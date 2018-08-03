@@ -7,6 +7,7 @@ import (
 
 	"github.com/operator-framework/operator-sdk/pkg/sdk"
 	"github.com/sirupsen/logrus"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -24,7 +25,7 @@ type Handler struct {
 func (h *Handler) Handle(ctx context.Context, event sdk.Event) error {
 	switch o := event.Object.(type) {
 	case *v1alpha1.ClusterIngress:
-		err := sdk.Create(newbusyBoxPod(o))
+		err := sdk.Create(newRouterDaemonSet(o))
 		if err != nil && !errors.IsAlreadyExists(err) {
 			logrus.Errorf("Failed to create busybox pod : %v", err)
 			return err
@@ -33,18 +34,15 @@ func (h *Handler) Handle(ctx context.Context, event sdk.Event) error {
 	return nil
 }
 
-// newbusyBoxPod demonstrates how to create a busybox pod
-func newbusyBoxPod(cr *v1alpha1.ClusterIngress) *corev1.Pod {
-	labels := map[string]string{
-		"app": "busy-box",
-	}
-	return &corev1.Pod{
+func newRouterDaemonSet(cr *v1alpha1.ClusterIngress) *appsv1.DaemonSet {
+	name := "router-" + cr.Name
+	return &appsv1.DaemonSet{
 		TypeMeta: metav1.TypeMeta{
-			Kind:       "Pod",
-			APIVersion: "v1",
+			Kind:       "DaemonSet",
+			APIVersion: "apps/v1",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "busy-box",
+			Name:      name,
 			Namespace: cr.Namespace,
 			OwnerReferences: []metav1.OwnerReference{
 				*metav1.NewControllerRef(cr, schema.GroupVersionKind{
@@ -53,14 +51,33 @@ func newbusyBoxPod(cr *v1alpha1.ClusterIngress) *corev1.Pod {
 					Kind:    "ClusterIngress",
 				}),
 			},
-			Labels: labels,
+			Labels: map[string]string{
+				"app": "router",
+			},
 		},
-		Spec: corev1.PodSpec{
-			Containers: []corev1.Container{
-				{
-					Name:    "busybox",
-					Image:   "busybox",
-					Command: []string{"sleep", "3600"},
+		Spec: appsv1.DaemonSetSpec{
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app": name,
+				},
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"app": name,
+					},
+				},
+				Spec: corev1.PodSpec{
+					NodeSelector: map[string]string{
+						"node-role.kubernetes.io/infra": "true",
+					},
+					Containers: []corev1.Container{
+						{
+							Name:    "busybox",
+							Image:   "busybox",
+							Command: []string{"sleep", "3600"},
+						},
+					},
 				},
 			},
 		},

@@ -1,4 +1,4 @@
 apiVersion: "ingress.openshift.io/v1alpha1"
 kind: "ClusterIngress"
 metadata:
-  name: "example"
+  name: "default"
