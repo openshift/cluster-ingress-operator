@@ -1,0 +1,3 @@
+apiVersion: ingress.openshift.io/v1alpha1
+kind: ClusterIngress
+projectName: cluster-ingress-operator
