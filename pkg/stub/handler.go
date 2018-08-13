@@ -165,6 +165,7 @@ func newRouterService(cr *v1alpha1.ClusterIngress) *corev1.Service {
 			Selector: map[string]string{
 				"app": name,
 			},
+			ExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyTypeLocal,
 			Ports: []corev1.ServicePort{
 				{
 					Name:     "http",
