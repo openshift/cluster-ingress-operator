@@ -165,6 +165,8 @@ func newRouterService(cr *v1alpha1.ClusterIngress) *corev1.Service {
 			Selector: map[string]string{
 				"app": name,
 			},
+			// This also has the effect of marking LB pool targets as unhealthy when
+			// no router pods are present on a node behind the service.
 			ExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyTypeLocal,
 			Ports: []corev1.ServicePort{
 				{
