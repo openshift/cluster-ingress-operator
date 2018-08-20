@@ -91,17 +91,17 @@ func newRouterDaemonSet(cr *v1alpha1.ClusterIngress) *appsv1.DaemonSet {
 								{
 									Name:          "http",
 									ContainerPort: 80,
-									Protocol:      "TCP",
+									Protocol:      corev1.ProtocolTCP,
 								},
 								{
 									Name:          "https",
 									ContainerPort: 443,
-									Protocol:      "TCP",
+									Protocol:      corev1.ProtocolTCP,
 								},
 								{
 									Name:          "stats",
 									ContainerPort: 1936,
-									Protocol:      "TCP",
+									Protocol:      corev1.ProtocolTCP,
 								},
 							},
 							Env: []corev1.EnvVar{
