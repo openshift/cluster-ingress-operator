@@ -75,7 +75,7 @@ func newRouterDaemonSet(cr *v1alpha1.ClusterIngress) *appsv1.DaemonSet {
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{
-						"app": name,
+						"app": name,,
 					},
 				},
 				Spec: corev1.PodSpec{
