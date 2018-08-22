@@ -65,6 +65,29 @@ To build the operator during development, use the standard Go toolchain:
 $ go build ./...
 ```
 
+### Container image
+
+To build the operator docker image:
+
+##### Using docker
+
+```
+docker build -f images/cluster-ingress-operator/Dockerfile  -t openshift/cluster-ingress-operator:latest .
+```
+
+##### Using buildah
+
+```
+sudo buildah bud -f images/cluster-ingress-operator/Dockerfile  -t openshift/cluster-ingress-operator:latest .
+```
+
+##### Push it to a registry if needed
+
+```
+sudo buildah push openshift/cluster-ingress-operator:latest docker-daemon:openshift/cluster-ingress-operator:latest
+```
+
+
 ### Running
 
 To run the operator, first deploy the custom resource definitions:

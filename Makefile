@@ -1,15 +1,17 @@
 all: build
 
 APP_NAME=cluster-ingress-operator
-BIN=cluster-ingress-operator
+OS_OUTPUT_BINPATH=_output/bin
+BIN=$(OS_OUTPUT_BINPATH)/$(APP_NAME)
 MAIN_PKG=github.com/openshift/$(APP_NAME)/cmd/$(APP_NAME)
 ENVVAR=GOOS=linux GOARCH=amd64 CGO_ENABLED=0
 GOOS=linux
-GO_BUILD_RECIPE=GOOS=$(GOOS) go build -o $(BIN) $(MAIN_PKG)
 
-build: $(BIN)
+build:
+	mkdir -p $(OS_OUTPUT_BINPATH)
+	GOOS=$(GOOS) go build -o $(BIN) $(MAIN_PKG)
 
-$(BIN):
-	$(GO_BUILD_RECIPE)
+clean:
+	rm -rf $(OS_OUTPUT_BINPATH)
 
 .PHONY: all build
