@@ -1,0 +1,19 @@
+# Load Balancer Service to place in front of the router in cloud environments.
+kind: Service
+apiVersion: v1
+metadata:
+  name: router
+  labels:
+    app: router
+spec:
+  type: LoadBalancer
+  selector:
+    app: router
+  # This also has the effect of marking LB pool targets as unhealthy when no
+  # router pods are present on a node behind the service.
+  externalTrafficPolicy: Local
+  ports:
+  - name: http
+    protocol: TCP
+    port: 80
+    targetPort: http

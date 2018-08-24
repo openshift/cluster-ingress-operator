@@ -1,0 +1,44 @@
+kind: DaemonSet
+apiVersion: apps/v1
+metadata:
+  name: router
+  labels:
+    app: router
+spec:
+  selector:
+    matchLabels:
+      app: router
+  template:
+    metadata:
+      labels:
+        app: router
+    spec:
+      serviceAccountName: router
+      nodeSelector:
+        "node-role.kubernetes.io/infra": "true"
+      containers:
+        - name: router
+          image: "docker.io/openshift/origin-haproxy-router:v3.11.0"
+          ports:
+          - name: http
+            containerPort: 80
+            protocol: TCP
+          - name: https
+            containerPort: 443
+            protocol: TCP
+          - name: stats
+            containerPort: 1936
+            protocol: TCP
+          env:
+          - name: STATS_PORT
+            value: "1936"
+          livenessProbe:
+            initialDelaySeconds: 10
+            httpGet:
+              path: /healthz
+              port: 1936
+          readinessProbe:
+            initialDelaySeconds: 10
+            httpGet:
+              path: /healthz
+              port: 1936
