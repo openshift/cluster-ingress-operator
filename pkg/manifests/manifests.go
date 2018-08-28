@@ -14,8 +14,7 @@ import (
 )
 
 const (
-	DefaultRouterNamespace = "openshift-cluster-ingress-router"
-
+	RouterNamespace          = "assets/router/namespace.yaml"
 	RouterServiceAccount     = "assets/router/service-account.yaml"
 	RouterClusterRole        = "assets/router/cluster-role.yaml"
 	RouterClusterRoleBinding = "assets/router/cluster-role-binding.yaml"
@@ -27,28 +26,20 @@ func MustAssetReader(asset string) io.Reader {
 	return bytes.NewReader(MustAsset(asset))
 }
 
+// Factory knows how to create ingress-related cluster resources from manifest
+// files. It provides a point of control to mutate the static resources with
+// provided configuration.
 type Factory struct {
-	routerNamespace string
 }
 
 func NewFactory() *Factory {
-	return &Factory{
-		routerNamespace: DefaultRouterNamespace,
-	}
+	return &Factory{}
 }
 
 func (f *Factory) RouterNamespace() (*corev1.Namespace, error) {
-	ns := &corev1.Namespace{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "Namespace",
-			APIVersion: "v1",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name: f.routerNamespace,
-			Annotations: map[string]string{
-				"openshift.io/node-selector": "",
-			},
-		},
+	ns, err := NewNamespace(MustAssetReader(RouterNamespace))
+	if err != nil {
+		return nil, err
 	}
 	return ns, nil
 }
@@ -58,7 +49,6 @@ func (f *Factory) RouterServiceAccount() (*corev1.ServiceAccount, error) {
 	if err != nil {
 		return nil, err
 	}
-	sa.Namespace = f.routerNamespace
 	return sa, nil
 }
 
@@ -75,7 +65,6 @@ func (f *Factory) RouterClusterRoleBinding() (*rbacv1.ClusterRoleBinding, error)
 	if err != nil {
 		return nil, err
 	}
-	crb.Subjects[0].Namespace = f.routerNamespace
 	return crb, nil
 }
 
@@ -87,12 +76,10 @@ func (f *Factory) RouterDaemonSet(cr *ingressv1alpha1.ClusterIngress) (*appsv1.D
 
 	name := "router-" + cr.Name
 
-	ds.ObjectMeta = metav1.ObjectMeta{
-		Name:      name,
-		Namespace: f.routerNamespace,
-		Labels: map[string]string{
-			"app": "router",
-		},
+	ds.Name = name
+
+	ds.Labels = map[string]string{
+		"app": "router",
 	}
 
 	ds.Spec.Selector = &metav1.LabelSelector{
@@ -101,7 +88,7 @@ func (f *Factory) RouterDaemonSet(cr *ingressv1alpha1.ClusterIngress) (*appsv1.D
 		},
 	}
 
-	ds.Spec.Template.ObjectMeta.Labels["app"] = name
+	ds.Spec.Template.Labels["app"] = name
 
 	return ds, nil
 }
@@ -114,12 +101,10 @@ func (f *Factory) RouterServiceCloud(cr *ingressv1alpha1.ClusterIngress) (*corev
 
 	name := "router-" + cr.Name
 
-	s.ObjectMeta = metav1.ObjectMeta{
-		Name:      name,
-		Namespace: f.routerNamespace,
-		Labels: map[string]string{
-			"app": "router",
-		},
+	s.Name = name
+
+	s.Labels = map[string]string{
+		"app": "router",
 	}
 
 	s.Spec.Selector = map[string]string{
@@ -172,4 +157,13 @@ func NewService(manifest io.Reader) (*corev1.Service, error) {
 	}
 
 	return &s, nil
+}
+
+func NewNamespace(manifest io.Reader) (*corev1.Namespace, error) {
+	ns := corev1.Namespace{}
+	if err := yaml.NewYAMLOrJSONDecoder(manifest, 100).Decode(&ns); err != nil {
+		return nil, err
+	}
+
+	return &ns, nil
 }

@@ -2,6 +2,7 @@ kind: DaemonSet
 apiVersion: apps/v1
 metadata:
   name: router
+  namespace: openshift-cluster-ingress-router
   labels:
     app: router
 spec:

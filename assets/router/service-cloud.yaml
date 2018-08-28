@@ -3,6 +3,7 @@ kind: Service
 apiVersion: v1
 metadata:
   name: router
+  namespace: openshift-cluster-ingress-router
   labels:
     app: router
 spec:
