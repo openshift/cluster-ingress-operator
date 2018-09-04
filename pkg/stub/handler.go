@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/sirupsen/logrus"
+
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 
@@ -39,8 +41,10 @@ func (h *Handler) syncIngressUpdate(ci *ingressv1alpha1.ClusterIngress) error {
 		return fmt.Errorf("couldn't build router namespace: %v", err)
 	}
 	err = sdk.Create(ns)
-	if err != nil && !errors.IsAlreadyExists(err) {
-		return fmt.Errorf("couldn't create router namespace: %v", err)
+	if err == nil {
+		logrus.Infof("created router namespace %q", ns.Name)
+	} else if !errors.IsAlreadyExists(err) {
+		return fmt.Errorf("couldn't create router namespace %q: %v", ns.Name, err)
 	}
 
 	sa, err := h.manifestFactory.RouterServiceAccount()
@@ -48,8 +52,10 @@ func (h *Handler) syncIngressUpdate(ci *ingressv1alpha1.ClusterIngress) error {
 		return fmt.Errorf("couldn't build router service account: %v", err)
 	}
 	err = sdk.Create(sa)
-	if err != nil && !errors.IsAlreadyExists(err) {
-		return fmt.Errorf("couldn't create router service account: %v", err)
+	if err == nil {
+		logrus.Infof("created router service account %s/%s", sa.Namespace, sa.Name)
+	} else if !errors.IsAlreadyExists(err) {
+		return fmt.Errorf("couldn't create router service account %s/%s: %v", sa.Namespace, sa.Name, err)
 	}
 
 	cr, err := h.manifestFactory.RouterClusterRole()
@@ -57,7 +63,9 @@ func (h *Handler) syncIngressUpdate(ci *ingressv1alpha1.ClusterIngress) error {
 		return fmt.Errorf("couldn't build router cluster role: %v", err)
 	}
 	err = sdk.Create(cr)
-	if err != nil && !errors.IsAlreadyExists(err) {
+	if err == nil {
+		logrus.Infof("created router cluster role %q", cr.Name)
+	} else if !errors.IsAlreadyExists(err) {
 		return fmt.Errorf("couldn't create router cluster role: %v", err)
 	}
 
@@ -66,7 +74,9 @@ func (h *Handler) syncIngressUpdate(ci *ingressv1alpha1.ClusterIngress) error {
 		return fmt.Errorf("couldn't build router cluster role binding: %v", err)
 	}
 	err = sdk.Create(crb)
-	if err != nil && !errors.IsAlreadyExists(err) {
+	if err == nil {
+		logrus.Infof("created router cluster role binding %q", crb.Name)
+	} else if !errors.IsAlreadyExists(err) {
 		return fmt.Errorf("couldn't create router cluster role binding: %v", err)
 	}
 
@@ -75,17 +85,26 @@ func (h *Handler) syncIngressUpdate(ci *ingressv1alpha1.ClusterIngress) error {
 		return fmt.Errorf("couldn't build daemonset: %v", err)
 	}
 	err = sdk.Create(ds)
-	if err != nil && !errors.IsAlreadyExists(err) {
-		return fmt.Errorf("failed to create daemonset: %v", err)
+	if err == nil {
+		logrus.Infof("created router daemonset %s/%s", ds.Namespace, ds.Name)
+	} else if !errors.IsAlreadyExists(err) {
+		return fmt.Errorf("failed to create daemonset %s/%s: %v", ds.Namespace, ds.Name, err)
 	}
 
-	service, err := h.manifestFactory.RouterServiceCloud(ci)
-	if err != nil {
-		return fmt.Errorf("couldn't build service: %v", err)
-	}
-	err = sdk.Create(service)
-	if err != nil && !errors.IsAlreadyExists(err) {
-		return fmt.Errorf("failed to create service: %v", err)
+	if ci.Spec.HighAvailability != nil {
+		switch ci.Spec.HighAvailability.Type {
+		case ingressv1alpha1.CloudClusterIngressHA:
+			service, err := h.manifestFactory.RouterServiceCloud(ci)
+			if err != nil {
+				return fmt.Errorf("couldn't build service: %v", err)
+			}
+			err = sdk.Create(service)
+			if err == nil {
+				logrus.Infof("created router service %s/%s", service.Namespace, service.Name)
+			} else if !errors.IsAlreadyExists(err) {
+				return fmt.Errorf("failed to create service %s/%s: %v", service.Namespace, service.Name, err)
+			}
+		}
 	}
 
 	return nil
