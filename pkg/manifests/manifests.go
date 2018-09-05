@@ -122,7 +122,10 @@ func (f *Factory) RouterServiceCloud(cr *ingressv1alpha1.ClusterIngress) (*corev
 
 	s.Name = name
 
-	s.Labels["router"] = name
+	s.Labels = map[string]string{
+		"app":    "router",
+		"router": name,
+	}
 
 	s.Spec.Selector = map[string]string{
 		"app":    "router",
