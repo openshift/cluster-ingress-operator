@@ -33,11 +33,11 @@ type ClusterIngressSpec struct {
 
 	// NamespaceSelector is a label selector which filters the
 	// namespaces covered by this ClusterIngress.
-	NamespaceSelector *map[string]string `json:"namespaceSelector"`
+	NamespaceSelector *metav1.LabelSelector `json:"namespaceSelector"`
 
 	// RouteSelector is a label selector which filters the Routes
 	// covered by this ClusterIngress.
-	RouteSelector *map[string]string `json:"routeSelector"`
+	RouteSelector *metav1.LabelSelector `json:"routeSelector"`
 
 	// HighAvailability describes the kind of HA mechanism to apply to
 	// the cluster ingress. For cloud environments which support it,
