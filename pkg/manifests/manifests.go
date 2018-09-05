@@ -79,7 +79,10 @@ func (f *Factory) RouterDaemonSet(cr *ingressv1alpha1.ClusterIngress) (*appsv1.D
 
 	ds.Name = name
 
-	ds.Spec.Template.Labels["router"] = name
+	ds.Spec.Template.Labels = map[string]string{
+		"app":    "router",
+		"router": name,
+	}
 
 	ds.Spec.Selector = &metav1.LabelSelector{
 		MatchLabels: map[string]string{
@@ -88,16 +91,22 @@ func (f *Factory) RouterDaemonSet(cr *ingressv1alpha1.ClusterIngress) (*appsv1.D
 		},
 	}
 
-	routeSelector, err := metav1.LabelSelectorAsSelector(cr.Spec.RouteSelector)
-	if err != nil {
-		return nil, fmt.Errorf("clusteringress %q has invalid spec.routeSelector: %v", cr.Name, err)
-	}
 	env := []corev1.EnvVar{
 		{Name: "ROUTER_SERVICE_NAME", Value: cr.Name},
-		{Name: "ROUTER_SERVICE_NAMESPACE", Value: ds.Namespace},
-		{Name: "ROUTER_CANONICAL_HOSTNAME", Value: cr.Spec.IngressDomain},
-		{Name: "ROUTE_LABELS", Value: routeSelector.String()},
 	}
+
+	if cr.Spec.IngressDomain != nil {
+		env = append(env, corev1.EnvVar{Name: "ROUTER_CANONICAL_HOSTNAME", Value: *cr.Spec.IngressDomain})
+	}
+
+	if cr.Spec.RouteSelector != nil {
+		routeSelector, err := metav1.LabelSelectorAsSelector(cr.Spec.RouteSelector)
+		if err != nil {
+			return nil, fmt.Errorf("clusteringress %q has invalid spec.routeSelector: %v", cr.Name, err)
+		}
+		env = append(env, corev1.EnvVar{Name: "ROUTE_LABELS", Value: routeSelector.String()})
+	}
+
 	ds.Spec.Template.Spec.Containers[0].Env = append(ds.Spec.Template.Spec.Containers[0].Env, env...)
 
 	return ds, nil

@@ -6,13 +6,7 @@ metadata:
   labels:
     app: router
 spec:
-  selector:
-    matchLabels:
-      app: router
   template:
-    metadata:
-      labels:
-        app: router
     spec:
       serviceAccountName: router
       nodeSelector:
@@ -34,6 +28,8 @@ spec:
           env:
           - name: STATS_PORT
             value: "1936"
+          - name: ROUTER_SERVICE_NAMESPACE
+            value: openshift-cluster-ingress-router
           livenessProbe:
             initialDelaySeconds: 10
             httpGet:

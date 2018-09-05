@@ -24,8 +24,8 @@ type ClusterIngress struct {
 type ClusterIngressSpec struct {
 	// IngressDomain is a DNS name suffix serviced by the
 	// ClusterIngress. This value is added automatically to the
-	// status of Routes to inform downstream systems. Required.
-	IngressDomain string `json:"ingressDomain"`
+	// status of Routes to inform downstream systems.
+	IngressDomain *string `json:"ingressDomain"`
 
 	// NodePlacement provides additional control over the
 	// scheduling of ingress implementation pods.
@@ -56,7 +56,7 @@ type ClusterIngressSpec struct {
 type NodePlacement struct {
 	// NodeSelector is a label selector used to inform pod
 	// scheduling.
-	NodeSelector map[string]string `json:"nodeSelector"`
+	NodeSelector *metav1.LabelSelector `json:"nodeSelector"`
 
 	// TODO: affinity, tolerations
 }
@@ -67,19 +67,6 @@ const (
 	// CloudClusterIngressHA is a type of HA implemented by fronting
 	// the cluster ingress implementation with a Service Load Balancer.
 	CloudClusterIngressHA ClusterIngressHAType = "Cloud"
-
-	// IPFailoverClusterIngressHighAvailability is a type of HA
-	// implemented by fronting the cluster ingress implementation with
-	// a keepalived cluster.
-	//
-	// When using this HA type, a VRRP resource must exist to provide
-	// the configuration and state management for the keepalived
-	// cluster.
-	//
-	// OpenShift will create IPFailover resources as necessary to
-	// materialize the keepalived cluster based on existing managed
-	// ClusterIngress instances.
-	IPFailoverClusterIngressHA ClusterIngressHAType = "IPFailover"
 )
 
 type ClusterIngressHighAvailability struct {
