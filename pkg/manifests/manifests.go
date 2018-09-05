@@ -93,6 +93,8 @@ func (f *Factory) RouterDaemonSet(cr *ingressv1alpha1.ClusterIngress) (*appsv1.D
 		return nil, fmt.Errorf("clusteringress %q has invalid spec.routeSelector: %v", cr.Name, err)
 	}
 	env := []corev1.EnvVar{
+		{Name: "ROUTER_SERVICE_NAME", Value: cr.Name},
+		{Name: "ROUTER_SERVICE_NAMESPACE", Value: ds.Namespace},
 		{Name: "ROUTER_CANONICAL_HOSTNAME", Value: cr.Spec.IngressDomain},
 		{Name: "ROUTE_LABELS", Value: routeSelector.String()},
 	}
