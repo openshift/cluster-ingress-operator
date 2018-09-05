@@ -1,18 +1,23 @@
 kind: DaemonSet
 apiVersion: apps/v1
 metadata:
+  # Replaced at runtime.
   name: router
   namespace: openshift-cluster-ingress-router
   labels:
     app: router
 spec:
+  # Replaced at runtime.
   selector:
     matchLabels:
       app: router
+      router: router
   template:
     metadata:
+      # Replaced at runtime.
       labels:
         app: router
+        router: router
     spec:
       serviceAccountName: router
       nodeSelector:
@@ -31,9 +36,12 @@ spec:
           - name: stats
             containerPort: 1936
             protocol: TCP
+          # Merged at runtime.
           env:
           - name: STATS_PORT
             value: "1936"
+          - name: ROUTER_SERVICE_NAMESPACE
+            value: openshift-cluster-ingress-router
           livenessProbe:
             initialDelaySeconds: 10
             httpGet:

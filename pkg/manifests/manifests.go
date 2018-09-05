@@ -2,6 +2,7 @@ package manifests
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
@@ -78,17 +79,35 @@ func (f *Factory) RouterDaemonSet(cr *ingressv1alpha1.ClusterIngress) (*appsv1.D
 
 	ds.Name = name
 
-	ds.Labels = map[string]string{
-		"app": "router",
+	ds.Spec.Template.Labels = map[string]string{
+		"app":    "router",
+		"router": name,
 	}
 
 	ds.Spec.Selector = &metav1.LabelSelector{
 		MatchLabels: map[string]string{
-			"app": name,
+			"app":    "router",
+			"router": name,
 		},
 	}
 
-	ds.Spec.Template.Labels["app"] = name
+	env := []corev1.EnvVar{
+		{Name: "ROUTER_SERVICE_NAME", Value: cr.Name},
+	}
+
+	if cr.Spec.IngressDomain != nil {
+		env = append(env, corev1.EnvVar{Name: "ROUTER_CANONICAL_HOSTNAME", Value: *cr.Spec.IngressDomain})
+	}
+
+	if cr.Spec.RouteSelector != nil {
+		routeSelector, err := metav1.LabelSelectorAsSelector(cr.Spec.RouteSelector)
+		if err != nil {
+			return nil, fmt.Errorf("clusteringress %q has invalid spec.routeSelector: %v", cr.Name, err)
+		}
+		env = append(env, corev1.EnvVar{Name: "ROUTE_LABELS", Value: routeSelector.String()})
+	}
+
+	ds.Spec.Template.Spec.Containers[0].Env = append(ds.Spec.Template.Spec.Containers[0].Env, env...)
 
 	return ds, nil
 }
@@ -104,11 +123,13 @@ func (f *Factory) RouterServiceCloud(cr *ingressv1alpha1.ClusterIngress) (*corev
 	s.Name = name
 
 	s.Labels = map[string]string{
-		"app": "router",
+		"app":    "router",
+		"router": name,
 	}
 
 	s.Spec.Selector = map[string]string{
-		"app": name,
+		"app":    "router",
+		"router": name,
 	}
 
 	return s, nil

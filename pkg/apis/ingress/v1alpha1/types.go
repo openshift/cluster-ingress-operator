@@ -22,8 +22,59 @@ type ClusterIngress struct {
 }
 
 type ClusterIngressSpec struct {
-	// Fill me
+	// IngressDomain is a DNS name suffix serviced by the
+	// ClusterIngress. This value is added automatically to the
+	// status of Routes to inform downstream systems.
+	IngressDomain *string `json:"ingressDomain"`
+
+	// NodePlacement provides additional control over the
+	// scheduling of ingress implementation pods.
+	NodePlacement *NodePlacement `json:"nodePlacement"`
+
+	// NamespaceSelector is a label selector which filters the
+	// namespaces covered by this ClusterIngress.
+	NamespaceSelector *metav1.LabelSelector `json:"namespaceSelector"`
+
+	// RouteSelector is a label selector which filters the Routes
+	// covered by this ClusterIngress.
+	RouteSelector *metav1.LabelSelector `json:"routeSelector"`
+
+	// HighAvailability describes the kind of HA mechanism to apply to
+	// the cluster ingress. For cloud environments which support it,
+	// CloudClusterIngressHA is the default.
+	HighAvailability *ClusterIngressHighAvailability `json:"highAvailability"`
+
+	// UnsupportedExtensions is a list of JSON patches to router
+	// deployments created for this ClusterIngress. This field is
+	// to facilitate backwards compatibility and when used results in
+	// an unsupported cluster ingress configuration.
+	UnsupportedExtensions *[]string `json:"unsupportedExtensions"`
 }
+
+// NodePlacement wraps node scheduling constructs like selectors
+// and affinity rules.
+type NodePlacement struct {
+	// NodeSelector is a label selector used to inform pod
+	// scheduling.
+	NodeSelector *metav1.LabelSelector `json:"nodeSelector"`
+
+	// TODO: affinity, tolerations
+}
+
+type ClusterIngressHAType string
+
+const (
+	// CloudClusterIngressHA is a type of HA implemented by fronting
+	// the cluster ingress implementation with a Service Load Balancer.
+	CloudClusterIngressHA ClusterIngressHAType = "Cloud"
+)
+
+type ClusterIngressHighAvailability struct {
+	// Type is a kind of HA mechanism which can apply to a cluster
+	// ingress.
+	Type ClusterIngressHAType `json:"type"`
+}
+
 type ClusterIngressStatus struct {
 	// Fill me
 }
