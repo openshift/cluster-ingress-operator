@@ -79,17 +79,15 @@ func (f *Factory) RouterDaemonSet(cr *ingressv1alpha1.ClusterIngress) (*appsv1.D
 
 	ds.Name = name
 
-	ds.Spec.Template.Labels = map[string]string{
-		"app":    "router",
-		"router": name,
+	if ds.Spec.Template.Labels == nil {
+		ds.Spec.Template.Labels = map[string]string{}
 	}
+	ds.Spec.Template.Labels["router"] = name
 
-	ds.Spec.Selector = &metav1.LabelSelector{
-		MatchLabels: map[string]string{
-			"app":    "router",
-			"router": name,
-		},
+	if ds.Spec.Selector.MatchLabels == nil {
+		ds.Spec.Selector.MatchLabels = map[string]string{}
 	}
+	ds.Spec.Selector.MatchLabels["router"] = name
 
 	env := []corev1.EnvVar{
 		{Name: "ROUTER_SERVICE_NAME", Value: cr.Name},
@@ -122,15 +120,15 @@ func (f *Factory) RouterServiceCloud(cr *ingressv1alpha1.ClusterIngress) (*corev
 
 	s.Name = name
 
-	s.Labels = map[string]string{
-		"app":    "router",
-		"router": name,
+	if s.Labels == nil {
+		s.Labels = map[string]string{}
 	}
+	s.Labels["router"] = name
 
-	s.Spec.Selector = map[string]string{
-		"app":    "router",
-		"router": name,
+	if s.Spec.Selector == nil {
+		s.Spec.Selector = map[string]string{}
 	}
+	s.Spec.Selector["router"] = name
 
 	return s, nil
 }

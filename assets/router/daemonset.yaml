@@ -1,23 +1,20 @@
+# DaemonSet with default values
+# Cluster Ingress specific values are applied at runtime.
 kind: DaemonSet
 apiVersion: apps/v1
 metadata:
-  # Replaced at runtime.
-  name: router
+  # Name is set at runtime.
   namespace: openshift-cluster-ingress-router
   labels:
     app: router
 spec:
-  # Replaced at runtime.
   selector:
     matchLabels:
       app: router
-      router: router
   template:
     metadata:
-      # Replaced at runtime.
       labels:
         app: router
-        router: router
     spec:
       serviceAccountName: router
       nodeSelector:

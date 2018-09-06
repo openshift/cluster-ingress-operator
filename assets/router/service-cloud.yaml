@@ -1,20 +1,16 @@
 # Load Balancer Service to place in front of the router in cloud environments.
+# Cluster Ingress specific values are applied at runtime.
 kind: Service
 apiVersion: v1
 metadata:
-  # Replaced at runtime.
-  name: router
+  # Name is set at runtime.
   namespace: openshift-cluster-ingress-router
-  # Replaced at runtime.
   labels:
     app: router
-    router: router
 spec:
   type: LoadBalancer
-  # Replaced at runtime.
   selector:
     app: router
-    router: router
   # This also has the effect of marking LB pool targets as unhealthy when no
   # router pods are present on a node behind the service.
   externalTrafficPolicy: Local
