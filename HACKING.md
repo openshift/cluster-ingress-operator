@@ -39,8 +39,6 @@ docker build -f images/cluster-ingress-operator/Dockerfile  -t openshift/cluster
 sudo buildah bud -f images/cluster-ingress-operator/Dockerfile  -t openshift/cluster-ingress-operator:latest .
 ```
 
-##### Push it to a registry if needed
-
 ```
 sudo buildah push openshift/cluster-ingress-operator:latest docker-daemon:openshift/cluster-ingress-operator:latest
 ```

@@ -26,6 +26,6 @@ test:
 	go test ./...
 
 clean:
-  rm $(BIN)
+	rm $(BIN)
 
 .PHONY: all build generate test

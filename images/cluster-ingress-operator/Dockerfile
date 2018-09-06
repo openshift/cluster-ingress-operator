@@ -10,7 +10,7 @@ COPY . $GOPATH/$CIO_PATH
 
 RUN cd $GOPATH/$CIO_PATH \
     && make build \
-    && cp $GOPATH/$CIO_PATH/_output/bin/cluster-ingress-operator /usr/bin/
+    && cp $GOPATH/$CIO_PATH/cluster-ingress-operator /usr/bin/
 
 RUN yum remove -y golang make
 
