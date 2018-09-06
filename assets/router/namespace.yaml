@@ -1,0 +1,6 @@
+kind: Namespace
+apiVersion: v1
+metadata:
+  name: openshift-cluster-ingress-router
+  annotations:
+    openshift.io/node-selector: ""

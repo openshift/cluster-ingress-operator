@@ -2,27 +2,26 @@ package stub
 
 import (
 	"context"
-
-	"github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
-
-	"github.com/operator-framework/operator-sdk/pkg/sdk"
+	"fmt"
 
 	"github.com/sirupsen/logrus"
 
-	appsv1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
+	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
+	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
+
+	"github.com/operator-framework/operator-sdk/pkg/sdk"
+
 	"k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 func NewHandler() sdk.Handler {
-	return &Handler{}
+	return &Handler{
+		manifestFactory: manifests.NewFactory(),
+	}
 }
 
 type Handler struct {
-	// Fill me
+	manifestFactory *manifests.Factory
 }
 
 func (h *Handler) Handle(ctx context.Context, event sdk.Event) error {
@@ -30,155 +29,83 @@ func (h *Handler) Handle(ctx context.Context, event sdk.Event) error {
 		return nil
 	}
 	switch o := event.Object.(type) {
-	case *v1alpha1.ClusterIngress:
-		err := sdk.Create(newRouterDaemonSet(o))
-		if err != nil && !errors.IsAlreadyExists(err) {
-			logrus.Errorf("Failed to create daemonset: %v", err)
-			return err
-		}
-		err = sdk.Create(newRouterService(o))
-		if err != nil && !errors.IsAlreadyExists(err) {
-			logrus.Errorf("Failed to create service: %v", err)
-			return err
-		}
+	case *ingressv1alpha1.ClusterIngress:
+		return h.syncIngressUpdate(o)
 	}
 	return nil
 }
 
-func newRouterDaemonSet(cr *v1alpha1.ClusterIngress) *appsv1.DaemonSet {
-	name := "router-" + cr.Name
-	return &appsv1.DaemonSet{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "DaemonSet",
-			APIVersion: "apps/v1",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: cr.Namespace,
-			OwnerReferences: []metav1.OwnerReference{
-				*metav1.NewControllerRef(cr, schema.GroupVersionKind{
-					Group:   v1alpha1.SchemeGroupVersion.Group,
-					Version: v1alpha1.SchemeGroupVersion.Version,
-					Kind:    "ClusterIngress",
-				}),
-			},
-			Labels: map[string]string{
-				"app": "router",
-			},
-		},
-		Spec: appsv1.DaemonSetSpec{
-			Selector: &metav1.LabelSelector{
-				MatchLabels: map[string]string{
-					"app": name,
-				},
-			},
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{
-						"app": name,
-					},
-				},
-				Spec: corev1.PodSpec{
-					ServiceAccountName: "router",
-					NodeSelector: map[string]string{
-						"node-role.kubernetes.io/infra": "true",
-					},
-					Containers: []corev1.Container{
-						{
-							Name:  "router",
-							Image: "docker.io/openshift/origin-haproxy-router:v3.11.0",
-							Ports: []corev1.ContainerPort{
-								{
-									Name:          "http",
-									ContainerPort: 80,
-									Protocol:      corev1.ProtocolTCP,
-								},
-								{
-									Name:          "https",
-									ContainerPort: 443,
-									Protocol:      corev1.ProtocolTCP,
-								},
-								{
-									Name:          "stats",
-									ContainerPort: 1936,
-									Protocol:      corev1.ProtocolTCP,
-								},
-							},
-							Env: []corev1.EnvVar{
-								{Name: "STATS_PORT", Value: "1936"},
-							},
-							LivenessProbe: &corev1.Probe{
-								InitialDelaySeconds: 10,
-								Handler: corev1.Handler{
-									HTTPGet: &corev1.HTTPGetAction{
-										Path: "/healthz",
-										Port: intstr.IntOrString{
-											Type:   intstr.Int,
-											IntVal: int32(1936),
-										},
-									},
-								},
-							},
-							ReadinessProbe: &corev1.Probe{
-								InitialDelaySeconds: 10,
-								Handler: corev1.Handler{
-									HTTPGet: &corev1.HTTPGetAction{
-										Path: "/healthz",
-										Port: intstr.IntOrString{
-											Type:   intstr.Int,
-											IntVal: int32(1936),
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-		},
+func (h *Handler) syncIngressUpdate(ci *ingressv1alpha1.ClusterIngress) error {
+	ns, err := h.manifestFactory.RouterNamespace()
+	if err != nil {
+		return fmt.Errorf("couldn't build router namespace: %v", err)
 	}
-}
+	err = sdk.Create(ns)
+	if err == nil {
+		logrus.Infof("created router namespace %q", ns.Name)
+	} else if !errors.IsAlreadyExists(err) {
+		return fmt.Errorf("couldn't create router namespace %q: %v", ns.Name, err)
+	}
 
-func newRouterService(cr *v1alpha1.ClusterIngress) *corev1.Service {
-	name := "router-" + cr.Name
-	return &corev1.Service{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "Service",
-			APIVersion: "v1",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: cr.Namespace,
-			OwnerReferences: []metav1.OwnerReference{
-				*metav1.NewControllerRef(cr, schema.GroupVersionKind{
-					Group:   v1alpha1.SchemeGroupVersion.Group,
-					Version: v1alpha1.SchemeGroupVersion.Version,
-					Kind:    "ClusterIngress",
-				}),
-			},
-			Labels: map[string]string{
-				"app": "router",
-			},
-		},
-		Spec: corev1.ServiceSpec{
-			Type: corev1.ServiceTypeLoadBalancer,
-			Selector: map[string]string{
-				"app": name,
-			},
-			// This also has the effect of marking LB pool targets as unhealthy when
-			// no router pods are present on a node behind the service.
-			ExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyTypeLocal,
-			Ports: []corev1.ServicePort{
-				{
-					Name:     "http",
-					Protocol: corev1.ProtocolTCP,
-					Port:     80,
-					TargetPort: intstr.IntOrString{
-						Type:   intstr.String,
-						StrVal: "http",
-					},
-				},
-			},
-		},
+	sa, err := h.manifestFactory.RouterServiceAccount()
+	if err != nil {
+		return fmt.Errorf("couldn't build router service account: %v", err)
 	}
+	err = sdk.Create(sa)
+	if err == nil {
+		logrus.Infof("created router service account %s/%s", sa.Namespace, sa.Name)
+	} else if !errors.IsAlreadyExists(err) {
+		return fmt.Errorf("couldn't create router service account %s/%s: %v", sa.Namespace, sa.Name, err)
+	}
+
+	cr, err := h.manifestFactory.RouterClusterRole()
+	if err != nil {
+		return fmt.Errorf("couldn't build router cluster role: %v", err)
+	}
+	err = sdk.Create(cr)
+	if err == nil {
+		logrus.Infof("created router cluster role %q", cr.Name)
+	} else if !errors.IsAlreadyExists(err) {
+		return fmt.Errorf("couldn't create router cluster role: %v", err)
+	}
+
+	crb, err := h.manifestFactory.RouterClusterRoleBinding()
+	if err != nil {
+		return fmt.Errorf("couldn't build router cluster role binding: %v", err)
+	}
+	err = sdk.Create(crb)
+	if err == nil {
+		logrus.Infof("created router cluster role binding %q", crb.Name)
+	} else if !errors.IsAlreadyExists(err) {
+		return fmt.Errorf("couldn't create router cluster role binding: %v", err)
+	}
+
+	ds, err := h.manifestFactory.RouterDaemonSet(ci)
+	if err != nil {
+		return fmt.Errorf("couldn't build daemonset: %v", err)
+	}
+	err = sdk.Create(ds)
+	if err == nil {
+		logrus.Infof("created router daemonset %s/%s", ds.Namespace, ds.Name)
+	} else if !errors.IsAlreadyExists(err) {
+		return fmt.Errorf("failed to create daemonset %s/%s: %v", ds.Namespace, ds.Name, err)
+	}
+
+	if ci.Spec.HighAvailability != nil {
+		switch ci.Spec.HighAvailability.Type {
+		case ingressv1alpha1.CloudClusterIngressHA:
+			service, err := h.manifestFactory.RouterServiceCloud(ci)
+			if err != nil {
+				return fmt.Errorf("couldn't build service: %v", err)
+			}
+			err = sdk.Create(service)
+			if err == nil {
+				logrus.Infof("created router service %s/%s", service.Namespace, service.Name)
+			} else if !errors.IsAlreadyExists(err) {
+				return fmt.Errorf("failed to create service %s/%s: %v", service.Namespace, service.Name, err)
+			}
+		}
+	}
+
+	return nil
 }

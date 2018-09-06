@@ -13,49 +13,7 @@ It's possible (and useful) to develop the operator locally targeting a remote cl
 
 #### GCP test clusters
 
-One reliable and hands-free way to create a suitable test cluster and `KUBECONFIG` in GCP is to use the [openshift/release](https://github.com/openshift/release/tree/master/cluster/test-deploy) tooling. For a multi-node environment with isolated infra nodes, add the following to your `zz_vars.yaml` in the `gcp-dev` profile, adjusting the `scale` keys to suit your needs:
-
-```yaml
-openshift_gcp_node_group_config:
-  - name: master
-    suffix: m
-    tags: ocp-master,ocp-node
-    machine_type: n1-standard-1
-    boot_disk_size: 150
-    scale: 1
-    bootstrap: true
-    wait_for_stable: true
-  - name: infra
-    suffix: i
-    tags: ocp-infra-node,oc-node
-    machine_type: n1-standard-1
-    boot_disk_size: 150
-    scale: 2
-    bootstrap: true
-  - name: node
-    suffix: n
-    tags: ocp-node
-    machine_type: n1-standard-2
-    boot_disk_size: 150
-    scale: 2
-    bootstrap: true
-
-openshift_node_groups:
-- name: node-config-master
-  labels:
-  - 'node-role.kubernetes.io/master=true'
-- name: node-config-infra
-  labels:
-  - 'node-role.kubernetes.io/infra=true'
-- name: node-config-node
-  labels:
-  - 'node-role.kubernetes.io/compute=true'
-- name: node-config-compute
-  labels:
-  - 'node-role.kubernetes.io/compute=true'
-
-openshift_gcp_infra_network_instance_group: ig-i
-```
+One reliable and hands-free way to create a suitable test cluster and `KUBECONFIG` in GCP is to use the [openshift/release](https://github.com/openshift/release/tree/master/cluster/test-deploy) tooling. The default `gcp-dev` profile will produce a cluster compatible with Service Load Balancers.
 
 ### Building
 
