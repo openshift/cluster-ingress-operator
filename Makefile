@@ -1,4 +1,4 @@
-all: build
+all: generate build
 
 PACKAGE=github.com/openshift/cluster-ingress-operator
 MAIN_PACKAGE=$(PACKAGE)/cmd/cluster-ingress-operator
@@ -15,8 +15,8 @@ GO_BUILD_RECIPE=GOOS=$(GOOS) go build -o $(BIN) $(MAIN_PACKAGE)
 build:
 	$(GO_BUILD_RECIPE)
 
+# Using "-modtime 1" to make generate target deterministic. It sets all file time stamps to unix timestamp 1
 generate: $(GOBINDATA_BIN)
-	# Using "-modtime 1" to make generate target deterministic. It sets all file time stamps to unix timestamp 1
 	go-bindata -mode 420 -modtime 1 -pkg manifests -o $(BINDATA) assets/...
 
 $(GOBINDATA_BIN):
@@ -26,6 +26,7 @@ test:
 	go test ./...
 
 clean:
-	rm $(BIN)
+	go clean
+	rm -f $(BIN)
 
-.PHONY: all build generate test
+.PHONY: all build generate test clean
