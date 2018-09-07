@@ -244,6 +244,13 @@
   version = "1.0.1"
 
 [[projects]]
+  digest = "1:e12ad085c028af76360cd712986c3096888fe044301080c8683e4e5490161f6c"
+  name = "github.com/openshift/api"
+  packages = ["route/v1"]
+  pruneopts = ""
+  revision = "0b3bd79a90c98650f1715c3021b8e9dcf4a7069a"
+
+[[projects]]
   branch = "master"
   digest = "1:20467c005652233c5ed2f07415f62bb95ba12d416052e5f5f8e672fd70efe86f"
   name = "github.com/operator-framework/operator-sdk"
@@ -657,15 +664,19 @@
   analyzer-name = "dep"
   analyzer-version = 1
   input-imports = [
+    "github.com/openshift/api/route/v1",
     "github.com/operator-framework/operator-sdk/pkg/sdk",
     "github.com/operator-framework/operator-sdk/pkg/util/k8sutil",
     "github.com/operator-framework/operator-sdk/version",
     "github.com/sirupsen/logrus",
+    "k8s.io/api/apps/v1",
     "k8s.io/api/core/v1",
+    "k8s.io/api/rbac/v1",
     "k8s.io/apimachinery/pkg/api/errors",
     "k8s.io/apimachinery/pkg/apis/meta/v1",
     "k8s.io/apimachinery/pkg/runtime",
     "k8s.io/apimachinery/pkg/runtime/schema",
+    "k8s.io/apimachinery/pkg/util/yaml",
     "k8s.io/client-go/plugin/pkg/client/auth/gcp",
     "k8s.io/code-generator/cmd/client-gen",
     "k8s.io/code-generator/cmd/conversion-gen",

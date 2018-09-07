@@ -32,6 +32,10 @@ required = [
   # revision for tag "kubernetes-1.9.3"
   revision = "9389c055a838d4f208b699b3c7c51b70f2368861"
 
+[[override]]
+  name = "github.com/openshift/api"
+  revision = "0b3bd79a90c98650f1715c3021b8e9dcf4a7069a"
+
 [[constraint]]
   name = "github.com/operator-framework/operator-sdk"
   # The version rule is used for a specific release and the master branch for in between releases.
