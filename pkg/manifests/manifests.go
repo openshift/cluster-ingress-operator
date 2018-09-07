@@ -12,6 +12,8 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/yaml"
+
+	routev1 "github.com/openshift/api/route/v1"
 )
 
 const (
@@ -185,4 +187,31 @@ func NewNamespace(manifest io.Reader) (*corev1.Namespace, error) {
 	}
 
 	return &ns, nil
+}
+
+func NewDeployment(manifest io.Reader) (*appsv1.Deployment, error) {
+	o := appsv1.Deployment{}
+	if err := yaml.NewYAMLOrJSONDecoder(manifest, 100).Decode(&o); err != nil {
+		return nil, err
+	}
+
+	return &o, nil
+}
+
+func NewRoute(manifest io.Reader) (*routev1.Route, error) {
+	o := routev1.Route{}
+	if err := yaml.NewYAMLOrJSONDecoder(manifest, 100).Decode(&o); err != nil {
+		return nil, err
+	}
+
+	return &o, nil
+}
+
+func NewClusterIngress(manifest io.Reader) (*ingressv1alpha1.ClusterIngress, error) {
+	o := ingressv1alpha1.ClusterIngress{}
+	if err := yaml.NewYAMLOrJSONDecoder(manifest, 100).Decode(&o); err != nil {
+		return nil, err
+	}
+
+	return &o, nil
 }
