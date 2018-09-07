@@ -25,4 +25,7 @@ $(GOBINDATA_BIN):
 test:
 	go test ./...
 
+clean:
+	rm $(BIN)
+
 .PHONY: all build generate test

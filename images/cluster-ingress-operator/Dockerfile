@@ -2,14 +2,15 @@ FROM centos:7
 
 RUN yum install -y golang make
 
+ENV CIO_PATH=src/github.com/openshift/cluster-ingress-operator
 ENV GOPATH /go
 RUN mkdir $GOPATH
 
-COPY . $GOPATH/src/github.com/openshift/cluster-ingress-operator
+COPY . $GOPATH/$CIO_PATH
 
-RUN cd $GOPATH/src/github.com/openshift/cluster-ingress-operator \
+RUN cd $GOPATH/$CIO_PATH \
     && make build \
-    && cp $GOPATH/src/github.com/openshift/cluster-ingress-operator/cluster-ingress-operator /usr/bin/
+    && cp $GOPATH/$CIO_PATH/cluster-ingress-operator /usr/bin/
 
 RUN yum remove -y golang make
 
