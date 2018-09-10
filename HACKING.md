@@ -65,3 +65,24 @@ To test the default `ClusterIngress` manifest:
 ```
 $ oc create -f deploy/cr.yaml
 ```
+
+## Tests
+
+### Integration tests
+
+Integration tests are still very immature. To run them, use the GCP test cluster instructions, create the ClusterIngress custom resource definition:
+
+```
+$ oc apply -f deploy/crd.yaml
+```
+
+Then run the tests using the following as a guide:
+
+```
+KUBECONFIG=/some/admin.kubeconfig \
+CLUSTER_NAME=your_gcp_cluster_name \
+WATCH_NAMESPACE=default \
+go test -v -tags integration ./test/integration
+```
+
+**Important**: Note that the resources and namespaces used for the test are currently fixed and the tests will clean up after themselves, including deleting the `openshift-cluster-ingress-router` namespace. Don't run these tests in a cluster where data loss is a concern.
