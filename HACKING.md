@@ -52,13 +52,24 @@ To run the operator, first deploy the custom resource definitions:
 $ oc create -f deploy/crd.yaml
 ```
 
-Then, use the operator-sdk to launch the operator:
+#### Running with Operator SDK
+
+Use the operator-sdk to launch the operator:
 
 ```
 $ operator-sdk up local namespace default --kubeconfig=$KUBECONFIG
 ```
 
 If you're using the `openshift/release` tooling, `KUBECONFIG` will be something like `$RELEASE_REPO/cluster/test-deploy/gcp-dev/admin.kubeconfig`.
+
+#### Running a Containerized Operator
+
+```
+oc create -f deploy/cluster-ingress-operator.yaml
+```
+
+*In order to run as a container you will need to upload the Cluster Ingress Operator image to your registry*
+
 
 To test the default `ClusterIngress` manifest:
 
