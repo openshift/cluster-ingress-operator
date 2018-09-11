@@ -9,13 +9,6 @@ rules:
   attributeRestrictions: null
   resources:
   - endpoints
-  verbs:
-  - list
-  - watch
-- apiGroups:
-  - ""
-  attributeRestrictions: null
-  resources:
   - services
   verbs:
   - list
@@ -25,12 +18,6 @@ rules:
   attributeRestrictions: null
   resources:
   - tokenreviews
-  verbs:
-  - create
-- apiGroups:
-  - authorization.k8s.io
-  attributeRestrictions: null
-  resources:
   - subjectaccessreviews
   verbs:
   - create
