@@ -27,8 +27,11 @@ $(GOBINDATA_BIN):
 test:
 	go test ./...
 
+test-integration:
+	go test -v -tags integration ./test/integration
+
 clean:
 	go clean
 	rm -f $(BIN)
 
-.PHONY: all build generate test clean
+.PHONY: all build generate test test-integration clean
