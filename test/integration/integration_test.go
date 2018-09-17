@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"testing"
 	"time"
 
@@ -21,43 +22,22 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 )
 
-var operatorNamespace string
-var clusterName string
+var testConfig *TestConfig
 
 func TestIntegration(t *testing.T) {
-	kubeConfig := os.Getenv("KUBECONFIG")
-	if len(kubeConfig) == 0 {
-		t.Fatalf("KUBECONFIG is required")
-	}
-	// The operator-sdk uses KUBERNETES_CONFIG...
-	os.Setenv("KUBERNETES_CONFIG", kubeConfig)
+	testConfig = NewTestConfig(t)
 
-	clusterName = os.Getenv("CLUSTER_NAME")
-	if len(clusterName) == 0 {
-		t.Fatalf("CLUSTER_NAME is required")
-	}
+	testConfig.createCRD()
+	defer testConfig.deleteCRD()
 
-	namespace, err := k8sutil.GetWatchNamespace()
-	if err != nil {
-		t.Fatalf("failed to get watch namespace: %v", err)
-	}
-	operatorNamespace = namespace
-
-	// Start up the operator
-	resource := "ingress.openshift.io/v1alpha1"
-	kind := "ClusterIngress"
-	resyncPeriod := 5
-	t.Logf("Watching %s, %s, %s, %d", resource, kind, namespace, resyncPeriod)
-	sdk.Watch(resource, kind, namespace, resyncPeriod)
-	sdk.Handle(stub.NewHandler())
-	go sdk.Run(context.TODO())
+	testConfig.startOperator()
 
 	// Execute subtests
 	t.Run("TestMultipleIngresses", testMultipleIngresses)
 }
 
 func testMultipleIngresses(t *testing.T) {
-	f := manifests.NewFactory(clusterName)
+	f := manifests.NewFactory(testConfig.clusterName)
 
 	appNamespace, err := f.AppIngressNamespace()
 	if err != nil {
@@ -84,13 +64,13 @@ func testMultipleIngresses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	clusterIngressDefault.Namespace = operatorNamespace
+	clusterIngressDefault.Namespace = testConfig.operatorNamespace
 
 	clusterIngressInternal, err := f.ClusterIngressInternal()
 	if err != nil {
 		t.Fatal(err)
 	}
-	clusterIngressInternal.Namespace = operatorNamespace
+	clusterIngressInternal.Namespace = testConfig.operatorNamespace
 
 	routerNamespace, err := f.RouterNamespace()
 	if err != nil {
@@ -198,5 +178,69 @@ func testMultipleIngresses(t *testing.T) {
 		if err != nil {
 			t.Fatalf("timed out waiting for route endpoint %q at ingress IP %q: %s", routeHost, ingressIP, err)
 		}
+	}
+}
+
+type TestConfig struct {
+	operatorNamespace string
+	clusterName       string
+	kubeConfig        string
+
+	t *testing.T
+}
+
+func NewTestConfig(t *testing.T) *TestConfig {
+	config := &TestConfig{t: t}
+
+	// Check prerequisites
+	kubeConfig := os.Getenv("KUBECONFIG")
+	if len(kubeConfig) == 0 {
+		t.Fatalf("KUBECONFIG is required")
+	}
+	// The operator-sdk uses KUBERNETES_CONFIG...
+	os.Setenv("KUBERNETES_CONFIG", kubeConfig)
+	config.kubeConfig = kubeConfig
+
+	clusterName := os.Getenv("CLUSTER_NAME")
+	if len(clusterName) == 0 {
+		t.Fatalf("CLUSTER_NAME is required")
+	}
+	config.clusterName = clusterName
+
+	namespace, err := k8sutil.GetWatchNamespace()
+	if err != nil {
+		namespace = "default"
+		os.Setenv("WATCH_NAMESPACE", namespace)
+	}
+	config.operatorNamespace = namespace
+
+	return config
+}
+
+func (tc *TestConfig) startOperator() {
+	resource := "ingress.openshift.io/v1alpha1"
+	kind := "ClusterIngress"
+	resyncPeriod := 5
+	tc.t.Logf("Watching %s, %s, %s, %d", resource, kind, tc.operatorNamespace, resyncPeriod)
+	sdk.Watch(resource, kind, tc.operatorNamespace, resyncPeriod)
+	sdk.Handle(stub.NewHandler())
+	go sdk.Run(context.TODO())
+}
+
+func (tc *TestConfig) createCRD() {
+	tc.runShellCmd(fmt.Sprintf("oc apply -f ../../deploy/crd.yaml -n %s", tc.operatorNamespace), "create cluster ingress CRD")
+}
+
+func (tc *TestConfig) deleteCRD() {
+	tc.runShellCmd(fmt.Sprintf("oc delete crd clusteringresses.ingress.openshift.io -n %s", tc.operatorNamespace), "delete cluster ingress CRD")
+}
+
+func (tc *TestConfig) runShellCmd(command, msg string) {
+	cmd := []string{"sh", "-c", command}
+	c := exec.Command(cmd[0], cmd[1:]...)
+	c.Env = os.Environ()
+	c.Env = append(c.Env, fmt.Sprintf("KUBECONFIG=%s", tc.kubeConfig))
+	if err := c.Run(); err != nil {
+		tc.t.Fatalf("failed to %s: %v", msg, err)
 	}
 }
