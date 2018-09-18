@@ -1,0 +1,13 @@
+apiVersion: apiextensions.k8s.io/v1beta1
+kind: CustomResourceDefinition
+metadata:
+  name: clusteringresses.ingress.openshift.io
+spec:
+  group: ingress.openshift.io
+  names:
+    kind: ClusterIngress
+    listKind: ClusterIngressList
+    plural: clusteringresses
+    singular: clusteringress
+  scope: Namespaced
+  version: v1alpha1
