@@ -7,6 +7,7 @@ ENV GOPATH /go
 RUN mkdir $GOPATH
 
 COPY . $GOPATH/$CIO_PATH
+ADD manifests /manifests
 
 RUN cd $GOPATH/$CIO_PATH \
     && make build \
