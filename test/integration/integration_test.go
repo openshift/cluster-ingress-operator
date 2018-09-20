@@ -228,7 +228,7 @@ func (tc *TestConfig) startOperator() {
 }
 
 func (tc *TestConfig) createCRD() {
-	tc.runShellCmd(fmt.Sprintf("oc apply -f ../../deploy/crd.yaml -n %s", tc.operatorNamespace), "create cluster ingress CRD")
+	tc.runShellCmd(fmt.Sprintf("oc apply -f ../../manifests/02_crd.yaml -n %s", tc.operatorNamespace), "create cluster ingress CRD")
 }
 
 func (tc *TestConfig) deleteCRD() {
