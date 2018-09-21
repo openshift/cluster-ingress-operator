@@ -49,7 +49,7 @@ sudo buildah push openshift/cluster-ingress-operator:latest docker-daemon:opensh
 To run the operator, first deploy the custom resource definitions:
 
 ```
-$ oc create -f deploy/crd.yaml
+$ oc create -f manifests/02_crd.yaml
 ```
 
 #### Running with Operator SDK
@@ -65,17 +65,11 @@ If you're using the `openshift/release` tooling, `KUBECONFIG` will be something 
 #### Running a Containerized Operator
 
 ```
-oc create -f deploy/cluster-ingress-operator.yaml
+oc create -f manifests/04_cluster-ingress-operator.yaml
 ```
 
 *In order to run as a container you will need to upload the Cluster Ingress Operator image to your registry*
 
-
-To test the default `ClusterIngress` manifest:
-
-```
-$ oc create -f deploy/cr.yaml
-```
 
 ## Tests
 
