@@ -30,11 +30,11 @@ import (
 
 // A Job represents an operation which has been submitted to BigQuery for processing.
 type Job struct {
-	c         *Client
-	projectID string
-	jobID     string
-	location  string
-
+	c          *Client
+	projectID  string
+	jobID      string
+	location   string
+	email      string
 	config     *bq.JobConfiguration
 	lastStatus *JobStatus
 }
@@ -71,6 +71,11 @@ func (j *Job) ID() string {
 // Location returns the job's location.
 func (j *Job) Location() string {
 	return j.location
+}
+
+// Email returns the email of the job's creator.
+func (j *Job) Email() string {
+	return j.email
 }
 
 // State is one of a sequence of states that a Job progresses through as it is processed.
@@ -226,7 +231,7 @@ func (j *Job) Wait(ctx context.Context) (js *JobStatus, err error) {
 
 	if j.isQuery() {
 		// We can avoid polling for query jobs.
-		if _, err := j.waitForQuery(ctx, j.projectID); err != nil {
+		if _, _, err := j.waitForQuery(ctx, j.projectID); err != nil {
 			return nil, err
 		}
 		// Note: extra RPC even if you just want to wait for the query to finish.
@@ -262,7 +267,7 @@ func (j *Job) Read(ctx context.Context) (ri *RowIterator, err error) {
 	return j.read(ctx, j.waitForQuery, fetchPage)
 }
 
-func (j *Job) read(ctx context.Context, waitForQuery func(context.Context, string) (Schema, error), pf pageFetcher) (*RowIterator, error) {
+func (j *Job) read(ctx context.Context, waitForQuery func(context.Context, string) (Schema, uint64, error), pf pageFetcher) (*RowIterator, error) {
 	if !j.isQuery() {
 		return nil, errors.New("bigquery: cannot read from a non-query job")
 	}
@@ -272,7 +277,7 @@ func (j *Job) read(ctx context.Context, waitForQuery func(context.Context, strin
 	if destTable != nil && projectID != destTable.ProjectId {
 		return nil, fmt.Errorf("bigquery: job project ID is %q, but destination table's is %q", projectID, destTable.ProjectId)
 	}
-	schema, err := waitForQuery(ctx, projectID)
+	schema, totalRows, err := waitForQuery(ctx, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -280,13 +285,18 @@ func (j *Job) read(ctx context.Context, waitForQuery func(context.Context, strin
 		return nil, errors.New("bigquery: query job missing destination table")
 	}
 	dt := bqToTable(destTable, j.c)
+	if totalRows == 0 {
+		pf = nil
+	}
 	it := newRowIterator(ctx, dt, pf)
 	it.Schema = schema
+	it.TotalRows = totalRows
 	return it, nil
 }
 
-// waitForQuery waits for the query job to complete and returns its schema.
-func (j *Job) waitForQuery(ctx context.Context, projectID string) (Schema, error) {
+// waitForQuery waits for the query job to complete and returns its schema. It also
+// returns the total number of rows in the result set.
+func (j *Job) waitForQuery(ctx context.Context, projectID string) (Schema, uint64, error) {
 	// Use GetQueryResults only to wait for completion, not to read results.
 	call := j.c.bqs.Jobs.GetQueryResults(projectID, j.jobID).Location(j.location).Context(ctx).MaxResults(0)
 	setClientHeader(call.Header())
@@ -307,9 +317,9 @@ func (j *Job) waitForQuery(ctx context.Context, projectID string) (Schema, error
 		return true, nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return bqToSchema(res.Schema), nil
+	return bqToSchema(res.Schema), res.TotalRows, nil
 }
 
 // JobStatistics contains statistics about a job.
@@ -543,9 +553,11 @@ func (c *Client) Jobs(ctx context.Context) *JobIterator {
 
 // JobIterator iterates over jobs in a project.
 type JobIterator struct {
-	ProjectID string // Project ID of the jobs to list. Default is the client's project.
-	AllUsers  bool   // Whether to list jobs owned by all users in the project, or just the current caller.
-	State     State  // List only jobs in the given state. Defaults to all states.
+	ProjectID       string    // Project ID of the jobs to list. Default is the client's project.
+	AllUsers        bool      // Whether to list jobs owned by all users in the project, or just the current caller.
+	State           State     // List only jobs in the given state. Defaults to all states.
+	MinCreationTime time.Time // List only jobs created after this time.
+	MaxCreationTime time.Time // List only jobs created before this time.
 
 	ctx      context.Context
 	c        *Client
@@ -588,6 +600,12 @@ func (it *JobIterator) fetch(pageSize int, pageToken string) (string, error) {
 	if st != "" {
 		req.StateFilter(st)
 	}
+	if !it.MinCreationTime.IsZero() {
+		req.MinCreationTime(uint64(it.MinCreationTime.UnixNano() / 1e6))
+	}
+	if !it.MaxCreationTime.IsZero() {
+		req.MaxCreationTime(uint64(it.MaxCreationTime.UnixNano() / 1e6))
+	}
 	setClientHeader(req.Header())
 	if pageSize > 0 {
 		req.MaxResults(int64(pageSize))
@@ -607,7 +625,7 @@ func (it *JobIterator) fetch(pageSize int, pageToken string) (string, error) {
 }
 
 func convertListedJob(j *bq.JobListJobs, c *Client) (*Job, error) {
-	return bqToJob2(j.JobReference, j.Configuration, j.Status, j.Statistics, c)
+	return bqToJob2(j.JobReference, j.Configuration, j.Status, j.Statistics, j.UserEmail, c)
 }
 
 func (c *Client) getJobInternal(ctx context.Context, jobID, location string, fields ...googleapi.Field) (*bq.Job, error) {
@@ -631,15 +649,16 @@ func (c *Client) getJobInternal(ctx context.Context, jobID, location string, fie
 }
 
 func bqToJob(q *bq.Job, c *Client) (*Job, error) {
-	return bqToJob2(q.JobReference, q.Configuration, q.Status, q.Statistics, c)
+	return bqToJob2(q.JobReference, q.Configuration, q.Status, q.Statistics, q.UserEmail, c)
 }
 
-func bqToJob2(qr *bq.JobReference, qc *bq.JobConfiguration, qs *bq.JobStatus, qt *bq.JobStatistics, c *Client) (*Job, error) {
+func bqToJob2(qr *bq.JobReference, qc *bq.JobConfiguration, qs *bq.JobStatus, qt *bq.JobStatistics, email string, c *Client) (*Job, error) {
 	j := &Job{
 		projectID: qr.ProjectId,
 		jobID:     qr.JobId,
 		location:  qr.Location,
 		c:         c,
+		email:     email,
 	}
 	j.setConfig(qc)
 	if err := j.setStatus(qs); err != nil {

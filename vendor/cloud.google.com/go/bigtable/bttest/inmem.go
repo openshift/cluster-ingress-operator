@@ -30,6 +30,7 @@ To use a Server, create it, and then connect to it with no security:
 package bttest // import "cloud.google.com/go/bigtable/bttest"
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"log"
@@ -41,14 +42,13 @@ import (
 	"sync"
 	"time"
 
-	"bytes"
-
 	emptypb "github.com/golang/protobuf/ptypes/empty"
 	"github.com/golang/protobuf/ptypes/wrappers"
 	"github.com/google/btree"
 	"golang.org/x/net/context"
 	btapb "google.golang.org/genproto/googleapis/bigtable/admin/v2"
 	btpb "google.golang.org/genproto/googleapis/bigtable/v2"
+	"google.golang.org/genproto/googleapis/longrunning"
 	statpb "google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -135,6 +135,10 @@ func (s *server) CreateTable(ctx context.Context, req *btapb.CreateTableRequest)
 	s.mu.Unlock()
 
 	return &btapb.Table{Name: tbl}, nil
+}
+
+func (s *server) CreateTableFromSnapshot(context.Context, *btapb.CreateTableFromSnapshotRequest) (*longrunning.Operation, error) {
+	return nil, status.Errorf(codes.Unimplemented, "the emulator does not currently support snapshots")
 }
 
 func (s *server) ListTables(ctx context.Context, req *btapb.ListTablesRequest) (*btapb.ListTablesResponse, error) {
@@ -266,10 +270,6 @@ func (s *server) DropRowRange(ctx context.Context, req *btapb.DropRowRangeReques
 	return &emptypb.Empty{}, nil
 }
 
-// This is a private alpha release of Cloud Bigtable replication. This feature
-// is not currently available to most Cloud Bigtable customers. This feature
-// might be changed in backward-incompatible ways and is not recommended for
-// production use. It is not subject to any SLA or deprecation policy.
 func (s *server) GenerateConsistencyToken(ctx context.Context, req *btapb.GenerateConsistencyTokenRequest) (*btapb.GenerateConsistencyTokenResponse, error) {
 	// Check that the table exists.
 	_, ok := s.tables[req.Name]
@@ -282,10 +282,6 @@ func (s *server) GenerateConsistencyToken(ctx context.Context, req *btapb.Genera
 	}, nil
 }
 
-// This is a private alpha release of Cloud Bigtable replication. This feature
-// is not currently available to most Cloud Bigtable customers. This feature
-// might be changed in backward-incompatible ways and is not recommended for
-// production use. It is not subject to any SLA or deprecation policy.
 func (s *server) CheckConsistency(ctx context.Context, req *btapb.CheckConsistencyRequest) (*btapb.CheckConsistencyResponse, error) {
 	// Check that the table exists.
 	_, ok := s.tables[req.Name]
@@ -302,6 +298,20 @@ func (s *server) CheckConsistency(ctx context.Context, req *btapb.CheckConsisten
 	return &btapb.CheckConsistencyResponse{
 		Consistent: true,
 	}, nil
+}
+
+func (s *server) SnapshotTable(context.Context, *btapb.SnapshotTableRequest) (*longrunning.Operation, error) {
+	return nil, status.Errorf(codes.Unimplemented, "the emulator does not currently support snapshots")
+}
+
+func (s *server) GetSnapshot(context.Context, *btapb.GetSnapshotRequest) (*btapb.Snapshot, error) {
+	return nil, status.Errorf(codes.Unimplemented, "the emulator does not currently support snapshots")
+}
+func (s *server) ListSnapshots(context.Context, *btapb.ListSnapshotsRequest) (*btapb.ListSnapshotsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "the emulator does not currently support snapshots")
+}
+func (s *server) DeleteSnapshot(context.Context, *btapb.DeleteSnapshotRequest) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "the emulator does not currently support snapshots")
 }
 
 func (s *server) ReadRows(req *btpb.ReadRowsRequest, stream btpb.Bigtable_ReadRowsServer) error {
@@ -497,7 +507,7 @@ func filterRow(f *btpb.RowFilter, r *row) bool {
 		return filterRow(f.Condition.FalseFilter, r)
 	case *btpb.RowFilter_RowKeyRegexFilter:
 		pat := string(f.RowKeyRegexFilter)
-		rx, err := regexp.Compile(pat)
+		rx, err := newRegexp(pat)
 		if err != nil {
 			log.Printf("Bad rowkey_regex_filter pattern %q: %v", pat, err)
 			return false
@@ -593,8 +603,8 @@ func includeCell(f *btpb.RowFilter, fam, col string, cell cell) bool {
 		log.Printf("WARNING: don't know how to handle filter of type %T (ignoring it)", f)
 		return true
 	case *btpb.RowFilter_FamilyNameRegexFilter:
-		pat := string(f.FamilyNameRegexFilter)
-		rx, err := regexp.Compile(pat)
+		pat := f.FamilyNameRegexFilter
+		rx, err := newRegexp(pat)
 		if err != nil {
 			log.Printf("Bad family_name_regex_filter pattern %q: %v", pat, err)
 			return false
@@ -602,7 +612,7 @@ func includeCell(f *btpb.RowFilter, fam, col string, cell cell) bool {
 		return rx.MatchString(fam)
 	case *btpb.RowFilter_ColumnQualifierRegexFilter:
 		pat := string(f.ColumnQualifierRegexFilter)
-		rx, err := regexp.Compile(pat)
+		rx, err := newRegexp(pat)
 		if err != nil {
 			log.Printf("Bad column_qualifier_regex_filter pattern %q: %v", pat, err)
 			return false
@@ -610,7 +620,7 @@ func includeCell(f *btpb.RowFilter, fam, col string, cell cell) bool {
 		return rx.MatchString(col)
 	case *btpb.RowFilter_ValueRegexFilter:
 		pat := string(f.ValueRegexFilter)
-		rx, err := regexp.Compile(pat)
+		rx, err := newRegexp(pat)
 		if err != nil {
 			log.Printf("Bad value_regex_filter pattern %q: %v", pat, err)
 			return false
@@ -661,6 +671,14 @@ func includeCell(f *btpb.RowFilter, fam, col string, cell cell) bool {
 		}
 		return inRangeStart() && inRangeEnd()
 	}
+}
+
+func newRegexp(pat string) (*regexp.Regexp, error) {
+	re, err := regexp.Compile("^" + pat + "$") // match entire target
+	if err != nil {
+		log.Printf("Bad pattern %q: %v", pat, err)
+	}
+	return re, err
 }
 
 func (s *server) MutateRow(ctx context.Context, req *btpb.MutateRowRequest) (*btpb.MutateRowResponse, error) {
@@ -787,9 +805,13 @@ func applyMutations(tbl *table, r *row, muts []*btpb.Mutation, fs map[string]*co
 					if !tbl.validTimestamp(tsr.StartTimestampMicros) {
 						return fmt.Errorf("invalid timestamp %d", tsr.StartTimestampMicros)
 					}
-					if !tbl.validTimestamp(tsr.EndTimestampMicros) {
+					if !tbl.validTimestamp(tsr.EndTimestampMicros) && tsr.EndTimestampMicros != 0 {
 						return fmt.Errorf("invalid timestamp %d", tsr.EndTimestampMicros)
 					}
+					if tsr.StartTimestampMicros >= tsr.EndTimestampMicros && tsr.EndTimestampMicros != 0 {
+						return fmt.Errorf("inverted or invalid timestamp range [%d, %d]", tsr.StartTimestampMicros, tsr.EndTimestampMicros)
+					}
+
 					// Find half-open interval to remove.
 					// Cells are in descending timestamp order,
 					// so the predicates to sort.Search are inverted.
@@ -1059,7 +1081,7 @@ func newTable(ctr *btapb.CreateTableRequest) *table {
 }
 
 func (t *table) validTimestamp(ts int64) bool {
-	if ts <= minValidMilliSeconds || ts >= maxValidMilliSeconds {
+	if ts < minValidMilliSeconds || ts > maxValidMilliSeconds {
 		return false
 	}
 

@@ -34,9 +34,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/googleapis/gax-go"
-
 	"cloud.google.com/go/storage"
+	gax "github.com/googleapis/gax-go"
 	"golang.org/x/build/kubernetes"
 	k8sapi "golang.org/x/build/kubernetes/api"
 	"golang.org/x/build/kubernetes/gke"
@@ -282,6 +281,10 @@ func (tr *TestRunner) QueryProfiles(projectID, service, startTime, endTime, prof
 		return ProfileResponse{}, fmt.Errorf("failed to read response body: %v", err)
 	}
 
+	if resp.StatusCode != 200 {
+		return ProfileResponse{}, fmt.Errorf("failed to query API: status: %s, response body: %s", resp.Status, string(body))
+	}
+
 	var pr ProfileResponse
 	if err := json.Unmarshal(body, &pr); err != nil {
 		return ProfileResponse{}, err
@@ -294,6 +297,9 @@ func (tr *TestRunner) QueryProfiles(projectID, service, startTime, endTime, prof
 // bucket and pushes the image to Google Container Registry.
 func (tr *GKETestRunner) createAndPublishDockerImage(ctx context.Context, projectID, sourceBucket, sourceObject, ImageName string) error {
 	cloudbuildService, err := cloudbuild.New(tr.Client)
+	if err != nil {
+		return err
+	}
 
 	build := &cloudbuild.Build{
 		Source: &cloudbuild.Source{
@@ -544,7 +550,7 @@ func (tr *GKETestRunner) uploadImageSource(ctx context.Context, bucket, objectNa
 	}
 	wc := tr.StorageClient.Bucket(bucket).Object(objectName).NewWriter(ctx)
 	wc.ContentType = "application/zip"
-	wc.ACL = []storage.ACLRule{{storage.AllUsers, storage.RoleReader}}
+	wc.ACL = []storage.ACLRule{{Entity: storage.AllUsers, Role: storage.RoleReader}}
 	if _, err := wc.Write(zipBuf.Bytes()); err != nil {
 		return err
 	}
