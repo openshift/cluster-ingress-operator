@@ -220,7 +220,7 @@ func NewTestConfig(t *testing.T) *TestConfig {
 func (tc *TestConfig) startOperator() {
 	resource := "ingress.openshift.io/v1alpha1"
 	kind := "ClusterIngress"
-	resyncPeriod := 5
+	resyncPeriod := 5 * time.Second
 	tc.t.Logf("Watching %s, %s, %s, %d", resource, kind, tc.operatorNamespace, resyncPeriod)
 	sdk.Watch(resource, kind, tc.operatorNamespace, resyncPeriod)
 	sdk.Handle(stub.NewHandler())
