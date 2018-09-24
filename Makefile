@@ -7,7 +7,8 @@ BIN=$(lastword $(subst /, ,$(MAIN_PACKAGE)))
 BINDATA=pkg/manifests/bindata.go
 TEST_BINDATA=test/manifests/bindata.go
 
-GOBINDATA_BIN=$(GOPATH)/bin/go-bindata
+vpath bin/go-bindata $(GOPATH)
+GOBINDATA_BIN=bin/go-bindata
 
 ENVVAR=GOOS=linux GOARCH=amd64 CGO_ENABLED=0
 GOOS=linux
