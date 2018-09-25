@@ -44,6 +44,15 @@ rules:
   - list
   - watch
 
+- apiGroups:
+  - operatorstatus.openshift.io
+  resources:
+  - clusteroperators
+  verbs:
+  - create
+  - get
+  - update
+
 # Mirrored from assets/router/cluster-role.yaml
 - apiGroups:
   - ""

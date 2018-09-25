@@ -39,6 +39,8 @@ type Handler struct {
 }
 
 func (h *Handler) Handle(ctx context.Context, event sdk.Event) error {
+	defer h.syncOperatorStatus()
+
 	// TODO: This should be adding an item to a rate limited work queue, but for
 	// now correctness is more important than performance.
 	switch o := event.Object.(type) {
