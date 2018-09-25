@@ -21,7 +21,6 @@ spec:
             name: metrics
           command:
           - cluster-ingress-operator
-          imagePullPolicy: Always
           env:
             - name: WATCH_NAMESPACE
               valueFrom:
