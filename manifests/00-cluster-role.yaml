@@ -1,15 +1,5 @@
-# Account for the operator itself. It should require namespace scoped
-# permissions.
-kind: ServiceAccount
-apiVersion: v1
-metadata:
-  name: cluster-ingress-operator
-  namespace: openshift-cluster-ingress-operator
-
----
-
-# Role for the operator itself.
-kind: Role
+# Cluster role for the operator itself.
+kind: ClusterRole
 apiVersion: rbac.authorization.k8s.io/v1beta1
 metadata:
   name: cluster-ingress-operator
@@ -18,43 +8,29 @@ rules:
 - apiGroups:
   - ingress.openshift.io
   resources:
-  - "*"
+  - clusteringresses
   verbs:
-  - "*"
-- apiGroups:
-  - ""
-  resources:
-  - pods
-  - services
-  - endpoints
-  - persistentvolumeclaims
-  - events
-  - configmaps
-  - secrets
-  verbs:
-  - "*"
+  - list
+  - watch
 - apiGroups:
   - apps
   resources:
-  - deployments
   - daemonsets
-  - replicasets
-  - statefulsets
   verbs:
-  - "*"
-
----
-
-# Binds the operator role to its Service Account.
-kind: RoleBinding
-apiVersion: rbac.authorization.k8s.io/v1beta1
-metadata:
-  name: cluster-ingress-operator:cluster-ingress-operator
-subjects:
-- kind: ServiceAccount
-  name: cluster-ingress-operator
-  namespace: openshift-cluster-ingress-operator
-roleRef:
-  kind: Role
-  name: cluster-ingress-operator
-  apiGroup: rbac.authorization.k8s.io
+  - create
+- apiGroups:
+  - ""
+  - rbac.authorization.k8s.io
+  resources:
+  - namespaces
+  - pods
+  - endpoints
+  - services
+  - serviceaccounts
+  - configmaps
+  - clusterroles
+  - clusterrolebindings
+  verbs:
+  - create
+  - list
+  - watch
