@@ -15,6 +15,18 @@ func TestManifests(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "default",
 		},
+		Spec: ingressv1alpha1.ClusterIngressSpec{
+			NamespaceSelector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"foo": "bar",
+				},
+			},
+			RouteSelector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"baz": "quux",
+				},
+			},
+		},
 	}
 
 	if _, err := f.RouterNamespace(); err != nil {
@@ -37,6 +49,35 @@ func TestManifests(t *testing.T) {
 	if err != nil {
 		t.Errorf("invalid RouterDaemonSet: %v", err)
 	}
+
+	namespaceSelector := ""
+	for _, envVar := range ds.Spec.Template.Spec.Containers[0].Env {
+		if envVar.Name == "NAMESPACE_LABELS" {
+			namespaceSelector = envVar.Value
+			break
+		}
+	}
+	if namespaceSelector == "" {
+		t.Error("RouterDaemonSet has no namespace selector")
+	} else if namespaceSelector != "foo=bar" {
+		t.Errorf("RouterDaemonSet has unexpected namespace selectors: %v",
+		         namespaceSelector)
+	}
+
+	routeSelector := ""
+	for _, envVar := range ds.Spec.Template.Spec.Containers[0].Env {
+		if envVar.Name == "ROUTE_LABELS" {
+			routeSelector = envVar.Value
+			break
+		}
+	}
+	if routeSelector == "" {
+		t.Error("RouterDaemonSet has no route selector")
+	} else if routeSelector != "baz=quux" {
+		t.Errorf("RouterDaemonSet has unexpected route selectors: %v",
+			routeSelector)
+	}
+
 	if len(ds.Spec.Template.Spec.NodeSelector) == 0 {
 		t.Error("RouterDaemonSet has no default node selector")
 	}

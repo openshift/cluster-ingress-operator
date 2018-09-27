@@ -111,6 +111,19 @@ func (f *Factory) RouterDaemonSet(cr *ingressv1alpha1.ClusterIngress) (*appsv1.D
 		}
 	}
 
+	if cr.Spec.NamespaceSelector != nil {
+		namespaceSelector, err := metav1.LabelSelectorAsSelector(cr.Spec.NamespaceSelector)
+		if err != nil {
+			return nil, fmt.Errorf("clusteringress %q has invalid spec.namespaceSelector: %v",
+			                       cr.Name, err)
+		}
+
+		env = append(env, corev1.EnvVar{
+			Name: "NAMESPACE_LABELS",
+			Value: namespaceSelector.String(),
+		})
+	}
+
 	if cr.Spec.RouteSelector != nil {
 		routeSelector, err := metav1.LabelSelectorAsSelector(cr.Spec.RouteSelector)
 		if err != nil {
