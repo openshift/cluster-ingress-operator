@@ -12,6 +12,10 @@ import (
 	"github.com/operator-framework/operator-sdk/pkg/sdk"
 
 	"k8s.io/apimachinery/pkg/api/errors"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	appsv1 "k8s.io/api/apps/v1"
 )
 
 func NewHandler() sdk.Handler {
@@ -25,12 +29,18 @@ type Handler struct {
 }
 
 func (h *Handler) Handle(ctx context.Context, event sdk.Event) error {
-	if event.Deleted {
-		return nil
-	}
 	switch o := event.Object.(type) {
 	case *ingressv1alpha1.ClusterIngress:
-		return h.syncIngressUpdate(o)
+		if event.Deleted {
+			logrus.Infof("Deleting ClusterIngress object: %s", o.Name)
+			err := h.deleteIngress(o)
+			if err != nil {
+				return fmt.Errorf("error deleting ClusterIngress %s", err)
+			}
+			return nil
+		} else {
+			return h.syncIngressUpdate(o)
+		}
 	}
 	return nil
 }
@@ -98,6 +108,12 @@ func (h *Handler) syncIngressUpdate(ci *ingressv1alpha1.ClusterIngress) error {
 			if err != nil {
 				return fmt.Errorf("couldn't build service: %v", err)
 			}
+			dsRef, err := getDaemonSetOwnerRef(ds)
+			// Don't create the service unless the DaemonSet is ready
+			if err != nil {
+				return fmt.Errorf("failed to create service, could not get DaemonSet ownerReference: %s", err)
+			}
+			service.SetOwnerReferences(append(service.GetOwnerReferences(), dsRef))
 			err = sdk.Create(service)
 			if err == nil {
 				logrus.Infof("created router service %s/%s", service.Namespace, service.Name)
@@ -108,4 +124,41 @@ func (h *Handler) syncIngressUpdate(ci *ingressv1alpha1.ClusterIngress) error {
 	}
 
 	return nil
+}
+
+func (h *Handler) deleteIngress(ci *ingressv1alpha1.ClusterIngress) error {
+	ds, err := h.manifestFactory.RouterDaemonSet(ci)
+	if err != nil {
+		return fmt.Errorf("couldn't build DaemonSet object for deletion: %v", err)
+	}
+	return sdk.Delete(ds)
+}
+
+// getDaemonSetOwnerRef returns an object as OwnerReference
+func getDaemonSetOwnerRef(ds *appsv1.DaemonSet) (metav1.OwnerReference, error) {
+	var or metav1.OwnerReference
+	d := &appsv1.DaemonSet{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "DaemonSet",
+			APIVersion: "apps/v1",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      ds.Name,
+			Namespace: ds.Namespace,
+		},
+	}
+
+	err := sdk.Get(d)
+	if err != nil {
+		return or, fmt.Errorf("couldn't get DaemonSet %s Namespace %s : %s", ds.Name, ds.Namespace, err)
+	}
+	trueVar := true
+	or = metav1.OwnerReference{
+		APIVersion: d.APIVersion,
+		Kind:       d.Kind,
+		Name:       d.Name,
+		UID:        d.UID,
+		Controller: &trueVar,
+	}
+	return or, nil
 }
