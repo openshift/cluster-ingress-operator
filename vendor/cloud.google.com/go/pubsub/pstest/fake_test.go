@@ -150,7 +150,7 @@ func TestPublish(t *testing.T) {
 	}
 }
 
-// Note: this sets the fake's "now" time, so it is senstive to concurrent changes to "now".
+// Note: this sets the fake's "now" time, so it is sensitive to concurrent changes to "now".
 func publish(t *testing.T, pclient pb.PublisherClient, topic *pb.Topic, messages []*pb.PubsubMessage) map[string]*pb.PubsubMessage {
 	pubTime := time.Now()
 	now.Store(func() time.Time { return pubTime })
@@ -443,6 +443,27 @@ func TestStreamingPullTimeout(t *testing.T) {
 	_, err := stream.Recv()
 	if err != io.EOF {
 		t.Errorf("got %v, want io.EOF", err)
+	}
+}
+
+func TestSeek(t *testing.T) {
+	pclient, sclient, _ := newFake(t)
+	top := mustCreateTopic(t, pclient, &pb.Topic{Name: "projects/P/topics/T"})
+	sub := mustCreateSubscription(t, sclient, &pb.Subscription{
+		Name:               "projects/P/subscriptions/S",
+		Topic:              top.Name,
+		AckDeadlineSeconds: 10,
+	})
+	ts, err := ptypes.TimestampProto(time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = sclient.Seek(context.Background(), &pb.SeekRequest{
+		Subscription: sub.Name,
+		Target:       &pb.SeekRequest_Time{ts},
+	})
+	if err != nil {
+		t.Errorf("Seeking: %v", err)
 	}
 }
 

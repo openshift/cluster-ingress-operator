@@ -29,6 +29,7 @@ import (
 	framework "github.com/operator-framework/operator-sdk/test/e2e/framework"
 
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
 )
 
 const (
@@ -45,8 +46,15 @@ func TestMemcached(t *testing.T) {
 	defer ctx.Cleanup(t)
 	gopath, ok := os.LookupEnv("GOPATH")
 	if !ok {
-		t.Fatalf("GOPATH not set")
+		t.Fatalf("$GOPATH not set")
 	}
+	cd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		os.Chdir(cd)
+	}()
 	os.Chdir(path.Join(gopath, "/src/github.com/example-inc"))
 	t.Log("Creating new operator project")
 	cmdOut, err := exec.Command("operator-sdk",
@@ -55,7 +63,7 @@ func TestMemcached(t *testing.T) {
 		"--api-version=cache.example.com/v1alpha1",
 		"--kind=Memcached").CombinedOutput()
 	if err != nil {
-		t.Fatalf("Error: %v\nCommand Output: %s\n", err, string(cmdOut))
+		t.Fatalf("error: %v\nCommand Output: %s\n", err, string(cmdOut))
 	}
 	ctx.AddFinalizerFn(func() error { return os.RemoveAll(path.Join(gopath, "/src/github.com/example-inc/memcached-operator")) })
 
@@ -94,7 +102,7 @@ func TestMemcached(t *testing.T) {
 	t.Log("Generating k8s")
 	cmdOut, err = exec.Command("operator-sdk", "generate", "k8s").CombinedOutput()
 	if err != nil {
-		t.Fatalf("Error: %v\nCommand Output: %s\n", err, string(cmdOut))
+		t.Fatalf("error: %v\nCommand Output: %s\n", err, string(cmdOut))
 	}
 
 	// create crd
@@ -161,7 +169,6 @@ func memcachedScaleTest(t *testing.T, f *framework.Framework, ctx framework.Test
 }
 
 func MemcachedLocal(t *testing.T) {
-	t.Parallel()
 	// get global framework variables
 	f := framework.Global
 	ctx := f.NewTestCtx(t)
@@ -180,12 +187,12 @@ func MemcachedLocal(t *testing.T) {
 
 	err = cmd.Start()
 	if err != nil {
-		t.Fatalf("Error: %v", err)
+		t.Fatalf("error: %v", err)
 	}
 	ctx.AddFinalizerFn(func() error { return cmd.Process.Signal(os.Interrupt) })
 
 	// wait for operator to start (may take a minute to compile the command...)
-	err = e2eutil.Retry(time.Second*5, 16, func() (done bool, err error) {
+	err = wait.Poll(time.Second*5, time.Second*100, func() (done bool, err error) {
 		file, err := ioutil.ReadFile("stderr.txt")
 		if err != nil {
 			return false, err
@@ -196,7 +203,7 @@ func MemcachedLocal(t *testing.T) {
 		return true, nil
 	})
 	if err != nil {
-		t.Fatalf("Local operator not ready after 60 seconds: %v\n", err)
+		t.Fatalf("local operator not ready after 100 seconds: %v\n", err)
 	}
 
 	if err = memcachedScaleTest(t, f, ctx); err != nil {
@@ -205,7 +212,6 @@ func MemcachedLocal(t *testing.T) {
 }
 
 func MemcachedCluster(t *testing.T) {
-	t.Parallel()
 	// get global framework variables
 	f := framework.Global
 	ctx := f.NewTestCtx(t)
@@ -217,10 +223,13 @@ func MemcachedCluster(t *testing.T) {
 	t.Log("Building operator docker image")
 	cmdOut, err := exec.Command("operator-sdk", "build", *f.ImageName).CombinedOutput()
 	if err != nil {
-		t.Fatalf("Error: %v\nCommand Output: %s\n", err, string(cmdOut))
+		t.Fatalf("error: %v\nCommand Output: %s\n", err, string(cmdOut))
 	}
+
+	operatorYAML, err := ioutil.ReadFile("deploy/operator.yaml")
+	operatorYAML = bytes.Replace(operatorYAML, []byte("REPLACE_IMAGE"), []byte(*f.ImageName), 1)
+
 	if local {
-		operatorYAML, err := ioutil.ReadFile("deploy/operator.yaml")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -233,9 +242,20 @@ func MemcachedCluster(t *testing.T) {
 		t.Log("Pushing docker image to repo")
 		cmdOut, err = exec.Command("docker", "push", *f.ImageName).CombinedOutput()
 		if err != nil {
-			t.Fatalf("Error: %v\nCommand Output: %s\n", err, string(cmdOut))
+			t.Fatalf("error: %v\nCommand Output: %s\n", err, string(cmdOut))
 		}
 	}
+
+	// create sa
+	saYAML, err := ioutil.ReadFile("deploy/sa.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = ctx.CreateFromYAML(saYAML)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Log("Created sa")
 
 	// create rbac
 	rbacYAML, err := ioutil.ReadFile("deploy/rbac.yaml")
@@ -249,7 +269,7 @@ func MemcachedCluster(t *testing.T) {
 	t.Log("Created rbac")
 
 	// create operator
-	operatorYAML, err := ioutil.ReadFile("deploy/operator.yaml")
+	operatorYAML, err = ioutil.ReadFile("deploy/operator.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}

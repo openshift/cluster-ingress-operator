@@ -21,6 +21,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 	"text/template"
@@ -177,11 +178,23 @@ func TestAgentIntegration(t *testing.T) {
 			InstanceConfig: proftest.InstanceConfig{
 				ProjectID:   projectID,
 				Zone:        zone,
+				Name:        fmt.Sprintf("profiler-test-go111-%s", runID),
+				MachineType: "n1-standard-1",
+			},
+			name:             fmt.Sprintf("profiler-test-go111-%s-gce", runID),
+			wantProfileTypes: []string{"CPU", "HEAP", "THREADS", "CONTENTION", "HEAP_ALLOC"},
+			goVersion:        "1.11",
+			mutexProfiling:   true,
+		},
+		{
+			InstanceConfig: proftest.InstanceConfig{
+				ProjectID:   projectID,
+				Zone:        zone,
 				Name:        fmt.Sprintf("profiler-test-go110-%s", runID),
 				MachineType: "n1-standard-1",
 			},
 			name:             fmt.Sprintf("profiler-test-go110-%s-gce", runID),
-			wantProfileTypes: []string{"CPU", "HEAP", "THREADS", "CONTENTION"},
+			wantProfileTypes: []string{"CPU", "HEAP", "THREADS", "CONTENTION", "HEAP_ALLOC"},
 			goVersion:        "1.10",
 			mutexProfiling:   true,
 		},
@@ -193,7 +206,7 @@ func TestAgentIntegration(t *testing.T) {
 				MachineType: "n1-standard-1",
 			},
 			name:             fmt.Sprintf("profiler-test-go19-%s-gce", runID),
-			wantProfileTypes: []string{"CPU", "HEAP", "THREADS", "CONTENTION"},
+			wantProfileTypes: []string{"CPU", "HEAP", "THREADS", "CONTENTION", "HEAP_ALLOC"},
 			goVersion:        "1.9",
 			mutexProfiling:   true,
 		},
@@ -205,7 +218,7 @@ func TestAgentIntegration(t *testing.T) {
 				MachineType: "n1-standard-1",
 			},
 			name:             fmt.Sprintf("profiler-test-go18-%s-gce", runID),
-			wantProfileTypes: []string{"CPU", "HEAP", "THREADS", "CONTENTION"},
+			wantProfileTypes: []string{"CPU", "HEAP", "THREADS", "CONTENTION", "HEAP_ALLOC"},
 			goVersion:        "1.8",
 			mutexProfiling:   true,
 		},
@@ -217,7 +230,7 @@ func TestAgentIntegration(t *testing.T) {
 				MachineType: "n1-standard-1",
 			},
 			name:             fmt.Sprintf("profiler-test-go17-%s-gce", runID),
-			wantProfileTypes: []string{"CPU", "HEAP", "THREADS"},
+			wantProfileTypes: []string{"CPU", "HEAP", "THREADS", "HEAP_ALLOC"},
 			goVersion:        "1.7",
 		},
 		{
@@ -228,11 +241,12 @@ func TestAgentIntegration(t *testing.T) {
 				MachineType: "n1-standard-1",
 			},
 			name:             fmt.Sprintf("profiler-test-go16-%s-gce", runID),
-			wantProfileTypes: []string{"CPU", "HEAP", "THREADS"},
+			wantProfileTypes: []string{"CPU", "HEAP", "THREADS", "HEAP_ALLOC"},
 			goVersion:        "1.6",
 		},
 	}
-
+	// The number of tests run in parallel is the current value of GOMAXPROCS.
+	runtime.GOMAXPROCS(len(testcases))
 	for _, tc := range testcases {
 		tc := tc // capture range variable
 		t.Run(tc.name, func(t *testing.T) {

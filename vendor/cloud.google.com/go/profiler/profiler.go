@@ -127,6 +127,14 @@ type Config struct {
 	// than Go 1.8.
 	MutexProfiling bool
 
+	// When true, collecting the allocation profiles is disabled.
+	NoAllocProfiling bool
+
+	// AllocForceGC forces garbage collection before the collection of each heap
+	// profile collected to produce the allocation profile. This increases the
+	// accuracy of allocation profiling. It defaults to false.
+	AllocForceGC bool
+
 	// When true, collecting the heap profiles is disabled.
 	NoHeapProfiling bool
 
@@ -291,7 +299,7 @@ func (a *agent) profileAndUpload(ctx context.Context, p *pb.Profile) {
 	case pb.ProfileType_CPU:
 		duration, err := ptypes.Duration(p.Duration)
 		if err != nil {
-			debugLog("failed to get profile duration: %v", err)
+			debugLog("failed to get profile duration for CPU profile: %v", err)
 			return
 		}
 		if err := startCPUProfile(&prof); err != nil {
@@ -301,13 +309,23 @@ func (a *agent) profileAndUpload(ctx context.Context, p *pb.Profile) {
 		sleep(ctx, duration)
 		stopCPUProfile()
 	case pb.ProfileType_HEAP:
-		if err := writeHeapProfile(&prof); err != nil {
+		if err := heapProfile(&prof); err != nil {
 			debugLog("failed to write heap profile: %v", err)
+			return
+		}
+	case pb.ProfileType_HEAP_ALLOC:
+		duration, err := ptypes.Duration(p.Duration)
+		if err != nil {
+			debugLog("failed to get profile duration for allocation profile: %v", err)
+			return
+		}
+		if err := deltaAllocProfile(ctx, duration, config.AllocForceGC, &prof); err != nil {
+			debugLog("failed to collect allocation profile: %v", err)
 			return
 		}
 	case pb.ProfileType_THREADS:
 		if err := pprof.Lookup("goroutine").WriteTo(&prof, 0); err != nil {
-			debugLog("failed to create goroutine profile: %v", err)
+			debugLog("failed to collect goroutine profile: %v", err)
 			return
 		}
 	case pb.ProfileType_CONTENTION:
@@ -317,7 +335,7 @@ func (a *agent) profileAndUpload(ctx context.Context, p *pb.Profile) {
 			return
 		}
 		if err := deltaMutexProfile(ctx, duration, &prof); err != nil {
-			debugLog("failed to create mutex profile: %v", err)
+			debugLog("failed to collect mutex profile: %v", err)
 			return
 		}
 	default:
@@ -361,14 +379,10 @@ func deltaMutexProfile(ctx context.Context, duration time.Duration, prof *bytes.
 		return err
 	}
 
-	// TODO(jianqiaoli): Remove this check when github.com/google/pprof/issues/242
-	// is fixed.
-	if len(p0.Mapping) > 0 {
-		p0.Scale(-1)
-		p, err = profile.Merge([]*profile.Profile{p0, p})
-		if err != nil {
-			return err
-		}
+	p0.Scale(-1)
+	p, err = profile.Merge([]*profile.Profile{p0, p})
+	if err != nil {
+		return err
 	}
 
 	// The mutex profile is not symbolized by runtime.pprof until
@@ -428,6 +442,9 @@ func initializeAgent(c pb.ProfilerServiceClient) *agent {
 	}
 	if !config.NoGoroutineProfiling {
 		profileTypes = append(profileTypes, pb.ProfileType_THREADS)
+	}
+	if !config.NoAllocProfiling {
+		profileTypes = append(profileTypes, pb.ProfileType_HEAP_ALLOC)
 	}
 	if mutexEnabled {
 		profileTypes = append(profileTypes, pb.ProfileType_CONTENTION)
