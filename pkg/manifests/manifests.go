@@ -99,6 +99,18 @@ func (f *Factory) RouterDaemonSet(cr *ingressv1alpha1.ClusterIngress) (*appsv1.D
 		env = append(env, corev1.EnvVar{Name: "ROUTER_CANONICAL_HOSTNAME", Value: *cr.Spec.IngressDomain})
 	}
 
+	if cr.Spec.NodePlacement != nil {
+		if cr.Spec.NodePlacement.NodeSelector != nil {
+			nodeSelector, err := metav1.LabelSelectorAsMap(cr.Spec.NodePlacement.NodeSelector)
+			if err != nil {
+				return nil, fmt.Errorf("clusteringress %q has invalid spec.nodePlacement.nodeSelector: %v",
+				                       cr.Name, err)
+			}
+
+			ds.Spec.Template.Spec.NodeSelector = nodeSelector
+		}
+	}
+
 	if cr.Spec.RouteSelector != nil {
 		routeSelector, err := metav1.LabelSelectorAsSelector(cr.Spec.RouteSelector)
 		if err != nil {

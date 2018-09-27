@@ -20,18 +20,44 @@ func TestManifests(t *testing.T) {
 	if _, err := f.RouterNamespace(); err != nil {
 		t.Errorf("invalid RouterNamespace: %v", err)
 	}
+
 	if _, err := f.RouterServiceAccount(); err != nil {
 		t.Errorf("invalid RouterServiceAccount: %v", err)
 	}
+
 	if _, err := f.RouterClusterRole(); err != nil {
 		t.Errorf("invalid RouterClusterRole: %v", err)
 	}
+
 	if _, err := f.RouterClusterRoleBinding(); err != nil {
 		t.Errorf("invalid RouterClusterRoleBinding: %v", err)
 	}
-	if _, err := f.RouterDaemonSet(ci); err != nil {
+
+	ds, err := f.RouterDaemonSet(ci)
+	if err != nil {
 		t.Errorf("invalid RouterDaemonSet: %v", err)
 	}
+	if len(ds.Spec.Template.Spec.NodeSelector) == 0 {
+		t.Error("RouterDaemonSet has no default node selector")
+	}
+
+	ci.Spec.NodePlacement = &ingressv1alpha1.NodePlacement{
+		NodeSelector: &metav1.LabelSelector{
+			MatchLabels: map[string]string{
+				"xyzzy": "quux",
+			},
+		},
+	}
+	ds, err = f.RouterDaemonSet(ci)
+	if err != nil {
+		t.Errorf("invalid RouterDaemonSet: %v", err)
+	}
+	if len(ds.Spec.Template.Spec.NodeSelector) != 1 ||
+		ds.Spec.Template.Spec.NodeSelector["xyzzy"] != "quux" {
+		t.Errorf("RouterDaemonSet has unexpected node selector: %#v",
+		         ds.Spec.Template.Spec.NodeSelector)
+	}
+
 	if _, err := f.RouterServiceCloud(ci); err != nil {
 		t.Errorf("invalid RouterServiceCloud: %v", err)
 	}
