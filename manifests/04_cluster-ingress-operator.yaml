@@ -16,9 +16,6 @@ spec:
       containers:
         - name: cluster-ingress-operator
           image: openshift/origin-cluster-ingress-operator:latest
-          ports:
-          - containerPort: 60000
-            name: metrics
           command:
           - cluster-ingress-operator
           env:

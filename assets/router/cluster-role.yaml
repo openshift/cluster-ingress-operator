@@ -6,7 +6,6 @@ metadata:
 rules:
 - apiGroups:
   - ""
-  attributeRestrictions: null
   resources:
   - endpoints
   - services
@@ -15,7 +14,6 @@ rules:
   - watch
 - apiGroups:
   - authentication.k8s.io
-  attributeRestrictions: null
   resources:
   - tokenreviews
   - subjectaccessreviews
@@ -24,7 +22,6 @@ rules:
 - apiGroups:
   - ""
   - route.openshift.io
-  attributeRestrictions: null
   resources:
   - routes
   verbs:
@@ -33,7 +30,6 @@ rules:
 - apiGroups:
   - ""
   - route.openshift.io
-  attributeRestrictions: null
   resources:
   - routes/status
   verbs:
