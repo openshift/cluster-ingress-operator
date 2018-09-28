@@ -220,9 +220,23 @@
   branch = "master"
   digest = "1:63c647aae90792ec52291fdc8c5aee66814d0ea2b22f32dfa9209033ed67dded"
   name = "github.com/openshift/api"
-  packages = ["route/v1"]
+  packages = [
+    "config/v1",
+    "operator/v1alpha1",
+    "route/v1",
+  ]
   pruneopts = ""
   revision = "739bd301126c341c6caddf2cb3e3935ae9e9fff9"
+
+[[projects]]
+  digest = "1:791428315c3ac7ace4b3aa1b172883bd07d3a3e9663e2154572a62979976dd7b"
+  name = "github.com/openshift/cluster-version-operator"
+  packages = [
+    "pkg/apis",
+    "pkg/apis/operatorstatus.openshift.io/v1",
+  ]
+  pruneopts = ""
+  revision = "a5a76d5118048d0e969e6bd3d40cb4c36591d171"
 
 [[projects]]
   branch = "master"
@@ -656,7 +670,9 @@
   analyzer-name = "dep"
   analyzer-version = 1
   input-imports = [
+    "github.com/openshift/api/operator/v1alpha1",
     "github.com/openshift/api/route/v1",
+    "github.com/openshift/cluster-version-operator/pkg/apis/operatorstatus.openshift.io/v1",
     "github.com/operator-framework/operator-sdk/pkg/sdk",
     "github.com/operator-framework/operator-sdk/pkg/util/k8sutil",
     "github.com/operator-framework/operator-sdk/version",
@@ -669,6 +685,7 @@
     "k8s.io/apimachinery/pkg/apis/meta/v1",
     "k8s.io/apimachinery/pkg/runtime",
     "k8s.io/apimachinery/pkg/runtime/schema",
+    "k8s.io/apimachinery/pkg/util/errors",
     "k8s.io/apimachinery/pkg/util/wait",
     "k8s.io/apimachinery/pkg/util/yaml",
     "k8s.io/client-go/plugin/pkg/client/auth/gcp",
