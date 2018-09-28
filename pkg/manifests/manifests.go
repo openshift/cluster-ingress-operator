@@ -10,6 +10,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	apiextensionsv1beta1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/yaml"
 
@@ -23,6 +24,15 @@ const (
 	RouterClusterRoleBinding = "assets/router/cluster-role-binding.yaml"
 	RouterDaemonSet          = "assets/router/daemonset.yaml"
 	RouterServiceCloud       = "assets/router/service-cloud.yaml"
+
+	OperatorClusterRole              = "manifests/00-cluster-role.yaml"
+	OperatorCustomResourceDefinition = "manifests/00-custom-resource-definition.yaml"
+	OperatorNamespace                = "manifests/00-namespace.yaml"
+	OperatorClusterRoleBinding       = "manifests/01-cluster-role-binding.yaml"
+	OperatorRole                     = "manifests/01-role.yaml"
+	OperatorRoleBinding              = "manifests/01-role-binding.yaml"
+	OperatorServiceAccount           = "manifests/01-service-account.yaml"
+	OperatorDeployment               = "manifests/02-deployment.yaml"
 )
 
 func MustAssetReader(asset string) io.Reader {
@@ -37,6 +47,83 @@ type Factory struct {
 
 func NewFactory() *Factory {
 	return &Factory{}
+}
+
+func (f *Factory) OperatorAssetContent() map[string][]byte {
+	return map[string][]byte{
+		OperatorCustomResourceDefinition: MustAsset(OperatorCustomResourceDefinition),
+		OperatorClusterRole:              MustAsset(OperatorClusterRole),
+		OperatorNamespace:                MustAsset(OperatorNamespace),
+		OperatorClusterRoleBinding:       MustAsset(OperatorClusterRoleBinding),
+		OperatorRole:                     MustAsset(OperatorRole),
+		OperatorRoleBinding:              MustAsset(OperatorRoleBinding),
+		OperatorServiceAccount:           MustAsset(OperatorServiceAccount),
+		OperatorDeployment:               MustAsset(OperatorDeployment),
+	}
+}
+
+func (f *Factory) OperatorCustomResourceDefinition() (*apiextensionsv1beta1.CustomResourceDefinition, error) {
+	crd, err := NewCustomResourceDefinition(MustAssetReader(OperatorCustomResourceDefinition))
+	if err != nil {
+		return nil, err
+	}
+	return crd, nil
+}
+
+func (f *Factory) OperatorNamespace() (*corev1.Namespace, error) {
+	ns, err := NewNamespace(MustAssetReader(OperatorNamespace))
+	if err != nil {
+		return nil, err
+	}
+	return ns, nil
+}
+
+func (f *Factory) OperatorServiceAccount() (*corev1.ServiceAccount, error) {
+	sa, err := NewServiceAccount(MustAssetReader(OperatorServiceAccount))
+	if err != nil {
+		return nil, err
+	}
+	return sa, nil
+}
+
+func (f *Factory) OperatorClusterRole() (*rbacv1.ClusterRole, error) {
+	cr, err := NewClusterRole(MustAssetReader(OperatorClusterRole))
+	if err != nil {
+		return nil, err
+	}
+	return cr, nil
+}
+
+func (f *Factory) OperatorClusterRoleBinding() (*rbacv1.ClusterRoleBinding, error) {
+	crb, err := NewClusterRoleBinding(MustAssetReader(OperatorClusterRoleBinding))
+	if err != nil {
+		return nil, err
+	}
+	return crb, nil
+}
+
+func (f *Factory) OperatorRole() (*rbacv1.Role, error) {
+	crb, err := NewRole(MustAssetReader(OperatorRole))
+	if err != nil {
+		return nil, err
+	}
+	return crb, nil
+}
+
+func (f *Factory) OperatorRoleBinding() (*rbacv1.RoleBinding, error) {
+	crb, err := NewRoleBinding(MustAssetReader(OperatorRoleBinding))
+	if err != nil {
+		return nil, err
+	}
+	return crb, nil
+}
+
+func (f *Factory) OperatorDeployment() (*appsv1.Deployment, error) {
+	d, err := NewDeployment(MustAssetReader(OperatorDeployment))
+	if err != nil {
+		return nil, err
+	}
+	return d, nil
 }
 
 func (f *Factory) RouterNamespace() (*corev1.Namespace, error) {
@@ -144,6 +231,24 @@ func NewServiceAccount(manifest io.Reader) (*corev1.ServiceAccount, error) {
 	return &sa, nil
 }
 
+func NewRole(manifest io.Reader) (*rbacv1.Role, error) {
+	r := rbacv1.Role{}
+	if err := yaml.NewYAMLOrJSONDecoder(manifest, 100).Decode(&r); err != nil {
+		return nil, err
+	}
+
+	return &r, nil
+}
+
+func NewRoleBinding(manifest io.Reader) (*rbacv1.RoleBinding, error) {
+	rb := rbacv1.RoleBinding{}
+	if err := yaml.NewYAMLOrJSONDecoder(manifest, 100).Decode(&rb); err != nil {
+		return nil, err
+	}
+
+	return &rb, nil
+}
+
 func NewClusterRole(manifest io.Reader) (*rbacv1.ClusterRole, error) {
 	cr := rbacv1.ClusterRole{}
 	if err := yaml.NewYAMLOrJSONDecoder(manifest, 100).Decode(&cr); err != nil {
@@ -214,4 +319,12 @@ func NewClusterIngress(manifest io.Reader) (*ingressv1alpha1.ClusterIngress, err
 	}
 
 	return &o, nil
+}
+
+func NewCustomResourceDefinition(manifest io.Reader) (*apiextensionsv1beta1.CustomResourceDefinition, error) {
+	crd := apiextensionsv1beta1.CustomResourceDefinition{}
+	if err := yaml.NewYAMLOrJSONDecoder(manifest, 100).Decode(&crd); err != nil {
+		return nil, err
+	}
+	return &crd, nil
 }
