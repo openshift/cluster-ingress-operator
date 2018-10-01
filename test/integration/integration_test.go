@@ -220,7 +220,7 @@ func NewTestConfig(t *testing.T) *TestConfig {
 func (tc *TestConfig) startOperator() {
 	resource := "ingress.openshift.io/v1alpha1"
 	kind := "ClusterIngress"
-	resyncPeriod := 5 * time.Second
+	resyncPeriod := 10 * time.Minute
 	tc.t.Logf("Watching %s, %s, %s, %d", resource, kind, tc.operatorNamespace, resyncPeriod)
 	sdk.Watch(resource, kind, tc.operatorNamespace, resyncPeriod)
 	sdk.Handle(stub.NewHandler())
@@ -228,7 +228,7 @@ func (tc *TestConfig) startOperator() {
 }
 
 func (tc *TestConfig) createCRD() {
-	tc.runShellCmd(fmt.Sprintf("oc apply -f ../../manifests/02_crd.yaml -n %s", tc.operatorNamespace), "create cluster ingress CRD")
+	tc.runShellCmd(fmt.Sprintf("oc apply -f ../../manifests/00-custom-resource-definition.yaml -n %s", tc.operatorNamespace), "create cluster ingress CRD")
 }
 
 func (tc *TestConfig) deleteCRD() {
