@@ -29,30 +29,6 @@ func TestManifests(t *testing.T) {
 		},
 	}
 
-	if _, err := f.OperatorNamespace(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.OperatorCustomResourceDefinition(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.OperatorRole(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.OperatorRoleBinding(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.OperatorClusterRole(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.OperatorClusterRoleBinding(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.OperatorDeployment(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.OperatorServiceAccount(); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := f.RouterNamespace(); err != nil {
 		t.Errorf("invalid RouterNamespace: %v", err)
 	}
@@ -85,7 +61,7 @@ func TestManifests(t *testing.T) {
 		t.Error("RouterDaemonSet has no namespace selector")
 	} else if namespaceSelector != "foo=bar" {
 		t.Errorf("RouterDaemonSet has unexpected namespace selectors: %v",
-		         namespaceSelector)
+			namespaceSelector)
 	}
 
 	routeSelector := ""
@@ -120,14 +96,10 @@ func TestManifests(t *testing.T) {
 	if len(ds.Spec.Template.Spec.NodeSelector) != 1 ||
 		ds.Spec.Template.Spec.NodeSelector["xyzzy"] != "quux" {
 		t.Errorf("RouterDaemonSet has unexpected node selector: %#v",
-		         ds.Spec.Template.Spec.NodeSelector)
+			ds.Spec.Template.Spec.NodeSelector)
 	}
 
 	if _, err := f.RouterServiceCloud(ci); err != nil {
 		t.Errorf("invalid RouterServiceCloud: %v", err)
-	}
-
-	if assetData := f.OperatorAssetContent(); len(assetData) == 0 {
-		t.Fatal("expected some valid operator asset content")
 	}
 }

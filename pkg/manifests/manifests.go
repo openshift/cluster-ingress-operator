@@ -24,15 +24,8 @@ const (
 	RouterClusterRoleBinding = "assets/router/cluster-role-binding.yaml"
 	RouterDaemonSet          = "assets/router/daemonset.yaml"
 	RouterServiceCloud       = "assets/router/service-cloud.yaml"
-
-	OperatorClusterRole              = "manifests/00-cluster-role.yaml"
-	OperatorCustomResourceDefinition = "manifests/00-custom-resource-definition.yaml"
-	OperatorNamespace                = "manifests/00-namespace.yaml"
-	OperatorClusterRoleBinding       = "manifests/01-cluster-role-binding.yaml"
-	OperatorRole                     = "manifests/01-role.yaml"
-	OperatorRoleBinding              = "manifests/01-role-binding.yaml"
-	OperatorServiceAccount           = "manifests/01-service-account.yaml"
-	OperatorDeployment               = "manifests/02-deployment.yaml"
+	OperatorRole             = "assets/router/operator-role.yaml"
+	OperatorRoleBinding      = "assets/router/operator-role-binding.yaml"
 )
 
 func MustAssetReader(asset string) io.Reader {
@@ -49,59 +42,6 @@ func NewFactory() *Factory {
 	return &Factory{}
 }
 
-func (f *Factory) OperatorAssetContent() map[string][]byte {
-	return map[string][]byte{
-		OperatorCustomResourceDefinition: MustAsset(OperatorCustomResourceDefinition),
-		OperatorClusterRole:              MustAsset(OperatorClusterRole),
-		OperatorNamespace:                MustAsset(OperatorNamespace),
-		OperatorClusterRoleBinding:       MustAsset(OperatorClusterRoleBinding),
-		OperatorRole:                     MustAsset(OperatorRole),
-		OperatorRoleBinding:              MustAsset(OperatorRoleBinding),
-		OperatorServiceAccount:           MustAsset(OperatorServiceAccount),
-		OperatorDeployment:               MustAsset(OperatorDeployment),
-	}
-}
-
-func (f *Factory) OperatorCustomResourceDefinition() (*apiextensionsv1beta1.CustomResourceDefinition, error) {
-	crd, err := NewCustomResourceDefinition(MustAssetReader(OperatorCustomResourceDefinition))
-	if err != nil {
-		return nil, err
-	}
-	return crd, nil
-}
-
-func (f *Factory) OperatorNamespace() (*corev1.Namespace, error) {
-	ns, err := NewNamespace(MustAssetReader(OperatorNamespace))
-	if err != nil {
-		return nil, err
-	}
-	return ns, nil
-}
-
-func (f *Factory) OperatorServiceAccount() (*corev1.ServiceAccount, error) {
-	sa, err := NewServiceAccount(MustAssetReader(OperatorServiceAccount))
-	if err != nil {
-		return nil, err
-	}
-	return sa, nil
-}
-
-func (f *Factory) OperatorClusterRole() (*rbacv1.ClusterRole, error) {
-	cr, err := NewClusterRole(MustAssetReader(OperatorClusterRole))
-	if err != nil {
-		return nil, err
-	}
-	return cr, nil
-}
-
-func (f *Factory) OperatorClusterRoleBinding() (*rbacv1.ClusterRoleBinding, error) {
-	crb, err := NewClusterRoleBinding(MustAssetReader(OperatorClusterRoleBinding))
-	if err != nil {
-		return nil, err
-	}
-	return crb, nil
-}
-
 func (f *Factory) OperatorRole() (*rbacv1.Role, error) {
 	crb, err := NewRole(MustAssetReader(OperatorRole))
 	if err != nil {
@@ -116,14 +56,6 @@ func (f *Factory) OperatorRoleBinding() (*rbacv1.RoleBinding, error) {
 		return nil, err
 	}
 	return crb, nil
-}
-
-func (f *Factory) OperatorDeployment() (*appsv1.Deployment, error) {
-	d, err := NewDeployment(MustAssetReader(OperatorDeployment))
-	if err != nil {
-		return nil, err
-	}
-	return d, nil
 }
 
 func (f *Factory) RouterNamespace() (*corev1.Namespace, error) {
@@ -191,7 +123,7 @@ func (f *Factory) RouterDaemonSet(cr *ingressv1alpha1.ClusterIngress) (*appsv1.D
 			nodeSelector, err := metav1.LabelSelectorAsMap(cr.Spec.NodePlacement.NodeSelector)
 			if err != nil {
 				return nil, fmt.Errorf("clusteringress %q has invalid spec.nodePlacement.nodeSelector: %v",
-				                       cr.Name, err)
+					cr.Name, err)
 			}
 
 			ds.Spec.Template.Spec.NodeSelector = nodeSelector
@@ -202,11 +134,11 @@ func (f *Factory) RouterDaemonSet(cr *ingressv1alpha1.ClusterIngress) (*appsv1.D
 		namespaceSelector, err := metav1.LabelSelectorAsSelector(cr.Spec.NamespaceSelector)
 		if err != nil {
 			return nil, fmt.Errorf("clusteringress %q has invalid spec.namespaceSelector: %v",
-			                       cr.Name, err)
+				cr.Name, err)
 		}
 
 		env = append(env, corev1.EnvVar{
-			Name: "NAMESPACE_LABELS",
+			Name:  "NAMESPACE_LABELS",
 			Value: namespaceSelector.String(),
 		})
 	}

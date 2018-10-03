@@ -22,3 +22,5 @@ USER 1001
 LABEL io.k8s.display-name="OpenShift cluster-ingress-operator" \
       io.k8s.description="This is a component of OpenShift Container Platform and manages the lifecycle of cluster ingress components." \
       maintainer="Dan Mace <dmace@redhat.com>"
+
+LABEL io.openshift.release.operator true
