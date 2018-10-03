@@ -2,8 +2,6 @@ package stub
 
 import (
 	"context"
-	"crypto/md5"
-	"encoding/json"
 	"fmt"
 
 	"github.com/sirupsen/logrus"
@@ -53,23 +51,6 @@ func (h *Handler) Handle(ctx context.Context, event sdk.Event) error {
 }
 
 func (h *Handler) syncIngressUpdate(ci *ingressv1alpha1.ClusterIngress) error {
-
-	// Get current ClusterIngress objetc md5
-	arrBytes := []byte{}
-	jsonBytes, _ := json.Marshal(ci)
-	arrBytes = append(arrBytes, jsonBytes...)
-	curr_ci_md5 := md5.Sum(arrBytes)
-
-	// if md5 are equal no update needed
-	if ci_md5[ci.Name] == curr_ci_md5 {
-		return nil
-
-	}
-	logrus.Infof("Changes for ClusterIngress %s detected, updating", ci.Name)
-	ci_md5[ci.Name] = curr_ci_md5
-
-	// NO UPDATES YET JUST ILLUSTRATING THE PATTERN
-
 	ns, err := h.manifestFactory.RouterNamespace()
 	if err != nil {
 		return fmt.Errorf("couldn't build router namespace: %v", err)
@@ -121,7 +102,13 @@ func (h *Handler) syncIngressUpdate(ci *ingressv1alpha1.ClusterIngress) error {
 	err = sdk.Create(ds)
 	if err == nil {
 		logrus.Infof("created router daemonset %s/%s", ds.Namespace, ds.Name)
-	} else if !errors.IsAlreadyExists(err) {
+	} else if errors.IsAlreadyExists(err) {
+		err = sdk.Update(ds)
+		if err != nil {
+			return fmt.Errorf("couldn't update router daemonset %s/%s", ds.Namespace, ds.Name)
+		}
+		logrus.Infof("updated router daemonset %s/%s", ds.Namespace, ds.Name)
+	} else {
 		return fmt.Errorf("failed to create daemonset %s/%s: %v", ds.Namespace, ds.Name, err)
 	}
 
@@ -141,7 +128,13 @@ func (h *Handler) syncIngressUpdate(ci *ingressv1alpha1.ClusterIngress) error {
 			err = sdk.Create(service)
 			if err == nil {
 				logrus.Infof("created router service %s/%s", service.Namespace, service.Name)
-			} else if !errors.IsAlreadyExists(err) {
+			} else if errors.IsAlreadyExists(err) {
+				err = sdk.Update(service)
+				if err != nil {
+					return fmt.Errorf("couldn't update router service %s/%s", service.Namespace, service.Name)
+				}
+				logrus.Infof("updated router service %s/%s", service.Namespace, service.Name)
+			} else {
 				return fmt.Errorf("failed to create service %s/%s: %v", service.Namespace, service.Name, err)
 			}
 		}
