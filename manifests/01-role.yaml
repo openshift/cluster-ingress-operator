@@ -1,6 +1,6 @@
 # Role for the operator itself.
 kind: Role
-apiVersion: rbac.authorization.k8s.io/v1beta1
+apiVersion: rbac.authorization.k8s.io/v1
 metadata:
   name: cluster-ingress-operator
   namespace: openshift-cluster-ingress-operator
