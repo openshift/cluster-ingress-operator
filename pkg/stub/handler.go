@@ -28,12 +28,7 @@ type Handler struct {
 	manifestFactory *manifests.Factory
 }
 
-var ci_md5 map[string][16]byte
-
 func (h *Handler) Handle(ctx context.Context, event sdk.Event) error {
-	if ci_md5 == nil {
-		ci_md5 = make(map[string][16]byte)
-	}
 	switch o := event.Object.(type) {
 	case *ingressv1alpha1.ClusterIngress:
 		if event.Deleted {
@@ -128,13 +123,7 @@ func (h *Handler) syncIngressUpdate(ci *ingressv1alpha1.ClusterIngress) error {
 			err = sdk.Create(service)
 			if err == nil {
 				logrus.Infof("created router service %s/%s", service.Namespace, service.Name)
-			} else if errors.IsAlreadyExists(err) {
-				err = sdk.Update(service)
-				if err != nil {
-					return fmt.Errorf("couldn't update router service %s/%s", service.Namespace, service.Name)
-				}
-				logrus.Infof("updated router service %s/%s", service.Namespace, service.Name)
-			} else {
+			} else if !errors.IsAlreadyExists(err) {
 				return fmt.Errorf("failed to create service %s/%s: %v", service.Namespace, service.Name, err)
 			}
 		}
