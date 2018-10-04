@@ -97,7 +97,13 @@ func (h *Handler) syncIngressUpdate(ci *ingressv1alpha1.ClusterIngress) error {
 	err = sdk.Create(ds)
 	if err == nil {
 		logrus.Infof("created router daemonset %s/%s", ds.Namespace, ds.Name)
-	} else if !errors.IsAlreadyExists(err) {
+	} else if errors.IsAlreadyExists(err) {
+		err = sdk.Update(ds)
+		if err != nil {
+			return fmt.Errorf("couldn't update router daemonset %s/%s", ds.Namespace, ds.Name)
+		}
+		logrus.Infof("updated router daemonset %s/%s", ds.Namespace, ds.Name)
+	} else {
 		return fmt.Errorf("failed to create daemonset %s/%s: %v", ds.Namespace, ds.Name, err)
 	}
 
