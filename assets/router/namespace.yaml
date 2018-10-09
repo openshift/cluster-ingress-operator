@@ -4,3 +4,6 @@ metadata:
   name: openshift-cluster-ingress-router
   annotations:
     openshift.io/node-selector: ""
+  labels:
+    # set value to avoid depending on kube admission that depends on openshift apis
+    openshift.io/run-level: "0"

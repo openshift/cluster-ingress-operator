@@ -18,7 +18,7 @@ spec:
     spec:
       serviceAccountName: router
       nodeSelector:
-        "node-role.kubernetes.io/infra": "true"
+        "node-role.kubernetes.io/worker": ""
       containers:
         - name: router
           image: "docker.io/openshift/origin-haproxy-router:v3.11.0"
