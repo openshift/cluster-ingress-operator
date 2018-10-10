@@ -9,13 +9,22 @@ import (
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 
+	"github.com/operator-framework/operator-sdk/pkg/k8sclient"
 	"github.com/operator-framework/operator-sdk/pkg/sdk"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func NewHandler() sdk.Handler {
+const (
+	// installerConfigNamespace is the namespace containing the installer config.
+	installerConfigNamespace = "kube-system"
+
+	// clusterConfigResource is the resource containing the installer config.
+	clusterConfigResource = "cluster-config-v1"
+)
+
+func NewHandler() *Handler {
 	return &Handler{
 		manifestFactory: manifests.NewFactory(),
 	}
@@ -36,6 +45,33 @@ func (h *Handler) Handle(ctx context.Context, event sdk.Event) error {
 		}
 	}
 	return nil
+}
+
+// EnsureDefaultClusterIngress ensures that a default ClusterIngress exists.
+func (h *Handler) EnsureDefaultClusterIngress() error {
+	client := k8sclient.GetKubeClient()
+	resourceClient := client.CoreV1().ConfigMaps(installerConfigNamespace)
+
+	cm, err := resourceClient.Get(clusterConfigResource, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("getting %s resource: %v", clusterConfigResource, err)
+	}
+
+	ci, err := h.manifestFactory.DefaultClusterIngress(cm)
+	if err != nil {
+		return err
+	}
+
+	err = sdk.Create(ci)
+	if err == nil || errors.IsAlreadyExists(err) {
+		if err == nil {
+			logrus.Infof("created default cluster ingress %s/%s", ci.Namespace, ci.Name)
+		}
+
+		return nil
+	}
+
+	return fmt.Errorf("creating default cluster ingress %s/%s: %v", ci.Namespace, ci.Name, err)
 }
 
 func (h *Handler) syncIngressUpdate(ci *ingressv1alpha1.ClusterIngress) error {

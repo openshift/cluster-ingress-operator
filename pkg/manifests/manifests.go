@@ -6,6 +6,7 @@ import (
 	"io"
 
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
+	"github.com/openshift/cluster-ingress-operator/pkg/util"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -18,6 +19,7 @@ import (
 )
 
 const (
+	ClusterIngressDefaults   = "assets/defaults/cluster-ingress.yaml"
 	RouterNamespace          = "assets/router/namespace.yaml"
 	RouterServiceAccount     = "assets/router/service-account.yaml"
 	RouterClusterRole        = "assets/router/cluster-role.yaml"
@@ -40,6 +42,19 @@ type Factory struct {
 
 func NewFactory() *Factory {
 	return &Factory{}
+}
+
+func (f *Factory) DefaultClusterIngress(cm *corev1.ConfigMap) (*ingressv1alpha1.ClusterIngress, error) {
+	ci, err := NewClusterIngress(MustAssetReader(ClusterIngressDefaults))
+	if err != nil {
+		return nil, err
+	}
+	ingressDomain, err := util.IngressDomain(cm)
+	if err != nil {
+		return nil, err
+	}
+	ci.Spec.IngressDomain = &ingressDomain
+	return ci, nil
 }
 
 func (f *Factory) OperatorRole() (*rbacv1.Role, error) {

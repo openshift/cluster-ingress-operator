@@ -7,13 +7,16 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - configmaps
   - namespaces
   - serviceaccounts
   - services
   verbs:
   - create
+  - get
   - list
   - watch
+  - delete
 
 - apiGroups:
   - apps
