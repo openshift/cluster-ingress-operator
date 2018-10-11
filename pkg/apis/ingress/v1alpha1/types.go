@@ -1,7 +1,10 @@
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	operatorv1alpha1api "github.com/openshift/api/operator/v1alpha1"
 )
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
@@ -76,5 +79,9 @@ type ClusterIngressHighAvailability struct {
 }
 
 type ClusterIngressStatus struct {
-	// Fill me
+	operatorv1alpha1api.OperatorStatus `json:",inline"`
+
+	// LoadBalancer contains the status of any load balancer that is
+	// associated with the ClusterIngress.
+	LoadBalancer corev1.LoadBalancerStatus `json:"loadBalancer,omitempty"`
 }

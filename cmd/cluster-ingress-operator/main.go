@@ -34,6 +34,9 @@ func main() {
 	resyncPeriod := 10 * time.Minute
 	logrus.Infof("Watching %s, %s, %s, %d", resource, kind, namespace, resyncPeriod)
 	sdk.Watch(resource, kind, namespace, resyncPeriod)
+	// TODO Define and use a named constant for the router namespace.
+	sdk.Watch("v1", "Service", "openshift-cluster-ingress-router", resyncPeriod)
+	sdk.Watch("v1", "Endpoints", "openshift-cluster-ingress-router", resyncPeriod)
 	sdk.Handle(stub.NewHandler())
 	sdk.Run(context.TODO())
 }

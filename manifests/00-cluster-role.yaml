@@ -50,6 +50,14 @@ rules:
   - get
   - update
 
+- apiGroups:
+  - ""
+  resources:
+  - endpoints
+  - services
+  verbs:
+  - get
+
 # Mirrored from assets/router/cluster-role.yaml
 - apiGroups:
   - ""
