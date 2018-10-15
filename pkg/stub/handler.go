@@ -69,16 +69,56 @@ func (h *Handler) EnsureDefaultClusterIngress() error {
 		return err
 	}
 
-	err = sdk.Create(ci)
-	if err == nil || errors.IsAlreadyExists(err) {
-		if err == nil {
-			logrus.Infof("created default cluster ingress %s/%s", ci.Namespace, ci.Name)
+	changed, nci, err := checkClusterIngress(ci)
+	if err != nil {
+		return err
+	}
+	if changed {
+		err = sdk.Update(nci)
+		if err != nil {
+			return fmt.Errorf("updating default cluster ingress %s/%s: %v", ci.Namespace, ci.Name, err)
 		}
+		logrus.Infof("updated default cluster ingress %s/%s", ci.Namespace, ci.Name)
+	} else if nci == nil {
+		err = sdk.Create(ci)
+		if err != nil {
+			return fmt.Errorf("creating default cluster ingress %s/%s: %v", ci.Namespace, ci.Name, err)
+		}
+		logrus.Infof("created default cluster ingress %s/%s", ci.Namespace, ci.Name)
+	}
+	return nil
+}
 
-		return nil
+func checkClusterIngress(ci *ingressv1alpha1.ClusterIngress) (bool, *ingressv1alpha1.ClusterIngress, error) {
+	oldci := &ingressv1alpha1.ClusterIngress{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       ci.Kind,
+			APIVersion: ci.APIVersion,
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      ci.Name,
+			Namespace: ci.Namespace,
+		},
+	}
+	err := sdk.Get(oldci)
+	if err != nil {
+		if !errors.IsNotFound(err) {
+			return false, nil, fmt.Errorf("failed to fetch existing default cluster ingress %s/%s, %v", ci.Namespace, ci.Name, err)
+		}
+		return false, nil, nil
 	}
 
-	return fmt.Errorf("creating default cluster ingress %s/%s: %v", ci.Namespace, ci.Name, err)
+	if ci.Spec.IngressDomain == nil {
+		return false, nil, fmt.Errorf("invalid ingress domain for default cluster ingress %s/%s", ci.Namespace, ci.Name)
+	}
+	if oldci.Spec.IngressDomain == nil {
+		oldci.Spec.IngressDomain = new(string)
+	}
+	if *oldci.Spec.IngressDomain != *ci.Spec.IngressDomain {
+		*oldci.Spec.IngressDomain = *ci.Spec.IngressDomain
+		return true, oldci, nil
+	}
+	return false, oldci, nil
 }
 
 // Reconcile performs a full reconciliation loop for ingress, including
