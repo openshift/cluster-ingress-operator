@@ -4,12 +4,18 @@ import (
 	"testing"
 
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
+	"github.com/openshift/cluster-ingress-operator/pkg/util"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestManifests(t *testing.T) {
 	f := &Factory{}
+
+	cm := util.ConfigTestDefaultConfigMap()
+	if _, err := f.DefaultClusterIngress(cm); err != nil {
+		t.Errorf("invalid DefaultClusterIngress: %v", err)
+	}
 
 	ci := &ingressv1alpha1.ClusterIngress{
 		ObjectMeta: metav1.ObjectMeta{
@@ -101,5 +107,20 @@ func TestManifests(t *testing.T) {
 
 	if _, err := f.RouterServiceCloud(ci); err != nil {
 		t.Errorf("invalid RouterServiceCloud: %v", err)
+	}
+}
+
+func TestDefaultClusterIngress(t *testing.T) {
+	f := &Factory{}
+
+	for _, tc := range util.ConfigTestScenarios() {
+		_, err := f.DefaultClusterIngress(tc.ConfigMap)
+		if tc.ErrorExpectation {
+			if err == nil {
+				t.Errorf("test case %s expected an error, got none", tc.Name)
+			}
+		} else if err != nil {
+			t.Errorf("test case %s did not expect an error, got %v", tc.Name, err)
+		}
 	}
 }

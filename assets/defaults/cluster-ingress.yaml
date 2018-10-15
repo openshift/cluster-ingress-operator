@@ -1,0 +1,19 @@
+# ClusterIngress with default values
+# Installer config specific values are applied at runtime.
+kind: ClusterIngress
+apiVersion: ingress.openshift.io/v1alpha1
+metadata:
+  name: default
+  namespace: openshift-cluster-ingress-operator
+  finalizers:
+  # Ensure that only the operator can delete the default cluster ingress object.
+  finalizers:
+  - ingress.openshift.io/default-cluster-ingress
+spec:
+  # IngressDomain is applied at runtime using the installer config.
+  nodePlacement:
+    nodeSelector:
+      matchLabels:
+        "node-role.kubernetes.io/worker": ""
+  highAvailability:
+    type: Cloud
