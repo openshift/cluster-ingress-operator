@@ -1,0 +1,8 @@
+kind: ImageStream
+apiVersion: image.openshift.io/v1
+spec:
+  tags:
+  - name: cluster-ingress-operator
+    from: 
+      kind: "DockerImage"
+      name: "openshift/origin-cluster-ingress-operator:latest"
