@@ -8,6 +8,7 @@ import (
 
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
+	"github.com/openshift/cluster-ingress-operator/pkg/util/slice"
 
 	"github.com/operator-framework/operator-sdk/pkg/k8sclient"
 	"github.com/operator-framework/operator-sdk/pkg/sdk"
@@ -23,6 +24,12 @@ const (
 
 	// clusterConfigResource is the resource containing the installer config.
 	clusterConfigResource = "cluster-config-v1"
+
+	// ClusterIngressFinalizer is applied to all ClusterIngress resources before
+	// they are considered for processing; this ensures the operator has a chance
+	// to handle all states.
+	// TODO: Make this generic and not tied to the "default" ingress.
+	ClusterIngressFinalizer = "ingress.openshift.io/default-cluster-ingress"
 )
 
 func NewHandler(namespace string, manifestFactory *manifests.Factory) *Handler {
@@ -111,10 +118,12 @@ func (h *Handler) reconcile() error {
 				continue
 			}
 			// Clean up the finalizer to allow the clusteringress to be deleted.
-			ingress.Finalizers = RemoveString(ingress.Finalizers, "ingress.openshift.io/default-cluster-ingress")
-			err = sdk.Update(&ingress)
-			if err != nil {
-				errors = append(errors, fmt.Errorf("couldn't remove finalizer from clusteringress %q: %v", ingress.Name, err))
+			if slice.ContainsString(ingress.Finalizers, ClusterIngressFinalizer) {
+				ingress.Finalizers = slice.RemoveString(ingress.Finalizers, ClusterIngressFinalizer)
+				err = sdk.Update(&ingress)
+				if err != nil {
+					errors = append(errors, fmt.Errorf("couldn't remove finalizer from clusteringress %q: %v", ingress.Name, err))
+				}
 			}
 			continue
 		}
@@ -237,22 +246,4 @@ func (h *Handler) ensureRouterDeleted(ci *ingressv1alpha1.ClusterIngress) error 
 		return err
 	}
 	return nil
-}
-
-// RemoveString returns a newly created []string that contains all items from slice that
-// are not equal to s.
-func RemoveString(slice []string, s string) []string {
-	newSlice := make([]string, 0)
-	for _, item := range slice {
-		if item == s {
-			continue
-		}
-		newSlice = append(newSlice, item)
-	}
-	if len(newSlice) == 0 {
-		// Sanitize for unit tests so we don't need to distinguish empty array
-		// and nil.
-		newSlice = nil
-	}
-	return newSlice
 }
