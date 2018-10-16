@@ -3,195 +3,41 @@
 package integration
 
 import (
-	"context"
+	"flag"
 	"fmt"
-	"net/http"
 	"os"
 	"os/exec"
 	"testing"
-	"time"
 
-	stub "github.com/openshift/cluster-ingress-operator/pkg/stub"
-	"github.com/openshift/cluster-ingress-operator/test/manifests"
-
-	sdk "github.com/operator-framework/operator-sdk/pkg/sdk"
-	k8sutil "github.com/operator-framework/operator-sdk/pkg/util/k8sutil"
-
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/util/wait"
+	"github.com/sirupsen/logrus"
 )
 
-var testConfig *TestConfig
+var clusterName = flag.String("cluster-name", "", "cluster name")
+var manifestsDir = flag.String("manifests-dir", "", "manifests directory")
 
-func TestIntegration(t *testing.T) {
-	testConfig = NewTestConfig(t)
-
-	testConfig.createCRD()
-	defer testConfig.deleteCRD()
-
-	testConfig.startOperator()
-
-	// Execute subtests
-	t.Run("TestMultipleIngresses", testMultipleIngresses)
+func TestMain(m *testing.M) {
+	flag.Parse()
+	os.Exit(m.Run())
 }
 
-func testMultipleIngresses(t *testing.T) {
-	f := manifests.NewFactory(testConfig.clusterName)
+func TestIntegration(t *testing.T) {
+	tc := NewTestConfig(t, *clusterName, *manifestsDir)
 
-	appNamespace, err := f.AppIngressNamespace()
-	if err != nil {
-		t.Fatal(err)
-	}
-	appDeployment, err := f.AppIngressDeployment()
-	if err != nil {
-		t.Fatal(err)
-	}
-	appService, err := f.AppIngressService()
-	if err != nil {
-		t.Fatal(err)
-	}
-	appRouteDefault, err := f.AppIngressRouteDefault()
-	if err != nil {
-		t.Fatal(err)
-	}
-	appRouteInternal, err := f.AppIngressRouteInternal()
-	if err != nil {
-		t.Fatal(err)
-	}
+	tc.setup(t)
+	defer tc.teardown(t)
 
-	clusterIngressDefault, err := f.ClusterIngressDefault()
-	if err != nil {
-		t.Fatal(err)
-	}
-	clusterIngressDefault.Namespace = testConfig.operatorNamespace
-
-	clusterIngressInternal, err := f.ClusterIngressInternal()
-	if err != nil {
-		t.Fatal(err)
-	}
-	clusterIngressInternal.Namespace = testConfig.operatorNamespace
-
-	routerNamespace, err := f.RouterNamespace()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defaultService, err := f.RouterServiceCloud(clusterIngressDefault)
-	if err != nil {
-		t.Fatal(err)
-	}
-	internalService, err := f.RouterServiceCloud(clusterIngressInternal)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	cleanup := func() {
-		leftovers := []sdk.Object{
-			clusterIngressDefault,
-			clusterIngressInternal,
-			routerNamespace,
-			appNamespace,
-		}
-		anyFailed := false
-		for _, o := range leftovers {
-			err := sdk.Delete(o)
-			if err != nil && !errors.IsNotFound(err) {
-				t.Logf("failed to clean up object %#v: %s", o, err)
-				anyFailed = true
-			}
-		}
-		if anyFailed {
-			t.Fatalf("failed to clean up resources")
-		}
-	}
-	defer cleanup()
-
-	err = sdk.Create(appNamespace)
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = sdk.Create(appDeployment)
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = sdk.Create(appService)
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = sdk.Create(appRouteDefault)
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = sdk.Create(appRouteInternal)
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = sdk.Create(clusterIngressDefault)
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = sdk.Create(clusterIngressInternal)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	for _, service := range []*corev1.Service{defaultService, internalService} {
-		err := wait.Poll(1*time.Second, 2*time.Minute, func() (bool, error) {
-			err := sdk.Get(service)
-			if err != nil {
-				if errors.IsNotFound(err) {
-					return false, nil
-				}
-				return false, err
-			}
-			for _, ingress := range service.Status.LoadBalancer.Ingress {
-				if len(ingress.IP) > 0 {
-					t.Logf("service %s/%s has ingress.IP %s", service.Namespace, service.Name, ingress.IP)
-					return true, nil
-				}
-			}
-			return false, nil
-		})
-		if err != nil {
-			t.Fatalf("timed out waiting for service %s/%s: %s", service.Namespace, service.Name, err)
-		}
-	}
-
-	client := &http.Client{}
-	for routeHost, ingressIP := range map[string]string{
-		appRouteDefault.Spec.Host:  defaultService.Status.LoadBalancer.Ingress[0].IP,
-		appRouteInternal.Spec.Host: internalService.Status.LoadBalancer.Ingress[0].IP,
-	} {
-		err := wait.Poll(1*time.Second, 2*time.Minute, func() (bool, error) {
-			req, err := http.NewRequest("GET", "http://"+ingressIP, nil)
-			req.Host = routeHost
-			resp, err := client.Do(req)
-			defer resp.Body.Close()
-			if err != nil {
-				return false, err
-			}
-			if resp.StatusCode == http.StatusOK {
-				return true, nil
-			}
-			return false, fmt.Errorf("last response: %s", resp.Status)
-		})
-		if err != nil {
-			t.Fatalf("timed out waiting for route endpoint %q at ingress IP %q: %s", routeHost, ingressIP, err)
-		}
-	}
+	// Execute subtests
+	t.Run("TestDefaultIngress", func(t *testing.T) { testDefaultIngress(t, tc) })
 }
 
 type TestConfig struct {
 	operatorNamespace string
 	clusterName       string
+	manifestsDir      string
 	kubeConfig        string
-
-	t *testing.T
 }
 
-func NewTestConfig(t *testing.T) *TestConfig {
-	config := &TestConfig{t: t}
-
+func NewTestConfig(t *testing.T, clusterName string, manifestsDir string) *TestConfig {
 	// Check prerequisites
 	kubeConfig := os.Getenv("KUBECONFIG")
 	if len(kubeConfig) == 0 {
@@ -199,48 +45,64 @@ func NewTestConfig(t *testing.T) *TestConfig {
 	}
 	// The operator-sdk uses KUBERNETES_CONFIG...
 	os.Setenv("KUBERNETES_CONFIG", kubeConfig)
-	config.kubeConfig = kubeConfig
 
-	clusterName := os.Getenv("CLUSTER_NAME")
 	if len(clusterName) == 0 {
-		t.Fatalf("CLUSTER_NAME is required")
+		t.Fatalf("cluster name is required")
 	}
-	config.clusterName = clusterName
 
-	namespace, err := k8sutil.GetWatchNamespace()
-	if err != nil {
-		namespace = "default"
-		os.Setenv("WATCH_NAMESPACE", namespace)
+	if len(manifestsDir) == 0 {
+		t.Fatalf("manifests directory is required")
 	}
-	config.operatorNamespace = namespace
 
-	return config
+	return &TestConfig{
+		clusterName:       clusterName,
+		kubeConfig:        kubeConfig,
+		manifestsDir:      manifestsDir,
+		operatorNamespace: "openshift-cluster-ingress-operator",
+	}
 }
 
-func (tc *TestConfig) startOperator() {
-	resource := "ingress.openshift.io/v1alpha1"
-	kind := "ClusterIngress"
-	resyncPeriod := 10 * time.Minute
-	tc.t.Logf("Watching %s, %s, %s, %d", resource, kind, tc.operatorNamespace, resyncPeriod)
-	sdk.Watch(resource, kind, tc.operatorNamespace, resyncPeriod)
-	sdk.Handle(stub.NewHandler())
-	go sdk.Run(context.TODO())
+func (tc *TestConfig) setup(t *testing.T) {
+	// uninstall the CVO
+	tc.runShellCmdNonFatal(t, `oc patch -n openshift-cluster-version daemonsets/cluster-version-operator --patch '{"spec": {"template": {"spec": {"nodeSelector": {"node-role.kubernetes.io/fake": ""}}}}}'`)
+
+	// uninstall tectonic-ingress
+	tc.runShellCmdNonFatal(t, `oc delete namespaces/openshift-ingress`)
+
+	// uninstall any existing operator
+	tc.uninstallOperator(t)
+
+	// reinstall the operator
+	tc.runShellCmdNonFatal(t, fmt.Sprintf(`oc apply -f %s`, tc.manifestsDir))
 }
 
-func (tc *TestConfig) createCRD() {
-	tc.runShellCmd(fmt.Sprintf("oc apply -f ../../manifests/00-custom-resource-definition.yaml -n %s", tc.operatorNamespace), "create cluster ingress CRD")
+func (tc *TestConfig) uninstallOperator(t *testing.T) {
+	tc.runShellCmdNonFatal(t, `oc delete -n openshift-cluster-ingress-operator --force --grace-period=0 clusteringresses/default`)
+	tc.runShellCmdNonFatal(t, `oc delete namespaces/openshift-cluster-ingress-operator`)
+	tc.runShellCmdNonFatal(t, `oc delete namespaces/openshift-cluster-ingress-router`)
+	tc.runShellCmdNonFatal(t, `oc delete clusterroles/cluster-ingress-operator:operator`)
+	tc.runShellCmdNonFatal(t, `oc delete clusterroles/cluster-ingress:router`)
+	tc.runShellCmdNonFatal(t, `oc delete clusterrolebindings/cluster-ingress-operator:operator`)
+	tc.runShellCmdNonFatal(t, `oc delete clusterrolebindings/cluster-ingress:router`)
+	tc.runShellCmdNonFatal(t, `oc delete customresourcedefinition.apiextensions.k8s.io/clusteringresses.ingress.openshift.io`)
 }
 
-func (tc *TestConfig) deleteCRD() {
-	tc.runShellCmd(fmt.Sprintf("oc delete crd clusteringresses.ingress.openshift.io -n %s", tc.operatorNamespace), "delete cluster ingress CRD")
+func (tc *TestConfig) teardown(t *testing.T) {
+	tc.uninstallOperator(t)
 }
 
-func (tc *TestConfig) runShellCmd(command, msg string) {
+func (tc *TestConfig) runShellCmdNonFatal(t *testing.T, command string) {
+	tc.runShellCmd(t, command, "", false)
+}
+
+func (tc *TestConfig) runShellCmd(t *testing.T, command string, msg string, failOnError bool) {
 	cmd := []string{"sh", "-c", command}
 	c := exec.Command(cmd[0], cmd[1:]...)
 	c.Env = os.Environ()
 	c.Env = append(c.Env, fmt.Sprintf("KUBECONFIG=%s", tc.kubeConfig))
-	if err := c.Run(); err != nil {
-		tc.t.Fatalf("failed to %s: %v", msg, err)
+	output, err := c.CombinedOutput()
+	if err != nil && failOnError {
+		t.Fatalf("failed to %s: %v", msg, err)
 	}
+	logrus.Infof("cmd output: %s", output)
 }

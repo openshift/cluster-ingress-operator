@@ -4,7 +4,7 @@ metadata:
   name: default
   namespace: cluster-ingress-test
 spec:
-  host: app-ingress-test.apps.CLUSTER_NAME.origin-gce.dev.openshift.com
+  host: app.NAMESPACE.apps.CLUSTER_NAME.devcluster.openshift.com
   to:
     kind: Service
     name: app

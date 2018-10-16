@@ -36,12 +36,14 @@ type Factory struct {
 	*coremanifests.Factory
 
 	clusterName string
+	namespace   string
 }
 
-func NewFactory(clusterName string) *Factory {
+func NewFactory(clusterName, namespace string) *Factory {
 	return &Factory{
 		Factory:     coremanifests.NewFactory(),
 		clusterName: clusterName,
+		namespace:   namespace,
 	}
 }
 
@@ -50,6 +52,7 @@ func (f *Factory) AppIngressNamespace() (*corev1.Namespace, error) {
 	if err != nil {
 		return nil, err
 	}
+	ns.Name = f.namespace
 	return ns, nil
 }
 
@@ -58,6 +61,7 @@ func (f *Factory) AppIngressDeployment() (*appsv1.Deployment, error) {
 	if err != nil {
 		return nil, err
 	}
+	d.Namespace = f.namespace
 	return d, nil
 }
 
@@ -66,6 +70,8 @@ func (f *Factory) AppIngressRouteDefault() (*routev1.Route, error) {
 	if err != nil {
 		return nil, err
 	}
+	r.Namespace = f.namespace
+	r.Spec.Host = strings.Replace(r.Spec.Host, "NAMESPACE", f.namespace, -1)
 	r.Spec.Host = strings.Replace(r.Spec.Host, "CLUSTER_NAME", f.clusterName, -1)
 	return r, nil
 }
@@ -75,6 +81,7 @@ func (f *Factory) AppIngressRouteInternal() (*routev1.Route, error) {
 	if err != nil {
 		return nil, err
 	}
+	r.Namespace = f.namespace
 	r.Spec.Host = strings.Replace(r.Spec.Host, "CLUSTER_NAME", f.clusterName, -1)
 	return r, nil
 }
@@ -84,6 +91,7 @@ func (f *Factory) AppIngressService() (*corev1.Service, error) {
 	if err != nil {
 		return nil, err
 	}
+	s.Namespace = f.namespace
 	return s, nil
 }
 
