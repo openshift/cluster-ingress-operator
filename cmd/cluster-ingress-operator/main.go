@@ -10,6 +10,8 @@ import (
 	k8sutil "github.com/operator-framework/operator-sdk/pkg/util/k8sutil"
 	sdkVersion "github.com/operator-framework/operator-sdk/version"
 
+	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
+
 	"github.com/sirupsen/logrus"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 )
@@ -31,7 +33,7 @@ func main() {
 	if err != nil {
 		logrus.Fatalf("Failed to get watch namespace: %v", err)
 	}
-	handler := stub.NewHandler()
+	handler := stub.NewHandler(namespace, manifests.NewFactory())
 	if err := handler.EnsureDefaultClusterIngress(); err != nil {
 		logrus.Fatalf("Ensuring default cluster ingress: %v", err)
 	}

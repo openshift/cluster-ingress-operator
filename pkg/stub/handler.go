@@ -14,6 +14,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 )
 
 const (
@@ -24,27 +25,26 @@ const (
 	clusterConfigResource = "cluster-config-v1"
 )
 
-func NewHandler() *Handler {
+func NewHandler(namespace string, manifestFactory *manifests.Factory) *Handler {
 	return &Handler{
-		manifestFactory: manifests.NewFactory(),
+		namespace:       namespace,
+		manifestFactory: manifestFactory,
 	}
 }
 
 type Handler struct {
+	namespace       string
 	manifestFactory *manifests.Factory
 }
 
 func (h *Handler) Handle(ctx context.Context, event sdk.Event) error {
+	// TODO: This should be adding an item to a rate limited work queue, but for
+	// now correctness is more important than performance.
 	switch o := event.Object.(type) {
 	case *ingressv1alpha1.ClusterIngress:
-		if event.Deleted {
-			logrus.Infof("Deleting ClusterIngress object: %s", o.Name)
-			return h.deleteIngress(o)
-		} else {
-			return h.syncIngressUpdate(o)
-		}
+		logrus.Infof("reconciling for update to clusteringress %q", o.Name)
 	}
-	return nil
+	return h.reconcile()
 }
 
 // EnsureDefaultClusterIngress ensures that a default ClusterIngress exists.
@@ -74,7 +74,74 @@ func (h *Handler) EnsureDefaultClusterIngress() error {
 	return fmt.Errorf("creating default cluster ingress %s/%s: %v", ci.Namespace, ci.Name, err)
 }
 
-func (h *Handler) syncIngressUpdate(ci *ingressv1alpha1.ClusterIngress) error {
+// Reconcile performs a full reconciliation loop for ingress, including
+// generalized setup and handling of all clusteringress resources in the
+// operator namespace.
+func (h *Handler) reconcile() error {
+	// Ensure we have all the necessary scaffolding on which to place router
+	// instances.
+	err := h.ensureRouterNamespace()
+	if err != nil {
+		return err
+	}
+
+	// Find all clusteringresses.
+	ingresses := &ingressv1alpha1.ClusterIngressList{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "ClusterIngress",
+			APIVersion: "ingress.openshift.io/v1alpha1",
+		},
+	}
+	err = sdk.List(h.namespace, ingresses, sdk.WithListOptions(&metav1.ListOptions{}))
+	if err != nil {
+		return fmt.Errorf("failed to list clusteringresses: %v", err)
+	}
+
+	// Reconcile all the ingresses.
+	errors := []error{}
+	for _, ingress := range ingresses.Items {
+		// Handle deleted ingress.
+		// TODO: Assert/ensure that the ingress has a finalizer so we can reliably detect
+		// deletion.
+		if ingress.DeletionTimestamp != nil {
+			// Destroy any router associated with the clusteringress.
+			err := h.ensureRouterDeleted(&ingress)
+			if err != nil {
+				errors = append(errors, fmt.Errorf("couldn't delete clusteringress %q: %v", ingress.Name, err))
+				continue
+			}
+			// Clean up the finalizer to allow the clusteringress to be deleted.
+			ingress.Finalizers = RemoveString(ingress.Finalizers, "ingress.openshift.io/default-cluster-ingress")
+			err = sdk.Update(&ingress)
+			if err != nil {
+				errors = append(errors, fmt.Errorf("couldn't remove finalizer from clusteringress %q: %v", ingress.Name, err))
+			}
+			continue
+		}
+
+		// Handle active ingress.
+		err := h.ensureRouterForIngress(&ingress)
+		if err != nil {
+			errors = append(errors, fmt.Errorf("couldn't ensure clusteringress %q: %v", ingress.Name, err))
+		}
+	}
+	return utilerrors.NewAggregate(errors)
+}
+
+// ensureRouterNamespace ensures all the necessary scaffolding exists for
+// routers generally, including a namespace and all RBAC setup.
+func (h *Handler) ensureRouterNamespace() error {
+	cr, err := h.manifestFactory.RouterClusterRole()
+	if err != nil {
+		return fmt.Errorf("couldn't build router cluster role: %v", err)
+	}
+	err = sdk.Create(cr)
+	if err == nil {
+		logrus.Infof("created router cluster role %q", cr.Name)
+	} else if !errors.IsAlreadyExists(err) {
+		return fmt.Errorf("couldn't create router cluster role: %v", err)
+	}
+
 	ns, err := h.manifestFactory.RouterNamespace()
 	if err != nil {
 		return fmt.Errorf("couldn't build router namespace: %v", err)
@@ -97,17 +164,6 @@ func (h *Handler) syncIngressUpdate(ci *ingressv1alpha1.ClusterIngress) error {
 		return fmt.Errorf("couldn't create router service account %s/%s: %v", sa.Namespace, sa.Name, err)
 	}
 
-	cr, err := h.manifestFactory.RouterClusterRole()
-	if err != nil {
-		return fmt.Errorf("couldn't build router cluster role: %v", err)
-	}
-	err = sdk.Create(cr)
-	if err == nil {
-		logrus.Infof("created router cluster role %q", cr.Name)
-	} else if !errors.IsAlreadyExists(err) {
-		return fmt.Errorf("couldn't create router cluster role: %v", err)
-	}
-
 	crb, err := h.manifestFactory.RouterClusterRoleBinding()
 	if err != nil {
 		return fmt.Errorf("couldn't build router cluster role binding: %v", err)
@@ -119,6 +175,12 @@ func (h *Handler) syncIngressUpdate(ci *ingressv1alpha1.ClusterIngress) error {
 		return fmt.Errorf("couldn't create router cluster role binding: %v", err)
 	}
 
+	return nil
+}
+
+// ensureRouterForIngress ensures all necessary router resources exist for a
+// given clusteringress.
+func (h *Handler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress) error {
 	ds, err := h.manifestFactory.RouterDaemonSet(ci)
 	if err != nil {
 		return fmt.Errorf("couldn't build daemonset: %v", err)
@@ -163,10 +225,34 @@ func (h *Handler) syncIngressUpdate(ci *ingressv1alpha1.ClusterIngress) error {
 	return nil
 }
 
-func (h *Handler) deleteIngress(ci *ingressv1alpha1.ClusterIngress) error {
+// ensureRouterDeleted ensures that any router resources associated with the
+// clusteringress are deleted.
+func (h *Handler) ensureRouterDeleted(ci *ingressv1alpha1.ClusterIngress) error {
 	ds, err := h.manifestFactory.RouterDaemonSet(ci)
 	if err != nil {
 		return fmt.Errorf("couldn't build DaemonSet object for deletion: %v", err)
 	}
-	return sdk.Delete(ds)
+	err = sdk.Delete(ds)
+	if !errors.IsNotFound(err) {
+		return err
+	}
+	return nil
+}
+
+// RemoveString returns a newly created []string that contains all items from slice that
+// are not equal to s.
+func RemoveString(slice []string, s string) []string {
+	newSlice := make([]string, 0)
+	for _, item := range slice {
+		if item == s {
+			continue
+		}
+		newSlice = append(newSlice, item)
+	}
+	if len(newSlice) == 0 {
+		// Sanitize for unit tests so we don't need to distinguish empty array
+		// and nil.
+		newSlice = nil
+	}
+	return newSlice
 }
