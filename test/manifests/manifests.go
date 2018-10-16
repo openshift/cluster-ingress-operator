@@ -5,7 +5,6 @@ import (
 	"io"
 	"strings"
 
-	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
 	coremanifests "github.com/openshift/cluster-ingress-operator/pkg/manifests"
 
 	routev1 "github.com/openshift/api/route/v1"
@@ -15,14 +14,10 @@ import (
 )
 
 const (
-	AppIngressNamespace     = "test/assets/app-ingress/namespace.yaml"
-	AppIngressDeployment    = "test/assets/app-ingress/deployment.yaml"
-	AppIngressRouteDefault  = "test/assets/app-ingress/route-default.yaml"
-	AppIngressRouteInternal = "test/assets/app-ingress/route-internal.yaml"
-	AppIngressService       = "test/assets/app-ingress/service.yaml"
-
-	ClusterIngressDefault  = "test/assets/cluster-ingress-default.yaml"
-	ClusterIngressInternal = "test/assets/cluster-ingress-internal.yaml"
+	AppIngressNamespace  = "test/assets/app-ingress/namespace.yaml"
+	AppIngressDeployment = "test/assets/app-ingress/deployment.yaml"
+	AppIngressRoute      = "test/assets/app-ingress/route.yaml"
+	AppIngressService    = "test/assets/app-ingress/service.yaml"
 )
 
 func MustAssetReader(asset string) io.Reader {
@@ -47,70 +42,40 @@ func NewFactory(clusterName, namespace string) *Factory {
 	}
 }
 
-func (f *Factory) AppIngressNamespace() (*corev1.Namespace, error) {
+func (f *Factory) AppIngressNamespace() *corev1.Namespace {
 	ns, err := coremanifests.NewNamespace(MustAssetReader(AppIngressNamespace))
 	if err != nil {
-		return nil, err
+		panic(err)
 	}
 	ns.Name = f.namespace
-	return ns, nil
+	return ns
 }
 
-func (f *Factory) AppIngressDeployment() (*appsv1.Deployment, error) {
+func (f *Factory) AppIngressDeployment() *appsv1.Deployment {
 	d, err := coremanifests.NewDeployment(MustAssetReader(AppIngressDeployment))
 	if err != nil {
-		return nil, err
+		panic(err)
 	}
 	d.Namespace = f.namespace
-	return d, nil
+	return d
 }
 
-func (f *Factory) AppIngressRouteDefault() (*routev1.Route, error) {
-	r, err := coremanifests.NewRoute(MustAssetReader(AppIngressRouteDefault))
+func (f *Factory) AppIngressRoute() *routev1.Route {
+	r, err := coremanifests.NewRoute(MustAssetReader(AppIngressRoute))
 	if err != nil {
-		return nil, err
+		panic(err)
 	}
 	r.Namespace = f.namespace
 	r.Spec.Host = strings.Replace(r.Spec.Host, "NAMESPACE", f.namespace, -1)
 	r.Spec.Host = strings.Replace(r.Spec.Host, "CLUSTER_NAME", f.clusterName, -1)
-	return r, nil
+	return r
 }
 
-func (f *Factory) AppIngressRouteInternal() (*routev1.Route, error) {
-	r, err := coremanifests.NewRoute(MustAssetReader(AppIngressRouteInternal))
-	if err != nil {
-		return nil, err
-	}
-	r.Namespace = f.namespace
-	r.Spec.Host = strings.Replace(r.Spec.Host, "CLUSTER_NAME", f.clusterName, -1)
-	return r, nil
-}
-
-func (f *Factory) AppIngressService() (*corev1.Service, error) {
+func (f *Factory) AppIngressService() *corev1.Service {
 	s, err := coremanifests.NewService(MustAssetReader(AppIngressService))
 	if err != nil {
-		return nil, err
+		panic(err)
 	}
 	s.Namespace = f.namespace
-	return s, nil
-}
-
-func (f *Factory) ClusterIngressDefault() (*ingressv1alpha1.ClusterIngress, error) {
-	ci, err := coremanifests.NewClusterIngress(MustAssetReader(ClusterIngressDefault))
-	if err != nil {
-		return nil, err
-	}
-	ingressDomain := strings.Replace(*ci.Spec.IngressDomain, "CLUSTER_NAME", f.clusterName, -1)
-	ci.Spec.IngressDomain = &ingressDomain
-	return ci, nil
-}
-
-func (f *Factory) ClusterIngressInternal() (*ingressv1alpha1.ClusterIngress, error) {
-	ci, err := coremanifests.NewClusterIngress(MustAssetReader(ClusterIngressInternal))
-	if err != nil {
-		return nil, err
-	}
-	ingressDomain := strings.Replace(*ci.Spec.IngressDomain, "CLUSTER_NAME", f.clusterName, -1)
-	ci.Spec.IngressDomain = &ingressDomain
-	return ci, nil
+	return s
 }

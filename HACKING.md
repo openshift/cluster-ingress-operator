@@ -79,10 +79,16 @@ Integration tests are still very immature. To run them, start with an OpenShift 
 substituting for your own details where appropriate. This assumes `KUBECONFIG` is set.
 
 ```
-REPO=docker.io/username/origin-cluster-ingress-operator make release-local
+# 1. Uninstall any existing cluster-version-operator and cluster-ingress-operator.
+$ hack/uninstall.sh
 
-# Set the manifests directory to the temporary directory reported by `release-local`.
-CLUSTER_NAME=your-cluster-name MANIFESTS=/release-local/output make test-integration
+# 2. Build and push a new cluster-ingress-operator image.
+$ REPO=docker.io/username/origin-cluster-ingress-operator make release-local
+
+# 3. Run `oc apply` as instructed to install the locally-built operator.
+
+# 4. Run integration tests against the cluster.
+$ CLUSTER_NAME=your-cluster-name make test-integration
 ```
 
-**Important**: Note that these tests will destroy the Cluster Version Operator and any existing Cluster Ingress Operator deployment in the cluster. Don't run these tests in a cluster where data loss is a concern.
+**Important**: Don't run these tests in a cluster where data loss is a concern.
