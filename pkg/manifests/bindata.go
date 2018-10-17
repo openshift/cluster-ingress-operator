@@ -15,6 +15,7 @@
 // manifests/01-role.yaml
 // manifests/01-service-account.yaml
 // manifests/02-deployment.yaml
+// manifests/image-references
 // DO NOT EDIT!
 
 package manifests
@@ -382,6 +383,26 @@ func manifests02DeploymentYaml() (*asset, error) {
 	return a, nil
 }
 
+var _manifestsImageReferences = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x74\x8d\xb1\xca\xc3\x30\x0c\x84\x77\x3f\x85\xf0\xee\x84\x7f\xf5\xfc\x2f\x9d\x0b\xdd\x85\xab\xb8\x22\xb1\x65\x24\xb5\xcf\x5f\x92\x94\x6e\x9d\xee\xb8\x83\xef\x5b\xb9\xdf\x33\x5c\x1a\x56\xba\xba\x12\xb6\x80\x83\x6f\xa4\xc6\xd2\x33\xf0\xbe\x4f\x32\xa8\xdb\x83\x17\x9f\x58\xe6\xd7\x5f\xb0\x41\x25\x07\x00\xc7\x6a\x7b\x26\xe8\xd8\x28\x43\xd9\x9e\xe6\xa4\x89\x7b\x55\x32\x4b\x32\x48\xd1\x45\x03\x00\xc0\xa2\xd2\x32\x1c\x15\xe0\xb4\xc6\x7f\x29\x2b\xe9\x21\x8f\x9f\xe7\x24\xc5\xaf\x72\x16\xe5\xca\x3d\xfd\x62\xe7\x0d\x9d\xcc\x63\x78\x07\x00\x00\xff\xff\x89\xea\xe4\x72\xc9\x00\x00\x00")
+
+func manifestsImageReferencesBytes() ([]byte, error) {
+	return bindataRead(
+		_manifestsImageReferences,
+		"manifests/image-references",
+	)
+}
+
+func manifestsImageReferences() (*asset, error) {
+	bytes, err := manifestsImageReferencesBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "manifests/image-references", size: 201, mode: os.FileMode(420), modTime: time.Unix(1, 0)}
+	a := &asset{bytes: bytes, info: info}
+	return a, nil
+}
+
 // Asset loads and returns the asset for the given name.
 // It returns an error if the asset could not be found or
 // could not be loaded.
@@ -449,6 +470,7 @@ var _bindata = map[string]func() (*asset, error){
 	"manifests/01-role.yaml": manifests01RoleYaml,
 	"manifests/01-service-account.yaml": manifests01ServiceAccountYaml,
 	"manifests/02-deployment.yaml": manifests02DeploymentYaml,
+	"manifests/image-references": manifestsImageReferences,
 }
 
 // AssetDir returns the file names below a certain
@@ -513,6 +535,7 @@ var _bintree = &bintree{nil, map[string]*bintree{
 		"01-role.yaml": &bintree{manifests01RoleYaml, map[string]*bintree{}},
 		"01-service-account.yaml": &bintree{manifests01ServiceAccountYaml, map[string]*bintree{}},
 		"02-deployment.yaml": &bintree{manifests02DeploymentYaml, map[string]*bintree{}},
+		"image-references": &bintree{manifestsImageReferences, map[string]*bintree{}},
 	}},
 }}
 

@@ -28,11 +28,14 @@ $(GOBINDATA_BIN):
 test:
 	go test ./...
 
+release-local:
+	MANIFESTS=$(shell mktemp -d) hack/release-local.sh
+
 test-integration:
-	go test -v -tags integration ./test/integration
+	hack/test-integration.sh
 
 clean:
 	go clean
 	rm -f $(BIN)
 
-.PHONY: all build generate test test-integration clean
+.PHONY: all build generate test test-integration clean release-local

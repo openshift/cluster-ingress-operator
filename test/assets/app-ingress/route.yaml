@@ -1,12 +1,10 @@
 apiVersion: route.openshift.io/v1
 kind: Route
 metadata:
-  name: internal
+  name: default
   namespace: cluster-ingress-test
-  labels:
-    environment: internal
 spec:
-  host: app-ingress-test.apps.CLUSTER_NAME-internal.origin-gce.dev.openshift.com
+  host: app.NAMESPACE.apps.CLUSTER_NAME.devcluster.openshift.com
   to:
     kind: Service
     name: app

@@ -75,10 +75,20 @@ oc create -f manifests/04_cluster-ingress-operator.yaml
 
 ### Integration tests
 
-Integration tests are still very immature. To run them, use the GCP test cluster instructions and then run the tests with:
+Integration tests are still very immature. To run them, start with an OpenShift 4.0 cluster and then run the following,
+substituting for your own details where appropriate. This assumes `KUBECONFIG` is set.
 
 ```
-KUBECONFIG=/path/to/admin.kubeconfig CLUSTER_NAME=your_gcp_cluster_name make test-integration
+# 1. Uninstall any existing cluster-version-operator and cluster-ingress-operator.
+$ hack/uninstall.sh
+
+# 2. Build and push a new cluster-ingress-operator image.
+$ REPO=docker.io/username/origin-cluster-ingress-operator make release-local
+
+# 3. Run `oc apply` as instructed to install the locally-built operator.
+
+# 4. Run integration tests against the cluster.
+$ CLUSTER_NAME=your-cluster-name make test-integration
 ```
 
-**Important**: Note that the resources and namespaces used for the test are currently fixed and the tests will clean up after themselves, including deleting the `openshift-cluster-ingress-router` namespace. Don't run these tests in a cluster where data loss is a concern.
+**Important**: Don't run these tests in a cluster where data loss is a concern.
