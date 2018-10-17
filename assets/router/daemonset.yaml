@@ -4,7 +4,7 @@ kind: DaemonSet
 apiVersion: apps/v1
 metadata:
   # Name is set at runtime.
-  namespace: openshift-cluster-ingress-router
+  namespace: openshift-ingress
   labels:
     app: router
 spec:
@@ -38,7 +38,7 @@ spec:
           - name: STATS_PORT
             value: "1936"
           - name: ROUTER_SERVICE_NAMESPACE
-            value: openshift-cluster-ingress-router
+            value: openshift-ingress
           livenessProbe:
             initialDelaySeconds: 10
             httpGet:

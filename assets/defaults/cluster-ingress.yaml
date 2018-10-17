@@ -4,7 +4,7 @@ kind: ClusterIngress
 apiVersion: ingress.openshift.io/v1alpha1
 metadata:
   name: default
-  namespace: openshift-cluster-ingress-operator
+  namespace: openshift-ingress-operator
   finalizers:
   # Ensure that only the operator can delete the default cluster ingress object.
   finalizers:

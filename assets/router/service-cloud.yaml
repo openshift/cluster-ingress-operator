@@ -4,7 +4,7 @@ kind: Service
 apiVersion: v1
 metadata:
   # Name is set at runtime.
-  namespace: openshift-cluster-ingress-router
+  namespace: openshift-ingress
   labels:
     app: router
 spec:

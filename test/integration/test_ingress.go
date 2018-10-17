@@ -56,7 +56,7 @@ func testDefaultIngress(t *testing.T, tc TestConfig) {
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "router-default",
-			Namespace: "openshift-cluster-ingress-router",
+			Namespace: "openshift-ingress",
 		},
 	}
 

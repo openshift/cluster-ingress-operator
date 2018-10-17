@@ -3,4 +3,4 @@ apiVersion: v1
 metadata:
   name: cluster-ingress-test
   labels:
-    openshift.io/cluster-ingress-operator-test: ""
+    ingress.openshift.io/operator-test: ""

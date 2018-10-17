@@ -2,8 +2,8 @@
 kind: Role
 apiVersion: rbac.authorization.k8s.io/v1
 metadata:
-  name: cluster-ingress-operator
-  namespace: openshift-cluster-ingress-operator
+  name: ingress-operator
+  namespace: openshift-ingress-operator
 rules:
 - apiGroups:
   - ingress.openshift.io
