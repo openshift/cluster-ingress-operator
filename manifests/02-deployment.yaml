@@ -1,20 +1,20 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: cluster-ingress-operator
-  namespace: openshift-cluster-ingress-operator
+  name: ingress-operator
+  namespace: openshift-ingress-operator
 spec:
   replicas: 1
   selector:
     matchLabels:
-      name: cluster-ingress-operator
+      name: ingress-operator
   template:
     metadata:
       labels:
-        name: cluster-ingress-operator
+        name: ingress-operator
     spec:
       containers:
-        - name: cluster-ingress-operator
+        - name: ingress-operator
           image: openshift/origin-cluster-ingress-operator:latest
           ports:
           - containerPort: 60000
@@ -27,5 +27,5 @@ spec:
                 fieldRef:
                   fieldPath: metadata.namespace
             - name: OPERATOR_NAME
-              value: "cluster-ingress-operator"
-      serviceAccountName: cluster-ingress-operator
+              value: ingress-operator
+      serviceAccountName: ingress-operator
