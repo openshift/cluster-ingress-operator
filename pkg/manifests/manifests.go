@@ -44,15 +44,12 @@ func NewFactory() *Factory {
 	return &Factory{}
 }
 
-func (f *Factory) DefaultClusterIngress(cm *corev1.ConfigMap) (*ingressv1alpha1.ClusterIngress, error) {
+func (f *Factory) DefaultClusterIngress(ic *util.InstallConfig) (*ingressv1alpha1.ClusterIngress, error) {
 	ci, err := NewClusterIngress(MustAssetReader(ClusterIngressDefaults))
 	if err != nil {
 		return nil, err
 	}
-	ingressDomain, err := util.IngressDomain(cm)
-	if err != nil {
-		return nil, err
-	}
+	ingressDomain := fmt.Sprintf("%s.%s", ic.Metadata.Name, ic.BaseDomain)
 	ci.Spec.IngressDomain = &ingressDomain
 	return ci, nil
 }

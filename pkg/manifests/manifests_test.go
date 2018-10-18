@@ -12,11 +12,6 @@ import (
 func TestManifests(t *testing.T) {
 	f := &Factory{}
 
-	cm := util.ConfigTestDefaultConfigMap()
-	if _, err := f.DefaultClusterIngress(cm); err != nil {
-		t.Errorf("invalid DefaultClusterIngress: %v", err)
-	}
-
 	ci := &ingressv1alpha1.ClusterIngress{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "default",
@@ -111,16 +106,17 @@ func TestManifests(t *testing.T) {
 }
 
 func TestDefaultClusterIngress(t *testing.T) {
-	f := &Factory{}
-
-	for _, tc := range util.ConfigTestScenarios() {
-		_, err := f.DefaultClusterIngress(tc.ConfigMap)
-		if tc.ErrorExpectation {
-			if err == nil {
-				t.Errorf("test case %s expected an error, got none", tc.Name)
-			}
-		} else if err != nil {
-			t.Errorf("test case %s did not expect an error, got %v", tc.Name, err)
-		}
+	ic := &util.InstallConfig{
+		Metadata: util.InstallConfigMetadata{
+			Name: "user",
+		},
+		BaseDomain: "cluster.openshift.com",
+	}
+	def, err := NewFactory().DefaultClusterIngress(ic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e, a := "user.cluster.openshift.com", *def.Spec.IngressDomain; e != a {
+		t.Errorf("expected default clusteringress ingressDomain=%s, got %s", e, a)
 	}
 }

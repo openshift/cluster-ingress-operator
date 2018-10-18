@@ -2,22 +2,24 @@ package util
 
 import (
 	"testing"
+
+	corev1 "k8s.io/api/core/v1"
 )
 
-func TestIngressDomain(t *testing.T) {
-	for _, tc := range ConfigTestScenarios() {
-		domain, err := IngressDomain(tc.ConfigMap)
-		t.Logf("test case: %s", tc.Name)
-		if tc.ErrorExpectation {
-			t.Logf("    expected error: %v", err)
-			if err == nil {
-				t.Errorf("test case %s expected an error, got none", tc.Name)
-			}
-		} else {
-			t.Logf("    ingress domain: %s", domain)
-			if err != nil {
-				t.Errorf("test case %s did not expect an error, got %v", tc.Name, err)
-			}
-		}
+const (
+	validInstallConfig = `
+metadata:
+  name: user
+baseDomain: clusters.openshift.com
+`
+)
+
+func TestUnmarshalInstallConfig(t *testing.T) {
+	cm := &corev1.ConfigMap{}
+	cm.Data = map[string]string{"install-config": validInstallConfig}
+
+	_, err := UnmarshalInstallConfig(cm)
+	if err != nil {
+		t.Fatal(err)
 	}
 }
