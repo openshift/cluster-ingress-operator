@@ -2,47 +2,52 @@ package util
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/ghodss/yaml"
+
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 )
 
-// IngressDomain returns the domain used in the default ClusterIngress instance.
-func IngressDomain(cm *corev1.ConfigMap) (string, error) {
-	if cm == nil {
-		return "", fmt.Errorf("invalid installer configmap")
+const (
+	// ClusterConfigNamespace is the namespace containing the cluster config.
+	ClusterConfigNamespace = "kube-system"
+	// ClusterConfigName is the name of the cluster config configmap.
+	ClusterConfigName = "cluster-config-v1"
+	// InstallConfigKey is the key in the cluster config configmap containing a
+	// serialized InstallConfig.
+	InstallConfigKey = "install-config"
+)
+
+type InstallConfig struct {
+	Metadata   InstallConfigMetadata `json:"metadata"`
+	BaseDomain string                `json:"baseDomain"`
+}
+
+type InstallConfigMetadata struct {
+	Name string `json:"name"`
+}
+
+// UnmarshalInstallConfig builds an install config from the cluster config.
+func UnmarshalInstallConfig(clusterConfig *corev1.ConfigMap) (*InstallConfig, error) {
+	icJson, ok := clusterConfig.Data[InstallConfigKey]
+	if !ok {
+		return nil, fmt.Errorf("missing %q in configmap", InstallConfigKey)
+	}
+	var ic InstallConfig
+	if err := yaml.Unmarshal([]byte(icJson), &ic); err != nil {
+		return nil, fmt.Errorf("invalid InstallConfig: %v\njson:\n%s", err, icJson)
+	}
+	return &ic, nil
+}
+
+// GetInstallConfig looks up the install config in the cluster.
+func GetInstallConfig(client kubernetes.Interface) (*InstallConfig, error) {
+	cm, err := client.CoreV1().ConfigMaps(ClusterConfigNamespace).Get(ClusterConfigName, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("couldn't get clusterconfig %s/%s: %v", ClusterConfigNamespace, ClusterConfigName, err)
 	}
 
-	kco, ok := cm.Data["kco-config"]
-	if !ok {
-		return "", fmt.Errorf("missing kco-config in configmap")
-	}
-
-	kcoConfigMap := make(map[string]interface{})
-	if err := yaml.Unmarshal([]byte(kco), &kcoConfigMap); err != nil {
-		return "", fmt.Errorf("kco-config unmarshall error: %v", err)
-	}
-
-	routingConfig, ok := kcoConfigMap["routingConfig"]
-	if !ok {
-		return "", fmt.Errorf("missing routingConfig in kco-config")
-	}
-	routingConfigMap, ok := routingConfig.(map[string]interface{})
-	if !ok {
-		return "", fmt.Errorf("invalid routingConfig in kco-config")
-	}
-	subdomain, ok := routingConfigMap["subdomain"]
-	if !ok {
-		return "", fmt.Errorf("missing subdomain in routingConfig")
-	}
-	routingConfigSubdomain, ok := subdomain.(string)
-	if !ok {
-		return "", fmt.Errorf("invalid subdomain in routingConfig")
-	}
-	if len(strings.TrimSpace(routingConfigSubdomain)) == 0 {
-		return "", fmt.Errorf("empty subdomain in routingConfig")
-	}
-
-	return fmt.Sprintf("apps.%s", routingConfigSubdomain), nil
+	return UnmarshalInstallConfig(cm)
 }

@@ -5,14 +5,17 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	stub "github.com/openshift/cluster-ingress-operator/pkg/stub"
+	"github.com/openshift/cluster-ingress-operator/pkg/util"
+
+	"github.com/operator-framework/operator-sdk/pkg/k8sclient"
 	sdk "github.com/operator-framework/operator-sdk/pkg/sdk"
 	k8sutil "github.com/operator-framework/operator-sdk/pkg/util/k8sutil"
 	sdkVersion "github.com/operator-framework/operator-sdk/version"
 
-	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
-
 	"github.com/sirupsen/logrus"
+
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 )
 
@@ -33,9 +36,21 @@ func main() {
 	if err != nil {
 		logrus.Fatalf("Failed to get watch namespace: %v", err)
 	}
-	handler := stub.NewHandler(namespace, manifests.NewFactory())
+	kubeClient := k8sclient.GetKubeClient()
+
+	ic, err := util.GetInstallConfig(kubeClient)
+	if err != nil {
+		logrus.Fatalf("could't get installconfig: %v", err)
+	}
+
+	handler := &stub.Handler{
+		InstallConfig:   ic,
+		Namespace:       namespace,
+		ManifestFactory: manifests.NewFactory(),
+	}
+
 	if err := handler.EnsureDefaultClusterIngress(); err != nil {
-		logrus.Fatalf("Ensuring default cluster ingress: %v", err)
+		logrus.Fatalf("failed to ensure default cluster ingress: %v", err)
 	}
 	resyncPeriod := 10 * time.Minute
 	logrus.Infof("Watching %s, %s, %s, %d", resource, kind, namespace, resyncPeriod)

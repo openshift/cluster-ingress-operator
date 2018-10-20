@@ -8,9 +8,9 @@ import (
 
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
+	"github.com/openshift/cluster-ingress-operator/pkg/util"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/slice"
 
-	"github.com/operator-framework/operator-sdk/pkg/k8sclient"
 	"github.com/operator-framework/operator-sdk/pkg/sdk"
 
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -32,16 +32,10 @@ const (
 	ClusterIngressFinalizer = "ingress.openshift.io/default-cluster-ingress"
 )
 
-func NewHandler(namespace string, manifestFactory *manifests.Factory) *Handler {
-	return &Handler{
-		namespace:       namespace,
-		manifestFactory: manifestFactory,
-	}
-}
-
 type Handler struct {
-	namespace       string
-	manifestFactory *manifests.Factory
+	InstallConfig   *util.InstallConfig
+	ManifestFactory *manifests.Factory
+	Namespace       string
 }
 
 func (h *Handler) Handle(ctx context.Context, event sdk.Event) error {
@@ -56,29 +50,18 @@ func (h *Handler) Handle(ctx context.Context, event sdk.Event) error {
 
 // EnsureDefaultClusterIngress ensures that a default ClusterIngress exists.
 func (h *Handler) EnsureDefaultClusterIngress() error {
-	client := k8sclient.GetKubeClient()
-	resourceClient := client.CoreV1().ConfigMaps(installerConfigNamespace)
-
-	cm, err := resourceClient.Get(clusterConfigResource, metav1.GetOptions{})
-	if err != nil {
-		return fmt.Errorf("getting %s resource: %v", clusterConfigResource, err)
-	}
-
-	ci, err := h.manifestFactory.DefaultClusterIngress(cm)
+	ci, err := h.ManifestFactory.DefaultClusterIngress(h.InstallConfig)
 	if err != nil {
 		return err
 	}
 
 	err = sdk.Create(ci)
-	if err == nil || errors.IsAlreadyExists(err) {
-		if err == nil {
-			logrus.Infof("created default cluster ingress %s/%s", ci.Namespace, ci.Name)
-		}
-
-		return nil
+	if err != nil && !errors.IsAlreadyExists(err) {
+		return err
+	} else if err == nil {
+		logrus.Infof("created default cluster ingress %s/%s", ci.Namespace, ci.Name)
 	}
-
-	return fmt.Errorf("creating default cluster ingress %s/%s: %v", ci.Namespace, ci.Name, err)
+	return nil
 }
 
 // Reconcile performs a full reconciliation loop for ingress, including
@@ -99,7 +82,7 @@ func (h *Handler) reconcile() error {
 			APIVersion: "ingress.openshift.io/v1alpha1",
 		},
 	}
-	err = sdk.List(h.namespace, ingresses, sdk.WithListOptions(&metav1.ListOptions{}))
+	err = sdk.List(h.Namespace, ingresses, sdk.WithListOptions(&metav1.ListOptions{}))
 	if err != nil {
 		return fmt.Errorf("failed to list clusteringresses: %v", err)
 	}
@@ -140,7 +123,7 @@ func (h *Handler) reconcile() error {
 // ensureRouterNamespace ensures all the necessary scaffolding exists for
 // routers generally, including a namespace and all RBAC setup.
 func (h *Handler) ensureRouterNamespace() error {
-	cr, err := h.manifestFactory.RouterClusterRole()
+	cr, err := h.ManifestFactory.RouterClusterRole()
 	if err != nil {
 		return fmt.Errorf("couldn't build router cluster role: %v", err)
 	}
@@ -151,7 +134,7 @@ func (h *Handler) ensureRouterNamespace() error {
 		return fmt.Errorf("couldn't create router cluster role: %v", err)
 	}
 
-	ns, err := h.manifestFactory.RouterNamespace()
+	ns, err := h.ManifestFactory.RouterNamespace()
 	if err != nil {
 		return fmt.Errorf("couldn't build router namespace: %v", err)
 	}
@@ -162,7 +145,7 @@ func (h *Handler) ensureRouterNamespace() error {
 		return fmt.Errorf("couldn't create router namespace %q: %v", ns.Name, err)
 	}
 
-	sa, err := h.manifestFactory.RouterServiceAccount()
+	sa, err := h.ManifestFactory.RouterServiceAccount()
 	if err != nil {
 		return fmt.Errorf("couldn't build router service account: %v", err)
 	}
@@ -173,7 +156,7 @@ func (h *Handler) ensureRouterNamespace() error {
 		return fmt.Errorf("couldn't create router service account %s/%s: %v", sa.Namespace, sa.Name, err)
 	}
 
-	crb, err := h.manifestFactory.RouterClusterRoleBinding()
+	crb, err := h.ManifestFactory.RouterClusterRoleBinding()
 	if err != nil {
 		return fmt.Errorf("couldn't build router cluster role binding: %v", err)
 	}
@@ -190,7 +173,7 @@ func (h *Handler) ensureRouterNamespace() error {
 // ensureRouterForIngress ensures all necessary router resources exist for a
 // given clusteringress.
 func (h *Handler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress) error {
-	ds, err := h.manifestFactory.RouterDaemonSet(ci)
+	ds, err := h.ManifestFactory.RouterDaemonSet(ci)
 	if err != nil {
 		return fmt.Errorf("couldn't build daemonset: %v", err)
 	}
@@ -208,7 +191,7 @@ func (h *Handler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress) err
 	if ci.Spec.HighAvailability != nil {
 		switch ci.Spec.HighAvailability.Type {
 		case ingressv1alpha1.CloudClusterIngressHA:
-			service, err := h.manifestFactory.RouterServiceCloud(ci)
+			service, err := h.ManifestFactory.RouterServiceCloud(ci)
 			if err != nil {
 				return fmt.Errorf("couldn't build service: %v", err)
 			}
@@ -237,7 +220,7 @@ func (h *Handler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress) err
 // ensureRouterDeleted ensures that any router resources associated with the
 // clusteringress are deleted.
 func (h *Handler) ensureRouterDeleted(ci *ingressv1alpha1.ClusterIngress) error {
-	ds, err := h.manifestFactory.RouterDaemonSet(ci)
+	ds, err := h.ManifestFactory.RouterDaemonSet(ci)
 	if err != nil {
 		return fmt.Errorf("couldn't build DaemonSet object for deletion: %v", err)
 	}
