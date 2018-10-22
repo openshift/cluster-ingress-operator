@@ -181,6 +181,14 @@
   version = "v1.1.5"
 
 [[projects]]
+  digest = "1:434e3912172d6be4cb9d6210da2c78d24e33a9444c585153077e23eac17d4aa7"
+  name = "github.com/kevinburke/go-bindata"
+  packages = ["."]
+  pruneopts = ""
+  revision = "06af60a4461b70d84a2b173d92f9f425d78baf55"
+  version = "v3.11.0"
+
+[[projects]]
   branch = "master"
   digest = "1:212bebc561f4f654a653225868b2a97353cd5e160dc0b0bbc7232b06608474ec"
   name = "github.com/mailru/easyjson"
@@ -656,7 +664,10 @@
   analyzer-name = "dep"
   analyzer-version = 1
   input-imports = [
+    "github.com/ghodss/yaml",
+    "github.com/kevinburke/go-bindata",
     "github.com/openshift/api/route/v1",
+    "github.com/operator-framework/operator-sdk/pkg/k8sclient",
     "github.com/operator-framework/operator-sdk/pkg/sdk",
     "github.com/operator-framework/operator-sdk/pkg/util/k8sutil",
     "github.com/operator-framework/operator-sdk/version",
@@ -669,8 +680,10 @@
     "k8s.io/apimachinery/pkg/apis/meta/v1",
     "k8s.io/apimachinery/pkg/runtime",
     "k8s.io/apimachinery/pkg/runtime/schema",
+    "k8s.io/apimachinery/pkg/util/errors",
     "k8s.io/apimachinery/pkg/util/wait",
     "k8s.io/apimachinery/pkg/util/yaml",
+    "k8s.io/client-go/kubernetes",
     "k8s.io/client-go/plugin/pkg/client/auth/gcp",
     "k8s.io/code-generator/cmd/client-gen",
     "k8s.io/code-generator/cmd/conversion-gen",
