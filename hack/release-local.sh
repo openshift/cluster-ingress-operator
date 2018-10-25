@@ -16,7 +16,7 @@ if [[ "${TEMP_COMMIT}" == "true" ]]; then
 fi
 
 REV=$(git rev-parse --short HEAD)
-docker build -t $REPO:$REV -f images/cluster-ingress-operator/Dockerfile .
+docker build -t $REPO:$REV .
 docker push $REPO:$REV
 
 if [[ "${TEMP_COMMIT}" == "true" ]]; then
