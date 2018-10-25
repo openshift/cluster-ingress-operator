@@ -30,13 +30,13 @@ To build the operator docker image:
 ##### Using docker
 
 ```
-docker build -f images/cluster-ingress-operator/Dockerfile  -t openshift/cluster-ingress-operator:latest .
+docker build -t openshift/cluster-ingress-operator:latest .
 ```
 
 ##### Using buildah
 
 ```
-sudo buildah bud -f images/cluster-ingress-operator/Dockerfile  -t openshift/cluster-ingress-operator:latest .
+sudo buildah bud -t openshift/cluster-ingress-operator:latest .
 ```
 
 ```
