@@ -16,8 +16,13 @@ if [[ "${TEMP_COMMIT}" == "true" ]]; then
 fi
 
 REV=$(git rev-parse --short HEAD)
-docker build -t $REPO:$REV .
-docker push $REPO:$REV
+if [[ -z "${DOCKER+1}" ]] && command -v buildah >& /dev/null; then
+  buildah bud -t $REPO:$REV .
+  buildah push $REPO:$REV docker://$REPO:$REV
+else
+  docker build -t $REPO:$REV .
+  docker push $REPO:$REV
+fi
 
 if [[ "${TEMP_COMMIT}" == "true" ]]; then
   git reset --soft HEAD~1
