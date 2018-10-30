@@ -41,3 +41,7 @@ required = [
 [[constraint]]
   name = "github.com/kevinburke/go-bindata"
   version = "v3.11.0"
+
+[[constraint]]
+  name = "github.com/openshift/cluster-version-operator"
+  revision = "fe673cb712fa5e27001488fc088ac91bb553353d"

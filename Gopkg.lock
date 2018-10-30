@@ -233,6 +233,16 @@
   revision = "739bd301126c341c6caddf2cb3e3935ae9e9fff9"
 
 [[projects]]
+  digest = "1:5c8f9bc5d91660fb91ef7c9b10dab30492f0fec48b9f6e26e9a1eafdf67a29ce"
+  name = "github.com/openshift/cluster-version-operator"
+  packages = [
+    "pkg/apis",
+    "pkg/apis/operatorstatus.openshift.io/v1",
+  ]
+  pruneopts = ""
+  revision = "fe673cb712fa5e27001488fc088ac91bb553353d"
+
+[[projects]]
   branch = "master"
   digest = "1:70a46a231f6514e8de976fcfe9c9de2277eecc487ae7bc024fe430602c6f49bd"
   name = "github.com/operator-framework/operator-sdk"
@@ -667,6 +677,7 @@
     "github.com/ghodss/yaml",
     "github.com/kevinburke/go-bindata",
     "github.com/openshift/api/route/v1",
+    "github.com/openshift/cluster-version-operator/pkg/apis/operatorstatus.openshift.io/v1",
     "github.com/operator-framework/operator-sdk/pkg/k8sclient",
     "github.com/operator-framework/operator-sdk/pkg/sdk",
     "github.com/operator-framework/operator-sdk/pkg/util/k8sutil",
