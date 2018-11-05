@@ -10,20 +10,20 @@ import (
 
 func TestSetStatusCondition(t *testing.T) {
 	testCases := []struct {
-		description string
+		description   string
 		oldConditions []osv1.ClusterOperatorStatusCondition
-		newCondition *osv1.ClusterOperatorStatusCondition
-		expected []osv1.ClusterOperatorStatusCondition
+		newCondition  *osv1.ClusterOperatorStatusCondition
+		expected      []osv1.ClusterOperatorStatusCondition
 	}{
 		{
 			description: "new condition",
 			newCondition: &osv1.ClusterOperatorStatusCondition{
-				Type: osv1.OperatorAvailable,
+				Type:   osv1.OperatorAvailable,
 				Status: osv1.ConditionTrue,
 			},
 			expected: []osv1.ClusterOperatorStatusCondition{
 				{
-					Type: osv1.OperatorAvailable,
+					Type:   osv1.OperatorAvailable,
 					Status: osv1.ConditionTrue,
 				},
 			},
@@ -32,17 +32,17 @@ func TestSetStatusCondition(t *testing.T) {
 			description: "existing condition, unchanged",
 			oldConditions: []osv1.ClusterOperatorStatusCondition{
 				{
-					Type: osv1.OperatorAvailable,
+					Type:   osv1.OperatorAvailable,
 					Status: osv1.ConditionTrue,
 				},
 			},
 			newCondition: &osv1.ClusterOperatorStatusCondition{
-				Type: osv1.OperatorAvailable,
+				Type:   osv1.OperatorAvailable,
 				Status: osv1.ConditionTrue,
 			},
 			expected: []osv1.ClusterOperatorStatusCondition{
 				{
-					Type: osv1.OperatorAvailable,
+					Type:   osv1.OperatorAvailable,
 					Status: osv1.ConditionTrue,
 				},
 			},
@@ -51,33 +51,33 @@ func TestSetStatusCondition(t *testing.T) {
 			description: "existing conditions, one changed",
 			oldConditions: []osv1.ClusterOperatorStatusCondition{
 				{
-					Type: osv1.OperatorFailing,
+					Type:   osv1.OperatorFailing,
 					Status: osv1.ConditionFalse,
 				},
 				{
-					Type: osv1.OperatorProgressing,
+					Type:   osv1.OperatorProgressing,
 					Status: osv1.ConditionFalse,
 				},
 				{
-					Type: osv1.OperatorAvailable,
+					Type:   osv1.OperatorAvailable,
 					Status: osv1.ConditionFalse,
 				},
 			},
 			newCondition: &osv1.ClusterOperatorStatusCondition{
-				Type: osv1.OperatorAvailable,
+				Type:   osv1.OperatorAvailable,
 				Status: osv1.ConditionTrue,
 			},
 			expected: []osv1.ClusterOperatorStatusCondition{
 				{
-					Type: osv1.OperatorFailing,
+					Type:   osv1.OperatorFailing,
 					Status: osv1.ConditionFalse,
 				},
 				{
-					Type: osv1.OperatorProgressing,
+					Type:   osv1.OperatorProgressing,
 					Status: osv1.ConditionFalse,
 				},
 				{
-					Type: osv1.OperatorAvailable,
+					Type:   osv1.OperatorAvailable,
 					Status: osv1.ConditionTrue,
 				},
 			},
