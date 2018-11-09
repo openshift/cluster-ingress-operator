@@ -43,10 +43,8 @@ func (h *Handler) Handle(ctx context.Context, event sdk.Event) error {
 
 	// TODO: This should be adding an item to a rate limited work queue, but for
 	// now correctness is more important than performance.
-	switch o := event.Object.(type) {
-	case *ingressv1alpha1.ClusterIngress:
-		logrus.Infof("reconciling for update to clusteringress %q", o.Name)
-	}
+	logrus.Infof("reconciling in response to event: %#v", event)
+
 	return h.reconcile()
 }
 
@@ -129,44 +127,68 @@ func (h *Handler) ensureRouterNamespace() error {
 	if err != nil {
 		return fmt.Errorf("couldn't build router cluster role: %v", err)
 	}
-	err = sdk.Create(cr)
-	if err == nil {
-		logrus.Infof("created router cluster role %q", cr.Name)
-	} else if !errors.IsAlreadyExists(err) {
-		return fmt.Errorf("couldn't create router cluster role: %v", err)
+	err = sdk.Get(cr)
+	if err != nil {
+		if !errors.IsNotFound(err) {
+			return fmt.Errorf("failed to get router cluster role %q: %v", cr.Name, err)
+		}
+		err = sdk.Create(cr)
+		if err == nil {
+			logrus.Infof("created router cluster role %q", cr.Name)
+		} else if !errors.IsAlreadyExists(err) {
+			return fmt.Errorf("couldn't create router cluster role: %v", err)
+		}
 	}
 
 	ns, err := h.ManifestFactory.RouterNamespace()
 	if err != nil {
 		return fmt.Errorf("couldn't build router namespace: %v", err)
 	}
-	err = sdk.Create(ns)
-	if err == nil {
-		logrus.Infof("created router namespace %q", ns.Name)
-	} else if !errors.IsAlreadyExists(err) {
-		return fmt.Errorf("couldn't create router namespace %q: %v", ns.Name, err)
+	err = sdk.Get(ns)
+	if err != nil {
+		if !errors.IsNotFound(err) {
+			return fmt.Errorf("failed to get router namespace %q: %v", ns.Name, err)
+		}
+		err = sdk.Create(ns)
+		if err == nil {
+			logrus.Infof("created router namespace %q", ns.Name)
+		} else if !errors.IsAlreadyExists(err) {
+			return fmt.Errorf("couldn't create router namespace %q: %v", ns.Name, err)
+		}
 	}
 
 	sa, err := h.ManifestFactory.RouterServiceAccount()
 	if err != nil {
 		return fmt.Errorf("couldn't build router service account: %v", err)
 	}
-	err = sdk.Create(sa)
-	if err == nil {
-		logrus.Infof("created router service account %s/%s", sa.Namespace, sa.Name)
-	} else if !errors.IsAlreadyExists(err) {
-		return fmt.Errorf("couldn't create router service account %s/%s: %v", sa.Namespace, sa.Name, err)
+	err = sdk.Get(sa)
+	if err != nil {
+		if !errors.IsNotFound(err) {
+			return fmt.Errorf("failed to get router service account %s/%s: %v", sa.Namespace, sa.Name, err)
+		}
+		err = sdk.Create(sa)
+		if err == nil {
+			logrus.Infof("created router service account %s/%s", sa.Namespace, sa.Name)
+		} else if !errors.IsAlreadyExists(err) {
+			return fmt.Errorf("couldn't create router service account %s/%s: %v", sa.Namespace, sa.Name, err)
+		}
 	}
 
 	crb, err := h.ManifestFactory.RouterClusterRoleBinding()
 	if err != nil {
 		return fmt.Errorf("couldn't build router cluster role binding: %v", err)
 	}
-	err = sdk.Create(crb)
-	if err == nil {
-		logrus.Infof("created router cluster role binding %q", crb.Name)
-	} else if !errors.IsAlreadyExists(err) {
-		return fmt.Errorf("couldn't create router cluster role binding: %v", err)
+	err = sdk.Get(crb)
+	if err != nil {
+		if !errors.IsNotFound(err) {
+			return fmt.Errorf("failed to get router cluster role binding %q: %v", crb.Name, err)
+		}
+		err = sdk.Create(crb)
+		if err == nil {
+			logrus.Infof("created router cluster role binding %q", crb.Name)
+		} else if !errors.IsAlreadyExists(err) {
+			return fmt.Errorf("couldn't create router cluster role binding: %v", err)
+		}
 	}
 
 	return nil
@@ -179,15 +201,17 @@ func (h *Handler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress) err
 	if err != nil {
 		return fmt.Errorf("couldn't build daemonset: %v", err)
 	}
-	err = sdk.Create(ds)
-	if errors.IsAlreadyExists(err) {
-		if err = sdk.Get(ds); err != nil {
-			return fmt.Errorf("couldn't get daemonset %s, %v", ds.Name, err)
+	err = sdk.Get(ds)
+	if err != nil {
+		if !errors.IsNotFound(err) {
+			return fmt.Errorf("failed to get router daemonset %s/%s, %v", ds.Namespace, ds.Name, err)
 		}
-	} else if err != nil {
-		return fmt.Errorf("failed to create daemonset %s/%s: %v", ds.Namespace, ds.Name, err)
-	} else {
-		logrus.Infof("created router daemonset %s/%s", ds.Namespace, ds.Name)
+		err = sdk.Create(ds)
+		if err == nil {
+			logrus.Infof("created router daemonset %s/%s", ds.Namespace, ds.Name)
+		} else if !errors.IsAlreadyExists(err) {
+			return fmt.Errorf("failed to create daemonset %s/%s: %v", ds.Namespace, ds.Name, err)
+		}
 	}
 
 	if ci.Spec.HighAvailability != nil {
@@ -197,21 +221,27 @@ func (h *Handler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress) err
 			if err != nil {
 				return fmt.Errorf("couldn't build service: %v", err)
 			}
-			trueVar := true
-			dsRef := metav1.OwnerReference{
-				APIVersion: ds.APIVersion,
-				Kind:       ds.Kind,
-				Name:       ds.Name,
-				UID:        ds.UID,
-				Controller: &trueVar,
-			}
-			service.SetOwnerReferences([]metav1.OwnerReference{dsRef})
-
-			err = sdk.Create(service)
-			if err == nil {
-				logrus.Infof("created router service %s/%s", service.Namespace, service.Name)
-			} else if !errors.IsAlreadyExists(err) {
-				return fmt.Errorf("failed to create service %s/%s: %v", service.Namespace, service.Name, err)
+			err = sdk.Get(service)
+			if err != nil {
+				if !errors.IsNotFound(err) {
+					return fmt.Errorf("failed to fetch service %s, %v", service.Name, err)
+				}
+				// Service doesn't exist; try to create it.
+				trueVar := true
+				dsRef := metav1.OwnerReference{
+					APIVersion: ds.APIVersion,
+					Kind:       ds.Kind,
+					Name:       ds.Name,
+					UID:        ds.UID,
+					Controller: &trueVar,
+				}
+				service.SetOwnerReferences([]metav1.OwnerReference{dsRef})
+				err = sdk.Create(service)
+				if err == nil {
+					logrus.Infof("created router service %s/%s", service.Namespace, service.Name)
+				} else if !errors.IsAlreadyExists(err) {
+					return fmt.Errorf("failed to create service %s/%s: %v", service.Namespace, service.Name, err)
+				}
 			}
 		}
 	}
