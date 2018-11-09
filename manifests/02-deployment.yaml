@@ -13,6 +13,9 @@ spec:
       labels:
         name: ingress-operator
     spec:
+      strategy:
+        type: Recreate
+      serviceAccountName: ingress-operator
       containers:
         - name: ingress-operator
           image: openshift/origin-cluster-ingress-operator:latest
@@ -28,4 +31,3 @@ spec:
                   fieldPath: metadata.namespace
             - name: OPERATOR_NAME
               value: ingress-operator
-      serviceAccountName: ingress-operator

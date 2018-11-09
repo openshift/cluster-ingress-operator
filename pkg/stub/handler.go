@@ -43,10 +43,8 @@ func (h *Handler) Handle(ctx context.Context, event sdk.Event) error {
 
 	// TODO: This should be adding an item to a rate limited work queue, but for
 	// now correctness is more important than performance.
-	switch o := event.Object.(type) {
-	case *ingressv1alpha1.ClusterIngress:
-		logrus.Infof("reconciling for update to clusteringress %q", o.Name)
-	}
+	logrus.Infof("reconciling in response to event: %#v", event)
+
 	return h.reconcile()
 }
 
@@ -61,7 +59,7 @@ func (h *Handler) EnsureDefaultClusterIngress() error {
 	if err != nil && !errors.IsAlreadyExists(err) {
 		return err
 	} else if err == nil {
-		logrus.Infof("created default cluster ingress %s/%s", ci.Namespace, ci.Name)
+		logrus.Infof("created default clusteringress %s/%s", ci.Namespace, ci.Name)
 	}
 	return nil
 }
@@ -86,7 +84,7 @@ func (h *Handler) reconcile() error {
 	}
 	err = sdk.List(h.Namespace, ingresses, sdk.WithListOptions(&metav1.ListOptions{}))
 	if err != nil {
-		return fmt.Errorf("failed to list clusteringresses: %v", err)
+		return fmt.Errorf("failed to list clusteringresses in namespace %s: %v", h.Namespace, err)
 	}
 
 	// Reconcile all the ingresses.
@@ -99,7 +97,7 @@ func (h *Handler) reconcile() error {
 			// Destroy any router associated with the clusteringress.
 			err := h.ensureRouterDeleted(&ingress)
 			if err != nil {
-				errors = append(errors, fmt.Errorf("couldn't delete clusteringress %q: %v", ingress.Name, err))
+				errors = append(errors, fmt.Errorf("failed to delete clusteringress %s/%s: %v", ingress.Namespace, ingress.Name, err))
 				continue
 			}
 			// Clean up the finalizer to allow the clusteringress to be deleted.
@@ -107,7 +105,7 @@ func (h *Handler) reconcile() error {
 				ingress.Finalizers = slice.RemoveString(ingress.Finalizers, ClusterIngressFinalizer)
 				err = sdk.Update(&ingress)
 				if err != nil {
-					errors = append(errors, fmt.Errorf("couldn't remove finalizer from clusteringress %q: %v", ingress.Name, err))
+					errors = append(errors, fmt.Errorf("failed to remove finalizer from clusteringress %s/%s: %v", ingress.Namespace, ingress.Name, err))
 				}
 			}
 			continue
@@ -116,7 +114,7 @@ func (h *Handler) reconcile() error {
 		// Handle active ingress.
 		err := h.ensureRouterForIngress(&ingress)
 		if err != nil {
-			errors = append(errors, fmt.Errorf("couldn't ensure clusteringress %q: %v", ingress.Name, err))
+			errors = append(errors, fmt.Errorf("failed to ensure clusteringress %s/%s: %v", ingress.Namespace, ingress.Name, err))
 		}
 	}
 	return utilerrors.NewAggregate(errors)
@@ -127,46 +125,70 @@ func (h *Handler) reconcile() error {
 func (h *Handler) ensureRouterNamespace() error {
 	cr, err := h.ManifestFactory.RouterClusterRole()
 	if err != nil {
-		return fmt.Errorf("couldn't build router cluster role: %v", err)
+		return fmt.Errorf("failed to build router cluster role: %v", err)
 	}
-	err = sdk.Create(cr)
-	if err == nil {
-		logrus.Infof("created router cluster role %q", cr.Name)
-	} else if !errors.IsAlreadyExists(err) {
-		return fmt.Errorf("couldn't create router cluster role: %v", err)
+	err = sdk.Get(cr)
+	if err != nil {
+		if !errors.IsNotFound(err) {
+			return fmt.Errorf("failed to get router cluster role %s: %v", cr.Name, err)
+		}
+		err = sdk.Create(cr)
+		if err == nil {
+			logrus.Infof("created router cluster role %s", cr.Name)
+		} else if !errors.IsAlreadyExists(err) {
+			return fmt.Errorf("failed to create router cluster role %s: %v", cr.Name, err)
+		}
 	}
 
 	ns, err := h.ManifestFactory.RouterNamespace()
 	if err != nil {
-		return fmt.Errorf("couldn't build router namespace: %v", err)
+		return fmt.Errorf("failed to build router namespace: %v", err)
 	}
-	err = sdk.Create(ns)
-	if err == nil {
-		logrus.Infof("created router namespace %q", ns.Name)
-	} else if !errors.IsAlreadyExists(err) {
-		return fmt.Errorf("couldn't create router namespace %q: %v", ns.Name, err)
+	err = sdk.Get(ns)
+	if err != nil {
+		if !errors.IsNotFound(err) {
+			return fmt.Errorf("failed to get router namespace %q: %v", ns.Name, err)
+		}
+		err = sdk.Create(ns)
+		if err == nil {
+			logrus.Infof("created router namespace %s", ns.Name)
+		} else if !errors.IsAlreadyExists(err) {
+			return fmt.Errorf("failed to create router namespace %s: %v", ns.Name, err)
+		}
 	}
 
 	sa, err := h.ManifestFactory.RouterServiceAccount()
 	if err != nil {
-		return fmt.Errorf("couldn't build router service account: %v", err)
+		return fmt.Errorf("failed to build router service account: %v", err)
 	}
-	err = sdk.Create(sa)
-	if err == nil {
-		logrus.Infof("created router service account %s/%s", sa.Namespace, sa.Name)
-	} else if !errors.IsAlreadyExists(err) {
-		return fmt.Errorf("couldn't create router service account %s/%s: %v", sa.Namespace, sa.Name, err)
+	err = sdk.Get(sa)
+	if err != nil {
+		if !errors.IsNotFound(err) {
+			return fmt.Errorf("failed to get router service account %s/%s: %v", sa.Namespace, sa.Name, err)
+		}
+		err = sdk.Create(sa)
+		if err == nil {
+			logrus.Infof("created router service account %s/%s", sa.Namespace, sa.Name)
+		} else if !errors.IsAlreadyExists(err) {
+			return fmt.Errorf("failed to create router service account %s/%s: %v", sa.Namespace, sa.Name, err)
+		}
 	}
 
 	crb, err := h.ManifestFactory.RouterClusterRoleBinding()
 	if err != nil {
-		return fmt.Errorf("couldn't build router cluster role binding: %v", err)
+		return fmt.Errorf("failed to build router cluster role binding: %v", err)
 	}
-	err = sdk.Create(crb)
-	if err == nil {
-		logrus.Infof("created router cluster role binding %q", crb.Name)
-	} else if !errors.IsAlreadyExists(err) {
-		return fmt.Errorf("couldn't create router cluster role binding: %v", err)
+	err = sdk.Get(crb)
+	if err != nil {
+		if !errors.IsNotFound(err) {
+			return fmt.Errorf("failed to get router cluster role binding %s: %v", crb.Name, err)
+		}
+		err = sdk.Create(crb)
+		if err == nil {
+			logrus.Infof("created router cluster role binding %s", crb.Name)
+		} else if !errors.IsAlreadyExists(err) {
+			return fmt.Errorf("failed to create router cluster role binding %s: %v", crb.Name, err)
+		}
 	}
 
 	return nil
@@ -177,17 +199,19 @@ func (h *Handler) ensureRouterNamespace() error {
 func (h *Handler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress) error {
 	ds, err := h.ManifestFactory.RouterDaemonSet(ci)
 	if err != nil {
-		return fmt.Errorf("couldn't build daemonset: %v", err)
+		return fmt.Errorf("failed to build router daemonset: %v", err)
 	}
-	err = sdk.Create(ds)
-	if errors.IsAlreadyExists(err) {
-		if err = sdk.Get(ds); err != nil {
-			return fmt.Errorf("couldn't get daemonset %s, %v", ds.Name, err)
+	err = sdk.Get(ds)
+	if err != nil {
+		if !errors.IsNotFound(err) {
+			return fmt.Errorf("failed to get router daemonset %s/%s, %v", ds.Namespace, ds.Name, err)
 		}
-	} else if err != nil {
-		return fmt.Errorf("failed to create daemonset %s/%s: %v", ds.Namespace, ds.Name, err)
-	} else {
-		logrus.Infof("created router daemonset %s/%s", ds.Namespace, ds.Name)
+		err = sdk.Create(ds)
+		if err == nil {
+			logrus.Infof("created router daemonset %s/%s", ds.Namespace, ds.Name)
+		} else if !errors.IsAlreadyExists(err) {
+			return fmt.Errorf("failed to create router daemonset %s/%s: %v", ds.Namespace, ds.Name, err)
+		}
 	}
 
 	if ci.Spec.HighAvailability != nil {
@@ -195,23 +219,29 @@ func (h *Handler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress) err
 		case ingressv1alpha1.CloudClusterIngressHA:
 			service, err := h.ManifestFactory.RouterServiceCloud(ci)
 			if err != nil {
-				return fmt.Errorf("couldn't build service: %v", err)
+				return fmt.Errorf("failed to build router service: %v", err)
 			}
-			trueVar := true
-			dsRef := metav1.OwnerReference{
-				APIVersion: ds.APIVersion,
-				Kind:       ds.Kind,
-				Name:       ds.Name,
-				UID:        ds.UID,
-				Controller: &trueVar,
-			}
-			service.SetOwnerReferences([]metav1.OwnerReference{dsRef})
-
-			err = sdk.Create(service)
-			if err == nil {
-				logrus.Infof("created router service %s/%s", service.Namespace, service.Name)
-			} else if !errors.IsAlreadyExists(err) {
-				return fmt.Errorf("failed to create service %s/%s: %v", service.Namespace, service.Name, err)
+			err = sdk.Get(service)
+			if err != nil {
+				if !errors.IsNotFound(err) {
+					return fmt.Errorf("failed to get router service %s/%s, %v", service.Namespace, service.Name, err)
+				}
+				// Service doesn't exist; try to create it.
+				trueVar := true
+				dsRef := metav1.OwnerReference{
+					APIVersion: ds.APIVersion,
+					Kind:       ds.Kind,
+					Name:       ds.Name,
+					UID:        ds.UID,
+					Controller: &trueVar,
+				}
+				service.SetOwnerReferences([]metav1.OwnerReference{dsRef})
+				err = sdk.Create(service)
+				if err == nil {
+					logrus.Infof("created router service %s/%s", service.Namespace, service.Name)
+				} else if !errors.IsAlreadyExists(err) {
+					return fmt.Errorf("failed to create router service %s/%s: %v", service.Namespace, service.Name, err)
+				}
 			}
 		}
 	}
@@ -224,7 +254,7 @@ func (h *Handler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress) err
 func (h *Handler) ensureRouterDeleted(ci *ingressv1alpha1.ClusterIngress) error {
 	ds, err := h.ManifestFactory.RouterDaemonSet(ci)
 	if err != nil {
-		return fmt.Errorf("couldn't build DaemonSet object for deletion: %v", err)
+		return fmt.Errorf("failed to build router daemonset for deletion: %v", err)
 	}
 	err = sdk.Delete(ds)
 	if !errors.IsNotFound(err) {
