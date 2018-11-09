@@ -12,11 +12,38 @@ required = [
   "github.com/kevinburke/go-bindata",
 ]
 
+[prune]
+  go-tests = true
+  non-go = true
+  unused-packages = true
+
+[[prune.project]]
+  name = "k8s.io/code-generator"
+  non-go = false
+  unused-packages = false
+
+[[prune.project]]
+  name = "github.com/kevinburke/go-bindata"
+  non-go = false
+  unused-packages = false
+
 [[constraint]]
   name = "github.com/operator-framework/operator-sdk"
   # The version rule is used for a specific release and the master branch for in between releases.
   branch = "master"
   # version = "=v0.0.5"
+
+[[constraint]]
+  name = "github.com/openshift/api"
+  branch = "master"
+
+[[constraint]]
+  name = "github.com/kevinburke/go-bindata"
+  version = "v3.11.0"
+
+[[constraint]]
+  name = "github.com/openshift/cluster-version-operator"
+  revision = "fe673cb712fa5e27001488fc088ac91bb553353d"
 
 [[override]]
   name = "k8s.io/api"
@@ -33,15 +60,3 @@ required = [
 [[override]]
   name = "k8s.io/client-go"
   version = "kubernetes-1.10.1"
-
-[[constraint]]
-  name = "github.com/openshift/api"
-  branch = "master"
-
-[[constraint]]
-  name = "github.com/kevinburke/go-bindata"
-  version = "v3.11.0"
-
-[[constraint]]
-  name = "github.com/openshift/cluster-version-operator"
-  revision = "fe673cb712fa5e27001488fc088ac91bb553353d"
