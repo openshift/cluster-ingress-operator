@@ -7,6 +7,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
+	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/util"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/slice"
@@ -15,6 +16,7 @@ import (
 
 	cvoclientset "github.com/openshift/cluster-version-operator/pkg/generated/clientset/versioned"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
@@ -39,6 +41,7 @@ type Handler struct {
 	InstallConfig   *util.InstallConfig
 	ManifestFactory *manifests.Factory
 	Namespace       string
+	DNSManager      dns.Manager
 }
 
 func (h *Handler) Handle(ctx context.Context, event sdk.Event) error {
@@ -246,10 +249,34 @@ func (h *Handler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress) err
 					return fmt.Errorf("failed to create router service %s/%s: %v", service.Namespace, service.Name, err)
 				}
 			}
+			if ci.Spec.IngressDomain != nil {
+				err = h.ensureDNSForLoadBalancer(ci, service)
+				if err != nil {
+					return fmt.Errorf("failed to ensure DNS for router service %s/%s: %v", service.Namespace, service.Name, err)
+				}
+			}
 		}
 	}
 
 	return nil
+}
+
+// ensureDNSForLoadBalancer configures a wildcard DNS alias for a ClusterIngress
+// targeting the given service.
+func (h *Handler) ensureDNSForLoadBalancer(ci *ingressv1alpha1.ClusterIngress, service *corev1.Service) error {
+	if len(service.Status.LoadBalancer.Ingress) == 0 {
+		logrus.Infof("won't update DNS record for load balancer service %s/%s because status contains no ingresses", service.Namespace, service.Name)
+		return nil
+	}
+	target := service.Status.LoadBalancer.Ingress[0].Hostname
+	if len(target) == 0 {
+		logrus.Infof("won't update DNS record for load balancer service %s/%s because ingress hostname is empty", service.Namespace, service.Name)
+		return nil
+	}
+	// TODO: the routing wildcard prefix should come from cluster config or
+	// ClusterIngress.
+	domain := fmt.Sprintf("*.apps.%s", *ci.Spec.IngressDomain)
+	return h.DNSManager.EnsureAlias(domain, target)
 }
 
 // ensureRouterDeleted ensures that any router resources associated with the

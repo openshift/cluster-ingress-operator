@@ -16,12 +16,14 @@ if [[ "${TEMP_COMMIT}" == "true" ]]; then
 fi
 
 REV=$(git rev-parse --short HEAD)
+TAG="${TAG:-$REV}"
+
 if [[ -z "${DOCKER+1}" ]] && command -v buildah >& /dev/null; then
-  buildah bud -t $REPO:$REV .
-  buildah push $REPO:$REV docker://$REPO:$REV
+  buildah bud -t $REPO:$TAG .
+  buildah push $REPO:$TAG docker://$REPO:$TAG
 else
-  docker build -t $REPO:$REV .
-  docker push $REPO:$REV
+  docker build -t $REPO:$TAG .
+  docker push $REPO:$TAG
 fi
 
 if [[ "${TEMP_COMMIT}" == "true" ]]; then
@@ -29,9 +31,13 @@ if [[ "${TEMP_COMMIT}" == "true" ]]; then
 fi
 
 cp -R manifests/* $MANIFESTS
-cat manifests/02-deployment.yaml | sed "s~openshift/origin-cluster-ingress-operator:latest~$REPO:$REV~" > "$MANIFESTS/02-deployment.yaml"
+cat manifests/02-deployment.yaml | sed "s~openshift/origin-cluster-ingress-operator:latest~$REPO:$TAG~" > "$MANIFESTS/02-deployment.yaml"
 
-echo "Pushed $REPO:$REV"
+echo "Pushed $REPO:$TAG"
 echo "Install manifests using:"
 echo ""
 echo "oc apply -f $MANIFESTS"
+echo ""
+echo "Alternatively, rollout just a new operator deployment with:"
+echo ""
+echo "oc apply -f $MANIFESTS/02-deployment.yaml"
