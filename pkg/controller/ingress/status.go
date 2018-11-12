@@ -1,6 +1,7 @@
-package stub
+package ingress
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -11,29 +12,29 @@ import (
 	operatorversion "github.com/openshift/cluster-ingress-operator/version"
 	osv1 "github.com/openshift/cluster-version-operator/pkg/apis/operatorstatus.openshift.io/v1"
 
-	"github.com/operator-framework/operator-sdk/pkg/sdk"
-
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // syncOperatorStatus computes the operator's current status and therefrom
 // creates or updates the ClusterOperator resource for the operator.
-func (h *Handler) syncOperatorStatus() {
+func (r *IngressReconciler) syncOperatorStatus() {
 	co := &osv1.ClusterOperator{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "ClusterOperator",
 			APIVersion: "operatorstatus.openshift.io/v1",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace: h.Namespace,
+			Namespace: r.namespace,
 			// TODO Use a named constant or get name from config.
 			Name: "openshift-ingress",
 		},
 	}
-	err := sdk.Get(co)
+	err := r.client.Get(context.TODO(), types.NamespacedName{Name: co.Name, Namespace: co.Namespace}, co)
 	isNotFound := errors.IsNotFound(err)
 	if err != nil && !isNotFound {
 		logrus.Errorf("syncOperatorStatus: error getting ClusterOperator %s/%s: %v",
@@ -42,7 +43,7 @@ func (h *Handler) syncOperatorStatus() {
 		return
 	}
 
-	ns, ingresses, daemonsets, err := h.getOperatorState()
+	ns, ingresses, daemonsets, err := r.getOperatorState()
 	if err != nil {
 		logrus.Errorf("syncOperatorStatus: getOperatorState: %v", err)
 
@@ -56,7 +57,7 @@ func (h *Handler) syncOperatorStatus() {
 	if isNotFound {
 		co.Status.Version = operatorversion.Version
 
-		if err := sdk.Create(co); err != nil {
+		if err := r.client.Create(context.TODO(), co); err != nil {
 			logrus.Errorf("syncOperatorStatus: failed to create ClusterOperator %s/%s: %v",
 				co.Namespace, co.Name, err)
 		} else {
@@ -71,7 +72,7 @@ func (h *Handler) syncOperatorStatus() {
 		return
 	}
 
-	if _, err := h.CvoClient.OperatorstatusV1().
+	if _, err := r.cvoClient.OperatorstatusV1().
 		ClusterOperators(co.Namespace).
 		UpdateStatus(co); err != nil {
 		logrus.Errorf("syncOperatorStatus: updating status on %s/%s: %v",
@@ -81,14 +82,14 @@ func (h *Handler) syncOperatorStatus() {
 
 // getOperatorState gets and returns the resources necessary to compute the
 // operator's current state.
-func (h *Handler) getOperatorState() (*corev1.Namespace, []ingressv1alpha1.ClusterIngress, []appsv1.DaemonSet, error) {
-	ns, err := h.ManifestFactory.RouterNamespace()
+func (r *IngressReconciler) getOperatorState() (*corev1.Namespace, []ingressv1alpha1.ClusterIngress, []appsv1.DaemonSet, error) {
+	ns, err := r.manifestFactory.RouterNamespace()
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf(
 			"error building router namespace: %v", err)
 	}
 
-	if err := sdk.Get(ns); err != nil {
+	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: ns.Name}, ns); err != nil {
 		if errors.IsNotFound(err) {
 			return nil, nil, nil, nil
 		}
@@ -103,8 +104,7 @@ func (h *Handler) getOperatorState() (*corev1.Namespace, []ingressv1alpha1.Clust
 			APIVersion: "ingress.openshift.io/v1alpha1",
 		},
 	}
-	err = sdk.List(h.Namespace, ingressList,
-		sdk.WithListOptions(&metav1.ListOptions{}))
+	err = r.client.List(context.TODO(), &client.ListOptions{Namespace: r.namespace}, ingressList)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf(
 			"failed to list ClusterIngresses: %v", err)
@@ -116,8 +116,7 @@ func (h *Handler) getOperatorState() (*corev1.Namespace, []ingressv1alpha1.Clust
 			APIVersion: "apps/v1",
 		},
 	}
-	err = sdk.List(ns.Name, daemonsetList,
-		sdk.WithListOptions(&metav1.ListOptions{}))
+	err = r.client.List(context.TODO(), &client.ListOptions{Namespace: r.namespace}, daemonsetList)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf(
 			"failed to list DaemonSets: %v", err)

@@ -1,4 +1,4 @@
-package stub
+package ingress
 
 import (
 	"fmt"

@@ -78,3 +78,7 @@ type ClusterIngressHighAvailability struct {
 type ClusterIngressStatus struct {
 	// Fill me
 }
+
+func init() {
+	SchemeBuilder.Register(&ClusterIngress{}, &ClusterIngressList{})
+}
