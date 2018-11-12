@@ -1,5 +1,4 @@
 # Force dep to vendor the code generators, which aren't imported just used at dev time.
-# Picking a subpackage with Go code won't be necessary once https://github.com/golang/dep/pull/1545 is merged.
 required = [
   "k8s.io/code-generator/cmd/defaulter-gen",
   "k8s.io/code-generator/cmd/deepcopy-gen",
@@ -29,9 +28,8 @@ required = [
 
 [[constraint]]
   name = "github.com/operator-framework/operator-sdk"
-  # The version rule is used for a specific release and the master branch for in between releases.
-  branch = "master"
-  # version = "=v0.0.5"
+  revision = "acb5dbef1f89dd46c4ad8089de37034405032750"
+  # version = "=v0.1.1" #osdk_version_annotation
 
 [[constraint]]
   name = "github.com/openshift/api"
@@ -43,24 +41,37 @@ required = [
 
 [[constraint]]
   name = "github.com/openshift/cluster-version-operator"
-  revision = "fe673cb712fa5e27001488fc088ac91bb553353d"
+  revision = "60b645035315ff132ac6747ad1df8e2a75204d1e"
 
 [[constraint]]
   name = "github.com/aws/aws-sdk-go"
   version = "v1.15.72"
 
 [[override]]
-  name = "k8s.io/api"
-  version = "kubernetes-1.10.1"
+  name = "k8s.io/code-generator"
+  # revision for tag "kubernetes-1.11.2"
+  revision = "6702109cc68eb6fe6350b83e14407c8d7309fd1a"
 
 [[override]]
-  name = "k8s.io/apimachinery"
-  version = "kubernetes-1.10.1"
+  name = "k8s.io/api"
+  # revision for tag "kubernetes-1.11.2"
+  revision = "2d6f90ab1293a1fb871cf149423ebb72aa7423aa"
 
 [[override]]
   name = "k8s.io/apiextensions-apiserver"
-  version = "kubernetes-1.10.1"
+  # revision for tag "kubernetes-1.11.2"
+  revision = "408db4a50408e2149acbd657bceb2480c13cb0a4"
+
+[[override]]
+  name = "k8s.io/apimachinery"
+  # revision for tag "kubernetes-1.11.2"
+  revision = "103fd098999dc9c0c88536f5c9ad2e5da39373ae"
 
 [[override]]
   name = "k8s.io/client-go"
-  version = "kubernetes-1.10.1"
+  # revision for tag "kubernetes-1.11.2"
+  revision = "1f13a808da65775f22cbf47862c4e5898d8f4ca1"
+
+[[override]]
+  name = "sigs.k8s.io/controller-runtime"
+  version = "v0.1.4"
