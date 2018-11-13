@@ -71,8 +71,10 @@ func (h *Handler) syncOperatorStatus() {
 		return
 	}
 
-	if err := sdk.Update(co); err != nil {
-		logrus.Errorf("syncOperatorStatus: failed to update status of ClusterOperator %s/%s: %v",
+	if _, err := h.CvoClient.OperatorstatusV1().
+		ClusterOperators(co.Namespace).
+		UpdateStatus(co); err != nil {
+		logrus.Errorf("syncOperatorStatus: updating status on %s/%s: %v",
 			co.Namespace, co.Name, err)
 	}
 }

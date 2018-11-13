@@ -14,6 +14,8 @@ import (
 	k8sutil "github.com/operator-framework/operator-sdk/pkg/util/k8sutil"
 	sdkVersion "github.com/operator-framework/operator-sdk/version"
 
+	cvoclientset "github.com/openshift/cluster-version-operator/pkg/generated/clientset/versioned"
+
 	"github.com/sirupsen/logrus"
 
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
@@ -43,7 +45,13 @@ func main() {
 		logrus.Fatalf("could't get installconfig: %v", err)
 	}
 
+	cvoClient, err := cvoclientset.NewForConfig(k8sclient.GetKubeConfig())
+	if err != nil {
+		logrus.Fatalf("Failed to get cvoClient: %v", err)
+	}
+
 	handler := &stub.Handler{
+		CvoClient:       cvoClient,
 		InstallConfig:   ic,
 		Namespace:       namespace,
 		ManifestFactory: manifests.NewFactory(),
