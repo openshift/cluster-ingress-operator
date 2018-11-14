@@ -52,6 +52,12 @@ rules:
   verbs:
   - create
   - get
+
+- apiGroups:
+  - operatorstatus.openshift.io
+  resources:
+  - clusteroperators/status
+  verbs:
   - update
 
 # Mirrored from assets/router/cluster-role.yaml

@@ -25,6 +25,10 @@ test: verify
 release-local:
 	MANIFESTS=$(shell mktemp -d) hack/release-local.sh
 
+.PHONY: test-e2e
+test-e2e:
+	KUBERNETES_CONFIG="$(KUBECONFIG)" go test -v -tags e2e ./...
+
 .PHONY: test-integration
 test-integration:
 	hack/test-integration.sh
