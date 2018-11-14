@@ -13,6 +13,8 @@ import (
 
 	"github.com/operator-framework/operator-sdk/pkg/sdk"
 
+	cvoclientset "github.com/openshift/cluster-version-operator/pkg/generated/clientset/versioned"
+
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
@@ -33,6 +35,7 @@ const (
 )
 
 type Handler struct {
+	CvoClient       *cvoclientset.Clientset
 	InstallConfig   *util.InstallConfig
 	ManifestFactory *manifests.Factory
 	Namespace       string

@@ -134,6 +134,14 @@
   revision = "24818f796faf91cd76ec7bddd72458fbced7a6c1"
 
 [[projects]]
+  digest = "1:1bb197a3b5db4e06e00b7560f8e89836c486627f2a0338332ed37daa003d259e"
+  name = "github.com/google/uuid"
+  packages = ["."]
+  pruneopts = "NUT"
+  revision = "064e2069ce9c359c118179501254f67d7d37ba24"
+  version = "0.2"
+
+[[projects]]
   digest = "1:06a7dadb7b760767341ffb6c8d377238d68a1226f2b21b5d497d2e3f6ecf6b4e"
   name = "github.com/googleapis/gnostic"
   packages = [
@@ -233,11 +241,16 @@
   revision = "739bd301126c341c6caddf2cb3e3935ae9e9fff9"
 
 [[projects]]
-  digest = "1:3e533bffcb17cd1d469025533492773f5ba5c237c5729382c159d7af713ac0fa"
+  digest = "1:5d7bdb1ad329d6fe427bb42b3cca11689616c80070ba431b8023314539c78d75"
   name = "github.com/openshift/cluster-version-operator"
   packages = [
     "pkg/apis",
+    "pkg/apis/clusterversion.openshift.io/v1",
     "pkg/apis/operatorstatus.openshift.io/v1",
+    "pkg/generated/clientset/versioned",
+    "pkg/generated/clientset/versioned/scheme",
+    "pkg/generated/clientset/versioned/typed/clusterversion.openshift.io/v1",
+    "pkg/generated/clientset/versioned/typed/operatorstatus.openshift.io/v1",
   ]
   pruneopts = "NUT"
   revision = "fe673cb712fa5e27001488fc088ac91bb553353d"
@@ -678,6 +691,7 @@
     "github.com/kevinburke/go-bindata",
     "github.com/openshift/api/route/v1",
     "github.com/openshift/cluster-version-operator/pkg/apis/operatorstatus.openshift.io/v1",
+    "github.com/openshift/cluster-version-operator/pkg/generated/clientset/versioned",
     "github.com/operator-framework/operator-sdk/pkg/k8sclient",
     "github.com/operator-framework/operator-sdk/pkg/sdk",
     "github.com/operator-framework/operator-sdk/pkg/util/k8sutil",
