@@ -26,9 +26,14 @@ const (
 	RouterClusterRole        = "assets/router/cluster-role.yaml"
 	RouterClusterRoleBinding = "assets/router/cluster-role-binding.yaml"
 	RouterDaemonSet          = "assets/router/daemonset.yaml"
+	RouterServiceInternal    = "assets/router/service-internal.yaml"
 	RouterServiceCloud       = "assets/router/service-cloud.yaml"
 	OperatorRole             = "assets/router/operator-role.yaml"
 	OperatorRoleBinding      = "assets/router/operator-role-binding.yaml"
+
+	// Annotation used to inform the certificate generation service to
+	// generate a cluster-signed certificate and populate the secret.
+	ServingCertSecretAnnotation = "service.alpha.openshift.io/serving-cert-secret-name"
 )
 
 func MustAssetReader(asset string) io.Reader {
@@ -169,7 +174,42 @@ func (f *Factory) RouterDaemonSet(cr *ingressv1alpha1.ClusterIngress) (*appsv1.D
 
 	ds.Spec.Template.Spec.Containers[0].Image = f.config.RouterImage
 
+	// Fill in the default certificate secret name.
+	secretName := fmt.Sprintf("router-certs-%s", cr.Name)
+	if cr.Spec.DefaultCertificateSecret != nil && len(*cr.Spec.DefaultCertificateSecret) > 0 {
+		secretName = *cr.Spec.DefaultCertificateSecret
+	}
+	ds.Spec.Template.Spec.Volumes[0].Secret.SecretName = secretName
+
 	return ds, nil
+}
+
+func (f *Factory) RouterServiceInternal(cr *ingressv1alpha1.ClusterIngress) (*corev1.Service, error) {
+	s, err := NewService(MustAssetReader(RouterServiceInternal))
+	if err != nil {
+		return nil, err
+	}
+
+	name := "router-internal-" + cr.Name
+
+	s.Name = name
+
+	if s.Labels == nil {
+		s.Labels = map[string]string{}
+	}
+	s.Labels["router"] = name
+
+	if s.Annotations == nil {
+		s.Annotations = map[string]string{}
+	}
+	s.Annotations[ServingCertSecretAnnotation] = fmt.Sprintf("router-certs-%s", cr.Name)
+
+	if s.Spec.Selector == nil {
+		s.Spec.Selector = map[string]string{}
+	}
+	s.Spec.Selector["router"] = name
+
+	return s, nil
 }
 
 func (f *Factory) RouterServiceCloud(cr *ingressv1alpha1.ClusterIngress) (*corev1.Service, error) {

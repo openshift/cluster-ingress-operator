@@ -39,6 +39,8 @@ spec:
             value: "1936"
           - name: ROUTER_SERVICE_NAMESPACE
             value: openshift-ingress
+          - name: DEFAULT_CERTIFICATE_DIR
+            value: /etc/pki/tls/private
           livenessProbe:
             initialDelaySeconds: 10
             httpGet:
@@ -49,3 +51,12 @@ spec:
             httpGet:
               path: /healthz
               port: 1936
+          volumeMounts:
+          - mountPath: /etc/pki/tls/private
+            name: default-certificate
+            readOnly: true
+      volumes:
+      - name: default-certificate
+        secret:
+          defaultMode: 420
+          # SecretName is set at run-time.

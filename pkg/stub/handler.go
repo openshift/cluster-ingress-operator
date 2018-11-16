@@ -16,6 +16,7 @@ import (
 
 	cvoclientset "github.com/openshift/cluster-version-operator/pkg/generated/clientset/versioned"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -255,6 +256,44 @@ func (h *Handler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress) err
 					return fmt.Errorf("failed to ensure DNS for router service %s/%s: %v", service.Namespace, service.Name, err)
 				}
 			}
+		}
+	}
+
+	if err := h.ensureRouterServiceForIngress(ds, ci); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// ensureRouterServiceForIngress ensures that a Router service exists for a
+// given ClusterIngress exists.
+func (h *Handler) ensureRouterServiceForIngress(ds *appsv1.DaemonSet, ci *ingressv1alpha1.ClusterIngress) error {
+	svc, err := h.ManifestFactory.RouterServiceInternal(ci)
+	if err != nil {
+		return fmt.Errorf("failed to build router service: %v", err)
+	}
+	err = sdk.Get(svc)
+	if err != nil {
+		if !errors.IsNotFound(err) {
+			return fmt.Errorf("failed to get router service %s/%s, %v", svc.Namespace, svc.Name, err)
+		}
+
+		trueVar := true
+		dsRef := metav1.OwnerReference{
+			APIVersion: ds.APIVersion,
+			Kind:       ds.Kind,
+			Name:       ds.Name,
+			UID:        ds.UID,
+			Controller: &trueVar,
+		}
+		svc.SetOwnerReferences([]metav1.OwnerReference{dsRef})
+
+		err = sdk.Create(svc)
+		if err == nil {
+			logrus.Infof("created router service %s/%s", svc.Namespace, svc.Name)
+		} else if !errors.IsAlreadyExists(err) {
+			return fmt.Errorf("failed to create router service %s/%s: %v", svc.Namespace, svc.Name, err)
 		}
 	}
 
