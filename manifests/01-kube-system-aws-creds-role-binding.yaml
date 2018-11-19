@@ -1,0 +1,14 @@
+# Binds the aws-creds-secret-reader role to the operator Service Account.
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: ingress-operator-aws-creds-secret-reader
+  namespace: kube-system
+subjects:
+- kind: ServiceAccount
+  name: ingress-operator
+  namespace: openshift-ingress-operator
+roleRef:
+  kind: Role
+  apiGroup: rbac.authorization.k8s.io
+  name: aws-creds-secret-reader

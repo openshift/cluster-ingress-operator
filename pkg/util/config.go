@@ -22,11 +22,21 @@ const (
 
 type InstallConfig struct {
 	Metadata   InstallConfigMetadata `json:"metadata"`
+	ClusterID  string                `json:"clusterID"`
 	BaseDomain string                `json:"baseDomain"`
+	Platform   InstallConfigPlatform `json:"platform"`
 }
 
 type InstallConfigMetadata struct {
 	Name string `json:"name"`
+}
+
+type InstallConfigPlatform struct {
+	AWS *InstallConfigPlatformAWS `json:"aws"`
+}
+
+type InstallConfigPlatformAWS struct {
+	Region string `json:"region"`
 }
 
 // UnmarshalInstallConfig builds an install config from the cluster config.

@@ -45,6 +45,10 @@ required = [
   name = "github.com/openshift/cluster-version-operator"
   revision = "fe673cb712fa5e27001488fc088ac91bb553353d"
 
+[[constraint]]
+  name = "github.com/aws/aws-sdk-go"
+  version = "v1.15.72"
+
 [[override]]
   name = "k8s.io/api"
   version = "kubernetes-1.10.1"
