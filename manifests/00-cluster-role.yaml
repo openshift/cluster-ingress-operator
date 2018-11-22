@@ -46,6 +46,13 @@ rules:
   - watch
 
 - apiGroups:
+  - config.openshift.io
+  resources:
+  - ingresses
+  verbs:
+  - get
+
+- apiGroups:
   - operatorstatus.openshift.io
   resources:
   - clusteroperators

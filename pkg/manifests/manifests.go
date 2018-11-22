@@ -7,7 +7,6 @@ import (
 
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator"
-	"github.com/openshift/cluster-ingress-operator/pkg/util"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -46,13 +45,14 @@ func NewFactory(config operator.Config) *Factory {
 	return &Factory{config: config}
 }
 
-func (f *Factory) DefaultClusterIngress(ic *util.InstallConfig) (*ingressv1alpha1.ClusterIngress, error) {
+func (f *Factory) DefaultClusterIngress() (*ingressv1alpha1.ClusterIngress, error) {
 	ci, err := NewClusterIngress(MustAssetReader(ClusterIngressDefaults))
 	if err != nil {
 		return nil, err
 	}
-	ingressDomain := fmt.Sprintf("%s.%s", ic.Metadata.Name, ic.BaseDomain)
-	ci.Spec.IngressDomain = &ingressDomain
+	if len(f.config.DefaultIngressDomain) != 0 {
+		ci.Spec.IngressDomain = &f.config.DefaultIngressDomain
+	}
 	return ci, nil
 }
 
