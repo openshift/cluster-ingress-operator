@@ -281,11 +281,14 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:416ab68f11332bbaad8d2ee219dccb42e06f2e4321eb5dc210adc86f860e1004"
+  digest = "1:8d0349ca7980bc787c8c595434618a5abc98076d07a50ca38c9a80685e70f80e"
   name = "github.com/openshift/api"
-  packages = ["route/v1"]
+  packages = [
+    "config/v1",
+    "route/v1",
+  ]
   pruneopts = "NUT"
-  revision = "739bd301126c341c6caddf2cb3e3935ae9e9fff9"
+  revision = "6a375c5bd37e0a30bf3da96935273fa41f957a0d"
 
 [[projects]]
   digest = "1:5d7bdb1ad329d6fe427bb42b3cca11689616c80070ba431b8023314539c78d75"
@@ -741,6 +744,7 @@
     "github.com/aws/aws-sdk-go/service/route53",
     "github.com/ghodss/yaml",
     "github.com/kevinburke/go-bindata",
+    "github.com/openshift/api/config/v1",
     "github.com/openshift/api/route/v1",
     "github.com/openshift/cluster-version-operator/pkg/apis/operatorstatus.openshift.io/v1",
     "github.com/openshift/cluster-version-operator/pkg/generated/clientset/versioned",
