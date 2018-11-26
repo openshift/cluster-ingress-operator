@@ -21,7 +21,7 @@ spec:
         "node-role.kubernetes.io/worker": ""
       containers:
         - name: router
-          image: "docker.io/openshift/origin-haproxy-router:v3.11.0"
+          # image is set at runtime.
           imagePullPolicy: IfNotPresent
           ports:
           - name: http

@@ -29,10 +29,6 @@ release-local:
 test-e2e:
 	KUBERNETES_CONFIG="$(KUBECONFIG)" go test -v -tags e2e ./...
 
-.PHONY: test-integration
-test-integration:
-	hack/test-integration.sh
-
 .PHONY: clean
 clean:
 	go clean

@@ -4,13 +4,15 @@ import (
 	"testing"
 
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
+	"github.com/openshift/cluster-ingress-operator/pkg/operator"
 	"github.com/openshift/cluster-ingress-operator/pkg/util"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestManifests(t *testing.T) {
-	f := &Factory{}
+	config := operator.Config{RouterImage: "quay.io/openshift/router:latest"}
+	f := NewFactory(config)
 
 	ci := &ingressv1alpha1.ClusterIngress{
 		ObjectMeta: metav1.ObjectMeta{
@@ -99,6 +101,9 @@ func TestManifests(t *testing.T) {
 		t.Errorf("RouterDaemonSet has unexpected node selector: %#v",
 			ds.Spec.Template.Spec.NodeSelector)
 	}
+	if e, a := config.RouterImage, ds.Spec.Template.Spec.Containers[0].Image; e != a {
+		t.Errorf("expect router daemoset %q, got %q", e, a)
+	}
 
 	if _, err := f.RouterServiceCloud(ci); err != nil {
 		t.Errorf("invalid RouterServiceCloud: %v", err)
@@ -112,7 +117,7 @@ func TestDefaultClusterIngress(t *testing.T) {
 		},
 		BaseDomain: "cluster.openshift.com",
 	}
-	def, err := NewFactory().DefaultClusterIngress(ic)
+	def, err := NewFactory(operator.Config{RouterImage: "test"}).DefaultClusterIngress(ic)
 	if err != nil {
 		t.Fatal(err)
 	}
