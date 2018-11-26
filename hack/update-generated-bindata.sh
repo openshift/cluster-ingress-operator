@@ -25,7 +25,5 @@ popd >/dev/null
 # Using "-modtime 1" to make generate target deterministic. It sets all file
 # time stamps to unix timestamp 1
 ${GOPATH}/bin/go-bindata -mode 420 -modtime 1 -pkg manifests -o ${OUTDIR}/pkg/manifests/bindata.go assets/...
-${GOPATH}/bin/go-bindata -mode 420 -modtime 1 -pkg manifests -o ${OUTDIR}/test/manifests/bindata.go test/assets/...
 
 gofmt -s -w ${OUTDIR}/pkg/manifests/bindata.go
-gofmt -s -w ${OUTDIR}/test/manifests/bindata.go

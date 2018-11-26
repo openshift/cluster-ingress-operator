@@ -31,3 +31,5 @@ spec:
                   fieldPath: metadata.namespace
             - name: OPERATOR_NAME
               value: ingress-operator
+            - name: IMAGE
+              value: openshift/origin-haproxy-router:v4.0

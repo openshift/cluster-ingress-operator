@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"runtime"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 	awsdns "github.com/openshift/cluster-ingress-operator/pkg/dns/aws"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
+	"github.com/openshift/cluster-ingress-operator/pkg/operator"
 	stub "github.com/openshift/cluster-ingress-operator/pkg/stub"
 	"github.com/openshift/cluster-ingress-operator/pkg/util"
 
@@ -108,11 +110,20 @@ func createHandler(namespace string) (*stub.Handler, error) {
 		dnsManager = &dns.NoopManager{}
 	}
 
+	routerImage := os.Getenv("IMAGE")
+	if len(routerImage) == 0 {
+		logrus.Fatalf("IMAGE environment variable is required")
+	}
+
+	operatorConfig := operator.Config{
+		RouterImage: routerImage,
+	}
+
 	return &stub.Handler{
 		InstallConfig:   ic,
 		CvoClient:       cvoClient,
 		Namespace:       namespace,
-		ManifestFactory: manifests.NewFactory(),
+		ManifestFactory: manifests.NewFactory(operatorConfig),
 		DNSManager:      dnsManager,
 	}, nil
 }

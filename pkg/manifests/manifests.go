@@ -6,6 +6,7 @@ import (
 	"io"
 
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
+	"github.com/openshift/cluster-ingress-operator/pkg/operator"
 	"github.com/openshift/cluster-ingress-operator/pkg/util"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -38,10 +39,11 @@ func MustAssetReader(asset string) io.Reader {
 // files. It provides a point of control to mutate the static resources with
 // provided configuration.
 type Factory struct {
+	config operator.Config
 }
 
-func NewFactory() *Factory {
-	return &Factory{}
+func NewFactory(config operator.Config) *Factory {
+	return &Factory{config: config}
 }
 
 func (f *Factory) DefaultClusterIngress(ic *util.InstallConfig) (*ingressv1alpha1.ClusterIngress, error) {
@@ -164,6 +166,8 @@ func (f *Factory) RouterDaemonSet(cr *ingressv1alpha1.ClusterIngress) (*appsv1.D
 	}
 
 	ds.Spec.Template.Spec.Containers[0].Env = append(ds.Spec.Template.Spec.Containers[0].Env, env...)
+
+	ds.Spec.Template.Spec.Containers[0].Image = f.config.RouterImage
 
 	return ds, nil
 }
