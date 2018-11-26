@@ -6,3 +6,7 @@ spec:
     from: 
       kind: "DockerImage"
       name: "openshift/origin-cluster-ingress-operator:latest"
+  - name: haproxy-router
+    from:
+      kind: "DockerImage"
+      name: "openshift/origin-haproxy-router:v4.0"
