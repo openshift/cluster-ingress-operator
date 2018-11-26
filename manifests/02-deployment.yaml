@@ -32,4 +32,4 @@ spec:
             - name: OPERATOR_NAME
               value: ingress-operator
             - name: IMAGE
-              value: openshift/origin-v4.0:haproxy-router
+              value: openshift/origin-haproxy-router:v4.0

@@ -102,7 +102,7 @@ func TestManifests(t *testing.T) {
 			ds.Spec.Template.Spec.NodeSelector)
 	}
 	if e, a := config.RouterImage, ds.Spec.Template.Spec.Containers[0].Image; e != a {
-		t.Errorf("expect router daemoset %q, got %q", e, a)
+		t.Errorf("expect router daemonset %q, got %q", e, a)
 	}
 
 	if _, err := f.RouterServiceCloud(ci); err != nil {
