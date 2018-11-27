@@ -23,12 +23,6 @@ import (
 )
 
 const (
-	// installerConfigNamespace is the namespace containing the installer config.
-	installerConfigNamespace = "kube-system"
-
-	// clusterConfigResource is the resource containing the installer config.
-	clusterConfigResource = "cluster-config-v1"
-
 	// ClusterIngressFinalizer is applied to all ClusterIngress resources before
 	// they are considered for processing; this ensures the operator has a chance
 	// to handle all states.
