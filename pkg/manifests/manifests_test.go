@@ -1,7 +1,9 @@
 package manifests
 
 import (
+	"fmt"
 	"testing"
+	"time"
 
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator"
@@ -85,6 +87,25 @@ func TestManifests(t *testing.T) {
 		t.Error("RouterDaemonSet has no default node selector")
 	}
 
+	if ds.Spec.Template.Spec.Volumes[0].Secret == nil {
+		t.Error("RouterDaemonSet has no secret volume")
+	}
+
+	defaultSecretName := fmt.Sprintf("router-certs-%s", ci.Name)
+	if ds.Spec.Template.Spec.Volumes[0].Secret.SecretName != defaultSecretName {
+		t.Errorf("RouterDaemonSet expected volume with secret %s, got %s",
+			defaultSecretName, ds.Spec.Template.Spec.Volumes[0].Secret.SecretName)
+	}
+
+	if svc, err := f.RouterServiceInternal(ci); err != nil {
+		t.Errorf("invalid RouterServiceInternal: %v", err)
+	} else if svc.Annotations[ServingCertSecretAnnotation] != defaultSecretName {
+		t.Errorf("RouterServiceInternal expected serving secret annotation %s, got %s",
+			defaultSecretName, svc.Annotations[ServingCertSecretAnnotation])
+	}
+
+	secretName := fmt.Sprintf("secret-%v", time.Now().UnixNano())
+	ci.Spec.DefaultCertificateSecret = &secretName
 	ci.Spec.NodePlacement = &ingressv1alpha1.NodePlacement{
 		NodeSelector: &metav1.LabelSelector{
 			MatchLabels: map[string]string{
@@ -103,6 +124,21 @@ func TestManifests(t *testing.T) {
 	}
 	if e, a := config.RouterImage, ds.Spec.Template.Spec.Containers[0].Image; e != a {
 		t.Errorf("expect router daemonset %q, got %q", e, a)
+	}
+
+	if ds.Spec.Template.Spec.Volumes[0].Secret == nil {
+		t.Error("RouterDaemonSet has no secret volume")
+	}
+	if ds.Spec.Template.Spec.Volumes[0].Secret.SecretName != secretName {
+		t.Errorf("RouterDaemonSet expected volume with secret %s, got %s",
+			secretName, ds.Spec.Template.Spec.Volumes[0].Secret.SecretName)
+	}
+
+	if svc, err := f.RouterServiceInternal(ci); err != nil {
+		t.Errorf("invalid RouterServiceInternal: %v", err)
+	} else if svc.Annotations[ServingCertSecretAnnotation] != defaultSecretName {
+		t.Errorf("RouterServiceInternal expected serving secret annotation %s, got %s",
+			defaultSecretName, svc.Annotations[ServingCertSecretAnnotation])
 	}
 
 	if _, err := f.RouterServiceCloud(ci); err != nil {

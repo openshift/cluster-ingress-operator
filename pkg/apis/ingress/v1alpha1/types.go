@@ -31,6 +31,10 @@ type ClusterIngressSpec struct {
 	// scheduling of ingress implementation pods.
 	NodePlacement *NodePlacement `json:"nodePlacement"`
 
+	// DefaultCertificateSecret is the name of a secret containing the
+	// default certificate configuration (tls.{crt,key}).
+	DefaultCertificateSecret *string `json:"defaultCertificateSecret"`
+
 	// NamespaceSelector is a label selector which filters the
 	// namespaces covered by this ClusterIngress.
 	NamespaceSelector *metav1.LabelSelector `json:"namespaceSelector"`

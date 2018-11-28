@@ -16,6 +16,7 @@ import (
 
 	cvoclientset "github.com/openshift/cluster-version-operator/pkg/generated/clientset/versioned"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -201,6 +202,7 @@ func (h *Handler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress) err
 	if err != nil {
 		return fmt.Errorf("failed to build router daemonset: %v", err)
 	}
+	expected := ds.DeepCopy()
 	err = sdk.Get(ds)
 	if err != nil {
 		if !errors.IsNotFound(err) {
@@ -211,6 +213,15 @@ func (h *Handler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress) err
 			logrus.Infof("created router daemonset %s/%s", ds.Namespace, ds.Name)
 		} else if !errors.IsAlreadyExists(err) {
 			return fmt.Errorf("failed to create router daemonset %s/%s: %v", ds.Namespace, ds.Name, err)
+		}
+	}
+
+	if changed, obj := daemonsetConfigChanged(ds, expected); changed {
+		err = sdk.Update(obj)
+		if err == nil {
+			logrus.Infof("updated router daemonset %s/%s", obj.Namespace, obj.Name)
+		} else {
+			return fmt.Errorf("failed to update router daemonset %s/%s, %v", obj.Namespace, obj.Name, err)
 		}
 	}
 
@@ -252,6 +263,44 @@ func (h *Handler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress) err
 		}
 	}
 
+	if err := h.ensureRouterServiceForIngress(ds, ci); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// ensureRouterServiceForIngress ensures that a Router service exists for a
+// given ClusterIngress exists.
+func (h *Handler) ensureRouterServiceForIngress(ds *appsv1.DaemonSet, ci *ingressv1alpha1.ClusterIngress) error {
+	svc, err := h.ManifestFactory.RouterServiceInternal(ci)
+	if err != nil {
+		return fmt.Errorf("failed to build router service: %v", err)
+	}
+	err = sdk.Get(svc)
+	if err != nil {
+		if !errors.IsNotFound(err) {
+			return fmt.Errorf("failed to get router service %s/%s, %v", svc.Namespace, svc.Name, err)
+		}
+
+		trueVar := true
+		dsRef := metav1.OwnerReference{
+			APIVersion: ds.APIVersion,
+			Kind:       ds.Kind,
+			Name:       ds.Name,
+			UID:        ds.UID,
+			Controller: &trueVar,
+		}
+		svc.SetOwnerReferences([]metav1.OwnerReference{dsRef})
+
+		err = sdk.Create(svc)
+		if err == nil {
+			logrus.Infof("created router service %s/%s", svc.Namespace, svc.Name)
+		} else if !errors.IsAlreadyExists(err) {
+			return fmt.Errorf("failed to create router service %s/%s: %v", svc.Namespace, svc.Name, err)
+		}
+	}
+
 	return nil
 }
 
@@ -285,4 +334,18 @@ func (h *Handler) ensureRouterDeleted(ci *ingressv1alpha1.ClusterIngress) error 
 		return err
 	}
 	return nil
+}
+
+// daemonsetConfigChanged checks if current config matches the expected config
+// for the cluster ingress daemonset and if not returns the updated config.
+func daemonsetConfigChanged(current, expected *appsv1.DaemonSet) (bool, *appsv1.DaemonSet) {
+	// As per an offline conversation, this checks only the secret name
+	// for now but can be updated to a `reflect.DeepEqual` if needed.
+	if current.Spec.Template.Spec.Volumes[0].Secret.SecretName == expected.Spec.Template.Spec.Volumes[0].Secret.SecretName {
+		return false, nil
+	}
+
+	updated := current.DeepCopy()
+	updated.Spec.Template.Spec.Volumes[0].Secret.SecretName = expected.Spec.Template.Spec.Volumes[0].Secret.SecretName
+	return true, updated
 }
