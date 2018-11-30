@@ -50,51 +50,51 @@ func TestManifests(t *testing.T) {
 		t.Errorf("invalid RouterClusterRoleBinding: %v", err)
 	}
 
-	ds, err := f.RouterDaemonSet(ci)
+	deployment, err := f.RouterDeployment(ci)
 	if err != nil {
-		t.Errorf("invalid RouterDaemonSet: %v", err)
+		t.Errorf("invalid router Deployment: %v", err)
 	}
 
 	namespaceSelector := ""
-	for _, envVar := range ds.Spec.Template.Spec.Containers[0].Env {
+	for _, envVar := range deployment.Spec.Template.Spec.Containers[0].Env {
 		if envVar.Name == "NAMESPACE_LABELS" {
 			namespaceSelector = envVar.Value
 			break
 		}
 	}
 	if namespaceSelector == "" {
-		t.Error("RouterDaemonSet has no namespace selector")
+		t.Error("router Deployment has no namespace selector")
 	} else if namespaceSelector != "foo=bar" {
-		t.Errorf("RouterDaemonSet has unexpected namespace selectors: %v",
+		t.Errorf("router Deployment has unexpected namespace selectors: %v",
 			namespaceSelector)
 	}
 
 	routeSelector := ""
-	for _, envVar := range ds.Spec.Template.Spec.Containers[0].Env {
+	for _, envVar := range deployment.Spec.Template.Spec.Containers[0].Env {
 		if envVar.Name == "ROUTE_LABELS" {
 			routeSelector = envVar.Value
 			break
 		}
 	}
 	if routeSelector == "" {
-		t.Error("RouterDaemonSet has no route selector")
+		t.Error("router Deployment has no route selector")
 	} else if routeSelector != "baz=quux" {
-		t.Errorf("RouterDaemonSet has unexpected route selectors: %v",
+		t.Errorf("router Deployment has unexpected route selectors: %v",
 			routeSelector)
 	}
 
-	if len(ds.Spec.Template.Spec.NodeSelector) == 0 {
-		t.Error("RouterDaemonSet has no default node selector")
+	if len(deployment.Spec.Template.Spec.NodeSelector) == 0 {
+		t.Error("router Deployment has no default node selector")
 	}
 
-	if ds.Spec.Template.Spec.Volumes[0].Secret == nil {
-		t.Error("RouterDaemonSet has no secret volume")
+	if deployment.Spec.Template.Spec.Volumes[0].Secret == nil {
+		t.Error("router Deployment has no secret volume")
 	}
 
 	defaultSecretName := fmt.Sprintf("router-certs-%s", ci.Name)
-	if ds.Spec.Template.Spec.Volumes[0].Secret.SecretName != defaultSecretName {
-		t.Errorf("RouterDaemonSet expected volume with secret %s, got %s",
-			defaultSecretName, ds.Spec.Template.Spec.Volumes[0].Secret.SecretName)
+	if deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName != defaultSecretName {
+		t.Errorf("router Deployment expected volume with secret %s, got %s",
+			defaultSecretName, deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName)
 	}
 
 	if svc, err := f.RouterServiceInternal(ci); err != nil {
@@ -113,25 +113,25 @@ func TestManifests(t *testing.T) {
 			},
 		},
 	}
-	ds, err = f.RouterDaemonSet(ci)
+	deployment, err = f.RouterDeployment(ci)
 	if err != nil {
-		t.Errorf("invalid RouterDaemonSet: %v", err)
+		t.Errorf("invalid router Deployment: %v", err)
 	}
-	if len(ds.Spec.Template.Spec.NodeSelector) != 1 ||
-		ds.Spec.Template.Spec.NodeSelector["xyzzy"] != "quux" {
-		t.Errorf("RouterDaemonSet has unexpected node selector: %#v",
-			ds.Spec.Template.Spec.NodeSelector)
+	if len(deployment.Spec.Template.Spec.NodeSelector) != 1 ||
+		deployment.Spec.Template.Spec.NodeSelector["xyzzy"] != "quux" {
+		t.Errorf("router Deployment has unexpected node selector: %#v",
+			deployment.Spec.Template.Spec.NodeSelector)
 	}
-	if e, a := config.RouterImage, ds.Spec.Template.Spec.Containers[0].Image; e != a {
-		t.Errorf("expect router daemonset %q, got %q", e, a)
+	if e, a := config.RouterImage, deployment.Spec.Template.Spec.Containers[0].Image; e != a {
+		t.Errorf("expected router Deployment image %q, got %q", e, a)
 	}
 
-	if ds.Spec.Template.Spec.Volumes[0].Secret == nil {
-		t.Error("RouterDaemonSet has no secret volume")
+	if deployment.Spec.Template.Spec.Volumes[0].Secret == nil {
+		t.Error("router Deployment has no secret volume")
 	}
-	if ds.Spec.Template.Spec.Volumes[0].Secret.SecretName != secretName {
-		t.Errorf("RouterDaemonSet expected volume with secret %s, got %s",
-			secretName, ds.Spec.Template.Spec.Volumes[0].Secret.SecretName)
+	if deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName != secretName {
+		t.Errorf("expected router Deployment volume with secret %s, got %s",
+			secretName, deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName)
 	}
 
 	if svc, err := f.RouterServiceInternal(ci); err != nil {

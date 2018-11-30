@@ -42,7 +42,7 @@ func (h *Handler) syncOperatorStatus() {
 		return
 	}
 
-	ns, ingresses, daemonsets, err := h.getOperatorState()
+	ns, ingresses, deployments, err := h.getOperatorState()
 	if err != nil {
 		logrus.Errorf("syncOperatorStatus: getOperatorState: %v", err)
 
@@ -51,7 +51,7 @@ func (h *Handler) syncOperatorStatus() {
 
 	oldConditions := co.Status.Conditions
 	co.Status.Conditions = computeStatusConditions(oldConditions, ns,
-		ingresses, daemonsets)
+		ingresses, deployments)
 
 	if isNotFound {
 		co.Status.Version = operatorversion.Version
@@ -81,7 +81,7 @@ func (h *Handler) syncOperatorStatus() {
 
 // getOperatorState gets and returns the resources necessary to compute the
 // operator's current state.
-func (h *Handler) getOperatorState() (*corev1.Namespace, []ingressv1alpha1.ClusterIngress, []appsv1.DaemonSet, error) {
+func (h *Handler) getOperatorState() (*corev1.Namespace, []ingressv1alpha1.ClusterIngress, []appsv1.Deployment, error) {
 	ns, err := h.ManifestFactory.RouterNamespace()
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf(
@@ -110,24 +110,24 @@ func (h *Handler) getOperatorState() (*corev1.Namespace, []ingressv1alpha1.Clust
 			"failed to list ClusterIngresses: %v", err)
 	}
 
-	daemonsetList := &appsv1.DaemonSetList{
+	deploymentList := &appsv1.DeploymentList{
 		TypeMeta: metav1.TypeMeta{
-			Kind:       "DaemonSet",
+			Kind:       "Deployment",
 			APIVersion: "apps/v1",
 		},
 	}
-	err = sdk.List(ns.Name, daemonsetList,
+	err = sdk.List(ns.Name, deploymentList,
 		sdk.WithListOptions(&metav1.ListOptions{}))
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf(
-			"failed to list DaemonSets: %v", err)
+			"failed to list Deployment: %v", err)
 	}
 
-	return ns, ingressList.Items, daemonsetList.Items, nil
+	return ns, ingressList.Items, deploymentList.Items, nil
 }
 
 // computeStatusConditions computes the operator's current state.
-func computeStatusConditions(conditions []osv1.ClusterOperatorStatusCondition, ns *corev1.Namespace, ingresses []ingressv1alpha1.ClusterIngress, daemonsets []appsv1.DaemonSet) []osv1.ClusterOperatorStatusCondition {
+func computeStatusConditions(conditions []osv1.ClusterOperatorStatusCondition, ns *corev1.Namespace, ingresses []ingressv1alpha1.ClusterIngress, deployments []appsv1.Deployment) []osv1.ClusterOperatorStatusCondition {
 	failingCondition := &osv1.ClusterOperatorStatusCondition{
 		Type:   osv1.OperatorFailing,
 		Status: osv1.ConditionUnknown,
@@ -147,15 +147,15 @@ func computeStatusConditions(conditions []osv1.ClusterOperatorStatusCondition, n
 		Status: osv1.ConditionUnknown,
 	}
 	numIngresses := len(ingresses)
-	numDaemonsets := len(daemonsets)
-	if numIngresses == numDaemonsets {
+	numDeployments := len(deployments)
+	if numIngresses == numDeployments {
 		progressingCondition.Status = osv1.ConditionFalse
 	} else {
 		progressingCondition.Status = osv1.ConditionTrue
 		progressingCondition.Reason = "Reconciling"
 		progressingCondition.Message = fmt.Sprintf(
 			"have %d ingresses, want %d",
-			numDaemonsets, numIngresses)
+			numDeployments, numIngresses)
 	}
 	conditions = clusteroperator.SetStatusCondition(conditions,
 		progressingCondition)
@@ -164,16 +164,16 @@ func computeStatusConditions(conditions []osv1.ClusterOperatorStatusCondition, n
 		Type:   osv1.OperatorAvailable,
 		Status: osv1.ConditionUnknown,
 	}
-	dsAvailable := map[string]bool{}
-	for _, ds := range daemonsets {
-		dsAvailable[ds.Name] = ds.Status.NumberAvailable > 0
+	deploymentsAvailable := map[string]bool{}
+	for _, d := range deployments {
+		deploymentsAvailable[d.Name] = d.Status.AvailableReplicas > 0
 	}
 	unavailable := []string{}
 	for _, ingress := range ingresses {
 		// TODO Use the manifest to derive the name, or use labels or
 		// owner references.
 		name := "router-" + ingress.Name
-		if available, exists := dsAvailable[name]; !exists {
+		if available, exists := deploymentsAvailable[name]; !exists {
 			msg := fmt.Sprintf("no router for ingress %q",
 				ingress.Name)
 			unavailable = append(unavailable, msg)

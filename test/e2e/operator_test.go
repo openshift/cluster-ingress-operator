@@ -92,10 +92,10 @@ func TestClusterIngressUpdate(t *testing.T) {
 		t.Errorf("failed to get default ClusterIngress: %v", err)
 	}
 
-	// Wait for the router daemonset to exist.
-	ds := &appsv1.DaemonSet{
+	// Wait for the router deployment to exist.
+	deployment := &appsv1.Deployment{
 		TypeMeta: metav1.TypeMeta{
-			Kind:       "DaemonSet",
+			Kind:       "Deployment",
 			APIVersion: appsv1.SchemeGroupVersion.String(),
 		},
 		ObjectMeta: metav1.ObjectMeta{
@@ -104,13 +104,13 @@ func TestClusterIngressUpdate(t *testing.T) {
 		},
 	}
 	err = wait.PollImmediate(1*time.Second, 10*time.Minute, func() (bool, error) {
-		if err := sdk.Get(ds); err != nil {
+		if err := sdk.Get(deployment); err != nil {
 			return false, nil
 		}
 		return true, nil
 	})
 	if err != nil {
-		t.Errorf("failed to get default router daemonset: %v", err)
+		t.Errorf("failed to get default router deployment: %v", err)
 	}
 
 	originalSecret := ci.Spec.DefaultCertificateSecret
@@ -119,9 +119,9 @@ func TestClusterIngressUpdate(t *testing.T) {
 		expectedSecretName = *originalSecret
 	}
 
-	if ds.Spec.Template.Spec.Volumes[0].Secret.SecretName != expectedSecretName {
-		t.Errorf("expected router daemonset certificate secret to be %s, got %s",
-			expectedSecretName, ds.Spec.Template.Spec.Volumes[0].Secret.SecretName)
+	if deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName != expectedSecretName {
+		t.Errorf("expected router deployment certificate secret to be %s, got %s",
+			expectedSecretName, deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName)
 	}
 
 	err, secret := createDefaultCertTestSecret()
@@ -130,7 +130,7 @@ func TestClusterIngressUpdate(t *testing.T) {
 		return
 	}
 
-	// update the ci and wait for the updated daemonset to match expectations
+	// update the ci and wait for the updated deployment to match expectations
 	ci.Spec.DefaultCertificateSecret = &secret.Name
 	err = sdk.Update(ci)
 	if err != nil {
@@ -138,16 +138,16 @@ func TestClusterIngressUpdate(t *testing.T) {
 		return
 	}
 	err = wait.PollImmediate(1*time.Second, 10*time.Minute, func() (bool, error) {
-		if err := sdk.Get(ds); err != nil {
+		if err := sdk.Get(deployment); err != nil {
 			return false, nil
 		}
-		if ds.Spec.Template.Spec.Volumes[0].Secret.SecretName != secret.Name {
+		if deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName != secret.Name {
 			return false, nil
 		}
 		return true, nil
 	})
 	if err != nil {
-		t.Errorf("failed to get updated router daemonset: %v", err)
+		t.Errorf("failed to get updated router deployment: %v", err)
 	}
 
 	ci.Spec.DefaultCertificateSecret = originalSecret

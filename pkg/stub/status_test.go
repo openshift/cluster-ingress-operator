@@ -36,9 +36,9 @@ func TestComputeStatusConditions(t *testing.T) {
 
 	for _, tc := range testCases {
 		var (
-			namespace  *corev1.Namespace
-			ingresses  []ingressv1alpha1.ClusterIngress
-			daemonsets []appsv1.DaemonSet
+			namespace   *corev1.Namespace
+			ingresses   []ingressv1alpha1.ClusterIngress
+			deployments []appsv1.Deployment
 
 			failing, progressing, available osv1.ConditionStatus
 		)
@@ -53,19 +53,19 @@ func TestComputeStatusConditions(t *testing.T) {
 					},
 				})
 		}
-		numDaemonsets := tc.inputs.numAvailable + tc.inputs.numUnavailable
-		for i := 0; i < numDaemonsets; i++ {
+		numDeployments := tc.inputs.numAvailable + tc.inputs.numUnavailable
+		for i := 0; i < numDeployments; i++ {
 			numberAvailable := 0
 			if i < tc.inputs.numAvailable {
 				numberAvailable = 1
 			}
-			daemonsets = append(daemonsets, appsv1.DaemonSet{
+			deployments = append(deployments, appsv1.Deployment{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: fmt.Sprintf("router-ingress-%d",
 						i+1),
 				},
-				Status: appsv1.DaemonSetStatus{
-					NumberAvailable: int32(numberAvailable),
+				Status: appsv1.DeploymentStatus{
+					AvailableReplicas: int32(numberAvailable),
 				},
 			})
 		}
@@ -102,7 +102,7 @@ func TestComputeStatusConditions(t *testing.T) {
 			[]osv1.ClusterOperatorStatusCondition{},
 			namespace,
 			ingresses,
-			daemonsets,
+			deployments,
 		)
 		gotExpected := true
 		if len(new) != len(expected) {

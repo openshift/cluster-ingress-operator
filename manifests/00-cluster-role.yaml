@@ -20,9 +20,8 @@ rules:
 
 - apiGroups:
   - apps
-  - extensions
   resources:
-  - daemonsets
+  - deployments
   verbs:
   - "*"
 
