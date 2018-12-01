@@ -20,6 +20,7 @@ import (
 	k8sutil "github.com/operator-framework/operator-sdk/pkg/util/k8sutil"
 	sdkVersion "github.com/operator-framework/operator-sdk/version"
 
+	configv1 "github.com/openshift/api/config/v1"
 	cvoclientset "github.com/openshift/cluster-version-operator/pkg/generated/clientset/versioned"
 
 	"github.com/sirupsen/logrus"
@@ -110,13 +111,31 @@ func createHandler(namespace string) (*stub.Handler, error) {
 		dnsManager = &dns.NoopManager{}
 	}
 
+	ingressConfig := &configv1.Ingress{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "Ingress",
+			APIVersion: "config.openshift.io/v1",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "cluster",
+			// not namespaced
+		},
+	}
+	if err := sdk.Get(ingressConfig); err != nil {
+		return nil, fmt.Errorf("failed to get ingressconfig: %v", err)
+	}
+	if len(ingressConfig.Spec.Domain) == 0 {
+		logrus.Warnln("cluster ingress configuration has an empty domain; default ClusterIngress will have empty ingressDomain")
+	}
+
 	routerImage := os.Getenv("IMAGE")
 	if len(routerImage) == 0 {
 		logrus.Fatalf("IMAGE environment variable is required")
 	}
 
 	operatorConfig := operator.Config{
-		RouterImage: routerImage,
+		RouterImage:          routerImage,
+		DefaultIngressDomain: ingressConfig.Spec.Domain,
 	}
 
 	return &stub.Handler{

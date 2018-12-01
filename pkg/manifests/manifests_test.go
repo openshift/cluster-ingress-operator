@@ -7,7 +7,6 @@ import (
 
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator"
-	"github.com/openshift/cluster-ingress-operator/pkg/util"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -147,17 +146,15 @@ func TestManifests(t *testing.T) {
 }
 
 func TestDefaultClusterIngress(t *testing.T) {
-	ic := &util.InstallConfig{
-		Metadata: util.InstallConfigMetadata{
-			Name: "user",
-		},
-		BaseDomain: "cluster.openshift.com",
-	}
-	def, err := NewFactory(operator.Config{RouterImage: "test"}).DefaultClusterIngress(ic)
+	ingressDomain := "user.cluster.openshift.com"
+	def, err := NewFactory(operator.Config{
+		RouterImage:          "test",
+		DefaultIngressDomain: ingressDomain,
+	}).DefaultClusterIngress()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if e, a := "user.cluster.openshift.com", *def.Spec.IngressDomain; e != a {
+	if e, a := ingressDomain, *def.Spec.IngressDomain; e != a {
 		t.Errorf("expected default clusteringress ingressDomain=%s, got %s", e, a)
 	}
 }

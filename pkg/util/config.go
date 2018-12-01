@@ -21,14 +21,9 @@ const (
 )
 
 type InstallConfig struct {
-	Metadata   InstallConfigMetadata `json:"metadata"`
 	ClusterID  string                `json:"clusterID"`
 	BaseDomain string                `json:"baseDomain"`
 	Platform   InstallConfigPlatform `json:"platform"`
-}
-
-type InstallConfigMetadata struct {
-	Name string `json:"name"`
 }
 
 type InstallConfigPlatform struct {

@@ -51,7 +51,7 @@ func (h *Handler) Handle(ctx context.Context, event sdk.Event) error {
 
 // EnsureDefaultClusterIngress ensures that a default ClusterIngress exists.
 func (h *Handler) EnsureDefaultClusterIngress() error {
-	ci, err := h.ManifestFactory.DefaultClusterIngress(h.InstallConfig)
+	ci, err := h.ManifestFactory.DefaultClusterIngress()
 	if err != nil {
 		return err
 	}
@@ -318,7 +318,7 @@ func (h *Handler) ensureDNSForLoadBalancer(ci *ingressv1alpha1.ClusterIngress, s
 	}
 	// TODO: the routing wildcard prefix should come from cluster config or
 	// ClusterIngress.
-	domain := fmt.Sprintf("*.apps.%s", *ci.Spec.IngressDomain)
+	domain := fmt.Sprintf("*.%s", *ci.Spec.IngressDomain)
 	return h.DNSManager.EnsureAlias(domain, target)
 }
 
