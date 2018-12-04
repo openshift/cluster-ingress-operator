@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	configv1 "github.com/openshift/api/config/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 	awsdns "github.com/openshift/cluster-ingress-operator/pkg/dns/aws"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
@@ -19,9 +20,6 @@ import (
 	sdk "github.com/operator-framework/operator-sdk/pkg/sdk"
 	k8sutil "github.com/operator-framework/operator-sdk/pkg/util/k8sutil"
 	sdkVersion "github.com/operator-framework/operator-sdk/version"
-
-	configv1 "github.com/openshift/api/config/v1"
-	cvoclientset "github.com/openshift/cluster-version-operator/pkg/generated/clientset/versioned"
 
 	"github.com/sirupsen/logrus"
 
@@ -69,11 +67,6 @@ func main() {
 }
 
 func createHandler(namespace string) (*stub.Handler, error) {
-	cvoClient, err := cvoclientset.NewForConfig(k8sclient.GetKubeConfig())
-	if err != nil {
-		return nil, fmt.Errorf("failed to create CVO client: %v", err)
-	}
-
 	ic, err := util.GetInstallConfig(k8sclient.GetKubeClient())
 	if err != nil {
 		return nil, fmt.Errorf("failed to get installconfig: %v", err)
@@ -140,7 +133,6 @@ func createHandler(namespace string) (*stub.Handler, error) {
 
 	return &stub.Handler{
 		InstallConfig:   ic,
-		CvoClient:       cvoClient,
 		Namespace:       namespace,
 		ManifestFactory: manifests.NewFactory(operatorConfig),
 		DNSManager:      dnsManager,

@@ -1,20 +1,17 @@
 package clusteroperator
 
 import (
-	osv1 "github.com/openshift/cluster-version-operator/pkg/apis/operatorstatus.openshift.io/v1"
+	configv1 "github.com/openshift/api/config/v1"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // SetStatusCondition returns the result of setting the specified condition in
 // the given slice of conditions.
-// TODO Replace with cluster-version-operator's SetOperatorStatusCondition
-// once update to a version of cluster-version-operator that has it.
-// https://github.com/openshift/cluster-version-operator/blob/fe673cb712fa5e27001488fc088ac91bb553353d/lib/resourcemerge/os.go#L36-L54
-func SetStatusCondition(oldConditions []osv1.ClusterOperatorStatusCondition, condition *osv1.ClusterOperatorStatusCondition) []osv1.ClusterOperatorStatusCondition {
+func SetStatusCondition(oldConditions []configv1.ClusterOperatorStatusCondition, condition *configv1.ClusterOperatorStatusCondition) []configv1.ClusterOperatorStatusCondition {
 	condition.LastTransitionTime = metav1.Now()
 
-	newConditions := []osv1.ClusterOperatorStatusCondition{}
+	newConditions := []configv1.ClusterOperatorStatusCondition{}
 
 	found := false
 	for _, c := range oldConditions {
@@ -40,7 +37,7 @@ func SetStatusCondition(oldConditions []osv1.ClusterOperatorStatusCondition, con
 
 // ConditionsEqual returns true if and only if the provided slices of conditions
 // (ignoring LastTransitionTime) are equal.
-func ConditionsEqual(oldConditions, newConditions []osv1.ClusterOperatorStatusCondition) bool {
+func ConditionsEqual(oldConditions, newConditions []configv1.ClusterOperatorStatusCondition) bool {
 	if len(newConditions) != len(oldConditions) {
 		return false
 	}
