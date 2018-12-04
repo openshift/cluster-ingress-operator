@@ -28,8 +28,5 @@ rules:
   resources:
   - deployments
   - services
-  - daemonsets
-  - replicasets
-  - statefulsets
   verbs:
   - "*"

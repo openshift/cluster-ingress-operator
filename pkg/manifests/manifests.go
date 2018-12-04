@@ -24,7 +24,7 @@ const (
 	RouterServiceAccount     = "assets/router/service-account.yaml"
 	RouterClusterRole        = "assets/router/cluster-role.yaml"
 	RouterClusterRoleBinding = "assets/router/cluster-role-binding.yaml"
-	RouterDaemonSet          = "assets/router/daemonset.yaml"
+	RouterDeployment         = "assets/router/deployment.yaml"
 	RouterServiceInternal    = "assets/router/service-internal.yaml"
 	RouterServiceCloud       = "assets/router/service-cloud.yaml"
 	OperatorRole             = "assets/router/operator-role.yaml"
@@ -109,25 +109,25 @@ func (f *Factory) RouterClusterRoleBinding() (*rbacv1.ClusterRoleBinding, error)
 	return crb, nil
 }
 
-func (f *Factory) RouterDaemonSet(cr *ingressv1alpha1.ClusterIngress) (*appsv1.DaemonSet, error) {
-	ds, err := NewDaemonSet(MustAssetReader(RouterDaemonSet))
+func (f *Factory) RouterDeployment(cr *ingressv1alpha1.ClusterIngress) (*appsv1.Deployment, error) {
+	deployment, err := NewDeployment(MustAssetReader(RouterDeployment))
 	if err != nil {
 		return nil, err
 	}
 
 	name := "router-" + cr.Name
 
-	ds.Name = name
+	deployment.Name = name
 
-	if ds.Spec.Template.Labels == nil {
-		ds.Spec.Template.Labels = map[string]string{}
+	if deployment.Spec.Template.Labels == nil {
+		deployment.Spec.Template.Labels = map[string]string{}
 	}
-	ds.Spec.Template.Labels["router"] = name
+	deployment.Spec.Template.Labels["router"] = name
 
-	if ds.Spec.Selector.MatchLabels == nil {
-		ds.Spec.Selector.MatchLabels = map[string]string{}
+	if deployment.Spec.Selector.MatchLabels == nil {
+		deployment.Spec.Selector.MatchLabels = map[string]string{}
 	}
-	ds.Spec.Selector.MatchLabels["router"] = name
+	deployment.Spec.Selector.MatchLabels["router"] = name
 
 	env := []corev1.EnvVar{
 		{Name: "ROUTER_SERVICE_NAME", Value: cr.Name},
@@ -145,7 +145,7 @@ func (f *Factory) RouterDaemonSet(cr *ingressv1alpha1.ClusterIngress) (*appsv1.D
 					cr.Name, err)
 			}
 
-			ds.Spec.Template.Spec.NodeSelector = nodeSelector
+			deployment.Spec.Template.Spec.NodeSelector = nodeSelector
 		}
 	}
 
@@ -170,18 +170,18 @@ func (f *Factory) RouterDaemonSet(cr *ingressv1alpha1.ClusterIngress) (*appsv1.D
 		env = append(env, corev1.EnvVar{Name: "ROUTE_LABELS", Value: routeSelector.String()})
 	}
 
-	ds.Spec.Template.Spec.Containers[0].Env = append(ds.Spec.Template.Spec.Containers[0].Env, env...)
+	deployment.Spec.Template.Spec.Containers[0].Env = append(deployment.Spec.Template.Spec.Containers[0].Env, env...)
 
-	ds.Spec.Template.Spec.Containers[0].Image = f.config.RouterImage
+	deployment.Spec.Template.Spec.Containers[0].Image = f.config.RouterImage
 
 	// Fill in the default certificate secret name.
 	secretName := fmt.Sprintf("router-certs-%s", cr.Name)
 	if cr.Spec.DefaultCertificateSecret != nil && len(*cr.Spec.DefaultCertificateSecret) > 0 {
 		secretName = *cr.Spec.DefaultCertificateSecret
 	}
-	ds.Spec.Template.Spec.Volumes[0].Secret.SecretName = secretName
+	deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName = secretName
 
-	return ds, nil
+	return deployment, nil
 }
 
 func (f *Factory) RouterServiceInternal(cr *ingressv1alpha1.ClusterIngress) (*corev1.Service, error) {
@@ -278,15 +278,6 @@ func NewClusterRoleBinding(manifest io.Reader) (*rbacv1.ClusterRoleBinding, erro
 	}
 
 	return &crb, nil
-}
-
-func NewDaemonSet(manifest io.Reader) (*appsv1.DaemonSet, error) {
-	ds := appsv1.DaemonSet{}
-	if err := yaml.NewYAMLOrJSONDecoder(manifest, 100).Decode(&ds); err != nil {
-		return nil, err
-	}
-
-	return &ds, nil
 }
 
 func NewService(manifest io.Reader) (*corev1.Service, error) {

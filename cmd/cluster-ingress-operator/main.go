@@ -62,7 +62,7 @@ func main() {
 	sdk.Watch(resource, kind, namespace, resyncPeriod)
 	// TODO Use a named constant for the router's namespace or get the
 	// namespace from config.
-	sdk.Watch("apps/v1", "DaemonSet", "openshift-ingress", resyncPeriod)
+	sdk.Watch("apps/v1", "Deployment", "openshift-ingress", resyncPeriod)
 	sdk.Watch("v1", "Service", "openshift-ingress", resyncPeriod)
 	sdk.Handle(handler)
 	sdk.Run(context.TODO())

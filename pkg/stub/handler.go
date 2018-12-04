@@ -198,30 +198,30 @@ func (h *Handler) ensureRouterNamespace() error {
 // ensureRouterForIngress ensures all necessary router resources exist for a
 // given clusteringress.
 func (h *Handler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress) error {
-	ds, err := h.ManifestFactory.RouterDaemonSet(ci)
+	deployment, err := h.ManifestFactory.RouterDeployment(ci)
 	if err != nil {
-		return fmt.Errorf("failed to build router daemonset: %v", err)
+		return fmt.Errorf("failed to build router deployment: %v", err)
 	}
-	expected := ds.DeepCopy()
-	err = sdk.Get(ds)
+	expected := deployment.DeepCopy()
+	err = sdk.Get(deployment)
 	if err != nil {
 		if !errors.IsNotFound(err) {
-			return fmt.Errorf("failed to get router daemonset %s/%s, %v", ds.Namespace, ds.Name, err)
+			return fmt.Errorf("failed to get router deployment %s/%s, %v", deployment.Namespace, deployment.Name, err)
 		}
-		err = sdk.Create(ds)
+		err = sdk.Create(deployment)
 		if err == nil {
-			logrus.Infof("created router daemonset %s/%s", ds.Namespace, ds.Name)
+			logrus.Infof("created router deployment %s/%s", deployment.Namespace, deployment.Name)
 		} else if !errors.IsAlreadyExists(err) {
-			return fmt.Errorf("failed to create router daemonset %s/%s: %v", ds.Namespace, ds.Name, err)
+			return fmt.Errorf("failed to create router deployment %s/%s: %v", deployment.Namespace, deployment.Name, err)
 		}
 	}
 
-	if changed, obj := daemonsetConfigChanged(ds, expected); changed {
+	if changed, obj := deploymentConfigChanged(deployment, expected); changed {
 		err = sdk.Update(obj)
 		if err == nil {
-			logrus.Infof("updated router daemonset %s/%s", obj.Namespace, obj.Name)
+			logrus.Infof("updated router deployment %s/%s", obj.Namespace, obj.Name)
 		} else {
-			return fmt.Errorf("failed to update router daemonset %s/%s, %v", obj.Namespace, obj.Name, err)
+			return fmt.Errorf("failed to update router deployment %s/%s, %v", obj.Namespace, obj.Name, err)
 		}
 	}
 
@@ -239,14 +239,14 @@ func (h *Handler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress) err
 				}
 				// Service doesn't exist; try to create it.
 				trueVar := true
-				dsRef := metav1.OwnerReference{
-					APIVersion: ds.APIVersion,
-					Kind:       ds.Kind,
-					Name:       ds.Name,
-					UID:        ds.UID,
+				deploymentRef := metav1.OwnerReference{
+					APIVersion: deployment.APIVersion,
+					Kind:       deployment.Kind,
+					Name:       deployment.Name,
+					UID:        deployment.UID,
 					Controller: &trueVar,
 				}
-				service.SetOwnerReferences([]metav1.OwnerReference{dsRef})
+				service.SetOwnerReferences([]metav1.OwnerReference{deploymentRef})
 				err = sdk.Create(service)
 				if err == nil {
 					logrus.Infof("created router service %s/%s", service.Namespace, service.Name)
@@ -263,7 +263,7 @@ func (h *Handler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress) err
 		}
 	}
 
-	if err := h.ensureRouterServiceForIngress(ds, ci); err != nil {
+	if err := h.ensureRouterServiceForIngress(deployment, ci); err != nil {
 		return err
 	}
 
@@ -272,7 +272,7 @@ func (h *Handler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress) err
 
 // ensureRouterServiceForIngress ensures that a Router service exists for a
 // given ClusterIngress exists.
-func (h *Handler) ensureRouterServiceForIngress(ds *appsv1.DaemonSet, ci *ingressv1alpha1.ClusterIngress) error {
+func (h *Handler) ensureRouterServiceForIngress(deployment *appsv1.Deployment, ci *ingressv1alpha1.ClusterIngress) error {
 	svc, err := h.ManifestFactory.RouterServiceInternal(ci)
 	if err != nil {
 		return fmt.Errorf("failed to build router service: %v", err)
@@ -284,14 +284,14 @@ func (h *Handler) ensureRouterServiceForIngress(ds *appsv1.DaemonSet, ci *ingres
 		}
 
 		trueVar := true
-		dsRef := metav1.OwnerReference{
-			APIVersion: ds.APIVersion,
-			Kind:       ds.Kind,
-			Name:       ds.Name,
-			UID:        ds.UID,
+		deploymentRef := metav1.OwnerReference{
+			APIVersion: deployment.APIVersion,
+			Kind:       deployment.Kind,
+			Name:       deployment.Name,
+			UID:        deployment.UID,
 			Controller: &trueVar,
 		}
-		svc.SetOwnerReferences([]metav1.OwnerReference{dsRef})
+		svc.SetOwnerReferences([]metav1.OwnerReference{deploymentRef})
 
 		err = sdk.Create(svc)
 		if err == nil {
@@ -325,20 +325,20 @@ func (h *Handler) ensureDNSForLoadBalancer(ci *ingressv1alpha1.ClusterIngress, s
 // ensureRouterDeleted ensures that any router resources associated with the
 // clusteringress are deleted.
 func (h *Handler) ensureRouterDeleted(ci *ingressv1alpha1.ClusterIngress) error {
-	ds, err := h.ManifestFactory.RouterDaemonSet(ci)
+	deployment, err := h.ManifestFactory.RouterDeployment(ci)
 	if err != nil {
-		return fmt.Errorf("failed to build router daemonset for deletion: %v", err)
+		return fmt.Errorf("failed to build router deployment for deletion: %v", err)
 	}
-	err = sdk.Delete(ds)
+	err = sdk.Delete(deployment)
 	if !errors.IsNotFound(err) {
 		return err
 	}
 	return nil
 }
 
-// daemonsetConfigChanged checks if current config matches the expected config
-// for the cluster ingress daemonset and if not returns the updated config.
-func daemonsetConfigChanged(current, expected *appsv1.DaemonSet) (bool, *appsv1.DaemonSet) {
+// deploymentConfigChanged checks if current config matches the expected config
+// for the cluster ingress deployment and if not returns the updated config.
+func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv1.Deployment) {
 	// As per an offline conversation, this checks only the secret name
 	// for now but can be updated to a `reflect.DeepEqual` if needed.
 	if current.Spec.Template.Spec.Volumes[0].Secret.SecretName == expected.Spec.Template.Spec.Volumes[0].Secret.SecretName {

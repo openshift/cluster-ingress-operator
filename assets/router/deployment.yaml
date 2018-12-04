@@ -1,6 +1,6 @@
-# DaemonSet with default values
+# Deployment with default values
 # Cluster Ingress specific values are applied at runtime.
-kind: DaemonSet
+kind: Deployment
 apiVersion: apps/v1
 metadata:
   # Name is set at runtime.
