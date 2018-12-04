@@ -5,7 +5,7 @@ MAIN_PACKAGE=$(PACKAGE)/cmd/cluster-ingress-operator
 
 BIN=$(lastword $(subst /, ,$(MAIN_PACKAGE)))
 
-ENVVAR=GOOS=linux GOARCH=amd64 CGO_ENABLED=0
+ENVVAR=GOOS=linux CGO_ENABLED=0
 GOOS=linux
 GO_BUILD_RECIPE=GOOS=$(GOOS) go build -o $(BIN) $(MAIN_PACKAGE)
 
