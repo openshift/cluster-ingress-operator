@@ -16,6 +16,7 @@ spec:
       strategy:
         type: Recreate
       serviceAccountName: ingress-operator
+      priorityClassName: system-cluster-critical
       containers:
         - name: ingress-operator
           image: openshift/origin-cluster-ingress-operator:latest
