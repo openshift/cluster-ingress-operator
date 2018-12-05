@@ -60,6 +60,11 @@ const (
 	// CloudClusterIngressHA is a type of HA implemented by fronting
 	// the cluster ingress implementation with a Service Load Balancer.
 	CloudClusterIngressHA ClusterIngressHAType = "Cloud"
+	// UserDefinedClusterIngressHA configures the ingress implementation
+	// pods to use host networking, exposing ports 80 and 443 as endpoints
+	// on the host nodes.  Implementing HA for these endpoints is left to
+	// the user.
+	UserDefinedClusterIngressHA ClusterIngressHAType = "UserDefined"
 )
 
 type ClusterIngressHighAvailability struct {

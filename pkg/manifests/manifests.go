@@ -174,6 +174,19 @@ func (f *Factory) RouterDeployment(cr *ingressv1alpha1.ClusterIngress) (*appsv1.
 
 	deployment.Spec.Template.Spec.Containers[0].Image = f.config.RouterImage
 
+	if cr.Spec.HighAvailability != nil && cr.Spec.HighAvailability.Type == ingressv1alpha1.UserDefinedClusterIngressHA {
+		// Expose ports 80 and 443 on the host to provide endpoints for
+		// the user's HA solution.
+		deployment.Spec.Template.Spec.HostNetwork = true
+
+		// With container networking, probes default to using the pod IP
+		// address.  With host networking, probes default to using the
+		// node IP address.  Using localhost avoids potential routing
+		// problems or firewall restrictions.
+		deployment.Spec.Template.Spec.Containers[0].LivenessProbe.Handler.HTTPGet.Host = "localhost"
+		deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.Handler.HTTPGet.Host = "localhost"
+	}
+
 	// Fill in the default certificate secret name.
 	secretName := fmt.Sprintf("router-certs-%s", cr.Name)
 	if cr.Spec.DefaultCertificateSecret != nil && len(*cr.Spec.DefaultCertificateSecret) > 0 {
