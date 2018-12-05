@@ -19,6 +19,7 @@ spec:
       serviceAccountName: router
       nodeSelector:
         "node-role.kubernetes.io/worker": ""
+      priorityClassName: system-cluster-critical
       containers:
         - name: router
           # image is set at runtime.
