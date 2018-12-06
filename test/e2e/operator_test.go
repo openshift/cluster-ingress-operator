@@ -3,34 +3,67 @@
 package e2e
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
 
 	configv1 "github.com/openshift/api/config/v1"
+	"github.com/openshift/cluster-ingress-operator/pkg/apis"
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
 
-	"github.com/operator-framework/operator-sdk/pkg/sdk"
+	"github.com/operator-framework/operator-sdk/pkg/k8sutil"
+
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/config"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 )
 
-func TestOperatorAvailable(t *testing.T) {
-	co := &configv1.ClusterOperator{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "ClusterOperator",
-			APIVersion: "config.openshift.io/v1",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "openshift-ingress-operator",
-		},
+func getClient() (client.Client, string, error) {
+	namespace, err := k8sutil.GetWatchNamespace()
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to get watch namespace: %v", err)
 	}
-	err := wait.PollImmediate(1*time.Second, 10*time.Minute, func() (bool, error) {
-		if err := sdk.Get(co); err != nil {
+
+	cfg, err := config.GetConfig()
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to get a kube config: %v", err)
+	}
+
+	mgr, err := manager.New(cfg, manager.Options{Namespace: namespace})
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to create manager: %v", err)
+	}
+
+	if err := apis.AddToScheme(mgr.GetScheme()); err != nil {
+		return nil, "", fmt.Errorf("failed to set up scheme: %v", err)
+	}
+	if err := configv1.Install(mgr.GetScheme()); err != nil {
+		return nil, "", fmt.Errorf("failed to set up scheme: %v", err)
+	}
+	// TODO: Huge hack; the manager unconditionally uses a client with overly
+	// rigid semantics so either we set up a client from scratch here or cheat and
+	// reach in to get the live client the manager already made.
+	// https://github.com/kubernetes-sigs/controller-runtime/issues/180
+	return mgr.GetClient().(client.DelegatingClient).Reader.(*client.DelegatingReader).ClientReader.(client.Client), namespace, nil
+}
+
+func TestOperatorAvailable(t *testing.T) {
+	cl, ns, err := getClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	co := &configv1.ClusterOperator{}
+	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
+		if err := cl.Get(context.TODO(), types.NamespacedName{Name: ns}, co); err != nil {
 			return false, nil
 		}
 
@@ -48,19 +81,16 @@ func TestOperatorAvailable(t *testing.T) {
 	}
 }
 
+// TODO: Use manifest factory to build the expectation
 func TestDefaultClusterIngressExists(t *testing.T) {
-	ci := &ingressv1alpha1.ClusterIngress{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "ClusterIngress",
-			APIVersion: "ingress.openshift.io/v1alpha1",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "default",
-			Namespace: "openshift-ingress-operator",
-		},
+	cl, ns, err := getClient()
+	if err != nil {
+		t.Fatal(err)
 	}
-	err := wait.PollImmediate(1*time.Second, 10*time.Minute, func() (bool, error) {
-		if err := sdk.Get(ci); err != nil {
+
+	ci := &ingressv1alpha1.ClusterIngress{}
+	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
+		if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: ns, Name: "default"}, ci); err != nil {
 			return false, nil
 		}
 		return true, nil
@@ -70,46 +100,35 @@ func TestDefaultClusterIngressExists(t *testing.T) {
 	}
 }
 
+// TODO: Use manifest factory to build expectations
+// TODO: Find a way to do this test without mutating the default ingress?
 func TestClusterIngressUpdate(t *testing.T) {
-	ci := &ingressv1alpha1.ClusterIngress{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "ClusterIngress",
-			APIVersion: ingressv1alpha1.SchemeGroupVersion.String(),
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "default",
-			Namespace: "openshift-ingress-operator",
-		},
+	cl, ns, err := getClient()
+	if err != nil {
+		t.Fatal(err)
 	}
-	err := wait.PollImmediate(1*time.Second, 10*time.Minute, func() (bool, error) {
-		if err := sdk.Get(ci); err != nil {
+
+	ci := &ingressv1alpha1.ClusterIngress{}
+	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
+		if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: ns, Name: "default"}, ci); err != nil {
 			return false, nil
 		}
 		return true, nil
 	})
 	if err != nil {
-		t.Errorf("failed to get default ClusterIngress: %v", err)
+		t.Fatalf("failed to get default ClusterIngress: %v", err)
 	}
 
 	// Wait for the router deployment to exist.
-	deployment := &appsv1.Deployment{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "Deployment",
-			APIVersion: appsv1.SchemeGroupVersion.String(),
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("router-%s", ci.Name),
-			Namespace: "openshift-ingress",
-		},
-	}
-	err = wait.PollImmediate(1*time.Second, 10*time.Minute, func() (bool, error) {
-		if err := sdk.Get(deployment); err != nil {
+	deployment := &appsv1.Deployment{}
+	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
+		if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: "openshift-ingress", Name: fmt.Sprintf("router-%s", ci.Name)}, deployment); err != nil {
 			return false, nil
 		}
 		return true, nil
 	})
 	if err != nil {
-		t.Errorf("failed to get default router deployment: %v", err)
+		t.Fatalf("failed to get default router deployment: %v", err)
 	}
 
 	originalSecret := ci.Spec.DefaultCertificateSecret
@@ -119,25 +138,23 @@ func TestClusterIngressUpdate(t *testing.T) {
 	}
 
 	if deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName != expectedSecretName {
-		t.Errorf("expected router deployment certificate secret to be %s, got %s",
+		t.Fatalf("expected router deployment certificate secret to be %s, got %s",
 			expectedSecretName, deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName)
 	}
 
-	err, secret := createDefaultCertTestSecret()
+	err, secret := createDefaultCertTestSecret(cl)
 	if err != nil || secret == nil {
-		t.Errorf("creating default cert test secret: %v", err)
-		return
+		t.Fatalf("creating default cert test secret: %v", err)
 	}
 
 	// update the ci and wait for the updated deployment to match expectations
 	ci.Spec.DefaultCertificateSecret = &secret.Name
-	err = sdk.Update(ci)
+	err = cl.Update(context.TODO(), ci)
 	if err != nil {
-		t.Errorf("failed to get default ClusterIngress: %v", err)
-		return
+		t.Fatalf("failed to get default ClusterIngress: %v", err)
 	}
-	err = wait.PollImmediate(1*time.Second, 10*time.Minute, func() (bool, error) {
-		if err := sdk.Get(deployment); err != nil {
+	err = wait.PollImmediate(1*time.Second, 15*time.Second, func() (bool, error) {
+		if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: deployment.Namespace, Name: deployment.Name}, deployment); err != nil {
 			return false, nil
 		}
 		if deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName != secret.Name {
@@ -146,22 +163,22 @@ func TestClusterIngressUpdate(t *testing.T) {
 		return true, nil
 	})
 	if err != nil {
-		t.Errorf("failed to get updated router deployment: %v", err)
+		t.Fatalf("failed to get updated router deployment %s/%s: %v", deployment.Namespace, deployment.Name, err)
 	}
 
 	ci.Spec.DefaultCertificateSecret = originalSecret
-	err = sdk.Update(ci)
+	err = cl.Update(context.TODO(), ci)
 	if err != nil {
 		t.Errorf("failed to reset ClusterIngress: %v", err)
 	}
 
-	err = sdk.Delete(secret)
+	err = cl.Delete(context.TODO(), secret)
 	if err != nil {
 		t.Errorf("failed to delete test secret: %v", err)
 	}
 }
 
-func createDefaultCertTestSecret() (error, *corev1.Secret) {
+func createDefaultCertTestSecret(cl client.Client) (error, *corev1.Secret) {
 	defaultCert := `-----BEGIN CERTIFICATE-----
 MIIDIjCCAgqgAwIBAgIBBjANBgkqhkiG9w0BAQUFADCBoTELMAkGA1UEBhMCVVMx
 CzAJBgNVBAgMAlNDMRUwEwYDVQQHDAxEZWZhdWx0IENpdHkxHDAaBgNVBAoME0Rl
@@ -201,10 +218,6 @@ u3YLAbyW/lHhOCiZu2iAI8AbmXem9lW6Tr7p/97s0w==
 `
 
 	secret := &corev1.Secret{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "Secret",
-			APIVersion: corev1.SchemeGroupVersion.String(),
-		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "e2e-test-secret",
 			Namespace: "openshift-ingress",
@@ -216,9 +229,9 @@ u3YLAbyW/lHhOCiZu2iAI8AbmXem9lW6Tr7p/97s0w==
 		Type: corev1.SecretTypeTLS,
 	}
 
-	if err := sdk.Delete(secret); err != nil && !errors.IsNotFound(err) {
+	if err := cl.Delete(context.TODO(), secret); err != nil && !errors.IsNotFound(err) {
 		return err, nil
 	}
 
-	return sdk.Create(secret), secret
+	return cl.Create(context.TODO(), secret), secret
 }

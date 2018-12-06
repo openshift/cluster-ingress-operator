@@ -4,24 +4,13 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
+// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
-type ClusterIngressList struct {
-	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata"`
-	Items           []ClusterIngress `json:"items"`
-}
-
-// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
-
-type ClusterIngress struct {
-	metav1.TypeMeta   `json:",inline"`
-	metav1.ObjectMeta `json:"metadata"`
-	Spec              ClusterIngressSpec   `json:"spec"`
-	Status            ClusterIngressStatus `json:"status,omitempty"`
-}
-
+// ClusterIngressSpec defines the desired state of ClusterIngress
 type ClusterIngressSpec struct {
+	// Important: Run "operator-sdk generate k8s" to regenerate code after modifying this file
+
 	// IngressDomain is a DNS name suffix serviced by the
 	// ClusterIngress. This value is added automatically to the
 	// status of Routes to inform downstream systems.
@@ -79,6 +68,33 @@ type ClusterIngressHighAvailability struct {
 	Type ClusterIngressHAType `json:"type"`
 }
 
+// ClusterIngressStatus defines the observed state of ClusterIngress
 type ClusterIngressStatus struct {
-	// Fill me
+	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
+	// Important: Run "operator-sdk generate k8s" to regenerate code after modifying this file
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+// ClusterIngress is the Schema for the clusteringresses API
+// +k8s:openapi-gen=true
+type ClusterIngress struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+
+	Spec   ClusterIngressSpec   `json:"spec,omitempty"`
+	Status ClusterIngressStatus `json:"status,omitempty"`
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+// ClusterIngressList contains a list of ClusterIngress
+type ClusterIngressList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []ClusterIngress `json:"items"`
+}
+
+func init() {
+	SchemeBuilder.Register(&ClusterIngress{}, &ClusterIngressList{})
 }
