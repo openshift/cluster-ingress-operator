@@ -20,35 +20,36 @@ required = [
 [[prune.project]]
   name = "k8s.io/code-generator"
   non-go = false
-  unused-packages = false
 
 [[prune.project]]
   name = "github.com/kevinburke/go-bindata"
   non-go = false
   unused-packages = false
 
-[[constraint]]
-  name = "github.com/operator-framework/operator-sdk"
-  version = "v0.0.6"
+# Operator SDK and related
 
 [[constraint]]
-  name = "github.com/openshift/api"
-  revision = "83b2fe56301417028bd52e56edd75768e2ea051c"
+  name = "github.com/operator-framework/operator-sdk"
+  version = "v0.1.1"
+
+# Operator internals
 
 [[constraint]]
   name = "github.com/kevinburke/go-bindata"
   version = "v3.11.0"
 
 [[constraint]]
+  name = "github.com/openshift/api"
+  revision = "83b2fe56301417028bd52e56edd75768e2ea051c"
+
+[[constraint]]
   name = "github.com/aws/aws-sdk-go"
   version = "v1.15.72"
 
-[[override]]
-  name = "k8s.io/api"
-  version = "kubernetes-1.11.2"
+# Overrides for the operator-sdk
 
 [[override]]
-  name = "k8s.io/apimachinery"
+  name = "k8s.io/api"
   version = "kubernetes-1.11.2"
 
 [[override]]
@@ -56,5 +57,13 @@ required = [
   version = "kubernetes-1.11.2"
 
 [[override]]
+  name = "k8s.io/apimachinery"
+  version = "kubernetes-1.11.2"
+
+[[override]]
   name = "k8s.io/client-go"
   version = "kubernetes-1.11.2"
+
+[[override]]
+  name = "sigs.k8s.io/controller-runtime"
+  version = "v0.1.4"
