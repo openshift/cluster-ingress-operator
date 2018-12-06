@@ -3,7 +3,7 @@ package clusteroperator
 import (
 	"testing"
 
-	osv1 "github.com/openshift/cluster-version-operator/pkg/apis/operatorstatus.openshift.io/v1"
+	configv1 "github.com/openshift/api/config/v1"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -11,74 +11,74 @@ import (
 func TestSetStatusCondition(t *testing.T) {
 	testCases := []struct {
 		description   string
-		oldConditions []osv1.ClusterOperatorStatusCondition
-		newCondition  *osv1.ClusterOperatorStatusCondition
-		expected      []osv1.ClusterOperatorStatusCondition
+		oldConditions []configv1.ClusterOperatorStatusCondition
+		newCondition  *configv1.ClusterOperatorStatusCondition
+		expected      []configv1.ClusterOperatorStatusCondition
 	}{
 		{
 			description: "new condition",
-			newCondition: &osv1.ClusterOperatorStatusCondition{
-				Type:   osv1.OperatorAvailable,
-				Status: osv1.ConditionTrue,
+			newCondition: &configv1.ClusterOperatorStatusCondition{
+				Type:   configv1.OperatorAvailable,
+				Status: configv1.ConditionTrue,
 			},
-			expected: []osv1.ClusterOperatorStatusCondition{
+			expected: []configv1.ClusterOperatorStatusCondition{
 				{
-					Type:   osv1.OperatorAvailable,
-					Status: osv1.ConditionTrue,
+					Type:   configv1.OperatorAvailable,
+					Status: configv1.ConditionTrue,
 				},
 			},
 		},
 		{
 			description: "existing condition, unchanged",
-			oldConditions: []osv1.ClusterOperatorStatusCondition{
+			oldConditions: []configv1.ClusterOperatorStatusCondition{
 				{
-					Type:   osv1.OperatorAvailable,
-					Status: osv1.ConditionTrue,
+					Type:   configv1.OperatorAvailable,
+					Status: configv1.ConditionTrue,
 				},
 			},
-			newCondition: &osv1.ClusterOperatorStatusCondition{
-				Type:   osv1.OperatorAvailable,
-				Status: osv1.ConditionTrue,
+			newCondition: &configv1.ClusterOperatorStatusCondition{
+				Type:   configv1.OperatorAvailable,
+				Status: configv1.ConditionTrue,
 			},
-			expected: []osv1.ClusterOperatorStatusCondition{
+			expected: []configv1.ClusterOperatorStatusCondition{
 				{
-					Type:   osv1.OperatorAvailable,
-					Status: osv1.ConditionTrue,
+					Type:   configv1.OperatorAvailable,
+					Status: configv1.ConditionTrue,
 				},
 			},
 		},
 		{
 			description: "existing conditions, one changed",
-			oldConditions: []osv1.ClusterOperatorStatusCondition{
+			oldConditions: []configv1.ClusterOperatorStatusCondition{
 				{
-					Type:   osv1.OperatorFailing,
-					Status: osv1.ConditionFalse,
+					Type:   configv1.OperatorFailing,
+					Status: configv1.ConditionFalse,
 				},
 				{
-					Type:   osv1.OperatorProgressing,
-					Status: osv1.ConditionFalse,
+					Type:   configv1.OperatorProgressing,
+					Status: configv1.ConditionFalse,
 				},
 				{
-					Type:   osv1.OperatorAvailable,
-					Status: osv1.ConditionFalse,
+					Type:   configv1.OperatorAvailable,
+					Status: configv1.ConditionFalse,
 				},
 			},
-			newCondition: &osv1.ClusterOperatorStatusCondition{
-				Type:   osv1.OperatorAvailable,
-				Status: osv1.ConditionTrue,
+			newCondition: &configv1.ClusterOperatorStatusCondition{
+				Type:   configv1.OperatorAvailable,
+				Status: configv1.ConditionTrue,
 			},
-			expected: []osv1.ClusterOperatorStatusCondition{
+			expected: []configv1.ClusterOperatorStatusCondition{
 				{
-					Type:   osv1.OperatorFailing,
-					Status: osv1.ConditionFalse,
+					Type:   configv1.OperatorFailing,
+					Status: configv1.ConditionFalse,
 				},
 				{
-					Type:   osv1.OperatorProgressing,
-					Status: osv1.ConditionFalse,
+					Type:   configv1.OperatorProgressing,
+					Status: configv1.ConditionFalse,
 				},
 				{
-					Type:   osv1.OperatorAvailable,
-					Status: osv1.ConditionTrue,
+					Type:   configv1.OperatorAvailable,
+					Status: configv1.ConditionTrue,
 				},
 			},
 		},
@@ -97,7 +97,7 @@ func TestConditionsEqual(t *testing.T) {
 	testCases := []struct {
 		description string
 		expected    bool
-		a, b        []osv1.ClusterOperatorStatusCondition
+		a, b        []configv1.ClusterOperatorStatusCondition
 	}{
 		{
 			description: "empty statuses should be equal",
@@ -106,17 +106,17 @@ func TestConditionsEqual(t *testing.T) {
 		{
 			description: "condition LastTransitionTime should be ignored",
 			expected:    true,
-			a: []osv1.ClusterOperatorStatusCondition{
+			a: []configv1.ClusterOperatorStatusCondition{
 				{
-					Type:               osv1.OperatorAvailable,
-					Status:             osv1.ConditionTrue,
+					Type:               configv1.OperatorAvailable,
+					Status:             configv1.ConditionTrue,
 					LastTransitionTime: metav1.Unix(0, 0),
 				},
 			},
-			b: []osv1.ClusterOperatorStatusCondition{
+			b: []configv1.ClusterOperatorStatusCondition{
 				{
-					Type:               osv1.OperatorAvailable,
-					Status:             osv1.ConditionTrue,
+					Type:               configv1.OperatorAvailable,
+					Status:             configv1.ConditionTrue,
 					LastTransitionTime: metav1.Unix(1, 0),
 				},
 			},
@@ -124,61 +124,61 @@ func TestConditionsEqual(t *testing.T) {
 		{
 			description: "order of conditions should not matter",
 			expected:    true,
-			a: []osv1.ClusterOperatorStatusCondition{
+			a: []configv1.ClusterOperatorStatusCondition{
 				{
-					Type:   osv1.OperatorAvailable,
-					Status: osv1.ConditionTrue,
+					Type:   configv1.OperatorAvailable,
+					Status: configv1.ConditionTrue,
 				},
 				{
-					Type:   osv1.OperatorProgressing,
-					Status: osv1.ConditionTrue,
+					Type:   configv1.OperatorProgressing,
+					Status: configv1.ConditionTrue,
 				},
 			},
-			b: []osv1.ClusterOperatorStatusCondition{
+			b: []configv1.ClusterOperatorStatusCondition{
 				{
-					Type:   osv1.OperatorProgressing,
-					Status: osv1.ConditionTrue,
+					Type:   configv1.OperatorProgressing,
+					Status: configv1.ConditionTrue,
 				},
 				{
-					Type:   osv1.OperatorAvailable,
-					Status: osv1.ConditionTrue,
+					Type:   configv1.OperatorAvailable,
+					Status: configv1.ConditionTrue,
 				},
 			},
 		},
 		{
 			description: "check missing condition",
 			expected:    false,
-			a: []osv1.ClusterOperatorStatusCondition{
+			a: []configv1.ClusterOperatorStatusCondition{
 				{
-					Type:   osv1.OperatorProgressing,
-					Status: osv1.ConditionTrue,
+					Type:   configv1.OperatorProgressing,
+					Status: configv1.ConditionTrue,
 				},
 			},
-			b: []osv1.ClusterOperatorStatusCondition{
+			b: []configv1.ClusterOperatorStatusCondition{
 				{
-					Type:   osv1.OperatorAvailable,
-					Status: osv1.ConditionTrue,
+					Type:   configv1.OperatorAvailable,
+					Status: configv1.ConditionTrue,
 				},
 				{
-					Type:   osv1.OperatorProgressing,
-					Status: osv1.ConditionTrue,
+					Type:   configv1.OperatorProgressing,
+					Status: configv1.ConditionTrue,
 				},
 			},
 		},
 		{
 			description: "check condition reason differs",
 			expected:    false,
-			a: []osv1.ClusterOperatorStatusCondition{
+			a: []configv1.ClusterOperatorStatusCondition{
 				{
-					Type:   osv1.OperatorAvailable,
-					Status: osv1.ConditionFalse,
+					Type:   configv1.OperatorAvailable,
+					Status: configv1.ConditionFalse,
 					Reason: "foo",
 				},
 			},
-			b: []osv1.ClusterOperatorStatusCondition{
+			b: []configv1.ClusterOperatorStatusCondition{
 				{
-					Type:   osv1.OperatorAvailable,
-					Status: osv1.ConditionFalse,
+					Type:   configv1.OperatorAvailable,
+					Status: configv1.ConditionFalse,
 					Reason: "bar",
 				},
 			},
@@ -186,17 +186,17 @@ func TestConditionsEqual(t *testing.T) {
 		{
 			description: "check condition message differs",
 			expected:    false,
-			a: []osv1.ClusterOperatorStatusCondition{
+			a: []configv1.ClusterOperatorStatusCondition{
 				{
-					Type:    osv1.OperatorAvailable,
-					Status:  osv1.ConditionFalse,
+					Type:    configv1.OperatorAvailable,
+					Status:  configv1.ConditionFalse,
 					Message: "foo",
 				},
 			},
-			b: []osv1.ClusterOperatorStatusCondition{
+			b: []configv1.ClusterOperatorStatusCondition{
 				{
-					Type:    osv1.OperatorAvailable,
-					Status:  osv1.ConditionFalse,
+					Type:    configv1.OperatorAvailable,
+					Status:  configv1.ConditionFalse,
 					Message: "bar",
 				},
 			},

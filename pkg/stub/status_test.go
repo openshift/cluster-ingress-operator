@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"testing"
 
+	configv1 "github.com/openshift/api/config/v1"
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
-	osv1 "github.com/openshift/cluster-version-operator/pkg/apis/operatorstatus.openshift.io/v1"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -40,7 +40,7 @@ func TestComputeStatusConditions(t *testing.T) {
 			ingresses   []ingressv1alpha1.ClusterIngress
 			deployments []appsv1.Deployment
 
-			failing, progressing, available osv1.ConditionStatus
+			failing, progressing, available configv1.ConditionStatus
 		)
 		if tc.inputs.haveNamespace {
 			namespace = &corev1.Namespace{}
@@ -70,36 +70,36 @@ func TestComputeStatusConditions(t *testing.T) {
 			})
 		}
 		if tc.outputs.failing {
-			failing = osv1.ConditionTrue
+			failing = configv1.ConditionTrue
 		} else {
-			failing = osv1.ConditionFalse
+			failing = configv1.ConditionFalse
 		}
 		if tc.outputs.progressing {
-			progressing = osv1.ConditionTrue
+			progressing = configv1.ConditionTrue
 		} else {
-			progressing = osv1.ConditionFalse
+			progressing = configv1.ConditionFalse
 		}
 		if tc.outputs.available {
-			available = osv1.ConditionTrue
+			available = configv1.ConditionTrue
 		} else {
-			available = osv1.ConditionFalse
+			available = configv1.ConditionFalse
 		}
-		expected := []osv1.ClusterOperatorStatusCondition{
+		expected := []configv1.ClusterOperatorStatusCondition{
 			{
-				Type:   osv1.OperatorFailing,
+				Type:   configv1.OperatorFailing,
 				Status: failing,
 			},
 			{
-				Type:   osv1.OperatorProgressing,
+				Type:   configv1.OperatorProgressing,
 				Status: progressing,
 			},
 			{
-				Type:   osv1.OperatorAvailable,
+				Type:   configv1.OperatorAvailable,
 				Status: available,
 			},
 		}
 		new := computeStatusConditions(
-			[]osv1.ClusterOperatorStatusCondition{},
+			[]configv1.ClusterOperatorStatusCondition{},
 			namespace,
 			ingresses,
 			deployments,

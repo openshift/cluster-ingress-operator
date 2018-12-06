@@ -6,12 +6,14 @@ import (
 
 	"github.com/sirupsen/logrus"
 
+	configv1 "github.com/openshift/api/config/v1"
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/clusteroperator"
 	operatorversion "github.com/openshift/cluster-ingress-operator/version"
-	osv1 "github.com/openshift/cluster-version-operator/pkg/apis/operatorstatus.openshift.io/v1"
 
+	"github.com/operator-framework/operator-sdk/pkg/k8sclient"
 	"github.com/operator-framework/operator-sdk/pkg/sdk"
+	"github.com/operator-framework/operator-sdk/pkg/util/k8sutil"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -22,22 +24,20 @@ import (
 // syncOperatorStatus computes the operator's current status and therefrom
 // creates or updates the ClusterOperator resource for the operator.
 func (h *Handler) syncOperatorStatus() {
-	co := &osv1.ClusterOperator{
+	co := &configv1.ClusterOperator{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "ClusterOperator",
-			APIVersion: "operatorstatus.openshift.io/v1",
+			APIVersion: "config.openshift.io/v1",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace: h.Namespace,
-			// TODO Use a named constant or get name from config.
-			Name: "openshift-ingress",
+			Name: h.Namespace,
 		},
 	}
 	err := sdk.Get(co)
 	isNotFound := errors.IsNotFound(err)
 	if err != nil && !isNotFound {
-		logrus.Errorf("syncOperatorStatus: error getting ClusterOperator %s/%s: %v",
-			co.Namespace, co.Name, err)
+		logrus.Errorf("syncOperatorStatus: error getting ClusterOperator %s: %v",
+			co.Name, err)
 
 		return
 	}
@@ -57,11 +57,11 @@ func (h *Handler) syncOperatorStatus() {
 		co.Status.Version = operatorversion.Version
 
 		if err := sdk.Create(co); err != nil {
-			logrus.Errorf("syncOperatorStatus: failed to create ClusterOperator %s/%s: %v",
-				co.Namespace, co.Name, err)
+			logrus.Errorf("syncOperatorStatus: failed to create ClusterOperator %s: %v",
+				co.Name, err)
 		} else {
-			logrus.Infof("syncOperatorStatus: created ClusterOperator %s/%s (UID %v)",
-				co.Namespace, co.Name, co.UID)
+			logrus.Infof("syncOperatorStatus: created ClusterOperator %s (UID %v)",
+				co.Name, co.UID)
 		}
 
 		return
@@ -71,11 +71,24 @@ func (h *Handler) syncOperatorStatus() {
 		return
 	}
 
-	if _, err := h.CvoClient.OperatorstatusV1().
-		ClusterOperators(co.Namespace).
-		UpdateStatus(co); err != nil {
-		logrus.Errorf("syncOperatorStatus: updating status on %s/%s: %v",
-			co.Namespace, co.Name, err)
+	unstructObj, err := k8sutil.UnstructuredFromRuntimeObject(co)
+	if err != nil {
+		logrus.Errorf("syncOperatorStatus: k8sutil.UnstructuredFromRuntimeObject: %v", err)
+
+		return
+	}
+
+	resourceClient, _, err := k8sclient.GetResourceClient(co.APIVersion,
+		co.Kind, co.Namespace)
+	if err != nil {
+		logrus.Errorf("syncOperatorStatus: GetResourceClient: %v", err)
+
+		return
+	}
+
+	if _, err := resourceClient.UpdateStatus(unstructObj); err != nil {
+		logrus.Errorf("syncOperatorStatus: UpdateStatus on %s: %v",
+			co.Name, err)
 	}
 }
 
@@ -127,31 +140,31 @@ func (h *Handler) getOperatorState() (*corev1.Namespace, []ingressv1alpha1.Clust
 }
 
 // computeStatusConditions computes the operator's current state.
-func computeStatusConditions(conditions []osv1.ClusterOperatorStatusCondition, ns *corev1.Namespace, ingresses []ingressv1alpha1.ClusterIngress, deployments []appsv1.Deployment) []osv1.ClusterOperatorStatusCondition {
-	failingCondition := &osv1.ClusterOperatorStatusCondition{
-		Type:   osv1.OperatorFailing,
-		Status: osv1.ConditionUnknown,
+func computeStatusConditions(conditions []configv1.ClusterOperatorStatusCondition, ns *corev1.Namespace, ingresses []ingressv1alpha1.ClusterIngress, deployments []appsv1.Deployment) []configv1.ClusterOperatorStatusCondition {
+	failingCondition := &configv1.ClusterOperatorStatusCondition{
+		Type:   configv1.OperatorFailing,
+		Status: configv1.ConditionUnknown,
 	}
 	if ns == nil {
-		failingCondition.Status = osv1.ConditionTrue
+		failingCondition.Status = configv1.ConditionTrue
 		failingCondition.Reason = "NoNamespace"
 		failingCondition.Message = "router namespace does not exist"
 	} else {
-		failingCondition.Status = osv1.ConditionFalse
+		failingCondition.Status = configv1.ConditionFalse
 	}
 	conditions = clusteroperator.SetStatusCondition(conditions,
 		failingCondition)
 
-	progressingCondition := &osv1.ClusterOperatorStatusCondition{
-		Type:   osv1.OperatorProgressing,
-		Status: osv1.ConditionUnknown,
+	progressingCondition := &configv1.ClusterOperatorStatusCondition{
+		Type:   configv1.OperatorProgressing,
+		Status: configv1.ConditionUnknown,
 	}
 	numIngresses := len(ingresses)
 	numDeployments := len(deployments)
 	if numIngresses == numDeployments {
-		progressingCondition.Status = osv1.ConditionFalse
+		progressingCondition.Status = configv1.ConditionFalse
 	} else {
-		progressingCondition.Status = osv1.ConditionTrue
+		progressingCondition.Status = configv1.ConditionTrue
 		progressingCondition.Reason = "Reconciling"
 		progressingCondition.Message = fmt.Sprintf(
 			"have %d ingresses, want %d",
@@ -160,9 +173,9 @@ func computeStatusConditions(conditions []osv1.ClusterOperatorStatusCondition, n
 	conditions = clusteroperator.SetStatusCondition(conditions,
 		progressingCondition)
 
-	availableCondition := &osv1.ClusterOperatorStatusCondition{
-		Type:   osv1.OperatorAvailable,
-		Status: osv1.ConditionUnknown,
+	availableCondition := &configv1.ClusterOperatorStatusCondition{
+		Type:   configv1.OperatorAvailable,
+		Status: configv1.ConditionUnknown,
 	}
 	deploymentsAvailable := map[string]bool{}
 	for _, d := range deployments {
@@ -184,9 +197,9 @@ func computeStatusConditions(conditions []osv1.ClusterOperatorStatusCondition, n
 		}
 	}
 	if len(unavailable) == 0 {
-		availableCondition.Status = osv1.ConditionTrue
+		availableCondition.Status = configv1.ConditionTrue
 	} else {
-		availableCondition.Status = osv1.ConditionFalse
+		availableCondition.Status = configv1.ConditionFalse
 		availableCondition.Reason = "IngressUnavailable"
 		availableCondition.Message = strings.Join(unavailable,
 			"\n")

@@ -16,14 +16,17 @@ Jessica Forrester <jforrest@redhat.com>
 Jim Teeuwen <jimteeuwen@gmail.com>
 Jordan Liggitt <jordan@liggitt.net>
 Joseph Hager <ajhager@gmail.com>
+Keegan Carruthers-Smith <keegan.csmith@gmail.com>
 Keiji Yoshida <yoshida.keiji.84@gmail.com>
 Kenta Oda <oda@headjapan.com>
 Kevin Burke <kev@inburke.com>
 Matt Dee <mdee@hioscar.com>
 Maxim Ignatenko <imax@cesanta.com>
+MinJae Kwon <mingrammer@gmail.com>
 Paweł Błaszczyk <blaszczykpb@gmail.com>
 Pierre Baillet <pierre@baillet.name>
 Ruben Vermeersch <ruben@rocketeer.be>
+Russ Cox <rsc@golang.org>
 Ryosuke IWANAGA <riywo.jp@gmail.com>
 SATO taichi <ryushi@gmail.com>
 Sebastian Thiel <byronimo@gmail.com>
