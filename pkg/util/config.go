@@ -6,8 +6,6 @@ import (
 	"github.com/ghodss/yaml"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
 )
 
 const (
@@ -45,14 +43,4 @@ func UnmarshalInstallConfig(clusterConfig *corev1.ConfigMap) (*InstallConfig, er
 		return nil, fmt.Errorf("invalid InstallConfig: %v\njson:\n%s", err, icJson)
 	}
 	return &ic, nil
-}
-
-// GetInstallConfig looks up the install config in the cluster.
-func GetInstallConfig(client kubernetes.Interface) (*InstallConfig, error) {
-	cm, err := client.CoreV1().ConfigMaps(ClusterConfigNamespace).Get(ClusterConfigName, metav1.GetOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("couldn't get clusterconfig %s/%s: %v", ClusterConfigNamespace, ClusterConfigName, err)
-	}
-
-	return UnmarshalInstallConfig(cm)
 }

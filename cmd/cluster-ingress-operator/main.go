@@ -4,88 +4,104 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"runtime"
 	"strings"
-	"time"
 
-	configv1 "github.com/openshift/api/config/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 	awsdns "github.com/openshift/cluster-ingress-operator/pkg/dns/aws"
-	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator"
-	stub "github.com/openshift/cluster-ingress-operator/pkg/stub"
+	operatorconfig "github.com/openshift/cluster-ingress-operator/pkg/operator/config"
 	"github.com/openshift/cluster-ingress-operator/pkg/util"
 
-	"github.com/operator-framework/operator-sdk/pkg/k8sclient"
-	sdk "github.com/operator-framework/operator-sdk/pkg/sdk"
-	k8sutil "github.com/operator-framework/operator-sdk/pkg/util/k8sutil"
-	sdkVersion "github.com/operator-framework/operator-sdk/version"
+	"github.com/operator-framework/operator-sdk/pkg/k8sutil"
+
+	configv1 "github.com/openshift/api/config/v1"
 
 	"github.com/sirupsen/logrus"
 
 	corev1 "k8s.io/api/core/v1"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
+
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/config"
+	"sigs.k8s.io/controller-runtime/pkg/runtime/signals"
 )
 
-func printVersion() {
-	logrus.Infof("Go Version: %s", runtime.Version())
-	logrus.Infof("Go OS/Arch: %s/%s", runtime.GOOS, runtime.GOARCH)
-	logrus.Infof("operator-sdk Version: %v", sdkVersion.Version)
-}
-
 func main() {
-	printVersion()
+	// Get a kube client.
+	kubeConfig, err := config.GetConfig()
+	if err != nil {
+		logrus.Fatalf("failed to get kube config: %v", err)
+	}
+	kubeClient, err := operator.Client(kubeConfig)
+	if err != nil {
+		logrus.Fatalf("failed to create kube client: %v", err)
+	}
 
-	sdk.ExposeMetricsPort()
-
-	resource := "ingress.openshift.io/v1alpha1"
-	kind := "ClusterIngress"
-	namespace, err := k8sutil.GetWatchNamespace()
+	// Collect operator configuration.
+	operatorNamespace, err := k8sutil.GetWatchNamespace()
 	if err != nil {
 		logrus.Fatalf("Failed to get watch namespace: %v", err)
 	}
+	routerImage := os.Getenv("IMAGE")
+	if len(routerImage) == 0 {
+		logrus.Fatalf("IMAGE environment variable is required")
+	}
 
-	handler, err := createHandler(namespace)
+	// Retrieve the untyped cluster config (AKA the install config).
+	// TODO: Use of this should be completely replaced by config API types.
+	cm := &corev1.ConfigMap{}
+	err = kubeClient.Get(context.TODO(), types.NamespacedName{Namespace: util.ClusterConfigNamespace, Name: util.ClusterConfigName}, cm)
 	if err != nil {
-		logrus.Fatalf("couldn't create handler: %v", err)
+		logrus.Fatalf("failed to get clusterconfig: %v", err)
+	}
+	installConfig, err := util.UnmarshalInstallConfig(cm)
+	if err != nil {
+		logrus.Fatalf("failed to read clusterconfig: %v", err)
 	}
 
-	if err := handler.EnsureDefaultClusterIngress(); err != nil {
-		logrus.Fatalf("failed to ensure default cluster ingress: %v", err)
+	// Retrieve the typed cluster config.
+	ingressConfig := &configv1.Ingress{}
+	err = kubeClient.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, ingressConfig)
+	if err != nil {
+		logrus.Fatalf("failed to get ingressconfig 'cluster': %v", err)
+	}
+	if len(ingressConfig.Spec.Domain) == 0 {
+		logrus.Warnln("cluster ingress configuration has an empty domain; default ClusterIngress will have empty ingressDomain")
 	}
 
-	resyncPeriod := 10 * time.Minute
-	logrus.Infof("Watching %s, %s, %s, %d", resource, kind, namespace, resyncPeriod)
-	sdk.Watch(resource, kind, namespace, resyncPeriod)
-	// TODO Use a named constant for the router's namespace or get the
-	// namespace from config.
-	sdk.Watch("apps/v1", "Deployment", "openshift-ingress", resyncPeriod)
-	sdk.Watch("v1", "Service", "openshift-ingress", resyncPeriod)
-	sdk.Handle(handler)
-	sdk.Run(context.TODO())
+	// Set up the DNS manager.
+	dnsManager, err := createDNSManager(kubeClient, installConfig, ingressConfig)
+	if err != nil {
+		logrus.Fatalf("failed to create DNS manager: %v", err)
+	}
+
+	// Set up and start the operator.
+	operatorConfig := operatorconfig.Config{
+		Namespace:            operatorNamespace,
+		RouterImage:          routerImage,
+		DefaultIngressDomain: ingressConfig.Spec.Domain,
+	}
+	op, err := operator.New(operatorConfig, installConfig, dnsManager, kubeConfig)
+	if err != nil {
+		logrus.Fatalf("failed to create operator: %v", err)
+	}
+	if err := op.Start(signals.SetupSignalHandler()); err != nil {
+		logrus.Fatal(err)
+	}
 }
 
-func createHandler(namespace string) (*stub.Handler, error) {
-	ic, err := util.GetInstallConfig(k8sclient.GetKubeClient())
-	if err != nil {
-		return nil, fmt.Errorf("failed to get installconfig: %v", err)
-	}
-
+// createDNSManager creates a DNS manager compatible with the given cluster
+// configuration.
+func createDNSManager(cl client.Client, ic *util.InstallConfig, ingressConfig *configv1.Ingress) (dns.Manager, error) {
 	var dnsManager dns.Manager
 	switch {
 	case ic.Platform.AWS != nil:
-		awsCreds := &corev1.Secret{
-			TypeMeta: metav1.TypeMeta{
-				APIVersion: "v1",
-				Kind:       "Secret",
-			},
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "aws-creds",
-				Namespace: metav1.NamespaceSystem,
-			},
-		}
-		err := sdk.Get(awsCreds)
+		awsCreds := &corev1.Secret{}
+		err := cl.Get(context.TODO(), types.NamespacedName{Namespace: metav1.NamespaceSystem, Name: "aws-creds"}, awsCreds)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get aws creds from %s/%s: %v", awsCreds.Namespace, awsCreds.Name, err)
 		}
@@ -103,38 +119,5 @@ func createHandler(namespace string) (*stub.Handler, error) {
 	default:
 		dnsManager = &dns.NoopManager{}
 	}
-
-	ingressConfig := &configv1.Ingress{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "Ingress",
-			APIVersion: "config.openshift.io/v1",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "cluster",
-			// not namespaced
-		},
-	}
-	if err := sdk.Get(ingressConfig); err != nil {
-		return nil, fmt.Errorf("failed to get ingressconfig: %v", err)
-	}
-	if len(ingressConfig.Spec.Domain) == 0 {
-		logrus.Warnln("cluster ingress configuration has an empty domain; default ClusterIngress will have empty ingressDomain")
-	}
-
-	routerImage := os.Getenv("IMAGE")
-	if len(routerImage) == 0 {
-		logrus.Fatalf("IMAGE environment variable is required")
-	}
-
-	operatorConfig := operator.Config{
-		RouterImage:          routerImage,
-		DefaultIngressDomain: ingressConfig.Spec.Domain,
-	}
-
-	return &stub.Handler{
-		InstallConfig:   ic,
-		Namespace:       namespace,
-		ManifestFactory: manifests.NewFactory(operatorConfig),
-		DNSManager:      dnsManager,
-	}, nil
+	return dnsManager, nil
 }
