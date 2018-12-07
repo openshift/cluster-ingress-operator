@@ -6,7 +6,7 @@ import (
 	"io"
 
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
-	"github.com/openshift/cluster-ingress-operator/pkg/operator"
+	operatorconfig "github.com/openshift/cluster-ingress-operator/pkg/operator/config"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -43,10 +43,10 @@ func MustAssetReader(asset string) io.Reader {
 // files. It provides a point of control to mutate the static resources with
 // provided configuration.
 type Factory struct {
-	config operator.Config
+	config operatorconfig.Config
 }
 
-func NewFactory(config operator.Config) *Factory {
+func NewFactory(config operatorconfig.Config) *Factory {
 	return &Factory{config: config}
 }
 

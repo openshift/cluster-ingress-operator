@@ -6,13 +6,13 @@ import (
 	"time"
 
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
-	"github.com/openshift/cluster-ingress-operator/pkg/operator"
+	operatorconfig "github.com/openshift/cluster-ingress-operator/pkg/operator/config"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestManifests(t *testing.T) {
-	config := operator.Config{RouterImage: "quay.io/openshift/router:latest"}
+	config := operatorconfig.Config{RouterImage: "quay.io/openshift/router:latest"}
 	f := NewFactory(config)
 
 	ci := &ingressv1alpha1.ClusterIngress{
@@ -147,7 +147,7 @@ func TestManifests(t *testing.T) {
 
 func TestDefaultClusterIngress(t *testing.T) {
 	ingressDomain := "user.cluster.openshift.com"
-	def, err := NewFactory(operator.Config{
+	def, err := NewFactory(operatorconfig.Config{
 		RouterImage:          "test",
 		DefaultIngressDomain: ingressDomain,
 	}).DefaultClusterIngress()

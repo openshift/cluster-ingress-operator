@@ -5,9 +5,9 @@ MAIN_PACKAGE=$(PACKAGE)/cmd/cluster-ingress-operator
 
 BIN=$(lastword $(subst /, ,$(MAIN_PACKAGE)))
 
-ENVVAR=GOOS=linux CGO_ENABLED=0
-GOOS=linux
-GO_BUILD_RECIPE=GOOS=$(GOOS) go build -o $(BIN) $(MAIN_PACKAGE)
+GO_BUILD_RECIPE=CGO_ENABLED=0 go build -o $(BIN) $(MAIN_PACKAGE)
+
+TEST ?= .*
 
 .PHONY: build
 build:
@@ -27,7 +27,7 @@ release-local:
 
 .PHONY: test-e2e
 test-e2e:
-	KUBERNETES_CONFIG="$(KUBECONFIG)" go test -v -tags e2e ./...
+	KUBERNETES_CONFIG="$(KUBECONFIG)" WATCH_NAMESPACE=openshift-ingress-operator go test -count 1 -v -tags e2e -run "$(TEST)" ./...
 
 .PHONY: clean
 clean:
