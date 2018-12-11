@@ -103,8 +103,37 @@ func TestManifests(t *testing.T) {
 			defaultSecretName, svc.Annotations[ServingCertSecretAnnotation])
 	}
 
+	if deployment.Spec.Template.Spec.HostNetwork != false {
+		t.Error("expected host network to be false")
+	}
+
+	if len(deployment.Spec.Template.Spec.Containers[0].LivenessProbe.Handler.HTTPGet.Host) != 0 {
+		t.Errorf("expected empty liveness probe host, got %q", deployment.Spec.Template.Spec.Containers[0].LivenessProbe.Handler.HTTPGet.Host)
+	}
+	if len(deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.Handler.HTTPGet.Host) != 0 {
+		t.Errorf("expected empty readiness probe host, got %q", deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.Handler.HTTPGet.Host)
+	}
+
+	ci.Spec.HighAvailability = &ingressv1alpha1.ClusterIngressHighAvailability{
+		Type: ingressv1alpha1.CloudClusterIngressHA,
+	}
+	deployment, err = f.RouterDeployment(ci)
+	if err != nil {
+		t.Errorf("invalid router Deployment: %v", err)
+	}
+	if deployment.Spec.Template.Spec.HostNetwork != false {
+		t.Error("expected host network to be false")
+	}
+	if len(deployment.Spec.Template.Spec.Containers[0].LivenessProbe.Handler.HTTPGet.Host) != 0 {
+		t.Errorf("expected empty liveness probe host, got %q", deployment.Spec.Template.Spec.Containers[0].LivenessProbe.Handler.HTTPGet.Host)
+	}
+	if len(deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.Handler.HTTPGet.Host) != 0 {
+		t.Errorf("expected empty readiness probe host, got %q", deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.Handler.HTTPGet.Host)
+	}
+
 	secretName := fmt.Sprintf("secret-%v", time.Now().UnixNano())
 	ci.Spec.DefaultCertificateSecret = &secretName
+	ci.Spec.HighAvailability.Type = ingressv1alpha1.UserDefinedClusterIngressHA
 	ci.Spec.NodePlacement = &ingressv1alpha1.NodePlacement{
 		NodeSelector: &metav1.LabelSelector{
 			MatchLabels: map[string]string{
@@ -123,6 +152,16 @@ func TestManifests(t *testing.T) {
 	}
 	if e, a := config.RouterImage, deployment.Spec.Template.Spec.Containers[0].Image; e != a {
 		t.Errorf("expected router Deployment image %q, got %q", e, a)
+	}
+
+	if deployment.Spec.Template.Spec.HostNetwork != true {
+		t.Error("expected host network to be true")
+	}
+	if deployment.Spec.Template.Spec.Containers[0].LivenessProbe.Handler.HTTPGet.Host != "localhost" {
+		t.Errorf("expected liveness probe host to be \"localhost\", got %q", deployment.Spec.Template.Spec.Containers[0].LivenessProbe.Handler.HTTPGet.Host)
+	}
+	if deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.Handler.HTTPGet.Host != "localhost" {
+		t.Errorf("expected liveness probe host to be \"localhost\", got %q", deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.Handler.HTTPGet.Host)
 	}
 
 	if deployment.Spec.Template.Spec.Volumes[0].Secret == nil {
