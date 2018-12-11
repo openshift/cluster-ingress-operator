@@ -55,7 +55,7 @@ type Config struct {
 	// BaseDomain should be the *absolute* name shared by the zones.
 	// Example: 'devcluster.openshift.com.'
 	BaseDomain string
-	// ClusterID is the value of the 'tectonicClusterID' tag identifying the
+	// ClusterID is the value of the 'openshiftClusterID' tag identifying the
 	// cluster.
 	ClusterID string
 }
@@ -146,7 +146,7 @@ func (m *Manager) findClusterPrivateZone() *route53.HostedZone {
 	for _, zwt := range m.zones {
 		if aws.StringValue(zwt.zone.Name) == m.config.BaseDomain && aws.BoolValue(zwt.zone.Config.PrivateZone) {
 			for _, tag := range zwt.tags {
-				if aws.StringValue(tag.Key) == "tectonicClusterID" && aws.StringValue(tag.Value) == m.config.ClusterID {
+				if aws.StringValue(tag.Key) == "openshiftClusterID" && aws.StringValue(tag.Value) == m.config.ClusterID {
 					return zwt.zone
 				}
 			}
