@@ -65,7 +65,7 @@ func New(config operatorconfig.Config, dnsManager dns.Manager, kubeConfig *rest.
 	if err != nil {
 		return nil, fmt.Errorf("could't create kube client: %v", err)
 	}
-	mf := manifests.NewFactory(config)
+	mf := manifests.NewFactory(config, installConfig)
 
 	// Set up an operator manager for the operator namespace.
 	operatorManager, err := manager.New(kubeConfig, manager.Options{

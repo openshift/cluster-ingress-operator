@@ -7,6 +7,7 @@ import (
 
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
 	operatorconfig "github.com/openshift/cluster-ingress-operator/pkg/operator/config"
+	"github.com/openshift/cluster-ingress-operator/pkg/util"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -34,6 +35,9 @@ const (
 	// Annotation used to inform the certificate generation service to
 	// generate a cluster-signed certificate and populate the secret.
 	ServingCertSecretAnnotation = "service.alpha.openshift.io/serving-cert-secret-name"
+
+	// Annotation used to enable the proxy protocol on the AWS load balancer.
+	AWSLBProxyProtocolAnnotation = "service.beta.kubernetes.io/aws-load-balancer-proxy-protocol"
 )
 
 func MustAssetReader(asset string) io.Reader {
@@ -44,11 +48,12 @@ func MustAssetReader(asset string) io.Reader {
 // files. It provides a point of control to mutate the static resources with
 // provided configuration.
 type Factory struct {
-	config operatorconfig.Config
+	config        operatorconfig.Config
+	installConfig *util.InstallConfig
 }
 
-func NewFactory(config operatorconfig.Config) *Factory {
-	return &Factory{config: config}
+func NewFactory(config operatorconfig.Config, ic *util.InstallConfig) *Factory {
+	return &Factory{config: config, installConfig: ic}
 }
 
 func (f *Factory) DefaultClusterIngress() (*ingressv1alpha1.ClusterIngress, error) {
@@ -145,6 +150,14 @@ func (f *Factory) RouterDeployment(cr *ingressv1alpha1.ClusterIngress) (*appsv1.
 
 	if cr.Spec.IngressDomain != nil {
 		env = append(env, corev1.EnvVar{Name: "ROUTER_CANONICAL_HOSTNAME", Value: *cr.Spec.IngressDomain})
+	}
+
+	if cr.Spec.HighAvailability != nil && cr.Spec.HighAvailability.Type == ingressv1alpha1.CloudClusterIngressHA {
+		// For now, check if we are on AWS. This can really be done for
+		// for any external [cloud] LBs that support the proxy protocol.
+		if f.installConfig.Platform.AWS != nil {
+			env = append(env, corev1.EnvVar{Name: "ROUTER_USE_PROXY_PROTOCOL", Value: "true"})
+		}
 	}
 
 	if cr.Spec.NodePlacement != nil {
@@ -257,6 +270,13 @@ func (f *Factory) RouterServiceCloud(cr *ingressv1alpha1.ClusterIngress) (*corev
 		s.Spec.Selector = map[string]string{}
 	}
 	s.Spec.Selector["router"] = name
+
+	if f.installConfig.Platform.AWS != nil {
+		if s.Annotations == nil {
+			s.Annotations = map[string]string{}
+		}
+		s.Annotations[AWSLBProxyProtocolAnnotation] = "*"
+	}
 
 	return s, nil
 }
