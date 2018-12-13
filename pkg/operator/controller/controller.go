@@ -1,8 +1,9 @@
-package clusteringress
+package controller
 
 import (
 	"context"
 	"fmt"
+	"reflect"
 
 	"github.com/sirupsen/logrus"
 
@@ -16,6 +17,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 
@@ -98,6 +100,7 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 func (r *reconciler) reconcile() (reconcile.Result, error) {
 	// Ensure we have all the necessary scaffolding on which to place router
 	// instances.
+
 	err := r.ensureRouterNamespace()
 	if err != nil {
 		return reconcile.Result{}, err
@@ -148,72 +151,20 @@ func (r *reconciler) reconcile() (reconcile.Result, error) {
 // ensureRouterNamespace ensures all the necessary scaffolding exists for
 // routers generally, including a namespace and all RBAC setup.
 func (r *reconciler) ensureRouterNamespace() error {
-	cr, err := r.ManifestFactory.RouterClusterRole()
-	if err != nil {
-		return fmt.Errorf("failed to build router cluster role: %v", err)
-	}
-	err = r.Client.Get(context.TODO(), types.NamespacedName{Namespace: cr.Namespace, Name: cr.Name}, cr)
-	if err != nil {
-		if !errors.IsNotFound(err) {
-			return fmt.Errorf("failed to get router cluster role %s: %v", cr.Name, err)
-		}
-		err = r.Client.Create(context.TODO(), cr)
-		if err == nil {
-			logrus.Infof("created router cluster role %s", cr.Name)
-		} else if !errors.IsAlreadyExists(err) {
-			return fmt.Errorf("failed to create router cluster role %s: %v", cr.Name, err)
-		}
+	if err := r.ensureRouterClusterRole(); err != nil {
+		return err
 	}
 
-	ns, err := r.ManifestFactory.RouterNamespace()
-	if err != nil {
-		return fmt.Errorf("failed to build router namespace: %v", err)
-	}
-	err = r.Client.Get(context.TODO(), types.NamespacedName{Name: ns.Name}, ns)
-	if err != nil {
-		if !errors.IsNotFound(err) {
-			return fmt.Errorf("failed to get router namespace %q: %v", ns.Name, err)
-		}
-		err = r.Client.Create(context.TODO(), ns)
-		if err == nil {
-			logrus.Infof("created router namespace %s", ns.Name)
-		} else if !errors.IsAlreadyExists(err) {
-			return fmt.Errorf("failed to create router namespace %s: %v", ns.Name, err)
-		}
+	if err := r.ensureRouterNamespaceAsset(); err != nil {
+		return err
 	}
 
-	sa, err := r.ManifestFactory.RouterServiceAccount()
-	if err != nil {
-		return fmt.Errorf("failed to build router service account: %v", err)
-	}
-	err = r.Client.Get(context.TODO(), types.NamespacedName{Namespace: sa.Namespace, Name: sa.Name}, sa)
-	if err != nil {
-		if !errors.IsNotFound(err) {
-			return fmt.Errorf("failed to get router service account %s/%s: %v", sa.Namespace, sa.Name, err)
-		}
-		err = r.Client.Create(context.TODO(), sa)
-		if err == nil {
-			logrus.Infof("created router service account %s/%s", sa.Namespace, sa.Name)
-		} else if !errors.IsAlreadyExists(err) {
-			return fmt.Errorf("failed to create router service account %s/%s: %v", sa.Namespace, sa.Name, err)
-		}
+	if err := r.ensureRouterServiceAccount(); err != nil {
+		return err
 	}
 
-	crb, err := r.ManifestFactory.RouterClusterRoleBinding()
-	if err != nil {
-		return fmt.Errorf("failed to build router cluster role binding: %v", err)
-	}
-	err = r.Client.Get(context.TODO(), types.NamespacedName{Name: crb.Name}, crb)
-	if err != nil {
-		if !errors.IsNotFound(err) {
-			return fmt.Errorf("failed to get router cluster role binding %s: %v", crb.Name, err)
-		}
-		err = r.Client.Create(context.TODO(), crb)
-		if err == nil {
-			logrus.Infof("created router cluster role binding %s", crb.Name)
-		} else if !errors.IsAlreadyExists(err) {
-			return fmt.Errorf("failed to create router cluster role binding %s: %v", crb.Name, err)
-		}
+	if err := r.ensureRouterClusterRoleBinding(); err != nil {
+		return err
 	}
 
 	return nil
@@ -222,64 +173,19 @@ func (r *reconciler) ensureRouterNamespace() error {
 // ensureRouterForIngress ensures all necessary router resources exist for a
 // given clusteringress.
 func (r *reconciler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress) error {
-	expected, err := r.ManifestFactory.RouterDeployment(ci)
+	deployment, err := r.ensureRouterDeployment(ci)
 	if err != nil {
-		return fmt.Errorf("failed to build router deployment: %v", err)
-	}
-	current := expected.DeepCopy()
-	err = r.Client.Get(context.TODO(), types.NamespacedName{Namespace: expected.Namespace, Name: expected.Name}, current)
-	if err != nil {
-		if !errors.IsNotFound(err) {
-			return fmt.Errorf("failed to get router deployment %s/%s, %v", expected.Namespace, expected.Name, err)
-		}
-
-		err = r.Client.Create(context.TODO(), current)
-		if err == nil {
-			logrus.Infof("created router deployment %s/%s", current.Namespace, current.Name)
-		} else if !errors.IsAlreadyExists(err) {
-			return fmt.Errorf("failed to create router deployment %s/%s: %v", current.Namespace, current.Name, err)
-		}
-	}
-
-	if changed, updated := deploymentConfigChanged(current, expected); changed {
-		err = r.Client.Update(context.TODO(), updated)
-		if err == nil {
-			logrus.Infof("updated router deployment %s/%s", updated.Namespace, updated.Name)
-			current = updated
-		} else {
-			return fmt.Errorf("failed to update router deployment %s/%s, %v", updated.Namespace, updated.Name, err)
-		}
+		return err
 	}
 
 	if ci.Spec.HighAvailability != nil {
 		switch ci.Spec.HighAvailability.Type {
 		case ingressv1alpha1.CloudClusterIngressHA:
-			service, err := r.ManifestFactory.RouterServiceCloud(ci)
+			service, err := r.ensureRouterServiceCloud(deployment, ci)
 			if err != nil {
-				return fmt.Errorf("failed to build router service: %v", err)
+				return err
 			}
-			err = r.Client.Get(context.TODO(), types.NamespacedName{Namespace: service.Namespace, Name: service.Name}, service)
-			if err != nil {
-				if !errors.IsNotFound(err) {
-					return fmt.Errorf("failed to get router service %s/%s, %v", service.Namespace, service.Name, err)
-				}
-				// Service doesn't exist; try to create it.
-				trueVar := true
-				deploymentRef := metav1.OwnerReference{
-					APIVersion: "apps/v1",
-					Kind:       "Deployment",
-					Name:       current.Name,
-					UID:        current.UID,
-					Controller: &trueVar,
-				}
-				service.SetOwnerReferences([]metav1.OwnerReference{deploymentRef})
-				err = r.Client.Create(context.TODO(), service)
-				if err == nil {
-					logrus.Infof("created router service %s/%s", service.Namespace, service.Name)
-				} else if !errors.IsAlreadyExists(err) {
-					return fmt.Errorf("failed to create router service %s/%s: %v", service.Namespace, service.Name, err)
-				}
-			}
+
 			if ci.Spec.IngressDomain != nil {
 				err = r.ensureDNSForLoadBalancer(ci, service)
 				if err != nil {
@@ -289,42 +195,68 @@ func (r *reconciler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress) 
 		}
 	}
 
-	if err := r.ensureInternalRouterServiceForIngress(current, ci); err != nil {
+	if err := r.ensureRouterServiceInternal(deployment, ci); err != nil {
 		return fmt.Errorf("failed to create internal router service for clusteringress %s: %v", ci.Name, err)
 	}
 
 	return nil
 }
 
-// ensureInternalRouterServiceForIngress ensures that an internal service exists
-// for a given ClusterIngress.
-func (r *reconciler) ensureInternalRouterServiceForIngress(deployment *appsv1.Deployment, ci *ingressv1alpha1.ClusterIngress) error {
-	svc, err := r.ManifestFactory.RouterServiceInternal(ci)
-	if err != nil {
-		return fmt.Errorf("failed to build router service: %v", err)
-	}
-	err = r.Client.Get(context.TODO(), types.NamespacedName{Namespace: svc.Namespace, Name: svc.Name}, svc)
+// ensureRouterAsset ensures the expected router asset exists and returns the
+// current asset information.
+func (r *reconciler) ensureRouterAsset(key types.NamespacedName, obj runtime.Object) (runtime.Object, error) {
+	err := r.Client.Get(context.TODO(), key, obj)
 	if err != nil {
 		if !errors.IsNotFound(err) {
-			return fmt.Errorf("failed to get router service %s/%s, %v", svc.Namespace, svc.Name, err)
+			return obj, fmt.Errorf("failed to get router %T %s: %v", obj, key.String(), err)
 		}
 
-		trueVar := true
-		deploymentRef := metav1.OwnerReference{
-			APIVersion: "apps/v1",
-			Kind:       "Deployment",
-			Name:       deployment.Name,
-			UID:        deployment.UID,
-			Controller: &trueVar,
-		}
-		svc.SetOwnerReferences([]metav1.OwnerReference{deploymentRef})
-
-		err = r.Client.Create(context.TODO(), svc)
-		if err == nil {
-			logrus.Infof("created router service %s/%s", svc.Namespace, svc.Name)
+		if err := r.Client.Create(context.TODO(), obj); err == nil {
+			logrus.Infof("created router asset %T %s", obj, key.String())
 		} else if !errors.IsAlreadyExists(err) {
-			return fmt.Errorf("failed to create router service %s/%s: %v", svc.Namespace, svc.Name, err)
+			return obj, fmt.Errorf("failed to create router asset %T %s: %v", obj, key.String(), err)
 		}
+	}
+
+	return obj, nil
+}
+
+// ensureRouterServiceInternal ensures that an internal router service exists
+// for a given ClusterIngress.
+func (r *reconciler) ensureRouterServiceInternal(deployment *appsv1.Deployment, ci *ingressv1alpha1.ClusterIngress) error {
+	svc, err := r.ManifestFactory.RouterServiceInternal(ci)
+	if err != nil {
+		return fmt.Errorf("failed to build router service internal: %v", err)
+	}
+
+	trueVar := true
+	deploymentRef := metav1.OwnerReference{
+		APIVersion: "apps/v1",
+		Kind:       "Deployment",
+		Name:       deployment.Name,
+		UID:        deployment.UID,
+		Controller: &trueVar,
+	}
+	svc.SetOwnerReferences([]metav1.OwnerReference{deploymentRef})
+
+	current := svc.DeepCopy()
+	key := types.NamespacedName{Namespace: svc.Namespace, Name: svc.Name}
+
+	if _, err := r.ensureRouterAsset(key, current); err != nil {
+		return err
+	}
+
+	modified := !reflect.DeepEqual(current.Labels, svc.Labels) || !reflect.DeepEqual(current.GetOwnerReferences(), svc.GetOwnerReferences())
+	// Some annotations are generated, so check the serving secret one.
+	modified = modified || !reflect.DeepEqual(current.Annotations[manifests.ServingCertSecretAnnotation], svc.Annotations[manifests.ServingCertSecretAnnotation])
+	modified = modified || !reflect.DeepEqual(current.Spec, svc.Spec)
+	if modified {
+		if err := r.Client.Update(context.TODO(), svc); err != nil {
+			return err
+		}
+
+		logrus.Infof("updated router service %s", key.String())
+		return nil
 	}
 
 	return nil
@@ -361,6 +293,203 @@ func (r *reconciler) ensureRouterDeleted(ci *ingressv1alpha1.ClusterIngress) err
 		return err
 	}
 	return nil
+}
+
+// ensureRouterClusterRole ensures that the router cluster role exists and
+// matches the expected role.
+func (r *reconciler) ensureRouterClusterRole() error {
+	cr, err := r.ManifestFactory.RouterClusterRole()
+	if err != nil {
+		return fmt.Errorf("failed to build router cluster role: %v", err)
+	}
+
+	current := cr.DeepCopy()
+	key := types.NamespacedName{Namespace: cr.Namespace, Name: cr.Name}
+
+	if _, err := r.ensureRouterAsset(key, current); err != nil {
+		return err
+	}
+
+	// TODO: should we check for label/annotation changes or ignore them?
+	modified := !reflect.DeepEqual(current.Labels, cr.Labels) || !reflect.DeepEqual(current.Annotations, cr.Annotations)
+	modified = modified || !reflect.DeepEqual(current.Rules, cr.Rules)
+	modified = modified || !reflect.DeepEqual(current.AggregationRule, cr.AggregationRule)
+	if modified {
+		if err := r.Client.Update(context.TODO(), cr); err != nil {
+			return err
+		}
+
+		logrus.Infof("updated router cluster role %s", key.String())
+		return nil
+	}
+
+	return nil
+}
+
+// ensureRouterNamespaceAsset ensures that the router namespace exists and
+// matches the expected namespace.
+func (r *reconciler) ensureRouterNamespaceAsset() error {
+	ns, err := r.ManifestFactory.RouterNamespace()
+	if err != nil {
+		return fmt.Errorf("failed to build router namespace: %v", err)
+	}
+
+	current := ns.DeepCopy()
+	key := types.NamespacedName{Name: ns.Name}
+
+	if _, err := r.ensureRouterAsset(key, current); err != nil {
+		return err
+	}
+
+	// TODO: should we check for all label/annotation changes or just
+	//       specific ones node-selector/run-level?
+	modified := !reflect.DeepEqual(current.Labels, ns.Labels) || !reflect.DeepEqual(current.Annotations, ns.Annotations)
+	modified = modified || !reflect.DeepEqual(current.Spec, ns.Spec)
+	if modified {
+		if err := r.Client.Update(context.TODO(), ns); err != nil {
+			return err
+		}
+
+		logrus.Infof("updated router namespace %s", ns.Name)
+		return nil
+	}
+
+	return nil
+}
+
+// ensureRouterServiceAccount ensures that the router service account exists and
+// matches the expected service account.
+func (r *reconciler) ensureRouterServiceAccount() error {
+	sa, err := r.ManifestFactory.RouterServiceAccount()
+	if err != nil {
+		return fmt.Errorf("failed to build router service account: %v", err)
+	}
+
+	current := sa.DeepCopy()
+	key := types.NamespacedName{Namespace: sa.Namespace, Name: sa.Name}
+
+	if _, err := r.ensureRouterAsset(key, current); err != nil {
+		return err
+	}
+
+	// TODO: Should we check for Secrets, ImagePullSecrets and
+	//       AutomountServiceAccountToken - we don't really use those.
+	// TODO: should we check for label/annotation changes or ignore them?
+	modified := !reflect.DeepEqual(current.Labels, sa.Labels) || !reflect.DeepEqual(current.Annotations, sa.Annotations)
+	if modified {
+		if err := r.Client.Update(context.TODO(), sa); err != nil {
+			return err
+		}
+
+		logrus.Infof("updated router service account %s", key.String())
+		return nil
+	}
+
+	return nil
+}
+
+// ensureRouterClusterRoleBinding ensures that a router cluster role binding
+// exists and matches the expected cluster role binding.
+func (r *reconciler) ensureRouterClusterRoleBinding() error {
+	crb, err := r.ManifestFactory.RouterClusterRoleBinding()
+	if err != nil {
+	}
+
+	current := crb.DeepCopy()
+	key := types.NamespacedName{Name: crb.Name}
+
+	if _, err := r.ensureRouterAsset(key, current); err != nil {
+		return err
+	}
+
+	// TODO: should we check for label/annotation changes or ignore them?
+	modified := !reflect.DeepEqual(current.Labels, crb.Labels) || !reflect.DeepEqual(current.Annotations, crb.Annotations)
+	modified = modified || !reflect.DeepEqual(current.Subjects, crb.Subjects)
+	modified = modified || !reflect.DeepEqual(current.RoleRef, crb.RoleRef)
+	if modified {
+		if err := r.Client.Update(context.TODO(), crb); err != nil {
+			return err
+		}
+
+		logrus.Infof("updated router cluster role binding %s", crb.Name)
+		return nil
+	}
+
+	return nil
+}
+
+// ensureRouterDeployment ensures that the router deployment exists and matches
+// the expected deployment.
+func (r *reconciler) ensureRouterDeployment(ci *ingressv1alpha1.ClusterIngress) (*appsv1.Deployment, error) {
+	deployment, err := r.ManifestFactory.RouterDeployment(ci)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build router deployment: %v", err)
+	}
+
+	current := deployment.DeepCopy()
+	key := types.NamespacedName{Namespace: deployment.Namespace, Name: deployment.Name}
+
+	if _, err := r.ensureRouterAsset(key, current); err != nil {
+		return nil, err
+	}
+
+	// TODO: should we check for label/annotation changes or ignore them?
+	modified := !reflect.DeepEqual(current.Labels, deployment.Labels) || !reflect.DeepEqual(current.Annotations, deployment.Annotations)
+
+	// TODO: this will need changes when unsupported extensions/patches get
+	//       added to the router deployment.
+	modified = modified || !reflect.DeepEqual(current.Spec, deployment.Spec)
+	if modified {
+		if err := r.Client.Update(context.TODO(), deployment); err != nil {
+			return deployment, fmt.Errorf("failed to update router deployment %s, %v", key.String(), err)
+		}
+
+		logrus.Infof("updated router deployment %s", key.String())
+		return deployment, nil
+	}
+
+	return deployment, nil
+}
+
+// ensureRouterServiceCloud ensures that the router cloud service exists and
+// matches the expected service.
+func (r *reconciler) ensureRouterServiceCloud(deployment *appsv1.Deployment, ci *ingressv1alpha1.ClusterIngress) (*corev1.Service, error) {
+	service, err := r.ManifestFactory.RouterServiceCloud(ci)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build router cloud service: %v", err)
+	}
+
+	trueVar := true
+	deploymentRef := metav1.OwnerReference{
+		APIVersion: "apps/v1",
+		Kind:       "Deployment",
+		Name:       deployment.Name,
+		UID:        deployment.UID,
+		Controller: &trueVar,
+	}
+	service.SetOwnerReferences([]metav1.OwnerReference{deploymentRef})
+
+	current := service.DeepCopy()
+	key := types.NamespacedName{Namespace: service.Namespace, Name: service.Name}
+
+	if _, err := r.ensureRouterAsset(key, current); err != nil {
+		return nil, err
+	}
+
+	// TODO: should we check for label/annotation changes or ignore them?
+	modified := !reflect.DeepEqual(current.Labels, service.Labels) || !reflect.DeepEqual(current.Annotations, service.Annotations)
+	modified = modified || !reflect.DeepEqual(current.GetOwnerReferences(), service.GetOwnerReferences())
+	modified = modified || !reflect.DeepEqual(current.Spec, service.Spec)
+	if modified {
+		if err := r.Client.Update(context.TODO(), service); err != nil {
+			return service, err
+		}
+
+		logrus.Infof("updated router cloud service %s", key.String())
+		return service, nil
+	}
+
+	return service, nil
 }
 
 // deploymentConfigChanged checks if current config matches the expected config

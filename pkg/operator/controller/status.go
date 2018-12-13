@@ -1,4 +1,4 @@
-package clusteringress
+package controller
 
 import (
 	"context"
