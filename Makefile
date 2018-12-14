@@ -38,3 +38,7 @@ clean:
 verify:
 	hack/verify-gofmt.sh
 	hack/verify-generated-bindata.sh
+
+.PHONY: uninstall
+uninstall:
+	hack/uninstall.sh

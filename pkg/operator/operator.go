@@ -58,6 +58,7 @@ type Operator struct {
 	client          client.Client
 
 	manager manager.Manager
+	caches  []cache.Cache
 }
 
 // New creates (but does not start) a new operator from configuration.
@@ -99,9 +100,7 @@ func New(config operatorconfig.Config, installConfig *util.InstallConfig, dnsMan
 	if err != nil {
 		return nil, fmt.Errorf("failed to create openshift-ingress cache: %v", err)
 	}
-	operatorManager.Add(manager.RunnableFunc(func(s <-chan struct{}) error {
-		return ingressCache.Start(s)
-	}))
+
 	for _, obj := range []runtime.Object{
 		&appsv1.Deployment{},
 		&corev1.Service{},
@@ -115,6 +114,7 @@ func New(config operatorconfig.Config, installConfig *util.InstallConfig, dnsMan
 
 	return &Operator{
 		manager: operatorManager,
+		caches:  []cache.Cache{ingressCache},
 
 		// TODO: These are only needed for the default cluster ingress stuff, which
 		// should be refactored away.
@@ -131,6 +131,21 @@ func (o *Operator) Start(stop <-chan struct{}) error {
 	// Ensure the default cluster ingress exists.
 	if err := o.ensureDefaultClusterIngress(); err != nil {
 		return fmt.Errorf("failed to ensure default cluster ingress: %v", err)
+	}
+
+	// Start secondary caches.
+	for _, cache := range o.caches {
+		go func() {
+			if err := cache.Start(stop); err != nil {
+				// TODO: propagate to stop channel?
+				logrus.Infof("cache stopped with error: %v", err)
+			}
+		}()
+		logrus.Infof("waiting for cache to sync")
+		if !cache.WaitForCacheSync(stop) {
+			return fmt.Errorf("failed to sync cache")
+		}
+		logrus.Infof("cache synced")
 	}
 
 	// Start the primary manager.
