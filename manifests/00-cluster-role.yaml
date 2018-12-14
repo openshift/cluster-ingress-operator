@@ -48,6 +48,7 @@ rules:
   - config.openshift.io
   resources:
   - ingresses
+  - clusterversions
   verbs:
   - get
 

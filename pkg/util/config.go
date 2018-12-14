@@ -19,7 +19,6 @@ const (
 )
 
 type InstallConfig struct {
-	ClusterID  string                `json:"clusterID"`
 	BaseDomain string                `json:"baseDomain"`
 	Platform   InstallConfigPlatform `json:"platform"`
 }
