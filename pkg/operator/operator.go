@@ -133,12 +133,13 @@ func (o *Operator) Start(stop <-chan struct{}) error {
 		return fmt.Errorf("failed to ensure default cluster ingress: %v", err)
 	}
 
+	errChan := make(chan error)
+
 	// Start secondary caches.
 	for _, cache := range o.caches {
 		go func() {
 			if err := cache.Start(stop); err != nil {
-				// TODO: propagate to stop channel?
-				logrus.Infof("cache stopped with error: %v", err)
+				errChan <- err
 			}
 		}()
 		logrus.Infof("waiting for cache to sync")
@@ -148,8 +149,18 @@ func (o *Operator) Start(stop <-chan struct{}) error {
 		logrus.Infof("cache synced")
 	}
 
-	// Start the primary manager.
-	return o.manager.Start(stop)
+	// Secondary caches are all synced, so start the manager.
+	go func() {
+		errChan <- o.manager.Start(stop)
+	}()
+
+	// Wait for the manager to exit or a secondary cache to fail.
+	select {
+	case <-stop:
+		return nil
+	case err := <-errChan:
+		return err
+	}
 }
 
 // ensureDefaultClusterIngress ensures that a default ClusterIngress exists.
