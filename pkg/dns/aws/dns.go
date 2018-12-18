@@ -10,6 +10,7 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go/aws/ec2metadata"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/elb"
 	"github.com/aws/aws-sdk-go/service/route53"
@@ -49,8 +50,6 @@ type Config struct {
 	AccessID string
 	// AccessKey is an AWS credential.
 	AccessKey string
-	// Region is an AWS config.
-	Region string
 
 	// BaseDomain should be the *absolute* name shared by the zones.
 	// Example: 'devcluster.openshift.com.'
@@ -62,15 +61,31 @@ type Config struct {
 
 func NewManager(config Config) (*Manager, error) {
 	creds := credentials.NewStaticCredentials(config.AccessID, config.AccessKey, "")
-	sess, err := session.NewSession(&aws.Config{
-		Credentials: creds,
-		Region:      aws.String(config.Region),
+	sess, err := session.NewSessionWithOptions(session.Options{
+		Config: aws.Config{
+			Credentials: creds,
+		},
+		SharedConfigState: session.SharedConfigEnable,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("couldn't create AWS client session: %v", err)
 	}
+
+	region := aws.StringValue(sess.Config.Region)
+	if len(region) > 0 {
+		logrus.Infof("using region %q from shared config", region)
+	} else {
+		metadata := ec2metadata.New(sess)
+		discovered, err := metadata.Region()
+		if err != nil {
+			return nil, fmt.Errorf("couldn't get region from metadata: %v", err)
+		}
+		region = discovered
+		logrus.Infof("discovered region %q from metadata", region)
+	}
+
 	return &Manager{
-		elb:     elb.New(sess),
+		elb:     elb.New(sess, aws.NewConfig().WithRegion(region)),
 		route53: route53.New(sess),
 
 		config:         config,
