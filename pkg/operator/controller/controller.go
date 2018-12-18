@@ -9,7 +9,6 @@ import (
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
-	operatormanager "github.com/openshift/cluster-ingress-operator/pkg/operator/manager"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/slice"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -22,6 +21,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 )
@@ -37,9 +37,9 @@ const (
 // controller that handles all the logic for implementing ingress based on
 // ClusterIngress resources.
 //
-// The controller will be pre-configured to watch events from a component
-// source provided by the manager.
-func New(mgr operatormanager.ComponentManager, config Config) (controller.Controller, error) {
+// The controller will be pre-configured to watch for ClusterIngress resources
+// in the manager namespace.
+func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	reconciler := &reconciler{
 		Config: config,
 	}
@@ -48,10 +48,6 @@ func New(mgr operatormanager.ComponentManager, config Config) (controller.Contro
 		return nil, err
 	}
 	err = c.Watch(&source.Kind{Type: &ingressv1alpha1.ClusterIngress{}}, &handler.EnqueueRequestForObject{})
-	if err != nil {
-		return nil, err
-	}
-	err = c.Watch(mgr.ComponentSource(), &handler.EnqueueRequestForObject{})
 	if err != nil {
 		return nil, err
 	}

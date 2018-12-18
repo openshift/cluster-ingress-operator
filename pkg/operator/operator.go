@@ -9,7 +9,6 @@ import (
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	operatorconfig "github.com/openshift/cluster-ingress-operator/pkg/operator/config"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
-	operatormanager "github.com/openshift/cluster-ingress-operator/pkg/operator/manager"
 	"github.com/openshift/cluster-ingress-operator/pkg/util"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -27,9 +26,12 @@ import (
 
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 )
 
 // scheme contains all the API types necessary for the operator's dynamic
@@ -56,6 +58,7 @@ type Operator struct {
 	client          client.Client
 
 	manager manager.Manager
+	caches  []cache.Cache
 }
 
 // New creates (but does not start) a new operator from configuration.
@@ -66,31 +69,17 @@ func New(config operatorconfig.Config, installConfig *util.InstallConfig, dnsMan
 	}
 	mf := manifests.NewFactory(config)
 
-	// Set up an operator manager with a component manager watching for resources
-	// in the router namespace. Any new namespaces or types the operator should
-	// react to will be added here.
-	components := []operatormanager.ComponentOptions{
-		{
-			Options: manager.Options{
-				Namespace: "openshift-ingress",
-				Scheme:    scheme,
-			},
-			Types: []runtime.Object{
-				&appsv1.Deployment{},
-				&corev1.Service{},
-			},
-		},
-	}
-	operatorManager, err := operatormanager.New(kubeConfig, manager.Options{
+	// Set up an operator manager for the operator namespace.
+	operatorManager, err := manager.New(kubeConfig, manager.Options{
 		Namespace: config.Namespace,
 		Scheme:    scheme,
-	}, components...)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create operator manager: %v", err)
 	}
 
 	// Create and register the operator controller with the operator manager.
-	_, err = operatorcontroller.New(operatorManager, operatorcontroller.Config{
+	operatorController, err := operatorcontroller.New(operatorManager, operatorcontroller.Config{
 		Client:          kubeClient,
 		Namespace:       config.Namespace,
 		ManifestFactory: mf,
@@ -99,8 +88,33 @@ func New(config operatorconfig.Config, installConfig *util.InstallConfig, dnsMan
 	if err != nil {
 		return nil, fmt.Errorf("failed to create operator controller: %v", err)
 	}
+
+	// Create additional controller event sources from informers in the managed
+	// namespace. Any new managed resources outside the operator's namespace
+	// should be added here.
+	mapper, err := apiutil.NewDiscoveryRESTMapper(kubeConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get API Group-Resources")
+	}
+	ingressCache, err := cache.New(kubeConfig, cache.Options{Namespace: "openshift-ingress", Scheme: scheme, Mapper: mapper})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create openshift-ingress cache: %v", err)
+	}
+
+	for _, obj := range []runtime.Object{
+		&appsv1.Deployment{},
+		&corev1.Service{},
+	} {
+		informer, err := ingressCache.GetInformer(obj)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create informer for %v: %v", obj, err)
+		}
+		operatorController.Watch(&source.Informer{Informer: informer}, &handler.EnqueueRequestForObject{})
+	}
+
 	return &Operator{
 		manager: operatorManager,
+		caches:  []cache.Cache{ingressCache},
 
 		// TODO: These are only needed for the default cluster ingress stuff, which
 		// should be refactored away.
@@ -119,8 +133,34 @@ func (o *Operator) Start(stop <-chan struct{}) error {
 		return fmt.Errorf("failed to ensure default cluster ingress: %v", err)
 	}
 
-	// Start the primary manager.
-	return o.manager.Start(stop)
+	errChan := make(chan error)
+
+	// Start secondary caches.
+	for _, cache := range o.caches {
+		go func() {
+			if err := cache.Start(stop); err != nil {
+				errChan <- err
+			}
+		}()
+		logrus.Infof("waiting for cache to sync")
+		if !cache.WaitForCacheSync(stop) {
+			return fmt.Errorf("failed to sync cache")
+		}
+		logrus.Infof("cache synced")
+	}
+
+	// Secondary caches are all synced, so start the manager.
+	go func() {
+		errChan <- o.manager.Start(stop)
+	}()
+
+	// Wait for the manager to exit or a secondary cache to fail.
+	select {
+	case <-stop:
+		return nil
+	case err := <-errChan:
+		return err
+	}
 }
 
 // ensureDefaultClusterIngress ensures that a default ClusterIngress exists.
