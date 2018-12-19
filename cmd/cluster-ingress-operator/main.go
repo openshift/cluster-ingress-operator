@@ -12,8 +12,6 @@ import (
 	operatorconfig "github.com/openshift/cluster-ingress-operator/pkg/operator/config"
 	"github.com/openshift/cluster-ingress-operator/pkg/util"
 
-	"github.com/operator-framework/operator-sdk/pkg/k8sutil"
-
 	configv1 "github.com/openshift/api/config/v1"
 
 	"github.com/sirupsen/logrus"
@@ -42,9 +40,9 @@ func main() {
 	}
 
 	// Collect operator configuration.
-	operatorNamespace, err := k8sutil.GetWatchNamespace()
-	if err != nil {
-		logrus.Fatalf("Failed to get watch namespace: %v", err)
+	operatorNamespace, ok := os.LookupEnv("WATCH_NAMESPACE")
+	if !ok {
+		logrus.Fatalf("WATCH_NAMESPACE environment variable is required")
 	}
 	routerImage := os.Getenv("IMAGE")
 	if len(routerImage) == 0 {

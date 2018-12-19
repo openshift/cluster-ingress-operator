@@ -9,8 +9,6 @@ import (
 
 // ClusterIngressSpec defines the desired state of ClusterIngress
 type ClusterIngressSpec struct {
-	// Important: Run "operator-sdk generate k8s" to regenerate code after modifying this file
-
 	// IngressDomain is a DNS name suffix serviced by the
 	// ClusterIngress. This value is added automatically to the
 	// status of Routes to inform downstream systems.
@@ -76,7 +74,6 @@ type ClusterIngressHighAvailability struct {
 // ClusterIngressStatus defines the observed state of ClusterIngress
 type ClusterIngressStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "operator-sdk generate k8s" to regenerate code after modifying this file
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object

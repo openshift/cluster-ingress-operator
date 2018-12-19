@@ -5,14 +5,13 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"os"
 	"testing"
 	"time"
 
 	configv1 "github.com/openshift/api/config/v1"
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator"
-
-	"github.com/operator-framework/operator-sdk/pkg/k8sutil"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
@@ -26,9 +25,9 @@ import (
 )
 
 func getClient() (client.Client, string, error) {
-	namespace, err := k8sutil.GetWatchNamespace()
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to get watch namespace: %v", err)
+	namespace, ok := os.LookupEnv("WATCH_NAMESPACE")
+	if !ok {
+		return nil, "", fmt.Errorf("WATCH_NAMESPACE environment variable is required")
 	}
 	// Get a kube client.
 	kubeConfig, err := config.GetConfig()
