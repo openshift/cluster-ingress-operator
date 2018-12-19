@@ -17,3 +17,14 @@ type Config struct {
 	// Platform is the underlying infrastructure provider for the cluster.
 	Platform configv1.PlatformType
 }
+
+// PlatformType indicates the type of platform we are running on.
+type PlatformType string
+
+const (
+	// UnknownPlatform indicates the platform is unkown.
+	UnknownPlatform PlatformType = "unknown"
+
+	// AWSPlatform indicates the platform is AWS.
+	AWSPlatform PlatformType = "aws"
+)

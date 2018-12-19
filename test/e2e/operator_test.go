@@ -13,6 +13,7 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator"
+	"github.com/openshift/cluster-ingress-operator/pkg/util"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
@@ -162,6 +163,21 @@ func TestClusterProxyProtocol(t *testing.T) {
 	cl, ns, err := getClient()
 	if err != nil {
 		t.Fatal(err)
+	}
+
+	cm := &corev1.ConfigMap{}
+	err = cl.Get(context.TODO(), types.NamespacedName{Namespace: util.ClusterConfigNamespace, Name: util.ClusterConfigName}, cm)
+	if err != nil {
+		t.Fatalf("failed to get clusterconfig: %v", err)
+	}
+	installConfig, err := util.UnmarshalInstallConfig(cm)
+	if err != nil {
+		t.Fatalf("failed to read clusterconfig: %v", err)
+	}
+
+	if installConfig.Platform.AWS == nil {
+		t.Skip("test skipped on non-aws platform")
+		return
 	}
 
 	ci := &ingressv1alpha1.ClusterIngress{}

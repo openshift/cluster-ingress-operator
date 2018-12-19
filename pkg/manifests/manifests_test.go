@@ -8,27 +8,18 @@ import (
 
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
 	operatorconfig "github.com/openshift/cluster-ingress-operator/pkg/operator/config"
-	"github.com/openshift/cluster-ingress-operator/pkg/util"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	configv1 "github.com/openshift/api/config/v1"
 )
 
-func installConfig() *util.InstallConfig {
-	return &util.InstallConfig{
-		BaseDomain: "apps.ingress.test",
-		Platform: util.InstallConfigPlatform{
-			AWS: &util.InstallConfigPlatformAWS{
-				Region: "northsouth-not-eastwest",
-			},
-		},
-	}
-}
-
 func TestManifests(t *testing.T) {
-	config := operatorconfig.Config{RouterImage: "quay.io/openshift/router:latest"}
-	f := NewFactory(config, installConfig())
+	config := operatorconfig.Config{
+		RouterImage: "quay.io/openshift/router:latest",
+		Platform:    operatorconfig.AWSPlatform,
+	}
+	f := NewFactory(config)
 
 	ci := &ingressv1alpha1.ClusterIngress{
 		ObjectMeta: metav1.ObjectMeta{
