@@ -73,6 +73,12 @@ func main() {
 		logrus.Warnln("cluster ingress configuration has an empty domain; default ClusterIngress will have empty ingressDomain")
 	}
 
+	dnsConfig := &configv1.DNS{}
+	err = kubeClient.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, dnsConfig)
+	if err != nil {
+		logrus.Fatalf("failed to get dns 'cluster': %v", err)
+	}
+
 	// Retrieve the typed cluster version config.
 	clusterVersionConfig := &configv1.ClusterVersion{}
 	err = kubeClient.Get(context.TODO(), types.NamespacedName{Name: "version"}, clusterVersionConfig)
@@ -81,7 +87,7 @@ func main() {
 	}
 
 	// Set up the DNS manager.
-	dnsManager, err := createDNSManager(kubeClient, installConfig, ingressConfig, clusterVersionConfig)
+	dnsManager, err := createDNSManager(kubeClient, installConfig, ingressConfig, dnsConfig, clusterVersionConfig)
 	if err != nil {
 		logrus.Fatalf("failed to create DNS manager: %v", err)
 	}
@@ -103,7 +109,7 @@ func main() {
 
 // createDNSManager creates a DNS manager compatible with the given cluster
 // configuration.
-func createDNSManager(cl client.Client, ic *util.InstallConfig, ingressConfig *configv1.Ingress, clusterVersionConfig *configv1.ClusterVersion) (dns.Manager, error) {
+func createDNSManager(cl client.Client, ic *util.InstallConfig, ingressConfig *configv1.Ingress, dnsConfig *configv1.DNS, clusterVersionConfig *configv1.ClusterVersion) (dns.Manager, error) {
 	var dnsManager dns.Manager
 	switch {
 	case ic.Platform.AWS != nil:
@@ -115,8 +121,7 @@ func createDNSManager(cl client.Client, ic *util.InstallConfig, ingressConfig *c
 		manager, err := awsdns.NewManager(awsdns.Config{
 			AccessID:   string(awsCreds.Data["aws_access_key_id"]),
 			AccessKey:  string(awsCreds.Data["aws_secret_access_key"]),
-			Region:     ic.Platform.AWS.Region,
-			BaseDomain: strings.TrimSuffix(ic.BaseDomain, ".") + ".",
+			BaseDomain: strings.TrimSuffix(dnsConfig.Spec.BaseDomain, ".") + ".",
 			ClusterID:  string(clusterVersionConfig.Spec.ClusterID),
 		})
 		if err != nil {

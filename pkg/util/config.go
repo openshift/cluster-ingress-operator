@@ -19,8 +19,7 @@ const (
 )
 
 type InstallConfig struct {
-	BaseDomain string                `json:"baseDomain"`
-	Platform   InstallConfigPlatform `json:"platform"`
+	Platform InstallConfigPlatform `json:"platform"`
 }
 
 type InstallConfigPlatform struct {
@@ -28,7 +27,6 @@ type InstallConfigPlatform struct {
 }
 
 type InstallConfigPlatformAWS struct {
-	Region string `json:"region"`
 }
 
 // UnmarshalInstallConfig builds an install config from the cluster config.
