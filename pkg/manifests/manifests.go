@@ -220,7 +220,7 @@ func (f *Factory) RouterServiceInternal(cr *ingressv1alpha1.ClusterIngress) (*co
 	if s.Spec.Selector == nil {
 		s.Spec.Selector = map[string]string{}
 	}
-	s.Spec.Selector["router"] = name
+	s.Spec.Selector["router"] = "router-" + cr.Name
 
 	return s, nil
 }

@@ -87,6 +87,69 @@ func TestDefaultClusterIngressExists(t *testing.T) {
 	}
 }
 
+func TestRouterServiceInternalEndpoints(t *testing.T) {
+	cl, ns, err := getClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ci := &ingressv1alpha1.ClusterIngress{}
+	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
+		if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: ns, Name: "default"}, ci); err != nil {
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to get default ClusterIngress: %v", err)
+	}
+
+	// Wait for the router deployment to exist.
+	deployment := &appsv1.Deployment{}
+	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
+		if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: "openshift-ingress", Name: fmt.Sprintf("router-%s", ci.Name)}, deployment); err != nil {
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to get default router deployment: %v", err)
+	}
+
+	// check if service exists and has endpoints
+	svc := &corev1.Service{}
+	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
+		if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: "openshift-ingress", Name: fmt.Sprintf("router-internal-%s", ci.Name)}, svc); err != nil {
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to get internal router service: %v", err)
+	}
+
+	endpoints := &corev1.Endpoints{}
+	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
+		if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: "openshift-ingress", Name: fmt.Sprintf("router-internal-%s", ci.Name)}, endpoints); err != nil {
+			return false, nil
+		}
+
+		nready := 0
+		for i := range endpoints.Subsets {
+			es := &endpoints.Subsets[i]
+			nready = nready + len(es.Addresses)
+		}
+		if nready > 0 {
+			return true, nil
+		}
+
+		return false, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to get internal router service endpoints: %v", err)
+	}
+}
+
 // TODO: Use manifest factory to build expectations
 // TODO: Find a way to do this test without mutating the default ingress?
 func TestClusterIngressUpdate(t *testing.T) {
