@@ -1,8 +1,9 @@
-package clusteringress
+package controller
 
 import (
 	"context"
 	"fmt"
+	"reflect"
 
 	"github.com/sirupsen/logrus"
 
@@ -15,6 +16,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 
@@ -25,6 +27,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 )
+
+// resourceMatcherFunc checks if the two objects match.
+type resourceMatcherFunc func(old, new runtime.Object) bool
 
 const (
 	// ClusterIngressFinalizer is applied to all ClusterIngresses before they are
@@ -148,40 +153,20 @@ func (r *reconciler) ensureRouterNamespace() error {
 	if err != nil {
 		return fmt.Errorf("failed to build router cluster role: %v", err)
 	}
-	err = r.Client.Get(context.TODO(), types.NamespacedName{Namespace: cr.Namespace, Name: cr.Name}, cr)
+	err = r.verifyRouterAssetExists(types.NamespacedName{Namespace: cr.Namespace, Name: cr.Name}, cr, nil)
 	if err != nil {
-		if !errors.IsNotFound(err) {
-			return fmt.Errorf("failed to get router cluster role %s: %v", cr.Name, err)
-		}
-		err = r.Client.Create(context.TODO(), cr)
-		if err == nil {
-			logrus.Infof("created router cluster role %s", cr.Name)
-		} else if !errors.IsAlreadyExists(err) {
-			return fmt.Errorf("failed to create router cluster role %s: %v", cr.Name, err)
-		}
+		return err
 	}
 
-	ns, err := r.ManifestFactory.RouterNamespace()
-	if err != nil {
-		return fmt.Errorf("failed to build router namespace: %v", err)
-	}
-	err = r.Client.Get(context.TODO(), types.NamespacedName{Name: ns.Name}, ns)
-	if err != nil {
-		if !errors.IsNotFound(err) {
-			return fmt.Errorf("failed to get router namespace %q: %v", ns.Name, err)
-		}
-		err = r.Client.Create(context.TODO(), ns)
-		if err == nil {
-			logrus.Infof("created router namespace %s", ns.Name)
-		} else if !errors.IsAlreadyExists(err) {
-			return fmt.Errorf("failed to create router namespace %s: %v", ns.Name, err)
-		}
+	if err := r.ensureRouterNamespaceAsset(); err != nil {
+		return err
 	}
 
 	sa, err := r.ManifestFactory.RouterServiceAccount()
 	if err != nil {
 		return fmt.Errorf("failed to build router service account: %v", err)
 	}
+	// TODO: switch this to use verifyRouterAssetExists(key, obj, nil)
 	err = r.Client.Get(context.TODO(), types.NamespacedName{Namespace: sa.Namespace, Name: sa.Name}, sa)
 	if err != nil {
 		if !errors.IsNotFound(err) {
@@ -199,6 +184,7 @@ func (r *reconciler) ensureRouterNamespace() error {
 	if err != nil {
 		return fmt.Errorf("failed to build router cluster role binding: %v", err)
 	}
+	// TODO: switch this to use verifyRouterAssetExists(key, obj, nil)
 	err = r.Client.Get(context.TODO(), types.NamespacedName{Name: crb.Name}, crb)
 	if err != nil {
 		if !errors.IsNotFound(err) {
@@ -218,33 +204,9 @@ func (r *reconciler) ensureRouterNamespace() error {
 // ensureRouterForIngress ensures all necessary router resources exist for a
 // given clusteringress.
 func (r *reconciler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress) error {
-	expected, err := r.ManifestFactory.RouterDeployment(ci)
+	deployment, err := r.ensureRouterDeployment(ci)
 	if err != nil {
-		return fmt.Errorf("failed to build router deployment: %v", err)
-	}
-	current := expected.DeepCopy()
-	err = r.Client.Get(context.TODO(), types.NamespacedName{Namespace: expected.Namespace, Name: expected.Name}, current)
-	if err != nil {
-		if !errors.IsNotFound(err) {
-			return fmt.Errorf("failed to get router deployment %s/%s, %v", expected.Namespace, expected.Name, err)
-		}
-
-		err = r.Client.Create(context.TODO(), current)
-		if err == nil {
-			logrus.Infof("created router deployment %s/%s", current.Namespace, current.Name)
-		} else if !errors.IsAlreadyExists(err) {
-			return fmt.Errorf("failed to create router deployment %s/%s: %v", current.Namespace, current.Name, err)
-		}
-	}
-
-	if changed, updated := deploymentConfigChanged(current, expected); changed {
-		err = r.Client.Update(context.TODO(), updated)
-		if err == nil {
-			logrus.Infof("updated router deployment %s/%s", updated.Namespace, updated.Name)
-			current = updated
-		} else {
-			return fmt.Errorf("failed to update router deployment %s/%s, %v", updated.Namespace, updated.Name, err)
-		}
+		return err
 	}
 
 	if ci.Spec.HighAvailability != nil {
@@ -264,8 +226,8 @@ func (r *reconciler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress) 
 				deploymentRef := metav1.OwnerReference{
 					APIVersion: "apps/v1",
 					Kind:       "Deployment",
-					Name:       current.Name,
-					UID:        current.UID,
+					Name:       deployment.Name,
+					UID:        deployment.UID,
 					Controller: &trueVar,
 				}
 				service.SetOwnerReferences([]metav1.OwnerReference{deploymentRef})
@@ -285,12 +247,12 @@ func (r *reconciler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress) 
 		}
 	}
 
-	if err := r.ensureInternalRouterServiceForIngress(current, ci); err != nil {
+	if err := r.ensureInternalRouterServiceForIngress(deployment, ci); err != nil {
 		return fmt.Errorf("failed to create internal router service for clusteringress %s: %v", ci.Name, err)
 	}
 
-	if err := r.syncClusterIngressStatus(current, ci); err != nil {
-		return fmt.Errorf("failed to update status of clusteringress %s/%s: %v", current.Namespace, current.Name, err)
+	if err := r.syncClusterIngressStatus(deployment, ci); err != nil {
+		return fmt.Errorf("failed to update status of clusteringress %s/%s: %v", deployment.Namespace, deployment.Name, err)
 	}
 
 	return nil
@@ -312,6 +274,35 @@ func (r *reconciler) syncClusterIngressStatus(deployment *appsv1.Deployment, ci 
 	ci.Status.Selector = selector.String()
 	if err := r.Client.Status().Update(context.TODO(), ci); err != nil {
 		return fmt.Errorf("failed to update status of clusteringress %s/%s: %v", ci.Namespace, ci.Name, err)
+	}
+
+	return nil
+}
+
+// verifyRouterAssetExists verifies that the desired router asset exists and
+// matches the desired object.
+func (r *reconciler) verifyRouterAssetExists(key types.NamespacedName, desired runtime.Object, matcherFunc resourceMatcherFunc) error {
+	current := desired.DeepCopyObject()
+	err := r.Client.Get(context.TODO(), key, current)
+	if err != nil {
+		if !errors.IsNotFound(err) {
+			return fmt.Errorf("failed to get router %T %s: %v", desired, key.String(), err)
+		}
+
+		if err := r.Client.Create(context.TODO(), current); err == nil {
+			logrus.Infof("created router asset %T %s", current, key.String())
+			return nil
+		} else if !errors.IsAlreadyExists(err) {
+			return fmt.Errorf("failed to create router asset %T %s: %v", desired, key.String(), err)
+		}
+	}
+
+	if matcherFunc != nil && !matcherFunc(current, desired) {
+		if err := r.Client.Update(context.TODO(), desired); err != nil {
+			return err
+		}
+
+		logrus.Infof("updated router asset %T %s", desired, key.String())
 	}
 
 	return nil
@@ -349,6 +340,68 @@ func (r *reconciler) ensureInternalRouterServiceForIngress(deployment *appsv1.De
 	}
 
 	return nil
+}
+
+// ensureRouterNamespaceAsset ensures that the router namespace exists and
+// matches the expected namespace.
+func (r *reconciler) ensureRouterNamespaceAsset() error {
+	ns, err := r.ManifestFactory.RouterNamespace()
+	if err != nil {
+		return fmt.Errorf("failed to build router namespace: %v", err)
+	}
+
+	namespaceMatcher := func(obj1, obj2 runtime.Object) bool {
+		ns1 := obj1.(*corev1.Namespace)
+		ns2 := obj2.(*corev1.Namespace)
+
+		if !reflect.DeepEqual(ns1.Labels, ns2.Labels) {
+			return false
+		}
+		if !reflect.DeepEqual(ns1.Annotations, ns2.Annotations) {
+			return false
+		}
+
+		return true
+	}
+
+	key := types.NamespacedName{Name: ns.Name}
+	if err := r.verifyRouterAssetExists(key, ns, namespaceMatcher); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// ensureRouterDeployment ensures that the router deployment exists and matches
+// the expected deployment.
+func (r *reconciler) ensureRouterDeployment(ci *ingressv1alpha1.ClusterIngress) (*appsv1.Deployment, error) {
+	deployment, err := r.ManifestFactory.RouterDeployment(ci)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build router deployment: %v", err)
+	}
+
+	clusterIngressMatcher := func(obj1, obj2 runtime.Object) bool {
+		ci1 := obj1.(*appsv1.Deployment)
+		ci2 := obj2.(*appsv1.Deployment)
+
+		if !reflect.DeepEqual(ci1.Labels, ci2.Labels) {
+			return false
+		}
+		if !reflect.DeepEqual(ci1.Annotations, ci2.Annotations) {
+			return false
+		}
+		if !reflect.DeepEqual(ci1.Spec, ci2.Spec) {
+			return false
+		}
+		return true
+	}
+
+	key := types.NamespacedName{Namespace: deployment.Namespace, Name: deployment.Name}
+	if err := r.verifyRouterAssetExists(key, deployment, clusterIngressMatcher); err != nil {
+		return nil, err
+	}
+
+	return deployment, nil
 }
 
 // ensureDNSForLoadBalancer configures a wildcard DNS alias for a ClusterIngress
