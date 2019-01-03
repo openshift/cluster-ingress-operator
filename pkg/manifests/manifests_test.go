@@ -25,6 +25,7 @@ func TestManifests(t *testing.T) {
 					"foo": "bar",
 				},
 			},
+			Replicas: 1,
 			RouteSelector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{
 					"baz": "quux",
@@ -80,6 +81,13 @@ func TestManifests(t *testing.T) {
 	} else if routeSelector != "baz=quux" {
 		t.Errorf("router Deployment has unexpected route selectors: %v",
 			routeSelector)
+	}
+
+	if deployment.Spec.Replicas == nil {
+		t.Error("router Deployment has nil replicas")
+	}
+	if *deployment.Spec.Replicas != 1 {
+		t.Errorf("expected replicas to be 1, got %d", *deployment.Spec.Replicas)
 	}
 
 	if len(deployment.Spec.Template.Spec.NodeSelector) == 0 {
@@ -141,6 +149,7 @@ func TestManifests(t *testing.T) {
 			},
 		},
 	}
+	ci.Spec.Replicas = 3
 	deployment, err = f.RouterDeployment(ci)
 	if err != nil {
 		t.Errorf("invalid router Deployment: %v", err)
@@ -149,6 +158,12 @@ func TestManifests(t *testing.T) {
 		deployment.Spec.Template.Spec.NodeSelector["xyzzy"] != "quux" {
 		t.Errorf("router Deployment has unexpected node selector: %#v",
 			deployment.Spec.Template.Spec.NodeSelector)
+	}
+	if deployment.Spec.Replicas == nil {
+		t.Error("router Deployment has nil replicas")
+	}
+	if *deployment.Spec.Replicas != 3 {
+		t.Errorf("expected replicas to be 3, got %d", *deployment.Spec.Replicas)
 	}
 	if e, a := config.RouterImage, deployment.Spec.Template.Spec.Containers[0].Image; e != a {
 		t.Errorf("expected router Deployment image %q, got %q", e, a)

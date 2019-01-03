@@ -26,6 +26,9 @@ type ClusterIngressSpec struct {
 	// namespaces covered by this ClusterIngress.
 	NamespaceSelector *metav1.LabelSelector `json:"namespaceSelector"`
 
+	// Replicas is the desired number of router instances.
+	Replicas int32 `json:"replicas"`
+
 	// RouteSelector is a label selector which filters the Routes
 	// covered by this ClusterIngress.
 	RouteSelector *metav1.LabelSelector `json:"routeSelector"`
@@ -73,7 +76,13 @@ type ClusterIngressHighAvailability struct {
 
 // ClusterIngressStatus defines the observed state of ClusterIngress
 type ClusterIngressStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
+	// Replicas is the actual number of observed router instances.
+	Replicas int32 `json:"replicas"`
+
+	// Selector is a label selector, in string format, for pods
+	// corresponding to the ClusterIngress. The number of matching pods
+	// should equal the value of replicas.
+	Selector string `json:"labelSelector"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object

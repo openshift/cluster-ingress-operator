@@ -289,6 +289,31 @@ func (r *reconciler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress) 
 		return fmt.Errorf("failed to create internal router service for clusteringress %s: %v", ci.Name, err)
 	}
 
+	if err := r.syncClusterIngressStatus(current, ci); err != nil {
+		return fmt.Errorf("failed to update status of clusteringress %s/%s: %v", current.Namespace, current.Name, err)
+	}
+
+	return nil
+}
+
+// syncClusterIngressStatus updates the status for a given clusteringress.
+func (r *reconciler) syncClusterIngressStatus(deployment *appsv1.Deployment, ci *ingressv1alpha1.ClusterIngress) error {
+	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
+	if err != nil {
+		return fmt.Errorf("router deployment %s/%s has invalid spec.selector: %v", deployment.Namespace, deployment.Name, err)
+	}
+
+	if ci.Status.Replicas == deployment.Status.AvailableReplicas &&
+		ci.Status.Selector == selector.String() {
+		return nil
+	}
+
+	ci.Status.Replicas = deployment.Status.AvailableReplicas
+	ci.Status.Selector = selector.String()
+	if err := r.Client.Status().Update(context.TODO(), ci); err != nil {
+		return fmt.Errorf("failed to update status of clusteringress %s/%s: %v", ci.Namespace, ci.Name, err)
+	}
+
 	return nil
 }
 
@@ -364,11 +389,18 @@ func (r *reconciler) ensureRouterDeleted(ci *ingressv1alpha1.ClusterIngress) err
 func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv1.Deployment) {
 	// As per an offline conversation, this checks only the secret name
 	// for now but can be updated to a `reflect.DeepEqual` if needed.
-	if current.Spec.Template.Spec.Volumes[0].Secret.SecretName == expected.Spec.Template.Spec.Volumes[0].Secret.SecretName {
+	if current.Spec.Template.Spec.Volumes[0].Secret.SecretName == expected.Spec.Template.Spec.Volumes[0].Secret.SecretName &&
+		current.Spec.Replicas != nil &&
+		*current.Spec.Replicas == *expected.Spec.Replicas {
 		return false, nil
 	}
 
 	updated := current.DeepCopy()
 	updated.Spec.Template.Spec.Volumes[0].Secret.SecretName = expected.Spec.Template.Spec.Volumes[0].Secret.SecretName
+	replicas := int32(1)
+	if expected.Spec.Replicas != nil {
+		replicas = *expected.Spec.Replicas
+	}
+	updated.Spec.Replicas = &replicas
 	return true, updated
 }

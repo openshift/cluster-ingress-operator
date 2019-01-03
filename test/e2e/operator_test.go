@@ -17,11 +17,19 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 
 	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv1 "k8s.io/api/autoscaling/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/discovery"
+	discocache "k8s.io/client-go/discovery/cached"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/restmapper"
+	"k8s.io/client-go/scale"
 )
 
 func getClient() (client.Client, string, error) {
@@ -283,4 +291,166 @@ u3YLAbyW/lHhOCiZu2iAI8AbmXem9lW6Tr7p/97s0w==
 	}
 
 	return cl.Create(context.TODO(), secret), secret
+}
+
+func TestClusterIngressScale(t *testing.T) {
+	cl, ns, err := getClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	name := "default"
+
+	// Wait for the clusteringress to exist.
+	ci := &ingressv1alpha1.ClusterIngress{}
+	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
+		if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: ns, Name: name}, ci); err != nil {
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to get default ClusterIngress: %v", err)
+	}
+
+	// Wait for the router deployment to exist.
+	deployment := &appsv1.Deployment{}
+	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
+		if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: "openshift-ingress", Name: "router-" + ci.Name}, deployment); err != nil {
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to get default router deployment: %v", err)
+	}
+
+	// Get the deployment's selector so we can make sure it is reflected in
+	// the scale status.
+	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
+	if err != nil {
+		t.Fatalf("router deployment has invalid spec.selector: %v", err)
+	}
+
+	// Get the scale of the clusteringress.
+	// TODO Use controller-runtime once it supports the /scale subresource.
+	scaleClient, cachedDiscovery, err := getScaleClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resource := schema.GroupResource{
+		Group:    "ingress.openshift.io",
+		Resource: "clusteringresses",
+	}
+
+	//scale, err := scaleClient.Scales(ns).Get(resource, name)
+	// XXX The following polling is a workaround for a problem that will be
+	// fixed in client-go[1].  Once we get a newer client-go, the workaround
+	// will no longer be needed; in this case, uncomment the assignment
+	// immediately above this comment, and delete the variable declaration
+	// and assignment below.
+	// 1. https://github.com/kubernetes/client-go/commit/58652542545735c4b421dbf3631d81c7ec58e0c1.
+	var scale *autoscalingv1.Scale
+	err = wait.PollImmediate(1*time.Second, 15*time.Second, func() (bool, error) {
+		scale, err = scaleClient.Scales(ns).Get(resource, name)
+		if err != nil {
+			if !cachedDiscovery.Fresh() {
+				t.Logf("failed to get scale due to stale cache, will retry: %v", err)
+				return false, nil
+			}
+
+			t.Logf("failed to get scale due to error, will retry: %v", err)
+			return false, nil
+		}
+
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to get initial scale of ClusterIngress: %v", err)
+	}
+
+	// Make sure the deployment's selector is reflected in the scale status.
+	if scale.Status.Selector != selector.String() {
+		t.Fatalf("expected scale status.selector to be %q, got %q", selector.String(), scale.Status.Selector)
+	}
+
+	// Scale the clusteringress up.
+	scale.Spec.Replicas = scale.Spec.Replicas + 1
+	updatedScale, err := scaleClient.Scales(ns).Update(resource, scale)
+	if err != nil {
+		t.Fatalf("failed to scale ClusterIngress up: %v", err)
+	}
+	if updatedScale.Spec.Replicas != scale.Spec.Replicas {
+		t.Fatalf("expected scaled-up ClusterIngress's spec.replicas to be %d, got %d", scale.Spec.Replicas, updatedScale.Spec.Replicas)
+	}
+
+	// Wait for the deployment to scale up.
+	err = wait.PollImmediate(1*time.Second, 15*time.Second, func() (bool, error) {
+		if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: deployment.Namespace, Name: deployment.Name}, deployment); err != nil {
+			return false, nil
+		}
+
+		if deployment.Spec.Replicas == nil || *deployment.Spec.Replicas != updatedScale.Spec.Replicas {
+			return false, nil
+		}
+
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to get scaled-up router deployment %s/%s: %v", deployment.Namespace, deployment.Name, err)
+	}
+
+	// Get the latest scale so that we can update it again.
+	scale, err = scaleClient.Scales(ns).Get(resource, name)
+	if err != nil {
+		t.Fatalf("failed to get updated scale of ClusterIngress: %v", err)
+	}
+
+	// Scale the clusteringress back down.
+	scale.Spec.Replicas = scale.Spec.Replicas - 1
+	updatedScale, err = scaleClient.Scales(ns).Update(resource, scale)
+	if err != nil {
+		t.Fatalf("failed to scale ClusterIngress down: %v", err)
+	}
+	if updatedScale.Spec.Replicas != scale.Spec.Replicas {
+		t.Fatalf("expected scaled-down ClusterIngress's spec.replicas to be %d, got %d", scale.Spec.Replicas, updatedScale.Spec.Replicas)
+	}
+
+	// Wait for the deployment to scale down.
+	err = wait.PollImmediate(1*time.Second, 15*time.Second, func() (bool, error) {
+		if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: deployment.Namespace, Name: deployment.Name}, deployment); err != nil {
+			return false, nil
+		}
+
+		if deployment.Spec.Replicas == nil || *deployment.Spec.Replicas != updatedScale.Spec.Replicas {
+			return false, nil
+		}
+
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to get scaled-down router deployment %s/%s: %v", deployment.Namespace, deployment.Name, err)
+	}
+}
+
+func getScaleClient() (scale.ScalesGetter, discovery.CachedDiscoveryInterface, error) {
+	kubeConfig, err := config.GetConfig()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get kube config: %v", err)
+	}
+
+	client, err := kubernetes.NewForConfig(kubeConfig)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create kube client: %v", err)
+	}
+
+	cachedDiscovery := discocache.NewMemCacheClient(client.Discovery())
+	cachedDiscovery.Invalidate()
+	restMapper := restmapper.NewDeferredDiscoveryRESTMapper(cachedDiscovery)
+	restMapper.Reset()
+	scaleKindResolver := scale.NewDiscoveryScaleKindResolver(client.Discovery())
+	scale, err := scale.NewForConfig(kubeConfig, restMapper, dynamic.LegacyAPIPathResolverFunc, scaleKindResolver)
+
+	return scale, cachedDiscovery, err
 }
