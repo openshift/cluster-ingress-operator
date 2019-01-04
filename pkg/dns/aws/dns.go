@@ -2,6 +2,7 @@ package aws
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/sirupsen/logrus"
@@ -9,10 +10,12 @@ import (
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/arn"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/ec2metadata"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/elb"
+	"github.com/aws/aws-sdk-go/service/resourcegroupstaggingapi"
 	"github.com/aws/aws-sdk-go/service/route53"
 )
 
@@ -33,11 +36,16 @@ var _ dns.Manager = &Manager{}
 type Manager struct {
 	elb     *elb.ELB
 	route53 *route53.Route53
+	tags    *resourcegroupstaggingapi.ResourceGroupsTaggingAPI
 
 	config Config
-	lock   sync.RWMutex
-	// zones is a cache of all known DNS zones and their associated tags.
-	zones []*zoneWithTags
+
+	// lock protects access to everything below.
+	lock sync.RWMutex
+	// publicZoneID is the public zone shared by all clusters.
+	publicZoneID string
+	// privateZoneID is the private zone owned by the cluster.
+	privateZoneID string
 	// updatedRecords is a cache of records which have been created during the
 	// life of this manager. The key is zoneID+domain+target. This is a quick hack
 	// to minimize AWS API calls for now.
@@ -87,85 +95,74 @@ func NewManager(config Config) (*Manager, error) {
 	return &Manager{
 		elb:     elb.New(sess, aws.NewConfig().WithRegion(region)),
 		route53: route53.New(sess),
-
+		// TODO: This API will only return hostedzone resources (which are global)
+		// when the region is forced to us-east-1. We don't yet understand why.
+		tags:           resourcegroupstaggingapi.New(sess, aws.NewConfig().WithRegion("us-east-1")),
 		config:         config,
-		zones:          []*zoneWithTags{},
 		updatedRecords: map[string]struct{}{},
 	}, nil
 }
 
-type zoneWithTags struct {
-	zone *route53.HostedZone
-	tags []*route53.Tag
-}
-
-// updateZoneCache caches all zones and their tags.
-func (m *Manager) updateZoneCache() error {
+// discoverZones finds the public and private zones to manage, setting the
+// privateZoneID and publicZoneID fields. An error is returned if either zone
+// can't be found.
+func (m *Manager) discoverZones() error {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 
-	// There's no reason to update this more than once as we're only interested in
-	// the zones scoped to this cluster.
-	if len(m.zones) > 0 {
-		return nil
-	}
-
-	// Find and cache all zones and their tags.
-	// TODO: probably only need to store the two zones we care about.
-	zones := []*zoneWithTags{}
-	listedAllTags := true
-	f := func(resp *route53.ListHostedZonesOutput, lastPage bool) (shouldContinue bool) {
-		for _, zone := range resp.HostedZones {
-			tagsList, err := m.route53.ListTagsForResource(&route53.ListTagsForResourceInput{
-				ResourceType: aws.String("hostedzone"),
-				ResourceId:   zone.Id,
-			})
-			if err != nil {
-				logrus.Errorf("failed to list tags for hosted zone %s: %v", zone.Id, err)
-				listedAllTags = false
-				return false
-			}
-			zones = append(zones, &zoneWithTags{zone: zone, tags: tagsList.ResourceTagSet.Tags})
-		}
-		return true
-	}
-	err := m.route53.ListHostedZonesPages(&route53.ListHostedZonesInput{}, f)
-	if err != nil {
-		return fmt.Errorf("failed to list hosted zones: %v", err)
-	}
-	if !listedAllTags {
-		return fmt.Errorf("failed to list all hosted zone tags")
-	}
-
-	m.zones = zones
-	return nil
-}
-
-// findClusterPublicZone finds the public zone with the base domain from config.
-func (m *Manager) findClusterPublicZone() *route53.HostedZone {
-	m.lock.Lock()
-	defer m.lock.Unlock()
-	for _, zwt := range m.zones {
-		if aws.StringValue(zwt.zone.Name) == m.config.BaseDomain && !aws.BoolValue(zwt.zone.Config.PrivateZone) {
-			return zwt.zone
-		}
-	}
-	return nil
-}
-
-// findClusterPrivateZone finds the private zone with the base domain and
-// cluster ID from config.
-func (m *Manager) findClusterPrivateZone() *route53.HostedZone {
-	m.lock.Lock()
-	defer m.lock.Unlock()
-	for _, zwt := range m.zones {
-		if aws.StringValue(zwt.zone.Name) == m.config.BaseDomain && aws.BoolValue(zwt.zone.Config.PrivateZone) {
-			for _, tag := range zwt.tags {
-				if aws.StringValue(tag.Key) == "openshiftClusterID" && aws.StringValue(tag.Value) == m.config.ClusterID {
-					return zwt.zone
+	// Find the public zone, which is the non-private zone whose domain matches
+	// the cluster base domain.
+	if len(m.publicZoneID) == 0 {
+		f := func(resp *route53.ListHostedZonesOutput, lastPage bool) (shouldContinue bool) {
+			for _, zone := range resp.HostedZones {
+				if aws.StringValue(zone.Name) == m.config.BaseDomain && !aws.BoolValue(zone.Config.PrivateZone) {
+					m.publicZoneID = aws.StringValue(zone.Id)
+					return false
 				}
 			}
+			return true
 		}
+		err := m.route53.ListHostedZonesPages(&route53.ListHostedZonesInput{}, f)
+		if err != nil {
+			return fmt.Errorf("failed to list hosted zones: %v", err)
+		}
+		if len(m.publicZoneID) == 0 {
+			return fmt.Errorf("couldn't find public hosted zone for %q", m.config.BaseDomain)
+		}
+		logrus.Infof("using public zone %s", m.publicZoneID)
+	}
+
+	// Find the private zone, which is the private zone whose openshiftClusterID tag
+	// value matches the cluster ID.
+	if len(m.privateZoneID) == 0 {
+		zones, err := m.tags.GetResources(&resourcegroupstaggingapi.GetResourcesInput{
+			ResourceTypeFilters: []*string{aws.String("route53:hostedzone")},
+			TagFilters: []*resourcegroupstaggingapi.TagFilter{
+				{
+					Key:    aws.String("openshiftClusterID"),
+					Values: []*string{aws.String(m.config.ClusterID)},
+				},
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("failed to get tagged resources: %v", err)
+		}
+		for _, zone := range zones.ResourceTagMappingList {
+			zoneARN, err := arn.Parse(aws.StringValue(zone.ResourceARN))
+			if err != nil {
+				return fmt.Errorf("failed to parse hostedzone ARN %q: %v", aws.StringValue(zone.ResourceARN), err)
+			}
+			elems := strings.Split(zoneARN.Resource, "/")
+			if len(elems) != 2 || elems[0] != "hostedzone" {
+				return fmt.Errorf("got unexpected resource ARN: %v", zoneARN)
+			}
+			m.privateZoneID = elems[1]
+			break
+		}
+		if len(m.privateZoneID) == 0 {
+			return fmt.Errorf("couldn't find private hosted zone for cluster id %q", m.config.ClusterID)
+		}
+		logrus.Infof("using private zone %s", m.privateZoneID)
 	}
 	return nil
 }
@@ -182,18 +179,9 @@ func (m *Manager) EnsureAlias(domain, target string) error {
 	}
 
 	// Ensure the zone cache is up to date.
-	err := m.updateZoneCache()
+	err := m.discoverZones()
 	if err != nil {
-		return fmt.Errorf("failed to update hosted zone cache: %v", err)
-	}
-
-	publicZone := m.findClusterPublicZone()
-	privateZone := m.findClusterPrivateZone()
-	if publicZone == nil {
-		return fmt.Errorf("failed to find public zone for cluster")
-	}
-	if privateZone == nil {
-		return fmt.Errorf("failed to find private zone for cluster")
+		return fmt.Errorf("failed to discover hosted zones: %v", err)
 	}
 
 	// Find the target hosted zone of the load balancer attached to the service.
@@ -219,7 +207,7 @@ func (m *Manager) EnsureAlias(domain, target string) error {
 	// TODO: handle the caching/diff detection in a better way.
 	m.lock.Lock()
 	defer m.lock.Unlock()
-	for _, zoneID := range []string{aws.StringValue(publicZone.Id), aws.StringValue(privateZone.Id)} {
+	for _, zoneID := range []string{m.publicZoneID, m.privateZoneID} {
 		key := zoneID + domain + target
 		// Only process these once, for now.
 		if _, exists := m.updatedRecords[key]; exists {
