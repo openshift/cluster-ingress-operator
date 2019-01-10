@@ -135,6 +135,7 @@ func (m *Manager) discoverZones() error {
 	// Find the private zone, which is the private zone whose openshiftClusterID tag
 	// value matches the cluster ID.
 	if len(m.privateZoneID) == 0 {
+		logrus.Infof("using filter Name=tag:%s=Values=%s", "openshiftClusterID", m.config.ClusterID)
 		zones, err := m.tags.GetResources(&resourcegroupstaggingapi.GetResourcesInput{
 			ResourceTypeFilters: []*string{aws.String("route53:hostedzone")},
 			TagFilters: []*resourcegroupstaggingapi.TagFilter{
@@ -147,7 +148,9 @@ func (m *Manager) discoverZones() error {
 		if err != nil {
 			return fmt.Errorf("failed to get tagged resources: %v", err)
 		}
-		for _, zone := range zones.ResourceTagMappingList {
+		logrus.Infof("got %d zones", len(zones.ResourceTagMappingList))
+		for i, zone := range zones.ResourceTagMappingList {
+			logrus.Infof("zone %i: %#v", i, zone)
 			zoneARN, err := arn.Parse(aws.StringValue(zone.ResourceARN))
 			if err != nil {
 				return fmt.Errorf("failed to parse hostedzone ARN %q: %v", aws.StringValue(zone.ResourceARN), err)
