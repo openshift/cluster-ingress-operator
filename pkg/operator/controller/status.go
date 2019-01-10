@@ -38,9 +38,9 @@ func (r *reconciler) syncOperatorStatus() error {
 
 	oldConditions := co.Status.Conditions
 	co.Status.Conditions = computeStatusConditions(oldConditions, ns, ingresses, deployments)
+	co.Status.Version = operatorversion.Version
 
 	if isNotFound {
-		co.Status.Version = operatorversion.Version
 		if err := r.Client.Create(context.TODO(), co); err != nil {
 			return fmt.Errorf("failed to create clusteroperator %s: %v", co.Name, err)
 		}
