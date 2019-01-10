@@ -45,6 +45,13 @@ rules:
   - watch
 
 - apiGroups:
+  - ingress.openshift.io
+  resources:
+  - clusteringresses/status
+  verbs:
+  - update
+
+- apiGroups:
   - config.openshift.io
   resources:
   - ingresses

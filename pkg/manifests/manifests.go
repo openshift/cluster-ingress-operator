@@ -162,6 +162,9 @@ func (f *Factory) RouterDeployment(cr *ingressv1alpha1.ClusterIngress) (*appsv1.
 		})
 	}
 
+	replicas := cr.Spec.Replicas
+	deployment.Spec.Replicas = &replicas
+
 	if cr.Spec.RouteSelector != nil {
 		routeSelector, err := metav1.LabelSelectorAsSelector(cr.Spec.RouteSelector)
 		if err != nil {
