@@ -135,7 +135,38 @@ func (m *Manager) discoverZones() error {
 	// Find the private zone, which is the private zone whose openshiftClusterID tag
 	// value matches the cluster ID.
 	if len(m.privateZoneID) == 0 {
-		zones, err := m.tags.GetResources(&resourcegroupstaggingapi.GetResourcesInput{
+		// Even though we use filters when getting resources, the
+		// resources are still paginated as though no filter were
+		// applied.  If the desired resource is not on the first page,
+		// then GetResources will not return it.  We need to use
+		// GetResourcesPages and possibly go through one or more empty
+		// pages of resources till we find a resource that gets through
+		// the filters.
+		var innerError error
+		f := func(resp *resourcegroupstaggingapi.GetResourcesOutput, lastPage bool) (shouldContinue bool) {
+			for _, zone := range resp.ResourceTagMappingList {
+				zoneARN, err := arn.Parse(aws.StringValue(zone.ResourceARN))
+				if err != nil {
+					innerError = fmt.Errorf("failed to parse hostedzone ARN %q: %v", aws.StringValue(zone.ResourceARN), err)
+
+					return false
+				}
+
+				elems := strings.Split(zoneARN.Resource, "/")
+				if len(elems) != 2 || elems[0] != "hostedzone" {
+					innerError = fmt.Errorf("got unexpected resource ARN: %v", zoneARN)
+
+					return false
+				}
+
+				m.privateZoneID = elems[1]
+
+				return false
+			}
+
+			return true
+		}
+		err := m.tags.GetResourcesPages(&resourcegroupstaggingapi.GetResourcesInput{
 			ResourceTypeFilters: []*string{aws.String("route53:hostedzone")},
 			TagFilters: []*resourcegroupstaggingapi.TagFilter{
 				{
@@ -143,21 +174,12 @@ func (m *Manager) discoverZones() error {
 					Values: []*string{aws.String(m.config.ClusterID)},
 				},
 			},
-		})
+		}, f)
+		if innerError != nil {
+			err = innerError
+		}
 		if err != nil {
 			return fmt.Errorf("failed to get tagged resources: %v", err)
-		}
-		for _, zone := range zones.ResourceTagMappingList {
-			zoneARN, err := arn.Parse(aws.StringValue(zone.ResourceARN))
-			if err != nil {
-				return fmt.Errorf("failed to parse hostedzone ARN %q: %v", aws.StringValue(zone.ResourceARN), err)
-			}
-			elems := strings.Split(zoneARN.Resource, "/")
-			if len(elems) != 2 || elems[0] != "hostedzone" {
-				return fmt.Errorf("got unexpected resource ARN: %v", zoneARN)
-			}
-			m.privateZoneID = elems[1]
-			break
 		}
 		if len(m.privateZoneID) == 0 {
 			return fmt.Errorf("couldn't find private hosted zone for cluster id %q", m.config.ClusterID)
