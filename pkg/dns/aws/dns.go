@@ -17,6 +17,8 @@ import (
 	"github.com/aws/aws-sdk-go/service/elb"
 	"github.com/aws/aws-sdk-go/service/resourcegroupstaggingapi"
 	"github.com/aws/aws-sdk-go/service/route53"
+
+	kerrors "k8s.io/apimachinery/pkg/util/errors"
 )
 
 var _ dns.Manager = &Manager{}
@@ -166,7 +168,7 @@ func (m *Manager) discoverZones() error {
 
 			return true
 		}
-		err := m.tags.GetResourcesPages(&resourcegroupstaggingapi.GetResourcesInput{
+		outerError := m.tags.GetResourcesPages(&resourcegroupstaggingapi.GetResourcesInput{
 			ResourceTypeFilters: []*string{aws.String("route53:hostedzone")},
 			TagFilters: []*resourcegroupstaggingapi.TagFilter{
 				{
@@ -175,10 +177,7 @@ func (m *Manager) discoverZones() error {
 				},
 			},
 		}, f)
-		if innerError != nil {
-			err = innerError
-		}
-		if err != nil {
+		if err := kerrors.NewAggregate([]error{innerError, outerError}); err != nil {
 			return fmt.Errorf("failed to get tagged resources: %v", err)
 		}
 		if len(m.privateZoneID) == 0 {
