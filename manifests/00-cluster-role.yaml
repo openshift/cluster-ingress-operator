@@ -26,6 +26,13 @@ rules:
   - "*"
 
 - apiGroups:
+  - ""
+  resources:
+  - namespaces
+  verbs:
+  - update
+
+- apiGroups:
   - rbac.authorization.k8s.io
   resources:
   - clusterroles
