@@ -153,7 +153,7 @@ func (r *reconciler) ensureRouterNamespace() error {
 	if err != nil {
 		return fmt.Errorf("failed to build router cluster role: %v", err)
 	}
-	err = r.verifyRouterAssetExists(types.NamespacedName{Namespace: cr.Namespace, Name: cr.Name}, cr, nil)
+	_, err = r.verifyRouterAssetExists(types.NamespacedName{Namespace: cr.Namespace, Name: cr.Name}, cr, nil)
 	if err != nil {
 		return err
 	}
@@ -281,31 +281,37 @@ func (r *reconciler) syncClusterIngressStatus(deployment *appsv1.Deployment, ci 
 
 // verifyRouterAssetExists verifies that the desired router asset exists and
 // matches the desired object.
-func (r *reconciler) verifyRouterAssetExists(key types.NamespacedName, desired runtime.Object, matcherFunc resourceMatcherFunc) error {
+func (r *reconciler) verifyRouterAssetExists(key types.NamespacedName, desired runtime.Object, matcherFunc resourceMatcherFunc) (runtime.Object, error) {
 	current := desired.DeepCopyObject()
 	err := r.Client.Get(context.TODO(), key, current)
 	if err != nil {
 		if !errors.IsNotFound(err) {
-			return fmt.Errorf("failed to get router %T %s: %v", desired, key.String(), err)
+			return nil, fmt.Errorf("failed to get router %T %s: %v", desired, key.String(), err)
 		}
 
 		if err := r.Client.Create(context.TODO(), current); err == nil {
 			logrus.Infof("created router asset %T %s", current, key.String())
-			return nil
+			return current, nil
 		} else if !errors.IsAlreadyExists(err) {
-			return fmt.Errorf("failed to create router asset %T %s: %v", desired, key.String(), err)
+			return nil, fmt.Errorf("failed to create router asset %T %s: %v", desired, key.String(), err)
 		}
 	}
 
 	if matcherFunc != nil && !matcherFunc(current, desired) {
 		if err := r.Client.Update(context.TODO(), desired); err != nil {
-			return err
+			return nil, err
 		}
 
 		logrus.Infof("updated router asset %T %s", desired, key.String())
+		// Fetch back the updated asset.
+		err = r.Client.Get(context.TODO(), key, current)
+		if err != nil {
+			return nil, err
+		}
+		return current, nil
 	}
 
-	return nil
+	return current, nil
 }
 
 // ensureInternalRouterServiceForIngress ensures that an internal service exists
@@ -365,7 +371,7 @@ func (r *reconciler) ensureRouterNamespaceAsset() error {
 	}
 
 	key := types.NamespacedName{Name: ns.Name}
-	if err := r.verifyRouterAssetExists(key, ns, namespaceMatcher); err != nil {
+	if _, err := r.verifyRouterAssetExists(key, ns, namespaceMatcher); err != nil {
 		return err
 	}
 
@@ -397,11 +403,12 @@ func (r *reconciler) ensureRouterDeployment(ci *ingressv1alpha1.ClusterIngress) 
 	}
 
 	key := types.NamespacedName{Namespace: deployment.Namespace, Name: deployment.Name}
-	if err := r.verifyRouterAssetExists(key, deployment, clusterIngressMatcher); err != nil {
+	actual, err := r.verifyRouterAssetExists(key, deployment, clusterIngressMatcher)
+	if err != nil {
 		return nil, err
 	}
 
-	return deployment, nil
+	return actual.(*appsv1.Deployment), nil
 }
 
 // ensureDNSForLoadBalancer configures a wildcard DNS alias for a ClusterIngress
