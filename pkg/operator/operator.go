@@ -9,7 +9,6 @@ import (
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	operatorconfig "github.com/openshift/cluster-ingress-operator/pkg/operator/config"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
-	"github.com/openshift/cluster-ingress-operator/pkg/util"
 
 	configv1 "github.com/openshift/api/config/v1"
 
@@ -54,7 +53,6 @@ func init() {
 // specific resoure types in other namespaces should produce operator events.
 type Operator struct {
 	manifestFactory *manifests.Factory
-	installConfig   *util.InstallConfig
 	client          client.Client
 
 	manager manager.Manager
@@ -62,7 +60,7 @@ type Operator struct {
 }
 
 // New creates (but does not start) a new operator from configuration.
-func New(config operatorconfig.Config, installConfig *util.InstallConfig, dnsManager dns.Manager, kubeConfig *rest.Config) (*Operator, error) {
+func New(config operatorconfig.Config, dnsManager dns.Manager, kubeConfig *rest.Config) (*Operator, error) {
 	kubeClient, err := Client(kubeConfig)
 	if err != nil {
 		return nil, fmt.Errorf("could't create kube client: %v", err)
@@ -119,7 +117,6 @@ func New(config operatorconfig.Config, installConfig *util.InstallConfig, dnsMan
 		// TODO: These are only needed for the default cluster ingress stuff, which
 		// should be refactored away.
 		manifestFactory: mf,
-		installConfig:   installConfig,
 		client:          kubeClient,
 	}, nil
 }
