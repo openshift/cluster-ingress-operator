@@ -7,7 +7,6 @@ rules:
 - apiGroups:
   - ""
   resources:
-  - configmaps
   - namespaces
   - serviceaccounts
   - services
@@ -54,6 +53,7 @@ rules:
 - apiGroups:
   - config.openshift.io
   resources:
+  - infrastructures
   - ingresses
   - dnses
   - clusterversions

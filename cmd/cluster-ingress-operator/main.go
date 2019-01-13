@@ -10,7 +10,6 @@ import (
 	awsdns "github.com/openshift/cluster-ingress-operator/pkg/dns/aws"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator"
 	operatorconfig "github.com/openshift/cluster-ingress-operator/pkg/operator/config"
-	"github.com/openshift/cluster-ingress-operator/pkg/util"
 
 	configv1 "github.com/openshift/api/config/v1"
 
@@ -49,19 +48,14 @@ func main() {
 		logrus.Fatalf("IMAGE environment variable is required")
 	}
 
-	// Retrieve the untyped cluster config (AKA the install config).
-	// TODO: Use of this should be completely replaced by config API types.
-	cm := &corev1.ConfigMap{}
-	err = kubeClient.Get(context.TODO(), types.NamespacedName{Namespace: util.ClusterConfigNamespace, Name: util.ClusterConfigName}, cm)
+	// Retrieve the cluster infrastructure config.
+	infraConfig := &configv1.Infrastructure{}
+	err = kubeClient.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, infraConfig)
 	if err != nil {
-		logrus.Fatalf("failed to get clusterconfig: %v", err)
-	}
-	installConfig, err := util.UnmarshalInstallConfig(cm)
-	if err != nil {
-		logrus.Fatalf("failed to read clusterconfig: %v", err)
+		logrus.Fatalf("failed to get infrastructure 'config': %v", err)
 	}
 
-	// Retrieve the typed cluster config.
+	// Retrieve the cluster ingress config.
 	ingressConfig := &configv1.Ingress{}
 	err = kubeClient.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, ingressConfig)
 	if err != nil {
@@ -85,7 +79,7 @@ func main() {
 	}
 
 	// Set up the DNS manager.
-	dnsManager, err := createDNSManager(kubeClient, installConfig, ingressConfig, dnsConfig, clusterVersionConfig)
+	dnsManager, err := createDNSManager(kubeClient, infraConfig, ingressConfig, dnsConfig, clusterVersionConfig)
 	if err != nil {
 		logrus.Fatalf("failed to create DNS manager: %v", err)
 	}
@@ -96,7 +90,7 @@ func main() {
 		RouterImage:          routerImage,
 		DefaultIngressDomain: ingressConfig.Spec.Domain,
 	}
-	op, err := operator.New(operatorConfig, installConfig, dnsManager, kubeConfig)
+	op, err := operator.New(operatorConfig, dnsManager, kubeConfig)
 	if err != nil {
 		logrus.Fatalf("failed to create operator: %v", err)
 	}
@@ -107,10 +101,10 @@ func main() {
 
 // createDNSManager creates a DNS manager compatible with the given cluster
 // configuration.
-func createDNSManager(cl client.Client, ic *util.InstallConfig, ingressConfig *configv1.Ingress, dnsConfig *configv1.DNS, clusterVersionConfig *configv1.ClusterVersion) (dns.Manager, error) {
+func createDNSManager(cl client.Client, infraConfig *configv1.Infrastructure, ingressConfig *configv1.Ingress, dnsConfig *configv1.DNS, clusterVersionConfig *configv1.ClusterVersion) (dns.Manager, error) {
 	var dnsManager dns.Manager
-	switch {
-	case ic.Platform.AWS != nil:
+	switch infraConfig.Status.Platform {
+	case configv1.AWSPlatform:
 		awsCreds := &corev1.Secret{}
 		err := cl.Get(context.TODO(), types.NamespacedName{Namespace: metav1.NamespaceSystem, Name: "aws-creds"}, awsCreds)
 		if err != nil {
