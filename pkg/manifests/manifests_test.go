@@ -17,7 +17,7 @@ import (
 func TestManifests(t *testing.T) {
 	config := operatorconfig.Config{
 		RouterImage: "quay.io/openshift/router:latest",
-		Platform:    operatorconfig.AWSPlatform,
+		Platform:    configv1.AWSPlatform,
 	}
 	f := NewFactory(config)
 

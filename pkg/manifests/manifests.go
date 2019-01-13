@@ -153,7 +153,7 @@ func (f *Factory) RouterDeployment(cr *ingressv1alpha1.ClusterIngress) (*appsv1.
 	if cr.Spec.HighAvailability != nil && cr.Spec.HighAvailability.Type == ingressv1alpha1.CloudClusterIngressHA {
 		// For now, check if we are on AWS. This can really be done for
 		// for any external [cloud] LBs that support the proxy protocol.
-		if f.config.Platform == operatorconfig.AWSPlatform {
+		if f.config.Platform == configv1.AWSPlatform {
 			env = append(env, corev1.EnvVar{Name: "ROUTER_USE_PROXY_PROTOCOL", Value: "true"})
 		}
 	}
@@ -269,7 +269,7 @@ func (f *Factory) RouterServiceCloud(cr *ingressv1alpha1.ClusterIngress) (*corev
 	}
 	s.Spec.Selector["router"] = name
 
-	if f.config.Platform == operatorconfig.AWSPlatform {
+	if f.config.Platform == configv1.AWSPlatform {
 		if s.Annotations == nil {
 			s.Annotations = map[string]string{}
 		}
