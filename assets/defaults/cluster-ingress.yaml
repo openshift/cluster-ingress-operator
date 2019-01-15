@@ -15,6 +15,4 @@ spec:
     nodeSelector:
       matchLabels:
         "node-role.kubernetes.io/worker": ""
-  highAvailability:
-    type: Cloud
   replicas: 1

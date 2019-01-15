@@ -9,6 +9,8 @@ import (
 	operatorconfig "github.com/openshift/cluster-ingress-operator/pkg/operator/config"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	configv1 "github.com/openshift/api/config/v1"
 )
 
 func TestManifests(t *testing.T) {
@@ -201,14 +203,37 @@ func TestManifests(t *testing.T) {
 
 func TestDefaultClusterIngress(t *testing.T) {
 	ingressDomain := "user.cluster.openshift.com"
+
 	def, err := NewFactory(operatorconfig.Config{
 		RouterImage:          "test",
 		DefaultIngressDomain: ingressDomain,
+		Platform:             configv1.NonePlatform,
 	}).DefaultClusterIngress()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if e, a := ingressDomain, *def.Spec.IngressDomain; e != a {
 		t.Errorf("expected default clusteringress ingressDomain=%s, got %s", e, a)
+	}
+	if highAvailability := def.Spec.HighAvailability; highAvailability == nil {
+		t.Error("expected default clusteringress highAvailability to be non-nil")
+	}
+	if e, a := ingressv1alpha1.UserDefinedClusterIngressHA, def.Spec.HighAvailability.Type; e != a {
+		t.Errorf("expected default clusteringress highAvailability.type=%s, got %s", e, a)
+	}
+
+	def, err = NewFactory(operatorconfig.Config{
+		RouterImage:          "test",
+		DefaultIngressDomain: ingressDomain,
+		Platform:             configv1.AWSPlatform,
+	}).DefaultClusterIngress()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if highAvailability := def.Spec.HighAvailability; highAvailability == nil {
+		t.Error("expected default clusteringress highAvailability to be non-nil")
+	}
+	if e, a := ingressv1alpha1.CloudClusterIngressHA, def.Spec.HighAvailability.Type; e != a {
+		t.Errorf("expected default clusteringress highAvailability.type=%s, got %s", e, a)
 	}
 }
