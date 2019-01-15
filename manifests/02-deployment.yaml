@@ -13,6 +13,8 @@ spec:
       labels:
         name: ingress-operator
     spec:
+      nodeSelector:
+        beta.kubernetes.io/os: linux
       strategy:
         type: Recreate
       serviceAccountName: ingress-operator

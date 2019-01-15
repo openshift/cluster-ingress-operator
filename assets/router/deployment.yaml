@@ -18,7 +18,8 @@ spec:
     spec:
       serviceAccountName: router
       nodeSelector:
-        "node-role.kubernetes.io/worker": ""
+        beta.kubernetes.io/os: linux
+        node-role.kubernetes.io/worker: ''
       priorityClassName: system-cluster-critical
       containers:
         - name: router
