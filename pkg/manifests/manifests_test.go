@@ -238,7 +238,7 @@ func TestDefaultClusterIngress(t *testing.T) {
 		RouterImage:          "test",
 		DefaultIngressDomain: ingressDomain,
 		Platform:             configv1.NonePlatform,
-	}, installConfig()).DefaultClusterIngress()
+	}).DefaultClusterIngress()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +256,7 @@ func TestDefaultClusterIngress(t *testing.T) {
 		RouterImage:          "test",
 		DefaultIngressDomain: ingressDomain,
 		Platform:             configv1.AWSPlatform,
-	}, installConfig()).DefaultClusterIngress()
+	}).DefaultClusterIngress()
 	if err != nil {
 		t.Fatal(err)
 	}
