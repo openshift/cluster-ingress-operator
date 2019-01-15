@@ -89,6 +89,7 @@ func main() {
 		Namespace:            operatorNamespace,
 		RouterImage:          routerImage,
 		DefaultIngressDomain: ingressConfig.Spec.Domain,
+		Platform:             infraConfig.Status.Platform,
 	}
 	op, err := operator.New(operatorConfig, dnsManager, kubeConfig)
 	if err != nil {

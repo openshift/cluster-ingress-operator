@@ -15,6 +15,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/yaml"
 
+	configv1 "github.com/openshift/api/config/v1"
 	routev1 "github.com/openshift/api/route/v1"
 )
 
@@ -57,6 +58,15 @@ func (f *Factory) DefaultClusterIngress() (*ingressv1alpha1.ClusterIngress, erro
 	}
 	if len(f.config.DefaultIngressDomain) != 0 {
 		ci.Spec.IngressDomain = &f.config.DefaultIngressDomain
+	}
+	if ci.Spec.HighAvailability == nil {
+		ci.Spec.HighAvailability = &ingressv1alpha1.ClusterIngressHighAvailability{}
+	}
+	switch f.config.Platform {
+	case configv1.AWSPlatform:
+		ci.Spec.HighAvailability.Type = ingressv1alpha1.CloudClusterIngressHA
+	default:
+		ci.Spec.HighAvailability.Type = ingressv1alpha1.UserDefinedClusterIngressHA
 	}
 	return ci, nil
 }
