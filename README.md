@@ -10,3 +10,8 @@ The operator tries to be useful out of the box by creating a working default dep
 ## How to help
 
 See [HACKING.md](HACKING.md) for development topics.
+
+
+## Reporting issues
+
+Bugs are tracked in [Bugzilla](https://bugzilla.redhat.com/enter_bug.cgi?product=OpenShift%20Container%20Platform&version=4.0.0&component=Routing).
