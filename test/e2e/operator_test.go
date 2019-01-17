@@ -188,24 +188,6 @@ func TestClusterIngressUpdate(t *testing.T) {
 		t.Fatalf("failed to get default router deployment: %v", err)
 	}
 
-	// update router namespace with a label.
-	routerNS := &corev1.Namespace{}
-	if err := cl.Get(context.TODO(), types.NamespacedName{Name: "openshift-ingress"}, routerNS); err != nil {
-		t.Fatalf("failed to get default router namespace: %v", err)
-	}
-
-	if routerNS.Labels == nil {
-		routerNS.Labels = map[string]string{}
-	}
-
-	e2eLabel := fmt.Sprintf("e2e-label-%v", time.Now().UnixNano())
-	routerNS.Labels[e2eLabel] = "e2e-test"
-
-	err = cl.Update(context.TODO(), routerNS)
-	if err != nil {
-		t.Fatalf("failed to update router namespace with e2e test label %s: %v", e2eLabel, err)
-	}
-
 	originalSecret := ci.Spec.DefaultCertificateSecret
 	expectedSecretName := fmt.Sprintf("router-certs-%s", ci.Name)
 	if originalSecret != nil {
@@ -239,20 +221,6 @@ func TestClusterIngressUpdate(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("failed to get updated router deployment %s/%s: %v", deployment.Namespace, deployment.Name, err)
-	}
-
-	updatedNamespace := &corev1.Namespace{}
-	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
-		if err := cl.Get(context.TODO(), types.NamespacedName{Name: "openshift-ingress"}, updatedNamespace); err != nil {
-			return false, err
-		}
-		if _, ok := updatedNamespace.Labels[e2eLabel]; ok {
-			return false, nil
-		}
-		return true, nil
-	})
-	if err != nil {
-		t.Fatalf("expected router namespace to be updated without the e2e test label %s: %v", e2eLabel, err)
 	}
 
 	ci.Spec.DefaultCertificateSecret = originalSecret
