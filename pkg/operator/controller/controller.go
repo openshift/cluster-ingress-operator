@@ -148,7 +148,7 @@ func (r *reconciler) ensureRouterNamespace() error {
 	if err != nil {
 		return fmt.Errorf("failed to build router cluster role: %v", err)
 	}
-	err = r.Client.Get(context.TODO(), types.NamespacedName{Namespace: cr.Namespace, Name: cr.Name}, cr)
+	err = r.Client.Get(context.TODO(), types.NamespacedName{Name: cr.Name}, cr)
 	if err != nil {
 		if !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to get router cluster role %s: %v", cr.Name, err)
