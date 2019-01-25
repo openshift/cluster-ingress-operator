@@ -34,6 +34,9 @@ const (
 	// Annotation used to inform the certificate generation service to
 	// generate a cluster-signed certificate and populate the secret.
 	ServingCertSecretAnnotation = "service.alpha.openshift.io/serving-cert-secret-name"
+
+	// Annotation used to enable the proxy protocol on the AWS load balancer.
+	AWSLBProxyProtocolAnnotation = "service.beta.kubernetes.io/aws-load-balancer-proxy-protocol"
 )
 
 func MustAssetReader(asset string) io.Reader {
@@ -147,6 +150,14 @@ func (f *Factory) RouterDeployment(cr *ingressv1alpha1.ClusterIngress) (*appsv1.
 		env = append(env, corev1.EnvVar{Name: "ROUTER_CANONICAL_HOSTNAME", Value: *cr.Spec.IngressDomain})
 	}
 
+	if cr.Spec.HighAvailability != nil && cr.Spec.HighAvailability.Type == ingressv1alpha1.CloudClusterIngressHA {
+		// For now, check if we are on AWS. This can really be done for
+		// for any external [cloud] LBs that support the proxy protocol.
+		if f.config.Platform == configv1.AWSPlatform {
+			env = append(env, corev1.EnvVar{Name: "ROUTER_USE_PROXY_PROTOCOL", Value: "true"})
+		}
+	}
+
 	if cr.Spec.NodePlacement != nil {
 		if cr.Spec.NodePlacement.NodeSelector != nil {
 			nodeSelector, err := metav1.LabelSelectorAsMap(cr.Spec.NodePlacement.NodeSelector)
@@ -257,6 +268,13 @@ func (f *Factory) RouterServiceCloud(cr *ingressv1alpha1.ClusterIngress) (*corev
 		s.Spec.Selector = map[string]string{}
 	}
 	s.Spec.Selector["router"] = name
+
+	if f.config.Platform == configv1.AWSPlatform {
+		if s.Annotations == nil {
+			s.Annotations = map[string]string{}
+		}
+		s.Annotations[AWSLBProxyProtocolAnnotation] = "*"
+	}
 
 	return s, nil
 }

@@ -2,6 +2,7 @@ package manifests
 
 import (
 	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
@@ -14,7 +15,10 @@ import (
 )
 
 func TestManifests(t *testing.T) {
-	config := operatorconfig.Config{RouterImage: "quay.io/openshift/router:latest"}
+	config := operatorconfig.Config{
+		RouterImage: "quay.io/openshift/router:latest",
+		Platform:    configv1.AWSPlatform,
+	}
 	f := NewFactory(config)
 
 	ci := &ingressv1alpha1.ClusterIngress{
@@ -96,6 +100,19 @@ func TestManifests(t *testing.T) {
 		t.Error("router Deployment has no default node selector")
 	}
 
+	proxyProtocolEnabled := false
+	for _, envVar := range deployment.Spec.Template.Spec.Containers[0].Env {
+		if envVar.Name == "ROUTER_USE_PROXY_PROTOCOL" {
+			if v, err := strconv.ParseBool(envVar.Value); err == nil {
+				proxyProtocolEnabled = v
+			}
+			break
+		}
+	}
+	if proxyProtocolEnabled {
+		t.Errorf("router Deployment unexpected proxy protocol")
+	}
+
 	if deployment.Spec.Template.Spec.Volumes[0].Secret == nil {
 		t.Error("router Deployment has no secret volume")
 	}
@@ -139,6 +156,19 @@ func TestManifests(t *testing.T) {
 	}
 	if len(deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.Handler.HTTPGet.Host) != 0 {
 		t.Errorf("expected empty readiness probe host, got %q", deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.Handler.HTTPGet.Host)
+	}
+
+	proxyProtocolEnabled = false
+	for _, envVar := range deployment.Spec.Template.Spec.Containers[0].Env {
+		if envVar.Name == "ROUTER_USE_PROXY_PROTOCOL" {
+			if v, err := strconv.ParseBool(envVar.Value); err == nil {
+				proxyProtocolEnabled = v
+			}
+			break
+		}
+	}
+	if !proxyProtocolEnabled {
+		t.Errorf("router Deployment expected proxy protocol")
 	}
 
 	secretName := fmt.Sprintf("secret-%v", time.Now().UnixNano())

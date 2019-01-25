@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"testing"
 	"time"
 
@@ -155,6 +156,95 @@ func TestRouterServiceInternalEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get internal router service endpoints: %v", err)
 	}
+}
+
+func TestClusterProxyProtocol(t *testing.T) {
+	cl, ns, err := getClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	infraConfig := &configv1.Infrastructure{}
+	err = cl.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, infraConfig)
+	if err != nil {
+		t.Fatalf("failed to get infrastructure config: %v", err)
+	}
+
+	if infraConfig.Status.Platform != configv1.AWSPlatform {
+		t.Skip("test skipped on non-aws platform")
+		return
+	}
+
+	ci := &ingressv1alpha1.ClusterIngress{}
+	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
+		if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: ns, Name: "default"}, ci); err != nil {
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to get default ClusterIngress: %v", err)
+	}
+
+	// Wait for the router deployment to exist.
+	deployment := &appsv1.Deployment{}
+	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
+		if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: "openshift-ingress", Name: fmt.Sprintf("router-%s", ci.Name)}, deployment); err != nil {
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to get default router deployment: %v", err)
+	}
+
+	// Ensure proxy protocol is enabled on the router deployment.
+	proxyProtocolEnabled := false
+	for _, v := range deployment.Spec.Template.Spec.Containers[0].Env {
+		if v.Name == "ROUTER_USE_PROXY_PROTOCOL" {
+			if val, err := strconv.ParseBool(v.Value); err == nil {
+				proxyProtocolEnabled = val
+				break
+			}
+		}
+	}
+
+	if !proxyProtocolEnabled {
+		t.Fatalf("expected router deployment to enable the PROXY protocol")
+	}
+
+	// Wait for the internal router service to exist.
+	internalService := &corev1.Service{}
+	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
+		if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: "openshift-ingress", Name: fmt.Sprintf("router-internal-%s", ci.Name)}, internalService); err != nil {
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to get internal router service: %v", err)
+	}
+
+	// TODO: Wait for interal router service selector bug to be fixed.
+	// An alternative to test this would be to use an actual proxy protocol
+	// request to the internal router service.
+	// import "net"
+	// connection, err := net.Dial("tcp", internalService.Spec.ClusterIP)
+	// if err != nil {
+	//	t.Fatalf("failed to connect to internal router service: %v", err)
+	// }
+	// defer connection.Close()
+
+	// req := []byte("LOCAL\r\nGET / HTTP/1.1\r\nHost: non.existent.test\r\n\r\n")
+	// req = []byte(fmt.Sprintf("PROXY TCP4 10.9.8.7 %s 54321 443\r\nGET / HTTP/1.1\r\nHost: non.existent.test\r\n\r\n", internalService.Spec.ClusterIP))
+	// connection.Write(req)
+	// data := make([]byte, 4096)
+	// if _, err := connection.Read(data); err != nil {
+	// 	t.Fatalf("failed to read response from internal router service: %v", err)
+	// } else {
+	// 	check response is a http response 503.
+	// }
+
 }
 
 // TODO: Use manifest factory to build expectations
