@@ -346,6 +346,14 @@
   revision = "410d9946edf56ab0bad81164e9203d807fad7a9b"
 
 [[projects]]
+  branch = "master"
+  digest = "1:91235964617b12c582f03425e0b4e6229978c2b46a0fc687c01ec89abbb114fb"
+  name = "github.com/openshift/library-go"
+  packages = ["pkg/crypto"]
+  pruneopts = "NUT"
+  revision = "22c06b1b6dd66dc827b452b77b4cc48cd7820e91"
+
+[[projects]]
   digest = "1:93b1d84c5fa6d1ea52f4114c37714cddd84d5b78f151b62bb101128dd51399bf"
   name = "github.com/pborman/uuid"
   packages = ["."]
@@ -701,6 +709,14 @@
   version = "kubernetes-1.12.3"
 
 [[projects]]
+  branch = "master"
+  digest = "1:e7860f0ab68145bde4471ea7815c1506cb0b69f6c05c815d1bd3dcb36a914265"
+  name = "k8s.io/apiserver"
+  packages = ["pkg/authentication/user"]
+  pruneopts = "NUT"
+  revision = "b6aa1175dafa586b8042c7bfdcd1585f9ecfaa08"
+
+[[projects]]
   digest = "1:845d6a15996e526c72d1813ed10adac09d4bec7594827a842162ab3ab0d524b6"
   name = "k8s.io/client-go"
   packages = [
@@ -897,6 +913,7 @@
     "github.com/kevinburke/go-bindata",
     "github.com/openshift/api/config/v1",
     "github.com/openshift/api/route/v1",
+    "github.com/openshift/library-go/pkg/crypto",
     "github.com/sirupsen/logrus",
     "k8s.io/api/apps/v1",
     "k8s.io/api/autoscaling/v1",
@@ -909,6 +926,7 @@
     "k8s.io/apimachinery/pkg/runtime/schema",
     "k8s.io/apimachinery/pkg/types",
     "k8s.io/apimachinery/pkg/util/errors",
+    "k8s.io/apimachinery/pkg/util/sets",
     "k8s.io/apimachinery/pkg/util/wait",
     "k8s.io/apimachinery/pkg/util/yaml",
     "k8s.io/client-go/discovery",
