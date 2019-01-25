@@ -239,7 +239,7 @@ func (f *Factory) RouterServiceInternal(cr *ingressv1alpha1.ClusterIngress) (*co
 	if s.Annotations == nil {
 		s.Annotations = map[string]string{}
 	}
-	s.Annotations[ServingCertSecretAnnotation] = fmt.Sprintf("router-certs-%s", cr.Name)
+	s.Annotations[ServingCertSecretAnnotation] = fmt.Sprintf("router-metrics-certs-%s", cr.Name)
 
 	if s.Spec.Selector == nil {
 		s.Spec.Selector = map[string]string{}

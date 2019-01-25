@@ -123,11 +123,12 @@ func TestManifests(t *testing.T) {
 			defaultSecretName, deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName)
 	}
 
+	metricsCertSecretName := fmt.Sprintf("router-metrics-certs-%s", ci.Name)
 	if svc, err := f.RouterServiceInternal(ci); err != nil {
 		t.Errorf("invalid RouterServiceInternal: %v", err)
-	} else if svc.Annotations[ServingCertSecretAnnotation] != defaultSecretName {
+	} else if svc.Annotations[ServingCertSecretAnnotation] != metricsCertSecretName {
 		t.Errorf("RouterServiceInternal expected serving secret annotation %s, got %s",
-			defaultSecretName, svc.Annotations[ServingCertSecretAnnotation])
+			metricsCertSecretName, svc.Annotations[ServingCertSecretAnnotation])
 	}
 
 	if deployment.Spec.Template.Spec.HostNetwork != false {
@@ -221,9 +222,9 @@ func TestManifests(t *testing.T) {
 
 	if svc, err := f.RouterServiceInternal(ci); err != nil {
 		t.Errorf("invalid RouterServiceInternal: %v", err)
-	} else if svc.Annotations[ServingCertSecretAnnotation] != defaultSecretName {
+	} else if svc.Annotations[ServingCertSecretAnnotation] != metricsCertSecretName {
 		t.Errorf("RouterServiceInternal expected serving secret annotation %s, got %s",
-			defaultSecretName, svc.Annotations[ServingCertSecretAnnotation])
+			metricsCertSecretName, svc.Annotations[ServingCertSecretAnnotation])
 	}
 
 	if _, err := f.RouterServiceCloud(ci); err != nil {

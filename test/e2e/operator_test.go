@@ -4,7 +4,12 @@ package e2e
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"io"
+	"io/ioutil"
+	"net"
 	"os"
 	"strconv"
 	"testing"
@@ -543,4 +548,92 @@ func getScaleClient() (scale.ScalesGetter, discovery.CachedDiscoveryInterface, e
 	scale, err := scale.NewForConfig(kubeConfig, restMapper, dynamic.LegacyAPIPathResolverFunc, scaleKindResolver)
 
 	return scale, cachedDiscovery, err
+}
+
+func TestRouterCACertificate(t *testing.T) {
+	cl, ns, err := getClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ci := &ingressv1alpha1.ClusterIngress{}
+	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
+		if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: ns, Name: "default"}, ci); err != nil {
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to get default ClusterIngress: %v", err)
+	}
+	if ci.Spec.IngressDomain == nil {
+		t.Fatal("default ClusterIngress has no .spec.IngressDomain")
+	}
+
+	if ci.Spec.HighAvailability.Type != ingressv1alpha1.CloudClusterIngressHA {
+		t.Skip("test skipped for non-cloud HA type")
+		return
+	}
+
+	var certData []byte
+	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
+		cm := &corev1.ConfigMap{}
+		err := cl.Get(context.TODO(), types.NamespacedName{Namespace: ns, Name: "router-ca"}, cm)
+		if err != nil {
+			return false, nil
+		}
+		if val, ok := cm.Data["ca-bundle.crt"]; !ok {
+			return false, fmt.Errorf("router-ca secret is missing %q", "ca-bundle.crt")
+		} else {
+			certData = []byte(val)
+		}
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to get CA certificate: %v", err)
+	}
+
+	certPool := x509.NewCertPool()
+	if !certPool.AppendCertsFromPEM(certData) {
+		t.Fatalf("failed to parse CA certificate")
+	}
+
+	var host string
+	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
+		svc := &corev1.Service{}
+		err := cl.Get(context.TODO(), types.NamespacedName{Namespace: "openshift-ingress", Name: "router-" + ci.Name}, svc)
+		if err != nil {
+			return false, nil
+		}
+		if len(svc.Status.LoadBalancer.Ingress) == 0 || len(svc.Status.LoadBalancer.Ingress[0].Hostname) == 0 {
+			return false, nil
+		}
+		host = svc.Status.LoadBalancer.Ingress[0].Hostname
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to get router service: %v", err)
+	}
+
+	// Make sure we can connect without getting a "certificate signed by
+	// unknown authority" or "x509: certificate is valid for [...], not
+	// [...]" error.
+	serverName := "test." + *ci.Spec.IngressDomain
+	address := net.JoinHostPort(host, "443")
+	conn, err := tls.Dial("tcp", address, &tls.Config{
+		RootCAs:    certPool,
+		ServerName: serverName,
+	})
+	if err != nil {
+		t.Fatalf("failed to connect to router at %s: %v", address, err)
+	}
+	defer conn.Close()
+
+	conn.Write([]byte("GET / HTTP/1.1\r\n\r\n"))
+
+	// We do not care about the response as long as we can read it without
+	// error.
+	if _, err := io.Copy(ioutil.Discard, conn); err != nil && err != io.EOF {
+		t.Fatalf("failed to read response from router at %s: %v", address, err)
+	}
 }

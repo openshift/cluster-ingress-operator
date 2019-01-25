@@ -1,8 +1,10 @@
 package clusteringress
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/sirupsen/logrus"
 
@@ -11,12 +13,15 @@ import (
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/slice"
 
+	"github.com/openshift/library-go/pkg/crypto"
+
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/apimachinery/pkg/util/sets"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -31,6 +36,16 @@ const (
 	// considered for processing; this ensures the operator has a chance to handle
 	// all states. TODO: Make this generic and not tied to the "default" ingress.
 	ClusterIngressFinalizer = "ingress.openshift.io/default-cluster-ingress"
+
+	// caCertSecretName is the name of the secret that holds the CA certificate
+	// that the operator will use to create default certificates for
+	// clusteringresses.
+	caCertSecretName = "router-ca"
+
+	// caCertConfigMapName is the name of the config map with the public key for
+	// the CA certificate, which the operator publishes for other operators
+	// to use.
+	caCertConfigMapName = "router-ca"
 )
 
 // New creates the operator controller from configuration. This is the
@@ -54,12 +69,30 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	return c, nil
 }
 
+// CACert holds the CA certificate as well as the resource versions of the most
+// recently observed CA certificate secret and configmap.
+type CACert struct {
+	// CA is the CA certificate that the operator read from the secret
+	// or generated and put in the secret.
+	CA *crypto.CA
+
+	// CACertConfigMapLastObservedResourceVersion is the resource version of
+	// the config map at the time when the operator most recently
+	// successfully read or created it.
+	CACertConfigMapLastObservedResourceVersion string
+	// CACertSecretLastObservedResourceVersion is the resource version of
+	// the secret at the time when the operator most recently successfully
+	// read or created it.
+	CACertSecretLastObservedResourceVersion string
+}
+
 // Config holds all the things necessary for the controller to run.
 type Config struct {
 	Client          client.Client
 	ManifestFactory *manifests.Factory
 	Namespace       string
 	DNSManager      dns.Manager
+	CACert
 }
 
 // reconciler handles the actual ingress reconciliation logic in response to
@@ -289,6 +322,10 @@ func (r *reconciler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress) 
 		return fmt.Errorf("failed to create internal router service for clusteringress %s: %v", ci.Name, err)
 	}
 
+	if err := r.ensureDefaultCertificateForIngress(current, ci); err != nil {
+		return fmt.Errorf("failed to create default certificate for clusteringress %s: %v", ci.Name, err)
+	}
+
 	if err := r.syncClusterIngressStatus(current, ci); err != nil {
 		return fmt.Errorf("failed to update status of clusteringress %s/%s: %v", current.Namespace, current.Name, err)
 	}
@@ -349,6 +386,165 @@ func (r *reconciler) ensureInternalRouterServiceForIngress(deployment *appsv1.De
 	}
 
 	return nil
+}
+
+// ensureDefaultCertificateForIngress ensures that a default certificate exists
+// for a given ClusterIngress.
+func (r *reconciler) ensureDefaultCertificateForIngress(deployment *appsv1.Deployment, ci *ingressv1alpha1.ClusterIngress) error {
+	// Normally we would use the manifest factory to build the secret.
+	// However, we want to avoid generating certificates if the secret
+	// already exists.
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("router-certs-%s", ci.Name),
+			Namespace: deployment.Namespace,
+		},
+	}
+	err := r.Client.Get(context.TODO(), types.NamespacedName{Namespace: secret.Namespace, Name: secret.Name}, secret)
+	if err != nil {
+		if !errors.IsNotFound(err) {
+			return fmt.Errorf("failed to get secret %s/%s: %v", secret.Namespace, secret.Name, err)
+		}
+
+		ca, err := r.ensureRouterCACertificate()
+		if err != nil {
+			return fmt.Errorf("failed to get CA certificate: %v", err)
+		}
+		hostnames := sets.NewString(fmt.Sprintf("*.%s", *ci.Spec.IngressDomain))
+		cert, err := ca.MakeServerCert(hostnames, 0)
+		if err != nil {
+			return fmt.Errorf("failed to make CA: %v", err)
+		}
+
+		secret.Type = corev1.SecretTypeTLS
+		certBytes, keyBytes, err := cert.GetPEMBytes()
+		if err != nil {
+			return fmt.Errorf("failed to get certificate from secret %s/%s: %v", secret.Namespace, secret.Name, err)
+		}
+		secret.Data = map[string][]byte{
+			"tls.crt": certBytes,
+			"tls.key": keyBytes,
+		}
+		trueVar := true
+		deploymentRef := metav1.OwnerReference{
+			APIVersion: "apps/v1",
+			Kind:       "Deployment",
+			Name:       deployment.Name,
+			UID:        deployment.UID,
+			Controller: &trueVar,
+		}
+		secret.SetOwnerReferences([]metav1.OwnerReference{deploymentRef})
+		if err := r.Client.Create(context.TODO(), secret); err != nil {
+			if !errors.IsAlreadyExists(err) {
+				return fmt.Errorf("failed to create secret %s/%s: %v", secret.Namespace, secret.Name, err)
+			}
+
+			return nil
+		}
+		logrus.Infof("created secret %s/%s", secret.Namespace, secret.Name)
+	}
+
+	return nil
+}
+
+// ensureRouterCACertificate ensures a CA certificate exists that can be used to
+// sign the default certificates for ClusterIngresses.
+func (r *reconciler) ensureRouterCACertificate() (*crypto.CA, error) {
+	// Normally we would use the manifest factory to build the secret and
+	// configmap.  However, we want to avoid generating certificates if the
+	// resources already exist.
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      caCertSecretName,
+			Namespace: r.Namespace,
+		},
+	}
+	err := r.Client.Get(context.TODO(), types.NamespacedName{Namespace: secret.Namespace, Name: secret.Name}, secret)
+	if err != nil && !errors.IsNotFound(err) {
+		return nil, fmt.Errorf("failed to get secret %s/%s: %v", secret.Namespace, secret.Name, err)
+	}
+	haveSecret := !errors.IsNotFound(err)
+
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      caCertConfigMapName,
+			Namespace: r.Namespace,
+		},
+	}
+	err = r.Client.Get(context.TODO(), types.NamespacedName{Namespace: cm.Namespace, Name: cm.Name}, cm)
+	if err != nil && !errors.IsNotFound(err) {
+		return nil, fmt.Errorf("failed to get configmap %s/%s: %v", cm.Namespace, cm.Name, err)
+	}
+	haveConfigMap := !errors.IsNotFound(err)
+
+	if haveSecret && haveConfigMap &&
+		secret.ResourceVersion == r.CACertSecretLastObservedResourceVersion &&
+		cm.ResourceVersion == r.CACertConfigMapLastObservedResourceVersion {
+		return r.CACert.CA, nil
+	}
+
+	var ca *crypto.CA
+
+	if haveSecret {
+		if _, ok := secret.Data["tls.crt"]; !ok {
+			return nil, fmt.Errorf("failed to read %q from secret %s/%s: %3v", "tls.crt", secret.Namespace, secret.Name, err)
+		}
+		if _, ok := secret.Data["tls.key"]; !ok {
+			return nil, fmt.Errorf("failed to read %q from secret %s/%s: %3v", "tls.key", secret.Namespace, secret.Name, err)
+		}
+		ca, err = crypto.GetCAFromBytes(secret.Data["tls.crt"], secret.Data["tls.key"])
+		if err != nil {
+			return nil, fmt.Errorf("failed to get CA from secret %s/%s: %v", secret.Namespace, secret.Name, err)
+		}
+	} else {
+		// TODO Use certrotationcontroller from library-go.
+		signerName := fmt.Sprintf("%s@%d", "cluster-ingress-operator", time.Now().Unix())
+		caConfig, err := crypto.MakeCAConfig(signerName, 0)
+		if err != nil {
+			return nil, fmt.Errorf("failed to make CA config: %v", err)
+		}
+
+		secret.Type = corev1.SecretTypeTLS
+		certBytes, keyBytes, err := caConfig.GetPEMBytes()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get certificate: %v", err)
+		}
+		secret.Data = map[string][]byte{
+			"tls.crt": certBytes,
+			"tls.key": keyBytes,
+		}
+		if err := r.Client.Create(context.TODO(), secret); err != nil {
+			return nil, fmt.Errorf("failed to create secret %s/%s: %v", secret.Namespace, secret.Name, err)
+		}
+		logrus.Infof("created secret %s/%s", secret.Namespace, secret.Name)
+
+		ca = &crypto.CA{
+			Config:          caConfig,
+			SerialGenerator: &crypto.RandomSerialGenerator{},
+		}
+	}
+
+	if haveConfigMap {
+		if _, ok := cm.Data["ca-bundle.crt"]; !ok {
+			return nil, fmt.Errorf("failed to read %q from configmap %s/%s: %v", "ca-bundle.crt", cm.Namespace, cm.Name, err)
+		}
+		if !bytes.Equal(secret.Data["tls.crt"], []byte(cm.Data["ca-bundle.crt"])) {
+			return nil, fmt.Errorf("content of %q in configmap %s/%s does not match content of %q in secret %s/%s", "ca-bundle.crt", cm.Namespace, cm.Name, "tls.crt", secret.Namespace, secret.Name)
+			// TODO Update the configmap based off the secret?
+		}
+	} else {
+		cm.Data = map[string]string{"ca-bundle.crt": string(secret.Data["tls.crt"])}
+		if err := r.Client.Create(context.TODO(), cm); err != nil {
+			return nil, fmt.Errorf("failed to create configmap %s/%s: %v", cm.Namespace, cm.Name, err)
+		}
+		logrus.Infof("created configmap %s/%s", cm.Namespace, cm.Name)
+	}
+
+	r.CACert.CA = ca
+	r.CACertConfigMapLastObservedResourceVersion = cm.ResourceVersion
+	r.CACertSecretLastObservedResourceVersion = secret.ResourceVersion
+
+	return ca, nil
 }
 
 // ensureDNSForLoadBalancer configures a wildcard DNS alias for a ClusterIngress
