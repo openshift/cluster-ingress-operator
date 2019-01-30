@@ -80,6 +80,7 @@ type Config struct {
 	ManifestFactory *manifests.Factory
 	Namespace       string
 	DNSManager      dns.Manager
+	RouterImage     string
 }
 
 // reconciler handles the actual ingress reconciliation logic in response to

@@ -4,8 +4,12 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
+
 	configv1 "github.com/openshift/api/config/v1"
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
+	"github.com/openshift/cluster-ingress-operator/pkg/util"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -126,6 +130,98 @@ func TestComputeStatusConditions(t *testing.T) {
 		if !gotExpected {
 			t.Fatalf("%q: expected %#v, got %#v", tc.description,
 				expected, new)
+		}
+	}
+}
+
+func TestSetStatusCondition(t *testing.T) {
+	testCases := []struct {
+		description   string
+		oldConditions []configv1.ClusterOperatorStatusCondition
+		newCondition  *configv1.ClusterOperatorStatusCondition
+		expected      []configv1.ClusterOperatorStatusCondition
+	}{
+		{
+			description: "new condition",
+			newCondition: &configv1.ClusterOperatorStatusCondition{
+				Type:   configv1.OperatorAvailable,
+				Status: configv1.ConditionTrue,
+			},
+			expected: []configv1.ClusterOperatorStatusCondition{
+				{
+					Type:   configv1.OperatorAvailable,
+					Status: configv1.ConditionTrue,
+				},
+			},
+		},
+		{
+			description: "existing condition, unchanged",
+			oldConditions: []configv1.ClusterOperatorStatusCondition{
+				{
+					Type:   configv1.OperatorAvailable,
+					Status: configv1.ConditionTrue,
+				},
+			},
+			newCondition: &configv1.ClusterOperatorStatusCondition{
+				Type:   configv1.OperatorAvailable,
+				Status: configv1.ConditionTrue,
+			},
+			expected: []configv1.ClusterOperatorStatusCondition{
+				{
+					Type:   configv1.OperatorAvailable,
+					Status: configv1.ConditionTrue,
+				},
+			},
+		},
+		{
+			description: "existing conditions, one changed",
+			oldConditions: []configv1.ClusterOperatorStatusCondition{
+				{
+					Type:   configv1.OperatorFailing,
+					Status: configv1.ConditionFalse,
+				},
+				{
+					Type:   configv1.OperatorProgressing,
+					Status: configv1.ConditionFalse,
+				},
+				{
+					Type:   configv1.OperatorAvailable,
+					Status: configv1.ConditionFalse,
+				},
+			},
+			newCondition: &configv1.ClusterOperatorStatusCondition{
+				Type:   configv1.OperatorAvailable,
+				Status: configv1.ConditionTrue,
+			},
+			expected: []configv1.ClusterOperatorStatusCondition{
+				{
+					Type:   configv1.OperatorFailing,
+					Status: configv1.ConditionFalse,
+				},
+				{
+					Type:   configv1.OperatorProgressing,
+					Status: configv1.ConditionFalse,
+				},
+				{
+					Type:   configv1.OperatorAvailable,
+					Status: configv1.ConditionTrue,
+				},
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		actual := setStatusCondition(tc.oldConditions, tc.newCondition)
+		opts := []cmp.Option{
+			cmpopts.IgnoreFields(configv1.ClusterOperatorStatusCondition{}, "LastTransitionTime"),
+		}
+		equal, err := util.ElementsEqual(actual, tc.expected, opts)
+		if err != nil {
+			t.Fatalf("%q failed: %v", tc.description, err)
+		}
+		if !equal {
+			t.Fatalf("%q: expected %v, got %v", tc.description,
+				tc.expected, actual)
 		}
 	}
 }

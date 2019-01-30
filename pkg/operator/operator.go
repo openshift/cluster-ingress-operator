@@ -82,6 +82,7 @@ func New(config operatorconfig.Config, dnsManager dns.Manager, kubeConfig *rest.
 		Namespace:       config.Namespace,
 		ManifestFactory: mf,
 		DNSManager:      dnsManager,
+		RouterImage:     config.RouterImage,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create operator controller: %v", err)
