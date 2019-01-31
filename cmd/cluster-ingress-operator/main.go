@@ -17,7 +17,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
@@ -25,6 +24,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/controller-runtime/pkg/runtime/signals"
+)
+
+const (
+	// cloudCredentialsSecretName is the name of the secret in the
+	// operator's namespace that will hold the credentials that the operator
+	// will use to authenticate with the cloud API.
+	cloudCredentialsSecretName = "cloud-credentials"
 )
 
 func main() {
@@ -79,7 +85,7 @@ func main() {
 	}
 
 	// Set up the DNS manager.
-	dnsManager, err := createDNSManager(kubeClient, infraConfig, ingressConfig, dnsConfig, clusterVersionConfig)
+	dnsManager, err := createDNSManager(kubeClient, operatorNamespace, infraConfig, ingressConfig, dnsConfig, clusterVersionConfig)
 	if err != nil {
 		logrus.Fatalf("failed to create DNS manager: %v", err)
 	}
@@ -102,12 +108,12 @@ func main() {
 
 // createDNSManager creates a DNS manager compatible with the given cluster
 // configuration.
-func createDNSManager(cl client.Client, infraConfig *configv1.Infrastructure, ingressConfig *configv1.Ingress, dnsConfig *configv1.DNS, clusterVersionConfig *configv1.ClusterVersion) (dns.Manager, error) {
+func createDNSManager(cl client.Client, namespace string, infraConfig *configv1.Infrastructure, ingressConfig *configv1.Ingress, dnsConfig *configv1.DNS, clusterVersionConfig *configv1.ClusterVersion) (dns.Manager, error) {
 	var dnsManager dns.Manager
 	switch infraConfig.Status.Platform {
 	case configv1.AWSPlatform:
 		awsCreds := &corev1.Secret{}
-		err := cl.Get(context.TODO(), types.NamespacedName{Namespace: metav1.NamespaceSystem, Name: "aws-creds"}, awsCreds)
+		err := cl.Get(context.TODO(), types.NamespacedName{Namespace: namespace, Name: cloudCredentialsSecretName}, awsCreds)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get aws creds from %s/%s: %v", awsCreds.Namespace, awsCreds.Name, err)
 		}
