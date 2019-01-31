@@ -145,7 +145,7 @@ func (r *reconciler) reconcile() (reconcile.Result, error) {
 	}
 
 	// Reconcile all the ingresses.
-	errors := []error{}
+	errs := []error{}
 	for _, ingress := range ingresses.Items {
 		logrus.Infof("reconciling clusteringress %#v", ingress)
 		// Handle deleted ingress.
@@ -155,7 +155,7 @@ func (r *reconciler) reconcile() (reconcile.Result, error) {
 			// Destroy any router associated with the clusteringress.
 			err := r.ensureRouterDeleted(&ingress)
 			if err != nil {
-				errors = append(errors, fmt.Errorf("failed to delete clusteringress %s/%s: %v", ingress.Namespace, ingress.Name, err))
+				errs = append(errs, fmt.Errorf("failed to delete clusteringress %s/%s: %v", ingress.Namespace, ingress.Name, err))
 				continue
 			}
 			logrus.Infof("deleted router for clusteringress %s/%s", ingress.Namespace, ingress.Name)
@@ -164,7 +164,7 @@ func (r *reconciler) reconcile() (reconcile.Result, error) {
 				ingress.Finalizers = slice.RemoveString(ingress.Finalizers, ClusterIngressFinalizer)
 				err = r.Client.Update(context.TODO(), &ingress)
 				if err != nil {
-					errors = append(errors, fmt.Errorf("failed to remove finalizer from clusteringress %s/%s: %v", ingress.Namespace, ingress.Name, err))
+					errs = append(errs, fmt.Errorf("failed to remove finalizer from clusteringress %s/%s: %v", ingress.Namespace, ingress.Name, err))
 				}
 			}
 			continue
@@ -173,10 +173,10 @@ func (r *reconciler) reconcile() (reconcile.Result, error) {
 		// Handle active ingress.
 		err := r.ensureRouterForIngress(&ingress)
 		if err != nil {
-			errors = append(errors, fmt.Errorf("failed to ensure clusteringress %s/%s: %v", ingress.Namespace, ingress.Name, err))
+			errs = append(errs, fmt.Errorf("failed to ensure clusteringress %s/%s: %v", ingress.Namespace, ingress.Name, err))
 		}
 	}
-	return reconcile.Result{}, utilerrors.NewAggregate(errors)
+	return reconcile.Result{}, utilerrors.NewAggregate(errs)
 }
 
 // ensureRouterNamespace ensures all the necessary scaffolding exists for
