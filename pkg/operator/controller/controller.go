@@ -37,6 +37,11 @@ const (
 	// all states. TODO: Make this generic and not tied to the "default" ingress.
 	ClusterIngressFinalizer = "ingress.openshift.io/default-cluster-ingress"
 
+	// GlobalMachineSpecifiedConfigNamespace is the location for global
+	// config.  In particular, the operator will put the configmap with the
+	// CA certificate in this namespace.
+	GlobalMachineSpecifiedConfigNamespace = "openshift-config-managed"
+
 	// caCertSecretName is the name of the secret that holds the CA certificate
 	// that the operator will use to create default certificates for
 	// clusteringresses.
@@ -468,7 +473,7 @@ func (r *reconciler) ensureRouterCACertificate() (*crypto.CA, error) {
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      caCertConfigMapName,
-			Namespace: r.Namespace,
+			Namespace: GlobalMachineSpecifiedConfigNamespace,
 		},
 	}
 	err = r.Client.Get(context.TODO(), types.NamespacedName{Namespace: cm.Namespace, Name: cm.Name}, cm)

@@ -578,7 +578,7 @@ func TestRouterCACertificate(t *testing.T) {
 	var certData []byte
 	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
 		cm := &corev1.ConfigMap{}
-		err := cl.Get(context.TODO(), types.NamespacedName{Namespace: ns, Name: "router-ca"}, cm)
+		err := cl.Get(context.TODO(), types.NamespacedName{Namespace: "openshift-config-managed", Name: "router-ca"}, cm)
 		if err != nil {
 			return false, nil
 		}
