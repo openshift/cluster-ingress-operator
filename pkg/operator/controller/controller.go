@@ -74,30 +74,12 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	return c, nil
 }
 
-// CACert holds the CA certificate as well as the resource versions of the most
-// recently observed CA certificate secret and configmap.
-type CACert struct {
-	// CA is the CA certificate that the operator read from the secret
-	// or generated and put in the secret.
-	CA *crypto.CA
-
-	// CACertConfigMapLastObservedResourceVersion is the resource version of
-	// the config map at the time when the operator most recently
-	// successfully read or created it.
-	CACertConfigMapLastObservedResourceVersion string
-	// CACertSecretLastObservedResourceVersion is the resource version of
-	// the secret at the time when the operator most recently successfully
-	// read or created it.
-	CACertSecretLastObservedResourceVersion string
-}
-
 // Config holds all the things necessary for the controller to run.
 type Config struct {
 	Client          client.Client
 	ManifestFactory *manifests.Factory
 	Namespace       string
 	DNSManager      dns.Manager
-	CACert
 }
 
 // reconciler handles the actual ingress reconciliation logic in response to
@@ -482,14 +464,7 @@ func (r *reconciler) ensureRouterCACertificate() (*crypto.CA, error) {
 	}
 	haveConfigMap := !errors.IsNotFound(err)
 
-	if haveSecret && haveConfigMap &&
-		secret.ResourceVersion == r.CACertSecretLastObservedResourceVersion &&
-		cm.ResourceVersion == r.CACertConfigMapLastObservedResourceVersion {
-		return r.CACert.CA, nil
-	}
-
 	var ca *crypto.CA
-
 	if haveSecret {
 		if _, ok := secret.Data["tls.crt"]; !ok {
 			return nil, fmt.Errorf("failed to read %q from secret %s/%s: %3v", "tls.crt", secret.Namespace, secret.Name, err)
@@ -544,10 +519,6 @@ func (r *reconciler) ensureRouterCACertificate() (*crypto.CA, error) {
 		}
 		logrus.Infof("created configmap %s/%s", cm.Namespace, cm.Name)
 	}
-
-	r.CACert.CA = ca
-	r.CACertConfigMapLastObservedResourceVersion = cm.ResourceVersion
-	r.CACertSecretLastObservedResourceVersion = secret.ResourceVersion
 
 	return ca, nil
 }
