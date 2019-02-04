@@ -18,6 +18,7 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator"
+	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
@@ -56,14 +57,14 @@ func getClient() (client.Client, string, error) {
 }
 
 func TestOperatorAvailable(t *testing.T) {
-	cl, ns, err := getClient()
+	cl, _, err := getClient()
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	co := &configv1.ClusterOperator{}
 	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
-		if err := cl.Get(context.TODO(), types.NamespacedName{Name: ns}, co); err != nil {
+		if err := cl.Get(context.TODO(), types.NamespacedName{Name: ingresscontroller.IngressClusterOperatorName}, co); err != nil {
 			return false, nil
 		}
 
