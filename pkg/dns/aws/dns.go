@@ -19,6 +19,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/route53"
 
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/apimachinery/pkg/util/sets"
 )
 
 var _ dns.Manager = &Manager{}
@@ -51,7 +52,7 @@ type Manager struct {
 	// updatedRecords is a cache of records which have been created during the
 	// life of this manager. The key is zoneID+domain+target. This is a quick hack
 	// to minimize AWS API calls for now.
-	updatedRecords map[string]struct{}
+	updatedRecords sets.String
 }
 
 // Config is the necessary input to configure the manager.
@@ -101,7 +102,7 @@ func NewManager(config Config) (*Manager, error) {
 		// when the region is forced to us-east-1. We don't yet understand why.
 		tags:           resourcegroupstaggingapi.New(sess, aws.NewConfig().WithRegion("us-east-1")),
 		config:         config,
-		updatedRecords: map[string]struct{}{},
+		updatedRecords: sets.NewString(),
 	}, nil
 }
 
@@ -188,10 +189,33 @@ func (m *Manager) discoverZones() error {
 	return nil
 }
 
+type action string
+
+const (
+	upsertAction action = "UPSERT"
+	deleteAction action = "DELETE"
+)
+
+func (m *Manager) Ensure(record *dns.Record) error {
+	return m.change(record, upsertAction)
+}
+
+func (m *Manager) Delete(record *dns.Record) error {
+	return m.change(record, deleteAction)
+}
+
 // EnsureAlias will create an A record for domain/target in both the public and
 // private zones. The target must correspond to the hostname of an ELB which
 // will be automatically discovered.
-func (m *Manager) EnsureAlias(domain, target string) error {
+func (m *Manager) change(record *dns.Record, action action) error {
+	if record.Type != dns.ALIASRecord {
+		return fmt.Errorf("unsupported record type %s", record.Type)
+	}
+	alias := record.Alias
+	if alias == nil {
+		return fmt.Errorf("missing alias record")
+	}
+	domain, target := alias.Domain, alias.Target
 	if len(domain) == 0 {
 		return fmt.Errorf("domain is required")
 	}
@@ -230,28 +254,33 @@ func (m *Manager) EnsureAlias(domain, target string) error {
 	defer m.lock.Unlock()
 	for _, zoneID := range []string{m.publicZoneID, m.privateZoneID} {
 		key := zoneID + domain + target
-		// Only process these once, for now.
-		if _, exists := m.updatedRecords[key]; exists {
+		// Only process updates once for now because we're not diffing.
+		if m.updatedRecords.Has(key) && action == upsertAction {
 			continue
 		}
-		err := m.updateAlias(domain, zoneID, target, targetHostedZoneID)
+		err := m.updateAlias(domain, zoneID, target, targetHostedZoneID, string(action))
 		if err != nil {
 			return fmt.Errorf("failed to update alias in zone %s: %v", zoneID, err)
 		}
-		m.updatedRecords[key] = struct{}{}
+		switch action {
+		case upsertAction:
+			m.updatedRecords.Insert(key)
+		case deleteAction:
+			m.updatedRecords.Delete(key)
+		}
 	}
 	return nil
 }
 
 // updateAlias creates or updates an alias for domain in zoneID pointed at
 // target in targetHostedZoneID.
-func (m *Manager) updateAlias(domain, zoneID, target, targetHostedZoneID string) error {
+func (m *Manager) updateAlias(domain, zoneID, target, targetHostedZoneID, action string) error {
 	resp, err := m.route53.ChangeResourceRecordSets(&route53.ChangeResourceRecordSetsInput{
 		HostedZoneId: aws.String(zoneID),
 		ChangeBatch: &route53.ChangeBatch{
 			Changes: []*route53.Change{
 				{
-					Action: aws.String("UPSERT"),
+					Action: aws.String(action),
 					ResourceRecordSet: &route53.ResourceRecordSet{
 						Name: aws.String(domain),
 						Type: aws.String("A"),

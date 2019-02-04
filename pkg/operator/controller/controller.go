@@ -37,6 +37,8 @@ const (
 	// all states. TODO: Make this generic and not tied to the "default" ingress.
 	ClusterIngressFinalizer = "ingress.openshift.io/default-cluster-ingress"
 
+	GenericFinalizer = "ingress.openshift.io/operator"
+
 	// caCertSecretName is the name of the secret that holds the CA certificate
 	// that the operator will use to create default certificates for
 	// clusteringresses.
@@ -147,13 +149,19 @@ func (r *reconciler) reconcile() (reconcile.Result, error) {
 		// TODO: Assert/ensure that the ingress has a finalizer so we can reliably detect
 		// deletion.
 		if ingress.DeletionTimestamp != nil {
-			// Destroy any router associated with the clusteringress.
-			err := r.ensureRouterDeleted(&ingress)
+			// TODO: This should also be tied to the HA type.
+			err := r.finalizeLoadBalancerServiceDeleted(&ingress)
 			if err != nil {
-				errors = append(errors, fmt.Errorf("failed to delete clusteringress %s/%s: %v", ingress.Namespace, ingress.Name, err))
+				errors = append(errors, fmt.Errorf("failed to finalize load balancer service for %s: %v", ingress.Name, err))
 				continue
 			}
-			logrus.Infof("deleted router for clusteringress %s/%s", ingress.Namespace, ingress.Name)
+			logrus.Infof("finalized load balancer service for ingress %s", ingress.Name)
+			err = r.ensureRouterDeleted(&ingress)
+			if err != nil {
+				errors = append(errors, fmt.Errorf("failed to delete deployment for ingress %s: %v", ingress.Name, err))
+				continue
+			}
+			logrus.Infof("deleted deployment for ingress %s", ingress.Name)
 			// Clean up the finalizer to allow the clusteringress to be deleted.
 			if slice.ContainsString(ingress.Finalizers, ClusterIngressFinalizer) {
 				ingress.Finalizers = slice.RemoveString(ingress.Finalizers, ClusterIngressFinalizer)
@@ -302,6 +310,7 @@ func (r *reconciler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress) 
 					Controller: &trueVar,
 				}
 				service.SetOwnerReferences([]metav1.OwnerReference{deploymentRef})
+				service.Finalizers = []string{GenericFinalizer}
 				err = r.Client.Create(context.TODO(), service)
 				if err == nil {
 					logrus.Infof("created router service %s/%s", service.Namespace, service.Name)
@@ -310,9 +319,14 @@ func (r *reconciler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress) 
 				}
 			}
 			if ci.Spec.IngressDomain != nil {
-				err = r.ensureDNSForLoadBalancer(ci, service)
-				if err != nil {
-					return fmt.Errorf("failed to ensure DNS for router service %s/%s: %v", service.Namespace, service.Name, err)
+				records := getDNSRecordsForLoadBalancerService(ci, service)
+				if len(records) > 0 {
+					for _, record := range records {
+						err := r.DNSManager.Ensure(record)
+						if err != nil {
+							return fmt.Errorf("failed to ensure DNS record %v for %s: %v", record, ci.Name, err)
+						}
+					}
 				}
 			}
 		}
@@ -547,24 +561,6 @@ func (r *reconciler) ensureRouterCACertificate() (*crypto.CA, error) {
 	return ca, nil
 }
 
-// ensureDNSForLoadBalancer configures a wildcard DNS alias for a ClusterIngress
-// targeting the given service.
-func (r *reconciler) ensureDNSForLoadBalancer(ci *ingressv1alpha1.ClusterIngress, service *corev1.Service) error {
-	if len(service.Status.LoadBalancer.Ingress) == 0 {
-		logrus.Infof("won't update DNS record for load balancer service %s/%s because status contains no ingresses", service.Namespace, service.Name)
-		return nil
-	}
-	target := service.Status.LoadBalancer.Ingress[0].Hostname
-	if len(target) == 0 {
-		logrus.Infof("won't update DNS record for load balancer service %s/%s because ingress hostname is empty", service.Namespace, service.Name)
-		return nil
-	}
-	// TODO: the routing wildcard prefix should come from cluster config or
-	// ClusterIngress.
-	domain := fmt.Sprintf("*.%s", *ci.Spec.IngressDomain)
-	return r.DNSManager.EnsureAlias(domain, target)
-}
-
 // ensureRouterDeleted ensures that any router resources associated with the
 // clusteringress are deleted.
 func (r *reconciler) ensureRouterDeleted(ci *ingressv1alpha1.ClusterIngress) error {
@@ -576,6 +572,45 @@ func (r *reconciler) ensureRouterDeleted(ci *ingressv1alpha1.ClusterIngress) err
 	err = r.Client.Delete(context.TODO(), deployment)
 	if !errors.IsNotFound(err) {
 		return err
+	}
+	return nil
+}
+
+// finalizeLoadBalancerServiceDeleted deletes any DNS entries associated with
+// any load balancer service associated with the clusteringress and then
+// finalizes the service.
+func (r *reconciler) finalizeLoadBalancerServiceDeleted(ci *ingressv1alpha1.ClusterIngress) error {
+	service, err := r.ManifestFactory.RouterServiceCloud(ci)
+	if err != nil {
+		return fmt.Errorf("failed to build router service: %v", err)
+	}
+	err = r.Client.Get(context.TODO(), types.NamespacedName{Namespace: service.Namespace, Name: service.Name}, service)
+	if err != nil {
+		// Because of the finalizer, if the service isn't found, either it shouldn't
+		// exist or we already cleaned up.
+		// TODO: Think about how to do this without finalizers.
+		if errors.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	records := getDNSRecordsForLoadBalancerService(ci, service)
+	if len(records) > 0 {
+		for _, record := range records {
+			err := r.DNSManager.Delete(record)
+			if err != nil {
+				return fmt.Errorf("failed to delete DNS record %v for ingress %s: %v", record, ci.Name, err)
+			}
+			logrus.Infof("deleted DNS record %v for ingress %s", record, ci.Name)
+		}
+	}
+	updated := service.DeepCopy()
+	if slice.ContainsString(updated.Finalizers, GenericFinalizer) {
+		updated.Finalizers = slice.RemoveString(updated.Finalizers, GenericFinalizer)
+		err = r.Client.Update(context.TODO(), updated)
+		if err != nil {
+			return fmt.Errorf("failed to remove finalizer from service %s for ingress %s: %v", service.Name, ci.Name, err)
+		}
 	}
 	return nil
 }
@@ -599,4 +634,22 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 	}
 	updated.Spec.Replicas = &replicas
 	return true, updated
+}
+
+// getDNSRecordsForLoadBalancerService returns all the DNS records which should
+// exist for the given ClusterIngress and Load Balancer Service.
+func getDNSRecordsForLoadBalancerService(ci *ingressv1alpha1.ClusterIngress, service *corev1.Service) []*dns.Record {
+	records := []*dns.Record{}
+	ingress := service.Status.LoadBalancer.Ingress
+	if len(ingress) > 0 && len(ingress[0].Hostname) > 0 {
+		domain := fmt.Sprintf("*.%s", *ci.Spec.IngressDomain)
+		records = append(records, &dns.Record{
+			Type: dns.ALIASRecord,
+			Alias: &dns.AliasRecord{
+				Domain: domain,
+				Target: ingress[0].Hostname,
+			},
+		})
+	}
+	return records
 }
