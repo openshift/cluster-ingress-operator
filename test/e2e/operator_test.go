@@ -56,14 +56,14 @@ func getClient() (client.Client, string, error) {
 }
 
 func TestOperatorAvailable(t *testing.T) {
-	cl, ns, err := getClient()
+	cl, _, err := getClient()
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	co := &configv1.ClusterOperator{}
 	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
-		if err := cl.Get(context.TODO(), types.NamespacedName{Name: ns}, co); err != nil {
+		if err := cl.Get(context.TODO(), types.NamespacedName{Name: "ingress"}, co); err != nil {
 			return false, nil
 		}
 

@@ -24,7 +24,7 @@ import (
 // syncOperatorStatus computes the operator's current status and therefrom
 // creates or updates the ClusterOperator resource for the operator.
 func (r *reconciler) syncOperatorStatus() error {
-	co := &configv1.ClusterOperator{ObjectMeta: metav1.ObjectMeta{Name: r.Namespace}}
+	co := &configv1.ClusterOperator{ObjectMeta: metav1.ObjectMeta{Name: "ingress"}}
 	err := r.Client.Get(context.TODO(), types.NamespacedName{Name: co.Name}, co)
 	isNotFound := errors.IsNotFound(err)
 	if err != nil && !isNotFound {
