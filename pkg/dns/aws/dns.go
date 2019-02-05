@@ -115,22 +115,19 @@ func (m *Manager) discoverZones() error {
 	// Find the public zone, which is the non-private zone whose domain matches
 	// the cluster base domain.
 	if len(m.publicZoneID) == 0 {
+		var lastPublicZone *route53.HostedZone
 		f := func(resp *route53.ListHostedZonesOutput, lastPage bool) (shouldContinue bool) {
-			for _, zone := range resp.HostedZones {
-				if aws.StringValue(zone.Name) == m.config.BaseDomain && !aws.BoolValue(zone.Config.PrivateZone) {
-					m.publicZoneID = aws.StringValue(zone.Id)
-					return false
-				}
-			}
-			return true
+			lastPublicZone = findNearestPublicParentZone(m.config.BaseDomain, resp.HostedZones, lastPublicZone)
+			return lastPage
 		}
 		err := m.route53.ListHostedZonesPages(&route53.ListHostedZonesInput{}, f)
 		if err != nil {
 			return fmt.Errorf("failed to list hosted zones: %v", err)
 		}
-		if len(m.publicZoneID) == 0 {
+		if lastPublicZone == nil || aws.StringValue(lastPublicZone.Name) == "" {
 			return fmt.Errorf("couldn't find public hosted zone for %q", m.config.BaseDomain)
 		}
+		m.publicZoneID = aws.StringValue(lastPublicZone.Name)
 		logrus.Infof("using public zone %s", m.publicZoneID)
 	}
 
@@ -270,4 +267,36 @@ func (m *Manager) updateAlias(domain, zoneID, target, targetHostedZoneID string)
 	}
 	logrus.Infof("updated DNS record in zone %s, %s -> %s: %v", zoneID, domain, target, resp)
 	return nil
+}
+
+func findNearestPublicParentZone(domain string, candidates []*route53.HostedZone, lastNearest *route53.HostedZone) *route53.HostedZone {
+	last := lastNearest
+	if last == nil {
+		last = &route53.HostedZone{}
+	}
+	parents := []string{domain}
+	for {
+		idx := strings.Index(domain, ".")
+		if idx == -1 {
+			break
+		}
+		parents = append(parents, domain[idx+1:])
+		domain = domain[idx+1:]
+	}
+
+	for i, zone := range candidates {
+		// If the Config is empty or If the zone is private, we skip it.
+		if zone.Config == nil || aws.BoolValue(zone.Config.PrivateZone) {
+			continue
+		}
+		name := aws.StringValue(zone.Name)
+		for _, p := range parents {
+			if p == name && len(name) >= len(aws.StringValue(last.Name)) {
+				last = candidates[i]
+				// there are no parents that can be longer after this.
+				break
+			}
+		}
+	}
+	return last
 }
