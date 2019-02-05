@@ -2,12 +2,16 @@ package controller
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"fmt"
+	"math/big"
 	"time"
 
 	"github.com/sirupsen/logrus"
-
-	"github.com/openshift/library-go/pkg/crypto"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -63,19 +67,66 @@ func (r *reconciler) currentRouterCASecret() (*corev1.Secret, error) {
 	return secret, nil
 }
 
-// desiredRouterCASecret returns the desired router CA secret.  Note: Because
-// the secret has a generated certificate, this function is non-deterministic.
-func desiredRouterCASecret(namespace string) (*corev1.Secret, error) {
-	// TODO Use certrotationcontroller from library-go.
+// generateRouterCA generates and returns a CA certificate and key.
+func generateRouterCA() ([]byte, []byte, error) {
 	signerName := fmt.Sprintf("%s@%d", "cluster-ingress-operator", time.Now().Unix())
-	caConfig, err := crypto.MakeCAConfig(signerName, 0)
+
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
-		return nil, fmt.Errorf("failed to make CA config: %v", err)
+		return nil, nil, fmt.Errorf("failed to generate key: %v", err)
 	}
 
-	certBytes, keyBytes, err := caConfig.GetPEMBytes()
+	root := &x509.Certificate{
+		Subject: pkix.Name{CommonName: signerName},
+
+		SignatureAlgorithm: x509.SHA256WithRSA,
+
+		NotBefore:    time.Now().Add(-1 * time.Second),
+		NotAfter:     time.Now().Add(2 * 365 * 24 * time.Hour),
+		SerialNumber: big.NewInt(1),
+
+		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		BasicConstraintsValid: true,
+		IsCA: true,
+
+		// Don't allow the CA to be used to make another CA.
+		MaxPathLen:     0,
+		MaxPathLenZero: true,
+	}
+
+	derBytes, err := x509.CreateCertificate(rand.Reader, root, root, &privateKey.PublicKey, privateKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get certificate: %v", err)
+		return nil, nil, fmt.Errorf("failed to create certificate: %v", err)
+	}
+
+	certs, err := x509.ParseCertificates(derBytes)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to parse certificate: %v", err)
+	}
+
+	if len(certs) != 1 {
+		return nil, nil, fmt.Errorf("expected a single certificate")
+	}
+
+	certBytes := pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: certs[0].Raw,
+	})
+
+	keyBytes := pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(privateKey),
+	})
+
+	return certBytes, keyBytes, nil
+
+}
+
+// desiredRouterCASecret returns the desired router CA secret.
+func desiredRouterCASecret(namespace string) (*corev1.Secret, error) {
+	certBytes, keyBytes, err := generateRouterCA()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate certificate: %v", err)
 	}
 
 	name := routerCASecretName(namespace)
