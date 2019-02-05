@@ -1,4 +1,4 @@
-package clusteringress
+package controller
 
 import (
 	"context"
@@ -21,10 +21,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+const (
+	IngressClusterOperatorName = "ingress"
+)
+
 // syncOperatorStatus computes the operator's current status and therefrom
 // creates or updates the ClusterOperator resource for the operator.
 func (r *reconciler) syncOperatorStatus() error {
-	co := &configv1.ClusterOperator{ObjectMeta: metav1.ObjectMeta{Name: r.Namespace}}
+	co := &configv1.ClusterOperator{ObjectMeta: metav1.ObjectMeta{Name: IngressClusterOperatorName}}
 	err := r.Client.Get(context.TODO(), types.NamespacedName{Name: co.Name}, co)
 	isNotFound := errors.IsNotFound(err)
 	if err != nil && !isNotFound {
