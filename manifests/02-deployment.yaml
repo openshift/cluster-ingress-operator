@@ -37,3 +37,6 @@ spec:
                   fieldPath: metadata.namespace
             - name: IMAGE
               value: openshift/origin-haproxy-router:v4.0
+          resources:
+            requests:
+              cpu: 10m
