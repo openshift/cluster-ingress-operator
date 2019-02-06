@@ -281,6 +281,15 @@ func (r *reconciler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress) 
 		}
 	}
 
+	trueVar := true
+	deploymentRef := metav1.OwnerReference{
+		APIVersion: "apps/v1",
+		Kind:       "Deployment",
+		Name:       current.Name,
+		UID:        current.UID,
+		Controller: &trueVar,
+	}
+
 	if ci.Spec.HighAvailability != nil {
 		switch ci.Spec.HighAvailability.Type {
 		case ingressv1alpha1.CloudClusterIngressHA:
@@ -294,14 +303,6 @@ func (r *reconciler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress) 
 					return fmt.Errorf("failed to get router service %s/%s, %v", service.Namespace, service.Name, err)
 				}
 				// Service doesn't exist; try to create it.
-				trueVar := true
-				deploymentRef := metav1.OwnerReference{
-					APIVersion: "apps/v1",
-					Kind:       "Deployment",
-					Name:       current.Name,
-					UID:        current.UID,
-					Controller: &trueVar,
-				}
 				service.SetOwnerReferences([]metav1.OwnerReference{deploymentRef})
 				err = r.Client.Create(context.TODO(), service)
 				if err == nil {
@@ -319,7 +320,8 @@ func (r *reconciler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress) 
 		}
 	}
 
-	if err := r.ensureInternalRouterServiceForIngress(current, ci); err != nil {
+	internalSvc, err := r.ensureInternalRouterServiceForIngress(ci, deploymentRef)
+	if err != nil {
 		return fmt.Errorf("failed to create internal router service for clusteringress %s: %v", ci.Name, err)
 	}
 
@@ -333,8 +335,123 @@ func (r *reconciler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress) 
 		}
 	}
 
+	if err := r.ensureMetricsIntegration(ci, internalSvc, deploymentRef); err != nil {
+		return fmt.Errorf("failed to integrate metrics with openshift-monitoring for clusteringress %s: %v", ci.Name, err)
+	}
+
 	if err := r.syncClusterIngressStatus(current, ci); err != nil {
 		return fmt.Errorf("failed to update status of clusteringress %s/%s: %v", current.Namespace, current.Name, err)
+	}
+
+	return nil
+}
+
+// ensureMetricsIntegration ensures that router prometheus metrics is integrated with openshift-monitoring for the given clusteringress.
+func (r *reconciler) ensureMetricsIntegration(ci *ingressv1alpha1.ClusterIngress, svc *corev1.Service, deploymentRef metav1.OwnerReference) error {
+	statsSecret, err := r.ManifestFactory.RouterStatsSecret(ci)
+	if err != nil {
+		return fmt.Errorf("failed to build router stats secret: %v", err)
+	}
+	err = r.Client.Get(context.TODO(), types.NamespacedName{Namespace: statsSecret.Namespace, Name: statsSecret.Name}, statsSecret)
+	if err != nil {
+		if !errors.IsNotFound(err) {
+			return fmt.Errorf("failed to get router stats secret %s/%s, %v", statsSecret.Namespace, statsSecret.Name, err)
+		}
+
+		statsSecret.SetOwnerReferences([]metav1.OwnerReference{deploymentRef})
+		err = r.Client.Create(context.TODO(), statsSecret)
+		if err == nil {
+			logrus.Infof("created router stats secret %s/%s", statsSecret.Namespace, statsSecret.Name)
+		} else if !errors.IsAlreadyExists(err) {
+			return fmt.Errorf("failed to create router stats secret %s/%s: %v", statsSecret.Namespace, statsSecret.Name, err)
+		}
+	}
+
+	cr, err := r.ManifestFactory.MetricsClusterRole()
+	if err != nil {
+		return fmt.Errorf("failed to build router metrics cluster role: %v", err)
+	}
+	err = r.Client.Get(context.TODO(), types.NamespacedName{Name: cr.Name}, cr)
+	if err != nil {
+		if !errors.IsNotFound(err) {
+			return fmt.Errorf("failed to get router metrics cluster role %s: %v", cr.Name, err)
+		}
+		err = r.Client.Create(context.TODO(), cr)
+		if err == nil {
+			logrus.Infof("created router metrics cluster role %s", cr.Name)
+		} else if !errors.IsAlreadyExists(err) {
+			return fmt.Errorf("failed to create router metrics cluster role %s: %v", cr.Name, err)
+		}
+	}
+
+	crb, err := r.ManifestFactory.MetricsClusterRoleBinding()
+	if err != nil {
+		return fmt.Errorf("failed to build router metrics cluster role binding: %v", err)
+	}
+	err = r.Client.Get(context.TODO(), types.NamespacedName{Name: crb.Name}, crb)
+	if err != nil {
+		if !errors.IsNotFound(err) {
+			return fmt.Errorf("failed to get router metrics cluster role binding %s: %v", crb.Name, err)
+		}
+		err = r.Client.Create(context.TODO(), crb)
+		if err == nil {
+			logrus.Infof("created router metrics cluster role binding %s", crb.Name)
+		} else if !errors.IsAlreadyExists(err) {
+			return fmt.Errorf("failed to create router metrics cluster role binding %s: %v", crb.Name, err)
+		}
+	}
+
+	mr, err := r.ManifestFactory.MetricsRole()
+	if err != nil {
+		return fmt.Errorf("failed to build router metrics role: %v", err)
+	}
+	err = r.Client.Get(context.TODO(), types.NamespacedName{Namespace: mr.Namespace, Name: mr.Name}, mr)
+	if err != nil {
+		if !errors.IsNotFound(err) {
+			return fmt.Errorf("failed to get router metrics role %s: %v", mr.Name, err)
+		}
+		err = r.Client.Create(context.TODO(), mr)
+		if err == nil {
+			logrus.Infof("created router metrics role %s", mr.Name)
+		} else if !errors.IsAlreadyExists(err) {
+			return fmt.Errorf("failed to create router metrics role %s: %v", mr.Name, err)
+		}
+	}
+
+	mrb, err := r.ManifestFactory.MetricsRoleBinding()
+	if err != nil {
+		return fmt.Errorf("failed to build router metrics role binding: %v", err)
+	}
+	err = r.Client.Get(context.TODO(), types.NamespacedName{Namespace: mrb.Namespace, Name: mrb.Name}, mrb)
+	if err != nil {
+		if !errors.IsNotFound(err) {
+			return fmt.Errorf("failed to get router metrics role binding %s: %v", mrb.Name, err)
+		}
+		err = r.Client.Create(context.TODO(), mrb)
+		if err == nil {
+			logrus.Infof("created router metrics role binding %s", mrb.Name)
+		} else if !errors.IsAlreadyExists(err) {
+			return fmt.Errorf("failed to create router metrics role binding %s: %v", mrb.Name, err)
+		}
+	}
+
+	monitor, err := r.ManifestFactory.MetricsServiceMonitor(ci, svc)
+	if err != nil {
+		return fmt.Errorf("failed to build router service monitor: %v", err)
+	}
+	err = r.Client.Get(context.TODO(), types.NamespacedName{Namespace: monitor.Namespace, Name: monitor.Name}, monitor)
+	if err != nil {
+		if !errors.IsNotFound(err) {
+			return fmt.Errorf("failed to get router service monitor %s/%s, %v", monitor.Namespace, monitor.Name, err)
+		}
+
+		monitor.SetOwnerReferences([]metav1.OwnerReference{deploymentRef})
+		err = r.Client.Create(context.TODO(), monitor)
+		if err == nil {
+			logrus.Infof("created router service monitor %s/%s", monitor.Namespace, monitor.Name)
+		} else if !errors.IsAlreadyExists(err) {
+			return fmt.Errorf("failed to create router service monitor %s/%s: %v", monitor.Namespace, monitor.Name, err)
+		}
 	}
 
 	return nil
@@ -363,36 +480,27 @@ func (r *reconciler) syncClusterIngressStatus(deployment *appsv1.Deployment, ci 
 
 // ensureInternalRouterServiceForIngress ensures that an internal service exists
 // for a given ClusterIngress.
-func (r *reconciler) ensureInternalRouterServiceForIngress(deployment *appsv1.Deployment, ci *ingressv1alpha1.ClusterIngress) error {
+func (r *reconciler) ensureInternalRouterServiceForIngress(ci *ingressv1alpha1.ClusterIngress, deploymentRef metav1.OwnerReference) (*corev1.Service, error) {
 	svc, err := r.ManifestFactory.RouterServiceInternal(ci)
 	if err != nil {
-		return fmt.Errorf("failed to build router service: %v", err)
+		return nil, fmt.Errorf("failed to build router service: %v", err)
 	}
 	err = r.Client.Get(context.TODO(), types.NamespacedName{Namespace: svc.Namespace, Name: svc.Name}, svc)
 	if err != nil {
 		if !errors.IsNotFound(err) {
-			return fmt.Errorf("failed to get router service %s/%s, %v", svc.Namespace, svc.Name, err)
+			return nil, fmt.Errorf("failed to get router service %s/%s, %v", svc.Namespace, svc.Name, err)
 		}
 
-		trueVar := true
-		deploymentRef := metav1.OwnerReference{
-			APIVersion: "apps/v1",
-			Kind:       "Deployment",
-			Name:       deployment.Name,
-			UID:        deployment.UID,
-			Controller: &trueVar,
-		}
 		svc.SetOwnerReferences([]metav1.OwnerReference{deploymentRef})
-
 		err = r.Client.Create(context.TODO(), svc)
 		if err == nil {
 			logrus.Infof("created router service %s/%s", svc.Namespace, svc.Name)
 		} else if !errors.IsAlreadyExists(err) {
-			return fmt.Errorf("failed to create router service %s/%s: %v", svc.Namespace, svc.Name, err)
+			return nil, fmt.Errorf("failed to create router service %s/%s: %v", svc.Namespace, svc.Name, err)
 		}
 	}
 
-	return nil
+	return svc, nil
 }
 
 // ensureDefaultCertificateForIngress ensures that a default certificate exists

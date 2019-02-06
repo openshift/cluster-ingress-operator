@@ -1,0 +1,12 @@
+# Cluster roles needed by prometheus to scrape router metrics endpoint
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: router-monitoring
+rules:
+- apiGroups:
+  - route.openshift.io
+  resources:
+  - routers/metrics
+  verbs:
+  - get

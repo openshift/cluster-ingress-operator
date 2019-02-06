@@ -9,15 +9,13 @@ rules:
   resources:
   - configmaps
   - namespaces
-  - secrets
   - serviceaccounts
+  - endpoints
   - services
+  - secrets
+  - pods
   verbs:
-  - create
-  - get
-  - list
-  - watch
-  - delete
+  - "*"
 
 - apiGroups:
   - apps
@@ -27,17 +25,20 @@ rules:
   - "*"
 
 - apiGroups:
-  - ""
+  - monitoring.coreos.com
   resources:
-  - namespaces
+  - servicemonitors
   verbs:
-  - update
+  - create
+  - get
 
 - apiGroups:
   - rbac.authorization.k8s.io
   resources:
   - clusterroles
   - clusterrolebindings
+  - roles
+  - rolebindings
   verbs:
   - create
   - get
@@ -84,37 +85,42 @@ rules:
   verbs:
   - update
 
-# Mirrored from assets/router/cluster-role.yaml
+# Mirrored from assets/router/metrics/cluster-role.yaml
 - apiGroups:
-  - ""
+  - route.openshift.io
   resources:
-  - endpoints
-  - services
-  - namespaces
+  - routers/metrics
   verbs:
-  - list
-  - watch
+  - get
+
 # Mirrored from assets/router/cluster-role.yaml
 - apiGroups:
   - authentication.k8s.io
   resources:
   - tokenreviews
+  verbs:
+  - create
+
+# Mirrored from assets/router/cluster-role.yaml
+- apiGroups:
+  - authorization.k8s.io
+  resources:
   - subjectaccessreviews
   verbs:
   - create
+
 # Mirrored from assets/router/cluster-role.yaml
 - apiGroups:
   - route.openshift.io
-  - ""
   resources:
   - routes
   verbs:
   - list
   - watch
+
 # Mirrored from assets/router/cluster-role.yaml
 - apiGroups:
   - route.openshift.io
-  - ""
   resources:
   - routes/status
   verbs:

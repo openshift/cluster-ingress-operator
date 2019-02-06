@@ -11,6 +11,7 @@ rules:
   - "*"
   verbs:
   - "*"
+
 - apiGroups:
   - ""
   resources:
@@ -23,6 +24,7 @@ rules:
   - secrets
   verbs:
   - "*"
+
 - apiGroups:
   - apps
   resources:

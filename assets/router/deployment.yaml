@@ -32,11 +32,12 @@ spec:
           - name: https
             containerPort: 443
             protocol: TCP
-          - name: stats
+          - name: metrics
             containerPort: 1936
             protocol: TCP
           # Merged at runtime.
           env:
+          # stats username and password are generated at runtime
           - name: STATS_PORT
             value: "1936"
           - name: ROUTER_SERVICE_NAMESPACE
