@@ -37,6 +37,11 @@ const (
 	// all states. TODO: Make this generic and not tied to the "default" ingress.
 	ClusterIngressFinalizer = "ingress.openshift.io/default-cluster-ingress"
 
+	// GlobalMachineSpecifiedConfigNamespace is the location for global
+	// config.  In particular, the operator will put the configmap with the
+	// CA certificate in this namespace.
+	GlobalMachineSpecifiedConfigNamespace = "openshift-config-managed"
+
 	// caCertSecretName is the name of the secret that holds the CA certificate
 	// that the operator will use to create default certificates for
 	// clusteringresses.
@@ -69,30 +74,12 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	return c, nil
 }
 
-// CACert holds the CA certificate as well as the resource versions of the most
-// recently observed CA certificate secret and configmap.
-type CACert struct {
-	// CA is the CA certificate that the operator read from the secret
-	// or generated and put in the secret.
-	CA *crypto.CA
-
-	// CACertConfigMapLastObservedResourceVersion is the resource version of
-	// the config map at the time when the operator most recently
-	// successfully read or created it.
-	CACertConfigMapLastObservedResourceVersion string
-	// CACertSecretLastObservedResourceVersion is the resource version of
-	// the secret at the time when the operator most recently successfully
-	// read or created it.
-	CACertSecretLastObservedResourceVersion string
-}
-
 // Config holds all the things necessary for the controller to run.
 type Config struct {
 	Client          client.Client
 	ManifestFactory *manifests.Factory
 	Namespace       string
 	DNSManager      dns.Manager
-	CACert
 }
 
 // reconciler handles the actual ingress reconciliation logic in response to
@@ -140,7 +127,7 @@ func (r *reconciler) reconcile() (reconcile.Result, error) {
 	}
 
 	// Reconcile all the ingresses.
-	errors := []error{}
+	errs := []error{}
 	for _, ingress := range ingresses.Items {
 		logrus.Infof("reconciling clusteringress %#v", ingress)
 		// Handle deleted ingress.
@@ -150,7 +137,7 @@ func (r *reconciler) reconcile() (reconcile.Result, error) {
 			// Destroy any router associated with the clusteringress.
 			err := r.ensureRouterDeleted(&ingress)
 			if err != nil {
-				errors = append(errors, fmt.Errorf("failed to delete clusteringress %s/%s: %v", ingress.Namespace, ingress.Name, err))
+				errs = append(errs, fmt.Errorf("failed to delete clusteringress %s/%s: %v", ingress.Namespace, ingress.Name, err))
 				continue
 			}
 			logrus.Infof("deleted router for clusteringress %s/%s", ingress.Namespace, ingress.Name)
@@ -159,7 +146,7 @@ func (r *reconciler) reconcile() (reconcile.Result, error) {
 				ingress.Finalizers = slice.RemoveString(ingress.Finalizers, ClusterIngressFinalizer)
 				err = r.Client.Update(context.TODO(), &ingress)
 				if err != nil {
-					errors = append(errors, fmt.Errorf("failed to remove finalizer from clusteringress %s/%s: %v", ingress.Namespace, ingress.Name, err))
+					errs = append(errs, fmt.Errorf("failed to remove finalizer from clusteringress %s/%s: %v", ingress.Namespace, ingress.Name, err))
 				}
 			}
 			continue
@@ -168,10 +155,23 @@ func (r *reconciler) reconcile() (reconcile.Result, error) {
 		// Handle active ingress.
 		err := r.ensureRouterForIngress(&ingress)
 		if err != nil {
-			errors = append(errors, fmt.Errorf("failed to ensure clusteringress %s/%s: %v", ingress.Namespace, ingress.Name, err))
+			errs = append(errs, fmt.Errorf("failed to ensure clusteringress %s/%s: %v", ingress.Namespace, ingress.Name, err))
 		}
 	}
-	return reconcile.Result{}, utilerrors.NewAggregate(errors)
+
+	if len(errs) == 0 {
+		if shouldPublishRouterCA(ingresses.Items) {
+			if err := r.ensureRouterCAIsPublished(); err != nil {
+				errs = append(errs, fmt.Errorf("failed to ensure router CA was published: %v", err))
+			}
+		} else {
+			if err := r.ensureRouterCAIsUnpublished(); err != nil {
+				errs = append(errs, fmt.Errorf("failed to ensure router CA was unpublished: %v", err))
+			}
+		}
+	}
+
+	return reconcile.Result{}, utilerrors.NewAggregate(errs)
 }
 
 // ensureRouterNamespace ensures all the necessary scaffolding exists for
@@ -322,8 +322,14 @@ func (r *reconciler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress) 
 		return fmt.Errorf("failed to create internal router service for clusteringress %s: %v", ci.Name, err)
 	}
 
-	if err := r.ensureDefaultCertificateForIngress(current, ci); err != nil {
-		return fmt.Errorf("failed to create default certificate for clusteringress %s: %v", ci.Name, err)
+	if ci.Spec.DefaultCertificateSecret == nil {
+		if err := r.ensureDefaultCertificateForIngress(current, ci); err != nil {
+			return fmt.Errorf("failed to create default certificate for clusteringress %s: %v", ci.Name, err)
+		}
+	} else {
+		if err := r.ensureDefaultCertificateDeleted(current, ci); err != nil {
+			return fmt.Errorf("failed to delete operator-generated default certificate for clusteringress %s: %v", ci.Name, err)
+		}
 	}
 
 	if err := r.syncClusterIngressStatus(current, ci); err != nil {
@@ -391,9 +397,6 @@ func (r *reconciler) ensureInternalRouterServiceForIngress(deployment *appsv1.De
 // ensureDefaultCertificateForIngress ensures that a default certificate exists
 // for a given ClusterIngress.
 func (r *reconciler) ensureDefaultCertificateForIngress(deployment *appsv1.Deployment, ci *ingressv1alpha1.ClusterIngress) error {
-	// Normally we would use the manifest factory to build the secret.
-	// However, we want to avoid generating certificates if the secret
-	// already exists.
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      fmt.Sprintf("router-certs-%s", ci.Name),
@@ -406,7 +409,7 @@ func (r *reconciler) ensureDefaultCertificateForIngress(deployment *appsv1.Deplo
 			return fmt.Errorf("failed to get secret %s/%s: %v", secret.Namespace, secret.Name, err)
 		}
 
-		ca, err := r.ensureRouterCACertificate()
+		ca, err := r.getRouterCA()
 		if err != nil {
 			return fmt.Errorf("failed to get CA certificate: %v", err)
 		}
@@ -447,12 +450,50 @@ func (r *reconciler) ensureDefaultCertificateForIngress(deployment *appsv1.Deplo
 	return nil
 }
 
-// ensureRouterCACertificate ensures a CA certificate exists that can be used to
-// sign the default certificates for ClusterIngresses.
-func (r *reconciler) ensureRouterCACertificate() (*crypto.CA, error) {
-	// Normally we would use the manifest factory to build the secret and
-	// configmap.  However, we want to avoid generating certificates if the
-	// resources already exist.
+// ensureDefaultCertificateDeleted ensures any operator-generated default
+// certificate for a given ClusterIngress is deleted.
+func (r *reconciler) ensureDefaultCertificateDeleted(deployment *appsv1.Deployment, ci *ingressv1alpha1.ClusterIngress) error {
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("router-certs-%s", ci.Name),
+			Namespace: deployment.Namespace,
+		},
+	}
+	err := r.Client.Delete(context.TODO(), secret)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return nil
+		}
+
+		return fmt.Errorf("failed to delete secret %s/%s: %v", secret.Namespace, secret.Name, err)
+	}
+
+	logrus.Infof("deleted secret %s/%s", secret.Namespace, secret.Name)
+
+	return nil
+}
+
+// getRouterCA gets the CA, or creates it if it does not already exist.
+func (r *reconciler) getRouterCA() (*crypto.CA, error) {
+	secret, err := r.ensureRouterCACertificateSecret()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get CA secret: %v", err)
+	}
+
+	certBytes := secret.Data["tls.crt"]
+	keyBytes := secret.Data["tls.key"]
+
+	ca, err := crypto.GetCAFromBytes(certBytes, keyBytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get CA from secret %s/%s: %v", secret.Namespace, secret.Name, err)
+	}
+
+	return ca, nil
+}
+
+// ensureRouterCACertificateSecret ensures a CA certificate secret exists that
+// can be used to sign the default certificates for ClusterIngresses.
+func (r *reconciler) ensureRouterCACertificateSecret() (*corev1.Secret, error) {
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      caCertSecretName,
@@ -460,43 +501,11 @@ func (r *reconciler) ensureRouterCACertificate() (*crypto.CA, error) {
 		},
 	}
 	err := r.Client.Get(context.TODO(), types.NamespacedName{Namespace: secret.Namespace, Name: secret.Name}, secret)
-	if err != nil && !errors.IsNotFound(err) {
-		return nil, fmt.Errorf("failed to get secret %s/%s: %v", secret.Namespace, secret.Name, err)
-	}
-	haveSecret := !errors.IsNotFound(err)
-
-	cm := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      caCertConfigMapName,
-			Namespace: r.Namespace,
-		},
-	}
-	err = r.Client.Get(context.TODO(), types.NamespacedName{Namespace: cm.Namespace, Name: cm.Name}, cm)
-	if err != nil && !errors.IsNotFound(err) {
-		return nil, fmt.Errorf("failed to get configmap %s/%s: %v", cm.Namespace, cm.Name, err)
-	}
-	haveConfigMap := !errors.IsNotFound(err)
-
-	if haveSecret && haveConfigMap &&
-		secret.ResourceVersion == r.CACertSecretLastObservedResourceVersion &&
-		cm.ResourceVersion == r.CACertConfigMapLastObservedResourceVersion {
-		return r.CACert.CA, nil
-	}
-
-	var ca *crypto.CA
-
-	if haveSecret {
-		if _, ok := secret.Data["tls.crt"]; !ok {
-			return nil, fmt.Errorf("failed to read %q from secret %s/%s: %3v", "tls.crt", secret.Namespace, secret.Name, err)
+	if err != nil {
+		if !errors.IsNotFound(err) {
+			return nil, fmt.Errorf("failed to get secret %s/%s: %v", secret.Namespace, secret.Name, err)
 		}
-		if _, ok := secret.Data["tls.key"]; !ok {
-			return nil, fmt.Errorf("failed to read %q from secret %s/%s: %3v", "tls.key", secret.Namespace, secret.Name, err)
-		}
-		ca, err = crypto.GetCAFromBytes(secret.Data["tls.crt"], secret.Data["tls.key"])
-		if err != nil {
-			return nil, fmt.Errorf("failed to get CA from secret %s/%s: %v", secret.Namespace, secret.Name, err)
-		}
-	} else {
+
 		// TODO Use certrotationcontroller from library-go.
 		signerName := fmt.Sprintf("%s@%d", "cluster-ingress-operator", time.Now().Unix())
 		caConfig, err := crypto.MakeCAConfig(signerName, 0)
@@ -516,35 +525,11 @@ func (r *reconciler) ensureRouterCACertificate() (*crypto.CA, error) {
 		if err := r.Client.Create(context.TODO(), secret); err != nil {
 			return nil, fmt.Errorf("failed to create secret %s/%s: %v", secret.Namespace, secret.Name, err)
 		}
+
 		logrus.Infof("created secret %s/%s", secret.Namespace, secret.Name)
-
-		ca = &crypto.CA{
-			Config:          caConfig,
-			SerialGenerator: &crypto.RandomSerialGenerator{},
-		}
 	}
 
-	if haveConfigMap {
-		if _, ok := cm.Data["ca-bundle.crt"]; !ok {
-			return nil, fmt.Errorf("failed to read %q from configmap %s/%s: %v", "ca-bundle.crt", cm.Namespace, cm.Name, err)
-		}
-		if !bytes.Equal(secret.Data["tls.crt"], []byte(cm.Data["ca-bundle.crt"])) {
-			return nil, fmt.Errorf("content of %q in configmap %s/%s does not match content of %q in secret %s/%s", "ca-bundle.crt", cm.Namespace, cm.Name, "tls.crt", secret.Namespace, secret.Name)
-			// TODO Update the configmap based off the secret?
-		}
-	} else {
-		cm.Data = map[string]string{"ca-bundle.crt": string(secret.Data["tls.crt"])}
-		if err := r.Client.Create(context.TODO(), cm); err != nil {
-			return nil, fmt.Errorf("failed to create configmap %s/%s: %v", cm.Namespace, cm.Name, err)
-		}
-		logrus.Infof("created configmap %s/%s", cm.Namespace, cm.Name)
-	}
-
-	r.CACert.CA = ca
-	r.CACertConfigMapLastObservedResourceVersion = cm.ResourceVersion
-	r.CACertSecretLastObservedResourceVersion = secret.ResourceVersion
-
-	return ca, nil
+	return secret, nil
 }
 
 // ensureDNSForLoadBalancer configures a wildcard DNS alias for a ClusterIngress
@@ -599,4 +584,89 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 	}
 	updated.Spec.Replicas = &replicas
 	return true, updated
+}
+
+// shouldPublishRouterCA checks if some ClusterIngress uses the default
+// certificate, in which case the CA certificate needs to be published.
+func shouldPublishRouterCA(ingresses []ingressv1alpha1.ClusterIngress) bool {
+	for _, ci := range ingresses {
+		if ci.Spec.DefaultCertificateSecret == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// ensureRouterCAIsPublished ensures a configmap exists with the CA certificate
+// in a well known namespace.
+func (r *reconciler) ensureRouterCAIsPublished() error {
+	secret, err := r.ensureRouterCACertificateSecret()
+	if err != nil {
+		return fmt.Errorf("failed to get CA secret: %v", err)
+	}
+
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      caCertConfigMapName,
+			Namespace: GlobalMachineSpecifiedConfigNamespace,
+		},
+	}
+	err = r.Client.Get(context.TODO(), types.NamespacedName{Namespace: cm.Namespace, Name: cm.Name}, cm)
+	if err != nil {
+		if !errors.IsNotFound(err) {
+			return fmt.Errorf("failed to get configmap %s/%s: %v", cm.Namespace, cm.Name, err)
+		}
+
+		cm.Data = map[string]string{"ca-bundle.crt": string(secret.Data["tls.crt"])}
+		if err := r.Client.Create(context.TODO(), cm); err != nil {
+			if errors.IsAlreadyExists(err) {
+				return nil
+			}
+
+			return fmt.Errorf("failed to create configmap %s/%s: %v", cm.Namespace, cm.Name, err)
+		}
+
+		logrus.Infof("created configmap %s/%s", cm.Namespace, cm.Name)
+
+		return nil
+	}
+
+	if !bytes.Equal(secret.Data["tls.crt"], []byte(cm.Data["ca-bundle.crt"])) {
+		cm.Data["ca-bundle.crt"] = string(secret.Data["tls.crt"])
+		if err := r.Client.Update(context.TODO(), cm); err != nil {
+			if errors.IsAlreadyExists(err) {
+				return nil
+			}
+
+			return fmt.Errorf("failed to update configmap %s/%s: %v", cm.Namespace, cm.Name, err)
+		}
+
+		logrus.Infof("updated configmap %s/%s", cm.Namespace, cm.Name)
+
+		return nil
+	}
+
+	return nil
+}
+
+// ensureRouterCAIsUnpublished ensures the configmap with the CA certificate is
+// deleted.
+func (r *reconciler) ensureRouterCAIsUnpublished() error {
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      caCertConfigMapName,
+			Namespace: GlobalMachineSpecifiedConfigNamespace,
+		},
+	}
+	if err := r.Client.Delete(context.TODO(), cm); err != nil {
+		if errors.IsNotFound(err) {
+			return nil
+		}
+
+		return fmt.Errorf("failed to delete configmap %s/%s: %v", cm.Namespace, cm.Name, err)
+	}
+
+	logrus.Infof("deleted configmap %s/%s", cm.Namespace, cm.Name)
+
+	return nil
 }

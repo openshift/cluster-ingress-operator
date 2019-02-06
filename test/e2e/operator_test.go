@@ -284,6 +284,21 @@ func TestClusterIngressUpdate(t *testing.T) {
 		t.Fatalf("failed to get default router deployment: %v", err)
 	}
 
+	// Wait for the CA certificate configmap to exist.
+	configmap := &corev1.ConfigMap{}
+	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
+		if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: ingresscontroller.GlobalMachineSpecifiedConfigNamespace, Name: "router-ca"}, configmap); err != nil {
+			if !errors.IsNotFound(err) {
+				t.Logf("failed to get CA certificate configmap, will retry: %v", err)
+			}
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to get CA certificate configmap: %v", err)
+	}
+
 	originalSecret := ci.Spec.DefaultCertificateSecret
 	expectedSecretName := fmt.Sprintf("router-certs-%s", ci.Name)
 	if originalSecret != nil {
@@ -319,10 +334,38 @@ func TestClusterIngressUpdate(t *testing.T) {
 		t.Fatalf("failed to get updated router deployment %s/%s: %v", deployment.Namespace, deployment.Name, err)
 	}
 
+	// Wait for the CA certificate configmap to be deleted.
+	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
+		if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: ingresscontroller.GlobalMachineSpecifiedConfigNamespace, Name: "router-ca"}, configmap); err != nil {
+			if errors.IsNotFound(err) {
+				return true, nil
+			}
+			t.Logf("failed to get CA certificate configmap, will retry: %v", err)
+		}
+		return false, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to observe clean-up of CA certificate configmap: %v", err)
+	}
+
 	ci.Spec.DefaultCertificateSecret = originalSecret
 	err = cl.Update(context.TODO(), ci)
 	if err != nil {
 		t.Errorf("failed to reset ClusterIngress: %v", err)
+	}
+
+	// Wait for the CA certificate configmap to be recreated.
+	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
+		if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: ingresscontroller.GlobalMachineSpecifiedConfigNamespace, Name: "router-ca"}, configmap); err != nil {
+			if !errors.IsNotFound(err) {
+				t.Logf("failed to get CA certificate configmap, will retry: %v", err)
+			}
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to get recreated CA certificate configmap: %v", err)
 	}
 
 	err = cl.Delete(context.TODO(), secret)
@@ -579,7 +622,7 @@ func TestRouterCACertificate(t *testing.T) {
 	var certData []byte
 	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
 		cm := &corev1.ConfigMap{}
-		err := cl.Get(context.TODO(), types.NamespacedName{Namespace: ns, Name: "router-ca"}, cm)
+		err := cl.Get(context.TODO(), types.NamespacedName{Namespace: ingresscontroller.GlobalMachineSpecifiedConfigNamespace, Name: "router-ca"}, cm)
 		if err != nil {
 			return false, nil
 		}
