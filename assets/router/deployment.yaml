@@ -53,6 +53,10 @@ spec:
             httpGet:
               path: /healthz
               port: 1936
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
           volumeMounts:
           - mountPath: /etc/pki/tls/private
             name: default-certificate
