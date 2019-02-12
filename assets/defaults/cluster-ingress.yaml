@@ -15,4 +15,4 @@ spec:
     nodeSelector:
       matchLabels:
         "node-role.kubernetes.io/worker": ""
-  replicas: 1
+  replicas: 2
