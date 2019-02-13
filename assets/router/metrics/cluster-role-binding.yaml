@@ -1,0 +1,12 @@
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: router-monitoring
+subjects:
+- kind: ServiceAccount
+  name: prometheus-k8s
+  namespace: openshift-monitoring
+roleRef:
+  kind: ClusterRole
+  name: router-monitoring
+  apiGroup: rbac.authorization.k8s.io

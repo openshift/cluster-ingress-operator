@@ -9,6 +9,7 @@ import (
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
 	operatorconfig "github.com/openshift/cluster-ingress-operator/pkg/operator/config"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -39,6 +40,12 @@ func TestManifests(t *testing.T) {
 			},
 		},
 	}
+	internalSvc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "openshift-ingress",
+			Name:      "router-internal-default",
+		},
+	}
 
 	if _, err := f.RouterNamespace(); err != nil {
 		t.Errorf("invalid RouterNamespace: %v", err)
@@ -54,6 +61,30 @@ func TestManifests(t *testing.T) {
 
 	if _, err := f.RouterClusterRoleBinding(); err != nil {
 		t.Errorf("invalid RouterClusterRoleBinding: %v", err)
+	}
+
+	if _, err := f.MetricsClusterRole(); err != nil {
+		t.Errorf("invalid MetricsClusterRole: %v", err)
+	}
+
+	if _, err := f.MetricsClusterRoleBinding(); err != nil {
+		t.Errorf("invalid MetricsClusterRoleBinding: %v", err)
+	}
+
+	if _, err := f.MetricsRole(); err != nil {
+		t.Errorf("invalid MetricsRole: %v", err)
+	}
+
+	if _, err := f.MetricsRoleBinding(); err != nil {
+		t.Errorf("invalid MetricsRoleBinding: %v", err)
+	}
+
+	if _, err := f.MetricsServiceMonitor(ci, internalSvc); err != nil {
+		t.Errorf("invalid MetricsServiceMonitor: %v", err)
+	}
+
+	if _, err := f.RouterStatsSecret(ci); err != nil {
+		t.Errorf("invalid RouterStatsSecret: %v", err)
 	}
 
 	deployment, err := f.RouterDeployment(ci)

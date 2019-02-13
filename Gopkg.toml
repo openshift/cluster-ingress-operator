@@ -25,38 +25,50 @@ required = [
 
 # Operator internals
 
-[[constraint]]
+[[override]]
   name = "k8s.io/code-generator"
-  version = "kubernetes-1.12.3"
+  version = "kubernetes-1.12.5"
 
-[[constraint]]
+[[override]]
   name = "github.com/kevinburke/go-bindata"
-  version = "v3.11.0"
+  version = "v3.13.0"
 
-[[constraint]]
+[[override]]
   name = "github.com/openshift/api"
-  revision = "410d9946edf56ab0bad81164e9203d807fad7a9b"
+  revision = "31ed61683850951801cddda5b075fcb24a500532"
 
-[[constraint]]
+[[override]]
+  name = "github.com/coreos/prometheus-operator"
+  version = "v0.28.0"
+
+[[override]]
+  name = "github.com/openshift/library-go"
+  revision = "cef3bac303c956844aa15215630d26b1e0a1085a"
+
+[[override]]
   name = "github.com/aws/aws-sdk-go"
-  version = "v1.15.72"
+  version = "v1.16.26"
+
+[[override]]
+  name = "github.com/google/go-cmp"
+  version = "v0.2.0"
 
 [[override]]
   name = "k8s.io/api"
-  version = "kubernetes-1.12.3"
+  version = "kubernetes-1.13.1"
 
 [[override]]
   name = "k8s.io/apiextensions-apiserver"
-  version = "kubernetes-1.12.3"
+  version = "kubernetes-1.13.1"
 
 [[override]]
   name = "k8s.io/apimachinery"
-  version = "kubernetes-1.12.3"
+  version = "kubernetes-1.13.1"
 
 [[override]]
   name = "k8s.io/client-go"
-  version = "kubernetes-1.12.3"
+  version = "kubernetes-1.13.1"
 
 [[override]]
   name = "sigs.k8s.io/controller-runtime"
-  version = "v0.1.4"
+  version = "v0.1.10"

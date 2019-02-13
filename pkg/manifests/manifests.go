@@ -2,8 +2,10 @@ package manifests
 
 import (
 	"bytes"
+	"encoding/base64"
 	"fmt"
 	"io"
+	"path/filepath"
 
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
 	operatorconfig "github.com/openshift/cluster-ingress-operator/pkg/operator/config"
@@ -14,9 +16,12 @@ import (
 	apiextensionsv1beta1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/yaml"
+	"k8s.io/apiserver/pkg/storage/names"
 
 	configv1 "github.com/openshift/api/config/v1"
 	routev1 "github.com/openshift/api/route/v1"
+
+	monv1 "github.com/coreos/prometheus-operator/pkg/apis/monitoring/v1"
 )
 
 const (
@@ -30,6 +35,12 @@ const (
 	RouterServiceCloud       = "assets/router/service-cloud.yaml"
 	OperatorRole             = "assets/router/operator-role.yaml"
 	OperatorRoleBinding      = "assets/router/operator-role-binding.yaml"
+
+	MetricsServiceMonitor     = "assets/router/metrics/service-monitor.yaml"
+	MetricsClusterRole        = "assets/router/metrics/cluster-role.yaml"
+	MetricsClusterRoleBinding = "assets/router/metrics/cluster-role-binding.yaml"
+	MetricsRole               = "assets/router/metrics/role.yaml"
+	MetricsRoleBinding        = "assets/router/metrics/role-binding.yaml"
 
 	// Annotation used to inform the certificate generation service to
 	// generate a cluster-signed certificate and populate the secret.
@@ -122,6 +133,23 @@ func (f *Factory) RouterClusterRoleBinding() (*rbacv1.ClusterRoleBinding, error)
 	return crb, nil
 }
 
+func (f *Factory) RouterStatsSecret(cr *ingressv1alpha1.ClusterIngress) (*corev1.Secret, error) {
+	s := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("router-stats-%s", cr.Name),
+			Namespace: "openshift-ingress",
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{},
+	}
+
+	generatedUser := names.SimpleNameGenerator.GenerateName("user")
+	generatedPassword := names.SimpleNameGenerator.GenerateName("pass")
+	s.Data["statsUsername"] = []byte(base64.StdEncoding.EncodeToString([]byte(generatedUser)))
+	s.Data["statsPassword"] = []byte(base64.StdEncoding.EncodeToString([]byte(generatedPassword)))
+	return s, nil
+}
+
 func (f *Factory) RouterDeployment(cr *ingressv1alpha1.ClusterIngress) (*appsv1.Deployment, error) {
 	deployment, err := NewDeployment(MustAssetReader(RouterDeployment))
 	if err != nil {
@@ -142,9 +170,52 @@ func (f *Factory) RouterDeployment(cr *ingressv1alpha1.ClusterIngress) (*appsv1.
 	}
 	deployment.Spec.Selector.MatchLabels["router"] = name
 
+	statsSecretName := fmt.Sprintf("router-stats-%s", cr.Name)
 	env := []corev1.EnvVar{
 		{Name: "ROUTER_SERVICE_NAME", Value: cr.Name},
+		{Name: "STATS_USERNAME", ValueFrom: &corev1.EnvVarSource{
+			SecretKeyRef: &corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: statsSecretName,
+				},
+				Key: "statsUsername",
+			},
+		}},
+		{Name: "STATS_PASSWORD", ValueFrom: &corev1.EnvVarSource{
+			SecretKeyRef: &corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: statsSecretName,
+				},
+				Key: "statsPassword",
+			},
+		}},
 	}
+
+	// Enable prometheus metrics
+	certsSecretName := fmt.Sprintf("router-metrics-certs-%s", cr.Name)
+	certsVolumeName := "metrics-certs"
+	certsVolumeMountPath := "/etc/pki/tls/metrics-certs"
+
+	volume := corev1.Volume{
+		Name: certsVolumeName,
+		VolumeSource: corev1.VolumeSource{
+			Secret: &corev1.SecretVolumeSource{
+				SecretName: certsSecretName,
+			},
+		},
+	}
+	volumeMount := corev1.VolumeMount{
+		Name:      certsVolumeName,
+		MountPath: certsVolumeMountPath,
+		ReadOnly:  true,
+	}
+
+	deployment.Spec.Template.Spec.Volumes = append(deployment.Spec.Template.Spec.Volumes, volume)
+	deployment.Spec.Template.Spec.Containers[0].VolumeMounts = append(deployment.Spec.Template.Spec.Containers[0].VolumeMounts, volumeMount)
+
+	env = append(env, corev1.EnvVar{Name: "ROUTER_METRICS_TYPE", Value: "haproxy"})
+	env = append(env, corev1.EnvVar{Name: "ROUTER_METRICS_TLS_CERT_FILE", Value: filepath.Join(certsVolumeMountPath, "tls.crt")})
+	env = append(env, corev1.EnvVar{Name: "ROUTER_METRICS_TLS_KEY_FILE", Value: filepath.Join(certsVolumeMountPath, "tls.key")})
 
 	if cr.Spec.IngressDomain != nil {
 		env = append(env, corev1.EnvVar{Name: "ROUTER_CANONICAL_HOSTNAME", Value: *cr.Spec.IngressDomain})
@@ -277,6 +348,62 @@ func (f *Factory) RouterServiceCloud(cr *ingressv1alpha1.ClusterIngress) (*corev
 	}
 
 	return s, nil
+}
+
+func (f *Factory) MetricsServiceMonitor(ci *ingressv1alpha1.ClusterIngress, svc *corev1.Service) (*monv1.ServiceMonitor, error) {
+	sm, err := NewServiceMonitor(MustAssetReader(MetricsServiceMonitor))
+	if err != nil {
+		return nil, err
+	}
+	sm.Name = "router-" + ci.Name
+
+	for i := range sm.Spec.Endpoints {
+		if sm.Spec.Endpoints[i].Path == "/metrics" {
+			sm.Spec.Endpoints[i].TLSConfig.ServerName = fmt.Sprintf("%s.%s.svc", svc.Name, svc.Namespace)
+		}
+	}
+	return sm, nil
+}
+
+func (f *Factory) MetricsClusterRole() (*rbacv1.ClusterRole, error) {
+	cr, err := NewClusterRole(MustAssetReader(MetricsClusterRole))
+	if err != nil {
+		return nil, err
+	}
+	return cr, nil
+}
+
+func (f *Factory) MetricsClusterRoleBinding() (*rbacv1.ClusterRoleBinding, error) {
+	crb, err := NewClusterRoleBinding(MustAssetReader(MetricsClusterRoleBinding))
+	if err != nil {
+		return nil, err
+	}
+	return crb, nil
+}
+
+func (f *Factory) MetricsRole() (*rbacv1.Role, error) {
+	r, err := NewRole(MustAssetReader(MetricsRole))
+	if err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+func (f *Factory) MetricsRoleBinding() (*rbacv1.RoleBinding, error) {
+	rb, err := NewRoleBinding(MustAssetReader(MetricsRoleBinding))
+	if err != nil {
+		return nil, err
+	}
+	return rb, nil
+}
+
+func NewServiceMonitor(manifest io.Reader) (*monv1.ServiceMonitor, error) {
+	sm := monv1.ServiceMonitor{}
+	err := yaml.NewYAMLOrJSONDecoder(manifest, 100).Decode(&sm)
+	if err != nil {
+		return nil, err
+	}
+	return &sm, nil
 }
 
 func NewServiceAccount(manifest io.Reader) (*corev1.ServiceAccount, error) {

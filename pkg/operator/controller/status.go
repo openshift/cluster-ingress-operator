@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/sirupsen/logrus"
 
 	configv1 "github.com/openshift/api/config/v1"
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
-	"github.com/openshift/cluster-ingress-operator/pkg/util/clusteroperator"
-	operatorversion "github.com/openshift/cluster-ingress-operator/version"
+	"github.com/openshift/cluster-ingress-operator/pkg/util"
+	"github.com/openshift/cluster-ingress-operator/version"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -42,7 +44,30 @@ func (r *reconciler) syncOperatorStatus() error {
 
 	oldConditions := co.Status.Conditions
 	co.Status.Conditions = computeStatusConditions(oldConditions, ns, ingresses, deployments)
-	co.Status.Version = operatorversion.Version
+
+	oldRelatedObjects := co.Status.RelatedObjects
+	co.Status.RelatedObjects = []configv1.ObjectReference{
+		{
+			Resource: "namespaces",
+			Name:     "openshift-ingress-operator",
+		},
+		{
+			Resource: "namespaces",
+			Name:     ns.Name,
+		},
+	}
+
+	oldVersions := co.Status.Versions
+	co.Status.Versions = []configv1.OperandVersion{
+		{
+			Name:    "operator",
+			Version: version.OperatorVersion,
+		},
+		{
+			Name:    version.RouterOperandName,
+			Version: r.RouterImage,
+		},
+	}
 
 	if isNotFound {
 		if err := r.Client.Create(context.TODO(), co); err != nil {
@@ -50,7 +75,25 @@ func (r *reconciler) syncOperatorStatus() error {
 		}
 		logrus.Infof("created clusteroperator: %#v", co)
 	} else {
-		if !clusteroperator.ConditionsEqual(oldConditions, co.Status.Conditions) {
+		conditionOpts := []cmp.Option{
+			cmpopts.IgnoreFields(configv1.ClusterOperatorStatusCondition{}, "LastTransitionTime"),
+		}
+		conditionsEqual, err := util.ElementsEqual(oldConditions, co.Status.Conditions, conditionOpts)
+		if err != nil {
+			return fmt.Errorf("failed to compare clusteroperator conditions for %s: %v", co.Name, err)
+		}
+
+		relatedObjectsEqual, err := util.ElementsEqual(oldRelatedObjects, co.Status.RelatedObjects, []cmp.Option{})
+		if err != nil {
+			return fmt.Errorf("failed to compare clusteroperator related objects for %s: %v", co.Name, err)
+		}
+
+		versionsEqual, err := util.ElementsEqual(oldVersions, co.Status.Versions, []cmp.Option{})
+		if err != nil {
+			return fmt.Errorf("failed to compare clusteroperator versions %s: %v", co.Name, err)
+		}
+
+		if !conditionsEqual || !relatedObjectsEqual || !versionsEqual {
 			err = r.Client.Status().Update(context.TODO(), co)
 			if err != nil {
 				return fmt.Errorf("failed to update clusteroperator %s: %v", co.Name, err)
@@ -108,8 +151,7 @@ func computeStatusConditions(conditions []configv1.ClusterOperatorStatusConditio
 	} else {
 		failingCondition.Status = configv1.ConditionFalse
 	}
-	conditions = clusteroperator.SetStatusCondition(conditions,
-		failingCondition)
+	conditions = setStatusCondition(conditions, failingCondition)
 
 	progressingCondition := &configv1.ClusterOperatorStatusCondition{
 		Type:   configv1.OperatorProgressing,
@@ -126,8 +168,7 @@ func computeStatusConditions(conditions []configv1.ClusterOperatorStatusConditio
 			"have %d ingresses, want %d",
 			numDeployments, numIngresses)
 	}
-	conditions = clusteroperator.SetStatusCondition(conditions,
-		progressingCondition)
+	conditions = setStatusCondition(conditions, progressingCondition)
 
 	availableCondition := &configv1.ClusterOperatorStatusCondition{
 		Type:   configv1.OperatorAvailable,
@@ -159,8 +200,36 @@ func computeStatusConditions(conditions []configv1.ClusterOperatorStatusConditio
 		availableCondition.Reason = "IngressUnavailable"
 		availableCondition.Message = strings.Join(unavailable, "\n")
 	}
-	conditions = clusteroperator.SetStatusCondition(conditions,
-		availableCondition)
+	conditions = setStatusCondition(conditions, availableCondition)
 
 	return conditions
+}
+
+// setStatusCondition returns the result of setting the specified condition in
+// the given slice of conditions.
+func setStatusCondition(oldConditions []configv1.ClusterOperatorStatusCondition, condition *configv1.ClusterOperatorStatusCondition) []configv1.ClusterOperatorStatusCondition {
+	condition.LastTransitionTime = metav1.Now()
+
+	newConditions := []configv1.ClusterOperatorStatusCondition{}
+
+	found := false
+	for _, c := range oldConditions {
+		if condition.Type == c.Type {
+			if condition.Status == c.Status &&
+				condition.Reason == c.Reason &&
+				condition.Message == c.Message {
+				return oldConditions
+			}
+
+			found = true
+			newConditions = append(newConditions, *condition)
+		} else {
+			newConditions = append(newConditions, c)
+		}
+	}
+	if !found {
+		newConditions = append(newConditions, *condition)
+	}
+
+	return newConditions
 }

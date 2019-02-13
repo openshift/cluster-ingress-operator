@@ -20,7 +20,9 @@ oc delete namespaces/openshift-ingress
 if [ "$WHAT" == "all" ]; then
   oc delete clusterroles/openshift-ingress-operator
   oc delete clusterroles/openshift-ingress-router
+  oc delete clusterroles/router-monitoring
   oc delete clusterrolebindings/openshift-ingress-operator
   oc delete clusterrolebindings/openshift-ingress-router
+  oc delete clusterrolebindings/router-monitoring
   oc delete customresourcedefinition.apiextensions.k8s.io/clusteringresses.ingress.openshift.io
 fi
