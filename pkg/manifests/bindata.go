@@ -8,7 +8,6 @@
 // assets/router/metrics/cluster-role.yaml (259B)
 // assets/router/metrics/role-binding.yaml (297B)
 // assets/router/metrics/role.yaml (291B)
-// assets/router/metrics/service-monitor.yaml (580B)
 // assets/router/namespace.yaml (373B)
 // assets/router/service-account.yaml (213B)
 // assets/router/service-cloud.yaml (628B)
@@ -32,7 +31,7 @@ import (
 func bindataRead(data []byte, name string) ([]byte, error) {
 	gz, err := gzip.NewReader(bytes.NewBuffer(data))
 	if err != nil {
-		return nil, fmt.Errorf("read %q: %v", name, err)
+		return nil, fmt.Errorf("Read %q: %v", name, err)
 	}
 
 	var buf bytes.Buffer
@@ -40,7 +39,7 @@ func bindataRead(data []byte, name string) ([]byte, error) {
 	clErr := gz.Close()
 
 	if err != nil {
-		return nil, fmt.Errorf("read %q: %v", name, err)
+		return nil, fmt.Errorf("Read %q: %v", name, err)
 	}
 	if clErr != nil {
 		return nil, err
@@ -96,7 +95,7 @@ func assetsDefaultsClusterIngressYaml() (*asset, error) {
 		return nil, err
 	}
 
-	info := bindataFileInfo{name: "assets/defaults/cluster-ingress.yaml", size: 570, mode: os.FileMode(0644), modTime: time.Unix(1, 0)}
+	info := bindataFileInfo{name: "assets/defaults/cluster-ingress.yaml", size: 570, mode: os.FileMode(420), modTime: time.Unix(1, 0)}
 	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0xec, 0x19, 0x34, 0xe2, 0x78, 0xcc, 0x22, 0x5c, 0xa8, 0x79, 0xe, 0x34, 0xd8, 0x75, 0xb2, 0x24, 0x8, 0xab, 0x29, 0xdb, 0x91, 0x36, 0x17, 0x75, 0xc6, 0x24, 0x3a, 0x92, 0x49, 0x46, 0xd6, 0x47}}
 	return a, nil
 }
@@ -116,7 +115,7 @@ func assetsRouterClusterRoleBindingYaml() (*asset, error) {
 		return nil, err
 	}
 
-	info := bindataFileInfo{name: "assets/router/cluster-role-binding.yaml", size: 329, mode: os.FileMode(0644), modTime: time.Unix(1, 0)}
+	info := bindataFileInfo{name: "assets/router/cluster-role-binding.yaml", size: 329, mode: os.FileMode(420), modTime: time.Unix(1, 0)}
 	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x12, 0x9a, 0xeb, 0xd3, 0x79, 0x1a, 0xa6, 0x75, 0xb5, 0xda, 0x10, 0x70, 0xf9, 0x80, 0xd1, 0x51, 0x55, 0x98, 0x4d, 0x11, 0x98, 0x79, 0x5c, 0x46, 0x99, 0xa3, 0x39, 0x68, 0xe9, 0xa2, 0x72, 0x56}}
 	return a, nil
 }
@@ -136,7 +135,7 @@ func assetsRouterClusterRoleYaml() (*asset, error) {
 		return nil, err
 	}
 
-	info := bindataFileInfo{name: "assets/router/cluster-role.yaml", size: 654, mode: os.FileMode(0644), modTime: time.Unix(1, 0)}
+	info := bindataFileInfo{name: "assets/router/cluster-role.yaml", size: 654, mode: os.FileMode(420), modTime: time.Unix(1, 0)}
 	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x8e, 0xeb, 0x9d, 0xb3, 0x5c, 0xa1, 0x1f, 0xfb, 0x73, 0x10, 0xc0, 0x9e, 0x1c, 0x20, 0xc8, 0xf7, 0x31, 0x30, 0x5, 0x6a, 0xbd, 0xba, 0xa9, 0x91, 0xf8, 0xce, 0xb6, 0x64, 0x47, 0x80, 0x47, 0xc8}}
 	return a, nil
 }
@@ -156,7 +155,7 @@ func assetsRouterDeploymentYaml() (*asset, error) {
 		return nil, err
 	}
 
-	info := bindataFileInfo{name: "assets/router/deployment.yaml", size: 1871, mode: os.FileMode(0644), modTime: time.Unix(1, 0)}
+	info := bindataFileInfo{name: "assets/router/deployment.yaml", size: 1871, mode: os.FileMode(420), modTime: time.Unix(1, 0)}
 	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x51, 0x11, 0xd0, 0x59, 0xd6, 0xda, 0xf8, 0xb9, 0xbf, 0x50, 0x70, 0xf5, 0x72, 0x12, 0xee, 0xcd, 0xca, 0x17, 0xd4, 0x1a, 0x41, 0xa8, 0xea, 0xaa, 0x8b, 0x7a, 0x5e, 0x61, 0xda, 0xe8, 0x5b, 0x2a}}
 	return a, nil
 }
@@ -176,7 +175,7 @@ func assetsRouterMetricsClusterRoleBindingYaml() (*asset, error) {
 		return nil, err
 	}
 
-	info := bindataFileInfo{name: "assets/router/metrics/cluster-role-binding.yaml", size: 285, mode: os.FileMode(0644), modTime: time.Unix(1, 0)}
+	info := bindataFileInfo{name: "assets/router/metrics/cluster-role-binding.yaml", size: 285, mode: os.FileMode(420), modTime: time.Unix(1, 0)}
 	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0xa2, 0xce, 0x4e, 0xd1, 0x37, 0xde, 0x79, 0x91, 0x5c, 0x71, 0xd1, 0x88, 0x1b, 0xdb, 0xaf, 0x1, 0xe5, 0x8c, 0x81, 0xb3, 0xfd, 0x30, 0xe3, 0x5d, 0xb0, 0x59, 0x8b, 0x2a, 0x47, 0xf9, 0xa0, 0xdf}}
 	return a, nil
 }
@@ -196,7 +195,7 @@ func assetsRouterMetricsClusterRoleYaml() (*asset, error) {
 		return nil, err
 	}
 
-	info := bindataFileInfo{name: "assets/router/metrics/cluster-role.yaml", size: 259, mode: os.FileMode(0644), modTime: time.Unix(1, 0)}
+	info := bindataFileInfo{name: "assets/router/metrics/cluster-role.yaml", size: 259, mode: os.FileMode(420), modTime: time.Unix(1, 0)}
 	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x98, 0x77, 0x73, 0x9c, 0x6, 0x33, 0xf2, 0x91, 0x6f, 0x3b, 0x35, 0x49, 0xf3, 0xa5, 0xfc, 0x1d, 0x2e, 0x2e, 0xa6, 0x5b, 0x95, 0xa6, 0x7e, 0x8d, 0xfe, 0x7e, 0xf4, 0x62, 0x30, 0xa5, 0x37, 0x61}}
 	return a, nil
 }
@@ -216,7 +215,7 @@ func assetsRouterMetricsRoleBindingYaml() (*asset, error) {
 		return nil, err
 	}
 
-	info := bindataFileInfo{name: "assets/router/metrics/role-binding.yaml", size: 297, mode: os.FileMode(0644), modTime: time.Unix(1, 0)}
+	info := bindataFileInfo{name: "assets/router/metrics/role-binding.yaml", size: 297, mode: os.FileMode(420), modTime: time.Unix(1, 0)}
 	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0xff, 0xef, 0x8, 0xfb, 0x1f, 0xa3, 0xc7, 0xfb, 0xbc, 0x6, 0x78, 0xad, 0x0, 0x28, 0x90, 0xc8, 0xe8, 0xf5, 0x7d, 0xf8, 0xd0, 0xeb, 0x52, 0xf, 0xd4, 0x81, 0xce, 0x69, 0xb8, 0x8c, 0x26, 0x8c}}
 	return a, nil
 }
@@ -236,28 +235,8 @@ func assetsRouterMetricsRoleYaml() (*asset, error) {
 		return nil, err
 	}
 
-	info := bindataFileInfo{name: "assets/router/metrics/role.yaml", size: 291, mode: os.FileMode(0644), modTime: time.Unix(1, 0)}
+	info := bindataFileInfo{name: "assets/router/metrics/role.yaml", size: 291, mode: os.FileMode(420), modTime: time.Unix(1, 0)}
 	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x57, 0xe3, 0x68, 0x2c, 0xfd, 0xf1, 0x27, 0x9d, 0xa0, 0x3b, 0x10, 0x3e, 0xca, 0x3b, 0x76, 0x39, 0xf4, 0xb1, 0x37, 0x7b, 0xa3, 0xa7, 0x11, 0xc0, 0x6, 0x4b, 0x47, 0xbb, 0x93, 0x4b, 0xb7, 0xc2}}
-	return a, nil
-}
-
-var _assetsRouterMetricsServiceMonitorYaml = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x84\x91\xb1\xca\x1b\x41\x0c\x84\xfb\x7b\x0a\x81\xeb\xf3\x26\xa4\xdb\x36\x10\x48\x91\x34\x7f\x48\x2f\xcb\xb2\x4f\xf8\x56\x5a\x24\x9d\x53\x84\xbc\x7b\xb8\x3b\x9b\xb8\x08\xfc\xa5\x66\x67\x86\x8f\xd9\x03\x7c\xd5\x8b\x79\x03\xeb\xac\x31\xc9\x25\xc7\x66\x2a\x69\x2e\x7a\x05\x3c\xd9\x92\xf0\x6b\x12\x9a\x80\xf5\xdc\x4d\x34\x21\x0d\x96\x60\xb8\x98\x43\xe3\x74\xa1\x00\xb2\x79\x66\x4a\x31\x1d\x6e\xa2\xe7\x0a\x6f\xec\x77\x21\xfe\xb6\x57\x0d\xd8\xe5\x27\x7b\x88\x69\x85\x7f\xf5\x47\x32\x67\x8b\x23\x59\x2b\xf7\x8f\x43\xe3\xc4\x33\x26\xd6\x01\xe0\x00\x8a\x8d\x41\x02\x82\x13\x30\xc1\x17\x4d\x69\x3c\xc0\xf6\x10\x1d\x89\xeb\x0b\xb3\xe8\xd5\x39\x62\x88\xce\xb4\xe6\x9f\xb0\xb1\x1e\x23\x9c\x18\x9d\xfd\x87\xdd\x58\xbf\xc8\xcc\x15\xca\x1d\xbd\xf8\xa2\x25\x98\x9c\x33\xca\x6d\x39\xb1\x2b\x27\xc7\x51\xac\xc4\x8e\x8f\x44\xb6\x68\x96\x5c\x83\x03\x00\x80\x68\xb2\xdf\x71\xae\xf0\xe9\x43\x6c\x4a\x37\xcf\xfa\x1c\x62\x53\x82\x26\x6e\x5c\x61\xca\xec\x0f\x0f\xe6\x54\xa1\xbc\x9a\x72\x8e\xcf\xa6\x17\xb9\xd6\xed\x04\x20\x7c\x90\x71\x52\xe9\x6e\x8d\x73\xe2\x25\x0a\x6d\xae\x86\x3d\x76\x2a\xbd\x8e\xc4\x9e\x31\x12\x8e\xa7\x45\xcf\x33\x3f\x69\x47\xc2\x23\x79\x3e\xfa\x0e\xb0\xca\xec\xdf\xdf\xdd\xf1\x8d\xd7\xbf\x33\xdf\x49\x1a\x26\x4d\x6b\x28\xf6\x7b\xfc\xcf\xca\x00\xf1\xcc\xc0\xef\x3f\xc3\xdf\x00\x00\x00\xff\xff\xff\x3e\x51\x03\x44\x02\x00\x00")
-
-func assetsRouterMetricsServiceMonitorYamlBytes() ([]byte, error) {
-	return bindataRead(
-		_assetsRouterMetricsServiceMonitorYaml,
-		"assets/router/metrics/service-monitor.yaml",
-	)
-}
-
-func assetsRouterMetricsServiceMonitorYaml() (*asset, error) {
-	bytes, err := assetsRouterMetricsServiceMonitorYamlBytes()
-	if err != nil {
-		return nil, err
-	}
-
-	info := bindataFileInfo{name: "assets/router/metrics/service-monitor.yaml", size: 580, mode: os.FileMode(0644), modTime: time.Unix(1, 0)}
-	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x17, 0x2f, 0xfd, 0x56, 0xf1, 0x61, 0x45, 0x4f, 0xa3, 0xed, 0x37, 0x9a, 0xca, 0x10, 0x56, 0xd7, 0x3d, 0xe7, 0xde, 0x10, 0xc, 0x47, 0xbd, 0x97, 0xd1, 0x37, 0x3, 0xbc, 0x8e, 0x3d, 0xef, 0xad}}
 	return a, nil
 }
 
@@ -276,7 +255,7 @@ func assetsRouterNamespaceYaml() (*asset, error) {
 		return nil, err
 	}
 
-	info := bindataFileInfo{name: "assets/router/namespace.yaml", size: 373, mode: os.FileMode(0644), modTime: time.Unix(1, 0)}
+	info := bindataFileInfo{name: "assets/router/namespace.yaml", size: 373, mode: os.FileMode(420), modTime: time.Unix(1, 0)}
 	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0xe3, 0x62, 0x94, 0xa7, 0xc8, 0x35, 0x52, 0x42, 0x57, 0xac, 0x7e, 0xfa, 0x95, 0x1d, 0x7e, 0x8e, 0xaa, 0x9c, 0x4f, 0x18, 0xee, 0x6f, 0xaa, 0x40, 0xaf, 0xb6, 0xc7, 0xc6, 0xc2, 0x6, 0x75, 0x73}}
 	return a, nil
 }
@@ -296,7 +275,7 @@ func assetsRouterServiceAccountYaml() (*asset, error) {
 		return nil, err
 	}
 
-	info := bindataFileInfo{name: "assets/router/service-account.yaml", size: 213, mode: os.FileMode(0644), modTime: time.Unix(1, 0)}
+	info := bindataFileInfo{name: "assets/router/service-account.yaml", size: 213, mode: os.FileMode(420), modTime: time.Unix(1, 0)}
 	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0xd0, 0xe3, 0x6, 0x3a, 0x88, 0x2e, 0x33, 0xe3, 0x24, 0xf0, 0xf0, 0xe9, 0x43, 0xc8, 0x46, 0x6c, 0x60, 0x9, 0x69, 0x84, 0x3, 0xd8, 0xc3, 0x80, 0xb, 0xab, 0x37, 0x13, 0xce, 0xf2, 0xeb, 0x60}}
 	return a, nil
 }
@@ -316,7 +295,7 @@ func assetsRouterServiceCloudYaml() (*asset, error) {
 		return nil, err
 	}
 
-	info := bindataFileInfo{name: "assets/router/service-cloud.yaml", size: 628, mode: os.FileMode(0644), modTime: time.Unix(1, 0)}
+	info := bindataFileInfo{name: "assets/router/service-cloud.yaml", size: 628, mode: os.FileMode(420), modTime: time.Unix(1, 0)}
 	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x8c, 0x35, 0x3d, 0xd7, 0x8, 0xf9, 0xba, 0x0, 0x54, 0xbd, 0x2a, 0xeb, 0x98, 0x83, 0x6f, 0x28, 0x5e, 0xda, 0xd8, 0xa9, 0x45, 0x65, 0xe2, 0x35, 0x98, 0xd0, 0x6, 0x64, 0xc4, 0x82, 0x36, 0x14}}
 	return a, nil
 }
@@ -336,7 +315,7 @@ func assetsRouterServiceInternalYaml() (*asset, error) {
 		return nil, err
 	}
 
-	info := bindataFileInfo{name: "assets/router/service-internal.yaml", size: 512, mode: os.FileMode(0644), modTime: time.Unix(1, 0)}
+	info := bindataFileInfo{name: "assets/router/service-internal.yaml", size: 512, mode: os.FileMode(420), modTime: time.Unix(1, 0)}
 	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x88, 0x3, 0x6d, 0x72, 0xb, 0x1e, 0xd8, 0x4, 0x82, 0xd2, 0xb1, 0x70, 0xa9, 0x3f, 0xf, 0x83, 0x3a, 0x2b, 0xeb, 0x18, 0x2b, 0x1e, 0xd2, 0xd6, 0xc3, 0xbe, 0x58, 0x72, 0xaa, 0xee, 0x2f, 0xe3}}
 	return a, nil
 }
@@ -448,8 +427,6 @@ var _bindata = map[string]func() (*asset, error){
 
 	"assets/router/metrics/role.yaml": assetsRouterMetricsRoleYaml,
 
-	"assets/router/metrics/service-monitor.yaml": assetsRouterMetricsServiceMonitorYaml,
-
 	"assets/router/namespace.yaml": assetsRouterNamespaceYaml,
 
 	"assets/router/service-account.yaml": assetsRouterServiceAccountYaml,
@@ -513,7 +490,6 @@ var _bintree = &bintree{nil, map[string]*bintree{
 				"cluster-role.yaml":         {assetsRouterMetricsClusterRoleYaml, map[string]*bintree{}},
 				"role-binding.yaml":         {assetsRouterMetricsRoleBindingYaml, map[string]*bintree{}},
 				"role.yaml":                 {assetsRouterMetricsRoleYaml, map[string]*bintree{}},
-				"service-monitor.yaml":      {assetsRouterMetricsServiceMonitorYaml, map[string]*bintree{}},
 			}},
 			"namespace.yaml":        {assetsRouterNamespaceYaml, map[string]*bintree{}},
 			"service-account.yaml":  {assetsRouterServiceAccountYaml, map[string]*bintree{}},

@@ -17,6 +17,9 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+
+	configv1 "github.com/openshift/api/config/v1"
+
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -91,6 +94,13 @@ type reconciler struct {
 
 // Reconcile currently performs a full reconciliation in response to any
 // request. Status is recomputed and updated after every request is processed.
+//
+// TODO: Refactor the way the controllers are set up; the only requests that
+// should be coming into this controller are clusteringress keys. Then the loop
+// can act on a single clusteringress. To achieve this, watch events from
+// related resources must be translated into clusteringress keys through label
+// checks and such (as various relationships cross boundaries which can't be
+// expressed by ownerrefs).
 func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, error) {
 	// TODO: Should this be another controller?
 	defer func() {
@@ -113,9 +123,21 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 // the ingress namespace exists, and then creates, updates, or deletes router
 // clusters as appropriate given the ClusterIngresses that exist.
 func (r *reconciler) reconcile() (reconcile.Result, error) {
+	dnsConfig := &configv1.DNS{}
+	err := r.Client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, dnsConfig)
+	if err != nil {
+		return reconcile.Result{}, fmt.Errorf("failed to get dns 'cluster': %v", err)
+	}
+
+	infraConfig := &configv1.Infrastructure{}
+	err = r.Client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, infraConfig)
+	if err != nil {
+		return reconcile.Result{}, fmt.Errorf("failed to get infrastructure 'cluster': %v", err)
+	}
+
 	// Ensure we have all the necessary scaffolding on which to place router
 	// instances.
-	err := r.ensureRouterNamespace()
+	err = r.ensureRouterNamespace()
 	if err != nil {
 		return reconcile.Result{}, err
 	}
@@ -135,13 +157,19 @@ func (r *reconciler) reconcile() (reconcile.Result, error) {
 		// TODO: Assert/ensure that the ingress has a finalizer so we can reliably detect
 		// deletion.
 		if ingress.DeletionTimestamp != nil {
-			// Destroy any router associated with the clusteringress.
-			err := r.ensureRouterDeleted(&ingress)
+			// TODO: This should also be tied to the HA type.
+			err := r.finalizeLoadBalancerService(&ingress, dnsConfig)
 			if err != nil {
-				errs = append(errs, fmt.Errorf("failed to delete clusteringress %s/%s: %v", ingress.Namespace, ingress.Name, err))
+				errs = append(errs, fmt.Errorf("failed to finalize load balancer service for %s: %v", ingress.Name, err))
 				continue
 			}
-			logrus.Infof("deleted router for clusteringress %s/%s", ingress.Namespace, ingress.Name)
+			logrus.Infof("finalized load balancer service for ingress %s", ingress.Name)
+			err = r.ensureRouterDeleted(&ingress)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("failed to delete deployment for ingress %s: %v", ingress.Name, err))
+				continue
+			}
+			logrus.Infof("deleted deployment for ingress %s", ingress.Name)
 			// Clean up the finalizer to allow the clusteringress to be deleted.
 			if slice.ContainsString(ingress.Finalizers, ClusterIngressFinalizer) {
 				ingress.Finalizers = slice.RemoveString(ingress.Finalizers, ClusterIngressFinalizer)
@@ -154,7 +182,7 @@ func (r *reconciler) reconcile() (reconcile.Result, error) {
 		}
 
 		// Handle active ingress.
-		err := r.ensureRouterForIngress(&ingress)
+		err := r.ensureRouterForIngress(&ingress, dnsConfig, infraConfig)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("failed to ensure clusteringress %s/%s: %v", ingress.Namespace, ingress.Name, err))
 		}
@@ -251,7 +279,7 @@ func (r *reconciler) ensureRouterNamespace() error {
 
 // ensureRouterForIngress ensures all necessary router resources exist for a
 // given clusteringress.
-func (r *reconciler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress) error {
+func (r *reconciler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress, dnsConfig *configv1.DNS, infraConfig *configv1.Infrastructure) error {
 	expected, err := r.ManifestFactory.RouterDeployment(ci)
 	if err != nil {
 		return fmt.Errorf("failed to build router deployment: %v", err)
@@ -290,34 +318,14 @@ func (r *reconciler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress) 
 		Controller: &trueVar,
 	}
 
-	if ci.Spec.HighAvailability != nil {
-		switch ci.Spec.HighAvailability.Type {
-		case ingressv1alpha1.CloudClusterIngressHA:
-			service, err := r.ManifestFactory.RouterServiceCloud(ci)
-			if err != nil {
-				return fmt.Errorf("failed to build router service: %v", err)
-			}
-			err = r.Client.Get(context.TODO(), types.NamespacedName{Namespace: service.Namespace, Name: service.Name}, service)
-			if err != nil {
-				if !errors.IsNotFound(err) {
-					return fmt.Errorf("failed to get router service %s/%s, %v", service.Namespace, service.Name, err)
-				}
-				// Service doesn't exist; try to create it.
-				service.SetOwnerReferences([]metav1.OwnerReference{deploymentRef})
-				err = r.Client.Create(context.TODO(), service)
-				if err == nil {
-					logrus.Infof("created router service %s/%s", service.Namespace, service.Name)
-				} else if !errors.IsAlreadyExists(err) {
-					return fmt.Errorf("failed to create router service %s/%s: %v", service.Namespace, service.Name, err)
-				}
-			}
-			if ci.Spec.IngressDomain != nil {
-				err = r.ensureDNSForLoadBalancer(ci, service)
-				if err != nil {
-					return fmt.Errorf("failed to ensure DNS for router service %s/%s: %v", service.Namespace, service.Name, err)
-				}
-			}
-		}
+	lbService, err := r.ensureLoadBalancerService(ci, infraConfig, current)
+	if err != nil {
+		return fmt.Errorf("failed to ensure load balancer service for %s: %v", ci.Name, err)
+	}
+
+	err = r.ensureDNS(ci, dnsConfig, lbService)
+	if err != nil {
+		return fmt.Errorf("failed to ensure DNS for %s: %v", ci.Name, err)
 	}
 
 	internalSvc, err := r.ensureInternalRouterServiceForIngress(ci, deploymentRef)
@@ -337,6 +345,11 @@ func (r *reconciler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress) 
 
 	if err := r.ensureMetricsIntegration(ci, internalSvc, deploymentRef); err != nil {
 		return fmt.Errorf("failed to integrate metrics with openshift-monitoring for clusteringress %s: %v", ci.Name, err)
+	}
+
+	_, err = r.ensureServiceMonitor(ci, internalSvc, current)
+	if err != nil {
+		return fmt.Errorf("failed to ensure servicemonitor for %s: %v", ci.Name, err)
 	}
 
 	if err := r.syncClusterIngressStatus(current, ci); err != nil {
@@ -432,25 +445,6 @@ func (r *reconciler) ensureMetricsIntegration(ci *ingressv1alpha1.ClusterIngress
 			logrus.Infof("created router metrics role binding %s", mrb.Name)
 		} else if !errors.IsAlreadyExists(err) {
 			return fmt.Errorf("failed to create router metrics role binding %s: %v", mrb.Name, err)
-		}
-	}
-
-	monitor, err := r.ManifestFactory.MetricsServiceMonitor(ci, svc)
-	if err != nil {
-		return fmt.Errorf("failed to build router service monitor: %v", err)
-	}
-	err = r.Client.Get(context.TODO(), types.NamespacedName{Namespace: monitor.Namespace, Name: monitor.Name}, monitor)
-	if err != nil {
-		if !errors.IsNotFound(err) {
-			return fmt.Errorf("failed to get router service monitor %s/%s, %v", monitor.Namespace, monitor.Name, err)
-		}
-
-		monitor.SetOwnerReferences([]metav1.OwnerReference{deploymentRef})
-		err = r.Client.Create(context.TODO(), monitor)
-		if err == nil {
-			logrus.Infof("created router service monitor %s/%s", monitor.Namespace, monitor.Name)
-		} else if !errors.IsAlreadyExists(err) {
-			return fmt.Errorf("failed to create router service monitor %s/%s: %v", monitor.Namespace, monitor.Name, err)
 		}
 	}
 
@@ -639,24 +633,6 @@ func (r *reconciler) ensureRouterCACertificateSecret() (*corev1.Secret, error) {
 	}
 
 	return secret, nil
-}
-
-// ensureDNSForLoadBalancer configures a wildcard DNS alias for a ClusterIngress
-// targeting the given service.
-func (r *reconciler) ensureDNSForLoadBalancer(ci *ingressv1alpha1.ClusterIngress, service *corev1.Service) error {
-	if len(service.Status.LoadBalancer.Ingress) == 0 {
-		logrus.Infof("won't update DNS record for load balancer service %s/%s because status contains no ingresses", service.Namespace, service.Name)
-		return nil
-	}
-	target := service.Status.LoadBalancer.Ingress[0].Hostname
-	if len(target) == 0 {
-		logrus.Infof("won't update DNS record for load balancer service %s/%s because ingress hostname is empty", service.Namespace, service.Name)
-		return nil
-	}
-	// TODO: the routing wildcard prefix should come from cluster config or
-	// ClusterIngress.
-	domain := fmt.Sprintf("*.%s", *ci.Spec.IngressDomain)
-	return r.DNSManager.EnsureAlias(domain, target)
 }
 
 // ensureRouterDeleted ensures that any router resources associated with the

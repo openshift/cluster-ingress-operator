@@ -1,7 +1,7 @@
 #!/bin/bash
 set -uo pipefail
 
-WHAT="${WHAT:-all}"
+WHAT="${WHAT:-managed}"
 
 # Disable the CVO
 oc scale --replicas 0 -n openshift-cluster-version deployments/cluster-version-operator
