@@ -158,14 +158,14 @@ func header_compressed_nomemcopy(w io.Writer) error {
 func bindataRead(data, name string) ([]byte, error) {
 	gz, err := gzip.NewReader(strings.NewReader(data))
 	if err != nil {
-		return nil, fmt.Errorf("read %%q: %%v", name, err)
+		return nil, fmt.Errorf("Read %%q: %%v", name, err)
 	}
 
 	var buf bytes.Buffer
 	_, err = io.Copy(&buf, gz)
 
 	if err != nil {
-		return nil, fmt.Errorf("read %%q: %%v", name, err)
+		return nil, fmt.Errorf("Read %%q: %%v", name, err)
 	}
 
 	clErr := gz.Close()
@@ -197,7 +197,7 @@ func header_compressed_memcopy(w io.Writer) error {
 func bindataRead(data []byte, name string) ([]byte, error) {
 	gz, err := gzip.NewReader(bytes.NewBuffer(data))
 	if err != nil {
-		return nil, fmt.Errorf("read %%q: %%v", name, err)
+		return nil, fmt.Errorf("Read %%q: %%v", name, err)
 	}
 
 	var buf bytes.Buffer
@@ -205,7 +205,7 @@ func bindataRead(data []byte, name string) ([]byte, error) {
 	clErr := gz.Close()
 
 	if err != nil {
-		return nil, fmt.Errorf("read %%q: %%v", name, err)
+		return nil, fmt.Errorf("Read %%q: %%v", name, err)
 	}
 	if clErr != nil {
 		return nil, err
@@ -428,7 +428,7 @@ func asset_release_common(w io.Writer, c *Config, asset *Asset, digest [sha256.S
 		return nil, err
 	}
 
-	info := bindataFileInfo{name: %q, size: %d, mode: os.FileMode(%#o), modTime: time.Unix(%d, 0)}
+	info := bindataFileInfo{name: %q, size: %d, mode: os.FileMode(%d), modTime: time.Unix(%d, 0)}
 	a := &asset{bytes: bytes, info: info, digest: %#v}
 	return a, nil
 }

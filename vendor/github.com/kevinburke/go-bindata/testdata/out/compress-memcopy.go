@@ -23,7 +23,7 @@ import (
 func bindataRead(data []byte, name string) ([]byte, error) {
 	gz, err := gzip.NewReader(bytes.NewBuffer(data))
 	if err != nil {
-		return nil, fmt.Errorf("read %q: %v", name, err)
+		return nil, fmt.Errorf("Read %q: %v", name, err)
 	}
 
 	var buf bytes.Buffer
@@ -31,7 +31,7 @@ func bindataRead(data []byte, name string) ([]byte, error) {
 	clErr := gz.Close()
 
 	if err != nil {
-		return nil, fmt.Errorf("read %q: %v", name, err)
+		return nil, fmt.Errorf("Read %q: %v", name, err)
 	}
 	if clErr != nil {
 		return nil, err
@@ -87,7 +87,7 @@ func inATestAsset() (*asset, error) {
 		return nil, err
 	}
 
-	info := bindataFileInfo{name: "in/a/test.asset", size: 15, mode: os.FileMode(0644), modTime: time.Unix(1136214245, 0)}
+	info := bindataFileInfo{name: "in/a/test.asset", size: 15, mode: os.FileMode(420), modTime: time.Unix(1136214245, 0)}
 	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x67, 0xe5, 0x1a, 0x66, 0xe5, 0x1, 0x4e, 0x8, 0x46, 0xd8, 0xa6, 0x67, 0x32, 0xa8, 0xa4, 0xf2, 0x95, 0x5a, 0x81, 0xd4, 0xe7, 0x1d, 0x90, 0xfa, 0x78, 0x26, 0x53, 0x53, 0x62, 0xd0, 0x86, 0xd2}}
 	return a, nil
 }
@@ -107,7 +107,7 @@ func inBTestAsset() (*asset, error) {
 		return nil, err
 	}
 
-	info := bindataFileInfo{name: "in/b/test.asset", size: 15, mode: os.FileMode(0644), modTime: time.Unix(1136214245, 0)}
+	info := bindataFileInfo{name: "in/b/test.asset", size: 15, mode: os.FileMode(420), modTime: time.Unix(1136214245, 0)}
 	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x67, 0xe5, 0x1a, 0x66, 0xe5, 0x1, 0x4e, 0x8, 0x46, 0xd8, 0xa6, 0x67, 0x32, 0xa8, 0xa4, 0xf2, 0x95, 0x5a, 0x81, 0xd4, 0xe7, 0x1d, 0x90, 0xfa, 0x78, 0x26, 0x53, 0x53, 0x62, 0xd0, 0x86, 0xd2}}
 	return a, nil
 }
@@ -127,7 +127,7 @@ func inCTestAsset() (*asset, error) {
 		return nil, err
 	}
 
-	info := bindataFileInfo{name: "in/c/test.asset", size: 15, mode: os.FileMode(0644), modTime: time.Unix(1136214245, 0)}
+	info := bindataFileInfo{name: "in/c/test.asset", size: 15, mode: os.FileMode(420), modTime: time.Unix(1136214245, 0)}
 	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x67, 0xe5, 0x1a, 0x66, 0xe5, 0x1, 0x4e, 0x8, 0x46, 0xd8, 0xa6, 0x67, 0x32, 0xa8, 0xa4, 0xf2, 0x95, 0x5a, 0x81, 0xd4, 0xe7, 0x1d, 0x90, 0xfa, 0x78, 0x26, 0x53, 0x53, 0x62, 0xd0, 0x86, 0xd2}}
 	return a, nil
 }
@@ -147,7 +147,7 @@ func inTestAsset() (*asset, error) {
 		return nil, err
 	}
 
-	info := bindataFileInfo{name: "in/test.asset", size: 15, mode: os.FileMode(0644), modTime: time.Unix(1136214245, 0)}
+	info := bindataFileInfo{name: "in/test.asset", size: 15, mode: os.FileMode(420), modTime: time.Unix(1136214245, 0)}
 	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x67, 0xe5, 0x1a, 0x66, 0xe5, 0x1, 0x4e, 0x8, 0x46, 0xd8, 0xa6, 0x67, 0x32, 0xa8, 0xa4, 0xf2, 0x95, 0x5a, 0x81, 0xd4, 0xe7, 0x1d, 0x90, 0xfa, 0x78, 0x26, 0x53, 0x53, 0x62, 0xd0, 0x86, 0xd2}}
 	return a, nil
 }

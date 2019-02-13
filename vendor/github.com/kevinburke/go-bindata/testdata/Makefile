@@ -3,14 +3,11 @@ FILES:=$(wildcard out/*.go)
 .PHONY: check
 check: errcheck golint $(FILES:.go=.checked)
 
-out/%.checked: out/%.go | $(GOPATH)/bin/shadow
+out/%.checked: out/%.go
 	errcheck $<
 	go vet --all $<
-	go vet --vettool=$(GOPATH)/bin/shadow $<
+	go vet --shadow $<
 	golint $<
-
-$(GOPATH)/bin/shadow:
-	go get golang.org/x/tools/go/analysis/passes/shadow/cmd/shadow
 
 $(GOPATH)/bin/go-bindata: $(wildcard ../*.go) $(wildcard ../**/*.go)
 	go install -race ../...
@@ -34,4 +31,4 @@ errcheck:
 	go get github.com/kisielk/errcheck
 
 golint:
-	go get golang.org/x/lint/golint
+	go get github.com/golang/lint/golint
