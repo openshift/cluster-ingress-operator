@@ -118,8 +118,9 @@ func createDNSManager(cl client.Client, namespace string, infraConfig *configv1.
 		awsCreds := &corev1.Secret{}
 		err := cl.Get(context.TODO(), types.NamespacedName{Namespace: namespace, Name: cloudCredentialsSecretName}, awsCreds)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get aws creds from %s/%s: %v", awsCreds.Namespace, awsCreds.Name, err)
+			return nil, fmt.Errorf("failed to get aws creds from secret %s/%s: %v", awsCreds.Namespace, awsCreds.Name, err)
 		}
+		log.Info("using aws creds from secret", "namespace", awsCreds.Namespace, "name", awsCreds.Name)
 		manager, err := awsdns.NewManager(awsdns.Config{
 			AccessID:  string(awsCreds.Data["aws_access_key_id"]),
 			AccessKey: string(awsCreds.Data["aws_secret_access_key"]),
