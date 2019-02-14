@@ -176,15 +176,7 @@ func (r *reconciler) reconcile(request reconcile.Request) (reconcile.Result, err
 		if err != nil {
 			return reconcile.Result{}, fmt.Errorf("failed to list clusteringresses in namespace %s: %v", r.Namespace, err)
 		}
-		if shouldPublishRouterCA(ingresses.Items) {
-			if err := r.ensureRouterCAIsPublished(); err != nil {
-				errs = append(errs, fmt.Errorf("failed to ensure router CA was published: %v", err))
-			}
-		} else {
-			if err := r.ensureRouterCAIsUnpublished(); err != nil {
-				errs = append(errs, fmt.Errorf("failed to ensure router CA was unpublished: %v", err))
-			}
-		}
+		errs = append(errs, r.ensureRouterCAConfigMap(ingresses.Items))
 	}
 
 	return result, utilerrors.NewAggregate(errs)

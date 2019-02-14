@@ -27,6 +27,22 @@ const (
 	caCertConfigMapName = "router-ca"
 )
 
+// ensureRouterCAConfigMap will create or delete the configmap for the router CA
+// as appropriate.
+func (r *reconciler) ensureRouterCAConfigMap(ingresses []ingressv1alpha1.ClusterIngress) error {
+	if shouldPublishRouterCA(ingresses) {
+		if err := r.ensureRouterCAIsPublished(); err != nil {
+			return fmt.Errorf("failed to ensure router CA was published: %v", err)
+		}
+	} else {
+		if err := r.ensureRouterCAIsUnpublished(); err != nil {
+			return fmt.Errorf("failed to ensure router CA was unpublished: %v", err)
+		}
+	}
+
+	return nil
+}
+
 // shouldPublishRouterCA checks if some ClusterIngress uses the default
 // certificate, in which case the CA certificate needs to be published.
 func shouldPublishRouterCA(ingresses []ingressv1alpha1.ClusterIngress) bool {
