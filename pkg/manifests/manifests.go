@@ -13,15 +13,15 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+
 	apiextensionsv1beta1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/apiserver/pkg/storage/names"
 
 	configv1 "github.com/openshift/api/config/v1"
 	routev1 "github.com/openshift/api/route/v1"
-
-	monv1 "github.com/coreos/prometheus-operator/pkg/apis/monitoring/v1"
 )
 
 const (
@@ -36,18 +36,15 @@ const (
 	OperatorRole             = "assets/router/operator-role.yaml"
 	OperatorRoleBinding      = "assets/router/operator-role-binding.yaml"
 
-	MetricsServiceMonitor     = "assets/router/metrics/service-monitor.yaml"
-	MetricsClusterRole        = "assets/router/metrics/cluster-role.yaml"
-	MetricsClusterRoleBinding = "assets/router/metrics/cluster-role-binding.yaml"
-	MetricsRole               = "assets/router/metrics/role.yaml"
-	MetricsRoleBinding        = "assets/router/metrics/role-binding.yaml"
+	MetricsServiceMonitorAsset = "assets/router/metrics/service-monitor.yaml"
+	MetricsClusterRole         = "assets/router/metrics/cluster-role.yaml"
+	MetricsClusterRoleBinding  = "assets/router/metrics/cluster-role-binding.yaml"
+	MetricsRole                = "assets/router/metrics/role.yaml"
+	MetricsRoleBinding         = "assets/router/metrics/role-binding.yaml"
 
 	// Annotation used to inform the certificate generation service to
 	// generate a cluster-signed certificate and populate the secret.
 	ServingCertSecretAnnotation = "service.alpha.openshift.io/serving-cert-secret-name"
-
-	// Annotation used to enable the proxy protocol on the AWS load balancer.
-	AWSLBProxyProtocolAnnotation = "service.beta.kubernetes.io/aws-load-balancer-proxy-protocol"
 )
 
 func MustAssetReader(asset string) io.Reader {
@@ -320,49 +317,12 @@ func (f *Factory) RouterServiceInternal(cr *ingressv1alpha1.ClusterIngress) (*co
 	return s, nil
 }
 
-func (f *Factory) RouterServiceCloud(cr *ingressv1alpha1.ClusterIngress) (*corev1.Service, error) {
+func LoadBalancerService() *corev1.Service {
 	s, err := NewService(MustAssetReader(RouterServiceCloud))
 	if err != nil {
-		return nil, err
+		panic(err)
 	}
-
-	name := "router-" + cr.Name
-
-	s.Name = name
-
-	if s.Labels == nil {
-		s.Labels = map[string]string{}
-	}
-	s.Labels["router"] = name
-
-	if s.Spec.Selector == nil {
-		s.Spec.Selector = map[string]string{}
-	}
-	s.Spec.Selector["router"] = name
-
-	if f.config.Platform == configv1.AWSPlatform {
-		if s.Annotations == nil {
-			s.Annotations = map[string]string{}
-		}
-		s.Annotations[AWSLBProxyProtocolAnnotation] = "*"
-	}
-
-	return s, nil
-}
-
-func (f *Factory) MetricsServiceMonitor(ci *ingressv1alpha1.ClusterIngress, svc *corev1.Service) (*monv1.ServiceMonitor, error) {
-	sm, err := NewServiceMonitor(MustAssetReader(MetricsServiceMonitor))
-	if err != nil {
-		return nil, err
-	}
-	sm.Name = "router-" + ci.Name
-
-	for i := range sm.Spec.Endpoints {
-		if sm.Spec.Endpoints[i].Path == "/metrics" {
-			sm.Spec.Endpoints[i].TLSConfig.ServerName = fmt.Sprintf("%s.%s.svc", svc.Name, svc.Namespace)
-		}
-	}
-	return sm, nil
+	return s
 }
 
 func (f *Factory) MetricsClusterRole() (*rbacv1.ClusterRole, error) {
@@ -395,15 +355,6 @@ func (f *Factory) MetricsRoleBinding() (*rbacv1.RoleBinding, error) {
 		return nil, err
 	}
 	return rb, nil
-}
-
-func NewServiceMonitor(manifest io.Reader) (*monv1.ServiceMonitor, error) {
-	sm := monv1.ServiceMonitor{}
-	err := yaml.NewYAMLOrJSONDecoder(manifest, 100).Decode(&sm)
-	if err != nil {
-		return nil, err
-	}
-	return &sm, nil
 }
 
 func NewServiceAccount(manifest io.Reader) (*corev1.ServiceAccount, error) {

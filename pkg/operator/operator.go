@@ -14,8 +14,6 @@ import (
 
 	"github.com/sirupsen/logrus"
 
-	monv1 "github.com/coreos/prometheus-operator/pkg/apis/monitoring/v1"
-
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 
@@ -37,14 +35,15 @@ import (
 
 // scheme contains all the API types necessary for the operator's dynamic
 // clients to work. Any new non-core types must be added here.
+//
+// NOTE: The discovery mechanism used by the client won't automatically refresh,
+// so only add types here that are _guaranteed_ to exist before the operator
+// starts.
 var scheme *runtime.Scheme
 
 func init() {
 	scheme = kscheme.Scheme
 	if err := apis.AddToScheme(scheme); err != nil {
-		panic(err)
-	}
-	if err := monv1.AddToScheme(scheme); err != nil {
 		panic(err)
 	}
 	if err := configv1.Install(scheme); err != nil {

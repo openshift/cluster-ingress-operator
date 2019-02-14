@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 	awsdns "github.com/openshift/cluster-ingress-operator/pkg/dns/aws"
@@ -77,15 +76,8 @@ func main() {
 		logrus.Fatalf("failed to get dns 'cluster': %v", err)
 	}
 
-	// Retrieve the typed cluster version config.
-	clusterVersionConfig := &configv1.ClusterVersion{}
-	err = kubeClient.Get(context.TODO(), types.NamespacedName{Name: "version"}, clusterVersionConfig)
-	if err != nil {
-		logrus.Fatalf("failed to get clusterversion 'version': %v", err)
-	}
-
 	// Set up the DNS manager.
-	dnsManager, err := createDNSManager(kubeClient, operatorNamespace, infraConfig, ingressConfig, dnsConfig, clusterVersionConfig)
+	dnsManager, err := createDNSManager(kubeClient, operatorNamespace, infraConfig, dnsConfig)
 	if err != nil {
 		logrus.Fatalf("failed to create DNS manager: %v", err)
 	}
@@ -108,7 +100,7 @@ func main() {
 
 // createDNSManager creates a DNS manager compatible with the given cluster
 // configuration.
-func createDNSManager(cl client.Client, namespace string, infraConfig *configv1.Infrastructure, ingressConfig *configv1.Ingress, dnsConfig *configv1.DNS, clusterVersionConfig *configv1.ClusterVersion) (dns.Manager, error) {
+func createDNSManager(cl client.Client, namespace string, infraConfig *configv1.Infrastructure, dnsConfig *configv1.DNS) (dns.Manager, error) {
 	var dnsManager dns.Manager
 	switch infraConfig.Status.Platform {
 	case configv1.AWSPlatform:
@@ -118,10 +110,9 @@ func createDNSManager(cl client.Client, namespace string, infraConfig *configv1.
 			return nil, fmt.Errorf("failed to get aws creds from %s/%s: %v", awsCreds.Namespace, awsCreds.Name, err)
 		}
 		manager, err := awsdns.NewManager(awsdns.Config{
-			AccessID:   string(awsCreds.Data["aws_access_key_id"]),
-			AccessKey:  string(awsCreds.Data["aws_secret_access_key"]),
-			BaseDomain: strings.TrimSuffix(dnsConfig.Spec.BaseDomain, ".") + ".",
-			ClusterID:  string(clusterVersionConfig.Spec.ClusterID),
+			AccessID:  string(awsCreds.Data["aws_access_key_id"]),
+			AccessKey: string(awsCreds.Data["aws_secret_access_key"]),
+			DNS:       dnsConfig,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create AWS DNS manager: %v", err)

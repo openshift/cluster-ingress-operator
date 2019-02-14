@@ -9,7 +9,6 @@ import (
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
 	operatorconfig "github.com/openshift/cluster-ingress-operator/pkg/operator/config"
 
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -38,12 +37,6 @@ func TestManifests(t *testing.T) {
 					"baz": "quux",
 				},
 			},
-		},
-	}
-	internalSvc := &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace: "openshift-ingress",
-			Name:      "router-internal-default",
 		},
 	}
 
@@ -77,10 +70,6 @@ func TestManifests(t *testing.T) {
 
 	if _, err := f.MetricsRoleBinding(); err != nil {
 		t.Errorf("invalid MetricsRoleBinding: %v", err)
-	}
-
-	if _, err := f.MetricsServiceMonitor(ci, internalSvc); err != nil {
-		t.Errorf("invalid MetricsServiceMonitor: %v", err)
 	}
 
 	if _, err := f.RouterStatsSecret(ci); err != nil {
@@ -258,9 +247,7 @@ func TestManifests(t *testing.T) {
 			metricsCertSecretName, svc.Annotations[ServingCertSecretAnnotation])
 	}
 
-	if _, err := f.RouterServiceCloud(ci); err != nil {
-		t.Errorf("invalid RouterServiceCloud: %v", err)
-	}
+	LoadBalancerService()
 }
 
 func TestDefaultClusterIngress(t *testing.T) {
