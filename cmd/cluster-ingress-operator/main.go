@@ -117,6 +117,7 @@ func createDNSManager(cl client.Client, namespace string, infraConfig *configv1.
 		if err != nil {
 			return nil, fmt.Errorf("failed to get aws creds from %s/%s: %v", awsCreds.Namespace, awsCreds.Name, err)
 		}
+		logrus.Infof("using aws creds from %s/%s to create DNS manager", awsCreds.Namespace, awsCreds.Name)
 		manager, err := awsdns.NewManager(awsdns.Config{
 			AccessID:   string(awsCreds.Data["aws_access_key_id"]),
 			AccessKey:  string(awsCreds.Data["aws_secret_access_key"]),
