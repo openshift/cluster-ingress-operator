@@ -117,6 +117,11 @@ func (r *reconciler) reconcile(request reconcile.Request) (reconcile.Result, err
 		}
 	}
 
+	caSecret, err := r.ensureRouterCACertificateSecret()
+	if err != nil {
+		return reconcile.Result{}, fmt.Errorf("failed to get CA secret: %v", err)
+	}
+
 	// Collect errors as we go.
 	errs := []error{}
 	result := reconcile.Result{}
@@ -160,7 +165,7 @@ func (r *reconciler) reconcile(request reconcile.Request) (reconcile.Result, err
 			}
 		} else {
 			// Handle everything else.
-			if err := r.ensureRouterForIngress(ingress, &result); err != nil {
+			if err := r.ensureRouterForIngress(ingress, caSecret, &result); err != nil {
 				errs = append(errs, fmt.Errorf("failed to ensure clusteringress: %v", err))
 			}
 		}
@@ -175,7 +180,7 @@ func (r *reconciler) reconcile(request reconcile.Request) (reconcile.Result, err
 	if err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to list clusteringresses in namespace %s: %v", r.Namespace, err)
 	}
-	errs = append(errs, r.ensureRouterCAConfigMap(ingresses.Items))
+	errs = append(errs, r.ensureRouterCAConfigMap(caSecret, ingresses.Items))
 
 	return result, utilerrors.NewAggregate(errs)
 }
@@ -284,7 +289,7 @@ func (r *reconciler) ensureRouterNamespace() error {
 
 // ensureRouterForIngress ensures all necessary router resources exist for a
 // given clusteringress.
-func (r *reconciler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress, result *reconcile.Result) error {
+func (r *reconciler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress, caSecret *corev1.Secret, result *reconcile.Result) error {
 	expected, err := r.ManifestFactory.RouterDeployment(ci)
 	if err != nil {
 		return fmt.Errorf("failed to build router deployment: %v", err)
@@ -339,11 +344,6 @@ func (r *reconciler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress, 
 	}
 
 	if ci.Spec.DefaultCertificateSecret == nil {
-		caSecret, err := r.ensureRouterCACertificateSecret()
-		if err != nil {
-			return fmt.Errorf("failed to get CA secret: %v", err)
-		}
-
 		if err := r.ensureDefaultCertificateForIngress(caSecret, current, ci); err != nil {
 			errs = append(errs, fmt.Errorf("failed to create default certificate for clusteringress %s: %v", ci.Name, err))
 			return utilerrors.NewAggregate(errs)

@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 
@@ -27,20 +26,62 @@ const (
 	caCertConfigMapName = "router-ca"
 )
 
-// ensureRouterCAConfigMap will create or delete the configmap for the router CA
-// as appropriate.
-func (r *reconciler) ensureRouterCAConfigMap(ingresses []ingressv1alpha1.ClusterIngress) error {
-	if shouldPublishRouterCA(ingresses) {
-		if err := r.ensureRouterCAIsPublished(); err != nil {
-			return fmt.Errorf("failed to ensure router CA was published: %v", err)
-		}
-	} else {
-		if err := r.ensureRouterCAIsUnpublished(); err != nil {
+// routerCAConfigMapName returns the namespaced name for the router CA
+// configmap.
+func routerCAConfigMapName() types.NamespacedName {
+	return types.NamespacedName{
+		Namespace: GlobalMachineSpecifiedConfigNamespace,
+		Name:      caCertConfigMapName,
+	}
+}
+
+// ensureRouterCAConfigMap will create, update, or delete the configmap for the
+// router CA as appropriate.
+func (r *reconciler) ensureRouterCAConfigMap(secret *corev1.Secret, ingresses []ingressv1alpha1.ClusterIngress) error {
+	desired, err := desiredRouterCAConfigMap(secret, ingresses)
+	if err != nil {
+		return err
+	}
+	current, err := r.currentRouterCAConfigMap()
+	if err != nil {
+		return err
+	}
+	switch {
+	case desired == nil && current == nil:
+		// Nothing to do.
+	case desired == nil && current != nil:
+		if err := r.deleteRouterCAConfigMap(current); err != nil {
 			return fmt.Errorf("failed to ensure router CA was unpublished: %v", err)
 		}
+	case desired != nil && current == nil:
+		if err := r.createRouterCAConfigMap(desired); err != nil {
+			return fmt.Errorf("failed to ensure router CA was published: %v", err)
+		}
+	case desired != nil && current != nil:
+		if err := r.updateRouterCAConfigMap(current, desired); err != nil {
+			return fmt.Errorf("failed to update published router CA: %v", err)
+		}
+	}
+	return nil
+}
+
+// desiredRouterCAConfigMap returns the desired router CA configmap.
+func desiredRouterCAConfigMap(secret *corev1.Secret, ingresses []ingressv1alpha1.ClusterIngress) (*corev1.ConfigMap, error) {
+	if !shouldPublishRouterCA(ingresses) {
+		return nil, nil
 	}
 
-	return nil
+	name := routerCAConfigMapName()
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name.Name,
+			Namespace: name.Namespace,
+		},
+		Data: map[string]string{
+			"ca-bundle.crt": string(secret.Data["tls.crt"]),
+		},
+	}
+	return cm, nil
 }
 
 // shouldPublishRouterCA checks if some ClusterIngress uses the default
@@ -54,76 +95,64 @@ func shouldPublishRouterCA(ingresses []ingressv1alpha1.ClusterIngress) bool {
 	return false
 }
 
-// ensureRouterCAIsPublished ensures a configmap exists with the CA certificate
-// in a well known namespace.
-func (r *reconciler) ensureRouterCAIsPublished() error {
-	secret, err := r.ensureRouterCACertificateSecret()
-	if err != nil {
-		return fmt.Errorf("failed to get CA secret: %v", err)
-	}
-
-	cm := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      caCertConfigMapName,
-			Namespace: GlobalMachineSpecifiedConfigNamespace,
-		},
-	}
-	err = r.Client.Get(context.TODO(), types.NamespacedName{Namespace: cm.Namespace, Name: cm.Name}, cm)
-	if err != nil {
-		if !errors.IsNotFound(err) {
-			return fmt.Errorf("failed to get configmap %s/%s: %v", cm.Namespace, cm.Name, err)
+// currentRouterCAConfigMap returns the current router CA configmap.
+func (r *reconciler) currentRouterCAConfigMap() (*corev1.ConfigMap, error) {
+	name := routerCAConfigMapName()
+	cm := &corev1.ConfigMap{}
+	if err := r.Client.Get(context.TODO(), name, cm); err != nil {
+		if errors.IsNotFound(err) {
+			return nil, nil
 		}
-
-		cm.Data = map[string]string{"ca-bundle.crt": string(secret.Data["tls.crt"])}
-		if err := r.Client.Create(context.TODO(), cm); err != nil {
-			if errors.IsAlreadyExists(err) {
-				return nil
-			}
-
-			return fmt.Errorf("failed to create configmap %s/%s: %v", cm.Namespace, cm.Name, err)
-		}
-
-		logrus.Infof("created configmap %s/%s", cm.Namespace, cm.Name)
-
-		return nil
+		return nil, err
 	}
+	return cm, nil
+}
 
-	if !bytes.Equal(secret.Data["tls.crt"], []byte(cm.Data["ca-bundle.crt"])) {
-		cm.Data["ca-bundle.crt"] = string(secret.Data["tls.crt"])
-		if err := r.Client.Update(context.TODO(), cm); err != nil {
-			if errors.IsAlreadyExists(err) {
-				return nil
-			}
-
-			return fmt.Errorf("failed to update configmap %s/%s: %v", cm.Namespace, cm.Name, err)
+// createRouterCAConfigMap creates a router CA configmap.
+func (r *reconciler) createRouterCAConfigMap(cm *corev1.ConfigMap) error {
+	if err := r.Client.Create(context.TODO(), cm); err != nil {
+		if errors.IsAlreadyExists(err) {
+			return nil
 		}
-
-		logrus.Infof("updated configmap %s/%s", cm.Namespace, cm.Name)
-
-		return nil
+		return err
 	}
-
+	logrus.Infof("created configmap %s/%s", cm.Namespace, cm.Name)
 	return nil
 }
 
-// ensureRouterCAIsUnpublished ensures the configmap with the CA certificate is
-// deleted.
-func (r *reconciler) ensureRouterCAIsUnpublished() error {
-	cm := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      caCertConfigMapName,
-			Namespace: GlobalMachineSpecifiedConfigNamespace,
-		},
+// updateRouterCAConfigMaps updates the router CA configmap.
+func (r *reconciler) updateRouterCAConfigMap(current, desired *corev1.ConfigMap) error {
+	if routerCAConfigMapsEqual(current, desired) {
+		return nil
 	}
+	updated := current.DeepCopy()
+	updated.Data = desired.Data
+	if err := r.Client.Update(context.TODO(), updated); err != nil {
+		if errors.IsAlreadyExists(err) {
+			return nil
+		}
+		return err
+	}
+	logrus.Infof("updated configmap %s/%s", updated.Namespace, updated.Name)
+	return nil
+}
+
+// deleteRouterCAConfigMap deletes the router CA configmap.
+func (r *reconciler) deleteRouterCAConfigMap(cm *corev1.ConfigMap) error {
 	if err := r.Client.Delete(context.TODO(), cm); err != nil {
 		if errors.IsNotFound(err) {
 			return nil
 		}
-
-		return fmt.Errorf("failed to delete configmap %s/%s: %v", cm.Namespace, cm.Name, err)
+		return err
 	}
-
 	logrus.Infof("deleted configmap %s/%s", cm.Namespace, cm.Name)
-
 	return nil
+}
+
+// routerCAConfigMapsEqual compares two router CA configmaps.
+func routerCAConfigMapsEqual(a, b *corev1.ConfigMap) bool {
+	if a.Data["ca-bundle.crt"] != b.Data["ca-bundle.crt"] {
+		return false
+	}
+	return true
 }
