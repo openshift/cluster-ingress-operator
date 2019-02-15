@@ -45,6 +45,11 @@ const (
 	// Annotation used to inform the certificate generation service to
 	// generate a cluster-signed certificate and populate the secret.
 	ServingCertSecretAnnotation = "service.alpha.openshift.io/serving-cert-secret-name"
+
+	// OwningClusterIngressLabel should be applied to any objects "owned by" to a
+	// clusteringress to aid in selection (especially in cases where an ownerref
+	// can't be established due to namespace boundaries).
+	OwningClusterIngressLabel = "ingress.openshift.io/clusteringress"
 )
 
 func MustAssetReader(asset string) io.Reader {
@@ -160,7 +165,7 @@ func (f *Factory) RouterDeployment(cr *ingressv1alpha1.ClusterIngress) (*appsv1.
 	if deployment.Labels == nil {
 		deployment.Labels = map[string]string{}
 	}
-	deployment.Labels["ingress.openshift.io/clusteringress"] = cr.Name
+	deployment.Labels[OwningClusterIngressLabel] = cr.Name
 
 	if deployment.Spec.Template.Labels == nil {
 		deployment.Spec.Template.Labels = map[string]string{}
@@ -308,7 +313,7 @@ func (f *Factory) RouterServiceInternal(cr *ingressv1alpha1.ClusterIngress) (*co
 		s.Labels = map[string]string{}
 	}
 	s.Labels["router"] = name
-	s.Labels["ingress.openshift.io/clusteringress"] = cr.Name
+	s.Labels[OwningClusterIngressLabel] = cr.Name
 
 	if s.Annotations == nil {
 		s.Annotations = map[string]string{}

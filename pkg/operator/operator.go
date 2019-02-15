@@ -122,7 +122,7 @@ func New(config operatorconfig.Config, dnsManager dns.Manager, kubeConfig *rest.
 		operatorController.Watch(&source.Informer{Informer: informer}, &handler.EnqueueRequestsFromMapFunc{
 			ToRequests: handler.ToRequestsFunc(func(a handler.MapObject) []reconcile.Request {
 				labels := a.Meta.GetLabels()
-				if ingressName, ok := labels["ingress.openshift.io/clusteringress"]; ok {
+				if ingressName, ok := labels[manifests.OwningClusterIngressLabel]; ok {
 					logrus.Infof("queueing %s for related %s", ingressName, a.Meta.GetSelfLink())
 					return []reconcile.Request{
 						{NamespacedName: types.NamespacedName{
