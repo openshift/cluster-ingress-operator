@@ -171,7 +171,7 @@ func (r *reconciler) reconcile(request reconcile.Request) (reconcile.Result, err
 		}
 	}
 
-	// TODO: This should be in a different reconciler as it's independnt of an
+	// TODO: This should be in a different reconciler as it's independent of an
 	// individual ingress. We only really need to trigger this when a
 	// clusteringress is added or deleted...
 	if len(errs) == 0 {
