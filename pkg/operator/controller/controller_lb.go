@@ -89,6 +89,7 @@ func desiredLoadBalancerService(ci *ingressv1alpha1.ClusterIngress, infra *confi
 		service.Labels = map[string]string{}
 	}
 	service.Labels["router"] = name.Name
+	service.Labels[manifests.OwningClusterIngressLabel] = ci.Name
 
 	if service.Spec.Selector == nil {
 		service.Spec.Selector = map[string]string{}
