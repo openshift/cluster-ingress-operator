@@ -339,7 +339,12 @@ func (r *reconciler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress, 
 	}
 
 	if ci.Spec.DefaultCertificateSecret == nil {
-		if err := r.ensureDefaultCertificateForIngress(current, ci); err != nil {
+		caSecret, err := r.ensureRouterCACertificateSecret()
+		if err != nil {
+			return fmt.Errorf("failed to get CA secret: %v", err)
+		}
+
+		if err := r.ensureDefaultCertificateForIngress(caSecret, current, ci); err != nil {
 			errs = append(errs, fmt.Errorf("failed to create default certificate for clusteringress %s: %v", ci.Name, err))
 			return utilerrors.NewAggregate(errs)
 		}

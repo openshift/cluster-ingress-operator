@@ -101,21 +101,3 @@ func (r *reconciler) createRouterCASecret(secret *corev1.Secret) error {
 	logrus.Infof("created secret %s/%s", secret.Namespace, secret.Name)
 	return nil
 }
-
-// getRouterCA gets the CA, or creates it if it does not already exist.
-func (r *reconciler) getRouterCA() (*crypto.CA, error) {
-	secret, err := r.ensureRouterCACertificateSecret()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get CA secret: %v", err)
-	}
-
-	certBytes := secret.Data["tls.crt"]
-	keyBytes := secret.Data["tls.key"]
-
-	ca, err := crypto.GetCAFromBytes(certBytes, keyBytes)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get CA from secret %s/%s: %v", secret.Namespace, secret.Name, err)
-	}
-
-	return ca, nil
-}
