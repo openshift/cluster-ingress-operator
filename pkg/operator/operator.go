@@ -125,10 +125,12 @@ func New(config operatorconfig.Config, dnsManager dns.Manager, kubeConfig *rest.
 				if ingressName, ok := labels[manifests.OwningClusterIngressLabel]; ok {
 					logrus.Infof("queueing %s for related %s", ingressName, a.Meta.GetSelfLink())
 					return []reconcile.Request{
-						{NamespacedName: types.NamespacedName{
-							Namespace: config.Namespace,
-							Name:      ingressName,
-						}},
+						{
+							NamespacedName: types.NamespacedName{
+								Namespace: config.Namespace,
+								Name:      ingressName,
+							},
+						},
 					}
 				} else {
 					return []reconcile.Request{}
