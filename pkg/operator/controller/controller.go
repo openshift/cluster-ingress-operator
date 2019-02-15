@@ -343,16 +343,9 @@ func (r *reconciler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress, 
 		return utilerrors.NewAggregate(errs)
 	}
 
-	if ci.Spec.DefaultCertificateSecret == nil {
-		if err := r.ensureDefaultCertificateForIngress(caSecret, current, ci); err != nil {
-			errs = append(errs, fmt.Errorf("failed to create default certificate for clusteringress %s: %v", ci.Name, err))
-			return utilerrors.NewAggregate(errs)
-		}
-	} else {
-		if err := r.ensureDefaultCertificateDeleted(current, ci); err != nil {
-			errs = append(errs, fmt.Errorf("failed to delete operator-generated default certificate for clusteringress %s: %v", ci.Name, err))
-			return utilerrors.NewAggregate(errs)
-		}
+	if err := r.ensureDefaultCertificateForIngress(caSecret, current, ci); err != nil {
+		errs = append(errs, err)
+		return utilerrors.NewAggregate(errs)
 	}
 
 	if err := r.ensureMetricsIntegration(ci, internalSvc, deploymentRef); err != nil {
