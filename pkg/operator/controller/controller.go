@@ -98,8 +98,10 @@ type reconciler struct {
 func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, error) {
 	result, err := r.reconcile(request)
 	if err != nil {
-		// TODO: Figure out why the controller-runtime logger impl isn't logging
-		// these.
+		// TODO: We're not setting up the controller-runtime logger, so errors we
+		// bubble out are not being logged. For now, log them here, but we need to
+		// redo out logging and wire up the controller-runtime logger because who
+		// knows what else is being eaten.
 		logrus.Errorf("error: %v", err)
 	}
 	return result, err
