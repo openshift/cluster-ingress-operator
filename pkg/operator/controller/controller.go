@@ -210,7 +210,7 @@ func (r *reconciler) ensureIngressDeleted(ingress *ingressv1alpha1.ClusterIngres
 	}
 	logrus.Infof("deleted deployment for ingress %s", ingress.Name)
 	// Clean up the finalizer to allow the clusteringress to be deleted.
-	updated := ingress.DeepCopyObject().(*ingressv1alpha1.ClusterIngress)
+	updated := ingress.DeepCopy()
 	if slice.ContainsString(ingress.Finalizers, ClusterIngressFinalizer) {
 		updated.Finalizers = slice.RemoveString(updated.Finalizers, ClusterIngressFinalizer)
 		err = r.Client.Update(context.TODO(), updated)
