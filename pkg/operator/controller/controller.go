@@ -100,7 +100,7 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 	if err != nil {
 		// TODO: We're not setting up the controller-runtime logger, so errors we
 		// bubble out are not being logged. For now, log them here, but we need to
-		// redo out logging and wire up the controller-runtime logger because who
+		// redo our logging and wire up the controller-runtime logger because who
 		// knows what else is being eaten.
 		logrus.Errorf("error: %v", err)
 	}
