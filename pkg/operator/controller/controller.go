@@ -169,15 +169,13 @@ func (r *reconciler) reconcile(request reconcile.Request) (reconcile.Result, err
 	// TODO: This should be in a different reconciler as it's independent of an
 	// individual ingress. We only really need to trigger this when a
 	// clusteringress is added or deleted...
-	if len(errs) == 0 {
-		// Find all clusteringresses to compute CA states.
-		ingresses := &ingressv1alpha1.ClusterIngressList{}
-		err = r.Client.List(context.TODO(), &client.ListOptions{Namespace: r.Namespace}, ingresses)
-		if err != nil {
-			return reconcile.Result{}, fmt.Errorf("failed to list clusteringresses in namespace %s: %v", r.Namespace, err)
-		}
-		errs = append(errs, r.ensureRouterCAConfigMap(ingresses.Items))
+	// Find all clusteringresses to compute CA states.
+	ingresses := &ingressv1alpha1.ClusterIngressList{}
+	err = r.Client.List(context.TODO(), &client.ListOptions{Namespace: r.Namespace}, ingresses)
+	if err != nil {
+		return reconcile.Result{}, fmt.Errorf("failed to list clusteringresses in namespace %s: %v", r.Namespace, err)
 	}
+	errs = append(errs, r.ensureRouterCAConfigMap(ingresses.Items))
 
 	return result, utilerrors.NewAggregate(errs)
 }
