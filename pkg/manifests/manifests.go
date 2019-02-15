@@ -46,7 +46,7 @@ const (
 	// generate a cluster-signed certificate and populate the secret.
 	ServingCertSecretAnnotation = "service.alpha.openshift.io/serving-cert-secret-name"
 
-	// OwningClusterIngressLabel should be applied to any objects "owned by" to a
+	// OwningClusterIngressLabel should be applied to any objects "owned by" a
 	// clusteringress to aid in selection (especially in cases where an ownerref
 	// can't be established due to namespace boundaries).
 	OwningClusterIngressLabel = "ingress.openshift.io/clusteringress"
