@@ -157,6 +157,11 @@ func (f *Factory) RouterDeployment(cr *ingressv1alpha1.ClusterIngress) (*appsv1.
 
 	deployment.Name = name
 
+	if deployment.Labels == nil {
+		deployment.Labels = map[string]string{}
+	}
+	deployment.Labels["ingress.openshift.io/clusteringress"] = cr.Name
+
 	if deployment.Spec.Template.Labels == nil {
 		deployment.Spec.Template.Labels = map[string]string{}
 	}
@@ -303,6 +308,7 @@ func (f *Factory) RouterServiceInternal(cr *ingressv1alpha1.ClusterIngress) (*co
 		s.Labels = map[string]string{}
 	}
 	s.Labels["router"] = name
+	s.Labels["ingress.openshift.io/clusteringress"] = cr.Name
 
 	if s.Annotations == nil {
 		s.Annotations = map[string]string{}

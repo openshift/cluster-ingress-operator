@@ -92,16 +92,20 @@ type reconciler struct {
 	Config
 }
 
-// Reconcile currently performs a full reconciliation in response to any
-// request. Status is recomputed and updated after every request is processed.
-//
-// TODO: Refactor the way the controllers are set up; the only requests that
-// should be coming into this controller are clusteringress keys. Then the loop
-// can act on a single clusteringress. To achieve this, watch events from
-// related resources must be translated into clusteringress keys through label
-// checks and such (as various relationships cross boundaries which can't be
-// expressed by ownerrefs).
+// Reconcile expects request to refer to a clusteringress in the operator
+// namespace, and will do all the work to ensure the clusteringress is in the
+// desired state.
 func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, error) {
+	result, err := r.reconcile(request)
+	if err != nil {
+		// TODO: Figure out why the controller-runtime logger impl isn't logging
+		// these.
+		logrus.Errorf("error: %v", err)
+	}
+	return result, err
+}
+
+func (r *reconciler) reconcile(request reconcile.Request) (reconcile.Result, error) {
 	// TODO: Should this be another controller?
 	defer func() {
 		err := r.syncOperatorStatus()
@@ -110,85 +114,71 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 		}
 	}()
 
-	logrus.Infof("reconciling request: %#v", request)
+	logrus.Infof("reconciling request: %v", request)
 
-	result, err := r.reconcile()
+	// Get the current ingress state.
+	ingress := &ingressv1alpha1.ClusterIngress{}
+	err := r.Client.Get(context.TODO(), request.NamespacedName, ingress)
 	if err != nil {
-		logrus.Errorf("failed to reconcile: %v", err)
-	}
-	return result, err
-}
-
-// reconcile performs a single full reconciliation loop for ingress. It ensures
-// the ingress namespace exists, and then creates, updates, or deletes router
-// clusters as appropriate given the ClusterIngresses that exist.
-func (r *reconciler) reconcile() (reconcile.Result, error) {
-	dnsConfig := &configv1.DNS{}
-	err := r.Client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, dnsConfig)
-	if err != nil {
-		return reconcile.Result{}, fmt.Errorf("failed to get dns 'cluster': %v", err)
+		if errors.IsNotFound(err) {
+			// This means the ingress was already deleted/finalized and there are
+			// stale queue entries (or something edge triggering from a related
+			// resource that got deleted async).
+			ingress = nil
+		} else {
+			return reconcile.Result{}, fmt.Errorf("failed to get clusteringress %q: %v", request, err)
+		}
 	}
 
-	infraConfig := &configv1.Infrastructure{}
-	err = r.Client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, infraConfig)
-	if err != nil {
-		return reconcile.Result{}, fmt.Errorf("failed to get infrastructure 'cluster': %v", err)
-	}
-
-	// Ensure we have all the necessary scaffolding on which to place router
-	// instances.
-	err = r.ensureRouterNamespace()
-	if err != nil {
-		return reconcile.Result{}, err
-	}
-
-	// Find all clusteringresses.
-	ingresses := &ingressv1alpha1.ClusterIngressList{}
-	err = r.Client.List(context.TODO(), &client.ListOptions{Namespace: r.Namespace}, ingresses)
-	if err != nil {
-		return reconcile.Result{}, fmt.Errorf("failed to list clusteringresses in namespace %s: %v", r.Namespace, err)
-	}
-
-	// Reconcile all the ingresses.
+	// Collect errors as we go.
 	errs := []error{}
-	for _, ingress := range ingresses.Items {
-		logrus.Infof("reconciling clusteringress %#v", ingress)
-		// Handle deleted ingress.
-		// TODO: Assert/ensure that the ingress has a finalizer so we can reliably detect
-		// deletion.
-		if ingress.DeletionTimestamp != nil {
-			// TODO: This should also be tied to the HA type.
-			err := r.finalizeLoadBalancerService(&ingress, dnsConfig)
-			if err != nil {
-				errs = append(errs, fmt.Errorf("failed to finalize load balancer service for %s: %v", ingress.Name, err))
-				continue
-			}
-			logrus.Infof("finalized load balancer service for ingress %s", ingress.Name)
-			err = r.ensureRouterDeleted(&ingress)
-			if err != nil {
-				errs = append(errs, fmt.Errorf("failed to delete deployment for ingress %s: %v", ingress.Name, err))
-				continue
-			}
-			logrus.Infof("deleted deployment for ingress %s", ingress.Name)
-			// Clean up the finalizer to allow the clusteringress to be deleted.
-			if slice.ContainsString(ingress.Finalizers, ClusterIngressFinalizer) {
-				ingress.Finalizers = slice.RemoveString(ingress.Finalizers, ClusterIngressFinalizer)
-				err = r.Client.Update(context.TODO(), &ingress)
-				if err != nil {
-					errs = append(errs, fmt.Errorf("failed to remove finalizer from clusteringress %s/%s: %v", ingress.Namespace, ingress.Name, err))
-				}
-			}
-			continue
+
+	if ingress != nil {
+		// Only reconcile the ingress itself if it exists.
+		dnsConfig := &configv1.DNS{}
+		err = r.Client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, dnsConfig)
+		if err != nil {
+			return reconcile.Result{}, fmt.Errorf("failed to get dns 'cluster': %v", err)
 		}
 
-		// Handle active ingress.
-		err := r.ensureRouterForIngress(&ingress, dnsConfig, infraConfig)
+		infraConfig := &configv1.Infrastructure{}
+		err = r.Client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, infraConfig)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("failed to ensure clusteringress %s/%s: %v", ingress.Namespace, ingress.Name, err))
+			return reconcile.Result{}, fmt.Errorf("failed to get infrastructure 'cluster': %v", err)
+		}
+
+		// Ensure we have all the necessary scaffolding on which to place router
+		// instances.
+		err = r.ensureRouterNamespace()
+		if err != nil {
+			return reconcile.Result{}, err
+		}
+
+		if ingress.DeletionTimestamp != nil {
+			// Handle deletion.
+			err := r.ensureIngressDeleted(ingress, dnsConfig)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("failed to ensure ingress deletion: %v", err))
+			}
+		} else {
+			// Handle everything else.
+			err := r.ensureRouterForIngress(ingress, dnsConfig, infraConfig)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("failed to ensure clusteringress: %v", err))
+			}
 		}
 	}
 
+	// TODO: This should be in a different reconciler as it's independnt of an
+	// individual ingress. We only really need to trigger this when a
+	// clusteringress is added or deleted...
 	if len(errs) == 0 {
+		// Find all clusteringresses to compute CA states.
+		ingresses := &ingressv1alpha1.ClusterIngressList{}
+		err = r.Client.List(context.TODO(), &client.ListOptions{Namespace: r.Namespace}, ingresses)
+		if err != nil {
+			return reconcile.Result{}, fmt.Errorf("failed to list clusteringresses in namespace %s: %v", r.Namespace, err)
+		}
 		if shouldPublishRouterCA(ingresses.Items) {
 			if err := r.ensureRouterCAIsPublished(); err != nil {
 				errs = append(errs, fmt.Errorf("failed to ensure router CA was published: %v", err))
@@ -201,6 +191,32 @@ func (r *reconciler) reconcile() (reconcile.Result, error) {
 	}
 
 	return reconcile.Result{}, utilerrors.NewAggregate(errs)
+}
+
+// ensureIngressDeleted tries to delete ingress, and if successful, will remove
+// the finalizer.
+func (r *reconciler) ensureIngressDeleted(ingress *ingressv1alpha1.ClusterIngress, dnsConfig *configv1.DNS) error {
+	// TODO: This should also be tied to the HA type.
+	err := r.finalizeLoadBalancerService(ingress, dnsConfig)
+	if err != nil {
+		return fmt.Errorf("failed to finalize load balancer service for %s: %v", ingress.Name, err)
+	}
+	logrus.Infof("finalized load balancer service for ingress %s", ingress.Name)
+	err = r.ensureRouterDeleted(ingress)
+	if err != nil {
+		return fmt.Errorf("failed to delete deployment for ingress %s: %v", ingress.Name, err)
+	}
+	logrus.Infof("deleted deployment for ingress %s", ingress.Name)
+	// Clean up the finalizer to allow the clusteringress to be deleted.
+	updated := ingress.DeepCopyObject().(*ingressv1alpha1.ClusterIngress)
+	if slice.ContainsString(ingress.Finalizers, ClusterIngressFinalizer) {
+		updated.Finalizers = slice.RemoveString(updated.Finalizers, ClusterIngressFinalizer)
+		err = r.Client.Update(context.TODO(), updated)
+		if err != nil {
+			return fmt.Errorf("failed to remove finalizer from clusteringress %s: %v", ingress.Name, err)
+		}
+	}
+	return nil
 }
 
 // ensureRouterNamespace ensures all the necessary scaffolding exists for

@@ -22,6 +22,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 
@@ -30,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 )
 
@@ -99,25 +101,45 @@ func New(config operatorconfig.Config, dnsManager dns.Manager, kubeConfig *rest.
 	if err != nil {
 		return nil, fmt.Errorf("failed to get API Group-Resources")
 	}
-	ingressCache, err := cache.New(kubeConfig, cache.Options{Namespace: "openshift-ingress", Scheme: scheme, Mapper: mapper})
+	operandCache, err := cache.New(kubeConfig, cache.Options{Namespace: "openshift-ingress", Scheme: scheme, Mapper: mapper})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create openshift-ingress cache: %v", err)
 	}
-
-	for _, obj := range []runtime.Object{
+	// Any types added to the list here will only queue a clusteringress if the
+	// resource has the expected label associating the resource with a
+	// clusteringress.
+	for _, o := range []runtime.Object{
 		&appsv1.Deployment{},
 		&corev1.Service{},
 	} {
-		informer, err := ingressCache.GetInformer(obj)
+		// TODO: may not be necessary to copy, but erring on the side of caution for
+		// now given we're in a loop.
+		obj := o.DeepCopyObject()
+		informer, err := operandCache.GetInformer(obj)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create informer for %v: %v", obj, err)
 		}
-		operatorController.Watch(&source.Informer{Informer: informer}, &handler.EnqueueRequestForObject{})
+		operatorController.Watch(&source.Informer{Informer: informer}, &handler.EnqueueRequestsFromMapFunc{
+			ToRequests: handler.ToRequestsFunc(func(a handler.MapObject) []reconcile.Request {
+				labels := a.Meta.GetLabels()
+				if ingressName, ok := labels["ingress.openshift.io/clusteringress"]; ok {
+					logrus.Infof("queueing %s for related %s", ingressName, a.Meta.GetSelfLink())
+					return []reconcile.Request{
+						{NamespacedName: types.NamespacedName{
+							Namespace: config.Namespace,
+							Name:      ingressName,
+						}},
+					}
+				} else {
+					return []reconcile.Request{}
+				}
+			}),
+		})
 	}
 
 	return &Operator{
 		manager: operatorManager,
-		caches:  []cache.Cache{ingressCache},
+		caches:  []cache.Cache{operandCache},
 
 		// TODO: These are only needed for the default cluster ingress stuff, which
 		// should be refactored away.
