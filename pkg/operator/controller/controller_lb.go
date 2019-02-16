@@ -34,8 +34,8 @@ const (
 // ensureLoadBalancerService creates an LB service if one is desired but absent.
 // Always returns the current LB service if one exists (whether it already
 // existed or was created during the course of the function).
-func (r *reconciler) ensureLoadBalancerService(ci *ingressv1alpha1.ClusterIngress, infra *configv1.Infrastructure, deployment *appsv1.Deployment) (*corev1.Service, error) {
-	desiredLBService, err := desiredLoadBalancerService(ci, infra, deployment)
+func (r *reconciler) ensureLoadBalancerService(ci *ingressv1alpha1.ClusterIngress, deployment *appsv1.Deployment) (*corev1.Service, error) {
+	desiredLBService, err := r.desiredLoadBalancerService(ci, deployment)
 	if err != nil {
 		return nil, err
 	}
@@ -66,7 +66,7 @@ func loadBalancerServiceName(ci *ingressv1alpha1.ClusterIngress) types.Namespace
 // clusteringress, or nil if an LB service isn't desired. An LB service is
 // desired if the high availability type is Cloud. An LB service will declare an
 // owner reference to the given deployment.
-func desiredLoadBalancerService(ci *ingressv1alpha1.ClusterIngress, infra *configv1.Infrastructure, deployment *appsv1.Deployment) (*corev1.Service, error) {
+func (r *reconciler) desiredLoadBalancerService(ci *ingressv1alpha1.ClusterIngress, deployment *appsv1.Deployment) (*corev1.Service, error) {
 	if ci.Spec.HighAvailability == nil || ci.Spec.HighAvailability.Type != ingressv1alpha1.CloudClusterIngressHA {
 		return nil, nil
 	}
@@ -96,7 +96,10 @@ func desiredLoadBalancerService(ci *ingressv1alpha1.ClusterIngress, infra *confi
 	}
 	service.Spec.Selector["router"] = name.Name
 
-	if infra.Status.Platform == configv1.AWSPlatform {
+	if r.infraConfig == nil {
+		return nil, fmt.Errorf("infra config not found")
+	}
+	if r.infraConfig.Status.Platform == configv1.AWSPlatform {
 		if service.Annotations == nil {
 			service.Annotations = map[string]string{}
 		}
@@ -124,7 +127,7 @@ func (r *reconciler) currentLoadBalancerService(ci *ingressv1alpha1.ClusterIngre
 // finalizeLoadBalancerService deletes any DNS entries associated with any
 // current LB service associated with the clusteringress and then finalizes the
 // service.
-func (r *reconciler) finalizeLoadBalancerService(ci *ingressv1alpha1.ClusterIngress, dnsConfig *configv1.DNS) error {
+func (r *reconciler) finalizeLoadBalancerService(ci *ingressv1alpha1.ClusterIngress) error {
 	service, err := r.currentLoadBalancerService(ci)
 	if err != nil {
 		return err
@@ -132,7 +135,7 @@ func (r *reconciler) finalizeLoadBalancerService(ci *ingressv1alpha1.ClusterIngr
 	if service == nil {
 		return nil
 	}
-	records, err := desiredDNSRecords(ci, dnsConfig, service)
+	records, err := r.desiredDNSRecords(ci, service)
 	if err != nil {
 		return err
 	}

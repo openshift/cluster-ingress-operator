@@ -21,6 +21,7 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
@@ -90,6 +91,9 @@ type Config struct {
 // events.
 type reconciler struct {
 	Config
+
+	dnsConfig   *configv1.DNS
+	infraConfig *configv1.Infrastructure
 }
 
 // Reconcile expects request to refer to a clusteringress in the operator
@@ -134,38 +138,48 @@ func (r *reconciler) reconcile(request reconcile.Request) (reconcile.Result, err
 
 	// Collect errors as we go.
 	errs := []error{}
+	result := reconcile.Result{}
 
 	if ingress != nil {
 		// Only reconcile the ingress itself if it exists.
 		dnsConfig := &configv1.DNS{}
-		err = r.Client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, dnsConfig)
-		if err != nil {
-			return reconcile.Result{}, fmt.Errorf("failed to get dns 'cluster': %v", err)
+		if err := r.Client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, dnsConfig); err != nil {
+			errs = append(errs, fmt.Errorf("failed to get dns 'cluster': %v", err))
+			r.dnsConfig = nil
+			if errors.IsNotFound(err) {
+				result.RequeueAfter = 10 * time.Second
+			}
+		} else {
+			r.dnsConfig = dnsConfig
 		}
 
 		infraConfig := &configv1.Infrastructure{}
-		err = r.Client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, infraConfig)
-		if err != nil {
-			return reconcile.Result{}, fmt.Errorf("failed to get infrastructure 'cluster': %v", err)
+		if err := r.Client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, infraConfig); err != nil {
+			errs = append(errs, fmt.Errorf("failed to get infrastructure 'cluster': %v", err))
+			r.infraConfig = nil
+			if errors.IsNotFound(err) {
+				result.RequeueAfter = 10 * time.Second
+			}
+		} else {
+			r.infraConfig = infraConfig
 		}
 
 		// Ensure we have all the necessary scaffolding on which to place router
 		// instances.
 		err = r.ensureRouterNamespace()
 		if err != nil {
-			return reconcile.Result{}, err
+			errs = append(errs, err)
+			return result, utilerrors.NewAggregate(errs)
 		}
 
 		if ingress.DeletionTimestamp != nil {
 			// Handle deletion.
-			err := r.ensureIngressDeleted(ingress, dnsConfig)
-			if err != nil {
+			if err := r.ensureIngressDeleted(ingress); err != nil {
 				errs = append(errs, fmt.Errorf("failed to ensure ingress deletion: %v", err))
 			}
 		} else {
 			// Handle everything else.
-			err := r.ensureRouterForIngress(ingress, dnsConfig, infraConfig)
-			if err != nil {
+			if err := r.ensureRouterForIngress(ingress, &result); err != nil {
 				errs = append(errs, fmt.Errorf("failed to ensure clusteringress: %v", err))
 			}
 		}
@@ -192,23 +206,25 @@ func (r *reconciler) reconcile(request reconcile.Request) (reconcile.Result, err
 		}
 	}
 
-	return reconcile.Result{}, utilerrors.NewAggregate(errs)
+	return result, utilerrors.NewAggregate(errs)
 }
 
 // ensureIngressDeleted tries to delete ingress, and if successful, will remove
 // the finalizer.
-func (r *reconciler) ensureIngressDeleted(ingress *ingressv1alpha1.ClusterIngress, dnsConfig *configv1.DNS) error {
+func (r *reconciler) ensureIngressDeleted(ingress *ingressv1alpha1.ClusterIngress) error {
 	// TODO: This should also be tied to the HA type.
-	err := r.finalizeLoadBalancerService(ingress, dnsConfig)
+	err := r.finalizeLoadBalancerService(ingress)
 	if err != nil {
 		return fmt.Errorf("failed to finalize load balancer service for %s: %v", ingress.Name, err)
 	}
 	logrus.Infof("finalized load balancer service for ingress %s", ingress.Name)
+
 	err = r.ensureRouterDeleted(ingress)
 	if err != nil {
 		return fmt.Errorf("failed to delete deployment for ingress %s: %v", ingress.Name, err)
 	}
 	logrus.Infof("deleted deployment for ingress %s", ingress.Name)
+
 	// Clean up the finalizer to allow the clusteringress to be deleted.
 	updated := ingress.DeepCopy()
 	if slice.ContainsString(ingress.Finalizers, ClusterIngressFinalizer) {
@@ -297,7 +313,7 @@ func (r *reconciler) ensureRouterNamespace() error {
 
 // ensureRouterForIngress ensures all necessary router resources exist for a
 // given clusteringress.
-func (r *reconciler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress, dnsConfig *configv1.DNS, infraConfig *configv1.Infrastructure) error {
+func (r *reconciler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress, result *reconcile.Result) error {
 	expected, err := r.ManifestFactory.RouterDeployment(ci)
 	if err != nil {
 		return fmt.Errorf("failed to build router deployment: %v", err)
@@ -336,42 +352,49 @@ func (r *reconciler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress, 
 		Controller: &trueVar,
 	}
 
-	lbService, err := r.ensureLoadBalancerService(ci, infraConfig, current)
+	errs := []error{}
+	lbService, err := r.ensureLoadBalancerService(ci, current)
 	if err != nil {
-		return fmt.Errorf("failed to ensure load balancer service for %s: %v", ci.Name, err)
+		errs = append(errs, fmt.Errorf("failed to ensure load balancer service for %s: %v", ci.Name, err))
 	}
-
-	err = r.ensureDNS(ci, dnsConfig, lbService)
-	if err != nil {
-		return fmt.Errorf("failed to ensure DNS for %s: %v", ci.Name, err)
+	if err = r.ensureDNS(ci, lbService); err != nil {
+		errs = append(errs, fmt.Errorf("failed to ensure DNS for %s: %v", ci.Name, err))
 	}
 
 	internalSvc, err := r.ensureInternalRouterServiceForIngress(ci, deploymentRef)
 	if err != nil {
-		return fmt.Errorf("failed to create internal router service for clusteringress %s: %v", ci.Name, err)
+		errs = append(errs, fmt.Errorf("failed to create internal router service for clusteringress %s: %v", ci.Name, err))
+		return utilerrors.NewAggregate(errs)
 	}
 
 	if ci.Spec.DefaultCertificateSecret == nil {
 		if err := r.ensureDefaultCertificateForIngress(current, ci); err != nil {
-			return fmt.Errorf("failed to create default certificate for clusteringress %s: %v", ci.Name, err)
+			errs = append(errs, fmt.Errorf("failed to create default certificate for clusteringress %s: %v", ci.Name, err))
+			return utilerrors.NewAggregate(errs)
 		}
 	} else {
 		if err := r.ensureDefaultCertificateDeleted(current, ci); err != nil {
-			return fmt.Errorf("failed to delete operator-generated default certificate for clusteringress %s: %v", ci.Name, err)
+			errs = append(errs, fmt.Errorf("failed to delete operator-generated default certificate for clusteringress %s: %v", ci.Name, err))
+			return utilerrors.NewAggregate(errs)
 		}
 	}
 
 	if err := r.ensureMetricsIntegration(ci, internalSvc, deploymentRef); err != nil {
-		return fmt.Errorf("failed to integrate metrics with openshift-monitoring for clusteringress %s: %v", ci.Name, err)
+		errs = append(errs, fmt.Errorf("failed to integrate metrics with openshift-monitoring for clusteringress %s: %v", ci.Name, err))
+		return utilerrors.NewAggregate(errs)
 	}
 
 	_, err = r.ensureServiceMonitor(ci, internalSvc, current)
 	if err != nil {
-		return fmt.Errorf("failed to ensure servicemonitor for %s: %v", ci.Name, err)
+		errs = append(errs, fmt.Errorf("failed to ensure servicemonitor for %s: %v", ci.Name, err))
+		if meta.IsNoMatchError(err) {
+			result.RequeueAfter = 10 * time.Second
+		}
 	}
 
 	if err := r.syncClusterIngressStatus(current, ci); err != nil {
-		return fmt.Errorf("failed to update status of clusteringress %s/%s: %v", current.Namespace, current.Name, err)
+		errs = append(errs, fmt.Errorf("failed to update status of clusteringress %s/%s: %v", current.Namespace, current.Name, err))
+		return utilerrors.NewAggregate(errs)
 	}
 
 	return nil
