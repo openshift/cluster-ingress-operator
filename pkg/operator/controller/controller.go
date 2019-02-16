@@ -97,6 +97,7 @@ func (r *reconciler) reconcile(request reconcile.Request) (reconcile.Result, err
 		err := r.syncOperatorStatus()
 		if err != nil {
 			logrus.Infof("failed to sync operator status: %v", err)
+			result.Requeue = true
 		}
 	}()
 
