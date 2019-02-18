@@ -140,7 +140,7 @@ func (r *reconciler) reconcile(request reconcile.Request) (reconcile.Result, err
 			infraConfig = nil
 		}
 		if dnsConfig == nil || infraConfig == nil {
-			// For now, if the cluster configs are irretrievable, defer reconciliation
+			// For now, if the cluster configs are unavailable, defer reconciliation
 			// because weaving conditionals everywhere to deal with various nil states
 			// is too complicated. It doesn't seem too risky to rely on the invariant
 			// of the cluster config being available.

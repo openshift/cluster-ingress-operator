@@ -16,7 +16,7 @@ import (
 // ensureDNS will create DNS records for the given LB service. If service is
 // nil, nothing is done.
 func (r *reconciler) ensureDNS(ci *ingressv1alpha1.ClusterIngress, service *corev1.Service, dnsConfig *configv1.DNS) error {
-	dnsRecords, err := r.desiredDNSRecords(ci, service, dnsConfig)
+	dnsRecords, err := desiredDNSRecords(ci, service, dnsConfig)
 	if err != nil {
 		return err
 	}
@@ -34,7 +34,7 @@ func (r *reconciler) ensureDNS(ci *ingressv1alpha1.ClusterIngress, service *core
 // If service is nil, no records are desired. If an ingress domain is in use,
 // records are desired in every specified zone present in the cluster DNS
 // configuration.
-func (r *reconciler) desiredDNSRecords(ci *ingressv1alpha1.ClusterIngress, service *corev1.Service, dnsConfig *configv1.DNS) ([]*dns.Record, error) {
+func desiredDNSRecords(ci *ingressv1alpha1.ClusterIngress, service *corev1.Service, dnsConfig *configv1.DNS) ([]*dns.Record, error) {
 	records := []*dns.Record{}
 
 	// If no service exists, no DNS records should exist.

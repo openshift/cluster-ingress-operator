@@ -35,7 +35,7 @@ const (
 // Always returns the current LB service if one exists (whether it already
 // existed or was created during the course of the function).
 func (r *reconciler) ensureLoadBalancerService(ci *ingressv1alpha1.ClusterIngress, deployment *appsv1.Deployment, infraConfig *configv1.Infrastructure) (*corev1.Service, error) {
-	desiredLBService, err := r.desiredLoadBalancerService(ci, deployment, infraConfig)
+	desiredLBService, err := desiredLoadBalancerService(ci, deployment, infraConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -66,7 +66,7 @@ func loadBalancerServiceName(ci *ingressv1alpha1.ClusterIngress) types.Namespace
 // clusteringress, or nil if an LB service isn't desired. An LB service is
 // desired if the high availability type is Cloud. An LB service will declare an
 // owner reference to the given deployment.
-func (r *reconciler) desiredLoadBalancerService(ci *ingressv1alpha1.ClusterIngress, deployment *appsv1.Deployment, infraConfig *configv1.Infrastructure) (*corev1.Service, error) {
+func desiredLoadBalancerService(ci *ingressv1alpha1.ClusterIngress, deployment *appsv1.Deployment, infraConfig *configv1.Infrastructure) (*corev1.Service, error) {
 	if ci.Spec.HighAvailability == nil || ci.Spec.HighAvailability.Type != ingressv1alpha1.CloudClusterIngressHA {
 		return nil, nil
 	}
@@ -132,7 +132,7 @@ func (r *reconciler) finalizeLoadBalancerService(ci *ingressv1alpha1.ClusterIngr
 	if service == nil {
 		return nil
 	}
-	records, err := r.desiredDNSRecords(ci, service, dnsConfig)
+	records, err := desiredDNSRecords(ci, service, dnsConfig)
 	if err != nil {
 		return err
 	}
