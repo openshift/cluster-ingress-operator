@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/sirupsen/logrus"
-
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/slice"
@@ -47,7 +45,7 @@ func (r *reconciler) ensureLoadBalancerService(ci *ingressv1alpha1.ClusterIngres
 	if desiredLBService != nil && currentLBService == nil {
 		err = r.Client.Create(context.TODO(), desiredLBService)
 		if err == nil {
-			logrus.Infof("created load balancer service %s/%s", desiredLBService.Namespace, desiredLBService.Name)
+			log.Info("created load balancer service", "namespace", desiredLBService.Namespace, "name", desiredLBService.Name)
 		} else if !errors.IsAlreadyExists(err) {
 			return nil, fmt.Errorf("failed to create load balancer service %s/%s: %v", desiredLBService.Namespace, desiredLBService.Name, err)
 		}
@@ -140,9 +138,9 @@ func (r *reconciler) finalizeLoadBalancerService(ci *ingressv1alpha1.ClusterIngr
 	for _, record := range records {
 		err := r.DNSManager.Delete(record)
 		if err != nil {
-			dnsErrors = append(dnsErrors, fmt.Errorf("failed to delete DNS record %v for ingress %s: %v", record, ci.Name, err))
+			dnsErrors = append(dnsErrors, fmt.Errorf("failed to delete DNS record %v for ingress %s/%s: %v", record, ci.Namespace, ci.Name, err))
 		} else {
-			logrus.Infof("deleted DNS record %v for ingress %s", record, ci.Name)
+			log.Info("deleted DNS record for ingress", "namespace", ci.Namespace, "name", ci.Name, "record", record)
 		}
 	}
 	if err := utilerrors.NewAggregate(dnsErrors); err != nil {
@@ -155,7 +153,7 @@ func (r *reconciler) finalizeLoadBalancerService(ci *ingressv1alpha1.ClusterIngr
 		updated.Finalizers = slice.RemoveString(updated.Finalizers, loadBalancerServiceFinalizer)
 		err = r.Client.Update(context.TODO(), updated)
 		if err != nil {
-			return fmt.Errorf("failed to remove finalizer from service %s for ingress %s: %v", service.Name, ci.Name, err)
+			return fmt.Errorf("failed to remove finalizer from service %s for ingress %s/%s: %v", service.Namespace, service.Name, ci.Name, err)
 		}
 	}
 	return nil

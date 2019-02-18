@@ -6,9 +6,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/sirupsen/logrus"
-
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
+	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/arn"
@@ -25,7 +24,10 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 )
 
-var _ dns.Manager = &Manager{}
+var (
+	_   dns.Manager = &Manager{}
+	log             = logf.Logger.WithName("aws-dns-manager")
+)
 
 // Manager provides AWS DNS record management. In this implementation, calling
 // Ensure will create records in any zone specified in the DNS configuration.
@@ -79,7 +81,7 @@ func NewManager(config Config) (*Manager, error) {
 
 	region := aws.StringValue(sess.Config.Region)
 	if len(region) > 0 {
-		logrus.Infof("using region %q from shared config", region)
+		log.Info("using region from shared config", "region name", region)
 	} else {
 		metadata := ec2metadata.New(sess)
 		discovered, err := metadata.Region()
@@ -87,7 +89,7 @@ func NewManager(config Config) (*Manager, error) {
 			return nil, fmt.Errorf("couldn't get region from metadata: %v", err)
 		}
 		region = discovered
-		logrus.Infof("discovered region %q from metadata", region)
+		log.Info("discovered region from metadata", "region name", region)
 	}
 
 	return &Manager{
@@ -167,7 +169,7 @@ func (m *Manager) getZoneID(zoneConfig configv1.DNSZone) (string, error) {
 
 	// Update the cache
 	m.idsToTags[id] = zoneConfig.Tags
-	logrus.Infof("found zone id %q for tags %v", id, zoneConfig.Tags)
+	log.Info("found hosted zone using tags", "zone id", id, "tags", zoneConfig.Tags)
 
 	return id, nil
 }
@@ -218,7 +220,7 @@ func (m *Manager) change(record *dns.Record, action action) error {
 		return fmt.Errorf("failed to describe load balancers: %v", err)
 	}
 	for _, lb := range loadBalancers.LoadBalancerDescriptions {
-		logrus.Debugf("found load balancer: %s (DNS name: %s, zone: %s)", aws.StringValue(lb.LoadBalancerName), aws.StringValue(lb.DNSName), aws.StringValue(lb.CanonicalHostedZoneNameID))
+		log.Info("found load balancer", "name", aws.StringValue(lb.LoadBalancerName), "dns name", aws.StringValue(lb.DNSName), "hosted zone ID", aws.StringValue(lb.CanonicalHostedZoneNameID))
 		if aws.StringValue(lb.CanonicalHostedZoneName) == target {
 			targetHostedZoneID = aws.StringValue(lb.CanonicalHostedZoneNameID)
 			break
@@ -235,7 +237,7 @@ func (m *Manager) change(record *dns.Record, action action) error {
 	key := zoneID + domain + target
 	// Only process updates once for now because we're not diffing.
 	if m.updatedRecords.Has(key) && action == upsertAction {
-		logrus.Infof("skipping update for record %v", record)
+		log.Info("skipping DNS record update", "record", record)
 		return nil
 	}
 	err = m.updateAlias(domain, zoneID, target, targetHostedZoneID, string(action))
@@ -245,10 +247,10 @@ func (m *Manager) change(record *dns.Record, action action) error {
 	switch action {
 	case upsertAction:
 		m.updatedRecords.Insert(key)
-		logrus.Infof("updated DNS record: %v", record)
+		log.Info("upserted DNS record", "record", record)
 	case deleteAction:
 		m.updatedRecords.Delete(key)
-		logrus.Infof("deleted DNS record: %v", record)
+		log.Info("deleted DNS record", "record", record)
 	}
 	return nil
 }
@@ -278,6 +280,6 @@ func (m *Manager) updateAlias(domain, zoneID, target, targetHostedZoneID, action
 	if err != nil {
 		return fmt.Errorf("couldn't update DNS record in zone %s: %v", zoneID, err)
 	}
-	logrus.Infof("updated DNS record in zone %s, %s -> %s: %v", zoneID, domain, target, resp)
+	log.Info("updated DNS record", "zone id", zoneID, "domain", domain, "target", target, "response", resp)
 	return nil
 }

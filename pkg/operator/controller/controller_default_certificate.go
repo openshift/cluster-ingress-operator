@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/sirupsen/logrus"
-
 	"github.com/openshift/library-go/pkg/crypto"
 
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
@@ -123,7 +121,7 @@ func (r *reconciler) createRouterDefaultCertificate(secret *corev1.Secret) error
 		}
 		return err
 	}
-	logrus.Infof("created secret %s/%s", secret.Namespace, secret.Name)
+	log.Info("created secret", "namespace", secret.Namespace, "name", secret.Name)
 	return nil
 }
 
@@ -135,6 +133,6 @@ func (r *reconciler) deleteRouterDefaultCertificate(secret *corev1.Secret) error
 		}
 		return err
 	}
-	logrus.Infof("deleted secret %s/%s", secret.Namespace, secret.Name)
+	log.Info("deleted secret", "namespace", secret.Namespace, "name", secret.Name)
 	return nil
 }

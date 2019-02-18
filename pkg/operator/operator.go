@@ -6,13 +6,12 @@ import (
 
 	"github.com/openshift/cluster-ingress-operator/pkg/apis"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
+	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	operatorconfig "github.com/openshift/cluster-ingress-operator/pkg/operator/config"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
 	configv1 "github.com/openshift/api/config/v1"
-
-	"github.com/sirupsen/logrus"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -35,15 +34,21 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/source"
 )
 
-// scheme contains all the API types necessary for the operator's dynamic
-// clients to work. Any new non-core types must be added here.
-//
-// NOTE: The discovery mechanism used by the client won't automatically refresh,
-// so only add types here that are _guaranteed_ to exist before the operator
-// starts.
-var scheme *runtime.Scheme
+var (
+	// scheme contains all the API types necessary for the operator's dynamic
+	// clients to work. Any new non-core types must be added here.
+	//
+	// NOTE: The discovery mechanism used by the client won't automatically refresh,
+	// so only add types here that are _guaranteed_ to exist before the operator
+	// starts.
+	scheme *runtime.Scheme
+	log    = logf.Logger.WithName("base-operator")
+)
 
 func init() {
+	// Setup controller-runtime logging
+	logf.SetRuntimeLogger(log)
+
 	scheme = kscheme.Scheme
 	if err := apis.AddToScheme(scheme); err != nil {
 		panic(err)
@@ -123,7 +128,7 @@ func New(config operatorconfig.Config, dnsManager dns.Manager, kubeConfig *rest.
 			ToRequests: handler.ToRequestsFunc(func(a handler.MapObject) []reconcile.Request {
 				labels := a.Meta.GetLabels()
 				if ingressName, ok := labels[manifests.OwningClusterIngressLabel]; ok {
-					logrus.Infof("queueing %s for related %s", ingressName, a.Meta.GetSelfLink())
+					log.Info("queueing ingress", "name", ingressName, "related", a.Meta.GetSelfLink())
 					return []reconcile.Request{
 						{
 							NamespacedName: types.NamespacedName{
@@ -168,11 +173,11 @@ func (o *Operator) Start(stop <-chan struct{}) error {
 				errChan <- err
 			}
 		}()
-		logrus.Infof("waiting for cache to sync")
+		log.Info("waiting for cache to sync")
 		if !cache.WaitForCacheSync(stop) {
 			return fmt.Errorf("failed to sync cache")
 		}
-		logrus.Infof("cache synced")
+		log.Info("cache synced")
 	}
 
 	// Secondary caches are all synced, so start the manager.
@@ -199,7 +204,7 @@ func (o *Operator) ensureDefaultClusterIngress() error {
 	if err != nil && !errors.IsAlreadyExists(err) {
 		return err
 	} else if err == nil {
-		logrus.Infof("created default clusteringress %s/%s", ci.Namespace, ci.Name)
+		log.Info("created default clusteringress", "namespace", ci.Namespace, "name", ci.Name)
 	}
 	return nil
 }

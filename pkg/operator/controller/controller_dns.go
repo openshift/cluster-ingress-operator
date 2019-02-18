@@ -3,8 +3,6 @@ package controller
 import (
 	"fmt"
 
-	"github.com/sirupsen/logrus"
-
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 
@@ -23,9 +21,9 @@ func (r *reconciler) ensureDNS(ci *ingressv1alpha1.ClusterIngress, service *core
 	for _, record := range dnsRecords {
 		err := r.DNSManager.Ensure(record)
 		if err != nil {
-			return fmt.Errorf("failed to ensure DNS record %v for %s: %v", record, ci.Name, err)
+			return fmt.Errorf("failed to ensure DNS record %v for %s/%s: %v", record, ci.Namespace, ci.Name, err)
 		}
-		logrus.Infof("ensured DNS record for clusteringress %s: %v", ci.Name, record)
+		log.Info("ensured DNS record for clusteringress", "namespace", ci.Namespace, "name", ci.Name, "record", record)
 	}
 	return nil
 }
