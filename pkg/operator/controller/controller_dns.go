@@ -15,8 +15,8 @@ import (
 
 // ensureDNS will create DNS records for the given LB service. If service is
 // nil, nothing is done.
-func (r *reconciler) ensureDNS(ci *ingressv1alpha1.ClusterIngress, service *corev1.Service) error {
-	dnsRecords, err := r.desiredDNSRecords(ci, service)
+func (r *reconciler) ensureDNS(ci *ingressv1alpha1.ClusterIngress, service *corev1.Service, dnsConfig *configv1.DNS) error {
+	dnsRecords, err := r.desiredDNSRecords(ci, service, dnsConfig)
 	if err != nil {
 		return err
 	}
@@ -34,7 +34,7 @@ func (r *reconciler) ensureDNS(ci *ingressv1alpha1.ClusterIngress, service *core
 // If service is nil, no records are desired. If an ingress domain is in use,
 // records are desired in every specified zone present in the cluster DNS
 // configuration.
-func (r *reconciler) desiredDNSRecords(ci *ingressv1alpha1.ClusterIngress, service *corev1.Service) ([]*dns.Record, error) {
+func (r *reconciler) desiredDNSRecords(ci *ingressv1alpha1.ClusterIngress, service *corev1.Service, dnsConfig *configv1.DNS) ([]*dns.Record, error) {
 	records := []*dns.Record{}
 
 	// If no service exists, no DNS records should exist.
@@ -49,11 +49,8 @@ func (r *reconciler) desiredDNSRecords(ci *ingressv1alpha1.ClusterIngress, servi
 		return records, nil
 	}
 
-	if r.dnsConfig == nil {
-		return records, fmt.Errorf("dns config not found")
-	}
 	// If no zones are configured, there's nothing to do.
-	if r.dnsConfig.Spec.PrivateZone == nil && r.dnsConfig.Spec.PublicZone == nil {
+	if dnsConfig.Spec.PrivateZone == nil && dnsConfig.Spec.PublicZone == nil {
 		return records, nil
 	}
 
@@ -75,11 +72,11 @@ func (r *reconciler) desiredDNSRecords(ci *ingressv1alpha1.ClusterIngress, servi
 			},
 		}
 	}
-	if r.dnsConfig.Spec.PrivateZone != nil {
-		records = append(records, makeRecord(r.dnsConfig.Spec.PrivateZone))
+	if dnsConfig.Spec.PrivateZone != nil {
+		records = append(records, makeRecord(dnsConfig.Spec.PrivateZone))
 	}
-	if r.dnsConfig.Spec.PublicZone != nil {
-		records = append(records, makeRecord(r.dnsConfig.Spec.PublicZone))
+	if dnsConfig.Spec.PublicZone != nil {
+		records = append(records, makeRecord(dnsConfig.Spec.PublicZone))
 	}
 	return records, nil
 }
