@@ -305,15 +305,6 @@ func (r *reconciler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress, 
 		}
 	}
 
-	trueVar := true
-	deploymentRef := metav1.OwnerReference{
-		APIVersion: "apps/v1",
-		Kind:       "Deployment",
-		Name:       current.Name,
-		UID:        current.UID,
-		Controller: &trueVar,
-	}
-
 	errs := []error{}
 	lbService, err := r.ensureLoadBalancerService(ci, current, infraConfig)
 	if err != nil {
@@ -323,7 +314,7 @@ func (r *reconciler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress, 
 		errs = append(errs, fmt.Errorf("failed to ensure DNS for %s: %v", ci.Name, err))
 	}
 
-	internalSvc, err := r.ensureInternalRouterServiceForIngress(ci, deploymentRef)
+	internalSvc, err := r.ensureInternalRouterServiceForIngress(ci, current)
 	if err != nil {
 		errs = append(errs, fmt.Errorf("failed to create internal router service for clusteringress %s: %v", ci.Name, err))
 		return utilerrors.NewAggregate(errs)
@@ -334,7 +325,7 @@ func (r *reconciler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress, 
 		return utilerrors.NewAggregate(errs)
 	}
 
-	if err := r.ensureMetricsIntegration(ci, internalSvc, deploymentRef); err != nil {
+	if err := r.ensureMetricsIntegration(ci, internalSvc, current); err != nil {
 		errs = append(errs, fmt.Errorf("failed to integrate metrics with openshift-monitoring for clusteringress %s: %v", ci.Name, err))
 		return utilerrors.NewAggregate(errs)
 	}
@@ -356,7 +347,16 @@ func (r *reconciler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress, 
 }
 
 // ensureMetricsIntegration ensures that router prometheus metrics is integrated with openshift-monitoring for the given clusteringress.
-func (r *reconciler) ensureMetricsIntegration(ci *ingressv1alpha1.ClusterIngress, svc *corev1.Service, deploymentRef metav1.OwnerReference) error {
+func (r *reconciler) ensureMetricsIntegration(ci *ingressv1alpha1.ClusterIngress, svc *corev1.Service, deployment *appsv1.Deployment) error {
+	trueVar := true
+	deploymentRef := metav1.OwnerReference{
+		APIVersion: "apps/v1",
+		Kind:       "Deployment",
+		Name:       deployment.Name,
+		UID:        deployment.UID,
+		Controller: &trueVar,
+	}
+
 	statsSecret, err := r.ManifestFactory.RouterStatsSecret(ci)
 	if err != nil {
 		return fmt.Errorf("failed to build router stats secret: %v", err)
@@ -470,7 +470,16 @@ func (r *reconciler) syncClusterIngressStatus(deployment *appsv1.Deployment, ci 
 
 // ensureInternalRouterServiceForIngress ensures that an internal service exists
 // for a given ClusterIngress.
-func (r *reconciler) ensureInternalRouterServiceForIngress(ci *ingressv1alpha1.ClusterIngress, deploymentRef metav1.OwnerReference) (*corev1.Service, error) {
+func (r *reconciler) ensureInternalRouterServiceForIngress(ci *ingressv1alpha1.ClusterIngress, deployment *appsv1.Deployment) (*corev1.Service, error) {
+	trueVar := true
+	deploymentRef := metav1.OwnerReference{
+		APIVersion: "apps/v1",
+		Kind:       "Deployment",
+		Name:       deployment.Name,
+		UID:        deployment.UID,
+		Controller: &trueVar,
+	}
+
 	svc, err := r.ManifestFactory.RouterServiceInternal(ci)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build router service: %v", err)
