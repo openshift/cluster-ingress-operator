@@ -75,15 +75,6 @@ func (f *Factory) DefaultClusterIngress() (*ingressv1alpha1.ClusterIngress, erro
 	if len(f.config.DefaultIngressDomain) != 0 {
 		ci.Spec.IngressDomain = &f.config.DefaultIngressDomain
 	}
-	if ci.Spec.HighAvailability == nil {
-		ci.Spec.HighAvailability = &ingressv1alpha1.ClusterIngressHighAvailability{}
-	}
-	switch f.config.Platform {
-	case configv1.AWSPlatform:
-		ci.Spec.HighAvailability.Type = ingressv1alpha1.CloudClusterIngressHA
-	default:
-		ci.Spec.HighAvailability.Type = ingressv1alpha1.UserDefinedClusterIngressHA
-	}
 	return ci, nil
 }
 

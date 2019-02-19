@@ -326,7 +326,18 @@ func (r *reconciler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress, 
 	}
 
 	errs := []error{}
-	lbService, err := r.ensureLoadBalancerService(ci, current, infraConfig)
+
+	ha := ci.Spec.HighAvailability
+	if ha == nil {
+		switch infraConfig.Status.Platform {
+		case configv1.AWSPlatform:
+			ha = ingressv1alpha1.CloudClusterIngressHA
+		default:
+			ha = ingressv1alpha1.UserDefinedClusterIngressHA
+		}
+	}
+
+	lbService, err := r.ensureLoadBalancerService(ci, current, infraConfig, ha)
 	if err != nil {
 		errs = append(errs, fmt.Errorf("failed to ensure load balancer service for %s: %v", ci.Name, err))
 	}

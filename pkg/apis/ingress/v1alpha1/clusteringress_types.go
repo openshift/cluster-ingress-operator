@@ -83,6 +83,10 @@ type ClusterIngressStatus struct {
 	// corresponding to the ClusterIngress. The number of matching pods
 	// should equal the value of replicas.
 	Selector string `json:"labelSelector"`
+
+	// HighAvailability is the actual high availability type in use for the
+	// ClusterIngress.
+	HighAvailability ClusterIngressHighAvailability `json:"highAvailability"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
