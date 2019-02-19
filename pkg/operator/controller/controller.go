@@ -276,12 +276,13 @@ func (r *reconciler) ensureRouterNamespace() error {
 // ensureClusterIngress ensures all necessary router resources exist for a
 // given clusteringress.
 func (r *reconciler) ensureClusterIngress(ci *ingressv1alpha1.ClusterIngress, caSecret *corev1.Secret, infraConfig *configv1.Infrastructure, dnsConfig *configv1.DNS, result *reconcile.Result) error {
+	errs := []error{}
+
 	deployment, err := r.ensureRouterDeployment(ci)
 	if err != nil {
-		return err
+		errs = append(errs, err)
 	}
 
-	errs := []error{}
 	lbService, err := r.ensureLoadBalancerService(ci, deployment, infraConfig)
 	if err != nil {
 		errs = append(errs, fmt.Errorf("failed to ensure load balancer service for %s: %v", ci.Name, err))
@@ -324,6 +325,10 @@ func (r *reconciler) ensureClusterIngress(ci *ingressv1alpha1.ClusterIngress, ca
 
 // ensureMetricsIntegration ensures that router prometheus metrics is integrated with openshift-monitoring for the given clusteringress.
 func (r *reconciler) ensureMetricsIntegration(ci *ingressv1alpha1.ClusterIngress, svc *corev1.Service, deployment *appsv1.Deployment) error {
+	if deployment == nil {
+		return nil
+	}
+
 	trueVar := true
 	deploymentRef := metav1.OwnerReference{
 		APIVersion: "apps/v1",
@@ -425,6 +430,10 @@ func (r *reconciler) ensureMetricsIntegration(ci *ingressv1alpha1.ClusterIngress
 
 // syncClusterIngressStatus updates the status for a given clusteringress.
 func (r *reconciler) syncClusterIngressStatus(deployment *appsv1.Deployment, ci *ingressv1alpha1.ClusterIngress) error {
+	if deployment == nil {
+		return nil
+	}
+
 	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
 	if err != nil {
 		return fmt.Errorf("router deployment %s/%s has invalid spec.selector: %v", deployment.Namespace, deployment.Name, err)
@@ -447,6 +456,10 @@ func (r *reconciler) syncClusterIngressStatus(deployment *appsv1.Deployment, ci 
 // ensureInternalRouterServiceForIngress ensures that an internal service exists
 // for a given ClusterIngress.
 func (r *reconciler) ensureInternalRouterServiceForIngress(ci *ingressv1alpha1.ClusterIngress, deployment *appsv1.Deployment) (*corev1.Service, error) {
+	if deployment == nil {
+		return nil, nil
+	}
+
 	trueVar := true
 	deploymentRef := metav1.OwnerReference{
 		APIVersion: "apps/v1",

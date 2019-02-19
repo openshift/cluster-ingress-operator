@@ -33,6 +33,10 @@ const (
 // Always returns the current LB service if one exists (whether it already
 // existed or was created during the course of the function).
 func (r *reconciler) ensureLoadBalancerService(ci *ingressv1alpha1.ClusterIngress, deployment *appsv1.Deployment, infraConfig *configv1.Infrastructure) (*corev1.Service, error) {
+	if deployment == nil {
+		return nil, nil
+	}
+
 	desiredLBService, err := desiredLoadBalancerService(ci, deployment, infraConfig)
 	if err != nil {
 		return nil, err
