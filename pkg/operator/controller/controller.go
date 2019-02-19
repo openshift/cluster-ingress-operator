@@ -276,33 +276,9 @@ func (r *reconciler) ensureRouterNamespace() error {
 // ensureClusterIngress ensures all necessary router resources exist for a
 // given clusteringress.
 func (r *reconciler) ensureClusterIngress(ci *ingressv1alpha1.ClusterIngress, caSecret *corev1.Secret, infraConfig *configv1.Infrastructure, dnsConfig *configv1.DNS, result *reconcile.Result) error {
-	expected, err := r.ManifestFactory.RouterDeployment(ci)
+	current, err := r.ensureRouterDeployment(ci)
 	if err != nil {
-		return fmt.Errorf("failed to build router deployment: %v", err)
-	}
-	current := expected.DeepCopy()
-	err = r.Client.Get(context.TODO(), types.NamespacedName{Namespace: expected.Namespace, Name: expected.Name}, current)
-	if err != nil {
-		if !errors.IsNotFound(err) {
-			return fmt.Errorf("failed to get router deployment %s/%s, %v", expected.Namespace, expected.Name, err)
-		}
-
-		err = r.Client.Create(context.TODO(), current)
-		if err == nil {
-			log.Info("created router deployment", "namespace", current.Namespace, "name", current.Name)
-		} else if !errors.IsAlreadyExists(err) {
-			return fmt.Errorf("failed to create router deployment %s/%s: %v", current.Namespace, current.Name, err)
-		}
-	}
-
-	if changed, updated := deploymentConfigChanged(current, expected); changed {
-		err = r.Client.Update(context.TODO(), updated)
-		if err == nil {
-			log.Info("updated router deployment", "namespace", updated.Namespace, "name", updated.Name)
-			current = updated
-		} else {
-			return fmt.Errorf("failed to update router deployment %s/%s, %v", updated.Namespace, updated.Name, err)
-		}
+		return err
 	}
 
 	errs := []error{}
