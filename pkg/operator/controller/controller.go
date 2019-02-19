@@ -150,7 +150,7 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 				}
 			} else {
 				// Handle everything else.
-				if err := r.ensureRouterForIngress(ingress, caSecret, infraConfig, dnsConfig, &result); err != nil {
+				if err := r.ensureClusterIngress(ingress, caSecret, infraConfig, dnsConfig, &result); err != nil {
 					errs = append(errs, fmt.Errorf("failed to ensure clusteringress: %v", err))
 				}
 			}
@@ -273,9 +273,9 @@ func (r *reconciler) ensureRouterNamespace() error {
 	return nil
 }
 
-// ensureRouterForIngress ensures all necessary router resources exist for a
+// ensureClusterIngress ensures all necessary router resources exist for a
 // given clusteringress.
-func (r *reconciler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress, caSecret *corev1.Secret, infraConfig *configv1.Infrastructure, dnsConfig *configv1.DNS, result *reconcile.Result) error {
+func (r *reconciler) ensureClusterIngress(ci *ingressv1alpha1.ClusterIngress, caSecret *corev1.Secret, infraConfig *configv1.Infrastructure, dnsConfig *configv1.DNS, result *reconcile.Result) error {
 	expected, err := r.ManifestFactory.RouterDeployment(ci)
 	if err != nil {
 		return fmt.Errorf("failed to build router deployment: %v", err)
