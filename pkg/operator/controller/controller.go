@@ -276,13 +276,13 @@ func (r *reconciler) ensureRouterNamespace() error {
 // ensureClusterIngress ensures all necessary router resources exist for a
 // given clusteringress.
 func (r *reconciler) ensureClusterIngress(ci *ingressv1alpha1.ClusterIngress, caSecret *corev1.Secret, infraConfig *configv1.Infrastructure, dnsConfig *configv1.DNS, result *reconcile.Result) error {
-	current, err := r.ensureRouterDeployment(ci)
+	deployment, err := r.ensureRouterDeployment(ci)
 	if err != nil {
 		return err
 	}
 
 	errs := []error{}
-	lbService, err := r.ensureLoadBalancerService(ci, current, infraConfig)
+	lbService, err := r.ensureLoadBalancerService(ci, deployment, infraConfig)
 	if err != nil {
 		errs = append(errs, fmt.Errorf("failed to ensure load balancer service for %s: %v", ci.Name, err))
 	}
@@ -290,23 +290,23 @@ func (r *reconciler) ensureClusterIngress(ci *ingressv1alpha1.ClusterIngress, ca
 		errs = append(errs, fmt.Errorf("failed to ensure DNS for %s: %v", ci.Name, err))
 	}
 
-	internalSvc, err := r.ensureInternalRouterServiceForIngress(ci, current)
+	internalSvc, err := r.ensureInternalRouterServiceForIngress(ci, deployment)
 	if err != nil {
 		errs = append(errs, fmt.Errorf("failed to create internal router service for clusteringress %s: %v", ci.Name, err))
 		return utilerrors.NewAggregate(errs)
 	}
 
-	if err := r.ensureDefaultCertificateForIngress(caSecret, current, ci); err != nil {
+	if err := r.ensureDefaultCertificateForIngress(caSecret, deployment, ci); err != nil {
 		errs = append(errs, err)
 		return utilerrors.NewAggregate(errs)
 	}
 
-	if err := r.ensureMetricsIntegration(ci, internalSvc, current); err != nil {
+	if err := r.ensureMetricsIntegration(ci, internalSvc, deployment); err != nil {
 		errs = append(errs, fmt.Errorf("failed to integrate metrics with openshift-monitoring for clusteringress %s: %v", ci.Name, err))
 		return utilerrors.NewAggregate(errs)
 	}
 
-	_, err = r.ensureServiceMonitor(ci, internalSvc, current)
+	_, err = r.ensureServiceMonitor(ci, internalSvc, deployment)
 	if err != nil {
 		errs = append(errs, fmt.Errorf("failed to ensure servicemonitor for %s: %v", ci.Name, err))
 		if meta.IsNoMatchError(err) {
@@ -314,8 +314,8 @@ func (r *reconciler) ensureClusterIngress(ci *ingressv1alpha1.ClusterIngress, ca
 		}
 	}
 
-	if err := r.syncClusterIngressStatus(current, ci); err != nil {
-		errs = append(errs, fmt.Errorf("failed to update status of clusteringress %s/%s: %v", current.Namespace, current.Name, err))
+	if err := r.syncClusterIngressStatus(deployment, ci); err != nil {
+		errs = append(errs, fmt.Errorf("failed to update status of clusteringress %s/%s: %v", deployment.Namespace, deployment.Name, err))
 		return utilerrors.NewAggregate(errs)
 	}
 
