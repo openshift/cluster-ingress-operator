@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
-	"path/filepath"
 
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
 	operatorconfig "github.com/openshift/cluster-ingress-operator/pkg/operator/config"
@@ -30,7 +29,7 @@ const (
 	RouterServiceAccount     = "assets/router/service-account.yaml"
 	RouterClusterRole        = "assets/router/cluster-role.yaml"
 	RouterClusterRoleBinding = "assets/router/cluster-role-binding.yaml"
-	RouterDeployment         = "assets/router/deployment.yaml"
+	RouterDeploymentAsset    = "assets/router/deployment.yaml"
 	RouterServiceInternal    = "assets/router/service-internal.yaml"
 	RouterServiceCloud       = "assets/router/service-cloud.yaml"
 	OperatorRole             = "assets/router/operator-role.yaml"
@@ -152,151 +151,12 @@ func (f *Factory) RouterStatsSecret(cr *ingressv1alpha1.ClusterIngress) (*corev1
 	return s, nil
 }
 
-func (f *Factory) RouterDeployment(cr *ingressv1alpha1.ClusterIngress) (*appsv1.Deployment, error) {
-	deployment, err := NewDeployment(MustAssetReader(RouterDeployment))
+func RouterDeployment(cr *ingressv1alpha1.ClusterIngress) *appsv1.Deployment {
+	deployment, err := NewDeployment(MustAssetReader(RouterDeploymentAsset))
 	if err != nil {
-		return nil, err
+		panic(err)
 	}
-
-	name := "router-" + cr.Name
-
-	deployment.Name = name
-
-	if deployment.Labels == nil {
-		deployment.Labels = map[string]string{}
-	}
-	deployment.Labels[OwningClusterIngressLabel] = cr.Name
-
-	if deployment.Spec.Template.Labels == nil {
-		deployment.Spec.Template.Labels = map[string]string{}
-	}
-	deployment.Spec.Template.Labels["router"] = name
-
-	if deployment.Spec.Selector.MatchLabels == nil {
-		deployment.Spec.Selector.MatchLabels = map[string]string{}
-	}
-	deployment.Spec.Selector.MatchLabels["router"] = name
-
-	statsSecretName := fmt.Sprintf("router-stats-%s", cr.Name)
-	env := []corev1.EnvVar{
-		{Name: "ROUTER_SERVICE_NAME", Value: cr.Name},
-		{Name: "STATS_USERNAME", ValueFrom: &corev1.EnvVarSource{
-			SecretKeyRef: &corev1.SecretKeySelector{
-				LocalObjectReference: corev1.LocalObjectReference{
-					Name: statsSecretName,
-				},
-				Key: "statsUsername",
-			},
-		}},
-		{Name: "STATS_PASSWORD", ValueFrom: &corev1.EnvVarSource{
-			SecretKeyRef: &corev1.SecretKeySelector{
-				LocalObjectReference: corev1.LocalObjectReference{
-					Name: statsSecretName,
-				},
-				Key: "statsPassword",
-			},
-		}},
-	}
-
-	// Enable prometheus metrics
-	certsSecretName := fmt.Sprintf("router-metrics-certs-%s", cr.Name)
-	certsVolumeName := "metrics-certs"
-	certsVolumeMountPath := "/etc/pki/tls/metrics-certs"
-
-	volume := corev1.Volume{
-		Name: certsVolumeName,
-		VolumeSource: corev1.VolumeSource{
-			Secret: &corev1.SecretVolumeSource{
-				SecretName: certsSecretName,
-			},
-		},
-	}
-	volumeMount := corev1.VolumeMount{
-		Name:      certsVolumeName,
-		MountPath: certsVolumeMountPath,
-		ReadOnly:  true,
-	}
-
-	deployment.Spec.Template.Spec.Volumes = append(deployment.Spec.Template.Spec.Volumes, volume)
-	deployment.Spec.Template.Spec.Containers[0].VolumeMounts = append(deployment.Spec.Template.Spec.Containers[0].VolumeMounts, volumeMount)
-
-	env = append(env, corev1.EnvVar{Name: "ROUTER_METRICS_TYPE", Value: "haproxy"})
-	env = append(env, corev1.EnvVar{Name: "ROUTER_METRICS_TLS_CERT_FILE", Value: filepath.Join(certsVolumeMountPath, "tls.crt")})
-	env = append(env, corev1.EnvVar{Name: "ROUTER_METRICS_TLS_KEY_FILE", Value: filepath.Join(certsVolumeMountPath, "tls.key")})
-
-	if cr.Spec.IngressDomain != nil {
-		env = append(env, corev1.EnvVar{Name: "ROUTER_CANONICAL_HOSTNAME", Value: *cr.Spec.IngressDomain})
-	}
-
-	if cr.Spec.HighAvailability != nil && cr.Spec.HighAvailability.Type == ingressv1alpha1.CloudClusterIngressHA {
-		// For now, check if we are on AWS. This can really be done for
-		// for any external [cloud] LBs that support the proxy protocol.
-		if f.config.Platform == configv1.AWSPlatform {
-			env = append(env, corev1.EnvVar{Name: "ROUTER_USE_PROXY_PROTOCOL", Value: "true"})
-		}
-	}
-
-	if cr.Spec.NodePlacement != nil {
-		if cr.Spec.NodePlacement.NodeSelector != nil {
-			nodeSelector, err := metav1.LabelSelectorAsMap(cr.Spec.NodePlacement.NodeSelector)
-			if err != nil {
-				return nil, fmt.Errorf("clusteringress %q has invalid spec.nodePlacement.nodeSelector: %v",
-					cr.Name, err)
-			}
-
-			deployment.Spec.Template.Spec.NodeSelector = nodeSelector
-		}
-	}
-
-	if cr.Spec.NamespaceSelector != nil {
-		namespaceSelector, err := metav1.LabelSelectorAsSelector(cr.Spec.NamespaceSelector)
-		if err != nil {
-			return nil, fmt.Errorf("clusteringress %q has invalid spec.namespaceSelector: %v",
-				cr.Name, err)
-		}
-
-		env = append(env, corev1.EnvVar{
-			Name:  "NAMESPACE_LABELS",
-			Value: namespaceSelector.String(),
-		})
-	}
-
-	replicas := cr.Spec.Replicas
-	deployment.Spec.Replicas = &replicas
-
-	if cr.Spec.RouteSelector != nil {
-		routeSelector, err := metav1.LabelSelectorAsSelector(cr.Spec.RouteSelector)
-		if err != nil {
-			return nil, fmt.Errorf("clusteringress %q has invalid spec.routeSelector: %v", cr.Name, err)
-		}
-		env = append(env, corev1.EnvVar{Name: "ROUTE_LABELS", Value: routeSelector.String()})
-	}
-
-	deployment.Spec.Template.Spec.Containers[0].Env = append(deployment.Spec.Template.Spec.Containers[0].Env, env...)
-
-	deployment.Spec.Template.Spec.Containers[0].Image = f.config.RouterImage
-
-	if cr.Spec.HighAvailability != nil && cr.Spec.HighAvailability.Type == ingressv1alpha1.UserDefinedClusterIngressHA {
-		// Expose ports 80 and 443 on the host to provide endpoints for
-		// the user's HA solution.
-		deployment.Spec.Template.Spec.HostNetwork = true
-
-		// With container networking, probes default to using the pod IP
-		// address.  With host networking, probes default to using the
-		// node IP address.  Using localhost avoids potential routing
-		// problems or firewall restrictions.
-		deployment.Spec.Template.Spec.Containers[0].LivenessProbe.Handler.HTTPGet.Host = "localhost"
-		deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.Handler.HTTPGet.Host = "localhost"
-	}
-
-	// Fill in the default certificate secret name.
-	secretName := fmt.Sprintf("router-certs-%s", cr.Name)
-	if cr.Spec.DefaultCertificateSecret != nil && len(*cr.Spec.DefaultCertificateSecret) > 0 {
-		secretName = *cr.Spec.DefaultCertificateSecret
-	}
-	deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName = secretName
-
-	return deployment, nil
+	return deployment
 }
 
 func (f *Factory) RouterServiceInternal(cr *ingressv1alpha1.ClusterIngress) (*corev1.Service, error) {

@@ -278,7 +278,7 @@ func (r *reconciler) ensureRouterNamespace() error {
 func (r *reconciler) ensureClusterIngress(ci *ingressv1alpha1.ClusterIngress, caSecret *corev1.Secret, infraConfig *configv1.Infrastructure, dnsConfig *configv1.DNS, result *reconcile.Result) error {
 	errs := []error{}
 
-	deployment, err := r.ensureRouterDeployment(ci)
+	deployment, err := r.ensureRouterDeployment(ci, infraConfig)
 	if err != nil {
 		errs = append(errs, err)
 	}
