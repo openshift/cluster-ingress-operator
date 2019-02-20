@@ -29,36 +29,25 @@ func routerDeploymentName(ci *ingressv1alpha1.ClusterIngress) types.NamespacedNa
 // ensureRouterDeployment ensures the router deployment exists for a given
 // clusteringress.
 func (r *reconciler) ensureRouterDeployment(ci *ingressv1alpha1.ClusterIngress, infraConfig *configv1.Infrastructure, ha ingressv1alpha1.ClusterIngressHighAvailability) (*appsv1.Deployment, error) {
-	expected, err := desiredRouterDeployment(ci, r.Config.RouterImage, infraConfig, ha.Type)
+	desired, err := desiredRouterDeployment(ci, r.Config.RouterImage, infraConfig, ha.Type)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build router deployment: %v", err)
 	}
-	current := expected.DeepCopy()
-	err = r.Client.Get(context.TODO(), types.NamespacedName{Namespace: expected.Namespace, Name: expected.Name}, current)
+	current, err := r.currentRouterDeployment(ci)
 	if err != nil {
-		if !errors.IsNotFound(err) {
-			return nil, fmt.Errorf("failed to get router deployment %s/%s, %v", expected.Namespace, expected.Name, err)
+		return nil, err
+	}
+	switch {
+	case desired != nil && current == nil:
+		if err := r.createRouterDeployment(desired); err != nil {
+			return nil, err
 		}
-
-		err = r.Client.Create(context.TODO(), current)
-		if err == nil {
-			log.Info("created router deployment", "namespace", current.Namespace, "name", current.Name)
-		} else if !errors.IsAlreadyExists(err) {
-			return nil, fmt.Errorf("failed to create router deployment %s/%s: %v", current.Namespace, current.Name, err)
+	case desired != nil && current != nil:
+		if err := r.updateRouterDeployment(current, desired); err != nil {
+			return nil, err
 		}
 	}
-
-	if changed, updated := deploymentConfigChanged(current, expected); changed {
-		err = r.Client.Update(context.TODO(), updated)
-		if err == nil {
-			log.Info("updated router deployment", "namespace", updated.Namespace, "name", updated.Name)
-			current = updated
-		} else {
-			return nil, fmt.Errorf("failed to update router deployment %s/%s, %v", updated.Namespace, updated.Name, err)
-		}
-	}
-
-	return current, nil
+	return r.currentRouterDeployment(ci)
 }
 
 // ensureRouterDeleted ensures that any router resources associated with the
@@ -217,4 +206,38 @@ func desiredRouterDeployment(ci *ingressv1alpha1.ClusterIngress, routerImage str
 	deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName = secretName
 
 	return deployment, nil
+}
+
+// currentRouterDeployment returns the current router deployment.
+func (r *reconciler) currentRouterDeployment(ci *ingressv1alpha1.ClusterIngress) (*appsv1.Deployment, error) {
+	deployment := &appsv1.Deployment{}
+	if err := r.Client.Get(context.TODO(), routerDeploymentName(ci), deployment); err != nil {
+		if errors.IsNotFound(err) {
+			return nil, nil
+		}
+	}
+	return deployment, nil
+}
+
+// createRouterDeployment creates a router deployment.
+func (r *reconciler) createRouterDeployment(deployment *appsv1.Deployment) error {
+	if err := r.Client.Create(context.TODO(), deployment); err != nil {
+		return fmt.Errorf("failed to create router deployment %s/%s: %v", deployment.Namespace, deployment.Name, err)
+	}
+	log.Info("created router deployment", "namespace", deployment.Namespace, "name", deployment.Name)
+	return nil
+}
+
+// updateRouterDeployment updates a router deployment.
+func (r *reconciler) updateRouterDeployment(current, desired *appsv1.Deployment) error {
+	changed, updated := deploymentConfigChanged(current, desired)
+	if !changed {
+		return nil
+	}
+
+	if err := r.Client.Update(context.TODO(), updated); err != nil {
+		return fmt.Errorf("failed to update router deployment %s/%s: %v", updated.Namespace, updated.Name, err)
+	}
+	log.Info("updated router deployment", "namespace", updated.Namespace, "name", updated.Name)
+	return nil
 }
