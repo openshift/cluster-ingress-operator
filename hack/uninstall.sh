@@ -11,7 +11,7 @@ oc delete -n openshift-ingress-operator deployments/ingress-operator
 oc patch -n openshift-ingress-operator clusteringresses/default --patch '{"metadata":{"finalizers": []}}' --type=merge
 # TODO: this leaves DNS dangling
 oc patch -n openshift-ingress services/router-default --patch '{"metadata":{"finalizers": []}}' --type=merge
-oc delete clusteroperator.config.openshift.io/openshift-ingress-operator
+oc delete clusteroperator.config.openshift.io/ingress
 oc delete --force --grace-period=0 -n openshift-ingress-operator clusteringresses/default
 
 if [ "$WHAT" == "all" ]; then
