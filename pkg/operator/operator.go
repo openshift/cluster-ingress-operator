@@ -196,11 +196,8 @@ func (o *Operator) Start(stop <-chan struct{}) error {
 
 // ensureDefaultClusterIngress ensures that a default ClusterIngress exists.
 func (o *Operator) ensureDefaultClusterIngress() error {
-	ci, err := o.manifestFactory.DefaultClusterIngress()
-	if err != nil {
-		return err
-	}
-	err = o.client.Create(context.TODO(), ci)
+	ci := manifests.DefaultClusterIngress()
+	err := o.client.Create(context.TODO(), ci)
 	if err != nil && !errors.IsAlreadyExists(err) {
 		return err
 	} else if err == nil {

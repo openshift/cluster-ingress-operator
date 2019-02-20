@@ -39,7 +39,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		},
 	}
 
-	deployment, err := desiredRouterDeployment(ci, routerImage, infraConfig)
+	deployment, err := desiredRouterDeployment(ci, routerImage, infraConfig, ingressv1alpha1.NoClusterIngressHA)
 	if err != nil {
 		t.Errorf("invalid router Deployment: %v", err)
 	}
@@ -128,11 +128,8 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		t.Errorf("expected empty readiness probe host, got %q", deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.Handler.HTTPGet.Host)
 	}
 
-	ci.Spec.HighAvailability = &ingressv1alpha1.ClusterIngressHighAvailability{
-		Type: ingressv1alpha1.CloudClusterIngressHA,
-	}
 	ci.Status.IngressDomain = "example.com"
-	deployment, err = desiredRouterDeployment(ci, routerImage, infraConfig)
+	deployment, err = desiredRouterDeployment(ci, routerImage, infraConfig, ingressv1alpha1.CloudClusterIngressHA)
 	if err != nil {
 		t.Errorf("invalid router Deployment: %v", err)
 	}
@@ -174,7 +171,6 @@ func TestDesiredRouterDeployment(t *testing.T) {
 
 	secretName := fmt.Sprintf("secret-%v", time.Now().UnixNano())
 	ci.Spec.DefaultCertificateSecret = &secretName
-	ci.Spec.HighAvailability.Type = ingressv1alpha1.UserDefinedClusterIngressHA
 	ci.Spec.NodePlacement = &ingressv1alpha1.NodePlacement{
 		NodeSelector: &metav1.LabelSelector{
 			MatchLabels: map[string]string{
@@ -183,7 +179,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		},
 	}
 	ci.Spec.Replicas = 3
-	deployment, err = desiredRouterDeployment(ci, routerImage, infraConfig)
+	deployment, err = desiredRouterDeployment(ci, routerImage, infraConfig, ingressv1alpha1.UserDefinedClusterIngressHA)
 	if err != nil {
 		t.Errorf("invalid router Deployment: %v", err)
 	}

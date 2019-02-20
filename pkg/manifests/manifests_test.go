@@ -88,31 +88,5 @@ func TestManifests(t *testing.T) {
 }
 
 func TestDefaultClusterIngress(t *testing.T) {
-	def, err := NewFactory(operatorconfig.Config{
-		RouterImage: "test",
-		Platform:    configv1.NonePlatform,
-	}).DefaultClusterIngress()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if highAvailability := def.Spec.HighAvailability; highAvailability == nil {
-		t.Error("expected default clusteringress highAvailability to be non-nil")
-	}
-	if e, a := ingressv1alpha1.UserDefinedClusterIngressHA, def.Spec.HighAvailability.Type; e != a {
-		t.Errorf("expected default clusteringress highAvailability.type=%s, got %s", e, a)
-	}
-
-	def, err = NewFactory(operatorconfig.Config{
-		RouterImage: "test",
-		Platform:    configv1.AWSPlatform,
-	}).DefaultClusterIngress()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if highAvailability := def.Spec.HighAvailability; highAvailability == nil {
-		t.Error("expected default clusteringress highAvailability to be non-nil")
-	}
-	if e, a := ingressv1alpha1.CloudClusterIngressHA, def.Spec.HighAvailability.Type; e != a {
-		t.Errorf("expected default clusteringress highAvailability.type=%s, got %s", e, a)
-	}
+	DefaultClusterIngress()
 }

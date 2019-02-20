@@ -19,7 +19,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/apiserver/pkg/storage/names"
 
-	configv1 "github.com/openshift/api/config/v1"
 	routev1 "github.com/openshift/api/route/v1"
 )
 
@@ -66,21 +65,12 @@ func NewFactory(config operatorconfig.Config) *Factory {
 	return &Factory{config: config}
 }
 
-func (f *Factory) DefaultClusterIngress() (*ingressv1alpha1.ClusterIngress, error) {
+func DefaultClusterIngress() *ingressv1alpha1.ClusterIngress {
 	ci, err := NewClusterIngress(MustAssetReader(ClusterIngressDefaults))
 	if err != nil {
-		return nil, err
+		panic(err)
 	}
-	if ci.Spec.HighAvailability == nil {
-		ci.Spec.HighAvailability = &ingressv1alpha1.ClusterIngressHighAvailability{}
-	}
-	switch f.config.Platform {
-	case configv1.AWSPlatform:
-		ci.Spec.HighAvailability.Type = ingressv1alpha1.CloudClusterIngressHA
-	default:
-		ci.Spec.HighAvailability.Type = ingressv1alpha1.UserDefinedClusterIngressHA
-	}
-	return ci, nil
+	return ci
 }
 
 func (f *Factory) OperatorRole() (*rbacv1.Role, error) {

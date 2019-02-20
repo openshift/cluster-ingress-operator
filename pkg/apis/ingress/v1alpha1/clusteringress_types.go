@@ -66,6 +66,9 @@ const (
 	// on the host nodes.  Implementing HA for these endpoints is left to
 	// the user.
 	UserDefinedClusterIngressHA ClusterIngressHAType = "UserDefined"
+	// NoClusterIngressHA configures the ingress implementation
+	// pods without any high availability.
+	NoClusterIngressHA ClusterIngressHAType = "None"
 )
 
 type ClusterIngressHighAvailability struct {
@@ -89,6 +92,13 @@ type ClusterIngressStatus struct {
 	// Otherwise the actual ingress domain will be assigned a default value
 	// based on the cluster ingress config.
 	IngressDomain string `json:"ingressDomain"`
+
+	// HighAvailability is the actual HA configuration for the cluster
+	// ingress.  If HighAvailability is specified in the spec, it will be
+	// used as the actual HA configuration.  Otherwise the actual HA
+	// configuration will be determined from the cluster infrastructure
+	// config.
+	HighAvailability ClusterIngressHighAvailability `json:"highAvailability"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object

@@ -614,7 +614,7 @@ func TestRouterCACertificate(t *testing.T) {
 		t.Fatal("default ClusterIngress has no .status.ingressDomain")
 	}
 
-	if ci.Spec.HighAvailability.Type != ingressv1alpha1.CloudClusterIngressHA {
+	if ci.Status.HighAvailability.Type != ingressv1alpha1.CloudClusterIngressHA {
 		t.Skip("test skipped for non-cloud HA type")
 		return
 	}
