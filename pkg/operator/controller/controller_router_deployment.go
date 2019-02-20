@@ -241,3 +241,24 @@ func (r *reconciler) updateRouterDeployment(current, desired *appsv1.Deployment)
 	log.Info("updated router deployment", "namespace", updated.Namespace, "name", updated.Name)
 	return nil
 }
+
+// deploymentConfigChanged checks if current config matches the expected config
+// for the cluster ingress deployment and if not returns the updated config.
+func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv1.Deployment) {
+	// As per an offline conversation, this checks only the secret name
+	// for now but can be updated to a `reflect.DeepEqual` if needed.
+	if current.Spec.Template.Spec.Volumes[0].Secret.SecretName == expected.Spec.Template.Spec.Volumes[0].Secret.SecretName &&
+		current.Spec.Replicas != nil &&
+		*current.Spec.Replicas == *expected.Spec.Replicas {
+		return false, nil
+	}
+
+	updated := current.DeepCopy()
+	updated.Spec.Template.Spec.Volumes[0].Secret.SecretName = expected.Spec.Template.Spec.Volumes[0].Secret.SecretName
+	replicas := int32(1)
+	if expected.Spec.Replicas != nil {
+		replicas = *expected.Spec.Replicas
+	}
+	updated.Spec.Replicas = &replicas
+	return true, updated
+}
