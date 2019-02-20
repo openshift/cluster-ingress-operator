@@ -83,6 +83,12 @@ type ClusterIngressStatus struct {
 	// corresponding to the ClusterIngress. The number of matching pods
 	// should equal the value of replicas.
 	Selector string `json:"labelSelector"`
+
+	// IngressDomain is the actual ingress domain.  If an ingress domain is
+	// specified in the spec, it will be used as the actual ingress domain.
+	// Otherwise the actual ingress domain will be assigned a default value
+	// based on the cluster ingress config.
+	IngressDomain string `json:"ingressDomain"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object

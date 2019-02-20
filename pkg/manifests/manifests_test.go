@@ -88,18 +88,12 @@ func TestManifests(t *testing.T) {
 }
 
 func TestDefaultClusterIngress(t *testing.T) {
-	ingressDomain := "user.cluster.openshift.com"
-
 	def, err := NewFactory(operatorconfig.Config{
-		RouterImage:          "test",
-		DefaultIngressDomain: ingressDomain,
-		Platform:             configv1.NonePlatform,
+		RouterImage: "test",
+		Platform:    configv1.NonePlatform,
 	}).DefaultClusterIngress()
 	if err != nil {
 		t.Fatal(err)
-	}
-	if e, a := ingressDomain, *def.Spec.IngressDomain; e != a {
-		t.Errorf("expected default clusteringress ingressDomain=%s, got %s", e, a)
 	}
 	if highAvailability := def.Spec.HighAvailability; highAvailability == nil {
 		t.Error("expected default clusteringress highAvailability to be non-nil")
@@ -109,9 +103,8 @@ func TestDefaultClusterIngress(t *testing.T) {
 	}
 
 	def, err = NewFactory(operatorconfig.Config{
-		RouterImage:          "test",
-		DefaultIngressDomain: ingressDomain,
-		Platform:             configv1.AWSPlatform,
+		RouterImage: "test",
+		Platform:    configv1.AWSPlatform,
 	}).DefaultClusterIngress()
 	if err != nil {
 		t.Fatal(err)

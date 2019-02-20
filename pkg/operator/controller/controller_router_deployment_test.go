@@ -96,6 +96,17 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		t.Errorf("router Deployment unexpected proxy protocol")
 	}
 
+	canonicalHostname := ""
+	for _, envVar := range deployment.Spec.Template.Spec.Containers[0].Env {
+		if envVar.Name == "ROUTER_CANONICAL_HOSTNAME" {
+			canonicalHostname = envVar.Value
+			break
+		}
+	}
+	if canonicalHostname != "" {
+		t.Errorf("router Deployment has unexpected canonical hostname: %q", canonicalHostname)
+	}
+
 	if deployment.Spec.Template.Spec.Volumes[0].Secret == nil {
 		t.Error("router Deployment has no secret volume")
 	}
@@ -120,6 +131,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	ci.Spec.HighAvailability = &ingressv1alpha1.ClusterIngressHighAvailability{
 		Type: ingressv1alpha1.CloudClusterIngressHA,
 	}
+	ci.Status.IngressDomain = "example.com"
 	deployment, err = desiredRouterDeployment(ci, routerImage, infraConfig)
 	if err != nil {
 		t.Errorf("invalid router Deployment: %v", err)
@@ -145,6 +157,19 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	}
 	if !proxyProtocolEnabled {
 		t.Errorf("router Deployment expected proxy protocol")
+	}
+
+	canonicalHostname = ""
+	for _, envVar := range deployment.Spec.Template.Spec.Containers[0].Env {
+		if envVar.Name == "ROUTER_CANONICAL_HOSTNAME" {
+			canonicalHostname = envVar.Value
+			break
+		}
+	}
+	if canonicalHostname == "" {
+		t.Error("router Deployment has no canonical hostname")
+	} else if canonicalHostname != ci.Status.IngressDomain {
+		t.Errorf("router Deployment has unexpected canonical hostname: %q, expected %q", canonicalHostname, ci.Status.IngressDomain)
 	}
 
 	secretName := fmt.Sprintf("secret-%v", time.Now().UnixNano())

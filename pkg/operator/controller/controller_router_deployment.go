@@ -144,8 +144,8 @@ func desiredRouterDeployment(ci *ingressv1alpha1.ClusterIngress, routerImage str
 	env = append(env, corev1.EnvVar{Name: "ROUTER_METRICS_TLS_CERT_FILE", Value: filepath.Join(certsVolumeMountPath, "tls.crt")})
 	env = append(env, corev1.EnvVar{Name: "ROUTER_METRICS_TLS_KEY_FILE", Value: filepath.Join(certsVolumeMountPath, "tls.key")})
 
-	if ci.Spec.IngressDomain != nil {
-		env = append(env, corev1.EnvVar{Name: "ROUTER_CANONICAL_HOSTNAME", Value: *ci.Spec.IngressDomain})
+	if len(ci.Status.IngressDomain) > 0 {
+		env = append(env, corev1.EnvVar{Name: "ROUTER_CANONICAL_HOSTNAME", Value: ci.Status.IngressDomain})
 	}
 
 	if ci.Spec.HighAvailability != nil && ci.Spec.HighAvailability.Type == ingressv1alpha1.CloudClusterIngressHA {

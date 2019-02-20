@@ -128,7 +128,13 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 			log.Error(err, "failed to get infrastructure 'cluster'")
 			infraConfig = nil
 		}
-		if dnsConfig == nil || infraConfig == nil {
+		ingressConfig := &configv1.Ingress{}
+		if err := r.Client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, ingressConfig); err != nil {
+			log.Error(err, "failed to get ingress 'cluster'")
+			ingressConfig = nil
+		}
+
+		if dnsConfig == nil || infraConfig == nil || ingressConfig == nil {
 			// For now, if the cluster configs are unavailable, defer reconciliation
 			// because weaving conditionals everywhere to deal with various nil states
 			// is too complicated. It doesn't seem too risky to rely on the invariant
@@ -143,7 +149,9 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 				return result, utilerrors.NewAggregate(errs)
 			}
 
-			if ingress.DeletionTimestamp != nil {
+			if err := r.enforceEffectiveIngressDomain(ingress, ingressConfig); err != nil {
+				errs = append(errs, fmt.Errorf("failed to enforce the effective ingress domain for clusteringress %s: %v", ingress.Name, err))
+			} else if ingress.DeletionTimestamp != nil {
 				// Handle deletion.
 				if err := r.ensureIngressDeleted(ingress, dnsConfig); err != nil {
 					errs = append(errs, fmt.Errorf("failed to ensure ingress deletion: %v", err))
@@ -169,6 +177,29 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 	errs = append(errs, r.ensureRouterCAConfigMap(caSecret, ingresses.Items))
 
 	return result, utilerrors.NewAggregate(errs)
+}
+
+// enforceEffectiveIngressDomain determines the effective ingress domain for the
+// given clusteringress and ingress configuration and publishes it to the
+// clusteringress's status.
+func (r *reconciler) enforceEffectiveIngressDomain(ci *ingressv1alpha1.ClusterIngress, ingressConfig *configv1.Ingress) error {
+	// The clusteringress's ingress domain is immutable, so if we have
+	// published a domain to status, we must continue using it.
+	if len(ci.Status.IngressDomain) > 0 {
+		return nil
+	}
+
+	switch {
+	case ci.Spec.IngressDomain != nil:
+		ci.Status.IngressDomain = *ci.Spec.IngressDomain
+	default:
+		ci.Status.IngressDomain = ingressConfig.Spec.Domain
+	}
+	// TODO Validate and check for conflicting claims.
+	if err := r.Client.Status().Update(context.TODO(), ci); err != nil {
+		return fmt.Errorf("failed to update status of clusteringress %s/%s: %v", ci.Namespace, ci.Name, err)
+	}
+	return nil
 }
 
 // ensureIngressDeleted tries to delete ingress, and if successful, will remove

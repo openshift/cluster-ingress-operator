@@ -71,9 +71,6 @@ func (f *Factory) DefaultClusterIngress() (*ingressv1alpha1.ClusterIngress, erro
 	if err != nil {
 		return nil, err
 	}
-	if len(f.config.DefaultIngressDomain) != 0 {
-		ci.Spec.IngressDomain = &f.config.DefaultIngressDomain
-	}
 	if ci.Spec.HighAvailability == nil {
 		ci.Spec.HighAvailability = &ingressv1alpha1.ClusterIngressHighAvailability{}
 	}

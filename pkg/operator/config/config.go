@@ -11,9 +11,6 @@ type Config struct {
 	Namespace string
 	// RouterImage is the router image to manage.
 	RouterImage string
-	// DefaultIngressDomain is the value that the operator will use for
-	// IngressDomain when creating a default ClusterIngress.
-	DefaultIngressDomain string
 	// Platform is the underlying infrastructure provider for the cluster.
 	Platform configv1.PlatformType
 }

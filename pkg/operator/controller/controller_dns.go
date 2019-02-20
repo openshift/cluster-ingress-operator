@@ -40,10 +40,16 @@ func desiredDNSRecords(ci *ingressv1alpha1.ClusterIngress, service *corev1.Servi
 		return records, nil
 	}
 
-	// TODO: This will need revisited when we stop defaulting .spec.ingressDomain
-	// and .spec.highAvailability as both can be nil but used with an effective
+	// If the clusteringress has no ingress domain, we cannot configure any
+	// DNS records.
+	if len(ci.Status.IngressDomain) == 0 {
+		return records, nil
+	}
+
+	// TODO: This will need revisited when we stop defaulting
+	// .spec.highAvailability as it can be nil but used with an effective
 	// system-provided default reported on status.
-	if ci.Spec.HighAvailability == nil || ci.Spec.HighAvailability.Type != ingressv1alpha1.CloudClusterIngressHA || ci.Spec.IngressDomain == nil {
+	if ci.Spec.HighAvailability == nil || ci.Spec.HighAvailability.Type != ingressv1alpha1.CloudClusterIngressHA {
 		return records, nil
 	}
 
@@ -59,7 +65,7 @@ func desiredDNSRecords(ci *ingressv1alpha1.ClusterIngress, service *corev1.Servi
 		return nil, fmt.Errorf("no load balancer is assigned to service %s/%s", service.Namespace, service.Name)
 	}
 
-	domain := fmt.Sprintf("*.%s", *ci.Spec.IngressDomain)
+	domain := fmt.Sprintf("*.%s", ci.Status.IngressDomain)
 	makeRecord := func(zone *configv1.DNSZone) *dns.Record {
 		return &dns.Record{
 			Zone: *zone,

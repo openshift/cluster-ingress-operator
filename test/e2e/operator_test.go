@@ -610,8 +610,8 @@ func TestRouterCACertificate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get default ClusterIngress: %v", err)
 	}
-	if ci.Spec.IngressDomain == nil {
-		t.Fatal("default ClusterIngress has no .spec.IngressDomain")
+	if len(ci.Status.IngressDomain) == 0 {
+		t.Fatal("default ClusterIngress has no .status.ingressDomain")
 	}
 
 	if ci.Spec.HighAvailability.Type != ingressv1alpha1.CloudClusterIngressHA {
@@ -662,7 +662,7 @@ func TestRouterCACertificate(t *testing.T) {
 	// Make sure we can connect without getting a "certificate signed by
 	// unknown authority" or "x509: certificate is valid for [...], not
 	// [...]" error.
-	serverName := "test." + *ci.Spec.IngressDomain
+	serverName := "test." + ci.Status.IngressDomain
 	address := net.JoinHostPort(host, "443")
 	conn, err := tls.Dial("tcp", address, &tls.Config{
 		RootCAs:    certPool,
