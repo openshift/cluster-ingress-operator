@@ -28,6 +28,10 @@ func routerDefaultCertificateSecretName(ci *ingressv1alpha1.ClusterIngress, name
 // ensureDefaultCertificateForIngress creates or deletes an operator-generated
 // default certificate for a given ClusterIngress as appropriate.
 func (r *reconciler) ensureDefaultCertificateForIngress(caSecret *corev1.Secret, deployment *appsv1.Deployment, ci *ingressv1alpha1.ClusterIngress) error {
+	if deployment == nil {
+		return nil
+	}
+
 	ca, err := crypto.GetCAFromBytes(caSecret.Data["tls.crt"], caSecret.Data["tls.key"])
 	if err != nil {
 		return fmt.Errorf("failed to get CA from secret %s/%s: %v", caSecret.Namespace, caSecret.Name, err)
@@ -60,11 +64,18 @@ func (r *reconciler) ensureDefaultCertificateForIngress(caSecret *corev1.Secret,
 // desiredRouterDefaultCertificateSecret returns the desired default certificate
 // secret.
 func desiredRouterDefaultCertificateSecret(ca *crypto.CA, deployment *appsv1.Deployment, ci *ingressv1alpha1.ClusterIngress) (*corev1.Secret, error) {
+	// Without an ingress domain, we cannot generate a default certificate.
+	if len(ci.Status.IngressDomain) == 0 {
+		return nil, nil
+	}
+
+	// If the clusteringress specifies a default certificate secret, the
+	// operator does not need to generate a certificate.
 	if ci.Spec.DefaultCertificateSecret != nil {
 		return nil, nil
 	}
 
-	hostnames := sets.NewString(fmt.Sprintf("*.%s", *ci.Spec.IngressDomain))
+	hostnames := sets.NewString(fmt.Sprintf("*.%s", ci.Status.IngressDomain))
 	cert, err := ca.MakeServerCert(hostnames, 0)
 	if err != nil {
 		return nil, fmt.Errorf("failed to make certificate: %v", err)

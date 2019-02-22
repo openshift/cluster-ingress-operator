@@ -128,7 +128,13 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 			log.Error(err, "failed to get infrastructure 'cluster'")
 			infraConfig = nil
 		}
-		if dnsConfig == nil || infraConfig == nil {
+		ingressConfig := &configv1.Ingress{}
+		if err := r.Client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, ingressConfig); err != nil {
+			log.Error(err, "failed to get ingress 'cluster'")
+			ingressConfig = nil
+		}
+
+		if dnsConfig == nil || infraConfig == nil || ingressConfig == nil {
 			// For now, if the cluster configs are unavailable, defer reconciliation
 			// because weaving conditionals everywhere to deal with various nil states
 			// is too complicated. It doesn't seem too risky to rely on the invariant
@@ -143,14 +149,16 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 				return result, utilerrors.NewAggregate(errs)
 			}
 
-			if ingress.DeletionTimestamp != nil {
+			if err := r.enforceEffectiveIngressDomain(ingress, ingressConfig); err != nil {
+				errs = append(errs, fmt.Errorf("failed to enforce the effective ingress domain for clusteringress %s: %v", ingress.Name, err))
+			} else if ingress.DeletionTimestamp != nil {
 				// Handle deletion.
-				if err := r.ensureIngressDeleted(ingress, dnsConfig); err != nil {
+				if err := r.ensureIngressDeleted(ingress, dnsConfig, infraConfig); err != nil {
 					errs = append(errs, fmt.Errorf("failed to ensure ingress deletion: %v", err))
 				}
 			} else {
 				// Handle everything else.
-				if err := r.ensureRouterForIngress(ingress, caSecret, infraConfig, dnsConfig, &result); err != nil {
+				if err := r.ensureClusterIngress(ingress, caSecret, infraConfig, dnsConfig, &result); err != nil {
 					errs = append(errs, fmt.Errorf("failed to ensure clusteringress: %v", err))
 				}
 			}
@@ -171,11 +179,57 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 	return result, utilerrors.NewAggregate(errs)
 }
 
+// enforceEffectiveIngressDomain determines the effective ingress domain for the
+// given clusteringress and ingress configuration and publishes it to the
+// clusteringress's status.
+func (r *reconciler) enforceEffectiveIngressDomain(ci *ingressv1alpha1.ClusterIngress, ingressConfig *configv1.Ingress) error {
+	// The clusteringress's ingress domain is immutable, so if we have
+	// published a domain to status, we must continue using it.
+	if len(ci.Status.IngressDomain) > 0 {
+		return nil
+	}
+
+	switch {
+	case ci.Spec.IngressDomain != nil:
+		ci.Status.IngressDomain = *ci.Spec.IngressDomain
+	default:
+		ci.Status.IngressDomain = ingressConfig.Spec.Domain
+	}
+	// TODO Validate and check for conflicting claims.
+	if err := r.Client.Status().Update(context.TODO(), ci); err != nil {
+		return fmt.Errorf("failed to update status of clusteringress %s/%s: %v", ci.Namespace, ci.Name, err)
+	}
+	return nil
+}
+
+// haTypeForInfra returns the appropriate HA type for the given infrastructure
+// config.
+func haTypeForInfra(infraConfig *configv1.Infrastructure) ingressv1alpha1.ClusterIngressHAType {
+	switch infraConfig.Status.Platform {
+	case configv1.AWSPlatform:
+		return ingressv1alpha1.CloudClusterIngressHA
+	}
+	return ingressv1alpha1.UserDefinedClusterIngressHA
+}
+
+// effectiveHighAvailability returns the HA configuration as derived from the
+// given clusteringress and infrastructure config.
+func effectiveHighAvailability(ci *ingressv1alpha1.ClusterIngress, infraConfig *configv1.Infrastructure) (ha ingressv1alpha1.ClusterIngressHighAvailability) {
+	switch {
+	case ci.Spec.HighAvailability != nil:
+		ha.Type = ci.Spec.HighAvailability.Type
+	default:
+		ha.Type = haTypeForInfra(infraConfig)
+	}
+	return
+}
+
 // ensureIngressDeleted tries to delete ingress, and if successful, will remove
 // the finalizer.
-func (r *reconciler) ensureIngressDeleted(ingress *ingressv1alpha1.ClusterIngress, dnsConfig *configv1.DNS) error {
-	// TODO: This should also be tied to the HA type.
-	err := r.finalizeLoadBalancerService(ingress, dnsConfig)
+func (r *reconciler) ensureIngressDeleted(ingress *ingressv1alpha1.ClusterIngress, dnsConfig *configv1.DNS, infraConfig *configv1.Infrastructure) error {
+	ha := effectiveHighAvailability(ingress, infraConfig)
+
+	err := r.finalizeLoadBalancerService(ingress, dnsConfig, ha)
 	if err != nil {
 		return fmt.Errorf("failed to finalize load balancer service for %s: %v", ingress.Name, err)
 	}
@@ -273,73 +327,43 @@ func (r *reconciler) ensureRouterNamespace() error {
 	return nil
 }
 
-// ensureRouterForIngress ensures all necessary router resources exist for a
+// ensureClusterIngress ensures all necessary router resources exist for a
 // given clusteringress.
-func (r *reconciler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress, caSecret *corev1.Secret, infraConfig *configv1.Infrastructure, dnsConfig *configv1.DNS, result *reconcile.Result) error {
-	expected, err := r.ManifestFactory.RouterDeployment(ci)
-	if err != nil {
-		return fmt.Errorf("failed to build router deployment: %v", err)
-	}
-	current := expected.DeepCopy()
-	err = r.Client.Get(context.TODO(), types.NamespacedName{Namespace: expected.Namespace, Name: expected.Name}, current)
-	if err != nil {
-		if !errors.IsNotFound(err) {
-			return fmt.Errorf("failed to get router deployment %s/%s, %v", expected.Namespace, expected.Name, err)
-		}
-
-		err = r.Client.Create(context.TODO(), current)
-		if err == nil {
-			log.Info("created router deployment", "namespace", current.Namespace, "name", current.Name)
-		} else if !errors.IsAlreadyExists(err) {
-			return fmt.Errorf("failed to create router deployment %s/%s: %v", current.Namespace, current.Name, err)
-		}
-	}
-
-	if changed, updated := deploymentConfigChanged(current, expected); changed {
-		err = r.Client.Update(context.TODO(), updated)
-		if err == nil {
-			log.Info("updated router deployment", "namespace", updated.Namespace, "name", updated.Name)
-			current = updated
-		} else {
-			return fmt.Errorf("failed to update router deployment %s/%s, %v", updated.Namespace, updated.Name, err)
-		}
-	}
-
-	trueVar := true
-	deploymentRef := metav1.OwnerReference{
-		APIVersion: "apps/v1",
-		Kind:       "Deployment",
-		Name:       current.Name,
-		UID:        current.UID,
-		Controller: &trueVar,
-	}
-
+func (r *reconciler) ensureClusterIngress(ci *ingressv1alpha1.ClusterIngress, caSecret *corev1.Secret, infraConfig *configv1.Infrastructure, dnsConfig *configv1.DNS, result *reconcile.Result) error {
 	errs := []error{}
-	lbService, err := r.ensureLoadBalancerService(ci, current, infraConfig)
+
+	ha := effectiveHighAvailability(ci, infraConfig)
+
+	deployment, err := r.ensureRouterDeployment(ci, infraConfig, ha)
+	if err != nil {
+		errs = append(errs, err)
+	}
+
+	lbService, err := r.ensureLoadBalancerService(ci, deployment, infraConfig, ha)
 	if err != nil {
 		errs = append(errs, fmt.Errorf("failed to ensure load balancer service for %s: %v", ci.Name, err))
 	}
-	if err = r.ensureDNS(ci, lbService, dnsConfig); err != nil {
+	if err = r.ensureDNS(ci, lbService, dnsConfig, ha); err != nil {
 		errs = append(errs, fmt.Errorf("failed to ensure DNS for %s: %v", ci.Name, err))
 	}
 
-	internalSvc, err := r.ensureInternalRouterServiceForIngress(ci, deploymentRef)
+	internalSvc, err := r.ensureInternalRouterServiceForIngress(ci, deployment)
 	if err != nil {
 		errs = append(errs, fmt.Errorf("failed to create internal router service for clusteringress %s: %v", ci.Name, err))
 		return utilerrors.NewAggregate(errs)
 	}
 
-	if err := r.ensureDefaultCertificateForIngress(caSecret, current, ci); err != nil {
+	if err := r.ensureDefaultCertificateForIngress(caSecret, deployment, ci); err != nil {
 		errs = append(errs, err)
 		return utilerrors.NewAggregate(errs)
 	}
 
-	if err := r.ensureMetricsIntegration(ci, internalSvc, deploymentRef); err != nil {
+	if err := r.ensureMetricsIntegration(ci, internalSvc, deployment); err != nil {
 		errs = append(errs, fmt.Errorf("failed to integrate metrics with openshift-monitoring for clusteringress %s: %v", ci.Name, err))
 		return utilerrors.NewAggregate(errs)
 	}
 
-	_, err = r.ensureServiceMonitor(ci, internalSvc, current)
+	_, err = r.ensureServiceMonitor(ci, internalSvc, deployment)
 	if err != nil {
 		errs = append(errs, fmt.Errorf("failed to ensure servicemonitor for %s: %v", ci.Name, err))
 		if meta.IsNoMatchError(err) {
@@ -347,8 +371,8 @@ func (r *reconciler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress, 
 		}
 	}
 
-	if err := r.syncClusterIngressStatus(current, ci); err != nil {
-		errs = append(errs, fmt.Errorf("failed to update status of clusteringress %s/%s: %v", current.Namespace, current.Name, err))
+	if err := r.syncClusterIngressStatus(deployment, ci, ha); err != nil {
+		errs = append(errs, fmt.Errorf("failed to update status of clusteringress %s/%s: %v", deployment.Namespace, deployment.Name, err))
 		return utilerrors.NewAggregate(errs)
 	}
 
@@ -356,7 +380,20 @@ func (r *reconciler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress, 
 }
 
 // ensureMetricsIntegration ensures that router prometheus metrics is integrated with openshift-monitoring for the given clusteringress.
-func (r *reconciler) ensureMetricsIntegration(ci *ingressv1alpha1.ClusterIngress, svc *corev1.Service, deploymentRef metav1.OwnerReference) error {
+func (r *reconciler) ensureMetricsIntegration(ci *ingressv1alpha1.ClusterIngress, svc *corev1.Service, deployment *appsv1.Deployment) error {
+	if deployment == nil {
+		return nil
+	}
+
+	trueVar := true
+	deploymentRef := metav1.OwnerReference{
+		APIVersion: "apps/v1",
+		Kind:       "Deployment",
+		Name:       deployment.Name,
+		UID:        deployment.UID,
+		Controller: &trueVar,
+	}
+
 	statsSecret, err := r.ManifestFactory.RouterStatsSecret(ci)
 	if err != nil {
 		return fmt.Errorf("failed to build router stats secret: %v", err)
@@ -448,19 +485,25 @@ func (r *reconciler) ensureMetricsIntegration(ci *ingressv1alpha1.ClusterIngress
 }
 
 // syncClusterIngressStatus updates the status for a given clusteringress.
-func (r *reconciler) syncClusterIngressStatus(deployment *appsv1.Deployment, ci *ingressv1alpha1.ClusterIngress) error {
+func (r *reconciler) syncClusterIngressStatus(deployment *appsv1.Deployment, ci *ingressv1alpha1.ClusterIngress, ha ingressv1alpha1.ClusterIngressHighAvailability) error {
+	if deployment == nil {
+		return nil
+	}
+
 	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
 	if err != nil {
 		return fmt.Errorf("router deployment %s/%s has invalid spec.selector: %v", deployment.Namespace, deployment.Name, err)
 	}
 
 	if ci.Status.Replicas == deployment.Status.AvailableReplicas &&
-		ci.Status.Selector == selector.String() {
+		ci.Status.Selector == selector.String() &&
+		ci.Status.HighAvailability == ha {
 		return nil
 	}
 
 	ci.Status.Replicas = deployment.Status.AvailableReplicas
 	ci.Status.Selector = selector.String()
+	ci.Status.HighAvailability = ha
 	if err := r.Client.Status().Update(context.TODO(), ci); err != nil {
 		return fmt.Errorf("failed to update status of clusteringress %s/%s: %v", ci.Namespace, ci.Name, err)
 	}
@@ -470,7 +513,20 @@ func (r *reconciler) syncClusterIngressStatus(deployment *appsv1.Deployment, ci 
 
 // ensureInternalRouterServiceForIngress ensures that an internal service exists
 // for a given ClusterIngress.
-func (r *reconciler) ensureInternalRouterServiceForIngress(ci *ingressv1alpha1.ClusterIngress, deploymentRef metav1.OwnerReference) (*corev1.Service, error) {
+func (r *reconciler) ensureInternalRouterServiceForIngress(ci *ingressv1alpha1.ClusterIngress, deployment *appsv1.Deployment) (*corev1.Service, error) {
+	if deployment == nil {
+		return nil, nil
+	}
+
+	trueVar := true
+	deploymentRef := metav1.OwnerReference{
+		APIVersion: "apps/v1",
+		Kind:       "Deployment",
+		Name:       deployment.Name,
+		UID:        deployment.UID,
+		Controller: &trueVar,
+	}
+
 	svc, err := r.ManifestFactory.RouterServiceInternal(ci)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build router service: %v", err)
@@ -491,40 +547,4 @@ func (r *reconciler) ensureInternalRouterServiceForIngress(ci *ingressv1alpha1.C
 	}
 
 	return svc, nil
-}
-
-// ensureRouterDeleted ensures that any router resources associated with the
-// clusteringress are deleted.
-func (r *reconciler) ensureRouterDeleted(ci *ingressv1alpha1.ClusterIngress) error {
-	deployment, err := r.ManifestFactory.RouterDeployment(ci)
-	if err != nil {
-		return fmt.Errorf("failed to build router deployment for deletion: %v", err)
-	}
-
-	err = r.Client.Delete(context.TODO(), deployment)
-	if !errors.IsNotFound(err) {
-		return err
-	}
-	return nil
-}
-
-// deploymentConfigChanged checks if current config matches the expected config
-// for the cluster ingress deployment and if not returns the updated config.
-func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv1.Deployment) {
-	// As per an offline conversation, this checks only the secret name
-	// for now but can be updated to a `reflect.DeepEqual` if needed.
-	if current.Spec.Template.Spec.Volumes[0].Secret.SecretName == expected.Spec.Template.Spec.Volumes[0].Secret.SecretName &&
-		current.Spec.Replicas != nil &&
-		*current.Spec.Replicas == *expected.Spec.Replicas {
-		return false, nil
-	}
-
-	updated := current.DeepCopy()
-	updated.Spec.Template.Spec.Volumes[0].Secret.SecretName = expected.Spec.Template.Spec.Volumes[0].Secret.SecretName
-	replicas := int32(1)
-	if expected.Spec.Replicas != nil {
-		replicas = *expected.Spec.Replicas
-	}
-	updated.Spec.Replicas = &replicas
-	return true, updated
 }

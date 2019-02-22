@@ -66,17 +66,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Retrieve the cluster ingress config.
-	ingressConfig := &configv1.Ingress{}
-	err = kubeClient.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, ingressConfig)
-	if err != nil {
-		log.Error(err, "failed to get ingress 'cluster'")
-		os.Exit(1)
-	}
-	if len(ingressConfig.Spec.Domain) == 0 {
-		log.Info("cluster ingress configuration has an empty domain; default ClusterIngress will have empty ingressDomain")
-	}
-
 	dnsConfig := &configv1.DNS{}
 	err = kubeClient.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, dnsConfig)
 	if err != nil {
@@ -93,10 +82,9 @@ func main() {
 
 	// Set up and start the operator.
 	operatorConfig := operatorconfig.Config{
-		Namespace:            operatorNamespace,
-		RouterImage:          routerImage,
-		DefaultIngressDomain: ingressConfig.Spec.Domain,
-		Platform:             infraConfig.Status.Platform,
+		Namespace:   operatorNamespace,
+		RouterImage: routerImage,
+		Platform:    infraConfig.Status.Platform,
 	}
 	op, err := operator.New(operatorConfig, dnsManager, kubeConfig)
 	if err != nil {

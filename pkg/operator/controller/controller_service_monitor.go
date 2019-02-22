@@ -17,6 +17,10 @@ import (
 )
 
 func (r *reconciler) ensureServiceMonitor(ci *ingressv1alpha1.ClusterIngress, svc *corev1.Service, deployment *appsv1.Deployment) (*unstructured.Unstructured, error) {
+	if deployment == nil {
+		return nil, nil
+	}
+
 	desired := desiredServiceMonitor(ci, svc, deployment)
 
 	current, err := r.currentServiceMonitor(ci)
