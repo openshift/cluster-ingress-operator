@@ -8,11 +8,13 @@ import (
 
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
+	"github.com/openshift/cluster-ingress-operator/version"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/arn"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/ec2metadata"
+	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/elb"
 	"github.com/aws/aws-sdk-go/service/resourcegroupstaggingapi"
@@ -78,6 +80,10 @@ func NewManager(config Config) (*Manager, error) {
 	if err != nil {
 		return nil, fmt.Errorf("couldn't create AWS client session: %v", err)
 	}
+	sess.Handlers.Build.PushBackNamed(request.NamedHandler{
+		Name: "openshift.io/ingress-operator",
+		Fn:   request.MakeAddToUserAgentHandler("openshift.io ingress-operator", version.OperatorVersion),
+	})
 
 	region := aws.StringValue(sess.Config.Region)
 	if len(region) > 0 {
