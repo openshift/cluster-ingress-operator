@@ -11,8 +11,6 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/sirupsen/logrus"
-
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -87,6 +85,7 @@ func generateRouterCA() ([]byte, []byte, error) {
 
 		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
 		BasicConstraintsValid: true,
+
 		IsCA: true,
 
 		// Don't allow the CA to be used to make another CA.
@@ -149,6 +148,6 @@ func (r *reconciler) createRouterCASecret(secret *corev1.Secret) error {
 	if err := r.Client.Create(context.TODO(), secret); err != nil {
 		return err
 	}
-	logrus.Infof("created secret %s/%s", secret.Namespace, secret.Name)
+	log.Info("created secret", "namespace", secret.Namespace, "name", secret.Name)
 	return nil
 }

@@ -7,12 +7,11 @@ import (
 
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 	awsdns "github.com/openshift/cluster-ingress-operator/pkg/dns/aws"
+	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator"
 	operatorconfig "github.com/openshift/cluster-ingress-operator/pkg/operator/config"
 
 	configv1 "github.com/openshift/api/config/v1"
-
-	"github.com/sirupsen/logrus"
 
 	corev1 "k8s.io/api/core/v1"
 
@@ -32,54 +31,64 @@ const (
 	cloudCredentialsSecretName = "cloud-credentials"
 )
 
+var log = logf.Logger.WithName("entrypoint")
+
 func main() {
 	// Get a kube client.
 	kubeConfig, err := config.GetConfig()
 	if err != nil {
-		logrus.Fatalf("failed to get kube config: %v", err)
+		log.Error(err, "failed to get kube config")
+		os.Exit(1)
 	}
 	kubeClient, err := operator.Client(kubeConfig)
 	if err != nil {
-		logrus.Fatalf("failed to create kube client: %v", err)
+		log.Error(err, "failed to create kube client")
+		os.Exit(1)
 	}
 
 	// Collect operator configuration.
 	operatorNamespace, ok := os.LookupEnv("WATCH_NAMESPACE")
 	if !ok {
-		logrus.Fatalf("WATCH_NAMESPACE environment variable is required")
+		log.Error(fmt.Errorf("missing environment variable"), "'WATCH_NAMESPACE' environment variable must be set")
+		os.Exit(1)
 	}
 	routerImage := os.Getenv("IMAGE")
 	if len(routerImage) == 0 {
-		logrus.Fatalf("IMAGE environment variable is required")
+		log.Error(fmt.Errorf("missing environment variable"), "'IMAGE' environment variable must be set")
+		os.Exit(1)
 	}
 
 	// Retrieve the cluster infrastructure config.
 	infraConfig := &configv1.Infrastructure{}
 	err = kubeClient.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, infraConfig)
 	if err != nil {
-		logrus.Fatalf("failed to get infrastructure 'config': %v", err)
+		log.Error(err, "failed to get infrastructure 'config'")
+		os.Exit(1)
 	}
 
 	// Retrieve the cluster ingress config.
 	ingressConfig := &configv1.Ingress{}
 	err = kubeClient.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, ingressConfig)
 	if err != nil {
-		logrus.Fatalf("failed to get ingress 'cluster': %v", err)
+		log.Error(err, "failed to get ingress 'cluster'")
+		os.Exit(1)
 	}
 	if len(ingressConfig.Spec.Domain) == 0 {
-		logrus.Warnln("cluster ingress configuration has an empty domain; default ClusterIngress will have empty ingressDomain")
+		log.Info("cluster ingress configuration has an empty domain; default ClusterIngress will have empty ingressDomain")
 	}
 
 	dnsConfig := &configv1.DNS{}
 	err = kubeClient.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, dnsConfig)
 	if err != nil {
-		logrus.Fatalf("failed to get dns 'cluster': %v", err)
+		log.Error(err, "failed to get dns 'cluster'")
+		os.Exit(1)
 	}
 
 	// Set up the DNS manager.
 	dnsManager, err := createDNSManager(kubeClient, operatorNamespace, infraConfig, dnsConfig)
 	if err != nil {
-		logrus.Fatalf("failed to create DNS manager: %v", err)
+		log.Error(err, "failed to create DNS manager")
+		os.Exit(1)
 	}
 
 	// Set up and start the operator.
@@ -91,10 +100,12 @@ func main() {
 	}
 	op, err := operator.New(operatorConfig, dnsManager, kubeConfig)
 	if err != nil {
-		logrus.Fatalf("failed to create operator: %v", err)
+		log.Error(err, "failed to create operator")
+		os.Exit(1)
 	}
 	if err := op.Start(signals.SetupSignalHandler()); err != nil {
-		logrus.Fatal(err)
+		log.Error(err, "failed to start operator")
+		os.Exit(1)
 	}
 }
 

@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/sirupsen/logrus"
-
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -29,7 +27,7 @@ func (r *reconciler) ensureServiceMonitor(ci *ingressv1alpha1.ClusterIngress, sv
 	if desired != nil && current == nil {
 		err = r.Client.Create(context.TODO(), desired)
 		if err == nil {
-			logrus.Infof("created servicemonitor %s/%s", desired.GetNamespace(), desired.GetName())
+			log.Info("created servicemonitor", "namespace", desired.GetNamespace(), "name", desired.GetName())
 		} else if !errors.IsAlreadyExists(err) {
 			return nil, fmt.Errorf("failed to create servicemonitor %s/%s: %v", desired.GetNamespace(), desired.GetName(), err)
 		}

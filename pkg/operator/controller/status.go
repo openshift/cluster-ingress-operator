@@ -7,7 +7,6 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-	"github.com/sirupsen/logrus"
 
 	configv1 "github.com/openshift/api/config/v1"
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
@@ -73,7 +72,7 @@ func (r *reconciler) syncOperatorStatus() error {
 		if err := r.Client.Create(context.TODO(), co); err != nil {
 			return fmt.Errorf("failed to create clusteroperator %s: %v", co.Name, err)
 		}
-		logrus.Infof("created clusteroperator: %#v", co)
+		log.Info("created clusteroperator", "object", co)
 	} else {
 		conditionOpts := []cmp.Option{
 			cmpopts.IgnoreFields(configv1.ClusterOperatorStatusCondition{}, "LastTransitionTime"),

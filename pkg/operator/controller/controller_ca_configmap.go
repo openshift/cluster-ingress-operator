@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/sirupsen/logrus"
-
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
 
 	corev1 "k8s.io/api/core/v1"
@@ -116,7 +114,7 @@ func (r *reconciler) createRouterCAConfigMap(cm *corev1.ConfigMap) error {
 		}
 		return err
 	}
-	logrus.Infof("created configmap %s/%s", cm.Namespace, cm.Name)
+	log.Info("created configmap", "namespace", cm.Namespace, "name", cm.Name)
 	return nil
 }
 
@@ -133,7 +131,7 @@ func (r *reconciler) updateRouterCAConfigMap(current, desired *corev1.ConfigMap)
 		}
 		return err
 	}
-	logrus.Infof("updated configmap %s/%s", updated.Namespace, updated.Name)
+	log.Info("updated configmap", "namespace", updated.Namespace, "name", updated.Name)
 	return nil
 }
 
@@ -145,7 +143,7 @@ func (r *reconciler) deleteRouterCAConfigMap(cm *corev1.ConfigMap) error {
 		}
 		return err
 	}
-	logrus.Infof("deleted configmap %s/%s", cm.Namespace, cm.Name)
+	log.Info("deleted configmap", "namespace", cm.Namespace, "name", cm.Name)
 	return nil
 }
 

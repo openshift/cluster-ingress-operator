@@ -5,10 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/sirupsen/logrus"
-
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
+	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/slice"
 
@@ -37,6 +36,8 @@ const (
 	// all states. TODO: Make this generic and not tied to the "default" ingress.
 	ClusterIngressFinalizer = "ingress.openshift.io/default-cluster-ingress"
 )
+
+var log = logf.Logger.WithName("cluster-ingress-controller")
 
 // New creates the operator controller from configuration. This is the
 // controller that handles all the logic for implementing ingress based on
@@ -78,29 +79,17 @@ type reconciler struct {
 // namespace, and will do all the work to ensure the clusteringress is in the
 // desired state.
 func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, error) {
-	result, err := r.reconcile(request)
-	if err != nil {
-		// TODO: We're not setting up the controller-runtime logger, so errors we
-		// bubble out are not being logged. For now, log them here, but we need to
-		// redo our logging and wire up the controller-runtime logger because who
-		// knows what else is being eaten.
-		logrus.Errorf("error: %v", err)
-	}
-	return result, err
-}
-
-func (r *reconciler) reconcile(request reconcile.Request) (reconcile.Result, error) {
 	result := reconcile.Result{}
 
 	// TODO: Should this be another controller?
 	defer func() {
 		err := r.syncOperatorStatus()
 		if err != nil {
-			logrus.Infof("failed to sync operator status: %v", err)
+			log.Error(err, "failed to sync operator status")
 		}
 	}()
 
-	logrus.Infof("reconciling request: %v", request)
+	log.Info("reconciling", "request", request)
 
 	// Get the current ingress state.
 	ingress := &ingressv1alpha1.ClusterIngress{}
@@ -110,10 +99,10 @@ func (r *reconciler) reconcile(request reconcile.Request) (reconcile.Result, err
 			// This means the ingress was already deleted/finalized and there are
 			// stale queue entries (or something edge triggering from a related
 			// resource that got deleted async).
-			logrus.Infof("clusteringress %q not found and reconciliation will be skipped", request)
+			log.Info("clusteringress not found; reconciliation will be skipped", "request", request)
 		} else {
 			// Try again later.
-			logrus.Errorf("failed to get clusteringress %q: %v", request, err)
+			log.Error(err, "failed to get clusteringress", "request", request)
 			result.RequeueAfter = 10 * time.Second
 		}
 		ingress = nil
@@ -131,12 +120,12 @@ func (r *reconciler) reconcile(request reconcile.Request) (reconcile.Result, err
 	if ingress != nil {
 		dnsConfig := &configv1.DNS{}
 		if err := r.Client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, dnsConfig); err != nil {
-			logrus.Errorf("failed to get dns 'cluster': %v", err)
+			log.Error(err, "failed to get dns 'cluster'")
 			dnsConfig = nil
 		}
 		infraConfig := &configv1.Infrastructure{}
 		if err := r.Client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, infraConfig); err != nil {
-			logrus.Errorf("failed to get infrastructure 'cluster': %v", err)
+			log.Error(err, "failed to get infrastructure 'cluster'")
 			infraConfig = nil
 		}
 		if dnsConfig == nil || infraConfig == nil {
@@ -190,13 +179,13 @@ func (r *reconciler) ensureIngressDeleted(ingress *ingressv1alpha1.ClusterIngres
 	if err != nil {
 		return fmt.Errorf("failed to finalize load balancer service for %s: %v", ingress.Name, err)
 	}
-	logrus.Infof("finalized load balancer service for ingress %s", ingress.Name)
+	log.Info("finalized load balancer service for ingress", "namespace", ingress.Namespace, "name", ingress.Name)
 
 	err = r.ensureRouterDeleted(ingress)
 	if err != nil {
 		return fmt.Errorf("failed to delete deployment for ingress %s: %v", ingress.Name, err)
 	}
-	logrus.Infof("deleted deployment for ingress %s", ingress.Name)
+	log.Info("deleted deployment for ingress", "namespace", ingress.Namespace, "name", ingress.Name)
 
 	// Clean up the finalizer to allow the clusteringress to be deleted.
 	updated := ingress.DeepCopy()
@@ -224,7 +213,7 @@ func (r *reconciler) ensureRouterNamespace() error {
 		}
 		err = r.Client.Create(context.TODO(), cr)
 		if err == nil {
-			logrus.Infof("created router cluster role %s", cr.Name)
+			log.Info("created router cluster role", "name", cr.Name)
 		} else if !errors.IsAlreadyExists(err) {
 			return fmt.Errorf("failed to create router cluster role %s: %v", cr.Name, err)
 		}
@@ -241,7 +230,7 @@ func (r *reconciler) ensureRouterNamespace() error {
 		}
 		err = r.Client.Create(context.TODO(), ns)
 		if err == nil {
-			logrus.Infof("created router namespace %s", ns.Name)
+			log.Info("created router namespace", "name", ns.Name)
 		} else if !errors.IsAlreadyExists(err) {
 			return fmt.Errorf("failed to create router namespace %s: %v", ns.Name, err)
 		}
@@ -258,7 +247,7 @@ func (r *reconciler) ensureRouterNamespace() error {
 		}
 		err = r.Client.Create(context.TODO(), sa)
 		if err == nil {
-			logrus.Infof("created router service account %s/%s", sa.Namespace, sa.Name)
+			log.Info("created router service account", "namespace", sa.Namespace, "name", sa.Name)
 		} else if !errors.IsAlreadyExists(err) {
 			return fmt.Errorf("failed to create router service account %s/%s: %v", sa.Namespace, sa.Name, err)
 		}
@@ -275,7 +264,7 @@ func (r *reconciler) ensureRouterNamespace() error {
 		}
 		err = r.Client.Create(context.TODO(), crb)
 		if err == nil {
-			logrus.Infof("created router cluster role binding %s", crb.Name)
+			log.Info("created router cluster role binding", "name", crb.Name)
 		} else if !errors.IsAlreadyExists(err) {
 			return fmt.Errorf("failed to create router cluster role binding %s: %v", crb.Name, err)
 		}
@@ -300,7 +289,7 @@ func (r *reconciler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress, 
 
 		err = r.Client.Create(context.TODO(), current)
 		if err == nil {
-			logrus.Infof("created router deployment %s/%s", current.Namespace, current.Name)
+			log.Info("created router deployment", "namespace", current.Namespace, "name", current.Name)
 		} else if !errors.IsAlreadyExists(err) {
 			return fmt.Errorf("failed to create router deployment %s/%s: %v", current.Namespace, current.Name, err)
 		}
@@ -309,7 +298,7 @@ func (r *reconciler) ensureRouterForIngress(ci *ingressv1alpha1.ClusterIngress, 
 	if changed, updated := deploymentConfigChanged(current, expected); changed {
 		err = r.Client.Update(context.TODO(), updated)
 		if err == nil {
-			logrus.Infof("updated router deployment %s/%s", updated.Namespace, updated.Name)
+			log.Info("updated router deployment", "namespace", updated.Namespace, "name", updated.Name)
 			current = updated
 		} else {
 			return fmt.Errorf("failed to update router deployment %s/%s, %v", updated.Namespace, updated.Name, err)
@@ -381,7 +370,7 @@ func (r *reconciler) ensureMetricsIntegration(ci *ingressv1alpha1.ClusterIngress
 		statsSecret.SetOwnerReferences([]metav1.OwnerReference{deploymentRef})
 		err = r.Client.Create(context.TODO(), statsSecret)
 		if err == nil {
-			logrus.Infof("created router stats secret %s/%s", statsSecret.Namespace, statsSecret.Name)
+			log.Info("created router stats secret", "namespace", statsSecret.Namespace, "name", statsSecret.Name)
 		} else if !errors.IsAlreadyExists(err) {
 			return fmt.Errorf("failed to create router stats secret %s/%s: %v", statsSecret.Namespace, statsSecret.Name, err)
 		}
@@ -398,7 +387,7 @@ func (r *reconciler) ensureMetricsIntegration(ci *ingressv1alpha1.ClusterIngress
 		}
 		err = r.Client.Create(context.TODO(), cr)
 		if err == nil {
-			logrus.Infof("created router metrics cluster role %s", cr.Name)
+			log.Info("created router metrics cluster role", "name", cr.Name)
 		} else if !errors.IsAlreadyExists(err) {
 			return fmt.Errorf("failed to create router metrics cluster role %s: %v", cr.Name, err)
 		}
@@ -415,7 +404,7 @@ func (r *reconciler) ensureMetricsIntegration(ci *ingressv1alpha1.ClusterIngress
 		}
 		err = r.Client.Create(context.TODO(), crb)
 		if err == nil {
-			logrus.Infof("created router metrics cluster role binding %s", crb.Name)
+			log.Info("created router metrics cluster role binding", "name", crb.Name)
 		} else if !errors.IsAlreadyExists(err) {
 			return fmt.Errorf("failed to create router metrics cluster role binding %s: %v", crb.Name, err)
 		}
@@ -432,7 +421,7 @@ func (r *reconciler) ensureMetricsIntegration(ci *ingressv1alpha1.ClusterIngress
 		}
 		err = r.Client.Create(context.TODO(), mr)
 		if err == nil {
-			logrus.Infof("created router metrics role %s", mr.Name)
+			log.Info("created router metrics role", "name", mr.Name)
 		} else if !errors.IsAlreadyExists(err) {
 			return fmt.Errorf("failed to create router metrics role %s: %v", mr.Name, err)
 		}
@@ -449,7 +438,7 @@ func (r *reconciler) ensureMetricsIntegration(ci *ingressv1alpha1.ClusterIngress
 		}
 		err = r.Client.Create(context.TODO(), mrb)
 		if err == nil {
-			logrus.Infof("created router metrics role binding %s", mrb.Name)
+			log.Info("created router metrics role binding", "name", mrb.Name)
 		} else if !errors.IsAlreadyExists(err) {
 			return fmt.Errorf("failed to create router metrics role binding %s: %v", mrb.Name, err)
 		}
@@ -495,7 +484,7 @@ func (r *reconciler) ensureInternalRouterServiceForIngress(ci *ingressv1alpha1.C
 		svc.SetOwnerReferences([]metav1.OwnerReference{deploymentRef})
 		err = r.Client.Create(context.TODO(), svc)
 		if err == nil {
-			logrus.Infof("created router service %s/%s", svc.Namespace, svc.Name)
+			log.Info("created router service", "namespace", svc.Namespace, "name", svc.Name)
 		} else if !errors.IsAlreadyExists(err) {
 			return nil, fmt.Errorf("failed to create router service %s/%s: %v", svc.Namespace, svc.Name, err)
 		}
