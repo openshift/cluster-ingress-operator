@@ -57,8 +57,7 @@ func (r *reconciler) ensureRouterDeleted(ci *ingressv1alpha1.ClusterIngress) err
 	name := routerDeploymentName(ci)
 	deployment.Name = name.Name
 	deployment.Namespace = name.Namespace
-	err := r.Client.Delete(context.TODO(), deployment)
-	if !errors.IsNotFound(err) {
+	if err := r.Client.Delete(context.TODO(), deployment); !errors.IsNotFound(err) {
 		return err
 	}
 	return nil

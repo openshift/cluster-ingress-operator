@@ -6,7 +6,6 @@ import (
 
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
 
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -16,12 +15,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
-func (r *reconciler) ensureServiceMonitor(ci *ingressv1alpha1.ClusterIngress, svc *corev1.Service, deployment *appsv1.Deployment) (*unstructured.Unstructured, error) {
-	if deployment == nil {
-		return nil, nil
-	}
-
-	desired := desiredServiceMonitor(ci, svc, deployment)
+func (r *reconciler) ensureServiceMonitor(ci *ingressv1alpha1.ClusterIngress, svc *corev1.Service, deploymentRef metav1.OwnerReference) (*unstructured.Unstructured, error) {
+	desired := desiredServiceMonitor(ci, svc, deploymentRef)
 
 	current, err := r.currentServiceMonitor(ci)
 	if err != nil {
@@ -29,8 +24,7 @@ func (r *reconciler) ensureServiceMonitor(ci *ingressv1alpha1.ClusterIngress, sv
 	}
 
 	if desired != nil && current == nil {
-		err = r.Client.Create(context.TODO(), desired)
-		if err == nil {
+		if err := r.Client.Create(context.TODO(), desired); err == nil {
 			log.Info("created servicemonitor", "namespace", desired.GetNamespace(), "name", desired.GetName())
 		} else if !errors.IsAlreadyExists(err) {
 			return nil, fmt.Errorf("failed to create servicemonitor %s/%s: %v", desired.GetNamespace(), desired.GetName(), err)
@@ -44,7 +38,7 @@ func serviceMonitorName(ci *ingressv1alpha1.ClusterIngress) types.NamespacedName
 	return types.NamespacedName{Namespace: "openshift-ingress", Name: "router-" + ci.Name}
 }
 
-func desiredServiceMonitor(ci *ingressv1alpha1.ClusterIngress, svc *corev1.Service, deployment *appsv1.Deployment) *unstructured.Unstructured {
+func desiredServiceMonitor(ci *ingressv1alpha1.ClusterIngress, svc *corev1.Service, deploymentRef metav1.OwnerReference) *unstructured.Unstructured {
 	name := serviceMonitorName(ci)
 	sm := &unstructured.Unstructured{
 		Object: map[string]interface{}{
@@ -80,14 +74,6 @@ func desiredServiceMonitor(ci *ingressv1alpha1.ClusterIngress, svc *corev1.Servi
 		Kind:    "ServiceMonitor",
 		Version: "v1",
 	})
-	trueVar := true
-	deploymentRef := metav1.OwnerReference{
-		APIVersion: "apps/v1",
-		Kind:       "Deployment",
-		Name:       deployment.Name,
-		UID:        deployment.UID,
-		Controller: &trueVar,
-	}
 	sm.SetOwnerReferences([]metav1.OwnerReference{deploymentRef})
 	return sm
 }
@@ -99,8 +85,7 @@ func (r *reconciler) currentServiceMonitor(ci *ingressv1alpha1.ClusterIngress) (
 		Kind:    "ServiceMonitor",
 		Version: "v1",
 	})
-	err := r.Client.Get(context.TODO(), serviceMonitorName(ci), sm)
-	if err != nil {
+	if err := r.Client.Get(context.TODO(), serviceMonitorName(ci), sm); err != nil {
 		if errors.IsNotFound(err) {
 			return nil, nil
 		}

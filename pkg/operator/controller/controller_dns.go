@@ -35,11 +35,6 @@ func (r *reconciler) ensureDNS(ci *ingressv1alpha1.ClusterIngress, service *core
 func desiredDNSRecords(ci *ingressv1alpha1.ClusterIngress, service *corev1.Service, dnsConfig *configv1.DNS) ([]*dns.Record, error) {
 	records := []*dns.Record{}
 
-	// If no service exists, no DNS records should exist.
-	if service == nil {
-		return records, nil
-	}
-
 	// If the clusteringress has no ingress domain, we cannot configure any
 	// DNS records.
 	if len(ci.Status.IngressDomain) == 0 {
