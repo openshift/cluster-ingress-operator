@@ -14,13 +14,15 @@ var Logger logr.Logger
 
 func init() {
 	// Build a zap development logger.
-	zapLog, err := zap.NewDevelopment()
+	zapLogger, err := zap.NewDevelopment(zap.AddCallerSkip(1))
 	if err != nil {
 		panic(fmt.Sprintf("error building logger: %v", err))
 	}
+	defer zapLogger.Sync()
+
 	// zapr defines an implementation of the Logger
 	// interface built on top of Zap (go.uber.org/zap).
-	Logger = zapr.NewLogger(zapLog)
+	Logger = zapr.NewLogger(zapLogger).WithName("operator")
 	Logger.Info("started zapr logger")
 }
 

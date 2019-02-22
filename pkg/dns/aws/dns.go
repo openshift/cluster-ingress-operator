@@ -26,7 +26,7 @@ import (
 
 var (
 	_   dns.Manager = &Manager{}
-	log             = logf.Logger.WithName("aws-dns-manager")
+	log             = logf.Logger.WithName("dns")
 )
 
 // Manager provides AWS DNS record management. In this implementation, calling

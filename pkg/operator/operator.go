@@ -42,7 +42,7 @@ var (
 	// so only add types here that are _guaranteed_ to exist before the operator
 	// starts.
 	scheme *runtime.Scheme
-	log    = logf.Logger.WithName("base-operator")
+	log    = logf.Logger.WithName("init")
 )
 
 func init() {
