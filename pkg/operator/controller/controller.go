@@ -336,47 +336,44 @@ func (r *reconciler) ensureClusterIngress(ci *ingressv1alpha1.ClusterIngress, ca
 
 	deployment, err := r.ensureRouterDeployment(ci, infraConfig, ha)
 	if err != nil {
-		errs = append(errs, err)
-	}
-
-	lbService, err := r.ensureLoadBalancerService(ci, deployment, infraConfig, ha)
-	if err != nil {
-		errs = append(errs, fmt.Errorf("failed to ensure load balancer service for %s: %v", ci.Name, err))
-	}
-	if err = r.ensureDNS(ci, lbService, dnsConfig, ha); err != nil {
-		errs = append(errs, fmt.Errorf("failed to ensure DNS for %s: %v", ci.Name, err))
-	}
-
-	internalSvc, err := r.ensureInternalRouterServiceForIngress(ci, deployment)
-	if err != nil {
-		errs = append(errs, fmt.Errorf("failed to create internal router service for clusteringress %s: %v", ci.Name, err))
+		errs = append(errs, fmt.Errorf("failed to ensure deployment: %v", err))
 		return utilerrors.NewAggregate(errs)
+	}
+
+	if lbService, err := r.ensureLoadBalancerService(ci, deployment, infraConfig, ha); err != nil {
+		errs = append(errs, fmt.Errorf("failed to ensure load balancer service: %v", err))
+	} else {
+		if err = r.ensureDNS(ci, lbService, dnsConfig, ha); err != nil {
+			errs = append(errs, fmt.Errorf("failed to ensure DNS: %v", err))
+		}
 	}
 
 	if err := r.ensureDefaultCertificateForIngress(caSecret, deployment, ci); err != nil {
-		errs = append(errs, err)
-		return utilerrors.NewAggregate(errs)
+		errs = append(errs, fmt.Errorf("failed to ensure default certificate: %v", err))
 	}
 
-	if err := r.ensureMetricsIntegration(ci, internalSvc, deployment); err != nil {
-		errs = append(errs, fmt.Errorf("failed to integrate metrics with openshift-monitoring for clusteringress %s: %v", ci.Name, err))
-		return utilerrors.NewAggregate(errs)
-	}
-
-	_, err = r.ensureServiceMonitor(ci, internalSvc, deployment)
-	if err != nil {
-		errs = append(errs, fmt.Errorf("failed to ensure servicemonitor for %s: %v", ci.Name, err))
-		if meta.IsNoMatchError(err) {
-			result.RequeueAfter = 10 * time.Second
+	if internalSvc, err := r.ensureInternalRouterServiceForIngress(ci, deployment); err != nil {
+		errs = append(errs, fmt.Errorf("failed to create internal router service: %v", err))
+	} else {
+		if err := r.ensureMetricsIntegration(ci, internalSvc, deployment); err != nil {
+			errs = append(errs, fmt.Errorf("failed to integrate metrics: %v", err))
+		} else {
+			if _, err = r.ensureServiceMonitor(ci, internalSvc, deployment); err != nil {
+				if meta.IsNoMatchError(err) {
+					log.Error(err, "failed to ensure servicemonitor because of missing type; will retry")
+					result.RequeueAfter = 10 * time.Second
+				} else {
+					errs = append(errs, fmt.Errorf("failed to ensure servicemonitor: %v", err))
+				}
+			}
 		}
 	}
 
 	if err := r.syncClusterIngressStatus(deployment, ci, ha); err != nil {
-		errs = append(errs, fmt.Errorf("failed to update status of clusteringress %s/%s: %v", deployment.Namespace, deployment.Name, err))
-		return utilerrors.NewAggregate(errs)
+		errs = append(errs, fmt.Errorf("failed to sync status: %v", err))
 	}
 
-	return nil
+	return utilerrors.NewAggregate(errs)
 }
 
 // ensureMetricsIntegration ensures that router prometheus metrics is integrated with openshift-monitoring for the given clusteringress.
