@@ -32,12 +32,12 @@ const (
 // ensureLoadBalancerService creates an LB service if one is desired but absent.
 // Always returns the current LB service if one exists (whether it already
 // existed or was created during the course of the function).
-func (r *reconciler) ensureLoadBalancerService(ci *ingressv1alpha1.ClusterIngress, deployment *appsv1.Deployment, infraConfig *configv1.Infrastructure, ha ingressv1alpha1.ClusterIngressHighAvailability) (*corev1.Service, error) {
+func (r *reconciler) ensureLoadBalancerService(ci *ingressv1alpha1.ClusterIngress, deployment *appsv1.Deployment, infraConfig *configv1.Infrastructure) (*corev1.Service, error) {
 	if deployment == nil {
 		return nil, nil
 	}
 
-	desiredLBService, err := desiredLoadBalancerService(ci, deployment, infraConfig, ha.Type)
+	desiredLBService, err := desiredLoadBalancerService(ci, deployment, infraConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -68,8 +68,8 @@ func loadBalancerServiceName(ci *ingressv1alpha1.ClusterIngress) types.Namespace
 // clusteringress, or nil if an LB service isn't desired. An LB service is
 // desired if the high availability type is Cloud. An LB service will declare an
 // owner reference to the given deployment.
-func desiredLoadBalancerService(ci *ingressv1alpha1.ClusterIngress, deployment *appsv1.Deployment, infraConfig *configv1.Infrastructure, haType ingressv1alpha1.ClusterIngressHAType) (*corev1.Service, error) {
-	if haType != ingressv1alpha1.CloudClusterIngressHA {
+func desiredLoadBalancerService(ci *ingressv1alpha1.ClusterIngress, deployment *appsv1.Deployment, infraConfig *configv1.Infrastructure) (*corev1.Service, error) {
+	if ci.Status.HighAvailability.Type != ingressv1alpha1.CloudClusterIngressHA {
 		return nil, nil
 	}
 	trueVar := true
@@ -126,7 +126,7 @@ func (r *reconciler) currentLoadBalancerService(ci *ingressv1alpha1.ClusterIngre
 // finalizeLoadBalancerService deletes any DNS entries associated with any
 // current LB service associated with the clusteringress and then finalizes the
 // service.
-func (r *reconciler) finalizeLoadBalancerService(ci *ingressv1alpha1.ClusterIngress, dnsConfig *configv1.DNS, ha ingressv1alpha1.ClusterIngressHighAvailability) error {
+func (r *reconciler) finalizeLoadBalancerService(ci *ingressv1alpha1.ClusterIngress, dnsConfig *configv1.DNS) error {
 	service, err := r.currentLoadBalancerService(ci)
 	if err != nil {
 		return err
@@ -134,7 +134,7 @@ func (r *reconciler) finalizeLoadBalancerService(ci *ingressv1alpha1.ClusterIngr
 	if service == nil {
 		return nil
 	}
-	records, err := desiredDNSRecords(ci, service, dnsConfig, ha.Type)
+	records, err := desiredDNSRecords(ci, service, dnsConfig)
 	if err != nil {
 		return err
 	}

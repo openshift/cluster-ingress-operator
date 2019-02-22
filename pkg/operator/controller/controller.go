@@ -151,6 +151,8 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 
 			if err := r.enforceEffectiveIngressDomain(ingress, ingressConfig); err != nil {
 				errs = append(errs, fmt.Errorf("failed to enforce the effective ingress domain for clusteringress %s: %v", ingress.Name, err))
+			} else if err := r.enforceEffectiveHighAvailability(ingress, infraConfig); err != nil {
+				errs = append(errs, fmt.Errorf("failed to enforce the effective HA configuration for clusteringress %s: %v", ingress.Name, err))
 			} else if ingress.DeletionTimestamp != nil {
 				// Handle deletion.
 				if err := r.ensureIngressDeleted(ingress, dnsConfig, infraConfig); err != nil {
@@ -212,24 +214,32 @@ func haTypeForInfra(infraConfig *configv1.Infrastructure) ingressv1alpha1.Cluste
 	return ingressv1alpha1.UserDefinedClusterIngressHA
 }
 
-// effectiveHighAvailability returns the HA configuration as derived from the
-// given clusteringress and infrastructure config.
-func effectiveHighAvailability(ci *ingressv1alpha1.ClusterIngress, infraConfig *configv1.Infrastructure) (ha ingressv1alpha1.ClusterIngressHighAvailability) {
+// enforceEffectiveHighAvailability determines the effective HA configuration
+// for the given clusteringress and infrastructure config and publishes it to
+// the clusteringress's status.
+func (r *reconciler) enforceEffectiveHighAvailability(ci *ingressv1alpha1.ClusterIngress, infraConfig *configv1.Infrastructure) error {
+	// The clusteringress's HA configuration is immutable, so if we have
+	// published an HA type status, we must continue using it.
+	if len(ci.Status.HighAvailability.Type) > 0 {
+		return nil
+	}
+
 	switch {
 	case ci.Spec.HighAvailability != nil:
-		ha.Type = ci.Spec.HighAvailability.Type
+		ci.Status.HighAvailability.Type = ci.Spec.HighAvailability.Type
 	default:
-		ha.Type = haTypeForInfra(infraConfig)
+		ci.Status.HighAvailability.Type = haTypeForInfra(infraConfig)
 	}
-	return
+	if err := r.Client.Status().Update(context.TODO(), ci); err != nil {
+		return fmt.Errorf("failed to update status of clusteringress %s/%s: %v", ci.Namespace, ci.Name, err)
+	}
+	return nil
 }
 
 // ensureIngressDeleted tries to delete ingress, and if successful, will remove
 // the finalizer.
 func (r *reconciler) ensureIngressDeleted(ingress *ingressv1alpha1.ClusterIngress, dnsConfig *configv1.DNS, infraConfig *configv1.Infrastructure) error {
-	ha := effectiveHighAvailability(ingress, infraConfig)
-
-	err := r.finalizeLoadBalancerService(ingress, dnsConfig, ha)
+	err := r.finalizeLoadBalancerService(ingress, dnsConfig)
 	if err != nil {
 		return fmt.Errorf("failed to finalize load balancer service for %s: %v", ingress.Name, err)
 	}
@@ -332,18 +342,16 @@ func (r *reconciler) ensureRouterNamespace() error {
 func (r *reconciler) ensureClusterIngress(ci *ingressv1alpha1.ClusterIngress, caSecret *corev1.Secret, infraConfig *configv1.Infrastructure, dnsConfig *configv1.DNS, result *reconcile.Result) error {
 	errs := []error{}
 
-	ha := effectiveHighAvailability(ci, infraConfig)
-
-	deployment, err := r.ensureRouterDeployment(ci, infraConfig, ha)
+	deployment, err := r.ensureRouterDeployment(ci, infraConfig)
 	if err != nil {
 		errs = append(errs, fmt.Errorf("failed to ensure deployment: %v", err))
 		return utilerrors.NewAggregate(errs)
 	}
 
-	if lbService, err := r.ensureLoadBalancerService(ci, deployment, infraConfig, ha); err != nil {
+	if lbService, err := r.ensureLoadBalancerService(ci, deployment, infraConfig); err != nil {
 		errs = append(errs, fmt.Errorf("failed to ensure load balancer service: %v", err))
 	} else {
-		if err = r.ensureDNS(ci, lbService, dnsConfig, ha); err != nil {
+		if err = r.ensureDNS(ci, lbService, dnsConfig); err != nil {
 			errs = append(errs, fmt.Errorf("failed to ensure DNS: %v", err))
 		}
 	}
@@ -369,7 +377,7 @@ func (r *reconciler) ensureClusterIngress(ci *ingressv1alpha1.ClusterIngress, ca
 		}
 	}
 
-	if err := r.syncClusterIngressStatus(deployment, ci, ha); err != nil {
+	if err := r.syncClusterIngressStatus(deployment, ci); err != nil {
 		errs = append(errs, fmt.Errorf("failed to sync status: %v", err))
 	}
 
@@ -482,7 +490,7 @@ func (r *reconciler) ensureMetricsIntegration(ci *ingressv1alpha1.ClusterIngress
 }
 
 // syncClusterIngressStatus updates the status for a given clusteringress.
-func (r *reconciler) syncClusterIngressStatus(deployment *appsv1.Deployment, ci *ingressv1alpha1.ClusterIngress, ha ingressv1alpha1.ClusterIngressHighAvailability) error {
+func (r *reconciler) syncClusterIngressStatus(deployment *appsv1.Deployment, ci *ingressv1alpha1.ClusterIngress) error {
 	if deployment == nil {
 		return nil
 	}
@@ -493,14 +501,12 @@ func (r *reconciler) syncClusterIngressStatus(deployment *appsv1.Deployment, ci 
 	}
 
 	if ci.Status.Replicas == deployment.Status.AvailableReplicas &&
-		ci.Status.Selector == selector.String() &&
-		ci.Status.HighAvailability == ha {
+		ci.Status.Selector == selector.String() {
 		return nil
 	}
 
 	ci.Status.Replicas = deployment.Status.AvailableReplicas
 	ci.Status.Selector = selector.String()
-	ci.Status.HighAvailability = ha
 	if err := r.Client.Status().Update(context.TODO(), ci); err != nil {
 		return fmt.Errorf("failed to update status of clusteringress %s/%s: %v", ci.Namespace, ci.Name, err)
 	}
