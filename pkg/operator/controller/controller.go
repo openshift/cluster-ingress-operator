@@ -191,15 +191,19 @@ func (r *reconciler) enforceEffectiveIngressDomain(ci *ingressv1alpha1.ClusterIn
 		return nil
 	}
 
+	updated := ci.DeepCopy()
 	switch {
 	case ci.Spec.IngressDomain != nil:
-		ci.Status.IngressDomain = *ci.Spec.IngressDomain
+		updated.Status.IngressDomain = *ci.Spec.IngressDomain
 	default:
-		ci.Status.IngressDomain = ingressConfig.Spec.Domain
+		updated.Status.IngressDomain = ingressConfig.Spec.Domain
 	}
 	// TODO Validate and check for conflicting claims.
-	if err := r.Client.Status().Update(context.TODO(), ci); err != nil {
-		return fmt.Errorf("failed to update status of clusteringress %s/%s: %v", ci.Namespace, ci.Name, err)
+	if err := r.Client.Status().Update(context.TODO(), updated); err != nil {
+		return fmt.Errorf("failed to update status of clusteringress %s/%s: %v", updated.Namespace, updated.Name, err)
+	}
+	if err := r.Client.Get(context.TODO(), types.NamespacedName{Namespace: updated.Namespace, Name: updated.Name}, ci); err != nil {
+		return fmt.Errorf("failed to get clusteringress %s/%s: %v", updated.Namespace, updated.Name, err)
 	}
 	return nil
 }
@@ -224,14 +228,18 @@ func (r *reconciler) enforceEffectiveHighAvailability(ci *ingressv1alpha1.Cluste
 		return nil
 	}
 
+	updated := ci.DeepCopy()
 	switch {
 	case ci.Spec.HighAvailability != nil:
-		ci.Status.HighAvailability.Type = ci.Spec.HighAvailability.Type
+		updated.Status.HighAvailability.Type = ci.Spec.HighAvailability.Type
 	default:
-		ci.Status.HighAvailability.Type = haTypeForInfra(infraConfig)
+		updated.Status.HighAvailability.Type = haTypeForInfra(infraConfig)
 	}
-	if err := r.Client.Status().Update(context.TODO(), ci); err != nil {
-		return fmt.Errorf("failed to update status of clusteringress %s/%s: %v", ci.Namespace, ci.Name, err)
+	if err := r.Client.Status().Update(context.TODO(), updated); err != nil {
+		return fmt.Errorf("failed to update status of clusteringress %s/%s: %v", updated.Namespace, updated.Name, err)
+	}
+	if err := r.Client.Get(context.TODO(), types.NamespacedName{Namespace: updated.Namespace, Name: updated.Name}, ci); err != nil {
+		return fmt.Errorf("failed to get clusteringress %s/%s: %v", updated.Namespace, updated.Name, err)
 	}
 	return nil
 }
@@ -505,10 +513,14 @@ func (r *reconciler) syncClusterIngressStatus(deployment *appsv1.Deployment, ci 
 		return nil
 	}
 
-	ci.Status.Replicas = deployment.Status.AvailableReplicas
-	ci.Status.Selector = selector.String()
-	if err := r.Client.Status().Update(context.TODO(), ci); err != nil {
-		return fmt.Errorf("failed to update status of clusteringress %s/%s: %v", ci.Namespace, ci.Name, err)
+	updated := ci.DeepCopy()
+	updated.Status.Replicas = deployment.Status.AvailableReplicas
+	updated.Status.Selector = selector.String()
+	if err := r.Client.Status().Update(context.TODO(), updated); err != nil {
+		return fmt.Errorf("failed to update status of clusteringress %s/%s: %v", updated.Namespace, updated.Name, err)
+	}
+	if err := r.Client.Get(context.TODO(), types.NamespacedName{Namespace: updated.Namespace, Name: updated.Name}, ci); err != nil {
+		return fmt.Errorf("failed to get clusteringress %s/%s: %v", updated.Namespace, updated.Name, err)
 	}
 
 	return nil
