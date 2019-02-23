@@ -189,20 +189,21 @@ func (m *Manager) getLBHostedZone(name string) (string, error) {
 	}
 
 	var id string
-	loadBalancers, err := m.elb.DescribeLoadBalancers(&elb.DescribeLoadBalancersInput{})
+	fn := func(resp *elb.DescribeLoadBalancersOutput, lastPage bool) (shouldContinue bool) {
+		for _, lb := range resp.LoadBalancerDescriptions {
+			log.V(0).Info("found load balancer", "name", aws.StringValue(lb.LoadBalancerName), "dns name", aws.StringValue(lb.DNSName), "hosted zone ID", aws.StringValue(lb.CanonicalHostedZoneNameID))
+			if aws.StringValue(lb.CanonicalHostedZoneName) == name {
+				id = aws.StringValue(lb.CanonicalHostedZoneNameID)
+				return false
+			}
+		}
+		return true
+	}
+	err := m.elb.DescribeLoadBalancersPages(&elb.DescribeLoadBalancersInput{}, fn)
 	if err != nil {
 		return "", fmt.Errorf("failed to describe load balancers: %v", err)
 	}
-	for _, lb := range loadBalancers.LoadBalancerDescriptions {
-		if aws.StringValue(lb.CanonicalHostedZoneName) == name {
-			id = aws.StringValue(lb.CanonicalHostedZoneNameID)
-			break
-		}
-	}
 	if len(id) == 0 {
-		for _, lb := range loadBalancers.LoadBalancerDescriptions {
-			log.Info("found load balancer", "name", aws.StringValue(lb.LoadBalancerName), "dns name", aws.StringValue(lb.DNSName), "hosted zone ID", aws.StringValue(lb.CanonicalHostedZoneNameID))
-		}
 		return "", fmt.Errorf("couldn't find hosted zone ID of ELB %s", name)
 	}
 	log.Info("associating load balancer with hosted zone", "dns name", name, "zone", id)
