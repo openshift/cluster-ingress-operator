@@ -37,7 +37,7 @@ const (
 	ClusterIngressFinalizer = "ingress.openshift.io/default-cluster-ingress"
 )
 
-var log = logf.Logger.WithName("cluster-ingress-controller")
+var log = logf.Logger.WithName("controller")
 
 // New creates the operator controller from configuration. This is the
 // controller that handles all the logic for implementing ingress based on
