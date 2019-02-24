@@ -52,6 +52,9 @@ type Manager struct {
 	// equal if their maps are reflect.DeepEqual.
 	idsToTags map[string]map[string]string
 
+	// lbZones is a cache of load balancer DNS names to LB hosted zone IDs.
+	lbZones map[string]string
+
 	// updatedRecords is a cache of records which have been created or updated
 	// during the life of this manager. The key is zoneID+domain+target. This is a
 	// quick hack to minimize AWS API calls, and also prevent changes to existing
@@ -106,6 +109,7 @@ func NewManager(config Config) (*Manager, error) {
 		tags:           resourcegroupstaggingapi.New(sess, aws.NewConfig().WithRegion("us-east-1")),
 		config:         config,
 		idsToTags:      map[string]map[string]string{},
+		lbZones:        map[string]string{},
 		updatedRecords: sets.NewString(),
 	}, nil
 }
@@ -180,6 +184,39 @@ func (m *Manager) getZoneID(zoneConfig configv1.DNSZone) (string, error) {
 	return id, nil
 }
 
+// getLBHostedZone finds the hosted zone ID of an ELB whose DNS name matches the
+// name parameter. Results are cached.
+func (m *Manager) getLBHostedZone(name string) (string, error) {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
+	if id, exists := m.lbZones[name]; exists {
+		return id, nil
+	}
+
+	var id string
+	fn := func(resp *elb.DescribeLoadBalancersOutput, lastPage bool) (shouldContinue bool) {
+		for _, lb := range resp.LoadBalancerDescriptions {
+			log.V(0).Info("found load balancer", "name", aws.StringValue(lb.LoadBalancerName), "dns name", aws.StringValue(lb.DNSName), "hosted zone ID", aws.StringValue(lb.CanonicalHostedZoneNameID))
+			if aws.StringValue(lb.CanonicalHostedZoneName) == name {
+				id = aws.StringValue(lb.CanonicalHostedZoneNameID)
+				return false
+			}
+		}
+		return true
+	}
+	err := m.elb.DescribeLoadBalancersPages(&elb.DescribeLoadBalancersInput{}, fn)
+	if err != nil {
+		return "", fmt.Errorf("failed to describe load balancers: %v", err)
+	}
+	if len(id) == 0 {
+		return "", fmt.Errorf("couldn't find hosted zone ID of ELB %s", name)
+	}
+	log.Info("associating load balancer with hosted zone", "dns name", name, "zone", id)
+	m.lbZones[name] = id
+	return id, nil
+}
+
 type action string
 
 const (
@@ -219,21 +256,9 @@ func (m *Manager) change(record *dns.Record, action action) error {
 	}
 
 	// Find the target hosted zone of the load balancer attached to the service.
-	// TODO: cache it?
-	var targetHostedZoneID string
-	loadBalancers, err := m.elb.DescribeLoadBalancers(&elb.DescribeLoadBalancersInput{})
+	targetHostedZoneID, err := m.getLBHostedZone(target)
 	if err != nil {
-		return fmt.Errorf("failed to describe load balancers: %v", err)
-	}
-	for _, lb := range loadBalancers.LoadBalancerDescriptions {
-		log.Info("found load balancer", "name", aws.StringValue(lb.LoadBalancerName), "dns name", aws.StringValue(lb.DNSName), "hosted zone ID", aws.StringValue(lb.CanonicalHostedZoneNameID))
-		if aws.StringValue(lb.CanonicalHostedZoneName) == target {
-			targetHostedZoneID = aws.StringValue(lb.CanonicalHostedZoneNameID)
-			break
-		}
-	}
-	if len(targetHostedZoneID) == 0 {
-		return fmt.Errorf("couldn't find hosted zone ID of target ELB with domain name %s", target)
+		return fmt.Errorf("failed to get hosted zone for load balancer target %q: %v", target, err)
 	}
 
 	// Configure records and cache updates.
