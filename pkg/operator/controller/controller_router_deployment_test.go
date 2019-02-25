@@ -31,6 +31,11 @@ func TestDesiredRouterDeployment(t *testing.T) {
 				},
 			},
 		},
+		Status: ingressv1alpha1.ClusterIngressStatus{
+			HighAvailability: ingressv1alpha1.ClusterIngressHighAvailability{
+				Type: ingressv1alpha1.NoClusterIngressHA,
+			},
+		},
 	}
 	routerImage := "quay.io/openshift/router:latest"
 	infraConfig := &configv1.Infrastructure{
@@ -39,7 +44,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		},
 	}
 
-	deployment, err := desiredRouterDeployment(ci, routerImage, infraConfig, ingressv1alpha1.NoClusterIngressHA)
+	deployment, err := desiredRouterDeployment(ci, routerImage, infraConfig)
 	if err != nil {
 		t.Errorf("invalid router Deployment: %v", err)
 	}
@@ -129,7 +134,8 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	}
 
 	ci.Status.IngressDomain = "example.com"
-	deployment, err = desiredRouterDeployment(ci, routerImage, infraConfig, ingressv1alpha1.CloudClusterIngressHA)
+	ci.Status.HighAvailability.Type = ingressv1alpha1.CloudClusterIngressHA
+	deployment, err = desiredRouterDeployment(ci, routerImage, infraConfig)
 	if err != nil {
 		t.Errorf("invalid router Deployment: %v", err)
 	}
@@ -179,7 +185,8 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		},
 	}
 	ci.Spec.Replicas = 3
-	deployment, err = desiredRouterDeployment(ci, routerImage, infraConfig, ingressv1alpha1.UserDefinedClusterIngressHA)
+	ci.Status.HighAvailability.Type = ingressv1alpha1.UserDefinedClusterIngressHA
+	deployment, err = desiredRouterDeployment(ci, routerImage, infraConfig)
 	if err != nil {
 		t.Errorf("invalid router Deployment: %v", err)
 	}

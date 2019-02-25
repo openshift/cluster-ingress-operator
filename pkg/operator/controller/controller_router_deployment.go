@@ -28,8 +28,8 @@ func routerDeploymentName(ci *ingressv1alpha1.ClusterIngress) types.NamespacedNa
 
 // ensureRouterDeployment ensures the router deployment exists for a given
 // clusteringress.
-func (r *reconciler) ensureRouterDeployment(ci *ingressv1alpha1.ClusterIngress, infraConfig *configv1.Infrastructure, ha ingressv1alpha1.ClusterIngressHighAvailability) (*appsv1.Deployment, error) {
-	desired, err := desiredRouterDeployment(ci, r.Config.RouterImage, infraConfig, ha.Type)
+func (r *reconciler) ensureRouterDeployment(ci *ingressv1alpha1.ClusterIngress, infraConfig *configv1.Infrastructure) (*appsv1.Deployment, error) {
+	desired, err := desiredRouterDeployment(ci, r.Config.RouterImage, infraConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build router deployment: %v", err)
 	}
@@ -65,7 +65,7 @@ func (r *reconciler) ensureRouterDeleted(ci *ingressv1alpha1.ClusterIngress) err
 }
 
 // desiredRouterDeployment returns the desired router deployment.
-func desiredRouterDeployment(ci *ingressv1alpha1.ClusterIngress, routerImage string, infraConfig *configv1.Infrastructure, haType ingressv1alpha1.ClusterIngressHAType) (*appsv1.Deployment, error) {
+func desiredRouterDeployment(ci *ingressv1alpha1.ClusterIngress, routerImage string, infraConfig *configv1.Infrastructure) (*appsv1.Deployment, error) {
 	deployment := manifests.RouterDeployment(ci)
 	name := routerDeploymentName(ci)
 	deployment.Name = name.Name
@@ -137,7 +137,7 @@ func desiredRouterDeployment(ci *ingressv1alpha1.ClusterIngress, routerImage str
 		env = append(env, corev1.EnvVar{Name: "ROUTER_CANONICAL_HOSTNAME", Value: ci.Status.IngressDomain})
 	}
 
-	if haType == ingressv1alpha1.CloudClusterIngressHA {
+	if ci.Status.HighAvailability.Type == ingressv1alpha1.CloudClusterIngressHA {
 		// For now, check if we are on AWS. This can really be done for
 		// for any external [cloud] LBs that support the proxy protocol.
 		if infraConfig.Status.Platform == configv1.AWSPlatform {
@@ -185,7 +185,7 @@ func desiredRouterDeployment(ci *ingressv1alpha1.ClusterIngress, routerImage str
 
 	deployment.Spec.Template.Spec.Containers[0].Image = routerImage
 
-	if haType == ingressv1alpha1.UserDefinedClusterIngressHA {
+	if ci.Status.HighAvailability.Type == ingressv1alpha1.UserDefinedClusterIngressHA {
 		// Expose ports 80 and 443 on the host to provide endpoints for
 		// the user's HA solution.
 		deployment.Spec.Template.Spec.HostNetwork = true
