@@ -8,7 +8,6 @@ import (
 
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
 
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -27,20 +26,16 @@ func routerDefaultCertificateSecretName(ci *ingressv1alpha1.ClusterIngress, name
 
 // ensureDefaultCertificateForIngress creates or deletes an operator-generated
 // default certificate for a given ClusterIngress as appropriate.
-func (r *reconciler) ensureDefaultCertificateForIngress(caSecret *corev1.Secret, deployment *appsv1.Deployment, ci *ingressv1alpha1.ClusterIngress) error {
-	if deployment == nil {
-		return nil
-	}
-
+func (r *reconciler) ensureDefaultCertificateForIngress(caSecret *corev1.Secret, namespace string, deploymentRef metav1.OwnerReference, ci *ingressv1alpha1.ClusterIngress) error {
 	ca, err := crypto.GetCAFromBytes(caSecret.Data["tls.crt"], caSecret.Data["tls.key"])
 	if err != nil {
 		return fmt.Errorf("failed to get CA from secret %s/%s: %v", caSecret.Namespace, caSecret.Name, err)
 	}
-	desired, err := desiredRouterDefaultCertificateSecret(ca, deployment, ci)
+	desired, err := desiredRouterDefaultCertificateSecret(ca, namespace, deploymentRef, ci)
 	if err != nil {
 		return err
 	}
-	current, err := r.currentRouterDefaultCertificate(ci, deployment)
+	current, err := r.currentRouterDefaultCertificate(ci, namespace)
 	if err != nil {
 		return err
 	}
@@ -63,7 +58,7 @@ func (r *reconciler) ensureDefaultCertificateForIngress(caSecret *corev1.Secret,
 
 // desiredRouterDefaultCertificateSecret returns the desired default certificate
 // secret.
-func desiredRouterDefaultCertificateSecret(ca *crypto.CA, deployment *appsv1.Deployment, ci *ingressv1alpha1.ClusterIngress) (*corev1.Secret, error) {
+func desiredRouterDefaultCertificateSecret(ca *crypto.CA, namespace string, deploymentRef metav1.OwnerReference, ci *ingressv1alpha1.ClusterIngress) (*corev1.Secret, error) {
 	// Without an ingress domain, we cannot generate a default certificate.
 	if len(ci.Status.IngressDomain) == 0 {
 		return nil, nil
@@ -86,7 +81,7 @@ func desiredRouterDefaultCertificateSecret(ca *crypto.CA, deployment *appsv1.Dep
 		return nil, fmt.Errorf("failed to encode certificate: %v", err)
 	}
 
-	name := routerDefaultCertificateSecretName(ci, deployment.Namespace)
+	name := routerDefaultCertificateSecretName(ci, namespace)
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name.Name,
@@ -98,22 +93,14 @@ func desiredRouterDefaultCertificateSecret(ca *crypto.CA, deployment *appsv1.Dep
 			"tls.key": keyBytes,
 		},
 	}
-	trueVar := true
-	deploymentRef := metav1.OwnerReference{
-		APIVersion: "apps/v1",
-		Kind:       "Deployment",
-		Name:       deployment.Name,
-		UID:        deployment.UID,
-		Controller: &trueVar,
-	}
 	secret.SetOwnerReferences([]metav1.OwnerReference{deploymentRef})
 	return secret, nil
 }
 
 // currentRouterDefaultCertificate returns the current router default
 // certificate secret.
-func (r *reconciler) currentRouterDefaultCertificate(ci *ingressv1alpha1.ClusterIngress, deployment *appsv1.Deployment) (*corev1.Secret, error) {
-	name := routerDefaultCertificateSecretName(ci, deployment.Namespace)
+func (r *reconciler) currentRouterDefaultCertificate(ci *ingressv1alpha1.ClusterIngress, namespace string) (*corev1.Secret, error) {
+	name := routerDefaultCertificateSecretName(ci, namespace)
 	secret := &corev1.Secret{}
 	if err := r.Client.Get(context.TODO(), name, secret); err != nil {
 		if errors.IsNotFound(err) {

@@ -8,7 +8,6 @@ import (
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/slice"
 
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -32,12 +31,8 @@ const (
 // ensureLoadBalancerService creates an LB service if one is desired but absent.
 // Always returns the current LB service if one exists (whether it already
 // existed or was created during the course of the function).
-func (r *reconciler) ensureLoadBalancerService(ci *ingressv1alpha1.ClusterIngress, deployment *appsv1.Deployment, infraConfig *configv1.Infrastructure) (*corev1.Service, error) {
-	if deployment == nil {
-		return nil, nil
-	}
-
-	desiredLBService, err := desiredLoadBalancerService(ci, deployment, infraConfig)
+func (r *reconciler) ensureLoadBalancerService(ci *ingressv1alpha1.ClusterIngress, deploymentRef metav1.OwnerReference, infraConfig *configv1.Infrastructure) (*corev1.Service, error) {
+	desiredLBService, err := desiredLoadBalancerService(ci, deploymentRef, infraConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -47,8 +42,7 @@ func (r *reconciler) ensureLoadBalancerService(ci *ingressv1alpha1.ClusterIngres
 		return nil, err
 	}
 	if desiredLBService != nil && currentLBService == nil {
-		err = r.Client.Create(context.TODO(), desiredLBService)
-		if err == nil {
+		if err := r.Client.Create(context.TODO(), desiredLBService); err == nil {
 			log.Info("created load balancer service", "namespace", desiredLBService.Namespace, "name", desiredLBService.Name)
 		} else if !errors.IsAlreadyExists(err) {
 			return nil, fmt.Errorf("failed to create load balancer service %s/%s: %v", desiredLBService.Namespace, desiredLBService.Name, err)
@@ -68,17 +62,9 @@ func loadBalancerServiceName(ci *ingressv1alpha1.ClusterIngress) types.Namespace
 // clusteringress, or nil if an LB service isn't desired. An LB service is
 // desired if the high availability type is Cloud. An LB service will declare an
 // owner reference to the given deployment.
-func desiredLoadBalancerService(ci *ingressv1alpha1.ClusterIngress, deployment *appsv1.Deployment, infraConfig *configv1.Infrastructure) (*corev1.Service, error) {
+func desiredLoadBalancerService(ci *ingressv1alpha1.ClusterIngress, deploymentRef metav1.OwnerReference, infraConfig *configv1.Infrastructure) (*corev1.Service, error) {
 	if ci.Status.HighAvailability.Type != ingressv1alpha1.CloudClusterIngressHA {
 		return nil, nil
-	}
-	trueVar := true
-	deploymentRef := metav1.OwnerReference{
-		APIVersion: "apps/v1",
-		Kind:       "Deployment",
-		Name:       deployment.Name,
-		UID:        deployment.UID,
-		Controller: &trueVar,
 	}
 	service := manifests.LoadBalancerService()
 
@@ -113,8 +99,7 @@ func desiredLoadBalancerService(ci *ingressv1alpha1.ClusterIngress, deployment *
 // clusteringress.
 func (r *reconciler) currentLoadBalancerService(ci *ingressv1alpha1.ClusterIngress) (*corev1.Service, error) {
 	service := &corev1.Service{}
-	err := r.Client.Get(context.TODO(), loadBalancerServiceName(ci), service)
-	if err != nil {
+	if err := r.Client.Get(context.TODO(), loadBalancerServiceName(ci), service); err != nil {
 		if errors.IsNotFound(err) {
 			return nil, nil
 		}
@@ -140,8 +125,7 @@ func (r *reconciler) finalizeLoadBalancerService(ci *ingressv1alpha1.ClusterIngr
 	}
 	dnsErrors := []error{}
 	for _, record := range records {
-		err := r.DNSManager.Delete(record)
-		if err != nil {
+		if err := r.DNSManager.Delete(record); err != nil {
 			dnsErrors = append(dnsErrors, fmt.Errorf("failed to delete DNS record %v for ingress %s/%s: %v", record, ci.Namespace, ci.Name, err))
 		} else {
 			log.Info("deleted DNS record for ingress", "namespace", ci.Namespace, "name", ci.Name, "record", record)
@@ -155,8 +139,7 @@ func (r *reconciler) finalizeLoadBalancerService(ci *ingressv1alpha1.ClusterIngr
 	updated := service.DeepCopy()
 	if slice.ContainsString(updated.Finalizers, loadBalancerServiceFinalizer) {
 		updated.Finalizers = slice.RemoveString(updated.Finalizers, loadBalancerServiceFinalizer)
-		err = r.Client.Update(context.TODO(), updated)
-		if err != nil {
+		if err := r.Client.Update(context.TODO(), updated); err != nil {
 			return fmt.Errorf("failed to remove finalizer from service %s for ingress %s/%s: %v", service.Namespace, service.Name, ci.Name, err)
 		}
 	}
