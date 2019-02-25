@@ -34,3 +34,4 @@ if [ "$WHAT" == "all" ]; then
 fi
 
 oc delete -n openshift-config-managed configmaps/router-ca
+oc delete -n openshift-config-managed secrets/router-certs

@@ -23,6 +23,11 @@ const (
 	// for the CA certificate, which the operator publishes for other
 	// operators to use.
 	caCertConfigMapName = "router-ca"
+
+	// routerCertsGlobalSecretName is the name of the secret with the
+	// default certificates and their keys, which the operator publishes for
+	// other operators to use.
+	routerCertsGlobalSecretName = "router-certs"
 )
 
 // RouterDeploymentName returns the namespaced name for the router deployment.
@@ -46,6 +51,15 @@ func RouterCAConfigMapName() types.NamespacedName {
 	return types.NamespacedName{
 		Namespace: GlobalMachineSpecifiedConfigNamespace,
 		Name:      caCertConfigMapName,
+	}
+}
+
+// RouterCertsGlobalSecretName returns the namespaced name for the router certs
+// secret.
+func RouterCertsGlobalSecretName() types.NamespacedName {
+	return types.NamespacedName{
+		Namespace: GlobalMachineSpecifiedConfigNamespace,
+		Name:      routerCertsGlobalSecretName,
 	}
 }
 
