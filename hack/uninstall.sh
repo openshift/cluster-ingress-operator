@@ -16,7 +16,11 @@ oc delete --force --grace-period=0 -n openshift-ingress-operator clusteringresse
 
 if [ "$WHAT" == "all" ]; then
   oc delete namespaces/openshift-ingress-operator
+else
+  oc delete -n openshift-ingress-operator secrets/router-ca
+  oc delete -n openshift-ingress-operator events --all
 fi
+
 oc delete namespaces/openshift-ingress
 
 if [ "$WHAT" == "all" ]; then

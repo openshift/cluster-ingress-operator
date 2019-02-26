@@ -169,7 +169,7 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 				}
 			} else {
 				// Handle everything else.
-				if err := r.ensureClusterIngress(ingress, caSecret, dnsConfig, infraConfig); err != nil {
+				if err := r.ensureClusterIngress(ingress, dnsConfig, infraConfig); err != nil {
 					errs = append(errs, fmt.Errorf("failed to ensure clusteringress: %v", err))
 				}
 			}
@@ -338,7 +338,7 @@ func (r *reconciler) ensureRouterNamespace() error {
 }
 
 // ensureClusterIngress ensures all necessary router resources exist for a given clusteringress.
-func (r *reconciler) ensureClusterIngress(ci *ingressv1alpha1.ClusterIngress, caSecret *corev1.Secret, dnsConfig *configv1.DNS, infraConfig *configv1.Infrastructure) error {
+func (r *reconciler) ensureClusterIngress(ci *ingressv1alpha1.ClusterIngress, dnsConfig *configv1.DNS, infraConfig *configv1.Infrastructure) error {
 	errs := []error{}
 
 	if deployment, err := r.ensureRouterDeployment(ci, infraConfig); err != nil {
@@ -358,12 +358,6 @@ func (r *reconciler) ensureClusterIngress(ci *ingressv1alpha1.ClusterIngress, ca
 		} else if lbService != nil {
 			if err := r.ensureDNS(ci, lbService, dnsConfig); err != nil {
 				errs = append(errs, fmt.Errorf("failed to ensure DNS for %s: %v", ci.Name, err))
-			}
-		}
-
-		if caSecret != nil {
-			if err := r.ensureDefaultCertificateForIngress(caSecret, deployment.Namespace, deploymentRef, ci); err != nil {
-				errs = append(errs, fmt.Errorf("failed to ensure default certificate for clusteringress %s: %v", ci.Name, err))
 			}
 		}
 
