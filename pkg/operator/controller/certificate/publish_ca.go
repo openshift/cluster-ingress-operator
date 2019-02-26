@@ -1,37 +1,16 @@
-package controller
+package certificate
 
 import (
 	"context"
 	"fmt"
 
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
+	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 )
-
-const (
-	// GlobalMachineSpecifiedConfigNamespace is the location for global
-	// config.  In particular, the operator will put the configmap with the
-	// CA certificate in this namespace.
-	GlobalMachineSpecifiedConfigNamespace = "openshift-config-managed"
-
-	// caCertConfigMapName is the name of the config map with the public key
-	// for the CA certificate, which the operator publishes for other
-	// operators to use.
-	caCertConfigMapName = "router-ca"
-)
-
-// routerCAConfigMapName returns the namespaced name for the router CA
-// configmap.
-func routerCAConfigMapName() types.NamespacedName {
-	return types.NamespacedName{
-		Namespace: GlobalMachineSpecifiedConfigNamespace,
-		Name:      caCertConfigMapName,
-	}
-}
 
 // ensureRouterCAConfigMap will create, update, or delete the configmap for the
 // router CA as appropriate.
@@ -48,16 +27,22 @@ func (r *reconciler) ensureRouterCAConfigMap(secret *corev1.Secret, ingresses []
 	case desired == nil && current == nil:
 		// Nothing to do.
 	case desired == nil && current != nil:
-		if err := r.deleteRouterCAConfigMap(current); err != nil {
+		if deleted, err := r.deleteRouterCAConfigMap(current); err != nil {
 			return fmt.Errorf("failed to ensure router CA was unpublished: %v", err)
+		} else if deleted {
+			r.recorder.Eventf(current, "Normal", "UnpublishedDefaultRouterCA", "Unpublished default router CA")
 		}
 	case desired != nil && current == nil:
-		if err := r.createRouterCAConfigMap(desired); err != nil {
+		if created, err := r.createRouterCAConfigMap(desired); err != nil {
 			return fmt.Errorf("failed to ensure router CA was published: %v", err)
+		} else if created {
+			r.recorder.Eventf(desired, "Normal", "PublishedDefaultRouterCA", "Published default router CA")
 		}
 	case desired != nil && current != nil:
-		if err := r.updateRouterCAConfigMap(current, desired); err != nil {
+		if updated, err := r.updateRouterCAConfigMap(current, desired); err != nil {
 			return fmt.Errorf("failed to update published router CA: %v", err)
+		} else if updated {
+			r.recorder.Eventf(desired, "Normal", "UpdatedPublishedDefaultRouterCA", "Updated the published default router CA")
 		}
 	}
 	return nil
@@ -69,7 +54,7 @@ func desiredRouterCAConfigMap(secret *corev1.Secret, ingresses []ingressv1alpha1
 		return nil, nil
 	}
 
-	name := routerCAConfigMapName()
+	name := controller.RouterCAConfigMapName()
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name.Name,
@@ -95,9 +80,9 @@ func shouldPublishRouterCA(ingresses []ingressv1alpha1.ClusterIngress) bool {
 
 // currentRouterCAConfigMap returns the current router CA configmap.
 func (r *reconciler) currentRouterCAConfigMap() (*corev1.ConfigMap, error) {
-	name := routerCAConfigMapName()
+	name := controller.RouterCAConfigMapName()
 	cm := &corev1.ConfigMap{}
-	if err := r.Client.Get(context.TODO(), name, cm); err != nil {
+	if err := r.client.Get(context.TODO(), name, cm); err != nil {
 		if errors.IsNotFound(err) {
 			return nil, nil
 		}
@@ -106,45 +91,45 @@ func (r *reconciler) currentRouterCAConfigMap() (*corev1.ConfigMap, error) {
 	return cm, nil
 }
 
-// createRouterCAConfigMap creates a router CA configmap.
-func (r *reconciler) createRouterCAConfigMap(cm *corev1.ConfigMap) error {
-	if err := r.Client.Create(context.TODO(), cm); err != nil {
+// createRouterCAConfigMap creates a router CA configmap. Returns true if the
+// configmap was created, false otherwise.
+func (r *reconciler) createRouterCAConfigMap(cm *corev1.ConfigMap) (bool, error) {
+	if err := r.client.Create(context.TODO(), cm); err != nil {
 		if errors.IsAlreadyExists(err) {
-			return nil
+			return false, nil
 		}
-		return err
+		return false, err
 	}
-	log.Info("created configmap", "namespace", cm.Namespace, "name", cm.Name)
-	return nil
+	return true, nil
 }
 
-// updateRouterCAConfigMaps updates the router CA configmap.
-func (r *reconciler) updateRouterCAConfigMap(current, desired *corev1.ConfigMap) error {
+// updateRouterCAConfigMaps updates the router CA configmap. Returns true if the
+// configmap was updated, false otherwise.
+func (r *reconciler) updateRouterCAConfigMap(current, desired *corev1.ConfigMap) (bool, error) {
 	if routerCAConfigMapsEqual(current, desired) {
-		return nil
+		return false, nil
 	}
 	updated := current.DeepCopy()
 	updated.Data = desired.Data
-	if err := r.Client.Update(context.TODO(), updated); err != nil {
+	if err := r.client.Update(context.TODO(), updated); err != nil {
 		if errors.IsAlreadyExists(err) {
-			return nil
+			return false, nil
 		}
-		return err
+		return false, err
 	}
-	log.Info("updated configmap", "namespace", updated.Namespace, "name", updated.Name)
-	return nil
+	return true, nil
 }
 
-// deleteRouterCAConfigMap deletes the router CA configmap.
-func (r *reconciler) deleteRouterCAConfigMap(cm *corev1.ConfigMap) error {
-	if err := r.Client.Delete(context.TODO(), cm); err != nil {
+// deleteRouterCAConfigMap deletes the router CA configmap. Returns true if the
+// configmap was deleted, false otherwise.
+func (r *reconciler) deleteRouterCAConfigMap(cm *corev1.ConfigMap) (bool, error) {
+	if err := r.client.Delete(context.TODO(), cm); err != nil {
 		if errors.IsNotFound(err) {
-			return nil
+			return false, nil
 		}
-		return err
+		return false, err
 	}
-	log.Info("deleted configmap", "namespace", cm.Namespace, "name", cm.Name)
-	return nil
+	return true, nil
 }
 
 // routerCAConfigMapsEqual compares two router CA configmaps.

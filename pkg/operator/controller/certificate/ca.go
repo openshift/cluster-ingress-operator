@@ -11,27 +11,13 @@ import (
 	"math/big"
 	"time"
 
+	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+
 	corev1 "k8s.io/api/core/v1"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 )
-
-const (
-	// caCertSecretName is the name of the secret that holds the CA certificate
-	// that the operator will use to create default certificates for
-	// clusteringresses.
-	caCertSecretName = "router-ca"
-)
-
-// CASecretName returns the namespaced name for the router CA secret.
-func CASecretName(operatorNamespace string) types.NamespacedName {
-	return types.NamespacedName{
-		Namespace: operatorNamespace,
-		Name:      caCertSecretName,
-	}
-}
 
 func (r *reconciler) ensureRouterCASecret() (*corev1.Secret, error) {
 	current, err := r.currentRouterCASecret()
@@ -55,7 +41,7 @@ func (r *reconciler) ensureRouterCASecret() (*corev1.Secret, error) {
 
 // currentRouterCASecret returns the current router CA secret.
 func (r *reconciler) currentRouterCASecret() (*corev1.Secret, error) {
-	name := CASecretName(r.operatorNamespace)
+	name := controller.RouterCASecretName(r.operatorNamespace)
 	secret := &corev1.Secret{}
 	if err := r.client.Get(context.TODO(), name, secret); err != nil {
 		if errors.IsNotFound(err) {
@@ -128,7 +114,7 @@ func desiredRouterCASecret(namespace string) (*corev1.Secret, error) {
 		return nil, fmt.Errorf("failed to generate certificate: %v", err)
 	}
 
-	name := CASecretName(namespace)
+	name := controller.RouterCASecretName(namespace)
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name.Name,
