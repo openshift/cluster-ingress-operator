@@ -1,4 +1,9 @@
-package controller
+// The certificate controller is responsible for:
+//
+//   1. Managing a CA for minting self-signed certs
+//   2. Managing self-signed certificates for any clusteringresses which require them
+//   3. Publishing in-use wildcard certificates to `openshift-config-managed`
+package certificate
 
 import (
 	"context"
@@ -11,10 +16,23 @@ import (
 	"math/big"
 	"time"
 
+	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
+
 	corev1 "k8s.io/api/core/v1"
+
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+
+	"k8s.io/client-go/tools/record"
+
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 )
 
 const (
@@ -22,41 +40,66 @@ const (
 	// that the operator will use to create default certificates for
 	// clusteringresses.
 	caCertSecretName = "router-ca"
+
+	controllerName = "certificate-controller"
 )
 
-// routerCASecretName returns the namespaced name for the router CA secret.
-func routerCASecretName(namespace string) types.NamespacedName {
+var log = logf.Logger.WithName(controllerName)
+
+// CASecretName returns the namespaced name for the router CA secret.
+func CASecretName(operatorNamespace string) types.NamespacedName {
 	return types.NamespacedName{
-		Namespace: namespace,
+		Namespace: operatorNamespace,
 		Name:      caCertSecretName,
 	}
 }
 
-// ensureRouterCACertificateSecret ensures a CA certificate secret exists that
-// can be used to sign the default certificates for ClusterIngresses.
-func (r *reconciler) ensureRouterCACertificateSecret() (*corev1.Secret, error) {
+func New(mgr manager.Manager, client client.Client, operatorNamespace string, events <-chan event.GenericEvent) (controller.Controller, error) {
+	reconciler := &reconciler{
+		client:            client,
+		recorder:          mgr.GetRecorder(controllerName),
+		operatorNamespace: operatorNamespace,
+	}
+	c, err := controller.New(controllerName, mgr, controller.Options{Reconciler: reconciler})
+	if err != nil {
+		return nil, err
+	}
+	if err := c.Watch(&source.Channel{Source: events}, &handler.EnqueueRequestForObject{}); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+type reconciler struct {
+	client            client.Client
+	recorder          record.EventRecorder
+	operatorNamespace string
+}
+
+func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, error) {
 	current, err := r.currentRouterCASecret()
 	if err != nil {
-		return nil, err
+		return reconcile.Result{}, err
 	}
 	if current != nil {
-		return current, nil
+		return reconcile.Result{}, nil
 	}
-	desired, err := desiredRouterCASecret(r.Namespace)
+	desired, err := desiredRouterCASecret(r.operatorNamespace)
 	if err != nil {
-		return nil, err
+		return reconcile.Result{}, err
 	}
 	if err := r.createRouterCASecret(desired); err != nil {
-		return nil, fmt.Errorf("failed to create router CA secret: %v", err)
+		return reconcile.Result{}, fmt.Errorf("failed to create CA secret: %v", err)
 	}
-	return r.currentRouterCASecret()
+	r.recorder.Event(desired, "Normal", "CreatedWildcardCACert", "Created a default wildcard CA certificate")
+	return reconcile.Result{}, nil
 }
 
 // currentRouterCASecret returns the current router CA secret.
 func (r *reconciler) currentRouterCASecret() (*corev1.Secret, error) {
-	name := routerCASecretName(r.Namespace)
+	name := CASecretName(r.operatorNamespace)
 	secret := &corev1.Secret{}
-	if err := r.Client.Get(context.TODO(), name, secret); err != nil {
+	if err := r.client.Get(context.TODO(), name, secret); err != nil {
 		if errors.IsNotFound(err) {
 			return nil, nil
 		}
@@ -118,7 +161,6 @@ func generateRouterCA() ([]byte, []byte, error) {
 	})
 
 	return certBytes, keyBytes, nil
-
 }
 
 // desiredRouterCASecret returns the desired router CA secret.
@@ -128,7 +170,7 @@ func desiredRouterCASecret(namespace string) (*corev1.Secret, error) {
 		return nil, fmt.Errorf("failed to generate certificate: %v", err)
 	}
 
-	name := routerCASecretName(namespace)
+	name := CASecretName(namespace)
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name.Name,
@@ -145,7 +187,7 @@ func desiredRouterCASecret(namespace string) (*corev1.Secret, error) {
 
 // createRouterCASecret creates the router CA secret.
 func (r *reconciler) createRouterCASecret(secret *corev1.Secret) error {
-	if err := r.Client.Create(context.TODO(), secret); err != nil {
+	if err := r.client.Create(context.TODO(), secret); err != nil {
 		return err
 	}
 	log.Info("created secret", "namespace", secret.Namespace, "name", secret.Name)

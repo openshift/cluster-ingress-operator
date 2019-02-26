@@ -5,11 +5,13 @@ import (
 	"fmt"
 
 	"github.com/openshift/cluster-ingress-operator/pkg/apis"
+	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	operatorconfig "github.com/openshift/cluster-ingress-operator/pkg/operator/config"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	certcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/certificate"
 
 	configv1 "github.com/openshift/api/config/v1"
 
@@ -28,6 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -68,6 +71,8 @@ type Operator struct {
 
 	manager manager.Manager
 	caches  []cache.Cache
+	// certEvents is used to trigger the certificate controller.
+	certEvents chan event.GenericEvent
 }
 
 // New creates (but does not start) a new operator from configuration.
@@ -144,9 +149,15 @@ func New(config operatorconfig.Config, dnsManager dns.Manager, kubeConfig *rest.
 		})
 	}
 
+	certEvents := make(chan event.GenericEvent)
+	if _, err := certcontroller.New(operatorManager, kubeClient, config.Namespace, certEvents); err != nil {
+		return nil, fmt.Errorf("failed to create cacert controller: %v", err)
+	}
+
 	return &Operator{
-		manager: operatorManager,
-		caches:  []cache.Cache{operandCache},
+		manager:    operatorManager,
+		caches:     []cache.Cache{operandCache},
+		certEvents: certEvents,
 
 		// TODO: These are only needed for the default cluster ingress stuff, which
 		// should be refactored away.
@@ -179,6 +190,12 @@ func (o *Operator) Start(stop <-chan struct{}) error {
 		}
 		log.Info("cache synced")
 	}
+
+	// Kick off the certificate controller
+	go func() {
+		ci := ingressv1alpha1.ClusterIngress{}
+		o.certEvents <- event.GenericEvent{Meta: ci.GetObjectMeta()}
+	}()
 
 	// Secondary caches are all synced, so start the manager.
 	go func() {
