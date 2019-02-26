@@ -3,15 +3,18 @@ package controller
 import (
 	"context"
 	"fmt"
+	"time"
 
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
+	certcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/certificate"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/slice"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/tools/record"
 
 	configv1 "github.com/openshift/api/config/v1"
 
@@ -45,7 +48,8 @@ var log = logf.Logger.WithName("controller")
 // in the manager namespace.
 func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	reconciler := &reconciler{
-		Config: config,
+		Config:   config,
+		recorder: mgr.GetRecorder("operator-controller"),
 	}
 	c, err := controller.New("operator-controller", mgr, controller.Options{Reconciler: reconciler})
 	if err != nil {
@@ -70,6 +74,8 @@ type Config struct {
 // events.
 type reconciler struct {
 	Config
+
+	recorder record.EventRecorder
 }
 
 // Reconcile expects request to refer to a clusteringress in the operator
@@ -95,10 +101,24 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 		ingress = nil
 	}
 
-	caSecret, err := r.ensureRouterCACertificateSecret()
-	if err != nil {
-		errs = append(errs, fmt.Errorf("failed to ensure CA secret: %v", err))
-	} else {
+	caSecretName := certcontroller.CASecretName(r.Namespace)
+	caSecret := &corev1.Secret{}
+	if err := r.Client.Get(context.TODO(), caSecretName, caSecret); err != nil {
+		if errors.IsNotFound(err) {
+			// Most likely the CA cert controller hasn't created it yet, try again
+			// after a reasonable time.
+			result.RequeueAfter = 5 * time.Second
+			// TODO: This check won't be necessary if all cert stuff is extracted.
+			if ingress != nil {
+				r.recorder.Event(ingress, "Warning", "DefaultWildcardCACertMissing", "The default wildcard CA certificate is missing")
+			}
+		} else {
+			errs = append(errs, fmt.Errorf("failed to get CA secret %s: %v", caSecretName, err))
+		}
+		caSecret = nil
+	}
+
+	if caSecret != nil {
 		// TODO: This should be in a different reconciler as it's independent of an
 		// individual ingress. We only really need to trigger this when a
 		// clusteringress is added or deleted...
