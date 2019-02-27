@@ -114,9 +114,6 @@ func (r *reconciler) currentRouterDefaultCertificate(ci *ingressv1alpha1.Cluster
 // createRouterDefaultCertificate creates a router default certificate secret.
 func (r *reconciler) createRouterDefaultCertificate(secret *corev1.Secret) error {
 	if err := r.Client.Create(context.TODO(), secret); err != nil {
-		if errors.IsAlreadyExists(err) {
-			return nil
-		}
 		return err
 	}
 	log.Info("created secret", "namespace", secret.Namespace, "name", secret.Name)

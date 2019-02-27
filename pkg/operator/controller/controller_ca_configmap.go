@@ -109,9 +109,6 @@ func (r *reconciler) currentRouterCAConfigMap() (*corev1.ConfigMap, error) {
 // createRouterCAConfigMap creates a router CA configmap.
 func (r *reconciler) createRouterCAConfigMap(cm *corev1.ConfigMap) error {
 	if err := r.Client.Create(context.TODO(), cm); err != nil {
-		if errors.IsAlreadyExists(err) {
-			return nil
-		}
 		return err
 	}
 	log.Info("created configmap", "namespace", cm.Namespace, "name", cm.Name)
@@ -126,9 +123,6 @@ func (r *reconciler) updateRouterCAConfigMap(current, desired *corev1.ConfigMap)
 	updated := current.DeepCopy()
 	updated.Data = desired.Data
 	if err := r.Client.Update(context.TODO(), updated); err != nil {
-		if errors.IsAlreadyExists(err) {
-			return nil
-		}
 		return err
 	}
 	log.Info("updated configmap", "namespace", updated.Namespace, "name", updated.Name)
