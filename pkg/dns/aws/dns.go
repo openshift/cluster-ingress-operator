@@ -11,6 +11,7 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/arn"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/ec2metadata"
 	"github.com/aws/aws-sdk-go/aws/request"
@@ -308,6 +309,14 @@ func (m *Manager) updateAlias(domain, zoneID, target, targetHostedZoneID, action
 		},
 	})
 	if err != nil {
+		if action == string(deleteAction) {
+			if aerr, ok := err.(awserr.Error); ok {
+				if strings.Contains(aerr.Message(), "not found") {
+					log.Info("record not found", "zone id", zoneID, "domain", domain, "target", target)
+					return nil
+				}
+			}
+		}
 		return fmt.Errorf("couldn't update DNS record in zone %s: %v", zoneID, err)
 	}
 	log.Info("updated DNS record", "zone id", zoneID, "domain", domain, "target", target, "response", resp)
