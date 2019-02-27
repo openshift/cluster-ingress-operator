@@ -95,9 +95,6 @@ func (r *reconciler) currentRouterCAConfigMap() (*corev1.ConfigMap, error) {
 // configmap was created, false otherwise.
 func (r *reconciler) createRouterCAConfigMap(cm *corev1.ConfigMap) (bool, error) {
 	if err := r.client.Create(context.TODO(), cm); err != nil {
-		if errors.IsAlreadyExists(err) {
-			return false, nil
-		}
 		return false, err
 	}
 	return true, nil
@@ -112,9 +109,6 @@ func (r *reconciler) updateRouterCAConfigMap(current, desired *corev1.ConfigMap)
 	updated := current.DeepCopy()
 	updated.Data = desired.Data
 	if err := r.client.Update(context.TODO(), updated); err != nil {
-		if errors.IsAlreadyExists(err) {
-			return false, nil
-		}
 		return false, err
 	}
 	return true, nil

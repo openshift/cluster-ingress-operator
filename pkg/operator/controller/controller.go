@@ -250,11 +250,10 @@ func (r *reconciler) ensureRouterNamespace() error {
 		if !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to get router cluster role %s: %v", cr.Name, err)
 		}
-		if err := r.Client.Create(context.TODO(), cr); err == nil {
-			log.Info("created router cluster role", "name", cr.Name)
-		} else if !errors.IsAlreadyExists(err) {
+		if err := r.Client.Create(context.TODO(), cr); err != nil {
 			return fmt.Errorf("failed to create router cluster role %s: %v", cr.Name, err)
 		}
+		log.Info("created router cluster role", "name", cr.Name)
 	}
 
 	ns, err := r.ManifestFactory.RouterNamespace()
@@ -265,11 +264,10 @@ func (r *reconciler) ensureRouterNamespace() error {
 		if !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to get router namespace %q: %v", ns.Name, err)
 		}
-		if err := r.Client.Create(context.TODO(), ns); err == nil {
-			log.Info("created router namespace", "name", ns.Name)
-		} else if !errors.IsAlreadyExists(err) {
+		if err := r.Client.Create(context.TODO(), ns); err != nil {
 			return fmt.Errorf("failed to create router namespace %s: %v", ns.Name, err)
 		}
+		log.Info("created router namespace", "name", ns.Name)
 	}
 
 	sa, err := r.ManifestFactory.RouterServiceAccount()
@@ -280,11 +278,10 @@ func (r *reconciler) ensureRouterNamespace() error {
 		if !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to get router service account %s/%s: %v", sa.Namespace, sa.Name, err)
 		}
-		if err := r.Client.Create(context.TODO(), sa); err == nil {
-			log.Info("created router service account", "namespace", sa.Namespace, "name", sa.Name)
-		} else if !errors.IsAlreadyExists(err) {
+		if err := r.Client.Create(context.TODO(), sa); err != nil {
 			return fmt.Errorf("failed to create router service account %s/%s: %v", sa.Namespace, sa.Name, err)
 		}
+		log.Info("created router service account", "namespace", sa.Namespace, "name", sa.Name)
 	}
 
 	crb, err := r.ManifestFactory.RouterClusterRoleBinding()
@@ -295,11 +292,10 @@ func (r *reconciler) ensureRouterNamespace() error {
 		if !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to get router cluster role binding %s: %v", crb.Name, err)
 		}
-		if err := r.Client.Create(context.TODO(), crb); err == nil {
-			log.Info("created router cluster role binding", "name", crb.Name)
-		} else if !errors.IsAlreadyExists(err) {
+		if err := r.Client.Create(context.TODO(), crb); err != nil {
 			return fmt.Errorf("failed to create router cluster role binding %s: %v", crb.Name, err)
 		}
+		log.Info("created router cluster role binding", "name", crb.Name)
 	}
 
 	return nil
@@ -355,11 +351,10 @@ func (r *reconciler) ensureMetricsIntegration(ci *ingressv1alpha1.ClusterIngress
 		}
 
 		statsSecret.SetOwnerReferences([]metav1.OwnerReference{deploymentRef})
-		if err := r.Client.Create(context.TODO(), statsSecret); err == nil {
-			log.Info("created router stats secret", "namespace", statsSecret.Namespace, "name", statsSecret.Name)
-		} else if !errors.IsAlreadyExists(err) {
+		if err := r.Client.Create(context.TODO(), statsSecret); err != nil {
 			return fmt.Errorf("failed to create router stats secret %s/%s: %v", statsSecret.Namespace, statsSecret.Name, err)
 		}
+		log.Info("created router stats secret", "namespace", statsSecret.Namespace, "name", statsSecret.Name)
 	}
 
 	cr, err := r.ManifestFactory.MetricsClusterRole()
@@ -370,11 +365,10 @@ func (r *reconciler) ensureMetricsIntegration(ci *ingressv1alpha1.ClusterIngress
 		if !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to get router metrics cluster role %s: %v", cr.Name, err)
 		}
-		if err := r.Client.Create(context.TODO(), cr); err == nil {
-			log.Info("created router metrics cluster role", "name", cr.Name)
-		} else if !errors.IsAlreadyExists(err) {
+		if err := r.Client.Create(context.TODO(), cr); err != nil {
 			return fmt.Errorf("failed to create router metrics cluster role %s: %v", cr.Name, err)
 		}
+		log.Info("created router metrics cluster role", "name", cr.Name)
 	}
 
 	crb, err := r.ManifestFactory.MetricsClusterRoleBinding()
@@ -385,11 +379,10 @@ func (r *reconciler) ensureMetricsIntegration(ci *ingressv1alpha1.ClusterIngress
 		if !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to get router metrics cluster role binding %s: %v", crb.Name, err)
 		}
-		if err := r.Client.Create(context.TODO(), crb); err == nil {
-			log.Info("created router metrics cluster role binding", "name", crb.Name)
-		} else if !errors.IsAlreadyExists(err) {
+		if err := r.Client.Create(context.TODO(), crb); err != nil {
 			return fmt.Errorf("failed to create router metrics cluster role binding %s: %v", crb.Name, err)
 		}
+		log.Info("created router metrics cluster role binding", "name", crb.Name)
 	}
 
 	mr, err := r.ManifestFactory.MetricsRole()
@@ -400,11 +393,10 @@ func (r *reconciler) ensureMetricsIntegration(ci *ingressv1alpha1.ClusterIngress
 		if !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to get router metrics role %s: %v", mr.Name, err)
 		}
-		if err := r.Client.Create(context.TODO(), mr); err == nil {
-			log.Info("created router metrics role", "name", mr.Name)
-		} else if !errors.IsAlreadyExists(err) {
+		if err := r.Client.Create(context.TODO(), mr); err != nil {
 			return fmt.Errorf("failed to create router metrics role %s: %v", mr.Name, err)
 		}
+		log.Info("created router metrics role", "name", mr.Name)
 	}
 
 	mrb, err := r.ManifestFactory.MetricsRoleBinding()
@@ -415,11 +407,10 @@ func (r *reconciler) ensureMetricsIntegration(ci *ingressv1alpha1.ClusterIngress
 		if !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to get router metrics role binding %s: %v", mrb.Name, err)
 		}
-		if err := r.Client.Create(context.TODO(), mrb); err == nil {
-			log.Info("created router metrics role binding", "name", mrb.Name)
-		} else if !errors.IsAlreadyExists(err) {
+		if err := r.Client.Create(context.TODO(), mrb); err != nil {
 			return fmt.Errorf("failed to create router metrics role binding %s: %v", mrb.Name, err)
 		}
+		log.Info("created router metrics role binding", "name", mrb.Name)
 	}
 
 	if _, err := r.ensureServiceMonitor(ci, svc, deploymentRef); err != nil {
@@ -467,11 +458,10 @@ func (r *reconciler) ensureInternalRouterServiceForIngress(ci *ingressv1alpha1.C
 		}
 
 		svc.SetOwnerReferences([]metav1.OwnerReference{deploymentRef})
-		if err := r.Client.Create(context.TODO(), svc); err == nil {
-			log.Info("created router service", "namespace", svc.Namespace, "name", svc.Name)
-		} else if !errors.IsAlreadyExists(err) {
+		if err := r.Client.Create(context.TODO(), svc); err != nil {
 			return nil, fmt.Errorf("failed to create router service %s/%s: %v", svc.Namespace, svc.Name, err)
 		}
+		log.Info("created router service", "namespace", svc.Namespace, "name", svc.Name)
 	}
 
 	return svc, nil

@@ -114,9 +114,6 @@ func (r *reconciler) currentRouterDefaultCertificate(ci *ingressv1alpha1.Cluster
 // Returns true if the secret was newly created, otherwise returns false.
 func (r *reconciler) createRouterDefaultCertificate(secret *corev1.Secret) (bool, error) {
 	if err := r.client.Create(context.TODO(), secret); err != nil {
-		if errors.IsAlreadyExists(err) {
-			return false, nil
-		}
 		return false, err
 	}
 	return true, nil

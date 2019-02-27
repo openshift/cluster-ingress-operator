@@ -34,11 +34,10 @@ const (
 	OperatorRole             = "assets/router/operator-role.yaml"
 	OperatorRoleBinding      = "assets/router/operator-role-binding.yaml"
 
-	MetricsServiceMonitorAsset = "assets/router/metrics/service-monitor.yaml"
-	MetricsClusterRole         = "assets/router/metrics/cluster-role.yaml"
-	MetricsClusterRoleBinding  = "assets/router/metrics/cluster-role-binding.yaml"
-	MetricsRole                = "assets/router/metrics/role.yaml"
-	MetricsRoleBinding         = "assets/router/metrics/role-binding.yaml"
+	MetricsClusterRole        = "assets/router/metrics/cluster-role.yaml"
+	MetricsClusterRoleBinding = "assets/router/metrics/cluster-role-binding.yaml"
+	MetricsRole               = "assets/router/metrics/role.yaml"
+	MetricsRoleBinding        = "assets/router/metrics/role-binding.yaml"
 
 	// Annotation used to inform the certificate generation service to
 	// generate a cluster-signed certificate and populate the secret.
