@@ -11,6 +11,7 @@ import (
 	"github.com/openshift/cluster-ingress-operator/version"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/arn"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/ec2metadata"
@@ -309,6 +310,15 @@ func (m *Manager) updateAlias(domain, zoneID, target, targetHostedZoneID, action
 		},
 	})
 	if err != nil {
+		if action == "DELETE" {
+			if aerr, ok := err.(awserr.Error); ok {
+				if aerr.Code() == route53.ErrCodeInvalidChangeBatch {
+					log.Info("record already deleted, ignoring error for zone", "zone", zoneID, "error", err)
+					return nil
+				}
+				return fmt.Errorf("couldn't delete DNS record in zone %s: %v", zoneID, err)
+			}
+		}
 		return fmt.Errorf("couldn't update DNS record in zone %s: %v", zoneID, err)
 	}
 	log.Info("updated DNS record", "zone id", zoneID, "domain", domain, "target", target, "response", resp)
