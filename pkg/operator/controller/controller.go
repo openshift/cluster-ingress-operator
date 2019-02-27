@@ -353,9 +353,11 @@ func (r *reconciler) ensureClusterIngress(ci *ingressv1alpha1.ClusterIngress, ca
 			Controller: &trueVar,
 		}
 
-		if lbService, err := r.ensureLoadBalancerService(ci, deploymentRef, infraConfig); err != nil {
+		lbService, err := r.ensureLoadBalancerService(ci, deploymentRef, infraConfig)
+		if err != nil {
 			errs = append(errs, fmt.Errorf("failed to ensure load balancer service for %s: %v", ci.Name, err))
-		} else if lbService != nil {
+		}
+		if len(lbService.Status.LoadBalancer.Ingress) != 0 {
 			if err := r.ensureDNS(ci, lbService, dnsConfig); err != nil {
 				errs = append(errs, fmt.Errorf("failed to ensure DNS for %s: %v", ci.Name, err))
 			}
@@ -373,7 +375,7 @@ func (r *reconciler) ensureClusterIngress(ci *ingressv1alpha1.ClusterIngress, ca
 			errs = append(errs, fmt.Errorf("failed to integrate metrics with openshift-monitoring for clusteringress %s: %v", ci.Name, err))
 		}
 
-		if err := r.syncClusterIngressStatus(deployment, ci); err != nil {
+		if err := r.syncClusterIngressStatus(deployment, lbService, ci); err != nil {
 			errs = append(errs, fmt.Errorf("failed to sync status of clusteringress %s/%s: %v", deployment.Namespace, deployment.Name, err))
 		}
 	}
@@ -468,7 +470,7 @@ func (r *reconciler) ensureMetricsIntegration(ci *ingressv1alpha1.ClusterIngress
 }
 
 // syncClusterIngressStatus updates the status for a given clusteringress.
-func (r *reconciler) syncClusterIngressStatus(deployment *appsv1.Deployment, ci *ingressv1alpha1.ClusterIngress) error {
+func (r *reconciler) syncClusterIngressStatus(deployment *appsv1.Deployment, svc *corev1.Service, ci *ingressv1alpha1.ClusterIngress) error {
 	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
 	if err != nil {
 		return fmt.Errorf("router deployment %s/%s has invalid spec.selector: %v", deployment.Namespace, deployment.Name, err)
@@ -481,6 +483,7 @@ func (r *reconciler) syncClusterIngressStatus(deployment *appsv1.Deployment, ci 
 
 	updated := ci.DeepCopy()
 	updated.Status.Replicas = deployment.Status.AvailableReplicas
+	updated.Status.LoadBalancer = svc.Status.LoadBalancer
 	updated.Status.Selector = selector.String()
 	if err := r.Client.Status().Update(context.TODO(), updated); err != nil {
 		return fmt.Errorf("failed to update status of clusteringress %s/%s: %v", updated.Namespace, updated.Name, err)

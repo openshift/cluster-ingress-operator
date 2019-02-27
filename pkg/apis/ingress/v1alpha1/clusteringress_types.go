@@ -1,6 +1,7 @@
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -81,6 +82,9 @@ type ClusterIngressHighAvailability struct {
 type ClusterIngressStatus struct {
 	// Replicas is the actual number of observed router instances.
 	Replicas int32 `json:"replicas"`
+
+	// LoadBalancer is observed service loadbalancer status.
+	LoadBalancer corev1.LoadBalancerStatus `json:"loadBalancer,omitempty"`
 
 	// Selector is a label selector, in string format, for pods
 	// corresponding to the ClusterIngress. The number of matching pods
