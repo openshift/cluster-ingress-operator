@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
+
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 
@@ -244,16 +247,18 @@ func (r *reconciler) updateRouterDeployment(current, desired *appsv1.Deployment)
 // deploymentConfigChanged checks if current config matches the expected config
 // for the cluster ingress deployment and if not returns the updated config.
 func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv1.Deployment) {
-	// As per an offline conversation, this checks only the secret name
-	// for now but can be updated to a `reflect.DeepEqual` if needed.
-	if current.Spec.Template.Spec.Volumes[0].Secret.SecretName == expected.Spec.Template.Spec.Volumes[0].Secret.SecretName &&
+	if cmp.Equal(current.Spec.Template.Spec.Volumes, expected.Spec.Template.Spec.Volumes, cmpopts.EquateEmpty()) &&
 		current.Spec.Replicas != nil &&
 		*current.Spec.Replicas == *expected.Spec.Replicas {
 		return false, nil
 	}
 
 	updated := current.DeepCopy()
-	updated.Spec.Template.Spec.Volumes[0].Secret.SecretName = expected.Spec.Template.Spec.Volumes[0].Secret.SecretName
+	volumes := make([]corev1.Volume, len(expected.Spec.Template.Spec.Volumes))
+	for i, vol := range expected.Spec.Template.Spec.Volumes {
+		volumes[i] = *vol.DeepCopy()
+	}
+	updated.Spec.Template.Spec.Volumes = volumes
 	replicas := int32(1)
 	if expected.Spec.Replicas != nil {
 		replicas = *expected.Spec.Replicas
