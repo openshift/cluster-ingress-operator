@@ -258,6 +258,14 @@ func TestDeploymentConfigChanged(t *testing.T) {
 			},
 			expect: true,
 		},
+		{
+			description: "if .spec.template.spec.nodeSelector changes",
+			mutate: func(deployment *appsv1.Deployment) {
+				ns := map[string]string{"xyzzy": "quux"}
+				deployment.Spec.Template.Spec.NodeSelector = ns
+			},
+			expect: true,
+		},
 	}
 
 	for _, tc := range testCases {

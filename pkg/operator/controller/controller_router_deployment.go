@@ -248,6 +248,7 @@ func (r *reconciler) updateRouterDeployment(current, desired *appsv1.Deployment)
 // for the cluster ingress deployment and if not returns the updated config.
 func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv1.Deployment) {
 	if cmp.Equal(current.Spec.Template.Spec.Volumes, expected.Spec.Template.Spec.Volumes, cmpopts.EquateEmpty()) &&
+		cmp.Equal(current.Spec.Template.Spec.NodeSelector, expected.Spec.Template.Spec.NodeSelector, cmpopts.EquateEmpty()) &&
 		current.Spec.Replicas != nil &&
 		*current.Spec.Replicas == *expected.Spec.Replicas {
 		return false, nil
@@ -259,6 +260,7 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 		volumes[i] = *vol.DeepCopy()
 	}
 	updated.Spec.Template.Spec.Volumes = volumes
+	updated.Spec.Template.Spec.NodeSelector = expected.Spec.Template.Spec.NodeSelector
 	replicas := int32(1)
 	if expected.Spec.Replicas != nil {
 		replicas = *expected.Spec.Replicas
