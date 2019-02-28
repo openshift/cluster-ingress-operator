@@ -3,13 +3,11 @@ package controller
 import (
 	"context"
 	"fmt"
-	"time"
 
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
-	certcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/certificate"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/slice"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -99,36 +97,6 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 			errs = append(errs, fmt.Errorf("failed to get clusteringress %q: %v", request, err))
 		}
 		ingress = nil
-	}
-
-	caSecretName := certcontroller.CASecretName(r.Namespace)
-	caSecret := &corev1.Secret{}
-	if err := r.Client.Get(context.TODO(), caSecretName, caSecret); err != nil {
-		if errors.IsNotFound(err) {
-			// Most likely the CA cert controller hasn't created it yet, try again
-			// after a reasonable time.
-			result.RequeueAfter = 5 * time.Second
-			// TODO: This check won't be necessary if all cert stuff is extracted.
-			if ingress != nil {
-				r.recorder.Event(ingress, "Warning", "DefaultWildcardCACertMissing", "The default wildcard CA certificate is missing")
-			}
-		} else {
-			errs = append(errs, fmt.Errorf("failed to get CA secret %s: %v", caSecretName, err))
-		}
-		caSecret = nil
-	}
-
-	if caSecret != nil {
-		// TODO: This should be in a different reconciler as it's independent of an
-		// individual ingress. We only really need to trigger this when a
-		// clusteringress is added or deleted...
-		// Find all clusteringresses to compute CA states.
-		ingresses := &ingressv1alpha1.ClusterIngressList{}
-		if err := r.Client.List(context.TODO(), &client.ListOptions{Namespace: r.Namespace}, ingresses); err != nil {
-			errs = append(errs, fmt.Errorf("failed to list clusteringresses in namespace %s: %v", r.Namespace, err))
-		} else if err := r.ensureRouterCAConfigMap(caSecret, ingresses.Items); err != nil {
-			errs = append(errs, fmt.Errorf("failed to ensure router ca config map: %v", err))
-		}
 	}
 
 	if ingress != nil {

@@ -32,3 +32,5 @@ if [ "$WHAT" == "all" ]; then
   oc delete clusterrolebindings/router-monitoring
   oc delete customresourcedefinition.apiextensions.k8s.io/clusteringresses.ingress.openshift.io
 fi
+
+oc delete -n openshift-config-managed configmaps/router-ca

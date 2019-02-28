@@ -14,7 +14,7 @@ var Logger logr.Logger
 
 func init() {
 	// Build a zap development logger.
-	zapLogger, err := zap.NewDevelopment(zap.AddCallerSkip(1))
+	zapLogger, err := zap.NewDevelopment(zap.AddCallerSkip(1), zap.AddStacktrace(zap.FatalLevel))
 	if err != nil {
 		panic(fmt.Sprintf("error building logger: %v", err))
 	}

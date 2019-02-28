@@ -7,22 +7,13 @@ import (
 	"github.com/openshift/library-go/pkg/crypto"
 
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
+	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 )
-
-// routerDefaultCertificateSecretName returns the namespaced name for the router
-// default certificate secret.
-func routerDefaultCertificateSecretName(ci *ingressv1alpha1.ClusterIngress, namespace string) types.NamespacedName {
-	return types.NamespacedName{
-		Namespace: namespace,
-		Name:      fmt.Sprintf("router-certs-%s", ci.Name),
-	}
-}
 
 // ensureDefaultCertificateForIngress creates or deletes an operator-generated
 // default certificate for a given ClusterIngress as appropriate.
@@ -85,7 +76,7 @@ func desiredRouterDefaultCertificateSecret(ca *crypto.CA, namespace string, depl
 		return nil, fmt.Errorf("failed to encode certificate: %v", err)
 	}
 
-	name := routerDefaultCertificateSecretName(ci, namespace)
+	name := controller.RouterDefaultCertificateSecretName(ci, namespace)
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name.Name,
@@ -104,7 +95,7 @@ func desiredRouterDefaultCertificateSecret(ca *crypto.CA, namespace string, depl
 // currentRouterDefaultCertificate returns the current router default
 // certificate secret.
 func (r *reconciler) currentRouterDefaultCertificate(ci *ingressv1alpha1.ClusterIngress, namespace string) (*corev1.Secret, error) {
-	name := routerDefaultCertificateSecretName(ci, namespace)
+	name := controller.RouterDefaultCertificateSecretName(ci, namespace)
 	secret := &corev1.Secret{}
 	if err := r.client.Get(context.TODO(), name, secret); err != nil {
 		if errors.IsNotFound(err) {
