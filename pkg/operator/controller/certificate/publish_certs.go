@@ -38,13 +38,17 @@ func (r *reconciler) ensureRouterCertsGlobalSecret(secrets []corev1.Secret, ingr
 		if created, err := r.createRouterCertsGlobalSecret(desired); err != nil {
 			return fmt.Errorf("failed to ensure router certificates secret was published: %v", err)
 		} else if created {
-			r.recorder.Eventf(desired, "Normal", "PublishedRouterCertificates", "Published router certificates")
+			new, err := r.currentRouterCertsGlobalSecret()
+			if err != nil {
+				return err
+			}
+			r.recorder.Eventf(new, "Normal", "PublishedRouterCertificates", "Published router certificates")
 		}
 	case desired != nil && current != nil:
 		if updated, err := r.updateRouterCertsGlobalSecret(current, desired); err != nil {
 			return fmt.Errorf("failed to update published router certificates secret: %v", err)
 		} else if updated {
-			r.recorder.Eventf(desired, "Normal", "UpdatedPublishedRouterCertificates", "Updated the published router certificates")
+			r.recorder.Eventf(current, "Normal", "UpdatedPublishedRouterCertificates", "Updated the published router certificates")
 		}
 	}
 	return nil

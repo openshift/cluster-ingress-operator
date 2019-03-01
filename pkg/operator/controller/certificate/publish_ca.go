@@ -36,13 +36,17 @@ func (r *reconciler) ensureRouterCAConfigMap(secret *corev1.Secret, ingresses []
 		if created, err := r.createRouterCAConfigMap(desired); err != nil {
 			return fmt.Errorf("failed to ensure router CA was published: %v", err)
 		} else if created {
-			r.recorder.Eventf(desired, "Normal", "PublishedDefaultRouterCA", "Published default router CA")
+			new, err := r.currentRouterCAConfigMap()
+			if err != nil {
+				return err
+			}
+			r.recorder.Eventf(new, "Normal", "PublishedDefaultRouterCA", "Published default router CA")
 		}
 	case desired != nil && current != nil:
 		if updated, err := r.updateRouterCAConfigMap(current, desired); err != nil {
 			return fmt.Errorf("failed to update published router CA: %v", err)
 		} else if updated {
-			r.recorder.Eventf(desired, "Normal", "UpdatedPublishedDefaultRouterCA", "Updated the published default router CA")
+			r.recorder.Eventf(current, "Normal", "UpdatedPublishedDefaultRouterCA", "Updated the published default router CA")
 		}
 	}
 	return nil

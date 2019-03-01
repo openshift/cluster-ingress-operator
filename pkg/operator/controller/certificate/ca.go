@@ -34,9 +34,15 @@ func (r *reconciler) ensureRouterCASecret() (*corev1.Secret, error) {
 	if created, err := r.createRouterCASecret(desired); err != nil {
 		return nil, fmt.Errorf("failed to create CA secret: %v", err)
 	} else if created {
-		r.recorder.Event(desired, "Normal", "CreatedWildcardCACert", "Created a default wildcard CA certificate")
+		new, err := r.currentRouterCASecret()
+		if err != nil {
+			return nil, err
+		}
+		r.recorder.Event(new, "Normal", "CreatedWildcardCACert", "Created a default wildcard CA certificate")
+		return new, nil
+
 	}
-	return desired, nil
+	return r.currentRouterCASecret()
 }
 
 // currentRouterCASecret returns the current router CA secret.
