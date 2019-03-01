@@ -10,7 +10,6 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
-	"github.com/openshift/cluster-ingress-operator/version"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -52,15 +51,23 @@ func (r *reconciler) syncOperatorStatus() error {
 			Name:     ns.Name,
 		},
 	}
-	co.Status.Versions = []configv1.OperandVersion{
-		{
-			Name:    "operator",
-			Version: version.OperatorVersion,
-		},
-		{
-			Name:    version.RouterOperandName,
-			Version: r.RouterImage,
-		},
+
+	if len(r.OperatorReleaseVersion) > 0 {
+		// An available operator resets release version
+		for _, condition := range co.Status.Conditions {
+			if condition.Type == configv1.OperatorAvailable && condition.Status == configv1.ConditionTrue {
+				co.Status.Versions = []configv1.OperandVersion{
+					{
+						Name:    "operator",
+						Version: r.OperatorReleaseVersion,
+					},
+					{
+						Name:    "ingress-controller",
+						Version: r.RouterImage,
+					},
+				}
+			}
+		}
 	}
 
 	if isNotFound {

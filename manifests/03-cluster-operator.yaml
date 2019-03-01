@@ -3,3 +3,5 @@ kind: ClusterOperator
 metadata:
   name: ingress
 spec: {}
+status:
+  # status is set at runtime
