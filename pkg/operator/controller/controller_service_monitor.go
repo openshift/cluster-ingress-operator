@@ -24,12 +24,11 @@ func (r *reconciler) ensureServiceMonitor(ci *ingressv1alpha1.ClusterIngress, sv
 	}
 
 	if desired != nil && current == nil {
-		if err := r.Client.Create(context.TODO(), desired); err == nil {
-			log.Info("created servicemonitor", "namespace", desired.GetNamespace(), "name", desired.GetName())
-		} else if !errors.IsAlreadyExists(err) {
+		if err := r.Client.Create(context.TODO(), desired); err != nil {
 			return nil, fmt.Errorf("failed to create servicemonitor %s/%s: %v", desired.GetNamespace(), desired.GetName(), err)
 		}
-		return r.currentServiceMonitor(ci)
+		log.Info("created servicemonitor", "namespace", desired.GetNamespace(), "name", desired.GetName())
+		return desired, nil
 	}
 	return current, nil
 }

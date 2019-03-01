@@ -42,12 +42,11 @@ func (r *reconciler) ensureLoadBalancerService(ci *ingressv1alpha1.ClusterIngres
 		return nil, err
 	}
 	if desiredLBService != nil && currentLBService == nil {
-		if err := r.Client.Create(context.TODO(), desiredLBService); err == nil {
-			log.Info("created load balancer service", "namespace", desiredLBService.Namespace, "name", desiredLBService.Name)
-		} else if !errors.IsAlreadyExists(err) {
+		if err := r.Client.Create(context.TODO(), desiredLBService); err != nil {
 			return nil, fmt.Errorf("failed to create load balancer service %s/%s: %v", desiredLBService.Namespace, desiredLBService.Name, err)
 		}
-		return r.currentLoadBalancerService(ci)
+		log.Info("created load balancer service", "namespace", desiredLBService.Namespace, "name", desiredLBService.Name)
+		return desiredLBService, nil
 	}
 	return currentLBService, nil
 }
