@@ -198,11 +198,8 @@ func desiredRouterDeployment(ci *ingressv1alpha1.ClusterIngress, routerImage str
 	}
 
 	// Fill in the default certificate secret name.
-	secretName := fmt.Sprintf("router-certs-%s", ci.Name)
-	if ci.Spec.DefaultCertificateSecret != nil && len(*ci.Spec.DefaultCertificateSecret) > 0 {
-		secretName = *ci.Spec.DefaultCertificateSecret
-	}
-	deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName = secretName
+	secretName := RouterEffectiveDefaultCertificateSecretName(ci, deployment.Namespace)
+	deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName = secretName.Name
 
 	return deployment, nil
 }

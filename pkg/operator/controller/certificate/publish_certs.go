@@ -64,12 +64,8 @@ func desiredRouterCertsGlobalSecret(secrets []corev1.Secret, ingresses []ingress
 
 	ingressToSecret := map[*ingressv1alpha1.ClusterIngress]*corev1.Secret{}
 	for i, ingress := range ingresses {
-		secretName := controller.RouterDefaultCertificateSecretName(&ingress, "")
-		name := secretName.Name
-		if ingress.Spec.DefaultCertificateSecret != nil && len(*ingress.Spec.DefaultCertificateSecret) > 0 {
-			name = *ingress.Spec.DefaultCertificateSecret
-		}
-		if secret, ok := nameToSecret[name]; ok {
+		name := controller.RouterEffectiveDefaultCertificateSecretName(&ingress, "")
+		if secret, ok := nameToSecret[name.Name]; ok {
 			ingressToSecret[&ingresses[i]] = secret
 		}
 	}
