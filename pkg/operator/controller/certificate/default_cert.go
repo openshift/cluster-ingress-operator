@@ -39,7 +39,7 @@ func (r *reconciler) ensureDefaultCertificateForIngress(caSecret *corev1.Secret,
 		if deleted, err := r.deleteRouterDefaultCertificate(current); err != nil {
 			return false, fmt.Errorf("failed to delete default certificate: %v", err)
 		} else if deleted {
-			r.recorder.Eventf(ci, "Normal", "DeletedDefaultCertificate", "Deleted default wildcard certificate %q", desired.Name)
+			r.recorder.Eventf(ci, "Normal", "DeletedDefaultCertificate", "Deleted default wildcard certificate %q", current.Name)
 			return true, nil
 		}
 	case desired != nil && current == nil:
