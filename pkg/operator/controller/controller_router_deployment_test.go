@@ -266,6 +266,59 @@ func TestDeploymentConfigChanged(t *testing.T) {
 			},
 			expect: true,
 		},
+		{
+			description: "if ROUTER_CANONICAL_HOSTNAME changes",
+			mutate: func(deployment *appsv1.Deployment) {
+				envs := deployment.Spec.Template.Spec.Containers[0].Env
+				for i, env := range envs {
+					if env.Name == "ROUTER_CANONICAL_HOSTNAME" {
+						envs[i].Value = "mutated.example.com"
+					}
+				}
+				deployment.Spec.Template.Spec.Containers[0].Env = envs
+			},
+			expect: true,
+		},
+		{
+			description: "if ROUTER_USE_PROXY_PROTOCOL changes",
+			mutate: func(deployment *appsv1.Deployment) {
+				envs := deployment.Spec.Template.Spec.Containers[0].Env
+				for i, env := range envs {
+					if env.Name == "ROUTER_USE_PROXY_PROTOCOL" {
+						envs[i].Value = "true"
+					}
+				}
+				deployment.Spec.Template.Spec.Containers[0].Env = envs
+			},
+			expect: true,
+		},
+		{
+			description: "if NAMESPACE_LABELS is added",
+			mutate: func(deployment *appsv1.Deployment) {
+				envs := deployment.Spec.Template.Spec.Containers[0].Env
+				env := corev1.EnvVar{
+					Name:  "NAMESPACE_LABELS",
+					Value: "x=y",
+				}
+				envs = append(envs, env)
+				deployment.Spec.Template.Spec.Containers[0].Env = envs
+			},
+			expect: true,
+		},
+		{
+			description: "if ROUTE_LABELS is deleted",
+			mutate: func(deployment *appsv1.Deployment) {
+				oldEnvs := deployment.Spec.Template.Spec.Containers[0].Env
+				newEnvs := []corev1.EnvVar{}
+				for _, env := range oldEnvs {
+					if env.Name != "ROUTE_LABELS" {
+						newEnvs = append(newEnvs, env)
+					}
+				}
+				deployment.Spec.Template.Spec.Containers[0].Env = newEnvs
+			},
+			expect: true,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -284,6 +337,24 @@ func TestDeploymentConfigChanged(t *testing.T) {
 								VolumeSource: corev1.VolumeSource{
 									Secret: &corev1.SecretVolumeSource{
 										SecretName: "secrets-volume",
+									},
+								},
+							},
+						},
+						Containers: []corev1.Container{
+							{
+								Env: []corev1.EnvVar{
+									{
+										Name:  "ROUTER_CANONICAL_HOSTNAME",
+										Value: "example.com",
+									},
+									{
+										Name:  "ROUTER_USE_PROXY_PROTOCOL",
+										Value: "false",
+									},
+									{
+										Name:  "ROUTE_LABELS",
+										Value: "foo=bar",
 									},
 								},
 							},
