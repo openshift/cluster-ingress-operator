@@ -80,7 +80,7 @@ func desiredRouterDefaultCertificateSecret(ca *crypto.CA, namespace string, depl
 		return nil, fmt.Errorf("failed to encode certificate: %v", err)
 	}
 
-	name := controller.RouterDefaultCertificateSecretName(ci, namespace)
+	name := controller.RouterOperatorGeneratedDefaultCertificateSecretName(ci, namespace)
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name.Name,
@@ -99,7 +99,7 @@ func desiredRouterDefaultCertificateSecret(ca *crypto.CA, namespace string, depl
 // currentRouterDefaultCertificate returns the current router default
 // certificate secret.
 func (r *reconciler) currentRouterDefaultCertificate(ci *ingressv1alpha1.ClusterIngress, namespace string) (*corev1.Secret, error) {
-	name := controller.RouterDefaultCertificateSecretName(ci, namespace)
+	name := controller.RouterOperatorGeneratedDefaultCertificateSecretName(ci, namespace)
 	secret := &corev1.Secret{}
 	if err := r.client.Get(context.TODO(), name, secret); err != nil {
 		if errors.IsNotFound(err) {

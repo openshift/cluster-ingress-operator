@@ -63,11 +63,21 @@ func RouterCertsGlobalSecretName() types.NamespacedName {
 	}
 }
 
-// RouterDefaultCertificateSecretName returns the namespaced name for the router
-// default certificate secret.
-func RouterDefaultCertificateSecretName(ci *ingressv1alpha1.ClusterIngress, namespace string) types.NamespacedName {
+// RouterOperatorGeneratedDefaultCertificateSecretName returns the namespaced name for
+// the operator-generated router default certificate secret.
+func RouterOperatorGeneratedDefaultCertificateSecretName(ci *ingressv1alpha1.ClusterIngress, namespace string) types.NamespacedName {
 	return types.NamespacedName{
 		Namespace: namespace,
 		Name:      fmt.Sprintf("router-certs-%s", ci.Name),
 	}
+}
+
+// RouterEffectiveDefaultCertificateSecretName returns the namespaced name for
+// the in-use router default certificate secret.
+func RouterEffectiveDefaultCertificateSecretName(ci *ingressv1alpha1.ClusterIngress, namespace string) types.NamespacedName {
+	name := RouterOperatorGeneratedDefaultCertificateSecretName(ci, namespace).Name
+	if ci.Spec.DefaultCertificateSecret != nil && len(*ci.Spec.DefaultCertificateSecret) > 0 {
+		name = *ci.Spec.DefaultCertificateSecret
+	}
+	return types.NamespacedName{Namespace: namespace, Name: name}
 }
