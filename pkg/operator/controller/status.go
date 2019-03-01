@@ -10,7 +10,6 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
-	"github.com/openshift/cluster-ingress-operator/pkg/util"
 	"github.com/openshift/cluster-ingress-operator/version"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -41,10 +40,8 @@ func (r *reconciler) syncOperatorStatus() error {
 		return fmt.Errorf("failed to get operator state: %v", err)
 	}
 
-	oldConditions := co.Status.Conditions
-	co.Status.Conditions = computeStatusConditions(oldConditions, ns, ingresses, deployments)
-
-	oldRelatedObjects := co.Status.RelatedObjects
+	oldStatus := co.Status.DeepCopy()
+	co.Status.Conditions = computeStatusConditions(oldStatus.Conditions, ns, ingresses, deployments)
 	co.Status.RelatedObjects = []configv1.ObjectReference{
 		{
 			Resource: "namespaces",
@@ -55,8 +52,6 @@ func (r *reconciler) syncOperatorStatus() error {
 			Name:     ns.Name,
 		},
 	}
-
-	oldVersions := co.Status.Versions
 	co.Status.Versions = []configv1.OperandVersion{
 		{
 			Name:    "operator",
@@ -74,25 +69,7 @@ func (r *reconciler) syncOperatorStatus() error {
 		}
 		log.Info("created clusteroperator", "object", co)
 	} else {
-		conditionOpts := []cmp.Option{
-			cmpopts.IgnoreFields(configv1.ClusterOperatorStatusCondition{}, "LastTransitionTime"),
-		}
-		conditionsEqual, err := util.ElementsEqual(oldConditions, co.Status.Conditions, conditionOpts)
-		if err != nil {
-			return fmt.Errorf("failed to compare clusteroperator conditions for %s: %v", co.Name, err)
-		}
-
-		relatedObjectsEqual, err := util.ElementsEqual(oldRelatedObjects, co.Status.RelatedObjects, []cmp.Option{})
-		if err != nil {
-			return fmt.Errorf("failed to compare clusteroperator related objects for %s: %v", co.Name, err)
-		}
-
-		versionsEqual, err := util.ElementsEqual(oldVersions, co.Status.Versions, []cmp.Option{})
-		if err != nil {
-			return fmt.Errorf("failed to compare clusteroperator versions %s: %v", co.Name, err)
-		}
-
-		if !conditionsEqual || !relatedObjectsEqual || !versionsEqual {
+		if !statusesEqual(*oldStatus, co.Status) {
 			err = r.Client.Status().Update(context.TODO(), co)
 			if err != nil {
 				return fmt.Errorf("failed to update clusteroperator %s: %v", co.Name, err)
@@ -231,4 +208,36 @@ func setStatusCondition(oldConditions []configv1.ClusterOperatorStatusCondition,
 	}
 
 	return newConditions
+}
+
+// statusesEqual compares two ClusterOperatorStatus values.  Returns true if the
+// provided ClusterOperatorStatus values should be considered equal for the
+// purpose of determining whether an update is necessary, false otherwise.
+func statusesEqual(a, b configv1.ClusterOperatorStatus) bool {
+	conditionCmpOpts := []cmp.Option{
+		cmpopts.IgnoreFields(configv1.ClusterOperatorStatusCondition{}, "LastTransitionTime"),
+		cmpopts.EquateEmpty(),
+		cmpopts.SortSlices(func(a, b configv1.ClusterOperatorStatusCondition) bool { return a.Type < b.Type }),
+	}
+	if !cmp.Equal(a.Conditions, b.Conditions, conditionCmpOpts...) {
+		return false
+	}
+
+	relatedCmpOpts := []cmp.Option{
+		cmpopts.EquateEmpty(),
+		cmpopts.SortSlices(func(a, b configv1.ObjectReference) bool { return a.Name < b.Name }),
+	}
+	if !cmp.Equal(a.RelatedObjects, b.RelatedObjects, relatedCmpOpts...) {
+		return false
+	}
+
+	versionsCmpOpts := []cmp.Option{
+		cmpopts.EquateEmpty(),
+		cmpopts.SortSlices(func(a, b configv1.OperandVersion) bool { return a.Name < b.Name }),
+	}
+	if !cmp.Equal(a.Versions, b.Versions, versionsCmpOpts...) {
+		return false
+	}
+
+	return true
 }
