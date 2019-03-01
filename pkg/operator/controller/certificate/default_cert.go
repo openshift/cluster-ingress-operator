@@ -16,39 +16,43 @@ import (
 )
 
 // ensureDefaultCertificateForIngress creates or deletes an operator-generated
-// default certificate for a given ClusterIngress as appropriate.
-func (r *reconciler) ensureDefaultCertificateForIngress(caSecret *corev1.Secret, namespace string, deploymentRef metav1.OwnerReference, ci *ingressv1alpha1.ClusterIngress) error {
+// default certificate for a given ClusterIngress as appropriate.  Returns true
+// if it creates, updates, or deletes the secret for the certificate, false
+// otherwise.
+func (r *reconciler) ensureDefaultCertificateForIngress(caSecret *corev1.Secret, namespace string, deploymentRef metav1.OwnerReference, ci *ingressv1alpha1.ClusterIngress) (bool, error) {
 	ca, err := crypto.GetCAFromBytes(caSecret.Data["tls.crt"], caSecret.Data["tls.key"])
 	if err != nil {
-		return fmt.Errorf("failed to get CA from secret %s/%s: %v", caSecret.Namespace, caSecret.Name, err)
+		return false, fmt.Errorf("failed to get CA from secret %s/%s: %v", caSecret.Namespace, caSecret.Name, err)
 	}
 	desired, err := desiredRouterDefaultCertificateSecret(ca, namespace, deploymentRef, ci)
 	if err != nil {
-		return err
+		return false, err
 	}
 	current, err := r.currentRouterDefaultCertificate(ci, namespace)
 	if err != nil {
-		return err
+		return false, err
 	}
 	switch {
 	case desired == nil && current == nil:
 		// Nothing to do.
 	case desired == nil && current != nil:
 		if deleted, err := r.deleteRouterDefaultCertificate(current); err != nil {
-			return fmt.Errorf("failed to delete default certificate: %v", err)
+			return false, fmt.Errorf("failed to delete default certificate: %v", err)
 		} else if deleted {
 			r.recorder.Eventf(ci, "Normal", "DeletedDefaultCertificate", "Deleted default wildcard certificate %q", desired.Name)
+			return true, nil
 		}
 	case desired != nil && current == nil:
 		if created, err := r.createRouterDefaultCertificate(desired); err != nil {
-			return fmt.Errorf("failed to create default certificate: %v", err)
+			return false, fmt.Errorf("failed to create default certificate: %v", err)
 		} else if created {
 			r.recorder.Eventf(ci, "Normal", "CreatedDefaultCertificate", "Created default wildcard certificate %q", desired.Name)
+			return true, nil
 		}
 	case desired != nil && current != nil:
 		// TODO Update if CA certificate changed.
 	}
-	return nil
+	return false, nil
 }
 
 // desiredRouterDefaultCertificateSecret returns the desired default certificate

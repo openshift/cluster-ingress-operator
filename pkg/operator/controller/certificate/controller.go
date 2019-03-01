@@ -2,7 +2,8 @@
 //
 //   1. Managing a CA for minting self-signed certs
 //   2. Managing self-signed certificates for any clusteringresses which require them
-//   3. Publishing in-use wildcard certificates to `openshift-config-managed`
+//   3. Publishing the CA to `openshift-config-managed`
+//   4. Publishing in-use certificates to `openshift-config-managed`
 package certificate
 
 import (
@@ -21,6 +22,7 @@ import (
 	"k8s.io/client-go/tools/record"
 
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	runtimecontroller "sigs.k8s.io/controller-runtime/pkg/controller"
@@ -64,6 +66,7 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 		return reconcile.Result{}, fmt.Errorf("failed to ensure router CA: %v", err)
 	}
 
+	defaultCertificateChanged := false
 	result := reconcile.Result{}
 	errs := []error{}
 	ingress := &ingressv1alpha1.ClusterIngress{}
@@ -96,7 +99,7 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 				UID:        deployment.UID,
 				Controller: &trueVar,
 			}
-			err = r.ensureDefaultCertificateForIngress(ca, deployment.Namespace, deploymentRef, ingress)
+			defaultCertificateChanged, err = r.ensureDefaultCertificateForIngress(ca, deployment.Namespace, deploymentRef, ingress)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("failed to ensure default cert for %s: %v", ingress.Name, err))
 			}
@@ -106,8 +109,21 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 	ingresses := &ingressv1alpha1.ClusterIngressList{}
 	if err := r.client.List(context.TODO(), &client.ListOptions{Namespace: r.operatorNamespace}, ingresses); err != nil {
 		errs = append(errs, fmt.Errorf("failed to list clusteringresses: %v", err))
-	} else if err := r.ensureRouterCAConfigMap(ca, ingresses.Items); err != nil {
-		errs = append(errs, fmt.Errorf("failed to publish router CA: %v", err))
+	} else {
+		if err := r.ensureRouterCAConfigMap(ca, ingresses.Items); err != nil {
+			errs = append(errs, fmt.Errorf("failed to publish router CA: %v", err))
+		}
+
+		if defaultCertificateChanged {
+			secrets := &corev1.SecretList{}
+			if err := r.client.List(context.TODO(), &client.ListOptions{Namespace: "openshift-ingress"}, secrets); err != nil {
+				errs = append(errs, fmt.Errorf("failed to list secrets: %v", err))
+			} else {
+				if err := r.ensureRouterCertsGlobalSecret(secrets.Items, ingresses.Items); err != nil {
+					errs = append(errs, fmt.Errorf("failed to ensure router-certs secret: %v", err))
+				}
+			}
+		}
 	}
 
 	return result, utilerrors.NewAggregate(errs)
