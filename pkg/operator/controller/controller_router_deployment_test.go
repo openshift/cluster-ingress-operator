@@ -8,6 +8,8 @@ import (
 
 	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
 
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -221,5 +223,155 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	if deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName != secretName {
 		t.Errorf("expected router Deployment volume with secret %s, got %s",
 			secretName, deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName)
+	}
+}
+
+func TestDeploymentConfigChanged(t *testing.T) {
+	testCases := []struct {
+		description string
+		mutate      func(*appsv1.Deployment)
+		expect      bool
+	}{
+		{
+			description: "if nothing changes",
+			mutate:      func(_ *appsv1.Deployment) {},
+			expect:      false,
+		},
+		{
+			description: "if .uid changes",
+			mutate: func(deployment *appsv1.Deployment) {
+				deployment.UID = "2"
+			},
+			expect: false,
+		},
+		{
+			description: "if .spec.template.spec.volumes is set to empty",
+			mutate: func(deployment *appsv1.Deployment) {
+				deployment.Spec.Template.Spec.Volumes = []corev1.Volume{}
+			},
+			expect: true,
+		},
+		{
+			description: "if .spec.template.spec.volumes is set to nil",
+			mutate: func(deployment *appsv1.Deployment) {
+				deployment.Spec.Template.Spec.Volumes = nil
+			},
+			expect: true,
+		},
+		{
+			description: "if .spec.template.spec.nodeSelector changes",
+			mutate: func(deployment *appsv1.Deployment) {
+				ns := map[string]string{"xyzzy": "quux"}
+				deployment.Spec.Template.Spec.NodeSelector = ns
+			},
+			expect: true,
+		},
+		{
+			description: "if ROUTER_CANONICAL_HOSTNAME changes",
+			mutate: func(deployment *appsv1.Deployment) {
+				envs := deployment.Spec.Template.Spec.Containers[0].Env
+				for i, env := range envs {
+					if env.Name == "ROUTER_CANONICAL_HOSTNAME" {
+						envs[i].Value = "mutated.example.com"
+					}
+				}
+				deployment.Spec.Template.Spec.Containers[0].Env = envs
+			},
+			expect: true,
+		},
+		{
+			description: "if ROUTER_USE_PROXY_PROTOCOL changes",
+			mutate: func(deployment *appsv1.Deployment) {
+				envs := deployment.Spec.Template.Spec.Containers[0].Env
+				for i, env := range envs {
+					if env.Name == "ROUTER_USE_PROXY_PROTOCOL" {
+						envs[i].Value = "true"
+					}
+				}
+				deployment.Spec.Template.Spec.Containers[0].Env = envs
+			},
+			expect: true,
+		},
+		{
+			description: "if NAMESPACE_LABELS is added",
+			mutate: func(deployment *appsv1.Deployment) {
+				envs := deployment.Spec.Template.Spec.Containers[0].Env
+				env := corev1.EnvVar{
+					Name:  "NAMESPACE_LABELS",
+					Value: "x=y",
+				}
+				envs = append(envs, env)
+				deployment.Spec.Template.Spec.Containers[0].Env = envs
+			},
+			expect: true,
+		},
+		{
+			description: "if ROUTE_LABELS is deleted",
+			mutate: func(deployment *appsv1.Deployment) {
+				oldEnvs := deployment.Spec.Template.Spec.Containers[0].Env
+				newEnvs := []corev1.EnvVar{}
+				for _, env := range oldEnvs {
+					if env.Name != "ROUTE_LABELS" {
+						newEnvs = append(newEnvs, env)
+					}
+				}
+				deployment.Spec.Template.Spec.Containers[0].Env = newEnvs
+			},
+			expect: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		nineteen := int32(19)
+		original := appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "router-original",
+				Namespace: "openshift-ingress",
+				UID:       "1",
+			},
+			Spec: appsv1.DeploymentSpec{
+				Template: corev1.PodTemplateSpec{
+					Spec: corev1.PodSpec{
+						Volumes: []corev1.Volume{
+							{
+								VolumeSource: corev1.VolumeSource{
+									Secret: &corev1.SecretVolumeSource{
+										SecretName: "secrets-volume",
+									},
+								},
+							},
+						},
+						Containers: []corev1.Container{
+							{
+								Env: []corev1.EnvVar{
+									{
+										Name:  "ROUTER_CANONICAL_HOSTNAME",
+										Value: "example.com",
+									},
+									{
+										Name:  "ROUTER_USE_PROXY_PROTOCOL",
+										Value: "false",
+									},
+									{
+										Name:  "ROUTE_LABELS",
+										Value: "foo=bar",
+									},
+								},
+							},
+						},
+					},
+				},
+				Replicas: &nineteen,
+			},
+		}
+		mutated := original.DeepCopy()
+		tc.mutate(mutated)
+		if changed, updated := deploymentConfigChanged(&original, mutated); changed != tc.expect {
+			t.Errorf("%s, expect deploymentConfigChanged to be %t, got %t", tc.description, tc.expect, changed)
+		} else if changed {
+			if changedAgain, _ := deploymentConfigChanged(mutated, updated); changedAgain {
+				t.Errorf("%s, deploymentConfigChanged does not behave as a fixed point function", tc.description)
+			}
+		}
 	}
 }
