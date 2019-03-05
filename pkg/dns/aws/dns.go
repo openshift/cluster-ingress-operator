@@ -8,7 +8,6 @@ import (
 
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
-	"github.com/openshift/cluster-ingress-operator/version"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/arn"
@@ -72,7 +71,7 @@ type Config struct {
 	DNS *configv1.DNS
 }
 
-func NewManager(config Config) (*Manager, error) {
+func NewManager(config Config, operatorReleaseVersion string) (*Manager, error) {
 	creds := credentials.NewStaticCredentials(config.AccessID, config.AccessKey, "")
 	sess, err := session.NewSessionWithOptions(session.Options{
 		Config: aws.Config{
@@ -85,7 +84,7 @@ func NewManager(config Config) (*Manager, error) {
 	}
 	sess.Handlers.Build.PushBackNamed(request.NamedHandler{
 		Name: "openshift.io/ingress-operator",
-		Fn:   request.MakeAddToUserAgentHandler("openshift.io ingress-operator", version.OperatorVersion),
+		Fn:   request.MakeAddToUserAgentHandler("openshift.io ingress-operator", operatorReleaseVersion),
 	})
 
 	region := aws.StringValue(sess.Config.Region)

@@ -61,11 +61,12 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 
 // Config holds all the things necessary for the controller to run.
 type Config struct {
-	Client          client.Client
-	ManifestFactory *manifests.Factory
-	Namespace       string
-	DNSManager      dns.Manager
-	RouterImage     string
+	Client                 client.Client
+	ManifestFactory        *manifests.Factory
+	Namespace              string
+	DNSManager             dns.Manager
+	RouterImage            string
+	OperatorReleaseVersion string
 }
 
 // reconciler handles the actual ingress reconciliation logic in response to

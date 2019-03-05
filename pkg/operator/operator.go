@@ -90,11 +90,12 @@ func New(config operatorconfig.Config, dnsManager dns.Manager, kubeConfig *rest.
 
 	// Create and register the operator controller with the operator manager.
 	operatorController, err := operatorcontroller.New(operatorManager, operatorcontroller.Config{
-		Client:          kubeClient,
-		Namespace:       config.Namespace,
-		ManifestFactory: mf,
-		DNSManager:      dnsManager,
-		RouterImage:     config.RouterImage,
+		Client:                 kubeClient,
+		Namespace:              config.Namespace,
+		ManifestFactory:        mf,
+		DNSManager:             dnsManager,
+		RouterImage:            config.RouterImage,
+		OperatorReleaseVersion: config.OperatorReleaseVersion,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create operator controller: %v", err)
