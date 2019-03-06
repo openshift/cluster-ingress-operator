@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/openshift/cluster-ingress-operator/pkg/apis"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
@@ -13,6 +12,7 @@ import (
 	certcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/certificate"
 
 	configv1 "github.com/openshift/api/config/v1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -51,7 +51,7 @@ func init() {
 	logf.SetRuntimeLogger(log)
 
 	scheme = kscheme.Scheme
-	if err := apis.AddToScheme(scheme); err != nil {
+	if err := operatorv1.AddToScheme(scheme); err != nil {
 		panic(err)
 	}
 	if err := configv1.Install(scheme); err != nil {

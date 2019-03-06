@@ -341,10 +341,11 @@
   version = "1.0.1"
 
 [[projects]]
-  digest = "1:cdc7cf803cbf01116b8d0d8dafa0b719e9d9a6462f3fc3b82ef2b49750a37a47"
+  digest = "1:7e3c1fd9c00ecd221b5e69e99db9d46e5836bcbeb20dd3418ad1155757244f20"
   name = "github.com/openshift/api"
   packages = [
     "config/v1",
+    "operator/v1",
     "route/v1",
   ]
   pruneopts = "NUT"
@@ -862,7 +863,7 @@
   revision = "d7c86cdc46e3a4fcf892b32dd7bc3aa775e0870e"
 
 [[projects]]
-  digest = "1:88700a4c08b78b0c39a9115e4a2cdb30ee558f89f5b549165db2281a74e298b4"
+  digest = "1:c3ef2714fbe246fa826a03c29e01b9b72a0f9b8a98bd3ab36a698b6b89225234"
   name = "sigs.k8s.io/controller-runtime"
   packages = [
     "pkg/cache",
@@ -885,7 +886,6 @@
     "pkg/recorder",
     "pkg/runtime/inject",
     "pkg/runtime/log",
-    "pkg/runtime/scheme",
     "pkg/runtime/signals",
     "pkg/source",
     "pkg/source/internal",
@@ -913,11 +913,11 @@
     "github.com/aws/aws-sdk-go/service/route53",
     "github.com/go-logr/logr",
     "github.com/go-logr/zapr",
-    "github.com/go-openapi/spec",
     "github.com/google/go-cmp/cmp",
     "github.com/google/go-cmp/cmp/cmpopts",
     "github.com/kevinburke/go-bindata",
     "github.com/openshift/api/config/v1",
+    "github.com/openshift/api/operator/v1",
     "github.com/openshift/api/route/v1",
     "github.com/openshift/library-go/pkg/crypto",
     "go.uber.org/zap",
@@ -952,7 +952,6 @@
     "k8s.io/code-generator/cmd/defaulter-gen",
     "k8s.io/code-generator/cmd/openapi-gen",
     "k8s.io/gengo/args",
-    "k8s.io/kube-openapi/pkg/common",
     "sigs.k8s.io/controller-runtime/pkg/cache",
     "sigs.k8s.io/controller-runtime/pkg/client",
     "sigs.k8s.io/controller-runtime/pkg/client/apiutil",
@@ -962,7 +961,6 @@
     "sigs.k8s.io/controller-runtime/pkg/manager",
     "sigs.k8s.io/controller-runtime/pkg/reconcile",
     "sigs.k8s.io/controller-runtime/pkg/runtime/log",
-    "sigs.k8s.io/controller-runtime/pkg/runtime/scheme",
     "sigs.k8s.io/controller-runtime/pkg/runtime/signals",
     "sigs.k8s.io/controller-runtime/pkg/source",
   ]

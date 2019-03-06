@@ -9,7 +9,7 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 
 	configv1 "github.com/openshift/api/config/v1"
-	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -88,7 +88,7 @@ func (r *reconciler) syncOperatorStatus() error {
 
 // getOperatorState gets and returns the resources necessary to compute the
 // operator's current state.
-func (r *reconciler) getOperatorState() (*corev1.Namespace, []ingressv1alpha1.ClusterIngress, []appsv1.Deployment, error) {
+func (r *reconciler) getOperatorState() (*corev1.Namespace, []operatorv1.IngressController, []appsv1.Deployment, error) {
 	ns, err := r.ManifestFactory.RouterNamespace()
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf(
@@ -104,7 +104,7 @@ func (r *reconciler) getOperatorState() (*corev1.Namespace, []ingressv1alpha1.Cl
 			"error getting Namespace %s: %v", ns.Name, err)
 	}
 
-	ingressList := &ingressv1alpha1.ClusterIngressList{}
+	ingressList := &operatorv1.IngressControllerList{}
 	err = r.Client.List(context.TODO(), &client.ListOptions{Namespace: r.Namespace}, ingressList)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf(
@@ -122,7 +122,7 @@ func (r *reconciler) getOperatorState() (*corev1.Namespace, []ingressv1alpha1.Cl
 }
 
 // computeStatusConditions computes the operator's current state.
-func computeStatusConditions(conditions []configv1.ClusterOperatorStatusCondition, ns *corev1.Namespace, ingresses []ingressv1alpha1.ClusterIngress, deployments []appsv1.Deployment) []configv1.ClusterOperatorStatusCondition {
+func computeStatusConditions(conditions []configv1.ClusterOperatorStatusCondition, ns *corev1.Namespace, ingresses []operatorv1.IngressController, deployments []appsv1.Deployment) []configv1.ClusterOperatorStatusCondition {
 	failingCondition := &configv1.ClusterOperatorStatusCondition{
 		Type:   configv1.OperatorFailing,
 		Status: configv1.ConditionUnknown,

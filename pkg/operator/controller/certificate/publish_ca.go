@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
 	corev1 "k8s.io/api/core/v1"
@@ -14,7 +14,7 @@ import (
 
 // ensureRouterCAConfigMap will create, update, or delete the configmap for the
 // router CA as appropriate.
-func (r *reconciler) ensureRouterCAConfigMap(secret *corev1.Secret, ingresses []ingressv1alpha1.ClusterIngress) error {
+func (r *reconciler) ensureRouterCAConfigMap(secret *corev1.Secret, ingresses []operatorv1.IngressController) error {
 	desired, err := desiredRouterCAConfigMap(secret, ingresses)
 	if err != nil {
 		return err
@@ -53,7 +53,7 @@ func (r *reconciler) ensureRouterCAConfigMap(secret *corev1.Secret, ingresses []
 }
 
 // desiredRouterCAConfigMap returns the desired router CA configmap.
-func desiredRouterCAConfigMap(secret *corev1.Secret, ingresses []ingressv1alpha1.ClusterIngress) (*corev1.ConfigMap, error) {
+func desiredRouterCAConfigMap(secret *corev1.Secret, ingresses []operatorv1.IngressController) (*corev1.ConfigMap, error) {
 	if !shouldPublishRouterCA(ingresses) {
 		return nil, nil
 	}
@@ -73,9 +73,9 @@ func desiredRouterCAConfigMap(secret *corev1.Secret, ingresses []ingressv1alpha1
 
 // shouldPublishRouterCA checks if some ClusterIngress uses the default
 // certificate, in which case the CA certificate needs to be published.
-func shouldPublishRouterCA(ingresses []ingressv1alpha1.ClusterIngress) bool {
+func shouldPublishRouterCA(ingresses []operatorv1.IngressController) bool {
 	for _, ci := range ingresses {
-		if ci.Spec.DefaultCertificateSecret == nil {
+		if ci.Spec.DefaultCertificate == nil {
 			return true
 		}
 	}

@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"time"
 
-	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
@@ -23,6 +22,8 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+
+	operatorv1 "github.com/openshift/api/operator/v1"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	runtimecontroller "sigs.k8s.io/controller-runtime/pkg/controller"
@@ -48,7 +49,7 @@ func New(mgr manager.Manager, client client.Client, operatorNamespace string) (r
 	if err != nil {
 		return nil, err
 	}
-	if err := c.Watch(&source.Kind{Type: &ingressv1alpha1.ClusterIngress{}}, &handler.EnqueueRequestForObject{}); err != nil {
+	if err := c.Watch(&source.Kind{Type: &operatorv1.IngressController{}}, &handler.EnqueueRequestForObject{}); err != nil {
 		return nil, err
 	}
 	return c, nil
@@ -69,7 +70,7 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 	defaultCertificateChanged := false
 	result := reconcile.Result{}
 	errs := []error{}
-	ingress := &ingressv1alpha1.ClusterIngress{}
+	ingress := &operatorv1.IngressController{}
 	if err := r.client.Get(context.TODO(), request.NamespacedName, ingress); err != nil {
 		if errors.IsNotFound(err) {
 			// The ingress could have been deleted and we're processing a stale queue
@@ -106,7 +107,7 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 		}
 	}
 
-	ingresses := &ingressv1alpha1.ClusterIngressList{}
+	ingresses := &operatorv1.IngressControllerList{}
 	if err := r.client.List(context.TODO(), &client.ListOptions{Namespace: r.operatorNamespace}, ingresses); err != nil {
 		errs = append(errs, fmt.Errorf("failed to list clusteringresses: %v", err))
 	} else {

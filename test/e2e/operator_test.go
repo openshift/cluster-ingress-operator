@@ -16,7 +16,7 @@ import (
 	"time"
 
 	configv1 "github.com/openshift/api/config/v1"
-	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator"
 	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
@@ -24,11 +24,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 
 	appsv1 "k8s.io/api/apps/v1"
-	autoscalingv1 "k8s.io/api/autoscaling/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/discovery"
@@ -89,7 +87,7 @@ func TestDefaultClusterIngressExists(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ci := &ingressv1alpha1.ClusterIngress{}
+	ci := &operatorv1.IngressController{}
 	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
 		if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: ns, Name: "default"}, ci); err != nil {
 			return false, nil
@@ -107,7 +105,7 @@ func TestRouterServiceInternalEndpoints(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ci := &ingressv1alpha1.ClusterIngress{}
+	ci := &operatorv1.IngressController{}
 	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
 		if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: ns, Name: "default"}, ci); err != nil {
 			return false, nil
@@ -181,7 +179,7 @@ func TestClusterProxyProtocol(t *testing.T) {
 		return
 	}
 
-	ci := &ingressv1alpha1.ClusterIngress{}
+	ci := &operatorv1.IngressController{}
 	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
 		if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: ns, Name: "default"}, ci); err != nil {
 			return false, nil
@@ -261,7 +259,7 @@ func TestClusterIngressUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ci := &ingressv1alpha1.ClusterIngress{}
+	ci := &operatorv1.IngressController{}
 	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
 		if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: ns, Name: "default"}, ci); err != nil {
 			return false, nil
@@ -299,10 +297,10 @@ func TestClusterIngressUpdate(t *testing.T) {
 		t.Fatalf("failed to get CA certificate configmap: %v", err)
 	}
 
-	originalSecret := ci.Spec.DefaultCertificateSecret
+	originalSecret := ci.Spec.DefaultCertificate.DeepCopy()
 	expectedSecretName := fmt.Sprintf("router-certs-%s", ci.Name)
 	if originalSecret != nil {
-		expectedSecretName = *originalSecret
+		expectedSecretName = originalSecret.Name
 	}
 
 	if deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName != expectedSecretName {
@@ -316,7 +314,7 @@ func TestClusterIngressUpdate(t *testing.T) {
 	}
 
 	// update the ci and wait for the updated deployment to match expectations
-	ci.Spec.DefaultCertificateSecret = &secret.Name
+	ci.Spec.DefaultCertificate = &corev1.LocalObjectReference{Name: secret.Name}
 	err = cl.Update(context.TODO(), ci)
 	if err != nil {
 		t.Fatalf("failed to get default ClusterIngress: %v", err)
@@ -348,7 +346,7 @@ func TestClusterIngressUpdate(t *testing.T) {
 		t.Fatalf("failed to observe clean-up of CA certificate configmap: %v", err)
 	}
 
-	ci.Spec.DefaultCertificateSecret = originalSecret
+	ci.Spec.DefaultCertificate = originalSecret
 	err = cl.Update(context.TODO(), ci)
 	if err != nil {
 		t.Errorf("failed to reset ClusterIngress: %v", err)
@@ -432,6 +430,13 @@ u3YLAbyW/lHhOCiZu2iAI8AbmXem9lW6Tr7p/97s0w==
 	return cl.Create(context.TODO(), secret), secret
 }
 
+// TestClusterIngressScale exercises a simple scale up/down scenario. Note that
+// the scaling client isn't yet reliable because of issues with CRD scale
+// subresource handling upstream (e.g. a persisted nil .spec.replicas will break
+// GET /scale). For now, only support scaling through direct update to
+// ingresscontroller.spec.replicas.
+//
+// See also: https://github.com/kubernetes/kubernetes/pull/75210
 func TestClusterIngressScale(t *testing.T) {
 	cl, ns, err := getClient()
 	if err != nil {
@@ -441,7 +446,7 @@ func TestClusterIngressScale(t *testing.T) {
 	name := "default"
 
 	// Wait for the clusteringress to exist.
-	ci := &ingressv1alpha1.ClusterIngress{}
+	ci := &operatorv1.IngressController{}
 	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
 		if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: ns, Name: name}, ci); err != nil {
 			return false, nil
@@ -449,7 +454,7 @@ func TestClusterIngressScale(t *testing.T) {
 		return true, nil
 	})
 	if err != nil {
-		t.Fatalf("failed to get default ClusterIngress: %v", err)
+		t.Fatalf("failed to get default ingresscontroller: %v", err)
 	}
 
 	// Wait for the router deployment to exist.
@@ -461,67 +466,15 @@ func TestClusterIngressScale(t *testing.T) {
 		return true, nil
 	})
 	if err != nil {
-		t.Fatalf("failed to get default router deployment: %v", err)
+		t.Fatalf("failed to get default deployment: %v", err)
 	}
 
-	// Get the deployment's selector so we can make sure it is reflected in
-	// the scale status.
-	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
-	if err != nil {
-		t.Fatalf("router deployment has invalid spec.selector: %v", err)
-	}
+	originalReplicas := *deployment.Spec.Replicas
+	newReplicas := originalReplicas + 1
 
-	// Get the scale of the clusteringress.
-	// TODO Use controller-runtime once it supports the /scale subresource.
-	scaleClient, cachedDiscovery, err := getScaleClient()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	resource := schema.GroupResource{
-		Group:    "ingress.openshift.io",
-		Resource: "clusteringresses",
-	}
-
-	//scale, err := scaleClient.Scales(ns).Get(resource, name)
-	// XXX The following polling is a workaround for a problem that will be
-	// fixed in client-go[1].  Once we get a newer client-go, the workaround
-	// will no longer be needed; in this case, uncomment the assignment
-	// immediately above this comment, and delete the variable declaration
-	// and assignment below.
-	// 1. https://github.com/kubernetes/client-go/commit/58652542545735c4b421dbf3631d81c7ec58e0c1.
-	var scale *autoscalingv1.Scale
-	err = wait.PollImmediate(1*time.Second, 15*time.Second, func() (bool, error) {
-		scale, err = scaleClient.Scales(ns).Get(resource, name)
-		if err != nil {
-			if !cachedDiscovery.Fresh() {
-				t.Logf("failed to get scale due to stale cache, will retry: %v", err)
-				return false, nil
-			}
-
-			t.Logf("failed to get scale due to error, will retry: %v", err)
-			return false, nil
-		}
-
-		return true, nil
-	})
-	if err != nil {
-		t.Fatalf("failed to get initial scale of ClusterIngress: %v", err)
-	}
-
-	// Make sure the deployment's selector is reflected in the scale status.
-	if scale.Status.Selector != selector.String() {
-		t.Fatalf("expected scale status.selector to be %q, got %q", selector.String(), scale.Status.Selector)
-	}
-
-	// Scale the clusteringress up.
-	scale.Spec.Replicas = scale.Spec.Replicas + 1
-	updatedScale, err := scaleClient.Scales(ns).Update(resource, scale)
-	if err != nil {
-		t.Fatalf("failed to scale ClusterIngress up: %v", err)
-	}
-	if updatedScale.Spec.Replicas != scale.Spec.Replicas {
-		t.Fatalf("expected scaled-up ClusterIngress's spec.replicas to be %d, got %d", scale.Spec.Replicas, updatedScale.Spec.Replicas)
+	ci.Spec.Replicas = &newReplicas
+	if err := cl.Update(context.TODO(), ci); err != nil {
+		t.Fatalf("failed to update ingresscontroller: %v", err)
 	}
 
 	// Wait for the deployment to scale up.
@@ -530,30 +483,20 @@ func TestClusterIngressScale(t *testing.T) {
 			return false, nil
 		}
 
-		if deployment.Spec.Replicas == nil || *deployment.Spec.Replicas != updatedScale.Spec.Replicas {
+		if deployment.Spec.Replicas == nil || *deployment.Spec.Replicas != newReplicas {
 			return false, nil
 		}
 
 		return true, nil
 	})
 	if err != nil {
-		t.Fatalf("failed to get scaled-up router deployment %s/%s: %v", deployment.Namespace, deployment.Name, err)
+		t.Fatalf("failed to get scaled-up deployment %s/%s: %v", deployment.Namespace, deployment.Name, err)
 	}
 
-	// Get the latest scale so that we can update it again.
-	scale, err = scaleClient.Scales(ns).Get(resource, name)
-	if err != nil {
-		t.Fatalf("failed to get updated scale of ClusterIngress: %v", err)
-	}
-
-	// Scale the clusteringress back down.
-	scale.Spec.Replicas = scale.Spec.Replicas - 1
-	updatedScale, err = scaleClient.Scales(ns).Update(resource, scale)
-	if err != nil {
-		t.Fatalf("failed to scale ClusterIngress down: %v", err)
-	}
-	if updatedScale.Spec.Replicas != scale.Spec.Replicas {
-		t.Fatalf("expected scaled-down ClusterIngress's spec.replicas to be %d, got %d", scale.Spec.Replicas, updatedScale.Spec.Replicas)
+	// Scale back down.
+	ci.Spec.Replicas = &originalReplicas
+	if err := cl.Update(context.TODO(), ci); err != nil {
+		t.Fatalf("failed to update ingresscontroller: %v", err)
 	}
 
 	// Wait for the deployment to scale down.
@@ -562,14 +505,14 @@ func TestClusterIngressScale(t *testing.T) {
 			return false, nil
 		}
 
-		if deployment.Spec.Replicas == nil || *deployment.Spec.Replicas != updatedScale.Spec.Replicas {
+		if deployment.Spec.Replicas == nil || *deployment.Spec.Replicas != originalReplicas {
 			return false, nil
 		}
 
 		return true, nil
 	})
 	if err != nil {
-		t.Fatalf("failed to get scaled-down router deployment %s/%s: %v", deployment.Namespace, deployment.Name, err)
+		t.Fatalf("failed to get scaled-down deployment %s/%s: %v", deployment.Namespace, deployment.Name, err)
 	}
 }
 
@@ -600,7 +543,7 @@ func TestRouterCACertificate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ci := &ingressv1alpha1.ClusterIngress{}
+	ci := &operatorv1.IngressController{}
 	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
 		if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: ns, Name: "default"}, ci); err != nil {
 			return false, nil
@@ -610,11 +553,11 @@ func TestRouterCACertificate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get default ClusterIngress: %v", err)
 	}
-	if len(ci.Status.IngressDomain) == 0 {
+	if len(ci.Status.Domain) == 0 {
 		t.Fatal("default ClusterIngress has no .status.ingressDomain")
 	}
 
-	if ci.Status.HighAvailability.Type != ingressv1alpha1.CloudClusterIngressHA {
+	if ci.Status.EndpointPublishingStrategy.Type != operatorv1.LoadBalancerServiceStrategyType {
 		t.Skip("test skipped for non-cloud HA type")
 		return
 	}
@@ -662,7 +605,7 @@ func TestRouterCACertificate(t *testing.T) {
 	// Make sure we can connect without getting a "certificate signed by
 	// unknown authority" or "x509: certificate is valid for [...], not
 	// [...]" error.
-	serverName := "test." + ci.Status.IngressDomain
+	serverName := "test." + ci.Status.Domain
 	address := net.JoinHostPort(host, "443")
 	conn, err := tls.Dial("tcp", address, &tls.Config{
 		RootCAs:    certPool,
