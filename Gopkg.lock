@@ -341,14 +341,14 @@
   version = "1.0.1"
 
 [[projects]]
-  digest = "1:d7711fea8a09123909cd82d50158f891d369086cf92ce99830fe0203f357b015"
+  digest = "1:ddc5035407671741583a4b2b278d75ddb4f2511061d97098b823142e9a55d792"
   name = "github.com/openshift/api"
   packages = [
     "config/v1",
     "route/v1",
   ]
   pruneopts = "NUT"
-  revision = "abd194123b1ba2dcf9fd383f995c0082c81a8e6a"
+  revision = "c379c2159de1fafc3830ffa365066b683cb53e1c"
 
 [[projects]]
   digest = "1:91235964617b12c582f03425e0b4e6229978c2b46a0fc687c01ec89abbb114fb"
@@ -958,7 +958,6 @@
     "sigs.k8s.io/controller-runtime/pkg/client/apiutil",
     "sigs.k8s.io/controller-runtime/pkg/client/config",
     "sigs.k8s.io/controller-runtime/pkg/controller",
-    "sigs.k8s.io/controller-runtime/pkg/event",
     "sigs.k8s.io/controller-runtime/pkg/handler",
     "sigs.k8s.io/controller-runtime/pkg/manager",
     "sigs.k8s.io/controller-runtime/pkg/reconcile",

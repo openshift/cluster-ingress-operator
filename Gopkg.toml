@@ -41,7 +41,7 @@ required = [
 
 [[override]]
   name = "github.com/openshift/api"
-  revision = "abd194123b1ba2dcf9fd383f995c0082c81a8e6a"
+  revision = "c379c2159de1fafc3830ffa365066b683cb53e1c"
 
 [[override]]
   name = "k8s.io/code-generator"
