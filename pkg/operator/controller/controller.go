@@ -30,10 +30,10 @@ import (
 )
 
 const (
-	// ClusterIngressFinalizer is applied to all ClusterIngresses before they are
+	// IngressControllerFinalizer is applied to an IngressController before being
 	// considered for processing; this ensures the operator has a chance to handle
-	// all states. TODO: Make this generic and not tied to the "default" ingress.
-	ClusterIngressFinalizer = "ingress.openshift.io/default-cluster-ingress"
+	// all states.
+	IngressControllerFinalizer = "ingress.openshift.io/ingress-controller"
 )
 
 var log = logf.Logger.WithName("controller")
@@ -136,6 +136,8 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 				if err := r.ensureIngressDeleted(ingress, dnsConfig, infraConfig); err != nil {
 					errs = append(errs, fmt.Errorf("failed to ensure ingress deletion: %v", err))
 				}
+			} else if err := r.enforceIngressFinalizer(ingress); err != nil {
+				errs = append(errs, fmt.Errorf("failed to enforce ingress finalizer %s/%s: %v", ingress.Namespace, ingress.Name, err))
 			} else {
 				// Handle everything else.
 				if err := r.ensureClusterIngress(ingress, dnsConfig, infraConfig); err != nil {
@@ -216,6 +218,18 @@ func (r *reconciler) enforceEffectiveHighAvailability(ci *ingressv1alpha1.Cluste
 	return nil
 }
 
+// enforceIngressFinalizer adds IngressControllerFinalizer to ingress if it doesn't exist.
+func (r *reconciler) enforceIngressFinalizer(ingress *ingressv1alpha1.ClusterIngress) error {
+	if !slice.ContainsString(ingress.Finalizers, IngressControllerFinalizer) {
+		ingress.Finalizers = append(ingress.Finalizers, IngressControllerFinalizer)
+		if err := r.Client.Update(context.TODO(), ingress); err != nil {
+			return err
+		}
+		log.Info("enforced finalizer for ingress", "namespace", ingress.Namespace, "name", ingress.Name)
+	}
+	return nil
+}
+
 // ensureIngressDeleted tries to delete ingress, and if successful, will remove
 // the finalizer.
 func (r *reconciler) ensureIngressDeleted(ingress *ingressv1alpha1.ClusterIngress, dnsConfig *configv1.DNS, infraConfig *configv1.Infrastructure) error {
@@ -231,8 +245,8 @@ func (r *reconciler) ensureIngressDeleted(ingress *ingressv1alpha1.ClusterIngres
 
 	// Clean up the finalizer to allow the clusteringress to be deleted.
 	updated := ingress.DeepCopy()
-	if slice.ContainsString(ingress.Finalizers, ClusterIngressFinalizer) {
-		updated.Finalizers = slice.RemoveString(updated.Finalizers, ClusterIngressFinalizer)
+	if slice.ContainsString(ingress.Finalizers, IngressControllerFinalizer) {
+		updated.Finalizers = slice.RemoveString(updated.Finalizers, IngressControllerFinalizer)
 		if err := r.Client.Update(context.TODO(), updated); err != nil {
 			return fmt.Errorf("failed to remove finalizer from clusteringress %s: %v", ingress.Name, err)
 		}

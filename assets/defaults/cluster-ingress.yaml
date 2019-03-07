@@ -8,7 +8,7 @@ metadata:
   finalizers:
   # Ensure that only the operator can delete the default cluster ingress object.
   finalizers:
-  - ingress.openshift.io/default-cluster-ingress
+  - ingress.openshift.io/ingress-controller
 spec:
   # IngressDomain is applied at runtime using the installer config.
   nodePlacement:
