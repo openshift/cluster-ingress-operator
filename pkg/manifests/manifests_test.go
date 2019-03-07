@@ -85,5 +85,5 @@ func TestManifests(t *testing.T) {
 }
 
 func TestDefaultClusterIngress(t *testing.T) {
-	DefaultClusterIngress()
+	DefaultIngressController()
 }

@@ -64,7 +64,7 @@ func NewFactory(config operatorconfig.Config) *Factory {
 	return &Factory{config: config}
 }
 
-func DefaultClusterIngress() *ingressv1alpha1.ClusterIngress {
+func DefaultIngressController() *ingressv1alpha1.ClusterIngress {
 	ci, err := NewClusterIngress(MustAssetReader(ClusterIngressDefaults))
 	if err != nil {
 		panic(err)

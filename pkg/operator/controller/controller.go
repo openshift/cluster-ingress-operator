@@ -131,6 +131,8 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 				errs = append(errs, fmt.Errorf("failed to enforce the effective ingress domain for clusteringress %s: %v", ingress.Name, err))
 			} else if err := r.enforceEffectiveHighAvailability(ingress, infraConfig); err != nil {
 				errs = append(errs, fmt.Errorf("failed to enforce the effective HA configuration for clusteringress %s: %v", ingress.Name, err))
+			} else if err := r.ensureDefaultIngressController(); err != nil {
+				errs = append(errs, fmt.Errorf("failed to ensure default ingress controller: %v", err))
 			} else if ingress.DeletionTimestamp != nil {
 				// Handle deletion.
 				if err := r.ensureIngressDeleted(ingress, dnsConfig, infraConfig); err != nil {
@@ -299,6 +301,18 @@ func (r *reconciler) ensureRouterNamespace() error {
 		log.Info("created router cluster role binding", "name", crb.Name)
 	}
 
+	return nil
+}
+
+// ensureDefaultIngressController ensures that a default IngressController exists.
+func (r *reconciler) ensureDefaultIngressController() error {
+	ci := manifests.DefaultIngressController()
+	err := r.Client.Create(context.TODO(), ci)
+	if err != nil && !errors.IsAlreadyExists(err) {
+		return err
+	} else if err == nil {
+		log.Info("created default ingress controller", "namespace", ci.Namespace, "name", ci.Name)
+	}
 	return nil
 }
 

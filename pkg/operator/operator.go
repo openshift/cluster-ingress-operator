@@ -1,7 +1,6 @@
 package operator
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/openshift/cluster-ingress-operator/pkg/apis"
@@ -20,7 +19,6 @@ import (
 	kscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 
-	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 
@@ -154,23 +152,12 @@ func New(config operatorconfig.Config, dnsManager dns.Manager, kubeConfig *rest.
 	return &Operator{
 		manager: operatorManager,
 		caches:  []cache.Cache{operandCache},
-
-		// TODO: These are only needed for the default cluster ingress stuff, which
-		// should be refactored away.
-		manifestFactory: mf,
-		client:          kubeClient,
 	}, nil
 }
 
 // Start creates the default ClusterIngress and then starts the operator
 // synchronously until a message is received on the stop channel.
-// TODO: Move the default ClusterIngress logic elsewhere.
 func (o *Operator) Start(stop <-chan struct{}) error {
-	// Ensure the default cluster ingress exists.
-	if err := o.ensureDefaultClusterIngress(); err != nil {
-		return fmt.Errorf("failed to ensure default cluster ingress: %v", err)
-	}
-
 	errChan := make(chan error)
 
 	// Start secondary caches.
@@ -199,18 +186,6 @@ func (o *Operator) Start(stop <-chan struct{}) error {
 	case err := <-errChan:
 		return err
 	}
-}
-
-// ensureDefaultClusterIngress ensures that a default ClusterIngress exists.
-func (o *Operator) ensureDefaultClusterIngress() error {
-	ci := manifests.DefaultClusterIngress()
-	err := o.client.Create(context.TODO(), ci)
-	if err != nil && !errors.IsAlreadyExists(err) {
-		return err
-	} else if err == nil {
-		log.Info("created default clusteringress", "namespace", ci.Namespace, "name", ci.Name)
-	}
-	return nil
 }
 
 // Client builds an operator-compatible kube client from the given REST config.
