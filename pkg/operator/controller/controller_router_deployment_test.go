@@ -319,6 +319,13 @@ func TestDeploymentConfigChanged(t *testing.T) {
 			},
 			expect: true,
 		},
+		{
+			description: "if the container image is changed",
+			mutate: func(deployment *appsv1.Deployment) {
+				deployment.Spec.Template.Spec.Containers[0].Image = "openshift/origin-cluster-ingress-operator:latest"
+			},
+			expect: true,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -357,6 +364,7 @@ func TestDeploymentConfigChanged(t *testing.T) {
 										Value: "foo=bar",
 									},
 								},
+								Image: "openshift/origin-cluster-ingress-operator:v4.0",
 							},
 						},
 					},
