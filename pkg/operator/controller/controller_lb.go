@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/slice"
 
@@ -31,7 +31,7 @@ const (
 // ensureLoadBalancerService creates an LB service if one is desired but absent.
 // Always returns the current LB service if one exists (whether it already
 // existed or was created during the course of the function).
-func (r *reconciler) ensureLoadBalancerService(ci *ingressv1alpha1.ClusterIngress, deploymentRef metav1.OwnerReference, infraConfig *configv1.Infrastructure) (*corev1.Service, error) {
+func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, infraConfig *configv1.Infrastructure) (*corev1.Service, error) {
 	desiredLBService, err := desiredLoadBalancerService(ci, deploymentRef, infraConfig)
 	if err != nil {
 		return nil, err
@@ -53,7 +53,7 @@ func (r *reconciler) ensureLoadBalancerService(ci *ingressv1alpha1.ClusterIngres
 
 // TODO: This should take operator config into account so that the operand
 // namespace isn't hard-coded.
-func loadBalancerServiceName(ci *ingressv1alpha1.ClusterIngress) types.NamespacedName {
+func loadBalancerServiceName(ci *operatorv1.IngressController) types.NamespacedName {
 	return types.NamespacedName{Namespace: "openshift-ingress", Name: "router-" + ci.Name}
 }
 
@@ -61,8 +61,8 @@ func loadBalancerServiceName(ci *ingressv1alpha1.ClusterIngress) types.Namespace
 // clusteringress, or nil if an LB service isn't desired. An LB service is
 // desired if the high availability type is Cloud. An LB service will declare an
 // owner reference to the given deployment.
-func desiredLoadBalancerService(ci *ingressv1alpha1.ClusterIngress, deploymentRef metav1.OwnerReference, infraConfig *configv1.Infrastructure) (*corev1.Service, error) {
-	if ci.Status.HighAvailability.Type != ingressv1alpha1.CloudClusterIngressHA {
+func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, infraConfig *configv1.Infrastructure) (*corev1.Service, error) {
+	if ci.Status.EndpointPublishingStrategy.Type != operatorv1.LoadBalancerServiceStrategyType {
 		return nil, nil
 	}
 	service := manifests.LoadBalancerService()
@@ -96,7 +96,7 @@ func desiredLoadBalancerService(ci *ingressv1alpha1.ClusterIngress, deploymentRe
 
 // currentLoadBalancerService returns any existing LB service for the
 // clusteringress.
-func (r *reconciler) currentLoadBalancerService(ci *ingressv1alpha1.ClusterIngress) (*corev1.Service, error) {
+func (r *reconciler) currentLoadBalancerService(ci *operatorv1.IngressController) (*corev1.Service, error) {
 	service := &corev1.Service{}
 	if err := r.Client.Get(context.TODO(), loadBalancerServiceName(ci), service); err != nil {
 		if errors.IsNotFound(err) {
@@ -110,7 +110,7 @@ func (r *reconciler) currentLoadBalancerService(ci *ingressv1alpha1.ClusterIngre
 // finalizeLoadBalancerService deletes any DNS entries associated with any
 // current LB service associated with the clusteringress and then finalizes the
 // service.
-func (r *reconciler) finalizeLoadBalancerService(ci *ingressv1alpha1.ClusterIngress, dnsConfig *configv1.DNS) error {
+func (r *reconciler) finalizeLoadBalancerService(ci *operatorv1.IngressController, dnsConfig *configv1.DNS) error {
 	service, err := r.currentLoadBalancerService(ci)
 	if err != nil {
 		return err

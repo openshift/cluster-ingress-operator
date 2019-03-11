@@ -1,7 +1,7 @@
-# ClusterIngress with default values
+# IngressController with default values
 # Installer config specific values are applied at runtime.
-kind: ClusterIngress
-apiVersion: ingress.openshift.io/v1alpha1
+kind: IngressController
+apiVersion: operator.openshift.io/v1
 metadata:
   name: default
   namespace: openshift-ingress-operator
@@ -15,4 +15,4 @@ spec:
     nodeSelector:
       matchLabels:
         "node-role.kubernetes.io/worker": ""
-  replicas: 2
+

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 
 	corev1 "k8s.io/api/core/v1"
 
@@ -15,7 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
-func (r *reconciler) ensureServiceMonitor(ci *ingressv1alpha1.ClusterIngress, svc *corev1.Service, deploymentRef metav1.OwnerReference) (*unstructured.Unstructured, error) {
+func (r *reconciler) ensureServiceMonitor(ci *operatorv1.IngressController, svc *corev1.Service, deploymentRef metav1.OwnerReference) (*unstructured.Unstructured, error) {
 	desired := desiredServiceMonitor(ci, svc, deploymentRef)
 
 	current, err := r.currentServiceMonitor(ci)
@@ -33,11 +33,11 @@ func (r *reconciler) ensureServiceMonitor(ci *ingressv1alpha1.ClusterIngress, sv
 	return current, nil
 }
 
-func serviceMonitorName(ci *ingressv1alpha1.ClusterIngress) types.NamespacedName {
+func serviceMonitorName(ci *operatorv1.IngressController) types.NamespacedName {
 	return types.NamespacedName{Namespace: "openshift-ingress", Name: "router-" + ci.Name}
 }
 
-func desiredServiceMonitor(ci *ingressv1alpha1.ClusterIngress, svc *corev1.Service, deploymentRef metav1.OwnerReference) *unstructured.Unstructured {
+func desiredServiceMonitor(ci *operatorv1.IngressController, svc *corev1.Service, deploymentRef metav1.OwnerReference) *unstructured.Unstructured {
 	name := serviceMonitorName(ci)
 	sm := &unstructured.Unstructured{
 		Object: map[string]interface{}{
@@ -77,7 +77,7 @@ func desiredServiceMonitor(ci *ingressv1alpha1.ClusterIngress, svc *corev1.Servi
 	return sm
 }
 
-func (r *reconciler) currentServiceMonitor(ci *ingressv1alpha1.ClusterIngress) (*unstructured.Unstructured, error) {
+func (r *reconciler) currentServiceMonitor(ci *operatorv1.IngressController) (*unstructured.Unstructured, error) {
 	sm := &unstructured.Unstructured{}
 	sm.SetGroupVersionKind(schema.GroupVersionKind{
 		Group:   "monitoring.coreos.com",

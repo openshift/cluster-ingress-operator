@@ -53,17 +53,17 @@ rules:
   - watch
 
 - apiGroups:
-  - ingress.openshift.io
+  - operator.openshift.io
   resources:
-  - clusteringresses
+  - ingresscontrollers
   verbs:
   - list
   - watch
 
 - apiGroups:
-  - ingress.openshift.io
+  - operator.openshift.io
   resources:
-  - clusteringresses/status
+  - ingresscontrollers/status
   verbs:
   - update
 

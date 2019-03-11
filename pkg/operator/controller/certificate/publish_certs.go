@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"reflect"
 
-	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
 	corev1 "k8s.io/api/core/v1"
@@ -16,7 +16,7 @@ import (
 
 // ensureRouterCertsGlobalSecret will create, update, or delete the global
 // certificates secret as appropriate.
-func (r *reconciler) ensureRouterCertsGlobalSecret(secrets []corev1.Secret, ingresses []ingressv1alpha1.ClusterIngress) error {
+func (r *reconciler) ensureRouterCertsGlobalSecret(secrets []corev1.Secret, ingresses []operatorv1.IngressController) error {
 	desired, err := desiredRouterCertsGlobalSecret(secrets, ingresses)
 	if err != nil {
 		return err
@@ -56,7 +56,7 @@ func (r *reconciler) ensureRouterCertsGlobalSecret(secrets []corev1.Secret, ingr
 
 // desiredRouterCertsGlobalSecret returns the desired router-certs global
 // secret.
-func desiredRouterCertsGlobalSecret(secrets []corev1.Secret, ingresses []ingressv1alpha1.ClusterIngress) (*corev1.Secret, error) {
+func desiredRouterCertsGlobalSecret(secrets []corev1.Secret, ingresses []operatorv1.IngressController) (*corev1.Secret, error) {
 	if len(ingresses) == 0 || len(secrets) == 0 {
 		return nil, nil
 	}
@@ -66,7 +66,7 @@ func desiredRouterCertsGlobalSecret(secrets []corev1.Secret, ingresses []ingress
 		nameToSecret[certSecret.Name] = &secrets[i]
 	}
 
-	ingressToSecret := map[*ingressv1alpha1.ClusterIngress]*corev1.Secret{}
+	ingressToSecret := map[*operatorv1.IngressController]*corev1.Secret{}
 	for i, ingress := range ingresses {
 		name := controller.RouterEffectiveDefaultCertificateSecretName(&ingress, "")
 		if secret, ok := nameToSecret[name.Name]; ok {
@@ -83,14 +83,14 @@ func desiredRouterCertsGlobalSecret(secrets []corev1.Secret, ingresses []ingress
 		Data: map[string][]byte{},
 	}
 	for ingress, certSecret := range ingressToSecret {
-		if len(ingress.Status.IngressDomain) == 0 {
+		if len(ingress.Status.Domain) == 0 {
 			continue
 		}
 		pem := bytes.Join([][]byte{
 			certSecret.Data["tls.crt"],
 			certSecret.Data["tls.key"],
 		}, nil)
-		globalSecret.Data[ingress.Status.IngressDomain] = pem
+		globalSecret.Data[ingress.Status.Domain] = pem
 	}
 	return globalSecret, nil
 }

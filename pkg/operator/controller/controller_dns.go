@@ -3,7 +3,7 @@ package controller
 import (
 	"fmt"
 
-	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 
 	corev1 "k8s.io/api/core/v1"
@@ -13,7 +13,7 @@ import (
 
 // ensureDNS will create DNS records for the given LB service. If service is
 // nil, nothing is done.
-func (r *reconciler) ensureDNS(ci *ingressv1alpha1.ClusterIngress, service *corev1.Service, dnsConfig *configv1.DNS) error {
+func (r *reconciler) ensureDNS(ci *operatorv1.IngressController, service *corev1.Service, dnsConfig *configv1.DNS) error {
 	dnsRecords, err := desiredDNSRecords(ci, service, dnsConfig)
 	if err != nil {
 		return err
@@ -32,17 +32,17 @@ func (r *reconciler) ensureDNS(ci *ingressv1alpha1.ClusterIngress, service *core
 // If service is nil, no records are desired. If an ingress domain is in use,
 // records are desired in every specified zone present in the cluster DNS
 // configuration.
-func desiredDNSRecords(ci *ingressv1alpha1.ClusterIngress, service *corev1.Service, dnsConfig *configv1.DNS) ([]*dns.Record, error) {
+func desiredDNSRecords(ci *operatorv1.IngressController, service *corev1.Service, dnsConfig *configv1.DNS) ([]*dns.Record, error) {
 	records := []*dns.Record{}
 
 	// If the clusteringress has no ingress domain, we cannot configure any
 	// DNS records.
-	if len(ci.Status.IngressDomain) == 0 {
+	if len(ci.Status.Domain) == 0 {
 		return records, nil
 	}
 
 	// If the HA type is not cloud, then we don't manage DNS.
-	if ci.Status.HighAvailability.Type != ingressv1alpha1.CloudClusterIngressHA {
+	if ci.Status.EndpointPublishingStrategy.Type != operatorv1.LoadBalancerServiceStrategyType {
 		return records, nil
 	}
 
@@ -58,7 +58,7 @@ func desiredDNSRecords(ci *ingressv1alpha1.ClusterIngress, service *corev1.Servi
 		return nil, fmt.Errorf("no load balancer is assigned to service %s/%s", service.Namespace, service.Name)
 	}
 
-	domain := fmt.Sprintf("*.%s", ci.Status.IngressDomain)
+	domain := fmt.Sprintf("*.%s", ci.Status.Domain)
 	makeRecord := func(zone *configv1.DNSZone) *dns.Record {
 		return &dns.Record{
 			Zone: *zone,

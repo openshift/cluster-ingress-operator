@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 	operatorconfig "github.com/openshift/cluster-ingress-operator/pkg/operator/config"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -16,17 +16,18 @@ func TestManifests(t *testing.T) {
 	}
 	f := NewFactory(config)
 
-	ci := &ingressv1alpha1.ClusterIngress{
+	var one int32 = 1
+	ci := &operatorv1.IngressController{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "default",
 		},
-		Spec: ingressv1alpha1.ClusterIngressSpec{
+		Spec: operatorv1.IngressControllerSpec{
 			NamespaceSelector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{
 					"foo": "bar",
 				},
 			},
-			Replicas: 1,
+			Replicas: &one,
 			RouteSelector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{
 					"baz": "quux",

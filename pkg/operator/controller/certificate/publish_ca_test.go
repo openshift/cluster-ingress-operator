@@ -4,12 +4,15 @@ import (
 	"fmt"
 	"testing"
 
-	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
+
+	operatorv1 "github.com/openshift/api/operator/v1"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestShouldPublishRouterCA(t *testing.T) {
+	var replicas int32 = 1
 	var (
 		empty = ""
 		x     = "x"
@@ -29,15 +32,19 @@ func TestShouldPublishRouterCA(t *testing.T) {
 		{"mix of no default certificate and generated default certificate", []*string{&empty, &empty, nil}, true},
 	}
 	for _, tc := range testCases {
-		ingresses := []ingressv1alpha1.ClusterIngress{}
+		ingresses := []operatorv1.IngressController{}
 		for i := range tc.input {
-			ingress := ingressv1alpha1.ClusterIngress{
+			var cert *corev1.LocalObjectReference
+			if secret := tc.input[i]; secret != nil {
+				cert = &corev1.LocalObjectReference{Name: *secret}
+			}
+			ingress := operatorv1.IngressController{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: fmt.Sprintf("router-%d", i),
 				},
-				Spec: ingressv1alpha1.ClusterIngressSpec{
-					Replicas:                 1,
-					DefaultCertificateSecret: tc.input[i],
+				Spec: operatorv1.IngressControllerSpec{
+					Replicas:           &replicas,
+					DefaultCertificate: cert,
 				},
 			}
 			ingresses = append(ingresses, ingress)

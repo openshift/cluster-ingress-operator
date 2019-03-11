@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	configv1 "github.com/openshift/api/config/v1"
-	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -37,7 +37,7 @@ func TestComputeStatusConditions(t *testing.T) {
 	for _, tc := range testCases {
 		var (
 			namespace   *corev1.Namespace
-			ingresses   []ingressv1alpha1.ClusterIngress
+			ingresses   []operatorv1.IngressController
 			deployments []appsv1.Deployment
 
 			failing, progressing, available configv1.ConditionStatus
@@ -47,7 +47,7 @@ func TestComputeStatusConditions(t *testing.T) {
 		}
 		for i := 0; i < tc.inputs.numWanted; i++ {
 			ingresses = append(ingresses,
-				ingressv1alpha1.ClusterIngress{
+				operatorv1.IngressController{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: fmt.Sprintf("ingress-%d", i+1),
 					},

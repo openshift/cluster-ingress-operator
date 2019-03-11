@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -16,26 +16,27 @@ import (
 )
 
 func TestDesiredRouterDeployment(t *testing.T) {
-	ci := &ingressv1alpha1.ClusterIngress{
+	var one int32 = 1
+	ci := &operatorv1.IngressController{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "default",
 		},
-		Spec: ingressv1alpha1.ClusterIngressSpec{
+		Spec: operatorv1.IngressControllerSpec{
 			NamespaceSelector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{
 					"foo": "bar",
 				},
 			},
-			Replicas: 1,
+			Replicas: &one,
 			RouteSelector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{
 					"baz": "quux",
 				},
 			},
 		},
-		Status: ingressv1alpha1.ClusterIngressStatus{
-			HighAvailability: ingressv1alpha1.ClusterIngressHighAvailability{
-				Type: ingressv1alpha1.NoClusterIngressHA,
+		Status: operatorv1.IngressControllerStatus{
+			EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.PrivateStrategyType,
 			},
 		},
 	}
@@ -135,8 +136,8 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		t.Errorf("expected empty readiness probe host, got %q", deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.Handler.HTTPGet.Host)
 	}
 
-	ci.Status.IngressDomain = "example.com"
-	ci.Status.HighAvailability.Type = ingressv1alpha1.CloudClusterIngressHA
+	ci.Status.Domain = "example.com"
+	ci.Status.EndpointPublishingStrategy.Type = operatorv1.LoadBalancerServiceStrategyType
 	deployment, err = desiredRouterDeployment(ci, routerImage, infraConfig)
 	if err != nil {
 		t.Errorf("invalid router Deployment: %v", err)
@@ -173,21 +174,24 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	}
 	if canonicalHostname == "" {
 		t.Error("router Deployment has no canonical hostname")
-	} else if canonicalHostname != ci.Status.IngressDomain {
-		t.Errorf("router Deployment has unexpected canonical hostname: %q, expected %q", canonicalHostname, ci.Status.IngressDomain)
+	} else if canonicalHostname != ci.Status.Domain {
+		t.Errorf("router Deployment has unexpected canonical hostname: %q, expected %q", canonicalHostname, ci.Status.Domain)
 	}
 
 	secretName := fmt.Sprintf("secret-%v", time.Now().UnixNano())
-	ci.Spec.DefaultCertificateSecret = &secretName
-	ci.Spec.NodePlacement = &ingressv1alpha1.NodePlacement{
+	ci.Spec.DefaultCertificate = &corev1.LocalObjectReference{
+		Name: secretName,
+	}
+	ci.Spec.NodePlacement = &operatorv1.NodePlacement{
 		NodeSelector: &metav1.LabelSelector{
 			MatchLabels: map[string]string{
 				"xyzzy": "quux",
 			},
 		},
 	}
-	ci.Spec.Replicas = 3
-	ci.Status.HighAvailability.Type = ingressv1alpha1.UserDefinedClusterIngressHA
+	var expectedReplicas int32 = 3
+	ci.Spec.Replicas = &expectedReplicas
+	ci.Status.EndpointPublishingStrategy.Type = operatorv1.HostNetworkStrategyType
 	deployment, err = desiredRouterDeployment(ci, routerImage, infraConfig)
 	if err != nil {
 		t.Errorf("invalid router Deployment: %v", err)
@@ -200,8 +204,8 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	if deployment.Spec.Replicas == nil {
 		t.Error("router Deployment has nil replicas")
 	}
-	if *deployment.Spec.Replicas != 3 {
-		t.Errorf("expected replicas to be 3, got %d", *deployment.Spec.Replicas)
+	if *deployment.Spec.Replicas != expectedReplicas {
+		t.Errorf("expected replicas to be %d, got %d", expectedReplicas, *deployment.Spec.Replicas)
 	}
 	if e, a := routerImage, deployment.Spec.Template.Spec.Containers[0].Image; e != a {
 		t.Errorf("expected router Deployment image %q, got %q", e, a)

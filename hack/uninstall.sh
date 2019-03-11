@@ -8,11 +8,11 @@ oc scale --replicas 0 -n openshift-cluster-version deployments/cluster-version-o
 
 # Uninstall the cluster-ingress-operator
 oc delete -n openshift-ingress-operator deployments/ingress-operator
-oc patch -n openshift-ingress-operator clusteringresses/default --patch '{"metadata":{"finalizers": []}}' --type=merge
+oc patch -n openshift-ingress-operator ingresscontroller/default --patch '{"metadata":{"finalizers": []}}' --type=merge
 # TODO: this leaves DNS dangling
 oc patch -n openshift-ingress services/router-default --patch '{"metadata":{"finalizers": []}}' --type=merge
 oc delete clusteroperator.config.openshift.io/ingress
-oc delete --force --grace-period=0 -n openshift-ingress-operator clusteringresses/default
+oc delete --force --grace-period=0 -n openshift-ingress-operator ingresscontroller/default
 
 if [ "$WHAT" == "all" ]; then
   oc delete namespaces/openshift-ingress-operator
@@ -30,7 +30,7 @@ if [ "$WHAT" == "all" ]; then
   oc delete clusterrolebindings/openshift-ingress-operator
   oc delete clusterrolebindings/openshift-ingress-router
   oc delete clusterrolebindings/router-monitoring
-  oc delete customresourcedefinition.apiextensions.k8s.io/clusteringresses.ingress.openshift.io
+  oc delete customresourcedefinition.apiextensions.k8s.io/ingresscontroller.operator.openshift.io
 fi
 
 oc delete -n openshift-config-managed configmaps/router-ca

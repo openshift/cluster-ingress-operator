@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -70,17 +70,17 @@ u3YLAbyW/lHhOCiZu2iAI8AbmXem9lW6Tr7p/97s0w==
 // newClusterIngress returns a new clusteringress with the specified name,
 // default certificate secret name (or nil if empty), and ingress domain, for
 // use as a test input.
-func newClusterIngress(name, defaultCertificateSecretName, domain string) ingressv1alpha1.ClusterIngress {
-	clusteringress := ingressv1alpha1.ClusterIngress{
+func newClusterIngress(name, defaultCertificateSecretName, domain string) operatorv1.IngressController {
+	clusteringress := operatorv1.IngressController{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
 		},
-		Status: ingressv1alpha1.ClusterIngressStatus{
-			IngressDomain: domain,
+		Status: operatorv1.IngressControllerStatus{
+			Domain: domain,
 		},
 	}
 	if len(defaultCertificateSecretName) != 0 {
-		clusteringress.Spec.DefaultCertificateSecret = &defaultCertificateSecretName
+		clusteringress.Spec.DefaultCertificate = &corev1.LocalObjectReference{Name: defaultCertificateSecretName}
 	}
 	return clusteringress
 }
@@ -90,7 +90,7 @@ func newClusterIngress(name, defaultCertificateSecretName, domain string) ingres
 // clusteringresses and default certificate secrets.
 func TestDesiredRouterCertsGlobalSecret(t *testing.T) {
 	type testInputs struct {
-		ingresses []ingressv1alpha1.ClusterIngress
+		ingresses []operatorv1.IngressController
 		secrets   []corev1.Secret
 	}
 	type testOutputs struct {
@@ -119,7 +119,7 @@ func TestDesiredRouterCertsGlobalSecret(t *testing.T) {
 		{
 			description: "default configuration",
 			inputs: testInputs{
-				[]ingressv1alpha1.ClusterIngress{defaultCI},
+				[]operatorv1.IngressController{defaultCI},
 				[]corev1.Secret{defaultCert},
 			},
 			output: testOutputs{
@@ -131,7 +131,7 @@ func TestDesiredRouterCertsGlobalSecret(t *testing.T) {
 		{
 			description: "no ingresses",
 			inputs: testInputs{
-				[]ingressv1alpha1.ClusterIngress{},
+				[]operatorv1.IngressController{},
 				[]corev1.Secret{},
 			},
 			output: testOutputs{nil},
@@ -139,7 +139,7 @@ func TestDesiredRouterCertsGlobalSecret(t *testing.T) {
 		{
 			description: "no secrets",
 			inputs: testInputs{
-				[]ingressv1alpha1.ClusterIngress{ci1},
+				[]operatorv1.IngressController{ci1},
 				[]corev1.Secret{},
 			},
 			output: testOutputs{nil},
@@ -147,7 +147,7 @@ func TestDesiredRouterCertsGlobalSecret(t *testing.T) {
 		{
 			description: "missing secret",
 			inputs: testInputs{
-				[]ingressv1alpha1.ClusterIngress{ci1, ci2},
+				[]operatorv1.IngressController{ci1, ci2},
 				[]corev1.Secret{s1},
 			},
 			output: testOutputs{
@@ -159,7 +159,7 @@ func TestDesiredRouterCertsGlobalSecret(t *testing.T) {
 		{
 			description: "extra secret",
 			inputs: testInputs{
-				[]ingressv1alpha1.ClusterIngress{ci2},
+				[]operatorv1.IngressController{ci2},
 				[]corev1.Secret{s1, s2},
 			},
 			output: testOutputs{
@@ -171,7 +171,7 @@ func TestDesiredRouterCertsGlobalSecret(t *testing.T) {
 		{
 			description: "perfect match",
 			inputs: testInputs{
-				[]ingressv1alpha1.ClusterIngress{ci1, ci2},
+				[]operatorv1.IngressController{ci1, ci2},
 				[]corev1.Secret{s1, s2},
 			},
 			output: testOutputs{

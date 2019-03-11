@@ -16,7 +16,6 @@ build:
 .PHONY: generate
 generate:
 	hack/update-generated-bindata.sh
-	hack/update-codegen.sh
 
 .PHONY: test
 test: verify
@@ -39,7 +38,6 @@ clean:
 verify:
 	hack/verify-gofmt.sh
 	hack/verify-generated-bindata.sh
-	hack/verify-codegen.sh
 
 .PHONY: uninstall
 uninstall:

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 
-	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 	operatorconfig "github.com/openshift/cluster-ingress-operator/pkg/operator/config"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -64,7 +64,7 @@ func NewFactory(config operatorconfig.Config) *Factory {
 	return &Factory{config: config}
 }
 
-func DefaultClusterIngress() *ingressv1alpha1.ClusterIngress {
+func DefaultClusterIngress() *operatorv1.IngressController {
 	ci, err := NewClusterIngress(MustAssetReader(ClusterIngressDefaults))
 	if err != nil {
 		panic(err)
@@ -120,7 +120,7 @@ func (f *Factory) RouterClusterRoleBinding() (*rbacv1.ClusterRoleBinding, error)
 	return crb, nil
 }
 
-func (f *Factory) RouterStatsSecret(cr *ingressv1alpha1.ClusterIngress) (*corev1.Secret, error) {
+func (f *Factory) RouterStatsSecret(cr *operatorv1.IngressController) (*corev1.Secret, error) {
 	s := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      fmt.Sprintf("router-stats-%s", cr.Name),
@@ -137,7 +137,7 @@ func (f *Factory) RouterStatsSecret(cr *ingressv1alpha1.ClusterIngress) (*corev1
 	return s, nil
 }
 
-func RouterDeployment(cr *ingressv1alpha1.ClusterIngress) *appsv1.Deployment {
+func RouterDeployment(cr *operatorv1.IngressController) *appsv1.Deployment {
 	deployment, err := NewDeployment(MustAssetReader(RouterDeploymentAsset))
 	if err != nil {
 		panic(err)
@@ -145,7 +145,7 @@ func RouterDeployment(cr *ingressv1alpha1.ClusterIngress) *appsv1.Deployment {
 	return deployment
 }
 
-func (f *Factory) RouterServiceInternal(cr *ingressv1alpha1.ClusterIngress) (*corev1.Service, error) {
+func (f *Factory) RouterServiceInternal(cr *operatorv1.IngressController) (*corev1.Service, error) {
 	s, err := NewService(MustAssetReader(RouterServiceInternal))
 	if err != nil {
 		return nil, err
@@ -295,8 +295,8 @@ func NewRoute(manifest io.Reader) (*routev1.Route, error) {
 	return &o, nil
 }
 
-func NewClusterIngress(manifest io.Reader) (*ingressv1alpha1.ClusterIngress, error) {
-	o := ingressv1alpha1.ClusterIngress{}
+func NewClusterIngress(manifest io.Reader) (*operatorv1.IngressController, error) {
+	o := operatorv1.IngressController{}
 	if err := yaml.NewYAMLOrJSONDecoder(manifest, 100).Decode(&o); err != nil {
 		return nil, err
 	}

@@ -8,7 +8,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
-	ingressv1alpha1 "github.com/openshift/cluster-ingress-operator/pkg/apis/ingress/v1alpha1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -22,7 +22,7 @@ import (
 )
 
 // routerDeploymentName returns the namespaced name for the router deployment.
-func routerDeploymentName(ci *ingressv1alpha1.ClusterIngress) types.NamespacedName {
+func routerDeploymentName(ci *operatorv1.IngressController) types.NamespacedName {
 	return types.NamespacedName{
 		Namespace: "openshift-ingress",
 		Name:      "router-" + ci.Name,
@@ -31,7 +31,7 @@ func routerDeploymentName(ci *ingressv1alpha1.ClusterIngress) types.NamespacedNa
 
 // ensureRouterDeployment ensures the router deployment exists for a given
 // clusteringress.
-func (r *reconciler) ensureRouterDeployment(ci *ingressv1alpha1.ClusterIngress, infraConfig *configv1.Infrastructure) (*appsv1.Deployment, error) {
+func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, infraConfig *configv1.Infrastructure) (*appsv1.Deployment, error) {
 	desired, err := desiredRouterDeployment(ci, r.Config.RouterImage, infraConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build router deployment: %v", err)
@@ -55,7 +55,7 @@ func (r *reconciler) ensureRouterDeployment(ci *ingressv1alpha1.ClusterIngress, 
 
 // ensureRouterDeleted ensures that any router resources associated with the
 // clusteringress are deleted.
-func (r *reconciler) ensureRouterDeleted(ci *ingressv1alpha1.ClusterIngress) error {
+func (r *reconciler) ensureRouterDeleted(ci *operatorv1.IngressController) error {
 	deployment := manifests.RouterDeployment(ci)
 	name := routerDeploymentName(ci)
 	deployment.Name = name.Name
@@ -67,7 +67,7 @@ func (r *reconciler) ensureRouterDeleted(ci *ingressv1alpha1.ClusterIngress) err
 }
 
 // desiredRouterDeployment returns the desired router deployment.
-func desiredRouterDeployment(ci *ingressv1alpha1.ClusterIngress, routerImage string, infraConfig *configv1.Infrastructure) (*appsv1.Deployment, error) {
+func desiredRouterDeployment(ci *operatorv1.IngressController, routerImage string, infraConfig *configv1.Infrastructure) (*appsv1.Deployment, error) {
 	deployment := manifests.RouterDeployment(ci)
 	name := routerDeploymentName(ci)
 	deployment.Name = name.Name
@@ -135,11 +135,11 @@ func desiredRouterDeployment(ci *ingressv1alpha1.ClusterIngress, routerImage str
 	env = append(env, corev1.EnvVar{Name: "ROUTER_METRICS_TLS_CERT_FILE", Value: filepath.Join(certsVolumeMountPath, "tls.crt")})
 	env = append(env, corev1.EnvVar{Name: "ROUTER_METRICS_TLS_KEY_FILE", Value: filepath.Join(certsVolumeMountPath, "tls.key")})
 
-	if len(ci.Status.IngressDomain) > 0 {
-		env = append(env, corev1.EnvVar{Name: "ROUTER_CANONICAL_HOSTNAME", Value: ci.Status.IngressDomain})
+	if len(ci.Status.Domain) > 0 {
+		env = append(env, corev1.EnvVar{Name: "ROUTER_CANONICAL_HOSTNAME", Value: ci.Status.Domain})
 	}
 
-	if ci.Status.HighAvailability.Type == ingressv1alpha1.CloudClusterIngressHA {
+	if ci.Status.EndpointPublishingStrategy.Type == operatorv1.LoadBalancerServiceStrategyType {
 		// For now, check if we are on AWS. This can really be done for
 		// for any external [cloud] LBs that support the proxy protocol.
 		if infraConfig.Status.Platform == configv1.AWSPlatform {
@@ -172,8 +172,11 @@ func desiredRouterDeployment(ci *ingressv1alpha1.ClusterIngress, routerImage str
 		})
 	}
 
-	replicas := ci.Spec.Replicas
-	deployment.Spec.Replicas = &replicas
+	var desiredReplicas int32 = 2
+	if ci.Spec.Replicas != nil {
+		desiredReplicas = *ci.Spec.Replicas
+	}
+	deployment.Spec.Replicas = &desiredReplicas
 
 	if ci.Spec.RouteSelector != nil {
 		routeSelector, err := metav1.LabelSelectorAsSelector(ci.Spec.RouteSelector)
@@ -187,7 +190,7 @@ func desiredRouterDeployment(ci *ingressv1alpha1.ClusterIngress, routerImage str
 
 	deployment.Spec.Template.Spec.Containers[0].Image = routerImage
 
-	if ci.Status.HighAvailability.Type == ingressv1alpha1.UserDefinedClusterIngressHA {
+	if ci.Status.EndpointPublishingStrategy.Type == operatorv1.HostNetworkStrategyType {
 		// Expose ports 80 and 443 on the host to provide endpoints for
 		// the user's HA solution.
 		deployment.Spec.Template.Spec.HostNetwork = true
@@ -208,7 +211,7 @@ func desiredRouterDeployment(ci *ingressv1alpha1.ClusterIngress, routerImage str
 }
 
 // currentRouterDeployment returns the current router deployment.
-func (r *reconciler) currentRouterDeployment(ci *ingressv1alpha1.ClusterIngress) (*appsv1.Deployment, error) {
+func (r *reconciler) currentRouterDeployment(ci *operatorv1.IngressController) (*appsv1.Deployment, error) {
 	deployment := &appsv1.Deployment{}
 	if err := r.Client.Get(context.TODO(), routerDeploymentName(ci), deployment); err != nil {
 		if errors.IsNotFound(err) {
