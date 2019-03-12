@@ -624,3 +624,59 @@ func TestRouterCACertificate(t *testing.T) {
 		t.Fatalf("failed to read response from router at %s: %v", address, err)
 	}
 }
+
+// TestHostNetworkEndpointPublishingStrategy creates an ingresscontroller with
+// the "HostNetwork" endpoint publishing strategy type and verifies that the
+// operator creates a router and that the router becomes available.
+func TestHostNetworkEndpointPublishingStrategy(t *testing.T) {
+	cl, _, err := getClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create the ingresscontroller.
+	var one int32 = 1
+	ing := &operatorv1.IngressController{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "hostnetwork",
+			Namespace: "openshift-ingress-operator",
+		},
+		Spec: operatorv1.IngressControllerSpec{
+			NodePlacement: &operatorv1.NodePlacement{
+				NodeSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{
+						"node-role.kubernetes.io/worker": "",
+					},
+				},
+			},
+			Replicas: &one,
+			EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.HostNetworkStrategyType,
+			},
+		},
+	}
+	if cl.Create(context.TODO(), ing); err != nil {
+		t.Fatalf("failed to create the ingresscontroller: %v", err)
+	}
+
+	// Wait for the deployment to exist and be available.
+	err = wait.PollImmediate(1*time.Second, 60*time.Second, func() (bool, error) {
+		deployment := &appsv1.Deployment{}
+		if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: "openshift-ingress", Name: "router-hostnetwork"}, deployment); err != nil {
+			return false, nil
+		}
+		if ing.Spec.Replicas == nil || deployment.Status.AvailableReplicas != *ing.Spec.Replicas {
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		// Use Errorf rather than Fatalf so that we continue on to
+		// delete the ingresscontroller.
+		t.Errorf("failed to get deployment: %v", err)
+	}
+
+	if cl.Delete(context.TODO(), ing); err != nil {
+		t.Fatalf("failed to delete the ingresscontroller: %v", err)
+	}
+}
