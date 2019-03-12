@@ -18,9 +18,7 @@ spec:
         ingress.openshift.io/component: ingress-controller
     spec:
       serviceAccountName: router
-      nodeSelector:
-        beta.kubernetes.io/os: linux
-        node-role.kubernetes.io/worker: ''
+      # nodeSelector is set at runtime.
       affinity:
         podAntiAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
