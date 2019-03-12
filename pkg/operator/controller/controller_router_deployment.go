@@ -147,17 +147,21 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, routerImage strin
 		}
 	}
 
+	nodeSelector := map[string]string{
+		"beta.kubernetes.io/os":          "linux",
+		"node-role.kubernetes.io/worker": "",
+	}
 	if ci.Spec.NodePlacement != nil {
 		if ci.Spec.NodePlacement.NodeSelector != nil {
-			nodeSelector, err := metav1.LabelSelectorAsMap(ci.Spec.NodePlacement.NodeSelector)
+			var err error
+			nodeSelector, err = metav1.LabelSelectorAsMap(ci.Spec.NodePlacement.NodeSelector)
 			if err != nil {
 				return nil, fmt.Errorf("clusteringress %q has invalid spec.nodePlacement.nodeSelector: %v",
 					ci.Name, err)
 			}
-
-			deployment.Spec.Template.Spec.NodeSelector = nodeSelector
 		}
 	}
+	deployment.Spec.Template.Spec.NodeSelector = nodeSelector
 
 	if ci.Spec.NamespaceSelector != nil {
 		namespaceSelector, err := metav1.LabelSelectorAsSelector(ci.Spec.NamespaceSelector)
