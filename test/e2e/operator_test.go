@@ -37,6 +37,10 @@ import (
 	"k8s.io/client-go/scale"
 )
 
+const (
+	ingressControllerName = "test"
+)
+
 func getClient() (client.Client, string, error) {
 	namespace, ok := os.LookupEnv("WATCH_NAMESPACE")
 	if !ok {
@@ -52,6 +56,24 @@ func getClient() (client.Client, string, error) {
 		return nil, "", fmt.Errorf("failed to create kube client: %s", err)
 	}
 	return kubeClient, namespace, nil
+}
+
+func newIngressController(name, ns, domain string) *operatorv1.IngressController {
+	repl := int32(1)
+	return &operatorv1.IngressController{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: ns,
+		},
+		// TODO: Test needs to be infrastructure and platform aware in the very near future.
+		Spec: operatorv1.IngressControllerSpec{
+			Domain:   domain,
+			Replicas: &repl,
+			EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.LoadBalancerServiceStrategyType,
+			},
+		},
+	}
 }
 
 func TestOperatorAvailable(t *testing.T) {
@@ -96,6 +118,60 @@ func TestDefaultClusterIngressExists(t *testing.T) {
 	})
 	if err != nil {
 		t.Errorf("failed to get default ClusterIngress: %v", err)
+	}
+}
+
+func TestClusterIngressControllerCreateDelete(t *testing.T) {
+	cl, ns, err := getClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ing := &operatorv1.IngressController{}
+	if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: ns, Name: "default"}, ing); err != nil {
+		t.Fatalf("failed to get default IngressController: %v", err)
+	}
+
+	dnsConfig := &configv1.DNS{}
+	if err := cl.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, dnsConfig); err != nil {
+		t.Fatalf("failed to get DNS 'cluster': %v", err)
+	}
+
+	ing = newIngressController(ingressControllerName, ns, ingressControllerName+"."+dnsConfig.Spec.BaseDomain)
+	if err := cl.Create(context.TODO(), ing); err != nil {
+		t.Fatalf("failed to create IngressController %s/%s: %v", ing.Namespace, ing.Name, err)
+	}
+
+	// Verify the ingress controller deployment created the specified
+	// number of pod replicas.
+	err = wait.PollImmediate(1*time.Second, 30*time.Second, func() (bool, error) {
+		if err := cl.Get(context.TODO(), types.NamespacedName{ing.Namespace, ing.Name}, ing); err != nil {
+			return false, nil
+		}
+		if ing.Status.AvailableReplicas != *ing.Spec.Replicas {
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		t.Errorf("failed to reconcile IngressController %s/%s: %v", ing.Namespace, ing.Name, err)
+	}
+
+	if err := cl.Delete(context.TODO(), ing); err != nil {
+		t.Fatalf("failed to delete IngressController %s/%s: %v", ing.Namespace, ing.Name, err)
+	}
+
+	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
+		if err := cl.Get(context.TODO(), types.NamespacedName{ing.Namespace, ing.Name}, ing); err != nil {
+			if errors.IsNotFound(err) {
+				return true, nil
+			}
+			return false, nil
+		}
+		return false, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to finalize IngressController %s/%s: %v", ing.Namespace, ing.Name, err)
 	}
 }
 
