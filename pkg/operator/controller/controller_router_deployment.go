@@ -60,7 +60,7 @@ func (r *reconciler) ensureRouterDeleted(ci *operatorv1.IngressController) error
 	name := routerDeploymentName(ci)
 	deployment.Name = name.Name
 	deployment.Namespace = name.Namespace
-	if err := r.Client.Delete(context.TODO(), deployment); !errors.IsNotFound(err) {
+	if err := r.client.Delete(context.TODO(), deployment); !errors.IsNotFound(err) {
 		return err
 	}
 	return nil
@@ -234,7 +234,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, routerImage strin
 // currentRouterDeployment returns the current router deployment.
 func (r *reconciler) currentRouterDeployment(ci *operatorv1.IngressController) (*appsv1.Deployment, error) {
 	deployment := &appsv1.Deployment{}
-	if err := r.Client.Get(context.TODO(), routerDeploymentName(ci), deployment); err != nil {
+	if err := r.client.Get(context.TODO(), routerDeploymentName(ci), deployment); err != nil {
 		if errors.IsNotFound(err) {
 			return nil, nil
 		}
@@ -244,7 +244,7 @@ func (r *reconciler) currentRouterDeployment(ci *operatorv1.IngressController) (
 
 // createRouterDeployment creates a router deployment.
 func (r *reconciler) createRouterDeployment(deployment *appsv1.Deployment) error {
-	if err := r.Client.Create(context.TODO(), deployment); err != nil {
+	if err := r.client.Create(context.TODO(), deployment); err != nil {
 		return fmt.Errorf("failed to create router deployment %s/%s: %v", deployment.Namespace, deployment.Name, err)
 	}
 	log.Info("created router deployment", "namespace", deployment.Namespace, "name", deployment.Name)
@@ -258,7 +258,7 @@ func (r *reconciler) updateRouterDeployment(current, desired *appsv1.Deployment)
 		return nil
 	}
 
-	if err := r.Client.Update(context.TODO(), updated); err != nil {
+	if err := r.client.Update(context.TODO(), updated); err != nil {
 		return fmt.Errorf("failed to update router deployment %s/%s: %v", updated.Namespace, updated.Name, err)
 	}
 	log.Info("updated router deployment", "namespace", updated.Namespace, "name", updated.Name)

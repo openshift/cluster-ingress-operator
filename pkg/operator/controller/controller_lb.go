@@ -42,7 +42,7 @@ func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController,
 		return nil, err
 	}
 	if desiredLBService != nil && currentLBService == nil {
-		if err := r.Client.Create(context.TODO(), desiredLBService); err != nil {
+		if err := r.client.Create(context.TODO(), desiredLBService); err != nil {
 			return nil, fmt.Errorf("failed to create load balancer service %s/%s: %v", desiredLBService.Namespace, desiredLBService.Name, err)
 		}
 		log.Info("created load balancer service", "namespace", desiredLBService.Namespace, "name", desiredLBService.Name)
@@ -95,7 +95,7 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 // clusteringress.
 func (r *reconciler) currentLoadBalancerService(ci *operatorv1.IngressController) (*corev1.Service, error) {
 	service := &corev1.Service{}
-	if err := r.Client.Get(context.TODO(), loadBalancerServiceName(ci), service); err != nil {
+	if err := r.client.Get(context.TODO(), loadBalancerServiceName(ci), service); err != nil {
 		if errors.IsNotFound(err) {
 			return nil, nil
 		}
@@ -148,7 +148,7 @@ func (r *reconciler) finalizeLoadBalancerService(ci *operatorv1.IngressControlle
 	updated := service.DeepCopy()
 	if slice.ContainsString(updated.Finalizers, loadBalancerServiceFinalizer) {
 		updated.Finalizers = slice.RemoveString(updated.Finalizers, loadBalancerServiceFinalizer)
-		if err := r.Client.Update(context.TODO(), updated); err != nil {
+		if err := r.client.Update(context.TODO(), updated); err != nil {
 			return fmt.Errorf("failed to remove finalizer from service %s for ingress %s/%s: %v", service.Namespace, service.Name, ci.Name, err)
 		}
 	}

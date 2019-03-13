@@ -5,21 +5,19 @@ import (
 	"fmt"
 	"time"
 
+	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
+	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
 	operatorconfig "github.com/openshift/cluster-ingress-operator/pkg/operator/config"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	certcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/certificate"
 	certpublishercontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/certificate-publisher"
 
-	configv1 "github.com/openshift/api/config/v1"
-	operatorv1 "github.com/openshift/api/operator/v1"
-
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 
-	kscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -40,14 +38,7 @@ import (
 )
 
 var (
-	// scheme contains all the API types necessary for the operator's dynamic
-	// clients to work. Any new non-core types must be added here.
-	//
-	// NOTE: The discovery mechanism used by the client won't automatically refresh,
-	// so only add types here that are _guaranteed_ to exist before the operator
-	// starts.
-	scheme *runtime.Scheme
-	log    = logf.Logger.WithName("init")
+	log = logf.Logger.WithName("init")
 )
 
 const (
@@ -59,14 +50,6 @@ const (
 func init() {
 	// Setup controller-runtime logging
 	logf.SetRuntimeLogger(log)
-
-	scheme = kscheme.Scheme
-	if err := operatorv1.AddToScheme(scheme); err != nil {
-		panic(err)
-	}
-	if err := configv1.Install(scheme); err != nil {
-		panic(err)
-	}
 }
 
 // Operator is the scaffolding for the ingress operator. It sets up dependencies
@@ -85,12 +68,13 @@ type Operator struct {
 
 // New creates (but does not start) a new operator from configuration.
 func New(config operatorconfig.Config, dnsManager dns.Manager, kubeConfig *rest.Config) (*Operator, error) {
-	kubeClient, err := Client(kubeConfig)
+	kubeClient, err := operatorclient.NewClient(kubeConfig)
 	if err != nil {
-		return nil, fmt.Errorf("could't create kube client: %v", err)
+		return nil, fmt.Errorf("failed to create kube client: %v", err)
 	}
 	mf := manifests.NewFactory(config)
 
+	scheme := operatorclient.GetScheme()
 	// Set up an operator manager for the operator namespace.
 	operatorManager, err := manager.New(kubeConfig, manager.Options{
 		Namespace: config.Namespace,
@@ -102,7 +86,7 @@ func New(config operatorconfig.Config, dnsManager dns.Manager, kubeConfig *rest.
 
 	// Create and register the operator controller with the operator manager.
 	operatorController, err := operatorcontroller.New(operatorManager, operatorcontroller.Config{
-		Client:                 kubeClient,
+		KubeConfig:             kubeConfig,
 		Namespace:              config.Namespace,
 		ManifestFactory:        mf,
 		DNSManager:             dnsManager,
@@ -247,24 +231,4 @@ func (o *Operator) ensureDefaultIngressController() error {
 	}
 	log.Info("created default ingresscontroller", "namespace", ic.Namespace, "name", ic.Name)
 	return nil
-}
-
-// Client builds an operator-compatible kube client from the given REST config.
-func Client(kubeConfig *rest.Config) (client.Client, error) {
-	managerOptions := manager.Options{
-		Scheme:         scheme,
-		MapperProvider: apiutil.NewDiscoveryRESTMapper,
-	}
-	mapper, err := managerOptions.MapperProvider(kubeConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get API Group-Resources")
-	}
-	kubeClient, err := client.New(kubeConfig, client.Options{
-		Scheme: scheme,
-		Mapper: mapper,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create kube client: %v", err)
-	}
-	return kubeClient, nil
 }

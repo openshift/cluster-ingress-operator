@@ -9,6 +9,7 @@ import (
 	awsdns "github.com/openshift/cluster-ingress-operator/pkg/dns/aws"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator"
+	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
 	operatorconfig "github.com/openshift/cluster-ingress-operator/pkg/operator/config"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -43,7 +44,7 @@ func main() {
 		log.Error(err, "failed to get kube config")
 		os.Exit(1)
 	}
-	kubeClient, err := operator.Client(kubeConfig)
+	kubeClient, err := operatorclient.NewClient(kubeConfig)
 	if err != nil {
 		log.Error(err, "failed to create kube client")
 		os.Exit(1)
