@@ -78,10 +78,7 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 	service.Labels["router"] = name.Name
 	service.Labels[manifests.OwningClusterIngressLabel] = ci.Name
 
-	if service.Spec.Selector == nil {
-		service.Spec.Selector = map[string]string{}
-	}
-	service.Spec.Selector["router"] = name.Name
+	service.Spec.Selector = IngressControllerDeploymentPodSelector(ci).MatchLabels
 
 	if infraConfig.Status.Platform == configv1.AWSPlatform {
 		if service.Annotations == nil {

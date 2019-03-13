@@ -5,30 +5,11 @@ apiVersion: apps/v1
 metadata:
   # Name is set at runtime.
   namespace: openshift-ingress
-  labels:
-    app: router
 spec:
-  selector:
-    matchLabels:
-      app: router
   template:
-    metadata:
-      labels:
-        app: router
-        ingress.openshift.io/component: ingress-controller
     spec:
       serviceAccountName: router
       # nodeSelector is set at runtime.
-      affinity:
-        podAntiAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-          - topologyKey: "kubernetes.io/hostname"
-            labelSelector:
-              matchExpressions:
-              - key: ingress.openshift.io/component
-                operator: In
-                values:
-                - ingress-controller
       priorityClassName: system-cluster-critical
       containers:
         - name: router

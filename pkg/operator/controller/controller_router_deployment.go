@@ -73,20 +73,37 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, routerImage strin
 	deployment.Name = name.Name
 	deployment.Namespace = name.Namespace
 
-	if deployment.Labels == nil {
-		deployment.Labels = map[string]string{}
+	deployment.Labels = map[string]string{
+		// associate the deployment with the ingresscontroller
+		manifests.OwningClusterIngressLabel: ci.Name,
 	}
-	deployment.Labels[manifests.OwningClusterIngressLabel] = ci.Name
 
-	if deployment.Spec.Template.Labels == nil {
-		deployment.Spec.Template.Labels = map[string]string{}
-	}
-	deployment.Spec.Template.Labels["router"] = deployment.Name
+	// Ensure the deployment adopts only its own pods.
+	deployment.Spec.Selector = IngressControllerDeploymentPodSelector(ci)
+	deployment.Spec.Template.Labels = deployment.Spec.Selector.MatchLabels
 
-	if deployment.Spec.Selector.MatchLabels == nil {
-		deployment.Spec.Selector.MatchLabels = map[string]string{}
+	// Prevent colocation of controller pods to enable simple horizontal scaling
+	deployment.Spec.Template.Spec.Affinity = &corev1.Affinity{
+		PodAntiAffinity: &corev1.PodAntiAffinity{
+			PreferredDuringSchedulingIgnoredDuringExecution: []corev1.WeightedPodAffinityTerm{
+				{
+					Weight: 100,
+					PodAffinityTerm: corev1.PodAffinityTerm{
+						TopologyKey: "kubernetes.io/hostname",
+						LabelSelector: &metav1.LabelSelector{
+							MatchExpressions: []metav1.LabelSelectorRequirement{
+								{
+									Key:      controllerDeploymentLabel,
+									Operator: metav1.LabelSelectorOpIn,
+									Values:   []string{IngressControllerDeploymentLabel(ci)},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
 	}
-	deployment.Spec.Selector.MatchLabels["router"] = deployment.Name
 
 	statsSecretName := fmt.Sprintf("router-stats-%s", ci.Name)
 	env := []corev1.EnvVar{

@@ -345,7 +345,7 @@ func (r *reconciler) ensureClusterIngress(ci *operatorv1.IngressController, dnsC
 			}
 		}
 
-		if internalSvc, err := r.ensureInternalRouterServiceForIngress(ci, deploymentRef); err != nil {
+		if internalSvc, err := r.ensureInternalIngressControllerService(ci, deploymentRef); err != nil {
 			errs = append(errs, fmt.Errorf("failed to create internal router service for clusteringress %s: %v", ci.Name, err))
 		} else if err := r.ensureMetricsIntegration(ci, internalSvc, deploymentRef); err != nil {
 			errs = append(errs, fmt.Errorf("failed to integrate metrics with openshift-monitoring for clusteringress %s: %v", ci.Name, err))
@@ -463,26 +463,4 @@ func (r *reconciler) syncClusterIngressStatus(deployment *appsv1.Deployment, ci 
 	}
 
 	return nil
-}
-
-// ensureInternalRouterServiceForIngress ensures that an internal service exists
-// for a given ClusterIngress.
-func (r *reconciler) ensureInternalRouterServiceForIngress(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference) (*corev1.Service, error) {
-	svc, err := r.ManifestFactory.RouterServiceInternal(ci)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build router service: %v", err)
-	}
-	if err := r.Client.Get(context.TODO(), types.NamespacedName{Namespace: svc.Namespace, Name: svc.Name}, svc); err != nil {
-		if !errors.IsNotFound(err) {
-			return nil, fmt.Errorf("failed to get router service %s/%s, %v", svc.Namespace, svc.Name, err)
-		}
-
-		svc.SetOwnerReferences([]metav1.OwnerReference{deploymentRef})
-		if err := r.Client.Create(context.TODO(), svc); err != nil {
-			return nil, fmt.Errorf("failed to create router service %s/%s: %v", svc.Namespace, svc.Name, err)
-		}
-		log.Info("created router service", "namespace", svc.Namespace, "name", svc.Name)
-	}
-
-	return svc, nil
 }
