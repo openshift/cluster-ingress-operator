@@ -129,7 +129,7 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 
 			if err := r.enforceEffectiveIngressDomain(ingress, ingressConfig); err != nil {
 				errs = append(errs, fmt.Errorf("failed to enforce the effective ingress domain for clusteringress %s: %v", ingress.Name, err))
-			} else if err := r.enforceEffectiveHighAvailability(ingress, infraConfig); err != nil {
+			} else if err := r.enforceEffectiveEndpointPublishingStrategy(ingress, infraConfig); err != nil {
 				errs = append(errs, fmt.Errorf("failed to enforce the effective HA configuration for clusteringress %s: %v", ingress.Name, err))
 			} else if ingress.DeletionTimestamp != nil {
 				// Handle deletion.
@@ -182,9 +182,9 @@ func (r *reconciler) enforceEffectiveIngressDomain(ci *operatorv1.IngressControl
 	return nil
 }
 
-// haTypeForInfra returns the appropriate HA type for the given infrastructure
-// config.
-func haTypeForInfra(infraConfig *configv1.Infrastructure) operatorv1.EndpointPublishingStrategyType {
+// publishingStrategyTypeForInfra returns the appropriate endpoint publishing
+// strategy type for the given infrastructure config.
+func publishingStrategyTypeForInfra(infraConfig *configv1.Infrastructure) operatorv1.EndpointPublishingStrategyType {
 	switch infraConfig.Status.Platform {
 	case configv1.AWSPlatform:
 		return operatorv1.LoadBalancerServiceStrategyType
@@ -194,12 +194,13 @@ func haTypeForInfra(infraConfig *configv1.Infrastructure) operatorv1.EndpointPub
 	return operatorv1.PrivateStrategyType
 }
 
-// enforceEffectiveHighAvailability determines the effective HA configuration
-// for the given clusteringress and infrastructure config and publishes it to
-// the clusteringress's status.
-func (r *reconciler) enforceEffectiveHighAvailability(ci *operatorv1.IngressController, infraConfig *configv1.Infrastructure) error {
-	// The clusteringress's HA configuration is immutable, so if we have
-	// published an HA type status, we must continue using it.
+// enforceEffectiveEndpointPublishingStrategy uses the infrastructure config to
+// determine the appropriate endpoint publishing strategy configuration for the
+// given ingresscontroller and publishes it to the ingresscontroller's status.
+func (r *reconciler) enforceEffectiveEndpointPublishingStrategy(ci *operatorv1.IngressController, infraConfig *configv1.Infrastructure) error {
+	// The ingresscontroller's endpoint publishing strategy is immutable, so
+	// if we have previously published a strategy in status, we must
+	// continue to use that strategy it.
 	if ci.Status.EndpointPublishingStrategy != nil {
 		return nil
 	}
@@ -210,7 +211,7 @@ func (r *reconciler) enforceEffectiveHighAvailability(ci *operatorv1.IngressCont
 		updated.Status.EndpointPublishingStrategy = ci.Spec.EndpointPublishingStrategy.DeepCopy()
 	default:
 		updated.Status.EndpointPublishingStrategy = &operatorv1.EndpointPublishingStrategy{
-			Type: haTypeForInfra(infraConfig),
+			Type: publishingStrategyTypeForInfra(infraConfig),
 		}
 	}
 	if err := r.Client.Status().Update(context.TODO(), updated); err != nil {
