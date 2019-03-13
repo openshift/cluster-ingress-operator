@@ -188,6 +188,8 @@ func haTypeForInfra(infraConfig *configv1.Infrastructure) operatorv1.EndpointPub
 	switch infraConfig.Status.Platform {
 	case configv1.AWSPlatform:
 		return operatorv1.LoadBalancerServiceStrategyType
+	case configv1.LibvirtPlatform:
+		return operatorv1.HostNetworkStrategyType
 	}
 	return operatorv1.PrivateStrategyType
 }
