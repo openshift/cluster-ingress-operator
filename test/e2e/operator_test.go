@@ -144,7 +144,7 @@ func TestClusterIngressControllerCreateDelete(t *testing.T) {
 
 	// Verify the ingress controller deployment created the specified
 	// number of pod replicas.
-	err = wait.PollImmediate(1*time.Second, 30*time.Second, func() (bool, error) {
+	err = wait.PollImmediate(1*time.Second, 60*time.Second, func() (bool, error) {
 		if err := cl.Get(context.TODO(), types.NamespacedName{ing.Namespace, ing.Name}, ing); err != nil {
 			return false, nil
 		}
