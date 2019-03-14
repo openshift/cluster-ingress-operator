@@ -29,6 +29,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/apiserver/pkg/storage/names"
 	"k8s.io/client-go/discovery"
 	discocache "k8s.io/client-go/discovery/cached"
 	"k8s.io/client-go/dynamic"
@@ -384,8 +385,8 @@ func TestClusterIngressUpdate(t *testing.T) {
 			expectedSecretName, deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName)
 	}
 
-	err, secret := createDefaultCertTestSecret(cl)
-	if err != nil || secret == nil {
+	secret, err := createDefaultCertTestSecret(cl, names.SimpleNameGenerator.GenerateName("test-"))
+	if err != nil {
 		t.Fatalf("creating default cert test secret: %v", err)
 	}
 
@@ -448,7 +449,7 @@ func TestClusterIngressUpdate(t *testing.T) {
 	}
 }
 
-func createDefaultCertTestSecret(cl client.Client) (error, *corev1.Secret) {
+func createDefaultCertTestSecret(cl client.Client, name string) (*corev1.Secret, error) {
 	defaultCert := `-----BEGIN CERTIFICATE-----
 MIIDIjCCAgqgAwIBAgIBBjANBgkqhkiG9w0BAQUFADCBoTELMAkGA1UEBhMCVVMx
 CzAJBgNVBAgMAlNDMRUwEwYDVQQHDAxEZWZhdWx0IENpdHkxHDAaBgNVBAoME0Rl
@@ -489,7 +490,7 @@ u3YLAbyW/lHhOCiZu2iAI8AbmXem9lW6Tr7p/97s0w==
 
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "e2e-test-secret",
+			Name:      name,
 			Namespace: "openshift-ingress",
 		},
 		Data: map[string][]byte{
@@ -500,10 +501,10 @@ u3YLAbyW/lHhOCiZu2iAI8AbmXem9lW6Tr7p/97s0w==
 	}
 
 	if err := cl.Delete(context.TODO(), secret); err != nil && !errors.IsNotFound(err) {
-		return err, nil
+		return nil, err
 	}
 
-	return cl.Create(context.TODO(), secret), secret
+	return secret, cl.Create(context.TODO(), secret)
 }
 
 // TestClusterIngressScale exercises a simple scale up/down scenario. Note that

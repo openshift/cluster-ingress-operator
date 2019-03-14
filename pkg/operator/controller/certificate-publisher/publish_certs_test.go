@@ -1,4 +1,4 @@
-package certificate
+package certificatepublisher
 
 import (
 	"bytes"
