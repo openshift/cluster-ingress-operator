@@ -84,7 +84,3 @@ func TestManifests(t *testing.T) {
 
 	LoadBalancerService()
 }
-
-func TestDefaultClusterIngress(t *testing.T) {
-	DefaultClusterIngress()
-}

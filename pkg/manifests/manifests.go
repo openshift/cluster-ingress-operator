@@ -23,7 +23,6 @@ import (
 )
 
 const (
-	ClusterIngressDefaults   = "assets/defaults/cluster-ingress.yaml"
 	RouterNamespace          = "assets/router/namespace.yaml"
 	RouterServiceAccount     = "assets/router/service-account.yaml"
 	RouterClusterRole        = "assets/router/cluster-role.yaml"
@@ -62,14 +61,6 @@ type Factory struct {
 
 func NewFactory(config operatorconfig.Config) *Factory {
 	return &Factory{config: config}
-}
-
-func DefaultClusterIngress() *operatorv1.IngressController {
-	ci, err := NewClusterIngress(MustAssetReader(ClusterIngressDefaults))
-	if err != nil {
-		panic(err)
-	}
-	return ci
 }
 
 func (f *Factory) OperatorRole() (*rbacv1.Role, error) {
@@ -288,15 +279,6 @@ func NewDeployment(manifest io.Reader) (*appsv1.Deployment, error) {
 
 func NewRoute(manifest io.Reader) (*routev1.Route, error) {
 	o := routev1.Route{}
-	if err := yaml.NewYAMLOrJSONDecoder(manifest, 100).Decode(&o); err != nil {
-		return nil, err
-	}
-
-	return &o, nil
-}
-
-func NewClusterIngress(manifest io.Reader) (*operatorv1.IngressController, error) {
-	o := operatorv1.IngressController{}
 	if err := yaml.NewYAMLOrJSONDecoder(manifest, 100).Decode(&o); err != nil {
 		return nil, err
 	}
