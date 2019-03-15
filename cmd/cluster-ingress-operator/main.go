@@ -21,6 +21,7 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
+	"sigs.k8s.io/controller-runtime/pkg/metrics"
 	"sigs.k8s.io/controller-runtime/pkg/runtime/signals"
 )
 
@@ -34,6 +35,8 @@ const (
 var log = logf.Logger.WithName("entrypoint")
 
 func main() {
+	metrics.DefaultBindAddress = ":60000"
+
 	// Get a kube client.
 	kubeConfig, err := config.GetConfig()
 	if err != nil {
