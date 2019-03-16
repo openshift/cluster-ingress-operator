@@ -187,7 +187,7 @@ func TestDesiredRouterCertsGlobalSecret(t *testing.T) {
 
 	for _, tc := range testCases {
 		expected := tc.output.secret
-		actual, err := desiredRouterCertsGlobalSecret(tc.inputs.secrets, tc.inputs.ingresses)
+		actual, err := desiredRouterCertsGlobalSecret(tc.inputs.secrets, tc.inputs.ingresses, "openshift-ingress")
 		if err != nil {
 			t.Errorf("failed to get desired router-ca global secret: %v", err)
 			continue
