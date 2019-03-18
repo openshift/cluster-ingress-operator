@@ -11,7 +11,6 @@ import (
 	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/slice"
 
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/tools/record"
 
@@ -395,8 +394,8 @@ func (r *reconciler) ensureClusterIngress(ci *operatorv1.IngressController, dnsC
 			errs = append(errs, fmt.Errorf("failed to integrate metrics with openshift-monitoring for clusteringress %s: %v", ci.Name, err))
 		}
 
-		if err := r.syncClusterIngressStatus(deployment, ci); err != nil {
-			errs = append(errs, fmt.Errorf("failed to sync status of clusteringress %s/%s: %v", deployment.Namespace, deployment.Name, err))
+		if err := r.syncIngressControllerStatus(deployment, ci); err != nil {
+			errs = append(errs, fmt.Errorf("failed to sync ingresscontroller status: %v", err))
 		}
 	}
 
@@ -479,31 +478,6 @@ func (r *reconciler) ensureMetricsIntegration(ci *operatorv1.IngressController, 
 
 	if _, err := r.ensureServiceMonitor(ci, svc, deploymentRef); err != nil {
 		return fmt.Errorf("failed to ensure servicemonitor for %s: %v", ci.Name, err)
-	}
-
-	return nil
-}
-
-// syncClusterIngressStatus updates the status for a given clusteringress.
-func (r *reconciler) syncClusterIngressStatus(deployment *appsv1.Deployment, ci *operatorv1.IngressController) error {
-	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
-	if err != nil {
-		return fmt.Errorf("router deployment %s/%s has invalid spec.selector: %v", deployment.Namespace, deployment.Name, err)
-	}
-
-	if ci.Status.AvailableReplicas == deployment.Status.AvailableReplicas &&
-		ci.Status.Selector == selector.String() {
-		return nil
-	}
-
-	updated := ci.DeepCopy()
-	updated.Status.AvailableReplicas = deployment.Status.AvailableReplicas
-	updated.Status.Selector = selector.String()
-	if err := r.client.Status().Update(context.TODO(), updated); err != nil {
-		return fmt.Errorf("failed to update status of clusteringress %s/%s: %v", updated.Namespace, updated.Name, err)
-	}
-	if err := r.client.Get(context.TODO(), types.NamespacedName{Namespace: updated.Namespace, Name: updated.Name}, ci); err != nil {
-		return fmt.Errorf("failed to get clusteringress %s/%s: %v", updated.Namespace, updated.Name, err)
 	}
 
 	return nil
