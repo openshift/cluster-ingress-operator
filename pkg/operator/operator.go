@@ -3,6 +3,7 @@ package operator
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
@@ -21,8 +22,10 @@ import (
 	"k8s.io/client-go/rest"
 
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
 
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 
@@ -44,6 +47,12 @@ var (
 	// starts.
 	scheme *runtime.Scheme
 	log    = logf.Logger.WithName("init")
+)
+
+const (
+	// DefaultIngressController is the name of the default IngressController
+	// instance.
+	DefaultIngressController = "default"
 )
 
 func init() {
@@ -69,6 +78,8 @@ type Operator struct {
 
 	manager manager.Manager
 	caches  []cache.Cache
+
+	namespace string
 }
 
 // New creates (but does not start) a new operator from configuration.
@@ -159,6 +170,7 @@ func New(config operatorconfig.Config, dnsManager dns.Manager, kubeConfig *rest.
 		// should be refactored away.
 		manifestFactory: mf,
 		client:          kubeClient,
+		namespace:       config.Namespace,
 	}, nil
 }
 
@@ -166,10 +178,13 @@ func New(config operatorconfig.Config, dnsManager dns.Manager, kubeConfig *rest.
 // synchronously until a message is received on the stop channel.
 // TODO: Move the default ClusterIngress logic elsewhere.
 func (o *Operator) Start(stop <-chan struct{}) error {
-	// Ensure the default cluster ingress exists.
-	if err := o.ensureDefaultClusterIngress(); err != nil {
-		return fmt.Errorf("failed to ensure default cluster ingress: %v", err)
-	}
+	// Periodicaly ensure the default controller exists.
+	go wait.Until(func() {
+		err := o.ensureDefaultIngressController()
+		if err != nil {
+			log.Error(err, "failed to ensure default ingresscontroller")
+		}
+	}, 1*time.Minute, stop)
 
 	errChan := make(chan error)
 
@@ -201,15 +216,30 @@ func (o *Operator) Start(stop <-chan struct{}) error {
 	}
 }
 
-// ensureDefaultClusterIngress ensures that a default ClusterIngress exists.
-func (o *Operator) ensureDefaultClusterIngress() error {
-	ci := manifests.DefaultClusterIngress()
-	err := o.client.Create(context.TODO(), ci)
-	if err != nil && !errors.IsAlreadyExists(err) {
-		return err
-	} else if err == nil {
-		log.Info("created default clusteringress", "namespace", ci.Namespace, "name", ci.Name)
+// ensureDefaultIngressController creates the default ingresscontroller if it
+// doesn't already exist.
+func (o *Operator) ensureDefaultIngressController() error {
+	ic := &operatorv1.IngressController{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      DefaultIngressController,
+			Namespace: o.namespace,
+		},
 	}
+	err := o.client.Get(context.TODO(), types.NamespacedName{Namespace: ic.Namespace, Name: ic.Name}, ic)
+	if err == nil {
+		return nil
+	}
+	if !errors.IsNotFound(err) {
+		return err
+	}
+	err = o.client.Create(context.TODO(), ic)
+	if err != nil {
+		if errors.IsAlreadyExists(err) {
+			return nil
+		}
+		return err
+	}
+	log.Info("created default ingresscontroller", "namespace", ic.Namespace, "name", ic.Name)
 	return nil
 }
 
