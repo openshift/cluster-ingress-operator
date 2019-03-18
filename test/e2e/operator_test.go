@@ -59,7 +59,7 @@ func getClient() (client.Client, string, error) {
 	return kubeClient, namespace, nil
 }
 
-func newIngressController(name, ns, domain string) *operatorv1.IngressController {
+func newIngressController(name, ns, domain string, epType operatorv1.EndpointPublishingStrategyType) *operatorv1.IngressController {
 	repl := int32(1)
 	return &operatorv1.IngressController{
 		ObjectMeta: metav1.ObjectMeta{
@@ -71,7 +71,7 @@ func newIngressController(name, ns, domain string) *operatorv1.IngressController
 			Domain:   domain,
 			Replicas: &repl,
 			EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
-				Type: operatorv1.LoadBalancerServiceStrategyType,
+				Type: epType,
 			},
 		},
 	}
@@ -138,7 +138,8 @@ func TestClusterIngressControllerCreateDelete(t *testing.T) {
 		t.Fatalf("failed to get DNS 'cluster': %v", err)
 	}
 
-	ing = newIngressController(ingressControllerName, ns, ingressControllerName+"."+dnsConfig.Spec.BaseDomain)
+	domain := ingressControllerName + "." + dnsConfig.Spec.BaseDomain
+	ing = newIngressController(ingressControllerName, ns, domain, operatorv1.LoadBalancerServiceStrategyType)
 	if err := cl.Create(context.TODO(), ing); err != nil {
 		t.Fatalf("failed to create IngressController %s/%s: %v", ing.Namespace, ing.Name, err)
 	}
@@ -643,32 +644,19 @@ func TestRouterCACertificate(t *testing.T) {
 // the "HostNetwork" endpoint publishing strategy type and verifies that the
 // operator creates a router and that the router becomes available.
 func TestHostNetworkEndpointPublishingStrategy(t *testing.T) {
-	cl, _, err := getClient()
+	cl, ns, err := getClient()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Create the ingresscontroller.
-	var one int32 = 1
-	ing := &operatorv1.IngressController{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "hostnetwork",
-			Namespace: "openshift-ingress-operator",
-		},
-		Spec: operatorv1.IngressControllerSpec{
-			NodePlacement: &operatorv1.NodePlacement{
-				NodeSelector: &metav1.LabelSelector{
-					MatchLabels: map[string]string{
-						"node-role.kubernetes.io/worker": "",
-					},
-				},
-			},
-			Replicas: &one,
-			EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
-				Type: operatorv1.HostNetworkStrategyType,
-			},
-		},
+	dnsConfig := &configv1.DNS{}
+	if err := cl.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, dnsConfig); err != nil {
+		t.Fatalf("failed to get DNS 'cluster': %v", err)
 	}
+
+	// Create the ingresscontroller.
+	domain := ingressControllerName + "." + dnsConfig.Spec.BaseDomain
+	ing := newIngressController(ingressControllerName, ns, domain, operatorv1.HostNetworkStrategyType)
 	if cl.Create(context.TODO(), ing); err != nil {
 		t.Fatalf("failed to create the ingresscontroller: %v", err)
 	}
