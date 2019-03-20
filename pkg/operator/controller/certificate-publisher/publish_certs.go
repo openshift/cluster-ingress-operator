@@ -1,4 +1,4 @@
-package certificate
+package certificatepublisher
 
 import (
 	"bytes"
@@ -17,7 +17,7 @@ import (
 // ensureRouterCertsGlobalSecret will create, update, or delete the global
 // certificates secret as appropriate.
 func (r *reconciler) ensureRouterCertsGlobalSecret(secrets []corev1.Secret, ingresses []operatorv1.IngressController) error {
-	desired, err := desiredRouterCertsGlobalSecret(secrets, ingresses)
+	desired, err := desiredRouterCertsGlobalSecret(secrets, ingresses, r.operandNamespace)
 	if err != nil {
 		return err
 	}
@@ -56,7 +56,7 @@ func (r *reconciler) ensureRouterCertsGlobalSecret(secrets []corev1.Secret, ingr
 
 // desiredRouterCertsGlobalSecret returns the desired router-certs global
 // secret.
-func desiredRouterCertsGlobalSecret(secrets []corev1.Secret, ingresses []operatorv1.IngressController) (*corev1.Secret, error) {
+func desiredRouterCertsGlobalSecret(secrets []corev1.Secret, ingresses []operatorv1.IngressController, operandNamespace string) (*corev1.Secret, error) {
 	if len(ingresses) == 0 || len(secrets) == 0 {
 		return nil, nil
 	}
@@ -68,7 +68,7 @@ func desiredRouterCertsGlobalSecret(secrets []corev1.Secret, ingresses []operato
 
 	ingressToSecret := map[*operatorv1.IngressController]*corev1.Secret{}
 	for i, ingress := range ingresses {
-		name := controller.RouterEffectiveDefaultCertificateSecretName(&ingress, "")
+		name := controller.RouterEffectiveDefaultCertificateSecretName(&ingress, operandNamespace)
 		if secret, ok := nameToSecret[name.Name]; ok {
 			ingressToSecret[&ingresses[i]] = secret
 		}

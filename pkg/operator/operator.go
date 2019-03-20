@@ -11,6 +11,7 @@ import (
 	operatorconfig "github.com/openshift/cluster-ingress-operator/pkg/operator/config"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	certcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/certificate"
+	certpublishercontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/certificate-publisher"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -160,6 +161,11 @@ func New(config operatorconfig.Config, dnsManager dns.Manager, kubeConfig *rest.
 	// Set up the certificate controller
 	if _, err := certcontroller.New(operatorManager, kubeClient, config.Namespace); err != nil {
 		return nil, fmt.Errorf("failed to create cacert controller: %v", err)
+	}
+
+	// Set up the certificate-publisher controller
+	if _, err := certpublishercontroller.New(operatorManager, operandCache, kubeClient, config.Namespace, "openshift-ingress"); err != nil {
+		return nil, fmt.Errorf("failed to create certificate-publisher controller: %v", err)
 	}
 
 	return &Operator{
