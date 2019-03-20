@@ -14,7 +14,14 @@ import (
 // ensureDNS will create DNS records for the given LB service. If service is
 // nil, nothing is done.
 func (r *reconciler) ensureDNS(ci *operatorv1.IngressController, service *corev1.Service, dnsConfig *configv1.DNS) error {
-	dnsRecords, err := desiredDNSRecords(ci, service, dnsConfig)
+	// If no load balancer has been provisioned, we can't do anything with the
+	// configured DNS zones.
+	ingress := service.Status.LoadBalancer.Ingress
+	if len(ingress) == 0 || len(ingress[0].Hostname) == 0 {
+		return fmt.Errorf("no load balancer is assigned to service %s/%s", service.Namespace, service.Name)
+	}
+
+	dnsRecords, err := desiredDNSRecords(ci, ingress[0].Hostname, dnsConfig)
 	if err != nil {
 		return err
 	}
@@ -29,10 +36,9 @@ func (r *reconciler) ensureDNS(ci *operatorv1.IngressController, service *corev1
 }
 
 // desiredDNSRecords will return any necessary DNS records for the given inputs.
-// If service is nil, no records are desired. If an ingress domain is in use,
-// records are desired in every specified zone present in the cluster DNS
-// configuration.
-func desiredDNSRecords(ci *operatorv1.IngressController, service *corev1.Service, dnsConfig *configv1.DNS) ([]*dns.Record, error) {
+// If an ingress domain is in use, records are desired in every specified zone
+// present in the cluster DNS configuration.
+func desiredDNSRecords(ci *operatorv1.IngressController, hostname string, dnsConfig *configv1.DNS) ([]*dns.Record, error) {
 	records := []*dns.Record{}
 
 	// If the clusteringress has no ingress domain, we cannot configure any
@@ -51,13 +57,6 @@ func desiredDNSRecords(ci *operatorv1.IngressController, service *corev1.Service
 		return records, nil
 	}
 
-	// If no load balancer has been provisioned, we can't do anything with the
-	// configured DNS zones.
-	ingress := service.Status.LoadBalancer.Ingress
-	if len(ingress) == 0 || len(ingress[0].Hostname) == 0 {
-		return nil, fmt.Errorf("no load balancer is assigned to service %s/%s", service.Namespace, service.Name)
-	}
-
 	domain := fmt.Sprintf("*.%s", ci.Status.Domain)
 	makeRecord := func(zone *configv1.DNSZone) *dns.Record {
 		return &dns.Record{
@@ -65,7 +64,7 @@ func desiredDNSRecords(ci *operatorv1.IngressController, service *corev1.Service
 			Type: dns.ALIASRecord,
 			Alias: &dns.AliasRecord{
 				Domain: domain,
-				Target: ingress[0].Hostname,
+				Target: hostname,
 			},
 		}
 	}
