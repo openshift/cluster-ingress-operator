@@ -8,6 +8,7 @@ import (
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
+	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/slice"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -16,12 +17,14 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 
+	"k8s.io/client-go/rest"
+
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 
-	"sigs.k8s.io/controller-runtime/pkg/client"
+	kclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
@@ -45,8 +48,13 @@ var log = logf.Logger.WithName("controller")
 // The controller will be pre-configured to watch for ClusterIngress resources
 // in the manager namespace.
 func New(mgr manager.Manager, config Config) (controller.Controller, error) {
+	kubeClient, err := operatorclient.NewClient(config.KubeConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create kube client: %v", err)
+	}
 	reconciler := &reconciler{
 		Config:   config,
+		client:   kubeClient,
 		recorder: mgr.GetRecorder("operator-controller"),
 	}
 	c, err := controller.New("operator-controller", mgr, controller.Options{Reconciler: reconciler})
@@ -61,7 +69,7 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 
 // Config holds all the things necessary for the controller to run.
 type Config struct {
-	Client                 client.Client
+	KubeConfig             *rest.Config
 	ManifestFactory        *manifests.Factory
 	Namespace              string
 	DNSManager             dns.Manager
@@ -74,6 +82,12 @@ type Config struct {
 type reconciler struct {
 	Config
 
+	// client is the kube Client and it will refresh scheme/mapper fields if needed
+	// to detect some resources like ServiceMonitor which could get registered after
+	// the client creation.
+	// Since this controller is running in single threaded mode,
+	// we do not need to synchronize when changing rest scheme/mapper fields.
+	client   kclient.Client
 	recorder record.EventRecorder
 }
 
@@ -88,7 +102,7 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 
 	// Get the current ingress state.
 	ingress := &operatorv1.IngressController{}
-	if err := r.Client.Get(context.TODO(), request.NamespacedName, ingress); err != nil {
+	if err := r.client.Get(context.TODO(), request.NamespacedName, ingress); err != nil {
 		if errors.IsNotFound(err) {
 			// This means the ingress was already deleted/finalized and there are
 			// stale queue entries (or something edge triggering from a related
@@ -102,17 +116,17 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 
 	if ingress != nil {
 		dnsConfig := &configv1.DNS{}
-		if err := r.Client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, dnsConfig); err != nil {
+		if err := r.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, dnsConfig); err != nil {
 			errs = append(errs, fmt.Errorf("failed to get dns 'cluster': %v", err))
 			dnsConfig = nil
 		}
 		infraConfig := &configv1.Infrastructure{}
-		if err := r.Client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, infraConfig); err != nil {
+		if err := r.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, infraConfig); err != nil {
 			errs = append(errs, fmt.Errorf("failed to get infrastructure 'cluster': %v", err))
 			infraConfig = nil
 		}
 		ingressConfig := &configv1.Ingress{}
-		if err := r.Client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, ingressConfig); err != nil {
+		if err := r.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, ingressConfig); err != nil {
 			errs = append(errs, fmt.Errorf("failed to get ingress 'cluster': %v", err))
 			ingressConfig = nil
 		}
@@ -173,10 +187,10 @@ func (r *reconciler) enforceEffectiveIngressDomain(ci *operatorv1.IngressControl
 		updated.Status.Domain = ingressConfig.Spec.Domain
 	}
 	// TODO Validate and check for conflicting claims.
-	if err := r.Client.Status().Update(context.TODO(), updated); err != nil {
+	if err := r.client.Status().Update(context.TODO(), updated); err != nil {
 		return fmt.Errorf("failed to update status of clusteringress %s/%s: %v", updated.Namespace, updated.Name, err)
 	}
-	if err := r.Client.Get(context.TODO(), types.NamespacedName{Namespace: updated.Namespace, Name: updated.Name}, ci); err != nil {
+	if err := r.client.Get(context.TODO(), types.NamespacedName{Namespace: updated.Namespace, Name: updated.Name}, ci); err != nil {
 		return fmt.Errorf("failed to get clusteringress %s/%s: %v", updated.Namespace, updated.Name, err)
 	}
 	return nil
@@ -214,10 +228,10 @@ func (r *reconciler) enforceEffectiveEndpointPublishingStrategy(ci *operatorv1.I
 			Type: publishingStrategyTypeForInfra(infraConfig),
 		}
 	}
-	if err := r.Client.Status().Update(context.TODO(), updated); err != nil {
+	if err := r.client.Status().Update(context.TODO(), updated); err != nil {
 		return fmt.Errorf("failed to update status of clusteringress %s/%s: %v", updated.Namespace, updated.Name, err)
 	}
-	if err := r.Client.Get(context.TODO(), types.NamespacedName{Namespace: updated.Namespace, Name: updated.Name}, ci); err != nil {
+	if err := r.client.Get(context.TODO(), types.NamespacedName{Namespace: updated.Namespace, Name: updated.Name}, ci); err != nil {
 		return fmt.Errorf("failed to get clusteringress %s/%s: %v", updated.Namespace, updated.Name, err)
 	}
 	return nil
@@ -227,7 +241,7 @@ func (r *reconciler) enforceEffectiveEndpointPublishingStrategy(ci *operatorv1.I
 func (r *reconciler) enforceIngressFinalizer(ingress *operatorv1.IngressController) error {
 	if !slice.ContainsString(ingress.Finalizers, IngressControllerFinalizer) {
 		ingress.Finalizers = append(ingress.Finalizers, IngressControllerFinalizer)
-		if err := r.Client.Update(context.TODO(), ingress); err != nil {
+		if err := r.client.Update(context.TODO(), ingress); err != nil {
 			return err
 		}
 		log.Info("enforced finalizer for ingress", "namespace", ingress.Namespace, "name", ingress.Name)
@@ -252,7 +266,7 @@ func (r *reconciler) ensureIngressDeleted(ingress *operatorv1.IngressController,
 	updated := ingress.DeepCopy()
 	if slice.ContainsString(ingress.Finalizers, IngressControllerFinalizer) {
 		updated.Finalizers = slice.RemoveString(updated.Finalizers, IngressControllerFinalizer)
-		if err := r.Client.Update(context.TODO(), updated); err != nil {
+		if err := r.client.Update(context.TODO(), updated); err != nil {
 			return fmt.Errorf("failed to remove finalizer from clusteringress %s: %v", ingress.Name, err)
 		}
 	}
@@ -266,11 +280,11 @@ func (r *reconciler) ensureRouterNamespace() error {
 	if err != nil {
 		return fmt.Errorf("failed to build router cluster role: %v", err)
 	}
-	if err := r.Client.Get(context.TODO(), types.NamespacedName{Name: cr.Name}, cr); err != nil {
+	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: cr.Name}, cr); err != nil {
 		if !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to get router cluster role %s: %v", cr.Name, err)
 		}
-		if err := r.Client.Create(context.TODO(), cr); err != nil {
+		if err := r.client.Create(context.TODO(), cr); err != nil {
 			return fmt.Errorf("failed to create router cluster role %s: %v", cr.Name, err)
 		}
 		log.Info("created router cluster role", "name", cr.Name)
@@ -280,11 +294,11 @@ func (r *reconciler) ensureRouterNamespace() error {
 	if err != nil {
 		return fmt.Errorf("failed to build router namespace: %v", err)
 	}
-	if err := r.Client.Get(context.TODO(), types.NamespacedName{Name: ns.Name}, ns); err != nil {
+	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: ns.Name}, ns); err != nil {
 		if !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to get router namespace %q: %v", ns.Name, err)
 		}
-		if err := r.Client.Create(context.TODO(), ns); err != nil {
+		if err := r.client.Create(context.TODO(), ns); err != nil {
 			return fmt.Errorf("failed to create router namespace %s: %v", ns.Name, err)
 		}
 		log.Info("created router namespace", "name", ns.Name)
@@ -294,11 +308,11 @@ func (r *reconciler) ensureRouterNamespace() error {
 	if err != nil {
 		return fmt.Errorf("failed to build router service account: %v", err)
 	}
-	if err := r.Client.Get(context.TODO(), types.NamespacedName{Namespace: sa.Namespace, Name: sa.Name}, sa); err != nil {
+	if err := r.client.Get(context.TODO(), types.NamespacedName{Namespace: sa.Namespace, Name: sa.Name}, sa); err != nil {
 		if !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to get router service account %s/%s: %v", sa.Namespace, sa.Name, err)
 		}
-		if err := r.Client.Create(context.TODO(), sa); err != nil {
+		if err := r.client.Create(context.TODO(), sa); err != nil {
 			return fmt.Errorf("failed to create router service account %s/%s: %v", sa.Namespace, sa.Name, err)
 		}
 		log.Info("created router service account", "namespace", sa.Namespace, "name", sa.Name)
@@ -308,11 +322,11 @@ func (r *reconciler) ensureRouterNamespace() error {
 	if err != nil {
 		return fmt.Errorf("failed to build router cluster role binding: %v", err)
 	}
-	if err := r.Client.Get(context.TODO(), types.NamespacedName{Name: crb.Name}, crb); err != nil {
+	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: crb.Name}, crb); err != nil {
 		if !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to get router cluster role binding %s: %v", crb.Name, err)
 		}
-		if err := r.Client.Create(context.TODO(), crb); err != nil {
+		if err := r.client.Create(context.TODO(), crb); err != nil {
 			return fmt.Errorf("failed to create router cluster role binding %s: %v", crb.Name, err)
 		}
 		log.Info("created router cluster role binding", "name", crb.Name)
@@ -365,13 +379,13 @@ func (r *reconciler) ensureMetricsIntegration(ci *operatorv1.IngressController, 
 	if err != nil {
 		return fmt.Errorf("failed to build router stats secret: %v", err)
 	}
-	if err := r.Client.Get(context.TODO(), types.NamespacedName{Namespace: statsSecret.Namespace, Name: statsSecret.Name}, statsSecret); err != nil {
+	if err := r.client.Get(context.TODO(), types.NamespacedName{Namespace: statsSecret.Namespace, Name: statsSecret.Name}, statsSecret); err != nil {
 		if !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to get router stats secret %s/%s, %v", statsSecret.Namespace, statsSecret.Name, err)
 		}
 
 		statsSecret.SetOwnerReferences([]metav1.OwnerReference{deploymentRef})
-		if err := r.Client.Create(context.TODO(), statsSecret); err != nil {
+		if err := r.client.Create(context.TODO(), statsSecret); err != nil {
 			return fmt.Errorf("failed to create router stats secret %s/%s: %v", statsSecret.Namespace, statsSecret.Name, err)
 		}
 		log.Info("created router stats secret", "namespace", statsSecret.Namespace, "name", statsSecret.Name)
@@ -381,11 +395,11 @@ func (r *reconciler) ensureMetricsIntegration(ci *operatorv1.IngressController, 
 	if err != nil {
 		return fmt.Errorf("failed to build router metrics cluster role: %v", err)
 	}
-	if err := r.Client.Get(context.TODO(), types.NamespacedName{Name: cr.Name}, cr); err != nil {
+	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: cr.Name}, cr); err != nil {
 		if !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to get router metrics cluster role %s: %v", cr.Name, err)
 		}
-		if err := r.Client.Create(context.TODO(), cr); err != nil {
+		if err := r.client.Create(context.TODO(), cr); err != nil {
 			return fmt.Errorf("failed to create router metrics cluster role %s: %v", cr.Name, err)
 		}
 		log.Info("created router metrics cluster role", "name", cr.Name)
@@ -395,11 +409,11 @@ func (r *reconciler) ensureMetricsIntegration(ci *operatorv1.IngressController, 
 	if err != nil {
 		return fmt.Errorf("failed to build router metrics cluster role binding: %v", err)
 	}
-	if err := r.Client.Get(context.TODO(), types.NamespacedName{Name: crb.Name}, crb); err != nil {
+	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: crb.Name}, crb); err != nil {
 		if !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to get router metrics cluster role binding %s: %v", crb.Name, err)
 		}
-		if err := r.Client.Create(context.TODO(), crb); err != nil {
+		if err := r.client.Create(context.TODO(), crb); err != nil {
 			return fmt.Errorf("failed to create router metrics cluster role binding %s: %v", crb.Name, err)
 		}
 		log.Info("created router metrics cluster role binding", "name", crb.Name)
@@ -409,11 +423,11 @@ func (r *reconciler) ensureMetricsIntegration(ci *operatorv1.IngressController, 
 	if err != nil {
 		return fmt.Errorf("failed to build router metrics role: %v", err)
 	}
-	if err := r.Client.Get(context.TODO(), types.NamespacedName{Namespace: mr.Namespace, Name: mr.Name}, mr); err != nil {
+	if err := r.client.Get(context.TODO(), types.NamespacedName{Namespace: mr.Namespace, Name: mr.Name}, mr); err != nil {
 		if !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to get router metrics role %s: %v", mr.Name, err)
 		}
-		if err := r.Client.Create(context.TODO(), mr); err != nil {
+		if err := r.client.Create(context.TODO(), mr); err != nil {
 			return fmt.Errorf("failed to create router metrics role %s: %v", mr.Name, err)
 		}
 		log.Info("created router metrics role", "name", mr.Name)
@@ -423,11 +437,11 @@ func (r *reconciler) ensureMetricsIntegration(ci *operatorv1.IngressController, 
 	if err != nil {
 		return fmt.Errorf("failed to build router metrics role binding: %v", err)
 	}
-	if err := r.Client.Get(context.TODO(), types.NamespacedName{Namespace: mrb.Namespace, Name: mrb.Name}, mrb); err != nil {
+	if err := r.client.Get(context.TODO(), types.NamespacedName{Namespace: mrb.Namespace, Name: mrb.Name}, mrb); err != nil {
 		if !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to get router metrics role binding %s: %v", mrb.Name, err)
 		}
-		if err := r.Client.Create(context.TODO(), mrb); err != nil {
+		if err := r.client.Create(context.TODO(), mrb); err != nil {
 			return fmt.Errorf("failed to create router metrics role binding %s: %v", mrb.Name, err)
 		}
 		log.Info("created router metrics role binding", "name", mrb.Name)
@@ -455,10 +469,10 @@ func (r *reconciler) syncClusterIngressStatus(deployment *appsv1.Deployment, ci 
 	updated := ci.DeepCopy()
 	updated.Status.AvailableReplicas = deployment.Status.AvailableReplicas
 	updated.Status.Selector = selector.String()
-	if err := r.Client.Status().Update(context.TODO(), updated); err != nil {
+	if err := r.client.Status().Update(context.TODO(), updated); err != nil {
 		return fmt.Errorf("failed to update status of clusteringress %s/%s: %v", updated.Namespace, updated.Name, err)
 	}
-	if err := r.Client.Get(context.TODO(), types.NamespacedName{Namespace: updated.Namespace, Name: updated.Name}, ci); err != nil {
+	if err := r.client.Get(context.TODO(), types.NamespacedName{Namespace: updated.Namespace, Name: updated.Name}, ci); err != nil {
 		return fmt.Errorf("failed to get clusteringress %s/%s: %v", updated.Namespace, updated.Name, err)
 	}
 

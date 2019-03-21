@@ -31,7 +31,7 @@ func (r *reconciler) ensureInternalIngressControllerService(ic *operatorv1.Ingre
 		return current, nil
 	}
 
-	if err := r.Client.Create(context.TODO(), desired); err != nil {
+	if err := r.client.Create(context.TODO(), desired); err != nil {
 		return nil, fmt.Errorf("failed to create internal ingresscontroller service: %v", err)
 	}
 	log.Info("created internal ingresscontroller service", "service", desired)
@@ -40,7 +40,7 @@ func (r *reconciler) ensureInternalIngressControllerService(ic *operatorv1.Ingre
 
 func (r *reconciler) currentInternalIngressControllerService(ic *operatorv1.IngressController) (*corev1.Service, error) {
 	current := &corev1.Service{}
-	err := r.Client.Get(context.TODO(), InternalIngressControllerServiceName(ic), current)
+	err := r.client.Get(context.TODO(), InternalIngressControllerServiceName(ic), current)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			return nil, nil

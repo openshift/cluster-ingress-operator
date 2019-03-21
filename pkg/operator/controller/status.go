@@ -28,7 +28,7 @@ const (
 // creates or updates the ClusterOperator resource for the operator.
 func (r *reconciler) syncOperatorStatus() error {
 	co := &configv1.ClusterOperator{ObjectMeta: metav1.ObjectMeta{Name: IngressClusterOperatorName}}
-	err := r.Client.Get(context.TODO(), types.NamespacedName{Name: co.Name}, co)
+	err := r.client.Get(context.TODO(), types.NamespacedName{Name: co.Name}, co)
 	isNotFound := errors.IsNotFound(err)
 	if err != nil && !isNotFound {
 		return fmt.Errorf("failed to get clusteroperator %s: %v", co.Name, err)
@@ -71,13 +71,13 @@ func (r *reconciler) syncOperatorStatus() error {
 	}
 
 	if isNotFound {
-		if err := r.Client.Create(context.TODO(), co); err != nil {
+		if err := r.client.Create(context.TODO(), co); err != nil {
 			return fmt.Errorf("failed to create clusteroperator %s: %v", co.Name, err)
 		}
 		log.Info("created clusteroperator", "object", co)
 	} else {
 		if !statusesEqual(*oldStatus, co.Status) {
-			err = r.Client.Status().Update(context.TODO(), co)
+			err = r.client.Status().Update(context.TODO(), co)
 			if err != nil {
 				return fmt.Errorf("failed to update clusteroperator %s: %v", co.Name, err)
 			}
@@ -95,7 +95,7 @@ func (r *reconciler) getOperatorState() (*corev1.Namespace, []operatorv1.Ingress
 			"error building router namespace: %v", err)
 	}
 
-	if err := r.Client.Get(context.TODO(), types.NamespacedName{Name: ns.Name}, ns); err != nil {
+	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: ns.Name}, ns); err != nil {
 		if errors.IsNotFound(err) {
 			return nil, nil, nil, nil
 		}
@@ -105,14 +105,14 @@ func (r *reconciler) getOperatorState() (*corev1.Namespace, []operatorv1.Ingress
 	}
 
 	ingressList := &operatorv1.IngressControllerList{}
-	err = r.Client.List(context.TODO(), &client.ListOptions{Namespace: r.Namespace}, ingressList)
+	err = r.client.List(context.TODO(), &client.ListOptions{Namespace: r.Namespace}, ingressList)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf(
 			"failed to list ClusterIngresses: %v", err)
 	}
 
 	deploymentList := &appsv1.DeploymentList{}
-	err = r.Client.List(context.TODO(), &client.ListOptions{Namespace: ns.Name}, deploymentList)
+	err = r.client.List(context.TODO(), &client.ListOptions{Namespace: ns.Name}, deploymentList)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf(
 			"failed to list Deployment: %v", err)

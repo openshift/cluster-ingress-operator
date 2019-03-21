@@ -8,7 +8,10 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
+	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
+
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -24,7 +27,7 @@ func (r *reconciler) ensureServiceMonitor(ci *operatorv1.IngressController, svc 
 	}
 
 	if desired != nil && current == nil {
-		if err := r.Client.Create(context.TODO(), desired); err != nil {
+		if err := r.client.Create(context.TODO(), desired); err != nil {
 			return nil, fmt.Errorf("failed to create servicemonitor %s/%s: %v", desired.GetNamespace(), desired.GetName(), err)
 		}
 		log.Info("created servicemonitor", "namespace", desired.GetNamespace(), "name", desired.GetName())
@@ -84,7 +87,21 @@ func (r *reconciler) currentServiceMonitor(ci *operatorv1.IngressController) (*u
 		Kind:    "ServiceMonitor",
 		Version: "v1",
 	})
-	if err := r.Client.Get(context.TODO(), serviceMonitorName(ci), sm); err != nil {
+	if err := r.client.Get(context.TODO(), serviceMonitorName(ci), sm); err != nil {
+		if meta.IsNoMatchError(err) {
+			// Refresh kube client with latest rest scheme/mapper.
+			kClient, err := operatorclient.NewClient(r.KubeConfig)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create kube client: %v", err)
+			}
+			r.client = kClient
+
+			err = r.client.Get(context.TODO(), serviceMonitorName(ci), sm)
+			if err == nil {
+				return sm, nil
+			}
+		}
+
 		if errors.IsNotFound(err) {
 			return nil, nil
 		}

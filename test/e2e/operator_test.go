@@ -17,7 +17,7 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
-	"github.com/openshift/cluster-ingress-operator/pkg/operator"
+	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
 	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -52,7 +52,7 @@ func getClient() (client.Client, string, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to get kube config: %s", err)
 	}
-	kubeClient, err := operator.Client(kubeConfig)
+	kubeClient, err := operatorclient.NewClient(kubeConfig)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to create kube client: %s", err)
 	}
