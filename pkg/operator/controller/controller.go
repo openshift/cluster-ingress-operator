@@ -191,7 +191,7 @@ func publishingStrategyTypeForInfra(infraConfig *configv1.Infrastructure) operat
 	case configv1.LibvirtPlatform:
 		return operatorv1.HostNetworkStrategyType
 	}
-	return operatorv1.PrivateStrategyType
+	return operatorv1.HostNetworkStrategyType
 }
 
 // enforceEffectiveEndpointPublishingStrategy uses the infrastructure config to
