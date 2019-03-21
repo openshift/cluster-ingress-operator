@@ -5,6 +5,7 @@ import (
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
 
@@ -28,6 +29,10 @@ const (
 	// default certificates and their keys, which the operator publishes for
 	// other operators to use.
 	routerCertsGlobalSecretName = "router-certs"
+
+	// controllerDeploymentLabel identifies a deployment as an ingress controller
+	// deployment, and the value is the name of the owning ingress controller.
+	controllerDeploymentLabel = "ingress.operator.openshift.io/ingress-controller-deployment"
 )
 
 // RouterDeploymentName returns the namespaced name for the router deployment.
@@ -79,4 +84,21 @@ func RouterEffectiveDefaultCertificateSecretName(ci *operatorv1.IngressControlle
 		return types.NamespacedName{Namespace: namespace, Name: cert.Name}
 	}
 	return RouterOperatorGeneratedDefaultCertificateSecretName(ci, namespace)
+}
+
+func IngressControllerDeploymentLabel(ic *operatorv1.IngressController) string {
+	return ic.Name
+}
+
+func IngressControllerDeploymentPodSelector(ic *operatorv1.IngressController) *metav1.LabelSelector {
+	return &metav1.LabelSelector{
+		MatchLabels: map[string]string{
+			controllerDeploymentLabel: IngressControllerDeploymentLabel(ic),
+		},
+	}
+}
+
+func InternalIngressControllerServiceName(ic *operatorv1.IngressController) types.NamespacedName {
+	// TODO: remove hard-coded namespace
+	return types.NamespacedName{Namespace: "openshift-ingress", Name: "router-internal-" + ic.Name}
 }

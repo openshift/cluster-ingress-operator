@@ -4,13 +4,8 @@ kind: Service
 apiVersion: v1
 metadata:
   # Name and Annotations are set at runtime.
-  namespace: openshift-ingress
-  labels:
-    app: router
 spec:
   type: ClusterIP
-  selector:
-    app: router
   ports:
   - name: http
     port: 80

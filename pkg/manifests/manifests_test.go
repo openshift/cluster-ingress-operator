@@ -1,7 +1,6 @@
 package manifests
 
 import (
-	"fmt"
 	"testing"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -74,13 +73,6 @@ func TestManifests(t *testing.T) {
 
 	RouterDeployment(ci)
 
-	metricsCertSecretName := fmt.Sprintf("router-metrics-certs-%s", ci.Name)
-	if svc, err := f.RouterServiceInternal(ci); err != nil {
-		t.Errorf("invalid RouterServiceInternal: %v", err)
-	} else if svc.Annotations[ServingCertSecretAnnotation] != metricsCertSecretName {
-		t.Errorf("RouterServiceInternal expected serving secret annotation %s, got %s",
-			metricsCertSecretName, svc.Annotations[ServingCertSecretAnnotation])
-	}
-
+	InternalIngressControllerService()
 	LoadBalancerService()
 }

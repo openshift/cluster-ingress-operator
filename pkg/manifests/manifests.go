@@ -136,33 +136,12 @@ func RouterDeployment(cr *operatorv1.IngressController) *appsv1.Deployment {
 	return deployment
 }
 
-func (f *Factory) RouterServiceInternal(cr *operatorv1.IngressController) (*corev1.Service, error) {
+func InternalIngressControllerService() *corev1.Service {
 	s, err := NewService(MustAssetReader(RouterServiceInternal))
 	if err != nil {
-		return nil, err
+		panic(err)
 	}
-
-	name := "router-internal-" + cr.Name
-
-	s.Name = name
-
-	if s.Labels == nil {
-		s.Labels = map[string]string{}
-	}
-	s.Labels["router"] = name
-	s.Labels[OwningClusterIngressLabel] = cr.Name
-
-	if s.Annotations == nil {
-		s.Annotations = map[string]string{}
-	}
-	s.Annotations[ServingCertSecretAnnotation] = fmt.Sprintf("router-metrics-certs-%s", cr.Name)
-
-	if s.Spec.Selector == nil {
-		s.Spec.Selector = map[string]string{}
-	}
-	s.Spec.Selector["router"] = "router-" + cr.Name
-
-	return s, nil
+	return s
 }
 
 func LoadBalancerService() *corev1.Service {
