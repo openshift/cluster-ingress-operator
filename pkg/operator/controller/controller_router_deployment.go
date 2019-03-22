@@ -268,7 +268,7 @@ func (r *reconciler) updateRouterDeployment(current, desired *appsv1.Deployment)
 // deploymentConfigChanged checks if current config matches the expected config
 // for the cluster ingress deployment and if not returns the updated config.
 func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv1.Deployment) {
-	if cmp.Equal(current.Spec.Template.Spec.Volumes, expected.Spec.Template.Spec.Volumes, cmpopts.EquateEmpty(), cmpopts.SortSlices(cmpVolumes)) &&
+	if cmp.Equal(current.Spec.Template.Spec.Volumes, expected.Spec.Template.Spec.Volumes, cmpopts.EquateEmpty(), cmpopts.SortSlices(cmpVolumes), cmp.Comparer(cmpSecretVolumeSource)) &&
 		cmp.Equal(current.Spec.Template.Spec.NodeSelector, expected.Spec.Template.Spec.NodeSelector, cmpopts.EquateEmpty()) &&
 		cmp.Equal(current.Spec.Template.Spec.Containers[0].Env, expected.Spec.Template.Spec.Containers[0].Env, cmpopts.EquateEmpty(), cmpopts.SortSlices(cmpEnvs)) &&
 		current.Spec.Template.Spec.Containers[0].Image == expected.Spec.Template.Spec.Containers[0].Image &&
@@ -296,3 +296,26 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 
 func cmpEnvs(a, b corev1.EnvVar) bool    { return a.Name < b.Name }
 func cmpVolumes(a, b corev1.Volume) bool { return a.Name < b.Name }
+func cmpSecretVolumeSource(a, b corev1.SecretVolumeSource) bool {
+	if a.SecretName != b.SecretName {
+		return false
+	}
+	if !cmp.Equal(a.Items, b.Items, cmpopts.EquateEmpty()) {
+		return false
+	}
+	aDefaultMode := int32(420)
+	if a.DefaultMode != nil {
+		aDefaultMode = *a.DefaultMode
+	}
+	bDefaultMode := int32(420)
+	if b.DefaultMode != nil {
+		bDefaultMode = *b.DefaultMode
+	}
+	if aDefaultMode != bDefaultMode {
+		return false
+	}
+	if !cmp.Equal(a.Optional, b.Optional, cmpopts.EquateEmpty()) {
+		return false
+	}
+	return true
+}
