@@ -330,6 +330,14 @@ func TestDeploymentConfigChanged(t *testing.T) {
 			},
 			expect: true,
 		},
+		{
+			description: "if the volumes change ordering",
+			mutate: func(deployment *appsv1.Deployment) {
+				vols := deployment.Spec.Template.Spec.Volumes
+				vols[1], vols[0] = vols[0], vols[1]
+			},
+			expect: false,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -345,9 +353,18 @@ func TestDeploymentConfigChanged(t *testing.T) {
 					Spec: corev1.PodSpec{
 						Volumes: []corev1.Volume{
 							{
+								Name: "default-certificate",
 								VolumeSource: corev1.VolumeSource{
 									Secret: &corev1.SecretVolumeSource{
-										SecretName: "secrets-volume",
+										SecretName:  "secrets-volume",
+									},
+								},
+							},
+							{
+								Name: "metrics-certs",
+								VolumeSource: corev1.VolumeSource{
+									Secret: &corev1.SecretVolumeSource{
+										SecretName: "router-metrics-certs-default",
 									},
 								},
 							},
