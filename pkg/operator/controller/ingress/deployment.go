@@ -11,6 +11,8 @@ import (
 	"strings"
 
 	"github.com/davecgh/go-spew/spew"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
@@ -738,10 +740,12 @@ func (r *reconciler) updateRouterDeployment(current, desired *appsv1.Deployment)
 		return nil
 	}
 
+	// Diff before updating because the client may mutate the object.
+	diff := cmp.Diff(current, updated, cmpopts.EquateEmpty())
 	if err := r.client.Update(context.TODO(), updated); err != nil {
 		return fmt.Errorf("failed to update router deployment %s/%s: %v", updated.Namespace, updated.Name, err)
 	}
-	log.Info("updated router deployment", "namespace", updated.Namespace, "name", updated.Name)
+	log.Info("updated router deployment", "namespace", updated.Namespace, "name", updated.Name, "diff", diff)
 	return nil
 }
 
