@@ -263,6 +263,21 @@ func TestDeploymentConfigChanged(t *testing.T) {
 			expect: true,
 		},
 		{
+			description: "if the default-certificates default mode value changes",
+			mutate: func(deployment *appsv1.Deployment) {
+				newVal := int32(0)
+				deployment.Spec.Template.Spec.Volumes[0].Secret.DefaultMode = &newVal
+			},
+			expect: true,
+		},
+		{
+			description: "if the default-certificates default mode value is omitted",
+			mutate: func(deployment *appsv1.Deployment) {
+				deployment.Spec.Template.Spec.Volumes[0].Secret.DefaultMode = nil
+			},
+			expect: false,
+		},
+		{
 			description: "if .spec.template.spec.nodeSelector changes",
 			mutate: func(deployment *appsv1.Deployment) {
 				ns := map[string]string{"xyzzy": "quux"}
@@ -330,10 +345,19 @@ func TestDeploymentConfigChanged(t *testing.T) {
 			},
 			expect: true,
 		},
+		{
+			description: "if the volumes change ordering",
+			mutate: func(deployment *appsv1.Deployment) {
+				vols := deployment.Spec.Template.Spec.Volumes
+				vols[1], vols[0] = vols[0], vols[1]
+			},
+			expect: false,
+		},
 	}
 
 	for _, tc := range testCases {
 		nineteen := int32(19)
+		fourTwenty := int32(420) // = 0644 octal.
 		original := appsv1.Deployment{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "router-original",
@@ -345,9 +369,19 @@ func TestDeploymentConfigChanged(t *testing.T) {
 					Spec: corev1.PodSpec{
 						Volumes: []corev1.Volume{
 							{
+								Name: "default-certificate",
 								VolumeSource: corev1.VolumeSource{
 									Secret: &corev1.SecretVolumeSource{
-										SecretName: "secrets-volume",
+										SecretName:  "secrets-volume",
+										DefaultMode: &fourTwenty,
+									},
+								},
+							},
+							{
+								Name: "metrics-certs",
+								VolumeSource: corev1.VolumeSource{
+									Secret: &corev1.SecretVolumeSource{
+										SecretName: "router-metrics-certs-default",
 									},
 								},
 							},
