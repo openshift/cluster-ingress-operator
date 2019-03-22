@@ -10,6 +10,7 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
+	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -89,12 +90,7 @@ func (r *reconciler) syncOperatorStatus() error {
 // getOperatorState gets and returns the resources necessary to compute the
 // operator's current state.
 func (r *reconciler) getOperatorState() (*corev1.Namespace, []operatorv1.IngressController, []appsv1.Deployment, error) {
-	ns, err := r.ManifestFactory.RouterNamespace()
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf(
-			"error building router namespace: %v", err)
-	}
-
+	ns := manifests.RouterNamespace()
 	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: ns.Name}, ns); err != nil {
 		if errors.IsNotFound(err) {
 			return nil, nil, nil, nil
@@ -105,15 +101,13 @@ func (r *reconciler) getOperatorState() (*corev1.Namespace, []operatorv1.Ingress
 	}
 
 	ingressList := &operatorv1.IngressControllerList{}
-	err = r.client.List(context.TODO(), &client.ListOptions{Namespace: r.Namespace}, ingressList)
-	if err != nil {
+	if err := r.client.List(context.TODO(), &client.ListOptions{Namespace: r.Namespace}, ingressList); err != nil {
 		return nil, nil, nil, fmt.Errorf(
 			"failed to list ClusterIngresses: %v", err)
 	}
 
 	deploymentList := &appsv1.DeploymentList{}
-	err = r.client.List(context.TODO(), &client.ListOptions{Namespace: ns.Name}, deploymentList)
-	if err != nil {
+	if err := r.client.List(context.TODO(), &client.ListOptions{Namespace: ns.Name}, deploymentList); err != nil {
 		return nil, nil, nil, fmt.Errorf(
 			"failed to list Deployment: %v", err)
 	}

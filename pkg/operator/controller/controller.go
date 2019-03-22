@@ -290,10 +290,7 @@ func (r *reconciler) ensureRouterNamespace() error {
 		log.Info("created router cluster role", "name", cr.Name)
 	}
 
-	ns, err := r.ManifestFactory.RouterNamespace()
-	if err != nil {
-		return fmt.Errorf("failed to build router namespace: %v", err)
-	}
+	ns := manifests.RouterNamespace()
 	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: ns.Name}, ns); err != nil {
 		if !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to get router namespace %q: %v", ns.Name, err)
