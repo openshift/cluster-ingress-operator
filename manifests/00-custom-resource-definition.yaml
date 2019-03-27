@@ -17,3 +17,79 @@ spec:
       specReplicasPath: .spec.replicas
       statusReplicasPath: .status.availableReplicas
       labelSelectorPath: .status.labelSelector
+  validation:
+    openAPIV3Schema:
+      properties:
+        apiVersion:
+          type: string
+        kind:
+          type: string
+        metadata:
+          type: object
+        spec:
+          properties:
+            defaultCertificate:
+              type: object
+            domain:
+              type: string
+            endpointPublishingStrategy:
+              properties:
+                type:
+                  type: string
+              required:
+              - type
+              type: object
+            namespaceSelector:
+              type: object
+            nodePlacement:
+              properties:
+                nodeSelector:
+                  type: object
+              type: object
+            replicas:
+              format: int32
+              type: integer
+            routeSelector:
+              type: object
+          type: object
+        status:
+          properties:
+            availableReplicas:
+              format: int32
+              type: integer
+            conditions:
+              items:
+                properties:
+                  lastTransitionTime:
+                    format: date-time
+                    type: string
+                  message:
+                    type: string
+                  reason:
+                    type: string
+                  status:
+                    type: string
+                  type:
+                    type: string
+                required:
+                - type
+                - status
+                type: object
+              type: array
+            domain:
+              type: string
+            endpointPublishingStrategy:
+              properties:
+                type:
+                  type: string
+              required:
+              - type
+              type: object
+            selector:
+              type: string
+          required:
+          - availableReplicas
+          - selector
+          - domain
+          type: object
+      type: object
