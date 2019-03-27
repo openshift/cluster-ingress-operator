@@ -143,19 +143,21 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 
 			if err := r.enforceEffectiveIngressDomain(ingress, ingressConfig); err != nil {
 				errs = append(errs, fmt.Errorf("failed to enforce the effective ingress domain for clusteringress %s: %v", ingress.Name, err))
-			} else if err := r.enforceEffectiveEndpointPublishingStrategy(ingress, infraConfig); err != nil {
-				errs = append(errs, fmt.Errorf("failed to enforce the effective HA configuration for clusteringress %s: %v", ingress.Name, err))
-			} else if ingress.DeletionTimestamp != nil {
-				// Handle deletion.
-				if err := r.ensureIngressDeleted(ingress, dnsConfig, infraConfig); err != nil {
-					errs = append(errs, fmt.Errorf("failed to ensure ingress deletion: %v", err))
-				}
-			} else if err := r.enforceIngressFinalizer(ingress); err != nil {
-				errs = append(errs, fmt.Errorf("failed to enforce ingress finalizer %s/%s: %v", ingress.Namespace, ingress.Name, err))
-			} else {
-				// Handle everything else.
-				if err := r.ensureClusterIngress(ingress, dnsConfig, infraConfig); err != nil {
-					errs = append(errs, fmt.Errorf("failed to ensure clusteringress: %v", err))
+			} else if IsStatusDomainSet(ingress) {
+				if err := r.enforceEffectiveEndpointPublishingStrategy(ingress, infraConfig); err != nil {
+					errs = append(errs, fmt.Errorf("failed to enforce the effective HA configuration for clusteringress %s: %v", ingress.Name, err))
+				} else if ingress.DeletionTimestamp != nil {
+					// Handle deletion.
+					if err := r.ensureIngressDeleted(ingress, dnsConfig, infraConfig); err != nil {
+						errs = append(errs, fmt.Errorf("failed to ensure ingress deletion: %v", err))
+					}
+				} else if err := r.enforceIngressFinalizer(ingress); err != nil {
+					errs = append(errs, fmt.Errorf("failed to enforce ingress finalizer %s/%s: %v", ingress.Namespace, ingress.Name, err))
+				} else {
+					// Handle everything else.
+					if err := r.ensureClusterIngress(ingress, dnsConfig, infraConfig); err != nil {
+						errs = append(errs, fmt.Errorf("failed to ensure clusteringress: %v", err))
+					}
 				}
 			}
 		}
@@ -172,28 +174,59 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 // enforceEffectiveIngressDomain determines the effective ingress domain for the
 // given clusteringress and ingress configuration and publishes it to the
 // clusteringress's status.
-func (r *reconciler) enforceEffectiveIngressDomain(ci *operatorv1.IngressController, ingressConfig *configv1.Ingress) error {
+func (r *reconciler) enforceEffectiveIngressDomain(ic *operatorv1.IngressController, ingressConfig *configv1.Ingress) error {
 	// The clusteringress's ingress domain is immutable, so if we have
 	// published a domain to status, we must continue using it.
-	if len(ci.Status.Domain) > 0 {
+	if len(ic.Status.Domain) > 0 {
 		return nil
 	}
 
-	updated := ci.DeepCopy()
+	updated := ic.DeepCopy()
+	var domain string
 	switch {
-	case len(ci.Spec.Domain) > 0:
-		updated.Status.Domain = ci.Spec.Domain
+	case len(ic.Spec.Domain) > 0:
+		domain = ic.Spec.Domain
 	default:
-		updated.Status.Domain = ingressConfig.Spec.Domain
+		domain = ingressConfig.Spec.Domain
 	}
-	// TODO Validate and check for conflicting claims.
+	unique, err := r.isDomainUnique(domain)
+	if err != nil {
+		return err
+	}
+	if !unique {
+		log.Info("domain not unique, not setting status domain for IngressController", "namespace", ic.Namespace, "name", ic.Name)
+		return nil
+	}
+	updated.Status.Domain = domain
+
 	if err := r.client.Status().Update(context.TODO(), updated); err != nil {
-		return fmt.Errorf("failed to update status of clusteringress %s/%s: %v", updated.Namespace, updated.Name, err)
+		return fmt.Errorf("failed to update status of IngressController %s/%s: %v", updated.Namespace, updated.Name, err)
 	}
-	if err := r.client.Get(context.TODO(), types.NamespacedName{Namespace: updated.Namespace, Name: updated.Name}, ci); err != nil {
-		return fmt.Errorf("failed to get clusteringress %s/%s: %v", updated.Namespace, updated.Name, err)
+	if err := r.client.Get(context.TODO(), types.NamespacedName{Namespace: updated.Namespace, Name: updated.Name}, ic); err != nil {
+		return fmt.Errorf("failed to get IngressController %s/%s: %v", updated.Namespace, updated.Name, err)
 	}
 	return nil
+}
+
+// isDomainUnique compares domain with spec.domain of all ingress controllers
+// and returns a false if a conflict exists or an error if the
+// ingress controller list operation returns an error.
+func (r *reconciler) isDomainUnique(domain string) (bool, error) {
+	ingresses := operatorv1.IngressControllerList{}
+	if err := r.client.List(context.TODO(), &kclient.ListOptions{Namespace: r.Namespace}, &ingresses); err != nil {
+		return false, fmt.Errorf("failed to list ingresscontrollers: %v", err)
+	}
+
+	// Compare domain with all ingress controllers for a conflict.
+	for _, ing := range ingresses.Items {
+		if domain == ing.Status.Domain {
+			log.Info("domain conflicts with existing IngressController", "domain", domain, "namespace",
+				ing.Namespace, "name", ing.Name)
+			return false, nil
+		}
+	}
+
+	return true, nil
 }
 
 // publishingStrategyTypeForInfra returns the appropriate endpoint publishing
@@ -474,4 +507,12 @@ func (r *reconciler) syncClusterIngressStatus(deployment *appsv1.Deployment, ci 
 	}
 
 	return nil
+}
+
+// IsStatusDomainSet checks whether status.domain of ingress is set.
+func IsStatusDomainSet(ingress *operatorv1.IngressController) bool {
+	if len(ingress.Status.Domain) == 0 {
+		return false
+	}
+	return true
 }

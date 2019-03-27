@@ -76,6 +76,8 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 		} else {
 			errs = append(errs, fmt.Errorf("failed to get clusteringress: %v", err))
 		}
+	} else if !controller.IsStatusDomainSet(ingress) {
+		log.Info("ingresscontroller domain not set; reconciliation will be skipped", "request", request)
 	} else {
 		deployment := &appsv1.Deployment{}
 		err = r.client.Get(context.TODO(), controller.RouterDeploymentName(ingress), deployment)
