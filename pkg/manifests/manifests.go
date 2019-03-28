@@ -7,7 +7,6 @@ import (
 	"io"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
-	operatorconfig "github.com/openshift/cluster-ingress-operator/pkg/operator/config"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -50,15 +49,8 @@ func MustAssetReader(asset string) io.Reader {
 	return bytes.NewReader(MustAsset(asset))
 }
 
-// Factory knows how to create ingress-related cluster resources from manifest
-// files. It provides a point of control to mutate the static resources with
-// provided configuration.
+// Factory knows how to create ingress-related cluster resources from manifest files.
 type Factory struct {
-	config operatorconfig.Config
-}
-
-func NewFactory(config operatorconfig.Config) *Factory {
-	return &Factory{config: config}
 }
 
 func (f *Factory) OperatorRole() (*rbacv1.Role, error) {

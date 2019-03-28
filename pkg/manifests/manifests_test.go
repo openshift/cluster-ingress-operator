@@ -4,16 +4,12 @@ import (
 	"testing"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
-	operatorconfig "github.com/openshift/cluster-ingress-operator/pkg/operator/config"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestManifests(t *testing.T) {
-	config := operatorconfig.Config{
-		RouterImage: "quay.io/openshift/router:latest",
-	}
-	f := NewFactory(config)
+	f := &Factory{}
 
 	var one int32 = 1
 	ci := &operatorv1.IngressController{
