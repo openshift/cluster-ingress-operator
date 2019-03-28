@@ -3,7 +3,6 @@ package controller
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -12,7 +11,6 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -35,13 +33,13 @@ func (r *reconciler) syncOperatorStatus() error {
 		return fmt.Errorf("failed to get clusteroperator %s: %v", co.Name, err)
 	}
 
-	ns, ingresses, deployments, err := r.getOperatorState()
+	ns, ingresses, err := r.getOperatorState()
 	if err != nil {
 		return fmt.Errorf("failed to get operator state: %v", err)
 	}
 
 	oldStatus := co.Status.DeepCopy()
-	co.Status.Conditions = computeStatusConditions(oldStatus.Conditions, ns, ingresses, deployments)
+	co.Status.Conditions = computeOperatorStatusConditions(oldStatus.Conditions, ns, ingresses)
 	co.Status.RelatedObjects = []configv1.ObjectReference{
 		{
 			Resource: "namespaces",
@@ -77,7 +75,7 @@ func (r *reconciler) syncOperatorStatus() error {
 		}
 		log.Info("created clusteroperator", "object", co)
 	} else {
-		if !statusesEqual(*oldStatus, co.Status) {
+		if !operatorStatusesEqual(*oldStatus, co.Status) {
 			err = r.client.Status().Update(context.TODO(), co)
 			if err != nil {
 				return fmt.Errorf("failed to update clusteroperator %s: %v", co.Name, err)
@@ -89,34 +87,28 @@ func (r *reconciler) syncOperatorStatus() error {
 
 // getOperatorState gets and returns the resources necessary to compute the
 // operator's current state.
-func (r *reconciler) getOperatorState() (*corev1.Namespace, []operatorv1.IngressController, []appsv1.Deployment, error) {
+func (r *reconciler) getOperatorState() (*corev1.Namespace, []operatorv1.IngressController, error) {
 	ns := manifests.RouterNamespace()
+
 	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: ns.Name}, ns); err != nil {
 		if errors.IsNotFound(err) {
-			return nil, nil, nil, nil
+			return nil, nil, nil
 		}
 
-		return nil, nil, nil, fmt.Errorf(
+		return nil, nil, fmt.Errorf(
 			"error getting Namespace %s: %v", ns.Name, err)
 	}
 
 	ingressList := &operatorv1.IngressControllerList{}
 	if err := r.client.List(context.TODO(), &client.ListOptions{Namespace: r.Namespace}, ingressList); err != nil {
-		return nil, nil, nil, fmt.Errorf(
-			"failed to list ClusterIngresses: %v", err)
+		return nil, nil, fmt.Errorf("failed to list IngressControllers: %v", err)
 	}
 
-	deploymentList := &appsv1.DeploymentList{}
-	if err := r.client.List(context.TODO(), &client.ListOptions{Namespace: ns.Name}, deploymentList); err != nil {
-		return nil, nil, nil, fmt.Errorf(
-			"failed to list Deployment: %v", err)
-	}
-
-	return ns, ingressList.Items, deploymentList.Items, nil
+	return ns, ingressList.Items, nil
 }
 
-// computeStatusConditions computes the operator's current state.
-func computeStatusConditions(conditions []configv1.ClusterOperatorStatusCondition, ns *corev1.Namespace, ingresses []operatorv1.IngressController, deployments []appsv1.Deployment) []configv1.ClusterOperatorStatusCondition {
+// computeOperatorStatusConditions computes the operator's current state.
+func computeOperatorStatusConditions(conditions []configv1.ClusterOperatorStatusCondition, ns *corev1.Namespace, ingresses []operatorv1.IngressController) []configv1.ClusterOperatorStatusCondition {
 	failingCondition := &configv1.ClusterOperatorStatusCondition{
 		Type:   configv1.OperatorFailing,
 		Status: configv1.ConditionUnknown,
@@ -124,67 +116,61 @@ func computeStatusConditions(conditions []configv1.ClusterOperatorStatusConditio
 	if ns == nil {
 		failingCondition.Status = configv1.ConditionTrue
 		failingCondition.Reason = "NoNamespace"
-		failingCondition.Message = "router namespace does not exist"
+		failingCondition.Message = "operand namespace does not exist"
 	} else {
 		failingCondition.Status = configv1.ConditionFalse
 	}
-	conditions = setStatusCondition(conditions, failingCondition)
+	conditions = setOperatorStatusCondition(conditions, failingCondition)
 
+	// TODO: Update progressingCondition when an ingresscontroller
+	//       progressing condition is created. The Operator's condition
+	//       should be derived from the ingresscontroller's condition.
 	progressingCondition := &configv1.ClusterOperatorStatusCondition{
 		Type:   configv1.OperatorProgressing,
 		Status: configv1.ConditionUnknown,
 	}
 	numIngresses := len(ingresses)
-	numDeployments := len(deployments)
-	if numIngresses == numDeployments {
+	var ingressesAvailable int
+	for _, ing := range ingresses {
+		for _, c := range ing.Status.Conditions {
+			if c.Type == operatorv1.IngressControllerAvailableConditionType && c.Status == operatorv1.ConditionTrue {
+				ingressesAvailable++
+				break
+			}
+		}
+	}
+	if numIngresses == ingressesAvailable {
 		progressingCondition.Status = configv1.ConditionFalse
 	} else {
 		progressingCondition.Status = configv1.ConditionTrue
 		progressingCondition.Reason = "Reconciling"
 		progressingCondition.Message = fmt.Sprintf(
-			"have %d ingresses, want %d",
-			numDeployments, numIngresses)
+			"%d ingress controllers available, want %d",
+			ingressesAvailable, numIngresses)
 	}
-	conditions = setStatusCondition(conditions, progressingCondition)
+	conditions = setOperatorStatusCondition(conditions, progressingCondition)
 
 	availableCondition := &configv1.ClusterOperatorStatusCondition{
 		Type:   configv1.OperatorAvailable,
 		Status: configv1.ConditionUnknown,
 	}
-	deploymentsAvailable := map[string]bool{}
-	for _, d := range deployments {
-		deploymentsAvailable[d.Name] = d.Status.AvailableReplicas > 0
-	}
-	unavailable := []string{}
-	for _, ingress := range ingresses {
-		// TODO Use the manifest to derive the name, or use labels or
-		// owner references.
-		name := "router-" + ingress.Name
-		if available, exists := deploymentsAvailable[name]; !exists {
-			msg := fmt.Sprintf("no router for ingress %q",
-				ingress.Name)
-			unavailable = append(unavailable, msg)
-		} else if !available {
-			msg := fmt.Sprintf("ingress %q not available",
-				ingress.Name)
-			unavailable = append(unavailable, msg)
-		}
-	}
-	if len(unavailable) == 0 {
+	if numIngresses == ingressesAvailable {
 		availableCondition.Status = configv1.ConditionTrue
 	} else {
 		availableCondition.Status = configv1.ConditionFalse
 		availableCondition.Reason = "IngressUnavailable"
-		availableCondition.Message = strings.Join(unavailable, "\n")
+		availableCondition.Message = fmt.Sprintf(
+			"%d ingress controllers available, want %d",
+			ingressesAvailable, numIngresses)
 	}
-	conditions = setStatusCondition(conditions, availableCondition)
+	conditions = setOperatorStatusCondition(conditions, availableCondition)
 
 	return conditions
 }
 
-// setStatusCondition returns the result of setting the specified condition in
-// the given slice of conditions.
-func setStatusCondition(oldConditions []configv1.ClusterOperatorStatusCondition, condition *configv1.ClusterOperatorStatusCondition) []configv1.ClusterOperatorStatusCondition {
+// setOperatorStatusCondition returns a slice of Operator status conditions as
+// a result of setting the specified condition in the given slice of conditions.
+func setOperatorStatusCondition(oldConditions []configv1.ClusterOperatorStatusCondition, condition *configv1.ClusterOperatorStatusCondition) []configv1.ClusterOperatorStatusCondition {
 	condition.LastTransitionTime = metav1.Now()
 
 	newConditions := []configv1.ClusterOperatorStatusCondition{}
@@ -211,10 +197,10 @@ func setStatusCondition(oldConditions []configv1.ClusterOperatorStatusCondition,
 	return newConditions
 }
 
-// statusesEqual compares two ClusterOperatorStatus values.  Returns true if the
-// provided ClusterOperatorStatus values should be considered equal for the
-// purpose of determining whether an update is necessary, false otherwise.
-func statusesEqual(a, b configv1.ClusterOperatorStatus) bool {
+// operatorStatusesEqual compares two ClusterOperatorStatus values.  Returns
+// true if the provided ClusterOperatorStatus values should be considered equal
+// for the purpose of determining whether an update is necessary, false otherwise.
+func operatorStatusesEqual(a, b configv1.ClusterOperatorStatus) bool {
 	conditionCmpOpts := []cmp.Option{
 		cmpopts.IgnoreFields(configv1.ClusterOperatorStatusCondition{}, "LastTransitionTime"),
 		cmpopts.EquateEmpty(),

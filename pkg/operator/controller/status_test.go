@@ -7,15 +7,14 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func TestComputeStatusConditions(t *testing.T) {
+func TestComputeOperatorStatusConditions(t *testing.T) {
 	type testInputs struct {
-		haveNamespace                           bool
-		numWanted, numAvailable, numUnavailable int
+		haveNamespace           bool
+		numWanted, numAvailable int
 	}
 	type testOutputs struct {
 		failing, progressing, available bool
@@ -25,49 +24,37 @@ func TestComputeStatusConditions(t *testing.T) {
 		inputs      testInputs
 		outputs     testOutputs
 	}{
-		{"no namespace", testInputs{false, 0, 0, 0}, testOutputs{true, false, true}},
-		{"no ingresses, no routers", testInputs{true, 0, 0, 0}, testOutputs{false, false, true}},
-		{"scaling up", testInputs{true, 1, 0, 0}, testOutputs{false, true, false}},
-		{"scaling down", testInputs{true, 0, 1, 0}, testOutputs{false, true, true}},
-		{"0/2 ingresses available", testInputs{true, 2, 0, 2}, testOutputs{false, false, false}},
-		{"1/2 ingresses available", testInputs{true, 2, 1, 1}, testOutputs{false, false, false}},
-		{"2/2 ingresses available", testInputs{true, 2, 2, 0}, testOutputs{false, false, true}},
+		{"no operand namespace", testInputs{false, 0, 0}, testOutputs{true, false, true}},
+		{"no ingresscontrollers available", testInputs{true, 0, 0}, testOutputs{false, false, true}},
+		{"0/2 ingresscontrollers available", testInputs{true, 2, 0}, testOutputs{false, true, false}},
+		{"1/2 ingresscontrollers available", testInputs{true, 2, 1}, testOutputs{false, true, false}},
+		{"2/2 ingresscontrollers available", testInputs{true, 2, 2}, testOutputs{false, false, true}},
 	}
 
 	for _, tc := range testCases {
 		var (
-			namespace   *corev1.Namespace
-			ingresses   []operatorv1.IngressController
-			deployments []appsv1.Deployment
+			namespace *corev1.Namespace
+			ingresses []operatorv1.IngressController
 
 			failing, progressing, available configv1.ConditionStatus
 		)
 		if tc.inputs.haveNamespace {
 			namespace = &corev1.Namespace{}
 		}
+		ingressAvailable := operatorv1.OperatorCondition{
+			Type:   operatorv1.IngressControllerAvailableConditionType,
+			Status: operatorv1.ConditionTrue,
+		}
 		for i := 0; i < tc.inputs.numWanted; i++ {
 			ingresses = append(ingresses,
 				operatorv1.IngressController{
 					ObjectMeta: metav1.ObjectMeta{
-						Name: fmt.Sprintf("ingress-%d", i+1),
+						Name: fmt.Sprintf("ingresscontroller-%d", i+1),
 					},
 				})
 		}
-		numDeployments := tc.inputs.numAvailable + tc.inputs.numUnavailable
-		for i := 0; i < numDeployments; i++ {
-			numberAvailable := 0
-			if i < tc.inputs.numAvailable {
-				numberAvailable = 1
-			}
-			deployments = append(deployments, appsv1.Deployment{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: fmt.Sprintf("router-ingress-%d",
-						i+1),
-				},
-				Status: appsv1.DeploymentStatus{
-					AvailableReplicas: int32(numberAvailable),
-				},
-			})
+		for i := 0; i < tc.inputs.numAvailable; i++ {
+			ingresses[i].Status.Conditions = []operatorv1.OperatorCondition{ingressAvailable}
 		}
 		if tc.outputs.failing {
 			failing = configv1.ConditionTrue
@@ -98,11 +85,10 @@ func TestComputeStatusConditions(t *testing.T) {
 				Status: available,
 			},
 		}
-		new := computeStatusConditions(
+		new := computeOperatorStatusConditions(
 			[]configv1.ClusterOperatorStatusCondition{},
 			namespace,
 			ingresses,
-			deployments,
 		)
 		gotExpected := true
 		if len(new) != len(expected) {
@@ -130,7 +116,7 @@ func TestComputeStatusConditions(t *testing.T) {
 	}
 }
 
-func TestSetStatusCondition(t *testing.T) {
+func TestSetOperatorStatusCondition(t *testing.T) {
 	testCases := []struct {
 		description   string
 		oldConditions []configv1.ClusterOperatorStatusCondition
@@ -207,17 +193,17 @@ func TestSetStatusCondition(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		actual := setStatusCondition(tc.oldConditions, tc.newCondition)
+		actual := setOperatorStatusCondition(tc.oldConditions, tc.newCondition)
 		a := configv1.ClusterOperatorStatus{Conditions: actual}
 		b := configv1.ClusterOperatorStatus{Conditions: tc.expected}
-		if !statusesEqual(a, b) {
+		if !operatorStatusesEqual(a, b) {
 			t.Fatalf("%q: expected %v, got %v", tc.description,
 				tc.expected, actual)
 		}
 	}
 }
 
-func TestStatusesEqual(t *testing.T) {
+func TestOperatorStatusesEqual(t *testing.T) {
 	testCases := []struct {
 		description string
 		expected    bool
@@ -443,7 +429,7 @@ func TestStatusesEqual(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		if actual := statusesEqual(tc.a, tc.b); actual != tc.expected {
+		if actual := operatorStatusesEqual(tc.a, tc.b); actual != tc.expected {
 			t.Fatalf("%q: expected %v, got %v", tc.description, tc.expected, actual)
 		}
 	}
