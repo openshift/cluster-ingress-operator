@@ -224,9 +224,6 @@ func (o *Operator) ensureDefaultIngressController() error {
 	}
 	err = o.client.Create(context.TODO(), ic)
 	if err != nil {
-		if errors.IsAlreadyExists(err) {
-			return nil
-		}
 		return err
 	}
 	log.Info("created default ingresscontroller", "namespace", ic.Namespace, "name", ic.Name)
