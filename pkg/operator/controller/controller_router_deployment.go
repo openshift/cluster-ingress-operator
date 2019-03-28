@@ -16,18 +16,9 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 
 	configv1 "github.com/openshift/api/config/v1"
 )
-
-// routerDeploymentName returns the namespaced name for the router deployment.
-func routerDeploymentName(ci *operatorv1.IngressController) types.NamespacedName {
-	return types.NamespacedName{
-		Namespace: "openshift-ingress",
-		Name:      "router-" + ci.Name,
-	}
-}
 
 // ensureRouterDeployment ensures the router deployment exists for a given
 // clusteringress.
@@ -57,7 +48,7 @@ func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, in
 // clusteringress are deleted.
 func (r *reconciler) ensureRouterDeleted(ci *operatorv1.IngressController) error {
 	deployment := manifests.RouterDeployment(ci)
-	name := routerDeploymentName(ci)
+	name := RouterDeploymentName(ci)
 	deployment.Name = name.Name
 	deployment.Namespace = name.Namespace
 	if err := r.client.Delete(context.TODO(), deployment); !errors.IsNotFound(err) {
@@ -69,7 +60,7 @@ func (r *reconciler) ensureRouterDeleted(ci *operatorv1.IngressController) error
 // desiredRouterDeployment returns the desired router deployment.
 func desiredRouterDeployment(ci *operatorv1.IngressController, routerImage string, infraConfig *configv1.Infrastructure) (*appsv1.Deployment, error) {
 	deployment := manifests.RouterDeployment(ci)
-	name := routerDeploymentName(ci)
+	name := RouterDeploymentName(ci)
 	deployment.Name = name.Name
 	deployment.Namespace = name.Namespace
 
@@ -234,7 +225,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, routerImage strin
 // currentRouterDeployment returns the current router deployment.
 func (r *reconciler) currentRouterDeployment(ci *operatorv1.IngressController) (*appsv1.Deployment, error) {
 	deployment := &appsv1.Deployment{}
-	if err := r.client.Get(context.TODO(), routerDeploymentName(ci), deployment); err != nil {
+	if err := r.client.Get(context.TODO(), RouterDeploymentName(ci), deployment); err != nil {
 		if errors.IsNotFound(err) {
 			return nil, nil
 		}
