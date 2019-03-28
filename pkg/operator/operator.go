@@ -72,7 +72,6 @@ func New(config operatorconfig.Config, dnsManager dns.Manager, kubeConfig *rest.
 	if err != nil {
 		return nil, fmt.Errorf("failed to create kube client: %v", err)
 	}
-	mf := manifests.NewFactory(config)
 
 	scheme := operatorclient.GetScheme()
 	// Set up an operator manager for the operator namespace.
@@ -88,7 +87,7 @@ func New(config operatorconfig.Config, dnsManager dns.Manager, kubeConfig *rest.
 	operatorController, err := operatorcontroller.New(operatorManager, operatorcontroller.Config{
 		KubeConfig:             kubeConfig,
 		Namespace:              config.Namespace,
-		ManifestFactory:        mf,
+		ManifestFactory:        &manifests.Factory{},
 		DNSManager:             dnsManager,
 		RouterImage:            config.RouterImage,
 		OperatorReleaseVersion: config.OperatorReleaseVersion,
@@ -158,7 +157,7 @@ func New(config operatorconfig.Config, dnsManager dns.Manager, kubeConfig *rest.
 
 		// TODO: These are only needed for the default cluster ingress stuff, which
 		// should be refactored away.
-		manifestFactory: mf,
+		manifestFactory: &manifests.Factory{},
 		client:          kubeClient,
 		namespace:       config.Namespace,
 	}, nil
