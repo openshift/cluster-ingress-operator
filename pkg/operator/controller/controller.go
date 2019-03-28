@@ -9,6 +9,7 @@ import (
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
+	"github.com/openshift/cluster-ingress-operator/pkg/operator/validation"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/slice"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -115,48 +116,54 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 	}
 
 	if ingress != nil {
-		dnsConfig := &configv1.DNS{}
-		if err := r.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, dnsConfig); err != nil {
-			errs = append(errs, fmt.Errorf("failed to get dns 'cluster': %v", err))
-			dnsConfig = nil
-		}
-		infraConfig := &configv1.Infrastructure{}
-		if err := r.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, infraConfig); err != nil {
-			errs = append(errs, fmt.Errorf("failed to get infrastructure 'cluster': %v", err))
-			infraConfig = nil
-		}
-		ingressConfig := &configv1.Ingress{}
-		if err := r.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, ingressConfig); err != nil {
-			errs = append(errs, fmt.Errorf("failed to get ingress 'cluster': %v", err))
-			ingressConfig = nil
-		}
-
-		// For now, if the cluster configs are unavailable, defer reconciliation
-		// because weaving conditionals everywhere to deal with various nil states
-		// is too complicated. It doesn't seem too risky to rely on the invariant
-		// of the cluster config being available.
-		if dnsConfig != nil && infraConfig != nil && ingressConfig != nil {
-			// Ensure we have all the necessary scaffolding on which to place router instances.
-			if err := r.ensureRouterNamespace(); err != nil {
-				errs = append(errs, fmt.Errorf("failed to ensure router namespace: %v", err))
+		if verrs := validation.ValidateIngressController(ingress); len(verrs) > 0 {
+			for _, v := range verrs {
+				errs = append(errs, fmt.Errorf("failed to validate ingresscontroller: %v", v))
+			}
+		} else {
+			dnsConfig := &configv1.DNS{}
+			if err := r.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, dnsConfig); err != nil {
+				errs = append(errs, fmt.Errorf("failed to get dns 'cluster': %v", err))
+				dnsConfig = nil
+			}
+			infraConfig := &configv1.Infrastructure{}
+			if err := r.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, infraConfig); err != nil {
+				errs = append(errs, fmt.Errorf("failed to get infrastructure 'cluster': %v", err))
+				infraConfig = nil
+			}
+			ingressConfig := &configv1.Ingress{}
+			if err := r.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, ingressConfig); err != nil {
+				errs = append(errs, fmt.Errorf("failed to get ingress 'cluster': %v", err))
+				ingressConfig = nil
 			}
 
-			if err := r.enforceEffectiveIngressDomain(ingress, ingressConfig); err != nil {
-				errs = append(errs, fmt.Errorf("failed to enforce the effective ingress domain for clusteringress %s: %v", ingress.Name, err))
-			} else if IsStatusDomainSet(ingress) {
-				if err := r.enforceEffectiveEndpointPublishingStrategy(ingress, infraConfig); err != nil {
-					errs = append(errs, fmt.Errorf("failed to enforce the effective HA configuration for clusteringress %s: %v", ingress.Name, err))
-				} else if ingress.DeletionTimestamp != nil {
-					// Handle deletion.
-					if err := r.ensureIngressDeleted(ingress, dnsConfig, infraConfig); err != nil {
-						errs = append(errs, fmt.Errorf("failed to ensure ingress deletion: %v", err))
-					}
-				} else if err := r.enforceIngressFinalizer(ingress); err != nil {
-					errs = append(errs, fmt.Errorf("failed to enforce ingress finalizer %s/%s: %v", ingress.Namespace, ingress.Name, err))
-				} else {
-					// Handle everything else.
-					if err := r.ensureClusterIngress(ingress, dnsConfig, infraConfig); err != nil {
-						errs = append(errs, fmt.Errorf("failed to ensure clusteringress: %v", err))
+			// For now, if the cluster configs are unavailable, defer reconciliation
+			// because weaving conditionals everywhere to deal with various nil states
+			// is too complicated. It doesn't seem too risky to rely on the invariant
+			// of the cluster config being available.
+			if dnsConfig != nil && infraConfig != nil && ingressConfig != nil {
+				// Ensure we have all the necessary scaffolding on which to place router instances.
+				if err := r.ensureRouterNamespace(); err != nil {
+					errs = append(errs, fmt.Errorf("failed to ensure router namespace: %v", err))
+				}
+
+				if err := r.enforceEffectiveIngressDomain(ingress, ingressConfig); err != nil {
+					errs = append(errs, fmt.Errorf("failed to enforce the effective ingress domain for clusteringress %s: %v", ingress.Name, err))
+				} else if IsStatusDomainSet(ingress) {
+					if err := r.enforceEffectiveEndpointPublishingStrategy(ingress, infraConfig); err != nil {
+						errs = append(errs, fmt.Errorf("failed to enforce the effective HA configuration for clusteringress %s: %v", ingress.Name, err))
+					} else if ingress.DeletionTimestamp != nil {
+						// Handle deletion.
+						if err := r.ensureIngressDeleted(ingress, dnsConfig, infraConfig); err != nil {
+							errs = append(errs, fmt.Errorf("failed to ensure ingress deletion: %v", err))
+						}
+					} else if err := r.enforceIngressFinalizer(ingress); err != nil {
+						errs = append(errs, fmt.Errorf("failed to enforce ingress finalizer %s/%s: %v", ingress.Namespace, ingress.Name, err))
+					} else {
+						// Handle everything else.
+						if err := r.ensureClusterIngress(ingress, dnsConfig, infraConfig); err != nil {
+							errs = append(errs, fmt.Errorf("failed to ensure clusteringress: %v", err))
+						}
 					}
 				}
 			}
