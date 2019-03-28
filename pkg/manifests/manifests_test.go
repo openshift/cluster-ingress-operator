@@ -64,7 +64,7 @@ func TestManifests(t *testing.T) {
 	}
 
 	RouterNamespace()
-	RouterDeployment(ci)
+	RouterDeployment()
 	InternalIngressControllerService()
 	LoadBalancerService()
 }
