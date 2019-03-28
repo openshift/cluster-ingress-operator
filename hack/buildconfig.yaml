@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: Template
+metadata:
+  name: ingress-operator-build
+  annotations:
+    description: "Template for building the ingress operator."
+objects:
+- apiVersion: v1
+  kind: ImageStream
+  metadata:
+    name: ingress-operator
+- apiVersion: v1
+  kind: BuildConfig
+  metadata:
+    name: ingress-operator
+  spec:
+    output:
+      to:
+        kind: ImageStreamTag
+        name: ingress-operator:latest
+    source:
+      git:
+        uri: ${GIT_URL}
+        ref: ${GIT_BRANCH}
+      type: Git
+    strategy:
+      dockerStrategy:
+        dockerfilePath: Dockerfile
+      type: Docker
+parameters:
+- description: 'URL for the ingress operator Git repository'
+  name: GIT_URL
+  value: https://github.com/openshift/cluster-ingress-operator
+- description: 'Git branch'
+  name: GIT_BRANCH
+  value: master

@@ -13,6 +13,14 @@ TEST ?= .*
 build:
 	$(GO_BUILD_RECIPE)
 
+.PHONY: buildconfig
+buildconfig:
+	hack/create-buildconfig.sh
+
+.PHONY: cluster-build
+cluster-build:
+	hack/start-build.sh
+
 .PHONY: generate
 generate:
 	hack/update-generated-bindata.sh
