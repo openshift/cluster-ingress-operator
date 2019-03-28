@@ -7,6 +7,7 @@ required = [
   "k8s.io/code-generator/cmd/openapi-gen",
   "k8s.io/gengo/args",
   "github.com/kevinburke/go-bindata",
+  "github.com/openshift/library-go/cmd/crd-schema-gen", # required for generating ingress crd
 ]
 
 [prune]
@@ -37,7 +38,7 @@ required = [
 
 [[constraint]]
   name = "github.com/openshift/library-go"
-  revision = "cef3bac303c956844aa15215630d26b1e0a1085a"
+  revision = "fc4b2d5cbcf0ab855422e340c78fe7a53a38bee3"
 
 [[override]]
   name = "github.com/openshift/api"
