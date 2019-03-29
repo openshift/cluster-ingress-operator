@@ -273,20 +273,8 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 	}
 
 	updated := current.DeepCopy()
-	volumes := make([]corev1.Volume, len(expected.Spec.Template.Spec.Volumes))
-	for i, vol := range expected.Spec.Template.Spec.Volumes {
-		volumes[i] = *vol.DeepCopy()
-	}
-	updated.Spec.Template.Spec.Volumes = volumes
-	updated.Spec.Template.Spec.NodeSelector = expected.Spec.Template.Spec.NodeSelector
-	updated.Spec.Template.Spec.Containers[0].Env = expected.Spec.Template.Spec.Containers[0].Env
-	updated.Spec.Template.Spec.Containers[0].Image = expected.Spec.Template.Spec.Containers[0].Image
-	replicas := int32(1)
-	if expected.Spec.Replicas != nil {
-		replicas = *expected.Spec.Replicas
-	}
-	updated.Spec.Replicas = &replicas
-	updated.Spec.Template.Spec.HostNetwork = expected.Spec.Template.Spec.HostNetwork
+	expectedCopy := expected.DeepCopy()
+	updated.Spec = expectedCopy.Spec
 	return true, updated
 }
 
