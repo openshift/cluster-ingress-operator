@@ -53,7 +53,7 @@ func init() {
 }
 
 // Operator is the scaffolding for the ingress operator. It sets up dependencies
-// and defines the toplogy of the operator and its managed components, wiring
+// and defines the topology of the operator and its managed components, wiring
 // them together. Operator knows what namespace the operator lives in, and what
 // specific resoure types in other namespaces should produce operator events.
 type Operator struct {
@@ -119,7 +119,7 @@ func New(config operatorconfig.Config, dnsManager dns.Manager, kubeConfig *rest.
 		obj := o.DeepCopyObject()
 		informer, err := operandCache.GetInformer(obj)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create informer for %v: %v", obj, err)
+			return nil, fmt.Errorf("failed to get informer for %v: %v", obj, err)
 		}
 		operatorController.Watch(&source.Informer{Informer: informer}, &handler.EnqueueRequestsFromMapFunc{
 			ToRequests: handler.ToRequestsFunc(func(a handler.MapObject) []reconcile.Request {

@@ -118,7 +118,7 @@ func (f *Factory) RouterStatsSecret(cr *operatorv1.IngressController) (*corev1.S
 	return s, nil
 }
 
-func RouterDeployment(cr *operatorv1.IngressController) *appsv1.Deployment {
+func RouterDeployment() *appsv1.Deployment {
 	deployment, err := NewDeployment(MustAssetReader(RouterDeploymentAsset))
 	if err != nil {
 		panic(err)
