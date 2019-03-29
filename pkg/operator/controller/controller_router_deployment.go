@@ -267,7 +267,8 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 		cmp.Equal(current.Spec.Template.Spec.Containers[0].Env, expected.Spec.Template.Spec.Containers[0].Env, cmpopts.EquateEmpty(), cmpopts.SortSlices(cmpEnvs)) &&
 		current.Spec.Template.Spec.Containers[0].Image == expected.Spec.Template.Spec.Containers[0].Image &&
 		current.Spec.Replicas != nil &&
-		*current.Spec.Replicas == *expected.Spec.Replicas {
+		*current.Spec.Replicas == *expected.Spec.Replicas &&
+		current.Spec.Template.Spec.HostNetwork == current.Spec.Template.Spec.HostNetwork {
 		return false, nil
 	}
 
@@ -285,6 +286,7 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 		replicas = *expected.Spec.Replicas
 	}
 	updated.Spec.Replicas = &replicas
+	updated.Spec.Template.Spec.HostNetwork = expected.Spec.Template.Spec.HostNetwork
 	return true, updated
 }
 

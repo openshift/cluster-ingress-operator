@@ -91,22 +91,43 @@ func getClient() (*testClient, string, error) {
 	return &testClient{kubeClient}, namespace, nil
 }
 
-func newIngressController(name, ns, domain string, epType operatorv1.EndpointPublishingStrategyType) *operatorv1.IngressController {
+func newUniqueAvailableIngressController(cl *testClient, epst operatorv1.EndpointPublishingStrategyType) (*operatorv1.IngressController, error) {
+	dnsConfig := &configv1.DNS{}
+	if err := cl.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, dnsConfig); err != nil {
+		return nil, fmt.Errorf("failed to get DNS 'cluster': %v", err)
+	}
+
+	name := randomName("test-")
 	repl := int32(1)
-	return &operatorv1.IngressController{
+	ic := &operatorv1.IngressController{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: ns,
+			GenerateName: name,
+			Namespace:    "openshift-ingress-operator",
 		},
 		// TODO: Test needs to be infrastructure and platform aware in the very near future.
 		Spec: operatorv1.IngressControllerSpec{
-			Domain:   domain,
+			Domain:   name + "." + dnsConfig.Spec.BaseDomain,
 			Replicas: &repl,
 			EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
-				Type: epType,
+				Type: epst,
 			},
 		},
 	}
+
+	if err := cl.Create(context.TODO(), ic); err != nil {
+		return nil, fmt.Errorf("failed to create ingresscontroller: %v", err)
+	}
+
+	// Verify the ingress controller deployment created the specified
+	// number of pod replicas.
+	if err := waitForIngressControllerAvailable(cl, ic, 60*time.Second); err != nil {
+		return nil, fmt.Errorf("ingresscontroller %s/%s failed to become available: %v", ic.Namespace, ic.Name, err)
+	}
+	return ic, nil
+}
+
+func randomName(prefix string) string {
+	return prefix + string([]byte(fmt.Sprintf("%d", time.Now().UnixNano()))[3:8])
 }
 
 func ingressControllerAvailable(ic *operatorv1.IngressController) bool {
@@ -184,82 +205,68 @@ func TestDefaultClusterIngressExists(t *testing.T) {
 	}
 }
 
-func TestClusterIngressControllerCreateDelete(t *testing.T) {
-	cl, ns, err := getClient()
+func TestEndpointPublishingStrategyChanges(t *testing.T) {
+	cl, _, err := getClient()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	ing := &operatorv1.IngressController{}
-	if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: ns, Name: operator.DefaultIngressController}, ing); err != nil {
-		t.Fatalf("failed to get default IngressController: %v", err)
-	}
-
-	dnsConfig := &configv1.DNS{}
-	if err := cl.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, dnsConfig); err != nil {
-		t.Fatalf("failed to get DNS 'cluster': %v", err)
-	}
-
-	domain := ingressControllerName + "." + dnsConfig.Spec.BaseDomain
-	ing = newIngressController(ingressControllerName, ns, domain, operatorv1.LoadBalancerServiceStrategyType)
-	if err := cl.Create(context.TODO(), ing); err != nil {
-		t.Fatalf("failed to create ingresscontroller %s/%s: %v", ing.Namespace, ing.Name, err)
-	}
-
-	// Verify the ingress controller deployment created the specified
-	// number of pod replicas.
-	err = waitForIngressControllerAvailable(cl, ing, 60*time.Second)
+	ing, err := newUniqueAvailableIngressController(cl, operatorv1.PrivateStrategyType)
 	if err != nil {
-		t.Errorf("ingresscontroller %s/%s failed to become available: %v", ing.Namespace, ing.Name, err)
+		t.Fatal(err)
+	}
+	t.Logf("created ingresscontroller %s/%s", ing.Namespace, ing.Name)
+
+	defer func() {
+		// Delete the ingresscontroller and wait for it to be finalized
+		if err := cl.Delete(context.TODO(), ing); err != nil {
+			t.Fatalf("failed to delete ingresscontroller %s/%s: %v", ing.Namespace, ing.Name, err)
+		}
+		if err := cl.WaitForNotFound(context.TODO(), types.NamespacedName{ing.Namespace, ing.Name}, ing, 60*time.Second); err != nil {
+			t.Fatalf("failed to finalize ingresscontroller %s/%s: %v", ing.Namespace, ing.Name, err)
+		}
+		t.Logf("deleted ingresscontroller %s/%s", ing.Namespace, ing.Name)
+	}()
+
+	tests := []struct {
+		from operatorv1.EndpointPublishingStrategyType
+		to   operatorv1.EndpointPublishingStrategyType
+	}{
+		{from: operatorv1.PrivateStrategyType, to: operatorv1.LoadBalancerServiceStrategyType},
+		{from: operatorv1.PrivateStrategyType, to: operatorv1.HostNetworkStrategyType},
+		{from: operatorv1.LoadBalancerServiceStrategyType, to: operatorv1.PrivateStrategyType},
+		{from: operatorv1.LoadBalancerServiceStrategyType, to: operatorv1.HostNetworkStrategyType},
+		{from: operatorv1.HostNetworkStrategyType, to: operatorv1.PrivateStrategyType},
+		{from: operatorv1.HostNetworkStrategyType, to: operatorv1.LoadBalancerServiceStrategyType},
 	}
 
-	// Change the publishing strategy type to private
-	ing.Spec.EndpointPublishingStrategy.Type = operatorv1.PrivateStrategyType
-	err = cl.Update(context.TODO(), ing)
-	if err != nil {
-		t.Fatalf("failed to update ingresscontroller: %v", err)
-	}
+	for _, test := range tests {
+		t.Logf("testing transition from %s -> %s", test.from, test.to)
 
-	// Wait for status to reflect the strategy change
-	err = waitForEndpointPublishingStrategyStatus(cl, ing, operatorv1.PrivateStrategyType, 60*time.Second)
-	if err != nil {
-		t.Errorf("timed out waiting for ingresscontroller status to reflect private endpoint publishing strategy: %v", err)
-	}
-
-	// Wait for the LB service to be deleted
-	svc := &corev1.Service{}
-	err = cl.WaitForNotFound(context.TODO(), ingresscontroller.LoadBalancerServiceName(ing), svc, 60*time.Second)
-	if err != nil {
-		t.Errorf("timed out waiting for loadbalancer service to be deleted: %v", err)
-	}
-
-	// Change the publishing strategy type back to LB
-	ing.Spec.EndpointPublishingStrategy.Type = operatorv1.LoadBalancerServiceStrategyType
-	err = cl.Update(context.TODO(), ing)
-	if err != nil {
-		t.Fatalf("failed to update ingresscontroller: %v", err)
-	}
-
-	// Wait for status to reflect the strategy change
-	err = waitForEndpointPublishingStrategyStatus(cl, ing, operatorv1.LoadBalancerServiceStrategyType, 60*time.Second)
-	if err != nil {
-		t.Errorf("timed out waiting for ingresscontroller status to reflect LB endpoint publishing strategy: %v", err)
-	}
-
-	// Wait for the LB service to reappear
-	err = cl.RetryGet(context.TODO(), ingresscontroller.LoadBalancerServiceName(ing), svc, 60*time.Second)
-	if err != nil {
-		t.Errorf("timed out waiting for loadbalancer service to be created: %v", err)
-	}
-
-	// Delete the ingresscontroller and wait for it to be finalized
-	if err := cl.Delete(context.TODO(), ing); err != nil {
-		t.Fatalf("failed to delete ingresscontroller %s/%s: %v", ing.Namespace, ing.Name, err)
-	}
-
-	err = cl.WaitForNotFound(context.TODO(), types.NamespacedName{ing.Namespace, ing.Name}, ing, 60*time.Second)
-	if err != nil {
-		t.Fatalf("failed to finalize IngressController %s/%s: %v", ing.Namespace, ing.Name, err)
+		transition := func(strategy operatorv1.EndpointPublishingStrategyType) {
+			ing.Spec.EndpointPublishingStrategy.Type = strategy
+			if err := cl.Update(context.TODO(), ing); err != nil {
+				t.Fatalf("failed to update ingresscontroller: %v", err)
+			}
+			if err := waitForEndpointPublishingStrategyStatus(cl, ing, strategy, 60*time.Second); err != nil {
+				t.Fatalf("timed out waiting for ingresscontroller status to reflect endpoint publishing strategy %q: %v", strategy, err)
+			}
+			if err := waitForIngressControllerAvailable(cl, ing, 60*time.Second); err != nil {
+				t.Fatalf("ingresscontroller %q failed to become available: %v", ing.Name, err)
+			}
+			switch strategy {
+			case operatorv1.PrivateStrategyType, operatorv1.HostNetworkStrategyType:
+				if err := cl.WaitForNotFound(context.TODO(), ingresscontroller.LoadBalancerServiceName(ing), &corev1.Service{}, 60*time.Second); err != nil {
+					t.Errorf("timed out waiting for loadbalancer service to be not found: %v", err)
+				}
+			case operatorv1.LoadBalancerServiceStrategyType:
+				if err := cl.RetryGet(context.TODO(), ingresscontroller.LoadBalancerServiceName(ing), &corev1.Service{}, 60*time.Second); err != nil {
+					t.Errorf("timed out waiting for loadbalancer service to exist: %v", err)
+				}
+			}
+		}
+		transition(test.from)
+		transition(test.to)
 	}
 }
 
@@ -724,48 +731,5 @@ func TestRouterCACertificate(t *testing.T) {
 	// error.
 	if _, err := io.Copy(ioutil.Discard, conn); err != nil && err != io.EOF {
 		t.Fatalf("failed to read response from router at %s: %v", address, err)
-	}
-}
-
-// TestHostNetworkEndpointPublishingStrategy creates an ingresscontroller with
-// the "HostNetwork" endpoint publishing strategy type and verifies that the
-// operator creates a router and that the router becomes available.
-func TestHostNetworkEndpointPublishingStrategy(t *testing.T) {
-	cl, ns, err := getClient()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	dnsConfig := &configv1.DNS{}
-	if err := cl.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, dnsConfig); err != nil {
-		t.Fatalf("failed to get DNS 'cluster': %v", err)
-	}
-
-	// Create the ingresscontroller.
-	domain := ingressControllerName + "." + dnsConfig.Spec.BaseDomain
-	ing := newIngressController(ingressControllerName, ns, domain, operatorv1.HostNetworkStrategyType)
-	if cl.Create(context.TODO(), ing); err != nil {
-		t.Fatalf("failed to create the ingresscontroller: %v", err)
-	}
-
-	// Wait for the deployment to exist and be available.
-	err = wait.PollImmediate(1*time.Second, 60*time.Second, func() (bool, error) {
-		deployment := &appsv1.Deployment{}
-		if err := cl.Get(context.TODO(), ingresscontroller.RouterDeploymentName(ing), deployment); err != nil {
-			return false, nil
-		}
-		if ing.Spec.Replicas == nil || deployment.Status.AvailableReplicas != *ing.Spec.Replicas {
-			return false, nil
-		}
-		return true, nil
-	})
-	if err != nil {
-		// Use Errorf rather than Fatalf so that we continue on to
-		// delete the ingresscontroller.
-		t.Errorf("failed to get deployment: %v", err)
-	}
-
-	if cl.Delete(context.TODO(), ing); err != nil {
-		t.Fatalf("failed to delete the ingresscontroller: %v", err)
 	}
 }
