@@ -102,3 +102,7 @@ func InternalIngressControllerServiceName(ic *operatorv1.IngressController) type
 	// TODO: remove hard-coded namespace
 	return types.NamespacedName{Namespace: "openshift-ingress", Name: "router-internal-" + ic.Name}
 }
+
+func LoadBalancerServiceName(ic *operatorv1.IngressController) types.NamespacedName {
+	return types.NamespacedName{Namespace: "openshift-ingress", Name: "router-" + ic.Name}
+}

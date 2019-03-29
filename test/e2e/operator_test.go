@@ -17,6 +17,7 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
+	operator "github.com/openshift/cluster-ingress-operator/pkg/operator"
 	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
 	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
@@ -112,7 +113,7 @@ func TestDefaultClusterIngressExists(t *testing.T) {
 
 	ci := &operatorv1.IngressController{}
 	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
-		if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: ns, Name: "default"}, ci); err != nil {
+		if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: ns, Name: operator.DefaultIngressController}, ci); err != nil {
 			return false, nil
 		}
 		return true, nil
@@ -129,7 +130,7 @@ func TestClusterIngressControllerCreateDelete(t *testing.T) {
 	}
 
 	ing := &operatorv1.IngressController{}
-	if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: ns, Name: "default"}, ing); err != nil {
+	if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: ns, Name: operator.DefaultIngressController}, ing); err != nil {
 		t.Fatalf("failed to get default IngressController: %v", err)
 	}
 
@@ -141,7 +142,7 @@ func TestClusterIngressControllerCreateDelete(t *testing.T) {
 	domain := ingressControllerName + "." + dnsConfig.Spec.BaseDomain
 	ing = newIngressController(ingressControllerName, ns, domain, operatorv1.LoadBalancerServiceStrategyType)
 	if err := cl.Create(context.TODO(), ing); err != nil {
-		t.Fatalf("failed to create IngressController %s/%s: %v", ing.Namespace, ing.Name, err)
+		t.Fatalf("failed to create ingresscontroller %s/%s: %v", ing.Namespace, ing.Name, err)
 	}
 
 	// Verify the ingress controller deployment created the specified
@@ -156,11 +157,93 @@ func TestClusterIngressControllerCreateDelete(t *testing.T) {
 		return true, nil
 	})
 	if err != nil {
-		t.Errorf("failed to reconcile IngressController %s/%s: %v", ing.Namespace, ing.Name, err)
+		t.Errorf("ingresscontroller %s/%s failed to become available: %v", ing.Namespace, ing.Name, err)
 	}
 
+	// Change the publishing strategy type to private
+	ing.Spec.EndpointPublishingStrategy.Type = operatorv1.PrivateStrategyType
+	err = cl.Update(context.TODO(), ing)
+	if err != nil {
+		t.Fatalf("failed to update ingresscontroller: %v", err)
+	}
+
+	// Wait for status to reflect the strategy change
+	err = wait.PollImmediate(1*time.Second, 60*time.Second, func() (bool, error) {
+		if err := cl.Get(context.TODO(), types.NamespacedName{ing.Namespace, ing.Name}, ing); err != nil {
+			return false, nil
+		}
+		strategy := ing.Status.EndpointPublishingStrategy
+		switch {
+		case strategy == nil:
+			return false, nil
+		case strategy.Type == operatorv1.PrivateStrategyType:
+			return true, nil
+		default:
+			return false, nil
+		}
+	})
+	if err != nil {
+		t.Errorf("timed out waiting for ingresscontroller status to reflect private endpoint publishing strategy: %v", err)
+	}
+
+	// Wait for the LB service to be deleted
+	err = wait.PollImmediate(1*time.Second, 60*time.Second, func() (bool, error) {
+		svc := &corev1.Service{}
+		if err := cl.Get(context.TODO(), ingresscontroller.LoadBalancerServiceName(ing), svc); err == nil {
+			return false, nil
+		} else {
+			if errors.IsNotFound(err) {
+				return true, nil
+			}
+			return false, err
+		}
+	})
+	if err != nil {
+		t.Errorf("timed out waiting for loadbalancer service to be deleted: %v", err)
+	}
+
+	// Change the publishing strategy type back to LB
+	ing.Spec.EndpointPublishingStrategy.Type = operatorv1.LoadBalancerServiceStrategyType
+	err = cl.Update(context.TODO(), ing)
+	if err != nil {
+		t.Fatalf("failed to update ingresscontroller: %v", err)
+	}
+
+	// Wait for status to reflect the strategy change
+	err = wait.PollImmediate(1*time.Second, 60*time.Second, func() (bool, error) {
+		if err := cl.Get(context.TODO(), types.NamespacedName{ing.Namespace, ing.Name}, ing); err != nil {
+			return false, nil
+		}
+		strategy := ing.Status.EndpointPublishingStrategy
+		switch {
+		case strategy == nil:
+			return false, nil
+		case strategy.Type == operatorv1.LoadBalancerServiceStrategyType:
+			return true, nil
+		default:
+			return false, nil
+		}
+	})
+	if err != nil {
+		t.Errorf("timed out waiting for ingresscontroller status to reflect LB endpoint publishing strategy: %v", err)
+	}
+
+	// Wait for the LB service to reappear
+	err = wait.PollImmediate(1*time.Second, 60*time.Second, func() (bool, error) {
+		svc := &corev1.Service{}
+		if err := cl.Get(context.TODO(), ingresscontroller.LoadBalancerServiceName(ing), svc); err == nil {
+			return true, nil
+		} else {
+			return false, err
+		}
+	})
+	if err != nil {
+		t.Errorf("timed out waiting for loadbalancer service to be created: %v", err)
+	}
+
+	// Delete the ingresscontroller and wait for it to be finalized
 	if err := cl.Delete(context.TODO(), ing); err != nil {
-		t.Fatalf("failed to delete IngressController %s/%s: %v", ing.Namespace, ing.Name, err)
+		t.Fatalf("failed to delete ingresscontroller %s/%s: %v", ing.Namespace, ing.Name, err)
 	}
 
 	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
@@ -276,13 +359,13 @@ func TestClusterIngressUpdate(t *testing.T) {
 
 	ci := &operatorv1.IngressController{}
 	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
-		if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: ns, Name: "default"}, ci); err != nil {
+		if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: ns, Name: operator.DefaultIngressController}, ci); err != nil {
 			return false, nil
 		}
 		return true, nil
 	})
 	if err != nil {
-		t.Fatalf("failed to get default ClusterIngress: %v", err)
+		t.Fatalf("failed to get default ingresscontroller: %v", err)
 	}
 
 	// Wait for the router deployment to exist.
@@ -294,13 +377,13 @@ func TestClusterIngressUpdate(t *testing.T) {
 		return true, nil
 	})
 	if err != nil {
-		t.Fatalf("failed to get default router deployment: %v", err)
+		t.Fatalf("failed to get default ingresscontroller deployment: %v", err)
 	}
 
 	// Wait for the CA certificate configmap to exist.
 	configmap := &corev1.ConfigMap{}
 	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
-		if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: ingresscontroller.GlobalMachineSpecifiedConfigNamespace, Name: "router-ca"}, configmap); err != nil {
+		if err := cl.Get(context.TODO(), ingresscontroller.RouterCAConfigMapName(), configmap); err != nil {
 			if !errors.IsNotFound(err) {
 				t.Logf("failed to get CA certificate configmap, will retry: %v", err)
 			}
@@ -313,13 +396,13 @@ func TestClusterIngressUpdate(t *testing.T) {
 	}
 
 	originalSecret := ci.Spec.DefaultCertificate.DeepCopy()
-	expectedSecretName := fmt.Sprintf("router-certs-%s", ci.Name)
+	expectedSecretName := ingresscontroller.RouterOperatorGeneratedDefaultCertificateSecretName(ci, "openshift-ingress")
 	if originalSecret != nil {
-		expectedSecretName = originalSecret.Name
+		expectedSecretName = types.NamespacedName{Namespace: "openshift-ingress", Name: originalSecret.Name}
 	}
 
-	if deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName != expectedSecretName {
-		t.Fatalf("expected router deployment certificate secret to be %s, got %s",
+	if deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName != expectedSecretName.Name {
+		t.Fatalf("expected deployment certificate secret to be %s, got %s",
 			expectedSecretName, deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName)
 	}
 
@@ -332,7 +415,7 @@ func TestClusterIngressUpdate(t *testing.T) {
 	ci.Spec.DefaultCertificate = &corev1.LocalObjectReference{Name: secret.Name}
 	err = cl.Update(context.TODO(), ci)
 	if err != nil {
-		t.Fatalf("failed to get default ClusterIngress: %v", err)
+		t.Fatalf("failed to update ingresscontroller: %v", err)
 	}
 	err = wait.PollImmediate(1*time.Second, 15*time.Second, func() (bool, error) {
 		if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: deployment.Namespace, Name: deployment.Name}, deployment); err != nil {
@@ -344,12 +427,12 @@ func TestClusterIngressUpdate(t *testing.T) {
 		return true, nil
 	})
 	if err != nil {
-		t.Fatalf("failed to get updated router deployment %s/%s: %v", deployment.Namespace, deployment.Name, err)
+		t.Fatalf("failed to get updated ingresscontroller deployment %s/%s: %v", deployment.Namespace, deployment.Name, err)
 	}
 
 	// Wait for the CA certificate configmap to be deleted.
 	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
-		if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: ingresscontroller.GlobalMachineSpecifiedConfigNamespace, Name: "router-ca"}, configmap); err != nil {
+		if err := cl.Get(context.TODO(), ingresscontroller.RouterCAConfigMapName(), configmap); err != nil {
 			if errors.IsNotFound(err) {
 				return true, nil
 			}
@@ -361,15 +444,16 @@ func TestClusterIngressUpdate(t *testing.T) {
 		t.Fatalf("failed to observe clean-up of CA certificate configmap: %v", err)
 	}
 
+	// Reset the original secret
 	ci.Spec.DefaultCertificate = originalSecret
 	err = cl.Update(context.TODO(), ci)
 	if err != nil {
-		t.Errorf("failed to reset ClusterIngress: %v", err)
+		t.Errorf("failed to update ingresscontroller: %v", err)
 	}
 
 	// Wait for the CA certificate configmap to be recreated.
 	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
-		if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: ingresscontroller.GlobalMachineSpecifiedConfigNamespace, Name: "router-ca"}, configmap); err != nil {
+		if err := cl.Get(context.TODO(), ingresscontroller.RouterCAConfigMapName(), configmap); err != nil {
 			if !errors.IsNotFound(err) {
 				t.Logf("failed to get CA certificate configmap, will retry: %v", err)
 			}
