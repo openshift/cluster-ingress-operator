@@ -229,6 +229,7 @@ func (r *reconciler) currentRouterDeployment(ci *operatorv1.IngressController) (
 		if errors.IsNotFound(err) {
 			return nil, nil
 		}
+		return nil, err
 	}
 	return deployment, nil
 }
