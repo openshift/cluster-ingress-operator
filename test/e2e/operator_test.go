@@ -28,6 +28,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apiserver/pkg/storage/names"
@@ -43,7 +44,37 @@ const (
 	ingressControllerName = "test"
 )
 
-func getClient() (client.Client, string, error) {
+type testClient struct {
+	client.Client
+}
+
+func (c *testClient) RetryGet(ctx context.Context, key client.ObjectKey, obj runtime.Object, timeout time.Duration) error {
+	return wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
+		if err := c.Client.Get(context.TODO(), key, obj); err == nil {
+			return true, nil
+		} else {
+			if errors.IsNotFound(err) {
+				return false, nil
+			}
+			return false, err
+		}
+	})
+}
+
+func (c *testClient) WaitForNotFound(ctx context.Context, key client.ObjectKey, obj runtime.Object, timeout time.Duration) error {
+	return wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
+		if err := c.Client.Get(context.TODO(), key, obj); err == nil {
+			return false, nil
+		} else {
+			if errors.IsNotFound(err) {
+				return true, nil
+			}
+			return false, err
+		}
+	})
+}
+
+func getClient() (*testClient, string, error) {
 	namespace, ok := os.LookupEnv("WATCH_NAMESPACE")
 	if !ok {
 		return nil, "", fmt.Errorf("WATCH_NAMESPACE environment variable is required")
@@ -57,7 +88,7 @@ func getClient() (client.Client, string, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to create kube client: %s", err)
 	}
-	return kubeClient, namespace, nil
+	return &testClient{kubeClient}, namespace, nil
 }
 
 func newIngressController(name, ns, domain string, epType operatorv1.EndpointPublishingStrategyType) *operatorv1.IngressController {
@@ -76,6 +107,41 @@ func newIngressController(name, ns, domain string, epType operatorv1.EndpointPub
 			},
 		},
 	}
+}
+
+func ingressControllerAvailable(ic *operatorv1.IngressController) bool {
+	for _, cond := range ic.Status.Conditions {
+		if cond.Type == operatorv1.OperatorStatusTypeAvailable && cond.Status == operatorv1.ConditionTrue {
+			return true
+		}
+	}
+	return false
+}
+
+func waitForIngressControllerAvailable(cl client.Client, ic *operatorv1.IngressController, timeout time.Duration) error {
+	return wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
+		if err := cl.Get(context.TODO(), types.NamespacedName{ic.Namespace, ic.Name}, ic); err != nil {
+			return false, err
+		}
+		return ingressControllerAvailable(ic), nil
+	})
+}
+
+func waitForEndpointPublishingStrategyStatus(cl client.Client, ic *operatorv1.IngressController, expected operatorv1.EndpointPublishingStrategyType, timeout time.Duration) error {
+	return wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
+		if err := cl.Get(context.TODO(), types.NamespacedName{ic.Namespace, ic.Name}, ic); err != nil {
+			return false, nil
+		}
+		strategy := ic.Status.EndpointPublishingStrategy
+		switch {
+		case strategy == nil:
+			return false, nil
+		case strategy.Type == expected:
+			return true, nil
+		default:
+			return false, nil
+		}
+	})
 }
 
 func TestOperatorAvailable(t *testing.T) {
@@ -112,12 +178,7 @@ func TestDefaultClusterIngressExists(t *testing.T) {
 	}
 
 	ci := &operatorv1.IngressController{}
-	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
-		if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: ns, Name: operator.DefaultIngressController}, ci); err != nil {
-			return false, nil
-		}
-		return true, nil
-	})
+	err = cl.RetryGet(context.TODO(), types.NamespacedName{Namespace: ns, Name: operator.DefaultIngressController}, ci, 10*time.Second)
 	if err != nil {
 		t.Errorf("failed to get default ClusterIngress: %v", err)
 	}
@@ -147,15 +208,7 @@ func TestClusterIngressControllerCreateDelete(t *testing.T) {
 
 	// Verify the ingress controller deployment created the specified
 	// number of pod replicas.
-	err = wait.PollImmediate(1*time.Second, 60*time.Second, func() (bool, error) {
-		if err := cl.Get(context.TODO(), types.NamespacedName{ing.Namespace, ing.Name}, ing); err != nil {
-			return false, nil
-		}
-		if ing.Status.AvailableReplicas != *ing.Spec.Replicas {
-			return false, nil
-		}
-		return true, nil
-	})
+	err = waitForIngressControllerAvailable(cl, ing, 60*time.Second)
 	if err != nil {
 		t.Errorf("ingresscontroller %s/%s failed to become available: %v", ing.Namespace, ing.Name, err)
 	}
@@ -168,36 +221,14 @@ func TestClusterIngressControllerCreateDelete(t *testing.T) {
 	}
 
 	// Wait for status to reflect the strategy change
-	err = wait.PollImmediate(1*time.Second, 60*time.Second, func() (bool, error) {
-		if err := cl.Get(context.TODO(), types.NamespacedName{ing.Namespace, ing.Name}, ing); err != nil {
-			return false, nil
-		}
-		strategy := ing.Status.EndpointPublishingStrategy
-		switch {
-		case strategy == nil:
-			return false, nil
-		case strategy.Type == operatorv1.PrivateStrategyType:
-			return true, nil
-		default:
-			return false, nil
-		}
-	})
+	err = waitForEndpointPublishingStrategyStatus(cl, ing, operatorv1.PrivateStrategyType, 60*time.Second)
 	if err != nil {
 		t.Errorf("timed out waiting for ingresscontroller status to reflect private endpoint publishing strategy: %v", err)
 	}
 
 	// Wait for the LB service to be deleted
-	err = wait.PollImmediate(1*time.Second, 60*time.Second, func() (bool, error) {
-		svc := &corev1.Service{}
-		if err := cl.Get(context.TODO(), ingresscontroller.LoadBalancerServiceName(ing), svc); err == nil {
-			return false, nil
-		} else {
-			if errors.IsNotFound(err) {
-				return true, nil
-			}
-			return false, err
-		}
-	})
+	svc := &corev1.Service{}
+	err = cl.WaitForNotFound(context.TODO(), ingresscontroller.LoadBalancerServiceName(ing), svc, 60*time.Second)
 	if err != nil {
 		t.Errorf("timed out waiting for loadbalancer service to be deleted: %v", err)
 	}
@@ -210,33 +241,13 @@ func TestClusterIngressControllerCreateDelete(t *testing.T) {
 	}
 
 	// Wait for status to reflect the strategy change
-	err = wait.PollImmediate(1*time.Second, 60*time.Second, func() (bool, error) {
-		if err := cl.Get(context.TODO(), types.NamespacedName{ing.Namespace, ing.Name}, ing); err != nil {
-			return false, nil
-		}
-		strategy := ing.Status.EndpointPublishingStrategy
-		switch {
-		case strategy == nil:
-			return false, nil
-		case strategy.Type == operatorv1.LoadBalancerServiceStrategyType:
-			return true, nil
-		default:
-			return false, nil
-		}
-	})
+	err = waitForEndpointPublishingStrategyStatus(cl, ing, operatorv1.LoadBalancerServiceStrategyType, 60*time.Second)
 	if err != nil {
 		t.Errorf("timed out waiting for ingresscontroller status to reflect LB endpoint publishing strategy: %v", err)
 	}
 
 	// Wait for the LB service to reappear
-	err = wait.PollImmediate(1*time.Second, 60*time.Second, func() (bool, error) {
-		svc := &corev1.Service{}
-		if err := cl.Get(context.TODO(), ingresscontroller.LoadBalancerServiceName(ing), svc); err == nil {
-			return true, nil
-		} else {
-			return false, err
-		}
-	})
+	err = cl.RetryGet(context.TODO(), ingresscontroller.LoadBalancerServiceName(ing), svc, 60*time.Second)
 	if err != nil {
 		t.Errorf("timed out waiting for loadbalancer service to be created: %v", err)
 	}
@@ -246,15 +257,7 @@ func TestClusterIngressControllerCreateDelete(t *testing.T) {
 		t.Fatalf("failed to delete ingresscontroller %s/%s: %v", ing.Namespace, ing.Name, err)
 	}
 
-	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
-		if err := cl.Get(context.TODO(), types.NamespacedName{ing.Namespace, ing.Name}, ing); err != nil {
-			if errors.IsNotFound(err) {
-				return true, nil
-			}
-			return false, nil
-		}
-		return false, nil
-	})
+	err = cl.WaitForNotFound(context.TODO(), types.NamespacedName{ing.Namespace, ing.Name}, ing, 60*time.Second)
 	if err != nil {
 		t.Fatalf("failed to finalize IngressController %s/%s: %v", ing.Namespace, ing.Name, err)
 	}
