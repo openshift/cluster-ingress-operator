@@ -31,7 +31,7 @@ const (
 // ensureLoadBalancerService creates an LB service if one is desired but absent.
 // Always returns the current LB service if one exists (whether it already
 // existed or was created during the course of the function).
-func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, infraConfig *configv1.Infrastructure) (*corev1.Service, error) {
+func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, infraConfig *configv1.Infrastructure, dnsConfig *configv1.DNS) (*corev1.Service, error) {
 	desiredLBService, err := desiredLoadBalancerService(ci, deploymentRef, infraConfig)
 	if err != nil {
 		return nil, err
@@ -41,14 +41,37 @@ func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController,
 	if err != nil {
 		return nil, err
 	}
-	if desiredLBService != nil && currentLBService == nil {
+
+	desired, exists := desiredLBService != nil, currentLBService != nil
+
+	switch {
+	case desired && !exists:
 		if err := r.client.Create(context.TODO(), desiredLBService); err != nil {
 			return nil, fmt.Errorf("failed to create load balancer service %s/%s: %v", desiredLBService.Namespace, desiredLBService.Name, err)
 		}
 		log.Info("created load balancer service", "namespace", desiredLBService.Namespace, "name", desiredLBService.Name)
 		return desiredLBService, nil
+	case !desired && exists:
+		err := r.finalizeLoadBalancerService(ci, dnsConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to finalize load balancer service %s: %v", currentLBService.Name, err)
+		}
+		current, err := r.currentLoadBalancerService(ci)
+		if err != nil {
+			return nil, err
+		}
+		err = r.client.Delete(context.TODO(), current)
+		if err != nil {
+			return nil, fmt.Errorf("failed to delete load balancer service %s: %v", current.Name, err)
+		}
+		log.V(0).Info("finalized load balancer service for ingresscontroller", "service", current.Name, "name", ci.Name)
+		return nil, nil
+	case desired && exists:
+		// TODO: handle mutations
+		return currentLBService, nil
 	}
-	return currentLBService, nil
+
+	return nil, nil
 }
 
 // TODO: This should take operator config into account so that the operand

@@ -244,13 +244,6 @@ func publishingStrategyTypeForInfra(infraConfig *configv1.Infrastructure) operat
 // determine the appropriate endpoint publishing strategy configuration for the
 // given ingresscontroller and publishes it to the ingresscontroller's status.
 func (r *reconciler) enforceEffectiveEndpointPublishingStrategy(ci *operatorv1.IngressController, infraConfig *configv1.Infrastructure) error {
-	// The ingresscontroller's endpoint publishing strategy is immutable, so
-	// if we have previously published a strategy in status, we must
-	// continue to use that strategy it.
-	if ci.Status.EndpointPublishingStrategy != nil {
-		return nil
-	}
-
 	updated := ci.DeepCopy()
 	switch {
 	case ci.Spec.EndpointPublishingStrategy != nil:
@@ -380,7 +373,7 @@ func (r *reconciler) ensureClusterIngress(ci *operatorv1.IngressController, dnsC
 			Controller: &trueVar,
 		}
 
-		if lbService, err := r.ensureLoadBalancerService(ci, deploymentRef, infraConfig); err != nil {
+		if lbService, err := r.ensureLoadBalancerService(ci, deploymentRef, infraConfig, dnsConfig); err != nil {
 			errs = append(errs, fmt.Errorf("failed to ensure load balancer service for %s: %v", ci.Name, err))
 		} else if lbService != nil {
 			if err := r.ensureDNS(ci, lbService, dnsConfig); err != nil {
