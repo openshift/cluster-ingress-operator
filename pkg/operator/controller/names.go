@@ -32,7 +32,7 @@ const (
 
 	// controllerDeploymentLabel identifies a deployment as an ingress controller
 	// deployment, and the value is the name of the owning ingress controller.
-	controllerDeploymentLabel = "ingress.operator.openshift.io/ingress-controller-deployment"
+	controllerDeploymentLabel = "ingresscontroller.operator.openshift.io/deployment-ingresscontroller"
 )
 
 // RouterDeploymentName returns the namespaced name for the router deployment.

@@ -124,7 +124,7 @@ func New(config operatorconfig.Config, dnsManager dns.Manager, kubeConfig *rest.
 		err = operatorController.Watch(&source.Informer{Informer: informer}, &handler.EnqueueRequestsFromMapFunc{
 			ToRequests: handler.ToRequestsFunc(func(a handler.MapObject) []reconcile.Request {
 				labels := a.Meta.GetLabels()
-				if ingressName, ok := labels[manifests.OwningClusterIngressLabel]; ok {
+				if ingressName, ok := labels[manifests.OwningIngressControllerLabel]; ok {
 					log.Info("queueing ingress", "name", ingressName, "related", a.Meta.GetSelfLink())
 					return []reconcile.Request{
 						{

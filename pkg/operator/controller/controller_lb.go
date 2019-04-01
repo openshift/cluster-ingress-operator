@@ -76,7 +76,7 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 		service.Labels = map[string]string{}
 	}
 	service.Labels["router"] = name.Name
-	service.Labels[manifests.OwningClusterIngressLabel] = ci.Name
+	service.Labels[manifests.OwningIngressControllerLabel] = ci.Name
 
 	service.Spec.Selector = IngressControllerDeploymentPodSelector(ci).MatchLabels
 

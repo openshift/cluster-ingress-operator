@@ -68,7 +68,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, routerImage strin
 
 	deployment.Labels = map[string]string{
 		// associate the deployment with the ingresscontroller
-		manifests.OwningClusterIngressLabel: ci.Name,
+		manifests.OwningIngressControllerLabel: ci.Name,
 	}
 
 	// Ensure the deployment adopts only its own pods.

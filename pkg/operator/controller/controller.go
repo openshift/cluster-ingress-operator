@@ -36,7 +36,7 @@ const (
 	// IngressControllerFinalizer is applied to an IngressController before being
 	// considered for processing; this ensures the operator has a chance to handle
 	// all states.
-	IngressControllerFinalizer = "ingress.openshift.io/ingress-controller"
+	IngressControllerFinalizer = "ingresscontroller.operator.openshift.io/finalizer-ingresscontroller"
 )
 
 var log = logf.Logger.WithName("controller")

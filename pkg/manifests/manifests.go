@@ -39,10 +39,10 @@ const (
 	// generate a cluster-signed certificate and populate the secret.
 	ServingCertSecretAnnotation = "service.alpha.openshift.io/serving-cert-secret-name"
 
-	// OwningClusterIngressLabel should be applied to any objects "owned by" a
-	// clusteringress to aid in selection (especially in cases where an ownerref
+	// OwningIngressControllerLabel should be applied to any objects "owned by" a
+	// ingress controller to aid in selection (especially in cases where an ownerref
 	// can't be established due to namespace boundaries).
-	OwningClusterIngressLabel = "ingress.openshift.io/clusteringress"
+	OwningIngressControllerLabel = "ingresscontroller.operator.openshift.io/owning-ingresscontroller"
 )
 
 func MustAssetReader(asset string) io.Reader {
