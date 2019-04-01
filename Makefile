@@ -22,8 +22,18 @@ cluster-build:
 	hack/start-build.sh
 
 .PHONY: generate
-generate:
+generate: crd
 	hack/update-generated-bindata.sh
+
+# Generate ClusterIngress CRD from vendored API spec.
+.PHONY: crd
+crd:
+	go run ./vendor/github.com/openshift/library-go/cmd/crd-schema-gen/main.go --apis-dir vendor/github.com/openshift/api
+
+# Do not write the ClusterIngress CRD, only compare and return (code 1 if dirty).
+.PHONY: verify-crd
+verify-crd:
+	go run ./vendor/github.com/openshift/library-go/cmd/crd-schema-gen/main.go --apis-dir vendor/github.com/openshift/api --verify-only
 
 .PHONY: test
 test: verify
@@ -43,7 +53,7 @@ clean:
 	rm -f $(BIN)
 
 .PHONY: verify
-verify:
+verify: verify-crd
 	hack/verify-gofmt.sh
 	hack/verify-generated-bindata.sh
 
