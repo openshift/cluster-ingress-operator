@@ -296,8 +296,8 @@ func (r *reconciler) ensureIngressDeleted(ingress *operatorv1.IngressController,
 	log.Info("deleted deployment for ingress", "namespace", ingress.Namespace, "name", ingress.Name)
 
 	// Clean up the finalizer to allow the clusteringress to be deleted.
-	updated := ingress.DeepCopy()
 	if slice.ContainsString(ingress.Finalizers, IngressControllerFinalizer) {
+		updated := ingress.DeepCopy()
 		updated.Finalizers = slice.RemoveString(updated.Finalizers, IngressControllerFinalizer)
 		if err := r.client.Update(context.TODO(), updated); err != nil {
 			return fmt.Errorf("failed to remove finalizer from clusteringress %s: %v", ingress.Name, err)

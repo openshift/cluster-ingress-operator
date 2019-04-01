@@ -2,9 +2,7 @@
 # Cluster Ingress specific values are applied at runtime.
 kind: Deployment
 apiVersion: apps/v1
-metadata:
-  # Name is set at runtime.
-  namespace: openshift-ingress
+# name and namespace are set at runtime.
 spec:
   template:
     spec:
