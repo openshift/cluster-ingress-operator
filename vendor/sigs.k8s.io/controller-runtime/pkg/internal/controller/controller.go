@@ -31,14 +31,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/internal/controller/metrics"
+	logf "sigs.k8s.io/controller-runtime/pkg/internal/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/runtime/inject"
-	logf "sigs.k8s.io/controller-runtime/pkg/runtime/log"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 )
 
-var log = logf.KBLog.WithName("controller")
+var log = logf.RuntimeLog.WithName("controller")
 
 var _ inject.Injector = &Controller{}
 
@@ -248,6 +248,5 @@ func (c *Controller) InjectFunc(f inject.Func) error {
 
 // updateMetrics updates prometheus metrics within the controller
 func (c *Controller) updateMetrics(reconcileTime time.Duration) {
-	ctrlmetrics.QueueLength.WithLabelValues(c.Name).Set(float64(c.Queue.Len()))
 	ctrlmetrics.ReconcileTime.WithLabelValues(c.Name).Observe(reconcileTime.Seconds())
 }
