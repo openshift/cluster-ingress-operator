@@ -107,7 +107,7 @@ func main() {
 func createDNSManager(cl client.Client, operatorConfig operatorconfig.Config, infraConfig *configv1.Infrastructure, dnsConfig *configv1.DNS) (dns.Manager, error) {
 	var dnsManager dns.Manager
 	switch infraConfig.Status.Platform {
-	case configv1.AWSPlatform:
+	case configv1.AWSPlatformType:
 		awsCreds := &corev1.Secret{}
 		err := cl.Get(context.TODO(), types.NamespacedName{Namespace: operatorConfig.Namespace, Name: cloudCredentialsSecretName}, awsCreds)
 		if err != nil {

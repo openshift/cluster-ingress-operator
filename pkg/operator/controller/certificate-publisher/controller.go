@@ -55,7 +55,7 @@ func New(mgr manager.Manager, operandCache cache.Cache, cl client.Client, operat
 		client:            cl,
 		operatorCache:     operatorCache,
 		operandCache:      operandCache,
-		recorder:          mgr.GetRecorder(controllerName),
+		recorder:          mgr.GetEventRecorderFor(controllerName),
 		operatorNamespace: operatorNamespace,
 		operandNamespace:  operandNamespace,
 	}
@@ -125,9 +125,7 @@ func (r *reconciler) secretToIngressController(o handler.MapObject) []reconcile.
 // the given secret.
 func (r *reconciler) ingressControllersWithSecret(secretName string) ([]operatorv1.IngressController, error) {
 	controllers := &operatorv1.IngressControllerList{}
-	lo := &client.ListOptions{}
-	lo.MatchingField("defaultCertificateName", secretName)
-	if err := r.operatorCache.List(context.Background(), lo, controllers); err != nil {
+	if err := r.operatorCache.List(context.Background(), controllers, client.MatchingField("defaultCertificateName", secretName)); err != nil {
 		return nil, err
 	}
 	return controllers.Items, nil
@@ -176,12 +174,12 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 	log.Info("Reconciling", "request", request)
 
 	controllers := &operatorv1.IngressControllerList{}
-	if err := r.operatorCache.List(context.TODO(), &client.ListOptions{Namespace: r.operatorNamespace}, controllers); err != nil {
+	if err := r.operatorCache.List(context.TODO(), controllers, client.InNamespace(r.operatorNamespace)); err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to list ingresscontrollers: %v", err)
 	}
 
 	secrets := &corev1.SecretList{}
-	if err := r.operandCache.List(context.TODO(), &client.ListOptions{Namespace: r.operandNamespace}, secrets); err != nil {
+	if err := r.operandCache.List(context.TODO(), secrets, client.InNamespace(r.operandNamespace)); err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to list secrets: %v", err)
 	}
 

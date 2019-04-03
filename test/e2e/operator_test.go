@@ -189,7 +189,7 @@ func TestClusterProxyProtocol(t *testing.T) {
 		t.Fatalf("failed to get infrastructure config: %v", err)
 	}
 
-	if infraConfig.Status.Platform != configv1.AWSPlatform {
+	if infraConfig.Status.Platform != configv1.AWSPlatformType {
 		t.Skip("test skipped on non-aws platform")
 		return
 	}

@@ -23,6 +23,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	kclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -54,7 +55,7 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	reconciler := &reconciler{
 		Config:   config,
 		client:   kubeClient,
-		recorder: mgr.GetRecorder("operator-controller"),
+		recorder: mgr.GetEventRecorderFor("operator-controller"),
 	}
 	c, err := controller.New("operator-controller", mgr, controller.Options{Reconciler: reconciler})
 	if err != nil {
@@ -211,8 +212,8 @@ func (r *reconciler) enforceEffectiveIngressDomain(ic *operatorv1.IngressControl
 // and returns a false if a conflict exists or an error if the
 // ingress controller list operation returns an error.
 func (r *reconciler) isDomainUnique(domain string) (bool, error) {
-	ingresses := operatorv1.IngressControllerList{}
-	if err := r.client.List(context.TODO(), &kclient.ListOptions{Namespace: r.Namespace}, &ingresses); err != nil {
+	ingresses := &operatorv1.IngressControllerList{}
+	if err := r.client.List(context.TODO(), ingresses, client.InNamespace(r.Namespace)); err != nil {
 		return false, fmt.Errorf("failed to list ingresscontrollers: %v", err)
 	}
 
@@ -232,9 +233,9 @@ func (r *reconciler) isDomainUnique(domain string) (bool, error) {
 // strategy type for the given infrastructure config.
 func publishingStrategyTypeForInfra(infraConfig *configv1.Infrastructure) operatorv1.EndpointPublishingStrategyType {
 	switch infraConfig.Status.Platform {
-	case configv1.AWSPlatform:
+	case configv1.AWSPlatformType:
 		return operatorv1.LoadBalancerServiceStrategyType
-	case configv1.LibvirtPlatform:
+	case configv1.LibvirtPlatformType:
 		return operatorv1.HostNetworkStrategyType
 	}
 	return operatorv1.HostNetworkStrategyType
