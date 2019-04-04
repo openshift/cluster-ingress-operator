@@ -47,12 +47,14 @@ func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, in
 // ensureRouterDeleted ensures that any router resources associated with the
 // clusteringress are deleted.
 func (r *reconciler) ensureRouterDeleted(ci *operatorv1.IngressController) error {
-	deployment := manifests.RouterDeployment()
+	deployment := &appsv1.Deployment{}
 	name := RouterDeploymentName(ci)
 	deployment.Name = name.Name
 	deployment.Namespace = name.Namespace
-	if err := r.client.Delete(context.TODO(), deployment); !errors.IsNotFound(err) {
-		return err
+	if err := r.client.Delete(context.TODO(), deployment); err != nil {
+		if !errors.IsNotFound(err) {
+			return err
+		}
 	}
 	return nil
 }
