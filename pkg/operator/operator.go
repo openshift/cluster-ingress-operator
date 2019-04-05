@@ -121,7 +121,7 @@ func New(config operatorconfig.Config, dnsManager dns.Manager, kubeConfig *rest.
 		if err != nil {
 			return nil, fmt.Errorf("failed to get informer for %v: %v", obj, err)
 		}
-		operatorController.Watch(&source.Informer{Informer: informer}, &handler.EnqueueRequestsFromMapFunc{
+		err = operatorController.Watch(&source.Informer{Informer: informer}, &handler.EnqueueRequestsFromMapFunc{
 			ToRequests: handler.ToRequestsFunc(func(a handler.MapObject) []reconcile.Request {
 				labels := a.Meta.GetLabels()
 				if ingressName, ok := labels[manifests.OwningClusterIngressLabel]; ok {
@@ -139,6 +139,9 @@ func New(config operatorconfig.Config, dnsManager dns.Manager, kubeConfig *rest.
 				}
 			}),
 		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create watch for %v: %v", obj, err)
+		}
 	}
 
 	// Set up the certificate controller
