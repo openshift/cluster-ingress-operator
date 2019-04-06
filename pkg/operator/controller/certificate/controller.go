@@ -40,7 +40,7 @@ var log = logf.Logger.WithName(controllerName)
 func New(mgr manager.Manager, client client.Client, operatorNamespace string) (runtimecontroller.Controller, error) {
 	reconciler := &reconciler{
 		client:            client,
-		recorder:          mgr.GetRecorder(controllerName),
+		recorder:          mgr.GetEventRecorderFor(controllerName),
 		operatorNamespace: operatorNamespace,
 	}
 	c, err := runtimecontroller.New(controllerName, mgr, runtimecontroller.Options{Reconciler: reconciler})
@@ -106,7 +106,7 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 	}
 
 	ingresses := &operatorv1.IngressControllerList{}
-	if err := r.client.List(context.TODO(), &client.ListOptions{Namespace: r.operatorNamespace}, ingresses); err != nil {
+	if err := r.client.List(context.TODO(), ingresses, client.InNamespace(r.operatorNamespace)); err != nil {
 		errs = append(errs, fmt.Errorf("failed to list clusteringresses: %v", err))
 	} else if err := r.ensureRouterCAConfigMap(ca, ingresses.Items); err != nil {
 		errs = append(errs, fmt.Errorf("failed to publish router CA: %v", err))

@@ -100,7 +100,7 @@ func (r *reconciler) getOperatorState() (*corev1.Namespace, []operatorv1.Ingress
 	}
 
 	ingressList := &operatorv1.IngressControllerList{}
-	if err := r.client.List(context.TODO(), &client.ListOptions{Namespace: r.Namespace}, ingressList); err != nil {
+	if err := r.client.List(context.TODO(), ingressList, client.InNamespace(r.Namespace)); err != nil {
 		return nil, nil, fmt.Errorf("failed to list IngressControllers: %v", err)
 	}
 

@@ -152,7 +152,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, routerImage strin
 	if ci.Status.EndpointPublishingStrategy.Type == operatorv1.LoadBalancerServiceStrategyType {
 		// For now, check if we are on AWS. This can really be done for
 		// for any external [cloud] LBs that support the proxy protocol.
-		if infraConfig.Status.Platform == configv1.AWSPlatform {
+		if infraConfig.Status.Platform == configv1.AWSPlatformType {
 			env = append(env, corev1.EnvVar{Name: "ROUTER_USE_PROXY_PROTOCOL", Value: "true"})
 		}
 	}

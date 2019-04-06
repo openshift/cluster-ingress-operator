@@ -80,7 +80,7 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 
 	service.Spec.Selector = IngressControllerDeploymentPodSelector(ci).MatchLabels
 
-	if infraConfig.Status.Platform == configv1.AWSPlatform {
+	if infraConfig.Status.Platform == configv1.AWSPlatformType {
 		if service.Annotations == nil {
 			service.Annotations = map[string]string{}
 		}

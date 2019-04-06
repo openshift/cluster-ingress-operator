@@ -43,7 +43,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	routerImage := "quay.io/openshift/router:latest"
 	infraConfig := &configv1.Infrastructure{
 		Status: configv1.InfrastructureStatus{
-			Platform: configv1.AWSPlatform,
+			Platform: configv1.AWSPlatformType,
 		},
 	}
 

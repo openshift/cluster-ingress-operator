@@ -1,13 +1,7 @@
-# Force dep to vendor the code generators, which aren't imported just used at dev time.
-# Picking a subpackage with Go code won't be necessary once https://github.com/golang/dep/pull/1545 is merged.
+# Force dep to vendor non-imported code generators.
 required = [
-  "k8s.io/code-generator/cmd/defaulter-gen",
-  "k8s.io/code-generator/cmd/deepcopy-gen",
-  "k8s.io/code-generator/cmd/conversion-gen",
-  "k8s.io/code-generator/cmd/openapi-gen",
-  "k8s.io/gengo/args",
   "github.com/kevinburke/go-bindata",
-  "github.com/openshift/library-go/cmd/crd-schema-gen", # required for generating ingress crd
+  "github.com/openshift/library-go/cmd/crd-schema-gen",
 ]
 
 [prune]
@@ -16,46 +10,55 @@ required = [
   unused-packages = true
 
 [[prune.project]]
-  name = "k8s.io/code-generator"
-  non-go = false
-
-[[prune.project]]
   name = "github.com/kevinburke/go-bindata"
   non-go = false
   unused-packages = false
 
-[[constraint]]
-  name = "sigs.k8s.io/controller-runtime"
-  version = "=v0.1.9"
+# openshift
+[[override]]
+  name = "github.com/openshift/api"
+  revision = "d2f01e7b77a6fc78b328db20285423838419fef7"
 
 [[constraint]]
-  name = "github.com/kevinburke/go-bindata"
-  version = "=v3.11.0"
+  name = "github.com/openshift/library-go"
+  revision = "dab26bb3a8dc7fccde7227194af755bbff30ce5d"
+
+# kube
+[[override]]
+  name = "k8s.io/api"
+  version = "kubernetes-1.13.4"
+
+[[override]]
+  name = "k8s.io/client-go"
+  version = "kubernetes-1.13.4"
+
+[[override]]
+  name = "k8s.io/apimachinery"
+  version = "kubernetes-1.13.4"
+
+[[override]]
+  name = "k8s.io/code-generator"
+  version = "kubernetes-1.13.4"
+
+# controller-runtime
+[[constraint]]
+  name = "sigs.k8s.io/controller-runtime"
+  revision = "0d6f672f4bf2f096fedb507f6b0bd94da62ae70f"
 
 [[constraint]]
   name = "github.com/aws/aws-sdk-go"
   version = "=v1.15.72"
 
+# codegen
 [[constraint]]
-  name = "github.com/openshift/library-go"
-  revision = "fc4b2d5cbcf0ab855422e340c78fe7a53a38bee3"
+  name = "github.com/kevinburke/go-bindata"
+  version = "=v3.11.0"
 
+# crd-schema-gen
 [[override]]
-  name = "github.com/openshift/api"
-  revision = "853a7faf74b1c63a56e4010d39057559fa13271f"
-
+  name = "sigs.k8s.io/controller-tools"
+  revision = "43466124052c1a1aa7d8fd33624b00bc111fb7cf"
+  source = "https://github.com/openshift/kubernetes-sigs-controller-tools.git"
 [[override]]
-  name = "k8s.io/code-generator"
-  version = "kubernetes-1.12.5"
-
-[[override]]
-  name = "k8s.io/api"
-  version = "kubernetes-1.12.5"
-
-[[override]]
-  name = "k8s.io/apimachinery"
-  version = "kubernetes-1.12.5"
-
-[[override]]
-  name = "k8s.io/client-go"
-  version = "kubernetes-1.12.5"
+  name = "k8s.io/gengo"
+  revision = "4242d8e6c5dba56827bb7bcf14ad11cda38f3991"
