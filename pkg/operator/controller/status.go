@@ -131,22 +131,28 @@ func computeOperatorStatusConditions(conditions []configv1.ClusterOperatorStatus
 	}
 	numIngresses := len(ingresses)
 	var ingressesAvailable int
-	for _, ing := range ingresses {
-		for _, c := range ing.Status.Conditions {
-			if c.Type == operatorv1.IngressControllerAvailableConditionType && c.Status == operatorv1.ConditionTrue {
-				ingressesAvailable++
-				break
+	if numIngresses == 0 {
+		progressingCondition.Status = configv1.ConditionTrue
+		progressingCondition.Reason = "NoIngressControllers"
+		progressingCondition.Message = "0 ingress controllers available, want at least 1"
+	} else {
+		for _, ing := range ingresses {
+			for _, c := range ing.Status.Conditions {
+				if c.Type == operatorv1.IngressControllerAvailableConditionType && c.Status == operatorv1.ConditionTrue {
+					ingressesAvailable++
+					break
+				}
 			}
 		}
-	}
-	if numIngresses == ingressesAvailable {
-		progressingCondition.Status = configv1.ConditionFalse
-	} else {
-		progressingCondition.Status = configv1.ConditionTrue
-		progressingCondition.Reason = "Reconciling"
-		progressingCondition.Message = fmt.Sprintf(
-			"%d ingress controllers available, want %d",
-			ingressesAvailable, numIngresses)
+		if numIngresses == ingressesAvailable {
+			progressingCondition.Status = configv1.ConditionFalse
+		} else {
+			progressingCondition.Status = configv1.ConditionTrue
+			progressingCondition.Reason = "Reconciling"
+			progressingCondition.Message = fmt.Sprintf(
+				"%d ingress controllers available, want %d",
+				ingressesAvailable, numIngresses)
+		}
 	}
 	conditions = setOperatorStatusCondition(conditions, progressingCondition)
 
@@ -154,14 +160,19 @@ func computeOperatorStatusConditions(conditions []configv1.ClusterOperatorStatus
 		Type:   configv1.OperatorAvailable,
 		Status: configv1.ConditionUnknown,
 	}
-	if numIngresses == ingressesAvailable {
-		availableCondition.Status = configv1.ConditionTrue
-	} else {
+	switch {
+	case numIngresses == 0:
+		availableCondition.Status = configv1.ConditionFalse
+		availableCondition.Reason = "NoIngressControllers"
+		availableCondition.Message = "0 ingress controllers available, want at least 1"
+	case numIngresses != ingressesAvailable:
 		availableCondition.Status = configv1.ConditionFalse
 		availableCondition.Reason = "IngressUnavailable"
 		availableCondition.Message = fmt.Sprintf(
 			"%d ingress controllers available, want %d",
 			ingressesAvailable, numIngresses)
+	default:
+		availableCondition.Status = configv1.ConditionTrue
 	}
 	conditions = setOperatorStatusCondition(conditions, availableCondition)
 

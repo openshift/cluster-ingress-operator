@@ -24,11 +24,66 @@ func TestComputeOperatorStatusConditions(t *testing.T) {
 		inputs      testInputs
 		outputs     testOutputs
 	}{
-		{"no operand namespace", testInputs{false, 0, 0}, testOutputs{true, false, true}},
-		{"no ingresscontrollers available", testInputs{true, 0, 0}, testOutputs{false, false, true}},
-		{"0/2 ingresscontrollers available", testInputs{true, 2, 0}, testOutputs{false, true, false}},
-		{"1/2 ingresscontrollers available", testInputs{true, 2, 1}, testOutputs{false, true, false}},
-		{"2/2 ingresscontrollers available", testInputs{true, 2, 2}, testOutputs{false, false, true}},
+		{description: "no operand namespace",
+			inputs: testInputs{
+				haveNamespace: false,
+				numWanted:     1,
+				numAvailable:  0,
+			},
+			outputs: testOutputs{
+				failing:     true,
+				progressing: true,
+				available:   false,
+			},
+		},
+		{description: "no ingresscontrollers available",
+			inputs: testInputs{
+				haveNamespace: true,
+				numWanted:     1,
+				numAvailable:  0,
+			},
+			outputs: testOutputs{
+				failing:     false,
+				progressing: true,
+				available:   false,
+			},
+		},
+		{description: "0/2 ingresscontrollers available",
+			inputs: testInputs{
+				haveNamespace: true,
+				numWanted:     2,
+				numAvailable:  0,
+			},
+			outputs: testOutputs{
+				failing:     false,
+				progressing: true,
+				available:   false,
+			},
+		},
+		{description: "1/2 ingresscontrollers available",
+			inputs: testInputs{
+				haveNamespace: true,
+				numWanted:     2,
+				numAvailable:  1,
+			},
+			outputs: testOutputs{
+				failing:     false,
+				progressing: true,
+				available:   false,
+			},
+		},
+		{description: "2/2 ingresscontrollers available",
+			inputs: testInputs{
+				haveNamespace: true,
+				numWanted:     2,
+				numAvailable:  2,
+			},
+			outputs: testOutputs{
+				failing:     false,
+				progressing: false,
+				available:   true,
+			},
+		},
 	}
 
 	for _, tc := range testCases {
