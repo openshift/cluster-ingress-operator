@@ -89,7 +89,7 @@ func New(config operatorconfig.Config, dnsManager dns.Manager, kubeConfig *rest.
 		Namespace:              config.Namespace,
 		ManifestFactory:        &manifests.Factory{},
 		DNSManager:             dnsManager,
-		RouterImage:            config.RouterImage,
+		IngressControllerImage: config.IngressControllerImage,
 		OperatorReleaseVersion: config.OperatorReleaseVersion,
 	})
 	if err != nil {

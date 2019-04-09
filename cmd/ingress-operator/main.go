@@ -55,15 +55,15 @@ func main() {
 		log.Error(fmt.Errorf("missing environment variable"), "'WATCH_NAMESPACE' environment variable must be set")
 		os.Exit(1)
 	}
-	routerImage := os.Getenv("IMAGE")
-	if len(routerImage) == 0 {
+	ingressControllerImage := os.Getenv("IMAGE")
+	if len(ingressControllerImage) == 0 {
 		log.Error(fmt.Errorf("missing environment variable"), "'IMAGE' environment variable must be set")
 		os.Exit(1)
 	}
 	releaseVersion := os.Getenv("RELEASE_VERSION")
 	if len(releaseVersion) == 0 {
-		releaseVersion = controller.UnknownReleaseVersionName
-		log.Info("RELEASE_VERSION environment variable missing", "release version", controller.UnknownReleaseVersionName)
+		releaseVersion = controller.UnknownVersionValue
+		log.Info("RELEASE_VERSION environment variable missing", "release version", controller.UnknownVersionValue)
 	}
 
 	// Retrieve the cluster infrastructure config.
@@ -84,7 +84,7 @@ func main() {
 	operatorConfig := operatorconfig.Config{
 		OperatorReleaseVersion: releaseVersion,
 		Namespace:              operatorNamespace,
-		RouterImage:            routerImage,
+		IngressControllerImage: ingressControllerImage,
 	}
 
 	// Set up the DNS manager.

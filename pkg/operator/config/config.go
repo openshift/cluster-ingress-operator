@@ -9,6 +9,6 @@ type Config struct {
 	// Namespace is the operator namespace.
 	Namespace string
 
-	// RouterImage is the router image to manage.
-	RouterImage string
+	// IngressControllerImage is the ingress controller image to manage.
+	IngressControllerImage string
 }

@@ -24,7 +24,7 @@ import (
 // ensureRouterDeployment ensures the router deployment exists for a given
 // ingresscontroller.
 func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, infraConfig *configv1.Infrastructure) (*appsv1.Deployment, error) {
-	desired, err := desiredRouterDeployment(ci, r.Config.RouterImage, infraConfig)
+	desired, err := desiredRouterDeployment(ci, r.Config.IngressControllerImage, infraConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build router deployment: %v", err)
 	}
@@ -61,7 +61,7 @@ func (r *reconciler) ensureRouterDeleted(ci *operatorv1.IngressController) error
 }
 
 // desiredRouterDeployment returns the desired router deployment.
-func desiredRouterDeployment(ci *operatorv1.IngressController, routerImage string, infraConfig *configv1.Infrastructure) (*appsv1.Deployment, error) {
+func desiredRouterDeployment(ci *operatorv1.IngressController, ingressControllerImage string, infraConfig *configv1.Infrastructure) (*appsv1.Deployment, error) {
 	deployment := manifests.RouterDeployment()
 	name := RouterDeploymentName(ci)
 	deployment.Name = name.Name
@@ -210,7 +210,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, routerImage strin
 
 	deployment.Spec.Template.Spec.Containers[0].Env = append(deployment.Spec.Template.Spec.Containers[0].Env, env...)
 
-	deployment.Spec.Template.Spec.Containers[0].Image = routerImage
+	deployment.Spec.Template.Spec.Containers[0].Image = ingressControllerImage
 
 	if ci.Status.EndpointPublishingStrategy.Type == operatorv1.HostNetworkStrategyType {
 		// Expose ports 80 and 443 on the host to provide endpoints for

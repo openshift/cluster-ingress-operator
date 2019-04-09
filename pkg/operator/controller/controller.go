@@ -73,7 +73,7 @@ type Config struct {
 	ManifestFactory        *manifests.Factory
 	Namespace              string
 	DNSManager             dns.Manager
-	RouterImage            string
+	IngressControllerImage string
 	OperatorReleaseVersion string
 }
 
