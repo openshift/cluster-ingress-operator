@@ -5,6 +5,8 @@ metadata:
   namespace: openshift-ingress-operator
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       name: ingress-operator
@@ -18,8 +20,6 @@ spec:
         node-role.kubernetes.io/master: ""
       tolerations:
       - operator: Exists 
-      strategy:
-        type: Recreate
       serviceAccountName: ingress-operator
       priorityClassName: system-cluster-critical
       containers:
