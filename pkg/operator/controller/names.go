@@ -17,7 +17,7 @@ const (
 
 	// caCertSecretName is the name of the secret that holds the CA certificate
 	// that the operator will use to create default certificates for
-	// clusteringresses.
+	// ingresscontrollers.
 	caCertSecretName = "router-ca"
 
 	// caCertConfigMapName is the name of the config map with the public key

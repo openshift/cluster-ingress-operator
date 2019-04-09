@@ -104,7 +104,7 @@ func TestOperatorAvailable(t *testing.T) {
 }
 
 // TODO: Use manifest factory to build the expectation
-func TestDefaultClusterIngressExists(t *testing.T) {
+func TestDefaultIngressControllerExists(t *testing.T) {
 	cl, ns, err := getClient()
 	if err != nil {
 		t.Fatal(err)
@@ -118,11 +118,11 @@ func TestDefaultClusterIngressExists(t *testing.T) {
 		return true, nil
 	})
 	if err != nil {
-		t.Errorf("failed to get default ClusterIngress: %v", err)
+		t.Errorf("failed to get default IngressController: %v", err)
 	}
 }
 
-func TestClusterIngressControllerCreateDelete(t *testing.T) {
+func TestIngressControllerControllerCreateDelete(t *testing.T) {
 	cl, ns, err := getClient()
 	if err != nil {
 		t.Fatal(err)
@@ -268,7 +268,7 @@ func TestClusterProxyProtocol(t *testing.T) {
 
 // TODO: Use manifest factory to build expectations
 // TODO: Find a way to do this test without mutating the default ingress?
-func TestClusterIngressUpdate(t *testing.T) {
+func TestIngressControllerUpdate(t *testing.T) {
 	cl, ns, err := getClient()
 	if err != nil {
 		t.Fatal(err)
@@ -282,7 +282,7 @@ func TestClusterIngressUpdate(t *testing.T) {
 		return true, nil
 	})
 	if err != nil {
-		t.Fatalf("failed to get default ClusterIngress: %v", err)
+		t.Fatalf("failed to get default IngressController: %v", err)
 	}
 
 	// Wait for the router deployment to exist.
@@ -332,7 +332,7 @@ func TestClusterIngressUpdate(t *testing.T) {
 	ci.Spec.DefaultCertificate = &corev1.LocalObjectReference{Name: secret.Name}
 	err = cl.Update(context.TODO(), ci)
 	if err != nil {
-		t.Fatalf("failed to get default ClusterIngress: %v", err)
+		t.Fatalf("failed to get default IngressController: %v", err)
 	}
 	err = wait.PollImmediate(1*time.Second, 15*time.Second, func() (bool, error) {
 		if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: deployment.Namespace, Name: deployment.Name}, deployment); err != nil {
@@ -364,7 +364,7 @@ func TestClusterIngressUpdate(t *testing.T) {
 	ci.Spec.DefaultCertificate = originalSecret
 	err = cl.Update(context.TODO(), ci)
 	if err != nil {
-		t.Errorf("failed to reset ClusterIngress: %v", err)
+		t.Errorf("failed to reset IngressController: %v", err)
 	}
 
 	// Wait for the CA certificate configmap to be recreated.
@@ -445,14 +445,14 @@ u3YLAbyW/lHhOCiZu2iAI8AbmXem9lW6Tr7p/97s0w==
 	return secret, cl.Create(context.TODO(), secret)
 }
 
-// TestClusterIngressScale exercises a simple scale up/down scenario. Note that
+// TestIngressControllerScale exercises a simple scale up/down scenario. Note that
 // the scaling client isn't yet reliable because of issues with CRD scale
 // subresource handling upstream (e.g. a persisted nil .spec.replicas will break
 // GET /scale). For now, only support scaling through direct update to
 // ingresscontroller.spec.replicas.
 //
 // See also: https://github.com/kubernetes/kubernetes/pull/75210
-func TestClusterIngressScale(t *testing.T) {
+func TestIngressControllerScale(t *testing.T) {
 	cl, ns, err := getClient()
 	if err != nil {
 		t.Fatal(err)
@@ -460,7 +460,7 @@ func TestClusterIngressScale(t *testing.T) {
 
 	name := "default"
 
-	// Wait for the clusteringress to exist.
+	// Wait for the ingresscontroller to exist.
 	ci := &operatorv1.IngressController{}
 	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
 		if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: ns, Name: name}, ci); err != nil {
@@ -566,10 +566,10 @@ func TestRouterCACertificate(t *testing.T) {
 		return true, nil
 	})
 	if err != nil {
-		t.Fatalf("failed to get default ClusterIngress: %v", err)
+		t.Fatalf("failed to get default IngressController: %v", err)
 	}
 	if len(ci.Status.Domain) == 0 {
-		t.Fatal("default ClusterIngress has no .status.ingressDomain")
+		t.Fatal("default IngressController has no .status.ingressDomain")
 	}
 
 	if ci.Status.EndpointPublishingStrategy.Type != operatorv1.LoadBalancerServiceStrategyType {

@@ -21,7 +21,7 @@ import (
 )
 
 // ensureRouterDeployment ensures the router deployment exists for a given
-// clusteringress.
+// ingresscontroller.
 func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, infraConfig *configv1.Infrastructure) (*appsv1.Deployment, error) {
 	desired, err := desiredRouterDeployment(ci, r.Config.RouterImage, infraConfig)
 	if err != nil {
@@ -45,7 +45,7 @@ func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, in
 }
 
 // ensureRouterDeleted ensures that any router resources associated with the
-// clusteringress are deleted.
+// ingresscontroller are deleted.
 func (r *reconciler) ensureRouterDeleted(ci *operatorv1.IngressController) error {
 	deployment := &appsv1.Deployment{}
 	name := RouterDeploymentName(ci)
@@ -168,7 +168,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, routerImage strin
 			var err error
 			nodeSelector, err = metav1.LabelSelectorAsMap(ci.Spec.NodePlacement.NodeSelector)
 			if err != nil {
-				return nil, fmt.Errorf("clusteringress %q has invalid spec.nodePlacement.nodeSelector: %v",
+				return nil, fmt.Errorf("ingresscontroller %q has invalid spec.nodePlacement.nodeSelector: %v",
 					ci.Name, err)
 			}
 		}
@@ -178,7 +178,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, routerImage strin
 	if ci.Spec.NamespaceSelector != nil {
 		namespaceSelector, err := metav1.LabelSelectorAsSelector(ci.Spec.NamespaceSelector)
 		if err != nil {
-			return nil, fmt.Errorf("clusteringress %q has invalid spec.namespaceSelector: %v",
+			return nil, fmt.Errorf("ingresscontroller %q has invalid spec.namespaceSelector: %v",
 				ci.Name, err)
 		}
 
@@ -197,7 +197,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, routerImage strin
 	if ci.Spec.RouteSelector != nil {
 		routeSelector, err := metav1.LabelSelectorAsSelector(ci.Spec.RouteSelector)
 		if err != nil {
-			return nil, fmt.Errorf("clusteringress %q has invalid spec.routeSelector: %v", ci.Name, err)
+			return nil, fmt.Errorf("ingresscontroller %q has invalid spec.routeSelector: %v", ci.Name, err)
 		}
 		env = append(env, corev1.EnvVar{Name: "ROUTE_LABELS", Value: routeSelector.String()})
 	}
@@ -262,7 +262,7 @@ func (r *reconciler) updateRouterDeployment(current, desired *appsv1.Deployment)
 }
 
 // deploymentConfigChanged checks if current config matches the expected config
-// for the cluster ingress deployment and if not returns the updated config.
+// for the ingress controller deployment and if not returns the updated config.
 func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv1.Deployment) {
 	if cmp.Equal(current.Spec.Template.Spec.Volumes, expected.Spec.Template.Spec.Volumes, cmpopts.EquateEmpty(), cmpopts.SortSlices(cmpVolumes), cmp.Comparer(cmpSecretVolumeSource)) &&
 		cmp.Equal(current.Spec.Template.Spec.NodeSelector, expected.Spec.Template.Spec.NodeSelector, cmpopts.EquateEmpty()) &&

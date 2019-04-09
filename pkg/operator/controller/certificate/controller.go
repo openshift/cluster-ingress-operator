@@ -1,7 +1,7 @@
 // The certificate controller is responsible for:
 //
 //   1. Managing a CA for minting self-signed certs
-//   2. Managing self-signed certificates for any clusteringresses which require them
+//   2. Managing self-signed certificates for any ingresscontrollers which require them
 //   3. Publishing the CA to `openshift-config-managed`
 package certificate
 
@@ -72,9 +72,9 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 		if errors.IsNotFound(err) {
 			// The ingress could have been deleted and we're processing a stale queue
 			// item, so ignore and skip.
-			log.Info("clusteringress not found; reconciliation will be skipped", "request", request)
+			log.Info("ingresscontroller not found; reconciliation will be skipped", "request", request)
 		} else {
-			errs = append(errs, fmt.Errorf("failed to get clusteringress: %v", err))
+			errs = append(errs, fmt.Errorf("failed to get ingresscontroller: %v", err))
 		}
 	} else if !controller.IsStatusDomainSet(ingress) {
 		log.Info("ingresscontroller domain not set; reconciliation will be skipped", "request", request)
@@ -85,7 +85,7 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 			if errors.IsNotFound(err) {
 				// All ingresses should have a deployment, so this one may not have been
 				// created yet. Retry after a reasonable amount of time.
-				log.Info("deployment not found; will retry default cert sync", "clusteringress", ingress.Name)
+				log.Info("deployment not found; will retry default cert sync", "ingresscontroller", ingress.Name)
 				result.RequeueAfter = 5 * time.Second
 			} else {
 				errs = append(errs, fmt.Errorf("failed to get deployment: %v", err))
@@ -107,7 +107,7 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 
 	ingresses := &operatorv1.IngressControllerList{}
 	if err := r.client.List(context.TODO(), ingresses, client.InNamespace(r.operatorNamespace)); err != nil {
-		errs = append(errs, fmt.Errorf("failed to list clusteringresses: %v", err))
+		errs = append(errs, fmt.Errorf("failed to list ingresscontrollers: %v", err))
 	} else if err := r.ensureRouterCAConfigMap(ca, ingresses.Items); err != nil {
 		errs = append(errs, fmt.Errorf("failed to publish router CA: %v", err))
 	}

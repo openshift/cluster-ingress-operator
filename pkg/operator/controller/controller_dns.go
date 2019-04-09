@@ -30,7 +30,7 @@ func (r *reconciler) ensureDNS(ci *operatorv1.IngressController, service *corev1
 		if err != nil {
 			return fmt.Errorf("failed to ensure DNS record %v for %s/%s: %v", record, ci.Namespace, ci.Name, err)
 		}
-		log.Info("ensured DNS record for clusteringress", "namespace", ci.Namespace, "name", ci.Name, "record", record)
+		log.Info("ensured DNS record for ingresscontroller", "namespace", ci.Namespace, "name", ci.Name, "record", record)
 	}
 	return nil
 }
@@ -41,7 +41,7 @@ func (r *reconciler) ensureDNS(ci *operatorv1.IngressController, service *corev1
 func desiredDNSRecords(ci *operatorv1.IngressController, hostname string, dnsConfig *configv1.DNS) ([]*dns.Record, error) {
 	records := []*dns.Record{}
 
-	// If the clusteringress has no ingress domain, we cannot configure any
+	// If the ingresscontroller has no ingress domain, we cannot configure any
 	// DNS records.
 	if len(ci.Status.Domain) == 0 {
 		return records, nil

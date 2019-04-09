@@ -1,5 +1,5 @@
 # Cluster Service with default values
-# Cluster Ingress specific annotations are applied at runtime.
+# Ingress Controller specific annotations are applied at runtime.
 kind: Service
 apiVersion: v1
 # name, namespace and annotations are set at runtime.

@@ -71,7 +71,7 @@ func desiredRouterCAConfigMap(secret *corev1.Secret, ingresses []operatorv1.Ingr
 	return cm, nil
 }
 
-// shouldPublishRouterCA checks if some ClusterIngress uses the default
+// shouldPublishRouterCA checks if some IngressController uses the default
 // certificate, in which case the CA certificate needs to be published.
 func shouldPublishRouterCA(ingresses []operatorv1.IngressController) bool {
 	for _, ci := range ingresses {

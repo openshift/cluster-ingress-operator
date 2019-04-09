@@ -11,5 +11,5 @@ USER cluster-ingress-operator
 ENTRYPOINT ["/usr/bin/cluster-ingress-operator"]
 LABEL io.openshift.release.operator true
 LABEL io.k8s.display-name="OpenShift cluster-ingress-operator" \
-      io.k8s.description="This is a component of OpenShift Container Platform and manages the lifecycle of cluster ingress components." \
+      io.k8s.description="This is a component of OpenShift Container Platform and manages the lifecycle of ingress controller components." \
       maintainer="Dan Mace <dmace@redhat.com>"

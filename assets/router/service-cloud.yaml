@@ -1,5 +1,5 @@
 # Load Balancer Service to place in front of the router in cloud environments.
-# Cluster Ingress specific values are applied at runtime.
+# Ingress Controller specific values are applied at runtime.
 kind: Service
 apiVersion: v1
 metadata:
