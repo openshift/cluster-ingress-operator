@@ -6,7 +6,7 @@ WHAT="${WHAT:-managed}"
 # Disable the CVO
 oc scale --replicas 0 -n openshift-cluster-version deployments/cluster-version-operator
 
-# Uninstall the cluster-ingress-operator
+# Uninstall the ingress-operator
 oc delete -n openshift-ingress-operator deployments/ingress-operator
 oc patch -n openshift-ingress-operator ingresscontroller/default --patch '{"metadata":{"finalizers": []}}' --type=merge
 # TODO: this leaves DNS dangling

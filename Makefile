@@ -1,7 +1,7 @@
 all: generate build
 
 PACKAGE=github.com/openshift/cluster-ingress-operator
-MAIN_PACKAGE=$(PACKAGE)/cmd/cluster-ingress-operator
+MAIN_PACKAGE=$(PACKAGE)/cmd/ingress-operator
 
 BIN=$(lastword $(subst /, ,$(MAIN_PACKAGE)))
 
