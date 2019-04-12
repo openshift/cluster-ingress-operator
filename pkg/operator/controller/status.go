@@ -27,10 +27,15 @@ const (
 // creates or updates the ClusterOperator resource for the operator.
 func (r *reconciler) syncOperatorStatus() error {
 	co := &configv1.ClusterOperator{ObjectMeta: metav1.ObjectMeta{Name: IngressClusterOperatorName}}
-	err := r.client.Get(context.TODO(), types.NamespacedName{Name: co.Name}, co)
-	isNotFound := errors.IsNotFound(err)
-	if err != nil && !isNotFound {
-		return fmt.Errorf("failed to get clusteroperator %s: %v", co.Name, err)
+	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: co.Name}, co); err != nil {
+		if errors.IsNotFound(err) {
+			if err := r.client.Create(context.TODO(), co); err != nil {
+				return fmt.Errorf("failed to create clusteroperator %s: %v", co.Name, err)
+			}
+			log.Info("created clusteroperator", "object", co)
+		} else {
+			return fmt.Errorf("failed to get clusteroperator %s: %v", co.Name, err)
+		}
 	}
 
 	ns, ingresses, err := r.getOperatorState()
@@ -69,19 +74,13 @@ func (r *reconciler) syncOperatorStatus() error {
 		}
 	}
 
-	if isNotFound {
-		if err := r.client.Create(context.TODO(), co); err != nil {
-			return fmt.Errorf("failed to create clusteroperator %s: %v", co.Name, err)
-		}
-		log.Info("created clusteroperator", "object", co)
-	} else {
-		if !operatorStatusesEqual(*oldStatus, co.Status) {
-			err = r.client.Status().Update(context.TODO(), co)
-			if err != nil {
-				return fmt.Errorf("failed to update clusteroperator %s: %v", co.Name, err)
-			}
+	if !operatorStatusesEqual(*oldStatus, co.Status) {
+		err = r.client.Status().Update(context.TODO(), co)
+		if err != nil {
+			return fmt.Errorf("failed to update clusteroperator %s: %v", co.Name, err)
 		}
 	}
+
 	return nil
 }
 
