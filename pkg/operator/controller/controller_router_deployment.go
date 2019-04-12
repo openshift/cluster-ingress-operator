@@ -172,6 +172,9 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, routerImage strin
 					ci.Name, err)
 			}
 		}
+		if ci.Spec.NodePlacement.Tolerations != nil {
+			deployment.Spec.Template.Spec.Tolerations = ci.Spec.NodePlacement.Tolerations
+		}
 	}
 	deployment.Spec.Template.Spec.NodeSelector = nodeSelector
 
@@ -268,6 +271,7 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 		cmp.Equal(current.Spec.Template.Spec.NodeSelector, expected.Spec.Template.Spec.NodeSelector, cmpopts.EquateEmpty()) &&
 		cmp.Equal(current.Spec.Template.Spec.Containers[0].Env, expected.Spec.Template.Spec.Containers[0].Env, cmpopts.EquateEmpty(), cmpopts.SortSlices(cmpEnvs)) &&
 		current.Spec.Template.Spec.Containers[0].Image == expected.Spec.Template.Spec.Containers[0].Image &&
+		cmp.Equal(current.Spec.Template.Spec.Tolerations, expected.Spec.Template.Spec.Tolerations, cmpopts.EquateEmpty(), cmpopts.SortSlices(cmpTolerations)) &&
 		current.Spec.Replicas != nil &&
 		*current.Spec.Replicas == *expected.Spec.Replicas {
 		return false, nil
@@ -282,6 +286,9 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 	updated.Spec.Template.Spec.NodeSelector = expected.Spec.Template.Spec.NodeSelector
 	updated.Spec.Template.Spec.Containers[0].Env = expected.Spec.Template.Spec.Containers[0].Env
 	updated.Spec.Template.Spec.Containers[0].Image = expected.Spec.Template.Spec.Containers[0].Image
+	if expected.Spec.Template.Spec.Tolerations != nil {
+		updated.Spec.Template.Spec.Tolerations = expected.Spec.Template.Spec.Tolerations
+	}
 	replicas := int32(1)
 	if expected.Spec.Replicas != nil {
 		replicas = *expected.Spec.Replicas
@@ -312,6 +319,31 @@ func cmpSecretVolumeSource(a, b corev1.SecretVolumeSource) bool {
 	}
 	if !cmp.Equal(a.Optional, b.Optional, cmpopts.EquateEmpty()) {
 		return false
+	}
+	return true
+}
+
+func cmpTolerations(a, b corev1.Toleration) bool {
+	if a.Key != b.Key {
+		return false
+	}
+	if a.Value != b.Value {
+		return false
+	}
+	if a.Operator != b.Operator {
+		return false
+	}
+	if a.Effect != b.Effect {
+		return false
+	}
+	if a.Effect == corev1.TaintEffectNoExecute {
+		if (a.TolerationSeconds == nil) != (b.TolerationSeconds == nil) {
+			return false
+		}
+		// Field is ignored unless effect is NoExecute.
+		if a.TolerationSeconds != nil && *a.TolerationSeconds != *b.TolerationSeconds {
+			return false
+		}
 	}
 	return true
 }

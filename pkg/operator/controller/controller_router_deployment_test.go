@@ -2,6 +2,7 @@ package controller
 
 import (
 	"fmt"
+	"reflect"
 	"strconv"
 	"testing"
 	"time"
@@ -14,6 +15,13 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 )
+
+var toleration = corev1.Toleration{
+	Key:      "foo",
+	Value:    "bar",
+	Operator: corev1.TolerationOpExists,
+	Effect:   corev1.TaintEffectNoExecute,
+}
 
 func TestDesiredRouterDeployment(t *testing.T) {
 	var one int32 = 1
@@ -89,6 +97,10 @@ func TestDesiredRouterDeployment(t *testing.T) {
 
 	if len(deployment.Spec.Template.Spec.NodeSelector) == 0 {
 		t.Error("router Deployment has no default node selector")
+	}
+	if len(deployment.Spec.Template.Spec.Tolerations) != 0 {
+		t.Errorf("router Deployment has unexpected toleration: %#v",
+			deployment.Spec.Template.Spec.Tolerations)
 	}
 
 	proxyProtocolEnabled := false
@@ -188,6 +200,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 				"xyzzy": "quux",
 			},
 		},
+		Tolerations: []corev1.Toleration{toleration},
 	}
 	var expectedReplicas int32 = 3
 	ci.Spec.Replicas = &expectedReplicas
@@ -200,6 +213,11 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		deployment.Spec.Template.Spec.NodeSelector["xyzzy"] != "quux" {
 		t.Errorf("router Deployment has unexpected node selector: %#v",
 			deployment.Spec.Template.Spec.NodeSelector)
+	}
+	if len(deployment.Spec.Template.Spec.Tolerations) != 1 ||
+		!reflect.DeepEqual(ci.Spec.NodePlacement.Tolerations, deployment.Spec.Template.Spec.Tolerations) {
+		t.Errorf("router Deployment has unexpected tolerations, expected: %#v,  got: %#v",
+			ci.Spec.NodePlacement.Tolerations, deployment.Spec.Template.Spec.Tolerations)
 	}
 	if deployment.Spec.Replicas == nil {
 		t.Error("router Deployment has nil replicas")
@@ -282,6 +300,13 @@ func TestDeploymentConfigChanged(t *testing.T) {
 			mutate: func(deployment *appsv1.Deployment) {
 				ns := map[string]string{"xyzzy": "quux"}
 				deployment.Spec.Template.Spec.NodeSelector = ns
+			},
+			expect: true,
+		},
+		{
+			description: "if .spec.template.spec.tolerations change",
+			mutate: func(deployment *appsv1.Deployment) {
+				deployment.Spec.Template.Spec.Tolerations = []corev1.Toleration{toleration}
 			},
 			expect: true,
 		},
