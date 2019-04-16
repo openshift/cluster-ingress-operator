@@ -16,7 +16,7 @@ import (
 )
 
 // ensureDefaultCertificateForIngress creates or deletes an operator-generated
-// default certificate for a given ClusterIngress as appropriate.  Returns true
+// default certificate for a given IngressController as appropriate.  Returns true
 // if it creates, updates, or deletes the secret for the certificate, false
 // otherwise.
 func (r *reconciler) ensureDefaultCertificateForIngress(caSecret *corev1.Secret, namespace string, deploymentRef metav1.OwnerReference, ci *operatorv1.IngressController) (bool, error) {
@@ -63,7 +63,7 @@ func desiredRouterDefaultCertificateSecret(ca *crypto.CA, namespace string, depl
 		return nil, nil
 	}
 
-	// If the clusteringress specifies a default certificate secret, the
+	// If the ingresscontroller specifies a default certificate secret, the
 	// operator does not need to generate a certificate.
 	if ci.Spec.DefaultCertificate != nil {
 		return nil, nil

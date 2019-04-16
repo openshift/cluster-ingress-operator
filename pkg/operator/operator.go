@@ -107,9 +107,9 @@ func New(config operatorconfig.Config, dnsManager dns.Manager, kubeConfig *rest.
 	if err != nil {
 		return nil, fmt.Errorf("failed to create openshift-ingress cache: %v", err)
 	}
-	// Any types added to the list here will only queue a clusteringress if the
+	// Any types added to the list here will only queue a ingresscontroller if the
 	// resource has the expected label associating the resource with a
-	// clusteringress.
+	// ingresscontroller.
 	for _, o := range []runtime.Object{
 		&appsv1.Deployment{},
 		&corev1.Service{},
@@ -124,7 +124,7 @@ func New(config operatorconfig.Config, dnsManager dns.Manager, kubeConfig *rest.
 		err = operatorController.Watch(&source.Informer{Informer: informer}, &handler.EnqueueRequestsFromMapFunc{
 			ToRequests: handler.ToRequestsFunc(func(a handler.MapObject) []reconcile.Request {
 				labels := a.Meta.GetLabels()
-				if ingressName, ok := labels[manifests.OwningClusterIngressLabel]; ok {
+				if ingressName, ok := labels[manifests.OwningIngressControllerLabel]; ok {
 					log.Info("queueing ingress", "name", ingressName, "related", a.Meta.GetSelfLink())
 					return []reconcile.Request{
 						{
@@ -158,7 +158,7 @@ func New(config operatorconfig.Config, dnsManager dns.Manager, kubeConfig *rest.
 		manager: operatorManager,
 		caches:  []cache.Cache{operandCache},
 
-		// TODO: These are only needed for the default cluster ingress stuff, which
+		// TODO: These are only needed for the default ingress controller stuff, which
 		// should be refactored away.
 		manifestFactory: &manifests.Factory{},
 		client:          kubeClient,
@@ -166,9 +166,9 @@ func New(config operatorconfig.Config, dnsManager dns.Manager, kubeConfig *rest.
 	}, nil
 }
 
-// Start creates the default ClusterIngress and then starts the operator
+// Start creates the default IngressController and then starts the operator
 // synchronously until a message is received on the stop channel.
-// TODO: Move the default ClusterIngress logic elsewhere.
+// TODO: Move the default IngressController logic elsewhere.
 func (o *Operator) Start(stop <-chan struct{}) error {
 	// Periodicaly ensure the default controller exists.
 	go wait.Until(func() {

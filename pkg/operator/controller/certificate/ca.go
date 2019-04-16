@@ -60,7 +60,7 @@ func (r *reconciler) currentRouterCASecret() (*corev1.Secret, error) {
 
 // generateRouterCA generates and returns a CA certificate and key.
 func generateRouterCA() ([]byte, []byte, error) {
-	signerName := fmt.Sprintf("%s@%d", "cluster-ingress-operator", time.Now().Unix())
+	signerName := fmt.Sprintf("%s@%d", "ingress-operator", time.Now().Unix())
 
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {

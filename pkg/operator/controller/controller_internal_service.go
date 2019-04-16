@@ -59,7 +59,7 @@ func desiredInternalIngressControllerService(ic *operatorv1.IngressController, d
 	s.Name = name.Name
 
 	s.Labels = map[string]string{
-		manifests.OwningClusterIngressLabel: ic.Name,
+		manifests.OwningIngressControllerLabel: ic.Name,
 	}
 
 	s.Annotations = map[string]string{

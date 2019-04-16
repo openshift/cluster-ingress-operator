@@ -27,8 +27,6 @@ const (
 	RouterDeploymentAsset    = "assets/router/deployment.yaml"
 	RouterServiceInternal    = "assets/router/service-internal.yaml"
 	RouterServiceCloud       = "assets/router/service-cloud.yaml"
-	OperatorRole             = "assets/router/operator-role.yaml"
-	OperatorRoleBinding      = "assets/router/operator-role-binding.yaml"
 
 	MetricsClusterRole        = "assets/router/metrics/cluster-role.yaml"
 	MetricsClusterRoleBinding = "assets/router/metrics/cluster-role-binding.yaml"
@@ -39,10 +37,10 @@ const (
 	// generate a cluster-signed certificate and populate the secret.
 	ServingCertSecretAnnotation = "service.alpha.openshift.io/serving-cert-secret-name"
 
-	// OwningClusterIngressLabel should be applied to any objects "owned by" a
-	// clusteringress to aid in selection (especially in cases where an ownerref
+	// OwningIngressControllerLabel should be applied to any objects "owned by" a
+	// ingress controller to aid in selection (especially in cases where an ownerref
 	// can't be established due to namespace boundaries).
-	OwningClusterIngressLabel = "ingress.openshift.io/clusteringress"
+	OwningIngressControllerLabel = "ingresscontroller.operator.openshift.io/owning-ingresscontroller"
 )
 
 func MustAssetReader(asset string) io.Reader {
@@ -51,22 +49,6 @@ func MustAssetReader(asset string) io.Reader {
 
 // Factory knows how to create ingress-related cluster resources from manifest files.
 type Factory struct {
-}
-
-func (f *Factory) OperatorRole() (*rbacv1.Role, error) {
-	crb, err := NewRole(MustAssetReader(OperatorRole))
-	if err != nil {
-		return nil, err
-	}
-	return crb, nil
-}
-
-func (f *Factory) OperatorRoleBinding() (*rbacv1.RoleBinding, error) {
-	crb, err := NewRoleBinding(MustAssetReader(OperatorRoleBinding))
-	if err != nil {
-		return nil, err
-	}
-	return crb, nil
 }
 
 func RouterNamespace() *corev1.Namespace {

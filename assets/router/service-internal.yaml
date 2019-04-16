@@ -1,9 +1,8 @@
 # Cluster Service with default values
-# Cluster Ingress specific annotations are applied at runtime.
+# Ingress Controller specific annotations are applied at runtime.
 kind: Service
 apiVersion: v1
-metadata:
-  # Name and Annotations are set at runtime.
+# name, namespace and annotations are set at runtime.
 spec:
   type: ClusterIP
   ports:

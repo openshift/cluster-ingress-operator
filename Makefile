@@ -1,7 +1,7 @@
 all: generate build
 
 PACKAGE=github.com/openshift/cluster-ingress-operator
-MAIN_PACKAGE=$(PACKAGE)/cmd/cluster-ingress-operator
+MAIN_PACKAGE=$(PACKAGE)/cmd/ingress-operator
 
 BIN=$(lastword $(subst /, ,$(MAIN_PACKAGE)))
 
@@ -25,12 +25,12 @@ cluster-build:
 generate: crd
 	hack/update-generated-bindata.sh
 
-# Generate ClusterIngress CRD from vendored API spec.
+# Generate IngressController CRD from vendored API spec.
 .PHONY: crd
 crd:
 	go run ./vendor/github.com/openshift/library-go/cmd/crd-schema-gen/main.go --apis-dir vendor/github.com/openshift/api
 
-# Do not write the ClusterIngress CRD, only compare and return (code 1 if dirty).
+# Do not write the IngressController CRD, only compare and return (code 1 if dirty).
 .PHONY: verify-crd
 verify-crd:
 	go run ./vendor/github.com/openshift/library-go/cmd/crd-schema-gen/main.go --apis-dir vendor/github.com/openshift/api --verify-only

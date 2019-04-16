@@ -36,16 +36,16 @@ const (
 	// IngressControllerFinalizer is applied to an IngressController before being
 	// considered for processing; this ensures the operator has a chance to handle
 	// all states.
-	IngressControllerFinalizer = "ingress.openshift.io/ingress-controller"
+	IngressControllerFinalizer = "ingresscontroller.operator.openshift.io/finalizer-ingresscontroller"
 )
 
 var log = logf.Logger.WithName("controller")
 
 // New creates the operator controller from configuration. This is the
 // controller that handles all the logic for implementing ingress based on
-// ClusterIngress resources.
+// IngressController resources.
 //
-// The controller will be pre-configured to watch for ClusterIngress resources
+// The controller will be pre-configured to watch for IngressController resources
 // in the manager namespace.
 func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	kubeClient, err := operatorclient.NewClient(config.KubeConfig)
@@ -91,8 +91,8 @@ type reconciler struct {
 	recorder record.EventRecorder
 }
 
-// Reconcile expects request to refer to a clusteringress in the operator
-// namespace, and will do all the work to ensure the clusteringress is in the
+// Reconcile expects request to refer to a ingresscontroller in the operator
+// namespace, and will do all the work to ensure the ingresscontroller is in the
 // desired state.
 func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, error) {
 	errs := []error{}
@@ -107,9 +107,9 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 			// This means the ingress was already deleted/finalized and there are
 			// stale queue entries (or something edge triggering from a related
 			// resource that got deleted async).
-			log.Info("clusteringress not found; reconciliation will be skipped", "request", request)
+			log.Info("ingresscontroller not found; reconciliation will be skipped", "request", request)
 		} else {
-			errs = append(errs, fmt.Errorf("failed to get clusteringress %q: %v", request, err))
+			errs = append(errs, fmt.Errorf("failed to get ingresscontroller %q: %v", request, err))
 		}
 		ingress = nil
 	}
@@ -142,10 +142,10 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 			}
 
 			if err := r.enforceEffectiveIngressDomain(ingress, ingressConfig); err != nil {
-				errs = append(errs, fmt.Errorf("failed to enforce the effective ingress domain for clusteringress %s: %v", ingress.Name, err))
+				errs = append(errs, fmt.Errorf("failed to enforce the effective ingress domain for ingresscontroller %s: %v", ingress.Name, err))
 			} else if IsStatusDomainSet(ingress) {
 				if err := r.enforceEffectiveEndpointPublishingStrategy(ingress, infraConfig); err != nil {
-					errs = append(errs, fmt.Errorf("failed to enforce the effective HA configuration for clusteringress %s: %v", ingress.Name, err))
+					errs = append(errs, fmt.Errorf("failed to enforce the effective HA configuration for ingresscontroller %s: %v", ingress.Name, err))
 				} else if ingress.DeletionTimestamp != nil {
 					// Handle deletion.
 					if err := r.ensureIngressDeleted(ingress, dnsConfig, infraConfig); err != nil {
@@ -155,8 +155,8 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 					errs = append(errs, fmt.Errorf("failed to enforce ingress finalizer %s/%s: %v", ingress.Namespace, ingress.Name, err))
 				} else {
 					// Handle everything else.
-					if err := r.ensureClusterIngress(ingress, dnsConfig, infraConfig); err != nil {
-						errs = append(errs, fmt.Errorf("failed to ensure clusteringress: %v", err))
+					if err := r.ensureIngressController(ingress, dnsConfig, infraConfig); err != nil {
+						errs = append(errs, fmt.Errorf("failed to ensure ingresscontroller: %v", err))
 					}
 				}
 			}
@@ -172,10 +172,10 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 }
 
 // enforceEffectiveIngressDomain determines the effective ingress domain for the
-// given clusteringress and ingress configuration and publishes it to the
-// clusteringress's status.
+// given ingresscontroller and ingress configuration and publishes it to the
+// ingresscontroller's status.
 func (r *reconciler) enforceEffectiveIngressDomain(ic *operatorv1.IngressController, ingressConfig *configv1.Ingress) error {
-	// The clusteringress's ingress domain is immutable, so if we have
+	// The ingresscontroller's ingress domain is immutable, so if we have
 	// published a domain to status, we must continue using it.
 	if len(ic.Status.Domain) > 0 {
 		return nil
@@ -262,10 +262,10 @@ func (r *reconciler) enforceEffectiveEndpointPublishingStrategy(ci *operatorv1.I
 		}
 	}
 	if err := r.client.Status().Update(context.TODO(), updated); err != nil {
-		return fmt.Errorf("failed to update status of clusteringress %s/%s: %v", updated.Namespace, updated.Name, err)
+		return fmt.Errorf("failed to update status of ingresscontroller %s/%s: %v", updated.Namespace, updated.Name, err)
 	}
 	if err := r.client.Get(context.TODO(), types.NamespacedName{Namespace: updated.Namespace, Name: updated.Name}, ci); err != nil {
-		return fmt.Errorf("failed to get clusteringress %s/%s: %v", updated.Namespace, updated.Name, err)
+		return fmt.Errorf("failed to get ingresscontroller %s/%s: %v", updated.Namespace, updated.Name, err)
 	}
 	return nil
 }
@@ -295,12 +295,12 @@ func (r *reconciler) ensureIngressDeleted(ingress *operatorv1.IngressController,
 	}
 	log.Info("deleted deployment for ingress", "namespace", ingress.Namespace, "name", ingress.Name)
 
-	// Clean up the finalizer to allow the clusteringress to be deleted.
-	updated := ingress.DeepCopy()
+	// Clean up the finalizer to allow the ingresscontroller to be deleted.
 	if slice.ContainsString(ingress.Finalizers, IngressControllerFinalizer) {
+		updated := ingress.DeepCopy()
 		updated.Finalizers = slice.RemoveString(updated.Finalizers, IngressControllerFinalizer)
 		if err := r.client.Update(context.TODO(), updated); err != nil {
-			return fmt.Errorf("failed to remove finalizer from clusteringress %s: %v", ingress.Name, err)
+			return fmt.Errorf("failed to remove finalizer from ingresscontroller %s: %v", ingress.Name, err)
 		}
 	}
 	return nil
@@ -365,8 +365,8 @@ func (r *reconciler) ensureRouterNamespace() error {
 	return nil
 }
 
-// ensureClusterIngress ensures all necessary router resources exist for a given clusteringress.
-func (r *reconciler) ensureClusterIngress(ci *operatorv1.IngressController, dnsConfig *configv1.DNS, infraConfig *configv1.Infrastructure) error {
+// ensureIngressController ensures all necessary router resources exist for a given ingresscontroller.
+func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, dnsConfig *configv1.DNS, infraConfig *configv1.Infrastructure) error {
 	errs := []error{}
 
 	if deployment, err := r.ensureRouterDeployment(ci, infraConfig); err != nil {
@@ -390,9 +390,9 @@ func (r *reconciler) ensureClusterIngress(ci *operatorv1.IngressController, dnsC
 		}
 
 		if internalSvc, err := r.ensureInternalIngressControllerService(ci, deploymentRef); err != nil {
-			errs = append(errs, fmt.Errorf("failed to create internal router service for clusteringress %s: %v", ci.Name, err))
+			errs = append(errs, fmt.Errorf("failed to create internal router service for ingresscontroller %s: %v", ci.Name, err))
 		} else if err := r.ensureMetricsIntegration(ci, internalSvc, deploymentRef); err != nil {
-			errs = append(errs, fmt.Errorf("failed to integrate metrics with openshift-monitoring for clusteringress %s: %v", ci.Name, err))
+			errs = append(errs, fmt.Errorf("failed to integrate metrics with openshift-monitoring for ingresscontroller %s: %v", ci.Name, err))
 		}
 
 		if err := r.syncIngressControllerStatus(deployment, ci); err != nil {
@@ -403,7 +403,7 @@ func (r *reconciler) ensureClusterIngress(ci *operatorv1.IngressController, dnsC
 	return utilerrors.NewAggregate(errs)
 }
 
-// ensureMetricsIntegration ensures that router prometheus metrics is integrated with openshift-monitoring for the given clusteringress.
+// ensureMetricsIntegration ensures that router prometheus metrics is integrated with openshift-monitoring for the given ingresscontroller.
 func (r *reconciler) ensureMetricsIntegration(ci *operatorv1.IngressController, svc *corev1.Service, deploymentRef metav1.OwnerReference) error {
 	statsSecret, err := r.ManifestFactory.RouterStatsSecret(ci)
 	if err != nil {

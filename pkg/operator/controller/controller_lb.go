@@ -58,7 +58,7 @@ func loadBalancerServiceName(ci *operatorv1.IngressController) types.NamespacedN
 }
 
 // desiredLoadBalancerService returns the desired LB service for a
-// clusteringress, or nil if an LB service isn't desired. An LB service is
+// ingresscontroller, or nil if an LB service isn't desired. An LB service is
 // desired if the high availability type is Cloud. An LB service will declare an
 // owner reference to the given deployment.
 func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, infraConfig *configv1.Infrastructure) (*corev1.Service, error) {
@@ -76,7 +76,7 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 		service.Labels = map[string]string{}
 	}
 	service.Labels["router"] = name.Name
-	service.Labels[manifests.OwningClusterIngressLabel] = ci.Name
+	service.Labels[manifests.OwningIngressControllerLabel] = ci.Name
 
 	service.Spec.Selector = IngressControllerDeploymentPodSelector(ci).MatchLabels
 
@@ -92,7 +92,7 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 }
 
 // currentLoadBalancerService returns any existing LB service for the
-// clusteringress.
+// ingresscontroller.
 func (r *reconciler) currentLoadBalancerService(ci *operatorv1.IngressController) (*corev1.Service, error) {
 	service := &corev1.Service{}
 	if err := r.client.Get(context.TODO(), loadBalancerServiceName(ci), service); err != nil {
@@ -105,7 +105,7 @@ func (r *reconciler) currentLoadBalancerService(ci *operatorv1.IngressController
 }
 
 // finalizeLoadBalancerService deletes any DNS entries associated with any
-// current LB service associated with the clusteringress and then finalizes the
+// current LB service associated with the ingresscontroller and then finalizes the
 // service.
 func (r *reconciler) finalizeLoadBalancerService(ci *operatorv1.IngressController, dnsConfig *configv1.DNS) error {
 	service, err := r.currentLoadBalancerService(ci)

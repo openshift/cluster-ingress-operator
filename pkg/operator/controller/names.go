@@ -17,7 +17,7 @@ const (
 
 	// caCertSecretName is the name of the secret that holds the CA certificate
 	// that the operator will use to create default certificates for
-	// clusteringresses.
+	// ingresscontrollers.
 	caCertSecretName = "router-ca"
 
 	// caCertConfigMapName is the name of the config map with the public key
@@ -32,7 +32,7 @@ const (
 
 	// controllerDeploymentLabel identifies a deployment as an ingress controller
 	// deployment, and the value is the name of the owning ingress controller.
-	controllerDeploymentLabel = "ingress.operator.openshift.io/ingress-controller-deployment"
+	controllerDeploymentLabel = "ingresscontroller.operator.openshift.io/deployment-ingresscontroller"
 )
 
 // RouterDeploymentName returns the namespaced name for the router deployment.

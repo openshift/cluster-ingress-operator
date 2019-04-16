@@ -67,11 +67,11 @@ u3YLAbyW/lHhOCiZu2iAI8AbmXem9lW6Tr7p/97s0w==
 	}
 }
 
-// newClusterIngress returns a new clusteringress with the specified name,
+// newIngressController returns a new ingresscontroller with the specified name,
 // default certificate secret name (or nil if empty), and ingress domain, for
 // use as a test input.
-func newClusterIngress(name, defaultCertificateSecretName, domain string) operatorv1.IngressController {
-	clusteringress := operatorv1.IngressController{
+func newIngressController(name, defaultCertificateSecretName, domain string) operatorv1.IngressController {
+	ingresscontroller := operatorv1.IngressController{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
 		},
@@ -80,14 +80,14 @@ func newClusterIngress(name, defaultCertificateSecretName, domain string) operat
 		},
 	}
 	if len(defaultCertificateSecretName) != 0 {
-		clusteringress.Spec.DefaultCertificate = &corev1.LocalObjectReference{Name: defaultCertificateSecretName}
+		ingresscontroller.Spec.DefaultCertificate = &corev1.LocalObjectReference{Name: defaultCertificateSecretName}
 	}
-	return clusteringress
+	return ingresscontroller
 }
 
 // TestDesiredRouterCertsGlobalSecret verifies that we get the expected global
-// secret for the default clusteringress and for various combinations of
-// clusteringresses and default certificate secrets.
+// secret for the default ingresscontroller and for various combinations of
+// ingresscontrollers and default certificate secrets.
 func TestDesiredRouterCertsGlobalSecret(t *testing.T) {
 	type testInputs struct {
 		ingresses []operatorv1.IngressController
@@ -98,10 +98,10 @@ func TestDesiredRouterCertsGlobalSecret(t *testing.T) {
 	}
 	var (
 		defaultCert = newSecret("router-certs-default")
-		defaultCI   = newClusterIngress("default", "", "apps.my.devcluster.openshift.com")
+		defaultCI   = newIngressController("default", "", "apps.my.devcluster.openshift.com")
 
-		ci1 = newClusterIngress("ci1", "s1", "dom1")
-		ci2 = newClusterIngress("ci2", "s2", "dom2")
+		ci1 = newIngressController("ci1", "s1", "dom1")
+		ci2 = newIngressController("ci2", "s2", "dom2")
 		s1  = newSecret("s1")
 		s2  = newSecret("s2")
 		// data has the PEM for defaultCert, s1, and s2 (which all have
