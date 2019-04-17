@@ -195,9 +195,16 @@ func (r *reconciler) enforceEffectiveIngressDomain(ic *operatorv1.IngressControl
 	}
 	if !unique {
 		log.Info("domain not unique, not setting status domain for IngressController", "namespace", ic.Namespace, "name", ic.Name)
-		return nil
+		availableCondition := &operatorv1.OperatorCondition{
+			Type:    operatorv1.IngressControllerAvailableConditionType,
+			Status:  operatorv1.ConditionFalse,
+			Reason:  "InvalidDomain",
+			Message: fmt.Sprintf("domain %q is already in use by another IngressController", domain),
+		}
+		updated.Status.Conditions = setIngressStatusCondition(updated.Status.Conditions, availableCondition)
+	} else {
+		updated.Status.Domain = domain
 	}
-	updated.Status.Domain = domain
 
 	if err := r.client.Status().Update(context.TODO(), updated); err != nil {
 		return fmt.Errorf("failed to update status of IngressController %s/%s: %v", updated.Namespace, updated.Name, err)
