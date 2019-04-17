@@ -11,6 +11,7 @@ import (
 	"github.com/openshift/cluster-ingress-operator/pkg/operator"
 	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
 	operatorconfig "github.com/openshift/cluster-ingress-operator/pkg/operator/config"
+	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
 	configv1 "github.com/openshift/api/config/v1"
 
@@ -51,8 +52,8 @@ func main() {
 	}
 
 	// Collect operator configuration.
-	operatorNamespace, ok := os.LookupEnv("WATCH_NAMESPACE")
-	if !ok {
+	operatorNamespace := os.Getenv("WATCH_NAMESPACE")
+	if len(operatorNamespace) == 0 {
 		log.Error(fmt.Errorf("missing environment variable"), "'WATCH_NAMESPACE' environment variable must be set")
 		os.Exit(1)
 	}
@@ -60,6 +61,11 @@ func main() {
 	if len(routerImage) == 0 {
 		log.Error(fmt.Errorf("missing environment variable"), "'IMAGE' environment variable must be set")
 		os.Exit(1)
+	}
+	releaseVersion := os.Getenv("RELEASE_VERSION")
+	if len(releaseVersion) == 0 {
+		releaseVersion = controller.UnknownReleaseVersionName
+		log.Info("RELEASE_VERSION environment variable missing", "release version", controller.UnknownReleaseVersionName)
 	}
 
 	// Retrieve the cluster infrastructure config.
@@ -78,7 +84,7 @@ func main() {
 	}
 
 	operatorConfig := operatorconfig.Config{
-		OperatorReleaseVersion: os.Getenv("RELEASE_VERSION"),
+		OperatorReleaseVersion: releaseVersion,
 		Namespace:              operatorNamespace,
 		RouterImage:            routerImage,
 	}

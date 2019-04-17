@@ -20,7 +20,10 @@ import (
 )
 
 const (
-	IngressClusterOperatorName = "ingress"
+	IngressClusterOperatorName     = "ingress"
+	UnknownReleaseVersionName      = "unknown"
+	ingressesEqualConditionMessage = "desired and current number of IngressControllers are equal"
+	operatorVersionName            = "operator"
 )
 
 // syncOperatorStatus computes the operator's current status and therefrom
@@ -56,20 +59,18 @@ func (r *reconciler) syncOperatorStatus() error {
 		},
 	}
 
-	if len(r.OperatorReleaseVersion) > 0 {
-		// An available operator resets release version
-		for _, condition := range co.Status.Conditions {
-			if condition.Type == configv1.OperatorAvailable && condition.Status == configv1.ConditionTrue {
-				co.Status.Versions = []configv1.OperandVersion{
-					{
-						Name:    "operator",
-						Version: r.OperatorReleaseVersion,
-					},
-					{
-						Name:    "ingress-controller",
-						Version: r.RouterImage,
-					},
-				}
+	// An available operator resets release version
+	for _, condition := range co.Status.Conditions {
+		if condition.Type == configv1.OperatorAvailable && condition.Status == configv1.ConditionTrue {
+			co.Status.Versions = []configv1.OperandVersion{
+				{
+					Name:    operatorVersionName,
+					Version: r.OperatorReleaseVersion,
+				},
+				{
+					Name:    "ingress-controller",
+					Version: r.RouterImage,
+				},
 			}
 		}
 	}
@@ -107,7 +108,17 @@ func (r *reconciler) getOperatorState() (*corev1.Namespace, []operatorv1.Ingress
 }
 
 // computeOperatorStatusConditions computes the operator's current state.
-func computeOperatorStatusConditions(conditions []configv1.ClusterOperatorStatusCondition, ns *corev1.Namespace, ingresses []operatorv1.IngressController) []configv1.ClusterOperatorStatusCondition {
+func computeOperatorStatusConditions(conditions []configv1.ClusterOperatorStatusCondition, ns *corev1.Namespace,
+	ingresses []operatorv1.IngressController) []configv1.ClusterOperatorStatusCondition {
+	conditions = computeOperatorFailingCondition(conditions, ns)
+	conditions = computeOperatorProgressingCondition(conditions, ingresses)
+	conditions = computeOperatorAvailableCondition(conditions, ingresses)
+
+	return conditions
+}
+
+// computeOperatorFailingCondition computes the operator's current Failing status state.
+func computeOperatorFailingCondition(conditions []configv1.ClusterOperatorStatusCondition, ns *corev1.Namespace) []configv1.ClusterOperatorStatusCondition {
 	failingCondition := &configv1.ClusterOperatorStatusCondition{
 		Type:   configv1.OperatorFailing,
 		Status: configv1.ConditionUnknown,
@@ -118,9 +129,14 @@ func computeOperatorStatusConditions(conditions []configv1.ClusterOperatorStatus
 		failingCondition.Message = "operand namespace does not exist"
 	} else {
 		failingCondition.Status = configv1.ConditionFalse
+		failingCondition.Message = "operand namespace exists"
 	}
-	conditions = setOperatorStatusCondition(conditions, failingCondition)
 
+	return setOperatorStatusCondition(conditions, failingCondition)
+}
+
+// computeOperatorProgressingCondition computes the operator's current Progressing status state.
+func computeOperatorProgressingCondition(conditions []configv1.ClusterOperatorStatusCondition, ingresses []operatorv1.IngressController) []configv1.ClusterOperatorStatusCondition {
 	// TODO: Update progressingCondition when an ingresscontroller
 	//       progressing condition is created. The Operator's condition
 	//       should be derived from the ingresscontroller's condition.
@@ -140,6 +156,7 @@ func computeOperatorStatusConditions(conditions []configv1.ClusterOperatorStatus
 	}
 	if numIngresses == ingressesAvailable {
 		progressingCondition.Status = configv1.ConditionFalse
+		progressingCondition.Message = ingressesEqualConditionMessage
 	} else {
 		progressingCondition.Status = configv1.ConditionTrue
 		progressingCondition.Reason = "Reconciling"
@@ -147,14 +164,30 @@ func computeOperatorStatusConditions(conditions []configv1.ClusterOperatorStatus
 			"%d ingress controllers available, want %d",
 			ingressesAvailable, numIngresses)
 	}
-	conditions = setOperatorStatusCondition(conditions, progressingCondition)
 
+	return setOperatorStatusCondition(conditions, progressingCondition)
+}
+
+// computeOperatorAvailableCondition computes the operator's current Available status state.
+func computeOperatorAvailableCondition(conditions []configv1.ClusterOperatorStatusCondition,
+	ingresses []operatorv1.IngressController) []configv1.ClusterOperatorStatusCondition {
 	availableCondition := &configv1.ClusterOperatorStatusCondition{
 		Type:   configv1.OperatorAvailable,
 		Status: configv1.ConditionUnknown,
 	}
+	numIngresses := len(ingresses)
+	var ingressesAvailable int
+	for _, ing := range ingresses {
+		for _, c := range ing.Status.Conditions {
+			if c.Type == operatorv1.IngressControllerAvailableConditionType && c.Status == operatorv1.ConditionTrue {
+				ingressesAvailable++
+				break
+			}
+		}
+	}
 	if numIngresses == ingressesAvailable {
 		availableCondition.Status = configv1.ConditionTrue
+		availableCondition.Message = ingressesEqualConditionMessage
 	} else {
 		availableCondition.Status = configv1.ConditionFalse
 		availableCondition.Reason = "IngressUnavailable"
@@ -162,9 +195,8 @@ func computeOperatorStatusConditions(conditions []configv1.ClusterOperatorStatus
 			"%d ingress controllers available, want %d",
 			ingressesAvailable, numIngresses)
 	}
-	conditions = setOperatorStatusCondition(conditions, availableCondition)
 
-	return conditions
+	return setOperatorStatusCondition(conditions, availableCondition)
 }
 
 // setOperatorStatusCondition returns a slice of Operator status conditions as
