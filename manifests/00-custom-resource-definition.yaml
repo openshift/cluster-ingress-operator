@@ -104,6 +104,12 @@ spec:
                     linux   node-role.kubernetes.io/worker: ''''  If set, the specified
                     selector is used and replaces the default.'
                   type: object
+                tolerations:
+                  description: tolerations is a list of tolerations applied to ingress
+                    controller deployments.  The default is an empty list.  See https://kubernetes.io/docs/concepts/configuration/taint-and-toleration/
+                  items:
+                    type: object
+                  type: array
               type: object
             replicas:
               description: replicas is the desired number of ingress controller replicas.
