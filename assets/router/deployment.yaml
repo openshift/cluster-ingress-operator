@@ -13,6 +13,7 @@ spec:
         - name: router
           # image is set at runtime.
           imagePullPolicy: IfNotPresent
+          terminationMessagePolicy: FallbackToLogsOnError
           ports:
           - name: http
             containerPort: 80
