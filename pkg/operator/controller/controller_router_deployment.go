@@ -286,9 +286,7 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 	updated.Spec.Template.Spec.NodeSelector = expected.Spec.Template.Spec.NodeSelector
 	updated.Spec.Template.Spec.Containers[0].Env = expected.Spec.Template.Spec.Containers[0].Env
 	updated.Spec.Template.Spec.Containers[0].Image = expected.Spec.Template.Spec.Containers[0].Image
-	if expected.Spec.Template.Spec.Tolerations != nil {
-		updated.Spec.Template.Spec.Tolerations = expected.Spec.Template.Spec.Tolerations
-	}
+	updated.Spec.Template.Spec.Tolerations = expected.Spec.Template.Spec.Tolerations
 	replicas := int32(1)
 	if expected.Spec.Replicas != nil {
 		replicas = *expected.Spec.Replicas
