@@ -16,12 +16,6 @@ then
         "containers": [
           {
             "name": "ingress-operator",
-            "env": [
-              {
-                "name": "IMAGE",
-                "value": "image-registry.openshift-image-registry.svc:5000/openshift-ingress-operator/ingress-operator:latest"
-              }
-            ],
             "image": "image-registry.openshift-image-registry.svc:5000/openshift-ingress-operator/ingress-operator:latest",
             "imagePullPolicy": "Always"
           }
