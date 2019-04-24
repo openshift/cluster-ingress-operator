@@ -19,8 +19,6 @@ import (
 
 	"k8s.io/apimachinery/pkg/types"
 
-	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
-
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
