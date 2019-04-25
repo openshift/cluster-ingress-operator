@@ -17,7 +17,7 @@ required = [
 # openshift
 [[override]]
   name = "github.com/openshift/api"
-  revision = "87f97e6c35f4e067e1c744b3013fd902c5baa4ad"
+  revision = "515b3561c8a150ecbd1a2dd744c7bd829b3308f2"
 
 [[constraint]]
   name = "github.com/openshift/library-go"

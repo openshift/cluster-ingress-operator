@@ -17,7 +17,7 @@ func TestComputeOperatorStatusConditions(t *testing.T) {
 		numWanted, numAvailable int
 	}
 	type testOutputs struct {
-		failing, progressing, available bool
+		degraded, progressing, available bool
 	}
 	testCases := []struct {
 		description string
@@ -36,7 +36,7 @@ func TestComputeOperatorStatusConditions(t *testing.T) {
 			namespace *corev1.Namespace
 			ingresses []operatorv1.IngressController
 
-			failing, progressing, available configv1.ConditionStatus
+			degraded, progressing, available configv1.ConditionStatus
 		)
 		if tc.inputs.haveNamespace {
 			namespace = &corev1.Namespace{}
@@ -56,10 +56,10 @@ func TestComputeOperatorStatusConditions(t *testing.T) {
 		for i := 0; i < tc.inputs.numAvailable; i++ {
 			ingresses[i].Status.Conditions = []operatorv1.OperatorCondition{ingressAvailable}
 		}
-		if tc.outputs.failing {
-			failing = configv1.ConditionTrue
+		if tc.outputs.degraded {
+			degraded = configv1.ConditionTrue
 		} else {
-			failing = configv1.ConditionFalse
+			degraded = configv1.ConditionFalse
 		}
 		if tc.outputs.progressing {
 			progressing = configv1.ConditionTrue
@@ -73,8 +73,8 @@ func TestComputeOperatorStatusConditions(t *testing.T) {
 		}
 		expected := []configv1.ClusterOperatorStatusCondition{
 			{
-				Type:   configv1.OperatorFailing,
-				Status: failing,
+				Type:   configv1.OperatorDegraded,
+				Status: degraded,
 			},
 			{
 				Type:   configv1.OperatorProgressing,
@@ -159,7 +159,7 @@ func TestSetOperatorStatusCondition(t *testing.T) {
 			description: "existing conditions, one changed",
 			oldConditions: []configv1.ClusterOperatorStatusCondition{
 				{
-					Type:   configv1.OperatorFailing,
+					Type:   configv1.OperatorDegraded,
 					Status: configv1.ConditionFalse,
 				},
 				{
@@ -177,7 +177,7 @@ func TestSetOperatorStatusCondition(t *testing.T) {
 			},
 			expected: []configv1.ClusterOperatorStatusCondition{
 				{
-					Type:   configv1.OperatorFailing,
+					Type:   configv1.OperatorDegraded,
 					Status: configv1.ConditionFalse,
 				},
 				{

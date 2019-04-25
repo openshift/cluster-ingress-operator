@@ -110,29 +110,29 @@ func (r *reconciler) getOperatorState() (*corev1.Namespace, []operatorv1.Ingress
 // computeOperatorStatusConditions computes the operator's current state.
 func computeOperatorStatusConditions(conditions []configv1.ClusterOperatorStatusCondition, ns *corev1.Namespace,
 	ingresses []operatorv1.IngressController) []configv1.ClusterOperatorStatusCondition {
-	conditions = computeOperatorFailingCondition(conditions, ns)
+	conditions = computeOperatorDegradedCondition(conditions, ns)
 	conditions = computeOperatorProgressingCondition(conditions, ingresses)
 	conditions = computeOperatorAvailableCondition(conditions, ingresses)
 
 	return conditions
 }
 
-// computeOperatorFailingCondition computes the operator's current Failing status state.
-func computeOperatorFailingCondition(conditions []configv1.ClusterOperatorStatusCondition, ns *corev1.Namespace) []configv1.ClusterOperatorStatusCondition {
-	failingCondition := &configv1.ClusterOperatorStatusCondition{
-		Type:   configv1.OperatorFailing,
+// computeOperatorDegradedCondition computes the operator's current Degraded status state.
+func computeOperatorDegradedCondition(conditions []configv1.ClusterOperatorStatusCondition, ns *corev1.Namespace) []configv1.ClusterOperatorStatusCondition {
+	degradedCondition := &configv1.ClusterOperatorStatusCondition{
+		Type:   configv1.OperatorDegraded,
 		Status: configv1.ConditionUnknown,
 	}
 	if ns == nil {
-		failingCondition.Status = configv1.ConditionTrue
-		failingCondition.Reason = "NoNamespace"
-		failingCondition.Message = "operand namespace does not exist"
+		degradedCondition.Status = configv1.ConditionTrue
+		degradedCondition.Reason = "NoNamespace"
+		degradedCondition.Message = "operand namespace does not exist"
 	} else {
-		failingCondition.Status = configv1.ConditionFalse
-		failingCondition.Message = "operand namespace exists"
+		degradedCondition.Status = configv1.ConditionFalse
+		degradedCondition.Message = "operand namespace exists"
 	}
 
-	return setOperatorStatusCondition(conditions, failingCondition)
+	return setOperatorStatusCondition(conditions, degradedCondition)
 }
 
 // computeOperatorProgressingCondition computes the operator's current Progressing status state.
