@@ -1,4 +1,6 @@
 kind: Namespace
 apiVersion: v1
 metadata:
+  annotations:
+    openshift.io/node-selector: ""
   name: openshift-ingress-operator
