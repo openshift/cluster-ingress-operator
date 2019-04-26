@@ -16,6 +16,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 
 	configv1 "github.com/openshift/api/config/v1"
 )
@@ -97,6 +98,8 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, routerImage strin
 			},
 		},
 	}
+
+	deployment.Spec.Strategy = deploymentStrategyForPublishingStrategy(ci.Status.EndpointPublishingStrategy)
 
 	statsSecretName := fmt.Sprintf("router-stats-%s", ci.Name)
 	env := []corev1.EnvVar{
@@ -239,6 +242,40 @@ func (r *reconciler) currentRouterDeployment(ci *operatorv1.IngressController) (
 		return nil, err
 	}
 	return deployment, nil
+}
+
+// deploymentStrategyForPublishingStrategy chooses an appropriate default
+// deployment strategy for an endpoint publishing strategy.
+//
+// The default is a rolling update with 25% max unavailable and 25% max surge.
+// This enables 100% availability rollouts at any replica/node count when the
+// publishing strategy supports colocated ingress controllers.
+//
+// With HostNetwork, use 25% max unavailable and 0 surge. This is because the
+// ingress controllers can't be colocated. Usually, replicas will be equal to
+// the node pool size. Under these conditions, surge requires new nodes to
+// support the rollout. This means a positive surge can cause the rollout to
+// wedge in the absence of auto-scaling.
+func deploymentStrategyForPublishingStrategy(strategy *operatorv1.EndpointPublishingStrategy) appsv1.DeploymentStrategy {
+	pointerTo := func(ios intstr.IntOrString) *intstr.IntOrString { return &ios }
+	switch strategy.Type {
+	case operatorv1.HostNetworkStrategyType:
+		return appsv1.DeploymentStrategy{
+			Type: appsv1.RollingUpdateDeploymentStrategyType,
+			RollingUpdate: &appsv1.RollingUpdateDeployment{
+				MaxUnavailable: pointerTo(intstr.FromString("25%")),
+				MaxSurge:       pointerTo(intstr.FromInt(0)),
+			},
+		}
+	default:
+		return appsv1.DeploymentStrategy{
+			Type: appsv1.RollingUpdateDeploymentStrategyType,
+			RollingUpdate: &appsv1.RollingUpdateDeployment{
+				MaxUnavailable: pointerTo(intstr.FromString("25%")),
+				MaxSurge:       pointerTo(intstr.FromString("25%")),
+			},
+		}
+	}
 }
 
 // createRouterDeployment creates a router deployment.
