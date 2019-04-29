@@ -15,13 +15,12 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
 )
 
-func (r *reconciler) ensureServiceMonitor(ci *operatorv1.IngressController, svc *corev1.Service, deploymentRef metav1.OwnerReference) (*unstructured.Unstructured, error) {
-	desired := desiredServiceMonitor(ci, svc, deploymentRef)
+func (r *reconciler) ensureServiceMonitor(ic *operatorv1.IngressController, svc *corev1.Service, deploymentRef metav1.OwnerReference) (*unstructured.Unstructured, error) {
+	desired := desiredServiceMonitor(ic, svc, deploymentRef)
 
-	current, err := r.currentServiceMonitor(ci)
+	current, err := r.currentServiceMonitor(ic)
 	if err != nil {
 		return nil, err
 	}
@@ -36,12 +35,8 @@ func (r *reconciler) ensureServiceMonitor(ci *operatorv1.IngressController, svc 
 	return current, nil
 }
 
-func serviceMonitorName(ci *operatorv1.IngressController) types.NamespacedName {
-	return types.NamespacedName{Namespace: "openshift-ingress", Name: "router-" + ci.Name}
-}
-
-func desiredServiceMonitor(ci *operatorv1.IngressController, svc *corev1.Service, deploymentRef metav1.OwnerReference) *unstructured.Unstructured {
-	name := serviceMonitorName(ci)
+func desiredServiceMonitor(ic *operatorv1.IngressController, svc *corev1.Service, deploymentRef metav1.OwnerReference) *unstructured.Unstructured {
+	name := IngressControllerServiceMonitorName(ic)
 	sm := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"metadata": map[string]interface{}{
@@ -80,14 +75,14 @@ func desiredServiceMonitor(ci *operatorv1.IngressController, svc *corev1.Service
 	return sm
 }
 
-func (r *reconciler) currentServiceMonitor(ci *operatorv1.IngressController) (*unstructured.Unstructured, error) {
+func (r *reconciler) currentServiceMonitor(ic *operatorv1.IngressController) (*unstructured.Unstructured, error) {
 	sm := &unstructured.Unstructured{}
 	sm.SetGroupVersionKind(schema.GroupVersionKind{
 		Group:   "monitoring.coreos.com",
 		Kind:    "ServiceMonitor",
 		Version: "v1",
 	})
-	if err := r.client.Get(context.TODO(), serviceMonitorName(ci), sm); err != nil {
+	if err := r.client.Get(context.TODO(), IngressControllerServiceMonitorName(ic), sm); err != nil {
 		if meta.IsNoMatchError(err) {
 			// Refresh kube client with latest rest scheme/mapper.
 			kClient, err := operatorclient.NewClient(r.KubeConfig)
@@ -96,7 +91,7 @@ func (r *reconciler) currentServiceMonitor(ci *operatorv1.IngressController) (*u
 			}
 			r.client = kClient
 
-			err = r.client.Get(context.TODO(), serviceMonitorName(ci), sm)
+			err = r.client.Get(context.TODO(), IngressControllerServiceMonitorName(ic), sm)
 			if err == nil {
 				return sm, nil
 			}
