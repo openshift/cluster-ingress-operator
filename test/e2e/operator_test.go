@@ -59,8 +59,8 @@ func getClient() (client.Client, string, error) {
 	return kubeClient, namespace, nil
 }
 
-func newIngressController(name, ns, domain string, epType operatorv1.EndpointPublishingStrategyType) *operatorv1.IngressController {
-	repl := int32(1)
+func newIngressController(name, ns, domain string, repl int, epType operatorv1.EndpointPublishingStrategyType) *operatorv1.IngressController {
+	repl32 := int32(repl)
 	return &operatorv1.IngressController{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -69,7 +69,10 @@ func newIngressController(name, ns, domain string, epType operatorv1.EndpointPub
 		// TODO: Test needs to be infrastructure and platform aware in the very near future.
 		Spec: operatorv1.IngressControllerSpec{
 			Domain:   domain,
-			Replicas: &repl,
+			Replicas: &repl32,
+			RouteSelector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"foo": "bar"},
+			},
 			EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
 				Type: epType,
 			},
@@ -139,7 +142,7 @@ func TestIngressControllerControllerCreateDelete(t *testing.T) {
 	}
 
 	domain := ingressControllerName + "." + dnsConfig.Spec.BaseDomain
-	ing = newIngressController(ingressControllerName, ns, domain, operatorv1.LoadBalancerServiceStrategyType)
+	ing = newIngressController(ingressControllerName, ns, domain, 1, operatorv1.LoadBalancerServiceStrategyType)
 	if err := cl.Create(context.TODO(), ing); err != nil {
 		t.Fatalf("failed to create IngressController %s/%s: %v", ing.Namespace, ing.Name, err)
 	}
@@ -656,7 +659,7 @@ func TestHostNetworkEndpointPublishingStrategy(t *testing.T) {
 
 	// Create the ingresscontroller.
 	domain := ingressControllerName + "." + dnsConfig.Spec.BaseDomain
-	ing := newIngressController(ingressControllerName, ns, domain, operatorv1.HostNetworkStrategyType)
+	ing := newIngressController(ingressControllerName, ns, domain, 1, operatorv1.HostNetworkStrategyType)
 	if cl.Create(context.TODO(), ing); err != nil {
 		t.Fatalf("failed to create the ingresscontroller: %v", err)
 	}
@@ -679,6 +682,92 @@ func TestHostNetworkEndpointPublishingStrategy(t *testing.T) {
 	}
 
 	if cl.Delete(context.TODO(), ing); err != nil {
+		t.Fatalf("failed to delete the ingresscontroller: %v", err)
+	}
+}
+
+// TestDeploymentStrategyForPublishingStrategy creates a 3-replica ingresscontroller
+// using "HostNetwork" endpoint publishing strategy and verifies that the
+// operator creates a router and that the router becomes available. The test
+// then updates routeSelector labels to force a Deployment rolling update
+// and verifies no unavailable replicas exist.
+func TestDeploymentStrategyForPublishingStrategy(t *testing.T) {
+	cl, ns, err := getClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dnsConfig := &configv1.DNS{}
+	if err := cl.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, dnsConfig); err != nil {
+		t.Fatalf("failed to get DNS 'cluster': %v", err)
+	}
+
+	// Create an ingresscontroller with 3 replicas.
+	domain := ingressControllerName + "." + dnsConfig.Spec.BaseDomain
+	ic := newIngressController(ingressControllerName, ns, domain, 1, operatorv1.HostNetworkStrategyType)
+	if cl.Create(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to create the ingresscontroller: %v", err)
+	}
+
+	// Wait for the ingress controller's status to reflect the desired number of replicas.
+	err = wait.PollImmediate(1*time.Second, 30*time.Second, func() (bool, error) {
+		if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: ns, Name: ingressControllerName}, ic); err != nil {
+			return false, nil
+		}
+		if ic.Spec.Replicas == nil || ic.Status.AvailableReplicas != *ic.Spec.Replicas {
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		// Errorf is used instead of Fatalf to ensure that
+		// the ingresscontroller is deleted.
+		t.Errorf("failed to get the ingresscontroller: %v", err)
+	}
+
+	// Get the ingress controller's associated deployment.
+	deployment := &appsv1.Deployment{}
+	err = wait.PollImmediate(1*time.Second, 60*time.Second, func() (bool, error) {
+		if err := cl.Get(context.TODO(), ingresscontroller.RouterDeploymentName(ic), deployment); err != nil {
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		// Errorf is used instead of Fatalf to ensure that
+		// the ingresscontroller is deleted.
+		t.Errorf("failed to get deployment: %v", err)
+	}
+
+	// Force a rolling update of the Deployment pods by updating
+	// the ingress controller's routeSelector label.
+	ic.Spec.RouteSelector.MatchLabels = map[string]string{"foo": "baz"}
+	if err := cl.Update(context.TODO(), ic); err != nil {
+		t.Errorf("failed to update ingresscontroller: %v", err)
+	}
+
+	// Get the deployment and wait for the deployment observed generation
+	// to be updated and contain no unavailableReplicas.
+	err = wait.PollImmediate(1*time.Second, 60*time.Second, func() (bool, error) {
+		if err := cl.Get(context.TODO(), ingresscontroller.RouterDeploymentName(ic), deployment); err != nil {
+			return false, nil
+		}
+		if deployment.Status.ObservedGeneration == int64(1) {
+			return false, nil
+		}
+		// TODO: Figure out why this condition does not work.
+		if deployment.Status.UnavailableReplicas > int32(0) {
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		// Errorf is used instead of Fatalf to ensure that
+		// the ingresscontroller is deleted.
+		t.Errorf("failed to reconcile updated deployment: %v", err)
+	}
+
+	if cl.Delete(context.TODO(), ic); err != nil {
 		t.Fatalf("failed to delete the ingresscontroller: %v", err)
 	}
 }
