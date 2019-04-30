@@ -7,13 +7,14 @@ import (
 	"testing"
 	"time"
 
+	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	configv1 "github.com/openshift/api/config/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 var toleration = corev1.Toleration{
@@ -249,6 +250,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 }
 
 func TestDeploymentConfigChanged(t *testing.T) {
+	pointerTo := func(ios intstr.IntOrString) *intstr.IntOrString { return &ios }
 	testCases := []struct {
 		description string
 		mutate      func(*appsv1.Deployment)
@@ -378,6 +380,20 @@ func TestDeploymentConfigChanged(t *testing.T) {
 			},
 			expect: false,
 		},
+		{
+			description: "if the deployment strategy parameters are changed",
+			mutate: func(deployment *appsv1.Deployment) {
+				deployment.Spec.Strategy.RollingUpdate.MaxSurge = pointerTo(intstr.FromString("25%"))
+			},
+			expect: true,
+		},
+		{
+			description: "if the deployment template affinity is changed",
+			mutate: func(deployment *appsv1.Deployment) {
+				deployment.Spec.Template.Spec.Affinity.PodAntiAffinity.RequiredDuringSchedulingIgnoredDuringExecution[0].LabelSelector.MatchExpressions[0].Key = "new-label"
+			},
+			expect: true,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -390,6 +406,13 @@ func TestDeploymentConfigChanged(t *testing.T) {
 				UID:       "1",
 			},
 			Spec: appsv1.DeploymentSpec{
+				Strategy: appsv1.DeploymentStrategy{
+					Type: appsv1.RollingUpdateDeploymentStrategyType,
+					RollingUpdate: &appsv1.RollingUpdateDeployment{
+						MaxUnavailable: pointerTo(intstr.FromString("25%")),
+						MaxSurge:       pointerTo(intstr.FromInt(0)),
+					},
+				},
 				Template: corev1.PodTemplateSpec{
 					Spec: corev1.PodSpec{
 						Volumes: []corev1.Volume{
@@ -428,6 +451,24 @@ func TestDeploymentConfigChanged(t *testing.T) {
 									},
 								},
 								Image: "openshift/origin-cluster-ingress-operator:v4.0",
+							},
+						},
+						Affinity: &corev1.Affinity{
+							PodAntiAffinity: &corev1.PodAntiAffinity{
+								RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+									{
+										TopologyKey: "kubernetes.io/hostname",
+										LabelSelector: &metav1.LabelSelector{
+											MatchExpressions: []metav1.LabelSelectorRequirement{
+												{
+													Key:      "label",
+													Operator: metav1.LabelSelectorOpIn,
+													Values:   []string{"value"},
+												},
+											},
+										},
+									},
+								},
 							},
 						},
 					},

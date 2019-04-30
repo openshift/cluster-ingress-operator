@@ -79,18 +79,15 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, routerImage strin
 	// Prevent colocation of controller pods to enable simple horizontal scaling
 	deployment.Spec.Template.Spec.Affinity = &corev1.Affinity{
 		PodAntiAffinity: &corev1.PodAntiAffinity{
-			PreferredDuringSchedulingIgnoredDuringExecution: []corev1.WeightedPodAffinityTerm{
+			RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
 				{
-					Weight: 100,
-					PodAffinityTerm: corev1.PodAffinityTerm{
-						TopologyKey: "kubernetes.io/hostname",
-						LabelSelector: &metav1.LabelSelector{
-							MatchExpressions: []metav1.LabelSelectorRequirement{
-								{
-									Key:      controllerDeploymentLabel,
-									Operator: metav1.LabelSelectorOpIn,
-									Values:   []string{IngressControllerDeploymentLabel(ci)},
-								},
+					TopologyKey: "kubernetes.io/hostname",
+					LabelSelector: &metav1.LabelSelector{
+						MatchExpressions: []metav1.LabelSelectorRequirement{
+							{
+								Key:      controllerDeploymentLabel,
+								Operator: metav1.LabelSelectorOpIn,
+								Values:   []string{IngressControllerDeploymentLabel(ci)},
 							},
 						},
 					},
@@ -99,7 +96,19 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, routerImage strin
 		},
 	}
 
-	deployment.Spec.Strategy = deploymentStrategyForPublishingStrategy(ci.Status.EndpointPublishingStrategy)
+	// For now, all strategies use 25% max unavailable and 0 surge. This is because
+	// distinct ingress controllers can't currently be colocated. Usually, replicas
+	// will be equal to the node pool size. Under these conditions, surge requires
+	// new nodes to support the rollout. This means a positive surge can cause the
+	// rollout to wedge in the absence of auto-scaling.
+	pointerTo := func(ios intstr.IntOrString) *intstr.IntOrString { return &ios }
+	deployment.Spec.Strategy = appsv1.DeploymentStrategy{
+		Type: appsv1.RollingUpdateDeploymentStrategyType,
+		RollingUpdate: &appsv1.RollingUpdateDeployment{
+			MaxUnavailable: pointerTo(intstr.FromString("25%")),
+			MaxSurge:       pointerTo(intstr.FromInt(0)),
+		},
+	}
 
 	statsSecretName := fmt.Sprintf("router-stats-%s", ci.Name)
 	env := []corev1.EnvVar{
@@ -244,40 +253,6 @@ func (r *reconciler) currentRouterDeployment(ci *operatorv1.IngressController) (
 	return deployment, nil
 }
 
-// deploymentStrategyForPublishingStrategy chooses an appropriate default
-// deployment strategy for an endpoint publishing strategy.
-//
-// The default is a rolling update with 25% max unavailable and 25% max surge.
-// This enables 100% availability rollouts at any replica/node count when the
-// publishing strategy supports colocated ingress controllers.
-//
-// With HostNetwork, use 25% max unavailable and 0 surge. This is because the
-// ingress controllers can't be colocated. Usually, replicas will be equal to
-// the node pool size. Under these conditions, surge requires new nodes to
-// support the rollout. This means a positive surge can cause the rollout to
-// wedge in the absence of auto-scaling.
-func deploymentStrategyForPublishingStrategy(strategy *operatorv1.EndpointPublishingStrategy) appsv1.DeploymentStrategy {
-	pointerTo := func(ios intstr.IntOrString) *intstr.IntOrString { return &ios }
-	switch strategy.Type {
-	case operatorv1.HostNetworkStrategyType:
-		return appsv1.DeploymentStrategy{
-			Type: appsv1.RollingUpdateDeploymentStrategyType,
-			RollingUpdate: &appsv1.RollingUpdateDeployment{
-				MaxUnavailable: pointerTo(intstr.FromString("25%")),
-				MaxSurge:       pointerTo(intstr.FromInt(0)),
-			},
-		}
-	default:
-		return appsv1.DeploymentStrategy{
-			Type: appsv1.RollingUpdateDeploymentStrategyType,
-			RollingUpdate: &appsv1.RollingUpdateDeployment{
-				MaxUnavailable: pointerTo(intstr.FromString("25%")),
-				MaxSurge:       pointerTo(intstr.FromString("25%")),
-			},
-		}
-	}
-}
-
 // createRouterDeployment creates a router deployment.
 func (r *reconciler) createRouterDeployment(deployment *appsv1.Deployment) error {
 	if err := r.client.Create(context.TODO(), deployment); err != nil {
@@ -309,12 +284,15 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 		cmp.Equal(current.Spec.Template.Spec.Containers[0].Env, expected.Spec.Template.Spec.Containers[0].Env, cmpopts.EquateEmpty(), cmpopts.SortSlices(cmpEnvs)) &&
 		current.Spec.Template.Spec.Containers[0].Image == expected.Spec.Template.Spec.Containers[0].Image &&
 		cmp.Equal(current.Spec.Template.Spec.Tolerations, expected.Spec.Template.Spec.Tolerations, cmpopts.EquateEmpty(), cmpopts.SortSlices(cmpTolerations)) &&
+		cmp.Equal(current.Spec.Template.Spec.Affinity, expected.Spec.Template.Spec.Affinity, cmpopts.EquateEmpty()) &&
+		cmp.Equal(current.Spec.Strategy, expected.Spec.Strategy, cmpopts.EquateEmpty()) &&
 		current.Spec.Replicas != nil &&
 		*current.Spec.Replicas == *expected.Spec.Replicas {
 		return false, nil
 	}
 
 	updated := current.DeepCopy()
+	updated.Spec.Strategy = expected.Spec.Strategy
 	volumes := make([]corev1.Volume, len(expected.Spec.Template.Spec.Volumes))
 	for i, vol := range expected.Spec.Template.Spec.Volumes {
 		volumes[i] = *vol.DeepCopy()
@@ -324,6 +302,7 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 	updated.Spec.Template.Spec.Containers[0].Env = expected.Spec.Template.Spec.Containers[0].Env
 	updated.Spec.Template.Spec.Containers[0].Image = expected.Spec.Template.Spec.Containers[0].Image
 	updated.Spec.Template.Spec.Tolerations = expected.Spec.Template.Spec.Tolerations
+	updated.Spec.Template.Spec.Affinity = expected.Spec.Template.Spec.Affinity
 	replicas := int32(1)
 	if expected.Spec.Replicas != nil {
 		replicas = *expected.Spec.Replicas
