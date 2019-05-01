@@ -274,27 +274,22 @@ func TestIngressControllerUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Wait for the ingress controller to be available.
+	// TODO: Also check the progressing condition once it is added.
 	ci := &operatorv1.IngressController{}
-	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
+	err = wait.PollImmediate(1*time.Second, 30*time.Second, func() (bool, error) {
 		if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: ns, Name: "default"}, ci); err != nil {
 			return false, nil
 		}
-		return true, nil
+		for _, cond := range ci.Status.Conditions {
+			if cond.Type == operatorv1.IngressControllerAvailableConditionType && cond.Status == operatorv1.ConditionTrue {
+				return true, nil
+			}
+		}
+		return false, nil
 	})
 	if err != nil {
 		t.Fatalf("failed to get default IngressController: %v", err)
-	}
-
-	// Wait for the router deployment to exist.
-	deployment := &appsv1.Deployment{}
-	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
-		if err := cl.Get(context.TODO(), ingresscontroller.RouterDeploymentName(ci), deployment); err != nil {
-			return false, nil
-		}
-		return true, nil
-	})
-	if err != nil {
-		t.Fatalf("failed to get default router deployment: %v", err)
 	}
 
 	// Wait for the CA certificate configmap to exist.
@@ -312,27 +307,32 @@ func TestIngressControllerUpdate(t *testing.T) {
 		t.Fatalf("failed to get CA certificate configmap: %v", err)
 	}
 
+	// Verify that the deployment uses the secret name specified in the
+	// ingress controller, or the default if none is set, and store the
+	// secret name (if any) so we can reset it at the end of the test.
+	deployment := &appsv1.Deployment{}
+	if err := cl.Get(context.TODO(), ingresscontroller.RouterDeploymentName(ci), deployment); err != nil {
+		t.Fatalf("failed to get default router deployment: %v", err)
+	}
 	originalSecret := ci.Spec.DefaultCertificate.DeepCopy()
-	expectedSecretName := fmt.Sprintf("router-certs-%s", ci.Name)
+	expectedSecretName := ingresscontroller.RouterOperatorGeneratedDefaultCertificateSecretName(ci, "openshift-ingress").Name
 	if originalSecret != nil {
 		expectedSecretName = originalSecret.Name
 	}
-
 	if deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName != expectedSecretName {
 		t.Fatalf("expected router deployment certificate secret to be %s, got %s",
 			expectedSecretName, deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName)
 	}
 
+	// Update the ingress controller and wait for the deployment to match.
 	secret, err := createDefaultCertTestSecret(cl, names.SimpleNameGenerator.GenerateName("test-"))
 	if err != nil {
 		t.Fatalf("creating default cert test secret: %v", err)
 	}
 
-	// update the ci and wait for the updated deployment to match expectations
 	ci.Spec.DefaultCertificate = &corev1.LocalObjectReference{Name: secret.Name}
-	err = cl.Update(context.TODO(), ci)
-	if err != nil {
-		t.Fatalf("failed to get default IngressController: %v", err)
+	if err := cl.Update(context.TODO(), ci); err != nil {
+		t.Fatalf("failed to update default IngressController: %v", err)
 	}
 	err = wait.PollImmediate(1*time.Second, 15*time.Second, func() (bool, error) {
 		if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: deployment.Namespace, Name: deployment.Name}, deployment); err != nil {
@@ -344,7 +344,7 @@ func TestIngressControllerUpdate(t *testing.T) {
 		return true, nil
 	})
 	if err != nil {
-		t.Fatalf("failed to get updated router deployment %s/%s: %v", deployment.Namespace, deployment.Name, err)
+		t.Fatalf("failed to observe updated router deployment %s/%s: %v", deployment.Namespace, deployment.Name, err)
 	}
 
 	// Wait for the CA certificate configmap to be deleted.
@@ -361,9 +361,12 @@ func TestIngressControllerUpdate(t *testing.T) {
 		t.Fatalf("failed to observe clean-up of CA certificate configmap: %v", err)
 	}
 
+	// Reset .spec.defaultCertificate to its original value.
+	if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: ns, Name: "default"}, ci); err != nil {
+		t.Fatalf("failed to get default IngressController: %v", err)
+	}
 	ci.Spec.DefaultCertificate = originalSecret
-	err = cl.Update(context.TODO(), ci)
-	if err != nil {
+	if err := cl.Update(context.TODO(), ci); err != nil {
 		t.Errorf("failed to reset IngressController: %v", err)
 	}
 
