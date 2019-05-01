@@ -221,9 +221,6 @@ func computeOperatorDegradedCondition(oldCondition *configv1.ClusterOperatorStat
 // computeOperatorProgressingCondition computes the operator's current Progressing status state.
 func (r *reconciler) computeOperatorProgressingCondition(oldCondition *configv1.ClusterOperatorStatusCondition,
 	allIngressesAvailable bool, oldVersions, curVersions []configv1.OperandVersion) configv1.ClusterOperatorStatusCondition {
-	// TODO: Update progressingCondition when an ingresscontroller
-	//       progressing condition is created. The Operator's condition
-	//       should be derived from the ingresscontroller's condition.
 	progressingCondition := configv1.ClusterOperatorStatusCondition{
 		Type: configv1.OperatorProgressing,
 	}

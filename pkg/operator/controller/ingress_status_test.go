@@ -190,36 +190,54 @@ func TestComputeLoadBalancerStatus(t *testing.T) {
 	}
 }
 
-func TestComputeIngressStatusConditions(t *testing.T) {
+func TestComputeDeploymentStatusConditions(t *testing.T) {
+	type testInputs struct {
+		desireRepl             int32
+		unavailRepl, availRepl int32
+	}
+	type testOutputs struct {
+		deployAvailable bool
+	}
 	testCases := []struct {
-		description     string
-		availRepl, repl int32
-		condType        string
-		condStatus      operatorv1.ConditionStatus
+		description string
+		inputs      testInputs
+		outputs     testOutputs
 	}{
-		{"0/2 deployment replicas available", 0, 2, operatorv1.OperatorStatusTypeAvailable, operatorv1.ConditionFalse},
-		{"1/2 deployment replicas available", 1, 2, operatorv1.OperatorStatusTypeAvailable, operatorv1.ConditionTrue},
-		{"2/2 deployment replicas available", 2, 2, operatorv1.OperatorStatusTypeAvailable, operatorv1.ConditionTrue},
+		{
+			description: "0/2 deployment replicas available",
+			inputs:      testInputs{2, 0, 0},
+			outputs:     testOutputs{false},
+		},
+		{
+			description: "1/2 deployment replicas available",
+			inputs:      testInputs{1, 1, 1},
+			outputs:     testOutputs{true},
+		},
+		{
+			description: "2/2 deployment replicas available",
+			inputs:      testInputs{0, 2, 1},
+			outputs:     testOutputs{true},
+		},
 	}
 
 	for i, tc := range testCases {
-		deploy := &appsv1.Deployment{
+		var deployStatus operatorv1.ConditionStatus
+		deployment := &appsv1.Deployment{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: fmt.Sprintf("ingress-controller-%d", i+1),
 			},
 			Status: appsv1.DeploymentStatus{
-				Replicas:          tc.repl,
-				AvailableReplicas: tc.availRepl,
+				UnavailableReplicas: tc.inputs.unavailRepl,
+				AvailableReplicas:   tc.inputs.availRepl,
 			},
 		}
-
-		expected := []operatorv1.OperatorCondition{
-			{
-				Type:   tc.condType,
-				Status: tc.condStatus,
-			},
+		if tc.outputs.deployAvailable {
+			deployStatus = operatorv1.ConditionTrue
+		} else {
+			deployStatus = operatorv1.ConditionFalse
 		}
-		actual := computeIngressStatusConditions([]operatorv1.OperatorCondition{}, deploy)
+		expected := operatorv1.OperatorCondition{Type: DeploymentAvailableConditionType, Status: deployStatus}
+		actual := computeDeploymentStatus(deployment)
 		conditionsCmpOpts := []cmp.Option{
 			cmpopts.IgnoreFields(operatorv1.OperatorCondition{}, "LastTransitionTime", "Reason", "Message"),
 			cmpopts.EquateEmpty(),
@@ -227,6 +245,179 @@ func TestComputeIngressStatusConditions(t *testing.T) {
 		}
 		if !cmp.Equal(actual, expected, conditionsCmpOpts...) {
 			t.Fatalf("%q: expected %#v, got %#v", tc.description, expected, actual)
+		}
+	}
+}
+
+func TestComputeIngressStatusConditions(t *testing.T) {
+	tests := []struct {
+		description string
+		domainSet   bool
+		input       []operatorv1.OperatorCondition
+		expect      []operatorv1.OperatorCondition
+	}{
+		{
+			description: "no status domain set",
+			domainSet:   false,
+			input: []operatorv1.OperatorCondition{
+				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "WantedByEndpointPublishingStrategy"),
+				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionTrue, "LoadBalancerProvisioned"),
+			},
+			expect: []operatorv1.OperatorCondition{
+				cond(operatorv1.OperatorStatusTypeAvailable, operatorv1.ConditionFalse, "StatusDomainUnset"),
+			},
+		},
+		{
+			description: "status domain set",
+			domainSet:   true,
+			input:       []operatorv1.OperatorCondition{},
+			expect: []operatorv1.OperatorCondition{
+				cond(operatorv1.OperatorStatusTypeAvailable, operatorv1.ConditionTrue, "AsExpected"),
+			},
+		},
+		{
+			description: "load balancer provisioned",
+			domainSet:   true,
+			input: []operatorv1.OperatorCondition{
+				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "WantedByEndpointPublishingStrategy"),
+				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionTrue, "LoadBalancerProvisioned"),
+			},
+			expect: []operatorv1.OperatorCondition{
+				cond(operatorv1.OperatorStatusTypeAvailable, operatorv1.ConditionTrue, "AsExpected"),
+			},
+		},
+		{
+			description: "no load balancer provisioned",
+			domainSet:   true,
+			input: []operatorv1.OperatorCondition{
+				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "WantedByEndpointPublishingStrategy"),
+				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionFalse, "LoadBalancerProvisioned"),
+			},
+			expect: []operatorv1.OperatorCondition{
+				cond(operatorv1.OperatorStatusTypeAvailable, operatorv1.ConditionFalse, "DependantResourceFailure"),
+			},
+		},
+		{
+			description: "dns no failed zones",
+			domainSet:   true,
+			input: []operatorv1.OperatorCondition{
+				cond(operatorv1.DNSManagedIngressConditionType, operatorv1.ConditionTrue, "Normal"),
+				cond(operatorv1.DNSReadyIngressConditionType, operatorv1.ConditionTrue, "NoFailedZones"),
+			},
+			expect: []operatorv1.OperatorCondition{
+				cond(operatorv1.OperatorStatusTypeAvailable, operatorv1.ConditionTrue, "AsExpected"),
+			},
+		},
+		{
+			description: "dns record not found",
+			domainSet:   true,
+			input: []operatorv1.OperatorCondition{
+				cond(operatorv1.DNSManagedIngressConditionType, operatorv1.ConditionTrue, "Normal"),
+				cond(operatorv1.DNSReadyIngressConditionType, operatorv1.ConditionFalse, "RecordNotFound"),
+			},
+			expect: []operatorv1.OperatorCondition{
+				cond(operatorv1.OperatorStatusTypeAvailable, operatorv1.ConditionFalse, "DependantResourceFailure"),
+			},
+		},
+		{
+			description: "load balancer provisioned, no failed dns zones",
+			domainSet:   true,
+			input: []operatorv1.OperatorCondition{
+				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "WantedByEndpointPublishingStrategy"),
+				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionTrue, "LoadBalancerProvisioned"),
+				cond(operatorv1.DNSManagedIngressConditionType, operatorv1.ConditionTrue, "Normal"),
+				cond(operatorv1.DNSReadyIngressConditionType, operatorv1.ConditionTrue, "NoFailedZones"),
+			},
+			expect: []operatorv1.OperatorCondition{
+				cond(operatorv1.OperatorStatusTypeAvailable, operatorv1.ConditionTrue, "AsExpected"),
+			},
+		},
+	}
+
+	for i, test := range tests {
+		t.Logf("evaluating test %s", test.description)
+		ic := ingressController(fmt.Sprintf("status-test-%d", i+1), operatorv1.LoadBalancerServiceStrategyType)
+		if test.domainSet {
+			ic.Status.Domain = "test.local"
+		}
+		actual := computeIngressStatusConditions(ic, test.input)
+		conditionsCmpOpts := []cmp.Option{
+			cmpopts.IgnoreFields(operatorv1.OperatorCondition{}, "LastTransitionTime", "Message"),
+			cmpopts.EquateEmpty(),
+			cmpopts.SortSlices(func(a, b operatorv1.OperatorCondition) bool { return a.Type < b.Type }),
+		}
+		if !cmp.Equal(actual, test.expect, conditionsCmpOpts...) {
+			t.Fatalf("expected:\n%#v\ngot:\n%#v", test.expect, actual)
+		}
+	}
+}
+
+func TestSetIngressLastTransitionTime(t *testing.T) {
+	type testInputs struct {
+		statusChange, reasonChange, msgChange bool
+	}
+	type testOutputs struct {
+		transition bool
+	}
+	testCases := []struct {
+		description string
+		inputs      testInputs
+		outputs     testOutputs
+	}{
+		{
+			description: "no condition changes",
+			inputs:      testInputs{false, false, false},
+			outputs:     testOutputs{false},
+		},
+		{
+			description: "condition status changed",
+			inputs:      testInputs{true, false, false},
+			outputs:     testOutputs{true},
+		},
+		{
+			description: "condition reason changed",
+			inputs:      testInputs{false, true, false},
+			outputs:     testOutputs{true},
+		},
+		{
+			description: "condition message changed",
+			inputs:      testInputs{false, false, true},
+			outputs:     testOutputs{true},
+		},
+	}
+
+	for _, tc := range testCases {
+		var (
+			reason                            = "old reason"
+			msg                               = "old msg"
+			status operatorv1.ConditionStatus = "old status"
+		)
+		oldCondition := &operatorv1.OperatorCondition{
+			Type:               operatorv1.OperatorStatusTypeAvailable,
+			Status:             status,
+			Reason:             reason,
+			Message:            msg,
+			LastTransitionTime: metav1.Unix(0, 0),
+		}
+		if tc.inputs.msgChange {
+			msg = "new message"
+		}
+		if tc.inputs.reasonChange {
+			reason = "new reason"
+		}
+		if tc.inputs.statusChange {
+			status = "new status"
+		}
+		expectCondition := &operatorv1.OperatorCondition{
+			Type:    operatorv1.OperatorStatusTypeAvailable,
+			Status:  status,
+			Reason:  reason,
+			Message: msg,
+		}
+		setIngressLastTransitionTime(expectCondition, oldCondition)
+		if tc.outputs.transition != (expectCondition.LastTransitionTime != oldCondition.LastTransitionTime) {
+			t.Fatalf(fmt.Sprintf("%q: expected LastTransitionTime %v, got %v", tc.description,
+				oldCondition.LastTransitionTime, expectCondition.LastTransitionTime))
 		}
 	}
 }

@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -18,6 +19,12 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+const (
+	// DeploymentAvailableConditionType is a status condition type indicating
+	// an IngressController Deployment is available.
+	DeploymentAvailableConditionType = "DeploymentAvailable"
+)
+
 // syncIngressControllerStatus computes the current status of ic and
 // updates status upon any changes since last sync.
 func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressController, deployment *appsv1.Deployment, service *corev1.Service, operandEvents []corev1.Event, wildcardRecord *iov1.DNSRecord, dnsConfig *configv1.DNS) error {
@@ -31,9 +38,10 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	updated.Status.Selector = selector.String()
 
 	updated.Status.Conditions = []operatorv1.OperatorCondition{}
-	updated.Status.Conditions = append(updated.Status.Conditions, computeIngressStatusConditions(updated.Status.Conditions, deployment)...)
+	updated.Status.Conditions = append(updated.Status.Conditions, computeDeploymentStatus(deployment))
 	updated.Status.Conditions = append(updated.Status.Conditions, computeLoadBalancerStatus(ic, service, operandEvents)...)
 	updated.Status.Conditions = append(updated.Status.Conditions, computeDNSStatus(ic, wildcardRecord, dnsConfig)...)
+	updated.Status.Conditions = append(updated.Status.Conditions, computeIngressStatusConditions(ic, updated.Status.Conditions)...)
 
 	for i := range updated.Status.Conditions {
 		newCondition := &updated.Status.Conditions[i]
@@ -58,29 +66,50 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 }
 
 // computeIngressStatusConditions computes the ingress controller's current state.
-func computeIngressStatusConditions(oldConditions []operatorv1.OperatorCondition, deployment *appsv1.Deployment) []operatorv1.OperatorCondition {
-	oldAvailableCondition := getIngressAvailableCondition(oldConditions)
-
+func computeIngressStatusConditions(ic *operatorv1.IngressController, conditions []operatorv1.OperatorCondition) []operatorv1.OperatorCondition {
 	return []operatorv1.OperatorCondition{
-		computeIngressAvailableCondition(oldAvailableCondition, deployment),
+		computeIngressAvailableCondition(ic, conditions),
 	}
 }
 
 // computeIngressAvailableCondition computes the ingress controller's current Available status state.
-func computeIngressAvailableCondition(oldAvailableCondition *operatorv1.OperatorCondition, deployment *appsv1.Deployment) operatorv1.OperatorCondition {
-	availableCondition := operatorv1.OperatorCondition{
+func computeIngressAvailableCondition(ic *operatorv1.IngressController, conditions []operatorv1.OperatorCondition) operatorv1.OperatorCondition {
+	condition := operatorv1.OperatorCondition{
 		Type: operatorv1.IngressControllerAvailableConditionType,
 	}
 
-	if deployment.Status.AvailableReplicas > 0 {
-		availableCondition.Status = operatorv1.ConditionTrue
-	} else {
-		availableCondition.Status = operatorv1.ConditionFalse
-		availableCondition.Reason = "DeploymentUnavailable"
-		availableCondition.Message = "no Deployment replicas available"
+	messages := []string{}
+	for _, c := range conditions {
+		if c.Status == operatorv1.ConditionFalse && (c.Type == DeploymentAvailableConditionType ||
+			c.Type == operatorv1.LoadBalancerReadyIngressConditionType ||
+			c.Type == operatorv1.DNSReadyIngressConditionType) {
+			messages = append(messages, c.Message)
+		}
+	}
+	var message string
+	switch {
+	case len(messages) == 1:
+		message = messages[0]
+	case len(messages) > 1:
+		message = strings.Join(messages, ". ")
 	}
 
-	return availableCondition
+	switch {
+	case len(ic.Status.Domain) == 0:
+		condition.Status = operatorv1.ConditionFalse
+		condition.Reason = "StatusDomainUnset"
+		condition.Message = "The IngressController status domain is not set"
+	case len(messages) != 0:
+		condition.Status = operatorv1.ConditionFalse
+		condition.Reason = "DependantResourceFailure"
+		condition.Message = message
+	default:
+		condition.Status = operatorv1.ConditionTrue
+		condition.Reason = "AsExpected"
+		condition.Message = "All IngressControllers dependant resources are available"
+	}
+
+	return condition
 }
 
 // getIngressAvailableCondition fetches ingress controller's available condition from the given conditions.
@@ -122,6 +151,27 @@ func ingressStatusesEqual(a, b operatorv1.IngressControllerStatus) bool {
 	}
 
 	return true
+}
+
+// computeDeploymentStatus returns a DeploymentAvailable status condition based
+// on the status of the given Deployment.
+func computeDeploymentStatus(deployment *appsv1.Deployment) operatorv1.OperatorCondition {
+	condition := operatorv1.OperatorCondition{
+		Type: DeploymentAvailableConditionType,
+	}
+
+	switch {
+	case deployment.Status.AvailableReplicas == 0:
+		condition.Status = operatorv1.ConditionFalse
+		condition.Reason = "NoAvailableReplicas"
+		condition.Message = "The Deployment has no available replicas"
+	default:
+		condition.Status = operatorv1.ConditionTrue
+		condition.Reason = "AllReplicasAvailable"
+		condition.Message = "All Deployment replicas are available"
+	}
+
+	return condition
 }
 
 // computeLoadBalancerStatus returns the complete set of current

@@ -44,6 +44,7 @@ const (
 var (
 	defaultAvailableConditions = []operatorv1.OperatorCondition{
 		{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionTrue},
+		{Type: ingresscontroller.DeploymentAvailableConditionType, Status: operatorv1.ConditionTrue},
 		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionTrue},
 		{Type: operatorv1.LoadBalancerReadyIngressConditionType, Status: operatorv1.ConditionTrue},
 		{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionTrue},
