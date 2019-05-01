@@ -1,204 +1,134 @@
 package controller
 
 import (
-	"fmt"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
+
 	configv1 "github.com/openshift/api/config/v1"
-	operatorv1 "github.com/openshift/api/operator/v1"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestComputeOperatorStatusConditions(t *testing.T) {
-	type testInputs struct {
-		haveNamespace           bool
-		numWanted, numAvailable int
-	}
-	type testOutputs struct {
+	type conditions struct {
 		degraded, progressing, available bool
 	}
+	type versions struct {
+		operator, operand string
+	}
+
 	testCases := []struct {
-		description string
-		inputs      testInputs
-		outputs     testOutputs
+		description           string
+		noNamespace           bool
+		allIngressesAvailable bool
+		reportedVersions      versions
+		curVersions           versions
+		expectedConditions    conditions
 	}{
-		{"no operand namespace", testInputs{false, 0, 0}, testOutputs{true, false, true}},
-		{"no ingresscontrollers available", testInputs{true, 0, 0}, testOutputs{false, false, true}},
-		{"0/2 ingresscontrollers available", testInputs{true, 2, 0}, testOutputs{false, true, false}},
-		{"1/2 ingresscontrollers available", testInputs{true, 2, 1}, testOutputs{false, true, false}},
-		{"2/2 ingresscontrollers available", testInputs{true, 2, 2}, testOutputs{false, false, true}},
+		{
+			description:           "no operand namespace",
+			noNamespace:           true,
+			allIngressesAvailable: true,
+			expectedConditions:    conditions{true, false, true},
+		},
+		{
+			description:           "all ingress controllers are available",
+			allIngressesAvailable: true,
+			expectedConditions:    conditions{false, false, true},
+		},
+		{
+			description:        "all ingress controllers are not available",
+			expectedConditions: conditions{false, true, false},
+		},
+		{
+			description:           "versions match",
+			allIngressesAvailable: true,
+			reportedVersions:      versions{"v1", "ic-v1"},
+			curVersions:           versions{"v1", "ic-v1"},
+			expectedConditions:    conditions{false, false, true},
+		},
+		{
+			description:           "operator version mismatch",
+			allIngressesAvailable: true,
+			reportedVersions:      versions{"v1", "ic-v1"},
+			curVersions:           versions{"v2", "ic-v1"},
+			expectedConditions:    conditions{false, true, true},
+		},
+		{
+			description:           "operand version mismatch",
+			allIngressesAvailable: true,
+			reportedVersions:      versions{"v1", "ic-v1"},
+			curVersions:           versions{"v1", "ic-v2"},
+			expectedConditions:    conditions{false, true, true},
+		},
+		{
+			description:           "operator and operand version mismatch",
+			allIngressesAvailable: true,
+			reportedVersions:      versions{"v1", "ic-v1"},
+			curVersions:           versions{"v2", "ic-v2"},
+			expectedConditions:    conditions{false, true, true},
+		},
 	}
 
 	for _, tc := range testCases {
-		var (
-			namespace *corev1.Namespace
-			ingresses []operatorv1.IngressController
-
-			degraded, progressing, available configv1.ConditionStatus
-		)
-		if tc.inputs.haveNamespace {
+		var namespace *corev1.Namespace
+		if !tc.noNamespace {
 			namespace = &corev1.Namespace{}
 		}
-		ingressAvailable := operatorv1.OperatorCondition{
-			Type:   operatorv1.IngressControllerAvailableConditionType,
-			Status: operatorv1.ConditionTrue,
+
+		reportedVersions := []configv1.OperandVersion{
+			{
+				Name:    OperatorVersionName,
+				Version: tc.reportedVersions.operator,
+			},
+			{
+				Name:    IngressControllerVersionName,
+				Version: tc.reportedVersions.operand,
+			},
 		}
-		for i := 0; i < tc.inputs.numWanted; i++ {
-			ingresses = append(ingresses,
-				operatorv1.IngressController{
-					ObjectMeta: metav1.ObjectMeta{
-						Name: fmt.Sprintf("ingresscontroller-%d", i+1),
-					},
-				})
+		r := &reconciler{
+			Config: Config{
+				OperatorReleaseVersion: tc.curVersions.operator,
+				IngressControllerImage: tc.curVersions.operand,
+			},
 		}
-		for i := 0; i < tc.inputs.numAvailable; i++ {
-			ingresses[i].Status.Conditions = []operatorv1.OperatorCondition{ingressAvailable}
-		}
-		if tc.outputs.degraded {
-			degraded = configv1.ConditionTrue
-		} else {
-			degraded = configv1.ConditionFalse
-		}
-		if tc.outputs.progressing {
-			progressing = configv1.ConditionTrue
-		} else {
-			progressing = configv1.ConditionFalse
-		}
-		if tc.outputs.available {
-			available = configv1.ConditionTrue
-		} else {
-			available = configv1.ConditionFalse
-		}
-		expected := []configv1.ClusterOperatorStatusCondition{
+
+		expectedConditions := []configv1.ClusterOperatorStatusCondition{
 			{
 				Type:   configv1.OperatorDegraded,
-				Status: degraded,
+				Status: configv1.ConditionFalse,
 			},
 			{
 				Type:   configv1.OperatorProgressing,
-				Status: progressing,
+				Status: configv1.ConditionFalse,
 			},
 			{
 				Type:   configv1.OperatorAvailable,
-				Status: available,
+				Status: configv1.ConditionFalse,
 			},
 		}
-		new := computeOperatorStatusConditions(
-			[]configv1.ClusterOperatorStatusCondition{},
-			namespace,
-			ingresses,
-		)
-		gotExpected := true
-		if len(new) != len(expected) {
-			gotExpected = false
+		if tc.expectedConditions.degraded {
+			expectedConditions[0].Status = configv1.ConditionTrue
 		}
-		for _, conditionA := range new {
-			foundMatchingCondition := false
-
-			for _, conditionB := range expected {
-				if conditionA.Type == conditionB.Type &&
-					conditionA.Status == conditionB.Status {
-					foundMatchingCondition = true
-					break
-				}
-			}
-
-			if !foundMatchingCondition {
-				gotExpected = false
-			}
+		if tc.expectedConditions.progressing {
+			expectedConditions[1].Status = configv1.ConditionTrue
 		}
-		if !gotExpected {
-			t.Fatalf("%q: expected %#v, got %#v", tc.description,
-				expected, new)
+		if tc.expectedConditions.available {
+			expectedConditions[2].Status = configv1.ConditionTrue
 		}
-	}
-}
 
-func TestSetOperatorStatusCondition(t *testing.T) {
-	testCases := []struct {
-		description   string
-		oldConditions []configv1.ClusterOperatorStatusCondition
-		newCondition  *configv1.ClusterOperatorStatusCondition
-		expected      []configv1.ClusterOperatorStatusCondition
-	}{
-		{
-			description: "new condition",
-			newCondition: &configv1.ClusterOperatorStatusCondition{
-				Type:   configv1.OperatorAvailable,
-				Status: configv1.ConditionTrue,
-			},
-			expected: []configv1.ClusterOperatorStatusCondition{
-				{
-					Type:   configv1.OperatorAvailable,
-					Status: configv1.ConditionTrue,
-				},
-			},
-		},
-		{
-			description: "existing condition, unchanged",
-			oldConditions: []configv1.ClusterOperatorStatusCondition{
-				{
-					Type:   configv1.OperatorAvailable,
-					Status: configv1.ConditionTrue,
-				},
-			},
-			newCondition: &configv1.ClusterOperatorStatusCondition{
-				Type:   configv1.OperatorAvailable,
-				Status: configv1.ConditionTrue,
-			},
-			expected: []configv1.ClusterOperatorStatusCondition{
-				{
-					Type:   configv1.OperatorAvailable,
-					Status: configv1.ConditionTrue,
-				},
-			},
-		},
-		{
-			description: "existing conditions, one changed",
-			oldConditions: []configv1.ClusterOperatorStatusCondition{
-				{
-					Type:   configv1.OperatorDegraded,
-					Status: configv1.ConditionFalse,
-				},
-				{
-					Type:   configv1.OperatorProgressing,
-					Status: configv1.ConditionFalse,
-				},
-				{
-					Type:   configv1.OperatorAvailable,
-					Status: configv1.ConditionFalse,
-				},
-			},
-			newCondition: &configv1.ClusterOperatorStatusCondition{
-				Type:   configv1.OperatorAvailable,
-				Status: configv1.ConditionTrue,
-			},
-			expected: []configv1.ClusterOperatorStatusCondition{
-				{
-					Type:   configv1.OperatorDegraded,
-					Status: configv1.ConditionFalse,
-				},
-				{
-					Type:   configv1.OperatorProgressing,
-					Status: configv1.ConditionFalse,
-				},
-				{
-					Type:   configv1.OperatorAvailable,
-					Status: configv1.ConditionTrue,
-				},
-			},
-		},
-	}
-
-	for _, tc := range testCases {
-		actual := setOperatorStatusCondition(tc.oldConditions, tc.newCondition)
-		a := configv1.ClusterOperatorStatus{Conditions: actual}
-		b := configv1.ClusterOperatorStatus{Conditions: tc.expected}
-		if !operatorStatusesEqual(a, b) {
-			t.Fatalf("%q: expected %v, got %v", tc.description,
-				tc.expected, actual)
+		conditions := r.computeOperatorStatusConditions([]configv1.ClusterOperatorStatusCondition{},
+			namespace, tc.allIngressesAvailable, reportedVersions)
+		conditionsCmpOpts := []cmp.Option{
+			cmpopts.IgnoreFields(configv1.ClusterOperatorStatusCondition{}, "LastTransitionTime", "Reason", "Message"),
+			cmpopts.EquateEmpty(),
+			cmpopts.SortSlices(func(a, b configv1.ClusterOperatorStatusCondition) bool { return a.Type < b.Type }),
+		}
+		if !cmp.Equal(conditions, expectedConditions, conditionsCmpOpts...) {
+			t.Fatalf("%q: expected %#v, got %#v", tc.description, expectedConditions, conditions)
 		}
 	}
 }
@@ -431,6 +361,124 @@ func TestOperatorStatusesEqual(t *testing.T) {
 	for _, tc := range testCases {
 		if actual := operatorStatusesEqual(tc.a, tc.b); actual != tc.expected {
 			t.Fatalf("%q: expected %v, got %v", tc.description, tc.expected, actual)
+		}
+	}
+}
+
+func TestComputeOperatorStatusVersions(t *testing.T) {
+	type versions struct {
+		operator string
+		operand  string
+	}
+
+	testCases := []struct {
+		description           string
+		oldVersions           versions
+		curVersions           versions
+		allIngressesAvailable bool
+		expectedVersions      versions
+	}{
+		{
+			description:           "initialize versions, operator is avaiable",
+			oldVersions:           versions{UnknownVersionValue, UnknownVersionValue},
+			curVersions:           versions{"v1", "ic-v1"},
+			allIngressesAvailable: true,
+			expectedVersions:      versions{"v1", "ic-v1"},
+		},
+		{
+			description:      "initialize versions, operator is not available",
+			oldVersions:      versions{UnknownVersionValue, UnknownVersionValue},
+			curVersions:      versions{"v1", "ic-v1"},
+			expectedVersions: versions{UnknownVersionValue, UnknownVersionValue},
+		},
+		{
+			description:           "update with no change",
+			oldVersions:           versions{"v1", "ic-v1"},
+			curVersions:           versions{"v1", "ic-v1"},
+			allIngressesAvailable: true,
+			expectedVersions:      versions{"v1", "ic-v1"},
+		},
+		{
+			description:      "update operator version, operator is not available",
+			oldVersions:      versions{"v1", "ic-v1"},
+			curVersions:      versions{"v2", "ic-v1"},
+			expectedVersions: versions{"v1", "ic-v1"},
+		},
+		{
+			description:           "update operator version, operator is available",
+			oldVersions:           versions{"v1", "ic-v1"},
+			curVersions:           versions{"v2", "ic-v1"},
+			allIngressesAvailable: true,
+			expectedVersions:      versions{"v2", "ic-v1"},
+		},
+		{
+			description:      "update ingress controller image, operator is not available",
+			oldVersions:      versions{"v1", "ic-v1"},
+			curVersions:      versions{"v1", "ic-v2"},
+			expectedVersions: versions{"v1", "ic-v1"},
+		},
+		{
+			description:           "update ingress controller image, operator is available",
+			oldVersions:           versions{"v1", "ic-v1"},
+			curVersions:           versions{"v1", "ic-v2"},
+			allIngressesAvailable: true,
+			expectedVersions:      versions{"v1", "ic-v2"},
+		},
+		{
+			description:      "update operator and ingress controller image, operator is not available",
+			oldVersions:      versions{"v1", "ic-v1"},
+			curVersions:      versions{"v2", "ic-v2"},
+			expectedVersions: versions{"v1", "ic-v1"},
+		},
+		{
+			description:           "update operator and ingress controller image, operator is available",
+			oldVersions:           versions{"v1", "ic-v1"},
+			curVersions:           versions{"v2", "ic-v2"},
+			allIngressesAvailable: true,
+			expectedVersions:      versions{"v2", "ic-v2"},
+		},
+	}
+
+	for _, tc := range testCases {
+		var (
+			oldVersions      []configv1.OperandVersion
+			expectedVersions []configv1.OperandVersion
+		)
+
+		oldVersions = []configv1.OperandVersion{
+			{
+				Name:    OperatorVersionName,
+				Version: tc.oldVersions.operator,
+			},
+			{
+				Name:    IngressControllerVersionName,
+				Version: tc.oldVersions.operand,
+			},
+		}
+		expectedVersions = []configv1.OperandVersion{
+			{
+				Name:    OperatorVersionName,
+				Version: tc.expectedVersions.operator,
+			},
+			{
+				Name:    IngressControllerVersionName,
+				Version: tc.expectedVersions.operand,
+			},
+		}
+
+		r := &reconciler{
+			Config: Config{
+				OperatorReleaseVersion: tc.curVersions.operator,
+				IngressControllerImage: tc.curVersions.operand,
+			},
+		}
+		versions := r.computeOperatorStatusVersions(oldVersions, tc.allIngressesAvailable)
+		versionsCmpOpts := []cmp.Option{
+			cmpopts.EquateEmpty(),
+			cmpopts.SortSlices(func(a, b configv1.OperandVersion) bool { return a.Name < b.Name }),
+		}
+		if !cmp.Equal(versions, expectedVersions, versionsCmpOpts...) {
+			t.Fatalf("%q: expected %v, got %v", tc.description, expectedVersions, versions)
 		}
 	}
 }

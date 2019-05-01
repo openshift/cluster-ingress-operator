@@ -1,7 +1,7 @@
+# This resource is not created by CVO, it is only used as a communication
+# mechanism to tell the CVO which ClusterOperator resource to wait for.
+# IngressController creates and updates this resource.
 apiVersion: config.openshift.io/v1
 kind: ClusterOperator
 metadata:
   name: ingress
-spec: {}
-status:
-  # status is set at runtime

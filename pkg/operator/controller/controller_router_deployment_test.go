@@ -48,14 +48,14 @@ func TestDesiredRouterDeployment(t *testing.T) {
 			},
 		},
 	}
-	routerImage := "quay.io/openshift/router:latest"
+	ingressControllerImage := "quay.io/openshift/router:latest"
 	infraConfig := &configv1.Infrastructure{
 		Status: configv1.InfrastructureStatus{
 			Platform: configv1.AWSPlatformType,
 		},
 	}
 
-	deployment, err := desiredRouterDeployment(ci, routerImage, infraConfig)
+	deployment, err := desiredRouterDeployment(ci, ingressControllerImage, infraConfig)
 	if err != nil {
 		t.Errorf("invalid router Deployment: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 
 	ci.Status.Domain = "example.com"
 	ci.Status.EndpointPublishingStrategy.Type = operatorv1.LoadBalancerServiceStrategyType
-	deployment, err = desiredRouterDeployment(ci, routerImage, infraConfig)
+	deployment, err = desiredRouterDeployment(ci, ingressControllerImage, infraConfig)
 	if err != nil {
 		t.Errorf("invalid router Deployment: %v", err)
 	}
@@ -205,7 +205,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	var expectedReplicas int32 = 3
 	ci.Spec.Replicas = &expectedReplicas
 	ci.Status.EndpointPublishingStrategy.Type = operatorv1.HostNetworkStrategyType
-	deployment, err = desiredRouterDeployment(ci, routerImage, infraConfig)
+	deployment, err = desiredRouterDeployment(ci, ingressControllerImage, infraConfig)
 	if err != nil {
 		t.Errorf("invalid router Deployment: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	if *deployment.Spec.Replicas != expectedReplicas {
 		t.Errorf("expected replicas to be %d, got %d", expectedReplicas, *deployment.Spec.Replicas)
 	}
-	if e, a := routerImage, deployment.Spec.Template.Spec.Containers[0].Image; e != a {
+	if e, a := ingressControllerImage, deployment.Spec.Template.Spec.Containers[0].Image; e != a {
 		t.Errorf("expected router Deployment image %q, got %q", e, a)
 	}
 
