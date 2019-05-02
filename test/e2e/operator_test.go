@@ -490,6 +490,9 @@ func TestIngressControllerScale(t *testing.T) {
 	originalReplicas := *deployment.Spec.Replicas
 	newReplicas := originalReplicas + 1
 
+	if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: ns, Name: name}, ci); err != nil {
+		t.Fatalf("failed to get default ingresscontroller: %v", err)
+	}
 	ci.Spec.Replicas = &newReplicas
 	if err := cl.Update(context.TODO(), ci); err != nil {
 		t.Fatalf("failed to update ingresscontroller: %v", err)
@@ -512,6 +515,9 @@ func TestIngressControllerScale(t *testing.T) {
 	}
 
 	// Scale back down.
+	if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: ns, Name: name}, ci); err != nil {
+		t.Fatalf("failed to get default ingresscontroller: %v", err)
+	}
 	ci.Spec.Replicas = &originalReplicas
 	if err := cl.Update(context.TODO(), ci); err != nil {
 		t.Fatalf("failed to update ingresscontroller: %v", err)
