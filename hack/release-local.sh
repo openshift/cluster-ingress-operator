@@ -32,6 +32,8 @@ fi
 
 cp -R manifests/* $MANIFESTS
 cat manifests/02-deployment.yaml | sed "s~openshift/origin-cluster-ingress-operator:latest~$REPO:$TAG~" > "$MANIFESTS/02-deployment.yaml"
+# To simulate CVO, ClusterOperator resource need to be created by the operator.
+rm $MANIFESTS/03-cluster-operator.yaml
 
 echo "Pushed $REPO:$TAG"
 echo "Install manifests using:"
