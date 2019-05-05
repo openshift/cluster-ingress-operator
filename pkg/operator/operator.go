@@ -57,8 +57,7 @@ func init() {
 // them together. Operator knows what namespace the operator lives in, and what
 // specific resoure types in other namespaces should produce operator events.
 type Operator struct {
-	manifestFactory *manifests.Factory
-	client          client.Client
+	client client.Client
 
 	manager manager.Manager
 	caches  []cache.Cache
@@ -87,7 +86,6 @@ func New(config operatorconfig.Config, dnsManager dns.Manager, kubeConfig *rest.
 	operatorController, err := operatorcontroller.New(operatorManager, operatorcontroller.Config{
 		KubeConfig:             kubeConfig,
 		Namespace:              config.Namespace,
-		ManifestFactory:        &manifests.Factory{},
 		DNSManager:             dnsManager,
 		IngressControllerImage: config.IngressControllerImage,
 		OperatorReleaseVersion: config.OperatorReleaseVersion,
@@ -160,9 +158,8 @@ func New(config operatorconfig.Config, dnsManager dns.Manager, kubeConfig *rest.
 
 		// TODO: These are only needed for the default ingress controller stuff, which
 		// should be refactored away.
-		manifestFactory: &manifests.Factory{},
-		client:          kubeClient,
-		namespace:       config.Namespace,
+		client:    kubeClient,
+		namespace: config.Namespace,
 	}, nil
 }
 

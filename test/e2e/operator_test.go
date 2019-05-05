@@ -103,7 +103,6 @@ func TestOperatorAvailable(t *testing.T) {
 	}
 }
 
-// TODO: Use manifest factory to build the expectation
 func TestDefaultIngressControllerExists(t *testing.T) {
 	cl, ns, err := getClient()
 	if err != nil {
@@ -266,7 +265,6 @@ func TestClusterProxyProtocol(t *testing.T) {
 
 }
 
-// TODO: Use manifest factory to build expectations
 // TODO: Find a way to do this test without mutating the default ingress?
 func TestIngressControllerUpdate(t *testing.T) {
 	cl, ns, err := getClient()

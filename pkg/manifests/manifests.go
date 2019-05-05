@@ -20,18 +20,18 @@ import (
 )
 
 const (
-	RouterNamespaceAsset     = "assets/router/namespace.yaml"
-	RouterServiceAccount     = "assets/router/service-account.yaml"
-	RouterClusterRole        = "assets/router/cluster-role.yaml"
-	RouterClusterRoleBinding = "assets/router/cluster-role-binding.yaml"
-	RouterDeploymentAsset    = "assets/router/deployment.yaml"
-	RouterServiceInternal    = "assets/router/service-internal.yaml"
-	RouterServiceCloud       = "assets/router/service-cloud.yaml"
+	RouterNamespaceAsset          = "assets/router/namespace.yaml"
+	RouterServiceAccountAsset     = "assets/router/service-account.yaml"
+	RouterClusterRoleAsset        = "assets/router/cluster-role.yaml"
+	RouterClusterRoleBindingAsset = "assets/router/cluster-role-binding.yaml"
+	RouterDeploymentAsset         = "assets/router/deployment.yaml"
+	RouterServiceInternalAsset    = "assets/router/service-internal.yaml"
+	RouterServiceCloudAsset       = "assets/router/service-cloud.yaml"
 
-	MetricsClusterRole        = "assets/router/metrics/cluster-role.yaml"
-	MetricsClusterRoleBinding = "assets/router/metrics/cluster-role-binding.yaml"
-	MetricsRole               = "assets/router/metrics/role.yaml"
-	MetricsRoleBinding        = "assets/router/metrics/role-binding.yaml"
+	MetricsClusterRoleAsset        = "assets/router/metrics/cluster-role.yaml"
+	MetricsClusterRoleBindingAsset = "assets/router/metrics/cluster-role-binding.yaml"
+	MetricsRoleAsset               = "assets/router/metrics/role.yaml"
+	MetricsRoleBindingAsset        = "assets/router/metrics/role-binding.yaml"
 
 	// Annotation used to inform the certificate generation service to
 	// generate a cluster-signed certificate and populate the secret.
@@ -47,10 +47,6 @@ func MustAssetReader(asset string) io.Reader {
 	return bytes.NewReader(MustAsset(asset))
 }
 
-// Factory knows how to create ingress-related cluster resources from manifest files.
-type Factory struct {
-}
-
 func RouterNamespace() *corev1.Namespace {
 	ns, err := NewNamespace(MustAssetReader(RouterNamespaceAsset))
 	if err != nil {
@@ -59,31 +55,31 @@ func RouterNamespace() *corev1.Namespace {
 	return ns
 }
 
-func (f *Factory) RouterServiceAccount() (*corev1.ServiceAccount, error) {
-	sa, err := NewServiceAccount(MustAssetReader(RouterServiceAccount))
+func RouterServiceAccount() *corev1.ServiceAccount {
+	sa, err := NewServiceAccount(MustAssetReader(RouterServiceAccountAsset))
 	if err != nil {
-		return nil, err
+		panic(err)
 	}
-	return sa, nil
+	return sa
 }
 
-func (f *Factory) RouterClusterRole() (*rbacv1.ClusterRole, error) {
-	cr, err := NewClusterRole(MustAssetReader(RouterClusterRole))
+func RouterClusterRole() *rbacv1.ClusterRole {
+	cr, err := NewClusterRole(MustAssetReader(RouterClusterRoleAsset))
 	if err != nil {
-		return nil, err
+		panic(err)
 	}
-	return cr, nil
+	return cr
 }
 
-func (f *Factory) RouterClusterRoleBinding() (*rbacv1.ClusterRoleBinding, error) {
-	crb, err := NewClusterRoleBinding(MustAssetReader(RouterClusterRoleBinding))
+func RouterClusterRoleBinding() *rbacv1.ClusterRoleBinding {
+	crb, err := NewClusterRoleBinding(MustAssetReader(RouterClusterRoleBindingAsset))
 	if err != nil {
-		return nil, err
+		panic(err)
 	}
-	return crb, nil
+	return crb
 }
 
-func (f *Factory) RouterStatsSecret(cr *operatorv1.IngressController) (*corev1.Secret, error) {
+func RouterStatsSecret(cr *operatorv1.IngressController) *corev1.Secret {
 	s := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      fmt.Sprintf("router-stats-%s", cr.Name),
@@ -97,7 +93,7 @@ func (f *Factory) RouterStatsSecret(cr *operatorv1.IngressController) (*corev1.S
 	generatedPassword := names.SimpleNameGenerator.GenerateName("pass")
 	s.Data["statsUsername"] = []byte(base64.StdEncoding.EncodeToString([]byte(generatedUser)))
 	s.Data["statsPassword"] = []byte(base64.StdEncoding.EncodeToString([]byte(generatedPassword)))
-	return s, nil
+	return s
 }
 
 func RouterDeployment() *appsv1.Deployment {
@@ -109,7 +105,7 @@ func RouterDeployment() *appsv1.Deployment {
 }
 
 func InternalIngressControllerService() *corev1.Service {
-	s, err := NewService(MustAssetReader(RouterServiceInternal))
+	s, err := NewService(MustAssetReader(RouterServiceInternalAsset))
 	if err != nil {
 		panic(err)
 	}
@@ -117,43 +113,43 @@ func InternalIngressControllerService() *corev1.Service {
 }
 
 func LoadBalancerService() *corev1.Service {
-	s, err := NewService(MustAssetReader(RouterServiceCloud))
+	s, err := NewService(MustAssetReader(RouterServiceCloudAsset))
 	if err != nil {
 		panic(err)
 	}
 	return s
 }
 
-func (f *Factory) MetricsClusterRole() (*rbacv1.ClusterRole, error) {
-	cr, err := NewClusterRole(MustAssetReader(MetricsClusterRole))
+func MetricsClusterRole() *rbacv1.ClusterRole {
+	cr, err := NewClusterRole(MustAssetReader(MetricsClusterRoleAsset))
 	if err != nil {
-		return nil, err
+		panic(err)
 	}
-	return cr, nil
+	return cr
 }
 
-func (f *Factory) MetricsClusterRoleBinding() (*rbacv1.ClusterRoleBinding, error) {
-	crb, err := NewClusterRoleBinding(MustAssetReader(MetricsClusterRoleBinding))
+func MetricsClusterRoleBinding() *rbacv1.ClusterRoleBinding {
+	crb, err := NewClusterRoleBinding(MustAssetReader(MetricsClusterRoleBindingAsset))
 	if err != nil {
-		return nil, err
+		panic(err)
 	}
-	return crb, nil
+	return crb
 }
 
-func (f *Factory) MetricsRole() (*rbacv1.Role, error) {
-	r, err := NewRole(MustAssetReader(MetricsRole))
+func MetricsRole() *rbacv1.Role {
+	r, err := NewRole(MustAssetReader(MetricsRoleAsset))
 	if err != nil {
-		return nil, err
+		panic(err)
 	}
-	return r, nil
+	return r
 }
 
-func (f *Factory) MetricsRoleBinding() (*rbacv1.RoleBinding, error) {
-	rb, err := NewRoleBinding(MustAssetReader(MetricsRoleBinding))
+func MetricsRoleBinding() *rbacv1.RoleBinding {
+	rb, err := NewRoleBinding(MustAssetReader(MetricsRoleBindingAsset))
 	if err != nil {
-		return nil, err
+		panic(err)
 	}
-	return rb, nil
+	return rb
 }
 
 func NewServiceAccount(manifest io.Reader) (*corev1.ServiceAccount, error) {
