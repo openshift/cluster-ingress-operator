@@ -25,6 +25,7 @@ func TestComputeOperatorStatusConditions(t *testing.T) {
 		noNamespace           bool
 		allIngressesAvailable bool
 		reportedVersions      versions
+		oldVersions           versions
 		curVersions           versions
 		expectedConditions    conditions
 	}{
@@ -47,29 +48,57 @@ func TestComputeOperatorStatusConditions(t *testing.T) {
 			description:           "versions match",
 			allIngressesAvailable: true,
 			reportedVersions:      versions{"v1", "ic-v1"},
+			oldVersions:           versions{"v1", "ic-v1"},
 			curVersions:           versions{"v1", "ic-v1"},
 			expectedConditions:    conditions{false, false, true},
 		},
 		{
-			description:           "operator version mismatch",
+			description:           "operator upgrade in progress",
 			allIngressesAvailable: true,
 			reportedVersions:      versions{"v1", "ic-v1"},
+			oldVersions:           versions{"v1", "ic-v1"},
 			curVersions:           versions{"v2", "ic-v1"},
 			expectedConditions:    conditions{false, true, true},
 		},
 		{
-			description:           "operand version mismatch",
+			description:           "operand upgrade in progress",
 			allIngressesAvailable: true,
 			reportedVersions:      versions{"v1", "ic-v1"},
+			oldVersions:           versions{"v1", "ic-v1"},
 			curVersions:           versions{"v1", "ic-v2"},
 			expectedConditions:    conditions{false, true, true},
 		},
 		{
-			description:           "operator and operand version mismatch",
+			description:           "operator and operand upgrade in progress",
 			allIngressesAvailable: true,
 			reportedVersions:      versions{"v1", "ic-v1"},
+			oldVersions:           versions{"v1", "ic-v1"},
 			curVersions:           versions{"v2", "ic-v2"},
 			expectedConditions:    conditions{false, true, true},
+		},
+		{
+			description:           "operator upgrade done",
+			allIngressesAvailable: true,
+			reportedVersions:      versions{"v2", "ic-v1"},
+			oldVersions:           versions{"v1", "ic-v1"},
+			curVersions:           versions{"v2", "ic-v1"},
+			expectedConditions:    conditions{false, false, true},
+		},
+		{
+			description:           "operand upgrade done",
+			allIngressesAvailable: true,
+			reportedVersions:      versions{"v1", "ic-v2"},
+			oldVersions:           versions{"v1", "ic-v1"},
+			curVersions:           versions{"v1", "ic-v2"},
+			expectedConditions:    conditions{false, false, true},
+		},
+		{
+			description:           "operator and operand upgrade done",
+			allIngressesAvailable: true,
+			reportedVersions:      versions{"v2", "ic-v2"},
+			oldVersions:           versions{"v1", "ic-v1"},
+			curVersions:           versions{"v2", "ic-v2"},
+			expectedConditions:    conditions{false, false, true},
 		},
 	}
 
@@ -79,6 +108,16 @@ func TestComputeOperatorStatusConditions(t *testing.T) {
 			namespace = &corev1.Namespace{}
 		}
 
+		oldVersions := []configv1.OperandVersion{
+			{
+				Name:    OperatorVersionName,
+				Version: tc.oldVersions.operator,
+			},
+			{
+				Name:    IngressControllerVersionName,
+				Version: tc.oldVersions.operand,
+			},
+		}
 		reportedVersions := []configv1.OperandVersion{
 			{
 				Name:    OperatorVersionName,
@@ -121,7 +160,7 @@ func TestComputeOperatorStatusConditions(t *testing.T) {
 		}
 
 		conditions := r.computeOperatorStatusConditions([]configv1.ClusterOperatorStatusCondition{},
-			namespace, tc.allIngressesAvailable, reportedVersions)
+			namespace, tc.allIngressesAvailable, oldVersions, reportedVersions)
 		conditionsCmpOpts := []cmp.Option{
 			cmpopts.IgnoreFields(configv1.ClusterOperatorStatusCondition{}, "LastTransitionTime", "Reason", "Message"),
 			cmpopts.EquateEmpty(),
