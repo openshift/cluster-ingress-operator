@@ -62,3 +62,14 @@ required = [
 [[override]]
   name = "k8s.io/gengo"
   revision = "4242d8e6c5dba56827bb7bcf14ad11cda38f3991"
+
+# For dependency below: Refer to issue https://github.com/golang/dep/issues/1799
+[[override]]
+name = "gopkg.in/fsnotify.v1"
+source = "https://github.com/fsnotify/fsnotify.git"
+version="v1.4.7"
+
+
+[[constraint]]
+  name = "github.com/Azure/azure-sdk-for-go"
+  version = "27.3.0"
