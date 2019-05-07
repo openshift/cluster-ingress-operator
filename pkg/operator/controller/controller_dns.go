@@ -17,14 +17,27 @@ func (r *reconciler) ensureDNS(ci *operatorv1.IngressController, service *corev1
 	// If no load balancer has been provisioned, we can't do anything with the
 	// configured DNS zones.
 	ingress := service.Status.LoadBalancer.Ingress
-	if len(ingress) == 0 || len(ingress[0].Hostname) == 0 {
+	if len(ingress) == 0 || (len(ingress[0].Hostname) == 0 && len(ingress[0].IP) == 0) {
 		return fmt.Errorf("no load balancer is assigned to service %s/%s", service.Namespace, service.Name)
 	}
 
-	dnsRecords, err := desiredDNSRecords(ci, ingress[0].Hostname, dnsConfig)
-	if err != nil {
-		return err
+	var dnsRecords []*dns.Record
+	if len(ingress[0].Hostname) != 0 {
+		aliasRecords, err := desiredDNSAliasRecords(ci, ingress[0].Hostname, dnsConfig)
+		if err != nil {
+			return err
+		}
+		dnsRecords = append(dnsRecords, aliasRecords...)
 	}
+
+	if len(ingress[0].IP) != 0 {
+		aRecords, err := desiredDNSARecords(ci, ingress[0].IP, dnsConfig)
+		if err != nil {
+			return err
+		}
+		dnsRecords = append(dnsRecords, aRecords...)
+	}
+
 	for _, record := range dnsRecords {
 		err := r.DNSManager.Ensure(record)
 		if err != nil {
@@ -35,10 +48,42 @@ func (r *reconciler) ensureDNS(ci *operatorv1.IngressController, service *corev1
 	return nil
 }
 
+type makeRecordFunc func(zone *configv1.DNSZone) *dns.Record
+
+func desiredDNSAliasRecords(ci *operatorv1.IngressController, hostname string, dnsConfig *configv1.DNS) ([]*dns.Record, error) {
+	domain := fmt.Sprintf("*.%s", ci.Status.Domain)
+	makeRecord := func(zone *configv1.DNSZone) *dns.Record {
+		return &dns.Record{
+			Zone: *zone,
+			Type: dns.ALIASRecord,
+			Alias: &dns.AliasRecord{
+				Domain: domain,
+				Target: hostname,
+			},
+		}
+	}
+	return desiredDNSRecords(ci, dnsConfig, makeRecord)
+}
+
+func desiredDNSARecords(ci *operatorv1.IngressController, ip string, dnsConfig *configv1.DNS) ([]*dns.Record, error) {
+	domain := fmt.Sprintf("*.%s", ci.Status.Domain)
+	makeRecord := func(zone *configv1.DNSZone) *dns.Record {
+		return &dns.Record{
+			Zone: *zone,
+			Type: dns.ARecordType,
+			ARecord: &dns.ARecord{
+				Domain:  domain,
+				Address: ip,
+			},
+		}
+	}
+	return desiredDNSRecords(ci, dnsConfig, makeRecord)
+}
+
 // desiredDNSRecords will return any necessary DNS records for the given inputs.
 // If an ingress domain is in use, records are desired in every specified zone
 // present in the cluster DNS configuration.
-func desiredDNSRecords(ci *operatorv1.IngressController, hostname string, dnsConfig *configv1.DNS) ([]*dns.Record, error) {
+func desiredDNSRecords(ci *operatorv1.IngressController, dnsConfig *configv1.DNS, makeRecord makeRecordFunc) ([]*dns.Record, error) {
 	records := []*dns.Record{}
 
 	// If the ingresscontroller has no ingress domain, we cannot configure any
@@ -57,17 +102,6 @@ func desiredDNSRecords(ci *operatorv1.IngressController, hostname string, dnsCon
 		return records, nil
 	}
 
-	domain := fmt.Sprintf("*.%s", ci.Status.Domain)
-	makeRecord := func(zone *configv1.DNSZone) *dns.Record {
-		return &dns.Record{
-			Zone: *zone,
-			Type: dns.ALIASRecord,
-			Alias: &dns.AliasRecord{
-				Domain: domain,
-				Target: hostname,
-			},
-		}
-	}
 	if dnsConfig.Spec.PrivateZone != nil {
 		records = append(records, makeRecord(dnsConfig.Spec.PrivateZone))
 	}

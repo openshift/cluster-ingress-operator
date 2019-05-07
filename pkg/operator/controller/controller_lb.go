@@ -127,7 +127,7 @@ func (r *reconciler) finalizeLoadBalancerService(ci *operatorv1.IngressControlle
 	// an annotation on the ingresscontroller.
 	ingress := service.Status.LoadBalancer.Ingress
 	if len(ingress) > 0 && len(ingress[0].Hostname) > 0 {
-		records, err := desiredDNSRecords(ci, ingress[0].Hostname, dnsConfig)
+		records, err := desiredDNSAliasRecords(ci, ingress[0].Hostname, dnsConfig)
 		if err != nil {
 			return err
 		}
