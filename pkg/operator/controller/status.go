@@ -57,7 +57,7 @@ func (r *reconciler) syncOperatorStatus() error {
 
 	co.Status.Versions = r.computeOperatorStatusVersions(oldStatus.Versions, allIngressesAvailable)
 	co.Status.Conditions = r.computeOperatorStatusConditions(oldStatus.Conditions,
-		ns, allIngressesAvailable, co.Status.Versions)
+		ns, allIngressesAvailable, oldStatus.Versions, co.Status.Versions)
 
 	if !operatorStatusesEqual(*oldStatus, co.Status) {
 		if err := r.client.Status().Update(context.TODO(), co); err != nil {
@@ -148,7 +148,7 @@ func (r *reconciler) computeOperatorStatusVersions(oldVersions []configv1.Operan
 // computeOperatorStatusConditions computes the operator's current state.
 func (r *reconciler) computeOperatorStatusConditions(oldConditions []configv1.ClusterOperatorStatusCondition,
 	ns *corev1.Namespace, allIngressesAvailable bool,
-	curVersions []configv1.OperandVersion) []configv1.ClusterOperatorStatusCondition {
+	oldVersions, curVersions []configv1.OperandVersion) []configv1.ClusterOperatorStatusCondition {
 	var oldDegradedCondition, oldProgressingCondition, oldAvailableCondition *configv1.ClusterOperatorStatusCondition
 	for i := range oldConditions {
 		switch oldConditions[i].Type {
@@ -163,7 +163,7 @@ func (r *reconciler) computeOperatorStatusConditions(oldConditions []configv1.Cl
 
 	conditions := []configv1.ClusterOperatorStatusCondition{
 		computeOperatorDegradedCondition(oldDegradedCondition, ns),
-		r.computeOperatorProgressingCondition(oldProgressingCondition, allIngressesAvailable, curVersions),
+		r.computeOperatorProgressingCondition(oldProgressingCondition, allIngressesAvailable, oldVersions, curVersions),
 		computeOperatorAvailableCondition(oldAvailableCondition, allIngressesAvailable),
 	}
 
@@ -209,7 +209,7 @@ func computeOperatorDegradedCondition(oldCondition *configv1.ClusterOperatorStat
 
 // computeOperatorProgressingCondition computes the operator's current Progressing status state.
 func (r *reconciler) computeOperatorProgressingCondition(oldCondition *configv1.ClusterOperatorStatusCondition,
-	allIngressesAvailable bool, curVersions []configv1.OperandVersion) configv1.ClusterOperatorStatusCondition {
+	allIngressesAvailable bool, oldVersions, curVersions []configv1.OperandVersion) configv1.ClusterOperatorStatusCondition {
 	// TODO: Update progressingCondition when an ingresscontroller
 	//       progressing condition is created. The Operator's condition
 	//       should be derived from the ingresscontroller's condition.
@@ -217,30 +217,45 @@ func (r *reconciler) computeOperatorProgressingCondition(oldCondition *configv1.
 		Type: configv1.OperatorProgressing,
 	}
 
+	progressing := false
+
 	messages := []string{}
 	if !allIngressesAvailable {
 		messages = append(messages, "Not all ingress controllers are available.")
+		progressing = true
+	}
+
+	oldVersionsMap := make(map[string]string)
+	for _, opv := range oldVersions {
+		oldVersionsMap[opv.Name] = opv.Version
 	}
 
 	for _, opv := range curVersions {
+		if oldVersion, ok := oldVersionsMap[opv.Name]; ok && oldVersion != opv.Version {
+			messages = append(messages, fmt.Sprintf("Upgraded %s to %q.", opv.Name, opv.Version))
+		}
 		switch opv.Name {
 		case OperatorVersionName:
 			if opv.Version != r.OperatorReleaseVersion {
 				messages = append(messages, fmt.Sprintf("Moving to release version %q.", r.OperatorReleaseVersion))
+				progressing = true
 			}
 		case IngressControllerVersionName:
 			if opv.Version != r.IngressControllerImage {
 				messages = append(messages, fmt.Sprintf("Moving to ingress-controller image version %q.", r.IngressControllerImage))
+				progressing = true
 			}
 		}
 	}
 
-	if len(messages) == 0 {
-		progressingCondition.Status = configv1.ConditionFalse
-		progressingCondition.Message = ingressesEqualConditionMessage
-	} else {
+	if progressing {
 		progressingCondition.Status = configv1.ConditionTrue
 		progressingCondition.Reason = "Reconciling"
+	} else {
+		progressingCondition.Status = configv1.ConditionFalse
+	}
+	progressingCondition.Message = ingressesEqualConditionMessage
+	if len(messages) > 0 {
 		progressingCondition.Message = strings.Join(messages, "\n")
 	}
 
