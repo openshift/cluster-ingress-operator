@@ -190,31 +190,27 @@ func (m *Manager) getLBHostedZone(name string) (string, error) {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 
-	if id, exists := m.lbZones[name]; exists {
-		return id, nil
+	if zoneID, exists := m.lbZones[name]; exists {
+		return zoneID, nil
 	}
 
-	var id string
-	fn := func(resp *elb.DescribeLoadBalancersOutput, lastPage bool) (shouldContinue bool) {
-		for _, lb := range resp.LoadBalancerDescriptions {
-			log.V(0).Info("found load balancer", "name", aws.StringValue(lb.LoadBalancerName), "dns name", aws.StringValue(lb.DNSName), "hosted zone ID", aws.StringValue(lb.CanonicalHostedZoneNameID))
-			if aws.StringValue(lb.CanonicalHostedZoneName) == name {
-				id = aws.StringValue(lb.CanonicalHostedZoneNameID)
-				return false
-			}
-		}
-		return true
-	}
-	err := m.elb.DescribeLoadBalancersPages(&elb.DescribeLoadBalancersInput{}, fn)
+	// An elb name is the first 32 bytes of the elb's dns name.
+	// https://github.com/kubernetes/cloud-provider/blob/master/cloud.go#L86-L89
+	lbName := name[:32]
+	input := elb.DescribeLoadBalancersInput{LoadBalancerNames: []*string{aws.String(lbName)}}
+	output, err := m.elb.DescribeLoadBalancers(&input)
 	if err != nil {
 		return "", fmt.Errorf("failed to describe load balancers: %v", err)
 	}
-	if len(id) == 0 {
+	/// only 1 elb should have been created for the lb service.
+	if len(output.LoadBalancerDescriptions) != 1 {
 		return "", fmt.Errorf("couldn't find hosted zone ID of ELB %s", name)
 	}
-	log.Info("associating load balancer with hosted zone", "dns name", name, "zone", id)
-	m.lbZones[name] = id
-	return id, nil
+	zoneID := aws.StringValue(output.LoadBalancerDescriptions[0].CanonicalHostedZoneNameID)
+	log.Info("associating load balancer with hosted zone", "dns name", name, "zone", zoneID)
+	m.lbZones[name] = zoneID
+
+	return zoneID, nil
 }
 
 type action string
