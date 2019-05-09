@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
+
 	operatorv1 "github.com/openshift/api/operator/v1"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -40,99 +43,13 @@ func TestComputeIngressStatusConditions(t *testing.T) {
 			},
 		}
 		actual := computeIngressStatusConditions([]operatorv1.OperatorCondition{}, deploy)
-		gotExpected := true
-		if len(actual) != len(expected) {
-			gotExpected = false
+		conditionsCmpOpts := []cmp.Option{
+			cmpopts.IgnoreFields(operatorv1.OperatorCondition{}, "LastTransitionTime", "Reason", "Message"),
+			cmpopts.EquateEmpty(),
+			cmpopts.SortSlices(func(a, b operatorv1.OperatorCondition) bool { return a.Type < b.Type }),
 		}
-		for _, conditionA := range actual {
-			foundMatchingCondition := false
-
-			for _, conditionB := range expected {
-				if conditionA.Type == conditionB.Type &&
-					conditionA.Status == conditionB.Status {
-					foundMatchingCondition = true
-					break
-				}
-			}
-
-			if !foundMatchingCondition {
-				gotExpected = false
-			}
-		}
-		if !gotExpected {
-			t.Fatalf("%q: expected %#v, got %#v", tc.description,
-				expected, actual)
-		}
-	}
-}
-
-func TestSetIngressStatusCondition(t *testing.T) {
-	testCases := []struct {
-		description   string
-		oldConditions []operatorv1.OperatorCondition
-		newCondition  *operatorv1.OperatorCondition
-		expected      []operatorv1.OperatorCondition
-	}{
-		{
-			description: "new condition",
-			newCondition: &operatorv1.OperatorCondition{
-				Type:   operatorv1.IngressControllerAvailableConditionType,
-				Status: operatorv1.ConditionTrue,
-			},
-			expected: []operatorv1.OperatorCondition{
-				{
-					Type:   operatorv1.IngressControllerAvailableConditionType,
-					Status: operatorv1.ConditionTrue,
-				},
-			},
-		},
-		{
-			description: "existing condition, unchanged",
-			oldConditions: []operatorv1.OperatorCondition{
-				{
-					Type:   operatorv1.IngressControllerAvailableConditionType,
-					Status: operatorv1.ConditionTrue,
-				},
-			},
-			newCondition: &operatorv1.OperatorCondition{
-				Type:   operatorv1.IngressControllerAvailableConditionType,
-				Status: operatorv1.ConditionTrue,
-			},
-			expected: []operatorv1.OperatorCondition{
-				{
-					Type:   operatorv1.IngressControllerAvailableConditionType,
-					Status: operatorv1.ConditionTrue,
-				},
-			},
-		},
-		{
-			description: "existing condition changed",
-			oldConditions: []operatorv1.OperatorCondition{
-				{
-					Type:   operatorv1.IngressControllerAvailableConditionType,
-					Status: operatorv1.ConditionFalse,
-				},
-			},
-			newCondition: &operatorv1.OperatorCondition{
-				Type:   operatorv1.IngressControllerAvailableConditionType,
-				Status: operatorv1.ConditionTrue,
-			},
-			expected: []operatorv1.OperatorCondition{
-				{
-					Type:   operatorv1.IngressControllerAvailableConditionType,
-					Status: operatorv1.ConditionTrue,
-				},
-			},
-		},
-	}
-
-	for _, tc := range testCases {
-		actual := setIngressStatusCondition(tc.oldConditions, tc.newCondition)
-		a := operatorv1.IngressControllerStatus{Conditions: actual}
-		b := operatorv1.IngressControllerStatus{Conditions: tc.expected}
-		if !ingressStatusesEqual(a, b) {
-			t.Fatalf("%q: expected %v, got %v", tc.description,
-				tc.expected, actual)
+		if !cmp.Equal(actual, expected, conditionsCmpOpts...) {
+			t.Fatalf("%q: expected %#v, got %#v", tc.description, expected, actual)
 		}
 	}
 }
@@ -161,8 +78,8 @@ func TestIngressStatusesEqual(t *testing.T) {
 			},
 		},
 		{
-			description: "condition LastTransitionTime should be ignored",
-			expected:    true,
+			description: "condition LastTransitionTime should not be ignored",
+			expected:    false,
 			a: operatorv1.IngressControllerStatus{
 				Conditions: []operatorv1.OperatorCondition{
 					{

@@ -195,13 +195,16 @@ func (r *reconciler) enforceEffectiveIngressDomain(ic *operatorv1.IngressControl
 	}
 	if !unique {
 		log.Info("domain not unique, not setting status domain for IngressController", "namespace", ic.Namespace, "name", ic.Name)
-		availableCondition := &operatorv1.OperatorCondition{
+		availableCondition := operatorv1.OperatorCondition{
 			Type:    operatorv1.IngressControllerAvailableConditionType,
 			Status:  operatorv1.ConditionFalse,
 			Reason:  "InvalidDomain",
 			Message: fmt.Sprintf("domain %q is already in use by another IngressController", domain),
 		}
-		updated.Status.Conditions = setIngressStatusCondition(updated.Status.Conditions, availableCondition)
+		oldAvailableCondition := getIngressAvailableCondition(updated.Status.Conditions)
+		setIngressLastTransitionTime(&availableCondition, oldAvailableCondition)
+		// TODO: refactor when we deal with multiple ingress conditions
+		updated.Status.Conditions = []operatorv1.OperatorCondition{availableCondition}
 	} else {
 		updated.Status.Domain = domain
 	}
