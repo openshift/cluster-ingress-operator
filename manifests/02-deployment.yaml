@@ -32,6 +32,7 @@ spec:
         tolerationSeconds: 120
       serviceAccountName: ingress-operator
       priorityClassName: system-cluster-critical
+      hostNetwork: true
       containers:
         - name: ingress-operator
           terminationMessagePolicy: FallbackToLogsOnError
