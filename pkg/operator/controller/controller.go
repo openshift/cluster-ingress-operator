@@ -70,7 +70,6 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 // Config holds all the things necessary for the controller to run.
 type Config struct {
 	KubeConfig             *rest.Config
-	ManifestFactory        *manifests.Factory
 	Namespace              string
 	DNSManager             dns.Manager
 	IngressControllerImage string
@@ -316,10 +315,7 @@ func (r *reconciler) ensureIngressDeleted(ingress *operatorv1.IngressController,
 // ensureRouterNamespace ensures all the necessary scaffolding exists for
 // routers generally, including a namespace and all RBAC setup.
 func (r *reconciler) ensureRouterNamespace() error {
-	cr, err := r.ManifestFactory.RouterClusterRole()
-	if err != nil {
-		return fmt.Errorf("failed to build router cluster role: %v", err)
-	}
+	cr := manifests.RouterClusterRole()
 	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: cr.Name}, cr); err != nil {
 		if !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to get router cluster role %s: %v", cr.Name, err)
@@ -341,10 +337,7 @@ func (r *reconciler) ensureRouterNamespace() error {
 		log.Info("created router namespace", "name", ns.Name)
 	}
 
-	sa, err := r.ManifestFactory.RouterServiceAccount()
-	if err != nil {
-		return fmt.Errorf("failed to build router service account: %v", err)
-	}
+	sa := manifests.RouterServiceAccount()
 	if err := r.client.Get(context.TODO(), types.NamespacedName{Namespace: sa.Namespace, Name: sa.Name}, sa); err != nil {
 		if !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to get router service account %s/%s: %v", sa.Namespace, sa.Name, err)
@@ -355,10 +348,7 @@ func (r *reconciler) ensureRouterNamespace() error {
 		log.Info("created router service account", "namespace", sa.Namespace, "name", sa.Name)
 	}
 
-	crb, err := r.ManifestFactory.RouterClusterRoleBinding()
-	if err != nil {
-		return fmt.Errorf("failed to build router cluster role binding: %v", err)
-	}
+	crb := manifests.RouterClusterRoleBinding()
 	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: crb.Name}, crb); err != nil {
 		if !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to get router cluster role binding %s: %v", crb.Name, err)
@@ -412,10 +402,7 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 
 // ensureMetricsIntegration ensures that router prometheus metrics is integrated with openshift-monitoring for the given ingresscontroller.
 func (r *reconciler) ensureMetricsIntegration(ci *operatorv1.IngressController, svc *corev1.Service, deploymentRef metav1.OwnerReference) error {
-	statsSecret, err := r.ManifestFactory.RouterStatsSecret(ci)
-	if err != nil {
-		return fmt.Errorf("failed to build router stats secret: %v", err)
-	}
+	statsSecret := manifests.RouterStatsSecret(ci)
 	if err := r.client.Get(context.TODO(), types.NamespacedName{Namespace: statsSecret.Namespace, Name: statsSecret.Name}, statsSecret); err != nil {
 		if !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to get router stats secret %s/%s, %v", statsSecret.Namespace, statsSecret.Name, err)
@@ -428,10 +415,7 @@ func (r *reconciler) ensureMetricsIntegration(ci *operatorv1.IngressController, 
 		log.Info("created router stats secret", "namespace", statsSecret.Namespace, "name", statsSecret.Name)
 	}
 
-	cr, err := r.ManifestFactory.MetricsClusterRole()
-	if err != nil {
-		return fmt.Errorf("failed to build router metrics cluster role: %v", err)
-	}
+	cr := manifests.MetricsClusterRole()
 	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: cr.Name}, cr); err != nil {
 		if !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to get router metrics cluster role %s: %v", cr.Name, err)
@@ -442,10 +426,7 @@ func (r *reconciler) ensureMetricsIntegration(ci *operatorv1.IngressController, 
 		log.Info("created router metrics cluster role", "name", cr.Name)
 	}
 
-	crb, err := r.ManifestFactory.MetricsClusterRoleBinding()
-	if err != nil {
-		return fmt.Errorf("failed to build router metrics cluster role binding: %v", err)
-	}
+	crb := manifests.MetricsClusterRoleBinding()
 	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: crb.Name}, crb); err != nil {
 		if !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to get router metrics cluster role binding %s: %v", crb.Name, err)
@@ -456,10 +437,7 @@ func (r *reconciler) ensureMetricsIntegration(ci *operatorv1.IngressController, 
 		log.Info("created router metrics cluster role binding", "name", crb.Name)
 	}
 
-	mr, err := r.ManifestFactory.MetricsRole()
-	if err != nil {
-		return fmt.Errorf("failed to build router metrics role: %v", err)
-	}
+	mr := manifests.MetricsRole()
 	if err := r.client.Get(context.TODO(), types.NamespacedName{Namespace: mr.Namespace, Name: mr.Name}, mr); err != nil {
 		if !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to get router metrics role %s: %v", mr.Name, err)
@@ -470,10 +448,7 @@ func (r *reconciler) ensureMetricsIntegration(ci *operatorv1.IngressController, 
 		log.Info("created router metrics role", "name", mr.Name)
 	}
 
-	mrb, err := r.ManifestFactory.MetricsRoleBinding()
-	if err != nil {
-		return fmt.Errorf("failed to build router metrics role binding: %v", err)
-	}
+	mrb := manifests.MetricsRoleBinding()
 	if err := r.client.Get(context.TODO(), types.NamespacedName{Namespace: mrb.Namespace, Name: mrb.Name}, mrb); err != nil {
 		if !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to get router metrics role binding %s: %v", mrb.Name, err)
