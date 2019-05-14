@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/ghodss/yaml"
+
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 	awsdns "github.com/openshift/cluster-ingress-operator/pkg/dns/aws"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
@@ -81,6 +83,20 @@ func main() {
 		os.Exit(1)
 	}
 
+	// TODO: This can be replaced by cluster API when
+	// https://github.com/openshift/installer/pull/1725 is available.
+	clusterConfig := &corev1.ConfigMap{}
+	err = kubeClient.Get(context.TODO(), types.NamespacedName{Namespace: "kube-system", Name: "cluster-config-v1"}, clusterConfig)
+	if err != nil {
+		log.Error(err, "failed to get configmap 'kube-system/cluster-config-v1'")
+		os.Exit(1)
+	}
+	installConfig, err := newInstallConfig(clusterConfig)
+	if err != nil {
+		log.Error(err, "failed to extract install config from cluster config")
+		os.Exit(1)
+	}
+
 	operatorConfig := operatorconfig.Config{
 		OperatorReleaseVersion: releaseVersion,
 		Namespace:              operatorNamespace,
@@ -88,7 +104,7 @@ func main() {
 	}
 
 	// Set up the DNS manager.
-	dnsManager, err := createDNSManager(kubeClient, operatorConfig, infraConfig, dnsConfig)
+	dnsManager, err := createDNSManager(kubeClient, operatorConfig, infraConfig, dnsConfig, installConfig)
 	if err != nil {
 		log.Error(err, "failed to create DNS manager")
 		os.Exit(1)
@@ -108,7 +124,7 @@ func main() {
 
 // createDNSManager creates a DNS manager compatible with the given cluster
 // configuration.
-func createDNSManager(cl client.Client, operatorConfig operatorconfig.Config, infraConfig *configv1.Infrastructure, dnsConfig *configv1.DNS) (dns.Manager, error) {
+func createDNSManager(cl client.Client, operatorConfig operatorconfig.Config, infraConfig *configv1.Infrastructure, dnsConfig *configv1.DNS, installConfig *installConfig) (dns.Manager, error) {
 	var dnsManager dns.Manager
 	switch infraConfig.Status.Platform {
 	case configv1.AWSPlatformType:
@@ -122,6 +138,7 @@ func createDNSManager(cl client.Client, operatorConfig operatorconfig.Config, in
 			AccessID:  string(awsCreds.Data["aws_access_key_id"]),
 			AccessKey: string(awsCreds.Data["aws_secret_access_key"]),
 			DNS:       dnsConfig,
+			Region:    installConfig.Platform.AWS.Region,
 		}, operatorConfig.OperatorReleaseVersion)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create AWS DNS manager: %v", err)
@@ -131,4 +148,26 @@ func createDNSManager(cl client.Client, operatorConfig operatorconfig.Config, in
 		dnsManager = &dns.NoopManager{}
 	}
 	return dnsManager, nil
+}
+
+// TODO: This can be replaced by cluster API when
+// https://github.com/openshift/installer/pull/1725 is available.
+type installConfig struct {
+	Platform struct {
+		AWS struct {
+			Region string `json:"region"`
+		} `json:"aws"`
+	} `json:"platform"`
+}
+
+func newInstallConfig(clusterConfig *corev1.ConfigMap) (*installConfig, error) {
+	data, ok := clusterConfig.Data["install-config"]
+	if !ok {
+		return nil, fmt.Errorf("missing install-config in configmap")
+	}
+	var ic installConfig
+	if err := yaml.Unmarshal([]byte(data), &ic); err != nil {
+		return nil, fmt.Errorf("invalid install-config: %v\njson:\n%s", err, data)
+	}
+	return &ic, nil
 }
