@@ -13,7 +13,6 @@ import (
 	"github.com/aws/aws-sdk-go/aws/arn"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/ec2metadata"
 	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/elb"
@@ -68,6 +67,8 @@ type Config struct {
 	AccessID string
 	// AccessKey is an AWS credential.
 	AccessKey string
+	// Region is the AWS region ELBs are created in.
+	Region string
 	// DNS is public and private DNS zone configuration for the cluster.
 	DNS *configv1.DNS
 }
@@ -92,13 +93,11 @@ func NewManager(config Config, operatorReleaseVersion string) (*Manager, error) 
 	if len(region) > 0 {
 		log.Info("using region from shared config", "region name", region)
 	} else {
-		metadata := ec2metadata.New(sess)
-		discovered, err := metadata.Region()
-		if err != nil {
-			return nil, fmt.Errorf("couldn't get region from metadata: %v", err)
-		}
-		region = discovered
-		log.Info("discovered region from metadata", "region name", region)
+		region = config.Region
+		log.Info("using region from operator config", "region name", region)
+	}
+	if len(region) == 0 {
+		return nil, fmt.Errorf("region is required")
 	}
 
 	return &Manager{
