@@ -236,8 +236,8 @@ func TestOperatorStatusesEqual(t *testing.T) {
 			},
 		},
 		{
-			description: "condition LastTransitionTime should be ignored",
-			expected:    true,
+			description: "condition LastTransitionTime should not be ignored",
+			expected:    false,
 			a: configv1.ClusterOperatorStatus{
 				Conditions: []configv1.ClusterOperatorStatusCondition{
 					{

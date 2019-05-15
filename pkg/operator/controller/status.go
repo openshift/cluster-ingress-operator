@@ -299,7 +299,6 @@ func setLastTransitionTime(condition, oldCondition *configv1.ClusterOperatorStat
 // for the purpose of determining whether an update is necessary, false otherwise.
 func operatorStatusesEqual(a, b configv1.ClusterOperatorStatus) bool {
 	conditionCmpOpts := []cmp.Option{
-		cmpopts.IgnoreFields(configv1.ClusterOperatorStatusCondition{}, "LastTransitionTime"),
 		cmpopts.EquateEmpty(),
 		cmpopts.SortSlices(func(a, b configv1.ClusterOperatorStatusCondition) bool { return a.Type < b.Type }),
 	}
