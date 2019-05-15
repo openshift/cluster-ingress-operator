@@ -242,7 +242,7 @@ func (r *reconciler) isDomainUnique(domain string) (bool, error) {
 // strategy type for the given infrastructure config.
 func publishingStrategyTypeForInfra(infraConfig *configv1.Infrastructure) operatorv1.EndpointPublishingStrategyType {
 	switch infraConfig.Status.Platform {
-	case configv1.AWSPlatformType, configv1.AzurePlatformType:
+	case configv1.AWSPlatformType, configv1.AzurePlatformType, configv1.GCPPlatformType:
 		return operatorv1.LoadBalancerServiceStrategyType
 	case configv1.LibvirtPlatformType:
 		return operatorv1.HostNetworkStrategyType
