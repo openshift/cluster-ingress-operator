@@ -36,12 +36,12 @@ spec:
           livenessProbe:
             initialDelaySeconds: 10
             httpGet:
-              path: /healthz
+              path: /healthz/live
               port: 1936
           readinessProbe:
             initialDelaySeconds: 10
             httpGet:
-              path: /healthz
+              path: /healthz/ready
               port: 1936
           resources:
             requests:

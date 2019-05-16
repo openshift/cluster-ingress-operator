@@ -221,6 +221,17 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 
 	deployment.Spec.Template.Spec.Containers[0].Image = ingressControllerImage
 
+	deployment.Spec.Template.Spec.Containers[0].Lifecycle = &corev1.Lifecycle{
+		PreStop: &corev1.Handler{
+			Exec: &corev1.ExecAction{
+				Command: []string{"/var/lib/haproxy/shutdown-haproxy"},
+			},
+		},
+	}
+
+	gracePeriod := int64(120)
+	deployment.Spec.Template.Spec.TerminationGracePeriodSeconds = &gracePeriod
+
 	if ci.Status.EndpointPublishingStrategy.Type == operatorv1.HostNetworkStrategyType {
 		// Expose ports 80 and 443 on the host to provide endpoints for
 		// the user's HA solution.
@@ -286,6 +297,10 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 		cmp.Equal(current.Spec.Template.Spec.Tolerations, expected.Spec.Template.Spec.Tolerations, cmpopts.EquateEmpty(), cmpopts.SortSlices(cmpTolerations)) &&
 		cmp.Equal(current.Spec.Template.Spec.Affinity, expected.Spec.Template.Spec.Affinity, cmpopts.EquateEmpty()) &&
 		cmp.Equal(current.Spec.Strategy, expected.Spec.Strategy, cmpopts.EquateEmpty()) &&
+		cmp.Equal(current.Spec.Template.Spec.Containers[0].Lifecycle, expected.Spec.Template.Spec.Containers[0].Lifecycle, cmpopts.EquateEmpty()) &&
+		cmp.Equal(current.Spec.Template.Spec.Containers[0].LivenessProbe, expected.Spec.Template.Spec.Containers[0].LivenessProbe, cmpopts.EquateEmpty()) &&
+		cmp.Equal(current.Spec.Template.Spec.Containers[0].ReadinessProbe, expected.Spec.Template.Spec.Containers[0].ReadinessProbe, cmpopts.EquateEmpty()) &&
+		cmp.Equal(current.Spec.Template.Spec.TerminationGracePeriodSeconds, expected.Spec.Template.Spec.TerminationGracePeriodSeconds, cmpopts.EquateEmpty()) &&
 		current.Spec.Replicas != nil &&
 		*current.Spec.Replicas == *expected.Spec.Replicas {
 		return false, nil
@@ -301,6 +316,10 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 	updated.Spec.Template.Spec.NodeSelector = expected.Spec.Template.Spec.NodeSelector
 	updated.Spec.Template.Spec.Containers[0].Env = expected.Spec.Template.Spec.Containers[0].Env
 	updated.Spec.Template.Spec.Containers[0].Image = expected.Spec.Template.Spec.Containers[0].Image
+	updated.Spec.Template.Spec.Containers[0].Lifecycle = expected.Spec.Template.Spec.Containers[0].Lifecycle
+	updated.Spec.Template.Spec.Containers[0].LivenessProbe = expected.Spec.Template.Spec.Containers[0].LivenessProbe
+	updated.Spec.Template.Spec.Containers[0].ReadinessProbe = expected.Spec.Template.Spec.Containers[0].ReadinessProbe
+	updated.Spec.Template.Spec.TerminationGracePeriodSeconds = expected.Spec.Template.Spec.TerminationGracePeriodSeconds
 	updated.Spec.Template.Spec.Tolerations = expected.Spec.Template.Spec.Tolerations
 	updated.Spec.Template.Spec.Affinity = expected.Spec.Template.Spec.Affinity
 	replicas := int32(1)

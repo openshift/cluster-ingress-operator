@@ -384,18 +384,24 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 			Controller: &trueVar,
 		}
 
-		if lbService, err := r.ensureLoadBalancerService(ci, deploymentRef, infraConfig); err != nil {
+		if wantHealthz, healthzSvc, err := r.ensureHealthzService(ci, deploymentRef); err != nil {
+			errs = append(errs, fmt.Errorf("failed to create healthz service for ingresscontroller %s: %v", ci.Name, err))
+		} else if haveLBService, lbService, err := r.ensureLoadBalancerService(ci, wantHealthz, healthzSvc, deploymentRef, infraConfig); err != nil {
 			errs = append(errs, fmt.Errorf("failed to ensure load balancer service for %s: %v", ci.Name, err))
-		} else if lbService != nil {
+		} else if haveLBService {
 			if err := r.ensureDNS(ci, lbService, dnsConfig); err != nil {
 				errs = append(errs, fmt.Errorf("failed to ensure DNS for %s: %v", ci.Name, err))
 			}
 		}
 
-		if internalSvc, err := r.ensureInternalIngressControllerService(ci, deploymentRef); err != nil {
+		if _, internalSvc, err := r.ensureInternalIngressControllerService(ci, deploymentRef); err != nil {
 			errs = append(errs, fmt.Errorf("failed to create internal router service for ingresscontroller %s: %v", ci.Name, err))
 		} else if err := r.ensureMetricsIntegration(ci, internalSvc, deploymentRef); err != nil {
 			errs = append(errs, fmt.Errorf("failed to integrate metrics with openshift-monitoring for ingresscontroller %s: %v", ci.Name, err))
+		}
+
+		if _, _, err := r.ensureRouterPodDisruptionBudget(ci, deploymentRef); err != nil {
+			errs = append(errs, err)
 		}
 
 		if err := r.syncIngressControllerStatus(deployment, ci); err != nil {

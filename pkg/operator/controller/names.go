@@ -43,6 +43,15 @@ func RouterDeploymentName(ci *operatorv1.IngressController) types.NamespacedName
 	}
 }
 
+// RouterPodDisruptionBudgetName returns the namespaced name for the router
+// deployment's pod disruption budget.
+func RouterPodDisruptionBudgetName(ci *operatorv1.IngressController) types.NamespacedName {
+	return types.NamespacedName{
+		Namespace: "openshift-ingress",
+		Name:      "router-" + ci.Name,
+	}
+}
+
 // RouterCASecretName returns the namespaced name for the router CA secret.
 func RouterCASecretName(operatorNamespace string) types.NamespacedName {
 	return types.NamespacedName{
@@ -98,9 +107,19 @@ func IngressControllerDeploymentPodSelector(ic *operatorv1.IngressController) *m
 	}
 }
 
+func HealthzServiceName(ic *operatorv1.IngressController) types.NamespacedName {
+	// TODO: remove hard-coded namespace
+	return types.NamespacedName{Namespace: "openshift-ingress", Name: "router-healthz-" + ic.Name}
+}
+
 func InternalIngressControllerServiceName(ic *operatorv1.IngressController) types.NamespacedName {
 	// TODO: remove hard-coded namespace
 	return types.NamespacedName{Namespace: "openshift-ingress", Name: "router-internal-" + ic.Name}
+}
+
+func LoadBalancerServiceName(ci *operatorv1.IngressController) types.NamespacedName {
+	// TODO: remove hard-coded namespace
+	return types.NamespacedName{Namespace: "openshift-ingress", Name: "router-" + ci.Name}
 }
 
 func IngressControllerServiceMonitorName(ic *operatorv1.IngressController) types.NamespacedName {

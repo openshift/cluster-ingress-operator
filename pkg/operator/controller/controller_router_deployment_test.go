@@ -394,11 +394,61 @@ func TestDeploymentConfigChanged(t *testing.T) {
 			},
 			expect: true,
 		},
+		{
+			description: "if a container pre-stop lifecycle handler is added",
+			mutate: func(deployment *appsv1.Deployment) {
+				deployment.Spec.Template.Spec.Containers[0].Lifecycle = &corev1.Lifecycle{
+					PreStop: &corev1.Handler{
+						Exec: &corev1.ExecAction{
+							Command: []string{"/var/lib/haproxy/shutdown-haproxy"},
+						},
+					},
+				}
+			},
+			expect: true,
+		},
+		{
+			description: "if the container liveness probe is modified",
+			mutate: func(deployment *appsv1.Deployment) {
+				deployment.Spec.Template.Spec.Containers[0].LivenessProbe = &corev1.Probe{
+					Handler: corev1.Handler{
+						HTTPGet: &corev1.HTTPGetAction{
+							Path: "/healthz/live",
+							Port: intstr.FromInt(10),
+						},
+					},
+				}
+			},
+			expect: true,
+		},
+		{
+			description: "if the container readiness probe is modified",
+			mutate: func(deployment *appsv1.Deployment) {
+				deployment.Spec.Template.Spec.Containers[0].ReadinessProbe = &corev1.Probe{
+					Handler: corev1.Handler{
+						HTTPGet: &corev1.HTTPGetAction{
+							Path: "/healthz/ready",
+							Port: intstr.FromInt(10),
+						},
+					},
+				}
+			},
+			expect: true,
+		},
+		{
+			description: "if the deployment terminationGracePeriodSeconds is changed",
+			mutate: func(deployment *appsv1.Deployment) {
+				gracePeriod := int64(120)
+				deployment.Spec.Template.Spec.TerminationGracePeriodSeconds = &gracePeriod
+			},
+			expect: true,
+		},
 	}
 
 	for _, tc := range testCases {
 		nineteen := int32(19)
 		fourTwenty := int32(420) // = 0644 octal.
+		thirty := int64(30)
 		original := appsv1.Deployment{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "router-original",
@@ -451,6 +501,22 @@ func TestDeploymentConfigChanged(t *testing.T) {
 									},
 								},
 								Image: "openshift/origin-cluster-ingress-operator:v4.0",
+								LivenessProbe: &corev1.Probe{
+									Handler: corev1.Handler{
+										HTTPGet: &corev1.HTTPGetAction{
+											Path: "/healthz",
+											Port: intstr.FromInt(10),
+										},
+									},
+								},
+								ReadinessProbe: &corev1.Probe{
+									Handler: corev1.Handler{
+										HTTPGet: &corev1.HTTPGetAction{
+											Path: "/healthz",
+											Port: intstr.FromInt(10),
+										},
+									},
+								},
 							},
 						},
 						Affinity: &corev1.Affinity{
@@ -471,6 +537,7 @@ func TestDeploymentConfigChanged(t *testing.T) {
 								},
 							},
 						},
+						TerminationGracePeriodSeconds: &thirty,
 					},
 				},
 				Replicas: &nineteen,
