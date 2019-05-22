@@ -11,12 +11,14 @@ import (
 	"io/ioutil"
 	"net"
 	"os"
+	"reflect"
 	"strconv"
 	"testing"
 	"time"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
+
 	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
 	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
@@ -25,11 +27,14 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
+
 	"k8s.io/apiserver/pkg/storage/names"
+
 	"k8s.io/client-go/discovery"
 	discocache "k8s.io/client-go/discovery/cached"
 	"k8s.io/client-go/dynamic"
@@ -77,47 +82,87 @@ func newIngressController(name, ns, domain string, epType operatorv1.EndpointPub
 	}
 }
 
+func clusterOperatorConditionMap(conditions ...configv1.ClusterOperatorStatusCondition) map[string]string {
+	conds := map[string]string{}
+	for _, cond := range conditions {
+		conds[string(cond.Type)] = string(cond.Status)
+	}
+	return conds
+}
+
+func operatorConditionMap(conditions ...operatorv1.OperatorCondition) map[string]string {
+	conds := map[string]string{}
+	for _, cond := range conditions {
+		conds[string(cond.Type)] = string(cond.Status)
+	}
+	return conds
+}
+
+func conditionsMatchExpected(expected, actual map[string]string) bool {
+	filtered := map[string]string{}
+	for k := range actual {
+		if _, comparable := expected[k]; comparable {
+			filtered[k] = actual[k]
+		}
+	}
+	return reflect.DeepEqual(expected, filtered)
+}
+
+func waitForClusterOperatorConditions(cl client.Client, conditions ...configv1.ClusterOperatorStatusCondition) error {
+	co := &configv1.ClusterOperator{}
+	return wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
+		if err := cl.Get(context.TODO(), types.NamespacedName{Name: ingresscontroller.IngressClusterOperatorName}, co); err != nil {
+			return false, err
+		}
+
+		expected := clusterOperatorConditionMap(conditions...)
+		current := clusterOperatorConditionMap(co.Status.Conditions...)
+		return conditionsMatchExpected(expected, current), nil
+	})
+}
+
+func waitForIngressControllerCondition(cl client.Client, name types.NamespacedName, conditions ...operatorv1.OperatorCondition) error {
+	ic := &operatorv1.IngressController{}
+	return wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
+		if err := cl.Get(context.TODO(), name, ic); err != nil {
+			return false, err
+		}
+		expected := operatorConditionMap(conditions...)
+		current := operatorConditionMap(ic.Status.Conditions...)
+		return conditionsMatchExpected(expected, current), nil
+	})
+}
+
 func TestOperatorAvailable(t *testing.T) {
 	cl, _, err := getClient()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	co := &configv1.ClusterOperator{}
-	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
-		if err := cl.Get(context.TODO(), types.NamespacedName{Name: ingresscontroller.IngressClusterOperatorName}, co); err != nil {
-			return false, nil
-		}
-
-		for _, cond := range co.Status.Conditions {
-			if cond.Type == configv1.OperatorAvailable &&
-				cond.Status == configv1.ConditionTrue {
-				return true, nil
-			}
-		}
-
-		return false, nil
-	})
+	expected := []configv1.ClusterOperatorStatusCondition{
+		{Type: configv1.OperatorAvailable, Status: configv1.ConditionTrue},
+	}
+	err = waitForClusterOperatorConditions(cl, expected...)
 	if err != nil {
 		t.Errorf("did not get expected available condition: %v", err)
 	}
 }
 
-func TestDefaultIngressControllerExists(t *testing.T) {
+func TestDefaultIngressControllerAvailable(t *testing.T) {
 	cl, ns, err := getClient()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	ci := &operatorv1.IngressController{}
-	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
-		if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: ns, Name: "default"}, ci); err != nil {
-			return false, nil
-		}
-		return true, nil
-	})
+	name := types.NamespacedName{Namespace: ns, Name: "default"}
+	expected := []operatorv1.OperatorCondition{
+		{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionTrue},
+		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionTrue},
+		{Type: operatorv1.LoadBalancerReadyIngressConditionType, Status: operatorv1.ConditionTrue},
+	}
+	err = waitForIngressControllerCondition(cl, name, expected...)
 	if err != nil {
-		t.Errorf("failed to get default IngressController: %v", err)
+		t.Errorf("did not get expected condition: %v", err)
 	}
 }
 

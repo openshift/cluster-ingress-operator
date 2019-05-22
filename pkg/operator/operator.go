@@ -82,18 +82,6 @@ func New(config operatorconfig.Config, dnsManager dns.Manager, kubeConfig *rest.
 		return nil, fmt.Errorf("failed to create operator manager: %v", err)
 	}
 
-	// Create and register the operator controller with the operator manager.
-	operatorController, err := operatorcontroller.New(operatorManager, operatorcontroller.Config{
-		KubeConfig:             kubeConfig,
-		Namespace:              config.Namespace,
-		DNSManager:             dnsManager,
-		IngressControllerImage: config.IngressControllerImage,
-		OperatorReleaseVersion: config.OperatorReleaseVersion,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create operator controller: %v", err)
-	}
-
 	// Create additional controller event sources from informers in the managed
 	// namespace. Any new managed resources outside the operator's namespace
 	// should be added here.
@@ -105,6 +93,28 @@ func New(config operatorconfig.Config, dnsManager dns.Manager, kubeConfig *rest.
 	if err != nil {
 		return nil, fmt.Errorf("failed to create openshift-ingress cache: %v", err)
 	}
+	// This cache is used to work with objects across all operator-managed
+	// namespaced from a single uniform cache. For now, it's used for status
+	// computation.
+	buildGlobalCache := cache.MultiNamespacedCacheBuilder([]string{"openshift-ingress-operator", "openshift-ingress"})
+	globalCache, err := buildGlobalCache(kubeConfig, cache.Options{Scheme: scheme, Mapper: mapper})
+	if err != nil {
+		return nil, fmt.Errorf("failed to build global cache: %v", err)
+	}
+	statusCache := operatorcontroller.NewIngressStatusCache(globalCache)
+
+	// Create and register the operator controller with the operator manager.
+	operatorController, err := operatorcontroller.New(operatorManager, statusCache, operatorcontroller.Config{
+		KubeConfig:             kubeConfig,
+		Namespace:              config.Namespace,
+		DNSManager:             dnsManager,
+		IngressControllerImage: config.IngressControllerImage,
+		OperatorReleaseVersion: config.OperatorReleaseVersion,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create operator controller: %v", err)
+	}
+
 	// Any types added to the list here will only queue a ingresscontroller if the
 	// resource has the expected label associating the resource with a
 	// ingresscontroller.
@@ -154,7 +164,7 @@ func New(config operatorconfig.Config, dnsManager dns.Manager, kubeConfig *rest.
 
 	return &Operator{
 		manager: operatorManager,
-		caches:  []cache.Cache{operandCache},
+		caches:  []cache.Cache{operandCache, globalCache},
 
 		// TODO: These are only needed for the default ingress controller stuff, which
 		// should be refactored away.
