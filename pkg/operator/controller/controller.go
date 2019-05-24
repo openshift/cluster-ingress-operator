@@ -47,15 +47,16 @@ var log = logf.Logger.WithName("controller")
 //
 // The controller will be pre-configured to watch for IngressController resources
 // in the manager namespace.
-func New(mgr manager.Manager, config Config) (controller.Controller, error) {
+func New(mgr manager.Manager, statusCache *ingressStatusCache, config Config) (controller.Controller, error) {
 	kubeClient, err := operatorclient.NewClient(config.KubeConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create kube client: %v", err)
 	}
 	reconciler := &reconciler{
-		Config:   config,
-		client:   kubeClient,
-		recorder: mgr.GetEventRecorderFor("operator-controller"),
+		Config:      config,
+		client:      kubeClient,
+		recorder:    mgr.GetEventRecorderFor("operator-controller"),
+		statusCache: statusCache,
 	}
 	c, err := controller.New("operator-controller", mgr, controller.Options{Reconciler: reconciler})
 	if err != nil {
@@ -88,6 +89,8 @@ type reconciler struct {
 	// we do not need to synchronize when changing rest scheme/mapper fields.
 	client   kclient.Client
 	recorder record.EventRecorder
+
+	statusCache *ingressStatusCache
 }
 
 // Reconcile expects request to refer to a ingresscontroller in the operator
