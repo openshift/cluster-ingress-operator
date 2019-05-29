@@ -36,6 +36,10 @@ type Record struct {
 	ARecord *ARecord
 }
 
+func (r *Record) String() string {
+	return fmt.Sprintf("Zone: %v, Type: %v, Alias: %s, A: %s", r.Zone, r.Type, r.Alias, r.ARecord)
+}
+
 // RecordType is a DNS record type.
 type RecordType string
 

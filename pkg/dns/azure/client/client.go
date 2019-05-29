@@ -70,7 +70,12 @@ func (c *dnsClient) Put(ctx context.Context, zone Zone, arec ARecord) error {
 }
 
 func (c *dnsClient) Delete(ctx context.Context, zone Zone, arec ARecord) error {
-	_, err := c.recordSets.Delete(ctx, zone.ResourceGroup, zone.Name, arec.Name, dns.A, "")
+	_, err := c.recordSets.Get(ctx, zone.ResourceGroup, zone.Name, arec.Name, dns.A)
+	if err != nil {
+		// TODO: How do we interpret this as a notfound error?
+		return nil
+	}
+	_, err = c.recordSets.Delete(ctx, zone.ResourceGroup, zone.Name, arec.Name, dns.A, "")
 	if err != nil {
 		return errors.Wrapf(err, "failed to delete dns a record: %s.%s", arec.Name, zone.Name)
 	}
