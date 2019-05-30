@@ -125,23 +125,17 @@ func (r *reconciler) finalizeLoadBalancerService(ci *operatorv1.IngressControlle
 	// at the service, we should be maintaining state with any DNS records
 	// that we have created for the ingresscontroller, for example by using
 	// an annotation on the ingresscontroller.
-	ingress := service.Status.LoadBalancer.Ingress
-	if len(ingress) > 0 && len(ingress[0].Hostname) > 0 {
-		records, err := desiredDNSRecords(ci, ingress[0].Hostname, dnsConfig)
-		if err != nil {
-			return err
+	records := desiredDNSRecords(ci, dnsConfig, service)
+	dnsErrors := []error{}
+	for _, record := range records {
+		if err := r.DNSManager.Delete(record); err != nil {
+			dnsErrors = append(dnsErrors, fmt.Errorf("failed to delete DNS record %v for ingress %s/%s: %v", record, ci.Namespace, ci.Name, err))
+		} else {
+			log.Info("deleted DNS record for ingress", "namespace", ci.Namespace, "name", ci.Name, "record", record)
 		}
-		dnsErrors := []error{}
-		for _, record := range records {
-			if err := r.DNSManager.Delete(record); err != nil {
-				dnsErrors = append(dnsErrors, fmt.Errorf("failed to delete DNS record %v for ingress %s/%s: %v", record, ci.Namespace, ci.Name, err))
-			} else {
-				log.Info("deleted DNS record for ingress", "namespace", ci.Namespace, "name", ci.Name, "record", record)
-			}
-		}
-		if err := utilerrors.NewAggregate(dnsErrors); err != nil {
-			return err
-		}
+	}
+	if err := utilerrors.NewAggregate(dnsErrors); err != nil {
+		return err
 	}
 	// Mutate a copy to avoid assuming we know where the current one came from
 	// (i.e. it could have been from a cache).

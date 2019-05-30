@@ -31,6 +31,13 @@ type Record struct {
 
 	// Alias is options for an ALIAS record.
 	Alias *AliasRecord
+
+	// ARecord is options for an A record.
+	ARecord *ARecord
+}
+
+func (r *Record) String() string {
+	return fmt.Sprintf("Zone: %v, Type: %v, Alias: %s, A: %s", r.Zone, r.Type, r.Alias, r.ARecord)
 }
 
 // RecordType is a DNS record type.
@@ -39,6 +46,9 @@ type RecordType string
 const (
 	// ALIASRecord is a DNS ALIAS record.
 	ALIASRecord RecordType = "ALIAS"
+
+	// ARecordType is a DNS A record.
+	ARecordType RecordType = "A"
 )
 
 // AliasRecord is a DNS ALIAS record.
@@ -52,4 +62,17 @@ type AliasRecord struct {
 
 func (r *AliasRecord) String() string {
 	return fmt.Sprintf("%s -> %s", r.Domain, r.Target)
+}
+
+// ARecord is a DNS A record.
+type ARecord struct {
+	// Domain is the record name.
+	Domain string
+
+	// Address is the IPv4 address of the A record.
+	Address string
+}
+
+func (r *ARecord) String() string {
+	return fmt.Sprintf("%s -> %s", r.Domain, r.Address)
 }

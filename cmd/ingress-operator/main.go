@@ -9,6 +9,7 @@ import (
 
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 	awsdns "github.com/openshift/cluster-ingress-operator/pkg/dns/aws"
+	azuredns "github.com/openshift/cluster-ingress-operator/pkg/dns/azure"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator"
 	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
@@ -142,6 +143,25 @@ func createDNSManager(cl client.Client, operatorConfig operatorconfig.Config, in
 		}, operatorConfig.OperatorReleaseVersion)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create AWS DNS manager: %v", err)
+		}
+		dnsManager = manager
+	case configv1.AzurePlatformType:
+		azureCreds := &corev1.Secret{}
+		err := cl.Get(context.TODO(), types.NamespacedName{Namespace: operatorConfig.Namespace, Name: cloudCredentialsSecretName}, azureCreds)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get azure creds from secret %s/%s: %v", azureCreds.Namespace, azureCreds.Name, err)
+		}
+		log.Info("using azure creds from secret", "namespace", azureCreds.Namespace, "name", azureCreds.Name)
+		manager, err := azuredns.NewManager(azuredns.Config{
+			Environment:    "AzurePublicCloud",
+			ClientID:       string(azureCreds.Data["azure_client_id"]),
+			ClientSecret:   string(azureCreds.Data["azure_client_secret"]),
+			TenantID:       string(azureCreds.Data["azure_tenant_id"]),
+			SubscriptionID: string(azureCreds.Data["azure_subscription_id"]),
+			DNS:            dnsConfig,
+		}, operatorConfig.OperatorReleaseVersion)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Azure DNS manager: %v", err)
 		}
 		dnsManager = manager
 	default:
