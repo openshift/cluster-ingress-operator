@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
+	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 
 	corev1 "k8s.io/api/core/v1"
 
@@ -49,7 +50,11 @@ func desiredServiceMonitor(ic *operatorv1.IngressController, svc *corev1.Service
 						"openshift-ingress",
 					},
 				},
-				"selector": map[string]interface{}{},
+				"selector": map[string]interface{}{
+					"matchLabels": map[string]interface{}{
+						manifests.OwningIngressControllerLabel: ic.Name,
+					},
+				},
 				"endpoints": []map[string]interface{}{
 					{
 						"bearerTokenFile": "/var/run/secrets/kubernetes.io/serviceaccount/token",
