@@ -19,7 +19,7 @@ require (
 	github.com/hashicorp/golang-lru v0.5.1 // indirect
 	github.com/imdario/mergo v0.3.7 // indirect
 	github.com/kevinburke/go-bindata v3.11.0+incompatible
-	github.com/openshift/api v3.9.1-0.20190530131937-dafd2647cb03+incompatible
+	github.com/openshift/api v3.9.1-0.20190531141350-9a61cdf9e959+incompatible
 	github.com/openshift/library-go v0.0.0-20190402153831-dab26bb3a8dc
 	github.com/pborman/uuid v0.0.0-20180906182336-adf5a7427709 // indirect
 	github.com/pkg/errors v0.8.1

@@ -141,7 +141,7 @@ github.com/matttproud/golang_protobuf_extensions/pbutil
 github.com/modern-go/concurrent
 # github.com/modern-go/reflect2 v1.0.1
 github.com/modern-go/reflect2
-# github.com/openshift/api v3.9.1-0.20190530131937-dafd2647cb03+incompatible
+# github.com/openshift/api v3.9.1-0.20190531141350-9a61cdf9e959+incompatible
 github.com/openshift/api/config/v1
 github.com/openshift/api/operator/v1
 github.com/openshift/api/route/v1
