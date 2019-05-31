@@ -1,10 +1,10 @@
-FROM registry.svc.ci.openshift.org/openshift/release:golang-1.10 AS builder
-WORKDIR /go/src/github.com/openshift/cluster-ingress-operator
+FROM registry.svc.ci.openshift.org/openshift/release:golang-1.12 AS builder
+WORKDIR /ingress-operator
 COPY . .
 RUN make build
 
 FROM registry.svc.ci.openshift.org/openshift/origin-v4.0:base
-COPY --from=builder /go/src/github.com/openshift/cluster-ingress-operator/ingress-operator /usr/bin/
+COPY --from=builder /ingress-operator/ingress-operator /usr/bin/
 COPY manifests /manifests
 RUN useradd ingress-operator
 USER ingress-operator

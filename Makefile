@@ -5,7 +5,8 @@ MAIN_PACKAGE=$(PACKAGE)/cmd/ingress-operator
 
 BIN=$(lastword $(subst /, ,$(MAIN_PACKAGE)))
 
-GO_BUILD_RECIPE=CGO_ENABLED=0 go build -o $(BIN) $(MAIN_PACKAGE)
+GO=GO111MODULE=on GOFLAGS=-mod=vendor go
+GO_BUILD_RECIPE=CGO_ENABLED=0 $(GO) build -o $(BIN) $(MAIN_PACKAGE)
 
 TEST ?= .*
 
@@ -22,22 +23,29 @@ cluster-build:
 	hack/start-build.sh
 
 .PHONY: generate
-generate: crd
+generate: bindata crd
+
+.PHONY: bindata
+bindata:
 	hack/update-generated-bindata.sh
 
 # Generate IngressController CRD from vendored API spec.
 .PHONY: crd
 crd:
-	go run ./vendor/github.com/openshift/library-go/cmd/crd-schema-gen/main.go --apis-dir vendor/github.com/openshift/api
+	hack/update-generated-crd.sh
+
+.PHONY: verify-bindata
+verify-bindata:
+	hack/verify-generated-bindata.sh
 
 # Do not write the IngressController CRD, only compare and return (code 1 if dirty).
 .PHONY: verify-crd
 verify-crd:
-	go run ./vendor/github.com/openshift/library-go/cmd/crd-schema-gen/main.go --apis-dir vendor/github.com/openshift/api --verify-only
+	hack/verify-generated-crd.sh
 
 .PHONY: test
 test: verify
-	go test ./...
+	$(GO) test ./...
 
 .PHONY: release-local
 release-local:
@@ -45,17 +53,16 @@ release-local:
 
 .PHONY: test-e2e
 test-e2e:
-	KUBERNETES_CONFIG="$(KUBECONFIG)" WATCH_NAMESPACE=openshift-ingress-operator go test -count 1 -v -tags e2e -run "$(TEST)" ./...
+	KUBERNETES_CONFIG="$(KUBECONFIG)" WATCH_NAMESPACE=openshift-ingress-operator $(GO) test -count 1 -v -tags e2e -run "$(TEST)" ./...
 
 .PHONY: clean
 clean:
-	go clean
+	$(GO) clean
 	rm -f $(BIN)
 
 .PHONY: verify
-verify: verify-crd
+verify: verify-bindata verify-crd
 	hack/verify-gofmt.sh
-	hack/verify-generated-bindata.sh
 
 .PHONY: uninstall
 uninstall:
