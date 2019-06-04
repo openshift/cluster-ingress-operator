@@ -45,14 +45,9 @@ var log = logf.Logger.WithName("controller")
 // The controller will be pre-configured to watch for IngressController resources
 // in the manager namespace.
 func New(mgr manager.Manager, statusCache *ingressStatusCache, config Config) (controller.Controller, error) {
-	liveClient, err := client.New(mgr.GetConfig(), client.Options{Scheme: mgr.GetScheme(), Mapper: mgr.GetRESTMapper()})
-	if err != nil {
-		return nil, err
-	}
 	reconciler := &reconciler{
 		Config:      config,
 		client:      mgr.GetClient(),
-		liveClient:  liveClient,
 		recorder:    mgr.GetEventRecorderFor("operator-controller"),
 		statusCache: statusCache,
 	}
@@ -108,10 +103,6 @@ type reconciler struct {
 
 	client   client.Client
 	recorder record.EventRecorder
-	// This is a non-caching client which is currently necessary for working with
-	// cluster-scoped resources. When the MultiNamespaceCache supports
-	// cluster-scoped resources, this client can be removed.
-	liveClient client.Client
 
 	statusCache *ingressStatusCache
 }
@@ -141,17 +132,17 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 
 	if ingress != nil {
 		dnsConfig := &configv1.DNS{}
-		if err := r.liveClient.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, dnsConfig); err != nil {
+		if err := r.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, dnsConfig); err != nil {
 			errs = append(errs, fmt.Errorf("failed to get dns 'cluster': %v", err))
 			dnsConfig = nil
 		}
 		infraConfig := &configv1.Infrastructure{}
-		if err := r.liveClient.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, infraConfig); err != nil {
+		if err := r.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, infraConfig); err != nil {
 			errs = append(errs, fmt.Errorf("failed to get infrastructure 'cluster': %v", err))
 			infraConfig = nil
 		}
 		ingressConfig := &configv1.Ingress{}
-		if err := r.liveClient.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, ingressConfig); err != nil {
+		if err := r.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, ingressConfig); err != nil {
 			errs = append(errs, fmt.Errorf("failed to get ingress 'cluster': %v", err))
 			ingressConfig = nil
 		}
@@ -345,22 +336,22 @@ func (r *reconciler) ensureIngressDeleted(ingress *operatorv1.IngressController,
 // routers generally, including a namespace and all RBAC setup.
 func (r *reconciler) ensureRouterNamespace() error {
 	cr := manifests.RouterClusterRole()
-	if err := r.liveClient.Get(context.TODO(), types.NamespacedName{Name: cr.Name}, cr); err != nil {
+	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: cr.Name}, cr); err != nil {
 		if !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to get router cluster role %s: %v", cr.Name, err)
 		}
-		if err := r.liveClient.Create(context.TODO(), cr); err != nil {
+		if err := r.client.Create(context.TODO(), cr); err != nil {
 			return fmt.Errorf("failed to create router cluster role %s: %v", cr.Name, err)
 		}
 		log.Info("created router cluster role", "name", cr.Name)
 	}
 
 	ns := manifests.RouterNamespace()
-	if err := r.liveClient.Get(context.TODO(), types.NamespacedName{Name: ns.Name}, ns); err != nil {
+	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: ns.Name}, ns); err != nil {
 		if !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to get router namespace %q: %v", ns.Name, err)
 		}
-		if err := r.liveClient.Create(context.TODO(), ns); err != nil {
+		if err := r.client.Create(context.TODO(), ns); err != nil {
 			return fmt.Errorf("failed to create router namespace %s: %v", ns.Name, err)
 		}
 		log.Info("created router namespace", "name", ns.Name)
@@ -378,11 +369,11 @@ func (r *reconciler) ensureRouterNamespace() error {
 	}
 
 	crb := manifests.RouterClusterRoleBinding()
-	if err := r.liveClient.Get(context.TODO(), types.NamespacedName{Name: crb.Name}, crb); err != nil {
+	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: crb.Name}, crb); err != nil {
 		if !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to get router cluster role binding %s: %v", crb.Name, err)
 		}
-		if err := r.liveClient.Create(context.TODO(), crb); err != nil {
+		if err := r.client.Create(context.TODO(), crb); err != nil {
 			return fmt.Errorf("failed to create router cluster role binding %s: %v", crb.Name, err)
 		}
 		log.Info("created router cluster role binding", "name", crb.Name)
@@ -393,42 +384,37 @@ func (r *reconciler) ensureRouterNamespace() error {
 
 // ensureIngressController ensures all necessary router resources exist for a given ingresscontroller.
 func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, dnsConfig *configv1.DNS, infraConfig *configv1.Infrastructure) error {
-	deployment, err := r.ensureRouterDeployment(ci, infraConfig)
-	if err != nil {
-		return fmt.Errorf("failed to ensure router deployment for %s: %v", ci.Name, err)
-	}
-
-	if deployment == nil {
-		log.V(4).Info("no deployment found for ingresscontroller", "ingresscontroller", ci.Name)
-		return nil
-	}
-
 	errs := []error{}
-	trueVar := true
-	deploymentRef := metav1.OwnerReference{
-		APIVersion: "apps/v1",
-		Kind:       "Deployment",
-		Name:       deployment.Name,
-		UID:        deployment.UID,
-		Controller: &trueVar,
-	}
 
-	if lbService, err := r.ensureLoadBalancerService(ci, deploymentRef, infraConfig); err != nil {
-		errs = append(errs, fmt.Errorf("failed to ensure load balancer service for %s: %v", ci.Name, err))
-	} else if lbService != nil {
-		if err := r.ensureDNS(ci, lbService, dnsConfig); err != nil {
-			errs = append(errs, fmt.Errorf("failed to ensure DNS for %s: %v", ci.Name, err))
+	if deployment, err := r.ensureRouterDeployment(ci, infraConfig); err != nil {
+		errs = append(errs, fmt.Errorf("failed to ensure router deployment for %s: %v", ci.Name, err))
+	} else {
+		trueVar := true
+		deploymentRef := metav1.OwnerReference{
+			APIVersion: "apps/v1",
+			Kind:       "Deployment",
+			Name:       deployment.Name,
+			UID:        deployment.UID,
+			Controller: &trueVar,
 		}
-	}
 
-	if internalSvc, err := r.ensureInternalIngressControllerService(ci, deploymentRef); err != nil {
-		errs = append(errs, fmt.Errorf("failed to create internal router service for ingresscontroller %s: %v", ci.Name, err))
-	} else if err := r.ensureMetricsIntegration(ci, internalSvc, deploymentRef); err != nil {
-		errs = append(errs, fmt.Errorf("failed to integrate metrics with openshift-monitoring for ingresscontroller %s: %v", ci.Name, err))
-	}
+		if lbService, err := r.ensureLoadBalancerService(ci, deploymentRef, infraConfig); err != nil {
+			errs = append(errs, fmt.Errorf("failed to ensure load balancer service for %s: %v", ci.Name, err))
+		} else if lbService != nil {
+			if err := r.ensureDNS(ci, lbService, dnsConfig); err != nil {
+				errs = append(errs, fmt.Errorf("failed to ensure DNS for %s: %v", ci.Name, err))
+			}
+		}
 
-	if err := r.syncIngressControllerStatus(deployment, ci); err != nil {
-		errs = append(errs, fmt.Errorf("failed to sync ingresscontroller status: %v", err))
+		if internalSvc, err := r.ensureInternalIngressControllerService(ci, deploymentRef); err != nil {
+			errs = append(errs, fmt.Errorf("failed to create internal router service for ingresscontroller %s: %v", ci.Name, err))
+		} else if err := r.ensureMetricsIntegration(ci, internalSvc, deploymentRef); err != nil {
+			errs = append(errs, fmt.Errorf("failed to integrate metrics with openshift-monitoring for ingresscontroller %s: %v", ci.Name, err))
+		}
+
+		if err := r.syncIngressControllerStatus(deployment, ci); err != nil {
+			errs = append(errs, fmt.Errorf("failed to sync ingresscontroller status: %v", err))
+		}
 	}
 
 	return utilerrors.NewAggregate(errs)
@@ -450,22 +436,22 @@ func (r *reconciler) ensureMetricsIntegration(ci *operatorv1.IngressController, 
 	}
 
 	cr := manifests.MetricsClusterRole()
-	if err := r.liveClient.Get(context.TODO(), types.NamespacedName{Name: cr.Name}, cr); err != nil {
+	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: cr.Name}, cr); err != nil {
 		if !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to get router metrics cluster role %s: %v", cr.Name, err)
 		}
-		if err := r.liveClient.Create(context.TODO(), cr); err != nil {
+		if err := r.client.Create(context.TODO(), cr); err != nil {
 			return fmt.Errorf("failed to create router metrics cluster role %s: %v", cr.Name, err)
 		}
 		log.Info("created router metrics cluster role", "name", cr.Name)
 	}
 
 	crb := manifests.MetricsClusterRoleBinding()
-	if err := r.liveClient.Get(context.TODO(), types.NamespacedName{Name: crb.Name}, crb); err != nil {
+	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: crb.Name}, crb); err != nil {
 		if !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to get router metrics cluster role binding %s: %v", crb.Name, err)
 		}
-		if err := r.liveClient.Create(context.TODO(), crb); err != nil {
+		if err := r.client.Create(context.TODO(), crb); err != nil {
 			return fmt.Errorf("failed to create router metrics cluster role binding %s: %v", crb.Name, err)
 		}
 		log.Info("created router metrics cluster role binding", "name", crb.Name)

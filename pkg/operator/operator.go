@@ -11,9 +11,9 @@ import (
 	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
 	operatorconfig "github.com/openshift/cluster-ingress-operator/pkg/operator/config"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
-	operatorutil "github.com/openshift/cluster-ingress-operator/pkg/util"
 	certcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/certificate"
 	certpublishercontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/certificate-publisher"
+	operatorutil "github.com/openshift/cluster-ingress-operator/pkg/util"
 
 	"k8s.io/client-go/rest"
 
@@ -61,14 +61,24 @@ func New(config operatorconfig.Config, dnsManager dns.Manager, kubeConfig *rest.
 	scheme := operatorclient.GetScheme()
 	// Set up an operator manager for the operator namespace.
 	mgr, err := manager.New(kubeConfig, manager.Options{
-		Namespace: config.Namespace,
-		Scheme:    scheme,
+		Namespace:      config.Namespace,
+		Scheme:         scheme,
 		MapperProvider: operatorutil.NewDynamicRESTMapper,
 		NewCache: cache.MultiNamespacedCacheBuilder([]string{
 			config.Namespace,
 			"openshift-ingress",
 			"openshift-config-managed",
 		}),
+		// Use a non-caching client everywhere. The default split client does not
+		// promise to invalidate the cache during writes (nor does it promise
+		// sequential create/get coherence), and we have code which (probably
+		// incorrectly) assumes a get immediately following a create/update will
+		// return the updated resource. All client consumers will need audited to
+		// ensure they are tolerant of stale data (or we need a cache or client that
+		// makes stronger coherence guarantees).
+		NewClient: func(_ cache.Cache, config *rest.Config, options client.Options) (client.Client, error) {
+			return client.New(config, options)
+		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create operator manager: %v", err)
