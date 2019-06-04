@@ -11,6 +11,7 @@ import (
 	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
 	operatorconfig "github.com/openshift/cluster-ingress-operator/pkg/operator/config"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	operatorutil "github.com/openshift/cluster-ingress-operator/pkg/util"
 	certcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/certificate"
 	certpublishercontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/certificate-publisher"
 
@@ -62,6 +63,7 @@ func New(config operatorconfig.Config, dnsManager dns.Manager, kubeConfig *rest.
 	mgr, err := manager.New(kubeConfig, manager.Options{
 		Namespace: config.Namespace,
 		Scheme:    scheme,
+		MapperProvider: operatorutil.NewDynamicRESTMapper,
 		NewCache: cache.MultiNamespacedCacheBuilder([]string{
 			config.Namespace,
 			"openshift-ingress",
