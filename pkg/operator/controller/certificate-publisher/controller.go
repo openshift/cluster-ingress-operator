@@ -21,6 +21,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	runtimecontroller "sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/event"
@@ -39,6 +40,7 @@ var log = logf.Logger.WithName(controllerName)
 
 type reconciler struct {
 	client            client.Client
+	cache             cache.Cache
 	recorder          record.EventRecorder
 	operatorNamespace string
 	operandNamespace  string
@@ -50,6 +52,7 @@ func New(mgr manager.Manager, operatorNamespace, operandNamespace string) (runti
 	operatorCache := mgr.GetCache()
 	reconciler := &reconciler{
 		client:            mgr.GetClient(),
+		cache:             operatorCache,
 		recorder:          mgr.GetEventRecorderFor(controllerName),
 		operatorNamespace: operatorNamespace,
 		operandNamespace:  operandNamespace,
@@ -120,7 +123,7 @@ func (r *reconciler) secretToIngressController(o handler.MapObject) []reconcile.
 // the given secret.
 func (r *reconciler) ingressControllersWithSecret(secretName string) ([]operatorv1.IngressController, error) {
 	controllers := &operatorv1.IngressControllerList{}
-	if err := r.client.List(context.Background(), controllers, client.MatchingField("defaultCertificateName", secretName)); err != nil {
+	if err := r.cache.List(context.Background(), controllers, client.MatchingField("defaultCertificateName", secretName)); err != nil {
 		return nil, err
 	}
 	return controllers.Items, nil
@@ -169,12 +172,12 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 	log.Info("Reconciling", "request", request)
 
 	controllers := &operatorv1.IngressControllerList{}
-	if err := r.client.List(context.TODO(), controllers, client.InNamespace(r.operatorNamespace)); err != nil {
+	if err := r.cache.List(context.TODO(), controllers, client.InNamespace(r.operatorNamespace)); err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to list ingresscontrollers: %v", err)
 	}
 
 	secrets := &corev1.SecretList{}
-	if err := r.client.List(context.TODO(), secrets, client.InNamespace(r.operandNamespace)); err != nil {
+	if err := r.cache.List(context.TODO(), secrets, client.InNamespace(r.operandNamespace)); err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to list secrets: %v", err)
 	}
 

@@ -21,6 +21,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -48,6 +49,7 @@ func New(mgr manager.Manager, statusCache *ingressStatusCache, config Config) (c
 	reconciler := &reconciler{
 		Config:      config,
 		client:      mgr.GetClient(),
+		cache:       mgr.GetCache(),
 		recorder:    mgr.GetEventRecorderFor("operator-controller"),
 		statusCache: statusCache,
 	}
@@ -102,6 +104,7 @@ type reconciler struct {
 	Config
 
 	client   client.Client
+	cache    cache.Cache
 	recorder record.EventRecorder
 
 	statusCache *ingressStatusCache
@@ -239,7 +242,7 @@ func (r *reconciler) enforceEffectiveIngressDomain(ic *operatorv1.IngressControl
 // ingress controller list operation returns an error.
 func (r *reconciler) isDomainUnique(domain string) (bool, error) {
 	ingresses := &operatorv1.IngressControllerList{}
-	if err := r.client.List(context.TODO(), ingresses, client.InNamespace(r.Namespace)); err != nil {
+	if err := r.cache.List(context.TODO(), ingresses, client.InNamespace(r.Namespace)); err != nil {
 		return false, fmt.Errorf("failed to list ingresscontrollers: %v", err)
 	}
 
