@@ -8,15 +8,13 @@ import (
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
-	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/slice"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/tools/record"
 
 	configv1 "github.com/openshift/api/config/v1"
-
-	"k8s.io/client-go/rest"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -24,7 +22,6 @@ import (
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	kclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
@@ -48,13 +45,9 @@ var log = logf.Logger.WithName("controller")
 // The controller will be pre-configured to watch for IngressController resources
 // in the manager namespace.
 func New(mgr manager.Manager, statusCache *ingressStatusCache, config Config) (controller.Controller, error) {
-	kubeClient, err := operatorclient.NewClient(config.KubeConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create kube client: %v", err)
-	}
 	reconciler := &reconciler{
 		Config:      config,
-		client:      kubeClient,
+		client:      mgr.GetClient(),
 		recorder:    mgr.GetEventRecorderFor("operator-controller"),
 		statusCache: statusCache,
 	}
@@ -65,12 +58,38 @@ func New(mgr manager.Manager, statusCache *ingressStatusCache, config Config) (c
 	if err := c.Watch(&source.Kind{Type: &operatorv1.IngressController{}}, &handler.EnqueueRequestForObject{}); err != nil {
 		return nil, err
 	}
+	if err := c.Watch(&source.Kind{Type: &appsv1.Deployment{}}, enqueueRequestForOwningIngressController(config.Namespace)); err != nil {
+		return nil, err
+	}
+	if err := c.Watch(&source.Kind{Type: &corev1.Service{}}, enqueueRequestForOwningIngressController(config.Namespace)); err != nil {
+		return nil, err
+	}
 	return c, nil
+}
+
+func enqueueRequestForOwningIngressController(namespace string) handler.EventHandler {
+	return &handler.EnqueueRequestsFromMapFunc{
+		ToRequests: handler.ToRequestsFunc(func(a handler.MapObject) []reconcile.Request {
+			labels := a.Meta.GetLabels()
+			if ingressName, ok := labels[manifests.OwningIngressControllerLabel]; ok {
+				log.Info("queueing ingress", "name", ingressName, "related", a.Meta.GetSelfLink())
+				return []reconcile.Request{
+					{
+						NamespacedName: types.NamespacedName{
+							Namespace: namespace,
+							Name:      ingressName,
+						},
+					},
+				}
+			} else {
+				return []reconcile.Request{}
+			}
+		}),
+	}
 }
 
 // Config holds all the things necessary for the controller to run.
 type Config struct {
-	KubeConfig             *rest.Config
 	Namespace              string
 	DNSManager             dns.Manager
 	IngressControllerImage string
@@ -82,12 +101,7 @@ type Config struct {
 type reconciler struct {
 	Config
 
-	// client is the kube Client and it will refresh scheme/mapper fields if needed
-	// to detect some resources like ServiceMonitor which could get registered after
-	// the client creation.
-	// Since this controller is running in single threaded mode,
-	// we do not need to synchronize when changing rest scheme/mapper fields.
-	client   kclient.Client
+	client   client.Client
 	recorder record.EventRecorder
 
 	statusCache *ingressStatusCache

@@ -37,9 +37,9 @@ const (
 
 var log = logf.Logger.WithName(controllerName)
 
-func New(mgr manager.Manager, client client.Client, operatorNamespace string) (runtimecontroller.Controller, error) {
+func New(mgr manager.Manager, operatorNamespace string) (runtimecontroller.Controller, error) {
 	reconciler := &reconciler{
-		client:            client,
+		client:            mgr.GetClient(),
 		recorder:          mgr.GetEventRecorderFor(controllerName),
 		operatorNamespace: operatorNamespace,
 	}

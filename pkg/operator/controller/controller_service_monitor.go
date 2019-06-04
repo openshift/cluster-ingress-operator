@@ -9,10 +9,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
-	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
-
 	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -88,20 +85,6 @@ func (r *reconciler) currentServiceMonitor(ic *operatorv1.IngressController) (*u
 		Version: "v1",
 	})
 	if err := r.client.Get(context.TODO(), IngressControllerServiceMonitorName(ic), sm); err != nil {
-		if meta.IsNoMatchError(err) {
-			// Refresh kube client with latest rest scheme/mapper.
-			kClient, err := operatorclient.NewClient(r.KubeConfig)
-			if err != nil {
-				return nil, fmt.Errorf("failed to create kube client: %v", err)
-			}
-			r.client = kClient
-
-			err = r.client.Get(context.TODO(), IngressControllerServiceMonitorName(ic), sm)
-			if err == nil {
-				return sm, nil
-			}
-		}
-
 		if errors.IsNotFound(err) {
 			return nil, nil
 		}
