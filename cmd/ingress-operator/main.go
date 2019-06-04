@@ -55,9 +55,10 @@ func main() {
 	// Collect operator configuration.
 	operatorNamespace := os.Getenv("WATCH_NAMESPACE")
 	if len(operatorNamespace) == 0 {
-		log.Error(fmt.Errorf("missing environment variable"), "'WATCH_NAMESPACE' environment variable must be set")
-		os.Exit(1)
+		operatorNamespace = "openshift-ingress-operator"
 	}
+	log.Info("using operator namespace", "namespace", operatorNamespace)
+
 	ingressControllerImage := os.Getenv("IMAGE")
 	if len(ingressControllerImage) == 0 {
 		log.Error(fmt.Errorf("missing environment variable"), "'IMAGE' environment variable must be set")

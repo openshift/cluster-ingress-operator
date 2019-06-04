@@ -36,10 +36,10 @@ func (r *reconciler) syncOperatorStatus() error {
 	ns := manifests.RouterNamespace()
 
 	co := &configv1.ClusterOperator{ObjectMeta: metav1.ObjectMeta{Name: IngressClusterOperatorName}}
-	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: co.Name}, co); err != nil {
+	if err := r.liveClient.Get(context.TODO(), types.NamespacedName{Name: co.Name}, co); err != nil {
 		if errors.IsNotFound(err) {
 			initializeClusterOperator(co, ns.Name)
-			if err := r.client.Create(context.TODO(), co); err != nil {
+			if err := r.liveClient.Create(context.TODO(), co); err != nil {
 				return fmt.Errorf("failed to create clusteroperator %s: %v", co.Name, err)
 			}
 			log.Info("created clusteroperator", "object", co)
@@ -60,7 +60,7 @@ func (r *reconciler) syncOperatorStatus() error {
 		ns, allIngressesAvailable, oldStatus.Versions, co.Status.Versions)
 
 	if !operatorStatusesEqual(*oldStatus, co.Status) {
-		if err := r.client.Status().Update(context.TODO(), co); err != nil {
+		if err := r.liveClient.Status().Update(context.TODO(), co); err != nil {
 			return fmt.Errorf("failed to update clusteroperator %s: %v", co.Name, err)
 		}
 	}
@@ -110,7 +110,7 @@ func initializeClusterOperator(co *configv1.ClusterOperator, nsName string) {
 // operator's current state.
 func (r *reconciler) getOperatorState(nsName string) ([]operatorv1.IngressController, *corev1.Namespace, error) {
 	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: nsName}}
-	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: nsName}, ns); err != nil {
+	if err := r.liveClient.Get(context.TODO(), types.NamespacedName{Name: nsName}, ns); err != nil {
 		if errors.IsNotFound(err) {
 			return nil, nil, nil
 		}

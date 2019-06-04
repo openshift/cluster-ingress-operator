@@ -19,6 +19,8 @@ type DynamicRESTMapper struct {
 // types at runtime. This is in contrast to controller-manager's default RESTMapper, which
 // only checks resource types at startup, and so can't handle the case of first creating a
 // CRD and then creating an instance of that CRD.
+//
+// https://github.com/kubernetes-sigs/controller-runtime/issues/321
 func NewDynamicRESTMapper(cfg *rest.Config) (meta.RESTMapper, error) {
 	client, err := discovery.NewDiscoveryClientForConfig(cfg)
 	if err != nil {
