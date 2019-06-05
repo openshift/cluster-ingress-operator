@@ -67,7 +67,7 @@ func New(config operatorconfig.Config, dnsManager dns.Manager, kubeConfig *rest.
 		NewCache: cache.MultiNamespacedCacheBuilder([]string{
 			config.Namespace,
 			"openshift-ingress",
-			"openshift-config-managed",
+			operatorcontroller.GlobalMachineSpecifiedConfigNamespace,
 		}),
 		// Use a non-caching client everywhere. The default split client does not
 		// promise to invalidate the cache during writes (nor does it promise
