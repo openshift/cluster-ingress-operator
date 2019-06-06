@@ -40,8 +40,7 @@ var log = logf.Logger.WithName(controllerName)
 
 type reconciler struct {
 	client            client.Client
-	operatorCache     cache.Cache
-	operandCache      cache.Cache
+	cache             cache.Cache
 	recorder          record.EventRecorder
 	operatorNamespace string
 	operandNamespace  string
@@ -49,12 +48,11 @@ type reconciler struct {
 
 // New returns a new controller that publishes a "router-certs" secret in the
 // openshift-config-managed namespace with all in-use default certificates.
-func New(mgr manager.Manager, operandCache cache.Cache, cl client.Client, operatorNamespace, operandNamespace string) (runtimecontroller.Controller, error) {
+func New(mgr manager.Manager, operatorNamespace, operandNamespace string) (runtimecontroller.Controller, error) {
 	operatorCache := mgr.GetCache()
 	reconciler := &reconciler{
-		client:            cl,
-		operatorCache:     operatorCache,
-		operandCache:      operandCache,
+		client:            mgr.GetClient(),
+		cache:             operatorCache,
 		recorder:          mgr.GetEventRecorderFor(controllerName),
 		operatorNamespace: operatorNamespace,
 		operandNamespace:  operandNamespace,
@@ -74,7 +72,7 @@ func New(mgr manager.Manager, operandCache cache.Cache, cl client.Client, operat
 		return nil, fmt.Errorf("failed to create index for ingresscontroller: %v", err)
 	}
 
-	secretsInformer, err := operandCache.GetInformer(&corev1.Secret{})
+	secretsInformer, err := operatorCache.GetInformer(&corev1.Secret{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create informer for secrets: %v", err)
 	}
@@ -125,7 +123,7 @@ func (r *reconciler) secretToIngressController(o handler.MapObject) []reconcile.
 // the given secret.
 func (r *reconciler) ingressControllersWithSecret(secretName string) ([]operatorv1.IngressController, error) {
 	controllers := &operatorv1.IngressControllerList{}
-	if err := r.operatorCache.List(context.Background(), controllers, client.MatchingField("defaultCertificateName", secretName)); err != nil {
+	if err := r.cache.List(context.Background(), controllers, client.MatchingField("defaultCertificateName", secretName)); err != nil {
 		return nil, err
 	}
 	return controllers.Items, nil
@@ -148,7 +146,7 @@ func (r *reconciler) hasSecret(meta metav1.Object, o runtime.Object) bool {
 	ic := o.(*operatorv1.IngressController)
 	secretName := controller.RouterEffectiveDefaultCertificateSecretName(ic, r.operandNamespace)
 	secret := &corev1.Secret{}
-	if err := r.operandCache.Get(context.Background(), secretName, secret); err != nil {
+	if err := r.client.Get(context.Background(), secretName, secret); err != nil {
 		if errors.IsNotFound(err) {
 			return false
 		}
@@ -174,12 +172,12 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 	log.Info("Reconciling", "request", request)
 
 	controllers := &operatorv1.IngressControllerList{}
-	if err := r.operatorCache.List(context.TODO(), controllers, client.InNamespace(r.operatorNamespace)); err != nil {
+	if err := r.cache.List(context.TODO(), controllers, client.InNamespace(r.operatorNamespace)); err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to list ingresscontrollers: %v", err)
 	}
 
 	secrets := &corev1.SecretList{}
-	if err := r.operandCache.List(context.TODO(), secrets, client.InNamespace(r.operandNamespace)); err != nil {
+	if err := r.cache.List(context.TODO(), secrets, client.InNamespace(r.operandNamespace)); err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to list secrets: %v", err)
 	}
 

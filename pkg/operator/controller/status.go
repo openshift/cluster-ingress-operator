@@ -118,7 +118,7 @@ func (r *reconciler) getOperatorState(nsName string) ([]operatorv1.IngressContro
 	}
 
 	ingressList := &operatorv1.IngressControllerList{}
-	if err := r.client.List(context.TODO(), ingressList, client.InNamespace(r.Namespace)); err != nil {
+	if err := r.cache.List(context.TODO(), ingressList, client.InNamespace(r.Namespace)); err != nil {
 		return nil, nil, fmt.Errorf("failed to list IngressControllers: %v", err)
 	}
 

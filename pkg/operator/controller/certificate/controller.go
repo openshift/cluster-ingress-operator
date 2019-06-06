@@ -23,6 +23,7 @@ import (
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	runtimecontroller "sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -37,9 +38,10 @@ const (
 
 var log = logf.Logger.WithName(controllerName)
 
-func New(mgr manager.Manager, client client.Client, operatorNamespace string) (runtimecontroller.Controller, error) {
+func New(mgr manager.Manager, operatorNamespace string) (runtimecontroller.Controller, error) {
 	reconciler := &reconciler{
-		client:            client,
+		client:            mgr.GetClient(),
+		cache:             mgr.GetCache(),
 		recorder:          mgr.GetEventRecorderFor(controllerName),
 		operatorNamespace: operatorNamespace,
 	}
@@ -55,6 +57,7 @@ func New(mgr manager.Manager, client client.Client, operatorNamespace string) (r
 
 type reconciler struct {
 	client            client.Client
+	cache             cache.Cache
 	recorder          record.EventRecorder
 	operatorNamespace string
 }
@@ -106,7 +109,7 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 	}
 
 	ingresses := &operatorv1.IngressControllerList{}
-	if err := r.client.List(context.TODO(), ingresses, client.InNamespace(r.operatorNamespace)); err != nil {
+	if err := r.cache.List(context.TODO(), ingresses, client.InNamespace(r.operatorNamespace)); err != nil {
 		errs = append(errs, fmt.Errorf("failed to list ingresscontrollers: %v", err))
 	} else if err := r.ensureRouterCAConfigMap(ca, ingresses.Items); err != nil {
 		errs = append(errs, fmt.Errorf("failed to publish router CA: %v", err))
