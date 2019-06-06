@@ -14,7 +14,6 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 )
 
@@ -51,12 +50,6 @@ func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController,
 	return currentLBService, nil
 }
 
-// TODO: This should take operator config into account so that the operand
-// namespace isn't hard-coded.
-func loadBalancerServiceName(ci *operatorv1.IngressController) types.NamespacedName {
-	return types.NamespacedName{Namespace: "openshift-ingress", Name: "router-" + ci.Name}
-}
-
 // desiredLoadBalancerService returns the desired LB service for a
 // ingresscontroller, or nil if an LB service isn't desired. An LB service is
 // desired if the high availability type is Cloud. An LB service will declare an
@@ -67,7 +60,7 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 	}
 	service := manifests.LoadBalancerService()
 
-	name := loadBalancerServiceName(ci)
+	name := LoadBalancerServiceName(ci)
 
 	service.Namespace = name.Namespace
 	service.Name = name.Name
@@ -95,7 +88,7 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 // ingresscontroller.
 func (r *reconciler) currentLoadBalancerService(ci *operatorv1.IngressController) (*corev1.Service, error) {
 	service := &corev1.Service{}
-	if err := r.client.Get(context.TODO(), loadBalancerServiceName(ci), service); err != nil {
+	if err := r.client.Get(context.TODO(), LoadBalancerServiceName(ci), service); err != nil {
 		if errors.IsNotFound(err) {
 			return nil, nil
 		}

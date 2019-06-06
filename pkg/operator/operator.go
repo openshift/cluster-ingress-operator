@@ -84,10 +84,8 @@ func New(config operatorconfig.Config, dnsManager dns.Manager, kubeConfig *rest.
 		return nil, fmt.Errorf("failed to create operator manager: %v", err)
 	}
 
-	statusCache := operatorcontroller.NewIngressStatusCache(mgr.GetCache())
-
 	// Create and register the operator controller with the operator manager.
-	if _, err := operatorcontroller.New(mgr, statusCache, operatorcontroller.Config{
+	if _, err := operatorcontroller.New(mgr, operatorcontroller.Config{
 		Namespace:              config.Namespace,
 		DNSManager:             dnsManager,
 		IngressControllerImage: config.IngressControllerImage,

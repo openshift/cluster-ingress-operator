@@ -1,4 +1,6 @@
 # Cluster role for the operator itself.
+# TODO: A lot of these should be replaced by roles in the namespaces for which
+# the operator actually needs access.
 kind: ClusterRole
 apiVersion: rbac.authorization.k8s.io/v1
 metadata:
@@ -14,15 +16,9 @@ rules:
   - services
   - secrets
   - pods
-  verbs:
-  - "*"
-
-- apiGroups:
-  - ""
-  resources:
   - events
   verbs:
-  - create
+  - "*"
 
 - apiGroups:
   - apps

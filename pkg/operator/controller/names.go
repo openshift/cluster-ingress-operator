@@ -109,3 +109,7 @@ func IngressControllerServiceMonitorName(ic *operatorv1.IngressController) types
 		Name:      "router-" + ic.Name,
 	}
 }
+
+func LoadBalancerServiceName(ic *operatorv1.IngressController) types.NamespacedName {
+	return types.NamespacedName{Namespace: "openshift-ingress", Name: "router-" + ic.Name}
+}
