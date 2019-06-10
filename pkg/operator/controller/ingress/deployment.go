@@ -3,11 +3,13 @@ package ingress
 import (
 	"context"
 	"fmt"
+	"hash"
+	"hash/fnv"
 	"path/filepath"
+	"sort"
 	"strings"
 
-	"github.com/google/go-cmp/cmp"
-	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/davecgh/go-spew/spew"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
@@ -21,6 +23,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/apimachinery/pkg/util/rand"
 
 	configv1 "github.com/openshift/api/config/v1"
 )
@@ -78,43 +81,114 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 
 	// Ensure the deployment adopts only its own pods.
 	deployment.Spec.Selector = controller.IngressControllerDeploymentPodSelector(ci)
-	deployment.Spec.Template.Labels = deployment.Spec.Selector.MatchLabels
+	deployment.Spec.Template.Labels = controller.IngressControllerDeploymentPodSelector(ci).MatchLabels
 
 	volumes := deployment.Spec.Template.Spec.Volumes
 	routerVolumeMounts := deployment.Spec.Template.Spec.Containers[0].VolumeMounts
 
-	// Prevent colocation of controller pods to enable simple horizontal scaling
-	deployment.Spec.Template.Spec.Affinity = &corev1.Affinity{
-		PodAntiAffinity: &corev1.PodAntiAffinity{
-			RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
-				{
-					TopologyKey: "kubernetes.io/hostname",
-					LabelSelector: &metav1.LabelSelector{
-						MatchExpressions: []metav1.LabelSelectorRequirement{
-							{
-								Key:      controller.ControllerDeploymentLabel,
-								Operator: metav1.LabelSelectorOpIn,
-								Values:   []string{controller.IngressControllerDeploymentLabel(ci)},
+	needDeploymentHash := false
+	switch ci.Status.EndpointPublishingStrategy.Type {
+	case operatorv1.HostNetworkStrategyType:
+		// Typically, an ingress controller will be scaled with replicas
+		// set equal to the node pool size, in which case, using surge
+		// for rolling updates would fail to create new replicas (in the
+		// absence of node auto-scaling).  Thus, when using HostNetwork,
+		// we set max unavailable to 25% and surge to 0.
+		pointerTo := func(ios intstr.IntOrString) *intstr.IntOrString { return &ios }
+		deployment.Spec.Strategy = appsv1.DeploymentStrategy{
+			Type: appsv1.RollingUpdateDeploymentStrategyType,
+			RollingUpdate: &appsv1.RollingUpdateDeployment{
+				MaxUnavailable: pointerTo(intstr.FromString("25%")),
+				MaxSurge:       pointerTo(intstr.FromInt(0)),
+			},
+		}
+
+		// Pod replicas for ingress controllers that use the host
+		// network cannot be colocated because replicas on the same node
+		// would conflict with each other by trying to bind the same
+		// ports.  The scheduler avoids scheduling multiple pods that
+		// use host networking and specify the same port to the same
+		// node.  Thus no affinity policy is required when using
+		// HostNetwork.
+	case operatorv1.PrivateStrategyType, operatorv1.LoadBalancerServiceStrategyType:
+		// To avoid downtime during a rolling update, we need two
+		// things: a deployment strategy and affinity policy.  First,
+		// the deployment strategy: During a rolling update, we want the
+		// deployment controller to scale up the new replica set first
+		// and scale down the old replica set once the new replica is
+		// ready.  Thus set max unavailable to 0 and surge to 1.
+		pointerTo := func(ios intstr.IntOrString) *intstr.IntOrString { return &ios }
+		deployment.Spec.Strategy = appsv1.DeploymentStrategy{
+			Type: appsv1.RollingUpdateDeploymentStrategyType,
+			RollingUpdate: &appsv1.RollingUpdateDeployment{
+				MaxUnavailable: pointerTo(intstr.FromInt(0)),
+				MaxSurge:       pointerTo(intstr.FromInt(1)),
+			},
+		}
+
+		// Next, the affinity policy: We want the deployment controller
+		// to scale the new replica set up in such a way that each new
+		// pod is colocated with a pod from the old replica set.  To
+		// this end, we add a label with a hash of the deployment, using
+		// which we can select replicas of the same generation (or
+		// select replicas that are *not* of the same generation),
+		// configure affinity to colocate replicas of different
+		// generations of the same ingress controller, and configure
+		// anti-affinity to prevent colocation of replicas of the same
+		// generation of the same ingress controller.
+		//
+		// Together, the deployment strategy and affinity policy ensure
+		// that a node that had local endpoints at the start of a
+		// rolling update continues to have local endpoints for the
+		// throughout and at the completion of the update.
+		needDeploymentHash = true
+		deployment.Spec.Template.Spec.Affinity = &corev1.Affinity{
+			PodAffinity: &corev1.PodAffinity{
+				PreferredDuringSchedulingIgnoredDuringExecution: []corev1.WeightedPodAffinityTerm{
+					{
+						Weight: int32(100),
+						PodAffinityTerm: corev1.PodAffinityTerm{
+							TopologyKey: "kubernetes.io/hostname",
+							LabelSelector: &metav1.LabelSelector{
+								MatchExpressions: []metav1.LabelSelectorRequirement{
+									{
+										Key:      controller.ControllerDeploymentLabel,
+										Operator: metav1.LabelSelectorOpIn,
+										Values:   []string{controller.IngressControllerDeploymentLabel(ci)},
+									},
+									{
+										Key:      controller.ControllerDeploymentHashLabel,
+										Operator: metav1.LabelSelectorOpNotIn,
+										// Values is set at the end of this function.
+									},
+								},
 							},
 						},
 					},
 				},
 			},
-		},
-	}
-
-	// For now, all strategies use 25% max unavailable and 0 surge. This is because
-	// distinct ingress controllers can't currently be colocated. Usually, replicas
-	// will be equal to the node pool size. Under these conditions, surge requires
-	// new nodes to support the rollout. This means a positive surge can cause the
-	// rollout to wedge in the absence of auto-scaling.
-	pointerTo := func(ios intstr.IntOrString) *intstr.IntOrString { return &ios }
-	deployment.Spec.Strategy = appsv1.DeploymentStrategy{
-		Type: appsv1.RollingUpdateDeploymentStrategyType,
-		RollingUpdate: &appsv1.RollingUpdateDeployment{
-			MaxUnavailable: pointerTo(intstr.FromString("25%")),
-			MaxSurge:       pointerTo(intstr.FromInt(0)),
-		},
+			PodAntiAffinity: &corev1.PodAntiAffinity{
+				RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+					{
+						TopologyKey: "kubernetes.io/hostname",
+						LabelSelector: &metav1.LabelSelector{
+							MatchExpressions: []metav1.LabelSelectorRequirement{
+								{
+									Key:      controller.ControllerDeploymentLabel,
+									Operator: metav1.LabelSelectorOpIn,
+									Values:   []string{controller.IngressControllerDeploymentLabel(ci)},
+								},
+								{
+									Key:      controller.ControllerDeploymentHashLabel,
+									Operator: metav1.LabelSelectorOpIn,
+									// Values is set at the end of this function.
+								},
+							},
+						},
+					},
+				},
+			},
+		}
 	}
 
 	statsSecretName := fmt.Sprintf("router-stats-%s", ci.Name)
@@ -333,6 +407,17 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	deployment.Spec.Template.Spec.Containers[0].VolumeMounts = routerVolumeMounts
 	deployment.Spec.Template.Spec.Containers[0].Env = append(deployment.Spec.Template.Spec.Containers[0].Env, env...)
 
+	// If the deployment needs a hash for the affinity policy, we must
+	// compute it now, after all the other fields have been computed, and
+	// inject it into the appropriate fields.
+	if needDeploymentHash {
+		hash := deploymentHash(deployment)
+		deployment.Spec.Template.Labels[controller.ControllerDeploymentHashLabel] = hash
+		values := []string{hash}
+		deployment.Spec.Template.Spec.Affinity.PodAffinity.PreferredDuringSchedulingIgnoredDuringExecution[0].PodAffinityTerm.LabelSelector.MatchExpressions[1].Values = values
+		deployment.Spec.Template.Spec.Affinity.PodAntiAffinity.RequiredDuringSchedulingIgnoredDuringExecution[0].LabelSelector.MatchExpressions[1].Values = values
+	}
+
 	return deployment, nil
 }
 
@@ -391,6 +476,148 @@ func inferTLSProfileSpecFromDeployment(deployment *appsv1.Deployment) *configv1.
 	return profile
 }
 
+// deploymentHash returns a stringified hash value for the router deployment
+// fields that, if changed, should trigger an update.
+func deploymentHash(deployment *appsv1.Deployment) string {
+	hasher := fnv.New32a()
+	deepHashObject(hasher, hashableDeployment(deployment))
+	return rand.SafeEncodeString(fmt.Sprint(hasher.Sum32()))
+}
+
+// hashableDeployment returns a copy of the given deployment with exactly the
+// fields from deployment that should be used for computing its hash copied
+// over.  In particular, these are the fields that desiredRouterDeployment sets.
+// Fields with slice values will be sorted.  Fields that should be ignored, or
+// that have explicit values that are equal to their respective default values,
+// will be zeroed.
+func hashableDeployment(deployment *appsv1.Deployment) *appsv1.Deployment {
+	var hashableDeployment appsv1.Deployment
+	hashableDeployment.Name = deployment.Name
+	hashableDeployment.Namespace = deployment.Namespace
+	hashableDeployment.Labels = deployment.Labels
+	delete(hashableDeployment.Labels, controller.ControllerDeploymentHashLabel)
+	hashableDeployment.Spec.Selector = deployment.Spec.Selector
+	affinity := deployment.Spec.Template.Spec.Affinity.DeepCopy()
+	if affinity != nil {
+		cmpMatchExpressions := func(a, b metav1.LabelSelectorRequirement) bool {
+			if a.Key != b.Key {
+				return a.Key < b.Key
+			}
+			if a.Operator != b.Operator {
+				return a.Operator < b.Operator
+			}
+			for i := range b.Values {
+				if i == len(a.Values) {
+					return true
+				}
+				if a.Values[i] != b.Values[i] {
+					return a.Values[i] < b.Values[i]
+				}
+			}
+			return false
+		}
+
+		if affinity.PodAffinity != nil {
+			terms := affinity.PodAffinity.PreferredDuringSchedulingIgnoredDuringExecution
+			for _, term := range terms {
+				labelSelector := term.PodAffinityTerm.LabelSelector
+				if labelSelector != nil {
+					for i, expr := range labelSelector.MatchExpressions {
+						if expr.Key == controller.ControllerDeploymentHashLabel {
+							// Hash value should be ignored.
+							labelSelector.MatchExpressions[i].Values = nil
+						}
+					}
+
+				}
+				exprs := labelSelector.MatchExpressions
+				sort.Slice(exprs, func(i, j int) bool {
+					return cmpMatchExpressions(exprs[i], exprs[j])
+				})
+			}
+		}
+		if affinity.PodAntiAffinity != nil {
+			terms := affinity.PodAntiAffinity.RequiredDuringSchedulingIgnoredDuringExecution
+			for _, term := range terms {
+				if term.LabelSelector != nil {
+					for i, expr := range term.LabelSelector.MatchExpressions {
+						if expr.Key == controller.ControllerDeploymentHashLabel {
+							// Hash value should be ignored.
+							term.LabelSelector.MatchExpressions[i].Values = nil
+						}
+					}
+
+				}
+				exprs := term.LabelSelector.MatchExpressions
+				sort.Slice(exprs, func(i, j int) bool {
+					return cmpMatchExpressions(exprs[i], exprs[j])
+				})
+			}
+		}
+	}
+	hashableDeployment.Spec.Template.Spec.Affinity = affinity
+	hashableDeployment.Spec.Strategy = deployment.Spec.Strategy
+	tolerations := make([]corev1.Toleration, len(deployment.Spec.Template.Spec.Tolerations))
+	for i, toleration := range deployment.Spec.Template.Spec.Tolerations {
+		tolerations[i] = *toleration.DeepCopy()
+		if toleration.Effect == corev1.TaintEffectNoExecute {
+			// TolerationSeconds is ignored unless Effect is
+			// NoExecute.
+			tolerations[i].TolerationSeconds = nil
+		}
+	}
+	sort.Slice(tolerations, func(i, j int) bool {
+		return tolerations[i].Key < tolerations[j].Key || tolerations[i].Operator < tolerations[j].Operator || tolerations[i].Value < tolerations[j].Value || tolerations[i].Effect < tolerations[j].Effect
+	})
+	hashableDeployment.Spec.Template.Spec.Tolerations = tolerations
+	hashableDeployment.Spec.Template.Spec.NodeSelector = deployment.Spec.Template.Spec.NodeSelector
+	var replicas *int32
+	if deployment.Spec.Replicas != nil && *deployment.Spec.Replicas != int32(1) {
+		// 1 is the default value for Replicas.
+		replicas = deployment.Spec.Replicas
+	}
+	hashableDeployment.Spec.Replicas = replicas
+	containers := make([]corev1.Container, len(deployment.Spec.Template.Spec.Containers))
+	for i, container := range deployment.Spec.Template.Spec.Containers {
+		env := container.Env
+		sort.Slice(env, func(i, j int) bool {
+			return env[i].Name < env[j].Name
+		})
+		containers[i] = corev1.Container{
+			Command:         container.Command,
+			Env:             env,
+			Image:           container.Image,
+			ImagePullPolicy: container.ImagePullPolicy,
+			Name:            container.Name,
+			LivenessProbe:   container.LivenessProbe,
+			ReadinessProbe:  container.ReadinessProbe,
+			VolumeMounts:    container.VolumeMounts,
+		}
+	}
+	sort.Slice(containers, func(i, j int) bool {
+		return containers[i].Name < containers[j].Name
+	})
+	hashableDeployment.Spec.Template.Spec.Containers = containers
+	hashableDeployment.Spec.Template.Spec.HostNetwork = deployment.Spec.Template.Spec.HostNetwork
+	volumes := make([]corev1.Volume, len(deployment.Spec.Template.Spec.Volumes))
+	for i, vol := range deployment.Spec.Template.Spec.Volumes {
+		volumes[i] = *vol.DeepCopy()
+		// 420 is the default value for DefaultMode for ConfigMap and
+		// Secret volumes.
+		if vol.ConfigMap != nil && vol.ConfigMap.DefaultMode != nil && *vol.ConfigMap.DefaultMode == int32(420) {
+			volumes[i].ConfigMap.DefaultMode = nil
+		}
+		if vol.Secret != nil && vol.Secret.DefaultMode != nil && *vol.Secret.DefaultMode == int32(420) {
+			volumes[i].Secret.DefaultMode = nil
+		}
+	}
+	sort.Slice(volumes, func(i, j int) bool {
+		return volumes[i].Name < volumes[j].Name
+	})
+	hashableDeployment.Spec.Template.Spec.Volumes = volumes
+	return &hashableDeployment
+}
+
 // currentRouterDeployment returns the current router deployment.
 func (r *reconciler) currentRouterDeployment(ci *operatorv1.IngressController) (*appsv1.Deployment, error) {
 	deployment := &appsv1.Deployment{}
@@ -426,21 +653,26 @@ func (r *reconciler) updateRouterDeployment(current, desired *appsv1.Deployment)
 	return nil
 }
 
+// deepHashObject writes specified object to hash using the spew library
+// which follows pointers and prints actual values of the nested objects
+// ensuring the hash does not change when a pointer changes.
+//
+// Copied from github.com/kubernetes/kubernetes/pkg/util/hash/hash.go.
+func deepHashObject(hasher hash.Hash, objectToWrite interface{}) {
+	hasher.Reset()
+	printer := spew.ConfigState{
+		Indent:         " ",
+		SortKeys:       true,
+		DisableMethods: true,
+		SpewKeys:       true,
+	}
+	printer.Fprintf(hasher, "%#v", objectToWrite)
+}
+
 // deploymentConfigChanged checks if current config matches the expected config
 // for the ingress controller deployment and if not returns the updated config.
 func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv1.Deployment) {
-	// Don't worry about sidecars for the comparison because any changes to
-	// the sidecar will be accompanied by changes to the router container.
-	if cmp.Equal(current.Spec.Template.Spec.Volumes, expected.Spec.Template.Spec.Volumes, cmpopts.EquateEmpty(), cmpopts.SortSlices(cmpVolumes), cmp.Comparer(cmpConfigMapVolumeSource), cmp.Comparer(cmpSecretVolumeSource)) &&
-		cmp.Equal(current.Spec.Template.Spec.NodeSelector, expected.Spec.Template.Spec.NodeSelector, cmpopts.EquateEmpty()) &&
-		cmp.Equal(current.Spec.Template.Spec.Containers[0].Env, expected.Spec.Template.Spec.Containers[0].Env, cmpopts.EquateEmpty(), cmpopts.SortSlices(cmpEnvs)) &&
-		cmp.Equal(current.Spec.Template.Spec.Containers[0].VolumeMounts, expected.Spec.Template.Spec.Containers[0].VolumeMounts, cmpopts.EquateEmpty(), cmpopts.SortSlices(cmpVolumeMounts)) &&
-		current.Spec.Template.Spec.Containers[0].Image == expected.Spec.Template.Spec.Containers[0].Image &&
-		cmp.Equal(current.Spec.Template.Spec.Tolerations, expected.Spec.Template.Spec.Tolerations, cmpopts.EquateEmpty(), cmpopts.SortSlices(cmpTolerations)) &&
-		cmp.Equal(current.Spec.Template.Spec.Affinity, expected.Spec.Template.Spec.Affinity, cmpopts.EquateEmpty()) &&
-		cmp.Equal(current.Spec.Strategy, expected.Spec.Strategy, cmpopts.EquateEmpty()) &&
-		current.Spec.Replicas != nil &&
-		*current.Spec.Replicas == *expected.Spec.Replicas {
+	if deploymentHash(current) == deploymentHash(expected) {
 		return false, nil
 	}
 
@@ -453,6 +685,7 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 		containers[i+1] = *container.DeepCopy()
 	}
 	updated.Spec.Template.Spec.Containers = containers
+	updated.Spec.Template.Labels = expected.Spec.Template.Labels
 	updated.Spec.Strategy = expected.Spec.Strategy
 	volumes := make([]corev1.Volume, len(expected.Spec.Template.Spec.Volumes))
 	for i, vol := range expected.Spec.Template.Spec.Volumes {
@@ -471,79 +704,4 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 	}
 	updated.Spec.Replicas = &replicas
 	return true, updated
-}
-
-func cmpEnvs(a, b corev1.EnvVar) bool              { return a.Name < b.Name }
-func cmpVolumes(a, b corev1.Volume) bool           { return a.Name < b.Name }
-func cmpVolumeMounts(a, b corev1.VolumeMount) bool { return a.Name < b.Name }
-func cmpConfigMapVolumeSource(a, b corev1.ConfigMapVolumeSource) bool {
-	if a.LocalObjectReference != b.LocalObjectReference {
-		return false
-	}
-	if !cmp.Equal(a.Items, b.Items, cmpopts.EquateEmpty()) {
-		return false
-	}
-	aDefaultMode := int32(420)
-	if a.DefaultMode != nil {
-		aDefaultMode = *a.DefaultMode
-	}
-	bDefaultMode := int32(420)
-	if b.DefaultMode != nil {
-		bDefaultMode = *b.DefaultMode
-	}
-	if aDefaultMode != bDefaultMode {
-		return false
-	}
-	if !cmp.Equal(a.Optional, b.Optional, cmpopts.EquateEmpty()) {
-		return false
-	}
-	return true
-}
-func cmpSecretVolumeSource(a, b corev1.SecretVolumeSource) bool {
-	if a.SecretName != b.SecretName {
-		return false
-	}
-	if !cmp.Equal(a.Items, b.Items, cmpopts.EquateEmpty()) {
-		return false
-	}
-	aDefaultMode := int32(420)
-	if a.DefaultMode != nil {
-		aDefaultMode = *a.DefaultMode
-	}
-	bDefaultMode := int32(420)
-	if b.DefaultMode != nil {
-		bDefaultMode = *b.DefaultMode
-	}
-	if aDefaultMode != bDefaultMode {
-		return false
-	}
-	if !cmp.Equal(a.Optional, b.Optional, cmpopts.EquateEmpty()) {
-		return false
-	}
-	return true
-}
-
-func cmpTolerations(a, b corev1.Toleration) bool {
-	if a.Key != b.Key {
-		return false
-	}
-	if a.Value != b.Value {
-		return false
-	}
-	if a.Operator != b.Operator {
-		return false
-	}
-	if a.Effect != b.Effect {
-		return false
-	}
-	if a.Effect == corev1.TaintEffectNoExecute {
-		if (a.TolerationSeconds == nil) != (b.TolerationSeconds == nil) {
-			return false
-		}
-		// Field is ignored unless effect is NoExecute.
-		if a.TolerationSeconds != nil && *a.TolerationSeconds != *b.TolerationSeconds {
-			return false
-		}
-	}
-	return true
 }

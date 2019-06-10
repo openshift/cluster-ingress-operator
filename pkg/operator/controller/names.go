@@ -18,6 +18,13 @@ const (
 	// ControllerDeploymentLabel identifies a deployment as an ingress controller
 	// deployment, and the value is the name of the owning ingress controller.
 	ControllerDeploymentLabel = "ingresscontroller.operator.openshift.io/deployment-ingresscontroller"
+
+	// ControllerDeploymentHashLabel identifies an ingress controller
+	// deployment's generation.  This label is used for affinity, to
+	// colocate replicas of different generations of the same ingress
+	// controller, and for anti-affinity, to prevent colocation of replicas
+	// of the same generation of the same ingress controller.
+	ControllerDeploymentHashLabel = "ingresscontroller.operator.openshift.io/hash"
 )
 
 // IngressClusterOperatorName returns the namespaced name of the ClusterOperator
