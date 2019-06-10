@@ -35,6 +35,8 @@ const (
 	// considered for processing; this ensures the operator has a chance to handle
 	// all states.
 	IngressControllerFinalizer = "ingresscontroller.operator.openshift.io/finalizer-ingresscontroller"
+
+	controllerName = "ingress_controller"
 )
 
 var log = logf.Logger.WithName("controller")
@@ -50,9 +52,9 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 		Config:   config,
 		client:   mgr.GetClient(),
 		cache:    mgr.GetCache(),
-		recorder: mgr.GetEventRecorderFor("operator-controller"),
+		recorder: mgr.GetEventRecorderFor(controllerName),
 	}
-	c, err := controller.New("operator-controller", mgr, controller.Options{Reconciler: reconciler})
+	c, err := controller.New(controllerName, mgr, controller.Options{Reconciler: reconciler})
 	if err != nil {
 		return nil, err
 	}
