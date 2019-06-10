@@ -45,13 +45,12 @@ var log = logf.Logger.WithName("controller")
 //
 // The controller will be pre-configured to watch for IngressController resources
 // in the manager namespace.
-func New(mgr manager.Manager, statusCache *ingressStatusCache, config Config) (controller.Controller, error) {
+func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	reconciler := &reconciler{
-		Config:      config,
-		client:      mgr.GetClient(),
-		cache:       mgr.GetCache(),
-		recorder:    mgr.GetEventRecorderFor("operator-controller"),
-		statusCache: statusCache,
+		Config:   config,
+		client:   mgr.GetClient(),
+		cache:    mgr.GetCache(),
+		recorder: mgr.GetEventRecorderFor("operator-controller"),
 	}
 	c, err := controller.New("operator-controller", mgr, controller.Options{Reconciler: reconciler})
 	if err != nil {
@@ -106,8 +105,6 @@ type reconciler struct {
 	client   client.Client
 	cache    cache.Cache
 	recorder record.EventRecorder
-
-	statusCache *ingressStatusCache
 }
 
 // Reconcile expects request to refer to a ingresscontroller in the operator
@@ -401,7 +398,8 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 			Controller: &trueVar,
 		}
 
-		if lbService, err := r.ensureLoadBalancerService(ci, deploymentRef, infraConfig); err != nil {
+		lbService, err := r.ensureLoadBalancerService(ci, deploymentRef, infraConfig)
+		if err != nil {
 			errs = append(errs, fmt.Errorf("failed to ensure load balancer service for %s: %v", ci.Name, err))
 		} else if lbService != nil {
 			if err := r.ensureDNS(ci, lbService, dnsConfig); err != nil {
@@ -415,7 +413,12 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 			errs = append(errs, fmt.Errorf("failed to integrate metrics with openshift-monitoring for ingresscontroller %s: %v", ci.Name, err))
 		}
 
-		if err := r.syncIngressControllerStatus(deployment, ci); err != nil {
+		operandEvents := &corev1.EventList{}
+		if err := r.cache.List(context.TODO(), operandEvents, client.InNamespace("openshift-ingress")); err != nil {
+			errs = append(errs, fmt.Errorf("failed to list events in namespace %q: %v", "openshift-ingress", err))
+		}
+
+		if err := r.syncIngressControllerStatus(ci, deployment, lbService, operandEvents.Items); err != nil {
 			errs = append(errs, fmt.Errorf("failed to sync ingresscontroller status: %v", err))
 		}
 	}

@@ -6,7 +6,6 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 
@@ -16,15 +15,25 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-
-	toolscache "k8s.io/client-go/tools/cache"
 )
+
+func ingressController(name string, t operatorv1.EndpointPublishingStrategyType) *operatorv1.IngressController {
+	return &operatorv1.IngressController{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name,
+		},
+		Status: operatorv1.IngressControllerStatus{
+			EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+				Type: t,
+			},
+		},
+	}
+}
 
 func pendingLBService(owner string) *corev1.Service {
 	return &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "router-" + owner,
+			Name: owner,
 			Labels: map[string]string{
 				manifests.OwningIngressControllerLabel: owner,
 			},
@@ -38,7 +47,7 @@ func pendingLBService(owner string) *corev1.Service {
 func provisionedLBservice(owner string) *corev1.Service {
 	return &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "router-" + owner,
+			Name: owner,
 			Labels: map[string]string{
 				manifests.OwningIngressControllerLabel: owner,
 			},
@@ -59,10 +68,39 @@ func provisionedLBservice(owner string) *corev1.Service {
 func clusterIPservice(name string) *corev1.Service {
 	return &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "router-" + name + "internal",
+			Name: name + "-internal",
 		},
 		Spec: corev1.ServiceSpec{
 			Type: corev1.ServiceTypeClusterIP,
+		},
+	}
+}
+
+func failedCreateLBEvent(service string) corev1.Event {
+	return corev1.Event{
+		Type:    "Warning",
+		Reason:  "CreatingLoadBalancerFailed",
+		Message: "failed to ensure load balancer for service openshift-ingress/router-default: TooManyLoadBalancers: Exceeded quota of account",
+		Source: corev1.EventSource{
+			Component: "service-controller",
+		},
+		InvolvedObject: corev1.ObjectReference{
+			Kind: "Service",
+			Name: service,
+		},
+	}
+}
+
+func schedulerEvent() corev1.Event {
+	return corev1.Event{
+		Type:   "Normal",
+		Reason: "Scheduled",
+		Source: corev1.EventSource{
+			Component: "default-scheduler",
+		},
+		InvolvedObject: corev1.ObjectReference{
+			Kind: "Pod",
+			Name: "router-default-1",
 		},
 	}
 }
@@ -75,120 +113,72 @@ func cond(t string, status operatorv1.ConditionStatus, reason string) operatorv1
 	}
 }
 
-func indexerContains(indexer toolscache.Indexer, name, value string) bool {
-	objects, err := indexer.ByIndex(name, value)
-	if err != nil {
-		return false
-	}
-	return len(objects) > 0
-}
-
-func makeIndexers(funcs map[string]client.IndexerFunc) toolscache.Indexers {
-	indexers := map[string]toolscache.IndexFunc{}
-	for name := range funcs {
-		fn := funcs[name]
-		indexers[name] = func(obj interface{}) ([]string, error) {
-			return fn(obj.(runtime.Object)), nil
-		}
-	}
-	return indexers
-}
-
 func TestComputeLoadBalancerStatus(t *testing.T) {
 	tests := []struct {
-		desc       string
-		controller string
-		strat      operatorv1.EndpointPublishingStrategyType
-		services   []*corev1.Service
+		name       string
+		controller *operatorv1.IngressController
+		service    *corev1.Service
+		events     []corev1.Event
 		expect     []operatorv1.OperatorCondition
 	}{
 		{
-			desc:       "provisioned/ready",
-			controller: "default",
-			strat:      operatorv1.LoadBalancerServiceStrategyType,
-			services: []*corev1.Service{
-				provisionedLBservice("secondary"),
-				provisionedLBservice("default"),
-				clusterIPservice("default"),
-			},
+			name:       "lb provisioned",
+			controller: ingressController("default", operatorv1.LoadBalancerServiceStrategyType),
+			service:    provisionedLBservice("default"),
 			expect: []operatorv1.OperatorCondition{
-				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "HasLoadBalancerEndpointPublishingStrategy"),
+				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "WantedByEndpointPublishingStrategy"),
 				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionTrue, "LoadBalancerProvisioned"),
 			},
 		},
 		{
-			desc:       "pending/unready",
-			controller: "default",
-			strat:      operatorv1.LoadBalancerServiceStrategyType,
-			services: []*corev1.Service{
-				provisionedLBservice("secondary"),
-				pendingLBService("default"),
-				clusterIPservice("default"),
+			name:       "no events for current lb",
+			controller: ingressController("default", operatorv1.LoadBalancerServiceStrategyType),
+			service:    pendingLBService("default"),
+			events: []corev1.Event{
+				schedulerEvent(),
+				failedCreateLBEvent("secondary"),
 			},
 			expect: []operatorv1.OperatorCondition{
-				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "HasLoadBalancerEndpointPublishingStrategy"),
+				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "WantedByEndpointPublishingStrategy"),
 				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionFalse, "LoadBalancerPending"),
 			},
 		},
 		{
-			desc:       "unmanaged",
-			controller: "default",
-			strat:      operatorv1.HostNetworkStrategyType,
-			services: []*corev1.Service{
-				provisionedLBservice("secondary"),
-				clusterIPservice("default"),
+			name:       "lb pending, create failed events",
+			controller: ingressController("default", operatorv1.LoadBalancerServiceStrategyType),
+			service:    pendingLBService("default"),
+			events: []corev1.Event{
+				schedulerEvent(),
+				failedCreateLBEvent("secondary"),
+				failedCreateLBEvent("default"),
 			},
+			expect: []operatorv1.OperatorCondition{
+				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "WantedByEndpointPublishingStrategy"),
+				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionFalse, "CreatingLoadBalancerFailed"),
+			},
+		},
+		{
+			name:       "unmanaged",
+			controller: ingressController("default", operatorv1.HostNetworkStrategyType),
 			expect: []operatorv1.OperatorCondition{
 				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionFalse, "UnsupportedEndpointPublishingStrategy"),
 			},
 		},
 		{
-			desc:       "missing",
-			controller: "default",
-			strat:      operatorv1.LoadBalancerServiceStrategyType,
-			services: []*corev1.Service{
-				provisionedLBservice("secondary"),
-				clusterIPservice("default"),
-			},
+			name:       "lb service missing",
+			controller: ingressController("default", operatorv1.LoadBalancerServiceStrategyType),
 			expect: []operatorv1.OperatorCondition{
-				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "HasLoadBalancerEndpointPublishingStrategy"),
-				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionFalse, "LoadBalancerNotFound"),
+				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "WantedByEndpointPublishingStrategy"),
+				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionFalse, "ServiceNotFound"),
 			},
 		},
 	}
 
 	for _, test := range tests {
-		t.Logf("evaluating test %s", test.desc)
-		controllers := toolscache.NewIndexer(toolscache.MetaNamespaceKeyFunc, makeIndexers(controllerIndexers))
-		services := toolscache.NewIndexer(toolscache.MetaNamespaceKeyFunc, makeIndexers(serviceIndexers))
-		status := &ingressStatusCache{
-			contains: func(kind runtime.Object, name, value string) bool {
-				switch kind.(type) {
-				case *corev1.ServiceList:
-					return indexerContains(services, name, value)
-				case *operatorv1.IngressControllerList:
-					return indexerContains(controllers, name, value)
-				default:
-					return false
-				}
-			},
-		}
-		controller := &operatorv1.IngressController{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: test.controller,
-			},
-			Status: operatorv1.IngressControllerStatus{
-				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
-					Type: test.strat,
-				},
-			},
-		}
-		controllers.Add(controller)
-		for i := range test.services {
-			services.Add(test.services[i])
-		}
+		t.Logf("evaluating test %s", test.name)
 
-		actual := status.computeLoadBalancerStatus(controller)
+		actual := computeLoadBalancerStatus(test.controller, test.service, test.events)
+
 		conditionsCmpOpts := []cmp.Option{
 			cmpopts.IgnoreFields(operatorv1.OperatorCondition{}, "LastTransitionTime", "Message"),
 			cmpopts.EquateEmpty(),
