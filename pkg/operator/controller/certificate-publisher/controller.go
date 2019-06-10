@@ -33,7 +33,7 @@ import (
 )
 
 const (
-	controllerName = "certificate-publisher-controller"
+	controllerName = "certificate_publisher_controller"
 )
 
 var log = logf.Logger.WithName(controllerName)
