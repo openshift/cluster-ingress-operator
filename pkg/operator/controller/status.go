@@ -38,7 +38,7 @@ func (r *reconciler) syncOperatorStatus() error {
 	co := &configv1.ClusterOperator{ObjectMeta: metav1.ObjectMeta{Name: IngressClusterOperatorName}}
 	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: co.Name}, co); err != nil {
 		if errors.IsNotFound(err) {
-			initializeClusterOperator(co, ns.Name)
+			initializeClusterOperator(co)
 			if err := r.client.Create(context.TODO(), co); err != nil {
 				return fmt.Errorf("failed to create clusteroperator %s: %v", co.Name, err)
 			}
@@ -53,6 +53,27 @@ func (r *reconciler) syncOperatorStatus() error {
 	if err != nil {
 		return fmt.Errorf("failed to get operator state: %v", err)
 	}
+
+	related := []configv1.ObjectReference{
+		{
+			Resource: "namespaces",
+			Name:     "openshift-ingress-operator",
+		},
+		{
+			Resource: "namespaces",
+			Name:     ns.Name,
+		},
+	}
+	for _, ingress := range ingresses {
+		related = append(related, configv1.ObjectReference{
+			Group:     operatorv1.GroupName,
+			Resource:  "IngressController",
+			Namespace: r.Namespace,
+			Name:      ingress.Name,
+		})
+	}
+	co.Status.RelatedObjects = related
+
 	allIngressesAvailable := checkAllIngressesAvailable(ingresses)
 
 	co.Status.Versions = r.computeOperatorStatusVersions(oldStatus.Versions, allIngressesAvailable)
@@ -69,7 +90,7 @@ func (r *reconciler) syncOperatorStatus() error {
 }
 
 // Populate versions and conditions in cluster operator status as CVO expects these fields.
-func initializeClusterOperator(co *configv1.ClusterOperator, nsName string) {
+func initializeClusterOperator(co *configv1.ClusterOperator) {
 	co.Status.Versions = []configv1.OperandVersion{
 		{
 			Name:    OperatorVersionName,
@@ -92,16 +113,6 @@ func initializeClusterOperator(co *configv1.ClusterOperator, nsName string) {
 		{
 			Type:   configv1.OperatorAvailable,
 			Status: configv1.ConditionUnknown,
-		},
-	}
-	co.Status.RelatedObjects = []configv1.ObjectReference{
-		{
-			Resource: "namespaces",
-			Name:     "openshift-ingress-operator",
-		},
-		{
-			Resource: "namespaces",
-			Name:     nsName,
 		},
 	}
 }
