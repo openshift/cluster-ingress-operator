@@ -173,7 +173,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	env = append(env, corev1.EnvVar{Name: "ROUTER_THREADS", Value: "4"})
 
 	nodeSelector := map[string]string{
-		"beta.kubernetes.io/os":          "linux",
+		"kubernetes.io/os":               "linux",
 		"node-role.kubernetes.io/worker": "",
 	}
 	if ci.Spec.NodePlacement != nil {
