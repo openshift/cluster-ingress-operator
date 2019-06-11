@@ -5,15 +5,18 @@ import (
 	"fmt"
 	"time"
 
-	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
+	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
 	operatorconfig "github.com/openshift/cluster-ingress-operator/pkg/operator/config"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	certcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/certificate"
 	certpublishercontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/certificate-publisher"
+	dnscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/dns"
 	operatorutil "github.com/openshift/cluster-ingress-operator/pkg/util"
+
+	operatorv1 "github.com/openshift/api/operator/v1"
 
 	"k8s.io/client-go/rest"
 
@@ -22,8 +25,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 
-	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
-
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
@@ -31,12 +32,6 @@ import (
 
 var (
 	log = logf.Logger.WithName("init")
-)
-
-const (
-	// DefaultIngressController is the name of the default IngressController
-	// instance.
-	DefaultIngressController = "default"
 )
 
 func init() {
@@ -57,7 +52,7 @@ type Operator struct {
 }
 
 // New creates (but does not start) a new operator from configuration.
-func New(config operatorconfig.Config, dnsManager dns.Manager, kubeConfig *rest.Config) (*Operator, error) {
+func New(config operatorconfig.Config, dnsProvider dns.Provider, kubeConfig *rest.Config) (*Operator, error) {
 	scheme := operatorclient.GetScheme()
 	// Set up an operator manager for the operator namespace.
 	mgr, err := manager.New(kubeConfig, manager.Options{
@@ -66,7 +61,7 @@ func New(config operatorconfig.Config, dnsManager dns.Manager, kubeConfig *rest.
 		MapperProvider: operatorutil.NewDynamicRESTMapper,
 		NewCache: cache.MultiNamespacedCacheBuilder([]string{
 			config.Namespace,
-			"openshift-ingress",
+			manifests.DefaultOperandNamespace,
 			operatorcontroller.GlobalMachineSpecifiedConfigNamespace,
 		}),
 		// Use a non-caching client everywhere. The default split client does not
@@ -87,7 +82,6 @@ func New(config operatorconfig.Config, dnsManager dns.Manager, kubeConfig *rest.
 	// Create and register the operator controller with the operator manager.
 	if _, err := operatorcontroller.New(mgr, operatorcontroller.Config{
 		Namespace:              config.Namespace,
-		DNSManager:             dnsManager,
 		IngressControllerImage: config.IngressControllerImage,
 		OperatorReleaseVersion: config.OperatorReleaseVersion,
 	}); err != nil {
@@ -102,6 +96,11 @@ func New(config operatorconfig.Config, dnsManager dns.Manager, kubeConfig *rest.
 	// Set up the certificate-publisher controller
 	if _, err := certpublishercontroller.New(mgr, config.Namespace, "openshift-ingress"); err != nil {
 		return nil, fmt.Errorf("failed to create certificate-publisher controller: %v", err)
+	}
+
+	// Set up the DNS controller
+	if _, err := dnscontroller.New(mgr, config.Namespace, dnsProvider); err != nil {
+		return nil, fmt.Errorf("failed to create dns controller: %v", err)
 	}
 
 	return &Operator{
@@ -148,7 +147,7 @@ func (o *Operator) Start(stop <-chan struct{}) error {
 func (o *Operator) ensureDefaultIngressController() error {
 	ic := &operatorv1.IngressController{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      DefaultIngressController,
+			Name:      manifests.DefaultIngressControllerName,
 			Namespace: o.namespace,
 		},
 	}

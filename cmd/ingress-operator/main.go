@@ -11,6 +11,7 @@ import (
 	awsdns "github.com/openshift/cluster-ingress-operator/pkg/dns/aws"
 	azuredns "github.com/openshift/cluster-ingress-operator/pkg/dns/azure"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
+	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator"
 	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
 	operatorconfig "github.com/openshift/cluster-ingress-operator/pkg/operator/config"
@@ -55,7 +56,7 @@ func main() {
 	// Collect operator configuration.
 	operatorNamespace := os.Getenv("WATCH_NAMESPACE")
 	if len(operatorNamespace) == 0 {
-		operatorNamespace = "openshift-ingress-operator"
+		operatorNamespace = manifests.DefaultOperatorNamespace
 	}
 	log.Info("using operator namespace", "namespace", operatorNamespace)
 
@@ -106,14 +107,14 @@ func main() {
 	}
 
 	// Set up the DNS manager.
-	dnsManager, err := createDNSManager(kubeClient, operatorConfig, infraConfig, dnsConfig, installConfig)
+	dnsProvider, err := createDNSProvider(kubeClient, operatorConfig, infraConfig, dnsConfig, installConfig)
 	if err != nil {
 		log.Error(err, "failed to create DNS manager")
 		os.Exit(1)
 	}
 
 	// Set up and start the operator.
-	op, err := operator.New(operatorConfig, dnsManager, kubeConfig)
+	op, err := operator.New(operatorConfig, dnsProvider, kubeConfig)
 	if err != nil {
 		log.Error(err, "failed to create operator")
 		os.Exit(1)
@@ -126,8 +127,8 @@ func main() {
 
 // createDNSManager creates a DNS manager compatible with the given cluster
 // configuration.
-func createDNSManager(cl client.Client, operatorConfig operatorconfig.Config, infraConfig *configv1.Infrastructure, dnsConfig *configv1.DNS, installConfig *installConfig) (dns.Manager, error) {
-	var dnsManager dns.Manager
+func createDNSProvider(cl client.Client, operatorConfig operatorconfig.Config, infraConfig *configv1.Infrastructure, dnsConfig *configv1.DNS, installConfig *installConfig) (dns.Provider, error) {
+	var dnsProvider dns.Provider
 	switch infraConfig.Status.Platform {
 	case configv1.AWSPlatformType:
 		awsCreds := &corev1.Secret{}
@@ -136,7 +137,7 @@ func createDNSManager(cl client.Client, operatorConfig operatorconfig.Config, in
 			return nil, fmt.Errorf("failed to get aws creds from secret %s/%s: %v", awsCreds.Namespace, awsCreds.Name, err)
 		}
 		log.Info("using aws creds from secret", "namespace", awsCreds.Namespace, "name", awsCreds.Name)
-		manager, err := awsdns.NewManager(awsdns.Config{
+		provider, err := awsdns.NewProvider(awsdns.Config{
 			AccessID:  string(awsCreds.Data["aws_access_key_id"]),
 			AccessKey: string(awsCreds.Data["aws_secret_access_key"]),
 			DNS:       dnsConfig,
@@ -145,7 +146,7 @@ func createDNSManager(cl client.Client, operatorConfig operatorconfig.Config, in
 		if err != nil {
 			return nil, fmt.Errorf("failed to create AWS DNS manager: %v", err)
 		}
-		dnsManager = manager
+		dnsProvider = provider
 	case configv1.AzurePlatformType:
 		azureCreds := &corev1.Secret{}
 		err := cl.Get(context.TODO(), types.NamespacedName{Namespace: operatorConfig.Namespace, Name: cloudCredentialsSecretName}, azureCreds)
@@ -153,7 +154,7 @@ func createDNSManager(cl client.Client, operatorConfig operatorconfig.Config, in
 			return nil, fmt.Errorf("failed to get azure creds from secret %s/%s: %v", azureCreds.Namespace, azureCreds.Name, err)
 		}
 		log.Info("using azure creds from secret", "namespace", azureCreds.Namespace, "name", azureCreds.Name)
-		manager, err := azuredns.NewManager(azuredns.Config{
+		provider, err := azuredns.NewProvider(azuredns.Config{
 			Environment:    "AzurePublicCloud",
 			ClientID:       string(azureCreds.Data["azure_client_id"]),
 			ClientSecret:   string(azureCreds.Data["azure_client_secret"]),
@@ -164,11 +165,11 @@ func createDNSManager(cl client.Client, operatorConfig operatorconfig.Config, in
 		if err != nil {
 			return nil, fmt.Errorf("failed to create Azure DNS manager: %v", err)
 		}
-		dnsManager = manager
+		dnsProvider = provider
 	default:
-		dnsManager = &dns.NoopManager{}
+		dnsProvider = &dns.FakeProvider{}
 	}
-	return dnsManager, nil
+	return dnsProvider, nil
 }
 
 // TODO: This can be replaced by cluster API when

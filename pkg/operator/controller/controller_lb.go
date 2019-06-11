@@ -14,14 +14,9 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 )
 
 const (
-	// loadBalancerServiceFinalizer is applied to load balancer services to ensure
-	// we can manage deletion of associated DNS records.
-	loadBalancerServiceFinalizer = "ingress.openshift.io/operator"
-
 	// awsLBProxyProtocolAnnotation is used to enable the PROXY protocol on any
 	// AWS load balancer services created.
 	awsLBProxyProtocolAnnotation = "service.beta.kubernetes.io/aws-load-balancer-proxy-protocol"
@@ -80,7 +75,7 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 		service.Annotations[awsLBProxyProtocolAnnotation] = "*"
 	}
 	service.SetOwnerReferences([]metav1.OwnerReference{deploymentRef})
-	service.Finalizers = []string{loadBalancerServiceFinalizer}
+	service.Finalizers = []string{manifests.LoadBalancerServiceFinalizer}
 	return service, nil
 }
 
@@ -97,10 +92,12 @@ func (r *reconciler) currentLoadBalancerService(ci *operatorv1.IngressController
 	return service, nil
 }
 
-// finalizeLoadBalancerService deletes any DNS entries associated with any
-// current LB service associated with the ingresscontroller and then finalizes the
-// service.
-func (r *reconciler) finalizeLoadBalancerService(ci *operatorv1.IngressController, dnsConfig *configv1.DNS) error {
+// finalizeLoadBalancerService removes finalizers from any LB service. This used
+// to be to help with DNS cleanup, but now that's no longer necessary, and so we
+// just need to clear the finalizer which might exist on existing resources.
+//
+// TODO: How can we delete this code?
+func (r *reconciler) finalizeLoadBalancerService(ci *operatorv1.IngressController) error {
 	service, err := r.currentLoadBalancerService(ci)
 	if err != nil {
 		return err
@@ -108,33 +105,11 @@ func (r *reconciler) finalizeLoadBalancerService(ci *operatorv1.IngressControlle
 	if service == nil {
 		return nil
 	}
-	// We cannot published DNS records for a load balancer till it has been
-	// provisioned.  Thus if the service's status does not _currently_
-	// indicate that a load balancer has been provisioned, that means we
-	// _probably_ have not published any DNS records (and if we have, then
-	// we have lost track of them).
-	//
-	// TODO: Instead of trying to infer whether DNS records exist by looking
-	// at the service, we should be maintaining state with any DNS records
-	// that we have created for the ingresscontroller, for example by using
-	// an annotation on the ingresscontroller.
-	records := desiredDNSRecords(ci, dnsConfig, service)
-	dnsErrors := []error{}
-	for _, record := range records {
-		if err := r.DNSManager.Delete(record); err != nil {
-			dnsErrors = append(dnsErrors, fmt.Errorf("failed to delete DNS record %v for ingress %s/%s: %v", record, ci.Namespace, ci.Name, err))
-		} else {
-			log.Info("deleted DNS record for ingress", "namespace", ci.Namespace, "name", ci.Name, "record", record)
-		}
-	}
-	if err := utilerrors.NewAggregate(dnsErrors); err != nil {
-		return err
-	}
 	// Mutate a copy to avoid assuming we know where the current one came from
 	// (i.e. it could have been from a cache).
 	updated := service.DeepCopy()
-	if slice.ContainsString(updated.Finalizers, loadBalancerServiceFinalizer) {
-		updated.Finalizers = slice.RemoveString(updated.Finalizers, loadBalancerServiceFinalizer)
+	if slice.ContainsString(updated.Finalizers, manifests.LoadBalancerServiceFinalizer) {
+		updated.Finalizers = slice.RemoveString(updated.Finalizers, manifests.LoadBalancerServiceFinalizer)
 		if err := r.client.Update(context.TODO(), updated); err != nil {
 			return fmt.Errorf("failed to remove finalizer from service %s for ingress %s/%s: %v", service.Namespace, service.Name, ci.Name, err)
 		}

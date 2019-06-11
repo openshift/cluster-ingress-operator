@@ -113,3 +113,10 @@ func IngressControllerServiceMonitorName(ic *operatorv1.IngressController) types
 func LoadBalancerServiceName(ic *operatorv1.IngressController) types.NamespacedName {
 	return types.NamespacedName{Namespace: "openshift-ingress", Name: "router-" + ic.Name}
 }
+
+func WildcardDNSRecordName(ic *operatorv1.IngressController) types.NamespacedName {
+	return types.NamespacedName{
+		Namespace: ic.Namespace,
+		Name:      fmt.Sprintf("%s-wildcard", ic.Name),
+	}
+}

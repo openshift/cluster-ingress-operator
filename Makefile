@@ -22,6 +22,7 @@ buildconfig:
 cluster-build:
 	hack/start-build.sh
 
+# TODO: Add deepcopy generation script/target
 .PHONY: generate
 generate: bindata crd
 
@@ -53,7 +54,7 @@ release-local:
 
 .PHONY: test-e2e
 test-e2e:
-	KUBERNETES_CONFIG="$(KUBECONFIG)" WATCH_NAMESPACE=openshift-ingress-operator $(GO) test -count 1 -v -tags e2e -run "$(TEST)" ./...
+	$(GO) test -count 1 -v -tags e2e -run "$(TEST)" ./...
 
 .PHONY: clean
 clean:

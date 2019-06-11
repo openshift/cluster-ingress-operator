@@ -1,89 +1,139 @@
 package controller
 
 import (
+	"context"
 	"fmt"
 
+	iov1 "github.com/openshift/cluster-ingress-operator/pkg/api/v1"
+	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
+
 	operatorv1 "github.com/openshift/api/operator/v1"
-	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 
 	corev1 "k8s.io/api/core/v1"
 
-	configv1 "github.com/openshift/api/config/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // ensureDNS will create DNS records for the given LB service. If service is
 // nil, nothing is done.
-func (r *reconciler) ensureDNS(ci *operatorv1.IngressController, service *corev1.Service, dnsConfig *configv1.DNS) error {
-	records := desiredDNSRecords(ci, dnsConfig, service)
-	for _, record := range records {
-		err := r.DNSManager.Ensure(record)
-		if err != nil {
-			return fmt.Errorf("failed to ensure DNS record %v for %s/%s: %v", record, ci.Namespace, ci.Name, err)
+func (r *reconciler) ensureWildcardDNSRecord(ic *operatorv1.IngressController, service *corev1.Service) (*iov1.DNSRecord, error) {
+	if service == nil {
+		return nil, nil
+	}
+
+	desired := desiredWildcardRecord(ic, service)
+	current, err := r.currentWilcardDNSRecord(ic)
+	if err != nil {
+		return nil, err
+	}
+	if desired != nil && current == nil {
+		if err := r.client.Create(context.TODO(), desired); err != nil {
+			return nil, fmt.Errorf("failed to create dnsrecord %s/%s: %v", desired.Namespace, desired.Name, err)
 		}
-		log.Info("ensured DNS record for ingresscontroller", "namespace", ci.Namespace, "name", ci.Name, "record", record)
+		log.Info("created dnsrecord", "namespace", desired.Namespace, "dnsrecord", desired)
+		return desired, nil
 	}
-	return nil
+	return current, nil
 }
 
-func newAliasRecord(domain, target string, zone configv1.DNSZone) *dns.Record {
-	return &dns.Record{
-		Zone: zone,
-		Type: dns.ALIASRecord,
-		Alias: &dns.AliasRecord{
-			Domain: domain,
-			Target: target,
-		},
-	}
-}
-
-func newARecord(domain, target string, zone configv1.DNSZone) *dns.Record {
-	return &dns.Record{
-		Zone: zone,
-		Type: dns.ARecordType,
-		ARecord: &dns.ARecord{
-			Domain:  domain,
-			Address: target,
-		},
-	}
-}
-
-// desiredDNSRecords will return any necessary DNS records for the given inputs.
-// If an ingress domain is in use, records are desired in every specified zone
-// present in the cluster DNS configuration.
-func desiredDNSRecords(ci *operatorv1.IngressController, dnsConfig *configv1.DNS, service *corev1.Service) []*dns.Record {
-	records := []*dns.Record{}
-
+// desiredDNSRecords will return any necessary wildcard DNS records for the
+// ingresscontroller.
+//
+// For now, if the service has more than one .status.loadbalancer.ingress, only
+// the first will be used.
+//
+// TODO: If .status.loadbalancer.ingress is processed once as non-empty and then
+// later becomes empty, what should we do? Currently we'll treat it as an intent
+// to not have a desired record.
+func desiredWildcardRecord(ic *operatorv1.IngressController, service *corev1.Service) *iov1.DNSRecord {
 	// If the ingresscontroller has no ingress domain, we cannot configure any
 	// DNS records.
-	if len(ci.Status.Domain) == 0 {
-		return records
+	if len(ic.Status.Domain) == 0 {
+		return nil
 	}
 
-	// If the HA type is not cloud, then we don't manage DNS.
-	if ci.Status.EndpointPublishingStrategy.Type != operatorv1.LoadBalancerServiceStrategyType {
-		return records
+	// DNS is only managed for LB publishing.
+	if ic.Status.EndpointPublishingStrategy.Type != operatorv1.LoadBalancerServiceStrategyType {
+		return nil
 	}
 
-	name := fmt.Sprintf("*.%s", ci.Status.Domain)
-	zones := []configv1.DNSZone{}
-	if dnsConfig.Spec.PrivateZone != nil {
-		zones = append(zones, *dnsConfig.Spec.PrivateZone)
+	// No LB target exists for the domain record to point at.
+	if len(service.Status.LoadBalancer.Ingress) == 0 {
+		return nil
 	}
-	if dnsConfig.Spec.PublicZone != nil {
-		zones = append(zones, *dnsConfig.Spec.PublicZone)
+
+	ingress := service.Status.LoadBalancer.Ingress[0]
+
+	// Quick sanity check since we don't know how to handle both being set (is
+	// that even a valid state?)
+	if len(ingress.Hostname) > 0 && len(ingress.IP) > 0 {
+		return nil
 	}
-	for _, ingress := range service.Status.LoadBalancer.Ingress {
-		if len(ingress.Hostname) > 0 {
-			for _, zone := range zones {
-				records = append(records, newAliasRecord(name, ingress.Hostname, zone))
-			}
+
+	name := WildcardDNSRecordName(ic)
+	domain := fmt.Sprintf("*.%s", ic.Status.Domain)
+	var target string
+	var recordType string
+
+	if len(ingress.Hostname) > 0 {
+		recordType = iov1.CNAMERecordType
+		target = ingress.Hostname
+	} else {
+		recordType = iov1.ARecordType
+		target = ingress.IP
+	}
+
+	trueVar := true
+	return &iov1.DNSRecord{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: name.Namespace,
+			Name:      name.Name,
+			Labels: map[string]string{
+				manifests.OwningIngressControllerLabel: ic.Name,
+			},
+			OwnerReferences: []metav1.OwnerReference{
+				{
+					APIVersion:         operatorv1.GroupVersion.String(),
+					Kind:               "IngressController",
+					Name:               ic.Name,
+					UID:                ic.UID,
+					Controller:         &trueVar,
+					BlockOwnerDeletion: &trueVar,
+				},
+			},
+			Finalizers: []string{manifests.DNSRecordFinalizer},
+		},
+		Spec: iov1.DNSRecordSpec{
+			DNSName:    domain,
+			Targets:    []string{target},
+			RecordType: recordType,
+		},
+	}
+}
+
+func (r *reconciler) currentWilcardDNSRecord(ic *operatorv1.IngressController) (*iov1.DNSRecord, error) {
+	current := &iov1.DNSRecord{}
+	err := r.client.Get(context.TODO(), WildcardDNSRecordName(ic), current)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return nil, nil
 		}
-		if len(ingress.IP) > 0 {
-			for _, zone := range zones {
-				records = append(records, newARecord(name, ingress.IP, zone))
-			}
-		}
+		return nil, err
 	}
+	return current, nil
+}
 
-	return records
+func (r *reconciler) deleteWildcardDNSRecord(ic *operatorv1.IngressController) error {
+	name := WildcardDNSRecordName(ic)
+	record := &iov1.DNSRecord{}
+	record.Namespace = name.Namespace
+	record.Name = name.Name
+	if err := r.client.Delete(context.TODO(), record); err != nil {
+		if errors.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	return nil
 }

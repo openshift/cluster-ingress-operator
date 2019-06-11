@@ -41,6 +41,25 @@ const (
 	// ingress controller to aid in selection (especially in cases where an ownerref
 	// can't be established due to namespace boundaries).
 	OwningIngressControllerLabel = "ingresscontroller.operator.openshift.io/owning-ingresscontroller"
+
+	// IngressControllerFinalizer is used to block deletion of ingresscontrollers
+	// until the operator has ensured it's safe for deletion to proceed.
+	IngressControllerFinalizer = "ingresscontroller.operator.openshift.io/finalizer-ingresscontroller"
+
+	// LoadBalancerServiceFinalizer is used to block deletion of LoadBalancer
+	// services until the operator has ensured it's safe for deletion to proceed.
+	LoadBalancerServiceFinalizer = "ingress.openshift.io/operator"
+
+	// DNSRecordFinalizer is used to block deletion of dnsrecords until the
+	// operator has ensured it's safe for deletion to proceeed.
+	DNSRecordFinalizer = "operator.openshift.io/ingress-dns"
+
+	DefaultOperatorNamespace = "openshift-ingress-operator"
+	DefaultOperandNamespace  = "openshift-ingress"
+
+	// DefaultIngressControllerName is the name of the default IngressController
+	// instance.
+	DefaultIngressControllerName = "default"
 )
 
 func MustAssetReader(asset string) io.Reader {

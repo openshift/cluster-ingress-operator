@@ -1,78 +1,23 @@
 package dns
 
 import (
-	"fmt"
+	iov1 "github.com/openshift/cluster-ingress-operator/pkg/api/v1"
 
 	configv1 "github.com/openshift/api/config/v1"
 )
 
-// Manager knows how to manage DNS zones only as pertains to routing.
-type Manager interface {
+// Provider knows how to manage DNS zones only as pertains to routing.
+type Provider interface {
 	// Ensure will create or update record.
-	Ensure(record *Record) error
+	Ensure(record *iov1.DNSRecord, zone configv1.DNSZone) error
 
 	// Delete will delete record.
-	Delete(record *Record) error
+	Delete(record *iov1.DNSRecord, zone configv1.DNSZone) error
 }
 
-var _ Manager = &NoopManager{}
+var _ Provider = &FakeProvider{}
 
-type NoopManager struct{}
+type FakeProvider struct{}
 
-func (_ *NoopManager) Ensure(record *Record) error { return nil }
-func (_ *NoopManager) Delete(record *Record) error { return nil }
-
-// Record represents a DNS record.
-type Record struct {
-	Zone configv1.DNSZone
-
-	// Type is the DNS record type.
-	Type RecordType
-
-	// Alias is options for an ALIAS record.
-	Alias *AliasRecord
-
-	// ARecord is options for an A record.
-	ARecord *ARecord
-}
-
-func (r *Record) String() string {
-	return fmt.Sprintf("Zone: %v, Type: %v, Alias: %s, A: %s", r.Zone, r.Type, r.Alias, r.ARecord)
-}
-
-// RecordType is a DNS record type.
-type RecordType string
-
-const (
-	// ALIASRecord is a DNS ALIAS record.
-	ALIASRecord RecordType = "ALIAS"
-
-	// ARecordType is a DNS A record.
-	ARecordType RecordType = "A"
-)
-
-// AliasRecord is a DNS ALIAS record.
-type AliasRecord struct {
-	// Domain is the record name.
-	Domain string
-
-	// Target is the mapped destination name of Domain.
-	Target string
-}
-
-func (r *AliasRecord) String() string {
-	return fmt.Sprintf("%s -> %s", r.Domain, r.Target)
-}
-
-// ARecord is a DNS A record.
-type ARecord struct {
-	// Domain is the record name.
-	Domain string
-
-	// Address is the IPv4 address of the A record.
-	Address string
-}
-
-func (r *ARecord) String() string {
-	return fmt.Sprintf("%s -> %s", r.Domain, r.Address)
-}
+func (_ *FakeProvider) Ensure(record *iov1.DNSRecord, zone configv1.DNSZone) error { return nil }
+func (_ *FakeProvider) Delete(record *iov1.DNSRecord, zone configv1.DNSZone) error { return nil }
