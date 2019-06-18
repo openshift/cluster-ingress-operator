@@ -23,7 +23,7 @@ func (r *reconciler) ensureWildcardDNSRecord(ic *operatorv1.IngressController, s
 	}
 
 	desired := desiredWildcardRecord(ic, service)
-	current, err := r.currentWilcardDNSRecord(ic)
+	current, err := r.currentWildcardDNSRecord(ic)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +112,7 @@ func desiredWildcardRecord(ic *operatorv1.IngressController, service *corev1.Ser
 	}
 }
 
-func (r *reconciler) currentWilcardDNSRecord(ic *operatorv1.IngressController) (*iov1.DNSRecord, error) {
+func (r *reconciler) currentWildcardDNSRecord(ic *operatorv1.IngressController) (*iov1.DNSRecord, error) {
 	current := &iov1.DNSRecord{}
 	err := r.client.Get(context.TODO(), WildcardDNSRecordName(ic), current)
 	if err != nil {

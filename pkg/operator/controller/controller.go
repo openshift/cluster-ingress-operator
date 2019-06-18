@@ -321,7 +321,7 @@ func (r *reconciler) ensureIngressDeleted(ingress *operatorv1.IngressController)
 	if err := r.deleteWildcardDNSRecord(ingress); err != nil {
 		return fmt.Errorf("failed to delete wildcard dnsrecord: %v", err)
 	}
-	if record, err := r.currentWilcardDNSRecord(ingress); err != nil {
+	if record, err := r.currentWildcardDNSRecord(ingress); err != nil {
 		return fmt.Errorf("failed to get current wildcard dnsrecord: %v", err)
 	} else {
 		if record != nil {
