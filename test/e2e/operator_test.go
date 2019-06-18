@@ -671,3 +671,92 @@ func TestHostNetworkEndpointPublishingStrategy(t *testing.T) {
 		t.Fatalf("WARNING: cloud resources may have been leaked! failed to delete ingresscontroller %s: %v", name, err)
 	}
 }
+
+// TestInternalLoadBalancer creates an ingresscontroller with the
+// "LoadBalancerService" endpoint publishing strategy type with scope set to
+// "Internal" and verifies that the operator creates a load balancer and that
+// the load balancer has a private IP address.
+func TestInternalLoadBalancer(t *testing.T) {
+	cl, ns, err := getClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	infraConfig := &configv1.Infrastructure{}
+	err = cl.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, infraConfig)
+	if err != nil {
+		t.Fatalf("failed to get infrastructure config: %v", err)
+	}
+
+	annotation := map[string]string{}
+	switch infraConfig.Status.Platform {
+	case configv1.AWSPlatformType:
+		annotation["service.beta.kubernetes.io/aws-load-balancer-proxy-protocol"] = "*"
+	case configv1.AzurePlatformType:
+		annotation["service.beta.kubernetes.io/azure-load-balancer-internal"] = "true"
+	case configv1.BareMetalPlatformType:
+		t.Skip("test skipped on bare metal")
+	case configv1.GCPPlatformType:
+		annotation["cloud.google.com/load-balancer-type"] = "Internal"
+	case configv1.LibvirtPlatformType:
+		t.Skip("test skipped on libvirt")
+	case configv1.OpenStackPlatformType:
+		annotation["service.beta.kubernetes.io/openstack-internal-load-balancer"] = "true"
+	case configv1.NonePlatformType:
+		t.Skip("test skipped on \"none\" platform type")
+	case configv1.VSpherePlatformType:
+		t.Skip("test skipped on vSphere")
+	}
+
+	dnsConfig := &configv1.DNS{}
+	if err := cl.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, dnsConfig); err != nil {
+		t.Fatalf("failed to get DNS 'cluster': %v", err)
+	}
+
+	name := types.NamespacedName{Namespace: ns, Name: ingressControllerName}
+	domain := name.Name + "." + dnsConfig.Spec.BaseDomain
+	ic := newIngressController(name.Name, name.Namespace, domain, operatorv1.LoadBalancerServiceStrategyType)
+	ic.Spec.EndpointPublishingStrategy.LoadBalancer = &operatorv1.LoadBalancerStrategy{
+		Scope: operatorv1.InternalLoadBalancer,
+	}
+	if err := cl.Create(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to create ingresscontroller %s: %v", name, err)
+	}
+	defer func() {
+		if err := cl.Delete(context.TODO(), ic); err != nil {
+			t.Fatalf("WARNING: cloud resources may have been leaked! failed to delete ingresscontroller %s: %v", name, err)
+		}
+
+		err = wait.PollImmediate(1*time.Second, 2*time.Minute, func() (bool, error) {
+			if err := cl.Get(context.TODO(), name, ic); err != nil {
+				if errors.IsNotFound(err) {
+					return true, nil
+				}
+				return false, nil
+			}
+			return false, nil
+		})
+		if err != nil {
+			t.Fatalf("WARNING: cloud resources may have been leaked! failed to delete ingresscontroller %s: %v", name, err)
+		}
+	}()
+
+	// Wait for the load balancer and DNS to be ready.
+	err = waitForIngressControllerCondition(cl, 5*time.Minute, name, defaultAvailableConditions...)
+	if err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	lbService := &corev1.Service{}
+	if err := cl.Get(context.TODO(), ingresscontroller.LoadBalancerServiceName(ic), lbService); err != nil {
+		t.Fatalf("failed to get LoadBalancer service: %v", err)
+	}
+
+	for name, expected := range annotation {
+		if actual, ok := lbService.Annotations[name]; !ok {
+			t.Fatalf("load balancer has no %q annotation: %v", name, lbService.Annotations)
+		} else if actual != expected {
+			t.Fatalf("expected %s=%s, found %s=%s", name, expected, name, actual)
+		}
+	}
+}
