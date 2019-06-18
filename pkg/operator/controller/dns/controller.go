@@ -76,14 +76,16 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 			log.Info("dnsrecord not found; reconciliation will be skipped", "request", request)
 			return reconcile.Result{}, nil
 		} else {
-			return reconcile.Result{RequeueAfter: 15 * time.Second}, fmt.Errorf("failed to get dnsrecord: %v", err)
+			log.Error(err, "failed to get dnsrecord; will retry", "dnsrecord", request.NamespacedName)
+			return reconcile.Result{RequeueAfter: 15 * time.Second}, nil
 		}
 	}
 
 	// If the DNS record was deleted, clean up and return.
 	if record.DeletionTimestamp != nil {
 		if err := r.delete(record); err != nil {
-			return reconcile.Result{RequeueAfter: 15 * time.Second}, err
+			log.Error(err, "failed to delete dnsrecord; will retry", "dnsrecord", record)
+			return reconcile.Result{RequeueAfter: 15 * time.Second}, nil
 		}
 		return reconcile.Result{}, nil
 	}
@@ -96,9 +98,12 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 	if err := r.cache.Get(context.TODO(), types.NamespacedName{Namespace: record.Namespace, Name: ingressName}, ingress); err != nil {
 		if errors.IsNotFound(err) {
 			// TODO: what should we do here? something upstream could detect and delete the orphan? add new conditions?
-			return reconcile.Result{RequeueAfter: 1 * time.Minute}, fmt.Errorf("ingresscontroller %s not found for record %s", ingressName, record.Name)
+			// is it safe to retry without verifying the owner isn't a new object?
+			log.V(2).Info("warning: dnsrecord owner not found; the dnsrecord may be orphaned; will retry", "dnsrecord", record, "ingresscontroller", ingressName)
+			return reconcile.Result{RequeueAfter: 1 * time.Minute}, nil
 		} else {
-			return reconcile.Result{RequeueAfter: 15 * time.Second}, fmt.Errorf("failed to get ingresscontroller %s for record %s: %v", ingressName, record.Name, err)
+			log.Error(err, "failed to get ingresscontroller for dnsrecord; will retry", "dnsrecord", record, "ingresscontroller", ingressName)
+			return reconcile.Result{RequeueAfter: 15 * time.Second}, nil
 		}
 	}
 
@@ -142,7 +147,8 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 	updated := record.DeepCopy()
 	updated.Status.Zones = statuses
 	if err := r.client.Status().Update(context.TODO(), updated); err != nil {
-		return reconcile.Result{RequeueAfter: 10 * time.Second}, fmt.Errorf("failed to update dnsrecord status: %v", err)
+		log.Error(err, "failed to get ingresscontroller for dnsrecord; will retry", "dnsrecord", record, "ingresscontroller", ingressName)
+		return reconcile.Result{RequeueAfter: 10 * time.Second}, nil
 	}
 
 	return result, nil
