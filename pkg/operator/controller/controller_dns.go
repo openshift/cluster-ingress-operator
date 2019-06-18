@@ -37,7 +37,7 @@ func (r *reconciler) ensureWildcardDNSRecord(ic *operatorv1.IngressController, s
 	return current, nil
 }
 
-// desiredDNSRecords will return any necessary wildcard DNS records for the
+// ensureWildcardDNSRecord will return any necessary wildcard DNS records for the
 // ingresscontroller.
 //
 // For now, if the service has more than one .status.loadbalancer.ingress, only
