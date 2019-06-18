@@ -75,10 +75,9 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 		if errors.IsNotFound(err) {
 			log.Info("dnsrecord not found; reconciliation will be skipped", "request", request)
 			return reconcile.Result{}, nil
-		} else {
-			log.Error(err, "failed to get dnsrecord; will retry", "dnsrecord", request.NamespacedName)
-			return reconcile.Result{RequeueAfter: 15 * time.Second}, nil
 		}
+		log.Error(err, "failed to get dnsrecord; will retry", "dnsrecord", request.NamespacedName)
+		return reconcile.Result{RequeueAfter: 15 * time.Second}, nil
 	}
 
 	// If the DNS record was deleted, clean up and return.
@@ -92,7 +91,8 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 
 	ingressName, ok := record.Labels[manifests.OwningIngressControllerLabel]
 	if !ok {
-		return reconcile.Result{}, fmt.Errorf("missing owner label")
+		log.V(2).Info("warning: dnsrecord is missing owner label", "dnsrecord", record, "ingresscontroller", ingressName)
+		return reconcile.Result{RequeueAfter: 1 * time.Minute}, nil
 	}
 	ingress := &operatorv1.IngressController{}
 	if err := r.cache.Get(context.TODO(), types.NamespacedName{Namespace: record.Namespace, Name: ingressName}, ingress); err != nil {
