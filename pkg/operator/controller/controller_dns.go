@@ -31,7 +31,7 @@ func (r *reconciler) ensureWildcardDNSRecord(ic *operatorv1.IngressController, s
 		if err := r.client.Create(context.TODO(), desired); err != nil {
 			return nil, fmt.Errorf("failed to create dnsrecord %s/%s: %v", desired.Namespace, desired.Name, err)
 		}
-		log.Info("created dnsrecord", "namespace", desired.Namespace, "dnsrecord", desired)
+		log.Info("created dnsrecord", "dnsrecord", desired)
 		return desired, nil
 	}
 	return current, nil
