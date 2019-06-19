@@ -3,6 +3,8 @@ package client
 import (
 	"fmt"
 
+	iov1 "github.com/openshift/cluster-ingress-operator/pkg/api/v1"
+
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 
@@ -31,6 +33,9 @@ func init() {
 		panic(err)
 	}
 	if err := configv1.Install(scheme); err != nil {
+		panic(err)
+	}
+	if err := iov1.AddToScheme(scheme); err != nil {
 		panic(err)
 	}
 }

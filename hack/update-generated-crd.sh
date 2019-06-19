@@ -16,6 +16,11 @@ GO111MODULE=on GOFLAGS=-mod=vendor go run sigs.k8s.io/controller-tools/cmd/contr
   output:crd:dir="$OUTDIR"
 set +x
 
+set -x
+GO111MODULE=on GOFLAGS=-mod=vendor go run sigs.k8s.io/controller-tools/cmd/controller-gen crd:trivialVersions=true paths=./pkg/api/v1 output:crd:dir="$OUTDIR"
+set +x
+
 if [[ -z "${SKIP_COPY+1}" ]]; then
   cp "$OUTDIR/operator.openshift.io_ingresscontrollers.yaml" manifests/00-custom-resource-definition.yaml
+  cp "$OUTDIR/ingress.operator.openshift.io_dnsrecords.yaml" manifests/00-custom-resource-definition-internal.yaml
 fi

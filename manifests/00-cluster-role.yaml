@@ -52,16 +52,17 @@ rules:
   - operator.openshift.io
   resources:
   - ingresscontrollers
-  verbs:
-  - list
-  - watch
-
-- apiGroups:
-  - operator.openshift.io
-  resources:
   - ingresscontrollers/status
   verbs:
-  - update
+  - "*"
+
+- apiGroups:
+  - ingress.operator.openshift.io
+  resources:
+  - dnsrecords
+  - dnsrecords/status
+  verbs:
+  - "*"
 
 - apiGroups:
   - config.openshift.io

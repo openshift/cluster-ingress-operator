@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 
+	iov1 "github.com/openshift/cluster-ingress-operator/pkg/api/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 
@@ -26,17 +27,18 @@ import (
 )
 
 var (
-	_   dns.Manager = &Manager{}
-	log             = logf.Logger.WithName("dns")
+	_   dns.Provider = &Provider{}
+	log              = logf.Logger.WithName("dns")
 )
 
-// Manager provides AWS DNS record management. In this implementation, calling
-// Ensure will create records in any zone specified in the DNS configuration.
+// Provider is a dns.Provider for AWS Route53. It only supports DNSRecords of
+// type CNAME, and the CNAME records are implemented as A records using the
+// Route53 Alias feature.
 //
 // TODO: Records are considered owned by the manager if they exist in a managed
 // zone and if their names match expectations. This is relatively dangerous
 // compared to storing additional metadata (like tags or TXT records).
-type Manager struct {
+type Provider struct {
 	elb     *elb.ELB
 	route53 *route53.Route53
 	tags    *resourcegroupstaggingapi.ResourceGroupsTaggingAPI
@@ -73,7 +75,7 @@ type Config struct {
 	DNS *configv1.DNS
 }
 
-func NewManager(config Config, operatorReleaseVersion string) (*Manager, error) {
+func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error) {
 	creds := credentials.NewStaticCredentials(config.AccessID, config.AccessKey, "")
 	sess, err := session.NewSessionWithOptions(session.Options{
 		Config: aws.Config{
@@ -100,7 +102,7 @@ func NewManager(config Config, operatorReleaseVersion string) (*Manager, error) 
 		return nil, fmt.Errorf("region is required")
 	}
 
-	return &Manager{
+	return &Provider{
 		elb:     elb.New(sess, aws.NewConfig().WithRegion(region)),
 		route53: route53.New(sess),
 		// TODO: This API will only return hostedzone resources (which are global)
@@ -116,7 +118,7 @@ func NewManager(config Config, operatorReleaseVersion string) (*Manager, error) 
 // getZoneID finds the ID of given zoneConfig in Route53. If an ID is already
 // known, return that; otherwise, use tags to search for the zone. Returns an
 // error if the zone can't be found.
-func (m *Manager) getZoneID(zoneConfig configv1.DNSZone) (string, error) {
+func (m *Provider) getZoneID(zoneConfig configv1.DNSZone) (string, error) {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 
@@ -185,7 +187,7 @@ func (m *Manager) getZoneID(zoneConfig configv1.DNSZone) (string, error) {
 
 // getLBHostedZone finds the hosted zone ID of an ELB whose DNS name matches the
 // name parameter. Results are cached.
-func (m *Manager) getLBHostedZone(name string) (string, error) {
+func (m *Provider) getLBHostedZone(name string) (string, error) {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 
@@ -196,7 +198,7 @@ func (m *Manager) getLBHostedZone(name string) (string, error) {
 	var id string
 	fn := func(resp *elb.DescribeLoadBalancersOutput, lastPage bool) (shouldContinue bool) {
 		for _, lb := range resp.LoadBalancerDescriptions {
-			log.V(0).Info("found load balancer", "name", aws.StringValue(lb.LoadBalancerName), "dns name", aws.StringValue(lb.DNSName), "hosted zone ID", aws.StringValue(lb.CanonicalHostedZoneNameID))
+			log.V(2).Info("found load balancer", "name", aws.StringValue(lb.LoadBalancerName), "dns name", aws.StringValue(lb.DNSName), "hosted zone ID", aws.StringValue(lb.CanonicalHostedZoneNameID))
 			if aws.StringValue(lb.CanonicalHostedZoneName) == name {
 				id = aws.StringValue(lb.CanonicalHostedZoneNameID)
 				return false
@@ -211,7 +213,7 @@ func (m *Manager) getLBHostedZone(name string) (string, error) {
 	if len(id) == 0 {
 		return "", fmt.Errorf("couldn't find hosted zone ID of ELB %s", name)
 	}
-	log.Info("associating load balancer with hosted zone", "dns name", name, "zone", id)
+	log.V(2).Info("associating load balancer with hosted zone", "dns name", name, "zone", id)
 	m.lbZones[name] = id
 	return id, nil
 }
@@ -223,25 +225,22 @@ const (
 	deleteAction action = "DELETE"
 )
 
-func (m *Manager) Ensure(record *dns.Record) error {
-	return m.change(record, upsertAction)
+func (m *Provider) Ensure(record *iov1.DNSRecord, zone configv1.DNSZone) error {
+	return m.change(record, zone, upsertAction)
 }
 
-func (m *Manager) Delete(record *dns.Record) error {
-	return m.change(record, deleteAction)
+func (m *Provider) Delete(record *iov1.DNSRecord, zone configv1.DNSZone) error {
+	return m.change(record, zone, deleteAction)
 }
 
 // change will perform an action on a record. The target must correspond to the
 // hostname of an ELB which will be automatically discovered.
-func (m *Manager) change(record *dns.Record, action action) error {
-	if record.Type != dns.ALIASRecord {
-		return fmt.Errorf("unsupported record type %s", record.Type)
+func (m *Provider) change(record *iov1.DNSRecord, zone configv1.DNSZone, action action) error {
+	if record.Spec.RecordType != iov1.CNAMERecordType {
+		return fmt.Errorf("unsupported record type %s", record.Spec.RecordType)
 	}
-	alias := record.Alias
-	if alias == nil {
-		return fmt.Errorf("missing alias record")
-	}
-	domain, target := alias.Domain, alias.Target
+	// TODO: handle >0 targets
+	domain, target := record.Spec.DNSName, record.Spec.Targets[0]
 	if len(domain) == 0 {
 		return fmt.Errorf("domain is required")
 	}
@@ -249,7 +248,7 @@ func (m *Manager) change(record *dns.Record, action action) error {
 		return fmt.Errorf("target is required")
 	}
 
-	zoneID, err := m.getZoneID(record.Zone)
+	zoneID, err := m.getZoneID(zone)
 	if err != nil {
 		return fmt.Errorf("failed to find hosted zone for record %v: %v", record, err)
 	}
@@ -267,7 +266,7 @@ func (m *Manager) change(record *dns.Record, action action) error {
 	key := zoneID + domain + target
 	// Only process updates once for now because we're not diffing.
 	if m.updatedRecords.Has(key) && action == upsertAction {
-		log.Info("skipping DNS record update", "record", record)
+		log.V(2).Info("skipping cached DNS record update", "record", record)
 		return nil
 	}
 	err = m.updateAlias(domain, zoneID, target, targetHostedZoneID, string(action))
@@ -287,7 +286,7 @@ func (m *Manager) change(record *dns.Record, action action) error {
 
 // updateAlias creates or updates an alias for domain in zoneID pointed at
 // target in targetHostedZoneID.
-func (m *Manager) updateAlias(domain, zoneID, target, targetHostedZoneID, action string) error {
+func (m *Provider) updateAlias(domain, zoneID, target, targetHostedZoneID, action string) error {
 	resp, err := m.route53.ChangeResourceRecordSets(&route53.ChangeResourceRecordSetsInput{
 		HostedZoneId: aws.String(zoneID),
 		ChangeBatch: &route53.ChangeBatch{

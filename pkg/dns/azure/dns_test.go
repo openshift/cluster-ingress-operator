@@ -3,16 +3,19 @@ package azure_test
 import (
 	"testing"
 
-	v1 "github.com/openshift/api/config/v1"
-	dns "github.com/openshift/cluster-ingress-operator/pkg/dns"
+	"github.com/pkg/errors"
+
+	configv1 "github.com/openshift/api/config/v1"
+
+	iov1 "github.com/openshift/cluster-ingress-operator/pkg/api/v1"
+	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns/azure"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns/azure/client"
-	"github.com/pkg/errors"
 )
 
-func fakeManager(fc *client.FakeDNSClient) (dns.Manager, error) {
+func fakeManager(fc *client.FakeDNSClient) (dns.Provider, error) {
 	cfg := azure.Config{}
-	mgr, err := azure.NewFakeManager(cfg, fc)
+	mgr, err := azure.NewFakeProvider(cfg, fc)
 	if err != nil {
 		errors.New("failed to create manager")
 	}
@@ -29,17 +32,17 @@ func TestEnsureDNS(t *testing.T) {
 	rg := "test-rg"
 	zone := "dnszone.io"
 	ARecordName := "subdomain"
-	record := dns.Record{
-		Zone: v1.DNSZone{
-			ID: "/subscriptions/E540B02D-5CCE-4D47-A13B-EB05A19D696E/resourceGroups/test-rg/providers/Microsoft.Network/dnszones/dnszone.io",
-		},
-		Type: dns.ARecordType,
-		ARecord: &dns.ARecord{
-			Domain:  "subdomain.dnszone.io",
-			Address: "55.11.22.33",
+	record := iov1.DNSRecord{
+		Spec: iov1.DNSRecordSpec{
+			DNSName:    "subdomain.dnszone.io",
+			RecordType: iov1.ARecordType,
+			Targets:    []string{"55.11.22.33"},
 		},
 	}
-	err = mgr.Ensure(&record)
+	dnsZone := configv1.DNSZone{
+		ID: "/subscriptions/E540B02D-5CCE-4D47-A13B-EB05A19D696E/resourceGroups/test-rg/providers/Microsoft.Network/dnszones/dnszone.io",
+	}
+	err = mgr.Ensure(&record, dnsZone)
 	if err != nil {
 		t.Fatal("failed to ensure dns")
 		return
@@ -61,7 +64,7 @@ func TestDeleteDNS(t *testing.T) {
 	}
 
 	cfg := azure.Config{}
-	mgr, err := azure.NewFakeManager(cfg, fc)
+	mgr, err := azure.NewFakeProvider(cfg, fc)
 	if err != nil {
 		t.Error("failed to create manager")
 		return
@@ -70,17 +73,17 @@ func TestDeleteDNS(t *testing.T) {
 	rg := "test-rg"
 	zone := "dnszone.io"
 	ARecordName := "subdomain"
-	record := dns.Record{
-		Zone: v1.DNSZone{
-			ID: "/subscriptions/E540B02D-5CCE-4D47-A13B-EB05A19D696E/resourceGroups/test-rg/providers/Microsoft.Network/dnszones/dnszone.io",
-		},
-		Type: dns.ARecordType,
-		ARecord: &dns.ARecord{
-			Domain:  "subdomain.dnszone.io",
-			Address: "55.11.22.33",
+	record := iov1.DNSRecord{
+		Spec: iov1.DNSRecordSpec{
+			DNSName:    "subdomain.dnszone.io",
+			RecordType: iov1.ARecordType,
+			Targets:    []string{"55.11.22.33"},
 		},
 	}
-	err = mgr.Delete(&record)
+	dnsZone := configv1.DNSZone{
+		ID: "/subscriptions/E540B02D-5CCE-4D47-A13B-EB05A19D696E/resourceGroups/test-rg/providers/Microsoft.Network/dnszones/dnszone.io",
+	}
+	err = mgr.Delete(&record, dnsZone)
 	if err != nil {
 		t.Error("failed to ensure dns")
 		return

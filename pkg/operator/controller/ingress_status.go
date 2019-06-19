@@ -7,6 +7,9 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
+	iov1 "github.com/openshift/cluster-ingress-operator/pkg/api/v1"
+
+	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -17,7 +20,7 @@ import (
 
 // syncIngressControllerStatus computes the current status of ic and
 // updates status upon any changes since last sync.
-func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressController, deployment *appsv1.Deployment, service *corev1.Service, operandEvents []corev1.Event) error {
+func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressController, deployment *appsv1.Deployment, service *corev1.Service, operandEvents []corev1.Event, wildcardRecord *iov1.DNSRecord, dnsConfig *configv1.DNS) error {
 	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
 	if err != nil {
 		return fmt.Errorf("deployment has invalid spec.selector: %v", err)
@@ -30,6 +33,7 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	updated.Status.Conditions = []operatorv1.OperatorCondition{}
 	updated.Status.Conditions = append(updated.Status.Conditions, computeIngressStatusConditions(updated.Status.Conditions, deployment)...)
 	updated.Status.Conditions = append(updated.Status.Conditions, computeLoadBalancerStatus(ic, service, operandEvents)...)
+	updated.Status.Conditions = append(updated.Status.Conditions, computeDNSStatus(ic, wildcardRecord, dnsConfig)...)
 
 	for i := range updated.Status.Conditions {
 		newCondition := &updated.Status.Conditions[i]
@@ -196,7 +200,7 @@ func isPending(service *corev1.Service) bool {
 }
 
 func getEventsByReason(events []corev1.Event, component, reason string) []corev1.Event {
-	filtered := []corev1.Event{}
+	var filtered []corev1.Event
 	for i := range events {
 		event := events[i]
 		if event.Source.Component == component && event.Reason == reason {
@@ -204,4 +208,81 @@ func getEventsByReason(events []corev1.Event, component, reason string) []corev1
 		}
 	}
 	return filtered
+}
+
+func computeDNSStatus(ic *operatorv1.IngressController, wildcardRecord *iov1.DNSRecord, dnsConfig *configv1.DNS) []operatorv1.OperatorCondition {
+	if dnsConfig.Spec.PublicZone == nil && dnsConfig.Spec.PrivateZone == nil {
+		return []operatorv1.OperatorCondition{
+			{
+				Type:    operatorv1.DNSManagedIngressConditionType,
+				Status:  operatorv1.ConditionFalse,
+				Reason:  "NoDNSZones",
+				Message: "No DNS zones are defined in the cluster dns config.",
+			},
+		}
+	}
+
+	if ic.Status.EndpointPublishingStrategy.Type != operatorv1.LoadBalancerServiceStrategyType {
+		return []operatorv1.OperatorCondition{
+			{
+				Type:    operatorv1.DNSManagedIngressConditionType,
+				Status:  operatorv1.ConditionFalse,
+				Reason:  "UnsupportedEndpointPublishingStrategy",
+				Message: "The endpoint publishing strategy doesn't support DNS management.",
+			},
+		}
+	}
+
+	conditions := []operatorv1.OperatorCondition{
+		{
+			Type:    operatorv1.DNSManagedIngressConditionType,
+			Status:  operatorv1.ConditionTrue,
+			Reason:  "Normal",
+			Message: "DNS management is supported and zones are specified in the cluster DNS config.",
+		},
+	}
+
+	switch {
+	case wildcardRecord == nil:
+		conditions = append(conditions, operatorv1.OperatorCondition{
+			Type:    operatorv1.DNSReadyIngressConditionType,
+			Status:  operatorv1.ConditionFalse,
+			Reason:  "RecordNotFound",
+			Message: "The wildcard record resource was not found.",
+		})
+	case len(wildcardRecord.Status.Zones) == 0:
+		conditions = append(conditions, operatorv1.OperatorCondition{
+			Type:    operatorv1.DNSReadyIngressConditionType,
+			Status:  operatorv1.ConditionFalse,
+			Reason:  "NoZones",
+			Message: "The record isn't present in any zones.",
+		})
+	case len(wildcardRecord.Status.Zones) > 0:
+		var failedZones []configv1.DNSZone
+		for _, zone := range wildcardRecord.Status.Zones {
+			for _, cond := range zone.Conditions {
+				if cond.Type == iov1.DNSRecordFailedConditionType && cond.Status == string(operatorv1.ConditionTrue) {
+					failedZones = append(failedZones, zone.DNSZone)
+				}
+			}
+		}
+		if len(failedZones) == 0 {
+			conditions = append(conditions, operatorv1.OperatorCondition{
+				Type:    operatorv1.DNSReadyIngressConditionType,
+				Status:  operatorv1.ConditionTrue,
+				Reason:  "NoFailedZones",
+				Message: "The record is provisioned in all reported zones.",
+			})
+		} else {
+			// TODO: Add failed condition reasons
+			conditions = append(conditions, operatorv1.OperatorCondition{
+				Type:    operatorv1.DNSReadyIngressConditionType,
+				Status:  operatorv1.ConditionFalse,
+				Reason:  "FailedZones",
+				Message: fmt.Sprintf("The record failed to provision in some zones: %v", failedZones),
+			})
+		}
+	}
+
+	return conditions
 }

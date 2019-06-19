@@ -5,16 +5,19 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/pkg/errors"
+
 	configv1 "github.com/openshift/api/config/v1"
+
+	iov1 "github.com/openshift/cluster-ingress-operator/pkg/api/v1"
 	dns "github.com/openshift/cluster-ingress-operator/pkg/dns"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns/azure/client"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
-	"github.com/pkg/errors"
 )
 
 var (
-	_   dns.Manager = &manager{}
-	log             = logf.Logger.WithName("dns")
+	_   dns.Provider = &provider{}
+	log              = logf.Logger.WithName("dns")
 )
 
 // Config is the necessary input to configure the manager for azure.
@@ -33,13 +36,15 @@ type Config struct {
 	DNS *configv1.DNS
 }
 
-type manager struct {
+type provider struct {
 	config       Config
 	client       client.DNSClient
 	clientConfig client.Config
 }
 
-func NewManager(config Config, operatorReleaseVersion string) (dns.Manager, error) {
+// NewProvider creates a new dns.Provider for Azure. It only supports DNSRecords with
+// type A.
+func NewProvider(config Config, operatorReleaseVersion string) (dns.Provider, error) {
 	c, err := client.New(client.Config{
 		Environment:    config.Environment,
 		SubscriptionID: config.SubscriptionID,
@@ -50,33 +55,34 @@ func NewManager(config Config, operatorReleaseVersion string) (dns.Manager, erro
 	if err != nil {
 		return nil, err
 	}
-	return &manager{config: config, client: c}, nil
+	return &provider{config: config, client: c}, nil
 }
 
 func userAgent(operatorReleaseVersion string) string {
 	return fmt.Sprintf("%s/%s", "openshift.io ingress-operator", operatorReleaseVersion)
 }
 
-func (m *manager) Ensure(record *dns.Record) error {
-	if record.Type != dns.ARecordType {
+func (m *provider) Ensure(record *iov1.DNSRecord, zone configv1.DNSZone) error {
+	if record.Spec.RecordType != iov1.ARecordType {
 		return fmt.Errorf("only A record types are supported")
 	}
 
-	targetZone, err := client.ParseZone(record.Zone.ID)
+	targetZone, err := client.ParseZone(zone.ID)
 	if err != nil {
 		return errors.Wrap(err, "failed to parse zoneID")
 	}
 
-	ARecordName, err := getARecordName(record.ARecord.Domain, "."+targetZone.Name)
+	ARecordName, err := getARecordName(record.Spec.DNSName, "."+targetZone.Name)
 	if err != nil {
 		return err
 	}
 
+	// TODO: handle >0 targets
 	err = m.client.Put(
 		context.TODO(),
 		*targetZone,
 		client.ARecord{
-			Address: record.ARecord.Address,
+			Address: record.Spec.Targets[0],
 			Name:    ARecordName,
 		})
 
@@ -87,22 +93,23 @@ func (m *manager) Ensure(record *dns.Record) error {
 	return err
 }
 
-func (m *manager) Delete(record *dns.Record) error {
-	targetZone, err := client.ParseZone(record.Zone.ID)
+func (m *provider) Delete(record *iov1.DNSRecord, zone configv1.DNSZone) error {
+	targetZone, err := client.ParseZone(zone.ID)
 	if err != nil {
 		return errors.Wrap(err, "failed to parse zoneID")
 	}
 
-	ARecordName, err := getARecordName(record.ARecord.Domain, "."+targetZone.Name)
+	ARecordName, err := getARecordName(record.Spec.DNSName, "."+targetZone.Name)
 	if err != nil {
 		return err
 	}
 
+	// TODO: handle >0 targets
 	err = m.client.Delete(
 		context.TODO(),
 		*targetZone,
 		client.ARecord{
-			Address: record.ARecord.Address,
+			Address: record.Spec.Targets[0],
 			Name:    ARecordName,
 		})
 

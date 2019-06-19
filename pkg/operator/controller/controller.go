@@ -4,17 +4,18 @@ import (
 	"context"
 	"fmt"
 
-	operatorv1 "github.com/openshift/api/operator/v1"
-	"github.com/openshift/cluster-ingress-operator/pkg/dns"
+	iov1 "github.com/openshift/cluster-ingress-operator/pkg/api/v1"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/slice"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+
 	"k8s.io/client-go/tools/record"
 
 	configv1 "github.com/openshift/api/config/v1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -31,11 +32,6 @@ import (
 )
 
 const (
-	// IngressControllerFinalizer is applied to an IngressController before being
-	// considered for processing; this ensures the operator has a chance to handle
-	// all states.
-	IngressControllerFinalizer = "ingresscontroller.operator.openshift.io/finalizer-ingresscontroller"
-
 	controllerName = "ingress_controller"
 )
 
@@ -67,6 +63,9 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	if err := c.Watch(&source.Kind{Type: &corev1.Service{}}, enqueueRequestForOwningIngressController(config.Namespace)); err != nil {
 		return nil, err
 	}
+	if err := c.Watch(&source.Kind{Type: &iov1.DNSRecord{}}, &handler.EnqueueRequestForOwner{OwnerType: &operatorv1.IngressController{}}); err != nil {
+		return nil, err
+	}
 	return c, nil
 }
 
@@ -94,7 +93,6 @@ func enqueueRequestForOwningIngressController(namespace string) handler.EventHan
 // Config holds all the things necessary for the controller to run.
 type Config struct {
 	Namespace              string
-	DNSManager             dns.Manager
 	IngressControllerImage string
 	OperatorReleaseVersion string
 }
@@ -166,7 +164,7 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 					errs = append(errs, fmt.Errorf("failed to enforce the effective HA configuration for ingresscontroller %s: %v", ingress.Name, err))
 				} else if ingress.DeletionTimestamp != nil {
 					// Handle deletion.
-					if err := r.ensureIngressDeleted(ingress, dnsConfig, infraConfig); err != nil {
+					if err := r.ensureIngressDeleted(ingress); err != nil {
 						errs = append(errs, fmt.Errorf("failed to ensure ingress deletion: %v", err))
 					}
 				} else if err := r.enforceIngressFinalizer(ingress); err != nil {
@@ -300,8 +298,8 @@ func (r *reconciler) enforceEffectiveEndpointPublishingStrategy(ci *operatorv1.I
 
 // enforceIngressFinalizer adds IngressControllerFinalizer to ingress if it doesn't exist.
 func (r *reconciler) enforceIngressFinalizer(ingress *operatorv1.IngressController) error {
-	if !slice.ContainsString(ingress.Finalizers, IngressControllerFinalizer) {
-		ingress.Finalizers = append(ingress.Finalizers, IngressControllerFinalizer)
+	if !slice.ContainsString(ingress.Finalizers, manifests.IngressControllerFinalizer) {
+		ingress.Finalizers = append(ingress.Finalizers, manifests.IngressControllerFinalizer)
 		if err := r.client.Update(context.TODO(), ingress); err != nil {
 			return err
 		}
@@ -312,11 +310,25 @@ func (r *reconciler) enforceIngressFinalizer(ingress *operatorv1.IngressControll
 
 // ensureIngressDeleted tries to delete ingress, and if successful, will remove
 // the finalizer.
-func (r *reconciler) ensureIngressDeleted(ingress *operatorv1.IngressController, dnsConfig *configv1.DNS, infraConfig *configv1.Infrastructure) error {
-	if err := r.finalizeLoadBalancerService(ingress, dnsConfig); err != nil {
+func (r *reconciler) ensureIngressDeleted(ingress *operatorv1.IngressController) error {
+	if err := r.finalizeLoadBalancerService(ingress); err != nil {
 		return fmt.Errorf("failed to finalize load balancer service for %s: %v", ingress.Name, err)
 	}
 	log.Info("finalized load balancer service for ingress", "namespace", ingress.Namespace, "name", ingress.Name)
+
+	// Delete the wildcard DNS record, and block ingresscontroller finalization
+	// until the dnsrecord has been finalized.
+	if err := r.deleteWildcardDNSRecord(ingress); err != nil {
+		return fmt.Errorf("failed to delete wildcard dnsrecord: %v", err)
+	}
+	if record, err := r.currentWildcardDNSRecord(ingress); err != nil {
+		return fmt.Errorf("failed to get current wildcard dnsrecord: %v", err)
+	} else {
+		if record != nil {
+			log.V(1).Info("waiting for wildcard dnsrecord to be deleted", "dnsrecord", record)
+			return nil
+		}
+	}
 
 	if err := r.ensureRouterDeleted(ingress); err != nil {
 		return fmt.Errorf("failed to delete deployment for ingress %s: %v", ingress.Name, err)
@@ -324,9 +336,9 @@ func (r *reconciler) ensureIngressDeleted(ingress *operatorv1.IngressController,
 	log.Info("deleted deployment for ingress", "namespace", ingress.Namespace, "name", ingress.Name)
 
 	// Clean up the finalizer to allow the ingresscontroller to be deleted.
-	if slice.ContainsString(ingress.Finalizers, IngressControllerFinalizer) {
+	if slice.ContainsString(ingress.Finalizers, manifests.IngressControllerFinalizer) {
 		updated := ingress.DeepCopy()
-		updated.Finalizers = slice.RemoveString(updated.Finalizers, IngressControllerFinalizer)
+		updated.Finalizers = slice.RemoveString(updated.Finalizers, manifests.IngressControllerFinalizer)
 		if err := r.client.Update(context.TODO(), updated); err != nil {
 			return fmt.Errorf("failed to remove finalizer from ingresscontroller %s: %v", ingress.Name, err)
 		}
@@ -400,12 +412,16 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 			Controller: &trueVar,
 		}
 
-		lbService, err := r.ensureLoadBalancerService(ci, deploymentRef, infraConfig)
-		if err != nil {
+		var lbService *corev1.Service
+		var wildcardRecord *iov1.DNSRecord
+		if lb, err := r.ensureLoadBalancerService(ci, deploymentRef, infraConfig); err != nil {
 			errs = append(errs, fmt.Errorf("failed to ensure load balancer service for %s: %v", ci.Name, err))
-		} else if lbService != nil {
-			if err := r.ensureDNS(ci, lbService, dnsConfig); err != nil {
-				errs = append(errs, fmt.Errorf("failed to ensure DNS for %s: %v", ci.Name, err))
+		} else {
+			lbService = lb
+			if record, err := r.ensureWildcardDNSRecord(ci, lbService); err != nil {
+				errs = append(errs, fmt.Errorf("failed to ensure wildcard dnsrecord for %s: %v", ci.Name, err))
+			} else {
+				wildcardRecord = record
 			}
 		}
 
@@ -420,7 +436,7 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 			errs = append(errs, fmt.Errorf("failed to list events in namespace %q: %v", "openshift-ingress", err))
 		}
 
-		if err := r.syncIngressControllerStatus(ci, deployment, lbService, operandEvents.Items); err != nil {
+		if err := r.syncIngressControllerStatus(ci, deployment, lbService, operandEvents.Items, wildcardRecord, dnsConfig); err != nil {
 			errs = append(errs, fmt.Errorf("failed to sync ingresscontroller status: %v", err))
 		}
 	}
