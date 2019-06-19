@@ -279,6 +279,7 @@ func (r *reconciler) enforceEffectiveEndpointPublishingStrategy(ci *operatorv1.I
 	}
 
 	updated := ci.DeepCopy()
+
 	switch {
 	case ci.Spec.EndpointPublishingStrategy != nil:
 		updated.Status.EndpointPublishingStrategy = ci.Spec.EndpointPublishingStrategy.DeepCopy()
@@ -287,6 +288,20 @@ func (r *reconciler) enforceEffectiveEndpointPublishingStrategy(ci *operatorv1.I
 			Type: publishingStrategyTypeForInfra(infraConfig),
 		}
 	}
+
+	switch updated.Status.EndpointPublishingStrategy.Type {
+	case operatorv1.LoadBalancerServiceStrategyType:
+		if updated.Status.EndpointPublishingStrategy.LoadBalancer == nil {
+			updated.Status.EndpointPublishingStrategy.LoadBalancer = &operatorv1.LoadBalancerStrategy{
+				Scope: operatorv1.ExternalLoadBalancer,
+			}
+		}
+	case operatorv1.HostNetworkStrategyType:
+		// No parameters.
+	case operatorv1.PrivateStrategyType:
+		// No parameters.
+	}
+
 	if err := r.client.Status().Update(context.TODO(), updated); err != nil {
 		return fmt.Errorf("failed to update status of ingresscontroller %s/%s: %v", updated.Namespace, updated.Name, err)
 	}

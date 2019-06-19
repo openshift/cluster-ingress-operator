@@ -1,5 +1,3 @@
-# cloud.google.com/go v0.37.2
-cloud.google.com/go/compute/metadata
 # contrib.go.opencensus.io/exporter/ocagent v0.4.12
 contrib.go.opencensus.io/exporter/ocagent
 # github.com/Azure/azure-sdk-for-go v30.0.0+incompatible
@@ -141,11 +139,11 @@ github.com/matttproud/golang_protobuf_extensions/pbutil
 github.com/modern-go/concurrent
 # github.com/modern-go/reflect2 v1.0.1
 github.com/modern-go/reflect2
-# github.com/openshift/api v3.9.1-0.20190531141350-9a61cdf9e959+incompatible
+# github.com/openshift/api v3.9.1-0.20190617172503-2024105dd4c3+incompatible
 github.com/openshift/api/config/v1
 github.com/openshift/api/operator/v1
 github.com/openshift/api/route/v1
-# github.com/openshift/library-go v0.0.0-20190402153831-dab26bb3a8dc
+# github.com/openshift/library-go v0.0.0-20190613200606-e617f832835d
 github.com/openshift/library-go/pkg/crypto
 # github.com/pborman/uuid v0.0.0-20180906182336-adf5a7427709
 github.com/pborman/uuid
@@ -208,16 +206,13 @@ golang.org/x/net/http2
 golang.org/x/net/http/httpguts
 golang.org/x/net/http2/hpack
 golang.org/x/net/idna
-golang.org/x/net/context/ctxhttp
 golang.org/x/net/context
 golang.org/x/net/trace
+golang.org/x/net/context/ctxhttp
 golang.org/x/net/internal/timeseries
 # golang.org/x/oauth2 v0.0.0-20190402181905-9f3314589c9a
 golang.org/x/oauth2
-golang.org/x/oauth2/google
 golang.org/x/oauth2/internal
-golang.org/x/oauth2/jws
-golang.org/x/oauth2/jwt
 # golang.org/x/sync v0.0.0-20190423024810-112230192c58
 golang.org/x/sync/semaphore
 # golang.org/x/sys v0.0.0-20190429190828-d89cdac9e872
@@ -241,11 +236,8 @@ golang.org/x/tools/internal/fastwalk
 # google.golang.org/api v0.3.1
 google.golang.org/api/support/bundler
 # google.golang.org/appengine v1.5.0
-google.golang.org/appengine
 google.golang.org/appengine/urlfetch
 google.golang.org/appengine/internal
-google.golang.org/appengine/internal/app_identity
-google.golang.org/appengine/internal/modules
 google.golang.org/appengine/internal/urlfetch
 google.golang.org/appengine/internal/base
 google.golang.org/appengine/internal/datastore
@@ -358,8 +350,8 @@ k8s.io/apimachinery/pkg/conversion/queryparams
 k8s.io/apimachinery/pkg/util/naming
 k8s.io/apimachinery/pkg/util/rand
 k8s.io/apimachinery/pkg/util/validation/field
-k8s.io/apimachinery/pkg/util/net
 k8s.io/apimachinery/pkg/runtime/serializer/streaming
+k8s.io/apimachinery/pkg/util/net
 k8s.io/apimachinery/pkg/util/clock
 k8s.io/apimachinery/pkg/util/strategicpatch
 k8s.io/apimachinery/pkg/apis/meta/v1beta1
@@ -381,7 +373,6 @@ k8s.io/apimachinery/pkg/apis/meta/internalversion
 k8s.io/apiserver/pkg/storage/names
 k8s.io/apiserver/pkg/authentication/user
 # k8s.io/client-go v11.0.1-0.20190409021438-1a26190bd76a+incompatible
-k8s.io/client-go/plugin/pkg/client/auth/gcp
 k8s.io/client-go/rest
 k8s.io/client-go/kubernetes/scheme
 k8s.io/client-go/tools/record
@@ -392,7 +383,6 @@ k8s.io/client-go/tools/clientcmd
 k8s.io/client-go/tools/cache
 k8s.io/client-go/tools/metrics
 k8s.io/client-go/util/workqueue
-k8s.io/client-go/util/jsonpath
 k8s.io/client-go/pkg/version
 k8s.io/client-go/plugin/pkg/client/auth/exec
 k8s.io/client-go/rest/watch
@@ -404,15 +394,11 @@ k8s.io/client-go/tools/leaderelection
 k8s.io/client-go/tools/leaderelection/resourcelock
 k8s.io/client-go/tools/record/util
 k8s.io/client-go/tools/reference
-k8s.io/client-go/discovery/cached
-k8s.io/client-go/kubernetes
-k8s.io/client-go/scale
 k8s.io/client-go/tools/auth
 k8s.io/client-go/tools/clientcmd/api/latest
 k8s.io/client-go/util/homedir
 k8s.io/client-go/tools/pager
 k8s.io/client-go/util/retry
-k8s.io/client-go/third_party/forked/golang/template
 k8s.io/client-go/pkg/apis/clientauthentication
 k8s.io/client-go/pkg/apis/clientauthentication/v1alpha1
 k8s.io/client-go/pkg/apis/clientauthentication/v1beta1
@@ -420,7 +406,8 @@ k8s.io/client-go/util/connrotation
 k8s.io/client-go/util/keyutil
 k8s.io/client-go/kubernetes/typed/coordination/v1
 k8s.io/client-go/kubernetes/typed/core/v1
-k8s.io/client-go/discovery/cached/memory
+k8s.io/client-go/kubernetes
+k8s.io/client-go/tools/clientcmd/api/v1
 k8s.io/client-go/kubernetes/typed/admissionregistration/v1beta1
 k8s.io/client-go/kubernetes/typed/apps/v1
 k8s.io/client-go/kubernetes/typed/apps/v1beta1
@@ -455,14 +442,6 @@ k8s.io/client-go/kubernetes/typed/settings/v1alpha1
 k8s.io/client-go/kubernetes/typed/storage/v1
 k8s.io/client-go/kubernetes/typed/storage/v1alpha1
 k8s.io/client-go/kubernetes/typed/storage/v1beta1
-k8s.io/client-go/scale/scheme
-k8s.io/client-go/scale/scheme/appsint
-k8s.io/client-go/scale/scheme/appsv1beta1
-k8s.io/client-go/scale/scheme/appsv1beta2
-k8s.io/client-go/scale/scheme/autoscalingv1
-k8s.io/client-go/scale/scheme/extensionsint
-k8s.io/client-go/scale/scheme/extensionsv1beta1
-k8s.io/client-go/tools/clientcmd/api/v1
 # k8s.io/klog v0.3.0
 k8s.io/klog
 # k8s.io/kube-openapi v0.0.0-20190401085232-94e1e7b7574c

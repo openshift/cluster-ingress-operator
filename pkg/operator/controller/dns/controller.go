@@ -100,13 +100,13 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 		}
 	}
 
-	// TODO: Will soon need to honor scope of the ingresscontroller's LoadBalancer
-	// strategy.
+	haveExternalLB := ingress.Status.EndpointPublishingStrategy != nil && ingress.Status.EndpointPublishingStrategy.LoadBalancer != nil && ingress.Status.EndpointPublishingStrategy.LoadBalancer.Scope == operatorv1.ExternalLoadBalancer
+
 	var zones []configv1.DNSZone
 	if dnsConfig.Spec.PrivateZone != nil {
 		zones = append(zones, *dnsConfig.Spec.PrivateZone)
 	}
-	if dnsConfig.Spec.PublicZone != nil {
+	if dnsConfig.Spec.PublicZone != nil && haveExternalLB {
 		zones = append(zones, *dnsConfig.Spec.PublicZone)
 	}
 
