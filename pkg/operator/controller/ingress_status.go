@@ -200,7 +200,7 @@ func isPending(service *corev1.Service) bool {
 }
 
 func getEventsByReason(events []corev1.Event, component, reason string) []corev1.Event {
-	filtered := []corev1.Event{}
+	var filtered []corev1.Event
 	for i := range events {
 		event := events[i]
 		if event.Source.Component == component && event.Reason == reason {
@@ -258,10 +258,10 @@ func computeDNSStatus(ic *operatorv1.IngressController, wildcardRecord *iov1.DNS
 			Message: "The record isn't present in any zones.",
 		})
 	case len(wildcardRecord.Status.Zones) > 0:
-		failedZones := []configv1.DNSZone{}
+		var failedZones []configv1.DNSZone
 		for _, zone := range wildcardRecord.Status.Zones {
 			for _, cond := range zone.Conditions {
-				if cond.Type == iov1.DNSRecordFailedConditionType {
+				if cond.Type == iov1.DNSRecordFailedConditionType && cond.Status == string(operatorv1.ConditionTrue) {
 					failedZones = append(failedZones, zone.DNSZone)
 				}
 			}

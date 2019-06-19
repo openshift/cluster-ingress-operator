@@ -41,13 +41,13 @@ func TestDesiredWildcardDNSRecord(t *testing.T) {
 		},
 		{
 			description: "no ingresses",
-			domain:      "",
+			domain:      "apps.openshift.example.com",
 			publish:     operatorv1.LoadBalancerServiceStrategyType,
 			ingresses:   []corev1.LoadBalancerIngress{},
 			expect:      nil,
 		},
 		{
-			description: "hostname to ALIAS record",
+			description: "hostname to CNAME record",
 			publish:     operatorv1.LoadBalancerServiceStrategyType,
 			domain:      "apps.openshift.example.com",
 			ingresses: []corev1.LoadBalancerIngress{
@@ -60,7 +60,7 @@ func TestDesiredWildcardDNSRecord(t *testing.T) {
 			},
 		},
 		{
-			description: "hostname to A record",
+			description: "IP to A record",
 			publish:     operatorv1.LoadBalancerServiceStrategyType,
 			domain:      "apps.openshift.example.com",
 			ingresses: []corev1.LoadBalancerIngress{

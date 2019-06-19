@@ -11,8 +11,6 @@ import (
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/slice"
 
-	"k8s.io/client-go/tools/record"
-
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -36,13 +34,11 @@ const (
 
 var log = logf.Logger.WithName(controllerName)
 
-func New(mgr manager.Manager, operatorNamespace string, dnsProvider dns.Provider) (runtimecontroller.Controller, error) {
+func New(mgr manager.Manager, dnsProvider dns.Provider) (runtimecontroller.Controller, error) {
 	reconciler := &reconciler{
-		client:            mgr.GetClient(),
-		cache:             mgr.GetCache(),
-		recorder:          mgr.GetEventRecorderFor(controllerName),
-		operatorNamespace: operatorNamespace,
-		dnsProvider:       dnsProvider,
+		client:      mgr.GetClient(),
+		cache:       mgr.GetCache(),
+		dnsProvider: dnsProvider,
 	}
 	c, err := runtimecontroller.New(controllerName, mgr, runtimecontroller.Options{Reconciler: reconciler})
 	if err != nil {
@@ -55,12 +51,9 @@ func New(mgr manager.Manager, operatorNamespace string, dnsProvider dns.Provider
 }
 
 type reconciler struct {
-	client            client.Client
-	cache             cache.Cache
-	recorder          record.EventRecorder
-	operatorNamespace string
-	dnsProvider       dns.Provider
-	dnsConfig         *configv1.DNS
+	client      client.Client
+	cache       cache.Cache
+	dnsProvider dns.Provider
 }
 
 func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, error) {
@@ -109,7 +102,7 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 
 	// TODO: Will soon need to honor scope of the ingresscontroller's LoadBalancer
 	// strategy.
-	zones := []configv1.DNSZone{}
+	var zones []configv1.DNSZone
 	if dnsConfig.Spec.PrivateZone != nil {
 		zones = append(zones, *dnsConfig.Spec.PrivateZone)
 	}
@@ -122,10 +115,10 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 	// successfully ensured. Then the DNS provider wouldn't need such aggressive
 	// internal caching.
 	result := reconcile.Result{}
-	statuses := []iov1.DNSZoneStatus{}
+	var statuses []iov1.DNSZoneStatus
 	for i := range zones {
 		zone := zones[i]
-		conditions := []iov1.DNSZoneCondition{}
+		var conditions []iov1.DNSZoneCondition
 		err := r.dnsProvider.Ensure(record, zone)
 		if err != nil {
 			conditions = append(conditions, iov1.DNSZoneCondition{
