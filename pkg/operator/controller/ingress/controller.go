@@ -1,4 +1,4 @@
-package controller
+package ingress
 
 import (
 	"context"
@@ -35,10 +35,10 @@ const (
 	controllerName = "ingress_controller"
 )
 
-var log = logf.Logger.WithName("controller")
+var log = logf.Logger.WithName(controllerName)
 
-// New creates the operator controller from configuration. This is the
-// controller that handles all the logic for implementing ingress based on
+// New creates the ingress controller from configuration. This is the controller
+// that handles all the logic for implementing ingress based on
 // IngressController resources.
 //
 // The controller will be pre-configured to watch for IngressController resources
@@ -94,7 +94,6 @@ func enqueueRequestForOwningIngressController(namespace string) handler.EventHan
 type Config struct {
 	Namespace              string
 	IngressControllerImage string
-	OperatorReleaseVersion string
 }
 
 // reconciler handles the actual ingress reconciliation logic in response to
@@ -179,11 +178,6 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 				}
 			}
 		}
-	}
-
-	// TODO: Should this be another controller?
-	if err := r.syncOperatorStatus(); err != nil {
-		errs = append(errs, fmt.Errorf("failed to sync operator status: %v", err))
 	}
 
 	return result, utilerrors.NewAggregate(errs)

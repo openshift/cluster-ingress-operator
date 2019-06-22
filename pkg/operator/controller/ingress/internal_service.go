@@ -1,4 +1,4 @@
-package controller
+package ingress
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
+	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
 	corev1 "k8s.io/api/core/v1"
 
@@ -40,7 +41,7 @@ func (r *reconciler) ensureInternalIngressControllerService(ic *operatorv1.Ingre
 
 func (r *reconciler) currentInternalIngressControllerService(ic *operatorv1.IngressController) (*corev1.Service, error) {
 	current := &corev1.Service{}
-	err := r.client.Get(context.TODO(), InternalIngressControllerServiceName(ic), current)
+	err := r.client.Get(context.TODO(), controller.InternalIngressControllerServiceName(ic), current)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			return nil, nil
@@ -53,7 +54,7 @@ func (r *reconciler) currentInternalIngressControllerService(ic *operatorv1.Ingr
 func desiredInternalIngressControllerService(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference) *corev1.Service {
 	s := manifests.InternalIngressControllerService()
 
-	name := InternalIngressControllerServiceName(ic)
+	name := controller.InternalIngressControllerServiceName(ic)
 
 	s.Namespace = name.Namespace
 	s.Name = name.Name
@@ -67,7 +68,7 @@ func desiredInternalIngressControllerService(ic *operatorv1.IngressController, d
 		ServingCertSecretAnnotation: fmt.Sprintf("router-metrics-certs-%s", ic.Name),
 	}
 
-	s.Spec.Selector = IngressControllerDeploymentPodSelector(ic).MatchLabels
+	s.Spec.Selector = controller.IngressControllerDeploymentPodSelector(ic).MatchLabels
 
 	s.SetOwnerReferences([]metav1.OwnerReference{deploymentRef})
 

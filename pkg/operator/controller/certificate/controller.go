@@ -12,6 +12,7 @@ import (
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -79,7 +80,7 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 		} else {
 			errs = append(errs, fmt.Errorf("failed to get ingresscontroller: %v", err))
 		}
-	} else if !controller.IsStatusDomainSet(ingress) {
+	} else if !ingresscontroller.IsStatusDomainSet(ingress) {
 		log.Info("ingresscontroller domain not set; reconciliation will be skipped", "request", request)
 	} else {
 		deployment := &appsv1.Deployment{}

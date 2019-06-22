@@ -1,4 +1,4 @@
-package controller
+package ingress
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
+	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/slice"
 
 	corev1 "k8s.io/api/core/v1"
@@ -88,7 +89,7 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 	}
 	service := manifests.LoadBalancerService()
 
-	name := LoadBalancerServiceName(ci)
+	name := controller.LoadBalancerServiceName(ci)
 
 	service.Namespace = name.Namespace
 	service.Name = name.Name
@@ -99,7 +100,7 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 	service.Labels["router"] = name.Name
 	service.Labels[manifests.OwningIngressControllerLabel] = ci.Name
 
-	service.Spec.Selector = IngressControllerDeploymentPodSelector(ci).MatchLabels
+	service.Spec.Selector = controller.IngressControllerDeploymentPodSelector(ci).MatchLabels
 
 	isInternal := ci.Status.EndpointPublishingStrategy.LoadBalancer == nil || ci.Status.EndpointPublishingStrategy.LoadBalancer.Scope == operatorv1.InternalLoadBalancer
 
@@ -125,7 +126,7 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 // ingresscontroller.
 func (r *reconciler) currentLoadBalancerService(ci *operatorv1.IngressController) (*corev1.Service, error) {
 	service := &corev1.Service{}
-	if err := r.client.Get(context.TODO(), LoadBalancerServiceName(ci), service); err != nil {
+	if err := r.client.Get(context.TODO(), controller.LoadBalancerServiceName(ci), service); err != nil {
 		if errors.IsNotFound(err) {
 			return nil, nil
 		}

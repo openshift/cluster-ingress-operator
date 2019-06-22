@@ -1,4 +1,4 @@
-package controller
+package ingress
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
+	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
 	corev1 "k8s.io/api/core/v1"
 
@@ -34,7 +35,7 @@ func (r *reconciler) ensureServiceMonitor(ic *operatorv1.IngressController, svc 
 }
 
 func desiredServiceMonitor(ic *operatorv1.IngressController, svc *corev1.Service, deploymentRef metav1.OwnerReference) *unstructured.Unstructured {
-	name := IngressControllerServiceMonitorName(ic)
+	name := controller.IngressControllerServiceMonitorName(ic)
 	sm := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"metadata": map[string]interface{}{
@@ -84,7 +85,7 @@ func (r *reconciler) currentServiceMonitor(ic *operatorv1.IngressController) (*u
 		Kind:    "ServiceMonitor",
 		Version: "v1",
 	})
-	if err := r.client.Get(context.TODO(), IngressControllerServiceMonitorName(ic), sm); err != nil {
+	if err := r.client.Get(context.TODO(), controller.IngressControllerServiceMonitorName(ic), sm); err != nil {
 		if errors.IsNotFound(err) {
 			return nil, nil
 		}
