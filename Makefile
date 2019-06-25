@@ -54,7 +54,7 @@ release-local:
 
 .PHONY: test-e2e
 test-e2e:
-	$(GO) test -count 1 -v -tags e2e -run "$(TEST)" ./...
+	$(GO) test -count 1 -v -tags e2e -run "$(TEST)" ./test/e2e
 
 .PHONY: clean
 clean:

@@ -110,12 +110,9 @@ type reconciler struct {
 // namespace, and will do all the work to ensure the ingresscontroller is in the
 // desired state.
 func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, error) {
-	errs := []error{}
-	result := reconcile.Result{}
-
 	log.Info("reconciling", "request", request)
 
-	// Get the current ingress state.
+	// Only proceed if we can get the ingresscontroller's state.
 	ingress := &operatorv1.IngressController{}
 	if err := r.client.Get(context.TODO(), request.NamespacedName, ingress); err != nil {
 		if errors.IsNotFound(err) {
@@ -123,172 +120,131 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 			// stale queue entries (or something edge triggering from a related
 			// resource that got deleted async).
 			log.Info("ingresscontroller not found; reconciliation will be skipped", "request", request)
-		} else {
-			errs = append(errs, fmt.Errorf("failed to get ingresscontroller %q: %v", request, err))
+			return reconcile.Result{}, nil
 		}
-		ingress = nil
+		return reconcile.Result{}, fmt.Errorf("failed to get ingresscontroller %q: %v", request, err)
 	}
 
-	if ingress != nil {
-		if ingress.DeletionTimestamp != nil {
-			// Handle deletion.
-			if err := r.ensureIngressDeleted(ingress); err != nil {
-				errs = append(errs, fmt.Errorf("failed to ensure ingress deletion: %v", err))
-			}
-		} else {
-			dnsConfig := &configv1.DNS{}
-			if err := r.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, dnsConfig); err != nil {
-				errs = append(errs, fmt.Errorf("failed to get dns 'cluster': %v", err))
-				dnsConfig = nil
-			}
-			infraConfig := &configv1.Infrastructure{}
-			if err := r.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, infraConfig); err != nil {
-				errs = append(errs, fmt.Errorf("failed to get infrastructure 'cluster': %v", err))
-				infraConfig = nil
-			}
-			ingressConfig := &configv1.Ingress{}
-			if err := r.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, ingressConfig); err != nil {
-				errs = append(errs, fmt.Errorf("failed to get ingress 'cluster': %v", err))
-				ingressConfig = nil
-			}
-
-			// For now, if the cluster configs are unavailable, defer reconciliation
-			// because weaving conditionals everywhere to deal with various nil states
-			// is too complicated. It doesn't seem too risky to rely on the invariant
-			// of the cluster config being available.
-			if dnsConfig != nil && infraConfig != nil && ingressConfig != nil {
-				// Ensure we have all the necessary scaffolding on which to place router instances.
-				if err := r.ensureRouterNamespace(); err != nil {
-					errs = append(errs, fmt.Errorf("failed to ensure router namespace: %v", err))
-				}
-
-				if err := r.enforceEffectiveIngressDomain(ingress, ingressConfig); err != nil {
-					errs = append(errs, fmt.Errorf("failed to enforce the effective ingress domain for ingresscontroller %s: %v", ingress.Name, err))
-				} else if IsStatusDomainSet(ingress) {
-					if err := r.enforceEffectiveEndpointPublishingStrategy(ingress, infraConfig); err != nil {
-						errs = append(errs, fmt.Errorf("failed to enforce the effective HA configuration for ingresscontroller %s: %v", ingress.Name, err))
-					} else if err := r.enforceIngressFinalizer(ingress); err != nil {
-						errs = append(errs, fmt.Errorf("failed to enforce ingress finalizer %s/%s: %v", ingress.Namespace, ingress.Name, err))
-					} else {
-						// Handle everything else.
-						if err := r.ensureIngressController(ingress, dnsConfig, infraConfig); err != nil {
-							errs = append(errs, fmt.Errorf("failed to ensure ingresscontroller: %v", err))
-						}
-					}
-				}
-			}
+	// If the ingresscontroller is deleted, handle that and return early.
+	if ingress.DeletionTimestamp != nil {
+		if err := r.ensureIngressDeleted(ingress); err != nil {
+			return reconcile.Result{}, fmt.Errorf("failed to ensure ingress deletion: %v", err)
 		}
+		log.Info("ingresscontroller was successfully deleted", "ingresscontroller", ingress)
+		return reconcile.Result{}, nil
 	}
 
-	return result, utilerrors.NewAggregate(errs)
+	// Only proceed if we can collect cluster config.
+	dnsConfig := &configv1.DNS{}
+	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, dnsConfig); err != nil {
+		return reconcile.Result{}, fmt.Errorf("failed to get dns 'cluster': %v", err)
+	}
+	infraConfig := &configv1.Infrastructure{}
+	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, infraConfig); err != nil {
+		return reconcile.Result{}, fmt.Errorf("failed to get infrastructure 'cluster': %v", err)
+	}
+	ingressConfig := &configv1.Ingress{}
+	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, ingressConfig); err != nil {
+		return reconcile.Result{}, fmt.Errorf("failed to get ingress 'cluster': %v", err)
+	}
+
+	// Admit if necessary. Don't process until admission succeeds. If admission is
+	// successful, immediately re-queue to refresh state.
+	if !isAdmitted(ingress) {
+		if err := r.admit(ingress, ingressConfig, infraConfig); err != nil {
+			return reconcile.Result{}, fmt.Errorf("failed to admit ingresscontroller: %v", err)
+		}
+		log.Info("admitted ingresscontroller", "ingresscontroller", ingress)
+		// Just re-queue for simplicity
+		return reconcile.Result{Requeue: true}, nil
+	}
+
+	// The ingresscontroller is safe to process, so ensure it.
+	if err := r.ensureIngressController(ingress, dnsConfig, infraConfig); err != nil {
+		return reconcile.Result{}, fmt.Errorf("failed to ensure ingresscontroller: %v", err)
+	}
+
+	return reconcile.Result{}, nil
 }
 
-// enforceEffectiveIngressDomain determines the effective ingress domain for the
-// given ingresscontroller and ingress configuration and publishes it to the
-// ingresscontroller's status.
-func (r *reconciler) enforceEffectiveIngressDomain(ic *operatorv1.IngressController, ingressConfig *configv1.Ingress) error {
-	// The ingresscontroller's ingress domain is immutable, so if we have
-	// published a domain to status, we must continue using it.
-	if len(ic.Status.Domain) > 0 {
+func (r *reconciler) admit(current *operatorv1.IngressController, ingressConfig *configv1.Ingress, infraConfig *configv1.Infrastructure) error {
+	updated := current.DeepCopy()
+
+	setDefaultDomain(updated, ingressConfig)
+	setDefaultPublishingStrategy(updated, infraConfig)
+
+	if err := r.validate(updated); err != nil {
+		updated.Status.Conditions = mergeConditions(updated.Status.Conditions, operatorv1.OperatorCondition{
+			Type:    iov1.IngressControllerAdmittedConditionType,
+			Status:  operatorv1.ConditionFalse,
+			Reason:  "Invalid",
+			Message: fmt.Sprintf("%v", err),
+		})
+		if !ingressStatusesEqual(current.Status, updated.Status) {
+			if err := r.client.Status().Update(context.TODO(), updated); err != nil {
+				return fmt.Errorf("failed to update status: %v", err)
+			}
+		}
 		return nil
 	}
 
-	updated := ic.DeepCopy()
-	var domain string
-	switch {
-	case len(ic.Spec.Domain) > 0:
-		domain = ic.Spec.Domain
-	default:
-		domain = ingressConfig.Spec.Domain
-	}
-	unique, err := r.isDomainUnique(domain)
-	if err != nil {
-		return err
-	}
-	if !unique {
-		log.Info("domain not unique, not setting status domain for IngressController", "namespace", ic.Namespace, "name", ic.Name)
-		availableCondition := operatorv1.OperatorCondition{
-			Type:    operatorv1.IngressControllerAvailableConditionType,
-			Status:  operatorv1.ConditionFalse,
-			Reason:  "InvalidDomain",
-			Message: fmt.Sprintf("domain %q is already in use by another IngressController", domain),
+	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, operatorv1.OperatorCondition{
+		Type:   iov1.IngressControllerAdmittedConditionType,
+		Status: operatorv1.ConditionTrue,
+		Reason: "Valid",
+	})
+	if !ingressStatusesEqual(current.Status, updated.Status) {
+		if err := r.client.Status().Update(context.TODO(), updated); err != nil {
+			return fmt.Errorf("failed to update status: %v", err)
 		}
-		oldAvailableCondition := getIngressAvailableCondition(updated.Status.Conditions)
-		setIngressLastTransitionTime(&availableCondition, oldAvailableCondition)
-		// TODO: refactor when we deal with multiple ingress conditions
-		updated.Status.Conditions = []operatorv1.OperatorCondition{availableCondition}
-	} else {
-		updated.Status.Domain = domain
-	}
-
-	if err := r.client.Status().Update(context.TODO(), updated); err != nil {
-		return fmt.Errorf("failed to update status of IngressController %s/%s: %v", updated.Namespace, updated.Name, err)
-	}
-	if err := r.client.Get(context.TODO(), types.NamespacedName{Namespace: updated.Namespace, Name: updated.Name}, ic); err != nil {
-		return fmt.Errorf("failed to get IngressController %s/%s: %v", updated.Namespace, updated.Name, err)
 	}
 	return nil
 }
 
-// isDomainUnique compares domain with spec.domain of all ingress controllers
-// and returns a false if a conflict exists or an error if the
-// ingress controller list operation returns an error.
-func (r *reconciler) isDomainUnique(domain string) (bool, error) {
-	ingresses := &operatorv1.IngressControllerList{}
-	if err := r.cache.List(context.TODO(), ingresses, client.InNamespace(r.Namespace)); err != nil {
-		return false, fmt.Errorf("failed to list ingresscontrollers: %v", err)
-	}
-
-	// Compare domain with all ingress controllers for a conflict.
-	for _, ing := range ingresses.Items {
-		if domain == ing.Status.Domain {
-			log.Info("domain conflicts with existing IngressController", "domain", domain, "namespace",
-				ing.Namespace, "name", ing.Name)
-			return false, nil
+func isAdmitted(ic *operatorv1.IngressController) bool {
+	for _, cond := range ic.Status.Conditions {
+		if cond.Type == iov1.IngressControllerAdmittedConditionType && cond.Status == operatorv1.ConditionTrue {
+			return true
 		}
 	}
-
-	return true, nil
+	return false
 }
 
-// publishingStrategyTypeForInfra returns the appropriate endpoint publishing
-// strategy type for the given infrastructure config.
-func publishingStrategyTypeForInfra(infraConfig *configv1.Infrastructure) operatorv1.EndpointPublishingStrategyType {
-	switch infraConfig.Status.Platform {
-	case configv1.AWSPlatformType, configv1.AzurePlatformType, configv1.GCPPlatformType:
-		return operatorv1.LoadBalancerServiceStrategyType
-	case configv1.LibvirtPlatformType:
-		return operatorv1.HostNetworkStrategyType
-	}
-	return operatorv1.HostNetworkStrategyType
-}
-
-// enforceEffectiveEndpointPublishingStrategy uses the infrastructure config to
-// determine the appropriate endpoint publishing strategy configuration for the
-// given ingresscontroller and publishes it to the ingresscontroller's status.
-func (r *reconciler) enforceEffectiveEndpointPublishingStrategy(ci *operatorv1.IngressController, infraConfig *configv1.Infrastructure) error {
-	// The ingresscontroller's endpoint publishing strategy is immutable, so
-	// if we have previously published a strategy in status, we must
-	// continue to use that strategy it.
-	if ci.Status.EndpointPublishingStrategy != nil {
-		return nil
-	}
-
-	updated := ci.DeepCopy()
-
+func setDefaultDomain(ic *operatorv1.IngressController, ingressConfig *configv1.Ingress) bool {
+	var effectiveDomain string
 	switch {
-	case ci.Spec.EndpointPublishingStrategy != nil:
-		updated.Status.EndpointPublishingStrategy = ci.Spec.EndpointPublishingStrategy.DeepCopy()
+	case len(ic.Spec.Domain) > 0:
+		effectiveDomain = ic.Spec.Domain
 	default:
-		updated.Status.EndpointPublishingStrategy = &operatorv1.EndpointPublishingStrategy{
-			Type: publishingStrategyTypeForInfra(infraConfig),
+		effectiveDomain = ingressConfig.Spec.Domain
+	}
+	if len(ic.Status.Domain) == 0 {
+		ic.Status.Domain = effectiveDomain
+		return true
+	}
+	return false
+}
+
+func setDefaultPublishingStrategy(ic *operatorv1.IngressController, infraConfig *configv1.Infrastructure) bool {
+	effectiveStrategy := ic.Spec.EndpointPublishingStrategy
+	if effectiveStrategy == nil {
+		var strategyType operatorv1.EndpointPublishingStrategyType
+		switch infraConfig.Status.Platform {
+		case configv1.AWSPlatformType, configv1.AzurePlatformType, configv1.GCPPlatformType:
+			strategyType = operatorv1.LoadBalancerServiceStrategyType
+		case configv1.LibvirtPlatformType:
+			strategyType = operatorv1.HostNetworkStrategyType
+		default:
+			strategyType = operatorv1.HostNetworkStrategyType
+		}
+		effectiveStrategy = &operatorv1.EndpointPublishingStrategy{
+			Type: strategyType,
 		}
 	}
-
-	switch updated.Status.EndpointPublishingStrategy.Type {
+	switch effectiveStrategy.Type {
 	case operatorv1.LoadBalancerServiceStrategyType:
-		if updated.Status.EndpointPublishingStrategy.LoadBalancer == nil {
-			updated.Status.EndpointPublishingStrategy.LoadBalancer = &operatorv1.LoadBalancerStrategy{
+		if effectiveStrategy.LoadBalancer == nil {
+			effectiveStrategy.LoadBalancer = &operatorv1.LoadBalancerStrategy{
 				Scope: operatorv1.ExternalLoadBalancer,
 			}
 		}
@@ -297,25 +253,51 @@ func (r *reconciler) enforceEffectiveEndpointPublishingStrategy(ci *operatorv1.I
 	case operatorv1.PrivateStrategyType:
 		// No parameters.
 	}
-
-	if err := r.client.Status().Update(context.TODO(), updated); err != nil {
-		return fmt.Errorf("failed to update status of ingresscontroller %s/%s: %v", updated.Namespace, updated.Name, err)
+	if ic.Status.EndpointPublishingStrategy == nil {
+		ic.Status.EndpointPublishingStrategy = effectiveStrategy
+		return true
 	}
-	if err := r.client.Get(context.TODO(), types.NamespacedName{Namespace: updated.Namespace, Name: updated.Name}, ci); err != nil {
-		return fmt.Errorf("failed to get ingresscontroller %s/%s: %v", updated.Namespace, updated.Name, err)
+	return false
+}
+
+func (r *reconciler) validate(ic *operatorv1.IngressController) error {
+	var errors []error
+
+	ingresses := &operatorv1.IngressControllerList{}
+	if err := r.cache.List(context.TODO(), ingresses, client.InNamespace(r.Namespace)); err != nil {
+		return fmt.Errorf("failed to list ingresscontrollers: %v", err)
+	}
+
+	if err := validateDomain(ic); err != nil {
+		errors = append(errors, err)
+	}
+	if err := validateDomainUniqueness(ic, ingresses.Items); err != nil {
+		errors = append(errors, err)
+	}
+
+	return utilerrors.NewAggregate(errors)
+}
+
+func validateDomain(ic *operatorv1.IngressController) error {
+	if len(ic.Status.Domain) == 0 {
+		return fmt.Errorf("domain is required")
 	}
 	return nil
 }
 
-// enforceIngressFinalizer adds IngressControllerFinalizer to ingress if it doesn't exist.
-func (r *reconciler) enforceIngressFinalizer(ingress *operatorv1.IngressController) error {
-	if !slice.ContainsString(ingress.Finalizers, manifests.IngressControllerFinalizer) {
-		ingress.Finalizers = append(ingress.Finalizers, manifests.IngressControllerFinalizer)
-		if err := r.client.Update(context.TODO(), ingress); err != nil {
-			return err
+// validateDomainUniqueness returns an error if the desired controller's domain
+// conflicts with any other admitted controllers.
+func validateDomainUniqueness(desired *operatorv1.IngressController, existing []operatorv1.IngressController) error {
+	for i := range existing {
+		current := existing[i]
+		if !isAdmitted(&current) {
+			continue
 		}
-		log.Info("enforced finalizer for ingress", "namespace", ingress.Namespace, "name", ingress.Name)
+		if desired.UID != current.UID && desired.Status.Domain == current.Status.Domain {
+			return fmt.Errorf("conflicts with: %s", current.Name)
+		}
 	}
+
 	return nil
 }
 
@@ -359,47 +341,65 @@ func (r *reconciler) ensureIngressDeleted(ingress *operatorv1.IngressController)
 
 // ensureIngressController ensures all necessary router resources exist for a given ingresscontroller.
 func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, dnsConfig *configv1.DNS, infraConfig *configv1.Infrastructure) error {
-	errs := []error{}
+	// Before doing anything at all with the controller, ensure it has a finalizer
+	// so we can clean up later.
+	if !slice.ContainsString(ci.Finalizers, manifests.IngressControllerFinalizer) {
+		updated := ci.DeepCopy()
+		updated.Finalizers = append(updated.Finalizers, manifests.IngressControllerFinalizer)
+		if err := r.client.Update(context.TODO(), updated); err != nil {
+			return fmt.Errorf("failed to update finalizers: %v", err)
+		}
+		if err := r.client.Get(context.TODO(), types.NamespacedName{Namespace: updated.Namespace, Name: updated.Name}, updated); err != nil {
+			return fmt.Errorf("failed to get ingresscontroller: %v", err)
+		}
+		ci = updated
+	}
 
-	if deployment, err := r.ensureRouterDeployment(ci, infraConfig); err != nil {
-		errs = append(errs, fmt.Errorf("failed to ensure router deployment for %s: %v", ci.Name, err))
+	if err := r.ensureRouterNamespace(); err != nil {
+		return fmt.Errorf("failed to ensure namespace: %v", err)
+	}
+
+	deployment, err := r.ensureRouterDeployment(ci, infraConfig)
+	if err != nil {
+		return fmt.Errorf("failed to ensure deployment: %v", err)
+	}
+
+	var errs []error
+	trueVar := true
+	deploymentRef := metav1.OwnerReference{
+		APIVersion: "apps/v1",
+		Kind:       "Deployment",
+		Name:       deployment.Name,
+		UID:        deployment.UID,
+		Controller: &trueVar,
+	}
+
+	var lbService *corev1.Service
+	var wildcardRecord *iov1.DNSRecord
+	if lb, err := r.ensureLoadBalancerService(ci, deploymentRef, infraConfig); err != nil {
+		errs = append(errs, fmt.Errorf("failed to ensure load balancer service for %s: %v", ci.Name, err))
 	} else {
-		trueVar := true
-		deploymentRef := metav1.OwnerReference{
-			APIVersion: "apps/v1",
-			Kind:       "Deployment",
-			Name:       deployment.Name,
-			UID:        deployment.UID,
-			Controller: &trueVar,
-		}
-
-		var lbService *corev1.Service
-		var wildcardRecord *iov1.DNSRecord
-		if lb, err := r.ensureLoadBalancerService(ci, deploymentRef, infraConfig); err != nil {
-			errs = append(errs, fmt.Errorf("failed to ensure load balancer service for %s: %v", ci.Name, err))
+		lbService = lb
+		if record, err := r.ensureWildcardDNSRecord(ci, lbService); err != nil {
+			errs = append(errs, fmt.Errorf("failed to ensure wildcard dnsrecord for %s: %v", ci.Name, err))
 		} else {
-			lbService = lb
-			if record, err := r.ensureWildcardDNSRecord(ci, lbService); err != nil {
-				errs = append(errs, fmt.Errorf("failed to ensure wildcard dnsrecord for %s: %v", ci.Name, err))
-			} else {
-				wildcardRecord = record
-			}
+			wildcardRecord = record
 		}
+	}
 
-		if internalSvc, err := r.ensureInternalIngressControllerService(ci, deploymentRef); err != nil {
-			errs = append(errs, fmt.Errorf("failed to create internal router service for ingresscontroller %s: %v", ci.Name, err))
-		} else if err := r.ensureMetricsIntegration(ci, internalSvc, deploymentRef); err != nil {
-			errs = append(errs, fmt.Errorf("failed to integrate metrics with openshift-monitoring for ingresscontroller %s: %v", ci.Name, err))
-		}
+	if internalSvc, err := r.ensureInternalIngressControllerService(ci, deploymentRef); err != nil {
+		errs = append(errs, fmt.Errorf("failed to create internal router service for ingresscontroller %s: %v", ci.Name, err))
+	} else if err := r.ensureMetricsIntegration(ci, internalSvc, deploymentRef); err != nil {
+		errs = append(errs, fmt.Errorf("failed to integrate metrics with openshift-monitoring for ingresscontroller %s: %v", ci.Name, err))
+	}
 
-		operandEvents := &corev1.EventList{}
-		if err := r.cache.List(context.TODO(), operandEvents, client.InNamespace("openshift-ingress")); err != nil {
-			errs = append(errs, fmt.Errorf("failed to list events in namespace %q: %v", "openshift-ingress", err))
-		}
+	operandEvents := &corev1.EventList{}
+	if err := r.cache.List(context.TODO(), operandEvents, client.InNamespace("openshift-ingress")); err != nil {
+		errs = append(errs, fmt.Errorf("failed to list events in namespace %q: %v", "openshift-ingress", err))
+	}
 
-		if err := r.syncIngressControllerStatus(ci, deployment, lbService, operandEvents.Items, wildcardRecord, dnsConfig); err != nil {
-			errs = append(errs, fmt.Errorf("failed to sync ingresscontroller status: %v", err))
-		}
+	if err := r.syncIngressControllerStatus(ci, deployment, lbService, operandEvents.Items, wildcardRecord, dnsConfig); err != nil {
+		errs = append(errs, fmt.Errorf("failed to sync ingresscontroller status: %v", err))
 	}
 
 	return utilerrors.NewAggregate(errs)
