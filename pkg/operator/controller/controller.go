@@ -162,17 +162,24 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 				if err := r.ensureRouterNamespace(); err != nil {
 					errs = append(errs, fmt.Errorf("failed to ensure router namespace: %v", err))
 				}
-
-				if err := r.enforceEffectiveIngressDomain(ingress, ingressConfig); err != nil {
-					errs = append(errs, fmt.Errorf("failed to enforce the effective ingress domain for ingresscontroller %s: %v", ingress.Name, err))
+				if !IsStatusDomainSet(ingress) {
+					deployment := &appsv1.Deployment{}
+					service := &corev1.Service{}
+					operandEvents := []corev1.Event{}
+					wildcardRecord := &iov1.DNSRecord{}
+					if err := r.syncIngressControllerStatus(ingress, ingressConfig, deployment, service, operandEvents, wildcardRecord, dnsConfig); err != nil {
+						errs = append(errs, fmt.Errorf("failed to sync ingresscontroller status: %v", err))
+					}
+					// To avoid another reconciliation loop, check the status.domain again as
+					// syncIngressControllerStatus may have not set it.
 				} else if IsStatusDomainSet(ingress) {
+					// Handle everything else.
 					if err := r.enforceEffectiveEndpointPublishingStrategy(ingress, infraConfig); err != nil {
 						errs = append(errs, fmt.Errorf("failed to enforce the effective HA configuration for ingresscontroller %s: %v", ingress.Name, err))
 					} else if err := r.enforceIngressFinalizer(ingress); err != nil {
 						errs = append(errs, fmt.Errorf("failed to enforce ingress finalizer %s/%s: %v", ingress.Namespace, ingress.Name, err))
 					} else {
-						// Handle everything else.
-						if err := r.ensureIngressController(ingress, dnsConfig, infraConfig); err != nil {
+						if err := r.ensureIngressController(ingress, ingressConfig, dnsConfig, infraConfig); err != nil {
 							errs = append(errs, fmt.Errorf("failed to ensure ingresscontroller: %v", err))
 						}
 					}
@@ -187,74 +194,6 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 	}
 
 	return result, utilerrors.NewAggregate(errs)
-}
-
-// enforceEffectiveIngressDomain determines the effective ingress domain for the
-// given ingresscontroller and ingress configuration and publishes it to the
-// ingresscontroller's status.
-func (r *reconciler) enforceEffectiveIngressDomain(ic *operatorv1.IngressController, ingressConfig *configv1.Ingress) error {
-	// The ingresscontroller's ingress domain is immutable, so if we have
-	// published a domain to status, we must continue using it.
-	if len(ic.Status.Domain) > 0 {
-		return nil
-	}
-
-	updated := ic.DeepCopy()
-	var domain string
-	switch {
-	case len(ic.Spec.Domain) > 0:
-		domain = ic.Spec.Domain
-	default:
-		domain = ingressConfig.Spec.Domain
-	}
-	unique, err := r.isDomainUnique(domain)
-	if err != nil {
-		return err
-	}
-	if !unique {
-		log.Info("domain not unique, not setting status domain for IngressController", "namespace", ic.Namespace, "name", ic.Name)
-		availableCondition := operatorv1.OperatorCondition{
-			Type:    operatorv1.IngressControllerAvailableConditionType,
-			Status:  operatorv1.ConditionFalse,
-			Reason:  "InvalidDomain",
-			Message: fmt.Sprintf("domain %q is already in use by another IngressController", domain),
-		}
-		oldAvailableCondition := getIngressAvailableCondition(updated.Status.Conditions)
-		setIngressLastTransitionTime(&availableCondition, oldAvailableCondition)
-		// TODO: refactor when we deal with multiple ingress conditions
-		updated.Status.Conditions = []operatorv1.OperatorCondition{availableCondition}
-	} else {
-		updated.Status.Domain = domain
-	}
-
-	if err := r.client.Status().Update(context.TODO(), updated); err != nil {
-		return fmt.Errorf("failed to update status of IngressController %s/%s: %v", updated.Namespace, updated.Name, err)
-	}
-	if err := r.client.Get(context.TODO(), types.NamespacedName{Namespace: updated.Namespace, Name: updated.Name}, ic); err != nil {
-		return fmt.Errorf("failed to get IngressController %s/%s: %v", updated.Namespace, updated.Name, err)
-	}
-	return nil
-}
-
-// isDomainUnique compares domain with spec.domain of all ingress controllers
-// and returns a false if a conflict exists or an error if the
-// ingress controller list operation returns an error.
-func (r *reconciler) isDomainUnique(domain string) (bool, error) {
-	ingresses := &operatorv1.IngressControllerList{}
-	if err := r.cache.List(context.TODO(), ingresses, client.InNamespace(r.Namespace)); err != nil {
-		return false, fmt.Errorf("failed to list ingresscontrollers: %v", err)
-	}
-
-	// Compare domain with all ingress controllers for a conflict.
-	for _, ing := range ingresses.Items {
-		if domain == ing.Status.Domain {
-			log.Info("domain conflicts with existing IngressController", "domain", domain, "namespace",
-				ing.Namespace, "name", ing.Name)
-			return false, nil
-		}
-	}
-
-	return true, nil
 }
 
 // publishingStrategyTypeForInfra returns the appropriate endpoint publishing
@@ -414,7 +353,7 @@ func (r *reconciler) ensureRouterNamespace() error {
 }
 
 // ensureIngressController ensures all necessary router resources exist for a given ingresscontroller.
-func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, dnsConfig *configv1.DNS, infraConfig *configv1.Infrastructure) error {
+func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, ingressConfig *configv1.Ingress, dnsConfig *configv1.DNS, infraConfig *configv1.Infrastructure) error {
 	errs := []error{}
 
 	if deployment, err := r.ensureRouterDeployment(ci, infraConfig); err != nil {
@@ -453,7 +392,7 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 			errs = append(errs, fmt.Errorf("failed to list events in namespace %q: %v", "openshift-ingress", err))
 		}
 
-		if err := r.syncIngressControllerStatus(ci, deployment, lbService, operandEvents.Items, wildcardRecord, dnsConfig); err != nil {
+		if err := r.syncIngressControllerStatus(ci, ingressConfig, deployment, lbService, operandEvents.Items, wildcardRecord, dnsConfig); err != nil {
 			errs = append(errs, fmt.Errorf("failed to sync ingresscontroller status: %v", err))
 		}
 	}

@@ -193,13 +193,15 @@ func TestComputeLoadBalancerStatus(t *testing.T) {
 func TestComputeIngressStatusConditions(t *testing.T) {
 	testCases := []struct {
 		description     string
+		effectiveDomain bool
 		availRepl, repl int32
 		condType        string
 		condStatus      operatorv1.ConditionStatus
 	}{
-		{"0/2 deployment replicas available", 0, 2, operatorv1.OperatorStatusTypeAvailable, operatorv1.ConditionFalse},
-		{"1/2 deployment replicas available", 1, 2, operatorv1.OperatorStatusTypeAvailable, operatorv1.ConditionTrue},
-		{"2/2 deployment replicas available", 2, 2, operatorv1.OperatorStatusTypeAvailable, operatorv1.ConditionTrue},
+		{"0/2 deployment replicas available", true, 0, 2, operatorv1.OperatorStatusTypeAvailable, operatorv1.ConditionFalse},
+		{"1/2 deployment replicas available", true, 1, 2, operatorv1.OperatorStatusTypeAvailable, operatorv1.ConditionTrue},
+		{"2/2 deployment replicas available", true, 2, 2, operatorv1.OperatorStatusTypeAvailable, operatorv1.ConditionTrue},
+		{"Ineffective ingress domain", false, 2, 2, operatorv1.OperatorStatusTypeAvailable, operatorv1.ConditionFalse},
 	}
 
 	for i, tc := range testCases {
@@ -219,7 +221,7 @@ func TestComputeIngressStatusConditions(t *testing.T) {
 				Status: tc.condStatus,
 			},
 		}
-		actual := computeIngressStatusConditions([]operatorv1.OperatorCondition{}, deploy)
+		actual := computeIngressStatusConditions([]operatorv1.OperatorCondition{}, deploy, tc.effectiveDomain)
 		conditionsCmpOpts := []cmp.Option{
 			cmpopts.IgnoreFields(operatorv1.OperatorCondition{}, "LastTransitionTime", "Reason", "Message"),
 			cmpopts.EquateEmpty(),

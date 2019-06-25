@@ -15,26 +15,35 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // syncIngressControllerStatus computes the current status of ic and
 // updates status upon any changes since last sync.
-func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressController, deployment *appsv1.Deployment, service *corev1.Service, operandEvents []corev1.Event, wildcardRecord *iov1.DNSRecord, dnsConfig *configv1.DNS) error {
-	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
-	if err != nil {
-		return fmt.Errorf("deployment has invalid spec.selector: %v", err)
+func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressController, ingressConfig *configv1.Ingress, deployment *appsv1.Deployment, service *corev1.Service, operandEvents []corev1.Event, wildcardRecord *iov1.DNSRecord, dnsConfig *configv1.DNS) error {
+	effectiveDomain := true
+	updated := ic.DeepCopy()
+	updated.Status.Conditions = []operatorv1.OperatorCondition{}
+
+	if !IsStatusDomainSet(ic) {
+		if err := r.enforceEffectiveIngressDomain(updated, ingressConfig); err != nil {
+			log.Error(err, "failed to enforce the effective ingress domain for ingresscontroller", "name", ic.Name)
+		}
+		effectiveDomain = false
+	} else {
+		selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
+		if err != nil {
+			return fmt.Errorf("deployment has invalid spec.selector: %v", err)
+		}
+		updated.Status.AvailableReplicas = deployment.Status.AvailableReplicas
+		updated.Status.Selector = selector.String()
+		updated.Status.Conditions = append(updated.Status.Conditions, computeLoadBalancerStatus(ic, service, operandEvents)...)
+		updated.Status.Conditions = append(updated.Status.Conditions, computeDNSStatus(ic, wildcardRecord, dnsConfig)...)
 	}
 
-	updated := ic.DeepCopy()
-	updated.Status.AvailableReplicas = deployment.Status.AvailableReplicas
-	updated.Status.Selector = selector.String()
-
-	updated.Status.Conditions = []operatorv1.OperatorCondition{}
-	updated.Status.Conditions = append(updated.Status.Conditions, computeIngressStatusConditions(updated.Status.Conditions, deployment)...)
-	updated.Status.Conditions = append(updated.Status.Conditions, computeLoadBalancerStatus(ic, service, operandEvents)...)
-	updated.Status.Conditions = append(updated.Status.Conditions, computeDNSStatus(ic, wildcardRecord, dnsConfig)...)
-
+	updated.Status.Conditions = append(updated.Status.Conditions, computeIngressStatusConditions(updated.Status.Conditions, deployment, effectiveDomain)...)
 	for i := range updated.Status.Conditions {
 		newCondition := &updated.Status.Conditions[i]
 		var oldCondition *operatorv1.OperatorCondition
@@ -58,26 +67,31 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 }
 
 // computeIngressStatusConditions computes the ingress controller's current state.
-func computeIngressStatusConditions(oldConditions []operatorv1.OperatorCondition, deployment *appsv1.Deployment) []operatorv1.OperatorCondition {
+func computeIngressStatusConditions(oldConditions []operatorv1.OperatorCondition, deployment *appsv1.Deployment, effectiveDomain bool) []operatorv1.OperatorCondition {
 	oldAvailableCondition := getIngressAvailableCondition(oldConditions)
 
 	return []operatorv1.OperatorCondition{
-		computeIngressAvailableCondition(oldAvailableCondition, deployment),
+		computeIngressAvailableCondition(oldAvailableCondition, deployment, effectiveDomain),
 	}
 }
 
 // computeIngressAvailableCondition computes the ingress controller's current Available status state.
-func computeIngressAvailableCondition(oldAvailableCondition *operatorv1.OperatorCondition, deployment *appsv1.Deployment) operatorv1.OperatorCondition {
+func computeIngressAvailableCondition(oldAvailableCondition *operatorv1.OperatorCondition, deployment *appsv1.Deployment, effectiveDomain bool) operatorv1.OperatorCondition {
 	availableCondition := operatorv1.OperatorCondition{
 		Type: operatorv1.IngressControllerAvailableConditionType,
 	}
 
-	if deployment.Status.AvailableReplicas > 0 {
-		availableCondition.Status = operatorv1.ConditionTrue
-	} else {
+	switch {
+	case !effectiveDomain:
+		availableCondition.Status = operatorv1.ConditionFalse
+		availableCondition.Reason = "IneffectiveDomain"
+		availableCondition.Message = "Failed to enforce effective domain"
+	case deployment.Status.AvailableReplicas == 0:
 		availableCondition.Status = operatorv1.ConditionFalse
 		availableCondition.Reason = "DeploymentUnavailable"
 		availableCondition.Message = "no Deployment replicas available"
+	default:
+		availableCondition.Status = operatorv1.ConditionTrue
 	}
 
 	return availableCondition
@@ -285,4 +299,56 @@ func computeDNSStatus(ic *operatorv1.IngressController, wildcardRecord *iov1.DNS
 	}
 
 	return conditions
+}
+
+// enforceEffectiveIngressDomain determines the effective ingress domain
+// for the given ic and ingressConfig.
+func (r *reconciler) enforceEffectiveIngressDomain(ic *operatorv1.IngressController, ingressConfig *configv1.Ingress) error {
+	var domain string
+
+	if isSpecDomainSet(ic) {
+		domain = ic.Spec.Domain
+	} else {
+		domain = ingressConfig.Spec.Domain
+	}
+	uniqueDomain, err := r.isDomainUnique(domain)
+	if err != nil {
+		return err
+	}
+	if uniqueDomain {
+		ic.Status.Domain = domain
+	} else {
+		return fmt.Errorf("non unique domain, status.domain for IngressController %s/%s not set", ic.Namespace, ic.Name)
+	}
+
+	return nil
+}
+
+// isSpecDomainSet checks whether spec.domain of ingress is set.
+func isSpecDomainSet(ingress *operatorv1.IngressController) bool {
+	if len(ingress.Spec.Domain) == 0 {
+		return false
+	}
+	return true
+}
+
+// isDomainUnique compares domain with status.domain of all ingress controllers
+// returning false if a conflict exists or an error if the ingress controller
+// list operation returns an error.
+func (r *reconciler) isDomainUnique(domain string) (bool, error) {
+	ingresses := &operatorv1.IngressControllerList{}
+	if err := r.client.List(context.TODO(), ingresses, client.InNamespace(r.Namespace)); err != nil {
+		return false, fmt.Errorf("failed to list ingresscontrollers: %v", err)
+	}
+
+	// Compare domain with all ingress controllers for a conflict.
+	for _, ing := range ingresses.Items {
+		if domain == ing.Status.Domain {
+			log.Info("domain conflicts with existing IngressController", "domain", domain, "namespace",
+				ing.Namespace, "name", ing.Name)
+			return false, nil
+		}
+	}
+
+	return true, nil
 }
