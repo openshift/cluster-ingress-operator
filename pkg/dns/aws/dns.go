@@ -198,9 +198,11 @@ func (m *Provider) getLBHostedZone(name string) (string, error) {
 	var id string
 	fn := func(resp *elb.DescribeLoadBalancersOutput, lastPage bool) (shouldContinue bool) {
 		for _, lb := range resp.LoadBalancerDescriptions {
-			log.V(2).Info("found load balancer", "name", aws.StringValue(lb.LoadBalancerName), "dns name", aws.StringValue(lb.DNSName), "hosted zone ID", aws.StringValue(lb.CanonicalHostedZoneNameID))
-			if aws.StringValue(lb.CanonicalHostedZoneName) == name {
-				id = aws.StringValue(lb.CanonicalHostedZoneNameID)
+			dnsName := aws.StringValue(lb.DNSName)
+			zoneID := aws.StringValue(lb.CanonicalHostedZoneNameID)
+			log.V(2).Info("found load balancer", "name", aws.StringValue(lb.LoadBalancerName), "dns name", dnsName, "hosted zone ID", zoneID)
+			if dnsName == name {
+				id = zoneID
 				return false
 			}
 		}
