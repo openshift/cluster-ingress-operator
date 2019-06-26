@@ -687,26 +687,17 @@ func TestInternalLoadBalancer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get infrastructure config: %v", err)
 	}
+	platform := infraConfig.Status.Platform
 
-	annotation := map[string]string{}
-	switch infraConfig.Status.Platform {
-	case configv1.AWSPlatformType:
-		annotation["service.beta.kubernetes.io/aws-load-balancer-proxy-protocol"] = "*"
-	case configv1.AzurePlatformType:
-		annotation["service.beta.kubernetes.io/azure-load-balancer-internal"] = "true"
-	case configv1.BareMetalPlatformType:
-		t.Skip("test skipped on bare metal")
-	case configv1.GCPPlatformType:
-		annotation["cloud.google.com/load-balancer-type"] = "Internal"
-	case configv1.LibvirtPlatformType:
-		t.Skip("test skipped on libvirt")
-	case configv1.OpenStackPlatformType:
-		annotation["service.beta.kubernetes.io/openstack-internal-load-balancer"] = "true"
-	case configv1.NonePlatformType:
-		t.Skip("test skipped on \"none\" platform type")
-	case configv1.VSpherePlatformType:
-		t.Skip("test skipped on vSphere")
+	supportedPlatforms := map[configv1.PlatformType]struct{}{
+		configv1.AWSPlatformType:   {},
+		configv1.AzurePlatformType: {},
 	}
+	if _, supported := supportedPlatforms[platform]; !supported {
+		t.Skip(fmt.Sprintf("test skipped on platform %q", platform))
+	}
+
+	annotation := ingresscontroller.InternalLBAnnotations[platform]
 
 	dnsConfig := &configv1.DNS{}
 	if err := cl.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, dnsConfig); err != nil {

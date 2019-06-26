@@ -30,9 +30,9 @@ var (
 	// that the load balancer is internal.
 	//
 	// https://kubernetes.io/docs/concepts/services-networking/service/#internal-load-balancer
-	internalLBAnnotations = map[configv1.PlatformType]map[string]string{
+	InternalLBAnnotations = map[configv1.PlatformType]map[string]string{
 		configv1.AWSPlatformType: {
-			"service.beta.kubernetes.io/aws-load-balancer-proxy-protocol": "*",
+			"service.beta.kubernetes.io/aws-load-balancer-internal": "0.0.0.0/0",
 		},
 		configv1.AzurePlatformType: {
 			"service.beta.kubernetes.io/azure-load-balancer-internal": "true",
@@ -110,7 +110,7 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 		service.Annotations[awsLBProxyProtocolAnnotation] = "*"
 	}
 	if isInternal {
-		annotation := internalLBAnnotations[infraConfig.Status.Platform]
+		annotation := InternalLBAnnotations[infraConfig.Status.Platform]
 		for name, value := range annotation {
 			service.Annotations[name] = value
 		}
