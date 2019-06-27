@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -26,8 +27,8 @@ import (
 
 // ensureRouterDeployment ensures the router deployment exists for a given
 // ingresscontroller.
-func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, infraConfig *configv1.Infrastructure, ingressConfig *configv1.Ingress) (*appsv1.Deployment, error) {
-	desired, err := desiredRouterDeployment(ci, r.Config.IngressControllerImage, infraConfig, ingressConfig)
+func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, infraConfig *configv1.Infrastructure, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer) (*appsv1.Deployment, error) {
+	desired, err := desiredRouterDeployment(ci, r.Config.IngressControllerImage, infraConfig, ingressConfig, apiConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build router deployment: %v", err)
 	}
@@ -64,7 +65,7 @@ func (r *reconciler) ensureRouterDeleted(ci *operatorv1.IngressController) error
 }
 
 // desiredRouterDeployment returns the desired router deployment.
-func desiredRouterDeployment(ci *operatorv1.IngressController, ingressControllerImage string, infraConfig *configv1.Infrastructure, ingressConfig *configv1.Ingress) (*appsv1.Deployment, error) {
+func desiredRouterDeployment(ci *operatorv1.IngressController, ingressControllerImage string, infraConfig *configv1.Infrastructure, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer) (*appsv1.Deployment, error) {
 	deployment := manifests.RouterDeployment()
 	name := controller.RouterDeploymentName(ci)
 	deployment.Name = name.Name
@@ -309,11 +310,85 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		deployment.Spec.Template.Spec.Containers = append(deployment.Spec.Template.Spec.Containers, syslogContainer)
 	}
 
+	tlsProfileSpec := tlsProfileSpecForIngressController(ci, apiConfig)
+
+	ciphers := strings.Join(tlsProfileSpec.Ciphers, ":")
+	env = append(env, corev1.EnvVar{Name: "ROUTER_CIPHERS", Value: ciphers})
+
+	var minTLSVersion string
+	switch tlsProfileSpec.MinTLSVersion {
+	// TLS 1.0 is not supported.
+	case configv1.VersionTLS11:
+		minTLSVersion = "TLSv1.1"
+	case configv1.VersionTLS12:
+		minTLSVersion = "TLSv1.2"
+	case configv1.VersionTLS13:
+		minTLSVersion = "TLSv1.3"
+	default:
+		minTLSVersion = "TLSv1.2"
+	}
+	env = append(env, corev1.EnvVar{Name: "SSL_MIN_VERSION", Value: minTLSVersion})
+
 	deployment.Spec.Template.Spec.Volumes = volumes
 	deployment.Spec.Template.Spec.Containers[0].VolumeMounts = routerVolumeMounts
 	deployment.Spec.Template.Spec.Containers[0].Env = append(deployment.Spec.Template.Spec.Containers[0].Env, env...)
 
 	return deployment, nil
+}
+
+// inferTLSProfileSpecFromDeployment examines the given deployment's pod
+// template spec and reconstructs a TLS profile spec based on that pod spec.
+func inferTLSProfileSpecFromDeployment(deployment *appsv1.Deployment) *configv1.TLSProfileSpec {
+	var env []corev1.EnvVar
+	foundContainer := false
+	for _, container := range deployment.Spec.Template.Spec.Containers {
+		if container.Name == "router" {
+			env = container.Env
+			foundContainer = true
+			break
+		}
+	}
+
+	if !foundContainer {
+		return &configv1.TLSProfileSpec{}
+	}
+
+	var (
+		ciphersString       string
+		minTLSVersionString string
+	)
+	for _, v := range env {
+		switch v.Name {
+		case "ROUTER_CIPHERS":
+			ciphersString = v.Value
+		case "SSL_MIN_VERSION":
+			minTLSVersionString = v.Value
+		}
+	}
+
+	var ciphers []string
+	if len(ciphersString) > 0 {
+		ciphers = strings.Split(ciphersString, ":")
+	}
+
+	var minTLSVersion configv1.TLSProtocolVersion
+	switch minTLSVersionString {
+	case "TLSv1.1":
+		minTLSVersion = configv1.VersionTLS11
+	case "TLSv1.2":
+		minTLSVersion = configv1.VersionTLS12
+	case "TLSv1.3":
+		minTLSVersion = configv1.VersionTLS13
+	default:
+		minTLSVersion = configv1.VersionTLS12
+	}
+
+	profile := &configv1.TLSProfileSpec{
+		Ciphers:       ciphers,
+		MinTLSVersion: minTLSVersion,
+	}
+
+	return profile
 }
 
 // currentRouterDeployment returns the current router deployment.
