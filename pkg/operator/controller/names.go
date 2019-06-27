@@ -15,25 +15,18 @@ const (
 	// CA certificate in this namespace.
 	GlobalMachineSpecifiedConfigNamespace = "openshift-config-managed"
 
-	// caCertSecretName is the name of the secret that holds the CA certificate
-	// that the operator will use to create default certificates for
-	// ingresscontrollers.
-	caCertSecretName = "router-ca"
-
-	// caCertConfigMapName is the name of the config map with the public key
-	// for the CA certificate, which the operator publishes for other
-	// operators to use.
-	caCertConfigMapName = "router-ca"
-
-	// routerCertsGlobalSecretName is the name of the secret with the
-	// default certificates and their keys, which the operator publishes for
-	// other operators to use.
-	routerCertsGlobalSecretName = "router-certs"
-
-	// controllerDeploymentLabel identifies a deployment as an ingress controller
+	// ControllerDeploymentLabel identifies a deployment as an ingress controller
 	// deployment, and the value is the name of the owning ingress controller.
-	controllerDeploymentLabel = "ingresscontroller.operator.openshift.io/deployment-ingresscontroller"
+	ControllerDeploymentLabel = "ingresscontroller.operator.openshift.io/deployment-ingresscontroller"
 )
+
+// IngressClusterOperatorName returns the namespaced name of the ClusterOperator
+// resource for the operator.
+func IngressClusterOperatorName() types.NamespacedName {
+	return types.NamespacedName{
+		Name: "ingress",
+	}
+}
 
 // RouterDeploymentName returns the namespaced name for the router deployment.
 func RouterDeploymentName(ci *operatorv1.IngressController) types.NamespacedName {
@@ -44,27 +37,33 @@ func RouterDeploymentName(ci *operatorv1.IngressController) types.NamespacedName
 }
 
 // RouterCASecretName returns the namespaced name for the router CA secret.
+// This secret holds the CA certificate that the operator will use to create
+// default certificates for ingresscontrollers.
 func RouterCASecretName(operatorNamespace string) types.NamespacedName {
 	return types.NamespacedName{
 		Namespace: operatorNamespace,
-		Name:      caCertSecretName,
+		Name:      "router-ca",
 	}
 }
 
 // RouterCAConfigMapName returns the namespaced name for the router CA configmap.
+// The operator uses this configmap to publish the public key for the CA
+// certificate, so that other operators can include it into their trust bundles.
 func RouterCAConfigMapName() types.NamespacedName {
 	return types.NamespacedName{
 		Namespace: GlobalMachineSpecifiedConfigNamespace,
-		Name:      caCertConfigMapName,
+		Name:      "router-ca",
 	}
 }
 
 // RouterCertsGlobalSecretName returns the namespaced name for the router certs
-// secret.
+// secret.  The operator uses this secret to publish the default certificates and
+// their keys, so that the authentication operator can configure the OAuth server
+// to use the same certificates.
 func RouterCertsGlobalSecretName() types.NamespacedName {
 	return types.NamespacedName{
 		Namespace: GlobalMachineSpecifiedConfigNamespace,
-		Name:      routerCertsGlobalSecretName,
+		Name:      "router-certs",
 	}
 }
 
@@ -93,7 +92,7 @@ func IngressControllerDeploymentLabel(ic *operatorv1.IngressController) string {
 func IngressControllerDeploymentPodSelector(ic *operatorv1.IngressController) *metav1.LabelSelector {
 	return &metav1.LabelSelector{
 		MatchLabels: map[string]string{
-			controllerDeploymentLabel: IngressControllerDeploymentLabel(ic),
+			ControllerDeploymentLabel: IngressControllerDeploymentLabel(ic),
 		},
 	}
 }

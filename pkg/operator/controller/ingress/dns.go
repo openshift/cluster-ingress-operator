@@ -1,4 +1,4 @@
-package controller
+package ingress
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 
 	iov1 "github.com/openshift/cluster-ingress-operator/pkg/api/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
+	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 
@@ -71,7 +72,7 @@ func desiredWildcardRecord(ic *operatorv1.IngressController, service *corev1.Ser
 		return nil
 	}
 
-	name := WildcardDNSRecordName(ic)
+	name := controller.WildcardDNSRecordName(ic)
 	domain := fmt.Sprintf("*.%s", ic.Status.Domain)
 	var target string
 	var recordType string
@@ -114,7 +115,7 @@ func desiredWildcardRecord(ic *operatorv1.IngressController, service *corev1.Ser
 
 func (r *reconciler) currentWildcardDNSRecord(ic *operatorv1.IngressController) (*iov1.DNSRecord, error) {
 	current := &iov1.DNSRecord{}
-	err := r.client.Get(context.TODO(), WildcardDNSRecordName(ic), current)
+	err := r.client.Get(context.TODO(), controller.WildcardDNSRecordName(ic), current)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			return nil, nil
@@ -125,7 +126,7 @@ func (r *reconciler) currentWildcardDNSRecord(ic *operatorv1.IngressController) 
 }
 
 func (r *reconciler) deleteWildcardDNSRecord(ic *operatorv1.IngressController) error {
-	name := WildcardDNSRecordName(ic)
+	name := controller.WildcardDNSRecordName(ic)
 	record := &iov1.DNSRecord{}
 	record.Namespace = name.Namespace
 	record.Name = name.Name

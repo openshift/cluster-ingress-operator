@@ -1,4 +1,4 @@
-package controller
+package ingress
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
+	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -49,7 +50,7 @@ func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, in
 // ingresscontroller are deleted.
 func (r *reconciler) ensureRouterDeleted(ci *operatorv1.IngressController) error {
 	deployment := &appsv1.Deployment{}
-	name := RouterDeploymentName(ci)
+	name := controller.RouterDeploymentName(ci)
 	deployment.Name = name.Name
 	deployment.Namespace = name.Namespace
 	if err := r.client.Delete(context.TODO(), deployment); err != nil {
@@ -63,7 +64,7 @@ func (r *reconciler) ensureRouterDeleted(ci *operatorv1.IngressController) error
 // desiredRouterDeployment returns the desired router deployment.
 func desiredRouterDeployment(ci *operatorv1.IngressController, ingressControllerImage string, infraConfig *configv1.Infrastructure) (*appsv1.Deployment, error) {
 	deployment := manifests.RouterDeployment()
-	name := RouterDeploymentName(ci)
+	name := controller.RouterDeploymentName(ci)
 	deployment.Name = name.Name
 	deployment.Namespace = name.Namespace
 
@@ -73,7 +74,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	}
 
 	// Ensure the deployment adopts only its own pods.
-	deployment.Spec.Selector = IngressControllerDeploymentPodSelector(ci)
+	deployment.Spec.Selector = controller.IngressControllerDeploymentPodSelector(ci)
 	deployment.Spec.Template.Labels = deployment.Spec.Selector.MatchLabels
 
 	// Prevent colocation of controller pods to enable simple horizontal scaling
@@ -85,9 +86,9 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 					LabelSelector: &metav1.LabelSelector{
 						MatchExpressions: []metav1.LabelSelectorRequirement{
 							{
-								Key:      controllerDeploymentLabel,
+								Key:      controller.ControllerDeploymentLabel,
 								Operator: metav1.LabelSelectorOpIn,
-								Values:   []string{IngressControllerDeploymentLabel(ci)},
+								Values:   []string{controller.IngressControllerDeploymentLabel(ci)},
 							},
 						},
 					},
@@ -235,7 +236,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	}
 
 	// Fill in the default certificate secret name.
-	secretName := RouterEffectiveDefaultCertificateSecretName(ci, deployment.Namespace)
+	secretName := controller.RouterEffectiveDefaultCertificateSecretName(ci, deployment.Namespace)
 	deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName = secretName.Name
 
 	return deployment, nil
@@ -244,7 +245,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 // currentRouterDeployment returns the current router deployment.
 func (r *reconciler) currentRouterDeployment(ci *operatorv1.IngressController) (*appsv1.Deployment, error) {
 	deployment := &appsv1.Deployment{}
-	if err := r.client.Get(context.TODO(), RouterDeploymentName(ci), deployment); err != nil {
+	if err := r.client.Get(context.TODO(), controller.RouterDeploymentName(ci), deployment); err != nil {
 		if errors.IsNotFound(err) {
 			return nil, nil
 		}

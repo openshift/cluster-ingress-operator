@@ -15,7 +15,7 @@ import (
 	"github.com/openshift/cluster-ingress-operator/pkg/operator"
 	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
 	operatorconfig "github.com/openshift/cluster-ingress-operator/pkg/operator/config"
-	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	statuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/status"
 
 	configv1 "github.com/openshift/api/config/v1"
 
@@ -67,8 +67,8 @@ func main() {
 	}
 	releaseVersion := os.Getenv("RELEASE_VERSION")
 	if len(releaseVersion) == 0 {
-		releaseVersion = controller.UnknownVersionValue
-		log.Info("RELEASE_VERSION environment variable missing", "release version", controller.UnknownVersionValue)
+		releaseVersion = statuscontroller.UnknownVersionValue
+		log.Info("RELEASE_VERSION environment variable missing", "release version", statuscontroller.UnknownVersionValue)
 	}
 
 	// Retrieve the cluster infrastructure config.

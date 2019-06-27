@@ -14,6 +14,8 @@ import (
 	certcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/certificate"
 	certpublishercontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/certificate-publisher"
 	dnscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/dns"
+	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
+	statuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/status"
 	operatorutil "github.com/openshift/cluster-ingress-operator/pkg/util"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -79,13 +81,21 @@ func New(config operatorconfig.Config, dnsProvider dns.Provider, kubeConfig *res
 		return nil, fmt.Errorf("failed to create operator manager: %v", err)
 	}
 
-	// Create and register the operator controller with the operator manager.
-	if _, err := operatorcontroller.New(mgr, operatorcontroller.Config{
+	// Create and register the ingress controller with the operator manager.
+	if _, err := ingresscontroller.New(mgr, ingresscontroller.Config{
+		Namespace:              config.Namespace,
+		IngressControllerImage: config.IngressControllerImage,
+	}); err != nil {
+		return nil, fmt.Errorf("failed to create ingress controller: %v", err)
+	}
+
+	// Set up the status controller.
+	if _, err := statuscontroller.New(mgr, statuscontroller.Config{
 		Namespace:              config.Namespace,
 		IngressControllerImage: config.IngressControllerImage,
 		OperatorReleaseVersion: config.OperatorReleaseVersion,
 	}); err != nil {
-		return nil, fmt.Errorf("failed to create operator controller: %v", err)
+		return nil, fmt.Errorf("failed to create status controller: %v", err)
 	}
 
 	// Set up the certificate controller

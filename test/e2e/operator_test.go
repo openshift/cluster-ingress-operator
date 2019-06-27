@@ -21,7 +21,8 @@ import (
 	iov1 "github.com/openshift/cluster-ingress-operator/pkg/api/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
-	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
@@ -111,7 +112,7 @@ func conditionsMatchExpected(expected, actual map[string]string) bool {
 func waitForClusterOperatorConditions(cl client.Client, conditions ...configv1.ClusterOperatorStatusCondition) error {
 	co := &configv1.ClusterOperator{}
 	return wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
-		if err := cl.Get(context.TODO(), types.NamespacedName{Name: ingresscontroller.IngressClusterOperatorName}, co); err != nil {
+		if err := cl.Get(context.TODO(), controller.IngressClusterOperatorName(), co); err != nil {
 			return false, err
 		}
 
@@ -233,7 +234,7 @@ func TestClusterProxyProtocol(t *testing.T) {
 	// Wait for the router deployment to exist.
 	deployment := &appsv1.Deployment{}
 	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
-		if err := cl.Get(context.TODO(), ingresscontroller.RouterDeploymentName(ic), deployment); err != nil {
+		if err := cl.Get(context.TODO(), controller.RouterDeploymentName(ic), deployment); err != nil {
 			return false, nil
 		}
 		return true, nil
@@ -260,7 +261,7 @@ func TestClusterProxyProtocol(t *testing.T) {
 	// Wait for the internal router service to exist.
 	internalService := &corev1.Service{}
 	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
-		if err := cl.Get(context.TODO(), ingresscontroller.InternalIngressControllerServiceName(ic), internalService); err != nil {
+		if err := cl.Get(context.TODO(), controller.InternalIngressControllerServiceName(ic), internalService); err != nil {
 			return false, nil
 		}
 		return true, nil
@@ -293,7 +294,7 @@ func TestUpdateDefaultIngressController(t *testing.T) {
 	// Wait for the CA certificate configmap to exist.
 	configmap := &corev1.ConfigMap{}
 	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
-		if err := cl.Get(context.TODO(), ingresscontroller.RouterCAConfigMapName(), configmap); err != nil {
+		if err := cl.Get(context.TODO(), controller.RouterCAConfigMapName(), configmap); err != nil {
 			if !errors.IsNotFound(err) {
 				t.Logf("failed to get CA certificate configmap, will retry: %v", err)
 			}
@@ -309,11 +310,11 @@ func TestUpdateDefaultIngressController(t *testing.T) {
 	// ingress controller, or the default if none is set, and store the
 	// secret name (if any) so we can reset it at the end of the test.
 	deployment := &appsv1.Deployment{}
-	if err := cl.Get(context.TODO(), ingresscontroller.RouterDeploymentName(ic), deployment); err != nil {
+	if err := cl.Get(context.TODO(), controller.RouterDeploymentName(ic), deployment); err != nil {
 		t.Fatalf("failed to get default router deployment: %v", err)
 	}
 	originalSecret := ic.Spec.DefaultCertificate.DeepCopy()
-	expectedSecretName := ingresscontroller.RouterOperatorGeneratedDefaultCertificateSecretName(ic, deployment.Namespace).Name
+	expectedSecretName := controller.RouterOperatorGeneratedDefaultCertificateSecretName(ic, deployment.Namespace).Name
 	if originalSecret != nil {
 		expectedSecretName = originalSecret.Name
 	}
@@ -352,7 +353,7 @@ func TestUpdateDefaultIngressController(t *testing.T) {
 
 	// Wait for the CA certificate configmap to be deleted.
 	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
-		if err := cl.Get(context.TODO(), ingresscontroller.RouterCAConfigMapName(), configmap); err != nil {
+		if err := cl.Get(context.TODO(), controller.RouterCAConfigMapName(), configmap); err != nil {
 			if errors.IsNotFound(err) {
 				return true, nil
 			}
@@ -375,7 +376,7 @@ func TestUpdateDefaultIngressController(t *testing.T) {
 
 	// Wait for the CA certificate configmap to be recreated.
 	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
-		if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: ingresscontroller.GlobalMachineSpecifiedConfigNamespace, Name: "router-ca"}, configmap); err != nil {
+		if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: controller.GlobalMachineSpecifiedConfigNamespace, Name: "router-ca"}, configmap); err != nil {
 			if !errors.IsNotFound(err) {
 				t.Logf("failed to get CA certificate configmap, will retry: %v", err)
 			}
@@ -470,7 +471,7 @@ func TestIngressControllerScale(t *testing.T) {
 		t.Fatalf("failed to get ingresscontroller %s: %v", name, err)
 	}
 
-	deploymentName := ingresscontroller.RouterDeploymentName(ic)
+	deploymentName := controller.RouterDeploymentName(ic)
 	deployment := &appsv1.Deployment{}
 	if err := cl.Get(context.TODO(), deploymentName, deployment); err != nil {
 		t.Fatalf("failed to get deployment %s: %v", deploymentName, err)
@@ -565,7 +566,7 @@ func TestRouterCACertificate(t *testing.T) {
 	var certData []byte
 	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
 		cm := &corev1.ConfigMap{}
-		err := cl.Get(context.TODO(), ingresscontroller.RouterCAConfigMapName(), cm)
+		err := cl.Get(context.TODO(), controller.RouterCAConfigMapName(), cm)
 		if err != nil {
 			return false, nil
 		}
@@ -585,7 +586,7 @@ func TestRouterCACertificate(t *testing.T) {
 		t.Fatalf("failed to parse CA certificate")
 	}
 
-	wildcardRecordName := ingresscontroller.WildcardDNSRecordName(ic)
+	wildcardRecordName := controller.WildcardDNSRecordName(ic)
 	wildcardRecord := &iov1.DNSRecord{}
 	err = cl.Get(context.TODO(), wildcardRecordName, wildcardRecord)
 	if err != nil {
@@ -739,7 +740,7 @@ func TestInternalLoadBalancer(t *testing.T) {
 	}
 
 	lbService := &corev1.Service{}
-	if err := cl.Get(context.TODO(), ingresscontroller.LoadBalancerServiceName(ic), lbService); err != nil {
+	if err := cl.Get(context.TODO(), controller.LoadBalancerServiceName(ic), lbService); err != nil {
 		t.Fatalf("failed to get LoadBalancer service: %v", err)
 	}
 

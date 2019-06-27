@@ -1,4 +1,4 @@
-package controller
+package status
 
 import (
 	"context"
@@ -10,48 +10,97 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
+	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
+	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 )
 
 const (
-	IngressClusterOperatorName = "ingress"
-
 	OperatorVersionName          = "operator"
 	IngressControllerVersionName = "ingress-controller"
 	UnknownVersionValue          = "unknown"
 
 	ingressesEqualConditionMessage = "desired and current number of IngressControllers are equal"
+
+	controllerName = "status_controller"
 )
 
-// syncOperatorStatus computes the operator's current status and therefrom
-// creates or updates the ClusterOperator resource for the operator.
-func (r *reconciler) syncOperatorStatus() error {
+var log = logf.Logger.WithName(controllerName)
+
+// New creates the status controller. This is the controller that handles all
+// the logic for creating the ClusterOperator operator and updating its status.
+//
+// The controller watches IngressController resources in the manager namespace
+// and uses them to compute the operator status.
+func New(mgr manager.Manager, config Config) (controller.Controller, error) {
+	reconciler := &reconciler{
+		Config: config,
+		client: mgr.GetClient(),
+		cache:  mgr.GetCache(),
+	}
+	c, err := controller.New(controllerName, mgr, controller.Options{Reconciler: reconciler})
+	if err != nil {
+		return nil, err
+	}
+	if err := c.Watch(&source.Kind{Type: &operatorv1.IngressController{}}, &handler.EnqueueRequestForObject{}); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+// Config holds all the things necessary for the controller to run.
+type Config struct {
+	IngressControllerImage string
+	OperatorReleaseVersion string
+	Namespace              string
+}
+
+// reconciler handles the actual status reconciliation logic in response to
+// events.
+type reconciler struct {
+	Config
+
+	client client.Client
+	cache  cache.Cache
+}
+
+// Reconcile computes the operator's current status and therefrom creates or
+// updates the ClusterOperator resource for the operator.
+func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, error) {
+	log.Info("Reconciling", "request", request)
+
 	ns := manifests.RouterNamespace()
 
-	co := &configv1.ClusterOperator{ObjectMeta: metav1.ObjectMeta{Name: IngressClusterOperatorName}}
-	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: co.Name}, co); err != nil {
+	co := &configv1.ClusterOperator{ObjectMeta: metav1.ObjectMeta{Name: operatorcontroller.IngressClusterOperatorName().Name}}
+	if err := r.client.Get(context.TODO(), operatorcontroller.IngressClusterOperatorName(), co); err != nil {
 		if errors.IsNotFound(err) {
 			initializeClusterOperator(co)
 			if err := r.client.Create(context.TODO(), co); err != nil {
-				return fmt.Errorf("failed to create clusteroperator %s: %v", co.Name, err)
+				return reconcile.Result{}, fmt.Errorf("failed to create clusteroperator %s: %v", co.Name, err)
 			}
 			log.Info("created clusteroperator", "object", co)
 		} else {
-			return fmt.Errorf("failed to get clusteroperator %s: %v", co.Name, err)
+			return reconcile.Result{}, fmt.Errorf("failed to get clusteroperator %s: %v", co.Name, err)
 		}
 	}
 	oldStatus := co.Status.DeepCopy()
 
 	ingresses, ns, err := r.getOperatorState(ns.Name)
 	if err != nil {
-		return fmt.Errorf("failed to get operator state: %v", err)
+		return reconcile.Result{}, fmt.Errorf("failed to get operator state: %v", err)
 	}
 
 	related := []configv1.ObjectReference{
@@ -59,10 +108,12 @@ func (r *reconciler) syncOperatorStatus() error {
 			Resource: "namespaces",
 			Name:     "openshift-ingress-operator",
 		},
-		{
+	}
+	if ns != nil {
+		related = append(related, configv1.ObjectReference{
 			Resource: "namespaces",
 			Name:     ns.Name,
-		},
+		})
 	}
 	for _, ingress := range ingresses {
 		related = append(related, configv1.ObjectReference{
@@ -82,11 +133,11 @@ func (r *reconciler) syncOperatorStatus() error {
 
 	if !operatorStatusesEqual(*oldStatus, co.Status) {
 		if err := r.client.Status().Update(context.TODO(), co); err != nil {
-			return fmt.Errorf("failed to update clusteroperator %s: %v", co.Name, err)
+			return reconcile.Result{}, fmt.Errorf("failed to update clusteroperator %s: %v", co.Name, err)
 		}
 	}
 
-	return nil
+	return reconcile.Result{}, nil
 }
 
 // Populate versions and conditions in cluster operator status as CVO expects these fields.
