@@ -52,3 +52,27 @@ spec:
           resources:
             requests:
               cpu: 10m
+        - name: kube-rbac-proxy
+          image: quay.io/openshift/origin-kube-rbac-proxy:latest
+          args:
+          - --logtostderr
+          - --secure-listen-address=:9393
+          - --tls-cipher-suites=TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_RSA_WITH_AES_128_CBC_SHA256,TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256,TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256
+          - --upstream=http://127.0.0.1:60000/
+          - --tls-cert-file=/etc/tls/private/tls.crt
+          - --tls-private-key-file=/etc/tls/private/tls.key
+          ports:
+          - containerPort: 9393
+            name: metrics
+          resources:
+            requests:
+              cpu: 10m
+              memory: 40Mi
+          volumeMounts:
+          - mountPath: /etc/tls/private
+            name: metrics-tls
+            readOnly: true
+      volumes:
+      - name: metrics-tls
+        secret:
+          secretName: metrics-tls
