@@ -37,9 +37,6 @@ spec:
           terminationMessagePolicy: FallbackToLogsOnError
           imagePullPolicy: IfNotPresent
           image: openshift/origin-cluster-ingress-operator:latest
-          ports:
-          - containerPort: 60000
-            name: metrics
           command:
           - ingress-operator
           env:
