@@ -74,6 +74,10 @@ type DNSRecordList struct {
 	Items           []DNSRecord `json:"items"`
 }
 
+const (
+	IngressControllerAdmittedConditionType = "Admitted"
+)
+
 func init() {
 	SchemeBuilder.Register(&DNSRecord{}, &DNSRecordList{})
 }

@@ -16,7 +16,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	utilclock "k8s.io/apimachinery/pkg/util/clock"
 )
+
+// clock is to enable unit testing
+var clock utilclock.Clock = utilclock.RealClock{}
 
 // syncIngressControllerStatus computes the current status of ic and
 // updates status upon any changes since last sync.
@@ -30,23 +34,9 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	updated.Status.AvailableReplicas = deployment.Status.AvailableReplicas
 	updated.Status.Selector = selector.String()
 
-	updated.Status.Conditions = []operatorv1.OperatorCondition{}
-	updated.Status.Conditions = append(updated.Status.Conditions, computeIngressStatusConditions(updated.Status.Conditions, deployment)...)
-	updated.Status.Conditions = append(updated.Status.Conditions, computeLoadBalancerStatus(ic, service, operandEvents)...)
-	updated.Status.Conditions = append(updated.Status.Conditions, computeDNSStatus(ic, wildcardRecord, dnsConfig)...)
-
-	for i := range updated.Status.Conditions {
-		newCondition := &updated.Status.Conditions[i]
-		var oldCondition *operatorv1.OperatorCondition
-		for j, possibleOldCondition := range ic.Status.Conditions {
-			if possibleOldCondition.Type == newCondition.Type {
-				old := ic.Status.Conditions[j]
-				oldCondition = &old
-				break
-			}
-		}
-		setIngressLastTransitionTime(newCondition, oldCondition)
-	}
+	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, computeIngressStatusConditions(deployment)...)
+	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, computeLoadBalancerStatus(ic, service, operandEvents)...)
+	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, computeDNSStatus(ic, wildcardRecord, dnsConfig)...)
 
 	if !ingressStatusesEqual(updated.Status, ic.Status) {
 		if err := r.client.Status().Update(context.TODO(), updated); err != nil {
@@ -57,17 +47,44 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	return nil
 }
 
-// computeIngressStatusConditions computes the ingress controller's current state.
-func computeIngressStatusConditions(oldConditions []operatorv1.OperatorCondition, deployment *appsv1.Deployment) []operatorv1.OperatorCondition {
-	oldAvailableCondition := getIngressAvailableCondition(oldConditions)
+// mergeConditions adds or updates matching conditions, and updates
+// the transition time if details of a condition have changed. Returns
+// the updated condition array.
+func mergeConditions(conditions []operatorv1.OperatorCondition, updates ...operatorv1.OperatorCondition) []operatorv1.OperatorCondition {
+	now := metav1.NewTime(clock.Now())
+	var additions []operatorv1.OperatorCondition
+	for i, update := range updates {
+		add := true
+		for j, cond := range conditions {
+			if cond.Type == update.Type {
+				add = false
+				if conditionChanged(cond, update) {
+					conditions[j].Status = update.Status
+					conditions[j].Reason = update.Reason
+					conditions[j].Message = update.Message
+					conditions[j].LastTransitionTime = now
+					break
+				}
+			}
+		}
+		if add {
+			updates[i].LastTransitionTime = now
+			additions = append(additions, updates[i])
+		}
+	}
+	conditions = append(conditions, additions...)
+	return conditions
+}
 
+// computeIngressStatusConditions computes the ingress controller's current state.
+func computeIngressStatusConditions(deployment *appsv1.Deployment) []operatorv1.OperatorCondition {
 	return []operatorv1.OperatorCondition{
-		computeIngressAvailableCondition(oldAvailableCondition, deployment),
+		computeIngressAvailableCondition(deployment),
 	}
 }
 
 // computeIngressAvailableCondition computes the ingress controller's current Available status state.
-func computeIngressAvailableCondition(oldAvailableCondition *operatorv1.OperatorCondition, deployment *appsv1.Deployment) operatorv1.OperatorCondition {
+func computeIngressAvailableCondition(deployment *appsv1.Deployment) operatorv1.OperatorCondition {
 	availableCondition := operatorv1.OperatorCondition{
 		Type: operatorv1.IngressControllerAvailableConditionType,
 	}
@@ -83,45 +100,31 @@ func computeIngressAvailableCondition(oldAvailableCondition *operatorv1.Operator
 	return availableCondition
 }
 
-// getIngressAvailableCondition fetches ingress controller's available condition from the given conditions.
-func getIngressAvailableCondition(conditions []operatorv1.OperatorCondition) *operatorv1.OperatorCondition {
-	var availableCondition *operatorv1.OperatorCondition
-	for i := range conditions {
-		switch conditions[i].Type {
-		case operatorv1.IngressControllerAvailableConditionType:
-			availableCondition = &conditions[i]
-			break
-		}
-	}
-
-	return availableCondition
-}
-
-// setIngressLastTransitionTime sets LastTransitionTime for the given ingress controller condition.
-// If the condition has changed, it will assign a new timestamp otherwise keeps the old timestamp.
-func setIngressLastTransitionTime(condition, oldCondition *operatorv1.OperatorCondition) {
-	if oldCondition != nil && condition.Status == oldCondition.Status &&
-		condition.Reason == oldCondition.Reason && condition.Message == oldCondition.Message {
-		condition.LastTransitionTime = oldCondition.LastTransitionTime
-	} else {
-		condition.LastTransitionTime = metav1.Now()
-	}
-}
-
 // ingressStatusesEqual compares two IngressControllerStatus values.  Returns true
 // if the provided values should be considered equal for the purpose of determining
 // whether an update is necessary, false otherwise.
 func ingressStatusesEqual(a, b operatorv1.IngressControllerStatus) bool {
-	conditionCmpOpts := []cmp.Option{
-		cmpopts.EquateEmpty(),
-		cmpopts.SortSlices(func(a, b operatorv1.OperatorCondition) bool { return a.Type < b.Type }),
-	}
-	if !cmp.Equal(a.Conditions, b.Conditions, conditionCmpOpts...) || a.AvailableReplicas != b.AvailableReplicas ||
+	if !conditionsEqual(a.Conditions, b.Conditions) || a.AvailableReplicas != b.AvailableReplicas ||
 		a.Selector != b.Selector {
 		return false
 	}
 
 	return true
+}
+
+func conditionsEqual(a, b []operatorv1.OperatorCondition) bool {
+	conditionCmpOpts := []cmp.Option{
+		cmpopts.EquateEmpty(),
+		cmpopts.SortSlices(func(a, b operatorv1.OperatorCondition) bool { return a.Type < b.Type }),
+	}
+	if !cmp.Equal(a, b, conditionCmpOpts...) {
+		return false
+	}
+	return true
+}
+
+func conditionChanged(a, b operatorv1.OperatorCondition) bool {
+	return a.Status != b.Status || a.Reason != b.Reason || a.Message != b.Message
 }
 
 // computeLoadBalancerStatus returns the complete set of current

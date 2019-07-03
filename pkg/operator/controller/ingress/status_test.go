@@ -3,6 +3,7 @@ package ingress
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -15,6 +16,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	utilclock "k8s.io/apimachinery/pkg/util/clock"
 )
 
 func ingressController(name string, t operatorv1.EndpointPublishingStrategyType) *operatorv1.IngressController {
@@ -65,17 +67,6 @@ func provisionedLBservice(owner string) *corev1.Service {
 	}
 }
 
-func clusterIPservice(name string) *corev1.Service {
-	return &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: name + "-internal",
-		},
-		Spec: corev1.ServiceSpec{
-			Type: corev1.ServiceTypeClusterIP,
-		},
-	}
-}
-
 func failedCreateLBEvent(service string) corev1.Event {
 	return corev1.Event{
 		Type:    "Warning",
@@ -105,11 +96,12 @@ func schedulerEvent() corev1.Event {
 	}
 }
 
-func cond(t string, status operatorv1.ConditionStatus, reason string) operatorv1.OperatorCondition {
+func cond(t string, status operatorv1.ConditionStatus, reason string, lt time.Time) operatorv1.OperatorCondition {
 	return operatorv1.OperatorCondition{
-		Type:   t,
-		Status: status,
-		Reason: reason,
+		Type:               t,
+		Status:             status,
+		Reason:             reason,
+		LastTransitionTime: metav1.NewTime(lt),
 	}
 }
 
@@ -126,8 +118,8 @@ func TestComputeLoadBalancerStatus(t *testing.T) {
 			controller: ingressController("default", operatorv1.LoadBalancerServiceStrategyType),
 			service:    provisionedLBservice("default"),
 			expect: []operatorv1.OperatorCondition{
-				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "WantedByEndpointPublishingStrategy"),
-				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionTrue, "LoadBalancerProvisioned"),
+				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "WantedByEndpointPublishingStrategy", clock.Now()),
+				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionTrue, "LoadBalancerProvisioned", clock.Now()),
 			},
 		},
 		{
@@ -139,8 +131,8 @@ func TestComputeLoadBalancerStatus(t *testing.T) {
 				failedCreateLBEvent("secondary"),
 			},
 			expect: []operatorv1.OperatorCondition{
-				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "WantedByEndpointPublishingStrategy"),
-				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionFalse, "LoadBalancerPending"),
+				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "WantedByEndpointPublishingStrategy", clock.Now()),
+				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionFalse, "LoadBalancerPending", clock.Now()),
 			},
 		},
 		{
@@ -153,23 +145,23 @@ func TestComputeLoadBalancerStatus(t *testing.T) {
 				failedCreateLBEvent("default"),
 			},
 			expect: []operatorv1.OperatorCondition{
-				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "WantedByEndpointPublishingStrategy"),
-				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionFalse, "CreatingLoadBalancerFailed"),
+				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "WantedByEndpointPublishingStrategy", clock.Now()),
+				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionFalse, "CreatingLoadBalancerFailed", clock.Now()),
 			},
 		},
 		{
 			name:       "unmanaged",
 			controller: ingressController("default", operatorv1.HostNetworkStrategyType),
 			expect: []operatorv1.OperatorCondition{
-				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionFalse, "UnsupportedEndpointPublishingStrategy"),
+				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionFalse, "UnsupportedEndpointPublishingStrategy", clock.Now()),
 			},
 		},
 		{
 			name:       "lb service missing",
 			controller: ingressController("default", operatorv1.LoadBalancerServiceStrategyType),
 			expect: []operatorv1.OperatorCondition{
-				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "WantedByEndpointPublishingStrategy"),
-				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionFalse, "ServiceNotFound"),
+				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "WantedByEndpointPublishingStrategy", clock.Now()),
+				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionFalse, "ServiceNotFound", clock.Now()),
 			},
 		},
 	}
@@ -219,7 +211,7 @@ func TestComputeIngressStatusConditions(t *testing.T) {
 				Status: tc.condStatus,
 			},
 		}
-		actual := computeIngressStatusConditions([]operatorv1.OperatorCondition{}, deploy)
+		actual := computeIngressStatusConditions(deploy)
 		conditionsCmpOpts := []cmp.Option{
 			cmpopts.IgnoreFields(operatorv1.OperatorCondition{}, "LastTransitionTime", "Reason", "Message"),
 			cmpopts.EquateEmpty(),
@@ -347,6 +339,56 @@ func TestIngressStatusesEqual(t *testing.T) {
 	for _, tc := range testCases {
 		if actual := ingressStatusesEqual(tc.a, tc.b); actual != tc.expected {
 			t.Fatalf("%q: expected %v, got %v", tc.description, tc.expected, actual)
+		}
+	}
+}
+
+func TestMergeConditions(t *testing.T) {
+	// Inject a fake clock and don't forget to reset it
+	fakeClock := utilclock.NewFakeClock(time.Time{})
+	clock = fakeClock
+	defer func() {
+		clock = utilclock.RealClock{}
+	}()
+
+	start := fakeClock.Now()
+	middle := start.Add(1 * time.Minute)
+	later := start.Add(2 * time.Minute)
+
+	tests := map[string]struct {
+		conditions []operatorv1.OperatorCondition
+		updates    []operatorv1.OperatorCondition
+		expected   []operatorv1.OperatorCondition
+	}{
+		"updates": {
+			conditions: []operatorv1.OperatorCondition{
+				cond("A", "False", "Reason", start),
+				cond("B", "True", "Reason", start),
+				cond("Ignored", "True", "Reason", start),
+			},
+			updates: []operatorv1.OperatorCondition{
+				cond("A", "True", "Reason", middle),
+				cond("B", "True", "Reason", middle),
+				cond("C", "False", "Reason", middle),
+			},
+			expected: []operatorv1.OperatorCondition{
+				cond("A", "True", "Reason", later),
+				cond("B", "True", "Reason", start),
+				cond("C", "False", "Reason", later),
+				cond("Ignored", "True", "Reason", start),
+			},
+		},
+	}
+
+	// Simulate the passage of time between original condition creation
+	// and update processing
+	fakeClock.SetTime(later)
+
+	for name, test := range tests {
+		t.Logf("test: %s", name)
+		actual := mergeConditions(test.conditions, test.updates...)
+		if !conditionsEqual(test.expected, actual) {
+			t.Errorf("expected:\n%v\nactual:\n%v", toYaml(test.expected), toYaml(actual))
 		}
 	}
 }
