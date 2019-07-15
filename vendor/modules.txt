@@ -139,7 +139,7 @@ github.com/matttproud/golang_protobuf_extensions/pbutil
 github.com/modern-go/concurrent
 # github.com/modern-go/reflect2 v1.0.1
 github.com/modern-go/reflect2
-# github.com/openshift/api v3.9.1-0.20190617172503-2024105dd4c3+incompatible
+# github.com/openshift/api v3.9.1-0.20190713024856-f15120709e0a+incompatible
 github.com/openshift/api/config/v1
 github.com/openshift/api/operator/v1
 github.com/openshift/api/route/v1
@@ -335,6 +335,7 @@ k8s.io/apimachinery/pkg/util/yaml
 k8s.io/apimachinery/pkg/api/errors
 k8s.io/apimachinery/pkg/util/wait
 k8s.io/apimachinery/pkg/apis/meta/v1/unstructured
+k8s.io/apimachinery/pkg/util/clock
 k8s.io/apimachinery/pkg/util/intstr
 k8s.io/apimachinery/pkg/api/meta
 k8s.io/apimachinery/pkg/util/runtime
@@ -352,7 +353,6 @@ k8s.io/apimachinery/pkg/util/rand
 k8s.io/apimachinery/pkg/util/validation/field
 k8s.io/apimachinery/pkg/runtime/serializer/streaming
 k8s.io/apimachinery/pkg/util/net
-k8s.io/apimachinery/pkg/util/clock
 k8s.io/apimachinery/pkg/util/strategicpatch
 k8s.io/apimachinery/pkg/apis/meta/v1beta1
 k8s.io/apimachinery/pkg/version

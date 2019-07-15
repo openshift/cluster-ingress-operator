@@ -3,7 +3,6 @@ module github.com/openshift/cluster-ingress-operator
 go 1.12
 
 require (
-	cloud.google.com/go v0.37.2 // indirect
 	github.com/Azure/azure-sdk-for-go v30.0.0+incompatible
 	github.com/Azure/go-autorest/autorest v0.2.0
 	github.com/Azure/go-autorest/autorest/adal v0.1.0
@@ -19,7 +18,7 @@ require (
 	github.com/hashicorp/golang-lru v0.5.1 // indirect
 	github.com/imdario/mergo v0.3.7 // indirect
 	github.com/kevinburke/go-bindata v3.11.0+incompatible
-	github.com/openshift/api v3.9.1-0.20190617172503-2024105dd4c3+incompatible
+	github.com/openshift/api v3.9.1-0.20190713024856-f15120709e0a+incompatible
 	github.com/openshift/library-go v0.0.0-20190613200606-e617f832835d
 	github.com/pborman/uuid v0.0.0-20180906182336-adf5a7427709 // indirect
 	github.com/pkg/errors v0.8.1
