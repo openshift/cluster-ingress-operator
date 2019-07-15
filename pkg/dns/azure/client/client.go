@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"net/http"
 
 	"github.com/Azure/azure-sdk-for-go/services/dns/mgmt/2017-10-01/dns"
 	"github.com/pkg/errors"
@@ -18,6 +19,7 @@ type Config struct {
 	ClientID       string
 	ClientSecret   string
 	TenantID       string
+	HTTPClient     *http.Client
 }
 
 // ARecord is a DNS A record.
@@ -50,6 +52,11 @@ func New(config Config, userAgentExtension string) (DNSClient, error) {
 	rc := dns.NewRecordSetsClient(config.SubscriptionID)
 	rc.AddToUserAgent(userAgentExtension)
 	rc.Authorizer = authorizer
+
+	if config.HTTPClient != nil {
+		zc.Sender = config.HTTPClient
+		rc.Sender = config.HTTPClient
+	}
 	return &dnsClient{zones: zc, recordSets: rc, config: config}, nil
 }
 

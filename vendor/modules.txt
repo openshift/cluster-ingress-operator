@@ -202,10 +202,11 @@ go.uber.org/zap/internal/exit
 # golang.org/x/crypto v0.0.0-20190404164418-38d8ce5564a5
 golang.org/x/crypto/ssh/terminal
 # golang.org/x/net v0.0.0-20190501004415-9ce7a6920f09
+golang.org/x/net/http/httpproxy
+golang.org/x/net/idna
 golang.org/x/net/http2
 golang.org/x/net/http/httpguts
 golang.org/x/net/http2/hpack
-golang.org/x/net/idna
 golang.org/x/net/context
 golang.org/x/net/trace
 golang.org/x/net/context/ctxhttp

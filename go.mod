@@ -28,6 +28,7 @@ require (
 	github.com/spf13/cobra v0.0.4 // indirect
 	go.uber.org/zap v1.9.1
 	golang.org/x/crypto v0.0.0-20190404164418-38d8ce5564a5 // indirect
+	golang.org/x/net v0.0.0-20190501004415-9ce7a6920f09
 	golang.org/x/oauth2 v0.0.0-20190402181905-9f3314589c9a // indirect
 	golang.org/x/time v0.0.0-20190308202827-9d24e82272b4 // indirect
 	google.golang.org/appengine v1.5.0 // indirect

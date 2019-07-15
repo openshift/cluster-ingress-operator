@@ -3,14 +3,14 @@ package azure
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 
+	configv1 "github.com/openshift/api/config/v1"
 	"github.com/pkg/errors"
 
-	configv1 "github.com/openshift/api/config/v1"
-
 	iov1 "github.com/openshift/cluster-ingress-operator/pkg/api/v1"
-	dns "github.com/openshift/cluster-ingress-operator/pkg/dns"
+	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns/azure/client"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 )
@@ -34,6 +34,8 @@ type Config struct {
 	SubscriptionID string
 	// DNS is public and private DNS zone configuration for the cluster.
 	DNS *configv1.DNS
+	// HTTPClient is a custom HTTP client to use for API connectivity.
+	HTTPClient *http.Client
 }
 
 type provider struct {
@@ -51,6 +53,7 @@ func NewProvider(config Config, operatorReleaseVersion string) (dns.Provider, er
 		ClientID:       config.ClientID,
 		ClientSecret:   config.ClientSecret,
 		TenantID:       config.TenantID,
+		HTTPClient:     config.HTTPClient,
 	}, userAgent(operatorReleaseVersion))
 	if err != nil {
 		return nil, err

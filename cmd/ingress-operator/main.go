@@ -3,7 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
+	"net/http"
+	"net/url"
 	"os"
+	"time"
+
+	"golang.org/x/net/http/httpproxy"
 
 	"github.com/ghodss/yaml"
 
@@ -21,6 +27,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -92,6 +99,23 @@ func main() {
 		os.Exit(1)
 	}
 
+	// If the cluster proxy config specifies proxy info, create an HTTP client using the proxy
+	// which can be used to configure the HTTP client for all non-apiserver connections.
+	proxyConfig := &configv1.Proxy{}
+	if err := kubeClient.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, proxyConfig); err != nil {
+		if errors.IsNotFound(err) {
+			log.Info("cluster proxy config was not found")
+		} else {
+			log.Error(err, "failed to get proxy 'cluster'")
+			os.Exit(1)
+		}
+	}
+	var proxyClient *http.Client
+	if len(proxyConfig.Status.HTTPProxy) > 0 || len(proxyConfig.Status.HTTPSProxy) > 0 {
+		log.Info("using HTTP client with cluster proxy config: %#v", proxyConfig)
+		proxyClient = newProxyClient(proxyConfig)
+	}
+
 	operatorConfig := operatorconfig.Config{
 		OperatorReleaseVersion: releaseVersion,
 		Namespace:              operatorNamespace,
@@ -99,7 +123,7 @@ func main() {
 	}
 
 	// Set up the DNS manager.
-	dnsProvider, err := createDNSProvider(kubeClient, operatorConfig, dnsConfig, platformStatus)
+	dnsProvider, err := createDNSProvider(kubeClient, operatorConfig, dnsConfig, platformStatus, proxyClient)
 	if err != nil {
 		log.Error(err, "failed to create DNS manager")
 		os.Exit(1)
@@ -119,7 +143,7 @@ func main() {
 
 // createDNSManager creates a DNS manager compatible with the given cluster
 // configuration.
-func createDNSProvider(cl client.Client, operatorConfig operatorconfig.Config, dnsConfig *configv1.DNS, platformStatus *configv1.PlatformStatus) (dns.Provider, error) {
+func createDNSProvider(cl client.Client, operatorConfig operatorconfig.Config, dnsConfig *configv1.DNS, platformStatus *configv1.PlatformStatus, httpClient *http.Client) (dns.Provider, error) {
 	var dnsProvider dns.Provider
 	switch platformStatus.Type {
 	case configv1.AWSPlatformType:
@@ -130,10 +154,11 @@ func createDNSProvider(cl client.Client, operatorConfig operatorconfig.Config, d
 		}
 		log.Info("using aws creds from secret", "namespace", awsCreds.Namespace, "name", awsCreds.Name)
 		provider, err := awsdns.NewProvider(awsdns.Config{
-			AccessID:  string(awsCreds.Data["aws_access_key_id"]),
-			AccessKey: string(awsCreds.Data["aws_secret_access_key"]),
-			DNS:       dnsConfig,
-			Region:    platformStatus.AWS.Region,
+			AccessID:   string(awsCreds.Data["aws_access_key_id"]),
+			AccessKey:  string(awsCreds.Data["aws_secret_access_key"]),
+			DNS:        dnsConfig,
+			Region:     platformStatus.AWS.Region,
+			HTTPClient: httpClient,
 		}, operatorConfig.OperatorReleaseVersion)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create AWS DNS manager: %v", err)
@@ -153,6 +178,7 @@ func createDNSProvider(cl client.Client, operatorConfig operatorconfig.Config, d
 			TenantID:       string(azureCreds.Data["azure_tenant_id"]),
 			SubscriptionID: string(azureCreds.Data["azure_subscription_id"]),
 			DNS:            dnsConfig,
+			HTTPClient:     httpClient,
 		}, operatorConfig.OperatorReleaseVersion)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create Azure DNS manager: %v", err)
@@ -207,4 +233,32 @@ func getPlatformStatus(client client.Client, infra *configv1.Infrastructure) (*c
 			Region: ic.Platform.AWS.Region,
 		},
 	}, nil
+}
+
+// newProxyClient returns an http.Client based on http.DefaultClient with Proxy
+// set to a proxy function based on proxyConfig.
+func newProxyClient(proxyConfig *configv1.Proxy) *http.Client {
+	cfg := &httpproxy.Config{
+		HTTPProxy:  proxyConfig.Status.HTTPProxy,
+		HTTPSProxy: proxyConfig.Status.HTTPSProxy,
+		NoProxy:    proxyConfig.Status.NoProxy,
+	}
+	proxyFn := cfg.ProxyFunc()
+	proxy := func(req *http.Request) (*url.URL, error) {
+		return proxyFn(req.URL)
+	}
+	return &http.Client{
+		Transport: &http.Transport{
+			Proxy: proxy,
+			DialContext: (&net.Dialer{
+				Timeout:   30 * time.Second,
+				KeepAlive: 30 * time.Second,
+				DualStack: true,
+			}).DialContext,
+			MaxIdleConns:          100,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		},
+	}
 }

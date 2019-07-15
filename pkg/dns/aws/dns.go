@@ -2,6 +2,7 @@ package aws
 
 import (
 	"fmt"
+	"net/http"
 	"reflect"
 	"strings"
 	"sync"
@@ -73,13 +74,15 @@ type Config struct {
 	Region string
 	// DNS is public and private DNS zone configuration for the cluster.
 	DNS *configv1.DNS
+	// HTTPClient is a custom HTTP client to use for API connectivity.
+	HTTPClient *http.Client
 }
 
 func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error) {
-	creds := credentials.NewStaticCredentials(config.AccessID, config.AccessKey, "")
 	sess, err := session.NewSessionWithOptions(session.Options{
 		Config: aws.Config{
-			Credentials: creds,
+			Credentials: credentials.NewStaticCredentials(config.AccessID, config.AccessKey, ""),
+			HTTPClient:  config.HTTPClient,
 		},
 		SharedConfigState: session.SharedConfigEnable,
 	})
