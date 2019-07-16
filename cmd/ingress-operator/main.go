@@ -86,17 +86,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	// TODO: This can be replaced by cluster API when
-	// https://github.com/openshift/installer/pull/1725 is available.
-	clusterConfig := &corev1.ConfigMap{}
-	err = kubeClient.Get(context.TODO(), types.NamespacedName{Namespace: "kube-system", Name: "cluster-config-v1"}, clusterConfig)
+	platformStatus, err := getPlatformStatus(kubeClient, infraConfig)
 	if err != nil {
-		log.Error(err, "failed to get configmap 'kube-system/cluster-config-v1'")
-		os.Exit(1)
-	}
-	installConfig, err := newInstallConfig(clusterConfig)
-	if err != nil {
-		log.Error(err, "failed to extract install config from cluster config")
+		log.Error(err, "failed to get platform status")
 		os.Exit(1)
 	}
 
@@ -107,7 +99,7 @@ func main() {
 	}
 
 	// Set up the DNS manager.
-	dnsProvider, err := createDNSProvider(kubeClient, operatorConfig, infraConfig, dnsConfig, installConfig)
+	dnsProvider, err := createDNSProvider(kubeClient, operatorConfig, dnsConfig, platformStatus)
 	if err != nil {
 		log.Error(err, "failed to create DNS manager")
 		os.Exit(1)
@@ -127,9 +119,9 @@ func main() {
 
 // createDNSManager creates a DNS manager compatible with the given cluster
 // configuration.
-func createDNSProvider(cl client.Client, operatorConfig operatorconfig.Config, infraConfig *configv1.Infrastructure, dnsConfig *configv1.DNS, installConfig *installConfig) (dns.Provider, error) {
+func createDNSProvider(cl client.Client, operatorConfig operatorconfig.Config, dnsConfig *configv1.DNS, platformStatus *configv1.PlatformStatus) (dns.Provider, error) {
 	var dnsProvider dns.Provider
-	switch infraConfig.Status.Platform {
+	switch platformStatus.Type {
 	case configv1.AWSPlatformType:
 		awsCreds := &corev1.Secret{}
 		err := cl.Get(context.TODO(), types.NamespacedName{Namespace: operatorConfig.Namespace, Name: cloudCredentialsSecretName}, awsCreds)
@@ -141,7 +133,7 @@ func createDNSProvider(cl client.Client, operatorConfig operatorconfig.Config, i
 			AccessID:  string(awsCreds.Data["aws_access_key_id"]),
 			AccessKey: string(awsCreds.Data["aws_secret_access_key"]),
 			DNS:       dnsConfig,
-			Region:    installConfig.Platform.AWS.Region,
+			Region:    platformStatus.AWS.Region,
 		}, operatorConfig.OperatorReleaseVersion)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create AWS DNS manager: %v", err)
@@ -172,17 +164,35 @@ func createDNSProvider(cl client.Client, operatorConfig operatorconfig.Config, i
 	return dnsProvider, nil
 }
 
-// TODO: This can be replaced by cluster API when
-// https://github.com/openshift/installer/pull/1725 is available.
-type installConfig struct {
-	Platform struct {
-		AWS struct {
-			Region string `json:"region"`
-		} `json:"aws"`
-	} `json:"platform"`
-}
+// getPlatformStatus provides a backwards-compatible way to look up platform status. AWS is the
+// special case. 4.1 clusters on AWS expose the region config only through install-config. New AWS clusters
+// and all other 4.2+ platforms are configured via platform status.
+func getPlatformStatus(client client.Client, infra *configv1.Infrastructure) (*configv1.PlatformStatus, error) {
+	status := infra.Status.PlatformStatus
 
-func newInstallConfig(clusterConfig *corev1.ConfigMap) (*installConfig, error) {
+	// Only AWS needs backwards compatibility with install-config
+	if status.Type != configv1.AWSPlatformType {
+		return status, nil
+	}
+
+	// Check whether the cluster config is already migrated
+	if status.AWS != nil && len(status.AWS.Region) > 0 {
+		return status, nil
+	}
+
+	// Otherwise build a platform status from the deprecated install-config
+	type installConfig struct {
+		Platform struct {
+			AWS struct {
+				Region string `json:"region"`
+			} `json:"aws"`
+		} `json:"platform"`
+	}
+	clusterConfigName := types.NamespacedName{Namespace: "kube-system", Name: "cluster-config-v1"}
+	clusterConfig := &corev1.ConfigMap{}
+	if err := client.Get(context.TODO(), clusterConfigName, clusterConfig); err != nil {
+		return nil, fmt.Errorf("failed to get configmap %s: %v", clusterConfigName, err)
+	}
 	data, ok := clusterConfig.Data["install-config"]
 	if !ok {
 		return nil, fmt.Errorf("missing install-config in configmap")
@@ -191,5 +201,10 @@ func newInstallConfig(clusterConfig *corev1.ConfigMap) (*installConfig, error) {
 	if err := yaml.Unmarshal([]byte(data), &ic); err != nil {
 		return nil, fmt.Errorf("invalid install-config: %v\njson:\n%s", err, data)
 	}
-	return &ic, nil
+	return &configv1.PlatformStatus{
+		Type: configv1.AWSPlatformType,
+		AWS: &configv1.AWSPlatformStatus{
+			Region: ic.Platform.AWS.Region,
+		},
+	}, nil
 }
