@@ -393,6 +393,10 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		errs = append(errs, fmt.Errorf("failed to integrate metrics with openshift-monitoring for ingresscontroller %s: %v", ci.Name, err))
 	}
 
+	if _, _, err := r.ensureRouterPodDisruptionBudget(ci, deploymentRef); err != nil {
+		errs = append(errs, err)
+	}
+
 	operandEvents := &corev1.EventList{}
 	if err := r.cache.List(context.TODO(), operandEvents, client.InNamespace("openshift-ingress")); err != nil {
 		errs = append(errs, fmt.Errorf("failed to list events in namespace %q: %v", "openshift-ingress", err))
