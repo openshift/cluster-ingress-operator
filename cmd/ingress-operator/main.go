@@ -10,6 +10,7 @@ import (
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 	awsdns "github.com/openshift/cluster-ingress-operator/pkg/dns/aws"
 	azuredns "github.com/openshift/cluster-ingress-operator/pkg/dns/azure"
+	gcpdns "github.com/openshift/cluster-ingress-operator/pkg/dns/gcp"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator"
@@ -121,6 +122,8 @@ func main() {
 // configuration.
 func createDNSProvider(cl client.Client, operatorConfig operatorconfig.Config, dnsConfig *configv1.DNS, platformStatus *configv1.PlatformStatus) (dns.Provider, error) {
 	var dnsProvider dns.Provider
+	userAgent := fmt.Sprintf("OpenShift/%s (ingress-operator)", operatorConfig.OperatorReleaseVersion)
+
 	switch platformStatus.Type {
 	case configv1.AWSPlatformType:
 		awsCreds := &corev1.Secret{}
@@ -156,6 +159,15 @@ func createDNSProvider(cl client.Client, operatorConfig operatorconfig.Config, d
 		}, operatorConfig.OperatorReleaseVersion)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create Azure DNS manager: %v", err)
+		}
+		dnsProvider = provider
+	case configv1.GCPPlatformType:
+		provider, err := gcpdns.New(gcpdns.Config{
+			Project:   platformStatus.GCP.ProjectID,
+			UserAgent: userAgent,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create GCP DNS provider: %v", err)
 		}
 		dnsProvider = provider
 	default:
