@@ -168,16 +168,16 @@ func createDNSProvider(cl client.Client, operatorConfig operatorconfig.Config, d
 // special case. 4.1 clusters on AWS expose the region config only through install-config. New AWS clusters
 // and all other 4.2+ platforms are configured via platform status.
 func getPlatformStatus(client client.Client, infra *configv1.Infrastructure) (*configv1.PlatformStatus, error) {
-	status := infra.Status.PlatformStatus
+	if status := infra.Status.PlatformStatus; status != nil {
+		// Only AWS needs backwards compatibility with install-config
+		if status.Type != configv1.AWSPlatformType {
+			return status, nil
+		}
 
-	// Only AWS needs backwards compatibility with install-config
-	if status.Type != configv1.AWSPlatformType {
-		return status, nil
-	}
-
-	// Check whether the cluster config is already migrated
-	if status.AWS != nil && len(status.AWS.Region) > 0 {
-		return status, nil
+		// Check whether the cluster config is already migrated
+		if status.AWS != nil && len(status.AWS.Region) > 0 {
+			return status, nil
+		}
 	}
 
 	// Otherwise build a platform status from the deprecated install-config
