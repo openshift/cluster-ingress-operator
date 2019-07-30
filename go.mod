@@ -25,6 +25,7 @@ require (
 	github.com/prometheus/client_model v0.0.0-20190129233127-fd36f4220a90 // indirect
 	github.com/prometheus/procfs v0.0.0-20190403104016-ea9eea638872 // indirect
 	github.com/rogpeppe/go-internal v1.3.0 // indirect
+	github.com/securego/gosec v0.0.0-20190709033609-4b59c948083c
 	github.com/spf13/cobra v0.0.4 // indirect
 	go.uber.org/zap v1.9.1
 	golang.org/x/crypto v0.0.0-20190404164418-38d8ce5564a5 // indirect
