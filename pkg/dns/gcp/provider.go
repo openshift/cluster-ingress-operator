@@ -27,12 +27,13 @@ type Provider struct {
 }
 
 type Config struct {
-	Project   string
-	UserAgent string
+	Project         string
+	UserAgent       string
+	CredentialsJSON []byte
 }
 
 func New(config Config) (*Provider, error) {
-	dnsService, err := gdnsv1.NewService(context.TODO(), option.WithUserAgent(config.UserAgent))
+	dnsService, err := gdnsv1.NewService(context.TODO(), option.WithCredentialsJSON(config.CredentialsJSON), option.WithUserAgent(config.UserAgent))
 	if err != nil {
 		return nil, err
 	}
