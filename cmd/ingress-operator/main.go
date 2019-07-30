@@ -10,6 +10,7 @@ import (
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 	awsdns "github.com/openshift/cluster-ingress-operator/pkg/dns/aws"
 	azuredns "github.com/openshift/cluster-ingress-operator/pkg/dns/azure"
+	gcpdns "github.com/openshift/cluster-ingress-operator/pkg/dns/gcp"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator"
@@ -121,17 +122,18 @@ func main() {
 // configuration.
 func createDNSProvider(cl client.Client, operatorConfig operatorconfig.Config, dnsConfig *configv1.DNS, platformStatus *configv1.PlatformStatus) (dns.Provider, error) {
 	var dnsProvider dns.Provider
+	userAgent := fmt.Sprintf("OpenShift/%s (ingress-operator)", operatorConfig.OperatorReleaseVersion)
+
 	switch platformStatus.Type {
 	case configv1.AWSPlatformType:
-		awsCreds := &corev1.Secret{}
-		err := cl.Get(context.TODO(), types.NamespacedName{Namespace: operatorConfig.Namespace, Name: cloudCredentialsSecretName}, awsCreds)
+		creds := &corev1.Secret{}
+		err := cl.Get(context.TODO(), types.NamespacedName{Namespace: operatorConfig.Namespace, Name: cloudCredentialsSecretName}, creds)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get aws creds from secret %s/%s: %v", awsCreds.Namespace, awsCreds.Name, err)
+			return nil, fmt.Errorf("failed to get cloud credentials from secret %s/%s: %v", creds.Namespace, creds.Name, err)
 		}
-		log.Info("using aws creds from secret", "namespace", awsCreds.Namespace, "name", awsCreds.Name)
 		provider, err := awsdns.NewProvider(awsdns.Config{
-			AccessID:  string(awsCreds.Data["aws_access_key_id"]),
-			AccessKey: string(awsCreds.Data["aws_secret_access_key"]),
+			AccessID:  string(creds.Data["aws_access_key_id"]),
+			AccessKey: string(creds.Data["aws_secret_access_key"]),
 			DNS:       dnsConfig,
 			Region:    platformStatus.AWS.Region,
 		}, operatorConfig.OperatorReleaseVersion)
@@ -140,22 +142,36 @@ func createDNSProvider(cl client.Client, operatorConfig operatorconfig.Config, d
 		}
 		dnsProvider = provider
 	case configv1.AzurePlatformType:
-		azureCreds := &corev1.Secret{}
-		err := cl.Get(context.TODO(), types.NamespacedName{Namespace: operatorConfig.Namespace, Name: cloudCredentialsSecretName}, azureCreds)
+		creds := &corev1.Secret{}
+		err := cl.Get(context.TODO(), types.NamespacedName{Namespace: operatorConfig.Namespace, Name: cloudCredentialsSecretName}, creds)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get azure creds from secret %s/%s: %v", azureCreds.Namespace, azureCreds.Name, err)
+			return nil, fmt.Errorf("failed to get cloud credentials from secret %s/%s: %v", creds.Namespace, creds.Name, err)
 		}
-		log.Info("using azure creds from secret", "namespace", azureCreds.Namespace, "name", azureCreds.Name)
 		provider, err := azuredns.NewProvider(azuredns.Config{
 			Environment:    "AzurePublicCloud",
-			ClientID:       string(azureCreds.Data["azure_client_id"]),
-			ClientSecret:   string(azureCreds.Data["azure_client_secret"]),
-			TenantID:       string(azureCreds.Data["azure_tenant_id"]),
-			SubscriptionID: string(azureCreds.Data["azure_subscription_id"]),
+			ClientID:       string(creds.Data["azure_client_id"]),
+			ClientSecret:   string(creds.Data["azure_client_secret"]),
+			TenantID:       string(creds.Data["azure_tenant_id"]),
+			SubscriptionID: string(creds.Data["azure_subscription_id"]),
 			DNS:            dnsConfig,
 		}, operatorConfig.OperatorReleaseVersion)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create Azure DNS manager: %v", err)
+		}
+		dnsProvider = provider
+	case configv1.GCPPlatformType:
+		creds := &corev1.Secret{}
+		err := cl.Get(context.TODO(), types.NamespacedName{Namespace: operatorConfig.Namespace, Name: cloudCredentialsSecretName}, creds)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get cloud credentials from secret %s/%s: %v", creds.Namespace, creds.Name, err)
+		}
+		provider, err := gcpdns.New(gcpdns.Config{
+			Project:         platformStatus.GCP.ProjectID,
+			CredentialsJSON: creds.Data["service_account.json"],
+			UserAgent:       userAgent,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create GCP DNS provider: %v", err)
 		}
 		dnsProvider = provider
 	default:

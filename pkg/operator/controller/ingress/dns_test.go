@@ -54,7 +54,7 @@ func TestDesiredWildcardDNSRecord(t *testing.T) {
 				{Hostname: "lb.cloud.example.com"},
 			},
 			expect: &iov1.DNSRecordSpec{
-				DNSName:    "*.apps.openshift.example.com",
+				DNSName:    "*.apps.openshift.example.com.",
 				RecordType: iov1.CNAMERecordType,
 				Targets:    []string{"lb.cloud.example.com"},
 			},
@@ -67,7 +67,7 @@ func TestDesiredWildcardDNSRecord(t *testing.T) {
 				{IP: "192.0.2.1"},
 			},
 			expect: &iov1.DNSRecordSpec{
-				DNSName:    "*.apps.openshift.example.com",
+				DNSName:    "*.apps.openshift.example.com.",
 				RecordType: iov1.ARecordType,
 				Targets:    []string{"192.0.2.1"},
 			},

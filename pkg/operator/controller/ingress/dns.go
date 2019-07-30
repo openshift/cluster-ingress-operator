@@ -73,7 +73,8 @@ func desiredWildcardRecord(ic *operatorv1.IngressController, service *corev1.Ser
 	}
 
 	name := controller.WildcardDNSRecordName(ic)
-	domain := fmt.Sprintf("*.%s", ic.Status.Domain)
+	// Use an absolute name to prevent any ambiguity.
+	domain := fmt.Sprintf("*.%s.", ic.Status.Domain)
 	var target string
 	var recordType string
 
