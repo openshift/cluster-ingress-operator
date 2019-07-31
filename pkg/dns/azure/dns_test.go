@@ -34,7 +34,7 @@ func TestEnsureDNS(t *testing.T) {
 	ARecordName := "subdomain"
 	record := iov1.DNSRecord{
 		Spec: iov1.DNSRecordSpec{
-			DNSName:    "subdomain.dnszone.io",
+			DNSName:    "subdomain.dnszone.io.",
 			RecordType: iov1.ARecordType,
 			Targets:    []string{"55.11.22.33"},
 		},
@@ -75,7 +75,7 @@ func TestDeleteDNS(t *testing.T) {
 	ARecordName := "subdomain"
 	record := iov1.DNSRecord{
 		Spec: iov1.DNSRecordSpec{
-			DNSName:    "subdomain.dnszone.io",
+			DNSName:    "subdomain.dnszone.io.",
 			RecordType: iov1.ARecordType,
 			Targets:    []string{"55.11.22.33"},
 		},
