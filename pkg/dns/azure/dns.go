@@ -72,7 +72,7 @@ func (m *provider) Ensure(record *iov1.DNSRecord, zone configv1.DNSZone) error {
 		return errors.Wrap(err, "failed to parse zoneID")
 	}
 
-	ARecordName, err := getARecordName(record.Spec.DNSName, "."+targetZone.Name)
+	ARecordName, err := getARecordName(record.Spec.DNSName, targetZone.Name)
 	if err != nil {
 		return err
 	}
@@ -99,7 +99,7 @@ func (m *provider) Delete(record *iov1.DNSRecord, zone configv1.DNSZone) error {
 		return errors.Wrap(err, "failed to parse zoneID")
 	}
 
-	ARecordName, err := getARecordName(record.Spec.DNSName, "."+targetZone.Name)
+	ARecordName, err := getARecordName(record.Spec.DNSName, targetZone.Name)
 	if err != nil {
 		return err
 	}
@@ -123,5 +123,5 @@ func (m *provider) Delete(record *iov1.DNSRecord, zone configv1.DNSZone) error {
 // getARecordName extracts the ARecord subdomain name from the full domain string.
 // azure defines the ARecord Name as the subdomain name only.
 func getARecordName(recordDomain string, zoneName string) (string, error) {
-	return strings.TrimSuffix(recordDomain, zoneName), nil
+	return strings.TrimSuffix(strings.TrimSuffix(recordDomain, "."), "."+zoneName), nil
 }
