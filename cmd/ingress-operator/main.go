@@ -218,7 +218,7 @@ func getPlatformStatus(client client.Client, infra *configv1.Infrastructure) (*c
 		return nil, fmt.Errorf("invalid install-config: %v\njson:\n%s", err, data)
 	}
 	return &configv1.PlatformStatus{
-		Type: configv1.AWSPlatformType,
+		Type: infra.Status.Platform,
 		AWS: &configv1.AWSPlatformStatus{
 			Region: ic.Platform.AWS.Region,
 		},
