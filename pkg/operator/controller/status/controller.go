@@ -10,11 +10,14 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
+
+	iov1 "github.com/openshift/cluster-ingress-operator/pkg/api/v1"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
 	corev1 "k8s.io/api/core/v1"
+
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -82,7 +85,7 @@ type reconciler struct {
 func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, error) {
 	log.Info("Reconciling", "request", request)
 
-	ns := manifests.RouterNamespace()
+	nsManifest := manifests.RouterNamespace()
 
 	co := &configv1.ClusterOperator{ObjectMeta: metav1.ObjectMeta{Name: operatorcontroller.IngressClusterOperatorName().Name}}
 	if err := r.client.Get(context.TODO(), operatorcontroller.IngressClusterOperatorName(), co); err != nil {
@@ -98,7 +101,7 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 	}
 	oldStatus := co.Status.DeepCopy()
 
-	ingresses, ns, err := r.getOperatorState(ns.Name)
+	state, err := r.getOperatorState(nsManifest.Name)
 	if err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to get operator state: %v", err)
 	}
@@ -109,27 +112,35 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 			Name:     "openshift-ingress-operator",
 		},
 	}
-	if ns != nil {
+	if state.Namespace != nil {
 		related = append(related, configv1.ObjectReference{
 			Resource: "namespaces",
-			Name:     ns.Name,
+			Name:     state.Namespace.Name,
 		})
 	}
-	for _, ingress := range ingresses {
+	for _, ingress := range state.IngressControllers {
 		related = append(related, configv1.ObjectReference{
 			Group:     operatorv1.GroupName,
 			Resource:  "IngressController",
-			Namespace: r.Namespace,
+			Namespace: ingress.Namespace,
 			Name:      ingress.Name,
+		})
+	}
+	for _, dns := range state.DNSRecords {
+		related = append(related, configv1.ObjectReference{
+			Group:     iov1.GroupVersion.Group,
+			Resource:  "DNSRecord",
+			Namespace: dns.Namespace,
+			Name:      dns.Name,
 		})
 	}
 	co.Status.RelatedObjects = related
 
-	allIngressesAvailable := checkAllIngressesAvailable(ingresses)
+	allIngressesAvailable := checkAllIngressesAvailable(state.IngressControllers)
 
 	co.Status.Versions = r.computeOperatorStatusVersions(oldStatus.Versions, allIngressesAvailable)
 	co.Status.Conditions = r.computeOperatorStatusConditions(oldStatus.Conditions,
-		ns, allIngressesAvailable, oldStatus.Versions, co.Status.Versions)
+		state.Namespace, allIngressesAvailable, oldStatus.Versions, co.Status.Versions)
 
 	if !operatorStatusesEqual(*oldStatus, co.Status) {
 		if err := r.client.Status().Update(context.TODO(), co); err != nil {
@@ -168,23 +179,41 @@ func initializeClusterOperator(co *configv1.ClusterOperator) {
 	}
 }
 
+type operatorState struct {
+	Namespace          *corev1.Namespace
+	IngressControllers []operatorv1.IngressController
+	DNSRecords         []iov1.DNSRecord
+}
+
 // getOperatorState gets and returns the resources necessary to compute the
 // operator's current state.
-func (r *reconciler) getOperatorState(nsName string) ([]operatorv1.IngressController, *corev1.Namespace, error) {
+func (r *reconciler) getOperatorState(nsName string) (operatorState, error) {
+	state := operatorState{}
+
 	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: nsName}}
 	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: nsName}, ns); err != nil {
-		if errors.IsNotFound(err) {
-			return nil, nil, nil
+		if !errors.IsNotFound(err) {
+			return state, fmt.Errorf("failed to get namespace %q: %v", nsName, err)
 		}
-		return nil, nil, fmt.Errorf("error getting Namespace %s: %v", nsName, err)
+	} else {
+		state.Namespace = ns
 	}
 
 	ingressList := &operatorv1.IngressControllerList{}
 	if err := r.cache.List(context.TODO(), ingressList, client.InNamespace(r.Namespace)); err != nil {
-		return nil, nil, fmt.Errorf("failed to list IngressControllers: %v", err)
+		return state, fmt.Errorf("failed to list ingresscontrollers in %q: %v", r.Namespace, err)
+	} else {
+		state.IngressControllers = ingressList.Items
 	}
 
-	return ingressList.Items, ns, nil
+	dnsRecords := &iov1.DNSRecordList{}
+	if err := r.cache.List(context.TODO(), dnsRecords, client.InNamespace(r.Namespace)); err != nil {
+		return state, fmt.Errorf("failed to list dnsrecords in %q: %v", r.Namespace, err)
+	} else {
+		state.DNSRecords = dnsRecords.Items
+	}
+
+	return state, nil
 }
 
 // computeOperatorStatusVersions computes the operator's current versions.
