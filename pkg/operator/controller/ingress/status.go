@@ -34,7 +34,7 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	updated.Status.AvailableReplicas = deployment.Status.AvailableReplicas
 	updated.Status.Selector = selector.String()
 
-	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, computeIngressStatusConditions(deployment)...)
+	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, computeIngressAvailableCondition(deployment))
 	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, computeLoadBalancerStatus(ic, service, operandEvents)...)
 	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, computeDNSStatus(ic, wildcardRecord, dnsConfig)...)
 
@@ -76,28 +76,36 @@ func mergeConditions(conditions []operatorv1.OperatorCondition, updates ...opera
 	return conditions
 }
 
-// computeIngressStatusConditions computes the ingress controller's current state.
-func computeIngressStatusConditions(deployment *appsv1.Deployment) []operatorv1.OperatorCondition {
-	return []operatorv1.OperatorCondition{
-		computeIngressAvailableCondition(deployment),
-	}
-}
-
-// computeIngressAvailableCondition computes the ingress controller's current Available status state.
+// computeIngressAvailableCondition computes the ingress controller's current Available status state
+// by inspecting the Available condition of deployment. The ingresscontroller is only available if
+// the deployment is also available.
 func computeIngressAvailableCondition(deployment *appsv1.Deployment) operatorv1.OperatorCondition {
-	availableCondition := operatorv1.OperatorCondition{
-		Type: operatorv1.IngressControllerAvailableConditionType,
+	for _, cond := range deployment.Status.Conditions {
+		if cond.Type != appsv1.DeploymentAvailable {
+			continue
+		}
+		switch cond.Status {
+		case corev1.ConditionTrue:
+			return operatorv1.OperatorCondition{
+				Type:   operatorv1.IngressControllerAvailableConditionType,
+				Status: operatorv1.ConditionTrue,
+			}
+		case corev1.ConditionFalse:
+			return operatorv1.OperatorCondition{
+				Type:    operatorv1.IngressControllerAvailableConditionType,
+				Status:  operatorv1.ConditionFalse,
+				Reason:  cond.Reason,
+				Message: "The deployment is unavailable: " + cond.Message,
+			}
+		}
 	}
 
-	if deployment.Status.AvailableReplicas > 0 {
-		availableCondition.Status = operatorv1.ConditionTrue
-	} else {
-		availableCondition.Status = operatorv1.ConditionFalse
-		availableCondition.Reason = "DeploymentUnavailable"
-		availableCondition.Message = "no Deployment replicas available"
+	return operatorv1.OperatorCondition{
+		Type:    operatorv1.IngressControllerAvailableConditionType,
+		Status:  operatorv1.ConditionFalse,
+		Reason:  "DeploymentAvailabilityUnknown",
+		Message: "The deployment's Available condition couldn't be interpreted",
 	}
-
-	return availableCondition
 }
 
 // ingressStatusesEqual compares two IngressControllerStatus values.  Returns true

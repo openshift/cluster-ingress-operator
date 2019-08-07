@@ -182,16 +182,40 @@ func TestComputeLoadBalancerStatus(t *testing.T) {
 	}
 }
 
-func TestComputeIngressStatusConditions(t *testing.T) {
+func TestComputeIngressAvailableCondition(t *testing.T) {
 	testCases := []struct {
-		description     string
-		availRepl, repl int32
-		condType        string
-		condStatus      operatorv1.ConditionStatus
+		description          string
+		deploymentConditions []appsv1.DeploymentCondition
+		expect               operatorv1.OperatorCondition
 	}{
-		{"0/2 deployment replicas available", 0, 2, operatorv1.OperatorStatusTypeAvailable, operatorv1.ConditionFalse},
-		{"1/2 deployment replicas available", 1, 2, operatorv1.OperatorStatusTypeAvailable, operatorv1.ConditionTrue},
-		{"2/2 deployment replicas available", 2, 2, operatorv1.OperatorStatusTypeAvailable, operatorv1.ConditionTrue},
+		{
+			description: "deployment available",
+			deploymentConditions: []appsv1.DeploymentCondition{
+				{Type: appsv1.DeploymentAvailable, Status: corev1.ConditionTrue},
+			},
+			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeAvailable, Status: operatorv1.ConditionTrue},
+		},
+		{
+			description: "deployment not available",
+			deploymentConditions: []appsv1.DeploymentCondition{
+				{Type: appsv1.DeploymentAvailable, Status: corev1.ConditionFalse},
+			},
+			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeAvailable, Status: operatorv1.ConditionFalse},
+		},
+		{
+			description: "deployment availability unknown",
+			deploymentConditions: []appsv1.DeploymentCondition{
+				{Type: appsv1.DeploymentAvailable, Status: corev1.ConditionUnknown},
+			},
+			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeAvailable, Status: operatorv1.ConditionFalse},
+		},
+		{
+			description: "deployment availability not present",
+			deploymentConditions: []appsv1.DeploymentCondition{
+				{Type: appsv1.DeploymentProgressing, Status: corev1.ConditionUnknown},
+			},
+			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeAvailable, Status: operatorv1.ConditionFalse},
+		},
 	}
 
 	for i, tc := range testCases {
@@ -200,25 +224,17 @@ func TestComputeIngressStatusConditions(t *testing.T) {
 				Name: fmt.Sprintf("ingress-controller-%d", i+1),
 			},
 			Status: appsv1.DeploymentStatus{
-				Replicas:          tc.repl,
-				AvailableReplicas: tc.availRepl,
+				Conditions: tc.deploymentConditions,
 			},
 		}
 
-		expected := []operatorv1.OperatorCondition{
-			{
-				Type:   tc.condType,
-				Status: tc.condStatus,
-			},
-		}
-		actual := computeIngressStatusConditions(deploy)
+		actual := computeIngressAvailableCondition(deploy)
 		conditionsCmpOpts := []cmp.Option{
 			cmpopts.IgnoreFields(operatorv1.OperatorCondition{}, "LastTransitionTime", "Reason", "Message"),
 			cmpopts.EquateEmpty(),
-			cmpopts.SortSlices(func(a, b operatorv1.OperatorCondition) bool { return a.Type < b.Type }),
 		}
-		if !cmp.Equal(actual, expected, conditionsCmpOpts...) {
-			t.Fatalf("%q: expected %#v, got %#v", tc.description, expected, actual)
+		if !cmp.Equal(actual, tc.expect, conditionsCmpOpts...) {
+			t.Fatalf("%q: expected %#v, got %#v", tc.description, tc.expect, actual)
 		}
 	}
 }
