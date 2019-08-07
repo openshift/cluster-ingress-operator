@@ -37,6 +37,7 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, computeIngressAvailableCondition(deployment))
 	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, computeLoadBalancerStatus(ic, service, operandEvents)...)
 	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, computeDNSStatus(ic, wildcardRecord, dnsConfig)...)
+	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, computeIngressDegradedCondition(deployment))
 
 	if !ingressStatusesEqual(updated.Status, ic.Status) {
 		if err := r.client.Status().Update(context.TODO(), updated); err != nil {
@@ -105,6 +106,24 @@ func computeIngressAvailableCondition(deployment *appsv1.Deployment) operatorv1.
 		Status:  operatorv1.ConditionFalse,
 		Reason:  "DeploymentAvailabilityUnknown",
 		Message: "The deployment's Available condition couldn't be interpreted",
+	}
+}
+
+func computeIngressDegradedCondition(deployment *appsv1.Deployment) operatorv1.OperatorCondition {
+	for _, cond := range deployment.Status.Conditions {
+		if cond.Type == appsv1.DeploymentProgressing && cond.Status == corev1.ConditionFalse && cond.Reason == "ProgressDeadlineExceeded" {
+			return operatorv1.OperatorCondition{
+				Type:    operatorv1.OperatorStatusTypeDegraded,
+				Status:  operatorv1.ConditionTrue,
+				Reason:  "DeploymentFailed",
+				Message: fmt.Sprintf("The deployment failed (reason: %s) with message: %s", cond.Reason, cond.Message),
+			}
+		}
+	}
+	return operatorv1.OperatorCondition{
+		Type:   operatorv1.OperatorStatusTypeDegraded,
+		Status: operatorv1.ConditionFalse,
+		Reason: "DeploymentAvailable",
 	}
 }
 

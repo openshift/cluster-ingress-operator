@@ -4,6 +4,7 @@ kind: Deployment
 apiVersion: apps/v1
 # name and namespace are set at runtime.
 spec:
+  progressDeadlineSeconds: 120
   template:
     spec:
       serviceAccountName: router
