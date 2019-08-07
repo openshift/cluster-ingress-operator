@@ -123,7 +123,6 @@ func computeIngressDegradedCondition(deployment *appsv1.Deployment) operatorv1.O
 	return operatorv1.OperatorCondition{
 		Type:   operatorv1.OperatorStatusTypeDegraded,
 		Status: operatorv1.ConditionFalse,
-		Reason: "DeploymentAvailable",
 	}
 }
 
