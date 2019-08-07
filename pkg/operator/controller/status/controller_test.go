@@ -130,8 +130,6 @@ func TestComputeOperatorProgressingCondition(t *testing.T) {
 		actual := computeOperatorProgressingCondition(tc.allIngressesAvailable, oldVersions, reportedVersions, tc.curVersions.operator, tc.curVersions.operand)
 		conditionsCmpOpts := []cmp.Option{
 			cmpopts.IgnoreFields(configv1.ClusterOperatorStatusCondition{}, "LastTransitionTime", "Reason", "Message"),
-			cmpopts.EquateEmpty(),
-			cmpopts.SortSlices(func(a, b configv1.ClusterOperatorStatusCondition) bool { return a.Type < b.Type }),
 		}
 		if !cmp.Equal(actual, expected, conditionsCmpOpts...) {
 			t.Fatalf("%q: expected %#v, got %#v", tc.description, expected, actual)
