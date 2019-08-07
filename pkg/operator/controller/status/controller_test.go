@@ -8,14 +8,10 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func TestComputeOperatorStatusConditions(t *testing.T) {
-	type conditions struct {
-		degraded, progressing, available bool
-	}
+func TestComputeOperatorProgressingCondition(t *testing.T) {
 	type versions struct {
 		operator, operand string
 	}
@@ -27,22 +23,16 @@ func TestComputeOperatorStatusConditions(t *testing.T) {
 		reportedVersions      versions
 		oldVersions           versions
 		curVersions           versions
-		expectedConditions    conditions
+		expectProgressing     configv1.ConditionStatus
 	}{
-		{
-			description:           "no operand namespace",
-			noNamespace:           true,
-			allIngressesAvailable: true,
-			expectedConditions:    conditions{true, false, true},
-		},
 		{
 			description:           "all ingress controllers are available",
 			allIngressesAvailable: true,
-			expectedConditions:    conditions{false, false, true},
+			expectProgressing:     configv1.ConditionFalse,
 		},
 		{
-			description:        "all ingress controllers are not available",
-			expectedConditions: conditions{false, true, false},
+			description:       "all ingress controllers are not available",
+			expectProgressing: configv1.ConditionTrue,
 		},
 		{
 			description:           "versions match",
@@ -50,7 +40,7 @@ func TestComputeOperatorStatusConditions(t *testing.T) {
 			reportedVersions:      versions{"v1", "ic-v1"},
 			oldVersions:           versions{"v1", "ic-v1"},
 			curVersions:           versions{"v1", "ic-v1"},
-			expectedConditions:    conditions{false, false, true},
+			expectProgressing:     configv1.ConditionFalse,
 		},
 		{
 			description:           "operator upgrade in progress",
@@ -58,7 +48,7 @@ func TestComputeOperatorStatusConditions(t *testing.T) {
 			reportedVersions:      versions{"v1", "ic-v1"},
 			oldVersions:           versions{"v1", "ic-v1"},
 			curVersions:           versions{"v2", "ic-v1"},
-			expectedConditions:    conditions{false, true, true},
+			expectProgressing:     configv1.ConditionTrue,
 		},
 		{
 			description:           "operand upgrade in progress",
@@ -66,7 +56,7 @@ func TestComputeOperatorStatusConditions(t *testing.T) {
 			reportedVersions:      versions{"v1", "ic-v1"},
 			oldVersions:           versions{"v1", "ic-v1"},
 			curVersions:           versions{"v1", "ic-v2"},
-			expectedConditions:    conditions{false, true, true},
+			expectProgressing:     configv1.ConditionTrue,
 		},
 		{
 			description:           "operator and operand upgrade in progress",
@@ -74,7 +64,7 @@ func TestComputeOperatorStatusConditions(t *testing.T) {
 			reportedVersions:      versions{"v1", "ic-v1"},
 			oldVersions:           versions{"v1", "ic-v1"},
 			curVersions:           versions{"v2", "ic-v2"},
-			expectedConditions:    conditions{false, true, true},
+			expectProgressing:     configv1.ConditionTrue,
 		},
 		{
 			description:           "operator upgrade done",
@@ -82,7 +72,7 @@ func TestComputeOperatorStatusConditions(t *testing.T) {
 			reportedVersions:      versions{"v2", "ic-v1"},
 			oldVersions:           versions{"v1", "ic-v1"},
 			curVersions:           versions{"v2", "ic-v1"},
-			expectedConditions:    conditions{false, false, true},
+			expectProgressing:     configv1.ConditionFalse,
 		},
 		{
 			description:           "operand upgrade done",
@@ -90,7 +80,7 @@ func TestComputeOperatorStatusConditions(t *testing.T) {
 			reportedVersions:      versions{"v1", "ic-v2"},
 			oldVersions:           versions{"v1", "ic-v1"},
 			curVersions:           versions{"v1", "ic-v2"},
-			expectedConditions:    conditions{false, false, true},
+			expectProgressing:     configv1.ConditionFalse,
 		},
 		{
 			description:           "operator and operand upgrade done",
@@ -98,7 +88,7 @@ func TestComputeOperatorStatusConditions(t *testing.T) {
 			reportedVersions:      versions{"v2", "ic-v2"},
 			oldVersions:           versions{"v1", "ic-v1"},
 			curVersions:           versions{"v2", "ic-v2"},
-			expectedConditions:    conditions{false, false, true},
+			expectProgressing:     configv1.ConditionFalse,
 		},
 		{
 			description:           "operator upgrade in progress, operand upgrade done",
@@ -106,16 +96,11 @@ func TestComputeOperatorStatusConditions(t *testing.T) {
 			reportedVersions:      versions{"v2", "ic-v1"},
 			oldVersions:           versions{"v1", "ic-v1"},
 			curVersions:           versions{"v2", "ic-v2"},
-			expectedConditions:    conditions{false, true, true},
+			expectProgressing:     configv1.ConditionTrue,
 		},
 	}
 
 	for _, tc := range testCases {
-		var namespace *corev1.Namespace
-		if !tc.noNamespace {
-			namespace = &corev1.Namespace{}
-		}
-
 		oldVersions := []configv1.OperandVersion{
 			{
 				Name:    OperatorVersionName,
@@ -136,46 +121,18 @@ func TestComputeOperatorStatusConditions(t *testing.T) {
 				Version: tc.reportedVersions.operand,
 			},
 		}
-		r := &reconciler{
-			Config: Config{
-				OperatorReleaseVersion: tc.curVersions.operator,
-				IngressControllerImage: tc.curVersions.operand,
-			},
+
+		expected := configv1.ClusterOperatorStatusCondition{
+			Type:   configv1.OperatorProgressing,
+			Status: tc.expectProgressing,
 		}
 
-		expectedConditions := []configv1.ClusterOperatorStatusCondition{
-			{
-				Type:   configv1.OperatorDegraded,
-				Status: configv1.ConditionFalse,
-			},
-			{
-				Type:   configv1.OperatorProgressing,
-				Status: configv1.ConditionFalse,
-			},
-			{
-				Type:   configv1.OperatorAvailable,
-				Status: configv1.ConditionFalse,
-			},
-		}
-		if tc.expectedConditions.degraded {
-			expectedConditions[0].Status = configv1.ConditionTrue
-		}
-		if tc.expectedConditions.progressing {
-			expectedConditions[1].Status = configv1.ConditionTrue
-		}
-		if tc.expectedConditions.available {
-			expectedConditions[2].Status = configv1.ConditionTrue
-		}
-
-		conditions := r.computeOperatorStatusConditions([]configv1.ClusterOperatorStatusCondition{},
-			namespace, tc.allIngressesAvailable, oldVersions, reportedVersions)
+		actual := computeOperatorProgressingCondition(tc.allIngressesAvailable, oldVersions, reportedVersions, tc.curVersions.operator, tc.curVersions.operand)
 		conditionsCmpOpts := []cmp.Option{
 			cmpopts.IgnoreFields(configv1.ClusterOperatorStatusCondition{}, "LastTransitionTime", "Reason", "Message"),
-			cmpopts.EquateEmpty(),
-			cmpopts.SortSlices(func(a, b configv1.ClusterOperatorStatusCondition) bool { return a.Type < b.Type }),
 		}
-		if !cmp.Equal(conditions, expectedConditions, conditionsCmpOpts...) {
-			t.Fatalf("%q: expected %#v, got %#v", tc.description, expectedConditions, conditions)
+		if !cmp.Equal(actual, expected, conditionsCmpOpts...) {
+			t.Fatalf("%q: expected %#v, got %#v", tc.description, expected, actual)
 		}
 	}
 }

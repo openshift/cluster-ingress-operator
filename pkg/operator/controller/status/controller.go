@@ -21,6 +21,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	utilclock "k8s.io/apimachinery/pkg/util/clock"
 
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -42,6 +43,9 @@ const (
 )
 
 var log = logf.Logger.WithName(controllerName)
+
+// clock is to enable unit testing
+var clock utilclock.Clock = utilclock.RealClock{}
 
 // New creates the status controller. This is the controller that handles all
 // the logic for creating the ClusterOperator operator and updating its status.
@@ -139,8 +143,10 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 	allIngressesAvailable := checkAllIngressesAvailable(state.IngressControllers)
 
 	co.Status.Versions = r.computeOperatorStatusVersions(oldStatus.Versions, allIngressesAvailable)
-	co.Status.Conditions = r.computeOperatorStatusConditions(oldStatus.Conditions,
-		state.Namespace, allIngressesAvailable, oldStatus.Versions, co.Status.Versions)
+
+	co.Status.Conditions = mergeConditions(co.Status.Conditions, computeOperatorAvailableCondition(allIngressesAvailable))
+	co.Status.Conditions = mergeConditions(co.Status.Conditions, computeOperatorProgressingCondition(allIngressesAvailable, oldStatus.Versions, co.Status.Versions, r.OperatorReleaseVersion, r.IngressControllerImage))
+	co.Status.Conditions = mergeConditions(co.Status.Conditions, computeOperatorDegradedCondition(state.IngressControllers))
 
 	if !operatorStatusesEqual(*oldStatus, co.Status) {
 		if err := r.client.Status().Update(context.TODO(), co); err != nil {
@@ -236,31 +242,6 @@ func (r *reconciler) computeOperatorStatusVersions(oldVersions []configv1.Operan
 	}
 }
 
-// computeOperatorStatusConditions computes the operator's current state.
-func (r *reconciler) computeOperatorStatusConditions(oldConditions []configv1.ClusterOperatorStatusCondition,
-	ns *corev1.Namespace, allIngressesAvailable bool,
-	oldVersions, curVersions []configv1.OperandVersion) []configv1.ClusterOperatorStatusCondition {
-	var oldDegradedCondition, oldProgressingCondition, oldAvailableCondition *configv1.ClusterOperatorStatusCondition
-	for i := range oldConditions {
-		switch oldConditions[i].Type {
-		case configv1.OperatorDegraded:
-			oldDegradedCondition = &oldConditions[i]
-		case configv1.OperatorProgressing:
-			oldProgressingCondition = &oldConditions[i]
-		case configv1.OperatorAvailable:
-			oldAvailableCondition = &oldConditions[i]
-		}
-	}
-
-	conditions := []configv1.ClusterOperatorStatusCondition{
-		computeOperatorDegradedCondition(oldDegradedCondition, ns),
-		r.computeOperatorProgressingCondition(oldProgressingCondition, allIngressesAvailable, oldVersions, curVersions),
-		computeOperatorAvailableCondition(oldAvailableCondition, allIngressesAvailable),
-	}
-
-	return conditions
-}
-
 // checkAllIngressesAvailable checks if all the ingress controllers are available.
 func checkAllIngressesAvailable(ingresses []operatorv1.IngressController) bool {
 	for _, ing := range ingresses {
@@ -276,31 +257,36 @@ func checkAllIngressesAvailable(ingresses []operatorv1.IngressController) bool {
 		}
 	}
 
-	return (len(ingresses) != 0)
+	return len(ingresses) != 0
 }
 
 // computeOperatorDegradedCondition computes the operator's current Degraded status state.
-func computeOperatorDegradedCondition(oldCondition *configv1.ClusterOperatorStatusCondition,
-	ns *corev1.Namespace) configv1.ClusterOperatorStatusCondition {
-	degradedCondition := configv1.ClusterOperatorStatusCondition{
-		Type: configv1.OperatorDegraded,
+func computeOperatorDegradedCondition(ingresses []operatorv1.IngressController) configv1.ClusterOperatorStatusCondition {
+	var degradedIngresses []string
+	for _, ingress := range ingresses {
+		for _, cond := range ingress.Status.Conditions {
+			if cond.Type == operatorv1.OperatorStatusTypeDegraded && cond.Status == operatorv1.ConditionTrue {
+				degradedIngresses = append(degradedIngresses, ingress.Name)
+			}
+		}
 	}
-	if ns == nil {
-		degradedCondition.Status = configv1.ConditionTrue
-		degradedCondition.Reason = "NoNamespace"
-		degradedCondition.Message = "operand namespace does not exist"
-	} else {
-		degradedCondition.Status = configv1.ConditionFalse
-		degradedCondition.Message = "operand namespace exists"
+	if len(degradedIngresses) == 0 {
+		return configv1.ClusterOperatorStatusCondition{
+			Type:   configv1.OperatorDegraded,
+			Status: configv1.ConditionFalse,
+			Reason: "NoIngressControllersDegraded",
+		}
 	}
-
-	setLastTransitionTime(&degradedCondition, oldCondition)
-	return degradedCondition
+	return configv1.ClusterOperatorStatusCondition{
+		Type:    configv1.OperatorDegraded,
+		Status:  configv1.ConditionTrue,
+		Reason:  "IngressControllersDegraded",
+		Message: fmt.Sprintf("Some ingresscontrollers are degraded: %s", strings.Join(degradedIngresses, ",")),
+	}
 }
 
 // computeOperatorProgressingCondition computes the operator's current Progressing status state.
-func (r *reconciler) computeOperatorProgressingCondition(oldCondition *configv1.ClusterOperatorStatusCondition,
-	allIngressesAvailable bool, oldVersions, curVersions []configv1.OperandVersion) configv1.ClusterOperatorStatusCondition {
+func computeOperatorProgressingCondition(allIngressesAvailable bool, oldVersions, curVersions []configv1.OperandVersion, operatorReleaseVersion, ingressControllerImage string) configv1.ClusterOperatorStatusCondition {
 	// TODO: Update progressingCondition when an ingresscontroller
 	//       progressing condition is created. The Operator's condition
 	//       should be derived from the ingresscontroller's condition.
@@ -310,7 +296,7 @@ func (r *reconciler) computeOperatorProgressingCondition(oldCondition *configv1.
 
 	progressing := false
 
-	messages := []string{}
+	var messages []string
 	if !allIngressesAvailable {
 		messages = append(messages, "Not all ingress controllers are available.")
 		progressing = true
@@ -327,13 +313,13 @@ func (r *reconciler) computeOperatorProgressingCondition(oldCondition *configv1.
 		}
 		switch opv.Name {
 		case OperatorVersionName:
-			if opv.Version != r.OperatorReleaseVersion {
-				messages = append(messages, fmt.Sprintf("Moving to release version %q.", r.OperatorReleaseVersion))
+			if opv.Version != operatorReleaseVersion {
+				messages = append(messages, fmt.Sprintf("Moving to release version %q.", operatorReleaseVersion))
 				progressing = true
 			}
 		case IngressControllerVersionName:
-			if opv.Version != r.IngressControllerImage {
-				messages = append(messages, fmt.Sprintf("Moving to ingress-controller image version %q.", r.IngressControllerImage))
+			if opv.Version != ingressControllerImage {
+				messages = append(messages, fmt.Sprintf("Moving to ingress-controller image version %q.", ingressControllerImage))
 				progressing = true
 			}
 		}
@@ -350,13 +336,11 @@ func (r *reconciler) computeOperatorProgressingCondition(oldCondition *configv1.
 		progressingCondition.Message = strings.Join(messages, "\n")
 	}
 
-	setLastTransitionTime(&progressingCondition, oldCondition)
 	return progressingCondition
 }
 
 // computeOperatorAvailableCondition computes the operator's current Available status state.
-func computeOperatorAvailableCondition(oldCondition *configv1.ClusterOperatorStatusCondition,
-	allIngressesAvailable bool) configv1.ClusterOperatorStatusCondition {
+func computeOperatorAvailableCondition(allIngressesAvailable bool) configv1.ClusterOperatorStatusCondition {
 	availableCondition := configv1.ClusterOperatorStatusCondition{
 		Type: configv1.OperatorAvailable,
 	}
@@ -370,19 +354,40 @@ func computeOperatorAvailableCondition(oldCondition *configv1.ClusterOperatorSta
 		availableCondition.Message = "Not all ingress controllers are available."
 	}
 
-	setLastTransitionTime(&availableCondition, oldCondition)
 	return availableCondition
 }
 
-// setLastTransitionTime sets LastTransitionTime for the given condition.
-// If the condition has changed, it will assign a new timestamp otherwise keeps the old timestamp.
-func setLastTransitionTime(condition, oldCondition *configv1.ClusterOperatorStatusCondition) {
-	if oldCondition != nil && condition.Status == oldCondition.Status &&
-		condition.Reason == oldCondition.Reason && condition.Message == oldCondition.Message {
-		condition.LastTransitionTime = oldCondition.LastTransitionTime
-	} else {
-		condition.LastTransitionTime = metav1.Now()
+// mergeConditions adds or updates matching conditions, and updates
+// the transition time if details of a condition have changed. Returns
+// the updated condition array.
+func mergeConditions(conditions []configv1.ClusterOperatorStatusCondition, updates ...configv1.ClusterOperatorStatusCondition) []configv1.ClusterOperatorStatusCondition {
+	now := metav1.NewTime(clock.Now())
+	var additions []configv1.ClusterOperatorStatusCondition
+	for i, update := range updates {
+		add := true
+		for j, cond := range conditions {
+			if cond.Type == update.Type {
+				add = false
+				if conditionChanged(cond, update) {
+					conditions[j].Status = update.Status
+					conditions[j].Reason = update.Reason
+					conditions[j].Message = update.Message
+					conditions[j].LastTransitionTime = now
+					break
+				}
+			}
+		}
+		if add {
+			updates[i].LastTransitionTime = now
+			additions = append(additions, updates[i])
+		}
 	}
+	conditions = append(conditions, additions...)
+	return conditions
+}
+
+func conditionChanged(a, b configv1.ClusterOperatorStatusCondition) bool {
+	return a.Status != b.Status || a.Reason != b.Reason || a.Message != b.Message
 }
 
 // operatorStatusesEqual compares two ClusterOperatorStatus values.  Returns
