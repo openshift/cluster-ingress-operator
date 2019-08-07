@@ -184,34 +184,34 @@ func TestComputeLoadBalancerStatus(t *testing.T) {
 
 func TestComputeIngressAvailableCondition(t *testing.T) {
 	testCases := []struct {
-		description string
-		deployment  []appsv1.DeploymentCondition
-		expect      operatorv1.OperatorCondition
+		description          string
+		deploymentConditions []appsv1.DeploymentCondition
+		expect               operatorv1.OperatorCondition
 	}{
 		{
 			description: "deployment available",
-			deployment: []appsv1.DeploymentCondition{
+			deploymentConditions: []appsv1.DeploymentCondition{
 				{Type: appsv1.DeploymentAvailable, Status: corev1.ConditionTrue},
 			},
 			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeAvailable, Status: operatorv1.ConditionTrue},
 		},
 		{
 			description: "deployment not available",
-			deployment: []appsv1.DeploymentCondition{
+			deploymentConditions: []appsv1.DeploymentCondition{
 				{Type: appsv1.DeploymentAvailable, Status: corev1.ConditionFalse},
 			},
 			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeAvailable, Status: operatorv1.ConditionFalse},
 		},
 		{
 			description: "deployment availability unknown",
-			deployment: []appsv1.DeploymentCondition{
+			deploymentConditions: []appsv1.DeploymentCondition{
 				{Type: appsv1.DeploymentAvailable, Status: corev1.ConditionUnknown},
 			},
 			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeAvailable, Status: operatorv1.ConditionFalse},
 		},
 		{
 			description: "deployment availability not present",
-			deployment: []appsv1.DeploymentCondition{
+			deploymentConditions: []appsv1.DeploymentCondition{
 				{Type: appsv1.DeploymentProgressing, Status: corev1.ConditionUnknown},
 			},
 			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeAvailable, Status: operatorv1.ConditionFalse},
@@ -224,7 +224,7 @@ func TestComputeIngressAvailableCondition(t *testing.T) {
 				Name: fmt.Sprintf("ingress-controller-%d", i+1),
 			},
 			Status: appsv1.DeploymentStatus{
-				Conditions: tc.deployment,
+				Conditions: tc.deploymentConditions,
 			},
 		}
 
