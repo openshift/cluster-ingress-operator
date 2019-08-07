@@ -483,6 +483,14 @@ func TestDeploymentConfigChanged(t *testing.T) {
 			expect: true,
 		},
 		{
+			description: "if the tolerations change ordering",
+			mutate: func(deployment *appsv1.Deployment) {
+				tolerations := deployment.Spec.Template.Spec.Tolerations
+				tolerations[1], tolerations[0] = tolerations[0], tolerations[1]
+			},
+			expect: false,
+		},
+		{
 			description: "if ROUTER_CANONICAL_HOSTNAME changes",
 			mutate: func(deployment *appsv1.Deployment) {
 				envs := deployment.Spec.Template.Spec.Containers[0].Env
@@ -569,6 +577,13 @@ func TestDeploymentConfigChanged(t *testing.T) {
 	for _, tc := range testCases {
 		nineteen := int32(19)
 		fourTwenty := int32(420) // = 0644 octal.
+		otherToleration := corev1.Toleration{
+			Key:      "xyz",
+			Value:    "bar",
+			Operator: corev1.TolerationOpExists,
+			Effect:   corev1.TaintEffectNoExecute,
+		}
+
 		original := appsv1.Deployment{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "router-original",
@@ -641,6 +656,7 @@ func TestDeploymentConfigChanged(t *testing.T) {
 								},
 							},
 						},
+						Tolerations: []corev1.Toleration{toleration, otherToleration},
 					},
 				},
 				Replicas: &nineteen,
