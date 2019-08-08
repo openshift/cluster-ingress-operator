@@ -106,6 +106,18 @@ type reconciler struct {
 	recorder record.EventRecorder
 }
 
+// admissionRejection is an error type for ingresscontroller admission
+// rejections.
+type admissionRejection struct {
+	// Reason describes why the ingresscontroller was rejected.
+	Reason string
+}
+
+// Error returns the reason or reasons why an ingresscontroller was rejected.
+func (e *admissionRejection) Error() string {
+	return e.Reason
+}
+
 // Reconcile expects request to refer to a ingresscontroller in the operator
 // namespace, and will do all the work to ensure the ingresscontroller is in the
 // desired state.
@@ -152,7 +164,13 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 	// successful, immediately re-queue to refresh state.
 	if !isAdmitted(ingress) {
 		if err := r.admit(ingress, ingressConfig, infraConfig); err != nil {
-			return reconcile.Result{}, fmt.Errorf("failed to admit ingresscontroller: %v", err)
+			switch err := err.(type) {
+			case *admissionRejection:
+				log.Info("rejected ingresscontroller", "ingresscontroller", ingress, "reason", err.Reason)
+				return reconcile.Result{}, nil
+			default:
+				return reconcile.Result{}, fmt.Errorf("failed to admit ingresscontroller: %v", err)
+			}
 		}
 		log.Info("admitted ingresscontroller", "ingresscontroller", ingress)
 		// Just re-queue for simplicity
@@ -167,6 +185,10 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 	return reconcile.Result{}, nil
 }
 
+// admit processes the given ingresscontroller by defaulting and validating its
+// fields.  Returns an error value, which will have a non-nil value of type
+// admissionRejection if the ingresscontroller was rejected, or a non-nil
+// value of a different type if the ingresscontroller could not be processed.
 func (r *reconciler) admit(current *operatorv1.IngressController, ingressConfig *configv1.Ingress, infraConfig *configv1.Infrastructure) error {
 	updated := current.DeepCopy()
 
@@ -174,18 +196,21 @@ func (r *reconciler) admit(current *operatorv1.IngressController, ingressConfig 
 	setDefaultPublishingStrategy(updated, infraConfig)
 
 	if err := r.validate(updated); err != nil {
-		updated.Status.Conditions = mergeConditions(updated.Status.Conditions, operatorv1.OperatorCondition{
-			Type:    iov1.IngressControllerAdmittedConditionType,
-			Status:  operatorv1.ConditionFalse,
-			Reason:  "Invalid",
-			Message: fmt.Sprintf("%v", err),
-		})
-		if !ingressStatusesEqual(current.Status, updated.Status) {
-			if err := r.client.Status().Update(context.TODO(), updated); err != nil {
-				return fmt.Errorf("failed to update status: %v", err)
+		switch err := err.(type) {
+		case *admissionRejection:
+			updated.Status.Conditions = mergeConditions(updated.Status.Conditions, operatorv1.OperatorCondition{
+				Type:    iov1.IngressControllerAdmittedConditionType,
+				Status:  operatorv1.ConditionFalse,
+				Reason:  "Invalid",
+				Message: err.Reason,
+			})
+			if !ingressStatusesEqual(current.Status, updated.Status) {
+				if err := r.client.Status().Update(context.TODO(), updated); err != nil {
+					return fmt.Errorf("failed to update status: %v", err)
+				}
 			}
 		}
-		return nil
+		return err
 	}
 
 	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, operatorv1.OperatorCondition{
@@ -260,6 +285,10 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, infraConfig 
 	return false
 }
 
+// validate attempts to perform validation of the given ingresscontroller and
+// returns an error value, which will have a non-nil value of type
+// admissionRejection if the ingresscontroller is invalid, or a non-nil value of
+// a different type if validation could not be completed.
 func (r *reconciler) validate(ic *operatorv1.IngressController) error {
 	var errors []error
 
@@ -275,7 +304,11 @@ func (r *reconciler) validate(ic *operatorv1.IngressController) error {
 		errors = append(errors, err)
 	}
 
-	return utilerrors.NewAggregate(errors)
+	if err := utilerrors.NewAggregate(errors); err != nil {
+		return &admissionRejection{err.Error()}
+	}
+
+	return nil
 }
 
 func validateDomain(ic *operatorv1.IngressController) error {
