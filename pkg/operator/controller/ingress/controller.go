@@ -166,13 +166,13 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 		if err := r.admit(ingress, ingressConfig, infraConfig); err != nil {
 			switch err := err.(type) {
 			case *admissionRejection:
-				log.Info("rejected ingresscontroller", "ingresscontroller", ingress, "reason", err.Reason)
+				r.recorder.Event(ingress, "Warning", "Rejected", err.Reason)
 				return reconcile.Result{}, nil
 			default:
 				return reconcile.Result{}, fmt.Errorf("failed to admit ingresscontroller: %v", err)
 			}
 		}
-		log.Info("admitted ingresscontroller", "ingresscontroller", ingress)
+		r.recorder.Event(ingress, "Normal", "Admitted", "ingresscontroller passed validation")
 		// Just re-queue for simplicity
 		return reconcile.Result{Requeue: true}, nil
 	}
