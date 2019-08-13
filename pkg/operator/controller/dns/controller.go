@@ -82,13 +82,14 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 		return reconcile.Result{}, nil
 	}
 
+	// Only process records associated with ingresscontrollers, because this isn't
+	// intended to be a general purpose DNS management system.
 	ingressName, ok := record.Labels[manifests.OwningIngressControllerLabel]
 	if !ok {
 		log.V(2).Info("warning: dnsrecord is missing owner label", "dnsrecord", record, "ingresscontroller", ingressName)
 		return reconcile.Result{RequeueAfter: 1 * time.Minute}, nil
 	}
-	ingress := &operatorv1.IngressController{}
-	if err := r.cache.Get(context.TODO(), types.NamespacedName{Namespace: record.Namespace, Name: ingressName}, ingress); err != nil {
+	if err := r.cache.Get(context.TODO(), types.NamespacedName{Namespace: record.Namespace, Name: ingressName}, &operatorv1.IngressController{}); err != nil {
 		if errors.IsNotFound(err) {
 			// TODO: what should we do here? something upstream could detect and delete the orphan? add new conditions?
 			// is it safe to retry without verifying the owner isn't a new object?
@@ -100,13 +101,11 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 		}
 	}
 
-	haveExternalLB := ingress.Status.EndpointPublishingStrategy != nil && ingress.Status.EndpointPublishingStrategy.LoadBalancer != nil && ingress.Status.EndpointPublishingStrategy.LoadBalancer.Scope == operatorv1.ExternalLoadBalancer
-
 	var zones []configv1.DNSZone
 	if dnsConfig.Spec.PrivateZone != nil {
 		zones = append(zones, *dnsConfig.Spec.PrivateZone)
 	}
-	if dnsConfig.Spec.PublicZone != nil && haveExternalLB {
+	if dnsConfig.Spec.PublicZone != nil {
 		zones = append(zones, *dnsConfig.Spec.PublicZone)
 	}
 
@@ -140,7 +139,7 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 	updated := record.DeepCopy()
 	updated.Status.Zones = statuses
 	if err := r.client.Status().Update(context.TODO(), updated); err != nil {
-		log.Error(err, "failed to get ingresscontroller for dnsrecord; will retry", "dnsrecord", record, "ingresscontroller", ingressName)
+		log.Error(err, "failed to update dnsrecord; will retry", "dnsrecord", record)
 		return reconcile.Result{RequeueAfter: 10 * time.Second}, nil
 	}
 
