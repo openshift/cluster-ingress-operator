@@ -3,6 +3,7 @@ package ingress
 import (
 	"context"
 	"fmt"
+	"reflect"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
@@ -16,24 +17,37 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
-func (r *reconciler) ensureServiceMonitor(ic *operatorv1.IngressController, svc *corev1.Service, deploymentRef metav1.OwnerReference) (*unstructured.Unstructured, error) {
+// ensureServiceMonitor ensures the servicemonitor exists for a given
+// ingresscontroller.  Returns a Boolean indicating whether the servicemonitor
+// exists, the servicemonitor if it does exist, and an error value.
+func (r *reconciler) ensureServiceMonitor(ic *operatorv1.IngressController, svc *corev1.Service, deploymentRef metav1.OwnerReference) (bool, *unstructured.Unstructured, error) {
 	desired := desiredServiceMonitor(ic, svc, deploymentRef)
 
-	current, err := r.currentServiceMonitor(ic)
+	haveSM, current, err := r.currentServiceMonitor(ic)
 	if err != nil {
-		return nil, err
+		return false, nil, err
 	}
 
-	if desired != nil && current == nil {
-		if err := r.client.Create(context.TODO(), desired); err != nil {
-			return nil, fmt.Errorf("failed to create servicemonitor %s/%s: %v", desired.GetNamespace(), desired.GetName(), err)
+	switch {
+	case !haveSM:
+		if created, err := r.createServiceMonitor(desired); err != nil {
+			return false, nil, fmt.Errorf("failed to create servicemonitor %s/%s: %v", desired.GetNamespace(), desired.GetName(), err)
+		} else if created {
+			log.Info("created servicemonitor", "namespace", desired.GetNamespace(), "name", desired.GetName())
 		}
-		log.Info("created servicemonitor", "namespace", desired.GetNamespace(), "name", desired.GetName())
-		return desired, nil
+	case haveSM:
+		if updated, err := r.updateServiceMonitor(current, desired); err != nil {
+			return true, nil, fmt.Errorf("failed to update servicemonitor %s/%s: %v", desired.GetNamespace(), desired.GetName(), err)
+		} else if updated {
+			log.Info("updated servicemonitor", "namespace", desired.GetNamespace(), "name", desired.GetName())
+		}
 	}
-	return current, nil
+
+	return r.currentServiceMonitor(ic)
 }
 
+// desiredServiceMonitor returns the desired servicemonitor for the given
+// ingresscontroller and service.
 func desiredServiceMonitor(ic *operatorv1.IngressController, svc *corev1.Service, deploymentRef metav1.OwnerReference) *unstructured.Unstructured {
 	name := controller.IngressControllerServiceMonitorName(ic)
 	sm := &unstructured.Unstructured{
@@ -53,8 +67,17 @@ func desiredServiceMonitor(ic *operatorv1.IngressController, svc *corev1.Service
 						manifests.OwningIngressControllerLabel: ic.Name,
 					},
 				},
-				"endpoints": []map[string]interface{}{
-					{
+				// It is important to use the type []interface{}
+				// for the "endpoints" field.  Using
+				// []map[string]interface{} causes at least two
+				// problems: first, DeepCopy will fail with
+				// "cannot deep copy []map[string]interface {}";
+				// second, the API returns an object that uses
+				// type []interface{} for this field, so
+				// DeepEqual against an API object will always
+				// return false.
+				"endpoints": []interface{}{
+					map[string]interface{}{
 						"bearerTokenFile": "/var/run/secrets/kubernetes.io/serviceaccount/token",
 						"interval":        "30s",
 						"port":            "metrics",
@@ -78,7 +101,10 @@ func desiredServiceMonitor(ic *operatorv1.IngressController, svc *corev1.Service
 	return sm
 }
 
-func (r *reconciler) currentServiceMonitor(ic *operatorv1.IngressController) (*unstructured.Unstructured, error) {
+// currentServiceMonitor returns the current servicemonitor.  Returns a Boolean
+// indicating whether the servicemonitor existed, the servicemonitor if it did
+// exist, and an error value.
+func (r *reconciler) currentServiceMonitor(ic *operatorv1.IngressController) (bool, *unstructured.Unstructured, error) {
 	sm := &unstructured.Unstructured{}
 	sm.SetGroupVersionKind(schema.GroupVersionKind{
 		Group:   "monitoring.coreos.com",
@@ -87,9 +113,44 @@ func (r *reconciler) currentServiceMonitor(ic *operatorv1.IngressController) (*u
 	})
 	if err := r.client.Get(context.TODO(), controller.IngressControllerServiceMonitorName(ic), sm); err != nil {
 		if errors.IsNotFound(err) {
-			return nil, nil
+			return false, nil, nil
 		}
-		return nil, err
+		return false, nil, err
 	}
-	return sm, nil
+	return true, sm, nil
+}
+
+// createServiceMonitor creates a servicemonitor.  Returns a Boolean indicating
+// whether the servicemonitor was created, and an error value.
+func (r *reconciler) createServiceMonitor(sm *unstructured.Unstructured) (bool, error) {
+	if err := r.client.Create(context.TODO(), sm); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// updateServiceMonitor updates a servicemonitor.  Returns a Boolean indicating
+// whether the servicemonitor was updated, and an error value.
+func (r *reconciler) updateServiceMonitor(current, desired *unstructured.Unstructured) (bool, error) {
+	changed, updated := serviceMonitorChanged(current, desired)
+	if !changed {
+		return false, nil
+	}
+
+	if err := r.client.Update(context.TODO(), updated); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// serviceMonitorChanged checks if current servicemonitor spec matches the
+// expected spec and if not returns an updated one.
+func serviceMonitorChanged(current, expected *unstructured.Unstructured) (bool, *unstructured.Unstructured) {
+	if reflect.DeepEqual(current.Object["spec"], expected.Object["spec"]) {
+		return false, nil
+	}
+
+	updated := current.DeepCopy()
+	updated.Object["spec"] = expected.Object["spec"]
+	return true, updated
 }

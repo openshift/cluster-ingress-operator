@@ -74,7 +74,7 @@ func (r *reconciler) ensureMetricsIntegration(ci *operatorv1.IngressController, 
 		log.Info("created router metrics role binding", "name", mrb.Name)
 	}
 
-	if _, err := r.ensureServiceMonitor(ci, svc, deploymentRef); err != nil {
+	if _, _, err := r.ensureServiceMonitor(ci, svc, deploymentRef); err != nil {
 		return fmt.Errorf("failed to ensure servicemonitor for %s: %v", ci.Name, err)
 	}
 
