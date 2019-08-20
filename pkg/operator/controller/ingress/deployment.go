@@ -218,6 +218,10 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		env = append(env, corev1.EnvVar{Name: "ROUTE_LABELS", Value: routeSelector.String()})
 	}
 
+	if ci.Spec.DisableNamespaceOwnershipCheck != nil && *ci.Spec.DisableNamespaceOwnershipCheck {
+		env = append(env, corev1.EnvVar{Name: "ROUTER_DISABLE_NAMESPACE_OWNERSHIP_CHECK", Value: "true"})
+	}
+
 	deployment.Spec.Template.Spec.Containers[0].Env = append(deployment.Spec.Template.Spec.Containers[0].Env, env...)
 
 	deployment.Spec.Template.Spec.Containers[0].Image = ingressControllerImage

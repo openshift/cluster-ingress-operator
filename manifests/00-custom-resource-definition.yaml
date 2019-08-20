@@ -418,6 +418,15 @@ spec:
                     TODO: Add other useful fields. apiVersion, kind, uid?'
                   type: string
               type: object
+            disableNamespaceOwnershipCheck:
+              description: "disableNamespaceOwnershipCheck disables the namespace
+                ownership checks for a route host with different paths or for overlapping
+                host names in the case of wildcard routes. Please be aware that if
+                namespace ownership checks are disabled, routes in a different namespace
+                can use this mechanism to 'steal' sub-paths for existing domains.
+                This is only safe if route creation privileges are restricted, or
+                if all the users can be trusted. \n If unset, the default is false"
+              type: boolean
             domain:
               description: "domain is a DNS name serviced by the ingress controller
                 and is used to configure multiple features: \n * For the LoadBalancerService

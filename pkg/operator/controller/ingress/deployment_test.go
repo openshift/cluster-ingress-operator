@@ -247,6 +247,51 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		t.Errorf("expected router Deployment volume with secret %s, got %s",
 			secretName, deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName)
 	}
+
+	type testcases struct {
+		name                      string
+		specDisableNamespaceCheck *bool
+		expected                  bool
+	}
+	setTrue := true
+	setFalse := false
+	namespaceTestcases := []testcases{
+		{
+			name:                      "router deployment has not added disableNamespaceOwnershipCheck env",
+			specDisableNamespaceCheck: &setTrue,
+			expected:                  true,
+		},
+		{
+			name:                      "router deployment has added disableNamespaceOwnershipCheck env, but should be absent",
+			specDisableNamespaceCheck: &setFalse,
+			expected:                  false,
+		},
+		{
+			name:                      "router deployment has disableNamespaceOwnershipCheck env, which should not be present",
+			specDisableNamespaceCheck: nil,
+			expected:                  false,
+		},
+	}
+	for _, tc := range namespaceTestcases {
+		ci.Spec.DisableNamespaceOwnershipCheck = tc.specDisableNamespaceCheck
+		deployment, err = desiredRouterDeployment(ci, ingressControllerImage, infraConfig)
+		if err != nil {
+			t.Errorf("invalid router Deployment: %v", err)
+		}
+
+		routerDisableNamespaceOwnershipCheckENV := false
+		for _, envVar := range deployment.Spec.Template.Spec.Containers[0].Env {
+			if envVar.Name == "ROUTER_DISABLE_NAMESPACE_OWNERSHIP_CHECK" {
+				if v, err := strconv.ParseBool(envVar.Value); err == nil {
+					routerDisableNamespaceOwnershipCheckENV = v
+				}
+				break
+			}
+		}
+		if routerDisableNamespaceOwnershipCheckENV != tc.expected {
+			t.Errorf("%s, expected: %v, got: %+v", tc.name, tc.expected, routerDisableNamespaceOwnershipCheckENV)
+		}
+	}
 }
 
 func TestDeploymentConfigChanged(t *testing.T) {
@@ -391,6 +436,20 @@ func TestDeploymentConfigChanged(t *testing.T) {
 			description: "if the deployment template affinity is changed",
 			mutate: func(deployment *appsv1.Deployment) {
 				deployment.Spec.Template.Spec.Affinity.PodAntiAffinity.RequiredDuringSchedulingIgnoredDuringExecution[0].LabelSelector.MatchExpressions[0].Key = "new-label"
+			},
+			expect: true,
+		},
+		{
+			description: "if the deployment container ownership envvar is added",
+			mutate: func(deployment *appsv1.Deployment) {
+				oldEnvs := deployment.Spec.Template.Spec.Containers[0].Env
+				newEnvs := []corev1.EnvVar{{Name: "ROUTER_DISABLE_NAMESPACE_OWNERSHIP_CHECK", Value: "true"}}
+				for _, env := range oldEnvs {
+					if env.Name != "ROUTER_DISABLE_NAMESPACE_OWNERSHIP_CHECK" {
+						newEnvs = append(newEnvs, env)
+					}
+				}
+				deployment.Spec.Template.Spec.Containers[0].Env = newEnvs
 			},
 			expect: true,
 		},
