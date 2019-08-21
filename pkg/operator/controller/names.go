@@ -85,6 +85,14 @@ func RouterPodDisruptionBudgetName(ic *operatorv1.IngressController) types.Names
 	}
 }
 
+// RsyslogConfigMapName returns the namespaced name for the rsyslog configmap.
+func RsyslogConfigMapName(ic *operatorv1.IngressController) types.NamespacedName {
+	return types.NamespacedName{
+		Namespace: "openshift-ingress",
+		Name:      "rsyslog-conf-" + ic.Name,
+	}
+}
+
 // RouterEffectiveDefaultCertificateSecretName returns the namespaced name for
 // the in-use router default certificate secret.
 func RouterEffectiveDefaultCertificateSecretName(ci *operatorv1.IngressController, namespace string) types.NamespacedName {
