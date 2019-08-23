@@ -69,9 +69,9 @@ func RouterCertsGlobalSecretName() types.NamespacedName {
 
 // RouterOperatorGeneratedDefaultCertificateSecretName returns the namespaced name for
 // the operator-generated router default certificate secret.
-func RouterOperatorGeneratedDefaultCertificateSecretName(ci *operatorv1.IngressController, namespace string) types.NamespacedName {
+func RouterOperatorGeneratedDefaultCertificateSecretName(ci *operatorv1.IngressController) types.NamespacedName {
 	return types.NamespacedName{
-		Namespace: namespace,
+		Namespace: "openshift-ingress",
 		Name:      fmt.Sprintf("router-certs-%s", ci.Name),
 	}
 }
@@ -97,9 +97,9 @@ func RsyslogConfigMapName(ic *operatorv1.IngressController) types.NamespacedName
 // the in-use router default certificate secret.
 func RouterEffectiveDefaultCertificateSecretName(ic *operatorv1.IngressController) types.NamespacedName {
 	if cert := ic.Spec.DefaultCertificate; cert != nil {
-		return types.NamespacedName{Namespace: ic.Namespace, Name: cert.Name}
+		return types.NamespacedName{Namespace: "openshift-ingress", Name: cert.Name}
 	}
-	return RouterOperatorGeneratedDefaultCertificateSecretName(ic, ic.Namespace)
+	return RouterOperatorGeneratedDefaultCertificateSecretName(ic)
 }
 
 func IngressControllerDeploymentLabel(ic *operatorv1.IngressController) string {

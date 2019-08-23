@@ -69,7 +69,7 @@ func (r *reconciler) desiredRouterCAConfigMap(ingresses []operatorv1.IngressCont
 	}
 	for _, ingress := range ingresses {
 		if cert := ingress.Spec.DefaultCertificate; cert != nil {
-			name := types.NamespacedName{Namespace: ingress.Namespace, Name: cert.Name}
+			name := types.NamespacedName{Namespace: "openshift-ingress", Name: cert.Name}
 			secrets[name.String()] = name
 		}
 	}

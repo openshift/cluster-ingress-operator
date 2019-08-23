@@ -196,7 +196,7 @@ func TestUpdateDefaultIngressController(t *testing.T) {
 		t.Fatalf("failed to get default deployment: %v", err)
 	}
 	originalSecret := ic.Spec.DefaultCertificate.DeepCopy()
-	expectedSecretName := controller.RouterOperatorGeneratedDefaultCertificateSecretName(ic, deployment.Namespace).Name
+	expectedSecretName := controller.RouterOperatorGeneratedDefaultCertificateSecretName(ic).Name
 	if originalSecret != nil {
 		expectedSecretName = originalSecret.Name
 	}
