@@ -239,7 +239,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	}
 
 	// Fill in the default certificate secret name.
-	secretName := controller.RouterEffectiveDefaultCertificateSecretName(ci, deployment.Namespace)
+	secretName := controller.RouterEffectiveDefaultCertificateSecretName(ci)
 	deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName = secretName.Name
 
 	if enabled, level := ExtraLoggingEnabled(ci, ingressConfig); enabled {

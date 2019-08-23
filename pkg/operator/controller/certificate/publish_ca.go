@@ -1,13 +1,17 @@
 package certificate
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
+	"k8s.io/apimachinery/pkg/types"
+
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
 	corev1 "k8s.io/api/core/v1"
+
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -15,7 +19,7 @@ import (
 // ensureRouterCAConfigMap will create, update, or delete the configmap for the
 // router CA as appropriate.
 func (r *reconciler) ensureRouterCAConfigMap(secret *corev1.Secret, ingresses []operatorv1.IngressController) error {
-	desired, err := desiredRouterCAConfigMap(secret, ingresses)
+	desired, err := r.desiredRouterCAConfigMap(ingresses)
 	if err != nil {
 		return err
 	}
@@ -52,10 +56,32 @@ func (r *reconciler) ensureRouterCAConfigMap(secret *corev1.Secret, ingresses []
 	return nil
 }
 
-// desiredRouterCAConfigMap returns the desired router CA configmap.
-func desiredRouterCAConfigMap(secret *corev1.Secret, ingresses []operatorv1.IngressController) (*corev1.ConfigMap, error) {
-	if !shouldPublishRouterCA(ingresses) {
-		return nil, nil
+// desiredRouterCAConfigMap returns a configmap containing a single 'ca-bundle.crt'
+// key whose value is the concatenation of:
+//
+// 1. The default generated CA tls.crt data
+// 2. All distinct default certificate secret tls.crt data referenced by ingresscontrollers
+func (r *reconciler) desiredRouterCAConfigMap(ingresses []operatorv1.IngressController) (*corev1.ConfigMap, error) {
+	caName := controller.RouterCASecretName(r.operatorNamespace)
+	secrets := map[string]types.NamespacedName{
+		caName.String(): caName,
+	}
+	for _, ingress := range ingresses {
+		name := controller.RouterEffectiveDefaultCertificateSecretName(&ingress)
+		secrets[name.String()] = name
+	}
+
+	var certs [][]byte
+	for _, name := range secrets {
+		secret := &corev1.Secret{}
+		if err := r.client.Get(context.TODO(), name, secret); err != nil {
+			return nil, fmt.Errorf("failed to get certificate secret %q: %v", name.String(), err)
+		}
+		if data, ok := secret.Data["tls.crt"]; ok {
+			certs = append(certs, data)
+		} else {
+			return nil, fmt.Errorf("certificate tls.crt key is missing from certificate secret %q", name.String())
+		}
 	}
 
 	name := controller.RouterCAConfigMapName()
@@ -65,21 +91,10 @@ func desiredRouterCAConfigMap(secret *corev1.Secret, ingresses []operatorv1.Ingr
 			Namespace: name.Namespace,
 		},
 		Data: map[string]string{
-			"ca-bundle.crt": string(secret.Data["tls.crt"]),
+			"ca-bundle.crt": string(bytes.Join(certs, nil)),
 		},
 	}
 	return cm, nil
-}
-
-// shouldPublishRouterCA checks if some IngressController uses the default
-// certificate, in which case the CA certificate needs to be published.
-func shouldPublishRouterCA(ingresses []operatorv1.IngressController) bool {
-	for _, ci := range ingresses {
-		if ci.Spec.DefaultCertificate == nil {
-			return true
-		}
-	}
-	return false
 }
 
 // currentRouterCAConfigMap returns the current router CA configmap.

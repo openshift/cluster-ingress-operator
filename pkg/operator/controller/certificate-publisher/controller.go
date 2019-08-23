@@ -66,7 +66,7 @@ func New(mgr manager.Manager, operatorNamespace, operandNamespace string) (runti
 	// secretIsInUse and secretToIngressController can look up
 	// ingresscontrollers that reference the secret.
 	if err := operatorCache.IndexField(&operatorv1.IngressController{}, "defaultCertificateName", func(o runtime.Object) []string {
-		secret := controller.RouterEffectiveDefaultCertificateSecretName(o.(*operatorv1.IngressController), operandNamespace)
+		secret := controller.RouterEffectiveDefaultCertificateSecretName(o.(*operatorv1.IngressController))
 		return []string{secret.Name}
 	}); err != nil {
 		return nil, fmt.Errorf("failed to create index for ingresscontroller: %v", err)
@@ -144,7 +144,7 @@ func (r *reconciler) secretIsInUse(meta metav1.Object) bool {
 // given ingresscontroller exists, false otherwise.
 func (r *reconciler) hasSecret(meta metav1.Object, o runtime.Object) bool {
 	ic := o.(*operatorv1.IngressController)
-	secretName := controller.RouterEffectiveDefaultCertificateSecretName(ic, r.operandNamespace)
+	secretName := controller.RouterEffectiveDefaultCertificateSecretName(ic)
 	secret := &corev1.Secret{}
 	if err := r.client.Get(context.Background(), secretName, secret); err != nil {
 		if errors.IsNotFound(err) {
@@ -161,8 +161,8 @@ func (r *reconciler) hasSecret(meta metav1.Object, o runtime.Object) bool {
 func (r *reconciler) secretChanged(old, new runtime.Object) bool {
 	oldController := old.(*operatorv1.IngressController)
 	newController := new.(*operatorv1.IngressController)
-	oldSecret := controller.RouterEffectiveDefaultCertificateSecretName(oldController, r.operandNamespace)
-	newSecret := controller.RouterEffectiveDefaultCertificateSecretName(newController, r.operandNamespace)
+	oldSecret := controller.RouterEffectiveDefaultCertificateSecretName(oldController)
+	newSecret := controller.RouterEffectiveDefaultCertificateSecretName(newController)
 	oldStatus := oldController.Status.Domain
 	newStatus := newController.Status.Domain
 	return oldSecret != newSecret || oldStatus != newStatus

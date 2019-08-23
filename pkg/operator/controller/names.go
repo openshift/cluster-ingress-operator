@@ -95,11 +95,11 @@ func RsyslogConfigMapName(ic *operatorv1.IngressController) types.NamespacedName
 
 // RouterEffectiveDefaultCertificateSecretName returns the namespaced name for
 // the in-use router default certificate secret.
-func RouterEffectiveDefaultCertificateSecretName(ci *operatorv1.IngressController, namespace string) types.NamespacedName {
-	if cert := ci.Spec.DefaultCertificate; cert != nil {
-		return types.NamespacedName{Namespace: namespace, Name: cert.Name}
+func RouterEffectiveDefaultCertificateSecretName(ic *operatorv1.IngressController) types.NamespacedName {
+	if cert := ic.Spec.DefaultCertificate; cert != nil {
+		return types.NamespacedName{Namespace: ic.Namespace, Name: cert.Name}
 	}
-	return RouterOperatorGeneratedDefaultCertificateSecretName(ci, namespace)
+	return RouterOperatorGeneratedDefaultCertificateSecretName(ic, ic.Namespace)
 }
 
 func IngressControllerDeploymentLabel(ic *operatorv1.IngressController) string {
