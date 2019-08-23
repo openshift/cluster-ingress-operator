@@ -60,15 +60,18 @@ func (r *reconciler) ensureRouterCAConfigMap(secret *corev1.Secret, ingresses []
 // key whose value is the concatenation of:
 //
 // 1. The default generated CA tls.crt data
-// 2. All distinct default certificate secret tls.crt data referenced by ingresscontrollers
+// 2. All distinct user-provided default certificate secret tls.crt data referenced
+//    by ingresscontrollers.
 func (r *reconciler) desiredRouterCAConfigMap(ingresses []operatorv1.IngressController) (*corev1.ConfigMap, error) {
 	caName := controller.RouterCASecretName(r.operatorNamespace)
 	secrets := map[string]types.NamespacedName{
 		caName.String(): caName,
 	}
 	for _, ingress := range ingresses {
-		name := controller.RouterEffectiveDefaultCertificateSecretName(&ingress)
-		secrets[name.String()] = name
+		if cert := ingress.Spec.DefaultCertificate; cert != nil {
+			name := types.NamespacedName{Namespace: ingress.Namespace, Name: cert.Name}
+			secrets[name.String()] = name
+		}
 	}
 
 	var certs [][]byte
