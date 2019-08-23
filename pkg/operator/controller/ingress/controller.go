@@ -178,7 +178,7 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 	}
 
 	// The ingresscontroller is safe to process, so ensure it.
-	if err := r.ensureIngressController(ingress, dnsConfig, infraConfig); err != nil {
+	if err := r.ensureIngressController(ingress, dnsConfig, infraConfig, ingressConfig); err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to ensure ingresscontroller: %v", err)
 	}
 
@@ -373,7 +373,7 @@ func (r *reconciler) ensureIngressDeleted(ingress *operatorv1.IngressController)
 }
 
 // ensureIngressController ensures all necessary router resources exist for a given ingresscontroller.
-func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, dnsConfig *configv1.DNS, infraConfig *configv1.Infrastructure) error {
+func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, dnsConfig *configv1.DNS, infraConfig *configv1.Infrastructure, ingressConfig *configv1.Ingress) error {
 	// Before doing anything at all with the controller, ensure it has a finalizer
 	// so we can clean up later.
 	if !slice.ContainsString(ci.Finalizers, manifests.IngressControllerFinalizer) {
@@ -392,7 +392,7 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		return fmt.Errorf("failed to ensure namespace: %v", err)
 	}
 
-	deployment, err := r.ensureRouterDeployment(ci, infraConfig)
+	deployment, err := r.ensureRouterDeployment(ci, infraConfig, ingressConfig)
 	if err != nil {
 		return fmt.Errorf("failed to ensure deployment: %v", err)
 	}
@@ -424,6 +424,10 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		errs = append(errs, fmt.Errorf("failed to create internal router service for ingresscontroller %s: %v", ci.Name, err))
 	} else if err := r.ensureMetricsIntegration(ci, internalSvc, deploymentRef); err != nil {
 		errs = append(errs, fmt.Errorf("failed to integrate metrics with openshift-monitoring for ingresscontroller %s: %v", ci.Name, err))
+	}
+
+	if _, _, err := r.ensureRsyslogConfigMap(ci, deploymentRef, ingressConfig); err != nil {
+		errs = append(errs, err)
 	}
 
 	if _, _, err := r.ensureRouterPodDisruptionBudget(ci, deploymentRef); err != nil {

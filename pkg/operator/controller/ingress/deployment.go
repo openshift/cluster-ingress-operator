@@ -16,7 +16,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	"k8s.io/apimachinery/pkg/util/intstr"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -24,8 +26,8 @@ import (
 
 // ensureRouterDeployment ensures the router deployment exists for a given
 // ingresscontroller.
-func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, infraConfig *configv1.Infrastructure) (*appsv1.Deployment, error) {
-	desired, err := desiredRouterDeployment(ci, r.Config.IngressControllerImage, infraConfig)
+func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, infraConfig *configv1.Infrastructure, ingressConfig *configv1.Ingress) (*appsv1.Deployment, error) {
+	desired, err := desiredRouterDeployment(ci, r.Config.IngressControllerImage, infraConfig, ingressConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build router deployment: %v", err)
 	}
@@ -62,7 +64,7 @@ func (r *reconciler) ensureRouterDeleted(ci *operatorv1.IngressController) error
 }
 
 // desiredRouterDeployment returns the desired router deployment.
-func desiredRouterDeployment(ci *operatorv1.IngressController, ingressControllerImage string, infraConfig *configv1.Infrastructure) (*appsv1.Deployment, error) {
+func desiredRouterDeployment(ci *operatorv1.IngressController, ingressControllerImage string, infraConfig *configv1.Infrastructure, ingressConfig *configv1.Ingress) (*appsv1.Deployment, error) {
 	deployment := manifests.RouterDeployment()
 	name := controller.RouterDeploymentName(ci)
 	deployment.Name = name.Name
@@ -76,6 +78,9 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	// Ensure the deployment adopts only its own pods.
 	deployment.Spec.Selector = controller.IngressControllerDeploymentPodSelector(ci)
 	deployment.Spec.Template.Labels = deployment.Spec.Selector.MatchLabels
+
+	volumes := deployment.Spec.Template.Spec.Volumes
+	routerVolumeMounts := deployment.Spec.Template.Spec.Containers[0].VolumeMounts
 
 	// Prevent colocation of controller pods to enable simple horizontal scaling
 	deployment.Spec.Template.Spec.Affinity = &corev1.Affinity{
@@ -137,7 +142,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	certsVolumeName := "metrics-certs"
 	certsVolumeMountPath := "/etc/pki/tls/metrics-certs"
 
-	volume := corev1.Volume{
+	certsVolume := corev1.Volume{
 		Name: certsVolumeName,
 		VolumeSource: corev1.VolumeSource{
 			Secret: &corev1.SecretVolumeSource{
@@ -145,14 +150,14 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 			},
 		},
 	}
-	volumeMount := corev1.VolumeMount{
+	certsVolumeMount := corev1.VolumeMount{
 		Name:      certsVolumeName,
 		MountPath: certsVolumeMountPath,
 		ReadOnly:  true,
 	}
 
-	deployment.Spec.Template.Spec.Volumes = append(deployment.Spec.Template.Spec.Volumes, volume)
-	deployment.Spec.Template.Spec.Containers[0].VolumeMounts = append(deployment.Spec.Template.Spec.Containers[0].VolumeMounts, volumeMount)
+	volumes = append(volumes, certsVolume)
+	routerVolumeMounts = append(routerVolumeMounts, certsVolumeMount)
 
 	env = append(env, corev1.EnvVar{Name: "ROUTER_METRICS_TYPE", Value: "haproxy"})
 	env = append(env, corev1.EnvVar{Name: "ROUTER_METRICS_TLS_CERT_FILE", Value: filepath.Join(certsVolumeMountPath, "tls.crt")})
@@ -218,8 +223,6 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		env = append(env, corev1.EnvVar{Name: "ROUTE_LABELS", Value: routeSelector.String()})
 	}
 
-	deployment.Spec.Template.Spec.Containers[0].Env = append(deployment.Spec.Template.Spec.Containers[0].Env, env...)
-
 	deployment.Spec.Template.Spec.Containers[0].Image = ingressControllerImage
 
 	if ci.Status.EndpointPublishingStrategy.Type == operatorv1.HostNetworkStrategyType {
@@ -238,6 +241,77 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	// Fill in the default certificate secret name.
 	secretName := controller.RouterEffectiveDefaultCertificateSecretName(ci, deployment.Namespace)
 	deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName = secretName.Name
+
+	if enabled, level := ExtraLoggingEnabled(ci, ingressConfig); enabled {
+		rsyslogConfigVolume := corev1.Volume{
+			Name: "rsyslog-config",
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: controller.RsyslogConfigMapName(ci).Name,
+					},
+				},
+			},
+		}
+		rsyslogConfigVolumeMount := corev1.VolumeMount{
+			Name:      rsyslogConfigVolume.Name,
+			MountPath: "/etc/rsyslog",
+		}
+
+		// Ideally we would use a Unix domain socket in the abstract
+		// namespace, but rsyslog does not support that, so we need a
+		// filesystem that is common to the router and syslog
+		// containers.
+		rsyslogSocketVolume := corev1.Volume{
+			Name: "rsyslog-socket",
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		}
+		rsyslogSocketVolumeMount := corev1.VolumeMount{
+			Name:      rsyslogSocketVolume.Name,
+			MountPath: "/var/lib/rsyslog",
+		}
+
+		configPath := filepath.Join(rsyslogConfigVolumeMount.MountPath, "rsyslog.conf")
+		socketPath := filepath.Join(rsyslogSocketVolumeMount.MountPath, "rsyslog.sock")
+
+		syslogContainer := corev1.Container{
+			Name: "syslog",
+			// The ingresscontroller image has rsyslog built in.
+			Image: ingressControllerImage,
+			Command: []string{
+				"/sbin/rsyslogd", "-n",
+				// TODO: Once we have rsyslog 8.32 or later,
+				// we can switch to -i NONE.
+				"-i", "/tmp/rsyslog.pid",
+				"-f", configPath,
+			},
+			ImagePullPolicy: corev1.PullIfNotPresent,
+			VolumeMounts: []corev1.VolumeMount{
+				rsyslogConfigVolumeMount,
+				rsyslogSocketVolumeMount,
+			},
+			Resources: corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("100m"),
+					corev1.ResourceMemory: resource.MustParse("256Mi"),
+				},
+			},
+		}
+
+		env = append(env,
+			corev1.EnvVar{Name: "ROUTER_SYSLOG_ADDRESS", Value: socketPath},
+			corev1.EnvVar{Name: "ROUTER_LOG_LEVEL", Value: level},
+		)
+		volumes = append(volumes, rsyslogConfigVolume, rsyslogSocketVolume)
+		routerVolumeMounts = append(routerVolumeMounts, rsyslogSocketVolumeMount)
+		deployment.Spec.Template.Spec.Containers = append(deployment.Spec.Template.Spec.Containers, syslogContainer)
+	}
+
+	deployment.Spec.Template.Spec.Volumes = volumes
+	deployment.Spec.Template.Spec.Containers[0].VolumeMounts = routerVolumeMounts
+	deployment.Spec.Template.Spec.Containers[0].Env = append(deployment.Spec.Template.Spec.Containers[0].Env, env...)
 
 	return deployment, nil
 }
@@ -280,9 +354,12 @@ func (r *reconciler) updateRouterDeployment(current, desired *appsv1.Deployment)
 // deploymentConfigChanged checks if current config matches the expected config
 // for the ingress controller deployment and if not returns the updated config.
 func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv1.Deployment) {
-	if cmp.Equal(current.Spec.Template.Spec.Volumes, expected.Spec.Template.Spec.Volumes, cmpopts.EquateEmpty(), cmpopts.SortSlices(cmpVolumes), cmp.Comparer(cmpSecretVolumeSource)) &&
+	// Don't worry about sidecars for the comparison because any changes to
+	// the sidecar will be accompanied by changes to the router container.
+	if cmp.Equal(current.Spec.Template.Spec.Volumes, expected.Spec.Template.Spec.Volumes, cmpopts.EquateEmpty(), cmpopts.SortSlices(cmpVolumes), cmp.Comparer(cmpConfigMapVolumeSource), cmp.Comparer(cmpSecretVolumeSource)) &&
 		cmp.Equal(current.Spec.Template.Spec.NodeSelector, expected.Spec.Template.Spec.NodeSelector, cmpopts.EquateEmpty()) &&
 		cmp.Equal(current.Spec.Template.Spec.Containers[0].Env, expected.Spec.Template.Spec.Containers[0].Env, cmpopts.EquateEmpty(), cmpopts.SortSlices(cmpEnvs)) &&
+		cmp.Equal(current.Spec.Template.Spec.Containers[0].VolumeMounts, expected.Spec.Template.Spec.Containers[0].VolumeMounts, cmpopts.EquateEmpty(), cmpopts.SortSlices(cmpVolumeMounts)) &&
 		current.Spec.Template.Spec.Containers[0].Image == expected.Spec.Template.Spec.Containers[0].Image &&
 		cmp.Equal(current.Spec.Template.Spec.Tolerations, expected.Spec.Template.Spec.Tolerations, cmpopts.EquateEmpty(), cmpopts.SortSlices(cmpTolerations)) &&
 		cmp.Equal(current.Spec.Template.Spec.Affinity, expected.Spec.Template.Spec.Affinity, cmpopts.EquateEmpty()) &&
@@ -293,6 +370,14 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 	}
 
 	updated := current.DeepCopy()
+	// Copy the primary container from current and update its fields
+	// selectively.  Copy any sidecars from expected verbatim.
+	containers := make([]corev1.Container, len(expected.Spec.Template.Spec.Containers))
+	containers[0] = updated.Spec.Template.Spec.Containers[0]
+	for i, container := range expected.Spec.Template.Spec.Containers[1:] {
+		containers[i+1] = *container.DeepCopy()
+	}
+	updated.Spec.Template.Spec.Containers = containers
 	updated.Spec.Strategy = expected.Spec.Strategy
 	volumes := make([]corev1.Volume, len(expected.Spec.Template.Spec.Volumes))
 	for i, vol := range expected.Spec.Template.Spec.Volumes {
@@ -302,6 +387,7 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 	updated.Spec.Template.Spec.NodeSelector = expected.Spec.Template.Spec.NodeSelector
 	updated.Spec.Template.Spec.Containers[0].Env = expected.Spec.Template.Spec.Containers[0].Env
 	updated.Spec.Template.Spec.Containers[0].Image = expected.Spec.Template.Spec.Containers[0].Image
+	updated.Spec.Template.Spec.Containers[0].VolumeMounts = expected.Spec.Template.Spec.Containers[0].VolumeMounts
 	updated.Spec.Template.Spec.Tolerations = expected.Spec.Template.Spec.Tolerations
 	updated.Spec.Template.Spec.Affinity = expected.Spec.Template.Spec.Affinity
 	replicas := int32(1)
@@ -312,8 +398,32 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 	return true, updated
 }
 
-func cmpEnvs(a, b corev1.EnvVar) bool    { return a.Name < b.Name }
-func cmpVolumes(a, b corev1.Volume) bool { return a.Name < b.Name }
+func cmpEnvs(a, b corev1.EnvVar) bool              { return a.Name < b.Name }
+func cmpVolumes(a, b corev1.Volume) bool           { return a.Name < b.Name }
+func cmpVolumeMounts(a, b corev1.VolumeMount) bool { return a.Name < b.Name }
+func cmpConfigMapVolumeSource(a, b corev1.ConfigMapVolumeSource) bool {
+	if a.LocalObjectReference != b.LocalObjectReference {
+		return false
+	}
+	if !cmp.Equal(a.Items, b.Items, cmpopts.EquateEmpty()) {
+		return false
+	}
+	aDefaultMode := int32(420)
+	if a.DefaultMode != nil {
+		aDefaultMode = *a.DefaultMode
+	}
+	bDefaultMode := int32(420)
+	if b.DefaultMode != nil {
+		bDefaultMode = *b.DefaultMode
+	}
+	if aDefaultMode != bDefaultMode {
+		return false
+	}
+	if !cmp.Equal(a.Optional, b.Optional, cmpopts.EquateEmpty()) {
+		return false
+	}
+	return true
+}
 func cmpSecretVolumeSource(a, b corev1.SecretVolumeSource) bool {
 	if a.SecretName != b.SecretName {
 		return false

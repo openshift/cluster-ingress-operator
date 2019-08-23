@@ -26,6 +26,7 @@ var toleration = corev1.Toleration{
 
 func TestDesiredRouterDeployment(t *testing.T) {
 	var one int32 = 1
+	ingressConfig := &configv1.Ingress{}
 	ci := &operatorv1.IngressController{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "default",
@@ -56,7 +57,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		},
 	}
 
-	deployment, err := desiredRouterDeployment(ci, ingressControllerImage, infraConfig)
+	deployment, err := desiredRouterDeployment(ci, ingressControllerImage, infraConfig, ingressConfig)
 	if err != nil {
 		t.Errorf("invalid router Deployment: %v", err)
 	}
@@ -149,9 +150,18 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		t.Errorf("expected empty readiness probe host, got %q", deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.Handler.HTTPGet.Host)
 	}
 
+	for _, container := range deployment.Spec.Template.Spec.Containers {
+		if container.Name == "syslog" {
+			t.Errorf("router Deployment has unexpected syslog container: %#v", container)
+		}
+	}
+
+	ingressConfig.Annotations = map[string]string{
+		EnableLoggingAnnotation: "debug",
+	}
 	ci.Status.Domain = "example.com"
 	ci.Status.EndpointPublishingStrategy.Type = operatorv1.LoadBalancerServiceStrategyType
-	deployment, err = desiredRouterDeployment(ci, ingressControllerImage, infraConfig)
+	deployment, err = desiredRouterDeployment(ci, ingressControllerImage, infraConfig, ingressConfig)
 	if err != nil {
 		t.Errorf("invalid router Deployment: %v", err)
 	}
@@ -191,6 +201,16 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		t.Errorf("router Deployment has unexpected canonical hostname: %q, expected %q", canonicalHostname, ci.Status.Domain)
 	}
 
+	foundSyslogContainer := false
+	for _, container := range deployment.Spec.Template.Spec.Containers {
+		if container.Name == "syslog" {
+			foundSyslogContainer = true
+		}
+	}
+	if !foundSyslogContainer {
+		t.Error("router Deployment has no syslog container")
+	}
+
 	secretName := fmt.Sprintf("secret-%v", time.Now().UnixNano())
 	ci.Spec.DefaultCertificate = &corev1.LocalObjectReference{
 		Name: secretName,
@@ -206,7 +226,11 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	var expectedReplicas int32 = 3
 	ci.Spec.Replicas = &expectedReplicas
 	ci.Status.EndpointPublishingStrategy.Type = operatorv1.HostNetworkStrategyType
-	deployment, err = desiredRouterDeployment(ci, ingressControllerImage, infraConfig)
+	delete(ingressConfig.Annotations, EnableLoggingAnnotation)
+	ci.Annotations = map[string]string{
+		EnableLoggingAnnotation: "debug",
+	}
+	deployment, err = desiredRouterDeployment(ci, ingressControllerImage, infraConfig, ingressConfig)
 	if err != nil {
 		t.Errorf("invalid router Deployment: %v", err)
 	}
@@ -246,6 +270,16 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	if deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName != secretName {
 		t.Errorf("expected router Deployment volume with secret %s, got %s",
 			secretName, deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName)
+	}
+
+	foundSyslogContainer = false
+	for _, container := range deployment.Spec.Template.Spec.Containers {
+		if container.Name == "syslog" {
+			foundSyslogContainer = true
+		}
+	}
+	if !foundSyslogContainer {
+		t.Error("router Deployment has no syslog container")
 	}
 }
 
