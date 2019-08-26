@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"sort"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 
@@ -72,11 +73,13 @@ func (r *reconciler) ensureRouterCAConfigMap(caSecret *corev1.Secret, ingresses 
 // caSecret is the default generated CA secret.
 // secrets is a list of all secrets in the operand namespace.
 func desiredRouterCAConfigMap(ingresses []operatorv1.IngressController, caSecret *corev1.Secret, secrets []corev1.Secret) (*corev1.ConfigMap, error) {
-	secretsToPublish := map[string]corev1.Secret{}
+	secretsToPublishByName := map[string]corev1.Secret{}
+
+	hash := func(cert corev1.Secret) string { return cert.Namespace + "/" + cert.Name }
 
 	// Always include the CA secret if it exists.
 	if caSecret != nil {
-		secretsToPublish[string(caSecret.UID)] = *caSecret
+		secretsToPublishByName[hash(*caSecret)] = *caSecret
 	}
 
 	// Only include non-default certificate secrets referenced by ingresscontrollers.
@@ -84,12 +87,24 @@ func desiredRouterCAConfigMap(ingresses []operatorv1.IngressController, caSecret
 		if cert := ingress.Spec.DefaultCertificate; cert != nil {
 			for i, secret := range secrets {
 				if secret.Name == cert.Name {
-					secretsToPublish[string(secret.UID)] = secrets[i]
+					secretsToPublishByName[hash(secret)] = secrets[i]
 				}
 			}
 		}
 	}
 
+	// Sort the secrets in a predictable order to help with comparison and testing.
+	var sortedNames []string
+	for name := range secretsToPublishByName {
+		sortedNames = append(sortedNames, name)
+	}
+	sort.Strings(sortedNames)
+	var secretsToPublish []corev1.Secret
+	for _, name := range sortedNames {
+		secretsToPublish = append(secretsToPublish, secretsToPublishByName[name])
+	}
+
+	// Collect data from all the certs
 	var certs [][]byte
 	for _, secret := range secretsToPublish {
 		if data, ok := secret.Data["tls.crt"]; ok {
@@ -98,6 +113,8 @@ func desiredRouterCAConfigMap(ingresses []operatorv1.IngressController, caSecret
 			return nil, fmt.Errorf("certificate tls.crt key is missing from certificate secret %s/%s", secret.Namespace, secret.Name)
 		}
 	}
+
+	// Generate the final configmap.
 	name := controller.RouterCAConfigMapName()
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
