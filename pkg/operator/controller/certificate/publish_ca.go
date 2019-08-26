@@ -72,24 +72,26 @@ func (r *reconciler) ensureRouterCAConfigMap(caSecret *corev1.Secret, ingresses 
 // caSecret is the default generated CA secret.
 // secrets is a list of all secrets in the operand namespace.
 func desiredRouterCAConfigMap(ingresses []operatorv1.IngressController, caSecret *corev1.Secret, secrets []corev1.Secret) (*corev1.ConfigMap, error) {
-	activeSecrets := map[string]corev1.Secret{}
+	secretsToPublish := map[string]corev1.Secret{}
 
-	// Always include the CA secret.
-	activeSecrets[string(caSecret.UID)] = *caSecret
+	// Always include the CA secret if it exists.
+	if caSecret != nil {
+		secretsToPublish[string(caSecret.UID)] = *caSecret
+	}
 
 	// Only include non-default certificate secrets referenced by ingresscontrollers.
 	for _, ingress := range ingresses {
 		if cert := ingress.Spec.DefaultCertificate; cert != nil {
 			for i, secret := range secrets {
 				if secret.Name == cert.Name {
-					activeSecrets[string(secret.UID)] = secrets[i]
+					secretsToPublish[string(secret.UID)] = secrets[i]
 				}
 			}
 		}
 	}
 
 	var certs [][]byte
-	for _, secret := range activeSecrets {
+	for _, secret := range secretsToPublish {
 		if data, ok := secret.Data["tls.crt"]; ok {
 			certs = append(certs, data)
 		} else {

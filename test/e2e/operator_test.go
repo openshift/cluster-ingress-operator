@@ -233,20 +233,6 @@ func TestUpdateDefaultIngressController(t *testing.T) {
 		t.Fatalf("failed to observe updated deployment: %v", err)
 	}
 
-	// Wait for the CA certificate configmap to be deleted.
-	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
-		if err := kclient.Get(context.TODO(), controller.RouterCAConfigMapName(), configmap); err != nil {
-			if errors.IsNotFound(err) {
-				return true, nil
-			}
-			t.Logf("failed to get CA certificate configmap, will retry: %v", err)
-		}
-		return false, nil
-	})
-	if err != nil {
-		t.Fatalf("failed to observe clean-up of CA certificate configmap: %v", err)
-	}
-
 	// Reset .spec.defaultCertificate to its original value.
 	if err := kclient.Get(context.TODO(), defaultName, ic); err != nil {
 		t.Fatalf("failed to get default ingresscontroller: %v", err)
@@ -255,19 +241,17 @@ func TestUpdateDefaultIngressController(t *testing.T) {
 	if err := kclient.Update(context.TODO(), ic); err != nil {
 		t.Errorf("failed to reset default ingresscontroller: %v", err)
 	}
-
-	// Wait for the CA certificate configmap to be recreated.
-	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
-		if err := kclient.Get(context.TODO(), controller.RouterCAConfigMapName(), configmap); err != nil {
-			if !errors.IsNotFound(err) {
-				t.Logf("failed to get CA certificate configmap, will retry: %v", err)
-			}
+	err = wait.PollImmediate(1*time.Second, 15*time.Second, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), types.NamespacedName{Namespace: deployment.Namespace, Name: deployment.Name}, deployment); err != nil {
+			return false, nil
+		}
+		if deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName != expectedSecretName {
 			return false, nil
 		}
 		return true, nil
 	})
 	if err != nil {
-		t.Fatalf("failed to get recreated CA certificate configmap: %v", err)
+		t.Fatalf("failed to observe updated deployment: %v", err)
 	}
 }
 
