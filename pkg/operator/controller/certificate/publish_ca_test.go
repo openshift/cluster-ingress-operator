@@ -16,37 +16,73 @@ import (
 )
 
 func TestDesiredRouterCAConfigMap(t *testing.T) {
+	// This one is special, everything else is in the
+	// operand namespace.
 	caSecret := certSecret("ca", "x")
 	caSecret.Namespace = "openshift-ingress-operator"
 
-	secrets := []corev1.Secret{
-		certSecret("a", "a"),
-		certSecret("b", "b"),
-		certSecret("c", "c"),
-		certSecret("d", "d"),
-	}
-
-	ingresses := []operatorv1.IngressController{
-		newIngressControllerWithCert("a", "a"),
-		newIngressControllerWithCert("c", "c"),
-	}
-
-	actual, err := desiredRouterCAConfigMap(ingresses, &caSecret, secrets)
-	if err != nil {
-		t.Fatalf("failed: %v", err)
-	}
-
-	expected := &corev1.ConfigMap{
-		Data: map[string]string{
-			"ca-bundle.crt": "xac",
+	tests := map[string]struct {
+		ca        *corev1.Secret
+		ingresses []operatorv1.IngressController
+		secrets   []corev1.Secret
+		expect    map[string]string
+	}{
+		"with ca, user defined references": {
+			ca: &caSecret,
+			ingresses: []operatorv1.IngressController{
+				newIngressControllerWithCert("default", ""),
+				newIngressControllerWithCert("a", "a"),
+				newIngressControllerWithCert("c", "c"),
+			},
+			secrets: []corev1.Secret{
+				certSecret("a", "a"),
+				certSecret("b", "b"),
+				certSecret("c", "c"),
+				certSecret("d", "d"),
+			},
+			expect: map[string]string{"ca-bundle.crt": "xac"},
+		},
+		"with ca, no ingresscontrollers": {
+			ca:        &caSecret,
+			ingresses: []operatorv1.IngressController{},
+			secrets: []corev1.Secret{
+				certSecret("a", "a"),
+				certSecret("b", "b"),
+				certSecret("c", "c"),
+			},
+			expect: map[string]string{"ca-bundle.crt": "x"},
+		},
+		"with ca, no user defined references": {
+			ca: &caSecret,
+			ingresses: []operatorv1.IngressController{
+				newIngressControllerWithCert("default", ""),
+			},
+			secrets: []corev1.Secret{
+				certSecret("a", "a"),
+			},
+			expect: map[string]string{"ca-bundle.crt": "x"},
+		},
+		"no ca, no references": {
+			ingresses: []operatorv1.IngressController{},
+			secrets: []corev1.Secret{
+				certSecret("a", "a"),
+			},
+			expect: map[string]string{"ca-bundle.crt": ""},
 		},
 	}
 
-	opts := []cmp.Option{
-		cmpopts.EquateEmpty(),
-	}
-	if !cmp.Equal(actual.Data, expected.Data, opts...) {
-		t.Fatalf("expected:\n%#v\ngot:\n%#v", expected.Data, actual.Data)
+	for name, test := range tests {
+		t.Logf("testing: %v", name)
+		actual, err := desiredRouterCAConfigMap(test.ingresses, test.ca, test.secrets)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		opts := []cmp.Option{
+			cmpopts.EquateEmpty(),
+		}
+		if !cmp.Equal(actual.Data, test.expect, opts...) {
+			t.Errorf("expected:\n%#v\ngot:\n%#v", test.expect, actual.Data)
+		}
 	}
 }
 
