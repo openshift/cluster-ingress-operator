@@ -6,7 +6,8 @@ import (
 	"fmt"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
-	"k8s.io/apimachinery/pkg/types"
+
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
@@ -18,8 +19,12 @@ import (
 
 // ensureRouterCAConfigMap will create, update, or delete the configmap for the
 // router CA as appropriate.
-func (r *reconciler) ensureRouterCAConfigMap(secret *corev1.Secret, ingresses []operatorv1.IngressController) error {
-	desired, err := r.desiredRouterCAConfigMap(ingresses)
+func (r *reconciler) ensureRouterCAConfigMap(caSecret *corev1.Secret, ingresses []operatorv1.IngressController) error {
+	secrets := &corev1.SecretList{}
+	if err := r.cache.List(context.TODO(), secrets, client.InNamespace("openshift-ingress")); err != nil {
+		return fmt.Errorf("failed to list secrets: %v", err)
+	}
+	desired, err := desiredRouterCAConfigMap(ingresses, caSecret, secrets.Items)
 	if err != nil {
 		return err
 	}
@@ -62,31 +67,35 @@ func (r *reconciler) ensureRouterCAConfigMap(secret *corev1.Secret, ingresses []
 // 1. The default generated CA tls.crt data
 // 2. All distinct user-provided default certificate secret tls.crt data referenced
 //    by ingresscontrollers.
-func (r *reconciler) desiredRouterCAConfigMap(ingresses []operatorv1.IngressController) (*corev1.ConfigMap, error) {
-	caName := controller.RouterCASecretName(r.operatorNamespace)
-	secrets := map[string]types.NamespacedName{
-		caName.String(): caName,
-	}
+//
+// ingresses are all ingresscontrollers.
+// caSecret is the default generated CA secret.
+// secrets is a list of all secrets in the operand namespace.
+func desiredRouterCAConfigMap(ingresses []operatorv1.IngressController, caSecret *corev1.Secret, secrets []corev1.Secret) (*corev1.ConfigMap, error) {
+	activeSecrets := map[string]corev1.Secret{}
+
+	// Always include the CA secret.
+	activeSecrets[string(caSecret.UID)] = *caSecret
+
+	// Only include non-default certificate secrets referenced by ingresscontrollers.
 	for _, ingress := range ingresses {
 		if cert := ingress.Spec.DefaultCertificate; cert != nil {
-			name := types.NamespacedName{Namespace: "openshift-ingress", Name: cert.Name}
-			secrets[name.String()] = name
+			for i, secret := range secrets {
+				if secret.Name == cert.Name {
+					activeSecrets[string(secret.UID)] = secrets[i]
+				}
+			}
 		}
 	}
 
 	var certs [][]byte
-	for _, name := range secrets {
-		secret := &corev1.Secret{}
-		if err := r.client.Get(context.TODO(), name, secret); err != nil {
-			return nil, fmt.Errorf("failed to get certificate secret %q: %v", name.String(), err)
-		}
+	for _, secret := range activeSecrets {
 		if data, ok := secret.Data["tls.crt"]; ok {
 			certs = append(certs, data)
 		} else {
-			return nil, fmt.Errorf("certificate tls.crt key is missing from certificate secret %q", name.String())
+			return nil, fmt.Errorf("certificate tls.crt key is missing from certificate secret %s/%s", secret.Namespace, secret.Name)
 		}
 	}
-
 	name := controller.RouterCAConfigMapName()
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
