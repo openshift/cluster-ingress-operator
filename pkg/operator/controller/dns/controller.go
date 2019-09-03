@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"k8s.io/client-go/tools/record"
+
 	iov1 "github.com/openshift/cluster-ingress-operator/pkg/api/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
@@ -39,6 +41,7 @@ func New(mgr manager.Manager, dnsProvider dns.Provider) (runtimecontroller.Contr
 		client:      mgr.GetClient(),
 		cache:       mgr.GetCache(),
 		dnsProvider: dnsProvider,
+		recorder:    mgr.GetEventRecorderFor(controllerName),
 	}
 	c, err := runtimecontroller.New(controllerName, mgr, runtimecontroller.Options{Reconciler: reconciler})
 	if err != nil {
@@ -54,6 +57,7 @@ type reconciler struct {
 	client      client.Client
 	cache       cache.Cache
 	dnsProvider dns.Provider
+	recorder    record.EventRecorder
 }
 
 func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, error) {
@@ -89,6 +93,15 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 		log.V(2).Info("warning: dnsrecord is missing owner label", "dnsrecord", record, "ingresscontroller", ingressName)
 		return reconcile.Result{RequeueAfter: 1 * time.Minute}, nil
 	}
+
+	// Existing 4.1 records will have a zero TTL. Instead of making all the client implementations guard against
+	// zero TTLs, simply ignore the record until the TTL is updated by the ingresscontroller controller. Report
+	// this through events so we can detect problems with our migration.
+	if record.Spec.RecordTTL <= 0 {
+		r.recorder.Eventf(record, "Warning", "ZeroTTL", "Record is missing TTL and will be temporarily ignored; the TTL will be automatically updated and the record will be retried.")
+		return reconcile.Result{}, nil
+	}
+
 	if err := r.cache.Get(context.TODO(), types.NamespacedName{Namespace: record.Namespace, Name: ingressName}, &operatorv1.IngressController{}); err != nil {
 		if errors.IsNotFound(err) {
 			// TODO: what should we do here? something upstream could detect and delete the orphan? add new conditions?

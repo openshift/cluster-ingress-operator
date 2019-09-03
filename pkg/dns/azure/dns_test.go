@@ -37,6 +37,7 @@ func TestEnsureDNS(t *testing.T) {
 			DNSName:    "subdomain.dnszone.io.",
 			RecordType: iov1.ARecordType,
 			Targets:    []string{"55.11.22.33"},
+			RecordTTL:  120,
 		},
 	}
 	dnsZone := configv1.DNSZone{

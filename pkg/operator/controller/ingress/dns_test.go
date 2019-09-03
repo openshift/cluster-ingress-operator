@@ -57,6 +57,7 @@ func TestDesiredWildcardDNSRecord(t *testing.T) {
 				DNSName:    "*.apps.openshift.example.com.",
 				RecordType: iov1.CNAMERecordType,
 				Targets:    []string{"lb.cloud.example.com"},
+				RecordTTL:  defaultRecordTTL,
 			},
 		},
 		{
@@ -70,6 +71,7 @@ func TestDesiredWildcardDNSRecord(t *testing.T) {
 				DNSName:    "*.apps.openshift.example.com.",
 				RecordType: iov1.ARecordType,
 				Targets:    []string{"192.0.2.1"},
+				RecordTTL:  defaultRecordTTL,
 			},
 		},
 	}

@@ -72,6 +72,6 @@ func resourceRecordSet(record *iov1.DNSRecord) *gdnsv1.ResourceRecordSet {
 		Name:    record.Spec.DNSName,
 		Rrdatas: record.Spec.Targets,
 		Type:    record.Spec.RecordType,
-		Ttl:     300,
+		Ttl:     record.Spec.RecordTTL,
 	}
 }
