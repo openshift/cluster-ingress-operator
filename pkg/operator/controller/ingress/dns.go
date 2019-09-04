@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
+
 	iov1 "github.com/openshift/cluster-ingress-operator/pkg/api/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
@@ -15,6 +18,14 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+// defaultRecordTTL is the TTL (in seconds) assigned to all new DNS records.
+//
+// Note that TTL isn't necessarily honored by clouds providers (for example,
+// on AWS TTL is not configurable for alias records[1]).
+//
+// [1] https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/resource-record-sets-choosing-alias-non-alias.html
+const defaultRecordTTL int64 = 30
 
 // ensureDNS will create DNS records for the given LB service. If service is
 // nil, nothing is done.
@@ -28,13 +39,23 @@ func (r *reconciler) ensureWildcardDNSRecord(ic *operatorv1.IngressController, s
 	if err != nil {
 		return nil, err
 	}
-	if desired != nil && current == nil {
+
+	switch {
+	case desired != nil && current == nil:
 		if err := r.client.Create(context.TODO(), desired); err != nil {
 			return nil, fmt.Errorf("failed to create dnsrecord %s/%s: %v", desired.Namespace, desired.Name, err)
 		}
 		log.Info("created dnsrecord", "dnsrecord", desired)
-		return desired, nil
+		return r.currentWildcardDNSRecord(ic)
+	case desired != nil && current != nil:
+		if updated, err := r.updateDNSRecord(current, desired); err != nil {
+			return nil, fmt.Errorf("failed to update dnsrecord %s/%s: %v", desired.Namespace, desired.Name, err)
+		} else if updated {
+			log.Info("updated dnsrecord", "dnsrecord", desired)
+			return r.currentWildcardDNSRecord(ic)
+		}
 	}
+
 	return current, nil
 }
 
@@ -110,6 +131,7 @@ func desiredWildcardRecord(ic *operatorv1.IngressController, service *corev1.Ser
 			DNSName:    domain,
 			Targets:    []string{target},
 			RecordType: recordType,
+			RecordTTL:  defaultRecordTTL,
 		},
 	}
 }
@@ -138,4 +160,30 @@ func (r *reconciler) deleteWildcardDNSRecord(ic *operatorv1.IngressController) e
 		return err
 	}
 	return nil
+}
+
+// updateDNSRecord updates a DNSRecord. Returns a boolean indicating whether
+// the record was updated, and an error value.
+func (r *reconciler) updateDNSRecord(current, desired *iov1.DNSRecord) (bool, error) {
+	changed, updated := dnsRecordChanged(current, desired)
+	if !changed {
+		return false, nil
+	}
+
+	if err := r.client.Update(context.TODO(), updated); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// dnsRecordChanged checks if the current DNSRecord spec matches the expected spec and
+// if not returns an updated one.
+func dnsRecordChanged(current, expected *iov1.DNSRecord) (bool, *iov1.DNSRecord) {
+	if cmp.Equal(current.Spec, expected.Spec, cmpopts.EquateEmpty()) {
+		return false, nil
+	}
+
+	updated := current.DeepCopy()
+	updated.Spec = expected.Spec
+	return true, updated
 }
