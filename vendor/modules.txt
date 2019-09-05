@@ -141,7 +141,17 @@ github.com/matttproud/golang_protobuf_extensions/pbutil
 github.com/modern-go/concurrent
 # github.com/modern-go/reflect2 v1.0.1
 github.com/modern-go/reflect2
-# github.com/openshift/api v3.9.1-0.20190713024856-f15120709e0a+incompatible
+# github.com/nbutton23/zxcvbn-go v0.0.0-20180912185939-ae427f1e4c1d
+github.com/nbutton23/zxcvbn-go
+github.com/nbutton23/zxcvbn-go/match
+github.com/nbutton23/zxcvbn-go/matching
+github.com/nbutton23/zxcvbn-go/scoring
+github.com/nbutton23/zxcvbn-go/utils/math
+github.com/nbutton23/zxcvbn-go/adjacency
+github.com/nbutton23/zxcvbn-go/entropy
+github.com/nbutton23/zxcvbn-go/frequency
+github.com/nbutton23/zxcvbn-go/data
+# github.com/openshift/api v3.9.1-0.20190905013149-e6c3eeae444f+incompatible
 github.com/openshift/api/config/v1
 github.com/openshift/api/operator/v1
 github.com/openshift/api/route/v1
@@ -167,6 +177,11 @@ github.com/prometheus/procfs
 github.com/rogpeppe/go-internal/modfile
 github.com/rogpeppe/go-internal/module
 github.com/rogpeppe/go-internal/semver
+# github.com/securego/gosec v0.0.0-20190709033609-4b59c948083c
+github.com/securego/gosec/cmd/gosec
+github.com/securego/gosec
+github.com/securego/gosec/output
+github.com/securego/gosec/rules
 # github.com/spf13/cobra v0.0.4
 github.com/spf13/cobra
 # github.com/spf13/pflag v1.0.3
@@ -304,6 +319,7 @@ gopkg.in/yaml.v2
 k8s.io/api/core/v1
 k8s.io/api/apps/v1
 k8s.io/api/rbac/v1
+k8s.io/api/policy/v1beta1
 k8s.io/api/admissionregistration/v1beta1
 k8s.io/api/apps/v1beta1
 k8s.io/api/apps/v1beta2
@@ -327,7 +343,6 @@ k8s.io/api/networking/v1
 k8s.io/api/networking/v1beta1
 k8s.io/api/node/v1alpha1
 k8s.io/api/node/v1beta1
-k8s.io/api/policy/v1beta1
 k8s.io/api/rbac/v1alpha1
 k8s.io/api/rbac/v1beta1
 k8s.io/api/scheduling/v1
@@ -351,12 +366,12 @@ k8s.io/apimachinery/pkg/util/sets
 k8s.io/apimachinery/pkg/util/yaml
 k8s.io/apimachinery/pkg/api/errors
 k8s.io/apimachinery/pkg/util/wait
+k8s.io/apimachinery/pkg/api/resource
 k8s.io/apimachinery/pkg/apis/meta/v1/unstructured
 k8s.io/apimachinery/pkg/util/clock
 k8s.io/apimachinery/pkg/util/intstr
 k8s.io/apimachinery/pkg/api/meta
 k8s.io/apimachinery/pkg/util/runtime
-k8s.io/apimachinery/pkg/api/resource
 k8s.io/apimachinery/pkg/fields
 k8s.io/apimachinery/pkg/labels
 k8s.io/apimachinery/pkg/runtime/serializer
