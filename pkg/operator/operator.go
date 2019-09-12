@@ -155,10 +155,20 @@ func (o *Operator) Start(stop <-chan struct{}) error {
 // ensureDefaultIngressController creates the default ingresscontroller if it
 // doesn't already exist.
 func (o *Operator) ensureDefaultIngressController() error {
+	// Set the replicas field to a non-nil value because otherwise its
+	// persisted value will be nil, which causes GETs on the /scale
+	// subresource to fail, which breaks the scaling client.  See also:
+	// https://github.com/kubernetes/kubernetes/pull/75210
+	//
+	// TODO: Set the replicas value to the number of workers.
+	two := int32(2)
 	ic := &operatorv1.IngressController{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      manifests.DefaultIngressControllerName,
 			Namespace: o.namespace,
+		},
+		Spec: operatorv1.IngressControllerSpec{
+			Replicas: &two,
 		},
 	}
 	err := o.client.Get(context.TODO(), types.NamespacedName{Namespace: ic.Namespace, Name: ic.Name}, ic)

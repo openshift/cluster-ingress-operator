@@ -34,10 +34,17 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 
 	"k8s.io/apiserver/pkg/storage/names"
+
+	discocache "k8s.io/client-go/discovery/cached"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/restmapper"
+	"k8s.io/client-go/scale"
 )
 
 var (
@@ -271,14 +278,16 @@ func TestUpdateDefaultIngressController(t *testing.T) {
 	}
 }
 
-// TestIngressControllerScale exercises a simple scale up/down scenario. Note that
-// the scaling client isn't yet reliable because of issues with CRD scale
-// subresource handling upstream (e.g. a persisted nil .spec.replicas will break
-// GET /scale). For now, only support scaling through direct update to
-// ingresscontroller.spec.replicas.
-//
-// See also: https://github.com/kubernetes/kubernetes/pull/75210
+// TestIngressControllerScale exercises a simple scale up/down scenario.
 func TestIngressControllerScale(t *testing.T) {
+	// Get a scale client.
+	//
+	// TODO: Use controller-runtime once it supports the /scale subresource.
+	scaleClient, err := getScaleClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	ic := &operatorv1.IngressController{}
 	if err := kclient.Get(context.TODO(), defaultName, ic); err != nil {
 		t.Fatalf("failed to get default ingresscontroller: %v", err)
@@ -287,17 +296,41 @@ func TestIngressControllerScale(t *testing.T) {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
-	// TODO: desired replicas isn't actually persisted in our API...
 	deployment := &appsv1.Deployment{}
 	if err := kclient.Get(context.TODO(), controller.RouterDeploymentName(ic), deployment); err != nil {
 		t.Fatalf("failed to get default ingresscontroller deployment: %v", err)
 	}
-	originalReplicas := deployment.Spec.Replicas
-	newReplicas := *originalReplicas + 1
 
-	ic.Spec.Replicas = &newReplicas
-	if err := kclient.Update(context.TODO(), ic); err != nil {
-		t.Fatalf("failed to update ingresscontroller: %v", err)
+	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
+	if err != nil {
+		t.Fatalf("router deployment has invalid spec.selector: %v", err)
+	}
+
+	resource := schema.GroupResource{
+		Group:    "operator.openshift.io",
+		Resource: "ingresscontrollers",
+	}
+
+	scale, err := scaleClient.Scales(defaultName.Namespace).Get(resource, defaultName.Name)
+	if err != nil {
+		t.Fatalf("failed to get initial scale of default ingresscontroller: %v", err)
+	}
+
+	// Make sure the deployment's selector is reflected in the scale status.
+	if scale.Status.Selector != selector.String() {
+		t.Fatalf("expected scale status.selector to be %q, got %q", selector.String(), scale.Status.Selector)
+	}
+
+	originalReplicas := scale.Spec.Replicas
+	newReplicas := originalReplicas + 1
+
+	scale.Spec.Replicas = newReplicas
+	updatedScale, err := scaleClient.Scales(defaultName.Namespace).Update(resource, scale)
+	if err != nil {
+		t.Fatalf("failed to scale ingresscontroller up: %v", err)
+	}
+	if updatedScale.Spec.Replicas != scale.Spec.Replicas {
+		t.Fatalf("expected scaled-up ingresscontroller's spec.replicas to be %d, got %d", scale.Spec.Replicas, updatedScale.Spec.Replicas)
 	}
 
 	// Wait for the deployment scale up to be observed.
@@ -311,16 +344,21 @@ func TestIngressControllerScale(t *testing.T) {
 	}
 
 	// Scale back down.
-	if err := kclient.Get(context.TODO(), defaultName, ic); err != nil {
-		t.Fatalf("failed to get ingresscontroller: %v", err)
+	scale, err = scaleClient.Scales(defaultName.Namespace).Get(resource, defaultName.Name)
+	if err != nil {
+		t.Fatalf("failed to get updated scale of ClusterIngress: %v", err)
 	}
-	ic.Spec.Replicas = originalReplicas
-	if err := kclient.Update(context.TODO(), ic); err != nil {
-		t.Fatalf("failed to update ingresscontroller: %v", err)
+	scale.Spec.Replicas = originalReplicas
+	updatedScale, err = scaleClient.Scales(defaultName.Namespace).Update(resource, scale)
+	if err != nil {
+		t.Fatalf("failed to scale ingresscontroller down: %v", err)
+	}
+	if updatedScale.Spec.Replicas != scale.Spec.Replicas {
+		t.Fatalf("expected scaled-down ingresscontroller's spec.replicas to be %d, got %d", scale.Spec.Replicas, updatedScale.Spec.Replicas)
 	}
 
 	// Wait for the deployment scale down to be observed.
-	if err := waitForAvailableReplicas(kclient, ic, 2*time.Minute, *originalReplicas); err != nil {
+	if err := waitForAvailableReplicas(kclient, ic, 2*time.Minute, originalReplicas); err != nil {
 		t.Fatalf("failed waiting deployment %s to scale to %d: %v", defaultName, originalReplicas, err)
 	}
 
@@ -329,6 +367,26 @@ func TestIngressControllerScale(t *testing.T) {
 	if err := waitForIngressControllerCondition(kclient, 5*time.Minute, defaultName, defaultAvailableConditions...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
+}
+
+func getScaleClient() (scale.ScalesGetter, error) {
+	kubeConfig, err := config.GetConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get kube config: %v", err)
+	}
+
+	client, err := kubernetes.NewForConfig(kubeConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create kube client: %v", err)
+	}
+
+	cachedDiscovery := discocache.NewMemCacheClient(client.Discovery())
+	cachedDiscovery.Invalidate()
+	restMapper := restmapper.NewDeferredDiscoveryRESTMapper(cachedDiscovery)
+	restMapper.Reset()
+	scaleKindResolver := scale.NewDiscoveryScaleKindResolver(client.Discovery())
+
+	return scale.NewForConfig(kubeConfig, restMapper, dynamic.LegacyAPIPathResolverFunc, scaleKindResolver)
 }
 
 func TestRouterCACertificate(t *testing.T) {
