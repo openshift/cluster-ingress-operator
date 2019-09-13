@@ -38,6 +38,7 @@ rules:
   verbs:
   - create
   - get
+  - update
 
 - apiGroups:
   - rbac.authorization.k8s.io
