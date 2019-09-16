@@ -27,8 +27,8 @@ import (
 // [1] https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/resource-record-sets-choosing-alias-non-alias.html
 const defaultRecordTTL int64 = 30
 
-// ensureDNS will create DNS records for the given LB service. If service is
-// nil, nothing is done.
+// ensureWildcardDNSRecord will create DNS records for the given LB service.
+// If service is nil, nothing is done.
 func (r *reconciler) ensureWildcardDNSRecord(ic *operatorv1.IngressController, service *corev1.Service) (*iov1.DNSRecord, error) {
 	if service == nil {
 		return nil, nil
