@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/Azure/azure-sdk-for-go/services/dns/mgmt/2017-10-01/dns"
+	privatedns "github.com/Azure/azure-sdk-for-go/services/privatedns/mgmt/2018-09-01/privatedns"
 	"github.com/pkg/errors"
 )
 
@@ -33,27 +34,63 @@ type ARecord struct {
 }
 
 type dnsClient struct {
-	zones      dns.ZonesClient
-	recordSets dns.RecordSetsClient
-	config     Config
+	recordSetClient, privateRecordSetClient DNSClient
 }
 
 // New returns an authenticated DNSClient
 func New(config Config, userAgentExtension string) (DNSClient, error) {
+	rsc, err := newRecordSetClient(config, userAgentExtension)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create recordSetClient")
+	}
+
+	prsc, err := newPrivateRecordSetClient(config, userAgentExtension)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create privateRecordSetClient")
+	}
+
+	return &dnsClient{recordSetClient: rsc, privateRecordSetClient: prsc}, nil
+}
+
+func (c *dnsClient) Put(ctx context.Context, zone Zone, arec ARecord) error {
+	switch zone.Provider {
+	case "Microsoft.Network/privateDnsZones":
+		return c.privateRecordSetClient.Put(ctx, zone, arec)
+	case "Microsoft.Network/dnszones":
+		return c.recordSetClient.Put(ctx, zone, arec)
+	default:
+		return errors.Errorf("unsupported Zone provider %s", zone.Provider)
+	}
+}
+
+func (c *dnsClient) Delete(ctx context.Context, zone Zone, arec ARecord) error {
+	switch zone.Provider {
+	case "Microsoft.Network/privateDnsZones":
+		return c.privateRecordSetClient.Delete(ctx, zone, arec)
+	case "Microsoft.Network/dnszones":
+		return c.recordSetClient.Delete(ctx, zone, arec)
+	default:
+		return errors.Errorf("unsupported Zone provider %s", zone.Provider)
+	}
+}
+
+type recordSetClient struct {
+	client dns.RecordSetsClient
+}
+
+func newRecordSetClient(config Config, userAgentExtension string) (*recordSetClient, error) {
 	authorizer, err := getAuthorizerForResource(config)
 	if err != nil {
 		return nil, err
 	}
-	zc := dns.NewZonesClient(config.SubscriptionID)
-	zc.AddToUserAgent(userAgentExtension)
-	zc.Authorizer = authorizer
+
 	rc := dns.NewRecordSetsClient(config.SubscriptionID)
 	rc.AddToUserAgent(userAgentExtension)
 	rc.Authorizer = authorizer
-	return &dnsClient{zones: zc, recordSets: rc, config: config}, nil
+	return &recordSetClient{client: rc}, nil
 }
 
-func (c *dnsClient) Put(ctx context.Context, zone Zone, arec ARecord) error {
+func (c *recordSetClient) Put(ctx context.Context, zone Zone, arec ARecord) error {
 	rs := dns.RecordSet{
 		RecordSetProperties: &dns.RecordSetProperties{
 			TTL: &arec.TTL,
@@ -62,20 +99,65 @@ func (c *dnsClient) Put(ctx context.Context, zone Zone, arec ARecord) error {
 			},
 		},
 	}
-	_, err := c.recordSets.CreateOrUpdate(ctx, zone.ResourceGroup, zone.Name, arec.Name, dns.A, rs, "", "")
+	_, err := c.client.CreateOrUpdate(ctx, zone.ResourceGroup, zone.Name, arec.Name, dns.A, rs, "", "")
 	if err != nil {
 		return errors.Wrapf(err, "failed to update dns a record: %s.%s", arec.Name, zone.Name)
 	}
 	return nil
 }
 
-func (c *dnsClient) Delete(ctx context.Context, zone Zone, arec ARecord) error {
-	_, err := c.recordSets.Get(ctx, zone.ResourceGroup, zone.Name, arec.Name, dns.A)
+func (c *recordSetClient) Delete(ctx context.Context, zone Zone, arec ARecord) error {
+	_, err := c.client.Get(ctx, zone.ResourceGroup, zone.Name, arec.Name, dns.A)
 	if err != nil {
 		// TODO: How do we interpret this as a notfound error?
 		return nil
 	}
-	_, err = c.recordSets.Delete(ctx, zone.ResourceGroup, zone.Name, arec.Name, dns.A, "")
+	_, err = c.client.Delete(ctx, zone.ResourceGroup, zone.Name, arec.Name, dns.A, "")
+	if err != nil {
+		return errors.Wrapf(err, "failed to delete dns a record: %s.%s", arec.Name, zone.Name)
+	}
+	return nil
+}
+
+type privateRecordSetClient struct {
+	client privatedns.RecordSetsClient
+}
+
+func newPrivateRecordSetClient(config Config, userAgentExtension string) (*privateRecordSetClient, error) {
+	authorizer, err := getAuthorizerForResource(config)
+	if err != nil {
+		return nil, err
+	}
+
+	prc := privatedns.NewRecordSetsClient(config.SubscriptionID)
+	prc.AddToUserAgent(userAgentExtension)
+	prc.Authorizer = authorizer
+	return &privateRecordSetClient{client: prc}, nil
+}
+
+func (c *privateRecordSetClient) Put(ctx context.Context, zone Zone, arec ARecord) error {
+	rs := privatedns.RecordSet{
+		RecordSetProperties: &privatedns.RecordSetProperties{
+			TTL: &arec.TTL,
+			ARecords: &[]privatedns.ARecord{
+				{Ipv4Address: &arec.Address},
+			},
+		},
+	}
+	_, err := c.client.CreateOrUpdate(ctx, zone.ResourceGroup, zone.Name, privatedns.A, arec.Name, rs, "", "")
+	if err != nil {
+		return errors.Wrapf(err, "failed to update dns a record: %s.%s", arec.Name, zone.Name)
+	}
+	return nil
+}
+
+func (c *privateRecordSetClient) Delete(ctx context.Context, zone Zone, arec ARecord) error {
+	_, err := c.client.Get(ctx, zone.ResourceGroup, zone.Name, privatedns.A, arec.Name)
+	if err != nil {
+		// TODO: How do we interpret this as a notfound error?
+		return nil
+	}
+	_, err = c.client.Delete(ctx, zone.ResourceGroup, zone.Name, privatedns.A, arec.Name, "")
 	if err != nil {
 		return errors.Wrapf(err, "failed to delete dns a record: %s.%s", arec.Name, zone.Name)
 	}
