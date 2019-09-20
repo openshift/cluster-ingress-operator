@@ -4,6 +4,7 @@ cloud.google.com/go/compute/metadata
 contrib.go.opencensus.io/exporter/ocagent
 # github.com/Azure/azure-sdk-for-go v30.0.0+incompatible
 github.com/Azure/azure-sdk-for-go/services/dns/mgmt/2017-10-01/dns
+github.com/Azure/azure-sdk-for-go/services/privatedns/mgmt/2018-09-01/privatedns
 github.com/Azure/azure-sdk-for-go/version
 # github.com/Azure/go-autorest/autorest v0.2.0
 github.com/Azure/go-autorest/autorest
