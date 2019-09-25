@@ -5,8 +5,12 @@ MAIN_PACKAGE=$(PACKAGE)/cmd/ingress-operator
 
 BIN=$(lastword $(subst /, ,$(MAIN_PACKAGE)))
 
+ifneq ($(DELVE),)
+GO_GCFLAGS ?= -gcflags=all="-N -l"
+endif
+
 GO=GO111MODULE=on GOFLAGS=-mod=vendor go
-GO_BUILD_RECIPE=CGO_ENABLED=0 $(GO) build -o $(BIN) $(MAIN_PACKAGE)
+GO_BUILD_RECIPE=CGO_ENABLED=0 $(GO) build -o $(BIN) $(GO_GCFLAGS) $(MAIN_PACKAGE)
 
 TEST ?= .*
 
@@ -72,3 +76,7 @@ verify-gosec:
 .PHONY: uninstall
 uninstall:
 	hack/uninstall.sh
+
+.PHONY: run-local
+run-local:
+	hack/run-local.sh
