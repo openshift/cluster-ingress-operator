@@ -23,6 +23,10 @@ limitations under the License.
 package rbac
 
 import (
+	"fmt"
+	"sort"
+	"strings"
+
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -36,16 +40,86 @@ var (
 	RuleDefinition = markers.Must(markers.MakeDefinition("kubebuilder:rbac", markers.DescribesPackage, Rule{}))
 )
 
-// Rule is a marker value that describes a kubernetes RBAC rule.
+// +controllertools:marker:generateHelp:category=RBAC
+
+// Rule specifies an RBAC rule to all access to some resources or non-resource URLs.
 type Rule struct {
-	Groups    []string `marker:",optional"`
+	// Groups specifies the API groups that this rule encompasses.
+	Groups []string `marker:",optional"`
+	// Resources specifies the API resources that this rule encompasses.
 	Resources []string `marker:",optional"`
-	Verbs     []string
-	URLs      []string `marker:"urls,optional"`
+	// Verbs specifies the (lowercase) kubernetes API verbs that this rule encompasses.
+	Verbs []string
+	// URL specifies the non-resource URLs that this rule encompasses.
+	URLs []string `marker:"urls,optional"`
+	// Namespace specifies the scope of the Rule.
+	// If not set, the Rule belongs to the generated ClusterRole.
+	// If set, the Rule belongs to a Role, whose namespace is specified by this field.
+	Namespace string `marker:",optional"`
+}
+
+// ruleKey represents the resources and non-resources a Rule applies.
+type ruleKey struct {
+	Groups    string
+	Resources string
+	URLs      string
+}
+
+func (key ruleKey) String() string {
+	return fmt.Sprintf("%s + %s + %s", key.Groups, key.Resources, key.URLs)
+}
+
+// ruleKeys implements sort.Interface
+type ruleKeys []ruleKey
+
+func (keys ruleKeys) Len() int           { return len(keys) }
+func (keys ruleKeys) Swap(i, j int)      { keys[i], keys[j] = keys[j], keys[i] }
+func (keys ruleKeys) Less(i, j int) bool { return keys[i].String() < keys[j].String() }
+
+// key normalizes the Rule and returns a ruleKey object.
+func (r *Rule) key() ruleKey {
+	r.normalize()
+	return ruleKey{
+		Groups:    strings.Join(r.Groups, "&"),
+		Resources: strings.Join(r.Resources, "&"),
+		URLs:      strings.Join(r.URLs, "&"),
+	}
+}
+
+// addVerbs adds new verbs into a Rule.
+// The duplicates in `r.Verbs` will be removed, and then `r.Verbs` will be sorted.
+func (r *Rule) addVerbs(verbs []string) {
+	r.Verbs = removeDupAndSort(append(r.Verbs, verbs...))
+}
+
+// normalize removes duplicates from each field of a Rule, and sorts each field.
+func (r *Rule) normalize() {
+	r.Groups = removeDupAndSort(r.Groups)
+	r.Resources = removeDupAndSort(r.Resources)
+	r.Verbs = removeDupAndSort(r.Verbs)
+	r.URLs = removeDupAndSort(r.URLs)
+}
+
+// removeDupAndSort removes duplicates in strs, sorts the items, and returns a
+// new slice of strings.
+func removeDupAndSort(strs []string) []string {
+	set := make(map[string]bool)
+	for _, str := range strs {
+		if _, ok := set[str]; !ok {
+			set[str] = true
+		}
+	}
+
+	var result []string
+	for str := range set {
+		result = append(result, str)
+	}
+	sort.Strings(result)
+	return result
 }
 
 // ToRule converts this rule to its Kubernetes API form.
-func (r Rule) ToRule() rbacv1.PolicyRule {
+func (r *Rule) ToRule() rbacv1.PolicyRule {
 	// fix the group names first, since letting people type "core" is nice
 	for i, group := range r.Groups {
 		if group == "core" {
@@ -60,43 +134,125 @@ func (r Rule) ToRule() rbacv1.PolicyRule {
 	}
 }
 
-// Generator is a genall.Generator that generated RBAC manifests..
+// +controllertools:marker:generateHelp
+
+// Generator generates ClusterRole objects.
 type Generator struct {
+	// RoleName sets the name of the generated ClusterRole.
 	RoleName string
 }
 
 func (Generator) RegisterMarkers(into *markers.Registry) error {
-	return into.Register(RuleDefinition)
+	if err := into.Register(RuleDefinition); err != nil {
+		return err
+	}
+	into.AddHelp(RuleDefinition, Rule{}.Help())
+	return nil
 }
-func (g Generator) Generate(ctx *genall.GenerationContext) error {
-	var rules []rbacv1.PolicyRule
+
+// GenerateRoles generate a slice of objs representing either a ClusterRole or a Role object
+// The order of the objs in the returned slice is stable and determined by their namespaces.
+func GenerateRoles(ctx *genall.GenerationContext, roleName string) ([]interface{}, error) {
+	rulesByNS := make(map[string][]*Rule)
 	for _, root := range ctx.Roots {
 		markerSet, err := markers.PackageMarkers(ctx.Collector, root)
 		if err != nil {
 			root.AddError(err)
 		}
 
-		for _, rule := range markerSet[RuleDefinition.Name] {
-			rules = append(rules, rule.(Rule).ToRule())
+		// group RBAC markers by namespace
+		for _, markerValue := range markerSet[RuleDefinition.Name] {
+			rule := markerValue.(Rule)
+			namespace := rule.Namespace
+			if _, ok := rulesByNS[namespace]; !ok {
+				rules := make([]*Rule, 0)
+				rulesByNS[namespace] = rules
+			}
+			rulesByNS[namespace] = append(rulesByNS[namespace], &rule)
 		}
 	}
 
-	if len(rules) == 0 {
-		return nil
+	// NormalizeRules merge Rule with the same ruleKey and sort the Rules
+	NormalizeRules := func(rules []*Rule) []rbacv1.PolicyRule {
+		ruleMap := make(map[ruleKey]*Rule)
+		// all the Rules having the same ruleKey will be merged into the first Rule
+		for _, rule := range rules {
+			key := rule.key()
+			if _, ok := ruleMap[key]; !ok {
+				ruleMap[key] = rule
+				continue
+			}
+			ruleMap[key].addVerbs(rule.Verbs)
+		}
+
+		// sort the Rules in rules according to their ruleKeys
+		keys := make([]ruleKey, 0, len(ruleMap))
+		for key := range ruleMap {
+			keys = append(keys, key)
+		}
+		sort.Sort(ruleKeys(keys))
+
+		var policyRules []rbacv1.PolicyRule
+		for _, key := range keys {
+			policyRules = append(policyRules, ruleMap[key].ToRule())
+
+		}
+		return policyRules
 	}
 
-	if err := ctx.WriteYAML("role.yaml", rbacv1.ClusterRole{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "ClusterRole",
-			APIVersion: rbacv1.SchemeGroupVersion.String(),
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name: g.RoleName,
-		},
-		Rules: rules,
-	}); err != nil {
+	// collect all the namespaces and sort them
+	var namespaces []string
+	for ns := range rulesByNS {
+		namespaces = append(namespaces, ns)
+	}
+	sort.Strings(namespaces)
+
+	// process the items in rulesByNS by the order specified in `namespaces` to make sure that the Role order is stable
+	var objs []interface{}
+	for _, ns := range namespaces {
+		rules := rulesByNS[ns]
+		policyRules := NormalizeRules(rules)
+		if len(policyRules) == 0 {
+			continue
+		}
+		if ns == "" {
+			objs = append(objs, rbacv1.ClusterRole{
+				TypeMeta: metav1.TypeMeta{
+					Kind:       "ClusterRole",
+					APIVersion: rbacv1.SchemeGroupVersion.String(),
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name: roleName,
+				},
+				Rules: policyRules,
+			})
+		} else {
+			objs = append(objs, rbacv1.Role{
+				TypeMeta: metav1.TypeMeta{
+					Kind:       "Role",
+					APIVersion: rbacv1.SchemeGroupVersion.String(),
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      roleName,
+					Namespace: ns,
+				},
+				Rules: policyRules,
+			})
+		}
+	}
+
+	return objs, nil
+}
+
+func (g Generator) Generate(ctx *genall.GenerationContext) error {
+	objs, err := GenerateRoles(ctx, g.RoleName)
+	if err != nil {
 		return err
 	}
 
-	return nil
+	if len(objs) == 0 {
+		return nil
+	}
+
+	return ctx.WriteYAML("role.yaml", objs...)
 }
