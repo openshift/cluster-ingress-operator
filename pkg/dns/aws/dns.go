@@ -252,7 +252,7 @@ func (m *Provider) change(record *iov1.DNSRecord, zone configv1.DNSZone, action 
 
 	zoneID, err := m.getZoneID(zone)
 	if err != nil {
-		return fmt.Errorf("failed to find hosted zone for record %v: %v", record, err)
+		return fmt.Errorf("failed to find hosted zone for record: %v", err)
 	}
 
 	// Find the target hosted zone of the load balancer attached to the service.
