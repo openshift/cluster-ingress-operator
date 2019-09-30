@@ -132,11 +132,11 @@ github.com/nbutton23/zxcvbn-go/adjacency
 github.com/nbutton23/zxcvbn-go/entropy
 github.com/nbutton23/zxcvbn-go/frequency
 github.com/nbutton23/zxcvbn-go/data
-# github.com/openshift/api v3.9.1-0.20190925205819-e39b0dc4e188+incompatible
+# github.com/openshift/api v3.9.1-0.20190930094450-41448ee845f6+incompatible
 github.com/openshift/api/config/v1
 github.com/openshift/api/operator/v1
 github.com/openshift/api/route/v1
-# github.com/openshift/library-go v0.0.0-20190925211623-9b918c218a4e
+# github.com/openshift/library-go v0.0.0-20190927184318-c355e2019bb3
 github.com/openshift/library-go/pkg/crypto
 # github.com/pkg/errors v0.8.1
 github.com/pkg/errors

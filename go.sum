@@ -281,10 +281,14 @@ github.com/openshift/api v3.9.1-0.20190905013149-e6c3eeae444f+incompatible h1:CA
 github.com/openshift/api v3.9.1-0.20190905013149-e6c3eeae444f+incompatible/go.mod h1:dh9o4Fs58gpFXGSYfnVxGR9PnV53I8TW84pQaJDdGiY=
 github.com/openshift/api v3.9.1-0.20190925205819-e39b0dc4e188+incompatible h1:fo4PhGUciMa8Xs2wtOSYY51cnr3+4o/Zkc8nWIC3t/E=
 github.com/openshift/api v3.9.1-0.20190925205819-e39b0dc4e188+incompatible/go.mod h1:dh9o4Fs58gpFXGSYfnVxGR9PnV53I8TW84pQaJDdGiY=
+github.com/openshift/api v3.9.1-0.20190930094450-41448ee845f6+incompatible h1:L2Rs2csZGJlrc6/U7q9FF6TFC4WHj0lnWfO5KukBa9A=
+github.com/openshift/api v3.9.1-0.20190930094450-41448ee845f6+incompatible/go.mod h1:dh9o4Fs58gpFXGSYfnVxGR9PnV53I8TW84pQaJDdGiY=
 github.com/openshift/library-go v0.0.0-20190613200606-e617f832835d h1:a/+OnGnX5qMHSSuKcSSLMPZghOgD48NNZgzDklj9cIc=
 github.com/openshift/library-go v0.0.0-20190613200606-e617f832835d/go.mod h1:NBttNjZpWwup/nthuLbPAPSYC8Qyo+BBK5bCtFoyYjo=
 github.com/openshift/library-go v0.0.0-20190925211623-9b918c218a4e h1:hDRrx7dI0ANkTLLWRmv2KyAt3hvnYewqa9PnEyk+2ho=
 github.com/openshift/library-go v0.0.0-20190925211623-9b918c218a4e/go.mod h1:NBttNjZpWwup/nthuLbPAPSYC8Qyo+BBK5bCtFoyYjo=
+github.com/openshift/library-go v0.0.0-20190927184318-c355e2019bb3 h1:8DJ9+kpIhJvzDv73DSXt4PW7X4t7w0ovure43aZrP+w=
+github.com/openshift/library-go v0.0.0-20190927184318-c355e2019bb3/go.mod h1:NBttNjZpWwup/nthuLbPAPSYC8Qyo+BBK5bCtFoyYjo=
 github.com/openzipkin/zipkin-go v0.1.6/go.mod h1:QgAqvLzwWbR/WpD4A3cGpPtJrZXNIiJc5AZX7/PBEpw=
 github.com/pborman/uuid v0.0.0-20170612153648-e790cca94e6c/go.mod h1:VyrYX9gd7irzKovcSS6BIIEwPRkP2Wm2m9ufcdFSJ34=
 github.com/pborman/uuid v0.0.0-20180906182336-adf5a7427709 h1:zNBQb37RGLmJybyMcs983HfUfpkw9OTFD9tbBfAViHE=
