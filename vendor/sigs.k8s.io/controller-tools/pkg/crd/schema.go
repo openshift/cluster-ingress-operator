@@ -66,6 +66,7 @@ type schemaContext struct {
 	info *markers.TypeInfo
 
 	schemaRequester schemaRequester
+	PackageMarkers  markers.MarkerValues
 }
 
 // newSchemaContext constructs a new schemaContext for the given package and schema requester.
@@ -185,8 +186,8 @@ func qualifiedName(pkgName, typeName string) string {
 	return typeName
 }
 
-// definitionLink creates a definition link for the given type and package.
-func definitionLink(pkgName, typeName string) string {
+// TypeRefLink creates a definition link for the given type and package.
+func TypeRefLink(pkgName, typeName string) string {
 	return defPrefix + qualifiedName(pkgName, typeName)
 }
 
@@ -217,7 +218,7 @@ func localNamedToSchema(ctx *schemaContext, ident *ast.Ident) *v1beta1.JSONSchem
 		pkgPath = ""
 	}
 	ctx.requestSchema(pkgPath, typeNameInfo.Name())
-	link := definitionLink(pkgPath, typeNameInfo.Name())
+	link := TypeRefLink(pkgPath, typeNameInfo.Name())
 	return &v1beta1.JSONSchemaProps{
 		Ref: &link,
 	}
@@ -234,7 +235,7 @@ func namedToSchema(ctx *schemaContext, named *ast.SelectorExpr) *v1beta1.JSONSch
 	typeNameInfo := typeInfo.Obj()
 	nonVendorPath := loader.NonVendorPath(typeNameInfo.Pkg().Path())
 	ctx.requestSchema(nonVendorPath, typeNameInfo.Name())
-	link := definitionLink(nonVendorPath, typeNameInfo.Name())
+	link := TypeRefLink(nonVendorPath, typeNameInfo.Name())
 	return &v1beta1.JSONSchemaProps{
 		Ref: &link,
 	}
@@ -290,6 +291,12 @@ func mapToSchema(ctx *schemaContext, mapType *ast.MapType) *v1beta1.JSONSchemaPr
 		valSchema = localNamedToSchema(ctx.ForInfo(&markers.TypeInfo{}), val)
 	case *ast.SelectorExpr:
 		valSchema = namedToSchema(ctx.ForInfo(&markers.TypeInfo{}), val)
+	case *ast.ArrayType:
+		valSchema = arrayToSchema(ctx.ForInfo(&markers.TypeInfo{}), val)
+		if valSchema.Type == "array" && valSchema.Items.Schema.Type != "string" {
+			ctx.pkg.AddError(loader.ErrFromNode(fmt.Errorf("map values must be a named type, not %T", mapType.Value), mapType.Value))
+			return &v1beta1.JSONSchemaProps{}
+		}
 	default:
 		ctx.pkg.AddError(loader.ErrFromNode(fmt.Errorf("map values must be a named type, not %T", mapType.Value), mapType.Value))
 		return &v1beta1.JSONSchemaProps{}
@@ -299,6 +306,7 @@ func mapToSchema(ctx *schemaContext, mapType *ast.MapType) *v1beta1.JSONSchemaPr
 		Type: "object",
 		AdditionalProperties: &v1beta1.JSONSchemaPropsOrBool{
 			Schema: valSchema,
+			Allows: true, /* set automatically by serialization, but useful for testing */
 		},
 	}
 }
@@ -320,7 +328,7 @@ func structToSchema(ctx *schemaContext, structType *ast.StructType) *v1beta1.JSO
 		jsonTag, hasTag := field.Tag.Lookup("json")
 		if !hasTag {
 			// if the field doesn't have a JSON tag, it doesn't belong in output (and shouldn't exist in a serialized type)
-			ctx.pkg.AddError(loader.ErrFromNode(fmt.Errorf("enountered struct field %q without JSON tag in type %q", field.Name, ctx.info.Name), field.RawField))
+			ctx.pkg.AddError(loader.ErrFromNode(fmt.Errorf("encountered struct field %q without JSON tag in type %q", field.Name, ctx.info.Name), field.RawField))
 			continue
 		}
 		jsonOpts := strings.Split(jsonTag, ",")
@@ -342,8 +350,26 @@ func structToSchema(ctx *schemaContext, structType *ast.StructType) *v1beta1.JSO
 		fieldName := jsonOpts[0]
 		inline = inline || fieldName == "" // anonymous fields are inline fields in YAML/JSON
 
-		if !inline && !omitEmpty {
-			props.Required = append(props.Required, fieldName)
+		// if no default required mode is set, default to required
+		defaultMode := "required"
+		if ctx.PackageMarkers.Get("kubebuilder:validation:Optional") != nil {
+			defaultMode = "optional"
+		}
+
+		switch defaultMode {
+		// if this package isn't set to optional default...
+		case "required":
+			// ...everything that's not inline, omitempty, or explicitly optional is required
+			if !inline && !omitEmpty && field.Markers.Get("kubebuilder:validation:Optional") == nil && field.Markers.Get("optional") == nil {
+				props.Required = append(props.Required, fieldName)
+			}
+
+		// if this package isn't set to required default...
+		case "optional":
+			// ...everything that isn't explicitly required is optional
+			if field.Markers.Get("kubebuilder:validation:Required") != nil {
+				props.Required = append(props.Required, fieldName)
+			}
 		}
 
 		propSchema := typeToSchema(ctx.ForInfo(&markers.TypeInfo{}), field.RawField.Type)
@@ -363,8 +389,8 @@ func structToSchema(ctx *schemaContext, structType *ast.StructType) *v1beta1.JSO
 }
 
 // builtinToType converts builtin basic types to their equivalent JSON schema form.
-// It *only* handles types allowed by the kubernetes API standards, meaning
-// no floats (technically we shouldn't allow int64 or plain int either, but :shrug:).
+// It *only* handles types allowed by the kubernetes API standards. Floats are not
+// allowed.
 func builtinToType(basic *types.Basic) (typ string, format string, err error) {
 	// NB(directxman12): formats from OpenAPI v3 are slightly different than those defined
 	// in JSONSchema.  This'll use the OpenAPI v3 ones, since they're useful for bounding our
