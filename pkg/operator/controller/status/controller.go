@@ -115,27 +115,21 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 			Resource: "namespaces",
 			Name:     "openshift-ingress-operator",
 		},
+		{
+			Group:     operatorv1.GroupName,
+			Resource:  "IngressController",
+			Namespace: r.Namespace,
+		},
+		{
+			Group:     iov1.GroupVersion.Group,
+			Resource:  "DNSRecord",
+			Namespace: r.Namespace,
+		},
 	}
 	if state.Namespace != nil {
 		related = append(related, configv1.ObjectReference{
 			Resource: "namespaces",
 			Name:     state.Namespace.Name,
-		})
-	}
-	for _, ingress := range state.IngressControllers {
-		related = append(related, configv1.ObjectReference{
-			Group:     operatorv1.GroupName,
-			Resource:  "IngressController",
-			Namespace: ingress.Namespace,
-			Name:      ingress.Name,
-		})
-	}
-	for _, dns := range state.DNSRecords {
-		related = append(related, configv1.ObjectReference{
-			Group:     iov1.GroupVersion.Group,
-			Resource:  "DNSRecord",
-			Namespace: dns.Namespace,
-			Name:      dns.Name,
 		})
 	}
 	co.Status.RelatedObjects = related
@@ -210,13 +204,6 @@ func (r *reconciler) getOperatorState(nsName string) (operatorState, error) {
 		return state, fmt.Errorf("failed to list ingresscontrollers in %q: %v", r.Namespace, err)
 	} else {
 		state.IngressControllers = ingressList.Items
-	}
-
-	dnsRecords := &iov1.DNSRecordList{}
-	if err := r.cache.List(context.TODO(), dnsRecords, client.InNamespace(r.Namespace)); err != nil {
-		return state, fmt.Errorf("failed to list dnsrecords in %q: %v", r.Namespace, err)
-	} else {
-		state.DNSRecords = dnsRecords.Items
 	}
 
 	return state, nil
