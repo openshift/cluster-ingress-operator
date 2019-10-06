@@ -197,13 +197,13 @@ func computeLoadBalancerStatus(ic *operatorv1.IngressController, service *corev1
 		message := "The LoadBalancer service is pending"
 
 		// Try and find a more specific reason for for the pending status.
-		createFailedReason := "CreatingLoadBalancerFailed"
+		createFailedReason := "SyncLoadBalancerFailed"
 		failedLoadBalancerEvents := getEventsByReason(operandEvents, "service-controller", createFailedReason)
 		for _, event := range failedLoadBalancerEvents {
 			involved := event.InvolvedObject
-			if involved.Kind == "Service" && involved.Namespace == service.Namespace && involved.Name == service.Name {
-				reason = "CreatingLoadBalancerFailed"
-				message = fmt.Sprintf("The %s component is reporting CreatingLoadBalancerFailed events like: %s\n%s",
+			if involved.Kind == "Service" && involved.Namespace == service.Namespace && involved.Name == service.Name && involved.UID == service.UID {
+				reason = "SyncLoadBalancerFailed"
+				message = fmt.Sprintf("The %s component is reporting SyncLoadBalancerFailed events like: %s\n%s",
 					event.Source.Component, event.Message, "The kube-controller-manager logs may contain more details.")
 				break
 			}
