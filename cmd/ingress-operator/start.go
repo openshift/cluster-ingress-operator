@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/ghodss/yaml"
 	"github.com/spf13/cobra"
@@ -12,6 +13,7 @@ import (
 	awsdns "github.com/openshift/cluster-ingress-operator/pkg/dns/aws"
 	azuredns "github.com/openshift/cluster-ingress-operator/pkg/dns/azure"
 	gcpdns "github.com/openshift/cluster-ingress-operator/pkg/dns/gcp"
+	libvirtdns "github.com/openshift/cluster-ingress-operator/pkg/dns/libvirt"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator"
 	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
@@ -180,6 +182,19 @@ func createDNSProvider(cl client.Client, operatorConfig operatorconfig.Config, d
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create GCP DNS provider: %v", err)
+		}
+		dnsProvider = provider
+	case configv1.LibvirtPlatformType:
+		cluster := strings.Split(dnsConfig.Spec.BaseDomain, ".")[0]
+		appDomain := strings.Replace(dnsConfig.Spec.BaseDomain, cluster, "apps", 1)
+		libvirtUrl := strings.Join([]string{"api.", dnsConfig.Spec.BaseDomain}, "")
+		provider, err := libvirtdns.New(libvirtdns.Config{
+			Cluster: cluster,
+			Domain:  appDomain,
+			Url:     libvirtUrl,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create libvirt DNS provider: %v", err)
 		}
 		dnsProvider = provider
 	default:
