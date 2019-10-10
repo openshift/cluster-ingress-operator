@@ -39,6 +39,7 @@ spec:
           image: openshift/origin-cluster-ingress-operator:latest
           command:
           - ingress-operator
+          - start
           env:
             - name: RELEASE_VERSION
               value: "0.0.1-snapshot"
