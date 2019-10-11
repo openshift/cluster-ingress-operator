@@ -16,6 +16,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	types "k8s.io/apimachinery/pkg/types"
 	utilclock "k8s.io/apimachinery/pkg/util/clock"
 )
 
@@ -32,13 +33,14 @@ func ingressController(name string, t operatorv1.EndpointPublishingStrategyType)
 	}
 }
 
-func pendingLBService(owner string) *corev1.Service {
+func pendingLBService(owner string, UID types.UID) *corev1.Service {
 	return &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: owner,
 			Labels: map[string]string{
 				manifests.OwningIngressControllerLabel: owner,
 			},
+			UID: UID,
 		},
 		Spec: corev1.ServiceSpec{
 			Type: corev1.ServiceTypeLoadBalancer,
@@ -67,10 +69,10 @@ func provisionedLBservice(owner string) *corev1.Service {
 	}
 }
 
-func failedCreateLBEvent(service string) corev1.Event {
+func failedCreateLBEvent(service string, UID types.UID) corev1.Event {
 	return corev1.Event{
 		Type:    "Warning",
-		Reason:  "CreatingLoadBalancerFailed",
+		Reason:  "SyncLoadBalancerFailed",
 		Message: "failed to ensure load balancer for service openshift-ingress/router-default: TooManyLoadBalancers: Exceeded quota of account",
 		Source: corev1.EventSource{
 			Component: "service-controller",
@@ -78,6 +80,7 @@ func failedCreateLBEvent(service string) corev1.Event {
 		InvolvedObject: corev1.ObjectReference{
 			Kind: "Service",
 			Name: service,
+			UID:  UID,
 		},
 	}
 }
@@ -125,10 +128,11 @@ func TestComputeLoadBalancerStatus(t *testing.T) {
 		{
 			name:       "no events for current lb",
 			controller: ingressController("default", operatorv1.LoadBalancerServiceStrategyType),
-			service:    pendingLBService("default"),
+			service:    pendingLBService("default", "1"),
 			events: []corev1.Event{
 				schedulerEvent(),
-				failedCreateLBEvent("secondary"),
+				failedCreateLBEvent("secondary", "2"),
+				failedCreateLBEvent("default", "3"),
 			},
 			expect: []operatorv1.OperatorCondition{
 				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "WantedByEndpointPublishingStrategy", clock.Now()),
@@ -138,15 +142,15 @@ func TestComputeLoadBalancerStatus(t *testing.T) {
 		{
 			name:       "lb pending, create failed events",
 			controller: ingressController("default", operatorv1.LoadBalancerServiceStrategyType),
-			service:    pendingLBService("default"),
+			service:    pendingLBService("default", "1"),
 			events: []corev1.Event{
 				schedulerEvent(),
-				failedCreateLBEvent("secondary"),
-				failedCreateLBEvent("default"),
+				failedCreateLBEvent("secondary", "3"),
+				failedCreateLBEvent("default", "1"),
 			},
 			expect: []operatorv1.OperatorCondition{
 				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "WantedByEndpointPublishingStrategy", clock.Now()),
-				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionFalse, "CreatingLoadBalancerFailed", clock.Now()),
+				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionFalse, "SyncLoadBalancerFailed", clock.Now()),
 			},
 		},
 		{
