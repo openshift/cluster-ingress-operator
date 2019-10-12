@@ -332,6 +332,10 @@ type IngressControllerStatus struct {
 	//     * DNS records have been successfully created.
 	//   - False if any of those conditions are unsatisfied.
 	Conditions []OperatorCondition `json:"conditions,omitempty"`
+
+	// observedGeneration is the most recent generation observed.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object

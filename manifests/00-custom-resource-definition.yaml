@@ -414,6 +414,10 @@ spec:
               required:
               - type
               type: object
+            observedGeneration:
+              description: observedGeneration is the most recent generation observed.
+              format: int64
+              type: integer
             selector:
               description: selector is a label selector, in string format, for ingress
                 controller pods corresponding to the IngressController. The number
