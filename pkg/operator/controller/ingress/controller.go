@@ -162,7 +162,7 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 
 	// Admit if necessary. Don't process until admission succeeds. If admission is
 	// successful, immediately re-queue to refresh state.
-	if !isAdmitted(ingress) {
+	if !isAdmitted(ingress) || needsReadmission(ingress) {
 		if err := r.admit(ingress, ingressConfig, infraConfig); err != nil {
 			switch err := err.(type) {
 			case *admissionRejection:
@@ -204,6 +204,7 @@ func (r *reconciler) admit(current *operatorv1.IngressController, ingressConfig 
 				Reason:  "Invalid",
 				Message: err.Reason,
 			})
+			updated.Status.ObservedGeneration = updated.Generation
 			if !ingressStatusesEqual(current.Status, updated.Status) {
 				if err := r.client.Status().Update(context.TODO(), updated); err != nil {
 					return fmt.Errorf("failed to update status: %v", err)
@@ -218,6 +219,7 @@ func (r *reconciler) admit(current *operatorv1.IngressController, ingressConfig 
 		Status: operatorv1.ConditionTrue,
 		Reason: "Valid",
 	})
+	updated.Status.ObservedGeneration = updated.Generation
 	if !ingressStatusesEqual(current.Status, updated.Status) {
 		if err := r.client.Status().Update(context.TODO(), updated); err != nil {
 			return fmt.Errorf("failed to update status: %v", err)
@@ -231,6 +233,19 @@ func isAdmitted(ic *operatorv1.IngressController) bool {
 		if cond.Type == iov1.IngressControllerAdmittedConditionType && cond.Status == operatorv1.ConditionTrue {
 			return true
 		}
+	}
+	return false
+}
+
+// needsReadmission returns a Boolean value indicating whether the given
+// ingresscontroller needs to be re-admitted.  Re-admission is necessary in
+// order to revalidate mutable fields that are subject to admission checks.  The
+// determination whether re-admission is needed is based on the
+// ingresscontroller's current generation and the observed generation recorded
+// in its status.
+func needsReadmission(ic *operatorv1.IngressController) bool {
+	if ic.Generation != ic.Status.ObservedGeneration {
+		return true
 	}
 	return false
 }

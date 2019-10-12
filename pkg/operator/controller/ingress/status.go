@@ -130,6 +130,9 @@ func computeIngressDegradedCondition(deployment *appsv1.Deployment) operatorv1.O
 // if the provided values should be considered equal for the purpose of determining
 // whether an update is necessary, false otherwise.
 func ingressStatusesEqual(a, b operatorv1.IngressControllerStatus) bool {
+	if a.ObservedGeneration != b.ObservedGeneration {
+		return false
+	}
 	if !conditionsEqual(a.Conditions, b.Conditions) || a.AvailableReplicas != b.AvailableReplicas ||
 		a.Selector != b.Selector {
 		return false
