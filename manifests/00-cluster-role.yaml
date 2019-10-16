@@ -78,6 +78,7 @@ rules:
   - infrastructures
   - ingresses
   - dnses
+  - apiservers
   verbs:
   - get
 

@@ -3,6 +3,7 @@ package ingress
 import (
 	"context"
 	"fmt"
+	"reflect"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -33,7 +34,7 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	updated := ic.DeepCopy()
 	updated.Status.AvailableReplicas = deployment.Status.AvailableReplicas
 	updated.Status.Selector = selector.String()
-
+	updated.Status.TLSProfile = computeIngressTLSProfile(ic.Status.TLSProfile, deployment)
 	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, computeIngressAvailableCondition(deployment))
 	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, computeLoadBalancerStatus(ic, service, operandEvents)...)
 	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, computeDNSStatus(ic, wildcardRecord, dnsConfig)...)
@@ -75,6 +76,19 @@ func mergeConditions(conditions []operatorv1.OperatorCondition, updates ...opera
 	}
 	conditions = append(conditions, additions...)
 	return conditions
+}
+
+// computeIngressTLSProfile computes the ingresscontroller's current TLS
+// profile.  If the deployment is ready, then the TLS profile is inferred from
+// deployment's pod template spec.  Otherwise the previous TLS profile is used.
+func computeIngressTLSProfile(oldProfile *configv1.TLSProfileSpec, deployment *appsv1.Deployment) *configv1.TLSProfileSpec {
+	if deployment.Status.Replicas != deployment.Status.UpdatedReplicas {
+		return oldProfile
+	}
+
+	newProfile := inferTLSProfileSpecFromDeployment(deployment)
+
+	return newProfile
 }
 
 // computeIngressAvailableCondition computes the ingress controller's current Available status state
@@ -130,8 +144,14 @@ func computeIngressDegradedCondition(deployment *appsv1.Deployment) operatorv1.O
 // if the provided values should be considered equal for the purpose of determining
 // whether an update is necessary, false otherwise.
 func ingressStatusesEqual(a, b operatorv1.IngressControllerStatus) bool {
+	if a.ObservedGeneration != b.ObservedGeneration {
+		return false
+	}
 	if !conditionsEqual(a.Conditions, b.Conditions) || a.AvailableReplicas != b.AvailableReplicas ||
 		a.Selector != b.Selector {
+		return false
+	}
+	if !reflect.DeepEqual(a.TLSProfile, b.TLSProfile) {
 		return false
 	}
 

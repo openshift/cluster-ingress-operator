@@ -3,6 +3,8 @@ package ingress
 import (
 	"context"
 	"fmt"
+	"regexp"
+	"strings"
 
 	iov1 "github.com/openshift/cluster-ingress-operator/pkg/api/v1"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
@@ -147,6 +149,10 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 	}
 
 	// Only proceed if we can collect cluster config.
+	apiConfig := &configv1.APIServer{}
+	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, apiConfig); err != nil {
+		return reconcile.Result{}, fmt.Errorf("failed to get apiserver 'cluster': %v", err)
+	}
 	dnsConfig := &configv1.DNS{}
 	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, dnsConfig); err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to get dns 'cluster': %v", err)
@@ -162,7 +168,7 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 
 	// Admit if necessary. Don't process until admission succeeds. If admission is
 	// successful, immediately re-queue to refresh state.
-	if !isAdmitted(ingress) {
+	if !isAdmitted(ingress) || needsReadmission(ingress) {
 		if err := r.admit(ingress, ingressConfig, infraConfig); err != nil {
 			switch err := err.(type) {
 			case *admissionRejection:
@@ -178,7 +184,7 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 	}
 
 	// The ingresscontroller is safe to process, so ensure it.
-	if err := r.ensureIngressController(ingress, dnsConfig, infraConfig, ingressConfig); err != nil {
+	if err := r.ensureIngressController(ingress, dnsConfig, infraConfig, ingressConfig, apiConfig); err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to ensure ingresscontroller: %v", err)
 	}
 
@@ -195,6 +201,10 @@ func (r *reconciler) admit(current *operatorv1.IngressController, ingressConfig 
 	setDefaultDomain(updated, ingressConfig)
 	setDefaultPublishingStrategy(updated, infraConfig)
 
+	// The TLS security profile need not be defaulted.  If none is set, we
+	// get the default from the APIServer config (which is assumed to be
+	// valid).
+
 	if err := r.validate(updated); err != nil {
 		switch err := err.(type) {
 		case *admissionRejection:
@@ -204,6 +214,7 @@ func (r *reconciler) admit(current *operatorv1.IngressController, ingressConfig 
 				Reason:  "Invalid",
 				Message: err.Reason,
 			})
+			updated.Status.ObservedGeneration = updated.Generation
 			if !ingressStatusesEqual(current.Status, updated.Status) {
 				if err := r.client.Status().Update(context.TODO(), updated); err != nil {
 					return fmt.Errorf("failed to update status: %v", err)
@@ -218,6 +229,7 @@ func (r *reconciler) admit(current *operatorv1.IngressController, ingressConfig 
 		Status: operatorv1.ConditionTrue,
 		Reason: "Valid",
 	})
+	updated.Status.ObservedGeneration = updated.Generation
 	if !ingressStatusesEqual(current.Status, updated.Status) {
 		if err := r.client.Status().Update(context.TODO(), updated); err != nil {
 			return fmt.Errorf("failed to update status: %v", err)
@@ -231,6 +243,19 @@ func isAdmitted(ic *operatorv1.IngressController) bool {
 		if cond.Type == iov1.IngressControllerAdmittedConditionType && cond.Status == operatorv1.ConditionTrue {
 			return true
 		}
+	}
+	return false
+}
+
+// needsReadmission returns a Boolean value indicating whether the given
+// ingresscontroller needs to be re-admitted.  Re-admission is necessary in
+// order to revalidate mutable fields that are subject to admission checks.  The
+// determination whether re-admission is needed is based on the
+// ingresscontroller's current generation and the observed generation recorded
+// in its status.
+func needsReadmission(ic *operatorv1.IngressController) bool {
+	if ic.Generation != ic.Status.ObservedGeneration {
+		return true
 	}
 	return false
 }
@@ -285,6 +310,50 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, infraConfig 
 	return false
 }
 
+// tlsProfileSpecForIngressController returns a TLS profile spec based on either
+// the profile specified by the given ingresscontroller, the profile specified
+// by the APIServer config if the ingresscontroller does not specify one, or the
+// "Intermediate" profile if neither the ingresscontroller nor the APIServer
+// config specifies one.  Note that the return value must not be mutated by the
+// caller; the caller must make a copy if it needs to mutate the value.
+func tlsProfileSpecForIngressController(ic *operatorv1.IngressController, apiConfig *configv1.APIServer) *configv1.TLSProfileSpec {
+	if hasTLSSecurityProfile(ic) {
+		return tlsProfileSpecForSecurityProfile(ic.Spec.TLSSecurityProfile)
+	}
+	return tlsProfileSpecForSecurityProfile(apiConfig.Spec.TLSSecurityProfile)
+}
+
+// hasTLSSecurityProfile checks whether the given ingresscontroller specifies a
+// TLS security profile.
+func hasTLSSecurityProfile(ic *operatorv1.IngressController) bool {
+	if ic.Spec.TLSSecurityProfile == nil {
+		return false
+	}
+	if len(ic.Spec.TLSSecurityProfile.Type) == 0 {
+		return false
+	}
+	return true
+}
+
+// tlsProfileSpecForSecurityProfile returns a TLS profile spec based on the
+// provided security profile, or the "Intermediate" profile if an unknown
+// security profile type is provided.  Note that the return value must not be
+// mutated by the caller; the caller must make a copy if it needs to mutate the
+// value.
+func tlsProfileSpecForSecurityProfile(profile *configv1.TLSSecurityProfile) *configv1.TLSProfileSpec {
+	if profile != nil {
+		if profile.Type == configv1.TLSProfileCustomType {
+			if profile.Custom != nil {
+				return &profile.Custom.TLSProfileSpec
+			}
+			return &configv1.TLSProfileSpec{}
+		} else if spec, ok := configv1.TLSProfiles[profile.Type]; ok {
+			return spec
+		}
+	}
+	return configv1.TLSProfiles[configv1.TLSProfileIntermediateType]
+}
+
 // validate attempts to perform validation of the given ingresscontroller and
 // returns an error value, which will have a non-nil value of type
 // admissionRejection if the ingresscontroller is invalid, or a non-nil value of
@@ -301,6 +370,9 @@ func (r *reconciler) validate(ic *operatorv1.IngressController) error {
 		errors = append(errors, err)
 	}
 	if err := validateDomainUniqueness(ic, ingresses.Items); err != nil {
+		errors = append(errors, err)
+	}
+	if err := validateTLSSecurityProfile(ic); err != nil {
 		errors = append(errors, err)
 	}
 
@@ -332,6 +404,58 @@ func validateDomainUniqueness(desired *operatorv1.IngressController, existing []
 	}
 
 	return nil
+}
+
+var (
+	// validTLSVersions is all allowed values for TLSProtocolVersion.
+	validTLSVersions = map[configv1.TLSProtocolVersion]struct{}{
+		configv1.VersionTLS10: {},
+		configv1.VersionTLS11: {},
+		configv1.VersionTLS12: {},
+		configv1.VersionTLS13: {},
+	}
+
+	// isValidCipher is a regexp for strings that look like cipher names.
+	isValidCipher = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_+-]+$`).MatchString
+)
+
+// validateTLSSecurityProfile validates the given ingresscontroller's TLS
+// security profile, if it specifies one.
+func validateTLSSecurityProfile(ic *operatorv1.IngressController) error {
+	if !hasTLSSecurityProfile(ic) {
+		return nil
+	}
+
+	if ic.Spec.TLSSecurityProfile.Type != configv1.TLSProfileCustomType {
+		return nil
+	}
+
+	spec := ic.Spec.TLSSecurityProfile.Custom
+	if spec == nil {
+		return fmt.Errorf("security profile is not defined")
+	}
+
+	var errs []error
+
+	if len(spec.Ciphers) == 0 {
+		errs = append(errs, fmt.Errorf("security profile has an empty ciphers list"))
+	} else {
+		invalidCiphers := []string{}
+		for _, cipher := range spec.Ciphers {
+			if !isValidCipher(strings.TrimPrefix(cipher, "!")) {
+				invalidCiphers = append(invalidCiphers, cipher)
+			}
+		}
+		if len(invalidCiphers) != 0 {
+			errs = append(errs, fmt.Errorf("security profile has invalid ciphers: %s", strings.Join(invalidCiphers, ", ")))
+		}
+	}
+
+	if _, ok := validTLSVersions[spec.MinTLSVersion]; !ok {
+		errs = append(errs, fmt.Errorf("security profile has invalid minimum security protocol version: %q", spec.MinTLSVersion))
+	}
+
+	return utilerrors.NewAggregate(errs)
 }
 
 // ensureIngressDeleted tries to delete ingress, and if successful, will remove
@@ -373,7 +497,7 @@ func (r *reconciler) ensureIngressDeleted(ingress *operatorv1.IngressController)
 }
 
 // ensureIngressController ensures all necessary router resources exist for a given ingresscontroller.
-func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, dnsConfig *configv1.DNS, infraConfig *configv1.Infrastructure, ingressConfig *configv1.Ingress) error {
+func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, dnsConfig *configv1.DNS, infraConfig *configv1.Infrastructure, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer) error {
 	// Before doing anything at all with the controller, ensure it has a finalizer
 	// so we can clean up later.
 	if !slice.ContainsString(ci.Finalizers, manifests.IngressControllerFinalizer) {
@@ -392,7 +516,7 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		return fmt.Errorf("failed to ensure namespace: %v", err)
 	}
 
-	deployment, err := r.ensureRouterDeployment(ci, infraConfig, ingressConfig)
+	deployment, err := r.ensureRouterDeployment(ci, infraConfig, ingressConfig, apiConfig)
 	if err != nil {
 		return fmt.Errorf("failed to ensure deployment: %v", err)
 	}

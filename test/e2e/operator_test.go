@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"gopkg.in/yaml.v2"
+
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 
@@ -549,6 +551,69 @@ func TestInternalLoadBalancer(t *testing.T) {
 		} else if actual != expected {
 			t.Fatalf("expected %s=%s, found %s=%s", name, expected, name, actual)
 		}
+	}
+}
+
+// TestTLSSecurityProfile creates an ingresscontroller with no explicit TLS
+// profile, then verifies that the operator sets the default "Intermediate" TLS
+// profile, then updates the ingresscontroller to use a custom TLS profile, and
+// then verifies that the operator reflects the custom profile in its status.
+func TestTLSSecurityProfile(t *testing.T) {
+	name := types.NamespacedName{Namespace: operatorNamespace, Name: "test"}
+	domain := name.Name + "." + dnsConfig.Spec.BaseDomain
+	ic := newPrivateController(name, domain)
+	if err := kclient.Create(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to create ingresscontroller %s: %v", name, err)
+	}
+	defer assertIngressControllerDeleted(t, kclient, ic)
+	conditions := []operatorv1.OperatorCondition{
+		{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionTrue},
+		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
+		{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionFalse},
+	}
+	if err := waitForIngressControllerCondition(kclient, 5*time.Minute, name, conditions...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	if err := kclient.Get(context.TODO(), name, ic); err != nil {
+		t.Fatalf("failed to get ingresscontroller %s: %v", name, err)
+	}
+	if ic.Status.TLSProfile == nil {
+		t.Fatalf("ingresscontroller status has no security profile")
+	}
+	intermediateProfileSpec := configv1.TLSProfiles[configv1.TLSProfileIntermediateType]
+	if !reflect.DeepEqual(*ic.Status.TLSProfile, *intermediateProfileSpec) {
+		expected, _ := yaml.Marshal(intermediateProfileSpec)
+		actual, _ := yaml.Marshal(*ic.Status.TLSProfile)
+		t.Fatalf("ingresscontroller status has unexpected security profile spec.\nexpected:\n%s\ngot:\n%s", expected, actual)
+	}
+
+	customProfileSpec := configv1.TLSProfileSpec{
+		Ciphers:       []string{"ECDHE-ECDSA-AES256-GCM-SHA384"},
+		MinTLSVersion: configv1.VersionTLS12,
+	}
+	ic.Spec.TLSSecurityProfile = &configv1.TLSSecurityProfile{
+		Type: configv1.TLSProfileCustomType,
+		Custom: &configv1.CustomTLSProfile{
+			TLSProfileSpec: customProfileSpec,
+		},
+	}
+	if err := kclient.Update(context.TODO(), ic); err != nil {
+		t.Errorf("failed to update ingresscontroller %s: %v", name, err)
+	}
+	err := wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), name, ic); err != nil {
+			t.Fatalf("failed to get ingresscontroller %s: %v", name, err)
+		}
+		if !reflect.DeepEqual(*ic.Status.TLSProfile, customProfileSpec) {
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		expected, _ := yaml.Marshal(customProfileSpec)
+		actual, _ := yaml.Marshal(*ic.Status.TLSProfile)
+		t.Fatalf("ingresscontroller status has unexpected security profile spec.\nexpected:\n%s\ngot:\n%s", expected, actual)
 	}
 }
 

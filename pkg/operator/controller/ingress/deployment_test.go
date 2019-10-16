@@ -56,8 +56,25 @@ func TestDesiredRouterDeployment(t *testing.T) {
 			Platform: configv1.AWSPlatformType,
 		},
 	}
+	apiConfig := &configv1.APIServer{
+		Spec: configv1.APIServerSpec{
+			TLSSecurityProfile: &configv1.TLSSecurityProfile{
+				Type: configv1.TLSProfileCustomType,
+				Custom: &configv1.CustomTLSProfile{
+					TLSProfileSpec: configv1.TLSProfileSpec{
+						Ciphers: []string{
+							"foo",
+							"bar",
+							"baz",
+						},
+						MinTLSVersion: configv1.VersionTLS11,
+					},
+				},
+			},
+		},
+	}
 
-	deployment, err := desiredRouterDeployment(ci, ingressControllerImage, infraConfig, ingressConfig)
+	deployment, err := desiredRouterDeployment(ci, ingressControllerImage, infraConfig, ingressConfig, apiConfig)
 	if err != nil {
 		t.Errorf("invalid router Deployment: %v", err)
 	}
@@ -156,12 +173,45 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		}
 	}
 
+	ciphers := ""
+	for _, envVar := range deployment.Spec.Template.Spec.Containers[0].Env {
+		if envVar.Name == "ROUTER_CIPHERS" {
+			ciphers = envVar.Value
+			break
+		}
+	}
+	expectedCiphers := "foo:bar:baz"
+	if ciphers != expectedCiphers {
+		t.Errorf("router Deployment has unexpected ciphers: expected %q, got %q", expectedCiphers, ciphers)
+	}
+
+	tlsMinVersion := ""
+	for _, envVar := range deployment.Spec.Template.Spec.Containers[0].Env {
+		if envVar.Name == "SSL_MIN_VERSION" {
+			tlsMinVersion = envVar.Value
+			break
+		}
+	}
+	expectedTLSMinVersion := "TLSv1.1"
+	if tlsMinVersion != expectedTLSMinVersion {
+		t.Errorf("router Deployment has unexpected minimum TLS version: expected %q, got %q", expectedTLSMinVersion, tlsMinVersion)
+	}
+
 	ingressConfig.Annotations = map[string]string{
 		EnableLoggingAnnotation: "debug",
 	}
+	ci.Spec.TLSSecurityProfile = &configv1.TLSSecurityProfile{
+		Type: configv1.TLSProfileCustomType,
+		Custom: &configv1.CustomTLSProfile{
+			TLSProfileSpec: configv1.TLSProfileSpec{
+				Ciphers:       []string{"quux"},
+				MinTLSVersion: configv1.VersionTLS13,
+			},
+		},
+	}
 	ci.Status.Domain = "example.com"
 	ci.Status.EndpointPublishingStrategy.Type = operatorv1.LoadBalancerServiceStrategyType
-	deployment, err = desiredRouterDeployment(ci, ingressControllerImage, infraConfig, ingressConfig)
+	deployment, err = desiredRouterDeployment(ci, ingressControllerImage, infraConfig, ingressConfig, apiConfig)
 	if err != nil {
 		t.Errorf("invalid router Deployment: %v", err)
 	}
@@ -211,6 +261,30 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		t.Error("router Deployment has no syslog container")
 	}
 
+	ciphers = ""
+	for _, envVar := range deployment.Spec.Template.Spec.Containers[0].Env {
+		if envVar.Name == "ROUTER_CIPHERS" {
+			ciphers = envVar.Value
+			break
+		}
+	}
+	expectedCiphers = "quux"
+	if ciphers != expectedCiphers {
+		t.Errorf("router Deployment has unexpected ciphers: expected %q, got %q", expectedCiphers, ciphers)
+	}
+
+	tlsMinVersion = ""
+	for _, envVar := range deployment.Spec.Template.Spec.Containers[0].Env {
+		if envVar.Name == "SSL_MIN_VERSION" {
+			tlsMinVersion = envVar.Value
+			break
+		}
+	}
+	expectedTLSMinVersion = "TLSv1.3"
+	if tlsMinVersion != expectedTLSMinVersion {
+		t.Errorf("router Deployment has unexpected minimum TLS version: expected %q, got %q", expectedTLSMinVersion, tlsMinVersion)
+	}
+
 	secretName := fmt.Sprintf("secret-%v", time.Now().UnixNano())
 	ci.Spec.DefaultCertificate = &corev1.LocalObjectReference{
 		Name: secretName,
@@ -230,7 +304,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	ci.Annotations = map[string]string{
 		EnableLoggingAnnotation: "debug",
 	}
-	deployment, err = desiredRouterDeployment(ci, ingressControllerImage, infraConfig, ingressConfig)
+	deployment, err = desiredRouterDeployment(ci, ingressControllerImage, infraConfig, ingressConfig, apiConfig)
 	if err != nil {
 		t.Errorf("invalid router Deployment: %v", err)
 	}
@@ -280,6 +354,68 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	}
 	if !foundSyslogContainer {
 		t.Error("router Deployment has no syslog container")
+	}
+}
+
+func TestInferTLSProfileSpecFromDeployment(t *testing.T) {
+	testCases := []struct {
+		description string
+		containers  []corev1.Container
+		expected    *configv1.TLSProfileSpec
+	}{
+		{
+			description: "no router container -> empty spec",
+			containers:  []corev1.Container{{Name: "foo"}},
+			expected:    &configv1.TLSProfileSpec{},
+		},
+		{
+			description: "missing environment variables -> nil ciphers, TLSv1.2",
+			containers:  []corev1.Container{{Name: "router"}},
+			expected: &configv1.TLSProfileSpec{
+				Ciphers:       nil,
+				MinTLSVersion: configv1.VersionTLS12,
+			},
+		},
+		{
+			description: "normal deployment -> normal profile",
+			containers: []corev1.Container{
+				{
+					Name: "router",
+					Env: []corev1.EnvVar{
+						{
+							Name:  "ROUTER_CIPHERS",
+							Value: "foo:bar:baz",
+						},
+						{
+							Name:  "SSL_MIN_VERSION",
+							Value: "TLSv1.1",
+						},
+					},
+				},
+				{
+					Name: "syslog",
+				},
+			},
+			expected: &configv1.TLSProfileSpec{
+				Ciphers:       []string{"foo", "bar", "baz"},
+				MinTLSVersion: configv1.VersionTLS11,
+			},
+		},
+	}
+	for _, tc := range testCases {
+		deployment := &appsv1.Deployment{
+			Spec: appsv1.DeploymentSpec{
+				Template: corev1.PodTemplateSpec{
+					Spec: corev1.PodSpec{
+						Containers: tc.containers,
+					},
+				},
+			},
+		}
+		tlsProfileSpec := inferTLSProfileSpecFromDeployment(deployment)
+		if !reflect.DeepEqual(tlsProfileSpec, tc.expected) {
+			t.Errorf("%q: expected %#v, got %#v", tc.description, tc.expected, tlsProfileSpec)
+		}
 	}
 }
 
