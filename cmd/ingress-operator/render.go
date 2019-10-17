@@ -51,13 +51,13 @@ func render(dir string, prefix string) error {
 		return nil
 	}
 
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0750); err != nil {
 		return fmt.Errorf("failed to create output directory %q: %v", dir, err)
 	}
 
 	for _, file := range files {
 		outputFile := filepath.Join(dir, prefix+filepath.Base(file))
-		if err := ioutil.WriteFile(outputFile, manifests.MustAsset(file), 0644); err != nil {
+		if err := ioutil.WriteFile(outputFile, manifests.MustAsset(file), 0640); err != nil {
 			return fmt.Errorf("failed to write %q: %v", outputFile, err)
 		}
 		fmt.Printf("wrote %s\n", outputFile)
