@@ -23,7 +23,6 @@ func init() {
 	// zapr defines an implementation of the Logger
 	// interface built on top of Zap (go.uber.org/zap).
 	Logger = zapr.NewLogger(zapLogger).WithName("operator")
-	Logger.Info("started zapr logger")
 }
 
 // SetRuntimeLogger sets a concrete logging implementation for all

@@ -60,6 +60,9 @@ const (
 	// DefaultIngressControllerName is the name of the default IngressController
 	// instance.
 	DefaultIngressControllerName = "default"
+
+	NamespaceManifest                = "manifests/00-namespace.yaml"
+	CustomResourceDefinitionManifest = "manifests/00-custom-resource-definition.yaml"
 )
 
 func MustAssetReader(asset string) io.Reader {
