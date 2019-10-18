@@ -29,8 +29,11 @@ func NewRenderCommand() *cobra.Command {
 		},
 	}
 
-	command.Flags().StringVarP(&options.OutputDir, "output-dir", "o", "-", "manifest output directory. Use '-' for stdout.")
+	command.Flags().StringVarP(&options.OutputDir, "output-dir", "o", "", "manifest output directory.")
 	command.Flags().StringVarP(&options.Prefix, "prefix", "p", "", "optional prefix for rendered filenames.")
+	if err := command.MarkFlagRequired("output-dir"); err != nil {
+		panic(err)
+	}
 
 	return command
 }
@@ -39,16 +42,6 @@ func render(dir string, prefix string) error {
 	files := []string{
 		manifests.CustomResourceDefinitionManifest,
 		manifests.NamespaceManifest,
-	}
-
-	if dir == "-" {
-		for _, file := range files {
-			fmt.Println("---")
-			fmt.Printf("# file: %s\n", filepath.Base(file))
-			fmt.Println(manifests.MustAssetString(file))
-			fmt.Println("...")
-		}
-		return nil
 	}
 
 	if err := os.MkdirAll(dir, 0750); err != nil {
