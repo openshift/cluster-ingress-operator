@@ -255,12 +255,14 @@ func (m *Provider) change(record *iov1.DNSRecord, zone configv1.DNSZone, action 
 	if record.Spec.RecordType != iov1.CNAMERecordType {
 		return fmt.Errorf("unsupported record type %s", record.Spec.RecordType)
 	}
-	// TODO: handle >0 targets
-	domain, target := record.Spec.DNSName, record.Spec.Targets[0]
+	domain, targets := record.Spec.DNSName, record.Spec.Targets
+	m.lock.Lock()
+	updatedRecords := sets.NewString(m.updatedRecords.List()...)
+	m.lock.Unlock()
 	if len(domain) == 0 {
 		return fmt.Errorf("domain is required")
 	}
-	if len(target) == 0 {
+	if len(targets) == 0 {
 		return fmt.Errorf("target is required")
 	}
 
@@ -269,70 +271,79 @@ func (m *Provider) change(record *iov1.DNSRecord, zone configv1.DNSZone, action 
 		return fmt.Errorf("failed to find hosted zone for record: %v", err)
 	}
 
-	// Find the target hosted zone of the load balancer attached to the service.
-	targetHostedZoneID, err := m.getLBHostedZone(target)
-	if err != nil {
-		return fmt.Errorf("failed to get hosted zone for load balancer target %q: %v", target, err)
+	var changes []*route53.Change
+	for _, target := range targets {
+		// Find the target hosted zone of the load balancer attached to the service.
+		targetHostedZoneID, err := m.getLBHostedZone(target)
+		if err != nil {
+			return fmt.Errorf("failed to get hosted zone for load balancer target %q: %v", target, err)
+		}
+		key := zoneID + domain + target
+		// Configure records and cache updates.
+		// TODO: handle the caching/diff detection in a better way.
+		// Only process updates once for now because we're not diffing.
+		if updatedRecords.Has(key) && action == upsertAction {
+			log.V(2).Info("skipping cached DNS record update for target", "record", record, "target", target)
+			continue
+		}
+
+		switch action {
+		case upsertAction:
+			updatedRecords.Insert(key)
+			log.Info("upserting DNS record", "record", record, "target", target)
+		case deleteAction:
+			updatedRecords.Delete(key)
+			log.Info("deleting DNS record", "record", record, "target", target)
+		}
+
+		change := &route53.Change{
+			Action: aws.String(string(action)),
+			ResourceRecordSet: &route53.ResourceRecordSet{
+				Name: aws.String(domain),
+				Type: aws.String("A"),
+				AliasTarget: &route53.AliasTarget{
+					HostedZoneId:         aws.String(targetHostedZoneID),
+					DNSName:              aws.String(target),
+					EvaluateTargetHealth: aws.Bool(false),
+				},
+			},
+		}
+
+		changes = append(changes, change)
 	}
 
-	// Configure records and cache updates.
-	// TODO: handle the caching/diff detection in a better way.
-	m.lock.Lock()
-	defer m.lock.Unlock()
-	key := zoneID + domain + target
-	// Only process updates once for now because we're not diffing.
-	if m.updatedRecords.Has(key) && action == upsertAction {
-		log.V(2).Info("skipping cached DNS record update", "record", record)
-		return nil
+	if len(changes) > 0 {
+		if err := m.updateAlias(domain, zoneID, targets, string(action), changes); err != nil {
+			return fmt.Errorf("failed to update alias in zone %s: %v", zoneID, err)
+		}
+		m.lock.Lock()
+		m.updatedRecords = updatedRecords
+		m.lock.Unlock()
 	}
-	err = m.updateAlias(domain, zoneID, target, targetHostedZoneID, string(action))
-	if err != nil {
-		return fmt.Errorf("failed to update alias in zone %s: %v", zoneID, err)
-	}
-	switch action {
-	case upsertAction:
-		m.updatedRecords.Insert(key)
-		log.Info("upserted DNS record", "record", record)
-	case deleteAction:
-		m.updatedRecords.Delete(key)
-		log.Info("deleted DNS record", "record", record)
-	}
+
 	return nil
 }
 
 // updateAlias creates or updates an alias for domain in zoneID pointed at
 // target in targetHostedZoneID.
-func (m *Provider) updateAlias(domain, zoneID, target, targetHostedZoneID, action string) error {
+func (m *Provider) updateAlias(domain, zoneID string, targets []string, action string, changes []*route53.Change) error {
 	resp, err := m.route53.ChangeResourceRecordSets(&route53.ChangeResourceRecordSetsInput{
 		HostedZoneId: aws.String(zoneID),
 		ChangeBatch: &route53.ChangeBatch{
-			Changes: []*route53.Change{
-				{
-					Action: aws.String(action),
-					ResourceRecordSet: &route53.ResourceRecordSet{
-						Name: aws.String(domain),
-						Type: aws.String("A"),
-						AliasTarget: &route53.AliasTarget{
-							HostedZoneId:         aws.String(targetHostedZoneID),
-							DNSName:              aws.String(target),
-							EvaluateTargetHealth: aws.Bool(false),
-						},
-					},
-				},
-			},
+			Changes: changes,
 		},
 	})
 	if err != nil {
 		if action == string(deleteAction) {
 			if aerr, ok := err.(awserr.Error); ok {
 				if strings.Contains(aerr.Message(), "not found") {
-					log.Info("record not found", "zone id", zoneID, "domain", domain, "target", target)
+					log.Info("record not found", "zone id", zoneID, "domain", domain, "target", strings.Join(targets, ","))
 					return nil
 				}
 			}
 		}
 		return fmt.Errorf("couldn't update DNS record in zone %s: %v", zoneID, err)
 	}
-	log.Info("updated DNS record", "zone id", zoneID, "domain", domain, "target", target, "response", resp)
+	log.Info("updated DNS record", "zone id", zoneID, "domain", domain, "target", strings.Join(targets, ","), "response", resp)
 	return nil
 }

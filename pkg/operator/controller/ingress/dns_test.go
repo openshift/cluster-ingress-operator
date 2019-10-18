@@ -74,6 +74,52 @@ func TestDesiredWildcardDNSRecord(t *testing.T) {
 				RecordTTL:  defaultRecordTTL,
 			},
 		},
+		{
+			description: "IP to A record with more than one IP",
+			publish:     operatorv1.LoadBalancerServiceStrategyType,
+			domain:      "apps.openshift.example.com",
+			ingresses: []corev1.LoadBalancerIngress{
+				{IP: "192.0.2.1"}, {IP: "192.0.2.2"},
+			},
+			expect: &iov1.DNSRecordSpec{
+				DNSName:    "*.apps.openshift.example.com.",
+				RecordType: iov1.ARecordType,
+				Targets:    []string{"192.0.2.1", "192.0.2.2"},
+				RecordTTL:  defaultRecordTTL,
+			},
+		},
+		{
+			description: "hostname to more than one CNAME record",
+			publish:     operatorv1.LoadBalancerServiceStrategyType,
+			domain:      "apps.openshift.example.com",
+			ingresses: []corev1.LoadBalancerIngress{
+				{Hostname: "lb.cloud.example.com"}, {Hostname: "lb.origin.example.com"},
+			},
+			expect: &iov1.DNSRecordSpec{
+				DNSName:    "*.apps.openshift.example.com.",
+				RecordType: iov1.CNAMERecordType,
+				Targets:    []string{"lb.cloud.example.com", "lb.origin.example.com"},
+				RecordTTL:  defaultRecordTTL,
+			},
+		},
+		{
+			description: "IP and Hostname both present for the same target",
+			publish:     operatorv1.LoadBalancerServiceStrategyType,
+			domain:      "apps.openshift.example.com",
+			ingresses: []corev1.LoadBalancerIngress{
+				{IP: "192.0.2.1", Hostname: "lb.cloud.example.com"}, {IP: "192.0.2.2", Hostname: "lb.origin.example.com"},
+			},
+			expect: nil,
+		},
+		{
+			description: "IP present for one target, host name present for another target",
+			publish:     operatorv1.LoadBalancerServiceStrategyType,
+			domain:      "apps.openshift.example.com",
+			ingresses: []corev1.LoadBalancerIngress{
+				{IP: "192.0.2.1"}, {Hostname: "lb.origin.example.com"},
+			},
+			expect: nil,
+		},
 	}
 
 	for _, test := range tests {

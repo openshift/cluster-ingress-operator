@@ -85,26 +85,36 @@ func desiredWildcardRecord(ic *operatorv1.IngressController, service *corev1.Ser
 		return nil
 	}
 
-	ingress := service.Status.LoadBalancer.Ingress[0]
-
-	// Quick sanity check since we don't know how to handle both being set (is
-	// that even a valid state?)
-	if len(ingress.Hostname) > 0 && len(ingress.IP) > 0 {
-		return nil
-	}
-
 	name := controller.WildcardDNSRecordName(ic)
 	// Use an absolute name to prevent any ambiguity.
 	domain := fmt.Sprintf("*.%s.", ic.Status.Domain)
-	var target string
+
+	var targetHostnames, targetIPAddresses []string
+	for _, ingress := range service.Status.LoadBalancer.Ingress {
+		if len(ingress.Hostname) > 0 {
+			targetHostnames = append(targetHostnames, ingress.Hostname)
+		}
+		if len(ingress.IP) > 0 {
+			targetIPAddresses = append(targetIPAddresses, ingress.IP)
+		}
+	}
+
+	var targets []string
 	var recordType iov1.DNSRecordType
 
-	if len(ingress.Hostname) > 0 {
+	switch {
+	case len(targetHostnames) > 0 && len(targetIPAddresses) > 0:
+		return nil
+		// XXX Alternatively, we could choose to use either host names
+		// or IP addresses.
+	case len(targetHostnames) == 0 && len(targetIPAddresses) == 0:
+		return nil
+	case len(targetHostnames) > 0:
 		recordType = iov1.CNAMERecordType
-		target = ingress.Hostname
-	} else {
+		targets = targetHostnames
+	case len(targetIPAddresses) > 0:
 		recordType = iov1.ARecordType
-		target = ingress.IP
+		targets = targetIPAddresses
 	}
 
 	trueVar := true
@@ -129,7 +139,7 @@ func desiredWildcardRecord(ic *operatorv1.IngressController, service *corev1.Ser
 		},
 		Spec: iov1.DNSRecordSpec{
 			DNSName:    domain,
-			Targets:    []string{target},
+			Targets:    targets,
 			RecordType: recordType,
 			RecordTTL:  defaultRecordTTL,
 		},

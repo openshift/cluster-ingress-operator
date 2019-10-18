@@ -75,14 +75,13 @@ func (m *provider) Ensure(record *iov1.DNSRecord, zone configv1.DNSZone) error {
 		return err
 	}
 
-	// TODO: handle >0 targets
 	err = m.client.Put(
 		context.TODO(),
 		*targetZone,
 		client.ARecord{
-			Address: record.Spec.Targets[0],
-			Name:    ARecordName,
-			TTL:     record.Spec.RecordTTL,
+			Addresses: record.Spec.Targets,
+			Name:      ARecordName,
+			TTL:       record.Spec.RecordTTL,
 		})
 
 	if err == nil {
@@ -103,14 +102,13 @@ func (m *provider) Delete(record *iov1.DNSRecord, zone configv1.DNSZone) error {
 		return err
 	}
 
-	// TODO: handle >0 targets
 	err = m.client.Delete(
 		context.TODO(),
 		*targetZone,
 		client.ARecord{
-			Address: record.Spec.Targets[0],
-			Name:    ARecordName,
-			TTL:     record.Spec.RecordTTL,
+			Addresses: record.Spec.Targets,
+			Name:      ARecordName,
+			TTL:       record.Spec.RecordTTL,
 		})
 
 	if err == nil {

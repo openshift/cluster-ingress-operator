@@ -27,7 +27,7 @@ type ARecord struct {
 	Name string
 
 	// Address is the IPv4 address of the A record.
-	Address string
+	Addresses []string
 
 	//TTL is the Time To Live property of the A record
 	TTL int64
@@ -91,12 +91,20 @@ func newRecordSetClient(config Config, userAgentExtension string) (*recordSetCli
 }
 
 func (c *recordSetClient) Put(ctx context.Context, zone Zone, arec ARecord) error {
+	var arecs []dns.ARecord
+
+	for i := range arec.Addresses {
+		record := dns.ARecord{
+			Ipv4Address: &arec.Addresses[i],
+		}
+
+		arecs = append(arecs, record)
+	}
+
 	rs := dns.RecordSet{
 		RecordSetProperties: &dns.RecordSetProperties{
-			TTL: &arec.TTL,
-			ARecords: &[]dns.ARecord{
-				{Ipv4Address: &arec.Address},
-			},
+			TTL:      &arec.TTL,
+			ARecords: &arecs,
 		},
 	}
 	_, err := c.client.CreateOrUpdate(ctx, zone.ResourceGroup, zone.Name, arec.Name, dns.A, rs, "", "")
@@ -136,14 +144,23 @@ func newPrivateRecordSetClient(config Config, userAgentExtension string) (*priva
 }
 
 func (c *privateRecordSetClient) Put(ctx context.Context, zone Zone, arec ARecord) error {
+	var arecs []privatedns.ARecord
+
+	for i := range arec.Addresses {
+		record := privatedns.ARecord{
+			Ipv4Address: &arec.Addresses[i],
+		}
+
+		arecs = append(arecs, record)
+	}
+
 	rs := privatedns.RecordSet{
 		RecordSetProperties: &privatedns.RecordSetProperties{
-			TTL: &arec.TTL,
-			ARecords: &[]privatedns.ARecord{
-				{Ipv4Address: &arec.Address},
-			},
+			TTL:      &arec.TTL,
+			ARecords: &arecs,
 		},
 	}
+
 	_, err := c.client.CreateOrUpdate(ctx, zone.ResourceGroup, zone.Name, privatedns.A, arec.Name, rs, "", "")
 	if err != nil {
 		return errors.Wrapf(err, "failed to update dns a record: %s.%s", arec.Name, zone.Name)
