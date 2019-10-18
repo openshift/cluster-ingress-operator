@@ -349,6 +349,7 @@ k8s.io/apimachinery/pkg/api/resource
 k8s.io/apimachinery/pkg/apis/meta/v1/unstructured
 k8s.io/apimachinery/pkg/util/clock
 k8s.io/apimachinery/pkg/util/intstr
+k8s.io/apimachinery/pkg/util/rand
 k8s.io/apimachinery/pkg/api/meta
 k8s.io/apimachinery/pkg/util/runtime
 k8s.io/apimachinery/pkg/fields
@@ -360,7 +361,6 @@ k8s.io/apimachinery/pkg/selection
 k8s.io/apimachinery/pkg/watch
 k8s.io/apimachinery/pkg/conversion/queryparams
 k8s.io/apimachinery/pkg/util/naming
-k8s.io/apimachinery/pkg/util/rand
 k8s.io/apimachinery/pkg/util/validation/field
 k8s.io/apimachinery/pkg/runtime/serializer/streaming
 k8s.io/apimachinery/pkg/util/net
