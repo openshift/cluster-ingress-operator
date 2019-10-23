@@ -140,7 +140,14 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 
 	co.Status.Conditions = mergeConditions(co.Status.Conditions, computeOperatorAvailableCondition(allIngressesAvailable))
 	co.Status.Conditions = mergeConditions(co.Status.Conditions, computeOperatorProgressingCondition(allIngressesAvailable, oldStatus.Versions, co.Status.Versions, r.OperatorReleaseVersion, r.IngressControllerImage))
-	co.Status.Conditions = mergeConditions(co.Status.Conditions, computeOperatorDegradedCondition(state.IngressControllers))
+	co.Status.Conditions = mergeConditions(co.Status.Conditions, computeOperatorIngressDegradedCondition(state.IngressControllers))
+
+	authStateObj := &operatorv1.Authentication{}
+	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, authStateObj); err != nil {
+		log.Error(err, "unable to get authentication cluster operator")
+	} else {
+		co.Status.Conditions = mergeConditions(co.Status.Conditions, computeOperatorAuthenticationDegradedCondition(authStateObj.Status))
+	}
 
 	if !operatorStatusesEqual(*oldStatus, co.Status) {
 		if err := r.client.Status().Update(context.TODO(), co); err != nil {
@@ -247,8 +254,37 @@ func checkAllIngressesAvailable(ingresses []operatorv1.IngressController) bool {
 	return len(ingresses) != 0
 }
 
-// computeOperatorDegradedCondition computes the operator's current Degraded status state.
-func computeOperatorDegradedCondition(ingresses []operatorv1.IngressController) configv1.ClusterOperatorStatusCondition {
+// computeOperatorAuthenticationDegradedCondition checks the status of authentication operator and propagate the route health degraded
+// condition as AuthenticationRouteDegraded condition for this operator.
+func computeOperatorAuthenticationDegradedCondition(authStatus operatorv1.AuthenticationStatus) configv1.ClusterOperatorStatusCondition {
+	var degradedAuthentication []string
+	for _, cond := range authStatus.Conditions {
+		if cond.Type == operatorv1.OperatorStatusTypeDegraded && cond.Status == operatorv1.ConditionTrue {
+			switch cond.Reason {
+			case "RouteHealthDegradedError":
+				degradedAuthentication = append(degradedAuthentication, cond.Message)
+			}
+		}
+	}
+
+	if len(degradedAuthentication) == 0 {
+		return configv1.ClusterOperatorStatusCondition{
+			Type:   configv1.OperatorDegraded,
+			Status: configv1.ConditionFalse,
+			Reason: "NoAuthenticationRouteDegraded",
+		}
+	}
+
+	return configv1.ClusterOperatorStatusCondition{
+		Type:    configv1.OperatorDegraded,
+		Status:  configv1.ConditionTrue,
+		Reason:  "AuthenticationRouteDegraded",
+		Message: fmt.Sprintf("Authentication route is degraded: %s", strings.Join(degradedAuthentication, ",")),
+	}
+}
+
+// computeOperatorIngressDegradedCondition computes the operator's current Degraded status state.
+func computeOperatorIngressDegradedCondition(ingresses []operatorv1.IngressController) configv1.ClusterOperatorStatusCondition {
 	var degradedIngresses []string
 	for _, ingress := range ingresses {
 		for _, cond := range ingress.Status.Conditions {
