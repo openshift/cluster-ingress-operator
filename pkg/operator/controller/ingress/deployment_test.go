@@ -296,7 +296,8 @@ func TestDesiredRouterDeployment(t *testing.T) {
 			break
 		}
 	}
-	expectedTLSMinVersion = "TLSv1.3"
+	// TODO: Update when haproxy is built with an openssl version that supports tls v1.3.
+	expectedTLSMinVersion = "TLSv1.2"
 	if tlsMinVersion != expectedTLSMinVersion {
 		t.Errorf("router Deployment has unexpected minimum TLS version: expected %q, got %q", expectedTLSMinVersion, tlsMinVersion)
 	}

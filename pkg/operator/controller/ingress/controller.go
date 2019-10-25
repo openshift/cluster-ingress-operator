@@ -337,9 +337,9 @@ func hasTLSSecurityProfile(ic *operatorv1.IngressController) bool {
 
 // tlsProfileSpecForSecurityProfile returns a TLS profile spec based on the
 // provided security profile, or the "Intermediate" profile if an unknown
-// security profile type is provided.  Note that the return value must not be
-// mutated by the caller; the caller must make a copy if it needs to mutate the
-// value.
+// or "Modern" security profile type is provided.  Note that the return value
+// must not be mutated by the caller; the caller must make a copy if it needs
+// to mutate the value.
 func tlsProfileSpecForSecurityProfile(profile *configv1.TLSSecurityProfile) *configv1.TLSProfileSpec {
 	if profile != nil {
 		if profile.Type == configv1.TLSProfileCustomType {
@@ -348,6 +348,11 @@ func tlsProfileSpecForSecurityProfile(profile *configv1.TLSSecurityProfile) *con
 			}
 			return &configv1.TLSProfileSpec{}
 		} else if spec, ok := configv1.TLSProfiles[profile.Type]; ok {
+			// TODO remove when haproxy is built with an openssl version that supports tls v1.3.
+			if profile.Type == configv1.TLSProfileModernType {
+				log.Info("converted modern tls security profile to intermediate")
+				return configv1.TLSProfiles[configv1.TLSProfileIntermediateType]
+			}
 			return spec
 		}
 	}
@@ -412,7 +417,8 @@ var (
 		configv1.VersionTLS10: {},
 		configv1.VersionTLS11: {},
 		configv1.VersionTLS12: {},
-		configv1.VersionTLS13: {},
+		// TODO: Add VersionTLS13 support after haproxy is built with an openssl
+		//  version that supports tls v1.3.
 	}
 
 	// isValidCipher is a regexp for strings that look like cipher names.
