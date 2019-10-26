@@ -8,6 +8,9 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
+	iov1 "github.com/openshift/cluster-ingress-operator/pkg/api/v1"
+	retryable "github.com/openshift/cluster-ingress-operator/pkg/util/retryableerror"
+
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -105,6 +108,146 @@ func cond(t string, status operatorv1.ConditionStatus, reason string, lt time.Ti
 		Status:             status,
 		Reason:             reason,
 		LastTransitionTime: metav1.NewTime(lt),
+	}
+}
+
+func TestComputeIngressDegradedCondition(t *testing.T) {
+	tests := []struct {
+		name                        string
+		conditions                  []operatorv1.OperatorCondition
+		expectIngressDegradedStatus operatorv1.ConditionStatus
+		expectRequeue               bool
+	}{
+		{
+			name:                        "no conditions set",
+			expectIngressDegradedStatus: operatorv1.ConditionFalse,
+			expectRequeue:               false,
+		},
+		{
+			name: "not admitted",
+			conditions: []operatorv1.OperatorCondition{
+				cond(iov1.IngressControllerAdmittedConditionType, operatorv1.ConditionFalse, "", clock.Now()),
+			},
+			expectIngressDegradedStatus: operatorv1.ConditionTrue,
+			expectRequeue:               true,
+		},
+		{
+			name: "deployment degraded for <30s",
+			conditions: []operatorv1.OperatorCondition{
+				cond(iov1.IngressControllerDeploymentDegradedConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Second*-20)),
+			},
+			expectIngressDegradedStatus: operatorv1.ConditionFalse,
+			expectRequeue:               true,
+		},
+		{
+			name: "deployment degraded for >30s",
+			conditions: []operatorv1.OperatorCondition{
+				cond(iov1.IngressControllerDeploymentDegradedConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Second*-31)),
+			},
+			expectIngressDegradedStatus: operatorv1.ConditionTrue,
+			expectRequeue:               true,
+		},
+		{
+			name: "DNS and LB not managed",
+			conditions: []operatorv1.OperatorCondition{
+				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Hour*-1)),
+				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Hour*-1)),
+				cond(operatorv1.DNSManagedIngressConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Hour*-1)),
+				cond(operatorv1.DNSReadyIngressConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Hour*-1)),
+			},
+			expectIngressDegradedStatus: operatorv1.ConditionFalse,
+			expectRequeue:               false,
+		},
+		{
+			name: "LB provisioning failing <90s",
+			conditions: []operatorv1.OperatorCondition{
+				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Minute*-3)),
+				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Second*-60)),
+				cond(operatorv1.DNSManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Minute*-3)),
+				cond(operatorv1.DNSReadyIngressConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Minute*-3)),
+			},
+			expectIngressDegradedStatus: operatorv1.ConditionFalse,
+			expectRequeue:               true,
+		},
+		{
+			name: "LB provisioning failing >90s",
+			conditions: []operatorv1.OperatorCondition{
+				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Minute*-3)),
+				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Second*-120)),
+				cond(operatorv1.DNSManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Minute*-3)),
+				cond(operatorv1.DNSReadyIngressConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Minute*-3)),
+			},
+			expectIngressDegradedStatus: operatorv1.ConditionTrue,
+			expectRequeue:               true,
+		},
+		{
+			name: "DNS failing <30s",
+			conditions: []operatorv1.OperatorCondition{
+				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Minute*-3)),
+				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Second*-120)),
+				cond(operatorv1.DNSManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Minute*-3)),
+				cond(operatorv1.DNSReadyIngressConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Second*-15)),
+			},
+			expectIngressDegradedStatus: operatorv1.ConditionFalse,
+			expectRequeue:               true,
+		},
+		{
+			name: "DNS failing >30s",
+			conditions: []operatorv1.OperatorCondition{
+				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Minute*-3)),
+				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Second*-120)),
+				cond(operatorv1.DNSManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Minute*-3)),
+				cond(operatorv1.DNSReadyIngressConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Minute*-2)),
+			},
+			expectIngressDegradedStatus: operatorv1.ConditionTrue,
+			expectRequeue:               true,
+		},
+		{
+			name: "DNS not ready and deployment degraded",
+			conditions: []operatorv1.OperatorCondition{
+				cond(iov1.IngressControllerAdmittedConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+				cond(iov1.IngressControllerDeploymentDegradedConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+				cond(operatorv1.DNSManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+				cond(operatorv1.DNSReadyIngressConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Hour*-1)),
+			},
+			expectIngressDegradedStatus: operatorv1.ConditionTrue,
+			expectRequeue:               true,
+		},
+		{
+			name: "admitted, DNS, LB, and deployment OK",
+			conditions: []operatorv1.OperatorCondition{
+				cond(iov1.IngressControllerAdmittedConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+				cond(iov1.IngressControllerDeploymentDegradedConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Hour*-1)),
+				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+				cond(operatorv1.DNSManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+				cond(operatorv1.DNSReadyIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+			},
+			expectIngressDegradedStatus: operatorv1.ConditionFalse,
+			expectRequeue:               false,
+		},
+	}
+
+	for _, test := range tests {
+		actual, err := computeIngressDegradedCondition(test.conditions)
+		switch err.(type) {
+		case retryable.Error:
+			if !test.expectRequeue {
+				t.Errorf("%q: expected not to be told to requeue", test.name)
+			}
+		case nil:
+			if test.expectRequeue {
+				t.Errorf("%q: expected to be told to requeue", test.name)
+			}
+		default:
+			t.Errorf("%q: unexpected error: %v", test.name, err)
+			continue
+		}
+		if actual.Status != test.expectIngressDegradedStatus {
+			t.Errorf("%q: expected status to be %s, got %s", test.name, test.expectIngressDegradedStatus, actual.Status)
+		}
 	}
 }
 

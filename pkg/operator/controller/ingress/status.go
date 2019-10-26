@@ -2,13 +2,16 @@ package ingress
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
 	iov1 "github.com/openshift/cluster-ingress-operator/pkg/api/v1"
+	"github.com/openshift/cluster-ingress-operator/pkg/util/retryableerror"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -31,22 +34,27 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 		return fmt.Errorf("deployment has invalid spec.selector: %v", err)
 	}
 
+	var errs []error
+
 	updated := ic.DeepCopy()
 	updated.Status.AvailableReplicas = deployment.Status.AvailableReplicas
 	updated.Status.Selector = selector.String()
 	updated.Status.TLSProfile = computeIngressTLSProfile(ic.Status.TLSProfile, deployment)
 	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, computeIngressAvailableCondition(deployment))
+	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, computeDeploymentDegradedCondition(deployment))
 	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, computeLoadBalancerStatus(ic, service, operandEvents)...)
 	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, computeDNSStatus(ic, wildcardRecord, dnsConfig)...)
-	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, computeIngressDegradedCondition(deployment))
+	degradedCondition, err := computeIngressDegradedCondition(updated.Status.Conditions)
+	errs = append(errs, err)
+	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, degradedCondition)
 
 	if !ingressStatusesEqual(updated.Status, ic.Status) {
 		if err := r.client.Status().Update(context.TODO(), updated); err != nil {
-			return fmt.Errorf("failed to update ingresscontroller status: %v", err)
+			errs = append(errs, fmt.Errorf("failed to update ingresscontroller status: %v", err))
 		}
 	}
 
-	return nil
+	return retryableerror.NewMaybeRetryableAggregate(errs)
 }
 
 // mergeConditions adds or updates matching conditions, and updates
@@ -123,11 +131,14 @@ func computeIngressAvailableCondition(deployment *appsv1.Deployment) operatorv1.
 	}
 }
 
-func computeIngressDegradedCondition(deployment *appsv1.Deployment) operatorv1.OperatorCondition {
+// computeDeploymentDegradedCondition computes the ingresscontroller's
+// "DeploymentDegraded" status condition by examining the status conditions of
+// the deployment.
+func computeDeploymentDegradedCondition(deployment *appsv1.Deployment) operatorv1.OperatorCondition {
 	for _, cond := range deployment.Status.Conditions {
 		if cond.Type == appsv1.DeploymentProgressing && cond.Status == corev1.ConditionFalse && cond.Reason == "ProgressDeadlineExceeded" {
 			return operatorv1.OperatorCondition{
-				Type:    operatorv1.OperatorStatusTypeDegraded,
+				Type:    iov1.IngressControllerDeploymentDegradedConditionType,
 				Status:  operatorv1.ConditionTrue,
 				Reason:  "DeploymentFailed",
 				Message: fmt.Sprintf("The deployment failed (reason: %s) with message: %s", cond.Reason, cond.Message),
@@ -135,9 +146,126 @@ func computeIngressDegradedCondition(deployment *appsv1.Deployment) operatorv1.O
 		}
 	}
 	return operatorv1.OperatorCondition{
+		Type:   iov1.IngressControllerDeploymentDegradedConditionType,
+		Status: operatorv1.ConditionFalse,
+	}
+}
+
+// computeIngressDegradedCondition computes the ingresscontroller's "Degraded"
+// status condition, which aggregates other status conditions that can indicate
+// a degraded state.  In addition, computeIngressDegradedCondition returns a
+// duration value that indicates, if it is non-zero, that the operator should
+// reconcile the ingresscontroller again after that period to update its status
+// conditions.
+func computeIngressDegradedCondition(conditions []operatorv1.OperatorCondition) (operatorv1.OperatorCondition, error) {
+	var requeueAfter time.Duration
+	var needRequeue bool
+	conditionsMap := make(map[string]*operatorv1.OperatorCondition)
+	for i := range conditions {
+		conditionsMap[conditions[i].Type] = &conditions[i]
+	}
+
+	expectedConditions := []struct {
+		condition        string
+		status           operatorv1.ConditionStatus
+		ifConditionsTrue []string
+		gracePeriod      time.Duration
+	}{
+		{
+			condition: iov1.IngressControllerAdmittedConditionType,
+			status:    operatorv1.ConditionTrue,
+		},
+		{
+			condition:   iov1.IngressControllerDeploymentDegradedConditionType,
+			status:      operatorv1.ConditionFalse,
+			gracePeriod: time.Second * 30,
+		},
+		{
+			condition:        operatorv1.LoadBalancerReadyIngressConditionType,
+			status:           operatorv1.ConditionTrue,
+			ifConditionsTrue: []string{operatorv1.LoadBalancerManagedIngressConditionType},
+			gracePeriod:      time.Second * 90,
+		},
+		{
+			condition: operatorv1.DNSReadyIngressConditionType,
+			status:    operatorv1.ConditionTrue,
+			ifConditionsTrue: []string{
+				operatorv1.LoadBalancerManagedIngressConditionType,
+				operatorv1.LoadBalancerReadyIngressConditionType,
+				operatorv1.DNSManagedIngressConditionType,
+			},
+			gracePeriod: time.Second * 30,
+		},
+	}
+
+	var degradedConditions []*operatorv1.OperatorCondition
+	now := clock.Now()
+	for _, expected := range expectedConditions {
+		condition, haveCondition := conditionsMap[expected.condition]
+		if !haveCondition {
+			continue
+		}
+		if condition.Status == expected.status {
+			continue
+		}
+		failedPredicates := false
+		for _, ifCond := range expected.ifConditionsTrue {
+			predicate, havePredicate := conditionsMap[ifCond]
+			if !havePredicate || predicate.Status != operatorv1.ConditionTrue {
+				failedPredicates = true
+				break
+			}
+		}
+		if failedPredicates {
+			continue
+		}
+		if expected.gracePeriod != 0 {
+			t1 := now.Add(-expected.gracePeriod)
+			t2 := condition.LastTransitionTime
+			if t2.After(t1) {
+				d := t2.Sub(t1)
+				if !needRequeue || d < requeueAfter {
+					// Recompute status conditions again
+					// after the grace period has elapsed.
+					requeueAfter = d
+				}
+				needRequeue = true
+				continue
+			}
+		}
+		degradedConditions = append(degradedConditions, condition)
+	}
+
+	if len(degradedConditions) != 0 {
+		// Keep checking conditions every minute while degraded.
+		requeueAfter = time.Minute
+
+		var degraded string
+		for _, cond := range degradedConditions {
+			degraded = degraded + fmt.Sprintf(", %s=%s", cond.Type, cond.Status)
+		}
+
+		condition := operatorv1.OperatorCondition{
+			Type:    operatorv1.OperatorStatusTypeDegraded,
+			Status:  operatorv1.ConditionTrue,
+			Reason:  "DegradedConditions",
+			Message: "One or more other status conditions indicate a degraded state: " + degraded[2:],
+		}
+
+		return condition, retryableerror.New(errors.New("IngressController is degraded"), requeueAfter)
+	}
+
+	condition := operatorv1.OperatorCondition{
 		Type:   operatorv1.OperatorStatusTypeDegraded,
 		Status: operatorv1.ConditionFalse,
 	}
+
+	var err error
+	if needRequeue {
+		err = retryableerror.New(errors.New("IngressController may become degraded soon"), requeueAfter)
+	}
+
+	return condition, err
 }
 
 // ingressStatusesEqual compares two IngressControllerStatus values.  Returns true

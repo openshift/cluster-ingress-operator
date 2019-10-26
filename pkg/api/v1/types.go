@@ -75,7 +75,8 @@ type DNSRecordList struct {
 }
 
 const (
-	IngressControllerAdmittedConditionType = "Admitted"
+	IngressControllerAdmittedConditionType           = "Admitted"
+	IngressControllerDeploymentDegradedConditionType = "DeploymentDegraded"
 )
 
 func init() {
