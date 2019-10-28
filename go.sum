@@ -292,6 +292,8 @@ github.com/openshift/api v3.9.1-0.20191008185537-a3e424cbaf4e+incompatible h1:Dd
 github.com/openshift/api v3.9.1-0.20191008185537-a3e424cbaf4e+incompatible/go.mod h1:dh9o4Fs58gpFXGSYfnVxGR9PnV53I8TW84pQaJDdGiY=
 github.com/openshift/api v3.9.1-0.20191015204012-3f47c9a8fa7f+incompatible h1:iC4buL9efNDnWoAOgGXCbmsQJLYBsv03HgP44N+pK5g=
 github.com/openshift/api v3.9.1-0.20191015204012-3f47c9a8fa7f+incompatible/go.mod h1:dh9o4Fs58gpFXGSYfnVxGR9PnV53I8TW84pQaJDdGiY=
+github.com/openshift/api v3.9.1-0.20191028134408-abf28f93703b+incompatible h1:1mW1j1mik2++Z+ehEaqm2xcWGiGYJUK8SdbkTgTS+N4=
+github.com/openshift/api v3.9.1-0.20191028134408-abf28f93703b+incompatible/go.mod h1:dh9o4Fs58gpFXGSYfnVxGR9PnV53I8TW84pQaJDdGiY=
 github.com/openshift/library-go v0.0.0-20190613200606-e617f832835d h1:a/+OnGnX5qMHSSuKcSSLMPZghOgD48NNZgzDklj9cIc=
 github.com/openshift/library-go v0.0.0-20190613200606-e617f832835d/go.mod h1:NBttNjZpWwup/nthuLbPAPSYC8Qyo+BBK5bCtFoyYjo=
 github.com/openshift/library-go v0.0.0-20190925211623-9b918c218a4e h1:hDRrx7dI0ANkTLLWRmv2KyAt3hvnYewqa9PnEyk+2ho=
