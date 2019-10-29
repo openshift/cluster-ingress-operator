@@ -21,10 +21,8 @@ require (
 	github.com/openshift/api v3.9.1-0.20191028134408-abf28f93703b+incompatible
 	github.com/openshift/library-go v0.0.0-20190927184318-c355e2019bb3
 	github.com/pkg/errors v0.8.1
-	github.com/prometheus/client_golang v0.9.3-0.20190127221311-3c4408c8b829 // indirect
-	github.com/prometheus/client_model v0.0.0-20190129233127-fd36f4220a90 // indirect
-	github.com/prometheus/procfs v0.0.0-20190403104016-ea9eea638872 // indirect
 	github.com/securego/gosec v0.0.0-20190709033609-4b59c948083c
+	github.com/spf13/cobra v0.0.5
 	go.uber.org/zap v1.9.1
 	golang.org/x/time v0.0.0-20190308202827-9d24e82272b4 // indirect
 	google.golang.org/api v0.4.0
@@ -36,10 +34,6 @@ require (
 	k8s.io/apiserver v0.0.0-20190918160949-bfa5e2e684ad
 	k8s.io/client-go v0.0.0-20190918160344-1fbdaa4c8d90
 
-	sigs.k8s.io/controller-runtime v0.2.0-beta.1.0.20190918234459-801e12a50160
+	sigs.k8s.io/controller-runtime v0.3.1-0.20191011155846-b2bc3490f2e3
 	sigs.k8s.io/controller-tools v0.2.2-0.20190919191502-76a25b63325a
 )
-
-// Remove when the following merges:
-// https://github.com/kubernetes-sigs/controller-runtime/pull/588
-replace sigs.k8s.io/controller-runtime => github.com/munnerz/controller-runtime v0.1.8-0.20190907105316-d02b94982e57
