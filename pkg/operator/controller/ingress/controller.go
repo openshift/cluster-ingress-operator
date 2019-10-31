@@ -361,7 +361,11 @@ func (r *reconciler) ensureIngressDeleted(ingress *operatorv1.IngressController)
 	}
 	log.Info("deleted deployment for ingress", "namespace", ingress.Namespace, "name", ingress.Name)
 
-	// Clean up the finalizer to allow the ingresscontroller to be deleted.
+	if err := r.ensureLoadBalancerCleanupFinalizer(ingress); err != nil {
+		return err
+	}
+	// Remove the "ingresscontroller.operator.openshift.io/finalizer-ingresscontroller" finalizer
+	// to allow the ingresscontroller to be deleted.
 	if slice.ContainsString(ingress.Finalizers, manifests.IngressControllerFinalizer) {
 		updated := ingress.DeepCopy()
 		updated.Finalizers = slice.RemoveString(updated.Finalizers, manifests.IngressControllerFinalizer)

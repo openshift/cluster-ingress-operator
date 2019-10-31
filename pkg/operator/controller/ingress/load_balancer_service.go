@@ -23,6 +23,10 @@ const (
 	//
 	// https://kubernetes.io/docs/concepts/services-networking/service/#proxy-protocol-support-on-aws
 	awsLBProxyProtocolAnnotation = "service.beta.kubernetes.io/aws-load-balancer-proxy-protocol"
+	// lbServiceCleanUpFinalizer is a finalizer attached to any service that has type=LoadBalancer.
+	// Upon deletion of the service, the actual deletion of the resource will be blocked until
+	// this finalizer is removed.
+	lbServiceCleanUpFinalizer = "service.kubernetes.io/load-balancer-cleanup"
 )
 
 var (
@@ -135,10 +139,10 @@ func (r *reconciler) currentLoadBalancerService(ci *operatorv1.IngressController
 	return service, nil
 }
 
-// finalizeLoadBalancerService removes finalizers from any LB service. This used
-// to be to help with DNS cleanup, but now that's no longer necessary, and so we
-// just need to clear the finalizer which might exist on existing resources.
-//
+// finalizeLoadBalancerService removes the "ingress.openshift.io/operator" finalizer
+// from the load balancer service of ci. This was for helping with DNS cleanup, but
+// that's no longer necessary. We just need to clear the finalizer which might exist
+// on existing resources.
 // TODO: How can we delete this code?
 func (r *reconciler) finalizeLoadBalancerService(ci *operatorv1.IngressController) error {
 	service, err := r.currentLoadBalancerService(ci)
@@ -158,4 +162,22 @@ func (r *reconciler) finalizeLoadBalancerService(ci *operatorv1.IngressControlle
 		}
 	}
 	return nil
+}
+
+// ensureLoadBalancerCleanupFinalizer ensures the "service.kubernetes.io/load-balancer-cleanup"
+// finalizer does not exist for the load balancer service of ic. For additional background on
+// this finalizer, see:
+// https://github.com/kubernetes/enhancements/blob/master/keps/sig-network/20190423-service-lb-finalizer.md
+func (r *reconciler) ensureLoadBalancerCleanupFinalizer(ic *operatorv1.IngressController) error {
+	service, err := r.currentLoadBalancerService(ic)
+	if err != nil {
+		return err
+	}
+	if service == nil {
+		return nil
+	}
+	if !slice.ContainsString(service.Finalizers, lbServiceCleanUpFinalizer) {
+		return nil
+	}
+	return fmt.Errorf("finalizer %s exists for service %s/%s", lbServiceCleanUpFinalizer, service.Namespace, service.Name)
 }
