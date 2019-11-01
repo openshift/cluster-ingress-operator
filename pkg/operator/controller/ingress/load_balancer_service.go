@@ -161,23 +161,11 @@ func (r *reconciler) finalizeLoadBalancerService(ci *operatorv1.IngressControlle
 			return fmt.Errorf("failed to remove finalizer from service %s for ingress %s/%s: %v", service.Namespace, service.Name, ci.Name, err)
 		}
 	}
+	// The load balancer service is not deleted until the cloud infra is cleaned-up. For more details, see:
+	// https://github.com/kubernetes/enhancements/blob/master/keps/sig-network/20190423-service-lb-finalizer.md
+	if slice.ContainsString(service.Finalizers, lbServiceCleanUpFinalizer) {
+		return fmt.Errorf("finalizer %s exists for service %s/%s", lbServiceCleanUpFinalizer, service.Namespace, service.Name)
+	}
+	log.Info("finalized load balancer service for ingress", "namespace", ci.Namespace, "name", ci.Name)
 	return nil
-}
-
-// ensureLoadBalancerCleanupFinalizer ensures the "service.kubernetes.io/load-balancer-cleanup"
-// finalizer does not exist for the load balancer service of ic. For additional background on
-// this finalizer, see:
-// https://github.com/kubernetes/enhancements/blob/master/keps/sig-network/20190423-service-lb-finalizer.md
-func (r *reconciler) ensureLoadBalancerCleanupFinalizer(ic *operatorv1.IngressController) error {
-	service, err := r.currentLoadBalancerService(ic)
-	if err != nil {
-		return err
-	}
-	if service == nil {
-		return nil
-	}
-	if !slice.ContainsString(service.Finalizers, lbServiceCleanUpFinalizer) {
-		return nil
-	}
-	return fmt.Errorf("finalizer %s exists for service %s/%s", lbServiceCleanUpFinalizer, service.Namespace, service.Name)
 }

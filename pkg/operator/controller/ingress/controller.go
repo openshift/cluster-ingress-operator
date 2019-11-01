@@ -337,18 +337,18 @@ func validateDomainUniqueness(desired *operatorv1.IngressController, existing []
 // ensureIngressDeleted tries to delete ingress, and if successful, will remove
 // the finalizer.
 func (r *reconciler) ensureIngressDeleted(ingress *operatorv1.IngressController) error {
+	errs := []error{}
 	if err := r.finalizeLoadBalancerService(ingress); err != nil {
-		return fmt.Errorf("failed to finalize load balancer service for %s: %v", ingress.Name, err)
+		errs = append(errs, fmt.Errorf("failed to finalize load balancer service for %s/%s: %v", ingress.Namespace, ingress.Name, err))
 	}
-	log.Info("finalized load balancer service for ingress", "namespace", ingress.Namespace, "name", ingress.Name)
 
 	// Delete the wildcard DNS record, and block ingresscontroller finalization
 	// until the dnsrecord has been finalized.
 	if err := r.deleteWildcardDNSRecord(ingress); err != nil {
-		return fmt.Errorf("failed to delete wildcard dnsrecord: %v", err)
+		errs = append(errs, fmt.Errorf("failed to delete wildcard dnsrecord: %v", err))
 	}
 	if record, err := r.currentWildcardDNSRecord(ingress); err != nil {
-		return fmt.Errorf("failed to get current wildcard dnsrecord: %v", err)
+		errs = append(errs, fmt.Errorf("failed to get current wildcard dnsrecord: %v", err))
 	} else {
 		if record != nil {
 			log.V(1).Info("waiting for wildcard dnsrecord to be deleted", "dnsrecord", record)
@@ -357,23 +357,21 @@ func (r *reconciler) ensureIngressDeleted(ingress *operatorv1.IngressController)
 	}
 
 	if err := r.ensureRouterDeleted(ingress); err != nil {
-		return fmt.Errorf("failed to delete deployment for ingress %s: %v", ingress.Name, err)
+		errs = append(errs, fmt.Errorf("failed to delete deployment for ingress %s: %v", ingress.Name, err))
 	}
-	log.Info("deleted deployment for ingress", "namespace", ingress.Namespace, "name", ingress.Name)
 
-	if err := r.ensureLoadBalancerCleanupFinalizer(ingress); err != nil {
-		return err
-	}
-	// Remove the "ingresscontroller.operator.openshift.io/finalizer-ingresscontroller" finalizer
-	// to allow the ingresscontroller to be deleted.
-	if slice.ContainsString(ingress.Finalizers, manifests.IngressControllerFinalizer) {
-		updated := ingress.DeepCopy()
-		updated.Finalizers = slice.RemoveString(updated.Finalizers, manifests.IngressControllerFinalizer)
-		if err := r.client.Update(context.TODO(), updated); err != nil {
-			return fmt.Errorf("failed to remove finalizer from ingresscontroller %s: %v", ingress.Name, err)
+	if len(errs) == 0 {
+		// Remove the "ingresscontroller.operator.openshift.io/finalizer-ingresscontroller" finalizer
+		// to allow the ingresscontroller to be deleted.
+		if slice.ContainsString(ingress.Finalizers, manifests.IngressControllerFinalizer) {
+			updated := ingress.DeepCopy()
+			updated.Finalizers = slice.RemoveString(updated.Finalizers, manifests.IngressControllerFinalizer)
+			if err := r.client.Update(context.TODO(), updated); err != nil {
+				errs = append(errs, fmt.Errorf("failed to remove finalizer from ingresscontroller %s: %v", ingress.Name, err))
+			}
 		}
 	}
-	return nil
+	return utilerrors.NewAggregate(errs)
 }
 
 // ensureIngressController ensures all necessary router resources exist for a given ingresscontroller.
