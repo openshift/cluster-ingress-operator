@@ -64,6 +64,8 @@ func (r *reconciler) ensureRouterDeleted(ci *operatorv1.IngressController) error
 			return err
 		}
 	}
+	log.Info("deleted deployment", "namespace", deployment.Namespace, "name", deployment.Name)
+	r.recorder.Eventf(ci, "Normal", "DeletedDeployment", "Deleted deployment %s/%s", deployment.Namespace, deployment.Name)
 	return nil
 }
 
