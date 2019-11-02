@@ -251,6 +251,53 @@ func TestComputeIngressDegradedCondition(t *testing.T) {
 	}
 }
 
+func TestComputeDeploymentDegradedCondition(t *testing.T) {
+	tests := []struct {
+		name                           string
+		deploymentConditions           []appsv1.DeploymentCondition
+		expectDeploymentDegradedStatus operatorv1.ConditionStatus
+	}{
+		{
+			name:                           "available absent",
+			deploymentConditions:           []appsv1.DeploymentCondition{},
+			expectDeploymentDegradedStatus: operatorv1.ConditionUnknown,
+		},
+		{
+			name: "available true",
+			deploymentConditions: []appsv1.DeploymentCondition{
+				{
+					Type:   appsv1.DeploymentAvailable,
+					Status: corev1.ConditionTrue,
+				},
+			},
+			expectDeploymentDegradedStatus: operatorv1.ConditionFalse,
+		},
+		{
+			name: "available false",
+			deploymentConditions: []appsv1.DeploymentCondition{
+				{
+					Type:   appsv1.DeploymentAvailable,
+					Status: corev1.ConditionFalse,
+				},
+			},
+			expectDeploymentDegradedStatus: operatorv1.ConditionTrue,
+		},
+	}
+
+	for _, test := range tests {
+		deploy := &appsv1.Deployment{
+			Status: appsv1.DeploymentStatus{
+				Conditions: test.deploymentConditions,
+			},
+		}
+
+		actual := computeDeploymentDegradedCondition(deploy)
+		if actual.Status != test.expectDeploymentDegradedStatus {
+			t.Errorf("%q: expected %v, got %v", test.name, test.expectDeploymentDegradedStatus, actual.Status)
+		}
+	}
+}
+
 func TestComputeLoadBalancerStatus(t *testing.T) {
 	tests := []struct {
 		name       string

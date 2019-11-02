@@ -136,18 +136,31 @@ func computeIngressAvailableCondition(deployment *appsv1.Deployment) operatorv1.
 // the deployment.
 func computeDeploymentDegradedCondition(deployment *appsv1.Deployment) operatorv1.OperatorCondition {
 	for _, cond := range deployment.Status.Conditions {
-		if cond.Type == appsv1.DeploymentProgressing && cond.Status == corev1.ConditionFalse && cond.Reason == "ProgressDeadlineExceeded" {
-			return operatorv1.OperatorCondition{
-				Type:    iov1.IngressControllerDeploymentDegradedConditionType,
-				Status:  operatorv1.ConditionTrue,
-				Reason:  "DeploymentFailed",
-				Message: fmt.Sprintf("The deployment failed (reason: %s) with message: %s", cond.Reason, cond.Message),
+		if cond.Type == appsv1.DeploymentAvailable {
+			switch cond.Status {
+			case corev1.ConditionFalse:
+				return operatorv1.OperatorCondition{
+					Type:    iov1.IngressControllerDeploymentDegradedConditionType,
+					Status:  operatorv1.ConditionTrue,
+					Reason:  "DeploymentUnavailable",
+					Message: fmt.Sprintf("The deployment has Available status condition set to False (reason: %s) with message: %s", cond.Reason, cond.Message),
+				}
+			case corev1.ConditionTrue:
+				return operatorv1.OperatorCondition{
+					Type:    iov1.IngressControllerDeploymentDegradedConditionType,
+					Status:  operatorv1.ConditionFalse,
+					Reason:  "DeploymentAvailable",
+					Message: "The deployment has Available status condition set to True",
+				}
 			}
+			break
 		}
 	}
 	return operatorv1.OperatorCondition{
-		Type:   iov1.IngressControllerDeploymentDegradedConditionType,
-		Status: operatorv1.ConditionFalse,
+		Type:    iov1.IngressControllerDeploymentDegradedConditionType,
+		Status:  operatorv1.ConditionUnknown,
+		Reason:  "DeploymentAvailabilityUnknown",
+		Message: "The deployment has no Available status condition set",
 	}
 }
 
