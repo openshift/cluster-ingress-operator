@@ -23,6 +23,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/apimachinery/pkg/util/sets"
 
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -37,7 +38,14 @@ const (
 	controllerName = "ingress_controller"
 )
 
-var log = logf.Logger.WithName(controllerName)
+var (
+	log = logf.Logger.WithName(controllerName)
+	// tlsVersion13Ciphers is a list of TLS v1.3 cipher suites as specified by
+	// https://www.openssl.org/docs/man1.1.1/man1/ciphers.html
+	tlsVersion13Ciphers = sets.NewString("TLS_AES_128_GCM_SHA256", "TLS_AES_256_GCM_SHA384", "TLS_CHACHA20_POLY1305_SHA256",
+		"TLS_AES_128_CCM_SHA256", "TLS_AES_128_CCM_8_SHA256", "TLS_AES_128_GCM_SHA256", "TLS_AES_256_GCM_SHA384",
+		"TLS_CHACHA20_POLY1305_SHA256", "TLS_AES_128_CCM_SHA256", "TLS_AES_128_CCM_8_SHA256")
+)
 
 // New creates the ingress controller from configuration. This is the controller
 // that handles all the logic for implementing ingress based on
@@ -350,7 +358,6 @@ func tlsProfileSpecForSecurityProfile(profile *configv1.TLSSecurityProfile) *con
 		} else if spec, ok := configv1.TLSProfiles[profile.Type]; ok {
 			// TODO remove when haproxy is built with an openssl version that supports tls v1.3.
 			if profile.Type == configv1.TLSProfileModernType {
-				log.Info("converted modern tls security profile to intermediate")
 				return configv1.TLSProfiles[configv1.TLSProfileIntermediateType]
 			}
 			return spec
@@ -455,6 +462,10 @@ func validateTLSSecurityProfile(ic *operatorv1.IngressController) error {
 		if len(invalidCiphers) != 0 {
 			errs = append(errs, fmt.Errorf("security profile has invalid ciphers: %s", strings.Join(invalidCiphers, ", ")))
 		}
+		filteredCiphers := filterTLS13Ciphers(spec.Ciphers)
+		if len(filteredCiphers) == 0 {
+			errs = append(errs, fmt.Errorf("security profile contains only tls v1.3 cipher suites"))
+		}
 	}
 
 	if _, ok := validTLSVersions[spec.MinTLSVersion]; !ok {
@@ -462,6 +473,22 @@ func validateTLSSecurityProfile(ic *operatorv1.IngressController) error {
 	}
 
 	return utilerrors.NewAggregate(errs)
+}
+
+// filterTLS13Ciphers filters any TLS v1.3 cipher suites from ciphers returning
+// a filtered list of cipher suites.
+func filterTLS13Ciphers(ciphers []string) []string {
+	filteredCiphers := []string{}
+	for i := 0; i < len(ciphers); i++ {
+		exist := false
+		if tlsVersion13Ciphers.Has(ciphers[i]) {
+			exist = true
+		}
+		if !exist {
+			filteredCiphers = append(filteredCiphers, ciphers[i])
+		}
+	}
+	return filteredCiphers
 }
 
 // ensureIngressDeleted tries to delete ingress, and if successful, will remove
