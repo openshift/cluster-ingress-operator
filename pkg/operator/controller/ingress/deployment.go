@@ -6,6 +6,7 @@ import (
 	"hash"
 	"hash/fnv"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -644,6 +645,44 @@ func (r *reconciler) updateRouterDeployment(current, desired *appsv1.Deployment)
 	changed, updated := deploymentConfigChanged(current, desired)
 	if !changed {
 		return nil
+	}
+
+	// It may be impossible to transition from the current state to the
+	// desired state if the current state has an affinity policy with a pod
+	// anti-affinity rule that prohibits colocation of pods belonging to the
+	// same ingresscontroller and the desired state requires using surge for
+	// rolling updates.  Thus, if the current deployment has an old affinity
+	// policy, we update the deployment in two steps:
+	//
+	// 1. Update the affinity policy (which should enable colocation of pods
+	// with different deployment hashes).
+	//
+	// 2. Once that update is rolled out, update the deployment strategy to
+	// use surge.
+	//
+	// TODO: This migration was introduced in OpenShift 4.3 and can be
+	// removed in OpenShift 4.4.
+	switch {
+	case reflect.DeepEqual(current.Spec.Strategy, updated.Spec.Strategy):
+		// Migration is complete (or was never needed), so continue with
+		// the update as usual.
+	case reflect.DeepEqual(current.Spec.Template.Spec.Affinity, updated.Spec.Template.Spec.Affinity):
+		// Migration has been started but not completed.
+		if current.Status.UpdatedReplicas != current.Status.Replicas {
+			// We cannot continue to the next step till the rollout
+			// is complete, so log and return.
+			log.Info("waiting for rollout of new affinity policy to complete", "namespace", current.Namespace, "name", current.Name)
+			return nil
+		}
+
+		// Update of the affinity policy is complete; now update the
+		// deployment strategy by continuing with the update as normal.
+		log.Info("migrating router deployment to new deployment strategy", "namespace", current.Namespace, "name", current.Name)
+	default:
+		// Initiate migration by updating affinity but keeping the old
+		// strategy.
+		updated.Spec.Strategy = current.Spec.Strategy
+		log.Info("migrating router deployment to new affinity policy", "namespace", current.Namespace, "name", current.Name)
 	}
 
 	if err := r.client.Update(context.TODO(), updated); err != nil {
