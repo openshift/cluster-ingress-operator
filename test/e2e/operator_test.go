@@ -601,7 +601,7 @@ func TestTLSSecurityProfile(t *testing.T) {
 	if err := kclient.Update(context.TODO(), ic); err != nil {
 		t.Errorf("failed to update ingresscontroller %s: %v", name, err)
 	}
-	err := wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
+	err := wait.PollImmediate(1*time.Second, 5*time.Minute, func() (bool, error) {
 		if err := kclient.Get(context.TODO(), name, ic); err != nil {
 			t.Fatalf("failed to get ingresscontroller %s: %v", name, err)
 		}
