@@ -28,13 +28,13 @@ cluster-build:
 
 # TODO: Add deepcopy generation script/target
 .PHONY: generate
-generate: bindata crd
+generate: crd bindata
 
 .PHONY: bindata
 bindata:
 	hack/update-generated-bindata.sh
 
-# Generate IngressController CRD from vendored API spec.
+# Generate CRDs from vendored and internal API specs.
 .PHONY: crd
 crd:
 	hack/update-generated-crd.sh
@@ -43,7 +43,7 @@ crd:
 verify-bindata:
 	hack/verify-generated-bindata.sh
 
-# Do not write the IngressController CRD, only compare and return (code 1 if dirty).
+# Do not write the CRDs, only compare and return (code 1 if dirty).
 .PHONY: verify-crd
 verify-crd:
 	hack/verify-generated-crd.sh
@@ -66,7 +66,7 @@ clean:
 	rm -f $(BIN)
 
 .PHONY: verify
-verify: verify-bindata verify-crd verify-gosec
+verify: verify-crd verify-bindata verify-gosec
 	hack/verify-gofmt.sh
 
 .PHONY: verify-gosec
