@@ -12,6 +12,10 @@ func TestTLSProfileSpecForSecurityProfile(t *testing.T) {
 	invalidTLSVersion := configv1.TLSProtocolVersion("abc")
 	invalidCiphers := []string{"ECDHE-ECDSA-AES256-GCM-SHA384", "invalid cipher"}
 	validCiphers := []string{"ECDHE-ECDSA-AES256-GCM-SHA384"}
+	tlsVersion13Ciphers := []string{"TLS_AES_128_GCM_SHA256", "TLS_AES_256_GCM_SHA384", "TLS_CHACHA20_POLY1305_SHA256",
+		"TLS_AES_128_CCM_SHA256", "TLS_AES_128_CCM_8_SHA256", "TLS_AES_128_GCM_SHA256", "TLS_AES_256_GCM_SHA384",
+		"TLS_CHACHA20_POLY1305_SHA256", "TLS_AES_128_CCM_SHA256", "TLS_AES_128_CCM_8_SHA256"}
+	tlsVersion1213Ciphers := []string{"TLS_AES_128_GCM_SHA256", "TLS_AES_256_GCM_SHA384", "ECDHE-ECDSA-AES256-GCM-SHA384"}
 	testCases := []struct {
 		description  string
 		profile      *configv1.TLSSecurityProfile
@@ -47,13 +51,15 @@ func TestTLSProfileSpecForSecurityProfile(t *testing.T) {
 			valid:        true,
 			expectedSpec: configv1.TLSProfiles[configv1.TLSProfileIntermediateType],
 		},
+		// TODO: Update test case to use Modern cipher suites when haproxy is
+		//  built with an openssl version that supports tls v1.3.
 		{
 			description: "modern",
 			profile: &configv1.TLSSecurityProfile{
 				Type: configv1.TLSProfileModernType,
 			},
 			valid:        true,
-			expectedSpec: configv1.TLSProfiles[configv1.TLSProfileModernType],
+			expectedSpec: configv1.TLSProfiles[configv1.TLSProfileIntermediateType],
 		},
 		{
 			description: "custom, nil profile",
@@ -82,6 +88,32 @@ func TestTLSProfileSpecForSecurityProfile(t *testing.T) {
 				},
 			},
 			valid: false,
+		},
+		{
+			description: "custom, invalid tls v1.3 only ciphers",
+			profile: &configv1.TLSSecurityProfile{
+				Type: configv1.TLSProfileCustomType,
+				Custom: &configv1.CustomTLSProfile{
+					TLSProfileSpec: configv1.TLSProfileSpec{
+						Ciphers:       tlsVersion13Ciphers,
+						MinTLSVersion: configv1.VersionTLS10,
+					},
+				},
+			},
+			valid: false,
+		},
+		{
+			description: "custom, mixed tls v1.2 and v1.3 ciphers",
+			profile: &configv1.TLSSecurityProfile{
+				Type: configv1.TLSProfileCustomType,
+				Custom: &configv1.CustomTLSProfile{
+					TLSProfileSpec: configv1.TLSProfileSpec{
+						Ciphers:       tlsVersion1213Ciphers,
+						MinTLSVersion: configv1.VersionTLS10,
+					},
+				},
+			},
+			valid: true,
 		},
 		{
 			description: "custom, invalid minimum security protocol version",
@@ -241,6 +273,30 @@ func TestTLSProfileSpecForIngressController(t *testing.T) {
 			icProfile:    &configv1.TLSSecurityProfile{Type: configv1.TLSProfileCustomType},
 			apiProfile:   &configv1.TLSSecurityProfile{Type: configv1.TLSProfileCustomType},
 			expectedSpec: &configv1.TLSProfileSpec{},
+		},
+		// TODO: Update test cases to use Modern cipher suites when haproxy is
+		//  built with an openssl version that supports tls v1.3.
+		{
+			description:  "modern, nil -> intermediate",
+			icProfile:    &configv1.TLSSecurityProfile{Type: configv1.TLSProfileModernType},
+			expectedSpec: configv1.TLSProfiles[configv1.TLSProfileIntermediateType],
+		},
+		{
+			description:  "nil, modern -> intermediate",
+			apiProfile:   &configv1.TLSSecurityProfile{Type: configv1.TLSProfileModernType},
+			expectedSpec: configv1.TLSProfiles[configv1.TLSProfileIntermediateType],
+		},
+		{
+			description:  "modern, empty -> intermediate",
+			icProfile:    &configv1.TLSSecurityProfile{Type: configv1.TLSProfileModernType},
+			apiProfile:   &configv1.TLSSecurityProfile{},
+			expectedSpec: configv1.TLSProfiles[configv1.TLSProfileIntermediateType],
+		},
+		{
+			description:  "empty, modern -> intermediate",
+			icProfile:    &configv1.TLSSecurityProfile{},
+			apiProfile:   &configv1.TLSSecurityProfile{Type: configv1.TLSProfileModernType},
+			expectedSpec: configv1.TLSProfiles[configv1.TLSProfileIntermediateType],
 		},
 	}
 
