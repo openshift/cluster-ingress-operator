@@ -467,9 +467,9 @@ func TestRouterCACertificate(t *testing.T) {
 	}
 }
 
-// TestPodDisruptionBudgetExists verifies that a PodDisruptionBudget resource
-// exists for the default ingresscontroller.
-func TestPodDisruptionBudgetExists(t *testing.T) {
+// TestPodDisruptionBudgetDoesNotExist verifies that a PodDisruptionBudget
+// resource does not exist for the default ingresscontroller.
+func TestPodDisruptionBudgetDoesNotExist(t *testing.T) {
 	ic := &operatorv1.IngressController{}
 	if err := kclient.Get(context.TODO(), defaultName, ic); err != nil {
 		t.Fatalf("failed to get default ingresscontroller: %v", err)
@@ -481,7 +481,10 @@ func TestPodDisruptionBudgetExists(t *testing.T) {
 
 	pdb := &policyv1beta1.PodDisruptionBudget{}
 	if err := kclient.Get(context.TODO(), controller.RouterPodDisruptionBudgetName(ic), pdb); err != nil {
-		t.Fatalf("failed to get default ingresscontroller poddisruptionbudget: %v", err)
+		if errors.IsNotFound(err) {
+			return
+		}
+		t.Errorf("error getting default ingresscontroller poddisruptionbudget: %v", err)
 	}
 }
 
