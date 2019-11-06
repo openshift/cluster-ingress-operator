@@ -14,7 +14,6 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 // ensureRouterPodDisruptionBudget ensures the pod disruption budget exists for
@@ -61,23 +60,10 @@ func (r *reconciler) ensureRouterPodDisruptionBudget(ic *operatorv1.IngressContr
 // budget.  Returns a Boolean indicating whether a PDB is desired, as well as
 // the PDB if one is desired.
 func desiredRouterPodDisruptionBudget(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference) (bool, *policyv1beta1.PodDisruptionBudget, error) {
-	name := controller.RouterPodDisruptionBudgetName(ic)
-	pointerTo := func(ios intstr.IntOrString) *intstr.IntOrString { return &ios }
-	pdb := policyv1beta1.PodDisruptionBudget{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name.Name,
-			Namespace: name.Namespace,
-		},
-		Spec: policyv1beta1.PodDisruptionBudgetSpec{
-			// The disruption controller rounds MaxUnavailable up.
-			// https://github.com/kubernetes/kubernetes/blob/65dc445aa2d581b4fa829258e46e4faf44e999b6/pkg/controller/disruption/disruption.go#L539
-			MaxUnavailable: pointerTo(intstr.FromString("25%")),
-			Selector:       controller.IngressControllerDeploymentPodSelector(ic),
-		},
-	}
-	pdb.SetOwnerReferences([]metav1.OwnerReference{deploymentRef})
-
-	return true, &pdb, nil
+	// Always return false because we never want a pod disruption budget.
+	// TODO: We removed pod disruption budgets in OpenShift 4.3; we should
+	// remove ensureRouterPodDisruptionBudget in OpenShift 4.4.
+	return false, nil, nil
 }
 
 // currentRouterPodDisruptionBudget returns the current router pod disruption
