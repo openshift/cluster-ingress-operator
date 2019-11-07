@@ -394,7 +394,9 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 
 	var minTLSVersion string
 	switch tlsProfileSpec.MinTLSVersion {
-	// TLS 1.0 is not supported.
+	// TLS 1.0 is not supported, convert to TLS 1.1.
+	case configv1.VersionTLS10:
+		minTLSVersion = "TLSv1.1"
 	case configv1.VersionTLS11:
 		minTLSVersion = "TLSv1.1"
 	case configv1.VersionTLS12:
