@@ -40,6 +40,33 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, computeDNSStatus(ic, wildcardRecord, dnsConfig)...)
 	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, computeIngressDegradedCondition(deployment))
 
+	isDNSReady := func(conditions []operatorv1.OperatorCondition) bool {
+		for _, cond := range conditions {
+			switch cond.Type {
+			case operatorv1.DNSReadyIngressConditionType:
+				return cond.Status == operatorv1.ConditionTrue
+			}
+		}
+		return true
+	}
+
+	isLoadBalancerReady := func(conditions []operatorv1.OperatorCondition) bool {
+		for _, cond := range conditions {
+			switch cond.Type {
+			case operatorv1.LoadBalancerReadyIngressConditionType:
+				return cond.Status == operatorv1.ConditionTrue
+			}
+		}
+		return true
+	}
+
+	if !isDNSReady(updated.Status.Conditions) || !isLoadBalancerReady(updated.Status.Conditions) {
+		updated.Status.Conditions = mergeConditions(updated.Status.Conditions, operatorv1.OperatorCondition{
+			Type:   operatorv1.OperatorStatusTypeDegraded,
+			Status: operatorv1.ConditionTrue,
+		})
+	}
+
 	if !ingressStatusesEqual(updated.Status, ic.Status) {
 		if err := r.client.Status().Update(context.TODO(), updated); err != nil {
 			return fmt.Errorf("failed to update ingresscontroller status: %v", err)
