@@ -9,6 +9,7 @@ import (
 	iov1 "github.com/openshift/cluster-ingress-operator/pkg/api/v1"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
+	retryable "github.com/openshift/cluster-ingress-operator/pkg/util/retryableerror"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/slice"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -193,9 +194,14 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 
 	// The ingresscontroller is safe to process, so ensure it.
 	if err := r.ensureIngressController(ingress, dnsConfig, infraConfig, ingressConfig, apiConfig); err != nil {
-		return reconcile.Result{}, fmt.Errorf("failed to ensure ingresscontroller: %v", err)
+		switch e := err.(type) {
+		case retryable.Error:
+			log.Error(e, "got retryable error; requeueing", "after", e.After())
+			return reconcile.Result{RequeueAfter: e.After()}, nil
+		default:
+			return reconcile.Result{}, err
+		}
 	}
-
 	return reconcile.Result{}, nil
 }
 
@@ -531,7 +537,10 @@ func (r *reconciler) ensureIngressDeleted(ingress *operatorv1.IngressController)
 	return utilerrors.NewAggregate(errs)
 }
 
-// ensureIngressController ensures all necessary router resources exist for a given ingresscontroller.
+// ensureIngressController ensures all necessary router resources exist for a
+// given ingresscontroller.  Any error values are collected into either a
+// retryable.Error value, if any of the error values are retryable, or else an
+// Aggregate error value.
 func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, dnsConfig *configv1.DNS, infraConfig *configv1.Infrastructure, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer) error {
 	// Before doing anything at all with the controller, ensure it has a finalizer
 	// so we can clean up later.
@@ -602,7 +611,7 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		errs = append(errs, fmt.Errorf("failed to sync ingresscontroller status: %v", err))
 	}
 
-	return utilerrors.NewAggregate(errs)
+	return retryable.NewMaybeRetryableAggregate(errs)
 }
 
 // IsStatusDomainSet checks whether status.domain of ingress is set.
