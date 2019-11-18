@@ -10,3 +10,7 @@ spec:
     from:
       kind: "DockerImage"
       name: "openshift/origin-haproxy-router:v4.0"
+  - name: kube-rbac-proxy
+    from:
+      kind: DockerImage
+      name: quay.io/openshift/origin-kube-rbac-proxy:latest
