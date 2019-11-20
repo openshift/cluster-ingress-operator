@@ -23,10 +23,6 @@ const (
 	//
 	// https://kubernetes.io/docs/concepts/services-networking/service/#proxy-protocol-support-on-aws
 	awsLBProxyProtocolAnnotation = "service.beta.kubernetes.io/aws-load-balancer-proxy-protocol"
-	// lbServiceCleanUpFinalizer is a finalizer attached to any service that has type=LoadBalancer.
-	// Upon deletion of the service, the actual deletion of the resource will be blocked until
-	// this finalizer is removed.
-	lbServiceCleanUpFinalizer = "service.kubernetes.io/load-balancer-cleanup"
 )
 
 var (
@@ -144,13 +140,13 @@ func (r *reconciler) currentLoadBalancerService(ci *operatorv1.IngressController
 // that's no longer necessary. We just need to clear the finalizer which might exist
 // on existing resources.
 // TODO: How can we delete this code?
-func (r *reconciler) finalizeLoadBalancerService(ci *operatorv1.IngressController) error {
+func (r *reconciler) finalizeLoadBalancerService(ci *operatorv1.IngressController) (bool, error) {
 	service, err := r.currentLoadBalancerService(ci)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if service == nil {
-		return nil
+		return false, nil
 	}
 	// Mutate a copy to avoid assuming we know where the current one came from
 	// (i.e. it could have been from a cache).
@@ -158,14 +154,10 @@ func (r *reconciler) finalizeLoadBalancerService(ci *operatorv1.IngressControlle
 	if slice.ContainsString(updated.Finalizers, manifests.LoadBalancerServiceFinalizer) {
 		updated.Finalizers = slice.RemoveString(updated.Finalizers, manifests.LoadBalancerServiceFinalizer)
 		if err := r.client.Update(context.TODO(), updated); err != nil {
-			return fmt.Errorf("failed to remove finalizer from service %s for ingress %s/%s: %v", service.Namespace, service.Name, ci.Name, err)
+			return true, fmt.Errorf("failed to remove finalizer from service %s/%s for ingress %s/%s: %v",
+				service.Namespace, service.Name, ci.Namespace, ci.Name, err)
 		}
 	}
-	// The load balancer service is not deleted until the cloud infra is cleaned-up. For more details, see:
-	// https://github.com/kubernetes/enhancements/blob/master/keps/sig-network/20190423-service-lb-finalizer.md
-	if slice.ContainsString(service.Finalizers, lbServiceCleanUpFinalizer) {
-		return fmt.Errorf("finalizer %s exists for service %s/%s", lbServiceCleanUpFinalizer, service.Namespace, service.Name)
-	}
 	log.Info("finalized load balancer service for ingress", "namespace", ci.Namespace, "name", ci.Name)
-	return nil
+	return true, nil
 }
