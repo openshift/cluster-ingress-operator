@@ -9,6 +9,7 @@ import (
 	iov1 "github.com/openshift/cluster-ingress-operator/pkg/api/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
+	"github.com/openshift/cluster-ingress-operator/pkg/operator/watcher"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/arn"
@@ -45,6 +46,10 @@ type Provider struct {
 
 	config Config
 
+	// fileWatcher watches the trusted ca bundle for changes
+	// and keeps CA certificates of DNS clients updated.
+	fileWatcher *watcher.FileWatcher
+
 	// lock protects access to everything below.
 	lock sync.RWMutex
 
@@ -75,7 +80,7 @@ type Config struct {
 	DNS *configv1.DNS
 }
 
-func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error) {
+func NewProvider(config Config, operatorReleaseVersion string, watcher *watcher.FileWatcher, stop <-chan struct{}) (*Provider, error) {
 	creds := credentials.NewStaticCredentials(config.AccessID, config.AccessKey, "")
 	sess, err := session.NewSessionWithOptions(session.Options{
 		Config: aws.Config{
@@ -102,9 +107,10 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 		return nil, fmt.Errorf("region is required")
 	}
 
-	return &Provider{
-		elb:     elb.New(sess, aws.NewConfig().WithRegion(region)),
-		route53: route53.New(sess),
+	provider := &Provider{
+		elb:         elb.New(sess, aws.NewConfig().WithRegion(region)),
+		route53:     route53.New(sess),
+		fileWatcher: watcher,
 		// TODO: This API will only return hostedzone resources (which are global)
 		// when the region is forced to us-east-1. We don't yet understand why.
 		tags:           resourcegroupstaggingapi.New(sess, aws.NewConfig().WithRegion("us-east-1")),
@@ -112,7 +118,11 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 		idsToTags:      map[string]map[string]string{},
 		lbZones:        map[string]string{},
 		updatedRecords: sets.NewString(),
-	}, nil
+	}
+	if err := provider.startWatcher(stop); err != nil {
+		return nil, fmt.Errorf("failed to start trusted ca bundle file watcher: %v", err)
+	}
+	return provider, nil
 }
 
 // getZoneID finds the ID of given zoneConfig in Route53. If an ID is already
