@@ -54,10 +54,6 @@ func (r *reconciler) ensureRouterCAConfigMap(secret *corev1.Secret, ingresses []
 
 // desiredRouterCAConfigMap returns the desired router CA configmap.
 func desiredRouterCAConfigMap(secret *corev1.Secret, ingresses []operatorv1.IngressController) (*corev1.ConfigMap, error) {
-	if !shouldPublishRouterCA(ingresses) {
-		return nil, nil
-	}
-
 	name := controller.RouterCAConfigMapName()
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
