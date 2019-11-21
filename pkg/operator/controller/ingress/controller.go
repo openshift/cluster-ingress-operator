@@ -501,31 +501,34 @@ func filterTLS13Ciphers(ciphers []string) []string {
 // the finalizer.
 func (r *reconciler) ensureIngressDeleted(ingress *operatorv1.IngressController) error {
 	errs := []error{}
-	if err := r.finalizeLoadBalancerService(ingress); err != nil {
-		errs = append(errs, fmt.Errorf("failed to finalize load balancer service for %s/%s: %v", ingress.Namespace, ingress.Name, err))
+	if svcExists, err := r.finalizeLoadBalancerService(ingress); err != nil {
+		errs = append(errs, fmt.Errorf("failed to finalize load balancer service for ingress %s/%s: %v", ingress.Namespace, ingress.Name, err))
+	} else if svcExists {
+		errs = append(errs, fmt.Errorf("load balancer service exists for ingress %s/%s", ingress.Namespace, ingress.Name))
 	}
 
 	// Delete the wildcard DNS record, and block ingresscontroller finalization
 	// until the dnsrecord has been finalized.
 	if err := r.deleteWildcardDNSRecord(ingress); err != nil {
-		errs = append(errs, fmt.Errorf("failed to delete wildcard dnsrecord: %v", err))
+		errs = append(errs, fmt.Errorf("failed to delete wildcard dnsrecord for ingress %s/%s: %v", ingress.Namespace, ingress.Name, err))
 	}
 	if record, err := r.currentWildcardDNSRecord(ingress); err != nil {
-		errs = append(errs, fmt.Errorf("failed to get current wildcard dnsrecord: %v", err))
-	} else {
-		if record != nil {
-			log.V(1).Info("waiting for wildcard dnsrecord to be deleted", "dnsrecord", record)
-			return nil
-		}
+		errs = append(errs, fmt.Errorf("failed to get current wildcard dnsrecord for ingress %s/%s: %v", ingress.Namespace, ingress.Name, err))
+	} else if record != nil {
+		errs = append(errs, fmt.Errorf("wildcard dnsrecord exists for ingress %s/%s", ingress.Namespace, ingress.Name))
 	}
 
 	if err := r.ensureRouterDeleted(ingress); err != nil {
-		errs = append(errs, fmt.Errorf("failed to delete deployment for ingress %s: %v", ingress.Name, err))
+		errs = append(errs, fmt.Errorf("failed to delete deployment for ingress %s/%s: %v", ingress.Namespace, ingress.Name, err))
+	}
+	if deploy, err := r.currentRouterDeployment(ingress); err != nil {
+		errs = append(errs, fmt.Errorf("failed to get deployment for ingress %s/%s: %v", ingress.Namespace, ingress.Name, err))
+	} else if deploy != nil {
+		errs = append(errs, fmt.Errorf("deployment still exists for ingress %s/%s", ingress.Namespace, ingress.Name))
 	}
 
 	if len(errs) == 0 {
-		// Remove the "ingresscontroller.operator.openshift.io/finalizer-ingresscontroller" finalizer
-		// to allow the ingresscontroller to be deleted.
+		// Remove the ingresscontroller finalizer.
 		if slice.ContainsString(ingress.Finalizers, manifests.IngressControllerFinalizer) {
 			updated := ingress.DeepCopy()
 			updated.Finalizers = slice.RemoveString(updated.Finalizers, manifests.IngressControllerFinalizer)
