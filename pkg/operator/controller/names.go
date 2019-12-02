@@ -63,6 +63,16 @@ func RouterCAConfigMapName() types.NamespacedName {
 	}
 }
 
+// DefaultIngressCertConfigMapName returns the namespaced name for the default ingress cert configmap.
+// The operator uses this configmap to publish the public key that golang clients can use to trust
+// the default ingress wildcard serving cert.
+func DefaultIngressCertConfigMapName() types.NamespacedName {
+	return types.NamespacedName{
+		Namespace: GlobalMachineSpecifiedConfigNamespace,
+		Name:      "default-ingress-cert",
+	}
+}
+
 // RouterCertsGlobalSecretName returns the namespaced name for the router certs
 // secret.  The operator uses this secret to publish the default certificates and
 // their keys, so that the authentication operator can configure the OAuth server
