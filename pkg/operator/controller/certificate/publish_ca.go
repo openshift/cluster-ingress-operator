@@ -10,7 +10,23 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 )
+
+// ensureDefaultIngressCertConfigMap will create or update the configmap containing the public half of the default ingress wildcard certificate
+func (r *reconciler) ensureDefaultIngressCertConfigMap(caBundle string) error {
+	name := controller.DefaultIngressCertConfigMapName()
+	desired := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name.Name,
+			Namespace: name.Namespace,
+		},
+		Data: map[string]string{
+			"ca-bundle.crt": caBundle,
+		},
+	}
+	return r.ensureConfigMap(name, desired)
+}
 
 // ensureRouterCAConfigMap will create, update, or delete the configmap for the
 // router CA as appropriate.
@@ -19,7 +35,12 @@ func (r *reconciler) ensureRouterCAConfigMap(secret *corev1.Secret, ingresses []
 	if err != nil {
 		return err
 	}
-	current, err := r.currentRouterCAConfigMap()
+	return r.ensureConfigMap(controller.RouterCAConfigMapName(), desired)
+}
+
+// ensureConfigMap will create, update, or delete the configmap as appropriate.
+func (r *reconciler) ensureConfigMap(name types.NamespacedName, desired *corev1.ConfigMap) error {
+	current, err := r.currentConfigMap(name)
 	if err != nil {
 		return err
 	}
@@ -28,25 +49,25 @@ func (r *reconciler) ensureRouterCAConfigMap(secret *corev1.Secret, ingresses []
 		// Nothing to do.
 	case desired == nil && current != nil:
 		if deleted, err := r.deleteRouterCAConfigMap(current); err != nil {
-			return fmt.Errorf("failed to ensure router CA was unpublished: %v", err)
+			return fmt.Errorf("failed to ensure %q in %q was unpublished: %v", name.Name, name.Namespace, err)
 		} else if deleted {
-			r.recorder.Eventf(current, "Normal", "UnpublishedDefaultRouterCA", "Unpublished default router CA")
+			r.recorder.Eventf(current, "Normal", "UnpublishedRouterCA", "Unpublished %q in %q", name.Name, name.Namespace)
 		}
 	case desired != nil && current == nil:
 		if created, err := r.createRouterCAConfigMap(desired); err != nil {
-			return fmt.Errorf("failed to ensure router CA was published: %v", err)
+			return fmt.Errorf("failed to ensure %q in %q was published: %v", desired.Name, desired.Namespace, err)
 		} else if created {
-			new, err := r.currentRouterCAConfigMap()
+			new, err := r.currentConfigMap(name)
 			if err != nil {
 				return err
 			}
-			r.recorder.Eventf(new, "Normal", "PublishedDefaultRouterCA", "Published default router CA")
+			r.recorder.Eventf(new, "Normal", "PublishedRouterCA", "Published %q in %q", desired.Name, desired.Namespace)
 		}
 	case desired != nil && current != nil:
 		if updated, err := r.updateRouterCAConfigMap(current, desired); err != nil {
-			return fmt.Errorf("failed to update published router CA: %v", err)
+			return fmt.Errorf("failed to update published %q in %q: %v", desired.Name, desired.Namespace, err)
 		} else if updated {
-			r.recorder.Eventf(current, "Normal", "UpdatedPublishedDefaultRouterCA", "Updated the published default router CA")
+			r.recorder.Eventf(current, "Normal", "UpdatedPublishedRouterCA", "Updated the published %q in %q", desired.Name, desired.Namespace)
 		}
 	}
 	return nil
@@ -82,9 +103,8 @@ func shouldPublishRouterCA(ingresses []operatorv1.IngressController) bool {
 	return false
 }
 
-// currentRouterCAConfigMap returns the current router CA configmap.
-func (r *reconciler) currentRouterCAConfigMap() (*corev1.ConfigMap, error) {
-	name := controller.RouterCAConfigMapName()
+// currentConfigMap returns the current state of the desired configmap namespace/name.
+func (r *reconciler) currentConfigMap(name types.NamespacedName) (*corev1.ConfigMap, error) {
 	cm := &corev1.ConfigMap{}
 	if err := r.client.Get(context.TODO(), name, cm); err != nil {
 		if errors.IsNotFound(err) {

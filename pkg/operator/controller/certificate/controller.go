@@ -21,6 +21,7 @@ import (
 	"k8s.io/client-go/tools/record"
 
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 
@@ -109,10 +110,30 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 		}
 	}
 
+	// This section creates the legacy router-ca configmap which only ever contains the operator-managed default signing
+	// cert used for signing the default wildcard serving cert
 	ingresses := &operatorv1.IngressControllerList{}
 	if err := r.cache.List(context.TODO(), ingresses, client.InNamespace(r.operatorNamespace)); err != nil {
 		errs = append(errs, fmt.Errorf("failed to list ingresscontrollers: %v", err))
 	} else if err := r.ensureRouterCAConfigMap(ca, ingresses.Items); err != nil {
+		errs = append(errs, fmt.Errorf("failed to publish router CA: %v", err))
+	}
+
+	// We need to construct the CA bundle that can be used to verify the ingress used to serve the console and the oauth-server.
+	// In an operator maintained cluster, this is always `oc get -n openshift-ingress-operator ingresscontroller/default`, skip the rest and return here.
+	// TODO if network-edge wishes to expand the scope of the CA bundle (and you could legitimately see a need/desire to have one CA that verifies all ingress traffic).
+	// TODO this could be accomplished using union logic similar to the kube-apiserver's join of multiple CAs.
+	if ingress == nil || ingress.Namespace != "openshift-ingress-operator" || ingress.Name != "default" {
+		return result, utilerrors.NewAggregate(errs)
+	}
+
+	wildcardServingCertKeySecret := &corev1.Secret{}
+	if err := r.client.Get(context.TODO(), controller.RouterEffectiveDefaultCertificateSecretName(ingress, "openshift-ingress"), wildcardServingCertKeySecret); err != nil {
+		errs = append(errs, fmt.Errorf("failed to lookup wildcard cert: %v", err))
+		return result, utilerrors.NewAggregate(errs)
+	}
+	caBundle := string(wildcardServingCertKeySecret.Data["tls.crt"])
+	if err := r.ensureDefaultIngressCertConfigMap(caBundle); err != nil {
 		errs = append(errs, fmt.Errorf("failed to publish router CA: %v", err))
 	}
 
