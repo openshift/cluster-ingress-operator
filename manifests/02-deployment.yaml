@@ -3,6 +3,8 @@ kind: Deployment
 metadata:
   name: ingress-operator
   namespace: openshift-ingress-operator
+  annotations:
+    config.openshift.io/inject-proxy: manager
 spec:
   replicas: 1
   strategy:
@@ -52,6 +54,9 @@ spec:
           resources:
             requests:
               cpu: 10m
+          volumeMounts:
+          - name: cio-trusted-ca
+            mountPath: /var/run/configmaps/trusted-ca-bundle
         - name: kube-rbac-proxy
           image: quay.io/openshift/origin-kube-rbac-proxy:latest
           args:
@@ -76,3 +81,10 @@ spec:
       - name: metrics-tls
         secret:
           secretName: metrics-tls
+      - name: cio-trusted-ca
+        configMap:
+          optional: true
+          name: cio-trusted-ca
+          items:
+          - key: ca-bundle.crt
+            path: tls-ca-bundle.pem
