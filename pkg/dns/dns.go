@@ -1,9 +1,8 @@
 package dns
 
 import (
-	iov1 "github.com/openshift/cluster-ingress-operator/pkg/api/v1"
-
 	configv1 "github.com/openshift/api/config/v1"
+	iov1 "github.com/openshift/cluster-ingress-operator/pkg/api/v1"
 )
 
 // Provider knows how to manage DNS zones only as pertains to routing.
@@ -13,6 +12,11 @@ type Provider interface {
 
 	// Delete will delete record.
 	Delete(record *iov1.DNSRecord, zone configv1.DNSZone) error
+
+	// StartWatcher starts running the FileWatcher. The FileWatcher will stop
+	// running when the channel is closed. StartWatcher blocks until the
+	// channel is closed or an error occurs.
+	StartWatcher(string, <-chan struct{}) error
 }
 
 var _ Provider = &FakeProvider{}
@@ -21,3 +25,5 @@ type FakeProvider struct{}
 
 func (_ *FakeProvider) Ensure(record *iov1.DNSRecord, zone configv1.DNSZone) error { return nil }
 func (_ *FakeProvider) Delete(record *iov1.DNSRecord, zone configv1.DNSZone) error { return nil }
+
+func (_ *FakeProvider) StartWatcher(string, <-chan struct{}) error { return nil }

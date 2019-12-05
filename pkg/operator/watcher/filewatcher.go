@@ -5,8 +5,9 @@ import (
 	"io/ioutil"
 	"sync"
 
-	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"gopkg.in/fsnotify.v1"
+
+	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 )
 
 var log = logf.Logger.WithName("filewatcher")
@@ -14,8 +15,9 @@ var log = logf.Logger.WithName("filewatcher")
 // FileWatcher watches a file for changes.
 type FileWatcher struct {
 	sync.Mutex
-	file        string
+	fileName    string
 	currentData []byte
+	changed     bool
 	watcher     *fsnotify.Watcher
 }
 
@@ -23,46 +25,57 @@ type FileWatcher struct {
 func New(file string) (*FileWatcher, error) {
 	var err error
 
-	cw := &FileWatcher{
-		file: file,
+	fw := &FileWatcher{
+		fileName: file,
 	}
 
 	// Initial read of file.
-	if err := cw.ReadFile(); err != nil {
+	if err := fw.ReadFile(); err != nil {
 		return nil, err
 	}
+	// Set to false for initial read.
+	fw.SetFileChanged(false)
 
-	cw.watcher, err = fsnotify.NewWatcher()
+	fw.watcher, err = fsnotify.NewWatcher()
 	if err != nil {
 		return nil, err
 	}
 
-	return cw, nil
+	return fw, nil
 }
 
-// GetFile fetches the file being watched by FileWatcher.
-func (fw *FileWatcher) GetFile() string {
-	fw.Lock()
-	defer fw.Unlock()
-	return fw.file
-}
-
-// GetFileData fetches the currently loaded file data of FileWatcher.
+// GetFileData fetches the data of the currently watched file.
 func (fw *FileWatcher) GetFileData() []byte {
 	fw.Lock()
 	defer fw.Unlock()
 	return fw.currentData
 }
 
+// FileChanged returns true if FileWatcher changed the current
+// data of the watched file.
+func (fw *FileWatcher) FileChanged() bool {
+	fw.Lock()
+	defer fw.Unlock()
+	return fw.changed
+}
+
+// SetFileChanged sets the changed flag to changed for the
+// watched file.
+func (fw *FileWatcher) SetFileChanged(changed bool) {
+	fw.Lock()
+	defer fw.Unlock()
+	fw.changed = changed
+}
+
 // Start starts the FileWatcher.
 func (fw *FileWatcher) Start(stopCh <-chan struct{}) error {
-	if err := fw.watcher.Add(fw.file); err != nil {
+	if err := fw.watcher.Add(fw.fileName); err != nil {
 		return err
 	}
 
 	go fw.Watch()
 
-	log.Info("Starting file watcher")
+	log.Info("starting file watcher")
 
 	// Block until the stop channel is closed.
 	<-stopCh
@@ -96,19 +109,18 @@ func (fw *FileWatcher) Watch() {
 // ReadFile reads the watched file from disk, parses the file,
 // and updates FileWatcher current data.
 func (fw *FileWatcher) ReadFile() error {
-	data, err := ioutil.ReadFile(fw.file)
+	data, err := ioutil.ReadFile(fw.fileName)
 	switch {
 	case err != nil:
-		return fmt.Errorf("failed to read file %s: %v", fw.file, err)
+		return fmt.Errorf("failed to read file %s: %v", fw.fileName, err)
 	case len(data) == 0:
-		return fmt.Errorf("file %s contains no currentData", fw.file)
+		return fmt.Errorf("file %s contains no data", fw.fileName)
 	}
-
 	fw.Lock()
 	fw.currentData = data
 	fw.Unlock()
-
-	log.Info("updated file watcher current data")
+	fw.SetFileChanged(true)
+	log.Info("changed file watcher current data")
 
 	return nil
 }
@@ -119,17 +131,15 @@ func (fw *FileWatcher) handleEvent(event fsnotify.Event) {
 	if !(isWrite(event) || isRemove(event) || isCreate(event)) {
 		return
 	}
-
 	log.Info("watched file change", "event", event)
 
 	if isRemove(event) {
 		if err := fw.watcher.Add(event.Name); err != nil {
-			log.Error(err, "error re-watching file %s", fw.file)
+			log.Error(err, "error re-watching file %s", fw.fileName)
 		}
 	}
-
 	if err := fw.ReadFile(); err != nil {
-		log.Error(err, "error re-reading watched file %s", fw.file)
+		log.Error(err, "error re-reading watched file %s", fw.fileName)
 	}
 }
 
