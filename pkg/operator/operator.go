@@ -50,6 +50,8 @@ type Operator struct {
 
 	manager manager.Manager
 
+	dnsProvider dns.Provider
+
 	namespace string
 }
 
@@ -114,7 +116,8 @@ func New(config operatorconfig.Config, dnsProvider dns.Provider, kubeConfig *res
 	}
 
 	return &Operator{
-		manager: mgr,
+		manager:     mgr,
+		dnsProvider: dnsProvider,
 		// TODO: These are only needed for the default ingress controller stuff, which
 		// should be refactored away.
 		client:    mgr.GetClient(),
@@ -123,9 +126,10 @@ func New(config operatorconfig.Config, dnsProvider dns.Provider, kubeConfig *res
 }
 
 // Start creates the default IngressController and then starts the operator
-// synchronously until a message is received on the stop channel.
+// and trusted ca bundle watcher synchronously until a message is received
+// on the stop channel.
 // TODO: Move the default IngressController logic elsewhere.
-func (o *Operator) Start(stop <-chan struct{}) error {
+func (o *Operator) Start(operatorReleaseVersion string, stop <-chan struct{}) error {
 	// Periodicaly ensure the default controller exists.
 	go wait.Until(func() {
 		if !o.manager.GetCache().WaitForCacheSync(stop) {
@@ -141,6 +145,9 @@ func (o *Operator) Start(stop <-chan struct{}) error {
 	errChan := make(chan error)
 	go func() {
 		errChan <- o.manager.Start(stop)
+	}()
+	go func() {
+		errChan <- o.dnsProvider.StartWatcher(operatorReleaseVersion, stop)
 	}()
 
 	// Wait for the manager to exit or an explicit stop.

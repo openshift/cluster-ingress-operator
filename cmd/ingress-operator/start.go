@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/openshift/cluster-ingress-operator/pkg/operator/watcher"
 	"os"
 
 	"github.com/ghodss/yaml"
@@ -36,8 +35,6 @@ const (
 	// operator's namespace that will hold the credentials that the operator
 	// will use to authenticate with the cloud API.
 	cloudCredentialsSecretName = "cloud-credentials"
-	// The fully qualified path of the trusted CA certificate bundle file.
-	defaultCABundle = "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem"
 )
 
 func NewStartCommand() *cobra.Command {
@@ -108,13 +105,6 @@ func start() error {
 		os.Exit(1)
 	}
 
-	// Setup the file watcher for the trusted ca bundle.
-	caWatcher, err := watcher.New(defaultCABundle)
-	if err != nil {
-		log.Error(err, "failed to create trusted ca bundle watcher")
-		os.Exit(1)
-	}
-
 	stop := signals.SetupSignalHandler()
 	operatorConfig := operatorconfig.Config{
 		OperatorReleaseVersion: releaseVersion,
@@ -123,7 +113,7 @@ func start() error {
 	}
 
 	// Set up the DNS manager.
-	dnsProvider, err := createDNSProvider(kubeClient, operatorConfig, dnsConfig, platformStatus, caWatcher, stop)
+	dnsProvider, err := createDNSProvider(kubeClient, operatorConfig, dnsConfig, platformStatus)
 	if err != nil {
 		log.Error(err, "failed to create DNS manager")
 		os.Exit(1)
@@ -134,18 +124,21 @@ func start() error {
 	if err != nil {
 		return fmt.Errorf("failed to create operator: %v", err)
 	}
-	return op.Start(stop)
+	return op.Start(operatorConfig.OperatorReleaseVersion, stop)
 }
 
 // createDNSManager creates a DNS manager compatible with the given cluster
 // configuration.
 func createDNSProvider(cl client.Client, operatorConfig operatorconfig.Config, dnsConfig *configv1.DNS,
-	platformStatus *configv1.PlatformStatus, watcher *watcher.FileWatcher, stop <-chan struct{}) (dns.Provider, error) {
+	platformStatus *configv1.PlatformStatus) (dns.Provider, error) {
 	var dnsProvider dns.Provider
 	userAgent := fmt.Sprintf("OpenShift/%s (ingress-operator)", operatorConfig.OperatorReleaseVersion)
 
 	switch platformStatus.Type {
 	case configv1.AWSPlatformType:
+		if len(platformStatus.AWS.Region) == 0 {
+			return nil, fmt.Errorf("region is required")
+		}
 		creds := &corev1.Secret{}
 		err := cl.Get(context.TODO(), types.NamespacedName{Namespace: operatorConfig.Namespace, Name: cloudCredentialsSecretName}, creds)
 		if err != nil {
@@ -156,7 +149,7 @@ func createDNSProvider(cl client.Client, operatorConfig operatorconfig.Config, d
 			AccessKey: string(creds.Data["aws_secret_access_key"]),
 			DNS:       dnsConfig,
 			Region:    platformStatus.AWS.Region,
-		}, operatorConfig.OperatorReleaseVersion, watcher, stop)
+		}, operatorConfig.OperatorReleaseVersion)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create AWS DNS manager: %v", err)
 		}

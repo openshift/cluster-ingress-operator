@@ -1,26 +1,29 @@
 package aws
 
 import (
-	"bytes"
-	"io/ioutil"
+	"fmt"
 	"time"
 
-	certsutil "github.com/openshift/cluster-ingress-operator/pkg/util/certs"
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/service/elb"
+	"github.com/aws/aws-sdk-go/service/resourcegroupstaggingapi"
+	"github.com/aws/aws-sdk-go/service/route53"
 
 	"k8s.io/apimachinery/pkg/util/wait"
 )
 
-// startWatcher starts the FileWatcher and periodically ensures DNS clients
+// StartWatcher starts a file watcher and periodically ensures AWS sessions
 // are using the current ca bundle until a message is received on the stop
 // or error channels.
-func (m *Provider) startWatcher(stop <-chan struct{}) error {
+func (m *Provider) StartWatcher(operatorReleaseVersion string, stop <-chan struct{}) error {
+	errChan := make(chan error)
 	go wait.Until(func() {
-		if err := m.ensureDNSClientsTLSTransport(); err != nil {
-			log.Error(err, "failed to ensure dns client tls transport")
+		err := m.ensureSessionTransport(operatorReleaseVersion)
+		if err != nil {
+			log.Error(err, "failed to ensure dns client transport")
 		}
 	}, 1*time.Minute, stop)
 
-	errChan := make(chan error)
 	go func() {
 		errChan <- m.fileWatcher.Start(stop)
 	}()
@@ -34,43 +37,21 @@ func (m *Provider) startWatcher(stop <-chan struct{}) error {
 	}
 }
 
-// ensureDNSClientsTLSTransport compares the watched ca bundle with the
-// current ca bundle of FileWatcher and updates DNS clients with the current
-// ca bundle if the two are not equal.
-func (m *Provider) ensureDNSClientsTLSTransport() error {
-	equal, caBundle, err := m.caBundlesEqual()
-	if err != nil {
-		return err
+// ensureSessionTransport ensures AWS sessions use the current certificates
+// from the file watcher.
+func (m *Provider) ensureSessionTransport(operatorReleaseVersion string) error {
+	if m.fileWatcher.FileChanged() {
+		sess, err := NewProviderSession(m.config, operatorReleaseVersion, m.fileWatcher.GetFileData())
+		if err != nil {
+			return fmt.Errorf("failed to create dns provider session: %v", err)
+		}
+		m.lock.Lock()
+		m.elb = elb.New(sess, aws.NewConfig().WithRegion(m.config.Region))
+		m.route53 = route53.New(sess)
+		m.tags = resourcegroupstaggingapi.New(sess, aws.NewConfig().WithRegion("us-east-1"))
+		m.lock.Unlock()
+		m.fileWatcher.SetFileChanged(false)
+		log.Info("updated dns provider session")
 	}
-	if equal {
-		return nil
-	}
-
-	certs, err := certsutil.CertsFromPEM(caBundle)
-	if err != nil {
-		return err
-	}
-
-	m.route53.Client.Config.HTTPClient.Transport = certsutil.MakeTLSTransport(certs)
-	m.elb.Client.Config.HTTPClient.Transport = certsutil.MakeTLSTransport(certs)
-	m.tags.Client.Config.HTTPClient.Transport = certsutil.MakeTLSTransport(certs)
-
 	return nil
-}
-
-// caBundlesEqual compares the watched ca bundle with the current
-// ca bundle of FileWatcher, returning false and the current ca
-// bundle if the two are not equal.
-func (m *Provider) caBundlesEqual() (bool, []byte, error) {
-	watchedCAs, err := ioutil.ReadFile(m.fileWatcher.GetFile())
-	if err != nil {
-		return false, nil, err
-	}
-
-	currentCAs := m.fileWatcher.GetFileData()
-	if !bytes.Equal(watchedCAs, currentCAs) {
-		return false, currentCAs, nil
-	}
-
-	return true, nil, nil
 }

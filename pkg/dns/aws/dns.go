@@ -1,10 +1,15 @@
 package aws
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"net"
+	"net/http"
 	"reflect"
 	"strings"
 	"sync"
+	"time"
 
 	iov1 "github.com/openshift/cluster-ingress-operator/pkg/api/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
@@ -30,6 +35,9 @@ import (
 var (
 	_   dns.Provider = &Provider{}
 	log              = logf.Logger.WithName("dns")
+	// The fully qualified path of the trusted CA bundle that gets
+	// mounted from configmap openshift-ingress-operator/trusted-ca.
+	defaultCABundle = "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem"
 )
 
 // Provider is a dns.Provider for AWS Route53. It only supports DNSRecords of
@@ -47,7 +55,7 @@ type Provider struct {
 	config Config
 
 	// fileWatcher watches the trusted ca bundle for changes
-	// and keeps CA certificates of DNS clients updated.
+	// and keeps AWS sessions updated.
 	fileWatcher *watcher.FileWatcher
 
 	// lock protects access to everything below.
@@ -80,37 +88,24 @@ type Config struct {
 	DNS *configv1.DNS
 }
 
-func NewProvider(config Config, operatorReleaseVersion string, watcher *watcher.FileWatcher, stop <-chan struct{}) (*Provider, error) {
-	creds := credentials.NewStaticCredentials(config.AccessID, config.AccessKey, "")
-	sess, err := session.NewSessionWithOptions(session.Options{
-		Config: aws.Config{
-			Credentials: creds,
-		},
-		SharedConfigState: session.SharedConfigEnable,
-	})
+// NewProvider returns a new AWS Provider based on config and adds
+// openshift.io/ingress-operator/operatorReleaseVersion to the user-agent
+// request header.
+func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error) {
+	caWatcher, err := watcher.New(defaultCABundle)
 	if err != nil {
-		return nil, fmt.Errorf("couldn't create AWS client session: %v", err)
+		return nil, err
 	}
-	sess.Handlers.Build.PushBackNamed(request.NamedHandler{
-		Name: "openshift.io/ingress-operator",
-		Fn:   request.MakeAddToUserAgentHandler("openshift.io ingress-operator", operatorReleaseVersion),
-	})
 
-	region := aws.StringValue(sess.Config.Region)
-	if len(region) > 0 {
-		log.Info("using region from shared config", "region name", region)
-	} else {
-		region = config.Region
-		log.Info("using region from operator config", "region name", region)
-	}
-	if len(region) == 0 {
-		return nil, fmt.Errorf("region is required")
+	sess, err := NewProviderSession(config, operatorReleaseVersion, caWatcher.GetFileData())
+	if err != nil {
+		return nil, err
 	}
 
 	provider := &Provider{
-		elb:         elb.New(sess, aws.NewConfig().WithRegion(region)),
+		elb:         elb.New(sess, aws.NewConfig().WithRegion(config.Region)),
 		route53:     route53.New(sess),
-		fileWatcher: watcher,
+		fileWatcher: caWatcher,
 		// TODO: This API will only return hostedzone resources (which are global)
 		// when the region is forced to us-east-1. We don't yet understand why.
 		tags:           resourcegroupstaggingapi.New(sess, aws.NewConfig().WithRegion("us-east-1")),
@@ -119,10 +114,57 @@ func NewProvider(config Config, operatorReleaseVersion string, watcher *watcher.
 		lbZones:        map[string]string{},
 		updatedRecords: sets.NewString(),
 	}
-	if err := provider.startWatcher(stop); err != nil {
-		return nil, fmt.Errorf("failed to start trusted ca bundle file watcher: %v", err)
-	}
 	return provider, nil
+}
+
+// NewProviderSession returns a new AWS Session with credentials from config;
+// adding openshift.io/ingress-operator/operatorReleaseVersion to the user-agent
+// request header and pemData to the TLS Config CA pool.
+func NewProviderSession(config Config, operatorReleaseVersion string, pemData []byte) (*session.Session, error) {
+	creds := credentials.NewStaticCredentials(config.AccessID, config.AccessKey, "")
+	trans, err := NewProviderTransport(pemData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create dns provider transport: %v", err)
+	}
+	sess, err := session.NewSessionWithOptions(session.Options{
+		Config: aws.Config{
+			Credentials: creds,
+			HTTPClient:  &http.Client{Transport: trans},
+		},
+		SharedConfigState: session.SharedConfigEnable,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create AWS client session: %v", err)
+	}
+	sess.Handlers.Build.PushBackNamed(request.NamedHandler{
+		Name: "openshift.io/ingress-operator",
+		Fn:   request.MakeAddToUserAgentHandler("openshift.io ingress-operator", operatorReleaseVersion),
+	})
+
+	return sess, nil
+}
+
+// NewProviderTransport returns an http Transport with a TLS Config
+// containing root CA's from pemData.
+func NewProviderTransport(pemData []byte) (*http.Transport, error) {
+	caPool := x509.NewCertPool()
+	if ok := caPool.AppendCertsFromPEM(pemData); !ok {
+		return nil, fmt.Errorf("failed to append certificates to ca pool")
+	}
+	tlsConfig := &tls.Config{RootCAs: caPool}
+	return &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+			DualStack: true,
+		}).DialContext,
+		TLSClientConfig:       tlsConfig,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}, nil
 }
 
 // getZoneID finds the ID of given zoneConfig in Route53. If an ID is already
