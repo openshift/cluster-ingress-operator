@@ -17,7 +17,6 @@ type FileWatcher struct {
 	sync.Mutex
 	fileName    string
 	currentData []byte
-	changed     bool
 	watcher     *fsnotify.Watcher
 }
 
@@ -33,8 +32,6 @@ func New(file string) (*FileWatcher, error) {
 	if err := fw.ReadFile(); err != nil {
 		return nil, err
 	}
-	// Set to false for initial read.
-	fw.SetFileChanged(false)
 
 	fw.watcher, err = fsnotify.NewWatcher()
 	if err != nil {
@@ -51,29 +48,13 @@ func (fw *FileWatcher) GetFileData() []byte {
 	return fw.currentData
 }
 
-// FileChanged returns true if FileWatcher changed the current
-// data of the watched file.
-func (fw *FileWatcher) FileChanged() bool {
-	fw.Lock()
-	defer fw.Unlock()
-	return fw.changed
-}
-
-// SetFileChanged sets the changed flag to changed for the
-// watched file.
-func (fw *FileWatcher) SetFileChanged(changed bool) {
-	fw.Lock()
-	defer fw.Unlock()
-	fw.changed = changed
-}
-
 // Start starts the FileWatcher.
-func (fw *FileWatcher) Start(stopCh <-chan struct{}) error {
+func (fw *FileWatcher) Start(stopCh <-chan struct{}, reloadCh chan bool) error {
 	if err := fw.watcher.Add(fw.fileName); err != nil {
 		return err
 	}
 
-	go fw.Watch()
+	go fw.Watch(reloadCh)
 
 	log.Info("starting file watcher")
 
@@ -84,7 +65,7 @@ func (fw *FileWatcher) Start(stopCh <-chan struct{}) error {
 }
 
 // Watch reads events from the watcher's channel and reacts to changes.
-func (fw *FileWatcher) Watch() {
+func (fw *FileWatcher) Watch(reload chan bool) {
 	for {
 		select {
 		case event, ok := <-fw.watcher.Events:
@@ -93,7 +74,7 @@ func (fw *FileWatcher) Watch() {
 				return
 			}
 
-			fw.handleEvent(event)
+			fw.handleEvent(event, reload)
 
 		case err, ok := <-fw.watcher.Errors:
 			// Channel is closed.
@@ -119,15 +100,14 @@ func (fw *FileWatcher) ReadFile() error {
 	fw.Lock()
 	fw.currentData = data
 	fw.Unlock()
-	fw.SetFileChanged(true)
-	log.Info("changed file watcher current data")
+	log.Info("reloaded file watcher current data")
 
 	return nil
 }
 
 // handleEvent filters events, re-adds and re-reads the watched file
 // if removed.
-func (fw *FileWatcher) handleEvent(event fsnotify.Event) {
+func (fw *FileWatcher) handleEvent(event fsnotify.Event, reload chan bool) {
 	if !(isWrite(event) || isRemove(event) || isCreate(event)) {
 		return
 	}
@@ -140,6 +120,8 @@ func (fw *FileWatcher) handleEvent(event fsnotify.Event) {
 	}
 	if err := fw.ReadFile(); err != nil {
 		log.Error(err, "error re-reading watched file %s", fw.fileName)
+	} else {
+		reload <- true
 	}
 }
 

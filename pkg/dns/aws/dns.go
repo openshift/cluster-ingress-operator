@@ -92,6 +92,7 @@ type Config struct {
 // openshift.io/ingress-operator/operatorReleaseVersion to the user-agent
 // request header.
 func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error) {
+	//reloadCh := make(chan bool)
 	caWatcher, err := watcher.New(defaultCABundle)
 	if err != nil {
 		return nil, err

@@ -150,7 +150,7 @@ func (o *Operator) Start(operatorReleaseVersion string, stop <-chan struct{}) er
 		errChan <- o.dnsProvider.StartWatcher(operatorReleaseVersion, stop)
 	}()
 
-	// Wait for the manager to exit or an explicit stop.
+	// Wait for the manager or watcher to exit or an explicit stop.
 	select {
 	case <-stop:
 		return nil
