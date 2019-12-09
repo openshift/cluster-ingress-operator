@@ -192,8 +192,12 @@ func TestUpdateDefaultIngressController(t *testing.T) {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
-	configmap := &corev1.ConfigMap{}
-	if err := kclient.Get(context.TODO(), controller.RouterCAConfigMapName(), configmap); err != nil {
+	routerCAConfigmap := &corev1.ConfigMap{}
+	if err := kclient.Get(context.TODO(), controller.RouterCAConfigMapName(), routerCAConfigmap); err != nil {
+		t.Fatalf("failed to get CA certificate configmap: %v", err)
+	}
+	defaultIngressCAConfigmap := &corev1.ConfigMap{}
+	if err := kclient.Get(context.TODO(), controller.DefaultIngressCertConfigMapName(), defaultIngressCAConfigmap); err != nil {
 		t.Fatalf("failed to get CA certificate configmap: %v", err)
 	}
 
@@ -244,7 +248,7 @@ func TestUpdateDefaultIngressController(t *testing.T) {
 
 	// Wait for the CA certificate configmap to be deleted.
 	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
-		if err := kclient.Get(context.TODO(), controller.RouterCAConfigMapName(), configmap); err != nil {
+		if err := kclient.Get(context.TODO(), controller.RouterCAConfigMapName(), routerCAConfigmap); err != nil {
 			if errors.IsNotFound(err) {
 				return true, nil
 			}
@@ -254,6 +258,20 @@ func TestUpdateDefaultIngressController(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("failed to observe clean-up of CA certificate configmap: %v", err)
+	}
+	// Wait for the default ingress configmap to be updated
+	previousDefaultIngressCAConfigmap := defaultIngressCAConfigmap.DeepCopy()
+	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), controller.DefaultIngressCertConfigMapName(), defaultIngressCAConfigmap); err != nil {
+			return false, err
+		}
+		if defaultIngressCAConfigmap.Data["ca-bundle.crt"] == previousDefaultIngressCAConfigmap.Data["ca-bundle.crt"] {
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to observe update of default ingress CA certificate configmap: %v", err)
 	}
 
 	// Reset .spec.defaultCertificate to its original value.
@@ -267,7 +285,7 @@ func TestUpdateDefaultIngressController(t *testing.T) {
 
 	// Wait for the CA certificate configmap to be recreated.
 	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
-		if err := kclient.Get(context.TODO(), controller.RouterCAConfigMapName(), configmap); err != nil {
+		if err := kclient.Get(context.TODO(), controller.RouterCAConfigMapName(), routerCAConfigmap); err != nil {
 			if !errors.IsNotFound(err) {
 				t.Logf("failed to get CA certificate configmap, will retry: %v", err)
 			}
@@ -277,6 +295,21 @@ func TestUpdateDefaultIngressController(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("failed to get recreated CA certificate configmap: %v", err)
+	}
+	// Wait for the default ingress configmap to be updated back to the original
+	previousDefaultIngressCAConfigmap = defaultIngressCAConfigmap.DeepCopy()
+	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), controller.DefaultIngressCertConfigMapName(), defaultIngressCAConfigmap); err != nil {
+			return false, err
+		}
+		if defaultIngressCAConfigmap.Data["ca-bundle.crt"] == previousDefaultIngressCAConfigmap.Data["ca-bundle.crt"] {
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		t.Logf("secret content=%v", string(secret.Data["tls.crt"]))
+		t.Fatalf("failed to observe update of default ingress CA certificate configmap: %v\noriginal=%v\ncurrent=%v", err, previousDefaultIngressCAConfigmap.Data["ca-bundle.crt"], defaultIngressCAConfigmap.Data["ca-bundle.crt"])
 	}
 }
 
