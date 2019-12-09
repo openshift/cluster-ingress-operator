@@ -22,8 +22,6 @@ type FileWatcher struct {
 
 // New returns a new FileWatcher watching the given file.
 func New(file string) (*FileWatcher, error) {
-	var err error
-
 	fw := &FileWatcher{
 		fileName: file,
 	}
@@ -33,9 +31,10 @@ func New(file string) (*FileWatcher, error) {
 		return nil, err
 	}
 
-	fw.watcher, err = fsnotify.NewWatcher()
-	if err != nil {
+	if watcher, err := fsnotify.NewWatcher(); err != nil {
 		return nil, err
+	} else {
+		fw.watcher = watcher
 	}
 
 	return fw, nil
@@ -49,15 +48,13 @@ func (fw *FileWatcher) GetFileData() []byte {
 }
 
 // Start starts the FileWatcher.
-func (fw *FileWatcher) Start(stopCh <-chan struct{}, reloadCh chan bool) error {
+func (fw *FileWatcher) Start(stopCh <-chan struct{}, reloadCh chan struct{}) error {
 	if err := fw.watcher.Add(fw.fileName); err != nil {
 		return err
 	}
 
 	go fw.Watch(reloadCh)
-
 	log.Info("starting file watcher")
-
 	// Block until the stop channel is closed.
 	<-stopCh
 
@@ -65,23 +62,21 @@ func (fw *FileWatcher) Start(stopCh <-chan struct{}, reloadCh chan bool) error {
 }
 
 // Watch reads events from the watcher's channel and reacts to changes.
-func (fw *FileWatcher) Watch(reload chan bool) {
+func (fw *FileWatcher) Watch(reload chan struct{}) {
 	for {
 		select {
 		case event, ok := <-fw.watcher.Events:
-			// Channel is closed.
 			if !ok {
+				log.Info("file watch events channel closed")
 				return
 			}
-
 			fw.handleEvent(event, reload)
 
 		case err, ok := <-fw.watcher.Errors:
-			// Channel is closed.
 			if !ok {
+				log.Info("file watch error channel closed")
 				return
 			}
-
 			log.Error(err, "file watch error")
 		}
 	}
@@ -107,7 +102,7 @@ func (fw *FileWatcher) ReadFile() error {
 
 // handleEvent filters events, re-adds and re-reads the watched file
 // if removed.
-func (fw *FileWatcher) handleEvent(event fsnotify.Event, reload chan bool) {
+func (fw *FileWatcher) handleEvent(event fsnotify.Event, reload chan struct{}) {
 	if !(isWrite(event) || isRemove(event) || isCreate(event)) {
 		return
 	}
@@ -121,7 +116,7 @@ func (fw *FileWatcher) handleEvent(event fsnotify.Event, reload chan bool) {
 	if err := fw.ReadFile(); err != nil {
 		log.Error(err, "error re-reading watched file %s", fw.fileName)
 	} else {
-		reload <- true
+		reload <- struct{}{}
 	}
 }
 

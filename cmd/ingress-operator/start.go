@@ -35,6 +35,9 @@ const (
 	// operator's namespace that will hold the credentials that the operator
 	// will use to authenticate with the cloud API.
 	cloudCredentialsSecretName = "cloud-credentials"
+	// The fully qualified path of the trusted CA bundle that is
+	// mounted from configmap openshift-ingress-operator/trusted-ca.
+	defaultCABundle = "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem"
 )
 
 func NewStartCommand() *cobra.Command {
@@ -105,11 +108,11 @@ func start() error {
 		os.Exit(1)
 	}
 
-	stop := signals.SetupSignalHandler()
 	operatorConfig := operatorconfig.Config{
 		OperatorReleaseVersion: releaseVersion,
 		Namespace:              operatorNamespace,
 		IngressControllerImage: ingressControllerImage,
+		TrustedCABundle:        defaultCABundle,
 	}
 
 	// Set up the DNS manager.
@@ -124,13 +127,12 @@ func start() error {
 	if err != nil {
 		return fmt.Errorf("failed to create operator: %v", err)
 	}
-	return op.Start(operatorConfig.OperatorReleaseVersion, stop)
+	return op.Start(signals.SetupSignalHandler())
 }
 
 // createDNSManager creates a DNS manager compatible with the given cluster
 // configuration.
-func createDNSProvider(cl client.Client, operatorConfig operatorconfig.Config, dnsConfig *configv1.DNS,
-	platformStatus *configv1.PlatformStatus) (dns.Provider, error) {
+func createDNSProvider(cl client.Client, operatorConfig operatorconfig.Config, dnsConfig *configv1.DNS, platformStatus *configv1.PlatformStatus) (dns.Provider, error) {
 	var dnsProvider dns.Provider
 	userAgent := fmt.Sprintf("OpenShift/%s (ingress-operator)", operatorConfig.OperatorReleaseVersion)
 
@@ -149,7 +151,7 @@ func createDNSProvider(cl client.Client, operatorConfig operatorconfig.Config, d
 			AccessKey: string(creds.Data["aws_secret_access_key"]),
 			DNS:       dnsConfig,
 			Region:    platformStatus.AWS.Region,
-		}, operatorConfig.OperatorReleaseVersion)
+		}, operatorConfig.OperatorReleaseVersion, operatorConfig.TrustedCABundle)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create AWS DNS manager: %v", err)
 		}

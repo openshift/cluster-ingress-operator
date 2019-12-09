@@ -11,4 +11,8 @@ type Config struct {
 
 	// IngressControllerImage is the ingress controller image to manage.
 	IngressControllerImage string
+
+	// TrustedCABundle is the fully qualified path of the operator's trusted
+	// CA certificate bundle.
+	TrustedCABundle string
 }

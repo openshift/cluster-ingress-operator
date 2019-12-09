@@ -15,7 +15,6 @@ oc delete clusteroperator.config.openshift.io/ingress
 oc delete --force --grace-period=0 -n openshift-ingress-operator ingresscontroller/default
 
 if [ "$WHAT" == "all" ]; then
-  oc delete configmap/trusted-ca -n openshift-ingress-operator
   oc delete namespaces/openshift-ingress-operator
 else
   oc delete -n openshift-ingress-operator secrets/router-ca
