@@ -75,5 +75,3 @@ func resourceRecordSet(record *iov1.DNSRecord) *gdnsv1.ResourceRecordSet {
 		Ttl:     record.Spec.RecordTTL,
 	}
 }
-
-func (p *Provider) StartWatcher(string, <-chan struct{}) error { return nil }

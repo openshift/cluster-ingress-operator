@@ -127,5 +127,3 @@ func (m *provider) Delete(record *iov1.DNSRecord, zone configv1.DNSZone) error {
 func getARecordName(recordDomain string, zoneName string) (string, error) {
 	return strings.TrimSuffix(strings.TrimSuffix(recordDomain, "."), "."+zoneName), nil
 }
-
-func (m *provider) StartWatcher(string, <-chan struct{}) error { return nil }

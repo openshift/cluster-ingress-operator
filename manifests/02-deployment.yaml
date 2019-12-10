@@ -55,8 +55,9 @@ spec:
             requests:
               cpu: 10m
           volumeMounts:
-            - name: trusted-ca
-              mountPath: /etc/pki/ca-trust/extracted/pem
+          - name: trusted-ca
+            mountPath: /etc/pki/ca-trust/extracted/pem
+            readOnly: true
         - name: kube-rbac-proxy
           image: quay.io/openshift/origin-kube-rbac-proxy:latest
           args:

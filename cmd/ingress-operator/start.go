@@ -35,9 +35,9 @@ const (
 	// operator's namespace that will hold the credentials that the operator
 	// will use to authenticate with the cloud API.
 	cloudCredentialsSecretName = "cloud-credentials"
-	// The fully qualified path of the trusted CA bundle that is
-	// mounted from configmap openshift-ingress-operator/trusted-ca.
-	defaultCABundle = "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem"
+	// defaultTrustedCABundle is the fully qualified path of the trusted CA bundle
+	// that is mounted from configmap openshift-ingress-operator/trusted-ca.
+	defaultTrustedCABundle = "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem"
 )
 
 func NewStartCommand() *cobra.Command {
@@ -112,7 +112,7 @@ func start() error {
 		OperatorReleaseVersion: releaseVersion,
 		Namespace:              operatorNamespace,
 		IngressControllerImage: ingressControllerImage,
-		TrustedCABundle:        defaultCABundle,
+		TrustedCABundle:        defaultTrustedCABundle,
 	}
 
 	// Set up the DNS manager.
@@ -138,9 +138,6 @@ func createDNSProvider(cl client.Client, operatorConfig operatorconfig.Config, d
 
 	switch platformStatus.Type {
 	case configv1.AWSPlatformType:
-		if len(platformStatus.AWS.Region) == 0 {
-			return nil, fmt.Errorf("region is required")
-		}
 		creds := &corev1.Secret{}
 		err := cl.Get(context.TODO(), types.NamespacedName{Namespace: operatorConfig.Namespace, Name: cloudCredentialsSecretName}, creds)
 		if err != nil {
@@ -151,7 +148,7 @@ func createDNSProvider(cl client.Client, operatorConfig operatorconfig.Config, d
 			AccessKey: string(creds.Data["aws_secret_access_key"]),
 			DNS:       dnsConfig,
 			Region:    platformStatus.AWS.Region,
-		}, operatorConfig.OperatorReleaseVersion, operatorConfig.TrustedCABundle)
+		}, operatorConfig.OperatorReleaseVersion)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create AWS DNS manager: %v", err)
 		}

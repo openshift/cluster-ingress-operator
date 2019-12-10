@@ -13,9 +13,6 @@ type Provider interface {
 
 	// Delete will delete record.
 	Delete(record *iov1.DNSRecord, zone configv1.DNSZone) error
-
-	// StartWatcher starts running a file watcher.
-	StartWatcher(string, <-chan struct{}) error
 }
 
 var _ Provider = &FakeProvider{}
@@ -24,5 +21,3 @@ type FakeProvider struct{}
 
 func (_ *FakeProvider) Ensure(record *iov1.DNSRecord, zone configv1.DNSZone) error { return nil }
 func (_ *FakeProvider) Delete(record *iov1.DNSRecord, zone configv1.DNSZone) error { return nil }
-
-func (_ *FakeProvider) StartWatcher(string, <-chan struct{}) error { return nil }
