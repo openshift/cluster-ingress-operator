@@ -15,9 +15,8 @@ var log = logf.Logger.WithName("filewatcher")
 // FileWatcher watches a file for changes.
 type FileWatcher struct {
 	sync.Mutex
-	fileName    string
-	currentData []byte
-	watcher     *fsnotify.Watcher
+	fileName string
+	watcher  *fsnotify.Watcher
 }
 
 // New returns a new FileWatcher watching the given file.
@@ -40,13 +39,6 @@ func New(file string) (*FileWatcher, error) {
 	return fw, nil
 }
 
-// GetFileData fetches the data of the currently watched file.
-func (fw *FileWatcher) GetFileData() []byte {
-	fw.Lock()
-	defer fw.Unlock()
-	return fw.currentData
-}
-
 // Start starts the FileWatcher.
 func (fw *FileWatcher) Start(stopCh <-chan struct{}, reloadCh chan struct{}) error {
 	if err := fw.watcher.Add(fw.fileName); err != nil {
@@ -62,7 +54,7 @@ func (fw *FileWatcher) Start(stopCh <-chan struct{}, reloadCh chan struct{}) err
 }
 
 // Watch reads events from the watcher's channel and reacts to changes.
-func (fw *FileWatcher) Watch(reload chan struct{}) {
+func (fw *FileWatcher) Watch(reloadCh chan struct{}) {
 	for {
 		select {
 		case event, ok := <-fw.watcher.Events:
@@ -70,7 +62,7 @@ func (fw *FileWatcher) Watch(reload chan struct{}) {
 				log.Info("file watch events channel closed")
 				return
 			}
-			fw.handleEvent(event, reload)
+			fw.handleEvent(event, reloadCh)
 
 		case err, ok := <-fw.watcher.Errors:
 			if !ok {
@@ -92,32 +84,18 @@ func (fw *FileWatcher) ReadFile() error {
 	case len(data) == 0:
 		return fmt.Errorf("file %s contains no data", fw.fileName)
 	}
-	fw.Lock()
-	fw.currentData = data
-	fw.Unlock()
-	log.Info("reloaded file watcher current data")
 
 	return nil
 }
 
-// handleEvent filters events, re-adds and re-reads the watched file
-// if removed.
-func (fw *FileWatcher) handleEvent(event fsnotify.Event, reload chan struct{}) {
+// handleEvent filters events and gracefully terminates the operator
+// if a write, remove or create event is received for the watched file.
+func (fw *FileWatcher) handleEvent(event fsnotify.Event, reloadCh chan struct{}) {
 	if !(isWrite(event) || isRemove(event) || isCreate(event)) {
 		return
 	}
-	log.Info("watched file change", "event", event)
-
-	if isRemove(event) {
-		if err := fw.watcher.Add(event.Name); err != nil {
-			log.Error(err, "error re-watching file %s", fw.fileName)
-		}
-	}
-	if err := fw.ReadFile(); err != nil {
-		log.Error(err, "error re-reading watched file %s", fw.fileName)
-	} else {
-		reload <- struct{}{}
-	}
+	log.Info("watched file changed", "event", event)
+	reloadCh <- struct{}{}
 }
 
 func isWrite(event fsnotify.Event) bool {

@@ -16,6 +16,7 @@ import (
 	dnscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/dns"
 	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 	statuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/status"
+	"github.com/openshift/cluster-ingress-operator/pkg/operator/watcher"
 	operatorutil "github.com/openshift/cluster-ingress-operator/pkg/util"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -50,11 +51,9 @@ type Operator struct {
 
 	manager manager.Manager
 
-	dnsProvider dns.Provider
+	caWatcher *watcher.FileWatcher
 
 	namespace string
-
-	releaseVersion string
 }
 
 // New creates (but does not start) a new operator from configuration.
@@ -117,10 +116,15 @@ func New(config operatorconfig.Config, dnsProvider dns.Provider, kubeConfig *res
 		return nil, fmt.Errorf("failed to create dns controller: %v", err)
 	}
 
+	// Set up trusted ca bundle watcher
+	watcher, err := watcher.New(config.TrustedCABundle)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create trusted ca watcher: %v", err)
+	}
+
 	return &Operator{
-		manager:        mgr,
-		dnsProvider:    dnsProvider,
-		releaseVersion: config.OperatorReleaseVersion,
+		manager:   mgr,
+		caWatcher: watcher,
 		// TODO: These are only needed for the default ingress controller stuff, which
 		// should be refactored away.
 		client:    mgr.GetClient(),
@@ -130,7 +134,7 @@ func New(config operatorconfig.Config, dnsProvider dns.Provider, kubeConfig *res
 
 // Start creates the default IngressController and then starts the operator
 // and trusted ca bundle watcher synchronously until a message is received
-// on the stop channel.
+// on the stop or reload channels.
 // TODO: Move the default IngressController logic elsewhere.
 func (o *Operator) Start(stop <-chan struct{}) error {
 	// Periodicaly ensure the default controller exists.
@@ -149,13 +153,17 @@ func (o *Operator) Start(stop <-chan struct{}) error {
 	go func() {
 		errChan <- o.manager.Start(stop)
 	}()
+
+	reloadChan := make(chan struct{})
 	go func() {
-		errChan <- o.dnsProvider.StartWatcher(o.releaseVersion, stop)
+		errChan <- o.caWatcher.Start(stop, reloadChan)
 	}()
 
 	// Wait for the manager or watcher to exit or an explicit stop.
 	select {
 	case <-stop:
+		return nil
+	case <-reloadChan:
 		return nil
 	case err := <-errChan:
 		return err

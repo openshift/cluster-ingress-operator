@@ -1,20 +1,14 @@
 package aws
 
 import (
-	"crypto/tls"
-	"crypto/x509"
 	"fmt"
-	"net"
-	"net/http"
 	"reflect"
 	"strings"
 	"sync"
-	"time"
 
 	iov1 "github.com/openshift/cluster-ingress-operator/pkg/api/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
-	"github.com/openshift/cluster-ingress-operator/pkg/operator/watcher"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/arn"
@@ -51,10 +45,6 @@ type Provider struct {
 
 	config Config
 
-	// fileWatcher watches the trusted ca bundle for changes
-	// and keeps AWS sessions updated.
-	fileWatcher *watcher.FileWatcher
-
 	// lock protects access to everything below.
 	lock sync.RWMutex
 
@@ -85,88 +75,44 @@ type Config struct {
 	DNS *configv1.DNS
 }
 
-// NewProvider returns a new AWS Provider based on config and adds
-// openshift.io/ingress-operator/operatorReleaseVersion to the user-agent
-// request header.
-func NewProvider(config Config, operatorReleaseVersion string, trustBundle string) (*Provider, error) {
-	caWatcher, err := watcher.New(trustBundle)
-	if err != nil {
-		return nil, err
-	}
-
-	sess, err := newProviderSession(config, operatorReleaseVersion, caWatcher.GetFileData())
-	if err != nil {
-		return nil, err
-	}
-
-	elbClient, route53Client, taggingClient := newClients(sess, config.Region)
-	provider := &Provider{
-		elb:            elbClient,
-		route53:        route53Client,
-		fileWatcher:    caWatcher,
-		tags:           taggingClient,
-		config:         config,
-		idsToTags:      map[string]map[string]string{},
-		lbZones:        map[string]string{},
-		updatedRecords: sets.NewString(),
-	}
-	return provider, nil
-}
-
-// newProviderSession returns a new AWS Session with credentials from config;
-// adding openshift.io/ingress-operator/operatorReleaseVersion to the user-agent
-// request header and pemData to the TLS Config CA pool. Aside from TLSClientConfig,
-// the transport created is identical to DefaultTransport of net/http.
-func newProviderSession(config Config, operatorReleaseVersion string, pemData []byte) (*session.Session, error) {
+func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error) {
 	creds := credentials.NewStaticCredentials(config.AccessID, config.AccessKey, "")
-	caPool := x509.NewCertPool()
-	if ok := caPool.AppendCertsFromPEM(pemData); !ok {
-		return nil, fmt.Errorf("failed to append certificates to ca pool")
-	}
-	tlsConfig := &tls.Config{RootCAs: caPool}
-	trans := &http.Transport{
-		Proxy: http.ProxyFromEnvironment,
-		DialContext: (&net.Dialer{
-			Timeout:   30 * time.Second,
-			KeepAlive: 30 * time.Second,
-			DualStack: true,
-		}).DialContext,
-		TLSClientConfig:       tlsConfig,
-		MaxIdleConns:          100,
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-	}
 	sess, err := session.NewSessionWithOptions(session.Options{
 		Config: aws.Config{
 			Credentials: creds,
-			HTTPClient:  &http.Client{Transport: trans},
 		},
 		SharedConfigState: session.SharedConfigEnable,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create AWS client session: %v", err)
+		return nil, fmt.Errorf("couldn't create AWS client session: %v", err)
 	}
 	sess.Handlers.Build.PushBackNamed(request.NamedHandler{
 		Name: "openshift.io/ingress-operator",
 		Fn:   request.MakeAddToUserAgentHandler("openshift.io ingress-operator", operatorReleaseVersion),
 	})
 
-	return sess, nil
-}
+	region := aws.StringValue(sess.Config.Region)
+	if len(region) > 0 {
+		log.Info("using region from shared config", "region name", region)
+	} else {
+		region = config.Region
+		log.Info("using region from operator config", "region name", region)
+	}
+	if len(region) == 0 {
+		return nil, fmt.Errorf("region is required")
+	}
 
-// newClients returns new elb, route53 and resourcegroupstagging api clients
-// using session and region. Note that region "us-east-1" is used for the
-// resourcegroupstagging client.
-func newClients(session *session.Session, region string) (*elb.ELB, *route53.Route53, *resourcegroupstaggingapi.ResourceGroupsTaggingAPI) {
-	elb := elb.New(session, aws.NewConfig().WithRegion(region))
-	route53 := route53.New(session)
-
-	// TODO: The resourcegroupstagging API will only return hostedzone resources (which are global)
-	// when the region is forced to us-east-1. We don't yet understand why.
-	tags := resourcegroupstaggingapi.New(session, aws.NewConfig().WithRegion("us-east-1"))
-
-	return elb, route53, tags
+	return &Provider{
+		elb:     elb.New(sess, aws.NewConfig().WithRegion(region)),
+		route53: route53.New(sess),
+		// TODO: This API will only return hostedzone resources (which are global)
+		// when the region is forced to us-east-1. We don't yet understand why.
+		tags:           resourcegroupstaggingapi.New(sess, aws.NewConfig().WithRegion("us-east-1")),
+		config:         config,
+		idsToTags:      map[string]map[string]string{},
+		lbZones:        map[string]string{},
+		updatedRecords: sets.NewString(),
+	}, nil
 }
 
 // getZoneID finds the ID of given zoneConfig in Route53. If an ID is already
