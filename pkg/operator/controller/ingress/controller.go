@@ -610,9 +610,7 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		errs = append(errs, fmt.Errorf("failed to list events in namespace %q: %v", "openshift-ingress", err))
 	}
 
-	if err := r.syncIngressControllerStatus(ci, deployment, lbService, operandEvents.Items, wildcardRecord, dnsConfig); err != nil {
-		errs = append(errs, fmt.Errorf("failed to sync ingresscontroller status: %v", err))
-	}
+	errs = append(errs, r.syncIngressControllerStatus(ci, deployment, lbService, operandEvents.Items, wildcardRecord, dnsConfig))
 
 	return retryable.NewMaybeRetryableAggregate(errs)
 }
