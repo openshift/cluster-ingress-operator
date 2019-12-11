@@ -20,6 +20,10 @@ func TestRetryableError(t *testing.T) {
 			name: "empty list",
 		},
 		{
+			name:   "nil error",
+			errors: []error{nil},
+		},
+		{
 			name:            "non-retryable errors",
 			errors:          []error{errors.New("foo"), errors.New("bar")},
 			expectAggregate: true,
@@ -39,6 +43,7 @@ func TestRetryableError(t *testing.T) {
 			errors: []error{
 				New(errors.New("baz"), time.Second*15),
 				New(errors.New("quux"), time.Minute),
+				nil,
 			},
 			expectRetryable: true,
 			expectAfter:     time.Second * 15,
