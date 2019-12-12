@@ -416,7 +416,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	// compute it now, after all the other fields have been computed, and
 	// inject it into the appropriate fields.
 	if needDeploymentHash {
-		hash := deploymentHash(deployment)
+		hash := deploymentTemplateHash(deployment)
 		deployment.Spec.Template.Labels[controller.ControllerDeploymentHashLabel] = hash
 		values := []string{hash}
 		deployment.Spec.Template.Spec.Affinity.PodAffinity.PreferredDuringSchedulingIgnoredDuringExecution[0].PodAffinityTerm.LabelSelector.MatchExpressions[1].Values = values
@@ -484,7 +484,18 @@ func inferTLSProfileSpecFromDeployment(deployment *appsv1.Deployment) *configv1.
 // fields that, if changed, should trigger an update.
 func deploymentHash(deployment *appsv1.Deployment) string {
 	hasher := fnv.New32a()
-	deepHashObject(hasher, hashableDeployment(deployment))
+	deepHashObject(hasher, hashableDeployment(deployment, false))
+	return rand.SafeEncodeString(fmt.Sprint(hasher.Sum32()))
+}
+
+// deploymentTemplateHash returns a stringified hash value for the router
+// deployment fields that should be used to distinguish the given deployment
+// from the deployment for another ingresscontroller or another generation of
+// the same ingresscontroller (which will trigger a rolling update of the
+// deployment).
+func deploymentTemplateHash(deployment *appsv1.Deployment) string {
+	hasher := fnv.New32a()
+	deepHashObject(hasher, hashableDeployment(deployment, true))
 	return rand.SafeEncodeString(fmt.Sprint(hasher.Sum32()))
 }
 
@@ -493,14 +504,18 @@ func deploymentHash(deployment *appsv1.Deployment) string {
 // over.  In particular, these are the fields that desiredRouterDeployment sets.
 // Fields with slice values will be sorted.  Fields that should be ignored, or
 // that have explicit values that are equal to their respective default values,
-// will be zeroed.
-func hashableDeployment(deployment *appsv1.Deployment) *appsv1.Deployment {
+// will be zeroed.  If onlyTemplate is true, fields that should not trigger a
+// rolling update are zeroed as well.
+func hashableDeployment(deployment *appsv1.Deployment, onlyTemplate bool) *appsv1.Deployment {
 	var hashableDeployment appsv1.Deployment
+
+	// Copy metadata fields that distinguish the deployment for one
+	// ingresscontroller from the deployment for another.
 	hashableDeployment.Name = deployment.Name
 	hashableDeployment.Namespace = deployment.Namespace
-	hashableDeployment.Labels = deployment.Labels
-	delete(hashableDeployment.Labels, controller.ControllerDeploymentHashLabel)
-	hashableDeployment.Spec.Selector = deployment.Spec.Selector
+
+	// Copy pod template spec fields to which any changes should
+	// trigger a rolling update of the deployment.
 	affinity := deployment.Spec.Template.Spec.Affinity.DeepCopy()
 	if affinity != nil {
 		cmpMatchExpressions := func(a, b metav1.LabelSelectorRequirement) bool {
@@ -560,7 +575,6 @@ func hashableDeployment(deployment *appsv1.Deployment) *appsv1.Deployment {
 		}
 	}
 	hashableDeployment.Spec.Template.Spec.Affinity = affinity
-	hashableDeployment.Spec.Strategy = deployment.Spec.Strategy
 	tolerations := make([]corev1.Toleration, len(deployment.Spec.Template.Spec.Tolerations))
 	for i, toleration := range deployment.Spec.Template.Spec.Tolerations {
 		tolerations[i] = *toleration.DeepCopy()
@@ -575,12 +589,6 @@ func hashableDeployment(deployment *appsv1.Deployment) *appsv1.Deployment {
 	})
 	hashableDeployment.Spec.Template.Spec.Tolerations = tolerations
 	hashableDeployment.Spec.Template.Spec.NodeSelector = deployment.Spec.Template.Spec.NodeSelector
-	var replicas *int32
-	if deployment.Spec.Replicas != nil && *deployment.Spec.Replicas != int32(1) {
-		// 1 is the default value for Replicas.
-		replicas = deployment.Spec.Replicas
-	}
-	hashableDeployment.Spec.Replicas = replicas
 	containers := make([]corev1.Container, len(deployment.Spec.Template.Spec.Containers))
 	for i, container := range deployment.Spec.Template.Spec.Containers {
 		env := container.Env
@@ -619,6 +627,24 @@ func hashableDeployment(deployment *appsv1.Deployment) *appsv1.Deployment {
 		return volumes[i].Name < volumes[j].Name
 	})
 	hashableDeployment.Spec.Template.Spec.Volumes = volumes
+
+	if onlyTemplate {
+		return &hashableDeployment
+	}
+
+	// Copy metadata and spec fields to which any changes should trigger an
+	// update of the deployment but should not trigger a rolling update.
+	hashableDeployment.Labels = deployment.Labels
+	hashableDeployment.Spec.Strategy = deployment.Spec.Strategy
+	var replicas *int32
+	if deployment.Spec.Replicas != nil && *deployment.Spec.Replicas != int32(1) {
+		// 1 is the default value for Replicas.
+		replicas = deployment.Spec.Replicas
+	}
+	hashableDeployment.Spec.Replicas = replicas
+	delete(hashableDeployment.Labels, controller.ControllerDeploymentHashLabel)
+	hashableDeployment.Spec.Selector = deployment.Spec.Selector
+
 	return &hashableDeployment
 }
 
