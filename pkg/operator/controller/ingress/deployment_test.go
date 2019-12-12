@@ -25,6 +25,13 @@ var toleration = corev1.Toleration{
 	Effect:   corev1.TaintEffectNoExecute,
 }
 
+var otherToleration = corev1.Toleration{
+	Key:      "xyz",
+	Value:    "bar",
+	Operator: corev1.TolerationOpExists,
+	Effect:   corev1.TaintEffectNoExecute,
+}
+
 func TestDesiredRouterDeployment(t *testing.T) {
 	var one int32 = 1
 	ingressConfig := &configv1.Ingress{}
@@ -80,7 +87,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		t.Errorf("invalid router Deployment: %v", err)
 	}
 
-	expectedHash := deploymentHash(deployment)
+	expectedHash := deploymentTemplateHash(deployment)
 	actualHash, haveHashLabel := deployment.Spec.Template.Labels[controller.ControllerDeploymentHashLabel]
 	if !haveHashLabel {
 		t.Error("router Deployment is missing hash label")
@@ -224,7 +231,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	if err != nil {
 		t.Errorf("invalid router Deployment: %v", err)
 	}
-	expectedHash = deploymentHash(deployment)
+	expectedHash = deploymentTemplateHash(deployment)
 	actualHash, haveHashLabel = deployment.Spec.Template.Labels[controller.ControllerDeploymentHashLabel]
 	if !haveHashLabel {
 		t.Error("router Deployment is missing hash label")
@@ -440,6 +447,85 @@ func TestInferTLSProfileSpecFromDeployment(t *testing.T) {
 	}
 }
 
+// TestDeploymentHash verifies that the hash values that deploymentHash and
+// deploymentTemplateHash return change exactly when expected with respect to
+// mutations to a deployment.
+func TestDeploymentHash(t *testing.T) {
+	three := int32(3)
+	testCases := []struct {
+		description                 string
+		mutate                      func(*appsv1.Deployment)
+		expectDeploymentHashChanged bool
+		expectTemplateHashChanged   bool
+	}{
+		{
+			description: "if nothing changes",
+			mutate:      func(_ *appsv1.Deployment) {},
+		},
+		{
+			description: "if .uid changes",
+			mutate: func(deployment *appsv1.Deployment) {
+				deployment.UID = "2"
+			},
+		},
+		{
+			description: "if .name changes",
+			mutate: func(deployment *appsv1.Deployment) {
+				deployment.Name = "foo"
+			},
+			expectDeploymentHashChanged: true,
+			expectTemplateHashChanged:   true,
+		},
+		{
+			description: "if .spec.replicas changes",
+			mutate: func(deployment *appsv1.Deployment) {
+				deployment.Spec.Replicas = &three
+			},
+			expectDeploymentHashChanged: true,
+		},
+		{
+			description: "if .spec.template.spec.tolerations change",
+			mutate: func(deployment *appsv1.Deployment) {
+				deployment.Spec.Template.Spec.Tolerations = []corev1.Toleration{toleration}
+			},
+			expectDeploymentHashChanged: true,
+			expectTemplateHashChanged:   true,
+		},
+	}
+
+	for _, tc := range testCases {
+		two := int32(2)
+		original := &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "router-original",
+				Namespace: "openshift-ingress",
+				UID:       "1",
+			},
+			Spec: appsv1.DeploymentSpec{
+				Template: corev1.PodTemplateSpec{
+					Spec: corev1.PodSpec{
+						Tolerations: []corev1.Toleration{toleration, otherToleration},
+					},
+				},
+				Replicas: &two,
+			},
+		}
+		mutated := original.DeepCopy()
+		tc.mutate(mutated)
+		deploymentHashChanged := deploymentHash(original) != deploymentHash(mutated)
+		templateHashChanged := deploymentTemplateHash(original) != deploymentTemplateHash(mutated)
+		if templateHashChanged && !deploymentHashChanged {
+			t.Errorf("%q: deployment hash changed but the template hash did not", tc.description)
+		}
+		if deploymentHashChanged != tc.expectDeploymentHashChanged {
+			t.Errorf("%q: expected deployment hash changed to be %t, got %t", tc.description, tc.expectDeploymentHashChanged, deploymentHashChanged)
+		}
+		if templateHashChanged != tc.expectTemplateHashChanged {
+			t.Errorf("%q: expected template hash changed to be %t, got %t", tc.description, tc.expectTemplateHashChanged, templateHashChanged)
+		}
+	}
+}
+
 func TestDeploymentConfigChanged(t *testing.T) {
 	pointerTo := func(ios intstr.IntOrString) *intstr.IntOrString { return &ios }
 	testCases := []struct {
@@ -635,13 +721,6 @@ func TestDeploymentConfigChanged(t *testing.T) {
 	for _, tc := range testCases {
 		nineteen := int32(19)
 		fourTwenty := int32(420) // = 0644 octal.
-		otherToleration := corev1.Toleration{
-			Key:      "xyz",
-			Value:    "bar",
-			Operator: corev1.TolerationOpExists,
-			Effect:   corev1.TaintEffectNoExecute,
-		}
-
 		original := appsv1.Deployment{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "router-original",
