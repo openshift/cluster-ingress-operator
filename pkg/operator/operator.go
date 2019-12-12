@@ -16,7 +16,6 @@ import (
 	dnscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/dns"
 	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 	statuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/status"
-	"github.com/openshift/cluster-ingress-operator/pkg/operator/watcher"
 	operatorutil "github.com/openshift/cluster-ingress-operator/pkg/util"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -50,8 +49,6 @@ type Operator struct {
 	client client.Client
 
 	manager manager.Manager
-
-	caWatcher *watcher.FileWatcher
 
 	namespace string
 }
@@ -116,15 +113,8 @@ func New(config operatorconfig.Config, dnsProvider dns.Provider, kubeConfig *res
 		return nil, fmt.Errorf("failed to create dns controller: %v", err)
 	}
 
-	// Set up trusted ca bundle watcher
-	watcher, err := watcher.New(config.TrustedCABundle)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create trusted ca watcher: %v", err)
-	}
-
 	return &Operator{
-		manager:   mgr,
-		caWatcher: watcher,
+		manager: mgr,
 		// TODO: These are only needed for the default ingress controller stuff, which
 		// should be refactored away.
 		client:    mgr.GetClient(),
@@ -133,8 +123,7 @@ func New(config operatorconfig.Config, dnsProvider dns.Provider, kubeConfig *res
 }
 
 // Start creates the default IngressController and then starts the operator
-// and trusted ca bundle watcher synchronously until a message is received
-// on the stop or reload channels.
+// synchronously until a message is received on the stop channel.
 // TODO: Move the default IngressController logic elsewhere.
 func (o *Operator) Start(stop <-chan struct{}) error {
 	// Periodicaly ensure the default controller exists.
@@ -154,16 +143,9 @@ func (o *Operator) Start(stop <-chan struct{}) error {
 		errChan <- o.manager.Start(stop)
 	}()
 
-	reloadChan := make(chan struct{})
-	go func() {
-		errChan <- o.caWatcher.Start(stop, reloadChan)
-	}()
-
-	// Wait for the manager or watcher to exit or an explicit stop.
+	// Wait for the manager to exit or an explicit stop.
 	select {
 	case <-stop:
-		return nil
-	case <-reloadChan:
 		return nil
 	case err := <-errChan:
 		return err
