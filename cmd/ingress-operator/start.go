@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io/ioutil"
 	"os"
 
 	"github.com/ghodss/yaml"
 	"github.com/spf13/cobra"
+	"gopkg.in/fsnotify.v1"
 
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 	awsdns "github.com/openshift/cluster-ingress-operator/pkg/dns/aws"
@@ -112,7 +115,6 @@ func start() error {
 		OperatorReleaseVersion: releaseVersion,
 		Namespace:              operatorNamespace,
 		IngressControllerImage: ingressControllerImage,
-		TrustedCABundle:        defaultTrustedCABundle,
 	}
 
 	// Set up the DNS manager.
@@ -122,12 +124,67 @@ func start() error {
 		os.Exit(1)
 	}
 
+	// Set up the channels for the watcher and operator.
+	stop := make(chan struct{})
+	signal := signals.SetupSignalHandler()
+
+	// Set up and start the file watcher.
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		log.Error(err, "failed to create watcher")
+		os.Exit(1)
+	}
+	defer watcher.Close()
+	if err := watcher.Add(defaultTrustedCABundle); err != nil {
+		log.Error(err, "failed to add file to watcher", "filename", defaultTrustedCABundle)
+		os.Exit(1)
+	}
+	log.Info("watching file", "filename", defaultTrustedCABundle)
+	orig, err := ioutil.ReadFile(defaultTrustedCABundle)
+	if err != nil {
+		log.Error(err, "failed to read watched file", "filename", defaultTrustedCABundle)
+		os.Exit(1)
+	}
+	go func() {
+		for {
+			select {
+			case <-signal:
+				close(stop)
+				return
+			case _, ok := <-watcher.Events:
+				if !ok {
+					log.Info("file watch events channel closed")
+					close(stop)
+					return
+				}
+				latest, err := ioutil.ReadFile(defaultTrustedCABundle)
+				if err != nil {
+					log.Error(err, "failed to read watched file", "filename", defaultTrustedCABundle)
+					close(stop)
+					return
+				}
+				if !bytes.Equal(orig, latest) {
+					log.Info("watched file changed, stopping operator", "filename", defaultTrustedCABundle)
+					close(stop)
+					return
+				}
+			case err, ok := <-watcher.Errors:
+				if !ok {
+					log.Info("file watch error channel closed")
+					close(stop)
+					return
+				}
+				log.Error(err, "file watch error")
+			}
+		}
+	}()
+
 	// Set up and start the operator.
 	op, err := operator.New(operatorConfig, dnsProvider, kubeConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create operator: %v", err)
 	}
-	return op.Start(signals.SetupSignalHandler())
+	return op.Start(stop)
 }
 
 // createDNSManager creates a DNS manager compatible with the given cluster
