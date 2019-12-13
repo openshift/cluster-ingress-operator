@@ -38,6 +38,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 
 	"k8s.io/apiserver/pkg/storage/names"
@@ -308,6 +309,11 @@ func TestIngressControllerScale(t *testing.T) {
 		t.Fatalf("router deployment has invalid spec.selector: %v", err)
 	}
 
+	oldRsList := &appsv1.ReplicaSetList{}
+	if err := kclient.List(context.TODO(), oldRsList, client.MatchingLabelsSelector{selector}); err != nil {
+		t.Fatalf("failed to list replicasets for ingresscontroller: %v", err)
+	}
+
 	resource := schema.GroupResource{
 		Group:    "operator.openshift.io",
 		Resource: "ingresscontrollers",
@@ -368,6 +374,24 @@ func TestIngressControllerScale(t *testing.T) {
 	// TODO: assert that the conditions hold steady for some amount of time?
 	if err := waitForIngressControllerCondition(kclient, 5*time.Minute, defaultName, defaultAvailableConditions...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	// Ensure the deployment did not create a new replicaset
+	// (see <https://bugzilla.redhat.com/show_bug.cgi?id=1783007>).
+	newRsList := &appsv1.ReplicaSetList{}
+	if err := kclient.List(context.TODO(), newRsList, client.MatchingLabelsSelector{selector}); err != nil {
+		t.Fatalf("failed to list replicasets for ingresscontroller: %v", err)
+	}
+	oldRsIds := sets.String{}
+	for _, rs := range oldRsList.Items {
+		oldRsIds.Insert(string(rs.UID))
+	}
+	newRsIds := sets.String{}
+	for _, rs := range newRsList.Items {
+		newRsIds.Insert(string(rs.UID))
+	}
+	if !oldRsIds.IsSuperset(newRsIds) {
+		t.Fatalf("scaling the deployment created a new replicaset\nold replicaset list:\n%#v\nnew replicaset list:\n%#v)", oldRsList.Items, newRsList.Items)
 	}
 }
 
