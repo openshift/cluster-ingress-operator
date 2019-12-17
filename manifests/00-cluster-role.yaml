@@ -79,6 +79,7 @@ rules:
   - ingresses
   - dnses
   - apiservers
+  - networks
   verbs:
   - get
 

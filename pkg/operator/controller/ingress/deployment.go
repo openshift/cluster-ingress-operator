@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"hash"
 	"hash/fnv"
+	"net"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -31,8 +32,8 @@ import (
 
 // ensureRouterDeployment ensures the router deployment exists for a given
 // ingresscontroller.
-func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, infraConfig *configv1.Infrastructure, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer) (*appsv1.Deployment, error) {
-	desired, err := desiredRouterDeployment(ci, r.Config.IngressControllerImage, infraConfig, ingressConfig, apiConfig)
+func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, infraConfig *configv1.Infrastructure, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer, networkConfig *configv1.Network) (*appsv1.Deployment, error) {
+	desired, err := desiredRouterDeployment(ci, r.Config.IngressControllerImage, infraConfig, ingressConfig, apiConfig, networkConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build router deployment: %v", err)
 	}
@@ -71,7 +72,7 @@ func (r *reconciler) ensureRouterDeleted(ci *operatorv1.IngressController) error
 }
 
 // desiredRouterDeployment returns the desired router deployment.
-func desiredRouterDeployment(ci *operatorv1.IngressController, ingressControllerImage string, infraConfig *configv1.Infrastructure, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer) (*appsv1.Deployment, error) {
+func desiredRouterDeployment(ci *operatorv1.IngressController, ingressControllerImage string, infraConfig *configv1.Infrastructure, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer, networkConfig *configv1.Network) (*appsv1.Deployment, error) {
 	deployment := manifests.RouterDeployment()
 	name := controller.RouterDeploymentName(ci)
 	deployment.Name = name.Name
@@ -407,6 +408,27 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		minTLSVersion = "TLSv1.2"
 	}
 	env = append(env, corev1.EnvVar{Name: "SSL_MIN_VERSION", Value: minTLSVersion})
+
+	usingIPv4 := false
+	usingIPv6 := false
+	for _, clusterNetworkEntry := range networkConfig.Status.ClusterNetwork {
+		addr, _, err := net.ParseCIDR(clusterNetworkEntry.CIDR)
+		if err != nil {
+			continue
+		}
+		if addr.To4() != nil {
+			usingIPv4 = true
+		} else {
+			usingIPv6 = true
+		}
+	}
+	if usingIPv6 {
+		mode := "v4v6"
+		if !usingIPv4 {
+			mode = "v6_only"
+		}
+		env = append(env, corev1.EnvVar{Name: "ROUTER_IP_V4_V6_MODE", Value: mode})
+	}
 
 	deployment.Spec.Template.Spec.Volumes = volumes
 	deployment.Spec.Template.Spec.Containers[0].VolumeMounts = routerVolumeMounts

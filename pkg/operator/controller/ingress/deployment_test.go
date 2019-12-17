@@ -81,8 +81,15 @@ func TestDesiredRouterDeployment(t *testing.T) {
 			},
 		},
 	}
+	networkConfig := &configv1.Network{
+		Status: configv1.NetworkStatus{
+			ClusterNetwork: []configv1.ClusterNetworkEntry{
+				{CIDR: "10.0.0.1/8"},
+			},
+		},
+	}
 
-	deployment, err := desiredRouterDeployment(ci, ingressControllerImage, infraConfig, ingressConfig, apiConfig)
+	deployment, err := desiredRouterDeployment(ci, ingressControllerImage, infraConfig, ingressConfig, apiConfig, networkConfig)
 	if err != nil {
 		t.Errorf("invalid router Deployment: %v", err)
 	}
@@ -213,6 +220,19 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		t.Errorf("router Deployment has unexpected minimum TLS version: expected %q, got %q", expectedTLSMinVersion, tlsMinVersion)
 	}
 
+	var ipv4v6Mode string
+	foundIPv4V6Mode := false
+	for _, envVar := range deployment.Spec.Template.Spec.Containers[0].Env {
+		if envVar.Name == "ROUTER_IP_V4_V6_MODE" {
+			foundIPv4V6Mode = true
+			ipv4v6Mode = envVar.Value
+			break
+		}
+	}
+	if foundIPv4V6Mode {
+		t.Errorf("router Deployment has unexpected ROUTER_IP_V4_V6_MODE setting: %q", ipv4v6Mode)
+	}
+
 	ingressConfig.Annotations = map[string]string{
 		EnableLoggingAnnotation: "debug",
 	}
@@ -225,9 +245,13 @@ func TestDesiredRouterDeployment(t *testing.T) {
 			},
 		},
 	}
+	networkConfig.Status.ClusterNetwork = []configv1.ClusterNetworkEntry{
+		{CIDR: "10.0.0.1/8"},
+		{CIDR: "2620:0:2d0:200::7/32"},
+	}
 	ci.Status.Domain = "example.com"
 	ci.Status.EndpointPublishingStrategy.Type = operatorv1.LoadBalancerServiceStrategyType
-	deployment, err = desiredRouterDeployment(ci, ingressControllerImage, infraConfig, ingressConfig, apiConfig)
+	deployment, err = desiredRouterDeployment(ci, ingressControllerImage, infraConfig, ingressConfig, apiConfig, networkConfig)
 	if err != nil {
 		t.Errorf("invalid router Deployment: %v", err)
 	}
@@ -309,6 +333,20 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		t.Errorf("router Deployment has unexpected minimum TLS version: expected %q, got %q", expectedTLSMinVersion, tlsMinVersion)
 	}
 
+	foundIPv4V6Mode = false
+	for _, envVar := range deployment.Spec.Template.Spec.Containers[0].Env {
+		if envVar.Name == "ROUTER_IP_V4_V6_MODE" {
+			foundIPv4V6Mode = true
+			ipv4v6Mode = envVar.Value
+			break
+		}
+	}
+	if !foundIPv4V6Mode {
+		t.Error("router Deployment is missing ROUTER_IP_V4_V6_MODE setting")
+	} else if ipv4v6Mode != "v4v6" {
+		t.Errorf("router Deployment has unexpected ROUTER_IP_V4_V6_MODE setting: %q", ipv4v6Mode)
+	}
+
 	secretName := fmt.Sprintf("secret-%v", time.Now().UnixNano())
 	ci.Spec.DefaultCertificate = &corev1.LocalObjectReference{
 		Name: secretName,
@@ -328,7 +366,10 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	ci.Annotations = map[string]string{
 		EnableLoggingAnnotation: "debug",
 	}
-	deployment, err = desiredRouterDeployment(ci, ingressControllerImage, infraConfig, ingressConfig, apiConfig)
+	networkConfig.Status.ClusterNetwork = []configv1.ClusterNetworkEntry{
+		{CIDR: "2620:0:2d0:200::7/32"},
+	}
+	deployment, err = desiredRouterDeployment(ci, ingressControllerImage, infraConfig, ingressConfig, apiConfig, networkConfig)
 	if err != nil {
 		t.Errorf("invalid router Deployment: %v", err)
 	}
@@ -382,6 +423,20 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	}
 	if !foundSyslogContainer {
 		t.Error("router Deployment has no syslog container")
+	}
+
+	foundIPv4V6Mode = false
+	for _, envVar := range deployment.Spec.Template.Spec.Containers[0].Env {
+		if envVar.Name == "ROUTER_IP_V4_V6_MODE" {
+			foundIPv4V6Mode = true
+			ipv4v6Mode = envVar.Value
+			break
+		}
+	}
+	if !foundIPv4V6Mode {
+		t.Error("router Deployment is missing ROUTER_IP_V4_V6_MODE setting")
+	} else if ipv4v6Mode != "v6_only" {
+		t.Errorf("router Deployment has unexpected ROUTER_IP_V4_V6_MODE setting: %q", ipv4v6Mode)
 	}
 }
 
