@@ -174,6 +174,10 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, ingressConfig); err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to get ingress 'cluster': %v", err)
 	}
+	networkConfig := &configv1.Network{}
+	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, networkConfig); err != nil {
+		return reconcile.Result{}, fmt.Errorf("failed to get network 'cluster': %v", err)
+	}
 
 	// Admit if necessary. Don't process until admission succeeds. If admission is
 	// successful, immediately re-queue to refresh state.
@@ -193,7 +197,7 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 	}
 
 	// The ingresscontroller is safe to process, so ensure it.
-	if err := r.ensureIngressController(ingress, dnsConfig, infraConfig, ingressConfig, apiConfig); err != nil {
+	if err := r.ensureIngressController(ingress, dnsConfig, infraConfig, ingressConfig, apiConfig, networkConfig); err != nil {
 		switch e := err.(type) {
 		case retryable.Error:
 			log.Error(e, "got retryable error; requeueing", "after", e.After())
@@ -544,7 +548,7 @@ func (r *reconciler) ensureIngressDeleted(ingress *operatorv1.IngressController)
 // given ingresscontroller.  Any error values are collected into either a
 // retryable.Error value, if any of the error values are retryable, or else an
 // Aggregate error value.
-func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, dnsConfig *configv1.DNS, infraConfig *configv1.Infrastructure, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer) error {
+func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, dnsConfig *configv1.DNS, infraConfig *configv1.Infrastructure, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer, networkConfig *configv1.Network) error {
 	// Before doing anything at all with the controller, ensure it has a finalizer
 	// so we can clean up later.
 	if !slice.ContainsString(ci.Finalizers, manifests.IngressControllerFinalizer) {
@@ -563,7 +567,7 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		return fmt.Errorf("failed to ensure namespace: %v", err)
 	}
 
-	deployment, err := r.ensureRouterDeployment(ci, infraConfig, ingressConfig, apiConfig)
+	deployment, err := r.ensureRouterDeployment(ci, infraConfig, ingressConfig, apiConfig, networkConfig)
 	if err != nil {
 		return fmt.Errorf("failed to ensure deployment: %v", err)
 	}
