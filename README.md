@@ -79,7 +79,7 @@ design diagram for each is shown below.
 
 The `LoadBalancerService` strategy publishes an ingress controller using a
 Kubernetes [LoadBalancer
-Service](https://kubernetes.io/docs/concepts/services-networking/#loadbalancer)
+Service](https://kubernetes.io/docs/concepts/services-networking/service/#loadbalancer)
 and on some platforms offers managed wildcard DNS.
 
 ![Image of LoadBalancerService](docs/images/endpoint-publishing-loadbalancerservice.png)
