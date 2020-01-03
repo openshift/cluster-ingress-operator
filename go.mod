@@ -17,7 +17,7 @@ require (
 	github.com/google/go-cmp v0.3.0
 	github.com/imdario/mergo v0.3.7 // indirect
 	github.com/kevinburke/go-bindata v3.11.0+incompatible
-	github.com/openshift/api v3.9.1-0.20191028134408-abf28f93703b+incompatible
+	github.com/openshift/api v3.9.1-0.20191028134408-7e36eed0d19e+incompatible
 	github.com/openshift/library-go v0.0.0-20190927184318-c355e2019bb3
 	github.com/pkg/errors v0.8.1
 	github.com/securego/gosec v0.0.0-20190709033609-4b59c948083c
@@ -25,11 +25,12 @@ require (
 	go.uber.org/zap v1.9.1
 	golang.org/x/time v0.0.0-20190308202827-9d24e82272b4 // indirect
 	google.golang.org/api v0.4.0
-	gopkg.in/yaml.v2 v2.2.2
+	gopkg.in/fsnotify.v1 v1.4.7
+	gopkg.in/yaml.v2 v2.2.4
 
 	// kubernetes-1.16.0
-	k8s.io/api v0.0.0-20190918155943-95b840bb6a1f
-	k8s.io/apimachinery v0.0.0-20190913080033-27d36303b655
+	k8s.io/api v0.17.0
+	k8s.io/apimachinery v0.17.0
 	k8s.io/apiserver v0.0.0-20190918160949-bfa5e2e684ad
 	k8s.io/client-go v0.0.0-20190918160344-1fbdaa4c8d90
 
