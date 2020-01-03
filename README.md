@@ -84,6 +84,16 @@ and on some platforms offers managed wildcard DNS.
 
 ![Image of LoadBalancerService](docs/images/endpoint-publishing-loadbalancerservice.png)
 
+#### NodePortService
+
+The `NodePortService` strategy publishes an ingress controller using a
+Kubernetes [NodePort
+Service](https://kubernetes.io/docs/concepts/services-networking/service/#nodeport).
+With this strategy, the administrator is responsible for configuring
+any external DNS or load balancer.
+
+![Image of NodePortService](docs/images/endpoint-publishing-nodeportservice.png)
+
 #### HostNetwork
 
 The `HostNetwork` strategy uses host networking to publish the ingress

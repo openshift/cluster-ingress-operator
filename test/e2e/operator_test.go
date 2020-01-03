@@ -614,6 +614,29 @@ func TestInternalLoadBalancer(t *testing.T) {
 	}
 }
 
+// TestNodePortServiceEndpointPublishingStrategy creates an ingresscontroller
+// with the "NodePortService" endpoint publishing strategy type and verifies
+// that the operator creates a router and that the router becomes available.
+func TestNodePortServiceEndpointPublishingStrategy(t *testing.T) {
+	name := types.NamespacedName{Namespace: operatorNamespace, Name: "nodeport"}
+	ing := newNodePortController(name, name.Name+"."+dnsConfig.Spec.BaseDomain)
+	if err := kclient.Create(context.TODO(), ing); err != nil {
+		t.Fatalf("failed to create ingresscontroller: %v", err)
+	}
+	defer assertIngressControllerDeleted(t, kclient, ing)
+
+	conditions := []operatorv1.OperatorCondition{
+		{Type: iov1.IngressControllerAdmittedConditionType, Status: operatorv1.ConditionTrue},
+		{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionTrue},
+		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
+		{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionFalse},
+	}
+	err := waitForIngressControllerCondition(kclient, 5*time.Minute, name, conditions...)
+	if err != nil {
+		t.Errorf("failed to observe expected conditions: %v", err)
+	}
+}
+
 // TestTLSSecurityProfile creates an ingresscontroller with no explicit TLS
 // profile, then verifies that the operator sets the default "Intermediate" TLS
 // profile, then updates the ingresscontroller to use a custom TLS profile, and
@@ -689,6 +712,23 @@ func newLoadBalancerController(name types.NamespacedName, domain string) *operat
 			Replicas: &repl,
 			EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
 				Type: operatorv1.LoadBalancerServiceStrategyType,
+			},
+		},
+	}
+}
+
+func newNodePortController(name types.NamespacedName, domain string) *operatorv1.IngressController {
+	repl := int32(1)
+	return &operatorv1.IngressController{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: name.Namespace,
+			Name:      name.Name,
+		},
+		Spec: operatorv1.IngressControllerSpec{
+			Domain:   domain,
+			Replicas: &repl,
+			EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.NodePortServiceStrategyType,
 			},
 		},
 	}
