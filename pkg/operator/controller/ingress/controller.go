@@ -316,6 +316,8 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, infraConfig 
 				Scope: operatorv1.ExternalLoadBalancer,
 			}
 		}
+	case operatorv1.NodePortServiceStrategyType:
+		// No parameters.
 	case operatorv1.HostNetworkStrategyType:
 		// No parameters.
 	case operatorv1.PrivateStrategyType:
@@ -593,6 +595,10 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		} else {
 			wildcardRecord = record
 		}
+	}
+
+	if _, _, err := r.ensureNodePortService(ci, deploymentRef); err != nil {
+		errs = append(errs, err)
 	}
 
 	if internalSvc, err := r.ensureInternalIngressControllerService(ci, deploymentRef); err != nil {
