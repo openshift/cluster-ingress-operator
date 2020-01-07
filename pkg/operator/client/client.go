@@ -7,6 +7,7 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
+	routev1 "github.com/openshift/api/route/v1"
 
 	kscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
@@ -36,6 +37,9 @@ func init() {
 		panic(err)
 	}
 	if err := iov1.AddToScheme(scheme); err != nil {
+		panic(err)
+	}
+	if err := routev1.Install(scheme); err != nil {
 		panic(err)
 	}
 }
