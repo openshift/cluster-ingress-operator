@@ -123,16 +123,6 @@ github.com/matttproud/golang_protobuf_extensions/pbutil
 github.com/modern-go/concurrent
 # github.com/modern-go/reflect2 v1.0.1
 github.com/modern-go/reflect2
-# github.com/nbutton23/zxcvbn-go v0.0.0-20180912185939-ae427f1e4c1d
-github.com/nbutton23/zxcvbn-go
-github.com/nbutton23/zxcvbn-go/match
-github.com/nbutton23/zxcvbn-go/matching
-github.com/nbutton23/zxcvbn-go/scoring
-github.com/nbutton23/zxcvbn-go/utils/math
-github.com/nbutton23/zxcvbn-go/adjacency
-github.com/nbutton23/zxcvbn-go/entropy
-github.com/nbutton23/zxcvbn-go/frequency
-github.com/nbutton23/zxcvbn-go/data
 # github.com/openshift/api v3.9.1-0.20191028134408-7e36eed0d19e+incompatible
 github.com/openshift/api/config/v1
 github.com/openshift/api/operator/v1
@@ -154,11 +144,6 @@ github.com/prometheus/common/internal/bitbucket.org/ww/goautoneg
 # github.com/prometheus/procfs v0.0.2
 github.com/prometheus/procfs
 github.com/prometheus/procfs/internal/fs
-# github.com/securego/gosec v0.0.0-20190709033609-4b59c948083c
-github.com/securego/gosec/cmd/gosec
-github.com/securego/gosec
-github.com/securego/gosec/output
-github.com/securego/gosec/rules
 # github.com/spf13/cobra v0.0.5
 github.com/spf13/cobra
 # github.com/spf13/pflag v1.0.5

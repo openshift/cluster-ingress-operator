@@ -66,12 +66,8 @@ clean:
 	rm -f $(BIN)
 
 .PHONY: verify
-verify: verify-crd verify-bindata verify-gosec
+verify: verify-crd verify-bindata
 	hack/verify-gofmt.sh
-
-.PHONY: verify-gosec
-verify-gosec:
-	hack/verify-gosec.sh
 
 .PHONY: uninstall
 uninstall:
