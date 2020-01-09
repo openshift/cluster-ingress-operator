@@ -20,7 +20,6 @@ require (
 	github.com/openshift/api v3.9.1-0.20191028134408-7e36eed0d19e+incompatible
 	github.com/openshift/library-go v0.0.0-20190927184318-c355e2019bb3
 	github.com/pkg/errors v0.8.1
-	github.com/securego/gosec v0.0.0-20190709033609-4b59c948083c
 	github.com/spf13/cobra v0.0.5
 	go.uber.org/zap v1.9.1
 	golang.org/x/time v0.0.0-20190308202827-9d24e82272b4 // indirect
