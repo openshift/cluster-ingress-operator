@@ -48,6 +48,16 @@ type StartOptions struct {
 	// When this file changes, the operator will shut down. This is useful for simple
 	// reloading when things like a certificate changes.
 	ShutdownFile string
+	// MetricsListenAddr is the address on which to expose the metrics endpoint.
+	MetricsListenAddr string
+	// OperatorNamespace is the namespace the operator should watch for
+	// ingresscontroller resources.
+	OperatorNamespace string
+	// IngressControllerImage is the pullspec of the ingress controller image to
+	// be managed.
+	IngressControllerImage string
+	// ReleaseVersion is the cluster version which the operator will converge to.
+	ReleaseVersion string
 }
 
 func NewStartCommand() *cobra.Command {
@@ -65,76 +75,75 @@ func NewStartCommand() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVarP(&options.ShutdownFile, "shutdown-file", "s", defaultTrustedCABundle, "file which when modified should trigger a shutdown. If empty, shutdown triggering is disabled.")
+	cmd.Flags().StringVarP(&options.OperatorNamespace, "namespace", "n", manifests.DefaultOperatorNamespace, "namespace the operator is deployed to (required)")
+	cmd.Flags().StringVarP(&options.IngressControllerImage, "image", "i", "", "image of the ingress controller the operator will manage (required)")
+	cmd.Flags().StringVarP(&options.ReleaseVersion, "release-version", "", statuscontroller.UnknownVersionValue, "the release version the operator should converge to (required)")
+	cmd.Flags().StringVarP(&options.MetricsListenAddr, "metrics-listen-addr", "", ":60000", "metrics endpoint listen address (required)")
+	cmd.Flags().StringVarP(&options.ShutdownFile, "shutdown-file", "s", defaultTrustedCABundle, "if provided, shut down the operator when this file changes")
+
+	if err := cmd.MarkFlagRequired("namespace"); err != nil {
+		panic(err)
+	}
+	if err := cmd.MarkFlagRequired("image"); err != nil {
+		panic(err)
+	}
+	if err := cmd.MarkFlagRequired("release-version"); err != nil {
+		panic(err)
+	}
+	if err := cmd.MarkFlagRequired("metrics-listen-addr"); err != nil {
+		panic(err)
+	}
 
 	return cmd
 }
 
 func start(opts *StartOptions) error {
-	metrics.DefaultBindAddress = ":60000"
+	metrics.DefaultBindAddress = opts.MetricsListenAddr
 
 	// Get a kube client.
 	kubeConfig, err := config.GetConfig()
 	if err != nil {
-		log.Error(err, "failed to get kube config")
-		os.Exit(1)
+		return fmt.Errorf("failed to get kube config: %v", err)
 	}
 	kubeClient, err := operatorclient.NewClient(kubeConfig)
 	if err != nil {
-		log.Error(err, "failed to create kube client")
-		os.Exit(1)
+		return fmt.Errorf("failed to create kube client: %v", err)
 	}
 
-	// Collect operator configuration.
-	operatorNamespace := os.Getenv("WATCH_NAMESPACE")
-	if len(operatorNamespace) == 0 {
-		operatorNamespace = manifests.DefaultOperatorNamespace
-	}
-	log.Info("using operator namespace", "namespace", operatorNamespace)
+	log.Info("using operator namespace", "namespace", opts.OperatorNamespace)
 
-	ingressControllerImage := os.Getenv("IMAGE")
-	if len(ingressControllerImage) == 0 {
-		log.Error(fmt.Errorf("missing environment variable"), "'IMAGE' environment variable must be set")
-		os.Exit(1)
-	}
-	releaseVersion := os.Getenv("RELEASE_VERSION")
-	if len(releaseVersion) == 0 {
-		releaseVersion = statuscontroller.UnknownVersionValue
-		log.Info("RELEASE_VERSION environment variable missing", "release version", statuscontroller.UnknownVersionValue)
+	if opts.ReleaseVersion == statuscontroller.UnknownVersionValue {
+		log.Info("Warning: no release version is specified", "release version", statuscontroller.UnknownVersionValue)
 	}
 
 	// Retrieve the cluster infrastructure config.
 	infraConfig := &configv1.Infrastructure{}
 	err = kubeClient.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, infraConfig)
 	if err != nil {
-		log.Error(err, "failed to get infrastructure 'config'")
-		os.Exit(1)
+		return fmt.Errorf("failed to get infrastructure 'config': %v", err)
 	}
 
 	dnsConfig := &configv1.DNS{}
 	err = kubeClient.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, dnsConfig)
 	if err != nil {
-		log.Error(err, "failed to get dns 'cluster'")
-		os.Exit(1)
+		return fmt.Errorf("failed to get dns 'cluster': %v", err)
 	}
 
 	platformStatus, err := getPlatformStatus(kubeClient, infraConfig)
 	if err != nil {
-		log.Error(err, "failed to get platform status")
-		os.Exit(1)
+		return fmt.Errorf("failed to get platform status: %v", err)
 	}
 
 	operatorConfig := operatorconfig.Config{
-		OperatorReleaseVersion: releaseVersion,
-		Namespace:              operatorNamespace,
-		IngressControllerImage: ingressControllerImage,
+		OperatorReleaseVersion: opts.ReleaseVersion,
+		Namespace:              opts.OperatorNamespace,
+		IngressControllerImage: opts.IngressControllerImage,
 	}
 
 	// Set up the DNS manager.
 	dnsProvider, err := createDNSProvider(kubeClient, operatorConfig, dnsConfig, platformStatus)
 	if err != nil {
-		log.Error(err, "failed to create DNS manager")
-		os.Exit(1)
+		return fmt.Errorf("failed to create DNS manager: %v", err)
 	}
 
 	// Set up the channels for the watcher and operator.
@@ -144,22 +153,23 @@ func start(opts *StartOptions) error {
 	// Set up and start the file watcher.
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		log.Error(err, "failed to create watcher")
-		os.Exit(1)
+		return fmt.Errorf("failed to create watcher: %v", err)
 	}
-	defer watcher.Close()
+	defer func() {
+		if err := watcher.Close(); err != nil {
+			log.V(1).Info("warning: watcher close returned an error: %v", err)
+		}
+	}()
 
 	var orig []byte
 	if len(opts.ShutdownFile) > 0 {
 		if err := watcher.Add(opts.ShutdownFile); err != nil {
-			log.Error(err, "failed to add file to watcher", "filename", opts.ShutdownFile)
-			os.Exit(1)
+			return fmt.Errorf("failed to add file %q to watcher: %v", opts.ShutdownFile, err)
 		}
 		log.Info("watching file", "filename", opts.ShutdownFile)
 		orig, err = ioutil.ReadFile(opts.ShutdownFile)
 		if err != nil {
-			log.Error(err, "failed to read watched file", "filename", opts.ShutdownFile)
-			os.Exit(1)
+			return fmt.Errorf("failed to read watcher file %q: %v", opts.ShutdownFile, err)
 		}
 	}
 	go func() {
