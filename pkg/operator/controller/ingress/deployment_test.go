@@ -435,7 +435,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	}
 	if !foundIPv4V6Mode {
 		t.Error("router Deployment is missing ROUTER_IP_V4_V6_MODE setting")
-	} else if ipv4v6Mode != "v6_only" {
+	} else if ipv4v6Mode != "v6" {
 		t.Errorf("router Deployment has unexpected ROUTER_IP_V4_V6_MODE setting: %q", ipv4v6Mode)
 	}
 }

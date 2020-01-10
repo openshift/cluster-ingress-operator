@@ -425,7 +425,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	if usingIPv6 {
 		mode := "v4v6"
 		if !usingIPv4 {
-			mode = "v6_only"
+			mode = "v6"
 		}
 		env = append(env, corev1.EnvVar{Name: "ROUTER_IP_V4_V6_MODE", Value: mode})
 	}
