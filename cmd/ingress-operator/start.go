@@ -38,26 +38,39 @@ const (
 	// operator's namespace that will hold the credentials that the operator
 	// will use to authenticate with the cloud API.
 	cloudCredentialsSecretName = "cloud-credentials"
+
 	// defaultTrustedCABundle is the fully qualified path of the trusted CA bundle
 	// that is mounted from configmap openshift-ingress-operator/trusted-ca.
 	defaultTrustedCABundle = "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem"
 )
 
+type StartOptions struct {
+	// When this file changes, the operator will shut down. This is useful for simple
+	// reloading when things like a certificate changes.
+	ShutdownFile string
+}
+
 func NewStartCommand() *cobra.Command {
-	return &cobra.Command{
+	var options StartOptions
+
+	cmd := &cobra.Command{
 		Use:   "start",
 		Short: "Start the operator",
 		Long:  `starts launches the operator in the foreground.`,
 		Run: func(cmd *cobra.Command, args []string) {
-			if err := start(); err != nil {
+			if err := start(&options); err != nil {
 				log.Error(err, "error starting")
 				os.Exit(1)
 			}
 		},
 	}
+
+	cmd.Flags().StringVarP(&options.ShutdownFile, "shutdown-file", "s", defaultTrustedCABundle, "file which when modified should trigger a shutdown. If empty, shutdown triggering is disabled.")
+
+	return cmd
 }
 
-func start() error {
+func start(opts *StartOptions) error {
 	metrics.DefaultBindAddress = ":60000"
 
 	// Get a kube client.
@@ -135,15 +148,19 @@ func start() error {
 		os.Exit(1)
 	}
 	defer watcher.Close()
-	if err := watcher.Add(defaultTrustedCABundle); err != nil {
-		log.Error(err, "failed to add file to watcher", "filename", defaultTrustedCABundle)
-		os.Exit(1)
-	}
-	log.Info("watching file", "filename", defaultTrustedCABundle)
-	orig, err := ioutil.ReadFile(defaultTrustedCABundle)
-	if err != nil {
-		log.Error(err, "failed to read watched file", "filename", defaultTrustedCABundle)
-		os.Exit(1)
+
+	var orig []byte
+	if len(opts.ShutdownFile) > 0 {
+		if err := watcher.Add(opts.ShutdownFile); err != nil {
+			log.Error(err, "failed to add file to watcher", "filename", opts.ShutdownFile)
+			os.Exit(1)
+		}
+		log.Info("watching file", "filename", opts.ShutdownFile)
+		orig, err = ioutil.ReadFile(opts.ShutdownFile)
+		if err != nil {
+			log.Error(err, "failed to read watched file", "filename", opts.ShutdownFile)
+			os.Exit(1)
+		}
 	}
 	go func() {
 		for {
@@ -157,14 +174,14 @@ func start() error {
 					close(stop)
 					return
 				}
-				latest, err := ioutil.ReadFile(defaultTrustedCABundle)
+				latest, err := ioutil.ReadFile(opts.ShutdownFile)
 				if err != nil {
-					log.Error(err, "failed to read watched file", "filename", defaultTrustedCABundle)
+					log.Error(err, "failed to read watched file", "filename", opts.ShutdownFile)
 					close(stop)
 					return
 				}
 				if !bytes.Equal(orig, latest) {
-					log.Info("watched file changed, stopping operator", "filename", defaultTrustedCABundle)
+					log.Info("watched file changed, stopping operator", "filename", opts.ShutdownFile)
 					close(stop)
 					return
 				}
