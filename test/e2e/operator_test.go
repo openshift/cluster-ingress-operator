@@ -20,6 +20,7 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
+	routev1 "github.com/openshift/api/route/v1"
 
 	iov1 "github.com/openshift/cluster-ingress-operator/pkg/api/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
@@ -578,6 +579,7 @@ func TestInternalLoadBalancer(t *testing.T) {
 	supportedPlatforms := map[configv1.PlatformType]struct{}{
 		configv1.AWSPlatformType:   {},
 		configv1.AzurePlatformType: {},
+		configv1.IBMCloudPlatformType: {},
 	}
 	if _, supported := supportedPlatforms[platform]; !supported {
 		t.Skip(fmt.Sprintf("test skipped on platform %q", platform))
@@ -700,6 +702,120 @@ func TestTLSSecurityProfile(t *testing.T) {
 	}
 }
 
+func TestRouteAdmissionPolicy(t *testing.T) {
+	// Set up an ingresscontroller which only selects routes created by this test
+	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "routeadmission"}
+	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
+	ic := newPrivateController(icName, domain)
+	ic.Spec.RouteAdmission = &operatorv1.RouteAdmissionPolicy{
+		NamespaceOwnership: operatorv1.StrictNamespaceOwnershipCheck,
+	}
+	ic.Spec.RouteSelector = &metav1.LabelSelector{
+		MatchLabels: map[string]string{
+			"routeadmissiontest": "",
+		},
+	}
+	if err := kclient.Create(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
+	}
+	defer assertIngressControllerDeleted(t, kclient, ic)
+	conditions := []operatorv1.OperatorCondition{
+		{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionTrue},
+		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
+		{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionFalse},
+	}
+	if err := waitForIngressControllerCondition(kclient, 5*time.Minute, icName, conditions...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	// Set up a pair of namespaces in which to create routes
+	ns1 := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "routeadmissionpolicytest1",
+		},
+	}
+	if err := kclient.Create(context.TODO(), ns1); err != nil {
+		t.Fatalf("failed to create namespace: %v", err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), ns1); err != nil {
+			t.Fatalf("failed to delete test namespace %v: %v", ns1.Name, err)
+		}
+	}()
+	ns2 := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "routeadmissionpolicytest2",
+		},
+	}
+	if err := kclient.Create(context.TODO(), ns2); err != nil {
+		t.Fatalf("failed to create namespace: %v", err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), ns2); err != nil {
+			t.Fatalf("failed to delete test namespace %v: %v", ns2.Name, err)
+		}
+	}()
+
+	// Create conflicting routes in the namespaces
+	makeRoute := func(name types.NamespacedName, host, path string) *routev1.Route {
+		return &routev1.Route{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: name.Namespace,
+				Name:      name.Name,
+				Labels: map[string]string{
+					"routeadmissiontest": "",
+				},
+			},
+			Spec: routev1.RouteSpec{
+				Host: host,
+				Path: path,
+				To: routev1.RouteTargetReference{
+					Kind: "Service",
+					Name: "foo",
+				},
+			},
+		}
+	}
+	route1Name := types.NamespacedName{Namespace: ns1.Name, Name: "route"}
+	route1 := makeRoute(route1Name, "routeadmission.test.example.com", "/foo")
+
+	route2Name := types.NamespacedName{Namespace: ns2.Name, Name: "route"}
+	route2 := makeRoute(route2Name, "routeadmission.test.example.com", "/bar")
+
+	admittedCondition := routev1.RouteIngressCondition{Type: routev1.RouteAdmitted, Status: corev1.ConditionTrue}
+	rejectedCondition := routev1.RouteIngressCondition{Type: routev1.RouteAdmitted, Status: corev1.ConditionFalse}
+
+	// The first route should be admitted
+	if err := kclient.Create(context.TODO(), route1); err != nil {
+		t.Fatalf("failed to create route: %v", err)
+	}
+	if err := waitForRouteIngressConditions(kclient, route1Name, ic.Name, admittedCondition); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	// The second route should be rejected because the policy is Strict
+	if err := kclient.Create(context.TODO(), route2); err != nil {
+		t.Fatalf("failed to create route: %v", err)
+	}
+	if err := waitForRouteIngressConditions(kclient, route2Name, ic.Name, rejectedCondition); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	// Update the ingresscontroller to a different route admission policy
+	if err := kclient.Get(context.TODO(), icName, ic); err != nil {
+		t.Fatalf("failed to get ingresscontroller: %v", ic)
+	}
+	ic.Spec.RouteAdmission.NamespaceOwnership = operatorv1.InterNamespaceAllowedOwnershipCheck
+	if err := kclient.Update(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to update ingresscontroller: %v", err)
+	}
+
+	// The second route should eventually be admitted because of the new policy
+	if err := waitForRouteIngressConditions(kclient, route2Name, ic.Name, admittedCondition); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+}
+
 func newLoadBalancerController(name types.NamespacedName, domain string) *operatorv1.IngressController {
 	repl := int32(1)
 	return &operatorv1.IngressController{
@@ -798,6 +914,14 @@ func clusterOperatorConditionMap(conditions ...configv1.ClusterOperatorStatusCon
 func operatorConditionMap(conditions ...operatorv1.OperatorCondition) map[string]string {
 	conds := map[string]string{}
 	for _, cond := range conditions {
+		conds[cond.Type] = string(cond.Status)
+	}
+	return conds
+}
+
+func routeConditionMap(conditions ...routev1.RouteIngressCondition) map[string]string {
+	conds := map[string]string{}
+	for _, cond := range conditions {
 		conds[string(cond.Type)] = string(cond.Status)
 	}
 	return conds
@@ -823,6 +947,25 @@ func waitForClusterOperatorConditions(cl client.Client, conditions ...configv1.C
 		expected := clusterOperatorConditionMap(conditions...)
 		current := clusterOperatorConditionMap(co.Status.Conditions...)
 		return conditionsMatchExpected(expected, current), nil
+	})
+}
+
+func waitForRouteIngressConditions(cl client.Client, routeName types.NamespacedName, routerName string, conditions ...routev1.RouteIngressCondition) error {
+	return wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
+		route := &routev1.Route{}
+		if err := cl.Get(context.TODO(), routeName, route); err != nil {
+			return false, err
+		}
+
+		for _, ingress := range route.Status.Ingress {
+			if ingress.RouterName == routerName {
+				expected := routeConditionMap(conditions...)
+				current := routeConditionMap(ingress.Conditions...)
+				return conditionsMatchExpected(expected, current), nil
+			}
+		}
+
+		return false, nil
 	})
 }
 
