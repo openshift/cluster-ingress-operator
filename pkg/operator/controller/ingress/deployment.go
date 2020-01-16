@@ -430,6 +430,19 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		env = append(env, corev1.EnvVar{Name: "ROUTER_IP_V4_V6_MODE", Value: mode})
 	}
 
+	routeAdmission := operatorv1.RouteAdmissionPolicy{
+		NamespaceOwnership: operatorv1.StrictNamespaceOwnershipCheck,
+	}
+	if admission := ci.Spec.RouteAdmission; admission != nil && len(admission.NamespaceOwnership) > 0 {
+		routeAdmission.NamespaceOwnership = ci.Spec.RouteAdmission.NamespaceOwnership
+	}
+	switch routeAdmission.NamespaceOwnership {
+	case operatorv1.StrictNamespaceOwnershipCheck:
+		env = append(env, corev1.EnvVar{Name: "ROUTER_DISABLE_NAMESPACE_OWNERSHIP_CHECK", Value: "false"})
+	case operatorv1.InterNamespaceAllowedOwnershipCheck:
+		env = append(env, corev1.EnvVar{Name: "ROUTER_DISABLE_NAMESPACE_OWNERSHIP_CHECK", Value: "true"})
+	}
+
 	deployment.Spec.Template.Spec.Volumes = volumes
 	deployment.Spec.Template.Spec.Containers[0].VolumeMounts = routerVolumeMounts
 	deployment.Spec.Template.Spec.Containers[0].Env = append(deployment.Spec.Template.Spec.Containers[0].Env, env...)
