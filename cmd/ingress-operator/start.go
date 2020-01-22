@@ -87,12 +87,6 @@ func NewStartCommand() *cobra.Command {
 	if err := cmd.MarkFlagRequired("image"); err != nil {
 		panic(err)
 	}
-	if err := cmd.MarkFlagRequired("release-version"); err != nil {
-		panic(err)
-	}
-	if err := cmd.MarkFlagRequired("metrics-listen-addr"); err != nil {
-		panic(err)
-	}
 
 	return cmd
 }
