@@ -190,6 +190,18 @@ func start() error {
 // createDNSManager creates a DNS manager compatible with the given cluster
 // configuration.
 func createDNSProvider(cl client.Client, operatorConfig operatorconfig.Config, dnsConfig *configv1.DNS, platformStatus *configv1.PlatformStatus) (dns.Provider, error) {
+	// If no DNS configuration is provided, don't try to set up provider clients.
+	// TODO: the provider configuration can be refactored into the provider
+	// implementations themselves, so this part of the code won't need to
+	// know anything about the provider setup beyond picking the right implementation.
+	// Then, it would be safe to always use the appropriate provider for the platform
+	// and let the provider surface configuration errors if DNS records are actually
+	// created to exercise the provider.
+	if dnsConfig.Spec.PrivateZone == nil && dnsConfig.Spec.PublicZone == nil {
+		log.Info("using fake DNS provider because no public or private zone is defined in the cluster DNS configuration")
+		return &dns.FakeProvider{}, nil
+	}
+
 	var dnsProvider dns.Provider
 	userAgent := fmt.Sprintf("OpenShift/%s (ingress-operator)", operatorConfig.OperatorReleaseVersion)
 
