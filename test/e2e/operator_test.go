@@ -577,8 +577,8 @@ func TestInternalLoadBalancer(t *testing.T) {
 	platform := infraConfig.Status.Platform
 
 	supportedPlatforms := map[configv1.PlatformType]struct{}{
-		configv1.AWSPlatformType:   {},
-		configv1.AzurePlatformType: {},
+		configv1.AWSPlatformType:      {},
+		configv1.AzurePlatformType:    {},
 		configv1.IBMCloudPlatformType: {},
 	}
 	if _, supported := supportedPlatforms[platform]; !supported {

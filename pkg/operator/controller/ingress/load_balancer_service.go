@@ -27,7 +27,6 @@ const (
 	iksLBProxyProtocolAnnotations = "service.kubernetes.io/ibm-load-balancer-cloud-provider-ip-type"
 
 	iksLBProxyRegionAnnotations = "service.kubernetes.io/ibm-load-balancer-cloud-provider-zone"
-
 )
 
 var (
