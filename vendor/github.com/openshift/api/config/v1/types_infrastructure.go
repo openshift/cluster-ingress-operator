@@ -133,6 +133,10 @@ type PlatformStatus struct {
 	// Ovirt contains settings specific to the oVirt infrastructure provider.
 	// +optional
 	Ovirt *OvirtPlatformStatus `json:"ovirt,omitempty"`
+
+	// VSphere contains settings specific to the VSphere infrastructure provider.
+	// +optional
+	VSphere *VSpherePlatformStatus `json:"vsphere,omitempty"`
 }
 
 // AWSPlatformStatus holds the current status of the Amazon Web Services infrastructure provider.

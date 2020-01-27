@@ -23,6 +23,10 @@ const (
 	//
 	// https://kubernetes.io/docs/concepts/services-networking/service/#proxy-protocol-support-on-aws
 	awsLBProxyProtocolAnnotation = "service.beta.kubernetes.io/aws-load-balancer-proxy-protocol"
+
+	iksLBProxyProtocolAnnotations = "service.kubernetes.io/ibm-load-balancer-cloud-provider-ip-type"
+
+	iksLBProxyRegionAnnotations = "service.kubernetes.io/ibm-load-balancer-cloud-provider-zone"
 )
 
 var (
