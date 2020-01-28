@@ -23,6 +23,10 @@ const (
 	//
 	// https://kubernetes.io/docs/concepts/services-networking/service/#proxy-protocol-support-on-aws
 	awsLBProxyProtocolAnnotation = "service.beta.kubernetes.io/aws-load-balancer-proxy-protocol"
+
+	iksLBProxyProtocolAnnotations = "service.kubernetes.io/ibm-load-balancer-cloud-provider-ip-type"
+
+	iksLBProxyRegionAnnotations = "service.kubernetes.io/ibm-load-balancer-cloud-provider-zone"
 )
 
 var (
@@ -53,6 +57,9 @@ var (
 		configv1.NonePlatformType: nil,
 		// vSphere does not support load balancers as of 2019-06-17.
 		configv1.VSpherePlatformType: nil,
+		configv1.IBMCloudPlatformType: {
+			iksLBProxyProtocolAnnotations: "private",
+		},
 	}
 )
 
@@ -110,6 +117,11 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 	if infraConfig.Status.Platform == configv1.AWSPlatformType {
 		service.Annotations[awsLBProxyProtocolAnnotation] = "*"
 	}
+
+	if infraConfig.Status.Platform == configv1.IBMCloudPlatformType {
+		service.Annotations[iksLBProxyProtocolAnnotations] = "public"
+	}
+
 	if isInternal {
 		annotation := InternalLBAnnotations[infraConfig.Status.Platform]
 		for name, value := range annotation {
