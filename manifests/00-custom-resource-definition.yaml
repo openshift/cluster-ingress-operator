@@ -616,6 +616,12 @@ spec:
                     type: object
                   type: array
               type: object
+            proxyprotocol:
+              description: proxyprotocol is a flag used to indicate whether the ingress
+                routers should be configured to accept the PROXY Protocol or not.
+                If unset, defaults to false, unless the Infrastructure platform is
+                of type AWS, which it is enabled by default.
+              type: boolean
             replicas:
               description: replicas is the desired number of ingress controller replicas.
                 If unset, defaults to 2.

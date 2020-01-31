@@ -167,10 +167,16 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		env = append(env, corev1.EnvVar{Name: "ROUTER_CANONICAL_HOSTNAME", Value: ci.Status.Domain})
 	}
 
-	if ci.Status.EndpointPublishingStrategy.Type == operatorv1.LoadBalancerServiceStrategyType {
+	// Check if ProxyProtocol is enabled - not the most efficient if/elseif, but someone else can
+	// clean it up when they make this more robust to handle more flags, or ask me to do it.
+	if ci.Spec.ProxyProtocolEnabled == true {
+		log.Info("ProxyProtocol flag was set - using PROXY PROTOCOL")
+		env = append(env, corev1.EnvVar{Name: "ROUTER_USE_PROXY_PROTOCOL", Value: "true"})
+	} else if ci.Status.EndpointPublishingStrategy.Type == operatorv1.LoadBalancerServiceStrategyType {
 		// For now, check if we are on AWS. This can really be done for
 		// for any external [cloud] LBs that support the proxy protocol.
 		if infraConfig.Status.Platform == configv1.AWSPlatformType {
+			log.Info("Platform is AWS - using PROXY PROTOCOL")
 			env = append(env, corev1.EnvVar{Name: "ROUTER_USE_PROXY_PROTOCOL", Value: "true"})
 		}
 	}

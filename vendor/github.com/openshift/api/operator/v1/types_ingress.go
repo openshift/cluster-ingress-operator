@@ -64,6 +64,13 @@ type IngressControllerSpec struct {
 	// +optional
 	Replicas *int32 `json:"replicas,omitempty"`
 
+
+	// proxyprotocol is a flag used to indicate whether the ingress routers should be configured to accept the PROXY Protocol or not.
+	// If unset, defaults to false, unless the Infrastructure platform is of type AWS, which it is enabled by default.
+	//
+	// +optional
+	ProxyProtocolEnabled bool `json:"proxyprotocol,omitempty"`
+
 	// endpointPublishingStrategy is used to publish the ingress controller
 	// endpoints to other networks, enable load balancer integrations, etc.
 	//
