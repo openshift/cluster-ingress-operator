@@ -83,10 +83,9 @@ spec:
                 etc. \n If unset, the default is based on infrastructure.config.openshift.io/cluster
                 .status.platform: \n   AWS:      LoadBalancerService (with External
                 scope)   Azure:    LoadBalancerService (with External scope)   GCP:
-                \     LoadBalancerService (with External scope)   IBMCloud: LoadBalancerService
-                (with External scope)   Libvirt:  HostNetwork \n Any other platform
-                types (including None) default to HostNetwork. \n endpointPublishingStrategy
-                cannot be updated."
+                \     LoadBalancerService (with External scope)   Libvirt:  HostNetwork
+                \n Any other platform types (including None) default to HostNetwork.
+                \n endpointPublishingStrategy cannot be updated."
               type: object
               required:
               - type
@@ -277,21 +276,6 @@ spec:
                 If unset, defaults to 2.
               type: integer
               format: int32
-            routeAdmission:
-              description: "routeAdmission defines a policy for handling new route
-                claims (for example, to allow or deny claims across namespaces). \n
-                If empty, defaults will be applied. See specific routeAdmission fields
-                for details about their defaults."
-              type: object
-              properties:
-                namespaceOwnership:
-                  description: "namespaceOwnership describes how host name claims
-                    across namespaces should be handled. \n Value must be one of:
-                    \n - Strict: Do not allow routes in different namespaces to claim
-                    the same host. \n - InterNamespaceAllowed: Allow routes to claim
-                    different paths of the same   host name across namespaces. \n
-                    If empty, the default is Strict."
-                  type: string
             routeSelector:
               description: "routeSelector is used to filter the set of Routes serviced
                 by the ingress controller. This is useful for implementing shards.
