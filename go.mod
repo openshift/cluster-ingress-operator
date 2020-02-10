@@ -25,6 +25,7 @@ require (
 	go.uber.org/zap v1.9.1
 	golang.org/x/time v0.0.0-20190308202827-9d24e82272b4 // indirect
 	google.golang.org/api v0.4.0
+	gopkg.in/fsnotify.v1 v1.4.7
 	gopkg.in/yaml.v2 v2.2.2
 
 	// kubernetes-1.16.0
