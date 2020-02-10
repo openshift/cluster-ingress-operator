@@ -114,7 +114,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		// use host networking and specify the same port to the same
 		// node.  Thus no affinity policy is required when using
 		// HostNetwork.
-	case operatorv1.PrivateStrategyType, operatorv1.LoadBalancerServiceStrategyType:
+	case operatorv1.PrivateStrategyType, operatorv1.LoadBalancerServiceStrategyType, operatorv1.NodePortServiceStrategyType:
 		// To avoid downtime during a rolling update, we need two
 		// things: a deployment strategy and affinity policy.  First,
 		// the deployment strategy: During a rolling update, we want the
