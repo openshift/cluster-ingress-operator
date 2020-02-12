@@ -17,7 +17,7 @@ require (
 	github.com/google/go-cmp v0.3.0
 	github.com/imdario/mergo v0.3.7 // indirect
 	github.com/kevinburke/go-bindata v3.11.0+incompatible
-	github.com/openshift/api v0.0.0-20200212190230-267354aa4567
+	github.com/openshift/api v0.0.0-20200217161739-c99157bc6492
 	github.com/openshift/library-go v0.0.0-20190927184318-c355e2019bb3
 	github.com/pkg/errors v0.8.1
 	github.com/spf13/cobra v0.0.5
