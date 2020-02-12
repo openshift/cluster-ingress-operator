@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	iov1 "github.com/openshift/cluster-ingress-operator/pkg/api/v1"
+	iov1 "github.com/openshift/api/operatoringress/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 

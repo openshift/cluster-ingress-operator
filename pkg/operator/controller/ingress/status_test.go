@@ -8,7 +8,6 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
-	iov1 "github.com/openshift/cluster-ingress-operator/pkg/api/v1"
 	retryable "github.com/openshift/cluster-ingress-operator/pkg/util/retryableerror"
 
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
@@ -126,7 +125,7 @@ func TestComputeIngressDegradedCondition(t *testing.T) {
 		{
 			name: "not admitted",
 			conditions: []operatorv1.OperatorCondition{
-				cond(iov1.IngressControllerAdmittedConditionType, operatorv1.ConditionFalse, "", clock.Now()),
+				cond(IngressControllerAdmittedConditionType, operatorv1.ConditionFalse, "", clock.Now()),
 			},
 			expectIngressDegradedStatus: operatorv1.ConditionTrue,
 			expectRequeue:               true,
@@ -134,7 +133,7 @@ func TestComputeIngressDegradedCondition(t *testing.T) {
 		{
 			name: "deployment degraded for <30s",
 			conditions: []operatorv1.OperatorCondition{
-				cond(iov1.IngressControllerDeploymentDegradedConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Second*-20)),
+				cond(IngressControllerDeploymentDegradedConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Second*-20)),
 			},
 			expectIngressDegradedStatus: operatorv1.ConditionFalse,
 			expectRequeue:               true,
@@ -142,7 +141,7 @@ func TestComputeIngressDegradedCondition(t *testing.T) {
 		{
 			name: "deployment degraded for >30s",
 			conditions: []operatorv1.OperatorCondition{
-				cond(iov1.IngressControllerDeploymentDegradedConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Second*-31)),
+				cond(IngressControllerDeploymentDegradedConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Second*-31)),
 			},
 			expectIngressDegradedStatus: operatorv1.ConditionTrue,
 			expectRequeue:               true,
@@ -205,8 +204,8 @@ func TestComputeIngressDegradedCondition(t *testing.T) {
 		{
 			name: "DNS not ready and deployment degraded",
 			conditions: []operatorv1.OperatorCondition{
-				cond(iov1.IngressControllerAdmittedConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
-				cond(iov1.IngressControllerDeploymentDegradedConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+				cond(IngressControllerAdmittedConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+				cond(IngressControllerDeploymentDegradedConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
 				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
 				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
 				cond(operatorv1.DNSManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
@@ -218,8 +217,8 @@ func TestComputeIngressDegradedCondition(t *testing.T) {
 		{
 			name: "admitted, DNS, LB, and deployment OK",
 			conditions: []operatorv1.OperatorCondition{
-				cond(iov1.IngressControllerAdmittedConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
-				cond(iov1.IngressControllerDeploymentDegradedConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Hour*-1)),
+				cond(IngressControllerAdmittedConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+				cond(IngressControllerDeploymentDegradedConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Hour*-1)),
 				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
 				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
 				cond(operatorv1.DNSManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),

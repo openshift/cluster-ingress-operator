@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	iov1 "github.com/openshift/cluster-ingress-operator/pkg/api/v1"
+	iov1 "github.com/openshift/api/operatoringress/v1"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	retryable "github.com/openshift/cluster-ingress-operator/pkg/util/retryableerror"
@@ -37,6 +37,12 @@ import (
 
 const (
 	controllerName = "ingress_controller"
+)
+
+// TODO: consider moving these to openshift/api
+const (
+	IngressControllerAdmittedConditionType           = "Admitted"
+	IngressControllerDeploymentDegradedConditionType = "DeploymentDegraded"
 )
 
 var (
@@ -227,7 +233,7 @@ func (r *reconciler) admit(current *operatorv1.IngressController, ingressConfig 
 		switch err := err.(type) {
 		case *admissionRejection:
 			updated.Status.Conditions = mergeConditions(updated.Status.Conditions, operatorv1.OperatorCondition{
-				Type:    iov1.IngressControllerAdmittedConditionType,
+				Type:    IngressControllerAdmittedConditionType,
 				Status:  operatorv1.ConditionFalse,
 				Reason:  "Invalid",
 				Message: err.Reason,
@@ -243,7 +249,7 @@ func (r *reconciler) admit(current *operatorv1.IngressController, ingressConfig 
 	}
 
 	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, operatorv1.OperatorCondition{
-		Type:   iov1.IngressControllerAdmittedConditionType,
+		Type:   IngressControllerAdmittedConditionType,
 		Status: operatorv1.ConditionTrue,
 		Reason: "Valid",
 	})
@@ -258,7 +264,7 @@ func (r *reconciler) admit(current *operatorv1.IngressController, ingressConfig 
 
 func isAdmitted(ic *operatorv1.IngressController) bool {
 	for _, cond := range ic.Status.Conditions {
-		if cond.Type == iov1.IngressControllerAdmittedConditionType && cond.Status == operatorv1.ConditionTrue {
+		if cond.Type == IngressControllerAdmittedConditionType && cond.Status == operatorv1.ConditionTrue {
 			return true
 		}
 	}

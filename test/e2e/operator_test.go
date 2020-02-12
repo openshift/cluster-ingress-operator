@@ -22,7 +22,7 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 	routev1 "github.com/openshift/api/route/v1"
 
-	iov1 "github.com/openshift/cluster-ingress-operator/pkg/api/v1"
+	iov1 "github.com/openshift/api/operatoringress/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
@@ -58,7 +58,7 @@ var (
 		{Type: operatorv1.LoadBalancerReadyIngressConditionType, Status: operatorv1.ConditionTrue},
 		{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionTrue},
 		{Type: operatorv1.DNSReadyIngressConditionType, Status: operatorv1.ConditionTrue},
-		{Type: iov1.IngressControllerAdmittedConditionType, Status: operatorv1.ConditionTrue},
+		{Type: ingresscontroller.IngressControllerAdmittedConditionType, Status: operatorv1.ConditionTrue},
 	}
 )
 
@@ -139,7 +139,7 @@ func TestUniqueDomainRejection(t *testing.T) {
 	defer assertIngressControllerDeleted(t, kclient, conflict)
 
 	conditions := []operatorv1.OperatorCondition{
-		{Type: iov1.IngressControllerAdmittedConditionType, Status: operatorv1.ConditionFalse},
+		{Type: ingresscontroller.IngressControllerAdmittedConditionType, Status: operatorv1.ConditionFalse},
 	}
 	err := waitForIngressControllerCondition(kclient, 5*time.Minute, conflictName, conditions...)
 	if err != nil {
@@ -558,7 +558,7 @@ func TestHostNetworkEndpointPublishingStrategy(t *testing.T) {
 	defer assertIngressControllerDeleted(t, kclient, ing)
 
 	conditions := []operatorv1.OperatorCondition{
-		{Type: iov1.IngressControllerAdmittedConditionType, Status: operatorv1.ConditionTrue},
+		{Type: ingresscontroller.IngressControllerAdmittedConditionType, Status: operatorv1.ConditionTrue},
 		{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionTrue},
 		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
 		{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionFalse},
@@ -628,7 +628,7 @@ func TestNodePortServiceEndpointPublishingStrategy(t *testing.T) {
 	defer assertIngressControllerDeleted(t, kclient, ing)
 
 	conditions := []operatorv1.OperatorCondition{
-		{Type: iov1.IngressControllerAdmittedConditionType, Status: operatorv1.ConditionTrue},
+		{Type: ingresscontroller.IngressControllerAdmittedConditionType, Status: operatorv1.ConditionTrue},
 		{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionTrue},
 		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
 		{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionFalse},

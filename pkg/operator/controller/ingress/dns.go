@@ -7,7 +7,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
-	iov1 "github.com/openshift/cluster-ingress-operator/pkg/api/v1"
+	iov1 "github.com/openshift/api/operatoringress/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
@@ -97,7 +97,7 @@ func desiredWildcardRecord(ic *operatorv1.IngressController, service *corev1.Ser
 	// Use an absolute name to prevent any ambiguity.
 	domain := fmt.Sprintf("*.%s.", ic.Status.Domain)
 	var target string
-	var recordType string
+	var recordType iov1.DNSRecordType
 
 	if len(ingress.Hostname) > 0 {
 		recordType = iov1.CNAMERecordType

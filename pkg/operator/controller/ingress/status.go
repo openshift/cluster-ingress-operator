@@ -10,7 +10,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
-	iov1 "github.com/openshift/cluster-ingress-operator/pkg/api/v1"
+	iov1 "github.com/openshift/api/operatoringress/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/retryableerror"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -140,14 +140,14 @@ func computeDeploymentDegradedCondition(deployment *appsv1.Deployment) operatorv
 			switch cond.Status {
 			case corev1.ConditionFalse:
 				return operatorv1.OperatorCondition{
-					Type:    iov1.IngressControllerDeploymentDegradedConditionType,
+					Type:    IngressControllerDeploymentDegradedConditionType,
 					Status:  operatorv1.ConditionTrue,
 					Reason:  "DeploymentUnavailable",
 					Message: fmt.Sprintf("The deployment has Available status condition set to False (reason: %s) with message: %s", cond.Reason, cond.Message),
 				}
 			case corev1.ConditionTrue:
 				return operatorv1.OperatorCondition{
-					Type:    iov1.IngressControllerDeploymentDegradedConditionType,
+					Type:    IngressControllerDeploymentDegradedConditionType,
 					Status:  operatorv1.ConditionFalse,
 					Reason:  "DeploymentAvailable",
 					Message: "The deployment has Available status condition set to True",
@@ -157,7 +157,7 @@ func computeDeploymentDegradedCondition(deployment *appsv1.Deployment) operatorv
 		}
 	}
 	return operatorv1.OperatorCondition{
-		Type:    iov1.IngressControllerDeploymentDegradedConditionType,
+		Type:    IngressControllerDeploymentDegradedConditionType,
 		Status:  operatorv1.ConditionUnknown,
 		Reason:  "DeploymentAvailabilityUnknown",
 		Message: "The deployment has no Available status condition set",
@@ -185,11 +185,11 @@ func computeIngressDegradedCondition(conditions []operatorv1.OperatorCondition) 
 		gracePeriod      time.Duration
 	}{
 		{
-			condition: iov1.IngressControllerAdmittedConditionType,
+			condition: IngressControllerAdmittedConditionType,
 			status:    operatorv1.ConditionTrue,
 		},
 		{
-			condition:   iov1.IngressControllerDeploymentDegradedConditionType,
+			condition:   IngressControllerDeploymentDegradedConditionType,
 			status:      operatorv1.ConditionFalse,
 			gracePeriod: time.Second * 30,
 		},

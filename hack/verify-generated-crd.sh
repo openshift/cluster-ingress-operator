@@ -1,11 +1,18 @@
 #!/bin/bash
 set -euo pipefail
 
-TMP_DIR="$(mktemp -d)"
-VENDORED_CRD="vendor/github.com/openshift/api/operator/v1/0000_50_ingress-operator_00-custom-resource-definition.yaml"
-LOCAL_CRD="manifests/00-custom-resource-definition.yaml"
+function verify_crd {
+  local SRC="$1"
+  local DST="$2"
+  if ! diff -Naup "$SRC" "$DST"; then
+    echo "invalid CRD: $SRC => $DST"
+  fi
+}
 
-OUTDIR="$TMP_DIR" SKIP_COPY=true ./hack/update-generated-crd.sh
+verify_crd \
+  "vendor/github.com/openshift/api/operator/v1/0000_50_ingress-operator_00-custom-resource-definition.yaml" \
+  "manifests/00-custom-resource-definition.yaml"
 
-diff -Naup "$TMP_DIR/ingress.operator.openshift.io_dnsrecords.yaml" manifests/00-custom-resource-definition-internal.yaml
-diff -Naup "$VENDORED_CRD" "$LOCAL_CRD"
+verify_crd \
+  "vendor/github.com/openshift/api/operatoringress/v1/0000_50_dns-record.yaml" \
+  "manifests/00-custom-resource-definition-internal.yaml"

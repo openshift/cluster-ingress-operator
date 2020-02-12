@@ -1,7 +1,7 @@
 package dns
 
 import (
-	iov1 "github.com/openshift/cluster-ingress-operator/pkg/api/v1"
+	iov1 "github.com/openshift/api/operatoringress/v1"
 
 	configv1 "github.com/openshift/api/config/v1"
 )

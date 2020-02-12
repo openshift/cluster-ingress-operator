@@ -9,8 +9,8 @@ import (
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 
-	iov1 "github.com/openshift/cluster-ingress-operator/pkg/api/v1"
-	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 
 	corev1 "k8s.io/api/core/v1"
 
@@ -34,7 +34,7 @@ func TestCreateIngressControllerThenSecret(t *testing.T) {
 	defer assertIngressControllerDeleted(t, kclient, ic)
 
 	conditions := []operatorv1.OperatorCondition{
-		{Type: iov1.IngressControllerAdmittedConditionType, Status: operatorv1.ConditionTrue},
+		{Type: ingresscontroller.IngressControllerAdmittedConditionType, Status: operatorv1.ConditionTrue},
 	}
 	err := waitForIngressControllerCondition(kclient, 5*time.Minute, name, conditions...)
 	if err != nil {
@@ -55,7 +55,7 @@ func TestCreateIngressControllerThenSecret(t *testing.T) {
 	// Wait for the "router-certs" secret to be updated.
 	err = wait.PollImmediate(1*time.Second, 60*time.Second, func() (bool, error) {
 		globalSecret := &corev1.Secret{}
-		if err := kclient.Get(context.TODO(), ingresscontroller.RouterCertsGlobalSecretName(), globalSecret); err != nil {
+		if err := kclient.Get(context.TODO(), controller.RouterCertsGlobalSecretName(), globalSecret); err != nil {
 			return false, nil
 		}
 		if _, ok := globalSecret.Data[ic.Spec.Domain]; !ok {
@@ -98,7 +98,7 @@ func TestCreateSecretThenIngressController(t *testing.T) {
 	// Wait for the "router-certs" secret to be updated.
 	err = wait.PollImmediate(1*time.Second, 60*time.Second, func() (bool, error) {
 		globalSecret := &corev1.Secret{}
-		if err := kclient.Get(context.TODO(), ingresscontroller.RouterCertsGlobalSecretName(), globalSecret); err != nil {
+		if err := kclient.Get(context.TODO(), controller.RouterCertsGlobalSecretName(), globalSecret); err != nil {
 			return false, nil
 		}
 		if _, ok := globalSecret.Data[ic.Spec.Domain]; !ok {
