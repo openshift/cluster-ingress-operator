@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/arn"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go/aws/endpoints"
 	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/elb"
@@ -102,12 +103,27 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 		return nil, fmt.Errorf("region is required")
 	}
 
+	r53Config := aws.NewConfig()
+
+	// TODO: The Tagging API will only return hostedzone resources (which are global)
+	// when the region is forced to us-east-1. We don't yet understand why.
+	tagConfig := aws.NewConfig().WithRegion(endpoints.UsEast1RegionID)
+
+	// If the region is in aws china, cn-north-1 or cn-northwest-1, we should:
+	// 1. hard code route53 api endpoint to https://route53.amazonaws.com.cn and region to "cn-northwest-1" as route53 is not GA in AWS China,
+	//    and aws sdk didn't have the endpoint.
+	// 2. use the aws china region cn-northwest-1 to setup tagging api correctly in stead of "us-east-1"
+	switch region {
+	case endpoints.CnNorth1RegionID, endpoints.CnNorthwest1RegionID:
+		tagConfig = tagConfig.WithRegion(endpoints.CnNorthwest1RegionID)
+		r53Config = r53Config.WithRegion(endpoints.CnNorthwest1RegionID)
+		r53Config = r53Config.WithEndpoint("https://route53.amazonaws.com.cn")
+	}
+
 	return &Provider{
-		elb:     elb.New(sess, aws.NewConfig().WithRegion(region)),
-		route53: route53.New(sess),
-		// TODO: This API will only return hostedzone resources (which are global)
-		// when the region is forced to us-east-1. We don't yet understand why.
-		tags:           resourcegroupstaggingapi.New(sess, aws.NewConfig().WithRegion("us-east-1")),
+		elb:            elb.New(sess, aws.NewConfig().WithRegion(region)),
+		route53:        route53.New(sess, r53Config),
+		tags:           resourcegroupstaggingapi.New(sess, tagConfig),
 		config:         config,
 		idsToTags:      map[string]map[string]string{},
 		lbZones:        map[string]string{},
