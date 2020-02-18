@@ -1,20 +1,20 @@
 #!/bin/bash
 set -euo pipefail
 
-VENDORED_CRD="vendor/github.com/openshift/api/operator/v1/0000_50_ingress-operator_00-custom-resource-definition.yaml"
-LOCAL_CRD="manifests/00-custom-resource-definition.yaml"
-OUTDIR="${OUTDIR:-}"
-if [[ -z "$OUTDIR" ]]; then
-  OUTDIR="$(mktemp -d)"
-fi
-
-set -x
-GO111MODULE=on GOFLAGS=-mod=vendor go run sigs.k8s.io/controller-tools/cmd/controller-gen crd:trivialVersions=true paths=./pkg/api/v1 output:crd:dir="$OUTDIR"
-set +x
-
-if [[ -z "${SKIP_COPY+1}" ]]; then
-  cp "$OUTDIR/ingress.operator.openshift.io_dnsrecords.yaml" manifests/00-custom-resource-definition-internal.yaml
-  if ! diff -Naup "$VENDORED_CRD" "$LOCAL_CRD"; then
-    cp "$VENDORED_CRD" "$LOCAL_CRD"
+function install_crd {
+  local SRC="$1"
+  local DST="$2"
+  if ! diff -Naup "$SRC" "$DST"; then
+    cp "$SRC" "$DST"
+    echo "installed CRD: $SRC => $DST"
   fi
-fi
+}
+
+# Can't rely on associative arrays for old Bash versions (e.g. OSX)
+install_crd \
+  "vendor/github.com/openshift/api/operator/v1/0000_50_ingress-operator_00-custom-resource-definition.yaml" \
+  "manifests/00-custom-resource-definition.yaml"
+
+install_crd \
+  "vendor/github.com/openshift/api/operatoringress/v1/0000_50_dns-record.yaml" \
+  "manifests/00-custom-resource-definition-internal.yaml"

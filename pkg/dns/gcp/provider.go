@@ -8,7 +8,7 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 
-	iov1 "github.com/openshift/cluster-ingress-operator/pkg/api/v1"
+	iov1 "github.com/openshift/api/operatoringress/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 
 	gdnsv1 "google.golang.org/api/dns/v1"
@@ -71,7 +71,7 @@ func resourceRecordSet(record *iov1.DNSRecord) *gdnsv1.ResourceRecordSet {
 	return &gdnsv1.ResourceRecordSet{
 		Name:    record.Spec.DNSName,
 		Rrdatas: record.Spec.Targets,
-		Type:    record.Spec.RecordType,
+		Type:    string(record.Spec.RecordType),
 		Ttl:     record.Spec.RecordTTL,
 	}
 }

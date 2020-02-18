@@ -123,8 +123,9 @@ github.com/matttproud/golang_protobuf_extensions/pbutil
 github.com/modern-go/concurrent
 # github.com/modern-go/reflect2 v1.0.1
 github.com/modern-go/reflect2
-# github.com/openshift/api v0.0.0-20200212190230-267354aa4567
+# github.com/openshift/api v0.0.0-20200217161739-c99157bc6492
 github.com/openshift/api/config/v1
+github.com/openshift/api/operatoringress/v1
 github.com/openshift/api/operator/v1
 github.com/openshift/api/route/v1
 # github.com/openshift/library-go v0.0.0-20190927184318-c355e2019bb3
@@ -326,16 +327,16 @@ k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1
 k8s.io/apiextensions-apiserver/pkg/apis/apiextensions
 # k8s.io/apimachinery v0.17.1
 k8s.io/apimachinery/pkg/types
-k8s.io/apimachinery/pkg/apis/meta/v1
-k8s.io/apimachinery/pkg/runtime
-k8s.io/apimachinery/pkg/runtime/schema
 k8s.io/apimachinery/pkg/util/errors
 k8s.io/apimachinery/pkg/util/sets
+k8s.io/apimachinery/pkg/apis/meta/v1
 k8s.io/apimachinery/pkg/util/yaml
 k8s.io/apimachinery/pkg/api/errors
 k8s.io/apimachinery/pkg/util/wait
+k8s.io/apimachinery/pkg/runtime
 k8s.io/apimachinery/pkg/api/resource
 k8s.io/apimachinery/pkg/apis/meta/v1/unstructured
+k8s.io/apimachinery/pkg/runtime/schema
 k8s.io/apimachinery/pkg/util/clock
 k8s.io/apimachinery/pkg/util/intstr
 k8s.io/apimachinery/pkg/util/rand
@@ -348,11 +349,11 @@ k8s.io/apimachinery/pkg/util/json
 k8s.io/apimachinery/pkg/conversion
 k8s.io/apimachinery/pkg/selection
 k8s.io/apimachinery/pkg/watch
-k8s.io/apimachinery/pkg/conversion/queryparams
-k8s.io/apimachinery/pkg/util/naming
 k8s.io/apimachinery/pkg/util/validation/field
 k8s.io/apimachinery/pkg/runtime/serializer/streaming
 k8s.io/apimachinery/pkg/util/net
+k8s.io/apimachinery/pkg/conversion/queryparams
+k8s.io/apimachinery/pkg/util/naming
 k8s.io/apimachinery/pkg/util/strategicpatch
 k8s.io/apimachinery/pkg/version
 k8s.io/apimachinery/pkg/util/validation
@@ -469,7 +470,6 @@ sigs.k8s.io/controller-runtime/pkg/client
 sigs.k8s.io/controller-runtime/pkg/client/config
 sigs.k8s.io/controller-runtime/pkg/metrics
 sigs.k8s.io/controller-runtime/pkg/runtime/signals
-sigs.k8s.io/controller-runtime/pkg/scheme
 sigs.k8s.io/controller-runtime/pkg/runtime/log
 sigs.k8s.io/controller-runtime/pkg/cache
 sigs.k8s.io/controller-runtime/pkg/manager
