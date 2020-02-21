@@ -40,6 +40,7 @@ var (
 			"service.beta.kubernetes.io/aws-load-balancer-internal": "0.0.0.0/0",
 		},
 		configv1.AzurePlatformType: {
+			// Azure load balancers are not customizable and are set to (2 fail @ 5s interval, 2 healthy)
 			"service.beta.kubernetes.io/azure-load-balancer-internal": "true",
 		},
 		// There are no required annotations for this platform as of
@@ -116,7 +117,14 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 	}
 	if infraConfig.Status.Platform == configv1.AWSPlatformType {
 		service.Annotations[awsLBProxyProtocolAnnotation] = "*"
+		// Set the load balancer for AWS to be as aggressive as Azure (2 fail @ 5s interval, 2 healthy)
+		service.Annotations["service.beta.kubernetes.io/aws-load-balancer-healthcheck-interval"] = "5"
+		service.Annotations["service.beta.kubernetes.io/aws-load-balancer-healthcheck-timeout"] = "4"
+		service.Annotations["service.beta.kubernetes.io/aws-load-balancer-healthcheck-unhealthy-threshold"] = "2"
+		service.Annotations["service.beta.kubernetes.io/aws-load-balancer-healthcheck-healthy-threshold"] = "2"
 	}
+	// Azure load balancers are not customizable and are set to (2 fail @ 5s interval, 2 healthy)
+	// GCP load balancers are not customizable and are set to (3 fail @ 8s interval, 1 healthy)
 
 	if infraConfig.Status.Platform == configv1.IBMCloudPlatformType {
 		service.Annotations[iksLBProxyProtocolAnnotations] = "public"
