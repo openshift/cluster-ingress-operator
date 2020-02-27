@@ -232,7 +232,6 @@ func createDNSProvider(cl client.Client, operatorConfig operatorconfig.Config, d
 		provider, err := awsdns.NewProvider(awsdns.Config{
 			AccessID:  string(creds.Data["aws_access_key_id"]),
 			AccessKey: string(creds.Data["aws_secret_access_key"]),
-			DNS:       dnsConfig,
 			Region:    platformStatus.AWS.Region,
 		}, operatorConfig.OperatorReleaseVersion)
 		if err != nil {
@@ -251,7 +250,6 @@ func createDNSProvider(cl client.Client, operatorConfig operatorconfig.Config, d
 			ClientSecret:   string(creds.Data["azure_client_secret"]),
 			TenantID:       string(creds.Data["azure_tenant_id"]),
 			SubscriptionID: string(creds.Data["azure_subscription_id"]),
-			DNS:            dnsConfig,
 		}, operatorConfig.OperatorReleaseVersion)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create Azure DNS manager: %v", err)
