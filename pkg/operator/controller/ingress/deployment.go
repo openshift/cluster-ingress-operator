@@ -87,6 +87,10 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	deployment.Spec.Selector = controller.IngressControllerDeploymentPodSelector(ci)
 	deployment.Spec.Template.Labels = controller.IngressControllerDeploymentPodSelector(ci).MatchLabels
 
+	// the router should have a very long grace period by default (1h)
+	gracePeriod := int64(60 * 60)
+	deployment.Spec.Template.Spec.TerminationGracePeriodSeconds = &gracePeriod
+
 	volumes := deployment.Spec.Template.Spec.Volumes
 	routerVolumeMounts := deployment.Spec.Template.Spec.Containers[0].VolumeMounts
 
