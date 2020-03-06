@@ -12,15 +12,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/sets"
 )
 
 const (
-	// EnableLoggingAnnotation is an annotation that indicates that debug
-	// logging should be enabled for an ingresscontroller.  Use of this
-	// annotation is unsupported.
-	EnableLoggingAnnotation = "ingress.operator.openshift.io/unsupported-logging"
-
 	// rsyslogConfiguration is the contents for rsyslog.conf.
 	rsyslogConfiguration = `$ModLoad imuxsock
 $SystemLogSocketName /var/lib/rsyslog/rsyslog.sock
@@ -28,22 +22,6 @@ $ModLoad omstdout.so
 *.* :omstdout:
 `
 )
-
-// haproxyLogLevels is the set of log levels that HAProxy recognizes.
-var haproxyLogLevels = sets.NewString("emerg", "alert", "crit", "err", "warning", "notice", "info", "debug")
-
-// ExtraLoggingEnabled returns a Boolean value indicating whether extra logging
-// is enabled and, if so, the configured log level, based on the annotations on
-// the provided ingresscontroller and ingress config.
-func ExtraLoggingEnabled(ci *operatorv1.IngressController, ingressConfig *configv1.Ingress) (bool, string) {
-	if val, ok := ci.Annotations[EnableLoggingAnnotation]; ok {
-		return haproxyLogLevels.Has(val), val
-	}
-	if val, ok := ingressConfig.Annotations[EnableLoggingAnnotation]; ok {
-		return haproxyLogLevels.Has(val), val
-	}
-	return false, ""
-}
 
 // ensureRsyslogConfigMap ensures the rsyslog configmap exists for a given
 // ingresscontroller if the access logging is enabled.  Returns a Boolean
@@ -90,7 +68,8 @@ func (r *reconciler) ensureRsyslogConfigMap(ic *operatorv1.IngressController, de
 // Boolean indicating whether a configmap is desired, as well as the configmap
 // if one is desired.
 func desiredRsyslogConfigMap(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference, ingressConfig *configv1.Ingress) (bool, *corev1.ConfigMap, error) {
-	if enabled, _ := ExtraLoggingEnabled(ic, ingressConfig); !enabled {
+	accessLogging := accessLoggingForIngressController(ic)
+	if accessLogging == nil || accessLogging.Destination.Type != operatorv1.ContainerLoggingDestinationType {
 		return false, nil, nil
 	}
 

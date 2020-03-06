@@ -211,7 +211,11 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		t.Errorf("expected empty readiness probe host, got %q", deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.Handler.HTTPGet.Host)
 	}
 
-	checkDeploymentHasContainer(t, deployment, "syslog", false)
+	checkDeploymentHasContainer(t, deployment, operatorv1.ContainerLoggingSidecarContainerName, false)
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOG_FACILITY", false, "")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOG_LEVEL", false, "")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SYSLOG_ADDRESS", false, "")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SYSLOG_FORMAT", false, "")
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CIPHERS", true, "foo:bar:baz")
 
@@ -219,8 +223,14 @@ func TestDesiredRouterDeployment(t *testing.T) {
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_IP_V4_V6_MODE", false, "")
 
-	ingressConfig.Annotations = map[string]string{
-		EnableLoggingAnnotation: "debug",
+	ci.Spec.Logging = &operatorv1.IngressControllerLogging{
+		Access: &operatorv1.AccessLogging{
+			Destination: operatorv1.LoggingDestination{
+				Type:      operatorv1.ContainerLoggingDestinationType,
+				Container: &operatorv1.ContainerLoggingDestinationParameters{},
+			},
+			HttpLogFormat: "%ci:%cp [%t] %ft %b/%s %B %bq %HM %HU %HV",
+		},
 	}
 	ci.Spec.TLSSecurityProfile = &configv1.TLSSecurityProfile{
 		Type: configv1.TLSProfileCustomType,
@@ -265,7 +275,11 @@ func TestDesiredRouterDeployment(t *testing.T) {
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CANONICAL_HOSTNAME", true, ci.Status.Domain)
 
-	checkDeploymentHasContainer(t, deployment, "syslog", true)
+	checkDeploymentHasContainer(t, deployment, operatorv1.ContainerLoggingSidecarContainerName, true)
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOG_FACILITY", false, "")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOG_LEVEL", true, "debug")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SYSLOG_ADDRESS", true, "/var/lib/rsyslog/rsyslog.sock")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SYSLOG_FORMAT", true, `"%ci:%cp [%t] %ft %b/%s %B %bq %HM %HU %HV"`)
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CIPHERS", true, "quux")
 
@@ -278,6 +292,18 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	ci.Spec.DefaultCertificate = &corev1.LocalObjectReference{
 		Name: secretName,
 	}
+	ci.Spec.Logging = &operatorv1.IngressControllerLogging{
+		Access: &operatorv1.AccessLogging{
+			Destination: operatorv1.LoggingDestination{
+				Type: operatorv1.SyslogLoggingDestinationType,
+				Syslog: &operatorv1.SyslogLoggingDestinationParameters{
+					Address:  "1.2.3.4",
+					Port:     uint32(12345),
+					Facility: "local2",
+				},
+			},
+		},
+	}
 	ci.Spec.NodePlacement = &operatorv1.NodePlacement{
 		NodeSelector: &metav1.LabelSelector{
 			MatchLabels: map[string]string{
@@ -289,10 +315,6 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	expectedReplicas = 3
 	ci.Spec.Replicas = &expectedReplicas
 	ci.Status.EndpointPublishingStrategy.Type = operatorv1.HostNetworkStrategyType
-	delete(ingressConfig.Annotations, EnableLoggingAnnotation)
-	ci.Annotations = map[string]string{
-		EnableLoggingAnnotation: "debug",
-	}
 	networkConfig.Status.ClusterNetwork = []configv1.ClusterNetworkEntry{
 		{CIDR: "2620:0:2d0:200::7/32"},
 	}
@@ -343,7 +365,11 @@ func TestDesiredRouterDeployment(t *testing.T) {
 			secretName, deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName)
 	}
 
-	checkDeploymentHasContainer(t, deployment, "syslog", true)
+	checkDeploymentHasContainer(t, deployment, operatorv1.ContainerLoggingSidecarContainerName, false)
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOG_FACILITY", true, "local2")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOG_LEVEL", true, "debug")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SYSLOG_ADDRESS", true, "1.2.3.4:12345")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SYSLOG_FORMAT", false, "")
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_IP_V4_V6_MODE", true, "v6")
 }
@@ -384,7 +410,7 @@ func TestInferTLSProfileSpecFromDeployment(t *testing.T) {
 					},
 				},
 				{
-					Name: "syslog",
+					Name: "logs",
 				},
 			},
 			expected: &configv1.TLSProfileSpec{

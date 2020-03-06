@@ -3,6 +3,7 @@
 package e2e
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -865,6 +867,206 @@ func TestRouteAdmissionPolicy(t *testing.T) {
 
 	// The route should now be admitted.
 	if err := waitForRouteIngressConditions(kclient, route4Name, ic.Name, admittedCondition); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+}
+
+func TestSyslogLogging(t *testing.T) {
+	ic := &operatorv1.IngressController{}
+	if err := kclient.Get(context.TODO(), defaultName, ic); err != nil {
+		t.Fatalf("failed to get default ingresscontroller: %v", err)
+	}
+	deployment := &appsv1.Deployment{}
+	if err := kclient.Get(context.TODO(), controller.RouterDeploymentName(ic), deployment); err != nil {
+		t.Fatalf("failed to get default ingresscontroller's deployment: %v", err)
+	}
+	var (
+		image      string
+		foundImage bool
+	)
+	for _, container := range deployment.Spec.Template.Spec.Containers {
+		if container.Name == "router" {
+			image = container.Image
+			foundImage = true
+		}
+	}
+	if !foundImage {
+		t.Fatal("failed to determine default ingresscontroller deployment's image")
+	}
+
+	// Set up rsyslog.
+	syslogPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "openshift-ingress",
+			Name:      "syslog",
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name:  "syslog",
+					Image: image,
+					Command: []string{
+						"/sbin/rsyslogd", "-n",
+						"-i", "/tmp/rsyslog.pid",
+						"-f", "/etc/rsyslog/rsyslog.conf",
+					},
+					VolumeMounts: []corev1.VolumeMount{
+						{
+							Name:      "rsyslog-config",
+							MountPath: "/etc/rsyslog",
+						},
+					},
+				},
+			},
+			Volumes: []corev1.Volume{
+				{
+					Name: "rsyslog-config",
+					VolumeSource: corev1.VolumeSource{
+						ConfigMap: &corev1.ConfigMapVolumeSource{
+							LocalObjectReference: corev1.LocalObjectReference{
+								Name: "rsyslog-conf",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	if err := kclient.Create(context.TODO(), syslogPod); err != nil {
+		t.Fatalf("failed to create pod for rsyslog: %v", err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), syslogPod); err != nil {
+			t.Fatalf("failed to delete pod %s: %v", syslogPod.Name, err)
+		}
+	}()
+	syslogConfigmap := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "rsyslog-conf",
+			Namespace: "openshift-ingress",
+		},
+		Data: map[string]string{
+			"rsyslog.conf": `$ModLoad imudp
+$UDPServerRun 10514
+$ModLoad omstdout.so
+*.* :omstdout:
+`,
+		},
+	}
+	if err := kclient.Create(context.TODO(), syslogConfigmap); err != nil {
+		t.Fatalf("failed to create configmap for rsyslog: %v", err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), syslogConfigmap); err != nil {
+			t.Fatalf("failed to delete configmap %s: %v", syslogConfigmap.Name, err)
+		}
+	}()
+
+	// Get the rsyslog endpoint.
+	var syslogAddress string
+	err := wait.PollImmediate(1*time.Second, 3*time.Minute, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), types.NamespacedName{Namespace: syslogPod.Namespace, Name: syslogPod.Name}, syslogPod); err != nil {
+			return false, nil
+		}
+		syslogAddress = syslogPod.Status.PodIP
+		if len(syslogAddress) == 0 {
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to observe syslog pod IP address: %v", err)
+	}
+
+	// Create an ingresscontroller that logs to the endpoint.
+	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "syslog"}
+	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
+	ic = newPrivateController(icName, domain)
+	ic.Spec.Logging = &operatorv1.IngressControllerLogging{
+		Access: &operatorv1.AccessLogging{
+			Destination: operatorv1.LoggingDestination{
+				Type: operatorv1.SyslogLoggingDestinationType,
+				Syslog: &operatorv1.SyslogLoggingDestinationParameters{
+					Address: syslogAddress,
+					Port:    uint32(10514),
+				},
+			},
+		},
+	}
+	if err := kclient.Create(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
+	}
+	defer assertIngressControllerDeleted(t, kclient, ic)
+	conditions := []operatorv1.OperatorCondition{
+		{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionTrue},
+		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
+		{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionFalse},
+	}
+	if err := waitForIngressControllerCondition(kclient, 5*time.Minute, icName, conditions...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	// Scan the syslog logs to make sure some requests get logged;
+	// the kubelet's health probes should get logged.
+	kubeConfig, err := config.GetConfig()
+	if err != nil {
+		t.Fatalf("failed to get kube config: %v", err)
+	}
+	client, err := kubernetes.NewForConfig(kubeConfig)
+	if err != nil {
+		t.Fatalf("failed to create kube client: %v", err)
+	}
+	err = wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
+		readCloser, err := client.CoreV1().Pods(syslogPod.Namespace).GetLogs(syslogPod.Name, &corev1.PodLogOptions{
+			Container: "syslog",
+			Follow:    false,
+		}).Stream(context.TODO())
+		if err != nil {
+			t.Errorf("failed to read logs from syslog: %v", err)
+			return false, nil
+		}
+		defer func() {
+			if err := readCloser.Close(); err != nil {
+				t.Errorf("failed to close logs reader: %v", err)
+			}
+		}()
+		scanner := bufio.NewScanner(readCloser)
+		for scanner.Scan() {
+			line := scanner.Text()
+			if strings.Contains(line, " HTTP/1.1") {
+				t.Logf("found log message for request: %s", line)
+				return true, nil
+			}
+		}
+		return false, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to observe any request logged in syslog: %v", err)
+	}
+}
+
+func TestContainerLogging(t *testing.T) {
+	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "containerlogging"}
+	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
+	ic := newPrivateController(icName, domain)
+	ic.Spec.Logging = &operatorv1.IngressControllerLogging{
+		Access: &operatorv1.AccessLogging{
+			Destination: operatorv1.LoggingDestination{
+				Type:      operatorv1.ContainerLoggingDestinationType,
+				Container: &operatorv1.ContainerLoggingDestinationParameters{},
+			},
+		},
+	}
+	if err := kclient.Create(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
+	}
+	defer assertIngressControllerDeleted(t, kclient, ic)
+	conditions := []operatorv1.OperatorCondition{
+		{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionTrue},
+		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
+		{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionFalse},
+	}
+	if err := waitForIngressControllerCondition(kclient, 5*time.Minute, icName, conditions...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 }
