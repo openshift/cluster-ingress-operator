@@ -17,7 +17,7 @@ require (
 	github.com/google/go-cmp v0.3.1
 	github.com/kevinburke/go-bindata v3.11.0+incompatible
 
-	github.com/openshift/api v0.0.0-20200330134433-8e259f67fc55
+	github.com/openshift/api v0.0.0-20200416222006-8cfd79130f9c
 	github.com/openshift/library-go v0.0.0-20200324092245-db2a8546af81
 
 	github.com/pkg/errors v0.8.1
