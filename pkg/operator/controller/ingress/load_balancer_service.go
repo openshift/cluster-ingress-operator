@@ -137,6 +137,10 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 		}
 	}
 
+	if infraConfig.Status.Platform == configv1.IBMCloudPlatformType {
+		service.Spec.ExternalTrafficPolicy = corev1.ServiceExternalTrafficPolicyTypeCluster
+	}
+
 	service.SetOwnerReferences([]metav1.OwnerReference{deploymentRef})
 	service.Finalizers = []string{manifests.LoadBalancerServiceFinalizer}
 	return service, nil
