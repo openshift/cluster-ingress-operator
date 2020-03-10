@@ -32,8 +32,6 @@ type Config struct {
 	TenantID string
 	// SubscriptionID is the azure identity's subscription ID.
 	SubscriptionID string
-	// DNS is public and private DNS zone configuration for the cluster.
-	DNS *configv1.DNS
 }
 
 type provider struct {

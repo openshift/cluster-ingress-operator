@@ -72,8 +72,6 @@ type Config struct {
 	AccessKey string
 	// Region is the AWS region ELBs are created in.
 	Region string
-	// DNS is public and private DNS zone configuration for the cluster.
-	DNS *configv1.DNS
 }
 
 func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error) {
