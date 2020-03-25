@@ -344,7 +344,7 @@ func TestIngressControllerScale(t *testing.T) {
 	}
 
 	oldRsList := &appsv1.ReplicaSetList{}
-	if err := kclient.List(context.TODO(), oldRsList, client.MatchingLabelsSelector{selector}); err != nil {
+	if err := kclient.List(context.TODO(), oldRsList, client.MatchingLabelsSelector{Selector: selector}); err != nil {
 		t.Fatalf("failed to list replicasets for ingresscontroller: %v", err)
 	}
 
@@ -353,7 +353,7 @@ func TestIngressControllerScale(t *testing.T) {
 		Resource: "ingresscontrollers",
 	}
 
-	scale, err := scaleClient.Scales(defaultName.Namespace).Get(resource, defaultName.Name)
+	scale, err := scaleClient.Scales(defaultName.Namespace).Get(context.TODO(), resource, defaultName.Name, metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("failed to get initial scale of default ingresscontroller: %v", err)
 	}
@@ -367,7 +367,7 @@ func TestIngressControllerScale(t *testing.T) {
 	newReplicas := originalReplicas + 1
 
 	scale.Spec.Replicas = newReplicas
-	updatedScale, err := scaleClient.Scales(defaultName.Namespace).Update(resource, scale)
+	updatedScale, err := scaleClient.Scales(defaultName.Namespace).Update(context.TODO(), resource, scale, metav1.UpdateOptions{})
 	if err != nil {
 		t.Fatalf("failed to scale ingresscontroller up: %v", err)
 	}
@@ -386,12 +386,12 @@ func TestIngressControllerScale(t *testing.T) {
 	}
 
 	// Scale back down.
-	scale, err = scaleClient.Scales(defaultName.Namespace).Get(resource, defaultName.Name)
+	scale, err = scaleClient.Scales(defaultName.Namespace).Get(context.TODO(), resource, defaultName.Name, metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("failed to get updated scale of ClusterIngress: %v", err)
 	}
 	scale.Spec.Replicas = originalReplicas
-	updatedScale, err = scaleClient.Scales(defaultName.Namespace).Update(resource, scale)
+	updatedScale, err = scaleClient.Scales(defaultName.Namespace).Update(context.TODO(), resource, scale, metav1.UpdateOptions{})
 	if err != nil {
 		t.Fatalf("failed to scale ingresscontroller down: %v", err)
 	}
@@ -413,7 +413,7 @@ func TestIngressControllerScale(t *testing.T) {
 	// Ensure the deployment did not create a new replicaset
 	// (see <https://bugzilla.redhat.com/show_bug.cgi?id=1783007>).
 	newRsList := &appsv1.ReplicaSetList{}
-	if err := kclient.List(context.TODO(), newRsList, client.MatchingLabelsSelector{selector}); err != nil {
+	if err := kclient.List(context.TODO(), newRsList, client.MatchingLabelsSelector{Selector: selector}); err != nil {
 		t.Fatalf("failed to list replicasets for ingresscontroller: %v", err)
 	}
 	oldRsIds := sets.String{}
