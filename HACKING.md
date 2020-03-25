@@ -20,13 +20,13 @@ $ make build
 To build the operator on your local machine and deploy it to the cluster, first uninstall the existing operator and all its managed components:
 
 ```
-$ hack/uninstall.sh
+$ make uninstall
 ```
 
 Build a new image and custom manifests:
 
 ```
-$ REPO=docker.io/you/origin-cluster-ingress-operator make release-local
+$ REPO=docker.io/you/cluster-ingress-operator make release-local
 ```
 
 Follow the instructions to install the operator, e.g.:
