@@ -131,6 +131,6 @@ $ oc describe --namespace=openshift-ingress-operator ingresscontroller/<name>
 
 ## Contributing
 
-Report issues in [Bugzilla](https://bugzilla.redhat.com/enter_bug.cgi?product=OpenShift%20Container%20Platform&version=4.0.0&component=Routing).
+Report issues in [Bugzilla](https://bugzilla.redhat.com/enter_bug.cgi?product=OpenShift%20Container%20Platform&component=Routing).
 
 See [HACKING.md](HACKING.md) for development topics.
