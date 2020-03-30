@@ -17,7 +17,7 @@ require (
 	github.com/google/go-cmp v0.3.1
 	github.com/kevinburke/go-bindata v3.11.0+incompatible
 
-	github.com/openshift/api v0.0.0-20200324173355-9b3bdf846ea1
+	github.com/openshift/api v0.0.0-20200330134433-8e259f67fc55
 	github.com/openshift/library-go v0.0.0-20200324092245-db2a8546af81
 
 	github.com/pkg/errors v0.8.1
@@ -28,18 +28,15 @@ require (
 	gopkg.in/fsnotify.v1 v1.4.7
 	gopkg.in/yaml.v2 v2.2.8
 
-	k8s.io/api v0.18.0-rc.1
-	k8s.io/apimachinery v0.18.0-rc.1
-	k8s.io/apiserver v0.18.0-rc.1
-	k8s.io/client-go v0.18.0-rc.1
+	k8s.io/api v0.18.0
+	k8s.io/apimachinery v0.18.0
+	k8s.io/apiserver v0.18.0
+	k8s.io/client-go v0.18.0
 
-	sigs.k8s.io/controller-runtime v0.3.1-0.20191011155846-b2bc3490f2e3
+	// Update when a tagged release includes https://github.com/kubernetes-sigs/controller-runtime/pull/836
+	sigs.k8s.io/controller-runtime v0.5.1-0.20200330174416-a11a908d91e0
 	sigs.k8s.io/controller-tools v0.2.2-0.20190919191502-76a25b63325a
 )
 
-replace (
-	// Remove when https://github.com/kubernetes-sigs/controller-runtime/pull/836 merges.
-	sigs.k8s.io/controller-runtime => github.com/munnerz/controller-runtime v0.1.8-0.20200318092001-e22ac1073450
-	// Remove when https://github.com/kubernetes-sigs/controller-tools/pull/424 merges.
-	sigs.k8s.io/controller-tools => github.com/munnerz/controller-tools v0.1.10-0.20200323145043-a2d268fbf03d
-)
+// Remove when https://github.com/kubernetes-sigs/controller-tools/pull/424 merges.
+replace sigs.k8s.io/controller-tools => github.com/munnerz/controller-tools v0.1.10-0.20200323145043-a2d268fbf03d
