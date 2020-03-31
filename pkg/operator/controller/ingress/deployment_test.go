@@ -32,6 +32,28 @@ var otherToleration = corev1.Toleration{
 	Effect:   corev1.TaintEffectNoExecute,
 }
 
+func checkRollingUpdateParams(t *testing.T, deployment *appsv1.Deployment, maxUnavailable intstr.IntOrString, maxSurge intstr.IntOrString) {
+	t.Helper()
+
+	params := deployment.Spec.Strategy.RollingUpdate
+	if params == nil {
+		t.Error("router Deployment does not specify rolling update parameters")
+		return
+	}
+
+	if params.MaxSurge == nil {
+		t.Errorf("router Deployment does not specify MaxSurge: %#v", params)
+	} else if *params.MaxSurge != maxSurge {
+		t.Errorf("router Deployment has unexpected MaxSurge value; expected %#v, got %#v", maxSurge, params.MaxSurge)
+	}
+
+	if params.MaxUnavailable == nil {
+		t.Errorf("router Deployment does not specify MaxUnavailable: %#v", params)
+	} else if *params.MaxUnavailable != maxUnavailable {
+		t.Errorf("router Deployment has unexpected MaxUnavailable value; expected %#v, got %#v", maxUnavailable, params.MaxUnavailable)
+	}
+}
+
 func TestDesiredRouterDeployment(t *testing.T) {
 	var one int32 = 1
 	ingressConfig := &configv1.Ingress{}
@@ -136,6 +158,8 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	if *deployment.Spec.Replicas != 1 {
 		t.Errorf("expected replicas to be 1, got %d", *deployment.Spec.Replicas)
 	}
+
+	checkRollingUpdateParams(t, deployment, intstr.FromString("50%"), intstr.FromString("25%"))
 
 	if len(deployment.Spec.Template.Spec.NodeSelector) == 0 {
 		t.Error("router Deployment has no default node selector")
@@ -249,6 +273,8 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		{CIDR: "10.0.0.1/8"},
 		{CIDR: "2620:0:2d0:200::7/32"},
 	}
+	var expectedReplicas int32 = 8
+	ci.Spec.Replicas = &expectedReplicas
 	ci.Status.Domain = "example.com"
 	ci.Status.EndpointPublishingStrategy.Type = operatorv1.LoadBalancerServiceStrategyType
 	deployment, err = desiredRouterDeployment(ci, ingressControllerImage, infraConfig, ingressConfig, apiConfig, networkConfig)
@@ -262,6 +288,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	} else if actualHash != expectedHash {
 		t.Errorf("router Deployment has wrong hash; expected: %s, got: %s", expectedHash, actualHash)
 	}
+	checkRollingUpdateParams(t, deployment, intstr.FromString("25%"), intstr.FromString("25%"))
 	if deployment.Spec.Template.Spec.HostNetwork != false {
 		t.Error("expected host network to be false")
 	}
@@ -359,7 +386,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		},
 		Tolerations: []corev1.Toleration{toleration},
 	}
-	var expectedReplicas int32 = 3
+	expectedReplicas = 3
 	ci.Spec.Replicas = &expectedReplicas
 	ci.Status.EndpointPublishingStrategy.Type = operatorv1.HostNetworkStrategyType
 	delete(ingressConfig.Annotations, EnableLoggingAnnotation)
@@ -393,6 +420,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	if *deployment.Spec.Replicas != expectedReplicas {
 		t.Errorf("expected replicas to be %d, got %d", expectedReplicas, *deployment.Spec.Replicas)
 	}
+	checkRollingUpdateParams(t, deployment, intstr.FromString("25%"), intstr.FromInt(0))
 	if e, a := ingressControllerImage, deployment.Spec.Template.Spec.Containers[0].Image; e != a {
 		t.Errorf("expected router Deployment image %q, got %q", e, a)
 	}
@@ -728,9 +756,16 @@ func TestDeploymentConfigChanged(t *testing.T) {
 			expect: false,
 		},
 		{
-			description: "if the deployment strategy parameters are changed",
+			description: "if the rolling update strategy's max surge parameter is changed",
 			mutate: func(deployment *appsv1.Deployment) {
 				deployment.Spec.Strategy.RollingUpdate.MaxSurge = pointerTo(intstr.FromString("25%"))
+			},
+			expect: true,
+		},
+		{
+			description: "if the rolling update strategy's max unavailable parameter is changed",
+			mutate: func(deployment *appsv1.Deployment) {
+				deployment.Spec.Strategy.RollingUpdate.MaxUnavailable = pointerTo(intstr.FromString("50%"))
 			},
 			expect: true,
 		},
