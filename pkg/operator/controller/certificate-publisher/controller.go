@@ -65,14 +65,14 @@ func New(mgr manager.Manager, operatorNamespace, operandNamespace string) (runti
 	// Index ingresscontrollers over the default certificate name so that
 	// secretIsInUse and secretToIngressController can look up
 	// ingresscontrollers that reference the secret.
-	if err := operatorCache.IndexField(&operatorv1.IngressController{}, "defaultCertificateName", func(o runtime.Object) []string {
+	if err := operatorCache.IndexField(context.Background(), &operatorv1.IngressController{}, "defaultCertificateName", func(o runtime.Object) []string {
 		secret := controller.RouterEffectiveDefaultCertificateSecretName(o.(*operatorv1.IngressController), operandNamespace)
 		return []string{secret.Name}
 	}); err != nil {
 		return nil, fmt.Errorf("failed to create index for ingresscontroller: %v", err)
 	}
 
-	secretsInformer, err := operatorCache.GetInformer(&corev1.Secret{})
+	secretsInformer, err := operatorCache.GetInformer(context.Background(), &corev1.Secret{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create informer for secrets: %v", err)
 	}

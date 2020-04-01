@@ -134,6 +134,25 @@ func (OAuthAPIServerStatus) SwaggerDoc() map[string]string {
 	return map_OAuthAPIServerStatus
 }
 
+var map_Config = map[string]string{
+	"":       "Config provides information to configure the config operator.",
+	"spec":   "spec is the specification of the desired behavior of the Config Operator.",
+	"status": "status defines the observed status of the Config Operator.",
+}
+
+func (Config) SwaggerDoc() map[string]string {
+	return map_Config
+}
+
+var map_ConfigList = map[string]string{
+	"":      "ConfigList is a collection of items",
+	"items": "Items contains the items",
+}
+
+func (ConfigList) SwaggerDoc() map[string]string {
+	return map_ConfigList
+}
+
 var map_Console = map[string]string{
 	"": "Console provides a means to configure an operator to manage the console.",
 }
@@ -408,6 +427,7 @@ func (PrivateStrategy) SwaggerDoc() map[string]string {
 var map_RouteAdmissionPolicy = map[string]string{
 	"":                   "RouteAdmissionPolicy is an admission policy for allowing new route claims.",
 	"namespaceOwnership": "namespaceOwnership describes how host name claims across namespaces should be handled.\n\nValue must be one of:\n\n- Strict: Do not allow routes in different namespaces to claim the same host.\n\n- InterNamespaceAllowed: Allow routes to claim different paths of the same\n  host name across namespaces.\n\nIf empty, the default is Strict.",
+	"wildcardPolicy":     "wildcardPolicy describes how routes with wildcard policies should be handled for the ingress controller. WildcardPolicy controls use of routes [1] exposed by the ingress controller based on the route's wildcard policy.\n\n[1] https://github.com/openshift/api/blob/master/route/v1/types.go\n\nNote: Updating WildcardPolicy from WildcardsAllowed to WildcardsDisallowed will cause admitted routes with a wildcard policy of Subdomain to stop working. These routes must be updated to a wildcard policy of None to be readmitted by the ingress controller.\n\nWildcardPolicy supports WildcardsAllowed and WildcardsDisallowed values.\n\nIf empty, defaults to \"WildcardsDisallowed\".",
 }
 
 func (RouteAdmissionPolicy) SwaggerDoc() map[string]string {
