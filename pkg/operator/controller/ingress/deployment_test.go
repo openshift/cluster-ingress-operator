@@ -102,6 +102,20 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		t.Errorf("router Deployment has wrong hash; expected: %s, got: %s", expectedHash, actualHash)
 	}
 
+	var wildcardPolicy string
+	for _, envVar := range deployment.Spec.Template.Spec.Containers[0].Env {
+		if envVar.Name == WildcardRouteAdmissionPolicy {
+			wildcardPolicy = envVar.Value
+			break
+		}
+	}
+	if wildcardPolicy == "" {
+		t.Error("router Deployment has no wildcard admission policy environment variable")
+	} else if wildcardPolicy != "false" {
+		t.Errorf("router Deployment has unexpected wildcard admission policy value: %v",
+			wildcardPolicy)
+	}
+
 	namespaceSelector := ""
 	for _, envVar := range deployment.Spec.Template.Spec.Containers[0].Env {
 		if envVar.Name == "NAMESPACE_LABELS" {
@@ -686,6 +700,19 @@ func TestDeploymentConfigChanged(t *testing.T) {
 			expect: true,
 		},
 		{
+			description: "if ROUTER_ALLOW_WILDCARD_ROUTES changes",
+			mutate: func(deployment *appsv1.Deployment) {
+				envs := deployment.Spec.Template.Spec.Containers[0].Env
+				for i, env := range envs {
+					if env.Name == WildcardRouteAdmissionPolicy {
+						envs[i].Value = "true"
+					}
+				}
+				deployment.Spec.Template.Spec.Containers[0].Env = envs
+			},
+			expect: true,
+		},
+		{
 			description: "if NAMESPACE_LABELS is added",
 			mutate: func(deployment *appsv1.Deployment) {
 				envs := deployment.Spec.Template.Spec.Containers[0].Env
@@ -825,6 +852,10 @@ func TestDeploymentConfigChanged(t *testing.T) {
 									},
 									{
 										Name:  "ROUTER_USE_PROXY_PROTOCOL",
+										Value: "false",
+									},
+									{
+										Name:  "ROUTER_ALLOW_WILDCARD_ROUTES",
 										Value: "false",
 									},
 									{

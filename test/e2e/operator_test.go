@@ -792,6 +792,62 @@ func TestRouteAdmissionPolicy(t *testing.T) {
 	if err := waitForRouteIngressConditions(kclient, route2Name, ic.Name, admittedCondition); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
+
+	// Test the ingress controller wildcard admission policy. An ingress controller with
+	// a nil wildcard policy defaults to WildcardsDisallowed and the default wildcard
+	// policy of a route is None. Therefore, the tests above cover defaulting behavior.
+	// Create a route that explicitly sets the wildcard policy to None.
+	route3Name := types.NamespacedName{Namespace: ns2.Name, Name: "route3"}
+	route3 := makeRoute(route3Name, "route3.test.example.com", "/bar")
+	route3.Spec.WildcardPolicy = routev1.WildcardPolicyNone
+
+	// The route should be admitted because the default ingresscontroller wildcard
+	// policy is WildcardsDisallowed.
+	if err := kclient.Create(context.TODO(), route3); err != nil {
+		t.Fatalf("failed to create route: %v", err)
+	}
+	if err := waitForRouteIngressConditions(kclient, route3Name, ic.Name, admittedCondition); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v, status: %v", err, route3)
+	}
+
+	// Create a route with a wildcard policy of Subdomain.
+	route4Name := types.NamespacedName{Namespace: ns2.Name, Name: "route4"}
+	route4 := makeRoute(route4Name, "route4.test.example.com", "/bar")
+	route4.Spec.WildcardPolicy = routev1.WildcardPolicySubdomain
+
+	// The route should not be admitted because the ingresscontroller wildcard policy
+	// is WildcardsDisallowed by default.
+	if err := kclient.Create(context.TODO(), route4); err != nil {
+		t.Fatalf("failed to create route: %v", err)
+	}
+	if err := waitForRouteIngressConditions(kclient, route4Name, ic.Name, rejectedCondition); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	// Update the ingresscontroller wildcard policy to WildcardsAllowed.
+	if err := kclient.Get(context.TODO(), icName, ic); err != nil {
+		t.Fatalf("failed to get ingresscontroller: %v", ic)
+	}
+	ic.Spec.RouteAdmission.WildcardPolicy = operatorv1.WildcardPolicyAllowed
+	if err := kclient.Update(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to update ingresscontroller: %v", err)
+	}
+
+	// Recreate the route since the failed route will not automatically get
+	// readmitted and a route wildcard policy is immutable.
+	if err := kclient.Delete(context.TODO(), route4); err != nil {
+		t.Fatalf("failed to delete route: %v", err)
+	}
+	route4 = makeRoute(route4Name, "route4.test.example.com", "/bar")
+	route4.Spec.WildcardPolicy = routev1.WildcardPolicySubdomain
+	if err := kclient.Create(context.TODO(), route4); err != nil {
+		t.Fatalf("failed to create route: %v", err)
+	}
+
+	// The route should now be admitted.
+	if err := waitForRouteIngressConditions(kclient, route4Name, ic.Name, admittedCondition); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
 }
 
 func newLoadBalancerController(name types.NamespacedName, domain string) *operatorv1.IngressController {
