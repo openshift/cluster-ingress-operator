@@ -1,0 +1,10 @@
+contact_links:
+- name: File a Bugzilla report
+  url: https://bugzilla.redhat.com/enter_bug.cgi?product=OpenShift%20Container%20Platform&component=Routing
+  about: Please use Bugzilla to report issues.
+- name: Ingress Operator in OpenShift Container Platform
+  url: https://docs.openshift.com/container-platform/latest/networking/ingress-operator.html
+  about: Refer to the OpenShift Container Platform documentation for information about the Ingress Operator in OpenShift Container Platform.
+- name: Ingress Operator in OKD
+  url: https://docs.okd.io/latest/networking/ingress-operator.html
+  about: Refer to the OKD documentation for information about the Ingress Operator in OKD.
