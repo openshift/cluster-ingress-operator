@@ -268,8 +268,6 @@ github.com/modern-go/reflect2 v0.0.0-20180701023420-4b7aa43c6742/go.mod h1:bx2lN
 github.com/modern-go/reflect2 v1.0.1 h1:9f412s+6RmYXLWZSEzVVgPGK7C2PphHj5RJrvfx9AWI=
 github.com/modern-go/reflect2 v1.0.1/go.mod h1:bx2lNnkwVCuqBIxFjflWJWanXIb3RllmbCylyMrvgv0=
 github.com/morikuni/aec v1.0.0/go.mod h1:BbKIizmSmc5MMPqRYbxO4ZU0S0+P200+tUnFx7PXmsc=
-github.com/munnerz/controller-runtime v0.1.8-0.20200318092001-e22ac1073450 h1:JVe6Zq1UU0+Sips4INYr3tmQYCBU8SsSx3UlGd9RPh8=
-github.com/munnerz/controller-runtime v0.1.8-0.20200318092001-e22ac1073450/go.mod h1:FAh/6qSQ+dJE/CNZCNW1d/RCSI2K2cLmm+J457bB0OI=
 github.com/munnerz/controller-tools v0.1.10-0.20200323145043-a2d268fbf03d h1:dTHZ9GYcAirNN04tOtCpRgqceNDzChH9y8IHnSAqeOU=
 github.com/munnerz/controller-tools v0.1.10-0.20200323145043-a2d268fbf03d/go.mod h1:etyVkyUd4jBXBgv91n5rRHD/7EdjUs/CQSgYDLFKsmU=
 github.com/munnerz/goautoneg v0.0.0-20120707110453-a547fc61f48d/go.mod h1:+n7T8mK8HuQTcFwEeznm/DIxMOiR9yIdICNftLE1DvQ=
@@ -290,8 +288,6 @@ github.com/opencontainers/go-digest v1.0.0-rc1/go.mod h1:cMLVZDEM3+U2I4VmLI6N8jQ
 github.com/opencontainers/image-spec v1.0.1/go.mod h1:BtxoFyWECRxE4U/7sNtV5W15zMzWCbyJoFRP3s7yZA0=
 github.com/opencontainers/runc v0.0.0-20191031171055-b133feaeeb2e/go.mod h1:qT5XzbpPznkRYVz/mWwUaVBUv2rmF59PVA73FjuZG0U=
 github.com/openshift/api v0.0.0-20200320142426-0de0d539b0c3/go.mod h1:7k3+uZYOir97walbYUqApHUA2OPhkQpVJHt0n7GJ6P4=
-github.com/openshift/api v0.0.0-20200324173355-9b3bdf846ea1 h1:fF7frgWWd2e33HbUVYwUw3w3rxZbk82TLK/kvV+FQEY=
-github.com/openshift/api v0.0.0-20200324173355-9b3bdf846ea1/go.mod h1:7k3+uZYOir97walbYUqApHUA2OPhkQpVJHt0n7GJ6P4=
 github.com/openshift/api v0.0.0-20200330134433-8e259f67fc55 h1:PbIRNLKSDnc+P0XT67emLMAItK41ntNYs5K8OUtJQ6U=
 github.com/openshift/api v0.0.0-20200330134433-8e259f67fc55/go.mod h1:RKMJ5CBnljLfnej+BJ/xnOWc3kZDvJUaIAEq2oKSPtE=
 github.com/openshift/build-machinery-go v0.0.0-20200211121458-5e3d6e570160/go.mod h1:1CkcsT3aVebzRBzVTSbiKSkJMsC/CASqxesfqEMfJEc=
