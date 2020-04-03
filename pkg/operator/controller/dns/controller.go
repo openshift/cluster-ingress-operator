@@ -121,7 +121,18 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 	if dnsConfig.Spec.PublicZone != nil {
 		zones = append(zones, *dnsConfig.Spec.PublicZone)
 	}
+	statuses, result := r.publishRecordToZones(zones, record)
+	// TODO: only update if status changed
+	updated := record.DeepCopy()
+	updated.Status.Zones = statuses
+	if err := r.client.Status().Update(context.TODO(), updated); err != nil {
+		log.Error(err, "failed to update dnsrecord; will retry", "dnsrecord", record)
+		return reconcile.Result{RequeueAfter: 10 * time.Second}, nil
+	}
+	return result, nil
+}
 
+func (r *reconciler) publishRecordToZones(zones []configv1.DNSZone, record *iov1.DNSRecord) ([]iov1.DNSZoneStatus, reconcile.Result) {
 	// TODO: If we compare desired zones with zones from status (i.e. actual
 	// zones), we can filter to list to those zones which haven't already been
 	// successfully ensured. Then the DNS provider wouldn't need such aggressive
@@ -130,33 +141,28 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 	var statuses []iov1.DNSZoneStatus
 	for i := range zones {
 		zone := zones[i]
-		var conditions []iov1.DNSZoneCondition
-		err := r.dnsProvider.Ensure(record, zone)
-		if err != nil {
-			conditions = append(conditions, iov1.DNSZoneCondition{
-				Type:               iov1.DNSRecordFailedConditionType,
-				Status:             string(operatorv1.ConditionTrue),
-				Reason:             "ProviderError",
-				Message:            fmt.Sprintf("The DNS provider failed to ensure the record: %v", err),
-				LastTransitionTime: metav1.Now(),
-			})
+		condition := iov1.DNSZoneCondition{
+			Status:             string(operatorv1.ConditionUnknown),
+			Type:               iov1.DNSRecordFailedConditionType,
+			LastTransitionTime: metav1.Now(),
+		}
+
+		if err := r.dnsProvider.Ensure(record, zone); err != nil {
+			condition.Status = string(operatorv1.ConditionTrue)
+			condition.Reason = "ProviderError"
+			condition.Message = fmt.Sprintf("The DNS provider failed to ensure the record: %v", err)
 			result.RequeueAfter = 30 * time.Second
+		} else {
+			condition.Status = string(operatorv1.ConditionFalse)
+			condition.Reason = "ProviderSuccess"
+			condition.Message = "The DNS provider succeeded in ensuring the record"
 		}
 		statuses = append(statuses, iov1.DNSZoneStatus{
 			DNSZone:    zone,
-			Conditions: conditions,
+			Conditions: []iov1.DNSZoneCondition{condition},
 		})
 	}
-
-	// TODO: only update if status changed
-	updated := record.DeepCopy()
-	updated.Status.Zones = statuses
-	if err := r.client.Status().Update(context.TODO(), updated); err != nil {
-		log.Error(err, "failed to update dnsrecord; will retry", "dnsrecord", record)
-		return reconcile.Result{RequeueAfter: 10 * time.Second}, nil
-	}
-
-	return result, nil
+	return statuses, result
 }
 
 func (r *reconciler) delete(record *iov1.DNSRecord) error {
