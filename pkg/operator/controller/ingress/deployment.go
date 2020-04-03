@@ -29,6 +29,10 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 )
 
+const (
+	WildcardRouteAdmissionPolicy = "ROUTER_ALLOW_WILDCARD_ROUTES"
+)
+
 // ensureRouterDeployment ensures the router deployment exists for a given
 // ingresscontroller.
 func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, infraConfig *configv1.Infrastructure, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer, networkConfig *configv1.Network) (*appsv1.Deployment, error) {
@@ -435,15 +439,27 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 
 	routeAdmission := operatorv1.RouteAdmissionPolicy{
 		NamespaceOwnership: operatorv1.StrictNamespaceOwnershipCheck,
+		WildcardPolicy:     operatorv1.WildcardPolicyDisallowed,
 	}
-	if admission := ci.Spec.RouteAdmission; admission != nil && len(admission.NamespaceOwnership) > 0 {
-		routeAdmission.NamespaceOwnership = ci.Spec.RouteAdmission.NamespaceOwnership
+	if admission := ci.Spec.RouteAdmission; admission != nil {
+		if len(admission.NamespaceOwnership) > 0 {
+			routeAdmission.NamespaceOwnership = admission.NamespaceOwnership
+		}
+		if len(admission.WildcardPolicy) > 0 {
+			routeAdmission.WildcardPolicy = admission.WildcardPolicy
+		}
 	}
 	switch routeAdmission.NamespaceOwnership {
 	case operatorv1.StrictNamespaceOwnershipCheck:
 		env = append(env, corev1.EnvVar{Name: "ROUTER_DISABLE_NAMESPACE_OWNERSHIP_CHECK", Value: "false"})
 	case operatorv1.InterNamespaceAllowedOwnershipCheck:
 		env = append(env, corev1.EnvVar{Name: "ROUTER_DISABLE_NAMESPACE_OWNERSHIP_CHECK", Value: "true"})
+	}
+	switch routeAdmission.WildcardPolicy {
+	case operatorv1.WildcardPolicyAllowed:
+		env = append(env, corev1.EnvVar{Name: WildcardRouteAdmissionPolicy, Value: "true"})
+	default:
+		env = append(env, corev1.EnvVar{Name: WildcardRouteAdmissionPolicy, Value: "false"})
 	}
 
 	deployment.Spec.Template.Spec.Volumes = volumes
