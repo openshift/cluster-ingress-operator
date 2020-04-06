@@ -39,17 +39,8 @@ bindata:
 crd:
 	hack/update-generated-crd.sh
 
-.PHONY: verify-bindata
-verify-bindata:
-	hack/verify-generated-bindata.sh
-
-# Do not write the CRDs, only compare and return (code 1 if dirty).
-.PHONY: verify-crd
-verify-crd:
-	hack/verify-generated-crd.sh
-
 .PHONY: test
-test: verify
+test:
 	$(GO) test ./...
 
 .PHONY: release-local
@@ -66,8 +57,11 @@ clean:
 	rm -f $(BIN)
 
 .PHONY: verify
-verify: verify-crd verify-bindata
+verify:
 	hack/verify-gofmt.sh
+	hack/verify-generated-crd.sh
+	hack/verify-generated-bindata.sh
+	hack/verify-deps.sh
 
 .PHONY: uninstall
 uninstall:
