@@ -33,6 +33,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	policyv1beta1 "k8s.io/api/policy/v1beta1"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -521,6 +522,24 @@ func TestRouterCACertificate(t *testing.T) {
 	// error.
 	if _, err := io.Copy(ioutil.Discard, conn); err != nil && err != io.EOF {
 		t.Fatalf("failed to read response from router at %s: %v", address, err)
+	}
+}
+
+// TestPodDisruptionBudgetExists verifies that a PodDisruptionBudget resource
+// exists for the default ingresscontroller.
+func TestPodDisruptionBudgetExists(t *testing.T) {
+	ic := &operatorv1.IngressController{}
+	if err := kclient.Get(context.TODO(), defaultName, ic); err != nil {
+		t.Fatalf("failed to get default ingresscontroller: %v", err)
+	}
+
+	if err := waitForIngressControllerCondition(kclient, 5*time.Minute, defaultName, defaultAvailableConditions...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	pdb := &policyv1beta1.PodDisruptionBudget{}
+	if err := kclient.Get(context.TODO(), controller.RouterPodDisruptionBudgetName(ic), pdb); err != nil {
+		t.Fatalf("failed to get default ingresscontroller poddisruptionbudget: %v", err)
 	}
 }
 

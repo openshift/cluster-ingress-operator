@@ -97,6 +97,12 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	volumes := deployment.Spec.Template.Spec.Volumes
 	routerVolumeMounts := deployment.Spec.Template.Spec.Containers[0].VolumeMounts
 
+	var desiredReplicas int32 = 2
+	if ci.Spec.Replicas != nil {
+		desiredReplicas = *ci.Spec.Replicas
+	}
+	deployment.Spec.Replicas = &desiredReplicas
+
 	needDeploymentHash := false
 	switch ci.Status.EndpointPublishingStrategy.Type {
 	case operatorv1.HostNetworkStrategyType:
@@ -127,13 +133,21 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		// the deployment strategy: During a rolling update, we want the
 		// deployment controller to scale up the new replica set first
 		// and scale down the old replica set once the new replica is
-		// ready.  Thus set max unavailable to 0 and surge to 1.
+		// ready.  Thus set max unavailable to 50% (if replicas < 4) or
+		// 25% (if replicas >= 4) and surge to 25%.  Note that the
+		// deployment controller rounds surge up and max unavailable
+		// down.
+
+		maxUnavailable := "50%"
+		if desiredReplicas >= 4 {
+			maxUnavailable = "25%"
+		}
 		pointerTo := func(ios intstr.IntOrString) *intstr.IntOrString { return &ios }
 		deployment.Spec.Strategy = appsv1.DeploymentStrategy{
 			Type: appsv1.RollingUpdateDeploymentStrategyType,
 			RollingUpdate: &appsv1.RollingUpdateDeployment{
-				MaxUnavailable: pointerTo(intstr.FromInt(0)),
-				MaxSurge:       pointerTo(intstr.FromInt(1)),
+				MaxUnavailable: pointerTo(intstr.FromString(maxUnavailable)),
+				MaxSurge:       pointerTo(intstr.FromString("25%")),
 			},
 		}
 
@@ -294,12 +308,6 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 			Value: namespaceSelector.String(),
 		})
 	}
-
-	var desiredReplicas int32 = 2
-	if ci.Spec.Replicas != nil {
-		desiredReplicas = *ci.Spec.Replicas
-	}
-	deployment.Spec.Replicas = &desiredReplicas
 
 	if ci.Spec.RouteSelector != nil {
 		routeSelector, err := metav1.LabelSelectorAsSelector(ci.Spec.RouteSelector)
