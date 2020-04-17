@@ -3,7 +3,6 @@ package ingress
 import (
 	"fmt"
 	"reflect"
-	"strconv"
 	"testing"
 	"time"
 
@@ -30,6 +29,46 @@ var otherToleration = corev1.Toleration{
 	Value:    "bar",
 	Operator: corev1.TolerationOpExists,
 	Effect:   corev1.TaintEffectNoExecute,
+}
+
+func checkDeploymentHasEnvVar(t *testing.T, deployment *appsv1.Deployment, name string, expectValue bool, expectedValue string) {
+	t.Helper()
+
+	var (
+		actualValue string
+		foundValue  bool
+	)
+	for _, envVar := range deployment.Spec.Template.Spec.Containers[0].Env {
+		if envVar.Name == name {
+			foundValue = true
+			actualValue = envVar.Value
+			break
+		}
+	}
+	switch {
+	case !expectValue && foundValue:
+		t.Errorf("router Deployment has unexpected %s setting: %q", name, actualValue)
+	case expectValue && !foundValue:
+		t.Errorf("router Deployment is missing %v", name)
+	case expectValue && expectedValue != actualValue:
+		t.Errorf("router Deployment has unexpected %s setting: expected %q, got %q", name, expectedValue, actualValue)
+	}
+}
+
+func checkDeploymentHasContainer(t *testing.T, deployment *appsv1.Deployment, name string, expect bool) {
+	t.Helper()
+
+	for _, container := range deployment.Spec.Template.Spec.Containers {
+		if container.Name == name {
+			if expect {
+				return
+			}
+			t.Errorf("router Deployment has unexpected %q container", name)
+		}
+	}
+	if expect {
+		t.Errorf("router Deployment has no %q container", name)
+	}
 }
 
 func checkRollingUpdateParams(t *testing.T, deployment *appsv1.Deployment, maxUnavailable intstr.IntOrString, maxSurge intstr.IntOrString) {
@@ -124,47 +163,11 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		t.Errorf("router Deployment has wrong hash; expected: %s, got: %s", expectedHash, actualHash)
 	}
 
-	var wildcardPolicy string
-	for _, envVar := range deployment.Spec.Template.Spec.Containers[0].Env {
-		if envVar.Name == WildcardRouteAdmissionPolicy {
-			wildcardPolicy = envVar.Value
-			break
-		}
-	}
-	if wildcardPolicy == "" {
-		t.Error("router Deployment has no wildcard admission policy environment variable")
-	} else if wildcardPolicy != "false" {
-		t.Errorf("router Deployment has unexpected wildcard admission policy value: %v",
-			wildcardPolicy)
-	}
+	checkDeploymentHasEnvVar(t, deployment, WildcardRouteAdmissionPolicy, true, "false")
 
-	namespaceSelector := ""
-	for _, envVar := range deployment.Spec.Template.Spec.Containers[0].Env {
-		if envVar.Name == "NAMESPACE_LABELS" {
-			namespaceSelector = envVar.Value
-			break
-		}
-	}
-	if namespaceSelector == "" {
-		t.Error("router Deployment has no namespace selector")
-	} else if namespaceSelector != "foo=bar" {
-		t.Errorf("router Deployment has unexpected namespace selectors: %v",
-			namespaceSelector)
-	}
+	checkDeploymentHasEnvVar(t, deployment, "NAMESPACE_LABELS", true, "foo=bar")
 
-	routeSelector := ""
-	for _, envVar := range deployment.Spec.Template.Spec.Containers[0].Env {
-		if envVar.Name == "ROUTE_LABELS" {
-			routeSelector = envVar.Value
-			break
-		}
-	}
-	if routeSelector == "" {
-		t.Error("router Deployment has no route selector")
-	} else if routeSelector != "baz=quux" {
-		t.Errorf("router Deployment has unexpected route selectors: %v",
-			routeSelector)
-	}
+	checkDeploymentHasEnvVar(t, deployment, "ROUTE_LABELS", true, "baz=quux")
 
 	if deployment.Spec.Replicas == nil {
 		t.Error("router Deployment has nil replicas")
@@ -183,29 +186,9 @@ func TestDesiredRouterDeployment(t *testing.T) {
 			deployment.Spec.Template.Spec.Tolerations)
 	}
 
-	proxyProtocolEnabled := false
-	for _, envVar := range deployment.Spec.Template.Spec.Containers[0].Env {
-		if envVar.Name == "ROUTER_USE_PROXY_PROTOCOL" {
-			if v, err := strconv.ParseBool(envVar.Value); err == nil {
-				proxyProtocolEnabled = v
-			}
-			break
-		}
-	}
-	if proxyProtocolEnabled {
-		t.Errorf("router Deployment unexpected proxy protocol")
-	}
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_USE_PROXY_PROTOCOL", false, "")
 
-	canonicalHostname := ""
-	for _, envVar := range deployment.Spec.Template.Spec.Containers[0].Env {
-		if envVar.Name == "ROUTER_CANONICAL_HOSTNAME" {
-			canonicalHostname = envVar.Value
-			break
-		}
-	}
-	if canonicalHostname != "" {
-		t.Errorf("router Deployment has unexpected canonical hostname: %q", canonicalHostname)
-	}
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CANONICAL_HOSTNAME", false, "")
 
 	if deployment.Spec.Template.Spec.Volumes[0].Secret == nil {
 		t.Error("router Deployment has no secret volume")
@@ -228,51 +211,26 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		t.Errorf("expected empty readiness probe host, got %q", deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.Handler.HTTPGet.Host)
 	}
 
-	for _, container := range deployment.Spec.Template.Spec.Containers {
-		if container.Name == "syslog" {
-			t.Errorf("router Deployment has unexpected syslog container: %#v", container)
-		}
-	}
+	checkDeploymentHasContainer(t, deployment, operatorv1.ContainerLoggingSidecarContainerName, false)
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOG_FACILITY", false, "")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOG_LEVEL", false, "")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SYSLOG_ADDRESS", false, "")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SYSLOG_FORMAT", false, "")
 
-	ciphers := ""
-	for _, envVar := range deployment.Spec.Template.Spec.Containers[0].Env {
-		if envVar.Name == "ROUTER_CIPHERS" {
-			ciphers = envVar.Value
-			break
-		}
-	}
-	expectedCiphers := "foo:bar:baz"
-	if ciphers != expectedCiphers {
-		t.Errorf("router Deployment has unexpected ciphers: expected %q, got %q", expectedCiphers, ciphers)
-	}
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CIPHERS", true, "foo:bar:baz")
 
-	tlsMinVersion := ""
-	for _, envVar := range deployment.Spec.Template.Spec.Containers[0].Env {
-		if envVar.Name == "SSL_MIN_VERSION" {
-			tlsMinVersion = envVar.Value
-			break
-		}
-	}
-	expectedTLSMinVersion := "TLSv1.1"
-	if tlsMinVersion != expectedTLSMinVersion {
-		t.Errorf("router Deployment has unexpected minimum TLS version: expected %q, got %q", expectedTLSMinVersion, tlsMinVersion)
-	}
+	checkDeploymentHasEnvVar(t, deployment, "SSL_MIN_VERSION", true, "TLSv1.1")
 
-	var ipv4v6Mode string
-	foundIPv4V6Mode := false
-	for _, envVar := range deployment.Spec.Template.Spec.Containers[0].Env {
-		if envVar.Name == "ROUTER_IP_V4_V6_MODE" {
-			foundIPv4V6Mode = true
-			ipv4v6Mode = envVar.Value
-			break
-		}
-	}
-	if foundIPv4V6Mode {
-		t.Errorf("router Deployment has unexpected ROUTER_IP_V4_V6_MODE setting: %q", ipv4v6Mode)
-	}
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_IP_V4_V6_MODE", false, "")
 
-	ingressConfig.Annotations = map[string]string{
-		EnableLoggingAnnotation: "debug",
+	ci.Spec.Logging = &operatorv1.IngressControllerLogging{
+		Access: &operatorv1.AccessLogging{
+			Destination: operatorv1.LoggingDestination{
+				Type:      operatorv1.ContainerLoggingDestinationType,
+				Container: &operatorv1.ContainerLoggingDestinationParameters{},
+			},
+			HttpLogFormat: "%ci:%cp [%t] %ft %b/%s %B %bq %HM %HU %HV",
+		},
 	}
 	ci.Spec.TLSSecurityProfile = &configv1.TLSSecurityProfile{
 		Type: configv1.TLSProfileCustomType,
@@ -313,84 +271,38 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		t.Errorf("expected empty readiness probe host, got %q", deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.Handler.HTTPGet.Host)
 	}
 
-	proxyProtocolEnabled = false
-	for _, envVar := range deployment.Spec.Template.Spec.Containers[0].Env {
-		if envVar.Name == "ROUTER_USE_PROXY_PROTOCOL" {
-			if v, err := strconv.ParseBool(envVar.Value); err == nil {
-				proxyProtocolEnabled = v
-			}
-			break
-		}
-	}
-	if !proxyProtocolEnabled {
-		t.Errorf("router Deployment expected proxy protocol")
-	}
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_USE_PROXY_PROTOCOL", true, "true")
 
-	canonicalHostname = ""
-	for _, envVar := range deployment.Spec.Template.Spec.Containers[0].Env {
-		if envVar.Name == "ROUTER_CANONICAL_HOSTNAME" {
-			canonicalHostname = envVar.Value
-			break
-		}
-	}
-	if canonicalHostname == "" {
-		t.Error("router Deployment has no canonical hostname")
-	} else if canonicalHostname != ci.Status.Domain {
-		t.Errorf("router Deployment has unexpected canonical hostname: %q, expected %q", canonicalHostname, ci.Status.Domain)
-	}
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CANONICAL_HOSTNAME", true, ci.Status.Domain)
 
-	foundSyslogContainer := false
-	for _, container := range deployment.Spec.Template.Spec.Containers {
-		if container.Name == "syslog" {
-			foundSyslogContainer = true
-		}
-	}
-	if !foundSyslogContainer {
-		t.Error("router Deployment has no syslog container")
-	}
+	checkDeploymentHasContainer(t, deployment, operatorv1.ContainerLoggingSidecarContainerName, true)
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOG_FACILITY", false, "")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOG_LEVEL", true, "debug")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SYSLOG_ADDRESS", true, "/var/lib/rsyslog/rsyslog.sock")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SYSLOG_FORMAT", true, `"%ci:%cp [%t] %ft %b/%s %B %bq %HM %HU %HV"`)
 
-	ciphers = ""
-	for _, envVar := range deployment.Spec.Template.Spec.Containers[0].Env {
-		if envVar.Name == "ROUTER_CIPHERS" {
-			ciphers = envVar.Value
-			break
-		}
-	}
-	expectedCiphers = "quux"
-	if ciphers != expectedCiphers {
-		t.Errorf("router Deployment has unexpected ciphers: expected %q, got %q", expectedCiphers, ciphers)
-	}
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CIPHERS", true, "quux")
 
-	tlsMinVersion = ""
-	for _, envVar := range deployment.Spec.Template.Spec.Containers[0].Env {
-		if envVar.Name == "SSL_MIN_VERSION" {
-			tlsMinVersion = envVar.Value
-			break
-		}
-	}
 	// TODO: Update when haproxy is built with an openssl version that supports tls v1.3.
-	expectedTLSMinVersion = "TLSv1.2"
-	if tlsMinVersion != expectedTLSMinVersion {
-		t.Errorf("router Deployment has unexpected minimum TLS version: expected %q, got %q", expectedTLSMinVersion, tlsMinVersion)
-	}
+	checkDeploymentHasEnvVar(t, deployment, "SSL_MIN_VERSION", true, "TLSv1.2")
 
-	foundIPv4V6Mode = false
-	for _, envVar := range deployment.Spec.Template.Spec.Containers[0].Env {
-		if envVar.Name == "ROUTER_IP_V4_V6_MODE" {
-			foundIPv4V6Mode = true
-			ipv4v6Mode = envVar.Value
-			break
-		}
-	}
-	if !foundIPv4V6Mode {
-		t.Error("router Deployment is missing ROUTER_IP_V4_V6_MODE setting")
-	} else if ipv4v6Mode != "v4v6" {
-		t.Errorf("router Deployment has unexpected ROUTER_IP_V4_V6_MODE setting: %q", ipv4v6Mode)
-	}
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_IP_V4_V6_MODE", true, "v4v6")
 
 	secretName := fmt.Sprintf("secret-%v", time.Now().UnixNano())
 	ci.Spec.DefaultCertificate = &corev1.LocalObjectReference{
 		Name: secretName,
+	}
+	ci.Spec.Logging = &operatorv1.IngressControllerLogging{
+		Access: &operatorv1.AccessLogging{
+			Destination: operatorv1.LoggingDestination{
+				Type: operatorv1.SyslogLoggingDestinationType,
+				Syslog: &operatorv1.SyslogLoggingDestinationParameters{
+					Address:  "1.2.3.4",
+					Port:     uint32(12345),
+					Facility: "local2",
+				},
+			},
+		},
 	}
 	ci.Spec.NodePlacement = &operatorv1.NodePlacement{
 		NodeSelector: &metav1.LabelSelector{
@@ -403,10 +315,6 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	expectedReplicas = 3
 	ci.Spec.Replicas = &expectedReplicas
 	ci.Status.EndpointPublishingStrategy.Type = operatorv1.HostNetworkStrategyType
-	delete(ingressConfig.Annotations, EnableLoggingAnnotation)
-	ci.Annotations = map[string]string{
-		EnableLoggingAnnotation: "debug",
-	}
 	networkConfig.Status.ClusterNetwork = []configv1.ClusterNetworkEntry{
 		{CIDR: "2620:0:2d0:200::7/32"},
 	}
@@ -457,29 +365,13 @@ func TestDesiredRouterDeployment(t *testing.T) {
 			secretName, deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName)
 	}
 
-	foundSyslogContainer = false
-	for _, container := range deployment.Spec.Template.Spec.Containers {
-		if container.Name == "syslog" {
-			foundSyslogContainer = true
-		}
-	}
-	if !foundSyslogContainer {
-		t.Error("router Deployment has no syslog container")
-	}
+	checkDeploymentHasContainer(t, deployment, operatorv1.ContainerLoggingSidecarContainerName, false)
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOG_FACILITY", true, "local2")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOG_LEVEL", true, "debug")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SYSLOG_ADDRESS", true, "1.2.3.4:12345")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SYSLOG_FORMAT", false, "")
 
-	foundIPv4V6Mode = false
-	for _, envVar := range deployment.Spec.Template.Spec.Containers[0].Env {
-		if envVar.Name == "ROUTER_IP_V4_V6_MODE" {
-			foundIPv4V6Mode = true
-			ipv4v6Mode = envVar.Value
-			break
-		}
-	}
-	if !foundIPv4V6Mode {
-		t.Error("router Deployment is missing ROUTER_IP_V4_V6_MODE setting")
-	} else if ipv4v6Mode != "v6" {
-		t.Errorf("router Deployment has unexpected ROUTER_IP_V4_V6_MODE setting: %q", ipv4v6Mode)
-	}
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_IP_V4_V6_MODE", true, "v6")
 }
 
 func TestInferTLSProfileSpecFromDeployment(t *testing.T) {
@@ -518,7 +410,7 @@ func TestInferTLSProfileSpecFromDeployment(t *testing.T) {
 					},
 				},
 				{
-					Name: "syslog",
+					Name: "logs",
 				},
 			},
 			expected: &configv1.TLSProfileSpec{

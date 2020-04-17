@@ -10,7 +10,7 @@ function verify_crd {
 }
 
 verify_crd \
-  "vendor/github.com/openshift/api/operator/v1/0000_50_ingress-operator_00-custom-resource-definition.yaml" \
+  "vendor/github.com/openshift/api/operator/v1/0000_50_ingress-operator_00-ingresscontroller.crd.yaml" \
   "manifests/00-custom-resource-definition.yaml"
 
 verify_crd \

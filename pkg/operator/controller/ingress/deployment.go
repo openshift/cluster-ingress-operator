@@ -31,6 +31,11 @@ import (
 
 const (
 	WildcardRouteAdmissionPolicy = "ROUTER_ALLOW_WILDCARD_ROUTES"
+
+	RouterLogLevelEnvName       = "ROUTER_LOG_LEVEL"
+	RouterSyslogAddressEnvName  = "ROUTER_SYSLOG_ADDRESS"
+	RouterSyslogFormatEnvName   = "ROUTER_SYSLOG_FORMAT"
+	RouterSyslogFacilityEnvName = "ROUTER_LOG_FACILITY"
 )
 
 // ensureRouterDeployment ensures the router deployment exists for a given
@@ -336,7 +341,11 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	secretName := controller.RouterEffectiveDefaultCertificateSecretName(ci, deployment.Namespace)
 	deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName = secretName.Name
 
-	if enabled, level := ExtraLoggingEnabled(ci, ingressConfig); enabled {
+	accessLogging := accessLoggingForIngressController(ci)
+	switch {
+	case accessLogging == nil:
+		// No additional configuration is needed.
+	case accessLogging.Destination.Type == operatorv1.ContainerLoggingDestinationType:
 		rsyslogConfigVolume := corev1.Volume{
 			Name: "rsyslog-config",
 			VolumeSource: corev1.VolumeSource{
@@ -371,7 +380,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		socketPath := filepath.Join(rsyslogSocketVolumeMount.MountPath, "rsyslog.sock")
 
 		syslogContainer := corev1.Container{
-			Name: "syslog",
+			Name: operatorv1.ContainerLoggingSidecarContainerName,
 			// The ingresscontroller image has rsyslog built in.
 			Image: ingressControllerImage,
 			Command: []string{
@@ -395,12 +404,29 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		}
 
 		env = append(env,
-			corev1.EnvVar{Name: "ROUTER_SYSLOG_ADDRESS", Value: socketPath},
-			corev1.EnvVar{Name: "ROUTER_LOG_LEVEL", Value: level},
+			corev1.EnvVar{Name: RouterSyslogAddressEnvName, Value: socketPath},
+			corev1.EnvVar{Name: RouterLogLevelEnvName, Value: "debug"},
 		)
+		if len(accessLogging.HttpLogFormat) > 0 {
+			env = append(env, corev1.EnvVar{Name: RouterSyslogFormatEnvName, Value: fmt.Sprintf("%q", accessLogging.HttpLogFormat)})
+		}
 		volumes = append(volumes, rsyslogConfigVolume, rsyslogSocketVolume)
 		routerVolumeMounts = append(routerVolumeMounts, rsyslogSocketVolumeMount)
 		deployment.Spec.Template.Spec.Containers = append(deployment.Spec.Template.Spec.Containers, syslogContainer)
+	case accessLogging.Destination.Type == operatorv1.SyslogLoggingDestinationType:
+		if len(accessLogging.Destination.Syslog.Facility) > 0 {
+			env = append(env, corev1.EnvVar{Name: RouterSyslogFacilityEnvName, Value: accessLogging.Destination.Syslog.Facility})
+		}
+		address := accessLogging.Destination.Syslog.Address
+		port := accessLogging.Destination.Syslog.Port
+		endpoint := net.JoinHostPort(address, fmt.Sprintf("%d", port))
+		env = append(env,
+			corev1.EnvVar{Name: RouterLogLevelEnvName, Value: "debug"},
+			corev1.EnvVar{Name: RouterSyslogAddressEnvName, Value: endpoint},
+		)
+		if len(accessLogging.HttpLogFormat) > 0 {
+			env = append(env, corev1.EnvVar{Name: RouterSyslogFormatEnvName, Value: fmt.Sprintf("%q", accessLogging.HttpLogFormat)})
+		}
 	}
 
 	tlsProfileSpec := tlsProfileSpecForIngressController(ci, apiConfig)
@@ -486,6 +512,41 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	}
 
 	return deployment, nil
+}
+
+// accessLoggingForIngressController returns an AccessLogging value for the
+// given ingresscontroller, or nil if the ingresscontroller does not specify
+// a valid access logging configuration.
+func accessLoggingForIngressController(ic *operatorv1.IngressController) *operatorv1.AccessLogging {
+	if ic.Spec.Logging == nil || ic.Spec.Logging.Access == nil {
+		return nil
+	}
+
+	switch ic.Spec.Logging.Access.Destination.Type {
+	case operatorv1.ContainerLoggingDestinationType:
+		return &operatorv1.AccessLogging{
+			Destination: operatorv1.LoggingDestination{
+				Type:      operatorv1.ContainerLoggingDestinationType,
+				Container: &operatorv1.ContainerLoggingDestinationParameters{},
+			},
+			HttpLogFormat: ic.Spec.Logging.Access.HttpLogFormat,
+		}
+	case operatorv1.SyslogLoggingDestinationType:
+		if ic.Spec.Logging.Access.Destination.Syslog != nil {
+			return &operatorv1.AccessLogging{
+				Destination: operatorv1.LoggingDestination{
+					Type: operatorv1.SyslogLoggingDestinationType,
+					Syslog: &operatorv1.SyslogLoggingDestinationParameters{
+						Address:  ic.Spec.Logging.Access.Destination.Syslog.Address,
+						Port:     ic.Spec.Logging.Access.Destination.Syslog.Port,
+						Facility: ic.Spec.Logging.Access.Destination.Syslog.Facility,
+					},
+				},
+				HttpLogFormat: ic.Spec.Logging.Access.HttpLogFormat,
+			}
+		}
+	}
+	return nil
 }
 
 // inferTLSProfileSpecFromDeployment examines the given deployment's pod
