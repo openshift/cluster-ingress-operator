@@ -25,7 +25,6 @@ import (
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 
-	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	runtimecontroller "sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -43,7 +42,6 @@ var log = logf.Logger.WithName(controllerName)
 func New(mgr manager.Manager, operatorNamespace string) (runtimecontroller.Controller, error) {
 	reconciler := &reconciler{
 		client:            mgr.GetClient(),
-		cache:             mgr.GetCache(),
 		recorder:          mgr.GetEventRecorderFor(controllerName),
 		operatorNamespace: operatorNamespace,
 	}
@@ -59,7 +57,6 @@ func New(mgr manager.Manager, operatorNamespace string) (runtimecontroller.Contr
 
 type reconciler struct {
 	client            client.Client
-	cache             cache.Cache
 	recorder          record.EventRecorder
 	operatorNamespace string
 }
@@ -108,15 +105,6 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 				errs = append(errs, fmt.Errorf("failed to ensure default cert for %s: %v", ingress.Name, err))
 			}
 		}
-	}
-
-	// This section creates the legacy router-ca configmap which only ever contains the operator-managed default signing
-	// cert used for signing the default wildcard serving cert
-	ingresses := &operatorv1.IngressControllerList{}
-	if err := r.cache.List(context.TODO(), ingresses, client.InNamespace(r.operatorNamespace)); err != nil {
-		errs = append(errs, fmt.Errorf("failed to list ingresscontrollers: %v", err))
-	} else if err := r.ensureRouterCAConfigMap(ca, ingresses.Items); err != nil {
-		errs = append(errs, fmt.Errorf("failed to publish router CA: %v", err))
 	}
 
 	// We need to construct the CA bundle that can be used to verify the ingress used to serve the console and the oauth-server.

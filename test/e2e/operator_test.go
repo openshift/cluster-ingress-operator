@@ -196,10 +196,6 @@ func TestUpdateDefaultIngressController(t *testing.T) {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
-	routerCAConfigmap := &corev1.ConfigMap{}
-	if err := kclient.Get(context.TODO(), controller.RouterCAConfigMapName(), routerCAConfigmap); err != nil {
-		t.Fatalf("failed to get CA certificate configmap: %v", err)
-	}
 	defaultIngressCAConfigmap := &corev1.ConfigMap{}
 	if err := kclient.Get(context.TODO(), controller.DefaultIngressCertConfigMapName(), defaultIngressCAConfigmap); err != nil {
 		t.Fatalf("failed to get CA certificate configmap: %v", err)
@@ -250,19 +246,6 @@ func TestUpdateDefaultIngressController(t *testing.T) {
 		t.Fatalf("failed to observe updated deployment: %v", err)
 	}
 
-	// Wait for the CA certificate configmap to be deleted.
-	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
-		if err := kclient.Get(context.TODO(), controller.RouterCAConfigMapName(), routerCAConfigmap); err != nil {
-			if errors.IsNotFound(err) {
-				return true, nil
-			}
-			t.Logf("failed to get CA certificate configmap, will retry: %v", err)
-		}
-		return false, nil
-	})
-	if err != nil {
-		t.Fatalf("failed to observe clean-up of CA certificate configmap: %v", err)
-	}
 	// Wait for the default ingress configmap to be updated
 	previousDefaultIngressCAConfigmap := defaultIngressCAConfigmap.DeepCopy()
 	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
@@ -287,19 +270,6 @@ func TestUpdateDefaultIngressController(t *testing.T) {
 		t.Errorf("failed to reset default ingresscontroller: %v", err)
 	}
 
-	// Wait for the CA certificate configmap to be recreated.
-	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
-		if err := kclient.Get(context.TODO(), controller.RouterCAConfigMapName(), routerCAConfigmap); err != nil {
-			if !errors.IsNotFound(err) {
-				t.Logf("failed to get CA certificate configmap, will retry: %v", err)
-			}
-			return false, nil
-		}
-		return true, nil
-	})
-	if err != nil {
-		t.Fatalf("failed to get recreated CA certificate configmap: %v", err)
-	}
 	// Wait for the default ingress configmap to be updated back to the original
 	previousDefaultIngressCAConfigmap = defaultIngressCAConfigmap.DeepCopy()
 	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
@@ -451,7 +421,9 @@ func getScaleClient() (scale.ScalesGetter, error) {
 	return scale.NewForConfig(kubeConfig, restMapper, dynamic.LegacyAPIPathResolverFunc, scaleKindResolver)
 }
 
-func TestRouterCACertificate(t *testing.T) {
+// TestDefaultIngressCertificate verifies that the "default-ingress-cert"
+// configmap is published and can be used to connect to the router.
+func TestDefaultIngressCertificate(t *testing.T) {
 	ic := &operatorv1.IngressController{}
 	if err := kclient.Get(context.TODO(), defaultName, ic); err != nil {
 		t.Fatalf("failed to get default ingresscontroller: %v", err)
@@ -466,22 +438,16 @@ func TestRouterCACertificate(t *testing.T) {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
+	defaultIngressCAConfigmap := &corev1.ConfigMap{}
+	if err := kclient.Get(context.TODO(), controller.DefaultIngressCertConfigMapName(), defaultIngressCAConfigmap); err != nil {
+		t.Fatalf("failed to get CA certificate configmap: %v", err)
+	}
+
 	var certData []byte
-	err := wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
-		cm := &corev1.ConfigMap{}
-		err := kclient.Get(context.TODO(), controller.RouterCAConfigMapName(), cm)
-		if err != nil {
-			return false, nil
-		}
-		if val, ok := cm.Data["ca-bundle.crt"]; !ok {
-			return false, fmt.Errorf("router-ca secret is missing %q", "ca-bundle.crt")
-		} else {
-			certData = []byte(val)
-		}
-		return true, nil
-	})
-	if err != nil {
-		t.Fatalf("failed to get CA certificate: %v", err)
+	if val, ok := defaultIngressCAConfigmap.Data["ca-bundle.crt"]; !ok {
+		t.Fatalf("%s configmap is missing %q", controller.DefaultIngressCertConfigMapName(), "ca-bundle.crt")
+	} else {
+		certData = []byte(val)
 	}
 
 	certPool := x509.NewCertPool()
@@ -491,8 +457,7 @@ func TestRouterCACertificate(t *testing.T) {
 
 	wildcardRecordName := controller.WildcardDNSRecordName(ic)
 	wildcardRecord := &iov1.DNSRecord{}
-	err = kclient.Get(context.TODO(), wildcardRecordName, wildcardRecord)
-	if err != nil {
+	if err := kclient.Get(context.TODO(), wildcardRecordName, wildcardRecord); err != nil {
 		t.Fatalf("failed to get wildcard dnsrecord %s: %v", wildcardRecordName, err)
 	}
 	// TODO: handle >0 targets

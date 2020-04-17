@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
 	corev1 "k8s.io/api/core/v1"
@@ -26,16 +25,6 @@ func (r *reconciler) ensureDefaultIngressCertConfigMap(caBundle string) error {
 		},
 	}
 	return r.ensureConfigMap(name, desired)
-}
-
-// ensureRouterCAConfigMap will create, update, or delete the configmap for the
-// router CA as appropriate.
-func (r *reconciler) ensureRouterCAConfigMap(secret *corev1.Secret, ingresses []operatorv1.IngressController) error {
-	desired, err := desiredRouterCAConfigMap(secret, ingresses)
-	if err != nil {
-		return err
-	}
-	return r.ensureConfigMap(controller.RouterCAConfigMapName(), desired)
 }
 
 // ensureConfigMap will create, update, or delete the configmap as appropriate.
@@ -71,36 +60,6 @@ func (r *reconciler) ensureConfigMap(name types.NamespacedName, desired *corev1.
 		}
 	}
 	return nil
-}
-
-// desiredRouterCAConfigMap returns the desired router CA configmap.
-func desiredRouterCAConfigMap(secret *corev1.Secret, ingresses []operatorv1.IngressController) (*corev1.ConfigMap, error) {
-	if !shouldPublishRouterCA(ingresses) {
-		return nil, nil
-	}
-
-	name := controller.RouterCAConfigMapName()
-	cm := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name.Name,
-			Namespace: name.Namespace,
-		},
-		Data: map[string]string{
-			"ca-bundle.crt": string(secret.Data["tls.crt"]),
-		},
-	}
-	return cm, nil
-}
-
-// shouldPublishRouterCA checks if some IngressController uses the default
-// certificate, in which case the CA certificate needs to be published.
-func shouldPublishRouterCA(ingresses []operatorv1.IngressController) bool {
-	for _, ci := range ingresses {
-		if ci.Spec.DefaultCertificate == nil {
-			return true
-		}
-	}
-	return false
 }
 
 // currentConfigMap returns the current state of the desired configmap namespace/name.

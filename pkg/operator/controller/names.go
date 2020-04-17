@@ -53,16 +53,6 @@ func RouterCASecretName(operatorNamespace string) types.NamespacedName {
 	}
 }
 
-// RouterCAConfigMapName returns the namespaced name for the router CA configmap.
-// The operator uses this configmap to publish the public key for the CA
-// certificate, so that other operators can include it into their trust bundles.
-func RouterCAConfigMapName() types.NamespacedName {
-	return types.NamespacedName{
-		Namespace: GlobalMachineSpecifiedConfigNamespace,
-		Name:      "router-ca",
-	}
-}
-
 // DefaultIngressCertConfigMapName returns the namespaced name for the default ingress cert configmap.
 // The operator uses this configmap to publish the public key that golang clients can use to trust
 // the default ingress wildcard serving cert.
