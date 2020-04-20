@@ -346,7 +346,7 @@ func TestComputeLoadBalancerStatus(t *testing.T) {
 			name:       "unmanaged",
 			controller: ingressController("default", operatorv1.HostNetworkStrategyType),
 			expect: []operatorv1.OperatorCondition{
-				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionFalse, "UnsupportedEndpointPublishingStrategy", clock.Now()),
+				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionFalse, "EndpointPublishingStrategyExcludesManagedLoadBalancer", clock.Now()),
 			},
 		},
 		{
