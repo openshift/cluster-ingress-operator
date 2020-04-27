@@ -833,6 +833,38 @@ func TestDeploymentConfigChanged(t *testing.T) {
 			},
 			expect: false,
 		},
+		{
+			description: "if probe values are set to default values",
+			mutate: func(deployment *appsv1.Deployment) {
+				deployment.Spec.Template.Spec.Containers[0].LivenessProbe.Handler.HTTPGet.Scheme = "HTTP"
+				deployment.Spec.Template.Spec.Containers[0].LivenessProbe.TimeoutSeconds = int32(1)
+				deployment.Spec.Template.Spec.Containers[0].LivenessProbe.PeriodSeconds = int32(10)
+				deployment.Spec.Template.Spec.Containers[0].LivenessProbe.SuccessThreshold = int32(1)
+				deployment.Spec.Template.Spec.Containers[0].LivenessProbe.FailureThreshold = int32(3)
+				deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.Handler.HTTPGet.Scheme = "HTTP"
+				deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.TimeoutSeconds = int32(1)
+				deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.PeriodSeconds = int32(10)
+				deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.SuccessThreshold = int32(1)
+				deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.FailureThreshold = int32(3)
+			},
+			expect: false,
+		},
+		{
+			description: "if probe values are set to non-default values",
+			mutate: func(deployment *appsv1.Deployment) {
+				deployment.Spec.Template.Spec.Containers[0].LivenessProbe.Handler.HTTPGet.Scheme = "HTTPS"
+				deployment.Spec.Template.Spec.Containers[0].LivenessProbe.TimeoutSeconds = int32(2)
+				deployment.Spec.Template.Spec.Containers[0].LivenessProbe.PeriodSeconds = int32(20)
+				deployment.Spec.Template.Spec.Containers[0].LivenessProbe.SuccessThreshold = int32(2)
+				deployment.Spec.Template.Spec.Containers[0].LivenessProbe.FailureThreshold = int32(30)
+				deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.Handler.HTTPGet.Scheme = "HTTPS"
+				deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.TimeoutSeconds = int32(2)
+				deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.PeriodSeconds = int32(20)
+				deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.SuccessThreshold = int32(2)
+				deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.FailureThreshold = int32(30)
+			},
+			expect: true,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -899,6 +931,26 @@ func TestDeploymentConfigChanged(t *testing.T) {
 									},
 								},
 								Image: "openshift/origin-cluster-ingress-operator:v4.0",
+								LivenessProbe: &corev1.Probe{
+									Handler: corev1.Handler{
+										HTTPGet: &corev1.HTTPGetAction{
+											Path: "/healthz",
+											Port: intstr.IntOrString{
+												IntVal: int32(1936),
+											},
+										},
+									},
+								},
+								ReadinessProbe: &corev1.Probe{
+									Handler: corev1.Handler{
+										HTTPGet: &corev1.HTTPGetAction{
+											Path: "/healthz/ready",
+											Port: intstr.IntOrString{
+												IntVal: int32(1936),
+											},
+										},
+									},
+								},
 							},
 						},
 						Affinity: &corev1.Affinity{

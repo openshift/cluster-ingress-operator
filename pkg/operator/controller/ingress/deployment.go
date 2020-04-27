@@ -665,9 +665,8 @@ func hashableDeployment(deployment *appsv1.Deployment, onlyTemplate bool) *appsv
 			Image:           container.Image,
 			ImagePullPolicy: container.ImagePullPolicy,
 			Name:            container.Name,
-			LivenessProbe:   container.LivenessProbe,
-			ReadinessProbe:  container.ReadinessProbe,
-			VolumeMounts:    container.VolumeMounts,
+			LivenessProbe:   hashableProbe(container.LivenessProbe),
+			ReadinessProbe:  hashableProbe(container.ReadinessProbe),
 		}
 	}
 	sort.Slice(containers, func(i, j int) bool {
@@ -710,6 +709,43 @@ func hashableDeployment(deployment *appsv1.Deployment, onlyTemplate bool) *appsv
 	hashableDeployment.Spec.Selector = deployment.Spec.Selector
 
 	return &hashableDeployment
+}
+
+// hashableProbe returns a copy of the given probe with exactly the fields that
+// should be used for computing a deployment's hash copied over.  Fields that
+// should be ignored, or that have explicit values that are equal to their
+// respective default values, will be zeroed.
+func hashableProbe(probe *corev1.Probe) *corev1.Probe {
+	if probe == nil {
+		return nil
+	}
+
+	var hashableProbe corev1.Probe
+
+	if probe.Handler.HTTPGet != nil {
+		hashableProbe.Handler.HTTPGet = &corev1.HTTPGetAction{
+			Path: probe.Handler.HTTPGet.Path,
+			Port: probe.Handler.HTTPGet.Port,
+			Host: probe.Handler.HTTPGet.Host,
+		}
+		if probe.Handler.HTTPGet.Scheme != "HTTP" {
+			hashableProbe.Handler.HTTPGet.Scheme = probe.Handler.HTTPGet.Scheme
+		}
+	}
+	if probe.TimeoutSeconds != int32(1) {
+		hashableProbe.TimeoutSeconds = probe.TimeoutSeconds
+	}
+	if probe.PeriodSeconds != int32(10) {
+		hashableProbe.PeriodSeconds = probe.PeriodSeconds
+	}
+	if probe.SuccessThreshold != int32(1) {
+		hashableProbe.SuccessThreshold = probe.SuccessThreshold
+	}
+	if probe.FailureThreshold != int32(3) {
+		hashableProbe.FailureThreshold = probe.FailureThreshold
+	}
+
+	return &hashableProbe
 }
 
 // currentRouterDeployment returns the current router deployment.
@@ -791,6 +827,8 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 	updated.Spec.Template.Spec.NodeSelector = expected.Spec.Template.Spec.NodeSelector
 	updated.Spec.Template.Spec.Containers[0].Env = expected.Spec.Template.Spec.Containers[0].Env
 	updated.Spec.Template.Spec.Containers[0].Image = expected.Spec.Template.Spec.Containers[0].Image
+	updated.Spec.Template.Spec.Containers[0].LivenessProbe = expected.Spec.Template.Spec.Containers[0].LivenessProbe
+	updated.Spec.Template.Spec.Containers[0].ReadinessProbe = expected.Spec.Template.Spec.Containers[0].ReadinessProbe
 	updated.Spec.Template.Spec.Containers[0].VolumeMounts = expected.Spec.Template.Spec.Containers[0].VolumeMounts
 	updated.Spec.Template.Spec.Tolerations = expected.Spec.Template.Spec.Tolerations
 	updated.Spec.Template.Spec.Affinity = expected.Spec.Template.Spec.Affinity
