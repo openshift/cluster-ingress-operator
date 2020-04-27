@@ -11,4 +11,4 @@ RELEASE_VERSION=$(oc get clusterversion/version -o json | jq -r '.status.desired
 echo "Image: ${IMAGE}"
 echo "Release version: ${RELEASE_VERSION}"
 
-IMAGE="${IMAGE}" RELEASE_VERSION="${RELEASE_VERSION}" ${DELVE:-} ./ingress-operator start $@
+IMAGE="${IMAGE}" RELEASE_VERSION="${RELEASE_VERSION}" ${DELVE:-} ./ingress-operator start --image $IMAGE --release-version $RELEASE_VERSION --namespace openshift-ingress-operator --shutdown-file "" $@

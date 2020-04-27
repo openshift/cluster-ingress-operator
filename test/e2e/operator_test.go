@@ -580,6 +580,109 @@ func TestInternalLoadBalancer(t *testing.T) {
 	}
 }
 
+func TestScopeChange(t *testing.T) {
+	platform := infraConfig.Status.Platform
+
+	supportedPlatforms := map[configv1.PlatformType]struct{}{
+		configv1.AWSPlatformType:      {},
+		configv1.AzurePlatformType:    {},
+		configv1.IBMCloudPlatformType: {},
+	}
+	if _, supported := supportedPlatforms[platform]; !supported {
+		t.Skip(fmt.Sprintf("test skipped on platform %q", platform))
+	}
+
+	name := types.NamespacedName{Namespace: operatorNamespace, Name: "test"}
+	ic := newLoadBalancerController(name, name.Name+"."+dnsConfig.Spec.BaseDomain)
+	ic.Spec.EndpointPublishingStrategy.LoadBalancer = &operatorv1.LoadBalancerStrategy{
+		Scope: operatorv1.ExternalLoadBalancer,
+	}
+	if err := kclient.Create(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to create ingresscontroller: %v", err)
+	}
+	defer assertIngressControllerDeleted(t, kclient, ic)
+
+	// Wait for the load balancer and DNS to be ready.
+	if err := waitForIngressControllerCondition(kclient, 5*time.Minute, name, defaultAvailableConditions...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	lbService := &corev1.Service{}
+	if err := kclient.Get(context.TODO(), controller.LoadBalancerServiceName(ic), lbService); err != nil {
+		t.Fatalf("failed to get LoadBalancer service: %v", err)
+	}
+
+	if ingresscontroller.IsServiceInternal(lbService) {
+		t.Fatalf("load balancer is internal but should be external")
+	}
+
+	// Change the scope to internal and wait for everything to come back to normal
+	if err := kclient.Get(context.TODO(), name, ic); err != nil {
+		t.Fatalf("failed to get ingresscontroller %s: %v", name, err)
+	}
+	ic.Spec.EndpointPublishingStrategy.LoadBalancer.Scope = operatorv1.InternalLoadBalancer
+
+	if err := kclient.Update(context.TODO(), ic); err != nil {
+		t.Fatal(err)
+	}
+
+	err := wait.PollImmediate(5*time.Second, 5*time.Minute, func() (bool, error) {
+		service := &corev1.Service{}
+		if err := kclient.Get(context.TODO(), controller.LoadBalancerServiceName(ic), service); err != nil {
+			if errors.IsNotFound(err) {
+				return false, nil
+			} else {
+				return false, err
+			}
+		}
+		if ingresscontroller.IsServiceInternal(service) {
+			return true, nil
+		}
+		t.Logf("service is still external: %#v\n", service)
+		return false, nil
+	})
+	if err != nil {
+		t.Fatalf("expected load balancer to become internal")
+	}
+
+	if err := waitForIngressControllerCondition(kclient, 5*time.Minute, name, defaultAvailableConditions...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	// Change the scope back to external and wait for everything to come back to normal
+	if err := kclient.Get(context.TODO(), name, ic); err != nil {
+		t.Fatalf("failed to get ingresscontroller %s: %v", name, err)
+	}
+	ic.Spec.EndpointPublishingStrategy.LoadBalancer.Scope = operatorv1.ExternalLoadBalancer
+
+	if err := kclient.Update(context.TODO(), ic); err != nil {
+		t.Fatal(err)
+	}
+
+	err = wait.PollImmediate(5*time.Second, 5*time.Minute, func() (bool, error) {
+		service := &corev1.Service{}
+		if err := kclient.Get(context.TODO(), controller.LoadBalancerServiceName(ic), service); err != nil {
+			if errors.IsNotFound(err) {
+				return false, nil
+			} else {
+				return false, err
+			}
+		}
+		if ingresscontroller.IsServiceInternal(service) {
+			t.Logf("service is still internal: %#v\n", service)
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("expected load balancer to become external: %v", err)
+	}
+
+	if err := waitForIngressControllerCondition(kclient, 5*time.Minute, name, defaultAvailableConditions...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+}
+
 // TestNodePortServiceEndpointPublishingStrategy creates an ingresscontroller
 // with the "NodePortService" endpoint publishing strategy type and verifies
 // that the operator creates a router and that the router becomes available.

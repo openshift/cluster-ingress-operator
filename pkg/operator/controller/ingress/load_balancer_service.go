@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
+
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/slice"
@@ -15,6 +16,8 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
@@ -66,23 +69,58 @@ var (
 // Always returns the current LB service if one exists (whether it already
 // existed or was created during the course of the function).
 func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, infraConfig *configv1.Infrastructure) (*corev1.Service, error) {
-	desiredLBService, err := desiredLoadBalancerService(ci, deploymentRef, infraConfig)
+	desired, err := desiredLoadBalancerService(ci, deploymentRef, infraConfig)
+	if err != nil {
+		return nil, err
+	}
+	current, err := r.currentLoadBalancerService(ci)
 	if err != nil {
 		return nil, err
 	}
 
-	currentLBService, err := r.currentLoadBalancerService(ci)
-	if err != nil {
-		return nil, err
-	}
-	if desiredLBService != nil && currentLBService == nil {
-		if err := r.client.Create(context.TODO(), desiredLBService); err != nil {
-			return nil, fmt.Errorf("failed to create load balancer service %s/%s: %v", desiredLBService.Namespace, desiredLBService.Name, err)
+	switch {
+	case desired != nil && current == nil:
+		if err := r.createLoadBalancerService(desired); err != nil {
+			return nil, err
 		}
-		log.Info("created load balancer service", "namespace", desiredLBService.Namespace, "name", desiredLBService.Name)
-		return desiredLBService, nil
+	case desired != nil && current != nil:
+		// If switching from internal/external, delete and recreate the service.
+		if IsServiceInternal(desired) != IsServiceInternal(current) {
+			if _, err := r.finalizeLoadBalancerService(ci); err != nil {
+				return nil, err
+			}
+			foreground := metav1.DeletePropagationForeground
+			if err := r.client.Delete(context.TODO(), current, &crclient.DeleteOptions{PropagationPolicy: &foreground}); err != nil {
+				return nil, err
+			}
+			if err := r.createLoadBalancerService(desired); err != nil {
+				return nil, err
+			}
+		}
 	}
-	return currentLBService, nil
+
+	return r.currentLoadBalancerService(ci)
+}
+
+func IsServiceInternal(service *corev1.Service) bool {
+	for dk, dv := range service.Annotations {
+		for _, annotations := range InternalLBAnnotations {
+			for ik, iv := range annotations {
+				if dk == ik && dv == iv {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func (r *reconciler) createLoadBalancerService(service *corev1.Service) error {
+	if err := r.client.Create(context.TODO(), service); err != nil {
+		return fmt.Errorf("failed to create load balancer service %s/%s: %v", service.Namespace, service.Name, err)
+	}
+	log.Info("created load balancer service", "namespace", service.Namespace, "name", service.Name)
+	return nil
 }
 
 // desiredLoadBalancerService returns the desired LB service for a
