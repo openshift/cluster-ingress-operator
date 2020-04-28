@@ -323,8 +323,8 @@ func computeLoadBalancerStatus(ic *operatorv1.IngressController, service *corev1
 			{
 				Type:    operatorv1.LoadBalancerManagedIngressConditionType,
 				Status:  operatorv1.ConditionFalse,
-				Reason:  "UnsupportedEndpointPublishingStrategy",
-				Message: fmt.Sprintf("The endpoint publishing strategy does not support a load balancer"),
+				Reason:  "EndpointPublishingStrategyExcludesManagedLoadBalancer",
+				Message: fmt.Sprintf("The configured endpoint publishing strategy does not include a managed load balancer"),
 			},
 		}
 	}
