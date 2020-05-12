@@ -172,7 +172,6 @@ func computeDeploymentDegradedCondition(deployment *appsv1.Deployment) operatorv
 // conditions.
 func computeIngressDegradedCondition(conditions []operatorv1.OperatorCondition) (operatorv1.OperatorCondition, error) {
 	var requeueAfter time.Duration
-	var needRequeue bool
 	conditionsMap := make(map[string]*operatorv1.OperatorCondition)
 	for i := range conditions {
 		conditionsMap[conditions[i].Type] = &conditions[i]
@@ -211,7 +210,7 @@ func computeIngressDegradedCondition(conditions []operatorv1.OperatorCondition) 
 		},
 	}
 
-	var degradedConditions []*operatorv1.OperatorCondition
+	var graceConditions, degradedConditions []*operatorv1.OperatorCondition
 	now := clock.Now()
 	for _, expected := range expectedConditions {
 		condition, haveCondition := conditionsMap[expected.condition]
@@ -237,12 +236,12 @@ func computeIngressDegradedCondition(conditions []operatorv1.OperatorCondition) 
 			t2 := condition.LastTransitionTime
 			if t2.After(t1) {
 				d := t2.Sub(t1)
-				if !needRequeue || d < requeueAfter {
+				if len(graceConditions) == 0 || d < requeueAfter {
 					// Recompute status conditions again
 					// after the grace period has elapsed.
 					requeueAfter = d
 				}
-				needRequeue = true
+				graceConditions = append(graceConditions, condition)
 				continue
 			}
 		}
@@ -257,15 +256,16 @@ func computeIngressDegradedCondition(conditions []operatorv1.OperatorCondition) 
 		for _, cond := range degradedConditions {
 			degraded = degraded + fmt.Sprintf(", %s=%s", cond.Type, cond.Status)
 		}
+		degraded = degraded[2:]
 
 		condition := operatorv1.OperatorCondition{
 			Type:    operatorv1.OperatorStatusTypeDegraded,
 			Status:  operatorv1.ConditionTrue,
 			Reason:  "DegradedConditions",
-			Message: "One or more other status conditions indicate a degraded state: " + degraded[2:],
+			Message: "One or more other status conditions indicate a degraded state: " + degraded,
 		}
 
-		return condition, retryableerror.New(errors.New("IngressController is degraded"), requeueAfter)
+		return condition, retryableerror.New(errors.New("IngressController is degraded: "+degraded), requeueAfter)
 	}
 
 	condition := operatorv1.OperatorCondition{
@@ -274,8 +274,14 @@ func computeIngressDegradedCondition(conditions []operatorv1.OperatorCondition) 
 	}
 
 	var err error
-	if needRequeue {
-		err = retryableerror.New(errors.New("IngressController may become degraded soon"), requeueAfter)
+	if len(graceConditions) != 0 {
+		var grace string
+		for _, cond := range graceConditions {
+			grace = grace + fmt.Sprintf(", %s=%s", cond.Type, cond.Status)
+		}
+		grace = grace[2:]
+
+		err = retryableerror.New(errors.New("IngressController may become degraded soon: "+grace), requeueAfter)
 	}
 
 	return condition, err
