@@ -3,6 +3,7 @@ package dns
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
@@ -129,6 +130,7 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 	if !dnsZoneStatusSlicesEqual(statuses, record.Status.Zones) {
 		updated := record.DeepCopy()
 		updated.Status.Zones = statuses
+		updated.Status.ObservedGeneration = updated.Generation
 		if err := r.client.Status().Update(context.TODO(), updated); err != nil {
 			log.Error(err, "failed to update dnsrecord; will retry", "dnsrecord", record)
 			return reconcile.Result{RequeueAfter: 10 * time.Second}, nil
@@ -138,13 +140,16 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 }
 
 func (r *reconciler) publishRecordToZones(zones []configv1.DNSZone, record *iov1.DNSRecord) ([]iov1.DNSZoneStatus, reconcile.Result) {
-	// TODO: If we compare desired zones with zones from status (i.e. actual
-	// zones), we can filter to list to those zones which haven't already been
-	// successfully ensured. Then the DNS provider wouldn't need such aggressive
-	// internal caching.
 	result := reconcile.Result{}
 	var statuses []iov1.DNSZoneStatus
 	for i := range zones {
+		// Only publish the record if the DNSRecord has been modified
+		// (which would mean the target could have changed) or its
+		// status does not indicate that it has already been published.
+		if record.Generation == record.Status.ObservedGeneration && recordIsAlreadyPublishedToZone(record, &zones[i]) {
+			continue
+		}
+
 		zone := zones[i]
 		condition := iov1.DNSZoneCondition{
 			Status:             string(operatorv1.ConditionUnknown),
@@ -170,6 +175,25 @@ func (r *reconciler) publishRecordToZones(zones []configv1.DNSZone, record *iov1
 		})
 	}
 	return mergeStatuses(record.Status.Zones, statuses), result
+}
+
+// recordIsAlreadyPublishedToZone returns a Boolean value indicating whether the
+// given DNSRecord is already published to the given zone, as determined from
+// the DNSRecord's status conditions.
+func recordIsAlreadyPublishedToZone(record *iov1.DNSRecord, zoneToPublish *configv1.DNSZone) bool {
+	for _, zoneInStatus := range record.Status.Zones {
+		if !reflect.DeepEqual(&zoneInStatus.DNSZone, zoneToPublish) {
+			continue
+		}
+
+		for _, condition := range zoneInStatus.Conditions {
+			if condition.Type == iov1.DNSRecordFailedConditionType {
+				return condition.Status == string(operatorv1.ConditionFalse)
+			}
+		}
+	}
+
+	return false
 }
 
 func (r *reconciler) delete(record *iov1.DNSRecord) error {

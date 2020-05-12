@@ -411,3 +411,158 @@ func TestDnsZoneStatusSlicesEqual(t *testing.T) {
 		}
 	}
 }
+
+func TestRecordIsAlreadyPublishedToZone(t *testing.T) {
+	var (
+		zoneWithId  = configv1.DNSZone{ID: "foo"}
+		zoneWithTag = configv1.DNSZone{Tags: map[string]string{"foo": "bar"}}
+	)
+	var testCases = []struct {
+		description  string
+		zone         *configv1.DNSZone
+		zoneStatuses []iov1.DNSZoneStatus
+		expect       bool
+	}{
+		{
+			description:  "status.zones is empty",
+			zone:         &zoneWithId,
+			zoneStatuses: []iov1.DNSZoneStatus{},
+			expect:       false,
+		},
+		{
+			description: "status.zones has an entry with matching id but Failed=Unknown",
+			zone:        &zoneWithId,
+			zoneStatuses: []iov1.DNSZoneStatus{
+				{
+					DNSZone: zoneWithId,
+					Conditions: []iov1.DNSZoneCondition{
+						{
+							Type:   "Failed",
+							Status: "Unknown",
+						},
+					},
+				},
+				{
+					DNSZone: zoneWithTag,
+					Conditions: []iov1.DNSZoneCondition{
+						{
+							Type:   "Failed",
+							Status: "Unknown",
+						},
+					},
+				},
+			},
+			expect: false,
+		},
+		{
+			description: "status.zones has an entry with matching id but Failed=True",
+			zone:        &zoneWithId,
+			zoneStatuses: []iov1.DNSZoneStatus{
+				{
+					DNSZone: zoneWithId,
+					Conditions: []iov1.DNSZoneCondition{
+						{
+							Type:   "Failed",
+							Status: "True",
+						},
+					},
+				},
+				{
+					DNSZone: zoneWithTag,
+					Conditions: []iov1.DNSZoneCondition{
+						{
+							Type:   "Failed",
+							Status: "True",
+						},
+					},
+				},
+			},
+			expect: false,
+		},
+		{
+			description: "status.zones has an entry with matching tag but Failed=True",
+			zone:        &zoneWithTag,
+			zoneStatuses: []iov1.DNSZoneStatus{
+				{
+					DNSZone: zoneWithId,
+					Conditions: []iov1.DNSZoneCondition{
+						{
+							Type:   "Failed",
+							Status: "True",
+						},
+					},
+				},
+				{
+					DNSZone: zoneWithTag,
+					Conditions: []iov1.DNSZoneCondition{
+						{
+							Type:   "Failed",
+							Status: "True",
+						},
+					},
+				},
+			},
+			expect: false,
+		},
+		{
+			description: "status.zones has an entry with matching id and Failed=False",
+			zone:        &zoneWithId,
+			zoneStatuses: []iov1.DNSZoneStatus{
+				{
+					DNSZone: zoneWithId,
+					Conditions: []iov1.DNSZoneCondition{
+						{
+							Type:   "Failed",
+							Status: "False",
+						},
+					},
+				},
+				{
+					DNSZone: zoneWithTag,
+					Conditions: []iov1.DNSZoneCondition{
+						{
+							Type:   "Failed",
+							Status: "True",
+						},
+					},
+				},
+			},
+			expect: true,
+		},
+		{
+			description: "status.zones has an entry with matching tag and Failed=False",
+			zone:        &zoneWithTag,
+			zoneStatuses: []iov1.DNSZoneStatus{
+				{
+					DNSZone: zoneWithId,
+					Conditions: []iov1.DNSZoneCondition{
+						{
+							Type:   "Failed",
+							Status: "True",
+						},
+					},
+				},
+				{
+					DNSZone: zoneWithTag,
+					Conditions: []iov1.DNSZoneCondition{
+						{
+							Type:   "Failed",
+							Status: "False",
+						},
+					},
+				},
+			},
+			expect: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		record := &iov1.DNSRecord{
+			Status: iov1.DNSRecordStatus{Zones: tc.zoneStatuses},
+		}
+		actual := recordIsAlreadyPublishedToZone(record, tc.zone)
+		if actual != tc.expect {
+			t.Errorf("%q: expected %t, got %t", tc.description, tc.expect, actual)
+		}
+	}
+}
