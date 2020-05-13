@@ -767,7 +767,7 @@ func TestRouteAdmissionPolicy(t *testing.T) {
 
 	// Update the ingresscontroller to a different route admission policy
 	if err := kclient.Get(context.TODO(), icName, ic); err != nil {
-		t.Fatalf("failed to get ingresscontroller: %v", ic)
+		t.Fatalf("failed to get ingresscontroller: %v", err)
 	}
 	ic.Spec.RouteAdmission.NamespaceOwnership = operatorv1.InterNamespaceAllowedOwnershipCheck
 	if err := kclient.Update(context.TODO(), ic); err != nil {
@@ -812,7 +812,7 @@ func TestRouteAdmissionPolicy(t *testing.T) {
 
 	// Update the ingresscontroller wildcard policy to WildcardsAllowed.
 	if err := kclient.Get(context.TODO(), icName, ic); err != nil {
-		t.Fatalf("failed to get ingresscontroller: %v", ic)
+		t.Fatalf("failed to get ingresscontroller: %v", err)
 	}
 	ic.Spec.RouteAdmission.WildcardPolicy = operatorv1.WildcardPolicyAllowed
 	if err := kclient.Update(context.TODO(), ic); err != nil {
