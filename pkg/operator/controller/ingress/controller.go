@@ -575,12 +575,21 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		return fmt.Errorf("failed to ensure namespace: %v", err)
 	}
 
-	deployment, err := r.ensureRouterDeployment(ci, infraConfig, ingressConfig, apiConfig, networkConfig)
-	if err != nil {
-		return fmt.Errorf("failed to ensure deployment: %v", err)
+	var errs []error
+	if _, _, err := r.ensureServiceCAConfigMap(); err != nil {
+		// Even if we were unable to create the configmap at this time,
+		// it is still safe try to create the deployment, as it
+		// specifies that the volume mount is non-optional, meaning the
+		// deployment will not start until the configmap exists.
+		errs = append(errs, err)
 	}
 
-	var errs []error
+	deployment, err := r.ensureRouterDeployment(ci, infraConfig, ingressConfig, apiConfig, networkConfig)
+	if err != nil {
+		errs = append(errs, fmt.Errorf("failed to ensure deployment: %v", err))
+		return utilerrors.NewAggregate(errs)
+	}
+
 	trueVar := true
 	deploymentRef := metav1.OwnerReference{
 		APIVersion: "apps/v1",
