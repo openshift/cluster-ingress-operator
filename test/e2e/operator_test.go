@@ -767,11 +767,33 @@ func TestRouteAdmissionPolicy(t *testing.T) {
 
 	// Update the ingresscontroller to a different route admission policy
 	if err := kclient.Get(context.TODO(), icName, ic); err != nil {
-		t.Fatalf("failed to get ingresscontroller: %v", ic)
+		t.Fatalf("failed to get ingresscontroller: %v", err)
 	}
 	ic.Spec.RouteAdmission.NamespaceOwnership = operatorv1.InterNamespaceAllowedOwnershipCheck
 	if err := kclient.Update(context.TODO(), ic); err != nil {
 		t.Fatalf("failed to update ingresscontroller: %v", err)
+	}
+
+	// The updated ingresscontroller deployment may take a few minutes to
+	// roll out, so make sure that it is updated, and then make sure that it
+	// has finished rolling out before checking the route.
+	err := wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
+		deployment := &appsv1.Deployment{}
+		if err := kclient.Get(context.TODO(), controller.RouterDeploymentName(ic), deployment); err != nil {
+			return false, err
+		}
+		for _, v := range deployment.Spec.Template.Spec.Containers[0].Env {
+			if v.Name == "ROUTER_DISABLE_NAMESPACE_OWNERSHIP_CHECK" {
+				return strconv.ParseBool(v.Value)
+			}
+		}
+		return false, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to observe ROUTER_DISABLE_NAMESPACE_OWNERSHIP_CHECK=true: %v", err)
+	}
+	if err := waitForIngressControllerCondition(kclient, 3*time.Minute, icName, conditions...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
 	// The second route should eventually be admitted because of the new policy
@@ -812,11 +834,29 @@ func TestRouteAdmissionPolicy(t *testing.T) {
 
 	// Update the ingresscontroller wildcard policy to WildcardsAllowed.
 	if err := kclient.Get(context.TODO(), icName, ic); err != nil {
-		t.Fatalf("failed to get ingresscontroller: %v", ic)
+		t.Fatalf("failed to get ingresscontroller: %v", err)
 	}
 	ic.Spec.RouteAdmission.WildcardPolicy = operatorv1.WildcardPolicyAllowed
 	if err := kclient.Update(context.TODO(), ic); err != nil {
 		t.Fatalf("failed to update ingresscontroller: %v", err)
+	}
+	err = wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
+		deployment := &appsv1.Deployment{}
+		if err := kclient.Get(context.TODO(), controller.RouterDeploymentName(ic), deployment); err != nil {
+			return false, err
+		}
+		for _, v := range deployment.Spec.Template.Spec.Containers[0].Env {
+			if v.Name == "ROUTER_ALLOW_WILDCARD_ROUTES" {
+				return strconv.ParseBool(v.Value)
+			}
+		}
+		return false, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to observe ROUTER_ALLOW_WILDCARD_ROUTES=true: %v", err)
+	}
+	if err := waitForIngressControllerCondition(kclient, 3*time.Minute, icName, conditions...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
 	// Recreate the route since the failed route will not automatically get
