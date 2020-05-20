@@ -109,6 +109,15 @@ func RouterEffectiveDefaultCertificateSecretName(ci *operatorv1.IngressControlle
 	return RouterOperatorGeneratedDefaultCertificateSecretName(ci, namespace)
 }
 
+// ServiceCAConfigMapName returns the namespaced name for the
+// configmap with the service CA bundle.
+func ServiceCAConfigMapName() types.NamespacedName {
+	return types.NamespacedName{
+		Namespace: "openshift-ingress",
+		Name:      "service-ca-bundle",
+	}
+}
+
 func IngressControllerDeploymentLabel(ic *operatorv1.IngressController) string {
 	return ic.Name
 }
