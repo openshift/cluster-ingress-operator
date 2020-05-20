@@ -5,6 +5,7 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/services/dns/mgmt/2017-10-01/dns"
 	privatedns "github.com/Azure/azure-sdk-for-go/services/privatedns/mgmt/2018-09-01/privatedns"
+	"github.com/Azure/go-autorest/autorest/azure"
 	"github.com/pkg/errors"
 )
 
@@ -14,7 +15,7 @@ type DNSClient interface {
 }
 
 type Config struct {
-	Environment    string
+	Environment    azure.Environment
 	SubscriptionID string
 	ClientID       string
 	ClientSecret   string
@@ -84,7 +85,7 @@ func newRecordSetClient(config Config, userAgentExtension string) (*recordSetCli
 		return nil, err
 	}
 
-	rc := dns.NewRecordSetsClient(config.SubscriptionID)
+	rc := dns.NewRecordSetsClientWithBaseURI(config.Environment.ResourceManagerEndpoint, config.SubscriptionID)
 	rc.AddToUserAgent(userAgentExtension)
 	rc.Authorizer = authorizer
 	return &recordSetClient{client: rc}, nil
@@ -129,7 +130,7 @@ func newPrivateRecordSetClient(config Config, userAgentExtension string) (*priva
 		return nil, err
 	}
 
-	prc := privatedns.NewRecordSetsClient(config.SubscriptionID)
+	prc := privatedns.NewRecordSetsClientWithBaseURI(config.Environment.ResourceManagerEndpoint, config.SubscriptionID)
 	prc.AddToUserAgent(userAgentExtension)
 	prc.Authorizer = authorizer
 	return &privateRecordSetClient{client: prc}, nil

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Azure/go-autorest/autorest/azure"
 	"github.com/pkg/errors"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -43,8 +44,12 @@ type provider struct {
 // NewProvider creates a new dns.Provider for Azure. It only supports DNSRecords with
 // type A.
 func NewProvider(config Config, operatorReleaseVersion string) (dns.Provider, error) {
+	env, err := azure.EnvironmentFromName(config.Environment)
+	if err != nil {
+		return nil, fmt.Errorf("could not determine cloud environment: %w", err)
+	}
 	c, err := client.New(client.Config{
-		Environment:    config.Environment,
+		Environment:    env,
 		SubscriptionID: config.SubscriptionID,
 		ClientID:       config.ClientID,
 		ClientSecret:   config.ClientSecret,
