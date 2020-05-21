@@ -8,6 +8,7 @@ import (
 	"net"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/davecgh/go-spew/spew"
@@ -38,6 +39,9 @@ const (
 	RouterSyslogAddressEnvName  = "ROUTER_SYSLOG_ADDRESS"
 	RouterSyslogFormatEnvName   = "ROUTER_SYSLOG_FORMAT"
 	RouterSyslogFacilityEnvName = "ROUTER_LOG_FACILITY"
+
+	RouterDisableHTTP2EnvName    = "ROUTER_DISABLE_HTTP2"
+	RouterDisableHTTP2Annotation = "ingress.operator.openshift.io/unsupported-disable-http2"
 )
 
 // ensureRouterDeployment ensures the router deployment exists for a given
@@ -79,6 +83,18 @@ func (r *reconciler) ensureRouterDeleted(ci *operatorv1.IngressController) error
 	log.Info("deleted deployment", "namespace", deployment.Namespace, "name", deployment.Name)
 	r.recorder.Eventf(ci, "Normal", "DeletedDeployment", "Deleted deployment %s/%s", deployment.Namespace, deployment.Name)
 	return nil
+}
+
+// HTTP2IsDisabledByAnnotation returns true if the map m has the key
+// RouterDisableHTTP2Annotation present and it has "true" as its
+// value.
+func HTTP2IsDisabledByAnnotation(m map[string]string) bool {
+	if mval, ok := m[RouterDisableHTTP2Annotation]; ok {
+		if val, err := strconv.ParseBool(mval); err == nil && val {
+			return true
+		}
+	}
+	return false
 }
 
 // desiredRouterDeployment returns the desired router deployment.
@@ -496,6 +512,10 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		env = append(env, corev1.EnvVar{Name: WildcardRouteAdmissionPolicy, Value: "true"})
 	default:
 		env = append(env, corev1.EnvVar{Name: WildcardRouteAdmissionPolicy, Value: "false"})
+	}
+
+	if HTTP2IsDisabledByAnnotation(ci.Annotations) || HTTP2IsDisabledByAnnotation(ingressConfig.Annotations) {
+		env = append(env, corev1.EnvVar{Name: RouterDisableHTTP2EnvName, Value: "true"})
 	}
 
 	deployment.Spec.Template.Spec.Volumes = volumes
