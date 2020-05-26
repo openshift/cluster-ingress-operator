@@ -83,7 +83,30 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	if err := c.Watch(&source.Kind{Type: &iov1.DNSRecord{}}, &handler.EnqueueRequestForOwner{OwnerType: &operatorv1.IngressController{}}); err != nil {
 		return nil, err
 	}
+	if err := c.Watch(&source.Kind{Type: &configv1.Ingress{}}, &handler.EnqueueRequestsFromMapFunc{ToRequests: handler.ToRequestsFunc(reconciler.ingressConfigToIngressController)}); err != nil {
+		return nil, err
+	}
 	return c, nil
+}
+
+func (r *reconciler) ingressConfigToIngressController(o handler.MapObject) []reconcile.Request {
+	var requests []reconcile.Request
+	controllers := &operatorv1.IngressControllerList{}
+	if err := r.cache.List(context.Background(), controllers, client.InNamespace(r.Namespace)); err != nil {
+		log.Error(err, "failed to list ingresscontrollers for ingress", "related", o.Meta.GetSelfLink())
+		return requests
+	}
+	for _, ic := range controllers.Items {
+		log.Info("queueing ingresscontroller", "name", ic.Name, "related", o.Meta.GetSelfLink())
+		request := reconcile.Request{
+			NamespacedName: types.NamespacedName{
+				Namespace: ic.Namespace,
+				Name:      ic.Name,
+			},
+		}
+		requests = append(requests, request)
+	}
+	return requests
 }
 
 func enqueueRequestForOwningIngressController(namespace string) handler.EventHandler {
