@@ -86,15 +86,31 @@ func (r *reconciler) ensureRouterDeleted(ci *operatorv1.IngressController) error
 }
 
 // HTTP2IsDisabledByAnnotation returns true if the map m has the key
-// RouterDisableHTTP2Annotation present and it has "true" as its
-// value.
-func HTTP2IsDisabledByAnnotation(m map[string]string) bool {
-	if mval, ok := m[RouterDisableHTTP2Annotation]; ok {
-		if val, err := strconv.ParseBool(mval); err == nil && val {
-			return true
-		}
+// RouterDisableHTTP2Annotation present and true|false depending on
+// the annotation's value that is parsed by strconv.ParseBool.
+func HTTP2IsDisabledByAnnotation(m map[string]string) (bool, bool) {
+	if val, ok := m[RouterDisableHTTP2Annotation]; ok {
+		v, _ := strconv.ParseBool(val)
+		return true, v
 	}
-	return false
+	return false, false
+}
+
+// HTTP2IsDisabled returns true if the ingress controller disables
+// http/2 via the RouterDisableHTTP2Annotation, or if the ingress
+// config disables http/2. It will return false for the case where the
+// ingress config has been disabled but the ingress controller
+// explicitly overrides that by having the annotation present (even if
+// its value is "false").
+func HTTP2IsDisabled(ic *operatorv1.IngressController, ingressConfig *configv1.Ingress) bool {
+	controllerHasHTTP2Annotation, controllerHasHTTP2Disabled := HTTP2IsDisabledByAnnotation(ic.Annotations)
+	_, configHasHTTP2Disabled := HTTP2IsDisabledByAnnotation(ingressConfig.Annotations)
+
+	if controllerHasHTTP2Annotation {
+		return controllerHasHTTP2Disabled
+	}
+
+	return configHasHTTP2Disabled
 }
 
 // desiredRouterDeployment returns the desired router deployment.
@@ -514,7 +530,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		env = append(env, corev1.EnvVar{Name: WildcardRouteAdmissionPolicy, Value: "false"})
 	}
 
-	if HTTP2IsDisabledByAnnotation(ci.Annotations) || HTTP2IsDisabledByAnnotation(ingressConfig.Annotations) {
+	if HTTP2IsDisabled(ci, ingressConfig) {
 		env = append(env, corev1.EnvVar{Name: RouterDisableHTTP2EnvName, Value: "true"})
 	}
 
