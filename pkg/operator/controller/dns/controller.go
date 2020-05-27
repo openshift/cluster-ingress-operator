@@ -3,7 +3,11 @@ package dns
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"time"
+
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"k8s.io/client-go/tools/record"
 
@@ -16,6 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	utilclock "k8s.io/apimachinery/pkg/util/clock"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -122,24 +127,29 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 		zones = append(zones, *dnsConfig.Spec.PublicZone)
 	}
 	statuses, result := r.publishRecordToZones(zones, record)
-	// TODO: only update if status changed
-	updated := record.DeepCopy()
-	updated.Status.Zones = statuses
-	if err := r.client.Status().Update(context.TODO(), updated); err != nil {
-		log.Error(err, "failed to update dnsrecord; will retry", "dnsrecord", record)
-		return reconcile.Result{RequeueAfter: 10 * time.Second}, nil
+	if !dnsZoneStatusSlicesEqual(statuses, record.Status.Zones) {
+		updated := record.DeepCopy()
+		updated.Status.Zones = statuses
+		updated.Status.ObservedGeneration = updated.Generation
+		if err := r.client.Status().Update(context.TODO(), updated); err != nil {
+			log.Error(err, "failed to update dnsrecord; will retry", "dnsrecord", record)
+			return reconcile.Result{RequeueAfter: 10 * time.Second}, nil
+		}
 	}
 	return result, nil
 }
 
 func (r *reconciler) publishRecordToZones(zones []configv1.DNSZone, record *iov1.DNSRecord) ([]iov1.DNSZoneStatus, reconcile.Result) {
-	// TODO: If we compare desired zones with zones from status (i.e. actual
-	// zones), we can filter to list to those zones which haven't already been
-	// successfully ensured. Then the DNS provider wouldn't need such aggressive
-	// internal caching.
 	result := reconcile.Result{}
 	var statuses []iov1.DNSZoneStatus
 	for i := range zones {
+		// Only publish the record if the DNSRecord has been modified
+		// (which would mean the target could have changed) or its
+		// status does not indicate that it has already been published.
+		if record.Generation == record.Status.ObservedGeneration && recordIsAlreadyPublishedToZone(record, &zones[i]) {
+			continue
+		}
+
 		zone := zones[i]
 		condition := iov1.DNSZoneCondition{
 			Status:             string(operatorv1.ConditionUnknown),
@@ -148,11 +158,13 @@ func (r *reconciler) publishRecordToZones(zones []configv1.DNSZone, record *iov1
 		}
 
 		if err := r.dnsProvider.Ensure(record, zone); err != nil {
+			log.Error(err, "failed to publish DNS record to zone", "dnsrecord", record, "dnszone", zone)
 			condition.Status = string(operatorv1.ConditionTrue)
 			condition.Reason = "ProviderError"
 			condition.Message = fmt.Sprintf("The DNS provider failed to ensure the record: %v", err)
 			result.RequeueAfter = 30 * time.Second
 		} else {
+			log.Info("published DNS record to zone", "dnsrecord", record, "dnszone", zone)
 			condition.Status = string(operatorv1.ConditionFalse)
 			condition.Reason = "ProviderSuccess"
 			condition.Message = "The DNS provider succeeded in ensuring the record"
@@ -162,7 +174,26 @@ func (r *reconciler) publishRecordToZones(zones []configv1.DNSZone, record *iov1
 			Conditions: []iov1.DNSZoneCondition{condition},
 		})
 	}
-	return statuses, result
+	return mergeStatuses(record.Status.Zones, statuses), result
+}
+
+// recordIsAlreadyPublishedToZone returns a Boolean value indicating whether the
+// given DNSRecord is already published to the given zone, as determined from
+// the DNSRecord's status conditions.
+func recordIsAlreadyPublishedToZone(record *iov1.DNSRecord, zoneToPublish *configv1.DNSZone) bool {
+	for _, zoneInStatus := range record.Status.Zones {
+		if !reflect.DeepEqual(&zoneInStatus.DNSZone, zoneToPublish) {
+			continue
+		}
+
+		for _, condition := range zoneInStatus.Conditions {
+			if condition.Type == iov1.DNSRecordFailedConditionType {
+				return condition.Status == string(operatorv1.ConditionFalse)
+			}
+		}
+	}
+
+	return false
 }
 
 func (r *reconciler) delete(record *iov1.DNSRecord) error {
@@ -186,4 +217,78 @@ func (r *reconciler) delete(record *iov1.DNSRecord) error {
 		}
 	}
 	return utilerrors.NewAggregate(errs)
+}
+
+// mergeStatuses updates or extends the provided slice of statuses with the
+// provided updates and returns the resulting slice.
+func mergeStatuses(statuses, updates []iov1.DNSZoneStatus) []iov1.DNSZoneStatus {
+	var additions []iov1.DNSZoneStatus
+	for i, update := range updates {
+		add := true
+		for j, status := range statuses {
+			if cmp.Equal(status.DNSZone, update.DNSZone) {
+				add = false
+				statuses[j].Conditions = mergeConditions(status.Conditions, update.Conditions)
+			}
+		}
+		if add {
+			additions = append(additions, updates[i])
+		}
+	}
+	return append(statuses, additions...)
+}
+
+// clock is to enable unit testing
+var clock utilclock.Clock = utilclock.RealClock{}
+
+// mergeConditions adds or updates matching conditions, and updates
+// the transition time if details of a condition have changed. Returns
+// the updated condition array.
+func mergeConditions(conditions, updates []iov1.DNSZoneCondition) []iov1.DNSZoneCondition {
+	now := metav1.NewTime(clock.Now())
+	var additions []iov1.DNSZoneCondition
+	for i, update := range updates {
+		add := true
+		for j, cond := range conditions {
+			if cond.Type == update.Type {
+				add = false
+				if conditionChanged(cond, update) {
+					conditions[j].Status = update.Status
+					conditions[j].Reason = update.Reason
+					conditions[j].Message = update.Message
+					conditions[j].LastTransitionTime = now
+					break
+				}
+			}
+		}
+		if add {
+			updates[i].LastTransitionTime = now
+			additions = append(additions, updates[i])
+		}
+	}
+	conditions = append(conditions, additions...)
+	return conditions
+}
+
+func conditionChanged(a, b iov1.DNSZoneCondition) bool {
+	return a.Status != b.Status || a.Reason != b.Reason || a.Message != b.Message
+}
+
+// dnsZoneStatusSlicesEqual compares two DNSZoneStatus slice values.  Returns
+// true if the provided values should be considered equal for the purpose of
+// determining whether an update is necessary, false otherwise.  The comparison
+// is agnostic with respect to the ordering of status conditions but not with
+// respect to zones.
+func dnsZoneStatusSlicesEqual(a, b []iov1.DNSZoneStatus) bool {
+	conditionCmpOpts := []cmp.Option{
+		cmpopts.EquateEmpty(),
+		cmpopts.SortSlices(func(a, b iov1.DNSZoneCondition) bool {
+			return a.Type < b.Type
+		}),
+	}
+	if !cmp.Equal(a, b, conditionCmpOpts...) {
+		return false
+	}
+
+	return true
 }

@@ -17,7 +17,7 @@ require (
 	github.com/google/go-cmp v0.3.1
 	github.com/kevinburke/go-bindata v3.11.0+incompatible
 
-	github.com/openshift/api v0.0.0-20200416222006-8cfd79130f9c
+	github.com/openshift/api v0.0.0-20200522173408-17ada6e4245b
 	github.com/openshift/library-go v0.0.0-20200324092245-db2a8546af81
 
 	github.com/pkg/errors v0.8.1
@@ -28,8 +28,8 @@ require (
 	gopkg.in/fsnotify.v1 v1.4.7
 	gopkg.in/yaml.v2 v2.2.8
 
-	k8s.io/api v0.18.0
-	k8s.io/apimachinery v0.18.0
+	k8s.io/api v0.18.3
+	k8s.io/apimachinery v0.18.3
 	k8s.io/apiserver v0.18.0
 	k8s.io/client-go v0.18.0
 

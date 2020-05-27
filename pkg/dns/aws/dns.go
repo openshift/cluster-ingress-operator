@@ -22,7 +22,6 @@ import (
 	"github.com/aws/aws-sdk-go/service/route53"
 
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
-	"k8s.io/apimachinery/pkg/util/sets"
 
 	configv1 "github.com/openshift/api/config/v1"
 )
@@ -56,12 +55,6 @@ type Provider struct {
 
 	// lbZones is a cache of load balancer DNS names to LB hosted zone IDs.
 	lbZones map[string]string
-
-	// updatedRecords is a cache of records which have been created or updated
-	// during the life of this manager. The key is zoneID+domain+target. This is a
-	// quick hack to minimize AWS API calls, and also prevent changes to existing
-	// records (something not yet supported).
-	updatedRecords sets.String
 }
 
 // Config is the necessary input to configure the manager.
@@ -119,13 +112,12 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 	}
 
 	return &Provider{
-		elb:            elb.New(sess, aws.NewConfig().WithRegion(region)),
-		route53:        route53.New(sess, r53Config),
-		tags:           resourcegroupstaggingapi.New(sess, tagConfig),
-		config:         config,
-		idsToTags:      map[string]map[string]string{},
-		lbZones:        map[string]string{},
-		updatedRecords: sets.NewString(),
+		elb:       elb.New(sess, aws.NewConfig().WithRegion(region)),
+		route53:   route53.New(sess, r53Config),
+		tags:      resourcegroupstaggingapi.New(sess, tagConfig),
+		config:    config,
+		idsToTags: map[string]map[string]string{},
+		lbZones:   map[string]string{},
 	}, nil
 }
 
@@ -275,26 +267,15 @@ func (m *Provider) change(record *iov1.DNSRecord, zone configv1.DNSZone, action 
 		return fmt.Errorf("failed to get hosted zone for load balancer target %q: %v", target, err)
 	}
 
-	// Configure records and cache updates.
-	// TODO: handle the caching/diff detection in a better way.
-	m.lock.Lock()
-	defer m.lock.Unlock()
-	key := zoneID + domain + target
-	// Only process updates once for now because we're not diffing.
-	if m.updatedRecords.Has(key) && action == upsertAction {
-		log.V(2).Info("skipping cached DNS record update", "record", record)
-		return nil
-	}
+	// Configure records.
 	err = m.updateAlias(domain, zoneID, target, targetHostedZoneID, string(action))
 	if err != nil {
 		return fmt.Errorf("failed to update alias in zone %s: %v", zoneID, err)
 	}
 	switch action {
 	case upsertAction:
-		m.updatedRecords.Insert(key)
 		log.Info("upserted DNS record", "record", record)
 	case deleteAction:
-		m.updatedRecords.Delete(key)
 		log.Info("deleted DNS record", "record", record)
 	}
 	return nil
