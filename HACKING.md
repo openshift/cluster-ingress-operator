@@ -15,7 +15,7 @@ $ make build
 * An [OpenShift cluster](https://github.com/openshift/installer)
 * An admin-scoped `KUBECONFIG` for the cluster.
 
-#### Building Locally
+#### Building Locally & Deploying to the Cluster
 
 To build the operator on your local machine and deploy it to the cluster, first uninstall the existing operator and all its managed components:
 
@@ -33,6 +33,34 @@ Follow the instructions to install the operator, e.g.:
 
 ```
 $ oc apply -f /tmp/manifests/path
+```
+
+Note, `make uninstall` scales the CVO to 0 replicas. To scale the CVO back up when testing is complete, run:
+
+```
+$ oc scale --replicas 1 -n openshift-cluster-version deployments/cluster-version-operator
+```
+
+#### Building & Running the Operator Locally
+
+This allows you to quickly test changes to the operator without pushing any code or images to the cluster.
+
+To build the operator binary locally:
+
+```
+$ make build
+```
+
+To run the operator binary in the cluster from your local machine (as opposed to on the cluster in a pod):
+
+```
+$ make run-local
+```
+
+Note, to rescale the operator on the cluster after local testing is complete, scale the CVO back up with:
+
+```
+$ oc scale --replicas 1 -n openshift-cluster-version deployments/cluster-version-operator
 ```
 
 #### Building Remotely on the Cluster
