@@ -137,6 +137,7 @@ func nodePortServiceChanged(current, expected *corev1.Service) (bool, *corev1.Se
 		// have modified.
 		cmpopts.IgnoreFields(corev1.ServicePort{}, "NodePort"),
 		cmpopts.IgnoreFields(corev1.ServiceSpec{}, "ClusterIP", "ExternalIPs", "HealthCheckNodePort"),
+		cmp.Comparer(cmpServiceAffinity),
 		cmpopts.EquateEmpty(),
 	}
 	if cmp.Equal(current.Spec, expected.Spec, serviceCmpOpts...) {
@@ -160,4 +161,14 @@ func nodePortServiceChanged(current, expected *corev1.Service) (bool, *corev1.Se
 	}
 
 	return true, updated
+}
+
+func cmpServiceAffinity(a, b corev1.ServiceAffinity) bool {
+	if len(a) == 0 {
+		a = corev1.ServiceAffinityNone
+	}
+	if len(b) == 0 {
+		b = corev1.ServiceAffinityNone
+	}
+	return a == b
 }
