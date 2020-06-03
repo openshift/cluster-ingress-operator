@@ -317,6 +317,7 @@ func computeOperatorProgressingCondition(allIngressesAvailable bool, oldVersions
 		progressingCondition.Reason = "Reconciling"
 	} else {
 		progressingCondition.Status = configv1.ConditionFalse
+		progressingCondition.Reason = "AsExpected"
 	}
 	progressingCondition.Message = ingressesEqualConditionMessage
 	if len(messages) > 0 {
@@ -334,6 +335,7 @@ func computeOperatorAvailableCondition(allIngressesAvailable bool) configv1.Clus
 
 	if allIngressesAvailable {
 		availableCondition.Status = configv1.ConditionTrue
+		availableCondition.Reason = "AsExpected"
 		availableCondition.Message = ingressesEqualConditionMessage
 	} else {
 		availableCondition.Status = configv1.ConditionFalse
