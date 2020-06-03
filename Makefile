@@ -68,5 +68,5 @@ uninstall:
 	hack/uninstall.sh
 
 .PHONY: run-local
-run-local:
+run-local: build
 	hack/run-local.sh
