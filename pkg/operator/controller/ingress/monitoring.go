@@ -37,7 +37,7 @@ func (r *reconciler) ensureServiceMonitor(ic *operatorv1.IngressController, svc 
 		}
 	case haveSM:
 		if updated, err := r.updateServiceMonitor(current, desired); err != nil {
-			return true, nil, fmt.Errorf("failed to update servicemonitor %s/%s: %v", desired.GetNamespace(), desired.GetName(), err)
+			return true, current, fmt.Errorf("failed to update servicemonitor %s/%s: %v", desired.GetNamespace(), desired.GetName(), err)
 		} else if updated {
 			log.Info("updated servicemonitor", "namespace", desired.GetNamespace(), "name", desired.GetName())
 		}

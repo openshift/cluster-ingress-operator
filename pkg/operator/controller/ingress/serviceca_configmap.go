@@ -43,7 +43,7 @@ func (r *reconciler) ensureServiceCAConfigMap() (bool, *corev1.ConfigMap, error)
 		log.Info("created configmap", "configmap", desired)
 	case wantCM && haveCM:
 		if updated, err := r.updateServiceCAConfigMap(current, desired); err != nil {
-			return true, nil, fmt.Errorf("failed to update configmap: %v", err)
+			return true, current, fmt.Errorf("failed to update configmap: %v", err)
 		} else if updated {
 			log.Info("updated configmap", "configmap", desired)
 		}
