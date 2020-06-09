@@ -40,6 +40,9 @@ const (
 	RouterSyslogFormatEnvName   = "ROUTER_SYSLOG_FORMAT"
 	RouterSyslogFacilityEnvName = "ROUTER_LOG_FACILITY"
 
+	RouterCaptureHTTPRequestHeaders  = "ROUTER_CAPTURE_HTTP_REQUEST_HEADERS"
+	RouterCaptureHTTPResponseHeaders = "ROUTER_CAPTURE_HTTP_RESPONSE_HEADERS"
+
 	RouterDisableHTTP2EnvName          = "ROUTER_DISABLE_HTTP2"
 	RouterDefaultEnableHTTP2Annotation = "ingress.operator.openshift.io/default-enable-http2"
 )
@@ -378,91 +381,100 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	secretName := controller.RouterEffectiveDefaultCertificateSecretName(ci, deployment.Namespace)
 	deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName = secretName.Name
 
-	accessLogging := accessLoggingForIngressController(ci)
-	switch {
-	case accessLogging == nil:
-		// No additional configuration is needed.
-	case accessLogging.Destination.Type == operatorv1.ContainerLoggingDestinationType:
-		rsyslogConfigVolume := corev1.Volume{
-			Name: "rsyslog-config",
-			VolumeSource: corev1.VolumeSource{
-				ConfigMap: &corev1.ConfigMapVolumeSource{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: controller.RsyslogConfigMapName(ci).Name,
+	if accessLogging := accessLoggingForIngressController(ci); accessLogging != nil {
+		switch {
+		case accessLogging.Destination.Type == operatorv1.ContainerLoggingDestinationType:
+			rsyslogConfigVolume := corev1.Volume{
+				Name: "rsyslog-config",
+				VolumeSource: corev1.VolumeSource{
+					ConfigMap: &corev1.ConfigMapVolumeSource{
+						LocalObjectReference: corev1.LocalObjectReference{
+							Name: controller.RsyslogConfigMapName(ci).Name,
+						},
 					},
 				},
-			},
-		}
-		rsyslogConfigVolumeMount := corev1.VolumeMount{
-			Name:      rsyslogConfigVolume.Name,
-			MountPath: "/etc/rsyslog",
-		}
+			}
+			rsyslogConfigVolumeMount := corev1.VolumeMount{
+				Name:      rsyslogConfigVolume.Name,
+				MountPath: "/etc/rsyslog",
+			}
 
-		// Ideally we would use a Unix domain socket in the abstract
-		// namespace, but rsyslog does not support that, so we need a
-		// filesystem that is common to the router and syslog
-		// containers.
-		rsyslogSocketVolume := corev1.Volume{
-			Name: "rsyslog-socket",
-			VolumeSource: corev1.VolumeSource{
-				EmptyDir: &corev1.EmptyDirVolumeSource{},
-			},
-		}
-		rsyslogSocketVolumeMount := corev1.VolumeMount{
-			Name:      rsyslogSocketVolume.Name,
-			MountPath: "/var/lib/rsyslog",
-		}
-
-		configPath := filepath.Join(rsyslogConfigVolumeMount.MountPath, "rsyslog.conf")
-		socketPath := filepath.Join(rsyslogSocketVolumeMount.MountPath, "rsyslog.sock")
-
-		syslogContainer := corev1.Container{
-			Name: operatorv1.ContainerLoggingSidecarContainerName,
-			// The ingresscontroller image has rsyslog built in.
-			Image: ingressControllerImage,
-			Command: []string{
-				"/sbin/rsyslogd", "-n",
-				// TODO: Once we have rsyslog 8.32 or later,
-				// we can switch to -i NONE.
-				"-i", "/tmp/rsyslog.pid",
-				"-f", configPath,
-			},
-			ImagePullPolicy: corev1.PullIfNotPresent,
-			VolumeMounts: []corev1.VolumeMount{
-				rsyslogConfigVolumeMount,
-				rsyslogSocketVolumeMount,
-			},
-			Resources: corev1.ResourceRequirements{
-				Requests: corev1.ResourceList{
-					corev1.ResourceCPU:    resource.MustParse("100m"),
-					corev1.ResourceMemory: resource.MustParse("256Mi"),
+			// Ideally we would use a Unix domain socket in the abstract
+			// namespace, but rsyslog does not support that, so we need a
+			// filesystem that is common to the router and syslog
+			// containers.
+			rsyslogSocketVolume := corev1.Volume{
+				Name: "rsyslog-socket",
+				VolumeSource: corev1.VolumeSource{
+					EmptyDir: &corev1.EmptyDirVolumeSource{},
 				},
-			},
+			}
+			rsyslogSocketVolumeMount := corev1.VolumeMount{
+				Name:      rsyslogSocketVolume.Name,
+				MountPath: "/var/lib/rsyslog",
+			}
+
+			configPath := filepath.Join(rsyslogConfigVolumeMount.MountPath, "rsyslog.conf")
+			socketPath := filepath.Join(rsyslogSocketVolumeMount.MountPath, "rsyslog.sock")
+
+			syslogContainer := corev1.Container{
+				Name: operatorv1.ContainerLoggingSidecarContainerName,
+				// The ingresscontroller image has rsyslog built in.
+				Image: ingressControllerImage,
+				Command: []string{
+					"/sbin/rsyslogd", "-n",
+					// TODO: Once we have rsyslog 8.32 or later,
+					// we can switch to -i NONE.
+					"-i", "/tmp/rsyslog.pid",
+					"-f", configPath,
+				},
+				ImagePullPolicy: corev1.PullIfNotPresent,
+				VolumeMounts: []corev1.VolumeMount{
+					rsyslogConfigVolumeMount,
+					rsyslogSocketVolumeMount,
+				},
+				Resources: corev1.ResourceRequirements{
+					Requests: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("100m"),
+						corev1.ResourceMemory: resource.MustParse("256Mi"),
+					},
+				},
+			}
+
+			env = append(env,
+				corev1.EnvVar{Name: RouterSyslogAddressEnvName, Value: socketPath},
+				corev1.EnvVar{Name: RouterLogLevelEnvName, Value: "debug"},
+			)
+			volumes = append(volumes, rsyslogConfigVolume, rsyslogSocketVolume)
+			routerVolumeMounts = append(routerVolumeMounts, rsyslogSocketVolumeMount)
+			deployment.Spec.Template.Spec.Containers = append(deployment.Spec.Template.Spec.Containers, syslogContainer)
+		case accessLogging.Destination.Type == operatorv1.SyslogLoggingDestinationType:
+			if len(accessLogging.Destination.Syslog.Facility) > 0 {
+				env = append(env, corev1.EnvVar{Name: RouterSyslogFacilityEnvName, Value: accessLogging.Destination.Syslog.Facility})
+			}
+			address := accessLogging.Destination.Syslog.Address
+			port := accessLogging.Destination.Syslog.Port
+			endpoint := net.JoinHostPort(address, fmt.Sprintf("%d", port))
+			env = append(env,
+				corev1.EnvVar{Name: RouterLogLevelEnvName, Value: "debug"},
+				corev1.EnvVar{Name: RouterSyslogAddressEnvName, Value: endpoint},
+			)
 		}
 
-		env = append(env,
-			corev1.EnvVar{Name: RouterSyslogAddressEnvName, Value: socketPath},
-			corev1.EnvVar{Name: RouterLogLevelEnvName, Value: "debug"},
-		)
 		if len(accessLogging.HttpLogFormat) > 0 {
 			env = append(env, corev1.EnvVar{Name: RouterSyslogFormatEnvName, Value: fmt.Sprintf("%q", accessLogging.HttpLogFormat)})
 		}
-		volumes = append(volumes, rsyslogConfigVolume, rsyslogSocketVolume)
-		routerVolumeMounts = append(routerVolumeMounts, rsyslogSocketVolumeMount)
-		deployment.Spec.Template.Spec.Containers = append(deployment.Spec.Template.Spec.Containers, syslogContainer)
-	case accessLogging.Destination.Type == operatorv1.SyslogLoggingDestinationType:
-		if len(accessLogging.Destination.Syslog.Facility) > 0 {
-			env = append(env, corev1.EnvVar{Name: RouterSyslogFacilityEnvName, Value: accessLogging.Destination.Syslog.Facility})
+		if val := serializeCaptureHeaders(accessLogging.HTTPCaptureHeaders.Request); len(val) != 0 {
+			env = append(env, corev1.EnvVar{
+				Name:  RouterCaptureHTTPRequestHeaders,
+				Value: val,
+			})
 		}
-		address := accessLogging.Destination.Syslog.Address
-		port := accessLogging.Destination.Syslog.Port
-		endpoint := net.JoinHostPort(address, fmt.Sprintf("%d", port))
-		env = append(env,
-			corev1.EnvVar{Name: RouterLogLevelEnvName, Value: "debug"},
-			corev1.EnvVar{Name: RouterSyslogAddressEnvName, Value: endpoint},
-		)
-		if len(accessLogging.HttpLogFormat) > 0 {
-			env = append(env, corev1.EnvVar{Name: RouterSyslogFormatEnvName, Value: fmt.Sprintf("%q", accessLogging.HttpLogFormat)})
+		if val := serializeCaptureHeaders(accessLogging.HTTPCaptureHeaders.Response); len(val) != 0 {
+			env = append(env, corev1.EnvVar{
+				Name:  RouterCaptureHTTPResponseHeaders,
+				Value: val,
+			})
 		}
 	}
 
@@ -572,7 +584,8 @@ func accessLoggingForIngressController(ic *operatorv1.IngressController) *operat
 				Type:      operatorv1.ContainerLoggingDestinationType,
 				Container: &operatorv1.ContainerLoggingDestinationParameters{},
 			},
-			HttpLogFormat: ic.Spec.Logging.Access.HttpLogFormat,
+			HttpLogFormat:      ic.Spec.Logging.Access.HttpLogFormat,
+			HTTPCaptureHeaders: ic.Spec.Logging.Access.HTTPCaptureHeaders,
 		}
 	case operatorv1.SyslogLoggingDestinationType:
 		if ic.Spec.Logging.Access.Destination.Syslog != nil {
@@ -585,11 +598,23 @@ func accessLoggingForIngressController(ic *operatorv1.IngressController) *operat
 						Facility: ic.Spec.Logging.Access.Destination.Syslog.Facility,
 					},
 				},
-				HttpLogFormat: ic.Spec.Logging.Access.HttpLogFormat,
+				HttpLogFormat:      ic.Spec.Logging.Access.HttpLogFormat,
+				HTTPCaptureHeaders: ic.Spec.Logging.Access.HTTPCaptureHeaders,
 			}
 		}
 	}
 	return nil
+}
+
+// serializeCaptureHeaders serializes a slice of
+// IngressControllerCaptureHTTPHeader values into a value suitable for
+// ROUTER_CAPTURE_HTTP_RESPONSE_HEADERS or ROUTER_CAPTURE_HTTP_REQUEST_HEADERS.
+func serializeCaptureHeaders(captureHeaders []operatorv1.IngressControllerCaptureHTTPHeader) string {
+	var headerSpecs []string
+	for _, header := range captureHeaders {
+		headerSpecs = append(headerSpecs, fmt.Sprintf("%s:%d", header.Name, header.MaxLength))
+	}
+	return strings.Join(headerSpecs, ",")
 }
 
 // inferTLSProfileSpecFromDeployment examines the given deployment's pod
