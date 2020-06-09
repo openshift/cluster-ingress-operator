@@ -547,18 +547,18 @@ func (r *reconciler) ensureIngressDeleted(ingress *operatorv1.IngressController)
 	if err := r.deleteWildcardDNSRecord(ingress); err != nil {
 		errs = append(errs, fmt.Errorf("failed to delete wildcard dnsrecord for ingress %s/%s: %v", ingress.Namespace, ingress.Name, err))
 	}
-	if record, err := r.currentWildcardDNSRecord(ingress); err != nil {
+	if haveRec, _, err := r.currentWildcardDNSRecord(ingress); err != nil {
 		errs = append(errs, fmt.Errorf("failed to get current wildcard dnsrecord for ingress %s/%s: %v", ingress.Namespace, ingress.Name, err))
-	} else if record != nil {
+	} else if haveRec {
 		errs = append(errs, fmt.Errorf("wildcard dnsrecord exists for ingress %s/%s", ingress.Namespace, ingress.Name))
 	}
 
 	if err := r.ensureRouterDeleted(ingress); err != nil {
 		errs = append(errs, fmt.Errorf("failed to delete deployment for ingress %s/%s: %v", ingress.Namespace, ingress.Name, err))
 	}
-	if deploy, err := r.currentRouterDeployment(ingress); err != nil {
+	if haveDepl, _, err := r.currentRouterDeployment(ingress); err != nil {
 		errs = append(errs, fmt.Errorf("failed to get deployment for ingress %s/%s: %v", ingress.Namespace, ingress.Name, err))
-	} else if deploy != nil {
+	} else if haveDepl {
 		errs = append(errs, fmt.Errorf("deployment still exists for ingress %s/%s", ingress.Namespace, ingress.Name))
 	}
 
@@ -607,9 +607,12 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		errs = append(errs, err)
 	}
 
-	deployment, err := r.ensureRouterDeployment(ci, infraConfig, ingressConfig, apiConfig, networkConfig)
+	haveDepl, deployment, err := r.ensureRouterDeployment(ci, infraConfig, ingressConfig, apiConfig, networkConfig)
 	if err != nil {
 		errs = append(errs, fmt.Errorf("failed to ensure deployment: %v", err))
+		return utilerrors.NewAggregate(errs)
+	} else if !haveDepl {
+		errs = append(errs, fmt.Errorf("failed to get router deployment %s/%s", ci.Namespace, ci.Name))
 		return utilerrors.NewAggregate(errs)
 	}
 
@@ -624,11 +627,11 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 
 	var lbService *corev1.Service
 	var wildcardRecord *iov1.DNSRecord
-	if lb, err := r.ensureLoadBalancerService(ci, deploymentRef, infraConfig); err != nil {
+	if haveLB, lb, err := r.ensureLoadBalancerService(ci, deploymentRef, infraConfig); err != nil {
 		errs = append(errs, fmt.Errorf("failed to ensure load balancer service for %s: %v", ci.Name, err))
 	} else {
 		lbService = lb
-		if record, err := r.ensureWildcardDNSRecord(ci, lbService); err != nil {
+		if _, record, err := r.ensureWildcardDNSRecord(ci, lbService, haveLB); err != nil {
 			errs = append(errs, fmt.Errorf("failed to ensure wildcard dnsrecord for %s: %v", ci.Name, err))
 		} else {
 			wildcardRecord = record

@@ -28,35 +28,35 @@ import (
 const defaultRecordTTL int64 = 30
 
 // ensureWildcardDNSRecord will create DNS records for the given LB service.
-// If service is nil, nothing is done.
-func (r *reconciler) ensureWildcardDNSRecord(ic *operatorv1.IngressController, service *corev1.Service) (*iov1.DNSRecord, error) {
-	if service == nil {
-		return nil, nil
+// If service is nil (haveLBS is false), nothing is done.
+func (r *reconciler) ensureWildcardDNSRecord(ic *operatorv1.IngressController, service *corev1.Service, haveLBS bool) (bool, *iov1.DNSRecord, error) {
+	if !haveLBS {
+		return false, nil, nil
 	}
 
 	desired := desiredWildcardRecord(ic, service)
-	current, err := r.currentWildcardDNSRecord(ic)
+	haveWC, current, err := r.currentWildcardDNSRecord(ic)
 	if err != nil {
-		return nil, err
+		return false, nil, err
 	}
 
 	switch {
-	case desired != nil && current == nil:
+	case !haveWC:
 		if err := r.client.Create(context.TODO(), desired); err != nil {
-			return nil, fmt.Errorf("failed to create dnsrecord %s/%s: %v", desired.Namespace, desired.Name, err)
+			return false, nil, fmt.Errorf("failed to create dnsrecord %s/%s: %v", desired.Namespace, desired.Name, err)
 		}
 		log.Info("created dnsrecord", "dnsrecord", desired)
 		return r.currentWildcardDNSRecord(ic)
-	case desired != nil && current != nil:
+	case haveWC:
 		if updated, err := r.updateDNSRecord(current, desired); err != nil {
-			return nil, fmt.Errorf("failed to update dnsrecord %s/%s: %v", desired.Namespace, desired.Name, err)
+			return true, current, fmt.Errorf("failed to update dnsrecord %s/%s: %v", desired.Namespace, desired.Name, err)
 		} else if updated {
 			log.Info("updated dnsrecord", "dnsrecord", desired)
 			return r.currentWildcardDNSRecord(ic)
 		}
 	}
 
-	return current, nil
+	return true, current, nil
 }
 
 // ensureWildcardDNSRecord will return any necessary wildcard DNS records for the
@@ -136,16 +136,16 @@ func desiredWildcardRecord(ic *operatorv1.IngressController, service *corev1.Ser
 	}
 }
 
-func (r *reconciler) currentWildcardDNSRecord(ic *operatorv1.IngressController) (*iov1.DNSRecord, error) {
+func (r *reconciler) currentWildcardDNSRecord(ic *operatorv1.IngressController) (bool, *iov1.DNSRecord, error) {
 	current := &iov1.DNSRecord{}
 	err := r.client.Get(context.TODO(), controller.WildcardDNSRecordName(ic), current)
 	if err != nil {
 		if errors.IsNotFound(err) {
-			return nil, nil
+			return false, nil, nil
 		}
-		return nil, err
+		return false, nil, err
 	}
-	return current, nil
+	return true, current, nil
 }
 
 func (r *reconciler) deleteWildcardDNSRecord(ic *operatorv1.IngressController) error {

@@ -55,7 +55,7 @@ func (r *reconciler) ensureRsyslogConfigMap(ic *operatorv1.IngressController, de
 		}
 	case wantCM && haveCM:
 		if updated, err := r.updateRsyslogConfigMap(current, desired); err != nil {
-			return true, nil, fmt.Errorf("failed to update configmap: %v", err)
+			return true, current, fmt.Errorf("failed to update configmap: %v", err)
 		} else if updated {
 			log.Info("updated configmap", "configmap", desired)
 		}

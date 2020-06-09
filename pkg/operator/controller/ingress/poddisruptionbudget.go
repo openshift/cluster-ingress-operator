@@ -49,7 +49,7 @@ func (r *reconciler) ensureRouterPodDisruptionBudget(ic *operatorv1.IngressContr
 		log.Info("created pod disruption budget", "poddisruptionbudget", desired)
 	case wantPDB && havePDB:
 		if updated, err := r.updateRouterPodDisruptionBudget(current, desired); err != nil {
-			return true, nil, fmt.Errorf("failed to update pod disruption budget: %v", err)
+			return true, current, fmt.Errorf("failed to update pod disruption budget: %v", err)
 		} else if updated {
 			log.Info("updated pod disruption budget", "poddisruptionbudget", desired)
 		}

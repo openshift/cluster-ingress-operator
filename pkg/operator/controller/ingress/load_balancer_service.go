@@ -65,24 +65,26 @@ var (
 // ensureLoadBalancerService creates an LB service if one is desired but absent.
 // Always returns the current LB service if one exists (whether it already
 // existed or was created during the course of the function).
-func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, infraConfig *configv1.Infrastructure) (*corev1.Service, error) {
+func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, infraConfig *configv1.Infrastructure) (bool, *corev1.Service, error) {
 	desiredLBService, err := desiredLoadBalancerService(ci, deploymentRef, infraConfig)
 	if err != nil {
-		return nil, err
+		return false, nil, err
 	}
 
-	currentLBService, err := r.currentLoadBalancerService(ci)
+	haveLBS, currentLBService, err := r.currentLoadBalancerService(ci)
 	if err != nil {
-		return nil, err
+		return false, nil, err
 	}
-	if desiredLBService != nil && currentLBService == nil {
+	if desiredLBService != nil && !haveLBS {
 		if err := r.client.Create(context.TODO(), desiredLBService); err != nil {
-			return nil, fmt.Errorf("failed to create load balancer service %s/%s: %v", desiredLBService.Namespace, desiredLBService.Name, err)
+			return false, nil, fmt.Errorf("failed to create load balancer service %s/%s: %v", desiredLBService.Namespace, desiredLBService.Name, err)
 		}
 		log.Info("created load balancer service", "namespace", desiredLBService.Namespace, "name", desiredLBService.Name)
-		return desiredLBService, nil
+		return true, desiredLBService, nil
 	}
-	return currentLBService, nil
+	// return haveLBS instead of forcing true here since
+	// there is no guarantee that currentLBService != nil
+	return haveLBS, currentLBService, nil
 }
 
 // desiredLoadBalancerService returns the desired LB service for a
@@ -142,15 +144,15 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 
 // currentLoadBalancerService returns any existing LB service for the
 // ingresscontroller.
-func (r *reconciler) currentLoadBalancerService(ci *operatorv1.IngressController) (*corev1.Service, error) {
+func (r *reconciler) currentLoadBalancerService(ci *operatorv1.IngressController) (bool, *corev1.Service, error) {
 	service := &corev1.Service{}
 	if err := r.client.Get(context.TODO(), controller.LoadBalancerServiceName(ci), service); err != nil {
 		if errors.IsNotFound(err) {
-			return nil, nil
+			return false, nil, nil
 		}
-		return nil, err
+		return false, nil, err
 	}
-	return service, nil
+	return true, service, nil
 }
 
 // finalizeLoadBalancerService removes the "ingress.openshift.io/operator" finalizer
@@ -159,11 +161,11 @@ func (r *reconciler) currentLoadBalancerService(ci *operatorv1.IngressController
 // on existing resources.
 // TODO: How can we delete this code?
 func (r *reconciler) finalizeLoadBalancerService(ci *operatorv1.IngressController) (bool, error) {
-	service, err := r.currentLoadBalancerService(ci)
+	haveLBS, service, err := r.currentLoadBalancerService(ci)
 	if err != nil {
 		return false, err
 	}
-	if service == nil {
+	if !haveLBS {
 		return false, nil
 	}
 	// Mutate a copy to avoid assuming we know where the current one came from
