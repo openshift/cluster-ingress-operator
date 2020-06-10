@@ -281,6 +281,8 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SYSLOG_ADDRESS", true, "/var/lib/rsyslog/rsyslog.sock")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SYSLOG_FORMAT", true, `"%ci:%cp [%t] %ft %b/%s %B %bq %HM %HU %HV"`)
 
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SET_FORWARDED_HEADERS", true, "append")
+
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CIPHERS", true, "quux")
 
 	// TODO: Update when haproxy is built with an openssl version that supports tls v1.3.
@@ -303,6 +305,9 @@ func TestDesiredRouterDeployment(t *testing.T) {
 				},
 			},
 		},
+	}
+	ci.Spec.HTTPHeaders = &operatorv1.IngressControllerHTTPHeaders{
+		ForwardedHeaderPolicy: operatorv1.NeverHTTPHeaderPolicy,
 	}
 	ci.Spec.NodePlacement = &operatorv1.NodePlacement{
 		NodeSelector: &metav1.LabelSelector{
@@ -370,6 +375,8 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOG_LEVEL", true, "debug")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SYSLOG_ADDRESS", true, "1.2.3.4:12345")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SYSLOG_FORMAT", false, "")
+
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SET_FORWARDED_HEADERS", true, "never")
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_IP_V4_V6_MODE", true, "v6")
 	checkDeploymentHasEnvVar(t, deployment, RouterDisableHTTP2EnvName, true, "true")

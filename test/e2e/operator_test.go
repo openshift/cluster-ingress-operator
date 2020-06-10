@@ -1279,6 +1279,30 @@ func waitForDeploymentComplete(t *testing.T, cl client.Client, deployment *appsv
 	return nil
 }
 
+// Wait for the provided deployment to have the specified environment variable set.
+func waitForDeploymentEnvVar(t *testing.T, cl client.Client, deployment *appsv1.Deployment, timeout time.Duration, name, value string) error {
+	t.Helper()
+	deploymentName := types.NamespacedName{Namespace: deployment.Namespace, Name: deployment.Name}
+	err := wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
+		deployment := &appsv1.Deployment{}
+		if err := kclient.Get(context.TODO(), deploymentName, deployment); err != nil {
+			t.Logf("error getting deployment %s: %v", name, err)
+			return false, nil
+		}
+		for _, container := range deployment.Spec.Template.Spec.Containers {
+			if container.Name == "router" {
+				for _, v := range container.Env {
+					if v.Name == name {
+						return v.Value == value, nil
+					}
+				}
+			}
+		}
+		return false, nil
+	})
+	return err
+}
+
 func clusterOperatorConditionMap(conditions ...configv1.ClusterOperatorStatusCondition) map[string]string {
 	conds := map[string]string{}
 	for _, cond := range conditions {
