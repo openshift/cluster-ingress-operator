@@ -46,23 +46,23 @@ const (
 
 // ensureRouterDeployment ensures the router deployment exists for a given
 // ingresscontroller.
-func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, infraConfig *configv1.Infrastructure, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer, networkConfig *configv1.Network) (*appsv1.Deployment, error) {
+func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, infraConfig *configv1.Infrastructure, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer, networkConfig *configv1.Network) (bool, *appsv1.Deployment, error) {
+	haveDepl, current, err := r.currentRouterDeployment(ci)
+	if err != nil {
+		return false, nil, err
+	}
 	desired, err := desiredRouterDeployment(ci, r.Config.IngressControllerImage, infraConfig, ingressConfig, apiConfig, networkConfig)
 	if err != nil {
-		return nil, fmt.Errorf("failed to build router deployment: %v", err)
-	}
-	current, err := r.currentRouterDeployment(ci)
-	if err != nil {
-		return nil, err
+		return haveDepl, current, fmt.Errorf("failed to build router deployment: %v", err)
 	}
 	switch {
-	case desired != nil && current == nil:
+	case !haveDepl:
 		if err := r.createRouterDeployment(desired); err != nil {
-			return nil, err
+			return false, nil, err
 		}
-	case desired != nil && current != nil:
+	case haveDepl:
 		if err := r.updateRouterDeployment(current, desired); err != nil {
-			return nil, err
+			return true, current, err
 		}
 	}
 	return r.currentRouterDeployment(ci)
@@ -846,15 +846,15 @@ func hashableProbe(probe *corev1.Probe) *corev1.Probe {
 }
 
 // currentRouterDeployment returns the current router deployment.
-func (r *reconciler) currentRouterDeployment(ci *operatorv1.IngressController) (*appsv1.Deployment, error) {
+func (r *reconciler) currentRouterDeployment(ci *operatorv1.IngressController) (bool, *appsv1.Deployment, error) {
 	deployment := &appsv1.Deployment{}
 	if err := r.client.Get(context.TODO(), controller.RouterDeploymentName(ci), deployment); err != nil {
 		if errors.IsNotFound(err) {
-			return nil, nil
+			return false, nil, nil
 		}
-		return nil, err
+		return false, nil, err
 	}
-	return deployment, nil
+	return true, deployment, nil
 }
 
 // createRouterDeployment creates a router deployment.
