@@ -34,20 +34,20 @@ func (r *reconciler) ensureWildcardDNSRecord(ic *operatorv1.IngressController, s
 		return false, nil, nil
 	}
 
-	desired := desiredWildcardRecord(ic, service)
+	wantWC, desired := desiredWildcardDNSRecord(ic, service)
 	haveWC, current, err := r.currentWildcardDNSRecord(ic)
 	if err != nil {
 		return false, nil, err
 	}
 
 	switch {
-	case !haveWC:
+	case wantWC && !haveWC:
 		if err := r.client.Create(context.TODO(), desired); err != nil {
 			return false, nil, fmt.Errorf("failed to create dnsrecord %s/%s: %v", desired.Namespace, desired.Name, err)
 		}
 		log.Info("created dnsrecord", "dnsrecord", desired)
 		return r.currentWildcardDNSRecord(ic)
-	case haveWC:
+	case wantWC && haveWC:
 		if updated, err := r.updateDNSRecord(current, desired); err != nil {
 			return true, current, fmt.Errorf("failed to update dnsrecord %s/%s: %v", desired.Namespace, desired.Name, err)
 		} else if updated {
@@ -56,10 +56,10 @@ func (r *reconciler) ensureWildcardDNSRecord(ic *operatorv1.IngressController, s
 		}
 	}
 
-	return true, current, nil
+	return haveWC, current, nil
 }
 
-// ensureWildcardDNSRecord will return any necessary wildcard DNS records for the
+// desiredWildcardDNSRecord will return any necessary wildcard DNS records for the
 // ingresscontroller.
 //
 // For now, if the service has more than one .status.loadbalancer.ingress, only
@@ -68,21 +68,21 @@ func (r *reconciler) ensureWildcardDNSRecord(ic *operatorv1.IngressController, s
 // TODO: If .status.loadbalancer.ingress is processed once as non-empty and then
 // later becomes empty, what should we do? Currently we'll treat it as an intent
 // to not have a desired record.
-func desiredWildcardRecord(ic *operatorv1.IngressController, service *corev1.Service) *iov1.DNSRecord {
+func desiredWildcardDNSRecord(ic *operatorv1.IngressController, service *corev1.Service) (bool, *iov1.DNSRecord) {
 	// If the ingresscontroller has no ingress domain, we cannot configure any
 	// DNS records.
 	if len(ic.Status.Domain) == 0 {
-		return nil
+		return false, nil
 	}
 
 	// DNS is only managed for LB publishing.
 	if ic.Status.EndpointPublishingStrategy.Type != operatorv1.LoadBalancerServiceStrategyType {
-		return nil
+		return false, nil
 	}
 
 	// No LB target exists for the domain record to point at.
 	if len(service.Status.LoadBalancer.Ingress) == 0 {
-		return nil
+		return false, nil
 	}
 
 	ingress := service.Status.LoadBalancer.Ingress[0]
@@ -90,7 +90,7 @@ func desiredWildcardRecord(ic *operatorv1.IngressController, service *corev1.Ser
 	// Quick sanity check since we don't know how to handle both being set (is
 	// that even a valid state?)
 	if len(ingress.Hostname) > 0 && len(ingress.IP) > 0 {
-		return nil
+		return false, nil
 	}
 
 	name := controller.WildcardDNSRecordName(ic)
@@ -108,7 +108,7 @@ func desiredWildcardRecord(ic *operatorv1.IngressController, service *corev1.Ser
 	}
 
 	trueVar := true
-	return &iov1.DNSRecord{
+	return true, &iov1.DNSRecord{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: name.Namespace,
 			Name:      name.Name,
