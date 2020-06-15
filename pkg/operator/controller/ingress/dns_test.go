@@ -95,15 +95,15 @@ func TestDesiredWildcardDNSRecord(t *testing.T) {
 			service.Status.LoadBalancer.Ingress = append(service.Status.LoadBalancer.Ingress, ingress)
 		}
 
-		actual := desiredWildcardRecord(controller, service)
+		haveWC, actual := desiredWildcardDNSRecord(controller, service)
 		switch {
-		case test.expect != nil && actual != nil:
+		case test.expect != nil && haveWC:
 			if !cmp.Equal(actual.Spec, *test.expect) {
 				t.Errorf("expected:\n%s\n\nactual:\n%s", toYaml(test.expect), toYaml(actual.Spec))
 			}
-		case test.expect == nil && actual != nil:
+		case test.expect == nil && haveWC:
 			t.Errorf("expected nil record, got:\n%s", toYaml(actual))
-		case test.expect != nil && actual == nil:
+		case test.expect != nil && !haveWC:
 			t.Errorf("expected record but got nil:\n%s", toYaml(test.expect))
 		}
 	}

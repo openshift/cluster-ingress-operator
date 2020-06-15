@@ -66,7 +66,7 @@ var (
 // Always returns the current LB service if one exists (whether it already
 // existed or was created during the course of the function).
 func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, infraConfig *configv1.Infrastructure) (bool, *corev1.Service, error) {
-	desiredLBService, err := desiredLoadBalancerService(ci, deploymentRef, infraConfig)
+	wantLBS, desiredLBService, err := desiredLoadBalancerService(ci, deploymentRef, infraConfig)
 	if err != nil {
 		return false, nil, err
 	}
@@ -75,7 +75,7 @@ func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController,
 	if err != nil {
 		return false, nil, err
 	}
-	if desiredLBService != nil && !haveLBS {
+	if wantLBS && !haveLBS {
 		if err := r.client.Create(context.TODO(), desiredLBService); err != nil {
 			return false, nil, fmt.Errorf("failed to create load balancer service %s/%s: %v", desiredLBService.Namespace, desiredLBService.Name, err)
 		}
@@ -91,9 +91,9 @@ func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController,
 // ingresscontroller, or nil if an LB service isn't desired. An LB service is
 // desired if the high availability type is Cloud. An LB service will declare an
 // owner reference to the given deployment.
-func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, infraConfig *configv1.Infrastructure) (*corev1.Service, error) {
+func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, infraConfig *configv1.Infrastructure) (bool, *corev1.Service, error) {
 	if ci.Status.EndpointPublishingStrategy.Type != operatorv1.LoadBalancerServiceStrategyType {
-		return nil, nil
+		return false, nil, nil
 	}
 	service := manifests.LoadBalancerService()
 
@@ -139,7 +139,7 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 
 	service.SetOwnerReferences([]metav1.OwnerReference{deploymentRef})
 	service.Finalizers = []string{manifests.LoadBalancerServiceFinalizer}
-	return service, nil
+	return true, service, nil
 }
 
 // currentLoadBalancerService returns any existing LB service for the
