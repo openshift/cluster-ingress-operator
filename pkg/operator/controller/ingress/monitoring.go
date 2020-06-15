@@ -30,20 +30,21 @@ func (r *reconciler) ensureServiceMonitor(ic *operatorv1.IngressController, svc 
 
 	switch {
 	case !haveSM:
-		if created, err := r.createServiceMonitor(desired); err != nil {
+		if err := r.client.Create(context.TODO(), desired); err != nil {
 			return false, nil, fmt.Errorf("failed to create servicemonitor %s/%s: %v", desired.GetNamespace(), desired.GetName(), err)
-		} else if created {
-			log.Info("created servicemonitor", "namespace", desired.GetNamespace(), "name", desired.GetName())
 		}
+		log.Info("created servicemonitor", "namespace", desired.GetNamespace(), "name", desired.GetName())
+		return r.currentServiceMonitor(ic)
 	case haveSM:
 		if updated, err := r.updateServiceMonitor(current, desired); err != nil {
 			return true, current, fmt.Errorf("failed to update servicemonitor %s/%s: %v", desired.GetNamespace(), desired.GetName(), err)
 		} else if updated {
 			log.Info("updated servicemonitor", "namespace", desired.GetNamespace(), "name", desired.GetName())
+			return r.currentServiceMonitor(ic)
 		}
 	}
 
-	return r.currentServiceMonitor(ic)
+	return true, current, nil
 }
 
 // desiredServiceMonitor returns the desired servicemonitor for the given
@@ -118,15 +119,6 @@ func (r *reconciler) currentServiceMonitor(ic *operatorv1.IngressController) (bo
 		return false, nil, err
 	}
 	return true, sm, nil
-}
-
-// createServiceMonitor creates a servicemonitor.  Returns a Boolean indicating
-// whether the servicemonitor was created, and an error value.
-func (r *reconciler) createServiceMonitor(sm *unstructured.Unstructured) (bool, error) {
-	if err := r.client.Create(context.TODO(), sm); err != nil {
-		return false, err
-	}
-	return true, nil
 }
 
 // updateServiceMonitor updates a servicemonitor.  Returns a Boolean indicating

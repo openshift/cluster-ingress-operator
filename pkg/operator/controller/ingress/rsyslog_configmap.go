@@ -42,26 +42,30 @@ func (r *reconciler) ensureRsyslogConfigMap(ic *operatorv1.IngressController, de
 	case !wantCM && !haveCM:
 		return false, nil, nil
 	case !wantCM && haveCM:
-		if deleted, err := r.deleteRsyslogConfigMap(current); err != nil {
-			return true, current, fmt.Errorf("failed to delete configmap: %v", err)
-		} else if deleted {
+		if err := r.client.Delete(context.TODO(), current); err != nil {
+			if !errors.IsNotFound(err) {
+				return true, current, fmt.Errorf("failed to delete configmap: %v", err)
+			}
+		} else {
 			log.Info("deleted configmap", "configmap", current)
 		}
+		return false, nil, nil
 	case wantCM && !haveCM:
-		if created, err := r.createRsyslogConfigMap(desired); err != nil {
+		if err := r.client.Create(context.TODO(), desired); err != nil {
 			return false, nil, fmt.Errorf("failed to create configmap: %v", err)
-		} else if created {
-			log.Info("created configmap", "configmap", desired)
 		}
+		log.Info("created configmap", "configmap", desired)
+		return r.currentRsyslogConfigMap(ic)
 	case wantCM && haveCM:
 		if updated, err := r.updateRsyslogConfigMap(current, desired); err != nil {
 			return true, current, fmt.Errorf("failed to update configmap: %v", err)
 		} else if updated {
 			log.Info("updated configmap", "configmap", desired)
+			return r.currentRsyslogConfigMap(ic)
 		}
 	}
 
-	return r.currentRsyslogConfigMap(ic)
+	return true, current, nil
 }
 
 // desiredRsyslogConfigMap returns the desired rsyslog configmap.  Returns a
@@ -100,27 +104,6 @@ func (r *reconciler) currentRsyslogConfigMap(ic *operatorv1.IngressController) (
 		return false, nil, err
 	}
 	return true, cm, nil
-}
-
-// createRsyslogConfigMap creates a configmap.  Returns a Boolean indicating
-// whether the configmap was created, and an error value.
-func (r *reconciler) createRsyslogConfigMap(cm *corev1.ConfigMap) (bool, error) {
-	if err := r.client.Create(context.TODO(), cm); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
-// deleteRsyslogConfigMap deletes a configmap.  Returns a Boolean indicating
-// whether the configmap was deleted, and an error value.
-func (r *reconciler) deleteRsyslogConfigMap(cm *corev1.ConfigMap) (bool, error) {
-	if err := r.client.Delete(context.TODO(), cm); err != nil {
-		if errors.IsNotFound(err) {
-			return false, nil
-		}
-		return false, err
-	}
-	return true, nil
 }
 
 // updateRsyslogConfigMap updates a configmap.  Returns a Boolean indicating
