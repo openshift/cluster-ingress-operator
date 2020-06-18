@@ -42,20 +42,23 @@ func (r *reconciler) ensureRouterPodDisruptionBudget(ic *operatorv1.IngressContr
 		} else {
 			log.Info("deleted pod disruption budget", "poddisruptionbudget", current)
 		}
+		return false, nil, nil
 	case wantPDB && !havePDB:
 		if err := r.client.Create(context.TODO(), desired); err != nil {
 			return false, nil, fmt.Errorf("failed to create pod disruption budget: %v", err)
 		}
 		log.Info("created pod disruption budget", "poddisruptionbudget", desired)
+		return r.currentRouterPodDisruptionBudget(ic)
 	case wantPDB && havePDB:
 		if updated, err := r.updateRouterPodDisruptionBudget(current, desired); err != nil {
 			return true, current, fmt.Errorf("failed to update pod disruption budget: %v", err)
 		} else if updated {
 			log.Info("updated pod disruption budget", "poddisruptionbudget", desired)
+			return r.currentRouterPodDisruptionBudget(ic)
 		}
 	}
 
-	return r.currentRouterPodDisruptionBudget(ic)
+	return true, current, nil
 }
 
 // desiredRouterPodDisruptionBudget returns the desired router pod disruption

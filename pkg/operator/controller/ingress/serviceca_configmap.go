@@ -36,20 +36,23 @@ func (r *reconciler) ensureServiceCAConfigMap() (bool, *corev1.ConfigMap, error)
 		} else {
 			log.Info("deleted configmap", "configmap", current)
 		}
+		return false, nil, nil
 	case wantCM && !haveCM:
 		if err := r.client.Create(context.TODO(), desired); err != nil {
 			return false, nil, fmt.Errorf("failed to create configmap: %v", err)
 		}
 		log.Info("created configmap", "configmap", desired)
+		return r.currentServiceCAConfigMap()
 	case wantCM && haveCM:
 		if updated, err := r.updateServiceCAConfigMap(current, desired); err != nil {
 			return true, current, fmt.Errorf("failed to update configmap: %v", err)
 		} else if updated {
 			log.Info("updated configmap", "configmap", desired)
+			return r.currentServiceCAConfigMap()
 		}
 	}
 
-	return r.currentServiceCAConfigMap()
+	return true, current, nil
 }
 
 // desiredServiceCAConfigMap returns the desired configmap for the service CA

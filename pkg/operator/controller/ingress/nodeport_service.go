@@ -36,26 +36,29 @@ func (r *reconciler) ensureNodePortService(ic *operatorv1.IngressController, dep
 		return false, nil, nil
 	case !wantService && haveService:
 		if err := r.client.Delete(context.TODO(), current); err != nil {
-			if errors.IsNotFound(err) {
-				return false, nil, nil
+			if !errors.IsNotFound(err) {
+				return true, current, fmt.Errorf("failed to delete NodePort service: %v", err)
 			}
-			return true, current, fmt.Errorf("failed to delete NodePort service: %v", err)
+		} else {
+			log.Info("deleted NodePort service", "service", current)
 		}
-		log.Info("deleted NodePort service", "service", current)
+		return false, nil, nil
 	case wantService && !haveService:
 		if err := r.client.Create(context.TODO(), desired); err != nil {
 			return false, nil, fmt.Errorf("failed to create NodePort service: %v", err)
 		}
 		log.Info("created NodePort service", "service", desired)
+		return r.currentNodePortService(ic)
 	case wantService && haveService:
 		if updated, err := r.updateNodePortService(current, desired); err != nil {
 			return true, current, fmt.Errorf("failed to update NodePort service: %v", err)
 		} else if updated {
 			log.Info("updated NodePort service", "service", desired)
+			return r.currentNodePortService(ic)
 		}
 	}
 
-	return r.currentNodePortService(ic)
+	return true, current, nil
 }
 
 // desiredNodePortService returns a Boolean indicating whether a NodePort

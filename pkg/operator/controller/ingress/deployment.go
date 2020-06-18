@@ -60,12 +60,16 @@ func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, in
 		if err := r.createRouterDeployment(desired); err != nil {
 			return false, nil, err
 		}
+		return r.currentRouterDeployment(ci)
 	case haveDepl:
-		if err := r.updateRouterDeployment(current, desired); err != nil {
+		if updated, err := r.updateRouterDeployment(current, desired); err != nil {
 			return true, current, err
+		} else if updated {
+			return r.currentRouterDeployment(ci)
 		}
 	}
-	return r.currentRouterDeployment(ci)
+
+	return true, current, nil
 }
 
 // ensureRouterDeleted ensures that any router resources associated with the
@@ -867,19 +871,19 @@ func (r *reconciler) createRouterDeployment(deployment *appsv1.Deployment) error
 }
 
 // updateRouterDeployment updates a router deployment.
-func (r *reconciler) updateRouterDeployment(current, desired *appsv1.Deployment) error {
+func (r *reconciler) updateRouterDeployment(current, desired *appsv1.Deployment) (bool, error) {
 	changed, updated := deploymentConfigChanged(current, desired)
 	if !changed {
-		return nil
+		return false, nil
 	}
 
 	// Diff before updating because the client may mutate the object.
 	diff := cmp.Diff(current, updated, cmpopts.EquateEmpty())
 	if err := r.client.Update(context.TODO(), updated); err != nil {
-		return fmt.Errorf("failed to update router deployment %s/%s: %v", updated.Namespace, updated.Name, err)
+		return false, fmt.Errorf("failed to update router deployment %s/%s: %v", updated.Namespace, updated.Name, err)
 	}
 	log.Info("updated router deployment", "namespace", updated.Namespace, "name", updated.Name, "diff", diff)
-	return nil
+	return true, nil
 }
 
 // deepHashObject writes specified object to hash using the spew library
