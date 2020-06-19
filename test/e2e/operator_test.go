@@ -101,13 +101,13 @@ func TestOperatorSteadyConditions(t *testing.T) {
 	expected := []configv1.ClusterOperatorStatusCondition{
 		{Type: configv1.OperatorAvailable, Status: configv1.ConditionTrue},
 	}
-	if err := waitForClusterOperatorConditions(kclient, expected...); err != nil {
+	if err := waitForClusterOperatorConditions(t, kclient, expected...); err != nil {
 		t.Errorf("did not get expected available condition: %v", err)
 	}
 }
 
 func TestDefaultIngressControllerSteadyConditions(t *testing.T) {
-	if err := waitForIngressControllerCondition(kclient, 10*time.Second, defaultName, defaultAvailableConditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 10*time.Second, defaultName, defaultAvailableConditions...); err != nil {
 		t.Errorf("did not get expected conditions: %v", err)
 	}
 }
@@ -120,14 +120,14 @@ func TestUserDefinedIngressController(t *testing.T) {
 	}
 	defer assertIngressControllerDeleted(t, kclient, ing)
 
-	if err := waitForIngressControllerCondition(kclient, 5*time.Minute, name, defaultAvailableConditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, defaultAvailableConditions...); err != nil {
 		t.Errorf("failed to observe expected conditions: %v", err)
 	}
 }
 
 func TestUniqueDomainRejection(t *testing.T) {
 	def := &operatorv1.IngressController{}
-	if err := waitForIngressControllerCondition(kclient, 5*time.Minute, defaultName, defaultAvailableConditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, defaultName, defaultAvailableConditions...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -145,7 +145,7 @@ func TestUniqueDomainRejection(t *testing.T) {
 	conditions := []operatorv1.OperatorCondition{
 		{Type: ingresscontroller.IngressControllerAdmittedConditionType, Status: operatorv1.ConditionFalse},
 	}
-	err := waitForIngressControllerCondition(kclient, 5*time.Minute, conflictName, conditions...)
+	err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, conflictName, conditions...)
 	if err != nil {
 		t.Errorf("failed to observe expected conditions: %v", err)
 	}
@@ -162,7 +162,7 @@ func TestClusterProxyProtocol(t *testing.T) {
 	if err := kclient.Get(context.TODO(), defaultName, ic); err != nil {
 		t.Fatalf("failed to get default ingresscontroller: %v", err)
 	}
-	if err := waitForIngressControllerCondition(kclient, 5*time.Minute, defaultName, defaultAvailableConditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, defaultName, defaultAvailableConditions...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -194,7 +194,7 @@ func TestUpdateDefaultIngressController(t *testing.T) {
 	if err := kclient.Get(context.TODO(), defaultName, ic); err != nil {
 		t.Fatalf("failed to get default ingresscontroller: %v", err)
 	}
-	if err := waitForIngressControllerCondition(kclient, 5*time.Minute, defaultName, defaultAvailableConditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, defaultName, defaultAvailableConditions...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -235,8 +235,10 @@ func TestUpdateDefaultIngressController(t *testing.T) {
 	if err := kclient.Update(context.TODO(), ic); err != nil {
 		t.Fatalf("failed to update default ingresscontroller: %v", err)
 	}
+	name := types.NamespacedName{Namespace: deployment.Namespace, Name: deployment.Name}
 	err = wait.PollImmediate(1*time.Second, 15*time.Second, func() (bool, error) {
-		if err := kclient.Get(context.TODO(), types.NamespacedName{Namespace: deployment.Namespace, Name: deployment.Name}, deployment); err != nil {
+		if err := kclient.Get(context.TODO(), name, deployment); err != nil {
+			t.Logf("failed to get deployment %s: %v", name, err)
 			return false, nil
 		}
 		if deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName != secret.Name {
@@ -252,7 +254,8 @@ func TestUpdateDefaultIngressController(t *testing.T) {
 	previousDefaultIngressCAConfigmap := defaultIngressCAConfigmap.DeepCopy()
 	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
 		if err := kclient.Get(context.TODO(), controller.DefaultIngressCertConfigMapName(), defaultIngressCAConfigmap); err != nil {
-			return false, err
+			t.Logf("failed to get CA config map %s: %v", controller.DefaultIngressCertConfigMapName(), err)
+			return false, nil
 		}
 		if defaultIngressCAConfigmap.Data["ca-bundle.crt"] == previousDefaultIngressCAConfigmap.Data["ca-bundle.crt"] {
 			return false, nil
@@ -276,7 +279,8 @@ func TestUpdateDefaultIngressController(t *testing.T) {
 	previousDefaultIngressCAConfigmap = defaultIngressCAConfigmap.DeepCopy()
 	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
 		if err := kclient.Get(context.TODO(), controller.DefaultIngressCertConfigMapName(), defaultIngressCAConfigmap); err != nil {
-			return false, err
+			t.Logf("failed to get CA config map %s: %v", controller.DefaultIngressCertConfigMapName(), err)
+			return false, nil
 		}
 		if defaultIngressCAConfigmap.Data["ca-bundle.crt"] == previousDefaultIngressCAConfigmap.Data["ca-bundle.crt"] {
 			return false, nil
@@ -303,7 +307,7 @@ func TestIngressControllerScale(t *testing.T) {
 	if err := kclient.Get(context.TODO(), defaultName, ic); err != nil {
 		t.Fatalf("failed to get default ingresscontroller: %v", err)
 	}
-	if err := waitForIngressControllerCondition(kclient, 5*time.Minute, defaultName, defaultAvailableConditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, defaultName, defaultAvailableConditions...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -350,12 +354,12 @@ func TestIngressControllerScale(t *testing.T) {
 	}
 
 	// Wait for the deployment scale up to be observed.
-	if err := waitForAvailableReplicas(kclient, ic, 2*time.Minute, newReplicas); err != nil {
+	if err := waitForAvailableReplicas(t, kclient, ic, 2*time.Minute, newReplicas); err != nil {
 		t.Fatalf("failed waiting deployment %s to scale to %d: %v", defaultName, newReplicas, err)
 	}
 
 	// Ensure the ingresscontroller remains available
-	if err := waitForIngressControllerCondition(kclient, 2*time.Minute, defaultName, defaultAvailableConditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 2*time.Minute, defaultName, defaultAvailableConditions...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -374,13 +378,13 @@ func TestIngressControllerScale(t *testing.T) {
 	}
 
 	// Wait for the deployment scale down to be observed.
-	if err := waitForAvailableReplicas(kclient, ic, 2*time.Minute, originalReplicas); err != nil {
+	if err := waitForAvailableReplicas(t, kclient, ic, 2*time.Minute, originalReplicas); err != nil {
 		t.Fatalf("failed waiting deployment %s to scale to %d: %v", defaultName, originalReplicas, err)
 	}
 
 	// Ensure the ingresscontroller remains available
 	// TODO: assert that the conditions hold steady for some amount of time?
-	if err := waitForIngressControllerCondition(kclient, 5*time.Minute, defaultName, defaultAvailableConditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, defaultName, defaultAvailableConditions...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -436,7 +440,7 @@ func TestDefaultIngressCertificate(t *testing.T) {
 		return
 	}
 
-	if err := waitForIngressControllerCondition(kclient, 5*time.Minute, defaultName, defaultAvailableConditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, defaultName, defaultAvailableConditions...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -502,7 +506,7 @@ func TestPodDisruptionBudgetExists(t *testing.T) {
 		t.Fatalf("failed to get default ingresscontroller: %v", err)
 	}
 
-	if err := waitForIngressControllerCondition(kclient, 5*time.Minute, defaultName, defaultAvailableConditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, defaultName, defaultAvailableConditions...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -529,7 +533,7 @@ func TestHostNetworkEndpointPublishingStrategy(t *testing.T) {
 		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
 		{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionFalse},
 	}
-	err := waitForIngressControllerCondition(kclient, 5*time.Minute, name, conditions...)
+	err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, conditions...)
 	if err != nil {
 		t.Errorf("failed to observe expected conditions: %v", err)
 	}
@@ -565,7 +569,7 @@ func TestInternalLoadBalancer(t *testing.T) {
 	defer assertIngressControllerDeleted(t, kclient, ic)
 
 	// Wait for the load balancer and DNS to be ready.
-	if err := waitForIngressControllerCondition(kclient, 5*time.Minute, name, defaultAvailableConditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, defaultAvailableConditions...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -600,7 +604,7 @@ func TestNodePortServiceEndpointPublishingStrategy(t *testing.T) {
 		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
 		{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionFalse},
 	}
-	err := waitForIngressControllerCondition(kclient, 5*time.Minute, name, conditions...)
+	err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, conditions...)
 	if err != nil {
 		t.Errorf("failed to observe expected conditions: %v", err)
 	}
@@ -623,7 +627,7 @@ func TestTLSSecurityProfile(t *testing.T) {
 		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
 		{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionFalse},
 	}
-	if err := waitForIngressControllerCondition(kclient, 5*time.Minute, name, conditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, conditions...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -655,7 +659,8 @@ func TestTLSSecurityProfile(t *testing.T) {
 	}
 	err := wait.PollImmediate(1*time.Second, 5*time.Minute, func() (bool, error) {
 		if err := kclient.Get(context.TODO(), name, ic); err != nil {
-			t.Fatalf("failed to get ingresscontroller %s: %v", name, err)
+			t.Logf("failed to get ingresscontroller %s: %v", name.Name, err)
+			return false, nil
 		}
 		if !reflect.DeepEqual(*ic.Status.TLSProfile, customProfileSpec) {
 			return false, nil
@@ -691,7 +696,7 @@ func TestRouteAdmissionPolicy(t *testing.T) {
 		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
 		{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionFalse},
 	}
-	if err := waitForIngressControllerCondition(kclient, 5*time.Minute, icName, conditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, conditions...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -756,7 +761,7 @@ func TestRouteAdmissionPolicy(t *testing.T) {
 	if err := kclient.Create(context.TODO(), route1); err != nil {
 		t.Fatalf("failed to create route: %v", err)
 	}
-	if err := waitForRouteIngressConditions(kclient, route1Name, ic.Name, admittedCondition); err != nil {
+	if err := waitForRouteIngressConditions(t, kclient, route1Name, ic.Name, admittedCondition); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -764,7 +769,7 @@ func TestRouteAdmissionPolicy(t *testing.T) {
 	if err := kclient.Create(context.TODO(), route2); err != nil {
 		t.Fatalf("failed to create route: %v", err)
 	}
-	if err := waitForRouteIngressConditions(kclient, route2Name, ic.Name, rejectedCondition); err != nil {
+	if err := waitForRouteIngressConditions(t, kclient, route2Name, ic.Name, rejectedCondition); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -783,7 +788,8 @@ func TestRouteAdmissionPolicy(t *testing.T) {
 	deployment := &appsv1.Deployment{}
 	err := wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
 		if err := kclient.Get(context.TODO(), controller.RouterDeploymentName(ic), deployment); err != nil {
-			return false, err
+			t.Logf("failed to get deployment %s: %v", controller.RouterDeploymentName(ic), err)
+			return false, nil
 		}
 		for _, v := range deployment.Spec.Template.Spec.Containers[0].Env {
 			if v.Name == "ROUTER_DISABLE_NAMESPACE_OWNERSHIP_CHECK" {
@@ -800,7 +806,7 @@ func TestRouteAdmissionPolicy(t *testing.T) {
 	}
 
 	// The second route should eventually be admitted because of the new policy
-	if err := waitForRouteIngressConditions(kclient, route2Name, ic.Name, admittedCondition); err != nil {
+	if err := waitForRouteIngressConditions(t, kclient, route2Name, ic.Name, admittedCondition); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -817,7 +823,7 @@ func TestRouteAdmissionPolicy(t *testing.T) {
 	if err := kclient.Create(context.TODO(), route3); err != nil {
 		t.Fatalf("failed to create route: %v", err)
 	}
-	if err := waitForRouteIngressConditions(kclient, route3Name, ic.Name, admittedCondition); err != nil {
+	if err := waitForRouteIngressConditions(t, kclient, route3Name, ic.Name, admittedCondition); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v, status: %v", err, route3)
 	}
 
@@ -831,7 +837,7 @@ func TestRouteAdmissionPolicy(t *testing.T) {
 	if err := kclient.Create(context.TODO(), route4); err != nil {
 		t.Fatalf("failed to create route: %v", err)
 	}
-	if err := waitForRouteIngressConditions(kclient, route4Name, ic.Name, rejectedCondition); err != nil {
+	if err := waitForRouteIngressConditions(t, kclient, route4Name, ic.Name, rejectedCondition); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -845,7 +851,8 @@ func TestRouteAdmissionPolicy(t *testing.T) {
 	}
 	err = wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
 		if err := kclient.Get(context.TODO(), controller.RouterDeploymentName(ic), deployment); err != nil {
-			return false, err
+			t.Logf("failed to get deployment %s: %v", controller.RouterDeploymentName(ic), err)
+			return false, nil
 		}
 		for _, v := range deployment.Spec.Template.Spec.Containers[0].Env {
 			if v.Name == "ROUTER_ALLOW_WILDCARD_ROUTES" {
@@ -873,7 +880,7 @@ func TestRouteAdmissionPolicy(t *testing.T) {
 	}
 
 	// The route should now be admitted.
-	if err := waitForRouteIngressConditions(kclient, route4Name, ic.Name, admittedCondition); err != nil {
+	if err := waitForRouteIngressConditions(t, kclient, route4Name, ic.Name, admittedCondition); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 }
@@ -971,8 +978,10 @@ $ModLoad omstdout.so
 
 	// Get the rsyslog endpoint.
 	var syslogAddress string
+	name := types.NamespacedName{Namespace: syslogPod.Namespace, Name: syslogPod.Name}
 	err := wait.PollImmediate(1*time.Second, 3*time.Minute, func() (bool, error) {
-		if err := kclient.Get(context.TODO(), types.NamespacedName{Namespace: syslogPod.Namespace, Name: syslogPod.Name}, syslogPod); err != nil {
+		if err := kclient.Get(context.TODO(), name, syslogPod); err != nil {
+			t.Logf("failed to get syslog pod %s/%s: %v", name.Namespace, name.Name, err)
 			return false, nil
 		}
 		syslogAddress = syslogPod.Status.PodIP
@@ -1009,7 +1018,7 @@ $ModLoad omstdout.so
 		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
 		{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionFalse},
 	}
-	if err := waitForIngressControllerCondition(kclient, 5*time.Minute, icName, conditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, conditions...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -1073,7 +1082,7 @@ func TestContainerLogging(t *testing.T) {
 		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
 		{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionFalse},
 	}
-	if err := waitForIngressControllerCondition(kclient, 5*time.Minute, icName, conditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, conditions...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 }
@@ -1144,7 +1153,7 @@ func TestIngressControllerCustomEndpoints(t *testing.T) {
 		t.Skipf("skipping TestIngressControllerCustomEndpoints test due to platform type: %s", platform.Type)
 	}
 	// The default ingresscontroller should surface the expected status conditions.
-	if err := waitForIngressControllerCondition(kclient, 30*time.Second, defaultName, defaultAvailableConditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 30*time.Second, defaultName, defaultAvailableConditions...); err != nil {
 		t.Fatalf("did not get expected ingress controller conditions: %v", err)
 	}
 	// Ensure an ingresscontroller can be created with custom endpoints.
@@ -1155,7 +1164,7 @@ func TestIngressControllerCustomEndpoints(t *testing.T) {
 	}
 	defer assertIngressControllerDeleted(t, kclient, ic)
 	// Ensure the ingress controller is reporting expected status conditions.
-	if err := waitForIngressControllerCondition(kclient, 5*time.Minute, name, defaultAvailableConditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, defaultAvailableConditions...); err != nil {
 		t.Errorf("failed to observe expected conditions: %v", err)
 	}
 }
@@ -1190,7 +1199,7 @@ func TestHTTPHeaderCapture(t *testing.T) {
 		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
 		{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionFalse},
 	}
-	if err := waitForIngressControllerCondition(kclient, 5*time.Minute, icName, conditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, conditions...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -1318,7 +1327,7 @@ func TestHTTPCookieCapture(t *testing.T) {
 		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
 		{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionFalse},
 	}
-	if err := waitForIngressControllerCondition(kclient, 5*time.Minute, icName, conditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, conditions...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -1451,7 +1460,7 @@ func TestNetworkLoadBalancer(t *testing.T) {
 	defer assertIngressControllerDeleted(t, kclient, ic)
 
 	// Wait for the load balancer and DNS to be ready.
-	if err := waitForIngressControllerCondition(kclient, 5*time.Minute, name, defaultAvailableConditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, defaultAvailableConditions...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -1484,7 +1493,7 @@ func TestUniqueIdHeader(t *testing.T) {
 		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
 		{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionFalse},
 	}
-	if err := waitForIngressControllerCondition(kclient, 5*time.Minute, icName, conditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, conditions...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -1658,11 +1667,13 @@ func newPrivateController(name types.NamespacedName, domain string) *operatorv1.
 	}
 }
 
-func waitForAvailableReplicas(cl client.Client, ic *operatorv1.IngressController, timeout time.Duration, expectedReplicas int32) error {
+func waitForAvailableReplicas(t *testing.T, cl client.Client, ic *operatorv1.IngressController, timeout time.Duration, expectedReplicas int32) error {
 	ic = ic.DeepCopy()
+	name := types.NamespacedName{Namespace: ic.Namespace, Name: ic.Name}
 	var lastObservedReplicas int32
 	err := wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
-		if err := cl.Get(context.TODO(), types.NamespacedName{Namespace: ic.Namespace, Name: ic.Name}, ic); err != nil {
+		if err := cl.Get(context.TODO(), name, ic); err != nil {
+			t.Logf("failed to get ingresscontroller %s: %v", name.Name, err)
 			return false, nil
 		}
 		lastObservedReplicas = ic.Status.AvailableReplicas
@@ -1685,7 +1696,7 @@ func waitForDeploymentComplete(t *testing.T, cl client.Client, deployment *appsv
 	deployment = &appsv1.Deployment{}
 	err := wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
 		if err := cl.Get(context.TODO(), name, deployment); err != nil {
-			t.Logf("error getting deployment %s: %v", name, err)
+			t.Logf("error getting deployment %s/%s: %v", name.Namespace, name.Name, err)
 			return false, nil
 		}
 		if deployment.Generation != deployment.Status.ObservedGeneration {
@@ -1718,7 +1729,7 @@ func waitForDeploymentEnvVar(t *testing.T, cl client.Client, deployment *appsv1.
 	err := wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
 		deployment := &appsv1.Deployment{}
 		if err := kclient.Get(context.TODO(), deploymentName, deployment); err != nil {
-			t.Logf("error getting deployment %s: %v", name, err)
+			t.Logf("error getting deployment %s/%s: %v", deploymentName.Namespace, deploymentName.Name, err)
 			return false, nil
 		}
 		for _, container := range deployment.Spec.Template.Spec.Containers {
@@ -1769,11 +1780,13 @@ func conditionsMatchExpected(expected, actual map[string]string) bool {
 	return reflect.DeepEqual(expected, filtered)
 }
 
-func waitForClusterOperatorConditions(cl client.Client, conditions ...configv1.ClusterOperatorStatusCondition) error {
+func waitForClusterOperatorConditions(t *testing.T, cl client.Client, conditions ...configv1.ClusterOperatorStatusCondition) error {
 	return wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
 		co := &configv1.ClusterOperator{}
-		if err := cl.Get(context.TODO(), controller.IngressClusterOperatorName(), co); err != nil {
-			return false, err
+		coName := controller.IngressClusterOperatorName()
+		if err := cl.Get(context.TODO(), coName, co); err != nil {
+			t.Logf("failed to get cluster operator %s: %v", coName.Name, err)
+			return false, nil
 		}
 
 		expected := clusterOperatorConditionMap(conditions...)
@@ -1782,11 +1795,12 @@ func waitForClusterOperatorConditions(cl client.Client, conditions ...configv1.C
 	})
 }
 
-func waitForRouteIngressConditions(cl client.Client, routeName types.NamespacedName, routerName string, conditions ...routev1.RouteIngressCondition) error {
+func waitForRouteIngressConditions(t *testing.T, cl client.Client, routeName types.NamespacedName, routerName string, conditions ...routev1.RouteIngressCondition) error {
 	return wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
 		route := &routev1.Route{}
 		if err := cl.Get(context.TODO(), routeName, route); err != nil {
-			return false, err
+			t.Logf("failed to get route %s: %v", routeName.Name, err)
+			return false, nil
 		}
 
 		for _, ingress := range route.Status.Ingress {
@@ -1801,11 +1815,12 @@ func waitForRouteIngressConditions(cl client.Client, routeName types.NamespacedN
 	})
 }
 
-func waitForIngressControllerCondition(cl client.Client, timeout time.Duration, name types.NamespacedName, conditions ...operatorv1.OperatorCondition) error {
+func waitForIngressControllerCondition(t *testing.T, cl client.Client, timeout time.Duration, name types.NamespacedName, conditions ...operatorv1.OperatorCondition) error {
 	return wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
 		ic := &operatorv1.IngressController{}
 		if err := cl.Get(context.TODO(), name, ic); err != nil {
-			return false, err
+			t.Logf("failed to get ingresscontroller %s: %v", name.Name, err)
+			return false, nil
 		}
 		expected := operatorConditionMap(conditions...)
 		current := operatorConditionMap(ic.Status.Conditions...)

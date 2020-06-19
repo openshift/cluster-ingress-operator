@@ -36,7 +36,7 @@ func TestCreateIngressControllerThenSecret(t *testing.T) {
 	conditions := []operatorv1.OperatorCondition{
 		{Type: ingresscontroller.IngressControllerAdmittedConditionType, Status: operatorv1.ConditionTrue},
 	}
-	err := waitForIngressControllerCondition(kclient, 5*time.Minute, name, conditions...)
+	err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, conditions...)
 	if err != nil {
 		t.Errorf("failed to observe expected conditions: %v", err)
 	}
