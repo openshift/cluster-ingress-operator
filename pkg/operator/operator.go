@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
@@ -54,7 +53,7 @@ type Operator struct {
 }
 
 // New creates (but does not start) a new operator from configuration.
-func New(config operatorconfig.Config, dnsProvider dns.Provider, kubeConfig *rest.Config) (*Operator, error) {
+func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, error) {
 	scheme := operatorclient.GetScheme()
 	// Set up an operator manager for the operator namespace.
 	mgr, err := manager.New(kubeConfig, manager.Options{
@@ -109,7 +108,10 @@ func New(config operatorconfig.Config, dnsProvider dns.Provider, kubeConfig *res
 	}
 
 	// Set up the DNS controller
-	if _, err := dnscontroller.New(mgr, dnsProvider); err != nil {
+	if _, err := dnscontroller.New(mgr, dnscontroller.Config{
+		Namespace:              config.Namespace,
+		OperatorReleaseVersion: config.OperatorReleaseVersion,
+	}); err != nil {
 		return nil, fmt.Errorf("failed to create dns controller: %v", err)
 	}
 
