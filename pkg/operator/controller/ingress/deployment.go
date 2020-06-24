@@ -172,7 +172,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		// HostNetwork.
 	case operatorv1.PrivateStrategyType, operatorv1.LoadBalancerServiceStrategyType, operatorv1.NodePortServiceStrategyType:
 		// To avoid downtime during a rolling update, we need two
-		// things: a deployment strategy and affinity policy.  First,
+		// things: a deployment strategy and an affinity policy.  First,
 		// the deployment strategy: During a rolling update, we want the
 		// deployment controller to scale up the new replica set first
 		// and scale down the old replica set once the new replica is
@@ -199,16 +199,16 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		// pod is colocated with a pod from the old replica set.  To
 		// this end, we add a label with a hash of the deployment, using
 		// which we can select replicas of the same generation (or
-		// select replicas that are *not* of the same generation),
-		// configure affinity to colocate replicas of different
-		// generations of the same ingress controller, and configure
+		// select replicas that are *not* of the same generation).
+		// Then, we can configure affinity to colocate replicas of
+		// different generations of the same ingress controller, and configure
 		// anti-affinity to prevent colocation of replicas of the same
 		// generation of the same ingress controller.
 		//
 		// Together, the deployment strategy and affinity policy ensure
 		// that a node that had local endpoints at the start of a
 		// rolling update continues to have local endpoints for the
-		// throughout and at the completion of the update.
+		// duration of and at the completion of the update.
 		needDeploymentHash = true
 		deployment.Spec.Template.Spec.Affinity = &corev1.Affinity{
 			PodAffinity: &corev1.PodAffinity{
@@ -886,7 +886,7 @@ func (r *reconciler) updateRouterDeployment(current, desired *appsv1.Deployment)
 	return true, nil
 }
 
-// deepHashObject writes specified object to hash using the spew library
+// deepHashObject writes a specified object to a hash using the spew library
 // which follows pointers and prints actual values of the nested objects
 // ensuring the hash does not change when a pointer changes.
 //
@@ -903,7 +903,7 @@ func deepHashObject(hasher hash.Hash, objectToWrite interface{}) {
 }
 
 // deploymentConfigChanged checks if current config matches the expected config
-// for the ingress controller deployment and if not returns the updated config.
+// for the ingress controller deployment and if it does not, returns the updated config.
 func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv1.Deployment) {
 	if deploymentHash(current) == deploymentHash(expected) {
 		return false, nil
