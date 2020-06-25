@@ -547,19 +547,24 @@ func (r *reconciler) ensureIngressDeleted(ingress *operatorv1.IngressController)
 	if err := r.deleteWildcardDNSRecord(ingress); err != nil {
 		errs = append(errs, fmt.Errorf("failed to delete wildcard dnsrecord for ingress %s/%s: %v", ingress.Namespace, ingress.Name, err))
 	}
-	if haveRec, _, err := r.currentWildcardDNSRecord(ingress); err != nil {
+	haveRec, _, err := r.currentWildcardDNSRecord(ingress)
+	switch {
+	case err != nil:
 		errs = append(errs, fmt.Errorf("failed to get current wildcard dnsrecord for ingress %s/%s: %v", ingress.Namespace, ingress.Name, err))
-	} else if haveRec {
+	case haveRec:
 		errs = append(errs, fmt.Errorf("wildcard dnsrecord exists for ingress %s/%s", ingress.Namespace, ingress.Name))
-	}
-
-	if err := r.ensureRouterDeleted(ingress); err != nil {
-		errs = append(errs, fmt.Errorf("failed to delete deployment for ingress %s/%s: %v", ingress.Namespace, ingress.Name, err))
-	}
-	if haveDepl, _, err := r.currentRouterDeployment(ingress); err != nil {
-		errs = append(errs, fmt.Errorf("failed to get deployment for ingress %s/%s: %v", ingress.Namespace, ingress.Name, err))
-	} else if haveDepl {
-		errs = append(errs, fmt.Errorf("deployment still exists for ingress %s/%s", ingress.Namespace, ingress.Name))
+	default:
+		// The router deployment manages the load-balancer service
+		// which is used to find the hosted zone id. Delete the deployment
+		// only when the dnsrecord does not exist.
+		if err := r.ensureRouterDeleted(ingress); err != nil {
+			errs = append(errs, fmt.Errorf("failed to delete deployment for ingress %s/%s: %v", ingress.Namespace, ingress.Name, err))
+		}
+		if haveDepl, _, err := r.currentRouterDeployment(ingress); err != nil {
+			errs = append(errs, fmt.Errorf("failed to get deployment for ingress %s/%s: %v", ingress.Namespace, ingress.Name, err))
+		} else if haveDepl {
+			errs = append(errs, fmt.Errorf("deployment still exists for ingress %s/%s", ingress.Namespace, ingress.Name))
+		}
 	}
 
 	if len(errs) == 0 {
