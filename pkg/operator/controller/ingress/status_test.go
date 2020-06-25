@@ -20,6 +20,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
 	utilclock "k8s.io/apimachinery/pkg/util/clock"
+	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 func ingressController(name string, t operatorv1.EndpointPublishingStrategyType) *operatorv1.IngressController {
@@ -131,17 +132,49 @@ func TestComputeIngressDegradedCondition(t *testing.T) {
 			expectRequeue:               true,
 		},
 		{
-			name: "deployment degraded for <30s",
+			name: "deployment unavailable for <30s",
 			conditions: []operatorv1.OperatorCondition{
-				cond(IngressControllerDeploymentDegradedConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Second*-20)),
+				cond(IngressControllerDeploymentAvailableConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Second*-20)),
 			},
 			expectIngressDegradedStatus: operatorv1.ConditionFalse,
 			expectRequeue:               true,
 		},
 		{
-			name: "deployment degraded for >30s",
+			name: "deployment unavailable for >30s",
 			conditions: []operatorv1.OperatorCondition{
-				cond(IngressControllerDeploymentDegradedConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Second*-31)),
+				cond(IngressControllerDeploymentAvailableConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Second*-31)),
+			},
+			expectIngressDegradedStatus: operatorv1.ConditionTrue,
+			expectRequeue:               true,
+		},
+		{
+			name: "deployment minimum replicas unavailable for <60s",
+			conditions: []operatorv1.OperatorCondition{
+				cond(IngressControllerDeploymentReplicasMinAvailableConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Second*-20)),
+			},
+			expectIngressDegradedStatus: operatorv1.ConditionFalse,
+			expectRequeue:               true,
+		},
+		{
+			name: "deployment minimum replicas unavailable for >60s",
+			conditions: []operatorv1.OperatorCondition{
+				cond(IngressControllerDeploymentReplicasMinAvailableConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Second*-61)),
+			},
+			expectIngressDegradedStatus: operatorv1.ConditionTrue,
+			expectRequeue:               true,
+		},
+		{
+			name: "deployment not all replicas available for <60m",
+			conditions: []operatorv1.OperatorCondition{
+				cond(IngressControllerDeploymentReplicasAllAvailableConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Minute*-20)),
+			},
+			expectIngressDegradedStatus: operatorv1.ConditionFalse,
+			expectRequeue:               true,
+		},
+		{
+			name: "deployment not all replicas available for >60m",
+			conditions: []operatorv1.OperatorCondition{
+				cond(IngressControllerDeploymentReplicasAllAvailableConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Minute*-61)),
 			},
 			expectIngressDegradedStatus: operatorv1.ConditionTrue,
 			expectRequeue:               true,
@@ -202,10 +235,12 @@ func TestComputeIngressDegradedCondition(t *testing.T) {
 			expectRequeue:               true,
 		},
 		{
-			name: "DNS not ready and deployment degraded",
+			name: "DNS not ready and deployment unavailable",
 			conditions: []operatorv1.OperatorCondition{
 				cond(IngressControllerAdmittedConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
-				cond(IngressControllerDeploymentDegradedConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+				cond(IngressControllerDeploymentAvailableConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Hour*-1)),
+				cond(IngressControllerDeploymentReplicasMinAvailableConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Hour*-1)),
+				cond(IngressControllerDeploymentReplicasAllAvailableConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Hour*-1)),
 				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
 				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
 				cond(operatorv1.DNSManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
@@ -218,7 +253,9 @@ func TestComputeIngressDegradedCondition(t *testing.T) {
 			name: "admitted, DNS, LB, and deployment OK",
 			conditions: []operatorv1.OperatorCondition{
 				cond(IngressControllerAdmittedConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
-				cond(IngressControllerDeploymentDegradedConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Hour*-1)),
+				cond(IngressControllerDeploymentAvailableConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+				cond(IngressControllerDeploymentReplicasMinAvailableConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+				cond(IngressControllerDeploymentReplicasAllAvailableConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
 				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
 				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
 				cond(operatorv1.DNSManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
@@ -250,16 +287,16 @@ func TestComputeIngressDegradedCondition(t *testing.T) {
 	}
 }
 
-func TestComputeDeploymentDegradedCondition(t *testing.T) {
+func TestComputeDeploymentAvailableCondition(t *testing.T) {
 	tests := []struct {
-		name                           string
-		deploymentConditions           []appsv1.DeploymentCondition
-		expectDeploymentDegradedStatus operatorv1.ConditionStatus
+		name                            string
+		deploymentConditions            []appsv1.DeploymentCondition
+		expectDeploymentAvailableStatus operatorv1.ConditionStatus
 	}{
 		{
-			name:                           "available absent",
-			deploymentConditions:           []appsv1.DeploymentCondition{},
-			expectDeploymentDegradedStatus: operatorv1.ConditionUnknown,
+			name:                            "available absent",
+			deploymentConditions:            []appsv1.DeploymentCondition{},
+			expectDeploymentAvailableStatus: operatorv1.ConditionUnknown,
 		},
 		{
 			name: "available true",
@@ -269,7 +306,7 @@ func TestComputeDeploymentDegradedCondition(t *testing.T) {
 					Status: corev1.ConditionTrue,
 				},
 			},
-			expectDeploymentDegradedStatus: operatorv1.ConditionFalse,
+			expectDeploymentAvailableStatus: operatorv1.ConditionTrue,
 		},
 		{
 			name: "available false",
@@ -279,7 +316,7 @@ func TestComputeDeploymentDegradedCondition(t *testing.T) {
 					Status: corev1.ConditionFalse,
 				},
 			},
-			expectDeploymentDegradedStatus: operatorv1.ConditionTrue,
+			expectDeploymentAvailableStatus: operatorv1.ConditionFalse,
 		},
 	}
 
@@ -290,9 +327,273 @@ func TestComputeDeploymentDegradedCondition(t *testing.T) {
 			},
 		}
 
-		actual := computeDeploymentDegradedCondition(deploy)
-		if actual.Status != test.expectDeploymentDegradedStatus {
-			t.Errorf("%q: expected %v, got %v", test.name, test.expectDeploymentDegradedStatus, actual.Status)
+		actual := computeDeploymentAvailableCondition(deploy)
+		if actual.Status != test.expectDeploymentAvailableStatus {
+			t.Errorf("%q: expected %v, got %v", test.name, test.expectDeploymentAvailableStatus, actual.Status)
+		}
+	}
+}
+
+func TestComputeDeploymentReplicasMinAvailableCondition(t *testing.T) {
+	pointerToInt32 := func(i int32) *int32 { return &i }
+	pointerToIntVal := func(val intstr.IntOrString) *intstr.IntOrString { return &val }
+	tests := []struct {
+		name                                       string
+		availableReplicas                          int32
+		replicas                                   *int32
+		rollingUpdate                              *appsv1.RollingUpdateDeployment
+		expectDeploymentReplicasMinAvailableStatus operatorv1.ConditionStatus
+	}{
+		{
+			name:              "replicas not specified, 0 available, rolling update parameters not specified",
+			availableReplicas: int32(0),
+			replicas:          nil,
+			rollingUpdate:     nil,
+			expectDeploymentReplicasMinAvailableStatus: operatorv1.ConditionFalse,
+		},
+		{
+			name:              "replicas not specified, 0 available, maxSurge nil, maxUnavailable nil",
+			availableReplicas: int32(0),
+			replicas:          nil,
+			rollingUpdate:     &appsv1.RollingUpdateDeployment{},
+			expectDeploymentReplicasMinAvailableStatus: operatorv1.ConditionFalse,
+		},
+		{
+			name:              "replicas not specified, 0 available, maxSurge 25%, maxUnavailable 50%",
+			availableReplicas: int32(0),
+			replicas:          nil,
+			rollingUpdate: &appsv1.RollingUpdateDeployment{
+				MaxSurge:       pointerToIntVal(intstr.FromString("25%")),
+				MaxUnavailable: pointerToIntVal(intstr.FromString("50%")),
+			},
+			expectDeploymentReplicasMinAvailableStatus: operatorv1.ConditionFalse,
+		},
+		{
+			name:              "replicas not specified, 1 available, maxSurge 25%, maxUnavailable 50%",
+			availableReplicas: int32(1),
+			replicas:          nil,
+			rollingUpdate: &appsv1.RollingUpdateDeployment{
+				MaxSurge:       pointerToIntVal(intstr.FromString("25%")),
+				MaxUnavailable: pointerToIntVal(intstr.FromString("50%")),
+			},
+			expectDeploymentReplicasMinAvailableStatus: operatorv1.ConditionTrue,
+		},
+		{
+			name:              "0/1 replicas available, maxSurge 0, maxUnavailable 50%",
+			availableReplicas: int32(0),
+			replicas:          pointerToInt32(int32(1)),
+			rollingUpdate: &appsv1.RollingUpdateDeployment{
+				MaxSurge:       pointerToIntVal(intstr.FromInt(0)),
+				MaxUnavailable: pointerToIntVal(intstr.FromString("50%")),
+			},
+			expectDeploymentReplicasMinAvailableStatus: operatorv1.ConditionTrue,
+		},
+		{
+			name:              "1/1 replicas available, maxSurge 0, maxUnavailable 50%",
+			availableReplicas: int32(1),
+			replicas:          pointerToInt32(int32(1)),
+			rollingUpdate: &appsv1.RollingUpdateDeployment{
+				MaxSurge:       pointerToIntVal(intstr.FromInt(0)),
+				MaxUnavailable: pointerToIntVal(intstr.FromString("50%")),
+			},
+			expectDeploymentReplicasMinAvailableStatus: operatorv1.ConditionTrue,
+		},
+		{
+			name:              "0/2 replicas available, maxSurge 0, maxUnavailable 50%",
+			availableReplicas: int32(0),
+			replicas:          pointerToInt32(int32(2)),
+			rollingUpdate: &appsv1.RollingUpdateDeployment{
+				MaxSurge:       pointerToIntVal(intstr.FromInt(0)),
+				MaxUnavailable: pointerToIntVal(intstr.FromString("50%")),
+			},
+			expectDeploymentReplicasMinAvailableStatus: operatorv1.ConditionFalse,
+		},
+		{
+			name:              "1/2 replicas available, maxSurge 0, maxUnavailable 50%",
+			availableReplicas: int32(1),
+			replicas:          pointerToInt32(int32(2)),
+			rollingUpdate: &appsv1.RollingUpdateDeployment{
+				MaxSurge:       pointerToIntVal(intstr.FromInt(0)),
+				MaxUnavailable: pointerToIntVal(intstr.FromString("50%")),
+			},
+			expectDeploymentReplicasMinAvailableStatus: operatorv1.ConditionTrue,
+		},
+		{
+			name:              "2/2 replicas available, maxSurge 0, maxUnavailable 50%",
+			availableReplicas: int32(2),
+			replicas:          pointerToInt32(int32(2)),
+			rollingUpdate: &appsv1.RollingUpdateDeployment{
+				MaxSurge:       pointerToIntVal(intstr.FromInt(0)),
+				MaxUnavailable: pointerToIntVal(intstr.FromString("50%")),
+			},
+			expectDeploymentReplicasMinAvailableStatus: operatorv1.ConditionTrue,
+		},
+		{
+			name:              "0/3 replicas available, maxSurge 25%, maxUnavailable 50%",
+			availableReplicas: int32(0),
+			replicas:          pointerToInt32(int32(3)),
+			rollingUpdate: &appsv1.RollingUpdateDeployment{
+				MaxSurge:       pointerToIntVal(intstr.FromString("25%")),
+				MaxUnavailable: pointerToIntVal(intstr.FromString("50%")),
+			},
+			expectDeploymentReplicasMinAvailableStatus: operatorv1.ConditionFalse,
+		},
+		{
+			name:              "1/3 replicas available, maxSurge 25%, maxUnavailable 50%",
+			availableReplicas: int32(1),
+			replicas:          pointerToInt32(int32(3)),
+			rollingUpdate: &appsv1.RollingUpdateDeployment{
+				MaxSurge:       pointerToIntVal(intstr.FromString("25%")),
+				MaxUnavailable: pointerToIntVal(intstr.FromString("50%")),
+			},
+			expectDeploymentReplicasMinAvailableStatus: operatorv1.ConditionFalse,
+		},
+		{
+			name:              "2/3 replicas available, maxSurge 25%, maxUnavailable 50%",
+			availableReplicas: int32(2),
+			replicas:          pointerToInt32(int32(3)),
+			rollingUpdate: &appsv1.RollingUpdateDeployment{
+				MaxSurge:       pointerToIntVal(intstr.FromString("25%")),
+				MaxUnavailable: pointerToIntVal(intstr.FromString("50%")),
+			},
+			expectDeploymentReplicasMinAvailableStatus: operatorv1.ConditionTrue,
+		},
+		{
+			name:              "3/3 replicas available, maxSurge 25%, maxUnavailable 50%",
+			availableReplicas: int32(3),
+			replicas:          pointerToInt32(int32(3)),
+			rollingUpdate: &appsv1.RollingUpdateDeployment{
+				MaxSurge:       pointerToIntVal(intstr.FromString("25%")),
+				MaxUnavailable: pointerToIntVal(intstr.FromString("50%")),
+			},
+			expectDeploymentReplicasMinAvailableStatus: operatorv1.ConditionTrue,
+		},
+		{
+			name:              "3/5 replicas available, maxSurge 25%, maxUnavailable 25%",
+			availableReplicas: int32(3),
+			replicas:          pointerToInt32(int32(5)),
+			rollingUpdate: &appsv1.RollingUpdateDeployment{
+				MaxSurge:       pointerToIntVal(intstr.FromString("25%")),
+				MaxUnavailable: pointerToIntVal(intstr.FromString("25%")),
+			},
+			expectDeploymentReplicasMinAvailableStatus: operatorv1.ConditionFalse,
+		},
+		{
+			name:              "4/5 replicas available, maxSurge 25%, maxUnavailable 25%",
+			availableReplicas: int32(4),
+			replicas:          pointerToInt32(int32(5)),
+			rollingUpdate: &appsv1.RollingUpdateDeployment{
+				MaxSurge:       pointerToIntVal(intstr.FromString("25%")),
+				MaxUnavailable: pointerToIntVal(intstr.FromString("25%")),
+			},
+			expectDeploymentReplicasMinAvailableStatus: operatorv1.ConditionTrue,
+		},
+		{
+			name:              "5/5 replicas available, maxSurge 25%, maxUnavailable 25%",
+			availableReplicas: int32(5),
+			replicas:          pointerToInt32(int32(5)),
+			rollingUpdate: &appsv1.RollingUpdateDeployment{
+				MaxSurge:       pointerToIntVal(intstr.FromString("25%")),
+				MaxUnavailable: pointerToIntVal(intstr.FromString("25%")),
+			},
+			expectDeploymentReplicasMinAvailableStatus: operatorv1.ConditionTrue,
+		},
+		{
+			name:              "6/5 replicas available, maxSurge 25%, maxUnavailable 25%",
+			availableReplicas: int32(6),
+			replicas:          pointerToInt32(int32(5)),
+			rollingUpdate: &appsv1.RollingUpdateDeployment{
+				MaxSurge:       pointerToIntVal(intstr.FromString("25%")),
+				MaxUnavailable: pointerToIntVal(intstr.FromString("25%")),
+			},
+			expectDeploymentReplicasMinAvailableStatus: operatorv1.ConditionTrue,
+		},
+		{
+			name:              "9/12 replicas available, maxSurge 25%, maxUnavailable 25%",
+			availableReplicas: int32(9),
+			replicas:          pointerToInt32(int32(12)),
+			rollingUpdate: &appsv1.RollingUpdateDeployment{
+				MaxSurge:       pointerToIntVal(intstr.FromString("25%")),
+				MaxUnavailable: pointerToIntVal(intstr.FromString("25%")),
+			},
+			expectDeploymentReplicasMinAvailableStatus: operatorv1.ConditionTrue,
+		},
+	}
+
+	for _, test := range tests {
+		deploy := &appsv1.Deployment{
+			Spec: appsv1.DeploymentSpec{
+				Replicas: test.replicas,
+				Strategy: appsv1.DeploymentStrategy{
+					Type:          appsv1.RollingUpdateDeploymentStrategyType,
+					RollingUpdate: test.rollingUpdate,
+				},
+			},
+			Status: appsv1.DeploymentStatus{
+				AvailableReplicas: test.availableReplicas,
+			},
+		}
+
+		actual := computeDeploymentReplicasMinAvailableCondition(deploy)
+		if actual.Status != test.expectDeploymentReplicasMinAvailableStatus {
+			t.Errorf("%q: expected %v, got %v", test.name, test.expectDeploymentReplicasMinAvailableStatus, actual.Status)
+		}
+	}
+}
+
+func TestComputeDeploymentReplicasAllAvailableCondition(t *testing.T) {
+	pointerTo := func(i int32) *int32 { return &i }
+	tests := []struct {
+		name                                       string
+		availableReplicas                          int32
+		replicas                                   *int32
+		expectDeploymentReplicasAllAvailableStatus operatorv1.ConditionStatus
+	}{
+		{
+			name:              "replicas not specified, 0 available",
+			availableReplicas: int32(0),
+			replicas:          nil,
+			expectDeploymentReplicasAllAvailableStatus: operatorv1.ConditionFalse,
+		},
+		{
+			name:              "replicas not specified, 1 available",
+			availableReplicas: int32(1),
+			replicas:          nil,
+			expectDeploymentReplicasAllAvailableStatus: operatorv1.ConditionTrue,
+		},
+		{
+			name:              "too few replicas available",
+			availableReplicas: int32(4),
+			replicas:          pointerTo(int32(5)),
+			expectDeploymentReplicasAllAvailableStatus: operatorv1.ConditionFalse,
+		},
+		{
+			name:              "all replicas available",
+			availableReplicas: int32(5),
+			replicas:          pointerTo(int32(5)),
+			expectDeploymentReplicasAllAvailableStatus: operatorv1.ConditionTrue,
+		},
+		{
+			name:              "excess replicas available",
+			availableReplicas: int32(6),
+			replicas:          pointerTo(int32(5)),
+			expectDeploymentReplicasAllAvailableStatus: operatorv1.ConditionTrue,
+		},
+	}
+
+	for _, test := range tests {
+		deploy := &appsv1.Deployment{
+			Spec: appsv1.DeploymentSpec{
+				Replicas: test.replicas,
+			},
+			Status: appsv1.DeploymentStatus{
+				AvailableReplicas: test.availableReplicas,
+			},
+		}
+
+		actual := computeDeploymentReplicasAllAvailableCondition(deploy)
+		if actual.Status != test.expectDeploymentReplicasAllAvailableStatus {
+			t.Errorf("%q: expected %v, got %v", test.name, test.expectDeploymentReplicasAllAvailableStatus, actual.Status)
 		}
 	}
 }
