@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/ghodss/yaml"
+
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
@@ -13,9 +15,14 @@ import (
 
 	iov1 "github.com/openshift/api/operatoringress/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
+	awsdns "github.com/openshift/cluster-ingress-operator/pkg/dns/aws"
+	azuredns "github.com/openshift/cluster-ingress-operator/pkg/dns/azure"
+	gcpdns "github.com/openshift/cluster-ingress-operator/pkg/dns/gcp"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/slice"
+
+	corev1 "k8s.io/api/core/v1"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -25,6 +32,7 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
+	operatoringressv1 "github.com/openshift/api/operatoringress/v1"
 
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -37,16 +45,21 @@ import (
 
 const (
 	controllerName = "dns_controller"
+
+	// cloudCredentialsSecretName is the name of the secret in the
+	// operator's namespace that will hold the credentials that the operator
+	// will use to authenticate with the cloud API.
+	cloudCredentialsSecretName = "cloud-credentials"
 )
 
 var log = logf.Logger.WithName(controllerName)
 
-func New(mgr manager.Manager, dnsProvider dns.Provider) (runtimecontroller.Controller, error) {
+func New(mgr manager.Manager, config Config) (runtimecontroller.Controller, error) {
 	reconciler := &reconciler{
-		client:      mgr.GetClient(),
-		cache:       mgr.GetCache(),
-		dnsProvider: dnsProvider,
-		recorder:    mgr.GetEventRecorderFor(controllerName),
+		Config:   config,
+		client:   mgr.GetClient(),
+		cache:    mgr.GetCache(),
+		recorder: mgr.GetEventRecorderFor(controllerName),
 	}
 	c, err := runtimecontroller.New(controllerName, mgr, runtimecontroller.Options{Reconciler: reconciler})
 	if err != nil {
@@ -55,13 +68,28 @@ func New(mgr manager.Manager, dnsProvider dns.Provider) (runtimecontroller.Contr
 	if err := c.Watch(&source.Kind{Type: &iov1.DNSRecord{}}, &handler.EnqueueRequestForObject{}); err != nil {
 		return nil, err
 	}
+	if err := c.Watch(&source.Kind{Type: &configv1.DNS{}}, &handler.EnqueueRequestsFromMapFunc{ToRequests: handler.ToRequestsFunc(reconciler.ToDNSRecords)}); err != nil {
+		return nil, err
+	}
+	if err := c.Watch(&source.Kind{Type: &configv1.Infrastructure{}}, &handler.EnqueueRequestsFromMapFunc{ToRequests: handler.ToRequestsFunc(reconciler.ToDNSRecords)}); err != nil {
+		return nil, err
+	}
 	return c, nil
 }
 
+// Config holds all the things necessary for the controller to run.
+type Config struct {
+	Namespace              string
+	OperatorReleaseVersion string
+}
+
 type reconciler struct {
+	Config
+
 	client      client.Client
 	cache       cache.Cache
 	dnsProvider dns.Provider
+	infraConfig *configv1.Infrastructure
 	recorder    record.EventRecorder
 }
 
@@ -72,6 +100,26 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 	dnsConfig := &configv1.DNS{}
 	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, dnsConfig); err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to get dns 'cluster': %v", err)
+	}
+
+	infraConfig := &configv1.Infrastructure{}
+	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, infraConfig); err != nil {
+		return reconcile.Result{}, fmt.Errorf("failed to get infrastructure 'config': %v", err)
+	}
+
+	// Initialize or re-initialize the DNS provider.
+	if r.infraConfig == nil || !reflect.DeepEqual(infraConfig.Status, r.infraConfig.Status) {
+		platformStatus, err := getPlatformStatus(r.client, infraConfig)
+		if err != nil {
+			return reconcile.Result{}, fmt.Errorf("failed to get platform status: %v", err)
+		}
+
+		dnsProvider, err := r.createDNSProvider(dnsConfig, platformStatus)
+		if err != nil {
+			return reconcile.Result{}, fmt.Errorf("failed to create DNS provider: %v", err)
+		}
+
+		r.dnsProvider, r.infraConfig = dnsProvider, infraConfig
 	}
 
 	record := &iov1.DNSRecord{}
@@ -297,4 +345,142 @@ func dnsZoneStatusSlicesEqual(a, b []iov1.DNSZoneStatus) bool {
 	}
 
 	return true
+}
+
+// ToDNSRecords returns reconciliation requests for all DNSRecords.
+func (r *reconciler) ToDNSRecords(o handler.MapObject) []reconcile.Request {
+	var requests []reconcile.Request
+	records := &operatoringressv1.DNSRecordList{}
+	if err := r.cache.List(context.Background(), records, client.InNamespace(r.Namespace)); err != nil {
+		log.Error(err, "failed to list dnsrecords", "related", o.Meta.GetSelfLink())
+		return requests
+	}
+	for _, record := range records.Items {
+		log.Info("queueing dnsrecord", "name", record.Name, "related", o.Meta.GetSelfLink())
+		request := reconcile.Request{
+			NamespacedName: types.NamespacedName{
+				Namespace: record.Namespace,
+				Name:      record.Name,
+			},
+		}
+		requests = append(requests, request)
+	}
+	return requests
+}
+
+// createDNSProvider creates a DNS manager compatible with the given cluster
+// configuration.
+func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *configv1.PlatformStatus) (dns.Provider, error) {
+	// If no DNS configuration is provided, don't try to set up provider clients.
+	// TODO: the provider configuration can be refactored into the provider
+	// implementations themselves, so this part of the code won't need to
+	// know anything about the provider setup beyond picking the right implementation.
+	// Then, it would be safe to always use the appropriate provider for the platform
+	// and let the provider surface configuration errors if DNS records are actually
+	// created to exercise the provider.
+	if dnsConfig.Spec.PrivateZone == nil && dnsConfig.Spec.PublicZone == nil {
+		log.Info("using fake DNS provider because no public or private zone is defined in the cluster DNS configuration")
+		return &dns.FakeProvider{}, nil
+	}
+
+	var dnsProvider dns.Provider
+	userAgent := fmt.Sprintf("OpenShift/%s (ingress-operator)", r.Config.OperatorReleaseVersion)
+
+	switch platformStatus.Type {
+	case configv1.AWSPlatformType:
+		creds := &corev1.Secret{}
+		err := r.client.Get(context.TODO(), types.NamespacedName{Namespace: r.Config.Namespace, Name: cloudCredentialsSecretName}, creds)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get cloud credentials from secret %s/%s: %v", creds.Namespace, creds.Name, err)
+		}
+		provider, err := awsdns.NewProvider(awsdns.Config{
+			AccessID:  string(creds.Data["aws_access_key_id"]),
+			AccessKey: string(creds.Data["aws_secret_access_key"]),
+			Region:    platformStatus.AWS.Region,
+		}, r.Config.OperatorReleaseVersion)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create AWS DNS manager: %v", err)
+		}
+		dnsProvider = provider
+	case configv1.AzurePlatformType:
+		creds := &corev1.Secret{}
+		err := r.client.Get(context.TODO(), types.NamespacedName{Namespace: r.Config.Namespace, Name: cloudCredentialsSecretName}, creds)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get cloud credentials from secret %s/%s: %v", creds.Namespace, creds.Name, err)
+		}
+		provider, err := azuredns.NewProvider(azuredns.Config{
+			Environment:    "AzurePublicCloud",
+			ClientID:       string(creds.Data["azure_client_id"]),
+			ClientSecret:   string(creds.Data["azure_client_secret"]),
+			TenantID:       string(creds.Data["azure_tenant_id"]),
+			SubscriptionID: string(creds.Data["azure_subscription_id"]),
+		}, r.Config.OperatorReleaseVersion)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Azure DNS manager: %v", err)
+		}
+		dnsProvider = provider
+	case configv1.GCPPlatformType:
+		creds := &corev1.Secret{}
+		err := r.client.Get(context.TODO(), types.NamespacedName{Namespace: r.Config.Namespace, Name: cloudCredentialsSecretName}, creds)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get cloud credentials from secret %s/%s: %v", creds.Namespace, creds.Name, err)
+		}
+		provider, err := gcpdns.New(gcpdns.Config{
+			Project:         platformStatus.GCP.ProjectID,
+			CredentialsJSON: creds.Data["service_account.json"],
+			UserAgent:       userAgent,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create GCP DNS provider: %v", err)
+		}
+		dnsProvider = provider
+	default:
+		dnsProvider = &dns.FakeProvider{}
+	}
+	return dnsProvider, nil
+}
+
+// getPlatformStatus provides a backwards-compatible way to look up platform status. AWS is the
+// special case. 4.1 clusters on AWS expose the region config only through install-config. New AWS clusters
+// and all other 4.2+ platforms are configured via platform status.
+func getPlatformStatus(client client.Client, infra *configv1.Infrastructure) (*configv1.PlatformStatus, error) {
+	if status := infra.Status.PlatformStatus; status != nil {
+		// Only AWS needs backwards compatibility with install-config
+		if status.Type != configv1.AWSPlatformType {
+			return status, nil
+		}
+
+		// Check whether the cluster config is already migrated
+		if status.AWS != nil && len(status.AWS.Region) > 0 {
+			return status, nil
+		}
+	}
+
+	// Otherwise build a platform status from the deprecated install-config
+	type installConfig struct {
+		Platform struct {
+			AWS struct {
+				Region string `json:"region"`
+			} `json:"aws"`
+		} `json:"platform"`
+	}
+	clusterConfigName := types.NamespacedName{Namespace: "kube-system", Name: "cluster-config-v1"}
+	clusterConfig := &corev1.ConfigMap{}
+	if err := client.Get(context.TODO(), clusterConfigName, clusterConfig); err != nil {
+		return nil, fmt.Errorf("failed to get configmap %s: %v", clusterConfigName, err)
+	}
+	data, ok := clusterConfig.Data["install-config"]
+	if !ok {
+		return nil, fmt.Errorf("missing install-config in configmap")
+	}
+	var ic installConfig
+	if err := yaml.Unmarshal([]byte(data), &ic); err != nil {
+		return nil, fmt.Errorf("invalid install-config: %v\njson:\n%s", err, data)
+	}
+	return &configv1.PlatformStatus{
+		Type: infra.Status.Platform,
+		AWS: &configv1.AWSPlatformStatus{
+			Region: ic.Platform.AWS.Region,
+		},
+	}, nil
 }
