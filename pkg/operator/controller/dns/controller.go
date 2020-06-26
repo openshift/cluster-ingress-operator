@@ -66,6 +66,8 @@ type reconciler struct {
 }
 
 func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, error) {
+	log.Info("reconciling", "request", request)
+
 	// TODO: If the new revision has changed, undefined stuff happens (resource leaks?)
 	dnsConfig := &configv1.DNS{}
 	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, dnsConfig); err != nil {
@@ -132,8 +134,10 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 		updated.Status.Zones = statuses
 		updated.Status.ObservedGeneration = updated.Generation
 		if err := r.client.Status().Update(context.TODO(), updated); err != nil {
-			log.Error(err, "failed to update dnsrecord; will retry", "dnsrecord", record)
+			log.Error(err, "failed to update dnsrecord; will retry", "dnsrecord", updated)
 			return reconcile.Result{RequeueAfter: 10 * time.Second}, nil
+		} else {
+			log.Info("updated dnsrecord", "dnsrecord", updated)
 		}
 	}
 	return result, nil
@@ -143,14 +147,16 @@ func (r *reconciler) publishRecordToZones(zones []configv1.DNSZone, record *iov1
 	result := reconcile.Result{}
 	var statuses []iov1.DNSZoneStatus
 	for i := range zones {
+		zone := zones[i]
+
 		// Only publish the record if the DNSRecord has been modified
 		// (which would mean the target could have changed) or its
 		// status does not indicate that it has already been published.
-		if record.Generation == record.Status.ObservedGeneration && recordIsAlreadyPublishedToZone(record, &zones[i]) {
+		if record.Generation == record.Status.ObservedGeneration && recordIsAlreadyPublishedToZone(record, &zone) {
+			log.Info("skipping zone to which the DNS record is already published", "record", record.Spec, "dnszone", zone)
 			continue
 		}
 
-		zone := zones[i]
 		condition := iov1.DNSZoneCondition{
 			Status:             string(operatorv1.ConditionUnknown),
 			Type:               iov1.DNSRecordFailedConditionType,
@@ -158,13 +164,13 @@ func (r *reconciler) publishRecordToZones(zones []configv1.DNSZone, record *iov1
 		}
 
 		if err := r.dnsProvider.Ensure(record, zone); err != nil {
-			log.Error(err, "failed to publish DNS record to zone", "dnsrecord", record, "dnszone", zone)
+			log.Error(err, "failed to publish DNS record to zone", "record", record.Spec, "dnszone", zone)
 			condition.Status = string(operatorv1.ConditionTrue)
 			condition.Reason = "ProviderError"
 			condition.Message = fmt.Sprintf("The DNS provider failed to ensure the record: %v", err)
 			result.RequeueAfter = 30 * time.Second
 		} else {
-			log.Info("published DNS record to zone", "dnsrecord", record, "dnszone", zone)
+			log.Info("published DNS record to zone", "record", record.Spec, "dnszone", zone)
 			condition.Status = string(operatorv1.ConditionFalse)
 			condition.Reason = "ProviderSuccess"
 			condition.Message = "The DNS provider succeeded in ensuring the record"
@@ -204,7 +210,7 @@ func (r *reconciler) delete(record *iov1.DNSRecord) error {
 		if err != nil {
 			errs = append(errs, err)
 		} else {
-			log.Info("deleted dnsrecord from DNS provider", "dnsrecord", record, "zone", zone)
+			log.Info("deleted dnsrecord from DNS provider", "record", record.Spec, "zone", zone)
 		}
 	}
 	if len(errs) == 0 {
