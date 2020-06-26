@@ -777,8 +777,8 @@ func TestRouteAdmissionPolicy(t *testing.T) {
 	// The updated ingresscontroller deployment may take a few minutes to
 	// roll out, so make sure that it is updated, and then make sure that it
 	// has finished rolling out before checking the route.
+	deployment := &appsv1.Deployment{}
 	err := wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
-		deployment := &appsv1.Deployment{}
 		if err := kclient.Get(context.TODO(), controller.RouterDeploymentName(ic), deployment); err != nil {
 			return false, err
 		}
@@ -792,7 +792,7 @@ func TestRouteAdmissionPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to observe ROUTER_DISABLE_NAMESPACE_OWNERSHIP_CHECK=true: %v", err)
 	}
-	if err := waitForIngressControllerCondition(kclient, 3*time.Minute, icName, conditions...); err != nil {
+	if err := waitForDeploymentComplete(t, kclient, deployment, 3*time.Minute); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -841,7 +841,6 @@ func TestRouteAdmissionPolicy(t *testing.T) {
 		t.Fatalf("failed to update ingresscontroller: %v", err)
 	}
 	err = wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
-		deployment := &appsv1.Deployment{}
 		if err := kclient.Get(context.TODO(), controller.RouterDeploymentName(ic), deployment); err != nil {
 			return false, err
 		}
@@ -855,7 +854,7 @@ func TestRouteAdmissionPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to observe ROUTER_ALLOW_WILDCARD_ROUTES=true: %v", err)
 	}
-	if err := waitForIngressControllerCondition(kclient, 3*time.Minute, icName, conditions...); err != nil {
+	if err := waitForDeploymentComplete(t, kclient, deployment, 3*time.Minute); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -1159,6 +1158,40 @@ func waitForAvailableReplicas(cl client.Client, ic *operatorv1.IngressController
 	})
 	if err != nil {
 		return fmt.Errorf("failed to achieve expected replicas, last observed: %v", lastObservedReplicas)
+	}
+	return nil
+}
+
+// Wait for the provided deployment to complete its rollout.
+func waitForDeploymentComplete(t *testing.T, cl client.Client, deployment *appsv1.Deployment, timeout time.Duration) error {
+	t.Helper()
+	replicas := int32(1)
+	name := types.NamespacedName{Namespace: deployment.Namespace, Name: deployment.Name}
+	deployment = &appsv1.Deployment{}
+	err := wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
+		if err := cl.Get(context.TODO(), name, deployment); err != nil {
+			t.Logf("error getting deployment %s: %v", name, err)
+			return false, nil
+		}
+		if deployment.Generation != deployment.Status.ObservedGeneration {
+			return false, nil
+		}
+		if deployment.Spec.Replicas != nil {
+			replicas = *deployment.Spec.Replicas
+		}
+		if replicas != deployment.Status.Replicas {
+			return false, nil
+		}
+		if replicas != deployment.Status.AvailableReplicas {
+			return false, nil
+		}
+		if replicas != deployment.Status.UpdatedReplicas {
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to observe deployment rollout complete; deployment specifies %v replicas and has generation %v; last observed %v updated, %v available, %v total replicas, with observed generation %v", replicas, deployment.Generation, deployment.Status.UpdatedReplicas, deployment.Status.AvailableReplicas, deployment.Status.Replicas, deployment.Status.ObservedGeneration)
 	}
 	return nil
 }
