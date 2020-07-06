@@ -40,8 +40,8 @@ const (
 	RouterSyslogFormatEnvName   = "ROUTER_SYSLOG_FORMAT"
 	RouterSyslogFacilityEnvName = "ROUTER_LOG_FACILITY"
 
-	RouterDisableHTTP2EnvName    = "ROUTER_DISABLE_HTTP2"
-	RouterDisableHTTP2Annotation = "ingress.operator.openshift.io/unsupported-disable-http2"
+	RouterDisableHTTP2EnvName          = "ROUTER_DISABLE_HTTP2"
+	RouterDefaultEnableHTTP2Annotation = "ingress.operator.openshift.io/default-enable-http2"
 )
 
 // ensureRouterDeployment ensures the router deployment exists for a given
@@ -85,32 +85,31 @@ func (r *reconciler) ensureRouterDeleted(ci *operatorv1.IngressController) error
 	return nil
 }
 
-// HTTP2IsDisabledByAnnotation returns true if the map m has the key
+// HTTP2IsEnabledByAnnotation returns true if the map m has the key
 // RouterDisableHTTP2Annotation present and true|false depending on
 // the annotation's value that is parsed by strconv.ParseBool.
-func HTTP2IsDisabledByAnnotation(m map[string]string) (bool, bool) {
-	if val, ok := m[RouterDisableHTTP2Annotation]; ok {
+func HTTP2IsEnabledByAnnotation(m map[string]string) (bool, bool) {
+	if val, ok := m[RouterDefaultEnableHTTP2Annotation]; ok {
 		v, _ := strconv.ParseBool(val)
 		return true, v
 	}
 	return false, false
 }
 
-// HTTP2IsDisabled returns true if the ingress controller disables
-// http/2 via the RouterDisableHTTP2Annotation, or if the ingress
-// config disables http/2. It will return false for the case where the
-// ingress config has been disabled but the ingress controller
-// explicitly overrides that by having the annotation present (even if
-// its value is "false").
-func HTTP2IsDisabled(ic *operatorv1.IngressController, ingressConfig *configv1.Ingress) bool {
-	controllerHasHTTP2Annotation, controllerHasHTTP2Disabled := HTTP2IsDisabledByAnnotation(ic.Annotations)
-	_, configHasHTTP2Disabled := HTTP2IsDisabledByAnnotation(ingressConfig.Annotations)
+// HTTP2IsEnabled returns true if the ingress controller enables
+// http/2, or if the ingress config enables http/2. It will return
+// false for the case where the ingress config has been enabled but
+// the ingress controller explicitly overrides that by having the
+// annotation present (even if its value is "false").
+func HTTP2IsEnabled(ic *operatorv1.IngressController, ingressConfig *configv1.Ingress) bool {
+	controllerHasHTTP2Annotation, controllerHasHTTP2Enabled := HTTP2IsEnabledByAnnotation(ic.Annotations)
+	_, configHasHTTP2Enabled := HTTP2IsEnabledByAnnotation(ingressConfig.Annotations)
 
 	if controllerHasHTTP2Annotation {
-		return controllerHasHTTP2Disabled
+		return controllerHasHTTP2Enabled
 	}
 
-	return configHasHTTP2Disabled
+	return configHasHTTP2Enabled
 }
 
 // desiredRouterDeployment returns the desired router deployment.
@@ -530,7 +529,9 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		env = append(env, corev1.EnvVar{Name: WildcardRouteAdmissionPolicy, Value: "false"})
 	}
 
-	if HTTP2IsDisabled(ci, ingressConfig) {
+	if HTTP2IsEnabled(ci, ingressConfig) {
+		env = append(env, corev1.EnvVar{Name: RouterDisableHTTP2EnvName, Value: "false"})
+	} else {
 		env = append(env, corev1.EnvVar{Name: RouterDisableHTTP2EnvName, Value: "true"})
 	}
 

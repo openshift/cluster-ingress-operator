@@ -39,12 +39,12 @@ func TestRouteHTTP2EnableAndDisableIngressController(t *testing.T) {
 		t.Fatalf("failed to get ingress controller: %v", err)
 	}
 
-	// By default the router should not have http/2 disabled
-	if err := waitForRouterDeploymentHTTP2Disabled(kclient, routerDeployTimeout, ic, false); err != nil {
-		t.Fatalf("expected router deployment to have http/2 enabled: %v", err)
+	// By default the router should not have http/2 enabled
+	if err := waitForRouterDeploymentHTTP2Enabled(kclient, routerDeployTimeout, ic, false); err != nil {
+		t.Fatalf("expected router deployment to have http/2 disabled: %v", err)
 	}
 
-	if err := setHTTP2DisabledForIngressController(t, kclient, 1*time.Minute, true, ic); err != nil {
+	if err := setHTTP2EnabledForIngressController(t, kclient, 1*time.Minute, true, ic); err != nil {
 		t.Fatalf("failed to update ingresscontroller: %v", err)
 	}
 
@@ -52,16 +52,16 @@ func TestRouteHTTP2EnableAndDisableIngressController(t *testing.T) {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
-	if err := waitForRouterDeploymentHTTP2Disabled(kclient, routerDeployTimeout, ic, true); err != nil {
-		t.Fatalf("expected router deployment to have http/2 disabled: %v", err)
+	if err := waitForRouterDeploymentHTTP2Enabled(kclient, routerDeployTimeout, ic, true); err != nil {
+		t.Fatalf("expected router deployment to have http/2 enabled: %v", err)
 	}
 
-	if err := setHTTP2DisabledForIngressController(t, kclient, 1*time.Minute, false, ic); err != nil {
+	if err := setHTTP2EnabledForIngressController(t, kclient, 1*time.Minute, false, ic); err != nil {
 		t.Fatalf("failed to update ingresscontroller: %v", err)
 	}
 
-	if err := waitForRouterDeploymentHTTP2Disabled(kclient, routerDeployTimeout, ic, false); err != nil {
-		t.Fatalf("expected router deployment to have http/2 enabled: %v", err)
+	if err := waitForRouterDeploymentHTTP2Enabled(kclient, routerDeployTimeout, ic, false); err != nil {
+		t.Fatalf("expected router deployment to have http/2 disabled: %v", err)
 	}
 }
 
@@ -75,8 +75,8 @@ func TestRouteHTTP2EnableAndDisableIngressConfig(t *testing.T) {
 		t.Fatalf("failed to get ingress controller: %v", err)
 	}
 
-	if err := setHTTP2DisabledForIngressController(t, kclient, 1*time.Minute, false, ic); err != nil {
-		t.Fatalf("failed to update ingress config: %v", err)
+	if err := setHTTP2EnabledForIngressController(t, kclient, 1*time.Minute, false, ic); err != nil {
+		t.Fatalf("failed to update ingress controller: %v", err)
 	}
 
 	ingressConfig, err := http2GetIngressConfig(t, kclient, 1*time.Minute)
@@ -84,12 +84,12 @@ func TestRouteHTTP2EnableAndDisableIngressConfig(t *testing.T) {
 		t.Fatalf("failed to get ingress config: %v", err)
 	}
 
-	// By default the router should not have http/2 disabled
-	if err := waitForRouterDeploymentHTTP2Disabled(kclient, routerDeployTimeout, ic, false); err != nil {
-		t.Fatalf("expected router deployment to have http/2 enabled: %v", err)
+	// By default the router should not have http/2 enabled
+	if err := waitForRouterDeploymentHTTP2Enabled(kclient, routerDeployTimeout, ic, false); err != nil {
+		t.Fatalf("expected router deployment to have http/2 disabled: %v", err)
 	}
 
-	if err := setHTTP2DisabledForIngressConfig(t, kclient, 1*time.Minute, true, ingressConfig); err != nil {
+	if err := setHTTP2EnabledForIngressConfig(t, kclient, 1*time.Minute, true, ingressConfig); err != nil {
 		t.Fatalf("failed to update ingress config: %v", err)
 	}
 
@@ -97,19 +97,19 @@ func TestRouteHTTP2EnableAndDisableIngressConfig(t *testing.T) {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
-	if err := waitForRouterDeploymentHTTP2Disabled(kclient, routerDeployTimeout, ic, true); err != nil {
-		t.Fatalf("expected router deployment to have http/2 disabled: %v", err)
+	if err := waitForRouterDeploymentHTTP2Enabled(kclient, routerDeployTimeout, ic, true); err != nil {
+		t.Fatalf("expected router deployment to have http/2 enabled: %v", err)
 	}
 
 	// Now set the ingress controller to also have the annotation
 	// but with an explicit value of "false" which will take
 	// precedence over the ingress config which is currently
 	// "true". The net result should be that the router deployment
-	// transitions from its current state of http/2 disabled
-	// (which we just asserted) back to http/2 enabled.
+	// transitions from its current state of http/2 enabled
+	// (which we just asserted) back to http/2 disabled.
 	//
 	// This update is different to
-	// setHTTP2DisabledForIngressController() as we preserve the
+	// setHTTP2EnabledForIngressController() as we preserve the
 	// annotation if the value is "false".
 	if err := wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
 		if err := kclient.Get(context.TODO(), defaultName, ic); err != nil {
@@ -119,7 +119,7 @@ func TestRouteHTTP2EnableAndDisableIngressConfig(t *testing.T) {
 		if ic.Annotations == nil {
 			ic.Annotations = map[string]string{}
 		}
-		ic.Annotations[ingress.RouterDisableHTTP2Annotation] = "false"
+		ic.Annotations[ingress.RouterDefaultEnableHTTP2Annotation] = "false"
 		if err := kclient.Update(context.TODO(), ic); err != nil {
 			t.Logf("failed to update ingress controller: %v", err)
 			return false, nil
@@ -133,17 +133,17 @@ func TestRouteHTTP2EnableAndDisableIngressConfig(t *testing.T) {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
-	if err := waitForRouterDeploymentHTTP2Disabled(kclient, routerDeployTimeout, ic, false); err != nil {
+	if err := waitForRouterDeploymentHTTP2Enabled(kclient, routerDeployTimeout, ic, false); err != nil {
 		t.Fatalf("expected router deployment to have http/2 disabled: %v", err)
 	}
 
 	// cleanup
 
-	if err := setHTTP2DisabledForIngressController(t, kclient, 1*time.Minute, false, ic); err != nil {
-		t.Fatalf("failed to update ingress config: %v", err)
+	if err := setHTTP2EnabledForIngressController(t, kclient, 1*time.Minute, false, ic); err != nil {
+		t.Fatalf("failed to update ingress controller: %v", err)
 	}
 
-	if err := setHTTP2DisabledForIngressConfig(t, kclient, 1*time.Minute, false, ingressConfig); err != nil {
+	if err := setHTTP2EnabledForIngressConfig(t, kclient, 1*time.Minute, false, ingressConfig); err != nil {
 		t.Fatalf("failed to update ingress config: %v", err)
 	}
 }
@@ -189,17 +189,17 @@ func http2GetIngressConfig(t *testing.T, client client.Client, timeout time.Dura
 	return &ingressConfig, nil
 }
 
-func waitForRouterDeploymentHTTP2Disabled(client client.Client, timeout time.Duration, c *operatorv1.IngressController, expectedDisabledStatus bool) error {
+func waitForRouterDeploymentHTTP2Enabled(client client.Client, timeout time.Duration, c *operatorv1.IngressController, enabledState bool) error {
 	return wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
 		deployment := &appsv1.Deployment{}
 		if err := client.Get(context.TODO(), controller.RouterDeploymentName(c), deployment); err != nil {
 			return false, nil
 		}
-		return http2IsDisabledInEnv(deployment.Spec.Template.Spec.Containers[0].Env) == expectedDisabledStatus, nil
+		return !http2IsDisabledInEnv(deployment.Spec.Template.Spec.Containers[0].Env) == enabledState, nil
 	})
 }
 
-func setHTTP2DisabledForIngressConfig(t *testing.T, client client.Client, timeout time.Duration, disableHTTP2 bool, c *configv1.Ingress) error {
+func setHTTP2EnabledForIngressConfig(t *testing.T, client client.Client, timeout time.Duration, enableHTTP2 bool, c *configv1.Ingress) error {
 	name := types.NamespacedName{Namespace: c.Namespace, Name: c.Name}
 
 	return wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
@@ -210,10 +210,10 @@ func setHTTP2DisabledForIngressConfig(t *testing.T, client client.Client, timeou
 		if c.Annotations == nil {
 			c.Annotations = map[string]string{}
 		}
-		if disableHTTP2 {
-			c.Annotations[ingress.RouterDisableHTTP2Annotation] = "true"
+		if enableHTTP2 {
+			c.Annotations[ingress.RouterDefaultEnableHTTP2Annotation] = "true"
 		} else {
-			delete(c.Annotations, ingress.RouterDisableHTTP2Annotation)
+			delete(c.Annotations, ingress.RouterDefaultEnableHTTP2Annotation)
 		}
 		if err := client.Update(context.TODO(), c); err != nil {
 			t.Logf("Update %q failed: %v, retrying...", name, err)
@@ -223,7 +223,7 @@ func setHTTP2DisabledForIngressConfig(t *testing.T, client client.Client, timeou
 	})
 }
 
-func setHTTP2DisabledForIngressController(t *testing.T, client client.Client, timeout time.Duration, disableHTTP2 bool, c *operatorv1.IngressController) error {
+func setHTTP2EnabledForIngressController(t *testing.T, client client.Client, timeout time.Duration, enableHTTP2 bool, c *operatorv1.IngressController) error {
 	name := types.NamespacedName{Namespace: c.Namespace, Name: c.Name}
 
 	return wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
@@ -234,10 +234,10 @@ func setHTTP2DisabledForIngressController(t *testing.T, client client.Client, ti
 		if c.Annotations == nil {
 			c.Annotations = map[string]string{}
 		}
-		if disableHTTP2 {
-			c.Annotations[ingress.RouterDisableHTTP2Annotation] = "true"
+		if enableHTTP2 {
+			c.Annotations[ingress.RouterDefaultEnableHTTP2Annotation] = "true"
 		} else {
-			delete(c.Annotations, ingress.RouterDisableHTTP2Annotation)
+			delete(c.Annotations, ingress.RouterDefaultEnableHTTP2Annotation)
 		}
 		if err := client.Update(context.TODO(), c); err != nil {
 			t.Logf("Update %q failed: %v, retrying...", name, err)
