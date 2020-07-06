@@ -189,13 +189,13 @@ func http2GetIngressConfig(t *testing.T, client client.Client, timeout time.Dura
 	return &ingressConfig, nil
 }
 
-func waitForRouterDeploymentHTTP2Enabled(client client.Client, timeout time.Duration, c *operatorv1.IngressController, expectedDisabledStatus bool) error {
+func waitForRouterDeploymentHTTP2Enabled(client client.Client, timeout time.Duration, c *operatorv1.IngressController, enabledState bool) error {
 	return wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
 		deployment := &appsv1.Deployment{}
 		if err := client.Get(context.TODO(), controller.RouterDeploymentName(c), deployment); err != nil {
 			return false, nil
 		}
-		return http2IsDisabledInEnv(deployment.Spec.Template.Spec.Containers[0].Env) == expectedDisabledStatus, nil
+		return !http2IsDisabledInEnv(deployment.Spec.Template.Spec.Containers[0].Env) == enabledState, nil
 	})
 }
 
