@@ -98,7 +98,7 @@ func HTTP2IsEnabledByAnnotation(m map[string]string) (bool, bool) {
 
 // HTTP2IsEnabled returns true if the ingress controller enables
 // http/2, or if the ingress config enables http/2. It will return
-// false for the case where the ingress config has been disabled but
+// false for the case where the ingress config has been enabled but
 // the ingress controller explicitly overrides that by having the
 // annotation present (even if its value is "false").
 func HTTP2IsEnabled(ic *operatorv1.IngressController, ingressConfig *configv1.Ingress) bool {
