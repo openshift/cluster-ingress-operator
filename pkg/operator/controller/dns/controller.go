@@ -37,8 +37,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	runtimecontroller "sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 )
@@ -74,6 +76,21 @@ func New(mgr manager.Manager, config Config) (runtimecontroller.Controller, erro
 	if err := c.Watch(&source.Kind{Type: &configv1.Infrastructure{}}, &handler.EnqueueRequestsFromMapFunc{ToRequests: handler.ToRequestsFunc(reconciler.ToDNSRecords)}); err != nil {
 		return nil, err
 	}
+	if err := c.Watch(&source.Kind{Type: &corev1.Secret{}}, &handler.EnqueueRequestsFromMapFunc{ToRequests: handler.ToRequestsFunc(reconciler.ToDNSRecords)}, predicate.Funcs{
+		CreateFunc: func(e event.CreateEvent) bool { return e.Meta.GetName() == cloudCredentialsSecretName },
+		DeleteFunc: func(e event.DeleteEvent) bool { return false },
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			if e.MetaNew.GetName() != cloudCredentialsSecretName {
+				return false
+			}
+			oldSecret := e.ObjectOld.(*corev1.Secret)
+			newSecret := e.ObjectNew.(*corev1.Secret)
+			return !reflect.DeepEqual(oldSecret.Data, newSecret.Data)
+		},
+		GenericFunc: func(e event.GenericEvent) bool { return false },
+	}); err != nil {
+		return nil, err
+	}
 	return c, nil
 }
 
@@ -86,11 +103,12 @@ type Config struct {
 type reconciler struct {
 	Config
 
-	client      client.Client
-	cache       cache.Cache
-	dnsProvider dns.Provider
-	infraConfig *configv1.Infrastructure
-	recorder    record.EventRecorder
+	client           client.Client
+	cache            cache.Cache
+	dnsProvider      dns.Provider
+	infraConfig      *configv1.Infrastructure
+	cloudCredentials *corev1.Secret
+	recorder         record.EventRecorder
 }
 
 func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, error) {
@@ -102,24 +120,8 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 		return reconcile.Result{}, fmt.Errorf("failed to get dns 'cluster': %v", err)
 	}
 
-	infraConfig := &configv1.Infrastructure{}
-	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, infraConfig); err != nil {
-		return reconcile.Result{}, fmt.Errorf("failed to get infrastructure 'config': %v", err)
-	}
-
-	// Initialize or re-initialize the DNS provider.
-	if r.infraConfig == nil || !reflect.DeepEqual(infraConfig.Status, r.infraConfig.Status) {
-		platformStatus, err := getPlatformStatus(r.client, infraConfig)
-		if err != nil {
-			return reconcile.Result{}, fmt.Errorf("failed to get platform status: %v", err)
-		}
-
-		dnsProvider, err := r.createDNSProvider(dnsConfig, platformStatus)
-		if err != nil {
-			return reconcile.Result{}, fmt.Errorf("failed to create DNS provider: %v", err)
-		}
-
-		r.dnsProvider, r.infraConfig = dnsProvider, infraConfig
+	if err := r.createDNSProviderIfNeeded(dnsConfig); err != nil {
+		return reconcile.Result{}, err
 	}
 
 	record := &iov1.DNSRecord{}
@@ -189,6 +191,53 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 		}
 	}
 	return result, nil
+}
+
+// createDNSProviderIfNeeded creates a new DNS provider if none has yet been
+// created or if the infrastructure platform status or cloud credentials have
+// changed since the current provider was created.  After creating a new
+// provider, createDNSProviderIfNeeded updates the reconciler state
+// with the new provider and current platform status and cloud credentials.
+func (r *reconciler) createDNSProviderIfNeeded(dnsConfig *configv1.DNS) error {
+	var needUpdate bool
+
+	infraConfig := &configv1.Infrastructure{}
+	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, infraConfig); err != nil {
+		return fmt.Errorf("failed to get infrastructure 'config': %v", err)
+	}
+
+	platformStatus, err := getPlatformStatus(r.client, infraConfig)
+	if err != nil {
+		return fmt.Errorf("failed to get platform status: %v", err)
+	}
+
+	creds := &corev1.Secret{}
+	switch platformStatus.Type {
+	case configv1.AWSPlatformType, configv1.AzurePlatformType, configv1.GCPPlatformType:
+		name := types.NamespacedName{Namespace: r.Config.Namespace, Name: cloudCredentialsSecretName}
+		if err := r.cache.Get(context.TODO(), name, creds); err != nil {
+			return fmt.Errorf("failed to get cloud credentials from secret %s: %v", name, err)
+		}
+
+		if r.cloudCredentials == nil || !reflect.DeepEqual(creds.Data, r.cloudCredentials.Data) {
+			needUpdate = true
+		}
+	}
+
+	if r.infraConfig == nil || !reflect.DeepEqual(infraConfig.Status, r.infraConfig.Status) {
+		needUpdate = true
+	}
+
+	if needUpdate {
+		dnsProvider, err := r.createDNSProvider(dnsConfig, platformStatus, creds)
+		if err != nil {
+			return fmt.Errorf("failed to create DNS provider: %v", err)
+		}
+
+		r.dnsProvider, r.infraConfig, r.cloudCredentials = dnsProvider, infraConfig, creds
+	}
+
+	return nil
 }
 
 func (r *reconciler) publishRecordToZones(zones []configv1.DNSZone, record *iov1.DNSRecord) ([]iov1.DNSZoneStatus, reconcile.Result) {
@@ -370,7 +419,7 @@ func (r *reconciler) ToDNSRecords(o handler.MapObject) []reconcile.Request {
 
 // createDNSProvider creates a DNS manager compatible with the given cluster
 // configuration.
-func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *configv1.PlatformStatus) (dns.Provider, error) {
+func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *configv1.PlatformStatus, creds *corev1.Secret) (dns.Provider, error) {
 	// If no DNS configuration is provided, don't try to set up provider clients.
 	// TODO: the provider configuration can be refactored into the provider
 	// implementations themselves, so this part of the code won't need to
@@ -388,11 +437,6 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 
 	switch platformStatus.Type {
 	case configv1.AWSPlatformType:
-		creds := &corev1.Secret{}
-		err := r.client.Get(context.TODO(), types.NamespacedName{Namespace: r.Config.Namespace, Name: cloudCredentialsSecretName}, creds)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get cloud credentials from secret %s/%s: %v", creds.Namespace, creds.Name, err)
-		}
 		provider, err := awsdns.NewProvider(awsdns.Config{
 			AccessID:  string(creds.Data["aws_access_key_id"]),
 			AccessKey: string(creds.Data["aws_secret_access_key"]),
@@ -403,11 +447,6 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 		}
 		dnsProvider = provider
 	case configv1.AzurePlatformType:
-		creds := &corev1.Secret{}
-		err := r.client.Get(context.TODO(), types.NamespacedName{Namespace: r.Config.Namespace, Name: cloudCredentialsSecretName}, creds)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get cloud credentials from secret %s/%s: %v", creds.Namespace, creds.Name, err)
-		}
 		provider, err := azuredns.NewProvider(azuredns.Config{
 			Environment:    "AzurePublicCloud",
 			ClientID:       string(creds.Data["azure_client_id"]),
@@ -420,11 +459,6 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 		}
 		dnsProvider = provider
 	case configv1.GCPPlatformType:
-		creds := &corev1.Secret{}
-		err := r.client.Get(context.TODO(), types.NamespacedName{Namespace: r.Config.Namespace, Name: cloudCredentialsSecretName}, creds)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get cloud credentials from secret %s/%s: %v", creds.Namespace, creds.Name, err)
-		}
 		provider, err := gcpdns.New(gcpdns.Config{
 			Project:         platformStatus.GCP.ProjectID,
 			CredentialsJSON: creds.Data["service_account.json"],
