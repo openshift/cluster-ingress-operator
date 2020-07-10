@@ -128,6 +128,20 @@ func TestNodePortServiceChanged(t *testing.T) {
 			expect: true,
 		},
 		{
+			description: "if .spec.sessionAffinity is defaulted",
+			mutate: func(service *corev1.Service) {
+				service.Spec.SessionAffinity = corev1.ServiceAffinityNone
+			},
+			expect: false,
+		},
+		{
+			description: "if .spec.sessionAffinity is set to a non-default value",
+			mutate: func(service *corev1.Service) {
+				service.Spec.SessionAffinity = corev1.ServiceAffinityClientIP
+			},
+			expect: true,
+		},
+		{
 			description: "if .spec.type changes",
 			mutate: func(svc *corev1.Service) {
 				svc.Spec.Type = corev1.ServiceTypeLoadBalancer
