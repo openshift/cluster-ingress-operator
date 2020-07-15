@@ -41,8 +41,10 @@ const (
 
 // TODO: consider moving these to openshift/api
 const (
-	IngressControllerAdmittedConditionType           = "Admitted"
-	IngressControllerDeploymentDegradedConditionType = "DeploymentDegraded"
+	IngressControllerAdmittedConditionType                       = "Admitted"
+	IngressControllerDeploymentAvailableConditionType            = "DeploymentAvailable"
+	IngressControllerDeploymentReplicasMinAvailableConditionType = "DeploymentReplicasMinAvailable"
+	IngressControllerDeploymentReplicasAllAvailableConditionType = "DeploymentReplicasAllAvailable"
 )
 
 var (

@@ -21,6 +21,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilclock "k8s.io/apimachinery/pkg/util/clock"
+	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 // clock is to enable unit testing
@@ -41,7 +42,9 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	updated.Status.Selector = selector.String()
 	updated.Status.TLSProfile = computeIngressTLSProfile(ic.Status.TLSProfile, deployment)
 	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, computeIngressAvailableCondition(deployment))
-	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, computeDeploymentDegradedCondition(deployment))
+	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, computeDeploymentAvailableCondition(deployment))
+	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, computeDeploymentReplicasMinAvailableCondition(deployment))
+	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, computeDeploymentReplicasAllAvailableCondition(deployment))
 	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, computeLoadBalancerStatus(ic, service, operandEvents)...)
 	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, computeDNSStatus(ic, wildcardRecord, dnsConfig)...)
 	degradedCondition, err := computeIngressDegradedCondition(updated.Status.Conditions)
@@ -131,24 +134,29 @@ func computeIngressAvailableCondition(deployment *appsv1.Deployment) operatorv1.
 	}
 }
 
-// computeDeploymentDegradedCondition computes the ingresscontroller's
-// "DeploymentDegraded" status condition by examining the status conditions of
-// the deployment.
-func computeDeploymentDegradedCondition(deployment *appsv1.Deployment) operatorv1.OperatorCondition {
+// computeDeploymentAvailableCondition computes the ingresscontroller's
+// "DeploymentAvailable" status condition by examining the status conditions of
+// the deployment.  The "DeploymentAvailable" condition is true if the
+// deployment's "Available" condition is true.
+//
+// Note: Due to a defect in the deployment controller, the deployment reports
+// Available=True before minimum availability requirements are met (see
+// <https://bugzilla.redhat.com/show_bug.cgi?id=1830271#c5>).
+func computeDeploymentAvailableCondition(deployment *appsv1.Deployment) operatorv1.OperatorCondition {
 	for _, cond := range deployment.Status.Conditions {
 		if cond.Type == appsv1.DeploymentAvailable {
 			switch cond.Status {
 			case corev1.ConditionFalse:
 				return operatorv1.OperatorCondition{
-					Type:    IngressControllerDeploymentDegradedConditionType,
-					Status:  operatorv1.ConditionTrue,
+					Type:    IngressControllerDeploymentAvailableConditionType,
+					Status:  operatorv1.ConditionFalse,
 					Reason:  "DeploymentUnavailable",
 					Message: fmt.Sprintf("The deployment has Available status condition set to False (reason: %s) with message: %s", cond.Reason, cond.Message),
 				}
 			case corev1.ConditionTrue:
 				return operatorv1.OperatorCondition{
-					Type:    IngressControllerDeploymentDegradedConditionType,
-					Status:  operatorv1.ConditionFalse,
+					Type:    IngressControllerDeploymentAvailableConditionType,
+					Status:  operatorv1.ConditionTrue,
 					Reason:  "DeploymentAvailable",
 					Message: "The deployment has Available status condition set to True",
 				}
@@ -157,10 +165,101 @@ func computeDeploymentDegradedCondition(deployment *appsv1.Deployment) operatorv
 		}
 	}
 	return operatorv1.OperatorCondition{
-		Type:    IngressControllerDeploymentDegradedConditionType,
+		Type:    IngressControllerDeploymentAvailableConditionType,
 		Status:  operatorv1.ConditionUnknown,
 		Reason:  "DeploymentAvailabilityUnknown",
 		Message: "The deployment has no Available status condition set",
+	}
+}
+
+// computeDeploymentReplicasMinAvailableCondition computes the
+// ingresscontroller's "DeploymentReplicasMinAvailable" status condition by
+// examining the number of available replicas reported in the deployment's
+// status and the maximum unavailable as configured in the deployment's rolling
+// update parameters.  The "DeploymentReplicasMinAvailable" condition is true if
+// the number of available replicas is equal to or greater than the number of
+// desired replicas less the number minimum available.
+func computeDeploymentReplicasMinAvailableCondition(deployment *appsv1.Deployment) operatorv1.OperatorCondition {
+	replicas := int32(1)
+	if deployment.Spec.Replicas != nil {
+		replicas = *deployment.Spec.Replicas
+	}
+
+	pointerTo := func(val intstr.IntOrString) *intstr.IntOrString { return &val }
+	maxUnavailableIntStr := pointerTo(intstr.FromString("25%"))
+	maxSurgeIntStr := pointerTo(intstr.FromString("25%"))
+	if deployment.Spec.Strategy.Type == appsv1.RollingUpdateDeploymentStrategyType && deployment.Spec.Strategy.RollingUpdate != nil {
+		if deployment.Spec.Strategy.RollingUpdate.MaxUnavailable != nil {
+			maxUnavailableIntStr = deployment.Spec.Strategy.RollingUpdate.MaxUnavailable
+		}
+		if deployment.Spec.Strategy.RollingUpdate.MaxSurge != nil {
+			maxSurgeIntStr = deployment.Spec.Strategy.RollingUpdate.MaxSurge
+		}
+	}
+	maxSurge, err := intstr.GetValueFromIntOrPercent(maxSurgeIntStr, int(replicas), true)
+	if err != nil {
+		return operatorv1.OperatorCondition{
+			Type:    IngressControllerDeploymentReplicasMinAvailableConditionType,
+			Status:  operatorv1.ConditionUnknown,
+			Reason:  "InvalidMaxSurgeValue",
+			Message: fmt.Sprintf("invalid value for max surge: %v", err),
+		}
+	}
+	maxUnavailable, err := intstr.GetValueFromIntOrPercent(maxUnavailableIntStr, int(replicas), false)
+	if err != nil {
+		return operatorv1.OperatorCondition{
+			Type:    IngressControllerDeploymentReplicasMinAvailableConditionType,
+			Status:  operatorv1.ConditionUnknown,
+			Reason:  "InvalidMaxUnavailableValue",
+			Message: fmt.Sprintf("invalid value for max unavailable: %v", err),
+		}
+	}
+	if maxSurge == 0 && maxUnavailable == 0 {
+		maxUnavailable = 1
+	}
+	if int(deployment.Status.AvailableReplicas) < int(replicas)-maxUnavailable {
+		return operatorv1.OperatorCondition{
+			Type:    IngressControllerDeploymentReplicasMinAvailableConditionType,
+			Status:  operatorv1.ConditionFalse,
+			Reason:  "DeploymentMinimumReplicasNotMet",
+			Message: fmt.Sprintf("%d/%d of replicas are available, max unavailable is %d", deployment.Status.AvailableReplicas, replicas, maxUnavailable),
+		}
+	}
+
+	return operatorv1.OperatorCondition{
+		Type:    IngressControllerDeploymentReplicasMinAvailableConditionType,
+		Status:  operatorv1.ConditionTrue,
+		Reason:  "DeploymentMinimumReplicasMet",
+		Message: "Minimum replicas requirement is met",
+	}
+}
+
+// computeDeploymentReplicasAllAvailableCondition computes the
+// ingresscontroller's "DeploymentReplicasAllAvailable" status condition by
+// examining the number of available replicas reported in the deployment's
+// status.  The "DeploymentReplicasAllAvailable" condition is true if the number
+// of available replicas is equal to or greater than the number of desired
+// replicas.
+func computeDeploymentReplicasAllAvailableCondition(deployment *appsv1.Deployment) operatorv1.OperatorCondition {
+	replicas := int32(1)
+	if deployment.Spec.Replicas != nil {
+		replicas = *deployment.Spec.Replicas
+	}
+
+	if deployment.Status.AvailableReplicas < replicas {
+		return operatorv1.OperatorCondition{
+			Type:    IngressControllerDeploymentReplicasAllAvailableConditionType,
+			Status:  operatorv1.ConditionFalse,
+			Reason:  "DeploymentReplicasNotAvailable",
+			Message: fmt.Sprintf("%d/%d of replicas are available", deployment.Status.AvailableReplicas, replicas),
+		}
+	}
+
+	return operatorv1.OperatorCondition{
+		Type:    IngressControllerDeploymentReplicasAllAvailableConditionType,
+		Status:  operatorv1.ConditionTrue,
+		Reason:  "DeploymentReplicasAvailable",
+		Message: "All replicas are available",
 	}
 }
 
@@ -188,9 +287,19 @@ func computeIngressDegradedCondition(conditions []operatorv1.OperatorCondition) 
 			status:    operatorv1.ConditionTrue,
 		},
 		{
-			condition:   IngressControllerDeploymentDegradedConditionType,
-			status:      operatorv1.ConditionFalse,
+			condition:   IngressControllerDeploymentAvailableConditionType,
+			status:      operatorv1.ConditionTrue,
 			gracePeriod: time.Second * 30,
+		},
+		{
+			condition:   IngressControllerDeploymentReplicasMinAvailableConditionType,
+			status:      operatorv1.ConditionTrue,
+			gracePeriod: time.Second * 60,
+		},
+		{
+			condition:   IngressControllerDeploymentReplicasAllAvailableConditionType,
+			status:      operatorv1.ConditionTrue,
+			gracePeriod: time.Minute * 60,
 		},
 		{
 			condition:        operatorv1.LoadBalancerReadyIngressConditionType,
