@@ -51,3 +51,11 @@ rules:
   - use
   resourceNames:
   - hostnetwork
+
+- apiGroups:
+  - discovery.k8s.io
+  resources:
+  - endpointslices
+  verbs:
+  - list
+  - watch
