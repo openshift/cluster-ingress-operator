@@ -158,3 +158,12 @@ rules:
   - use
   resourceNames:
   - hostnetwork
+
+# Mirrored from assets/router/cluster-role.yaml
+- apiGroups:
+  - discovery.k8s.io
+  resources:
+  - endpointslices
+  verbs:
+  - list
+  - watch
