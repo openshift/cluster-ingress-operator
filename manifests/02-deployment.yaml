@@ -5,6 +5,7 @@ metadata:
   namespace: openshift-ingress-operator
   annotations:
     config.openshift.io/inject-proxy: ingress-operator
+    ingress.operator.openshift.io/disable-endpointslices: "true"
 spec:
   replicas: 1
   strategy:

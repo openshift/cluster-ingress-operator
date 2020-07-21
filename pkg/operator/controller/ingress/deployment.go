@@ -42,6 +42,9 @@ const (
 
 	RouterDisableHTTP2EnvName          = "ROUTER_DISABLE_HTTP2"
 	RouterDefaultEnableHTTP2Annotation = "ingress.operator.openshift.io/default-enable-http2"
+
+	RouterWatchEndpointsEnvName           = "ROUTER_WATCH_ENDPOINTS"
+	RouterDisableEndpointSlicesAnnotation = "ingress.operator.openshift.io/disable-endpointslices"
 )
 
 // ensureRouterDeployment ensures the router deployment exists for a given
@@ -114,6 +117,36 @@ func HTTP2IsEnabled(ic *operatorv1.IngressController, ingressConfig *configv1.In
 	}
 
 	return configHasHTTP2Enabled
+}
+
+// EndpointSlicesIsDisabledByAnnotation returns true if the map m has
+// the key RouterDisableEndpointSlicesAnnotation present and
+// true|false depending on the annotation's value that is parsed by
+// strconv.ParseBool.
+func EndpointSlicesIsDisabledByAnnotation(m map[string]string) (bool, bool) {
+	if val, ok := m[RouterDisableEndpointSlicesAnnotation]; ok {
+		v, _ := strconv.ParseBool(val)
+		return true, v
+	}
+	return false, false
+}
+
+// EndpointSlicesIsDisabled returns true if the ingress controller
+// disables endpointslices via the
+// RouterDisableEndpointSlicesAnnotation, or if the ingress config
+// disables endpointslices. It will return false for the case where
+// the ingress config has been disabled but the ingress controller
+// explicitly overrides that by having the annotation present (even if
+// its value is "false").
+func EndpointSlicesIsDisabled(ic *operatorv1.IngressController, ingressConfig *configv1.Ingress) bool {
+	controllerHasEndpointSlicesAnnotation, controllerHasEndpointSlicesDisabled := EndpointSlicesIsDisabledByAnnotation(ic.Annotations)
+	_, configHasEndpointSlicesDisabled := EndpointSlicesIsDisabledByAnnotation(ingressConfig.Annotations)
+
+	if controllerHasEndpointSlicesAnnotation {
+		return controllerHasEndpointSlicesDisabled
+	}
+
+	return configHasEndpointSlicesDisabled
 }
 
 // desiredRouterDeployment returns the desired router deployment.
@@ -537,6 +570,10 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		env = append(env, corev1.EnvVar{Name: RouterDisableHTTP2EnvName, Value: "false"})
 	} else {
 		env = append(env, corev1.EnvVar{Name: RouterDisableHTTP2EnvName, Value: "true"})
+	}
+
+	if EndpointSlicesIsDisabled(ci, ingressConfig) {
+		env = append(env, corev1.EnvVar{Name: RouterWatchEndpointsEnvName, Value: "true"})
 	}
 
 	deployment.Spec.Template.Spec.Volumes = volumes
