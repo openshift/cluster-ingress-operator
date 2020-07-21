@@ -20,6 +20,7 @@ import (
 	gcpdns "github.com/openshift/cluster-ingress-operator/pkg/dns/gcp"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
+	operatorutil "github.com/openshift/cluster-ingress-operator/pkg/util"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/slice"
 
 	corev1 "k8s.io/api/core/v1"
@@ -437,11 +438,54 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 
 	switch platformStatus.Type {
 	case configv1.AWSPlatformType:
-		provider, err := awsdns.NewProvider(awsdns.Config{
+		cfg := awsdns.Config{
 			AccessID:  string(creds.Data["aws_access_key_id"]),
 			AccessKey: string(creds.Data["aws_secret_access_key"]),
 			Region:    platformStatus.AWS.Region,
-		}, r.Config.OperatorReleaseVersion)
+		}
+		if len(platformStatus.AWS.ServiceEndpoints) > 0 {
+			cfg.ServiceEndpoints = []awsdns.ServiceEndpoint{}
+			route53Found := false
+			elbFound := false
+			tagFound := false
+			for _, ep := range platformStatus.AWS.ServiceEndpoints {
+				switch {
+				case route53Found && elbFound && tagFound:
+					break
+				case ep.Name == awsdns.Route53Service:
+					route53Found = true
+					scheme, err := operatorutil.URI(ep.URL)
+					if err != nil {
+						return nil, fmt.Errorf("failed to validate URI %s: %v", ep.URL, err)
+					}
+					if scheme != operatorutil.SchemeHTTPS {
+						return nil, fmt.Errorf("invalid scheme for URI %s; must be %s", ep.URL, operatorutil.SchemeHTTPS)
+					}
+					cfg.ServiceEndpoints = append(cfg.ServiceEndpoints, awsdns.ServiceEndpoint{Name: ep.Name, URL: ep.URL})
+				case ep.Name == awsdns.ELBService:
+					elbFound = true
+					scheme, err := operatorutil.URI(ep.URL)
+					if err != nil {
+						return nil, fmt.Errorf("failed to validate URI %s: %v", ep.URL, err)
+					}
+					if scheme != operatorutil.SchemeHTTPS {
+						return nil, fmt.Errorf("invalid scheme for URI %s; must be %s", ep.URL, operatorutil.SchemeHTTPS)
+					}
+					cfg.ServiceEndpoints = append(cfg.ServiceEndpoints, awsdns.ServiceEndpoint{Name: ep.Name, URL: ep.URL})
+				case ep.Name == awsdns.ResourceGroupsService:
+					tagFound = true
+					scheme, err := operatorutil.URI(ep.URL)
+					if err != nil {
+						return nil, fmt.Errorf("failed to validate URI %s: %v", ep.URL, err)
+					}
+					if scheme != operatorutil.SchemeHTTPS {
+						return nil, fmt.Errorf("invalid scheme for URI %s; must be %s", ep.URL, operatorutil.SchemeHTTPS)
+					}
+					cfg.ServiceEndpoints = append(cfg.ServiceEndpoints, awsdns.ServiceEndpoint{Name: ep.Name, URL: ep.URL})
+				}
+			}
+		}
+		provider, err := awsdns.NewProvider(cfg, r.OperatorReleaseVersion)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create AWS DNS manager: %v", err)
 		}

@@ -26,6 +26,15 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 )
 
+const (
+	// Route53Service is the name of the Route 53 service.
+	Route53Service = route53.ServiceName
+	// ELBService is the name of the Elastic Load Balancing service.
+	ELBService = elb.ServiceName
+	// ResourceGroupsService is the name of the Resource Group service.
+	ResourceGroupsService = resourcegroupstaggingapi.ServiceName
+)
+
 var (
 	_   dns.Provider = &Provider{}
 	log              = logf.Logger.WithName("dns")
@@ -65,6 +74,21 @@ type Config struct {
 	AccessKey string
 	// Region is the AWS region ELBs are created in.
 	Region string
+	// ServiceEndpoints is the list of AWS API endpoints to use for
+	// Provider clients.
+	ServiceEndpoints []ServiceEndpoint
+}
+
+// ServiceEndpoint stores the configuration of a custom url to
+// override existing defaults of AWS Service API endpoints.
+type ServiceEndpoint struct {
+	// name is the name of the AWS service. The full list of service
+	// names can be found at:
+	//   https://docs.aws.amazon.com/general/latest/gr/aws-service-information.html
+	Name string
+	// url is a fully qualified URI that overrides the default generated
+	// AWS API endpoint.
+	URL string
 }
 
 func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error) {
@@ -95,24 +119,53 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 	}
 
 	r53Config := aws.NewConfig()
-
-	// TODO: The Tagging API will only return hostedzone resources (which are global)
-	// when the region is forced to us-east-1. We don't yet understand why.
-	tagConfig := aws.NewConfig().WithRegion(endpoints.UsEast1RegionID)
+	elbConfig := aws.NewConfig().WithRegion(region)
+	tagConfig := aws.NewConfig()
 
 	// If the region is in aws china, cn-north-1 or cn-northwest-1, we should:
 	// 1. hard code route53 api endpoint to https://route53.amazonaws.com.cn and region to "cn-northwest-1" as route53 is not GA in AWS China,
 	//    and aws sdk didn't have the endpoint.
-	// 2. use the aws china region cn-northwest-1 to setup tagging api correctly in stead of "us-east-1"
+	// 2. use the aws china region cn-northwest-1 to setup tagging api correctly instead of "us-east-1"
 	switch region {
 	case endpoints.CnNorth1RegionID, endpoints.CnNorthwest1RegionID:
 		tagConfig = tagConfig.WithRegion(endpoints.CnNorthwest1RegionID)
 		r53Config = r53Config.WithRegion(endpoints.CnNorthwest1RegionID)
 		r53Config = r53Config.WithEndpoint("https://route53.amazonaws.com.cn")
+	default:
+		// Since Route 53 is not a regionalized service, the Tagging API will
+		// only return hosted zone resources when the region is "us-east-1".
+		tagConfig = tagConfig.WithRegion(endpoints.UsEast1RegionID)
+		// Route 53 in AWS Regions other than the AWS Beijing and
+		// Ningxia (China) Regions: specify us-east-1 as the Region.
+		// See https://docs.aws.amazon.com/general/latest/gr/r53.html for details.
+		r53Config = r53Config.WithRegion(endpoints.UsEast1RegionID)
+		if len(config.ServiceEndpoints) > 0 {
+			route53Found := false
+			elbFound := false
+			tagFound := false
+			for _, ep := range config.ServiceEndpoints {
+				switch {
+				case route53Found && elbFound && tagFound:
+					break
+				case ep.Name == Route53Service:
+					route53Found = true
+					r53Config = r53Config.WithEndpoint(ep.URL)
+					log.Info("using route53 custom endpoint", "url", ep.URL)
+				case ep.Name == ELBService:
+					elbFound = true
+					elbConfig = elbConfig.WithEndpoint(ep.URL)
+					log.Info("using elb custom endpoint", "url", ep.URL)
+				case ep.Name == ResourceGroupsService:
+					tagFound = true
+					tagConfig = tagConfig.WithEndpoint(ep.URL)
+					log.Info("using group tagging custom endpoint", "url", ep.URL)
+				}
+			}
+		}
 	}
 
 	return &Provider{
-		elb:       elb.New(sess, aws.NewConfig().WithRegion(region)),
+		elb:       elb.New(sess, elbConfig),
 		route53:   route53.New(sess, r53Config),
 		tags:      resourcegroupstaggingapi.New(sess, tagConfig),
 		config:    config,
