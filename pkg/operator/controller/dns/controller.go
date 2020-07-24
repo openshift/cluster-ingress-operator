@@ -447,8 +447,12 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 		}
 		dnsProvider = provider
 	case configv1.AzurePlatformType:
+		environment := platformStatus.Azure.CloudName
+		if environment == "" {
+			environment = configv1.AzurePublicCloud
+		}
 		provider, err := azuredns.NewProvider(azuredns.Config{
-			Environment:    "AzurePublicCloud",
+			Environment:    string(environment),
 			ClientID:       string(creds.Data["azure_client_id"]),
 			ClientSecret:   string(creds.Data["azure_client_secret"]),
 			TenantID:       string(creds.Data["azure_tenant_id"]),
