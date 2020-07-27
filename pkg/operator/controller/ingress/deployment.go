@@ -42,6 +42,7 @@ const (
 
 	RouterCaptureHTTPRequestHeaders  = "ROUTER_CAPTURE_HTTP_REQUEST_HEADERS"
 	RouterCaptureHTTPResponseHeaders = "ROUTER_CAPTURE_HTTP_RESPONSE_HEADERS"
+	RouterCaptureHTTPCookies         = "ROUTER_CAPTURE_HTTP_COOKIE"
 
 	RouterDisableHTTP2EnvName          = "ROUTER_DISABLE_HTTP2"
 	RouterDefaultEnableHTTP2Annotation = "ingress.operator.openshift.io/default-enable-http2"
@@ -476,6 +477,25 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 				Value: val,
 			})
 		}
+		if len(accessLogging.HTTPCaptureCookies) > 0 {
+			var (
+				cookieName string
+				maxLength  = accessLogging.HTTPCaptureCookies[0].MaxLength
+			)
+			switch accessLogging.HTTPCaptureCookies[0].MatchType {
+			case operatorv1.CookieMatchTypeExact:
+				cookieName = accessLogging.HTTPCaptureCookies[0].Name + "="
+			case operatorv1.CookieMatchTypePrefix:
+				cookieName = accessLogging.HTTPCaptureCookies[0].NamePrefix
+			}
+			if maxLength == 0 {
+				maxLength = 256
+			}
+			env = append(env, corev1.EnvVar{
+				Name:  RouterCaptureHTTPCookies,
+				Value: fmt.Sprintf("%s:%d", cookieName, maxLength),
+			})
+		}
 	}
 
 	tlsProfileSpec := tlsProfileSpecForIngressController(ci, apiConfig)
@@ -586,6 +606,7 @@ func accessLoggingForIngressController(ic *operatorv1.IngressController) *operat
 			},
 			HttpLogFormat:      ic.Spec.Logging.Access.HttpLogFormat,
 			HTTPCaptureHeaders: ic.Spec.Logging.Access.HTTPCaptureHeaders,
+			HTTPCaptureCookies: ic.Spec.Logging.Access.HTTPCaptureCookies,
 		}
 	case operatorv1.SyslogLoggingDestinationType:
 		if ic.Spec.Logging.Access.Destination.Syslog != nil {
@@ -600,6 +621,7 @@ func accessLoggingForIngressController(ic *operatorv1.IngressController) *operat
 				},
 				HttpLogFormat:      ic.Spec.Logging.Access.HttpLogFormat,
 				HTTPCaptureHeaders: ic.Spec.Logging.Access.HTTPCaptureHeaders,
+				HTTPCaptureCookies: ic.Spec.Logging.Access.HTTPCaptureCookies,
 			}
 		}
 	}

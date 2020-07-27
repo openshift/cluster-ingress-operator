@@ -1291,6 +1291,135 @@ func TestHTTPHeaderCapture(t *testing.T) {
 	}
 }
 
+func TestHTTPCookieCapture(t *testing.T) {
+	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "cookiecapture"}
+	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
+	ic := newNodePortController(icName, domain)
+	ic.Spec.Logging = &operatorv1.IngressControllerLogging{
+		Access: &operatorv1.AccessLogging{
+			Destination: operatorv1.LoggingDestination{
+				Type:      operatorv1.ContainerLoggingDestinationType,
+				Container: &operatorv1.ContainerLoggingDestinationParameters{},
+			},
+			HTTPCaptureCookies: []operatorv1.IngressControllerCaptureHTTPCookie{
+				{MatchType: "Exact", Name: "foo", MaxLength: 9},
+			},
+		},
+	}
+	if err := kclient.Create(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
+	}
+	defer assertIngressControllerDeleted(t, kclient, ic)
+	conditions := []operatorv1.OperatorCondition{
+		{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionTrue},
+		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
+		{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionFalse},
+	}
+	if err := waitForIngressControllerCondition(kclient, 5*time.Minute, icName, conditions...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	// Get the deployment's pods.  We will use these to curl a route and to
+	// scan access logs.
+	deployment := &appsv1.Deployment{}
+	if err := kclient.Get(context.TODO(), controller.RouterDeploymentName(ic), deployment); err != nil {
+		t.Fatalf("failed to get ingresscontroller deployment: %v", err)
+	}
+	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
+	if err != nil {
+		t.Fatalf("router deployment has invalid spec.selector: %v", err)
+	}
+	podList := &corev1.PodList{}
+	if err := kclient.List(context.TODO(), podList, client.MatchingLabelsSelector{Selector: selector}); err != nil {
+		t.Fatalf("failed to list pods for ingresscontroller: %v", err)
+	}
+	if len(podList.Items) < 1 {
+		t.Fatalf("found no pods for ingresscontroller: %v", err)
+	}
+
+	// Make a request to the console route.
+	routeName := types.NamespacedName{Namespace: "openshift-console", Name: "console"}
+	route := &routev1.Route{}
+	if err := kclient.Get(context.TODO(), routeName, route); err != nil {
+		t.Fatalf("failed to get the console route: %v", err)
+	}
+	clientPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "cookietest",
+			Namespace: podList.Items[0].Namespace,
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name:    "curl",
+					Image:   podList.Items[0].Spec.Containers[0].Image,
+					Command: []string{"/bin/curl"},
+					Args: []string{
+						"-k",
+						"-o", "/dev/null", "-s",
+						"-H", "cookie:foobar=123",
+						"-H", "cookie:foo=xyzzypop",
+						"-H", "cookie:foobaz=abc",
+						"--resolve",
+						route.Spec.Host + ":443:" + podList.Items[0].Status.PodIP,
+						"https://" + route.Spec.Host,
+					},
+				},
+			},
+			RestartPolicy: corev1.RestartPolicyNever,
+		},
+	}
+	if err := kclient.Create(context.TODO(), clientPod); err != nil {
+		t.Fatalf("failed to create pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), clientPod); err != nil {
+			t.Fatalf("failed to delete pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
+		}
+	}()
+
+	// Scan the access logs to make sure the expected cookie was captured
+	// and logged.
+	kubeConfig, err := config.GetConfig()
+	if err != nil {
+		t.Fatalf("failed to get kube config: %v", err)
+	}
+	client, err := kubernetes.NewForConfig(kubeConfig)
+	if err != nil {
+		t.Fatalf("failed to create kube client: %v", err)
+	}
+	err = wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
+		for _, pod := range podList.Items {
+			readCloser, err := client.CoreV1().Pods(pod.Namespace).GetLogs(pod.Name, &corev1.PodLogOptions{
+				Container: "logs",
+				Follow:    false,
+			}).Stream(context.TODO())
+			if err != nil {
+				t.Errorf("failed to read logs from pod %s: %v", pod.Name, err)
+				continue
+			}
+			scanner := bufio.NewScanner(readCloser)
+			var found bool
+			for scanner.Scan() {
+				line := scanner.Text()
+				if strings.Contains(line, " foo=xyzzy ") {
+					t.Logf("found log message for request in pod %s logs: %s", pod.Name, line)
+					found = true
+					break
+				}
+			}
+			if err := readCloser.Close(); err != nil {
+				t.Errorf("failed to close logs reader for pod %s: %v", pod.Name, err)
+			}
+			return found, nil
+		}
+		return false, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to observe the expected log message: %v", err)
+	}
+}
+
 func newLoadBalancerController(name types.NamespacedName, domain string) *operatorv1.IngressController {
 	repl := int32(1)
 	return &operatorv1.IngressController{
