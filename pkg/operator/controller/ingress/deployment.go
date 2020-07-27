@@ -38,6 +38,9 @@ const (
 
 	RouterForwardedHeadersPolicy = "ROUTER_SET_FORWARDED_HEADERS"
 
+	RouterUniqueHeaderName   = "ROUTER_UNIQUE_ID_HEADER_NAME"
+	RouterUniqueHeaderFormat = "ROUTER_UNIQUE_ID_FORMAT"
+
 	RouterLogLevelEnvName       = "ROUTER_LOG_LEVEL"
 	RouterSyslogAddressEnvName  = "ROUTER_SYSLOG_ADDRESS"
 	RouterSyslogFormatEnvName   = "ROUTER_SYSLOG_FORMAT"
@@ -588,6 +591,18 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		routerForwardedHeadersPolicyValue = "never"
 	}
 	env = append(env, corev1.EnvVar{Name: RouterForwardedHeadersPolicy, Value: routerForwardedHeadersPolicyValue})
+
+	if ci.Spec.HTTPHeaders != nil && len(ci.Spec.HTTPHeaders.UniqueId.Name) > 0 {
+		headerName := ci.Spec.HTTPHeaders.UniqueId.Name
+		headerFormat := ci.Spec.HTTPHeaders.UniqueId.Format
+		if len(headerFormat) == 0 {
+			headerFormat = "%{+X}o %ci:%cp_%fi:%fp_%Ts_%rt:%pid"
+		}
+		env = append(env,
+			corev1.EnvVar{Name: RouterUniqueHeaderName, Value: headerName},
+			corev1.EnvVar{Name: RouterUniqueHeaderFormat, Value: headerFormat},
+		)
+	}
 
 	if HTTP2IsEnabled(ci, ingressConfig) {
 		env = append(env, corev1.EnvVar{Name: RouterDisableHTTP2EnvName, Value: "false"})
