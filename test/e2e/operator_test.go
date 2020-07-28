@@ -1075,6 +1075,88 @@ func TestContainerLogging(t *testing.T) {
 	}
 }
 
+func TestIngressControllerCustomEndpoints(t *testing.T) {
+	// TODO: Change from spec to status after https://bugzilla.redhat.com/show_bug.cgi?id=1850681
+	//       is fixed.
+	platform := infraConfig.Spec.PlatformSpec
+	switch platform.Type {
+	case configv1.AWSPlatformType:
+		if len(platform.AWS.ServiceEndpoints) != 0 {
+			t.Fatalf("custom endpoints detected for infrastructure %s", infraConfig.Name)
+		}
+		route53Endpoint := configv1.AWSServiceEndpoint{
+			Name: "route53",
+			URL:  "https://route53.amazonaws.com",
+		}
+		elbEndpoint := configv1.AWSServiceEndpoint{
+			Name: "elasticloadbalancing",
+			URL:  "https://elasticloadbalancing.us-west-2.amazonaws.com",
+		}
+		taggingEndpoint := configv1.AWSServiceEndpoint{
+			Name: "tagging",
+			URL:  "https://tagging.us-east-1.amazonaws.com",
+		}
+		endpoints := []configv1.AWSServiceEndpoint{route53Endpoint, elbEndpoint, taggingEndpoint}
+		infraConfig.Spec.PlatformSpec.AWS.ServiceEndpoints = endpoints
+		if err := kclient.Update(context.TODO(), &infraConfig); err != nil {
+			t.Logf("failed to update infrastructure config: %v\n", err)
+		}
+		// Wait for infrastructure status to update with custom endpoints.
+		err := wait.PollImmediate(1*time.Second, 30*time.Second, func() (bool, error) {
+			if err := kclient.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, &infraConfig); err != nil {
+				t.Logf("failed to get infrastructure config: %v\n", err)
+				return false, nil
+			}
+			// TODO: Change from spec to status after https://bugzilla.redhat.com/show_bug.cgi?id=1850681
+			//       is fixed.
+			if len(infraConfig.Spec.PlatformSpec.AWS.ServiceEndpoints) == 0 {
+				return false, nil
+			}
+			return true, nil
+		})
+		if err != nil {
+			t.Fatalf("failed to observe status update for infrastructure config %s", infraConfig.Name)
+		}
+		defer func() {
+			// Remove the custom endpoints from the infrastructure config.
+			infraConfig.Spec.PlatformSpec.AWS.ServiceEndpoints = []configv1.AWSServiceEndpoint{}
+			// Wait for infrastructure status to update.
+			err := wait.PollImmediate(1*time.Second, 30*time.Second, func() (bool, error) {
+				if err := kclient.Update(context.TODO(), &infraConfig); err != nil {
+					t.Logf("failed to get infrastructure config: %v\n", err)
+					return false, nil
+				}
+				// TODO: Change from spec to status after https://bugzilla.redhat.com/show_bug.cgi?id=1850681
+				//       is fixed.
+				if len(infraConfig.Spec.PlatformSpec.AWS.ServiceEndpoints) != 0 {
+					return false, nil
+				}
+				return true, nil
+			})
+			if err != nil {
+				t.Fatalf("failed to remove custom endpoints from infrastructure config %s", infraConfig.Name)
+			}
+		}()
+	default:
+		t.Skipf("skipping TestIngressControllerCustomEndpoints test due to platform type: %s", platform.Type)
+	}
+	// The default ingresscontroller should surface the expected status conditions.
+	if err := waitForIngressControllerCondition(kclient, 30*time.Second, defaultName, defaultAvailableConditions...); err != nil {
+		t.Fatalf("did not get expected ingress controller conditions: %v", err)
+	}
+	// Ensure an ingresscontroller can be created with custom endpoints.
+	name := types.NamespacedName{Namespace: operatorNamespace, Name: "test-custom-endpoints"}
+	ic := newLoadBalancerController(name, name.Name+"."+dnsConfig.Spec.BaseDomain)
+	if err := kclient.Create(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to create ingresscontroller %s: %v", ic.Name, err)
+	}
+	defer assertIngressControllerDeleted(t, kclient, ic)
+	// Ensure the ingress controller is reporting expected status conditions.
+	if err := waitForIngressControllerCondition(kclient, 5*time.Minute, name, defaultAvailableConditions...); err != nil {
+		t.Errorf("failed to observe expected conditions: %v", err)
+	}
+}
+
 func newLoadBalancerController(name types.NamespacedName, domain string) *operatorv1.IngressController {
 	repl := int32(1)
 	return &operatorv1.IngressController{
