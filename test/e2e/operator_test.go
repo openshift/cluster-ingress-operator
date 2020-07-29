@@ -1088,15 +1088,11 @@ func TestIngressControllerCustomEndpoints(t *testing.T) {
 			Name: "route53",
 			URL:  "https://route53.amazonaws.com",
 		}
-		elbEndpoint := configv1.AWSServiceEndpoint{
-			Name: "elasticloadbalancing",
-			URL:  "https://elasticloadbalancing.us-west-2.amazonaws.com",
-		}
 		taggingEndpoint := configv1.AWSServiceEndpoint{
 			Name: "tagging",
 			URL:  "https://tagging.us-east-1.amazonaws.com",
 		}
-		endpoints := []configv1.AWSServiceEndpoint{route53Endpoint, elbEndpoint, taggingEndpoint}
+		endpoints := []configv1.AWSServiceEndpoint{route53Endpoint, taggingEndpoint}
 		infraConfig.Spec.PlatformSpec.AWS.ServiceEndpoints = endpoints
 		if err := kclient.Update(context.TODO(), &infraConfig); err != nil {
 			t.Logf("failed to update infrastructure config: %v\n", err)
