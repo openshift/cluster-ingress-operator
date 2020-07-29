@@ -471,7 +471,7 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 						return nil, fmt.Errorf("invalid scheme for URI %s; must be %s", ep.URL, operatorutil.SchemeHTTPS)
 					}
 					cfg.ServiceEndpoints = append(cfg.ServiceEndpoints, awsdns.ServiceEndpoint{Name: ep.Name, URL: ep.URL})
-				case ep.Name == awsdns.ResourceGroupsService:
+				case ep.Name == awsdns.TaggingService:
 					tagFound = true
 					scheme, err := operatorutil.URI(ep.URL)
 					if err != nil {

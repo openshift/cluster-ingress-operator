@@ -32,8 +32,8 @@ const (
 	Route53Service = route53.ServiceName
 	// ELBService is the name of the Elastic Load Balancing service.
 	ELBService = elb.ServiceName
-	// ResourceGroupsService is the name of the Resource Group service.
-	ResourceGroupsService = resourcegroupstaggingapi.ServiceName
+	// TaggingService is the name of the Resource Group Tagging service.
+	TaggingService = resourcegroupstaggingapi.ServiceName
 )
 
 var (
@@ -121,6 +121,7 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 	}
 
 	r53Config := aws.NewConfig()
+	// elb requires no special region treatment.
 	elbConfig := aws.NewConfig().WithRegion(region)
 	tagConfig := aws.NewConfig()
 
@@ -151,16 +152,28 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 					break
 				case ep.Name == Route53Service:
 					route53Found = true
-					r53Config = r53Config.WithEndpoint(ep.URL)
-					log.Info("using route53 custom endpoint", "url", ep.URL)
+					if urlContainsRegion(endpoints.UsEast1RegionID, ep.URL) || ep.URL == "https://route53.amazonaws.com" {
+						r53Config = r53Config.WithEndpoint(ep.URL)
+						log.Info("using route53 custom endpoint", "url", ep.URL)
+					} else {
+						return nil, fmt.Errorf("%s does not include required %s region identifier", ep.URL, endpoints.UsEast1RegionID)
+					}
+				case ep.Name == TaggingService:
+					tagFound = true
+					if urlContainsRegion(endpoints.UsEast1RegionID, ep.URL) {
+						tagConfig = tagConfig.WithEndpoint(ep.URL)
+						log.Info("using group tagging custom endpoint", "url", ep.URL)
+					} else {
+						return nil, fmt.Errorf("%s does not include required %s region identifier", ep.URL, endpoints.UsEast1RegionID)
+					}
 				case ep.Name == ELBService:
 					elbFound = true
-					elbConfig = elbConfig.WithEndpoint(ep.URL)
-					log.Info("using elb custom endpoint", "url", ep.URL)
-				case ep.Name == ResourceGroupsService:
-					tagFound = true
-					tagConfig = tagConfig.WithEndpoint(ep.URL)
-					log.Info("using group tagging custom endpoint", "url", ep.URL)
+					if urlContainsRegion(region, ep.URL) {
+						elbConfig = elbConfig.WithEndpoint(ep.URL)
+						log.Info("using elb custom endpoint", "url", ep.URL)
+					} else {
+						return nil, fmt.Errorf("%s does not include required %s region identifier", ep.URL, region)
+					}
 				}
 			}
 		}
@@ -177,6 +190,11 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 		idsToTags: map[string]map[string]string{},
 		lbZones:   map[string]string{},
 	}, nil
+}
+
+// urlContainsRegion checks whether uri contains region.
+func urlContainsRegion(region, uri string) bool {
+	return strings.Contains(uri, region)
 }
 
 // getZoneID finds the ID of given zoneConfig in Route53. If an ID is already
