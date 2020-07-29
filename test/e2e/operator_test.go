@@ -1416,6 +1416,51 @@ func TestHTTPCookieCapture(t *testing.T) {
 	}
 }
 
+// TestNetworkLoadBalancer creates an ingresscontroller with the
+// "LoadBalancerService" endpoint publishing strategy type with
+// an AWS Network Load Balancer (NLB).
+func TestNetworkLoadBalancer(t *testing.T) {
+	platform := infraConfig.Status.PlatformStatus.Type
+
+	if platform != configv1.AWSPlatformType {
+		t.Skip(fmt.Sprintf("test skipped on platform %q", platform))
+	}
+
+	name := types.NamespacedName{Namespace: operatorNamespace, Name: "test-nlb"}
+	ic := newLoadBalancerController(name, name.Name+"."+dnsConfig.Spec.BaseDomain)
+	lb := &operatorv1.LoadBalancerStrategy{
+		Scope: operatorv1.ExternalLoadBalancer,
+		ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+			Type: operatorv1.AWSLoadBalancerProvider,
+			AWS: &operatorv1.AWSLoadBalancerParameters{
+				Type: operatorv1.AWSNetworkLoadBalancer,
+			},
+		},
+	}
+	ic.Spec.EndpointPublishingStrategy.LoadBalancer = lb
+	if err := kclient.Create(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to create ingresscontroller: %v", err)
+	}
+	defer assertIngressControllerDeleted(t, kclient, ic)
+
+	// Wait for the load balancer and DNS to be ready.
+	if err := waitForIngressControllerCondition(kclient, 5*time.Minute, name, defaultAvailableConditions...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	lbService := &corev1.Service{}
+	if err := kclient.Get(context.TODO(), controller.LoadBalancerServiceName(ic), lbService); err != nil {
+		t.Fatalf("failed to get LoadBalancer service: %v", err)
+	}
+
+	if actual, ok := lbService.Annotations[ingresscontroller.AWSLBTypeAnnotation]; !ok {
+		t.Fatalf("load balancer has no %q annotation: %v", ingresscontroller.AWSLBTypeAnnotation, lbService.Annotations)
+	} else if actual != ingresscontroller.AWSNLBAnnotation {
+		t.Fatalf("expected %s=%s, found %s=%s", ingresscontroller.AWSLBTypeAnnotation, ingresscontroller.AWSNLBAnnotation,
+			ingresscontroller.AWSLBTypeAnnotation, actual)
+	}
+}
+
 func newLoadBalancerController(name types.NamespacedName, domain string) *operatorv1.IngressController {
 	repl := int32(1)
 	return &operatorv1.IngressController{

@@ -18,6 +18,7 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	oputil "github.com/openshift/cluster-ingress-operator/pkg/util"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -55,7 +56,15 @@ func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, in
 	if err != nil {
 		return false, nil, err
 	}
-	desired, err := desiredRouterDeployment(ci, r.Config.IngressControllerImage, infraConfig, ingressConfig, apiConfig, networkConfig)
+	platform, err := oputil.GetPlatformStatus(r.client, infraConfig)
+	if err != nil {
+		return false, nil, fmt.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %v", ci.Namespace, ci.Name, err)
+	}
+	proxyNeeded, err := IsProxyProtocolNeeded(ci, platform)
+	if err != nil {
+		return false, nil, fmt.Errorf("failed to determine if proxy protocol is needed for ingresscontroller %s/%s: %v", ci.Namespace, ci.Name, err)
+	}
+	desired, err := desiredRouterDeployment(ci, r.Config.IngressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded)
 	if err != nil {
 		return haveDepl, current, fmt.Errorf("failed to build router deployment: %v", err)
 	}
@@ -121,7 +130,7 @@ func HTTP2IsEnabled(ic *operatorv1.IngressController, ingressConfig *configv1.In
 }
 
 // desiredRouterDeployment returns the desired router deployment.
-func desiredRouterDeployment(ci *operatorv1.IngressController, ingressControllerImage string, infraConfig *configv1.Infrastructure, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer, networkConfig *configv1.Network) (*appsv1.Deployment, error) {
+func desiredRouterDeployment(ci *operatorv1.IngressController, ingressControllerImage string, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer, networkConfig *configv1.Network, proxyNeeded bool) (*appsv1.Deployment, error) {
 	deployment := manifests.RouterDeployment()
 	name := controller.RouterDeploymentName(ci)
 	deployment.Name = name.Name
@@ -313,12 +322,8 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		env = append(env, corev1.EnvVar{Name: "ROUTER_CANONICAL_HOSTNAME", Value: ci.Status.Domain})
 	}
 
-	if ci.Status.EndpointPublishingStrategy.Type == operatorv1.LoadBalancerServiceStrategyType {
-		// For now, check if we are on AWS. This can really be done for
-		// for any external [cloud] LBs that support the proxy protocol.
-		if infraConfig.Status.Platform == configv1.AWSPlatformType {
-			env = append(env, corev1.EnvVar{Name: "ROUTER_USE_PROXY_PROTOCOL", Value: "true"})
-		}
+	if proxyNeeded {
+		env = append(env, corev1.EnvVar{Name: "ROUTER_USE_PROXY_PROTOCOL", Value: "true"})
 	}
 
 	env = append(env, corev1.EnvVar{Name: "ROUTER_THREADS", Value: "4"})

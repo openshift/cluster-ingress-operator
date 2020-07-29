@@ -680,3 +680,26 @@ func IsStatusDomainSet(ingress *operatorv1.IngressController) bool {
 	}
 	return true
 }
+
+// IsPRoxyProtocolNeeded checks whether proxy protocol is needed based
+// upon the given ic and platform.
+func IsProxyProtocolNeeded(ic *operatorv1.IngressController, platform *configv1.PlatformStatus) (bool, error) {
+	if platform == nil {
+		return false, fmt.Errorf("platform status is missing; failed to determine if proxy protocol is needed for %s/%s",
+			ic.Namespace, ic.Name)
+	}
+	// For now, check if we are on AWS. This can really be done for for any external
+	// [cloud] LBs that support the proxy protocol.
+	if platform.Type == configv1.AWSPlatformType {
+		if ic.Status.EndpointPublishingStrategy.Type == operatorv1.LoadBalancerServiceStrategyType {
+			if ic.Status.EndpointPublishingStrategy.LoadBalancer == nil ||
+				ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters == nil ||
+				ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS == nil ||
+				ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.Type == operatorv1.AWSLoadBalancerProvider &&
+					ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.Type == operatorv1.AWSClassicLoadBalancer {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}

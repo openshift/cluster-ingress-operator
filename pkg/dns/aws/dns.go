@@ -18,6 +18,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/elb"
+	"github.com/aws/aws-sdk-go/service/elbv2"
 	"github.com/aws/aws-sdk-go/service/resourcegroupstaggingapi"
 	"github.com/aws/aws-sdk-go/service/route53"
 
@@ -49,6 +50,7 @@ var (
 // compared to storing additional metadata (like tags or TXT records).
 type Provider struct {
 	elb     *elb.ELB
+	elbv2   *elbv2.ELBV2
 	route53 *route53.Route53
 	tags    *resourcegroupstaggingapi.ResourceGroupsTaggingAPI
 
@@ -165,7 +167,10 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 	}
 
 	return &Provider{
-		elb:       elb.New(sess, elbConfig),
+		elb: elb.New(sess, elbConfig),
+		// TODO: Add custom endpoint support for elbv2. See the following for details:
+		// https://docs.aws.amazon.com/general/latest/gr/elb.html
+		elbv2:     elbv2.New(sess, aws.NewConfig().WithRegion(region)),
 		route53:   route53.New(sess, r53Config),
 		tags:      resourcegroupstaggingapi.New(sess, tagConfig),
 		config:    config,
@@ -255,11 +260,11 @@ func (m *Provider) getLBHostedZone(name string) (string, error) {
 	}
 
 	var id string
-	fn := func(resp *elb.DescribeLoadBalancersOutput, lastPage bool) (shouldContinue bool) {
+	elbFn := func(resp *elb.DescribeLoadBalancersOutput, lastPage bool) (shouldContinue bool) {
 		for _, lb := range resp.LoadBalancerDescriptions {
 			dnsName := aws.StringValue(lb.DNSName)
 			zoneID := aws.StringValue(lb.CanonicalHostedZoneNameID)
-			log.V(2).Info("found load balancer", "name", aws.StringValue(lb.LoadBalancerName), "dns name", dnsName, "hosted zone ID", zoneID)
+			log.V(2).Info("found classic load balancer", "name", aws.StringValue(lb.LoadBalancerName), "dns name", dnsName, "hosted zone ID", zoneID)
 			if dnsName == name {
 				id = zoneID
 				return false
@@ -267,9 +272,27 @@ func (m *Provider) getLBHostedZone(name string) (string, error) {
 		}
 		return true
 	}
-	err := m.elb.DescribeLoadBalancersPages(&elb.DescribeLoadBalancersInput{}, fn)
+	err := m.elb.DescribeLoadBalancersPages(&elb.DescribeLoadBalancersInput{}, elbFn)
 	if err != nil {
-		return "", fmt.Errorf("failed to describe load balancers: %v", err)
+		return "", fmt.Errorf("failed to describe classic load balancers: %v", err)
+	}
+	if len(id) == 0 {
+		elbv2Fn := func(resp *elbv2.DescribeLoadBalancersOutput, lastPage bool) (shouldContinue bool) {
+			for _, lb := range resp.LoadBalancers {
+				dnsName := aws.StringValue(lb.DNSName)
+				zoneID := aws.StringValue(lb.CanonicalHostedZoneId)
+				log.V(2).Info("found network load balancer", "name", aws.StringValue(lb.LoadBalancerName), "dns name", dnsName, "hosted zone ID", zoneID)
+				if dnsName == name {
+					id = zoneID
+					return false
+				}
+			}
+			return true
+		}
+		err := m.elbv2.DescribeLoadBalancersPages(&elbv2.DescribeLoadBalancersInput{}, elbv2Fn)
+		if err != nil {
+			return "", fmt.Errorf("failed to describe network load balancers: %v", err)
+		}
 	}
 	if len(id) == 0 {
 		return "", fmt.Errorf("couldn't find hosted zone ID of ELB %s", name)

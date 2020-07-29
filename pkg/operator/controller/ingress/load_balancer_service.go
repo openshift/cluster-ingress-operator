@@ -7,6 +7,7 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	oputil "github.com/openshift/cluster-ingress-operator/pkg/util"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/slice"
 
 	corev1 "k8s.io/api/core/v1"
@@ -24,6 +25,43 @@ const (
 	// https://kubernetes.io/docs/concepts/services-networking/service/#proxy-protocol-support-on-aws
 	awsLBProxyProtocolAnnotation = "service.beta.kubernetes.io/aws-load-balancer-proxy-protocol"
 
+	// AWSLBTypeAnnotation is a Service annotation used to specify an AWS load
+	// balancer type. See the following for additional details:
+	//
+	// https://kubernetes.io/docs/concepts/services-networking/service/#aws-nlb-support
+	AWSLBTypeAnnotation = "service.beta.kubernetes.io/aws-load-balancer-type"
+
+	// AWSNLBAnnotation is the annotation value of an AWS Network Load Balancer (NLB).
+	AWSNLBAnnotation = "nlb"
+
+	// awsInternalLBAnnotation is the annotation used on a service to specify an AWS
+	// load balancer as being internal.
+	awsInternalLBAnnotation = "service.beta.kubernetes.io/aws-load-balancer-internal"
+
+	// awsLBHealthCheckIntervalAnnotation is the approximate interval, in seconds, between AWS
+	// load balancer health checks of an individual AWS instance. Defaults to 5, must be between
+	// 5 and 300.
+	awsLBHealthCheckIntervalAnnotation = "service.beta.kubernetes.io/aws-load-balancer-healthcheck-interval"
+	awsLBHealthCheckIntervalDefault    = "5"
+
+	// awsLBHealthCheckTimeoutAnnotation is the amount of time, in seconds, during which no response
+	// means a failed AWS load balancer health check. The value must be less than the value of
+	// awsLBHealthCheckIntervalAnnotation. Defaults to 4, must be between 2 and 60.
+	awsLBHealthCheckTimeoutAnnotation = "service.beta.kubernetes.io/aws-load-balancer-healthcheck-timeout"
+	awsLBHealthCheckTimeoutDefault    = "4"
+
+	// awsLBHealthCheckUnhealthyThresholdAnnotation is the number of unsuccessful health checks required
+	// for an AWS load balancer backend to be considered unhealthy for traffic. Defaults to 2, must be
+	// between 2 and 10.
+	awsLBHealthCheckUnhealthyThresholdAnnotation = "service.beta.kubernetes.io/aws-load-balancer-healthcheck-unhealthy-threshold"
+	awsLBHealthCheckUnhealthyThresholdDefault    = "2"
+
+	// awsLBHealthCheckHealthyThresholdAnnotation is the number of successive successful health checks
+	// required for an AWS load balancer backend to be considered healthy for traffic. Defaults to 2,
+	// must be between 2 and 10.
+	awsLBHealthCheckHealthyThresholdAnnotation = "service.beta.kubernetes.io/aws-load-balancer-healthcheck-healthy-threshold"
+	awsLBHealthCheckHealthyThresholdDefault    = "2"
+
 	iksLBScopeAnnotation = "service.kubernetes.io/ibm-load-balancer-cloud-provider-ip-type"
 )
 
@@ -35,7 +73,7 @@ var (
 	// https://kubernetes.io/docs/concepts/services-networking/service/#internal-load-balancer
 	InternalLBAnnotations = map[configv1.PlatformType]map[string]string{
 		configv1.AWSPlatformType: {
-			"service.beta.kubernetes.io/aws-load-balancer-internal": "0.0.0.0/0",
+			awsInternalLBAnnotation: "0.0.0.0/0",
 		},
 		configv1.AzurePlatformType: {
 			// Azure load balancers are not customizable and are set to (2 fail @ 5s interval, 2 healthy)
@@ -66,7 +104,15 @@ var (
 // Always returns the current LB service if one exists (whether it already
 // existed or was created during the course of the function).
 func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, infraConfig *configv1.Infrastructure) (bool, *corev1.Service, error) {
-	wantLBS, desiredLBService, err := desiredLoadBalancerService(ci, deploymentRef, infraConfig)
+	platform, err := oputil.GetPlatformStatus(r.client, infraConfig)
+	if err != nil {
+		return false, nil, fmt.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %v", ci.Namespace, ci.Name, err)
+	}
+	proxyNeeded, err := IsProxyProtocolNeeded(ci, platform)
+	if err != nil {
+		return false, nil, fmt.Errorf("failed to determine if proxy protocol is proxyNeeded for ingresscontroller %q: %v", ci.Name, err)
+	}
+	wantLBS, desiredLBService, err := desiredLoadBalancerService(ci, deploymentRef, platform, proxyNeeded)
 	if err != nil {
 		return false, nil, err
 	}
@@ -91,7 +137,7 @@ func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController,
 // ingresscontroller, or nil if an LB service isn't desired. An LB service is
 // desired if the high availability type is Cloud. An LB service will declare an
 // owner reference to the given deployment.
-func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, infraConfig *configv1.Infrastructure) (bool, *corev1.Service, error) {
+func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, platform *configv1.PlatformStatus, proxyNeeded bool) (bool, *corev1.Service, error) {
 	if ci.Status.EndpointPublishingStrategy.Type != operatorv1.LoadBalancerServiceStrategyType {
 		return false, nil, nil
 	}
@@ -115,26 +161,36 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 	if service.Annotations == nil {
 		service.Annotations = map[string]string{}
 	}
-	if infraConfig.Status.Platform == configv1.AWSPlatformType {
+
+	if proxyNeeded {
 		service.Annotations[awsLBProxyProtocolAnnotation] = "*"
-		// Set the load balancer for AWS to be as aggressive as Azure (2 fail @ 5s interval, 2 healthy)
-		service.Annotations["service.beta.kubernetes.io/aws-load-balancer-healthcheck-interval"] = "5"
-		service.Annotations["service.beta.kubernetes.io/aws-load-balancer-healthcheck-timeout"] = "4"
-		service.Annotations["service.beta.kubernetes.io/aws-load-balancer-healthcheck-unhealthy-threshold"] = "2"
-		service.Annotations["service.beta.kubernetes.io/aws-load-balancer-healthcheck-healthy-threshold"] = "2"
-	}
-	// Azure load balancers are not customizable and are set to (2 fail @ 5s interval, 2 healthy)
-	// GCP load balancers are not customizable and are set to (3 fail @ 8s interval, 1 healthy)
-
-	if infraConfig.Status.Platform == configv1.IBMCloudPlatformType {
-		service.Annotations[iksLBScopeAnnotation] = "public"
 	}
 
-	if isInternal {
-		annotation := InternalLBAnnotations[infraConfig.Status.Platform]
-		for name, value := range annotation {
-			service.Annotations[name] = value
+	if platform != nil {
+		if isInternal {
+			annotation := InternalLBAnnotations[platform.Type]
+			for name, value := range annotation {
+				service.Annotations[name] = value
+			}
 		}
+		switch platform.Type {
+		case configv1.AWSPlatformType:
+			if ci.Status.EndpointPublishingStrategy.LoadBalancer != nil &&
+				ci.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters != nil &&
+				ci.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.Type == operatorv1.AWSLoadBalancerProvider &&
+				ci.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.Type == operatorv1.AWSNetworkLoadBalancer {
+				service.Annotations[AWSLBTypeAnnotation] = AWSNLBAnnotation
+			}
+			// Set the load balancer for AWS to be as aggressive as Azure (2 fail @ 5s interval, 2 healthy)
+			service.Annotations[awsLBHealthCheckIntervalAnnotation] = awsLBHealthCheckIntervalDefault
+			service.Annotations[awsLBHealthCheckTimeoutAnnotation] = awsLBHealthCheckTimeoutDefault
+			service.Annotations[awsLBHealthCheckUnhealthyThresholdAnnotation] = awsLBHealthCheckUnhealthyThresholdDefault
+			service.Annotations[awsLBHealthCheckHealthyThresholdAnnotation] = awsLBHealthCheckHealthyThresholdDefault
+		case configv1.IBMCloudPlatformType:
+			service.Annotations[iksLBScopeAnnotation] = "public"
+		}
+		// Azure load balancers are not customizable and are set to (2 fail @ 5s interval, 2 healthy)
+		// GCP load balancers are not customizable and are set to (3 fail @ 8s interval, 1 healthy)
 	}
 
 	service.SetOwnerReferences([]metav1.OwnerReference{deploymentRef})
