@@ -31,11 +31,8 @@ func TestDesiredLoadBalancerService(t *testing.T) {
 		{
 			description:  "external classic load balancer without scope",
 			strategyType: operatorv1.LoadBalancerServiceStrategyType,
-			lbStrategy: operatorv1.LoadBalancerStrategy{
-				Scope: operatorv1.ExternalLoadBalancer,
-			},
-			proxyNeeded: true,
-			expect:      true,
+			proxyNeeded:  true,
+			expect:       true,
 		},
 		{
 			description:  "external classic load balancer without LoadBalancerStrategy",
