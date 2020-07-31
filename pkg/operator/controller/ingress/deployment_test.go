@@ -251,6 +251,9 @@ func TestDesiredRouterDeployment(t *testing.T) {
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_IP_V4_V6_MODE", false, "")
 
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_UNIQUE_ID_HEADER_NAME", false, "")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_UNIQUE_ID_FORMAT", false, "")
+
 	ci.Spec.Logging = &operatorv1.IngressControllerLogging{
 		Access: &operatorv1.AccessLogging{
 			Destination: operatorv1.LoggingDestination{
@@ -261,6 +264,11 @@ func TestDesiredRouterDeployment(t *testing.T) {
 			HTTPCaptureCookies: []operatorv1.IngressControllerCaptureHTTPCookie{
 				{MatchType: "Prefix", NamePrefix: "foo"},
 			},
+		},
+	}
+	ci.Spec.HTTPHeaders = &operatorv1.IngressControllerHTTPHeaders{
+		UniqueId: operatorv1.IngressControllerHTTPUniqueIdHeaderPolicy{
+			Name: "unique-id",
 		},
 	}
 	ci.Spec.TLSSecurityProfile = &configv1.TLSSecurityProfile{
@@ -362,6 +370,9 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	}
 	checkDeploymentDoesNotHaveEnvVar(t, deployment, "ROUTER_USE_PROXY_PROTOCOL")
 
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_UNIQUE_ID_HEADER_NAME", true, "unique-id")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_UNIQUE_ID_FORMAT", true, "%{+X}o %ci:%cp_%fi:%fp_%Ts_%rt:%pid")
+
 	secretName := fmt.Sprintf("secret-%v", time.Now().UnixNano())
 	ci.Spec.DefaultCertificate = &corev1.LocalObjectReference{
 		Name: secretName,
@@ -393,6 +404,10 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	}
 	ci.Spec.HTTPHeaders = &operatorv1.IngressControllerHTTPHeaders{
 		ForwardedHeaderPolicy: operatorv1.NeverHTTPHeaderPolicy,
+		UniqueId: operatorv1.IngressControllerHTTPUniqueIdHeaderPolicy{
+			Name:   "unique-id",
+			Format: "foo",
+		},
 	}
 	ci.Spec.NodePlacement = &operatorv1.NodePlacement{
 		NodeSelector: &metav1.LabelSelector{
@@ -472,6 +487,9 @@ func TestDesiredRouterDeployment(t *testing.T) {
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_IP_V4_V6_MODE", true, "v6")
 	checkDeploymentHasEnvVar(t, deployment, RouterDisableHTTP2EnvName, true, "true")
+
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_UNIQUE_ID_HEADER_NAME", true, "unique-id")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_UNIQUE_ID_FORMAT", true, "foo")
 }
 
 func TestInferTLSProfileSpecFromDeployment(t *testing.T) {
