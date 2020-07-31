@@ -9,6 +9,8 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awsutil"
 	"github.com/aws/aws-sdk-go/aws/request"
+	"github.com/aws/aws-sdk-go/private/protocol"
+	"github.com/aws/aws-sdk-go/private/protocol/query"
 )
 
 const opAddTags = "AddTags"
@@ -50,6 +52,7 @@ func (c *ELB) AddTagsRequest(input *AddTagsInput) (req *request.Request, output 
 
 	output = &AddTagsOutput{}
 	req = c.newRequest(op, input, output)
+	req.Handlers.Unmarshal.Swap(query.UnmarshalHandler.Name, protocol.UnmarshalDiscardBodyHandler)
 	return
 }
 
@@ -411,6 +414,7 @@ func (c *ELB) CreateAppCookieStickinessPolicyRequest(input *CreateAppCookieStick
 
 	output = &CreateAppCookieStickinessPolicyOutput{}
 	req = c.newRequest(op, input, output)
+	req.Handlers.Unmarshal.Swap(query.UnmarshalHandler.Name, protocol.UnmarshalDiscardBodyHandler)
 	return
 }
 
@@ -513,6 +517,7 @@ func (c *ELB) CreateLBCookieStickinessPolicyRequest(input *CreateLBCookieStickin
 
 	output = &CreateLBCookieStickinessPolicyOutput{}
 	req = c.newRequest(op, input, output)
+	req.Handlers.Unmarshal.Swap(query.UnmarshalHandler.Name, protocol.UnmarshalDiscardBodyHandler)
 	return
 }
 
@@ -746,6 +751,7 @@ func (c *ELB) CreateLoadBalancerListenersRequest(input *CreateLoadBalancerListen
 
 	output = &CreateLoadBalancerListenersOutput{}
 	req = c.newRequest(op, input, output)
+	req.Handlers.Unmarshal.Swap(query.UnmarshalHandler.Name, protocol.UnmarshalDiscardBodyHandler)
 	return
 }
 
@@ -847,6 +853,7 @@ func (c *ELB) CreateLoadBalancerPolicyRequest(input *CreateLoadBalancerPolicyInp
 
 	output = &CreateLoadBalancerPolicyOutput{}
 	req = c.newRequest(op, input, output)
+	req.Handlers.Unmarshal.Swap(query.UnmarshalHandler.Name, protocol.UnmarshalDiscardBodyHandler)
 	return
 }
 
@@ -942,6 +949,7 @@ func (c *ELB) DeleteLoadBalancerRequest(input *DeleteLoadBalancerInput) (req *re
 
 	output = &DeleteLoadBalancerOutput{}
 	req = c.newRequest(op, input, output)
+	req.Handlers.Unmarshal.Swap(query.UnmarshalHandler.Name, protocol.UnmarshalDiscardBodyHandler)
 	return
 }
 
@@ -1025,6 +1033,7 @@ func (c *ELB) DeleteLoadBalancerListenersRequest(input *DeleteLoadBalancerListen
 
 	output = &DeleteLoadBalancerListenersOutput{}
 	req = c.newRequest(op, input, output)
+	req.Handlers.Unmarshal.Swap(query.UnmarshalHandler.Name, protocol.UnmarshalDiscardBodyHandler)
 	return
 }
 
@@ -1104,6 +1113,7 @@ func (c *ELB) DeleteLoadBalancerPolicyRequest(input *DeleteLoadBalancerPolicyInp
 
 	output = &DeleteLoadBalancerPolicyOutput{}
 	req = c.newRequest(op, input, output)
+	req.Handlers.Unmarshal.Swap(query.UnmarshalHandler.Name, protocol.UnmarshalDiscardBodyHandler)
 	return
 }
 
@@ -1765,7 +1775,7 @@ func (c *ELB) DescribeLoadBalancersWithContext(ctx aws.Context, input *DescribeL
 //    // Example iterating over at most 3 pages of a DescribeLoadBalancers operation.
 //    pageNum := 0
 //    err := client.DescribeLoadBalancersPages(params,
-//        func(page *DescribeLoadBalancersOutput, lastPage bool) bool {
+//        func(page *elb.DescribeLoadBalancersOutput, lastPage bool) bool {
 //            pageNum++
 //            fmt.Println(page)
 //            return pageNum <= 3
@@ -1797,10 +1807,12 @@ func (c *ELB) DescribeLoadBalancersPagesWithContext(ctx aws.Context, input *Desc
 		},
 	}
 
-	cont := true
-	for p.Next() && cont {
-		cont = fn(p.Page().(*DescribeLoadBalancersOutput), !p.HasNextPage())
+	for p.Next() {
+		if !fn(p.Page().(*DescribeLoadBalancersOutput), !p.HasNextPage()) {
+			break
+		}
 	}
+
 	return p.Err()
 }
 
@@ -2394,6 +2406,7 @@ func (c *ELB) RemoveTagsRequest(input *RemoveTagsInput) (req *request.Request, o
 
 	output = &RemoveTagsOutput{}
 	req = c.newRequest(op, input, output)
+	req.Handlers.Unmarshal.Swap(query.UnmarshalHandler.Name, protocol.UnmarshalDiscardBodyHandler)
 	return
 }
 
@@ -2473,6 +2486,7 @@ func (c *ELB) SetLoadBalancerListenerSSLCertificateRequest(input *SetLoadBalance
 
 	output = &SetLoadBalancerListenerSSLCertificateOutput{}
 	req = c.newRequest(op, input, output)
+	req.Handlers.Unmarshal.Swap(query.UnmarshalHandler.Name, protocol.UnmarshalDiscardBodyHandler)
 	return
 }
 
@@ -2573,6 +2587,7 @@ func (c *ELB) SetLoadBalancerPoliciesForBackendServerRequest(input *SetLoadBalan
 
 	output = &SetLoadBalancerPoliciesForBackendServerOutput{}
 	req = c.newRequest(op, input, output)
+	req.Handlers.Unmarshal.Swap(query.UnmarshalHandler.Name, protocol.UnmarshalDiscardBodyHandler)
 	return
 }
 
@@ -2673,6 +2688,7 @@ func (c *ELB) SetLoadBalancerPoliciesOfListenerRequest(input *SetLoadBalancerPol
 
 	output = &SetLoadBalancerPoliciesOfListenerOutput{}
 	req = c.newRequest(op, input, output)
+	req.Handlers.Unmarshal.Swap(query.UnmarshalHandler.Name, protocol.UnmarshalDiscardBodyHandler)
 	return
 }
 

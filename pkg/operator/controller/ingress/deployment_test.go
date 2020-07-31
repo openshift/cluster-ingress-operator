@@ -55,6 +55,25 @@ func checkDeploymentHasEnvVar(t *testing.T, deployment *appsv1.Deployment, name 
 	}
 }
 
+func checkDeploymentDoesNotHaveEnvVar(t *testing.T, deployment *appsv1.Deployment, name string) {
+	t.Helper()
+
+	var (
+		actualValue string
+		foundValue  bool
+	)
+	for _, envVar := range deployment.Spec.Template.Spec.Containers[0].Env {
+		if envVar.Name == name {
+			foundValue = true
+			actualValue = envVar.Value
+			break
+		}
+	}
+	if foundValue {
+		t.Errorf("router Deployment has unexpected %s setting: %q", name, actualValue)
+	}
+}
+
 func checkDeploymentHasContainer(t *testing.T, deployment *appsv1.Deployment, name string, expect bool) {
 	t.Helper()
 
@@ -122,7 +141,9 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	ingressControllerImage := "quay.io/openshift/router:latest"
 	infraConfig := &configv1.Infrastructure{
 		Status: configv1.InfrastructureStatus{
-			Platform: configv1.AWSPlatformType,
+			PlatformStatus: &configv1.PlatformStatus{
+				Type: configv1.AWSPlatformType,
+			},
 		},
 	}
 	apiConfig := &configv1.APIServer{
@@ -150,7 +171,11 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		},
 	}
 
-	deployment, err := desiredRouterDeployment(ci, ingressControllerImage, infraConfig, ingressConfig, apiConfig, networkConfig)
+	proxyNeeded, err := IsProxyProtocolNeeded(ci, infraConfig.Status.PlatformStatus)
+	if err != nil {
+		t.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %v", ci.Namespace, ci.Name, err)
+	}
+	deployment, err := desiredRouterDeployment(ci, ingressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded)
 	if err != nil {
 		t.Errorf("invalid router Deployment: %v", err)
 	}
@@ -255,7 +280,11 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	ci.Spec.Replicas = &expectedReplicas
 	ci.Status.Domain = "example.com"
 	ci.Status.EndpointPublishingStrategy.Type = operatorv1.LoadBalancerServiceStrategyType
-	deployment, err = desiredRouterDeployment(ci, ingressControllerImage, infraConfig, ingressConfig, apiConfig, networkConfig)
+	proxyNeeded, err = IsProxyProtocolNeeded(ci, infraConfig.Status.PlatformStatus)
+	if err != nil {
+		t.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %v", ci.Namespace, ci.Name, err)
+	}
+	deployment, err = desiredRouterDeployment(ci, ingressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded)
 	if err != nil {
 		t.Errorf("invalid router Deployment: %v", err)
 	}
@@ -296,6 +325,42 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	checkDeploymentHasEnvVar(t, deployment, "SSL_MIN_VERSION", true, "TLSv1.2")
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_IP_V4_V6_MODE", true, "v4v6")
+
+	ci.Status.EndpointPublishingStrategy.LoadBalancer = &operatorv1.LoadBalancerStrategy{
+		Scope: operatorv1.ExternalLoadBalancer,
+		ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+			Type: operatorv1.AWSLoadBalancerProvider,
+			AWS: &operatorv1.AWSLoadBalancerParameters{
+				Type: operatorv1.AWSNetworkLoadBalancer,
+			},
+		},
+	}
+	proxyNeeded, err = IsProxyProtocolNeeded(ci, infraConfig.Status.PlatformStatus)
+	if err != nil {
+		t.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %v", ci.Namespace, ci.Name, err)
+	}
+	deployment, err = desiredRouterDeployment(ci, ingressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded)
+	if err != nil {
+		t.Errorf("invalid router Deployment: %v", err)
+	}
+	expectedHash = deploymentTemplateHash(deployment)
+	actualHash, haveHashLabel = deployment.Spec.Template.Labels[controller.ControllerDeploymentHashLabel]
+	if !haveHashLabel {
+		t.Error("router Deployment is missing hash label")
+	} else if actualHash != expectedHash {
+		t.Errorf("router Deployment has wrong hash; expected: %s, got: %s", expectedHash, actualHash)
+	}
+	checkRollingUpdateParams(t, deployment, intstr.FromString("25%"), intstr.FromString("25%"))
+	if deployment.Spec.Template.Spec.HostNetwork != false {
+		t.Error("expected host network to be false")
+	}
+	if len(deployment.Spec.Template.Spec.Containers[0].LivenessProbe.Handler.HTTPGet.Host) != 0 {
+		t.Errorf("expected empty liveness probe host, got %q", deployment.Spec.Template.Spec.Containers[0].LivenessProbe.Handler.HTTPGet.Host)
+	}
+	if len(deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.Handler.HTTPGet.Host) != 0 {
+		t.Errorf("expected empty readiness probe host, got %q", deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.Handler.HTTPGet.Host)
+	}
+	checkDeploymentDoesNotHaveEnvVar(t, deployment, "ROUTER_USE_PROXY_PROTOCOL")
 
 	secretName := fmt.Sprintf("secret-%v", time.Now().UnixNano())
 	ci.Spec.DefaultCertificate = &corev1.LocalObjectReference{
@@ -343,7 +408,11 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	networkConfig.Status.ClusterNetwork = []configv1.ClusterNetworkEntry{
 		{CIDR: "2620:0:2d0:200::7/32"},
 	}
-	deployment, err = desiredRouterDeployment(ci, ingressControllerImage, infraConfig, ingressConfig, apiConfig, networkConfig)
+	proxyNeeded, err = IsProxyProtocolNeeded(ci, infraConfig.Status.PlatformStatus)
+	if err != nil {
+		t.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %v", ci.Namespace, ci.Name, err)
+	}
+	deployment, err = desiredRouterDeployment(ci, ingressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded)
 	if err != nil {
 		t.Errorf("invalid router Deployment: %v", err)
 	}
