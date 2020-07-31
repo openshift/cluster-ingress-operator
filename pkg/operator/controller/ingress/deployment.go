@@ -35,6 +35,8 @@ import (
 const (
 	WildcardRouteAdmissionPolicy = "ROUTER_ALLOW_WILDCARD_ROUTES"
 
+	RouterForwardedHeadersPolicy = "ROUTER_SET_FORWARDED_HEADERS"
+
 	RouterLogLevelEnvName       = "ROUTER_LOG_LEVEL"
 	RouterSyslogAddressEnvName  = "ROUTER_SYSLOG_ADDRESS"
 	RouterSyslogFormatEnvName   = "ROUTER_SYSLOG_FORMAT"
@@ -564,6 +566,23 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	default:
 		env = append(env, corev1.EnvVar{Name: WildcardRouteAdmissionPolicy, Value: "false"})
 	}
+
+	forwardedHeaderPolicy := operatorv1.AppendHTTPHeaderPolicy
+	if ci.Spec.HTTPHeaders != nil && len(ci.Spec.HTTPHeaders.ForwardedHeaderPolicy) != 0 {
+		forwardedHeaderPolicy = ci.Spec.HTTPHeaders.ForwardedHeaderPolicy
+	}
+	routerForwardedHeadersPolicyValue := "append"
+	switch forwardedHeaderPolicy {
+	case operatorv1.AppendHTTPHeaderPolicy:
+		// Nothing to do.
+	case operatorv1.ReplaceHTTPHeaderPolicy:
+		routerForwardedHeadersPolicyValue = "replace"
+	case operatorv1.IfNoneHTTPHeaderPolicy:
+		routerForwardedHeadersPolicyValue = "if-none"
+	case operatorv1.NeverHTTPHeaderPolicy:
+		routerForwardedHeadersPolicyValue = "never"
+	}
+	env = append(env, corev1.EnvVar{Name: RouterForwardedHeadersPolicy, Value: routerForwardedHeadersPolicyValue})
 
 	if HTTP2IsEnabled(ci, ingressConfig) {
 		env = append(env, corev1.EnvVar{Name: RouterDisableHTTP2EnvName, Value: "false"})

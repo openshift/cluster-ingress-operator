@@ -543,6 +543,7 @@ func TestInternalLoadBalancer(t *testing.T) {
 	supportedPlatforms := map[configv1.PlatformType]struct{}{
 		configv1.AWSPlatformType:      {},
 		configv1.AzurePlatformType:    {},
+		configv1.GCPPlatformType:      {},
 		configv1.IBMCloudPlatformType: {},
 	}
 	if _, supported := supportedPlatforms[platform]; !supported {
@@ -1535,6 +1536,30 @@ func waitForDeploymentComplete(t *testing.T, cl client.Client, deployment *appsv
 		return fmt.Errorf("failed to observe deployment rollout complete; deployment specifies %v replicas and has generation %v; last observed %v updated, %v available, %v total replicas, with observed generation %v", replicas, deployment.Generation, deployment.Status.UpdatedReplicas, deployment.Status.AvailableReplicas, deployment.Status.Replicas, deployment.Status.ObservedGeneration)
 	}
 	return nil
+}
+
+// Wait for the provided deployment to have the specified environment variable set.
+func waitForDeploymentEnvVar(t *testing.T, cl client.Client, deployment *appsv1.Deployment, timeout time.Duration, name, value string) error {
+	t.Helper()
+	deploymentName := types.NamespacedName{Namespace: deployment.Namespace, Name: deployment.Name}
+	err := wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
+		deployment := &appsv1.Deployment{}
+		if err := kclient.Get(context.TODO(), deploymentName, deployment); err != nil {
+			t.Logf("error getting deployment %s: %v", name, err)
+			return false, nil
+		}
+		for _, container := range deployment.Spec.Template.Spec.Containers {
+			if container.Name == "router" {
+				for _, v := range container.Env {
+					if v.Name == name {
+						return v.Value == value, nil
+					}
+				}
+			}
+		}
+		return false, nil
+	})
+	return err
 }
 
 func clusterOperatorConditionMap(conditions ...configv1.ClusterOperatorStatusCondition) map[string]string {

@@ -288,6 +288,8 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SYSLOG_FORMAT", true, `"%ci:%cp [%t] %ft %b/%s %B %bq %HM %HU %HV"`)
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CAPTURE_HTTP_COOKIE", true, "foo:256")
 
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SET_FORWARDED_HEADERS", true, "append")
+
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CIPHERS", true, "quux")
 
 	// TODO: Update when haproxy is built with an openssl version that supports tls v1.3.
@@ -323,6 +325,9 @@ func TestDesiredRouterDeployment(t *testing.T) {
 				{MatchType: "Exact", Name: "foo", MaxLength: 15},
 			},
 		},
+	}
+	ci.Spec.HTTPHeaders = &operatorv1.IngressControllerHTTPHeaders{
+		ForwardedHeaderPolicy: operatorv1.NeverHTTPHeaderPolicy,
 	}
 	ci.Spec.NodePlacement = &operatorv1.NodePlacement{
 		NodeSelector: &metav1.LabelSelector{
@@ -393,6 +398,8 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CAPTURE_HTTP_REQUEST_HEADERS", true, "Host:15,Referer:15")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CAPTURE_HTTP_RESPONSE_HEADERS", true, "Content-length:9,Location:15")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CAPTURE_HTTP_COOKIE", true, "foo=:15")
+
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SET_FORWARDED_HEADERS", true, "never")
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_IP_V4_V6_MODE", true, "v6")
 	checkDeploymentHasEnvVar(t, deployment, RouterDisableHTTP2EnvName, true, "true")
