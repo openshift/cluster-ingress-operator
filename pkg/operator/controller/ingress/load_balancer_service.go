@@ -178,6 +178,7 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 			if ci.Status.EndpointPublishingStrategy.LoadBalancer != nil &&
 				ci.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters != nil &&
 				ci.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.Type == operatorv1.AWSLoadBalancerProvider &&
+				ci.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS != nil &&
 				ci.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.Type == operatorv1.AWSNetworkLoadBalancer {
 				service.Annotations[AWSLBTypeAnnotation] = AWSNLBAnnotation
 			}
