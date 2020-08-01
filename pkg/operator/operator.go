@@ -163,14 +163,14 @@ func (o *Operator) ensureDefaultIngressController() error {
 	// https://github.com/kubernetes/kubernetes/pull/75210
 	//
 	// TODO: Set the replicas value to the number of workers.
-	two := int32(2)
+	defaultReplicas := int32(3)
 	ic := &operatorv1.IngressController{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      manifests.DefaultIngressControllerName,
 			Namespace: o.namespace,
 		},
 		Spec: operatorv1.IngressControllerSpec{
-			Replicas: &two,
+			Replicas: &defaultReplicas,
 		},
 	}
 	err := o.client.Get(context.TODO(), types.NamespacedName{Namespace: ic.Namespace, Name: ic.Name}, ic)

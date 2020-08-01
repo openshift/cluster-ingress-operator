@@ -601,7 +601,7 @@ func TestDeploymentHash(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		two := int32(2)
+		defaultReplicas := int32(3)
 		original := &appsv1.Deployment{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "router-original",
@@ -614,7 +614,7 @@ func TestDeploymentHash(t *testing.T) {
 						Tolerations: []corev1.Toleration{toleration, otherToleration},
 					},
 				},
-				Replicas: &two,
+				Replicas: &defaultReplicas,
 			},
 		}
 		mutated := original.DeepCopy()

@@ -157,7 +157,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	volumes := deployment.Spec.Template.Spec.Volumes
 	routerVolumeMounts := deployment.Spec.Template.Spec.Containers[0].VolumeMounts
 
-	var desiredReplicas int32 = 2
+	var desiredReplicas int32 = 3
 	if ci.Spec.Replicas != nil {
 		desiredReplicas = *ci.Spec.Replicas
 	}
