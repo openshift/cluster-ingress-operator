@@ -601,6 +601,10 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		ci = updated
 	}
 
+	if _, _, err := r.ensureClusterRole(); err != nil {
+		return fmt.Errorf("failed to ensure cluster role: %v", err)
+	}
+
 	if err := r.ensureRouterNamespace(); err != nil {
 		return fmt.Errorf("failed to ensure namespace: %v", err)
 	}
