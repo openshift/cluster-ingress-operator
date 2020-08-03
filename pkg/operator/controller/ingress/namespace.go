@@ -13,17 +13,6 @@ import (
 // ensureRouterNamespace ensures all the necessary scaffolding exists for
 // routers generally, including a namespace and all RBAC setup.
 func (r *reconciler) ensureRouterNamespace() error {
-	cr := manifests.RouterClusterRole()
-	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: cr.Name}, cr); err != nil {
-		if !errors.IsNotFound(err) {
-			return fmt.Errorf("failed to get router cluster role %s: %v", cr.Name, err)
-		}
-		if err := r.client.Create(context.TODO(), cr); err != nil {
-			return fmt.Errorf("failed to create router cluster role %s: %v", cr.Name, err)
-		}
-		log.Info("created router cluster role", "name", cr.Name)
-	}
-
 	ns := manifests.RouterNamespace()
 	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: ns.Name}, ns); err != nil {
 		if !errors.IsNotFound(err) {
