@@ -600,7 +600,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		}
 		env = append(env,
 			corev1.EnvVar{Name: RouterUniqueHeaderName, Value: headerName},
-			corev1.EnvVar{Name: RouterUniqueHeaderFormat, Value: headerFormat},
+			corev1.EnvVar{Name: RouterUniqueHeaderFormat, Value: fmt.Sprintf("%q", headerFormat)},
 		)
 	}
 
