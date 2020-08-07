@@ -1,0 +1,25 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: ingress-operator
+  namespace: openshift-ingress-operator
+  labels:
+    role: alert-rules
+spec:
+  groups:
+    - name: openshift-ingress.rules
+      rules:
+      - alert: HAProxyReloadFail
+        expr: increase(template_router_reload_fails[5m]) > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          message: "HAProxy reloads have failed on {{ $labels.pod }}. Router is not respecting recently created or modified routes"
+      - alert: HAProxyDown
+        expr: haproxy_up == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          message: "HAProxy metrics are reporting that the router is down"
