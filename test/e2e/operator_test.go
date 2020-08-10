@@ -1462,6 +1462,128 @@ func TestNetworkLoadBalancer(t *testing.T) {
 	}
 }
 
+func TestUniqueIdHeader(t *testing.T) {
+	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "uniqueid"}
+	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
+	ic := newPrivateController(icName, domain)
+	ic.Spec.HTTPHeaders = &operatorv1.IngressControllerHTTPHeaders{
+		UniqueId: operatorv1.IngressControllerHTTPUniqueIdHeaderPolicy{Name: "x-unique-id"},
+	}
+	if err := kclient.Create(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
+	}
+	defer assertIngressControllerDeleted(t, kclient, ic)
+	conditions := []operatorv1.OperatorCondition{
+		{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionTrue},
+		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
+		{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionFalse},
+	}
+	if err := waitForIngressControllerCondition(kclient, 5*time.Minute, icName, conditions...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	deployment := &appsv1.Deployment{}
+	if err := kclient.Get(context.TODO(), controller.RouterDeploymentName(ic), deployment); err != nil {
+		t.Fatalf("failed to get ingresscontroller deployment: %v", err)
+	}
+
+	service := &corev1.Service{}
+	if err := kclient.Get(context.TODO(), controller.InternalIngressControllerServiceName(ic), service); err != nil {
+		t.Fatalf("failed to get ingresscontroller service: %v", err)
+	}
+
+	echoPod := buildEchoPod("unique-id-echo", deployment.Namespace)
+	if err := kclient.Create(context.TODO(), echoPod); err != nil {
+		t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), echoPod); err != nil {
+			t.Fatalf("failed to delete pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
+		}
+	}()
+
+	echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels)
+	if err := kclient.Create(context.TODO(), echoService); err != nil {
+		t.Fatalf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), echoService); err != nil {
+			t.Fatalf("failed to delete service %s/%s: %v", echoService.Namespace, echoService.Name, err)
+		}
+	}()
+
+	echoRoute := buildRoute(echoPod.Name, echoPod.Namespace, echoService.Name)
+	if err := kclient.Create(context.TODO(), echoRoute); err != nil {
+		t.Fatalf("failed to create route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), echoRoute); err != nil {
+			t.Fatalf("failed to delete route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
+		}
+	}()
+
+	kubeConfig, err := config.GetConfig()
+	if err != nil {
+		t.Fatalf("failed to get kube config: %v", err)
+	}
+	client, err := kubernetes.NewForConfig(kubeConfig)
+	if err != nil {
+		t.Fatalf("failed to create kube client: %v", err)
+	}
+	uniqueHeaders := map[string]int{}
+	const numRequests = 3
+	for i := 1; i <= numRequests; i++ {
+		name := fmt.Sprintf("unique-id-header-test-%d", i)
+		image := deployment.Spec.Template.Spec.Containers[0].Image
+		clientPod := buildCurlPod(name, echoRoute.Namespace, image, echoRoute.Spec.Host, service.Spec.ClusterIP)
+		if err := kclient.Create(context.TODO(), clientPod); err != nil {
+			t.Fatalf("failed to create pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
+		}
+		defer func() {
+			if err := kclient.Delete(context.TODO(), clientPod); err != nil {
+				t.Fatalf("failed to delete pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
+			}
+		}()
+
+		err = wait.PollImmediate(1*time.Second, 5*time.Minute, func() (bool, error) {
+			readCloser, err := client.CoreV1().Pods(clientPod.Namespace).GetLogs(clientPod.Name, &corev1.PodLogOptions{
+				Container: "curl",
+				Follow:    false,
+			}).Stream(context.TODO())
+			if err != nil {
+				t.Logf("failed to read output from pod %s: %v", clientPod.Name, err)
+				return false, nil
+			}
+			scanner := bufio.NewScanner(readCloser)
+			defer func() {
+				if err := readCloser.Close(); err != nil {
+					t.Errorf("failed to close reader for pod %s: %v", clientPod.Name, err)
+				}
+			}()
+			for scanner.Scan() {
+				line := scanner.Text()
+				if strings.HasPrefix(line, "x-unique-id:") {
+					t.Logf("found x-unique-id header from pod %s: %q", clientPod.Name, line)
+					uniqueHeaders[line]++
+					return true, nil
+				}
+			}
+			return false, nil
+		})
+		if err != nil {
+			t.Fatalf("failed to observe the expected log message: %v", err)
+		}
+	}
+	if len(uniqueHeaders) != numRequests {
+		t.Errorf("expected %d distinct x-unique-id headers, found %d", numRequests, len(uniqueHeaders))
+	}
+	for header, count := range uniqueHeaders {
+		if count != 1 {
+			t.Errorf("expected each x-unique-id header to be unique, found %d occurrences of %q", count, header)
+		}
+	}
+}
+
 func newLoadBalancerController(name types.NamespacedName, domain string) *operatorv1.IngressController {
 	repl := int32(1)
 	return &operatorv1.IngressController{

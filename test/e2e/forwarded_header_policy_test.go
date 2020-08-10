@@ -21,82 +21,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	"k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/wait"
 
 	"k8s.io/client-go/kubernetes"
 )
-
-// buildEchoPod returns a pod definition for an socat-based echo server.
-func buildEchoPod(namespace string) *corev1.Pod {
-	return &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Labels: map[string]string{
-				"app": "echo",
-			},
-			Name:      "echo",
-			Namespace: namespace,
-		},
-		Spec: corev1.PodSpec{
-			Containers: []corev1.Container{
-				{
-					Args: []string{
-						"TCP4-LISTEN:8080,reuseaddr,fork",
-						`EXEC:'/bin/bash -c \"printf \\\"HTTP/1.0 200 OK\r\n\r\n\\\"; sed -e \\\"/^\r/q\\\"\"'`,
-					},
-					Command: []string{"/bin/socat"},
-					Image:   "openshift/origin-node",
-					Name:    "echo",
-					Ports: []corev1.ContainerPort{
-						{
-							ContainerPort: int32(8080),
-							Protocol:      corev1.ProtocolTCP,
-						},
-					},
-				},
-			},
-		},
-	}
-}
-
-// buildEchoService returns a service definition for an HTTP service.
-func buildEchoService(name, namespace string, labels map[string]string) *corev1.Service {
-	return &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: namespace,
-		},
-		Spec: corev1.ServiceSpec{
-			Ports: []corev1.ServicePort{
-				{
-					Name:       "http",
-					Port:       int32(80),
-					Protocol:   corev1.ProtocolTCP,
-					TargetPort: intstr.FromInt(8080),
-				},
-			},
-			Selector: labels,
-		},
-	}
-}
-
-// buildRoute returns a route definition targeting the specified service.
-func buildRoute(name, namespace, serviceName string) *routev1.Route {
-	return &routev1.Route{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: namespace,
-		},
-		Spec: routev1.RouteSpec{
-			To: routev1.RouteTargetReference{
-				Kind: "Service",
-				Name: serviceName,
-			},
-		},
-	}
-}
 
 // testPodCount is a counter that is used to give each test pod a distinct name.
 var testPodCount int
@@ -116,35 +45,13 @@ func testRouteHeaders(t *testing.T, image string, route *routev1.Route, address 
 		t.Fatalf("failed to create kube client: %v", err)
 	}
 
-	curlArgs := []string{
-		"-s",
-		"--retry", "15", "--retry-delay", "1",
-		"--max-time", "2",
-		"--resolve",
-		route.Spec.Host + ":80:" + address,
-	}
+	var extraCurlArgs []string
 	for _, header := range headers {
-		curlArgs = append(curlArgs, "-H", header)
+		extraCurlArgs = append(extraCurlArgs, "-H", header)
 	}
-	curlArgs = append(curlArgs, "http://"+route.Spec.Host)
 	testPodCount++
-	clientPod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("forwardedheader%d", testPodCount),
-			Namespace: route.Namespace,
-		},
-		Spec: corev1.PodSpec{
-			Containers: []corev1.Container{
-				{
-					Name:    "curl",
-					Image:   image,
-					Command: []string{"/bin/curl"},
-					Args:    curlArgs,
-				},
-			},
-			RestartPolicy: corev1.RestartPolicyNever,
-		},
-	}
+	name := fmt.Sprintf("forwardedheader%d", testPodCount)
+	clientPod := buildCurlPod(name, route.Namespace, image, route.Spec.Host, address, extraCurlArgs...)
 	if err := kclient.Create(context.TODO(), clientPod); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
 	}
@@ -220,7 +127,7 @@ func TestForwardedHeaderPolicyAppend(t *testing.T) {
 	}
 
 	// Create a pod and route that echoes back the request.
-	echoPod := buildEchoPod(deployment.Namespace)
+	echoPod := buildEchoPod("forwarded-header-policy-append-echo", deployment.Namespace)
 	if err := kclient.Create(context.TODO(), echoPod); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 	}
@@ -316,7 +223,7 @@ func TestForwardedHeaderPolicyReplace(t *testing.T) {
 		t.Fatalf("failed to get ingresscontroller service: %v", err)
 	}
 
-	echoPod := buildEchoPod(deployment.Namespace)
+	echoPod := buildEchoPod("forwarded-header-policy-replace-echo", deployment.Namespace)
 	if err := kclient.Create(context.TODO(), echoPod); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 	}
@@ -385,7 +292,7 @@ func TestForwardedHeaderPolicyNever(t *testing.T) {
 		t.Fatalf("failed to get ingresscontroller service: %v", err)
 	}
 
-	echoPod := buildEchoPod(deployment.Namespace)
+	echoPod := buildEchoPod("forwarded-header-policy-never-echo", deployment.Namespace)
 	if err := kclient.Create(context.TODO(), echoPod); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 	}
@@ -455,7 +362,7 @@ func TestForwardedHeaderPolicyIfNone(t *testing.T) {
 		t.Fatalf("failed to get ingresscontroller service: %v", err)
 	}
 
-	echoPod := buildEchoPod(deployment.Namespace)
+	echoPod := buildEchoPod("forwarded-header-policy-if-none-echo", deployment.Namespace)
 	if err := kclient.Create(context.TODO(), echoPod); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 	}
