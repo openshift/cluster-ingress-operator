@@ -15,7 +15,6 @@ import (
 	dnscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/dns"
 	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 	statuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/status"
-	operatorutil "github.com/openshift/cluster-ingress-operator/pkg/util"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 
@@ -57,9 +56,8 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	scheme := operatorclient.GetScheme()
 	// Set up an operator manager for the operator namespace.
 	mgr, err := manager.New(kubeConfig, manager.Options{
-		Namespace:      config.Namespace,
-		Scheme:         scheme,
-		MapperProvider: operatorutil.NewDynamicRESTMapper,
+		Namespace: config.Namespace,
+		Scheme:    scheme,
 		NewCache: cache.MultiNamespacedCacheBuilder([]string{
 			config.Namespace,
 			manifests.DefaultOperandNamespace,
