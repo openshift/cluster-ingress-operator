@@ -344,7 +344,7 @@ func (m *Provider) change(record *iov1.DNSRecord, zone configv1.DNSZone, action 
 	}
 
 	// Configure records.
-	err = m.updateAlias(domain, zoneID, target, targetHostedZoneID, string(action))
+	err = m.updateRecord(domain, zoneID, target, targetHostedZoneID, string(action))
 	if err != nil {
 		return fmt.Errorf("failed to update alias in zone %s: %v", zoneID, err)
 	}
@@ -357,18 +357,34 @@ func (m *Provider) change(record *iov1.DNSRecord, zone configv1.DNSZone, action 
 	return nil
 }
 
-// updateAlias creates or updates an alias for domain in zoneID pointed at
-// target in targetHostedZoneID.
-func (m *Provider) updateAlias(domain, zoneID, target, targetHostedZoneID, action string) error {
-	resp, err := m.route53.ChangeResourceRecordSets(&route53.ChangeResourceRecordSetsInput{
-		HostedZoneId: aws.String(zoneID),
-		ChangeBatch: &route53.ChangeBatch{
+// updateRecord creates or updates a DNS record for domain in zoneID pointed at
+// target in targetHostedZoneID. An Alias record type is used for all regions
+// other than GovCloud (CNAME). See the following for additional details:
+// https://docs.aws.amazon.com/govcloud-us/latest/UserGuide/govcloud-r53.html
+func (m *Provider) updateRecord(domain, zoneID, target, targetHostedZoneID, action string) error {
+	input := route53.ChangeResourceRecordSetsInput{HostedZoneId: aws.String(zoneID)}
+	if strings.Contains(m.config.Region, endpoints.AwsUsGovPartitionID) {
+		record := route53.ResourceRecord{Value: aws.String(target)}
+		input.ChangeBatch = &route53.ChangeBatch{
+			Changes: []*route53.Change{
+				{
+					Action: aws.String(action),
+					ResourceRecordSet: &route53.ResourceRecordSet{
+						Name:            aws.String(domain),
+						Type:            aws.String(route53.RRTypeCname),
+						ResourceRecords: []*route53.ResourceRecord{&record},
+					},
+				},
+			},
+		}
+	} else {
+		input.ChangeBatch = &route53.ChangeBatch{
 			Changes: []*route53.Change{
 				{
 					Action: aws.String(action),
 					ResourceRecordSet: &route53.ResourceRecordSet{
 						Name: aws.String(domain),
-						Type: aws.String("A"),
+						Type: aws.String(route53.RRTypeA),
 						AliasTarget: &route53.AliasTarget{
 							HostedZoneId:         aws.String(targetHostedZoneID),
 							DNSName:              aws.String(target),
@@ -377,8 +393,9 @@ func (m *Provider) updateAlias(domain, zoneID, target, targetHostedZoneID, actio
 					},
 				},
 			},
-		},
-	})
+		}
+	}
+	resp, err := m.route53.ChangeResourceRecordSets(&input)
 	if err != nil {
 		if action == string(deleteAction) {
 			if aerr, ok := err.(awserr.Error); ok {
