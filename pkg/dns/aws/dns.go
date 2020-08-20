@@ -34,6 +34,15 @@ const (
 	ELBService = elb.ServiceName
 	// TaggingService is the name of the Resource Group Tagging service.
 	TaggingService = resourcegroupstaggingapi.ServiceName
+	// govCloudRoute53Region is the AWS GovCloud region for Route 53. See:
+	// https://docs.aws.amazon.com/govcloud-us/latest/UserGuide/using-govcloud-endpoints.html
+	govCloudRoute53Region = "us-gov"
+	// govCloudRoute53Endpoint is the Route 53 service endpoint used for AWS GovCloud.
+	govCloudRoute53Endpoint = "https://route53.us-gov.amazonaws.com"
+	// chinaRoute53Endpoint is the Route 53 service endpoint used for AWS China regions.
+	chinaRoute53Endpoint = "https://route53.amazonaws.com.cn"
+	// standardRoute53Endpoint is the standard AWS Route 53 service endpoint.
+	standardRoute53Endpoint = "https://route53.amazonaws.com"
 )
 
 var (
@@ -126,54 +135,57 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 	tagConfig := aws.NewConfig()
 
 	// If the region is in aws china, cn-north-1 or cn-northwest-1, we should:
-	// 1. hard code route53 api endpoint to https://route53.amazonaws.com.cn and region to "cn-northwest-1" as route53 is not GA in AWS China,
-	//    and aws sdk didn't have the endpoint.
+	// 1. hard code route53 api endpoint to https://route53.amazonaws.com.cn and region to "cn-northwest-1"
+	//    as route53 is not GA in AWS China and aws sdk didn't have the endpoint.
 	// 2. use the aws china region cn-northwest-1 to setup tagging api correctly instead of "us-east-1"
 	switch region {
 	case endpoints.CnNorth1RegionID, endpoints.CnNorthwest1RegionID:
 		tagConfig = tagConfig.WithRegion(endpoints.CnNorthwest1RegionID)
-		r53Config = r53Config.WithRegion(endpoints.CnNorthwest1RegionID)
-		r53Config = r53Config.WithEndpoint("https://route53.amazonaws.com.cn")
+		r53Config = r53Config.WithRegion(endpoints.CnNorthwest1RegionID).WithEndpoint(chinaRoute53Endpoint)
+	case endpoints.UsGovEast1RegionID, endpoints.UsGovWest1RegionID:
+		// Route53 for GovCloud uses the "us-gov" region id:
+		// https://docs.aws.amazon.com/govcloud-us/latest/UserGuide/using-govcloud-endpoints.html
+		r53Config = r53Config.WithRegion(govCloudRoute53Region)
+		tagConfig = tagConfig.WithRegion(region)
 	default:
 		// Since Route 53 is not a regionalized service, the Tagging API will
 		// only return hosted zone resources when the region is "us-east-1".
 		tagConfig = tagConfig.WithRegion(endpoints.UsEast1RegionID)
-		// Route 53 in AWS Regions other than the AWS Beijing and
-		// Ningxia (China) Regions: specify us-east-1 as the Region.
+		// Use us-east-1 for Route 53 in AWS Regions other than China or GovCloud Regions.
 		// See https://docs.aws.amazon.com/general/latest/gr/r53.html for details.
 		r53Config = r53Config.WithRegion(endpoints.UsEast1RegionID)
-		if len(config.ServiceEndpoints) > 0 {
-			route53Found := false
-			elbFound := false
-			tagFound := false
-			for _, ep := range config.ServiceEndpoints {
-				switch {
-				case route53Found && elbFound && tagFound:
-					break
-				case ep.Name == Route53Service:
-					route53Found = true
-					if urlContainsRegion(endpoints.UsEast1RegionID, ep.URL) || ep.URL == "https://route53.amazonaws.com" {
-						r53Config = r53Config.WithEndpoint(ep.URL)
-						log.Info("using route53 custom endpoint", "url", ep.URL)
-					} else {
-						return nil, fmt.Errorf("%s does not include required %s region identifier", ep.URL, endpoints.UsEast1RegionID)
-					}
-				case ep.Name == TaggingService:
-					tagFound = true
-					if urlContainsRegion(endpoints.UsEast1RegionID, ep.URL) {
-						tagConfig = tagConfig.WithEndpoint(ep.URL)
-						log.Info("using group tagging custom endpoint", "url", ep.URL)
-					} else {
-						return nil, fmt.Errorf("%s does not include required %s region identifier", ep.URL, endpoints.UsEast1RegionID)
-					}
-				case ep.Name == ELBService:
-					elbFound = true
-					if urlContainsRegion(region, ep.URL) {
-						elbConfig = elbConfig.WithEndpoint(ep.URL)
-						log.Info("using elb custom endpoint", "url", ep.URL)
-					} else {
-						return nil, fmt.Errorf("%s does not include required %s region identifier", ep.URL, region)
-					}
+	}
+	if len(config.ServiceEndpoints) > 0 {
+		route53Found := false
+		elbFound := false
+		tagFound := false
+		for _, ep := range config.ServiceEndpoints {
+			switch {
+			case route53Found && elbFound && tagFound:
+				break
+			case ep.Name == Route53Service:
+				route53Found = true
+				if urlContainsValidRegion(region, ep.URL) {
+					r53Config = r53Config.WithEndpoint(ep.URL)
+					log.Info("using route53 custom endpoint", "url", ep.URL)
+				} else {
+					return nil, fmt.Errorf("invalid %s service url %s for region %s", Route53Service, ep.URL, region)
+				}
+			case ep.Name == TaggingService:
+				tagFound = true
+				if urlContainsValidRegion(region, ep.URL) {
+					tagConfig = tagConfig.WithEndpoint(ep.URL)
+					log.Info("using group tagging custom endpoint", "url", ep.URL)
+				} else {
+					return nil, fmt.Errorf("invalid %s service url %s for region %s", TaggingService, ep.URL, region)
+				}
+			case ep.Name == ELBService:
+				elbFound = true
+				if urlContainsValidRegion(region, ep.URL) {
+					elbConfig = elbConfig.WithEndpoint(ep.URL)
+					log.Info("using elb custom endpoint", "url", ep.URL)
+				} else {
+					return nil, fmt.Errorf("invalid %s service url %s for region %s", ELBService, ep.URL, region)
 				}
 			}
 		}
@@ -192,9 +204,45 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 	}, nil
 }
 
-// urlContainsRegion checks whether uri contains region.
-func urlContainsRegion(region, uri string) bool {
-	return strings.Contains(uri, region)
+// urlContainsValidRegion checks whether uri is valid based on provided region.
+func urlContainsValidRegion(region, uri string) bool {
+	switch {
+	case strings.Contains(uri, Route53Service):
+		switch region {
+		case endpoints.CnNorth1RegionID, endpoints.CnNorthwest1RegionID:
+			if uri == chinaRoute53Endpoint {
+				return true
+			}
+		case endpoints.UsGovEast1RegionID, endpoints.UsGovWest1RegionID:
+			if uri == govCloudRoute53Endpoint {
+				return true
+			}
+		default:
+			if uri == standardRoute53Endpoint || strings.Contains(uri, endpoints.UsEast1RegionID) {
+				return true
+			}
+		}
+	case strings.Contains(uri, TaggingService):
+		switch region {
+		case endpoints.CnNorth1RegionID, endpoints.CnNorthwest1RegionID:
+			if strings.Contains(uri, endpoints.CnNorthwest1RegionID) {
+				return true
+			}
+		case endpoints.UsGovEast1RegionID, endpoints.UsGovWest1RegionID:
+			if strings.Contains(uri, endpoints.UsGovWest1RegionID) || strings.Contains(uri, endpoints.UsGovEast1RegionID) {
+				return true
+			}
+		default:
+			if strings.Contains(uri, endpoints.UsEast1RegionID) {
+				return true
+			}
+		}
+	default:
+		if strings.Contains(uri, region) {
+			return true
+		}
+	}
+	return false
 }
 
 // getZoneID finds the ID of given zoneConfig in Route53. If an ID is already
