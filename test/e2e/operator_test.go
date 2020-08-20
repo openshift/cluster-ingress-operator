@@ -30,6 +30,8 @@ import (
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 
+	"github.com/aws/aws-sdk-go/aws/endpoints"
+
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 
@@ -1077,36 +1079,53 @@ func TestContainerLogging(t *testing.T) {
 }
 
 func TestIngressControllerCustomEndpoints(t *testing.T) {
-	// TODO: Change from spec to status after https://bugzilla.redhat.com/show_bug.cgi?id=1850681
-	//       is fixed.
-	platform := infraConfig.Spec.PlatformSpec
+	platform := infraConfig.Status.PlatformStatus
+	if platform == nil {
+		t.Fatalf("platform status is missing for infrastructure %s", infraConfig.Name)
+	}
 	switch platform.Type {
 	case configv1.AWSPlatformType:
-		if len(platform.AWS.ServiceEndpoints) != 0 {
-			t.Fatalf("custom endpoints detected for infrastructure %s", infraConfig.Name)
+		switch {
+		case platform.AWS == nil:
+			t.Fatalf("aws platform status is missing for infrastructure %s", infraConfig.Name)
+		case len(platform.AWS.ServiceEndpoints) != 0:
+			t.Skipf("custom endpoints detected for infrastructure %s, skipping TestIngressControllerCustomEndpoints",
+				infraConfig.Name)
+		case len(platform.AWS.Region) == 0:
+			t.Fatalf("region is missing from aws platform status for infrastructure %s", infraConfig.Name)
+		case platform.AWS.Region == endpoints.CnNorth1RegionID || platform.AWS.Region == endpoints.CnNorthwest1RegionID:
+			t.Skipf("region %s or %s detected for infrastructure %s, skipping TestIngressControllerCustomEndpoints",
+				endpoints.CnNorth1RegionID, endpoints.CnNorthwest1RegionID, infraConfig.Name)
 		}
 		route53Endpoint := configv1.AWSServiceEndpoint{
 			Name: "route53",
-			URL:  "https://route53.amazonaws.com",
+			// AWS Route 53 is a non-regionalized service, so the endpoint URL
+			// does not include a region.
+			URL: "https://route53.amazonaws.com",
 		}
 		taggingEndpoint := configv1.AWSServiceEndpoint{
 			Name: "tagging",
-			URL:  "https://tagging.us-east-1.amazonaws.com",
+			// us-east-1 region is required to get hosted zone resources
+			// since route 53 is a non-regionalized service.
+			URL: "https://tagging.us-east-1.amazonaws.com",
 		}
-		endpoints := []configv1.AWSServiceEndpoint{route53Endpoint, taggingEndpoint}
-		infraConfig.Spec.PlatformSpec.AWS.ServiceEndpoints = endpoints
+		elbEndpoint := configv1.AWSServiceEndpoint{
+			Name: "elasticloadbalancing",
+			URL:  fmt.Sprintf("https://elasticloadbalancing.%s.amazonaws.com", platform.AWS.Region),
+		}
+		endpoints := []configv1.AWSServiceEndpoint{route53Endpoint, taggingEndpoint, elbEndpoint}
+		awsSpec := configv1.AWSPlatformSpec{ServiceEndpoints: endpoints}
+		infraConfig.Spec.PlatformSpec.AWS = &awsSpec
 		if err := kclient.Update(context.TODO(), &infraConfig); err != nil {
-			t.Logf("failed to update infrastructure config: %v\n", err)
+			t.Fatalf("failed to update infrastructure config: %v\n", err)
 		}
 		// Wait for infrastructure status to update with custom endpoints.
-		err := wait.PollImmediate(1*time.Second, 30*time.Second, func() (bool, error) {
+		err := wait.PollImmediate(1*time.Second, 15*time.Second, func() (bool, error) {
 			if err := kclient.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, &infraConfig); err != nil {
 				t.Logf("failed to get infrastructure config: %v\n", err)
-				return false, nil
+				return false, err
 			}
-			// TODO: Change from spec to status after https://bugzilla.redhat.com/show_bug.cgi?id=1850681
-			//       is fixed.
-			if len(infraConfig.Spec.PlatformSpec.AWS.ServiceEndpoints) == 0 {
+			if len(infraConfig.Status.PlatformStatus.AWS.ServiceEndpoints) == 0 {
 				return false, nil
 			}
 			return true, nil
@@ -1116,22 +1135,9 @@ func TestIngressControllerCustomEndpoints(t *testing.T) {
 		}
 		defer func() {
 			// Remove the custom endpoints from the infrastructure config.
-			infraConfig.Spec.PlatformSpec.AWS.ServiceEndpoints = []configv1.AWSServiceEndpoint{}
-			// Wait for infrastructure status to update.
-			err := wait.PollImmediate(1*time.Second, 30*time.Second, func() (bool, error) {
-				if err := kclient.Update(context.TODO(), &infraConfig); err != nil {
-					t.Logf("failed to get infrastructure config: %v\n", err)
-					return false, nil
-				}
-				// TODO: Change from spec to status after https://bugzilla.redhat.com/show_bug.cgi?id=1850681
-				//       is fixed.
-				if len(infraConfig.Spec.PlatformSpec.AWS.ServiceEndpoints) != 0 {
-					return false, nil
-				}
-				return true, nil
-			})
-			if err != nil {
-				t.Fatalf("failed to remove custom endpoints from infrastructure config %s", infraConfig.Name)
+			infraConfig.Spec.PlatformSpec.AWS = nil
+			if err := kclient.Update(context.TODO(), &infraConfig); err != nil {
+				t.Fatalf("failed to update infrastructure config: %v\n", err)
 			}
 		}()
 	default:
