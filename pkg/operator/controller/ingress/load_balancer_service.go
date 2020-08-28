@@ -62,7 +62,27 @@ const (
 	awsLBHealthCheckHealthyThresholdAnnotation = "service.beta.kubernetes.io/aws-load-balancer-healthcheck-healthy-threshold"
 	awsLBHealthCheckHealthyThresholdDefault    = "2"
 
+	// iksLBScopeAnnotation is the annotation used on a service to specify an IBM
+	// load balancer IP type.
 	iksLBScopeAnnotation = "service.kubernetes.io/ibm-load-balancer-cloud-provider-ip-type"
+	// iksLBScopePublic is the service annotation value used to specify an IBM load balancer
+	// IP as public.
+	iksLBScopePublic = "public"
+	// iksLBScopePublic is the service annotation value used to specify an IBM load balancer
+	// IP as private.
+	iksLBScopePrivate = "private"
+
+	// azureInternalLBAnnotation is the annotation used on a service to specify an Azure
+	// load balancer as being internal.
+	azureInternalLBAnnotation = "service.beta.kubernetes.io/azure-load-balancer-internal"
+
+	// gcpLBTypeAnnotation is the annotation used on a service to specify a type of GCP
+	// load balancer.
+	gcpLBTypeAnnotation = "cloud.google.com/load-balancer-type"
+
+	// openstackInternalLBAnnotation is the annotation used on a service to specify an
+	// OpenStack load balancer as being internal.
+	openstackInternalLBAnnotation = "service.beta.kubernetes.io/openstack-internal-load-balancer"
 )
 
 var (
@@ -77,25 +97,25 @@ var (
 		},
 		configv1.AzurePlatformType: {
 			// Azure load balancers are not customizable and are set to (2 fail @ 5s interval, 2 healthy)
-			"service.beta.kubernetes.io/azure-load-balancer-internal": "true",
+			azureInternalLBAnnotation: "true",
 		},
 		// There are no required annotations for this platform as of
 		// 2019-06-17 (but maybe MetalLB will have something for
 		// internal load-balancers in the future).
 		configv1.BareMetalPlatformType: nil,
 		configv1.GCPPlatformType: {
-			"cloud.google.com/load-balancer-type": "Internal",
+			gcpLBTypeAnnotation: "Internal",
 		},
 		// There are no required annotations for this platform.
 		configv1.LibvirtPlatformType: nil,
 		configv1.OpenStackPlatformType: {
-			"service.beta.kubernetes.io/openstack-internal-load-balancer": "true",
+			openstackInternalLBAnnotation: "true",
 		},
 		configv1.NonePlatformType: nil,
 		// vSphere does not support load balancers as of 2019-06-17.
 		configv1.VSpherePlatformType: nil,
 		configv1.IBMCloudPlatformType: {
-			iksLBScopeAnnotation: "private",
+			iksLBScopeAnnotation: iksLBScopePrivate,
 		},
 	}
 )
@@ -188,7 +208,9 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 			service.Annotations[awsLBHealthCheckUnhealthyThresholdAnnotation] = awsLBHealthCheckUnhealthyThresholdDefault
 			service.Annotations[awsLBHealthCheckHealthyThresholdAnnotation] = awsLBHealthCheckHealthyThresholdDefault
 		case configv1.IBMCloudPlatformType:
-			service.Annotations[iksLBScopeAnnotation] = "public"
+			if !isInternal {
+				service.Annotations[iksLBScopeAnnotation] = iksLBScopePublic
+			}
 		}
 		// Azure load balancers are not customizable and are set to (2 fail @ 5s interval, 2 healthy)
 		// GCP load balancers are not customizable and are set to (3 fail @ 8s interval, 1 healthy)
