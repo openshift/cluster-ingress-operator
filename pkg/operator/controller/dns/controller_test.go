@@ -150,6 +150,9 @@ func TestPublishRecordToZonesMergesStatus(t *testing.T) {
 		zone := []configv1.DNSZone{{ID: "zone2"}}
 		oldStatuses := record.Status.DeepCopy().Zones
 		newStatuses, _ := r.publishRecordToZones(zone, record)
+		if !dnsZoneStatusSlicesEqual(oldStatuses, tc.oldZoneStatuses) {
+			t.Fatalf("%q: publishRecordToZones mutated the record's status conditions\nold: %#v\nnew: %#v", tc.description, oldStatuses, tc.oldZoneStatuses)
+		}
 		if equal := dnsZoneStatusSlicesEqual(oldStatuses, newStatuses); !equal != tc.expectChange {
 			t.Fatalf("%q: expected old and new status equal to be %v, got %v\nold: %#v\nnew: %#v", tc.description, tc.expectChange, equal, oldStatuses, newStatuses)
 		}
