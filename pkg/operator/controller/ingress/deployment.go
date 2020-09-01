@@ -63,6 +63,9 @@ const (
 
 	RouterReloadIntervalEnvName = "RELOAD_INTERVAL"
 
+	RouterDontLogNull      = "ROUTER_DONT_LOG_NULL"
+	RouterHTTPIgnoreProbes = "ROUTER_HTTP_IGNORE_PROBES"
+
 	RouterDisableHTTP2EnvName          = "ROUTER_DISABLE_HTTP2"
 	RouterDefaultEnableHTTP2Annotation = "ingress.operator.openshift.io/default-enable-http2"
 
@@ -676,6 +679,10 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 				Value: fmt.Sprintf("%s:%d", cookieName, maxLength),
 			})
 		}
+
+		if accessLogging.LogEmptyRequests == operatorv1.LoggingPolicyIgnore {
+			env = append(env, corev1.EnvVar{Name: RouterDontLogNull, Value: "true"})
+		}
 	}
 
 	tlsProfileSpec := tlsProfileSpecForIngressController(ci, apiConfig)
@@ -797,6 +804,10 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		}
 		v := strings.Join(adjustments, ",")
 		env = append(env, corev1.EnvVar{Name: RouterHTTPHeaderNameCaseAdjustments, Value: v})
+	}
+
+	if ci.Spec.HTTPEmptyRequestsPolicy == operatorv1.HTTPEmptyRequestsPolicyIgnore {
+		env = append(env, corev1.EnvVar{Name: RouterHTTPIgnoreProbes, Value: "true"})
 	}
 
 	if HTTP2IsEnabled(ci, ingressConfig) {
@@ -972,6 +983,7 @@ func accessLoggingForIngressController(ic *operatorv1.IngressController) *operat
 			HttpLogFormat:      ic.Spec.Logging.Access.HttpLogFormat,
 			HTTPCaptureHeaders: ic.Spec.Logging.Access.HTTPCaptureHeaders,
 			HTTPCaptureCookies: ic.Spec.Logging.Access.HTTPCaptureCookies,
+			LogEmptyRequests:   ic.Spec.Logging.Access.LogEmptyRequests,
 		}
 	case operatorv1.SyslogLoggingDestinationType:
 		if ic.Spec.Logging.Access.Destination.Syslog != nil {
@@ -987,6 +999,7 @@ func accessLoggingForIngressController(ic *operatorv1.IngressController) *operat
 				HttpLogFormat:      ic.Spec.Logging.Access.HttpLogFormat,
 				HTTPCaptureHeaders: ic.Spec.Logging.Access.HTTPCaptureHeaders,
 				HTTPCaptureCookies: ic.Spec.Logging.Access.HTTPCaptureCookies,
+				LogEmptyRequests:   ic.Spec.Logging.Access.LogEmptyRequests,
 			}
 		}
 	}

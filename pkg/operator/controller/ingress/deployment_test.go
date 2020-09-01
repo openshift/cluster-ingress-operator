@@ -291,6 +291,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CAPTURE_HTTP_REQUEST_HEADERS", false, "")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CAPTURE_HTTP_RESPONSE_HEADERS", false, "")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CAPTURE_HTTP_COOKIE", false, "")
+	checkDeploymentHasEnvVar(t, deployment, RouterDontLogNull, false, "")
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_BUF_SIZE", false, "")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_MAX_REWRITE_SIZE", false, "")
@@ -309,6 +310,8 @@ func TestDesiredRouterDeployment(t *testing.T) {
 
 	checkDeploymentHasEnvVar(t, deployment, RouterHAProxyThreadsEnvName, true, strconv.Itoa(RouterHAProxyThreadsDefaultValue))
 
+	checkDeploymentHasEnvVar(t, deployment, RouterHTTPIgnoreProbes, false, "")
+
 	ci.Spec.Logging = &operatorv1.IngressControllerLogging{
 		Access: &operatorv1.AccessLogging{
 			Destination: operatorv1.LoggingDestination{
@@ -322,6 +325,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 					NamePrefix: "foo",
 				},
 			}},
+			LogEmptyRequests: "Ignore",
 		},
 	}
 	ci.Spec.HTTPHeaders = &operatorv1.IngressControllerHTTPHeaders{
@@ -338,6 +342,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		HeaderBufferMaxRewriteBytes: 4096,
 		ThreadCount:                 RouterHAProxyThreadsDefaultValue * 2,
 	}
+	ci.Spec.HTTPEmptyRequestsPolicy = "Ignore"
 	ci.Spec.TLSSecurityProfile = &configv1.TLSSecurityProfile{
 		Type: configv1.TLSProfileCustomType,
 		Custom: &configv1.CustomTLSProfile{
@@ -418,6 +423,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SYSLOG_ADDRESS", true, "/var/lib/rsyslog/rsyslog.sock")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SYSLOG_FORMAT", true, `"%ci:%cp [%t] %ft %b/%s %B %bq %HM %HU %HV"`)
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CAPTURE_HTTP_COOKIE", true, "foo:256")
+	checkDeploymentHasEnvVar(t, deployment, RouterDontLogNull, true, "true")
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_BUF_SIZE", true, "16384")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_MAX_REWRITE_SIZE", true, "4096")
@@ -425,6 +431,8 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	checkDeploymentHasEnvVar(t, deployment, RouterHAProxyThreadsEnvName, true, strconv.Itoa(RouterHAProxyThreadsDefaultValue*2))
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SET_FORWARDED_HEADERS", true, "append")
+
+	checkDeploymentHasEnvVar(t, deployment, RouterHTTPIgnoreProbes, true, "true")
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CIPHERS", true, "quux")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CIPHERSUITES", true, "TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256")
