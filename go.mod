@@ -37,3 +37,5 @@ require (
 	sigs.k8s.io/controller-runtime v0.6.2
 	sigs.k8s.io/controller-tools v0.3.0
 )
+
+replace github.com/openshift/api => github.com/Miciah/api v0.0.0-20200901182206-699bb3c0d08c
