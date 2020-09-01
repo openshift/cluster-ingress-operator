@@ -244,6 +244,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CAPTURE_HTTP_REQUEST_HEADERS", false, "")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CAPTURE_HTTP_RESPONSE_HEADERS", false, "")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CAPTURE_HTTP_COOKIE", false, "")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_DONT_LOG_NULL", false, "")
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CIPHERS", true, "foo:bar:baz")
 
@@ -253,6 +254,8 @@ func TestDesiredRouterDeployment(t *testing.T) {
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_UNIQUE_ID_HEADER_NAME", false, "")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_UNIQUE_ID_FORMAT", false, "")
+
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_HTTP_IGNORE_PROBES", false, "")
 
 	ci.Spec.Logging = &operatorv1.IngressControllerLogging{
 		Access: &operatorv1.AccessLogging{
@@ -264,6 +267,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 			HTTPCaptureCookies: []operatorv1.IngressControllerCaptureHTTPCookie{
 				{MatchType: "Prefix", NamePrefix: "foo"},
 			},
+			LogEmptyRequests: "Ignore",
 		},
 	}
 	ci.Spec.HTTPHeaders = &operatorv1.IngressControllerHTTPHeaders{
@@ -271,6 +275,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 			Name: "unique-id",
 		},
 	}
+	ci.Spec.HTTPEmptyRequestsPolicy = "Ignore"
 	ci.Spec.TLSSecurityProfile = &configv1.TLSSecurityProfile{
 		Type: configv1.TLSProfileCustomType,
 		Custom: &configv1.CustomTLSProfile{
@@ -324,8 +329,11 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SYSLOG_ADDRESS", true, "/var/lib/rsyslog/rsyslog.sock")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SYSLOG_FORMAT", true, `"%ci:%cp [%t] %ft %b/%s %B %bq %HM %HU %HV"`)
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CAPTURE_HTTP_COOKIE", true, "foo:256")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_DONT_LOG_NULL", true, "true")
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SET_FORWARDED_HEADERS", true, "append")
+
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_HTTP_IGNORE_PROBES", true, "true")
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CIPHERS", true, "quux")
 
