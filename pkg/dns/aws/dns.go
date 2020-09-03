@@ -118,14 +118,15 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 		Fn:   request.MakeAddToUserAgentHandler("openshift.io ingress-operator", operatorReleaseVersion),
 	})
 
-	region := aws.StringValue(sess.Config.Region)
-	if len(region) > 0 {
-		log.Info("using region from shared config", "region name", region)
-	} else {
+	var region string
+	switch {
+	case len(config.Region) > 0:
 		region = config.Region
 		log.Info("using region from operator config", "region name", region)
-	}
-	if len(region) == 0 {
+	case sess.Config.Region != nil:
+		region = aws.StringValue(sess.Config.Region)
+		log.Info("using region from shared config", "region name", region)
+	default:
 		return nil, fmt.Errorf("region is required")
 	}
 
