@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/arn"
 	"github.com/aws/aws-sdk-go/aws/awserr"
+	"github.com/aws/aws-sdk-go/aws/client/metadata"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/endpoints"
 	"github.com/aws/aws-sdk-go/aws/request"
@@ -118,14 +119,15 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 		Fn:   request.MakeAddToUserAgentHandler("openshift.io ingress-operator", operatorReleaseVersion),
 	})
 
-	region := aws.StringValue(sess.Config.Region)
-	if len(region) > 0 {
-		log.Info("using region from shared config", "region name", region)
-	} else {
+	var region string
+	switch {
+	case len(config.Region) > 0:
 		region = config.Region
 		log.Info("using region from operator config", "region name", region)
-	}
-	if len(region) == 0 {
+	case sess.Config.Region != nil:
+		region = aws.StringValue(sess.Config.Region)
+		log.Info("using region from shared config", "region name", region)
+	default:
 		return nil, fmt.Errorf("region is required")
 	}
 
@@ -143,9 +145,9 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 		tagConfig = tagConfig.WithRegion(endpoints.CnNorthwest1RegionID)
 		r53Config = r53Config.WithRegion(endpoints.CnNorthwest1RegionID).WithEndpoint(chinaRoute53Endpoint)
 	case endpoints.UsGovEast1RegionID, endpoints.UsGovWest1RegionID:
-		// Route53 for GovCloud uses the "us-gov" region id:
+		// Route53 for GovCloud uses the "us-gov-west-1" region id:
 		// https://docs.aws.amazon.com/govcloud-us/latest/UserGuide/using-govcloud-endpoints.html
-		r53Config = r53Config.WithRegion(govCloudRoute53Region)
+		r53Config = r53Config.WithRegion(endpoints.UsGovWest1RegionID)
 		tagConfig = tagConfig.WithRegion(region)
 	default:
 		// Since Route 53 is not a regionalized service, the Tagging API will
@@ -410,7 +412,7 @@ func (m *Provider) change(record *iov1.DNSRecord, zone configv1.DNSZone, action 
 	}
 
 	// Configure records.
-	err = m.updateRecord(domain, zoneID, target, targetHostedZoneID, string(action))
+	err = m.updateRecord(domain, zoneID, target, targetHostedZoneID, string(action), record.Spec.RecordTTL)
 	if err != nil {
 		return fmt.Errorf("failed to update alias in zone %s: %v", zoneID, err)
 	}
@@ -427,9 +429,9 @@ func (m *Provider) change(record *iov1.DNSRecord, zone configv1.DNSZone, action 
 // target in targetHostedZoneID. An Alias record type is used for all regions
 // other than GovCloud (CNAME). See the following for additional details:
 // https://docs.aws.amazon.com/govcloud-us/latest/UserGuide/govcloud-r53.html
-func (m *Provider) updateRecord(domain, zoneID, target, targetHostedZoneID, action string) error {
+func (m *Provider) updateRecord(domain, zoneID, target, targetHostedZoneID, action string, ttl int64) error {
 	input := route53.ChangeResourceRecordSetsInput{HostedZoneId: aws.String(zoneID)}
-	if strings.Contains(m.config.Region, endpoints.AwsUsGovPartitionID) {
+	if clientEndpointIsGovCloud(&m.route53.Client.ClientInfo) {
 		record := route53.ResourceRecord{Value: aws.String(target)}
 		input.ChangeBatch = &route53.ChangeBatch{
 			Changes: []*route53.Change{
@@ -438,6 +440,7 @@ func (m *Provider) updateRecord(domain, zoneID, target, targetHostedZoneID, acti
 					ResourceRecordSet: &route53.ResourceRecordSet{
 						Name:            aws.String(domain),
 						Type:            aws.String(route53.RRTypeCname),
+						TTL:             aws.Int64(ttl),
 						ResourceRecords: []*route53.ResourceRecord{&record},
 					},
 				},
@@ -475,4 +478,10 @@ func (m *Provider) updateRecord(domain, zoneID, target, targetHostedZoneID, acti
 	}
 	log.Info("updated DNS record", "zone id", zoneID, "domain", domain, "target", target, "response", resp)
 	return nil
+}
+
+// clientEndpointIsGovCloud returns true if the provided client info
+// references a US GovCloud API endpoint.
+func clientEndpointIsGovCloud(clientInfo *metadata.ClientInfo) bool {
+	return strings.Contains(clientInfo.Endpoint, govCloudRoute53Region)
 }
