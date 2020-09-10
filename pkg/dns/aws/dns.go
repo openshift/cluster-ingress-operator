@@ -40,6 +40,8 @@ const (
 	govCloudRoute53Region = "us-gov"
 	// govCloudRoute53Endpoint is the Route 53 service endpoint used for AWS GovCloud.
 	govCloudRoute53Endpoint = "https://route53.us-gov.amazonaws.com"
+	// govCloudTaggingEndpoint is the Group Tagging service endpoint used for AWS GovCloud.
+	govCloudTaggingEndpoint = "https://tagging.us-gov-west-1.amazonaws.com"
 	// chinaRoute53Endpoint is the Route 53 service endpoint used for AWS China regions.
 	chinaRoute53Endpoint = "https://route53.amazonaws.com.cn"
 	// standardRoute53Endpoint is the standard AWS Route 53 service endpoint.
@@ -148,7 +150,10 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 		// Route53 for GovCloud uses the "us-gov-west-1" region id:
 		// https://docs.aws.amazon.com/govcloud-us/latest/UserGuide/using-govcloud-endpoints.html
 		r53Config = r53Config.WithRegion(endpoints.UsGovWest1RegionID)
-		tagConfig = tagConfig.WithRegion(region)
+		// As with other AWS partitions, the GovCloud Tagging client must be
+		// in the same region as the Route53 client to find the hosted zone
+		// of managed records.
+		tagConfig = tagConfig.WithRegion(endpoints.UsGovWest1RegionID)
 	default:
 		// Since Route 53 is not a regionalized service, the Tagging API will
 		// only return hosted zone resources when the region is "us-east-1".
@@ -231,7 +236,7 @@ func urlContainsValidRegion(region, uri string) bool {
 				return true
 			}
 		case endpoints.UsGovEast1RegionID, endpoints.UsGovWest1RegionID:
-			if strings.Contains(uri, endpoints.UsGovWest1RegionID) || strings.Contains(uri, endpoints.UsGovEast1RegionID) {
+			if uri == govCloudTaggingEndpoint {
 				return true
 			}
 		default:
