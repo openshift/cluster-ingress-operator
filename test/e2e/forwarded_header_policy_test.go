@@ -113,7 +113,7 @@ func TestForwardedHeaderPolicyAppend(t *testing.T) {
 		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
 		{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionFalse},
 	}
-	if err := waitForIngressControllerCondition(kclient, 5*time.Minute, icName, conditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, conditions...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -210,7 +210,7 @@ func TestForwardedHeaderPolicyReplace(t *testing.T) {
 		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
 		{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionFalse},
 	}
-	if err := waitForIngressControllerCondition(kclient, 5*time.Minute, icName, conditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, conditions...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -279,7 +279,7 @@ func TestForwardedHeaderPolicyNever(t *testing.T) {
 		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
 		{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionFalse},
 	}
-	if err := waitForIngressControllerCondition(kclient, 5*time.Minute, icName, conditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, conditions...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -349,7 +349,7 @@ func TestForwardedHeaderPolicyIfNone(t *testing.T) {
 		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
 		{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionFalse},
 	}
-	if err := waitForIngressControllerCondition(kclient, 5*time.Minute, icName, conditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, conditions...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
