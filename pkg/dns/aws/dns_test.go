@@ -80,8 +80,14 @@ func TestURLContainsValidRegion(t *testing.T) {
 		},
 		{
 			description: "tagging GovCloud uri for region us-gov-west-1",
-			uri:         "https://tagging.us-gov-west-1.amazonaws.com",
+			uri:         govCloudTaggingEndpoint,
 			region:      endpoints.UsGovWest1RegionID,
+			expected:    true,
+		},
+		{
+			description: "tagging GovCloud uri for region us-gov-east-1",
+			uri:         govCloudTaggingEndpoint,
+			region:      endpoints.UsGovEast1RegionID,
 			expected:    true,
 		},
 		{
