@@ -277,7 +277,7 @@ func (r *reconciler) publishRecordToZones(zones []configv1.DNSZone, record *iov1
 			Conditions: []iov1.DNSZoneCondition{condition},
 		})
 	}
-	return mergeStatuses(record.Status.Zones, statuses), result
+	return mergeStatuses(record.Status.DeepCopy().Zones, statuses), result
 }
 
 // recordIsAlreadyPublishedToZone returns a Boolean value indicating whether the
