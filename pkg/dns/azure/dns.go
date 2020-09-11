@@ -86,7 +86,7 @@ func (m *provider) Ensure(record *iov1.DNSRecord, zone configv1.DNSZone) error {
 		})
 
 	if err == nil {
-		log.Info("upserted DNS record", "record", record)
+		log.Info("upserted DNS record", "record", record.Spec, "zone", zone)
 	}
 
 	return err
@@ -114,7 +114,7 @@ func (m *provider) Delete(record *iov1.DNSRecord, zone configv1.DNSZone) error {
 		})
 
 	if err == nil {
-		log.Info("deleted DNS record", "record", record)
+		log.Info("deleted DNS record", "record", record.Spec, "zone", zone)
 	}
 
 	return err

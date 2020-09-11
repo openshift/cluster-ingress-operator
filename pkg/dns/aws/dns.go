@@ -274,9 +274,9 @@ func (m *Provider) change(record *iov1.DNSRecord, zone configv1.DNSZone, action 
 	}
 	switch action {
 	case upsertAction:
-		log.Info("upserted DNS record", "record", record)
+		log.Info("upserted DNS record", "record", record.Spec, "zone", zone)
 	case deleteAction:
-		log.Info("deleted DNS record", "record", record)
+		log.Info("deleted DNS record", "record", record.Spec, "zone", zone)
 	}
 	return nil
 }
