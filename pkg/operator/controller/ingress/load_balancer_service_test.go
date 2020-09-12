@@ -49,12 +49,12 @@ func TestDesiredLoadBalancerService(t *testing.T) {
 			},
 		}
 
-		svc, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig)
+		haveSvc, svc, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig)
 		if err != nil {
 			t.Errorf("unexpected error from desiredLoadBalancerService for endpoint publishing strategy type %v: %v", tc.strategyType, err)
-		} else if tc.expect && svc == nil {
+		} else if tc.expect && !haveSvc {
 			t.Errorf("expected desiredLoadBalancerService to return a service for endpoint publishing strategy type %v, got nil", tc.strategyType)
-		} else if !tc.expect && svc != nil {
+		} else if !tc.expect && haveSvc {
 			t.Errorf("expected desiredLoadBalancerService to return nil service for endpoint publishing strategy type %v, got %#v", tc.strategyType, svc)
 		}
 	}
