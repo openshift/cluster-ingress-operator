@@ -172,33 +172,20 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 				break
 			case ep.Name == Route53Service:
 				route53Found = true
-				if urlContainsValidRegion(region, ep.URL) {
-					r53Config = r53Config.WithEndpoint(ep.URL)
-					log.Info("using route53 custom endpoint", "url", ep.URL)
-				} else {
-					return nil, fmt.Errorf("invalid %s service url %s for region %s", Route53Service, ep.URL, region)
-				}
+				r53Config = r53Config.WithEndpoint(ep.URL)
+				log.Info("using route53 custom endpoint", "url", ep.URL)
 			case ep.Name == TaggingService:
 				tagFound = true
-				if urlContainsValidRegion(region, ep.URL) {
-					tagConfig = tagConfig.WithEndpoint(ep.URL)
-					log.Info("using group tagging custom endpoint", "url", ep.URL)
-				} else {
-					return nil, fmt.Errorf("invalid %s service url %s for region %s", TaggingService, ep.URL, region)
-				}
+				tagConfig = tagConfig.WithEndpoint(ep.URL)
+				log.Info("using group tagging custom endpoint", "url", ep.URL)
 			case ep.Name == ELBService:
 				elbFound = true
-				if urlContainsValidRegion(region, ep.URL) {
-					elbConfig = elbConfig.WithEndpoint(ep.URL)
-					log.Info("using elb custom endpoint", "url", ep.URL)
-				} else {
-					return nil, fmt.Errorf("invalid %s service url %s for region %s", ELBService, ep.URL, region)
-				}
+				elbConfig = elbConfig.WithEndpoint(ep.URL)
+				log.Info("using elb custom endpoint", "url", ep.URL)
 			}
 		}
 	}
-
-	return &Provider{
+	p := &Provider{
 		elb: elb.New(sess, elbConfig),
 		// TODO: Add custom endpoint support for elbv2. See the following for details:
 		// https://docs.aws.amazon.com/general/latest/gr/elb.html
@@ -208,48 +195,34 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 		config:    config,
 		idsToTags: map[string]map[string]string{},
 		lbZones:   map[string]string{},
-	}, nil
+	}
+	if err := validateServiceEndpoints(p); err != nil {
+		return nil, fmt.Errorf("failed to validate aws provider service endpoints: %v", err)
+	}
+	return p, nil
 }
 
-// urlContainsValidRegion checks whether uri is valid based on provided region.
-func urlContainsValidRegion(region, uri string) bool {
-	switch {
-	case strings.Contains(uri, Route53Service):
-		switch region {
-		case endpoints.CnNorth1RegionID, endpoints.CnNorthwest1RegionID:
-			if uri == chinaRoute53Endpoint {
-				return true
-			}
-		case endpoints.UsGovEast1RegionID, endpoints.UsGovWest1RegionID:
-			if uri == govCloudRoute53Endpoint {
-				return true
-			}
-		default:
-			if uri == standardRoute53Endpoint || strings.Contains(uri, endpoints.UsEast1RegionID) {
-				return true
-			}
-		}
-	case strings.Contains(uri, TaggingService):
-		switch region {
-		case endpoints.CnNorth1RegionID, endpoints.CnNorthwest1RegionID:
-			if strings.Contains(uri, endpoints.CnNorthwest1RegionID) {
-				return true
-			}
-		case endpoints.UsGovEast1RegionID, endpoints.UsGovWest1RegionID:
-			if uri == govCloudTaggingEndpoint {
-				return true
-			}
-		default:
-			if strings.Contains(uri, endpoints.UsEast1RegionID) {
-				return true
-			}
-		}
-	default:
-		if strings.Contains(uri, region) {
-			return true
-		}
+// validateServiceEndpoints validates that provider clients can communicate with
+// associated API endpoints by having each client make a list/describe/get call.
+func validateServiceEndpoints(provider *Provider) error {
+	var errs []error
+	zoneInput := route53.ListHostedZonesInput{MaxItems: aws.String("1")}
+	if _, err := provider.route53.ListHostedZones(&zoneInput); err != nil {
+		errs = append(errs, fmt.Errorf("failed to list route53 hosted zones: %v", err))
 	}
-	return false
+	elbInput := elb.DescribeLoadBalancersInput{PageSize: aws.Int64(int64(1))}
+	if _, err := provider.elb.DescribeLoadBalancers(&elbInput); err != nil {
+		errs = append(errs, fmt.Errorf("failed to describe elb load balancers: %v", err))
+	}
+	elbv2Input := elbv2.DescribeLoadBalancersInput{PageSize: aws.Int64(int64(1))}
+	if _, err := provider.elbv2.DescribeLoadBalancers(&elbv2Input); err != nil {
+		errs = append(errs, fmt.Errorf("failed to describe elbv2 load balancers: %v", err))
+	}
+	tagInput := resourcegroupstaggingapi.GetResourcesInput{TagsPerPage: aws.Int64(int64(100))}
+	if _, err := provider.tags.GetResources(&tagInput); err != nil {
+		errs = append(errs, fmt.Errorf("failed to get group tagging resources: %v", err))
+	}
+	return kerrors.NewAggregate(errs)
 }
 
 // getZoneID finds the ID of given zoneConfig in Route53. If an ID is already
