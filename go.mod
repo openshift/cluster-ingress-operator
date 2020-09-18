@@ -19,7 +19,7 @@ require (
 	github.com/kevinburke/go-bindata v3.11.0+incompatible
 	github.com/onsi/ginkgo v1.14.0 // indirect
 	github.com/openshift/api v0.0.0-20200818143336-e9036946d01a
-	github.com/openshift/library-go v0.0.0-20200324092245-db2a8546af81
+	github.com/openshift/library-go v0.0.0-20200423123937-d1360419413d
 	github.com/pkg/errors v0.9.1
 	github.com/spf13/cobra v1.0.0
 	go.uber.org/zap v1.15.0
