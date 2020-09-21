@@ -3,6 +3,7 @@ package status
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/google/go-cmp/cmp"
@@ -15,6 +16,7 @@ import (
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	oputil "github.com/openshift/cluster-ingress-operator/pkg/util"
 
 	corev1 "k8s.io/api/core/v1"
 
@@ -249,11 +251,11 @@ func checkAllIngressesAvailable(ingresses []operatorv1.IngressController) bool {
 
 // computeOperatorDegradedCondition computes the operator's current Degraded status state.
 func computeOperatorDegradedCondition(ingresses []operatorv1.IngressController) configv1.ClusterOperatorStatusCondition {
-	var degradedIngresses []string
-	for _, ingress := range ingresses {
-		for _, cond := range ingress.Status.Conditions {
+	degradedIngresses := make(map[*operatorv1.IngressController]operatorv1.OperatorCondition)
+	for i, ingress := range ingresses {
+		for j, cond := range ingress.Status.Conditions {
 			if cond.Type == operatorv1.OperatorStatusTypeDegraded && cond.Status == operatorv1.ConditionTrue {
-				degradedIngresses = append(degradedIngresses, ingress.Name)
+				degradedIngresses[&ingresses[i]] = ingress.Status.Conditions[j]
 			}
 		}
 	}
@@ -264,11 +266,24 @@ func computeOperatorDegradedCondition(ingresses []operatorv1.IngressController) 
 			Reason: "NoIngressControllersDegraded",
 		}
 	}
+	message := "Some ingresscontrollers are degraded:"
+	// Sort keys so that the result is deterministic.
+	keys := make([]*operatorv1.IngressController, 0, len(degradedIngresses))
+	for ingress := range degradedIngresses {
+		keys = append(keys, ingress)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		return oputil.ObjectLess(&keys[i].ObjectMeta, &keys[j].ObjectMeta)
+	})
+	for _, ingress := range keys {
+		cond := degradedIngresses[ingress]
+		message = fmt.Sprintf("%s ingresscontroller %q is degraded: %s: %s", message, ingress.Name, cond.Reason, cond.Message)
+	}
 	return configv1.ClusterOperatorStatusCondition{
 		Type:    configv1.OperatorDegraded,
 		Status:  configv1.ConditionTrue,
 		Reason:  "IngressControllersDegraded",
-		Message: fmt.Sprintf("Some ingresscontrollers are degraded: %s", strings.Join(degradedIngresses, ",")),
+		Message: message,
 	}
 }
 
