@@ -142,7 +142,7 @@ github.com/openshift/api/config/v1
 github.com/openshift/api/operator/v1
 github.com/openshift/api/operatoringress/v1
 github.com/openshift/api/route/v1
-# github.com/openshift/library-go v0.0.0-20200324092245-db2a8546af81
+# github.com/openshift/library-go v0.0.0-20200423123937-d1360419413d
 github.com/openshift/library-go/pkg/crypto
 # github.com/pkg/errors v0.9.1
 github.com/pkg/errors
