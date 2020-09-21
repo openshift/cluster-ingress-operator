@@ -42,6 +42,7 @@ const (
 // TODO: consider moving these to openshift/api
 const (
 	IngressControllerAdmittedConditionType                       = "Admitted"
+	IngressControllerPodsScheduledConditionType                  = "PodsScheduled"
 	IngressControllerDeploymentAvailableConditionType            = "DeploymentAvailable"
 	IngressControllerDeploymentReplicasMinAvailableConditionType = "DeploymentReplicasMinAvailable"
 	IngressControllerDeploymentReplicasAllAvailableConditionType = "DeploymentReplicasAllAvailable"
@@ -672,7 +673,12 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		errs = append(errs, fmt.Errorf("failed to list events in namespace %q: %v", "openshift-ingress", err))
 	}
 
-	errs = append(errs, r.syncIngressControllerStatus(ci, deployment, lbService, operandEvents.Items, wildcardRecord, dnsConfig))
+	pods := &corev1.PodList{}
+	if err := r.cache.List(context.TODO(), pods, client.InNamespace("openshift-ingress")); err != nil {
+		errs = append(errs, fmt.Errorf("failed to list pods in namespace %q: %v", "openshift-ingress", err))
+	}
+
+	errs = append(errs, r.syncIngressControllerStatus(ci, deployment, pods.Items, lbService, operandEvents.Items, wildcardRecord, dnsConfig))
 
 	return retryable.NewMaybeRetryableAggregate(errs)
 }
