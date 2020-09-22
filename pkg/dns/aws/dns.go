@@ -38,14 +38,10 @@ const (
 	// govCloudRoute53Region is the AWS GovCloud region for Route 53. See:
 	// https://docs.aws.amazon.com/govcloud-us/latest/UserGuide/using-govcloud-endpoints.html
 	govCloudRoute53Region = "us-gov"
-	// govCloudRoute53Endpoint is the Route 53 service endpoint used for AWS GovCloud.
-	govCloudRoute53Endpoint = "https://route53.us-gov.amazonaws.com"
 	// govCloudTaggingEndpoint is the Group Tagging service endpoint used for AWS GovCloud.
 	govCloudTaggingEndpoint = "https://tagging.us-gov-west-1.amazonaws.com"
 	// chinaRoute53Endpoint is the Route 53 service endpoint used for AWS China regions.
 	chinaRoute53Endpoint = "https://route53.amazonaws.com.cn"
-	// standardRoute53Endpoint is the standard AWS Route 53 service endpoint.
-	standardRoute53Endpoint = "https://route53.amazonaws.com"
 )
 
 var (
@@ -176,8 +172,14 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 				log.Info("using route53 custom endpoint", "url", ep.URL)
 			case ep.Name == TaggingService:
 				tagFound = true
-				tagConfig = tagConfig.WithEndpoint(ep.URL)
-				log.Info("using group tagging custom endpoint", "url", ep.URL)
+				url := ep.URL
+				// route53 for govcloud is based out of us-gov-west-1,
+				// so the tagging client must match.
+				if strings.Contains(ep.URL, "us-gov-east-1") {
+					url = govCloudTaggingEndpoint
+				}
+				tagConfig = tagConfig.WithEndpoint(url)
+				log.Info("using group tagging custom endpoint", "url", url)
 			case ep.Name == ELBService:
 				elbFound = true
 				elbConfig = elbConfig.WithEndpoint(ep.URL)
