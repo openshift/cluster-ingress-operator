@@ -436,7 +436,7 @@ func computeIngressDegradedCondition(conditions []operatorv1.OperatorCondition) 
 
 		var degraded string
 		for _, cond := range degradedConditions {
-			degraded = degraded + fmt.Sprintf(", %s=%s", cond.Type, cond.Status)
+			degraded = degraded + fmt.Sprintf(", %s=%s (%s: %s)", cond.Type, cond.Status, cond.Reason, cond.Message)
 		}
 		degraded = degraded[2:]
 
