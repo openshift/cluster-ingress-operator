@@ -376,8 +376,8 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	deployment.Spec.Template.Spec.Containers[0].Image = ingressControllerImage
 
 	if ci.Status.EndpointPublishingStrategy.Type == operatorv1.HostNetworkStrategyType {
-		// Expose ports 80 and 443 on the host to provide endpoints for
-		// the user's HA solution.
+		// Expose ports 80, 443, and 1936 on the host to provide
+		// endpoints for the user's HA solution.
 		deployment.Spec.Template.Spec.HostNetwork = true
 
 		// With container networking, probes default to using the pod IP
