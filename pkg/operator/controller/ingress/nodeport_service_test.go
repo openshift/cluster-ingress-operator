@@ -1,6 +1,7 @@
 package ingress
 
 import (
+	"reflect"
 	"testing"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -12,9 +13,20 @@ import (
 )
 
 func TestDesiredNodePortService(t *testing.T) {
+	trueVar := true
+	deploymentRef := metav1.OwnerReference{
+		APIVersion: "apps/v1",
+		Kind:       "Deployment",
+		Name:       "router-default",
+		UID:        "1",
+		Controller: &trueVar,
+	}
+
 	testCases := []struct {
-		strategyType operatorv1.EndpointPublishingStrategyType
-		expect       bool
+		strategyType    operatorv1.EndpointPublishingStrategyType
+		wantMetricsPort bool
+		expect          bool
+		expectService   corev1.Service
 	}{
 		{
 			strategyType: operatorv1.LoadBalancerServiceStrategyType,
@@ -23,6 +35,83 @@ func TestDesiredNodePortService(t *testing.T) {
 		{
 			strategyType: operatorv1.NodePortServiceStrategyType,
 			expect:       true,
+			expectService: corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "openshift-ingress",
+					Name:      "router-nodeport-default",
+					Labels: map[string]string{
+						"app":    "router",
+						"router": "router-nodeport-default",
+						"ingresscontroller.operator.openshift.io/owning-ingresscontroller": "default",
+					},
+					OwnerReferences: []metav1.OwnerReference{deploymentRef},
+				},
+				Spec: corev1.ServiceSpec{
+					ExternalTrafficPolicy: "Local",
+					Ports: []corev1.ServicePort{
+						{
+							Name:       "http",
+							Protocol:   "TCP",
+							Port:       int32(80),
+							TargetPort: intstr.FromString("http"),
+						},
+						{
+							Name:       "https",
+							Protocol:   "TCP",
+							Port:       int32(443),
+							TargetPort: intstr.FromString("https"),
+						},
+					},
+					Selector: map[string]string{
+						"ingresscontroller.operator.openshift.io/deployment-ingresscontroller": "default",
+					},
+					Type: "NodePort",
+				},
+			},
+		},
+		{
+			strategyType:    operatorv1.NodePortServiceStrategyType,
+			wantMetricsPort: true,
+			expect:          true,
+			expectService: corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "openshift-ingress",
+					Name:      "router-nodeport-default",
+					Labels: map[string]string{
+						"app":    "router",
+						"router": "router-nodeport-default",
+						"ingresscontroller.operator.openshift.io/owning-ingresscontroller": "default",
+					},
+					OwnerReferences: []metav1.OwnerReference{deploymentRef},
+				},
+				Spec: corev1.ServiceSpec{
+					ExternalTrafficPolicy: "Local",
+					Ports: []corev1.ServicePort{
+						{
+							Name:       "http",
+							Protocol:   "TCP",
+							Port:       int32(80),
+							TargetPort: intstr.FromString("http"),
+						},
+						{
+							Name:       "https",
+							Protocol:   "TCP",
+							Port:       int32(443),
+							TargetPort: intstr.FromString("https"),
+						},
+						{
+							Name:       "metrics",
+							Protocol:   "TCP",
+							Port:       int32(1936),
+							TargetPort: intstr.FromString("metrics"),
+						},
+					},
+					Selector: map[string]string{
+						"ingresscontroller.operator.openshift.io/deployment-ingresscontroller": "default",
+					},
+					Type: "NodePort",
+				},
+			},
 		},
 	}
 
@@ -37,18 +126,11 @@ func TestDesiredNodePortService(t *testing.T) {
 				},
 			},
 		}
-		trueVar := true
-		deploymentRef := metav1.OwnerReference{
-			APIVersion: "apps/v1",
-			Kind:       "Deployment",
-			Name:       "router-default",
-			UID:        "1",
-			Controller: &trueVar,
-		}
-
-		want, svc := desiredNodePortService(ic, deploymentRef)
+		want, svc := desiredNodePortService(ic, deploymentRef, tc.wantMetricsPort)
 		if want != tc.expect {
 			t.Errorf("expected desiredNodePortService to return %t for endpoint publishing strategy type %v, got %t, with service %#v", tc.expect, tc.strategyType, want, svc)
+		} else if tc.expect && !reflect.DeepEqual(svc, &tc.expectService) {
+			t.Errorf("expected desiredNodePortService to return %#v, got %#v", &tc.expectService, svc)
 		}
 	}
 }
@@ -175,6 +257,13 @@ func TestNodePortServiceChanged(t *testing.T) {
 						Port:       int32(443),
 						Protocol:   corev1.ProtocolTCP,
 						TargetPort: intstr.FromString("https"),
+					},
+					{
+						Name:       "metrics",
+						NodePort:   int32(33336),
+						Port:       int32(1936),
+						Protocol:   corev1.ProtocolTCP,
+						TargetPort: intstr.FromString("metrics"),
 					},
 				},
 				Selector: map[string]string{
