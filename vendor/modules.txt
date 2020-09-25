@@ -61,7 +61,7 @@ github.com/beorn7/perks/quantile
 github.com/davecgh/go-spew/spew
 # github.com/dgrijalva/jwt-go v3.2.0+incompatible
 github.com/dgrijalva/jwt-go
-# github.com/evanphx/json-patch v4.5.0+incompatible
+# github.com/evanphx/json-patch v4.9.0+incompatible
 github.com/evanphx/json-patch
 # github.com/fatih/color v1.7.0
 github.com/fatih/color
@@ -128,7 +128,7 @@ github.com/openshift/api/config/v1
 github.com/openshift/api/operator/v1
 github.com/openshift/api/operatoringress/v1
 github.com/openshift/api/route/v1
-# github.com/openshift/library-go v0.0.0-20200324092245-db2a8546af81
+# github.com/openshift/library-go v0.0.0-20200421122923-c1de486c7d47
 github.com/openshift/library-go/pkg/crypto
 # github.com/pkg/errors v0.8.1
 github.com/pkg/errors
@@ -282,7 +282,7 @@ gopkg.in/inf.v0
 gopkg.in/yaml.v2
 # gopkg.in/yaml.v3 v3.0.0-20190905181640-827449938966
 gopkg.in/yaml.v3
-# k8s.io/api v0.18.3
+# k8s.io/api v0.18.9
 k8s.io/api/admission/v1beta1
 k8s.io/api/admissionregistration/v1
 k8s.io/api/admissionregistration/v1beta1
@@ -328,7 +328,7 @@ k8s.io/api/storage/v1beta1
 k8s.io/apiextensions-apiserver/pkg/apis/apiextensions
 k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1
 k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1
-# k8s.io/apimachinery v0.18.3
+# k8s.io/apimachinery v0.18.9
 k8s.io/apimachinery/pkg/api/equality
 k8s.io/apimachinery/pkg/api/errors
 k8s.io/apimachinery/pkg/api/meta
@@ -374,10 +374,10 @@ k8s.io/apimachinery/pkg/version
 k8s.io/apimachinery/pkg/watch
 k8s.io/apimachinery/third_party/forked/golang/json
 k8s.io/apimachinery/third_party/forked/golang/reflect
-# k8s.io/apiserver v0.18.0
+# k8s.io/apiserver v0.18.9
 k8s.io/apiserver/pkg/authentication/user
 k8s.io/apiserver/pkg/storage/names
-# k8s.io/client-go v0.18.0
+# k8s.io/client-go v0.18.9
 k8s.io/client-go/discovery
 k8s.io/client-go/discovery/cached
 k8s.io/client-go/discovery/cached/memory
