@@ -1,6 +1,6 @@
 module github.com/openshift/cluster-ingress-operator
 
-go 1.13
+go 1.15
 
 require (
 	github.com/Azure/azure-sdk-for-go v30.0.0+incompatible
