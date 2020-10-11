@@ -4,7 +4,11 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
+
 	operatorv1 "github.com/openshift/api/operator/v1"
+
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	oputil "github.com/openshift/cluster-ingress-operator/pkg/util"
@@ -16,6 +20,8 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
@@ -86,7 +92,7 @@ const (
 )
 
 var (
-	// internalLBAnnotations maps platform to the annotation name and value
+	// InternalLBAnnotations maps platform to the annotation name and value
 	// that tell the cloud provider that is associated with the platform
 	// that the load balancer is internal.
 	//
@@ -118,6 +124,16 @@ var (
 			iksLBScopeAnnotation: iksLBScopePrivate,
 		},
 	}
+	// externalLBAnnotations maps platform to the annotation name and value
+	// that tell the cloud provider that is associated with the platform
+	// that the load balancer is external.  This is the default for most
+	// platforms; only platforms for which it is not the default need
+	// entries in this map.
+	externalLBAnnotations = map[configv1.PlatformType]map[string]string{
+		configv1.IBMCloudPlatformType: {
+			iksLBScopeAnnotation: iksLBScopePublic,
+		},
+	}
 )
 
 // ensureLoadBalancerService creates an LB service if one is desired but absent.
@@ -141,16 +157,46 @@ func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController,
 	if err != nil {
 		return false, nil, err
 	}
-	if wantLBS && !haveLBS {
-		if err := r.client.Create(context.TODO(), desiredLBService); err != nil {
-			return false, nil, fmt.Errorf("failed to create load balancer service %s/%s: %v", desiredLBService.Namespace, desiredLBService.Name, err)
+
+	switch {
+	case !wantLBS && !haveLBS:
+		return false, nil, nil
+	case !wantLBS && haveLBS:
+		if deletedFinalizer, err := r.deleteLoadBalancerServiceFinalizer(currentLBService); err != nil {
+			return true, currentLBService, fmt.Errorf("failed to remove finalizer from load balancer service: %v", err)
+		} else if deletedFinalizer {
+			haveLBS, currentLBService, err = r.currentLoadBalancerService(ci)
+			if err != nil {
+				return haveLBS, currentLBService, err
+			}
 		}
-		log.Info("created load balancer service", "namespace", desiredLBService.Namespace, "name", desiredLBService.Name)
-		return true, desiredLBService, nil
+		if err := r.deleteLoadBalancerService(currentLBService, &crclient.DeleteOptions{}); err != nil {
+			return true, currentLBService, err
+		}
+		return false, nil, nil
+	case wantLBS && !haveLBS:
+		if err := r.createLoadBalancerService(desiredLBService); err != nil {
+			return false, nil, err
+		}
+		return r.currentLoadBalancerService(ci)
+	case wantLBS && haveLBS:
+		if deletedFinalizer, err := r.deleteLoadBalancerServiceFinalizer(currentLBService); err != nil {
+			return true, currentLBService, fmt.Errorf("failed to remove finalizer from load balancer service: %v", err)
+		} else if deletedFinalizer {
+			haveLBS, currentLBService, err = r.currentLoadBalancerService(ci)
+			if err != nil {
+				return haveLBS, currentLBService, err
+			}
+		}
+		if updated, err := r.updateLoadBalancerService(currentLBService, desiredLBService, platform); err != nil {
+			return true, currentLBService, fmt.Errorf("failed to update load balancer service: %v", err)
+		} else if updated {
+			log.Info("updated load balancer service", "namespace", desiredLBService.Namespace, "name", desiredLBService.Name)
+			return r.currentLoadBalancerService(ci)
+		}
 	}
-	// return haveLBS instead of forcing true here since
-	// there is no guarantee that currentLBService != nil
-	return haveLBS, currentLBService, nil
+
+	return true, currentLBService, nil
 }
 
 // desiredLoadBalancerService returns the desired LB service for a
@@ -192,6 +238,11 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 			for name, value := range annotation {
 				service.Annotations[name] = value
 			}
+		} else {
+			annotation := externalLBAnnotations[platform.Type]
+			for name, value := range annotation {
+				service.Annotations[name] = value
+			}
 		}
 		switch platform.Type {
 		case configv1.AWSPlatformType:
@@ -207,17 +258,12 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 			service.Annotations[awsLBHealthCheckTimeoutAnnotation] = awsLBHealthCheckTimeoutDefault
 			service.Annotations[awsLBHealthCheckUnhealthyThresholdAnnotation] = awsLBHealthCheckUnhealthyThresholdDefault
 			service.Annotations[awsLBHealthCheckHealthyThresholdAnnotation] = awsLBHealthCheckHealthyThresholdDefault
-		case configv1.IBMCloudPlatformType:
-			if !isInternal {
-				service.Annotations[iksLBScopeAnnotation] = iksLBScopePublic
-			}
 		}
 		// Azure load balancers are not customizable and are set to (2 fail @ 5s interval, 2 healthy)
 		// GCP load balancers are not customizable and are set to (3 fail @ 8s interval, 1 healthy)
 	}
 
 	service.SetOwnerReferences([]metav1.OwnerReference{deploymentRef})
-	service.Finalizers = []string{manifests.LoadBalancerServiceFinalizer}
 	return true, service, nil
 }
 
@@ -234,11 +280,168 @@ func (r *reconciler) currentLoadBalancerService(ci *operatorv1.IngressController
 	return true, service, nil
 }
 
+// createLoadBalancerService creates a load balancer service.
+func (r *reconciler) createLoadBalancerService(service *corev1.Service) error {
+	if err := r.client.Create(context.TODO(), service); err != nil {
+		return fmt.Errorf("failed to create load balancer service %s/%s: %v", service.Namespace, service.Name, err)
+	}
+	log.Info("created load balancer service", "namespace", service.Namespace, "name", service.Name)
+	return nil
+}
+
+// deleteLoadBalancerService deletes a load balancer service.
+func (r *reconciler) deleteLoadBalancerService(service *corev1.Service, options *crclient.DeleteOptions) error {
+	if err := r.client.Delete(context.TODO(), service, options); err != nil {
+		if errors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to delete load balancer service %s/%s: %v", service.Namespace, service.Name, err)
+	}
+	log.Info("deleted load balancer service", "namespace", service.Namespace, "name", service.Name)
+	return nil
+}
+
+// updateLoadBalancerService updates a load balancer service.  Returns a Boolean
+// indicating whether the service was updated, and an error value.
+func (r *reconciler) updateLoadBalancerService(current, desired *corev1.Service, platform *configv1.PlatformStatus) (bool, error) {
+	changed, updated, needRecreate := loadBalancerServiceChanged(current, desired, platform)
+	if !changed {
+		return false, nil
+	}
+
+	if needRecreate {
+		log.Info("load balancer scope changed, which requires deleting and recreating the load balancer", "namespace", updated.Namespace, "name", updated.Name, "platform", platform.Type)
+		foreground := metav1.DeletePropagationForeground
+		deleteOptions := crclient.DeleteOptions{PropagationPolicy: &foreground}
+		if err := r.deleteLoadBalancerService(current, &deleteOptions); err != nil {
+			return false, err
+		}
+		if err := r.createLoadBalancerService(updated); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+
+	if err := r.client.Update(context.TODO(), updated); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// loadBalancerServiceScopeChanged checks if the load balancer scope changed.
+func loadBalancerServiceScopeChanged(current, expected *corev1.Service, platform *configv1.PlatformStatus) bool {
+	currentAnnotations := current.Annotations
+	if currentAnnotations == nil {
+		currentAnnotations = map[string]string{}
+	}
+	expectedAnnotations := expected.Annotations
+	if expectedAnnotations == nil {
+		expectedAnnotations = map[string]string{}
+	}
+	for name := range InternalLBAnnotations[platform.Type] {
+		if currentAnnotations[name] != expectedAnnotations[name] {
+			return true
+		}
+	}
+	return false
+}
+
+// loadBalancerServiceChanged checks if the current load balancer service spec
+// matches the expected spec and if not returns an updated one.
+func loadBalancerServiceChanged(current, expected *corev1.Service, platform *configv1.PlatformStatus) (bool, *corev1.Service, bool) {
+	scopeChanged := loadBalancerServiceScopeChanged(current, expected, platform)
+
+	serviceCmpOpts := []cmp.Option{
+		// Ignore fields that the API, other controllers, or user may
+		// have modified.
+		cmpopts.IgnoreFields(corev1.ServicePort{}, "NodePort"),
+		cmpopts.IgnoreFields(corev1.ServiceSpec{}, "ClusterIP", "ExternalIPs", "HealthCheckNodePort"),
+		cmp.Comparer(cmpServiceAffinity),
+		cmpopts.EquateEmpty(),
+	}
+	if !scopeChanged && cmp.Equal(current.Spec, expected.Spec, serviceCmpOpts...) {
+		return false, nil, false
+	}
+
+	updated := current.DeepCopy()
+	if updated.Annotations == nil {
+		updated.Annotations = map[string]string{}
+	}
+	for name := range InternalLBAnnotations[platform.Type] {
+		if v, ok := expected.Annotations[name]; ok {
+			updated.Annotations[name] = v
+		} else {
+			delete(updated.Annotations, name)
+		}
+	}
+
+	updated.Spec = expected.Spec
+
+	// Preserve fields that the API, other controllers, or user may have
+	// modified.
+	updated.Spec.ClusterIP = current.Spec.ClusterIP
+	updated.Spec.ExternalIPs = current.Spec.ExternalIPs
+	updated.Spec.HealthCheckNodePort = current.Spec.HealthCheckNodePort
+	for i, updatedPort := range updated.Spec.Ports {
+		for _, currentPort := range current.Spec.Ports {
+			if currentPort.Name == updatedPort.Name {
+				updated.Spec.Ports[i].NodePort = currentPort.NodePort
+			}
+		}
+	}
+
+	// When switching between internal scope and external scope, it may be
+	// necessary to delete and recreate the service, depending on the cloud
+	// provider implementation:
+	//
+	// * Azure and GCE can handle changing scope, so updating the annotation
+	//   on the service suffices.
+	//
+	// * AWS cannot handle changing scope, so the service needs to be
+	//   recreated.
+	//
+	// * IBM Cloud may or may not handle scope change, so recreate the
+	//   service to be safe.
+	needsRecreate := false
+	if scopeChanged {
+		switch platform.Type {
+		case configv1.AWSPlatformType, configv1.IBMCloudPlatformType:
+			needsRecreate = true
+		}
+	}
+
+	return true, updated, needsRecreate
+}
+
+// deleteLoadBalancerServiceFinalizer removes the
+// "ingress.openshift.io/operator" finalizer from the provided load balancer
+// service.  This finalizer used to be needed for helping with DNS cleanup, but
+// that's no longer necessary.  We just need to clear the finalizer which might
+// exist on existing resources.
+//
+// TODO: Delete this method and all calls to it after 4.7.
+func (r *reconciler) deleteLoadBalancerServiceFinalizer(service *corev1.Service) (bool, error) {
+	if !slice.ContainsString(service.Finalizers, manifests.LoadBalancerServiceFinalizer) {
+		return false, nil
+	}
+
+	// Mutate a copy to avoid assuming we know where the current one came from
+	// (i.e. it could have been from a cache).
+	updated := service.DeepCopy()
+	updated.Finalizers = slice.RemoveString(updated.Finalizers, manifests.LoadBalancerServiceFinalizer)
+	if err := r.client.Update(context.TODO(), updated); err != nil {
+		return false, fmt.Errorf("failed to remove finalizer from service %s/%s: %v", service.Namespace, service.Name, err)
+	}
+
+	log.Info("removed finalizer from load balancer service", "namespace", service.Namespace, "name", service.Name)
+
+	return true, nil
+}
+
 // finalizeLoadBalancerService removes the "ingress.openshift.io/operator" finalizer
 // from the load balancer service of ci. This was for helping with DNS cleanup, but
 // that's no longer necessary. We just need to clear the finalizer which might exist
 // on existing resources.
-// TODO: How can we delete this code?
 func (r *reconciler) finalizeLoadBalancerService(ci *operatorv1.IngressController) (bool, error) {
 	haveLBS, service, err := r.currentLoadBalancerService(ci)
 	if err != nil {
@@ -247,16 +450,6 @@ func (r *reconciler) finalizeLoadBalancerService(ci *operatorv1.IngressControlle
 	if !haveLBS {
 		return false, nil
 	}
-	// Mutate a copy to avoid assuming we know where the current one came from
-	// (i.e. it could have been from a cache).
-	updated := service.DeepCopy()
-	if slice.ContainsString(updated.Finalizers, manifests.LoadBalancerServiceFinalizer) {
-		updated.Finalizers = slice.RemoveString(updated.Finalizers, manifests.LoadBalancerServiceFinalizer)
-		if err := r.client.Update(context.TODO(), updated); err != nil {
-			return true, fmt.Errorf("failed to remove finalizer from service %s/%s for ingress %s/%s: %v",
-				service.Namespace, service.Name, ci.Namespace, ci.Name, err)
-		}
-	}
-	log.Info("finalized load balancer service for ingress", "namespace", ci.Namespace, "name", ci.Name)
-	return true, nil
+	_, err = r.deleteLoadBalancerServiceFinalizer(service)
+	return true, err
 }
