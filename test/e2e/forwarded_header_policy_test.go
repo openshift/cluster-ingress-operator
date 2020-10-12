@@ -91,7 +91,24 @@ func testRouteHeaders(t *testing.T, image string, route *routev1.Route, address 
 		return numMatches == expectedMatches, nil
 	})
 	if err != nil {
-		t.Fatalf("failed to observe the expected output: %v", err)
+		pod := &corev1.Pod{}
+		podName := types.NamespacedName{
+			Namespace: clientPod.Namespace,
+			Name:      clientPod.Name,
+		}
+		if err := kclient.Get(context.TODO(), podName, pod); err != nil {
+			t.Errorf("failed to get pod %s: %v", clientPod.Name, err)
+		}
+
+		logs, err := client.CoreV1().Pods(clientPod.Namespace).GetLogs(clientPod.Name, &corev1.PodLogOptions{
+			Container: "curl",
+			Follow:    false,
+		}).DoRaw(context.TODO())
+		if err != nil {
+			t.Errorf("failed to get logs from pod %s: %v", clientPod.Name, err)
+		}
+
+		t.Fatalf("failed to observe the expected output: %v\nclient pod spec: %#v\nclient pod logs:\n%s", err, pod, logs)
 	}
 }
 
