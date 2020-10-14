@@ -26,6 +26,7 @@ rules:
   - apps
   resources:
   - deployments
+  - daemonsets
   verbs:
   - "*"
 
@@ -136,13 +137,13 @@ rules:
   - create
 
 # Mirrored from assets/router/cluster-role.yaml
+# and expanded for the canary-controller.
 - apiGroups:
   - route.openshift.io
   resources:
   - routes
   verbs:
-  - list
-  - watch
+  - '*'
 
 # Mirrored from assets/router/cluster-role.yaml
 - apiGroups:
