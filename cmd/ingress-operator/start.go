@@ -37,6 +37,9 @@ type StartOptions struct {
 	// IngressControllerImage is the pullspec of the ingress controller image to
 	// be managed.
 	IngressControllerImage string
+	// CanaryImage is the pullspec of the canary tester server image to
+	// be managed.
+	CanaryImage string
 	// ReleaseVersion is the cluster version which the operator will converge to.
 	ReleaseVersion string
 }
@@ -58,6 +61,7 @@ func NewStartCommand() *cobra.Command {
 
 	cmd.Flags().StringVarP(&options.OperatorNamespace, "namespace", "n", manifests.DefaultOperatorNamespace, "namespace the operator is deployed to (required)")
 	cmd.Flags().StringVarP(&options.IngressControllerImage, "image", "i", "", "image of the ingress controller the operator will manage (required)")
+	cmd.Flags().StringVarP(&options.CanaryImage, "canary-image", "c", "", "image of the canary container that the operator will manage (optional)")
 	cmd.Flags().StringVarP(&options.ReleaseVersion, "release-version", "", statuscontroller.UnknownVersionValue, "the release version the operator should converge to (required)")
 	cmd.Flags().StringVarP(&options.MetricsListenAddr, "metrics-listen-addr", "", ":60000", "metrics endpoint listen address (required)")
 	cmd.Flags().StringVarP(&options.ShutdownFile, "shutdown-file", "s", defaultTrustedCABundle, "if provided, shut down the operator when this file changes")
@@ -90,6 +94,7 @@ func start(opts *StartOptions) error {
 		OperatorReleaseVersion: opts.ReleaseVersion,
 		Namespace:              opts.OperatorNamespace,
 		IngressControllerImage: opts.IngressControllerImage,
+		CanaryImage:            opts.CanaryImage,
 	}
 
 	// Set up the channels for the watcher and operator.

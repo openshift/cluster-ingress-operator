@@ -11,4 +11,7 @@ type Config struct {
 
 	// IngressControllerImage is the ingress controller image to manage.
 	IngressControllerImage string
+
+	// CanaryImage is the ingress canary image to manage.
+	CanaryImage string
 }

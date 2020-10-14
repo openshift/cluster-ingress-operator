@@ -14,5 +14,10 @@ echo "Image: ${IMAGE}"
 echo "Release version: ${RELEASE_VERSION}"
 echo "Namespace: ${NAMESPACE}"
 
-${DELVE:-} ./ingress-operator start --image "${IMAGE}" --release-version "${RELEASE_VERSION}" \
+if [[ ! -z ${ENABLE_CANARY:-} ]]; then
+    CANARY_IMAGE=$(oc get -n openshift-ingress-operator deployments/ingress-operator -o json | jq -r '.spec.template.spec.containers[0].env[] | select(.name=="CANARY_IMAGE").value')
+    echo "Canary Image: ${CANARY_IMAGE}"
+fi
+
+${DELVE:-} ./ingress-operator start --image "${IMAGE}" --canary-image=${CANARY_IMAGE:-} --release-version "${RELEASE_VERSION}" \
 --namespace "${NAMESPACE}" --shutdown-file "${SHUTDOWN_FILE}" "$@"
