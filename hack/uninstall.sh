@@ -22,6 +22,7 @@ else
 fi
 
 oc delete namespaces/openshift-ingress
+oc delete namespaces/openshift-ingress-canary
 
 if [ "$WHAT" == "all" ]; then
   oc delete clusterroles/openshift-ingress-operator
