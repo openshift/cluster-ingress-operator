@@ -14,3 +14,7 @@ spec:
     from:
       kind: DockerImage
       name: quay.io/openshift/origin-kube-rbac-proxy:latest
+  - name: hello-openshift
+    from:
+      kind: DockerImage
+      name: "openshift/hello-openshift:latest"
