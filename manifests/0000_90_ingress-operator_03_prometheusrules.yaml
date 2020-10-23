@@ -5,6 +5,8 @@ metadata:
   namespace: openshift-ingress-operator
   labels:
     role: alert-rules
+  annotations:
+    include.release.openshift.io/self-managed-high-availability: "true"
 spec:
   groups:
     - name: openshift-ingress.rules

@@ -2,6 +2,7 @@ kind: Namespace
 apiVersion: v1
 metadata:
   annotations:
+    include.release.openshift.io/self-managed-high-availability: "true"
     openshift.io/node-selector: ""
   labels:
     # allow openshift-monitoring to look for ServiceMonitor objects in this namespace
