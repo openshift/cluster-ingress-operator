@@ -170,6 +170,8 @@ github.com/spf13/cobra
 github.com/spf13/pflag
 # github.com/stretchr/testify v1.5.1
 github.com/stretchr/testify/assert
+# github.com/tcnksm/go-httpstat v0.2.1-0.20191008022543-e866bb274419
+github.com/tcnksm/go-httpstat
 # go.opencensus.io v0.22.2
 go.opencensus.io
 go.opencensus.io/internal
