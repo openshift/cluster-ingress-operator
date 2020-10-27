@@ -14,4 +14,6 @@ type Config struct {
 
 	// CanaryImage is the ingress canary image to manage.
 	CanaryImage string
+
+	Stop chan struct{}
 }

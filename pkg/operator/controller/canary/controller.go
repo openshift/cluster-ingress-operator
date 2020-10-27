@@ -107,6 +107,7 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 type Config struct {
 	Namespace   string
 	CanaryImage string
+	Stop        chan struct{}
 }
 
 // reconciler handles the actual canary reconciliation logic in response to
