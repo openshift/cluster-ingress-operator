@@ -426,6 +426,13 @@ func TestLoadBalancerServiceChanged(t *testing.T) {
 			},
 			expect: true,
 		},
+		{
+			description: "if .spec.publishNotReadyAddresses changes",
+			mutate: func(svc *corev1.Service) {
+				svc.Spec.PublishNotReadyAddresses = true
+			},
+			expect: true,
+		},
 	}
 
 	for _, tc := range testCases {
