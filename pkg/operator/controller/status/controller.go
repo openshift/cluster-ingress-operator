@@ -116,7 +116,7 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 	related := []configv1.ObjectReference{
 		{
 			Resource: "namespaces",
-			Name:     "openshift-ingress-operator",
+			Name:     r.Namespace,
 		},
 		{
 			Group:     operatorv1.GroupName,

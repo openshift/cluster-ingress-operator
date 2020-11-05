@@ -9,9 +9,10 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/fsnotify.v1"
 
-	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator"
+
 	operatorconfig "github.com/openshift/cluster-ingress-operator/pkg/operator/config"
+	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	canarycontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/canary"
 	statuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/status"
 
@@ -59,7 +60,7 @@ func NewStartCommand() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVarP(&options.OperatorNamespace, "namespace", "n", manifests.DefaultOperatorNamespace, "namespace the operator is deployed to (required)")
+	cmd.Flags().StringVarP(&options.OperatorNamespace, "namespace", "n", operatorcontroller.DefaultOperatorNamespace, "namespace the operator is deployed to (required)")
 	cmd.Flags().StringVarP(&options.IngressControllerImage, "image", "i", "", "image of the ingress controller the operator will manage (required)")
 	cmd.Flags().StringVarP(&options.CanaryImage, "canary-image", "c", "", "image of the canary container that the operator will manage (optional)")
 	cmd.Flags().StringVarP(&options.ReleaseVersion, "release-version", "", statuscontroller.UnknownVersionValue, "the release version the operator should converge to (required)")

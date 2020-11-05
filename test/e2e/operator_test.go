@@ -28,6 +28,7 @@ import (
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 
 	"github.com/aws/aws-sdk-go/aws/endpoints"
@@ -69,7 +70,7 @@ var (
 var kclient client.Client
 var dnsConfig configv1.DNS
 var infraConfig configv1.Infrastructure
-var operatorNamespace = manifests.DefaultOperatorNamespace
+var operatorNamespace = operatorcontroller.DefaultOperatorNamespace
 var defaultName = types.NamespacedName{Namespace: operatorNamespace, Name: manifests.DefaultIngressControllerName}
 
 func TestMain(m *testing.M) {

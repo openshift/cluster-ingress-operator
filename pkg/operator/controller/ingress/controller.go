@@ -9,6 +9,7 @@ import (
 	iov1 "github.com/openshift/api/operatoringress/v1"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
+	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	retryable "github.com/openshift/cluster-ingress-operator/pkg/util/retryableerror"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/slice"
 
@@ -676,13 +677,13 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 	}
 
 	operandEvents := &corev1.EventList{}
-	if err := r.cache.List(context.TODO(), operandEvents, client.InNamespace("openshift-ingress")); err != nil {
-		errs = append(errs, fmt.Errorf("failed to list events in namespace %q: %v", "openshift-ingress", err))
+	if err := r.cache.List(context.TODO(), operandEvents, client.InNamespace(operatorcontroller.DefaultOperandNamespace)); err != nil {
+		errs = append(errs, fmt.Errorf("failed to list events in namespace %q: %v", operatorcontroller.DefaultOperandNamespace, err))
 	}
 
 	pods := &corev1.PodList{}
-	if err := r.cache.List(context.TODO(), pods, client.InNamespace("openshift-ingress")); err != nil {
-		errs = append(errs, fmt.Errorf("failed to list pods in namespace %q: %v", "openshift-ingress", err))
+	if err := r.cache.List(context.TODO(), pods, client.InNamespace(operatorcontroller.DefaultOperandNamespace)); err != nil {
+		errs = append(errs, fmt.Errorf("failed to list pods in namespace %q: %v", operatorcontroller.DefaultOperatorNamespace, err))
 	}
 
 	errs = append(errs, r.syncIngressControllerStatus(ci, deployment, pods.Items, lbService, operandEvents.Items, wildcardRecord, dnsConfig))

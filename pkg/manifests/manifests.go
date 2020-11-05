@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 
+	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+
 	operatorv1 "github.com/openshift/api/operator/v1"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -63,13 +65,6 @@ const (
 	// operator has ensured it's safe for deletion to proceeed.
 	DNSRecordFinalizer = "operator.openshift.io/ingress-dns"
 
-	DefaultOperatorNamespace = "openshift-ingress-operator"
-	DefaultOperandNamespace  = "openshift-ingress"
-
-	// DefaultCanaryNamespace is the default namespace for
-	// the ingress canary check resources.
-	DefaultCanaryNamespace = "openshift-ingress-canary"
-
 	// DefaultIngressControllerName is the name of the default IngressController
 	// instance.
 	DefaultIngressControllerName = "default"
@@ -118,7 +113,7 @@ func RouterStatsSecret(cr *operatorv1.IngressController) *corev1.Secret {
 	s := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      fmt.Sprintf("router-stats-%s", cr.Name),
-			Namespace: "openshift-ingress",
+			Namespace: operatorcontroller.DefaultOperandNamespace,
 		},
 		Type: corev1.SecretTypeOpaque,
 		Data: map[string][]byte{},
