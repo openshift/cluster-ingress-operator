@@ -32,7 +32,8 @@ var testPodCount int
 
 // testRouteHeaders connects to the specified route using the provided address
 // and verifies that the response has the expected number of matches of the
-// expected string.
+// expected string.  Case is ignored when comparing the expected response and
+// the actual response.
 func testRouteHeaders(t *testing.T, image string, route *routev1.Route, address string, headers []string, expectedResponse string, expectedMatches int) {
 	t.Helper()
 
@@ -62,6 +63,7 @@ func testRouteHeaders(t *testing.T, image string, route *routev1.Route, address 
 			}
 		}
 	}()
+	expectedResponse = strings.ToLower(expectedResponse)
 	err = wait.PollImmediate(1*time.Second, 4*time.Minute, func() (bool, error) {
 		readCloser, err := client.CoreV1().Pods(clientPod.Namespace).GetLogs(clientPod.Name, &corev1.PodLogOptions{
 			Container: "curl",
@@ -80,7 +82,7 @@ func testRouteHeaders(t *testing.T, image string, route *routev1.Route, address 
 		var numMatches int
 		for scanner.Scan() {
 			line := scanner.Text()
-			if strings.Contains(line, expectedResponse) {
+			if strings.Contains(strings.ToLower(line), expectedResponse) {
 				numMatches++
 				t.Logf("found match %d of %d expected: %s", numMatches, expectedMatches, line)
 			}
@@ -91,7 +93,24 @@ func testRouteHeaders(t *testing.T, image string, route *routev1.Route, address 
 		return numMatches == expectedMatches, nil
 	})
 	if err != nil {
-		t.Fatalf("failed to observe the expected output: %v", err)
+		pod := &corev1.Pod{}
+		podName := types.NamespacedName{
+			Namespace: clientPod.Namespace,
+			Name:      clientPod.Name,
+		}
+		if err := kclient.Get(context.TODO(), podName, pod); err != nil {
+			t.Errorf("failed to get pod %s: %v", clientPod.Name, err)
+		}
+
+		logs, err := client.CoreV1().Pods(clientPod.Namespace).GetLogs(clientPod.Name, &corev1.PodLogOptions{
+			Container: "curl",
+			Follow:    false,
+		}).DoRaw(context.TODO())
+		if err != nil {
+			t.Errorf("failed to get logs from pod %s: %v", clientPod.Name, err)
+		}
+
+		t.Fatalf("failed to observe the expected output: %v\nclient pod spec: %#v\nclient pod logs:\n%s", err, pod, logs)
 	}
 }
 
