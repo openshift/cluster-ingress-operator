@@ -3,6 +3,7 @@ package dns
 import (
 	"context"
 	"fmt"
+	"os"
 	"reflect"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	operatorutil "github.com/openshift/cluster-ingress-operator/pkg/util"
 	oputil "github.com/openshift/cluster-ingress-operator/pkg/util"
+	awsutil "github.com/openshift/cluster-ingress-operator/pkg/util/aws"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/slice"
 
 	corev1 "k8s.io/api/core/v1"
@@ -438,10 +440,18 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 	switch platformStatus.Type {
 	case configv1.AWSPlatformType:
 		cfg := awsdns.Config{
-			AccessID:  string(creds.Data["aws_access_key_id"]),
-			AccessKey: string(creds.Data["aws_secret_access_key"]),
-			Region:    platformStatus.AWS.Region,
+			Region: platformStatus.AWS.Region,
 		}
+
+		sharedCredsFile, err := awsutil.SharedCredentialsFileFromSecret(creds)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create shared credentials file from Secret: %v", err)
+		}
+		// since at the end of this function the aws dns provider will be initialized with aws clients, the AWS SDK no
+		// longer needs access to the file and therefore it can be removed.
+		defer os.Remove(sharedCredsFile)
+		cfg.SharedCredentialFile = sharedCredsFile
+
 		if len(platformStatus.AWS.ServiceEndpoints) > 0 {
 			cfg.ServiceEndpoints = []awsdns.ServiceEndpoint{}
 			route53Found := false
