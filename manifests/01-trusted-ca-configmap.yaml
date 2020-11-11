@@ -6,6 +6,7 @@ metadata:
   annotations:
     include.release.openshift.io/self-managed-high-availability: "true"
     release.openshift.io/create-only: "true"
+    include.release.openshift.io/ibm-cloud-managed: "true"
   labels:
     config.openshift.io/inject-trusted-cabundle: "true"
   name: trusted-ca
