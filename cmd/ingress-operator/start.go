@@ -59,7 +59,7 @@ func NewStartCommand() *cobra.Command {
 	cmd.Flags().StringVarP(&options.OperatorNamespace, "namespace", "n", manifests.DefaultOperatorNamespace, "namespace the operator is deployed to (required)")
 	cmd.Flags().StringVarP(&options.IngressControllerImage, "image", "i", "", "image of the ingress controller the operator will manage (required)")
 	cmd.Flags().StringVarP(&options.ReleaseVersion, "release-version", "", statuscontroller.UnknownVersionValue, "the release version the operator should converge to (required)")
-	cmd.Flags().StringVarP(&options.MetricsListenAddr, "metrics-listen-addr", "", ":60000", "metrics endpoint listen address (required)")
+	cmd.Flags().StringVarP(&options.MetricsListenAddr, "metrics-listen-addr", "", "127.0.0.1:60000", "metrics endpoint listen address (required)")
 	cmd.Flags().StringVarP(&options.ShutdownFile, "shutdown-file", "s", defaultTrustedCABundle, "if provided, shut down the operator when this file changes")
 
 	if err := cmd.MarkFlagRequired("namespace"); err != nil {
