@@ -7,6 +7,7 @@ approvers:
   - frobware
   - danehans
   - sgreene570
+  - candita
 reviewers:
   - ironcladlou
   - knobunc
@@ -16,4 +17,5 @@ reviewers:
   - frobware
   - danehans
   - sgreene570
+  - candita
 component: Routing
