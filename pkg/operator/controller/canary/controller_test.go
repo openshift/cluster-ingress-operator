@@ -43,6 +43,18 @@ func TestCycleServicePort(t *testing.T) {
 			success: false,
 		},
 		{
+			description: "route with no ports",
+			route: &routev1.Route{
+				Spec: routev1.RouteSpec{},
+			},
+			service: &corev1.Service{
+				Spec: corev1.ServiceSpec{
+					Ports: []corev1.ServicePort{},
+				},
+			},
+			success: false,
+		},
+		{
 			description: "service has one port",
 			route: &routev1.Route{
 				Spec: routev1.RouteSpec{
