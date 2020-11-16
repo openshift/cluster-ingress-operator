@@ -238,6 +238,7 @@ func TestComputePodsScheduledCondition(t *testing.T) {
 func TestComputeIngressDegradedCondition(t *testing.T) {
 	tests := []struct {
 		name                        string
+		icName                      string
 		conditions                  []operatorv1.OperatorCondition
 		expectIngressDegradedStatus operatorv1.ConditionStatus
 		expectRequeue               bool
@@ -407,10 +408,28 @@ func TestComputeIngressDegradedCondition(t *testing.T) {
 			expectIngressDegradedStatus: operatorv1.ConditionFalse,
 			expectRequeue:               false,
 		},
+		{
+			name: "default ingress controller, canary check failing",
+			conditions: []operatorv1.OperatorCondition{
+				cond(IngressControllerCanaryCheckSuccessConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Second*-61)),
+			},
+			expectIngressDegradedStatus: operatorv1.ConditionTrue,
+			expectRequeue:               true,
+			icName:                      "default",
+		},
+		{
+			name: "default ingress controller, canary check passing",
+			conditions: []operatorv1.OperatorCondition{
+				cond(IngressControllerCanaryCheckSuccessConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Minute*-1)),
+			},
+			expectIngressDegradedStatus: operatorv1.ConditionFalse,
+			expectRequeue:               false,
+			icName:                      "default",
+		},
 	}
 
 	for _, test := range tests {
-		actual, err := computeIngressDegradedCondition(test.conditions)
+		actual, err := computeIngressDegradedCondition(test.conditions, test.icName)
 		switch err.(type) {
 		case retryable.Error:
 			if !test.expectRequeue {
@@ -990,7 +1009,7 @@ func TestIngressStatusesEqual(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		if actual := ingressStatusesEqual(tc.a, tc.b); actual != tc.expected {
+		if actual := IngressStatusesEqual(tc.a, tc.b); actual != tc.expected {
 			t.Fatalf("%q: expected %v, got %v", tc.description, tc.expected, actual)
 		}
 	}
@@ -1039,7 +1058,7 @@ func TestMergeConditions(t *testing.T) {
 
 	for name, test := range tests {
 		t.Logf("test: %s", name)
-		actual := mergeConditions(test.conditions, test.updates...)
+		actual := MergeConditions(test.conditions, test.updates...)
 		if !conditionsEqual(test.expected, actual) {
 			t.Errorf("expected:\n%v\nactual:\n%v", toYaml(test.expected), toYaml(actual))
 		}

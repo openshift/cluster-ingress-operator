@@ -46,6 +46,7 @@ const (
 	IngressControllerDeploymentAvailableConditionType            = "DeploymentAvailable"
 	IngressControllerDeploymentReplicasMinAvailableConditionType = "DeploymentReplicasMinAvailable"
 	IngressControllerDeploymentReplicasAllAvailableConditionType = "DeploymentReplicasAllAvailable"
+	IngressControllerCanaryCheckSuccessConditionType             = "CanaryChecksSucceeding"
 )
 
 var (
@@ -258,14 +259,14 @@ func (r *reconciler) admit(current *operatorv1.IngressController, ingressConfig 
 	if err := r.validate(updated); err != nil {
 		switch err := err.(type) {
 		case *admissionRejection:
-			updated.Status.Conditions = mergeConditions(updated.Status.Conditions, operatorv1.OperatorCondition{
+			updated.Status.Conditions = MergeConditions(updated.Status.Conditions, operatorv1.OperatorCondition{
 				Type:    IngressControllerAdmittedConditionType,
 				Status:  operatorv1.ConditionFalse,
 				Reason:  "Invalid",
 				Message: err.Reason,
 			})
 			updated.Status.ObservedGeneration = updated.Generation
-			if !ingressStatusesEqual(current.Status, updated.Status) {
+			if !IngressStatusesEqual(current.Status, updated.Status) {
 				if err := r.client.Status().Update(context.TODO(), updated); err != nil {
 					return fmt.Errorf("failed to update status: %v", err)
 				}
@@ -274,13 +275,13 @@ func (r *reconciler) admit(current *operatorv1.IngressController, ingressConfig 
 		return err
 	}
 
-	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, operatorv1.OperatorCondition{
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, operatorv1.OperatorCondition{
 		Type:   IngressControllerAdmittedConditionType,
 		Status: operatorv1.ConditionTrue,
 		Reason: "Valid",
 	})
 	updated.Status.ObservedGeneration = updated.Generation
-	if !ingressStatusesEqual(current.Status, updated.Status) {
+	if !IngressStatusesEqual(current.Status, updated.Status) {
 		if err := r.client.Status().Update(context.TODO(), updated); err != nil {
 			return fmt.Errorf("failed to update status: %v", err)
 		}
