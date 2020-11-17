@@ -374,6 +374,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	}
 
 	deployment.Spec.Template.Spec.Containers[0].Image = ingressControllerImage
+	deployment.Spec.Template.Spec.DNSPolicy = corev1.DNSClusterFirst
 
 	if ci.Status.EndpointPublishingStrategy.Type == operatorv1.HostNetworkStrategyType {
 		// Expose ports 80 and 443 on the host to provide endpoints for
@@ -386,6 +387,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		// problems or firewall restrictions.
 		deployment.Spec.Template.Spec.Containers[0].LivenessProbe.Handler.HTTPGet.Host = "localhost"
 		deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.Handler.HTTPGet.Host = "localhost"
+		deployment.Spec.Template.Spec.DNSPolicy = corev1.DNSClusterFirstWithHostNet
 	}
 
 	// Fill in the default certificate secret name.
@@ -861,6 +863,7 @@ func hashableDeployment(deployment *appsv1.Deployment, onlyTemplate bool) *appsv
 		return containers[i].Name < containers[j].Name
 	})
 	hashableDeployment.Spec.Template.Spec.Containers = containers
+	hashableDeployment.Spec.Template.Spec.DNSPolicy = deployment.Spec.Template.Spec.DNSPolicy
 	hashableDeployment.Spec.Template.Spec.HostNetwork = deployment.Spec.Template.Spec.HostNetwork
 	volumes := make([]corev1.Volume, len(deployment.Spec.Template.Spec.Volumes))
 	for i, vol := range deployment.Spec.Template.Spec.Volumes {
@@ -1005,6 +1008,7 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 		containers[i+1] = *container.DeepCopy()
 	}
 	updated.Spec.Template.Spec.Containers = containers
+	updated.Spec.Template.Spec.DNSPolicy = expected.Spec.Template.Spec.DNSPolicy
 	updated.Spec.Template.Labels = expected.Spec.Template.Labels
 	updated.Spec.Strategy = expected.Spec.Strategy
 	volumes := make([]corev1.Volume, len(expected.Spec.Template.Spec.Volumes))
