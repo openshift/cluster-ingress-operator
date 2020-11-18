@@ -409,6 +409,7 @@ func (m *Provider) change(record *iov1.DNSRecord, zone configv1.DNSZone, action 
 // target in targetHostedZoneID. An Alias record type is used for all regions
 // other than GovCloud (CNAME). See the following for additional details:
 // https://docs.aws.amazon.com/govcloud-us/latest/UserGuide/govcloud-r53.html
+// Note that by API contract, TTL cannot be specified for an AliasTarget.
 func (m *Provider) updateRecord(domain, zoneID, target, targetHostedZoneID, action string, ttl int64) error {
 	input := route53.ChangeResourceRecordSetsInput{HostedZoneId: aws.String(zoneID)}
 	if clientEndpointIsGovCloud(&m.route53.Client.ClientInfo) {

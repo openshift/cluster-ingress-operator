@@ -1440,9 +1440,13 @@ func TestHTTPCookieCapture(t *testing.T) {
 				Type:      operatorv1.ContainerLoggingDestinationType,
 				Container: &operatorv1.ContainerLoggingDestinationParameters{},
 			},
-			HTTPCaptureCookies: []operatorv1.IngressControllerCaptureHTTPCookie{
-				{MatchType: "Exact", Name: "foo", MaxLength: 9},
-			},
+			HTTPCaptureCookies: []operatorv1.IngressControllerCaptureHTTPCookie{{
+				IngressControllerCaptureHTTPCookieUnion: operatorv1.IngressControllerCaptureHTTPCookieUnion{
+					MatchType: "Exact",
+					Name:      "foo",
+				},
+				MaxLength: 9,
+			}},
 		},
 	}
 	if err := kclient.Create(context.TODO(), ic); err != nil {
