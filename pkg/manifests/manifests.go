@@ -33,6 +33,11 @@ const (
 	MetricsRoleAsset               = "assets/router/metrics/role.yaml"
 	MetricsRoleBindingAsset        = "assets/router/metrics/role-binding.yaml"
 
+	CanaryNamespaceAsset = "assets/canary/namespace.yaml"
+	CanaryDaemonSetAsset = "assets/canary/daemonset.yaml"
+	CanaryServiceAsset   = "assets/canary/service.yaml"
+	CanaryRouteAsset     = "assets/canary/route.yaml"
+
 	// Annotation used to inform the certificate generation service to
 	// generate a cluster-signed certificate and populate the secret.
 	ServingCertSecretAnnotation = "service.alpha.openshift.io/serving-cert-secret-name"
@@ -41,6 +46,10 @@ const (
 	// ingress controller to aid in selection (especially in cases where an ownerref
 	// can't be established due to namespace boundaries).
 	OwningIngressControllerLabel = "ingresscontroller.operator.openshift.io/owning-ingresscontroller"
+
+	// OwningIngressCanaryCheckLabel should be applied to any objects "owned by" the
+	// ingress operator's canary end-to-end check controller.
+	OwningIngressCanaryCheckLabel = "ingress.openshift.io/canary"
 
 	// IngressControllerFinalizer is used to block deletion of ingresscontrollers
 	// until the operator has ensured it's safe for deletion to proceed.
@@ -56,6 +65,10 @@ const (
 
 	DefaultOperatorNamespace = "openshift-ingress-operator"
 	DefaultOperandNamespace  = "openshift-ingress"
+
+	// DefaultCanaryNamespace is the default namespace for
+	// the ingress canary check resources.
+	DefaultCanaryNamespace = "openshift-ingress-canary"
 
 	// DefaultIngressControllerName is the name of the default IngressController
 	// instance.
@@ -174,6 +187,38 @@ func MetricsRoleBinding() *rbacv1.RoleBinding {
 	return rb
 }
 
+func CanaryNamespace() *corev1.Namespace {
+	ns, err := NewNamespace(MustAssetReader(CanaryNamespaceAsset))
+	if err != nil {
+		panic(err)
+	}
+	return ns
+}
+
+func CanaryDaemonSet() *appsv1.DaemonSet {
+	daemonset, err := NewDaemonSet(MustAssetReader(CanaryDaemonSetAsset))
+	if err != nil {
+		panic(err)
+	}
+	return daemonset
+}
+
+func CanaryService() *corev1.Service {
+	service, err := NewService(MustAssetReader(CanaryServiceAsset))
+	if err != nil {
+		panic(err)
+	}
+	return service
+}
+
+func CanaryRoute() *routev1.Route {
+	route, err := NewRoute(MustAssetReader(CanaryRouteAsset))
+	if err != nil {
+		panic(err)
+	}
+	return route
+}
+
 func NewServiceAccount(manifest io.Reader) (*corev1.ServiceAccount, error) {
 	sa := corev1.ServiceAccount{}
 	if err := yaml.NewYAMLOrJSONDecoder(manifest, 100).Decode(&sa); err != nil {
@@ -239,6 +284,15 @@ func NewNamespace(manifest io.Reader) (*corev1.Namespace, error) {
 
 func NewDeployment(manifest io.Reader) (*appsv1.Deployment, error) {
 	o := appsv1.Deployment{}
+	if err := yaml.NewYAMLOrJSONDecoder(manifest, 100).Decode(&o); err != nil {
+		return nil, err
+	}
+
+	return &o, nil
+}
+
+func NewDaemonSet(manifest io.Reader) (*appsv1.DaemonSet, error) {
+	o := appsv1.DaemonSet{}
 	if err := yaml.NewYAMLOrJSONDecoder(manifest, 100).Decode(&o); err != nil {
 		return nil, err
 	}

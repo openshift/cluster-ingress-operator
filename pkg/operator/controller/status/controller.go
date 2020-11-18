@@ -91,7 +91,8 @@ type reconciler struct {
 func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, error) {
 	log.Info("Reconciling", "request", request)
 
-	nsManifest := manifests.RouterNamespace()
+	ingressNamespace := manifests.RouterNamespace().Name
+	canaryNamespace := manifests.CanaryNamespace().Name
 
 	co := &configv1.ClusterOperator{ObjectMeta: metav1.ObjectMeta{Name: operatorcontroller.IngressClusterOperatorName().Name}}
 	if err := r.client.Get(context.TODO(), operatorcontroller.IngressClusterOperatorName(), co); err != nil {
@@ -107,7 +108,7 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 	}
 	oldStatus := co.Status.DeepCopy()
 
-	state, err := r.getOperatorState(nsManifest.Name)
+	state, err := r.getOperatorState(ingressNamespace, canaryNamespace)
 	if err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to get operator state: %v", err)
 	}
@@ -128,12 +129,19 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 			Namespace: r.Namespace,
 		},
 	}
-	if state.Namespace != nil {
+	if state.IngressNamespace != nil {
 		related = append(related, configv1.ObjectReference{
 			Resource: "namespaces",
-			Name:     state.Namespace.Name,
+			Name:     state.IngressNamespace.Name,
 		})
 	}
+	if state.CanaryNamespace != nil {
+		related = append(related, configv1.ObjectReference{
+			Resource: "namespaces",
+			Name:     state.CanaryNamespace.Name,
+		})
+	}
+
 	co.Status.RelatedObjects = related
 
 	allIngressesAvailable := checkAllIngressesAvailable(state.IngressControllers)
@@ -182,23 +190,33 @@ func initializeClusterOperator(co *configv1.ClusterOperator) {
 }
 
 type operatorState struct {
-	Namespace          *corev1.Namespace
+	IngressNamespace   *corev1.Namespace
+	CanaryNamespace    *corev1.Namespace
 	IngressControllers []operatorv1.IngressController
 	DNSRecords         []iov1.DNSRecord
 }
 
 // getOperatorState gets and returns the resources necessary to compute the
 // operator's current state.
-func (r *reconciler) getOperatorState(nsName string) (operatorState, error) {
+func (r *reconciler) getOperatorState(ingressNamespace, canaryNamespace string) (operatorState, error) {
 	state := operatorState{}
 
-	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: nsName}}
-	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: nsName}, ns); err != nil {
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ingressNamespace}}
+	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: ingressNamespace}, ns); err != nil {
 		if !errors.IsNotFound(err) {
-			return state, fmt.Errorf("failed to get namespace %q: %v", nsName, err)
+			return state, fmt.Errorf("failed to get namespace %q: %v", ingressNamespace, err)
 		}
 	} else {
-		state.Namespace = ns
+		state.IngressNamespace = ns
+	}
+
+	ns = &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: canaryNamespace}}
+	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: canaryNamespace}, ns); err != nil {
+		if !errors.IsNotFound(err) {
+			return state, fmt.Errorf("failed to get namespace %q: %v", canaryNamespace, err)
+		}
+	} else {
+		state.CanaryNamespace = ns
 	}
 
 	ingressList := &operatorv1.IngressControllerList{}

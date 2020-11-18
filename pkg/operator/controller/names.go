@@ -25,6 +25,10 @@ const (
 	// controller, and for anti-affinity, to prevent colocation of replicas
 	// of the same generation of the same ingress controller.
 	ControllerDeploymentHashLabel = "ingresscontroller.operator.openshift.io/hash"
+
+	// CanaryDaemonsetLabel identifies a daemonset as an ingress canary daemonset, and
+	// the value is the name of the owning canary controller.
+	CanaryDaemonSetLabel = "ingresscanary.operator.openshift.io/daemonset-ingresscanary"
 )
 
 // IngressClusterOperatorName returns the namespaced name of the ClusterOperator
@@ -154,5 +158,34 @@ func WildcardDNSRecordName(ic *operatorv1.IngressController) types.NamespacedNam
 	return types.NamespacedName{
 		Namespace: ic.Namespace,
 		Name:      fmt.Sprintf("%s-wildcard", ic.Name),
+	}
+}
+
+func CanaryDaemonSetName() types.NamespacedName {
+	return types.NamespacedName{
+		Namespace: "openshift-ingress-canary",
+		Name:      "ingress-canary",
+	}
+}
+
+func CanaryDaemonSetPodSelector(canaryControllerName string) *metav1.LabelSelector {
+	return &metav1.LabelSelector{
+		MatchLabels: map[string]string{
+			CanaryDaemonSetLabel: canaryControllerName,
+		},
+	}
+}
+
+func CanaryServiceName() types.NamespacedName {
+	return types.NamespacedName{
+		Namespace: "openshift-ingress-canary",
+		Name:      "ingress-canary",
+	}
+}
+
+func CanaryRouteName() types.NamespacedName {
+	return types.NamespacedName{
+		Namespace: "openshift-ingress-canary",
+		Name:      "ingress-canary-route",
 	}
 }

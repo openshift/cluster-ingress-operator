@@ -1,0 +1,23 @@
+# Hello Openshift Ingress Canary daemonset
+# Specific values are set at runtime
+kind: DaemonSet
+apiVersion: apps/v1
+# name and namespace are set at runtime.
+spec:
+  progressDeadlineSeconds: 600
+  template:
+    spec:
+      containers:
+        - name: hello-openshift-canary
+          # Image is set at runtime
+          imagePullPolicy: IfNotPresent
+          terminationMessagePolicy: FallbackToLogsOnError
+          ports:
+          - containerPort: 8080
+            protocol: TCP
+          - containerPort: 8888
+            protocol: TCP
+          resources:
+            requests:
+              cpu: 10m
+              memory: 20Mi

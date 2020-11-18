@@ -10,6 +10,7 @@ import (
 	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
 	operatorconfig "github.com/openshift/cluster-ingress-operator/pkg/operator/config"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	canarycontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/canary"
 	certcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/certificate"
 	certpublishercontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/certificate-publisher"
 	dnscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/dns"
@@ -61,6 +62,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		NewCache: cache.MultiNamespacedCacheBuilder([]string{
 			config.Namespace,
 			manifests.DefaultOperandNamespace,
+			manifests.DefaultCanaryNamespace,
 			operatorcontroller.GlobalMachineSpecifiedConfigNamespace,
 		}),
 		// Use a non-caching client everywhere. The default split client does not
@@ -111,6 +113,16 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		OperatorReleaseVersion: config.OperatorReleaseVersion,
 	}); err != nil {
 		return nil, fmt.Errorf("failed to create dns controller: %v", err)
+	}
+
+	// Set up the canary controller when the config.CanaryImage is not empty
+	if len(config.CanaryImage) != 0 {
+		if _, err := canarycontroller.New(mgr, canarycontroller.Config{
+			Namespace:   config.Namespace,
+			CanaryImage: config.CanaryImage,
+		}); err != nil {
+			return nil, fmt.Errorf("failed to create canary controller: %v", err)
+		}
 	}
 
 	return &Operator{

@@ -47,6 +47,8 @@ spec:
           - "$(WATCH_NAMESPACE)"
           - --image
           - "$(IMAGE)"
+          - --canary-image
+          - "$(CANARY_IMAGE)"
           - --release-version
           - "$(RELEASE_VERSION)"
           env:
@@ -58,6 +60,8 @@ spec:
                   fieldPath: metadata.namespace
             - name: IMAGE
               value: openshift/origin-haproxy-router:v4.0
+            - name: CANARY_IMAGE
+              value: openshift/hello-openshift:latest
           resources:
             requests:
               cpu: 10m

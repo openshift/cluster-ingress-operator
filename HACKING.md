@@ -57,6 +57,9 @@ To run the operator binary in the cluster from your local machine (as opposed to
 $ make run-local
 ```
 
+Set `ENABLE_CANARY=true` in your environment (or inline with the `run-local` command) to enable the ingress canary.
+
+
 Note, to rescale the operator on the cluster after local testing is complete, scale the CVO back up with:
 
 ```
