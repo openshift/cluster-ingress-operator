@@ -261,9 +261,12 @@ func TestDesiredRouterDeployment(t *testing.T) {
 				Container: &operatorv1.ContainerLoggingDestinationParameters{},
 			},
 			HttpLogFormat: "%ci:%cp [%t] %ft %b/%s %B %bq %HM %HU %HV",
-			HTTPCaptureCookies: []operatorv1.IngressControllerCaptureHTTPCookie{
-				{MatchType: "Prefix", NamePrefix: "foo"},
-			},
+			HTTPCaptureCookies: []operatorv1.IngressControllerCaptureHTTPCookie{{
+				IngressControllerCaptureHTTPCookieUnion: operatorv1.IngressControllerCaptureHTTPCookieUnion{
+					MatchType:  "Prefix",
+					NamePrefix: "foo",
+				},
+			}},
 		},
 	}
 	ci.Spec.HTTPHeaders = &operatorv1.IngressControllerHTTPHeaders{
@@ -397,9 +400,13 @@ func TestDesiredRouterDeployment(t *testing.T) {
 					{Name: "Location", MaxLength: 15},
 				},
 			},
-			HTTPCaptureCookies: []operatorv1.IngressControllerCaptureHTTPCookie{
-				{MatchType: "Exact", Name: "foo", MaxLength: 15},
-			},
+			HTTPCaptureCookies: []operatorv1.IngressControllerCaptureHTTPCookie{{
+				IngressControllerCaptureHTTPCookieUnion: operatorv1.IngressControllerCaptureHTTPCookieUnion{
+					MatchType: "Exact",
+					Name:      "foo",
+				},
+				MaxLength: 15,
+			}},
 		},
 	}
 	ci.Spec.HTTPHeaders = &operatorv1.IngressControllerHTTPHeaders{
