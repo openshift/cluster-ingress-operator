@@ -14,7 +14,6 @@ import (
 	"github.com/aws/aws-sdk-go/aws/arn"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/client/metadata"
-	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/endpoints"
 	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -78,10 +77,10 @@ type Provider struct {
 
 // Config is the necessary input to configure the manager.
 type Config struct {
-	// AccessID is an AWS credential.
-	AccessID string
-	// AccessKey is an AWS credential.
-	AccessKey string
+	// SharedCredentialFile is the path to the aws shared credential file
+	// that is used by SDK to configure the credentials.
+	SharedCredentialFile string
+
 	// Region is the AWS region ELBs are created in.
 	Region string
 	// ServiceEndpoints is the list of AWS API endpoints to use for
@@ -102,12 +101,9 @@ type ServiceEndpoint struct {
 }
 
 func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error) {
-	creds := credentials.NewStaticCredentials(config.AccessID, config.AccessKey, "")
 	sess, err := session.NewSessionWithOptions(session.Options{
-		Config: aws.Config{
-			Credentials: creds,
-		},
 		SharedConfigState: session.SharedConfigEnable,
+		SharedConfigFiles: []string{config.SharedCredentialFile},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("couldn't create AWS client session: %v", err)
