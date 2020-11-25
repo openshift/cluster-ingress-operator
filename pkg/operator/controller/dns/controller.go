@@ -69,7 +69,7 @@ func New(mgr manager.Manager, config Config) (runtimecontroller.Controller, erro
 	if err != nil {
 		return nil, err
 	}
-	if err := c.Watch(&source.Kind{Type: &iov1.DNSRecord{}}, &handler.EnqueueRequestForObject{}); err != nil {
+	if err := c.Watch(&source.Kind{Type: &iov1.DNSRecord{}}, &handler.EnqueueRequestForObject{}, predicate.GenerationChangedPredicate{}); err != nil {
 		return nil, err
 	}
 	if err := c.Watch(&source.Kind{Type: &configv1.DNS{}}, &handler.EnqueueRequestsFromMapFunc{ToRequests: handler.ToRequestsFunc(reconciler.ToDNSRecords)}); err != nil {
