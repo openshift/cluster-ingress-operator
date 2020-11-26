@@ -254,6 +254,8 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_UNIQUE_ID_HEADER_NAME", false, "")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_UNIQUE_ID_FORMAT", false, "")
 
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_H1_CASE_ADJUST", false, "")
+
 	ci.Spec.Logging = &operatorv1.IngressControllerLogging{
 		Access: &operatorv1.AccessLogging{
 			Destination: operatorv1.LoggingDestination{
@@ -269,6 +271,10 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	ci.Spec.HTTPHeaders = &operatorv1.IngressControllerHTTPHeaders{
 		UniqueId: operatorv1.IngressControllerHTTPUniqueIdHeaderPolicy{
 			Name: "unique-id",
+		},
+		HeaderNameCaseAdjustments: []operatorv1.IngressControllerHTTPHeaderNameCaseAdjustment{
+			"Host",
+			"Cache-Control",
 		},
 	}
 	ci.Spec.TLSSecurityProfile = &configv1.TLSSecurityProfile{
@@ -315,6 +321,11 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	}
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_USE_PROXY_PROTOCOL", true, "true")
+
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_UNIQUE_ID_HEADER_NAME", true, "unique-id")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_UNIQUE_ID_FORMAT", true, `"%{+X}o %ci:%cp_%fi:%fp_%Ts_%rt:%pid"`)
+
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_H1_CASE_ADJUST", true, "Host,Cache-Control")
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CANONICAL_HOSTNAME", true, ci.Status.Domain)
 
@@ -490,7 +501,8 @@ func TestDesiredRouterDeployment(t *testing.T) {
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_UNIQUE_ID_HEADER_NAME", true, "unique-id")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_UNIQUE_ID_FORMAT", true, `"foo"`)
-	checkDeploymentHasEnvVar(t, deployment, RouterHardStopAfterEnvName, false, "")
+
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_H1_CASE_ADJUST", false, "")
 }
 
 func TestInferTLSProfileSpecFromDeployment(t *testing.T) {

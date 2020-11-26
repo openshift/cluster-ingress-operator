@@ -42,6 +42,8 @@ const (
 	RouterUniqueHeaderName   = "ROUTER_UNIQUE_ID_HEADER_NAME"
 	RouterUniqueHeaderFormat = "ROUTER_UNIQUE_ID_FORMAT"
 
+	RouterHTTPHeaderNameCaseAdjustments = "ROUTER_H1_CASE_ADJUST"
+
 	RouterLogLevelEnvName       = "ROUTER_LOG_LEVEL"
 	RouterSyslogAddressEnvName  = "ROUTER_SYSLOG_ADDRESS"
 	RouterSyslogFormatEnvName   = "ROUTER_SYSLOG_FORMAT"
@@ -633,6 +635,15 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 			corev1.EnvVar{Name: RouterUniqueHeaderName, Value: headerName},
 			corev1.EnvVar{Name: RouterUniqueHeaderFormat, Value: fmt.Sprintf("%q", headerFormat)},
 		)
+	}
+
+	if ci.Spec.HTTPHeaders != nil && len(ci.Spec.HTTPHeaders.HeaderNameCaseAdjustments) > 0 {
+		var adjustments []string
+		for _, v := range ci.Spec.HTTPHeaders.HeaderNameCaseAdjustments {
+			adjustments = append(adjustments, string(v))
+		}
+		v := strings.Join(adjustments, ",")
+		env = append(env, corev1.EnvVar{Name: RouterHTTPHeaderNameCaseAdjustments, Value: v})
 	}
 
 	if HTTP2IsEnabled(ci, ingressConfig) {
