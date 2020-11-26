@@ -111,6 +111,130 @@ func cond(t string, status operatorv1.ConditionStatus, reason string, lt time.Ti
 	}
 }
 
+func TestComputePodsScheduledCondition(t *testing.T) {
+	deployment := &appsv1.Deployment{
+		Spec: appsv1.DeploymentSpec{
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"ingresscontroller.operator.openshift.io/deployment-ingresscontroller": "default",
+					"ingresscontroller.operator.openshift.io/hash":                         "75678b564c",
+				},
+			},
+		},
+	}
+	unscheduledPod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "pod",
+			Labels: map[string]string{
+				"ingresscontroller.operator.openshift.io/deployment-ingresscontroller": "default",
+				"ingresscontroller.operator.openshift.io/hash":                         "75678b564c",
+			},
+		},
+		Status: corev1.PodStatus{
+			Conditions: []corev1.PodCondition{{
+				Type:   corev1.PodScheduled,
+				Status: corev1.ConditionFalse,
+			}},
+		},
+	}
+	unschedulablePod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "pod",
+			Labels: map[string]string{
+				"ingresscontroller.operator.openshift.io/deployment-ingresscontroller": "default",
+				"ingresscontroller.operator.openshift.io/hash":                         "75678b564c",
+			},
+		},
+		Status: corev1.PodStatus{
+			Conditions: []corev1.PodCondition{{
+				Type:    corev1.PodScheduled,
+				Status:  corev1.ConditionFalse,
+				Reason:  corev1.PodReasonUnschedulable,
+				Message: "0/3 nodes are available: 3 node(s) didn't match node selector.",
+			}},
+		},
+	}
+	scheduledPod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "pod",
+			Labels: map[string]string{
+				"ingresscontroller.operator.openshift.io/deployment-ingresscontroller": "default",
+				"ingresscontroller.operator.openshift.io/hash":                         "75678b564c",
+			},
+		},
+		Status: corev1.PodStatus{
+			Conditions: []corev1.PodCondition{{
+				Type:   corev1.PodScheduled,
+				Status: corev1.ConditionTrue,
+			}},
+		},
+	}
+	unrelatedPod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "pod",
+			Labels: map[string]string{
+				"ingresscontroller.operator.openshift.io/deployment-ingresscontroller": "default",
+				"ingresscontroller.operator.openshift.io/hash":                         "8921af1f16",
+			},
+		},
+		Status: corev1.PodStatus{
+			Conditions: []corev1.PodCondition{{
+				Type:    corev1.PodScheduled,
+				Status:  corev1.ConditionFalse,
+				Reason:  corev1.PodReasonUnschedulable,
+				Message: "0/3 nodes are available: 3 node(s) didn't match node selector.",
+			}},
+		},
+	}
+	invalidDeployment := &appsv1.Deployment{
+		Spec: appsv1.DeploymentSpec{
+			Selector: &metav1.LabelSelector{},
+		},
+	}
+	tests := []struct {
+		name       string
+		deployment *appsv1.Deployment
+		pods       []corev1.Pod
+		expect     operatorv1.ConditionStatus
+	}{
+		{
+			name:       "no pods",
+			deployment: deployment,
+			pods:       []corev1.Pod{unrelatedPod},
+			expect:     operatorv1.ConditionTrue,
+		},
+		{
+			name:       "all pods scheduled",
+			deployment: deployment,
+			pods:       []corev1.Pod{scheduledPod},
+			expect:     operatorv1.ConditionTrue,
+		},
+		{
+			name:       "some pod unscheduled",
+			deployment: deployment,
+			pods:       []corev1.Pod{scheduledPod, unscheduledPod},
+			expect:     operatorv1.ConditionFalse,
+		},
+		{
+			name:       "some pod unschedulable",
+			deployment: deployment,
+			pods:       []corev1.Pod{scheduledPod, unschedulablePod},
+			expect:     operatorv1.ConditionFalse,
+		},
+		{
+			name:       "deployment with empty label selector",
+			deployment: invalidDeployment,
+			expect:     operatorv1.ConditionUnknown,
+		},
+	}
+	for _, test := range tests {
+		actual := computeDeploymentPodsScheduledCondition(test.deployment, test.pods)
+		if actual.Status != test.expect {
+			t.Errorf("%q: expected %v, got %v", test.name, test.expect, actual.Status)
+		}
+	}
+}
+
 func TestComputeIngressDegradedCondition(t *testing.T) {
 	tests := []struct {
 		name                        string
@@ -127,6 +251,23 @@ func TestComputeIngressDegradedCondition(t *testing.T) {
 			name: "not admitted",
 			conditions: []operatorv1.OperatorCondition{
 				cond(IngressControllerAdmittedConditionType, operatorv1.ConditionFalse, "", clock.Now()),
+			},
+			expectIngressDegradedStatus: operatorv1.ConditionTrue,
+			expectRequeue:               true,
+		},
+		{
+			name: "pods not scheduled for <10m",
+			conditions: []operatorv1.OperatorCondition{
+				cond(
+					IngressControllerPodsScheduledConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Minute*-9)),
+			},
+			expectIngressDegradedStatus: operatorv1.ConditionFalse,
+			expectRequeue:               true,
+		},
+		{
+			name: "pods not scheduled for >10m",
+			conditions: []operatorv1.OperatorCondition{
+				cond(IngressControllerPodsScheduledConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Minute*-31)),
 			},
 			expectIngressDegradedStatus: operatorv1.ConditionTrue,
 			expectRequeue:               true,
@@ -238,6 +379,7 @@ func TestComputeIngressDegradedCondition(t *testing.T) {
 			name: "DNS not ready and deployment unavailable",
 			conditions: []operatorv1.OperatorCondition{
 				cond(IngressControllerAdmittedConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+				cond(IngressControllerPodsScheduledConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Hour*-1)),
 				cond(IngressControllerDeploymentAvailableConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Hour*-1)),
 				cond(IngressControllerDeploymentReplicasMinAvailableConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Hour*-1)),
 				cond(IngressControllerDeploymentReplicasAllAvailableConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Hour*-1)),
@@ -253,6 +395,7 @@ func TestComputeIngressDegradedCondition(t *testing.T) {
 			name: "admitted, DNS, LB, and deployment OK",
 			conditions: []operatorv1.OperatorCondition{
 				cond(IngressControllerAdmittedConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+				cond(IngressControllerPodsScheduledConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
 				cond(IngressControllerDeploymentAvailableConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
 				cond(IngressControllerDeploymentReplicasMinAvailableConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
 				cond(IngressControllerDeploymentReplicasAllAvailableConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),

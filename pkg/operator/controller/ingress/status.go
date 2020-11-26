@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"sort"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
@@ -15,11 +16,13 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
+	oputil "github.com/openshift/cluster-ingress-operator/pkg/util"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	utilclock "k8s.io/apimachinery/pkg/util/clock"
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
@@ -29,7 +32,7 @@ var clock utilclock.Clock = utilclock.RealClock{}
 
 // syncIngressControllerStatus computes the current status of ic and
 // updates status upon any changes since last sync.
-func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressController, deployment *appsv1.Deployment, service *corev1.Service, operandEvents []corev1.Event, wildcardRecord *iov1.DNSRecord, dnsConfig *configv1.DNS) error {
+func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressController, deployment *appsv1.Deployment, pods []corev1.Pod, service *corev1.Service, operandEvents []corev1.Event, wildcardRecord *iov1.DNSRecord, dnsConfig *configv1.DNS) error {
 	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
 	if err != nil {
 		return fmt.Errorf("deployment has invalid spec.selector: %v", err)
@@ -41,6 +44,7 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	updated.Status.AvailableReplicas = deployment.Status.AvailableReplicas
 	updated.Status.Selector = selector.String()
 	updated.Status.TLSProfile = computeIngressTLSProfile(ic.Status.TLSProfile, deployment)
+	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, computeDeploymentPodsScheduledCondition(deployment, pods))
 	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, computeIngressAvailableCondition(deployment))
 	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, computeDeploymentAvailableCondition(deployment))
 	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, computeDeploymentReplicasMinAvailableCondition(deployment))
@@ -100,6 +104,70 @@ func computeIngressTLSProfile(oldProfile *configv1.TLSProfileSpec, deployment *a
 	newProfile := inferTLSProfileSpecFromDeployment(deployment)
 
 	return newProfile
+}
+
+// computeDeploymentPodsScheduledCondition computes the ingress controller's
+// current PodsScheduled status condition state by inspecting the PodScheduled
+// conditions of the pods associated with the deployment.
+func computeDeploymentPodsScheduledCondition(deployment *appsv1.Deployment, pods []corev1.Pod) operatorv1.OperatorCondition {
+	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
+	if err != nil || selector.Empty() {
+		return operatorv1.OperatorCondition{
+			Type:    IngressControllerPodsScheduledConditionType,
+			Status:  operatorv1.ConditionUnknown,
+			Reason:  "InvalidLabelSelector",
+			Message: "Deployment has an invalid label selector.",
+		}
+	}
+	unscheduled := make(map[*corev1.Pod]corev1.PodCondition)
+	for i, pod := range pods {
+		if !selector.Matches(labels.Set(pod.Labels)) {
+			continue
+		}
+		for j, cond := range pod.Status.Conditions {
+			if cond.Type != corev1.PodScheduled {
+				continue
+			}
+			if cond.Status == corev1.ConditionTrue {
+				continue
+			}
+			unscheduled[&pods[i]] = pod.Status.Conditions[j]
+		}
+	}
+	if len(unscheduled) != 0 {
+		var haveUnschedulable bool
+		message := "Some pods are not scheduled:"
+		// Sort keys so that the result is deterministic.
+		keys := make([]*corev1.Pod, 0, len(unscheduled))
+		for pod := range unscheduled {
+			keys = append(keys, pod)
+		}
+		sort.Slice(keys, func(i, j int) bool {
+			return oputil.ObjectLess(&keys[i].ObjectMeta, &keys[j].ObjectMeta)
+		})
+		for _, pod := range keys {
+			cond := unscheduled[pod]
+			if cond.Reason == corev1.PodReasonUnschedulable {
+				haveUnschedulable = true
+				message = fmt.Sprintf("%s Pod %q cannot be scheduled: %s", message, pod.Name, cond.Message)
+			} else {
+				message = fmt.Sprintf("%s Pod %q is not yet scheduled: %s: %s", message, pod.Name, cond.Reason, cond.Message)
+			}
+		}
+		if haveUnschedulable {
+			message = message + " Make sure you have sufficient worker nodes."
+		}
+		return operatorv1.OperatorCondition{
+			Type:    IngressControllerPodsScheduledConditionType,
+			Status:  operatorv1.ConditionFalse,
+			Reason:  "PodsNotScheduled",
+			Message: message,
+		}
+	}
+	return operatorv1.OperatorCondition{
+		Type:   IngressControllerPodsScheduledConditionType,
+		Status: operatorv1.ConditionTrue,
+	}
 }
 
 // computeIngressAvailableCondition computes the ingress controller's current Available status state
@@ -287,6 +355,11 @@ func computeIngressDegradedCondition(conditions []operatorv1.OperatorCondition) 
 			status:    operatorv1.ConditionTrue,
 		},
 		{
+			condition:   IngressControllerPodsScheduledConditionType,
+			status:      operatorv1.ConditionTrue,
+			gracePeriod: time.Minute * 10,
+		},
+		{
 			condition:   IngressControllerDeploymentAvailableConditionType,
 			status:      operatorv1.ConditionTrue,
 			gracePeriod: time.Second * 30,
@@ -363,7 +436,7 @@ func computeIngressDegradedCondition(conditions []operatorv1.OperatorCondition) 
 
 		var degraded string
 		for _, cond := range degradedConditions {
-			degraded = degraded + fmt.Sprintf(", %s=%s", cond.Type, cond.Status)
+			degraded = degraded + fmt.Sprintf(", %s=%s (%s: %s)", cond.Type, cond.Status, cond.Reason, cond.Message)
 		}
 		degraded = degraded[2:]
 
