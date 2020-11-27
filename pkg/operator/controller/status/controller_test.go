@@ -19,7 +19,7 @@ func TestComputeOperatorProgressingCondition(t *testing.T) {
 	testCases := []struct {
 		description           string
 		noNamespace           bool
-		allIngressesAvailable bool
+		anyIngressProgressing bool
 		reportedVersions      versions
 		oldVersions           versions
 		curVersions           versions
@@ -27,7 +27,7 @@ func TestComputeOperatorProgressingCondition(t *testing.T) {
 	}{
 		{
 			description:           "all ingress controllers are available",
-			allIngressesAvailable: true,
+			anyIngressProgressing: true,
 			expectProgressing:     configv1.ConditionFalse,
 		},
 		{
@@ -36,7 +36,7 @@ func TestComputeOperatorProgressingCondition(t *testing.T) {
 		},
 		{
 			description:           "versions match",
-			allIngressesAvailable: true,
+			anyIngressProgressing: true,
 			reportedVersions:      versions{"v1", "ic-v1"},
 			oldVersions:           versions{"v1", "ic-v1"},
 			curVersions:           versions{"v1", "ic-v1"},
@@ -44,7 +44,7 @@ func TestComputeOperatorProgressingCondition(t *testing.T) {
 		},
 		{
 			description:           "operator upgrade in progress",
-			allIngressesAvailable: true,
+			anyIngressProgressing: true,
 			reportedVersions:      versions{"v1", "ic-v1"},
 			oldVersions:           versions{"v1", "ic-v1"},
 			curVersions:           versions{"v2", "ic-v1"},
@@ -52,7 +52,7 @@ func TestComputeOperatorProgressingCondition(t *testing.T) {
 		},
 		{
 			description:           "operand upgrade in progress",
-			allIngressesAvailable: true,
+			anyIngressProgressing: true,
 			reportedVersions:      versions{"v1", "ic-v1"},
 			oldVersions:           versions{"v1", "ic-v1"},
 			curVersions:           versions{"v1", "ic-v2"},
@@ -60,7 +60,7 @@ func TestComputeOperatorProgressingCondition(t *testing.T) {
 		},
 		{
 			description:           "operator and operand upgrade in progress",
-			allIngressesAvailable: true,
+			anyIngressProgressing: true,
 			reportedVersions:      versions{"v1", "ic-v1"},
 			oldVersions:           versions{"v1", "ic-v1"},
 			curVersions:           versions{"v2", "ic-v2"},
@@ -68,7 +68,7 @@ func TestComputeOperatorProgressingCondition(t *testing.T) {
 		},
 		{
 			description:           "operator upgrade done",
-			allIngressesAvailable: true,
+			anyIngressProgressing: true,
 			reportedVersions:      versions{"v2", "ic-v1"},
 			oldVersions:           versions{"v1", "ic-v1"},
 			curVersions:           versions{"v2", "ic-v1"},
@@ -76,7 +76,7 @@ func TestComputeOperatorProgressingCondition(t *testing.T) {
 		},
 		{
 			description:           "operand upgrade done",
-			allIngressesAvailable: true,
+			anyIngressProgressing: true,
 			reportedVersions:      versions{"v1", "ic-v2"},
 			oldVersions:           versions{"v1", "ic-v1"},
 			curVersions:           versions{"v1", "ic-v2"},
@@ -84,7 +84,7 @@ func TestComputeOperatorProgressingCondition(t *testing.T) {
 		},
 		{
 			description:           "operator and operand upgrade done",
-			allIngressesAvailable: true,
+			anyIngressProgressing: true,
 			reportedVersions:      versions{"v2", "ic-v2"},
 			oldVersions:           versions{"v1", "ic-v1"},
 			curVersions:           versions{"v2", "ic-v2"},
@@ -92,7 +92,7 @@ func TestComputeOperatorProgressingCondition(t *testing.T) {
 		},
 		{
 			description:           "operator upgrade in progress, operand upgrade done",
-			allIngressesAvailable: true,
+			anyIngressProgressing: true,
 			reportedVersions:      versions{"v2", "ic-v1"},
 			oldVersions:           versions{"v1", "ic-v1"},
 			curVersions:           versions{"v2", "ic-v2"},
@@ -127,7 +127,7 @@ func TestComputeOperatorProgressingCondition(t *testing.T) {
 			Status: tc.expectProgressing,
 		}
 
-		actual := computeOperatorProgressingCondition(tc.allIngressesAvailable, oldVersions, reportedVersions, tc.curVersions.operator, tc.curVersions.operand)
+		actual := computeOperatorProgressingCondition(tc.anyIngressProgressing, oldVersions, reportedVersions, tc.curVersions.operator, tc.curVersions.operand)
 		conditionsCmpOpts := []cmp.Option{
 			cmpopts.IgnoreFields(configv1.ClusterOperatorStatusCondition{}, "LastTransitionTime", "Reason", "Message"),
 		}
@@ -379,66 +379,70 @@ func TestComputeOperatorStatusVersions(t *testing.T) {
 		description           string
 		oldVersions           versions
 		curVersions           versions
-		allIngressesAvailable bool
+		anyIngressProgressing bool
 		expectedVersions      versions
 	}{
 		{
-			description:           "initialize versions, operator is avaiable",
+			description:           "initialize versions, operator is not progressing",
 			oldVersions:           versions{UnknownVersionValue, UnknownVersionValue},
 			curVersions:           versions{"v1", "ic-v1"},
-			allIngressesAvailable: true,
+			anyIngressProgressing: false,
 			expectedVersions:      versions{"v1", "ic-v1"},
 		},
 		{
-			description:      "initialize versions, operator is not available",
-			oldVersions:      versions{UnknownVersionValue, UnknownVersionValue},
-			curVersions:      versions{"v1", "ic-v1"},
-			expectedVersions: versions{UnknownVersionValue, UnknownVersionValue},
+			description:           "initialize versions, operator is progressing",
+			oldVersions:           versions{UnknownVersionValue, UnknownVersionValue},
+			curVersions:           versions{"v1", "ic-v1"},
+			anyIngressProgressing: true,
+			expectedVersions:      versions{UnknownVersionValue, UnknownVersionValue},
 		},
 		{
 			description:           "update with no change",
 			oldVersions:           versions{"v1", "ic-v1"},
 			curVersions:           versions{"v1", "ic-v1"},
-			allIngressesAvailable: true,
+			anyIngressProgressing: false,
 			expectedVersions:      versions{"v1", "ic-v1"},
 		},
 		{
-			description:      "update operator version, operator is not available",
-			oldVersions:      versions{"v1", "ic-v1"},
-			curVersions:      versions{"v2", "ic-v1"},
-			expectedVersions: versions{"v1", "ic-v1"},
-		},
-		{
-			description:           "update operator version, operator is available",
+			description:           "update operator version, operator is progressing",
 			oldVersions:           versions{"v1", "ic-v1"},
 			curVersions:           versions{"v2", "ic-v1"},
-			allIngressesAvailable: true,
+			anyIngressProgressing: true,
+			expectedVersions:      versions{"v1", "ic-v1"},
+		},
+		{
+			description:           "update operator version, operator is not progressing",
+			oldVersions:           versions{"v1", "ic-v1"},
+			curVersions:           versions{"v2", "ic-v1"},
+			anyIngressProgressing: false,
 			expectedVersions:      versions{"v2", "ic-v1"},
 		},
 		{
-			description:      "update ingress controller image, operator is not available",
-			oldVersions:      versions{"v1", "ic-v1"},
-			curVersions:      versions{"v1", "ic-v2"},
-			expectedVersions: versions{"v1", "ic-v1"},
-		},
-		{
-			description:           "update ingress controller image, operator is available",
+			description:           "update ingress controller image, operator is progressing",
 			oldVersions:           versions{"v1", "ic-v1"},
 			curVersions:           versions{"v1", "ic-v2"},
-			allIngressesAvailable: true,
+			anyIngressProgressing: true,
+			expectedVersions:      versions{"v1", "ic-v1"},
+		},
+		{
+			description:           "update ingress controller image, operator is not progressing",
+			oldVersions:           versions{"v1", "ic-v1"},
+			curVersions:           versions{"v1", "ic-v2"},
+			anyIngressProgressing: false,
 			expectedVersions:      versions{"v1", "ic-v2"},
 		},
 		{
-			description:      "update operator and ingress controller image, operator is not available",
-			oldVersions:      versions{"v1", "ic-v1"},
-			curVersions:      versions{"v2", "ic-v2"},
-			expectedVersions: versions{"v1", "ic-v1"},
-		},
-		{
-			description:           "update operator and ingress controller image, operator is available",
+			description:           "update operator and ingress controller image, operator is progressing",
 			oldVersions:           versions{"v1", "ic-v1"},
 			curVersions:           versions{"v2", "ic-v2"},
-			allIngressesAvailable: true,
+			anyIngressProgressing: true,
+			expectedVersions:      versions{"v1", "ic-v1"},
+		},
+		{
+			description:           "update operator and ingress controller image, operator is not progressing",
+			oldVersions:           versions{"v1", "ic-v1"},
+			curVersions:           versions{"v2", "ic-v2"},
+			anyIngressProgressing: false,
 			expectedVersions:      versions{"v2", "ic-v2"},
 		},
 	}
@@ -476,7 +480,7 @@ func TestComputeOperatorStatusVersions(t *testing.T) {
 				IngressControllerImage: tc.curVersions.operand,
 			},
 		}
-		versions := r.computeOperatorStatusVersions(oldVersions, tc.allIngressesAvailable)
+		versions := r.computeOperatorStatusVersions(oldVersions, tc.anyIngressProgressing)
 		versionsCmpOpts := []cmp.Option{
 			cmpopts.EquateEmpty(),
 			cmpopts.SortSlices(func(a, b configv1.OperandVersion) bool { return a.Name < b.Name }),

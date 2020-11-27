@@ -46,6 +46,7 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	updated.Status.TLSProfile = computeIngressTLSProfile(ic.Status.TLSProfile, deployment)
 	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, computeDeploymentPodsScheduledCondition(deployment, pods))
 	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, computeIngressAvailableCondition(deployment))
+	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, computeIngressProgressingCondition(deployment))
 	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, computeDeploymentAvailableCondition(deployment))
 	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, computeDeploymentReplicasMinAvailableCondition(deployment))
 	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, computeDeploymentReplicasAllAvailableCondition(deployment))
@@ -199,6 +200,31 @@ func computeIngressAvailableCondition(deployment *appsv1.Deployment) operatorv1.
 		Status:  operatorv1.ConditionFalse,
 		Reason:  "DeploymentAvailabilityUnknown",
 		Message: "The deployment's Available condition couldn't be interpreted",
+	}
+}
+
+// computeIngressProgressingCondition computes the ingresscontroller's current
+// Progressing status condition by inspecting the Progressing status condition
+// of deployment.  The ingresscontroller is progressing if the deployment is
+// also progressing.
+func computeIngressProgressingCondition(deployment *appsv1.Deployment) operatorv1.OperatorCondition {
+	for _, cond := range deployment.Status.Conditions {
+		if cond.Type != appsv1.DeploymentProgressing {
+			continue
+		}
+		return operatorv1.OperatorCondition{
+			Type:    IngressControllerProgressingConditionType,
+			Status:  operatorv1.ConditionStatus(cond.Status),
+			Reason:  cond.Reason,
+			Message: cond.Message,
+		}
+	}
+
+	return operatorv1.OperatorCondition{
+		Type:    IngressControllerProgressingConditionType,
+		Status:  operatorv1.ConditionUnknown,
+		Reason:  "DeploymentProgressingStatusUnknown",
+		Message: "The deployment's Progressing condition couldn't be interpreted",
 	}
 }
 

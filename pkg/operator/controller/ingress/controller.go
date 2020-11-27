@@ -46,6 +46,7 @@ const (
 	IngressControllerDeploymentAvailableConditionType            = "DeploymentAvailable"
 	IngressControllerDeploymentReplicasMinAvailableConditionType = "DeploymentReplicasMinAvailable"
 	IngressControllerDeploymentReplicasAllAvailableConditionType = "DeploymentReplicasAllAvailable"
+	IngressControllerProgressingConditionType                    = "Progressing"
 )
 
 var (

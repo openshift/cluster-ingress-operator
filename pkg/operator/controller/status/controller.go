@@ -16,6 +16,7 @@ import (
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 	oputil "github.com/openshift/cluster-ingress-operator/pkg/util"
 
 	corev1 "k8s.io/api/core/v1"
@@ -145,8 +146,9 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 	co.Status.RelatedObjects = related
 
 	allIngressesAvailable := checkAllIngressesAvailable(state.IngressControllers)
+	anyIngressProgressing := checkAnyIngressProgressing(state.IngressControllers)
 
-	co.Status.Versions = r.computeOperatorStatusVersions(oldStatus.Versions, allIngressesAvailable)
+	co.Status.Versions = r.computeOperatorStatusVersions(oldStatus.Versions, anyIngressProgressing)
 
 	co.Status.Conditions = mergeConditions(co.Status.Conditions, computeOperatorAvailableCondition(allIngressesAvailable))
 	co.Status.Conditions = mergeConditions(co.Status.Conditions, computeOperatorProgressingCondition(allIngressesAvailable, oldStatus.Versions, co.Status.Versions, r.OperatorReleaseVersion, r.IngressControllerImage))
@@ -230,10 +232,10 @@ func (r *reconciler) getOperatorState(ingressNamespace, canaryNamespace string) 
 }
 
 // computeOperatorStatusVersions computes the operator's current versions.
-func (r *reconciler) computeOperatorStatusVersions(oldVersions []configv1.OperandVersion, allIngressesAvailable bool) []configv1.OperandVersion {
+func (r *reconciler) computeOperatorStatusVersions(oldVersions []configv1.OperandVersion, anyIngressProgressing bool) []configv1.OperandVersion {
 	// We need to report old version until the operator fully transitions to the new version.
 	// https://github.com/openshift/cluster-version-operator/blob/master/docs/dev/clusteroperator.md#version-reporting-during-an-upgrade
-	if !allIngressesAvailable {
+	if anyIngressProgressing {
 		return oldVersions
 	}
 
@@ -265,6 +267,20 @@ func checkAllIngressesAvailable(ingresses []operatorv1.IngressController) bool {
 	}
 
 	return len(ingresses) != 0
+}
+
+// checkAnyIngressProgressing checks if any of the ingress controllers is
+// progressing.
+func checkAnyIngressProgressing(ingresses []operatorv1.IngressController) bool {
+	for _, ing := range ingresses {
+		for _, c := range ing.Status.Conditions {
+			if c.Type == ingresscontroller.IngressControllerProgressingConditionType && c.Status == operatorv1.ConditionTrue {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // computeOperatorDegradedCondition computes the operator's current Degraded status state.
