@@ -18,7 +18,7 @@ require (
 	github.com/imdario/mergo v0.3.10 // indirect
 	github.com/kevinburke/go-bindata v3.11.0+incompatible
 	github.com/onsi/ginkgo v1.14.0 // indirect
-	github.com/openshift/api v0.0.0-20201116215713-725145b8f33f
+	github.com/openshift/api v0.0.0-20201130121019-19e3831bc513
 	github.com/openshift/library-go v0.0.0-20200423123937-d1360419413d
 	github.com/pkg/errors v0.9.1
 	github.com/spf13/cobra v1.0.0
