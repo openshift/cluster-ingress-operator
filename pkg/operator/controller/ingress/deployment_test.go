@@ -229,6 +229,10 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		t.Error("expected host network to be false")
 	}
 
+	if deployment.Spec.Template.Spec.DNSPolicy != corev1.DNSClusterFirst {
+		t.Errorf("expected dnsPolicy to be %s, got %s", corev1.DNSClusterFirst, deployment.Spec.Template.Spec.DNSPolicy)
+	}
+
 	if len(deployment.Spec.Template.Spec.Containers[0].LivenessProbe.Handler.HTTPGet.Host) != 0 {
 		t.Errorf("expected empty liveness probe host, got %q", deployment.Spec.Template.Spec.Containers[0].LivenessProbe.Handler.HTTPGet.Host)
 	}
@@ -309,6 +313,9 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	checkRollingUpdateParams(t, deployment, intstr.FromString("25%"), intstr.FromString("25%"))
 	if deployment.Spec.Template.Spec.HostNetwork != false {
 		t.Error("expected host network to be false")
+	}
+	if deployment.Spec.Template.Spec.DNSPolicy != corev1.DNSClusterFirst {
+		t.Errorf("expected dnsPolicy to be %s, got %s", corev1.DNSClusterFirst, deployment.Spec.Template.Spec.DNSPolicy)
 	}
 	if len(deployment.Spec.Template.Spec.Containers[0].LivenessProbe.Handler.HTTPGet.Host) != 0 {
 		t.Errorf("expected empty liveness probe host, got %q", deployment.Spec.Template.Spec.Containers[0].LivenessProbe.Handler.HTTPGet.Host)
@@ -466,6 +473,11 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	if deployment.Spec.Template.Spec.HostNetwork != true {
 		t.Error("expected host network to be true")
 	}
+
+	if deployment.Spec.Template.Spec.DNSPolicy != corev1.DNSClusterFirstWithHostNet {
+		t.Errorf("expected dnsPolicy to be %s, got %s", corev1.DNSClusterFirstWithHostNet, deployment.Spec.Template.Spec.DNSPolicy)
+	}
+
 	if deployment.Spec.Template.Spec.Containers[0].LivenessProbe.Handler.HTTPGet.Host != "localhost" {
 		t.Errorf("expected liveness probe host to be \"localhost\", got %q", deployment.Spec.Template.Spec.Containers[0].LivenessProbe.Handler.HTTPGet.Host)
 	}
@@ -882,6 +894,13 @@ func TestDeploymentConfigChanged(t *testing.T) {
 			},
 			expect: true,
 		},
+		{
+			description: "if dnsPolicy is changed",
+			mutate: func(deployment *appsv1.Deployment) {
+				deployment.Spec.Template.Spec.DNSPolicy = corev1.DNSClusterFirstWithHostNet
+			},
+			expect: true,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -908,6 +927,7 @@ func TestDeploymentConfigChanged(t *testing.T) {
 						},
 					},
 					Spec: corev1.PodSpec{
+						DNSPolicy: corev1.DNSClusterFirst,
 						Volumes: []corev1.Volume{
 							{
 								Name: "default-certificate",
