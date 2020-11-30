@@ -6,6 +6,7 @@ function verify_crd {
   local DST="$2"
   if ! diff -Naup "$SRC" "$DST"; then
     echo "invalid CRD: $SRC => $DST"
+    exit 1
   fi
 }
 
