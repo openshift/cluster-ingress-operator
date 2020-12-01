@@ -361,6 +361,10 @@ func (m *Provider) Delete(record *iov1.DNSRecord, zone configv1.DNSZone) error {
 	return m.change(record, zone, deleteAction)
 }
 
+func (m *Provider) Replace(record *iov1.DNSRecord, zone configv1.DNSZone) error {
+	return m.change(record, zone, upsertAction)
+}
+
 // change will perform an action on a record. The target must correspond to the
 // hostname of an ELB which will be automatically discovered.
 func (m *Provider) change(record *iov1.DNSRecord, zone configv1.DNSZone, action action) error {

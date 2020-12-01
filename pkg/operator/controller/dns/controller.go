@@ -262,17 +262,34 @@ func (r *reconciler) publishRecordToZones(zones []configv1.DNSZone, record *iov1
 			LastTransitionTime: metav1.Now(),
 		}
 
-		if err := r.dnsProvider.Ensure(record, zone); err != nil {
-			log.Error(err, "failed to publish DNS record to zone", "record", record.Spec, "dnszone", zone)
-			condition.Status = string(operatorv1.ConditionTrue)
-			condition.Reason = "ProviderError"
-			condition.Message = fmt.Sprintf("The DNS provider failed to ensure the record: %v", err)
-			result.RequeueAfter = 30 * time.Second
+		if recordIsAlreadyPublishedToZone(record, &zone) {
+			log.Info("replacing DNS record", "record", record.Spec, "dnszone", zone)
+
+			if err := r.dnsProvider.Replace(record, zone); err != nil {
+				log.Error(err, "failed to replace DNS record in zone", "record", record.Spec, "dnszone", zone)
+				condition.Status = string(operatorv1.ConditionTrue)
+				condition.Reason = "ProviderError"
+				condition.Message = fmt.Sprintf("The DNS provider failed to replace the record: %v", err)
+				result.RequeueAfter = 30 * time.Second
+			} else {
+				log.Info("replaced DNS record in zone", "record", record.Spec, "dnszone", zone)
+				condition.Status = string(operatorv1.ConditionFalse)
+				condition.Reason = "ProviderSuccess"
+				condition.Message = "The DNS provider succeeded in replacing the record"
+			}
 		} else {
-			log.Info("published DNS record to zone", "record", record.Spec, "dnszone", zone)
-			condition.Status = string(operatorv1.ConditionFalse)
-			condition.Reason = "ProviderSuccess"
-			condition.Message = "The DNS provider succeeded in ensuring the record"
+			if err := r.dnsProvider.Ensure(record, zone); err != nil {
+				log.Error(err, "failed to publish DNS record to zone", "record", record.Spec, "dnszone", zone)
+				condition.Status = string(operatorv1.ConditionTrue)
+				condition.Reason = "ProviderError"
+				condition.Message = fmt.Sprintf("The DNS provider failed to ensure the record: %v", err)
+				result.RequeueAfter = 30 * time.Second
+			} else {
+				log.Info("published DNS record to zone", "record", record.Spec, "dnszone", zone)
+				condition.Status = string(operatorv1.ConditionFalse)
+				condition.Reason = "ProviderSuccess"
+				condition.Message = "The DNS provider succeeded in ensuring the record"
+			}
 		}
 		statuses = append(statuses, iov1.DNSZoneStatus{
 			DNSZone:    zone,
