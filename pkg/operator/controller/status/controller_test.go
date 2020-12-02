@@ -471,7 +471,7 @@ func TestComputeOperatorStatusVersions(t *testing.T) {
 		}
 
 		r := &reconciler{
-			Config: Config{
+			config: Config{
 				OperatorReleaseVersion: tc.curVersions.operator,
 				IngressControllerImage: tc.curVersions.operand,
 			},

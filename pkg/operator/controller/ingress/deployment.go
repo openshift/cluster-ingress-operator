@@ -71,7 +71,7 @@ func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, in
 	if err != nil {
 		return false, nil, fmt.Errorf("failed to determine if proxy protocol is needed for ingresscontroller %s/%s: %v", ci.Namespace, ci.Name, err)
 	}
-	desired, err := desiredRouterDeployment(ci, r.Config.IngressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded)
+	desired, err := desiredRouterDeployment(ci, r.config.IngressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded)
 	if err != nil {
 		return haveDepl, current, fmt.Errorf("failed to build router deployment: %v", err)
 	}

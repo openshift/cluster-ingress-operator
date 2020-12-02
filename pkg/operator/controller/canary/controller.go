@@ -57,7 +57,7 @@ var (
 // the canary service, daemonset, and route resources.
 func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	reconciler := &reconciler{
-		Config: config,
+		config: config,
 		client: mgr.GetClient(),
 	}
 	c, err := controller.New(canaryControllerName, mgr, controller.Options{Reconciler: reconciler})
@@ -170,7 +170,7 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 	// has been admitted.
 	if checkRouteAdmitted(route) {
 		routeProbeRunner.Do(func() {
-			r.startCanaryRoutePolling(r.Config.Stop)
+			r.startCanaryRoutePolling(r.config.Stop)
 		})
 	}
 
@@ -187,7 +187,7 @@ type Config struct {
 // reconciler handles the actual canary reconciliation logic in response to
 // events.
 type reconciler struct {
-	Config
+	config Config
 
 	client client.Client
 }
@@ -285,7 +285,7 @@ func (r *reconciler) setCanaryStatusCondition(cond operatorv1.OperatorCondition)
 	ic := &operatorv1.IngressController{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      manifests.DefaultIngressControllerName,
-			Namespace: r.Config.Namespace,
+			Namespace: r.config.Namespace,
 		},
 	}
 	if err := r.client.Get(context.TODO(), types.NamespacedName{Namespace: ic.Namespace, Name: ic.Name}, ic); err != nil {

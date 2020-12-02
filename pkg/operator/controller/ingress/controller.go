@@ -67,7 +67,7 @@ var (
 // in the manager namespace.
 func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	reconciler := &reconciler{
-		Config:   config,
+		config:   config,
 		client:   mgr.GetClient(),
 		cache:    mgr.GetCache(),
 		recorder: mgr.GetEventRecorderFor(controllerName),
@@ -97,7 +97,7 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 func (r *reconciler) ingressConfigToIngressController(o handler.MapObject) []reconcile.Request {
 	var requests []reconcile.Request
 	controllers := &operatorv1.IngressControllerList{}
-	if err := r.cache.List(context.Background(), controllers, client.InNamespace(r.Namespace)); err != nil {
+	if err := r.cache.List(context.Background(), controllers, client.InNamespace(r.config.Namespace)); err != nil {
 		log.Error(err, "failed to list ingresscontrollers for ingress", "related", o.Meta.GetSelfLink())
 		return requests
 	}
@@ -144,7 +144,7 @@ type Config struct {
 // reconciler handles the actual ingress reconciliation logic in response to
 // events.
 type reconciler struct {
-	Config
+	config Config
 
 	client   client.Client
 	cache    cache.Cache
@@ -426,7 +426,7 @@ func (r *reconciler) validate(ic *operatorv1.IngressController) error {
 	var errors []error
 
 	ingresses := &operatorv1.IngressControllerList{}
-	if err := r.cache.List(context.TODO(), ingresses, client.InNamespace(r.Namespace)); err != nil {
+	if err := r.cache.List(context.TODO(), ingresses, client.InNamespace(r.config.Namespace)); err != nil {
 		return fmt.Errorf("failed to list ingresscontrollers: %v", err)
 	}
 

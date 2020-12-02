@@ -13,7 +13,7 @@ import (
 
 // ensureCanaryDaemonSet ensures the canary daemonset exists
 func (r *reconciler) ensureCanaryDaemonSet() (bool, *appsv1.DaemonSet, error) {
-	desired := desiredCanaryDaemonSet(r.Config.CanaryImage)
+	desired := desiredCanaryDaemonSet(r.config.CanaryImage)
 	haveDs, current, err := r.currentCanaryDaemonSet()
 	if err != nil {
 		return false, nil, err

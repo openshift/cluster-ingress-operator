@@ -60,7 +60,7 @@ var log = logf.Logger.WithName(controllerName)
 
 func New(mgr manager.Manager, config Config) (runtimecontroller.Controller, error) {
 	reconciler := &reconciler{
-		Config:   config,
+		config:   config,
 		client:   mgr.GetClient(),
 		cache:    mgr.GetCache(),
 		recorder: mgr.GetEventRecorderFor(controllerName),
@@ -103,7 +103,7 @@ type Config struct {
 }
 
 type reconciler struct {
-	Config
+	config Config
 
 	client           client.Client
 	cache            cache.Cache
@@ -216,7 +216,7 @@ func (r *reconciler) createDNSProviderIfNeeded(dnsConfig *configv1.DNS) error {
 	creds := &corev1.Secret{}
 	switch platformStatus.Type {
 	case configv1.AWSPlatformType, configv1.AzurePlatformType, configv1.GCPPlatformType:
-		name := types.NamespacedName{Namespace: r.Config.Namespace, Name: cloudCredentialsSecretName}
+		name := types.NamespacedName{Namespace: r.config.Namespace, Name: cloudCredentialsSecretName}
 		if err := r.cache.Get(context.TODO(), name, creds); err != nil {
 			return fmt.Errorf("failed to get cloud credentials from secret %s: %v", name, err)
 		}
@@ -402,7 +402,7 @@ func dnsZoneStatusSlicesEqual(a, b []iov1.DNSZoneStatus) bool {
 func (r *reconciler) ToDNSRecords(o handler.MapObject) []reconcile.Request {
 	var requests []reconcile.Request
 	records := &operatoringressv1.DNSRecordList{}
-	if err := r.cache.List(context.Background(), records, client.InNamespace(r.Namespace)); err != nil {
+	if err := r.cache.List(context.Background(), records, client.InNamespace(r.config.Namespace)); err != nil {
 		log.Error(err, "failed to list dnsrecords", "related", o.Meta.GetSelfLink())
 		return requests
 	}
@@ -435,7 +435,7 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 	}
 
 	var dnsProvider dns.Provider
-	userAgent := fmt.Sprintf("OpenShift/%s (ingress-operator)", r.Config.OperatorReleaseVersion)
+	userAgent := fmt.Sprintf("OpenShift/%s (ingress-operator)", r.config.OperatorReleaseVersion)
 
 	switch platformStatus.Type {
 	case configv1.AWSPlatformType:
@@ -494,7 +494,7 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 				}
 			}
 		}
-		provider, err := awsdns.NewProvider(cfg, r.OperatorReleaseVersion)
+		provider, err := awsdns.NewProvider(cfg, r.config.OperatorReleaseVersion)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create AWS DNS manager: %v", err)
 		}
@@ -510,7 +510,7 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 			ClientSecret:   string(creds.Data["azure_client_secret"]),
 			TenantID:       string(creds.Data["azure_tenant_id"]),
 			SubscriptionID: string(creds.Data["azure_subscription_id"]),
-		}, r.Config.OperatorReleaseVersion)
+		}, r.config.OperatorReleaseVersion)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create Azure DNS manager: %v", err)
 		}
