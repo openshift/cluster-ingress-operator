@@ -106,6 +106,47 @@ func TestOperatorSteadyConditions(t *testing.T) {
 	}
 }
 
+func TestClusterOperatorStatusRelatedObjects(t *testing.T) {
+	expected := []configv1.ObjectReference{
+		{
+			Resource: "namespaces",
+			Name:     operatorNamespace,
+		},
+		{
+			Group:     operatorv1.GroupName,
+			Resource:  "IngressController",
+			Namespace: operatorNamespace,
+		},
+		{
+			Group:     iov1.GroupVersion.Group,
+			Resource:  "DNSRecord",
+			Namespace: operatorNamespace,
+		},
+		{
+			Resource: "namespaces",
+			Name:     "openshift-ingress",
+		},
+		{
+			Resource: "namespaces",
+			Name:     "openshift-ingress-canary",
+		},
+	}
+
+	coName := controller.IngressClusterOperatorName()
+	err := wait.PollImmediate(1*time.Second, 5*time.Minute, func() (bool, error) {
+		co := &configv1.ClusterOperator{}
+		if err := kclient.Get(context.TODO(), coName, co); err != nil {
+			t.Logf("failed to get ingress cluster operator %s: %v", coName, err)
+			return false, nil
+		}
+
+		return reflect.DeepEqual(expected, co.Status.RelatedObjects), nil
+	})
+	if err != nil {
+		t.Errorf("did not get expected status related objects: %v", err)
+	}
+}
+
 func TestDefaultIngressControllerSteadyConditions(t *testing.T) {
 	if err := waitForIngressControllerCondition(t, kclient, 10*time.Second, defaultName, defaultAvailableConditions...); err != nil {
 		t.Errorf("did not get expected conditions: %v", err)

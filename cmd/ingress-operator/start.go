@@ -12,10 +12,10 @@ import (
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator"
 	operatorconfig "github.com/openshift/cluster-ingress-operator/pkg/operator/config"
+	canarycontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/canary"
 	statuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/status"
 
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
-	"sigs.k8s.io/controller-runtime/pkg/metrics"
 	"sigs.k8s.io/controller-runtime/pkg/runtime/signals"
 )
 
@@ -77,7 +77,6 @@ func NewStartCommand() *cobra.Command {
 }
 
 func start(opts *StartOptions) error {
-	metrics.DefaultBindAddress = opts.MetricsListenAddr
 
 	kubeConfig, err := config.GetConfig()
 	if err != nil {
@@ -90,16 +89,20 @@ func start(opts *StartOptions) error {
 		log.Info("Warning: no release version is specified", "release version", statuscontroller.UnknownVersionValue)
 	}
 
+	// Set up the channels for the watcher, operator, and metrics.
+	stop := make(chan struct{})
+	signal := signals.SetupSignalHandler()
+
 	operatorConfig := operatorconfig.Config{
 		OperatorReleaseVersion: opts.ReleaseVersion,
 		Namespace:              opts.OperatorNamespace,
 		IngressControllerImage: opts.IngressControllerImage,
 		CanaryImage:            opts.CanaryImage,
+		Stop:                   stop,
 	}
 
-	// Set up the channels for the watcher and operator.
-	stop := make(chan struct{})
-	signal := signals.SetupSignalHandler()
+	// Start operator metrics.
+	go canarycontroller.StartMetricsListener(opts.MetricsListenAddr, stop)
 
 	// Set up and start the file watcher.
 	watcher, err := fsnotify.NewWatcher()

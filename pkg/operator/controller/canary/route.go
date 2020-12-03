@@ -139,3 +139,21 @@ func desiredCanaryRoute(service *corev1.Service) *routev1.Route {
 
 	return route
 }
+
+// checkRouteAdmitted returns true if a given route has been admitted
+// by the default Ingress Controller.
+func checkRouteAdmitted(route *routev1.Route) bool {
+	for _, routeIngress := range route.Status.Ingress {
+		if routeIngress.RouterName != manifests.DefaultIngressControllerName {
+			continue
+		}
+		conditions := routeIngress.Conditions
+		for _, cond := range conditions {
+			if cond.Type == routev1.RouteAdmitted && cond.Status == corev1.ConditionTrue {
+				return true
+			}
+		}
+	}
+
+	return false
+}

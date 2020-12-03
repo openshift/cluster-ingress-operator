@@ -12,6 +12,7 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 
 	iov1 "github.com/openshift/api/operatoringress/v1"
+	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/retryableerror"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -44,18 +45,18 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	updated.Status.AvailableReplicas = deployment.Status.AvailableReplicas
 	updated.Status.Selector = selector.String()
 	updated.Status.TLSProfile = computeIngressTLSProfile(ic.Status.TLSProfile, deployment)
-	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, computeDeploymentPodsScheduledCondition(deployment, pods))
-	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, computeIngressAvailableCondition(deployment))
-	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, computeDeploymentAvailableCondition(deployment))
-	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, computeDeploymentReplicasMinAvailableCondition(deployment))
-	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, computeDeploymentReplicasAllAvailableCondition(deployment))
-	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, computeLoadBalancerStatus(ic, service, operandEvents)...)
-	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, computeDNSStatus(ic, wildcardRecord, dnsConfig)...)
-	degradedCondition, err := computeIngressDegradedCondition(updated.Status.Conditions)
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentPodsScheduledCondition(deployment, pods))
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressAvailableCondition(deployment))
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentAvailableCondition(deployment))
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentReplicasMinAvailableCondition(deployment))
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentReplicasAllAvailableCondition(deployment))
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeLoadBalancerStatus(ic, service, operandEvents)...)
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDNSStatus(ic, wildcardRecord, dnsConfig)...)
+	degradedCondition, err := computeIngressDegradedCondition(updated.Status.Conditions, updated.Name)
 	errs = append(errs, err)
-	updated.Status.Conditions = mergeConditions(updated.Status.Conditions, degradedCondition)
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, degradedCondition)
 
-	if !ingressStatusesEqual(updated.Status, ic.Status) {
+	if !IngressStatusesEqual(updated.Status, ic.Status) {
 		if err := r.client.Status().Update(context.TODO(), updated); err != nil {
 			errs = append(errs, fmt.Errorf("failed to update ingresscontroller status: %v", err))
 		}
@@ -64,10 +65,10 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	return retryableerror.NewMaybeRetryableAggregate(errs)
 }
 
-// mergeConditions adds or updates matching conditions, and updates
+// MergeConditions adds or updates matching conditions, and updates
 // the transition time if details of a condition have changed. Returns
 // the updated condition array.
-func mergeConditions(conditions []operatorv1.OperatorCondition, updates ...operatorv1.OperatorCondition) []operatorv1.OperatorCondition {
+func MergeConditions(conditions []operatorv1.OperatorCondition, updates ...operatorv1.OperatorCondition) []operatorv1.OperatorCondition {
 	now := metav1.NewTime(clock.Now())
 	var additions []operatorv1.OperatorCondition
 	for i, update := range updates {
@@ -337,7 +338,7 @@ func computeDeploymentReplicasAllAvailableCondition(deployment *appsv1.Deploymen
 // duration value that indicates, if it is non-zero, that the operator should
 // reconcile the ingresscontroller again after that period to update its status
 // conditions.
-func computeIngressDegradedCondition(conditions []operatorv1.OperatorCondition) (operatorv1.OperatorCondition, error) {
+func computeIngressDegradedCondition(conditions []operatorv1.OperatorCondition, icName string) (operatorv1.OperatorCondition, error) {
 	var requeueAfter time.Duration
 	conditionsMap := make(map[string]*operatorv1.OperatorCondition)
 	for i := range conditions {
@@ -390,6 +391,23 @@ func computeIngressDegradedCondition(conditions []operatorv1.OperatorCondition) 
 			},
 			gracePeriod: time.Second * 30,
 		},
+	}
+
+	// Only check the default ingress controller for the canary
+	// success status condition.
+	if icName == manifests.DefaultIngressControllerName {
+		canaryCond := struct {
+			condition        string
+			status           operatorv1.ConditionStatus
+			ifConditionsTrue []string
+			gracePeriod      time.Duration
+		}{
+			condition:   IngressControllerCanaryCheckSuccessConditionType,
+			status:      operatorv1.ConditionTrue,
+			gracePeriod: time.Second * 60,
+		}
+
+		expectedConditions = append(expectedConditions, canaryCond)
 	}
 
 	var graceConditions, degradedConditions []*operatorv1.OperatorCondition
@@ -469,10 +487,10 @@ func computeIngressDegradedCondition(conditions []operatorv1.OperatorCondition) 
 	return condition, err
 }
 
-// ingressStatusesEqual compares two IngressControllerStatus values.  Returns true
+// IngressStatusesEqual compares two IngressControllerStatus values.  Returns true
 // if the provided values should be considered equal for the purpose of determining
 // whether an update is necessary, false otherwise.
-func ingressStatusesEqual(a, b operatorv1.IngressControllerStatus) bool {
+func IngressStatusesEqual(a, b operatorv1.IngressControllerStatus) bool {
 	if a.ObservedGeneration != b.ObservedGeneration {
 		return false
 	}

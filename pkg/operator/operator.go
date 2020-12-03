@@ -120,6 +120,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		if _, err := canarycontroller.New(mgr, canarycontroller.Config{
 			Namespace:   config.Namespace,
 			CanaryImage: config.CanaryImage,
+			Stop:        config.Stop,
 		}); err != nil {
 			return nil, fmt.Errorf("failed to create canary controller: %v", err)
 		}
