@@ -222,7 +222,7 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 
 	service.Spec.Selector = controller.IngressControllerDeploymentPodSelector(ci).MatchLabels
 
-	isInternal := ci.Status.EndpointPublishingStrategy.LoadBalancer == nil || ci.Status.EndpointPublishingStrategy.LoadBalancer.Scope == operatorv1.InternalLoadBalancer
+	isInternal := ci.Status.EndpointPublishingStrategy.LoadBalancer != nil && ci.Status.EndpointPublishingStrategy.LoadBalancer.Scope == operatorv1.InternalLoadBalancer
 
 	if service.Annotations == nil {
 		service.Annotations = map[string]string{}
