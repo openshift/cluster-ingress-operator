@@ -1,7 +1,6 @@
 package ingress
 
 import (
-	"fmt"
 	"testing"
 	"time"
 
@@ -236,12 +235,22 @@ func TestComputePodsScheduledCondition(t *testing.T) {
 }
 
 func TestComputeIngressDegradedCondition(t *testing.T) {
+	// Inject a fake clock and don't forget to reset it
+	fakeClock := utilclock.NewFakeClock(time.Time{})
+	clock = fakeClock
+	defer func() {
+		clock = utilclock.RealClock{}
+	}()
+
 	tests := []struct {
 		name                        string
 		icName                      string
 		conditions                  []operatorv1.OperatorCondition
 		expectIngressDegradedStatus operatorv1.ConditionStatus
 		expectRequeue               bool
+		// A degraded condition will give a 1 minute retry duration
+		// unless there is a grace period expected
+		expectAfter time.Duration
 	}{
 		{
 			name:                        "no conditions set",
@@ -255,15 +264,18 @@ func TestComputeIngressDegradedCondition(t *testing.T) {
 			},
 			expectIngressDegradedStatus: operatorv1.ConditionTrue,
 			expectRequeue:               true,
+			// Just use the one minute retry duration for this degraded condition
+			expectAfter: time.Minute,
 		},
 		{
 			name: "pods not scheduled for <10m",
 			conditions: []operatorv1.OperatorCondition{
-				cond(
-					IngressControllerPodsScheduledConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Minute*-9)),
+				cond(IngressControllerPodsScheduledConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Minute*-9)),
 			},
 			expectIngressDegradedStatus: operatorv1.ConditionFalse,
 			expectRequeue:               true,
+			// Grace period is 10 minutes, subtract the 9 minute spoofed last transition time
+			expectAfter: time.Minute,
 		},
 		{
 			name: "pods not scheduled for >10m",
@@ -272,6 +284,8 @@ func TestComputeIngressDegradedCondition(t *testing.T) {
 			},
 			expectIngressDegradedStatus: operatorv1.ConditionTrue,
 			expectRequeue:               true,
+			// Just use the one minute retry duration for this degraded condition
+			expectAfter: time.Minute,
 		},
 		{
 			name: "deployment unavailable for <30s",
@@ -280,6 +294,8 @@ func TestComputeIngressDegradedCondition(t *testing.T) {
 			},
 			expectIngressDegradedStatus: operatorv1.ConditionFalse,
 			expectRequeue:               true,
+			// Grace period is 30 seconds, subtract the 20 second spoofed last transition time
+			expectAfter: time.Second * 10,
 		},
 		{
 			name: "deployment unavailable for >30s",
@@ -288,6 +304,8 @@ func TestComputeIngressDegradedCondition(t *testing.T) {
 			},
 			expectIngressDegradedStatus: operatorv1.ConditionTrue,
 			expectRequeue:               true,
+			// Exceeded grace period, just use the one minute for this degraded condition
+			expectAfter: time.Minute,
 		},
 		{
 			name: "deployment minimum replicas unavailable for <60s",
@@ -296,6 +314,8 @@ func TestComputeIngressDegradedCondition(t *testing.T) {
 			},
 			expectIngressDegradedStatus: operatorv1.ConditionFalse,
 			expectRequeue:               true,
+			// Grace period is 60 seconds, subtract the 20 second spoofed last transition time
+			expectAfter: time.Second * 40,
 		},
 		{
 			name: "deployment minimum replicas unavailable for >60s",
@@ -304,6 +324,8 @@ func TestComputeIngressDegradedCondition(t *testing.T) {
 			},
 			expectIngressDegradedStatus: operatorv1.ConditionTrue,
 			expectRequeue:               true,
+			// Exceeded grace period, just use the one minute for this degraded condition
+			expectAfter: time.Minute,
 		},
 		{
 			name: "deployment not all replicas available for <60m",
@@ -312,6 +334,8 @@ func TestComputeIngressDegradedCondition(t *testing.T) {
 			},
 			expectIngressDegradedStatus: operatorv1.ConditionFalse,
 			expectRequeue:               true,
+			// Grace period is 60 minutes, subtract the 20 minute spoofed last transition time
+			expectAfter: time.Minute * 40,
 		},
 		{
 			name: "deployment not all replicas available for >60m",
@@ -320,6 +344,8 @@ func TestComputeIngressDegradedCondition(t *testing.T) {
 			},
 			expectIngressDegradedStatus: operatorv1.ConditionTrue,
 			expectRequeue:               true,
+			// Exceeded grace period, just use the one minute for this degraded condition
+			expectAfter: time.Minute,
 		},
 		{
 			name: "DNS and LB not managed",
@@ -342,6 +368,8 @@ func TestComputeIngressDegradedCondition(t *testing.T) {
 			},
 			expectIngressDegradedStatus: operatorv1.ConditionFalse,
 			expectRequeue:               true,
+			// Minimum grace period of combined conditions (DNSReadyIngressConditionType) is 30 seconds
+			expectAfter: time.Second * 30,
 		},
 		{
 			name: "LB provisioning failing >90s",
@@ -353,6 +381,8 @@ func TestComputeIngressDegradedCondition(t *testing.T) {
 			},
 			expectIngressDegradedStatus: operatorv1.ConditionTrue,
 			expectRequeue:               true,
+			// Exceeded grace period, just use the one minute for this degraded condition
+			expectAfter: time.Minute,
 		},
 		{
 			name: "DNS failing <30s",
@@ -364,6 +394,8 @@ func TestComputeIngressDegradedCondition(t *testing.T) {
 			},
 			expectIngressDegradedStatus: operatorv1.ConditionFalse,
 			expectRequeue:               true,
+			// Minimum grace period of combined conditions (DNSReadyIngressConditionType) is 30 seconds, subtract the 15 second spoofed last transition time
+			expectAfter: time.Second * 15,
 		},
 		{
 			name: "DNS failing >30s",
@@ -375,6 +407,8 @@ func TestComputeIngressDegradedCondition(t *testing.T) {
 			},
 			expectIngressDegradedStatus: operatorv1.ConditionTrue,
 			expectRequeue:               true,
+			// Exceeded grace period, just use the one minute for this degraded condition
+			expectAfter: time.Minute,
 		},
 		{
 			name: "DNS not ready and deployment unavailable",
@@ -391,6 +425,8 @@ func TestComputeIngressDegradedCondition(t *testing.T) {
 			},
 			expectIngressDegradedStatus: operatorv1.ConditionTrue,
 			expectRequeue:               true,
+			// Exceeded grace period, just use the one minute for these degraded conditions
+			expectAfter: time.Minute,
 		},
 		{
 			name: "admitted, DNS, LB, and deployment OK",
@@ -416,6 +452,8 @@ func TestComputeIngressDegradedCondition(t *testing.T) {
 			expectIngressDegradedStatus: operatorv1.ConditionTrue,
 			expectRequeue:               true,
 			icName:                      "default",
+			// Exceeded grace period, just use the one minute for these degraded conditions
+			expectAfter: time.Minute,
 		},
 		{
 			name: "default ingress controller, canary check passing",
@@ -427,13 +465,15 @@ func TestComputeIngressDegradedCondition(t *testing.T) {
 			icName:                      "default",
 		},
 	}
-
 	for _, test := range tests {
 		actual, err := computeIngressDegradedCondition(test.conditions, test.icName)
-		switch err.(type) {
+		switch e := err.(type) {
 		case retryable.Error:
 			if !test.expectRequeue {
 				t.Errorf("%q: expected not to be told to requeue", test.name)
+			}
+			if test.expectAfter.Seconds() != e.After().Seconds() {
+				t.Errorf("%q: expected requeue after %s, got %s", test.name, test.expectAfter.String(), e.After().String())
 			}
 		case nil:
 			if test.expectRequeue {
@@ -840,51 +880,74 @@ func TestComputeLoadBalancerStatus(t *testing.T) {
 
 func TestComputeIngressAvailableCondition(t *testing.T) {
 	testCases := []struct {
-		description          string
-		deploymentConditions []appsv1.DeploymentCondition
-		expect               operatorv1.OperatorCondition
+		description string
+		conditions  []operatorv1.OperatorCondition
+		expect      operatorv1.OperatorCondition
 	}{
 		{
-			description: "deployment available",
-			deploymentConditions: []appsv1.DeploymentCondition{
-				{Type: appsv1.DeploymentAvailable, Status: corev1.ConditionTrue},
+			description: "deployment, dns, and lb available",
+			conditions: []operatorv1.OperatorCondition{
+				{Type: IngressControllerDeploymentAvailableConditionType, Status: operatorv1.ConditionTrue},
+				{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionTrue},
+				{Type: operatorv1.DNSReadyIngressConditionType, Status: operatorv1.ConditionTrue},
+				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionTrue},
+				{Type: operatorv1.LoadBalancerReadyIngressConditionType, Status: operatorv1.ConditionTrue},
 			},
 			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeAvailable, Status: operatorv1.ConditionTrue},
 		},
 		{
-			description: "deployment not available",
-			deploymentConditions: []appsv1.DeploymentCondition{
-				{Type: appsv1.DeploymentAvailable, Status: corev1.ConditionFalse},
+			description: "deployment not available, but dns and lb available",
+			conditions: []operatorv1.OperatorCondition{
+				{Type: IngressControllerDeploymentAvailableConditionType, Status: operatorv1.ConditionFalse},
+				{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionTrue},
+				{Type: operatorv1.DNSReadyIngressConditionType, Status: operatorv1.ConditionTrue},
+				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionTrue},
+				{Type: operatorv1.LoadBalancerReadyIngressConditionType, Status: operatorv1.ConditionTrue},
 			},
 			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeAvailable, Status: operatorv1.ConditionFalse},
 		},
 		{
-			description: "deployment availability unknown",
-			deploymentConditions: []appsv1.DeploymentCondition{
-				{Type: appsv1.DeploymentAvailable, Status: corev1.ConditionUnknown},
+			description: "dns not available, but deployment and lb available",
+			conditions: []operatorv1.OperatorCondition{
+				{Type: IngressControllerDeploymentAvailableConditionType, Status: operatorv1.ConditionTrue},
+				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionTrue},
+				{Type: operatorv1.LoadBalancerReadyIngressConditionType, Status: operatorv1.ConditionTrue},
+				{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionTrue},
+				{Type: operatorv1.DNSReadyIngressConditionType, Status: operatorv1.ConditionFalse},
 			},
 			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeAvailable, Status: operatorv1.ConditionFalse},
 		},
 		{
-			description: "deployment availability not present",
-			deploymentConditions: []appsv1.DeploymentCondition{
-				{Type: appsv1.DeploymentProgressing, Status: corev1.ConditionUnknown},
+			description: "lb not available, but dns and deployment available",
+			conditions: []operatorv1.OperatorCondition{
+				{Type: IngressControllerDeploymentAvailableConditionType, Status: operatorv1.ConditionTrue},
+				{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionTrue},
+				{Type: operatorv1.DNSReadyIngressConditionType, Status: operatorv1.ConditionTrue},
+				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionTrue},
+				{Type: operatorv1.LoadBalancerReadyIngressConditionType, Status: operatorv1.ConditionFalse},
 			},
 			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeAvailable, Status: operatorv1.ConditionFalse},
+		},
+		{
+			description: "all availability unknown",
+			conditions: []operatorv1.OperatorCondition{
+				{Type: IngressControllerDeploymentAvailableConditionType, Status: operatorv1.ConditionUnknown},
+				{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionTrue},
+				{Type: operatorv1.DNSReadyIngressConditionType, Status: operatorv1.ConditionUnknown},
+				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionTrue},
+				{Type: operatorv1.LoadBalancerReadyIngressConditionType, Status: operatorv1.ConditionUnknown},
+			},
+			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeAvailable, Status: operatorv1.ConditionFalse},
+		},
+		{
+			description: "all availability not present",
+			conditions:  []operatorv1.OperatorCondition{},
+			expect:      operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeAvailable, Status: operatorv1.ConditionFalse},
 		},
 	}
 
-	for i, tc := range testCases {
-		deploy := &appsv1.Deployment{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: fmt.Sprintf("ingress-controller-%d", i+1),
-			},
-			Status: appsv1.DeploymentStatus{
-				Conditions: tc.deploymentConditions,
-			},
-		}
-
-		actual := computeIngressAvailableCondition(deploy)
+	for _, tc := range testCases {
+		actual := computeIngressAvailableCondition(tc.conditions)
 		conditionsCmpOpts := []cmp.Option{
 			cmpopts.IgnoreFields(operatorv1.OperatorCondition{}, "LastTransitionTime", "Reason", "Message"),
 			cmpopts.EquateEmpty(),
