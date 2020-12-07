@@ -193,6 +193,6 @@ func CanaryServiceName() types.NamespacedName {
 func CanaryRouteName() types.NamespacedName {
 	return types.NamespacedName{
 		Namespace: DefaultCanaryNamespace,
-		Name:      "ingress-canary-route",
+		Name:      "canary",
 	}
 }
