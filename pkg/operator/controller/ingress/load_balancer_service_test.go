@@ -350,6 +350,13 @@ func TestLoadBalancerServiceChanged(t *testing.T) {
 			expect: false,
 		},
 		{
+			description: "if .spec.loadBalancerSourceRanges changes",
+			mutate: func(svc *corev1.Service) {
+				svc.Spec.LoadBalancerSourceRanges = []string{"3.4.5.6/32"}
+			},
+			expect: false,
+		},
+		{
 			description: "if .spec.clusterIP changes",
 			mutate: func(svc *corev1.Service) {
 				svc.Spec.ClusterIP = "2.3.4.5"

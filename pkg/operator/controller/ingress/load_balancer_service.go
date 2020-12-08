@@ -381,6 +381,7 @@ func loadBalancerServiceChanged(current, expected *corev1.Service, platform *con
 	// modified.
 	updated.Spec.ClusterIP = current.Spec.ClusterIP
 	updated.Spec.ExternalIPs = current.Spec.ExternalIPs
+	updated.Spec.LoadBalancerSourceRanges = current.Spec.LoadBalancerSourceRanges
 	updated.Spec.HealthCheckNodePort = current.Spec.HealthCheckNodePort
 	for i, updatedPort := range updated.Spec.Ports {
 		for _, currentPort := range current.Spec.Ports {
