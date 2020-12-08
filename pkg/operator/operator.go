@@ -61,8 +61,8 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		Scheme:    scheme,
 		NewCache: cache.MultiNamespacedCacheBuilder([]string{
 			config.Namespace,
-			manifests.DefaultOperandNamespace,
-			manifests.DefaultCanaryNamespace,
+			operatorcontroller.DefaultOperandNamespace,
+			operatorcontroller.DefaultCanaryNamespace,
 			operatorcontroller.GlobalMachineSpecifiedConfigNamespace,
 		}),
 		// Use a non-caching client everywhere. The default split client does not
@@ -103,7 +103,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	}
 
 	// Set up the certificate-publisher controller
-	if _, err := certpublishercontroller.New(mgr, config.Namespace, "openshift-ingress"); err != nil {
+	if _, err := certpublishercontroller.New(mgr, config.Namespace, operatorcontroller.DefaultOperandNamespace); err != nil {
 		return nil, fmt.Errorf("failed to create certificate-publisher controller: %v", err)
 	}
 

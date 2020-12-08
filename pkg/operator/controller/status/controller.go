@@ -56,7 +56,7 @@ var clock utilclock.Clock = utilclock.RealClock{}
 // and uses them to compute the operator status.
 func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	reconciler := &reconciler{
-		Config: config,
+		config: config,
 		client: mgr.GetClient(),
 		cache:  mgr.GetCache(),
 	}
@@ -80,7 +80,7 @@ type Config struct {
 // reconciler handles the actual status reconciliation logic in response to
 // events.
 type reconciler struct {
-	Config
+	config Config
 
 	client client.Client
 	cache  cache.Cache
@@ -116,17 +116,17 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 	related := []configv1.ObjectReference{
 		{
 			Resource: "namespaces",
-			Name:     "openshift-ingress-operator",
+			Name:     r.config.Namespace,
 		},
 		{
 			Group:     operatorv1.GroupName,
 			Resource:  "IngressController",
-			Namespace: r.Namespace,
+			Namespace: r.config.Namespace,
 		},
 		{
 			Group:     iov1.GroupVersion.Group,
 			Resource:  "DNSRecord",
-			Namespace: r.Namespace,
+			Namespace: r.config.Namespace,
 		},
 	}
 	if state.IngressNamespace != nil {
@@ -149,7 +149,7 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 	co.Status.Versions = r.computeOperatorStatusVersions(oldStatus.Versions, allIngressesAvailable)
 
 	co.Status.Conditions = mergeConditions(co.Status.Conditions, computeOperatorAvailableCondition(allIngressesAvailable))
-	co.Status.Conditions = mergeConditions(co.Status.Conditions, computeOperatorProgressingCondition(allIngressesAvailable, oldStatus.Versions, co.Status.Versions, r.OperatorReleaseVersion, r.IngressControllerImage))
+	co.Status.Conditions = mergeConditions(co.Status.Conditions, computeOperatorProgressingCondition(allIngressesAvailable, oldStatus.Versions, co.Status.Versions, r.config.OperatorReleaseVersion, r.config.IngressControllerImage))
 	co.Status.Conditions = mergeConditions(co.Status.Conditions, computeOperatorDegradedCondition(state.IngressControllers))
 
 	if !operatorStatusesEqual(*oldStatus, co.Status) {
@@ -220,8 +220,8 @@ func (r *reconciler) getOperatorState(ingressNamespace, canaryNamespace string) 
 	}
 
 	ingressList := &operatorv1.IngressControllerList{}
-	if err := r.cache.List(context.TODO(), ingressList, client.InNamespace(r.Namespace)); err != nil {
-		return state, fmt.Errorf("failed to list ingresscontrollers in %q: %v", r.Namespace, err)
+	if err := r.cache.List(context.TODO(), ingressList, client.InNamespace(r.config.Namespace)); err != nil {
+		return state, fmt.Errorf("failed to list ingresscontrollers in %q: %v", r.config.Namespace, err)
 	} else {
 		state.IngressControllers = ingressList.Items
 	}
@@ -240,11 +240,11 @@ func (r *reconciler) computeOperatorStatusVersions(oldVersions []configv1.Operan
 	return []configv1.OperandVersion{
 		{
 			Name:    OperatorVersionName,
-			Version: r.OperatorReleaseVersion,
+			Version: r.config.OperatorReleaseVersion,
 		},
 		{
 			Name:    IngressControllerVersionName,
-			Version: r.IngressControllerImage,
+			Version: r.config.IngressControllerImage,
 		},
 	}
 }

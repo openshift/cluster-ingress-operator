@@ -23,7 +23,7 @@ func TestDesiredCanaryRoute(t *testing.T) {
 
 	expectedRouteName := types.NamespacedName{
 		Namespace: "openshift-ingress-canary",
-		Name:      "ingress-canary-route",
+		Name:      "canary",
 	}
 
 	if !cmp.Equal(route.Name, expectedRouteName.Name) {

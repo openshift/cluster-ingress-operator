@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"reflect"
 
+	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
@@ -60,7 +62,7 @@ func desiredServiceMonitor(ic *operatorv1.IngressController, svc *corev1.Service
 			"spec": map[string]interface{}{
 				"namespaceSelector": map[string]interface{}{
 					"matchNames": []interface{}{
-						"openshift-ingress",
+						operatorcontroller.DefaultOperandNamespace,
 					},
 				},
 				"selector": map[string]interface{}{

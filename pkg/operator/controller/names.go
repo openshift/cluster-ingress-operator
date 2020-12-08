@@ -29,6 +29,13 @@ const (
 	// CanaryDaemonsetLabel identifies a daemonset as an ingress canary daemonset, and
 	// the value is the name of the owning canary controller.
 	CanaryDaemonSetLabel = "ingresscanary.operator.openshift.io/daemonset-ingresscanary"
+
+	DefaultOperatorNamespace = "openshift-ingress-operator"
+	DefaultOperandNamespace  = "openshift-ingress"
+
+	// DefaultCanaryNamespace is the default namespace for
+	// the ingress canary check resources.
+	DefaultCanaryNamespace = "openshift-ingress-canary"
 )
 
 // IngressClusterOperatorName returns the namespaced name of the ClusterOperator
@@ -42,7 +49,7 @@ func IngressClusterOperatorName() types.NamespacedName {
 // RouterDeploymentName returns the namespaced name for the router deployment.
 func RouterDeploymentName(ci *operatorv1.IngressController) types.NamespacedName {
 	return types.NamespacedName{
-		Namespace: "openshift-ingress",
+		Namespace: DefaultOperandNamespace,
 		Name:      "router-" + ci.Name,
 	}
 }
@@ -90,7 +97,7 @@ func RouterOperatorGeneratedDefaultCertificateSecretName(ci *operatorv1.IngressC
 // RsyslogConfigMapName returns the namespaced name for the rsyslog configmap.
 func RsyslogConfigMapName(ic *operatorv1.IngressController) types.NamespacedName {
 	return types.NamespacedName{
-		Namespace: "openshift-ingress",
+		Namespace: DefaultOperandNamespace,
 		Name:      "rsyslog-conf-" + ic.Name,
 	}
 }
@@ -99,7 +106,7 @@ func RsyslogConfigMapName(ic *operatorv1.IngressController) types.NamespacedName
 // deployment's pod disruption budget.
 func RouterPodDisruptionBudgetName(ic *operatorv1.IngressController) types.NamespacedName {
 	return types.NamespacedName{
-		Namespace: "openshift-ingress",
+		Namespace: DefaultOperandNamespace,
 		Name:      "router-" + ic.Name,
 	}
 }
@@ -117,7 +124,7 @@ func RouterEffectiveDefaultCertificateSecretName(ci *operatorv1.IngressControlle
 // configmap with the service CA bundle.
 func ServiceCAConfigMapName() types.NamespacedName {
 	return types.NamespacedName{
-		Namespace: "openshift-ingress",
+		Namespace: DefaultOperandNamespace,
 		Name:      "service-ca-bundle",
 	}
 }
@@ -136,22 +143,22 @@ func IngressControllerDeploymentPodSelector(ic *operatorv1.IngressController) *m
 
 func InternalIngressControllerServiceName(ic *operatorv1.IngressController) types.NamespacedName {
 	// TODO: remove hard-coded namespace
-	return types.NamespacedName{Namespace: "openshift-ingress", Name: "router-internal-" + ic.Name}
+	return types.NamespacedName{Namespace: DefaultOperandNamespace, Name: "router-internal-" + ic.Name}
 }
 
 func IngressControllerServiceMonitorName(ic *operatorv1.IngressController) types.NamespacedName {
 	return types.NamespacedName{
-		Namespace: "openshift-ingress",
+		Namespace: DefaultOperandNamespace,
 		Name:      "router-" + ic.Name,
 	}
 }
 
 func LoadBalancerServiceName(ic *operatorv1.IngressController) types.NamespacedName {
-	return types.NamespacedName{Namespace: "openshift-ingress", Name: "router-" + ic.Name}
+	return types.NamespacedName{Namespace: DefaultOperandNamespace, Name: "router-" + ic.Name}
 }
 
 func NodePortServiceName(ic *operatorv1.IngressController) types.NamespacedName {
-	return types.NamespacedName{Namespace: "openshift-ingress", Name: "router-nodeport-" + ic.Name}
+	return types.NamespacedName{Namespace: DefaultOperandNamespace, Name: "router-nodeport-" + ic.Name}
 }
 
 func WildcardDNSRecordName(ic *operatorv1.IngressController) types.NamespacedName {
@@ -163,7 +170,7 @@ func WildcardDNSRecordName(ic *operatorv1.IngressController) types.NamespacedNam
 
 func CanaryDaemonSetName() types.NamespacedName {
 	return types.NamespacedName{
-		Namespace: "openshift-ingress-canary",
+		Namespace: DefaultCanaryNamespace,
 		Name:      "ingress-canary",
 	}
 }
@@ -178,14 +185,14 @@ func CanaryDaemonSetPodSelector(canaryControllerName string) *metav1.LabelSelect
 
 func CanaryServiceName() types.NamespacedName {
 	return types.NamespacedName{
-		Namespace: "openshift-ingress-canary",
+		Namespace: DefaultCanaryNamespace,
 		Name:      "ingress-canary",
 	}
 }
 
 func CanaryRouteName() types.NamespacedName {
 	return types.NamespacedName{
-		Namespace: "openshift-ingress-canary",
-		Name:      "ingress-canary-route",
+		Namespace: DefaultCanaryNamespace,
+		Name:      "canary",
 	}
 }

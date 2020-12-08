@@ -12,6 +12,7 @@ import (
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -111,12 +112,12 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 	// In an operator maintained cluster, this is always `oc get -n openshift-ingress-operator ingresscontroller/default`, skip the rest and return here.
 	// TODO if network-edge wishes to expand the scope of the CA bundle (and you could legitimately see a need/desire to have one CA that verifies all ingress traffic).
 	// TODO this could be accomplished using union logic similar to the kube-apiserver's join of multiple CAs.
-	if ingress == nil || ingress.Namespace != "openshift-ingress-operator" || ingress.Name != "default" {
+	if ingress == nil || ingress.Namespace != operatorcontroller.DefaultOperatorNamespace || ingress.Name != "default" {
 		return result, utilerrors.NewAggregate(errs)
 	}
 
 	wildcardServingCertKeySecret := &corev1.Secret{}
-	if err := r.client.Get(context.TODO(), controller.RouterEffectiveDefaultCertificateSecretName(ingress, "openshift-ingress"), wildcardServingCertKeySecret); err != nil {
+	if err := r.client.Get(context.TODO(), controller.RouterEffectiveDefaultCertificateSecretName(ingress, operatorcontroller.DefaultOperandNamespace), wildcardServingCertKeySecret); err != nil {
 		errs = append(errs, fmt.Errorf("failed to lookup wildcard cert: %v", err))
 		return result, utilerrors.NewAggregate(errs)
 	}

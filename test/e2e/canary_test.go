@@ -12,9 +12,7 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 	routev1 "github.com/openshift/api/route/v1"
 
-	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
-	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 
@@ -33,10 +31,6 @@ func TestCanaryRoute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get kube config: %v", err)
 	}
-	kubeClient, err := operatorclient.NewClient(kubeConfig)
-	if err != nil {
-		t.Fatalf("failed to create kube client: %s\n", err)
-	}
 
 	client, err := kubernetes.NewForConfig(kubeConfig)
 	if err != nil {
@@ -45,17 +39,17 @@ func TestCanaryRoute(t *testing.T) {
 
 	// check that the default ingress controller is ready
 	def := &operatorv1.IngressController{}
-	if err := waitForIngressControllerCondition(t, kubeClient, 5*time.Minute, defaultName, defaultAvailableConditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, defaultName, defaultAvailableConditions...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
-	if err := kubeClient.Get(context.TODO(), defaultName, def); err != nil {
+	if err := kclient.Get(context.TODO(), defaultName, def); err != nil {
 		t.Fatalf("failed to get default ingresscontroller: %v", err)
 	}
 
 	// Get default ingress controller deployment
 	deployment := &appsv1.Deployment{}
-	if err := kubeClient.Get(context.TODO(), controller.RouterDeploymentName(def), deployment); err != nil {
+	if err := kclient.Get(context.TODO(), controller.RouterDeploymentName(def), deployment); err != nil {
 		t.Fatalf("failed to get ingresscontroller deployment: %v", err)
 	}
 
@@ -63,7 +57,7 @@ func TestCanaryRoute(t *testing.T) {
 	canaryRoute := &routev1.Route{}
 	name := controller.CanaryRouteName()
 	err = wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
-		if err := kubeClient.Get(context.TODO(), name, canaryRoute); err != nil {
+		if err := kclient.Get(context.TODO(), name, canaryRoute); err != nil {
 			t.Logf("failed to get canary route %s: %v", name, err)
 			return false, nil
 		}
@@ -77,11 +71,11 @@ func TestCanaryRoute(t *testing.T) {
 
 	image := deployment.Spec.Template.Spec.Containers[0].Image
 	clientPod := buildCanaryCurlPod("canary-route-check", canaryRoute.Namespace, image, canaryRoute.Spec.Host)
-	if err := kubeClient.Create(context.TODO(), clientPod); err != nil {
+	if err := kclient.Create(context.TODO(), clientPod); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
 	}
 	defer func() {
-		if err := kubeClient.Delete(context.TODO(), clientPod); err != nil {
+		if err := kclient.Delete(context.TODO(), clientPod); err != nil {
 			t.Errorf("failed to delete pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
 		}
 	}()
@@ -119,33 +113,6 @@ func TestCanaryRoute(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("failed to observe the expected canary response body: %v", err)
-	}
-}
-
-// TestCanaryStatusCondition ensures that the default
-// ingress controller has the canary check succeeding
-// status condition, which is an indication that canary
-// checks are functioning as intended.
-func TestCanaryStatusCondition(t *testing.T) {
-	kubeConfig, err := config.GetConfig()
-	if err != nil {
-		t.Fatalf("failed to get kube config: %v", err)
-	}
-	kubeClient, err := operatorclient.NewClient(kubeConfig)
-	if err != nil {
-		t.Fatalf("failed to create kube client: %s\n", err)
-	}
-
-	// check that the default ingress controller has the canary success condition set to true
-	conditions := []operatorv1.OperatorCondition{
-		{
-			Type:   ingresscontroller.IngressControllerCanaryCheckSuccessConditionType,
-			Status: operatorv1.ConditionTrue,
-		},
-	}
-
-	if err := waitForIngressControllerCondition(t, kubeClient, 5*time.Minute, defaultName, conditions...); err != nil {
-		t.Fatalf("failed to observe expected canary conditions: %v", err)
 	}
 }
 
