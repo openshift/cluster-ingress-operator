@@ -426,6 +426,13 @@ func TestLoadBalancerServiceChanged(t *testing.T) {
 			},
 			expect: true,
 		},
+		{
+			description: "if .spec.loadBalancerSourceRanges changes",
+			mutate: func(svc *corev1.Service) {
+				svc.Spec.LoadBalancerSourceRanges = []string{"10.0.0.0/8"}
+			},
+			expect: true,
+		},
 	}
 
 	for _, tc := range testCases {

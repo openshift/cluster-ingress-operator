@@ -11,6 +11,7 @@ import (
 	"io"
 	"io/ioutil"
 	"net"
+	"net/http"
 	"os"
 	"reflect"
 	"strconv"
@@ -755,6 +756,118 @@ func TestScopeChange(t *testing.T) {
 
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, nondefaultAvailableConditions...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+}
+
+// TestAllowedSourceRanges creates an ingresscontroller with the
+// "LoadBalancerService" endpoint publishing strategy type and verifies that the
+// operator correctly configures the associated load balancer and updates its
+// configuration when the ingresscontroller's allowed source ranges are changed.
+func TestAllowedSourceRanges(t *testing.T) {
+	platform := infraConfig.Status.Platform
+
+	supportedPlatforms := map[configv1.PlatformType]struct{}{
+		configv1.AWSPlatformType:   {},
+		configv1.AzurePlatformType: {},
+		configv1.GCPPlatformType:   {},
+	}
+	if _, supported := supportedPlatforms[platform]; !supported {
+		t.Skipf("test skipped on platform %q", platform)
+	}
+
+	t.Log("Creating ingresscontroller with spec.endpointPublishingStrategy.loadBalancer.allowedSourceRanges set to 127.0.0.0/8")
+	name := types.NamespacedName{Namespace: operatorNamespace, Name: "sourcerange"}
+	domain := name.Name + "." + dnsConfig.Spec.BaseDomain
+	ic := newLoadBalancerController(name, domain)
+	ic.Spec.EndpointPublishingStrategy.LoadBalancer = &operatorv1.LoadBalancerStrategy{
+		Scope:               operatorv1.ExternalLoadBalancer,
+		AllowedSourceRanges: []operatorv1.CIDR{"127.0.0.0/8"},
+	}
+	if err := kclient.Create(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to create ingresscontroller: %v", err)
+	}
+	defer assertIngressControllerDeleted(t, kclient, ic)
+
+	// Wait for the load balancer and DNS to be ready.
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, nondefaultAvailableConditions...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	lbService := &corev1.Service{}
+	if err := kclient.Get(context.TODO(), controller.LoadBalancerServiceName(ic), lbService); err != nil {
+		t.Fatalf("failed to get service: %v", err)
+	}
+
+	if isServiceInternal(lbService) {
+		t.Fatalf("load balancer is internal but should be external")
+	}
+
+	n := 1
+	checkRoute := func() (string, error) {
+		// Use a unique host name for each request to work around
+		// caching of negative responses.
+		url := fmt.Sprintf("http://x%d.%s./", n, domain)
+		n++
+
+		request, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			return "", err
+		}
+
+		client := &http.Client{Timeout: 5 * time.Second}
+		response, err := client.Do(request)
+		if err != nil {
+			return "", err
+		}
+
+		_, err = io.Copy(ioutil.Discard, response.Body)
+		response.Body.Close()
+		if err != nil {
+			return "", err
+		}
+
+		return response.Status, nil
+	}
+
+	// The initial source range of 127.0.0.0/8 should block all traffic.
+	// Poll for a minute and verify that we do not get an HTTP response.
+	gotResponse := false
+	err := wait.PollImmediate(10*time.Second, 1*time.Minute, func() (bool, error) {
+		status, err := checkRoute()
+		if err != nil {
+			t.Logf("Got error from LB: %v", err)
+			return false, nil
+		}
+		t.Logf("Got HTTP response from LB: %s", status)
+		gotResponse = true
+		return true, nil
+	})
+	if gotResponse {
+		t.Fatal("expected load balancer to be inaccessible")
+	}
+
+	// Remove the allowed source range so that the default of 0.0.0.0/0
+	// (that is, allow all) takes effect.
+	t.Log("Clearing allowed source ranges")
+	if err := kclient.Get(context.TODO(), name, ic); err != nil {
+		t.Fatalf("failed to get ingresscontroller %s: %v", name, err)
+	}
+	ic.Spec.EndpointPublishingStrategy.LoadBalancer.AllowedSourceRanges = []operatorv1.CIDR{}
+	if err := kclient.Update(context.TODO(), ic); err != nil {
+		t.Fatal(err)
+	}
+
+	err = wait.PollImmediate(10*time.Second, 2*time.Minute, func() (bool, error) {
+		status, err := checkRoute()
+		if err != nil {
+			t.Logf("Got error from LB: %v", err)
+			return false, nil
+		}
+		t.Logf("Got HTTP response from LB: %s", status)
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("expected load balancer to become accessible: %v", err)
 	}
 }
 
