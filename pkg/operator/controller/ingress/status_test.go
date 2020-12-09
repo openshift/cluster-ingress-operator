@@ -11,6 +11,7 @@ import (
 
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 
+	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -954,6 +955,156 @@ func TestComputeIngressAvailableCondition(t *testing.T) {
 		}
 		if !cmp.Equal(actual, tc.expect, conditionsCmpOpts...) {
 			t.Fatalf("%q: expected %#v, got %#v", tc.description, tc.expect, actual)
+		}
+	}
+}
+
+func TestComputeIngressUpgradeableCondition(t *testing.T) {
+	testCases := []struct {
+		description string
+		mutate      func(*corev1.Service)
+		expect      bool
+	}{
+		{
+			description: "if the owner reference doesn't match",
+			mutate: func(svc *corev1.Service) {
+				svc.OwnerReferences[0].UID = "2"
+			},
+			expect: false,
+		},
+		{
+			description: "if .spec.clusterIP changes",
+			mutate: func(svc *corev1.Service) {
+				svc.Spec.ClusterIP = "2.3.4.5"
+			},
+			expect: true,
+		},
+		{
+			description: "if .spec.externalIPs changes",
+			mutate: func(svc *corev1.Service) {
+				svc.Spec.ExternalIPs = []string{"3.4.5.6"}
+			},
+			expect: false,
+		},
+		{
+			description: "if .spec.externalTrafficPolicy changes",
+			mutate: func(svc *corev1.Service) {
+				svc.Spec.ExternalTrafficPolicy = corev1.ServiceExternalTrafficPolicyTypeCluster
+			},
+			expect: false,
+		},
+		{
+			description: "if .spec.healthCheckNodePort changes",
+			mutate: func(svc *corev1.Service) {
+				svc.Spec.HealthCheckNodePort = int32(34566)
+			},
+			expect: true,
+		},
+		{
+			description: "if .spec.ports changes",
+			mutate: func(svc *corev1.Service) {
+				newPort := corev1.ServicePort{
+					Name:       "foo",
+					Protocol:   corev1.ProtocolTCP,
+					Port:       int32(8080),
+					TargetPort: intstr.FromString("foo"),
+				}
+				svc.Spec.Ports = append(svc.Spec.Ports, newPort)
+			},
+			expect: false,
+		},
+		{
+			description: "if .spec.ports[*].nodePort changes",
+			mutate: func(svc *corev1.Service) {
+				svc.Spec.Ports[0].NodePort = int32(33337)
+				svc.Spec.Ports[1].NodePort = int32(33338)
+			},
+			expect: true,
+		},
+		{
+			description: "if .spec.selector changes",
+			mutate: func(svc *corev1.Service) {
+				svc.Spec.Selector = nil
+			},
+			expect: false,
+		},
+		{
+			description: "if .spec.sessionAffinity is defaulted",
+			mutate: func(service *corev1.Service) {
+				service.Spec.SessionAffinity = corev1.ServiceAffinityNone
+			},
+			expect: true,
+		},
+		{
+			description: "if .spec.sessionAffinity is set to a non-default value",
+			mutate: func(service *corev1.Service) {
+				service.Spec.SessionAffinity = corev1.ServiceAffinityClientIP
+			},
+			expect: false,
+		},
+		{
+			description: "if .spec.type changes",
+			mutate: func(svc *corev1.Service) {
+				svc.Spec.Type = corev1.ServiceTypeNodePort
+			},
+			expect: false,
+		},
+		{
+			description: "if the service.beta.kubernetes.io/load-balancer-source-ranges annotation changes",
+			mutate: func(svc *corev1.Service) {
+				svc.Annotations["service.beta.kubernetes.io/load-balancer-source-ranges"] = "10.0.0.0/8"
+			},
+			expect: false,
+		},
+		{
+			description: "if the service.beta.kubernetes.io/aws-load-balancer-healthcheck-interval annotation changes",
+			mutate: func(svc *corev1.Service) {
+				svc.Annotations["service.beta.kubernetes.io/aws-load-balancer-healthcheck-interval"] = "10"
+			},
+			expect: false,
+		},
+	}
+	for _, tc := range testCases {
+		ic := &operatorv1.IngressController{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "default",
+			},
+			Status: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.LoadBalancerServiceStrategyType,
+				},
+			},
+		}
+		trueVar := true
+		deploymentRef := metav1.OwnerReference{
+			APIVersion: "apps/v1",
+			Kind:       "Deployment",
+			Name:       "router-default",
+			UID:        "1",
+			Controller: &trueVar,
+		}
+		platformStatus := &configv1.PlatformStatus{
+			Type: configv1.AWSPlatformType,
+		}
+		wantSvc, service, err := desiredLoadBalancerService(ic, deploymentRef, platformStatus)
+		if err != nil {
+			t.Errorf("%q: unexpected error from desiredLoadBalancerService: %v", tc.description, err)
+			continue
+		}
+		if !wantSvc {
+			t.Errorf("%q: unexpected false value from desiredLoadBalancerService", tc.description)
+			continue
+		}
+		tc.mutate(service)
+
+		expectedStatus := operatorv1.ConditionFalse
+		if tc.expect {
+			expectedStatus = operatorv1.ConditionTrue
+		}
+
+		actual := computeIngressUpgradeableCondition(ic, deploymentRef, service, platformStatus)
+		if actual.Status != expectedStatus {
+			t.Errorf("%q: expected Upgradeable to be %q, got %q", tc.description, expectedStatus, actual.Status)
 		}
 	}
 }

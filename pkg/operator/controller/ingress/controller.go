@@ -776,7 +776,7 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		errs = append(errs, fmt.Errorf("failed to list pods in namespace %q: %v", operatorcontroller.DefaultOperatorNamespace, err))
 	}
 
-	errs = append(errs, r.syncIngressControllerStatus(ci, deployment, pods.Items, lbService, operandEvents.Items, wildcardRecord, dnsConfig))
+	errs = append(errs, r.syncIngressControllerStatus(ci, deployment, deploymentRef, pods.Items, lbService, operandEvents.Items, wildcardRecord, dnsConfig, platform))
 
 	return retryable.NewMaybeRetryableAggregate(errs)
 }

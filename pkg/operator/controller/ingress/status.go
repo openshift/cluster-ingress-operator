@@ -25,6 +25,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	utilclock "k8s.io/apimachinery/pkg/util/clock"
+	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
@@ -44,7 +45,7 @@ type expectedCondition struct {
 
 // syncIngressControllerStatus computes the current status of ic and
 // updates status upon any changes since last sync.
-func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressController, deployment *appsv1.Deployment, pods []corev1.Pod, service *corev1.Service, operandEvents []corev1.Event, wildcardRecord *iov1.DNSRecord, dnsConfig *configv1.DNS) error {
+func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressController, deployment *appsv1.Deployment, deploymentRef metav1.OwnerReference, pods []corev1.Pod, service *corev1.Service, operandEvents []corev1.Event, wildcardRecord *iov1.DNSRecord, dnsConfig *configv1.DNS, platform *configv1.PlatformStatus) error {
 	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
 	if err != nil {
 		return fmt.Errorf("deployment has invalid spec.selector: %v", err)
@@ -66,6 +67,7 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	degradedCondition, err := computeIngressDegradedCondition(updated.Status.Conditions, updated.Name)
 	errs = append(errs, err)
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, degradedCondition)
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressUpgradeableCondition(ic, deploymentRef, service, platform))
 	updated.Status.Conditions = PruneConditions(updated.Status.Conditions)
 
 	if !IngressStatusesEqual(updated.Status, ic.Status) {
@@ -536,6 +538,32 @@ func formatConditions(conditions []*operatorv1.OperatorCondition) string {
 	}
 	formatted = formatted[2:]
 	return formatted
+}
+
+// computeIngressUpgradeableCondition computes the ingresscontroller's
+// "Upgradeable" status condition.
+func computeIngressUpgradeableCondition(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference, service *corev1.Service, platform *configv1.PlatformStatus) operatorv1.OperatorCondition {
+	errs := []error{}
+
+	if service != nil {
+		errs = append(errs, loadBalancerServiceIsUpgradeable(ic, deploymentRef, service, platform))
+	}
+
+	if err := kerrors.NewAggregate(errs); err != nil {
+		return operatorv1.OperatorCondition{
+			Type:    operatorv1.OperatorStatusTypeUpgradeable,
+			Status:  operatorv1.ConditionFalse,
+			Reason:  "OperandsNotUpgradeable",
+			Message: fmt.Sprintf("One or more managed resources are not upgradeable: %s", err),
+		}
+	}
+
+	return operatorv1.OperatorCondition{
+		Type:    operatorv1.OperatorStatusTypeUpgradeable,
+		Status:  operatorv1.ConditionTrue,
+		Reason:  "Upgradeable",
+		Message: "IngressController is upgradeable.",
+	}
 }
 
 // IngressStatusesEqual compares two IngressControllerStatus values.  Returns true

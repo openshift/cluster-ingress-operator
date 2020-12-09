@@ -397,3 +397,81 @@ func loadBalancerServiceChanged(current, expected *corev1.Service) (bool, *corev
 
 	return true, updated
 }
+
+// loadBalancerServiceExternallyModified checks if the current load balancer
+// service spec was modified externally and if so returns an updated service.
+// This function is similar to loadBalancerServiceChanged but stricter. For
+// example, loadBalancerServiceExternallyModified returns true if the user has
+// modified any annotations whereas loadBalancerServiceChanged ignores changes
+// to most annotations.
+func loadBalancerServiceExternallyModified(current, expected *corev1.Service, platform *configv1.PlatformStatus) (bool, *corev1.Service) {
+	serviceCmpOpts := []cmp.Option{
+		// Ignore fields that the API or other controllers may have
+		// modified.
+		cmpopts.IgnoreFields(corev1.ServicePort{}, "NodePort"),
+		cmpopts.IgnoreFields(corev1.ServiceSpec{},
+			"ClusterIP", "ClusterIPs",
+			"IPFamilies", "IPFamilyPolicy",
+			"HealthCheckNodePort"),
+		cmp.Comparer(cmpServiceAffinity),
+		cmpopts.EquateEmpty(),
+	}
+	if cmp.Equal(current.Annotations, expected.Annotations, cmpopts.EquateEmpty()) && cmp.Equal(current.Spec, expected.Spec, serviceCmpOpts...) {
+		return false, nil
+	}
+
+	updated := current.DeepCopy()
+
+	updated.Annotations = expected.Annotations
+	updated.Spec = expected.Spec
+
+	// Preserve fields that the API or other controllers may have modified.
+	updated.Spec.ClusterIP = current.Spec.ClusterIP
+	updated.Spec.ClusterIPs = current.Spec.ClusterIPs
+	updated.Spec.HealthCheckNodePort = current.Spec.HealthCheckNodePort
+	for i, updatedPort := range updated.Spec.Ports {
+		for _, currentPort := range current.Spec.Ports {
+			if currentPort.Name == updatedPort.Name {
+				updated.Spec.Ports[i].NodePort = currentPort.NodePort
+			}
+		}
+	}
+
+	return true, updated
+}
+
+// loadBalancerServiceIsUpgradeable returns an error value indicating if the
+// load balancer service is safe to upgrade.  In particular, if the current
+// service matches the desired service, then the service is upgradeable, and the
+// return value is nil.  Otherwise, if something or someone else has modified
+// the service, then the return value is a non-nil error indicating that the
+// modification must be reverted before upgrading is allowed.
+func loadBalancerServiceIsUpgradeable(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference, current *corev1.Service, platform *configv1.PlatformStatus) error {
+	owns := false
+	refs := current.GetOwnerReferences()
+	for _, ref := range refs {
+		if ref.UID == deploymentRef.UID {
+			owns = true
+		}
+	}
+	if !owns {
+		return fmt.Errorf("load balancer service %s/%s exists but is not owned by deployment %s", current.Namespace, current.Name, deploymentRef.Name)
+	}
+
+	want, desired, err := desiredLoadBalancerService(ic, deploymentRef, platform)
+	if err != nil {
+		return err
+	}
+
+	if !want {
+		return nil
+	}
+
+	changed, updated := loadBalancerServiceExternallyModified(current, desired, platform)
+	if changed {
+		diff := cmp.Diff(current, updated, cmpopts.EquateEmpty())
+		return fmt.Errorf("load balancer service has been modified; changes must be reverted before upgrading: %s", diff)
+	}
+
+	return nil
+}

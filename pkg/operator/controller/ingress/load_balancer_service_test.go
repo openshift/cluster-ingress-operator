@@ -546,3 +546,165 @@ func TestLoadBalancerServiceChanged(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadBalancerServiceExternallyModified(t *testing.T) {
+	testCases := []struct {
+		description string
+		mutate      func(*corev1.Service)
+		expect      bool
+	}{
+		{
+			description: "if nothing changes",
+			mutate:      func(_ *corev1.Service) {},
+			expect:      false,
+		},
+		{
+			description: "if .uid changes",
+			mutate: func(svc *corev1.Service) {
+				svc.UID = "2"
+			},
+			expect: false,
+		},
+		{
+			description: "if .spec.clusterIP changes",
+			mutate: func(svc *corev1.Service) {
+				svc.Spec.ClusterIP = "2.3.4.5"
+			},
+			expect: false,
+		},
+		{
+			description: "if .spec.externalIPs changes",
+			mutate: func(svc *corev1.Service) {
+				svc.Spec.ExternalIPs = []string{"3.4.5.6"}
+			},
+			expect: true,
+		},
+		{
+			description: "if .spec.externalTrafficPolicy changes",
+			mutate: func(svc *corev1.Service) {
+				svc.Spec.ExternalTrafficPolicy = corev1.ServiceExternalTrafficPolicyTypeCluster
+			},
+			expect: true,
+		},
+		{
+			description: "if .spec.healthCheckNodePort changes",
+			mutate: func(svc *corev1.Service) {
+				svc.Spec.HealthCheckNodePort = int32(34566)
+			},
+			expect: false,
+		},
+		{
+			description: "if .spec.ports changes",
+			mutate: func(svc *corev1.Service) {
+				newPort := corev1.ServicePort{
+					Name:       "foo",
+					Protocol:   corev1.ProtocolTCP,
+					Port:       int32(8080),
+					TargetPort: intstr.FromString("foo"),
+				}
+				svc.Spec.Ports = append(svc.Spec.Ports, newPort)
+			},
+			expect: true,
+		},
+		{
+			description: "if .spec.ports[*].nodePort changes",
+			mutate: func(svc *corev1.Service) {
+				svc.Spec.Ports[0].NodePort = int32(33337)
+				svc.Spec.Ports[1].NodePort = int32(33338)
+			},
+			expect: false,
+		},
+		{
+			description: "if .spec.selector changes",
+			mutate: func(svc *corev1.Service) {
+				svc.Spec.Selector = nil
+			},
+			expect: true,
+		},
+		{
+			description: "if .spec.sessionAffinity is defaulted",
+			mutate: func(service *corev1.Service) {
+				service.Spec.SessionAffinity = corev1.ServiceAffinityNone
+			},
+			expect: false,
+		},
+		{
+			description: "if .spec.sessionAffinity is set to a non-default value",
+			mutate: func(service *corev1.Service) {
+				service.Spec.SessionAffinity = corev1.ServiceAffinityClientIP
+			},
+			expect: true,
+		},
+		{
+			description: "if .spec.type changes",
+			mutate: func(svc *corev1.Service) {
+				svc.Spec.Type = corev1.ServiceTypeNodePort
+			},
+			expect: true,
+		},
+		{
+			description: "if the service.beta.kubernetes.io/load-balancer-source-ranges annotation changes",
+			mutate: func(svc *corev1.Service) {
+				svc.Annotations["service.beta.kubernetes.io/load-balancer-source-ranges"] = "10.0.0.0/8"
+			},
+			expect: true,
+		},
+		{
+			description: "if the service.beta.kubernetes.io/aws-load-balancer-healthcheck-interval annotation changes",
+			mutate: func(svc *corev1.Service) {
+				svc.Annotations["service.beta.kubernetes.io/aws-load-balancer-healthcheck-interval"] = "10"
+			},
+			expect: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		platformStatus := &configv1.PlatformStatus{
+			Type: configv1.AWSPlatformType,
+		}
+		original := corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{
+				Annotations: map[string]string{
+					"service.beta.kubernetes.io/aws-load-balancer-healthcheck-interval": "5",
+				},
+				Namespace: "openshift-ingress",
+				Name:      "router-original",
+				UID:       "1",
+			},
+			Spec: corev1.ServiceSpec{
+				ClusterIP:             "1.2.3.4",
+				ExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyTypeLocal,
+				HealthCheckNodePort:   int32(33333),
+				Ports: []corev1.ServicePort{
+					{
+						Name:       "http",
+						NodePort:   int32(33334),
+						Port:       int32(80),
+						Protocol:   corev1.ProtocolTCP,
+						TargetPort: intstr.FromString("http"),
+					},
+					{
+						Name:       "https",
+						NodePort:   int32(33335),
+						Port:       int32(443),
+						Protocol:   corev1.ProtocolTCP,
+						TargetPort: intstr.FromString("https"),
+					},
+				},
+				Selector: map[string]string{
+					"foo": "bar",
+				},
+				Type: corev1.ServiceTypeLoadBalancer,
+			},
+		}
+		mutated := original.DeepCopy()
+		tc.mutate(mutated)
+		if changed, updated := loadBalancerServiceExternallyModified(&original, mutated, platformStatus); changed != tc.expect {
+			t.Errorf("%s, expect loadBalancerServiceChanged to be %t, got %t", tc.description, tc.expect, changed)
+		} else if changed {
+			if changedAgain, _ := loadBalancerServiceExternallyModified(mutated, updated, platformStatus); changedAgain {
+				t.Errorf("%s, loadBalancerServiceChanged does not behave as a fixed point function", tc.description)
+			}
+		}
+	}
+}

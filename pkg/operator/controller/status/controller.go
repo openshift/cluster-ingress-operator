@@ -153,6 +153,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	co.Status.Conditions = mergeConditions(co.Status.Conditions, computeOperatorAvailableCondition(allIngressesAvailable))
 	co.Status.Conditions = mergeConditions(co.Status.Conditions, computeOperatorProgressingCondition(allIngressesAvailable, oldStatus.Versions, co.Status.Versions, r.config.OperatorReleaseVersion, r.config.IngressControllerImage, r.config.CanaryImage))
 	co.Status.Conditions = mergeConditions(co.Status.Conditions, computeOperatorDegradedCondition(state.IngressControllers))
+	co.Status.Conditions = mergeConditions(co.Status.Conditions, computeOperatorUpgradeableCondition(state.IngressControllers))
 
 	if !operatorStatusesEqual(*oldStatus, co.Status) {
 		if err := r.client.Status().Update(ctx, co); err != nil {
@@ -311,6 +312,45 @@ func computeOperatorDegradedCondition(ingresses []operatorv1.IngressController) 
 		Type:    configv1.OperatorDegraded,
 		Status:  configv1.ConditionTrue,
 		Reason:  "IngressControllersDegraded",
+		Message: message,
+	}
+}
+
+// computeOperatorUpgradeableCondition computes the operator's Upgradeable
+// status condition.
+func computeOperatorUpgradeableCondition(ingresses []operatorv1.IngressController) configv1.ClusterOperatorStatusCondition {
+	nonUpgradeableIngresses := make(map[*operatorv1.IngressController]operatorv1.OperatorCondition)
+	for i, ingress := range ingresses {
+		for j, cond := range ingress.Status.Conditions {
+			if cond.Type == operatorv1.OperatorStatusTypeUpgradeable && cond.Status == operatorv1.ConditionFalse {
+				nonUpgradeableIngresses[&ingresses[i]] = ingress.Status.Conditions[j]
+			}
+		}
+	}
+	if len(nonUpgradeableIngresses) == 0 {
+		return configv1.ClusterOperatorStatusCondition{
+			Type:   configv1.OperatorUpgradeable,
+			Status: configv1.ConditionTrue,
+			Reason: "IngressControllersUpgradeable",
+		}
+	}
+	message := "Some ingresscontrollers are not upgradeable:"
+	// Sort keys so that the result is deterministic.
+	keys := make([]*operatorv1.IngressController, 0, len(nonUpgradeableIngresses))
+	for ingress := range nonUpgradeableIngresses {
+		keys = append(keys, ingress)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		return oputil.ObjectLess(&keys[i].ObjectMeta, &keys[j].ObjectMeta)
+	})
+	for _, ingress := range keys {
+		cond := nonUpgradeableIngresses[ingress]
+		message = fmt.Sprintf("%s ingresscontroller %q is not upgradeable: %s: %s", message, ingress.Name, cond.Reason, cond.Message)
+	}
+	return configv1.ClusterOperatorStatusCondition{
+		Type:    configv1.OperatorUpgradeable,
+		Status:  configv1.ConditionFalse,
+		Reason:  "IngressControllersNotUpgradeable",
 		Message: message,
 	}
 }

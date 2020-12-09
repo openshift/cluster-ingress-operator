@@ -7,6 +7,8 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 
 	configv1 "github.com/openshift/api/config/v1"
+	operatorv1 "github.com/openshift/api/operator/v1"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -135,6 +137,70 @@ func TestComputeOperatorProgressingCondition(t *testing.T) {
 		}
 
 		actual := computeOperatorProgressingCondition(tc.allIngressesAvailable, oldVersions, reportedVersions, tc.curVersions.operator, tc.curVersions.operand1, tc.curVersions.operand2)
+		conditionsCmpOpts := []cmp.Option{
+			cmpopts.IgnoreFields(configv1.ClusterOperatorStatusCondition{}, "LastTransitionTime", "Reason", "Message"),
+		}
+		if !cmp.Equal(actual, expected, conditionsCmpOpts...) {
+			t.Fatalf("%q: expected %#v, got %#v", tc.description, expected, actual)
+		}
+	}
+}
+
+func TestComputeOperatorUpgradeableCondition(t *testing.T) {
+	testCases := []struct {
+		description                   string
+		ingresscontrollersUpgradeable []bool
+		expectUpgradeable             bool
+	}{
+		{
+			description:                   "no ingresscontrollers exist",
+			ingresscontrollersUpgradeable: []bool{},
+			expectUpgradeable:             true,
+		},
+		{
+			description:                   "no ingresscontrollers are upgradeable",
+			ingresscontrollersUpgradeable: []bool{false, false},
+			expectUpgradeable:             false,
+		},
+		{
+			description:                   "some ingresscontrollers are upgradeable",
+			ingresscontrollersUpgradeable: []bool{false, true},
+			expectUpgradeable:             false,
+		},
+		{
+			description:                   "all ingresscontrollers are upgradeable",
+			ingresscontrollersUpgradeable: []bool{true, true},
+			expectUpgradeable:             true,
+		},
+	}
+
+	for _, tc := range testCases {
+		ingresscontrollers := []operatorv1.IngressController{}
+		for _, upgradeable := range tc.ingresscontrollersUpgradeable {
+			upgradeableStatus := operatorv1.ConditionFalse
+			if upgradeable {
+				upgradeableStatus = operatorv1.ConditionTrue
+			}
+			ic := operatorv1.IngressController{
+				Status: operatorv1.IngressControllerStatus{
+					Conditions: []operatorv1.OperatorCondition{{
+						Type:   "Upgradeable",
+						Status: upgradeableStatus,
+					}},
+				},
+			}
+			ingresscontrollers = append(ingresscontrollers, ic)
+		}
+
+		expected := configv1.ClusterOperatorStatusCondition{
+			Type:   configv1.OperatorUpgradeable,
+			Status: configv1.ConditionFalse,
+		}
+		if tc.expectUpgradeable {
+			expected.Status = configv1.ConditionTrue
+		}
+
+		actual := computeOperatorUpgradeableCondition(ingresscontrollers)
 		conditionsCmpOpts := []cmp.Option{
 			cmpopts.IgnoreFields(configv1.ClusterOperatorStatusCondition{}, "LastTransitionTime", "Reason", "Message"),
 		}
