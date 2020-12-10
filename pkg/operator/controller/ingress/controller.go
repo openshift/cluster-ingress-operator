@@ -3,6 +3,7 @@ package ingress
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"regexp"
 	"strings"
 
@@ -361,11 +362,19 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, infraConfig 
 		ic.Status.EndpointPublishingStrategy = effectiveStrategy
 		return true
 	}
-	// Detect changes to LB scope, which is something we can safely roll out.
+	// Detect changes to LB scope and allowed source ranges, which we can
+	// safely roll out.
 	statusLB := ic.Status.EndpointPublishingStrategy.LoadBalancer
 	specLB := effectiveStrategy.LoadBalancer
-	if specLB != nil && statusLB != nil && specLB.Scope != statusLB.Scope {
-		ic.Status.EndpointPublishingStrategy.LoadBalancer.Scope = effectiveStrategy.LoadBalancer.Scope
+	if specLB != nil && statusLB != nil {
+		if specLB.Scope != statusLB.Scope {
+			log.Info("Detected change to load balancer's scope", "name", ic.Name, "old", specLB.Scope, "new", statusLB.Scope)
+			ic.Status.EndpointPublishingStrategy.LoadBalancer.Scope = effectiveStrategy.LoadBalancer.Scope
+		}
+		if !reflect.DeepEqual(specLB.AllowedSourceRanges, statusLB.AllowedSourceRanges) {
+			log.Info("Detected change to load balancer's allowed source ranges", "name", ic.Name, "old", specLB.AllowedSourceRanges, "new", statusLB.AllowedSourceRanges)
+			ic.Status.EndpointPublishingStrategy.LoadBalancer.AllowedSourceRanges = effectiveStrategy.LoadBalancer.AllowedSourceRanges
+		}
 	}
 	return false
 }

@@ -263,6 +263,12 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 		// GCP load balancers are not customizable and are set to (3 fail @ 8s interval, 1 healthy)
 	}
 
+	cidrs := make([]string, len(ci.Status.EndpointPublishingStrategy.LoadBalancer.AllowedSourceRanges))
+	for i, cidr := range ci.Status.EndpointPublishingStrategy.LoadBalancer.AllowedSourceRanges {
+		cidrs[i] = string(cidr)
+	}
+	service.Spec.LoadBalancerSourceRanges = cidrs
+
 	service.SetOwnerReferences([]metav1.OwnerReference{deploymentRef})
 	return true, service, nil
 }
