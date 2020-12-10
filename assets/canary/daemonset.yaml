@@ -21,3 +21,9 @@ spec:
             requests:
               cpu: 10m
               memory: 20Mi
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # Note: The daemon controller rounds the percentage up
+      # (unlike the deployment controller, which rounds down).
+      maxUnavailable: 10%
