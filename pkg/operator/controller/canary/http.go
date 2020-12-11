@@ -99,16 +99,13 @@ func probeRouteEndpoint(route *routev1.Route) error {
 
 	// Check status code
 	switch status := response.StatusCode; status {
-	case 200:
+	case http.StatusOK:
 		// Register total time in metrics (use milliseconds)
 		CanaryRequestTime.WithLabelValues(route.Spec.Host).Observe(float64(totalTime.Milliseconds()))
-	case 408:
+	case http.StatusRequestTimeout:
 		return fmt.Errorf("status code %d: request timed out", status)
-	case 503:
+	case http.StatusServiceUnavailable:
 		return fmt.Errorf("status code %d: Canary route not available via router", status)
-	// TODO (sgreene):
-	// Add more specific status code checks, if any are missing.
-	// Also, use HTTP status code constants, if available.
 	default:
 		return fmt.Errorf("unexpected status code: %d", status)
 	}
