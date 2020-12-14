@@ -183,6 +183,52 @@ var (
 			iksLBScopeAnnotation: iksLBScopePublic,
 		},
 	}
+
+	// managedLoadBalancerServiceAnnotations is a set of annotation keys for
+	// annotations that the operator manages for LoadBalancer-type services.
+	// The operator preserves all other annotations.
+	//
+	// Be careful when adding annotation keys to this set.  If a new release
+	// of the operator starts managing an annotation that it previously
+	// ignored, it could stomp annotations that the user has set when the
+	// user upgrades the operator to the new release (see
+	// <https://bugzilla.redhat.com/show_bug.cgi?id=1905490>).  In order to
+	// avoid problems, make sure the previous release blocks upgrades when
+	// the user has modified an annotation that the new release manages.
+	managedLoadBalancerServiceAnnotations = func() sets.String {
+		result := sets.NewString(
+			// AWS LB health check interval annotation (see
+			// <https://bugzilla.redhat.com/show_bug.cgi?id=1908758>).
+			awsLBHealthCheckIntervalAnnotation,
+			// GCP Global Access internal Load Balancer annotation
+			// (see <https://issues.redhat.com/browse/NE-447>).
+			GCPGlobalAccessAnnotation,
+			// local-with-fallback annotation for kube-proxy (see
+			// <https://bugzilla.redhat.com/show_bug.cgi?id=1960284>).
+			localWithFallbackAnnotation,
+		)
+
+		// Azure and GCP support switching between internal and external
+		// scope by changing the annotation, so the operator manages the
+		// corresponding load-balancer scope annotations for these
+		// platforms.  Other platforms require deleting and recreating
+		// the service, so the operator doesn't update the annotations
+		// that specify load-balancer scope for those platforms.  See
+		// <https://issues.redhat.com/browse/NE-621>.
+		for _, platform := range []configv1.PlatformType{
+			configv1.AzurePlatformType,
+			configv1.GCPPlatformType,
+		} {
+			for name := range InternalLBAnnotations[platform] {
+				result.Insert(name)
+			}
+			for name := range externalLBAnnotations[platform] {
+				result.Insert(name)
+			}
+		}
+
+		return result
+	}()
 )
 
 // ensureLoadBalancerService creates an LB service if one is desired but absent.
@@ -478,17 +524,17 @@ func (r *reconciler) updateLoadBalancerService(current, desired *corev1.Service,
 	return true, nil
 }
 
-// managedLoadBalancerServiceAnnotations is a set of annotation keys for
-// annotations that the operator manages for LoadBalancer-type services.
-var managedLoadBalancerServiceAnnotations = sets.NewString(
-	awsLBHealthCheckIntervalAnnotation,
-	GCPGlobalAccessAnnotation,
-	localWithFallbackAnnotation,
-)
-
 // loadBalancerServiceChanged checks if the current load balancer service
 // matches the expected and if not returns an updated one.
 func loadBalancerServiceChanged(current, expected *corev1.Service) (bool, *corev1.Service) {
+	// Preserve most fields and annotations.  If a new release of the
+	// operator starts managing an annotation or spec field that it
+	// previously ignored, it could stomp user changes when the user
+	// upgrades the operator to the new release (see
+	// <https://bugzilla.redhat.com/show_bug.cgi?id=1905490>).  In order to
+	// avoid problems, make sure the previous release blocks upgrades when
+	// the user has modified an annotation or spec field that the new
+	// release manages.
 	annotationCmpOpts := []cmp.Option{
 		cmpopts.IgnoreMapEntries(func(k, _ string) bool {
 			return !managedLoadBalancerServiceAnnotations.Has(k)
@@ -500,13 +546,6 @@ func loadBalancerServiceChanged(current, expected *corev1.Service) (bool, *corev
 
 	updated := current.DeepCopy()
 
-	// Preserve everything but the AWS LB health check interval annotation,
-	// GCP Global Access internal Load Balancer annotation, and
-	// local-with-fallback annotation
-	// (see <https://bugzilla.redhat.com/show_bug.cgi?id=1908758>).
-	// Updating annotations and spec fields cannot be done unless the
-	// previous release blocks upgrades when the user has modified those
-	// fields (see <https://bugzilla.redhat.com/show_bug.cgi?id=1905490>).
 	if updated.Annotations == nil {
 		updated.Annotations = map[string]string{}
 	}
@@ -522,4 +561,19 @@ func loadBalancerServiceChanged(current, expected *corev1.Service) (bool, *corev
 	}
 
 	return true, updated
+}
+
+// IsServiceInternal returns a Boolean indicating whether the provided service
+// is annotated to request an internal load balancer.
+func IsServiceInternal(service *corev1.Service) bool {
+	for dk, dv := range service.Annotations {
+		for _, annotations := range InternalLBAnnotations {
+			for ik, iv := range annotations {
+				if dk == ik && dv == iv {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }

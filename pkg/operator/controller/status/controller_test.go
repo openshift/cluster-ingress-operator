@@ -6,6 +6,8 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
+	operatorv1 "github.com/openshift/api/operator/v1"
+
 	configv1 "github.com/openshift/api/config/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -16,18 +18,25 @@ func TestComputeOperatorProgressingCondition(t *testing.T) {
 	}
 
 	testCases := []struct {
-		description           string
-		noNamespace           bool
-		allIngressesAvailable bool
-		reportedVersions      versions
-		oldVersions           versions
-		curVersions           versions
-		expectProgressing     configv1.ConditionStatus
+		description            string
+		noNamespace            bool
+		allIngressesAvailable  bool
+		someIngressProgressing bool
+		reportedVersions       versions
+		oldVersions            versions
+		curVersions            versions
+		expectProgressing      configv1.ConditionStatus
 	}{
 		{
 			description:           "all ingress controllers are available",
 			allIngressesAvailable: true,
 			expectProgressing:     configv1.ConditionFalse,
+		},
+		{
+			description:            "some ingress controller is progressing",
+			allIngressesAvailable:  true,
+			someIngressProgressing: true,
+			expectProgressing:      configv1.ConditionTrue,
 		},
 		{
 			description:       "all ingress controllers are not available",
@@ -134,7 +143,21 @@ func TestComputeOperatorProgressingCondition(t *testing.T) {
 			Status: tc.expectProgressing,
 		}
 
-		actual := computeOperatorProgressingCondition(tc.allIngressesAvailable, oldVersions, reportedVersions, tc.curVersions.operator, tc.curVersions.operand1, tc.curVersions.operand2)
+		var ingresscontrollers []operatorv1.IngressController
+		ic := operatorv1.IngressController{
+			Status: operatorv1.IngressControllerStatus{
+				Conditions: []operatorv1.OperatorCondition{{
+					Type:   operatorv1.OperatorStatusTypeProgressing,
+					Status: operatorv1.ConditionFalse,
+				}},
+			},
+		}
+		ingresscontrollers = append(ingresscontrollers, ic)
+		if tc.someIngressProgressing {
+			ingresscontrollers[0].Status.Conditions[0].Status = operatorv1.ConditionTrue
+		}
+
+		actual := computeOperatorProgressingCondition(ingresscontrollers, tc.allIngressesAvailable, oldVersions, reportedVersions, tc.curVersions.operator, tc.curVersions.operand1, tc.curVersions.operand2)
 		conditionsCmpOpts := []cmp.Option{
 			cmpopts.IgnoreFields(configv1.ClusterOperatorStatusCondition{}, "LastTransitionTime", "Reason", "Message"),
 		}

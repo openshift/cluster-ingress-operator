@@ -430,6 +430,10 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, infraConfig 
 		return true
 	}
 
+	// Detect changes to LB scope.
+	if specLB != nil && statusLB != nil && specLB.Scope != statusLB.Scope {
+		ic.Status.EndpointPublishingStrategy.LoadBalancer.Scope = effectiveStrategy.LoadBalancer.Scope
+	}
 	return false
 }
 
@@ -803,7 +807,7 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		errs = append(errs, fmt.Errorf("failed to list pods in namespace %q: %v", operatorcontroller.DefaultOperatorNamespace, err))
 	}
 
-	errs = append(errs, r.syncIngressControllerStatus(ci, deployment, pods.Items, lbService, operandEvents.Items, wildcardRecord, dnsConfig))
+	errs = append(errs, r.syncIngressControllerStatus(ci, deployment, pods.Items, lbService, operandEvents.Items, wildcardRecord, dnsConfig, infraConfig))
 
 	return retryable.NewMaybeRetryableAggregate(errs)
 }

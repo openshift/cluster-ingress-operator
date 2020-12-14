@@ -151,6 +151,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	co.Status.Conditions = mergeConditions(co.Status.Conditions,
 		computeOperatorAvailableCondition(state.IngressControllers),
 		computeOperatorProgressingCondition(
+			state.IngressControllers,
 			allIngressesAvailable,
 			oldStatus.Versions,
 			co.Status.Versions,
@@ -333,10 +334,7 @@ func computeOperatorDegradedCondition(ingresses []operatorv1.IngressController) 
 }
 
 // computeOperatorProgressingCondition computes the operator's current Progressing status state.
-func computeOperatorProgressingCondition(allIngressesAvailable bool, oldVersions, curVersions []configv1.OperandVersion, operatorReleaseVersion, ingressControllerImage string, canaryImage string) configv1.ClusterOperatorStatusCondition {
-	// TODO: Update progressingCondition when an ingresscontroller
-	//       progressing condition is created. The Operator's condition
-	//       should be derived from the ingresscontroller's condition.
+func computeOperatorProgressingCondition(ingresscontrollers []operatorv1.IngressController, allIngressesAvailable bool, oldVersions, curVersions []configv1.OperandVersion, operatorReleaseVersion, ingressControllerImage string, canaryImage string) configv1.ClusterOperatorStatusCondition {
 	progressingCondition := configv1.ClusterOperatorStatusCondition{
 		Type: configv1.OperatorProgressing,
 	}
@@ -344,6 +342,17 @@ func computeOperatorProgressingCondition(allIngressesAvailable bool, oldVersions
 	progressing := false
 
 	var messages []string
+
+	for _, ic := range ingresscontrollers {
+		for _, c := range ic.Status.Conditions {
+			if c.Type == operatorv1.OperatorStatusTypeProgressing && c.Status == operatorv1.ConditionTrue {
+				msg := fmt.Sprintf("ingresscontroller %q is progressing: %s: %s.", ic.Name, c.Reason, c.Message)
+				messages = append(messages, msg)
+				progressing = true
+			}
+		}
+	}
+
 	if !allIngressesAvailable {
 		messages = append(messages, "Not all ingress controllers are available.")
 		progressing = true
