@@ -223,9 +223,6 @@ func TestDesiredLoadBalancerService(t *testing.T) {
 				}
 			}
 			if tc.strategyType == operatorv1.LoadBalancerServiceStrategyType {
-				if err := checkServiceHasAnnotation(svc, awsLBHealthCheckIntervalAnnotation, true, awsLBHealthCheckIntervalDefault); err != nil {
-					t.Errorf("annotation check for test %q failed: %v", tc.description, err)
-				}
 				if err := checkServiceHasAnnotation(svc, awsLBHealthCheckTimeoutAnnotation, true, awsLBHealthCheckTimeoutDefault); err != nil {
 					t.Errorf("annotation check for test %q failed: %v", tc.description, err)
 				}
@@ -238,10 +235,16 @@ func TestDesiredLoadBalancerService(t *testing.T) {
 				classicLB := tc.lbStrategy.ProviderParameters == nil || tc.lbStrategy.ProviderParameters.AWS.Type == operatorv1.AWSClassicLoadBalancer
 				switch {
 				case classicLB:
+					if err := checkServiceHasAnnotation(svc, awsLBHealthCheckIntervalAnnotation, true, awsLBHealthCheckIntervalDefault); err != nil {
+						t.Errorf("annotation check for test %q failed: %v", tc.description, err)
+					}
 					if err := checkServiceHasAnnotation(svc, awsLBProxyProtocolAnnotation, true, "*"); err != nil {
 						t.Errorf("annotation check for test %q failed: %v", tc.description, err)
 					}
 				case tc.lbStrategy.ProviderParameters.AWS.Type == operatorv1.AWSNetworkLoadBalancer:
+					if err := checkServiceHasAnnotation(svc, awsLBHealthCheckIntervalAnnotation, true, awsLBHealthCheckIntervalNLB); err != nil {
+						t.Errorf("annotation check for test %q failed: %v", tc.description, err)
+					}
 					if err := checkServiceHasAnnotation(svc, AWSLBTypeAnnotation, true, AWSNLBAnnotation); err != nil {
 						t.Errorf("annotation check for test %q failed: %v", tc.description, err)
 					}
