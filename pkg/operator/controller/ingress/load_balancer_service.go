@@ -43,6 +43,9 @@ const (
 	// 5 and 300.
 	awsLBHealthCheckIntervalAnnotation = "service.beta.kubernetes.io/aws-load-balancer-healthcheck-interval"
 	awsLBHealthCheckIntervalDefault    = "5"
+	// Network Load Balancers require a health check interval of 10 or 30.
+	// See https://docs.aws.amazon.com/elasticloadbalancing/latest/network/target-group-health-checks.html
+	awsLBHealthCheckIntervalNLB = "10"
 
 	// awsLBHealthCheckTimeoutAnnotation is the amount of time, in seconds, during which no response
 	// means a failed AWS load balancer health check. The value must be less than the value of
@@ -212,9 +215,12 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 				ci.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS != nil &&
 				ci.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.Type == operatorv1.AWSNetworkLoadBalancer {
 				service.Annotations[AWSLBTypeAnnotation] = AWSNLBAnnotation
+				// NLBs require a different health check interval than CLBs
+				service.Annotations[awsLBHealthCheckIntervalAnnotation] = awsLBHealthCheckIntervalNLB
+			} else {
+				service.Annotations[awsLBHealthCheckIntervalAnnotation] = awsLBHealthCheckIntervalDefault
 			}
 			// Set the load balancer for AWS to be as aggressive as Azure (2 fail @ 5s interval, 2 healthy)
-			service.Annotations[awsLBHealthCheckIntervalAnnotation] = awsLBHealthCheckIntervalDefault
 			service.Annotations[awsLBHealthCheckTimeoutAnnotation] = awsLBHealthCheckTimeoutDefault
 			service.Annotations[awsLBHealthCheckUnhealthyThresholdAnnotation] = awsLBHealthCheckUnhealthyThresholdDefault
 			service.Annotations[awsLBHealthCheckHealthyThresholdAnnotation] = awsLBHealthCheckHealthyThresholdDefault
