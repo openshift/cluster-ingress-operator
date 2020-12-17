@@ -9,6 +9,7 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 func TestDesiredLoadBalancerService(t *testing.T) {
@@ -222,9 +223,6 @@ func TestDesiredLoadBalancerService(t *testing.T) {
 				}
 			}
 			if tc.strategyType == operatorv1.LoadBalancerServiceStrategyType {
-				if err := checkServiceHasAnnotation(svc, awsLBHealthCheckIntervalAnnotation, true, awsLBHealthCheckIntervalDefault); err != nil {
-					t.Errorf("annotation check for test %q failed: %v", tc.description, err)
-				}
 				if err := checkServiceHasAnnotation(svc, awsLBHealthCheckTimeoutAnnotation, true, awsLBHealthCheckTimeoutDefault); err != nil {
 					t.Errorf("annotation check for test %q failed: %v", tc.description, err)
 				}
@@ -237,10 +235,16 @@ func TestDesiredLoadBalancerService(t *testing.T) {
 				classicLB := tc.lbStrategy.ProviderParameters == nil || tc.lbStrategy.ProviderParameters.AWS.Type == operatorv1.AWSClassicLoadBalancer
 				switch {
 				case classicLB:
+					if err := checkServiceHasAnnotation(svc, awsLBHealthCheckIntervalAnnotation, true, awsLBHealthCheckIntervalDefault); err != nil {
+						t.Errorf("annotation check for test %q failed: %v", tc.description, err)
+					}
 					if err := checkServiceHasAnnotation(svc, awsLBProxyProtocolAnnotation, true, "*"); err != nil {
 						t.Errorf("annotation check for test %q failed: %v", tc.description, err)
 					}
 				case tc.lbStrategy.ProviderParameters.AWS.Type == operatorv1.AWSNetworkLoadBalancer:
+					if err := checkServiceHasAnnotation(svc, awsLBHealthCheckIntervalAnnotation, true, awsLBHealthCheckIntervalNLB); err != nil {
+						t.Errorf("annotation check for test %q failed: %v", tc.description, err)
+					}
 					if err := checkServiceHasAnnotation(svc, AWSLBTypeAnnotation, true, AWSNLBAnnotation); err != nil {
 						t.Errorf("annotation check for test %q failed: %v", tc.description, err)
 					}
@@ -327,5 +331,164 @@ func checkServiceHasAnnotation(svc *corev1.Service, name string, expectValue boo
 		return fmt.Errorf("service has unexpected %s annotation setting: expected %q, got %q", name, expectedValue, actualValue)
 	default:
 		return nil
+	}
+}
+
+func TestLoadBalancerServiceChanged(t *testing.T) {
+	testCases := []struct {
+		description string
+		mutate      func(*corev1.Service)
+		expect      bool
+	}{
+		{
+			description: "if nothing changes",
+			mutate:      func(_ *corev1.Service) {},
+			expect:      false,
+		},
+		{
+			description: "if .uid changes",
+			mutate: func(svc *corev1.Service) {
+				svc.UID = "2"
+			},
+			expect: false,
+		},
+		{
+			description: "if .spec.clusterIP changes",
+			mutate: func(svc *corev1.Service) {
+				svc.Spec.ClusterIP = "2.3.4.5"
+			},
+			expect: false,
+		},
+		{
+			description: "if .spec.externalIPs changes",
+			mutate: func(svc *corev1.Service) {
+				svc.Spec.ExternalIPs = []string{"3.4.5.6"}
+			},
+			expect: false,
+		},
+		{
+			description: "if .spec.externalTrafficPolicy changes",
+			mutate: func(svc *corev1.Service) {
+				svc.Spec.ExternalTrafficPolicy = corev1.ServiceExternalTrafficPolicyTypeCluster
+			},
+			expect: false,
+		},
+		{
+			description: "if .spec.healthCheckNodePort changes",
+			mutate: func(svc *corev1.Service) {
+				svc.Spec.HealthCheckNodePort = int32(34566)
+			},
+			expect: false,
+		},
+		{
+			description: "if .spec.ports changes",
+			mutate: func(svc *corev1.Service) {
+				newPort := corev1.ServicePort{
+					Name:       "foo",
+					Protocol:   corev1.ProtocolTCP,
+					Port:       int32(8080),
+					TargetPort: intstr.FromString("foo"),
+				}
+				svc.Spec.Ports = append(svc.Spec.Ports, newPort)
+			},
+			expect: false,
+		},
+		{
+			description: "if .spec.ports[*].nodePort changes",
+			mutate: func(svc *corev1.Service) {
+				svc.Spec.Ports[0].NodePort = int32(33337)
+				svc.Spec.Ports[1].NodePort = int32(33338)
+			},
+			expect: false,
+		},
+		{
+			description: "if .spec.selector changes",
+			mutate: func(svc *corev1.Service) {
+				svc.Spec.Selector = nil
+			},
+			expect: false,
+		},
+		{
+			description: "if .spec.sessionAffinity is defaulted",
+			mutate: func(service *corev1.Service) {
+				service.Spec.SessionAffinity = corev1.ServiceAffinityNone
+			},
+			expect: false,
+		},
+		{
+			description: "if .spec.sessionAffinity is set to a non-default value",
+			mutate: func(service *corev1.Service) {
+				service.Spec.SessionAffinity = corev1.ServiceAffinityClientIP
+			},
+			expect: false,
+		},
+		{
+			description: "if .spec.type changes",
+			mutate: func(svc *corev1.Service) {
+				svc.Spec.Type = corev1.ServiceTypeNodePort
+			},
+			expect: false,
+		},
+		{
+			description: "if the service.beta.kubernetes.io/load-balancer-source-ranges annotation changes",
+			mutate: func(svc *corev1.Service) {
+				svc.Annotations["service.beta.kubernetes.io/load-balancer-source-ranges"] = "10.0.0.0/8"
+			},
+			expect: false,
+		},
+		{
+			description: "if the service.beta.kubernetes.io/aws-load-balancer-healthcheck-interval annotation changes",
+			mutate: func(svc *corev1.Service) {
+				svc.Annotations["service.beta.kubernetes.io/aws-load-balancer-healthcheck-interval"] = "10"
+			},
+			expect: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		original := corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{
+				Annotations: map[string]string{
+					"service.beta.kubernetes.io/aws-load-balancer-healthcheck-interval": "5",
+				},
+				Namespace: "openshift-ingress",
+				Name:      "router-original",
+				UID:       "1",
+			},
+			Spec: corev1.ServiceSpec{
+				ClusterIP:             "1.2.3.4",
+				ExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyTypeLocal,
+				HealthCheckNodePort:   int32(33333),
+				Ports: []corev1.ServicePort{
+					{
+						Name:       "http",
+						NodePort:   int32(33334),
+						Port:       int32(80),
+						Protocol:   corev1.ProtocolTCP,
+						TargetPort: intstr.FromString("http"),
+					},
+					{
+						Name:       "https",
+						NodePort:   int32(33335),
+						Port:       int32(443),
+						Protocol:   corev1.ProtocolTCP,
+						TargetPort: intstr.FromString("https"),
+					},
+				},
+				Selector: map[string]string{
+					"foo": "bar",
+				},
+				Type: corev1.ServiceTypeLoadBalancer,
+			},
+		}
+		mutated := original.DeepCopy()
+		tc.mutate(mutated)
+		if changed, updated := loadBalancerServiceChanged(&original, mutated); changed != tc.expect {
+			t.Errorf("%s, expect loadBalancerServiceChanged to be %t, got %t", tc.description, tc.expect, changed)
+		} else if changed {
+			if changedAgain, _ := loadBalancerServiceChanged(mutated, updated); changedAgain {
+				t.Errorf("%s, loadBalancerServiceChanged does not behave as a fixed point function", tc.description)
+			}
+		}
 	}
 }

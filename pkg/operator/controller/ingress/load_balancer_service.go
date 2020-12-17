@@ -43,6 +43,9 @@ const (
 	// 5 and 300.
 	awsLBHealthCheckIntervalAnnotation = "service.beta.kubernetes.io/aws-load-balancer-healthcheck-interval"
 	awsLBHealthCheckIntervalDefault    = "5"
+	// Network Load Balancers require a health check interval of 10 or 30.
+	// See https://docs.aws.amazon.com/elasticloadbalancing/latest/network/target-group-health-checks.html
+	awsLBHealthCheckIntervalNLB = "10"
 
 	// awsLBHealthCheckTimeoutAnnotation is the amount of time, in seconds, during which no response
 	// means a failed AWS load balancer health check. The value must be less than the value of
@@ -141,16 +144,27 @@ func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController,
 	if err != nil {
 		return false, nil, err
 	}
-	if wantLBS && !haveLBS {
-		if err := r.client.Create(context.TODO(), desiredLBService); err != nil {
-			return false, nil, fmt.Errorf("failed to create load balancer service %s/%s: %v", desiredLBService.Namespace, desiredLBService.Name, err)
+
+	switch {
+	case !wantLBS && !haveLBS:
+		return false, nil, nil
+	case !wantLBS && haveLBS:
+		// TODO: Delete the service.
+		return true, currentLBService, nil
+	case wantLBS && !haveLBS:
+		if err := r.createLoadBalancerService(desiredLBService); err != nil {
+			return false, nil, err
 		}
-		log.Info("created load balancer service", "namespace", desiredLBService.Namespace, "name", desiredLBService.Name)
-		return true, desiredLBService, nil
+		return r.currentLoadBalancerService(ci)
+	case wantLBS && haveLBS:
+		if updated, err := r.updateLoadBalancerService(currentLBService, desiredLBService, platform); err != nil {
+			return true, currentLBService, fmt.Errorf("failed to update load balancer service: %v", err)
+		} else if updated {
+			log.Info("updated load balancer service", "namespace", desiredLBService.Namespace, "name", desiredLBService.Name)
+			return r.currentLoadBalancerService(ci)
+		}
 	}
-	// return haveLBS instead of forcing true here since
-	// there is no guarantee that currentLBService != nil
-	return haveLBS, currentLBService, nil
+	return true, currentLBService, nil
 }
 
 // desiredLoadBalancerService returns the desired LB service for a
@@ -201,9 +215,12 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 				ci.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS != nil &&
 				ci.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.Type == operatorv1.AWSNetworkLoadBalancer {
 				service.Annotations[AWSLBTypeAnnotation] = AWSNLBAnnotation
+				// NLBs require a different health check interval than CLBs
+				service.Annotations[awsLBHealthCheckIntervalAnnotation] = awsLBHealthCheckIntervalNLB
+			} else {
+				service.Annotations[awsLBHealthCheckIntervalAnnotation] = awsLBHealthCheckIntervalDefault
 			}
 			// Set the load balancer for AWS to be as aggressive as Azure (2 fail @ 5s interval, 2 healthy)
-			service.Annotations[awsLBHealthCheckIntervalAnnotation] = awsLBHealthCheckIntervalDefault
 			service.Annotations[awsLBHealthCheckTimeoutAnnotation] = awsLBHealthCheckTimeoutDefault
 			service.Annotations[awsLBHealthCheckUnhealthyThresholdAnnotation] = awsLBHealthCheckUnhealthyThresholdDefault
 			service.Annotations[awsLBHealthCheckHealthyThresholdAnnotation] = awsLBHealthCheckHealthyThresholdDefault
@@ -259,4 +276,48 @@ func (r *reconciler) finalizeLoadBalancerService(ci *operatorv1.IngressControlle
 	}
 	log.Info("finalized load balancer service for ingress", "namespace", ci.Namespace, "name", ci.Name)
 	return true, nil
+}
+
+// createLoadBalancerService creates a load balancer service.
+func (r *reconciler) createLoadBalancerService(service *corev1.Service) error {
+	if err := r.client.Create(context.TODO(), service); err != nil {
+		return fmt.Errorf("failed to create load balancer service %s/%s: %v", service.Namespace, service.Name, err)
+	}
+	log.Info("created load balancer service", "namespace", service.Namespace, "name", service.Name)
+	return nil
+}
+
+// updateLoadBalancerService updates a load balancer service.  Returns a Boolean
+// indicating whether the service was updated, and an error value.
+func (r *reconciler) updateLoadBalancerService(current, desired *corev1.Service, platform *configv1.PlatformStatus) (bool, error) {
+	changed, updated := loadBalancerServiceChanged(current, desired)
+	if !changed {
+		return false, nil
+	}
+	if err := r.client.Update(context.TODO(), updated); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// loadBalancerServiceChanged checks if the current load balancer service
+// matches the expected and if not returns an updated one.
+func loadBalancerServiceChanged(current, expected *corev1.Service) (bool, *corev1.Service) {
+	updated := current.DeepCopy()
+
+	// Preserve everything but the AWS LB health check interval annotation
+	// (see <https://bugzilla.redhat.com/show_bug.cgi?id=1908758>).
+	// Updating annotations and spec fields cannot be done unless the
+	// previous release blocks upgrades when the user has modified those
+	// fields (see <https://bugzilla.redhat.com/show_bug.cgi?id=1905490>).
+	if updated.Annotations == nil {
+		updated.Annotations = map[string]string{}
+	}
+	if current.Annotations[awsLBHealthCheckIntervalAnnotation] == expected.Annotations[awsLBHealthCheckIntervalAnnotation] {
+		return false, nil
+	}
+
+	updated.Annotations[awsLBHealthCheckIntervalAnnotation] = expected.Annotations[awsLBHealthCheckIntervalAnnotation]
+
+	return true, updated
 }
