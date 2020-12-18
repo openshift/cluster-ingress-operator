@@ -112,7 +112,7 @@ func TestHeaderNameCaseAdjustment(t *testing.T) {
 		}
 	}()
 
-	err = wait.PollImmediate(1*time.Second, 5*time.Minute, func() (bool, error) {
+	pollErr := wait.PollImmediate(1*time.Second, 5*time.Minute, func() (bool, error) {
 		readCloser, err := client.CoreV1().Pods(clientPod.Namespace).GetLogs(clientPod.Name, &corev1.PodLogOptions{
 			Container: "curl",
 			Follow:    false,
@@ -148,7 +148,7 @@ func TestHeaderNameCaseAdjustment(t *testing.T) {
 		}
 		return true, nil
 	})
-	if err != nil {
+	if pollErr != nil {
 		pod := &corev1.Pod{}
 		podName := types.NamespacedName{
 			Namespace: clientPod.Namespace,
@@ -166,6 +166,6 @@ func TestHeaderNameCaseAdjustment(t *testing.T) {
 			t.Errorf("failed to get logs from pod %s: %v", clientPod.Name, err)
 		}
 
-		t.Fatalf("failed to observe the expected output: %v\nclient pod spec: %#v\nclient pod logs:\n%s", err, pod, logs)
+		t.Fatalf("failed to observe the expected output: %v\nclient pod spec: %#v\nclient pod logs:\n%s", pollErr, pod, logs)
 	}
 }
