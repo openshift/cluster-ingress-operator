@@ -10,6 +10,7 @@ import (
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	oputil "github.com/openshift/cluster-ingress-operator/pkg/util"
 	retryable "github.com/openshift/cluster-ingress-operator/pkg/util/retryableerror"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/slice"
 
@@ -206,6 +207,10 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	if err := r.client.Get(ctx, types.NamespacedName{Name: "cluster"}, infraConfig); err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to get infrastructure 'cluster': %v", err)
 	}
+	platform, err := oputil.GetPlatformStatus(r.client, infraConfig)
+	if err != nil {
+		return reconcile.Result{}, fmt.Errorf("failed to determine infrastructure platform status: %v", err)
+	}
 	ingressConfig := &configv1.Ingress{}
 	if err := r.client.Get(ctx, types.NamespacedName{Name: "cluster"}, ingressConfig); err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to get ingress 'cluster': %v", err)
@@ -245,7 +250,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	}
 
 	// The ingresscontroller is safe to process, so ensure it.
-	if err := r.ensureIngressController(ingress, dnsConfig, infraConfig, ingressConfig, apiConfig, networkConfig); err != nil {
+	if err := r.ensureIngressController(ingress, dnsConfig, infraConfig, ingressConfig, platform, apiConfig, networkConfig); err != nil {
 		switch e := err.(type) {
 		case retryable.Error:
 			log.Error(e, "got retryable error; requeueing", "after", e.After())
@@ -680,7 +685,7 @@ func (r *reconciler) ensureIngressDeleted(ingress *operatorv1.IngressController)
 // given ingresscontroller.  Any error values are collected into either a
 // retryable.Error value, if any of the error values are retryable, or else an
 // Aggregate error value.
-func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, dnsConfig *configv1.DNS, infraConfig *configv1.Infrastructure, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer, networkConfig *configv1.Network) error {
+func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, dnsConfig *configv1.DNS, infraConfig *configv1.Infrastructure, ingressConfig *configv1.Ingress, platform *configv1.PlatformStatus, apiConfig *configv1.APIServer, networkConfig *configv1.Network) error {
 	// Before doing anything at all with the controller, ensure it has a finalizer
 	// so we can clean up later.
 	if !slice.ContainsString(ci.Finalizers, manifests.IngressControllerFinalizer) {
@@ -732,7 +737,7 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 
 	var lbService *corev1.Service
 	var wildcardRecord *iov1.DNSRecord
-	if haveLB, lb, err := r.ensureLoadBalancerService(ci, deploymentRef, infraConfig); err != nil {
+	if haveLB, lb, err := r.ensureLoadBalancerService(ci, deploymentRef, platform); err != nil {
 		errs = append(errs, fmt.Errorf("failed to ensure load balancer service for %s: %v", ci.Name, err))
 	} else {
 		lbService = lb

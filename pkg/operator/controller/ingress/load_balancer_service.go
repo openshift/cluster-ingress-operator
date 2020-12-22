@@ -11,7 +11,6 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
-	oputil "github.com/openshift/cluster-ingress-operator/pkg/util"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/slice"
 
 	corev1 "k8s.io/api/core/v1"
@@ -140,16 +139,8 @@ var (
 // ensureLoadBalancerService creates an LB service if one is desired but absent.
 // Always returns the current LB service if one exists (whether it already
 // existed or was created during the course of the function).
-func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, infraConfig *configv1.Infrastructure) (bool, *corev1.Service, error) {
-	platform, err := oputil.GetPlatformStatus(r.client, infraConfig)
-	if err != nil {
-		return false, nil, fmt.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %v", ci.Namespace, ci.Name, err)
-	}
-	proxyNeeded, err := IsProxyProtocolNeeded(ci, platform)
-	if err != nil {
-		return false, nil, fmt.Errorf("failed to determine if proxy protocol is proxyNeeded for ingresscontroller %q: %v", ci.Name, err)
-	}
-	wantLBS, desiredLBService, err := desiredLoadBalancerService(ci, deploymentRef, platform, proxyNeeded)
+func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, platform *configv1.PlatformStatus) (bool, *corev1.Service, error) {
+	wantLBS, desiredLBService, err := desiredLoadBalancerService(ci, deploymentRef, platform)
 	if err != nil {
 		return false, nil, err
 	}
@@ -202,7 +193,7 @@ func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController,
 // ingresscontroller, or nil if an LB service isn't desired. An LB service is
 // desired if the high availability type is Cloud. An LB service will declare an
 // owner reference to the given deployment.
-func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, platform *configv1.PlatformStatus, proxyNeeded bool) (bool, *corev1.Service, error) {
+func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, platform *configv1.PlatformStatus) (bool, *corev1.Service, error) {
 	if ci.Status.EndpointPublishingStrategy.Type != operatorv1.LoadBalancerServiceStrategyType {
 		return false, nil, nil
 	}
@@ -227,7 +218,9 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 		service.Annotations = map[string]string{}
 	}
 
-	if proxyNeeded {
+	if proxyNeeded, err := IsProxyProtocolNeeded(ci, platform); err != nil {
+		return false, nil, fmt.Errorf("failed to determine if proxy protocol is proxyNeeded for ingresscontroller %q: %v", ci.Name, err)
+	} else if proxyNeeded {
 		service.Annotations[awsLBProxyProtocolAnnotation] = "*"
 	}
 
