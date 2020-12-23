@@ -68,7 +68,19 @@ func desiredRouterCertsGlobalSecret(secrets []corev1.Secret, ingresses []operato
 
 	ingressToSecret := map[*operatorv1.IngressController]*corev1.Secret{}
 	for i, ingress := range ingresses {
-		name := controller.RouterEffectiveDefaultCertificateSecretName(&ingress, operandNamespace)
+		// Check if ingress.Spec.DefaultCertificate is an available secret
+		// in the secrets slice. If it is not, attempt to fall back to the
+		// operator generated default certificate. If ingress.Spec.DefaultCertificate
+		// is updated to point to a non-existent secret, the certificate controller
+		// will not delete the operator generated default certificate.
+		// See https://bugzilla.redhat.com/show_bug.cgi?id=1887441
+		if defaultCert := ingress.Spec.DefaultCertificate; defaultCert != nil {
+			if secret, ok := nameToSecret[defaultCert.Name]; ok {
+				ingressToSecret[&ingresses[i]] = secret
+				continue
+			}
+		}
+		name := controller.RouterOperatorGeneratedDefaultCertificateSecretName(&ingress, operandNamespace)
 		if secret, ok := nameToSecret[name.Name]; ok {
 			ingressToSecret[&ingresses[i]] = secret
 		}
