@@ -228,6 +228,11 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 			if !isInternal {
 				service.Annotations[iksLBScopeAnnotation] = iksLBScopePublic
 			}
+			// Set ExternalTrafficPolicy to type Cluster - IBM's LoadBalancer impl is created within the cluster.
+			// LB places VIP on one of the worker nodes, using keepalived to maintain the VIP and ensuring redundancy
+			// LB relies on iptable rules kube-proxy puts in to send traffic from the VIP node to the cluster
+			// If policy is local, traffic is only sent to pods on the local node, as such Cluster enables traffic to flow to  all the pods in the cluster
+			service.Spec.ExternalTrafficPolicy = corev1.ServiceExternalTrafficPolicyTypeCluster
 		}
 		// Azure load balancers are not customizable and are set to (2 fail @ 5s interval, 2 healthy)
 		// GCP load balancers are not customizable and are set to (3 fail @ 8s interval, 1 healthy)
