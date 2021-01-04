@@ -39,6 +39,8 @@ var map_NodeStatus = map[string]string{
 	"currentRevision":          "currentRevision is the generation of the most recently successful deployment",
 	"targetRevision":           "targetRevision is the generation of the deployment we're trying to apply",
 	"lastFailedRevision":       "lastFailedRevision is the generation of the deployment we tried and failed to deploy.",
+	"lastFailedTime":           "lastFailedTime is the time the last failed revision failed the last time.",
+	"lastFailedCount":          "lastFailedCount is how often the last failed revision failed.",
 	"lastFailedRevisionErrors": "lastFailedRevisionErrors is a list of the errors during the failed deployment referenced in lastFailedRevision",
 }
 
@@ -144,7 +146,7 @@ func (CloudCredential) SwaggerDoc() map[string]string {
 
 var map_CloudCredentialSpec = map[string]string{
 	"":                "CloudCredentialSpec is the specification of the desired behavior of the cloud-credential-operator.",
-	"credentialsMode": "CredentialsMode allows informing CCO that it should not attempt to dynamically determine the root cloud credentials capabilities, and it should just run in the specified mode. It also allows putting the operator into \"manual\" mode if desired. Leaving the field in default mode runs CCO so that the cluster's cloud credentials will be dynamically probed for capabilities (on supported clouds/platforms).",
+	"credentialsMode": "CredentialsMode allows informing CCO that it should not attempt to dynamically determine the root cloud credentials capabilities, and it should just run in the specified mode. It also allows putting the operator into \"manual\" mode if desired. Leaving the field in default mode runs CCO so that the cluster's cloud credentials will be dynamically probed for capabilities (on supported clouds/platforms). Supported modes:\n  AWS/Azure/GCP: \"\" (Default), \"Mint\", \"Passthrough\", \"Manual\"\n  Others: Do not set value as other platforms only support running in \"Passthrough\"",
 }
 
 func (CloudCredentialSpec) SwaggerDoc() map[string]string {
@@ -202,6 +204,7 @@ var map_ConsoleCustomization = map[string]string{
 	"documentationBaseURL": "documentationBaseURL links to external documentation are shown in various sections of the web console.  Providing documentationBaseURL will override the default documentation URL. Invalid value will prevent a console rollout.",
 	"customProductName":    "customProductName is the name that will be displayed in page titles, logo alt text, and the about dialog instead of the normal OpenShift product name.",
 	"customLogoFile":       "customLogoFile replaces the default OpenShift logo in the masthead and about dialog. It is a reference to a ConfigMap in the openshift-config namespace. This can be created with a command like 'oc create configmap custom-logo --from-file=/path/to/file -n openshift-config'. Image size must be less than 1 MB due to constraints on the ConfigMap size. The ConfigMap key should include a file extension so that the console serves the file with the correct MIME type. Recommended logo specifications: Dimensions: Max height of 68px and max width of 200px SVG format preferred",
+	"developerCatalog":     "developerCatalog allows to configure the shown developer catalog categories.",
 }
 
 func (ConsoleCustomization) SwaggerDoc() map[string]string {
@@ -222,6 +225,7 @@ var map_ConsoleSpec = map[string]string{
 	"customization": "customization is used to optionally provide a small set of customization options to the web console.",
 	"providers":     "providers contains configuration for using specific service providers.",
 	"route":         "route contains hostname and secret reference that contains the serving certificate. If a custom route is specified, a new route will be created with the provided hostname, under which console will be available. In case of custom hostname uses the default routing suffix of the cluster, the Secret specification for a serving certificate will not be needed. In case of custom hostname points to an arbitrary domain, manual DNS configurations steps are necessary. The default console route will be maintained to reserve the default hostname for console if the custom route is removed. If not specified, default route will be used.",
+	"plugins":       "plugins defines a list of enabled console plugin names.",
 }
 
 func (ConsoleSpec) SwaggerDoc() map[string]string {
@@ -234,6 +238,35 @@ var map_ConsoleStatus = map[string]string{
 
 func (ConsoleStatus) SwaggerDoc() map[string]string {
 	return map_ConsoleStatus
+}
+
+var map_DeveloperConsoleCatalogCategory = map[string]string{
+	"":              "DeveloperConsoleCatalogCategory for the developer console catalog.",
+	"subcategories": "subcategories defines a list of child categories.",
+}
+
+func (DeveloperConsoleCatalogCategory) SwaggerDoc() map[string]string {
+	return map_DeveloperConsoleCatalogCategory
+}
+
+var map_DeveloperConsoleCatalogCategoryMeta = map[string]string{
+	"":      "DeveloperConsoleCatalogCategoryMeta are the key identifiers of a developer catalog category.",
+	"id":    "ID is an identifier used in the URL to enable deep linking in console. ID is required and must have 1-32 URL safe (A-Z, a-z, 0-9, - and _) characters.",
+	"label": "label defines a category display label. It is required and must have 1-64 characters.",
+	"tags":  "tags is a list of strings that will match the category. A selected category show all items which has at least one overlapping tag between category and item.",
+}
+
+func (DeveloperConsoleCatalogCategoryMeta) SwaggerDoc() map[string]string {
+	return map_DeveloperConsoleCatalogCategoryMeta
+}
+
+var map_DeveloperConsoleCatalogCustomization = map[string]string{
+	"":           "DeveloperConsoleCatalogCustomization allow cluster admin to configure developer catalog.",
+	"categories": "categories which are shown in the developer catalog.",
+}
+
+func (DeveloperConsoleCatalogCustomization) SwaggerDoc() map[string]string {
+	return map_DeveloperConsoleCatalogCustomization
 }
 
 var map_StatuspageProvider = map[string]string{

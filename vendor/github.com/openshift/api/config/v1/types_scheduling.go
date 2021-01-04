@@ -35,8 +35,7 @@ type SchedulerSpec struct {
 	// Valid values are "LowNodeUtilization", "HighNodeUtilization", "NoScoring"
 	// Defaults to "LowNodeUtilization"
 	// +optional
-	// +kubebuilder:default=LowNodeUtilization
-	Profile SchedulerProfile `json:"profile"`
+	Profile SchedulerProfile `json:"profile,omitempty"`
 	// defaultNodeSelector helps set the cluster-wide default node selector to
 	// restrict pod placement to specific nodes. This is applied to the pods
 	// created in all namespaces and creates an intersection with any existing
@@ -81,7 +80,7 @@ var (
 
 	// HighNodeUtilization defines a scheduling profile which packs as many pods as possible onto
 	// as few nodes as possible targeting a small node count but high resource usage on each node.
-	HighNodeUtililzation SchedulerProfile = "HighNodeUtilization"
+	HighNodeUtilization SchedulerProfile = "HighNodeUtilization"
 
 	// NoScoring defines a scheduling profile which tries to provide lower-latency scheduling
 	// at the expense of potentially less optimal pod placement decisions.
