@@ -17,6 +17,7 @@ import (
 	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 	statuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/status"
 
+	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 
 	"k8s.io/client-go/rest"
@@ -168,31 +169,37 @@ func (o *Operator) Start(stop <-chan struct{}) error {
 // ensureDefaultIngressController creates the default ingresscontroller if it
 // doesn't already exist.
 func (o *Operator) ensureDefaultIngressController() error {
+	name := types.NamespacedName{Namespace: o.namespace, Name: manifests.DefaultIngressControllerName}
+	ic := &operatorv1.IngressController{}
+	if err := o.client.Get(context.TODO(), name, ic); err == nil {
+		return nil
+	} else if !errors.IsNotFound(err) {
+		return err
+	}
+	infraConfig := &configv1.Infrastructure{}
+	if err := o.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, infraConfig); err != nil {
+		return err
+	}
 	// Set the replicas field to a non-nil value because otherwise its
 	// persisted value will be nil, which causes GETs on the /scale
 	// subresource to fail, which breaks the scaling client.  See also:
 	// https://github.com/kubernetes/kubernetes/pull/75210
 	//
 	// TODO: Set the replicas value to the number of workers.
-	two := int32(2)
-	ic := &operatorv1.IngressController{
+	replicas := int32(2)
+	if infraConfig.Status.HighAvailabilityMode == configv1.NoneHighAvailabilityMode {
+		replicas = 1
+	}
+	ic = &operatorv1.IngressController{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      manifests.DefaultIngressControllerName,
-			Namespace: o.namespace,
+			Name:      name.Name,
+			Namespace: name.Namespace,
 		},
 		Spec: operatorv1.IngressControllerSpec{
-			Replicas: &two,
+			Replicas: &replicas,
 		},
 	}
-	err := o.client.Get(context.TODO(), types.NamespacedName{Namespace: ic.Namespace, Name: ic.Name}, ic)
-	if err == nil {
-		return nil
-	}
-	if !errors.IsNotFound(err) {
-		return err
-	}
-	err = o.client.Create(context.TODO(), ic)
-	if err != nil {
+	if err := o.client.Create(context.TODO(), ic); err != nil {
 		return err
 	}
 	log.Info("created default ingresscontroller", "namespace", ic.Namespace, "name", ic.Name)
