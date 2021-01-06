@@ -25,7 +25,6 @@ import (
 	routev1 "github.com/openshift/api/route/v1"
 
 	iov1 "github.com/openshift/api/operatoringress/v1"
-	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
@@ -73,7 +72,7 @@ var kclient client.Client
 var dnsConfig configv1.DNS
 var infraConfig configv1.Infrastructure
 var operatorNamespace = operatorcontroller.DefaultOperatorNamespace
-var defaultName = types.NamespacedName{Namespace: operatorNamespace, Name: manifests.DefaultIngressControllerName}
+var defaultName = types.NamespacedName{Namespace: operatorNamespace, Name: operatorcontroller.DefaultIngressControllerName}
 
 func TestMain(m *testing.M) {
 	kubeConfig, err := config.GetConfig()

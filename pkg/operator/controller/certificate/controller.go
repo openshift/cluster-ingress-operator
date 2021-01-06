@@ -112,7 +112,7 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 	// In an operator maintained cluster, this is always `oc get -n openshift-ingress-operator ingresscontroller/default`, skip the rest and return here.
 	// TODO if network-edge wishes to expand the scope of the CA bundle (and you could legitimately see a need/desire to have one CA that verifies all ingress traffic).
 	// TODO this could be accomplished using union logic similar to the kube-apiserver's join of multiple CAs.
-	if ingress == nil || ingress.Namespace != operatorcontroller.DefaultOperatorNamespace || ingress.Name != "default" {
+	if ingress == nil || ingress.Namespace != operatorcontroller.DefaultOperatorNamespace || ingress.Name != operatorcontroller.DefaultIngressControllerName {
 		return result, utilerrors.NewAggregate(errs)
 	}
 

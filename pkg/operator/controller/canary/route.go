@@ -6,6 +6,7 @@ import (
 
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -155,7 +156,7 @@ func desiredCanaryRoute(service *corev1.Service) (*routev1.Route, error) {
 // by the default Ingress Controller.
 func checkRouteAdmitted(route *routev1.Route) bool {
 	for _, routeIngress := range route.Status.Ingress {
-		if routeIngress.RouterName != manifests.DefaultIngressControllerName {
+		if routeIngress.RouterName != operatorcontroller.DefaultIngressControllerName {
 			continue
 		}
 		conditions := routeIngress.Conditions

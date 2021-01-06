@@ -8,7 +8,6 @@ import (
 	"time"
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
-	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -76,7 +75,7 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 
 	// trigger reconcile requests for the canary controller via events for the default ingress controller.
 	defaultIcPredicate := predicate.NewPredicateFuncs(func(meta metav1.Object, object runtime.Object) bool {
-		return meta.GetName() == manifests.DefaultIngressControllerName
+		return meta.GetName() == operatorcontroller.DefaultIngressControllerName
 	})
 
 	if err := c.Watch(&source.Kind{Type: &operatorv1.IngressController{}}, &handler.EnqueueRequestForObject{}, defaultIcPredicate); err != nil {
@@ -119,7 +118,7 @@ func enqueueRequestForDefaultIngressController(namespace string) handler.EventHa
 				{
 					NamespacedName: types.NamespacedName{
 						Namespace: namespace,
-						Name:      manifests.DefaultIngressControllerName,
+						Name:      operatorcontroller.DefaultIngressControllerName,
 					},
 				},
 			}
@@ -322,7 +321,7 @@ func (r *reconciler) setCanaryPassingStatusCondition() error {
 func (r *reconciler) setCanaryStatusCondition(cond operatorv1.OperatorCondition) error {
 	ic := &operatorv1.IngressController{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      manifests.DefaultIngressControllerName,
+			Name:      operatorcontroller.DefaultIngressControllerName,
 			Namespace: r.config.Namespace,
 		},
 	}

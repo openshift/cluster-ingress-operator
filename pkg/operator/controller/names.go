@@ -36,6 +36,10 @@ const (
 	// DefaultCanaryNamespace is the default namespace for
 	// the ingress canary check resources.
 	DefaultCanaryNamespace = "openshift-ingress-canary"
+
+	// DefaultIngressControllerName is the name of the default IngressController
+	// instance.
+	DefaultIngressControllerName = "default"
 )
 
 // IngressClusterOperatorName returns the namespaced name of the ClusterOperator

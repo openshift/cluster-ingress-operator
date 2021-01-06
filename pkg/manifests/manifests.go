@@ -65,10 +65,6 @@ const (
 	// operator has ensured it's safe for deletion to proceeed.
 	DNSRecordFinalizer = "operator.openshift.io/ingress-dns"
 
-	// DefaultIngressControllerName is the name of the default IngressController
-	// instance.
-	DefaultIngressControllerName = "default"
-
 	NamespaceManifest                = "manifests/00-namespace.yaml"
 	CustomResourceDefinitionManifest = "manifests/00-custom-resource-definition.yaml"
 )

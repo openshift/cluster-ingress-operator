@@ -689,7 +689,7 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 
 	pods := &corev1.PodList{}
 	if err := r.cache.List(context.TODO(), pods, client.InNamespace(operatorcontroller.DefaultOperandNamespace)); err != nil {
-		errs = append(errs, fmt.Errorf("failed to list pods in namespace %q: %v", operatorcontroller.DefaultOperatorNamespace, err))
+		errs = append(errs, fmt.Errorf("failed to list pods in namespace %q: %v", operatorcontroller.DefaultOperandNamespace, err))
 	}
 
 	errs = append(errs, r.syncIngressControllerStatus(ci, deployment, pods.Items, lbService, operandEvents.Items, wildcardRecord, dnsConfig))

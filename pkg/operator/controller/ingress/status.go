@@ -12,7 +12,7 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 
 	iov1 "github.com/openshift/api/operatoringress/v1"
-	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
+	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/retryableerror"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -475,7 +475,7 @@ func computeIngressDegradedCondition(conditions []operatorv1.OperatorCondition, 
 
 	// Only check the default ingress controller for the canary
 	// success status condition.
-	if icName == manifests.DefaultIngressControllerName {
+	if icName == operatorcontroller.DefaultIngressControllerName {
 		canaryCond := struct {
 			condition        string
 			status           operatorv1.ConditionStatus
