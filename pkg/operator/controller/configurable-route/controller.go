@@ -15,7 +15,6 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -71,9 +70,9 @@ func New(mgr manager.Manager, config Config, eventRecorder events.Recorder) (con
 	}
 
 	// Trigger reconcile requests for the cluster ingress resource.
-	clusterNamePredicate := predicate.NewPredicateFuncs(func(meta metav1.Object, object runtime.Object) bool {
+	clusterNamePredicate := predicate.NewPredicateFuncs(func(o client.Object) bool {
 		clusterIngressResource := operatorcontroller.IngressClusterConfigName()
-		return meta.GetName() == clusterIngressResource.Name && meta.GetNamespace() == clusterIngressResource.Namespace
+		return o.GetName() == clusterIngressResource.Name && o.GetNamespace() == clusterIngressResource.Namespace
 	})
 
 	if err := c.Watch(&source.Kind{Type: &configv1.Ingress{}}, &handler.EnqueueRequestForObject{}, clusterNamePredicate); err != nil {
@@ -81,17 +80,17 @@ func New(mgr manager.Manager, config Config, eventRecorder events.Recorder) (con
 	}
 
 	// Trigger reconcile requests for the roles and roleBindings with the componentRoute label.
-	defaultPredicate := predicate.NewPredicateFuncs(func(meta metav1.Object, object runtime.Object) bool {
-		labels := meta.GetLabels()
+	defaultPredicate := predicate.NewPredicateFuncs(func(o client.Object) bool {
+		labels := o.GetLabels()
 		_, ok := labels[componentRouteHashLabelKey]
 		return ok
 	})
 
-	if err := c.Watch(source.NewKindWithCache(&rbacv1.Role{}, mgr.GetCache()), &handler.EnqueueRequestsFromMapFunc{ToRequests: handler.ToRequestsFunc(reconciler.resourceToClusterIngressConfig)}, defaultPredicate); err != nil {
+	if err := c.Watch(source.NewKindWithCache(&rbacv1.Role{}, mgr.GetCache()), handler.EnqueueRequestsFromMapFunc(reconciler.resourceToClusterIngressConfig), defaultPredicate); err != nil {
 		return nil, err
 	}
 
-	if err := c.Watch(source.NewKindWithCache(&rbacv1.RoleBinding{}, mgr.GetCache()), &handler.EnqueueRequestsFromMapFunc{ToRequests: handler.ToRequestsFunc(reconciler.resourceToClusterIngressConfig)}, defaultPredicate); err != nil {
+	if err := c.Watch(source.NewKindWithCache(&rbacv1.RoleBinding{}, mgr.GetCache()), handler.EnqueueRequestsFromMapFunc(reconciler.resourceToClusterIngressConfig), defaultPredicate); err != nil {
 		return nil, err
 	}
 
@@ -99,7 +98,7 @@ func New(mgr manager.Manager, config Config, eventRecorder events.Recorder) (con
 }
 
 // resourceToClusterIngressConfig is used to only trigger reconciles on the cluster ingress config.
-func (r *reconciler) resourceToClusterIngressConfig(o handler.MapObject) []reconcile.Request {
+func (r *reconciler) resourceToClusterIngressConfig(o client.Object) []reconcile.Request {
 	return []reconcile.Request{
 		{
 			operatorcontroller.IngressClusterConfigName(),
@@ -125,12 +124,12 @@ type reconciler struct {
 // Reconcile expects request to refer to the
 // ingresses.config.openshift.io/cluster object and will do all the work to
 // ensure that RBAC for any configured component routes is in the desired state.
-func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, error) {
+func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	log.Info("reconciling", "request", request)
 
 	// Only proceed if we can get the ingress resource.
 	ingress := &configv1.Ingress{}
-	if err := r.cache.Get(context.TODO(), request.NamespacedName, ingress); err != nil {
+	if err := r.cache.Get(ctx, request.NamespacedName, ingress); err != nil {
 		if apierrors.IsNotFound(err) {
 			log.Info("ingress cr not found; reconciliation will be skipped", "request", request)
 			return reconcile.Result{}, nil
@@ -152,7 +151,7 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 
 		// Get the role just created so the UID is available for the ownerReference on the roleBinding.
 		role := &rbacv1.Role{}
-		if err := r.client.Get(context.TODO(), types.NamespacedName{Namespace: r.config.SecretNamespace, Name: roleName}, role); err != nil {
+		if err := r.client.Get(ctx, types.NamespacedName{Namespace: r.config.SecretNamespace, Name: roleName}, role); err != nil {
 			return reconcile.Result{}, err
 		}
 

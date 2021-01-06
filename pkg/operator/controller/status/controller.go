@@ -90,17 +90,17 @@ type reconciler struct {
 
 // Reconcile computes the operator's current status and therefrom creates or
 // updates the ClusterOperator resource for the operator.
-func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, error) {
+func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	log.Info("Reconciling", "request", request)
 
 	ingressNamespace := manifests.RouterNamespace().Name
 	canaryNamespace := manifests.CanaryNamespace().Name
 
 	co := &configv1.ClusterOperator{ObjectMeta: metav1.ObjectMeta{Name: operatorcontroller.IngressClusterOperatorName().Name}}
-	if err := r.client.Get(context.TODO(), operatorcontroller.IngressClusterOperatorName(), co); err != nil {
+	if err := r.client.Get(ctx, operatorcontroller.IngressClusterOperatorName(), co); err != nil {
 		if errors.IsNotFound(err) {
 			initializeClusterOperator(co)
-			if err := r.client.Create(context.TODO(), co); err != nil {
+			if err := r.client.Create(ctx, co); err != nil {
 				return reconcile.Result{}, fmt.Errorf("failed to create clusteroperator %s: %v", co.Name, err)
 			}
 			log.Info("created clusteroperator", "object", co)
@@ -155,7 +155,7 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 	co.Status.Conditions = mergeConditions(co.Status.Conditions, computeOperatorDegradedCondition(state.IngressControllers))
 
 	if !operatorStatusesEqual(*oldStatus, co.Status) {
-		if err := r.client.Status().Update(context.TODO(), co); err != nil {
+		if err := r.client.Status().Update(ctx, co); err != nil {
 			return reconcile.Result{}, fmt.Errorf("failed to update clusteroperator %s: %v", co.Name, err)
 		}
 	}

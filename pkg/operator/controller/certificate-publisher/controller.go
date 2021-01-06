@@ -65,10 +65,10 @@ func New(mgr manager.Manager, operatorNamespace, operandNamespace string) (runti
 	// Index ingresscontrollers over the default certificate name so that
 	// secretIsInUse and secretToIngressController can look up
 	// ingresscontrollers that reference the secret.
-	if err := operatorCache.IndexField(context.Background(), &operatorv1.IngressController{}, "defaultCertificateName", func(o runtime.Object) []string {
+	if err := operatorCache.IndexField(context.Background(), &operatorv1.IngressController{}, "defaultCertificateName", client.IndexerFunc(func(o client.Object) []string {
 		secret := controller.RouterEffectiveDefaultCertificateSecretName(o.(*operatorv1.IngressController), operandNamespace)
 		return []string{secret.Name}
-	}); err != nil {
+	})); err != nil {
 		return nil, fmt.Errorf("failed to create index for ingresscontroller: %v", err)
 	}
 
@@ -76,20 +76,20 @@ func New(mgr manager.Manager, operatorNamespace, operandNamespace string) (runti
 	if err != nil {
 		return nil, fmt.Errorf("failed to create informer for secrets: %v", err)
 	}
-	if err := c.Watch(&source.Informer{Informer: secretsInformer}, &handler.EnqueueRequestsFromMapFunc{ToRequests: handler.ToRequestsFunc(reconciler.secretToIngressController)}, predicate.Funcs{
-		CreateFunc:  func(e event.CreateEvent) bool { return reconciler.secretIsInUse(e.Meta) },
-		DeleteFunc:  func(e event.DeleteEvent) bool { return reconciler.secretIsInUse(e.Meta) },
-		UpdateFunc:  func(e event.UpdateEvent) bool { return reconciler.secretIsInUse(e.MetaNew) },
-		GenericFunc: func(e event.GenericEvent) bool { return reconciler.secretIsInUse(e.Meta) },
+	if err := c.Watch(&source.Informer{Informer: secretsInformer}, handler.EnqueueRequestsFromMapFunc(reconciler.secretToIngressController), predicate.Funcs{
+		CreateFunc:  func(e event.CreateEvent) bool { return reconciler.secretIsInUse(e.Object) },
+		DeleteFunc:  func(e event.DeleteEvent) bool { return reconciler.secretIsInUse(e.Object) },
+		UpdateFunc:  func(e event.UpdateEvent) bool { return reconciler.secretIsInUse(e.ObjectNew) },
+		GenericFunc: func(e event.GenericEvent) bool { return reconciler.secretIsInUse(e.Object) },
 	}); err != nil {
 		return nil, err
 	}
 
 	if err := c.Watch(&source.Kind{Type: &operatorv1.IngressController{}}, &handler.EnqueueRequestForObject{}, predicate.Funcs{
-		CreateFunc:  func(e event.CreateEvent) bool { return reconciler.hasSecret(e.Meta, e.Object) },
-		DeleteFunc:  func(e event.DeleteEvent) bool { return reconciler.hasSecret(e.Meta, e.Object) },
+		CreateFunc:  func(e event.CreateEvent) bool { return reconciler.hasSecret(e.Object, e.Object) },
+		DeleteFunc:  func(e event.DeleteEvent) bool { return reconciler.hasSecret(e.Object, e.Object) },
 		UpdateFunc:  func(e event.UpdateEvent) bool { return reconciler.secretChanged(e.ObjectOld, e.ObjectNew) },
-		GenericFunc: func(e event.GenericEvent) bool { return reconciler.hasSecret(e.Meta, e.Object) },
+		GenericFunc: func(e event.GenericEvent) bool { return reconciler.hasSecret(e.Object, e.Object) },
 	}); err != nil {
 		return nil, err
 	}
@@ -99,15 +99,15 @@ func New(mgr manager.Manager, operatorNamespace, operandNamespace string) (runti
 
 // secretToIngressController maps a secret to a slice of reconcile requests,
 // one request per ingresscontroller that references the secret.
-func (r *reconciler) secretToIngressController(o handler.MapObject) []reconcile.Request {
+func (r *reconciler) secretToIngressController(o client.Object) []reconcile.Request {
 	requests := []reconcile.Request{}
-	controllers, err := r.ingressControllersWithSecret(o.Meta.GetName())
+	controllers, err := r.ingressControllersWithSecret(o.GetName())
 	if err != nil {
-		log.Error(err, "failed to list ingresscontrollers for secret", "related", o.Meta.GetSelfLink())
+		log.Error(err, "failed to list ingresscontrollers for secret", "related", o.GetSelfLink())
 		return requests
 	}
 	for _, ic := range controllers {
-		log.Info("queueing ingresscontroller", "name", ic.Name, "related", o.Meta.GetSelfLink())
+		log.Info("queueing ingresscontroller", "name", ic.Name, "related", o.GetSelfLink())
 		request := reconcile.Request{
 			NamespacedName: types.NamespacedName{
 				Namespace: ic.Namespace,
@@ -123,7 +123,7 @@ func (r *reconciler) secretToIngressController(o handler.MapObject) []reconcile.
 // the given secret.
 func (r *reconciler) ingressControllersWithSecret(secretName string) ([]operatorv1.IngressController, error) {
 	controllers := &operatorv1.IngressControllerList{}
-	if err := r.cache.List(context.Background(), controllers, client.MatchingField("defaultCertificateName", secretName)); err != nil {
+	if err := r.cache.List(context.Background(), controllers, client.MatchingFields(map[string]string{"defaultCertificateName": secretName})); err != nil {
 		return nil, err
 	}
 	return controllers.Items, nil
@@ -168,16 +168,16 @@ func (r *reconciler) secretChanged(old, new runtime.Object) bool {
 	return oldSecret != newSecret || oldStatus != newStatus
 }
 
-func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, error) {
+func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	log.Info("Reconciling", "request", request)
 
 	controllers := &operatorv1.IngressControllerList{}
-	if err := r.cache.List(context.TODO(), controllers, client.InNamespace(r.operatorNamespace)); err != nil {
+	if err := r.cache.List(ctx, controllers, client.InNamespace(r.operatorNamespace)); err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to list ingresscontrollers: %v", err)
 	}
 
 	secrets := &corev1.SecretList{}
-	if err := r.cache.List(context.TODO(), secrets, client.InNamespace(r.operandNamespace)); err != nil {
+	if err := r.cache.List(ctx, secrets, client.InNamespace(r.operandNamespace)); err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to list secrets: %v", err)
 	}
 

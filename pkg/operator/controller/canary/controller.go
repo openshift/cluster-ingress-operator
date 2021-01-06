@@ -20,7 +20,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 
@@ -81,8 +80,8 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	}
 
 	// trigger reconcile requests for the canary controller via events for the default ingress controller.
-	defaultIcPredicate := predicate.NewPredicateFuncs(func(meta metav1.Object, object runtime.Object) bool {
-		return meta.GetName() == manifests.DefaultIngressControllerName
+	defaultIcPredicate := predicate.NewPredicateFuncs(func(o client.Object) bool {
+		return o.GetName() == manifests.DefaultIngressControllerName
 	})
 
 	if err := c.Watch(&source.Kind{Type: &operatorv1.IngressController{}}, &handler.EnqueueRequestForObject{}, defaultIcPredicate); err != nil {
@@ -90,8 +89,8 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	}
 
 	// trigger reconcile requests for the canary controller via events for the canary route.
-	canaryRoutePredicate := predicate.NewPredicateFuncs(func(meta metav1.Object, object runtime.Object) bool {
-		return meta.GetName() == operatorcontroller.CanaryRouteName().Name
+	canaryRoutePredicate := predicate.NewPredicateFuncs(func(o client.Object) bool {
+		return o.GetName() == operatorcontroller.CanaryRouteName().Name
 	})
 
 	// filter out canary route updates where the canary controller changes the canary route's Spec.Port,
@@ -119,8 +118,8 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 }
 
 func enqueueRequestForDefaultIngressController(namespace string) handler.EventHandler {
-	return &handler.EnqueueRequestsFromMapFunc{
-		ToRequests: handler.ToRequestsFunc(func(a handler.MapObject) []reconcile.Request {
+	return handler.EnqueueRequestsFromMapFunc(
+		func(a client.Object) []reconcile.Request {
 			return []reconcile.Request{
 				{
 					NamespacedName: types.NamespacedName{
@@ -129,13 +128,12 @@ func enqueueRequestForDefaultIngressController(namespace string) handler.EventHa
 					},
 				},
 			}
-		}),
-	}
+		})
 }
 
 // Reconcile ensures that the canary controller's resources
 // are in the desired state.
-func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, error) {
+func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	result := reconcile.Result{}
 
 	if _, _, err := r.ensureCanaryNamespace(); err != nil {

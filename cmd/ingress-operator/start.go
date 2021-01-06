@@ -19,7 +19,7 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
-	"sigs.k8s.io/controller-runtime/pkg/runtime/signals"
+	"sigs.k8s.io/controller-runtime/pkg/manager/signals"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -110,20 +110,20 @@ func start(opts *StartOptions) error {
 		log.Error(err, "failed to verify idling endpoints between endpoints and services")
 	}
 
-	// Set up the channels for the watcher, operator, and metrics.
-	stop := make(chan struct{})
-	signal := signals.SetupSignalHandler()
+	// Set up the channels for the watcher, operator, and metrics using
+	// the context provided from the controller runtime.
+	signal, cancel := context.WithCancel(signals.SetupSignalHandler())
+	defer cancel()
 
 	operatorConfig := operatorconfig.Config{
 		OperatorReleaseVersion: opts.ReleaseVersion,
 		Namespace:              opts.OperatorNamespace,
 		IngressControllerImage: opts.IngressControllerImage,
 		CanaryImage:            opts.CanaryImage,
-		Stop:                   stop,
 	}
 
 	// Start operator metrics.
-	go canarycontroller.StartMetricsListener(opts.MetricsListenAddr, stop)
+	go canarycontroller.StartMetricsListener(opts.MetricsListenAddr, signal)
 
 	// Set up and start the file watcher.
 	watcher, err := fsnotify.NewWatcher()
@@ -150,30 +150,29 @@ func start(opts *StartOptions) error {
 	go func() {
 		for {
 			select {
-			case <-signal:
-				close(stop)
+			case <-signal.Done():
 				return
 			case _, ok := <-watcher.Events:
 				if !ok {
 					log.Info("file watch events channel closed")
-					close(stop)
+					cancel()
 					return
 				}
 				latest, err := ioutil.ReadFile(opts.ShutdownFile)
 				if err != nil {
 					log.Error(err, "failed to read watched file", "filename", opts.ShutdownFile)
-					close(stop)
+					cancel()
 					return
 				}
 				if !bytes.Equal(orig, latest) {
 					log.Info("watched file changed, stopping operator", "filename", opts.ShutdownFile)
-					close(stop)
+					cancel()
 					return
 				}
 			case err, ok := <-watcher.Errors:
 				if !ok {
 					log.Info("file watch error channel closed")
-					close(stop)
+					cancel()
 					return
 				}
 				log.Error(err, "file watch error")
@@ -186,7 +185,7 @@ func start(opts *StartOptions) error {
 	if err != nil {
 		return fmt.Errorf("failed to create operator: %v", err)
 	}
-	return op.Start(stop)
+	return op.Start(signal)
 }
 
 func ensureServicesHaveIdleAnnotation(cl client.Client) error {
