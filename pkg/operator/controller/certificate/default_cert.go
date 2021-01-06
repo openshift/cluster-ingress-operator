@@ -73,9 +73,12 @@ func desiredRouterDefaultCertificateSecret(ca *crypto.CA, namespace string, depl
 		return false, nil, nil
 	}
 
+	name := controller.RouterOperatorGeneratedDefaultCertificateSecretName(ci, namespace)
+
 	// If the ingresscontroller specifies a default certificate secret, the
-	// operator does not need to generate a certificate.
-	if ci.Spec.DefaultCertificate != nil {
+	// operator does not need to generate a certificate, unless the specified
+	// secret name redundantly corresponds to the operator generated secret.
+	if ci.Spec.DefaultCertificate != nil && ci.Spec.DefaultCertificate.Name != name.Name {
 		return false, nil, nil
 	}
 
@@ -90,7 +93,6 @@ func desiredRouterDefaultCertificateSecret(ca *crypto.CA, namespace string, depl
 		return false, nil, fmt.Errorf("failed to encode certificate: %v", err)
 	}
 
-	name := controller.RouterOperatorGeneratedDefaultCertificateSecretName(ci, namespace)
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name.Name,
