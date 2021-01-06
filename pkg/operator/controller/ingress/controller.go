@@ -91,21 +91,21 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	if err := c.Watch(&source.Kind{Type: &iov1.DNSRecord{}}, &handler.EnqueueRequestForOwner{OwnerType: &operatorv1.IngressController{}}); err != nil {
 		return nil, err
 	}
-	if err := c.Watch(&source.Kind{Type: &configv1.Ingress{}}, &handler.EnqueueRequestsFromMapFunc{ToRequests: handler.ToRequestsFunc(reconciler.ingressConfigToIngressController)}); err != nil {
+	if err := c.Watch(&source.Kind{Type: &configv1.Ingress{}}, handler.EnqueueRequestsFromMapFunc(reconciler.ingressConfigToIngressController)); err != nil {
 		return nil, err
 	}
 	return c, nil
 }
 
-func (r *reconciler) ingressConfigToIngressController(o handler.MapObject) []reconcile.Request {
+func (r *reconciler) ingressConfigToIngressController(o client.Object) []reconcile.Request {
 	var requests []reconcile.Request
 	controllers := &operatorv1.IngressControllerList{}
 	if err := r.cache.List(context.Background(), controllers, client.InNamespace(r.config.Namespace)); err != nil {
-		log.Error(err, "failed to list ingresscontrollers for ingress", "related", o.Meta.GetSelfLink())
+		log.Error(err, "failed to list ingresscontrollers for ingress", "related", o.GetSelfLink())
 		return requests
 	}
 	for _, ic := range controllers.Items {
-		log.Info("queueing ingresscontroller", "name", ic.Name, "related", o.Meta.GetSelfLink())
+		log.Info("queueing ingresscontroller", "name", ic.Name, "related", o.GetSelfLink())
 		request := reconcile.Request{
 			NamespacedName: types.NamespacedName{
 				Namespace: ic.Namespace,
@@ -118,11 +118,11 @@ func (r *reconciler) ingressConfigToIngressController(o handler.MapObject) []rec
 }
 
 func enqueueRequestForOwningIngressController(namespace string) handler.EventHandler {
-	return &handler.EnqueueRequestsFromMapFunc{
-		ToRequests: handler.ToRequestsFunc(func(a handler.MapObject) []reconcile.Request {
-			labels := a.Meta.GetLabels()
+	return handler.EnqueueRequestsFromMapFunc(
+		func(a client.Object) []reconcile.Request {
+			labels := a.GetLabels()
 			if ingressName, ok := labels[manifests.OwningIngressControllerLabel]; ok {
-				log.Info("queueing ingress", "name", ingressName, "related", a.Meta.GetSelfLink())
+				log.Info("queueing ingress", "name", ingressName, "related", a.GetSelfLink())
 				return []reconcile.Request{
 					{
 						NamespacedName: types.NamespacedName{
@@ -134,8 +134,7 @@ func enqueueRequestForOwningIngressController(namespace string) handler.EventHan
 			} else {
 				return []reconcile.Request{}
 			}
-		}),
-	}
+		})
 }
 
 // Config holds all the things necessary for the controller to run.
@@ -169,12 +168,12 @@ func (e *admissionRejection) Error() string {
 // Reconcile expects request to refer to a ingresscontroller in the operator
 // namespace, and will do all the work to ensure the ingresscontroller is in the
 // desired state.
-func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, error) {
+func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	log.Info("reconciling", "request", request)
 
 	// Only proceed if we can get the ingresscontroller's state.
 	ingress := &operatorv1.IngressController{}
-	if err := r.client.Get(context.TODO(), request.NamespacedName, ingress); err != nil {
+	if err := r.client.Get(ctx, request.NamespacedName, ingress); err != nil {
 		if errors.IsNotFound(err) {
 			// This means the ingress was already deleted/finalized and there are
 			// stale queue entries (or something edge triggering from a related
@@ -196,23 +195,23 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 
 	// Only proceed if we can collect cluster config.
 	apiConfig := &configv1.APIServer{}
-	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, apiConfig); err != nil {
+	if err := r.client.Get(ctx, types.NamespacedName{Name: "cluster"}, apiConfig); err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to get apiserver 'cluster': %v", err)
 	}
 	dnsConfig := &configv1.DNS{}
-	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, dnsConfig); err != nil {
+	if err := r.client.Get(ctx, types.NamespacedName{Name: "cluster"}, dnsConfig); err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to get dns 'cluster': %v", err)
 	}
 	infraConfig := &configv1.Infrastructure{}
-	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, infraConfig); err != nil {
+	if err := r.client.Get(ctx, types.NamespacedName{Name: "cluster"}, infraConfig); err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to get infrastructure 'cluster': %v", err)
 	}
 	ingressConfig := &configv1.Ingress{}
-	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, ingressConfig); err != nil {
+	if err := r.client.Get(ctx, types.NamespacedName{Name: "cluster"}, ingressConfig); err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to get ingress 'cluster': %v", err)
 	}
 	networkConfig := &configv1.Network{}
-	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, networkConfig); err != nil {
+	if err := r.client.Get(ctx, types.NamespacedName{Name: "cluster"}, networkConfig); err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to get network 'cluster': %v", err)
 	}
 

@@ -78,17 +78,17 @@ func New(mgr manager.Manager, config Config) (runtimecontroller.Controller, erro
 	if err := c.Watch(&source.Kind{Type: &iov1.DNSRecord{}}, &handler.EnqueueRequestForObject{}, predicate.GenerationChangedPredicate{}); err != nil {
 		return nil, err
 	}
-	if err := c.Watch(&source.Kind{Type: &configv1.DNS{}}, &handler.EnqueueRequestsFromMapFunc{ToRequests: handler.ToRequestsFunc(reconciler.ToDNSRecords)}); err != nil {
+	if err := c.Watch(&source.Kind{Type: &configv1.DNS{}}, handler.EnqueueRequestsFromMapFunc(reconciler.ToDNSRecords)); err != nil {
 		return nil, err
 	}
-	if err := c.Watch(&source.Kind{Type: &configv1.Infrastructure{}}, &handler.EnqueueRequestsFromMapFunc{ToRequests: handler.ToRequestsFunc(reconciler.ToDNSRecords)}); err != nil {
+	if err := c.Watch(&source.Kind{Type: &configv1.Infrastructure{}}, handler.EnqueueRequestsFromMapFunc(reconciler.ToDNSRecords)); err != nil {
 		return nil, err
 	}
-	if err := c.Watch(&source.Kind{Type: &corev1.Secret{}}, &handler.EnqueueRequestsFromMapFunc{ToRequests: handler.ToRequestsFunc(reconciler.ToDNSRecords)}, predicate.Funcs{
-		CreateFunc: func(e event.CreateEvent) bool { return e.Meta.GetName() == cloudCredentialsSecretName },
+	if err := c.Watch(&source.Kind{Type: &corev1.Secret{}}, handler.EnqueueRequestsFromMapFunc(reconciler.ToDNSRecords), predicate.Funcs{
+		CreateFunc: func(e event.CreateEvent) bool { return e.Object.GetName() == cloudCredentialsSecretName },
 		DeleteFunc: func(e event.DeleteEvent) bool { return false },
 		UpdateFunc: func(e event.UpdateEvent) bool {
-			if e.MetaNew.GetName() != cloudCredentialsSecretName {
+			if e.ObjectNew.GetName() != cloudCredentialsSecretName {
 				return false
 			}
 			oldSecret := e.ObjectOld.(*corev1.Secret)
@@ -119,12 +119,12 @@ type reconciler struct {
 	recorder         record.EventRecorder
 }
 
-func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, error) {
+func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	log.Info("reconciling", "request", request)
 
 	// TODO: If the new revision has changed, undefined stuff happens (resource leaks?)
 	dnsConfig := &configv1.DNS{}
-	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, dnsConfig); err != nil {
+	if err := r.client.Get(ctx, types.NamespacedName{Name: "cluster"}, dnsConfig); err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to get dns 'cluster': %v", err)
 	}
 
@@ -133,7 +133,7 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 	}
 
 	record := &iov1.DNSRecord{}
-	if err := r.client.Get(context.TODO(), request.NamespacedName, record); err != nil {
+	if err := r.client.Get(ctx, request.NamespacedName, record); err != nil {
 		if errors.IsNotFound(err) {
 			log.Info("dnsrecord not found; reconciliation will be skipped", "request", request)
 			return reconcile.Result{}, nil
@@ -167,7 +167,7 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 		return reconcile.Result{}, nil
 	}
 
-	if err := r.cache.Get(context.TODO(), types.NamespacedName{Namespace: record.Namespace, Name: ingressName}, &operatorv1.IngressController{}); err != nil {
+	if err := r.cache.Get(ctx, types.NamespacedName{Namespace: record.Namespace, Name: ingressName}, &operatorv1.IngressController{}); err != nil {
 		if errors.IsNotFound(err) {
 			// TODO: what should we do here? something upstream could detect and delete the orphan? add new conditions?
 			// is it safe to retry without verifying the owner isn't a new object?
@@ -191,7 +191,7 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 		updated := record.DeepCopy()
 		updated.Status.Zones = statuses
 		updated.Status.ObservedGeneration = updated.Generation
-		if err := r.client.Status().Update(context.TODO(), updated); err != nil {
+		if err := r.client.Status().Update(ctx, updated); err != nil {
 			log.Error(err, "failed to update dnsrecord; will retry", "dnsrecord", updated)
 			return reconcile.Result{RequeueAfter: 10 * time.Second}, nil
 		} else {
@@ -427,15 +427,15 @@ func dnsZoneStatusSlicesEqual(a, b []iov1.DNSZoneStatus) bool {
 }
 
 // ToDNSRecords returns reconciliation requests for all DNSRecords.
-func (r *reconciler) ToDNSRecords(o handler.MapObject) []reconcile.Request {
+func (r *reconciler) ToDNSRecords(o client.Object) []reconcile.Request {
 	var requests []reconcile.Request
 	records := &operatoringressv1.DNSRecordList{}
 	if err := r.cache.List(context.Background(), records, client.InNamespace(r.config.Namespace)); err != nil {
-		log.Error(err, "failed to list dnsrecords", "related", o.Meta.GetSelfLink())
+		log.Error(err, "failed to list dnsrecords", "related", o.GetSelfLink())
 		return requests
 	}
 	for _, record := range records.Items {
-		log.Info("queueing dnsrecord", "name", record.Name, "related", o.Meta.GetSelfLink())
+		log.Info("queueing dnsrecord", "name", record.Name, "related", o.GetSelfLink())
 		request := reconcile.Request{
 			NamespacedName: types.NamespacedName{
 				Namespace: record.Namespace,

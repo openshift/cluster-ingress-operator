@@ -69,7 +69,7 @@ func registerCanaryMetrics() error {
 }
 
 // StartMetricsListener starts the metrics listener on addr.
-func StartMetricsListener(addr string, stopCh chan struct{}) {
+func StartMetricsListener(addr string, signal context.Context) {
 	// These metrics get registered in controller-runtime's registry via an init in the internal/controller/metrics package.
 	// Unregister the controller-runtime metrics, so that we can combine the controller-runtime metric's registry
 	// with that of the ingress-operator. This shouldn't have any side effects, as long as no 2 metrics across
@@ -100,7 +100,7 @@ func StartMetricsListener(addr string, stopCh chan struct{}) {
 			log.Error(err, "metrics listener exited")
 		}
 	}()
-	<-stopCh
+	<-signal.Done()
 	if err := s.Shutdown(context.Background()); err != http.ErrServerClosed {
 		log.Error(err, "error stopping metrics listener")
 	}
