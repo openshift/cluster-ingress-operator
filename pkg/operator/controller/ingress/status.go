@@ -66,6 +66,7 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	degradedCondition, err := computeIngressDegradedCondition(updated.Status.Conditions, updated.Name)
 	errs = append(errs, err)
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, degradedCondition)
+	updated.Status.Conditions = PruneConditions(updated.Status.Conditions)
 
 	if !IngressStatusesEqual(updated.Status, ic.Status) {
 		if err := r.client.Status().Update(context.TODO(), updated); err != nil {
@@ -102,6 +103,18 @@ func MergeConditions(conditions []operatorv1.OperatorCondition, updates ...opera
 		}
 	}
 	conditions = append(conditions, additions...)
+	return conditions
+}
+
+// PruneConditions removes any conditions that are not currently supported.
+// Returns the updated condition array.
+func PruneConditions(conditions []operatorv1.OperatorCondition) []operatorv1.OperatorCondition {
+	for i, condition := range conditions {
+		if condition.Type == "DeploymentDegraded" {
+			// DeploymentDegraded was removed in 4.6.0
+			conditions = append(conditions[:i], conditions[i+1:]...)
+		}
+	}
 	return conditions
 }
 
