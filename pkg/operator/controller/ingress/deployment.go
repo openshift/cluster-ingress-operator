@@ -54,6 +54,9 @@ const (
 
 	RouterDisableHTTP2EnvName          = "ROUTER_DISABLE_HTTP2"
 	RouterDefaultEnableHTTP2Annotation = "ingress.operator.openshift.io/default-enable-http2"
+
+	RouterHardStopAfterEnvName    = "ROUTER_HARD_STOP_AFTER"
+	RouterHardStopAfterAnnotation = "ingress.operator.openshift.io/hard-stop-after"
 )
 
 // ensureRouterDeployment ensures the router deployment exists for a given
@@ -134,6 +137,28 @@ func HTTP2IsEnabled(ic *operatorv1.IngressController, ingressConfig *configv1.In
 	}
 
 	return configHasHTTP2Enabled
+}
+
+// HardStopAfterIsEnabledByAnnotation returns true if the map m has
+// the key RouterHardStopAfterEnvName and its value is not the empty
+// string ("").
+func HardStopAfterIsEnabledByAnnotation(m map[string]string) (bool, string) {
+	if val, ok := m[RouterHardStopAfterAnnotation]; ok && len(val) > 0 {
+		return true, val
+	}
+	return false, ""
+}
+
+// HardStopAfterIsEnabled returns true if either the ingress
+// controller or the ingress config has the "hard-stop-after"
+// annotation. The presence of the annotation on the ingress
+// controller, irrespective of its value, always overrides any setting
+// on the ingress config.
+func HardStopAfterIsEnabled(ic *operatorv1.IngressController, ingressConfig *configv1.Ingress) (bool, string) {
+	if controllerAnnotation, controllerValue := HardStopAfterIsEnabledByAnnotation(ic.Annotations); controllerAnnotation {
+		return controllerAnnotation, controllerValue
+	}
+	return HardStopAfterIsEnabledByAnnotation(ingressConfig.Annotations)
 }
 
 // desiredRouterDeployment returns the desired router deployment.
@@ -621,6 +646,10 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		env = append(env, corev1.EnvVar{Name: RouterDisableHTTP2EnvName, Value: "false"})
 	} else {
 		env = append(env, corev1.EnvVar{Name: RouterDisableHTTP2EnvName, Value: "true"})
+	}
+
+	if enabled, value := HardStopAfterIsEnabled(ci, ingressConfig); enabled {
+		env = append(env, corev1.EnvVar{Name: RouterHardStopAfterEnvName, Value: value})
 	}
 
 	deployment.Spec.Template.Spec.Volumes = volumes
