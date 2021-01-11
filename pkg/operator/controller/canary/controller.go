@@ -3,6 +3,7 @@ package canary
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
@@ -44,6 +45,14 @@ const (
 	// canaryCheckFailureCount is how many successive failing canary checks should
 	// be observed before the default ingress controller goes degraded.
 	canaryCheckFailureCount = 5
+
+	// CanaryRouteRotationAnnotation is an annotation on the default ingress controller
+	// that specifies whether or not the canary check loop should periodically rotate
+	// the endpoints of the canary route. Canary route rotation is disabled by default
+	// to prevent router reloads from impacting ingress performance periodically.
+	// Canary route rotation is enabled when the canary route rotation annotation has
+	// a value of "true" (disabled otherwise).
+	CanaryRouteRotationAnnotation = "ingress.operator.openshift.io/rotate-canary-route"
 )
 
 var (
@@ -57,8 +66,9 @@ var (
 // the canary service, daemonset, and route resources.
 func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	reconciler := &reconciler{
-		config: config,
-		client: mgr.GetClient(),
+		config:                    config,
+		client:                    mgr.GetClient(),
+		enableCanaryRouteRotation: false,
 	}
 	c, err := controller.New(canaryControllerName, mgr, controller.Options{Reconciler: reconciler})
 	if err != nil {
@@ -166,6 +176,21 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 		return result, utilerrors.NewAggregate(errors)
 	}
 
+	// Get the canary route rotation annotation value
+	// from the default ingress controller.
+	ic := &operatorv1.IngressController{}
+	if err := r.client.Get(context.TODO(), request.NamespacedName, ic); err != nil {
+		errors = append(errors, fmt.Errorf("failed to get ingress controller %s: %v", request.NamespacedName.Name, err))
+		return result, utilerrors.NewAggregate(errors)
+	}
+
+	if val, ok := ic.Annotations[CanaryRouteRotationAnnotation]; ok {
+		v, _ := strconv.ParseBool(val)
+		r.mu.Lock()
+		r.enableCanaryRouteRotation = v
+		r.mu.Unlock()
+	}
+
 	// Start probing the canary route once the canary route
 	// has been admitted.
 	if checkRouteAdmitted(route) {
@@ -190,11 +215,23 @@ type reconciler struct {
 	config Config
 
 	client client.Client
+
+	// Use a mutex so enableCanaryRotation is
+	// go-routine safe.
+	mu                        sync.Mutex
+	enableCanaryRouteRotation bool
+}
+
+func (r *reconciler) isCanaryRouteRotationEnabled() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.enableCanaryRouteRotation
 }
 
 func (r *reconciler) startCanaryRoutePolling(stop <-chan struct{}) error {
 	// Keep track of how many canary checks have passed
-	// so the route endpoint can be periodically cycled.
+	// so the route endpoint can be periodically cycled
+	// (when canary route rotation is enabled).
 	checkCount := 0
 
 	// Keep track of successive canary check failures
@@ -211,8 +248,13 @@ func (r *reconciler) startCanaryRoutePolling(stop <-chan struct{}) error {
 			log.Info("canary check route does not exist")
 			return
 		}
-		// Periodically rotate the canary route endpoint.
-		if checkCount > canaryCheckCycleCount {
+
+		// Check if canary route rotations are enabled every iteration.
+		rotationEnabled := r.isCanaryRouteRotationEnabled()
+
+		// Periodically rotate the canary route endpoint if
+		// rotationEnabled is true.
+		if rotationEnabled && checkCount > canaryCheckCycleCount {
 			haveService, service, err := r.currentCanaryService()
 			if err != nil {
 				log.Error(err, "failed to get canary service")
@@ -250,7 +292,12 @@ func (r *reconciler) startCanaryRoutePolling(stop <-chan struct{}) error {
 			log.Error(err, "error updating canary status condition")
 		}
 		successiveFail = 0
-		checkCount++
+		// Only increment checkCount if periodic canary route
+		// endpoint rotation is enabled to prevent unbounded
+		// integer growth.
+		if rotationEnabled {
+			checkCount++
+		}
 	}, canaryCheckFrequency, stop)
 
 	return nil
