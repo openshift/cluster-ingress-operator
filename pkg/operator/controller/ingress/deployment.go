@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/davecgh/go-spew/spew"
 	"github.com/google/go-cmp/cmp"
@@ -54,6 +55,9 @@ const (
 
 	RouterDisableHTTP2EnvName          = "ROUTER_DISABLE_HTTP2"
 	RouterDefaultEnableHTTP2Annotation = "ingress.operator.openshift.io/default-enable-http2"
+
+	RouterHardStopAfterEnvName    = "ROUTER_HARD_STOP_AFTER"
+	RouterHardStopAfterAnnotation = "ingress.operator.openshift.io/hard-stop-after"
 )
 
 // ensureRouterDeployment ensures the router deployment exists for a given
@@ -134,6 +138,33 @@ func HTTP2IsEnabled(ic *operatorv1.IngressController, ingressConfig *configv1.In
 	}
 
 	return configHasHTTP2Enabled
+}
+
+// HardStopAfterIsEnabledByAnnotation returns true if the map m has
+// the key RouterHardStopAfterEnvName and its value is a valid HAProxy
+// time duration.
+func HardStopAfterIsEnabledByAnnotation(m map[string]string) (bool, string) {
+	if val, ok := m[RouterHardStopAfterAnnotation]; ok && len(val) > 0 {
+		if clippedVal, err := clipHAProxyTimeoutValue(val); err != nil {
+			log.Error(err, "invalid HAProxy time value", "annotation", RouterHardStopAfterAnnotation, "value", val)
+			return false, ""
+		} else {
+			return true, clippedVal
+		}
+	}
+	return false, ""
+}
+
+// HardStopAfterIsEnabled returns true if either the ingress
+// controller or the ingress config has the "hard-stop-after"
+// annotation. The presence of the annotation on the ingress
+// controller, irrespective of its value, always overrides any setting
+// on the ingress config.
+func HardStopAfterIsEnabled(ic *operatorv1.IngressController, ingressConfig *configv1.Ingress) (bool, string) {
+	if controllerAnnotation, controllerValue := HardStopAfterIsEnabledByAnnotation(ic.Annotations); controllerAnnotation {
+		return controllerAnnotation, controllerValue
+	}
+	return HardStopAfterIsEnabledByAnnotation(ingressConfig.Annotations)
 }
 
 // desiredRouterDeployment returns the desired router deployment.
@@ -623,6 +654,10 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		env = append(env, corev1.EnvVar{Name: RouterDisableHTTP2EnvName, Value: "true"})
 	}
 
+	if enabled, value := HardStopAfterIsEnabled(ci, ingressConfig); enabled {
+		env = append(env, corev1.EnvVar{Name: RouterHardStopAfterEnvName, Value: value})
+	}
+
 	deployment.Spec.Template.Spec.Volumes = volumes
 	deployment.Spec.Template.Spec.Containers[0].VolumeMounts = routerVolumeMounts
 	deployment.Spec.Template.Spec.Containers[0].Env = append(deployment.Spec.Template.Spec.Containers[0].Env, env...)
@@ -1041,4 +1076,47 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 	}
 	updated.Spec.Replicas = &replicas
 	return true, updated
+}
+
+// clipHAProxyTimeoutValue prevents the HAProxy config file from using
+// timeout values that exceed the maximum value allowed by HAProxy.
+// Returns an error in the event that a timeout string value is not
+// parsable as a valid time duration, or the clipped time duration
+// otherwise.
+//
+// TODO: this is a modified copy from openshift/router but returns ""
+// if there's any error.
+//
+// Ideally we need to share this utility function via:
+// https://github.com/openshift/library-go/blob/master/pkg/route/routeapihelpers
+func clipHAProxyTimeoutValue(val string) (string, error) {
+	const haproxyMaxTimeout = "2147483647ms" // max timeout allowable by HAProxy
+
+	endIndex := len(val) - 1
+	maxTimeout, err := time.ParseDuration(haproxyMaxTimeout)
+	if err != nil {
+		return "", err
+	}
+	// time.ParseDuration doesn't work with days
+	// despite HAProxy accepting timeouts that specify day units
+	if val[endIndex] == 'd' {
+		days, err := strconv.Atoi(val[:endIndex])
+		if err != nil {
+			return "", err
+		}
+		if maxTimeout.Hours() < float64(days*24) {
+			log.V(7).Info("Route annotation timeout exceeds maximum allowable by HAProxy, clipping to max")
+			return haproxyMaxTimeout, nil
+		}
+	} else {
+		duration, err := time.ParseDuration(val)
+		if err != nil {
+			return "", err
+		}
+		if maxTimeout.Milliseconds() < duration.Milliseconds() {
+			log.V(7).Info("Route annotation timeout exceeds maximum allowable by HAProxy, clipping to max")
+			return haproxyMaxTimeout, nil
+		}
+	}
+	return val, nil
 }
