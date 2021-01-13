@@ -125,6 +125,10 @@ func (m *provider) Delete(record *iov1.DNSRecord, zone configv1.DNSZone) error {
 	return err
 }
 
+func (m *provider) Replace(record *iov1.DNSRecord, zone configv1.DNSZone) error {
+	return m.Ensure(record, zone)
+}
+
 // getARecordName extracts the ARecord subdomain name from the full domain string.
 // azure defines the ARecord Name as the subdomain name only.
 func getARecordName(recordDomain string, zoneName string) (string, error) {

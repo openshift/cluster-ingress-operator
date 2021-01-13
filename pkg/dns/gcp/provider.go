@@ -10,13 +10,15 @@ import (
 
 	iov1 "github.com/openshift/api/operatoringress/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
+	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 
 	gdnsv1 "google.golang.org/api/dns/v1"
 	"google.golang.org/api/option"
 )
 
 var (
-	_ dns.Provider = &Provider{}
+	_   dns.Provider = &Provider{}
+	log              = logf.Logger.WithName("dns")
 )
 
 type Provider struct {
@@ -55,6 +57,30 @@ func (p *Provider) Ensure(record *iov1.DNSRecord, zone configv1.DNSZone) error {
 		return nil
 	}
 	return err
+}
+
+func (p *Provider) Replace(record *iov1.DNSRecord, zone configv1.DNSZone) error {
+	ctx := context.Background()
+	oldRecord := p.dnsService.ResourceRecordSets.List(p.config.Project, zone.ID).Name(record.Spec.DNSName)
+	if err := oldRecord.Pages(ctx, func(page *gdnsv1.ResourceRecordSetsListResponse) error {
+		for _, resourceRecordSet := range page.Rrsets {
+			log.Info("found old DNS resource record set", "resourceRecordSet", resourceRecordSet)
+			change := &gdnsv1.Change{Deletions: []*gdnsv1.ResourceRecordSet{resourceRecordSet}}
+			call := p.dnsService.Changes.Create(p.config.Project, zone.ID, change)
+			_, err := call.Do()
+			if ae, ok := err.(*googleapi.Error); ok && ae.Code == http.StatusNotFound {
+				return nil
+			}
+			return err
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := p.Ensure(record, zone); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (p *Provider) Delete(record *iov1.DNSRecord, zone configv1.DNSZone) error {
