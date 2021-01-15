@@ -25,7 +25,7 @@ require (
 	github.com/spf13/cobra v1.1.1
 	github.com/stretchr/testify v1.6.1
 	github.com/tcnksm/go-httpstat v0.2.1-0.20191008022543-e866bb274419
-	go.uber.org/zap v1.15.0
+	go.uber.org/zap v1.16.0
 	gomodules.xyz/jsonpatch/v2 v2.1.0 // indirect
 	google.golang.org/api v0.20.0
 	google.golang.org/appengine v1.6.6 // indirect
