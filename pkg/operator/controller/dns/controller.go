@@ -19,6 +19,7 @@ import (
 	gcpdns "github.com/openshift/cluster-ingress-operator/pkg/dns/gcp"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
+	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	operatorutil "github.com/openshift/cluster-ingress-operator/pkg/util"
 	oputil "github.com/openshift/cluster-ingress-operator/pkg/util"
 	awsutil "github.com/openshift/cluster-ingress-operator/pkg/util/aws"
@@ -54,6 +55,11 @@ const (
 	// operator's namespace that will hold the credentials that the operator
 	// will use to authenticate with the cloud API.
 	cloudCredentialsSecretName = "cloud-credentials"
+
+	// kubeCloudConfigName is the name of the kube cloud config ConfigMap
+	kubeCloudConfigName = "kube-cloud-config"
+	// cloudCABundleKey is the key in the kube cloud config ConfigMap where the custom CA bundle is located
+	cloudCABundleKey = "ca-bundle.pem"
 )
 
 var log = logf.Logger.WithName(controllerName)
@@ -516,6 +522,12 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 				}
 			}
 		}
+
+		cfg.CustomCABundle, err = r.customCABundle()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get the custom CA bundle: %w", err)
+		}
+
 		provider, err := awsdns.NewProvider(cfg, r.config.OperatorReleaseVersion)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create AWS DNS manager: %v", err)
@@ -551,4 +563,26 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 		dnsProvider = &dns.FakeProvider{}
 	}
 	return dnsProvider, nil
+}
+
+// customCABundle will get the custom CA bundle, if present, configured in the kube cloud config.
+func (r *reconciler) customCABundle() (string, error) {
+	cm := &corev1.ConfigMap{}
+	switch err := r.client.Get(
+		context.Background(),
+		client.ObjectKey{Namespace: controller.GlobalMachineSpecifiedConfigNamespace, Name: kubeCloudConfigName},
+		cm,
+	); {
+	case errors.IsNotFound(err):
+		// no cloud config ConfigMap, so no custom CA bundle
+		return "", nil
+	case err != nil:
+		return "", fmt.Errorf("failed to get kube-cloud-config ConfigMap: %w", err)
+	}
+	caBundle, ok := cm.Data[cloudCABundleKey]
+	if !ok {
+		// no "ca-bundle.pem" key in the ConfigMap, so no custom CA bundle
+		return "", nil
+	}
+	return caBundle, nil
 }

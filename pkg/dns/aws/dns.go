@@ -86,6 +86,8 @@ type Config struct {
 	// ServiceEndpoints is the list of AWS API endpoints to use for
 	// Provider clients.
 	ServiceEndpoints []ServiceEndpoint
+	// CustomCABundle is a custom CA bundle to use when accessing the AWS API
+	CustomCABundle string
 }
 
 // ServiceEndpoint stores the configuration of a custom url to
@@ -101,10 +103,14 @@ type ServiceEndpoint struct {
 }
 
 func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error) {
-	sess, err := session.NewSessionWithOptions(session.Options{
+	sessionOpts := session.Options{
 		SharedConfigState: session.SharedConfigEnable,
 		SharedConfigFiles: []string{config.SharedCredentialFile},
-	})
+	}
+	if config.CustomCABundle != "" {
+		sessionOpts.CustomCABundle = strings.NewReader(config.CustomCABundle)
+	}
+	sess, err := session.NewSessionWithOptions(sessionOpts)
 	if err != nil {
 		return nil, fmt.Errorf("couldn't create AWS client session: %v", err)
 	}
@@ -146,6 +152,10 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 		// in the same region as the Route53 client to find the hosted zone
 		// of managed records.
 		tagConfig = tagConfig.WithRegion(endpoints.UsGovWest1RegionID)
+	case endpoints.UsIsoEast1RegionID:
+		// Do not override the region for the C2S region
+		tagConfig = tagConfig.WithRegion(region)
+		r53Config = r53Config.WithRegion(region)
 	default:
 		// Since Route 53 is not a regionalized service, the Tagging API will
 		// only return hosted zone resources when the region is "us-east-1".
