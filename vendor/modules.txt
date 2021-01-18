@@ -155,7 +155,7 @@ github.com/modern-go/concurrent
 github.com/modern-go/reflect2
 # github.com/onsi/ginkgo v1.14.0
 ## explicit
-# github.com/openshift/api v0.0.0-20201201210054-c6debb38648f => github.com/ravidbro/api v0.0.0-20201222081342-ff6d9577a139
+# github.com/openshift/api v0.0.0-20201201210054-c6debb38648f => github.com/ravidbro/api v0.0.0-20210117132012-56ccddcf2bfa
 ## explicit
 github.com/openshift/api/config/v1
 github.com/openshift/api/operator/v1
@@ -634,4 +634,4 @@ sigs.k8s.io/controller-tools/pkg/webhook
 sigs.k8s.io/structured-merge-diff/v4/value
 # sigs.k8s.io/yaml v1.2.0
 sigs.k8s.io/yaml
-# github.com/openshift/api => github.com/ravidbro/api v0.0.0-20201222081342-ff6d9577a139
+# github.com/openshift/api => github.com/ravidbro/api v0.0.0-20210117132012-56ccddcf2bfa
