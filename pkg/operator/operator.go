@@ -187,7 +187,7 @@ func (o *Operator) ensureDefaultIngressController() error {
 	//
 	// TODO: Set the replicas value to the number of workers.
 	replicas := int32(2)
-	if infraConfig.Status.HighAvailabilityMode == configv1.NoneHighAvailabilityMode {
+	if infraConfig.Status.InfrastructureTopology == configv1.SingleReplicaTopologyMode {
 		replicas = 1
 	}
 	ic = &operatorv1.IngressController{
