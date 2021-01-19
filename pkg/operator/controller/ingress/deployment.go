@@ -58,6 +58,8 @@ const (
 
 	RouterHardStopAfterEnvName    = "ROUTER_HARD_STOP_AFTER"
 	RouterHardStopAfterAnnotation = "ingress.operator.openshift.io/hard-stop-after"
+
+	LivenessGracePeriodSecondsAnnotation = "unsupported.do-not-use.openshift.io/override-liveness-grace-period-seconds"
 )
 
 // ensureRouterDeployment ensures the router deployment exists for a given
@@ -927,6 +929,10 @@ func hashableDeployment(deployment *appsv1.Deployment, onlyTemplate bool) *appsv
 		return volumes[i].Name < volumes[j].Name
 	})
 	hashableDeployment.Spec.Template.Spec.Volumes = volumes
+	hashableDeployment.Spec.Template.Annotations = make(map[string]string)
+	if val, ok := deployment.Spec.Template.Annotations[LivenessGracePeriodSecondsAnnotation]; ok && len(val) > 0 {
+		hashableDeployment.Spec.Template.Annotations[LivenessGracePeriodSecondsAnnotation] = val
+	}
 
 	if onlyTemplate {
 		return &hashableDeployment
@@ -1056,6 +1062,14 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 	updated.Spec.Template.Spec.Containers = containers
 	updated.Spec.Template.Spec.DNSPolicy = expected.Spec.Template.Spec.DNSPolicy
 	updated.Spec.Template.Labels = expected.Spec.Template.Labels
+
+	if val, ok := expected.Spec.Template.Annotations[LivenessGracePeriodSecondsAnnotation]; ok && len(val) > 0 {
+		if updated.Spec.Template.Annotations == nil {
+			updated.Spec.Template.Annotations = make(map[string]string)
+		}
+		updated.Spec.Template.Annotations[LivenessGracePeriodSecondsAnnotation] = val
+	}
+
 	updated.Spec.Strategy = expected.Spec.Strategy
 	volumes := make([]corev1.Volume, len(expected.Spec.Template.Spec.Volumes))
 	for i, vol := range expected.Spec.Template.Spec.Volumes {
