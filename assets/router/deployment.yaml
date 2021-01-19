@@ -6,6 +6,9 @@ apiVersion: apps/v1
 spec:
   progressDeadlineSeconds: 600
   template:
+    metadata:
+      annotations:
+        "unsupported.do-not-use.openshift.io/override-liveness-grace-period-seconds": "10"
     spec:
       serviceAccountName: router
       # nodeSelector is set at runtime.
