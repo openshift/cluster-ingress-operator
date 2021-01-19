@@ -322,6 +322,11 @@ func (r *reconciler) delete(record *iov1.DNSRecord) error {
 	var errs []error
 	for i := range record.Status.Zones {
 		zone := record.Status.Zones[i].DNSZone
+		// If the record is currently not published in a zone,
+		// skip deleting it for that zone.
+		if !recordIsAlreadyPublishedToZone(record, &zone) {
+			continue
+		}
 		err := r.dnsProvider.Delete(record, zone)
 		if err != nil {
 			errs = append(errs, err)
