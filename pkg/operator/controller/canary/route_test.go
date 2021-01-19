@@ -19,7 +19,11 @@ func TestDesiredCanaryRoute(t *testing.T) {
 		Name: "test",
 	}
 	service := desiredCanaryService(daemonsetRef)
-	route := desiredCanaryRoute(service)
+	route, err := desiredCanaryRoute(service)
+
+	if err != nil {
+		t.Fatalf("desiredCanaryService returned an error: %v", err)
+	}
 
 	expectedRouteName := types.NamespacedName{
 		Namespace: "openshift-ingress-canary",
@@ -106,7 +110,10 @@ func TestCanaryRouteChanged(t *testing.T) {
 	service := desiredCanaryService(daemonsetRef)
 
 	for _, tc := range testCases {
-		original := desiredCanaryRoute(service)
+		original, err := desiredCanaryRoute(service)
+		if err != nil {
+			t.Fatalf("desiredCanaryService returned an error: %v", err)
+		}
 		mutated := original.DeepCopy()
 		tc.mutate(mutated)
 		if changed, updated := canaryRouteChanged(original, mutated); changed != tc.expect {

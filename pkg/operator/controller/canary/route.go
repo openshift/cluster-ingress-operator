@@ -18,7 +18,11 @@ import (
 
 // ensureCanaryRoute ensures the canary route exists
 func (r *reconciler) ensureCanaryRoute(service *corev1.Service) (bool, *routev1.Route, error) {
-	desired := desiredCanaryRoute(service)
+	desired, err := desiredCanaryRoute(service)
+	if err != nil {
+		return false, nil, fmt.Errorf("failed to build canary route: %v", err)
+	}
+
 	haveRoute, current, err := r.currentCanaryRoute()
 	if err != nil {
 		return false, nil, err
@@ -113,13 +117,17 @@ func canaryRouteChanged(current, expected *routev1.Route) (bool, *routev1.Route)
 
 // desiredCanaryRoute returns the desired canary route read in
 // from manifests
-func desiredCanaryRoute(service *corev1.Service) *routev1.Route {
+func desiredCanaryRoute(service *corev1.Service) (*routev1.Route, error) {
 	route := manifests.CanaryRoute()
 
 	name := controller.CanaryRouteName()
 
 	route.Namespace = name.Namespace
 	route.Name = name.Name
+
+	if service == nil {
+		return route, fmt.Errorf("expected non-nil canary service for canary route %s/%s", route.Namespace, route.Name)
+	}
 
 	route.Labels = map[string]string{
 		// associate the route with the canary controller
@@ -129,15 +137,18 @@ func desiredCanaryRoute(service *corev1.Service) *routev1.Route {
 	route.Spec.To.Name = controller.CanaryServiceName().Name
 
 	// Set spec.port.targetPort to the first port available in the canary service.
-	// The canary controller will toggle which targetPort the route targets
+	// The canary controller may toggle which targetPort the route targets
 	// to test > 1 endpoint, so it does not matter which port is selected as long
 	// as the canary service has > 1 ports available. If the canary service only has one
 	// available port, then route.Spec.Port.TargetPort will remain unchanged.
+	if len(service.Spec.Ports) == 0 {
+		return route, fmt.Errorf("expected spec.ports to be non-empty for canary service %s/%s", service.Namespace, service.Name)
+	}
 	route.Spec.Port.TargetPort = service.Spec.Ports[0].TargetPort
 
 	route.SetOwnerReferences(service.OwnerReferences)
 
-	return route
+	return route, nil
 }
 
 // checkRouteAdmitted returns true if a given route has been admitted
