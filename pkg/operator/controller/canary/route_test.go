@@ -77,6 +77,25 @@ func TestDesiredCanaryRoute(t *testing.T) {
 	}
 }
 
+func TestDesiredCanaryRouteWithInvalidService(t *testing.T) {
+	daemonsetRef := metav1.OwnerReference{
+		Name: "test",
+	}
+
+	_, err := desiredCanaryRoute(nil)
+	if err == nil {
+		t.Errorf("expected desiredCanaryService to return an error when the parameter service is nil")
+	}
+
+	service := desiredCanaryService(daemonsetRef)
+	service.Spec.Ports = nil
+
+	_, err = desiredCanaryRoute(service)
+	if err == nil {
+		t.Errorf("expected desiredCanaryService to return an error when the parameter service has empty spec.ports")
+	}
+}
+
 func TestCanaryRouteChanged(t *testing.T) {
 	testCases := []struct {
 		description string
