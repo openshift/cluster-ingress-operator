@@ -490,6 +490,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_UNIQUE_ID_HEADER_NAME", true, "unique-id")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_UNIQUE_ID_FORMAT", true, `"foo"`)
+	checkDeploymentHasEnvVar(t, deployment, RouterHardStopAfterEnvName, false, "")
 }
 
 func TestInferTLSProfileSpecFromDeployment(t *testing.T) {
