@@ -230,6 +230,18 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 		return reconcile.Result{Requeue: true}, nil
 	}
 
+	// TODO: remove this fix-up logic in 4.8
+	if ingress.Status.EndpointPublishingStrategy != nil && ingress.Status.EndpointPublishingStrategy.Type == operatorv1.LoadBalancerServiceStrategyType && ingress.Status.EndpointPublishingStrategy.LoadBalancer == nil {
+		log.Info("Setting default value for empty status.endpointPublishingStrategy.loadBalancer field", "ingresscontroller", ingress)
+		ingress.Status.EndpointPublishingStrategy.LoadBalancer = &operatorv1.LoadBalancerStrategy{
+			Scope: operatorv1.ExternalLoadBalancer,
+		}
+		if err := r.client.Status().Update(context.TODO(), ingress); err != nil {
+			return reconcile.Result{}, fmt.Errorf("failed to update status: %v", err)
+		}
+		return reconcile.Result{Requeue: true}, nil
+	}
+
 	// The ingresscontroller is safe to process, so ensure it.
 	if err := r.ensureIngressController(ingress, dnsConfig, infraConfig, ingressConfig, apiConfig, networkConfig); err != nil {
 		switch e := err.(type) {
