@@ -373,6 +373,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_IP_V4_V6_MODE", true, "v6")
 	checkDeploymentHasEnvVar(t, deployment, RouterDisableHTTP2EnvName, true, "true")
+	checkDeploymentHasEnvVar(t, deployment, RouterHardStopAfterEnvName, false, "")
 }
 
 func TestInferTLSProfileSpecFromDeployment(t *testing.T) {
