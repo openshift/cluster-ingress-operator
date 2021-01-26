@@ -177,7 +177,7 @@ func TestRouteHardStopAfterTestOneDayDuration(t *testing.T) {
 }
 
 func hardStopAfterTestSetup(t *testing.T, client client.Client, timeout time.Duration) (*operatorv1.IngressController, *configv1.Ingress, *appsv1.Deployment, error) {
-	if err := waitForIngressControllerCondition(t, client, timeout, defaultName, defaultAvailableConditions...); err != nil {
+	if err := waitForIngressControllerCondition(client, timeout, defaultName, defaultAvailableConditions...); err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to observe expected conditions: %v", err)
 	}
 
@@ -197,7 +197,7 @@ func hardStopAfterTestIngressConfig(t *testing.T, client client.Client, ingressC
 	if err := setHardStopAfterDurationForIngressConfig(t, client, hardStopAfterRetryTimeout, duration, hardStopAfterSetValue, ingressConfig); err != nil {
 		return fmt.Errorf("failed to update ingress config: %v", err)
 	}
-	if err := waitForIngressControllerCondition(t, client, hardStopAfterRetryTimeout, defaultName, defaultAvailableConditions...); err != nil {
+	if err := waitForIngressControllerCondition(client, hardStopAfterRetryTimeout, defaultName, defaultAvailableConditions...); err != nil {
 		return fmt.Errorf("failed to observe expected conditions: %v", err)
 	}
 	if err := waitForIngressConfigHardStopAfterToBeSet(client, hardStopAfterRetryTimeout, ingressConfig, duration); err != nil {
@@ -213,7 +213,7 @@ func hardStopAfterTestIngressController(t *testing.T, client client.Client, ic *
 	if err := setHardStopAfterDurationForIngressController(t, client, hardStopAfterRetryTimeout, duration, hardStopAfterSetValue, ic); err != nil {
 		t.Fatalf("failed to update ingresscontroller: %v", err)
 	}
-	if err := waitForIngressControllerCondition(t, client, hardStopAfterRetryTimeout, defaultName, defaultAvailableConditions...); err != nil {
+	if err := waitForIngressControllerCondition(client, hardStopAfterRetryTimeout, defaultName, defaultAvailableConditions...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 	if err := waitForIngressControllerHardStopAfterToBeSet(client, hardStopAfterRetryTimeout, ic, duration); err != nil {
