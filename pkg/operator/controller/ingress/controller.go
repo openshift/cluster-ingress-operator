@@ -228,9 +228,9 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 		return reconcile.Result{Requeue: true}, nil
 	}
 
+	// TODO: remove this fix-up logic in 4.8
 	if ingress.Status.EndpointPublishingStrategy != nil && ingress.Status.EndpointPublishingStrategy.Type == operatorv1.LoadBalancerServiceStrategyType && ingress.Status.EndpointPublishingStrategy.LoadBalancer == nil {
-		log.Info("EndpointPublishingStrategy missing LoadBalancer")
-		// set loadbalancer to external
+		log.Info("Setting default value for empty status.endpointPublishingStrategy.loadBalancer field", "ingresscontroller", ingress)
 		ingress.Status.EndpointPublishingStrategy.LoadBalancer = &operatorv1.LoadBalancerStrategy{
 			Scope: operatorv1.ExternalLoadBalancer,
 		}

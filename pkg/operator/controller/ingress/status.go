@@ -98,6 +98,7 @@ func mergeConditions(conditions []operatorv1.OperatorCondition, updates ...opera
 // Returns the updated condition array.
 func PruneConditions(conditions []operatorv1.OperatorCondition) []operatorv1.OperatorCondition {
 	for i, condition := range conditions {
+		// TODO: Remove this fix-up logic in 4.8
 		if condition.Type == "DeploymentDegraded" {
 			// DeploymentDegraded was removed in 4.6.0
 			conditions = append(conditions[:i], conditions[i+1:]...)
