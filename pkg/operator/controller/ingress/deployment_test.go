@@ -225,6 +225,16 @@ func TestDesiredRouterDeployment(t *testing.T) {
 			defaultSecretName, deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName)
 	}
 
+	if expected, got := 1, len(deployment.Spec.Template.Annotations); expected != got {
+		t.Errorf("expected len(annotations)=%v, got %v", expected, got)
+	}
+
+	if val, ok := deployment.Spec.Template.Annotations[LivenessGracePeriodSecondsAnnotation]; !ok {
+		t.Errorf("missing annotation %q", LivenessGracePeriodSecondsAnnotation)
+	} else if expected := "10"; expected != val {
+		t.Errorf("expected annotation %q to be %q, got %q", LivenessGracePeriodSecondsAnnotation, expected, val)
+	}
+
 	if deployment.Spec.Template.Spec.HostNetwork != false {
 		t.Error("expected host network to be false")
 	}
