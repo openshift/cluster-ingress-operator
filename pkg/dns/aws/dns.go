@@ -3,6 +3,7 @@ package aws
 import (
 	"fmt"
 	"reflect"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -46,6 +47,8 @@ const (
 var (
 	_   dns.Provider = &Provider{}
 	log              = logf.Logger.WithName("dns")
+
+	hostedZoneIDRegex = regexp.MustCompile("^/?hostedzone/([^/]+)$")
 )
 
 // Provider is a dns.Provider for AWS Route53. It only supports DNSRecords of
@@ -86,6 +89,8 @@ type Config struct {
 	// ServiceEndpoints is the list of AWS API endpoints to use for
 	// Provider clients.
 	ServiceEndpoints []ServiceEndpoint
+	// CustomCABundle is a custom CA bundle to use when accessing the AWS API
+	CustomCABundle string
 }
 
 // ServiceEndpoint stores the configuration of a custom url to
@@ -101,10 +106,14 @@ type ServiceEndpoint struct {
 }
 
 func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error) {
-	sess, err := session.NewSessionWithOptions(session.Options{
+	sessionOpts := session.Options{
 		SharedConfigState: session.SharedConfigEnable,
 		SharedConfigFiles: []string{config.SharedCredentialFile},
-	})
+	}
+	if config.CustomCABundle != "" {
+		sessionOpts.CustomCABundle = strings.NewReader(config.CustomCABundle)
+	}
+	sess, err := session.NewSessionWithOptions(sessionOpts)
 	if err != nil {
 		return nil, fmt.Errorf("couldn't create AWS client session: %v", err)
 	}
@@ -146,6 +155,11 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 		// in the same region as the Route53 client to find the hosted zone
 		// of managed records.
 		tagConfig = tagConfig.WithRegion(endpoints.UsGovWest1RegionID)
+	case endpoints.UsIsoEast1RegionID:
+		// The resourcetagging API is not available in C2S
+		tagConfig = nil
+		// Do not override the region in C2s
+		r53Config = r53Config.WithRegion(region)
 	default:
 		// Since Route 53 is not a regionalized service, the Tagging API will
 		// only return hosted zone resources when the region is "us-east-1".
@@ -167,6 +181,10 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 				r53Config = r53Config.WithEndpoint(ep.URL)
 				log.Info("using route53 custom endpoint", "url", ep.URL)
 			case ep.Name == TaggingService:
+				if tagConfig == nil {
+					log.Info("found resourcegroupstaggingapi custom endpoint which will be ignored since the %s region does not support that API", region)
+					continue
+				}
 				tagFound = true
 				url := ep.URL
 				// route53 for govcloud is based out of us-gov-west-1,
@@ -183,13 +201,17 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 			}
 		}
 	}
+	var tags *resourcegroupstaggingapi.ResourceGroupsTaggingAPI
+	if tagConfig != nil {
+		tags = resourcegroupstaggingapi.New(sess, tagConfig)
+	}
 	p := &Provider{
 		elb: elb.New(sess, elbConfig),
 		// TODO: Add custom endpoint support for elbv2. See the following for details:
 		// https://docs.aws.amazon.com/general/latest/gr/elb.html
 		elbv2:     elbv2.New(sess, aws.NewConfig().WithRegion(region)),
 		route53:   route53.New(sess, r53Config),
-		tags:      resourcegroupstaggingapi.New(sess, tagConfig),
+		tags:      tags,
 		config:    config,
 		idsToTags: map[string]map[string]string{},
 		lbZones:   map[string]string{},
@@ -216,9 +238,11 @@ func validateServiceEndpoints(provider *Provider) error {
 	if _, err := provider.elbv2.DescribeLoadBalancers(&elbv2Input); err != nil {
 		errs = append(errs, fmt.Errorf("failed to describe elbv2 load balancers: %v", err))
 	}
-	tagInput := resourcegroupstaggingapi.GetResourcesInput{TagsPerPage: aws.Int64(int64(100))}
-	if _, err := provider.tags.GetResources(&tagInput); err != nil {
-		errs = append(errs, fmt.Errorf("failed to get group tagging resources: %v", err))
+	if provider.tags != nil {
+		tagInput := resourcegroupstaggingapi.GetResourcesInput{TagsPerPage: aws.Int64(int64(100))}
+		if _, err := provider.tags.GetResources(&tagInput); err != nil {
+			errs = append(errs, fmt.Errorf("failed to get group tagging resources: %v", err))
+		}
 	}
 	return kerrors.NewAggregate(errs)
 }
@@ -244,7 +268,25 @@ func (m *Provider) getZoneID(zoneConfig configv1.DNSZone) (string, error) {
 
 	// Look up and cache the ID for these tags.
 	var id string
+	var err error
+	if m.tags != nil {
+		id, err = m.lookupZoneID(zoneConfig)
+	} else {
+		id, err = m.lookupZoneIDWithoutResourceTagging(zoneConfig)
+	}
+	if err != nil {
+		return id, err
+	}
 
+	// Update the cache
+	m.idsToTags[id] = zoneConfig.Tags
+	log.Info("found hosted zone using tags", "zone id", id, "tags", zoneConfig.Tags)
+
+	return id, nil
+}
+
+func (m *Provider) lookupZoneID(zoneConfig configv1.DNSZone) (string, error) {
+	var id string
 	// Even though we use filters when getting resources, the resources are still
 	// paginated as though no filter were applied.  If the desired resource is not
 	// on the first page, then GetResources will not return it.  We need to use
@@ -258,12 +300,7 @@ func (m *Provider) getZoneID(zoneConfig configv1.DNSZone) (string, error) {
 				innerError = fmt.Errorf("failed to parse hostedzone ARN %q: %v", aws.StringValue(zone.ResourceARN), err)
 				return false
 			}
-			elems := strings.Split(zoneARN.Resource, "/")
-			if len(elems) != 2 || elems[0] != "hostedzone" {
-				innerError = fmt.Errorf("got unexpected resource ARN: %v", zoneARN)
-				return false
-			}
-			id = elems[1]
+			id, innerError = zoneIDFromResource(zoneARN.Resource)
 			return false
 		}
 		return true
@@ -285,12 +322,82 @@ func (m *Provider) getZoneID(zoneConfig configv1.DNSZone) (string, error) {
 	if len(id) == 0 {
 		return id, fmt.Errorf("no matching hosted zone found")
 	}
-
-	// Update the cache
-	m.idsToTags[id] = zoneConfig.Tags
-	log.Info("found hosted zone using tags", "zone id", id, "tags", zoneConfig.Tags)
-
 	return id, nil
+}
+
+func (m *Provider) lookupZoneIDWithoutResourceTagging(zoneConfig configv1.DNSZone) (string, error) {
+	var id string
+	var innerError error
+	searchZones := func(resp *route53.ListHostedZonesOutput, lastPage bool) (shouldContinue bool) {
+		input := &route53.ListTagsForResourcesInput{
+			ResourceIds:  make([]*string, len(resp.HostedZones)),
+			ResourceType: aws.String("hostedzone"),
+		}
+		for i, zone := range resp.HostedZones {
+			zoneID, err := zoneIDFromResource(aws.StringValue(zone.Id))
+			if err != nil {
+				innerError = err
+				return false
+			}
+			input.ResourceIds[i] = &zoneID
+		}
+		output, err := m.route53.ListTagsForResources(input)
+		if err != nil {
+			innerError = err
+			return false
+		}
+		for _, tagSet := range output.ResourceTagSets {
+			if zoneMatchesTags(tagSet.Tags, zoneConfig) {
+				id = aws.StringValue(tagSet.ResourceId)
+				return false
+			}
+		}
+		return true
+	}
+	// the maximum page size is limited to 10 because the call to ListTagsForResources only supports 10 resources in a single call.
+	outerError := m.route53.ListHostedZonesPages(
+		&route53.ListHostedZonesInput{MaxItems: aws.String("10")},
+		searchZones,
+	)
+	if err := kerrors.NewAggregate([]error{innerError, outerError}); err != nil {
+		return id, fmt.Errorf("failed to get tagged resources: %v", err)
+	}
+	if len(id) == 0 {
+		return id, fmt.Errorf("no matching hosted zone found")
+	}
+	return id, nil
+}
+
+func zoneMatchesTags(tags []*route53.Tag, zoneConfig configv1.DNSZone) bool {
+	for k, v := range zoneConfig.Tags {
+		tagMatches := false
+		for _, tagPointer := range tags {
+			if tagPointer == nil {
+				continue
+			}
+			tag := *tagPointer
+			if k != aws.StringValue(tag.Key) {
+				continue
+			}
+			if v != aws.StringValue(tag.Value) {
+				return false
+			}
+			tagMatches = true
+			break
+		}
+		if !tagMatches {
+			return false
+		}
+	}
+	return true
+}
+
+func zoneIDFromResource(resource string) (string, error) {
+	submatches := hostedZoneIDRegex.FindStringSubmatch(resource)
+	if len(submatches) < 2 {
+		return "", fmt.Errorf("got unexpected resource: %s", resource)
+	}
+	return submatches[1], nil
 }
 
 // getLBHostedZone finds the hosted zone ID of an ELB whose DNS name matches the
