@@ -22,7 +22,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/wait"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -132,7 +131,6 @@ func enqueueRequestForDefaultIngressController(namespace string) handler.EventHa
 // are in the desired state.
 func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, error) {
 	result := reconcile.Result{}
-	errors := []error{}
 
 	if err := r.ensureCanaryNamespace(); err != nil {
 		// Return if the canary namespace cannot be created since
@@ -142,9 +140,9 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 
 	haveDs, daemonset, err := r.ensureCanaryDaemonSet()
 	if err != nil {
-		errors = append(errors, fmt.Errorf("failed to ensure canary daemonset: %v", err))
+		return result, fmt.Errorf("failed to ensure canary daemonset: %v", err)
 	} else if !haveDs {
-		errors = append(errors, fmt.Errorf("failed to get canary daemonset: %v", err))
+		return result, fmt.Errorf("failed to get canary daemonset: %v", err)
 	}
 
 	trueVar := true
@@ -158,30 +156,23 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 
 	haveService, service, err := r.ensureCanaryService(daemonsetRef)
 	if err != nil {
-		errors = append(errors, fmt.Errorf("failed to ensure canary service: %v", err))
+		return result, fmt.Errorf("failed to ensure canary service: %v", err)
 	} else if !haveService {
-		errors = append(errors, fmt.Errorf("failed to get canary service: %v", err))
+		return result, fmt.Errorf("failed to get canary service: %v", err)
 	}
 
 	haveRoute, route, err := r.ensureCanaryRoute(service)
 	if err != nil {
-		errors = append(errors, fmt.Errorf("failed to ensure canary route: %v", err))
+		return result, fmt.Errorf("failed to ensure canary route: %v", err)
 	} else if !haveRoute {
-		errors = append(errors, fmt.Errorf("failed to get canary route: %v", err))
-	}
-
-	// If errors have been encountered during a reconciliation,
-	// return before starting canary probes.
-	if len(errors) > 0 {
-		return result, utilerrors.NewAggregate(errors)
+		return result, fmt.Errorf("failed to get canary route: %v", err)
 	}
 
 	// Get the canary route rotation annotation value
 	// from the default ingress controller.
 	ic := &operatorv1.IngressController{}
 	if err := r.client.Get(context.TODO(), request.NamespacedName, ic); err != nil {
-		errors = append(errors, fmt.Errorf("failed to get ingress controller %s: %v", request.NamespacedName.Name, err))
-		return result, utilerrors.NewAggregate(errors)
+		return result, fmt.Errorf("failed to get ingress controller %s: %v", request.NamespacedName.Name, err)
 	}
 
 	if val, ok := ic.Annotations[CanaryRouteRotationAnnotation]; ok {
