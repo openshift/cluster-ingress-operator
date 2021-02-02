@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -14,9 +15,15 @@ import (
 	operatorconfig "github.com/openshift/cluster-ingress-operator/pkg/operator/config"
 	statuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/status"
 
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
 	"sigs.k8s.io/controller-runtime/pkg/runtime/signals"
+
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
+
+	unidlingapi "github.com/openshift/api/unidling/v1alpha1"
 )
 
 const (
@@ -84,6 +91,20 @@ func start(opts *StartOptions) error {
 
 	if opts.ReleaseVersion == statuscontroller.UnknownVersionValue {
 		log.Info("Warning: no release version is specified", "release version", statuscontroller.UnknownVersionValue)
+	}
+
+	// verify that all idled services have the correct idle annotations
+	// mirrored over from the corresponding endpoints resources.
+	// This is to ensure that applications idled with an older version of oc
+	// (and thus do not have the idle annotations on the service) are still
+	// safely un-idleable afer an upgrade that affects `oc idle` functionality.
+	// use a single-use client here separate from the client used by the operator.
+	cl, err := client.New(kubeConfig, client.Options{})
+	if err != nil {
+		return fmt.Errorf("failed to create client from kube config: %v", kubeConfig)
+	}
+	if err := ensureServicesHaveIdleAnnotation(cl); err != nil {
+		log.Error(err, "failed to verify idling endpoints between endpoints and services")
 	}
 
 	operatorConfig := operatorconfig.Config{
@@ -158,4 +179,55 @@ func start(opts *StartOptions) error {
 		return fmt.Errorf("failed to create operator: %v", err)
 	}
 	return op.Start(stop)
+}
+
+func ensureServicesHaveIdleAnnotation(cl client.Client) error {
+	endpointsList := &corev1.EndpointsList{}
+	err := cl.List(context.TODO(), endpointsList, &client.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to list endpoints in all namespaces: %v", err)
+	}
+
+	for _, endpoints := range endpointsList.Items {
+		idledAt, haveIdledAt := endpoints.Annotations[unidlingapi.IdledAtAnnotation]
+		unidleTarget, haveUnidleTarget := endpoints.Annotations[unidlingapi.UnidleTargetAnnotation]
+		// If the endpoints don't have the idle annotations, continue since we aren't idled.
+		if !haveIdledAt || !haveUnidleTarget {
+			continue
+		}
+		service := &corev1.Service{}
+		serviceName := types.NamespacedName{
+			Name:      endpoints.Name,
+			Namespace: endpoints.Namespace,
+		}
+		if err := cl.Get(context.TODO(), serviceName, service); err != nil {
+			log.Error(err, "failed to get service for endpoints", "namespace", service.Namespace, "name", service.Name)
+			continue
+		}
+
+		_, haveIdledAt = service.Annotations[unidlingapi.IdledAtAnnotation]
+		_, haveUnidleTarget = service.Annotations[unidlingapi.UnidleTargetAnnotation]
+		// If the service already has the correct annotations, continue.
+		if haveIdledAt && haveUnidleTarget {
+			continue
+		}
+
+		annotations := service.Annotations
+		if annotations == nil {
+			annotations = make(map[string]string)
+		}
+		annotations[unidlingapi.IdledAtAnnotation] = idledAt
+		annotations[unidlingapi.UnidleTargetAnnotation] = unidleTarget
+		updated := service.DeepCopy()
+		updated.Annotations = annotations
+
+		if err := cl.Update(context.TODO(), updated); err != nil {
+			log.Error(err, "failed to update service to have endpoint idling annotations", "namespace", updated.Namespace, "name", updated.Name)
+			continue
+		}
+
+		log.Info("added idle annotations from endpoint to service", "namespace", updated.Namespace, "name", updated.Name)
+	}
+
+	return nil
 }
