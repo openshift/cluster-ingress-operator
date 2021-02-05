@@ -98,7 +98,7 @@ var (
 	// https://kubernetes.io/docs/concepts/services-networking/service/#internal-load-balancer
 	InternalLBAnnotations = map[configv1.PlatformType]map[string]string{
 		configv1.AWSPlatformType: {
-			awsInternalLBAnnotation: "0.0.0.0/0",
+			awsInternalLBAnnotation: "true",
 		},
 		configv1.AzurePlatformType: {
 			// Azure load balancers are not customizable and are set to (2 fail @ 5s interval, 2 healthy)

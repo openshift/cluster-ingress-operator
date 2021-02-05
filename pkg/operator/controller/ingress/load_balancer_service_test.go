@@ -218,7 +218,7 @@ func TestDesiredLoadBalancerService(t *testing.T) {
 		switch platform.Type {
 		case configv1.AWSPlatformType:
 			if isInternal {
-				if err := checkServiceHasAnnotation(svc, awsInternalLBAnnotation, true, "0.0.0.0/0"); err != nil {
+				if err := checkServiceHasAnnotation(svc, awsInternalLBAnnotation, true, "true"); err != nil {
 					t.Errorf("annotation check for test %q failed: %v", tc.description, err)
 				}
 			}
