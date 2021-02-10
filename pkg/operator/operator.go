@@ -3,6 +3,7 @@ package operator
 import (
 	"context"
 	"fmt"
+	sync_http_error_code_configmap "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/sync-http-error-code-configmap"
 	"time"
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
@@ -62,9 +63,18 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		Scheme:    scheme,
 		NewCache: cache.MultiNamespacedCacheBuilder([]string{
 			config.Namespace,
-			operatorcontroller.DefaultOperandNamespace,
+			operatorcontroller.DefaultOperandNamespace, //----------->going to right function eg create, delete, update but fails with
+			//2021-03-14T14:10:56.504Z        INFO    operator.ingress_controller     ingress/deployment.go:80        volumes2: [{default-certificate {nil nil nil nil nil &SecretVolumeSource{SecretName:,Items:[]KeyToPath{},DefaultMode:*420,Optional:nil,} nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil}} {service-ca-bundle {nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil &ConfigMapVolumeSource{LocalObjectReference:LocalObjectReference{Name:service-ca-bundle,},Items:[]KeyToPath{KeyToPath{Key:service-ca.crt,Path:service-ca.crt,Mode:nil,},},DefaultMode:nil,Optional:*false,} nil nil nil nil nil nil nil nil nil nil}} {metrics-certs {nil nil nil nil nil &SecretVolumeSource{SecretName:router-metrics-certs-default,Items:[]KeyToPath{},DefaultMode:nil,Optional:nil,} nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil nil}}]
+			//2021-03-14T14:10:56.504Z        INFO    operator.ingress_controller     ingress/deployment.go:80        routerVolumeMounts: [{default-certificate true /etc/pki/tls/private  <nil> } {service-ca-bundle true /var/run/configmaps/service-ca  <nil> } {metrics-certs true /etc/pki/tls/metrics-certs  <nil> }]
+			//2021-03-14T14:10:56.547Z        ERROR   operator.init.controller        controller/controller.go:218    Reconciler error        {"controller": "ingress_controller", "name": "default", "namespace": "openshift-ingress-operator", "error": "[failed to list events in namespace \"openshift-ingress\": unable to get: openshift-ingress because of unknown namespace for the cache, failed to list pods in namespace \"openshift-ingress-operator\": unable to get: openshift-ingress because of unknown namespace for the cache]", "errorCauses": [{"error": "failed to list events in namespace \"openshift-ingress\": unable to get: openshift-ingress because of unknown namespace for the cache"}, {"error": "failed to list pods in namespace \"openshift-ingress-operator\": unable to get: openshift-ingress because of unknown namespace for the cache"}]}
+			//2021-03-14T14:10:56.851Z        INFO    operator.certificate_publisher_controller       controller/controller.go:244    Reconciling     {"request": "openshift-ingress-operator/default"}
+			//2021-03-14T14:10:56.851Z        ERROR   operator.init.controller        controller/controller.go:218    Reconciler error        {"controller": "certificate_publisher_controller", "name": "default", "namespace": "openshift-ingress-operator", "error": "failed to list secrets: unable to get: openshift-ingress because of unknown namespace for the cache"}
+			//2021-03-14T14:10:57.547Z        INFO    operator.ingress_controller     controller/controller.go:244    reconciling     {"request": "openshift-ingress-operator/test"}
+			//
+			//if this is used stale entry of ingress controller is passed there by the functions fail.
 			operatorcontroller.DefaultCanaryNamespace,
 			operatorcontroller.GlobalMachineSpecifiedConfigNamespace,
+			operatorcontroller.SourceConfigMapNamespace,
 		}),
 		// Use a non-caching client everywhere. The default split client does not
 		// promise to invalidate the cache during writes (nor does it promise
@@ -85,7 +95,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	if _, err := ingresscontroller.New(mgr, ingresscontroller.Config{
 		Namespace:              config.Namespace,
 		IngressControllerImage: config.IngressControllerImage,
-	}); err != nil {
+	}, operatorcontroller.DefaultOperandNamespace, operatorcontroller.SourceConfigMapNamespace); err != nil {
 		return nil, fmt.Errorf("failed to create ingress controller: %v", err)
 	}
 
@@ -102,6 +112,10 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	// Set up the certificate controller
 	if _, err := certcontroller.New(mgr, config.Namespace); err != nil {
 		return nil, fmt.Errorf("failed to create cacert controller: %v", err)
+	}
+
+	if _, err := sync_http_error_code_configmap.New(mgr, config.Namespace, "openshift-config", "openshift-ingress"); err != nil {
+		return nil, fmt.Errorf("failed to create sync_http_error_code_configmap controller: %v", err)
 	}
 
 	// Set up the certificate-publisher controller

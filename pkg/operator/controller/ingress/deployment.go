@@ -80,7 +80,7 @@ func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, in
 	if err != nil {
 		return false, nil, fmt.Errorf("failed to determine if proxy protocol is needed for ingresscontroller %s/%s: %v", ci.Namespace, ci.Name, err)
 	}
-	desired, err := desiredRouterDeployment(ci, r.config.IngressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded)
+	desired, err := desiredRouterDeployment(r, ci, r.config.IngressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded)
 	if err != nil {
 		return haveDepl, current, fmt.Errorf("failed to build router deployment: %v", err)
 	}
@@ -173,7 +173,7 @@ func HardStopAfterIsEnabled(ic *operatorv1.IngressController, ingressConfig *con
 }
 
 // desiredRouterDeployment returns the desired router deployment.
-func desiredRouterDeployment(ci *operatorv1.IngressController, ingressControllerImage string, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer, networkConfig *configv1.Network, proxyNeeded bool) (*appsv1.Deployment, error) {
+func desiredRouterDeployment(r *reconciler, ci *operatorv1.IngressController, ingressControllerImage string, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer, networkConfig *configv1.Network, proxyNeeded bool) (*appsv1.Deployment, error) {
 	deployment := manifests.RouterDeployment()
 	name := controller.RouterDeploymentName(ci)
 	deployment.Name = name.Name
@@ -356,6 +356,37 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 
 	volumes = append(volumes, certsVolume)
 	routerVolumeMounts = append(routerVolumeMounts, certsVolumeMount)
+
+	if ci.Spec.HttpErrorCodePage != "" {
+		haveErrorCodeCMInOpenShiftIngress, _, err := r.currentHttpErrorCodeConfigMap(ci, "openshift-ingress")
+		if err != nil {
+			return deployment, err
+		}
+		if haveErrorCodeCMInOpenShiftIngress {
+			log.Info(fmt.Sprintf("if haveErrorCodeCMInOpenShiftIngress %v", haveErrorCodeCMInOpenShiftIngress))
+			configmapName := ci.Spec.HttpErrorCodePage
+			httpErrorCodeConfigVolume := corev1.Volume{
+				Name: fmt.Sprintf("httperrorcodeconfigmap-volume-%s", ci.Spec.HttpErrorCodePage),
+				VolumeSource: corev1.VolumeSource{
+					ConfigMap: &corev1.ConfigMapVolumeSource{
+						LocalObjectReference: corev1.LocalObjectReference{
+							Name: configmapName,
+						},
+					},
+				},
+			}
+			volumes = append(volumes, httpErrorCodeConfigVolume)
+			log.Info(fmt.Sprintf("volumes1: %v", volumes))
+			httpErrorCodeVolumeMount := corev1.VolumeMount{
+				Name:      httpErrorCodeConfigVolume.Name,
+				MountPath: fmt.Sprintf("/var/lib/haproxy/conf-%s", configmapName),
+			}
+			routerVolumeMounts = append(routerVolumeMounts, httpErrorCodeVolumeMount)
+		}
+	}
+
+	log.Info(fmt.Sprintf("volumes2: %v", volumes))
+	log.Info(fmt.Sprintf("routerVolumeMounts: %v", routerVolumeMounts))
 
 	env = append(env, corev1.EnvVar{Name: "ROUTER_METRICS_TYPE", Value: "haproxy"})
 	env = append(env, corev1.EnvVar{Name: "ROUTER_METRICS_TLS_CERT_FILE", Value: filepath.Join(certsVolumeMountPath, "tls.crt")})
@@ -1004,6 +1035,21 @@ func hashableProbe(probe *corev1.Probe) *corev1.Probe {
 	}
 
 	return &hashableProbe
+}
+
+// CurrentHttpErrorCodeConfigMap returns the current configmap.  Returns a
+// Boolean indicating whether the configmap existed, the configmap if it did
+// exist, and an error value.
+func (r *reconciler) currentHttpErrorCodeConfigMap(ic *operatorv1.IngressController, namespace string) (bool, *corev1.ConfigMap, error) {
+	cm := &corev1.ConfigMap{}
+	log.Info(fmt.Sprintf("currentHttpErrorCodeConfigMap IC %v", ic))
+	if err := r.client.Get(context.TODO(), controller.HttpErrorCodePageConfigMapName(ic, namespace), cm); err != nil {
+		if errors.IsNotFound(err) {
+			return false, nil, nil
+		}
+		return false, nil, err
+	}
+	return true, cm, nil
 }
 
 // currentRouterDeployment returns the current router deployment.

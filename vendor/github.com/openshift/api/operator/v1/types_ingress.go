@@ -60,6 +60,15 @@ type IngressControllerSpec struct {
 	// +optional
 	Domain string `json:"domain,omitempty"`
 
+	//This used to sync the configmap(Eg- Admin first creates a configmap called http503page in openshift-config) from openshift-config to openshift-ingress
+	//The ingress operator configures the router deployment with a volume and volume mount
+	//that mounts the custom error pages from the httpErrorCodePage: http503page configmap
+	//on top of the existing error pages in the router pods.
+	//So we need a new IngressController API field in openshift/api, errorfile stanzas and
+	//error pages in openshift/router, and a new controller to copy the configmap and changes
+	//to desiredRouterDeployment to mount the configmap into the deployment in openshift/cluster-ingress-operator.
+	HttpErrorCodePage string `json:"httpErrorCodePage,omitempty"`
+
 	// replicas is the desired number of ingress controller replicas. If unset,
 	// defaults to 2.
 	//
@@ -176,17 +185,6 @@ type IngressControllerSpec struct {
 	//
 	// +optional
 	HTTPHeaders *IngressControllerHTTPHeaders `json:"httpHeaders,omitempty"`
-
-	// httpHeaderBuffer defines parameters for header buffer size values.
-	// If this field is empty, the default values are used. See specific
-	// httpHeaderBuffer fields for their respective default values.
-	// Setting this field is generally not recommended as header buffer
-	// values that are too small may break the IngressController and header
-	// buffer values that are too large could cause the IngressController to
-	// use significantly more memory than necessary.
-	//
-	// +optional
-	HTTPHeaderBuffer IngressControllerHTTPHeaderBuffer `json:"httpHeaderBuffer,omitempty"`
 }
 
 // NodePlacement describes node scheduling configuration for an ingress
@@ -290,15 +288,6 @@ type ProviderLoadBalancerParameters struct {
 	//
 	// +optional
 	AWS *AWSLoadBalancerParameters `json:"aws,omitempty"`
-
-	// gcp provides configuration settings that are specific to GCP
-	// load balancers.
-	//
-	// If empty, defaults will be applied. See specific gcp fields for
-	// details about their defaults.
-	//
-	// +optional
-	GCP *GCPLoadBalancerParameters `json:"gcp,omitempty"`
 }
 
 // LoadBalancerProviderType is the underlying infrastructure provider for the
@@ -364,39 +353,6 @@ const (
 	AWSNetworkLoadBalancer AWSLoadBalancerType = "NLB"
 )
 
-// GCPLoadBalancerParameters provides configuration settings that are
-// specific to GCP load balancers.
-type GCPLoadBalancerParameters struct {
-	// clientAccess describes how client access is restricted for internal
-	// load balancers.
-	//
-	// Valid values are:
-	// * "Global": Specifying an internal load balancer with Global client access
-	//   allows clients from any region within the VPC to communicate with the load
-	//   balancer.
-	//
-	//     https://cloud.google.com/kubernetes-engine/docs/how-to/internal-load-balancing#global_access
-	//
-	// * "Local": Specifying an internal load balancer with Local client access
-	//   means only clients within the same region (and VPC) as the GCP load balancer
-	//   can communicate with the load balancer. Note that this is the default behavior.
-	//
-	//     https://cloud.google.com/load-balancing/docs/internal#client_access
-	//
-	// +optional
-	ClientAccess GCPClientAccess `json:"clientAccess,omitempty"`
-}
-
-// GCPClientAccess describes how client access is restricted for internal
-// load balancers.
-// +kubebuilder:validation:Enum=Global;Local
-type GCPClientAccess string
-
-const (
-	GCPGlobalAccess GCPClientAccess = "Global"
-	GCPLocalAccess  GCPClientAccess = "Local"
-)
-
 // AWSClassicLoadBalancerParameters holds configuration parameters for an
 // AWS Classic load balancer.
 type AWSClassicLoadBalancerParameters struct {
@@ -410,34 +366,6 @@ type AWSNetworkLoadBalancerParameters struct {
 // HostNetworkStrategy holds parameters for the HostNetwork endpoint publishing
 // strategy.
 type HostNetworkStrategy struct {
-	// protocol specifies whether the IngressController expects incoming
-	// connections to use plain TCP or whether the IngressController expects
-	// PROXY protocol.
-	//
-	// PROXY protocol can be used with load balancers that support it to
-	// communicate the source addresses of client connections when
-	// forwarding those connections to the IngressController.  Using PROXY
-	// protocol enables the IngressController to report those source
-	// addresses instead of reporting the load balancer's address in HTTP
-	// headers and logs.  Note that enabling PROXY protocol on the
-	// IngressController will cause connections to fail if you are not using
-	// a load balancer that uses PROXY protocol to forward connections to
-	// the IngressController.  See
-	// http://www.haproxy.org/download/2.2/doc/proxy-protocol.txt for
-	// information about PROXY protocol.
-	//
-	// The following values are valid for this field:
-	//
-	// * The empty string.
-	// * "TCP".
-	// * "PROXY".
-	//
-	// The empty string specifies the default, which is TCP without PROXY
-	// protocol.  Note that the default is subject to change.
-	//
-	// +kubebuilder:validation:Optional
-	// +optional
-	Protocol IngressControllerProtocol `json:"protocol,omitempty"`
 }
 
 // PrivateStrategy holds parameters for the Private endpoint publishing
@@ -447,45 +375,7 @@ type PrivateStrategy struct {
 
 // NodePortStrategy holds parameters for the NodePortService endpoint publishing strategy.
 type NodePortStrategy struct {
-	// protocol specifies whether the IngressController expects incoming
-	// connections to use plain TCP or whether the IngressController expects
-	// PROXY protocol.
-	//
-	// PROXY protocol can be used with load balancers that support it to
-	// communicate the source addresses of client connections when
-	// forwarding those connections to the IngressController.  Using PROXY
-	// protocol enables the IngressController to report those source
-	// addresses instead of reporting the load balancer's address in HTTP
-	// headers and logs.  Note that enabling PROXY protocol on the
-	// IngressController will cause connections to fail if you are not using
-	// a load balancer that uses PROXY protocol to forward connections to
-	// the IngressController.  See
-	// http://www.haproxy.org/download/2.2/doc/proxy-protocol.txt for
-	// information about PROXY protocol.
-	//
-	// The following values are valid for this field:
-	//
-	// * The empty string.
-	// * "TCP".
-	// * "PROXY".
-	//
-	// The empty string specifies the default, which is TCP without PROXY
-	// protocol.  Note that the default is subject to change.
-	//
-	// +kubebuilder:validation:Optional
-	// +optional
-	Protocol IngressControllerProtocol `json:"protocol,omitempty"`
 }
-
-// IngressControllerProtocol specifies whether PROXY protocol is enabled or not.
-// +kubebuilder:validation:Enum="";TCP;PROXY
-type IngressControllerProtocol string
-
-const (
-	DefaultProtocol IngressControllerProtocol = ""
-	TCPProtocol     IngressControllerProtocol = "TCP"
-	ProxyProtocol   IngressControllerProtocol = "PROXY"
-)
 
 // EndpointPublishingStrategy is a way to publish the endpoints of an
 // IngressController, and represents the type and any additional configuration
@@ -1000,36 +890,6 @@ type IngressControllerHTTPHeaders struct {
 	// +nullable
 	// +optional
 	HeaderNameCaseAdjustments []IngressControllerHTTPHeaderNameCaseAdjustment `json:"headerNameCaseAdjustments,omitempty"`
-}
-
-// IngressControllerHTTPHeaderBuffer specifies the size of the
-// per-connection HTTP header buffers.
-type IngressControllerHTTPHeaderBuffer struct {
-	// headerBufferBytes describes how much memory should be reserved
-	// (in bytes) for IngressController connection sessions.
-	// Note that this value must be at least 16384 if HTTP/2 is
-	// enabled for the IngressController (https://tools.ietf.org/html/rfc7540).
-	// If this field is empty, the IngressController will use a default value
-	// of 32768 bytes.
-	//
-	// +kubebuilder:validation:Optional
-	// +kubebuilder:validation:Minimum=16384
-	// +optional
-	HeaderBufferBytes int32 `json:"headerBufferBytes,omitempty"`
-
-	// headerBufferMaxRewriteBytes describes how much memory should be reserved
-	// (in bytes) from headerBufferBytes for HTTP header rewriting
-	// and appending for IngressController connection sessions.
-	// Note that incoming HTTP requests will be limited to
-	// (headerBufferBytes - headerBufferMaxRewriteBytes) bytes, meaning
-	// headerBufferBytes must be greater than headerBufferMaxRewriteBytes.
-	// If this field is empty, the IngressController will use a default value
-	// of 8192 bytes.
-	//
-	// +kubebuilder:validation:Optional
-	// +kubebuilder:validation:Minimum=4096
-	// +optional
-	HeaderBufferMaxRewriteBytes int32 `json:"headerBufferMaxRewriteBytes,omitempty"`
 }
 
 var (

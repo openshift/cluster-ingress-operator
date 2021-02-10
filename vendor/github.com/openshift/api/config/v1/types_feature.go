@@ -125,10 +125,11 @@ var defaultFeatures = &FeatureGateEnabledDisabled{
 		"SupportPodPidsLimit",            // sig-pod, sjenning
 		"NodeDisruptionExclusion",        // sig-scheduling, ccoleman
 		"ServiceNodeExclusion",           // sig-scheduling, ccoleman
-		"DownwardAPIHugePages",           // sig-node, rphillips
+		"SCTPSupport",                    // sig-network, ccallend
 	},
 	Disabled: []string{
 		"LegacyNodeRoleBehavior", // sig-scheduling, ccoleman
+		"RemoveSelfLink",         // kuryr needs updating, deads2k will personally remove in 4.8
 	},
 }
 

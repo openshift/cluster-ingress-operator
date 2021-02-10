@@ -1,10 +1,13 @@
+//
 package controller
 
 import (
 	"fmt"
+	//"sigs.k8s.io/controller-runtime/pkg/log"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 
+	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
@@ -32,6 +35,7 @@ const (
 
 	DefaultOperatorNamespace = "openshift-ingress-operator"
 	DefaultOperandNamespace  = "openshift-ingress"
+	SourceConfigMapNamespace = "openshift-config"
 
 	// DefaultCanaryNamespace is the default namespace for
 	// the ingress canary check resources.
@@ -100,6 +104,15 @@ func RsyslogConfigMapName(ic *operatorv1.IngressController) types.NamespacedName
 		Namespace: DefaultOperandNamespace,
 		Name:      "rsyslog-conf-" + ic.Name,
 	}
+}
+
+// HttpErrorCodePageConfigMapName returns the namespaced name for the rsyslog configmap.
+func HttpErrorCodePageConfigMapName(ic *operatorv1.IngressController, namespace string) types.NamespacedName {
+	if configmap := ic.Spec.HttpErrorCodePage; configmap != "" {
+		logf.Logger.Info(fmt.Sprintf("In  HttpErrorCodePageConfigMapName %v", configmap))
+		return types.NamespacedName{Namespace: namespace, Name: ic.Spec.HttpErrorCodePage}
+	}
+	return types.NamespacedName{Namespace: namespace, Name: "dummy"}
 }
 
 // RouterPodDisruptionBudgetName returns the namespaced name for the router
