@@ -219,6 +219,8 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	}
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOAD_BALANCE_ALGORITHM", true, "random")
+	checkDeploymentDoesNotHaveEnvVar(t, deployment, "ROUTER_ERRORFILE_503")
+	checkDeploymentDoesNotHaveEnvVar(t, deployment, "ROUTER_ERRORFILE_404")
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_USE_PROXY_PROTOCOL", false, "")
 
@@ -349,6 +351,9 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	ci.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
 		Raw: []byte(`{"loadBalancingAlgorithm":"leastconn"}`),
 	}
+	ci.Spec.HttpErrorCodePages = configv1.ConfigMapNameReference{
+		Name: "my-custom-error-code-pages",
+	}
 	ci.Status.Domain = "example.com"
 	ci.Status.EndpointPublishingStrategy.Type = operatorv1.LoadBalancerServiceStrategyType
 	proxyNeeded, err = IsProxyProtocolNeeded(ci, infraConfig.Status.PlatformStatus)
@@ -378,6 +383,12 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	}
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOAD_BALANCE_ALGORITHM", true, "leastconn")
+	if len(deployment.Spec.Template.Spec.Containers[0].VolumeMounts) <= 4 || deployment.Spec.Template.Spec.Containers[0].VolumeMounts[4].Name != "error-pages" {
+		t.Errorf("hi")
+		t.Errorf("deployment.Spec.Template.Spec.Containers[0].VolumeMounts[4].Name %v", deployment.Spec.Template.Spec.Containers[0].VolumeMounts)
+		//log.Info(fmt.Sprintf("deployment.Spec.Template.Spec.Containers[0].VolumeMounts[4].Name %v", deployment.Spec.Template.Spec.Containers[0]))
+		t.Error("router Deployment is missing error code pages volume mount")
+	}
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_USE_PROXY_PROTOCOL", true, "true")
 
@@ -566,7 +577,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 			if volume.Secret.SecretName != secretName {
 				t.Errorf("router Deployment expected volume %s to have secret %s, got %s", volume.Name, secretName, volume.Secret.SecretName)
 			}
-		} else if volume.Name != "service-ca-bundle" {
+		} else if volume.Name != "service-ca-bundle" && volume.Name != "error-pages" {
 			t.Errorf("router deployment has unexpected volume %s", volume.Name)
 		}
 	}

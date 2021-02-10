@@ -3,6 +3,7 @@ package ingress
 import (
 	"context"
 	"fmt"
+
 	"regexp"
 	"strings"
 
@@ -146,8 +147,7 @@ type Config struct {
 // reconciler handles the actual ingress reconciliation logic in response to
 // events.
 type reconciler struct {
-	config Config
-
+	config   Config
 	client   client.Client
 	cache    cache.Cache
 	recorder record.EventRecorder

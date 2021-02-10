@@ -3,6 +3,7 @@ package operator
 import (
 	"context"
 	"fmt"
+	errorpageconfigmapcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/sync-http-error-code-configmap"
 	"time"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -68,6 +69,8 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 			operatorcontroller.DefaultCanaryNamespace,
 			operatorcontroller.GlobalMachineSpecifiedConfigNamespace,
 			"",
+			operatorcontroller.SourceConfigMapNamespace,
+			operatorcontroller.GlobalUserSpecifiedConfigNamespace,
 		}),
 		// Use a non-caching client everywhere. The default split client does not
 		// promise to invalidate the cache during writes (nor does it promise
@@ -112,6 +115,15 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	// Set up the certificate controller
 	if _, err := certcontroller.New(mgr, config.Namespace); err != nil {
 		return nil, fmt.Errorf("failed to create cacert controller: %v", err)
+	}
+
+	// Set up the error-page configmap controller.
+	if _, err := errorpageconfigmapcontroller.New(mgr, errorpageconfigmapcontroller.Config{
+		OperatorNamespace: config.Namespace,
+		ConfigNamespace:   operatorcontroller.GlobalUserSpecifiedConfigNamespace,
+		OperandNamespace:  operatorcontroller.DefaultOperandNamespace,
+	}); err != nil {
+		return nil, fmt.Errorf("failed to create error-page configmap controller: %w", err)
 	}
 
 	// Set up the certificate-publisher controller
