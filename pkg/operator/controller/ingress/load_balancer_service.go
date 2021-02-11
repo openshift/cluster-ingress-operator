@@ -3,6 +3,7 @@ package ingress
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
@@ -84,6 +85,10 @@ const (
 	// gcpLBTypeAnnotation is the annotation used on a service to specify a type of GCP
 	// load balancer.
 	gcpLBTypeAnnotation = "cloud.google.com/load-balancer-type"
+
+	// GCPGlobalAccessAnnotation is the annotation used on an internal load balancer service
+	// to enable the GCP Global Access feature.
+	GCPGlobalAccessAnnotation = "networking.gke.io/internal-load-balancer-allow-global-access"
 
 	// openstackInternalLBAnnotation is the annotation used on a service to specify an
 	// OpenStack load balancer as being internal.
@@ -226,6 +231,16 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 			for name, value := range annotation {
 				service.Annotations[name] = value
 			}
+
+			// Set the GCP Global Access annotation for internal load balancers on GCP only
+			if platform.Type == configv1.GCPPlatformType {
+				if ci.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters != nil &&
+					ci.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.Type == operatorv1.GCPLoadBalancerProvider &&
+					ci.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.GCP != nil {
+					globalAccessEnabled := ci.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.GCP.ClientAccess == operatorv1.GCPGlobalAccess
+					service.Annotations[GCPGlobalAccessAnnotation] = strconv.FormatBool(globalAccessEnabled)
+				}
+			}
 		}
 		switch platform.Type {
 		case configv1.AWSPlatformType:
@@ -353,8 +368,10 @@ func (r *reconciler) updateLoadBalancerService(current, desired *corev1.Service,
 // matches the expected and if not returns an updated one.
 func loadBalancerServiceChanged(current, expected *corev1.Service) (bool, *corev1.Service) {
 	updated := current.DeepCopy()
+	changed := false
 
-	// Preserve everything but the AWS LB health check interval annotation
+	// Preserve everything but the AWS LB health check interval annotation &
+	// GCP Global Access internal Load Balancer annotation.
 	// (see <https://bugzilla.redhat.com/show_bug.cgi?id=1908758>).
 	// Updating annotations and spec fields cannot be done unless the
 	// previous release blocks upgrades when the user has modified those
@@ -362,11 +379,19 @@ func loadBalancerServiceChanged(current, expected *corev1.Service) (bool, *corev
 	if updated.Annotations == nil {
 		updated.Annotations = map[string]string{}
 	}
-	if current.Annotations[awsLBHealthCheckIntervalAnnotation] == expected.Annotations[awsLBHealthCheckIntervalAnnotation] {
-		return false, nil
+	if current.Annotations[awsLBHealthCheckIntervalAnnotation] != expected.Annotations[awsLBHealthCheckIntervalAnnotation] {
+		updated.Annotations[awsLBHealthCheckIntervalAnnotation] = expected.Annotations[awsLBHealthCheckIntervalAnnotation]
+		changed = true
 	}
 
-	updated.Annotations[awsLBHealthCheckIntervalAnnotation] = expected.Annotations[awsLBHealthCheckIntervalAnnotation]
+	if current.Annotations[GCPGlobalAccessAnnotation] != expected.Annotations[GCPGlobalAccessAnnotation] {
+		updated.Annotations[GCPGlobalAccessAnnotation] = expected.Annotations[GCPGlobalAccessAnnotation]
+		changed = true
+	}
+
+	if !changed {
+		return false, nil
+	}
 
 	return true, updated
 }

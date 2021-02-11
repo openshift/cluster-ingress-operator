@@ -148,6 +148,36 @@ func TestDesiredLoadBalancerService(t *testing.T) {
 			expect: true,
 		},
 		{
+			description:  "internal load balancer for gcp platform with global ClientAccess",
+			platform:     configv1.GCPPlatformType,
+			strategyType: operatorv1.LoadBalancerServiceStrategyType,
+			lbStrategy: operatorv1.LoadBalancerStrategy{
+				Scope: operatorv1.InternalLoadBalancer,
+				ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+					Type: operatorv1.GCPLoadBalancerProvider,
+					GCP: &operatorv1.GCPLoadBalancerParameters{
+						ClientAccess: operatorv1.GCPGlobalAccess,
+					},
+				},
+			},
+			expect: true,
+		},
+		{
+			description:  "internal load balancer for gcp platform with local ClientAccess",
+			platform:     configv1.GCPPlatformType,
+			strategyType: operatorv1.LoadBalancerServiceStrategyType,
+			lbStrategy: operatorv1.LoadBalancerStrategy{
+				Scope: operatorv1.InternalLoadBalancer,
+				ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+					Type: operatorv1.GCPLoadBalancerProvider,
+					GCP: &operatorv1.GCPLoadBalancerParameters{
+						ClientAccess: operatorv1.GCPLocalAccess,
+					},
+				},
+			},
+			expect: true,
+		},
+		{
 			description:  "external load balancer for openstack platform",
 			platform:     configv1.OpenStackPlatformType,
 			strategyType: operatorv1.LoadBalancerServiceStrategyType,
