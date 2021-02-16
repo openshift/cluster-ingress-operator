@@ -16,6 +16,8 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
@@ -149,14 +151,32 @@ func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController,
 	case !wantLBS && !haveLBS:
 		return false, nil, nil
 	case !wantLBS && haveLBS:
-		// TODO: Delete the service.
-		return true, currentLBService, nil
+		if deletedFinalizer, err := r.deleteLoadBalancerServiceFinalizer(currentLBService); err != nil {
+			return true, currentLBService, fmt.Errorf("failed to remove finalizer from load balancer service: %v", err)
+		} else if deletedFinalizer {
+			haveLBS, currentLBService, err = r.currentLoadBalancerService(ci)
+			if err != nil {
+				return haveLBS, currentLBService, err
+			}
+		}
+		if err := r.deleteLoadBalancerService(currentLBService, &crclient.DeleteOptions{}); err != nil {
+			return true, currentLBService, err
+		}
+		return false, nil, nil
 	case wantLBS && !haveLBS:
 		if err := r.createLoadBalancerService(desiredLBService); err != nil {
 			return false, nil, err
 		}
 		return r.currentLoadBalancerService(ci)
 	case wantLBS && haveLBS:
+		if deletedFinalizer, err := r.deleteLoadBalancerServiceFinalizer(currentLBService); err != nil {
+			return true, currentLBService, fmt.Errorf("failed to remove finalizer from load balancer service: %v", err)
+		} else if deletedFinalizer {
+			haveLBS, currentLBService, err = r.currentLoadBalancerService(ci)
+			if err != nil {
+				return haveLBS, currentLBService, err
+			}
+		}
 		if updated, err := r.updateLoadBalancerService(currentLBService, desiredLBService, platform); err != nil {
 			return true, currentLBService, fmt.Errorf("failed to update load balancer service: %v", err)
 		} else if updated {
@@ -239,7 +259,6 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 	}
 
 	service.SetOwnerReferences([]metav1.OwnerReference{deploymentRef})
-	service.Finalizers = []string{manifests.LoadBalancerServiceFinalizer}
 	return true, service, nil
 }
 
@@ -256,11 +275,34 @@ func (r *reconciler) currentLoadBalancerService(ci *operatorv1.IngressController
 	return true, service, nil
 }
 
+// deleteLoadBalancerServiceFinalizer removes the
+// "ingress.openshift.io/operator" finalizer from the provided load balancer
+// service.  This finalizer used to be needed for helping with DNS cleanup, but
+// that's no longer necessary.  We just need to clear the finalizer which might
+// exist on existing resources.
+// TODO: Delete this method and all calls to it after 4.8.
+func (r *reconciler) deleteLoadBalancerServiceFinalizer(service *corev1.Service) (bool, error) {
+	if !slice.ContainsString(service.Finalizers, manifests.LoadBalancerServiceFinalizer) {
+		return false, nil
+	}
+
+	// Mutate a copy to avoid assuming we know where the current one came from
+	// (i.e. it could have been from a cache).
+	updated := service.DeepCopy()
+	updated.Finalizers = slice.RemoveString(updated.Finalizers, manifests.LoadBalancerServiceFinalizer)
+	if err := r.client.Update(context.TODO(), updated); err != nil {
+		return false, fmt.Errorf("failed to remove finalizer from service %s/%s: %v", service.Namespace, service.Name, err)
+	}
+
+	log.Info("removed finalizer from load balancer service", "namespace", service.Namespace, "name", service.Name)
+
+	return true, nil
+}
+
 // finalizeLoadBalancerService removes the "ingress.openshift.io/operator" finalizer
 // from the load balancer service of ci. This was for helping with DNS cleanup, but
 // that's no longer necessary. We just need to clear the finalizer which might exist
 // on existing resources.
-// TODO: How can we delete this code?
 func (r *reconciler) finalizeLoadBalancerService(ci *operatorv1.IngressController) (bool, error) {
 	haveLBS, service, err := r.currentLoadBalancerService(ci)
 	if err != nil {
@@ -269,18 +311,8 @@ func (r *reconciler) finalizeLoadBalancerService(ci *operatorv1.IngressControlle
 	if !haveLBS {
 		return false, nil
 	}
-	// Mutate a copy to avoid assuming we know where the current one came from
-	// (i.e. it could have been from a cache).
-	updated := service.DeepCopy()
-	if slice.ContainsString(updated.Finalizers, manifests.LoadBalancerServiceFinalizer) {
-		updated.Finalizers = slice.RemoveString(updated.Finalizers, manifests.LoadBalancerServiceFinalizer)
-		if err := r.client.Update(context.TODO(), updated); err != nil {
-			return true, fmt.Errorf("failed to remove finalizer from service %s/%s for ingress %s/%s: %v",
-				service.Namespace, service.Name, ci.Namespace, ci.Name, err)
-		}
-	}
-	log.Info("finalized load balancer service for ingress", "namespace", ci.Namespace, "name", ci.Name)
-	return true, nil
+	_, err = r.deleteLoadBalancerServiceFinalizer(service)
+	return true, err
 }
 
 // createLoadBalancerService creates a load balancer service.
@@ -289,6 +321,18 @@ func (r *reconciler) createLoadBalancerService(service *corev1.Service) error {
 		return fmt.Errorf("failed to create load balancer service %s/%s: %v", service.Namespace, service.Name, err)
 	}
 	log.Info("created load balancer service", "namespace", service.Namespace, "name", service.Name)
+	return nil
+}
+
+// deleteLoadBalancerService deletes a load balancer service.
+func (r *reconciler) deleteLoadBalancerService(service *corev1.Service, options *crclient.DeleteOptions) error {
+	if err := r.client.Delete(context.TODO(), service, options); err != nil {
+		if errors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to delete load balancer service %s/%s: %v", service.Namespace, service.Name, err)
+	}
+	log.Info("deleted load balancer service", "namespace", service.Namespace, "name", service.Name)
 	return nil
 }
 
