@@ -631,6 +631,96 @@ func TestInternalLoadBalancer(t *testing.T) {
 	}
 }
 
+// TestInternalLoadBalancerGlobalAccessGCP creates an ingresscontroller
+// with internal load balancer on GCP with the GCP Global Access provider
+// parameter set to both "Global" and "local" to verify that the
+// Load Balancer service is created properly.
+func TestInternalLoadBalancerGlobalAccessGCP(t *testing.T) {
+	platform := infraConfig.Status.Platform
+
+	supportedPlatforms := map[configv1.PlatformType]struct{}{
+		configv1.GCPPlatformType: {},
+	}
+	if _, supported := supportedPlatforms[platform]; !supported {
+		t.Skip(fmt.Sprintf("test skipped on platform %q", platform))
+	}
+
+	name := types.NamespacedName{Namespace: operatorNamespace, Name: "test-gcp"}
+	ic := newLoadBalancerController(name, name.Name+"."+dnsConfig.Spec.BaseDomain)
+	ic.Spec.EndpointPublishingStrategy.LoadBalancer = &operatorv1.LoadBalancerStrategy{
+		Scope: operatorv1.InternalLoadBalancer,
+		ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+			Type: operatorv1.GCPLoadBalancerProvider,
+			GCP: &operatorv1.GCPLoadBalancerParameters{
+				ClientAccess: operatorv1.GCPGlobalAccess,
+			},
+		},
+	}
+	if err := kclient.Create(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to create ingresscontroller: %v", err)
+	}
+	defer assertIngressControllerDeleted(t, kclient, ic)
+
+	// Wait for the load balancer and DNS to be ready.
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, nondefaultAvailableConditions...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	lbService := &corev1.Service{}
+	if err := kclient.Get(context.TODO(), controller.LoadBalancerServiceName(ic), lbService); err != nil {
+		t.Fatalf("failed to get LoadBalancer service: %v", err)
+	}
+
+	// Verify load balancer has desired global access annotation
+	annotation := ingresscontroller.GCPGlobalAccessAnnotation
+	// A ClientAccess value of "Global" results in the Global Access Annotation
+	// being set to "true".
+	expected := "true"
+
+	if actual, ok := lbService.Annotations[annotation]; !ok {
+		t.Fatalf("load balancer has no %q annotation: %v", annotation, lbService.Annotations)
+	} else if actual != expected {
+		t.Fatalf("expected %s=%s, found %s=%s", annotation, expected, annotation, actual)
+	}
+
+	// Update ingress controller to use "Local" Global Access
+	if err := kclient.Get(context.TODO(), name, ic); err != nil {
+		t.Fatalf("failed to get ingresscontroller %s: %v", name, err)
+	}
+
+	ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.GCP.ClientAccess = operatorv1.GCPLocalAccess
+
+	if err := kclient.Update(context.TODO(), ic); err != nil {
+		t.Errorf("failed to update ingresscontroller %s: %v", name, err)
+	}
+
+	// A ClientAccess value of "Local" results in the Global Access Annotation
+	// being set to "false".
+	expected = "false"
+
+	// Verify load balancer has desired global access annotation.
+	// Use a polling loop since the operator might not switch out the annotation
+	// immediately.
+	err := wait.PollImmediate(1*time.Second, 3*time.Minute, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), controller.LoadBalancerServiceName(ic), lbService); err != nil {
+			t.Logf("failed to get LoadBalancer service: %v", err)
+			return false, nil
+		}
+		if actual, ok := lbService.Annotations[annotation]; !ok {
+			t.Logf("load balancer has no %q annotation: %v", annotation, lbService.Annotations)
+			return false, nil
+		} else if actual != expected {
+			t.Logf("expected %s=%s, found %s=%s", annotation, expected, annotation, actual)
+			return false, nil
+		}
+		return true, nil
+	})
+
+	if err != nil {
+		t.Errorf("failed to observe expected annotations on load balancer service %s: %v", controller.LoadBalancerServiceName(ic), err)
+	}
+}
+
 // TestNodePortServiceEndpointPublishingStrategy creates an ingresscontroller
 // with the "NodePortService" endpoint publishing strategy type and verifies
 // that the operator creates a router and that the router becomes available.
