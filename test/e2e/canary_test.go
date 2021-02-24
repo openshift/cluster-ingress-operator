@@ -125,7 +125,7 @@ func TestCanaryRoute(t *testing.T) {
 // and in the given namespace that curls the specified route via the route's hostname.
 func buildCanaryCurlPod(name, namespace, image, host string) *corev1.Pod {
 	curlArgs := []string{
-		"-s", "-v",
+		"-s", "-v", "-k", "-L",
 		"--retry", "300", "--retry-delay", "1", "--max-time", "2",
 	}
 	curlArgs = append(curlArgs, "http://"+host)
