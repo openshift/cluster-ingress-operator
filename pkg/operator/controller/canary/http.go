@@ -1,6 +1,7 @@
 package canary
 
 import (
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io/ioutil"
@@ -42,7 +43,18 @@ func probeRouteEndpoint(route *routev1.Route) error {
 
 	// Send the HTTP request
 	timeout, _ := time.ParseDuration("10s")
-	client := &http.Client{Timeout: timeout}
+	client := &http.Client{
+		Timeout: timeout,
+		// The canary route uses edge termination and the
+		// default router certificate may be self signed, so
+		// skip certificate verification here. See
+		// https://bugzilla.redhat.com/show_bug.cgi?id=1932401.
+		// TODO: Add the router's certificate to the HTTP client
+		// so we can enable TLS verification.
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
 	response, err := client.Do(request)
 
 	if err != nil {
