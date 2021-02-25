@@ -94,6 +94,7 @@ func desiredCanaryDaemonSet(canaryImage string) *appsv1.DaemonSet {
 	daemonset.Spec.Template.Labels = controller.CanaryDaemonSetPodSelector(canaryControllerName).MatchLabels
 
 	daemonset.Spec.Template.Spec.Containers[0].Image = canaryImage
+	daemonset.Spec.Template.Spec.Containers[0].Command = []string{"ingress-operator", CanaryHealthcheckCommand}
 
 	return daemonset
 }
@@ -104,11 +105,20 @@ func canaryDaemonSetChanged(current, expected *appsv1.DaemonSet) (bool, *appsv1.
 	changed := false
 	updated := current.DeepCopy()
 
-	// Update the canary daemonset when the canary server image changes
-	if len(current.Spec.Template.Spec.Containers) > 0 && len(expected.Spec.Template.Spec.Containers) > 0 &&
-		current.Spec.Template.Spec.Containers[0].Image != expected.Spec.Template.Spec.Containers[0].Image {
-		updated.Spec.Template.Spec.Containers[0].Image = expected.Spec.Template.Spec.Containers[0].Image
-		changed = true
+	// Update the canary daemonset when the canary server image, command, or container name changes
+	if len(current.Spec.Template.Spec.Containers) > 0 && len(expected.Spec.Template.Spec.Containers) > 0 {
+		if current.Spec.Template.Spec.Containers[0].Image != expected.Spec.Template.Spec.Containers[0].Image {
+			updated.Spec.Template.Spec.Containers[0].Image = expected.Spec.Template.Spec.Containers[0].Image
+			changed = true
+		}
+		if !cmp.Equal(current.Spec.Template.Spec.Containers[0].Command, expected.Spec.Template.Spec.Containers[0].Command) {
+			updated.Spec.Template.Spec.Containers[0].Command = expected.Spec.Template.Spec.Containers[0].Command
+			changed = true
+		}
+		if current.Spec.Template.Spec.Containers[0].Name != expected.Spec.Template.Spec.Containers[0].Name {
+			updated.Spec.Template.Spec.Containers[0].Name = expected.Spec.Template.Spec.Containers[0].Name
+			changed = true
+		}
 	}
 
 	if !cmp.Equal(current.Spec.Template.Spec.NodeSelector, expected.Spec.Template.Spec.NodeSelector, cmpopts.EquateEmpty()) {

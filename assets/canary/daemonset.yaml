@@ -8,8 +8,8 @@ spec:
   template:
     spec:
       containers:
-        - name: hello-openshift-canary
-          # Image is set at runtime
+        - name: serve-healthcheck-canary
+          # Image and command are set at runtime
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           ports:

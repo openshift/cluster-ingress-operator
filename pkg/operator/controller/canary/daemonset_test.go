@@ -14,9 +14,9 @@ import (
 )
 
 func TestDesiredCanaryDaemonSet(t *testing.T) {
-	canaryImage := "openshift/hello-openshift:latest"
-
-	daemonset := desiredCanaryDaemonSet(canaryImage)
+	// canaryImageName is the ingress-operator image
+	canaryImageName := "openshift/origin-cluster-ingress-operator:latest"
+	daemonset := desiredCanaryDaemonSet(canaryImageName)
 
 	expectedDaemonSetName := controller.CanaryDaemonSetName()
 
@@ -55,8 +55,8 @@ func TestDesiredCanaryDaemonSet(t *testing.T) {
 		t.Errorf("expected daemonset to have 1 container, but found %d", len(containers))
 	}
 
-	if !cmp.Equal(containers[0].Image, canaryImage) {
-		t.Errorf("expected daemonset container image to be %q, but got %q", canaryImage, containers[0].Image)
+	if !cmp.Equal(containers[0].Image, canaryImageName) {
+		t.Errorf("expected daemonset container image to be %q, but got %q", canaryImageName, containers[0].Image)
 	}
 
 	nodeSelector := daemonset.Spec.Template.Spec.NodeSelector
@@ -120,6 +120,27 @@ func TestCanaryDaemonsetChanged(t *testing.T) {
 			description: "if canary server image changes",
 			mutate: func(ds *appsv1.DaemonSet) {
 				ds.Spec.Template.Spec.Containers[0].Image = "foo.io/test:latest"
+			},
+			expect: true,
+		},
+		{
+			description: "if canary command changes (removed)",
+			mutate: func(ds *appsv1.DaemonSet) {
+				ds.Spec.Template.Spec.Containers[0].Command = []string{}
+			},
+			expect: true,
+		},
+		{
+			description: "if canary command changes",
+			mutate: func(ds *appsv1.DaemonSet) {
+				ds.Spec.Template.Spec.Containers[0].Command = []string{"foo"}
+			},
+			expect: true,
+		},
+		{
+			description: "if canary server container name changes",
+			mutate: func(ds *appsv1.DaemonSet) {
+				ds.Spec.Template.Spec.Containers[0].Name = "bar"
 			},
 			expect: true,
 		},

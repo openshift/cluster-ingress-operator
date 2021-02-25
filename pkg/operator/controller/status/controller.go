@@ -37,6 +37,7 @@ import (
 const (
 	OperatorVersionName          = "operator"
 	IngressControllerVersionName = "ingress-controller"
+	CanaryImageVersionName       = "canary-server"
 	UnknownVersionValue          = "unknown"
 
 	ingressesEqualConditionMessage = "desired and current number of IngressControllers are equal"
@@ -73,6 +74,7 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 // Config holds all the things necessary for the controller to run.
 type Config struct {
 	IngressControllerImage string
+	CanaryImage            string
 	OperatorReleaseVersion string
 	Namespace              string
 }
@@ -149,7 +151,7 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 	co.Status.Versions = r.computeOperatorStatusVersions(oldStatus.Versions, allIngressesAvailable)
 
 	co.Status.Conditions = mergeConditions(co.Status.Conditions, computeOperatorAvailableCondition(allIngressesAvailable))
-	co.Status.Conditions = mergeConditions(co.Status.Conditions, computeOperatorProgressingCondition(allIngressesAvailable, oldStatus.Versions, co.Status.Versions, r.config.OperatorReleaseVersion, r.config.IngressControllerImage))
+	co.Status.Conditions = mergeConditions(co.Status.Conditions, computeOperatorProgressingCondition(allIngressesAvailable, oldStatus.Versions, co.Status.Versions, r.config.OperatorReleaseVersion, r.config.IngressControllerImage, r.config.CanaryImage))
 	co.Status.Conditions = mergeConditions(co.Status.Conditions, computeOperatorDegradedCondition(state.IngressControllers))
 
 	if !operatorStatusesEqual(*oldStatus, co.Status) {
@@ -170,6 +172,10 @@ func initializeClusterOperator(co *configv1.ClusterOperator) {
 		},
 		{
 			Name:    IngressControllerVersionName,
+			Version: UnknownVersionValue,
+		},
+		{
+			Name:    CanaryImageVersionName,
 			Version: UnknownVersionValue,
 		},
 	}
@@ -246,6 +252,10 @@ func (r *reconciler) computeOperatorStatusVersions(oldVersions []configv1.Operan
 			Name:    IngressControllerVersionName,
 			Version: r.config.IngressControllerImage,
 		},
+		{
+			Name:    CanaryImageVersionName,
+			Version: r.config.CanaryImage,
+		},
 	}
 }
 
@@ -306,7 +316,7 @@ func computeOperatorDegradedCondition(ingresses []operatorv1.IngressController) 
 }
 
 // computeOperatorProgressingCondition computes the operator's current Progressing status state.
-func computeOperatorProgressingCondition(allIngressesAvailable bool, oldVersions, curVersions []configv1.OperandVersion, operatorReleaseVersion, ingressControllerImage string) configv1.ClusterOperatorStatusCondition {
+func computeOperatorProgressingCondition(allIngressesAvailable bool, oldVersions, curVersions []configv1.OperandVersion, operatorReleaseVersion, ingressControllerImage string, canaryImage string) configv1.ClusterOperatorStatusCondition {
 	// TODO: Update progressingCondition when an ingresscontroller
 	//       progressing condition is created. The Operator's condition
 	//       should be derived from the ingresscontroller's condition.
@@ -340,6 +350,11 @@ func computeOperatorProgressingCondition(allIngressesAvailable bool, oldVersions
 		case IngressControllerVersionName:
 			if opv.Version != ingressControllerImage {
 				messages = append(messages, fmt.Sprintf("Moving to ingress-controller image version %q.", ingressControllerImage))
+				progressing = true
+			}
+		case CanaryImageVersionName:
+			if opv.Version != canaryImage {
+				messages = append(messages, fmt.Sprintf("Moving to canary image version %q.", canaryImage))
 				progressing = true
 			}
 		}

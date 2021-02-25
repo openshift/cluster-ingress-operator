@@ -52,6 +52,12 @@ const (
 	// Canary route rotation is enabled when the canary route rotation annotation has
 	// a value of "true" (disabled otherwise).
 	CanaryRouteRotationAnnotation = "ingress.operator.openshift.io/rotate-canary-route"
+
+	// CanaryHealthcheckCommand is a parameter to pass to the ingress-operator to call
+	// into the handler for the canary daemonset health check
+	CanaryHealthcheckCommand = "serve-healthcheck"
+	// CanaryHealthcheckResponse is the message that signals a successful health check
+	CanaryHealthcheckResponse = "Healthcheck requested"
 )
 
 var (

@@ -12,7 +12,7 @@ type Config struct {
 	// IngressControllerImage is the ingress controller image to manage.
 	IngressControllerImage string
 
-	// CanaryImage is the ingress canary image to manage.
+	// CanaryImage is the ingress operator image, which runs a canary command.
 	CanaryImage string
 
 	Stop chan struct{}

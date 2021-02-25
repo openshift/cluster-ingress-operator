@@ -93,6 +93,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	if _, err := statuscontroller.New(mgr, statuscontroller.Config{
 		Namespace:              config.Namespace,
 		IngressControllerImage: config.IngressControllerImage,
+		CanaryImage:            config.CanaryImage,
 		OperatorReleaseVersion: config.OperatorReleaseVersion,
 	}); err != nil {
 		return nil, fmt.Errorf("failed to create status controller: %v", err)
@@ -117,6 +118,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	}
 
 	// Set up the canary controller when the config.CanaryImage is not empty
+	// Canary can be disabled when running the operator locally.
 	if len(config.CanaryImage) != 0 {
 		if _, err := canarycontroller.New(mgr, canarycontroller.Config{
 			Namespace:   config.Namespace,
