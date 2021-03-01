@@ -4,10 +4,14 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
+
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 )
 
@@ -19,16 +23,21 @@ func (r *reconciler) ensureCanaryDaemonSet() (bool, *appsv1.DaemonSet, error) {
 		return false, nil, err
 	}
 
-	if haveDs {
-		return true, current, nil
+	switch {
+	case !haveDs:
+		if err := r.createCanaryDaemonSet(desired); err != nil {
+			return false, nil, err
+		}
+		return r.currentCanaryDaemonSet()
+	case haveDs:
+		if updated, err := r.updateCanaryDaemonSet(current, desired); err != nil {
+			return true, current, err
+		} else if updated {
+			return r.currentCanaryDaemonSet()
+		}
 	}
 
-	err = r.createCanaryDaemonSet(desired)
-	if err != nil {
-		return false, nil, err
-	}
-
-	return true, desired, nil
+	return true, current, nil
 }
 
 // currentCanaryDaemonSet returns the current canary daemonset
@@ -53,6 +62,21 @@ func (r *reconciler) createCanaryDaemonSet(daemonset *appsv1.DaemonSet) error {
 	return nil
 }
 
+// updateCanaryDaemonSet updates the canary daemonset if an appropriate change
+// has been detected
+func (r *reconciler) updateCanaryDaemonSet(current, desired *appsv1.DaemonSet) (bool, error) {
+	changed, updated := canaryDaemonSetChanged(current, desired)
+	if !changed {
+		return false, nil
+	}
+
+	if err := r.client.Update(context.TODO(), updated); err != nil {
+		return false, fmt.Errorf("failed to update canary daemonset %s/%s: %v", updated.Namespace, updated.Name, err)
+	}
+	log.Info("updated canary daemonset", "namespace", updated.Namespace, "name", updated.Name)
+	return true, nil
+}
+
 // desiredCanaryDaemonSet returns the desired canary daemonset read in
 // from manifests
 func desiredCanaryDaemonSet(canaryImage string) *appsv1.DaemonSet {
@@ -72,4 +96,61 @@ func desiredCanaryDaemonSet(canaryImage string) *appsv1.DaemonSet {
 	daemonset.Spec.Template.Spec.Containers[0].Image = canaryImage
 
 	return daemonset
+}
+
+// canaryDaemonSetChanged returns true if current and expected differ by the pod template's
+// node selector, tolerations, or container image reference.
+func canaryDaemonSetChanged(current, expected *appsv1.DaemonSet) (bool, *appsv1.DaemonSet) {
+	changed := false
+	updated := current.DeepCopy()
+
+	// Update the canary daemonset when the canary server image changes
+	if len(current.Spec.Template.Spec.Containers) > 0 && len(expected.Spec.Template.Spec.Containers) > 0 &&
+		current.Spec.Template.Spec.Containers[0].Image != expected.Spec.Template.Spec.Containers[0].Image {
+		updated.Spec.Template.Spec.Containers[0].Image = expected.Spec.Template.Spec.Containers[0].Image
+		changed = true
+	}
+
+	if !cmp.Equal(current.Spec.Template.Spec.NodeSelector, expected.Spec.Template.Spec.NodeSelector, cmpopts.EquateEmpty()) {
+		updated.Spec.Template.Spec.NodeSelector = expected.Spec.Template.Spec.NodeSelector
+		changed = true
+	}
+
+	if !cmp.Equal(current.Spec.Template.Spec.Tolerations, expected.Spec.Template.Spec.Tolerations, cmpopts.EquateEmpty(), cmpopts.SortSlices(cmpTolerations)) {
+		updated.Spec.Template.Spec.Tolerations = expected.Spec.Template.Spec.Tolerations
+		changed = true
+	}
+
+	if !changed {
+		return false, nil
+	}
+
+	return true, updated
+}
+
+// cmpTolerations compares two Tolerations values and returns a Boolean
+// indicating whether they are equal.
+func cmpTolerations(a, b corev1.Toleration) bool {
+	if a.Key != b.Key {
+		return false
+	}
+	if a.Value != b.Value {
+		return false
+	}
+	if a.Operator != b.Operator {
+		return false
+	}
+	if a.Effect != b.Effect {
+		return false
+	}
+	if a.Effect == corev1.TaintEffectNoExecute {
+		if (a.TolerationSeconds == nil) != (b.TolerationSeconds == nil) {
+			return false
+		}
+		// Field is ignored unless effect is NoExecute.
+		if a.TolerationSeconds != nil && *a.TolerationSeconds != *b.TolerationSeconds {
+			return false
+		}
+	}
+	return true
 }
