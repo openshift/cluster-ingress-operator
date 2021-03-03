@@ -28,7 +28,12 @@ func probeRouteEndpoint(route *routev1.Route) error {
 	}
 
 	// Create HTTP request
-	request, err := http.NewRequest("GET", "http://"+route.Spec.Host, nil)
+	// Use https now that the canary route uses edge termination.
+	// Some clusters that expose the default ingress controller
+	// via an external load balancer drop all traffic on port 80,
+	// in which case redirecting insecure traffic is not possible.
+	// See https://bugzilla.redhat.com/show_bug.cgi?id=1934773.
+	request, err := http.NewRequest("GET", "https://"+route.Spec.Host, nil)
 	if err != nil {
 		return fmt.Errorf("error creating canary HTTP request %v: %v", request, err)
 	}
