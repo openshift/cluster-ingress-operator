@@ -13,4 +13,7 @@ spec:
     kind: Service
     # Service name set at run time
     weight: 100
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
   wildcardPolicy: None
