@@ -132,7 +132,7 @@ func enqueueRequestForDefaultIngressController(namespace string) handler.EventHa
 func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, error) {
 	result := reconcile.Result{}
 
-	if err := r.ensureCanaryNamespace(); err != nil {
+	if _, _, err := r.ensureCanaryNamespace(); err != nil {
 		// Return if the canary namespace cannot be created since
 		// resource creation in a namespace that does not exist will fail.
 		return result, fmt.Errorf("failed to ensure canary namespace: %v", err)
