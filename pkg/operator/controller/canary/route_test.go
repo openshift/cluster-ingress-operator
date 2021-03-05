@@ -75,6 +75,14 @@ func TestDesiredCanaryRoute(t *testing.T) {
 	if !cmp.Equal(route.OwnerReferences, expectedOwnerRefs) {
 		t.Errorf("expected service owner references %#v, but got %#v", expectedOwnerRefs, route.OwnerReferences)
 	}
+
+	expectedTLS := &routev1.TLSConfig{
+		Termination:                   routev1.TLSTerminationEdge,
+		InsecureEdgeTerminationPolicy: routev1.InsecureEdgeTerminationPolicyRedirect,
+	}
+	if !cmp.Equal(route.Spec.TLS, expectedTLS) {
+		t.Errorf("expected route TLS config to be %v, but got %v", route.Spec.TLS, expectedTLS)
+	}
 }
 
 func TestCanaryRouteChanged(t *testing.T) {
@@ -99,6 +107,15 @@ func TestCanaryRouteChanged(t *testing.T) {
 			description: "if route spec.Port changes",
 			mutate: func(route *routev1.Route) {
 				route.Spec.Port.TargetPort = intstr.IntOrString{}
+			},
+			expect: true,
+		},
+		{
+			description: "if route spec.TLS changes",
+			mutate: func(route *routev1.Route) {
+				route.Spec.TLS = &routev1.TLSConfig{
+					Termination: routev1.TLSTerminationPassthrough,
+				}
 			},
 			expect: true,
 		},
