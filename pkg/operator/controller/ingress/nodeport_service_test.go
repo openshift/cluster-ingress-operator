@@ -75,6 +75,7 @@ func TestNodePortServiceChanged(t *testing.T) {
 			description: "if .spec.clusterIP changes",
 			mutate: func(svc *corev1.Service) {
 				svc.Spec.ClusterIP = "2.3.4.5"
+				svc.Spec.ClusterIPs = []string{"2.3.4.5"}
 			},
 			expect: false,
 		},
