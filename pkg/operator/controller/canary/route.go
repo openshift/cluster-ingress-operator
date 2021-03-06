@@ -75,10 +75,12 @@ func (r *reconciler) updateCanaryRoute(current, desired *routev1.Route) (bool, e
 		return false, nil
 	}
 
+	// Diff before updating because the client may mutate the object.
+	diff := cmp.Diff(current, updated, cmpopts.EquateEmpty())
 	if err := r.client.Update(context.TODO(), updated); err != nil {
 		return false, fmt.Errorf("failed to update canary route %s/%s: %v", updated.Namespace, updated.Name, err)
 	}
-	log.Info("updated canary route", "namespace", updated.Namespace, "name", updated.Name)
+	log.Info("updated canary route", "namespace", updated.Namespace, "name", updated.Name, "diff", diff)
 	return true, nil
 }
 

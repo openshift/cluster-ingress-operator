@@ -53,7 +53,6 @@ func (r *reconciler) ensureNodePortService(ic *operatorv1.IngressController, dep
 		if updated, err := r.updateNodePortService(current, desired); err != nil {
 			return true, current, fmt.Errorf("failed to update NodePort service: %v", err)
 		} else if updated {
-			log.Info("updated NodePort service", "service", desired)
 			return r.currentNodePortService(ic)
 		}
 	}
@@ -126,9 +125,12 @@ func (r *reconciler) updateNodePortService(current, desired *corev1.Service) (bo
 		return false, nil
 	}
 
+	// Diff before updating because the client may mutate the object.
+	diff := cmp.Diff(current, updated, cmpopts.EquateEmpty())
 	if err := r.client.Update(context.TODO(), updated); err != nil {
 		return false, err
 	}
+	log.Info("updated NodePort service", "namespace", updated.Namespace, "name", updated.Name, "diff", diff)
 	return true, nil
 }
 

@@ -51,7 +51,6 @@ func (r *reconciler) ensureWildcardDNSRecord(ic *operatorv1.IngressController, s
 		if updated, err := r.updateDNSRecord(current, desired); err != nil {
 			return true, current, fmt.Errorf("failed to update dnsrecord %s/%s: %v", desired.Namespace, desired.Name, err)
 		} else if updated {
-			log.Info("updated dnsrecord", "dnsrecord", desired)
 			return r.currentWildcardDNSRecord(ic)
 		}
 	}
@@ -170,9 +169,12 @@ func (r *reconciler) updateDNSRecord(current, desired *iov1.DNSRecord) (bool, er
 		return false, nil
 	}
 
+	// Diff before updating because the client may mutate the object.
+	diff := cmp.Diff(current, updated, cmpopts.EquateEmpty())
 	if err := r.client.Update(context.TODO(), updated); err != nil {
 		return false, err
 	}
+	log.Info("updated dnsrecord", "namespace", updated.Namespace, "name", updated.Name, "diff", diff)
 	return true, nil
 }
 
