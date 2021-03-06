@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"reflect"
 
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
+
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
@@ -45,7 +48,6 @@ func (r *reconciler) ensureClusterRole() (bool, *rbacv1.ClusterRole, error) {
 		if updated, err := r.updateClusterRole(current, desired); err != nil {
 			return true, current, fmt.Errorf("failed to update cluster role: %v", err)
 		} else if updated {
-			log.Info("updated cluster role", "desired", desired)
 			return r.currentClusterRole()
 		}
 	}
@@ -77,11 +79,14 @@ func (r *reconciler) updateClusterRole(current, desired *rbacv1.ClusterRole) (bo
 	}
 	updated := current.DeepCopy()
 	updated.Rules = desired.Rules
+	// Diff before updating because the client may mutate the object.
+	diff := cmp.Diff(current, updated, cmpopts.EquateEmpty())
 	if err := r.client.Update(context.TODO(), updated); err != nil {
 		if errors.IsAlreadyExists(err) {
 			return false, nil
 		}
 		return false, err
 	}
+	log.Info("updated cluster role", "namespace", updated.Namespace, "name", updated.Name, "diff", diff)
 	return true, nil
 }
