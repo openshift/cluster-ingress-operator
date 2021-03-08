@@ -120,8 +120,7 @@ func (AuthenticationList) SwaggerDoc() map[string]string {
 }
 
 var map_AuthenticationStatus = map[string]string{
-	"managingOAuthAPIServer": "ManagingOAuthAPIServer indicates whether this operator is managing OAuth related APIs. Setting this field to true will cause OAS-O to step down. Note that this field will be removed in the future releases, once https://github.com/openshift/enhancements/blob/master/enhancements/authentication/separate-oauth-resources.md is fully implemented",
-	"oauthAPIServer":         "OAuthAPIServer holds status specific only to oauth-apiserver",
+	"oauthAPIServer": "OAuthAPIServer holds status specific only to oauth-apiserver",
 }
 
 func (AuthenticationStatus) SwaggerDoc() map[string]string {
@@ -405,7 +404,7 @@ func (Server) SwaggerDoc() map[string]string {
 }
 
 var map_Etcd = map[string]string{
-	"": "Etcd provides information to configure an operator to manage kube-apiserver.",
+	"": "Etcd provides information to configure an operator to manage etcd.",
 }
 
 func (Etcd) SwaggerDoc() map[string]string {
@@ -479,6 +478,15 @@ var map_EndpointPublishingStrategy = map[string]string{
 
 func (EndpointPublishingStrategy) SwaggerDoc() map[string]string {
 	return map_EndpointPublishingStrategy
+}
+
+var map_GCPLoadBalancerParameters = map[string]string{
+	"":             "GCPLoadBalancerParameters provides configuration settings that are specific to GCP load balancers.",
+	"clientAccess": "clientAccess describes how client access is restricted for internal load balancers.\n\nValid values are: * \"Global\": Specifying an internal load balancer with Global client access\n  allows clients from any region within the VPC to communicate with the load\n  balancer.\n\n    https://cloud.google.com/kubernetes-engine/docs/how-to/internal-load-balancing#global_access\n\n* \"Local\": Specifying an internal load balancer with Local client access\n  means only clients within the same region (and VPC) as the GCP load balancer\n  can communicate with the load balancer. Note that this is the default behavior.\n\n    https://cloud.google.com/load-balancing/docs/internal#client_access",
+}
+
+func (GCPLoadBalancerParameters) SwaggerDoc() map[string]string {
+	return map_GCPLoadBalancerParameters
 }
 
 var map_HostNetworkStrategy = map[string]string{
@@ -662,6 +670,7 @@ var map_ProviderLoadBalancerParameters = map[string]string{
 	"":     "ProviderLoadBalancerParameters holds desired load balancer information specific to the underlying infrastructure provider.",
 	"type": "type is the underlying infrastructure provider for the load balancer. Allowed values are \"AWS\", \"Azure\", \"BareMetal\", \"GCP\", \"OpenStack\", and \"VSphere\".",
 	"aws":  "aws provides configuration settings that are specific to AWS load balancers.\n\nIf empty, defaults will be applied. See specific aws fields for details about their defaults.",
+	"gcp":  "gcp provides configuration settings that are specific to GCP load balancers.\n\nIf empty, defaults will be applied. See specific gcp fields for details about their defaults.",
 }
 
 func (ProviderLoadBalancerParameters) SwaggerDoc() map[string]string {
