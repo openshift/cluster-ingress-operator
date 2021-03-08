@@ -557,7 +557,7 @@ func TestIngressControllerScale(t *testing.T) {
 	}
 
 	// Wait for the deployment scale up to be observed.
-	if err := waitForAvailableReplicas(t, kclient, ic, 2*time.Minute, newReplicas); err != nil {
+	if err := waitForAvailableReplicas(t, kclient, ic, 4*time.Minute, newReplicas); err != nil {
 		t.Fatalf("failed waiting deployment %s to scale to %d: %v", defaultName, newReplicas, err)
 	}
 
@@ -2153,14 +2153,16 @@ func waitForIngressControllerCondition(t *testing.T, cl client.Client, timeout t
 }
 
 func assertIngressControllerDeleted(t *testing.T, cl client.Client, ing *operatorv1.IngressController) {
-	if err := deleteIngressController(cl, ing, 2*time.Minute); err != nil {
+	t.Helper()
+	if err := deleteIngressController(t, cl, ing, 2*time.Minute); err != nil {
 		t.Fatalf("WARNING: cloud resources may have been leaked! failed to delete ingresscontroller %s: %v", ing.Name, err)
 	} else {
 		t.Logf("deleted ingresscontroller %s", ing.Name)
 	}
 }
 
-func deleteIngressController(cl client.Client, ic *operatorv1.IngressController, timeout time.Duration) error {
+func deleteIngressController(t *testing.T, cl client.Client, ic *operatorv1.IngressController, timeout time.Duration) error {
+	t.Helper()
 	name := types.NamespacedName{Namespace: ic.Namespace, Name: ic.Name}
 	if err := cl.Delete(context.TODO(), ic); err != nil {
 		return fmt.Errorf("failed to delete ingresscontroller: %v", err)
@@ -2171,6 +2173,7 @@ func deleteIngressController(cl client.Client, ic *operatorv1.IngressController,
 			if errors.IsNotFound(err) {
 				return true, nil
 			}
+			t.Logf("failed to delete ingress controller %s/%s: %v", ic.Namespace, ic.Name, err)
 			return false, nil
 		}
 		return false, nil
