@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
+
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
@@ -185,7 +188,6 @@ func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController,
 		if updated, err := r.updateLoadBalancerService(currentLBService, desiredLBService, platform); err != nil {
 			return true, currentLBService, fmt.Errorf("failed to update load balancer service: %v", err)
 		} else if updated {
-			log.Info("updated load balancer service", "namespace", desiredLBService.Namespace, "name", desiredLBService.Name)
 			return r.currentLoadBalancerService(ci)
 		}
 	}
@@ -358,9 +360,12 @@ func (r *reconciler) updateLoadBalancerService(current, desired *corev1.Service,
 	if !changed {
 		return false, nil
 	}
+	// Diff before updating because the client may mutate the object.
+	diff := cmp.Diff(current, updated, cmpopts.EquateEmpty())
 	if err := r.client.Update(context.TODO(), updated); err != nil {
 		return false, err
 	}
+	log.Info("updated load balancer service", "namespace", updated.Namespace, "name", updated.Name, "diff", diff)
 	return true, nil
 }
 
