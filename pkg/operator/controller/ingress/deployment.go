@@ -491,7 +491,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 
 			env = append(env,
 				corev1.EnvVar{Name: RouterSyslogAddressEnvName, Value: socketPath},
-				corev1.EnvVar{Name: RouterLogLevelEnvName, Value: "debug"},
+				corev1.EnvVar{Name: RouterLogLevelEnvName, Value: "info"},
 			)
 			volumes = append(volumes, rsyslogConfigVolume, rsyslogSocketVolume)
 			routerVolumeMounts = append(routerVolumeMounts, rsyslogSocketVolumeMount)
@@ -504,7 +504,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 			port := accessLogging.Destination.Syslog.Port
 			endpoint := net.JoinHostPort(address, fmt.Sprintf("%d", port))
 			env = append(env,
-				corev1.EnvVar{Name: RouterLogLevelEnvName, Value: "debug"},
+				corev1.EnvVar{Name: RouterLogLevelEnvName, Value: "info"},
 				corev1.EnvVar{Name: RouterSyslogAddressEnvName, Value: endpoint},
 			)
 		}

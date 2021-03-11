@@ -351,7 +351,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 
 	checkDeploymentHasContainer(t, deployment, operatorv1.ContainerLoggingSidecarContainerName, true)
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOG_FACILITY", false, "")
-	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOG_LEVEL", true, "debug")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOG_LEVEL", true, "info")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SYSLOG_ADDRESS", true, "/var/lib/rsyslog/rsyslog.sock")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SYSLOG_FORMAT", true, `"%ci:%cp [%t] %ft %b/%s %B %bq %HM %HU %HV"`)
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CAPTURE_HTTP_COOKIE", true, "foo:256")
@@ -516,7 +516,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 
 	checkDeploymentHasContainer(t, deployment, operatorv1.ContainerLoggingSidecarContainerName, false)
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOG_FACILITY", true, "local2")
-	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOG_LEVEL", true, "debug")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOG_LEVEL", true, "info")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SYSLOG_ADDRESS", true, "1.2.3.4:12345")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SYSLOG_FORMAT", false, "")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CAPTURE_HTTP_REQUEST_HEADERS", true, "Host:15,Referer:15")
