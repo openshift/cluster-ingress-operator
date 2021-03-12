@@ -746,7 +746,7 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		errs = append(errs, fmt.Errorf("failed to integrate metrics with openshift-monitoring for ingresscontroller %s: %v", ci.Name, err))
 	}
 
-	if _, _, err := r.ensureRsyslogConfigMap(ci, deploymentRef, ingressConfig); err != nil {
+	if _, _, err := r.ensureRsyslogConfigMap(ci, deploymentRef); err != nil {
 		errs = append(errs, err)
 	}
 
