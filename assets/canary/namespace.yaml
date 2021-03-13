@@ -2,3 +2,5 @@ kind: Namespace
 apiVersion: v1
 metadata:
   name: openshift-ingress-canary
+  annotations:
+    openshift.io/node-selector: "" # Override global default node selector

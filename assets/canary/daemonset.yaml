@@ -21,6 +21,12 @@ spec:
             requests:
               cpu: 10m
               memory: 20Mi
+      nodeSelector:
+        kubernetes.io/os: linux
+      tolerations:
+        - effect: NoSchedule
+          key: node-role.kubernetes.io/infra
+          operator: Exists
   updateStrategy:
     type: RollingUpdate
     rollingUpdate:
