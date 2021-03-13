@@ -52,6 +52,9 @@ func probeRouteEndpoint(route *routev1.Route) error {
 		// TODO: Add the router's certificate to the HTTP client
 		// so we can enable TLS verification.
 		Transport: &http.Transport{
+			// Use the cluster-wide proxy if it is available in the
+			// pod's environment.
+			Proxy:           http.ProxyFromEnvironment,
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 		},
 	}
