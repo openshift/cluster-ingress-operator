@@ -93,8 +93,8 @@ func (r *reconciler) deleteCanaryRoute(route *routev1.Route) (bool, error) {
 	return true, nil
 }
 
-// canaryRouteChanged returns true if current and expected differ by Spec.Port
-// or Spec.To
+// canaryRouteChanged returns true if current and expected differ by Spec.Port,
+// Spec.To, or Spec.TLS.
 func canaryRouteChanged(current, expected *routev1.Route) (bool, *routev1.Route) {
 	changed := false
 	updated := current.DeepCopy()
@@ -106,6 +106,11 @@ func canaryRouteChanged(current, expected *routev1.Route) (bool, *routev1.Route)
 
 	if !cmp.Equal(current.Spec.To, expected.Spec.To, cmpopts.EquateEmpty()) {
 		updated.Spec.To = expected.Spec.To
+		changed = true
+	}
+
+	if !cmp.Equal(current.Spec.TLS, expected.Spec.TLS, cmpopts.EquateEmpty()) {
+		updated.Spec.TLS = expected.Spec.TLS
 		changed = true
 	}
 
