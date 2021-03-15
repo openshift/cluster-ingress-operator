@@ -48,6 +48,9 @@ const (
 	IngressControllerDeploymentReplicasMinAvailableConditionType = "DeploymentReplicasMinAvailable"
 	IngressControllerDeploymentReplicasAllAvailableConditionType = "DeploymentReplicasAllAvailable"
 	IngressControllerCanaryCheckSuccessConditionType             = "CanaryChecksSucceeding"
+
+	routerDefaultHeaderBufferSize           = 32768
+	routerDefaultHeaderBufferMaxRewriteSize = 8192
 )
 
 var (
@@ -455,7 +458,9 @@ func (r *reconciler) validate(ic *operatorv1.IngressController) error {
 	if err := validateTLSSecurityProfile(ic); err != nil {
 		errors = append(errors, err)
 	}
-
+	if err := validateHTTPHeaderBufferValues(ic); err != nil {
+		errors = append(errors, err)
+	}
 	if err := utilerrors.NewAggregate(errors); err != nil {
 		return &admissionRejection{err.Error()}
 	}
@@ -557,6 +562,36 @@ func filterTLS13Ciphers(ciphers []string) []string {
 		}
 	}
 	return filteredCiphers
+}
+
+// validateHTTPHeaderBufferValues validates the given ingresscontroller's header buffer
+// size configuration, if it specifies one.
+func validateHTTPHeaderBufferValues(ic *operatorv1.IngressController) error {
+	bufSize := int(ic.Spec.HTTPHeaderBuffer.HeaderBufferBytes)
+	maxRewrite := int(ic.Spec.HTTPHeaderBuffer.HeaderBufferMaxRewriteBytes)
+
+	if bufSize == 0 && maxRewrite == 0 {
+		return nil
+	}
+
+	// HeaderBufferBytes and HeaderBufferMaxRewriteBytes are both
+	// optional fields. Substitute the default values used by the
+	// router when either field is empty so that we can ensure that
+	// tune.maxrewrite will never wind up being greater than tune.bufsize
+	// (which would break router reloads).
+	if bufSize == 0 {
+		bufSize = routerDefaultHeaderBufferSize
+	}
+	if maxRewrite == 0 {
+		maxRewrite = routerDefaultHeaderBufferMaxRewriteSize
+	}
+
+	if bufSize <= maxRewrite {
+		return fmt.Errorf("invalid spec.httpHeaderBuffer: headerBufferBytes (%d) "+
+			"must be larger than headerBufferMaxRewriteBytes (%d)", bufSize, maxRewrite)
+	}
+
+	return nil
 }
 
 // ensureIngressDeleted tries to delete ingress, and if successful, will remove

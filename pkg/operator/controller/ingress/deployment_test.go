@@ -259,6 +259,9 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CAPTURE_HTTP_RESPONSE_HEADERS", false, "")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CAPTURE_HTTP_COOKIE", false, "")
 
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_BUF_SIZE", false, "")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_MAX_REWRITE_SIZE", false, "")
+
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CIPHERS", true, "foo:bar:baz")
 
 	checkDeploymentHasEnvVar(t, deployment, "SSL_MIN_VERSION", true, "TLSv1.1")
@@ -293,6 +296,10 @@ func TestDesiredRouterDeployment(t *testing.T) {
 			"Host",
 			"Cache-Control",
 		},
+	}
+	ci.Spec.HTTPHeaderBuffer = operatorv1.IngressControllerHTTPHeaderBuffer{
+		HeaderBufferBytes:           16384,
+		HeaderBufferMaxRewriteBytes: 4096,
 	}
 	ci.Spec.TLSSecurityProfile = &configv1.TLSSecurityProfile{
 		Type: configv1.TLSProfileCustomType,
@@ -355,6 +362,9 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SYSLOG_ADDRESS", true, "/var/lib/rsyslog/rsyslog.sock")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SYSLOG_FORMAT", true, `"%ci:%cp [%t] %ft %b/%s %B %bq %HM %HU %HV"`)
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CAPTURE_HTTP_COOKIE", true, "foo:256")
+
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_BUF_SIZE", true, "16384")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_MAX_REWRITE_SIZE", true, "4096")
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SET_FORWARDED_HEADERS", true, "append")
 

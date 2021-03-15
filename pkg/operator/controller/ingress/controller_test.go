@@ -317,3 +317,60 @@ func TestTLSProfileSpecForIngressController(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateHTTPHeaderBufferValues(t *testing.T) {
+	testCases := []struct {
+		description      string
+		httpHeaderBuffer operatorv1.IngressControllerHTTPHeaderBuffer
+		valid            bool
+	}{
+		{
+			description:      "no httpHeaderBuffer values",
+			httpHeaderBuffer: operatorv1.IngressControllerHTTPHeaderBuffer{},
+			valid:            true,
+		},
+		{
+			description: "valid httpHeaderBuffer values",
+			httpHeaderBuffer: operatorv1.IngressControllerHTTPHeaderBuffer{
+				HeaderBufferBytes:           32768,
+				HeaderBufferMaxRewriteBytes: 8192,
+			},
+			valid: true,
+		},
+		{
+			description: "invalid httpHeaderBuffer values",
+			httpHeaderBuffer: operatorv1.IngressControllerHTTPHeaderBuffer{
+				HeaderBufferBytes:           8192,
+				HeaderBufferMaxRewriteBytes: 32768,
+			},
+			valid: false,
+		},
+		{
+			description: "invalid httpHeaderBuffer values, HeaderBufferMaxRewriteBytes not set",
+			httpHeaderBuffer: operatorv1.IngressControllerHTTPHeaderBuffer{
+				HeaderBufferBytes: 1,
+			},
+			valid: false,
+		},
+		{
+			description: "invalid httpHeaderBuffer values, HeaderBufferBytes not set",
+			httpHeaderBuffer: operatorv1.IngressControllerHTTPHeaderBuffer{
+				HeaderBufferMaxRewriteBytes: 65536,
+			},
+			valid: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		ic := &operatorv1.IngressController{}
+		ic.Spec.HTTPHeaderBuffer = tc.httpHeaderBuffer
+		err := validateHTTPHeaderBufferValues(ic)
+		if tc.valid && err != nil {
+			t.Errorf("%q: Expected valid HTTPHeaderBuffer to not return a validation error: %v", tc.description, err)
+		}
+
+		if !tc.valid && err == nil {
+			t.Errorf("%q: Expected invalid HTTPHeaderBuffer to return a validation error", tc.description)
+		}
+	}
+}

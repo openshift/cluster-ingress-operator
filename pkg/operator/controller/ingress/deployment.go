@@ -53,6 +53,9 @@ const (
 	RouterCaptureHTTPResponseHeaders = "ROUTER_CAPTURE_HTTP_RESPONSE_HEADERS"
 	RouterCaptureHTTPCookies         = "ROUTER_CAPTURE_HTTP_COOKIE"
 
+	RouterHeaderBufferSize           = "ROUTER_BUF_SIZE"
+	RouterHeaderBufferMaxRewriteSize = "ROUTER_MAX_REWRITE_SIZE"
+
 	RouterDisableHTTP2EnvName          = "ROUTER_DISABLE_HTTP2"
 	RouterDefaultEnableHTTP2Annotation = "ingress.operator.openshift.io/default-enable-http2"
 
@@ -658,6 +661,18 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 
 	if enabled, value := HardStopAfterIsEnabled(ci, ingressConfig); enabled {
 		env = append(env, corev1.EnvVar{Name: RouterHardStopAfterEnvName, Value: value})
+	}
+
+	// Apply HTTP Header Buffer size values to env
+	// when they are specified.
+	if ci.Spec.HTTPHeaderBuffer.HeaderBufferBytes != 0 {
+		env = append(env, corev1.EnvVar{Name: RouterHeaderBufferSize, Value: strconv.Itoa(
+			int(ci.Spec.HTTPHeaderBuffer.HeaderBufferBytes))})
+	}
+
+	if ci.Spec.HTTPHeaderBuffer.HeaderBufferMaxRewriteBytes != 0 {
+		env = append(env, corev1.EnvVar{Name: RouterHeaderBufferMaxRewriteSize, Value: strconv.Itoa(
+			int(ci.Spec.HTTPHeaderBuffer.HeaderBufferMaxRewriteBytes))})
 	}
 
 	deployment.Spec.Template.Spec.Volumes = volumes
