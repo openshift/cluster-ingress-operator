@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	configv1 "github.com/openshift/api/config/v1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
@@ -13,19 +15,17 @@ import (
 	canarycontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/canary"
 	certcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/certificate"
 	certpublishercontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/certificate-publisher"
+	configurableroutecontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/configurable-route"
 	dnscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/dns"
 	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 	statuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/status"
-
-	configv1 "github.com/openshift/api/config/v1"
-	operatorv1 "github.com/openshift/api/operator/v1"
-
-	"k8s.io/client-go/rest"
+	"github.com/openshift/library-go/pkg/operator/events"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/rest"
 
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -62,9 +62,11 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		Scheme:    scheme,
 		NewCache: cache.MultiNamespacedCacheBuilder([]string{
 			config.Namespace,
+			operatorcontroller.GlobalUserSpecifiedConfigNamespace,
 			operatorcontroller.DefaultOperandNamespace,
 			operatorcontroller.DefaultCanaryNamespace,
 			operatorcontroller.GlobalMachineSpecifiedConfigNamespace,
+			"",
 		}),
 		// Use a non-caching client everywhere. The default split client does not
 		// promise to invalidate the cache during writes (nor does it promise
@@ -87,6 +89,13 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		IngressControllerImage: config.IngressControllerImage,
 	}); err != nil {
 		return nil, fmt.Errorf("failed to create ingress controller: %v", err)
+	}
+
+	// Create and register the configurable route controller with the operator manager.
+	if _, err := configurableroutecontroller.New(mgr, configurableroutecontroller.Config{
+		SecretNamespace: operatorcontroller.GlobalUserSpecifiedConfigNamespace,
+	}, events.NewLoggingEventRecorder(configurableroutecontroller.ControllerName)); err != nil {
+		return nil, fmt.Errorf("failed to create configurable-route controller: %v", err)
 	}
 
 	// Set up the status controller.
