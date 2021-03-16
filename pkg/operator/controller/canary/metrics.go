@@ -14,7 +14,7 @@ var (
 		prometheus.HistogramOpts{
 			Name:    "ingress_canary_check_duration",
 			Help:    "Canary endpoint request time in ms",
-			Buckets: []float64{25, 50, 100, 200, 400, 800, 1600},
+			Buckets: []float64{5, 10, 25, 50, 100, 250, 500, 1000},
 		}, []string{"host"})
 
 	CanaryEndpointWrongPortEcho = prometheus.NewCounter(

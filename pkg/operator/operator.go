@@ -6,7 +6,6 @@ import (
 	"time"
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
-	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
 	operatorconfig "github.com/openshift/cluster-ingress-operator/pkg/operator/config"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
@@ -169,7 +168,7 @@ func (o *Operator) Start(stop <-chan struct{}) error {
 // ensureDefaultIngressController creates the default ingresscontroller if it
 // doesn't already exist.
 func (o *Operator) ensureDefaultIngressController() error {
-	name := types.NamespacedName{Namespace: o.namespace, Name: manifests.DefaultIngressControllerName}
+	name := types.NamespacedName{Namespace: o.namespace, Name: operatorcontroller.DefaultIngressControllerName}
 	ic := &operatorv1.IngressController{}
 	if err := o.client.Get(context.TODO(), name, ic); err == nil {
 		return nil
@@ -192,8 +191,8 @@ func (o *Operator) ensureDefaultIngressController() error {
 	}
 	ic = &operatorv1.IngressController{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      name.Name,
-			Namespace: name.Namespace,
+			Name:      operatorcontroller.DefaultIngressControllerName,
+			Namespace: o.namespace,
 		},
 		Spec: operatorv1.IngressControllerSpec{
 			Replicas: &replicas,
