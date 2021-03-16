@@ -18,6 +18,7 @@ import (
 	configurableroutecontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/configurable-route"
 	dnscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/dns"
 	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
+	ingressclasscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingressclass"
 	statuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/status"
 	"github.com/openshift/library-go/pkg/operator/events"
 
@@ -124,6 +125,13 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		OperatorReleaseVersion: config.OperatorReleaseVersion,
 	}); err != nil {
 		return nil, fmt.Errorf("failed to create dns controller: %v", err)
+	}
+
+	// Set up the ingressclass controller.
+	if _, err := ingressclasscontroller.New(mgr, ingressclasscontroller.Config{
+		Namespace: config.Namespace,
+	}); err != nil {
+		return nil, fmt.Errorf("failed to create ingressclass controller: %w", err)
 	}
 
 	// Set up the canary controller when the config.CanaryImage is not empty
