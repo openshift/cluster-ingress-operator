@@ -198,7 +198,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	}
 	deployment.Spec.Replicas = &desiredReplicas
 
-	needDeploymentHash := false
+	configureAffinity := false
 	switch ci.Status.EndpointPublishingStrategy.Type {
 	case operatorv1.HostNetworkStrategyType:
 		// Typically, an ingress controller will be scaled with replicas
@@ -261,7 +261,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		// that a node that had local endpoints at the start of a
 		// rolling update continues to have local endpoints for the
 		// duration of and at the completion of the update.
-		needDeploymentHash = true
+		configureAffinity = true
 		deployment.Spec.Template.Spec.Affinity = &corev1.Affinity{
 			PodAffinity: &corev1.PodAffinity{
 				PreferredDuringSchedulingIgnoredDuringExecution: []corev1.WeightedPodAffinityTerm{
@@ -287,6 +287,10 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 					},
 				},
 			},
+			// TODO: Once https://issues.redhat.com/browse/RFE-1759
+			// is implemented, replace
+			// "RequiredDuringSchedulingIgnoredDuringExecution" with
+			// "PreferredDuringSchedulingIgnoredDuringExecution".
 			PodAntiAffinity: &corev1.PodAntiAffinity{
 				RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
 					{
@@ -310,6 +314,27 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 			},
 		}
 	}
+
+	// Configure topology constraints to spread replicas across availability
+	// zones.  We want to allow scheduling more replicas than there are AZs,
+	// so we specify "ScheduleAnyway".  We want to allow scheduling a
+	// newer-generation replica on the same node as an older-generation
+	// replica where the deployment strategy allows and depends on doing so,
+	// so we specify a label selector with the deployment's hash.
+	deployment.Spec.Template.Spec.TopologySpreadConstraints = []corev1.TopologySpreadConstraint{{
+		MaxSkew:           int32(1),
+		TopologyKey:       corev1.LabelTopologyZone,
+		WhenUnsatisfiable: corev1.ScheduleAnyway,
+		LabelSelector: &metav1.LabelSelector{
+			MatchExpressions: []metav1.LabelSelectorRequirement{
+				{
+					Key:      controller.ControllerDeploymentHashLabel,
+					Operator: metav1.LabelSelectorOpIn,
+					// Values is set at the end of this function.
+				},
+			},
+		},
+	}}
 
 	statsSecretName := fmt.Sprintf("router-stats-%s", ci.Name)
 	env := []corev1.EnvVar{
@@ -664,13 +689,14 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	deployment.Spec.Template.Spec.Containers[0].VolumeMounts = routerVolumeMounts
 	deployment.Spec.Template.Spec.Containers[0].Env = append(deployment.Spec.Template.Spec.Containers[0].Env, env...)
 
-	// If the deployment needs a hash for the affinity policy, we must
-	// compute it now, after all the other fields have been computed, and
-	// inject it into the appropriate fields.
-	if needDeploymentHash {
-		hash := deploymentTemplateHash(deployment)
-		deployment.Spec.Template.Labels[controller.ControllerDeploymentHashLabel] = hash
-		values := []string{hash}
+	// Compute the hash for topology spread constraints and possibly
+	// affinity policy now, after all the other fields have been computed,
+	// and inject it into the appropriate fields.
+	hash := deploymentTemplateHash(deployment)
+	deployment.Spec.Template.Labels[controller.ControllerDeploymentHashLabel] = hash
+	values := []string{hash}
+	deployment.Spec.Template.Spec.TopologySpreadConstraints[0].LabelSelector.MatchExpressions[0].Values = values
+	if configureAffinity {
 		deployment.Spec.Template.Spec.Affinity.PodAffinity.PreferredDuringSchedulingIgnoredDuringExecution[0].PodAffinityTerm.LabelSelector.MatchExpressions[1].Values = values
 		deployment.Spec.Template.Spec.Affinity.PodAntiAffinity.RequiredDuringSchedulingIgnoredDuringExecution[0].LabelSelector.MatchExpressions[1].Values = values
 	}
@@ -820,37 +846,11 @@ func hashableDeployment(deployment *appsv1.Deployment, onlyTemplate bool) *appsv
 	// trigger a rolling update of the deployment.
 	affinity := deployment.Spec.Template.Spec.Affinity.DeepCopy()
 	if affinity != nil {
-		cmpMatchExpressions := func(a, b metav1.LabelSelectorRequirement) bool {
-			if a.Key != b.Key {
-				return a.Key < b.Key
-			}
-			if a.Operator != b.Operator {
-				return a.Operator < b.Operator
-			}
-			for i := range b.Values {
-				if i == len(a.Values) {
-					return true
-				}
-				if a.Values[i] != b.Values[i] {
-					return a.Values[i] < b.Values[i]
-				}
-			}
-			return false
-		}
-
 		if affinity.PodAffinity != nil {
 			terms := affinity.PodAffinity.PreferredDuringSchedulingIgnoredDuringExecution
 			for _, term := range terms {
 				labelSelector := term.PodAffinityTerm.LabelSelector
-				if labelSelector != nil {
-					for i, expr := range labelSelector.MatchExpressions {
-						if expr.Key == controller.ControllerDeploymentHashLabel {
-							// Hash value should be ignored.
-							labelSelector.MatchExpressions[i].Values = nil
-						}
-					}
-
-				}
+				zeroOutDeploymentHash(labelSelector)
 				exprs := labelSelector.MatchExpressions
 				sort.Slice(exprs, func(i, j int) bool {
 					return cmpMatchExpressions(exprs[i], exprs[j])
@@ -860,15 +860,7 @@ func hashableDeployment(deployment *appsv1.Deployment, onlyTemplate bool) *appsv
 		if affinity.PodAntiAffinity != nil {
 			terms := affinity.PodAntiAffinity.RequiredDuringSchedulingIgnoredDuringExecution
 			for _, term := range terms {
-				if term.LabelSelector != nil {
-					for i, expr := range term.LabelSelector.MatchExpressions {
-						if expr.Key == controller.ControllerDeploymentHashLabel {
-							// Hash value should be ignored.
-							term.LabelSelector.MatchExpressions[i].Values = nil
-						}
-					}
-
-				}
+				zeroOutDeploymentHash(term.LabelSelector)
 				exprs := term.LabelSelector.MatchExpressions
 				sort.Slice(exprs, func(i, j int) bool {
 					return cmpMatchExpressions(exprs[i], exprs[j])
@@ -890,6 +882,17 @@ func hashableDeployment(deployment *appsv1.Deployment, onlyTemplate bool) *appsv
 		return tolerations[i].Key < tolerations[j].Key || tolerations[i].Operator < tolerations[j].Operator || tolerations[i].Value < tolerations[j].Value || tolerations[i].Effect < tolerations[j].Effect
 	})
 	hashableDeployment.Spec.Template.Spec.Tolerations = tolerations
+	topologySpreadConstraints := make([]corev1.TopologySpreadConstraint, len(deployment.Spec.Template.Spec.TopologySpreadConstraints))
+	for i, constraint := range deployment.Spec.Template.Spec.TopologySpreadConstraints {
+		topologySpreadConstraints[i] = *constraint.DeepCopy()
+		labelSelector := topologySpreadConstraints[i].LabelSelector
+		zeroOutDeploymentHash(labelSelector)
+		exprs := labelSelector.MatchExpressions
+		sort.Slice(exprs, func(i, j int) bool {
+			return cmpMatchExpressions(exprs[i], exprs[j])
+		})
+	}
+	hashableDeployment.Spec.Template.Spec.TopologySpreadConstraints = topologySpreadConstraints
 	hashableDeployment.Spec.Template.Spec.NodeSelector = deployment.Spec.Template.Spec.NodeSelector
 	containers := make([]corev1.Container, len(deployment.Spec.Template.Spec.Containers))
 	for i, container := range deployment.Spec.Template.Spec.Containers {
@@ -952,6 +955,37 @@ func hashableDeployment(deployment *appsv1.Deployment, onlyTemplate bool) *appsv
 	hashableDeployment.Spec.Selector = deployment.Spec.Selector
 
 	return &hashableDeployment
+}
+
+// cmpMatchExpressions is a helper for hashableDeployment.
+func cmpMatchExpressions(a, b metav1.LabelSelectorRequirement) bool {
+	if a.Key != b.Key {
+		return a.Key < b.Key
+	}
+	if a.Operator != b.Operator {
+		return a.Operator < b.Operator
+	}
+	for i := range b.Values {
+		if i == len(a.Values) {
+			return true
+		}
+		if a.Values[i] != b.Values[i] {
+			return a.Values[i] < b.Values[i]
+		}
+	}
+	return false
+}
+
+// zeroOutDeploymentHash is a helper for hashableDeployment.
+func zeroOutDeploymentHash(labelSelector *metav1.LabelSelector) {
+	if labelSelector != nil {
+		for i, expr := range labelSelector.MatchExpressions {
+			if expr.Key == controller.ControllerDeploymentHashLabel {
+				// Hash value should be ignored.
+				labelSelector.MatchExpressions[i].Values = nil
+			}
+		}
+	}
 }
 
 // hashableProbe returns a copy of the given probe with exactly the fields that
@@ -1083,6 +1117,7 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 	updated.Spec.Template.Spec.Containers[0].ReadinessProbe = expected.Spec.Template.Spec.Containers[0].ReadinessProbe
 	updated.Spec.Template.Spec.Containers[0].VolumeMounts = expected.Spec.Template.Spec.Containers[0].VolumeMounts
 	updated.Spec.Template.Spec.Tolerations = expected.Spec.Template.Spec.Tolerations
+	updated.Spec.Template.Spec.TopologySpreadConstraints = expected.Spec.Template.Spec.TopologySpreadConstraints
 	updated.Spec.Template.Spec.Affinity = expected.Spec.Template.Spec.Affinity
 	replicas := int32(1)
 	if expected.Spec.Replicas != nil {
