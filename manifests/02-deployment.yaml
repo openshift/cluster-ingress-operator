@@ -63,7 +63,7 @@ spec:
             - name: IMAGE
               value: openshift/origin-haproxy-router:v4.0
             - name: CANARY_IMAGE
-              value: quay.io/openshift/origin-hello-openshift:latest
+              value: openshift/origin-cluster-ingress-operator:latest
           resources:
             requests:
               cpu: 10m

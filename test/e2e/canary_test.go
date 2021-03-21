@@ -29,7 +29,7 @@ import (
 )
 
 // TestCanaryRoute tests the ingress canary route
-// and checks that the hello-openshift echo server
+// and checks that the serve-healthcheck echo server
 // works as expected.
 func TestCanaryRoute(t *testing.T) {
 	kubeConfig, err := config.GetConfig()
@@ -104,7 +104,7 @@ func TestCanaryRoute(t *testing.T) {
 		foundRequestPortHeader := false
 		for scanner.Scan() {
 			line := scanner.Text()
-			if strings.Contains(line, "Hello OpenShift!") {
+			if strings.Contains(line, canarycontroller.CanaryHealthcheckResponse) {
 				foundBody = true
 			}
 			if strings.Contains(strings.ToLower(line), "x-request-port:") {

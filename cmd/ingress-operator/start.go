@@ -45,8 +45,7 @@ type StartOptions struct {
 	// IngressControllerImage is the pullspec of the ingress controller image to
 	// be managed.
 	IngressControllerImage string
-	// CanaryImage is the pullspec of the canary tester server image to
-	// be managed.
+	// CanaryImage is the pullspec of the ingress operator image
 	CanaryImage string
 	// ReleaseVersion is the cluster version which the operator will converge to.
 	ReleaseVersion string
