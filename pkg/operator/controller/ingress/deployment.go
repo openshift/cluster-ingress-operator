@@ -390,7 +390,11 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		env = append(env, corev1.EnvVar{Name: "ROUTER_USE_PROXY_PROTOCOL", Value: "true"})
 	}
 
-	env = append(env, corev1.EnvVar{Name: "ROUTER_THREADS", Value: "4"})
+	threads := 4
+	if ci.Spec.TuningOptions.ThreadCount > 0 {
+		threads = int(ci.Spec.TuningOptions.ThreadCount)
+	}
+	env = append(env, corev1.EnvVar{Name: "ROUTER_THREADS", Value: strconv.Itoa(threads)})
 
 	nodeSelector := map[string]string{
 		"kubernetes.io/os":               "linux",

@@ -3,12 +3,25 @@
 package e2e
 
 import (
+	"context"
+	"fmt"
+	"testing"
+	"time"
+
 	routev1 "github.com/openshift/api/route/v1"
 
 	corev1 "k8s.io/api/core/v1"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	operatorv1 "github.com/openshift/api/operator/v1"
+
+	appsv1 "k8s.io/api/apps/v1"
+
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // buildEchoPod returns a pod definition for an socat-based echo server.
@@ -107,4 +120,34 @@ func buildRoute(name, namespace, serviceName string) *routev1.Route {
 			},
 		},
 	}
+}
+
+func getIngressController(t *testing.T, client client.Client, name types.NamespacedName, timeout time.Duration) (*operatorv1.IngressController, error) {
+	t.Helper()
+	ic := operatorv1.IngressController{}
+	if err := wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
+		if err := client.Get(context.TODO(), name, &ic); err != nil {
+			t.Logf("Get %q failed: %v, retrying...", name, err)
+			return false, nil
+		}
+		return true, nil
+	}); err != nil {
+		return nil, fmt.Errorf("failed to get %q: %v", name, err)
+	}
+	return &ic, nil
+}
+
+func getDeployment(t *testing.T, client client.Client, name types.NamespacedName, timeout time.Duration) (*appsv1.Deployment, error) {
+	t.Helper()
+	dep := appsv1.Deployment{}
+	if err := wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
+		if err := client.Get(context.TODO(), name, &dep); err != nil {
+			t.Logf("Get %q failed: %v, retrying...", name, err)
+			return false, nil
+		}
+		return true, nil
+	}); err != nil {
+		return nil, fmt.Errorf("Failed to get %q: %v", name, err)
+	}
+	return &dep, nil
 }
