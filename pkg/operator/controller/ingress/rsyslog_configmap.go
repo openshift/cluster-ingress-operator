@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"reflect"
 
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
+
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
@@ -60,7 +63,6 @@ func (r *reconciler) ensureRsyslogConfigMap(ic *operatorv1.IngressController, de
 		if updated, err := r.updateRsyslogConfigMap(current, desired); err != nil {
 			return true, current, fmt.Errorf("failed to update configmap: %v", err)
 		} else if updated {
-			log.Info("updated configmap", "configmap", desired)
 			return r.currentRsyslogConfigMap(ic)
 		}
 	}
@@ -114,12 +116,15 @@ func (r *reconciler) updateRsyslogConfigMap(current, desired *corev1.ConfigMap) 
 	}
 	updated := current.DeepCopy()
 	updated.Data = desired.Data
+	// Diff before updating because the client may mutate the object.
+	diff := cmp.Diff(current, updated, cmpopts.EquateEmpty())
 	if err := r.client.Update(context.TODO(), updated); err != nil {
 		if errors.IsAlreadyExists(err) {
 			return false, nil
 		}
 		return false, err
 	}
+	log.Info("updated configmap", "namespace", updated.Namespace, "name", updated.Name, "diff", diff)
 	return true, nil
 }
 

@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
+
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
 	corev1 "k8s.io/api/core/v1"
@@ -47,7 +50,6 @@ func (r *reconciler) ensureServiceCAConfigMap() (bool, *corev1.ConfigMap, error)
 		if updated, err := r.updateServiceCAConfigMap(current, desired); err != nil {
 			return true, current, fmt.Errorf("failed to update configmap: %v", err)
 		} else if updated {
-			log.Info("updated configmap", "configmap", desired)
 			return r.currentServiceCAConfigMap()
 		}
 	}
@@ -101,11 +103,14 @@ func (r *reconciler) updateServiceCAConfigMap(current, desired *corev1.ConfigMap
 
 	updated := current.DeepCopy()
 	updated.Annotations["service.beta.openshift.io/inject-cabundle"] = "true"
+	// Diff before updating because the client may mutate the object.
+	diff := cmp.Diff(current, updated, cmpopts.EquateEmpty())
 	if err := r.client.Update(context.TODO(), updated); err != nil {
 		if errors.IsAlreadyExists(err) {
 			return false, nil
 		}
 		return false, err
 	}
+	log.Info("updated configmap", "namespace", updated.Namespace, "name", updated.Name, "diff", diff)
 	return true, nil
 }

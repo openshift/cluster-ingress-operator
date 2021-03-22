@@ -53,7 +53,6 @@ func (r *reconciler) ensureRouterPodDisruptionBudget(ic *operatorv1.IngressContr
 		if updated, err := r.updateRouterPodDisruptionBudget(current, desired); err != nil {
 			return true, current, fmt.Errorf("failed to update pod disruption budget: %v", err)
 		} else if updated {
-			log.Info("updated pod disruption budget", "poddisruptionbudget", desired)
 			return r.currentRouterPodDisruptionBudget(ic)
 		}
 	}
@@ -115,9 +114,12 @@ func (r *reconciler) updateRouterPodDisruptionBudget(current, desired *policyv1b
 		return false, nil
 	}
 
+	// Diff before updating because the client may mutate the object.
+	diff := cmp.Diff(current, updated, cmpopts.EquateEmpty())
 	if err := r.client.Update(context.TODO(), updated); err != nil {
 		return false, err
 	}
+	log.Info("updated pod disruption budget", "namespace", updated.Namespace, "name", updated.Name, "diff", diff)
 	return true, nil
 }
 

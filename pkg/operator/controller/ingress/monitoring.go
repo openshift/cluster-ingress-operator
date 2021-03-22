@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"reflect"
 
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
+
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -41,7 +44,6 @@ func (r *reconciler) ensureServiceMonitor(ic *operatorv1.IngressController, svc 
 		if updated, err := r.updateServiceMonitor(current, desired); err != nil {
 			return true, current, fmt.Errorf("failed to update servicemonitor %s/%s: %v", desired.GetNamespace(), desired.GetName(), err)
 		} else if updated {
-			log.Info("updated servicemonitor", "namespace", desired.GetNamespace(), "name", desired.GetName())
 			return r.currentServiceMonitor(ic)
 		}
 	}
@@ -131,9 +133,12 @@ func (r *reconciler) updateServiceMonitor(current, desired *unstructured.Unstruc
 		return false, nil
 	}
 
+	// Diff before updating because the client may mutate the object.
+	diff := cmp.Diff(current, updated, cmpopts.EquateEmpty())
 	if err := r.client.Update(context.TODO(), updated); err != nil {
 		return false, err
 	}
+	log.Info("updated servicemonitor", "namespace", updated.GetNamespace(), "name", updated.GetName(), "diff", diff)
 	return true, nil
 }
 
