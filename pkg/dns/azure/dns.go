@@ -130,7 +130,13 @@ func (m *provider) Replace(record *iov1.DNSRecord, zone configv1.DNSZone) error 
 }
 
 // getARecordName extracts the ARecord subdomain name from the full domain string.
-// azure defines the ARecord Name as the subdomain name only.
+// Azure defines the ARecord Name as the subdomain name only.
+// This function logs a message if recordDomain is not a subdomain of zoneName.
 func getARecordName(recordDomain string, zoneName string) (string, error) {
-	return strings.TrimSuffix(strings.TrimSuffix(recordDomain, "."), "."+zoneName), nil
+	trimmedDomain := strings.TrimSuffix(recordDomain, ".")
+	if !strings.HasSuffix(trimmedDomain, "."+zoneName) {
+		log.Info("domain is not a subdomain of zone. The DNS provider may still succeed in updating the record, "+
+			"which might be unexpected", "domain", recordDomain, "zone", zoneName)
+	}
+	return strings.TrimSuffix(trimmedDomain, "."+zoneName), nil
 }
