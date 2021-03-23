@@ -155,7 +155,7 @@ github.com/modern-go/concurrent
 github.com/modern-go/reflect2
 # github.com/onsi/ginkgo v1.14.0
 ## explicit
-# github.com/openshift/api v0.0.0-20210216211028-bb81baaf35cd
+# github.com/openshift/api v0.0.0-20210319173601-ab6d2da2c3ef
 ## explicit
 github.com/openshift/api/config/v1
 github.com/openshift/api/operator/v1
