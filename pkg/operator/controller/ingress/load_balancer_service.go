@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -25,6 +26,13 @@ import (
 )
 
 const (
+	// awsLBAdditionalResourceTags is a comma separated list of
+	// Key=Value pairs that are additionally recorded on
+	// load balancer resources and security groups.
+	//
+	// https://kubernetes.io/docs/concepts/services-networking/service/#aws-load-balancer-additional-resource-tags
+	awsLBAdditionalResourceTags = "service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags"
+
 	// awsLBProxyProtocolAnnotation is used to enable the PROXY protocol on any
 	// AWS load balancer services created.
 	//
@@ -261,6 +269,19 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 			} else {
 				service.Annotations[awsLBHealthCheckIntervalAnnotation] = awsLBHealthCheckIntervalDefault
 			}
+
+			if platform.AWS != nil && len(platform.AWS.ResourceTags) > 0 {
+				var additionalTags []string
+				for _, userTag := range platform.AWS.ResourceTags {
+					if len(userTag.Key) > 0 {
+						additionalTags = append(additionalTags, userTag.Key+"="+userTag.Value)
+					}
+				}
+				if len(additionalTags) > 0 {
+					service.Annotations[awsLBAdditionalResourceTags] = strings.Join(additionalTags, ",")
+				}
+			}
+
 			// Set the load balancer for AWS to be as aggressive as Azure (2 fail @ 5s interval, 2 healthy)
 			service.Annotations[awsLBHealthCheckTimeoutAnnotation] = awsLBHealthCheckTimeoutDefault
 			service.Annotations[awsLBHealthCheckUnhealthyThresholdAnnotation] = awsLBHealthCheckUnhealthyThresholdDefault

@@ -2,8 +2,9 @@ package ingress
 
 import (
 	"fmt"
-	corev1 "k8s.io/api/core/v1"
 	"testing"
+
+	corev1 "k8s.io/api/core/v1"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -14,12 +15,14 @@ import (
 
 func TestDesiredLoadBalancerService(t *testing.T) {
 	testCases := []struct {
-		description  string
-		platform     configv1.PlatformType
-		strategyType operatorv1.EndpointPublishingStrategyType
-		lbStrategy   operatorv1.LoadBalancerStrategy
-		proxyNeeded  bool
-		expect       bool
+		description          string
+		platform             configv1.PlatformType
+		strategyType         operatorv1.EndpointPublishingStrategyType
+		lbStrategy           operatorv1.LoadBalancerStrategy
+		proxyNeeded          bool
+		expect               bool
+		platformStatus       configv1.PlatformStatus
+		expectedResourceTags string
 	}{
 		{
 			description:  "external classic load balancer with scope for aws platform",
@@ -30,6 +33,30 @@ func TestDesiredLoadBalancerService(t *testing.T) {
 			},
 			proxyNeeded: true,
 			expect:      true,
+		},
+		{
+			description:  "external classic load balancer with scope for aws platform and custom user tags",
+			platform:     configv1.AWSPlatformType,
+			strategyType: operatorv1.LoadBalancerServiceStrategyType,
+			lbStrategy: operatorv1.LoadBalancerStrategy{
+				Scope: operatorv1.ExternalLoadBalancer,
+			},
+			proxyNeeded: true,
+			expect:      true,
+			platformStatus: configv1.PlatformStatus{
+				AWS: &configv1.AWSPlatformStatus{
+					ResourceTags: []configv1.AWSResourceTag{{
+						Key:   "classic-load-balancer-key-with-value",
+						Value: "100",
+					}, {
+						Key:   "classic-load-balancer-key-with-empty-value",
+						Value: "",
+					}, {
+						Value: "classic-load-balancer-value-without-key",
+					}},
+				},
+			},
+			expectedResourceTags: "classic-load-balancer-key-with-value=100,classic-load-balancer-key-with-empty-value=",
 		},
 		{
 			description:  "external classic load balancer without scope for aws platform",
@@ -85,6 +112,37 @@ func TestDesiredLoadBalancerService(t *testing.T) {
 			},
 			proxyNeeded: false,
 			expect:      true,
+		},
+		{
+			description:  "external network load balancer with scope for aws platform and custom user tags",
+			platform:     configv1.AWSPlatformType,
+			strategyType: operatorv1.LoadBalancerServiceStrategyType,
+			lbStrategy: operatorv1.LoadBalancerStrategy{
+				Scope: operatorv1.ExternalLoadBalancer,
+				ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+					Type: operatorv1.AWSLoadBalancerProvider,
+					AWS: &operatorv1.AWSLoadBalancerParameters{
+						Type: operatorv1.AWSNetworkLoadBalancer,
+					},
+				},
+			},
+			proxyNeeded: false,
+			expect:      true,
+
+			platformStatus: configv1.PlatformStatus{
+				AWS: &configv1.AWSPlatformStatus{
+					ResourceTags: []configv1.AWSResourceTag{{
+						Key:   "network-load-balancer-key-with-value",
+						Value: "200",
+					}, {
+						Key:   "network-load-balancer-key-with-empty-value",
+						Value: "",
+					}, {
+						Value: "network-load-balancer-value-without-key",
+					}},
+				},
+			},
+			expectedResourceTags: "network-load-balancer-key-with-value=200,network-load-balancer-key-with-empty-value=",
 		},
 		{
 			description:  "nodePort service for aws platform",
@@ -219,11 +277,10 @@ func TestDesiredLoadBalancerService(t *testing.T) {
 		}
 		infraConfig := &configv1.Infrastructure{
 			Status: configv1.InfrastructureStatus{
-				PlatformStatus: &configv1.PlatformStatus{
-					Type: tc.platform,
-				},
+				PlatformStatus: &tc.platformStatus,
 			},
 		}
+		infraConfig.Status.PlatformStatus.Type = tc.platform
 
 		proxyNeeded, err := IsProxyProtocolNeeded(ic, infraConfig.Status.PlatformStatus)
 		switch {
@@ -265,6 +322,15 @@ func TestDesiredLoadBalancerService(t *testing.T) {
 				classicLB := tc.lbStrategy.ProviderParameters == nil || tc.lbStrategy.ProviderParameters.AWS.Type == operatorv1.AWSClassicLoadBalancer
 				switch {
 				case classicLB:
+					if len(tc.expectedResourceTags) > 0 {
+						if err := checkServiceHasAnnotation(svc, awsLBAdditionalResourceTags, true, tc.expectedResourceTags); err != nil {
+							t.Errorf("annotation check for test %q failed: %v, unexpected value", tc.description, err)
+						}
+					} else {
+						if err := checkServiceHasAnnotation(svc, awsLBAdditionalResourceTags, false, ""); err == nil {
+							t.Errorf("annotation check for test %q failed; unexpected annotation %s", tc.description, awsLBAdditionalResourceTags)
+						}
+					}
 					if err := checkServiceHasAnnotation(svc, awsLBHealthCheckIntervalAnnotation, true, awsLBHealthCheckIntervalDefault); err != nil {
 						t.Errorf("annotation check for test %q failed: %v", tc.description, err)
 					}
@@ -272,6 +338,15 @@ func TestDesiredLoadBalancerService(t *testing.T) {
 						t.Errorf("annotation check for test %q failed: %v", tc.description, err)
 					}
 				case tc.lbStrategy.ProviderParameters.AWS.Type == operatorv1.AWSNetworkLoadBalancer:
+					if len(tc.expectedResourceTags) > 0 {
+						if err := checkServiceHasAnnotation(svc, awsLBAdditionalResourceTags, true, tc.expectedResourceTags); err != nil {
+							t.Errorf("annotation check for test %q failed: %v, unexpected value", tc.description, err)
+						}
+					} else {
+						if err := checkServiceHasAnnotation(svc, awsLBAdditionalResourceTags, false, ""); err == nil {
+							t.Errorf("annotation check for test %q failed; unexpected annotation %s", tc.description, awsLBAdditionalResourceTags)
+						}
+					}
 					if err := checkServiceHasAnnotation(svc, awsLBHealthCheckIntervalAnnotation, true, awsLBHealthCheckIntervalNLB); err != nil {
 						t.Errorf("annotation check for test %q failed: %v", tc.description, err)
 					}
