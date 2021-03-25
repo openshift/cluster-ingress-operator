@@ -57,6 +57,12 @@ import (
 )
 
 var (
+	availableConditionsForIngressControllerWithNodePort = []operatorv1.OperatorCondition{
+		{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionTrue},
+		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
+		{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionFalse},
+		{Type: ingresscontroller.IngressControllerAdmittedConditionType, Status: operatorv1.ConditionTrue},
+	}
 	availableConditionsForIngressControllerWithLoadBalancer = []operatorv1.OperatorCondition{
 		{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionTrue},
 		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionTrue},
@@ -195,8 +201,11 @@ func TestUniqueDomainRejection(t *testing.T) {
 	}
 }
 
+// TestProxyProtocolOnAWS verifies that the default ingresscontroller
+// uses PROXY protocol on AWS.
+//
 // TODO: should this be a test of source IP preservation in the conformance suite?
-func TestClusterProxyProtocol(t *testing.T) {
+func TestProxyProtocolOnAWS(t *testing.T) {
 	if infraConfig.Status.Platform != configv1.AWSPlatformType {
 		t.Skip("test skipped on non-aws platform")
 		return
@@ -227,6 +236,43 @@ func TestClusterProxyProtocol(t *testing.T) {
 	}
 	if !proxyProtocolEnabled {
 		t.Fatalf("expected deployment to enable the PROXY protocol")
+	}
+}
+
+// TestProxyProtocolAPI verifies that the operator configures router pod
+// replicas to use PROXY protocol if it is specified on an ingresscontroller.
+func TestProxyProtocolAPI(t *testing.T) {
+	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "proxy-protocol"}
+	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
+	ic := newNodePortController(icName, domain)
+	if err := kclient.Create(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to create ingresscontroller: %v", err)
+	}
+	defer assertIngressControllerDeleted(t, kclient, ic)
+
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForIngressControllerWithNodePort...); err != nil {
+		t.Errorf("failed to observe expected conditions: %v", err)
+	}
+
+	if err := kclient.Get(context.TODO(), icName, ic); err != nil {
+		t.Fatalf("failed to get ingresscontroller: %v", err)
+	}
+	deployment := &appsv1.Deployment{}
+	if err := kclient.Get(context.TODO(), controller.RouterDeploymentName(ic), deployment); err != nil {
+		t.Fatalf("failed to get ingresscontroller deployment: %v", err)
+	}
+	if err := waitForDeploymentEnvVar(t, kclient, deployment, 1*time.Minute, "ROUTER_USE_PROXY_PROTOCOL", ""); err != nil {
+		t.Fatalf("expected initial deployment not to enable PROXY protocol: %v", err)
+	}
+
+	ic.Spec.EndpointPublishingStrategy.NodePort = &operatorv1.NodePortStrategy{
+		Protocol: operatorv1.ProxyProtocol,
+	}
+	if err := kclient.Update(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to update ingresscontroller: %v", err)
+	}
+	if err := waitForDeploymentEnvVar(t, kclient, deployment, 1*time.Minute, "ROUTER_USE_PROXY_PROTOCOL", "true"); err != nil {
+		t.Fatalf("expected updated deployment to enable PROXY protocol: %v", err)
 	}
 }
 
@@ -1860,7 +1906,9 @@ func waitForDeploymentComplete(t *testing.T, cl client.Client, deployment *appsv
 	return nil
 }
 
-// Wait for the provided deployment to have the specified environment variable set.
+// Wait for the provided deployment to have the specified environment variable
+// set with the provided value, or unset if the provided value is the empty
+// string.
 func waitForDeploymentEnvVar(t *testing.T, cl client.Client, deployment *appsv1.Deployment, timeout time.Duration, name, value string) error {
 	t.Helper()
 	deploymentName := types.NamespacedName{Namespace: deployment.Namespace, Name: deployment.Name}
@@ -1877,6 +1925,7 @@ func waitForDeploymentEnvVar(t *testing.T, cl client.Client, deployment *appsv1.
 						return v.Value == value, nil
 					}
 				}
+				return len(value) == 0, nil
 			}
 		}
 		return false, nil
