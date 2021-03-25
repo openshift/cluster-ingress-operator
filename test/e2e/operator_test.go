@@ -57,7 +57,7 @@ import (
 )
 
 var (
-	nondefaultAvailableConditions = []operatorv1.OperatorCondition{
+	availableConditionsForIngressControllerWithLoadBalancer = []operatorv1.OperatorCondition{
 		{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionTrue},
 		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionTrue},
 		{Type: operatorv1.LoadBalancerReadyIngressConditionType, Status: operatorv1.ConditionTrue},
@@ -66,7 +66,7 @@ var (
 		{Type: ingresscontroller.IngressControllerAdmittedConditionType, Status: operatorv1.ConditionTrue},
 	}
 	// The ingress canary check status condition only applies to the default ingress controller.
-	defaultAvailableConditions = append(nondefaultAvailableConditions, operatorv1.OperatorCondition{Type: ingresscontroller.IngressControllerCanaryCheckSuccessConditionType, Status: operatorv1.ConditionTrue})
+	defaultAvailableConditions = append(availableConditionsForIngressControllerWithLoadBalancer, operatorv1.OperatorCondition{Type: ingresscontroller.IngressControllerCanaryCheckSuccessConditionType, Status: operatorv1.ConditionTrue})
 )
 
 var kclient client.Client
@@ -164,14 +164,14 @@ func TestUserDefinedIngressController(t *testing.T) {
 	}
 	defer assertIngressControllerDeleted(t, kclient, ing)
 
-	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, nondefaultAvailableConditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
 		t.Errorf("failed to observe expected conditions: %v", err)
 	}
 }
 
 func TestUniqueDomainRejection(t *testing.T) {
 	def := &operatorv1.IngressController{}
-	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, defaultName, nondefaultAvailableConditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, defaultName, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -206,7 +206,7 @@ func TestClusterProxyProtocol(t *testing.T) {
 	if err := kclient.Get(context.TODO(), defaultName, ic); err != nil {
 		t.Fatalf("failed to get default ingresscontroller: %v", err)
 	}
-	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, defaultName, nondefaultAvailableConditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, defaultName, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -238,7 +238,7 @@ func TestUpdateDefaultIngressController(t *testing.T) {
 	if err := kclient.Get(context.TODO(), defaultName, ic); err != nil {
 		t.Fatalf("failed to get default ingresscontroller: %v", err)
 	}
-	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, defaultName, nondefaultAvailableConditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, defaultName, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -351,7 +351,7 @@ func TestIngressControllerScale(t *testing.T) {
 	if err := kclient.Get(context.TODO(), defaultName, ic); err != nil {
 		t.Fatalf("failed to get default ingresscontroller: %v", err)
 	}
-	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, defaultName, nondefaultAvailableConditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, defaultName, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -403,7 +403,7 @@ func TestIngressControllerScale(t *testing.T) {
 	}
 
 	// Ensure the ingresscontroller remains available
-	if err := waitForIngressControllerCondition(t, kclient, 2*time.Minute, defaultName, nondefaultAvailableConditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 2*time.Minute, defaultName, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -428,7 +428,7 @@ func TestIngressControllerScale(t *testing.T) {
 
 	// Ensure the ingresscontroller remains available
 	// TODO: assert that the conditions hold steady for some amount of time?
-	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, defaultName, nondefaultAvailableConditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, defaultName, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -484,7 +484,7 @@ func TestDefaultIngressCertificate(t *testing.T) {
 		return
 	}
 
-	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, defaultName, nondefaultAvailableConditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, defaultName, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -550,7 +550,7 @@ func TestPodDisruptionBudgetExists(t *testing.T) {
 		t.Fatalf("failed to get default ingresscontroller: %v", err)
 	}
 
-	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, defaultName, nondefaultAvailableConditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, defaultName, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -613,7 +613,7 @@ func TestInternalLoadBalancer(t *testing.T) {
 	defer assertIngressControllerDeleted(t, kclient, ic)
 
 	// Wait for the load balancer and DNS to be ready.
-	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, nondefaultAvailableConditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -662,7 +662,7 @@ func TestInternalLoadBalancerGlobalAccessGCP(t *testing.T) {
 	defer assertIngressControllerDeleted(t, kclient, ic)
 
 	// Wait for the load balancer and DNS to be ready.
-	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, nondefaultAvailableConditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -1287,7 +1287,7 @@ func TestIngressControllerCustomEndpoints(t *testing.T) {
 		t.Skipf("skipping TestIngressControllerCustomEndpoints test due to platform type: %s", platform.Type)
 	}
 	// The default ingresscontroller should surface the expected status conditions.
-	if err := waitForIngressControllerCondition(t, kclient, 30*time.Second, defaultName, nondefaultAvailableConditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 30*time.Second, defaultName, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
 		t.Fatalf("did not get expected ingress controller conditions: %v", err)
 	}
 	// Ensure an ingresscontroller can be created with custom endpoints.
@@ -1298,7 +1298,7 @@ func TestIngressControllerCustomEndpoints(t *testing.T) {
 	}
 	defer assertIngressControllerDeleted(t, kclient, ic)
 	// Ensure the ingress controller is reporting expected status conditions.
-	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, nondefaultAvailableConditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
 		t.Errorf("failed to observe expected conditions: %v", err)
 	}
 }
@@ -1598,7 +1598,7 @@ func TestNetworkLoadBalancer(t *testing.T) {
 	defer assertIngressControllerDeleted(t, kclient, ic)
 
 	// Wait for the load balancer and DNS to be ready.
-	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, nondefaultAvailableConditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
