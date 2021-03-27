@@ -40,15 +40,19 @@ spec:
           - name: DEFAULT_DESTINATION_CA_PATH
             value: /var/run/configmaps/service-ca/service-ca.crt
           livenessProbe:
-            initialDelaySeconds: 10
             httpGet:
               path: /healthz
               port: 1936
           readinessProbe:
-            initialDelaySeconds: 10
             httpGet:
               path: /healthz/ready
               port: 1936
+          startupProbe:
+            failureThreshold: 120
+            httpGet:
+              path: /healthz/ready
+              port: 1936
+            periodSeconds: 1
           resources:
             requests:
               cpu: 100m
