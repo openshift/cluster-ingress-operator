@@ -105,8 +105,12 @@ var (
 	//
 	// https://kubernetes.io/docs/concepts/services-networking/service/#internal-load-balancer
 	InternalLBAnnotations = map[configv1.PlatformType]map[string]string{
+		// Prior to 4.8, the aws internal LB annotation was set to "0.0.0.0/0".
+		// While "0.0.0.0/0" is valid, the preferred value, according to the
+		// documentation[1], is "true".
+		// [1] https://kubernetes.io/docs/concepts/services-networking/service/#internal-load-balancer
 		configv1.AWSPlatformType: {
-			awsInternalLBAnnotation: "0.0.0.0/0",
+			awsInternalLBAnnotation: "true",
 		},
 		configv1.AzurePlatformType: {
 			// Azure load balancers are not customizable and are set to (2 fail @ 5s interval, 2 healthy)
