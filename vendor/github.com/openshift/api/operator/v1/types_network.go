@@ -332,6 +332,9 @@ type HybridOverlayConfig struct {
 	HybridOverlayVXLANPort *uint32 `json:"hybridOverlayVXLANPort,omitempty"`
 }
 
+type IPsecConfig struct {
+}
+
 // NetworkType describes the network plugin type to configure
 type NetworkType string
 
