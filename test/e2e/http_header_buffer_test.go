@@ -14,7 +14,6 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -182,21 +181,6 @@ func TestHTTPHeaderBufferSize(t *testing.T) {
 		t.Errorf("failed to get ingresscontroller %s: %v", ic.Name, err)
 	}
 
-	// Get the name of the current router pod for the test ingress controller
-	podList := &corev1.PodList{}
-	labels := map[string]string{
-		controller.ControllerDeploymentLabel: "header-buffer-size",
-	}
-	if err := kclient.List(context.TODO(), podList, client.InNamespace(deployment.Namespace), client.MatchingLabels(labels)); err != nil {
-		t.Errorf("failed to list pods for ingress controllers %s: %v", ic.Name, err)
-	}
-
-	if len(podList.Items) != 1 {
-		t.Errorf("expected ingress controller %s to have exactly 1 router pod, but it has %d", ic.Name, len(podList.Items))
-	}
-
-	oldRouterPodName := podList.Items[0].Name
-
 	// Mutate the ic to use header buffer values that are 1/2 the default.
 	ic.Spec.HTTPHeaderBuffer = operatorv1.IngressControllerHTTPHeaderBuffer{
 		HeaderBufferBytes:           16384,
@@ -211,31 +195,18 @@ func TestHTTPHeaderBufferSize(t *testing.T) {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
-	// Wait for the new router pod for the updated ingresscontroller to become ready.
-	pollErr = wait.PollImmediate(2*time.Second, 3*time.Minute, func() (bool, error) {
-		podList := &corev1.PodList{}
-		if err := kclient.List(context.TODO(), podList, client.InNamespace(deployment.Namespace), client.MatchingLabels(labels)); err != nil {
-			t.Errorf("failed to list pods for ingress controllers %s: %v", ic.Name, err)
-		}
+	// Verify that the new router pods have the proper env variables
+	if err := waitForDeploymentEnvVar(t, kclient, deployment, 2*time.Minute, "ROUTER_BUF_SIZE", "16384"); err != nil {
+		t.Fatalf("expected updated router deployment to have correct ROUTER_BUF_SIZE value: %v", err)
+	}
 
-		for _, pod := range podList.Items {
-			if pod.Name == oldRouterPodName {
-				continue
-			}
+	if err := waitForDeploymentEnvVar(t, kclient, deployment, 2*time.Minute, "ROUTER_MAX_REWRITE_SIZE", "4096"); err != nil {
+		t.Fatalf("expected updated router deployment to have correct ROUTER_BUF_SIZE value: %v", err)
+	}
 
-			for _, cond := range pod.Status.Conditions {
-				if cond.Type == corev1.PodReady && cond.Status == corev1.ConditionTrue {
-					return true, nil
-				}
-			}
-
-		}
-		t.Logf("waiting for new router pod for %s to become ready", ic.Name)
-		return false, nil
-	})
-
-	if pollErr != nil {
-		t.Errorf("timed out waiting for new router pod for %s to become ready: %v", ic.Name, pollErr)
+	// Verify that the deployment has successfully rolled out after being updated
+	if err := waitForDeploymentComplete(t, kclient, deployment, 3*time.Minute); err != nil {
+		t.Fatalf("expected updated router deployment to succesfully rollout: %v", err)
 	}
 
 	name = name + "-fail-case"
