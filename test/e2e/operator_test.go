@@ -102,7 +102,6 @@ func TestMain(m *testing.M) {
 		fmt.Printf("failed to get infrastructure config: %v\n", err)
 		os.Exit(1)
 	}
-
 	os.Exit(m.Run())
 }
 

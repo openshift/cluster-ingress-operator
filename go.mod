@@ -19,7 +19,7 @@ require (
 	github.com/kevinburke/go-bindata v3.11.0+incompatible
 	github.com/onsi/ginkgo v1.14.0 // indirect
 	github.com/openshift/api v0.0.0-20210325163602-e37aaed4c278
-	github.com/openshift/library-go v0.0.0-20200423123937-d1360419413d
+	github.com/openshift/library-go v0.0.0-20210324013940-2cbb32340951
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.7.1
 	github.com/spf13/cobra v1.1.1
@@ -32,7 +32,6 @@ require (
 	gopkg.in/fsnotify.v1 v1.4.7
 	gopkg.in/yaml.v2 v2.3.0
 	k8s.io/api v0.20.0
-	k8s.io/apiextensions-apiserver v0.20.0 // indirect
 	k8s.io/apimachinery v0.20.0
 	k8s.io/apiserver v0.20.0
 	k8s.io/client-go v0.20.0
