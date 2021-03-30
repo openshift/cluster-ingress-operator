@@ -14,6 +14,13 @@ GO_BUILD_RECIPE=CGO_ENABLED=0 $(GO) build -o $(BIN) $(GO_GCFLAGS) $(MAIN_PACKAGE
 
 TEST ?= .*
 
+include $(addprefix ./vendor/github.com/openshift/build-machinery-go/make/, \
+    targets/openshift/operator/profile-manifests.mk \
+)
+# Adds verification of profile patches through the 'verify' target
+# as well as a way to update manifests via the 'update' target
+$(call add-profile-manifests,manifests,./profile-patches,./manifests)
+
 .PHONY: build
 build:
 	$(GO_BUILD_RECIPE)
@@ -28,11 +35,14 @@ cluster-build:
 
 # TODO: Add deepcopy generation script/target
 .PHONY: generate
-generate: crd bindata
+generate: update
 
 .PHONY: bindata
 bindata:
 	hack/update-generated-bindata.sh
+
+.PHONY: update
+update: crd bindata
 
 # Generate CRDs from vendored and internal API specs.
 .PHONY: crd
