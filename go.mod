@@ -18,7 +18,7 @@ require (
 	github.com/imdario/mergo v0.3.10 // indirect
 	github.com/kevinburke/go-bindata v3.11.0+incompatible
 	github.com/onsi/ginkgo v1.14.0 // indirect
-	github.com/openshift/api v0.0.0-20210319173601-ab6d2da2c3ef
+	github.com/openshift/api v0.0.0-20210325163602-e37aaed4c278
 	github.com/openshift/library-go v0.0.0-20200423123937-d1360419413d
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.7.1

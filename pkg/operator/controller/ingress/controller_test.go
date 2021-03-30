@@ -374,3 +374,192 @@ func TestValidateHTTPHeaderBufferValues(t *testing.T) {
 		}
 	}
 }
+
+// TestIsProxyProtocolNeeded verifies that IsProxyProtocolNeeded returns the
+// expected values for various platforms and endpoint publishing strategy
+// parameters.
+func TestIsProxyProtocolNeeded(t *testing.T) {
+	var (
+		awsPlatform = configv1.PlatformStatus{
+			Type: configv1.AWSPlatformType,
+		}
+		azurePlatform = configv1.PlatformStatus{
+			Type: configv1.AzurePlatformType,
+		}
+		gcpPlatform = configv1.PlatformStatus{
+			Type: configv1.GCPPlatformType,
+		}
+		bareMetalPlatform = configv1.PlatformStatus{
+			Type: configv1.BareMetalPlatformType,
+		}
+
+		hostNetworkStrategy = operatorv1.EndpointPublishingStrategy{
+			Type: operatorv1.HostNetworkStrategyType,
+		}
+		hostNetworkStrategyWithDefault = operatorv1.EndpointPublishingStrategy{
+			Type: operatorv1.HostNetworkStrategyType,
+			HostNetwork: &operatorv1.HostNetworkStrategy{
+				Protocol: operatorv1.DefaultProtocol,
+			},
+		}
+		hostNetworkStrategyWithTCP = operatorv1.EndpointPublishingStrategy{
+			Type: operatorv1.HostNetworkStrategyType,
+			HostNetwork: &operatorv1.HostNetworkStrategy{
+				Protocol: operatorv1.TCPProtocol,
+			},
+		}
+		hostNetworkStrategyWithPROXY = operatorv1.EndpointPublishingStrategy{
+			Type: operatorv1.HostNetworkStrategyType,
+			HostNetwork: &operatorv1.HostNetworkStrategy{
+				Protocol: operatorv1.ProxyProtocol,
+			},
+		}
+		loadBalancerStrategy = operatorv1.EndpointPublishingStrategy{
+			Type: operatorv1.LoadBalancerServiceStrategyType,
+		}
+		loadBalancerStrategyWithNLB = operatorv1.EndpointPublishingStrategy{
+			Type: operatorv1.LoadBalancerServiceStrategyType,
+			LoadBalancer: &operatorv1.LoadBalancerStrategy{
+				ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+					Type: operatorv1.AWSLoadBalancerProvider,
+					AWS: &operatorv1.AWSLoadBalancerParameters{
+						Type: operatorv1.AWSNetworkLoadBalancer,
+					},
+				},
+			},
+		}
+		nodePortStrategy = operatorv1.EndpointPublishingStrategy{
+			Type: operatorv1.NodePortServiceStrategyType,
+		}
+		nodePortStrategyWithDefault = operatorv1.EndpointPublishingStrategy{
+			Type: operatorv1.NodePortServiceStrategyType,
+			NodePort: &operatorv1.NodePortStrategy{
+				Protocol: operatorv1.DefaultProtocol,
+			},
+		}
+		nodePortStrategyWithTCP = operatorv1.EndpointPublishingStrategy{
+			Type: operatorv1.NodePortServiceStrategyType,
+			NodePort: &operatorv1.NodePortStrategy{
+				Protocol: operatorv1.TCPProtocol,
+			},
+		}
+		nodePortStrategyWithPROXY = operatorv1.EndpointPublishingStrategy{
+			Type: operatorv1.NodePortServiceStrategyType,
+			NodePort: &operatorv1.NodePortStrategy{
+				Protocol: operatorv1.ProxyProtocol,
+			},
+		}
+		privateStrategy = operatorv1.EndpointPublishingStrategy{
+			Type: operatorv1.PrivateStrategyType,
+		}
+	)
+	testCases := []struct {
+		description string
+		strategy    *operatorv1.EndpointPublishingStrategy
+		platform    *configv1.PlatformStatus
+		expect      bool
+		expectError bool
+	}{
+
+		{
+			description: "nil platformStatus should cause an error",
+			strategy:    &loadBalancerStrategy,
+			platform:    nil,
+			expectError: true,
+		},
+		{
+			description: "hostnetwork strategy shouldn't use PROXY",
+			strategy:    &hostNetworkStrategy,
+			platform:    &bareMetalPlatform,
+			expect:      false,
+		},
+		{
+			description: "hostnetwork strategy specifying default shouldn't use PROXY",
+			strategy:    &hostNetworkStrategyWithDefault,
+			platform:    &bareMetalPlatform,
+			expect:      false,
+		},
+		{
+			description: "hostnetwork strategy specifying TCP shouldn't use PROXY",
+			strategy:    &hostNetworkStrategyWithTCP,
+			platform:    &bareMetalPlatform,
+			expect:      false,
+		},
+		{
+			description: "hostnetwork strategy specifying PROXY should use PROXY",
+			strategy:    &hostNetworkStrategyWithPROXY,
+			platform:    &bareMetalPlatform,
+			expect:      true,
+		},
+		{
+			description: "loadbalancer strategy with ELB should use PROXY",
+			strategy:    &loadBalancerStrategy,
+			platform:    &awsPlatform,
+			expect:      true,
+		},
+		{
+			description: "loadbalancer strategy with NLB shouldn't use PROXY",
+			strategy:    &loadBalancerStrategyWithNLB,
+			platform:    &awsPlatform,
+			expect:      false,
+		},
+		{
+			description: "loadbalancer strategy shouldn't use PROXY on Azure",
+			strategy:    &loadBalancerStrategy,
+			platform:    &azurePlatform,
+			expect:      false,
+		},
+		{
+			description: "loadbalancer strategy shouldn't use PROXY on GCP",
+			strategy:    &loadBalancerStrategy,
+			platform:    &gcpPlatform,
+			expect:      false,
+		},
+		{
+			description: "empty nodeport strategy shouldn't use PROXY",
+			strategy:    &nodePortStrategy,
+			platform:    &awsPlatform,
+			expect:      false,
+		},
+		{
+			description: "nodeport strategy specifying default shouldn't use PROXY",
+			strategy:    &nodePortStrategyWithDefault,
+			platform:    &awsPlatform,
+			expect:      false,
+		},
+		{
+			description: "nodeport strategy specifying TCP shouldn't use PROXY",
+			strategy:    &nodePortStrategyWithTCP,
+			platform:    &awsPlatform,
+			expect:      false,
+		},
+		{
+			description: "nodeport strategy specifying PROXY should use PROXY",
+			strategy:    &nodePortStrategyWithPROXY,
+			platform:    &awsPlatform,
+			expect:      true,
+		},
+		{
+			description: "private strategy shouldn't use PROXY",
+			strategy:    &privateStrategy,
+			platform:    &awsPlatform,
+			expect:      false,
+		},
+	}
+
+	for _, tc := range testCases {
+		ic := &operatorv1.IngressController{
+			Status: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: tc.strategy,
+			},
+		}
+		switch actual, err := IsProxyProtocolNeeded(ic, tc.platform); {
+		case tc.expectError && err == nil:
+			t.Errorf("%q: expected error, got nil", tc.description)
+		case !tc.expectError && err != nil:
+			t.Errorf("%q: unexpected error: %v", tc.description, err)
+		case tc.expect != actual:
+			t.Errorf("%q: expected %t, got %t", tc.description, tc.expect, actual)
+		}
+	}
+}

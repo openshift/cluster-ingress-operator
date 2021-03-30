@@ -366,9 +366,19 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, infraConfig 
 			}
 		}
 	case operatorv1.NodePortServiceStrategyType:
-		// No parameters.
+		if effectiveStrategy.NodePort == nil {
+			effectiveStrategy.NodePort = &operatorv1.NodePortStrategy{}
+		}
+		if effectiveStrategy.NodePort.Protocol == operatorv1.DefaultProtocol {
+			effectiveStrategy.NodePort.Protocol = operatorv1.TCPProtocol
+		}
 	case operatorv1.HostNetworkStrategyType:
-		// No parameters.
+		if effectiveStrategy.HostNetwork == nil {
+			effectiveStrategy.HostNetwork = &operatorv1.HostNetworkStrategy{}
+		}
+		if effectiveStrategy.HostNetwork.Protocol == operatorv1.DefaultProtocol {
+			effectiveStrategy.HostNetwork.Protocol = operatorv1.TCPProtocol
+		}
 	case operatorv1.PrivateStrategyType:
 		// No parameters.
 	}
@@ -383,6 +393,20 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, infraConfig 
 	if specLB != nil && statusLB != nil && specLB.ProviderParameters != nil && statusLB.ProviderParameters != nil &&
 		specLB.ProviderParameters.GCP != statusLB.ProviderParameters.GCP {
 		ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.GCP = effectiveStrategy.LoadBalancer.ProviderParameters.GCP
+		return true
+	}
+
+	// Update if PROXY protocol is turned on or off.
+	statusNP := ic.Status.EndpointPublishingStrategy.NodePort
+	specNP := effectiveStrategy.NodePort
+	if specNP != nil && statusNP != nil && specNP.Protocol != statusNP.Protocol {
+		statusNP.Protocol = specNP.Protocol
+		return true
+	}
+	statusHN := ic.Status.EndpointPublishingStrategy.HostNetwork
+	specHN := effectiveStrategy.HostNetwork
+	if specHN != nil && statusHN != nil && specHN.Protocol != statusHN.Protocol {
+		statusHN.Protocol = specHN.Protocol
 		return true
 	}
 
@@ -757,10 +781,11 @@ func IsProxyProtocolNeeded(ic *operatorv1.IngressController, platform *configv1.
 		return false, fmt.Errorf("platform status is missing; failed to determine if proxy protocol is needed for %s/%s",
 			ic.Namespace, ic.Name)
 	}
-	// For now, check if we are on AWS. This can really be done for for any external
-	// [cloud] LBs that support the proxy protocol.
-	if platform.Type == configv1.AWSPlatformType {
-		if ic.Status.EndpointPublishingStrategy.Type == operatorv1.LoadBalancerServiceStrategyType {
+	switch ic.Status.EndpointPublishingStrategy.Type {
+	case operatorv1.LoadBalancerServiceStrategyType:
+		// For now, check if we are on AWS. This can really be done for for any external
+		// [cloud] LBs that support the proxy protocol.
+		if platform.Type == configv1.AWSPlatformType {
 			if ic.Status.EndpointPublishingStrategy.LoadBalancer == nil ||
 				ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters == nil ||
 				ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS == nil ||
@@ -768,6 +793,14 @@ func IsProxyProtocolNeeded(ic *operatorv1.IngressController, platform *configv1.
 					ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.Type == operatorv1.AWSClassicLoadBalancer {
 				return true, nil
 			}
+		}
+	case operatorv1.HostNetworkStrategyType:
+		if ic.Status.EndpointPublishingStrategy.HostNetwork != nil {
+			return ic.Status.EndpointPublishingStrategy.HostNetwork.Protocol == operatorv1.ProxyProtocol, nil
+		}
+	case operatorv1.NodePortServiceStrategyType:
+		if ic.Status.EndpointPublishingStrategy.NodePort != nil {
+			return ic.Status.EndpointPublishingStrategy.NodePort.Protocol == operatorv1.ProxyProtocol, nil
 		}
 	}
 	return false, nil
