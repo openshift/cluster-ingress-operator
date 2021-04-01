@@ -7,6 +7,7 @@ import (
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	grpctestserver "github.com/openshift/cluster-ingress-operator/test/grpc"
+	httphealthcheck "github.com/openshift/cluster-ingress-operator/test/http"
 	http2testserver "github.com/openshift/cluster-ingress-operator/test/http2"
 )
 
@@ -16,7 +17,7 @@ func main() {
 	var rootCmd = &cobra.Command{Use: "ingress-operator"}
 	rootCmd.AddCommand(NewStartCommand())
 	rootCmd.AddCommand(NewRenderCommand())
-	rootCmd.AddCommand(NewServeHealthCheckCommand())
+	rootCmd.AddCommand(httphealthcheck.NewServeHealthCheckCommand())
 	rootCmd.AddCommand(&cobra.Command{
 		Use:   "serve-grpc-test-server",
 		Short: "serve gRPC interoperability test server",
