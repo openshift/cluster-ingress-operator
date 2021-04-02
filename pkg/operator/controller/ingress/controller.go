@@ -590,8 +590,8 @@ func filterTLS13Ciphers(ciphers []string) []string {
 // validateHTTPHeaderBufferValues validates the given ingresscontroller's header buffer
 // size configuration, if it specifies one.
 func validateHTTPHeaderBufferValues(ic *operatorv1.IngressController) error {
-	bufSize := int(ic.Spec.HTTPHeaderBuffer.HeaderBufferBytes)
-	maxRewrite := int(ic.Spec.HTTPHeaderBuffer.HeaderBufferMaxRewriteBytes)
+	bufSize := int(ic.Spec.TuningOptions.HeaderBufferBytes)
+	maxRewrite := int(ic.Spec.TuningOptions.HeaderBufferMaxRewriteBytes)
 
 	if bufSize == 0 && maxRewrite == 0 {
 		return nil

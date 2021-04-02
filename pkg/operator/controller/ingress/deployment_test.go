@@ -300,7 +300,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 			"Cache-Control",
 		},
 	}
-	ci.Spec.HTTPHeaderBuffer = operatorv1.IngressControllerHTTPHeaderBuffer{
+	ci.Spec.TuningOptions = operatorv1.IngressControllerTuningOptions{
 		HeaderBufferBytes:           16384,
 		HeaderBufferMaxRewriteBytes: 4096,
 	}

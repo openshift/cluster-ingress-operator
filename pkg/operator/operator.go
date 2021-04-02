@@ -53,24 +53,6 @@ type Operator struct {
 	namespace string
 }
 
-type newClientBuilder struct{}
-
-// controller-runtime v0.7.0 manager.New(...) requires manager.Options.ClientBuilder{} to be
-// specified instead of the previously used manager.Options.NewClient(...) function.
-// Create a newClientBuilder type that fits the manager.ClientBuilder interface
-// so that a non-caching client can be used everywhere (instead of the default cache created by the
-// default ClientBuilder).
-func (n *newClientBuilder) Build(_ cache.Cache, config *rest.Config, options client.Options) (client.Client, error) {
-	return client.New(config, options)
-}
-
-// controller-runtime v0.7.0 manager.ClientBuilder interface requires this function
-// to be implemented, even if Build(...) ignores any cache parameters.
-// Short circuit the uncaching logic by returning the unmodified ClientBuilder.
-func (n *newClientBuilder) WithUncached(objs ...client.Object) manager.ClientBuilder {
-	return n
-}
-
 // New creates (but does not start) a new operator from configuration.
 func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, error) {
 	scheme := operatorclient.GetScheme()
@@ -93,7 +75,9 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		// return the updated resource. All client consumers will need audited to
 		// ensure they are tolerant of stale data (or we need a cache or client that
 		// makes stronger coherence guarantees).
-		ClientBuilder: &newClientBuilder{},
+		NewClient: func(_ cache.Cache, config *rest.Config, options client.Options, uncachedObjects ...client.Object) (client.Client, error) {
+			return client.New(config, options)
+		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create operator manager: %v", err)

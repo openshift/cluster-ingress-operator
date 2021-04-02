@@ -32,7 +32,7 @@ func TestHTTPHeaderBufferSize(t *testing.T) {
 	ic := newPrivateController(icName, domain)
 	// Create an ingress controller with header buffer values that are 2x
 	// the defaults.
-	ic.Spec.HTTPHeaderBuffer = operatorv1.IngressControllerHTTPHeaderBuffer{
+	ic.Spec.TuningOptions = operatorv1.IngressControllerTuningOptions{
 		HeaderBufferBytes:           65536,
 		HeaderBufferMaxRewriteBytes: 16384,
 	}
@@ -102,7 +102,7 @@ func TestHTTPHeaderBufferSize(t *testing.T) {
 	// Generate an arbitrary request header with random phony data.
 	// Use a random string with length reasonably close to the
 	// buffer limits to save space for other headers.
-	length := int(ic.Spec.HTTPHeaderBuffer.HeaderBufferBytes-ic.Spec.HTTPHeaderBuffer.HeaderBufferMaxRewriteBytes) - 1024
+	length := int(ic.Spec.TuningOptions.HeaderBufferBytes-ic.Spec.TuningOptions.HeaderBufferMaxRewriteBytes) - 1024
 	random := randomString(length)
 
 	testHeaderName := "test-random-data-header"
@@ -198,7 +198,7 @@ func TestHTTPHeaderBufferSize(t *testing.T) {
 	oldRouterPodName := podList.Items[0].Name
 
 	// Mutate the ic to use header buffer values that are 1/2 the default.
-	ic.Spec.HTTPHeaderBuffer = operatorv1.IngressControllerHTTPHeaderBuffer{
+	ic.Spec.TuningOptions = operatorv1.IngressControllerTuningOptions{
 		HeaderBufferBytes:           16384,
 		HeaderBufferMaxRewriteBytes: 4096,
 	}

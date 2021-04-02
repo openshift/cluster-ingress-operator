@@ -666,14 +666,14 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 
 	// Apply HTTP Header Buffer size values to env
 	// when they are specified.
-	if ci.Spec.HTTPHeaderBuffer.HeaderBufferBytes != 0 {
+	if ci.Spec.TuningOptions.HeaderBufferBytes != 0 {
 		env = append(env, corev1.EnvVar{Name: RouterHeaderBufferSize, Value: strconv.Itoa(
-			int(ci.Spec.HTTPHeaderBuffer.HeaderBufferBytes))})
+			int(ci.Spec.TuningOptions.HeaderBufferBytes))})
 	}
 
-	if ci.Spec.HTTPHeaderBuffer.HeaderBufferMaxRewriteBytes != 0 {
+	if ci.Spec.TuningOptions.HeaderBufferMaxRewriteBytes != 0 {
 		env = append(env, corev1.EnvVar{Name: RouterHeaderBufferMaxRewriteSize, Value: strconv.Itoa(
-			int(ci.Spec.HTTPHeaderBuffer.HeaderBufferMaxRewriteBytes))})
+			int(ci.Spec.TuningOptions.HeaderBufferMaxRewriteBytes))})
 	}
 
 	deployment.Spec.Template.Spec.Volumes = volumes
