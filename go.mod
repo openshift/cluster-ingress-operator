@@ -29,6 +29,7 @@ require (
 	gomodules.xyz/jsonpatch/v2 v2.1.0 // indirect
 	google.golang.org/api v0.20.0
 	google.golang.org/appengine v1.6.6 // indirect
+	google.golang.org/grpc v1.27.1
 	gopkg.in/fsnotify.v1 v1.4.7
 	gopkg.in/yaml.v2 v2.3.0
 	k8s.io/api v0.20.0
