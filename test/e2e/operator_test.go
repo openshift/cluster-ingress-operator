@@ -42,6 +42,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -57,6 +58,11 @@ import (
 )
 
 var (
+	availableConditionsForPrivateIngressController = []operatorv1.OperatorCondition{
+		{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionTrue},
+		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
+		{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionFalse},
+	}
 	availableConditionsForIngressControllerWithNodePort = []operatorv1.OperatorCondition{
 		{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionTrue},
 		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
@@ -801,12 +807,7 @@ func TestTLSSecurityProfile(t *testing.T) {
 		t.Fatalf("failed to create ingresscontroller %s: %v", name, err)
 	}
 	defer assertIngressControllerDeleted(t, kclient, ic)
-	conditions := []operatorv1.OperatorCondition{
-		{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionTrue},
-		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
-		{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionFalse},
-	}
-	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, conditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, availableConditionsForPrivateIngressController...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -870,12 +871,7 @@ func TestRouteAdmissionPolicy(t *testing.T) {
 		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
 	}
 	defer assertIngressControllerDeleted(t, kclient, ic)
-	conditions := []operatorv1.OperatorCondition{
-		{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionTrue},
-		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
-		{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionFalse},
-	}
-	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, conditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -1192,12 +1188,7 @@ $ModLoad omstdout.so
 		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
 	}
 	defer assertIngressControllerDeleted(t, kclient, ic)
-	conditions := []operatorv1.OperatorCondition{
-		{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionTrue},
-		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
-		{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionFalse},
-	}
-	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, conditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -1256,12 +1247,7 @@ func TestContainerLogging(t *testing.T) {
 		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
 	}
 	defer assertIngressControllerDeleted(t, kclient, ic)
-	conditions := []operatorv1.OperatorCondition{
-		{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionTrue},
-		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
-		{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionFalse},
-	}
-	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, conditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 }
@@ -1671,12 +1657,7 @@ func TestUniqueIdHeader(t *testing.T) {
 		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
 	}
 	defer assertIngressControllerDeleted(t, kclient, ic)
-	conditions := []operatorv1.OperatorCondition{
-		{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionTrue},
-		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
-		{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionFalse},
-	}
-	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, conditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -1779,6 +1760,47 @@ func TestUniqueIdHeader(t *testing.T) {
 		if count != 1 {
 			t.Errorf("expected each x-unique-id header to be unique, found %d occurrences of %q", count, header)
 		}
+	}
+}
+
+// TestLoadBalancingAlgorithmUnsupportedConfigOverride verifies that the
+// operator configures router pod replicas to use the "leastconn" load-balancing
+// algorithm if the ingresscontroller is so configured using an unsupported
+// config override.
+func TestLoadBalancingAlgorithmUnsupportedConfigOverride(t *testing.T) {
+	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "leastconn"}
+	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
+	ic := newPrivateController(icName, domain)
+	if err := kclient.Create(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to create ingresscontroller: %v", err)
+	}
+	defer assertIngressControllerDeleted(t, kclient, ic)
+
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
+		t.Errorf("failed to observe expected conditions: %w", err)
+	}
+
+	if err := kclient.Get(context.TODO(), icName, ic); err != nil {
+		t.Fatalf("failed to get ingresscontroller: %v", err)
+	}
+	deployment := &appsv1.Deployment{}
+	if err := kclient.Get(context.TODO(), controller.RouterDeploymentName(ic), deployment); err != nil {
+		t.Fatalf("failed to get ingresscontroller deployment: %v", err)
+	}
+	expectedAlgorithm := "random"
+	if err := waitForDeploymentEnvVar(t, kclient, deployment, 30*time.Second, "ROUTER_LOAD_BALANCE_ALGORITHM", expectedAlgorithm); err != nil {
+		t.Fatalf("expected initial deployment to use the %q algorithm: %v", expectedAlgorithm, err)
+	}
+
+	ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
+		Raw: []byte(`{"loadBalancingAlgorithm":"leastconn"}`),
+	}
+	if err := kclient.Update(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to update ingresscontroller: %v", err)
+	}
+	expectedAlgorithm = "leastconn"
+	if err := waitForDeploymentEnvVar(t, kclient, deployment, 1*time.Minute, "ROUTER_LOAD_BALANCE_ALGORITHM", expectedAlgorithm); err != nil {
+		t.Fatalf("expected updated deployment to use the %q algorithm: %v", expectedAlgorithm, err)
 	}
 }
 
