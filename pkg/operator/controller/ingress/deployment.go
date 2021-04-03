@@ -425,6 +425,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		// problems or firewall restrictions.
 		deployment.Spec.Template.Spec.Containers[0].LivenessProbe.Handler.HTTPGet.Host = "localhost"
 		deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.Handler.HTTPGet.Host = "localhost"
+		deployment.Spec.Template.Spec.Containers[0].StartupProbe.Handler.HTTPGet.Host = "localhost"
 		deployment.Spec.Template.Spec.DNSPolicy = corev1.DNSClusterFirstWithHostNet
 	}
 
@@ -920,6 +921,7 @@ func hashableDeployment(deployment *appsv1.Deployment, onlyTemplate bool) *appsv
 			Name:            container.Name,
 			LivenessProbe:   hashableProbe(container.LivenessProbe),
 			ReadinessProbe:  hashableProbe(container.ReadinessProbe),
+			StartupProbe:    hashableProbe(container.StartupProbe),
 		}
 	}
 	sort.Slice(containers, func(i, j int) bool {
@@ -1096,6 +1098,7 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 	updated.Spec.Template.Spec.Containers[0].Image = expected.Spec.Template.Spec.Containers[0].Image
 	updated.Spec.Template.Spec.Containers[0].LivenessProbe = expected.Spec.Template.Spec.Containers[0].LivenessProbe
 	updated.Spec.Template.Spec.Containers[0].ReadinessProbe = expected.Spec.Template.Spec.Containers[0].ReadinessProbe
+	updated.Spec.Template.Spec.Containers[0].StartupProbe = expected.Spec.Template.Spec.Containers[0].StartupProbe
 	updated.Spec.Template.Spec.Containers[0].VolumeMounts = expected.Spec.Template.Spec.Containers[0].VolumeMounts
 	updated.Spec.Template.Spec.Tolerations = expected.Spec.Template.Spec.Tolerations
 	updated.Spec.Template.Spec.Affinity = expected.Spec.Template.Spec.Affinity

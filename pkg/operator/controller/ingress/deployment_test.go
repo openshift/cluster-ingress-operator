@@ -249,6 +249,9 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	if len(deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.Handler.HTTPGet.Host) != 0 {
 		t.Errorf("expected empty readiness probe host, got %q", deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.Handler.HTTPGet.Host)
 	}
+	if len(deployment.Spec.Template.Spec.Containers[0].StartupProbe.Handler.HTTPGet.Host) != 0 {
+		t.Errorf("expected empty startup probe host, got %q", deployment.Spec.Template.Spec.Containers[0].StartupProbe.Handler.HTTPGet.Host)
+	}
 
 	checkDeploymentHasContainer(t, deployment, operatorv1.ContainerLoggingSidecarContainerName, false)
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOG_FACILITY", false, "")
@@ -346,6 +349,9 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	if len(deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.Handler.HTTPGet.Host) != 0 {
 		t.Errorf("expected empty readiness probe host, got %q", deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.Handler.HTTPGet.Host)
 	}
+	if len(deployment.Spec.Template.Spec.Containers[0].StartupProbe.Handler.HTTPGet.Host) != 0 {
+		t.Errorf("expected empty startup probe host, got %q", deployment.Spec.Template.Spec.Containers[0].StartupProbe.Handler.HTTPGet.Host)
+	}
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_USE_PROXY_PROTOCOL", true, "true")
 
@@ -408,6 +414,9 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	}
 	if len(deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.Handler.HTTPGet.Host) != 0 {
 		t.Errorf("expected empty readiness probe host, got %q", deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.Handler.HTTPGet.Host)
+	}
+	if len(deployment.Spec.Template.Spec.Containers[0].StartupProbe.Handler.HTTPGet.Host) != 0 {
+		t.Errorf("expected empty startup probe host, got %q", deployment.Spec.Template.Spec.Containers[0].StartupProbe.Handler.HTTPGet.Host)
 	}
 	checkDeploymentDoesNotHaveEnvVar(t, deployment, "ROUTER_USE_PROXY_PROTOCOL")
 
@@ -513,7 +522,10 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		t.Errorf("expected liveness probe host to be \"localhost\", got %q", deployment.Spec.Template.Spec.Containers[0].LivenessProbe.Handler.HTTPGet.Host)
 	}
 	if deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.Handler.HTTPGet.Host != "localhost" {
-		t.Errorf("expected liveness probe host to be \"localhost\", got %q", deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.Handler.HTTPGet.Host)
+		t.Errorf("expected readiness probe host to be \"localhost\", got %q", deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.Handler.HTTPGet.Host)
+	}
+	if deployment.Spec.Template.Spec.Containers[0].StartupProbe.Handler.HTTPGet.Host != "localhost" {
+		t.Errorf("expected startup probe host to be \"localhost\", got %q", deployment.Spec.Template.Spec.Containers[0].StartupProbe.Handler.HTTPGet.Host)
 	}
 
 	if deployment.Spec.Template.Spec.Volumes[0].Secret == nil {
@@ -909,22 +921,44 @@ func TestDeploymentConfigChanged(t *testing.T) {
 				deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.PeriodSeconds = int32(10)
 				deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.SuccessThreshold = int32(1)
 				deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.FailureThreshold = int32(3)
+				deployment.Spec.Template.Spec.Containers[0].StartupProbe.Handler.HTTPGet.Scheme = "HTTP"
+				deployment.Spec.Template.Spec.Containers[0].StartupProbe.TimeoutSeconds = int32(1)
+				deployment.Spec.Template.Spec.Containers[0].StartupProbe.PeriodSeconds = int32(10)
+				deployment.Spec.Template.Spec.Containers[0].StartupProbe.SuccessThreshold = int32(1)
+				deployment.Spec.Template.Spec.Containers[0].StartupProbe.FailureThreshold = int32(3)
 			},
 			expect: false,
 		},
 		{
-			description: "if probe values are set to non-default values",
+			description: "if liveness probe values are set to non-default values",
 			mutate: func(deployment *appsv1.Deployment) {
 				deployment.Spec.Template.Spec.Containers[0].LivenessProbe.Handler.HTTPGet.Scheme = "HTTPS"
 				deployment.Spec.Template.Spec.Containers[0].LivenessProbe.TimeoutSeconds = int32(2)
 				deployment.Spec.Template.Spec.Containers[0].LivenessProbe.PeriodSeconds = int32(20)
 				deployment.Spec.Template.Spec.Containers[0].LivenessProbe.SuccessThreshold = int32(2)
 				deployment.Spec.Template.Spec.Containers[0].LivenessProbe.FailureThreshold = int32(30)
+			},
+			expect: true,
+		},
+		{
+			description: "if readiness probe values are set to non-default values",
+			mutate: func(deployment *appsv1.Deployment) {
 				deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.Handler.HTTPGet.Scheme = "HTTPS"
 				deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.TimeoutSeconds = int32(2)
 				deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.PeriodSeconds = int32(20)
 				deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.SuccessThreshold = int32(2)
 				deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.FailureThreshold = int32(30)
+			},
+			expect: true,
+		},
+		{
+			description: "if startup probe values are set to non-default values",
+			mutate: func(deployment *appsv1.Deployment) {
+				deployment.Spec.Template.Spec.Containers[0].StartupProbe.Handler.HTTPGet.Scheme = "HTTPS"
+				deployment.Spec.Template.Spec.Containers[0].StartupProbe.TimeoutSeconds = int32(2)
+				deployment.Spec.Template.Spec.Containers[0].StartupProbe.PeriodSeconds = int32(20)
+				deployment.Spec.Template.Spec.Containers[0].StartupProbe.SuccessThreshold = int32(2)
+				deployment.Spec.Template.Spec.Containers[0].StartupProbe.FailureThreshold = int32(30)
 			},
 			expect: true,
 		},
@@ -1013,6 +1047,16 @@ func TestDeploymentConfigChanged(t *testing.T) {
 									},
 								},
 								ReadinessProbe: &corev1.Probe{
+									Handler: corev1.Handler{
+										HTTPGet: &corev1.HTTPGetAction{
+											Path: "/healthz/ready",
+											Port: intstr.IntOrString{
+												IntVal: int32(1936),
+											},
+										},
+									},
+								},
+								StartupProbe: &corev1.Probe{
 									Handler: corev1.Handler{
 										HTTPGet: &corev1.HTTPGetAction{
 											Path: "/healthz/ready",
