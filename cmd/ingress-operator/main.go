@@ -7,6 +7,7 @@ import (
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	grpctestserver "github.com/openshift/cluster-ingress-operator/test/grpc"
+	h2specclient "github.com/openshift/cluster-ingress-operator/test/h2spec"
 	httphealthcheck "github.com/openshift/cluster-ingress-operator/test/http"
 	http2testserver "github.com/openshift/cluster-ingress-operator/test/http2"
 )
@@ -34,6 +35,7 @@ func main() {
 			http2testserver.Serve()
 		},
 	})
+	rootCmd.AddCommand(h2specclient.NewClientCommand())
 
 	if err := rootCmd.Execute(); err != nil {
 		log.Error(err, "error")
