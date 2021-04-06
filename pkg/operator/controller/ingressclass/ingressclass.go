@@ -77,21 +77,27 @@ func desiredIngressClass(ingresscontrollerName string, ingressclasses []networki
 	// When creating an IngressClass for the "default" IngressController,
 	// annotate the IngressClass as the default IngressClass if no other
 	// IngressClass has the annotation.
-	if ingresscontrollerName == "default" {
-		const defaultAnnotation = "ingressclass.kubernetes.io/is-default-class"
-		someIngressClassIsDefault := false
-		for _, class := range ingressclasses {
-			if class.Annotations[defaultAnnotation] == "true" {
-				someIngressClassIsDefault = true
-				break
-			}
-		}
-		if !someIngressClassIsDefault {
-			class.ObjectMeta.Annotations = map[string]string{
-				defaultAnnotation: "true",
-			}
-		}
-	}
+	//
+	// TODO This is commented out because it breaks "[sig-network]
+	// IngressClass [Feature:Ingress] should not set default value if no
+	// default IngressClass"; we need to fix that test and then re-enable
+	// this logic.
+	//
+	// if ingresscontrollerName == "default" {
+	// 	const defaultAnnotation = "ingressclass.kubernetes.io/is-default-class"
+	// 	someIngressClassIsDefault := false
+	// 	for _, class := range ingressclasses {
+	// 		if class.Annotations[defaultAnnotation] == "true" {
+	// 			someIngressClassIsDefault = true
+	// 			break
+	// 		}
+	// 	}
+	// 	if !someIngressClassIsDefault {
+	// 		class.ObjectMeta.Annotations = map[string]string{
+	// 			defaultAnnotation: "true",
+	// 		}
+	// 	}
+	// }
 	return true, class
 }
 
