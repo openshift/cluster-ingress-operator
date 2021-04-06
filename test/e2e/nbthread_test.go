@@ -4,12 +4,15 @@ package e2e
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+
+	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -35,13 +38,15 @@ func TestRouteNbthreadIngressController(t *testing.T) {
 		t.Fatalf("failed to get router deployment: %v", err)
 	}
 
+	defaultThreadsStr := strconv.Itoa(ingresscontroller.RouterHAProxyThreadsDefaultValue)
+
 	// by default, the router deployment should have ROUTER_THREADS set to 4
-	if err := waitForDeploymentEnvVar(t, kclient, routerDeployment, nbthreadRouterDeployTimeout, "ROUTER_THREADS", "4"); err != nil {
-		t.Fatalf("expected router deployment to have spec.threading.count unset: %v", err)
+	if err := waitForDeploymentEnvVar(t, kclient, routerDeployment, nbthreadRouterDeployTimeout, "ROUTER_THREADS", defaultThreadsStr); err != nil {
+		t.Fatalf("expected router deployment to set ROUTER_THREADS to %v: %v", ingresscontroller.RouterHAProxyThreadsDefaultValue, err)
 	}
 
-	// set spec.threading.count to a nonstandard value, 7
-	if err := nbthreadSetThreadCount(t, kclient, 1*time.Minute, 7, ic); err != nil {
+	// set spec.tuningOptions.threadCount to a nonstandard value, double the default
+	if err := nbthreadSetThreadCount(t, kclient, 1*time.Minute, ingresscontroller.RouterHAProxyThreadsDefaultValue*2, ic); err != nil {
 		t.Fatalf("failed to update ingresscontroller: %v", err)
 	}
 
@@ -49,18 +54,18 @@ func TestRouteNbthreadIngressController(t *testing.T) {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
-	if err := waitForDeploymentEnvVar(t, kclient, routerDeployment, nbthreadRouterDeployTimeout, "ROUTER_THREADS", "7"); err != nil {
-		t.Fatalf("expected router deployment to set spec.threading.count: %v", err)
+	if err := waitForDeploymentEnvVar(t, kclient, routerDeployment, nbthreadRouterDeployTimeout, "ROUTER_THREADS", strconv.Itoa(ingresscontroller.RouterHAProxyThreadsDefaultValue*2)); err != nil {
+		t.Fatalf("expected router deployment to set ROUTER_THREADS to %v: %v", ingresscontroller.RouterHAProxyThreadsDefaultValue*2, err)
 	}
 
-	// set threading.count to 0, as if it was unset
+	// set spec.tuningOptions.threadCount to 0, as if it was unset
 	if err := nbthreadSetThreadCount(t, kclient, 1*time.Minute, 0, ic); err != nil {
 		t.Fatalf("failed to update ingresscontroller: %v", err)
 	}
 
 	// when set back to default, the router deployment should have ROUTER_THREADS set to 4
-	if err := waitForDeploymentEnvVar(t, kclient, routerDeployment, nbthreadRouterDeployTimeout, "ROUTER_THREADS", "4"); err != nil {
-		t.Fatalf("expected router deployment to have spec.threading.count unset: %v", err)
+	if err := waitForDeploymentEnvVar(t, kclient, routerDeployment, nbthreadRouterDeployTimeout, "ROUTER_THREADS", defaultThreadsStr); err != nil {
+		t.Fatalf("expected router deployment to set ROUTER_THREADS to %v: %v", ingresscontroller.RouterHAProxyThreadsDefaultValue, err)
 	}
 }
 

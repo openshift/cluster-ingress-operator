@@ -3,6 +3,7 @@ package ingress
 import (
 	"fmt"
 	"reflect"
+	"strconv"
 	"testing"
 	"time"
 
@@ -279,6 +280,8 @@ func TestDesiredRouterDeployment(t *testing.T) {
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_H1_CASE_ADJUST", false, "")
 
+	checkDeploymentHasEnvVar(t, deployment, RouterHAProxyThreadsEnvName, true, strconv.Itoa(RouterHAProxyThreadsDefaultValue))
+
 	ci.Spec.Logging = &operatorv1.IngressControllerLogging{
 		Access: &operatorv1.AccessLogging{
 			Destination: operatorv1.LoggingDestination{
@@ -306,6 +309,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	ci.Spec.TuningOptions = operatorv1.IngressControllerTuningOptions{
 		HeaderBufferBytes:           16384,
 		HeaderBufferMaxRewriteBytes: 4096,
+		ThreadCount:                 RouterHAProxyThreadsDefaultValue * 2,
 	}
 	ci.Spec.TLSSecurityProfile = &configv1.TLSSecurityProfile{
 		Type: configv1.TLSProfileCustomType,
@@ -379,6 +383,8 @@ func TestDesiredRouterDeployment(t *testing.T) {
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_BUF_SIZE", true, "16384")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_MAX_REWRITE_SIZE", true, "4096")
+
+	checkDeploymentHasEnvVar(t, deployment, RouterHAProxyThreadsEnvName, true, strconv.Itoa(RouterHAProxyThreadsDefaultValue*2))
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SET_FORWARDED_HEADERS", true, "append")
 
