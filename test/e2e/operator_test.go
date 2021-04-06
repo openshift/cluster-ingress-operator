@@ -38,7 +38,6 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	networkingv1 "k8s.io/api/networking/v1"
 	policyv1beta1 "k8s.io/api/policy/v1beta1"
 
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -165,25 +164,6 @@ func TestClusterOperatorStatusRelatedObjects(t *testing.T) {
 func TestDefaultIngressControllerSteadyConditions(t *testing.T) {
 	if err := waitForIngressControllerCondition(t, kclient, 10*time.Second, defaultName, defaultAvailableConditions...); err != nil {
 		t.Errorf("did not get expected conditions: %v", err)
-	}
-}
-
-// TestDefaultIngressClass verifies that the ingressclass controller has created
-// an ingressclass for the default ingresscontroller.
-func TestDefaultIngressClass(t *testing.T) {
-	name := controller.IngressClassName(manifests.DefaultIngressControllerName)
-	ingressclass := &networkingv1.IngressClass{}
-	if err := kclient.Get(context.TODO(), name, ingressclass); err != nil {
-		t.Errorf("failed to get ingressclass %q: %v", name, err)
-	}
-	const (
-		defaultAnnotation = "ingressclass.kubernetes.io/is-default-class"
-		expected          = "true"
-	)
-	if actual, ok := ingressclass.Annotations[defaultAnnotation]; !ok {
-		t.Fatalf("ingressclass %q has no %q annotation", name, defaultAnnotation)
-	} else if actual != expected {
-		t.Fatalf("expected %q annotation to have value %q, found %q", defaultAnnotation, expected, actual)
 	}
 }
 

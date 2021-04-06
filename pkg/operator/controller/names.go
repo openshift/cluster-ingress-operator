@@ -207,7 +207,3 @@ func CanaryRouteName() types.NamespacedName {
 		Name:      "canary",
 	}
 }
-
-func IngressClassName(ingressControllerName string) types.NamespacedName {
-	return types.NamespacedName{Name: "openshift-" + ingressControllerName}
-}
