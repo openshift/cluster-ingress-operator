@@ -245,6 +245,17 @@ github.com/spf13/pflag
 # github.com/stretchr/testify v1.6.1
 ## explicit
 github.com/stretchr/testify/assert
+# github.com/summerwind/h2spec v0.0.0-20200804131034-70ac22940108
+## explicit
+github.com/summerwind/h2spec
+github.com/summerwind/h2spec/client
+github.com/summerwind/h2spec/config
+github.com/summerwind/h2spec/generic
+github.com/summerwind/h2spec/hpack
+github.com/summerwind/h2spec/http2
+github.com/summerwind/h2spec/log
+github.com/summerwind/h2spec/reporter
+github.com/summerwind/h2spec/spec
 # github.com/tcnksm/go-httpstat v0.2.1-0.20191008022543-e866bb274419
 ## explicit
 github.com/tcnksm/go-httpstat
