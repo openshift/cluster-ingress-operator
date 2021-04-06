@@ -30,6 +30,9 @@ const (
 // roles and roleBindings based on the componentRoutes defined in the ingress resource.
 func TestConfigurableRouteRBAC(t *testing.T) {
 	ingress := &configv1.Ingress{}
+	if err := kclient.Get(context.TODO(), types.NamespacedName{Namespace: "", Name: "cluster"}, ingress); err != nil {
+		t.Fatalf("failed to get ingress resource: %v", err)
+	}
 	defer func() {
 		if err := kclient.Get(context.TODO(), types.NamespacedName{Namespace: "", Name: "cluster"}, ingress); err != nil {
 			t.Fatalf("failed to get ingress resource: %v", err)
@@ -186,6 +189,9 @@ func TestConfigurableRouteRBAC(t *testing.T) {
 // for componentRoutes that include an empty servingCertKeyPairSecret name.
 func TestConfigurableRouteNoSecretNoRBAC(t *testing.T) {
 	ingress := &configv1.Ingress{}
+	if err := kclient.Get(context.TODO(), types.NamespacedName{Namespace: "", Name: "cluster"}, ingress); err != nil {
+		t.Fatalf("failed to get ingress resource: %v", err)
+	}
 	defer func() {
 		if err := kclient.Get(context.TODO(), types.NamespacedName{Namespace: "", Name: "cluster"}, ingress); err != nil {
 			t.Fatalf("failed to get ingress resource: %v", err)
@@ -282,6 +288,9 @@ func TestConfigurableRouteNoSecretNoRBAC(t *testing.T) {
 func TestConfigurableRouteNoConsumingUserNoRBAC(t *testing.T) {
 	// Get the cluster ingress resource.
 	ingress := &configv1.Ingress{}
+	if err := kclient.Get(context.TODO(), types.NamespacedName{Namespace: "", Name: "cluster"}, ingress); err != nil {
+		t.Fatalf("failed to get ingress resource: %v", err)
+	}
 	defer func() {
 		if err := kclient.Get(context.TODO(), types.NamespacedName{Namespace: "", Name: "cluster"}, ingress); err != nil {
 			t.Fatalf("failed to get ingress resource: %v", err)
