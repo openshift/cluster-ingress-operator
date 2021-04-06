@@ -114,6 +114,17 @@ rules:
   verbs:
   - update
 
+- apiGroups:
+  - networking.k8s.io
+  resources:
+  - ingressclasses
+  verbs:
+  - create
+  - get
+  - list
+  - update
+  - watch
+
 # Mirrored from assets/router/metrics/cluster-role.yaml
 - apiGroups:
   - route.openshift.io
