@@ -62,7 +62,7 @@ type reconciler struct {
 	operatorNamespace string
 }
 
-func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, error) {
+func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	ca, err := r.ensureRouterCASecret()
 	if err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to ensure router CA: %v", err)
@@ -71,7 +71,7 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 	result := reconcile.Result{}
 	errs := []error{}
 	ingress := &operatorv1.IngressController{}
-	if err := r.client.Get(context.TODO(), request.NamespacedName, ingress); err != nil {
+	if err := r.client.Get(ctx, request.NamespacedName, ingress); err != nil {
 		if errors.IsNotFound(err) {
 			// The ingress could have been deleted and we're processing a stale queue
 			// item, so ignore and skip.
@@ -83,7 +83,7 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 		log.Info("ingresscontroller domain not set; reconciliation will be skipped", "request", request)
 	} else {
 		deployment := &appsv1.Deployment{}
-		err = r.client.Get(context.TODO(), controller.RouterDeploymentName(ingress), deployment)
+		err = r.client.Get(ctx, controller.RouterDeploymentName(ingress), deployment)
 		if err != nil {
 			if errors.IsNotFound(err) {
 				// All ingresses should have a deployment, so this one may not have been
@@ -117,7 +117,7 @@ func (r *reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 	}
 
 	wildcardServingCertKeySecret := &corev1.Secret{}
-	if err := r.client.Get(context.TODO(), controller.RouterEffectiveDefaultCertificateSecretName(ingress, operatorcontroller.DefaultOperandNamespace), wildcardServingCertKeySecret); err != nil {
+	if err := r.client.Get(ctx, controller.RouterEffectiveDefaultCertificateSecretName(ingress, operatorcontroller.DefaultOperandNamespace), wildcardServingCertKeySecret); err != nil {
 		errs = append(errs, fmt.Errorf("failed to lookup wildcard cert: %v", err))
 		return result, utilerrors.NewAggregate(errs)
 	}

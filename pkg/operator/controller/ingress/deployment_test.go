@@ -14,6 +14,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
@@ -211,6 +212,8 @@ func TestDesiredRouterDeployment(t *testing.T) {
 			deployment.Spec.Template.Spec.Tolerations)
 	}
 
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOAD_BALANCE_ALGORITHM", true, "random")
+
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_USE_PROXY_PROTOCOL", false, "")
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CANONICAL_HOSTNAME", false, "")
@@ -300,7 +303,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 			"Cache-Control",
 		},
 	}
-	ci.Spec.HTTPHeaderBuffer = operatorv1.IngressControllerHTTPHeaderBuffer{
+	ci.Spec.TuningOptions = operatorv1.IngressControllerTuningOptions{
 		HeaderBufferBytes:           16384,
 		HeaderBufferMaxRewriteBytes: 4096,
 	}
@@ -319,6 +322,9 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	}
 	var expectedReplicas int32 = 8
 	ci.Spec.Replicas = &expectedReplicas
+	ci.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
+		Raw: []byte(`{"loadBalancingAlgorithm":"leastconn"}`),
+	}
 	ci.Status.Domain = "example.com"
 	ci.Status.EndpointPublishingStrategy.Type = operatorv1.LoadBalancerServiceStrategyType
 	proxyNeeded, err = IsProxyProtocolNeeded(ci, infraConfig.Status.PlatformStatus)
@@ -353,6 +359,8 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		t.Errorf("expected empty startup probe host, got %q", deployment.Spec.Template.Spec.Containers[0].StartupProbe.Handler.HTTPGet.Host)
 	}
 
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOAD_BALANCE_ALGORITHM", true, "leastconn")
+
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_USE_PROXY_PROTOCOL", true, "true")
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_UNIQUE_ID_HEADER_NAME", true, "unique-id")
@@ -381,6 +389,11 @@ func TestDesiredRouterDeployment(t *testing.T) {
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_IP_V4_V6_MODE", true, "v4v6")
 
+	// Any value for loadBalancingAlgorithm other than "leastconn" should be
+	// ignored.
+	ci.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
+		Raw: []byte(`{"loadBalancingAlgorithm":"source"}`),
+	}
 	ci.Status.EndpointPublishingStrategy.LoadBalancer = &operatorv1.LoadBalancerStrategy{
 		Scope: operatorv1.ExternalLoadBalancer,
 		ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
@@ -418,6 +431,9 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	if len(deployment.Spec.Template.Spec.Containers[0].StartupProbe.Handler.HTTPGet.Host) != 0 {
 		t.Errorf("expected empty startup probe host, got %q", deployment.Spec.Template.Spec.Containers[0].StartupProbe.Handler.HTTPGet.Host)
 	}
+
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOAD_BALANCE_ALGORITHM", true, "random")
+
 	checkDeploymentDoesNotHaveEnvVar(t, deployment, "ROUTER_USE_PROXY_PROTOCOL")
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_UNIQUE_ID_HEADER_NAME", true, "unique-id")

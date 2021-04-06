@@ -14,7 +14,6 @@ import (
 
 	rbacv1 "k8s.io/api/rbac/v1"
 	meta "k8s.io/apimachinery/pkg/api/meta"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 
@@ -417,7 +416,7 @@ func eventuallyUpdateIngressStatus(t *testing.T, ingressStatus configv1.IngressS
 	})
 }
 
-func pollForNumberOfEntriesInList(t *testing.T, list runtime.Object, listOptions []client.ListOption, expectedLength int) error {
+func pollForNumberOfEntriesInList(t *testing.T, list client.ObjectList, listOptions []client.ListOption, expectedLength int) error {
 	t.Helper()
 
 	if !meta.IsListType(list) {
