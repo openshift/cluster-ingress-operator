@@ -21,6 +21,7 @@ require (
 	github.com/prometheus/client_golang v1.9.0
 	github.com/spf13/cobra v1.1.1
 	github.com/stretchr/testify v1.6.1
+	github.com/summerwind/h2spec v0.0.0-20200804131034-70ac22940108
 	github.com/tcnksm/go-httpstat v0.2.1-0.20191008022543-e866bb274419
 	go.uber.org/zap v1.16.0
 	google.golang.org/api v0.20.0
