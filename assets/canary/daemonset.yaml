@@ -6,6 +6,9 @@ apiVersion: apps/v1
 spec:
   progressDeadlineSeconds: 600
   template:
+    metadata:
+      annotations:
+        workload.openshift.io/management: '{"effect": "PreferredDuringScheduling"}'
     spec:
       containers:
         - name: serve-healthcheck-canary

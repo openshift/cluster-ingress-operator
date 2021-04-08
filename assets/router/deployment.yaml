@@ -9,6 +9,7 @@ spec:
     metadata:
       annotations:
         "unsupported.do-not-use.openshift.io/override-liveness-grace-period-seconds": "10"
+        workload.openshift.io/management: '{"effect": "PreferredDuringScheduling"}'
     spec:
       serviceAccountName: router
       # nodeSelector is set at runtime.
