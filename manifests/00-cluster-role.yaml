@@ -120,6 +120,8 @@ rules:
   verbs:
   - create
   - get
+  - list
+  - watch
 
 - apiGroups:
   - config.openshift.io
