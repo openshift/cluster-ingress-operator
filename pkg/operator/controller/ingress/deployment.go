@@ -69,6 +69,8 @@ const (
 
 	RouterHAProxyThreadsEnvName      = "ROUTER_THREADS"
 	RouterHAProxyThreadsDefaultValue = 4
+
+	WorkloadPartitioningManagement = "workload.openshift.io/management"
 )
 
 // ensureRouterDeployment ensures the router deployment exists for a given
@@ -975,8 +977,11 @@ func hashableDeployment(deployment *appsv1.Deployment, onlyTemplate bool) *appsv
 	})
 	hashableDeployment.Spec.Template.Spec.Volumes = volumes
 	hashableDeployment.Spec.Template.Annotations = make(map[string]string)
-	if val, ok := deployment.Spec.Template.Annotations[LivenessGracePeriodSecondsAnnotation]; ok && len(val) > 0 {
-		hashableDeployment.Spec.Template.Annotations[LivenessGracePeriodSecondsAnnotation] = val
+	annotations := []string{LivenessGracePeriodSecondsAnnotation, WorkloadPartitioningManagement}
+	for _, key := range annotations {
+		if val, ok := deployment.Spec.Template.Annotations[key]; ok && len(val) > 0 {
+			hashableDeployment.Spec.Template.Annotations[key] = val
+		}
 	}
 
 	if onlyTemplate {
@@ -1108,11 +1113,14 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 	updated.Spec.Template.Spec.DNSPolicy = expected.Spec.Template.Spec.DNSPolicy
 	updated.Spec.Template.Labels = expected.Spec.Template.Labels
 
-	if val, ok := expected.Spec.Template.Annotations[LivenessGracePeriodSecondsAnnotation]; ok && len(val) > 0 {
-		if updated.Spec.Template.Annotations == nil {
-			updated.Spec.Template.Annotations = make(map[string]string)
+	annotations := []string{LivenessGracePeriodSecondsAnnotation, WorkloadPartitioningManagement}
+	for _, key := range annotations {
+		if val, ok := expected.Spec.Template.Annotations[key]; ok && len(val) > 0 {
+			if updated.Spec.Template.Annotations == nil {
+				updated.Spec.Template.Annotations = make(map[string]string)
+			}
+			updated.Spec.Template.Annotations[key] = val
 		}
-		updated.Spec.Template.Annotations[LivenessGracePeriodSecondsAnnotation] = val
 	}
 
 	updated.Spec.Strategy = expected.Spec.Strategy

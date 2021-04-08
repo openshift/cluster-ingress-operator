@@ -229,7 +229,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 			defaultSecretName, deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName)
 	}
 
-	if expected, got := 1, len(deployment.Spec.Template.Annotations); expected != got {
+	if expected, got := 2, len(deployment.Spec.Template.Annotations); expected != got {
 		t.Errorf("expected len(annotations)=%v, got %v", expected, got)
 	}
 
