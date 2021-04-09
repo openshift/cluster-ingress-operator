@@ -239,6 +239,12 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		t.Errorf("expected annotation %q to be %q, got %q", LivenessGracePeriodSecondsAnnotation, expected, val)
 	}
 
+	if val, ok := deployment.Spec.Template.Annotations[WorkloadPartitioningManagement]; !ok {
+		t.Errorf("missing annotation %q", WorkloadPartitioningManagement)
+	} else if expected := "{\"effect\": \"PreferredDuringScheduling\"}"; expected != val {
+		t.Errorf("expected annotation %q to be %q, got %q", WorkloadPartitioningManagement, expected, val)
+	}
+
 	if deployment.Spec.Template.Spec.HostNetwork != false {
 		t.Error("expected host network to be false")
 	}
@@ -991,6 +997,13 @@ func TestDeploymentConfigChanged(t *testing.T) {
 			},
 			expect: true,
 		},
+		{
+			description: "if management workload partitioning annotation is changed",
+			mutate: func(deployment *appsv1.Deployment) {
+				deployment.Spec.Template.Annotations[WorkloadPartitioningManagement] = "someNewValue"
+			},
+			expect: true,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -1014,6 +1027,9 @@ func TestDeploymentConfigChanged(t *testing.T) {
 					ObjectMeta: metav1.ObjectMeta{
 						Labels: map[string]string{
 							controller.ControllerDeploymentHashLabel: "1",
+						},
+						Annotations: map[string]string{
+							WorkloadPartitioningManagement: "{\"effect\": \"PreferredDuringScheduling\"}",
 						},
 					},
 					Spec: corev1.PodSpec{
