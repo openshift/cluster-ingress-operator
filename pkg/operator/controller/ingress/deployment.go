@@ -66,6 +66,9 @@ const (
 	RouterHardStopAfterAnnotation = "ingress.operator.openshift.io/hard-stop-after"
 
 	LivenessGracePeriodSecondsAnnotation = "unsupported.do-not-use.openshift.io/override-liveness-grace-period-seconds"
+
+	RouterHAProxyThreadsEnvName      = "ROUTER_THREADS"
+	RouterHAProxyThreadsDefaultValue = 4
 )
 
 // ensureRouterDeployment ensures the router deployment exists for a given
@@ -390,7 +393,11 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		env = append(env, corev1.EnvVar{Name: "ROUTER_USE_PROXY_PROTOCOL", Value: "true"})
 	}
 
-	env = append(env, corev1.EnvVar{Name: "ROUTER_THREADS", Value: "4"})
+	threads := RouterHAProxyThreadsDefaultValue
+	if ci.Spec.TuningOptions.ThreadCount > 0 {
+		threads = int(ci.Spec.TuningOptions.ThreadCount)
+	}
+	env = append(env, corev1.EnvVar{Name: RouterHAProxyThreadsEnvName, Value: strconv.Itoa(threads)})
 
 	nodeSelector := map[string]string{
 		"kubernetes.io/os":               "linux",
