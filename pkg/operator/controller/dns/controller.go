@@ -431,11 +431,11 @@ func (r *reconciler) ToDNSRecords(o client.Object) []reconcile.Request {
 	var requests []reconcile.Request
 	records := &operatoringressv1.DNSRecordList{}
 	if err := r.cache.List(context.Background(), records, client.InNamespace(r.config.Namespace)); err != nil {
-		log.Error(err, "failed to list dnsrecords", "related", o.GetSelfLink())
+		log.Error(err, "failed to list dnsrecords", "relatedName", o.GetName(), "relatedNamespace", o.GetNamespace(), "relatedGVK", o.GetObjectKind().GroupVersionKind())
 		return requests
 	}
 	for _, record := range records.Items {
-		log.Info("queueing dnsrecord", "name", record.Name, "related", o.GetSelfLink())
+		log.Info("queueing dnsrecord", "name", record.Name, "relatedName", o.GetName(), "relatedNamespace", o.GetNamespace(), "relatedGVK", o.GetObjectKind().GroupVersionKind())
 		request := reconcile.Request{
 			NamespacedName: types.NamespacedName{
 				Namespace: record.Namespace,

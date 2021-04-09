@@ -101,11 +101,11 @@ func (r *reconciler) ingressConfigToIngressController(o client.Object) []reconci
 	var requests []reconcile.Request
 	controllers := &operatorv1.IngressControllerList{}
 	if err := r.cache.List(context.Background(), controllers, client.InNamespace(r.config.Namespace)); err != nil {
-		log.Error(err, "failed to list ingresscontrollers for ingress", "related", o.GetSelfLink())
+		log.Error(err, "failed to list ingresscontrollers", "relatedName", o.GetName(), "relatedNamespace", o.GetNamespace(), "relatedGVK", o.GetObjectKind().GroupVersionKind())
 		return requests
 	}
 	for _, ic := range controllers.Items {
-		log.Info("queueing ingresscontroller", "name", ic.Name, "related", o.GetSelfLink())
+		log.Info("queueing ingresscontroller", "name", ic.Name, "relatedName", o.GetName(), "relatedNamespace", o.GetNamespace(), "relatedGVK", o.GetObjectKind().GroupVersionKind())
 		request := reconcile.Request{
 			NamespacedName: types.NamespacedName{
 				Namespace: ic.Namespace,
@@ -122,7 +122,7 @@ func enqueueRequestForOwningIngressController(namespace string) handler.EventHan
 		func(a client.Object) []reconcile.Request {
 			labels := a.GetLabels()
 			if ingressName, ok := labels[manifests.OwningIngressControllerLabel]; ok {
-				log.Info("queueing ingress", "name", ingressName, "related", a.GetSelfLink())
+				log.Info("queueing ingress", "name", ingressName, "relatedName", a.GetName(), "relatedNamespace", a.GetNamespace(), "relatedGVK", a.GetObjectKind().GroupVersionKind())
 				return []reconcile.Request{
 					{
 						NamespacedName: types.NamespacedName{

@@ -103,11 +103,11 @@ func (r *reconciler) secretToIngressController(o client.Object) []reconcile.Requ
 	requests := []reconcile.Request{}
 	controllers, err := r.ingressControllersWithSecret(o.GetName())
 	if err != nil {
-		log.Error(err, "failed to list ingresscontrollers for secret", "related", o.GetSelfLink())
+		log.Error(err, "failed to list ingresscontrollers", "relatedName", o.GetName(), "relatedNamespace", o.GetNamespace(), "relatedGVK", o.GetObjectKind().GroupVersionKind())
 		return requests
 	}
 	for _, ic := range controllers {
-		log.Info("queueing ingresscontroller", "name", ic.Name, "related", o.GetSelfLink())
+		log.Info("queueing ingresscontroller", "name", ic.Name, "relatedName", o.GetName(), "relatedNamespace", o.GetNamespace(), "relatedGVK", o.GetObjectKind().GroupVersionKind())
 		request := reconcile.Request{
 			NamespacedName: types.NamespacedName{
 				Namespace: ic.Namespace,
@@ -134,7 +134,7 @@ func (r *reconciler) ingressControllersWithSecret(secretName string) ([]operator
 func (r *reconciler) secretIsInUse(meta metav1.Object) bool {
 	controllers, err := r.ingressControllersWithSecret(meta.GetName())
 	if err != nil {
-		log.Error(err, "failed to list ingresscontrollers for secret", "related", meta.GetSelfLink())
+		log.Error(err, "failed to list ingresscontrollers", "relatedName", meta.GetName(), "relatedNamespace", meta.GetNamespace(), "relatedGVK", corev1.SchemeGroupVersion.WithKind("Secret"))
 		return false
 	}
 	return len(controllers) > 0
@@ -150,7 +150,7 @@ func (r *reconciler) hasSecret(meta metav1.Object, o runtime.Object) bool {
 		if errors.IsNotFound(err) {
 			return false
 		}
-		log.Error(err, "failed to look up secret for ingresscontroller", "name", secretName, "related", meta.GetSelfLink())
+		log.Error(err, "failed to look up secret", "name", secretName, "relatedName", meta.GetName(), "relatedNamespace", meta.GetNamespace(), "relatedGVK", o.GetObjectKind().GroupVersionKind())
 	}
 	return true
 }
