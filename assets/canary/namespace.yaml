@@ -4,3 +4,4 @@ metadata:
   name: openshift-ingress-canary
   annotations:
     openshift.io/node-selector: "" # Override global default node selector
+    workload.openshift.io/allowed: "management"
