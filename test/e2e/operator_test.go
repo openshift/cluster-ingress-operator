@@ -948,10 +948,11 @@ func TestRouteAdmissionPolicy(t *testing.T) {
 			},
 		}
 	}
-	route1Name := types.NamespacedName{Namespace: ns1.Name, Name: "route"}
+	// use unique names for each test route to simplify debugging.
+	route1Name := types.NamespacedName{Namespace: ns1.Name, Name: "route1"}
 	route1 := makeRoute(route1Name, "routeadmission.test.example.com", "/foo")
 
-	route2Name := types.NamespacedName{Namespace: ns2.Name, Name: "route"}
+	route2Name := types.NamespacedName{Namespace: ns2.Name, Name: "route2"}
 	route2 := makeRoute(route2Name, "routeadmission.test.example.com", "/bar")
 
 	admittedCondition := routev1.RouteIngressCondition{Type: routev1.RouteAdmitted, Status: corev1.ConditionTrue}
@@ -964,6 +965,13 @@ func TestRouteAdmissionPolicy(t *testing.T) {
 	if err := waitForRouteIngressConditions(t, kclient, route1Name, ic.Name, admittedCondition); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
+
+	// sleep for a brief second to ensure that route1 and route2 _do not_
+	// have the same creation timestamp. In theory, it's possible for route2
+	// to be created < 1 second after route1 was created. If route1 and
+	// route2 have the same creation timestamp, we cannot determine which
+	// route will ultimately be rejected.
+	time.Sleep(2 * time.Second)
 
 	// The second route should be rejected because the policy is Strict
 	if err := kclient.Create(context.TODO(), route2); err != nil {
@@ -2014,7 +2022,7 @@ func conditionsMatchExpected(expected, actual map[string]string) bool {
 }
 
 func waitForClusterOperatorConditions(t *testing.T, cl client.Client, conditions ...configv1.ClusterOperatorStatusCondition) error {
-	return wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
+	return wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
 		co := &configv1.ClusterOperator{}
 		coName := controller.IngressClusterOperatorName()
 		if err := cl.Get(context.TODO(), coName, co); err != nil {
@@ -2029,7 +2037,7 @@ func waitForClusterOperatorConditions(t *testing.T, cl client.Client, conditions
 }
 
 func waitForRouteIngressConditions(t *testing.T, cl client.Client, routeName types.NamespacedName, routerName string, conditions ...routev1.RouteIngressCondition) error {
-	return wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
+	return wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
 		route := &routev1.Route{}
 		if err := cl.Get(context.TODO(), routeName, route); err != nil {
 			t.Logf("failed to get route %s: %v", routeName.Name, err)
