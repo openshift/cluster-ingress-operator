@@ -1,0 +1,9 @@
+- op: replace
+  path: /metadata/annotations
+  value:
+    config.openshift.io/inject-proxy: ingress-operator
+    include.release.openshift.io/ibm-cloud-managed: "true"
+- op: replace
+  path: /spec/template/spec/nodeSelector
+  value:
+    kubernetes.io/os: linux

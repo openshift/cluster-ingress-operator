@@ -1,6 +1,7 @@
 /ingress-operator
 
 tmp/
+_output/
 
 # Created by https://www.gitignore.io/api/go,vim,emacs,visualstudiocode
 
