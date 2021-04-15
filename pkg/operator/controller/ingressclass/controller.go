@@ -63,7 +63,7 @@ func ingressClassHasIngressController(o client.Object) bool {
 	return class.Spec.Controller == routev1.IngressToRouteIngressClassControllerName &&
 		class.Spec.Parameters != nil &&
 		class.Spec.Parameters.APIGroup != nil &&
-		*class.Spec.Parameters.APIGroup == operatorv1.GroupVersion.String() &&
+		*class.Spec.Parameters.APIGroup == operatorv1.GroupName &&
 		class.Spec.Parameters.Kind == "IngressController"
 }
 
