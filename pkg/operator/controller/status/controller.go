@@ -40,7 +40,7 @@ const (
 	CanaryImageVersionName       = "canary-server"
 	UnknownVersionValue          = "unknown"
 
-	ingressesEqualConditionMessage = "desired and current number of IngressControllers are equal"
+	ingressesEqualConditionMessage = "Desired and current number of IngressControllers are equal"
 
 	controllerName = "status_controller"
 )
