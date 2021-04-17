@@ -389,10 +389,21 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, infraConfig 
 	// Detect changes to GCP LB provider parameters, which is something we can safely roll out.
 	statusLB := ic.Status.EndpointPublishingStrategy.LoadBalancer
 	specLB := effectiveStrategy.LoadBalancer
-	if specLB != nil && statusLB != nil && specLB.ProviderParameters != nil && statusLB.ProviderParameters != nil &&
-		specLB.ProviderParameters.GCP != statusLB.ProviderParameters.GCP {
-		ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.GCP = effectiveStrategy.LoadBalancer.ProviderParameters.GCP
-		return true
+	if specLB != nil && statusLB != nil {
+		// If the ProviderParameters field does not exist for spec or status,
+		// just propagate (or remove) ProviderParameters in it's entirety
+		// (as long as GCP parameters are specified one way or the other).
+		if specLB.ProviderParameters == nil && statusLB.ProviderParameters != nil && statusLB.ProviderParameters.GCP != nil ||
+			specLB.ProviderParameters != nil && specLB.ProviderParameters.GCP != nil && statusLB.ProviderParameters == nil {
+			ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters = specLB.ProviderParameters
+			return true
+		}
+
+		if specLB.ProviderParameters != nil && statusLB.ProviderParameters != nil &&
+			specLB.ProviderParameters.GCP != statusLB.ProviderParameters.GCP {
+			ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.GCP = specLB.ProviderParameters.GCP
+			return true
+		}
 	}
 
 	// Update if PROXY protocol is turned on or off.
