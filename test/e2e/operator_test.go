@@ -169,13 +169,19 @@ func TestDefaultIngressControllerSteadyConditions(t *testing.T) {
 }
 
 // TestDefaultIngressClass verifies that the ingressclass controller has created
-// an ingressclass for the default ingresscontroller.
+// an ingressclass for the default ingresscontroller and recreates the
+// ingressclass if it is deleted.
 func TestDefaultIngressClass(t *testing.T) {
+	// The controller should create a "openshift-default" ingressclass.
 	name := controller.IngressClassName(manifests.DefaultIngressControllerName)
 	ingressclass := &networkingv1.IngressClass{}
 	if err := kclient.Get(context.TODO(), name, ingressclass); err != nil {
-		t.Errorf("failed to get ingressclass %q: %v", name, err)
+		t.Fatalf("failed to get ingressclass %q: %v", name, err)
 	}
+
+	// The controller should have made the "openshift-default" ingressclass
+	// the default ingresclass.
+	//
 	// TODO This is commented out because it breaks "[sig-network]
 	// IngressClass [Feature:Ingress] should not set default value if no
 	// default IngressClass"; we need to fix that test and then re-enable
@@ -190,6 +196,21 @@ func TestDefaultIngressClass(t *testing.T) {
 	// } else if actual != expected {
 	// 	t.Fatalf("expected %q annotation to have value %q, found %q", defaultAnnotation, expected, actual)
 	// }
+
+	// The controller should recreate the ingressclass if it is deleted.
+	if err := kclient.Delete(context.TODO(), ingressclass); err != nil {
+		t.Fatalf("failed to delete ingressclass %q: %v", name, err)
+	}
+	err := wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), name, ingressclass); err != nil {
+			t.Logf("failed to get ingressclass %q: %v", name, err)
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to observe recreated ingressclass %q: %v", name, err)
+	}
 }
 
 func TestUserDefinedIngressController(t *testing.T) {
