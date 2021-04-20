@@ -1054,7 +1054,7 @@ func TestComputeIngressUpgradeableCondition(t *testing.T) {
 			mutate: func(svc *corev1.Service) {
 				svc.Annotations["service.beta.kubernetes.io/load-balancer-source-ranges"] = "10.0.0.0/8"
 			},
-			expect: false,
+			expect: true,
 		},
 		{
 			description: "if the service.beta.kubernetes.io/aws-load-balancer-healthcheck-interval annotation changes",

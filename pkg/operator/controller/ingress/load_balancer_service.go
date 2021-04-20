@@ -402,8 +402,9 @@ func loadBalancerServiceChanged(current, expected *corev1.Service) (bool, *corev
 // service spec was modified externally and if so returns an updated service.
 // This function is similar to loadBalancerServiceChanged but stricter. For
 // example, loadBalancerServiceExternallyModified returns true if the user has
-// modified any annotations whereas loadBalancerServiceChanged ignores changes
-// to most annotations.
+// modified any annotations (other than the
+// "service.beta.kubernetes.io/load-balancer-source-ranges" annotation) whereas
+// loadBalancerServiceChanged ignores changes to most annotations.
 func loadBalancerServiceExternallyModified(current, expected *corev1.Service, platform *configv1.PlatformStatus) (bool, *corev1.Service) {
 	serviceCmpOpts := []cmp.Option{
 		// Ignore fields that the API or other controllers may have
@@ -416,7 +417,18 @@ func loadBalancerServiceExternallyModified(current, expected *corev1.Service, pl
 		cmp.Comparer(cmpServiceAffinity),
 		cmpopts.EquateEmpty(),
 	}
-	if cmp.Equal(current.Annotations, expected.Annotations, cmpopts.EquateEmpty()) && cmp.Equal(current.Spec, expected.Spec, serviceCmpOpts...) {
+	annotationCmpOpts := []cmp.Option{
+		cmpopts.IgnoreMapEntries(func(k, _ string) bool {
+			switch k {
+			case "service.beta.kubernetes.io/load-balancer-source-ranges":
+				return true
+			default:
+				return false
+			}
+		}),
+		cmpopts.EquateEmpty(),
+	}
+	if cmp.Equal(current.Annotations, expected.Annotations, annotationCmpOpts...) && cmp.Equal(current.Spec, expected.Spec, serviceCmpOpts...) {
 		return false, nil
 	}
 
