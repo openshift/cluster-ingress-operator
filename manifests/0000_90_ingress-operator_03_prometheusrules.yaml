@@ -26,4 +26,4 @@ spec:
         labels:
           severity: critical
         annotations:
-          message: "HAProxy metrics are reporting that the router is down"
+          message: "HAProxy metrics are reporting that HAProxy is down on pod {{ $labels.namespace }} / {{ $labels.pod }}"
