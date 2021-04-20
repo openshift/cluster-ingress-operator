@@ -213,6 +213,68 @@ func TestDefaultIngressClass(t *testing.T) {
 	}
 }
 
+// TestCustomIngressClass verifies that the ingressclass controller creates an
+// ingressclass for a custom ingresscontroller and deletes the ingressclass if
+// the ingresscontroller is deleted.
+func TestCustomIngressClass(t *testing.T) {
+	icName := types.NamespacedName{
+		Namespace: operatorNamespace,
+		Name:      "testcustomingressclass",
+	}
+	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
+	ic := newPrivateController(icName, domain)
+	if err := kclient.Create(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
+	}
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
+		t.Errorf("failed to observe expected conditions: %w", err)
+		assertIngressControllerDeleted(t, kclient, ic)
+		t.FailNow()
+	}
+
+	// The controller should create an ingressclass named
+	// "openshift-testcustomingressclass".
+	ingressclassName := controller.IngressClassName(icName.Name)
+	ingressclass := &networkingv1.IngressClass{}
+	err := wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), ingressclassName, ingressclass); err != nil {
+			t.Logf("failed to get ingressclass %q: %v", ingressclassName.Name, err)
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		t.Errorf("failed to get ingressclass %q: %w", ingressclassName.Name, err)
+		assertIngressControllerDeleted(t, kclient, ic)
+		t.FailNow()
+	}
+
+	// The controller should *not* have made the
+	// "openshift-testcustomingressclass" ingressclass the default
+	// ingressclass.
+	const defaultAnnotation = "ingressclass.kubernetes.io/is-default-class"
+	if actual, ok := ingressclass.Annotations[defaultAnnotation]; ok && actual != "false" {
+		t.Errorf("ingressclass %q has annotation %q with value %q", ingressclassName.Name, defaultAnnotation, actual)
+	}
+
+	// The controller should delete the ingressclass if the
+	// ingresscontroller is deleted.
+	assertIngressControllerDeleted(t, kclient, ic)
+	err = wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), ingressclassName, ingressclass); err != nil {
+			if errors.IsNotFound(err) {
+				return true, nil
+			}
+			t.Logf("failed to get ingressclass %q: %v", ingressclassName.Name, err)
+			return false, nil
+		}
+		return false, nil
+	})
+	if err != nil {
+		t.Errorf("failed to observe deletion of ingressclass %q: %v", ingressclassName.Name, err)
+	}
+}
+
 func TestUserDefinedIngressController(t *testing.T) {
 	name := types.NamespacedName{Namespace: operatorNamespace, Name: "test"}
 	ing := newLoadBalancerController(name, name.Name+"."+dnsConfig.Spec.BaseDomain)

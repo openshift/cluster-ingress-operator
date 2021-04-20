@@ -15,15 +15,28 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 // ensureIngressClass ensures an IngressClass exists for the IngressController
-// with the given name.  Returns a Boolean indicating whether the IngressClass
-// exists, the current IngressClass if it does exist, and an error value.
-func (r *reconciler) ensureIngressClass(ingresscontrollerName string, ingressclasses []networkingv1.IngressClass) (bool, *networkingv1.IngressClass, error) {
-	want, desired := desiredIngressClass(ingresscontrollerName, ingressclasses)
+// with the given name if the IngressController exists, or ensures that such an
+// IngressClass doesn't exist if the IngressController does not exist.  Returns
+// a Boolean indicating whether the IngressClass exists, the current
+// IngressClass if it does exist, and an error value.
+func (r *reconciler) ensureIngressClass(icName types.NamespacedName, ingressclasses []networkingv1.IngressClass) (bool, *networkingv1.IngressClass, error) {
+	haveIngressController := false
+	ic := &operatorv1.IngressController{}
+	if err := r.cache.Get(context.TODO(), icName, ic); err != nil {
+		if !errors.IsNotFound(err) {
+			return false, nil, fmt.Errorf("failed to get ingresscontroller: %w", err)
+		}
+	} else if ic.DeletionTimestamp == nil {
+		haveIngressController = true
+	}
 
-	have, current, err := r.currentIngressClass(ingresscontrollerName)
+	want, desired := desiredIngressClass(haveIngressController, icName.Name, ingressclasses)
+
+	have, current, err := r.currentIngressClass(icName.Name)
 	if err != nil {
 		return false, nil, err
 	}
@@ -45,12 +58,12 @@ func (r *reconciler) ensureIngressClass(ingresscontrollerName string, ingresscla
 			return false, nil, fmt.Errorf("failed to create IngressClass: %w", err)
 		}
 		log.Info("created IngressClass", "ingressclass", desired)
-		return r.currentIngressClass(ingresscontrollerName)
+		return r.currentIngressClass(icName.Name)
 	case want && have:
 		if updated, err := r.updateIngressClass(current, desired); err != nil {
 			return true, current, fmt.Errorf("failed to update IngressClass: %w", err)
 		} else if updated {
-			return r.currentIngressClass(ingresscontrollerName)
+			return r.currentIngressClass(icName.Name)
 		}
 	}
 
@@ -59,7 +72,11 @@ func (r *reconciler) ensureIngressClass(ingresscontrollerName string, ingresscla
 
 // desiredIngressClass returns a Boolean indicating whether an IngressClass
 // is desired, as well as the IngressClass if one is desired.
-func desiredIngressClass(ingresscontrollerName string, ingressclasses []networkingv1.IngressClass) (bool, *networkingv1.IngressClass) {
+func desiredIngressClass(haveIngressController bool, ingresscontrollerName string, ingressclasses []networkingv1.IngressClass) (bool, *networkingv1.IngressClass) {
+	if !haveIngressController {
+		return false, nil
+	}
+
 	name := controller.IngressClassName(ingresscontrollerName)
 	class := &networkingv1.IngressClass{
 		ObjectMeta: metav1.ObjectMeta{

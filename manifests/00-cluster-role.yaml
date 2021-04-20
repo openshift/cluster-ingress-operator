@@ -119,11 +119,7 @@ rules:
   resources:
   - ingressclasses
   verbs:
-  - create
-  - get
-  - list
-  - update
-  - watch
+  - '*'
 
 # Mirrored from assets/router/metrics/cluster-role.yaml
 - apiGroups:
