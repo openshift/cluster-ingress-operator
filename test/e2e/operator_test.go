@@ -176,11 +176,11 @@ func TestDefaultIngressClass(t *testing.T) {
 	name := controller.IngressClassName(manifests.DefaultIngressControllerName)
 	ingressclass := &networkingv1.IngressClass{}
 	if err := kclient.Get(context.TODO(), name, ingressclass); err != nil {
-		t.Fatalf("failed to get ingressclass %q: %v", name, err)
+		t.Fatalf("failed to get ingressclass %q: %v", name.Name, err)
 	}
 
 	// The controller should have made the "openshift-default" ingressclass
-	// the default ingresclass.
+	// the default ingressclass.
 	//
 	// TODO This is commented out because it breaks "[sig-network]
 	// IngressClass [Feature:Ingress] should not set default value if no
@@ -192,24 +192,24 @@ func TestDefaultIngressClass(t *testing.T) {
 	// 	expected          = "true"
 	// )
 	// if actual, ok := ingressclass.Annotations[defaultAnnotation]; !ok {
-	// 	t.Fatalf("ingressclass %q has no %q annotation", name, defaultAnnotation)
+	// 	t.Fatalf("ingressclass %q has no %q annotation", name.Name, defaultAnnotation)
 	// } else if actual != expected {
 	// 	t.Fatalf("expected %q annotation to have value %q, found %q", defaultAnnotation, expected, actual)
 	// }
 
 	// The controller should recreate the ingressclass if it is deleted.
 	if err := kclient.Delete(context.TODO(), ingressclass); err != nil {
-		t.Fatalf("failed to delete ingressclass %q: %v", name, err)
+		t.Fatalf("failed to delete ingressclass %q: %v", name.Name, err)
 	}
 	err := wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
 		if err := kclient.Get(context.TODO(), name, ingressclass); err != nil {
-			t.Logf("failed to get ingressclass %q: %v", name, err)
+			t.Logf("failed to get ingressclass %q: %v", name.Name, err)
 			return false, nil
 		}
 		return true, nil
 	})
 	if err != nil {
-		t.Fatalf("failed to observe recreated ingressclass %q: %v", name, err)
+		t.Fatalf("failed to observe recreated ingressclass %q: %v", name.Name, err)
 	}
 }
 
@@ -244,7 +244,7 @@ func TestCustomIngressClass(t *testing.T) {
 		return true, nil
 	})
 	if err != nil {
-		t.Errorf("failed to get ingressclass %q: %w", ingressclassName.Name, err)
+		t.Errorf("failed to get ingressclass %q: %v", ingressclassName.Name, err)
 		assertIngressControllerDeleted(t, kclient, ic)
 		t.FailNow()
 	}
