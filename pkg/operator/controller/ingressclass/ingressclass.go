@@ -23,7 +23,7 @@ import (
 // IngressClass doesn't exist if the IngressController does not exist.  Returns
 // a Boolean indicating whether the IngressClass exists, the current
 // IngressClass if it does exist, and an error value.
-func (r *reconciler) ensureIngressClass(icName types.NamespacedName, ingressclasses []networkingv1.IngressClass) (bool, *networkingv1.IngressClass, error) {
+func (r *reconciler) ensureIngressClass(icName types.NamespacedName, ingressClasses []networkingv1.IngressClass) (bool, *networkingv1.IngressClass, error) {
 	haveIngressController := false
 	ic := &operatorv1.IngressController{}
 	if err := r.cache.Get(context.TODO(), icName, ic); err != nil {
@@ -34,7 +34,7 @@ func (r *reconciler) ensureIngressClass(icName types.NamespacedName, ingressclas
 		haveIngressController = true
 	}
 
-	want, desired := desiredIngressClass(haveIngressController, icName.Name, ingressclasses)
+	want, desired := desiredIngressClass(haveIngressController, icName.Name, ingressClasses)
 
 	have, current, err := r.currentIngressClass(icName.Name)
 	if err != nil {
@@ -72,12 +72,12 @@ func (r *reconciler) ensureIngressClass(icName types.NamespacedName, ingressclas
 
 // desiredIngressClass returns a Boolean indicating whether an IngressClass
 // is desired, as well as the IngressClass if one is desired.
-func desiredIngressClass(haveIngressController bool, ingresscontrollerName string, ingressclasses []networkingv1.IngressClass) (bool, *networkingv1.IngressClass) {
+func desiredIngressClass(haveIngressController bool, ingressControllerName string, ingressClasses []networkingv1.IngressClass) (bool, *networkingv1.IngressClass) {
 	if !haveIngressController {
 		return false, nil
 	}
 
-	name := controller.IngressClassName(ingresscontrollerName)
+	name := controller.IngressClassName(ingressControllerName)
 	class := &networkingv1.IngressClass{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name.Name,
@@ -87,7 +87,7 @@ func desiredIngressClass(haveIngressController bool, ingresscontrollerName strin
 			Parameters: &networkingv1.IngressClassParametersReference{
 				APIGroup: &operatorv1.GroupName,
 				Kind:     "IngressController",
-				Name:     ingresscontrollerName,
+				Name:     ingressControllerName,
 			},
 		},
 	}
@@ -100,10 +100,10 @@ func desiredIngressClass(haveIngressController bool, ingresscontrollerName strin
 	// default IngressClass"; we need to fix that test and then re-enable
 	// this logic.
 	//
-	// if ingresscontrollerName == "default" {
+	// if ingressControllerName == "default" {
 	// 	const defaultAnnotation = "ingressclass.kubernetes.io/is-default-class"
 	// 	someIngressClassIsDefault := false
-	// 	for _, class := range ingressclasses {
+	// 	for _, class := range ingressClasses {
 	// 		if class.Annotations[defaultAnnotation] == "true" {
 	// 			someIngressClassIsDefault = true
 	// 			break
@@ -121,8 +121,8 @@ func desiredIngressClass(haveIngressController bool, ingresscontrollerName strin
 // currentIngressClass returns a Boolean indicating whether an IngressClass
 // exists for the IngressController with the given name, as well as the
 // IngressClass if it does exist and an error value.
-func (r *reconciler) currentIngressClass(ingresscontrollerName string) (bool, *networkingv1.IngressClass, error) {
-	name := controller.IngressClassName(ingresscontrollerName)
+func (r *reconciler) currentIngressClass(ingressControllerName string) (bool, *networkingv1.IngressClass, error) {
+	name := controller.IngressClassName(ingressControllerName)
 	class := &networkingv1.IngressClass{}
 	if err := r.client.Get(context.TODO(), name, class); err != nil {
 		if errors.IsNotFound(err) {
@@ -136,7 +136,7 @@ func (r *reconciler) currentIngressClass(ingresscontrollerName string) (bool, *n
 // updateIngressClass updates an IngressClass.  Returns a Boolean indicating
 // whether the IngressClass was updated, and an error value.
 func (r *reconciler) updateIngressClass(current, desired *networkingv1.IngressClass) (bool, error) {
-	changed, updated := ingressclassChanged(current, desired)
+	changed, updated := ingressClassChanged(current, desired)
 	if !changed {
 		return false, nil
 	}
@@ -150,9 +150,9 @@ func (r *reconciler) updateIngressClass(current, desired *networkingv1.IngressCl
 	return true, nil
 }
 
-// ingressclassChanged checks if the current IngressClass spec matches
+// ingressClassChanged checks if the current IngressClass spec matches
 // the expected spec and if not returns an updated one.
-func ingressclassChanged(current, expected *networkingv1.IngressClass) (bool, *networkingv1.IngressClass) {
+func ingressClassChanged(current, expected *networkingv1.IngressClass) (bool, *networkingv1.IngressClass) {
 	if cmp.Equal(current.Spec, expected.Spec, cmpopts.EquateEmpty()) {
 		return false, nil
 	}
