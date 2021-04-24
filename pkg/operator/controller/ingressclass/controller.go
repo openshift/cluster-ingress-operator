@@ -106,8 +106,8 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		return reconcile.Result{}, errors.Wrap(err, "failed to list ingressclasses")
 	}
 
-	if _, _, err := r.ensureIngressClass(request.NamespacedName.Name, classes.Items); err != nil {
-		return reconcile.Result{}, errors.Wrapf(err, "failed to ensure ingressclass for ingresscontroller %q", request.NamespacedName)
+	if _, _, err := r.ensureIngressClass(request.NamespacedName, classes.Items); err != nil {
+		return reconcile.Result{}, errors.Wrapf(err, "failed to ensure ingressclass for ingresscontroller %q", request.NamespacedName.Name)
 	}
 
 	return reconcile.Result{}, nil
