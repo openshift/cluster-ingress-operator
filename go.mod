@@ -1,6 +1,6 @@
 module github.com/openshift/cluster-ingress-operator
 
-go 1.15
+go 1.16
 
 require (
 	github.com/Azure/azure-sdk-for-go v30.0.0+incompatible
@@ -15,7 +15,7 @@ require (
 	github.com/go-logr/zapr v0.4.0
 	github.com/google/go-cmp v0.5.2
 	github.com/kevinburke/go-bindata v3.11.0+incompatible
-	github.com/openshift/api v0.0.0-20210415190711-38058be7d6ef
+	github.com/openshift/api v0.0.0-20210416094334-c22782737ea0
 	github.com/openshift/build-machinery-go v0.0.0-20210409131504-b1828cc0cdad
 	github.com/openshift/library-go v0.0.0-20210331235027-66936e2fcc52
 	github.com/pkg/errors v0.9.1
@@ -29,10 +29,10 @@ require (
 	google.golang.org/grpc v1.27.1
 	gopkg.in/fsnotify.v1 v1.4.7
 	gopkg.in/yaml.v2 v2.4.0
-	k8s.io/api v0.21.0-rc.0
-	k8s.io/apimachinery v0.21.0-rc.0
-	k8s.io/apiserver v0.21.0-rc.0
-	k8s.io/client-go v0.21.0-rc.0
+	k8s.io/api v0.21.0
+	k8s.io/apimachinery v0.21.0
+	k8s.io/apiserver v0.21.0
+	k8s.io/client-go v0.21.0
 	sigs.k8s.io/controller-runtime v0.9.0-alpha.1
 	sigs.k8s.io/controller-tools v0.4.1
 )
