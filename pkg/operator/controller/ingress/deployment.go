@@ -70,7 +70,7 @@ const (
 	RouterHAProxyThreadsEnvName      = "ROUTER_THREADS"
 	RouterHAProxyThreadsDefaultValue = 4
 
-	WorkloadPartitioningManagement = "workload.openshift.io/management"
+	WorkloadPartitioningManagement = "target.workload.openshift.io/management"
 )
 
 // ensureRouterDeployment ensures the router deployment exists for a given
