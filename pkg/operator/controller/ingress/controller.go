@@ -450,9 +450,9 @@ func hasTLSSecurityProfile(ic *operatorv1.IngressController) bool {
 
 // tlsProfileSpecForSecurityProfile returns a TLS profile spec based on the
 // provided security profile, or the "Intermediate" profile if an unknown
-// or "Modern" security profile type is provided.  Note that the return value
-// must not be mutated by the caller; the caller must make a copy if it needs
-// to mutate the value.
+// security profile type is provided.  Note that the return value must not be
+// mutated by the caller; the caller must make a copy if it needs to mutate the
+// value.
 func tlsProfileSpecForSecurityProfile(profile *configv1.TLSSecurityProfile) *configv1.TLSProfileSpec {
 	if profile != nil {
 		if profile.Type == configv1.TLSProfileCustomType {
@@ -461,10 +461,6 @@ func tlsProfileSpecForSecurityProfile(profile *configv1.TLSSecurityProfile) *con
 			}
 			return &configv1.TLSProfileSpec{}
 		} else if spec, ok := configv1.TLSProfiles[profile.Type]; ok {
-			// TODO remove when haproxy is built with an openssl version that supports tls v1.3.
-			if profile.Type == configv1.TLSProfileModernType {
-				return configv1.TLSProfiles[configv1.TLSProfileIntermediateType]
-			}
 			return spec
 		}
 	}
@@ -531,8 +527,7 @@ var (
 		configv1.VersionTLS10: {},
 		configv1.VersionTLS11: {},
 		configv1.VersionTLS12: {},
-		// TODO: Add VersionTLS13 support after haproxy is built with an openssl
-		//  version that supports tls v1.3.
+		configv1.VersionTLS13: {},
 	}
 
 	// isValidCipher is a regexp for strings that look like cipher names.
@@ -569,8 +564,15 @@ func validateTLSSecurityProfile(ic *operatorv1.IngressController) error {
 		if len(invalidCiphers) != 0 {
 			errs = append(errs, fmt.Errorf("security profile has invalid ciphers: %s", strings.Join(invalidCiphers, ", ")))
 		}
-		if tlsVersion13Ciphers.HasAll(spec.Ciphers...) {
-			errs = append(errs, fmt.Errorf("security profile contains only tls v1.3 cipher suites"))
+		switch spec.MinTLSVersion {
+		case configv1.VersionTLS10, configv1.VersionTLS11, configv1.VersionTLS12:
+			if tlsVersion13Ciphers.HasAll(spec.Ciphers...) {
+				errs = append(errs, fmt.Errorf("security profile specifies minTLSVersion: %s and contains only TLSv1.3 cipher suites", spec.MinTLSVersion))
+			}
+		case configv1.VersionTLS13:
+			if !tlsVersion13Ciphers.HasAny(spec.Ciphers...) {
+				errs = append(errs, fmt.Errorf("security profile specifies minTLSVersion: %s and contains no TLSv1.3 cipher suites", spec.MinTLSVersion))
+			}
 		}
 	}
 
