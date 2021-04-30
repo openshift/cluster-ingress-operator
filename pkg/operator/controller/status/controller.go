@@ -150,9 +150,18 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 
 	co.Status.Versions = r.computeOperatorStatusVersions(oldStatus.Versions, allIngressesAvailable)
 
-	co.Status.Conditions = mergeConditions(co.Status.Conditions, computeOperatorAvailableCondition(allIngressesAvailable))
-	co.Status.Conditions = mergeConditions(co.Status.Conditions, computeOperatorProgressingCondition(allIngressesAvailable, oldStatus.Versions, co.Status.Versions, r.config.OperatorReleaseVersion, r.config.IngressControllerImage, r.config.CanaryImage))
-	co.Status.Conditions = mergeConditions(co.Status.Conditions, computeOperatorDegradedCondition(state.IngressControllers))
+	co.Status.Conditions = mergeConditions(co.Status.Conditions,
+		computeOperatorAvailableCondition(allIngressesAvailable),
+		computeOperatorProgressingCondition(
+			allIngressesAvailable,
+			oldStatus.Versions,
+			co.Status.Versions,
+			r.config.OperatorReleaseVersion,
+			r.config.IngressControllerImage,
+			r.config.CanaryImage,
+		),
+		computeOperatorDegradedCondition(state.IngressControllers),
+	)
 
 	if !operatorStatusesEqual(*oldStatus, co.Status) {
 		if err := r.client.Status().Update(ctx, co); err != nil {
