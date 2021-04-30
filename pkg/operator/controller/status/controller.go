@@ -3,7 +3,6 @@ package status
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/google/go-cmp/cmp"
@@ -16,7 +15,6 @@ import (
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
-	oputil "github.com/openshift/cluster-ingress-operator/pkg/util"
 
 	corev1 "k8s.io/api/core/v1"
 
@@ -151,7 +149,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	co.Status.Versions = r.computeOperatorStatusVersions(oldStatus.Versions, allIngressesAvailable)
 
 	co.Status.Conditions = mergeConditions(co.Status.Conditions,
-		computeOperatorAvailableCondition(allIngressesAvailable),
+		computeOperatorAvailableCondition(state.IngressControllers),
 		computeOperatorProgressingCondition(
 			allIngressesAvailable,
 			oldStatus.Versions,
@@ -288,40 +286,50 @@ func checkAllIngressesAvailable(ingresses []operatorv1.IngressController) bool {
 
 // computeOperatorDegradedCondition computes the operator's current Degraded status state.
 func computeOperatorDegradedCondition(ingresses []operatorv1.IngressController) configv1.ClusterOperatorStatusCondition {
-	degradedIngresses := make(map[*operatorv1.IngressController]operatorv1.OperatorCondition)
-	for i, ingress := range ingresses {
-		for j, cond := range ingress.Status.Conditions {
-			if cond.Type == operatorv1.OperatorStatusTypeDegraded && cond.Status == operatorv1.ConditionTrue {
-				degradedIngresses[&ingresses[i]] = ingress.Status.Conditions[j]
+	degradedCondition := configv1.ClusterOperatorStatusCondition{
+		Type: configv1.OperatorDegraded,
+	}
+
+	foundDefaultIngressController := false
+	for _, ic := range ingresses {
+		if ic.Name != manifests.DefaultIngressControllerName {
+			continue
+		}
+		foundDefaultIngressController = true
+		foundDegradedStatusCondition := false
+		for _, cond := range ic.Status.Conditions {
+			if cond.Type != operatorv1.OperatorStatusTypeDegraded {
+				continue
+			}
+			foundDegradedStatusCondition = true
+			switch cond.Status {
+			case operatorv1.ConditionFalse:
+				degradedCondition.Status = configv1.ConditionFalse
+				degradedCondition.Reason = "IngressNotDegraded"
+				degradedCondition.Message = fmt.Sprintf("The %q ingress controller reports Degraded=False.", ic.Name)
+			case operatorv1.ConditionTrue:
+				degradedCondition.Status = configv1.ConditionTrue
+				degradedCondition.Reason = "IngressDegraded"
+				degradedCondition.Message = fmt.Sprintf("The %q ingress controller reports Degraded=True: %s: %s", ic.Name, cond.Reason, cond.Message)
+			default:
+				degradedCondition.Status = configv1.ConditionUnknown
+				degradedCondition.Reason = "IngressDegradedStatusUnknown"
+				degradedCondition.Message = fmt.Sprintf("The %q ingress controller reports Degraded=%s.", ic.Name, cond.Status)
 			}
 		}
-	}
-	if len(degradedIngresses) == 0 {
-		return configv1.ClusterOperatorStatusCondition{
-			Type:   configv1.OperatorDegraded,
-			Status: configv1.ConditionFalse,
-			Reason: "NoIngressControllersDegraded",
+		if !foundDegradedStatusCondition {
+			degradedCondition.Status = configv1.ConditionUnknown
+			degradedCondition.Reason = "IngressDoesNotHaveDegradedCondition"
+			degradedCondition.Message = fmt.Sprintf("The %q ingress controller is not reporting a Degraded status condition.", ic.Name)
 		}
 	}
-	message := "Some ingresscontrollers are degraded:"
-	// Sort keys so that the result is deterministic.
-	keys := make([]*operatorv1.IngressController, 0, len(degradedIngresses))
-	for ingress := range degradedIngresses {
-		keys = append(keys, ingress)
+	if !foundDefaultIngressController {
+		degradedCondition.Status = configv1.ConditionTrue
+		degradedCondition.Reason = "IngressDoesNotExist"
+		degradedCondition.Message = fmt.Sprintf("The %q ingress controller does not exist.", manifests.DefaultIngressControllerName)
 	}
-	sort.Slice(keys, func(i, j int) bool {
-		return oputil.ObjectLess(&keys[i].ObjectMeta, &keys[j].ObjectMeta)
-	})
-	for _, ingress := range keys {
-		cond := degradedIngresses[ingress]
-		message = fmt.Sprintf("%s ingresscontroller %q is degraded: %s: %s", message, ingress.Name, cond.Reason, cond.Message)
-	}
-	return configv1.ClusterOperatorStatusCondition{
-		Type:    configv1.OperatorDegraded,
-		Status:  configv1.ConditionTrue,
-		Reason:  "IngressControllersDegraded",
-		Message: message,
-	}
+
+	return degradedCondition
 }
 
 // computeOperatorProgressingCondition computes the operator's current Progressing status state.
@@ -385,19 +393,48 @@ func computeOperatorProgressingCondition(allIngressesAvailable bool, oldVersions
 }
 
 // computeOperatorAvailableCondition computes the operator's current Available status state.
-func computeOperatorAvailableCondition(allIngressesAvailable bool) configv1.ClusterOperatorStatusCondition {
+func computeOperatorAvailableCondition(ingresses []operatorv1.IngressController) configv1.ClusterOperatorStatusCondition {
 	availableCondition := configv1.ClusterOperatorStatusCondition{
 		Type: configv1.OperatorAvailable,
 	}
 
-	if allIngressesAvailable {
-		availableCondition.Status = configv1.ConditionTrue
-		availableCondition.Reason = "AsExpected"
-		availableCondition.Message = ingressesEqualConditionMessage
-	} else {
+	foundDefaultIngressController := false
+	for _, ic := range ingresses {
+		if ic.Name != manifests.DefaultIngressControllerName {
+			continue
+		}
+		foundDefaultIngressController = true
+		foundAvailableStatusCondition := false
+		for _, cond := range ic.Status.Conditions {
+			if cond.Type != operatorv1.OperatorStatusTypeAvailable {
+				continue
+			}
+			foundAvailableStatusCondition = true
+			switch cond.Status {
+			case operatorv1.ConditionFalse:
+				availableCondition.Status = configv1.ConditionFalse
+				availableCondition.Reason = "IngressUnavailable"
+				availableCondition.Message = fmt.Sprintf("The %q ingress controller reports Available=False: %s: %s", ic.Name, cond.Reason, cond.Message)
+			case operatorv1.ConditionTrue:
+				availableCondition.Status = configv1.ConditionTrue
+				availableCondition.Reason = "IngressAvailable"
+				availableCondition.Message = fmt.Sprintf("The %q ingress controller reports Available=True.", ic.Name)
+			default:
+				availableCondition.Status = configv1.ConditionUnknown
+				availableCondition.Reason = "IngressAvailableStatusUnknown"
+				availableCondition.Message = fmt.Sprintf("The %q ingress controller reports Available=%s.", ic.Name, cond.Status)
+			}
+		}
+		if !foundAvailableStatusCondition {
+			availableCondition.Status = configv1.ConditionUnknown
+			availableCondition.Reason = "IngressDoesNotHaveAvailableCondition"
+			availableCondition.Message = fmt.Sprintf("The %q ingress controller is not reporting an Available status condition.", ic.Name)
+		}
+	}
+	if !foundDefaultIngressController {
 		availableCondition.Status = configv1.ConditionFalse
-		availableCondition.Reason = "IngressUnavailable"
-		availableCondition.Message = "Not all ingress controllers are available."
+		availableCondition.Reason = "IngressDoesNotExist"
+		availableCondition.Message = fmt.Sprintf("The %q ingress controller does not exist.", manifests.DefaultIngressControllerName)
 	}
 
 	return availableCondition
