@@ -569,8 +569,7 @@ func validateTLSSecurityProfile(ic *operatorv1.IngressController) error {
 		if len(invalidCiphers) != 0 {
 			errs = append(errs, fmt.Errorf("security profile has invalid ciphers: %s", strings.Join(invalidCiphers, ", ")))
 		}
-		filteredCiphers := filterTLS13Ciphers(spec.Ciphers)
-		if len(filteredCiphers) == 0 {
+		if tlsVersion13Ciphers.HasAll(spec.Ciphers...) {
 			errs = append(errs, fmt.Errorf("security profile contains only tls v1.3 cipher suites"))
 		}
 	}
@@ -580,22 +579,6 @@ func validateTLSSecurityProfile(ic *operatorv1.IngressController) error {
 	}
 
 	return utilerrors.NewAggregate(errs)
-}
-
-// filterTLS13Ciphers filters any TLS v1.3 cipher suites from ciphers returning
-// a filtered list of cipher suites.
-func filterTLS13Ciphers(ciphers []string) []string {
-	filteredCiphers := []string{}
-	for i := 0; i < len(ciphers); i++ {
-		exist := false
-		if tlsVersion13Ciphers.Has(ciphers[i]) {
-			exist = true
-		}
-		if !exist {
-			filteredCiphers = append(filteredCiphers, ciphers[i])
-		}
-	}
-	return filteredCiphers
 }
 
 // validateHTTPHeaderBufferValues validates the given ingresscontroller's header buffer
