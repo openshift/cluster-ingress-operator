@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	corev1 "k8s.io/api/core/v1"
 
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
@@ -13,7 +15,58 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/sets"
 )
+
+var (
+	// ingressControllerConditions reports the status conditions of each
+	// IngressController using the ingress_controller_conditions metric.
+	ingressControllerConditions = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "ingress_controller_conditions",
+		Help: "Report the conditions for ingress controllers. 0 is False and 1 is True.",
+	}, []string{"name", "condition"})
+
+	// metricsList is a list of metrics for this package.
+	metricsList = []prometheus.Collector{
+		ingressControllerConditions,
+	}
+)
+
+// reportedConditions is the set of ingresscontroller status conditions that are
+// reported in the ingress_controller_conditions metric.
+var reportedConditions = sets.NewString("Available", "Degraded")
+
+// SetIngressControllerConditionsMetric updates the
+// ingress_controller_conditions metric values for the given IngressController.
+func SetIngressControllerConditionsMetric(ic *operatorv1.IngressController) {
+	for _, c := range ic.Status.Conditions {
+		if !reportedConditions.Has(c.Type) {
+			continue
+		}
+		switch c.Status {
+		case operatorv1.ConditionFalse, operatorv1.ConditionTrue:
+		default:
+			log.V(4).Info("skipping metrics for IngressController condition because it is neither True nor False", "ingresscontroller", ic.Name, "condition_type", c.Type, "condition_status", c.Status)
+			continue
+		}
+		var v float64 = 0
+		if c.Status == operatorv1.ConditionTrue {
+			v = 1
+		}
+		ingressControllerConditions.WithLabelValues(ic.Name, string(c.Type)).Set(v)
+	}
+}
+
+// RegisterMetrics calls prometheus.Register on each metric in metricsList, and
+// returns on errors.
+func RegisterMetrics() error {
+	for _, metric := range metricsList {
+		if err := prometheus.Register(metric); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 // ensureMetricsIntegration ensures that router prometheus metrics is integrated with openshift-monitoring for the given ingresscontroller.
 func (r *reconciler) ensureMetricsIntegration(ci *operatorv1.IngressController, svc *corev1.Service, deploymentRef metav1.OwnerReference) error {
