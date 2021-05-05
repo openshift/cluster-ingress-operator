@@ -699,8 +699,16 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		return fmt.Errorf("failed to ensure cluster role: %v", err)
 	}
 
-	if err := r.ensureRouterNamespace(); err != nil {
+	if _, _, err := r.ensureRouterNamespace(); err != nil {
 		return fmt.Errorf("failed to ensure namespace: %v", err)
+	}
+
+	if err := r.ensureRouterServiceAccount(); err != nil {
+		return fmt.Errorf("failed to ensure service account: %v", err)
+	}
+
+	if err := r.ensureRouterClusterRoleBinding(); err != nil {
+		return fmt.Errorf("failed to ensure cluster role binding: %v", err)
 	}
 
 	var errs []error
