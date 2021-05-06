@@ -15,14 +15,15 @@ import (
 
 func TestDesiredLoadBalancerService(t *testing.T) {
 	testCases := []struct {
-		description          string
-		platform             configv1.PlatformType
-		strategyType         operatorv1.EndpointPublishingStrategyType
-		lbStrategy           operatorv1.LoadBalancerStrategy
-		proxyNeeded          bool
-		expect               bool
-		platformStatus       configv1.PlatformStatus
-		expectedResourceTags string
+		description           string
+		platform              configv1.PlatformType
+		strategyType          operatorv1.EndpointPublishingStrategyType
+		lbStrategy            operatorv1.LoadBalancerStrategy
+		proxyNeeded           bool
+		expect                bool
+		platformStatus        configv1.PlatformStatus
+		expectedResourceTags  string
+		externalTrafficPolicy corev1.ServiceExternalTrafficPolicyType
 	}{
 		{
 			description:  "external classic load balancer with scope for aws platform",
@@ -253,6 +254,17 @@ func TestDesiredLoadBalancerService(t *testing.T) {
 			},
 			expect: true,
 		},
+		{
+			description:  "external load balancer for AWS platform, external traffic policy cluster",
+			platform:     configv1.AWSPlatformType,
+			strategyType: operatorv1.LoadBalancerServiceStrategyType,
+			lbStrategy: operatorv1.LoadBalancerStrategy{
+				Scope: operatorv1.ExternalLoadBalancer,
+			},
+			proxyNeeded:           true,
+			externalTrafficPolicy: corev1.ServiceExternalTrafficPolicyTypeCluster,
+			expect:                true,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -474,9 +486,9 @@ func TestLoadBalancerServiceChanged(t *testing.T) {
 		{
 			description: "if .spec.externalTrafficPolicy changes",
 			mutate: func(svc *corev1.Service) {
-				svc.Spec.ExternalTrafficPolicy = corev1.ServiceExternalTrafficPolicyTypeCluster
+				svc.Spec.ExternalTrafficPolicy = corev1.ServiceExternalTrafficPolicyTypeLocal
 			},
-			expect: false,
+			expect: true,
 		},
 		{
 			description: "if .spec.healthCheckNodePort changes",
@@ -562,7 +574,7 @@ func TestLoadBalancerServiceChanged(t *testing.T) {
 			},
 			Spec: corev1.ServiceSpec{
 				ClusterIP:             "1.2.3.4",
-				ExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyTypeLocal,
+				ExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyTypeCluster,
 				HealthCheckNodePort:   int32(33333),
 				Ports: []corev1.ServicePort{
 					{

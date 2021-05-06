@@ -2,6 +2,7 @@ package ingress
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -298,6 +299,24 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 		}
 		// Azure load balancers are not customizable and are set to (2 fail @ 5s interval, 2 healthy)
 		// GCP load balancers are not customizable and are set to (3 fail @ 8s interval, 1 healthy)
+
+		// ExternalTrafficPolicy default is now Cluster, but can still be overridden, except for IBMCloud
+		if platform.Type != configv1.IBMCloudPlatformType {
+			var unsupportedConfigOverrides struct {
+				ExternalTrafficPolicy string `json:"externalTrafficPolicy"`
+			}
+			if len(ci.Spec.UnsupportedConfigOverrides.Raw) > 0 {
+				if err := json.Unmarshal(ci.Spec.UnsupportedConfigOverrides.Raw, &unsupportedConfigOverrides); err != nil {
+					return true, nil, fmt.Errorf("ingresscontroller %q has invalid spec.unsupportedConfigOverrides: %w", ci.Name, err)
+				}
+			}
+			externalTrafficPolicy := corev1.ServiceExternalTrafficPolicyTypeCluster
+			switch unsupportedConfigOverrides.ExternalTrafficPolicy {
+			case string(corev1.ServiceExternalTrafficPolicyTypeLocal):
+				externalTrafficPolicy = corev1.ServiceExternalTrafficPolicyTypeLocal
+			}
+			service.Spec.ExternalTrafficPolicy = externalTrafficPolicy
+		}
 	}
 
 	service.SetOwnerReferences([]metav1.OwnerReference{deploymentRef})
@@ -400,9 +419,10 @@ func loadBalancerServiceChanged(current, expected *corev1.Service) (bool, *corev
 	updated := current.DeepCopy()
 	changed := false
 
-	// Preserve everything but the AWS LB health check interval annotation &
-	// GCP Global Access internal Load Balancer annotation.
-	// (see <https://bugzilla.redhat.com/show_bug.cgi?id=1908758>).
+	// Preserve everything except:
+	// AWS LB health check interval annotation (see <https://bugzilla.redhat.com/show_bug.cgi?id=1908758>) ,
+	// GCP Global Access internal Load Balancer annotation (see <https://bugzilla.redhat.com/show_bug.cgi?id=1908758>), &
+	// External Traffic Policy (see <https://bugzilla.redhat.com/show_bug.cgi?id=1929396>).
 	// Updating annotations and spec fields cannot be done unless the
 	// previous release blocks upgrades when the user has modified those
 	// fields (see <https://bugzilla.redhat.com/show_bug.cgi?id=1905490>).
@@ -419,6 +439,10 @@ func loadBalancerServiceChanged(current, expected *corev1.Service) (bool, *corev
 		changed = true
 	}
 
+	if current.Spec.ExternalTrafficPolicy != expected.Spec.ExternalTrafficPolicy {
+		updated.Spec.ExternalTrafficPolicy = expected.Spec.ExternalTrafficPolicy
+		changed = true
+	}
 	if !changed {
 		return false, nil
 	}

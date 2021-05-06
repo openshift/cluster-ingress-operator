@@ -1920,6 +1920,81 @@ func TestLoadBalancingAlgorithmUnsupportedConfigOverride(t *testing.T) {
 	}
 }
 
+// NOTE: This test mutates the default ingress controller, otherwise
+// it may get throttled by CI.
+//
+// TestExternalTrafficPolicyConfigOverride verifies that the
+// operator configures router LoadBalancer service to use the "Local"
+// external traffic policy if the ingresscontroller is so configured
+// using an unsupported config override.
+func TestExternalTrafficPolicyConfigOverride(t *testing.T) {
+	if infraConfig.Status.Platform == configv1.IBMCloudPlatformType {
+		t.Skip("test skipped on IBMCloud platform")
+		return
+	}
+
+	ic := &operatorv1.IngressController{}
+	if err := kclient.Get(context.TODO(), defaultName, ic); err != nil {
+		t.Fatalf("failed to get default ingresscontroller: %v", err)
+	}
+
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, defaultName, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	service := &corev1.Service{}
+	if err := kclient.Get(context.TODO(), controller.LoadBalancerServiceName(ic), service); err != nil {
+		t.Fatalf("failed to get ingresscontroller service: %v", err)
+	}
+
+	originalTrafficPolicy := service.Spec.ExternalTrafficPolicy
+	expectedTrafficPolicy := corev1.ServiceExternalTrafficPolicyTypeLocal
+	ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
+		Raw: []byte(`{"externalTrafficPolicy":"Local"}`),
+	}
+
+	if err := kclient.Update(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to update ingresscontroller to traffic policy Local: %v", err)
+	}
+
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, defaultName, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
+		t.Errorf("failed to observe expected conditions: %v", err)
+	}
+
+	if err := waitForServiceUpdate(t, controller.LoadBalancerServiceName(ic), expectedTrafficPolicy); err != nil {
+		t.Errorf("failed to successfully update and revert external traffic policy: %c", err)
+	}
+
+	if err := kclient.Get(context.TODO(), controller.LoadBalancerServiceName(ic), service); err != nil {
+		t.Fatalf("failed to get ingresscontroller service: %v", err)
+	}
+
+	if service.Spec.ExternalTrafficPolicy != expectedTrafficPolicy {
+		t.Fatalf("expected updated service spec to use the %q traffic policy, but it used the %q traffic policy", expectedTrafficPolicy, service.Spec.ExternalTrafficPolicy)
+	}
+
+	if err := kclient.Get(context.TODO(), defaultName, ic); err != nil {
+		t.Fatalf("failed to refresh default ingresscontroller: %v", err)
+	}
+
+	// Remove the changes made to the default ingress controller
+	ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
+		Raw: []byte(`{"externalTrafficPolicy":"Cluster"}`),
+	}
+
+	if err := kclient.Update(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to revert ingresscontroller to default traffic policy: %v", err)
+	}
+
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, defaultName, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
+		t.Errorf("failed to observe expected conditions: %v", err)
+	}
+
+	if err := waitForServiceUpdate(t, controller.LoadBalancerServiceName(ic), originalTrafficPolicy); err != nil {
+		t.Errorf("failed to successfully update and revert external traffic policy: %c", err)
+	}
+}
+
 func newLoadBalancerController(name types.NamespacedName, domain string) *operatorv1.IngressController {
 	repl := int32(1)
 	return &operatorv1.IngressController{
@@ -2067,6 +2142,25 @@ func waitForDeploymentEnvVar(t *testing.T, cl client.Client, deployment *appsv1.
 		}
 		return false, nil
 	})
+	return err
+}
+
+func waitForServiceUpdate(t *testing.T, servicename types.NamespacedName, policy corev1.ServiceExternalTrafficPolicyType) error {
+	service := &corev1.Service{}
+	err := wait.PollImmediate(1*time.Second, 30*time.Second, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), servicename, service); err != nil {
+			t.Logf("failed to get ingresscontroller service to check traffic policy: %v", err)
+			return false, nil
+		}
+		if service.Spec.ExternalTrafficPolicy != policy {
+			return false, nil
+		}
+		return true, nil
+	})
+
+	if service.Spec.ExternalTrafficPolicy != policy {
+		t.Fatalf("expected reverted service spec to use the %q traffic policy, but it used the %q traffic policy", policy, service.Spec.ExternalTrafficPolicy)
+	}
 	return err
 }
 
