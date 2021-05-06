@@ -586,12 +586,15 @@ func TestLoadBalancerServiceChanged(t *testing.T) {
 				Type: corev1.ServiceTypeLoadBalancer,
 			},
 		}
+		platformStatus := &configv1.PlatformStatus{
+			Type: configv1.AWSPlatformType,
+		}
 		mutated := original.DeepCopy()
 		tc.mutate(mutated)
-		if changed, updated := loadBalancerServiceChanged(&original, mutated); changed != tc.expect {
+		if changed, updated := loadBalancerServiceChanged(&original, mutated, platformStatus); changed != tc.expect {
 			t.Errorf("%s, expect loadBalancerServiceChanged to be %t, got %t", tc.description, tc.expect, changed)
 		} else if changed {
-			if changedAgain, _ := loadBalancerServiceChanged(mutated, updated); changedAgain {
+			if changedAgain, _ := loadBalancerServiceChanged(mutated, updated, platformStatus); changedAgain {
 				t.Errorf("%s, loadBalancerServiceChanged does not behave as a fixed point function", tc.description)
 			}
 		}

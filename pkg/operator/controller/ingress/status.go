@@ -44,10 +44,15 @@ type expectedCondition struct {
 
 // syncIngressControllerStatus computes the current status of ic and
 // updates status upon any changes since last sync.
-func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressController, deployment *appsv1.Deployment, pods []corev1.Pod, service *corev1.Service, operandEvents []corev1.Event, wildcardRecord *iov1.DNSRecord, dnsConfig *configv1.DNS) error {
+func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressController, deployment *appsv1.Deployment, pods []corev1.Pod, service *corev1.Service, operandEvents []corev1.Event, wildcardRecord *iov1.DNSRecord, dnsConfig *configv1.DNS, infraConfig *configv1.Infrastructure) error {
 	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
 	if err != nil {
 		return fmt.Errorf("deployment has invalid spec.selector: %v", err)
+	}
+
+	platform, err := oputil.GetPlatformStatus(r.client, infraConfig)
+	if err != nil {
+		return fmt.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %w", ic.Namespace, ic.Name, err)
 	}
 
 	var errs []error
@@ -65,6 +70,7 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressAvailableCondition(updated.Status.Conditions))
 	degradedCondition, err := computeIngressDegradedCondition(updated.Status.Conditions, updated.Name)
 	errs = append(errs, err)
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressProgressingCondition(updated.Status.Conditions, ic, service, platform))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, degradedCondition)
 	updated.Status.Conditions = PruneConditions(updated.Status.Conditions)
 
@@ -536,6 +542,45 @@ func formatConditions(conditions []*operatorv1.OperatorCondition) string {
 	}
 	formatted = formatted[2:]
 	return formatted
+}
+
+// computeIngressProgressingCondition computes the ingresscontroller's
+// "Progressing" status condition, which indicates if the ingresscontroller's
+// current state matches its desired state.
+func computeIngressProgressingCondition(conditions []operatorv1.OperatorCondition, ic *operatorv1.IngressController, service *corev1.Service, platform *configv1.PlatformStatus) operatorv1.OperatorCondition {
+	condition := operatorv1.OperatorCondition{
+		Type:   operatorv1.OperatorStatusTypeProgressing,
+		Status: operatorv1.ConditionFalse,
+	}
+	if ic.Status.EndpointPublishingStrategy.Type == operatorv1.LoadBalancerServiceStrategyType {
+		switch {
+		case ic.Status.EndpointPublishingStrategy.LoadBalancer == nil:
+			condition.Message = "status.endpointPublishingStrategy.loadBalancer is not set."
+			condition.Reason = "IncompleteStatus"
+			condition.Status = operatorv1.ConditionUnknown
+		case service == nil:
+			condition.Message = "LoadBalancer Service not created."
+			condition.Reason = "NoService"
+			condition.Status = operatorv1.ConditionTrue
+		default:
+			wantScope := ic.Status.EndpointPublishingStrategy.LoadBalancer.Scope
+			haveScope := operatorv1.ExternalLoadBalancer
+			if IsServiceInternal(service) {
+				haveScope = operatorv1.InternalLoadBalancer
+			}
+			if wantScope != haveScope {
+				message := fmt.Sprintf("Have load balancer with scope %q, want load balancer with scope %q.", haveScope, wantScope)
+				switch platform.Type {
+				case configv1.AWSPlatformType, configv1.IBMCloudPlatformType:
+					message = fmt.Sprintf("%s  You can delete the %s/%s service to proceed, and the service load-balancer will be deprovisioned and a new one created.  This will most likely cause the new load-balancer to have a different host name and IP address from the old one's.  Alternatively, you can change the IngressController's spec.endpointPublishingStrategy.loadBalancer.scope field value back to its previous value to make this message go away without affecting the load balancer.", message, service.Namespace, service.Name)
+				}
+				condition.Reason = "ScopeChanged"
+				condition.Message = message
+				condition.Status = operatorv1.ConditionTrue
+			}
+		}
+	}
+	return condition
 }
 
 // IngressStatusesEqual compares two IngressControllerStatus values.  Returns true

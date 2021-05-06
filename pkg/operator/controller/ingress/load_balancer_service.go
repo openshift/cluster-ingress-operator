@@ -107,7 +107,7 @@ const (
 )
 
 var (
-	// internalLBAnnotations maps platform to the annotation name and value
+	// InternalLBAnnotations maps platform to the annotation name and value
 	// that tell the cloud provider that is associated with the platform
 	// that the load balancer is internal.
 	//
@@ -141,6 +141,17 @@ var (
 		configv1.VSpherePlatformType: nil,
 		configv1.IBMCloudPlatformType: {
 			iksLBScopeAnnotation: iksLBScopePrivate,
+		},
+	}
+
+	// externalLBAnnotations maps platform to the annotation name and value
+	// that tell the cloud provider that is associated with the platform
+	// that the load balancer is external.  This is the default for most
+	// platforms; only platforms for which it is not the default need
+	// entries in this map.
+	externalLBAnnotations = map[configv1.PlatformType]map[string]string{
+		configv1.IBMCloudPlatformType: {
+			iksLBScopeAnnotation: iksLBScopePublic,
 		},
 	}
 )
@@ -254,6 +265,11 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 					globalAccessEnabled := ci.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.GCP.ClientAccess == operatorv1.GCPGlobalAccess
 					service.Annotations[GCPGlobalAccessAnnotation] = strconv.FormatBool(globalAccessEnabled)
 				}
+			}
+		} else {
+			annotation := externalLBAnnotations[platform.Type]
+			for name, value := range annotation {
+				service.Annotations[name] = value
 			}
 		}
 		switch platform.Type {
@@ -381,7 +397,7 @@ func (r *reconciler) deleteLoadBalancerService(service *corev1.Service, options 
 // updateLoadBalancerService updates a load balancer service.  Returns a Boolean
 // indicating whether the service was updated, and an error value.
 func (r *reconciler) updateLoadBalancerService(current, desired *corev1.Service, platform *configv1.PlatformStatus) (bool, error) {
-	changed, updated := loadBalancerServiceChanged(current, desired)
+	changed, updated := loadBalancerServiceChanged(current, desired, platform)
 	if !changed {
 		return false, nil
 	}
@@ -396,14 +412,15 @@ func (r *reconciler) updateLoadBalancerService(current, desired *corev1.Service,
 
 // loadBalancerServiceChanged checks if the current load balancer service
 // matches the expected and if not returns an updated one.
-func loadBalancerServiceChanged(current, expected *corev1.Service) (bool, *corev1.Service) {
+func loadBalancerServiceChanged(current, expected *corev1.Service, platform *configv1.PlatformStatus) (bool, *corev1.Service) {
 	updated := current.DeepCopy()
 	changed := false
 
-	// Preserve everything but the AWS LB health check interval annotation &
-	// GCP Global Access internal Load Balancer annotation.
-	// (see <https://bugzilla.redhat.com/show_bug.cgi?id=1908758>).
-	// Updating annotations and spec fields cannot be done unless the
+	// Preserve everything but the AWS LB health check interval annotation,
+	// GCP Global Access internal Load Balancer annotation, and
+	// load-balancer scope annotations (see
+	// <https://bugzilla.redhat.com/show_bug.cgi?id=1908758>).  In general,
+	// updating annotations and spec fields cannot be done unless the
 	// previous release blocks upgrades when the user has modified those
 	// fields (see <https://bugzilla.redhat.com/show_bug.cgi?id=1905490>).
 	if updated.Annotations == nil {
@@ -419,9 +436,86 @@ func loadBalancerServiceChanged(current, expected *corev1.Service) (bool, *corev
 		changed = true
 	}
 
+	// When switching between internal scope and external scope, it may be
+	// necessary to delete and recreate the service, depending on the cloud
+	// provider implementation:
+	//
+	// * Azure and GCE can handle changing scope, so updating the annotation
+	//   on the service suffices.
+	//
+	// * AWS cannot handle changing scope, so the service needs to be
+	//   recreated.
+	//
+	// * IBM Cloud may or may not handle scope change.
+	//
+	// Deleting and recreating the service typically causes the existing
+	// service load-balancer to be deprovisioned and a new one to be
+	// provisioned with a new host name and IP address.  This is a
+	// destructive operation that could surprise the cluster administrator,
+	// so the operator must not execute the deletion itself.
+	//
+	// Thus on platforms where deleting and recreating the service is
+	// required, the operator leaves it up to the administrator to delete
+	// the service: when the desired scope changes, the operator reports
+	// "Progressing=True" to inform the administrator of the required
+	// action; then the administrator can either revert the desired scope to
+	// the old value or manually delete the service.  If the administrator
+	// deletes the service, the operator recreates it with the desired
+	// scope, which completes the configuration change.
+	switch platform.Type {
+	case configv1.AWSPlatformType, configv1.IBMCloudPlatformType:
+		// Do nothing; the status reporting code will report
+		// Progressing=True.
+	case configv1.AzurePlatformType, configv1.GCPPlatformType:
+		if loadBalancerServiceScopeChanged(current, expected, platform) {
+			for name := range InternalLBAnnotations[platform.Type] {
+				if v, ok := expected.Annotations[name]; ok {
+					updated.Annotations[name] = v
+					changed = true
+				} else {
+					delete(updated.Annotations, name)
+					changed = true
+				}
+			}
+		}
+	}
+
 	if !changed {
 		return false, nil
 	}
 
 	return true, updated
+}
+
+// loadBalancerServiceScopeChanged checks if the load balancer's scope changed.
+func loadBalancerServiceScopeChanged(current, expected *corev1.Service, platform *configv1.PlatformStatus) bool {
+	currentAnnotations := current.Annotations
+	if currentAnnotations == nil {
+		currentAnnotations = map[string]string{}
+	}
+	expectedAnnotations := expected.Annotations
+	if expectedAnnotations == nil {
+		expectedAnnotations = map[string]string{}
+	}
+	for name := range InternalLBAnnotations[platform.Type] {
+		if currentAnnotations[name] != expectedAnnotations[name] {
+			return true
+		}
+	}
+	return false
+}
+
+// IsServiceInternal returns a Boolean indicating whether the provided service
+// is annotated to request an internal load balancer.
+func IsServiceInternal(service *corev1.Service) bool {
+	for dk, dv := range service.Annotations {
+		for _, annotations := range InternalLBAnnotations {
+			for ik, iv := range annotations {
+				if dk == ik && dv == iv {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
