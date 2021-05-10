@@ -212,7 +212,7 @@ func TestHTTPHeaderBufferSize(t *testing.T) {
 	}
 
 	// Wait for the new router pod for the updated ingresscontroller to become ready.
-	pollErr = wait.PollImmediate(2*time.Second, 3*time.Minute, func() (bool, error) {
+	pollErr = wait.PollImmediate(2*time.Second, 5*time.Minute, func() (bool, error) {
 		podList := &corev1.PodList{}
 		if err := kclient.List(context.TODO(), podList, client.InNamespace(deployment.Namespace), client.MatchingLabels(labels)); err != nil {
 			t.Errorf("failed to list pods for ingress controllers %s: %v", ic.Name, err)
@@ -220,16 +220,19 @@ func TestHTTPHeaderBufferSize(t *testing.T) {
 
 		for _, pod := range podList.Items {
 			if pod.Name == oldRouterPodName {
-				continue
+				// wait until the old router pod is gone before continuing
+				return false, nil
 			}
+		}
 
+		for _, pod := range podList.Items {
 			for _, cond := range pod.Status.Conditions {
 				if cond.Type == corev1.PodReady && cond.Status == corev1.ConditionTrue {
 					return true, nil
 				}
 			}
-
 		}
+
 		t.Logf("waiting for new router pod for %s to become ready", ic.Name)
 		return false, nil
 	})
