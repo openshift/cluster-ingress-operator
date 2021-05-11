@@ -86,7 +86,7 @@ func routerNamespaceChanged(current, expected *corev1.Namespace) (bool, *corev1.
 	}
 
 	knownLabels := []string{
-		"opensift.io/cluster-monitoring",
+		"openshift.io/cluster-monitoring",
 		"name",
 		"network.openshift.io/policy-group",
 		"policy-group.network.openshift.io/ingress",
@@ -104,14 +104,14 @@ func routerNamespaceChanged(current, expected *corev1.Namespace) (bool, *corev1.
 	}
 
 	for _, annotation := range knownAnnotations {
-		if current.Annotations[annotation] != expected.Annotations[annotation] {
+		if val, ok := current.Annotations[annotation]; !ok || val != expected.Annotations[annotation] {
 			updated.Annotations[annotation] = expected.Annotations[annotation]
 			changed = true
 		}
 	}
 
 	for _, label := range knownLabels {
-		if current.Labels[label] != expected.Labels[label] {
+		if val, ok := current.Labels[label]; !ok || val != expected.Labels[label] {
 			updated.Labels[label] = expected.Labels[label]
 			changed = true
 		}
