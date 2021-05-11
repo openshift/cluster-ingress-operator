@@ -71,6 +71,8 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	if !IngressStatusesEqual(updated.Status, ic.Status) {
 		if err := r.client.Status().Update(context.TODO(), updated); err != nil {
 			errs = append(errs, fmt.Errorf("failed to update ingresscontroller status: %v", err))
+		} else {
+			SetIngressControllerConditionsMetric(updated)
 		}
 	}
 

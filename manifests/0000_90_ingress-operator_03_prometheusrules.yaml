@@ -27,3 +27,21 @@ spec:
           severity: critical
         annotations:
           message: "HAProxy metrics are reporting that HAProxy is down on pod {{ $labels.namespace }} / {{ $labels.pod }}"
+      - alert: IngressControllerDegraded
+        expr: ingress_controller_conditions{condition="Degraded"} == 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          message: |
+            The {{ $labels.namespace }}/{{ $labels.name }} ingresscontroller is
+            degraded: {{ $labels.reason }}.
+      - alert: IngressControllerUnavailable
+        expr: ingress_controller_conditions{condition="Available"} == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          message: |
+            The {{ $labels.namespace }}/{{ $labels.name }} ingresscontroller is
+            unavailable: {{ $labels.reason }}.

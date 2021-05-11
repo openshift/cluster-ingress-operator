@@ -15,6 +15,7 @@ import (
 	operatorconfig "github.com/openshift/cluster-ingress-operator/pkg/operator/config"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	canarycontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/canary"
+	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 	statuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/status"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -123,7 +124,15 @@ func start(opts *StartOptions) error {
 	}
 
 	// Start operator metrics.
-	go canarycontroller.StartMetricsListener(opts.MetricsListenAddr, signal)
+	go operator.StartMetricsListener(opts.MetricsListenAddr, signal)
+	log.Info("registering Prometheus metrics for canary_controller")
+	if err := canarycontroller.RegisterMetrics(); err != nil {
+		log.Error(err, "unable to register metrics for canary_controller")
+	}
+	log.Info("registering Prometheus metrics for ingress_controller")
+	if err := ingresscontroller.RegisterMetrics(); err != nil {
+		log.Error(err, "unable to register metrics for ingress_controller")
+	}
 
 	// Set up and start the file watcher.
 	watcher, err := fsnotify.NewWatcher()
