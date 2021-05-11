@@ -90,7 +90,7 @@ func StartMetricsListener(addr string, signal context.Context) {
 		log.Error(err, "unable to register metrics")
 	}
 
-	log.Info("starting metrics listener on ", "addr", addr)
+	log.Info("starting metrics listener", "addr", addr)
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", handler)
 	s := http.Server{Addr: addr, Handler: mux}
