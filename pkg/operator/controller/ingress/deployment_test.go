@@ -377,7 +377,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_H1_CASE_ADJUST", true, "Host,Cache-Control")
 
-	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CANONICAL_HOSTNAME", true, ci.Status.Domain)
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CANONICAL_HOSTNAME", true, "router-"+ci.Name+"."+ci.Status.Domain)
 
 	checkDeploymentHasContainer(t, deployment, operatorv1.ContainerLoggingSidecarContainerName, true)
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOG_FACILITY", false, "")

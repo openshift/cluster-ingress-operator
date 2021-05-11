@@ -413,7 +413,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	})
 
 	if len(ci.Status.Domain) > 0 {
-		env = append(env, corev1.EnvVar{Name: "ROUTER_CANONICAL_HOSTNAME", Value: ci.Status.Domain})
+		env = append(env, corev1.EnvVar{Name: "ROUTER_CANONICAL_HOSTNAME", Value: "router-" + ci.Name + "." + ci.Status.Domain})
 	}
 
 	if proxyNeeded {
