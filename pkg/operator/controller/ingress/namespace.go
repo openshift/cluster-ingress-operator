@@ -82,7 +82,7 @@ func (r *reconciler) updateRouterNamespace(current, desired *corev1.Namespace) (
 // values written by other controllers are preserved.
 func routerNamespaceChanged(current, expected *corev1.Namespace) (bool, *corev1.Namespace) {
 	knownLabels := []string{
-		"opensift.io/cluster-monitoring",
+		"openshift.io/cluster-monitoring",
 		"name",
 		"network.openshift.io/policy-group",
 		"policy-group.network.openshift.io/ingress",
@@ -96,7 +96,7 @@ func routerNamespaceChanged(current, expected *corev1.Namespace) (bool, *corev1.
 	}
 
 	for _, label := range knownLabels {
-		if current.Labels[label] != expected.Labels[label] {
+		if val, ok := current.Labels[label]; !ok || val != expected.Labels[label] {
 			updated.Labels[label] = expected.Labels[label]
 			changed = true
 		}

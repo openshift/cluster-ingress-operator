@@ -34,16 +34,23 @@ func TestRouterNamespaceChanged(t *testing.T) {
 			},
 			expect: false,
 		},
+		{
+			description: "if a managed label with an empty string value is deleted",
+			mutate: func(ns *corev1.Namespace) {
+				delete(ns.Labels, "policy-group.network.openshift.io/ingress")
+			},
+			expect: true,
+		},
 	}
 
 	for _, tc := range testCases {
-		original := manifests.RouterNamespace()
-		mutated := original.DeepCopy()
+		desired := manifests.RouterNamespace()
+		mutated := desired.DeepCopy()
 		tc.mutate(mutated)
-		if changed, updated := routerNamespaceChanged(original, mutated); changed != tc.expect {
+		if changed, updated := routerNamespaceChanged(mutated, desired); changed != tc.expect {
 			t.Errorf("%s, expect routerNamespaceChanged to be %t, got %t", tc.description, tc.expect, changed)
 		} else if changed {
-			if changedAgain, _ := routerNamespaceChanged(mutated, updated); changedAgain {
+			if changedAgain, _ := routerNamespaceChanged(desired, updated); changedAgain {
 				t.Errorf("%s, routerNamespaceChanged does not behave as a fixed point function", tc.description)
 			}
 		}
