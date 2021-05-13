@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -1552,7 +1553,7 @@ func TestHTTPHeaderCapture(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create kube client: %v", err)
 	}
-	err = wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
+	err = wait.PollImmediate(1*time.Second, 3*time.Minute, func() (bool, error) {
 		for _, pod := range podList.Items {
 			readCloser, err := client.CoreV1().Pods(pod.Namespace).GetLogs(pod.Name, &corev1.PodLogOptions{
 				Container: "logs",
@@ -1562,7 +1563,8 @@ func TestHTTPHeaderCapture(t *testing.T) {
 				t.Errorf("failed to read logs from pod %s: %v", pod.Name, err)
 				continue
 			}
-			scanner := bufio.NewScanner(readCloser)
+			data, _ := ioutil.ReadAll(readCloser)
+			scanner := bufio.NewScanner(bytes.NewBuffer(data))
 			var found bool
 			for scanner.Scan() {
 				line := scanner.Text()
@@ -1574,6 +1576,9 @@ func TestHTTPHeaderCapture(t *testing.T) {
 			}
 			if err := readCloser.Close(); err != nil {
 				t.Errorf("failed to close logs reader for pod %s: %v", pod.Name, err)
+			}
+			if !found {
+				t.Logf("failed to find output:\n\n%s", string(data))
 			}
 			return found, nil
 		}
