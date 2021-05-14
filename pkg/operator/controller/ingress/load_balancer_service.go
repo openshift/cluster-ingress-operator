@@ -235,6 +235,8 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 		service.Annotations = map[string]string{}
 	}
 
+	service.Annotations["traffic-policy.network.openshift.io/prefer-local"] = ""
+
 	if proxyNeeded {
 		service.Annotations[awsLBProxyProtocolAnnotation] = "*"
 	}
