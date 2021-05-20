@@ -1015,6 +1015,20 @@ func TestDeploymentConfigChanged(t *testing.T) {
 			},
 			expect: true,
 		},
+		{
+			description: "if .spec.minReadySeconds changes to non-zero",
+			mutate: func(deployment *appsv1.Deployment) {
+				deployment.Spec.MinReadySeconds = 10
+			},
+			expect: true,
+		},
+		{
+			description: "if .spec.minReadySeconds changes to none",
+			mutate: func(deployment *appsv1.Deployment) {
+				deployment.Spec.MinReadySeconds = 0
+			},
+			expect: true,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -1027,6 +1041,7 @@ func TestDeploymentConfigChanged(t *testing.T) {
 				UID:       "1",
 			},
 			Spec: appsv1.DeploymentSpec{
+				MinReadySeconds: 30,
 				Strategy: appsv1.DeploymentStrategy{
 					Type: appsv1.RollingUpdateDeploymentStrategyType,
 					RollingUpdate: &appsv1.RollingUpdateDeployment{

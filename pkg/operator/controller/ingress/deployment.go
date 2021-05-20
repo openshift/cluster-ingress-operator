@@ -200,6 +200,16 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	gracePeriod := int64(60 * 60)
 	deployment.Spec.Template.Spec.TerminationGracePeriodSeconds = &gracePeriod
 
+	// Services behind load balancers should roll out new instances only after we are certain
+	// the new instance is part of rotation. This is set based on the highest value across all
+	// platforms, excluding custom load balancers like an F5, but our recommendation for these
+	// values for those should be indentical to the slowest cloud, AWS (which does not allow
+	// health checks to be more frequent than 10 seconds).
+	deployment.Spec.MinReadySeconds =
+		(2 + /* max healthy checks required to be brought into rotation across all platforms */
+			1) * /* we could miss one */
+			10 /* the longest health check interval on any platform */
+
 	volumes := deployment.Spec.Template.Spec.Volumes
 	routerVolumeMounts := deployment.Spec.Template.Spec.Containers[0].VolumeMounts
 
@@ -994,6 +1004,7 @@ func hashableDeployment(deployment *appsv1.Deployment, onlyTemplate bool) *appsv
 	// Copy metadata and spec fields to which any changes should trigger an
 	// update of the deployment but should not trigger a rolling update.
 	hashableDeployment.Labels = deployment.Labels
+	hashableDeployment.Spec.MinReadySeconds = deployment.Spec.MinReadySeconds
 	hashableDeployment.Spec.Strategy = deployment.Spec.Strategy
 	var replicas *int32
 	if deployment.Spec.Replicas != nil && *deployment.Spec.Replicas != int32(1) {
@@ -1178,6 +1189,7 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 		replicas = *expected.Spec.Replicas
 	}
 	updated.Spec.Replicas = &replicas
+	updated.Spec.MinReadySeconds = expected.Spec.MinReadySeconds
 	return true, updated
 }
 

@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -557,7 +558,7 @@ func TestIngressControllerScale(t *testing.T) {
 	}
 
 	// Wait for the deployment scale up to be observed.
-	if err := waitForAvailableReplicas(t, kclient, ic, 2*time.Minute, newReplicas); err != nil {
+	if err := waitForAvailableReplicas(t, kclient, ic, 4*time.Minute, newReplicas); err != nil {
 		t.Fatalf("failed waiting deployment %s to scale to %d: %v", defaultName, newReplicas, err)
 	}
 
@@ -1552,7 +1553,7 @@ func TestHTTPHeaderCapture(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create kube client: %v", err)
 	}
-	err = wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
+	err = wait.PollImmediate(1*time.Second, 3*time.Minute, func() (bool, error) {
 		for _, pod := range podList.Items {
 			readCloser, err := client.CoreV1().Pods(pod.Namespace).GetLogs(pod.Name, &corev1.PodLogOptions{
 				Container: "logs",
@@ -1562,7 +1563,8 @@ func TestHTTPHeaderCapture(t *testing.T) {
 				t.Errorf("failed to read logs from pod %s: %v", pod.Name, err)
 				continue
 			}
-			scanner := bufio.NewScanner(readCloser)
+			data, _ := ioutil.ReadAll(readCloser)
+			scanner := bufio.NewScanner(bytes.NewBuffer(data))
 			var found bool
 			for scanner.Scan() {
 				line := scanner.Text()
@@ -1574,6 +1576,9 @@ func TestHTTPHeaderCapture(t *testing.T) {
 			}
 			if err := readCloser.Close(); err != nil {
 				t.Errorf("failed to close logs reader for pod %s: %v", pod.Name, err)
+			}
+			if !found {
+				t.Logf("failed to find output:\n\n%s", string(data))
 			}
 			return found, nil
 		}
@@ -2153,14 +2158,16 @@ func waitForIngressControllerCondition(t *testing.T, cl client.Client, timeout t
 }
 
 func assertIngressControllerDeleted(t *testing.T, cl client.Client, ing *operatorv1.IngressController) {
-	if err := deleteIngressController(cl, ing, 2*time.Minute); err != nil {
+	t.Helper()
+	if err := deleteIngressController(t, cl, ing, 2*time.Minute); err != nil {
 		t.Fatalf("WARNING: cloud resources may have been leaked! failed to delete ingresscontroller %s: %v", ing.Name, err)
 	} else {
 		t.Logf("deleted ingresscontroller %s", ing.Name)
 	}
 }
 
-func deleteIngressController(cl client.Client, ic *operatorv1.IngressController, timeout time.Duration) error {
+func deleteIngressController(t *testing.T, cl client.Client, ic *operatorv1.IngressController, timeout time.Duration) error {
+	t.Helper()
 	name := types.NamespacedName{Namespace: ic.Namespace, Name: ic.Name}
 	if err := cl.Delete(context.TODO(), ic); err != nil {
 		return fmt.Errorf("failed to delete ingresscontroller: %v", err)
@@ -2171,6 +2178,7 @@ func deleteIngressController(cl client.Client, ic *operatorv1.IngressController,
 			if errors.IsNotFound(err) {
 				return true, nil
 			}
+			t.Logf("failed to delete ingress controller %s/%s: %v", ic.Namespace, ic.Name, err)
 			return false, nil
 		}
 		return false, nil
