@@ -2145,6 +2145,46 @@ func TestLocalWithFallbackOverrideForNodePortService(t *testing.T) {
 	}
 }
 
+// TestReloadIntervalUnsupportedConfigOverride verifies that the operator
+// configures router pod replicas with the specified value for RELOAD_INTERVAL
+// if one is specified using an unsupported config override on the
+// ingresscontroller.
+func TestReloadIntervalUnsupportedConfigOverride(t *testing.T) {
+	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "reload-interval"}
+	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
+	ic := newPrivateController(icName, domain)
+	if err := kclient.Create(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to create ingresscontroller: %v", err)
+	}
+	defer assertIngressControllerDeleted(t, kclient, ic)
+
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	if err := kclient.Get(context.TODO(), icName, ic); err != nil {
+		t.Fatalf("failed to get ingresscontroller: %v", err)
+	}
+
+	deployment := &appsv1.Deployment{}
+	if err := kclient.Get(context.TODO(), controller.RouterDeploymentName(ic), deployment); err != nil {
+		t.Fatalf("failed to get ingresscontroller deployment: %v", err)
+	}
+	if err := waitForDeploymentEnvVar(t, kclient, deployment, 30*time.Second, "RELOAD_INTERVAL", "5"); err != nil {
+		t.Fatalf("expected initial deployment to set RELOAD_INTERVAL=5: %v", err)
+	}
+
+	ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
+		Raw: []byte(`{"reloadInterval":60}`),
+	}
+	if err := kclient.Update(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to update ingresscontroller: %v", err)
+	}
+	if err := waitForDeploymentEnvVar(t, kclient, deployment, 1*time.Minute, "RELOAD_INTERVAL", "60"); err != nil {
+		t.Fatalf("expected updated deployment to set RELOAD_INTERVAL=60: %v", err)
+	}
+}
+
 // TestCustomErrorpages verifies that the custom error-pages API works properly,
 // and that the error-page configmap controller properly synchs the operator's
 // error-page configmap when it is deleted or when the user-provided configmap

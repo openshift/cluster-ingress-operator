@@ -224,6 +224,8 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	checkDeploymentDoesNotHaveEnvVar(t, deployment, "ROUTER_ERRORFILE_503")
 	checkDeploymentDoesNotHaveEnvVar(t, deployment, "ROUTER_ERRORFILE_404")
 
+	checkDeploymentHasEnvVar(t, deployment, "RELOAD_INTERVAL", true, "5")
+
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_USE_PROXY_PROTOCOL", false, "")
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CANONICAL_HOSTNAME", false, "")
@@ -356,7 +358,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	var expectedReplicas int32 = 8
 	ci.Spec.Replicas = &expectedReplicas
 	ci.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
-		Raw: []byte(`{"loadBalancingAlgorithm":"leastconn","dynamicConfigManager":"false"}`),
+		Raw: []byte(`{"loadBalancingAlgorithm":"leastconn","dynamicConfigManager":"false","reloadInterval":15}`),
 	}
 	ci.Spec.HttpErrorCodePages = configv1.ConfigMapNameReference{
 		Name: "my-custom-error-code-pages",
@@ -398,6 +400,8 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		//log.Info(fmt.Sprintf("deployment.Spec.Template.Spec.Containers[0].VolumeMounts[4].Name %v", deployment.Spec.Template.Spec.Containers[0]))
 		t.Error("router Deployment is missing error code pages volume mount")
 	}
+
+	checkDeploymentHasEnvVar(t, deployment, "RELOAD_INTERVAL", true, "15")
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_USE_PROXY_PROTOCOL", true, "true")
 
@@ -469,6 +473,8 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_HAPROXY_CONFIG_MANAGER", true, "true")
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOAD_BALANCE_ALGORITHM", true, "random")
+
+	checkDeploymentHasEnvVar(t, deployment, "RELOAD_INTERVAL", true, "5")
 
 	checkDeploymentDoesNotHaveEnvVar(t, deployment, "ROUTER_USE_PROXY_PROTOCOL")
 
