@@ -59,6 +59,8 @@ const (
 
 	RouterLoadBalancingAlgorithmEnvName = "ROUTER_LOAD_BALANCE_ALGORITHM"
 
+	RouterReloadIntervalEnvName = "RELOAD_INTERVAL"
+
 	RouterDisableHTTP2EnvName          = "ROUTER_DISABLE_HTTP2"
 	RouterDefaultEnableHTTP2Annotation = "ingress.operator.openshift.io/default-enable-http2"
 
@@ -440,6 +442,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 
 	var unsupportedConfigOverrides struct {
 		LoadBalancingAlgorithm string `json:"loadBalancingAlgorithm"`
+		ReloadInterval         int32  `json:"reloadInterval"`
 	}
 	if len(ci.Spec.UnsupportedConfigOverrides.Raw) > 0 {
 		if err := json.Unmarshal(ci.Spec.UnsupportedConfigOverrides.Raw, &unsupportedConfigOverrides); err != nil {
@@ -454,6 +457,14 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	env = append(env, corev1.EnvVar{
 		Name:  RouterLoadBalancingAlgorithmEnvName,
 		Value: loadBalancingAlgorithm,
+	})
+	reloadInterval := 5
+	if unsupportedConfigOverrides.ReloadInterval > 0 {
+		reloadInterval = int(unsupportedConfigOverrides.ReloadInterval)
+	}
+	env = append(env, corev1.EnvVar{
+		Name:  RouterReloadIntervalEnvName,
+		Value: strconv.Itoa(reloadInterval),
 	})
 
 	if len(ci.Status.Domain) > 0 {
