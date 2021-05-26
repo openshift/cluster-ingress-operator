@@ -224,14 +224,23 @@ func TestDesiredRouterDeployment(t *testing.T) {
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CANONICAL_HOSTNAME", false, "")
 
-	if deployment.Spec.Template.Spec.Volumes[0].Secret == nil {
-		t.Error("router Deployment has no secret volume")
+	checkDeploymentHasEnvVar(t, deployment, "STATS_USERNAME_FILE", true, "/var/lib/haproxy/conf/metrics-auth/statsUsername")
+	checkDeploymentHasEnvVar(t, deployment, "STATS_PASSWORD_FILE", true, "/var/lib/haproxy/conf/metrics-auth/statsPassword")
+
+	expectedVolumeSecretPairs := map[string]string{
+		"default-certificate": fmt.Sprintf("router-certs-%s", ci.Name),
+		"metrics-certs":       fmt.Sprintf("router-metrics-certs-%s", ci.Name),
+		"stats-auth":          fmt.Sprintf("router-stats-%s", ci.Name),
 	}
 
-	defaultSecretName := fmt.Sprintf("router-certs-%s", ci.Name)
-	if deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName != defaultSecretName {
-		t.Errorf("router Deployment expected volume with secret %s, got %s",
-			defaultSecretName, deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName)
+	for _, volume := range deployment.Spec.Template.Spec.Volumes {
+		if secretName, ok := expectedVolumeSecretPairs[volume.Name]; ok {
+			if volume.Secret.SecretName != secretName {
+				t.Errorf("router Deployment expected volume %s to have secret %s, got %s", volume.Name, secretName, volume.Secret.SecretName)
+			}
+		} else if volume.Name != "service-ca-bundle" {
+			t.Errorf("router deployment has unexpected volume %s", volume.Name)
+		}
 	}
 
 	if expected, got := 2, len(deployment.Spec.Template.Annotations); expected != got {
@@ -546,12 +555,20 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		t.Errorf("expected startup probe host to be \"localhost\", got %q", deployment.Spec.Template.Spec.Containers[0].StartupProbe.Handler.HTTPGet.Host)
 	}
 
-	if deployment.Spec.Template.Spec.Volumes[0].Secret == nil {
-		t.Error("router Deployment has no secret volume")
+	expectedVolumeSecretPairs = map[string]string{
+		"default-certificate": secretName,
+		"metrics-certs":       fmt.Sprintf("router-metrics-certs-%s", ci.Name),
+		"stats-auth":          fmt.Sprintf("router-stats-%s", ci.Name),
 	}
-	if deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName != secretName {
-		t.Errorf("expected router Deployment volume with secret %s, got %s",
-			secretName, deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName)
+
+	for _, volume := range deployment.Spec.Template.Spec.Volumes {
+		if secretName, ok := expectedVolumeSecretPairs[volume.Name]; ok {
+			if volume.Secret.SecretName != secretName {
+				t.Errorf("router Deployment expected volume %s to have secret %s, got %s", volume.Name, secretName, volume.Secret.SecretName)
+			}
+		} else if volume.Name != "service-ca-bundle" {
+			t.Errorf("router deployment has unexpected volume %s", volume.Name)
+		}
 	}
 
 	checkDeploymentHasContainer(t, deployment, operatorv1.ContainerLoggingSidecarContainerName, false)
@@ -1075,6 +1092,14 @@ func TestDeploymentConfigChanged(t *testing.T) {
 								VolumeSource: corev1.VolumeSource{
 									Secret: &corev1.SecretVolumeSource{
 										SecretName: "router-metrics-certs-default",
+									},
+								},
+							},
+							{
+								Name: "stats-auth",
+								VolumeSource: corev1.VolumeSource{
+									Secret: &corev1.SecretVolumeSource{
+										SecretName: "router-stats-default",
 									},
 								},
 							},

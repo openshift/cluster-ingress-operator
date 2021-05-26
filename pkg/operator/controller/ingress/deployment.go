@@ -358,24 +358,28 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	}}
 
 	statsSecretName := fmt.Sprintf("router-stats-%s", ci.Name)
+	statsVolumeName := "stats-auth"
+	statsVolumeMountPath := "/var/lib/haproxy/conf/metrics-auth"
+	statsVolume := corev1.Volume{
+		Name: statsVolumeName,
+		VolumeSource: corev1.VolumeSource{
+			Secret: &corev1.SecretVolumeSource{
+				SecretName: statsSecretName,
+			},
+		},
+	}
+	statsVolumeMount := corev1.VolumeMount{
+		Name:      statsVolumeName,
+		MountPath: statsVolumeMountPath,
+		ReadOnly:  true,
+	}
+
+	volumes = append(volumes, statsVolume)
+	routerVolumeMounts = append(routerVolumeMounts, statsVolumeMount)
 	env := []corev1.EnvVar{
 		{Name: "ROUTER_SERVICE_NAME", Value: ci.Name},
-		{Name: "STATS_USERNAME", ValueFrom: &corev1.EnvVarSource{
-			SecretKeyRef: &corev1.SecretKeySelector{
-				LocalObjectReference: corev1.LocalObjectReference{
-					Name: statsSecretName,
-				},
-				Key: "statsUsername",
-			},
-		}},
-		{Name: "STATS_PASSWORD", ValueFrom: &corev1.EnvVarSource{
-			SecretKeyRef: &corev1.SecretKeySelector{
-				LocalObjectReference: corev1.LocalObjectReference{
-					Name: statsSecretName,
-				},
-				Key: "statsPassword",
-			},
-		}},
+		{Name: "STATS_USERNAME_FILE", Value: filepath.Join(statsVolumeMountPath, "statsUsername")},
+		{Name: "STATS_PASSWORD_FILE", Value: filepath.Join(statsVolumeMountPath, "statsPassword")},
 	}
 
 	// Enable prometheus metrics
