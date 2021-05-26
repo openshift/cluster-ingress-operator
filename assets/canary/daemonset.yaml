@@ -10,6 +10,7 @@ spec:
       annotations:
         target.workload.openshift.io/management: '{"effect": "PreferredDuringScheduling"}'
     spec:
+      priorityClassName: system-cluster-critical
       containers:
         - name: serve-healthcheck-canary
           # Image and command are set at runtime
