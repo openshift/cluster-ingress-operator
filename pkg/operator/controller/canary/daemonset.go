@@ -131,6 +131,11 @@ func canaryDaemonSetChanged(current, expected *appsv1.DaemonSet) (bool, *appsv1.
 		changed = true
 	}
 
+	if current.Spec.Template.Spec.PriorityClassName != expected.Spec.Template.Spec.PriorityClassName {
+		updated.Spec.Template.Spec.PriorityClassName = expected.Spec.Template.Spec.PriorityClassName
+		changed = true
+	}
+
 	if !changed {
 		return false, nil
 	}

@@ -65,7 +65,12 @@ func TestDesiredCanaryDaemonSet(t *testing.T) {
 	}
 	if !cmp.Equal(nodeSelector, expectedNodeSelector) {
 		t.Errorf("expected daemonset node selector to be %q, but got %q", expectedNodeSelector, nodeSelector)
+	}
 
+	priorityClass := daemonset.Spec.Template.Spec.PriorityClassName
+	expectedPriorityClass := "system-cluster-critical"
+	if !cmp.Equal(priorityClass, expectedPriorityClass) {
+		t.Errorf("expected daemonset priority class to be %q, but got %q", expectedPriorityClass, priorityClass)
 	}
 
 	tolerations := daemonset.Spec.Template.Spec.Tolerations
@@ -141,6 +146,13 @@ func TestCanaryDaemonsetChanged(t *testing.T) {
 			description: "if canary server container name changes",
 			mutate: func(ds *appsv1.DaemonSet) {
 				ds.Spec.Template.Spec.Containers[0].Name = "bar"
+			},
+			expect: true,
+		},
+		{
+			description: "if canary daemonset priority class changed",
+			mutate: func(ds *appsv1.DaemonSet) {
+				ds.Spec.Template.Spec.PriorityClassName = "my-priority-class"
 			},
 			expect: true,
 		},
