@@ -15,6 +15,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
 
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
@@ -87,6 +88,9 @@ func desiredNodePortService(ic *operatorv1.IngressController, deploymentRef meta
 	name := controller.NodePortServiceName(ic)
 	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
+			Annotations: map[string]string{
+				localWithFallbackAnnotation: "",
+			},
 			Namespace: name.Namespace,
 			Name:      name.Name,
 			Labels: map[string]string{
@@ -160,9 +164,17 @@ func (r *reconciler) updateNodePortService(current, desired *corev1.Service) (bo
 	return true, nil
 }
 
+// managedNodePortServiceAnnotations is a set of annotation keys for annotations
+// that the operator manages for NodePort-type services.
+var managedNodePortServiceAnnotations = sets.NewString(
+	localWithFallbackAnnotation,
+)
+
 // nodePortServiceChanged checks if the current NodePort service spec matches
 // the expected spec and if not returns an updated one.
 func nodePortServiceChanged(current, expected *corev1.Service) (bool, *corev1.Service) {
+	changed := false
+
 	serviceCmpOpts := []cmp.Option{
 		// Ignore fields that the API, other controllers, or user may
 		// have modified.
@@ -171,13 +183,38 @@ func nodePortServiceChanged(current, expected *corev1.Service) (bool, *corev1.Se
 		cmp.Comparer(cmpServiceAffinity),
 		cmpopts.EquateEmpty(),
 	}
-	if cmp.Equal(current.Spec, expected.Spec, serviceCmpOpts...) {
+	if !cmp.Equal(current.Spec, expected.Spec, serviceCmpOpts...) {
+		changed = true
+	}
+
+	annotationCmpOpts := []cmp.Option{
+		cmpopts.IgnoreMapEntries(func(k, _ string) bool {
+			return !managedNodePortServiceAnnotations.Has(k)
+		}),
+	}
+	if !cmp.Equal(current.Annotations, expected.Annotations, annotationCmpOpts...) {
+		changed = true
+	}
+
+	if !changed {
 		return false, nil
 	}
 
 	updated := current.DeepCopy()
 	updated.Spec = expected.Spec
 
+	if updated.Annotations == nil {
+		updated.Annotations = map[string]string{}
+	}
+	for annotation := range managedNodePortServiceAnnotations {
+		currentVal, have := current.Annotations[annotation]
+		expectedVal, want := expected.Annotations[annotation]
+		if want && (!have || currentVal != expectedVal) {
+			updated.Annotations[annotation] = expected.Annotations[annotation]
+		} else if have && !want {
+			delete(updated.Annotations, annotation)
+		}
+	}
 	// Preserve fields that the API, other controllers, or user may have
 	// modified.
 	updated.Spec.ClusterIP = current.Spec.ClusterIP
