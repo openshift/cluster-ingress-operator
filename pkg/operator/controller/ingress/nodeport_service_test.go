@@ -132,8 +132,10 @@ func TestDesiredNodePortService(t *testing.T) {
 				},
 			},
 		}
-		want, svc := desiredNodePortService(ic, deploymentRef, tc.wantMetricsPort)
-		if want != tc.expect {
+		want, svc, err := desiredNodePortService(ic, deploymentRef, tc.wantMetricsPort)
+		if err != nil {
+			t.Errorf("unexpected error from desiredNodePortService: %w", err)
+		} else if want != tc.expect {
 			t.Errorf("expected desiredNodePortService to return %t for endpoint publishing strategy type %v, got %t, with service %#v", tc.expect, tc.strategyType, want, svc)
 		} else if tc.expect && !reflect.DeepEqual(svc, &tc.expectService) {
 			t.Errorf("expected desiredNodePortService to return %#v, got %#v", &tc.expectService, svc)

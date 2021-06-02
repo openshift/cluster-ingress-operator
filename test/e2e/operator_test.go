@@ -1978,6 +1978,128 @@ func TestLoadBalancingAlgorithmUnsupportedConfigOverride(t *testing.T) {
 	}
 }
 
+// TestLocalWithFallbackOverrideForLoadBalancerService verifies that the
+// operator does not set the local-with-fallback annotation on a LoadBalancer
+// service if the the localWithFallback unsupported config override is set to
+// "false".
+//
+// Note: This test mutates the default ingresscontroller rather than creating a
+// new one to reduce the risk of failing due to cloud provider API throttling.
+func TestLocalWithFallbackOverrideForLoadBalancerService(t *testing.T) {
+	supportedPlatforms := map[configv1.PlatformType]struct{}{
+		configv1.AWSPlatformType:   {},
+		configv1.AzurePlatformType: {},
+		configv1.GCPPlatformType:   {},
+	}
+	platform := infraConfig.Status.Platform
+	if _, supported := supportedPlatforms[platform]; !supported {
+		t.Skipf("test skipped on platform %q", platform)
+	}
+
+	ic := &operatorv1.IngressController{}
+	if err := kclient.Get(context.TODO(), defaultName, ic); err != nil {
+		t.Fatalf("failed to get ingresscontroller %q: %v", defaultName, err)
+	}
+
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, defaultName, defaultAvailableConditions...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	service := &corev1.Service{}
+	serviceName := controller.LoadBalancerServiceName(ic)
+	if err := kclient.Get(context.TODO(), serviceName, service); err != nil {
+		t.Fatalf("failed to get service %q: %v", serviceName, err)
+	}
+
+	const annotation = "traffic-policy.network.alpha.openshift.io/local-with-fallback"
+
+	if _, ok := service.Annotations[annotation]; !ok {
+		t.Fatalf("failed to observe the %q annotation on service %q", annotation, serviceName)
+	}
+
+	ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
+		Raw: []byte(`{"localWithFallback":"false"}`),
+	}
+	if err := kclient.Update(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to update ingresscontroller %q with override: %v", defaultName, err)
+	}
+	defer func() {
+		if err := kclient.Get(context.TODO(), defaultName, ic); err != nil {
+			t.Fatalf("failed to get ingresscontroller %q: %v", defaultName, err)
+		}
+		ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{}
+		if err := kclient.Update(context.TODO(), ic); err != nil {
+			t.Fatalf("failed to update ingresscontroller %q to remove the override: %v", defaultName, err)
+		}
+	}()
+
+	wait.PollImmediate(1*time.Second, 30*time.Second, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), serviceName, service); err != nil {
+			t.Logf("failed to get service %q: %v", serviceName, err)
+			return false, nil
+		}
+		_, ok := service.Annotations[annotation]
+		return !ok, nil
+	})
+	if _, ok := service.Annotations[annotation]; ok {
+		t.Fatalf("failed to observe removal of the %q annotation on service %q", annotation, serviceName)
+	}
+}
+
+// TestLocalWithFallbackOverrideForNodePortService verifies that the operator
+// does not set the local-with-fallback annotation on a NodePort service if the
+// the localWithFallback unsupported config override is set to "false".
+func TestLocalWithFallbackOverrideForNodePortService(t *testing.T) {
+	icName := types.NamespacedName{
+		Namespace: operatorNamespace,
+		Name:      "local-with-fallback",
+	}
+	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
+	ic := newNodePortController(icName, domain)
+	if err := kclient.Create(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to create ingresscontroller %q: %v", icName, err)
+	}
+	defer assertIngressControllerDeleted(t, kclient, ic)
+
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForIngressControllerWithNodePort...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	service := &corev1.Service{}
+	serviceName := controller.NodePortServiceName(ic)
+	if err := kclient.Get(context.TODO(), serviceName, service); err != nil {
+		t.Fatalf("failed to get service %q: %v", serviceName, err)
+	}
+
+	const annotation = "traffic-policy.network.alpha.openshift.io/local-with-fallback"
+
+	if _, ok := service.Annotations[annotation]; !ok {
+		t.Fatalf("failed to observe the %q annotation on ingresscontroller %q", annotation, icName)
+	}
+
+	if err := kclient.Get(context.TODO(), icName, ic); err != nil {
+		t.Fatalf("failed to get ingresscontroller %q: %v", icName, err)
+	}
+	ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
+		Raw: []byte(`{"localWithFallback":"false"}`),
+	}
+	if err := kclient.Update(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to update ingresscontroller %q with override: %v", icName, err)
+	}
+
+	wait.PollImmediate(1*time.Second, 30*time.Second, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), serviceName, service); err != nil {
+			t.Logf("failed to get service %q: %v", serviceName, err)
+			return false, nil
+		}
+		_, ok := service.Annotations[annotation]
+		return !ok, nil
+	})
+	if _, ok := service.Annotations[annotation]; ok {
+		t.Fatalf("failed to observe removal of the %q annotation on service %q", annotation, serviceName)
+	}
+}
+
 func newLoadBalancerController(name types.NamespacedName, domain string) *operatorv1.IngressController {
 	repl := int32(1)
 	return &operatorv1.IngressController{

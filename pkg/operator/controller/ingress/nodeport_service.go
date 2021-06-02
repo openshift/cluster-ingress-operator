@@ -47,7 +47,10 @@ func (r *reconciler) ensureNodePortService(ic *operatorv1.IngressController, dep
 		}
 	}
 
-	wantService, desired := desiredNodePortService(ic, deploymentRef, wantMetricsPort)
+	wantService, desired, err := desiredNodePortService(ic, deploymentRef, wantMetricsPort)
+	if err != nil {
+		return false, nil, err
+	}
 
 	switch {
 	case !wantService && !haveService:
@@ -80,19 +83,17 @@ func (r *reconciler) ensureNodePortService(ic *operatorv1.IngressController, dep
 
 // desiredNodePortService returns a Boolean indicating whether a NodePort
 // service is desired, as well as the NodePort service if one is desired.
-func desiredNodePortService(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference, wantMetricsPort bool) (bool, *corev1.Service) {
+func desiredNodePortService(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference, wantMetricsPort bool) (bool, *corev1.Service, error) {
 	if ic.Status.EndpointPublishingStrategy.Type != operatorv1.NodePortServiceStrategyType {
-		return false, nil
+		return false, nil, nil
 	}
 
 	name := controller.NodePortServiceName(ic)
 	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Annotations: map[string]string{
-				localWithFallbackAnnotation: "",
-			},
-			Namespace: name.Namespace,
-			Name:      name.Name,
+			Annotations: map[string]string{},
+			Namespace:   name.Namespace,
+			Name:        name.Name,
 			Labels: map[string]string{
 				"app":                                  "router",
 				"router":                               name.Name,
@@ -130,7 +131,13 @@ func desiredNodePortService(ic *operatorv1.IngressController, deploymentRef meta
 		service.Spec.Ports = service.Spec.Ports[0:2]
 	}
 
-	return true, service
+	if v, err := shouldUseLocalWithFallback(ic, service); err != nil {
+		return true, service, err
+	} else if v {
+		service.Annotations[localWithFallbackAnnotation] = ""
+	}
+
+	return true, service, nil
 }
 
 // currentNodePortService returns a Boolean indicating whether a NodePort

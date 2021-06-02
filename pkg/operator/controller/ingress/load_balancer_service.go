@@ -2,6 +2,7 @@ package ingress
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -306,13 +307,47 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 		// Azure load balancers are not customizable and are set to (2 fail @ 5s interval, 2 healthy)
 		// GCP load balancers are not customizable and are set to (3 fail @ 8s interval, 1 healthy)
 
-		if service.Spec.ExternalTrafficPolicy == corev1.ServiceExternalTrafficPolicyTypeLocal {
+		if v, err := shouldUseLocalWithFallback(ci, service); err != nil {
+			return true, service, err
+		} else if v {
 			service.Annotations[localWithFallbackAnnotation] = ""
 		}
 	}
 
 	service.SetOwnerReferences([]metav1.OwnerReference{deploymentRef})
 	return true, service, nil
+}
+
+// shouldUseLocalWithFallback returns a Boolean value indicating whether the
+// local-with-fallback annotation should be set for the given service, and
+// returns an error if the given ingresscontroller has an invalid unsupported
+// config override.
+func shouldUseLocalWithFallback(ic *operatorv1.IngressController, service *corev1.Service) (bool, error) {
+	// By default, use local-with-fallback when using the "Local" external
+	// traffic policy.
+	if service.Spec.ExternalTrafficPolicy != corev1.ServiceExternalTrafficPolicyTypeLocal {
+		return false, nil
+	}
+
+	// Allow the user to override local-with-fallback.
+	if len(ic.Spec.UnsupportedConfigOverrides.Raw) > 0 {
+		var unsupportedConfigOverrides struct {
+			LocalWithFallback string `json:"localWithFallback"`
+		}
+		if err := json.Unmarshal(ic.Spec.UnsupportedConfigOverrides.Raw, &unsupportedConfigOverrides); err != nil {
+			return false, fmt.Errorf("ingresscontroller %q has invalid spec.unsupportedConfigOverrides: %w", ic.Name, err)
+		}
+		override := unsupportedConfigOverrides.LocalWithFallback
+		if len(override) != 0 {
+			if val, err := strconv.ParseBool(override); err != nil {
+				return false, fmt.Errorf("ingresscontroller %q has invalid spec.unsupportedConfigOverrides.localWithFallback: %w", ic.Name, err)
+			} else {
+				return val, nil
+			}
+		}
+	}
+
+	return true, nil
 }
 
 // currentLoadBalancerService returns any existing LB service for the
