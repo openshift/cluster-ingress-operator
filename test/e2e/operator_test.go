@@ -883,7 +883,12 @@ func TestInternalLoadBalancerGlobalAccessGCP(t *testing.T) {
 
 // TestNodePortServiceEndpointPublishingStrategy creates an ingresscontroller
 // with the "NodePortService" endpoint publishing strategy type and verifies
-// that the operator creates a router and that the router becomes available.
+// that the operator creates a router, that the router becomes available, and
+// that the operator creates the expected NodePort-type service.
+//
+// The test then removes the "metrics" port from the NodePort-type service and
+// verifies that the operator does not add the port back.  See
+// <https://bugzilla.redhat.com/show_bug.cgi?id=1881210>.
 func TestNodePortServiceEndpointPublishingStrategy(t *testing.T) {
 	name := types.NamespacedName{Namespace: operatorNamespace, Name: "nodeport"}
 	ing := newNodePortController(name, name.Name+"."+dnsConfig.Spec.BaseDomain)
@@ -901,6 +906,54 @@ func TestNodePortServiceEndpointPublishingStrategy(t *testing.T) {
 	err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, conditions...)
 	if err != nil {
 		t.Errorf("failed to observe expected conditions: %v", err)
+	}
+
+	// Make sure the ingresscontroller has a nodeport service
+	// with the expected ports.
+	svcName := controller.NodePortServiceName(ing)
+	service := &corev1.Service{}
+	err = wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), svcName, service); err != nil {
+			t.Logf("failed to get service %q: %v", svcName, err)
+			return false, nil
+		}
+		return true, nil
+	})
+	ports := sets.String{}
+	for _, port := range service.Spec.Ports {
+		ports.Insert(port.Name)
+	}
+	expectedPorts := sets.NewString("http", "https", "metrics")
+	if !ports.Equal(expectedPorts) {
+		t.Fatalf("expected service %q to have ports %v, got %v", svcName, expectedPorts.List(), ports.List())
+	}
+
+	// Delete the "metrics" port and verify that the operator
+	// does not restore it.
+	for i, port := range service.Spec.Ports {
+		if port.Name == "metrics" {
+			ports := service.Spec.Ports
+			ports = append(ports[:i], ports[i+1:]...)
+			service.Spec.Ports = ports
+		}
+	}
+	if err := kclient.Update(context.TODO(), service); err != nil {
+		t.Fatalf("failed to update service %q: %v", svcName, err)
+	}
+	expectedPorts = sets.NewString("http", "https")
+	wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), svcName, service); err != nil {
+			t.Logf("failed to get service %q: %v", svcName, err)
+			return false, nil
+		}
+		ports = sets.String{}
+		for _, port := range service.Spec.Ports {
+			ports.Insert(port.Name)
+		}
+		return ports.Equal(expectedPorts), nil
+	})
+	if !ports.Equal(expectedPorts) {
+		t.Fatalf("after deleting the \"metrics\" port, expected service %q to have ports %v, got %v", svcName, expectedPorts.List(), ports.List())
 	}
 }
 

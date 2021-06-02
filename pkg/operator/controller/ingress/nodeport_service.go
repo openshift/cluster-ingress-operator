@@ -24,12 +24,29 @@ import (
 // indicating whether the NodePort service exists, the current NodePort service
 // if it does exist, and an error value.
 func (r *reconciler) ensureNodePortService(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference) (bool, *corev1.Service, error) {
-	wantService, desired := desiredNodePortService(ic, deploymentRef)
-
 	haveService, current, err := r.currentNodePortService(ic)
 	if err != nil {
 		return false, nil, err
 	}
+
+	// For compatibility, omit the "metrics" port iff the service already
+	// exists and doesn't have a "metrics" port.  This serves two purposes:
+	// (1) It avoids exhausting the nodeport range on upgrades if the
+	// cluster has many nodeport services and few available nodeports.
+	// (2) It enables the cluster administrator to remove the metrics port
+	// from an existing nodeport service to avoid exposing the port.
+	wantMetricsPort := false
+	if !haveService {
+		wantMetricsPort = true
+	} else {
+		for _, port := range current.Spec.Ports {
+			if port.Name == "metrics" {
+				wantMetricsPort = true
+			}
+		}
+	}
+
+	wantService, desired := desiredNodePortService(ic, deploymentRef, wantMetricsPort)
 
 	switch {
 	case !wantService && !haveService:
@@ -62,7 +79,7 @@ func (r *reconciler) ensureNodePortService(ic *operatorv1.IngressController, dep
 
 // desiredNodePortService returns a Boolean indicating whether a NodePort
 // service is desired, as well as the NodePort service if one is desired.
-func desiredNodePortService(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference) (bool, *corev1.Service) {
+func desiredNodePortService(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference, wantMetricsPort bool) (bool, *corev1.Service) {
 	if ic.Status.EndpointPublishingStrategy.Type != operatorv1.NodePortServiceStrategyType {
 		return false, nil
 	}
@@ -94,10 +111,19 @@ func desiredNodePortService(ic *operatorv1.IngressController, deploymentRef meta
 					Port:       int32(443),
 					TargetPort: intstr.FromString("https"),
 				},
+				{
+					Name:       "metrics",
+					Protocol:   corev1.ProtocolTCP,
+					Port:       int32(1936),
+					TargetPort: intstr.FromString("metrics"),
+				},
 			},
 			Selector: controller.IngressControllerDeploymentPodSelector(ic).MatchLabels,
 			Type:     corev1.ServiceTypeNodePort,
 		},
+	}
+	if !wantMetricsPort {
+		service.Spec.Ports = service.Spec.Ports[0:2]
 	}
 
 	return true, service
