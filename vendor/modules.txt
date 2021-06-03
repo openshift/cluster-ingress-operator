@@ -100,8 +100,6 @@ github.com/go-logr/logr
 # github.com/go-logr/zapr v0.4.0
 ## explicit
 github.com/go-logr/zapr
-# github.com/go-sql-driver/mysql v1.5.0
-## explicit
 # github.com/gobuffalo/flect v0.2.0
 github.com/gobuffalo/flect
 # github.com/gogo/protobuf v1.3.2
