@@ -113,6 +113,9 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 	if config.CustomCABundle != "" {
 		sessionOpts.CustomCABundle = strings.NewReader(config.CustomCABundle)
 	}
+	if len(config.Region) > 0 {
+		sessionOpts.Config.Region = aws.String(config.Region)
+	}
 	sess, err := session.NewSessionWithOptions(sessionOpts)
 	if err != nil {
 		return nil, fmt.Errorf("couldn't create AWS client session: %v", err)
