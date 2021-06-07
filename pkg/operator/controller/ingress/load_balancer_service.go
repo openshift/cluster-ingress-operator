@@ -2,6 +2,7 @@ package ingress
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -21,6 +22,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
 
 	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -104,6 +106,12 @@ const (
 	// openstackInternalLBAnnotation is the annotation used on a service to specify an
 	// OpenStack load balancer as being internal.
 	openstackInternalLBAnnotation = "service.beta.kubernetes.io/openstack-internal-load-balancer"
+
+	// localWithFallbackAnnotation is the annotation used on a service that
+	// has "Local" external traffic policy to indicate that the service
+	// proxy should prefer using a local endpoint but forward traffic to any
+	// available endpoint if no local endpoint is available.
+	localWithFallbackAnnotation = "traffic-policy.network.alpha.openshift.io/local-with-fallback"
 )
 
 var (
@@ -298,10 +306,48 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 		}
 		// Azure load balancers are not customizable and are set to (2 fail @ 5s interval, 2 healthy)
 		// GCP load balancers are not customizable and are set to (3 fail @ 8s interval, 1 healthy)
+
+		if v, err := shouldUseLocalWithFallback(ci, service); err != nil {
+			return true, service, err
+		} else if v {
+			service.Annotations[localWithFallbackAnnotation] = ""
+		}
 	}
 
 	service.SetOwnerReferences([]metav1.OwnerReference{deploymentRef})
 	return true, service, nil
+}
+
+// shouldUseLocalWithFallback returns a Boolean value indicating whether the
+// local-with-fallback annotation should be set for the given service, and
+// returns an error if the given ingresscontroller has an invalid unsupported
+// config override.
+func shouldUseLocalWithFallback(ic *operatorv1.IngressController, service *corev1.Service) (bool, error) {
+	// By default, use local-with-fallback when using the "Local" external
+	// traffic policy.
+	if service.Spec.ExternalTrafficPolicy != corev1.ServiceExternalTrafficPolicyTypeLocal {
+		return false, nil
+	}
+
+	// Allow the user to override local-with-fallback.
+	if len(ic.Spec.UnsupportedConfigOverrides.Raw) > 0 {
+		var unsupportedConfigOverrides struct {
+			LocalWithFallback string `json:"localWithFallback"`
+		}
+		if err := json.Unmarshal(ic.Spec.UnsupportedConfigOverrides.Raw, &unsupportedConfigOverrides); err != nil {
+			return false, fmt.Errorf("ingresscontroller %q has invalid spec.unsupportedConfigOverrides: %w", ic.Name, err)
+		}
+		override := unsupportedConfigOverrides.LocalWithFallback
+		if len(override) != 0 {
+			if val, err := strconv.ParseBool(override); err != nil {
+				return false, fmt.Errorf("ingresscontroller %q has invalid spec.unsupportedConfigOverrides.localWithFallback: %w", ic.Name, err)
+			} else {
+				return val, nil
+			}
+		}
+	}
+
+	return true, nil
 }
 
 // currentLoadBalancerService returns any existing LB service for the
@@ -394,14 +440,31 @@ func (r *reconciler) updateLoadBalancerService(current, desired *corev1.Service,
 	return true, nil
 }
 
+// managedLoadBalancerServiceAnnotations is a set of annotation keys for
+// annotations that the operator manages for LoadBalancer-type services.
+var managedLoadBalancerServiceAnnotations = sets.NewString(
+	awsLBHealthCheckIntervalAnnotation,
+	GCPGlobalAccessAnnotation,
+	localWithFallbackAnnotation,
+)
+
 // loadBalancerServiceChanged checks if the current load balancer service
 // matches the expected and if not returns an updated one.
 func loadBalancerServiceChanged(current, expected *corev1.Service) (bool, *corev1.Service) {
-	updated := current.DeepCopy()
-	changed := false
+	annotationCmpOpts := []cmp.Option{
+		cmpopts.IgnoreMapEntries(func(k, _ string) bool {
+			return !managedLoadBalancerServiceAnnotations.Has(k)
+		}),
+	}
+	if cmp.Equal(current.Annotations, expected.Annotations, annotationCmpOpts...) {
+		return false, nil
+	}
 
-	// Preserve everything but the AWS LB health check interval annotation &
-	// GCP Global Access internal Load Balancer annotation.
+	updated := current.DeepCopy()
+
+	// Preserve everything but the AWS LB health check interval annotation,
+	// GCP Global Access internal Load Balancer annotation, and
+	// local-with-fallback annotation
 	// (see <https://bugzilla.redhat.com/show_bug.cgi?id=1908758>).
 	// Updating annotations and spec fields cannot be done unless the
 	// previous release blocks upgrades when the user has modified those
@@ -409,18 +472,15 @@ func loadBalancerServiceChanged(current, expected *corev1.Service) (bool, *corev
 	if updated.Annotations == nil {
 		updated.Annotations = map[string]string{}
 	}
-	if current.Annotations[awsLBHealthCheckIntervalAnnotation] != expected.Annotations[awsLBHealthCheckIntervalAnnotation] {
-		updated.Annotations[awsLBHealthCheckIntervalAnnotation] = expected.Annotations[awsLBHealthCheckIntervalAnnotation]
-		changed = true
-	}
 
-	if current.Annotations[GCPGlobalAccessAnnotation] != expected.Annotations[GCPGlobalAccessAnnotation] {
-		updated.Annotations[GCPGlobalAccessAnnotation] = expected.Annotations[GCPGlobalAccessAnnotation]
-		changed = true
-	}
-
-	if !changed {
-		return false, nil
+	for annotation := range managedLoadBalancerServiceAnnotations {
+		currentVal, have := current.Annotations[annotation]
+		expectedVal, want := expected.Annotations[annotation]
+		if want && (!have || currentVal != expectedVal) {
+			updated.Annotations[annotation] = expected.Annotations[annotation]
+		} else if have && !want {
+			delete(updated.Annotations, annotation)
+		}
 	}
 
 	return true, updated

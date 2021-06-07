@@ -37,6 +37,9 @@ func TestDesiredNodePortService(t *testing.T) {
 			expect:       true,
 			expectService: corev1.Service{
 				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						localWithFallbackAnnotation: "",
+					},
 					Namespace: "openshift-ingress",
 					Name:      "router-nodeport-default",
 					Labels: map[string]string{
@@ -75,6 +78,9 @@ func TestDesiredNodePortService(t *testing.T) {
 			expect:          true,
 			expectService: corev1.Service{
 				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						localWithFallbackAnnotation: "",
+					},
 					Namespace: "openshift-ingress",
 					Name:      "router-nodeport-default",
 					Labels: map[string]string{
@@ -126,8 +132,10 @@ func TestDesiredNodePortService(t *testing.T) {
 				},
 			},
 		}
-		want, svc := desiredNodePortService(ic, deploymentRef, tc.wantMetricsPort)
-		if want != tc.expect {
+		want, svc, err := desiredNodePortService(ic, deploymentRef, tc.wantMetricsPort)
+		if err != nil {
+			t.Errorf("unexpected error from desiredNodePortService: %w", err)
+		} else if want != tc.expect {
 			t.Errorf("expected desiredNodePortService to return %t for endpoint publishing strategy type %v, got %t, with service %#v", tc.expect, tc.strategyType, want, svc)
 		} else if tc.expect && !reflect.DeepEqual(svc, &tc.expectService) {
 			t.Errorf("expected desiredNodePortService to return %#v, got %#v", &tc.expectService, svc)
@@ -172,6 +180,20 @@ func TestNodePortServiceChanged(t *testing.T) {
 			description: "if .spec.externalTrafficPolicy changes",
 			mutate: func(svc *corev1.Service) {
 				svc.Spec.ExternalTrafficPolicy = corev1.ServiceExternalTrafficPolicyTypeCluster
+			},
+			expect: true,
+		},
+		{
+			description: "if the local-with-fallback annotation changes",
+			mutate: func(svc *corev1.Service) {
+				svc.Annotations["traffic-policy.network.alpha.openshift.io/local-with-fallback"] = "x"
+			},
+			expect: true,
+		},
+		{
+			description: "if the local-with-fallback annotation is deleted",
+			mutate: func(svc *corev1.Service) {
+				delete(svc.Annotations, "traffic-policy.network.alpha.openshift.io/local-with-fallback")
 			},
 			expect: true,
 		},
@@ -236,6 +258,9 @@ func TestNodePortServiceChanged(t *testing.T) {
 	for _, tc := range testCases {
 		original := corev1.Service{
 			ObjectMeta: metav1.ObjectMeta{
+				Annotations: map[string]string{
+					"traffic-policy.network.alpha.openshift.io/local-with-fallback": "",
+				},
 				Namespace: "openshift-ingress",
 				Name:      "router-original",
 				UID:       "1",

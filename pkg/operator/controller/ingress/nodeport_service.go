@@ -15,6 +15,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
 
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
@@ -46,7 +47,10 @@ func (r *reconciler) ensureNodePortService(ic *operatorv1.IngressController, dep
 		}
 	}
 
-	wantService, desired := desiredNodePortService(ic, deploymentRef, wantMetricsPort)
+	wantService, desired, err := desiredNodePortService(ic, deploymentRef, wantMetricsPort)
+	if err != nil {
+		return false, nil, err
+	}
 
 	switch {
 	case !wantService && !haveService:
@@ -79,16 +83,17 @@ func (r *reconciler) ensureNodePortService(ic *operatorv1.IngressController, dep
 
 // desiredNodePortService returns a Boolean indicating whether a NodePort
 // service is desired, as well as the NodePort service if one is desired.
-func desiredNodePortService(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference, wantMetricsPort bool) (bool, *corev1.Service) {
+func desiredNodePortService(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference, wantMetricsPort bool) (bool, *corev1.Service, error) {
 	if ic.Status.EndpointPublishingStrategy.Type != operatorv1.NodePortServiceStrategyType {
-		return false, nil
+		return false, nil, nil
 	}
 
 	name := controller.NodePortServiceName(ic)
 	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace: name.Namespace,
-			Name:      name.Name,
+			Annotations: map[string]string{},
+			Namespace:   name.Namespace,
+			Name:        name.Name,
 			Labels: map[string]string{
 				"app":                                  "router",
 				"router":                               name.Name,
@@ -126,7 +131,13 @@ func desiredNodePortService(ic *operatorv1.IngressController, deploymentRef meta
 		service.Spec.Ports = service.Spec.Ports[0:2]
 	}
 
-	return true, service
+	if v, err := shouldUseLocalWithFallback(ic, service); err != nil {
+		return true, service, err
+	} else if v {
+		service.Annotations[localWithFallbackAnnotation] = ""
+	}
+
+	return true, service, nil
 }
 
 // currentNodePortService returns a Boolean indicating whether a NodePort
@@ -160,9 +171,17 @@ func (r *reconciler) updateNodePortService(current, desired *corev1.Service) (bo
 	return true, nil
 }
 
+// managedNodePortServiceAnnotations is a set of annotation keys for annotations
+// that the operator manages for NodePort-type services.
+var managedNodePortServiceAnnotations = sets.NewString(
+	localWithFallbackAnnotation,
+)
+
 // nodePortServiceChanged checks if the current NodePort service spec matches
 // the expected spec and if not returns an updated one.
 func nodePortServiceChanged(current, expected *corev1.Service) (bool, *corev1.Service) {
+	changed := false
+
 	serviceCmpOpts := []cmp.Option{
 		// Ignore fields that the API, other controllers, or user may
 		// have modified.
@@ -171,13 +190,38 @@ func nodePortServiceChanged(current, expected *corev1.Service) (bool, *corev1.Se
 		cmp.Comparer(cmpServiceAffinity),
 		cmpopts.EquateEmpty(),
 	}
-	if cmp.Equal(current.Spec, expected.Spec, serviceCmpOpts...) {
+	if !cmp.Equal(current.Spec, expected.Spec, serviceCmpOpts...) {
+		changed = true
+	}
+
+	annotationCmpOpts := []cmp.Option{
+		cmpopts.IgnoreMapEntries(func(k, _ string) bool {
+			return !managedNodePortServiceAnnotations.Has(k)
+		}),
+	}
+	if !cmp.Equal(current.Annotations, expected.Annotations, annotationCmpOpts...) {
+		changed = true
+	}
+
+	if !changed {
 		return false, nil
 	}
 
 	updated := current.DeepCopy()
 	updated.Spec = expected.Spec
 
+	if updated.Annotations == nil {
+		updated.Annotations = map[string]string{}
+	}
+	for annotation := range managedNodePortServiceAnnotations {
+		currentVal, have := current.Annotations[annotation]
+		expectedVal, want := expected.Annotations[annotation]
+		if want && (!have || currentVal != expectedVal) {
+			updated.Annotations[annotation] = expected.Annotations[annotation]
+		} else if have && !want {
+			delete(updated.Annotations, annotation)
+		}
+	}
 	// Preserve fields that the API, other controllers, or user may have
 	// modified.
 	updated.Spec.ClusterIP = current.Spec.ClusterIP

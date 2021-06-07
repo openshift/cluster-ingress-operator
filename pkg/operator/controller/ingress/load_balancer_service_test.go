@@ -10,6 +10,7 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
@@ -319,6 +320,9 @@ func TestDesiredLoadBalancerService(t *testing.T) {
 				if err := checkServiceHasAnnotation(svc, awsLBHealthCheckHealthyThresholdAnnotation, true, awsLBHealthCheckHealthyThresholdDefault); err != nil {
 					t.Errorf("annotation check for test %q failed: %v", tc.description, err)
 				}
+				if err := checkServiceHasAnnotation(svc, localWithFallbackAnnotation, true, ""); err != nil {
+					t.Errorf("local-with-fallback annotation check for test %q failed: %v", tc.description, err)
+				}
 				classicLB := tc.lbStrategy.ProviderParameters == nil || tc.lbStrategy.ProviderParameters.AWS.Type == operatorv1.AWSClassicLoadBalancer
 				switch {
 				case classicLB:
@@ -388,6 +392,9 @@ func TestDesiredLoadBalancerService(t *testing.T) {
 					t.Errorf("annotation check for test %q failed; unexpected annotation %s", tc.description, azureInternalLBAnnotation)
 				}
 			}
+			if err := checkServiceHasAnnotation(svc, localWithFallbackAnnotation, true, ""); err != nil {
+				t.Errorf("local-with-fallback annotation check for test %q failed: %v", tc.description, err)
+			}
 		case configv1.GCPPlatformType:
 			if isInternal {
 				if err := checkServiceHasAnnotation(svc, gcpLBTypeAnnotation, true, "Internal"); err != nil {
@@ -399,6 +406,9 @@ func TestDesiredLoadBalancerService(t *testing.T) {
 					t.Errorf("annotation check for test %q failed; unexpected annotation %s", tc.description, gcpLBTypeAnnotation)
 				}
 			}
+			if err := checkServiceHasAnnotation(svc, localWithFallbackAnnotation, true, ""); err != nil {
+				t.Errorf("local-with-fallback annotation check for test %q failed: %v", tc.description, err)
+			}
 		case configv1.OpenStackPlatformType:
 			if isInternal {
 				if err := checkServiceHasAnnotation(svc, openstackInternalLBAnnotation, true, "true"); err != nil {
@@ -409,6 +419,9 @@ func TestDesiredLoadBalancerService(t *testing.T) {
 				if err := checkServiceHasAnnotation(svc, openstackInternalLBAnnotation, false, ""); err == nil {
 					t.Errorf("annotation check for test %q failed; unexpected annotation %s", tc.description, openstackInternalLBAnnotation)
 				}
+			}
+			if err := checkServiceHasAnnotation(svc, localWithFallbackAnnotation, true, ""); err != nil {
+				t.Errorf("local-with-fallback annotation check for test %q failed: %v", tc.description, err)
 			}
 		}
 	}
@@ -436,6 +449,72 @@ func checkServiceHasAnnotation(svc *corev1.Service, name string, expectValue boo
 		return fmt.Errorf("service has unexpected %s annotation setting: expected %q, got %q", name, expectedValue, actualValue)
 	default:
 		return nil
+	}
+}
+
+// TestShouldUseLocalWithFallback verifies that shouldUseLocalWithFallback
+// behaves as expected.
+func TestShouldUseLocalWithFallback(t *testing.T) {
+	testCases := []struct {
+		description string
+		local       bool
+		override    string
+		expect      bool
+		expectError bool
+	}{
+		{
+			description: "if using Cluster without an override",
+			local:       false,
+			expect:      false,
+		},
+		{
+			description: "if using Local without an override",
+			local:       true,
+			expect:      true,
+		},
+		{
+			description: "if using Local with an override",
+			local:       true,
+			override:    `{"localWithFallback":"false"}`,
+			expect:      false,
+		},
+		{
+			description: "if using Local with a garbage override",
+			local:       true,
+			override:    `{"localWithFallback":"x"}`,
+			expectError: true,
+		},
+	}
+	for _, tc := range testCases {
+		var override []byte
+		if len(tc.override) != 0 {
+			override = []byte(tc.override)
+		}
+		ic := &operatorv1.IngressController{
+			Spec: operatorv1.IngressControllerSpec{
+				UnsupportedConfigOverrides: runtime.RawExtension{
+					Raw: override,
+				},
+			},
+		}
+		policy := corev1.ServiceExternalTrafficPolicyTypeCluster
+		if tc.local {
+			policy = corev1.ServiceExternalTrafficPolicyTypeLocal
+		}
+		service := corev1.Service{
+			Spec: corev1.ServiceSpec{
+				ExternalTrafficPolicy: policy,
+			},
+		}
+		actual, err := shouldUseLocalWithFallback(ic, &service)
+		switch {
+		case !tc.expectError && err != nil:
+			t.Errorf("%q: unexpected error: %w", tc.description, err)
+		case tc.expectError && err == nil:
+			t.Errorf("%q: expected error, got nil", tc.description)
+		case tc.expect != actual:
+			t.Errorf("%q: expected %t, got %t", tc.description, tc.expect, actual)
+		}
 	}
 }
 
@@ -477,6 +556,13 @@ func TestLoadBalancerServiceChanged(t *testing.T) {
 				svc.Spec.ExternalTrafficPolicy = corev1.ServiceExternalTrafficPolicyTypeCluster
 			},
 			expect: false,
+		},
+		{
+			description: "if the local-with-fallback annotation is added",
+			mutate: func(svc *corev1.Service) {
+				svc.Annotations[localWithFallbackAnnotation] = ""
+			},
+			expect: true,
 		},
 		{
 			description: "if .spec.healthCheckNodePort changes",
@@ -545,6 +631,13 @@ func TestLoadBalancerServiceChanged(t *testing.T) {
 			description: "if the service.beta.kubernetes.io/aws-load-balancer-healthcheck-interval annotation changes",
 			mutate: func(svc *corev1.Service) {
 				svc.Annotations["service.beta.kubernetes.io/aws-load-balancer-healthcheck-interval"] = "10"
+			},
+			expect: true,
+		},
+		{
+			description: "if the service.beta.kubernetes.io/aws-load-balancer-healthcheck-interval annotation is deleted",
+			mutate: func(svc *corev1.Service) {
+				delete(svc.Annotations, "service.beta.kubernetes.io/aws-load-balancer-healthcheck-interval")
 			},
 			expect: true,
 		},
