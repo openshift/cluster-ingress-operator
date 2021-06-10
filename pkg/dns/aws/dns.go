@@ -113,6 +113,12 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 	if config.CustomCABundle != "" {
 		sessionOpts.CustomCABundle = strings.NewReader(config.CustomCABundle)
 	}
+	var region string
+	if len(config.Region) > 0 {
+		region = config.Region
+		sessionOpts.Config.Region = aws.String(config.Region)
+		log.Info("using region from operator config", "region name", region)
+	}
 	sess, err := session.NewSessionWithOptions(sessionOpts)
 	if err != nil {
 		return nil, fmt.Errorf("couldn't create AWS client session: %v", err)
@@ -122,16 +128,13 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 		Fn:   request.MakeAddToUserAgentHandler("openshift.io ingress-operator", operatorReleaseVersion),
 	})
 
-	var region string
-	switch {
-	case len(config.Region) > 0:
-		region = config.Region
-		log.Info("using region from operator config", "region name", region)
-	case sess.Config.Region != nil:
-		region = aws.StringValue(sess.Config.Region)
-		log.Info("using region from shared config", "region name", region)
-	default:
-		return nil, fmt.Errorf("region is required")
+	if len(region) == 0 {
+		if sess.Config.Region != nil {
+			region = aws.StringValue(sess.Config.Region)
+			log.Info("using region from shared config", "region name", region)
+		} else {
+			return nil, fmt.Errorf("region is required")
+		}
 	}
 
 	r53Config := aws.NewConfig()
