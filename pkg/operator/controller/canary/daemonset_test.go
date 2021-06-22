@@ -123,6 +123,27 @@ func TestCanaryDaemonsetChanged(t *testing.T) {
 			},
 			expect: true,
 		},
+		{
+			description: "if canary command changes (removed)",
+			mutate: func(ds *appsv1.DaemonSet) {
+				ds.Spec.Template.Spec.Containers[0].Command = []string{}
+			},
+			expect: true,
+		},
+		{
+			description: "if canary command changes",
+			mutate: func(ds *appsv1.DaemonSet) {
+				ds.Spec.Template.Spec.Containers[0].Command = []string{"foo"}
+			},
+			expect: true,
+		},
+		{
+			description: "if canary server container name changes",
+			mutate: func(ds *appsv1.DaemonSet) {
+				ds.Spec.Template.Spec.Containers[0].Name = "bar"
+			},
+			expect: true,
+		},
 	}
 
 	for _, tc := range testCases {
