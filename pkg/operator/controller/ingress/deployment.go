@@ -67,6 +67,8 @@ const (
 
 	LivenessGracePeriodSecondsAnnotation = "unsupported.do-not-use.openshift.io/override-liveness-grace-period-seconds"
 
+	RouterHAProxyConfigManager = "ROUTER_HAPROXY_CONFIG_MANAGER"
+
 	RouterHAProxyThreadsEnvName      = "ROUTER_THREADS"
 	RouterHAProxyThreadsDefaultValue = 4
 
@@ -440,12 +442,14 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 
 	var unsupportedConfigOverrides struct {
 		LoadBalancingAlgorithm string `json:"loadBalancingAlgorithm"`
+		DynamicConfigManager   string `json:"dynamicConfigManager"`
 	}
 	if len(ci.Spec.UnsupportedConfigOverrides.Raw) > 0 {
 		if err := json.Unmarshal(ci.Spec.UnsupportedConfigOverrides.Raw, &unsupportedConfigOverrides); err != nil {
 			return nil, fmt.Errorf("ingresscontroller %q has invalid spec.unsupportedConfigOverrides: %w", ci.Name, err)
 		}
 	}
+
 	loadBalancingAlgorithm := "random"
 	switch unsupportedConfigOverrides.LoadBalancingAlgorithm {
 	case "leastconn":
@@ -455,6 +459,14 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		Name:  RouterLoadBalancingAlgorithmEnvName,
 		Value: loadBalancingAlgorithm,
 	})
+
+	dynamicConfigOverride := unsupportedConfigOverrides.DynamicConfigManager
+	if v, err := strconv.ParseBool(dynamicConfigOverride); err == nil && v {
+		env = append(env, corev1.EnvVar{
+			Name:  RouterHAProxyConfigManager,
+			Value: "true",
+		})
+	}
 
 	if len(ci.Status.Domain) > 0 {
 		env = append(env, corev1.EnvVar{Name: "ROUTER_CANONICAL_HOSTNAME", Value: "router-" + ci.Name + "." + ci.Status.Domain})

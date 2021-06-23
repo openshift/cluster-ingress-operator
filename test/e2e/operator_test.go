@@ -1985,6 +1985,44 @@ func TestLoadBalancingAlgorithmUnsupportedConfigOverride(t *testing.T) {
 	}
 }
 
+// TestDynamicConfigManagerUnsupportedConfigOverride verifies that the operator
+// configures router pod replicas to use the dynamic config manager if the
+// ingresscontroller is so configured using an unsupported config override.
+func TestDynamicConfigManagerUnsupportedConfigOverride(t *testing.T) {
+	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "dynamic-config-manager"}
+	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
+	ic := newPrivateController(icName, domain)
+	if err := kclient.Create(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to create ingresscontroller: %v", err)
+	}
+	defer assertIngressControllerDeleted(t, kclient, ic)
+
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
+		t.Errorf("failed to observe expected conditions: %w", err)
+	}
+
+	if err := kclient.Get(context.TODO(), icName, ic); err != nil {
+		t.Fatalf("failed to get ingresscontroller: %v", err)
+	}
+	deployment := &appsv1.Deployment{}
+	if err := kclient.Get(context.TODO(), controller.RouterDeploymentName(ic), deployment); err != nil {
+		t.Fatalf("failed to get ingresscontroller deployment: %v", err)
+	}
+	if err := waitForDeploymentEnvVar(t, kclient, deployment, 30*time.Second, "ROUTER_HAPROXY_CONFIG_MANAGER", ""); err != nil {
+		t.Fatalf("expected initial deployment not to set ROUTER_HAPROXY_CONFIG_MANAGER=true: %v", err)
+	}
+
+	ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
+		Raw: []byte(`{"dynamicConfigManager":"true"}`),
+	}
+	if err := kclient.Update(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to update ingresscontroller: %v", err)
+	}
+	if err := waitForDeploymentEnvVar(t, kclient, deployment, 1*time.Minute, "ROUTER_HAPROXY_CONFIG_MANAGER", "true"); err != nil {
+		t.Fatalf("expected updated deployment to set ROUTER_HAPROXY_CONFIG_MANAGER=true: %v", err)
+	}
+}
+
 // TestLocalWithFallbackOverrideForLoadBalancerService verifies that the
 // operator does not set the local-with-fallback annotation on a LoadBalancer
 // service if the the localWithFallback unsupported config override is set to

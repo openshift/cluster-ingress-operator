@@ -218,6 +218,8 @@ func TestDesiredRouterDeployment(t *testing.T) {
 			deployment.Spec.Template.Spec.Tolerations)
 	}
 
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_HAPROXY_CONFIG_MANAGER", false, "")
+
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOAD_BALANCE_ALGORITHM", true, "random")
 	checkDeploymentDoesNotHaveEnvVar(t, deployment, "ROUTER_ERRORFILE_503")
 	checkDeploymentDoesNotHaveEnvVar(t, deployment, "ROUTER_ERRORFILE_404")
@@ -354,7 +356,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	var expectedReplicas int32 = 8
 	ci.Spec.Replicas = &expectedReplicas
 	ci.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
-		Raw: []byte(`{"loadBalancingAlgorithm":"leastconn"}`),
+		Raw: []byte(`{"loadBalancingAlgorithm":"leastconn","dynamicConfigManager":"false"}`),
 	}
 	ci.Spec.HttpErrorCodePages = configv1.ConfigMapNameReference{
 		Name: "my-custom-error-code-pages",
@@ -386,6 +388,8 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	if len(deployment.Spec.Template.Spec.Containers[0].StartupProbe.Handler.HTTPGet.Host) != 0 {
 		t.Errorf("expected empty startup probe host, got %q", deployment.Spec.Template.Spec.Containers[0].StartupProbe.Handler.HTTPGet.Host)
 	}
+
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_HAPROXY_CONFIG_MANAGER", false, "")
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOAD_BALANCE_ALGORITHM", true, "leastconn")
 	if len(deployment.Spec.Template.Spec.Containers[0].VolumeMounts) <= 4 || deployment.Spec.Template.Spec.Containers[0].VolumeMounts[4].Name != "error-pages" {
@@ -428,7 +432,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	// Any value for loadBalancingAlgorithm other than "leastconn" should be
 	// ignored.
 	ci.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
-		Raw: []byte(`{"loadBalancingAlgorithm":"source"}`),
+		Raw: []byte(`{"loadBalancingAlgorithm":"source","dynamicConfigManager":"true"}`),
 	}
 	ci.Status.EndpointPublishingStrategy.LoadBalancer = &operatorv1.LoadBalancerStrategy{
 		Scope: operatorv1.ExternalLoadBalancer,
@@ -461,6 +465,8 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	if len(deployment.Spec.Template.Spec.Containers[0].StartupProbe.Handler.HTTPGet.Host) != 0 {
 		t.Errorf("expected empty startup probe host, got %q", deployment.Spec.Template.Spec.Containers[0].StartupProbe.Handler.HTTPGet.Host)
 	}
+
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_HAPROXY_CONFIG_MANAGER", true, "true")
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOAD_BALANCE_ALGORITHM", true, "random")
 
