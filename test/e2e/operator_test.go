@@ -2100,6 +2100,114 @@ func TestLocalWithFallbackOverrideForNodePortService(t *testing.T) {
 	}
 }
 
+// TestCustomErrorpages verifies that the custom error-pages API works properly,
+// and that the error-page configmap controller properly synchs the operator's
+// error-page configmap when it is deleted or when the user-provided configmap
+// is updated.
+func TestCustomErrorpages(t *testing.T) {
+	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "errorpage"}
+	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
+	ic := newPrivateController(icName, domain)
+	errorPageConfigmap := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "custom-error-pages",
+			Namespace: "openshift-config",
+		},
+		Data: map[string]string{
+			"error-page-503.http": "HTTP/1.0 503 Service Unavailable\r\nPragma: no-cache\r\nCache-Control: private, max-age=0, no-cache, no-store\r\nConnection: close\r\nContent-Type: text/text\r\n\r\nNot found.\r\n",
+		},
+	}
+	ic.Spec.HttpErrorCodePages.Name = errorPageConfigmap.Name
+	if err := kclient.Create(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to create ingresscontroller %q: %v", icName, err)
+	}
+	defer assertIngressControllerDeleted(t, kclient, ic)
+
+	errorPageConfigmapName := types.NamespacedName{
+		Name:      errorPageConfigmap.Name,
+		Namespace: errorPageConfigmap.Namespace,
+	}
+	if err := kclient.Create(context.TODO(), errorPageConfigmap); err != nil {
+		t.Fatalf("failed to create configmap %q: %v", errorPageConfigmapName, err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), errorPageConfigmap); err != nil {
+			t.Fatalf("failed to delete configmap %q: %v", errorPageConfigmapName, err)
+		}
+	}()
+
+	conditions := []operatorv1.OperatorCondition{
+		{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionTrue},
+		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
+		{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionFalse},
+	}
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, conditions...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	// The controller should create a configmap in "openshift-ingress".
+	cmName := controller.HttpErrorCodePageConfigMapName(ic)
+	cm := &corev1.ConfigMap{}
+	err := wait.PollImmediate(1*time.Second, 5*time.Minute, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), cmName, cm); err != nil {
+			t.Logf("failed to get configmap %q: %v", cmName, err)
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to observe initial configmap %q: %v", cmName, err)
+	}
+	if actual, expected := cm.Data["error-page-503.http"], errorPageConfigmap.Data["error-page-503.http"]; actual != expected {
+		t.Errorf("failed to observe expected data in configmap %q: expected %q, got %q", cmName, expected, actual)
+	}
+
+	// The deployment should use the custom error-page configmap.
+	deploymentName := controller.RouterDeploymentName(ic)
+	deployment := &appsv1.Deployment{}
+	if err := kclient.Get(context.TODO(), deploymentName, deployment); err != nil {
+		t.Fatalf("failed to get deployment %q: %v", deploymentName, err)
+	}
+	if err := waitForDeploymentEnvVar(t, kclient, deployment, 1*time.Minute, "ROUTER_ERRORFILE_503", "/var/lib/haproxy/conf/error_code_pages/error-page-503.http"); err != nil {
+		t.Fatalf("expected deployment %q to use the custom error-page file: %v", deploymentName, err)
+	}
+
+	// The controller should recreate the configmap if it is deleted.
+	if err := kclient.Delete(context.TODO(), cm); err != nil {
+		t.Fatalf("failed to delete configmap %q: %v", cmName, err)
+	}
+	err = wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), cmName, cm); err != nil {
+			t.Logf("failed to get configmap %q: %v", cmName, err)
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to observe recreated configmap %q: %v", cmName, err)
+	}
+
+	// The controller should update the its configmap if the user's changes.
+	// This example is technically invalid
+	errorPageConfigmap.Data["error-page-503.http"] = "HTTP/1.0 503 Service Unavailable\r\nPragma: no-cache\r\nCache-Control: private, max-age=0, no-cache, no-store\r\nConnection: close\r\nContent-Type: text/text\r\n\r\nNot found!\r\n"
+	if err := kclient.Update(context.TODO(), errorPageConfigmap); err != nil {
+		t.Fatalf("failed to update configmap %q: %v", errorPageConfigmapName, err)
+	}
+	err = wait.PollImmediate(1*time.Second, 5*time.Minute, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), cmName, cm); err != nil {
+			t.Logf("failed to get configmap %q: %v", cmName, err)
+			return false, nil
+		}
+		if cm.Data["error-page-503.http"] != errorPageConfigmap.Data["error-page-503.http"] {
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to observe update to configmap %q: %v\nexpected %q, got %q", cmName, err, errorPageConfigmap.Data["error-page-503.http"], cm.Data["error-page-503.http"])
+	}
+}
+
 func newLoadBalancerController(name types.NamespacedName, domain string) *operatorv1.IngressController {
 	repl := int32(1)
 	return &operatorv1.IngressController{
