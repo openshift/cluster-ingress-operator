@@ -157,7 +157,7 @@ github.com/matttproud/golang_protobuf_extensions/pbutil
 github.com/modern-go/concurrent
 # github.com/modern-go/reflect2 v1.0.1
 github.com/modern-go/reflect2
-# github.com/openshift/api v0.0.0-20210513192832-efee9960e6fd
+# github.com/openshift/api v0.0.0-20210628075413-841ec03e5006
 ## explicit
 github.com/openshift/api
 github.com/openshift/api/apiserver
@@ -217,7 +217,7 @@ github.com/openshift/api/template/v1
 github.com/openshift/api/unidling/v1alpha1
 github.com/openshift/api/user
 github.com/openshift/api/user/v1
-# github.com/openshift/build-machinery-go v0.0.0-20210409131504-b1828cc0cdad
+# github.com/openshift/build-machinery-go v0.0.0-20210423112049-9415d7ebd33e
 ## explicit
 github.com/openshift/build-machinery-go/make/lib
 github.com/openshift/build-machinery-go/make/targets/openshift
