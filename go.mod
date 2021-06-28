@@ -15,8 +15,8 @@ require (
 	github.com/go-logr/zapr v0.4.0
 	github.com/google/go-cmp v0.5.5
 	github.com/kevinburke/go-bindata v3.11.0+incompatible
-	github.com/openshift/api v0.0.0-20210513192832-efee9960e6fd
-	github.com/openshift/build-machinery-go v0.0.0-20210409131504-b1828cc0cdad
+	github.com/openshift/api v0.0.0-20210628075413-841ec03e5006
+	github.com/openshift/build-machinery-go v0.0.0-20210423112049-9415d7ebd33e
 	github.com/openshift/library-go v0.0.0-20210331235027-66936e2fcc52
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.11.0
