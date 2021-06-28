@@ -51,15 +51,13 @@ func TestTLSProfileSpecForSecurityProfile(t *testing.T) {
 			valid:        true,
 			expectedSpec: configv1.TLSProfiles[configv1.TLSProfileIntermediateType],
 		},
-		// TODO: Update test case to use Modern cipher suites when haproxy is
-		//  built with an openssl version that supports tls v1.3.
 		{
 			description: "modern",
 			profile: &configv1.TLSSecurityProfile{
 				Type: configv1.TLSProfileModernType,
 			},
 			valid:        true,
-			expectedSpec: configv1.TLSProfiles[configv1.TLSProfileIntermediateType],
+			expectedSpec: configv1.TLSProfiles[configv1.TLSProfileModernType],
 		},
 		{
 			description: "custom, nil profile",
@@ -274,29 +272,27 @@ func TestTLSProfileSpecForIngressController(t *testing.T) {
 			apiProfile:   &configv1.TLSSecurityProfile{Type: configv1.TLSProfileCustomType},
 			expectedSpec: &configv1.TLSProfileSpec{},
 		},
-		// TODO: Update test cases to use Modern cipher suites when haproxy is
-		//  built with an openssl version that supports tls v1.3.
 		{
-			description:  "modern, nil -> intermediate",
+			description:  "modern, nil -> modern",
 			icProfile:    &configv1.TLSSecurityProfile{Type: configv1.TLSProfileModernType},
-			expectedSpec: configv1.TLSProfiles[configv1.TLSProfileIntermediateType],
+			expectedSpec: configv1.TLSProfiles[configv1.TLSProfileModernType],
 		},
 		{
 			description:  "nil, modern -> intermediate",
 			apiProfile:   &configv1.TLSSecurityProfile{Type: configv1.TLSProfileModernType},
-			expectedSpec: configv1.TLSProfiles[configv1.TLSProfileIntermediateType],
+			expectedSpec: configv1.TLSProfiles[configv1.TLSProfileModernType],
 		},
 		{
 			description:  "modern, empty -> intermediate",
 			icProfile:    &configv1.TLSSecurityProfile{Type: configv1.TLSProfileModernType},
 			apiProfile:   &configv1.TLSSecurityProfile{},
-			expectedSpec: configv1.TLSProfiles[configv1.TLSProfileIntermediateType],
+			expectedSpec: configv1.TLSProfiles[configv1.TLSProfileModernType],
 		},
 		{
 			description:  "empty, modern -> intermediate",
 			icProfile:    &configv1.TLSSecurityProfile{},
 			apiProfile:   &configv1.TLSSecurityProfile{Type: configv1.TLSProfileModernType},
-			expectedSpec: configv1.TLSProfiles[configv1.TLSProfileIntermediateType],
+			expectedSpec: configv1.TLSProfiles[configv1.TLSProfileModernType],
 		},
 	}
 

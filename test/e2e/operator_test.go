@@ -14,6 +14,7 @@ import (
 	"net"
 	"os"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -980,7 +981,13 @@ func TestTLSSecurityProfile(t *testing.T) {
 		t.Fatalf("ingresscontroller status has no security profile")
 	}
 	intermediateProfileSpec := configv1.TLSProfiles[configv1.TLSProfileIntermediateType]
-	if !reflect.DeepEqual(*ic.Status.TLSProfile, *intermediateProfileSpec) {
+
+	actualCiphers := ic.Status.TLSProfile.Ciphers
+	expectedCiphers := intermediateProfileSpec.Ciphers
+	sort.Strings(actualCiphers)
+	sort.Strings(expectedCiphers)
+
+	if !reflect.DeepEqual(actualCiphers, expectedCiphers) || !reflect.DeepEqual(intermediateProfileSpec.MinTLSVersion, ic.Status.TLSProfile.MinTLSVersion) {
 		expected, _ := yaml.Marshal(intermediateProfileSpec)
 		actual, _ := yaml.Marshal(*ic.Status.TLSProfile)
 		t.Fatalf("ingresscontroller status has unexpected security profile spec.\nexpected:\n%s\ngot:\n%s", expected, actual)

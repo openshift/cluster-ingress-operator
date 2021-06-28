@@ -292,6 +292,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_MAX_REWRITE_SIZE", false, "")
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CIPHERS", true, "foo:bar:baz")
+	checkDeploymentDoesNotHaveEnvVar(t, deployment, "ROUTER_CIPHERSUITES")
 
 	checkDeploymentHasEnvVar(t, deployment, "SSL_MIN_VERSION", true, "TLSv1.1")
 
@@ -337,8 +338,12 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		Type: configv1.TLSProfileCustomType,
 		Custom: &configv1.CustomTLSProfile{
 			TLSProfileSpec: configv1.TLSProfileSpec{
-				Ciphers:       []string{"quux"},
-				MinTLSVersion: configv1.VersionTLS13,
+				Ciphers: []string{
+					"quux",
+					"TLS_AES_256_GCM_SHA384",
+					"TLS_CHACHA20_POLY1305_SHA256",
+				},
+				MinTLSVersion: configv1.VersionTLS12,
 			},
 		},
 	}
@@ -414,8 +419,8 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SET_FORWARDED_HEADERS", true, "append")
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CIPHERS", true, "quux")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CIPHERSUITES", true, "TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256")
 
-	// TODO: Update when haproxy is built with an openssl version that supports tls v1.3.
 	checkDeploymentHasEnvVar(t, deployment, "SSL_MIN_VERSION", true, "TLSv1.2")
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_IP_V4_V6_MODE", true, "v4v6")
@@ -502,6 +507,19 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		UniqueId: operatorv1.IngressControllerHTTPUniqueIdHeaderPolicy{
 			Name:   "unique-id",
 			Format: "foo",
+		},
+	}
+	ci.Spec.TLSSecurityProfile = &configv1.TLSSecurityProfile{
+		Type: configv1.TLSProfileCustomType,
+		Custom: &configv1.CustomTLSProfile{
+			TLSProfileSpec: configv1.TLSProfileSpec{
+				Ciphers: []string{
+					"quux",
+					"TLS_AES_256_GCM_SHA384",
+					"TLS_CHACHA20_POLY1305_SHA256",
+				},
+				MinTLSVersion: configv1.VersionTLS13,
+			},
 		},
 	}
 	ci.Spec.NodePlacement = &operatorv1.NodePlacement{
@@ -593,6 +611,11 @@ func TestDesiredRouterDeployment(t *testing.T) {
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SET_FORWARDED_HEADERS", true, "never")
 
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CIPHERS", true, "quux")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CIPHERSUITES", true, "TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256")
+
+	checkDeploymentHasEnvVar(t, deployment, "SSL_MIN_VERSION", true, "TLSv1.3")
+
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_IP_V4_V6_MODE", true, "v6")
 	checkDeploymentHasEnvVar(t, deployment, RouterDisableHTTP2EnvName, true, "true")
 
@@ -645,6 +668,56 @@ func TestInferTLSProfileSpecFromDeployment(t *testing.T) {
 			expected: &configv1.TLSProfileSpec{
 				Ciphers:       []string{"foo", "bar", "baz"},
 				MinTLSVersion: configv1.VersionTLS11,
+			},
+		},
+		{
+			description: "min TLS version 1.2",
+			containers: []corev1.Container{
+				{
+					Name: "router",
+					Env: []corev1.EnvVar{
+						{
+							Name:  "ROUTER_CIPHERS",
+							Value: "foo:bar:baz",
+						},
+						{
+							Name:  "SSL_MIN_VERSION",
+							Value: "TLSv1.2",
+						},
+					},
+				},
+				{
+					Name: "logs",
+				},
+			},
+			expected: &configv1.TLSProfileSpec{
+				Ciphers:       []string{"foo", "bar", "baz"},
+				MinTLSVersion: configv1.VersionTLS12,
+			},
+		},
+		{
+			description: "min TLS version 1.3",
+			containers: []corev1.Container{
+				{
+					Name: "router",
+					Env: []corev1.EnvVar{
+						{
+							Name:  "ROUTER_CIPHERS",
+							Value: "foo:bar:baz",
+						},
+						{
+							Name:  "SSL_MIN_VERSION",
+							Value: "TLSv1.3",
+						},
+					},
+				},
+				{
+					Name: "logs",
+				},
+			},
+			expected: &configv1.TLSProfileSpec{
+				Ciphers:       []string{"foo", "bar", "baz"},
+				MinTLSVersion: configv1.VersionTLS13,
 			},
 		},
 	}
