@@ -1080,6 +1080,42 @@ type IngressControllerTuningOptions struct {
 	// +kubebuilder:validation:Maximum=64
 	// +optional
 	ThreadCount int32 `json:"threadCount,omitempty"`
+
+	// clientTimeout defines how long a connection will be held open while
+	// waiting for a client response
+	// +kubebuilder:validation:Optional
+	// +optional
+	ClientTimeout string `json:"clientTimeout,omitempty"`
+
+	// clientFinTimeout defines how long a connection will be held open while
+	// waiting for the client response to the server/backend closing the
+	// connection
+	// +kubebuilder:validation:Optional
+	// +optional
+	ClientFinTimeout string `json:"clientFinTimeout,omitempty"`
+
+	// serverTimeout defines how long a connection will be held open while
+	// waiting for a server/backend response
+	// +kubebuilder:validation:Optional
+	// +optional
+	ServerTimeout string `json:"serverTimeout,omitempty"`
+
+	// serverFinTimeout defines how long a connection will be held open while
+	// waiting for the server/backend response to the client closing the
+	// connection
+	// +kubebuilder:validation:Optional
+	// +optional
+	ServerFinTimeout string `json:"serverFinTimeout,omitempty"`
+
+	// tlsInspectDelay defines how long the router can hold data to find a
+	// matching route.
+	//
+	// Setting this too short can cause the router to fall back to the default
+	// certificate for edge-terminated or reencrypt routes even when a better
+	// matching certificate could be used.
+	// +kubebuilder:validation:Optional
+	// +optional
+	TLSInspectDelay string `json:"tlsInspectDelay,omitempty"`
 }
 
 var (

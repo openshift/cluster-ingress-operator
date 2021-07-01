@@ -669,6 +669,11 @@ var map_IngressControllerTuningOptions = map[string]string{
 	"headerBufferBytes":           "headerBufferBytes describes how much memory should be reserved (in bytes) for IngressController connection sessions. Note that this value must be at least 16384 if HTTP/2 is enabled for the IngressController (https://tools.ietf.org/html/rfc7540). If this field is empty, the IngressController will use a default value of 32768 bytes.\n\nSetting this field is generally not recommended as headerBufferBytes values that are too small may break the IngressController and headerBufferBytes values that are too large could cause the IngressController to use significantly more memory than necessary.",
 	"headerBufferMaxRewriteBytes": "headerBufferMaxRewriteBytes describes how much memory should be reserved (in bytes) from headerBufferBytes for HTTP header rewriting and appending for IngressController connection sessions. Note that incoming HTTP requests will be limited to (headerBufferBytes - headerBufferMaxRewriteBytes) bytes, meaning headerBufferBytes must be greater than headerBufferMaxRewriteBytes. If this field is empty, the IngressController will use a default value of 8192 bytes.\n\nSetting this field is generally not recommended as headerBufferMaxRewriteBytes values that are too small may break the IngressController and headerBufferMaxRewriteBytes values that are too large could cause the IngressController to use significantly more memory than necessary.",
 	"threadCount":                 "threadCount defines the number of threads created per HAProxy process. Creating more threads allows each ingress controller pod to handle more connections, at the cost of more system resources being used. HAProxy currently supports up to 64 threads. If this field is empty, the IngressController will use the default value.  The current default is 4 threads, but this may change in future releases.\n\nSetting this field is generally not recommended. Increasing the number of HAProxy threads allows ingress controller pods to utilize more CPU time under load, potentially starving other pods if set too high. Reducing the number of threads may cause the ingress controller to perform poorly.",
+	"clientTimeout":               "clientTimeout defines how long a connection will be held open while waiting for a client response",
+	"clientFinTimeout":            "clientFinTimeout defines how long a connection will be held open while waiting for the client response to the server/backend closing the connection",
+	"serverTimeout":               "serverTimeout defines how long a connection will be held open while waiting for a server/backend response",
+	"serverFinTimeout":            "serverFinTimeout defines how long a connection will be held open while waiting for the server/backend response to the client closing the connection",
+	"tlsInspectDelay":             "tlsInspectDelay defines how long the router can hold data to find a matching route.\n\nSetting this too short can cause the router to fall back to the default certificate for edge-terminated or reencrypt routes even when a better matching certificate could be used.",
 }
 
 func (IngressControllerTuningOptions) SwaggerDoc() map[string]string {
@@ -791,6 +796,14 @@ var map_KubeControllerManagerList = map[string]string{
 
 func (KubeControllerManagerList) SwaggerDoc() map[string]string {
 	return map_KubeControllerManagerList
+}
+
+var map_KubeControllerManagerSpec = map[string]string{
+	"useMoreSecureServiceCA": "useMoreSecureServiceCA indicates that the service-ca.crt provided in SA token volumes should include only enough certificates to validate service serving certificates. Once set to true, it cannot be set to false. Even if someone finds a way to set it back to false, the service-ca.crt files that previously existed will only have the more secure content.",
+}
+
+func (KubeControllerManagerSpec) SwaggerDoc() map[string]string {
+	return map_KubeControllerManagerSpec
 }
 
 var map_KubeStorageVersionMigrator = map[string]string{
