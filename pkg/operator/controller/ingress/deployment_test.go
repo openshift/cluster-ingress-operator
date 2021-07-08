@@ -90,6 +90,17 @@ func checkDeploymentHasContainer(t *testing.T, deployment *appsv1.Deployment, na
 	}
 }
 
+func checkDeploymentHash(t *testing.T, deployment *appsv1.Deployment) {
+	t.Helper()
+	expectedHash := deploymentTemplateHash(deployment)
+	actualHash, haveHashLabel := deployment.Spec.Template.Labels[controller.ControllerDeploymentHashLabel]
+	if !haveHashLabel {
+		t.Error("router Deployment is missing hash label")
+	} else if actualHash != expectedHash {
+		t.Errorf("router Deployment has wrong hash; expected: %s, got: %s", expectedHash, actualHash)
+	}
+}
+
 func checkRollingUpdateParams(t *testing.T, deployment *appsv1.Deployment, maxUnavailable intstr.IntOrString, maxSurge intstr.IntOrString) {
 	t.Helper()
 
@@ -180,13 +191,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		t.Errorf("invalid router Deployment: %v", err)
 	}
 
-	expectedHash := deploymentTemplateHash(deployment)
-	actualHash, haveHashLabel := deployment.Spec.Template.Labels[controller.ControllerDeploymentHashLabel]
-	if !haveHashLabel {
-		t.Error("router Deployment is missing hash label")
-	} else if actualHash != expectedHash {
-		t.Errorf("router Deployment has wrong hash; expected: %s, got: %s", expectedHash, actualHash)
-	}
+	checkDeploymentHash(t, deployment)
 
 	checkDeploymentHasEnvVar(t, deployment, WildcardRouteAdmissionPolicy, true, "false")
 
@@ -319,13 +324,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	if err != nil {
 		t.Errorf("invalid router Deployment: %v", err)
 	}
-	expectedHash = deploymentTemplateHash(deployment)
-	actualHash, haveHashLabel = deployment.Spec.Template.Labels[controller.ControllerDeploymentHashLabel]
-	if !haveHashLabel {
-		t.Error("router Deployment is missing hash label")
-	} else if actualHash != expectedHash {
-		t.Errorf("router Deployment has wrong hash; expected: %s, got: %s", expectedHash, actualHash)
-	}
+	checkDeploymentHash(t, deployment)
 	checkRollingUpdateParams(t, deployment, intstr.FromString("25%"), intstr.FromString("25%"))
 	if deployment.Spec.Template.Spec.HostNetwork != false {
 		t.Error("expected host network to be false")
@@ -382,13 +381,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	if err != nil {
 		t.Errorf("invalid router Deployment: %v", err)
 	}
-	expectedHash = deploymentTemplateHash(deployment)
-	actualHash, haveHashLabel = deployment.Spec.Template.Labels[controller.ControllerDeploymentHashLabel]
-	if !haveHashLabel {
-		t.Error("router Deployment is missing hash label")
-	} else if actualHash != expectedHash {
-		t.Errorf("router Deployment has wrong hash; expected: %s, got: %s", expectedHash, actualHash)
-	}
+	checkDeploymentHash(t, deployment)
 	checkRollingUpdateParams(t, deployment, intstr.FromString("25%"), intstr.FromString("25%"))
 	if deployment.Spec.Template.Spec.HostNetwork != false {
 		t.Error("expected host network to be false")
@@ -466,10 +459,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	if err != nil {
 		t.Errorf("invalid router Deployment: %v", err)
 	}
-	actualHash, haveHashLabel = deployment.Spec.Template.Labels[controller.ControllerDeploymentHashLabel]
-	if haveHashLabel {
-		t.Errorf("router Deployment has unexpected hash label: %s", actualHash)
-	}
+	checkDeploymentHash(t, deployment)
 	if len(deployment.Spec.Template.Spec.NodeSelector) != 1 ||
 		deployment.Spec.Template.Spec.NodeSelector["xyzzy"] != "quux" {
 		t.Errorf("router Deployment has unexpected node selector: %#v",
@@ -751,6 +741,27 @@ func TestDeploymentConfigChanged(t *testing.T) {
 			mutate: func(deployment *appsv1.Deployment) {
 				tolerations := deployment.Spec.Template.Spec.Tolerations
 				tolerations[1], tolerations[0] = tolerations[0], tolerations[1]
+			},
+			expect: false,
+		},
+		{
+			description: "if .spec.template.spec.topologySpreadConstraints.maxSkew changes",
+			mutate: func(deployment *appsv1.Deployment) {
+				deployment.Spec.Template.Spec.TopologySpreadConstraints[0].MaxSkew = int32(2)
+			},
+			expect: true,
+		},
+		{
+			description: "if .spec.template.spec.topologySpreadConstraints is zeroed",
+			mutate: func(deployment *appsv1.Deployment) {
+				deployment.Spec.Template.Spec.TopologySpreadConstraints = []corev1.TopologySpreadConstraint{}
+			},
+			expect: true,
+		},
+		{
+			description: "if the hash in .spec.template.spec.topologySpreadConstraints changes",
+			mutate: func(deployment *appsv1.Deployment) {
+				deployment.Spec.Template.Spec.TopologySpreadConstraints[0].LabelSelector.MatchExpressions[0].Values = []string{"xyz"}
 			},
 			expect: false,
 		},
@@ -1062,6 +1073,20 @@ func TestDeploymentConfigChanged(t *testing.T) {
 							},
 						},
 						Tolerations: []corev1.Toleration{toleration, otherToleration},
+						TopologySpreadConstraints: []corev1.TopologySpreadConstraint{{
+							MaxSkew:           int32(1),
+							TopologyKey:       "topology.kubernetes.io/zone",
+							WhenUnsatisfiable: corev1.ScheduleAnyway,
+							LabelSelector: &metav1.LabelSelector{
+								MatchExpressions: []metav1.LabelSelectorRequirement{
+									{
+										Key:      controller.ControllerDeploymentHashLabel,
+										Operator: metav1.LabelSelectorOpIn,
+										Values:   []string{"default"},
+									},
+								},
+							},
+						}},
 					},
 				},
 				Replicas: &nineteen,
