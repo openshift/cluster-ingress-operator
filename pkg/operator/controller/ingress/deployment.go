@@ -479,12 +479,16 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	if ci.Spec.BindOptions.HTTPPort > 0 {
 		serviceHTTPPort = int(ci.Spec.BindOptions.HTTPPort)
 	}
-	env = append(env, corev1.EnvVar{Name: RouterHAProxyServiceHTTPPortEnvName, Value: strconv.Itoa(serviceHTTPPort)})
 
 	serviceHTTPsPort := RouterHAProxyServiceHTTPPortDefaultValue
 	if ci.Spec.BindOptions.HTTPsPort > 0 {
 		serviceHTTPsPort = int(ci.Spec.BindOptions.HTTPsPort)
 	}
+
+	if serviceHTTPPort == serviceHTTPsPort {
+		return nil, fmt.Errorf("ingresscontroller %q has invalid spec.bindOptions: httpPort can not be equal to httpsPort", ci.Name)
+	}
+	env = append(env, corev1.EnvVar{Name: RouterHAProxyServiceHTTPPortEnvName, Value: strconv.Itoa(serviceHTTPPort)})
 	env = append(env, corev1.EnvVar{Name: RouterHAProxyServiceHTTPsPortEnvName, Value: strconv.Itoa(serviceHTTPsPort)})
 
 	nodeSelector := map[string]string{
