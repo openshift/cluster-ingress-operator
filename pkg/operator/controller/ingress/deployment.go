@@ -70,6 +70,11 @@ const (
 	RouterHAProxyThreadsEnvName      = "ROUTER_THREADS"
 	RouterHAProxyThreadsDefaultValue = 4
 
+	RouterHAProxyServiceHTTPPortEnvName       = "ROUTER_SERVICE_HTTP_PORT"
+	RouterHAProxyServiceHTTPPortDefaultValue  = 80
+	RouterHAProxyServiceHTTPsPortEnvName      = "ROUTER_SERVICE_HTTP_PORT"
+	RouterHAProxyServiceHTTPsPortDefaultValue = 443
+
 	WorkloadPartitioningManagement = "target.workload.openshift.io/management"
 )
 
@@ -469,6 +474,18 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		threads = int(ci.Spec.TuningOptions.ThreadCount)
 	}
 	env = append(env, corev1.EnvVar{Name: RouterHAProxyThreadsEnvName, Value: strconv.Itoa(threads)})
+
+	serviceHTTPPort := RouterHAProxyServiceHTTPPortDefaultValue
+	if ci.Spec.BindOptions.HTTPPort > 0 {
+		serviceHTTPPort = int(ci.Spec.BindOptions.HTTPPort)
+	}
+	env = append(env, corev1.EnvVar{Name: RouterHAProxyServiceHTTPPortEnvName, Value: strconv.Itoa(serviceHTTPPort)})
+
+	serviceHTTPsPort := RouterHAProxyServiceHTTPPortDefaultValue
+	if ci.Spec.BindOptions.HTTPsPort > 0 {
+		serviceHTTPsPort = int(ci.Spec.BindOptions.HTTPsPort)
+	}
+	env = append(env, corev1.EnvVar{Name: RouterHAProxyServiceHTTPsPortEnvName, Value: strconv.Itoa(serviceHTTPsPort)})
 
 	nodeSelector := map[string]string{
 		"kubernetes.io/os":               "linux",
