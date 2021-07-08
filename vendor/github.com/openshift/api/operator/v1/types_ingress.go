@@ -200,6 +200,17 @@ type IngressControllerSpec struct {
 	// +optional
 	TuningOptions IngressControllerTuningOptions `json:"tuningOptions,omitempty"`
 
+	// bindOptions defines parameters for binding haproxy in ingress controller pods.
+	// All fields are optional and will use their respective defaults if not set.
+	// See specific bindOptions fields for more details.
+	//
+	//
+	// Setting fields within bindOptions is generally not recommended. The
+	// default values are suitable for most configurations.
+	//
+	// +optional
+	BindOptions IngressControllerBindOptions `json:"bindOptions,omitempty"`
+
 	// unsupportedConfigOverrides allows specifying unsupported
 	// configuration options.  Its use is unsupported.
 	//
@@ -1080,6 +1091,30 @@ type IngressControllerTuningOptions struct {
 	// +kubebuilder:validation:Maximum=64
 	// +optional
 	ThreadCount int32 `json:"threadCount,omitempty"`
+}
+
+// IngressControllerBindOptions specifies options for binding haproxy in ingress controller pods
+type IngressControllerBindOptions struct {
+
+	// httpPort deines the port number which HAProxy process binds for
+	// https connections. Setting this field is generally not recommended. However in
+	// hostNetworking strategy, default http 80 port might be occupied by other processess
+	//
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=30000
+	// +optional
+	HTTPPort int32 `json:"httpPort,omitempty"`
+
+	// httpPort deines the port number which HAProxy process binds for
+	// http connections. Setting this field is generally not recommended. However in
+	// hostNetworking strategy, default https 443 port might be occupied by other processess
+	//
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=30000
+	// +optional
+	HTTPsPort int32 `json:"httpsPort,omitempty"`
 }
 
 var (
