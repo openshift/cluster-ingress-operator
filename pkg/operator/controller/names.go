@@ -106,6 +106,25 @@ func RouterOperatorGeneratedDefaultCertificateSecretName(ci *operatorv1.IngressC
 	}
 }
 
+// ClientCAConfigMapName returns the namespaced name for the client CA
+// configmap.
+func ClientCAConfigMapName(ic *operatorv1.IngressController) types.NamespacedName {
+	return types.NamespacedName{
+		Namespace: "openshift-ingress",
+		// TODO Is this user-specified or operator-managed?
+		// Name:      "router-client-ca-" + ic.Name,
+		Name: ic.Spec.ClientTLS.ClientCA.Name,
+	}
+}
+
+// CRLConfigMapName returns the namespaced name for the CRL configmap.
+func CRLConfigMapName(ic *operatorv1.IngressController) types.NamespacedName {
+	return types.NamespacedName{
+		Namespace: "openshift-ingress",
+		Name:      "router-client-ca-crl-" + ic.Name,
+	}
+}
+
 // RsyslogConfigMapName returns the namespaced name for the rsyslog configmap.
 func RsyslogConfigMapName(ic *operatorv1.IngressController) types.NamespacedName {
 	return types.NamespacedName{

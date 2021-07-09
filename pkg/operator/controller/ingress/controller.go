@@ -705,7 +705,21 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		errs = append(errs, err)
 	}
 
-	haveDepl, deployment, err := r.ensureRouterDeployment(ci, infraConfig, ingressConfig, apiConfig, networkConfig)
+	var haveClientCAConfigmap bool
+	clientCAConfigmap := &corev1.ConfigMap{}
+	if len(ci.Spec.ClientTLS.ClientCA.Name) != 0 {
+		clientCAConfigmapName := types.NamespacedName{
+			Namespace: "openshift-ingress",
+			Name:      ci.Spec.ClientTLS.ClientCA.Name,
+		}
+		if err := r.cache.Get(context.TODO(), clientCAConfigmapName, clientCAConfigmap); err != nil {
+			errs = append(errs, fmt.Errorf("failed to get client CA configmap: %w", err))
+			return utilerrors.NewAggregate(errs)
+		}
+		haveClientCAConfigmap = true
+	}
+
+	haveDepl, deployment, err := r.ensureRouterDeployment(ci, infraConfig, ingressConfig, apiConfig, networkConfig, haveClientCAConfigmap, clientCAConfigmap)
 	if err != nil {
 		errs = append(errs, fmt.Errorf("failed to ensure deployment: %v", err))
 		return utilerrors.NewAggregate(errs)
