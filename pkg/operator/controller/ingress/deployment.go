@@ -8,6 +8,7 @@ import (
 	"hash/fnv"
 	"net"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -71,6 +72,10 @@ const (
 	RouterHAProxyThreadsDefaultValue = 4
 
 	WorkloadPartitioningManagement = "target.workload.openshift.io/management"
+)
+
+var (
+	HAProxyTimespecRegex = regexp.MustCompile("[0-9]+(?:[um]?s|[mhd])?")
 )
 
 // ensureRouterDeployment ensures the router deployment exists for a given
@@ -178,6 +183,15 @@ func HardStopAfterIsEnabled(ic *operatorv1.IngressController, ingressConfig *con
 		return controllerAnnotation, controllerValue
 	}
 	return HardStopAfterIsEnabledByAnnotation(ingressConfig.Annotations)
+}
+
+// HAProxyTimespec returns the first substring from `input` that matches the
+// HAProxy time format. HAProxy expects time as a set of digits, optionally
+// followed by one of the following time units: us, ms, s, m, h, or d. If no
+// time unit is specified, ms is assumed.
+// TODO: Is this redundant with clipHAProxyTimeoutValue()?
+func HAProxyTimespec(input string) string {
+	return HAProxyTimespecRegex.FindString(input)
 }
 
 // desiredRouterDeployment returns the desired router deployment.
@@ -469,6 +483,22 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		threads = int(ci.Spec.TuningOptions.ThreadCount)
 	}
 	env = append(env, corev1.EnvVar{Name: RouterHAProxyThreadsEnvName, Value: strconv.Itoa(threads)})
+
+	if len(ci.Spec.TuningOptions.ClientTimeout) > 0 {
+		env = append(env, corev1.EnvVar{Name: "ROUTER_DEFAULT_CLIENT_TIMEOUT", Value: HAProxyTimespec(ci.Spec.TuningOptions.ClientTimeout)})
+	}
+	if len(ci.Spec.TuningOptions.ClientFinTimeout) > 0 {
+		env = append(env, corev1.EnvVar{Name: "ROUTER_CLIENT_FIN_TIMEOUT", Value: HAProxyTimespec(ci.Spec.TuningOptions.ClientFinTimeout)})
+	}
+	if len(ci.Spec.TuningOptions.ServerTimeout) > 0 {
+		env = append(env, corev1.EnvVar{Name: "ROUTER_DEFAULT_SERVER_TIMEOUT", Value: HAProxyTimespec(ci.Spec.TuningOptions.ServerTimeout)})
+	}
+	if len(ci.Spec.TuningOptions.ServerFinTimeout) > 0 {
+		env = append(env, corev1.EnvVar{Name: "ROUTER_DEFAULT_SERVER_FIN_TIMEOUT", Value: HAProxyTimespec(ci.Spec.TuningOptions.ServerFinTimeout)})
+	}
+	if len(ci.Spec.TuningOptions.TLSInspectDelay) > 0 {
+		env = append(env, corev1.EnvVar{Name: "ROUTER_INSPECT_DELAY", Value: HAProxyTimespec(ci.Spec.TuningOptions.TLSInspectDelay)})
+	}
 
 	nodeSelector := map[string]string{
 		"kubernetes.io/os":               "linux",

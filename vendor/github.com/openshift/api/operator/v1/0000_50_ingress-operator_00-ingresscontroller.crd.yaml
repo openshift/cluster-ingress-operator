@@ -948,6 +948,15 @@ spec:
                   is generally not recommended. The default values are suitable for
                   most configurations."
                 properties:
+                  clientFinTimeout:
+                    description: clientFinTimeout defines how long a connection will
+                      be held open while waiting for the client response to the server/backend
+                      closing the connection
+                    type: string
+                  clientTimeout:
+                    description: clientTimeout defines how long a connection will
+                      be held open while waiting for a client response
+                    type: string
                   headerBufferBytes:
                     description: "headerBufferBytes describes how much memory should
                       be reserved (in bytes) for IngressController connection sessions.
@@ -978,6 +987,15 @@ spec:
                     format: int32
                     minimum: 4096
                     type: integer
+                  serverFinTimeout:
+                    description: serverFinTimeout defines how long a connection will
+                      be held open while waiting for the server/backend response to
+                      the client closing the connection
+                    type: string
+                  serverTimeout:
+                    description: serverTimeout defines how long a connection will
+                      be held open while waiting for a server/backend response
+                    type: string
                   threadCount:
                     description: "threadCount defines the number of threads created
                       per HAProxy process. Creating more threads allows each ingress
@@ -995,6 +1013,13 @@ spec:
                     maximum: 64
                     minimum: 1
                     type: integer
+                  tlsInspectDelay:
+                    description: "tlsInspectDelay defines how long the router can
+                      hold data to find a matching route. \n Setting this too short
+                      can cause the router to fall back to the default certificate
+                      for edge-terminated or reencrypt routes even when a better matching
+                      certificate could be used."
+                    type: string
                 type: object
               unsupportedConfigOverrides:
                 description: unsupportedConfigOverrides allows specifying unsupported
