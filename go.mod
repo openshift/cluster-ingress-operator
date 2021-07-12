@@ -8,6 +8,8 @@ require (
 	github.com/Azure/go-autorest/autorest/adal v0.9.5
 	github.com/Azure/go-autorest/autorest/to v0.2.0 // indirect
 	github.com/Azure/go-autorest/autorest/validation v0.1.0 // indirect
+	github.com/IBM/go-sdk-core/v4 v4.9.0
+	github.com/IBM/networking-go-sdk v0.14.0
 	github.com/aws/aws-sdk-go v1.38.49
 	github.com/davecgh/go-spew v1.1.1
 	github.com/ghodss/yaml v1.0.0
