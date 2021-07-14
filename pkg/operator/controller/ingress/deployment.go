@@ -72,7 +72,7 @@ const (
 
 	RouterHAProxyServiceHTTPPortEnvName       = "ROUTER_SERVICE_HTTP_PORT"
 	RouterHAProxyServiceHTTPPortDefaultValue  = 80
-	RouterHAProxyServiceHTTPsPortEnvName      = "ROUTER_SERVICE_HTTP_PORT"
+	RouterHAProxyServiceHTTPsPortEnvName      = "ROUTER_SERVICE_HTTPS_PORT"
 	RouterHAProxyServiceHTTPsPortDefaultValue = 443
 
 	WorkloadPartitioningManagement = "target.workload.openshift.io/management"
