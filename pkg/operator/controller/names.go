@@ -35,6 +35,7 @@ const (
 
 	DefaultOperatorNamespace = "openshift-ingress-operator"
 	DefaultOperandNamespace  = "openshift-ingress"
+	SourceConfigMapNamespace = "openshift-config"
 
 	// DefaultCanaryNamespace is the default namespace for
 	// the ingress canary check resources.
@@ -110,6 +111,14 @@ func RsyslogConfigMapName(ic *operatorv1.IngressController) types.NamespacedName
 	return types.NamespacedName{
 		Namespace: DefaultOperandNamespace,
 		Name:      "rsyslog-conf-" + ic.Name,
+	}
+}
+
+// HttpErrorCodePageConfigMapName returns the namespaced name for the errorpage configmap.
+func HttpErrorCodePageConfigMapName(ic *operatorv1.IngressController) types.NamespacedName {
+	return types.NamespacedName{
+		Namespace: DefaultOperandNamespace,
+		Name:      ic.Name + "-errorpages",
 	}
 }
 

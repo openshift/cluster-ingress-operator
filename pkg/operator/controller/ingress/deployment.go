@@ -92,6 +92,7 @@ func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, in
 	if err != nil {
 		return haveDepl, current, fmt.Errorf("failed to build router deployment: %v", err)
 	}
+
 	switch {
 	case !haveDepl:
 		if err := r.createRouterDeployment(desired); err != nil {
@@ -105,7 +106,6 @@ func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, in
 			return r.currentRouterDeployment(ci)
 		}
 	}
-
 	return true, current, nil
 }
 
@@ -404,6 +404,36 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	volumes = append(volumes, certsVolume)
 	routerVolumeMounts = append(routerVolumeMounts, certsVolumeMount)
 
+	if len(ci.Spec.HttpErrorCodePages.Name) != 0 {
+		configmapName := controller.HttpErrorCodePageConfigMapName(ci)
+		httpErrorCodeConfigVolume := corev1.Volume{
+			Name: "error-pages",
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: configmapName.Name,
+					},
+				},
+			},
+		}
+		volumes = append(volumes, httpErrorCodeConfigVolume)
+		httpErrorCodeVolumeMount := corev1.VolumeMount{
+			Name:      httpErrorCodeConfigVolume.Name,
+			MountPath: "/var/lib/haproxy/conf/error_code_pages",
+		}
+		routerVolumeMounts = append(routerVolumeMounts, httpErrorCodeVolumeMount)
+		if len(configmapName.Name) != 0 {
+			env = append(env, corev1.EnvVar{
+				Name:  "ROUTER_ERRORFILE_503",
+				Value: "/var/lib/haproxy/conf/error_code_pages/error-page-503.http",
+			})
+			env = append(env, corev1.EnvVar{
+				Name:  "ROUTER_ERRORFILE_404",
+				Value: "/var/lib/haproxy/conf/error_code_pages/error-page-404.http",
+			})
+		}
+	}
+
 	env = append(env, corev1.EnvVar{Name: "ROUTER_METRICS_TYPE", Value: "haproxy"})
 	env = append(env, corev1.EnvVar{Name: "ROUTER_METRICS_TLS_CERT_FILE", Value: filepath.Join(certsVolumeMountPath, "tls.crt")})
 	env = append(env, corev1.EnvVar{Name: "ROUTER_METRICS_TLS_KEY_FILE", Value: filepath.Join(certsVolumeMountPath, "tls.key")})
@@ -620,8 +650,24 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 
 	tlsProfileSpec := tlsProfileSpecForIngressController(ci, apiConfig)
 
-	ciphers := strings.Join(tlsProfileSpec.Ciphers, ":")
-	env = append(env, corev1.EnvVar{Name: "ROUTER_CIPHERS", Value: ciphers})
+	var tls13Ciphers, otherCiphers []string
+	for _, cipher := range tlsProfileSpec.Ciphers {
+		if tlsVersion13Ciphers.Has(cipher) {
+			tls13Ciphers = append(tls13Ciphers, cipher)
+		} else {
+			otherCiphers = append(otherCiphers, cipher)
+		}
+	}
+	env = append(env, corev1.EnvVar{
+		Name:  "ROUTER_CIPHERS",
+		Value: strings.Join(otherCiphers, ":"),
+	})
+	if len(tls13Ciphers) != 0 {
+		env = append(env, corev1.EnvVar{
+			Name:  "ROUTER_CIPHERSUITES",
+			Value: strings.Join(tls13Ciphers, ":"),
+		})
+	}
 
 	var minTLSVersion string
 	switch tlsProfileSpec.MinTLSVersion {
@@ -632,8 +678,8 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		minTLSVersion = "TLSv1.1"
 	case configv1.VersionTLS12:
 		minTLSVersion = "TLSv1.2"
-	// TODO: Add TLS 1.3 support when haproxy is built with an openssl
-	//  version that supports tls v1.3.
+	case configv1.VersionTLS13:
+		minTLSVersion = "TLSv1.3"
 	default:
 		minTLSVersion = "TLSv1.2"
 	}
@@ -833,12 +879,15 @@ func inferTLSProfileSpecFromDeployment(deployment *appsv1.Deployment) *configv1.
 
 	var (
 		ciphersString       string
+		cipherSuitesString  string
 		minTLSVersionString string
 	)
 	for _, v := range env {
 		switch v.Name {
 		case "ROUTER_CIPHERS":
 			ciphersString = v.Value
+		case "ROUTER_CIPHERSUITES":
+			cipherSuitesString = v.Value
 		case "SSL_MIN_VERSION":
 			minTLSVersionString = v.Value
 		}
@@ -848,6 +897,9 @@ func inferTLSProfileSpecFromDeployment(deployment *appsv1.Deployment) *configv1.
 	if len(ciphersString) > 0 {
 		ciphers = strings.Split(ciphersString, ":")
 	}
+	if len(cipherSuitesString) > 0 {
+		ciphers = append(ciphers, strings.Split(cipherSuitesString, ":")...)
+	}
 
 	var minTLSVersion configv1.TLSProtocolVersion
 	switch minTLSVersionString {
@@ -855,7 +907,8 @@ func inferTLSProfileSpecFromDeployment(deployment *appsv1.Deployment) *configv1.
 		minTLSVersion = configv1.VersionTLS11
 	case "TLSv1.2":
 		minTLSVersion = configv1.VersionTLS12
-	// TODO: Add TLS 1.3 support when haproxy is built with openssl 1.1.1.
+	case "TLSv1.3":
+		minTLSVersion = configv1.VersionTLS13
 	default:
 		minTLSVersion = configv1.VersionTLS12
 	}
