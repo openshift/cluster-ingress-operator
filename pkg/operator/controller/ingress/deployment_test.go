@@ -437,7 +437,7 @@ func Test_desiredRouterDeployment(t *testing.T) {
 		{"ROUTER_DEFAULT_CONNECT_TIMEOUT", false, ""},
 		{"ROUTER_ERRORFILE_503", false, ""},
 		{"ROUTER_ERRORFILE_404", false, ""},
-		{"ROUTER_HAPROXY_CONFIG_MANAGER", false, ""},
+		{"ROUTER_HAPROXY_CONFIG_MANAGER", true, "true"},
 		{"ROUTER_H1_CASE_ADJUST", false, ""},
 		{"ROUTER_INSPECT_DELAY", false, ""},
 		{"ROUTER_IP_V4_V6_MODE", false, ""},

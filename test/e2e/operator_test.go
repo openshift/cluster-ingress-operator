@@ -3283,6 +3283,9 @@ func TestUnsupportedConfigOverride(t *testing.T) {
 			icName := types.NamespacedName{Namespace: operatorNamespace, Name: tt.name}
 			domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
 			ic := newPrivateController(icName, domain)
+			ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
+				Raw: []byte(fmt.Sprintf(`{"%s":"false"}`, tt.unsupportedConfigOverride)),
+			}
 			if err := kclient.Create(context.TODO(), ic); err != nil {
 				t.Fatalf("failed to create ingresscontroller: %v", err)
 			}
