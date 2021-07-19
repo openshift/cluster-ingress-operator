@@ -555,7 +555,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	}
 
 	dynamicConfigOverride := unsupportedConfigOverrides.DynamicConfigManager
-	if v, err := strconv.ParseBool(dynamicConfigOverride); err == nil && v {
+	if v, err := strconv.ParseBool(dynamicConfigOverride); err != nil || v {
 		env = append(env, corev1.EnvVar{
 			Name:  RouterHAProxyConfigManager,
 			Value: "true",
