@@ -232,7 +232,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 			deployment.Spec.Template.Spec.Tolerations)
 	}
 
-	checkDeploymentHasEnvVar(t, deployment, "ROUTER_HAPROXY_CONFIG_MANAGER", false, "")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_HAPROXY_CONFIG_MANAGER", true, "true")
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOAD_BALANCE_ALGORITHM", true, "leastconn")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_TCP_BALANCE_SCHEME", true, "source")
