@@ -8,7 +8,6 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
-	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
@@ -30,8 +29,8 @@ $ModLoad omstdout.so
 // ingresscontroller if the access logging is enabled.  Returns a Boolean
 // indicating whether the configmap exists, the configmap if it does exist, and
 // an error value.
-func (r *reconciler) ensureRsyslogConfigMap(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference, ingressConfig *configv1.Ingress) (bool, *corev1.ConfigMap, error) {
-	wantCM, desired, err := desiredRsyslogConfigMap(ic, deploymentRef, ingressConfig)
+func (r *reconciler) ensureRsyslogConfigMap(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference) (bool, *corev1.ConfigMap, error) {
+	wantCM, desired, err := desiredRsyslogConfigMap(ic, deploymentRef)
 	if err != nil {
 		return false, nil, fmt.Errorf("failed to build configmap: %v", err)
 	}
@@ -73,7 +72,7 @@ func (r *reconciler) ensureRsyslogConfigMap(ic *operatorv1.IngressController, de
 // desiredRsyslogConfigMap returns the desired rsyslog configmap.  Returns a
 // Boolean indicating whether a configmap is desired, as well as the configmap
 // if one is desired.
-func desiredRsyslogConfigMap(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference, ingressConfig *configv1.Ingress) (bool, *corev1.ConfigMap, error) {
+func desiredRsyslogConfigMap(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference) (bool, *corev1.ConfigMap, error) {
 	accessLogging := accessLoggingForIngressController(ic)
 	if accessLogging == nil || accessLogging.Destination.Type != operatorv1.ContainerLoggingDestinationType {
 		return false, nil, nil
