@@ -188,7 +188,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	if err != nil {
 		t.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %v", ci.Namespace, ci.Name, err)
 	}
-	deployment, err := desiredRouterDeployment(ci, ingressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded)
+	deployment, err := desiredRouterDeployment(ci, ingressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded, false, nil)
 	if err != nil {
 		t.Errorf("invalid router Deployment: %v", err)
 	}
@@ -369,7 +369,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	if err != nil {
 		t.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %v", ci.Namespace, ci.Name, err)
 	}
-	deployment, err = desiredRouterDeployment(ci, ingressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded)
+	deployment, err = desiredRouterDeployment(ci, ingressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded, false, nil)
 	if err != nil {
 		t.Errorf("invalid router Deployment: %v", err)
 	}
@@ -451,7 +451,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	if err != nil {
 		t.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %v", ci.Namespace, ci.Name, err)
 	}
-	deployment, err = desiredRouterDeployment(ci, ingressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded)
+	deployment, err = desiredRouterDeployment(ci, ingressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded, false, nil)
 	if err != nil {
 		t.Errorf("invalid router Deployment: %v", err)
 	}
@@ -552,7 +552,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	if err != nil {
 		t.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %v", ci.Namespace, ci.Name, err)
 	}
-	deployment, err = desiredRouterDeployment(ci, ingressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded)
+	deployment, err = desiredRouterDeployment(ci, ingressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded, false, nil)
 	if err != nil {
 		t.Errorf("invalid router Deployment: %v", err)
 	}
