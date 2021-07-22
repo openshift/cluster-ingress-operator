@@ -2422,7 +2422,7 @@ func waitForDeploymentComplete(t *testing.T, cl client.Client, deployment *appsv
 func waitForDeploymentEnvVar(t *testing.T, cl client.Client, deployment *appsv1.Deployment, timeout time.Duration, name, value string) error {
 	t.Helper()
 	deploymentName := types.NamespacedName{Namespace: deployment.Namespace, Name: deployment.Name}
-	err := wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
+	err := wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
 		deployment := &appsv1.Deployment{}
 		if err := kclient.Get(context.TODO(), deploymentName, deployment); err != nil {
 			t.Logf("error getting deployment %s/%s: %v", deploymentName.Namespace, deploymentName.Name, err)
