@@ -224,7 +224,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	checkDeploymentDoesNotHaveEnvVar(t, deployment, "ROUTER_ERRORFILE_503")
 	checkDeploymentDoesNotHaveEnvVar(t, deployment, "ROUTER_ERRORFILE_404")
 
-	checkDeploymentHasEnvVar(t, deployment, "RELOAD_INTERVAL", true, "5")
+	checkDeploymentHasEnvVar(t, deployment, "RELOAD_INTERVAL", true, "5s")
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_USE_PROXY_PROTOCOL", false, "")
 
@@ -401,7 +401,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		t.Error("router Deployment is missing error code pages volume mount")
 	}
 
-	checkDeploymentHasEnvVar(t, deployment, "RELOAD_INTERVAL", true, "15")
+	checkDeploymentHasEnvVar(t, deployment, "RELOAD_INTERVAL", true, "15s")
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_USE_PROXY_PROTOCOL", true, "true")
 
@@ -474,7 +474,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOAD_BALANCE_ALGORITHM", true, "random")
 
-	checkDeploymentHasEnvVar(t, deployment, "RELOAD_INTERVAL", true, "5")
+	checkDeploymentHasEnvVar(t, deployment, "RELOAD_INTERVAL", true, "5s")
 
 	checkDeploymentDoesNotHaveEnvVar(t, deployment, "ROUTER_USE_PROXY_PROTOCOL")
 

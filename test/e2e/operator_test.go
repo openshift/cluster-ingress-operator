@@ -2170,8 +2170,8 @@ func TestReloadIntervalUnsupportedConfigOverride(t *testing.T) {
 	if err := kclient.Get(context.TODO(), controller.RouterDeploymentName(ic), deployment); err != nil {
 		t.Fatalf("failed to get ingresscontroller deployment: %v", err)
 	}
-	if err := waitForDeploymentEnvVar(t, kclient, deployment, 30*time.Second, "RELOAD_INTERVAL", "5"); err != nil {
-		t.Fatalf("expected initial deployment to set RELOAD_INTERVAL=5: %v", err)
+	if err := waitForDeploymentEnvVar(t, kclient, deployment, 30*time.Second, "RELOAD_INTERVAL", "5s"); err != nil {
+		t.Fatalf("expected initial deployment to set RELOAD_INTERVAL=5s: %v", err)
 	}
 
 	ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
@@ -2180,8 +2180,8 @@ func TestReloadIntervalUnsupportedConfigOverride(t *testing.T) {
 	if err := kclient.Update(context.TODO(), ic); err != nil {
 		t.Fatalf("failed to update ingresscontroller: %v", err)
 	}
-	if err := waitForDeploymentEnvVar(t, kclient, deployment, 1*time.Minute, "RELOAD_INTERVAL", "60"); err != nil {
-		t.Fatalf("expected updated deployment to set RELOAD_INTERVAL=60: %v", err)
+	if err := waitForDeploymentEnvVar(t, kclient, deployment, 1*time.Minute, "RELOAD_INTERVAL", "60s"); err != nil {
+		t.Fatalf("expected updated deployment to set RELOAD_INTERVAL=60s: %v", err)
 	}
 }
 

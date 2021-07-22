@@ -475,7 +475,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	}
 	env = append(env, corev1.EnvVar{
 		Name:  RouterReloadIntervalEnvName,
-		Value: strconv.Itoa(reloadInterval),
+		Value: fmt.Sprintf("%ds", reloadInterval),
 	})
 
 	dynamicConfigOverride := unsupportedConfigOverrides.DynamicConfigManager
