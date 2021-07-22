@@ -2145,6 +2145,58 @@ func TestLocalWithFallbackOverrideForNodePortService(t *testing.T) {
 	}
 }
 
+// TestMaxConnectionsUnsupportedConfigOverride verifies that the operator
+// configures router pod replicas with the appropriate value for
+// ROUTER_MAX_CONNECTIONS if a value is specified using an unsupported config
+// override on the ingresscontroller.
+func TestMaxConnectionsUnsupportedConfigOverride(t *testing.T) {
+	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "max-connections"}
+	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
+	ic := newPrivateController(icName, domain)
+	if err := kclient.Create(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to create ingresscontroller: %v", err)
+	}
+	defer assertIngressControllerDeleted(t, kclient, ic)
+
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	deployment := &appsv1.Deployment{}
+	if err := kclient.Get(context.TODO(), controller.RouterDeploymentName(ic), deployment); err != nil {
+		t.Fatalf("failed to get ingresscontroller deployment: %v", err)
+	}
+	if err := waitForDeploymentEnvVar(t, kclient, deployment, 30*time.Second, "ROUTER_MAX_CONNECTIONS", ""); err != nil {
+		t.Fatalf("expected initial deployment not to set ROUTER_MAX_CONNECTIONS: %v", err)
+	}
+
+	if err := kclient.Get(context.TODO(), icName, ic); err != nil {
+		t.Fatalf("failed to get ingresscontroller: %v", err)
+	}
+	ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
+		Raw: []byte(`{"maxConnections":-1}`),
+	}
+	if err := kclient.Update(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to update ingresscontroller: %v", err)
+	}
+	if err := waitForDeploymentEnvVar(t, kclient, deployment, 1*time.Minute, "ROUTER_MAX_CONNECTIONS", "auto"); err != nil {
+		t.Fatalf("expected updated deployment to set ROUTER_MAX_CONNECTIONS=auto: %v", err)
+	}
+
+	if err := kclient.Get(context.TODO(), icName, ic); err != nil {
+		t.Fatalf("failed to get ingresscontroller: %v", err)
+	}
+	ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
+		Raw: []byte(`{"maxConnections":40000}`),
+	}
+	if err := kclient.Update(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to update ingresscontroller: %v", err)
+	}
+	if err := waitForDeploymentEnvVar(t, kclient, deployment, 1*time.Minute, "ROUTER_MAX_CONNECTIONS", "40000"); err != nil {
+		t.Fatalf("expected twice-updated deployment to set ROUTER_MAX_CONNECTIONS=40000: %v", err)
+	}
+}
+
 // TestReloadIntervalUnsupportedConfigOverride verifies that the operator
 // configures router pod replicas with the specified value for RELOAD_INTERVAL
 // if one is specified using an unsupported config override on the
