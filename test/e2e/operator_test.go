@@ -369,9 +369,6 @@ func TestProxyProtocolAPI(t *testing.T) {
 		t.Errorf("failed to observe expected conditions: %v", err)
 	}
 
-	if err := kclient.Get(context.TODO(), icName, ic); err != nil {
-		t.Fatalf("failed to get ingresscontroller: %v", err)
-	}
 	deployment := &appsv1.Deployment{}
 	if err := kclient.Get(context.TODO(), controller.RouterDeploymentName(ic), deployment); err != nil {
 		t.Fatalf("failed to get ingresscontroller deployment: %v", err)
@@ -380,6 +377,9 @@ func TestProxyProtocolAPI(t *testing.T) {
 		t.Fatalf("expected initial deployment not to enable PROXY protocol: %v", err)
 	}
 
+	if err := kclient.Get(context.TODO(), icName, ic); err != nil {
+		t.Fatalf("failed to get ingresscontroller: %v", err)
+	}
 	ic.Spec.EndpointPublishingStrategy.NodePort = &operatorv1.NodePortStrategy{
 		Protocol: operatorv1.ProxyProtocol,
 	}
@@ -1961,9 +1961,6 @@ func TestLoadBalancingAlgorithmUnsupportedConfigOverride(t *testing.T) {
 		t.Errorf("failed to observe expected conditions: %w", err)
 	}
 
-	if err := kclient.Get(context.TODO(), icName, ic); err != nil {
-		t.Fatalf("failed to get ingresscontroller: %v", err)
-	}
 	deployment := &appsv1.Deployment{}
 	if err := kclient.Get(context.TODO(), controller.RouterDeploymentName(ic), deployment); err != nil {
 		t.Fatalf("failed to get ingresscontroller deployment: %v", err)
@@ -1973,6 +1970,9 @@ func TestLoadBalancingAlgorithmUnsupportedConfigOverride(t *testing.T) {
 		t.Fatalf("expected initial deployment to use the %q algorithm: %v", expectedAlgorithm, err)
 	}
 
+	if err := kclient.Get(context.TODO(), icName, ic); err != nil {
+		t.Fatalf("failed to get ingresscontroller: %v", err)
+	}
 	ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
 		Raw: []byte(`{"loadBalancingAlgorithm":"leastconn"}`),
 	}
@@ -2001,9 +2001,6 @@ func TestDynamicConfigManagerUnsupportedConfigOverride(t *testing.T) {
 		t.Errorf("failed to observe expected conditions: %w", err)
 	}
 
-	if err := kclient.Get(context.TODO(), icName, ic); err != nil {
-		t.Fatalf("failed to get ingresscontroller: %v", err)
-	}
 	deployment := &appsv1.Deployment{}
 	if err := kclient.Get(context.TODO(), controller.RouterDeploymentName(ic), deployment); err != nil {
 		t.Fatalf("failed to get ingresscontroller deployment: %v", err)
@@ -2012,6 +2009,9 @@ func TestDynamicConfigManagerUnsupportedConfigOverride(t *testing.T) {
 		t.Fatalf("expected initial deployment not to set ROUTER_HAPROXY_CONFIG_MANAGER=true: %v", err)
 	}
 
+	if err := kclient.Get(context.TODO(), icName, ic); err != nil {
+		t.Fatalf("failed to get ingresscontroller: %v", err)
+	}
 	ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
 		Raw: []byte(`{"dynamicConfigManager":"true"}`),
 	}
@@ -2214,10 +2214,6 @@ func TestReloadIntervalUnsupportedConfigOverride(t *testing.T) {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
-	if err := kclient.Get(context.TODO(), icName, ic); err != nil {
-		t.Fatalf("failed to get ingresscontroller: %v", err)
-	}
-
 	deployment := &appsv1.Deployment{}
 	if err := kclient.Get(context.TODO(), controller.RouterDeploymentName(ic), deployment); err != nil {
 		t.Fatalf("failed to get ingresscontroller deployment: %v", err)
@@ -2226,6 +2222,9 @@ func TestReloadIntervalUnsupportedConfigOverride(t *testing.T) {
 		t.Fatalf("expected initial deployment to set RELOAD_INTERVAL=5s: %v", err)
 	}
 
+	if err := kclient.Get(context.TODO(), icName, ic); err != nil {
+		t.Fatalf("failed to get ingresscontroller: %v", err)
+	}
 	ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
 		Raw: []byte(`{"reloadInterval":60}`),
 	}
