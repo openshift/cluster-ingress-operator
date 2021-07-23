@@ -224,7 +224,9 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	checkDeploymentDoesNotHaveEnvVar(t, deployment, "ROUTER_ERRORFILE_503")
 	checkDeploymentDoesNotHaveEnvVar(t, deployment, "ROUTER_ERRORFILE_404")
 
-	checkDeploymentHasEnvVar(t, deployment, "RELOAD_INTERVAL", true, "5")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_MAX_CONNECTIONS", false, "")
+
+	checkDeploymentHasEnvVar(t, deployment, "RELOAD_INTERVAL", true, "5s")
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_USE_PROXY_PROTOCOL", false, "")
 
@@ -376,7 +378,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	var expectedReplicas int32 = 8
 	ci.Spec.Replicas = &expectedReplicas
 	ci.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
-		Raw: []byte(`{"loadBalancingAlgorithm":"leastconn","dynamicConfigManager":"false","reloadInterval":15}`),
+		Raw: []byte(`{"loadBalancingAlgorithm":"leastconn","dynamicConfigManager":"false","maxConnections":-1,"reloadInterval":15}`),
 	}
 	ci.Spec.HttpErrorCodePages = configv1.ConfigMapNameReference{
 		Name: "my-custom-error-code-pages",
@@ -419,7 +421,9 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		t.Error("router Deployment is missing error code pages volume mount")
 	}
 
-	checkDeploymentHasEnvVar(t, deployment, "RELOAD_INTERVAL", true, "15")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_MAX_CONNECTIONS", true, "auto")
+
+	checkDeploymentHasEnvVar(t, deployment, "RELOAD_INTERVAL", true, "15s")
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_USE_PROXY_PROTOCOL", true, "true")
 
@@ -464,7 +468,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	// Any value for loadBalancingAlgorithm other than "leastconn" should be
 	// ignored.
 	ci.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
-		Raw: []byte(`{"loadBalancingAlgorithm":"source","dynamicConfigManager":"true"}`),
+		Raw: []byte(`{"loadBalancingAlgorithm":"source","dynamicConfigManager":"true","maxConnections":40000}`),
 	}
 	ci.Status.EndpointPublishingStrategy.LoadBalancer = &operatorv1.LoadBalancerStrategy{
 		Scope: operatorv1.ExternalLoadBalancer,
@@ -502,7 +506,9 @@ func TestDesiredRouterDeployment(t *testing.T) {
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOAD_BALANCE_ALGORITHM", true, "random")
 
-	checkDeploymentHasEnvVar(t, deployment, "RELOAD_INTERVAL", true, "5")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_MAX_CONNECTIONS", true, "40000")
+
+	checkDeploymentHasEnvVar(t, deployment, "RELOAD_INTERVAL", true, "5s")
 
 	checkDeploymentDoesNotHaveEnvVar(t, deployment, "ROUTER_USE_PROXY_PROTOCOL")
 

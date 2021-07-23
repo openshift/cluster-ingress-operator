@@ -62,6 +62,8 @@ const (
 
 	RouterLoadBalancingAlgorithmEnvName = "ROUTER_LOAD_BALANCE_ALGORITHM"
 
+	RouterMaxConnectionsEnvName = "ROUTER_MAX_CONNECTIONS"
+
 	RouterReloadIntervalEnvName = "RELOAD_INTERVAL"
 
 	RouterDontLogNull      = "ROUTER_DONT_LOG_NULL"
@@ -456,6 +458,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	var unsupportedConfigOverrides struct {
 		LoadBalancingAlgorithm string `json:"loadBalancingAlgorithm"`
 		DynamicConfigManager   string `json:"dynamicConfigManager"`
+		MaxConnections         int32  `json:"maxConnections"`
 		ReloadInterval         int32  `json:"reloadInterval"`
 	}
 	if len(ci.Spec.UnsupportedConfigOverrides.Raw) > 0 {
@@ -473,13 +476,27 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		Name:  RouterLoadBalancingAlgorithmEnvName,
 		Value: loadBalancingAlgorithm,
 	})
+
+	switch v := unsupportedConfigOverrides.MaxConnections; {
+	case v == -1:
+		env = append(env, corev1.EnvVar{
+			Name:  RouterMaxConnectionsEnvName,
+			Value: "auto",
+		})
+	case v > 0:
+		env = append(env, corev1.EnvVar{
+			Name:  RouterMaxConnectionsEnvName,
+			Value: strconv.Itoa(int(v)),
+		})
+	}
+
 	reloadInterval := 5
 	if unsupportedConfigOverrides.ReloadInterval > 0 {
 		reloadInterval = int(unsupportedConfigOverrides.ReloadInterval)
 	}
 	env = append(env, corev1.EnvVar{
 		Name:  RouterReloadIntervalEnvName,
-		Value: strconv.Itoa(reloadInterval),
+		Value: fmt.Sprintf("%ds", reloadInterval),
 	})
 
 	dynamicConfigOverride := unsupportedConfigOverrides.DynamicConfigManager
