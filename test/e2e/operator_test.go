@@ -1599,6 +1599,9 @@ func TestHTTPHeaderCapture(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), clientPod); err != nil {
+			if errors.IsNotFound(err) {
+				return
+			}
 			t.Fatalf("failed to delete pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
 		}
 	}()
@@ -1736,6 +1739,9 @@ func TestHTTPCookieCapture(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), clientPod); err != nil {
+			if errors.IsNotFound(err) {
+				return
+			}
 			t.Fatalf("failed to delete pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
 		}
 	}()
@@ -1901,6 +1907,9 @@ func TestUniqueIdHeader(t *testing.T) {
 		}
 		defer func() {
 			if err := kclient.Delete(context.TODO(), clientPod); err != nil {
+				if errors.IsNotFound(err) {
+					return
+				}
 				t.Fatalf("failed to delete pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
 			}
 		}()
