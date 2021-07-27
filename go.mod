@@ -15,7 +15,7 @@ require (
 	github.com/ghodss/yaml v1.0.0
 	github.com/go-logr/logr v0.4.0
 	github.com/go-logr/zapr v0.4.0
-	github.com/google/go-cmp v0.5.5
+	github.com/google/go-cmp v0.5.6
 	github.com/kevinburke/go-bindata v3.11.0+incompatible
 	github.com/openshift/api v0.0.0-20210722202039-91e26cfb36fc
 	github.com/openshift/build-machinery-go v0.0.0-20210712174854-1bb7fd1518d3
@@ -27,8 +27,8 @@ require (
 	github.com/summerwind/h2spec v0.0.0-20200804131034-70ac22940108
 	github.com/tcnksm/go-httpstat v0.2.1-0.20191008022543-e866bb274419
 	go.uber.org/zap v1.17.0
-	google.golang.org/api v0.20.0
-	google.golang.org/grpc v1.27.1
+	google.golang.org/api v0.49.0
+	google.golang.org/grpc v1.38.0
 	gopkg.in/fsnotify.v1 v1.4.7
 	gopkg.in/yaml.v2 v2.4.0
 	k8s.io/api v0.21.1
