@@ -8,19 +8,17 @@ import (
 	"testing"
 	"time"
 
+	operatorv1 "github.com/openshift/api/operator/v1"
 	routev1 "github.com/openshift/api/route/v1"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
-	operatorv1 "github.com/openshift/api/operator/v1"
-
-	appsv1 "k8s.io/api/apps/v1"
-
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/wait"
+
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -37,6 +35,7 @@ func buildEchoPod(name, namespace string) *corev1.Pod {
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{
 				{
+					// Note that HTTP/1.0 will strip the HSTS response header
 					Args: []string{
 						"TCP4-LISTEN:8080,reuseaddr,fork",
 						`EXEC:'/bin/bash -c \"printf \\\"HTTP/1.0 200 OK\r\n\r\n\\\"; sed -e \\\"/^\r/q\\\"\"'`,
@@ -143,6 +142,20 @@ func buildRoute(name, namespace, serviceName string) *routev1.Route {
 			},
 		},
 	}
+}
+
+// buildRoute returns a route definition with the specified HSTS annotation.
+// Overwrites Spec.Host and TLS
+func buildRouteWithHSTS(podName, namespace, serviceName, domain, annotation string) *routev1.Route {
+	route := buildRoute(podName, namespace, serviceName)
+	route.Spec.Host = domain
+	route.Spec.TLS = &routev1.TLSConfig{Termination: routev1.TLSTerminationEdge}
+	if route.Annotations == nil {
+		route.Annotations = map[string]string{}
+	}
+	route.Annotations["haproxy.router.openshift.io/hsts_header"] = annotation
+
+	return route
 }
 
 func getIngressController(t *testing.T, client client.Client, name types.NamespacedName, timeout time.Duration) (*operatorv1.IngressController, error) {

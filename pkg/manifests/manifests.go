@@ -69,6 +69,9 @@ const (
 	// instance.
 	DefaultIngressControllerName = "default"
 
+	// ClusterIngressConfigName is the name of the cluster Ingress Config
+	ClusterIngressConfigName = "cluster"
+
 	NamespaceManifest                = "manifests/00-namespace.yaml"
 	CustomResourceDefinitionManifest = "manifests/00-custom-resource-definition.yaml"
 )
