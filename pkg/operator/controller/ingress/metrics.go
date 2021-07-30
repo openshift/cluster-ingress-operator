@@ -57,6 +57,17 @@ func SetIngressControllerConditionsMetric(ic *operatorv1.IngressController) {
 	}
 }
 
+// DeleteIngressControllerConditionsMetric deletes ingress_controller_conditions metrics which belong to the given ingresscontroller
+func DeleteIngressControllerConditionsMetric(ic *operatorv1.IngressController) {
+	for _, c := range ic.Status.Conditions {
+		if !reportedConditions.Has(c.Type) {
+			continue
+		}
+		deleted := ingressControllerConditions.DeleteLabelValues(ic.Name, string(c.Type))
+		log.V(4).Info("deleted metric for IngressController that is being deleted", "ingresscontroller", ic.Name, "condition_type", c.Type, "deleted", deleted)
+	}
+}
+
 // RegisterMetrics calls prometheus.Register on each metric in metricsList, and
 // returns on errors.
 func RegisterMetrics() error {
