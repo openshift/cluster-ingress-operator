@@ -18,6 +18,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 
@@ -108,6 +109,9 @@ func TestHeaderNameCaseAdjustment(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), clientPod); err != nil {
+			if errors.IsNotFound(err) {
+				return
+			}
 			t.Fatalf("failed to delete pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
 		}
 	}()
