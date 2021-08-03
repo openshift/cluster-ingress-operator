@@ -312,7 +312,10 @@ func TestDesiredRouterDeployment(t *testing.T) {
 
 	checkDeploymentHasEnvVar(t, deployment, RouterHAProxyThreadsEnvName, true, strconv.Itoa(RouterHAProxyThreadsDefaultValue))
 	checkDeploymentHasEnvVar(t, deployment, RouterHAProxyServiceHTTPPortEnvName, true, strconv.Itoa(RouterHAProxyServiceHTTPPortDefaultValue))
-	checkDeploymentHasEnvVar(t, deployment, RouterHAProxyServiceHTTPsPortEnvName, true, strconv.Itoa(RouterHAProxyServiceHTTPsPortDefaultValue))
+	checkDeploymentHasEnvVar(t, deployment, RouterHAProxyServiceHTTPSPortEnvName, true, strconv.Itoa(RouterHAProxyServiceHTTPSPortDefaultValue))
+	checkDeploymentHasEnvVar(t, deployment, RouterHAProxyServiceSNIPortEnvName, true, strconv.Itoa(RouterHAProxyServiceSNIPortDefaultValue))
+	checkDeploymentHasEnvVar(t, deployment, RouterHAProxyServiceNoSNIPortEnvName, true, strconv.Itoa(RouterHAProxyServiceNoSNIPortDefaultValue))
+	checkDeploymentHasEnvVar(t, deployment, StatsPortEnvName, true, strconv.Itoa(StatsPortDefaultValue))
 
 	checkDeploymentHasEnvVar(t, deployment, RouterHTTPIgnoreProbes, false, "")
 
@@ -353,9 +356,12 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		HeaderBufferMaxRewriteBytes: 4096,
 		ThreadCount:                 RouterHAProxyThreadsDefaultValue * 2,
 	}
-	ci.Spec.BindOptions = operatorv1.IngressControllerBindOptions{
+	ci.Spec.EndpointPublishingStrategy.HostNetwork.BindOptions = &operatorv1.IngressControllerBindOptions{
 		HTTPPort:  10080,
-		HTTPsPort: 10443,
+		HTTPSPort: 10443,
+		SNIPort:   11444,
+		NoSNIPort: 11443,
+		StatsPort: 1937,
 	}
 	ci.Spec.HTTPEmptyRequestsPolicy = "Ignore"
 	ci.Spec.TuningOptions.ClientTimeout = &metav1.Duration{45 * time.Second}
@@ -453,7 +459,10 @@ func TestDesiredRouterDeployment(t *testing.T) {
 
 	checkDeploymentHasEnvVar(t, deployment, RouterHAProxyThreadsEnvName, true, strconv.Itoa(RouterHAProxyThreadsDefaultValue*2))
 	checkDeploymentHasEnvVar(t, deployment, RouterHAProxyServiceHTTPPortEnvName, true, "10080")
-	checkDeploymentHasEnvVar(t, deployment, RouterHAProxyServiceHTTPsPortEnvName, true, "10443")
+	checkDeploymentHasEnvVar(t, deployment, RouterHAProxyServiceHTTPSPortEnvName, true, "10443")
+	checkDeploymentHasEnvVar(t, deployment, RouterHAProxyServiceSNIPortEnvName, true, "11444")
+	checkDeploymentHasEnvVar(t, deployment, RouterHAProxyServiceNoSNIPortEnvName, true, "11443")
+	checkDeploymentHasEnvVar(t, deployment, StatsPortEnvName, true, "1937")
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SET_FORWARDED_HEADERS", true, "append")
 

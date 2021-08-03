@@ -28,6 +28,9 @@ import (
 //
 // Whenever possible, sensible defaults for the platform are used. See each
 // field for more details.
+//
+// Compatibility level 1: Stable within a major release for a minimum of 12 months or 3 minor releases (whichever is longer).
+// +openshift:compatibility-gen:level=1
 type IngressController struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -223,17 +226,6 @@ type IngressControllerSpec struct {
 	//
 	// +optional
 	TuningOptions IngressControllerTuningOptions `json:"tuningOptions,omitempty"`
-
-	// bindOptions defines parameters for binding haproxy in ingress controller pods.
-	// All fields are optional and will use their respective defaults if not set.
-	// See specific bindOptions fields for more details.
-	//
-	//
-	// Setting fields within bindOptions is generally not recommended. The
-	// default values are suitable for most configurations.
-	//
-	// +optional
-	BindOptions IngressControllerBindOptions `json:"bindOptions,omitempty"`
 
 	// unsupportedConfigOverrides allows specifying unsupported
 	// configuration options.  Its use is unsupported.
@@ -493,6 +485,17 @@ type HostNetworkStrategy struct {
 	// +kubebuilder:validation:Optional
 	// +optional
 	Protocol IngressControllerProtocol `json:"protocol,omitempty"`
+
+	// bindOptions defines parameters for binding haproxy in ingress controller pods.
+	// All fields are optional and will use their respective defaults if not set.
+	// See specific bindOptions fields for more details.
+	//
+	//
+	// Setting fields within bindOptions is generally not recommended. The
+	// default values are suitable for most configurations.
+	//
+	// +optional
+	BindOptions *IngressControllerBindOptions `json:"bindOptions,omitempty"`
 }
 
 // PrivateStrategy holds parameters for the Private endpoint publishing
@@ -1257,25 +1260,59 @@ type IngressControllerTuningOptions struct {
 // IngressControllerBindOptions specifies options for binding haproxy in ingress controller pods
 type IngressControllerBindOptions struct {
 
-	// httpPort deines the port number which HAProxy process binds for
+	// httpPort defines the port number which HAProxy process binds for
 	// http connections. Setting this field is generally not recommended. However in
 	// hostNetworking strategy, default http 80 port might be occupied by other processess
 	//
 	// +kubebuilder:validation:Optional
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=30000
+	// +kubebuilder:default:=80
 	// +optional
 	HTTPPort int32 `json:"httpPort,omitempty"`
 
-	// httpsPort deines the port number which HAProxy process binds for
+	// httpsPort defines the port number which HAProxy process binds for
 	// https connections. Setting this field is generally not recommended. However in
 	// hostNetworking strategy, default https 443 port might be occupied by other processess
 	//
 	// +kubebuilder:validation:Optional
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=30000
+	// +kubebuilder:default:=443
 	// +optional
-	HTTPsPort int32 `json:"httpsPort,omitempty"`
+	HTTPSPort int32 `json:"httpsPort,omitempty"`
+
+	// sniPort is for some internal front-end to back-end communication
+	// This port can be anything you want as long as they are unique on the machine.
+	// This port will not be exposed externally.
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=30000
+	// +kubebuilder:default:=10444
+	// +optional
+	SNIPort int32 `json:"sniPort,omitempty"`
+
+	// noSniPort is for some internal front-end to back-end communication
+	// This port can be anything you want as long as they are unique on the machine.
+	// This port will not be exposed externally.
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=30000
+	// +kubebuilder:default:=10443
+	// +optional
+	NoSNIPort int32 `json:"noSniPort,omitempty"`
+
+	// statsPort is the port number which HAProxy process binds
+	// to expose statistics on it. Setting this field is generally not recommended.
+	// However in hostNetworking strategy, default stats port 1936 might
+	// be occupied by other processess
+	//
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=30000
+	// +kubebuilder:default:=1936
+	// +optional
+	StatsPort int32 `json:"statsPort,omitempty"`
 }
 
 // HTTPEmptyRequestsPolicy indicates how HTTP connections for which no request
@@ -1373,6 +1410,9 @@ type IngressControllerStatus struct {
 // +kubebuilder:object:root=true
 
 // IngressControllerList contains a list of IngressControllers.
+//
+// Compatibility level 1: Stable within a major release for a minimum of 12 months or 3 minor releases (whichever is longer).
+// +openshift:compatibility-gen:level=1
 type IngressControllerList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`

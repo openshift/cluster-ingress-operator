@@ -84,8 +84,16 @@ const (
 
 	RouterHAProxyServiceHTTPPortEnvName       = "ROUTER_SERVICE_HTTP_PORT"
 	RouterHAProxyServiceHTTPPortDefaultValue  = 80
-	RouterHAProxyServiceHTTPsPortEnvName      = "ROUTER_SERVICE_HTTPS_PORT"
-	RouterHAProxyServiceHTTPsPortDefaultValue = 443
+	RouterHAProxyServiceHTTPSPortEnvName      = "ROUTER_SERVICE_HTTPS_PORT"
+	RouterHAProxyServiceHTTPSPortDefaultValue = 443
+
+	RouterHAProxyServiceSNIPortEnvName        = "ROUTER_SERVICE_SNI_PORT"
+	RouterHAProxyServiceSNIPortDefaultValue   = 10444
+	RouterHAProxyServiceNoSNIPortEnvName      = "ROUTER_SERVICE_NO_SNI_PORT"
+	RouterHAProxyServiceNoSNIPortDefaultValue = 10443
+
+	StatsPortEnvName      = "STATS_PORT"
+	StatsPortDefaultValue = 1936
 
 	WorkloadPartitioningManagement = "target.workload.openshift.io/management"
 
@@ -526,21 +534,63 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	}
 	env = append(env, corev1.EnvVar{Name: RouterHAProxyThreadsEnvName, Value: strconv.Itoa(threads)})
 
+	// Set the values for spec.endpointPublishingStrategy.hostNetwork.bindOptions
+	// based on IngressController and set the default values if they are not defined.
+	// Also make sure all ports are unique.
+	visited := make(map[int]struct{})
+	uniquenessError := fmt.Errorf("ingresscontroller %q has invalid spec.endpointPublishingStrategy.hostNetwork.bindOptions: all ports must be unique", ci.Name)
 	serviceHTTPPort := RouterHAProxyServiceHTTPPortDefaultValue
-	if ci.Spec.BindOptions.HTTPPort > 0 {
-		serviceHTTPPort = int(ci.Spec.BindOptions.HTTPPort)
+	if ci.Spec.EndpointPublishingStrategy.HostNetwork.BindOptions.HTTPPort > 0 {
+		serviceHTTPPort = int(ci.Spec.EndpointPublishingStrategy.HostNetwork.BindOptions.HTTPPort)
+	}
+	visited[serviceHTTPPort] = struct{}{}
+
+	serviceHTTPSPort := RouterHAProxyServiceHTTPSPortDefaultValue
+	if ci.Spec.EndpointPublishingStrategy.HostNetwork.BindOptions.HTTPSPort > 0 {
+		serviceHTTPSPort = int(ci.Spec.EndpointPublishingStrategy.HostNetwork.BindOptions.HTTPSPort)
+	}
+	if _, ok := visited[serviceHTTPSPort]; !ok {
+		visited[serviceHTTPSPort] = struct{}{}
+	} else {
+		return nil, uniquenessError
 	}
 
-	serviceHTTPsPort := RouterHAProxyServiceHTTPPortDefaultValue
-	if ci.Spec.BindOptions.HTTPsPort > 0 {
-		serviceHTTPsPort = int(ci.Spec.BindOptions.HTTPsPort)
+	serviceSNIPort := RouterHAProxyServiceSNIPortDefaultValue
+	if ci.Spec.EndpointPublishingStrategy.HostNetwork.BindOptions.SNIPort > 0 {
+		serviceSNIPort = int(ci.Spec.EndpointPublishingStrategy.HostNetwork.BindOptions.SNIPort)
+	}
+	if _, ok := visited[serviceSNIPort]; !ok {
+		visited[serviceSNIPort] = struct{}{}
+	} else {
+		return nil, uniquenessError
 	}
 
-	if serviceHTTPPort == serviceHTTPsPort {
-		return nil, fmt.Errorf("ingresscontroller %q has invalid spec.bindOptions: httpPort can not be equal to httpsPort", ci.Name)
+	serviceNoSNIPort := RouterHAProxyServiceNoSNIPortDefaultValue
+	if ci.Spec.EndpointPublishingStrategy.HostNetwork.BindOptions.NoSNIPort > 0 {
+		serviceNoSNIPort = int(ci.Spec.EndpointPublishingStrategy.HostNetwork.BindOptions.NoSNIPort)
 	}
+	if _, ok := visited[serviceNoSNIPort]; !ok {
+		visited[serviceNoSNIPort] = struct{}{}
+	} else {
+		return nil, uniquenessError
+	}
+
+	statsPort := StatsPortDefaultValue
+	if ci.Spec.EndpointPublishingStrategy.HostNetwork.BindOptions.StatsPort > 0 {
+		statsPort = int(ci.Spec.EndpointPublishingStrategy.HostNetwork.BindOptions.StatsPort)
+	}
+	if _, ok := visited[statsPort]; !ok {
+		visited[statsPort] = struct{}{}
+	} else {
+		return nil, uniquenessError
+	}
+
 	env = append(env, corev1.EnvVar{Name: RouterHAProxyServiceHTTPPortEnvName, Value: strconv.Itoa(serviceHTTPPort)})
-	env = append(env, corev1.EnvVar{Name: RouterHAProxyServiceHTTPsPortEnvName, Value: strconv.Itoa(serviceHTTPsPort)})
+	env = append(env, corev1.EnvVar{Name: RouterHAProxyServiceHTTPSPortEnvName, Value: strconv.Itoa(serviceHTTPSPort)})
+	env = append(env, corev1.EnvVar{Name: RouterHAProxyServiceSNIPortEnvName, Value: strconv.Itoa(serviceSNIPort)})
+	env = append(env, corev1.EnvVar{Name: RouterHAProxyServiceNoSNIPortEnvName, Value: strconv.Itoa(serviceNoSNIPort)})
+	env = append(env, corev1.EnvVar{Name: StatsPortEnvName, Value: strconv.Itoa(statsPort)})
+
 	if ci.Spec.TuningOptions.ClientTimeout != nil && ci.Spec.TuningOptions.ClientTimeout.Duration != 0*time.Second {
 		env = append(env, corev1.EnvVar{Name: "ROUTER_DEFAULT_CLIENT_TIMEOUT", Value: durationToHAProxyTimespec(ci.Spec.TuningOptions.ClientTimeout.Duration)})
 	}
