@@ -106,6 +106,29 @@ func buildCurlPod(name, namespace, image, host, address string, extraArgs ...str
 	}
 }
 
+// buildExecPod returns a pod definition for a pod with the given name and image
+// and in the given namespace that sleeps for 4 hours (or until it is deleted),
+// which can be used to exec commands inside the pod.
+func buildExecPod(name, namespace, image string) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name:    "execpod",
+					Image:   image,
+					Command: []string{"/bin/sleep"},
+					Args:    []string{"4h"},
+				},
+			},
+			RestartPolicy: corev1.RestartPolicyNever,
+		},
+	}
+}
+
 // buildRoute returns a route definition targeting the specified service.
 func buildRoute(name, namespace, serviceName string) *routev1.Route {
 	return &routev1.Route{

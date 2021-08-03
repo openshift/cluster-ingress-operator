@@ -188,7 +188,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	if err != nil {
 		t.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %v", ci.Namespace, ci.Name, err)
 	}
-	deployment, err := desiredRouterDeployment(ci, ingressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded)
+	deployment, err := desiredRouterDeployment(ci, ingressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded, false, nil)
 	if err != nil {
 		t.Errorf("invalid router Deployment: %v", err)
 	}
@@ -218,9 +218,15 @@ func TestDesiredRouterDeployment(t *testing.T) {
 			deployment.Spec.Template.Spec.Tolerations)
 	}
 
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_HAPROXY_CONFIG_MANAGER", false, "")
+
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOAD_BALANCE_ALGORITHM", true, "random")
 	checkDeploymentDoesNotHaveEnvVar(t, deployment, "ROUTER_ERRORFILE_503")
 	checkDeploymentDoesNotHaveEnvVar(t, deployment, "ROUTER_ERRORFILE_404")
+
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_MAX_CONNECTIONS", false, "")
+
+	checkDeploymentHasEnvVar(t, deployment, "RELOAD_INTERVAL", true, "5s")
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_USE_PROXY_PROTOCOL", false, "")
 
@@ -287,6 +293,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CAPTURE_HTTP_REQUEST_HEADERS", false, "")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CAPTURE_HTTP_RESPONSE_HEADERS", false, "")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CAPTURE_HTTP_COOKIE", false, "")
+	checkDeploymentHasEnvVar(t, deployment, RouterDontLogNull, false, "")
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_BUF_SIZE", false, "")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_MAX_REWRITE_SIZE", false, "")
@@ -307,6 +314,15 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	checkDeploymentHasEnvVar(t, deployment, RouterHAProxyServiceHTTPPortEnvName, true, strconv.Itoa(RouterHAProxyServiceHTTPPortDefaultValue))
 	checkDeploymentHasEnvVar(t, deployment, RouterHAProxyServiceHTTPsPortEnvName, true, strconv.Itoa(RouterHAProxyServiceHTTPsPortDefaultValue))
 
+	checkDeploymentHasEnvVar(t, deployment, RouterHTTPIgnoreProbes, false, "")
+
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_DEFAULT_CLIENT_TIMEOUT", false, "")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CLIENT_FIN_TIMEOUT", false, "")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_DEFAULT_SERVER_TIMEOUT", false, "")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_DEFAULT_SERVER_FIN_TIMEOUT", false, "")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_DEFAULT_TUNNEL_TIMEOUT", false, "")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_INSPECT_DELAY", false, "")
+
 	ci.Spec.Logging = &operatorv1.IngressControllerLogging{
 		Access: &operatorv1.AccessLogging{
 			Destination: operatorv1.LoggingDestination{
@@ -320,6 +336,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 					NamePrefix: "foo",
 				},
 			}},
+			LogEmptyRequests: "Ignore",
 		},
 	}
 	ci.Spec.HTTPHeaders = &operatorv1.IngressControllerHTTPHeaders{
@@ -340,6 +357,13 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		HTTPPort:  10080,
 		HTTPsPort: 10443,
 	}
+	ci.Spec.HTTPEmptyRequestsPolicy = "Ignore"
+	ci.Spec.TuningOptions.ClientTimeout = &metav1.Duration{45 * time.Second}
+	ci.Spec.TuningOptions.ClientFinTimeout = &metav1.Duration{3 * time.Second}
+	ci.Spec.TuningOptions.ServerTimeout = &metav1.Duration{60 * time.Second}
+	ci.Spec.TuningOptions.ServerFinTimeout = &metav1.Duration{4 * time.Second}
+	ci.Spec.TuningOptions.TunnelTimeout = &metav1.Duration{30 * time.Minute}
+	ci.Spec.TuningOptions.TLSInspectDelay = &metav1.Duration{5 * time.Second}
 	ci.Spec.TLSSecurityProfile = &configv1.TLSSecurityProfile{
 		Type: configv1.TLSProfileCustomType,
 		Custom: &configv1.CustomTLSProfile{
@@ -360,7 +384,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	var expectedReplicas int32 = 8
 	ci.Spec.Replicas = &expectedReplicas
 	ci.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
-		Raw: []byte(`{"loadBalancingAlgorithm":"leastconn"}`),
+		Raw: []byte(`{"loadBalancingAlgorithm":"leastconn","dynamicConfigManager":"false","maxConnections":-1,"reloadInterval":15}`),
 	}
 	ci.Spec.HttpErrorCodePages = configv1.ConfigMapNameReference{
 		Name: "my-custom-error-code-pages",
@@ -371,7 +395,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	if err != nil {
 		t.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %v", ci.Namespace, ci.Name, err)
 	}
-	deployment, err = desiredRouterDeployment(ci, ingressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded)
+	deployment, err = desiredRouterDeployment(ci, ingressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded, false, nil)
 	if err != nil {
 		t.Errorf("invalid router Deployment: %v", err)
 	}
@@ -393,6 +417,8 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		t.Errorf("expected empty startup probe host, got %q", deployment.Spec.Template.Spec.Containers[0].StartupProbe.Handler.HTTPGet.Host)
 	}
 
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_HAPROXY_CONFIG_MANAGER", false, "")
+
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOAD_BALANCE_ALGORITHM", true, "leastconn")
 	if len(deployment.Spec.Template.Spec.Containers[0].VolumeMounts) <= 4 || deployment.Spec.Template.Spec.Containers[0].VolumeMounts[4].Name != "error-pages" {
 		t.Errorf("hi")
@@ -400,6 +426,10 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		//log.Info(fmt.Sprintf("deployment.Spec.Template.Spec.Containers[0].VolumeMounts[4].Name %v", deployment.Spec.Template.Spec.Containers[0]))
 		t.Error("router Deployment is missing error code pages volume mount")
 	}
+
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_MAX_CONNECTIONS", true, "auto")
+
+	checkDeploymentHasEnvVar(t, deployment, "RELOAD_INTERVAL", true, "15s")
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_USE_PROXY_PROTOCOL", true, "true")
 
@@ -416,6 +446,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SYSLOG_ADDRESS", true, "/var/lib/rsyslog/rsyslog.sock")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SYSLOG_FORMAT", true, `"%ci:%cp [%t] %ft %b/%s %B %bq %HM %HU %HV"`)
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CAPTURE_HTTP_COOKIE", true, "foo:256")
+	checkDeploymentHasEnvVar(t, deployment, RouterDontLogNull, true, "true")
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_BUF_SIZE", true, "16384")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_MAX_REWRITE_SIZE", true, "4096")
@@ -426,6 +457,8 @@ func TestDesiredRouterDeployment(t *testing.T) {
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SET_FORWARDED_HEADERS", true, "append")
 
+	checkDeploymentHasEnvVar(t, deployment, RouterHTTPIgnoreProbes, true, "true")
+
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CIPHERS", true, "quux")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CIPHERSUITES", true, "TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256")
 
@@ -433,10 +466,17 @@ func TestDesiredRouterDeployment(t *testing.T) {
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_IP_V4_V6_MODE", true, "v4v6")
 
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_DEFAULT_CLIENT_TIMEOUT", true, "45s")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_CLIENT_FIN_TIMEOUT", true, "3s")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_DEFAULT_SERVER_TIMEOUT", true, "1m")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_DEFAULT_SERVER_FIN_TIMEOUT", true, "4s")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_DEFAULT_TUNNEL_TIMEOUT", true, "30m")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_INSPECT_DELAY", true, "5s")
+
 	// Any value for loadBalancingAlgorithm other than "leastconn" should be
 	// ignored.
 	ci.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
-		Raw: []byte(`{"loadBalancingAlgorithm":"source"}`),
+		Raw: []byte(`{"loadBalancingAlgorithm":"source","dynamicConfigManager":"true","maxConnections":40000}`),
 	}
 	ci.Status.EndpointPublishingStrategy.LoadBalancer = &operatorv1.LoadBalancerStrategy{
 		Scope: operatorv1.ExternalLoadBalancer,
@@ -451,7 +491,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	if err != nil {
 		t.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %v", ci.Namespace, ci.Name, err)
 	}
-	deployment, err = desiredRouterDeployment(ci, ingressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded)
+	deployment, err = desiredRouterDeployment(ci, ingressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded, false, nil)
 	if err != nil {
 		t.Errorf("invalid router Deployment: %v", err)
 	}
@@ -470,7 +510,13 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		t.Errorf("expected empty startup probe host, got %q", deployment.Spec.Template.Spec.Containers[0].StartupProbe.Handler.HTTPGet.Host)
 	}
 
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_HAPROXY_CONFIG_MANAGER", true, "true")
+
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOAD_BALANCE_ALGORITHM", true, "random")
+
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_MAX_CONNECTIONS", true, "40000")
+
+	checkDeploymentHasEnvVar(t, deployment, "RELOAD_INTERVAL", true, "5s")
 
 	checkDeploymentDoesNotHaveEnvVar(t, deployment, "ROUTER_USE_PROXY_PROTOCOL")
 
@@ -548,7 +594,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	if err != nil {
 		t.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %v", ci.Namespace, ci.Name, err)
 	}
-	deployment, err = desiredRouterDeployment(ci, ingressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded)
+	deployment, err = desiredRouterDeployment(ci, ingressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded, false, nil)
 	if err != nil {
 		t.Errorf("invalid router Deployment: %v", err)
 	}
@@ -1324,6 +1370,31 @@ func TestDeploymentConfigChanged(t *testing.T) {
 			if changedAgain, _ := deploymentConfigChanged(mutated, updated); changedAgain {
 				t.Errorf("%s, deploymentConfigChanged does not behave as a fixed point function", tc.description)
 			}
+		}
+	}
+}
+
+func TestDurationToHAProxyTimespec(t *testing.T) {
+	testCases := []struct {
+		inputDuration  time.Duration
+		expectedOutput string
+	}{
+		{0, "0s"},
+		{100 * time.Millisecond, "100ms"},
+		{1500 * time.Millisecond, "1500ms"},
+		{10 * time.Second, "10s"},
+		{60 * time.Second, "1m"},
+		{90 * time.Second, "90s"},
+		{2 * time.Minute, "2m"},
+		{75 * time.Minute, "75m"},
+		{120 * time.Minute, "2h"},
+		{48 * time.Hour, "48h"},
+		{720 * time.Hour, "2147483647ms"},
+	}
+	for _, tc := range testCases {
+		output := durationToHAProxyTimespec(tc.inputDuration)
+		if output != tc.expectedOutput {
+			t.Errorf("Expected %q, got %q", tc.expectedOutput, output)
 		}
 	}
 }
