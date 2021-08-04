@@ -2,10 +2,13 @@ package ingress
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"hash"
 	"hash/fnv"
+	"math"
 	"net"
 	"path/filepath"
 	"sort"
@@ -59,6 +62,13 @@ const (
 
 	RouterLoadBalancingAlgorithmEnvName = "ROUTER_LOAD_BALANCE_ALGORITHM"
 
+	RouterMaxConnectionsEnvName = "ROUTER_MAX_CONNECTIONS"
+
+	RouterReloadIntervalEnvName = "RELOAD_INTERVAL"
+
+	RouterDontLogNull      = "ROUTER_DONT_LOG_NULL"
+	RouterHTTPIgnoreProbes = "ROUTER_HTTP_IGNORE_PROBES"
+
 	RouterDisableHTTP2EnvName          = "ROUTER_DISABLE_HTTP2"
 	RouterDefaultEnableHTTP2Annotation = "ingress.operator.openshift.io/default-enable-http2"
 
@@ -67,15 +77,22 @@ const (
 
 	LivenessGracePeriodSecondsAnnotation = "unsupported.do-not-use.openshift.io/override-liveness-grace-period-seconds"
 
+	RouterHAProxyConfigManager = "ROUTER_HAPROXY_CONFIG_MANAGER"
+
 	RouterHAProxyThreadsEnvName      = "ROUTER_THREADS"
 	RouterHAProxyThreadsDefaultValue = 4
 
 	WorkloadPartitioningManagement = "target.workload.openshift.io/management"
+
+	RouterClientAuthPolicy = "ROUTER_MUTUAL_TLS_AUTH"
+	RouterClientAuthCA     = "ROUTER_MUTUAL_TLS_AUTH_CA"
+	RouterClientAuthCRL    = "ROUTER_MUTUAL_TLS_AUTH_CRL"
+	RouterClientAuthFilter = "ROUTER_MUTUAL_TLS_AUTH_FILTER"
 )
 
 // ensureRouterDeployment ensures the router deployment exists for a given
 // ingresscontroller.
-func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, infraConfig *configv1.Infrastructure, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer, networkConfig *configv1.Network) (bool, *appsv1.Deployment, error) {
+func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, infraConfig *configv1.Infrastructure, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer, networkConfig *configv1.Network, haveClientCAConfigmap bool, clientCAConfigmap *corev1.ConfigMap) (bool, *appsv1.Deployment, error) {
 	haveDepl, current, err := r.currentRouterDeployment(ci)
 	if err != nil {
 		return false, nil, err
@@ -88,7 +105,7 @@ func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, in
 	if err != nil {
 		return false, nil, fmt.Errorf("failed to determine if proxy protocol is needed for ingresscontroller %s/%s: %v", ci.Namespace, ci.Name, err)
 	}
-	desired, err := desiredRouterDeployment(ci, r.config.IngressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded)
+	desired, err := desiredRouterDeployment(ci, r.config.IngressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded, haveClientCAConfigmap, clientCAConfigmap)
 	if err != nil {
 		return haveDepl, current, fmt.Errorf("failed to build router deployment: %v", err)
 	}
@@ -181,7 +198,7 @@ func HardStopAfterIsEnabled(ic *operatorv1.IngressController, ingressConfig *con
 }
 
 // desiredRouterDeployment returns the desired router deployment.
-func desiredRouterDeployment(ci *operatorv1.IngressController, ingressControllerImage string, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer, networkConfig *configv1.Network, proxyNeeded bool) (*appsv1.Deployment, error) {
+func desiredRouterDeployment(ci *operatorv1.IngressController, ingressControllerImage string, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer, networkConfig *configv1.Network, proxyNeeded bool, haveClientCAConfigmap bool, clientCAConfigmap *corev1.ConfigMap) (*appsv1.Deployment, error) {
 	deployment := manifests.RouterDeployment()
 	name := controller.RouterDeploymentName(ci)
 	deployment.Name = name.Name
@@ -440,12 +457,16 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 
 	var unsupportedConfigOverrides struct {
 		LoadBalancingAlgorithm string `json:"loadBalancingAlgorithm"`
+		DynamicConfigManager   string `json:"dynamicConfigManager"`
+		MaxConnections         int32  `json:"maxConnections"`
+		ReloadInterval         int32  `json:"reloadInterval"`
 	}
 	if len(ci.Spec.UnsupportedConfigOverrides.Raw) > 0 {
 		if err := json.Unmarshal(ci.Spec.UnsupportedConfigOverrides.Raw, &unsupportedConfigOverrides); err != nil {
 			return nil, fmt.Errorf("ingresscontroller %q has invalid spec.unsupportedConfigOverrides: %w", ci.Name, err)
 		}
 	}
+
 	loadBalancingAlgorithm := "random"
 	switch unsupportedConfigOverrides.LoadBalancingAlgorithm {
 	case "leastconn":
@@ -455,6 +476,36 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		Name:  RouterLoadBalancingAlgorithmEnvName,
 		Value: loadBalancingAlgorithm,
 	})
+
+	switch v := unsupportedConfigOverrides.MaxConnections; {
+	case v == -1:
+		env = append(env, corev1.EnvVar{
+			Name:  RouterMaxConnectionsEnvName,
+			Value: "auto",
+		})
+	case v > 0:
+		env = append(env, corev1.EnvVar{
+			Name:  RouterMaxConnectionsEnvName,
+			Value: strconv.Itoa(int(v)),
+		})
+	}
+
+	reloadInterval := 5
+	if unsupportedConfigOverrides.ReloadInterval > 0 {
+		reloadInterval = int(unsupportedConfigOverrides.ReloadInterval)
+	}
+	env = append(env, corev1.EnvVar{
+		Name:  RouterReloadIntervalEnvName,
+		Value: fmt.Sprintf("%ds", reloadInterval),
+	})
+
+	dynamicConfigOverride := unsupportedConfigOverrides.DynamicConfigManager
+	if v, err := strconv.ParseBool(dynamicConfigOverride); err == nil && v {
+		env = append(env, corev1.EnvVar{
+			Name:  RouterHAProxyConfigManager,
+			Value: "true",
+		})
+	}
 
 	if len(ci.Status.Domain) > 0 {
 		env = append(env, corev1.EnvVar{Name: "ROUTER_CANONICAL_HOSTNAME", Value: "router-" + ci.Name + "." + ci.Status.Domain})
@@ -469,6 +520,25 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		threads = int(ci.Spec.TuningOptions.ThreadCount)
 	}
 	env = append(env, corev1.EnvVar{Name: RouterHAProxyThreadsEnvName, Value: strconv.Itoa(threads)})
+
+	if ci.Spec.TuningOptions.ClientTimeout != nil && ci.Spec.TuningOptions.ClientTimeout.Duration != 0*time.Second {
+		env = append(env, corev1.EnvVar{Name: "ROUTER_DEFAULT_CLIENT_TIMEOUT", Value: durationToHAProxyTimespec(ci.Spec.TuningOptions.ClientTimeout.Duration)})
+	}
+	if ci.Spec.TuningOptions.ClientFinTimeout != nil && ci.Spec.TuningOptions.ClientFinTimeout.Duration != 0*time.Second {
+		env = append(env, corev1.EnvVar{Name: "ROUTER_CLIENT_FIN_TIMEOUT", Value: durationToHAProxyTimespec(ci.Spec.TuningOptions.ClientFinTimeout.Duration)})
+	}
+	if ci.Spec.TuningOptions.ServerTimeout != nil && ci.Spec.TuningOptions.ServerTimeout.Duration != 0*time.Second {
+		env = append(env, corev1.EnvVar{Name: "ROUTER_DEFAULT_SERVER_TIMEOUT", Value: durationToHAProxyTimespec(ci.Spec.TuningOptions.ServerTimeout.Duration)})
+	}
+	if ci.Spec.TuningOptions.ServerFinTimeout != nil && ci.Spec.TuningOptions.ServerFinTimeout.Duration != 0*time.Second {
+		env = append(env, corev1.EnvVar{Name: "ROUTER_DEFAULT_SERVER_FIN_TIMEOUT", Value: durationToHAProxyTimespec(ci.Spec.TuningOptions.ServerFinTimeout.Duration)})
+	}
+	if ci.Spec.TuningOptions.TunnelTimeout != nil && ci.Spec.TuningOptions.TunnelTimeout.Duration != 0*time.Second {
+		env = append(env, corev1.EnvVar{Name: "ROUTER_DEFAULT_TUNNEL_TIMEOUT", Value: durationToHAProxyTimespec(ci.Spec.TuningOptions.TunnelTimeout.Duration)})
+	}
+	if ci.Spec.TuningOptions.TLSInspectDelay != nil && ci.Spec.TuningOptions.TLSInspectDelay.Duration != 0*time.Second {
+		env = append(env, corev1.EnvVar{Name: "ROUTER_INSPECT_DELAY", Value: durationToHAProxyTimespec(ci.Spec.TuningOptions.TLSInspectDelay.Duration)})
+	}
 
 	nodeSelector := map[string]string{
 		"kubernetes.io/os":               "linux",
@@ -646,6 +716,10 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 				Value: fmt.Sprintf("%s:%d", cookieName, maxLength),
 			})
 		}
+
+		if accessLogging.LogEmptyRequests == operatorv1.LoggingPolicyIgnore {
+			env = append(env, corev1.EnvVar{Name: RouterDontLogNull, Value: "true"})
+		}
 	}
 
 	tlsProfileSpec := tlsProfileSpecForIngressController(ci, apiConfig)
@@ -769,6 +843,10 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		env = append(env, corev1.EnvVar{Name: RouterHTTPHeaderNameCaseAdjustments, Value: v})
 	}
 
+	if ci.Spec.HTTPEmptyRequestsPolicy == operatorv1.HTTPEmptyRequestsPolicyIgnore {
+		env = append(env, corev1.EnvVar{Name: RouterHTTPIgnoreProbes, Value: "true"})
+	}
+
 	if HTTP2IsEnabled(ci, ingressConfig) {
 		env = append(env, corev1.EnvVar{Name: RouterDisableHTTP2EnvName, Value: "false"})
 	} else {
@@ -789,6 +867,120 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	if ci.Spec.TuningOptions.HeaderBufferMaxRewriteBytes != 0 {
 		env = append(env, corev1.EnvVar{Name: RouterHeaderBufferMaxRewriteSize, Value: strconv.Itoa(
 			int(ci.Spec.TuningOptions.HeaderBufferMaxRewriteBytes))})
+	}
+
+	if len(ci.Spec.ClientTLS.ClientCertificatePolicy) != 0 {
+		var clientAuthPolicy string
+		switch ci.Spec.ClientTLS.ClientCertificatePolicy {
+		case operatorv1.ClientCertificatePolicyRequired:
+			clientAuthPolicy = "required"
+		case operatorv1.ClientCertificatePolicyOptional:
+			clientAuthPolicy = "optional"
+		}
+		env = append(env,
+			corev1.EnvVar{Name: RouterClientAuthPolicy, Value: clientAuthPolicy},
+		)
+
+		if len(ci.Spec.ClientTLS.ClientCA.Name) != 0 {
+			clientCAConfigmapName := controller.ClientCAConfigMapName(ci)
+			clientCAVolumeName := "client-ca"
+			clientCAVolumeMountPath := "/etc/pki/tls/client-ca"
+			clientCABundleFilename := "ca-bundle.pem"
+			clientCAVolume := corev1.Volume{
+				Name: clientCAVolumeName,
+				VolumeSource: corev1.VolumeSource{
+					ConfigMap: &corev1.ConfigMapVolumeSource{
+						LocalObjectReference: corev1.LocalObjectReference{
+							Name: clientCAConfigmapName.Name,
+						},
+						Items: []corev1.KeyToPath{
+							{
+								Key:  clientCABundleFilename,
+								Path: clientCABundleFilename,
+							},
+						},
+					},
+				},
+			}
+			clientCAVolumeMount := corev1.VolumeMount{
+				Name:      clientCAVolumeName,
+				MountPath: clientCAVolumeMountPath,
+				ReadOnly:  true,
+			}
+			volumes = append(volumes, clientCAVolume)
+			routerVolumeMounts = append(routerVolumeMounts, clientCAVolumeMount)
+
+			clientAuthCAPath := filepath.Join(clientCAVolumeMount.MountPath, clientCABundleFilename)
+			env = append(env, corev1.EnvVar{Name: RouterClientAuthCA, Value: clientAuthCAPath})
+
+			if haveClientCAConfigmap {
+				// If any certificates in the client CA bundle
+				// specify any CRL distribution points, then we
+				// need to configure a configmap volume.  The
+				// crl controller is responsible for managing
+				// the configmap.
+				var clientCAData []byte
+				if v, ok := clientCAConfigmap.Data[clientCABundleFilename]; !ok {
+					return nil, fmt.Errorf("client CA configmap %s/%s is missing %q", clientCAConfigmap.Namespace, clientCAConfigmap.Name, clientCABundleFilename)
+				} else {
+					clientCAData = []byte(v)
+				}
+				var someClientCAHasCRL bool
+				for len(clientCAData) > 0 {
+					block, data := pem.Decode(clientCAData)
+					if block == nil {
+						break
+					}
+					clientCAData = data
+					cert, err := x509.ParseCertificate(block.Bytes)
+					if err != nil {
+						return nil, fmt.Errorf("client CA configmap %s/%s has an invalid certificate: %w", clientCAConfigmap.Namespace, clientCAConfigmap.Name, err)
+					}
+					if len(cert.CRLDistributionPoints) != 0 {
+						someClientCAHasCRL = true
+						break
+					}
+				}
+				if someClientCAHasCRL {
+					clientCACRLSecretName := controller.CRLConfigMapName(ci)
+					clientCACRLVolumeName := "client-ca-crl"
+					clientCACRLVolumeMountPath := "/etc/pki/tls/client-ca-crl"
+					clientCACRLFilename := "crl.pem"
+					clientCACRLVolume := corev1.Volume{
+						Name: clientCACRLVolumeName,
+						VolumeSource: corev1.VolumeSource{
+							ConfigMap: &corev1.ConfigMapVolumeSource{
+								LocalObjectReference: corev1.LocalObjectReference{
+									Name: clientCACRLSecretName.Name,
+								},
+								Items: []corev1.KeyToPath{
+									{
+										Key:  clientCACRLFilename,
+										Path: clientCACRLFilename,
+									},
+								},
+							},
+						},
+					}
+					clientCACRLVolumeMount := corev1.VolumeMount{
+						Name:      clientCACRLVolumeName,
+						MountPath: clientCACRLVolumeMountPath,
+						ReadOnly:  true,
+					}
+					volumes = append(volumes, clientCACRLVolume)
+					routerVolumeMounts = append(routerVolumeMounts, clientCACRLVolumeMount)
+
+					clientAuthCRLPath := filepath.Join(clientCACRLVolumeMount.MountPath, clientCACRLFilename)
+					env = append(env, corev1.EnvVar{Name: RouterClientAuthCRL, Value: clientAuthCRLPath})
+				}
+			}
+
+			if len(ci.Spec.ClientTLS.AllowedSubjectPatterns) != 0 {
+				pattern := "(?:" + strings.Join(ci.Spec.ClientTLS.AllowedSubjectPatterns, "|") + ")"
+				env = append(env, corev1.EnvVar{Name: RouterClientAuthFilter, Value: pattern})
+			}
+		}
+
 	}
 
 	deployment.Spec.Template.Spec.Volumes = volumes
@@ -828,6 +1020,7 @@ func accessLoggingForIngressController(ic *operatorv1.IngressController) *operat
 			HttpLogFormat:      ic.Spec.Logging.Access.HttpLogFormat,
 			HTTPCaptureHeaders: ic.Spec.Logging.Access.HTTPCaptureHeaders,
 			HTTPCaptureCookies: ic.Spec.Logging.Access.HTTPCaptureCookies,
+			LogEmptyRequests:   ic.Spec.Logging.Access.LogEmptyRequests,
 		}
 	case operatorv1.SyslogLoggingDestinationType:
 		if ic.Spec.Logging.Access.Destination.Syslog != nil {
@@ -843,6 +1036,7 @@ func accessLoggingForIngressController(ic *operatorv1.IngressController) *operat
 				HttpLogFormat:      ic.Spec.Logging.Access.HttpLogFormat,
 				HTTPCaptureHeaders: ic.Spec.Logging.Access.HTTPCaptureHeaders,
 				HTTPCaptureCookies: ic.Spec.Logging.Access.HTTPCaptureCookies,
+				LogEmptyRequests:   ic.Spec.Logging.Access.LogEmptyRequests,
 			}
 		}
 	}
@@ -1291,4 +1485,32 @@ func clipHAProxyTimeoutValue(val string) (string, error) {
 		}
 	}
 	return val, nil
+}
+
+// durationToHAProxyTimespec converts a time.Duration into a number that
+// HAProxy can consume, in the simplest unit possible. If the value would be
+// truncated by being converted to seconds, it outputs in milliseconds,
+// otherwise if the value wouldn't be truncated by converting to seconds, but
+// would if converted to minutes, it outputs in seconds, etc. up to a maximum
+// unit in hours (the largest unit natively supported by time.Duration).
+//
+// Also truncates values to the maximum length HAProxy allows if the value is
+// too large.
+func durationToHAProxyTimespec(duration time.Duration) string {
+	haproxyMaxTimeoutMilliseconds := int64(2147483647)
+	durationMilliseconds := duration.Milliseconds()
+	if durationMilliseconds == 0 {
+		return "0s"
+	} else if durationMilliseconds > haproxyMaxTimeoutMilliseconds {
+		log.V(2).Info("Time value %s exceeds the maximum timeout length of %dms. Truncating timeout to match maximum value.", duration.String(), haproxyMaxTimeoutMilliseconds)
+		return "2147483647ms"
+	} else if durationMilliseconds%time.Second.Milliseconds() != 0 {
+		return fmt.Sprintf("%dms", durationMilliseconds)
+	} else if durationMilliseconds%time.Minute.Milliseconds() != 0 {
+		return fmt.Sprintf("%ds", int(math.Round(duration.Seconds())))
+	} else if durationMilliseconds%time.Hour.Milliseconds() != 0 {
+		return fmt.Sprintf("%dm", int(math.Round(duration.Minutes())))
+	} else {
+		return fmt.Sprintf("%dh", int(math.Round(duration.Hours())))
+	}
 }

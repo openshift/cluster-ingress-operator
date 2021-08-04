@@ -705,7 +705,18 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		errs = append(errs, err)
 	}
 
-	haveDepl, deployment, err := r.ensureRouterDeployment(ci, infraConfig, ingressConfig, apiConfig, networkConfig)
+	var haveClientCAConfigmap bool
+	clientCAConfigmap := &corev1.ConfigMap{}
+	if len(ci.Spec.ClientTLS.ClientCA.Name) != 0 {
+		name := operatorcontroller.ClientCAConfigMapName(ci)
+		if err := r.cache.Get(context.TODO(), name, clientCAConfigmap); err != nil {
+			errs = append(errs, fmt.Errorf("failed to get client CA configmap: %w", err))
+			return utilerrors.NewAggregate(errs)
+		}
+		haveClientCAConfigmap = true
+	}
+
+	haveDepl, deployment, err := r.ensureRouterDeployment(ci, infraConfig, ingressConfig, apiConfig, networkConfig, haveClientCAConfigmap, clientCAConfigmap)
 	if err != nil {
 		errs = append(errs, fmt.Errorf("failed to ensure deployment: %v", err))
 		return utilerrors.NewAggregate(errs)
@@ -746,7 +757,7 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		errs = append(errs, fmt.Errorf("failed to integrate metrics with openshift-monitoring for ingresscontroller %s: %v", ci.Name, err))
 	}
 
-	if _, _, err := r.ensureRsyslogConfigMap(ci, deploymentRef, ingressConfig); err != nil {
+	if _, _, err := r.ensureRsyslogConfigMap(ci, deploymentRef); err != nil {
 		errs = append(errs, err)
 	}
 
