@@ -558,7 +558,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	if ci.Spec.EndpointPublishingStrategy.HostNetwork.BindOptions.SNIPort > 0 {
 		serviceSNIPort = int(ci.Spec.EndpointPublishingStrategy.HostNetwork.BindOptions.SNIPort)
 	}
-	if _, ok := visited[serviceSNIPort]; !ok {
+	if _, ok := visited[serviceSNIPort]; ok {
 		return nil, uniquenessError
 	}
 	visited[serviceSNIPort] = struct{}{}
@@ -567,7 +567,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	if ci.Spec.EndpointPublishingStrategy.HostNetwork.BindOptions.NoSNIPort > 0 {
 		serviceNoSNIPort = int(ci.Spec.EndpointPublishingStrategy.HostNetwork.BindOptions.NoSNIPort)
 	}
-	if _, ok := visited[serviceNoSNIPort]; !ok {
+	if _, ok := visited[serviceNoSNIPort]; ok {
 		return nil, uniquenessError
 	}
 	visited[serviceNoSNIPort] = struct{}{}
@@ -576,7 +576,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	if ci.Spec.EndpointPublishingStrategy.HostNetwork.BindOptions.StatsPort > 0 {
 		statsPort = int(ci.Spec.EndpointPublishingStrategy.HostNetwork.BindOptions.StatsPort)
 	}
-	if _, ok := visited[statsPort]; !ok {
+	if _, ok := visited[statsPort]; ok {
 		return nil, uniquenessError
 	}
 
