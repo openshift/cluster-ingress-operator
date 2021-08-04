@@ -549,39 +549,34 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	if ci.Spec.EndpointPublishingStrategy.HostNetwork.BindOptions.HTTPSPort > 0 {
 		serviceHTTPSPort = int(ci.Spec.EndpointPublishingStrategy.HostNetwork.BindOptions.HTTPSPort)
 	}
-	if _, ok := visited[serviceHTTPSPort]; !ok {
-		visited[serviceHTTPSPort] = struct{}{}
-	} else {
+	if _, ok := visited[serviceHTTPSPort]; ok {
 		return nil, uniquenessError
 	}
+	visited[serviceHTTPSPort] = struct{}{}
 
 	serviceSNIPort := RouterHAProxyServiceSNIPortDefaultValue
 	if ci.Spec.EndpointPublishingStrategy.HostNetwork.BindOptions.SNIPort > 0 {
 		serviceSNIPort = int(ci.Spec.EndpointPublishingStrategy.HostNetwork.BindOptions.SNIPort)
 	}
 	if _, ok := visited[serviceSNIPort]; !ok {
-		visited[serviceSNIPort] = struct{}{}
-	} else {
 		return nil, uniquenessError
 	}
+	visited[serviceSNIPort] = struct{}{}
 
 	serviceNoSNIPort := RouterHAProxyServiceNoSNIPortDefaultValue
 	if ci.Spec.EndpointPublishingStrategy.HostNetwork.BindOptions.NoSNIPort > 0 {
 		serviceNoSNIPort = int(ci.Spec.EndpointPublishingStrategy.HostNetwork.BindOptions.NoSNIPort)
 	}
 	if _, ok := visited[serviceNoSNIPort]; !ok {
-		visited[serviceNoSNIPort] = struct{}{}
-	} else {
 		return nil, uniquenessError
 	}
+	visited[serviceNoSNIPort] = struct{}{}
 
 	statsPort := StatsPortDefaultValue
 	if ci.Spec.EndpointPublishingStrategy.HostNetwork.BindOptions.StatsPort > 0 {
 		statsPort = int(ci.Spec.EndpointPublishingStrategy.HostNetwork.BindOptions.StatsPort)
 	}
 	if _, ok := visited[statsPort]; !ok {
-		visited[statsPort] = struct{}{}
-	} else {
 		return nil, uniquenessError
 	}
 
