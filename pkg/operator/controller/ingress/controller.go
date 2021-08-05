@@ -89,6 +89,10 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	if err := c.Watch(&source.Kind{Type: &corev1.Service{}}, enqueueRequestForOwningIngressController(config.Namespace)); err != nil {
 		return nil, err
 	}
+	// add watch for changes in DNS config
+	if err := c.Watch(&source.Kind{Type: &configv1.DNS{}}, handler.EnqueueRequestsFromMapFunc(reconciler.ingressConfigToIngressController)); err != nil {
+		return nil, err
+	}
 	if err := c.Watch(&source.Kind{Type: &iov1.DNSRecord{}}, &handler.EnqueueRequestForOwner{OwnerType: &operatorv1.IngressController{}}); err != nil {
 		return nil, err
 	}
