@@ -4,8 +4,6 @@ package e2e
 
 import (
 	"context"
-	"fmt"
-	"os"
 	"testing"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -28,17 +26,16 @@ import (
 func TestIngressStatus(t *testing.T) {
 	kubeConfig, err := config.GetConfig()
 	if err != nil {
-		fmt.Printf("failed to get kube config: %s\n", err)
-		os.Exit(1)
+		t.Fatalf("failed to get kube config: %s\n", err)
 	}
+
 	kubeClient, err := operatorclient.NewClient(kubeConfig)
 	if err != nil {
-		t.Errorf("failed to create kube client: %v", err)
+		t.Fatalf("failed to create kube client: %v", err)
 	}
-	kclient = kubeClient
 
-	if err := kclient.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, &dnsConfig); err != nil {
-		t.Errorf("failed to get DNS config: %v", err)
+	if err := kubeClient.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, &dnsConfig); err != nil {
+		t.Fatalf("failed to get DNS config: %v", err)
 	}
 
 	// step 1
@@ -47,14 +44,14 @@ func TestIngressStatus(t *testing.T) {
 		{Type: configv1.OperatorDegraded, Status: configv1.ConditionFalse},
 	}
 	if err := waitForClusterOperatorConditions(t, kclient, expected...); err != nil {
-		t.Errorf("did not get expected available condition: %v", err)
+		t.Fatalf("did not get expected available condition: %v", err)
 	}
 
 	// step 2
 	updCfg := dnsConfig.DeepCopy()
 	updateDNSConfig(true, updCfg)
 	if err := kclient.Update(context.TODO(), updCfg); err != nil {
-		t.Errorf("failed to get DNS config: %v", err)
+		t.Fatalf("failed to update DNS config: %v", err)
 	}
 
 	// step 3
@@ -62,13 +59,13 @@ func TestIngressStatus(t *testing.T) {
 		{Type: configv1.OperatorDegraded, Status: configv1.ConditionTrue},
 	}
 	if err := waitForClusterOperatorConditions(t, kclient, expected...); err != nil {
-		t.Errorf("did not get expected available condition: %v", err)
+		t.Fatalf("did not get expected available condition: %v", err)
 	}
 
 	// step 4
 	updateDNSConfig(false, updCfg)
 	if err := kclient.Update(context.TODO(), updCfg); err != nil {
-		t.Errorf("failed to get DNS config: %v", err)
+		t.Fatalf("failed to update DNS config: %v", err)
 	}
 
 	// step 5
@@ -77,7 +74,7 @@ func TestIngressStatus(t *testing.T) {
 		{Type: configv1.OperatorDegraded, Status: configv1.ConditionFalse},
 	}
 	if err := waitForClusterOperatorConditions(t, kclient, expected...); err != nil {
-		t.Errorf("did not get expected available condition: %v", err)
+		t.Fatalf("did not get expected available condition: %v", err)
 	}
 }
 

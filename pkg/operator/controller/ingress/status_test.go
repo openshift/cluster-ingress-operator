@@ -11,6 +11,7 @@ import (
 
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 
+	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -1125,5 +1126,89 @@ func TestMergeConditions(t *testing.T) {
 		if !conditionsEqual(test.expected, actual) {
 			t.Errorf("expected:\n%v\nactual:\n%v", toYaml(test.expected), toYaml(actual))
 		}
+	}
+}
+
+func TestZoneInConfig(t *testing.T) {
+	var z *configv1.DNSZone
+	var dnsZone configv1.DNSZone
+	tag := make(map[string]string)
+	tagZone := make(map[string]string)
+
+	testCases := []struct {
+		description        string
+		expected           bool
+		in, zone, zoneType string
+	}{
+		{
+			description: "[PrivateZone] empty strings (should fail)",
+			expected:    false,
+			in:          "",
+			zone:        "",
+			zoneType:    "ID",
+		},
+		{
+			description: "[PrivateZone] zone.ID empty string (should fail)",
+			expected:    false,
+			in:          "test",
+			zone:        "",
+			zoneType:    "ID",
+		}, {
+			description: "[PrivateZone] zone.ID with value (not equal should fail)",
+			expected:    false,
+			in:          "test",
+			zone:        "notest",
+			zoneType:    "ID",
+		}, {
+			description: "[PrivateZone] zone.ID with value (equal should pass)",
+			expected:    true,
+			in:          "test",
+			zone:        "test",
+			zoneType:    "ID",
+		}, {
+			description: "[PrivateZone] empty strings (should fail)",
+			expected:    false,
+			in:          "",
+			zone:        "",
+			zoneType:    "TAG",
+		}, {
+			description: "[PrivateZone] zone.Tags['Name'] empty string (should fail)",
+			expected:    false,
+			in:          "test",
+			zone:        "",
+			zoneType:    "TAG",
+		}, {
+			description: "[PrivateZone] zone.Tags['Name'] with value (not equal should fail)",
+			expected:    false,
+			in:          "test",
+			zone:        "notest",
+			zoneType:    "TAG",
+		}, {
+			description: "[PrivateZone] zone.tags['Name'] with value (equal should pass)",
+			expected:    true,
+			in:          "test",
+			zone:        "test",
+			zoneType:    "TAG",
+		},
+	}
+
+	for _, test := range testCases {
+		t.Run(test.description, func(t *testing.T) {
+			if test.zoneType == "ID" {
+				z = &configv1.DNSZone{ID: test.in}
+				dnsZone = configv1.DNSZone{ID: test.zone}
+			} else {
+				tag["Name"] = test.in
+				z = &configv1.DNSZone{Tags: tag}
+				tagZone["Name"] = test.zone
+				dnsZone = configv1.DNSZone{Tags: tagZone}
+			}
+			dnsSpec := configv1.DNSSpec{PrivateZone: z}
+			dnsConfig := &configv1.DNS{Spec: dnsSpec}
+			actual := checkZoneInConfig(dnsConfig, dnsZone)
+			if actual != test.expected {
+				t.Errorf("expected:%v actual:%v\n", test.expected, actual)
+			}
+		})
 	}
 }

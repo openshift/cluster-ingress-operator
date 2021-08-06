@@ -743,7 +743,6 @@ func computeDNSStatus(ic *operatorv1.IngressController, wildcardRecord *iov1.DNS
 
 // checkZoneInConfig - private utility to check for a zone in the current config
 func checkZoneInConfig(dnsConfig *configv1.DNS, zone configv1.DNSZone) bool {
-
 	// check PrivateZone settings only
 	// check for private zone ID
 	if dnsConfig.Spec.PrivateZone != nil && dnsConfig.Spec.PrivateZone.ID != "" && zone.ID != "" {
