@@ -89,6 +89,7 @@ var dnsConfig configv1.DNS
 var infraConfig configv1.Infrastructure
 var operatorNamespace = operatorcontroller.DefaultOperatorNamespace
 var defaultName = types.NamespacedName{Namespace: operatorNamespace, Name: manifests.DefaultIngressControllerName}
+var clusterConfigName = types.NamespacedName{Namespace: operatorNamespace, Name: manifests.ClusterIngressConfigName}
 
 func TestMain(m *testing.M) {
 	kubeConfig, err := config.GetConfig()
