@@ -521,22 +521,22 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	}
 	env = append(env, corev1.EnvVar{Name: RouterHAProxyThreadsEnvName, Value: strconv.Itoa(threads)})
 
-	if ci.Spec.TuningOptions.ClientTimeout != nil && ci.Spec.TuningOptions.ClientTimeout.Duration != 0*time.Second {
+	if ci.Spec.TuningOptions.ClientTimeout != nil && ci.Spec.TuningOptions.ClientTimeout.Duration > 0*time.Second {
 		env = append(env, corev1.EnvVar{Name: "ROUTER_DEFAULT_CLIENT_TIMEOUT", Value: durationToHAProxyTimespec(ci.Spec.TuningOptions.ClientTimeout.Duration)})
 	}
-	if ci.Spec.TuningOptions.ClientFinTimeout != nil && ci.Spec.TuningOptions.ClientFinTimeout.Duration != 0*time.Second {
+	if ci.Spec.TuningOptions.ClientFinTimeout != nil && ci.Spec.TuningOptions.ClientFinTimeout.Duration > 0*time.Second {
 		env = append(env, corev1.EnvVar{Name: "ROUTER_CLIENT_FIN_TIMEOUT", Value: durationToHAProxyTimespec(ci.Spec.TuningOptions.ClientFinTimeout.Duration)})
 	}
-	if ci.Spec.TuningOptions.ServerTimeout != nil && ci.Spec.TuningOptions.ServerTimeout.Duration != 0*time.Second {
+	if ci.Spec.TuningOptions.ServerTimeout != nil && ci.Spec.TuningOptions.ServerTimeout.Duration > 0*time.Second {
 		env = append(env, corev1.EnvVar{Name: "ROUTER_DEFAULT_SERVER_TIMEOUT", Value: durationToHAProxyTimespec(ci.Spec.TuningOptions.ServerTimeout.Duration)})
 	}
-	if ci.Spec.TuningOptions.ServerFinTimeout != nil && ci.Spec.TuningOptions.ServerFinTimeout.Duration != 0*time.Second {
+	if ci.Spec.TuningOptions.ServerFinTimeout != nil && ci.Spec.TuningOptions.ServerFinTimeout.Duration > 0*time.Second {
 		env = append(env, corev1.EnvVar{Name: "ROUTER_DEFAULT_SERVER_FIN_TIMEOUT", Value: durationToHAProxyTimespec(ci.Spec.TuningOptions.ServerFinTimeout.Duration)})
 	}
-	if ci.Spec.TuningOptions.TunnelTimeout != nil && ci.Spec.TuningOptions.TunnelTimeout.Duration != 0*time.Second {
+	if ci.Spec.TuningOptions.TunnelTimeout != nil && ci.Spec.TuningOptions.TunnelTimeout.Duration > 0*time.Second {
 		env = append(env, corev1.EnvVar{Name: "ROUTER_DEFAULT_TUNNEL_TIMEOUT", Value: durationToHAProxyTimespec(ci.Spec.TuningOptions.TunnelTimeout.Duration)})
 	}
-	if ci.Spec.TuningOptions.TLSInspectDelay != nil && ci.Spec.TuningOptions.TLSInspectDelay.Duration != 0*time.Second {
+	if ci.Spec.TuningOptions.TLSInspectDelay != nil && ci.Spec.TuningOptions.TLSInspectDelay.Duration > 0*time.Second {
 		env = append(env, corev1.EnvVar{Name: "ROUTER_INSPECT_DELAY", Value: durationToHAProxyTimespec(ci.Spec.TuningOptions.TLSInspectDelay.Duration)})
 	}
 
