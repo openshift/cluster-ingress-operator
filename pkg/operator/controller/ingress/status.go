@@ -660,6 +660,7 @@ func getEventsByReason(events []corev1.Event, component, reason string) []corev1
 }
 
 func computeDNSStatus(ic *operatorv1.IngressController, wildcardRecord *iov1.DNSRecord, dnsConfig *configv1.DNS) []operatorv1.OperatorCondition {
+
 	if dnsConfig.Spec.PublicZone == nil && dnsConfig.Spec.PrivateZone == nil {
 		return []operatorv1.OperatorCondition{
 			{
@@ -711,7 +712,11 @@ func computeDNSStatus(ic *operatorv1.IngressController, wildcardRecord *iov1.DNS
 		for _, zone := range wildcardRecord.Status.Zones {
 			for _, cond := range zone.Conditions {
 				if cond.Type == iov1.DNSRecordFailedConditionType && cond.Status == string(operatorv1.ConditionTrue) {
-					failedZones = append(failedZones, zone.DNSZone)
+					// check to see if the zone is in the dnsConfig.Spec
+					// fix:BZ1942657 - relates to status changes when updating DNS PrivateZone config
+					if checkZoneInConfig(dnsConfig, zone.DNSZone) {
+						failedZones = append(failedZones, zone.DNSZone)
+					}
 				}
 			}
 		}
@@ -734,4 +739,24 @@ func computeDNSStatus(ic *operatorv1.IngressController, wildcardRecord *iov1.DNS
 	}
 
 	return conditions
+}
+
+// checkZoneInConfig - private utility to check for a zone in the current config
+func checkZoneInConfig(dnsConfig *configv1.DNS, zone configv1.DNSZone) bool {
+	// check PrivateZone settings only
+	// check for private zone ID
+	if dnsConfig.Spec.PrivateZone != nil && dnsConfig.Spec.PrivateZone.ID != "" && zone.ID != "" {
+		if dnsConfig.Spec.PrivateZone.ID == zone.ID {
+			return true
+		}
+	}
+
+	// check for private zone Tags
+	if dnsConfig.Spec.PrivateZone != nil && dnsConfig.Spec.PrivateZone.Tags["Name"] != "" && zone.Tags["Name"] != "" {
+		if dnsConfig.Spec.PrivateZone.Tags["Name"] == zone.Tags["Name"] {
+			return true
+		}
+	}
+
+	return false
 }

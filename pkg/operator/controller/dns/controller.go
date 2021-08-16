@@ -305,7 +305,7 @@ func (r *reconciler) publishRecordToZones(zones []configv1.DNSZone, record *iov1
 			Conditions: []iov1.DNSZoneCondition{condition},
 		})
 	}
-	return mergeStatuses(record.Status.DeepCopy().Zones, statuses), result
+	return mergeStatuses(zones, record.Status.DeepCopy().Zones, statuses), result
 }
 
 // recordIsAlreadyPublishedToZone returns a Boolean value indicating whether the
@@ -357,7 +357,7 @@ func (r *reconciler) delete(record *iov1.DNSRecord) error {
 
 // mergeStatuses updates or extends the provided slice of statuses with the
 // provided updates and returns the resulting slice.
-func mergeStatuses(statuses, updates []iov1.DNSZoneStatus) []iov1.DNSZoneStatus {
+func mergeStatuses(zones []configv1.DNSZone, statuses, updates []iov1.DNSZoneStatus) []iov1.DNSZoneStatus {
 	var additions []iov1.DNSZoneStatus
 	for i, update := range updates {
 		add := true
