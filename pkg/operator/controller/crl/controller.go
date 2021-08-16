@@ -57,8 +57,8 @@ func New(mgr manager.Manager) (controller.Controller, error) {
 	}
 
 	// Index ingresscontrollers over the client CA configmap name so that
-	// configmapIsInUse and configmapToIngressController can look up
-	// ingresscontrollers that reference the configmap.
+	// configmapToIngressController can look up ingresscontrollers that
+	// reference the client CA configmap.
 	if err := operatorCache.IndexField(context.Background(), &operatorv1.IngressController{}, clientCAConfigmapIndexFieldName, client.IndexerFunc(func(o client.Object) []string {
 		ic := o.(*operatorv1.IngressController)
 		if len(ic.Spec.ClientTLS.ClientCA.Name) == 0 {
@@ -73,12 +73,7 @@ func New(mgr manager.Manager) (controller.Controller, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create informer for configmaps: %w", err)
 	}
-	if err := c.Watch(&source.Informer{Informer: configmapsInformer}, handler.EnqueueRequestsFromMapFunc(reconciler.configmapToIngressController), predicate.Funcs{
-		CreateFunc:  func(e event.CreateEvent) bool { return reconciler.configmapIsInUse(e.Object) },
-		DeleteFunc:  func(e event.DeleteEvent) bool { return reconciler.configmapIsInUse(e.Object) },
-		UpdateFunc:  func(e event.UpdateEvent) bool { return reconciler.configmapIsInUse(e.ObjectNew) },
-		GenericFunc: func(e event.GenericEvent) bool { return reconciler.configmapIsInUse(e.Object) },
-	}); err != nil {
+	if err := c.Watch(&source.Informer{Informer: configmapsInformer}, handler.EnqueueRequestsFromMapFunc(reconciler.configmapToIngressController)); err != nil {
 		return nil, err
 	}
 
@@ -127,17 +122,6 @@ func (r *reconciler) configmapToIngressController(o client.Object) []reconcile.R
 		requests = append(requests, request)
 	}
 	return requests
-}
-
-// configmapIsInUse returns true if the given configmap is referenced by some
-// ingresscontroller.
-func (r *reconciler) configmapIsInUse(meta metav1.Object) bool {
-	controllers, err := r.ingressControllersWithConfigmap(meta.GetName())
-	if err != nil {
-		log.Error(err, "failed to list ingresscontrollers for configmap")
-		return false
-	}
-	return len(controllers) > 0
 }
 
 // hasConfigmap returns true if a client CA configmap for the given
