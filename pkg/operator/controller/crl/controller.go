@@ -64,7 +64,7 @@ func New(mgr manager.Manager) (controller.Controller, error) {
 		if len(ic.Spec.ClientTLS.ClientCA.Name) == 0 {
 			return []string{}
 		}
-		return []string{ic.Spec.ClientTLS.ClientCA.Name} // TODO Use the name of the operator-managed configmap.
+		return []string{operatorcontroller.ClientCAConfigMapName(ic).Name}
 	})); err != nil {
 		return nil, fmt.Errorf("failed to create index for ingresscontroller: %w", err)
 	}
@@ -90,7 +90,8 @@ func New(mgr manager.Manager) (controller.Controller, error) {
 }
 
 // ingressControllersWithConfigmap returns the ingresscontrollers that reference
-// the given client CA configmap.
+// the specified client CA configmap in the "openshift-ingress" operand
+// namespace.
 func (r *reconciler) ingressControllersWithConfigmap(name string) ([]operatorv1.IngressController, error) {
 	controllers := &operatorv1.IngressControllerList{}
 	listOpts := client.MatchingFields(map[string]string{
@@ -106,6 +107,9 @@ func (r *reconciler) ingressControllersWithConfigmap(name string) ([]operatorv1.
 // one request per ingresscontroller that references the configmap.
 func (r *reconciler) configmapToIngressController(o client.Object) []reconcile.Request {
 	requests := []reconcile.Request{}
+	if o.GetNamespace() != operatorcontroller.DefaultOperandNamespace {
+		return requests
+	}
 	controllers, err := r.ingressControllersWithConfigmap(o.GetName())
 	if err != nil {
 		log.Error(err, "failed to list ingresscontrollers for configmap", "related", o.GetSelfLink())
