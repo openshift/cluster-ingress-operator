@@ -5,6 +5,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
 )
 
 const (
@@ -37,7 +40,17 @@ func Serve() {
 		port := lookupEnv("HTTP_PORT", defaultHTTPPort)
 		log.Printf("Listening on port %v\n", port)
 
-		if err := http.ListenAndServe(":"+port, nil); err != nil {
+		// h2s is a server that handles cleartext HTTP/2.
+		h2s := &http2.Server{}
+		// h1s is a server that handles cleartext HTTP/1 but with a
+		// handler that recognizes cleartext HTTP/2 connections and
+		// redirects them to h2s.
+		h1s := &http.Server{
+			Addr:    ":" + port,
+			Handler: h2c.NewHandler(http.DefaultServeMux, h2s),
+		}
+
+		if err := h1s.ListenAndServe(); err != nil {
 			log.Fatal(err)
 		}
 	}()

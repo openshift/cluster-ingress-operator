@@ -27,6 +27,7 @@ require (
 	github.com/summerwind/h2spec v0.0.0-20200804131034-70ac22940108
 	github.com/tcnksm/go-httpstat v0.2.1-0.20191008022543-e866bb274419
 	go.uber.org/zap v1.17.0
+	golang.org/x/net v0.0.0-20210813160813-60bc85c4be6d
 	google.golang.org/api v0.20.0
 	google.golang.org/grpc v1.27.1
 	gopkg.in/fsnotify.v1 v1.4.7
