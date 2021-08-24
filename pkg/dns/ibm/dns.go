@@ -41,11 +41,12 @@ func NewProvider(config Config) (*Provider, error) {
 		ApiKey: config.APIKey,
 	}
 	provider := &Provider{}
+	provider.dnsServices = make(map[string]dnsclient.DnsClient)
 
 	for _, zone := range config.Zones {
 		options := &dnsrecordsv1.DnsRecordsV1Options{
 			Authenticator:  authenticator,
-			URL:            "https://api.private.cis.cloud.ibm.com/v1",
+			URL:            "https://api.cis.cloud.ibm.com/",
 			Crn:            &config.CISCRN,
 			ZoneIdentifier: &zone,
 		}

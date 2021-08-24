@@ -1,6 +1,7 @@
 package ingress
 
 import (
+	configv1 "github.com/openshift/api/config/v1"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -95,7 +96,7 @@ func TestDesiredWildcardDNSRecord(t *testing.T) {
 			service.Status.LoadBalancer.Ingress = append(service.Status.LoadBalancer.Ingress, ingress)
 		}
 
-		haveWC, actual := desiredWildcardDNSRecord(controller, service)
+		haveWC, actual := desiredWildcardDNSRecord(controller, service, nil)
 		switch {
 		case test.expect != nil && haveWC:
 			if !cmp.Equal(actual.Spec, *test.expect) {
@@ -107,6 +108,73 @@ func TestDesiredWildcardDNSRecord(t *testing.T) {
 			t.Errorf("expected record but got nil:\n%s", toYaml(test.expect))
 		}
 	}
+}
+
+func TestDesiredWildcardDNSRecordForIBMCloud(t *testing.T) {
+
+	ibmPlatform := configv1.Infrastructure{
+		Status: configv1.InfrastructureStatus{
+			PlatformStatus: &configv1.PlatformStatus{
+				Type: configv1.IBMCloudPlatformType,
+			},
+		},
+	}
+
+	tests := []struct {
+		description string
+		domain      string
+		publish     operatorv1.EndpointPublishingStrategyType
+		ingresses   []corev1.LoadBalancerIngress
+		expect      *iov1.DNSRecordSpec
+	}{
+		{
+			description: "hostname to CNAME record for IBM Cloud",
+			publish:     operatorv1.LoadBalancerServiceStrategyType,
+			domain:      "apps.openshift.example.com",
+			ingresses: []corev1.LoadBalancerIngress{
+				{Hostname: "lb.cloud.example.com"},
+			},
+			expect: &iov1.DNSRecordSpec{
+				DNSName:    "*.apps.openshift.example.com.",
+				RecordType: iov1.CNAMERecordType,
+				Targets:    []string{"lb.cloud.example.com"},
+				RecordTTL:  defaultRecordTTLForIBMCloud,
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Logf("testing %s", test.description)
+		controller := &operatorv1.IngressController{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "default",
+			},
+			Status: operatorv1.IngressControllerStatus{
+				Domain: test.domain,
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: test.publish,
+				},
+			},
+		}
+
+		service := &corev1.Service{}
+		for _, ingress := range test.ingresses {
+			service.Status.LoadBalancer.Ingress = append(service.Status.LoadBalancer.Ingress, ingress)
+		}
+
+		haveWC, actual := desiredWildcardDNSRecord(controller, service, &ibmPlatform)
+		switch {
+		case test.expect != nil && haveWC:
+			if !cmp.Equal(actual.Spec, *test.expect) {
+				t.Errorf("expected:\n%s\n\nactual:\n%s", toYaml(test.expect), toYaml(actual.Spec))
+			}
+		case test.expect == nil && haveWC:
+			t.Errorf("expected nil record, got:\n%s", toYaml(actual))
+		case test.expect != nil && !haveWC:
+			t.Errorf("expected record but got nil:\n%s", toYaml(test.expect))
+		}
+	}
+
 }
 
 func toYaml(obj interface{}) string {

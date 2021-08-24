@@ -744,7 +744,7 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		errs = append(errs, fmt.Errorf("failed to ensure load balancer service for %s: %v", ci.Name, err))
 	} else {
 		lbService = lb
-		if _, record, err := r.ensureWildcardDNSRecord(ci, lbService, haveLB); err != nil {
+		if _, record, err := r.ensureWildcardDNSRecord(ci, lbService, haveLB, infraConfig); err != nil {
 			errs = append(errs, fmt.Errorf("failed to ensure wildcard dnsrecord for %s: %v", ci.Name, err))
 		} else {
 			wildcardRecord = record

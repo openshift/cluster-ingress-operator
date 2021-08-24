@@ -3,6 +3,7 @@ package ingress
 import (
 	"context"
 	"fmt"
+	configv1 "github.com/openshift/api/config/v1"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -27,14 +28,19 @@ import (
 // [1] https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/resource-record-sets-choosing-alias-non-alias.html
 const defaultRecordTTL int64 = 30
 
+// defaultRecordTTLForIBMCloud is the TTL (in seconds) assigned to ibm cloud DNS records.
+//Note For IBM Cloud TTL values can be between 120 and 2,147,483,647 seconds or 1 for Automatic
+//reference: https://cloud.ibm.com/apidocs/cis
+const defaultRecordTTLForIBMCloud int64 = 120
+
 // ensureWildcardDNSRecord will create DNS records for the given LB service.
 // If service is nil (haveLBS is false), nothing is done.
-func (r *reconciler) ensureWildcardDNSRecord(ic *operatorv1.IngressController, service *corev1.Service, haveLBS bool) (bool, *iov1.DNSRecord, error) {
+func (r *reconciler) ensureWildcardDNSRecord(ic *operatorv1.IngressController, service *corev1.Service, haveLBS bool, infraConfig *configv1.Infrastructure) (bool, *iov1.DNSRecord, error) {
 	if !haveLBS {
 		return false, nil, nil
 	}
 
-	wantWC, desired := desiredWildcardDNSRecord(ic, service)
+	wantWC, desired := desiredWildcardDNSRecord(ic, service, infraConfig)
 	haveWC, current, err := r.currentWildcardDNSRecord(ic)
 	if err != nil {
 		return false, nil, err
@@ -67,7 +73,7 @@ func (r *reconciler) ensureWildcardDNSRecord(ic *operatorv1.IngressController, s
 // TODO: If .status.loadbalancer.ingress is processed once as non-empty and then
 // later becomes empty, what should we do? Currently we'll treat it as an intent
 // to not have a desired record.
-func desiredWildcardDNSRecord(ic *operatorv1.IngressController, service *corev1.Service) (bool, *iov1.DNSRecord) {
+func desiredWildcardDNSRecord(ic *operatorv1.IngressController, service *corev1.Service, infraConfig *configv1.Infrastructure) (bool, *iov1.DNSRecord) {
 	// If the ingresscontroller has no ingress domain, we cannot configure any
 	// DNS records.
 	if len(ic.Status.Domain) == 0 {
@@ -130,7 +136,7 @@ func desiredWildcardDNSRecord(ic *operatorv1.IngressController, service *corev1.
 			DNSName:    domain,
 			Targets:    []string{target},
 			RecordType: recordType,
-			RecordTTL:  defaultRecordTTL,
+			RecordTTL:  getTTLForCloudProvider(infraConfig),
 		},
 	}
 }
@@ -188,4 +194,21 @@ func dnsRecordChanged(current, expected *iov1.DNSRecord) (bool, *iov1.DNSRecord)
 	updated := current.DeepCopy()
 	updated.Spec = expected.Spec
 	return true, updated
+}
+
+// getTTLForCloudProvider returns the cloud provider specific ttl value for dns record
+func getTTLForCloudProvider(infraConfig *configv1.Infrastructure) int64{
+	var platform configv1.PlatformType
+	if infraConfig != nil && infraConfig.Status.PlatformStatus != nil {
+		platform = infraConfig.Status.PlatformStatus.Type
+	}else{
+		return defaultRecordTTL
+	}
+
+	switch platform {
+	case configv1.IBMCloudPlatformType:
+		return defaultRecordTTLForIBMCloud
+	default:
+		return defaultRecordTTL
+	}
 }
