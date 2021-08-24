@@ -371,6 +371,54 @@ func TestValidateHTTPHeaderBufferValues(t *testing.T) {
 	}
 }
 
+// TestValidateClientTLS verifies the validateClientTLS accepts PCRE-compliant
+// patterns and rejects invalid patterns.
+func TestValidateClientTLS(t *testing.T) {
+	testCases := []struct {
+		description string
+		pattern     string
+		expectError bool
+	}{
+
+		{
+			description: "glob",
+			pattern:     "*.openshift.com",
+			expectError: true,
+		},
+		{
+			description: "invalid regexp",
+			pattern:     "foo.**bar",
+			expectError: true,
+		},
+		{
+			description: "valid PCRE pattern",
+			pattern:     "foo.*?bar",
+			expectError: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		clientTLS := operatorv1.ClientTLS{
+			ClientCertificatePolicy: operatorv1.ClientCertificatePolicyRequired,
+			ClientCA: configv1.ConfigMapNameReference{
+				Name: "client-tls-ca",
+			},
+			AllowedSubjectPatterns: []string{tc.pattern},
+		}
+		ic := &operatorv1.IngressController{
+			Spec: operatorv1.IngressControllerSpec{
+				ClientTLS: clientTLS,
+			},
+		}
+		switch err := validateClientTLS(ic); {
+		case err == nil && tc.expectError:
+			t.Errorf("%s: expected error, got nil", tc.description)
+		case err != nil && !tc.expectError:
+			t.Errorf("%s: expected success, got error: %v", tc.description, err)
+		}
+	}
+}
+
 // TestIsProxyProtocolNeeded verifies that IsProxyProtocolNeeded returns the
 // expected values for various platforms and endpoint publishing strategy
 // parameters.

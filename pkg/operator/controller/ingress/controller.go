@@ -3,9 +3,11 @@ package ingress
 import (
 	"context"
 	"fmt"
-
 	"regexp"
+	"regexp/syntax"
 	"strings"
+
+	"github.com/pkg/errors"
 
 	iov1 "github.com/openshift/api/operatoringress/v1"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
@@ -22,7 +24,7 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 
-	"k8s.io/apimachinery/pkg/api/errors"
+	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
@@ -178,7 +180,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	// Only proceed if we can get the ingresscontroller's state.
 	ingress := &operatorv1.IngressController{}
 	if err := r.client.Get(ctx, request.NamespacedName, ingress); err != nil {
-		if errors.IsNotFound(err) {
+		if kerrors.IsNotFound(err) {
 			// This means the ingress was already deleted/finalized and there are
 			// stale queue entries (or something edge triggering from a related
 			// resource that got deleted async).
@@ -495,6 +497,9 @@ func (r *reconciler) validate(ic *operatorv1.IngressController) error {
 	if err := validateHTTPHeaderBufferValues(ic); err != nil {
 		errors = append(errors, err)
 	}
+	if err := validateClientTLS(ic); err != nil {
+		errors = append(errors, err)
+	}
 	if err := utilerrors.NewAggregate(errors); err != nil {
 		return &admissionRejection{err.Error()}
 	}
@@ -615,6 +620,18 @@ func validateHTTPHeaderBufferValues(ic *operatorv1.IngressController) error {
 	}
 
 	return nil
+}
+
+// validateClientTLS validates the given ingresscontroller's client TLS
+// configuration.
+func validateClientTLS(ic *operatorv1.IngressController) error {
+	errs := []error{}
+	for i, pattern := range ic.Spec.ClientTLS.AllowedSubjectPatterns {
+		if _, err := syntax.Parse(pattern, syntax.Perl); err != nil {
+			errs = append(errs, errors.Wrapf(err, "failed to parse spec.clientTLS.allowedSubjectPatterns[%d]", i))
+		}
+	}
+	return utilerrors.NewAggregate(errs)
 }
 
 // ensureIngressDeleted tries to delete ingress, and if successful, will remove
