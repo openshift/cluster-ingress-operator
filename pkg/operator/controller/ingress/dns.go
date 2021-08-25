@@ -197,11 +197,11 @@ func dnsRecordChanged(current, expected *iov1.DNSRecord) (bool, *iov1.DNSRecord)
 }
 
 // getTTLForCloudProvider returns the cloud provider specific ttl value for dns record
-func getTTLForCloudProvider(infraConfig *configv1.Infrastructure) int64{
+func getTTLForCloudProvider(infraConfig *configv1.Infrastructure) int64 {
 	var platform configv1.PlatformType
 	if infraConfig != nil && infraConfig.Status.PlatformStatus != nil {
 		platform = infraConfig.Status.PlatformStatus.Type
-	}else{
+	} else {
 		return defaultRecordTTL
 	}
 
