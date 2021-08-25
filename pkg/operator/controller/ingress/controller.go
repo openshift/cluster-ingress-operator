@@ -60,9 +60,13 @@ var (
 	log = logf.Logger.WithName(controllerName)
 	// tlsVersion13Ciphers is a list of TLS v1.3 cipher suites as specified by
 	// https://www.openssl.org/docs/man1.1.1/man1/ciphers.html
-	tlsVersion13Ciphers = sets.NewString("TLS_AES_128_GCM_SHA256", "TLS_AES_256_GCM_SHA384", "TLS_CHACHA20_POLY1305_SHA256",
-		"TLS_AES_128_CCM_SHA256", "TLS_AES_128_CCM_8_SHA256", "TLS_AES_128_GCM_SHA256", "TLS_AES_256_GCM_SHA384",
-		"TLS_CHACHA20_POLY1305_SHA256", "TLS_AES_128_CCM_SHA256", "TLS_AES_128_CCM_8_SHA256")
+	tlsVersion13Ciphers = sets.NewString(
+		"TLS_AES_128_GCM_SHA256",
+		"TLS_AES_256_GCM_SHA384",
+		"TLS_CHACHA20_POLY1305_SHA256",
+		"TLS_AES_128_CCM_SHA256",
+		"TLS_AES_128_CCM_8_SHA256",
+	)
 )
 
 // New creates the ingress controller from configuration. This is the controller
