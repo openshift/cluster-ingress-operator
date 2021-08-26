@@ -57,7 +57,8 @@ const (
 	RouterHeaderBufferSize           = "ROUTER_BUF_SIZE"
 	RouterHeaderBufferMaxRewriteSize = "ROUTER_MAX_REWRITE_SIZE"
 
-	RouterLoadBalancingAlgorithmEnvName = "ROUTER_LOAD_BALANCE_ALGORITHM"
+	RouterLoadBalancingAlgorithmEnvName    = "ROUTER_LOAD_BALANCE_ALGORITHM"
+	RouterTCPLoadBalancingAlgorithmEnvName = "ROUTER_TCP_BALANCE_SCHEME"
 
 	RouterDisableHTTP2EnvName          = "ROUTER_DISABLE_HTTP2"
 	RouterDefaultEnableHTTP2Annotation = "ingress.operator.openshift.io/default-enable-http2"
@@ -416,6 +417,11 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 			return nil, fmt.Errorf("ingresscontroller %q has invalid spec.unsupportedConfigOverrides: %w", ci.Name, err)
 		}
 	}
+
+	// For non-TLS, edge-terminated, and reencrypt routes, use the "random"
+	// balancing algorithm by default, but allow an unsupported config
+	// override to override it.  For passthrough routes, use the "source"
+	// balancing algorithm in order to provide some session-affinity.
 	loadBalancingAlgorithm := "random"
 	switch unsupportedConfigOverrides.LoadBalancingAlgorithm {
 	case "leastconn":
@@ -424,6 +430,9 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	env = append(env, corev1.EnvVar{
 		Name:  RouterLoadBalancingAlgorithmEnvName,
 		Value: loadBalancingAlgorithm,
+	}, corev1.EnvVar{
+		Name:  RouterTCPLoadBalancingAlgorithmEnvName,
+		Value: "source",
 	})
 
 	if len(ci.Status.Domain) > 0 {
