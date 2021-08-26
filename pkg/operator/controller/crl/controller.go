@@ -33,6 +33,7 @@ const (
 	controllerName = "crl"
 
 	clientCAConfigmapIndexFieldName = "clientCAConfigmapName"
+	crlConfigmapIndexFieldName      = "crlConfigmapName"
 )
 
 var log = logf.Logger.WithName(controllerName)
@@ -57,14 +58,35 @@ func New(mgr manager.Manager) (controller.Controller, error) {
 	}
 
 	// Index ingresscontrollers over the client CA configmap name so that
-	// configmapIsInUse and configmapToIngressController can look up
-	// ingresscontrollers that reference the configmap.
+	// clientCAConfigmapToIngressController can look up ingresscontrollers
+	// that reference the client CA configmap.
 	if err := operatorCache.IndexField(context.Background(), &operatorv1.IngressController{}, clientCAConfigmapIndexFieldName, client.IndexerFunc(func(o client.Object) []string {
 		ic := o.(*operatorv1.IngressController)
+		// Don't add the ingresscontroller to the index unless it
+		// specifies a client CA certificate.
 		if len(ic.Spec.ClientTLS.ClientCA.Name) == 0 {
 			return []string{}
 		}
-		return []string{ic.Spec.ClientTLS.ClientCA.Name} // TODO Use the name of the operator-managed configmap.
+		// Index the ingresscontroller using the name of the
+		// operator-managed client CA configmap.
+		return []string{operatorcontroller.ClientCAConfigMapName(ic).Name}
+	})); err != nil {
+		return nil, fmt.Errorf("failed to create index for ingresscontroller: %w", err)
+	}
+
+	// Index ingresscontrollers over the CRL configmap name so that
+	// crlConfigmapToIngressController can look up the ingresscontroller
+	// associated with a given CRL configmap.
+	if err := operatorCache.IndexField(context.Background(), &operatorv1.IngressController{}, crlConfigmapIndexFieldName, client.IndexerFunc(func(o client.Object) []string {
+		ic := o.(*operatorv1.IngressController)
+		// Don't add the ingresscontroller to the index unless it
+		// specifies a client CA certificate.
+		if len(ic.Spec.ClientTLS.ClientCA.Name) == 0 {
+			return []string{}
+		}
+		// Index the ingresscontroller using the name of the
+		// operator-managed CRL configmap.
+		return []string{operatorcontroller.CRLConfigMapName(ic).Name}
 	})); err != nil {
 		return nil, fmt.Errorf("failed to create index for ingresscontroller: %w", err)
 	}
@@ -73,12 +95,27 @@ func New(mgr manager.Manager) (controller.Controller, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create informer for configmaps: %w", err)
 	}
-	if err := c.Watch(&source.Informer{Informer: configmapsInformer}, handler.EnqueueRequestsFromMapFunc(reconciler.configmapToIngressController), predicate.Funcs{
-		CreateFunc:  func(e event.CreateEvent) bool { return reconciler.configmapIsInUse(e.Object) },
-		DeleteFunc:  func(e event.DeleteEvent) bool { return reconciler.configmapIsInUse(e.Object) },
-		UpdateFunc:  func(e event.UpdateEvent) bool { return reconciler.configmapIsInUse(e.ObjectNew) },
-		GenericFunc: func(e event.GenericEvent) bool { return reconciler.configmapIsInUse(e.Object) },
-	}); err != nil {
+	// Watch configmaps using clientCAConfigmapToIngressController to map
+	// events to reconciliation requests for ingresscontrollers.  This watch
+	// is intended to trigger reconciliation of an ingresscontroller when a
+	// client CA configmap that the clientca-configmap controller created
+	// for that ingresscontroller is updated.  Events for other configmaps
+	// are ignored.
+	//
+	// Note that the clientca-configmap controller copies configmaps from
+	// the "openshift-config" namespace to the "openshift-ingress"
+	// namespace, and then this controller reads the configmap from the
+	// latter namespace.  This controller does not react directly to updates
+	// to the configmap in the "openshift-config" namespace.
+	if err := c.Watch(&source.Informer{Informer: configmapsInformer}, handler.EnqueueRequestsFromMapFunc(reconciler.clientCAConfigmapToIngressController)); err != nil {
+		return nil, err
+	}
+	// Watch configmaps using crlConfigmapToIngressController to map events
+	// to reconciliation requests.  This watch is intended to trigger
+	// reconciliation of an ingresscontroller when a CRL configmap that this
+	// controller created for that ingresscontroller is updated.  Events for
+	// other configmaps are ignored.
+	if err := c.Watch(&source.Informer{Informer: configmapsInformer}, handler.EnqueueRequestsFromMapFunc(reconciler.crlConfigmapToIngressController)); err != nil {
 		return nil, err
 	}
 
@@ -94,9 +131,10 @@ func New(mgr manager.Manager) (controller.Controller, error) {
 	return c, nil
 }
 
-// ingressControllersWithConfigmap returns the ingresscontrollers that reference
-// the given client CA configmap.
-func (r *reconciler) ingressControllersWithConfigmap(name string) ([]operatorv1.IngressController, error) {
+// ingressControllersWithClientCAConfigmap returns the ingresscontrollers that
+// reference the specified client CA configmap in the "openshift-ingress"
+// operand namespace.
+func (r *reconciler) ingressControllersWithClientCAConfigmap(name string) ([]operatorv1.IngressController, error) {
 	controllers := &operatorv1.IngressControllerList{}
 	listOpts := client.MatchingFields(map[string]string{
 		clientCAConfigmapIndexFieldName: name,
@@ -107,13 +145,17 @@ func (r *reconciler) ingressControllersWithConfigmap(name string) ([]operatorv1.
 	return controllers.Items, nil
 }
 
-// configmapToIngressController maps a configmap to a slice of reconcile requests,
-// one request per ingresscontroller that references the configmap.
-func (r *reconciler) configmapToIngressController(o client.Object) []reconcile.Request {
+// clientCAConfigmapToIngressController maps a CRL configmap to a slice of
+// reconcile requests, one request per ingresscontroller that references the
+// configmap.
+func (r *reconciler) clientCAConfigmapToIngressController(o client.Object) []reconcile.Request {
 	requests := []reconcile.Request{}
-	controllers, err := r.ingressControllersWithConfigmap(o.GetName())
+	if o.GetNamespace() != operatorcontroller.DefaultOperandNamespace {
+		return requests
+	}
+	controllers, err := r.ingressControllersWithClientCAConfigmap(o.GetName())
 	if err != nil {
-		log.Error(err, "failed to list ingresscontrollers for configmap", "related", o.GetSelfLink())
+		log.Error(err, "failed to list ingresscontrollers for client CA configmap", "related", o.GetSelfLink())
 		return requests
 	}
 	for _, ic := range controllers {
@@ -129,15 +171,44 @@ func (r *reconciler) configmapToIngressController(o client.Object) []reconcile.R
 	return requests
 }
 
-// configmapIsInUse returns true if the given configmap is referenced by some
-// ingresscontroller.
-func (r *reconciler) configmapIsInUse(meta metav1.Object) bool {
-	controllers, err := r.ingressControllersWithConfigmap(meta.GetName())
-	if err != nil {
-		log.Error(err, "failed to list ingresscontrollers for configmap")
-		return false
+// ingressControllersWithCRLConfigmap returns the ingresscontrollers that
+// reference the specified CRL configmap in the "openshift-ingress" operand
+// namespace.
+func (r *reconciler) ingressControllersWithCRLConfigmap(name string) ([]operatorv1.IngressController, error) {
+	controllers := &operatorv1.IngressControllerList{}
+	listOpts := client.MatchingFields(map[string]string{
+		crlConfigmapIndexFieldName: name,
+	})
+	if err := r.cache.List(context.Background(), controllers, listOpts); err != nil {
+		return nil, err
 	}
-	return len(controllers) > 0
+	return controllers.Items, nil
+}
+
+// crlConfigmapToIngressController maps a configmap to a slice of reconcile
+// requests, one request per ingresscontroller that references the client CA
+// configmap.
+func (r *reconciler) crlConfigmapToIngressController(o client.Object) []reconcile.Request {
+	requests := []reconcile.Request{}
+	if o.GetNamespace() != operatorcontroller.DefaultOperandNamespace {
+		return requests
+	}
+	controllers, err := r.ingressControllersWithCRLConfigmap(o.GetName())
+	if err != nil {
+		log.Error(err, "failed to list ingresscontrollers for CRL configmap", "related", o.GetSelfLink())
+		return requests
+	}
+	for _, ic := range controllers {
+		log.Info("queueing ingresscontroller", "name", ic.Name, "related", o.GetSelfLink())
+		request := reconcile.Request{
+			NamespacedName: types.NamespacedName{
+				Namespace: ic.Namespace,
+				Name:      ic.Name,
+			},
+		}
+		requests = append(requests, request)
+	}
+	return requests
 }
 
 // hasConfigmap returns true if a client CA configmap for the given
