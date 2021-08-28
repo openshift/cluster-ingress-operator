@@ -3,6 +3,7 @@
 package e2e
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"testing"
@@ -19,7 +20,12 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/wait"
 
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/tools/remotecommand"
+
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/config"
 )
 
 // buildEchoPod returns a pod definition for an socat-based echo server.
@@ -186,4 +192,32 @@ func getDeployment(t *testing.T, client client.Client, name types.NamespacedName
 		return nil, fmt.Errorf("Failed to get %q: %v", name, err)
 	}
 	return &dep, nil
+}
+
+func podExec(t *testing.T, pod corev1.Pod, stdout, stderr *bytes.Buffer, cmd []string) error {
+	t.Helper()
+	kubeConfig, err := config.GetConfig()
+	if err != nil {
+		t.Fatalf("failed to get kube config: %v", err)
+	}
+	cl, err := kubernetes.NewForConfig(kubeConfig)
+	if err != nil {
+		t.Fatalf("failed to create kube client: %v", err)
+	}
+	req := cl.CoreV1().RESTClient().Post().Resource("pods").
+		Namespace(pod.Namespace).Name(pod.Name).SubResource("exec").
+		Param("container", pod.Spec.Containers[0].Name).
+		VersionedParams(&corev1.PodExecOptions{
+			Command: cmd,
+			Stdout:  true,
+			Stderr:  true,
+		}, scheme.ParameterCodec)
+	exec, err := remotecommand.NewSPDYExecutor(kubeConfig, "POST", req.URL())
+	if err != nil {
+		return err
+	}
+	return exec.Stream(remotecommand.StreamOptions{
+		Stdout: stdout,
+		Stderr: stderr,
+	})
 }
