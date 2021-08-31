@@ -1031,6 +1031,42 @@ func TestComputeLoadBalancerStatus(t *testing.T) {
 	}
 }
 
+func TestComputeLoadBalancerStatusSyncLBFailed(t *testing.T) {
+	controller := ingressController("default", operatorv1.LoadBalancerServiceStrategyType)
+	controller.Status.Conditions = []operatorv1.OperatorCondition{
+		{
+			Type:               operatorv1.LoadBalancerReadyIngressConditionType,
+			Status:             operatorv1.ConditionFalse,
+			Reason:             "SyncLoadBalancerFailed",
+			LastTransitionTime: metav1.NewTime(clock.Now()),
+			Message:            "foo bar",
+		},
+	}
+	service := pendingLBService("default", "1")
+	events := []corev1.Event{
+		schedulerEvent(),
+	}
+	expect := []operatorv1.OperatorCondition{
+		{
+			Type:               operatorv1.LoadBalancerManagedIngressConditionType,
+			Status:             operatorv1.ConditionTrue,
+			Reason:             "WantedByEndpointPublishingStrategy",
+			LastTransitionTime: metav1.NewTime(clock.Now()),
+			Message:            "The endpoint publishing strategy supports a managed load balancer",
+		},
+	}
+	actual := computeLoadBalancerStatus(controller, service, events)
+
+	conditionsCmpOpts := []cmp.Option{
+		cmpopts.IgnoreFields(operatorv1.OperatorCondition{}, "LastTransitionTime"),
+		cmpopts.EquateEmpty(),
+		cmpopts.SortSlices(func(a, b operatorv1.OperatorCondition) bool { return a.Type < b.Type }),
+	}
+	if !cmp.Equal(actual, expect, conditionsCmpOpts...) {
+		t.Fatalf("expected:\n%#v\ngot:\n%#v", expect, actual)
+	}
+}
+
 func TestComputeIngressAvailableCondition(t *testing.T) {
 	testCases := []struct {
 		description string

@@ -755,25 +755,42 @@ func computeLoadBalancerStatus(ic *operatorv1.IngressController, service *corev1
 	case isPending(service):
 		reason := "LoadBalancerPending"
 		message := "The LoadBalancer service is pending"
+		lbReadyNeedsUpdate := true
 
-		// Try and find a more specific reason for for the pending status.
+		// Try and find a more specific reason for the pending status.
 		createFailedReason := "SyncLoadBalancerFailed"
 		failedLoadBalancerEvents := getEventsByReason(operandEvents, "service-controller", createFailedReason)
-		for _, event := range failedLoadBalancerEvents {
-			involved := event.InvolvedObject
-			if involved.Kind == "Service" && involved.Namespace == service.Namespace && involved.Name == service.Name && involved.UID == service.UID {
-				reason = "SyncLoadBalancerFailed"
-				message = fmt.Sprintf("The %s component is reporting SyncLoadBalancerFailed events like: %s\n%s",
-					event.Source.Component, event.Message, "The kube-controller-manager logs may contain more details.")
-				break
+		if len(failedLoadBalancerEvents) > 0 {
+			for _, event := range failedLoadBalancerEvents {
+				involved := event.InvolvedObject
+				if involved.Kind == "Service" && involved.Namespace == service.Namespace && involved.Name == service.Name && involved.UID == service.UID {
+					reason = createFailedReason
+					message = fmt.Sprintf("The %s component is reporting SyncLoadBalancerFailed events like: %s\n%s",
+						event.Source.Component, event.Message, "The kube-controller-manager logs may contain more details.")
+					break
+				}
+			}
+		} else {
+			// The LB service eventually stops reporting events, even if there
+			// are still errors. If the service is still in the pending state
+			// and on the previous update, it was in a failed state, assume it
+			// is still in a failed state even if no events are present.
+			for _, condition := range ic.Status.Conditions {
+				if condition.Type == operatorv1.LoadBalancerReadyIngressConditionType &&
+					condition.Status == operatorv1.ConditionFalse &&
+					condition.Reason == createFailedReason {
+					lbReadyNeedsUpdate = false
+				}
 			}
 		}
-		conditions = append(conditions, operatorv1.OperatorCondition{
-			Type:    operatorv1.LoadBalancerReadyIngressConditionType,
-			Status:  operatorv1.ConditionFalse,
-			Reason:  reason,
-			Message: message,
-		})
+		if lbReadyNeedsUpdate {
+			conditions = append(conditions, operatorv1.OperatorCondition{
+				Type:    operatorv1.LoadBalancerReadyIngressConditionType,
+				Status:  operatorv1.ConditionFalse,
+				Reason:  reason,
+				Message: message,
+			})
+		}
 	}
 
 	return conditions

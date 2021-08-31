@@ -66,6 +66,7 @@ func TestAll(t *testing.T) {
 		t.Run("TestDeleteIngressControllerShouldClearRouteStatus", TestDeleteIngressControllerShouldClearRouteStatus)
 		t.Run("TestIngressControllerRouteSelectorUpdateShouldClearRouteStatus", TestIngressControllerRouteSelectorUpdateShouldClearRouteStatus)
 		t.Run("TestIngressControllerNamespaceSelectorUpdateShouldClearRouteStatus", TestIngressControllerNamespaceSelectorUpdateShouldClearRouteStatus)
+		t.Run("TestSyncLBFailEvent", TestSyncLBFailEvent)
 	})
 
 	t.Run("serial", func(t *testing.T) {
