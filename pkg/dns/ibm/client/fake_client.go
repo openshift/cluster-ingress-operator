@@ -99,10 +99,6 @@ func (FakeDnsClient) NewDeleteDnsRecordOptions(dnsrecordIdentifier string) *dnsr
 	return &dnsrecordsv1.DeleteDnsRecordOptions{DnsrecordIdentifier: &dnsrecordIdentifier}
 }
 
-func (FakeDnsClient) NewGetDnsRecordOptions(dnsrecordIdentifier string) *dnsrecordsv1.GetDnsRecordOptions {
-	return &dnsrecordsv1.GetDnsRecordOptions{}
-}
-
 func (FakeDnsClient) NewListAllDnsRecordsOptions() *dnsrecordsv1.ListAllDnsRecordsOptions {
 	return &dnsrecordsv1.ListAllDnsRecordsOptions{}
 }

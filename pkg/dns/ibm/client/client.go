@@ -12,7 +12,6 @@ type DnsClient interface {
 	UpdateDnsRecord(updateDnsRecordOptions *dnsrecordsv1.UpdateDnsRecordOptions) (result *dnsrecordsv1.DnsrecordResp, response *core.DetailedResponse, err error)
 	NewCreateDnsRecordOptions() *dnsrecordsv1.CreateDnsRecordOptions
 	NewDeleteDnsRecordOptions(dnsrecordIdentifier string) *dnsrecordsv1.DeleteDnsRecordOptions
-	NewGetDnsRecordOptions(dnsrecordIdentifier string) *dnsrecordsv1.GetDnsRecordOptions
 	NewListAllDnsRecordsOptions() *dnsrecordsv1.ListAllDnsRecordsOptions
 	NewUpdateDnsRecordOptions(dnsrecordIdentifier string) *dnsrecordsv1.UpdateDnsRecordOptions
 }

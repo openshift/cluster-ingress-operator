@@ -3,6 +3,7 @@ package ibm
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/IBM/go-sdk-core/v4/core"
@@ -17,8 +18,9 @@ import (
 )
 
 var (
-	_   dns.Provider = &Provider{}
-	log              = logf.Logger.WithName("dns")
+	_                   dns.Provider = &Provider{}
+	log                              = logf.Logger.WithName("dns")
+	defaultCISRecordTTL              = int64(120)
 )
 
 type Provider struct {
@@ -42,10 +44,12 @@ func NewProvider(config Config) (*Provider, error) {
 	}
 	provider := &Provider{}
 
+	provider.dnsServices = make(map[string]dnsclient.DnsClient)
+
 	for _, zone := range config.Zones {
 		options := &dnsrecordsv1.DnsRecordsV1Options{
 			Authenticator:  authenticator,
-			URL:            "https://api.private.cis.cloud.ibm.com/v1",
+			URL:            "https://api.cis.cloud.ibm.com/",
 			Crn:            &config.CISCRN,
 			ZoneIdentifier: &zone,
 		}
@@ -139,9 +143,18 @@ func (p *Provider) createOrUpdateDNSRecord(record *iov1.DNSRecord, zone configv1
 	if !ok {
 		return fmt.Errorf("createOrUpdateDNSRecord: unknown zone: %v", zone.ID)
 	}
+
+	// TTL must be between 120 and 2,147,483,647 seconds, or 1 for Automatic.
+	if (record.Spec.RecordTTL > 1 && record.Spec.RecordTTL < 120) || record.Spec.RecordTTL == 0 {
+		log.Info("Warning: TTL must be between 120 and 2,147,483,647 seconds, or 1 for Automatic. RecordTTL set to default", "default CIS record TTL", defaultCISRecordTTL)
+		record.Spec.RecordTTL = defaultCISRecordTTL
+	}
+
 	listOpt := dnsService.NewListAllDnsRecordsOptions()
 	listOpt.SetType(string(record.Spec.RecordType))
-	listOpt.SetName(record.Spec.DNSName)
+	// Some dns records (e.g. wildcard record) have an ending "." character in the DNSName
+	DNSName := strings.TrimSuffix(record.Spec.DNSName, ".")
+	listOpt.SetName(DNSName)
 	for _, target := range record.Spec.Targets {
 		listOpt.SetContent(target)
 		result, response, err := dnsService.ListAllDnsRecords(listOpt)
