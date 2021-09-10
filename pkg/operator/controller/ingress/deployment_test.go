@@ -219,6 +219,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	}
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOAD_BALANCE_ALGORITHM", true, "random")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_TCP_BALANCE_SCHEME", true, "source")
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_USE_PROXY_PROTOCOL", false, "")
 
@@ -378,6 +379,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	}
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOAD_BALANCE_ALGORITHM", true, "leastconn")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_TCP_BALANCE_SCHEME", true, "source")
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_USE_PROXY_PROTOCOL", true, "true")
 
@@ -447,6 +449,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	}
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOAD_BALANCE_ALGORITHM", true, "random")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_TCP_BALANCE_SCHEME", true, "source")
 
 	checkDeploymentDoesNotHaveEnvVar(t, deployment, "ROUTER_USE_PROXY_PROTOCOL")
 
