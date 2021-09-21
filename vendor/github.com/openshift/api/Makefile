@@ -1,6 +1,9 @@
 all: build
 .PHONY: all
 
+# Ensure update-scripts are run before crd-gen so updates to Godoc are included in CRDs.
+update-codegen-crds: update-scripts
+
 # Include the library makefile
 include $(addprefix ./vendor/github.com/openshift/build-machinery-go/make/, \
 	golang.mk \
@@ -37,6 +40,7 @@ $(call add-crd-gen,cloudnetwork,./cloudnetwork/v1,./cloudnetwork/v1,./cloudnetwo
 $(call add-crd-gen,network,./network/v1,./network/v1,./network/v1)
 $(call add-crd-gen,networkoperator,./networkoperator/v1,./networkoperator/v1,./networkoperator/v1)
 $(call add-crd-gen,operatorcontrolplane,./operatorcontrolplane/v1alpha1,./operatorcontrolplane/v1alpha1,./operatorcontrolplane/v1alpha1)
+$(call add-crd-gen,machine,./machine/v1beta1,./machine/v1beta1,./machine/v1beta1)
 
 RUNTIME ?= podman
 RUNTIME_IMAGE_NAME ?= openshift-api-generator
@@ -48,15 +52,17 @@ verify-scripts:
 	hack/verify-crds.sh
 	bash -x hack/verify-types.sh
 	hack/verify-crds-version-upgrade.sh
+	bash -x hack/verify-compatibility.sh
+
 .PHONY: verify-scripts
 verify: verify-scripts verify-codegen-crds
 
 update-scripts:
 	hack/update-deepcopy.sh
+	hack/update-compatibility.sh
 	hack/update-protobuf.sh
 	hack/update-swagger-docs.sh
 .PHONY: update-scripts
-update: update-scripts update-codegen-crds
 
 generate-with-container: Dockerfile.build
 	$(RUNTIME) build -t $(RUNTIME_IMAGE_NAME) -f Dockerfile.build .

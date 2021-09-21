@@ -171,6 +171,24 @@ func TestDesiredLoadBalancerService(t *testing.T) {
 			expect: true,
 		},
 		{
+			description:  "external load balancer for Power VS platform",
+			platform:     configv1.PowerVSPlatformType,
+			strategyType: operatorv1.LoadBalancerServiceStrategyType,
+			lbStrategy: operatorv1.LoadBalancerStrategy{
+				Scope: operatorv1.ExternalLoadBalancer,
+			},
+			expect: true,
+		},
+		{
+			description:  "internal load balancer for Power VS platform",
+			platform:     configv1.PowerVSPlatformType,
+			strategyType: operatorv1.LoadBalancerServiceStrategyType,
+			lbStrategy: operatorv1.LoadBalancerStrategy{
+				Scope: operatorv1.InternalLoadBalancer,
+			},
+			expect: true,
+		},
+		{
 			description:  "external load balancer for azure platform",
 			platform:     configv1.AzurePlatformType,
 			strategyType: operatorv1.LoadBalancerServiceStrategyType,
@@ -364,6 +382,25 @@ func TestDesiredLoadBalancerService(t *testing.T) {
 				}
 			}
 		case configv1.IBMCloudPlatformType:
+			if isInternal {
+				if err := checkServiceHasAnnotation(svc, iksLBScopeAnnotation, true, iksLBScopePrivate); err != nil {
+					t.Errorf("annotation check for test %q failed: %v", tc.description, err)
+				}
+				// The ibm public annotation value should not exist for an internal LB.
+				if err := checkServiceHasAnnotation(svc, iksLBScopeAnnotation, true, iksLBScopePublic); err == nil {
+					t.Errorf("annotation check for test %q failed; unexpected annotation %s: %s", tc.description, iksLBScopeAnnotation, iksLBScopePublic)
+				}
+			} else {
+				if err := checkServiceHasAnnotation(svc, iksLBScopeAnnotation, true, iksLBScopePublic); err != nil {
+					t.Errorf("annotation check for test %q failed: %v", tc.description, err)
+				}
+				// The ibm private annotation value should not exist for an external LB.
+				if err := checkServiceHasAnnotation(svc, iksLBScopeAnnotation, true, iksLBScopePrivate); err == nil {
+					t.Errorf("annotation check for test %q failed; unexpected annotation %s: %s", tc.description, iksLBScopeAnnotation, iksLBScopePrivate)
+				}
+			}
+		case configv1.PowerVSPlatformType:
+			//Power VS platform uses same Load Balancer service as like IBM Cloud platform
 			if isInternal {
 				if err := checkServiceHasAnnotation(svc, iksLBScopeAnnotation, true, iksLBScopePrivate); err != nil {
 					t.Errorf("annotation check for test %q failed: %v", tc.description, err)

@@ -28,6 +28,9 @@ import (
 //
 // Whenever possible, sensible defaults for the platform are used. See each
 // field for more details.
+//
+// Compatibility level 1: Stable within a major release for a minimum of 12 months or 3 minor releases (whichever is longer).
+// +openshift:compatibility-gen:level=1
 type IngressController struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -84,11 +87,12 @@ type IngressControllerSpec struct {
 	// If unset, the default is based on
 	// infrastructure.config.openshift.io/cluster .status.platform:
 	//
-	//   AWS:      LoadBalancerService (with External scope)
-	//   Azure:    LoadBalancerService (with External scope)
-	//   GCP:      LoadBalancerService (with External scope)
-	//   IBMCloud: LoadBalancerService (with External scope)
-	//   Libvirt:  HostNetwork
+	//   AWS:          LoadBalancerService (with External scope)
+	//   Azure:        LoadBalancerService (with External scope)
+	//   GCP:          LoadBalancerService (with External scope)
+	//   IBMCloud:     LoadBalancerService (with External scope)
+	//   AlibabaCloud: LoadBalancerService (with External scope)
+	//   Libvirt:      HostNetwork
 	//
 	// Any other platform types (including None) default to HostNetwork.
 	//
@@ -353,13 +357,14 @@ type ProviderLoadBalancerParameters struct {
 type LoadBalancerProviderType string
 
 const (
-	AWSLoadBalancerProvider       LoadBalancerProviderType = "AWS"
-	AzureLoadBalancerProvider     LoadBalancerProviderType = "Azure"
-	GCPLoadBalancerProvider       LoadBalancerProviderType = "GCP"
-	OpenStackLoadBalancerProvider LoadBalancerProviderType = "OpenStack"
-	VSphereLoadBalancerProvider   LoadBalancerProviderType = "VSphere"
-	IBMLoadBalancerProvider       LoadBalancerProviderType = "IBM"
-	BareMetalLoadBalancerProvider LoadBalancerProviderType = "BareMetal"
+	AWSLoadBalancerProvider          LoadBalancerProviderType = "AWS"
+	AzureLoadBalancerProvider        LoadBalancerProviderType = "Azure"
+	GCPLoadBalancerProvider          LoadBalancerProviderType = "GCP"
+	OpenStackLoadBalancerProvider    LoadBalancerProviderType = "OpenStack"
+	VSphereLoadBalancerProvider      LoadBalancerProviderType = "VSphere"
+	IBMLoadBalancerProvider          LoadBalancerProviderType = "IBM"
+	BareMetalLoadBalancerProvider    LoadBalancerProviderType = "BareMetal"
+	AlibabaCloudLoadBalancerProvider LoadBalancerProviderType = "AlibabaCloud"
 )
 
 // AWSLoadBalancerParameters provides configuration settings that are
@@ -1338,6 +1343,9 @@ type IngressControllerStatus struct {
 // +kubebuilder:object:root=true
 
 // IngressControllerList contains a list of IngressControllers.
+//
+// Compatibility level 1: Stable within a major release for a minimum of 12 months or 3 minor releases (whichever is longer).
+// +openshift:compatibility-gen:level=1
 type IngressControllerList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
