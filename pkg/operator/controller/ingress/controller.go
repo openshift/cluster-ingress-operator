@@ -663,6 +663,9 @@ func (r *reconciler) ensureIngressDeleted(ingress *operatorv1.IngressController)
 		}
 	}
 
+	// Delete the metrics related to the ingresscontroller
+	DeleteIngressControllerConditionsMetric(ingress)
+
 	if len(errs) == 0 {
 		// Remove the ingresscontroller finalizer.
 		if slice.ContainsString(ingress.Finalizers, manifests.IngressControllerFinalizer) {
