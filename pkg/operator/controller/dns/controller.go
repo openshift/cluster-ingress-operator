@@ -568,26 +568,26 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 			log.Info("using fake DNS provider because cluster's ControlPlaneTopology is External")
 			return &dns.FakeProvider{}, nil
 		}
-		if platformStatus.IBMCloud.CISInstanceCRN == "" {
+		var err error
+		cisInstanceCRN := platformStatus.IBMCloud.CISInstanceCRN
+		if cisInstanceCRN == "" {
 			return nil, fmt.Errorf("missing cis instance crn")
 		}
-		zones := []string{}
-		if dnsConfig.Spec.PrivateZone != nil {
-			zones = append(zones, dnsConfig.Spec.PrivateZone.ID)
-		}
-		if dnsConfig.Spec.PublicZone != nil {
-			zones = append(zones, dnsConfig.Spec.PublicZone.ID)
-		}
-		provider, err := ibmdns.NewProvider(ibmdns.Config{
-			APIKey:    string(creds.Data["ibmcloud_api_key"]),
-			CISCRN:    platformStatus.IBMCloud.CISInstanceCRN,
-			Zones:     zones,
-			UserAgent: userAgent,
-		})
+		dnsProvider, err = getIbmDNSProvider(dnsConfig, creds, cisInstanceCRN, userAgent)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create IBM DNS manager: %v", err)
 		}
-		dnsProvider = provider
+	case configv1.PowerVSPlatformType:
+		//Power VS platform will use the ibm dns implementation
+		var err error
+		cisInstanceCRN := platformStatus.PowerVS.CISInstanceCRN
+		if cisInstanceCRN == "" {
+			return nil, fmt.Errorf("missing cis instance crn")
+		}
+		dnsProvider, err = getIbmDNSProvider(dnsConfig, creds, cisInstanceCRN, userAgent)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create IBM DNS manager: %v", err)
+		}
 	default:
 		dnsProvider = &dns.FakeProvider{}
 	}
@@ -614,4 +614,26 @@ func (r *reconciler) customCABundle() (string, error) {
 		return "", nil
 	}
 	return caBundle, nil
+}
+
+//getIbmDNSProvider will intialize the IBM DNS provider
+func getIbmDNSProvider(dnsConfig *configv1.DNS, creds *corev1.Secret, cisInstanceCRN, userAgent string) (*ibmdns.Provider,
+	error) {
+	zones := []string{}
+	if dnsConfig.Spec.PrivateZone != nil {
+		zones = append(zones, dnsConfig.Spec.PrivateZone.ID)
+	}
+	if dnsConfig.Spec.PublicZone != nil {
+		zones = append(zones, dnsConfig.Spec.PublicZone.ID)
+	}
+	provider, err := ibmdns.NewProvider(ibmdns.Config{
+		APIKey:    string(creds.Data["ibmcloud_api_key"]),
+		CISCRN:    cisInstanceCRN,
+		Zones:     zones,
+		UserAgent: userAgent,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create IBM DNS manager: %v", err)
+	}
+	return provider, nil
 }

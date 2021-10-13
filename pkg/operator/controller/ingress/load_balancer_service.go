@@ -150,6 +150,9 @@ var (
 		configv1.IBMCloudPlatformType: {
 			iksLBScopeAnnotation: iksLBScopePrivate,
 		},
+		configv1.PowerVSPlatformType: {
+			iksLBScopeAnnotation: iksLBScopePrivate,
+		},
 	}
 )
 
@@ -294,7 +297,7 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 			service.Annotations[awsLBHealthCheckTimeoutAnnotation] = awsLBHealthCheckTimeoutDefault
 			service.Annotations[awsLBHealthCheckUnhealthyThresholdAnnotation] = awsLBHealthCheckUnhealthyThresholdDefault
 			service.Annotations[awsLBHealthCheckHealthyThresholdAnnotation] = awsLBHealthCheckHealthyThresholdDefault
-		case configv1.IBMCloudPlatformType:
+		case configv1.IBMCloudPlatformType, configv1.PowerVSPlatformType:
 			if !isInternal {
 				service.Annotations[iksLBScopeAnnotation] = iksLBScopePublic
 			}
