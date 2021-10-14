@@ -14,6 +14,7 @@ import (
 
 	iov1 "github.com/openshift/api/operatoringress/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
+	alidns "github.com/openshift/cluster-ingress-operator/pkg/dns/alibaba"
 	awsdns "github.com/openshift/cluster-ingress-operator/pkg/dns/aws"
 	azuredns "github.com/openshift/cluster-ingress-operator/pkg/dns/azure"
 	gcpdns "github.com/openshift/cluster-ingress-operator/pkg/dns/gcp"
@@ -589,6 +590,26 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 		if err != nil {
 			return nil, fmt.Errorf("failed to create IBM DNS manager: %v", err)
 		}
+	case configv1.AlibabaCloudPlatformType:
+		if platformStatus.AlibabaCloud.Region == "" {
+			return nil, fmt.Errorf("missing region id in platform status")
+		}
+
+		var privateZones []string
+		if dnsConfig.Spec.PrivateZone != nil {
+			privateZones = append(privateZones, dnsConfig.Spec.PrivateZone.ID)
+		}
+
+		provider, err := alidns.NewProvider(alidns.Config{
+			Region:       platformStatus.AlibabaCloud.Region,
+			AccessKeyID:  string(creds.Data["alibabacloud_access_key_id"]),
+			AccessSecret: string(creds.Data["alibabacloud_secret_access_key"]),
+			PrivateZones: privateZones,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create AlibabaCloud DNS manager: %v", err)
+		}
+		dnsProvider = provider
 	default:
 		dnsProvider = &dns.FakeProvider{}
 	}
