@@ -418,14 +418,19 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		}
 	}
 
-	// For non-TLS, edge-terminated, and reencrypt routes, use the "random"
-	// balancing algorithm by default, but allow an unsupported config
-	// override to override it.  For passthrough routes, use the "source"
-	// balancing algorithm in order to provide some session-affinity.
-	loadBalancingAlgorithm := "random"
+	// For non-TLS, edge-terminated, and reencrypt routes, use the
+	// "leastconn" balancing algorithm by default, but allow an unsupported
+	// config override to override it.  For passthrough routes, use the
+	// "source" balancing algorithm in order to provide some
+	// session-affinity.  This code at one time used "random" as the default
+	// for non-passthrough routes, but we changed it to "leastconn" upon
+	// discovering that "random" incurs significant memory overhead for each
+	// backend that uses it.  See
+	// <https://bugzilla.redhat.com/show_bug.cgi?id=2007581>.
+	loadBalancingAlgorithm := "leastconn"
 	switch unsupportedConfigOverrides.LoadBalancingAlgorithm {
-	case "leastconn":
-		loadBalancingAlgorithm = "leastconn"
+	case "random":
+		loadBalancingAlgorithm = "random"
 	}
 	env = append(env, corev1.EnvVar{
 		Name:  RouterLoadBalancingAlgorithmEnvName,
