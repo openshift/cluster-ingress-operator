@@ -220,7 +220,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_HAPROXY_CONFIG_MANAGER", false, "")
 
-	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOAD_BALANCE_ALGORITHM", true, "random")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOAD_BALANCE_ALGORITHM", true, "leastconn")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_TCP_BALANCE_SCHEME", true, "source")
 	checkDeploymentDoesNotHaveEnvVar(t, deployment, "ROUTER_ERRORFILE_503")
 	checkDeploymentDoesNotHaveEnvVar(t, deployment, "ROUTER_ERRORFILE_404")
@@ -379,7 +379,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	var expectedReplicas int32 = 8
 	ci.Spec.Replicas = &expectedReplicas
 	ci.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
-		Raw: []byte(`{"loadBalancingAlgorithm":"leastconn","dynamicConfigManager":"false","maxConnections":-1,"reloadInterval":15}`),
+		Raw: []byte(`{"loadBalancingAlgorithm":"random","dynamicConfigManager":"false","maxConnections":-1,"reloadInterval":15}`),
 	}
 	ci.Spec.HttpErrorCodePages = configv1.ConfigMapNameReference{
 		Name: "my-custom-error-code-pages",
@@ -414,7 +414,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_HAPROXY_CONFIG_MANAGER", false, "")
 
-	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOAD_BALANCE_ALGORITHM", true, "leastconn")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOAD_BALANCE_ALGORITHM", true, "random")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_TCP_BALANCE_SCHEME", true, "source")
 	if len(deployment.Spec.Template.Spec.Containers[0].VolumeMounts) <= 4 || deployment.Spec.Template.Spec.Containers[0].VolumeMounts[4].Name != "error-pages" {
 		t.Errorf("hi")
@@ -467,7 +467,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_DEFAULT_TUNNEL_TIMEOUT", true, "30m")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_INSPECT_DELAY", true, "5s")
 
-	// Any value for loadBalancingAlgorithm other than "leastconn" should be
+	// Any value for loadBalancingAlgorithm other than "random" should be
 	// ignored.
 	ci.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
 		Raw: []byte(`{"loadBalancingAlgorithm":"source","dynamicConfigManager":"true","maxConnections":40000}`),
@@ -506,7 +506,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_HAPROXY_CONFIG_MANAGER", true, "true")
 
-	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOAD_BALANCE_ALGORITHM", true, "random")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOAD_BALANCE_ALGORITHM", true, "leastconn")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_TCP_BALANCE_SCHEME", true, "source")
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_MAX_CONNECTIONS", true, "40000")
