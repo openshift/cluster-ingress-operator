@@ -11,8 +11,8 @@ import (
 )
 
 const (
-	zoneTypeDNS         = "dns"
-	zoneTypePrivateZone = "pvtz"
+	zoneTypeDNS         = "public"
+	zoneTypePrivateZone = "private"
 
 	actionEnsure  = "ensure"
 	actionReplace = "replace"
