@@ -1767,7 +1767,8 @@ func TestHTTPCookieCapture(t *testing.T) {
 				t.Errorf("failed to read logs from pod %s: %v", pod.Name, err)
 				continue
 			}
-			scanner := bufio.NewScanner(readCloser)
+			data, _ := ioutil.ReadAll(readCloser)
+			scanner := bufio.NewScanner(bytes.NewBuffer(data))
 			var found bool
 			for scanner.Scan() {
 				line := scanner.Text()
@@ -1779,6 +1780,9 @@ func TestHTTPCookieCapture(t *testing.T) {
 			}
 			if err := readCloser.Close(); err != nil {
 				t.Errorf("failed to close logs reader for pod %s: %v", pod.Name, err)
+			}
+			if !found {
+				t.Logf("failed to find output:\n\n%s", string(data))
 			}
 			return found, nil
 		}
@@ -1924,7 +1928,9 @@ func TestUniqueIdHeader(t *testing.T) {
 				t.Logf("failed to read output from pod %s: %v", clientPod.Name, err)
 				return false, nil
 			}
-			scanner := bufio.NewScanner(readCloser)
+			data, _ := ioutil.ReadAll(readCloser)
+			scanner := bufio.NewScanner(bytes.NewBuffer(data))
+			var found bool
 			defer func() {
 				if err := readCloser.Close(); err != nil {
 					t.Errorf("failed to close reader for pod %s: %v", clientPod.Name, err)
@@ -1935,8 +1941,12 @@ func TestUniqueIdHeader(t *testing.T) {
 				if strings.HasPrefix(line, "x-unique-id:") {
 					t.Logf("found x-unique-id header from pod %s: %q", clientPod.Name, line)
 					uniqueHeaders[line]++
+					found = true
 					return true, nil
 				}
+			}
+			if !found {
+				t.Logf("failed to find output:\n\n%s", string(data))
 			}
 			return false, nil
 		})
