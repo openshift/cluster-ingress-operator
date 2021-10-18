@@ -223,15 +223,16 @@ func (r *reconciler) createDNSProviderIfNeeded(dnsConfig *configv1.DNS) error {
 	creds := &corev1.Secret{}
 	switch platformStatus.Type {
 	case configv1.AWSPlatformType, configv1.AzurePlatformType, configv1.GCPPlatformType, configv1.IBMCloudPlatformType:
-		if infraConfig.Status.ControlPlaneTopology != configv1.ExternalTopologyMode {
-			name := types.NamespacedName{Namespace: r.config.Namespace, Name: cloudCredentialsSecretName}
-			if err := r.cache.Get(context.TODO(), name, creds); err != nil {
-				return fmt.Errorf("failed to get cloud credentials from secret %s: %v", name, err)
-			}
+		if platformStatus.Type == configv1.IBMCloudPlatformType && infraConfig.Status.ControlPlaneTopology == configv1.ExternalTopologyMode {
+			break
+		}
+		name := types.NamespacedName{Namespace: r.config.Namespace, Name: cloudCredentialsSecretName}
+		if err := r.cache.Get(context.TODO(), name, creds); err != nil {
+			return fmt.Errorf("failed to get cloud credentials from secret %s: %v", name, err)
+		}
 
-			if r.cloudCredentials == nil || !reflect.DeepEqual(creds.Data, r.cloudCredentials.Data) {
-				needUpdate = true
-			}
+		if r.cloudCredentials == nil || !reflect.DeepEqual(creds.Data, r.cloudCredentials.Data) {
+			needUpdate = true
 		}
 	}
 
@@ -465,11 +466,6 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 		return &dns.FakeProvider{}, nil
 	}
 
-	if infraStatus.ControlPlaneTopology == configv1.ExternalTopologyMode {
-		log.Info("using fake DNS provider because cluster's ControlPlaneTopology is External")
-		return &dns.FakeProvider{}, nil
-	}
-
 	var dnsProvider dns.Provider
 	userAgent := fmt.Sprintf("OpenShift/%s (ingress-operator)", r.config.OperatorReleaseVersion)
 
@@ -568,6 +564,10 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 		}
 		dnsProvider = provider
 	case configv1.IBMCloudPlatformType:
+		if infraStatus.ControlPlaneTopology == configv1.ExternalTopologyMode {
+			log.Info("using fake DNS provider because cluster's ControlPlaneTopology is External")
+			return &dns.FakeProvider{}, nil
+		}
 		if platformStatus.IBMCloud.CISInstanceCRN == "" {
 			return nil, fmt.Errorf("missing cis instance crn")
 		}
