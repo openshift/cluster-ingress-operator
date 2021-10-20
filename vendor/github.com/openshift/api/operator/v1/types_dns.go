@@ -20,6 +20,9 @@ import (
 // https://github.com/kubernetes/dns/blob/master/docs/specification.md
 //
 // More details: https://kubernetes.io/docs/tasks/administer-cluster/coredns
+//
+// Compatibility level 1: Stable within a major release for a minimum of 12 months or 3 minor releases (whichever is longer).
+// +openshift:compatibility-gen:level=1
 type DNS struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -83,19 +86,46 @@ type Server struct {
 	ForwardPlugin ForwardPlugin `json:"forwardPlugin"`
 }
 
+// ForwardingPolicy is the policy to use when forwarding DNS requests.
+// +kubebuilder:validation:Enum=Random;RoundRobin;Sequential
+type ForwardingPolicy string
+
+const (
+	// RandomForwardingPolicy picks a random upstream server for each query.
+	RandomForwardingPolicy ForwardingPolicy = "Random"
+
+	// RoundRobinForwardingPolicy picks upstream servers in a round-robin order, moving to the next server for each new query.
+	RoundRobinForwardingPolicy ForwardingPolicy = "RoundRobin"
+
+	// SequentialForwardingPolicy tries querying upstream servers in a sequential order until one responds, starting with the first server for each new query.
+	SequentialForwardingPolicy ForwardingPolicy = "Sequential"
+)
+
 // ForwardPlugin defines a schema for configuring the CoreDNS forward plugin.
 type ForwardPlugin struct {
 	// upstreams is a list of resolvers to forward name queries for subdomains of Zones.
-	// Upstreams are randomized when more than 1 upstream is specified. Each instance of
-	// CoreDNS performs health checking of Upstreams. When a healthy upstream returns an
-	// error during the exchange, another resolver is tried from Upstreams. Each upstream
-	// is represented by an IP address or IP:port if the upstream listens on a port other
-	// than 53.
+	// Each instance of CoreDNS performs health checking of Upstreams. When a healthy upstream
+	// returns an error during the exchange, another resolver is tried from Upstreams. The
+	// Upstreams are selected in the order specified in Policy. Each upstream is represented
+	// by an IP address or IP:port if the upstream listens on a port other than 53.
 	//
 	// A maximum of 15 upstreams is allowed per ForwardPlugin.
 	//
 	// +kubebuilder:validation:MaxItems=15
 	Upstreams []string `json:"upstreams"`
+
+	// policy is used to determine the order in which upstream servers are selected for querying.
+	// Any one of the following values may be specified:
+	//
+	// * "Random" picks a random upstream server for each query.
+	// * "RoundRobin" picks upstream servers in a round-robin order, moving to the next server for each new query.
+	// * "Sequential" tries querying upstream servers in a sequential order until one responds, starting with the first server for each new query.
+	//
+	// The default value is "Random"
+	//
+	// +optional
+	// +kubebuilder:default:="Random"
+	Policy ForwardingPolicy `json:"policy,omitempty"`
 }
 
 // DNSNodePlacement describes the node scheduling configuration for DNS pods.
@@ -180,6 +210,9 @@ type DNSStatus struct {
 // +kubebuilder:object:root=true
 
 // DNSList contains a list of DNS
+//
+// Compatibility level 1: Stable within a major release for a minimum of 12 months or 3 minor releases (whichever is longer).
+// +openshift:compatibility-gen:level=1
 type DNSList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
