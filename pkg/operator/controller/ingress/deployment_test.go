@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -322,6 +323,9 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_DEFAULT_TUNNEL_TIMEOUT", false, "")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_INSPECT_DELAY", false, "")
 
+	checkDeploymentHasEnvVar(t, deployment, RouterEnableCompression, false, "")
+	checkDeploymentHasEnvVar(t, deployment, RouterCompressionMIMETypes, false, "")
+
 	ci.Spec.Logging = &operatorv1.IngressControllerLogging{
 		Access: &operatorv1.AccessLogging{
 			Destination: operatorv1.LoggingDestination{
@@ -384,6 +388,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	ci.Spec.HttpErrorCodePages = configv1.ConfigMapNameReference{
 		Name: "my-custom-error-code-pages",
 	}
+	ci.Spec.HTTPCompression.MimeTypes = []operatorv1.CompressionMIMEType{"text/html", "application/*"}
 	ci.Status.Domain = "example.com"
 	ci.Status.EndpointPublishingStrategy.Type = operatorv1.LoadBalancerServiceStrategyType
 	proxyNeeded, err = IsProxyProtocolNeeded(ci, infraConfig.Status.PlatformStatus)
@@ -466,6 +471,9 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_DEFAULT_SERVER_FIN_TIMEOUT", true, "4s")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_DEFAULT_TUNNEL_TIMEOUT", true, "30m")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_INSPECT_DELAY", true, "5s")
+
+	checkDeploymentHasEnvVar(t, deployment, RouterEnableCompression, true, "true")
+	checkDeploymentHasEnvVar(t, deployment, RouterCompressionMIMETypes, true, "text/html application/*")
 
 	// Any value for loadBalancingAlgorithm other than "random" should be
 	// ignored.
@@ -1179,6 +1187,17 @@ func TestDeploymentConfigChanged(t *testing.T) {
 			},
 			expect: true,
 		},
+		{
+			description: "if .spec.HTTPCompressionPolicy changes",
+			mutate: func(deployment *appsv1.Deployment) {
+				enableEV := corev1.EnvVar{Name: RouterEnableCompression, Value: "true"}
+				mimes := "text/html application/*"
+				mimesEV := corev1.EnvVar{Name: RouterCompressionMIMETypes, Value: mimes}
+				deployment.Spec.Template.Spec.Containers[0].Env = append(deployment.Spec.Template.Spec.Containers[0].Env, enableEV)
+				deployment.Spec.Template.Spec.Containers[0].Env = append(deployment.Spec.Template.Spec.Containers[0].Env, mimesEV)
+			},
+			expect: true,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -1390,6 +1409,32 @@ func TestDurationToHAProxyTimespec(t *testing.T) {
 		output := durationToHAProxyTimespec(tc.inputDuration)
 		if output != tc.expectedOutput {
 			t.Errorf("Expected %q, got %q", tc.expectedOutput, output)
+		}
+	}
+}
+
+func TestGetMIMETypes(t *testing.T) {
+	testCases := []struct {
+		mimeArrayInput []operatorv1.CompressionMIMEType
+		expectedOutput string
+	}{
+		{nil, ""},
+		{[]operatorv1.CompressionMIMEType{"text/html", "application/json"}, "text/html application/json"},
+		{[]operatorv1.CompressionMIMEType{"text/html", "image/svg+xml"}, "text/html image/svg+xml"},
+		{[]operatorv1.CompressionMIMEType{"text/html", "image/\x7F"}, "text/html image/\x7F"},
+		// the input quotes a string with an embedded space
+		{[]operatorv1.CompressionMIMEType{"text/html", "text/css; charset=utf-8"}, "text/html \"text/css; charset=utf-8\""},
+		// the input escapes a doublequote with \ for an usual string like text/xx"xx.  We expect " to be \" in the output
+		{[]operatorv1.CompressionMIMEType{"text/html", `text/xx"xx`}, `text/html "text/xx\"xx"`},
+		// the input escapes a literal \ with a \.  We expect this to be \ before each literal \, and \ before a ' or " in the output
+		{[]operatorv1.CompressionMIMEType{"text/html", ` '<>@,\;:"[]?.`}, `text/html " \'<>@,\\;:\"[]?."`},
+		// the input doesn't escape special characters other than a space, \, ', or "
+		{[]operatorv1.CompressionMIMEType{"text/html", "<>@,;:[]?."}, "text/html <>@,;:[]?."},
+	}
+	for _, tc := range testCases {
+		output := getMIMETypes(tc.mimeArrayInput)
+		if strings.Join(output, " ") != tc.expectedOutput {
+			t.Errorf("Expected %s, got %s", tc.expectedOutput, output)
 		}
 	}
 }

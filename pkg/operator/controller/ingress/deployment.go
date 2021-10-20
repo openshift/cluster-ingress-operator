@@ -89,6 +89,9 @@ const (
 	RouterClientAuthCA     = "ROUTER_MUTUAL_TLS_AUTH_CA"
 	RouterClientAuthCRL    = "ROUTER_MUTUAL_TLS_AUTH_CRL"
 	RouterClientAuthFilter = "ROUTER_MUTUAL_TLS_AUTH_FILTER"
+
+	RouterEnableCompression    = "ROUTER_ENABLE_COMPRESSION"
+	RouterCompressionMIMETypes = "ROUTER_COMPRESSION_MIME"
 )
 
 // ensureRouterDeployment ensures the router deployment exists for a given
@@ -998,6 +1001,16 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 
 	deployment.Spec.Template.Spec.Volumes = volumes
 	deployment.Spec.Template.Spec.Containers[0].VolumeMounts = routerVolumeMounts
+
+	// If MIMETypes were supplied, expose the RouterEnableCompression and RouterCompressionMIMETypes
+	// environment variables.
+	if len(ci.Spec.HTTPCompression.MimeTypes) != 0 {
+		env = append(env, corev1.EnvVar{Name: RouterEnableCompression, Value: "true"})
+		mimes := getMIMETypes(ci.Spec.HTTPCompression.MimeTypes)
+		env = append(env, corev1.EnvVar{Name: RouterCompressionMIMETypes, Value: strings.Join(mimes, " ")})
+	}
+
+	// Add the environment variables to the container
 	deployment.Spec.Template.Spec.Containers[0].Env = append(deployment.Spec.Template.Spec.Containers[0].Env, env...)
 
 	// Compute the hash for topology spread constraints and possibly
@@ -1526,4 +1539,26 @@ func durationToHAProxyTimespec(duration time.Duration) string {
 	} else {
 		return fmt.Sprintf("%dh", int(math.Round(duration.Hours())))
 	}
+}
+
+// getMIMETypes returns a slice of strings from an array of operatorv1.CompressionMIMETypes.
+// MIME strings that contain spaces must be quoted, as HAProxy requires a space-delimited MIME
+// type list. Also quote/escape any characters that are special to HAProxy (\,', and ").
+// See http://cbonte.github.io/haproxy-dconv/2.2/configuration.html#2.2
+func getMIMETypes(mimeTypes []operatorv1.CompressionMIMEType) []string {
+	var mimes []string
+
+	for _, m := range mimeTypes {
+		mimeType := string(m)
+		if strings.ContainsAny(mimeType, ` \"`) {
+			mimeType = strconv.Quote(mimeType)
+		}
+		// A single quote doesn't get escaped by strconv.Quote, so do it explicitly
+		if strings.Contains(mimeType, "'") {
+			mimeType = strings.ReplaceAll(mimeType, "'", "\\'")
+		}
+		mimes = append(mimes, mimeType)
+	}
+
+	return mimes
 }
