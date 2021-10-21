@@ -19,6 +19,8 @@ spec:
         labels:
           severity: warning
         annotations:
+          summary: HAProxy reload failure
+          description: "This alert fires when HAProxy fails to reload its configuration, which will result in the router not picking up recently created or modified routes."
           message: "HAProxy reloads are failing on {{ $labels.pod }}. Router is not respecting recently created or modified routes"
       - alert: HAProxyDown
         expr: haproxy_up == 0
@@ -26,6 +28,8 @@ spec:
         labels:
           severity: critical
         annotations:
+          summary: HAProxy is down
+          description: "This alert fires when metrics report that HAProxy is down."
           message: "HAProxy metrics are reporting that HAProxy is down on pod {{ $labels.namespace }} / {{ $labels.pod }}"
       - alert: IngressControllerDegraded
         expr: ingress_controller_conditions{condition="Degraded"} == 1
@@ -33,6 +37,8 @@ spec:
         labels:
           severity: warning
         annotations:
+          summary: IngressController is degraded
+          description: "This alert fires when the IngressController status is degraded."
           message: |
             The {{ $labels.namespace }}/{{ $labels.name }} ingresscontroller is
             degraded: {{ $labels.reason }}.
@@ -42,6 +48,8 @@ spec:
         labels:
           severity: warning
         annotations:
+          summary: IngressController is unavailable
+          description: "This alert fires when the IngressController is not available."
           message: |
             The {{ $labels.namespace }}/{{ $labels.name }} ingresscontroller is
             unavailable: {{ $labels.reason }}.
