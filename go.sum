@@ -592,8 +592,8 @@ github.com/opencontainers/go-digest v1.0.0-rc1/go.mod h1:cMLVZDEM3+U2I4VmLI6N8jQ
 github.com/opencontainers/image-spec v1.0.1/go.mod h1:BtxoFyWECRxE4U/7sNtV5W15zMzWCbyJoFRP3s7yZA0=
 github.com/openshift/api v0.0.0-20210331162552-3e31249e6a55/go.mod h1:dZ4kytOo3svxJHNYd0J55hwe/6IQG5gAUHUE0F3Jkio=
 github.com/openshift/api v0.0.0-20210331193751-3acddb19d360/go.mod h1:dZ4kytOo3svxJHNYd0J55hwe/6IQG5gAUHUE0F3Jkio=
-github.com/openshift/api v0.0.0-20211020145312-0c8d10a59d18 h1:u/z+jkhPYWqDNwQLEB2zlvBsRSCT1Ejdk2SVqF5Vp3c=
-github.com/openshift/api v0.0.0-20211020145312-0c8d10a59d18/go.mod h1:RsQCVJu4qhUawxxDP7pGlwU3IA4F01wYm3qKEu29Su8=
+github.com/openshift/api v0.0.0-20211021122928-16dd969d5550 h1:nYnMUZpzXNPVermbiQE/dxOxz2BEOg+5bVjZR3CREfM=
+github.com/openshift/api v0.0.0-20211021122928-16dd969d5550/go.mod h1:RsQCVJu4qhUawxxDP7pGlwU3IA4F01wYm3qKEu29Su8=
 github.com/openshift/build-machinery-go v0.0.0-20210209125900-0da259a2c359/go.mod h1:b1BuldmJlbA/xYtdZvKi+7j5YGB44qJUJDZ9zwiNCfE=
 github.com/openshift/build-machinery-go v0.0.0-20210712174854-1bb7fd1518d3 h1:hYMLjavR8LrcCva788SxDqYjRc1k2w0LNGi7eX9vY5Y=
 github.com/openshift/build-machinery-go v0.0.0-20210712174854-1bb7fd1518d3/go.mod h1:b1BuldmJlbA/xYtdZvKi+7j5YGB44qJUJDZ9zwiNCfE=
