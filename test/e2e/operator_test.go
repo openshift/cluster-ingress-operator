@@ -1938,9 +1938,11 @@ func TestUniqueIdHeader(t *testing.T) {
 }
 
 // TestLoadBalancingAlgorithmUnsupportedConfigOverride verifies that the
-// operator configures router pod replicas to use the "leastconn" load-balancing
-// algorithm if the ingresscontroller is so configured using an unsupported
-// config override.
+// operator configures router pod replicas to use the "random" load-balancing
+// algorithm for non-passthrough routes if the ingresscontroller is so
+// configured using an unsupported config override.  The test also verifies that
+// the operator always configures router pod replicas to use the "source"
+// algorithm for passthrough routes irrespective of the override.
 func TestLoadBalancingAlgorithmUnsupportedConfigOverride(t *testing.T) {
 	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "leastconn"}
 	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
@@ -1961,20 +1963,26 @@ func TestLoadBalancingAlgorithmUnsupportedConfigOverride(t *testing.T) {
 	if err := kclient.Get(context.TODO(), controller.RouterDeploymentName(ic), deployment); err != nil {
 		t.Fatalf("failed to get ingresscontroller deployment: %v", err)
 	}
-	expectedAlgorithm := "random"
+	expectedAlgorithm := "leastconn"
 	if err := waitForDeploymentEnvVar(t, kclient, deployment, 30*time.Second, "ROUTER_LOAD_BALANCE_ALGORITHM", expectedAlgorithm); err != nil {
-		t.Fatalf("expected initial deployment to use the %q algorithm: %v", expectedAlgorithm, err)
+		t.Fatalf("expected initial deployment to have ROUTER_LOAD_BALANCE_ALGORITHM=%s: %v", expectedAlgorithm, err)
+	}
+	if err := waitForDeploymentEnvVar(t, kclient, deployment, 30*time.Second, "ROUTER_TCP_BALANCE_SCHEME", "source"); err != nil {
+		t.Fatalf("expected initial deployment to have ROUTER_TCP_BALANCE_SCHEME=source: %v", err)
 	}
 
 	ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
-		Raw: []byte(`{"loadBalancingAlgorithm":"leastconn"}`),
+		Raw: []byte(`{"loadBalancingAlgorithm":"random"}`),
 	}
 	if err := kclient.Update(context.TODO(), ic); err != nil {
 		t.Fatalf("failed to update ingresscontroller: %v", err)
 	}
-	expectedAlgorithm = "leastconn"
+	expectedAlgorithm = "random"
 	if err := waitForDeploymentEnvVar(t, kclient, deployment, 1*time.Minute, "ROUTER_LOAD_BALANCE_ALGORITHM", expectedAlgorithm); err != nil {
-		t.Fatalf("expected updated deployment to use the %q algorithm: %v", expectedAlgorithm, err)
+		t.Fatalf("expected updated deployment to have ROUTER_LOAD_BALANCE_ALGORITHM=%s: %v", expectedAlgorithm, err)
+	}
+	if err := waitForDeploymentEnvVar(t, kclient, deployment, 30*time.Second, "ROUTER_TCP_BALANCE_SCHEME", "source"); err != nil {
+		t.Fatalf("expected updated deployment to have ROUTER_TCP_BALANCE_SCHEME=source: %v", err)
 	}
 }
 
