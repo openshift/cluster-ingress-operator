@@ -171,6 +171,24 @@ func TestDesiredLoadBalancerService(t *testing.T) {
 			expect: true,
 		},
 		{
+			description:  "external load balancer for Power VS platform",
+			platform:     configv1.PowerVSPlatformType,
+			strategyType: operatorv1.LoadBalancerServiceStrategyType,
+			lbStrategy: operatorv1.LoadBalancerStrategy{
+				Scope: operatorv1.ExternalLoadBalancer,
+			},
+			expect: true,
+		},
+		{
+			description:  "internal load balancer for Power VS platform",
+			platform:     configv1.PowerVSPlatformType,
+			strategyType: operatorv1.LoadBalancerServiceStrategyType,
+			lbStrategy: operatorv1.LoadBalancerStrategy{
+				Scope: operatorv1.InternalLoadBalancer,
+			},
+			expect: true,
+		},
+		{
 			description:  "external load balancer for azure platform",
 			platform:     configv1.AzurePlatformType,
 			strategyType: operatorv1.LoadBalancerServiceStrategyType,
@@ -363,7 +381,7 @@ func TestDesiredLoadBalancerService(t *testing.T) {
 					}
 				}
 			}
-		case configv1.IBMCloudPlatformType:
+		case configv1.IBMCloudPlatformType, configv1.PowerVSPlatformType:
 			if isInternal {
 				if err := checkServiceHasAnnotation(svc, iksLBScopeAnnotation, true, iksLBScopePrivate); err != nil {
 					t.Errorf("annotation check for test %q failed: %v", tc.description, err)
