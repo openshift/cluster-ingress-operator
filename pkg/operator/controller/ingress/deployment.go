@@ -48,10 +48,11 @@ const (
 
 	RouterHTTPHeaderNameCaseAdjustments = "ROUTER_H1_CASE_ADJUST"
 
-	RouterLogLevelEnvName       = "ROUTER_LOG_LEVEL"
-	RouterSyslogAddressEnvName  = "ROUTER_SYSLOG_ADDRESS"
-	RouterSyslogFormatEnvName   = "ROUTER_SYSLOG_FORMAT"
-	RouterSyslogFacilityEnvName = "ROUTER_LOG_FACILITY"
+	RouterLogLevelEnvName        = "ROUTER_LOG_LEVEL"
+	RouterSyslogAddressEnvName   = "ROUTER_SYSLOG_ADDRESS"
+	RouterSyslogFormatEnvName    = "ROUTER_SYSLOG_FORMAT"
+	RouterSyslogFacilityEnvName  = "ROUTER_LOG_FACILITY"
+	RouterSyslogMaxLengthEnvName = "ROUTER_LOG_MAX_LENGTH"
 
 	RouterCaptureHTTPRequestHeaders  = "ROUTER_CAPTURE_HTTP_REQUEST_HEADERS"
 	RouterCaptureHTTPResponseHeaders = "ROUTER_CAPTURE_HTTP_RESPONSE_HEADERS"
@@ -689,6 +690,12 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 			if len(accessLogging.Destination.Syslog.Facility) > 0 {
 				env = append(env, corev1.EnvVar{Name: RouterSyslogFacilityEnvName, Value: accessLogging.Destination.Syslog.Facility})
 			}
+			if accessLogging.Destination.Syslog.MaxLength > 0 {
+				env = append(env, corev1.EnvVar{
+					Name:  RouterSyslogMaxLengthEnvName,
+					Value: fmt.Sprintf("%d", accessLogging.Destination.Syslog.MaxLength),
+				})
+			}
 			address := accessLogging.Destination.Syslog.Address
 			port := accessLogging.Destination.Syslog.Port
 			endpoint := net.JoinHostPort(address, fmt.Sprintf("%d", port))
@@ -1054,9 +1061,10 @@ func accessLoggingForIngressController(ic *operatorv1.IngressController) *operat
 				Destination: operatorv1.LoggingDestination{
 					Type: operatorv1.SyslogLoggingDestinationType,
 					Syslog: &operatorv1.SyslogLoggingDestinationParameters{
-						Address:  ic.Spec.Logging.Access.Destination.Syslog.Address,
-						Port:     ic.Spec.Logging.Access.Destination.Syslog.Port,
-						Facility: ic.Spec.Logging.Access.Destination.Syslog.Facility,
+						Address:   ic.Spec.Logging.Access.Destination.Syslog.Address,
+						Port:      ic.Spec.Logging.Access.Destination.Syslog.Port,
+						Facility:  ic.Spec.Logging.Access.Destination.Syslog.Facility,
+						MaxLength: ic.Spec.Logging.Access.Destination.Syslog.MaxLength,
 					},
 				},
 				HttpLogFormat:      ic.Spec.Logging.Access.HttpLogFormat,

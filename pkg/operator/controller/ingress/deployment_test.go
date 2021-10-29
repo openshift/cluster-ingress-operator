@@ -289,6 +289,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 
 	checkDeploymentHasContainer(t, deployment, operatorv1.ContainerLoggingSidecarContainerName, false)
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOG_FACILITY", false, "")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOG_MAX_LENGTH", false, "")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOG_LEVEL", false, "")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SYSLOG_ADDRESS", false, "")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SYSLOG_FORMAT", false, "")
@@ -443,6 +444,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 
 	checkDeploymentHasContainer(t, deployment, operatorv1.ContainerLoggingSidecarContainerName, true)
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOG_FACILITY", false, "")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOG_MAX_LENGTH", false, "")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOG_LEVEL", true, "info")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SYSLOG_ADDRESS", true, "/var/lib/rsyslog/rsyslog.sock")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SYSLOG_FORMAT", true, `"%ci:%cp [%t] %ft %b/%s %B %bq %HM %HU %HV"`)
@@ -535,9 +537,10 @@ func TestDesiredRouterDeployment(t *testing.T) {
 			Destination: operatorv1.LoggingDestination{
 				Type: operatorv1.SyslogLoggingDestinationType,
 				Syslog: &operatorv1.SyslogLoggingDestinationParameters{
-					Address:  "1.2.3.4",
-					Port:     uint32(12345),
-					Facility: "local2",
+					Address:   "1.2.3.4",
+					Port:      uint32(12345),
+					Facility:  "local2",
+					MaxLength: uint32(4096),
 				},
 			},
 			HTTPCaptureHeaders: operatorv1.IngressControllerCaptureHTTPHeaders{
@@ -659,6 +662,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 
 	checkDeploymentHasContainer(t, deployment, operatorv1.ContainerLoggingSidecarContainerName, false)
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOG_FACILITY", true, "local2")
+	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOG_MAX_LENGTH", true, "4096")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_LOG_LEVEL", true, "info")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SYSLOG_ADDRESS", true, "1.2.3.4:12345")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_SYSLOG_FORMAT", false, "")

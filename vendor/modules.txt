@@ -187,7 +187,7 @@ github.com/modern-go/concurrent
 github.com/modern-go/reflect2
 # github.com/oklog/ulid v1.3.1
 github.com/oklog/ulid
-# github.com/openshift/api v0.0.0-20211020145312-0c8d10a59d18
+# github.com/openshift/api v0.0.0-20211021122928-16dd969d5550
 ## explicit
 github.com/openshift/api
 github.com/openshift/api/apiserver
