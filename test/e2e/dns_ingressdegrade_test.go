@@ -78,22 +78,27 @@ func TestIngressStatus(t *testing.T) {
 	}
 }
 
-// updateDNSConfig - utility to set/unset PrivateZone Tags/ID
+// updateDNSConfig sets an invalid Tag or ID for the cluster DNS config's
+// PrivateZone if the set argument is true and reverts the DNS config back to
+// its original setting if the set argument is false.
 func updateDNSConfig(set bool, dnsConfig *configv1.DNS) {
+	// Tested on Azure, AWS, and GCP.  Azure privateZone uses "/" notation,
+	// so prepending "error-" without "/" does not cause a failure on Azure.
+	const injectError = "/error"
 	if dnsConfig.Spec.PrivateZone.ID != "" {
 		if set {
-			dnsConfig.Spec.PrivateZone.ID = "error-" + dnsConfig.Spec.PrivateZone.ID
+			dnsConfig.Spec.PrivateZone.ID = injectError + dnsConfig.Spec.PrivateZone.ID
 		} else {
-			// remove 'error-' from prefix
-			dnsConfig.Spec.PrivateZone.ID = dnsConfig.Spec.PrivateZone.ID[6:]
+			// Remove injectError from prefix.
+			dnsConfig.Spec.PrivateZone.ID = dnsConfig.Spec.PrivateZone.ID[len(injectError):]
 		}
 	}
 	if dnsConfig.Spec.PrivateZone.Tags["Name"] != "" {
 		if set {
-			dnsConfig.Spec.PrivateZone.Tags["Name"] = "error-" + dnsConfig.Spec.PrivateZone.Tags["Name"]
+			dnsConfig.Spec.PrivateZone.Tags["Name"] = injectError + dnsConfig.Spec.PrivateZone.Tags["Name"]
 		} else {
-			// remove 'error-' from prefix
-			dnsConfig.Spec.PrivateZone.Tags["Name"] = dnsConfig.Spec.PrivateZone.Tags["Name"][6:]
+			// Remove injectError from prefix.
+			dnsConfig.Spec.PrivateZone.Tags["Name"] = dnsConfig.Spec.PrivateZone.Tags["Name"][len(injectError):]
 		}
 	}
 }
