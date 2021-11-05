@@ -26,9 +26,15 @@ var (
 		Help: "Report the conditions for ingress controllers. 0 is False and 1 is True.",
 	}, []string{"name", "condition"})
 
+	activeNLBs = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "ingress_controller_aws_nlb_active",
+		Help: "Report the number of active NLBs on AWS clusters.",
+	}, []string{"name"})
+
 	// metricsList is a list of metrics for this package.
 	metricsList = []prometheus.Collector{
 		ingressControllerConditions,
+		activeNLBs,
 	}
 )
 
@@ -66,6 +72,23 @@ func DeleteIngressControllerConditionsMetric(ic *operatorv1.IngressController) {
 		deleted := ingressControllerConditions.DeleteLabelValues(ic.Name, string(c.Type))
 		log.V(4).Info("deleted metric for IngressController that is being deleted", "ingresscontroller", ic.Name, "condition_type", c.Type, "deleted", deleted)
 	}
+}
+
+func DeleteActiveNLBMetrics(ic *operatorv1.IngressController) {
+	activeNLBs.DeleteLabelValues(ic.Name)
+}
+
+func SetIngressControllerNLBMetric(ci *operatorv1.IngressController) {
+	labelVal := 0
+	if ci.Status.EndpointPublishingStrategy != nil &&
+		ci.Status.EndpointPublishingStrategy.LoadBalancer != nil &&
+		ci.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters != nil &&
+		ci.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.Type == operatorv1.AWSLoadBalancerProvider &&
+		ci.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS != nil &&
+		ci.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.Type == operatorv1.AWSNetworkLoadBalancer {
+		labelVal = 1
+	}
+	activeNLBs.WithLabelValues(ci.Name).Set(float64(labelVal))
 }
 
 // RegisterMetrics calls prometheus.Register on each metric in metricsList, and

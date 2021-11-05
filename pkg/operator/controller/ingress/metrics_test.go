@@ -140,6 +140,76 @@ func TestDeleteIngressControllerConditionsMetric(t *testing.T) {
 	}
 }
 
+func TestIngressControllerNLBMetric(t *testing.T) {
+	testCases := []struct {
+		name                 string
+		inputIngress         *operatorv1.IngressController
+		expectedMetricFormat string
+	}{
+		{
+			name: "nlb metrics happy path",
+			inputIngress: testIngressControllerWithEndpointPublishingStrategy("test1",
+				&operatorv1.EndpointPublishingStrategy{LoadBalancer: &operatorv1.LoadBalancerStrategy{
+					ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+						Type: operatorv1.AWSLoadBalancerProvider,
+						AWS: &operatorv1.AWSLoadBalancerParameters{
+							Type: operatorv1.AWSNetworkLoadBalancer,
+						}},
+				}}),
+			expectedMetricFormat: `
+			# HELP ingress_controller_aws_nlb_active Report the number of active NLBs on AWS clusters.
+			# TYPE ingress_controller_aws_nlb_active gauge
+			ingress_controller_aws_nlb_active{name="test1"} 1
+			`,
+		},
+		{
+			name: "classic ELB metrics happy path",
+			inputIngress: testIngressControllerWithEndpointPublishingStrategy("test1",
+				&operatorv1.EndpointPublishingStrategy{LoadBalancer: &operatorv1.LoadBalancerStrategy{
+					ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+						Type: operatorv1.AWSLoadBalancerProvider,
+						AWS: &operatorv1.AWSLoadBalancerParameters{
+							Type: operatorv1.AWSClassicLoadBalancer,
+						}},
+				}}),
+			expectedMetricFormat: `
+			# HELP ingress_controller_aws_nlb_active Report the number of active NLBs on AWS clusters.
+			# TYPE ingress_controller_aws_nlb_active gauge
+			ingress_controller_aws_nlb_active{name="test1"} 0
+			`,
+		},
+		{
+			name:         "no endpoint publishing strategy",
+			inputIngress: testIngressControllerWithEndpointPublishingStrategy("test1", nil),
+			expectedMetricFormat: `
+			# HELP ingress_controller_aws_nlb_active Report the number of active NLBs on AWS clusters.
+			# TYPE ingress_controller_aws_nlb_active gauge
+			ingress_controller_aws_nlb_active{name="test1"} 0
+			`,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// cleanup the ingress condition metrics
+			activeNLBs.Reset()
+
+			SetIngressControllerNLBMetric(tc.inputIngress)
+
+			err := testutil.CollectAndCompare(activeNLBs, strings.NewReader(tc.expectedMetricFormat))
+			if err != nil {
+				t.Error(err)
+			}
+
+			DeleteActiveNLBMetrics(tc.inputIngress)
+			err = testutil.CollectAndCompare(activeNLBs, strings.NewReader(""))
+			if err != nil {
+				t.Error(err)
+			}
+		})
+	}
+}
+
 func testIngressControllerWithConditions(name string, conditions []operatorv1.OperatorCondition) *operatorv1.IngressController {
 	return &operatorv1.IngressController{
 		ObjectMeta: metav1.ObjectMeta{
@@ -147,6 +217,17 @@ func testIngressControllerWithConditions(name string, conditions []operatorv1.Op
 		},
 		Status: operatorv1.IngressControllerStatus{
 			Conditions: conditions,
+		},
+	}
+}
+
+func testIngressControllerWithEndpointPublishingStrategy(name string, eps *operatorv1.EndpointPublishingStrategy) *operatorv1.IngressController {
+	return &operatorv1.IngressController{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name,
+		},
+		Status: operatorv1.IngressControllerStatus{
+			EndpointPublishingStrategy: eps,
 		},
 	}
 }
