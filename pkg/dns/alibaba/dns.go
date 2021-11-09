@@ -3,11 +3,14 @@ package alibaba
 import (
 	"fmt"
 	"github.com/aliyun/alibaba-cloud-sdk-go/sdk"
+	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/endpoints"
 	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/requests"
 	"github.com/aliyun/alibaba-cloud-sdk-go/services/pvtz"
 	configv1 "github.com/openshift/api/config/v1"
 	iov1 "github.com/openshift/api/operatoringress/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
+	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
+	"strings"
 )
 
 const (
@@ -17,6 +20,10 @@ const (
 	actionEnsure  = "ensure"
 	actionReplace = "replace"
 	actionDelete  = "delete"
+)
+
+var (
+	log = logf.Logger.WithName("dns")
 )
 
 type Config struct {
@@ -34,6 +41,8 @@ type ZoneInfo struct {
 	// ID is the value used in OpenAPI to leverage dns records.
 	// In DNS(public zone), it should be domain name. And in private zone, it should be ZoneID
 	ID string
+	// DomainName is domain of the zone
+	Domain string
 }
 
 type provider struct {
@@ -57,7 +66,19 @@ func NewProvider(config Config) (dns.Provider, error) {
 		request.SearchMode = "EXACT"
 		request.PageSize = requests.NewInteger(100)
 		response := pvtz.CreateDescribeZonesResponse()
-		err := client.DoAction(request, response)
+
+		// resolve endpoint
+		endpoint, err := endpoints.Resolve(&endpoints.ResolveParam{
+			Product:  strings.ToLower(request.GetProduct()),
+			RegionId: strings.ToLower(config.Region),
+		})
+
+		if err != nil {
+			endpoint = defaultEndpoints[strings.ToLower(request.GetProduct())]
+		}
+		request.SetDomain(endpoint)
+
+		err = client.DoAction(request, response)
 		if err != nil {
 			return nil, fmt.Errorf("failed on describe private zones: %w", err)
 		}
@@ -73,22 +94,22 @@ func NewProvider(config Config) (dns.Provider, error) {
 			return nil, fmt.Errorf("zone id for name '%s' not found", zoneName)
 		}
 	}
+
 	return &provider{
 		config: config,
 		services: map[string]Service{
-			zoneTypeDNS:         NewDNSService(client),
-			zoneTypePrivateZone: NewPvtzService(client),
+			zoneTypeDNS:         NewDNSService(client, config.Region),
+			zoneTypePrivateZone: NewPvtzService(client, config.Region),
 		},
 		pvtzIDs: pvtzIDs,
 	}, nil
-
 }
 
 // parseZone parses the zone id to ZoneInfo
 func (p *provider) parseZone(zone configv1.DNSZone) (ZoneInfo, error) {
 	zoneType, ok := zone.Tags["type"]
 	if !ok {
-		return ZoneInfo{}, fmt.Errorf("can not find 'tag' type in DNSZone")
+		return ZoneInfo{}, fmt.Errorf("can not find tag 'type' in DNSZone")
 	}
 
 	zoneID := zone.ID
@@ -103,9 +124,18 @@ func (p *provider) parseZone(zone configv1.DNSZone) (ZoneInfo, error) {
 	}
 
 	return ZoneInfo{
-		Type: zoneType,
-		ID:   zoneID,
+		Type:   zoneType,
+		ID:     zoneID,
+		Domain: zone.ID,
 	}, nil
+}
+
+// getRR should get record name from a full qualified domain name
+// if dnsName is not a subdomain of domainName,
+// it will return the dnsName instead (without the trailing dot)
+func getRR(dnsName, domainName string) string {
+	dnsName = strings.TrimSuffix(dnsName, ".")
+	return strings.TrimSuffix(dnsName, "."+domainName)
 }
 
 func (p *provider) Ensure(record *iov1.DNSRecord, zone configv1.DNSZone) error {
@@ -131,13 +161,15 @@ func (p *provider) doRequest(zone configv1.DNSZone, record *iov1.DNSRecord, acti
 		return fmt.Errorf("unknown zone type %s", zoneInfo.Type)
 	}
 
+	rr := getRR(record.Spec.DNSName, zoneInfo.Domain)
+
 	switch action {
 	case actionEnsure:
-		err = service.Add(zoneInfo.ID, record.Spec.DNSName, string(record.Spec.RecordType), record.Spec.Targets[0], record.Spec.RecordTTL)
+		err = service.Add(zoneInfo.ID, rr, string(record.Spec.RecordType), record.Spec.Targets[0], record.Spec.RecordTTL)
 	case actionReplace:
-		err = service.Update(zoneInfo.ID, record.Spec.DNSName, string(record.Spec.RecordType), record.Spec.Targets[0], record.Spec.RecordTTL)
+		err = service.Update(zoneInfo.ID, rr, string(record.Spec.RecordType), record.Spec.Targets[0], record.Spec.RecordTTL)
 	case actionDelete:
-		err = service.Delete(zoneInfo.ID, record.Spec.DNSName, record.Spec.Targets[0])
+		err = service.Delete(zoneInfo.ID, rr, record.Spec.Targets[0])
 	}
 
 	return
