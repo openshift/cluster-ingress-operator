@@ -48,6 +48,7 @@ const (
 	IngressControllerAdmittedConditionType                       = "Admitted"
 	IngressControllerPodsScheduledConditionType                  = "PodsScheduled"
 	IngressControllerDeploymentAvailableConditionType            = "DeploymentAvailable"
+	IngressControllerDeploymentProgressingConditionType          = "DeploymentProgressing"
 	IngressControllerDeploymentReplicasMinAvailableConditionType = "DeploymentReplicasMinAvailable"
 	IngressControllerDeploymentReplicasAllAvailableConditionType = "DeploymentReplicasAllAvailable"
 	IngressControllerCanaryCheckSuccessConditionType             = "CanaryChecksSucceeding"

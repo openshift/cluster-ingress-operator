@@ -58,6 +58,7 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	updated.Status.TLSProfile = computeIngressTLSProfile(ic.Status.TLSProfile, deployment)
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentPodsScheduledCondition(deployment, pods))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentAvailableCondition(deployment))
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentProgressingCondition(deployment))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentReplicasMinAvailableCondition(deployment))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentReplicasAllAvailableCondition(deployment))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeLoadBalancerStatus(ic, service, operandEvents)...)
@@ -243,6 +244,42 @@ func computeIngressAvailableCondition(conditions []operatorv1.OperatorCondition)
 	return operatorv1.OperatorCondition{
 		Type:   operatorv1.IngressControllerAvailableConditionType,
 		Status: operatorv1.ConditionTrue,
+	}
+}
+
+// computeDeploymentProgressingCondition computes the current Progressing status
+// of the related Deployment
+func computeDeploymentProgressingCondition(deployment *appsv1.Deployment) operatorv1.OperatorCondition {
+	isProgressing := false
+
+	if *(deployment.Spec.Replicas) != deployment.Status.Replicas {
+		isProgressing = true
+	}
+
+	if *(deployment.Spec.Replicas) != deployment.Status.AvailableReplicas {
+		isProgressing = true
+	}
+
+	if *(deployment.Spec.Replicas) != deployment.Status.UpdatedReplicas {
+		isProgressing = true
+	}
+
+	if deployment.Generation != deployment.Status.ObservedGeneration {
+		isProgressing = true
+	}
+
+	if isProgressing {
+		return operatorv1.OperatorCondition{
+			Type:    IngressControllerDeploymentProgressingConditionType,
+			Status:  operatorv1.ConditionTrue,
+			Reason:  "IngressControllerDeploymentProgressing",
+			Message: "The Deployment associated with this IngressController has one or more Progressing conditions.",
+		}
+	}
+
+	return operatorv1.OperatorCondition{
+		Type:   IngressControllerDeploymentProgressingConditionType,
+		Status: operatorv1.ConditionFalse,
 	}
 }
 

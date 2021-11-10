@@ -537,6 +537,88 @@ func TestComputeDeploymentAvailableCondition(t *testing.T) {
 	}
 }
 
+func TestComputeDeploymentProgressingCondition(t *testing.T) {
+	deployment := func(generation int64, specReplicas int32, status appsv1.DeploymentStatus) *appsv1.Deployment {
+		return &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Generation: generation,
+			},
+			Spec: appsv1.DeploymentSpec{
+				Replicas: &specReplicas,
+			},
+			Status: status,
+		}
+	}
+
+	testCases := []struct {
+		description string
+		generation  int64
+		replicas    int32
+		status      appsv1.DeploymentStatus
+		expect      operatorv1.OperatorCondition
+	}{
+		{
+			description: "deployment has progressed",
+			generation:  1,
+			replicas:    1,
+			status: appsv1.DeploymentStatus{
+				ObservedGeneration:  1,
+				Replicas:            1,
+				UpdatedReplicas:     1,
+				ReadyReplicas:       1,
+				AvailableReplicas:   1,
+				UnavailableReplicas: 0,
+			},
+			expect: operatorv1.OperatorCondition{Type: IngressControllerDeploymentProgressingConditionType, Status: operatorv1.ConditionFalse},
+		},
+		{
+			description: "deployment generation does not match",
+			generation:  2,
+			status: appsv1.DeploymentStatus{
+				ObservedGeneration: 1,
+			},
+			expect: operatorv1.OperatorCondition{Type: IngressControllerDeploymentProgressingConditionType, Status: operatorv1.ConditionTrue},
+		},
+		{
+			description: "deployment replica count does not match available replica count",
+			replicas:    2,
+			status: appsv1.DeploymentStatus{
+				AvailableReplicas: 1,
+			},
+			expect: operatorv1.OperatorCondition{Type: IngressControllerDeploymentProgressingConditionType, Status: operatorv1.ConditionTrue},
+		},
+		{
+			description: "deployment replica count does not match updated replica count",
+			replicas:    2,
+			status: appsv1.DeploymentStatus{
+				UpdatedReplicas: 1,
+			},
+			expect: operatorv1.OperatorCondition{Type: IngressControllerDeploymentProgressingConditionType, Status: operatorv1.ConditionTrue},
+		},
+		{
+			description: "deployment replica count does not match replica count",
+			replicas:    2,
+			status: appsv1.DeploymentStatus{
+				Replicas: 1,
+			},
+			expect: operatorv1.OperatorCondition{Type: IngressControllerDeploymentProgressingConditionType, Status: operatorv1.ConditionTrue},
+		},
+	}
+
+	for _, tc := range testCases {
+		deployment := deployment(tc.generation, tc.replicas, tc.status)
+		actual := computeDeploymentProgressingCondition(deployment)
+		conditionsCmpOpts := []cmp.Option{
+			cmpopts.IgnoreFields(operatorv1.OperatorCondition{}, "LastTransitionTime", "Reason", "Message"),
+			cmpopts.EquateEmpty(),
+		}
+		if !cmp.Equal(actual, tc.expect, conditionsCmpOpts...) {
+			t.Fatalf("%q: expected %#v, got %#v", tc.description, tc.expect, actual)
+		}
+	}
+
+}
+
 func TestComputeDeploymentReplicasMinAvailableCondition(t *testing.T) {
 	pointerToInt32 := func(i int32) *int32 { return &i }
 	pointerToIntVal := func(val intstr.IntOrString) *intstr.IntOrString { return &val }
