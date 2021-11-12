@@ -19,6 +19,7 @@ func TestComputeOperatorProgressingCondition(t *testing.T) {
 		description           string
 		noNamespace           bool
 		allIngressesAvailable bool
+		ingressesProgressing  bool
 		reportedVersions      versions
 		oldVersions           versions
 		curVersions           versions
@@ -27,6 +28,18 @@ func TestComputeOperatorProgressingCondition(t *testing.T) {
 		{
 			description:           "all ingress controllers are available",
 			allIngressesAvailable: true,
+			expectProgressing:     configv1.ConditionFalse,
+		},
+		{
+			description:           "ingress controllers are progressing",
+			allIngressesAvailable: true,
+			ingressesProgressing:  true,
+			expectProgressing:     configv1.ConditionTrue,
+		},
+		{
+			description:           "ingress controllers are not progressing",
+			allIngressesAvailable: true,
+			ingressesProgressing:  false,
 			expectProgressing:     configv1.ConditionFalse,
 		},
 		{
@@ -134,7 +147,7 @@ func TestComputeOperatorProgressingCondition(t *testing.T) {
 			Status: tc.expectProgressing,
 		}
 
-		actual := computeOperatorProgressingCondition(tc.allIngressesAvailable, oldVersions, reportedVersions, tc.curVersions.operator, tc.curVersions.operand1, tc.curVersions.operand2)
+		actual := computeOperatorProgressingCondition(tc.allIngressesAvailable, oldVersions, reportedVersions, tc.curVersions.operator, tc.curVersions.operand1, tc.curVersions.operand2, tc.ingressesProgressing)
 		conditionsCmpOpts := []cmp.Option{
 			cmpopts.IgnoreFields(configv1.ClusterOperatorStatusCondition{}, "LastTransitionTime", "Reason", "Message"),
 		}

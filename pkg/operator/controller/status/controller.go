@@ -15,6 +15,7 @@ import (
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 
 	corev1 "k8s.io/api/core/v1"
 
@@ -146,6 +147,8 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 
 	allIngressesAvailable := checkAllIngressesAvailable(state.IngressControllers)
 
+	ingressesProgressing := checkIngressesProgressing(state.IngressControllers)
+
 	co.Status.Versions = r.computeOperatorStatusVersions(oldStatus.Versions, allIngressesAvailable)
 
 	co.Status.Conditions = mergeConditions(co.Status.Conditions,
@@ -157,6 +160,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 			r.config.OperatorReleaseVersion,
 			r.config.IngressControllerImage,
 			r.config.CanaryImage,
+			ingressesProgressing,
 		),
 		computeOperatorDegradedCondition(state.IngressControllers),
 	)
@@ -284,6 +288,18 @@ func checkAllIngressesAvailable(ingresses []operatorv1.IngressController) bool {
 	return len(ingresses) != 0
 }
 
+// checkIngressesProgressing checks if any of the ingress controllers have a progressing condition
+func checkIngressesProgressing(ingresses []operatorv1.IngressController) bool {
+	for _, ing := range ingresses {
+		for _, c := range ing.Status.Conditions {
+			if c.Type == ingress.IngressControllerDeploymentProgressingConditionType && c.Status == operatorv1.ConditionTrue {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // computeOperatorDegradedCondition computes the operator's current Degraded status state.
 func computeOperatorDegradedCondition(ingresses []operatorv1.IngressController) configv1.ClusterOperatorStatusCondition {
 	degradedCondition := configv1.ClusterOperatorStatusCondition{
@@ -333,10 +349,7 @@ func computeOperatorDegradedCondition(ingresses []operatorv1.IngressController) 
 }
 
 // computeOperatorProgressingCondition computes the operator's current Progressing status state.
-func computeOperatorProgressingCondition(allIngressesAvailable bool, oldVersions, curVersions []configv1.OperandVersion, operatorReleaseVersion, ingressControllerImage string, canaryImage string) configv1.ClusterOperatorStatusCondition {
-	// TODO: Update progressingCondition when an ingresscontroller
-	//       progressing condition is created. The Operator's condition
-	//       should be derived from the ingresscontroller's condition.
+func computeOperatorProgressingCondition(allIngressesAvailable bool, oldVersions, curVersions []configv1.OperandVersion, operatorReleaseVersion, ingressControllerImage, canaryImage string, ingressesProgressing bool) configv1.ClusterOperatorStatusCondition {
 	progressingCondition := configv1.ClusterOperatorStatusCondition{
 		Type: configv1.OperatorProgressing,
 	}
@@ -346,6 +359,11 @@ func computeOperatorProgressingCondition(allIngressesAvailable bool, oldVersions
 	var messages []string
 	if !allIngressesAvailable {
 		messages = append(messages, "Not all ingress controllers are available.")
+		progressing = true
+	}
+
+	if ingressesProgressing {
+		messages = append(messages, "One or more ingress controllers has a progressing condition.")
 		progressing = true
 	}
 
