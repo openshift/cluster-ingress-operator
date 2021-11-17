@@ -150,7 +150,7 @@ func buildRoute(name, namespace, serviceName string) *routev1.Route {
 	}
 }
 
-// buildRoute returns a route definition with the specified HSTS annotation.
+// buildRouteWithHSTS returns a route definition with the specified HSTS annotation.
 // Overwrites Spec.Host and TLS
 func buildRouteWithHSTS(podName, namespace, serviceName, domain, annotation string) *routev1.Route {
 	route := buildRoute(podName, namespace, serviceName)

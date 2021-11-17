@@ -1013,7 +1013,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	// environment variables.
 	if len(ci.Spec.HTTPCompression.MimeTypes) != 0 {
 		env = append(env, corev1.EnvVar{Name: RouterEnableCompression, Value: "true"})
-		mimes := getMIMETypes(ci.Spec.HTTPCompression.MimeTypes)
+		mimes := GetMIMETypes(ci.Spec.HTTPCompression.MimeTypes)
 		env = append(env, corev1.EnvVar{Name: RouterCompressionMIMETypes, Value: strings.Join(mimes, " ")})
 	}
 
@@ -1549,11 +1549,11 @@ func durationToHAProxyTimespec(duration time.Duration) string {
 	}
 }
 
-// getMIMETypes returns a slice of strings from an array of operatorv1.CompressionMIMETypes.
+// GetMIMETypes returns a slice of strings from an array of operatorv1.CompressionMIMETypes.
 // MIME strings that contain spaces must be quoted, as HAProxy requires a space-delimited MIME
 // type list. Also quote/escape any characters that are special to HAProxy (\,', and ").
 // See http://cbonte.github.io/haproxy-dconv/2.2/configuration.html#2.2
-func getMIMETypes(mimeTypes []operatorv1.CompressionMIMEType) []string {
+func GetMIMETypes(mimeTypes []operatorv1.CompressionMIMEType) []string {
 	var mimes []string
 
 	for _, m := range mimeTypes {
