@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
+	"github.com/openshift/cluster-ingress-operator/test/canaryProbe"
 	grpctestserver "github.com/openshift/cluster-ingress-operator/test/grpc"
 	h2specclient "github.com/openshift/cluster-ingress-operator/test/h2spec"
 	httphealthcheck "github.com/openshift/cluster-ingress-operator/test/http"
@@ -36,6 +37,7 @@ func main() {
 		},
 	})
 	rootCmd.AddCommand(h2specclient.NewClientCommand())
+	rootCmd.AddCommand(canaryProbe.NewClientCommand())
 
 	if err := rootCmd.Execute(); err != nil {
 		log.Error(err, "error")

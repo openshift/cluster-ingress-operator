@@ -13,6 +13,7 @@ import (
 
 	routev1 "github.com/openshift/api/route/v1"
 
+	"github.com/davecgh/go-spew/spew" // For debug pretty-printing
 	"github.com/tcnksm/go-httpstat"
 )
 
@@ -20,9 +21,10 @@ const (
 	echoServerPortAckHeader = "x-request-port"
 )
 
-// probeRouteEndpoint probes the given route's host
-// and returns an error when applicable.
-func probeRouteEndpoint(route *routev1.Route) error {
+// ProbeRouteEndpoint probes the given route's host and returns an error when applicable.
+// If getStats=false, it will send a probe without the httpstat wrapper.
+// If debug=true, it will print diagnostic information.
+func ProbeRouteEndpoint(route *routev1.Route, getStats bool, debug bool) error {
 	if len(route.Spec.Host) == 0 {
 		return fmt.Errorf("route.Spec.Host is empty, cannot test route")
 	}
@@ -38,13 +40,18 @@ func probeRouteEndpoint(route *routev1.Route) error {
 		return fmt.Errorf("error creating canary HTTP request %v: %v", request, err)
 	}
 
-	// Create HTTP result
-	// for request stats tracking.
-	result := &httpstat.Result{}
+	var result *httpstat.Result
+	var totalTime time.Duration
 
-	// Get request context
-	ctx := httpstat.WithHTTPStat(request.Context(), result)
-	request = request.WithContext(ctx)
+	if getStats {
+		// Create HTTP result
+		// for request stats tracking.
+		result = &httpstat.Result{}
+
+		// Get request context
+		ctx := httpstat.WithHTTPStat(request.Context(), result)
+		request = request.WithContext(ctx)
+	}
 
 	// Send the HTTP request
 	timeout, _ := time.ParseDuration("10s")
@@ -64,6 +71,12 @@ func probeRouteEndpoint(route *routev1.Route) error {
 		},
 	}
 	response, err := client.Do(request)
+
+	// Diagnostic information
+	if debug {
+		log.Info(fmt.Sprintf("Canary response: %s", responseToString(response)))
+		log.Info(spew.Sdump(response))
+	}
 
 	if err != nil {
 		// Check if err is a DNS error
@@ -90,10 +103,13 @@ func probeRouteEndpoint(route *routev1.Route) error {
 		return fmt.Errorf("error reading canary response body: %v", err)
 	}
 	body := string(bodyBytes)
-	t := time.Now()
-	// Mark request as finished
-	result.End(t)
-	totalTime := result.Total(t)
+
+	if getStats && result != nil {
+		t := time.Now()
+		// Mark request as finished
+		result.End(t)
+		totalTime = result.Total(t)
+	}
 
 	// Verify body contents
 	if len(body) == 0 {
@@ -119,8 +135,10 @@ func probeRouteEndpoint(route *routev1.Route) error {
 	// Check status code
 	switch status := response.StatusCode; status {
 	case http.StatusOK:
-		// Register total time in metrics (use milliseconds)
-		CanaryRequestTime.WithLabelValues(route.Spec.Host).Observe(float64(totalTime.Milliseconds()))
+		if getStats {
+			// Register total time in metrics (use milliseconds)
+			CanaryRequestTime.WithLabelValues(route.Spec.Host).Observe(float64(totalTime.Milliseconds()))
+		}
 	case http.StatusRequestTimeout:
 		return fmt.Errorf("status code %d: request timed out", status)
 	case http.StatusServiceUnavailable:
@@ -136,4 +154,18 @@ func probeRouteEndpoint(route *routev1.Route) error {
 	}
 
 	return nil
+}
+
+func responseToString(response *http.Response) string {
+	if response == nil {
+		return "empty"
+	}
+	return fmt.Sprintf("Status code:%d Status:%s Headers:%v ContentLength:%d "+
+		"TLS.OCSP:%v TLS.NegotiatedCipherSuite:0x%x TLS.HandshakeComplete:%t TLS.NegotiatedALPN: %s "+
+		"TLS.PeerCerts:%v TLS.ServerName:%s TLS.VerifiedChains:%v TLS.Version:0x%x "+
+		"Proto:%s Trailer:%v TransferEncoding:%s Request:%v",
+		response.StatusCode, response.Status, response.Header, response.ContentLength,
+		response.TLS.OCSPResponse, response.TLS.CipherSuite, response.TLS.HandshakeComplete, response.TLS.NegotiatedProtocol,
+		response.TLS.PeerCertificates, response.TLS.ServerName, response.TLS.VerifiedChains, response.TLS.Version,
+		response.Proto, response.Trailer, strings.Join(response.TransferEncoding, " "), response.Request)
 }

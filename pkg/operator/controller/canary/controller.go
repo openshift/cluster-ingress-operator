@@ -268,7 +268,7 @@ func (r *reconciler) startCanaryRoutePolling(stop <-chan struct{}) error {
 			return
 		}
 
-		err = probeRouteEndpoint(route)
+		err = ProbeRouteEndpoint(route, true, false)
 		if err != nil {
 			log.Error(err, "error performing canary route check")
 			SetCanaryRouteReachableMetric(route.Spec.Host, false)
