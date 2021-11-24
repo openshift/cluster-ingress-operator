@@ -3,8 +3,13 @@ package dns
 import (
 	"context"
 	"fmt"
+	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth"
+	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth/credentials"
+	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth/credentials/provider"
+	"io/ioutil"
 	"os"
 	"reflect"
+	"sync"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
@@ -65,6 +70,7 @@ const (
 )
 
 var log = logf.Logger.WithName(controllerName)
+var mutex sync.Mutex
 
 func New(mgr manager.Manager, config Config) (runtimecontroller.Controller, error) {
 	reconciler := &reconciler{
@@ -600,10 +606,20 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 			privateZones = append(privateZones, dnsConfig.Spec.PrivateZone.ID)
 		}
 
+		cred, err := fetchAlibabaCredentialsIniFromSecret(creds)
+		if err != nil {
+			return nil, err
+		}
+
+		c, ok := cred.(*credentials.AccessKeyCredential)
+		if !ok {
+			return nil, fmt.Errorf("failed to convert the credential to an AccessKeyCredential")
+		}
+
 		provider, err := alidns.NewProvider(alidns.Config{
 			Region:       platformStatus.AlibabaCloud.Region,
-			AccessKeyID:  string(creds.Data["alibabacloud_access_key_id"]),
-			AccessSecret: string(creds.Data["alibabacloud_secret_access_key"]),
+			AccessKeyID:  c.AccessKeyId,
+			AccessSecret: c.AccessKeySecret,
 			PrivateZones: privateZones,
 		})
 		if err != nil {
@@ -658,4 +674,33 @@ func getIbmDNSProvider(dnsConfig *configv1.DNS, creds *corev1.Secret, cisInstanc
 		return nil, fmt.Errorf("failed to create IBM DNS manager: %v", err)
 	}
 	return provider, nil
+}
+
+// fetchAlibabaCredentialsIniFromSecret fetches secret from credentials and returns the auth credential
+func fetchAlibabaCredentialsIniFromSecret(secret *corev1.Secret) (auth.Credential, error) {
+	creds, ok := secret.Data["credentials"]
+	if !ok {
+		return nil, fmt.Errorf("failed to fetch key 'credentials' in secret data")
+	}
+	f, err := ioutil.TempFile("", "alibaba-creds-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(f.Name())
+	defer f.Close()
+
+	_, err = f.Write(creds)
+	if err != nil {
+		return nil, err
+	}
+	// This lock is used to prevent the environment variable from being updated while we
+	// are using the environment variable to call the Alibaba credential provider chain.
+	mutex.Lock()
+	defer mutex.Unlock()
+	os.Setenv(provider.ENVCredentialFile, f.Name())
+	defer os.Unsetenv(provider.ENVCredentialFile)
+	// use Alibaba provider initialization
+	p := provider.NewProfileProvider("default")
+	// return a valid auth credential
+	return p.Resolve()
 }
