@@ -222,7 +222,8 @@ func (r *reconciler) createDNSProviderIfNeeded(dnsConfig *configv1.DNS) error {
 
 	creds := &corev1.Secret{}
 	switch platformStatus.Type {
-	case configv1.AWSPlatformType, configv1.AzurePlatformType, configv1.GCPPlatformType, configv1.IBMCloudPlatformType:
+	case configv1.AWSPlatformType, configv1.AzurePlatformType, configv1.GCPPlatformType,
+		configv1.IBMCloudPlatformType, configv1.PowerVSPlatformType:
 		if platformStatus.Type == configv1.IBMCloudPlatformType && infraConfig.Status.ControlPlaneTopology == configv1.ExternalTopologyMode {
 			break
 		}
