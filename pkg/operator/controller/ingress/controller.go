@@ -396,44 +396,57 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, infraConfig 
 		return true
 	}
 
-	// Detect changes to GCP LB provider parameters, which is something we can safely roll out.
-	statusLB := ic.Status.EndpointPublishingStrategy.LoadBalancer
-	specLB := effectiveStrategy.LoadBalancer
-	if specLB != nil && statusLB != nil {
-		// If the ProviderParameters field does not exist for spec or status,
-		// just propagate (or remove) ProviderParameters in it's entirety
-		// (as long as GCP parameters are specified one way or the other).
-		if specLB.ProviderParameters == nil && statusLB.ProviderParameters != nil && statusLB.ProviderParameters.GCP != nil ||
-			specLB.ProviderParameters != nil && specLB.ProviderParameters.GCP != nil && statusLB.ProviderParameters == nil {
-			ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters = specLB.ProviderParameters
+	// Detect changes to endpoint publishing strategy parameters that the
+	// operator can safely update.
+	switch effectiveStrategy.Type {
+	case operatorv1.LoadBalancerServiceStrategyType:
+		// Update if GCP LB provider parameters changed.
+		statusLB := ic.Status.EndpointPublishingStrategy.LoadBalancer
+		specLB := effectiveStrategy.LoadBalancer
+		if specLB != nil && statusLB != nil {
+			changed := false
+
+			// Detect changes to LB scope.
+			if specLB.Scope != statusLB.Scope {
+				ic.Status.EndpointPublishingStrategy.LoadBalancer.Scope = effectiveStrategy.LoadBalancer.Scope
+				changed = true
+			}
+
+			// If the ProviderParameters field does not exist for spec or status,
+			// just propagate (or remove) ProviderParameters in its entirety
+			// (as long as GCP parameters are specified one way or the other).
+			if specLB.ProviderParameters == nil && statusLB.ProviderParameters != nil && statusLB.ProviderParameters.GCP != nil ||
+				specLB.ProviderParameters != nil && specLB.ProviderParameters.GCP != nil && statusLB.ProviderParameters == nil {
+				ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters = specLB.ProviderParameters
+				changed = true
+			}
+
+			if specLB.ProviderParameters != nil && statusLB.ProviderParameters != nil &&
+				specLB.ProviderParameters.GCP != statusLB.ProviderParameters.GCP {
+				ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.GCP = specLB.ProviderParameters.GCP
+				changed = true
+			}
+
+			return changed
+		}
+	case operatorv1.NodePortServiceStrategyType:
+		// Update if PROXY protocol is turned on or off.
+		statusNP := ic.Status.EndpointPublishingStrategy.NodePort
+		specNP := effectiveStrategy.NodePort
+		if specNP != nil && statusNP != nil && specNP.Protocol != statusNP.Protocol {
+			statusNP.Protocol = specNP.Protocol
 			return true
 		}
-
-		if specLB.ProviderParameters != nil && statusLB.ProviderParameters != nil &&
-			specLB.ProviderParameters.GCP != statusLB.ProviderParameters.GCP {
-			ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.GCP = specLB.ProviderParameters.GCP
+	case operatorv1.HostNetworkStrategyType:
+		// Update if PROXY protocol is turned on or off.
+		statusHN := ic.Status.EndpointPublishingStrategy.HostNetwork
+		specHN := effectiveStrategy.HostNetwork
+		if specHN != nil && statusHN != nil && specHN.Protocol != statusHN.Protocol {
+			statusHN.Protocol = specHN.Protocol
 			return true
 		}
 	}
 
-	// Update if PROXY protocol is turned on or off.
-	statusNP := ic.Status.EndpointPublishingStrategy.NodePort
-	specNP := effectiveStrategy.NodePort
-	if specNP != nil && statusNP != nil && specNP.Protocol != statusNP.Protocol {
-		statusNP.Protocol = specNP.Protocol
-		return true
-	}
-	statusHN := ic.Status.EndpointPublishingStrategy.HostNetwork
-	specHN := effectiveStrategy.HostNetwork
-	if specHN != nil && statusHN != nil && specHN.Protocol != statusHN.Protocol {
-		statusHN.Protocol = specHN.Protocol
-		return true
-	}
-
-	// Detect changes to LB scope.
-	if specLB != nil && statusLB != nil && specLB.Scope != statusLB.Scope {
-		ic.Status.EndpointPublishingStrategy.LoadBalancer.Scope = effectiveStrategy.LoadBalancer.Scope
-	}
 	return false
 }
 
