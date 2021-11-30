@@ -421,17 +421,23 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, infraConfig 
 		}
 	case operatorv1.NodePortServiceStrategyType:
 		// Update if PROXY protocol is turned on or off.
+		if ic.Status.EndpointPublishingStrategy.NodePort == nil {
+			ic.Status.EndpointPublishingStrategy.NodePort = &operatorv1.NodePortStrategy{}
+		}
 		statusNP := ic.Status.EndpointPublishingStrategy.NodePort
 		specNP := effectiveStrategy.NodePort
-		if specNP != nil && statusNP != nil && specNP.Protocol != statusNP.Protocol {
+		if specNP != nil && specNP.Protocol != statusNP.Protocol {
 			statusNP.Protocol = specNP.Protocol
 			return true
 		}
 	case operatorv1.HostNetworkStrategyType:
 		// Update if PROXY protocol is turned on or off.
+		if ic.Status.EndpointPublishingStrategy.HostNetwork == nil {
+			ic.Status.EndpointPublishingStrategy.HostNetwork = &operatorv1.HostNetworkStrategy{}
+		}
 		statusHN := ic.Status.EndpointPublishingStrategy.HostNetwork
 		specHN := effectiveStrategy.HostNetwork
-		if specHN != nil && statusHN != nil && specHN.Protocol != statusHN.Protocol {
+		if specHN != nil && specHN.Protocol != statusHN.Protocol {
 			statusHN.Protocol = specHN.Protocol
 			return true
 		}
