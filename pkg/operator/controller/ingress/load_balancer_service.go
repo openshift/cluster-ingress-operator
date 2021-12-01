@@ -127,7 +127,7 @@ const (
 )
 
 var (
-	// internalLBAnnotations maps platform to the annotation name and value
+	// InternalLBAnnotations maps platform to the annotation name and value
 	// that tell the cloud provider that is associated with the platform
 	// that the load balancer is internal.
 	//
