@@ -169,6 +169,20 @@ var (
 			alibabaCloudLBAddressTypeAnnotation: alibabaCloudLBAddressTypeIntranet,
 		},
 	}
+
+	// externalLBAnnotations maps platform to the annotation name and value
+	// that tell the cloud provider that is associated with the platform
+	// that the load balancer is external.  This is the default for most
+	// platforms; only platforms for which it is not the default need
+	// entries in this map.
+	externalLBAnnotations = map[configv1.PlatformType]map[string]string{
+		configv1.IBMCloudPlatformType: {
+			iksLBScopeAnnotation: iksLBScopePublic,
+		},
+		configv1.PowerVSPlatformType: {
+			iksLBScopeAnnotation: iksLBScopePublic,
+		},
+	}
 )
 
 // ensureLoadBalancerService creates an LB service if one is desired but absent.
@@ -281,6 +295,11 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 					service.Annotations[GCPGlobalAccessAnnotation] = strconv.FormatBool(globalAccessEnabled)
 				}
 			}
+		} else {
+			annotation := externalLBAnnotations[platform.Type]
+			for name, value := range annotation {
+				service.Annotations[name] = value
+			}
 		}
 		switch platform.Type {
 		case configv1.AWSPlatformType:
@@ -313,9 +332,6 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 			service.Annotations[awsLBHealthCheckUnhealthyThresholdAnnotation] = awsLBHealthCheckUnhealthyThresholdDefault
 			service.Annotations[awsLBHealthCheckHealthyThresholdAnnotation] = awsLBHealthCheckHealthyThresholdDefault
 		case configv1.IBMCloudPlatformType, configv1.PowerVSPlatformType:
-			if !isInternal {
-				service.Annotations[iksLBScopeAnnotation] = iksLBScopePublic
-			}
 			// Set ExternalTrafficPolicy to type Cluster - IBM's LoadBalancer impl is created within the cluster.
 			// LB places VIP on one of the worker nodes, using keepalived to maintain the VIP and ensuring redundancy
 			// LB relies on iptable rules kube-proxy puts in to send traffic from the VIP node to the cluster
