@@ -753,10 +753,11 @@ func TestInternalLoadBalancer(t *testing.T) {
 	platform := infraConfig.Status.Platform
 
 	supportedPlatforms := map[configv1.PlatformType]struct{}{
-		configv1.AWSPlatformType:      {},
-		configv1.AzurePlatformType:    {},
-		configv1.GCPPlatformType:      {},
-		configv1.IBMCloudPlatformType: {},
+		configv1.AWSPlatformType:          {},
+		configv1.AzurePlatformType:        {},
+		configv1.GCPPlatformType:          {},
+		configv1.IBMCloudPlatformType:     {},
+		configv1.AlibabaCloudPlatformType: {},
 	}
 	if _, supported := supportedPlatforms[platform]; !supported {
 		t.Skip(fmt.Sprintf("test skipped on platform %q", platform))

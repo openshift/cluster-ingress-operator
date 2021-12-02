@@ -272,6 +272,24 @@ func TestDesiredLoadBalancerService(t *testing.T) {
 			},
 			expect: true,
 		},
+		{
+			description:  "external load balancer for alibaba platform",
+			platform:     configv1.AlibabaCloudPlatformType,
+			strategyType: operatorv1.LoadBalancerServiceStrategyType,
+			lbStrategy: operatorv1.LoadBalancerStrategy{
+				Scope: operatorv1.ExternalLoadBalancer,
+			},
+			expect: true,
+		},
+		{
+			description:  "internal load balancer for alibaba platform",
+			platform:     configv1.AlibabaCloudPlatformType,
+			strategyType: operatorv1.LoadBalancerServiceStrategyType,
+			lbStrategy: operatorv1.LoadBalancerStrategy{
+				Scope: operatorv1.InternalLoadBalancer,
+			},
+			expect: true,
+		},
 	}
 
 	for _, tc := range testCases {

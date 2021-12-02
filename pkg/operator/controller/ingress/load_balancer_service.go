@@ -112,6 +112,18 @@ const (
 	// proxy should prefer using a local endpoint but forward traffic to any
 	// available endpoint if no local endpoint is available.
 	localWithFallbackAnnotation = "traffic-policy.network.alpha.openshift.io/local-with-fallback"
+
+	// alibabaCloudLBAddressTypeAnnotation is the annotation used on a service
+	// to specify the network type of an Aliyun SLB
+	alibabaCloudLBAddressTypeAnnotation = "service.beta.kubernetes.io/alibaba-cloud-loadbalancer-address-type"
+
+	// alibabaCloudLBAddressTypeInternet is the service annotation value used to specify an Aliyun SLB
+	// IP is exposed to the internet (public)
+	alibabaCloudLBAddressTypeInternet = "internet"
+
+	// alibabaCloudLBAddressTypeIntranet is the service annotation value used to specify an Aliyun SLB
+	// IP is exposed to the intranet (private)
+	alibabaCloudLBAddressTypeIntranet = "intranet"
 )
 
 var (
@@ -152,6 +164,9 @@ var (
 		},
 		configv1.PowerVSPlatformType: {
 			iksLBScopeAnnotation: iksLBScopePrivate,
+		},
+		configv1.AlibabaCloudPlatformType: {
+			alibabaCloudLBAddressTypeAnnotation: alibabaCloudLBAddressTypeIntranet,
 		},
 	}
 )
@@ -306,6 +321,10 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 			// LB relies on iptable rules kube-proxy puts in to send traffic from the VIP node to the cluster
 			// If policy is local, traffic is only sent to pods on the local node, as such Cluster enables traffic to flow to  all the pods in the cluster
 			service.Spec.ExternalTrafficPolicy = corev1.ServiceExternalTrafficPolicyTypeCluster
+		case configv1.AlibabaCloudPlatformType:
+			if !isInternal {
+				service.Annotations[alibabaCloudLBAddressTypeAnnotation] = alibabaCloudLBAddressTypeInternet
+			}
 		}
 		// Azure load balancers are not customizable and are set to (2 fail @ 5s interval, 2 healthy)
 		// GCP load balancers are not customizable and are set to (3 fail @ 8s interval, 1 healthy)
