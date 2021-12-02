@@ -11,6 +11,7 @@ approvers:
   - rfredette
   - alebedev87
   - lmzuccarelli
+  - miheer
 reviewers:
   - ironcladlou
   - knobunc
@@ -24,4 +25,5 @@ reviewers:
   - rfredette
   - alebedev87
   - lmzuccarelli
+  - miheer 
 component: Routing
