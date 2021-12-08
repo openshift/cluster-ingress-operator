@@ -891,6 +891,12 @@ func TestInternalLoadBalancerGlobalAccessGCP(t *testing.T) {
 // IBM Cloud, the operator should set the Progressing=True status condition to
 // prompt the administrator to delete the old LoadBalancer service.  On Azure
 // and GCP, the operator should update the LoadBalancer service's annotations.
+//
+// As a special case, if the ingresscontroller's scope has been changed, the
+// "ingress.operator.openshift.io/auto-delete-load-balancer" annotation is set
+// on the ingresscontroller, and the current platform requires deleting and
+// recreating the LoadBalancer service to change its scope, then the operator
+// should delete and recreate the service automatically.
 func TestScopeChange(t *testing.T) {
 	platform := infraConfig.Status.Platform
 	supportedPlatforms := map[configv1.PlatformType]struct{}{
@@ -1013,6 +1019,41 @@ func TestScopeChange(t *testing.T) {
 
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	// Annotate the ingresscontroller to tell the operator to automatically
+	// delete and recreate the LoadBalancer service if necessary when the
+	// scope changes, and change the scope.
+	if err := kclient.Get(context.TODO(), name, ic); err != nil {
+		t.Fatalf("failed to get ingresscontroller %s: %v", name, err)
+	}
+	if ic.Annotations == nil {
+		ic.Annotations = map[string]string{}
+	}
+	ic.Annotations["ingress.operator.openshift.io/auto-delete-load-balancer"] = ""
+	ic.Spec.EndpointPublishingStrategy.LoadBalancer.Scope = operatorv1.InternalLoadBalancer
+
+	if err := kclient.Update(context.TODO(), ic); err != nil {
+		t.Fatal(err)
+	}
+
+	err := wait.PollImmediate(5*time.Second, 5*time.Minute, func() (bool, error) {
+		service := &corev1.Service{}
+		if err := kclient.Get(context.TODO(), controller.LoadBalancerServiceName(ic), service); err != nil {
+			if errors.IsNotFound(err) {
+				return false, nil
+			}
+			t.Logf("failed to get service %s: %v", controller.LoadBalancerServiceName(ic), err)
+			return false, nil
+		}
+		if ingresscontroller.IsServiceInternal(service) {
+			return true, nil
+		}
+		t.Logf("service is still external: %#v\n", service)
+		return false, nil
+	})
+	if err != nil {
+		t.Fatalf("expected load balancer to become internal: %v", err)
 	}
 }
 

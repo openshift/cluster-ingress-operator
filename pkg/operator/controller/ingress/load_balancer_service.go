@@ -124,6 +124,13 @@ const (
 	// alibabaCloudLBAddressTypeIntranet is the service annotation value used to specify an Aliyun SLB
 	// IP is exposed to the intranet (private)
 	alibabaCloudLBAddressTypeIntranet = "intranet"
+
+	// autoDeleteLoadBalancerAnnotation is an annotation that can be set on
+	// an IngressController to indicate that the operator should
+	// automatically delete any associated service load-balancer when its
+	// scope changes if changing scope requires deleting service
+	// load-balancers on the current platform.
+	autoDeleteLoadBalancerAnnotation = "ingress.operator.openshift.io/auto-delete-load-balancer"
 )
 
 var (
@@ -184,6 +191,14 @@ var (
 		},
 	}
 
+	// platformsWithMutableScope is the set of platforms that support
+	// mutating load-balancer scope without deleting and recreating a
+	// service load-balancer.
+	platformsWithMutableScope = map[configv1.PlatformType]struct{}{
+		configv1.AzurePlatformType: {},
+		configv1.GCPPlatformType:   {},
+	}
+
 	// managedLoadBalancerServiceAnnotations is a set of annotation keys for
 	// annotations that the operator manages for LoadBalancer-type services.
 	// The operator preserves all other annotations.
@@ -215,10 +230,7 @@ var (
 		// the service, so the operator doesn't update the annotations
 		// that specify load-balancer scope for those platforms.  See
 		// <https://issues.redhat.com/browse/NE-621>.
-		for _, platform := range []configv1.PlatformType{
-			configv1.AzurePlatformType,
-			configv1.GCPPlatformType,
-		} {
+		for platform := range platformsWithMutableScope {
 			for name := range InternalLBAnnotations[platform] {
 				result.Insert(name)
 			}
@@ -283,7 +295,11 @@ func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController,
 				return haveLBS, currentLBService, err
 			}
 		}
-		if updated, err := r.updateLoadBalancerService(currentLBService, desiredLBService, platform); err != nil {
+		deleteIfScopeChanged := false
+		if _, ok := ci.Annotations[autoDeleteLoadBalancerAnnotation]; ok {
+			deleteIfScopeChanged = true
+		}
+		if updated, err := r.updateLoadBalancerService(currentLBService, desiredLBService, platform, deleteIfScopeChanged); err != nil {
 			return true, currentLBService, fmt.Errorf("failed to update load balancer service: %v", err)
 		} else if updated {
 			return r.currentLoadBalancerService(ci)
@@ -510,7 +526,21 @@ func (r *reconciler) deleteLoadBalancerService(service *corev1.Service, options 
 
 // updateLoadBalancerService updates a load balancer service.  Returns a Boolean
 // indicating whether the service was updated, and an error value.
-func (r *reconciler) updateLoadBalancerService(current, desired *corev1.Service, platform *configv1.PlatformStatus) (bool, error) {
+func (r *reconciler) updateLoadBalancerService(current, desired *corev1.Service, platform *configv1.PlatformStatus, deleteIfScopeChanged bool) (bool, error) {
+	_, platformHasMutableScope := platformsWithMutableScope[platform.Type]
+	if !platformHasMutableScope && deleteIfScopeChanged && !scopeEqual(current, desired, platform) {
+		log.Info("deleting and recreating the load balancer because its scope changed", "namespace", desired.Namespace, "name", desired.Name)
+		foreground := metav1.DeletePropagationForeground
+		deleteOptions := crclient.DeleteOptions{PropagationPolicy: &foreground}
+		if err := r.deleteLoadBalancerService(current, &deleteOptions); err != nil {
+			return false, err
+		}
+		if err := r.createLoadBalancerService(desired); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+
 	changed, updated := loadBalancerServiceChanged(current, desired)
 	if !changed {
 		return false, nil
@@ -522,6 +552,30 @@ func (r *reconciler) updateLoadBalancerService(current, desired *corev1.Service,
 	}
 	log.Info("updated load balancer service", "namespace", updated.Namespace, "name", updated.Name, "diff", diff)
 	return true, nil
+}
+
+// scopeEqual returns true if the scope is the same between the two given
+// services and false if the scope is different.
+func scopeEqual(a, b *corev1.Service, platform *configv1.PlatformStatus) bool {
+	aAnnotations := a.Annotations
+	if aAnnotations == nil {
+		aAnnotations = map[string]string{}
+	}
+	bAnnotations := b.Annotations
+	if bAnnotations == nil {
+		bAnnotations = map[string]string{}
+	}
+	for name := range InternalLBAnnotations[platform.Type] {
+		if aAnnotations[name] != bAnnotations[name] {
+			return false
+		}
+	}
+	for name := range externalLBAnnotations[platform.Type] {
+		if aAnnotations[name] != bAnnotations[name] {
+			return false
+		}
+	}
+	return true
 }
 
 // loadBalancerServiceChanged checks if the current load balancer service
