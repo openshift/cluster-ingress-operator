@@ -13,7 +13,7 @@ func getAuthorizerForResource(config Config) (autorest.Authorizer, error) {
 	}
 
 	token, err := adal.NewServicePrincipalToken(
-		*oauthConfig, config.ClientID, config.ClientSecret, config.Environment.ResourceManagerEndpoint)
+		*oauthConfig, config.ClientID, config.ClientSecret, config.Environment.TokenAudience)
 	if err != nil {
 		return nil, err
 	}
