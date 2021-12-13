@@ -677,6 +677,13 @@ func TestLoadBalancerServiceChanged(t *testing.T) {
 			},
 			expect: true,
 		},
+		{
+			description: "if the service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags changes",
+			mutate: func(svc *corev1.Service) {
+				svc.Annotations[awsLBAdditionalResourceTags] = "key=value"
+			},
+			expect: true,
+		},
 	}
 
 	for _, tc := range testCases {

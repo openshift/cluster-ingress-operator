@@ -221,6 +221,7 @@ var (
 			// local-with-fallback annotation for kube-proxy (see
 			// <https://bugzilla.redhat.com/show_bug.cgi?id=1960284>).
 			localWithFallbackAnnotation,
+			awsLBAdditionalResourceTags,
 		)
 
 		// Azure and GCP support switching between internal and external

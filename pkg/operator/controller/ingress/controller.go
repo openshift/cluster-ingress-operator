@@ -105,6 +105,9 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	if err := c.Watch(&source.Kind{Type: &configv1.Ingress{}}, handler.EnqueueRequestsFromMapFunc(reconciler.ingressConfigToIngressController)); err != nil {
 		return nil, err
 	}
+	if err := c.Watch(&source.Kind{Type: &configv1.Infrastructure{}}, handler.EnqueueRequestsFromMapFunc(reconciler.ingressConfigToIngressController)); err != nil {
+		return nil, err
+	}
 	return c, nil
 }
 
