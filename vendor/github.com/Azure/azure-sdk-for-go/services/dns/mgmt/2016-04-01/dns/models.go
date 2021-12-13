@@ -28,7 +28,129 @@ import (
 )
 
 // The package's fully qualified name.
-const fqdn = "github.com/Azure/azure-sdk-for-go/services/dns/mgmt/2017-10-01/dns"
+const fqdn = "github.com/Azure/azure-sdk-for-go/services/dns/mgmt/2016-04-01/dns"
+
+// HTTPStatusCode enumerates the values for http status code.
+type HTTPStatusCode string
+
+const (
+	// Accepted ...
+	Accepted HTTPStatusCode = "Accepted"
+	// Ambiguous ...
+	Ambiguous HTTPStatusCode = "Ambiguous"
+	// BadGateway ...
+	BadGateway HTTPStatusCode = "BadGateway"
+	// BadRequest ...
+	BadRequest HTTPStatusCode = "BadRequest"
+	// Conflict ...
+	Conflict HTTPStatusCode = "Conflict"
+	// Continue ...
+	Continue HTTPStatusCode = "Continue"
+	// Created ...
+	Created HTTPStatusCode = "Created"
+	// ExpectationFailed ...
+	ExpectationFailed HTTPStatusCode = "ExpectationFailed"
+	// Forbidden ...
+	Forbidden HTTPStatusCode = "Forbidden"
+	// Found ...
+	Found HTTPStatusCode = "Found"
+	// GatewayTimeout ...
+	GatewayTimeout HTTPStatusCode = "GatewayTimeout"
+	// Gone ...
+	Gone HTTPStatusCode = "Gone"
+	// HTTPVersionNotSupported ...
+	HTTPVersionNotSupported HTTPStatusCode = "HttpVersionNotSupported"
+	// InternalServerError ...
+	InternalServerError HTTPStatusCode = "InternalServerError"
+	// LengthRequired ...
+	LengthRequired HTTPStatusCode = "LengthRequired"
+	// MethodNotAllowed ...
+	MethodNotAllowed HTTPStatusCode = "MethodNotAllowed"
+	// Moved ...
+	Moved HTTPStatusCode = "Moved"
+	// MovedPermanently ...
+	MovedPermanently HTTPStatusCode = "MovedPermanently"
+	// MultipleChoices ...
+	MultipleChoices HTTPStatusCode = "MultipleChoices"
+	// NoContent ...
+	NoContent HTTPStatusCode = "NoContent"
+	// NonAuthoritativeInformation ...
+	NonAuthoritativeInformation HTTPStatusCode = "NonAuthoritativeInformation"
+	// NotAcceptable ...
+	NotAcceptable HTTPStatusCode = "NotAcceptable"
+	// NotFound ...
+	NotFound HTTPStatusCode = "NotFound"
+	// NotImplemented ...
+	NotImplemented HTTPStatusCode = "NotImplemented"
+	// NotModified ...
+	NotModified HTTPStatusCode = "NotModified"
+	// OK ...
+	OK HTTPStatusCode = "OK"
+	// PartialContent ...
+	PartialContent HTTPStatusCode = "PartialContent"
+	// PaymentRequired ...
+	PaymentRequired HTTPStatusCode = "PaymentRequired"
+	// PreconditionFailed ...
+	PreconditionFailed HTTPStatusCode = "PreconditionFailed"
+	// ProxyAuthenticationRequired ...
+	ProxyAuthenticationRequired HTTPStatusCode = "ProxyAuthenticationRequired"
+	// Redirect ...
+	Redirect HTTPStatusCode = "Redirect"
+	// RedirectKeepVerb ...
+	RedirectKeepVerb HTTPStatusCode = "RedirectKeepVerb"
+	// RedirectMethod ...
+	RedirectMethod HTTPStatusCode = "RedirectMethod"
+	// RequestedRangeNotSatisfiable ...
+	RequestedRangeNotSatisfiable HTTPStatusCode = "RequestedRangeNotSatisfiable"
+	// RequestEntityTooLarge ...
+	RequestEntityTooLarge HTTPStatusCode = "RequestEntityTooLarge"
+	// RequestTimeout ...
+	RequestTimeout HTTPStatusCode = "RequestTimeout"
+	// RequestURITooLong ...
+	RequestURITooLong HTTPStatusCode = "RequestUriTooLong"
+	// ResetContent ...
+	ResetContent HTTPStatusCode = "ResetContent"
+	// SeeOther ...
+	SeeOther HTTPStatusCode = "SeeOther"
+	// ServiceUnavailable ...
+	ServiceUnavailable HTTPStatusCode = "ServiceUnavailable"
+	// SwitchingProtocols ...
+	SwitchingProtocols HTTPStatusCode = "SwitchingProtocols"
+	// TemporaryRedirect ...
+	TemporaryRedirect HTTPStatusCode = "TemporaryRedirect"
+	// Unauthorized ...
+	Unauthorized HTTPStatusCode = "Unauthorized"
+	// UnsupportedMediaType ...
+	UnsupportedMediaType HTTPStatusCode = "UnsupportedMediaType"
+	// Unused ...
+	Unused HTTPStatusCode = "Unused"
+	// UpgradeRequired ...
+	UpgradeRequired HTTPStatusCode = "UpgradeRequired"
+	// UseProxy ...
+	UseProxy HTTPStatusCode = "UseProxy"
+)
+
+// PossibleHTTPStatusCodeValues returns an array of possible values for the HTTPStatusCode const type.
+func PossibleHTTPStatusCodeValues() []HTTPStatusCode {
+	return []HTTPStatusCode{Accepted, Ambiguous, BadGateway, BadRequest, Conflict, Continue, Created, ExpectationFailed, Forbidden, Found, GatewayTimeout, Gone, HTTPVersionNotSupported, InternalServerError, LengthRequired, MethodNotAllowed, Moved, MovedPermanently, MultipleChoices, NoContent, NonAuthoritativeInformation, NotAcceptable, NotFound, NotImplemented, NotModified, OK, PartialContent, PaymentRequired, PreconditionFailed, ProxyAuthenticationRequired, Redirect, RedirectKeepVerb, RedirectMethod, RequestedRangeNotSatisfiable, RequestEntityTooLarge, RequestTimeout, RequestURITooLong, ResetContent, SeeOther, ServiceUnavailable, SwitchingProtocols, TemporaryRedirect, Unauthorized, UnsupportedMediaType, Unused, UpgradeRequired, UseProxy}
+}
+
+// OperationStatus enumerates the values for operation status.
+type OperationStatus string
+
+const (
+	// Failed ...
+	Failed OperationStatus = "Failed"
+	// InProgress ...
+	InProgress OperationStatus = "InProgress"
+	// Succeeded ...
+	Succeeded OperationStatus = "Succeeded"
+)
+
+// PossibleOperationStatusValues returns an array of possible values for the OperationStatus const type.
+func PossibleOperationStatusValues() []OperationStatus {
+	return []OperationStatus{Failed, InProgress, Succeeded}
+}
 
 // RecordType enumerates the values for record type.
 type RecordType string
@@ -38,8 +160,6 @@ const (
 	A RecordType = "A"
 	// AAAA ...
 	AAAA RecordType = "AAAA"
-	// CAA ...
-	CAA RecordType = "CAA"
 	// CNAME ...
 	CNAME RecordType = "CNAME"
 	// MX ...
@@ -58,7 +178,7 @@ const (
 
 // PossibleRecordTypeValues returns an array of possible values for the RecordType const type.
 func PossibleRecordTypeValues() []RecordType {
-	return []RecordType{A, AAAA, CAA, CNAME, MX, NS, PTR, SOA, SRV, TXT}
+	return []RecordType{A, AAAA, CNAME, MX, NS, PTR, SOA, SRV, TXT}
 }
 
 // AaaaRecord an AAAA record.
@@ -85,31 +205,16 @@ type AzureEntityResource struct {
 	Type *string `json:"type,omitempty"`
 }
 
-// CaaRecord a CAA record.
-type CaaRecord struct {
-	// Flags - The flags for this CAA record as an integer between 0 and 255.
-	Flags *int32 `json:"flags,omitempty"`
-	// Tag - The tag for this CAA record.
-	Tag *string `json:"tag,omitempty"`
-	// Value - The value for this CAA record.
-	Value *string `json:"value,omitempty"`
-}
-
-// CloudError an error message
+// CloudError ...
 type CloudError struct {
-	// Error - The error message body
 	Error *CloudErrorBody `json:"error,omitempty"`
 }
 
-// CloudErrorBody the body of an error message
+// CloudErrorBody ...
 type CloudErrorBody struct {
-	// Code - The error code
-	Code *string `json:"code,omitempty"`
-	// Message - A description of what caused the error
-	Message *string `json:"message,omitempty"`
-	// Target - The target resource of the error message
-	Target *string `json:"target,omitempty"`
-	// Details - Extra error information
+	Code    *string           `json:"code,omitempty"`
+	Message *string           `json:"message,omitempty"`
+	Target  *string           `json:"target,omitempty"`
 	Details *[]CloudErrorBody `json:"details,omitempty"`
 }
 
@@ -153,11 +258,11 @@ type PtrRecord struct {
 // RecordSet describes a DNS record set (a collection of DNS records with the same name and type).
 type RecordSet struct {
 	autorest.Response `json:"-"`
-	// ID - READ-ONLY; The ID of the record set.
+	// ID - The ID of the record set.
 	ID *string `json:"id,omitempty"`
-	// Name - READ-ONLY; The name of the record set.
+	// Name - The name of the record set.
 	Name *string `json:"name,omitempty"`
-	// Type - READ-ONLY; The type of the record set.
+	// Type - The type of the record set.
 	Type *string `json:"type,omitempty"`
 	// Etag - The etag of the record set.
 	Etag *string `json:"etag,omitempty"`
@@ -168,6 +273,15 @@ type RecordSet struct {
 // MarshalJSON is the custom marshaler for RecordSet.
 func (rs RecordSet) MarshalJSON() ([]byte, error) {
 	objectMap := make(map[string]interface{})
+	if rs.ID != nil {
+		objectMap["id"] = rs.ID
+	}
+	if rs.Name != nil {
+		objectMap["name"] = rs.Name
+	}
+	if rs.Type != nil {
+		objectMap["type"] = rs.Type
+	}
 	if rs.Etag != nil {
 		objectMap["etag"] = rs.Etag
 	}
@@ -242,7 +356,7 @@ type RecordSetListResult struct {
 	autorest.Response `json:"-"`
 	// Value - Information about the record sets in the response.
 	Value *[]RecordSet `json:"value,omitempty"`
-	// NextLink - READ-ONLY; The continuation token for the next page of results.
+	// NextLink - The continuation token for the next page of results.
 	NextLink *string `json:"nextLink,omitempty"`
 }
 
@@ -389,8 +503,6 @@ type RecordSetProperties struct {
 	Metadata map[string]*string `json:"metadata"`
 	// TTL - The TTL (time-to-live) of the records in the record set.
 	TTL *int64 `json:"TTL,omitempty"`
-	// Fqdn - READ-ONLY; Fully qualified domain name of the record set.
-	Fqdn *string `json:"fqdn,omitempty"`
 	// ARecords - The list of A records in the record set.
 	ARecords *[]ARecord `json:"ARecords,omitempty"`
 	// AaaaRecords - The list of AAAA records in the record set.
@@ -409,8 +521,6 @@ type RecordSetProperties struct {
 	CnameRecord *CnameRecord `json:"CNAMERecord,omitempty"`
 	// SoaRecord - The SOA record in the record set.
 	SoaRecord *SoaRecord `json:"SOARecord,omitempty"`
-	// CaaRecords - The list of CAA records in the record set.
-	CaaRecords *[]CaaRecord `json:"caaRecords,omitempty"`
 }
 
 // MarshalJSON is the custom marshaler for RecordSetProperties.
@@ -448,9 +558,6 @@ func (rsp RecordSetProperties) MarshalJSON() ([]byte, error) {
 	}
 	if rsp.SoaRecord != nil {
 		objectMap["SOARecord"] = rsp.SoaRecord
-	}
-	if rsp.CaaRecords != nil {
-		objectMap["caaRecords"] = rsp.CaaRecords
 	}
 	return json.Marshal(objectMap)
 }
@@ -501,7 +608,7 @@ type SrvRecord struct {
 	Target *string `json:"target,omitempty"`
 }
 
-// SubResource a reference to a another resource
+// SubResource ...
 type SubResource struct {
 	// ID - Resource Id.
 	ID *string `json:"id,omitempty"`
@@ -654,12 +761,24 @@ func (z *Zone) UnmarshalJSON(body []byte) error {
 	return nil
 }
 
+// ZoneDeleteResult the response to a Zone Delete operation.
+type ZoneDeleteResult struct {
+	autorest.Response `json:"-"`
+	// AzureAsyncOperation - Users can perform a Get on Azure-AsyncOperation to get the status of their delete Zone operations.
+	AzureAsyncOperation *string `json:"azureAsyncOperation,omitempty"`
+	// Status - Possible values include: 'InProgress', 'Succeeded', 'Failed'
+	Status OperationStatus `json:"status,omitempty"`
+	// StatusCode - Possible values include: 'Continue', 'SwitchingProtocols', 'OK', 'Created', 'Accepted', 'NonAuthoritativeInformation', 'NoContent', 'ResetContent', 'PartialContent', 'MultipleChoices', 'Ambiguous', 'MovedPermanently', 'Moved', 'Found', 'Redirect', 'SeeOther', 'RedirectMethod', 'NotModified', 'UseProxy', 'Unused', 'TemporaryRedirect', 'RedirectKeepVerb', 'BadRequest', 'Unauthorized', 'PaymentRequired', 'Forbidden', 'NotFound', 'MethodNotAllowed', 'NotAcceptable', 'ProxyAuthenticationRequired', 'RequestTimeout', 'Conflict', 'Gone', 'LengthRequired', 'PreconditionFailed', 'RequestEntityTooLarge', 'RequestURITooLong', 'UnsupportedMediaType', 'RequestedRangeNotSatisfiable', 'ExpectationFailed', 'UpgradeRequired', 'InternalServerError', 'NotImplemented', 'BadGateway', 'ServiceUnavailable', 'GatewayTimeout', 'HTTPVersionNotSupported'
+	StatusCode HTTPStatusCode `json:"statusCode,omitempty"`
+	RequestID  *string        `json:"requestId,omitempty"`
+}
+
 // ZoneListResult the response to a Zone List or ListAll operation.
 type ZoneListResult struct {
 	autorest.Response `json:"-"`
 	// Value - Information about the DNS zones.
 	Value *[]Zone `json:"value,omitempty"`
-	// NextLink - READ-ONLY; The continuation token for the next page of results.
+	// NextLink - The continuation token for the next page of results.
 	NextLink *string `json:"nextLink,omitempty"`
 }
 
@@ -802,9 +921,9 @@ func NewZoneListResultPage(getNextPage func(context.Context, ZoneListResult) (Zo
 
 // ZoneProperties represents the properties of the zone.
 type ZoneProperties struct {
-	// MaxNumberOfRecordSets - READ-ONLY; The maximum number of record sets that can be created in this DNS zone.  This is a read-only property and any attempt to set this value will be ignored.
+	// MaxNumberOfRecordSets - The maximum number of record sets that can be created in this DNS zone.  This is a read-only property and any attempt to set this value will be ignored.
 	MaxNumberOfRecordSets *int64 `json:"maxNumberOfRecordSets,omitempty"`
-	// NumberOfRecordSets - READ-ONLY; The current number of record sets in this DNS zone.  This is a read-only property and any attempt to set this value will be ignored.
+	// NumberOfRecordSets - The current number of record sets in this DNS zone.  This is a read-only property and any attempt to set this value will be ignored.
 	NumberOfRecordSets *int64 `json:"numberOfRecordSets,omitempty"`
 	// NameServers - READ-ONLY; The name servers for this DNS zone. This is a read-only property and any attempt to set this value will be ignored.
 	NameServers *[]string `json:"nameServers,omitempty"`
@@ -817,7 +936,7 @@ type ZonesDeleteFuture struct {
 
 // Result returns the result of the asynchronous operation.
 // If the operation has not completed it will return an error.
-func (future *ZonesDeleteFuture) Result(client ZonesClient) (ar autorest.Response, err error) {
+func (future *ZonesDeleteFuture) Result(client ZonesClient) (zdr ZoneDeleteResult, err error) {
 	var done bool
 	done, err = future.DoneWithContext(context.Background(), client)
 	if err != nil {
@@ -828,21 +947,12 @@ func (future *ZonesDeleteFuture) Result(client ZonesClient) (ar autorest.Respons
 		err = azure.NewAsyncOpIncompleteError("dns.ZonesDeleteFuture")
 		return
 	}
-	ar.Response = future.Response()
-	return
-}
-
-// ZoneUpdate describes a request to update a DNS zone.
-type ZoneUpdate struct {
-	// Tags - Resource tags.
-	Tags map[string]*string `json:"tags"`
-}
-
-// MarshalJSON is the custom marshaler for ZoneUpdate.
-func (zu ZoneUpdate) MarshalJSON() ([]byte, error) {
-	objectMap := make(map[string]interface{})
-	if zu.Tags != nil {
-		objectMap["tags"] = zu.Tags
+	sender := autorest.DecorateSender(client, autorest.DoRetryForStatusCodes(client.RetryAttempts, client.RetryDuration, autorest.StatusCodesForRetry...))
+	if zdr.Response.Response, err = future.GetResult(sender); err == nil && zdr.Response.Response.StatusCode != http.StatusNoContent {
+		zdr, err = client.DeleteResponder(zdr.Response.Response)
+		if err != nil {
+			err = autorest.NewErrorWithError(err, "dns.ZonesDeleteFuture", "Result", zdr.Response.Response, "Failure responding to request")
+		}
 	}
-	return json.Marshal(objectMap)
+	return
 }
