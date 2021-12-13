@@ -499,27 +499,27 @@ func TestUpdateDefaultIngressController(t *testing.T) {
 	}
 }
 
-// TestIngressControllerScale exercises a simple scale up/down scenario.
+// TestIngressControllerScale exercises a simple scale up/down scenario.  This
+// test creates a private ingresscontroller with 1 replica and then creates a
+// scale client and uses it to scale the ingresscontroller up to 2 replicas and
+// then back down to 1 replica.
 func TestIngressControllerScale(t *testing.T) {
-	// Get a scale client.
-	//
-	// TODO: Use controller-runtime once it supports the /scale subresource.
-	scaleClient, err := getScaleClient()
-	if err != nil {
-		t.Fatal(err)
+	// Create a new ingresscontroller.
+	name := types.NamespacedName{Namespace: operatorNamespace, Name: "scale"}
+	domain := name.Name + "." + dnsConfig.Spec.BaseDomain
+	ic := newPrivateController(name, domain)
+	if err := kclient.Create(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to create ingresscontroller %s: %v", name, err)
 	}
-
-	ic := &operatorv1.IngressController{}
-	if err := kclient.Get(context.TODO(), defaultName, ic); err != nil {
-		t.Fatalf("failed to get default ingresscontroller: %v", err)
-	}
-	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, defaultName, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
+	defer assertIngressControllerDeleted(t, kclient, ic)
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, availableConditionsForPrivateIngressController...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
+	// Get the ingresscontroller's deployment's selector and replicaset.
 	deployment := &appsv1.Deployment{}
 	if err := kclient.Get(context.TODO(), controller.RouterDeploymentName(ic), deployment); err != nil {
-		t.Fatalf("failed to get default ingresscontroller deployment: %v", err)
+		t.Fatalf("failed to get deployment for ingresscontroller %s: %v", name, err)
 	}
 
 	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
@@ -529,17 +529,25 @@ func TestIngressControllerScale(t *testing.T) {
 
 	oldRsList := &appsv1.ReplicaSetList{}
 	if err := kclient.List(context.TODO(), oldRsList, client.MatchingLabelsSelector{Selector: selector}); err != nil {
-		t.Fatalf("failed to list replicasets for ingresscontroller: %v", err)
+		t.Fatalf("failed to list replicasets for ingresscontroller %s: %v", name, err)
 	}
 
+	// Get a scale client.
+	//
+	// TODO: Use controller-runtime once it supports the /scale subresource.
+	scaleClient, err := getScaleClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Get the ingresscontroller's scale.
 	resource := schema.GroupResource{
 		Group:    "operator.openshift.io",
 		Resource: "ingresscontrollers",
 	}
-
-	scale, err := scaleClient.Scales(defaultName.Namespace).Get(context.TODO(), resource, defaultName.Name, metav1.GetOptions{})
+	scale, err := scaleClient.Scales(name.Namespace).Get(context.TODO(), resource, name.Name, metav1.GetOptions{})
 	if err != nil {
-		t.Fatalf("failed to get initial scale of default ingresscontroller: %v", err)
+		t.Fatalf("failed to get initial scale of ingresscontroller %s: %v", name, err)
 	}
 
 	// Make sure the deployment's selector is reflected in the scale status.
@@ -547,50 +555,53 @@ func TestIngressControllerScale(t *testing.T) {
 		t.Fatalf("expected scale status.selector to be %q, got %q", selector.String(), scale.Status.Selector)
 	}
 
+	// Scale the ingresscontroller up.
 	originalReplicas := scale.Spec.Replicas
 	newReplicas := originalReplicas + 1
-
 	scale.Spec.Replicas = newReplicas
-	updatedScale, err := scaleClient.Scales(defaultName.Namespace).Update(context.TODO(), resource, scale, metav1.UpdateOptions{})
+	updatedScale, err := scaleClient.Scales(name.Namespace).Update(context.TODO(), resource, scale, metav1.UpdateOptions{})
 	if err != nil {
-		t.Fatalf("failed to scale ingresscontroller up: %v", err)
-	}
-	if updatedScale.Spec.Replicas != scale.Spec.Replicas {
-		t.Fatalf("expected scaled-up ingresscontroller's spec.replicas to be %d, got %d", scale.Spec.Replicas, updatedScale.Spec.Replicas)
+		t.Fatalf("failed to scale ingresscontroller %s up: %v", name, err)
 	}
 
-	// Wait for the deployment scale up to be observed.
+	if updatedScale.Spec.Replicas != scale.Spec.Replicas {
+		t.Fatalf("expected ingresscontroller %s to have spec.replicas equal to %d, got %d", name, scale.Spec.Replicas, updatedScale.Spec.Replicas)
+	}
+
+	// Wait for the deployment scale-up to be observed.
 	if err := waitForAvailableReplicas(t, kclient, ic, 4*time.Minute, newReplicas); err != nil {
-		t.Fatalf("failed waiting deployment %s to scale to %d: %v", defaultName, newReplicas, err)
+		t.Fatalf("failed waiting deployment of ingresscontroller %s to scale to %d: %v", name, newReplicas, err)
 	}
 
 	// Ensure the ingresscontroller remains available
-	if err := waitForIngressControllerCondition(t, kclient, 2*time.Minute, defaultName, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 2*time.Minute, name, availableConditionsForPrivateIngressController...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
 	// Scale back down.
-	scale, err = scaleClient.Scales(defaultName.Namespace).Get(context.TODO(), resource, defaultName.Name, metav1.GetOptions{})
+	scale, err = scaleClient.Scales(name.Namespace).Get(context.TODO(), resource, name.Name, metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("failed to get updated scale of ClusterIngress: %v", err)
 	}
+
 	scale.Spec.Replicas = originalReplicas
-	updatedScale, err = scaleClient.Scales(defaultName.Namespace).Update(context.TODO(), resource, scale, metav1.UpdateOptions{})
+	updatedScale, err = scaleClient.Scales(name.Namespace).Update(context.TODO(), resource, scale, metav1.UpdateOptions{})
 	if err != nil {
 		t.Fatalf("failed to scale ingresscontroller down: %v", err)
 	}
+
 	if updatedScale.Spec.Replicas != scale.Spec.Replicas {
-		t.Fatalf("expected scaled-down ingresscontroller's spec.replicas to be %d, got %d", scale.Spec.Replicas, updatedScale.Spec.Replicas)
+		t.Fatalf("expected ingresscontroller %s to have spec.replicas equal to %d, got %d", name, scale.Spec.Replicas, updatedScale.Spec.Replicas)
 	}
 
 	// Wait for the deployment scale down to be observed.
 	if err := waitForAvailableReplicas(t, kclient, ic, 2*time.Minute, originalReplicas); err != nil {
-		t.Fatalf("failed waiting deployment %s to scale to %d: %v", defaultName, originalReplicas, err)
+		t.Fatalf("failed waiting deployment of ingresscontroller %s to scale to %d: %v", name, originalReplicas, err)
 	}
 
 	// Ensure the ingresscontroller remains available
 	// TODO: assert that the conditions hold steady for some amount of time?
-	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, defaultName, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, availableConditionsForPrivateIngressController...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -598,7 +609,7 @@ func TestIngressControllerScale(t *testing.T) {
 	// (see <https://bugzilla.redhat.com/show_bug.cgi?id=1783007>).
 	newRsList := &appsv1.ReplicaSetList{}
 	if err := kclient.List(context.TODO(), newRsList, client.MatchingLabelsSelector{Selector: selector}); err != nil {
-		t.Fatalf("failed to list replicasets for ingresscontroller: %v", err)
+		t.Fatalf("failed to list replicasets for ingresscontroller %s: %v", name, err)
 	}
 	oldRsIds := sets.String{}
 	for _, rs := range oldRsList.Items {
@@ -609,7 +620,7 @@ func TestIngressControllerScale(t *testing.T) {
 		newRsIds.Insert(string(rs.UID))
 	}
 	if !oldRsIds.IsSuperset(newRsIds) {
-		t.Fatalf("scaling the deployment created a new replicaset\nold replicaset list:\n%#v\nnew replicaset list:\n%#v)", oldRsList.Items, newRsList.Items)
+		t.Fatalf("scaling the deployment of ingresscontroller %s created a new replicaset\nold replicaset list:\n%#v\nnew replicaset list:\n%#v)", name, oldRsList.Items, newRsList.Items)
 	}
 }
 
