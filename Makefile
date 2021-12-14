@@ -14,13 +14,6 @@ GO_BUILD_RECIPE=CGO_ENABLED=0 $(GO) build -o $(BIN) $(GO_GCFLAGS) $(MAIN_PACKAGE
 
 TEST ?= .*
 
-include $(addprefix ./vendor/github.com/openshift/build-machinery-go/make/, \
-    targets/openshift/operator/profile-manifests.mk \
-)
-# Adds verification of profile patches through the 'verify' target
-# as well as a way to update manifests via the 'update' target
-$(call add-profile-manifests,manifests,./profile-patches,./manifests)
-
 .PHONY: build
 build:
 	$(GO_BUILD_RECIPE)
@@ -48,6 +41,7 @@ update: crd bindata
 .PHONY: crd
 crd:
 	hack/update-generated-crd.sh
+	hack/update-profile-manifests.sh
 
 .PHONY: test
 test:
@@ -70,6 +64,7 @@ clean:
 verify:
 	hack/verify-gofmt.sh
 	hack/verify-generated-crd.sh
+	hack/verify-profile-manifests.sh
 	hack/verify-generated-bindata.sh
 	hack/verify-deps.sh
 
