@@ -7,8 +7,5 @@ package tools
 
 import (
 	_ "github.com/kevinburke/go-bindata/go-bindata"
-	_ "github.com/openshift/build-machinery-go/make/lib"
-	_ "github.com/openshift/build-machinery-go/make/targets/openshift"
-	_ "github.com/openshift/build-machinery-go/make/targets/openshift/operator"
 	_ "sigs.k8s.io/controller-tools/cmd/controller-gen"
 )
