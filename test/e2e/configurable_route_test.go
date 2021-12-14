@@ -394,7 +394,7 @@ func eventuallyUpdateIngressSpec(t *testing.T, ingressSpec configv1.IngressSpec)
 			return false, err
 		}
 
-		ingress.Spec = ingressSpec
+		ingressSpec.DeepCopyInto(&ingress.Spec)
 
 		if err := kclient.Update(context.TODO(), ingress); err != nil {
 			t.Logf("error updating ingress.spec: %v", err)
@@ -414,7 +414,7 @@ func eventuallyUpdateIngressStatus(t *testing.T, ingressStatus configv1.IngressS
 			return false, nil
 		}
 
-		ingress.Status = ingressStatus
+		ingressStatus.DeepCopyInto(&ingress.Status)
 
 		if err := kclient.Status().Update(context.TODO(), ingress); err != nil {
 			t.Logf("error updating ingress.status: %v", err)
