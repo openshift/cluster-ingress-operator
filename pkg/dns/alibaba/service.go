@@ -52,7 +52,7 @@ func (d *publicZoneService) Add(id, rr, recordType, target string, ttl int64) er
 	if clampedTTL != ttl {
 		log.Info(fmt.Sprintf("record's TTL for public zone must be in the range of 600 to 86400, set it to %d", clampedTTL), "record", rr)
 	}
-	request.TTL = requests.NewInteger64(ttl)
+	request.TTL = requests.NewInteger64(clampedTTL)
 
 	response := alidns.CreateAddDomainRecordResponse()
 	return d.client.DoActionWithSetDomain(request, response)
@@ -76,7 +76,7 @@ func (d *publicZoneService) Update(id, rr, recordType, target string, ttl int64)
 	if clampedTTL != ttl {
 		log.Info(fmt.Sprintf("record's TTL for public zone must be in the range of 600 to 86400, set it to %d", clampedTTL), "record", rr)
 	}
-	request.TTL = requests.NewInteger64(ttl)
+	request.TTL = requests.NewInteger64(clampedTTL)
 
 	response := alidns.CreateUpdateDomainRecordResponse()
 	return d.client.DoActionWithSetDomain(request, response)
@@ -147,7 +147,7 @@ func (p *privateZoneService) Add(zoneName, rr, recordType, target string, ttl in
 	if clampedTTL != ttl {
 		log.Info(fmt.Sprintf("record's TTL for private zone must be in the range of 600 to 86400, set it to %d", clampedTTL), "record", rr)
 	}
-	request.Ttl = requests.NewInteger64(ttl)
+	request.Ttl = requests.NewInteger64(clampedTTL)
 
 	response := pvtz.CreateAddZoneRecordResponse()
 	return p.client.DoActionWithSetDomain(request, response)
@@ -176,7 +176,7 @@ func (p *privateZoneService) Update(zoneName, rr, recordType, target string, ttl
 	if clampedTTL != ttl {
 		log.Info(fmt.Sprintf("record's TTL for private zone must be in the range of 600 to 86400, set it to %d", clampedTTL), "record", rr)
 	}
-	request.Ttl = requests.NewInteger64(ttl)
+	request.Ttl = requests.NewInteger64(clampedTTL)
 
 	response := pvtz.CreateUpdateZoneRecordResponse()
 	return p.client.DoActionWithSetDomain(request, response)
