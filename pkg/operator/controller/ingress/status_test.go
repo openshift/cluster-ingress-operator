@@ -1,6 +1,7 @@
 package ingress
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -486,6 +487,151 @@ func TestComputeIngressDegradedCondition(t *testing.T) {
 		}
 		if actual.Status != test.expectIngressDegradedStatus {
 			t.Errorf("%q: expected status to be %s, got %s", test.name, test.expectIngressDegradedStatus, actual.Status)
+		}
+	}
+}
+
+// TestComputeIngressProgressCondition verifies that
+// computeIngressProgressingCondition returns the expected status condition.
+func TestComputeIngressProgressCondition(t *testing.T) {
+	hostNetworkIngressController := operatorv1.IngressController{
+		Status: operatorv1.IngressControllerStatus{
+			EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.HostNetworkStrategyType,
+			},
+		},
+	}
+	loadBalancerIngressController := operatorv1.IngressController{
+		Status: operatorv1.IngressControllerStatus{
+			EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.LoadBalancerServiceStrategyType,
+			},
+		},
+	}
+	loadBalancerIngressControllerWithInternalScope := operatorv1.IngressController{
+		Status: operatorv1.IngressControllerStatus{
+			EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.LoadBalancerServiceStrategyType,
+				LoadBalancer: &operatorv1.LoadBalancerStrategy{
+					Scope: operatorv1.InternalLoadBalancer,
+				},
+			},
+		},
+	}
+	loadBalancerIngressControllerWithExternalScope := operatorv1.IngressController{
+		Status: operatorv1.IngressControllerStatus{
+			EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.LoadBalancerServiceStrategyType,
+				LoadBalancer: &operatorv1.LoadBalancerStrategy{
+					Scope: operatorv1.ExternalLoadBalancer,
+				},
+			},
+		},
+	}
+	nodePortIngressController := operatorv1.IngressController{
+		Status: operatorv1.IngressControllerStatus{
+			EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.NodePortServiceStrategyType,
+			},
+		},
+	}
+	privateIngressController := operatorv1.IngressController{
+		Status: operatorv1.IngressControllerStatus{
+			EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.PrivateStrategyType,
+			},
+		},
+	}
+	lbService := &corev1.Service{}
+	lbServiceWithInternalScopeOnAWS := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Annotations: map[string]string{
+				awsInternalLBAnnotation: "true",
+			},
+		},
+	}
+	awsPlatformStatus := &configv1.PlatformStatus{
+		Type: configv1.AWSPlatformType,
+	}
+	azurePlatformStatus := &configv1.PlatformStatus{
+		Type: configv1.AzurePlatformType,
+	}
+	tests := []struct {
+		name                        string
+		conditions                  []operatorv1.OperatorCondition
+		ic                          *operatorv1.IngressController
+		service                     *corev1.Service
+		platformStatus              *configv1.PlatformStatus
+		expectStatus                operatorv1.ConditionStatus
+		expectMessageContains       string
+		expectMessageDoesNotContain string
+	}{
+		{
+			name:         "Private",
+			ic:           &privateIngressController,
+			expectStatus: operatorv1.ConditionFalse,
+		},
+		{
+			name:         "NodePortService",
+			ic:           &nodePortIngressController,
+			expectStatus: operatorv1.ConditionFalse,
+		},
+		{
+			name:         "HostNetwork",
+			ic:           &hostNetworkIngressController,
+			expectStatus: operatorv1.ConditionFalse,
+		},
+		{
+			name:         "LoadBalancerService, no service",
+			ic:           &loadBalancerIngressControllerWithExternalScope,
+			expectStatus: operatorv1.ConditionTrue,
+		},
+		{
+			name:         "LoadBalancerService, no status",
+			ic:           &loadBalancerIngressController,
+			expectStatus: operatorv1.ConditionUnknown,
+		},
+		{
+			name:                  "LoadBalancerService, inconsistent scope on AWS",
+			ic:                    &loadBalancerIngressControllerWithInternalScope,
+			service:               lbService,
+			platformStatus:        awsPlatformStatus,
+			expectStatus:          operatorv1.ConditionTrue,
+			expectMessageContains: "delete",
+		},
+		{
+			name:                        "LoadBalancerService, inconsistent scope on Azure",
+			ic:                          &loadBalancerIngressControllerWithInternalScope,
+			service:                     lbService,
+			platformStatus:              azurePlatformStatus,
+			expectStatus:                operatorv1.ConditionTrue,
+			expectMessageDoesNotContain: "delete",
+		},
+		{
+			name:           "LoadBalancerService, internal scope",
+			ic:             &loadBalancerIngressControllerWithInternalScope,
+			service:        lbServiceWithInternalScopeOnAWS,
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionFalse,
+		},
+		{
+			name:           "LoadBalancerService, external scope",
+			ic:             &loadBalancerIngressControllerWithExternalScope,
+			service:        lbService,
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionFalse,
+		},
+	}
+	for _, test := range tests {
+		actual := computeIngressProgressingCondition(test.conditions, test.ic, test.service, test.platformStatus)
+		if actual.Status != test.expectStatus {
+			t.Errorf("%q: expected status to be %s, got %s", test.name, test.expectStatus, actual.Status)
+		}
+		if len(test.expectMessageContains) != 0 && !strings.Contains(actual.Message, test.expectMessageContains) {
+			t.Errorf("%q: expected message to include %q, got %q", test.name, test.expectMessageContains, actual.Message)
+		}
+		if len(test.expectMessageDoesNotContain) != 0 && strings.Contains(actual.Message, test.expectMessageDoesNotContain) {
+			t.Errorf("%q: expected message not to include %q, got %q", test.name, test.expectMessageDoesNotContain, actual.Message)
 		}
 	}
 }

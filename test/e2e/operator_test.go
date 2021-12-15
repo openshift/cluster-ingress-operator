@@ -895,6 +895,179 @@ func TestInternalLoadBalancerGlobalAccessGCP(t *testing.T) {
 	}
 }
 
+// TestScopeChange creates an ingresscontroller with the "LoadBalancerService"
+// endpoint publishing strategy type and verifies that the operator behaves
+// correctly when the ingresscontroller's scope is mutated.  The correct
+// behavior depends on the platform on which the test is running.  On AWS and
+// IBM Cloud, the operator should set the Progressing=True status condition to
+// prompt the administrator to delete the old LoadBalancer service.  On Azure
+// and GCP, the operator should update the LoadBalancer service's annotations.
+//
+// As a special case, if the ingresscontroller's scope has been changed, the
+// "ingress.operator.openshift.io/auto-delete-load-balancer" annotation is set
+// on the ingresscontroller, and the current platform requires deleting and
+// recreating the LoadBalancer service to change its scope, then the operator
+// should delete and recreate the service automatically.
+func TestScopeChange(t *testing.T) {
+	platform := infraConfig.Status.Platform
+	supportedPlatforms := map[configv1.PlatformType]struct{}{
+		configv1.AlibabaCloudPlatformType: {},
+		configv1.AWSPlatformType:          {},
+		configv1.AzurePlatformType:        {},
+		configv1.GCPPlatformType:          {},
+		configv1.IBMCloudPlatformType:     {},
+		configv1.PowerVSPlatformType:      {},
+	}
+	if _, supported := supportedPlatforms[platform]; !supported {
+		t.Skipf("test skipped on platform %q", platform)
+	}
+
+	name := types.NamespacedName{Namespace: operatorNamespace, Name: "scope"}
+	ic := newLoadBalancerController(name, name.Name+"."+dnsConfig.Spec.BaseDomain)
+	ic.Spec.EndpointPublishingStrategy.LoadBalancer = &operatorv1.LoadBalancerStrategy{
+		Scope: operatorv1.ExternalLoadBalancer,
+	}
+	if err := kclient.Create(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to create ingresscontroller: %v", err)
+	}
+	defer assertIngressControllerDeleted(t, kclient, ic)
+
+	// Wait for the load balancer and DNS to be ready.
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	lbService := &corev1.Service{}
+	if err := kclient.Get(context.TODO(), controller.LoadBalancerServiceName(ic), lbService); err != nil {
+		t.Fatalf("failed to get LoadBalancer service: %v", err)
+	}
+
+	if ingresscontroller.IsServiceInternal(lbService) {
+		t.Fatalf("load balancer is internal but should be external")
+	}
+
+	// Change the scope to internal and wait for everything to come back to
+	// normal.
+	if err := kclient.Get(context.TODO(), name, ic); err != nil {
+		t.Fatalf("failed to get ingresscontroller %s: %v", name, err)
+	}
+	ic.Spec.EndpointPublishingStrategy.LoadBalancer.Scope = operatorv1.InternalLoadBalancer
+
+	if err := kclient.Update(context.TODO(), ic); err != nil {
+		t.Fatal(err)
+	}
+
+	switch platform {
+	case configv1.AlibabaCloudPlatformType, configv1.AWSPlatformType, configv1.IBMCloudPlatformType, configv1.PowerVSPlatformType:
+		progressingTrue := operatorv1.OperatorCondition{
+			Type:   operatorv1.OperatorStatusTypeProgressing,
+			Status: operatorv1.ConditionTrue,
+		}
+		if err := waitForIngressControllerCondition(t, kclient, 1*time.Minute, name, progressingTrue); err != nil {
+			t.Fatalf("failed to observe the ingresscontroller report Progressing=True: %v", err)
+		}
+	case configv1.AzurePlatformType, configv1.GCPPlatformType:
+		err := wait.PollImmediate(5*time.Second, 5*time.Minute, func() (bool, error) {
+			service := &corev1.Service{}
+			if err := kclient.Get(context.TODO(), controller.LoadBalancerServiceName(ic), service); err != nil {
+				if errors.IsNotFound(err) {
+					return false, nil
+				}
+				t.Logf("failed to get service %s: %v", controller.LoadBalancerServiceName(ic), err)
+				return false, nil
+			}
+			if ingresscontroller.IsServiceInternal(service) {
+				return true, nil
+			}
+			t.Logf("service is still external: %#v\n", service)
+			return false, nil
+		})
+		if err != nil {
+			t.Fatalf("expected load balancer to become internal: %v", err)
+		}
+	}
+
+	// Change the scope back to external and wait for everything to come
+	// back to normal.
+	if err := kclient.Get(context.TODO(), name, ic); err != nil {
+		t.Fatalf("failed to get ingresscontroller %s: %v", name, err)
+	}
+	ic.Spec.EndpointPublishingStrategy.LoadBalancer.Scope = operatorv1.ExternalLoadBalancer
+
+	if err := kclient.Update(context.TODO(), ic); err != nil {
+		t.Fatal(err)
+	}
+
+	switch platform {
+	case configv1.AWSPlatformType, configv1.IBMCloudPlatformType:
+		progressingFalse := operatorv1.OperatorCondition{
+			Type:   operatorv1.OperatorStatusTypeProgressing,
+			Status: operatorv1.ConditionFalse,
+		}
+		if err := waitForIngressControllerCondition(t, kclient, 1*time.Minute, name, progressingFalse); err != nil {
+			t.Fatalf("failed to observe the ingresscontroller report Progressing=True: %v", err)
+		}
+	case configv1.AzurePlatformType, configv1.GCPPlatformType:
+		err := wait.PollImmediate(5*time.Second, 5*time.Minute, func() (bool, error) {
+			service := &corev1.Service{}
+			if err := kclient.Get(context.TODO(), controller.LoadBalancerServiceName(ic), service); err != nil {
+				if errors.IsNotFound(err) {
+					return false, nil
+				}
+				t.Logf("failed to get ingresscontroller %s: %v", name.Name, err)
+				return false, nil
+			}
+			if ingresscontroller.IsServiceInternal(service) {
+				t.Logf("service is still internal: %#v\n", service)
+				return false, nil
+			}
+			return true, nil
+		})
+		if err != nil {
+			t.Fatalf("expected load balancer to become external: %v", err)
+		}
+	}
+
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	// Annotate the ingresscontroller to tell the operator to automatically
+	// delete and recreate the LoadBalancer service if necessary when the
+	// scope changes, and change the scope.
+	if err := kclient.Get(context.TODO(), name, ic); err != nil {
+		t.Fatalf("failed to get ingresscontroller %s: %v", name, err)
+	}
+	if ic.Annotations == nil {
+		ic.Annotations = map[string]string{}
+	}
+	ic.Annotations["ingress.operator.openshift.io/auto-delete-load-balancer"] = ""
+	ic.Spec.EndpointPublishingStrategy.LoadBalancer.Scope = operatorv1.InternalLoadBalancer
+
+	if err := kclient.Update(context.TODO(), ic); err != nil {
+		t.Fatal(err)
+	}
+
+	err := wait.PollImmediate(5*time.Second, 5*time.Minute, func() (bool, error) {
+		service := &corev1.Service{}
+		if err := kclient.Get(context.TODO(), controller.LoadBalancerServiceName(ic), service); err != nil {
+			if errors.IsNotFound(err) {
+				return false, nil
+			}
+			t.Logf("failed to get service %s: %v", controller.LoadBalancerServiceName(ic), err)
+			return false, nil
+		}
+		if ingresscontroller.IsServiceInternal(service) {
+			return true, nil
+		}
+		t.Logf("service is still external: %#v\n", service)
+		return false, nil
+	})
+	if err != nil {
+		t.Fatalf("expected load balancer to become internal: %v", err)
+	}
+}
+
 // TestNodePortServiceEndpointPublishingStrategy creates an ingresscontroller
 // with the "NodePortService" endpoint publishing strategy type and verifies
 // that the operator creates a router, that the router becomes available, and
