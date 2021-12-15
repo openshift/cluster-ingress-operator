@@ -3,13 +3,8 @@ package dns
 import (
 	"context"
 	"fmt"
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth"
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth/credentials"
-	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth/credentials/provider"
-	"io/ioutil"
 	"os"
 	"reflect"
-	"sync"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
@@ -20,6 +15,7 @@ import (
 	iov1 "github.com/openshift/api/operatoringress/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 	alidns "github.com/openshift/cluster-ingress-operator/pkg/dns/alibaba"
+	aliutil "github.com/openshift/cluster-ingress-operator/pkg/dns/alibaba/util"
 	awsdns "github.com/openshift/cluster-ingress-operator/pkg/dns/aws"
 	azuredns "github.com/openshift/cluster-ingress-operator/pkg/dns/azure"
 	gcpdns "github.com/openshift/cluster-ingress-operator/pkg/dns/gcp"
@@ -70,7 +66,6 @@ const (
 )
 
 var log = logf.Logger.WithName(controllerName)
-var mutex sync.Mutex
 
 func New(mgr manager.Manager, config Config) (runtimecontroller.Controller, error) {
 	reconciler := &reconciler{
@@ -602,26 +597,15 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 			return nil, fmt.Errorf("missing region id in platform status")
 		}
 
-		var privateZones []string
-		if dnsConfig.Spec.PrivateZone != nil {
-			privateZones = append(privateZones, dnsConfig.Spec.PrivateZone.ID)
-		}
-
-		cred, err := fetchAlibabaCredentialsIniFromSecret(creds)
+		cred, err := aliutil.FetchAlibabaCredentialsIniFromSecret(creds)
 		if err != nil {
 			return nil, err
 		}
 
-		c, ok := cred.(*credentials.AccessKeyCredential)
-		if !ok {
-			return nil, fmt.Errorf("failed to convert the credential to an AccessKeyCredential")
-		}
-
 		provider, err := alidns.NewProvider(alidns.Config{
 			Region:       platformStatus.AlibabaCloud.Region,
-			AccessKeyID:  c.AccessKeyId,
-			AccessSecret: c.AccessKeySecret,
-			PrivateZones: privateZones,
+			AccessKeyID:  cred.AccessKeyID,
+			AccessSecret: cred.AccessKeySecret,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create AlibabaCloud DNS manager: %v", err)
@@ -675,33 +659,4 @@ func getIbmDNSProvider(dnsConfig *configv1.DNS, creds *corev1.Secret, cisInstanc
 		return nil, fmt.Errorf("failed to create IBM DNS manager: %v", err)
 	}
 	return provider, nil
-}
-
-// fetchAlibabaCredentialsIniFromSecret fetches secret from credentials and returns the auth credential
-func fetchAlibabaCredentialsIniFromSecret(secret *corev1.Secret) (auth.Credential, error) {
-	creds, ok := secret.Data["credentials"]
-	if !ok {
-		return nil, fmt.Errorf("failed to fetch key 'credentials' in secret data")
-	}
-	f, err := ioutil.TempFile("", "alibaba-creds-*")
-	if err != nil {
-		return nil, err
-	}
-	defer os.Remove(f.Name())
-	defer f.Close()
-
-	_, err = f.Write(creds)
-	if err != nil {
-		return nil, err
-	}
-	// This lock is used to prevent the environment variable from being updated while we
-	// are using the environment variable to call the Alibaba credential provider chain.
-	mutex.Lock()
-	defer mutex.Unlock()
-	os.Setenv(provider.ENVCredentialFile, f.Name())
-	defer os.Unsetenv(provider.ENVCredentialFile)
-	// use Alibaba provider initialization
-	p := provider.NewProfileProvider("default")
-	// return a valid auth credential
-	return p.Resolve()
 }
