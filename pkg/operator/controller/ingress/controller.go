@@ -679,6 +679,7 @@ func (r *reconciler) ensureIngressDeleted(ingress *operatorv1.IngressController)
 
 	// Delete the metrics related to the ingresscontroller
 	DeleteIngressControllerConditionsMetric(ingress)
+	DeleteActiveNLBMetrics(ingress)
 
 	if len(errs) == 0 {
 		// Remove the ingresscontroller finalizer.
@@ -808,6 +809,8 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 	}
 
 	errs = append(errs, r.syncIngressControllerStatus(ci, deployment, pods.Items, lbService, operandEvents.Items, wildcardRecord, dnsConfig, infraConfig))
+
+	SetIngressControllerNLBMetric(ci)
 
 	return retryable.NewMaybeRetryableAggregate(errs)
 }
