@@ -348,7 +348,7 @@ func setDefaultDomain(ic *operatorv1.IngressController, ingressConfig *configv1.
 }
 
 func setDefaultPublishingStrategy(ic *operatorv1.IngressController, infraConfig *configv1.Infrastructure) bool {
-	effectiveStrategy := ic.Spec.EndpointPublishingStrategy
+	effectiveStrategy := ic.Spec.EndpointPublishingStrategy.DeepCopy()
 	if effectiveStrategy == nil {
 		var strategyType operatorv1.EndpointPublishingStrategyType
 		switch infraConfig.Status.Platform {
