@@ -526,3 +526,67 @@ func TestComputeOperatorStatusVersions(t *testing.T) {
 		}
 	}
 }
+
+func TestComputeOperatorUpgradeableCondition(t *testing.T) {
+	testCases := []struct {
+		description                   string
+		ingresscontrollersUpgradeable []bool
+		expectUpgradeable             bool
+	}{
+		{
+			description:                   "no ingresscontrollers exist",
+			ingresscontrollersUpgradeable: []bool{},
+			expectUpgradeable:             true,
+		},
+		{
+			description:                   "no ingresscontrollers are upgradeable",
+			ingresscontrollersUpgradeable: []bool{false, false},
+			expectUpgradeable:             false,
+		},
+		{
+			description:                   "some ingresscontrollers are upgradeable",
+			ingresscontrollersUpgradeable: []bool{false, true},
+			expectUpgradeable:             false,
+		},
+		{
+			description:                   "all ingresscontrollers are upgradeable",
+			ingresscontrollersUpgradeable: []bool{true, true},
+			expectUpgradeable:             true,
+		},
+	}
+
+	for _, tc := range testCases {
+		ingresscontrollers := []operatorv1.IngressController{}
+		for _, upgradeable := range tc.ingresscontrollersUpgradeable {
+			upgradeableStatus := operatorv1.ConditionFalse
+			if upgradeable {
+				upgradeableStatus = operatorv1.ConditionTrue
+			}
+			ic := operatorv1.IngressController{
+				Status: operatorv1.IngressControllerStatus{
+					Conditions: []operatorv1.OperatorCondition{{
+						Type:   "Upgradeable",
+						Status: upgradeableStatus,
+					}},
+				},
+			}
+			ingresscontrollers = append(ingresscontrollers, ic)
+		}
+
+		expected := configv1.ClusterOperatorStatusCondition{
+			Type:   configv1.OperatorUpgradeable,
+			Status: configv1.ConditionFalse,
+		}
+		if tc.expectUpgradeable {
+			expected.Status = configv1.ConditionTrue
+		}
+
+		actual := computeOperatorUpgradeableCondition(ingresscontrollers)
+		conditionsCmpOpts := []cmp.Option{
+			cmpopts.IgnoreFields(configv1.ClusterOperatorStatusCondition{}, "LastTransitionTime", "Reason", "Message"),
+		}
+		if !cmp.Equal(actual, expected, conditionsCmpOpts...) {
+			t.Fatalf("%q: expected %#v, got %#v", tc.description, expected, actual)
+		}
+	}
+}
