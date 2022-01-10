@@ -9,7 +9,6 @@ import (
 
 	"github.com/pkg/errors"
 
-	iov1 "github.com/openshift/api/operatoringress/v1"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
@@ -23,6 +22,7 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
+	iov1 "github.com/openshift/api/operatoringress/v1"
 
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -799,7 +799,7 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		errs = append(errs, fmt.Errorf("failed to list pods in namespace %q: %v", operatorcontroller.DefaultOperatorNamespace, err))
 	}
 
-	errs = append(errs, r.syncIngressControllerStatus(ci, deployment, pods.Items, lbService, operandEvents.Items, wildcardRecord, dnsConfig))
+	errs = append(errs, r.syncIngressControllerStatus(ci, deployment, deploymentRef, pods.Items, lbService, operandEvents.Items, wildcardRecord, dnsConfig, infraConfig))
 
 	return retryable.NewMaybeRetryableAggregate(errs)
 }
@@ -812,7 +812,7 @@ func IsStatusDomainSet(ingress *operatorv1.IngressController) bool {
 	return true
 }
 
-// IsPRoxyProtocolNeeded checks whether proxy protocol is needed based
+// IsProxyProtocolNeeded checks whether proxy protocol is needed based
 // upon the given ic and platform.
 func IsProxyProtocolNeeded(ic *operatorv1.IngressController, platform *configv1.PlatformStatus) (bool, error) {
 	if platform == nil {

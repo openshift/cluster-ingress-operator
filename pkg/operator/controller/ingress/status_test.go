@@ -1212,3 +1212,80 @@ func TestZoneInConfig(t *testing.T) {
 		})
 	}
 }
+
+func TestComputeIngressUpgradeableCondition(t *testing.T) {
+	testCases := []struct {
+		description string
+		mutate      func(*corev1.Service)
+		expect      bool
+	}{
+		{
+			description: "if the service.beta.kubernetes.io/aws-load-balancer-additional-resource-tag stays the same",
+			mutate: func(svc *corev1.Service) {
+				svc.Annotations[awsLBAdditionalResourceTags] = "Key1=Value1"
+			},
+			expect: true,
+		},
+		{
+			description: "if the service.beta.kubernetes.io/aws-load-balancer-additional-resource-tag annotation changes",
+			mutate: func(svc *corev1.Service) {
+				svc.Annotations[awsLBAdditionalResourceTags] = "Key2=Value2"
+			},
+			expect: false,
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			ic := &operatorv1.IngressController{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "default",
+				},
+				Status: operatorv1.IngressControllerStatus{
+					EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+						Type: operatorv1.LoadBalancerServiceStrategyType,
+					},
+				},
+			}
+			trueVar := true
+			deploymentRef := metav1.OwnerReference{
+				APIVersion: "apps/v1",
+				Kind:       "Deployment",
+				Name:       "router-default",
+				UID:        "1",
+				Controller: &trueVar,
+			}
+			platformStatus := &configv1.PlatformStatus{
+				Type: configv1.AWSPlatformType,
+				AWS: &configv1.AWSPlatformStatus{
+					ResourceTags: []configv1.AWSResourceTag{
+						{
+							Key:   "Key1",
+							Value: "Value1",
+						},
+					},
+				},
+			}
+			wantSvc, service, err := desiredLoadBalancerService(ic, deploymentRef, platformStatus)
+			if err != nil {
+				t.Errorf("%q: unexpected error from desiredLoadBalancerService: %v", tc.description, err)
+				return
+			}
+			if !wantSvc {
+				t.Errorf("%q: unexpected false value from desiredLoadBalancerService", tc.description)
+				return
+			}
+			tc.mutate(service)
+
+			expectedStatus := operatorv1.ConditionFalse
+			if tc.expect {
+				expectedStatus = operatorv1.ConditionTrue
+			}
+
+			actual := computeIngressUpgradeableCondition(ic, deploymentRef, service, platformStatus)
+			if actual.Status != expectedStatus {
+				t.Errorf("%q: expected Upgradeable to be %q, got %q", tc.description, expectedStatus, actual.Status)
+			}
+
+		})
+	}
+}
