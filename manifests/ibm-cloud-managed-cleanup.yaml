@@ -1,0 +1,26 @@
+apiVersion: cloudcredential.openshift.io/v1
+kind: CredentialsRequest
+metadata:
+  name: openshift-ingress
+  namespace: openshift-cloud-credential-operator
+  annotations:
+    include.release.openshift.io/ibm-cloud-managed: "true"
+    release.openshift.io/delete: "true"
+---
+apiVersion: cloudcredential.openshift.io/v1
+kind: CredentialsRequest
+metadata:
+  name: openshift-ingress-azure
+  namespace: openshift-cloud-credential-operator
+  annotations:
+    include.release.openshift.io/ibm-cloud-managed: "true"
+    release.openshift.io/delete: "true"
+---
+apiVersion: cloudcredential.openshift.io/v1
+kind: CredentialsRequest
+metadata:
+  name: openshift-ingress-gcp
+  namespace: openshift-cloud-credential-operator
+  annotations:
+    include.release.openshift.io/ibm-cloud-managed: "true"
+    release.openshift.io/delete: "true"
