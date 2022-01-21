@@ -1436,7 +1436,7 @@ func TestGetMIMETypes(t *testing.T) {
 		{[]operatorv1.CompressionMIMEType{"text/html", "<>@,;:[]?."}, "text/html <>@,;:[]?."},
 	}
 	for _, tc := range testCases {
-		output := getMIMETypes(tc.mimeArrayInput)
+		output := GetMIMETypes(tc.mimeArrayInput)
 		if strings.Join(output, " ") != tc.expectedOutput {
 			t.Errorf("Expected %s, got %s", tc.expectedOutput, output)
 		}
