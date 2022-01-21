@@ -127,7 +127,9 @@ func checkRollingUpdateParams(t *testing.T, deployment *appsv1.Deployment, maxUn
 }
 
 func TestDesiredRouterDeployment(t *testing.T) {
-	var one int32 = 1
+	// Expect 2 replicas when spec.replicas is omitted and the infraConfig
+	// does not specify HA.
+	var expectedReplicas int32 = 2
 	ingressConfig := &configv1.Ingress{}
 	ci := &operatorv1.IngressController{
 		ObjectMeta: metav1.ObjectMeta{
@@ -139,7 +141,6 @@ func TestDesiredRouterDeployment(t *testing.T) {
 					"foo": "bar",
 				},
 			},
-			Replicas: &one,
 			RouteSelector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{
 					"baz": "quux",
@@ -189,7 +190,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	if err != nil {
 		t.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %v", ci.Namespace, ci.Name, err)
 	}
-	deployment, err := desiredRouterDeployment(ci, ingressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded, false, nil)
+	deployment, err := desiredRouterDeployment(ci, ingressControllerImage, infraConfig, ingressConfig, apiConfig, networkConfig, proxyNeeded, false, nil)
 	if err != nil {
 		t.Errorf("invalid router Deployment: %v", err)
 	}
@@ -205,8 +206,8 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	if deployment.Spec.Replicas == nil {
 		t.Error("router Deployment has nil replicas")
 	}
-	if *deployment.Spec.Replicas != 1 {
-		t.Errorf("expected replicas to be 1, got %d", *deployment.Spec.Replicas)
+	if *deployment.Spec.Replicas != expectedReplicas {
+		t.Errorf("expected replicas to be %d, got %d", expectedReplicas, *deployment.Spec.Replicas)
 	}
 
 	checkRollingUpdateParams(t, deployment, intstr.FromString("50%"), intstr.FromString("25%"))
@@ -327,6 +328,8 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	checkDeploymentHasEnvVar(t, deployment, RouterEnableCompression, false, "")
 	checkDeploymentHasEnvVar(t, deployment, RouterCompressionMIMETypes, false, "")
 
+	infraConfig.Status.InfrastructureTopology = configv1.SingleReplicaTopologyMode
+	expectedReplicas = 1
 	ci.Spec.Logging = &operatorv1.IngressControllerLogging{
 		Access: &operatorv1.AccessLogging{
 			Destination: operatorv1.LoggingDestination{
@@ -381,8 +384,6 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		{CIDR: "10.0.0.1/8"},
 		{CIDR: "2620:0:2d0:200::7/32"},
 	}
-	var expectedReplicas int32 = 8
-	ci.Spec.Replicas = &expectedReplicas
 	ci.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
 		Raw: []byte(`{"loadBalancingAlgorithm":"random","dynamicConfigManager":"false","maxConnections":-1,"reloadInterval":15}`),
 	}
@@ -396,12 +397,12 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	if err != nil {
 		t.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %v", ci.Namespace, ci.Name, err)
 	}
-	deployment, err = desiredRouterDeployment(ci, ingressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded, false, nil)
+	deployment, err = desiredRouterDeployment(ci, ingressControllerImage, infraConfig, ingressConfig, apiConfig, networkConfig, proxyNeeded, false, nil)
 	if err != nil {
 		t.Errorf("invalid router Deployment: %v", err)
 	}
 	checkDeploymentHash(t, deployment)
-	checkRollingUpdateParams(t, deployment, intstr.FromString("25%"), intstr.FromString("25%"))
+	checkRollingUpdateParams(t, deployment, intstr.FromString("50%"), intstr.FromString("25%"))
 	if deployment.Spec.Template.Spec.HostNetwork != false {
 		t.Error("expected host network to be false")
 	}
@@ -477,6 +478,9 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	checkDeploymentHasEnvVar(t, deployment, RouterEnableCompression, true, "true")
 	checkDeploymentHasEnvVar(t, deployment, RouterCompressionMIMETypes, true, "text/html application/*")
 
+	infraConfig.Status.InfrastructureTopology = configv1.HighlyAvailableTopologyMode
+	expectedReplicas = 8
+	ci.Spec.Replicas = &expectedReplicas
 	// Any value for loadBalancingAlgorithm other than "random" should be
 	// ignored.
 	ci.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
@@ -495,7 +499,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	if err != nil {
 		t.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %v", ci.Namespace, ci.Name, err)
 	}
-	deployment, err = desiredRouterDeployment(ci, ingressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded, false, nil)
+	deployment, err = desiredRouterDeployment(ci, ingressControllerImage, infraConfig, ingressConfig, apiConfig, networkConfig, proxyNeeded, false, nil)
 	if err != nil {
 		t.Errorf("invalid router Deployment: %v", err)
 	}
@@ -528,6 +532,10 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_UNIQUE_ID_HEADER_NAME", true, "unique-id")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_UNIQUE_ID_FORMAT", true, `"%{+X}o %ci:%cp_%fi:%fp_%Ts_%rt:%pid"`)
 
+	// Expect 2 replicas when spec.replicas is omitted and infraConfig
+	// specifies HA.
+	expectedReplicas = 2
+	ci.Spec.Replicas = nil
 	secretName := fmt.Sprintf("secret-%v", time.Now().UnixNano())
 	ci.Spec.DefaultCertificate = &corev1.LocalObjectReference{
 		Name: secretName,
@@ -590,8 +598,6 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		},
 		Tolerations: []corev1.Toleration{toleration},
 	}
-	expectedReplicas = 3
-	ci.Spec.Replicas = &expectedReplicas
 	ci.Status.EndpointPublishingStrategy.Type = operatorv1.HostNetworkStrategyType
 	networkConfig.Status.ClusterNetwork = []configv1.ClusterNetworkEntry{
 		{CIDR: "2620:0:2d0:200::7/32"},
@@ -600,7 +606,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	if err != nil {
 		t.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %v", ci.Namespace, ci.Name, err)
 	}
-	deployment, err = desiredRouterDeployment(ci, ingressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded, false, nil)
+	deployment, err = desiredRouterDeployment(ci, ingressControllerImage, infraConfig, ingressConfig, apiConfig, networkConfig, proxyNeeded, false, nil)
 	if err != nil {
 		t.Errorf("invalid router Deployment: %v", err)
 	}

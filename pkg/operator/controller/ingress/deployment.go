@@ -110,7 +110,7 @@ func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, in
 	if err != nil {
 		return false, nil, fmt.Errorf("failed to determine if proxy protocol is needed for ingresscontroller %s/%s: %v", ci.Namespace, ci.Name, err)
 	}
-	desired, err := desiredRouterDeployment(ci, r.config.IngressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded, haveClientCAConfigmap, clientCAConfigmap)
+	desired, err := desiredRouterDeployment(ci, r.config.IngressControllerImage, infraConfig, ingressConfig, apiConfig, networkConfig, proxyNeeded, haveClientCAConfigmap, clientCAConfigmap)
 	if err != nil {
 		return haveDepl, current, fmt.Errorf("failed to build router deployment: %v", err)
 	}
@@ -203,7 +203,7 @@ func HardStopAfterIsEnabled(ic *operatorv1.IngressController, ingressConfig *con
 }
 
 // desiredRouterDeployment returns the desired router deployment.
-func desiredRouterDeployment(ci *operatorv1.IngressController, ingressControllerImage string, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer, networkConfig *configv1.Network, proxyNeeded bool, haveClientCAConfigmap bool, clientCAConfigmap *corev1.ConfigMap) (*appsv1.Deployment, error) {
+func desiredRouterDeployment(ci *operatorv1.IngressController, ingressControllerImage string, infraConfig *configv1.Infrastructure, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer, networkConfig *configv1.Network, proxyNeeded bool, haveClientCAConfigmap bool, clientCAConfigmap *corev1.ConfigMap) (*appsv1.Deployment, error) {
 	deployment := manifests.RouterDeployment()
 	name := controller.RouterDeploymentName(ci)
 	deployment.Name = name.Name
@@ -236,6 +236,9 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	routerVolumeMounts := deployment.Spec.Template.Spec.Containers[0].VolumeMounts
 
 	var desiredReplicas int32 = 2
+	if infraConfig.Status.InfrastructureTopology == configv1.SingleReplicaTopologyMode {
+		desiredReplicas = 1
+	}
 	if ci.Spec.Replicas != nil {
 		desiredReplicas = *ci.Spec.Replicas
 	}
