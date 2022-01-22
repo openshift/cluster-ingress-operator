@@ -11,12 +11,13 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
-	iov1 "github.com/openshift/api/operatoringress/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/retryableerror"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
+	iov1 "github.com/openshift/api/operatoringress/v1"
+
 	oputil "github.com/openshift/cluster-ingress-operator/pkg/util"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -25,6 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	utilclock "k8s.io/apimachinery/pkg/util/clock"
+	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
@@ -44,7 +46,7 @@ type expectedCondition struct {
 
 // syncIngressControllerStatus computes the current status of ic and
 // updates status upon any changes since last sync.
-func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressController, deployment *appsv1.Deployment, pods []corev1.Pod, service *corev1.Service, operandEvents []corev1.Event, wildcardRecord *iov1.DNSRecord, dnsConfig *configv1.DNS, infraConfig *configv1.Infrastructure) error {
+func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressController, deployment *appsv1.Deployment, deploymentRef metav1.OwnerReference, pods []corev1.Pod, service *corev1.Service, operandEvents []corev1.Event, wildcardRecord *iov1.DNSRecord, dnsConfig *configv1.DNS, infraConfig *configv1.Infrastructure) error {
 	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
 	if err != nil {
 		return fmt.Errorf("deployment has invalid spec.selector: %v", err)
@@ -72,6 +74,8 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	errs = append(errs, err)
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressProgressingCondition(updated.Status.Conditions, ic, service, platform))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, degradedCondition)
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressUpgradeableCondition(ic, deploymentRef, service, platform))
+
 	updated.Status.Conditions = PruneConditions(updated.Status.Conditions)
 
 	if !IngressStatusesEqual(updated.Status, ic.Status) {
@@ -532,6 +536,31 @@ func computeIngressDegradedCondition(conditions []operatorv1.OperatorCondition, 
 		err = retryableerror.New(errors.New("IngressController may become degraded soon: "+grace), requeueAfter)
 	}
 	return condition, err
+}
+
+// computeIngressUpgradeableCondition computes the IngressController's "Upgradeable" status condition.
+func computeIngressUpgradeableCondition(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference, service *corev1.Service, platform *configv1.PlatformStatus) operatorv1.OperatorCondition {
+	var errs []error
+
+	if service != nil {
+		errs = append(errs, loadBalancerServiceIsUpgradeable(ic, deploymentRef, service, platform))
+	}
+
+	if err := kerrors.NewAggregate(errs); err != nil {
+		return operatorv1.OperatorCondition{
+			Type:    operatorv1.OperatorStatusTypeUpgradeable,
+			Status:  operatorv1.ConditionFalse,
+			Reason:  "OperandsNotUpgradeable",
+			Message: fmt.Sprintf("One or more managed resources are not upgradeable: %s", err),
+		}
+	}
+
+	return operatorv1.OperatorCondition{
+		Type:    operatorv1.OperatorStatusTypeUpgradeable,
+		Status:  operatorv1.ConditionTrue,
+		Reason:  "Upgradeable",
+		Message: "IngressController is upgradeable.",
+	}
 }
 
 func formatConditions(conditions []*operatorv1.OperatorCondition) string {
