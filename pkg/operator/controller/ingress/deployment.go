@@ -609,9 +609,9 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		// address.  With host networking, probes default to using the
 		// node IP address.  Using localhost avoids potential routing
 		// problems or firewall restrictions.
-		deployment.Spec.Template.Spec.Containers[0].LivenessProbe.Handler.HTTPGet.Host = "localhost"
-		deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.Handler.HTTPGet.Host = "localhost"
-		deployment.Spec.Template.Spec.Containers[0].StartupProbe.Handler.HTTPGet.Host = "localhost"
+		deployment.Spec.Template.Spec.Containers[0].LivenessProbe.ProbeHandler.HTTPGet.Host = "localhost"
+		deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.ProbeHandler.HTTPGet.Host = "localhost"
+		deployment.Spec.Template.Spec.Containers[0].StartupProbe.ProbeHandler.HTTPGet.Host = "localhost"
 		deployment.Spec.Template.Spec.DNSPolicy = corev1.DNSClusterFirstWithHostNet
 	}
 
@@ -1345,14 +1345,14 @@ func hashableProbe(probe *corev1.Probe) *corev1.Probe {
 
 	var hashableProbe corev1.Probe
 
-	if probe.Handler.HTTPGet != nil {
-		hashableProbe.Handler.HTTPGet = &corev1.HTTPGetAction{
-			Path: probe.Handler.HTTPGet.Path,
-			Port: probe.Handler.HTTPGet.Port,
-			Host: probe.Handler.HTTPGet.Host,
+	if probe.ProbeHandler.HTTPGet != nil {
+		hashableProbe.ProbeHandler.HTTPGet = &corev1.HTTPGetAction{
+			Path: probe.ProbeHandler.HTTPGet.Path,
+			Port: probe.ProbeHandler.HTTPGet.Port,
+			Host: probe.ProbeHandler.HTTPGet.Host,
 		}
-		if probe.Handler.HTTPGet.Scheme != "HTTP" {
-			hashableProbe.Handler.HTTPGet.Scheme = probe.Handler.HTTPGet.Scheme
+		if probe.ProbeHandler.HTTPGet.Scheme != "HTTP" {
+			hashableProbe.ProbeHandler.HTTPGet.Scheme = probe.ProbeHandler.HTTPGet.Scheme
 		}
 	}
 	if probe.TimeoutSeconds != int32(1) {
