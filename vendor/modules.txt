@@ -243,7 +243,7 @@ github.com/modern-go/reflect2
 # github.com/oklog/ulid v1.3.1
 ## explicit
 github.com/oklog/ulid
-# github.com/openshift/api v0.0.0-20220121101128-0a830aea20c2
+# github.com/openshift/api v0.0.0-20220121101128-0a830aea20c2 => github.com/Miciah/api v0.0.0-20220121210948-d8ba5065c539
 ## explicit; go 1.16
 github.com/openshift/api
 github.com/openshift/api/apiserver
@@ -1056,3 +1056,4 @@ sigs.k8s.io/structured-merge-diff/v4/value
 # sigs.k8s.io/yaml v1.3.0
 ## explicit; go 1.12
 sigs.k8s.io/yaml
+# github.com/openshift/api => github.com/Miciah/api v0.0.0-20220121210948-d8ba5065c539
