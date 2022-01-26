@@ -12,6 +12,7 @@ approvers:
   - alebedev87
   - lmzuccarelli
   - miheer
+  - gcs278
 reviewers:
   - ironcladlou
   - knobunc
@@ -26,4 +27,5 @@ reviewers:
   - alebedev87
   - lmzuccarelli
   - miheer 
+  - gcs278
 component: Routing
