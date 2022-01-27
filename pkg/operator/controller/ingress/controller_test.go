@@ -124,7 +124,10 @@ func TestSetDefaultPublishingStrategySetsPlatformDefaults(t *testing.T) {
 				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
 					Type: operatorv1.HostNetworkStrategyType,
 					HostNetwork: &operatorv1.HostNetworkStrategy{
-						Protocol: operatorv1.TCPProtocol,
+						Protocol:  operatorv1.TCPProtocol,
+						HTTPPort:  80,
+						HTTPSPort: 443,
+						StatsPort: 1936,
 					},
 				},
 			},
@@ -301,7 +304,21 @@ func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
 			return &operatorv1.EndpointPublishingStrategy{
 				Type: operatorv1.HostNetworkStrategyType,
 				HostNetwork: &operatorv1.HostNetworkStrategy{
-					Protocol: proto,
+					Protocol:  proto,
+					HTTPPort:  80,
+					HTTPSPort: 443,
+					StatsPort: 1936,
+				},
+			}
+		}
+		customHostNetwork = func(httpPort, httpsPort, statsPort int32, protocol operatorv1.IngressControllerProtocol) *operatorv1.EndpointPublishingStrategy {
+			return &operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.HostNetworkStrategyType,
+				HostNetwork: &operatorv1.HostNetworkStrategy{
+					Protocol:  operatorv1.TCPProtocol,
+					HTTPPort:  httpPort,
+					HTTPSPort: httpsPort,
+					StatsPort: statsPort,
 				},
 			}
 		}
@@ -409,6 +426,30 @@ func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
 			ic:             makeIC(spec(hostNetwork(operatorv1.TCPProtocol)), status(hostNetwork(operatorv1.ProxyProtocol))),
 			expectedResult: true,
 			expectedIC:     makeIC(spec(hostNetwork(operatorv1.TCPProtocol)), status(hostNetwork(operatorv1.TCPProtocol))),
+		},
+		{
+			name:           "hostnetwork ports changed",
+			ic:             makeIC(spec(customHostNetwork(8080, 8443, 8136, operatorv1.TCPProtocol)), status(hostNetwork(operatorv1.TCPProtocol))),
+			expectedResult: true,
+			expectedIC:     makeIC(spec(customHostNetwork(8080, 8443, 8136, operatorv1.TCPProtocol)), status(customHostNetwork(8080, 8443, 8136, operatorv1.TCPProtocol))),
+		},
+		{
+			name:           "hostnetwork ports changed, with status null",
+			ic:             makeIC(spec(customHostNetwork(8080, 8443, 8136, operatorv1.TCPProtocol)), status(hostNetworkWithNull())),
+			expectedResult: true,
+			expectedIC:     makeIC(spec(customHostNetwork(8080, 8443, 8136, operatorv1.TCPProtocol)), status(customHostNetwork(8080, 8443, 8136, operatorv1.TCPProtocol))),
+		},
+		{
+			name:           "hostnetwork ports removed",
+			ic:             makeIC(spec(hostNetwork(operatorv1.TCPProtocol)), status(customHostNetwork(8080, 8443, 8136, operatorv1.TCPProtocol))),
+			expectedResult: true,
+			expectedIC:     makeIC(spec(hostNetwork(operatorv1.TCPProtocol)), status(hostNetwork(operatorv1.TCPProtocol))),
+		},
+		{
+			name:           "hostnetwork ports removed, with spec null",
+			ic:             makeIC(spec(hostNetworkWithNull()), status(customHostNetwork(8080, 8443, 8136, operatorv1.TCPProtocol))),
+			expectedResult: true,
+			expectedIC:     makeIC(spec(hostNetworkWithNull()), status(hostNetwork(operatorv1.TCPProtocol))),
 		},
 	}
 	for _, tc := range testCases {

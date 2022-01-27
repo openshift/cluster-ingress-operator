@@ -25,9 +25,9 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
+	iov1 "github.com/openshift/api/operatoringress/v1"
 	routev1 "github.com/openshift/api/route/v1"
 
-	iov1 "github.com/openshift/api/operatoringress/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
@@ -81,6 +81,13 @@ var (
 		{Type: operatorv1.DNSReadyIngressConditionType, Status: operatorv1.ConditionTrue},
 		{Type: ingresscontroller.IngressControllerAdmittedConditionType, Status: operatorv1.ConditionTrue},
 	}
+	availableConditionsForIngressControllerWithHostNetwork = []operatorv1.OperatorCondition{
+		{Type: ingresscontroller.IngressControllerAdmittedConditionType, Status: operatorv1.ConditionTrue},
+		{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionTrue},
+		{Type: ingresscontroller.IngressControllerDeploymentReplicasAllAvailableConditionType, Status: operatorv1.ConditionTrue},
+		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
+		{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionFalse},
+	}
 	// The ingress canary check status condition only applies to the default ingress controller.
 	defaultAvailableConditions = append(availableConditionsForIngressControllerWithLoadBalancer, operatorv1.OperatorCondition{Type: ingresscontroller.IngressControllerCanaryCheckSuccessConditionType, Status: operatorv1.ConditionTrue})
 )
@@ -89,6 +96,7 @@ var kclient client.Client
 var dnsConfig configv1.DNS
 var infraConfig configv1.Infrastructure
 var operatorNamespace = operatorcontroller.DefaultOperatorNamespace
+var operandNamespace = operatorcontroller.DefaultOperandNamespace
 var defaultName = types.NamespacedName{Namespace: operatorNamespace, Name: manifests.DefaultIngressControllerName}
 var clusterConfigName = types.NamespacedName{Namespace: operatorNamespace, Name: manifests.ClusterIngressConfigName}
 
@@ -755,6 +763,106 @@ func TestHostNetworkEndpointPublishingStrategy(t *testing.T) {
 	if err != nil {
 		t.Errorf("failed to observe expected conditions: %v", err)
 	}
+}
+
+// TestHostNetworkPortBinding creates two ingresscontrollers on the same node
+// with different port bindings and verifies that both routers are available.
+func TestHostNetworkPortBinding(t *testing.T) {
+	// deploy first ingresscontroller with the default port bindings
+	name1 := types.NamespacedName{Namespace: operatorNamespace, Name: "host"}
+	ing1 := newHostNetworkController(name1, name1.Name+"."+dnsConfig.Spec.BaseDomain)
+	if err := kclient.Create(context.TODO(), ing1); err != nil {
+		t.Fatalf("failed to create the first ingresscontroller: %v", err)
+	}
+	defer assertIngressControllerDeleted(t, kclient, ing1)
+
+	err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name1, availableConditionsForIngressControllerWithHostNetwork...)
+	if err != nil {
+		t.Errorf("failed to observe expected conditions for the first ingresscontroller: %v", err)
+	}
+
+	// get first router's single replica
+	pods := &corev1.PodList{}
+	if err := kclient.List(context.TODO(), pods, client.InNamespace(operandNamespace)); err != nil {
+		t.Fatalf("failed to list the first ingresscontroller's PODs: %v", err)
+	}
+	var pod1 *corev1.Pod
+	for _, p := range pods.Items {
+		if strings.HasPrefix(p.Name, "router-"+name1.Name) {
+			pod1 = &p
+			break
+		}
+	}
+	if pod1 == nil {
+		t.Fatal("failed to find the first ingresscontroller's POD")
+	}
+
+	routerContainer := pod1.Spec.Containers[0]
+	assertContainerHasPort(t, routerContainer, "http", 80)
+	assertContainerHasPort(t, routerContainer, "https", 443)
+	assertContainerHasPort(t, routerContainer, "metrics", 1936)
+	if !pod1.Spec.HostNetwork {
+		t.Errorf("pod %s is not running on the host's network", pod1.Name)
+	}
+
+	// create second ingresscontroller on the same node but with different port bindings
+	name2 := types.NamespacedName{Namespace: operatorNamespace, Name: "samehost"}
+	strategy := &operatorv1.HostNetworkStrategy{
+		HTTPPort:  9080,
+		HTTPSPort: 9443,
+		StatsPort: 9936,
+	}
+	// take the node placement of the first router
+	placement := &operatorv1.NodePlacement{
+		Tolerations: pod1.Spec.Tolerations,
+		NodeSelector: &metav1.LabelSelector{
+			MatchLabels: map[string]string{"kubernetes.io/hostname": pod1.Spec.NodeName},
+		},
+	}
+
+	ing2 := newHostNetworkController(name2, name2.Name+"."+dnsConfig.Spec.BaseDomain)
+	ing2.Spec.NodePlacement = placement
+	ing2.Spec.EndpointPublishingStrategy.HostNetwork = strategy
+	if err := kclient.Create(context.TODO(), ing2); err != nil {
+		t.Fatalf("failed to create the second ingresscontroller: %v", err)
+	}
+	defer assertIngressControllerDeleted(t, kclient, ing2)
+
+	err = waitForIngressControllerCondition(t, kclient, 5*time.Minute, name2, availableConditionsForIngressControllerWithHostNetwork...)
+	if err != nil {
+		t.Errorf("failed to observe expected conditions for the second ingresscontroller: %v", err)
+	}
+
+	if err := kclient.List(context.TODO(), pods, client.InNamespace(operandNamespace)); err != nil {
+		t.Fatalf("failed to list the first ingresscontroller's PODs: %v", err)
+	}
+	var pod2 *corev1.Pod
+	for _, p := range pods.Items {
+		if strings.HasPrefix(p.Name, "router-"+name2.Name) {
+			pod2 = &p
+			break
+		}
+	}
+	if pod2 == nil {
+		t.Fatalf("failed to find the second ingresscontroller's POD")
+	}
+	routerContainer = pod2.Spec.Containers[0]
+	assertContainerHasPort(t, routerContainer, "http", 9080)
+	assertContainerHasPort(t, routerContainer, "https", 9443)
+	assertContainerHasPort(t, routerContainer, "metrics", 9936)
+	if !pod2.Spec.HostNetwork {
+		t.Errorf("pod %s is not running on the host's network", pod2.Name)
+	}
+}
+
+func assertContainerHasPort(t *testing.T, container corev1.Container, name string, port int32) {
+	t.Helper()
+	for _, p := range container.Ports {
+		if p.Name == name && p.ContainerPort == port {
+			return
+		}
+	}
+	t.Errorf("container %s does not have port named %q open on %d", container.Name, name, port)
 }
 
 // TestInternalLoadBalancer creates an ingresscontroller with the

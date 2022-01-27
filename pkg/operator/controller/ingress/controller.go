@@ -54,6 +54,9 @@ const (
 
 	routerDefaultHeaderBufferSize           = 32768
 	routerDefaultHeaderBufferMaxRewriteSize = 8192
+	routerDefaultHostNetworkHTTPPort        = 80
+	routerDefaultHostNetworkHTTPSPort       = 443
+	routerDefaultHostNetworkStatsPort       = 1936
 )
 
 var (
@@ -385,6 +388,17 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, infraConfig 
 		if effectiveStrategy.HostNetwork == nil {
 			effectiveStrategy.HostNetwork = &operatorv1.HostNetworkStrategy{}
 		}
+		// explicitly set the default ports if some of them are omitted
+		if effectiveStrategy.HostNetwork.HTTPPort == 0 {
+			effectiveStrategy.HostNetwork.HTTPPort = routerDefaultHostNetworkHTTPPort
+		}
+		if effectiveStrategy.HostNetwork.HTTPSPort == 0 {
+			effectiveStrategy.HostNetwork.HTTPSPort = routerDefaultHostNetworkHTTPSPort
+		}
+		if effectiveStrategy.HostNetwork.StatsPort == 0 {
+			effectiveStrategy.HostNetwork.StatsPort = routerDefaultHostNetworkStatsPort
+		}
+
 		if effectiveStrategy.HostNetwork.Protocol == operatorv1.DefaultProtocol {
 			effectiveStrategy.HostNetwork.Protocol = operatorv1.TCPProtocol
 		}
@@ -441,16 +455,36 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, infraConfig 
 			return true
 		}
 	case operatorv1.HostNetworkStrategyType:
-		// Update if PROXY protocol is turned on or off.
 		if ic.Status.EndpointPublishingStrategy.HostNetwork == nil {
 			ic.Status.EndpointPublishingStrategy.HostNetwork = &operatorv1.HostNetworkStrategy{}
 		}
+
 		statusHN := ic.Status.EndpointPublishingStrategy.HostNetwork
 		specHN := effectiveStrategy.HostNetwork
-		if specHN != nil && specHN.Protocol != statusHN.Protocol {
-			statusHN.Protocol = specHN.Protocol
-			return true
+
+		var changed bool
+		if specHN != nil {
+			// Update if PROXY protocol is turned on or off.
+			if specHN.Protocol != statusHN.Protocol {
+				statusHN.Protocol = specHN.Protocol
+				changed = true
+			}
+
+			// Update if ports have been changed.
+			if specHN.HTTPPort != statusHN.HTTPPort {
+				statusHN.HTTPPort = specHN.HTTPPort
+				changed = true
+			}
+			if specHN.HTTPSPort != statusHN.HTTPSPort {
+				statusHN.HTTPSPort = specHN.HTTPSPort
+				changed = true
+			}
+			if specHN.StatsPort != statusHN.StatsPort {
+				statusHN.StatsPort = specHN.StatsPort
+				changed = true
+			}
 		}
+		return changed
 	}
 
 	return false
