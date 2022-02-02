@@ -1366,14 +1366,14 @@ func TestComputeIngressUpgradeableCondition(t *testing.T) {
 		expect      bool
 	}{
 		{
-			description: "if the service.beta.kubernetes.io/aws-load-balancer-additional-resource-tag stays the same",
+			description: "if the service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags stays the same",
 			mutate: func(svc *corev1.Service) {
 				svc.Annotations[awsLBAdditionalResourceTags] = "Key1=Value1"
 			},
 			expect: true,
 		},
 		{
-			description: "if the service.beta.kubernetes.io/aws-load-balancer-additional-resource-tag annotation changes",
+			description: "if the service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags annotation changes",
 			mutate: func(svc *corev1.Service) {
 				svc.Annotations[awsLBAdditionalResourceTags] = "Key2=Value2"
 			},
