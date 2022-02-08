@@ -59,8 +59,9 @@ func probeRouteEndpoint(route *routev1.Route) error {
 		Transport: &http.Transport{
 			// Use the cluster-wide proxy if it is available in the
 			// pod's environment.
-			Proxy:           http.ProxyFromEnvironment,
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			Proxy:             http.ProxyFromEnvironment,
+			TLSClientConfig:   &tls.Config{InsecureSkipVerify: true},
+			DisableKeepAlives: true, // BZ#2037447
 		},
 	}
 	response, err := client.Do(request)
