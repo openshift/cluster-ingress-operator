@@ -65,6 +65,9 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := c.Watch(&source.Kind{Type: &configv1.ClusterOperator{}}, &handler.EnqueueRequestForObject{}); err != nil {
+		return nil, err
+	}
 	if err := c.Watch(&source.Kind{Type: &operatorv1.IngressController{}}, &handler.EnqueueRequestForObject{}); err != nil {
 		return nil, err
 	}
