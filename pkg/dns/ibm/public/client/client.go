@@ -1,10 +1,12 @@
 package client
 
 import (
-	"github.com/IBM/go-sdk-core/v4/core"
+	"github.com/IBM/go-sdk-core/v5/core"
 	"github.com/IBM/networking-go-sdk/dnsrecordsv1"
 )
 
+// DnsClient is an interface to describe the methods defined in dnsrecordsv1
+// for the purpose of having an interface that we can use in the implementation and test code for cluster-ingress-operator's provider logic.
 type DnsClient interface {
 	ListAllDnsRecords(listAllDnsRecordsOptions *dnsrecordsv1.ListAllDnsRecordsOptions) (result *dnsrecordsv1.ListDnsrecordsResp, response *core.DetailedResponse, err error)
 	CreateDnsRecord(createDnsRecordOptions *dnsrecordsv1.CreateDnsRecordOptions) (result *dnsrecordsv1.DnsrecordResp, response *core.DetailedResponse, err error)

@@ -29,7 +29,7 @@ The authentication types that are appropriate for a particular service may
 vary from service to service. Each authentication type is implemented as an
 Authenticator for consumption by a service. To read more about authenticators
 and how to use them see here:
-https://github.com/IBM/go-sdk-core/blob/master/Authentication.md
+https://github.com/IBM/go-sdk-core/blob/main/Authentication.md
 
 Services
 

@@ -19,7 +19,9 @@ import (
 	awsdns "github.com/openshift/cluster-ingress-operator/pkg/dns/aws"
 	azuredns "github.com/openshift/cluster-ingress-operator/pkg/dns/azure"
 	gcpdns "github.com/openshift/cluster-ingress-operator/pkg/dns/gcp"
-	ibmdns "github.com/openshift/cluster-ingress-operator/pkg/dns/ibm"
+	ibm "github.com/openshift/cluster-ingress-operator/pkg/dns/ibm"
+	ibmprivatedns "github.com/openshift/cluster-ingress-operator/pkg/dns/ibm/private"
+	ibmpublicdns "github.com/openshift/cluster-ingress-operator/pkg/dns/ibm/public"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
@@ -573,14 +575,22 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 			log.Info("using fake DNS provider because cluster's ControlPlaneTopology is External")
 			return &dns.FakeProvider{}, nil
 		}
+
 		var err error
-		cisInstanceCRN := platformStatus.IBMCloud.CISInstanceCRN
-		if cisInstanceCRN == "" {
-			return nil, fmt.Errorf("missing cis instance crn")
-		}
-		dnsProvider, err = getIbmDNSProvider(dnsConfig, creds, cisInstanceCRN, userAgent)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create IBM DNS manager: %v", err)
+		if platformStatus.IBMCloud.CISInstanceCRN != "" {
+			dnsProvider, err = getIbmDNSProvider(dnsConfig, creds, platformStatus.IBMCloud.CISInstanceCRN, userAgent, true)
+			if err != nil {
+				return nil, err
+			}
+		} else if platformStatus.IBMCloud.DNSInstanceCRN != "" {
+			matches := ibm.IBMResourceCRNRegexp.FindStringSubmatch(platformStatus.IBMCloud.DNSInstanceCRN)
+			if len(matches) <= 0 {
+				return nil, fmt.Errorf("CRN does not match expected format: %s", platformStatus.IBMCloud.DNSInstanceCRN)
+			}
+			dnsProvider, err = getIbmDNSProvider(dnsConfig, creds, matches[ibm.IBMResourceCRNRegexp.SubexpIndex("guid")], userAgent, false)
+			if err != nil {
+				return nil, err
+			}
 		}
 	case configv1.PowerVSPlatformType:
 		//Power VS platform will use the ibm dns implementation
@@ -589,7 +599,7 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 		if cisInstanceCRN == "" {
 			return nil, fmt.Errorf("missing cis instance crn")
 		}
-		dnsProvider, err = getIbmDNSProvider(dnsConfig, creds, cisInstanceCRN, userAgent)
+		dnsProvider, err = getIbmDNSProvider(dnsConfig, creds, cisInstanceCRN, userAgent, true)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create IBM DNS manager: %v", err)
 		}
@@ -640,9 +650,8 @@ func (r *reconciler) customCABundle() (string, error) {
 	return caBundle, nil
 }
 
-//getIbmDNSProvider will intialize the IBM DNS provider
-func getIbmDNSProvider(dnsConfig *configv1.DNS, creds *corev1.Secret, cisInstanceCRN, userAgent string) (*ibmdns.Provider,
-	error) {
+// getIbmDNSProvider initializes and returns an IBM DNS provider instance.
+func getIbmDNSProvider(dnsConfig *configv1.DNS, creds *corev1.Secret, instanceID, userAgent string, isPublic bool) (dns.Provider, error) {
 	zones := []string{}
 	if dnsConfig.Spec.PrivateZone != nil {
 		zones = append(zones, dnsConfig.Spec.PrivateZone.ID)
@@ -650,14 +659,28 @@ func getIbmDNSProvider(dnsConfig *configv1.DNS, creds *corev1.Secret, cisInstanc
 	if dnsConfig.Spec.PublicZone != nil {
 		zones = append(zones, dnsConfig.Spec.PublicZone.ID)
 	}
-	provider, err := ibmdns.NewProvider(ibmdns.Config{
-		APIKey:    string(creds.Data["ibmcloud_api_key"]),
-		CISCRN:    cisInstanceCRN,
-		Zones:     zones,
-		UserAgent: userAgent,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create IBM DNS manager: %v", err)
+
+	providerCfg := ibm.Config{
+		APIKey:     string(creds.Data["ibmcloud_api_key"]),
+		InstanceID: instanceID,
+		Zones:      zones,
+		UserAgent:  userAgent,
 	}
-	return provider, nil
+
+	if isPublic {
+		provider, err := ibmpublicdns.NewProvider(providerCfg)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize IBM CIS DNS provider: %w", err)
+		}
+		log.Info("successfully initialized IBM CIS DNS provider")
+		return provider, nil
+	} else {
+		provider, err := ibmprivatedns.NewProvider(providerCfg)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize IBM Cloud DNS Services provider: %w", err)
+		}
+		log.Info("successfully initialized IBM Cloud DNS Services provider")
+		return provider, nil
+	}
+
 }

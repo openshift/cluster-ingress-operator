@@ -1,6 +1,6 @@
 package core
 
-// (C) Copyright IBM Corp. 2019.
+// (C) Copyright IBM Corp. 2019, 2021.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -20,25 +20,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httputil"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
 
-// IamAuthenticator-related constants.
-const (
-	DEFAULT_IAM_URL             = "https://iam.cloud.ibm.com/identity/token"
-	DEFAULT_CONTENT_TYPE        = "application/x-www-form-urlencoded"
-	/* #nosec G101 */
-	REQUEST_TOKEN_GRANT_TYPE    = "urn:ibm:params:oauth:grant-type:apikey"
-	REQUEST_TOKEN_RESPONSE_TYPE = "cloud_iam"
-)
-
-// IamAuthenticator uses an apikey to obtain a suitable bearer token value,
-// and adds the bearer token to requests via an Authorization header
+// IamAuthenticator uses an apikey to obtain an IAM access token,
+// and adds the access token to requests via an Authorization header
 // of the form:
 //
-// 		Authorization: Bearer <bearer-token>
+// 		Authorization: Bearer <access-token>
 //
 type IamAuthenticator struct {
 
@@ -82,10 +75,19 @@ type IamAuthenticator struct {
 
 	// The cached token and expiration time.
 	tokenData *iamTokenData
+
+	// Mutex to make the tokenData field thread safe.
+	tokenDataMutex sync.Mutex
 }
 
 var iamRequestTokenMutex sync.Mutex
 var iamNeedsRefreshMutex sync.Mutex
+
+const (
+	// The default (prod) IAM token server base endpoint address.
+	defaultIamTokenServerEndpoint = "https://iam.cloud.ibm.com"              // #nosec G101
+	iamGrantTypeApiKey            = "urn:ibm:params:oauth:grant-type:apikey" // #nosec G101
+)
 
 // NewIamAuthenticator constructs a new IamAuthenticator instance.
 func NewIamAuthenticator(apikey string, url string, clientId string, clientSecret string,
@@ -108,8 +110,7 @@ func NewIamAuthenticator(apikey string, url string, clientId string, clientSecre
 	return authenticator, nil
 }
 
-// NewIamAuthenticatorFromMap constructs a new IamAuthenticator instance from a
-// map.
+// newIamAuthenticatorFromMap constructs a new IamAuthenticator instance from a map.
 func newIamAuthenticatorFromMap(properties map[string]string) (authenticator *IamAuthenticator, err error) {
 	if properties == nil {
 		return nil, fmt.Errorf(ERRORMSG_PROPS_MAP_NIL)
@@ -130,7 +131,7 @@ func newIamAuthenticatorFromMap(properties map[string]string) (authenticator *Ia
 }
 
 // AuthenticationType returns the authentication type for this authenticator.
-func (IamAuthenticator) AuthenticationType() string {
+func (*IamAuthenticator) AuthenticationType() string {
 	return AUTHTYPE_IAM
 }
 
@@ -141,20 +142,36 @@ func (IamAuthenticator) AuthenticationType() string {
 // 		Authorization: Bearer <bearer-token>
 //
 func (authenticator *IamAuthenticator) Authenticate(request *http.Request) error {
-	token, err := authenticator.getToken()
+	token, err := authenticator.GetToken()
 	if err != nil {
 		return err
 	}
 
-	request.Header.Set("Authorization", fmt.Sprintf(`Bearer %s`, token))
+	request.Header.Set("Authorization", "Bearer "+token)
 	return nil
+}
+
+// getTokenData returns the tokenData field from the authenticator.
+func (authenticator *IamAuthenticator) getTokenData() *iamTokenData {
+	authenticator.tokenDataMutex.Lock()
+	defer authenticator.tokenDataMutex.Unlock()
+
+	return authenticator.tokenData
+}
+
+// setTokenData sets the given iamTokenData to the tokenData field of the authenticator.
+func (authenticator *IamAuthenticator) setTokenData(tokenData *iamTokenData) {
+	authenticator.tokenDataMutex.Lock()
+	defer authenticator.tokenDataMutex.Unlock()
+
+	authenticator.tokenData = tokenData
 }
 
 // Validate the authenticator's configuration.
 //
 // Ensures the ApiKey is valid, and the ClientId and ClientSecret pair are
 // mutually inclusive.
-func (this IamAuthenticator) Validate() error {
+func (this *IamAuthenticator) Validate() error {
 	if this.ApiKey == "" {
 		return fmt.Errorf(ERRORMSG_PROP_MISSING, "ApiKey")
 	}
@@ -180,37 +197,28 @@ func (this IamAuthenticator) Validate() error {
 	return nil
 }
 
-// getToken: returns an access token to be used in an Authorization header.
+// GetToken: returns an access token to be used in an Authorization header.
 // Whenever a new token is needed (when a token doesn't yet exist, needs to be refreshed,
 // or the existing token has expired), a new access token is fetched from the token server.
-func (authenticator *IamAuthenticator) getToken() (string, error) {
-	if authenticator.tokenData == nil || !authenticator.tokenData.isTokenValid() {
+func (authenticator *IamAuthenticator) GetToken() (string, error) {
+	if authenticator.getTokenData() == nil || !authenticator.getTokenData().isTokenValid() {
 		// synchronously request the token
 		err := authenticator.synchronizedRequestToken()
 		if err != nil {
 			return "", err
 		}
-	} else if authenticator.tokenData.needsRefresh() {
+	} else if authenticator.getTokenData().needsRefresh() {
 		// If refresh needed, kick off a go routine in the background to get a new token
-		ch := make(chan error)
-		go func() {
-			ch <- authenticator.getTokenData()
-		}()
-		select {
-		case err := <-ch:
-			if err != nil {
-				return "", err
-			}
-		default:
-		}
+		//nolint: errcheck
+		go authenticator.invokeRequestTokenData()
 	}
 
 	// return an error if the access token is not valid or was not fetched
-	if authenticator.tokenData == nil || authenticator.tokenData.AccessToken == "" {
+	if authenticator.getTokenData() == nil || authenticator.getTokenData().AccessToken == "" {
 		return "", fmt.Errorf("Error while trying to get access token")
 	}
 
-	return authenticator.tokenData.AccessToken, nil
+	return authenticator.getTokenData().AccessToken, nil
 }
 
 // synchronizedRequestToken: synchronously checks if the current token in cache
@@ -220,49 +228,55 @@ func (authenticator *IamAuthenticator) synchronizedRequestToken() error {
 	iamRequestTokenMutex.Lock()
 	defer iamRequestTokenMutex.Unlock()
 	// if cached token is still valid, then just continue to use it
-	if authenticator.tokenData != nil && authenticator.tokenData.isTokenValid() {
+	if authenticator.getTokenData() != nil && authenticator.getTokenData().isTokenValid() {
 		return nil
 	}
 
-	return authenticator.getTokenData()
+	return authenticator.invokeRequestTokenData()
 }
 
-// getTokenData: requests a new token from the access server and
+// invokeRequestTokenData: requests a new token from the access server and
 // unmarshals the token information to the tokenData cache. Returns
 // an error if the token was unable to be fetched, otherwise returns nil
-func (authenticator *IamAuthenticator) getTokenData() error {
+func (authenticator *IamAuthenticator) invokeRequestTokenData() error {
 	tokenResponse, err := authenticator.RequestToken()
 	if err != nil {
 		return err
 	}
 
-	authenticator.tokenData, err = newIamTokenData(tokenResponse)
-	if err != nil {
+	if tokenData, err := newIamTokenData(tokenResponse); err != nil {
 		return err
+	} else {
+		authenticator.setTokenData(tokenData)
 	}
 
 	return nil
 }
 
-// RequestToken: fetches a new access token from the token server.
+// RequestToken fetches a new access token from the token server.
 func (authenticator *IamAuthenticator) RequestToken() (*IamTokenServerResponse, error) {
+	var operationPath = "/identity/token"
+
 	// Use the default IAM URL if one was not specified by the user.
 	url := authenticator.URL
 	if url == "" {
-		url = DEFAULT_IAM_URL
+		url = defaultIamTokenServerEndpoint
+	} else {
+		// Canonicalize the URL by removing the operation path if it was specified by the user.
+		url = strings.TrimSuffix(url, operationPath)
 	}
 
 	builder := NewRequestBuilder(POST)
-	_, err := builder.ConstructHTTPURL(url, nil, nil)
+	_, err := builder.ResolveRequestURL(url, operationPath, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	builder.AddHeader(CONTENT_TYPE, DEFAULT_CONTENT_TYPE).
+	builder.AddHeader(CONTENT_TYPE, "application/x-www-form-urlencoded").
 		AddHeader(Accept, APPLICATION_JSON).
-		AddFormData("grant_type", "", "", REQUEST_TOKEN_GRANT_TYPE).
+		AddFormData("grant_type", "", "", iamGrantTypeApiKey).
 		AddFormData("apikey", "", "", authenticator.ApiKey).
-		AddFormData("response_type", "", "", REQUEST_TOKEN_RESPONSE_TYPE)
+		AddFormData("response_type", "", "", "cloud_iam")
 
 	// Add any optional parameters to the request.
 	if authenticator.Scope != "" {
@@ -301,9 +315,31 @@ func (authenticator *IamAuthenticator) RequestToken() (*IamTokenServerResponse, 
 		}
 	}
 
+	// If debug is enabled, then dump the request.
+	if GetLogger().IsLogLevelEnabled(LevelDebug) {
+		buf, dumpErr := httputil.DumpRequestOut(req, req.Body != nil)
+		if dumpErr == nil {
+			GetLogger().Debug("Request:\n%s\n", RedactSecrets(string(buf)))
+		} else {
+			GetLogger().Debug(fmt.Sprintf("error while attempting to log outbound request: %s", dumpErr.Error()))
+		}
+	}
+
+	GetLogger().Debug("Invoking IAM 'get token' operation: %s", builder.URL)
 	resp, err := authenticator.Client.Do(req)
 	if err != nil {
 		return nil, err
+	}
+	GetLogger().Debug("Returned from IAM 'get token' operation, received status code %d", resp.StatusCode)
+
+	// If debug is enabled, then dump the response.
+	if GetLogger().IsLogLevelEnabled(LevelDebug) {
+		buf, dumpErr := httputil.DumpResponse(resp, req.Body != nil)
+		if dumpErr == nil {
+			GetLogger().Debug("Response:\n%s\n", RedactSecrets(string(buf)))
+		} else {
+			GetLogger().Debug(fmt.Sprintf("error while attempting to log inbound response: %s", dumpErr.Error()))
+		}
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -316,7 +352,13 @@ func (authenticator *IamAuthenticator) RequestToken() (*IamTokenServerResponse, 
 			Headers:    resp.Header,
 			RawResult:  buff.Bytes(),
 		}
-		return nil, NewAuthenticationError(detailedResponse, fmt.Errorf(buff.String()))
+
+		iamErrorMsg := string(detailedResponse.RawResult)
+		if iamErrorMsg == "" {
+			iamErrorMsg =
+				fmt.Sprintf("unexpected status code %d received from IAM token server %s", detailedResponse.StatusCode, builder.URL)
+		}
+		return nil, NewAuthenticationError(detailedResponse, fmt.Errorf(iamErrorMsg))
 	}
 
 	tokenResponse := &IamTokenServerResponse{}
