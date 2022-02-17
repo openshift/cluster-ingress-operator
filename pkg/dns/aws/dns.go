@@ -158,10 +158,10 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 		// in the same region as the Route53 client to find the hosted zone
 		// of managed records.
 		tagConfig = tagConfig.WithRegion(endpoints.UsGovWest1RegionID)
-	case endpoints.UsIsoEast1RegionID:
-		// The resourcetagging API is not available in C2S
+	case endpoints.UsIsoEast1RegionID, endpoints.UsIsobEast1RegionID:
+		// The resourcetagging API is not available in C2S or SC2S
 		tagConfig = nil
-		// Do not override the region in C2s
+		// Do not override the region in C2S or SC2S
 		r53Config = r53Config.WithRegion(region)
 	default:
 		// Since Route 53 is not a regionalized service, the Tagging API will
