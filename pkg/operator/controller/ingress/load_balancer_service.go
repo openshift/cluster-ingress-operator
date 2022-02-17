@@ -205,6 +205,14 @@ func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController,
 				return haveLBS, currentLBService, err
 			}
 		}
+		if updated, err := r.normalizeLoadBalancerServiceAnnotations(currentLBService); err != nil {
+			return true, currentLBService, fmt.Errorf("failed to normalize annotations for load balancer service: %w", err)
+		} else if updated {
+			haveLBS, currentLBService, err = r.currentLoadBalancerService(ci)
+			if err != nil {
+				return haveLBS, currentLBService, err
+			}
+		}
 		if updated, err := r.updateLoadBalancerService(currentLBService, desiredLBService, platform); err != nil {
 			return true, currentLBService, fmt.Errorf("failed to update load balancer service: %v", err)
 		} else if updated {
@@ -385,6 +393,34 @@ func (r *reconciler) deleteLoadBalancerServiceFinalizer(service *corev1.Service)
 	log.Info("removed finalizer from load balancer service", "namespace", service.Namespace, "name", service.Name)
 
 	return true, nil
+}
+
+// normalizeLoadBalancerServiceAnnotations normalizes annotations for the
+// provided LoadBalancer-type service.
+func (r *reconciler) normalizeLoadBalancerServiceAnnotations(service *corev1.Service) (bool, error) {
+	// On AWS, the service.beta.kubernetes.io/aws-load-balancer-internal
+	// annotation can have either the value "0.0.0.0/0" or the value "true"
+	// to indicate that the service load-balancer should be internal.
+	// OpenShift 4.7 and earlier use the value "0.0.0.0/0", and OpenShift
+	// 4.8 and later use the value "true".  A service that was created on an
+	// older cluster might have the value "0.0.0.0/0".  Normalize the value
+	// to ensure that comparisons that use "true" behave as expected.  See
+	// <https://bugzilla.redhat.com/show_bug.cgi?id=2055470>.
+	if v, ok := service.Annotations[awsInternalLBAnnotation]; ok && v == "0.0.0.0/0" {
+		// Mutate a copy to avoid assuming we know where the current one came from
+		// (i.e. it could have been from a cache).
+		updated := service.DeepCopy()
+		updated.Annotations[awsInternalLBAnnotation] = "true"
+		if err := r.client.Update(context.TODO(), updated); err != nil {
+			return false, fmt.Errorf("failed to normalize %s annotation on service %s/%s: %w", awsInternalLBAnnotation, service.Namespace, service.Name, err)
+		}
+
+		log.Info("normalized annotation", "namespace", service.Namespace, "name", service.Name, "annotation", awsInternalLBAnnotation, "old", v, "new", updated.Annotations[awsInternalLBAnnotation])
+
+		return true, nil
+	}
+
+	return false, nil
 }
 
 // finalizeLoadBalancerService removes the "ingress.openshift.io/operator" finalizer
