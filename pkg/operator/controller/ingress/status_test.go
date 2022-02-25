@@ -1,6 +1,12 @@
 package ingress
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
 	"strings"
 	"testing"
 	"time"
@@ -1360,9 +1366,39 @@ func TestZoneInConfig(t *testing.T) {
 }
 
 func TestComputeIngressUpgradeableCondition(t *testing.T) {
+	makeDefaultCertificateSecret := func(cn string, sans []string) *corev1.Secret {
+		key, err := rsa.GenerateKey(rand.Reader, 2048)
+		if err != nil {
+			t.Fatalf("failed to generate key: %v", err)
+		}
+
+		certTemplate := &x509.Certificate{
+			SerialNumber: big.NewInt(1),
+			Subject:      pkix.Name{CommonName: cn},
+			DNSNames:     sans,
+		}
+		cert, err := x509.CreateCertificate(rand.Reader, certTemplate, certTemplate, &key.PublicKey, key)
+		if err != nil {
+			t.Fatalf("failed to generate certificate: %v", err)
+		}
+
+		certData := pem.EncodeToMemory(&pem.Block{
+			Type:  "CERTIFICATE",
+			Bytes: cert,
+		})
+
+		return &corev1.Secret{
+			Data: map[string][]byte{"tls.crt": certData},
+		}
+	}
+	const (
+		ingressDomain  = "apps.foo.com"
+		wildcardDomain = "*." + ingressDomain
+	)
 	testCases := []struct {
 		description string
 		mutate      func(*corev1.Service)
+		secret      *corev1.Secret
 		expect      bool
 	}{
 		{
@@ -1379,6 +1415,16 @@ func TestComputeIngressUpgradeableCondition(t *testing.T) {
 			},
 			expect: false,
 		},
+		{
+			description: "if the default certificate has a SAN",
+			secret:      makeDefaultCertificateSecret(wildcardDomain, []string{wildcardDomain}),
+			expect:      true,
+		},
+		{
+			description: "if the default certificate has no SAN",
+			secret:      makeDefaultCertificateSecret(wildcardDomain, []string{}),
+			expect:      false,
+		},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
@@ -1390,6 +1436,7 @@ func TestComputeIngressUpgradeableCondition(t *testing.T) {
 					EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
 						Type: operatorv1.LoadBalancerServiceStrategyType,
 					},
+					Domain: ingressDomain,
 				},
 			}
 			trueVar := true
@@ -1420,14 +1467,20 @@ func TestComputeIngressUpgradeableCondition(t *testing.T) {
 				t.Errorf("%q: unexpected false value from desiredLoadBalancerService", tc.description)
 				return
 			}
-			tc.mutate(service)
+			if tc.mutate != nil {
+				tc.mutate(service)
+			}
+			secret := tc.secret
+			if secret == nil {
+				secret = makeDefaultCertificateSecret("", []string{wildcardDomain})
+			}
 
 			expectedStatus := operatorv1.ConditionFalse
 			if tc.expect {
 				expectedStatus = operatorv1.ConditionTrue
 			}
 
-			actual := computeIngressUpgradeableCondition(ic, deploymentRef, service, platformStatus)
+			actual := computeIngressUpgradeableCondition(ic, deploymentRef, service, platformStatus, secret)
 			if actual.Status != expectedStatus {
 				t.Errorf("%q: expected Upgradeable to be %q, got %q", tc.description, expectedStatus, actual.Status)
 			}
