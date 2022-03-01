@@ -10,7 +10,6 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
-	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	oputil "github.com/openshift/cluster-ingress-operator/pkg/util"
@@ -19,6 +18,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	configv1 "github.com/openshift/api/config/v1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -161,11 +161,7 @@ func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController,
 	if err != nil {
 		return false, nil, fmt.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %v", ci.Namespace, ci.Name, err)
 	}
-	proxyNeeded, err := IsProxyProtocolNeeded(ci, platform)
-	if err != nil {
-		return false, nil, fmt.Errorf("failed to determine if proxy protocol is proxyNeeded for ingresscontroller %q: %v", ci.Name, err)
-	}
-	wantLBS, desiredLBService, err := desiredLoadBalancerService(ci, deploymentRef, platform, proxyNeeded)
+	wantLBS, desiredLBService, err := desiredLoadBalancerService(ci, deploymentRef, platform)
 	if err != nil {
 		return false, nil, err
 	}
@@ -218,7 +214,7 @@ func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController,
 // ingresscontroller, or nil if an LB service isn't desired. An LB service is
 // desired if the high availability type is Cloud. An LB service will declare an
 // owner reference to the given deployment.
-func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, platform *configv1.PlatformStatus, proxyNeeded bool) (bool, *corev1.Service, error) {
+func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, platform *configv1.PlatformStatus) (bool, *corev1.Service, error) {
 	if ci.Status.EndpointPublishingStrategy.Type != operatorv1.LoadBalancerServiceStrategyType {
 		return false, nil, nil
 	}
@@ -242,8 +238,9 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 	if service.Annotations == nil {
 		service.Annotations = map[string]string{}
 	}
-
-	if proxyNeeded {
+	if proxyNeeded, err := IsProxyProtocolNeeded(ci, platform); err != nil {
+		return false, nil, fmt.Errorf("failed to determine if proxy protocol is proxyNeeded for ingresscontroller %q: %v", ci.Name, err)
+	} else if proxyNeeded {
 		service.Annotations[awsLBProxyProtocolAnnotation] = "*"
 	}
 
@@ -451,9 +448,23 @@ var managedLoadBalancerServiceAnnotations = sets.NewString(
 // loadBalancerServiceChanged checks if the current load balancer service
 // matches the expected and if not returns an updated one.
 func loadBalancerServiceChanged(current, expected *corev1.Service) (bool, *corev1.Service) {
+	// Preserve most fields and annotations.  If a new release of the
+	// operator starts managing an annotation or spec field that it
+	// previously ignored, it could stomp user changes when the user
+	// upgrades the operator to the new release (see
+	// <https://bugzilla.redhat.com/show_bug.cgi?id=1905490>).  In order to
+	// avoid problems, make sure the previous release blocks upgrades when
+	// the user has modified an annotation or spec field that the new
+	// release manages.
+	return loadBalancerServiceAnnotationsChanged(current, expected, managedLoadBalancerServiceAnnotations)
+}
+
+// loadBalancerServiceAnnotationsChanged checks if the annotations on the expected Service
+// match the ones on the current Service.
+func loadBalancerServiceAnnotationsChanged(current, expected *corev1.Service, annotations sets.String) (bool, *corev1.Service) {
 	annotationCmpOpts := []cmp.Option{
 		cmpopts.IgnoreMapEntries(func(k, _ string) bool {
-			return !managedLoadBalancerServiceAnnotations.Has(k)
+			return !annotations.Has(k)
 		}),
 	}
 	if cmp.Equal(current.Annotations, expected.Annotations, annotationCmpOpts...) {
@@ -484,4 +495,50 @@ func loadBalancerServiceChanged(current, expected *corev1.Service) (bool, *corev
 	}
 
 	return true, updated
+}
+
+// IsServiceInternal returns a Boolean indicating whether the provided service
+// is annotated to request an internal load balancer.
+func IsServiceInternal(service *corev1.Service) bool {
+	for dk, dv := range service.Annotations {
+		for _, annotations := range InternalLBAnnotations {
+			for ik, iv := range annotations {
+				if dk == ik && dv == iv {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// loadBalancerServiceTagsModified verifies that none of the managedAnnotations have been changed and also the AWS tags annotation
+func loadBalancerServiceTagsModified(current, expected *corev1.Service) (bool, *corev1.Service) {
+	ignoredAnnotations := managedLoadBalancerServiceAnnotations.Union(sets.NewString(awsLBAdditionalResourceTags))
+	return loadBalancerServiceAnnotationsChanged(current, expected, ignoredAnnotations)
+}
+
+// loadBalancerServiceIsUpgradeable returns an error value indicating if the
+// load balancer service is safe to upgrade.  In particular, if the current
+// service matches the desired service, then the service is upgradeable, and the
+// return value is nil.  Otherwise, if something or someone else has modified
+// the service, then the return value is a non-nil error indicating that the
+// modification must be reverted before upgrading is allowed.
+func loadBalancerServiceIsUpgradeable(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference, current *corev1.Service, platform *configv1.PlatformStatus) error {
+	want, desired, err := desiredLoadBalancerService(ic, deploymentRef, platform)
+	if err != nil {
+		return err
+	}
+
+	if !want {
+		return nil
+	}
+
+	changed, updated := loadBalancerServiceTagsModified(current, desired)
+	if changed {
+		diff := cmp.Diff(current, updated, cmpopts.EquateEmpty())
+		return fmt.Errorf("load balancer service has been modified; changes must be reverted before upgrading: %s", diff)
+	}
+
+	return nil
 }

@@ -291,7 +291,7 @@ func TestDesiredLoadBalancerService(t *testing.T) {
 			t.Errorf("test %q failed; expected IsProxyProtocolNeeded to return %v, got %v", tc.description, tc.proxyNeeded, proxyNeeded)
 		}
 
-		haveSvc, svc, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig.Status.PlatformStatus, proxyNeeded)
+		haveSvc, svc, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig.Status.PlatformStatus)
 		switch {
 		case err != nil:
 			t.Errorf("test %q failed; unexpected error from desiredLoadBalancerService for endpoint publishing strategy type %v: %v", tc.description, tc.strategyType, err)
@@ -641,52 +641,62 @@ func TestLoadBalancerServiceChanged(t *testing.T) {
 			},
 			expect: true,
 		},
+		{
+			description: "if the service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags annotation changes",
+			mutate: func(svc *corev1.Service) {
+				svc.Annotations["service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags"] = "Key3=Value3,Key4=Value4"
+			},
+			expect: false,
+		},
 	}
 
 	for _, tc := range testCases {
-		original := corev1.Service{
-			ObjectMeta: metav1.ObjectMeta{
-				Annotations: map[string]string{
-					"service.beta.kubernetes.io/aws-load-balancer-healthcheck-interval": "5",
-				},
-				Namespace: "openshift-ingress",
-				Name:      "router-original",
-				UID:       "1",
-			},
-			Spec: corev1.ServiceSpec{
-				ClusterIP:             "1.2.3.4",
-				ExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyTypeLocal,
-				HealthCheckNodePort:   int32(33333),
-				Ports: []corev1.ServicePort{
-					{
-						Name:       "http",
-						NodePort:   int32(33334),
-						Port:       int32(80),
-						Protocol:   corev1.ProtocolTCP,
-						TargetPort: intstr.FromString("http"),
+		t.Run(tc.description, func(t *testing.T) {
+			original := corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						"service.beta.kubernetes.io/aws-load-balancer-healthcheck-interval":     "5",
+						"service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags": "Key1=Value1,Key2=Value2",
 					},
-					{
-						Name:       "https",
-						NodePort:   int32(33335),
-						Port:       int32(443),
-						Protocol:   corev1.ProtocolTCP,
-						TargetPort: intstr.FromString("https"),
+					Namespace: "openshift-ingress",
+					Name:      "router-original",
+					UID:       "1",
+				},
+				Spec: corev1.ServiceSpec{
+					ClusterIP:             "1.2.3.4",
+					ExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyTypeLocal,
+					HealthCheckNodePort:   int32(33333),
+					Ports: []corev1.ServicePort{
+						{
+							Name:       "http",
+							NodePort:   int32(33334),
+							Port:       int32(80),
+							Protocol:   corev1.ProtocolTCP,
+							TargetPort: intstr.FromString("http"),
+						},
+						{
+							Name:       "https",
+							NodePort:   int32(33335),
+							Port:       int32(443),
+							Protocol:   corev1.ProtocolTCP,
+							TargetPort: intstr.FromString("https"),
+						},
 					},
+					Selector: map[string]string{
+						"foo": "bar",
+					},
+					Type: corev1.ServiceTypeLoadBalancer,
 				},
-				Selector: map[string]string{
-					"foo": "bar",
-				},
-				Type: corev1.ServiceTypeLoadBalancer,
-			},
-		}
-		mutated := original.DeepCopy()
-		tc.mutate(mutated)
-		if changed, updated := loadBalancerServiceChanged(&original, mutated); changed != tc.expect {
-			t.Errorf("%s, expect loadBalancerServiceChanged to be %t, got %t", tc.description, tc.expect, changed)
-		} else if changed {
-			if changedAgain, _ := loadBalancerServiceChanged(mutated, updated); changedAgain {
-				t.Errorf("%s, loadBalancerServiceChanged does not behave as a fixed point function", tc.description)
 			}
-		}
+			mutated := original.DeepCopy()
+			tc.mutate(mutated)
+			if changed, updated := loadBalancerServiceChanged(&original, mutated); changed != tc.expect {
+				t.Errorf("expected loadBalancerServiceChanged to be %t, got %t", tc.expect, changed)
+			} else if changed {
+				if changedAgain, _ := loadBalancerServiceChanged(mutated, updated); changedAgain {
+					t.Error("loadBalancerServiceChanged does not behave as a fixed point function")
+				}
+			}
+		})
 	}
 }
