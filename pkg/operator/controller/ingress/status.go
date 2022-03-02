@@ -52,6 +52,11 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 		return fmt.Errorf("deployment has invalid spec.selector: %v", err)
 	}
 
+	platform, err := oputil.GetPlatformStatus(r.client, infraConfig)
+	if err != nil {
+		return fmt.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %w", ic.Namespace, ic.Name, err)
+	}
+
 	var errs []error
 
 	updated := ic.DeepCopy()
@@ -68,7 +73,7 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	degradedCondition, err := computeIngressDegradedCondition(updated.Status.Conditions, updated.Name)
 	errs = append(errs, err)
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, degradedCondition)
-	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressUpgradeableCondition(ic, deploymentRef, service, infraConfig.Status.PlatformStatus))
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressUpgradeableCondition(ic, deploymentRef, service, platform))
 	updated.Status.Conditions = PruneConditions(updated.Status.Conditions)
 
 	if !IngressStatusesEqual(updated.Status, ic.Status) {
