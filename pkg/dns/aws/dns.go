@@ -142,15 +142,20 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 	elbConfig := aws.NewConfig().WithRegion(region)
 	tagConfig := aws.NewConfig()
 
+	partition, ok := endpoints.PartitionForRegion(endpoints.DefaultPartitions(), region)
+	if !ok {
+		return nil, fmt.Errorf("Unable to determine partition from region: %q", region)
+	}
+
 	// If the region is in aws china, cn-north-1 or cn-northwest-1, we should:
 	// 1. hard code route53 api endpoint to https://route53.amazonaws.com.cn and region to "cn-northwest-1"
 	//    as route53 is not GA in AWS China and aws sdk didn't have the endpoint.
 	// 2. use the aws china region cn-northwest-1 to setup tagging api correctly instead of "us-east-1"
-	switch region {
-	case endpoints.CnNorth1RegionID, endpoints.CnNorthwest1RegionID:
+	switch partition.ID() {
+	case endpoints.AwsCnPartitionID:
 		tagConfig = tagConfig.WithRegion(endpoints.CnNorthwest1RegionID)
 		r53Config = r53Config.WithRegion(endpoints.CnNorthwest1RegionID).WithEndpoint(chinaRoute53Endpoint)
-	case endpoints.UsGovEast1RegionID, endpoints.UsGovWest1RegionID:
+	case endpoints.AwsUsGovPartitionID:
 		// Route53 for GovCloud uses the "us-gov-west-1" region id:
 		// https://docs.aws.amazon.com/govcloud-us/latest/UserGuide/using-govcloud-endpoints.html
 		r53Config = r53Config.WithRegion(endpoints.UsGovWest1RegionID)
@@ -158,7 +163,7 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 		// in the same region as the Route53 client to find the hosted zone
 		// of managed records.
 		tagConfig = tagConfig.WithRegion(endpoints.UsGovWest1RegionID)
-	case endpoints.UsIsoEast1RegionID, endpoints.UsIsobEast1RegionID:
+	case endpoints.AwsIsoPartitionID, endpoints.AwsIsoBPartitionID:
 		// The resourcetagging API is not available in C2S or SC2S
 		tagConfig = nil
 		// Do not override the region in C2S or SC2S
