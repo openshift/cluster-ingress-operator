@@ -174,6 +174,7 @@ var (
 		configv1.AlibabaCloudPlatformType: {
 			alibabaCloudLBAddressTypeAnnotation: alibabaCloudLBAddressTypeIntranet,
 		},
+		configv1.NutanixPlatformType: nil,
 	}
 
 	// externalLBAnnotations maps platform to the annotation name and value

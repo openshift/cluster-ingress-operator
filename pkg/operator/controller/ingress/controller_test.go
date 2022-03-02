@@ -208,6 +208,11 @@ func TestSetDefaultPublishingStrategySetsPlatformDefaults(t *testing.T) {
 			infraConfig: makeInfra(configv1.VSpherePlatformType),
 			expectedIC:  ingressControllerWithHostNetwork,
 		},
+		{
+			name:        "Nutanix",
+			infraConfig: makeInfra(configv1.NutanixPlatformType),
+			expectedIC:  ingressControllerWithHostNetwork,
+		},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
