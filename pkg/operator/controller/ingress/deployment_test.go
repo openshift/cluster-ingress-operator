@@ -3,6 +3,7 @@ package ingress
 import (
 	"fmt"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -74,6 +75,18 @@ func checkDeploymentDoesNotHaveEnvVar(t *testing.T, deployment *appsv1.Deploymen
 	}
 	if foundValue {
 		t.Errorf("router Deployment has unexpected %s setting: %q", name, actualValue)
+	}
+}
+
+func checkDeploymentHasEnvSorted(t *testing.T, deployment *appsv1.Deployment) {
+	t.Helper()
+
+	env := deployment.Spec.Template.Spec.Containers[0].Env
+	isSorted := sort.SliceIsSorted(env, func(i, j int) bool {
+		return env[i].Name < env[j].Name
+	})
+	if !isSorted {
+		t.Errorf("router Deployment environment variables are unsorted")
 	}
 }
 
@@ -327,6 +340,8 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	checkDeploymentHasEnvVar(t, deployment, RouterEnableCompression, false, "")
 	checkDeploymentHasEnvVar(t, deployment, RouterCompressionMIMETypes, false, "")
 
+	checkDeploymentHasEnvSorted(t, deployment)
+
 	ci.Spec.Logging = &operatorv1.IngressControllerLogging{
 		Access: &operatorv1.AccessLogging{
 			Destination: operatorv1.LoggingDestination{
@@ -477,6 +492,8 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	checkDeploymentHasEnvVar(t, deployment, RouterEnableCompression, true, "true")
 	checkDeploymentHasEnvVar(t, deployment, RouterCompressionMIMETypes, true, "text/html application/*")
 
+	checkDeploymentHasEnvSorted(t, deployment)
+
 	// Any value for loadBalancingAlgorithm other than "random" should be
 	// ignored.
 	ci.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
@@ -527,6 +544,8 @@ func TestDesiredRouterDeployment(t *testing.T) {
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_UNIQUE_ID_HEADER_NAME", true, "unique-id")
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_UNIQUE_ID_FORMAT", true, `"%{+X}o %ci:%cp_%fi:%fp_%Ts_%rt:%pid"`)
+
+	checkDeploymentHasEnvSorted(t, deployment)
 
 	secretName := fmt.Sprintf("secret-%v", time.Now().UnixNano())
 	ci.Spec.DefaultCertificate = &corev1.LocalObjectReference{
@@ -685,6 +704,8 @@ func TestDesiredRouterDeployment(t *testing.T) {
 
 	checkDeploymentHasEnvVar(t, deployment, "ROUTER_H1_CASE_ADJUST", false, "")
 	checkDeploymentHasEnvVar(t, deployment, RouterHardStopAfterEnvName, false, "")
+
+	checkDeploymentHasEnvSorted(t, deployment)
 }
 
 func TestInferTLSProfileSpecFromDeployment(t *testing.T) {
