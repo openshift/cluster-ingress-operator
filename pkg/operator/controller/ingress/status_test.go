@@ -1312,7 +1312,12 @@ func TestComputeIngressUpgradeableCondition(t *testing.T) {
 					},
 				},
 			}
-			wantSvc, service, err := desiredLoadBalancerService(ic, deploymentRef, platformStatus)
+			networkConfig := &configv1.Network{
+				Spec: configv1.NetworkSpec{
+					NetworkType: "OpenShiftSDN",
+				},
+			}
+			wantSvc, service, err := desiredLoadBalancerService(ic, deploymentRef, platformStatus, networkConfig.Spec.NetworkType)
 			if err != nil {
 				t.Errorf("%q: unexpected error from desiredLoadBalancerService: %v", tc.description, err)
 				return
@@ -1334,7 +1339,7 @@ func TestComputeIngressUpgradeableCondition(t *testing.T) {
 				expectedStatus = operatorv1.ConditionTrue
 			}
 
-			actual := computeIngressUpgradeableCondition(ic, deploymentRef, service, platformStatus, secret)
+			actual := computeIngressUpgradeableCondition(ic, deploymentRef, service, platformStatus, networkConfig, secret)
 			if actual.Status != expectedStatus {
 				t.Errorf("%q: expected Upgradeable to be %q, got %q", tc.description, expectedStatus, actual.Status)
 			}

@@ -50,7 +50,7 @@ type expectedCondition struct {
 
 // syncIngressControllerStatus computes the current status of ic and
 // updates status upon any changes since last sync.
-func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressController, deployment *appsv1.Deployment, deploymentRef metav1.OwnerReference, pods []corev1.Pod, service *corev1.Service, operandEvents []corev1.Event, wildcardRecord *iov1.DNSRecord, dnsConfig *configv1.DNS, infraConfig *configv1.Infrastructure) error {
+func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressController, deployment *appsv1.Deployment, deploymentRef metav1.OwnerReference, pods []corev1.Pod, service *corev1.Service, operandEvents []corev1.Event, wildcardRecord *iov1.DNSRecord, dnsConfig *configv1.DNS, infraConfig *configv1.Infrastructure, networkConfig *configv1.Network) error {
 	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
 	if err != nil {
 		return fmt.Errorf("deployment has invalid spec.selector: %v", err)
@@ -83,7 +83,7 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	degradedCondition, err := computeIngressDegradedCondition(updated.Status.Conditions, updated.Name)
 	errs = append(errs, err)
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, degradedCondition)
-	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressUpgradeableCondition(ic, deploymentRef, service, platform, secret))
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressUpgradeableCondition(ic, deploymentRef, service, platform, networkConfig, secret))
 
 	updated.Status.Conditions = PruneConditions(updated.Status.Conditions)
 
@@ -548,13 +548,13 @@ func computeIngressDegradedCondition(conditions []operatorv1.OperatorCondition, 
 }
 
 // computeIngressUpgradeableCondition computes the IngressController's "Upgradeable" status condition.
-func computeIngressUpgradeableCondition(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference, service *corev1.Service, platform *configv1.PlatformStatus, secret *corev1.Secret) operatorv1.OperatorCondition {
+func computeIngressUpgradeableCondition(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference, service *corev1.Service, platform *configv1.PlatformStatus, networkConfig *configv1.Network, secret *corev1.Secret) operatorv1.OperatorCondition {
 	var errs []error
 
 	errs = append(errs, checkDefaultCertificate(secret, "*."+ic.Status.Domain))
 
 	if service != nil {
-		errs = append(errs, loadBalancerServiceIsUpgradeable(ic, deploymentRef, service, platform))
+		errs = append(errs, loadBalancerServiceIsUpgradeable(ic, deploymentRef, service, platform, networkConfig))
 	}
 
 	if err := kerrors.NewAggregate(errs); err != nil {

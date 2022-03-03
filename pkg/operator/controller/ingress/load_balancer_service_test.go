@@ -23,7 +23,9 @@ func TestDesiredLoadBalancerService(t *testing.T) {
 		proxyNeeded          bool
 		expect               bool
 		platformStatus       configv1.PlatformStatus
+		networkType          string
 		expectedResourceTags string
+		expectedETP          string
 	}{
 		{
 			description:  "external classic load balancer with scope for aws platform",
@@ -159,7 +161,8 @@ func TestDesiredLoadBalancerService(t *testing.T) {
 			lbStrategy: operatorv1.LoadBalancerStrategy{
 				Scope: operatorv1.ExternalLoadBalancer,
 			},
-			expect: true,
+			expect:      true,
+			expectedETP: "Cluster",
 		},
 		{
 			description:  "internal load balancer for ibm platform",
@@ -168,7 +171,8 @@ func TestDesiredLoadBalancerService(t *testing.T) {
 			lbStrategy: operatorv1.LoadBalancerStrategy{
 				Scope: operatorv1.InternalLoadBalancer,
 			},
-			expect: true,
+			expect:      true,
+			expectedETP: "Cluster",
 		},
 		{
 			description:  "external load balancer for azure platform",
@@ -254,6 +258,18 @@ func TestDesiredLoadBalancerService(t *testing.T) {
 			},
 			expect: true,
 		},
+		{
+			description:  "external classic load balancer with scope for aws platform using OVN",
+			platform:     configv1.AWSPlatformType,
+			strategyType: operatorv1.LoadBalancerServiceStrategyType,
+			lbStrategy: operatorv1.LoadBalancerStrategy{
+				Scope: operatorv1.ExternalLoadBalancer,
+			},
+			proxyNeeded: true,
+			networkType: string(operatorv1.NetworkTypeOVNKubernetes),
+			expectedETP: "Cluster",
+			expect:      true,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -282,6 +298,14 @@ func TestDesiredLoadBalancerService(t *testing.T) {
 			},
 		}
 		infraConfig.Status.PlatformStatus.Type = tc.platform
+		networkType := tc.networkType
+		if len(networkType) == 0 {
+			networkType = string(operatorv1.NetworkTypeOpenShiftSDN)
+		}
+		expectedETP := tc.expectedETP
+		if len(expectedETP) == 0 {
+			expectedETP = "Local"
+		}
 
 		proxyNeeded, err := IsProxyProtocolNeeded(ic, infraConfig.Status.PlatformStatus)
 		switch {
@@ -291,7 +315,7 @@ func TestDesiredLoadBalancerService(t *testing.T) {
 			t.Errorf("test %q failed; expected IsProxyProtocolNeeded to return %v, got %v", tc.description, tc.proxyNeeded, proxyNeeded)
 		}
 
-		haveSvc, svc, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig.Status.PlatformStatus)
+		haveSvc, svc, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig.Status.PlatformStatus, networkType)
 		switch {
 		case err != nil:
 			t.Errorf("test %q failed; unexpected error from desiredLoadBalancerService for endpoint publishing strategy type %v: %v", tc.description, tc.strategyType, err)
@@ -320,8 +344,10 @@ func TestDesiredLoadBalancerService(t *testing.T) {
 				if err := checkServiceHasAnnotation(svc, awsLBHealthCheckHealthyThresholdAnnotation, true, awsLBHealthCheckHealthyThresholdDefault); err != nil {
 					t.Errorf("annotation check for test %q failed: %v", tc.description, err)
 				}
-				if err := checkServiceHasAnnotation(svc, localWithFallbackAnnotation, true, ""); err != nil {
-					t.Errorf("local-with-fallback annotation check for test %q failed: %v", tc.description, err)
+				if svc.Spec.ExternalTrafficPolicy == "Local" {
+					if err := checkServiceHasAnnotation(svc, localWithFallbackAnnotation, true, ""); err != nil {
+						t.Errorf("local-with-fallback annotation check for test %q failed: %v", tc.description, err)
+					}
 				}
 				classicLB := tc.lbStrategy.ProviderParameters == nil || tc.lbStrategy.ProviderParameters.AWS.Type == operatorv1.AWSClassicLoadBalancer
 				switch {
@@ -392,8 +418,10 @@ func TestDesiredLoadBalancerService(t *testing.T) {
 					t.Errorf("annotation check for test %q failed; unexpected annotation %s", tc.description, azureInternalLBAnnotation)
 				}
 			}
-			if err := checkServiceHasAnnotation(svc, localWithFallbackAnnotation, true, ""); err != nil {
-				t.Errorf("local-with-fallback annotation check for test %q failed: %v", tc.description, err)
+			if svc.Spec.ExternalTrafficPolicy == "Local" {
+				if err := checkServiceHasAnnotation(svc, localWithFallbackAnnotation, true, ""); err != nil {
+					t.Errorf("local-with-fallback annotation check for test %q failed: %v", tc.description, err)
+				}
 			}
 		case configv1.GCPPlatformType:
 			if isInternal {
@@ -406,8 +434,10 @@ func TestDesiredLoadBalancerService(t *testing.T) {
 					t.Errorf("annotation check for test %q failed; unexpected annotation %s", tc.description, gcpLBTypeAnnotation)
 				}
 			}
-			if err := checkServiceHasAnnotation(svc, localWithFallbackAnnotation, true, ""); err != nil {
-				t.Errorf("local-with-fallback annotation check for test %q failed: %v", tc.description, err)
+			if svc.Spec.ExternalTrafficPolicy == "Local" {
+				if err := checkServiceHasAnnotation(svc, localWithFallbackAnnotation, true, ""); err != nil {
+					t.Errorf("local-with-fallback annotation check for test %q failed: %v", tc.description, err)
+				}
 			}
 		case configv1.OpenStackPlatformType:
 			if isInternal {
@@ -420,9 +450,15 @@ func TestDesiredLoadBalancerService(t *testing.T) {
 					t.Errorf("annotation check for test %q failed; unexpected annotation %s", tc.description, openstackInternalLBAnnotation)
 				}
 			}
-			if err := checkServiceHasAnnotation(svc, localWithFallbackAnnotation, true, ""); err != nil {
-				t.Errorf("local-with-fallback annotation check for test %q failed: %v", tc.description, err)
+			if svc.Spec.ExternalTrafficPolicy == "Local" {
+				if err := checkServiceHasAnnotation(svc, localWithFallbackAnnotation, true, ""); err != nil {
+					t.Errorf("local-with-fallback annotation check for test %q failed: %v", tc.description, err)
+				}
 			}
+		}
+
+		if svc != nil && string(svc.Spec.ExternalTrafficPolicy) != expectedETP {
+			t.Errorf("expected spec.externalTrafficPolicy to be %q, got %q", expectedETP, svc.Spec.ExternalTrafficPolicy)
 		}
 	}
 }
