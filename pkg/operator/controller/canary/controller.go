@@ -165,7 +165,12 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		return result, fmt.Errorf("failed to get canary service: %v", err)
 	}
 
-	haveRoute, route, err := r.ensureCanaryRoute(service)
+	ic := &operatorv1.IngressController{}
+	if err := r.client.Get(context.TODO(), request.NamespacedName, ic); err != nil {
+		return result, fmt.Errorf("failed to get ingress controller %s: %v", request.NamespacedName.Name, err)
+	}
+
+	haveRoute, route, err := r.ensureCanaryRoute(service, ic)
 	if err != nil {
 		return result, fmt.Errorf("failed to ensure canary route: %v", err)
 	} else if !haveRoute {
@@ -174,11 +179,6 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 
 	// Get the canary route rotation annotation value
 	// from the default ingress controller.
-	ic := &operatorv1.IngressController{}
-	if err := r.client.Get(context.TODO(), request.NamespacedName, ic); err != nil {
-		return result, fmt.Errorf("failed to get ingress controller %s: %v", request.NamespacedName.Name, err)
-	}
-
 	if val, ok := ic.Annotations[CanaryRouteRotationAnnotation]; ok {
 		v, _ := strconv.ParseBool(val)
 		r.mu.Lock()

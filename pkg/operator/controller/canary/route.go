@@ -3,6 +3,7 @@ package canary
 import (
 	"context"
 	"fmt"
+	operatorv1 "github.com/openshift/api/operator/v1"
 
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
@@ -17,8 +18,8 @@ import (
 )
 
 // ensureCanaryRoute ensures the canary route exists
-func (r *reconciler) ensureCanaryRoute(service *corev1.Service) (bool, *routev1.Route, error) {
-	desired, err := desiredCanaryRoute(service)
+func (r *reconciler) ensureCanaryRoute(service *corev1.Service, ic *operatorv1.IngressController) (bool, *routev1.Route, error) {
+	desired, err := desiredCanaryRoute(service, ic)
 	if err != nil {
 		return false, nil, fmt.Errorf("failed to build canary route: %v", err)
 	}
@@ -116,6 +117,11 @@ func canaryRouteChanged(current, expected *routev1.Route) (bool, *routev1.Route)
 		changed = true
 	}
 
+	if !cmp.Equal(current.ObjectMeta.Labels, expected.ObjectMeta.Labels, cmpopts.EquateEmpty()) {
+		updated.ObjectMeta.Labels = expected.ObjectMeta.Labels
+		changed = true
+	}
+
 	if !changed {
 		return false, nil
 	}
@@ -124,7 +130,7 @@ func canaryRouteChanged(current, expected *routev1.Route) (bool, *routev1.Route)
 
 // desiredCanaryRoute returns the desired canary route read in
 // from manifests
-func desiredCanaryRoute(service *corev1.Service) (*routev1.Route, error) {
+func desiredCanaryRoute(service *corev1.Service, ic *operatorv1.IngressController) (*routev1.Route, error) {
 	route := manifests.CanaryRoute()
 
 	name := controller.CanaryRouteName()
@@ -139,6 +145,13 @@ func desiredCanaryRoute(service *corev1.Service) (*routev1.Route, error) {
 	route.Labels = map[string]string{
 		// associate the route with the canary controller
 		manifests.OwningIngressCanaryCheckLabel: canaryControllerName,
+	}
+
+	// BZ2024946 & BZ2021446: Add ingress controller's route selectors to route labels.
+	if ic.Spec.RouteSelector != nil && ic.Spec.RouteSelector.MatchLabels != nil {
+		for k, v := range ic.Spec.RouteSelector.MatchLabels {
+			route.Labels[k] = v
+		}
 	}
 
 	route.Spec.To.Name = controller.CanaryServiceName().Name

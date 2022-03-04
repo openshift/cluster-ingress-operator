@@ -1,6 +1,7 @@
 package canary
 
 import (
+	operatorv1 "github.com/openshift/api/operator/v1"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -18,8 +19,19 @@ func TestDesiredCanaryRoute(t *testing.T) {
 	daemonsetRef := metav1.OwnerReference{
 		Name: "test",
 	}
+
+	ic := &operatorv1.IngressController{
+		Spec: operatorv1.IngressControllerSpec{
+			RouteSelector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"type": "sharded",
+				},
+			},
+		},
+	}
+
 	service := desiredCanaryService(daemonsetRef)
-	route, err := desiredCanaryRoute(service)
+	route, err := desiredCanaryRoute(service, ic)
 
 	if err != nil {
 		t.Fatalf("desiredCanaryService returned an error: %v", err)
@@ -48,6 +60,10 @@ func TestDesiredCanaryRoute(t *testing.T) {
 
 	expectedLabels := map[string]string{
 		manifests.OwningIngressCanaryCheckLabel: canaryControllerName,
+	}
+	// Add additional ingress controller routeSelector labels as the route should match.
+	for k, v := range ic.Spec.RouteSelector.MatchLabels {
+		expectedLabels[k] = v
 	}
 
 	if !cmp.Equal(route.Labels, expectedLabels) {
@@ -119,7 +135,16 @@ func TestCanaryRouteChanged(t *testing.T) {
 			},
 			expect: true,
 		},
+		{
+			description: "if route ObjectMeta.Labels changes",
+			mutate: func(route *routev1.Route) {
+				route.ObjectMeta.Labels["type"] = "sharded"
+			},
+			expect: true,
+		},
 	}
+
+	ic := &operatorv1.IngressController{}
 
 	daemonsetRef := metav1.OwnerReference{
 		Name: "test",
@@ -127,7 +152,7 @@ func TestCanaryRouteChanged(t *testing.T) {
 	service := desiredCanaryService(daemonsetRef)
 
 	for _, tc := range testCases {
-		original, err := desiredCanaryRoute(service)
+		original, err := desiredCanaryRoute(service, ic)
 		if err != nil {
 			t.Fatalf("desiredCanaryService returned an error: %v", err)
 		}
