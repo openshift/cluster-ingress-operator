@@ -465,6 +465,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		DynamicConfigManager   string `json:"dynamicConfigManager"`
 		MaxConnections         int32  `json:"maxConnections"`
 		ReloadInterval         int32  `json:"reloadInterval"`
+		LoggingLevel           string `json:"loggingLevel"`
 	}
 	if len(ci.Spec.UnsupportedConfigOverrides.Raw) > 0 {
 		if err := json.Unmarshal(ci.Spec.UnsupportedConfigOverrides.Raw, &unsupportedConfigOverrides); err != nil {
@@ -522,6 +523,11 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 			Name:  RouterHAProxyConfigManager,
 			Value: "true",
 		})
+	}
+
+	loggingLevel := unsupportedConfigOverrides.LoggingLevel
+	if loggingLevel == "" {
+		loggingLevel = "info"
 	}
 
 	if len(ci.Status.Domain) > 0 {
@@ -681,7 +687,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 
 			env = append(env,
 				corev1.EnvVar{Name: RouterSyslogAddressEnvName, Value: socketPath},
-				corev1.EnvVar{Name: RouterLogLevelEnvName, Value: "info"},
+				corev1.EnvVar{Name: RouterLogLevelEnvName, Value: loggingLevel},
 			)
 			volumes = append(volumes, rsyslogConfigVolume, rsyslogSocketVolume)
 			routerVolumeMounts = append(routerVolumeMounts, rsyslogSocketVolumeMount)
