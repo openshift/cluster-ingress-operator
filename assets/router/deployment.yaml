@@ -16,6 +16,8 @@ spec:
       priorityClassName: system-cluster-critical
       containers:
         - name: router
+          securityContext:
+            allowPrivilegeEscalation: true
           # image is set at runtime.
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
