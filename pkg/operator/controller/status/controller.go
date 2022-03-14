@@ -122,12 +122,12 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		},
 		{
 			Group:     operatorv1.GroupName,
-			Resource:  "IngressController",
+			Resource:  "ingresscontrollers",
 			Namespace: r.config.Namespace,
 		},
 		{
 			Group:     iov1.GroupVersion.Group,
-			Resource:  "DNSRecord",
+			Resource:  "dnsrecords",
 			Namespace: r.config.Namespace,
 		},
 	}

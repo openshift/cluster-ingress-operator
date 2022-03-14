@@ -13,3 +13,19 @@ status:
   versions:
     - name: operator
       version: "0.0.1-snapshot"
+  relatedObjects:
+    - group: ""
+      name: openshift-ingress-operator
+      resource: namespaces
+    - group: ""
+      name: openshift-ingress
+      resource: namespaces
+    - group: ""
+      name: openshift-ingress-canary
+      resource: namespaces
+    - group: operator.openshift.io
+      namespace: openshift-ingress-operator
+      resource: ingresscontrollers
+    - group: ingress.operator.openshift.io
+      namespace: openshift-ingress-operator
+      resource: dnsrecords
