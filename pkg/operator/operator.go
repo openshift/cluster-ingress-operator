@@ -3,8 +3,15 @@ package operator
 import (
 	"context"
 	"fmt"
-	errorpageconfigmapcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/sync-http-error-code-configmap"
 	"time"
+
+	"github.com/openshift/library-go/pkg/operator/v1helpers"
+
+	errorpageconfigmapcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/sync-http-error-code-configmap"
+	"github.com/openshift/library-go/pkg/operator/onepodpernodeccontroller"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/informers"
+	"k8s.io/client-go/kubernetes"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -96,6 +103,33 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	}); err != nil {
 		return nil, fmt.Errorf("failed to create ingress controller: %v", err)
 	}
+
+	kubeClient, err := kubernetes.NewForConfig(kubeConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create kube client: %w", err)
+	}
+	namespaceInformers := informers.NewSharedInformerFactoryWithOptions(kubeClient, 24*time.Hour, informers.WithNamespace(operatorcontroller.DefaultOperandNamespace))
+	// this only handles the case for the default router which is used for oauth-server, console, and other
+	// platform services.  The scheduler bug will need to be fixed to correct the rest.
+	// Once https://bugzilla.redhat.com/show_bug.cgi?id=2062459 is fixed, this controller can be removed.
+	forcePodSpread := onepodpernodeccontroller.NewOnePodPerNodeController(
+		"spread-default-router-pods",
+		operatorcontroller.DefaultOperandNamespace,
+		operatorcontroller.IngressControllerDeploymentPodSelector(&operatorv1.IngressController{ObjectMeta: metav1.ObjectMeta{Name: "default"}}),
+		30, // minReadySeconds from deployments.apps/router-default
+		events.NewKubeRecorder(kubeClient.CoreV1().Events(config.Namespace), "cluster-ingress-operator", &corev1.ObjectReference{
+			APIVersion: "apps/v1",
+			Kind:       "Deployment",
+			Namespace:  config.Namespace,
+			Name:       "ingress-operator",
+		}),
+		// ingress operator appears to be wired to a namespaced resource
+		v1helpers.NewFakeOperatorClient(&operatorv1.OperatorSpec{ManagementState: operatorv1.Managed}, &operatorv1.OperatorStatus{}, nil),
+		kubeClient,
+		namespaceInformers.Core().V1().Pods(),
+	)
+	go forcePodSpread.Run(context.TODO(), 1)
+	go namespaceInformers.Start(config.Stop)
 
 	// Create and register the configurable route controller with the operator manager.
 	if _, err := configurableroutecontroller.New(mgr, configurableroutecontroller.Config{

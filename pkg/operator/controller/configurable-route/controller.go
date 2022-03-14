@@ -336,7 +336,7 @@ func (r *reconciler) ensureServiceCertKeyPairSecretRole(componentRoute aggregate
 	} else {
 		role.Name = roleList.Items[0].Name
 		role.GenerateName = ""
-		if _, _, err := resourceapply.ApplyRole(r.kclient.RbacV1(), r.eventRecorder, role); err != nil {
+		if _, _, err := resourceapply.ApplyRole(context.TODO(), r.kclient.RbacV1(), r.eventRecorder, role); err != nil {
 			return "", err
 		}
 	}
@@ -372,6 +372,6 @@ func (r *reconciler) ensureServiceCertKeyPairSecretRoleBinding(role *rbacv1.Role
 		},
 	}
 
-	_, _, err := resourceapply.ApplyRoleBinding(r.kclient.RbacV1(), r.eventRecorder, roleBinding)
+	_, _, err := resourceapply.ApplyRoleBinding(context.TODO(), r.kclient.RbacV1(), r.eventRecorder, roleBinding)
 	return err
 }
