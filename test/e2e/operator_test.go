@@ -791,6 +791,43 @@ func TestInternalLoadBalancer(t *testing.T) {
 			t.Fatalf("expected %s=%s, found %s=%s", name, expected, name, actual)
 		}
 	}
+
+	// On AWS, verify that the operator normalizes the
+	// service.beta.kubernetes.io/aws-load-balancer-internal=0.0.0.0/0
+	// annotation to replace "0.0.0.0/0" with "true".  See
+	// <https://bugzilla.redhat.com/show_bug.cgi?id=2055470>.
+	if platform == configv1.AWSPlatformType {
+		const annotation = "service.beta.kubernetes.io/aws-load-balancer-internal"
+
+		// Set the annotation value to "0.0.0.0/0".
+		if err := kclient.Get(context.TODO(), controller.LoadBalancerServiceName(ic), lbService); err != nil {
+			t.Fatalf("failed to get LoadBalancer service: %v", err)
+		}
+		lbService.Annotations[annotation] = "0.0.0.0/0"
+		if err := kclient.Update(context.TODO(), lbService); err != nil {
+			t.Errorf("failed to update LoadBalancer service: %w", err)
+		}
+
+		// Verify that the operator reverts the annotation value to
+		// "true".
+		err := wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
+			if err := kclient.Get(context.TODO(), controller.LoadBalancerServiceName(ic), lbService); err != nil {
+				t.Logf("failed to get LoadBalancer service: %v", err)
+				return false, nil
+			}
+			if v, ok := lbService.Annotations[annotation]; !ok {
+				t.Logf("load balancer has no %q annotation: %v", annotation, lbService.Annotations)
+				return false, nil
+			} else if v != "true" {
+				t.Logf("expected %s=%s, found %s=%s", annotation, "true", annotation, v)
+				return false, nil
+			}
+			return true, nil
+		})
+		if err != nil {
+			t.Errorf("failed to observe expected annotation on load balancer service %s: %w", controller.LoadBalancerServiceName(ic), err)
+		}
+	}
 }
 
 // TestInternalLoadBalancerGlobalAccessGCP creates an ingresscontroller
