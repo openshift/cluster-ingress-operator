@@ -165,7 +165,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		return result, fmt.Errorf("failed to get canary service: %v", err)
 	}
 
-	haveRoute, route, err := r.ensureCanaryRoute(service)
+	haveRoute, _, err := r.ensureCanaryRoute(service)
 	if err != nil {
 		return result, fmt.Errorf("failed to ensure canary route: %v", err)
 	} else if !haveRoute {
@@ -186,13 +186,10 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		r.mu.Unlock()
 	}
 
-	// Start probing the canary route once the canary route
-	// has been admitted.
-	if checkRouteAdmitted(route) {
-		routeProbeRunner.Do(func() {
-			r.startCanaryRoutePolling(r.config.Stop)
-		})
-	}
+	// Start probing the canary route.
+	routeProbeRunner.Do(func() {
+		r.startCanaryRoutePolling(r.config.Stop)
+	})
 
 	return result, nil
 }
@@ -241,6 +238,17 @@ func (r *reconciler) startCanaryRoutePolling(stop <-chan struct{}) error {
 			return
 		} else if !haveRoute {
 			log.Info("canary check route does not exist")
+			if err := r.setCanaryDoesNotExistStatusCondition(); err != nil {
+				log.Error(err, "error updating canary status condition")
+			}
+			return
+		}
+
+		// Don't attempt to probe if route is not actually admitted.
+		if !checkRouteAdmitted(route) {
+			if err := r.setCanaryNotAdmittedStatusCondition(); err != nil {
+				log.Error(err, "error updating canary status condition")
+			}
 			return
 		}
 
@@ -315,6 +323,28 @@ func (r *reconciler) setCanaryPassingStatusCondition() error {
 		Status:  operatorv1.ConditionTrue,
 		Reason:  "CanaryChecksSucceeding",
 		Message: "Canary route checks for the default ingress controller are successful",
+	}
+
+	return r.setCanaryStatusCondition(cond)
+}
+
+func (r *reconciler) setCanaryNotAdmittedStatusCondition() error {
+	cond := operatorv1.OperatorCondition{
+		Type:    ingresscontroller.IngressControllerCanaryCheckSuccessConditionType,
+		Status:  operatorv1.ConditionUnknown,
+		Reason:  "CanaryRouteNotAdmitted",
+		Message: "Canary route is not admitted by the default ingress controller",
+	}
+
+	return r.setCanaryStatusCondition(cond)
+}
+
+func (r *reconciler) setCanaryDoesNotExistStatusCondition() error {
+	cond := operatorv1.OperatorCondition{
+		Type:    ingresscontroller.IngressControllerCanaryCheckSuccessConditionType,
+		Status:  operatorv1.ConditionUnknown,
+		Reason:  "CanaryRouteDoesNotExist",
+		Message: "Canary route does not exist",
 	}
 
 	return r.setCanaryStatusCondition(cond)
