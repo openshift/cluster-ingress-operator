@@ -2,6 +2,8 @@ package ingress
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"reflect"
@@ -12,6 +14,7 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
+	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/retryableerror"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -23,6 +26,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	utilclock "k8s.io/apimachinery/pkg/util/clock"
@@ -52,6 +56,17 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 		return fmt.Errorf("deployment has invalid spec.selector: %v", err)
 	}
 
+	platform, err := oputil.GetPlatformStatus(r.client, infraConfig)
+	if err != nil {
+		return fmt.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %w", ic.Namespace, ic.Name, err)
+	}
+
+	secret := &corev1.Secret{}
+	secretName := controller.RouterEffectiveDefaultCertificateSecretName(ic, deployment.Namespace)
+	if err := r.client.Get(context.TODO(), secretName, secret); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("failed to get the default certificate secret %s for ingresscontroller %s/%s: %w", secretName, ic.Namespace, ic.Name, err)
+	}
+
 	var errs []error
 
 	updated := ic.DeepCopy()
@@ -68,7 +83,8 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	degradedCondition, err := computeIngressDegradedCondition(updated.Status.Conditions, updated.Name)
 	errs = append(errs, err)
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, degradedCondition)
-	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressUpgradeableCondition(ic, deploymentRef, service, infraConfig.Status.PlatformStatus))
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressUpgradeableCondition(ic, deploymentRef, service, platform, secret))
+
 	updated.Status.Conditions = PruneConditions(updated.Status.Conditions)
 
 	if !IngressStatusesEqual(updated.Status, ic.Status) {
@@ -532,8 +548,10 @@ func computeIngressDegradedCondition(conditions []operatorv1.OperatorCondition, 
 }
 
 // computeIngressUpgradeableCondition computes the IngressController's "Upgradeable" status condition.
-func computeIngressUpgradeableCondition(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference, service *corev1.Service, platform *configv1.PlatformStatus) operatorv1.OperatorCondition {
+func computeIngressUpgradeableCondition(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference, service *corev1.Service, platform *configv1.PlatformStatus, secret *corev1.Secret) operatorv1.OperatorCondition {
 	var errs []error
+
+	errs = append(errs, checkDefaultCertificate(secret, "*."+ic.Status.Domain))
 
 	if service != nil {
 		errs = append(errs, loadBalancerServiceIsUpgradeable(ic, deploymentRef, service, platform))
@@ -554,6 +572,50 @@ func computeIngressUpgradeableCondition(ic *operatorv1.IngressController, deploy
 		Reason:  "Upgradeable",
 		Message: "IngressController is upgradeable.",
 	}
+}
+
+// checkDefaultCertificate returns an error value indicating whether the default
+// certificate is safe for upgrades.  In particular, if the current default
+// certificate specifies a Subject Alternative Name (SAN) for the ingress
+// domain, then it is safe to upgrade, and the return value is nil.  Otherwise,
+// if the certificate has a legacy Common Name (CN) for the ingress domain and
+// no SAN for the same, then the return value is an error indicating that the
+// certificate must be replaced by one with a SAN before upgrading is allowed.
+// This check is necessary because OpenShift 4.10 is built using Go 1.17, which
+// rejects certificates without SANs.  Note that this function only checks the
+// validity of the certificate insofar as it affects upgrades.  See
+// <https://bugzilla.redhat.com/show_bug.cgi?id=2057762>.  This check can be
+// removed after OpenShift 4.9, in OpenShift 4.10 or later.
+func checkDefaultCertificate(secret *corev1.Secret, domain string) error {
+	var certData []byte
+	if v, ok := secret.Data["tls.crt"]; !ok {
+		return nil
+	} else {
+		certData = v
+	}
+
+	for len(certData) > 0 {
+		block, data := pem.Decode(certData)
+		if block == nil {
+			break
+		}
+		certData = data
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			continue
+		}
+		foundSAN := false
+		for i := range cert.DNSNames {
+			if cert.DNSNames[i] == domain {
+				foundSAN = true
+			}
+		}
+		if cert.Subject.CommonName == domain && !foundSAN {
+			return fmt.Errorf("certificate in secret %s/%s has legacy Common Name (CN) but has no Subject Alternative Name (SAN) for domain: %s", secret.Namespace, secret.Name, domain)
+		}
+	}
+
+	return nil
 }
 
 func formatConditions(conditions []*operatorv1.OperatorCondition) string {
