@@ -133,12 +133,12 @@ func TestClusterOperatorStatusRelatedObjects(t *testing.T) {
 		},
 		{
 			Group:     operatorv1.GroupName,
-			Resource:  "IngressController",
+			Resource:  "ingresscontrollers",
 			Namespace: operatorNamespace,
 		},
 		{
 			Group:     iov1.GroupVersion.Group,
-			Resource:  "DNSRecord",
+			Resource:  "dnsrecords",
 			Namespace: operatorNamespace,
 		},
 		{
