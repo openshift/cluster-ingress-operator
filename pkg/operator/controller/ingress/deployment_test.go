@@ -312,7 +312,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		{"ROUTER_H1_CASE_ADJUST", false, ""},
 		{"ROUTER_INSPECT_DELAY", false, ""},
 		{"ROUTER_IP_V4_V6_MODE", false, ""},
-		{"ROUTER_LOAD_BALANCE_ALGORITHM", true, "leastconn"},
+		{"ROUTER_LOAD_BALANCE_ALGORITHM", true, "random"},
 		{"ROUTER_LOG_FACILITY", false, ""},
 		{"ROUTER_LOG_LEVEL", false, ""},
 		{"ROUTER_LOG_MAX_LENGTH", false, ""},
@@ -455,7 +455,7 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 	var expectedReplicas int32 = 8
 	ic.Spec.Replicas = &expectedReplicas
 	ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
-		Raw: []byte(`{"loadBalancingAlgorithm":"random","dynamicConfigManager":"false","reloadInterval":15}`),
+		Raw: []byte(`{"loadBalancingAlgorithm":"leastconn","dynamicConfigManager":"false","reloadInterval":15}`),
 	}
 	ic.Spec.HttpErrorCodePages = configv1.ConfigMapNameReference{
 		Name: "my-custom-error-code-pages",
@@ -501,7 +501,7 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 	checkDeploymentHasContainer(t, deployment, operatorv1.ContainerLoggingSidecarContainerName, true)
 	tests := []envData{
 		{"ROUTER_HAPROXY_CONFIG_MANAGER", false, ""},
-		{"ROUTER_LOAD_BALANCE_ALGORITHM", true, "random"},
+		{"ROUTER_LOAD_BALANCE_ALGORITHM", true, "leastconn"},
 		{"ROUTER_TCP_BALANCE_SCHEME", true, "source"},
 		{"ROUTER_MAX_CONNECTIONS", true, "auto"},
 		{"RELOAD_INTERVAL", true, "15s"},
@@ -536,7 +536,7 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 
 	checkDeploymentHasEnvSorted(t, deployment)
 
-	// Any value for loadBalancingAlgorithm other than "random" should be
+	// Any value for loadBalancingAlgorithm other than "leastconn" should be
 	// ignored.
 	ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
 		Raw: []byte(`{"loadBalancingAlgorithm":"source","dynamicConfigManager":"true"}`),
@@ -576,7 +576,7 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 
 	tests = []envData{
 		{"ROUTER_HAPROXY_CONFIG_MANAGER", true, "true"},
-		{"ROUTER_LOAD_BALANCE_ALGORITHM", true, "leastconn"},
+		{"ROUTER_LOAD_BALANCE_ALGORITHM", true, "random"},
 		{"ROUTER_TCP_BALANCE_SCHEME", true, "source"},
 		{"ROUTER_MAX_CONNECTIONS", true, "40000"},
 		{"RELOAD_INTERVAL", true, "5s"},

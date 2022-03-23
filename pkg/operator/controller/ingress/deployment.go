@@ -492,18 +492,20 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	}
 
 	// For non-TLS, edge-terminated, and reencrypt routes, use the
-	// "leastconn" balancing algorithm by default, but allow an unsupported
+	// "random" balancing algorithm by default, but allow an unsupported
 	// config override to override it.  For passthrough routes, use the
 	// "source" balancing algorithm in order to provide some
-	// session-affinity.  This code at one time used "random" as the default
-	// for non-passthrough routes, but we changed it to "leastconn" upon
-	// discovering that "random" incurs significant memory overhead for each
-	// backend that uses it.  See
-	// <https://bugzilla.redhat.com/show_bug.cgi?id=2007581>.
-	loadBalancingAlgorithm := "leastconn"
+	// session-affinity.
+	// We've had issues with "random" in the past due to it incurring significant
+	// memory overhead with large weights on the server lines in haproxy config;
+	// however we mitigated that in openshift-router by effectively setting all
+	// servers lines in "random" backends to weight 1 to avoid incurring extraneous
+	// memory allocations.
+	// Reference: https://issues.redhat.com/browse/NE-709
+	loadBalancingAlgorithm := "random"
 	switch unsupportedConfigOverrides.LoadBalancingAlgorithm {
-	case "random":
-		loadBalancingAlgorithm = "random"
+	case "leastconn":
+		loadBalancingAlgorithm = "leastconn"
 	}
 	env = append(env, corev1.EnvVar{
 		Name:  RouterLoadBalancingAlgorithmEnvName,
