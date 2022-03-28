@@ -665,11 +665,6 @@ func validateClientTLS(ic *operatorv1.IngressController) error {
 // the finalizer.
 func (r *reconciler) ensureIngressDeleted(ingress *operatorv1.IngressController) error {
 	errs := []error{}
-	if svcExists, err := r.finalizeLoadBalancerService(ingress); err != nil {
-		errs = append(errs, fmt.Errorf("failed to finalize load balancer service for ingress %s/%s: %v", ingress.Namespace, ingress.Name, err))
-	} else if svcExists {
-		errs = append(errs, fmt.Errorf("load balancer service exists for ingress %s/%s", ingress.Namespace, ingress.Name))
-	}
 
 	// Delete the wildcard DNS record, and block ingresscontroller finalization
 	// until the dnsrecord has been finalized.

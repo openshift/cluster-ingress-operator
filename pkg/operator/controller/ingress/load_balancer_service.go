@@ -13,7 +13,6 @@ import (
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	oputil "github.com/openshift/cluster-ingress-operator/pkg/util"
-	"github.com/openshift/cluster-ingress-operator/pkg/util/slice"
 
 	corev1 "k8s.io/api/core/v1"
 
@@ -265,14 +264,6 @@ func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController,
 	case !wantLBS && !haveLBS:
 		return false, nil, nil
 	case !wantLBS && haveLBS:
-		if deletedFinalizer, err := r.deleteLoadBalancerServiceFinalizer(currentLBService); err != nil {
-			return true, currentLBService, fmt.Errorf("failed to remove finalizer from load balancer service: %v", err)
-		} else if deletedFinalizer {
-			haveLBS, currentLBService, err = r.currentLoadBalancerService(ci)
-			if err != nil {
-				return haveLBS, currentLBService, err
-			}
-		}
 		if err := r.deleteLoadBalancerService(currentLBService, &crclient.DeleteOptions{}); err != nil {
 			return true, currentLBService, err
 		}
@@ -283,14 +274,6 @@ func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController,
 		}
 		return r.currentLoadBalancerService(ci)
 	case wantLBS && haveLBS:
-		if deletedFinalizer, err := r.deleteLoadBalancerServiceFinalizer(currentLBService); err != nil {
-			return true, currentLBService, fmt.Errorf("failed to remove finalizer from load balancer service: %v", err)
-		} else if deletedFinalizer {
-			haveLBS, currentLBService, err = r.currentLoadBalancerService(ci)
-			if err != nil {
-				return haveLBS, currentLBService, err
-			}
-		}
 		if updated, err := r.normalizeLoadBalancerServiceAnnotations(currentLBService); err != nil {
 			return true, currentLBService, fmt.Errorf("failed to normalize annotations for load balancer service: %w", err)
 		} else if updated {
@@ -468,30 +451,6 @@ func (r *reconciler) currentLoadBalancerService(ci *operatorv1.IngressController
 	return true, service, nil
 }
 
-// deleteLoadBalancerServiceFinalizer removes the
-// "ingress.openshift.io/operator" finalizer from the provided load balancer
-// service.  This finalizer used to be needed for helping with DNS cleanup, but
-// that's no longer necessary.  We just need to clear the finalizer which might
-// exist on existing resources.
-// TODO: Delete this method and all calls to it after 4.8.
-func (r *reconciler) deleteLoadBalancerServiceFinalizer(service *corev1.Service) (bool, error) {
-	if !slice.ContainsString(service.Finalizers, manifests.LoadBalancerServiceFinalizer) {
-		return false, nil
-	}
-
-	// Mutate a copy to avoid assuming we know where the current one came from
-	// (i.e. it could have been from a cache).
-	updated := service.DeepCopy()
-	updated.Finalizers = slice.RemoveString(updated.Finalizers, manifests.LoadBalancerServiceFinalizer)
-	if err := r.client.Update(context.TODO(), updated); err != nil {
-		return false, fmt.Errorf("failed to remove finalizer from service %s/%s: %v", service.Namespace, service.Name, err)
-	}
-
-	log.Info("removed finalizer from load balancer service", "namespace", service.Namespace, "name", service.Name)
-
-	return true, nil
-}
-
 // normalizeLoadBalancerServiceAnnotations normalizes annotations for the
 // provided LoadBalancer-type service.
 func (r *reconciler) normalizeLoadBalancerServiceAnnotations(service *corev1.Service) (bool, error) {
@@ -518,22 +477,6 @@ func (r *reconciler) normalizeLoadBalancerServiceAnnotations(service *corev1.Ser
 	}
 
 	return false, nil
-}
-
-// finalizeLoadBalancerService removes the "ingress.openshift.io/operator" finalizer
-// from the load balancer service of ci. This was for helping with DNS cleanup, but
-// that's no longer necessary. We just need to clear the finalizer which might exist
-// on existing resources.
-func (r *reconciler) finalizeLoadBalancerService(ci *operatorv1.IngressController) (bool, error) {
-	haveLBS, service, err := r.currentLoadBalancerService(ci)
-	if err != nil {
-		return false, err
-	}
-	if !haveLBS {
-		return false, nil
-	}
-	_, err = r.deleteLoadBalancerServiceFinalizer(service)
-	return true, err
 }
 
 // createLoadBalancerService creates a load balancer service.
