@@ -3,6 +3,7 @@ package certificate
 import (
 	"context"
 	"fmt"
+	"reflect"
 
 	"github.com/openshift/library-go/pkg/crypto"
 
@@ -59,8 +60,12 @@ func (r *reconciler) ensureDefaultCertificateForIngress(caSecret *corev1.Secret,
 			return true, nil
 		}
 	case wantCert && haveCert:
-		// TODO Update if CA certificate changed.
-		return true, nil
+		if updated, err := r.updateRouterDefaultCertificate(current, desired); err != nil {
+			return true, fmt.Errorf("failed to update default certificate: %v", err)
+		} else if updated {
+			r.recorder.Eventf(ci, "Normal", "UpdatedDefaultCertificate", "Updated default wildcard certificate %q", desired.Name)
+			return true, nil
+		}
 	}
 	return false, nil
 }
@@ -138,6 +143,20 @@ func (r *reconciler) deleteRouterDefaultCertificate(secret *corev1.Secret) (bool
 		if errors.IsNotFound(err) {
 			return false, nil
 		}
+		return false, err
+	}
+	return true, nil
+}
+
+// updateRouterDefaultCertificate updates a router default certificate secret.
+// Returns true if the secret was newly created, otherwise returns false.
+func (r *reconciler) updateRouterDefaultCertificate(current *corev1.Secret, desired *corev1.Secret) (bool, error) {
+	if reflect.DeepEqual(current.Data, desired.Data) {
+		return false, nil
+	}
+	updated := current.DeepCopy()
+	updated.Data = desired.Data
+	if err := r.client.Update(context.TODO(), updated); err != nil {
 		return false, err
 	}
 	return true, nil
