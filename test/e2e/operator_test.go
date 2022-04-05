@@ -89,6 +89,7 @@ var kclient client.Client
 var dnsConfig configv1.DNS
 var infraConfig configv1.Infrastructure
 var operatorNamespace = operatorcontroller.DefaultOperatorNamespace
+var operandNamespace = operatorcontroller.DefaultOperandNamespace
 var defaultName = types.NamespacedName{Namespace: operatorNamespace, Name: manifests.DefaultIngressControllerName}
 var clusterConfigName = types.NamespacedName{Namespace: operatorNamespace, Name: manifests.ClusterIngressConfigName}
 
@@ -739,7 +740,7 @@ func TestPodDisruptionBudgetExists(t *testing.T) {
 // operator creates a router and that the router becomes available.
 func TestHostNetworkEndpointPublishingStrategy(t *testing.T) {
 	name := types.NamespacedName{Namespace: operatorNamespace, Name: "host"}
-	ing := newHostNetworkController(name, name.Name+"."+dnsConfig.Spec.BaseDomain)
+	ing := newHostNetworkController(name, name.Name+"."+dnsConfig.Spec.BaseDomain, nil, nil)
 	if err := kclient.Create(context.TODO(), ing); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
 	}
@@ -754,6 +755,78 @@ func TestHostNetworkEndpointPublishingStrategy(t *testing.T) {
 	err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, conditions...)
 	if err != nil {
 		t.Errorf("failed to observe expected conditions: %v", err)
+	}
+}
+
+// TestHostNetworkPortBinding creates two ingresscontrollers on the same node
+// with different port bindings and verifies that both routers are available.
+func TestHostNetworkPortBinding(t *testing.T) {
+	// deploy first ingresscontroller with the default port bindings
+	name1 := types.NamespacedName{Namespace: operatorNamespace, Name: "host"}
+	ing1 := newHostNetworkController(name1, name1.Name+"."+dnsConfig.Spec.BaseDomain, nil, nil)
+	if err := kclient.Create(context.TODO(), ing1); err != nil {
+		t.Fatalf("failed to create the first ingresscontroller: %v", err)
+	}
+	defer assertIngressControllerDeleted(t, kclient, ing1)
+
+	conditions := []operatorv1.OperatorCondition{
+		{Type: ingresscontroller.IngressControllerAdmittedConditionType, Status: operatorv1.ConditionTrue},
+		{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionTrue},
+		{Type: "DeploymentReplicasAllAvailable", Status: operatorv1.ConditionTrue},
+		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
+		{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionFalse},
+	}
+	err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name1, conditions...)
+	if err != nil {
+		t.Errorf("failed to observe expected conditions for the first ingresscontroller: %v", err)
+	}
+
+	// get first router's single replica
+	pods := &corev1.PodList{}
+	if err := kclient.List(context.TODO(), pods, client.InNamespace(operandNamespace)); err != nil {
+		t.Fatalf("failed to list the first ingresscontroller's PODs: %v", err)
+	}
+	var pod1 *corev1.Pod
+	for _, p := range pods.Items {
+		if strings.HasPrefix(p.Name, "router-"+name1.Name) {
+			pod1 = &p
+			break
+		}
+	}
+	if pod1 == nil {
+		t.Fatalf("failed to find the first ingresscontroller's POD: %v", err)
+	}
+
+	// create second ingresscontroller on the same node but with different port bindings
+	name2 := types.NamespacedName{Namespace: operatorNamespace, Name: "samehost"}
+	strategy := &operatorv1.HostNetworkStrategy{
+		/*
+		   httpPort: 9080,
+		   httsPort: 9443,
+		   statsPort: 9936,
+		*/
+	}
+	// take the node placement of the first router
+	placement := &operatorv1.NodePlacement{
+		Tolerations: pod1.Spec.Tolerations,
+		NodeSelector: &metav1.LabelSelector{
+			MatchLabels: pod1.Spec.NodeSelector,
+		},
+	}
+	if placement.NodeSelector.MatchLabels == nil {
+		placement.NodeSelector.MatchLabels = map[string]string{}
+	}
+	placement.NodeSelector.MatchLabels["kubernetes.io/hostname"] = pod1.Spec.NodeName
+
+	ing2 := newHostNetworkController(name2, name2.Name+"."+dnsConfig.Spec.BaseDomain, strategy, placement)
+	if err := kclient.Create(context.TODO(), ing2); err != nil {
+		t.Fatalf("failed to create the second ingresscontroller: %v", err)
+	}
+	defer assertIngressControllerDeleted(t, kclient, ing2)
+
+	err = waitForIngressControllerCondition(t, kclient, 5*time.Minute, name2, conditions...)
+	if err != nil {
+		t.Errorf("failed to observe expected conditions for the second ingresscontroller: %v", err)
 	}
 }
 
@@ -2619,9 +2692,9 @@ func newNodePortController(name types.NamespacedName, domain string) *operatorv1
 	}
 }
 
-func newHostNetworkController(name types.NamespacedName, domain string) *operatorv1.IngressController {
+func newHostNetworkController(name types.NamespacedName, domain string, strategy *operatorv1.HostNetworkStrategy, placement *operatorv1.NodePlacement) *operatorv1.IngressController {
 	repl := int32(1)
-	return &operatorv1.IngressController{
+	ig := &operatorv1.IngressController{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: name.Namespace,
 			Name:      name.Name,
@@ -2634,6 +2707,13 @@ func newHostNetworkController(name types.NamespacedName, domain string) *operato
 			},
 		},
 	}
+	if strategy != nil {
+		ig.Spec.EndpointPublishingStrategy.HostNetwork = strategy
+	}
+	if placement != nil {
+		ig.Spec.NodePlacement = placement
+	}
+	return ig
 }
 
 func newPrivateController(name types.NamespacedName, domain string) *operatorv1.IngressController {
