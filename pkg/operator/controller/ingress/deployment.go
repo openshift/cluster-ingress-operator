@@ -111,7 +111,7 @@ func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, in
 	if err != nil {
 		return false, nil, fmt.Errorf("failed to determine if proxy protocol is needed for ingresscontroller %s/%s: %v", ci.Namespace, ci.Name, err)
 	}
-	desired, err := desiredRouterDeployment(ci, r.config.IngressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded, haveClientCAConfigmap, clientCAConfigmap)
+	desired, err := desiredRouterDeployment(ci, r.config.IngressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, haveClientCAConfigmap, clientCAConfigmap)
 	if err != nil {
 		return haveDepl, current, fmt.Errorf("failed to build router deployment: %v", err)
 	}
@@ -203,8 +203,21 @@ func HardStopAfterIsEnabled(ic *operatorv1.IngressController, ingressConfig *con
 	return HardStopAfterIsEnabledByAnnotation(ingressConfig.Annotations)
 }
 
+// determineDeploymentReplicas determines the number of replicas that should be
+// set in the Deployment for an IngressController. If the user explicitly set a
+// replica count in the IngressController resource, that value will be used.
+// Otherwise, if unset, we follow the choice algorithm as described in the
+// documentation for the IngressController replicas parameter.
+func determineDeploymentReplicas(ic *operatorv1.IngressController, ingressConfig *configv1.Ingress, infraConfig *configv1.Infrastructure) int32 {
+	if ic.Spec.Replicas != nil {
+		return *ic.Spec.Replicas
+	}
+
+	return DetermineReplicas(ingressConfig, infraConfig)
+}
+
 // desiredRouterDeployment returns the desired router deployment.
-func desiredRouterDeployment(ci *operatorv1.IngressController, ingressControllerImage string, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer, networkConfig *configv1.Network, proxyNeeded bool, haveClientCAConfigmap bool, clientCAConfigmap *corev1.ConfigMap) (*appsv1.Deployment, error) {
+func desiredRouterDeployment(ci *operatorv1.IngressController, ingressControllerImage string, ingressConfig *configv1.Ingress, infraConfig *configv1.Infrastructure, apiConfig *configv1.APIServer, networkConfig *configv1.Network, proxyNeeded bool, haveClientCAConfigmap bool, clientCAConfigmap *corev1.ConfigMap) (*appsv1.Deployment, error) {
 	deployment := manifests.RouterDeployment()
 	name := controller.RouterDeploymentName(ci)
 	deployment.Name = name.Name
@@ -236,10 +249,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	volumes := deployment.Spec.Template.Spec.Volumes
 	routerVolumeMounts := deployment.Spec.Template.Spec.Containers[0].VolumeMounts
 
-	var desiredReplicas int32 = 2
-	if ci.Spec.Replicas != nil {
-		desiredReplicas = *ci.Spec.Replicas
-	}
+	desiredReplicas := determineDeploymentReplicas(ci, ingressConfig, infraConfig)
 	deployment.Spec.Replicas = &desiredReplicas
 
 	configureAffinity := false
@@ -562,9 +572,16 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	}
 
 	nodeSelector := map[string]string{
-		"kubernetes.io/os":               "linux",
-		"node-role.kubernetes.io/worker": "",
+		"kubernetes.io/os": "linux",
 	}
+
+	switch ingressConfig.Status.DefaultPlacement {
+	case configv1.DefaultPlacementControlPlane:
+		nodeSelector["node-role.kubernetes.io/master"] = ""
+	default:
+		nodeSelector["node-role.kubernetes.io/worker"] = ""
+	}
+
 	if ci.Spec.NodePlacement != nil {
 		if ci.Spec.NodePlacement.NodeSelector != nil {
 			var err error

@@ -450,7 +450,7 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 	if err != nil {
 		t.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %v", ic.Namespace, ic.Name, err)
 	}
-	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded, false, nil)
+	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, false, nil)
 	if err != nil {
 		t.Fatalf("invalid router Deployment: %v", err)
 	}
@@ -535,7 +535,7 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 	if err != nil {
 		t.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %v", ic.Namespace, ic.Name, err)
 	}
-	deployment, err = desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded, false, nil)
+	deployment, err = desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, false, nil)
 	if err != nil {
 		t.Fatalf("invalid router Deployment: %v", err)
 	}
@@ -644,7 +644,7 @@ func TestDesiredRouterDeploymentVariety(t *testing.T) {
 	if err != nil {
 		t.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %v", ic.Namespace, ic.Name, err)
 	}
-	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded, false, nil)
+	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, false, nil)
 	if err != nil {
 		t.Fatalf("invalid router Deployment: %v", err)
 	}
