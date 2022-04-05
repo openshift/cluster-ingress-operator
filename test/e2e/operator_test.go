@@ -800,11 +800,9 @@ func TestHostNetworkPortBinding(t *testing.T) {
 	// create second ingresscontroller on the same node but with different port bindings
 	name2 := types.NamespacedName{Namespace: operatorNamespace, Name: "samehost"}
 	strategy := &operatorv1.HostNetworkStrategy{
-		/*
-		   httpPort: 9080,
-		   httsPort: 9443,
-		   statsPort: 9936,
-		*/
+		HTTPPort:  9080,
+		HTTPSPort: 9443,
+		StatsPort: 9936,
 	}
 	// take the node placement of the first router
 	placement := &operatorv1.NodePlacement{
