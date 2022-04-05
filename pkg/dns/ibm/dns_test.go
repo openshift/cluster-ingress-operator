@@ -139,7 +139,7 @@ func TestDelete(t *testing.T) {
 			}
 
 			if !tc.expectedErr && err != nil {
-				t.Errorf("expected nil err, got %w", err)
+				t.Errorf("expected nil err, got %v", err)
 			}
 
 			recordedCall, _ := dnsService.RecordedCall(record.Spec.DNSName)
@@ -259,7 +259,7 @@ func TestCreateOrUpdate(t *testing.T) {
 			}
 
 			if !tc.expectedErr && err != nil {
-				t.Errorf("expected nil err, got %w", err)
+				t.Errorf("expected nil err, got %v", err)
 			}
 
 			recordedCall, _ := dnsService.RecordedCall(record.Spec.DNSName)
