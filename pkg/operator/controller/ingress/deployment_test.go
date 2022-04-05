@@ -139,7 +139,7 @@ func checkDeploymentEnvironment(t *testing.T, deployment *appsv1.Deployment, exp
 }
 
 func TestTuningOptions(t *testing.T) {
-	ic, ingressConfig, _, apiConfig, networkConfig, _ := getRouterDeploymentComponents(t)
+	ic, ingressConfig, infraConfig, apiConfig, networkConfig, _ := getRouterDeploymentComponents(t)
 
 	// Set up tuning options
 	ic.Spec.TuningOptions.ClientTimeout = &metav1.Duration{45 * time.Second}
@@ -150,7 +150,7 @@ func TestTuningOptions(t *testing.T) {
 	ic.Spec.TuningOptions.TLSInspectDelay = &metav1.Duration{5 * time.Second}
 	ic.Spec.TuningOptions.HealthCheckInterval = &metav1.Duration{15 * time.Second}
 
-	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, apiConfig, networkConfig, false, false, nil)
+	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, false, false, nil)
 	if err != nil {
 		t.Fatalf("invalid router Deployment: %v", err)
 	}
@@ -244,9 +244,9 @@ func getRouterDeploymentComponents(t *testing.T) (*operatorv1.IngressController,
 }
 
 func TestDesiredRouterDeployment(t *testing.T) {
-	ic, ingressConfig, _, apiConfig, networkConfig, proxyNeeded := getRouterDeploymentComponents(t)
+	ic, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded := getRouterDeploymentComponents(t)
 
-	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded, false, nil)
+	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, false, nil)
 	if err != nil {
 		t.Fatalf("invalid router Deployment: %v", err)
 	}
@@ -321,9 +321,9 @@ func TestDesiredRouterDeployment(t *testing.T) {
 }
 
 func TestDesiredRouterDeploymentSpecTemplate(t *testing.T) {
-	ic, ingressConfig, _, apiConfig, networkConfig, proxyNeeded := getRouterDeploymentComponents(t)
+	ic, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded := getRouterDeploymentComponents(t)
 
-	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded, false, nil)
+	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, false, nil)
 	if err != nil {
 		t.Fatalf("invalid router Deployment: %v", err)
 	}
@@ -1504,4 +1504,291 @@ func TestGetMIMETypes(t *testing.T) {
 			t.Errorf("Expected %s, got %s", tc.expectedOutput, output)
 		}
 	}
+}
+
+func TestDesiredRouterDeploymentDefaultPlacement(t *testing.T) {
+	var (
+		workerNodeSelector = map[string]string{
+			"kubernetes.io/os":               "linux",
+			"node-role.kubernetes.io/worker": "",
+		}
+		controlPlaneNodeSelector = map[string]string{
+			"kubernetes.io/os":               "linux",
+			"node-role.kubernetes.io/master": "",
+		}
+		highlyAvailableTopologyReplicas = int32(2)
+		singleReplicaTopologyReplicas   = int32(1)
+	)
+
+	testCases := []struct {
+		name                 string
+		ingressConfig        *configv1.Ingress
+		infraConfig          *configv1.Infrastructure
+		expectedNodeSelector map[string]string
+		expectedReplicas     int32
+	}{
+		{
+			name:          "empty ingress/infra config",
+			ingressConfig: &configv1.Ingress{},
+			infraConfig: &configv1.Infrastructure{
+				Status: configv1.InfrastructureStatus{
+					PlatformStatus: &configv1.PlatformStatus{
+						Type: configv1.AWSPlatformType,
+					},
+				},
+			},
+			expectedNodeSelector: workerNodeSelector,
+			expectedReplicas:     highlyAvailableTopologyReplicas,
+		},
+		{
+			name:          "empty ingress, single/single topologies",
+			ingressConfig: &configv1.Ingress{},
+			infraConfig: &configv1.Infrastructure{
+				Status: configv1.InfrastructureStatus{
+					InfrastructureTopology: configv1.SingleReplicaTopologyMode,
+					ControlPlaneTopology:   configv1.SingleReplicaTopologyMode,
+					PlatformStatus: &configv1.PlatformStatus{
+						Type: configv1.AWSPlatformType,
+					},
+				},
+			},
+			expectedNodeSelector: workerNodeSelector,
+			expectedReplicas:     singleReplicaTopologyReplicas,
+		},
+		{
+			name:          "empty ingress, high/single topologies",
+			ingressConfig: &configv1.Ingress{},
+			infraConfig: &configv1.Infrastructure{
+				Status: configv1.InfrastructureStatus{
+					InfrastructureTopology: configv1.HighlyAvailableTopologyMode,
+					ControlPlaneTopology:   configv1.SingleReplicaTopologyMode,
+					PlatformStatus: &configv1.PlatformStatus{
+						Type: configv1.AWSPlatformType,
+					},
+				},
+			},
+			expectedNodeSelector: workerNodeSelector,
+			expectedReplicas:     highlyAvailableTopologyReplicas,
+		},
+		{
+			name:          "empty ingress, single/high topologies",
+			ingressConfig: &configv1.Ingress{},
+			infraConfig: &configv1.Infrastructure{
+				Status: configv1.InfrastructureStatus{
+					InfrastructureTopology: configv1.SingleReplicaTopologyMode,
+					ControlPlaneTopology:   configv1.HighlyAvailableTopologyMode,
+					PlatformStatus: &configv1.PlatformStatus{
+						Type: configv1.AWSPlatformType,
+					},
+				},
+			},
+			expectedNodeSelector: workerNodeSelector,
+			expectedReplicas:     singleReplicaTopologyReplicas,
+		},
+		{
+			name:          "empty ingress, high/high topologies",
+			ingressConfig: &configv1.Ingress{},
+			infraConfig: &configv1.Infrastructure{
+				Status: configv1.InfrastructureStatus{
+					InfrastructureTopology: configv1.HighlyAvailableTopologyMode,
+					ControlPlaneTopology:   configv1.HighlyAvailableTopologyMode,
+					PlatformStatus: &configv1.PlatformStatus{
+						Type: configv1.AWSPlatformType,
+					},
+				},
+			},
+			expectedNodeSelector: workerNodeSelector,
+			expectedReplicas:     highlyAvailableTopologyReplicas,
+		},
+		{
+			name: "worker default ingress, single/single topologies",
+			ingressConfig: &configv1.Ingress{
+				Status: configv1.IngressStatus{
+					DefaultPlacement: configv1.DefaultPlacementWorkers,
+				},
+			},
+			infraConfig: &configv1.Infrastructure{
+				Status: configv1.InfrastructureStatus{
+					InfrastructureTopology: configv1.SingleReplicaTopologyMode,
+					ControlPlaneTopology:   configv1.SingleReplicaTopologyMode,
+					PlatformStatus: &configv1.PlatformStatus{
+						Type: configv1.AWSPlatformType,
+					},
+				},
+			},
+			expectedNodeSelector: workerNodeSelector,
+			expectedReplicas:     singleReplicaTopologyReplicas,
+		},
+		{
+			name: "worker default ingress, high/single topologies",
+			ingressConfig: &configv1.Ingress{
+				Status: configv1.IngressStatus{
+					DefaultPlacement: configv1.DefaultPlacementWorkers,
+				},
+			},
+			infraConfig: &configv1.Infrastructure{
+				Status: configv1.InfrastructureStatus{
+					InfrastructureTopology: configv1.HighlyAvailableTopologyMode,
+					ControlPlaneTopology:   configv1.SingleReplicaTopologyMode,
+					PlatformStatus: &configv1.PlatformStatus{
+						Type: configv1.AWSPlatformType,
+					},
+				},
+			},
+			expectedNodeSelector: workerNodeSelector,
+			expectedReplicas:     highlyAvailableTopologyReplicas,
+		},
+		{
+			name: "worker default ingress, single/high topologies",
+			ingressConfig: &configv1.Ingress{
+				Status: configv1.IngressStatus{
+					DefaultPlacement: configv1.DefaultPlacementWorkers,
+				},
+			},
+			infraConfig: &configv1.Infrastructure{
+				Status: configv1.InfrastructureStatus{
+					InfrastructureTopology: configv1.SingleReplicaTopologyMode,
+					ControlPlaneTopology:   configv1.HighlyAvailableTopologyMode,
+					PlatformStatus: &configv1.PlatformStatus{
+						Type: configv1.AWSPlatformType,
+					},
+				},
+			},
+			expectedNodeSelector: workerNodeSelector,
+			expectedReplicas:     singleReplicaTopologyReplicas,
+		},
+		{
+			name: "worker default ingress, high/high topologies",
+			ingressConfig: &configv1.Ingress{
+				Status: configv1.IngressStatus{
+					DefaultPlacement: configv1.DefaultPlacementWorkers,
+				},
+			},
+			infraConfig: &configv1.Infrastructure{
+				Status: configv1.InfrastructureStatus{
+					InfrastructureTopology: configv1.HighlyAvailableTopologyMode,
+					ControlPlaneTopology:   configv1.HighlyAvailableTopologyMode,
+					PlatformStatus: &configv1.PlatformStatus{
+						Type: configv1.AWSPlatformType,
+					},
+				},
+			},
+			expectedNodeSelector: workerNodeSelector,
+			expectedReplicas:     highlyAvailableTopologyReplicas,
+		},
+		{
+			name: "control-plane default ingress, single/single topologies",
+			ingressConfig: &configv1.Ingress{
+				Status: configv1.IngressStatus{
+					DefaultPlacement: configv1.DefaultPlacementControlPlane,
+				},
+			},
+			infraConfig: &configv1.Infrastructure{
+				Status: configv1.InfrastructureStatus{
+					InfrastructureTopology: configv1.SingleReplicaTopologyMode,
+					ControlPlaneTopology:   configv1.SingleReplicaTopologyMode,
+					PlatformStatus: &configv1.PlatformStatus{
+						Type: configv1.AWSPlatformType,
+					},
+				},
+			},
+			expectedNodeSelector: controlPlaneNodeSelector,
+			expectedReplicas:     singleReplicaTopologyReplicas,
+		},
+		{
+			name: "control-plane default ingress, high/single topologies",
+			ingressConfig: &configv1.Ingress{
+				Status: configv1.IngressStatus{
+					DefaultPlacement: configv1.DefaultPlacementControlPlane,
+				},
+			},
+			infraConfig: &configv1.Infrastructure{
+				Status: configv1.InfrastructureStatus{
+					InfrastructureTopology: configv1.HighlyAvailableTopologyMode,
+					ControlPlaneTopology:   configv1.SingleReplicaTopologyMode,
+					PlatformStatus: &configv1.PlatformStatus{
+						Type: configv1.AWSPlatformType,
+					},
+				},
+			},
+			expectedNodeSelector: controlPlaneNodeSelector,
+			expectedReplicas:     singleReplicaTopologyReplicas,
+		},
+		{
+			name: "control-plane default ingress, single/high topologies",
+			ingressConfig: &configv1.Ingress{
+				Status: configv1.IngressStatus{
+					DefaultPlacement: configv1.DefaultPlacementControlPlane,
+				},
+			},
+			infraConfig: &configv1.Infrastructure{
+				Status: configv1.InfrastructureStatus{
+					InfrastructureTopology: configv1.SingleReplicaTopologyMode,
+					ControlPlaneTopology:   configv1.HighlyAvailableTopologyMode,
+					PlatformStatus: &configv1.PlatformStatus{
+						Type: configv1.AWSPlatformType,
+					},
+				},
+			},
+			expectedNodeSelector: controlPlaneNodeSelector,
+			expectedReplicas:     highlyAvailableTopologyReplicas,
+		},
+		{
+			name: "control-plane default ingress, high/high topologies",
+			ingressConfig: &configv1.Ingress{
+				Status: configv1.IngressStatus{
+					DefaultPlacement: configv1.DefaultPlacementControlPlane,
+				},
+			},
+			infraConfig: &configv1.Infrastructure{
+				Status: configv1.InfrastructureStatus{
+					InfrastructureTopology: configv1.HighlyAvailableTopologyMode,
+					ControlPlaneTopology:   configv1.HighlyAvailableTopologyMode,
+					PlatformStatus: &configv1.PlatformStatus{
+						Type: configv1.AWSPlatformType,
+					},
+				},
+			},
+			expectedNodeSelector: controlPlaneNodeSelector,
+			expectedReplicas:     highlyAvailableTopologyReplicas,
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			var (
+				ic = &operatorv1.IngressController{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "default",
+					},
+					Spec: operatorv1.IngressControllerSpec{},
+					Status: operatorv1.IngressControllerStatus{
+						EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+							Type: operatorv1.PrivateStrategyType,
+						},
+					},
+				}
+				ingressControllerImage = "quay.io/openshift/router:latest"
+				apiConfig              = &configv1.APIServer{}
+				networkConfig          = &configv1.Network{}
+			)
+
+			// This value does not matter in the context of this test, just use a dummy value
+			dummyProxyNeeded := true
+
+			deployment, err := desiredRouterDeployment(ic, ingressControllerImage, tc.ingressConfig, tc.infraConfig, apiConfig, networkConfig, dummyProxyNeeded, false, nil)
+			if err != nil {
+				t.Error(err)
+			}
+
+			expectedReplicas := tc.expectedReplicas
+			if !reflect.DeepEqual(deployment.Spec.Replicas, &expectedReplicas) {
+				t.Errorf("expected replicas to be %v, got %v", expectedReplicas, *deployment.Spec.Replicas)
+			}
+
+			if !reflect.DeepEqual(deployment.Spec.Template.Spec.NodeSelector, tc.expectedNodeSelector) {
+				t.Errorf("expected node selector to be %v, got %v", tc.expectedNodeSelector, deployment.Spec.Template.Spec.NodeSelector)
+			}
+		})
+	}
+
 }
