@@ -336,7 +336,8 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 
 	service.Spec.Selector = controller.IngressControllerDeploymentPodSelector(ci).MatchLabels
 
-	isInternal := ci.Status.EndpointPublishingStrategy.LoadBalancer != nil && ci.Status.EndpointPublishingStrategy.LoadBalancer.Scope == operatorv1.InternalLoadBalancer
+	lb := ci.Status.EndpointPublishingStrategy.LoadBalancer
+	isInternal := lb != nil && lb.Scope == operatorv1.InternalLoadBalancer
 
 	if service.Annotations == nil {
 		service.Annotations = map[string]string{}
@@ -356,10 +357,10 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 
 			// Set the GCP Global Access annotation for internal load balancers on GCP only
 			if platform.Type == configv1.GCPPlatformType {
-				if ci.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters != nil &&
-					ci.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.Type == operatorv1.GCPLoadBalancerProvider &&
-					ci.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.GCP != nil {
-					globalAccessEnabled := ci.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.GCP.ClientAccess == operatorv1.GCPGlobalAccess
+				if lb.ProviderParameters != nil &&
+					lb.ProviderParameters.Type == operatorv1.GCPLoadBalancerProvider &&
+					lb.ProviderParameters.GCP != nil {
+					globalAccessEnabled := lb.ProviderParameters.GCP.ClientAccess == operatorv1.GCPGlobalAccess
 					service.Annotations[GCPGlobalAccessAnnotation] = strconv.FormatBool(globalAccessEnabled)
 				}
 			}
@@ -371,11 +372,11 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 		}
 		switch platform.Type {
 		case configv1.AWSPlatformType:
-			if ci.Status.EndpointPublishingStrategy.LoadBalancer != nil &&
-				ci.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters != nil &&
-				ci.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.Type == operatorv1.AWSLoadBalancerProvider &&
-				ci.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS != nil &&
-				ci.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.Type == operatorv1.AWSNetworkLoadBalancer {
+			if lb != nil &&
+				lb.ProviderParameters != nil &&
+				lb.ProviderParameters.Type == operatorv1.AWSLoadBalancerProvider &&
+				lb.ProviderParameters.AWS != nil &&
+				lb.ProviderParameters.AWS.Type == operatorv1.AWSNetworkLoadBalancer {
 				service.Annotations[AWSLBTypeAnnotation] = AWSNLBAnnotation
 				// NLBs require a different health check interval than CLBs
 				service.Annotations[awsLBHealthCheckIntervalAnnotation] = awsLBHealthCheckIntervalNLB
