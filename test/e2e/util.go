@@ -135,6 +135,38 @@ func buildExecPod(name, namespace, image string) *corev1.Pod {
 	}
 }
 
+// buildSlowHTTPDPod returns a pod that responds to HTTP requests slowly.
+func buildSlowHTTPDPod(name, namespace string) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Labels: map[string]string{
+				"app": "slow-httpd",
+			},
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Args: []string{
+						"TCP4-LISTEN:8080,reuseaddr,fork",
+						`EXEC:'/bin/bash -c \"sleep 40; printf \\\"HTTP/1.0 200 OK\r\n\r\nfin\r\n\\\"\"'`,
+					},
+					Command: []string{"/bin/socat"},
+					Image:   "openshift/origin-node",
+					Name:    "echo",
+					Ports: []corev1.ContainerPort{
+						{
+							ContainerPort: int32(8080),
+							Protocol:      corev1.ProtocolTCP,
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
 // buildRoute returns a route definition targeting the specified service.
 func buildRoute(name, namespace, serviceName string) *routev1.Route {
 	return &routev1.Route{

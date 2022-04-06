@@ -414,7 +414,7 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, infraConfig 
 	// operator can safely update.
 	switch effectiveStrategy.Type {
 	case operatorv1.LoadBalancerServiceStrategyType:
-		// Update if GCP LB provider parameters changed.
+		// Update if LB provider parameters changed.
 		statusLB := ic.Status.EndpointPublishingStrategy.LoadBalancer
 		specLB := effectiveStrategy.LoadBalancer
 		if specLB != nil && statusLB != nil {
@@ -427,14 +427,50 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, infraConfig 
 			}
 
 			// Detect changes to provider-specific parameters.
-			// Currently the only provider-specific parameter that
-			// is supported is the ClientAccess parameter for GCP.
+			// Currently the only platforms with configurable
+			// provider-specific parameters are AWS and GCP.
 			var lbType operatorv1.LoadBalancerProviderType
 			if specLB.ProviderParameters != nil {
 				lbType = specLB.ProviderParameters.Type
 			}
 			switch lbType {
+			case operatorv1.AWSLoadBalancerProvider:
+				// The only provider parameter that is supported
+				// for AWS is the connection idle timeout for
+				// classic ELBs.
+				var specIdleTimeout, statusIdleTimeout metav1.Duration
+				if specLB.ProviderParameters != nil && specLB.ProviderParameters.AWS != nil && specLB.ProviderParameters.AWS.ClassicLoadBalancerParameters != nil {
+					specIdleTimeout = specLB.ProviderParameters.AWS.ClassicLoadBalancerParameters.ConnectionIdleTimeout
+				}
+				if statusLB.ProviderParameters != nil && statusLB.ProviderParameters.AWS != nil && statusLB.ProviderParameters.AWS.ClassicLoadBalancerParameters != nil {
+					statusIdleTimeout = statusLB.ProviderParameters.AWS.ClassicLoadBalancerParameters.ConnectionIdleTimeout
+				}
+				if specIdleTimeout != statusIdleTimeout {
+					if statusLB.ProviderParameters == nil {
+						statusLB.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{}
+					}
+					if len(statusLB.ProviderParameters.Type) == 0 {
+						statusLB.ProviderParameters.Type = operatorv1.AWSLoadBalancerProvider
+					}
+					if statusLB.ProviderParameters.AWS == nil {
+						statusLB.ProviderParameters.AWS = &operatorv1.AWSLoadBalancerParameters{}
+					}
+					if len(statusLB.ProviderParameters.AWS.Type) == 0 {
+						statusLB.ProviderParameters.AWS.Type = operatorv1.AWSClassicLoadBalancer
+					}
+					if statusLB.ProviderParameters.AWS.ClassicLoadBalancerParameters == nil {
+						statusLB.ProviderParameters.AWS.ClassicLoadBalancerParameters = &operatorv1.AWSClassicLoadBalancerParameters{}
+					}
+					var v metav1.Duration
+					if specIdleTimeout.Duration > 0 {
+						v = specIdleTimeout
+					}
+					statusLB.ProviderParameters.AWS.ClassicLoadBalancerParameters.ConnectionIdleTimeout = v
+					changed = true
+				}
 			case operatorv1.GCPLoadBalancerProvider:
+				// The only provider parameter that is supported
+				// for GCP is the ClientAccess parameter.
 				var specClientAccess, statusClientAccess operatorv1.GCPClientAccess
 				if specLB.ProviderParameters != nil && specLB.ProviderParameters.GCP != nil {
 					specClientAccess = specLB.ProviderParameters.GCP.ClientAccess

@@ -3,11 +3,14 @@ package ingress
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // TestSetDefaultDomain verifies that setDefaultDomain behaves correctly.
@@ -267,6 +270,30 @@ func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
 			}
 			return eps
 		}
+		elbWithNullParameters = func() *operatorv1.EndpointPublishingStrategy {
+			eps := lb(operatorv1.ExternalLoadBalancer)
+			eps.LoadBalancer.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{
+				Type: operatorv1.AWSLoadBalancerProvider,
+				AWS: &operatorv1.AWSLoadBalancerParameters{
+					Type:                          operatorv1.AWSClassicLoadBalancer,
+					ClassicLoadBalancerParameters: &operatorv1.AWSClassicLoadBalancerParameters{},
+				},
+			}
+			return eps
+		}
+		elbWithIdleTimeout = func(timeout metav1.Duration) *operatorv1.EndpointPublishingStrategy {
+			eps := lb(operatorv1.ExternalLoadBalancer)
+			eps.LoadBalancer.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{
+				Type: operatorv1.AWSLoadBalancerProvider,
+				AWS: &operatorv1.AWSLoadBalancerParameters{
+					Type: operatorv1.AWSClassicLoadBalancer,
+					ClassicLoadBalancerParameters: &operatorv1.AWSClassicLoadBalancerParameters{
+						ConnectionIdleTimeout: timeout,
+					},
+				},
+			}
+			return eps
+		}
 		nlb = func() *operatorv1.EndpointPublishingStrategy {
 			eps := lb(operatorv1.ExternalLoadBalancer)
 			eps.LoadBalancer.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{
@@ -358,6 +385,30 @@ func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
 			ic:             makeIC(spec(elb()), status(nlb())),
 			expectedResult: false,
 			expectedIC:     makeIC(spec(elb()), status(nlb())),
+		},
+		{
+			name:           "loadbalancer ELB connection idle timeout changed from unset with null provider parameters to 2m",
+			ic:             makeIC(spec(elbWithIdleTimeout(metav1.Duration{Duration: 2 * time.Minute})), status(elbWithNullParameters())),
+			expectedResult: true,
+			expectedIC:     makeIC(spec(elbWithIdleTimeout(metav1.Duration{Duration: 2 * time.Minute})), status(elbWithIdleTimeout(metav1.Duration{Duration: 2 * time.Minute}))),
+		},
+		{
+			name:           "loadbalancer ELB connection idle timeout changed from unset with empty provider parameters to 2m",
+			ic:             makeIC(spec(elbWithIdleTimeout(metav1.Duration{Duration: 2 * time.Minute})), status(elbWithIdleTimeout(metav1.Duration{}))),
+			expectedResult: true,
+			expectedIC:     makeIC(spec(elbWithIdleTimeout(metav1.Duration{Duration: 2 * time.Minute})), status(elbWithIdleTimeout(metav1.Duration{Duration: 2 * time.Minute}))),
+		},
+		{
+			name:           "loadbalancer ELB connection idle timeout changed from unset to -1s",
+			ic:             makeIC(spec(elbWithIdleTimeout(metav1.Duration{Duration: -1 * time.Second})), status(elb())),
+			expectedResult: true,
+			expectedIC:     makeIC(spec(elbWithIdleTimeout(metav1.Duration{Duration: -1 * time.Second})), status(elbWithIdleTimeout(metav1.Duration{}))),
+		},
+		{
+			name:           "loadbalancer ELB connection idle timeout changed from 2m to unset",
+			ic:             makeIC(spec(elb()), status(elbWithIdleTimeout(metav1.Duration{Duration: 2 * time.Minute}))),
+			expectedResult: true,
+			expectedIC:     makeIC(spec(elb()), status(elbWithIdleTimeout(metav1.Duration{}))),
 		},
 		{
 			name:           "loadbalancer GCP Global Access changed from unset to global",
