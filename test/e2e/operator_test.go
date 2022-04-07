@@ -2585,6 +2585,144 @@ func TestCustomErrorpages(t *testing.T) {
 	}
 }
 
+// TestTunableRouterKubeletProbesForDefaultIngressController verifies that the
+// operator reverts changes to the kubelet probe parameters for the router
+// deployment associated with the default ingresscontroller.
+//
+// Note: This test mutates the default ingresscontroller.
+func TestTunableRouterKubeletProbesForDefaultIngressController(t *testing.T) {
+	ic := &operatorv1.IngressController{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: defaultName.Namespace,
+			Name:      defaultName.Name,
+		},
+	}
+
+	deploymentName := controller.RouterDeploymentName(ic)
+	deployment := &appsv1.Deployment{}
+	if err := kclient.Get(context.TODO(), deploymentName, deployment); err != nil {
+		t.Fatalf("failed to get default deployment: %v", err)
+	}
+
+	deployment.Spec.Template.Spec.Containers[0].LivenessProbe.TimeoutSeconds = int32(2)
+	deployment.Spec.Template.Spec.Containers[0].LivenessProbe.PeriodSeconds = int32(11)
+	deployment.Spec.Template.Spec.Containers[0].LivenessProbe.FailureThreshold = int32(4)
+	deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.TimeoutSeconds = int32(2)
+	deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.PeriodSeconds = int32(11)
+	deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.SuccessThreshold = int32(2)
+	deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.FailureThreshold = int32(4)
+	deployment.Spec.Template.Spec.Containers[0].StartupProbe.TimeoutSeconds = int32(2)
+	deployment.Spec.Template.Spec.Containers[0].StartupProbe.PeriodSeconds = int32(2)
+	deployment.Spec.Template.Spec.Containers[0].StartupProbe.FailureThreshold = int32(121)
+	if err := kclient.Update(context.TODO(), deployment); err != nil {
+		t.Fatalf("failed to update default deployment: %v", err)
+	}
+
+	if err := wait.PollImmediate(1*time.Second, time.Minute, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), deploymentName, deployment); err != nil {
+			t.Logf("error getting deployment %s: %v", deploymentName, err)
+
+			return false, nil
+		}
+
+		container := deployment.Spec.Template.Spec.Containers[0]
+		ok := true
+		// Verify that all parameters are reset.
+		if e, a := probe(1, 10, 1, 3), container.LivenessProbe; !cmpProbes(e, a) {
+			t.Logf("expected livenessProbe %v, got %v", e, a)
+			ok = false
+		}
+		if e, a := probe(1, 10, 1, 3), container.ReadinessProbe; !cmpProbes(e, a) {
+			t.Logf("expected readinessProbe %v, got %v", e, a)
+			ok = false
+		}
+		if e, a := probe(1, 1, 1, 120), container.StartupProbe; !cmpProbes(e, a) {
+			t.Logf("expected startupProbe %v, got %v", e, a)
+			ok = false
+		}
+
+		if ok {
+			t.Log("observed expected probes")
+		}
+
+		return ok, nil
+	}); err != nil {
+		t.Errorf("failed to observe expected conditions: %v", err)
+	}
+}
+
+// TestTunableRouterKubeletProbesForCustomIngressController verifies that the
+// operator allows changes to the kubelet probe timeouts for the router
+// deployment associated with a custom ingresscontroller.
+func TestTunableRouterKubeletProbesForCustomIngressController(t *testing.T) {
+	icName := types.NamespacedName{
+		Namespace: operatorNamespace,
+		Name:      "tunable-kubelet-probes",
+	}
+	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
+	ic := newPrivateController(icName, domain)
+	if err := kclient.Create(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
+	}
+	defer assertIngressControllerDeleted(t, kclient, ic)
+
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	deploymentName := controller.RouterDeploymentName(ic)
+	deployment := &appsv1.Deployment{}
+	if err := kclient.Get(context.TODO(), deploymentName, deployment); err != nil {
+		t.Fatalf("failed to get default deployment: %v", err)
+	}
+
+	deployment.Spec.Template.Spec.Containers[0].LivenessProbe.TimeoutSeconds = int32(2)
+	deployment.Spec.Template.Spec.Containers[0].LivenessProbe.PeriodSeconds = int32(11)
+	deployment.Spec.Template.Spec.Containers[0].LivenessProbe.FailureThreshold = int32(4)
+	deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.TimeoutSeconds = int32(2)
+	deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.PeriodSeconds = int32(11)
+	deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.SuccessThreshold = int32(2)
+	deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.FailureThreshold = int32(4)
+	deployment.Spec.Template.Spec.Containers[0].StartupProbe.TimeoutSeconds = int32(2)
+	deployment.Spec.Template.Spec.Containers[0].StartupProbe.PeriodSeconds = int32(2)
+	deployment.Spec.Template.Spec.Containers[0].StartupProbe.FailureThreshold = int32(121)
+	if err := kclient.Update(context.TODO(), deployment); err != nil {
+		t.Fatalf("failed to update default deployment: %v", err)
+	}
+
+	if err := wait.PollImmediate(1*time.Second, time.Minute, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), deploymentName, deployment); err != nil {
+			t.Logf("error getting deployment %s: %v", deploymentName, err)
+
+			return false, nil
+		}
+
+		container := deployment.Spec.Template.Spec.Containers[0]
+		ok := true
+		// Verify that all parameters *except* timeoutSeconds are reset.
+		if e, a := probe(2, 10, 1, 3), container.LivenessProbe; !cmpProbes(e, a) {
+			t.Logf("expected livenessProbe %v, got %v", e, a)
+			ok = false
+		}
+		if e, a := probe(2, 10, 1, 3), container.ReadinessProbe; !cmpProbes(e, a) {
+			t.Logf("expected readinessProbe %v, got %v", e, a)
+			ok = false
+		}
+		if e, a := probe(2, 1, 1, 120), container.StartupProbe; !cmpProbes(e, a) {
+			t.Logf("expected startupProbe %v, got %v", e, a)
+			ok = false
+		}
+
+		if ok {
+			t.Log("observed expected probes")
+		}
+
+		return ok, nil
+	}); err != nil {
+		t.Errorf("failed to observe expected conditions: %v", err)
+	}
+}
+
 func newLoadBalancerController(name types.NamespacedName, domain string) *operatorv1.IngressController {
 	repl := int32(1)
 	return &operatorv1.IngressController{
