@@ -44,7 +44,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	policyv1 "k8s.io/api/policy/v1"
 
-	"k8s.io/apimachinery/pkg/api/errors"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -274,7 +274,7 @@ func TestCustomIngressClass(t *testing.T) {
 	assertIngressControllerDeleted(t, kclient, ic)
 	err = wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
 		if err := kclient.Get(context.TODO(), ingressclassName, ingressclass); err != nil {
-			if errors.IsNotFound(err) {
+			if apierrors.IsNotFound(err) {
 				return true, nil
 			}
 			t.Logf("failed to get ingressclass %q: %v", ingressclassName.Name, err)
@@ -1116,7 +1116,7 @@ func TestScopeChange(t *testing.T) {
 		err := wait.PollImmediate(5*time.Second, 5*time.Minute, func() (bool, error) {
 			service := &corev1.Service{}
 			if err := kclient.Get(context.TODO(), controller.LoadBalancerServiceName(ic), service); err != nil {
-				if errors.IsNotFound(err) {
+				if apierrors.IsNotFound(err) {
 					return false, nil
 				}
 				t.Logf("failed to get service %s: %v", controller.LoadBalancerServiceName(ic), err)
@@ -1157,7 +1157,7 @@ func TestScopeChange(t *testing.T) {
 		err := wait.PollImmediate(5*time.Second, 5*time.Minute, func() (bool, error) {
 			service := &corev1.Service{}
 			if err := kclient.Get(context.TODO(), controller.LoadBalancerServiceName(ic), service); err != nil {
-				if errors.IsNotFound(err) {
+				if apierrors.IsNotFound(err) {
 					return false, nil
 				}
 				t.Logf("failed to get ingresscontroller %s: %v", name.Name, err)
@@ -1197,7 +1197,7 @@ func TestScopeChange(t *testing.T) {
 	err := wait.PollImmediate(5*time.Second, 5*time.Minute, func() (bool, error) {
 		service := &corev1.Service{}
 		if err := kclient.Get(context.TODO(), controller.LoadBalancerServiceName(ic), service); err != nil {
-			if errors.IsNotFound(err) {
+			if apierrors.IsNotFound(err) {
 				return false, nil
 			}
 			t.Logf("failed to get service %s: %v", controller.LoadBalancerServiceName(ic), err)
@@ -1931,7 +1931,7 @@ func TestHTTPHeaderCapture(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), clientPod); err != nil {
-			if errors.IsNotFound(err) {
+			if apierrors.IsNotFound(err) {
 				return
 			}
 			t.Fatalf("failed to delete pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
@@ -2071,7 +2071,7 @@ func TestHTTPCookieCapture(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), clientPod); err != nil {
-			if errors.IsNotFound(err) {
+			if apierrors.IsNotFound(err) {
 				return
 			}
 			t.Fatalf("failed to delete pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
@@ -2239,7 +2239,7 @@ func TestUniqueIdHeader(t *testing.T) {
 		}
 		defer func() {
 			if err := kclient.Delete(context.TODO(), clientPod); err != nil {
-				if errors.IsNotFound(err) {
+				if apierrors.IsNotFound(err) {
 					return
 				}
 				t.Fatalf("failed to delete pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
@@ -3063,7 +3063,7 @@ func deleteIngressController(t *testing.T, cl client.Client, ic *operatorv1.Ingr
 
 	err := wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
 		if err := cl.Get(context.TODO(), name, ic); err != nil {
-			if errors.IsNotFound(err) {
+			if apierrors.IsNotFound(err) {
 				return true, nil
 			}
 			t.Logf("failed to delete ingress controller %s/%s: %v", ic.Namespace, ic.Name, err)
@@ -3147,7 +3147,7 @@ u3YLAbyW/lHhOCiZu2iAI8AbmXem9lW6Tr7p/97s0w==
 		Type: corev1.SecretTypeTLS,
 	}
 
-	if err := cl.Delete(context.TODO(), secret); err != nil && !errors.IsNotFound(err) {
+	if err := cl.Delete(context.TODO(), secret); err != nil && !apierrors.IsNotFound(err) {
 		return nil, err
 	}
 
