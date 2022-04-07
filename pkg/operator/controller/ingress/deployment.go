@@ -514,7 +514,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		Value: "source",
 	})
 
-	switch v := unsupportedConfigOverrides.MaxConnections; {
+	switch v := ci.Spec.TuningOptions.MaxConnections; {
 	case v == -1:
 		env = append(env, corev1.EnvVar{
 			Name:  RouterMaxConnectionsEnvName,
