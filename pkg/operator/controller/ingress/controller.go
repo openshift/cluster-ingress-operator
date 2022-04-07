@@ -426,19 +426,34 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, infraConfig 
 				changed = true
 			}
 
-			// If the ProviderParameters field does not exist for spec or status,
-			// just propagate (or remove) ProviderParameters in its entirety
-			// (as long as GCP parameters are specified one way or the other).
-			if specLB.ProviderParameters == nil && statusLB.ProviderParameters != nil && statusLB.ProviderParameters.GCP != nil ||
-				specLB.ProviderParameters != nil && specLB.ProviderParameters.GCP != nil && statusLB.ProviderParameters == nil {
-				ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters = specLB.ProviderParameters
-				changed = true
+			// Detect changes to provider-specific parameters.
+			// Currently the only provider-specific parameter that
+			// is supported is the ClientAccess parameter for GCP.
+			var lbType operatorv1.LoadBalancerProviderType
+			if specLB.ProviderParameters != nil {
+				lbType = specLB.ProviderParameters.Type
 			}
-
-			if specLB.ProviderParameters != nil && statusLB.ProviderParameters != nil &&
-				specLB.ProviderParameters.GCP != statusLB.ProviderParameters.GCP {
-				ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.GCP = specLB.ProviderParameters.GCP
-				changed = true
+			switch lbType {
+			case operatorv1.GCPLoadBalancerProvider:
+				var specClientAccess, statusClientAccess operatorv1.GCPClientAccess
+				if specLB.ProviderParameters != nil && specLB.ProviderParameters.GCP != nil {
+					specClientAccess = specLB.ProviderParameters.GCP.ClientAccess
+				}
+				if statusLB.ProviderParameters != nil && statusLB.ProviderParameters.GCP != nil {
+					statusClientAccess = statusLB.ProviderParameters.GCP.ClientAccess
+				}
+				if specClientAccess != statusClientAccess {
+					if statusLB.ProviderParameters == nil {
+						statusLB.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{
+							Type: operatorv1.GCPLoadBalancerProvider,
+						}
+					}
+					if statusLB.ProviderParameters.GCP == nil {
+						statusLB.ProviderParameters.GCP = &operatorv1.GCPLoadBalancerParameters{}
+					}
+					statusLB.ProviderParameters.GCP.ClientAccess = specClientAccess
+					changed = true
+				}
 			}
 
 			return changed
