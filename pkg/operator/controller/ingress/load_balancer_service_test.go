@@ -545,7 +545,7 @@ func TestShouldUseLocalWithFallback(t *testing.T) {
 		actual, err := shouldUseLocalWithFallback(ic, &service)
 		switch {
 		case !tc.expectError && err != nil:
-			t.Errorf("%q: unexpected error: %w", tc.description, err)
+			t.Errorf("%q: unexpected error: %v", tc.description, err)
 		case tc.expectError && err == nil:
 			t.Errorf("%q: expected error, got nil", tc.description)
 		case tc.expect != actual:
