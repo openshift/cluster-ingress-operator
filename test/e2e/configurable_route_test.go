@@ -40,11 +40,11 @@ func TestConfigurableRouteRBAC(t *testing.T) {
 		}
 		ingress.Spec.ComponentRoutes = nil
 		if err := kclient.Update(context.TODO(), ingress); err != nil {
-			t.Errorf("failed to restore cluster ingress.spec resource to original state: %v", err)
+			t.Fatalf("failed to restore cluster ingress.spec resource to original state: %v", err)
 		}
 		ingress.Status.ComponentRoutes = nil
 		if err := kclient.Status().Update(context.TODO(), ingress); err != nil {
-			t.Errorf("failed to restore cluster ingress resource to original state: %v", err)
+			t.Fatalf("failed to restore cluster ingress resource to original state: %v", err)
 		}
 	}()
 
@@ -104,13 +104,13 @@ func TestConfigurableRouteRBAC(t *testing.T) {
 	// Check that a role and roleBinding are created for each Spec.ComponentRoutes entry in the openshift-config namespace
 	for _, componentRoute := range ingress.Spec.ComponentRoutes {
 		if err := pollForValidComponentRouteRole(t, componentRoute); err != nil {
-			t.Errorf("expected role unavailable: %v", err)
+			t.Fatalf("expected role unavailable: %v", err)
 		}
 	}
 
 	for _, componentRoute := range ingress.Status.ComponentRoutes {
 		if err := pollForValidComponentRouteRoleBinding(t, componentRoute); err != nil {
-			t.Errorf("expected roleBinding unavailable: %v", err)
+			t.Fatalf("expected roleBinding unavailable: %v", err)
 		}
 	}
 
@@ -145,13 +145,13 @@ func TestConfigurableRouteRBAC(t *testing.T) {
 
 	for _, componentRoute := range ingress.Spec.ComponentRoutes {
 		if err := pollForValidComponentRouteRole(t, componentRoute); err != nil {
-			t.Errorf("expected role unavailable: %v", err)
+			t.Fatalf("expected role unavailable: %v", err)
 		}
 	}
 
 	for _, componentRoute := range ingress.Status.ComponentRoutes {
 		if err := pollForValidComponentRouteRoleBinding(t, componentRoute); err != nil {
-			t.Errorf("expected roleBinding unavailable: %v", err)
+			t.Fatalf("expected roleBinding unavailable: %v", err)
 		}
 	}
 
@@ -178,11 +178,11 @@ func TestConfigurableRouteRBAC(t *testing.T) {
 		client.InNamespace(secretNamespace),
 	}
 	if err := pollForNumberOfEntriesInList(t, &rbacv1.RoleList{}, listOptions, 0); err != nil {
-		t.Errorf("role not deleted: %v", err)
+		t.Fatalf("role not deleted: %v", err)
 	}
 
 	if err := pollForNumberOfEntriesInList(t, &rbacv1.RoleBindingList{}, listOptions, 0); err != nil {
-		t.Errorf("roleBinding not deleted: %v", err)
+		t.Fatalf("roleBinding not deleted: %v", err)
 	}
 }
 
@@ -199,11 +199,11 @@ func TestConfigurableRouteNoSecretNoRBAC(t *testing.T) {
 		}
 		ingress.Spec.ComponentRoutes = nil
 		if err := kclient.Update(context.TODO(), ingress); err != nil {
-			t.Errorf("failed to restore cluster ingress resource to original state: %v", err)
+			t.Fatalf("failed to restore cluster ingress resource to original state: %v", err)
 		}
 		ingress.Status.ComponentRoutes = nil
 		if err := kclient.Status().Update(context.TODO(), ingress); err != nil {
-			t.Errorf("failed to restore cluster ingress resource to original state: %v", err)
+			t.Fatalf("failed to restore cluster ingress resource to original state: %v", err)
 		}
 	}()
 
@@ -219,7 +219,7 @@ func TestConfigurableRouteNoSecretNoRBAC(t *testing.T) {
 		},
 	}
 	if err := eventuallyUpdateIngressSpec(t, ingress.Spec); err != nil {
-		t.Errorf("error updating ingress.spec: %v", err)
+		t.Fatalf("error updating ingress.spec: %v", err)
 	}
 
 	// Include the componentRoute entry in the status.
@@ -238,7 +238,7 @@ func TestConfigurableRouteNoSecretNoRBAC(t *testing.T) {
 		},
 	}
 	if err := eventuallyUpdateIngressStatus(t, ingress.Status); err != nil {
-		t.Errorf("error updating ingress.status: %v", err)
+		t.Fatalf("error updating ingress.status: %v", err)
 	}
 
 	listOptions := []client.ListOption{
@@ -250,12 +250,12 @@ func TestConfigurableRouteNoSecretNoRBAC(t *testing.T) {
 
 	// Confirm that a single role is created from the componentRoute
 	if err := pollForNumberOfEntriesInList(t, &rbacv1.RoleList{}, listOptions, 1); err != nil {
-		t.Errorf("Number of roles in list != 1")
+		t.Fatalf("Number of roles in list != 1")
 	}
 
 	// Confirm that a single roleBinding is created from the componentRoute
 	if err := pollForNumberOfEntriesInList(t, &rbacv1.RoleBindingList{}, listOptions, 1); err != nil {
-		t.Errorf("Number of roleBindingss in list != 1")
+		t.Fatalf("Number of roleBindingss in list != 1")
 	}
 
 	// Update the spec of the ingress resource to have an empty secretName
@@ -270,17 +270,17 @@ func TestConfigurableRouteNoSecretNoRBAC(t *testing.T) {
 		},
 	}
 	if err := eventuallyUpdateIngressSpec(t, ingress.Spec); err != nil {
-		t.Errorf("error updating ingress.spec: %v", err)
+		t.Fatalf("error updating ingress.spec: %v", err)
 	}
 
 	// Confirm that the created role was deleted.
 	if err := pollForNumberOfEntriesInList(t, &rbacv1.RoleList{}, listOptions, 0); err != nil {
-		t.Error("Number of roles in list != 0")
+		t.Fatal("Number of roles in list != 0")
 	}
 
 	// Confirm that the created roleBinding was deleted.
 	if err := pollForNumberOfEntriesInList(t, &rbacv1.RoleBindingList{}, listOptions, 0); err != nil {
-		t.Error("Number of roleBindings in list != 0")
+		t.Fatal("Number of roleBindings in list != 0")
 	}
 }
 
@@ -298,11 +298,11 @@ func TestConfigurableRouteNoConsumingUserNoRBAC(t *testing.T) {
 		}
 		ingress.Spec.ComponentRoutes = nil
 		if err := kclient.Update(context.TODO(), ingress); err != nil {
-			t.Errorf("failed to restore cluster ingress resource to original state: %v", err)
+			t.Fatalf("failed to restore cluster ingress resource to original state: %v", err)
 		}
 		ingress.Status.ComponentRoutes = nil
 		if err := kclient.Status().Update(context.TODO(), ingress); err != nil {
-			t.Errorf("failed to restore cluster ingress resource to original state: %v", err)
+			t.Fatalf("failed to restore cluster ingress resource to original state: %v", err)
 		}
 	}()
 
@@ -318,7 +318,7 @@ func TestConfigurableRouteNoConsumingUserNoRBAC(t *testing.T) {
 		},
 	}
 	if err := eventuallyUpdateIngressSpec(t, ingress.Spec); err != nil {
-		t.Errorf("error updating ingress.spec: %v", err)
+		t.Fatalf("error updating ingress.spec: %v", err)
 	}
 
 	// Update the status of the ingress resource to include consumers
@@ -337,7 +337,7 @@ func TestConfigurableRouteNoConsumingUserNoRBAC(t *testing.T) {
 		},
 	}
 	if err := eventuallyUpdateIngressStatus(t, ingress.Status); err != nil {
-		t.Errorf("error updating ingress.status: %v", err)
+		t.Fatalf("error updating ingress.status: %v", err)
 	}
 
 	listOptions := []client.ListOption{
@@ -349,12 +349,12 @@ func TestConfigurableRouteNoConsumingUserNoRBAC(t *testing.T) {
 
 	// Confirm that a single role is created from the componentRoute
 	if err := pollForNumberOfEntriesInList(t, &rbacv1.RoleList{}, listOptions, 1); err != nil {
-		t.Errorf("Number of roles in list != 1")
+		t.Fatalf("Number of roles in list != 1")
 	}
 
 	// Confirm that a single roleBinding is created from the componentRoute
 	if err := pollForNumberOfEntriesInList(t, &rbacv1.RoleBindingList{}, listOptions, 1); err != nil {
-		t.Errorf("Number of roleBindings in list != 1")
+		t.Fatalf("Number of roleBindings in list != 1")
 	}
 
 	// Remove all consumingUsers from the componentRoute.
@@ -371,18 +371,18 @@ func TestConfigurableRouteNoConsumingUserNoRBAC(t *testing.T) {
 		},
 	}
 	if err := eventuallyUpdateIngressStatus(t, ingress.Status); err != nil {
-		t.Errorf("error updating ingress.status: %v", err)
+		t.Fatalf("error updating ingress.status: %v", err)
 
 	}
 
 	// Confirm that the created role was deleted.
 	if err := pollForNumberOfEntriesInList(t, &rbacv1.RoleList{}, listOptions, 0); err != nil {
-		t.Errorf("Number of roles in list != 0")
+		t.Fatalf("Number of roles in list != 0")
 	}
 
 	// Confirm that the created roleBinding was deleted.
 	if err := pollForNumberOfEntriesInList(t, &rbacv1.RoleBindingList{}, listOptions, 0); err != nil {
-		t.Errorf("Number of roleBindings in list != 0")
+		t.Fatalf("Number of roleBindings in list != 0")
 	}
 }
 
