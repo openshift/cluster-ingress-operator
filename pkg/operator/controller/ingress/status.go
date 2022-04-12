@@ -50,21 +50,22 @@ type expectedCondition struct {
 
 // syncIngressControllerStatus computes the current status of ic and
 // updates status upon any changes since last sync.
-func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressController, deployment *appsv1.Deployment, deploymentRef metav1.OwnerReference, pods []corev1.Pod, service *corev1.Service, operandEvents []corev1.Event, wildcardRecord *iov1.DNSRecord, dnsConfig *configv1.DNS, infraConfig *configv1.Infrastructure) error {
+func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressController, deployment *appsv1.Deployment, deploymentRef metav1.OwnerReference, pods []corev1.Pod, service *corev1.Service, operandEvents []corev1.Event, wildcardRecord *iov1.DNSRecord, dnsConfig *configv1.DNS, infraConfig *configv1.Infrastructure) (error, bool) {
+	updatedIc := false
 	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
 	if err != nil {
-		return fmt.Errorf("deployment has invalid spec.selector: %v", err)
+		return fmt.Errorf("deployment has invalid spec.selector: %v", err), updatedIc
 	}
 
 	platform, err := oputil.GetPlatformStatus(r.client, infraConfig)
 	if err != nil {
-		return fmt.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %w", ic.Namespace, ic.Name, err)
+		return fmt.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %w", ic.Namespace, ic.Name, err), updatedIc
 	}
 
 	secret := &corev1.Secret{}
 	secretName := controller.RouterEffectiveDefaultCertificateSecretName(ic, deployment.Namespace)
 	if err := r.client.Get(context.TODO(), secretName, secret); err != nil && !apierrors.IsNotFound(err) {
-		return fmt.Errorf("failed to get the default certificate secret %s for ingresscontroller %s/%s: %w", secretName, ic.Namespace, ic.Name, err)
+		return fmt.Errorf("failed to get the default certificate secret %s for ingresscontroller %s/%s: %w", secretName, ic.Namespace, ic.Name, err), updatedIc
 	}
 
 	var errs []error
@@ -92,11 +93,27 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 		if err := r.client.Status().Update(context.TODO(), updated); err != nil {
 			errs = append(errs, fmt.Errorf("failed to update ingresscontroller status: %v", err))
 		} else {
+			updatedIc = true
 			SetIngressControllerConditionsMetric(updated)
 		}
 	}
 
-	return retryableerror.NewMaybeRetryableAggregate(errs)
+	return retryableerror.NewMaybeRetryableAggregate(errs), updatedIc
+}
+
+// syncIngressControllerSelectorStatus syncs the routeSelector and namespaceSelector
+// from the spec to the status for tracking selector state.
+func (r *reconciler) syncIngressControllerSelectorStatus(ic *operatorv1.IngressController) error {
+	// Sync selectors from Spec to Status. This allows us to determine if either of these were updated.
+	updated := ic.DeepCopy()
+	updated.Status.RouteSelector = ic.Spec.RouteSelector
+	updated.Status.NamespaceSelector = ic.Spec.NamespaceSelector
+
+	if err := r.client.Status().Update(context.TODO(), updated); err != nil {
+		return fmt.Errorf("failed to update ingresscontroller status: %w", err)
+	}
+
+	return nil
 }
 
 // MergeConditions adds or updates matching conditions, and updates
