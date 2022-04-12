@@ -77,9 +77,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 			operatorcontroller.DefaultOperandNamespace,
 			operatorcontroller.DefaultCanaryNamespace,
 			operatorcontroller.GlobalMachineSpecifiedConfigNamespace,
-			"",
 			operatorcontroller.SourceConfigMapNamespace,
-			operatorcontroller.GlobalUserSpecifiedConfigNamespace,
 		}),
 		// Use a non-caching client everywhere. The default split client does not
 		// promise to invalidate the cache during writes (nor does it promise
