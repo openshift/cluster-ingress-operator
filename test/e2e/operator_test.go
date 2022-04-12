@@ -2631,6 +2631,11 @@ func newHostNetworkController(name types.NamespacedName, domain string) *operato
 			Replicas: &repl,
 			EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
 				Type: operatorv1.HostNetworkStrategyType,
+				HostNetwork: &operatorv1.HostNetworkStrategy{
+					HTTPPort:  8080,
+					HTTPSPort: 8443,
+					StatsPort: 19360,
+				},
 			},
 		},
 	}
