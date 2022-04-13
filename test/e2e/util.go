@@ -222,3 +222,34 @@ func podExec(t *testing.T, pod corev1.Pod, stdout, stderr *bytes.Buffer, cmd []s
 		Stderr: stderr,
 	})
 }
+
+// cmpProbes compares two probes on their timeoutSeconds, periodSeconds,
+// successThreshold, and failureThreshold parameters.
+func cmpProbes(a, b *corev1.Probe) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	if a.TimeoutSeconds != b.TimeoutSeconds {
+		return false
+	}
+	if a.PeriodSeconds != b.PeriodSeconds {
+		return false
+	}
+	if a.SuccessThreshold != b.SuccessThreshold {
+		return false
+	}
+	if a.FailureThreshold != b.FailureThreshold {
+		return false
+	}
+	return true
+}
+
+// probe returns a Probe with the specified parameters.
+func probe(timeout, period, success, failure int) *corev1.Probe {
+	return &corev1.Probe{
+		TimeoutSeconds:   int32(timeout),
+		PeriodSeconds:    int32(period),
+		SuccessThreshold: int32(success),
+		FailureThreshold: int32(failure),
+	}
+}

@@ -110,7 +110,8 @@ func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, in
 	if err != nil {
 		return false, nil, fmt.Errorf("failed to determine if proxy protocol is needed for ingresscontroller %s/%s: %v", ci.Namespace, ci.Name, err)
 	}
-	desired, err := desiredRouterDeployment(ci, r.config.IngressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded, haveClientCAConfigmap, clientCAConfigmap)
+	defaultIngressController := ci.Name == "default"
+	desired, err := desiredRouterDeployment(ci, r.config.IngressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded, haveClientCAConfigmap, clientCAConfigmap, defaultIngressController)
 	if err != nil {
 		return haveDepl, current, fmt.Errorf("failed to build router deployment: %v", err)
 	}
@@ -122,7 +123,7 @@ func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, in
 		}
 		return r.currentRouterDeployment(ci)
 	case haveDepl:
-		if updated, err := r.updateRouterDeployment(current, desired); err != nil {
+		if updated, err := r.updateRouterDeployment(current, desired, defaultIngressController); err != nil {
 			return true, current, err
 		} else if updated {
 			return r.currentRouterDeployment(ci)
@@ -203,7 +204,7 @@ func HardStopAfterIsEnabled(ic *operatorv1.IngressController, ingressConfig *con
 }
 
 // desiredRouterDeployment returns the desired router deployment.
-func desiredRouterDeployment(ci *operatorv1.IngressController, ingressControllerImage string, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer, networkConfig *configv1.Network, proxyNeeded bool, haveClientCAConfigmap bool, clientCAConfigmap *corev1.ConfigMap) (*appsv1.Deployment, error) {
+func desiredRouterDeployment(ci *operatorv1.IngressController, ingressControllerImage string, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer, networkConfig *configv1.Network, proxyNeeded bool, haveClientCAConfigmap bool, clientCAConfigmap *corev1.ConfigMap, defaultIngressController bool) (*appsv1.Deployment, error) {
 	deployment := manifests.RouterDeployment()
 	name := controller.RouterDeploymentName(ci)
 	deployment.Name = name.Name
@@ -1023,7 +1024,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	// Compute the hash for topology spread constraints and possibly
 	// affinity policy now, after all the other fields have been computed,
 	// and inject it into the appropriate fields.
-	hash := deploymentTemplateHash(deployment)
+	hash := deploymentTemplateHash(deployment, defaultIngressController)
 	deployment.Spec.Template.Labels[controller.ControllerDeploymentHashLabel] = hash
 	values := []string{hash}
 	deployment.Spec.Template.Spec.TopologySpreadConstraints[0].LabelSelector.MatchExpressions[0].Values = values
@@ -1151,9 +1152,9 @@ func inferTLSProfileSpecFromDeployment(deployment *appsv1.Deployment) *configv1.
 
 // deploymentHash returns a stringified hash value for the router deployment
 // fields that, if changed, should trigger an update.
-func deploymentHash(deployment *appsv1.Deployment) string {
+func deploymentHash(deployment *appsv1.Deployment, defaultIngressController bool) string {
 	hasher := fnv.New32a()
-	deepHashObject(hasher, hashableDeployment(deployment, false))
+	deepHashObject(hasher, hashableDeployment(deployment, false, defaultIngressController))
 	return rand.SafeEncodeString(fmt.Sprint(hasher.Sum32()))
 }
 
@@ -1162,9 +1163,9 @@ func deploymentHash(deployment *appsv1.Deployment) string {
 // from the deployment for another ingresscontroller or another generation of
 // the same ingresscontroller (which will trigger a rolling update of the
 // deployment).
-func deploymentTemplateHash(deployment *appsv1.Deployment) string {
+func deploymentTemplateHash(deployment *appsv1.Deployment, defaultIngressController bool) string {
 	hasher := fnv.New32a()
-	deepHashObject(hasher, hashableDeployment(deployment, true))
+	deepHashObject(hasher, hashableDeployment(deployment, true, defaultIngressController))
 	return rand.SafeEncodeString(fmt.Sprint(hasher.Sum32()))
 }
 
@@ -1174,8 +1175,10 @@ func deploymentTemplateHash(deployment *appsv1.Deployment) string {
 // Fields with slice values will be sorted.  Fields that should be ignored, or
 // that have explicit values that are equal to their respective default values,
 // will be zeroed.  If onlyTemplate is true, fields that should not trigger a
-// rolling update are zeroed as well.
-func hashableDeployment(deployment *appsv1.Deployment, onlyTemplate bool) *appsv1.Deployment {
+// rolling update are zeroed as well.  If defaultIngressController is false,
+// fields that should be modifiable by the user on the non-default
+// IngressController are also zeroed.
+func hashableDeployment(deployment *appsv1.Deployment, onlyTemplate, defaultIngressController bool) *appsv1.Deployment {
 	var hashableDeployment appsv1.Deployment
 
 	// Copy metadata fields that distinguish the deployment for one
@@ -1247,9 +1250,9 @@ func hashableDeployment(deployment *appsv1.Deployment, onlyTemplate bool) *appsv
 			Image:           container.Image,
 			ImagePullPolicy: container.ImagePullPolicy,
 			Name:            container.Name,
-			LivenessProbe:   hashableProbe(container.LivenessProbe),
-			ReadinessProbe:  hashableProbe(container.ReadinessProbe),
-			StartupProbe:    hashableProbe(container.StartupProbe),
+			LivenessProbe:   hashableProbe(container.LivenessProbe, defaultIngressController),
+			ReadinessProbe:  hashableProbe(container.ReadinessProbe, defaultIngressController),
+			StartupProbe:    hashableProbe(container.StartupProbe, defaultIngressController),
 		}
 	}
 	sort.Slice(containers, func(i, j int) bool {
@@ -1338,7 +1341,7 @@ func zeroOutDeploymentHash(labelSelector *metav1.LabelSelector) {
 // should be used for computing a deployment's hash copied over.  Fields that
 // should be ignored, or that have explicit values that are equal to their
 // respective default values, will be zeroed.
-func hashableProbe(probe *corev1.Probe) *corev1.Probe {
+func hashableProbe(probe *corev1.Probe, defaultIngressController bool) *corev1.Probe {
 	if probe == nil {
 		return nil
 	}
@@ -1355,7 +1358,10 @@ func hashableProbe(probe *corev1.Probe) *corev1.Probe {
 			hashableProbe.ProbeHandler.HTTPGet.Scheme = probe.ProbeHandler.HTTPGet.Scheme
 		}
 	}
-	if probe.TimeoutSeconds != int32(1) {
+	// Users are permitted to modify the timeout on non-default
+	// IngressControllers, so only hash it (and thus trigger reconciliation
+	// if it changes) for the default ingresscontroller.
+	if defaultIngressController && probe.TimeoutSeconds != int32(1) {
 		hashableProbe.TimeoutSeconds = probe.TimeoutSeconds
 	}
 	if probe.PeriodSeconds != int32(10) {
@@ -1393,8 +1399,8 @@ func (r *reconciler) createRouterDeployment(deployment *appsv1.Deployment) error
 }
 
 // updateRouterDeployment updates a router deployment.
-func (r *reconciler) updateRouterDeployment(current, desired *appsv1.Deployment) (bool, error) {
-	changed, updated := deploymentConfigChanged(current, desired)
+func (r *reconciler) updateRouterDeployment(current, desired *appsv1.Deployment, defaultIngressController bool) (bool, error) {
+	changed, updated := deploymentConfigChanged(current, desired, defaultIngressController)
 	if !changed {
 		return false, nil
 	}
@@ -1426,8 +1432,8 @@ func deepHashObject(hasher hash.Hash, objectToWrite interface{}) {
 
 // deploymentConfigChanged checks if current config matches the expected config
 // for the ingress controller deployment and if it does not, returns the updated config.
-func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv1.Deployment) {
-	if deploymentHash(current) == deploymentHash(expected) {
+func deploymentConfigChanged(current, expected *appsv1.Deployment, defaultIngressController bool) (bool, *appsv1.Deployment) {
+	if deploymentHash(current, defaultIngressController) == deploymentHash(expected, defaultIngressController) {
 		return false, nil
 	}
 
@@ -1462,9 +1468,9 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 	updated.Spec.Template.Spec.NodeSelector = expected.Spec.Template.Spec.NodeSelector
 	updated.Spec.Template.Spec.Containers[0].Env = expected.Spec.Template.Spec.Containers[0].Env
 	updated.Spec.Template.Spec.Containers[0].Image = expected.Spec.Template.Spec.Containers[0].Image
-	updated.Spec.Template.Spec.Containers[0].LivenessProbe = expected.Spec.Template.Spec.Containers[0].LivenessProbe
-	updated.Spec.Template.Spec.Containers[0].ReadinessProbe = expected.Spec.Template.Spec.Containers[0].ReadinessProbe
-	updated.Spec.Template.Spec.Containers[0].StartupProbe = expected.Spec.Template.Spec.Containers[0].StartupProbe
+	copyProbe(expected.Spec.Template.Spec.Containers[0].LivenessProbe, updated.Spec.Template.Spec.Containers[0].LivenessProbe, defaultIngressController)
+	copyProbe(expected.Spec.Template.Spec.Containers[0].ReadinessProbe, updated.Spec.Template.Spec.Containers[0].ReadinessProbe, defaultIngressController)
+	copyProbe(expected.Spec.Template.Spec.Containers[0].StartupProbe, updated.Spec.Template.Spec.Containers[0].StartupProbe, defaultIngressController)
 	updated.Spec.Template.Spec.Containers[0].VolumeMounts = expected.Spec.Template.Spec.Containers[0].VolumeMounts
 	updated.Spec.Template.Spec.Tolerations = expected.Spec.Template.Spec.Tolerations
 	updated.Spec.Template.Spec.TopologySpreadConstraints = expected.Spec.Template.Spec.TopologySpreadConstraints
@@ -1476,6 +1482,22 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 	updated.Spec.Replicas = &replicas
 	updated.Spec.MinReadySeconds = expected.Spec.MinReadySeconds
 	return true, updated
+}
+
+// copyProbe copies probe parameters that the operator manages from probe a to
+// probe b.
+func copyProbe(a, b *corev1.Probe, defaultIngressController bool) {
+	if a == nil || b == nil {
+		return
+	}
+
+	timeoutSeconds := b.TimeoutSeconds
+	a.DeepCopyInto(b)
+	// Ignore updates to timeoutSeconds for non-default ingresscontrollers
+	// to allow users to modify that parameter.
+	if !defaultIngressController {
+		b.TimeoutSeconds = timeoutSeconds
+	}
 }
 
 // clipHAProxyTimeoutValue prevents the HAProxy config file from using
