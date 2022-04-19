@@ -357,7 +357,7 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 
 			// Set the GCP Global Access annotation for internal load balancers on GCP only
 			if platform.Type == configv1.GCPPlatformType {
-				if lb.ProviderParameters != nil &&
+				if lb != nil && lb.ProviderParameters != nil &&
 					lb.ProviderParameters.Type == operatorv1.GCPLoadBalancerProvider &&
 					lb.ProviderParameters.GCP != nil {
 					globalAccessEnabled := lb.ProviderParameters.GCP.ClientAccess == operatorv1.GCPGlobalAccess
