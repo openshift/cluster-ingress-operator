@@ -2942,17 +2942,34 @@ func waitForRouteIngressConditions(t *testing.T, cl client.Client, routeName typ
 	})
 }
 
+// waitForIngressControllerCondition is a test helper that polls the specified
+// ingresscontroller until its status reports the specified conditions.  If the
+// polling loop reaches the timeout without observing the specified conditions,
+// waitForIngressControllerCondition marks the test as failed and returns an
+// error.  The caller can check the error value to stop execution of the test
+// using Fatal or FailNow if appropriate.
 func waitForIngressControllerCondition(t *testing.T, cl client.Client, timeout time.Duration, name types.NamespacedName, conditions ...operatorv1.OperatorCondition) error {
-	return wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
-		ic := &operatorv1.IngressController{}
+	t.Helper()
+
+	ic := &operatorv1.IngressController{}
+	expected := map[string]string{}
+	current := map[string]string{}
+
+	err := wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
 		if err := cl.Get(context.TODO(), name, ic); err != nil {
 			t.Logf("failed to get ingresscontroller %s: %v", name.Name, err)
 			return false, nil
 		}
-		expected := operatorConditionMap(conditions...)
-		current := operatorConditionMap(ic.Status.Conditions...)
+		expected = operatorConditionMap(conditions...)
+		current = operatorConditionMap(ic.Status.Conditions...)
+
 		return conditionsMatchExpected(expected, current), nil
 	})
+
+	if err != nil {
+		t.Errorf("Expected conditions: %v\n Current conditions: %v", expected, current)
+	}
+	return err
 }
 
 func assertIngressControllerDeleted(t *testing.T, cl client.Client, ing *operatorv1.IngressController) {
