@@ -39,11 +39,11 @@ func TestConfigurableRouteRBAC(t *testing.T) {
 			t.Fatalf("failed to get ingress resource: %v", err)
 		}
 		ingress.Spec.ComponentRoutes = nil
-		if err := kclient.Update(context.TODO(), ingress); err != nil {
+		if err := eventuallyUpdateIngressSpec(t, ingress.Spec); err != nil {
 			t.Errorf("failed to restore cluster ingress.spec resource to original state: %v", err)
 		}
 		ingress.Status.ComponentRoutes = nil
-		if err := kclient.Status().Update(context.TODO(), ingress); err != nil {
+		if err := eventuallyUpdateIngressStatus(t, ingress.Status); err != nil {
 			t.Errorf("failed to restore cluster ingress resource to original state: %v", err)
 		}
 	}()
@@ -198,11 +198,11 @@ func TestConfigurableRouteNoSecretNoRBAC(t *testing.T) {
 			t.Fatalf("failed to get ingress resource: %v", err)
 		}
 		ingress.Spec.ComponentRoutes = nil
-		if err := kclient.Update(context.TODO(), ingress); err != nil {
+		if err := eventuallyUpdateIngressSpec(t, ingress.Spec); err != nil {
 			t.Errorf("failed to restore cluster ingress resource to original state: %v", err)
 		}
 		ingress.Status.ComponentRoutes = nil
-		if err := kclient.Status().Update(context.TODO(), ingress); err != nil {
+		if err := eventuallyUpdateIngressStatus(t, ingress.Status); err != nil {
 			t.Errorf("failed to restore cluster ingress resource to original state: %v", err)
 		}
 	}()
@@ -297,11 +297,11 @@ func TestConfigurableRouteNoConsumingUserNoRBAC(t *testing.T) {
 			t.Fatalf("failed to get ingress resource: %v", err)
 		}
 		ingress.Spec.ComponentRoutes = nil
-		if err := kclient.Update(context.TODO(), ingress); err != nil {
+		if err := eventuallyUpdateIngressSpec(t, ingress.Spec); err != nil {
 			t.Errorf("failed to restore cluster ingress resource to original state: %v", err)
 		}
 		ingress.Status.ComponentRoutes = nil
-		if err := kclient.Status().Update(context.TODO(), ingress); err != nil {
+		if err := eventuallyUpdateIngressStatus(t, ingress.Status); err != nil {
 			t.Errorf("failed to restore cluster ingress resource to original state: %v", err)
 		}
 	}()
