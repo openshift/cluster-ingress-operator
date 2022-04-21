@@ -93,6 +93,7 @@ const (
 
 	RouterEnableCompression    = "ROUTER_ENABLE_COMPRESSION"
 	RouterCompressionMIMETypes = "ROUTER_COMPRESSION_MIME"
+	RouterBackendCheckInterval = "ROUTER_BACKEND_CHECK_INTERVAL"
 )
 
 // ensureRouterDeployment ensures the router deployment exists for a given
@@ -556,6 +557,9 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	}
 	if ci.Spec.TuningOptions.TLSInspectDelay != nil && ci.Spec.TuningOptions.TLSInspectDelay.Duration > 0*time.Second {
 		env = append(env, corev1.EnvVar{Name: "ROUTER_INSPECT_DELAY", Value: durationToHAProxyTimespec(ci.Spec.TuningOptions.TLSInspectDelay.Duration)})
+	}
+	if ci.Spec.TuningOptions.HealthCheckInterval != nil && ci.Spec.TuningOptions.HealthCheckInterval.Duration >= 1*time.Second {
+		env = append(env, corev1.EnvVar{Name: RouterBackendCheckInterval, Value: durationToHAProxyTimespec(ci.Spec.TuningOptions.HealthCheckInterval.Duration)})
 	}
 
 	nodeSelector := map[string]string{
