@@ -261,10 +261,16 @@ func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController,
 		return false, nil, err
 	}
 
+	// BZ2054200: Don't modify/delete services that are not directly owned by this controller.
+	ownLBS := isServiceOwnedByIngressController(currentLBService, ci)
+
 	switch {
 	case !wantLBS && !haveLBS:
 		return false, nil, nil
 	case !wantLBS && haveLBS:
+		if !ownLBS {
+			return false, nil, fmt.Errorf("a conflicting load balancer service exists that is not owned by the ingress controller: %s", controller.LoadBalancerServiceName(ci))
+		}
 		if err := r.deleteLoadBalancerService(currentLBService, &crclient.DeleteOptions{}); err != nil {
 			return true, currentLBService, err
 		}
@@ -275,6 +281,9 @@ func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController,
 		}
 		return r.currentLoadBalancerService(ci)
 	case wantLBS && haveLBS:
+		if !ownLBS {
+			return false, nil, fmt.Errorf("a conflicting load balancer service exists that is not owned by the ingress controller: %s", controller.LoadBalancerServiceName(ci))
+		}
 		if updated, err := r.normalizeLoadBalancerServiceAnnotations(currentLBService); err != nil {
 			return true, currentLBService, fmt.Errorf("failed to normalize annotations for load balancer service: %w", err)
 		} else if updated {
@@ -294,6 +303,14 @@ func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController,
 		}
 	}
 	return true, currentLBService, nil
+}
+
+// isServiceOwnedByIngressController determines whether a service is owned by an ingress controller.
+func isServiceOwnedByIngressController(service *corev1.Service, ic *operatorv1.IngressController) bool {
+	if service != nil && service.Labels[manifests.OwningIngressControllerLabel] == ic.Name {
+		return true
+	}
+	return false
 }
 
 // desiredLoadBalancerService returns the desired LB service for a
