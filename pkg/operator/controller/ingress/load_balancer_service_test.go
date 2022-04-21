@@ -8,6 +8,7 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
+	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -834,4 +835,67 @@ func TestLoadBalancerServiceAnnotationsChanged(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestServiceIngressOwner(t *testing.T) {
+	testCases := []struct {
+		description string
+		service     *corev1.Service
+		ingressName string
+		expect      bool
+	}{
+		{
+			description: "if owner is set correctly",
+			service: &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						manifests.OwningIngressControllerLabel: "foo",
+					},
+				},
+			},
+			ingressName: "foo",
+			expect:      true,
+		},
+		{
+			description: "if owner is not set correctly",
+			service: &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						manifests.OwningIngressControllerLabel: "foo",
+					},
+				},
+			},
+			ingressName: "bar",
+			expect:      false,
+		},
+		{
+			description: "if owner label is not set at all",
+			service: &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{},
+			},
+			ingressName: "bar",
+			expect:      false,
+		},
+		{
+			description: "if service is nil",
+			service:     nil,
+			ingressName: "bar",
+			expect:      false,
+		},
+	}
+
+	for _, tc := range testCases {
+		ic := &operatorv1.IngressController{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: tc.ingressName,
+			},
+			Spec:   operatorv1.IngressControllerSpec{},
+			Status: operatorv1.IngressControllerStatus{},
+		}
+
+		if actual := isServiceOwnedByIngressController(tc.service, ic); actual != tc.expect {
+			t.Errorf("expected ownership %t got %t", tc.expect, actual)
+		}
+	}
+
 }
