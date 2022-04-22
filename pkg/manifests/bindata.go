@@ -20,6 +20,7 @@
 // manifests/00-custom-resource-definition.yaml (91.138kB)
 // manifests/00-ingress-credentials-request.yaml (4.279kB)
 // manifests/00-namespace.yaml (508B)
+// manifests/0000_20_kube-apiserver-operator_00_scc-restricted-v2.yaml (1.463kB)
 // manifests/0000_90_ingress-operator_00_prometheusrole.yaml (446B)
 // manifests/0000_90_ingress-operator_01_prometheusrolebinding.yaml (514B)
 // manifests/0000_90_ingress-operator_02_servicemonitor.yaml (720B)
@@ -502,6 +503,26 @@ func manifests00NamespaceYaml() (*asset, error) {
 	return a, nil
 }
 
+var _manifests0000_20_kubeApiserverOperator_00_sccRestrictedV2Yaml = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x94\x54\x4b\x8f\x1b\x37\x0c\xbe\xeb\x57\x10\xb9\xe4\xb2\xe3\xa0\x3d\xfa\xe6\xda\x6e\x6a\xc0\xd9\x18\xbb\xc9\x5e\x8a\x22\xa0\x47\x1c\x0f\xbb\x1a\x49\x25\x29\x3b\xfe\xf7\x85\xc6\x9e\x6d\xf6\x01\x14\x39\x8a\x8f\x4f\x1f\x1f\x1f\x31\x84\x74\xfa\x23\xa9\xad\x58\x1e\x52\x28\x03\xed\x42\x39\x70\x9c\x43\x87\x41\xc9\x3d\xf9\x37\xbb\xe5\x2b\xdb\x2d\xd9\x29\xc9\xe3\x2b\xfb\x6e\xb3\x7a\x6d\x4b\x62\xfa\xcc\xba\x13\x3e\x72\xa0\x03\xad\xb5\xc5\x80\xc6\x29\xbe\xed\xf7\xcb\x14\x0d\x39\x92\x3c\xf3\x93\x5f\x62\xc6\x3d\x07\x36\x26\x9d\xbb\x06\x6e\xd7\x5f\xbe\xfd\xb6\xb9\x5d\x7d\xbb\x5f\xdf\x3d\x6c\x96\x6b\x87\x99\x1f\x48\x74\x44\x56\x6a\x8b\xb0\x9d\x67\x29\x53\xd4\x9e\x3b\x9b\x71\xfa\x70\xfc\xc5\x79\xea\xb0\x04\x5b\xf8\x17\x78\x9d\x7e\x94\x54\xf2\xdc\x01\xd8\x39\xd3\x1c\x3e\x15\xb5\xbb\x12\x17\xea\x0e\xd5\x31\x7e\xa9\x67\x35\x1a\xe6\x58\xac\xa7\x68\xdc\xa2\x91\x77\x8f\x1c\xfd\x1c\xee\xaf\x1f\x56\xf6\xf4\xdd\x96\x29\xaa\x09\x72\x34\x75\x03\x19\x7a\x34\xac\xd8\x18\x63\xb2\xb1\x7a\xad\x4f\x00\x8e\x6d\x28\x9e\x66\x42\x81\x50\xe9\x39\x5f\xde\x0f\x4d\x1b\x52\xf1\xcd\x80\x11\x0f\xe4\xe7\xf0\xce\xa4\xd0\xbb\xff\x4f\x55\x0a\xdd\x94\xd5\xf4\x7c\xe8\x1b\x3c\x22\x87\x4b\xc5\xe7\x9f\xc0\xe1\x78\x08\xd4\xc4\xe4\xa9\xf1\x74\xa4\x90\x72\x9d\xcc\x0f\xe9\x8f\x65\x4f\x12\xc9\x48\x6b\xbc\x27\x6d\x85\xf3\x65\xbe\x42\x6a\xc2\xad\x91\x6f\x8e\xbf\x82\xa7\xc8\xa4\x80\x6d\x4b\xaa\x60\x09\x30\x04\xe8\x93\x1a\x74\x84\x56\xa4\xfa\xa2\x07\xa1\x7f\x0a\x0b\xe9\x08\x0e\x90\x93\x1f\x83\xf7\x04\x52\x22\x9c\xd8\x7a\x40\xf8\xba\x59\xdd\x8c\xd1\xf7\xeb\x2d\xc7\xf2\x1d\xda\x4b\xdf\xc1\x7a\x34\x40\xa1\x0a\x9e\xc6\x01\xd5\x64\xeb\x09\x22\x0e\xa4\x19\x5b\x9a\xc1\x97\x9e\x27\x78\xd6\xd1\x39\x54\x1a\x13\x5d\x3e\x12\xdc\x2f\x97\x23\x3e\x5b\x0d\x29\x4a\x1e\xf6\x67\xb8\x6e\x0f\x74\x49\xe0\xd9\x16\xd4\x08\xd1\xd9\x15\xf4\x73\x04\x4b\x19\x52\x37\x62\x07\x3a\x60\x7b\x86\xf7\xff\x75\xe3\x7d\x85\xbf\xa9\xd8\x18\x34\x3d\x55\x5c\x99\x7a\x49\x19\x16\xdb\x2d\xb4\x3f\xac\xe7\x15\xb6\xf2\xf1\x89\x14\x62\xb2\xb1\xbe\x13\xe4\x49\x36\x40\x4f\xba\x82\x3d\x47\x14\x26\x9d\xc1\xc6\xe0\xc4\x21\x5c\xbe\x99\xc8\x57\x4e\x4a\x6d\x9b\x86\x3c\xf5\x58\x52\xc7\x81\xea\xff\x52\xa2\xf1\x40\x1f\xa6\x60\xee\xa0\x44\x25\xbb\x81\x64\x3d\xc9\x89\x95\xc0\x7a\xd6\x09\xe1\x29\x97\x75\xaa\xc3\xd7\x36\xd4\x6e\xbf\x58\x00\x97\x85\x53\xd5\xc8\xdc\x09\xa1\xff\x1c\xc3\xf9\x2e\x25\xfb\x9d\x03\x5d\x85\x75\x15\xfc\x84\xb3\x92\x94\x5f\xaa\x7e\xb1\xdd\x3a\xa9\xb2\xfc\xaa\x24\x6f\xa8\xf5\x0e\xe3\x81\x9c\xd2\xb8\x15\x57\x31\xbe\x25\xea\x2b\xfd\xdd\x85\x7d\x45\x7e\x51\xb9\xd3\x92\x73\xa0\x81\xa2\x61\xf8\x78\x3d\x01\x13\xce\x88\xb1\x88\x67\x37\x8e\x7d\x0e\x7f\xfe\xe5\x8e\xe3\x3d\x1d\x39\xb6\x29\x76\x7c\xf8\x84\xd9\x35\xe0\xd3\x29\x9e\x50\xfc\x62\xb7\x71\x0d\xd0\x90\xed\xbc\x62\x71\x0d\xe4\x7a\xaa\xd4\x28\xda\xe5\x12\x2f\x03\xf2\x50\xed\x92\xfe\xa6\xda\xb1\x7a\x6f\xa8\x15\x32\xf7\x6f\x00\x00\x00\xff\xff\xae\xd8\xe1\x02\xb7\x05\x00\x00")
+
+func manifests0000_20_kubeApiserverOperator_00_sccRestrictedV2YamlBytes() ([]byte, error) {
+	return bindataRead(
+		_manifests0000_20_kubeApiserverOperator_00_sccRestrictedV2Yaml,
+		"manifests/0000_20_kube-apiserver-operator_00_scc-restricted-v2.yaml",
+	)
+}
+
+func manifests0000_20_kubeApiserverOperator_00_sccRestrictedV2Yaml() (*asset, error) {
+	bytes, err := manifests0000_20_kubeApiserverOperator_00_sccRestrictedV2YamlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "manifests/0000_20_kube-apiserver-operator_00_scc-restricted-v2.yaml", size: 1463, mode: os.FileMode(420), modTime: time.Unix(1, 0)}
+	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0x96, 0x8d, 0x33, 0x67, 0x81, 0xd0, 0xb4, 0x9d, 0x3e, 0x6f, 0x57, 0xbd, 0xb3, 0x2, 0x41, 0x4b, 0xec, 0xee, 0xb5, 0x4c, 0x7b, 0x50, 0x1f, 0x67, 0x99, 0x75, 0x34, 0xfb, 0xc1, 0x3e, 0x2, 0xa1}}
+	return a, nil
+}
+
 var _manifests0000_90_ingressOperator_00_prometheusroleYaml = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x94\x8f\xb1\x6e\xe3\x30\x10\x44\x7b\x7d\x05\xe1\x9e\x3a\x5c\x67\xe8\x07\xae\xbf\x22\xfd\x8a\x1c\x4b\x0b\x53\xbb\xc4\x2e\xa9\x20\xf9\xfa\x40\xb2\xe3\x36\x48\xc5\x99\x01\xdf\x90\x43\x95\xdf\x60\xce\x2a\x53\xb0\x99\xd2\x48\xbd\xad\x6a\xfc\x49\x8d\x55\xc6\xfb\xd5\x47\xd6\x3f\xfb\xdf\xe1\xce\x92\xa7\xf0\x5f\x0b\x86\x0d\x8d\x32\x35\x9a\x86\x10\x84\x36\x4c\xa1\x9a\x6e\x68\x2b\xba\xc7\xfb\xd5\x9f\xb1\x57\x4a\x98\x82\x56\x88\xaf\x7c\x6b\x91\x65\x31\xb8\x47\xad\x30\x6a\x6a\x43\x08\x24\xa2\xed\x7c\xca\x8f\xb6\x10\x58\x52\xe9\x19\xa3\xa1\x80\x1c\xe3\x8b\x3e\xbe\xc1\xf3\x16\x53\xd1\x9e\xe3\x46\x42\x0b\xf2\x14\x2e\xcd\x3a\x2e\x3f\xa3\x8e\x72\xfb\xa6\xe2\xca\xcb\x1a\x69\x27\x2e\x34\x73\xe1\xf6\xf1\x8b\x1e\x96\xa5\x20\x8a\x66\xc4\x8c\x1d\xe5\x18\xf3\xc2\xad\x17\xf8\x34\xc4\x40\x95\xff\x99\xf6\x7a\xae\x8a\xe1\x72\x34\x1b\x5c\xbb\x25\x3c\x33\x87\xed\x9c\xe0\xa7\x81\xe4\xaa\x2c\xed\xe1\xaa\xe6\x43\xec\xb0\xf9\x79\x79\x41\x3b\xcf\xc2\xfe\x10\xef\xd4\xd2\x3a\x7c\x05\x00\x00\xff\xff\xd4\x51\x0b\x8b\xbe\x01\x00\x00")
 
 func manifests0000_90_ingressOperator_00_prometheusroleYamlBytes() ([]byte, error) {
@@ -913,6 +934,8 @@ var _bindata = map[string]func() (*asset, error){
 
 	"manifests/00-namespace.yaml": manifests00NamespaceYaml,
 
+	"manifests/0000_20_kube-apiserver-operator_00_scc-restricted-v2.yaml": manifests0000_20_kubeApiserverOperator_00_sccRestrictedV2Yaml,
+
 	"manifests/0000_90_ingress-operator_00_prometheusrole.yaml": manifests0000_90_ingressOperator_00_prometheusroleYaml,
 
 	"manifests/0000_90_ingress-operator_01_prometheusrolebinding.yaml": manifests0000_90_ingressOperator_01_prometheusrolebindingYaml,
@@ -1007,25 +1030,26 @@ var _bintree = &bintree{nil, map[string]*bintree{
 		}},
 	}},
 	"manifests": {nil, map[string]*bintree{
-		"00-cluster-role.yaml":                                   {manifests00ClusterRoleYaml, map[string]*bintree{}},
-		"00-custom-resource-definition-internal.yaml":            {manifests00CustomResourceDefinitionInternalYaml, map[string]*bintree{}},
-		"00-custom-resource-definition.yaml":                     {manifests00CustomResourceDefinitionYaml, map[string]*bintree{}},
-		"00-ingress-credentials-request.yaml":                    {manifests00IngressCredentialsRequestYaml, map[string]*bintree{}},
-		"00-namespace.yaml":                                      {manifests00NamespaceYaml, map[string]*bintree{}},
-		"0000_90_ingress-operator_00_prometheusrole.yaml":        {manifests0000_90_ingressOperator_00_prometheusroleYaml, map[string]*bintree{}},
-		"0000_90_ingress-operator_01_prometheusrolebinding.yaml": {manifests0000_90_ingressOperator_01_prometheusrolebindingYaml, map[string]*bintree{}},
-		"0000_90_ingress-operator_02_servicemonitor.yaml":        {manifests0000_90_ingressOperator_02_servicemonitorYaml, map[string]*bintree{}},
-		"0000_90_ingress-operator_03_prometheusrules.yaml":       {manifests0000_90_ingressOperator_03_prometheusrulesYaml, map[string]*bintree{}},
-		"01-cluster-role-binding.yaml":                           {manifests01ClusterRoleBindingYaml, map[string]*bintree{}},
-		"01-role-binding.yaml":                                   {manifests01RoleBindingYaml, map[string]*bintree{}},
-		"01-role.yaml":                                           {manifests01RoleYaml, map[string]*bintree{}},
-		"01-service-account.yaml":                                {manifests01ServiceAccountYaml, map[string]*bintree{}},
-		"01-service.yaml":                                        {manifests01ServiceYaml, map[string]*bintree{}},
-		"01-trusted-ca-configmap.yaml":                           {manifests01TrustedCaConfigmapYaml, map[string]*bintree{}},
-		"02-deployment-ibm-cloud-managed.yaml":                   {manifests02DeploymentIbmCloudManagedYaml, map[string]*bintree{}},
-		"02-deployment.yaml":                                     {manifests02DeploymentYaml, map[string]*bintree{}},
-		"03-cluster-operator.yaml":                               {manifests03ClusterOperatorYaml, map[string]*bintree{}},
-		"image-references":                                       {manifestsImageReferences, map[string]*bintree{}},
+		"00-cluster-role.yaml":                                      {manifests00ClusterRoleYaml, map[string]*bintree{}},
+		"00-custom-resource-definition-internal.yaml":               {manifests00CustomResourceDefinitionInternalYaml, map[string]*bintree{}},
+		"00-custom-resource-definition.yaml":                        {manifests00CustomResourceDefinitionYaml, map[string]*bintree{}},
+		"00-ingress-credentials-request.yaml":                       {manifests00IngressCredentialsRequestYaml, map[string]*bintree{}},
+		"00-namespace.yaml":                                         {manifests00NamespaceYaml, map[string]*bintree{}},
+		"0000_20_kube-apiserver-operator_00_scc-restricted-v2.yaml": {manifests0000_20_kubeApiserverOperator_00_sccRestrictedV2Yaml, map[string]*bintree{}},
+		"0000_90_ingress-operator_00_prometheusrole.yaml":           {manifests0000_90_ingressOperator_00_prometheusroleYaml, map[string]*bintree{}},
+		"0000_90_ingress-operator_01_prometheusrolebinding.yaml":    {manifests0000_90_ingressOperator_01_prometheusrolebindingYaml, map[string]*bintree{}},
+		"0000_90_ingress-operator_02_servicemonitor.yaml":           {manifests0000_90_ingressOperator_02_servicemonitorYaml, map[string]*bintree{}},
+		"0000_90_ingress-operator_03_prometheusrules.yaml":          {manifests0000_90_ingressOperator_03_prometheusrulesYaml, map[string]*bintree{}},
+		"01-cluster-role-binding.yaml":                              {manifests01ClusterRoleBindingYaml, map[string]*bintree{}},
+		"01-role-binding.yaml":                                      {manifests01RoleBindingYaml, map[string]*bintree{}},
+		"01-role.yaml":                                              {manifests01RoleYaml, map[string]*bintree{}},
+		"01-service-account.yaml":                                   {manifests01ServiceAccountYaml, map[string]*bintree{}},
+		"01-service.yaml":                                           {manifests01ServiceYaml, map[string]*bintree{}},
+		"01-trusted-ca-configmap.yaml":                              {manifests01TrustedCaConfigmapYaml, map[string]*bintree{}},
+		"02-deployment-ibm-cloud-managed.yaml":                      {manifests02DeploymentIbmCloudManagedYaml, map[string]*bintree{}},
+		"02-deployment.yaml":                                        {manifests02DeploymentYaml, map[string]*bintree{}},
+		"03-cluster-operator.yaml":                                  {manifests03ClusterOperatorYaml, map[string]*bintree{}},
+		"image-references":                                          {manifestsImageReferences, map[string]*bintree{}},
 	}},
 }}
 
