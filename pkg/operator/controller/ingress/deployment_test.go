@@ -70,7 +70,7 @@ func checkDeploymentHasContainer(t *testing.T, deployment *appsv1.Deployment, na
 
 func checkDeploymentHash(t *testing.T, deployment *appsv1.Deployment) {
 	t.Helper()
-	expectedHash := deploymentTemplateHash(deployment, false)
+	expectedHash := deploymentTemplateHash(deployment)
 	actualHash, haveHashLabel := deployment.Spec.Template.Labels[controller.ControllerDeploymentHashLabel]
 	if !haveHashLabel {
 		t.Error("router Deployment is missing hash label")
@@ -150,7 +150,7 @@ func TestTuningOptions(t *testing.T) {
 	ic.Spec.TuningOptions.TLSInspectDelay = &metav1.Duration{5 * time.Second}
 	ic.Spec.TuningOptions.HealthCheckInterval = &metav1.Duration{15 * time.Second}
 
-	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, apiConfig, networkConfig, false, false, nil, false)
+	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, apiConfig, networkConfig, false, false, nil)
 	if err != nil {
 		t.Fatalf("invalid router Deployment: %v", err)
 	}
@@ -246,7 +246,7 @@ func getRouterDeploymentComponents(t *testing.T) (*operatorv1.IngressController,
 func TestDesiredRouterDeployment(t *testing.T) {
 	ic, ingressConfig, _, apiConfig, networkConfig, proxyNeeded := getRouterDeploymentComponents(t)
 
-	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded, false, nil, false)
+	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded, false, nil)
 	if err != nil {
 		t.Fatalf("invalid router Deployment: %v", err)
 	}
@@ -323,7 +323,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 func TestDesiredRouterDeploymentSpecTemplate(t *testing.T) {
 	ic, ingressConfig, _, apiConfig, networkConfig, proxyNeeded := getRouterDeploymentComponents(t)
 
-	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded, false, nil, false)
+	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded, false, nil)
 	if err != nil {
 		t.Fatalf("invalid router Deployment: %v", err)
 	}
@@ -450,7 +450,7 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 	if err != nil {
 		t.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %v", ic.Namespace, ic.Name, err)
 	}
-	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded, false, nil, false)
+	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded, false, nil)
 	if err != nil {
 		t.Fatalf("invalid router Deployment: %v", err)
 	}
@@ -535,7 +535,7 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 	if err != nil {
 		t.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %v", ic.Namespace, ic.Name, err)
 	}
-	deployment, err = desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded, false, nil, false)
+	deployment, err = desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded, false, nil)
 	if err != nil {
 		t.Fatalf("invalid router Deployment: %v", err)
 	}
@@ -644,7 +644,7 @@ func TestDesiredRouterDeploymentVariety(t *testing.T) {
 	if err != nil {
 		t.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %v", ic.Namespace, ic.Name, err)
 	}
-	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded, false, nil, false)
+	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, apiConfig, networkConfig, proxyNeeded, false, nil)
 	if err != nil {
 		t.Fatalf("invalid router Deployment: %v", err)
 	}
@@ -914,8 +914,8 @@ func TestDeploymentHash(t *testing.T) {
 		}
 		mutated := original.DeepCopy()
 		tc.mutate(mutated)
-		deploymentHashChanged := deploymentHash(original, false) != deploymentHash(mutated, false)
-		templateHashChanged := deploymentTemplateHash(original, false) != deploymentTemplateHash(mutated, false)
+		deploymentHashChanged := deploymentHash(original) != deploymentHash(mutated)
+		templateHashChanged := deploymentTemplateHash(original) != deploymentTemplateHash(mutated)
 		if templateHashChanged && !deploymentHashChanged {
 			t.Errorf("%q: deployment hash changed but the template hash did not", tc.description)
 		}
@@ -931,10 +931,9 @@ func TestDeploymentHash(t *testing.T) {
 func TestDeploymentConfigChanged(t *testing.T) {
 	pointerTo := func(ios intstr.IntOrString) *intstr.IntOrString { return &ios }
 	testCases := []struct {
-		description              string
-		mutate                   func(*appsv1.Deployment)
-		defaultIngressController bool
-		expect                   bool
+		description string
+		mutate      func(*appsv1.Deployment)
+		expect      bool
 	}{
 		{
 			description: "if nothing changes",
@@ -1224,74 +1223,6 @@ func TestDeploymentConfigChanged(t *testing.T) {
 			expect: true,
 		},
 		{
-			description: "if probe values are set to default values for the default IngressController",
-			mutate: func(deployment *appsv1.Deployment) {
-				deployment.Spec.Template.Spec.Containers[0].LivenessProbe.ProbeHandler.HTTPGet.Scheme = "HTTP"
-				deployment.Spec.Template.Spec.Containers[0].LivenessProbe.TimeoutSeconds = int32(1)
-				deployment.Spec.Template.Spec.Containers[0].LivenessProbe.PeriodSeconds = int32(10)
-				deployment.Spec.Template.Spec.Containers[0].LivenessProbe.SuccessThreshold = int32(1)
-				deployment.Spec.Template.Spec.Containers[0].LivenessProbe.FailureThreshold = int32(3)
-				deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.ProbeHandler.HTTPGet.Scheme = "HTTP"
-				deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.TimeoutSeconds = int32(1)
-				deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.PeriodSeconds = int32(10)
-				deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.SuccessThreshold = int32(1)
-				deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.FailureThreshold = int32(3)
-				deployment.Spec.Template.Spec.Containers[0].StartupProbe.ProbeHandler.HTTPGet.Scheme = "HTTP"
-				deployment.Spec.Template.Spec.Containers[0].StartupProbe.TimeoutSeconds = int32(1)
-				deployment.Spec.Template.Spec.Containers[0].StartupProbe.PeriodSeconds = int32(10)
-				deployment.Spec.Template.Spec.Containers[0].StartupProbe.SuccessThreshold = int32(1)
-				deployment.Spec.Template.Spec.Containers[0].StartupProbe.FailureThreshold = int32(3)
-			},
-			defaultIngressController: true,
-			expect:                   false,
-		},
-		{
-			description: "if probe timeoutSecond values are set to non-default values on the default IngressController",
-			mutate: func(deployment *appsv1.Deployment) {
-				deployment.Spec.Template.Spec.Containers[0].LivenessProbe.TimeoutSeconds = int32(2)
-				deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.TimeoutSeconds = int32(2)
-				deployment.Spec.Template.Spec.Containers[0].StartupProbe.TimeoutSeconds = int32(2)
-			},
-			defaultIngressController: true,
-			expect:                   true,
-		},
-		{
-			description: "if liveness probe values are set to non-default values on the default IngressController",
-			mutate: func(deployment *appsv1.Deployment) {
-				deployment.Spec.Template.Spec.Containers[0].LivenessProbe.ProbeHandler.HTTPGet.Scheme = "HTTPS"
-				deployment.Spec.Template.Spec.Containers[0].LivenessProbe.TimeoutSeconds = int32(2)
-				deployment.Spec.Template.Spec.Containers[0].LivenessProbe.PeriodSeconds = int32(20)
-				deployment.Spec.Template.Spec.Containers[0].LivenessProbe.SuccessThreshold = int32(2)
-				deployment.Spec.Template.Spec.Containers[0].LivenessProbe.FailureThreshold = int32(30)
-			},
-			defaultIngressController: true,
-			expect:                   true,
-		},
-		{
-			description: "if readiness probe values are set to non-default values on the default IngressController",
-			mutate: func(deployment *appsv1.Deployment) {
-				deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.ProbeHandler.HTTPGet.Scheme = "HTTPS"
-				deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.TimeoutSeconds = int32(2)
-				deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.PeriodSeconds = int32(20)
-				deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.SuccessThreshold = int32(2)
-				deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.FailureThreshold = int32(30)
-			},
-			defaultIngressController: true,
-			expect:                   true,
-		},
-		{
-			description: "if startup probe values are set to non-default values on the default IngressController",
-			mutate: func(deployment *appsv1.Deployment) {
-				deployment.Spec.Template.Spec.Containers[0].StartupProbe.ProbeHandler.HTTPGet.Scheme = "HTTPS"
-				deployment.Spec.Template.Spec.Containers[0].StartupProbe.TimeoutSeconds = int32(2)
-				deployment.Spec.Template.Spec.Containers[0].StartupProbe.PeriodSeconds = int32(20)
-				deployment.Spec.Template.Spec.Containers[0].StartupProbe.SuccessThreshold = int32(2)
-				deployment.Spec.Template.Spec.Containers[0].StartupProbe.FailureThreshold = int32(30)
-			},
-			defaultIngressController: true,
-			expect:                   true,
-		},
-		{
 			description: "if dnsPolicy is changed",
 			mutate: func(deployment *appsv1.Deployment) {
 				deployment.Spec.Template.Spec.DNSPolicy = corev1.DNSClusterFirstWithHostNet
@@ -1510,10 +1441,10 @@ func TestDeploymentConfigChanged(t *testing.T) {
 		}
 		mutated := original.DeepCopy()
 		tc.mutate(mutated)
-		if changed, updated := deploymentConfigChanged(&original, mutated, tc.defaultIngressController); changed != tc.expect {
+		if changed, updated := deploymentConfigChanged(&original, mutated); changed != tc.expect {
 			t.Errorf("%s, expect deploymentConfigChanged to be %t, got %t", tc.description, tc.expect, changed)
 		} else if changed {
-			if changedAgain, _ := deploymentConfigChanged(mutated, updated, tc.defaultIngressController); changedAgain {
+			if changedAgain, _ := deploymentConfigChanged(mutated, updated); changedAgain {
 				t.Errorf("%s, deploymentConfigChanged does not behave as a fixed point function", tc.description)
 			}
 		}
