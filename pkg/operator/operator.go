@@ -27,6 +27,7 @@ import (
 	configurableroutecontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/configurable-route"
 	crlcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/crl"
 	dnscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/dns"
+	ingress "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 	ingressclasscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingressclass"
 	statuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/status"
@@ -245,6 +246,19 @@ func (o *Operator) Start(ctx context.Context) error {
 	}
 }
 
+func (o *Operator) determineReplicasForDefaultIngressController() (int32, error) {
+	infraConfig := &configv1.Infrastructure{}
+	if err := o.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, infraConfig); err != nil {
+		return 0, fmt.Errorf("failed fetching infrastructure config: %w", err)
+	}
+	ingressConfig := &configv1.Ingress{}
+	if err := o.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, ingressConfig); err != nil {
+		return 0, fmt.Errorf("failed fetching ingress config: %w", err)
+	}
+
+	return ingress.DetermineReplicas(ingressConfig, infraConfig), nil
+}
+
 // ensureDefaultIngressController creates the default ingresscontroller if it
 // doesn't already exist.
 func (o *Operator) ensureDefaultIngressController() error {
@@ -255,20 +269,16 @@ func (o *Operator) ensureDefaultIngressController() error {
 	} else if !errors.IsNotFound(err) {
 		return err
 	}
-	infraConfig := &configv1.Infrastructure{}
-	if err := o.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, infraConfig); err != nil {
-		return err
-	}
+
 	// Set the replicas field to a non-nil value because otherwise its
 	// persisted value will be nil, which causes GETs on the /scale
 	// subresource to fail, which breaks the scaling client.  See also:
 	// https://github.com/kubernetes/kubernetes/pull/75210
-	//
-	// TODO: Set the replicas value to the number of workers.
-	replicas := int32(2)
-	if infraConfig.Status.InfrastructureTopology == configv1.SingleReplicaTopologyMode {
-		replicas = 1
+	replicas, err := o.determineReplicasForDefaultIngressController()
+	if err != nil {
+		return fmt.Errorf("failed to determine number of replicas for default ingress controller: %w", err)
 	}
+
 	ic = &operatorv1.IngressController{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name.Name,
