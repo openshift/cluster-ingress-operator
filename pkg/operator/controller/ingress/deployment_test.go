@@ -431,6 +431,7 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 		HeaderBufferBytes:           16384,
 		HeaderBufferMaxRewriteBytes: 4096,
 		ThreadCount:                 RouterHAProxyThreadsDefaultValue * 2,
+		MaxConnections:              -1,
 	}
 	ic.Spec.HTTPEmptyRequestsPolicy = "Ignore"
 
@@ -454,7 +455,7 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 	var expectedReplicas int32 = 8
 	ic.Spec.Replicas = &expectedReplicas
 	ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
-		Raw: []byte(`{"loadBalancingAlgorithm":"random","dynamicConfigManager":"false","maxConnections":-1,"reloadInterval":15}`),
+		Raw: []byte(`{"loadBalancingAlgorithm":"random","dynamicConfigManager":"false","reloadInterval":15}`),
 	}
 	ic.Spec.HttpErrorCodePages = configv1.ConfigMapNameReference{
 		Name: "my-custom-error-code-pages",
@@ -538,8 +539,9 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 	// Any value for loadBalancingAlgorithm other than "random" should be
 	// ignored.
 	ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
-		Raw: []byte(`{"loadBalancingAlgorithm":"source","dynamicConfigManager":"true","maxConnections":40000}`),
+		Raw: []byte(`{"loadBalancingAlgorithm":"source","dynamicConfigManager":"true"}`),
 	}
+	ic.Spec.TuningOptions.MaxConnections = 40000
 	ic.Status.EndpointPublishingStrategy.LoadBalancer = &operatorv1.LoadBalancerStrategy{
 		Scope: operatorv1.ExternalLoadBalancer,
 		ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
