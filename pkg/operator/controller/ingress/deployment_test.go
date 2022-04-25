@@ -19,6 +19,10 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
+const (
+	routerContainerName = "router"
+)
+
 var toleration = corev1.Toleration{
 	Key:      "foo",
 	Value:    "bar",
@@ -89,6 +93,19 @@ func checkDeploymentHasContainer(t *testing.T, deployment *appsv1.Deployment, na
 	}
 	if expect {
 		t.Errorf("router Deployment has no %q container", name)
+	}
+}
+
+func checkRouterContainerSecurityContext(t *testing.T, deployment *appsv1.Deployment) {
+	t.Helper()
+	checkDeploymentHasContainer(t, deployment, routerContainerName, true)
+
+	for _, container := range deployment.Spec.Template.Spec.Containers {
+		if container.Name == routerContainerName {
+			if v := container.SecurityContext.AllowPrivilegeEscalation; v == nil || *v != true {
+				t.Errorf("%s container does not have securityContext.allowPrivilegeEscalation: true", routerContainerName)
+			}
+		}
 	}
 }
 
@@ -193,6 +210,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		t.Errorf("invalid router Deployment: %v", err)
 	}
 
+	checkRouterContainerSecurityContext(t, deployment)
 	checkDeploymentHash(t, deployment)
 
 	checkDeploymentHasEnvVar(t, deployment, WildcardRouteAdmissionPolicy, true, "false")
@@ -1176,6 +1194,17 @@ func TestDeploymentConfigChanged(t *testing.T) {
 			description: "if .spec.minReadySeconds changes to none",
 			mutate: func(deployment *appsv1.Deployment) {
 				deployment.Spec.MinReadySeconds = 0
+			},
+			expect: true,
+		},
+		{
+			description: "if the router container security context changes",
+			mutate: func(deployment *appsv1.Deployment) {
+				v := true
+				sc := &corev1.SecurityContext{
+					AllowPrivilegeEscalation: &v,
+				}
+				deployment.Spec.Template.Spec.Containers[0].SecurityContext = sc
 			},
 			expect: true,
 		},

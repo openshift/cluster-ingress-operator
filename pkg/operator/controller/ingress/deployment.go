@@ -1224,6 +1224,7 @@ func hashableDeployment(deployment *appsv1.Deployment, onlyTemplate bool) *appsv
 			LivenessProbe:   hashableProbe(container.LivenessProbe),
 			ReadinessProbe:  hashableProbe(container.ReadinessProbe),
 			StartupProbe:    hashableProbe(container.StartupProbe),
+			SecurityContext: container.SecurityContext,
 		}
 	}
 	sort.Slice(containers, func(i, j int) bool {
@@ -1434,6 +1435,7 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 	}
 	updated.Spec.Template.Spec.Volumes = volumes
 	updated.Spec.Template.Spec.NodeSelector = expected.Spec.Template.Spec.NodeSelector
+	updated.Spec.Template.Spec.Containers[0].SecurityContext = expected.Spec.Template.Spec.Containers[0].SecurityContext
 	updated.Spec.Template.Spec.Containers[0].Env = expected.Spec.Template.Spec.Containers[0].Env
 	updated.Spec.Template.Spec.Containers[0].Image = expected.Spec.Template.Spec.Containers[0].Image
 	updated.Spec.Template.Spec.Containers[0].LivenessProbe = expected.Spec.Template.Spec.Containers[0].LivenessProbe
