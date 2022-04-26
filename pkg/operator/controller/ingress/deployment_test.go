@@ -328,6 +328,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		{"STATS_PASSWORD_FILE", true, "/var/lib/haproxy/conf/metrics-auth/statsPassword"},
 		{"SSL_MIN_VERSION", true, "TLSv1.1"},
 		{WildcardRouteAdmissionPolicy, true, "false"},
+		{"ROUTER_DOMAIN", false, ""},
 	}
 	if err := checkDeploymentEnvironment(t, deployment, tests); err != nil {
 		t.Error(err)
@@ -526,6 +527,7 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 		{"ROUTER_IP_V4_V6_MODE", true, "v4v6"},
 		{RouterEnableCompression, true, "true"},
 		{RouterCompressionMIMETypes, true, "text/html application/*"},
+		{"ROUTER_DOMAIN", true, ic.Status.Domain},
 	}
 	if err := checkDeploymentEnvironment(t, deployment, tests); err != nil {
 		t.Error(err)
