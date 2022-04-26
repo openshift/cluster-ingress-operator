@@ -21,6 +21,7 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
+
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	oputil "github.com/openshift/cluster-ingress-operator/pkg/util"
@@ -94,6 +95,14 @@ const (
 	RouterEnableCompression    = "ROUTER_ENABLE_COMPRESSION"
 	RouterCompressionMIMETypes = "ROUTER_COMPRESSION_MIME"
 	RouterBackendCheckInterval = "ROUTER_BACKEND_CHECK_INTERVAL"
+
+	RouterServiceHTTPPort  = "ROUTER_SERVICE_HTTP_PORT"
+	RouterServiceHTTPSPort = "ROUTER_SERVICE_HTTPS_PORT"
+	StatsPort              = "STATS_PORT"
+
+	HTTPPortName  = "http"
+	HTTPSPortName = "https"
+	StatsPortName = "metrics"
 )
 
 // ensureRouterDeployment ensures the router deployment exists for a given
@@ -621,6 +630,12 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	deployment.Spec.Template.Spec.Containers[0].Image = ingressControllerImage
 	deployment.Spec.Template.Spec.DNSPolicy = corev1.DNSClusterFirst
 
+	var (
+		statsPort int32 = routerDefaultHostNetworkStatsPort
+		httpPort  int32 = routerDefaultHostNetworkHTTPPort
+		httpsPort int32 = routerDefaultHostNetworkHTTPSPort
+	)
+
 	if ci.Status.EndpointPublishingStrategy.Type == operatorv1.HostNetworkStrategyType {
 		// Expose ports 80, 443, and 1936 on the host to provide
 		// endpoints for the user's HA solution.
@@ -634,7 +649,40 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.ProbeHandler.HTTPGet.Host = "localhost"
 		deployment.Spec.Template.Spec.Containers[0].StartupProbe.ProbeHandler.HTTPGet.Host = "localhost"
 		deployment.Spec.Template.Spec.DNSPolicy = corev1.DNSClusterFirstWithHostNet
+
+		config := ci.Status.EndpointPublishingStrategy.HostNetwork
+		if config.HTTPSPort == config.HTTPPort || config.HTTPPort == config.StatsPort || config.StatsPort == config.HTTPSPort {
+			return nil, fmt.Errorf("the specified HTTPS, HTTP and Stats ports %d, %d, %d are not unique", config.HTTPSPort, config.HTTPPort, config.StatsPort)
+		}
+
+		// Set the ports to the values from the host network configuration
+		httpPort = config.HTTPPort
+		httpsPort = config.HTTPSPort
+		statsPort = config.StatsPort
+
+		// Append the environment variables for the HTTP and HTTPS ports
+		env = append(env,
+			corev1.EnvVar{
+				Name:  RouterServiceHTTPSPort,
+				Value: strconv.Itoa(int(httpsPort)),
+			},
+			corev1.EnvVar{
+				Name:  RouterServiceHTTPPort,
+				Value: strconv.Itoa(int(httpPort)),
+			},
+		)
 	}
+
+	// Set the port for the probes from the host network configuration
+	deployment.Spec.Template.Spec.Containers[0].LivenessProbe.ProbeHandler.HTTPGet.Port.IntVal = statsPort
+	deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.ProbeHandler.HTTPGet.Port.IntVal = statsPort
+	deployment.Spec.Template.Spec.Containers[0].StartupProbe.ProbeHandler.HTTPGet.Port.IntVal = statsPort
+
+	// append the value for the metrics port to the list of environment variables
+	env = append(env, corev1.EnvVar{
+		Name:  StatsPort,
+		Value: strconv.Itoa(int(statsPort)),
+	})
 
 	// Fill in the default certificate secret name.
 	secretName := controller.RouterEffectiveDefaultCertificateSecretName(ci, deployment.Namespace)
@@ -1041,6 +1089,23 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	// Add the environment variables to the container
 	deployment.Spec.Template.Spec.Containers[0].Env = append(deployment.Spec.Template.Spec.Containers[0].Env, env...)
 
+	// Add the ports to the container
+	deployment.Spec.Template.Spec.Containers[0].Ports = append(
+		deployment.Spec.Template.Spec.Containers[0].Ports,
+		corev1.ContainerPort{
+			Name:          HTTPPortName,
+			ContainerPort: httpPort,
+		},
+		corev1.ContainerPort{
+			Name:          HTTPSPortName,
+			ContainerPort: httpsPort,
+		},
+		corev1.ContainerPort{
+			Name:          StatsPortName,
+			ContainerPort: statsPort,
+		},
+	)
+
 	// Compute the hash for topology spread constraints and possibly
 	// affinity policy now, after all the other fields have been computed,
 	// and inject it into the appropriate fields.
@@ -1272,6 +1337,7 @@ func hashableDeployment(deployment *appsv1.Deployment, onlyTemplate bool) *appsv
 			ReadinessProbe:  hashableProbe(container.ReadinessProbe),
 			StartupProbe:    hashableProbe(container.StartupProbe),
 			SecurityContext: container.SecurityContext,
+			Ports:           container.Ports,
 		}
 	}
 	sort.Slice(containers, func(i, j int) bool {
@@ -1468,6 +1534,7 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 	copyProbe(expected.Spec.Template.Spec.Containers[0].ReadinessProbe, updated.Spec.Template.Spec.Containers[0].ReadinessProbe)
 	copyProbe(expected.Spec.Template.Spec.Containers[0].StartupProbe, updated.Spec.Template.Spec.Containers[0].StartupProbe)
 	updated.Spec.Template.Spec.Containers[0].VolumeMounts = expected.Spec.Template.Spec.Containers[0].VolumeMounts
+	updated.Spec.Template.Spec.Containers[0].Ports = expected.Spec.Template.Spec.Containers[0].Ports
 	updated.Spec.Template.Spec.Tolerations = expected.Spec.Template.Spec.Tolerations
 	updated.Spec.Template.Spec.TopologySpreadConstraints = expected.Spec.Template.Spec.TopologySpreadConstraints
 	updated.Spec.Template.Spec.Affinity = expected.Spec.Template.Spec.Affinity

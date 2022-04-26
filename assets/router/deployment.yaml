@@ -22,21 +22,8 @@ spec:
             # See https://bugzilla.redhat.com/2007246
             allowPrivilegeEscalation: true
           terminationMessagePolicy: FallbackToLogsOnError
-          ports:
-          - name: http
-            containerPort: 80
-            protocol: TCP
-          - name: https
-            containerPort: 443
-            protocol: TCP
-          - name: metrics
-            containerPort: 1936
-            protocol: TCP
           # Merged at runtime.
           env:
-          # stats username and password are generated at runtime
-          - name: STATS_PORT
-            value: "1936"
           - name: ROUTER_SERVICE_NAMESPACE
             value: openshift-ingress
           - name: DEFAULT_CERTIFICATE_DIR
