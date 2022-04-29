@@ -51,6 +51,11 @@ spec:
           requests:
             cpu: 10m
             memory: 56Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
         terminationMessagePolicy: FallbackToLogsOnError
         volumeMounts:
         - mountPath: /etc/pki/ca-trust/extracted/pem
@@ -75,6 +80,11 @@ spec:
           requests:
             cpu: 10m
             memory: 40Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
         volumeMounts:
         - mountPath: /etc/tls/private
           name: metrics-tls
@@ -82,6 +92,10 @@ spec:
       nodeSelector:
         kubernetes.io/os: linux
       priorityClassName: system-cluster-critical
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       serviceAccountName: ingress-operator
       tolerations:
       - effect: NoSchedule
