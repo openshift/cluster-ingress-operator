@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/spf13/cobra"
 	"github.com/summerwind/h2spec"
 	h2specconfig "github.com/summerwind/h2spec/config"
@@ -15,6 +16,8 @@ import (
 var (
 	version string = "2.6.0"
 	commit  string = "70ac2294010887f48b18e2d64f5cccd48421fad1"
+
+	log = logf.Logger.WithName("h2spec")
 )
 
 func NewClientCommand() *cobra.Command {
@@ -28,7 +31,6 @@ func NewClientCommand() *cobra.Command {
 	}
 
 	cmd.SilenceUsage = true
-	cmd.SilenceErrors = true
 
 	flags := cmd.Flags()
 	flags.StringP("host", "h", "127.0.0.1", "Target host")
@@ -148,6 +150,7 @@ func run(cmd *cobra.Command, args []string) error {
 
 	success, err := h2spec.Run(c)
 	if !success {
+		log.Error(err, "error")
 		os.Exit(1)
 	}
 
