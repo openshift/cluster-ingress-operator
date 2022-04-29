@@ -2769,6 +2769,20 @@ func TestTunableRouterKubeletProbesForCustomIngressController(t *testing.T) {
 // It creates a service with the same naming convention as the ingress controller creates its own load balancing services.
 // Then it triggers a reconcilation of the ingress operator to see if it will delete our service.
 func TestIngressControllerServiceNameCollision(t *testing.T) {
+	refreshService := func(name types.NamespacedName, timeout time.Duration) (*corev1.Service, error) {
+		service := corev1.Service{}
+		if err := wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
+			if err := kclient.Get(context.TODO(), name, &service); err != nil {
+				t.Logf("failed to get service %q: %v, retrying...", name, err)
+				return false, nil
+			}
+			return true, nil
+		}); err != nil {
+			return nil, err
+		}
+		return &service, nil
+	}
+
 	// Create the new private controller that we will later create a service to collide with the naming scheme of this.
 	icName := types.NamespacedName{
 		Namespace: operatorNamespace,
@@ -2835,15 +2849,28 @@ func TestIngressControllerServiceNameCollision(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Wait to see if our service gets deleted by the operator due to name collision.
-	oldLoadBalancerUID := conflictingLoadBalancerService.UID
-	oldNodePortUID := conflictingNodeportService.UID
+	// Check if LoadBalancer and Nodeport Service are still
+	// present. We don't check for an error from the final result
+	// of the PollImmediate loop as we want to assert that over a
+	// full minute both services are present and do not get
+	// recreated.
 	wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
-		// Check if LoadBalancer and Nodeport Service don't get deleted for the entire duration of this loop.
-		// Will throw fatal error if deleted or marked for deletion and this loop stops.
-		assertServiceNotDeleted(t, conflictingLoadBalancerServiceName, oldLoadBalancerUID)
-		assertServiceNotDeleted(t, conflictingNodeportServiceName, oldNodePortUID)
-
+		for _, existingService := range []*corev1.Service{
+			conflictingLoadBalancerService,
+			conflictingNodeportService,
+		} {
+			serviceName := types.NamespacedName{Namespace: existingService.Namespace, Name: existingService.Name}
+			updatedService, err := refreshService(serviceName, time.Minute)
+			if err != nil {
+				t.Fatalf("failed to get service %q: %v", serviceName, err)
+			}
+			if updatedService.DeletionTimestamp != nil {
+				t.Fatalf("expected service %s to not be marked for deletion: %v", serviceName, updatedService.DeletionTimestamp)
+			}
+			if updatedService.UID != existingService.UID {
+				t.Fatalf("expected service %s to have UID %v, got %v", serviceName, existingService.UID, updatedService.UID)
+			}
+		}
 		return false, nil
 	})
 }
@@ -3127,25 +3154,6 @@ func deleteIngressController(t *testing.T, cl client.Client, ic *operatorv1.Ingr
 		return fmt.Errorf("timed out waiting for ingresscontroller to be deleted: %v", err)
 	}
 	return nil
-}
-
-// assertServiceNotDeleted asserts that a provide service wasn't deleted.
-func assertServiceNotDeleted(t *testing.T, serviceName types.NamespacedName, oldUid types.UID) {
-	t.Helper()
-
-	// First check our LoadBalancer Service.
-	service := &corev1.Service{}
-	if err := kclient.Get(context.TODO(), serviceName, service); err != nil {
-		t.Fatalf("expected %s to be present: %v", serviceName, err)
-	}
-	// If there is a DeletionTimestamp, it has been marked for deletion.
-	if service.DeletionTimestamp != nil {
-		t.Fatalf("expected service %s to not be marked for deletion: %v", serviceName, service.DeletionTimestamp)
-	}
-	// If the UID has changed, then the service has been recreated.
-	if service.UID != oldUid {
-		t.Fatalf("expected service %s to have UID %v, got %v", serviceName, oldUid, service.UID)
-	}
 }
 
 func createDefaultCertTestSecret(cl client.Client, name string) (*corev1.Secret, error) {
