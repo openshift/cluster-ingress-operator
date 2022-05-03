@@ -1353,6 +1353,24 @@ func TestDeploymentConfigChanged(t *testing.T) {
 			},
 			expect: true,
 		},
+		{
+			description: "if the protocol for container ports is set to the default value",
+			mutate: func(deployment *appsv1.Deployment) {
+				deployment.Spec.Template.Spec.Containers[0].Ports[0].Protocol = corev1.ProtocolTCP
+				deployment.Spec.Template.Spec.Containers[0].Ports[1].Protocol = corev1.ProtocolTCP
+				deployment.Spec.Template.Spec.Containers[0].Ports[2].Protocol = corev1.ProtocolTCP
+			},
+			expect: false,
+		},
+		{
+			description: "if the protocol for container ports is set to a non-default value",
+			mutate: func(deployment *appsv1.Deployment) {
+				deployment.Spec.Template.Spec.Containers[0].Ports[0].Protocol = corev1.ProtocolUDP
+				deployment.Spec.Template.Spec.Containers[0].Ports[1].Protocol = corev1.ProtocolUDP
+				deployment.Spec.Template.Spec.Containers[0].Ports[2].Protocol = corev1.ProtocolUDP
+			},
+			expect: true,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -1466,14 +1484,17 @@ func TestDeploymentConfigChanged(t *testing.T) {
 									{
 										Name:          "http",
 										ContainerPort: int32(80),
+										Protocol:      corev1.ProtocolTCP,
 									},
 									{
 										Name:          "https",
 										ContainerPort: 443,
+										Protocol:      corev1.ProtocolTCP,
 									},
 									{
 										Name:          "metrics",
 										ContainerPort: 1936,
+										Protocol:      corev1.ProtocolTCP,
 									},
 								},
 							},
