@@ -1342,14 +1342,14 @@ func TestDeploymentConfigChanged(t *testing.T) {
 		{
 			description: "if container HTTPS port is changed",
 			mutate: func(deployment *appsv1.Deployment) {
-				deployment.Spec.Template.Spec.Containers[0].Ports[0].ContainerPort = 8443
+				deployment.Spec.Template.Spec.Containers[0].Ports[1].ContainerPort = 8443
 			},
 			expect: true,
 		},
 		{
 			description: "if container Stats port is changed",
 			mutate: func(deployment *appsv1.Deployment) {
-				deployment.Spec.Template.Spec.Containers[0].Ports[0].ContainerPort = 8936
+				deployment.Spec.Template.Spec.Containers[0].Ports[2].ContainerPort = 8936
 			},
 			expect: true,
 		},
