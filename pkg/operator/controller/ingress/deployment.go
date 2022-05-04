@@ -1099,14 +1099,17 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		corev1.ContainerPort{
 			Name:          HTTPPortName,
 			ContainerPort: httpPort,
+			Protocol:      corev1.ProtocolTCP,
 		},
 		corev1.ContainerPort{
 			Name:          HTTPSPortName,
 			ContainerPort: httpsPort,
+			Protocol:      corev1.ProtocolTCP,
 		},
 		corev1.ContainerPort{
 			Name:          StatsPortName,
 			ContainerPort: statsPort,
+			Protocol:      corev1.ProtocolTCP,
 		},
 	)
 
