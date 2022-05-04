@@ -144,7 +144,7 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 
 	partition, ok := endpoints.PartitionForRegion(endpoints.DefaultPartitions(), region)
 	if !ok {
-		return nil, fmt.Errorf("Unable to determine partition from region: %q", region)
+		log.Info("unable to determine partition from region", "region name", region)
 	}
 
 	// If the region is in aws china, cn-north-1 or cn-northwest-1, we should:
