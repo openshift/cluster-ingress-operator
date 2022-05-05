@@ -24,6 +24,7 @@ import (
 // references a secret that does not exist, then creates the secret and verifies
 // that the operator updates the "router-certs" global secret.
 func TestCreateIngressControllerThenSecret(t *testing.T) {
+	t.Parallel()
 	name := types.NamespacedName{Namespace: operatorNamespace, Name: names.SimpleNameGenerator.GenerateName("test-")}
 	ic := newPrivateController(name, name.Name+"."+dnsConfig.Spec.BaseDomain)
 	ic.Spec.DefaultCertificate = &corev1.LocalObjectReference{
@@ -73,6 +74,7 @@ func TestCreateIngressControllerThenSecret(t *testing.T) {
 // ingresscontroller that references the secret and verifies that the operator
 // updates the "router-certs" global secret.
 func TestCreateSecretThenIngressController(t *testing.T) {
+	t.Parallel()
 	name := types.NamespacedName{Namespace: operatorNamespace, Name: names.SimpleNameGenerator.GenerateName("test-")}
 
 	// Create the secret.

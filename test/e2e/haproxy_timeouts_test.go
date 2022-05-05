@@ -24,6 +24,7 @@ import (
 )
 
 func TestHAProxyTimeouts(t *testing.T) {
+	t.Parallel()
 	const (
 		clientTimeoutInput     = 45 * time.Second
 		clientTimeoutOutput    = "45s"
@@ -178,6 +179,7 @@ func TestHAProxyTimeouts(t *testing.T) {
 }
 
 func TestHAProxyTimeoutsRejection(t *testing.T) {
+	t.Parallel()
 	const (
 		clientTimeoutInput      = -45 * time.Second
 		clientFinTimeoutInput   = 0 * time.Millisecond

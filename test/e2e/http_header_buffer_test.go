@@ -29,6 +29,7 @@ import (
 )
 
 func TestHTTPHeaderBufferSize(t *testing.T) {
+	t.Parallel()
 	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "header-buffer-size"}
 	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
 	ic := newPrivateController(icName, domain)

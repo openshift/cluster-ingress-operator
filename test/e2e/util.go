@@ -34,7 +34,7 @@ func buildEchoPod(name, namespace string) *corev1.Pod {
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Labels: map[string]string{
-				"app": "echo",
+				"app": name,
 			},
 			Name:      name,
 			Namespace: namespace,

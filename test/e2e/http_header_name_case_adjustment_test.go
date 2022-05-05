@@ -27,6 +27,7 @@ import (
 )
 
 func TestHeaderNameCaseAdjustment(t *testing.T) {
+	t.Parallel()
 	testHeaderNames := []operatorv1.IngressControllerHTTPHeaderNameCaseAdjustment{
 		"X-Forwarded-For",
 		"Cache-Control",

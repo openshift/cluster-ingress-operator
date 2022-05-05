@@ -12,7 +12,7 @@ endif
 GO=GO111MODULE=on GOFLAGS=-mod=vendor go
 GO_BUILD_RECIPE=CGO_ENABLED=0 $(GO) build -o $(BIN) $(GO_GCFLAGS) $(MAIN_PACKAGE)
 
-TEST ?= .*
+TEST ?= TestAll
 
 .PHONY: build
 build:
@@ -53,7 +53,7 @@ release-local:
 
 .PHONY: test-e2e
 test-e2e:
-	$(GO) test -timeout 1h -count 1 -v -tags e2e -run "$(TEST)" ./test/e2e
+	E2E_SKIP_PARALLEL_TESTS=0 E2E_SKIP_SERIAL_TESTS=1 $(GO) test -timeout 2h -count 20 -v -tags e2e -run "$(TEST)" ./test/e2e
 
 .PHONY: clean
 clean:
