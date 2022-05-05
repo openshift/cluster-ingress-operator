@@ -21,6 +21,10 @@ spec:
       labels:
         name: ingress-operator
     spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       nodeSelector:
         kubernetes.io/os: linux
         node-role.kubernetes.io/master: ""
@@ -40,6 +44,10 @@ spec:
       priorityClassName: system-cluster-critical
       containers:
         - name: ingress-operator
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           terminationMessagePolicy: FallbackToLogsOnError
           imagePullPolicy: IfNotPresent
           image: openshift/origin-cluster-ingress-operator:latest
@@ -77,6 +85,10 @@ spec:
             mountPath: /var/run/secrets/openshift/serviceaccount
             readOnly: true
         - name: kube-rbac-proxy
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           image: quay.io/openshift/origin-kube-rbac-proxy:latest
           args:
           - --logtostderr
