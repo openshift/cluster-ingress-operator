@@ -3,7 +3,7 @@ package client
 import (
 	"context"
 
-	"github.com/Azure/azure-sdk-for-go/services/dns/mgmt/2017-10-01/dns"
+	"github.com/Azure/azure-sdk-for-go/profiles/2018-03-01/dns/mgmt/dns"
 	privatedns "github.com/Azure/azure-sdk-for-go/services/privatedns/mgmt/2018-09-01/privatedns"
 	"github.com/Azure/go-autorest/autorest/azure"
 	"github.com/pkg/errors"
