@@ -483,7 +483,6 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	var unsupportedConfigOverrides struct {
 		LoadBalancingAlgorithm string `json:"loadBalancingAlgorithm"`
 		DynamicConfigManager   string `json:"dynamicConfigManager"`
-		MaxConnections         int32  `json:"maxConnections"`
 		ReloadInterval         int32  `json:"reloadInterval"`
 	}
 	if len(ci.Spec.UnsupportedConfigOverrides.Raw) > 0 {
@@ -514,7 +513,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		Value: "source",
 	})
 
-	switch v := unsupportedConfigOverrides.MaxConnections; {
+	switch v := ci.Spec.TuningOptions.MaxConnections; {
 	case v == -1:
 		env = append(env, corev1.EnvVar{
 			Name:  RouterMaxConnectionsEnvName,
