@@ -1909,8 +1909,12 @@ func TestHTTPHeaderCapture(t *testing.T) {
 	if err := kclient.List(context.TODO(), podList, client.MatchingLabelsSelector{Selector: selector}); err != nil {
 		t.Fatalf("failed to list pods for ingresscontroller: %v", err)
 	}
-	if len(podList.Items) < 1 {
-		t.Fatalf("found no pods for ingresscontroller: %v", err)
+	if len(podList.Items) != 1 {
+		var podNames []string
+		for i := range podList.Items {
+			podNames = append(podNames, podList.Items[i].Name)
+		}
+		t.Fatalf("expected ingress controller %s to have exactly 1 router pod, but it has %d: %s", ic.Name, len(podList.Items), strings.Join(podNames, ", "))
 	}
 
 	// Make a request to the console route.
@@ -2049,8 +2053,8 @@ func TestHTTPCookieCapture(t *testing.T) {
 	if err := kclient.List(context.TODO(), podList, client.MatchingLabelsSelector{Selector: selector}); err != nil {
 		t.Fatalf("failed to list pods for ingresscontroller: %v", err)
 	}
-	if len(podList.Items) < 1 {
-		t.Fatalf("found no pods for ingresscontroller: %v", err)
+	if len(podList.Items) != 1 {
+		t.Fatalf("expected ingress controller %s to have exactly 1 router pod, but it has %d", ic.Name, len(podList.Items))
 	}
 
 	// Make a request to the console route.
