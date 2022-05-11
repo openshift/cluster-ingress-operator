@@ -103,6 +103,15 @@ var defaultName = types.NamespacedName{Namespace: operatorNamespace, Name: manif
 var clusterConfigName = types.NamespacedName{Namespace: operatorNamespace, Name: manifests.ClusterIngressConfigName}
 
 func TestMain(m *testing.M) {
+	if os.Getenv("E2E_TEST_MAIN_SKIP_SETUP") == "1" {
+		// If we are deriving the set of tests via `go test
+		// -list` then we don't always have a KUBECONFIG
+		// (e.g., CI, or local dev) so we do none of the
+		// overall test setup below because calls to
+		// getConfig() will fail and no test names will be
+		// discovered.
+		os.Exit(m.Run())
+	}
 	kubeConfig, err := config.GetConfig()
 	if err != nil {
 		fmt.Printf("failed to get kube config: %s\n", err)
