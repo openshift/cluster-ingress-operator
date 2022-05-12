@@ -12,3 +12,7 @@ metadata:
     # old and new forms of the label for matching with NetworkPolicy
     network.openshift.io/policy-group: ingress
     policy-group.network.openshift.io/ingress: ""
+    # router deployment needs to allow privilege escalation
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/audit: baseline
+    pod-security.kubernetes.io/warn: baseline
