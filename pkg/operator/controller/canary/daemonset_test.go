@@ -156,6 +156,34 @@ func TestCanaryDaemonsetChanged(t *testing.T) {
 			},
 			expect: true,
 		},
+		{
+			description: "if canary daemonset pod security context changed",
+			mutate: func(ds *appsv1.DaemonSet) {
+				v := false
+				sc := &corev1.PodSecurityContext{
+					RunAsNonRoot: &v,
+					SeccompProfile: &corev1.SeccompProfile{
+						Type: corev1.SeccompProfileTypeRuntimeDefault,
+					},
+				}
+				ds.Spec.Template.Spec.SecurityContext = sc
+			},
+			expect: true,
+		},
+		{
+			description: "if canary daemonset container security context changed",
+			mutate: func(ds *appsv1.DaemonSet) {
+				v := false
+				sc := &corev1.SecurityContext{
+					AllowPrivilegeEscalation: &v,
+					Capabilities: &corev1.Capabilities{
+						Drop: []corev1.Capability{},
+					},
+				}
+				ds.Spec.Template.Spec.Containers[0].SecurityContext = sc
+			},
+			expect: true,
+		},
 	}
 
 	for _, tc := range testCases {
