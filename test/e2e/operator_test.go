@@ -231,6 +231,7 @@ func TestDefaultIngressClass(t *testing.T) {
 // ingressclass for a custom ingresscontroller and deletes the ingressclass if
 // the ingresscontroller is deleted.
 func TestCustomIngressClass(t *testing.T) {
+	t.Parallel()
 	icName := types.NamespacedName{
 		Namespace: operatorNamespace,
 		Name:      "testcustomingressclass",
@@ -290,6 +291,7 @@ func TestCustomIngressClass(t *testing.T) {
 }
 
 func TestUserDefinedIngressController(t *testing.T) {
+	t.Parallel()
 	name := types.NamespacedName{Namespace: operatorNamespace, Name: "test"}
 	ing := newLoadBalancerController(name, name.Name+"."+dnsConfig.Spec.BaseDomain)
 	if err := kclient.Create(context.TODO(), ing); err != nil {
@@ -303,6 +305,7 @@ func TestUserDefinedIngressController(t *testing.T) {
 }
 
 func TestUniqueDomainRejection(t *testing.T) {
+	t.Parallel()
 	def := &operatorv1.IngressController{}
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, defaultName, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
@@ -369,6 +372,7 @@ func TestProxyProtocolOnAWS(t *testing.T) {
 // TestProxyProtocolAPI verifies that the operator configures router pod
 // replicas to use PROXY protocol if it is specified on an ingresscontroller.
 func TestProxyProtocolAPI(t *testing.T) {
+	t.Parallel()
 	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "proxy-protocol"}
 	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
 	ic := newNodePortController(icName, domain)
@@ -515,6 +519,7 @@ func TestUpdateDefaultIngressController(t *testing.T) {
 // scale client and uses it to scale the ingresscontroller up to 2 replicas and
 // then back down to 1 replica.
 func TestIngressControllerScale(t *testing.T) {
+	t.Parallel()
 	// Create a new ingresscontroller.
 	name := types.NamespacedName{Namespace: operatorNamespace, Name: "scale"}
 	domain := name.Name + "." + dnsConfig.Spec.BaseDomain
@@ -749,6 +754,7 @@ func TestPodDisruptionBudgetExists(t *testing.T) {
 // operator creates a router and that the router becomes available.
 func TestHostNetworkEndpointPublishingStrategy(t *testing.T) {
 	name := types.NamespacedName{Namespace: operatorNamespace, Name: "host"}
+	t.Parallel()
 	ing := newHostNetworkController(name, name.Name+"."+dnsConfig.Spec.BaseDomain)
 	if err := kclient.Create(context.TODO(), ing); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
@@ -770,6 +776,7 @@ func TestHostNetworkEndpointPublishingStrategy(t *testing.T) {
 // TestHostNetworkPortBinding creates two ingresscontrollers on the same node
 // with different port bindings and verifies that both routers are available.
 func TestHostNetworkPortBinding(t *testing.T) {
+	t.Parallel()
 	// deploy first ingresscontroller with the default port bindings
 	name1 := types.NamespacedName{Namespace: operatorNamespace, Name: "host"}
 	ing1 := newHostNetworkController(name1, name1.Name+"."+dnsConfig.Spec.BaseDomain)
@@ -872,6 +879,7 @@ func assertContainerHasPort(t *testing.T, container corev1.Container, name strin
 // "Internal" and verifies that the operator creates a load balancer and that
 // the load balancer has a private IP address.
 func TestInternalLoadBalancer(t *testing.T) {
+	t.Parallel()
 	platform := infraConfig.Status.Platform
 
 	supportedPlatforms := map[configv1.PlatformType]struct{}{
@@ -958,6 +966,7 @@ func TestInternalLoadBalancer(t *testing.T) {
 // parameter set to both "Global" and "local" to verify that the
 // Load Balancer service is created properly.
 func TestInternalLoadBalancerGlobalAccessGCP(t *testing.T) {
+	t.Parallel()
 	platform := infraConfig.Status.Platform
 
 	supportedPlatforms := map[configv1.PlatformType]struct{}{
@@ -1057,6 +1066,7 @@ func TestInternalLoadBalancerGlobalAccessGCP(t *testing.T) {
 // recreating the LoadBalancer service to change its scope, then the operator
 // should delete and recreate the service automatically.
 func TestScopeChange(t *testing.T) {
+	t.Parallel()
 	platform := infraConfig.Status.Platform
 	supportedPlatforms := map[configv1.PlatformType]struct{}{
 		configv1.AlibabaCloudPlatformType: {},
@@ -1225,6 +1235,7 @@ func TestScopeChange(t *testing.T) {
 // verifies that the operator does not add the port back.  See
 // <https://bugzilla.redhat.com/show_bug.cgi?id=1881210>.
 func TestNodePortServiceEndpointPublishingStrategy(t *testing.T) {
+	t.Parallel()
 	name := types.NamespacedName{Namespace: operatorNamespace, Name: "nodeport"}
 	ing := newNodePortController(name, name.Name+"."+dnsConfig.Spec.BaseDomain)
 	if err := kclient.Create(context.TODO(), ing); err != nil {
@@ -1297,6 +1308,7 @@ func TestNodePortServiceEndpointPublishingStrategy(t *testing.T) {
 // profile, then updates the ingresscontroller to use a custom TLS profile, and
 // then verifies that the operator reflects the custom profile in its status.
 func TestTLSSecurityProfile(t *testing.T) {
+	t.Parallel()
 	name := types.NamespacedName{Namespace: operatorNamespace, Name: "test"}
 	domain := name.Name + "." + dnsConfig.Spec.BaseDomain
 	ic := newPrivateController(name, domain)
@@ -1358,6 +1370,7 @@ func TestTLSSecurityProfile(t *testing.T) {
 }
 
 func TestRouteAdmissionPolicy(t *testing.T) {
+	t.Parallel()
 	// Set up an ingresscontroller which only selects routes created by this test
 	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "routeadmission"}
 	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
@@ -1572,6 +1585,7 @@ func TestRouteAdmissionPolicy(t *testing.T) {
 }
 
 func TestSyslogLogging(t *testing.T) {
+	t.Parallel()
 	ic := &operatorv1.IngressController{}
 	if err := kclient.Get(context.TODO(), defaultName, ic); err != nil {
 		t.Fatalf("failed to get default ingresscontroller: %v", err)
@@ -1743,6 +1757,7 @@ $ModLoad omstdout.so
 }
 
 func TestContainerLogging(t *testing.T) {
+	t.Parallel()
 	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "containerlogging"}
 	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
 	ic := newPrivateController(icName, domain)
@@ -1846,6 +1861,7 @@ func TestIngressControllerCustomEndpoints(t *testing.T) {
 }
 
 func TestHTTPHeaderCapture(t *testing.T) {
+	t.Parallel()
 	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "headercapture"}
 	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
 	ic := newNodePortController(icName, domain)
@@ -1987,6 +2003,7 @@ func TestHTTPHeaderCapture(t *testing.T) {
 }
 
 func TestHTTPCookieCapture(t *testing.T) {
+	t.Parallel()
 	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "cookiecapture"}
 	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
 	ic := newNodePortController(icName, domain)
@@ -2126,6 +2143,7 @@ func TestHTTPCookieCapture(t *testing.T) {
 // "LoadBalancerService" endpoint publishing strategy type with
 // an AWS Network Load Balancer (NLB).
 func TestNetworkLoadBalancer(t *testing.T) {
+	t.Parallel()
 	platform := infraConfig.Status.PlatformStatus.Type
 
 	if platform != configv1.AWSPlatformType {
@@ -2170,6 +2188,7 @@ func TestNetworkLoadBalancer(t *testing.T) {
 // TestAWSELBConnectionIdleTimeout verifies that the AWS ELB connection-idle
 // timeout works as expected.
 func TestAWSELBConnectionIdleTimeout(t *testing.T) {
+	t.Parallel()
 	if platform := infraConfig.Status.PlatformStatus.Type; platform != configv1.AWSPlatformType {
 		t.Skipf("test skipped on platform %q", platform)
 	}
@@ -2388,6 +2407,7 @@ func TestAWSELBConnectionIdleTimeout(t *testing.T) {
 }
 
 func TestUniqueIdHeader(t *testing.T) {
+	t.Parallel()
 	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "uniqueid"}
 	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
 	ic := newPrivateController(icName, domain)
@@ -2514,6 +2534,7 @@ func TestUniqueIdHeader(t *testing.T) {
 // the operator always configures router pod replicas to use the "source"
 // algorithm for passthrough routes irrespective of the override.
 func TestLoadBalancingAlgorithmUnsupportedConfigOverride(t *testing.T) {
+	t.Parallel()
 	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "leastconn"}
 	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
 	ic := newPrivateController(icName, domain)
@@ -2560,6 +2581,7 @@ func TestLoadBalancingAlgorithmUnsupportedConfigOverride(t *testing.T) {
 // configures router pod replicas to use the dynamic config manager if the
 // ingresscontroller is so configured using an unsupported config override.
 func TestDynamicConfigManagerUnsupportedConfigOverride(t *testing.T) {
+	t.Parallel()
 	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "dynamic-config-manager"}
 	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
 	ic := newPrivateController(icName, domain)
@@ -2666,6 +2688,7 @@ func TestLocalWithFallbackOverrideForLoadBalancerService(t *testing.T) {
 // does not set the local-with-fallback annotation on a NodePort service if the
 // the localWithFallback unsupported config override is set to "false".
 func TestLocalWithFallbackOverrideForNodePortService(t *testing.T) {
+	t.Parallel()
 	icName := types.NamespacedName{
 		Namespace: operatorNamespace,
 		Name:      "local-with-fallback",
@@ -2721,6 +2744,7 @@ func TestLocalWithFallbackOverrideForNodePortService(t *testing.T) {
 // if one is specified using an unsupported config override on the
 // ingresscontroller.
 func TestReloadIntervalUnsupportedConfigOverride(t *testing.T) {
+	t.Parallel()
 	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "reload-interval"}
 	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
 	ic := newPrivateController(icName, domain)
@@ -2760,6 +2784,7 @@ func TestReloadIntervalUnsupportedConfigOverride(t *testing.T) {
 // error-page configmap when it is deleted or when the user-provided configmap
 // is updated.
 func TestCustomErrorpages(t *testing.T) {
+	t.Parallel()
 	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "errorpage"}
 	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
 	ic := newPrivateController(icName, domain)
@@ -2867,6 +2892,7 @@ func TestCustomErrorpages(t *testing.T) {
 // operator allows changes to the kubelet probe timeouts for the router
 // deployment associated with a custom ingresscontroller.
 func TestTunableRouterKubeletProbesForCustomIngressController(t *testing.T) {
+	t.Parallel()
 	icName := types.NamespacedName{
 		Namespace: operatorNamespace,
 		Name:      "tunable-kubelet-probes",
@@ -2939,6 +2965,7 @@ func TestTunableRouterKubeletProbesForCustomIngressController(t *testing.T) {
 // It creates a service with the same naming convention as the ingress controller creates its own load balancing services.
 // Then it triggers a reconcilation of the ingress operator to see if it will delete our service.
 func TestIngressControllerServiceNameCollision(t *testing.T) {
+	t.Parallel()
 	// Create the new private controller that we will later create a service to collide with the naming scheme of this.
 	icName := types.NamespacedName{
 		Namespace: operatorNamespace,

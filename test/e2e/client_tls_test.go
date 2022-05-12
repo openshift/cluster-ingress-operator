@@ -55,6 +55,7 @@ import (
 // accepts connections with a valid, matching certificate and rejects other
 // connections.
 func TestClientTLS(t *testing.T) {
+	t.Parallel()
 	// We will configure the ingresscontroller to recognize certificates
 	// signed by this CA.
 	ca, caKey, err := generateClientCA()

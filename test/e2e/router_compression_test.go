@@ -24,6 +24,7 @@ import (
 )
 
 func TestRouterCompressionParsing(t *testing.T) {
+	t.Parallel()
 	// Test compression policies for the ingress config
 	mimeTypesNormative := []operatorv1.CompressionMIMEType{"text/html", "application/json", "x-custom/allow-custom"}
 	compressionPolicyNormative := operatorv1.HTTPCompressionPolicy{MimeTypes: mimeTypesNormative}

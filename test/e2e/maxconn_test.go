@@ -20,6 +20,7 @@ import (
 )
 
 func TestTunableMaxConnectionsValidValues(t *testing.T) {
+	t.Parallel()
 	updateMaxConnections := func(t *testing.T, client client.Client, timeout time.Duration, maxConnections int32, name types.NamespacedName) error {
 		return wait.PollImmediate(time.Second, timeout, func() (bool, error) {
 			ic := operatorv1.IngressController{}
@@ -95,6 +96,7 @@ func TestTunableMaxConnectionsValidValues(t *testing.T) {
 // so we test outside of those value and expect validation failures
 // when we attempt to set them.
 func TestTunableMaxConnectionsInvalidValues(t *testing.T) {
+	t.Parallel()
 	updateMaxConnections := func(t *testing.T, client client.Client, maxConnections int32, name types.NamespacedName) error {
 		ic := operatorv1.IngressController{}
 		if err := client.Get(context.TODO(), name, &ic); err != nil {
