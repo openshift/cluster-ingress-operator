@@ -90,6 +90,9 @@ func routerNamespaceChanged(current, expected *corev1.Namespace) (bool, *corev1.
 		"name",
 		"network.openshift.io/policy-group",
 		"policy-group.network.openshift.io/ingress",
+		"pod-security.kubernetes.io/enforce",
+		"pod-security.kubernetes.io/audit",
+		"pod-security.kubernetes.io/warn",
 	}
 
 	updated := current.DeepCopy()
