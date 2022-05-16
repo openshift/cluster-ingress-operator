@@ -452,10 +452,12 @@ func TestUpdateDefaultIngressController(t *testing.T) {
 		}
 	}()
 
-	ic.Spec.DefaultCertificate = &corev1.LocalObjectReference{Name: secret.Name}
-	if err := kclient.Update(context.TODO(), ic); err != nil {
-		t.Fatalf("failed to update default ingresscontroller: %v", err)
+	if err := updateIngressControllerSpecWithRetryOnConflict(t, defaultName, timeout, func(spec *operatorv1.IngressControllerSpec) {
+		spec.DefaultCertificate = &corev1.LocalObjectReference{Name: secret.Name}
+	}); err != nil {
+		t.Fatalf("failed to update default ingress controller: %v", err)
 	}
+
 	name := types.NamespacedName{Namespace: deployment.Namespace, Name: deployment.Name}
 	err = wait.PollImmediate(1*time.Second, 15*time.Second, func() (bool, error) {
 		if err := kclient.Get(context.TODO(), name, deployment); err != nil {
@@ -488,12 +490,10 @@ func TestUpdateDefaultIngressController(t *testing.T) {
 	}
 
 	// Reset .spec.defaultCertificate to its original value.
-	if err := kclient.Get(context.TODO(), defaultName, ic); err != nil {
-		t.Fatalf("failed to get default ingresscontroller: %v", err)
-	}
-	ic.Spec.DefaultCertificate = originalSecret
-	if err := kclient.Update(context.TODO(), ic); err != nil {
-		t.Errorf("failed to reset default ingresscontroller: %v", err)
+	if err := updateIngressControllerSpecWithRetryOnConflict(t, defaultName, timeout, func(spec *operatorv1.IngressControllerSpec) {
+		spec.DefaultCertificate = originalSecret
+	}); err != nil {
+		t.Fatalf("failed to reset default ingresscontroller: %v", err)
 	}
 
 	// Wait for the default ingress configmap to be updated back to the original
@@ -1813,14 +1813,27 @@ func TestIngressControllerCustomEndpoints(t *testing.T) {
 			Name: "elasticloadbalancing",
 			URL:  fmt.Sprintf("https://elasticloadbalancing.%s.amazonaws.com", platform.AWS.Region),
 		}
-		endpoints := []configv1.AWSServiceEndpoint{route53Endpoint, taggingEndpoint, elbEndpoint}
-		awsSpec := configv1.AWSPlatformSpec{ServiceEndpoints: endpoints}
-		infraConfig.Spec.PlatformSpec.AWS = &awsSpec
-		if err := kclient.Update(context.TODO(), &infraConfig); err != nil {
+		if err := updateInfrastructureConfigSpecWithRetryOnConflict(t, types.NamespacedName{Name: "cluster"}, timeout, func(spec *configv1.InfrastructureSpec) {
+			spec.PlatformSpec.AWS = &configv1.AWSPlatformSpec{
+				ServiceEndpoints: []configv1.AWSServiceEndpoint{
+					route53Endpoint,
+					taggingEndpoint,
+					elbEndpoint,
+				},
+			}
+		}); err != nil {
 			t.Fatalf("failed to update infrastructure config: %v\n", err)
 		}
+		defer func() {
+			// Remove the custom endpoints from the infrastructure config.
+			if err := updateInfrastructureConfigSpecWithRetryOnConflict(t, types.NamespacedName{Name: "cluster"}, timeout, func(spec *configv1.InfrastructureSpec) {
+				spec.PlatformSpec.AWS = nil
+			}); err != nil {
+				t.Fatalf("failed to update infrastructure config: %v", err)
+			}
+		}()
 		// Wait for infrastructure status to update with custom endpoints.
-		err := wait.PollImmediate(1*time.Second, 15*time.Second, func() (bool, error) {
+		if err := wait.PollImmediate(1*time.Second, 15*time.Second, func() (bool, error) {
 			if err := kclient.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, &infraConfig); err != nil {
 				t.Logf("failed to get infrastructure config: %v\n", err)
 				return false, err
@@ -1829,17 +1842,9 @@ func TestIngressControllerCustomEndpoints(t *testing.T) {
 				return false, nil
 			}
 			return true, nil
-		})
-		if err != nil {
+		}); err != nil {
 			t.Fatalf("failed to observe status update for infrastructure config %s", infraConfig.Name)
 		}
-		defer func() {
-			// Remove the custom endpoints from the infrastructure config.
-			infraConfig.Spec.PlatformSpec.AWS = nil
-			if err := kclient.Update(context.TODO(), &infraConfig); err != nil {
-				t.Fatalf("failed to update infrastructure config: %v\n", err)
-			}
-		}()
 	default:
 		t.Skipf("skipping TestIngressControllerCustomEndpoints test due to platform type: %s", platform.Type)
 	}
@@ -2666,11 +2671,9 @@ func TestLocalWithFallbackOverrideForLoadBalancerService(t *testing.T) {
 		t.Fatalf("failed to update ingresscontroller %q with override: %v", defaultName, err)
 	}
 	defer func() {
-		if err := kclient.Get(context.TODO(), defaultName, ic); err != nil {
-			t.Fatalf("failed to get ingresscontroller %q: %v", defaultName, err)
-		}
-		ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{}
-		if err := kclient.Update(context.TODO(), ic); err != nil {
+		if err := updateIngressControllerSpecWithRetryOnConflict(t, defaultName, timeout, func(spec *operatorv1.IngressControllerSpec) {
+			spec.UnsupportedConfigOverrides = runtime.RawExtension{}
+		}); err != nil {
 			t.Fatalf("failed to update ingresscontroller %q to remove the override: %v", defaultName, err)
 		}
 	}()

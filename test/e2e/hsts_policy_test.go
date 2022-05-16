@@ -61,8 +61,9 @@ func TestHstsPolicyWorks(t *testing.T) {
 	}
 	defer func() {
 		// Remove the HSTS policies from the ingress config
-		ing.Spec.RequiredHSTSPolicies = nil
-		if err := kclient.Update(context.TODO(), ing); err != nil {
+		if err := updateIngressConfigSpecWithRetryOnConflict(t, clusterConfigName, timeout, func(spec *configv1.IngressSpec) {
+			spec.RequiredHSTSPolicies = nil
+		}); err != nil {
 			t.Fatalf("failed to restore ingress config: %v", err)
 		}
 	}()
