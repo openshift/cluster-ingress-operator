@@ -292,7 +292,7 @@ func TestCustomIngressClass(t *testing.T) {
 
 func TestUserDefinedIngressController(t *testing.T) {
 	t.Parallel()
-	name := types.NamespacedName{Namespace: operatorNamespace, Name: "test"}
+	name := types.NamespacedName{Namespace: operatorNamespace, Name: "testuserdefinedingresscontroller"}
 	ing := newLoadBalancerController(name, name.Name+"."+dnsConfig.Spec.BaseDomain)
 	if err := kclient.Create(context.TODO(), ing); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
@@ -753,8 +753,8 @@ func TestPodDisruptionBudgetExists(t *testing.T) {
 // the "HostNetwork" endpoint publishing strategy type and verifies that the
 // operator creates a router and that the router becomes available.
 func TestHostNetworkEndpointPublishingStrategy(t *testing.T) {
-	name := types.NamespacedName{Namespace: operatorNamespace, Name: "host"}
 	t.Parallel()
+	name := types.NamespacedName{Namespace: operatorNamespace, Name: "hostnetworkendpointpublishingstrategy"}
 	ing := newHostNetworkController(name, name.Name+"."+dnsConfig.Spec.BaseDomain)
 	if err := kclient.Create(context.TODO(), ing); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
@@ -778,7 +778,7 @@ func TestHostNetworkEndpointPublishingStrategy(t *testing.T) {
 func TestHostNetworkPortBinding(t *testing.T) {
 	t.Parallel()
 	// deploy first ingresscontroller with the default port bindings
-	name1 := types.NamespacedName{Namespace: operatorNamespace, Name: "host"}
+	name1 := types.NamespacedName{Namespace: operatorNamespace, Name: "hostnetworkportbinding"}
 	ing1 := newHostNetworkController(name1, name1.Name+"."+dnsConfig.Spec.BaseDomain)
 	if err := kclient.Create(context.TODO(), ing1); err != nil {
 		t.Fatalf("failed to create the first ingresscontroller: %v", err)
@@ -895,7 +895,7 @@ func TestInternalLoadBalancer(t *testing.T) {
 
 	annotation := ingresscontroller.InternalLBAnnotations[platform]
 
-	name := types.NamespacedName{Namespace: operatorNamespace, Name: "test"}
+	name := types.NamespacedName{Namespace: operatorNamespace, Name: "testinternalloadbalancer"}
 	ic := newLoadBalancerController(name, name.Name+"."+dnsConfig.Spec.BaseDomain)
 	ic.Spec.EndpointPublishingStrategy.LoadBalancer = &operatorv1.LoadBalancerStrategy{
 		Scope: operatorv1.InternalLoadBalancer,
@@ -1309,7 +1309,7 @@ func TestNodePortServiceEndpointPublishingStrategy(t *testing.T) {
 // then verifies that the operator reflects the custom profile in its status.
 func TestTLSSecurityProfile(t *testing.T) {
 	t.Parallel()
-	name := types.NamespacedName{Namespace: operatorNamespace, Name: "test"}
+	name := types.NamespacedName{Namespace: operatorNamespace, Name: "testtlssecurityprofile"}
 	domain := name.Name + "." + dnsConfig.Spec.BaseDomain
 	ic := newPrivateController(name, domain)
 	if err := kclient.Create(context.TODO(), ic); err != nil {

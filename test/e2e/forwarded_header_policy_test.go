@@ -52,7 +52,7 @@ func testRouteHeaders(t *testing.T, image string, route *routev1.Route, address 
 		extraCurlArgs = append(extraCurlArgs, "-H", header)
 	}
 	testPodCount++
-	name := fmt.Sprintf("forwardedheader%d", testPodCount)
+	name := fmt.Sprintf("%s%d", route.Name, testPodCount)
 	clientPod := buildCurlPod(name, route.Namespace, image, route.Spec.Host, address, extraCurlArgs...)
 	if err := kclient.Create(context.TODO(), clientPod); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
@@ -122,7 +122,7 @@ func testRouteHeaders(t *testing.T, image string, route *routev1.Route, address 
 // 3rd.
 func TestForwardedHeaderPolicyAppend(t *testing.T) {
 	t.Parallel()
-	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "forwardedheader"}
+	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "forwardedheader-append"}
 	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
 	ic := newPrivateController(icName, domain)
 	if err := kclient.Create(context.TODO(), ic); err != nil {
@@ -217,7 +217,7 @@ func TestForwardedHeaderPolicyAppend(t *testing.T) {
 // should always have exactly 1 X-Forwarded-For header.
 func TestForwardedHeaderPolicyReplace(t *testing.T) {
 	t.Parallel()
-	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "forwardedheader"}
+	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "forwardedheader-replace"}
 	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
 	ic := newPrivateController(icName, domain)
 	ic.Spec.HTTPHeaders = &operatorv1.IngressControllerHTTPHeaders{
@@ -287,7 +287,7 @@ func TestForwardedHeaderPolicyReplace(t *testing.T) {
 // specified.
 func TestForwardedHeaderPolicyNever(t *testing.T) {
 	t.Parallel()
-	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "forwardedheader"}
+	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "forwardedheader-never"}
 	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
 	ic := newPrivateController(icName, domain)
 	ic.Spec.HTTPHeaders = &operatorv1.IngressControllerHTTPHeaders{
@@ -358,7 +358,7 @@ func TestForwardedHeaderPolicyNever(t *testing.T) {
 // include exactly as many X-Forwarded-For headers as the client specified.
 func TestForwardedHeaderPolicyIfNone(t *testing.T) {
 	t.Parallel()
-	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "forwardedheader"}
+	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "forwardedheader-none"}
 	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
 	ic := newPrivateController(icName, domain)
 	ic.Spec.HTTPHeaders = &operatorv1.IngressControllerHTTPHeaders{
