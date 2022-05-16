@@ -10,12 +10,14 @@ import (
 	"testing"
 	"time"
 
+	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	routev1 "github.com/openshift/api/route/v1"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -284,4 +286,78 @@ func probe(timeout, period, success, failure int) *corev1.Probe {
 		SuccessThreshold: int32(success),
 		FailureThreshold: int32(failure),
 	}
+}
+
+// updateIngressControllerSpecWithRetryOnConflict gets a fresh copy of
+// the named ingresscontroller, calls mutateSpecFn() where callers can
+// modify fields of the spec, and then updates the ingresscontroller
+// object. If there is a conflict error on update then the complete
+// sequence of get, mutate, and update is retried until timeout is
+// reached.
+func updateIngressControllerSpecWithRetryOnConflict(t *testing.T, name types.NamespacedName, timeout time.Duration, mutateSpecFn func(*operatorv1.IngressControllerSpec)) error {
+	ic := operatorv1.IngressController{}
+	return wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), name, &ic); err != nil {
+			t.Logf("error getting ingress controller %v: %v, retrying...", name, err)
+			return false, nil
+		}
+		mutateSpecFn(&ic.Spec)
+		if err := kclient.Update(context.TODO(), &ic); err != nil {
+			if errors.IsConflict(err) {
+				t.Logf("conflict when updating ingress controller %v: %v, retrying...", name, err)
+				return false, nil
+			}
+			return false, err
+		}
+		return true, nil
+	})
+}
+
+// updateIngressConfigSpecWithRetryOnConflict gets a fresh copy of the
+// name ingress config, calls updateSpecFn() where callers can modify
+// fields of the spec, and then updates the ingress config object. If
+// there is a conflict error on update then the complete operation of
+// get, mutate, and update is retried until timeout is reached.
+func updateIngressConfigSpecWithRetryOnConflict(t *testing.T, name types.NamespacedName, timeout time.Duration, mutateSpecFn func(*configv1.IngressSpec)) error {
+	ingressConfig := configv1.Ingress{}
+	return wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), name, &ingressConfig); err != nil {
+			t.Logf("error getting ingress config %v: %v, retrying...", name, err)
+			return false, nil
+		}
+		mutateSpecFn(&ingressConfig.Spec)
+		if err := kclient.Update(context.TODO(), &ingressConfig); err != nil {
+			if errors.IsConflict(err) {
+				t.Logf("conflict when updating ingress config %v: %v, retrying...", name, err)
+				return false, nil
+			}
+			return false, err
+		}
+		return true, nil
+	})
+}
+
+// updateInfrastructureConfigSpecWithRetryOnConflict gets a fresh copy
+// of the named infrastructure object, calls updateSpecFn() where
+// callers can modify fields of the spec, and then updates the infrastructure
+// config object. If there is a conflict error on update then the
+// complete operation of get, mutate, and update is retried until
+// timeout is reached.
+func updateInfrastructureConfigSpecWithRetryOnConflict(t *testing.T, name types.NamespacedName, timeout time.Duration, mutateSpecFn func(*configv1.InfrastructureSpec)) error {
+	infraConfig := configv1.Infrastructure{}
+	return wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), name, &infraConfig); err != nil {
+			t.Logf("error getting infrastructure config %v: %v, retrying...", name, err)
+			return false, nil
+		}
+		mutateSpecFn(&infraConfig.Spec)
+		if err := kclient.Update(context.TODO(), &infraConfig); err != nil {
+			if errors.IsConflict(err) {
+				t.Logf("conflict when updating infrastructure config %v: %v, retrying...", name, err)
+				return false, nil
+			}
+			return false, err
+		}
+		return true, nil
+	})
 }
