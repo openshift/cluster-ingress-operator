@@ -13,6 +13,7 @@ import (
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	oputil "github.com/openshift/cluster-ingress-operator/pkg/util"
 	retryable "github.com/openshift/cluster-ingress-operator/pkg/util/retryableerror"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/slice"
 
@@ -255,11 +256,15 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	if err := r.client.Get(ctx, types.NamespacedName{Name: "cluster"}, networkConfig); err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to get network 'cluster': %v", err)
 	}
+	platformStatus, err := oputil.GetPlatformStatus(r.client, infraConfig)
+	if err != nil {
+		return reconcile.Result{}, fmt.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %w", ingress.Namespace, ingress.Name, err)
+	}
 
 	// Admit if necessary. Don't process until admission succeeds. If admission is
 	// successful, immediately re-queue to refresh state.
 	if !isAdmitted(ingress) || needsReadmission(ingress) {
-		if err := r.admit(ingress, ingressConfig, infraConfig); err != nil {
+		if err := r.admit(ingress, ingressConfig, platformStatus, dnsConfig); err != nil {
 			switch err := err.(type) {
 			case *admissionRejection:
 				r.recorder.Event(ingress, "Warning", "Rejected", err.Reason)
@@ -286,7 +291,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	}
 
 	// The ingresscontroller is safe to process, so ensure it.
-	if err := r.ensureIngressController(ingress, dnsConfig, infraConfig, ingressConfig, apiConfig, networkConfig); err != nil {
+	if err := r.ensureIngressController(ingress, dnsConfig, infraConfig, platformStatus, ingressConfig, apiConfig, networkConfig); err != nil {
 		switch e := err.(type) {
 		case retryable.Error:
 			log.Error(e, "got retryable error; requeueing", "after", e.After())
@@ -302,11 +307,11 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 // fields.  Returns an error value, which will have a non-nil value of type
 // admissionRejection if the ingresscontroller was rejected, or a non-nil
 // value of a different type if the ingresscontroller could not be processed.
-func (r *reconciler) admit(current *operatorv1.IngressController, ingressConfig *configv1.Ingress, infraConfig *configv1.Infrastructure) error {
+func (r *reconciler) admit(current *operatorv1.IngressController, ingressConfig *configv1.Ingress, platformStatus *configv1.PlatformStatus, dnsConfig *configv1.DNS) error {
 	updated := current.DeepCopy()
 
 	setDefaultDomain(updated, ingressConfig)
-	setDefaultPublishingStrategy(updated, infraConfig)
+	setDefaultPublishingStrategy(updated, platformStatus)
 
 	// The TLS security profile need not be defaulted.  If none is set, we
 	// get the default from the APIServer config (which is assumed to be
@@ -337,6 +342,11 @@ func (r *reconciler) admit(current *operatorv1.IngressController, ingressConfig 
 		Reason: "Valid",
 	})
 	updated.Status.ObservedGeneration = updated.Generation
+
+	if !manageDNSForDomain(updated.Status.Domain, platformStatus, dnsConfig) {
+		r.recorder.Eventf(updated, "Warning", "DomainNotMatching", fmt.Sprintf("Domain [%s] of ingresscontroller does not match the baseDomain [%s] of the cluster DNS config, so DNS management is not supported.", updated.Status.Domain, dnsConfig.Spec.BaseDomain))
+	}
+
 	if !IngressStatusesEqual(current.Status, updated.Status) {
 		if err := r.client.Status().Update(context.TODO(), updated); err != nil {
 			return fmt.Errorf("failed to update status: %v", err)
@@ -382,11 +392,11 @@ func setDefaultDomain(ic *operatorv1.IngressController, ingressConfig *configv1.
 	return false
 }
 
-func setDefaultPublishingStrategy(ic *operatorv1.IngressController, infraConfig *configv1.Infrastructure) bool {
+func setDefaultPublishingStrategy(ic *operatorv1.IngressController, platformStatus *configv1.PlatformStatus) bool {
 	effectiveStrategy := ic.Spec.EndpointPublishingStrategy.DeepCopy()
 	if effectiveStrategy == nil {
 		var strategyType operatorv1.EndpointPublishingStrategyType
-		switch infraConfig.Status.Platform {
+		switch platformStatus.Type {
 		case configv1.AWSPlatformType, configv1.AzurePlatformType, configv1.GCPPlatformType, configv1.IBMCloudPlatformType, configv1.PowerVSPlatformType, configv1.AlibabaCloudPlatformType:
 			strategyType = operatorv1.LoadBalancerServiceStrategyType
 		case configv1.LibvirtPlatformType:
@@ -841,7 +851,7 @@ func (r *reconciler) ensureIngressDeleted(ingress *operatorv1.IngressController)
 // given ingresscontroller.  Any error values are collected into either a
 // retryable.Error value, if any of the error values are retryable, or else an
 // Aggregate error value.
-func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, dnsConfig *configv1.DNS, infraConfig *configv1.Infrastructure, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer, networkConfig *configv1.Network) error {
+func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, dnsConfig *configv1.DNS, infraConfig *configv1.Infrastructure, platformStatus *configv1.PlatformStatus, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer, networkConfig *configv1.Network) error {
 	// Before doing anything at all with the controller, ensure it has a finalizer
 	// so we can clean up later.
 	if !slice.ContainsString(ci.Finalizers, manifests.IngressControllerFinalizer) {
@@ -892,7 +902,7 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		haveClientCAConfigmap = true
 	}
 
-	haveDepl, deployment, err := r.ensureRouterDeployment(ci, infraConfig, ingressConfig, apiConfig, networkConfig, haveClientCAConfigmap, clientCAConfigmap)
+	haveDepl, deployment, err := r.ensureRouterDeployment(ci, infraConfig, ingressConfig, apiConfig, networkConfig, haveClientCAConfigmap, clientCAConfigmap, platformStatus)
 	if err != nil {
 		errs = append(errs, fmt.Errorf("failed to ensure deployment: %v", err))
 		return utilerrors.NewAggregate(errs)
@@ -912,11 +922,11 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 
 	var lbService *corev1.Service
 	var wildcardRecord *iov1.DNSRecord
-	if haveLB, lb, err := r.ensureLoadBalancerService(ci, deploymentRef, infraConfig); err != nil {
+	if haveLB, lb, err := r.ensureLoadBalancerService(ci, deploymentRef, platformStatus); err != nil {
 		errs = append(errs, fmt.Errorf("failed to ensure load balancer service for %s: %v", ci.Name, err))
 	} else {
 		lbService = lb
-		if _, record, err := r.ensureWildcardDNSRecord(ci, lbService, haveLB); err != nil {
+		if _, record, err := r.ensureWildcardDNSRecord(ci, platformStatus, dnsConfig, lbService, haveLB); err != nil {
 			errs = append(errs, fmt.Errorf("failed to ensure wildcard dnsrecord for %s: %v", ci.Name, err))
 		} else {
 			wildcardRecord = record
@@ -951,7 +961,7 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		errs = append(errs, fmt.Errorf("failed to list pods in namespace %q: %v", operatorcontroller.DefaultOperatorNamespace, err))
 	}
 
-	syncStatusErr, updated := r.syncIngressControllerStatus(ci, deployment, deploymentRef, pods.Items, lbService, operandEvents.Items, wildcardRecord, dnsConfig, infraConfig)
+	syncStatusErr, updated := r.syncIngressControllerStatus(ci, deployment, deploymentRef, pods.Items, lbService, operandEvents.Items, wildcardRecord, dnsConfig, platformStatus)
 	errs = append(errs, syncStatusErr)
 
 	// If syncIngressControllerStatus updated our ingress status, it's important we query for that new object.

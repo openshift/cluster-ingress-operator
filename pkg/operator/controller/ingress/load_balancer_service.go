@@ -13,8 +13,6 @@ import (
 
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
-	oputil "github.com/openshift/cluster-ingress-operator/pkg/util"
-
 	corev1 "k8s.io/api/core/v1"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -253,12 +251,8 @@ var (
 // ensureLoadBalancerService creates an LB service if one is desired but absent.
 // Always returns the current LB service if one exists (whether it already
 // existed or was created during the course of the function).
-func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, infraConfig *configv1.Infrastructure) (bool, *corev1.Service, error) {
-	platform, err := oputil.GetPlatformStatus(r.client, infraConfig)
-	if err != nil {
-		return false, nil, fmt.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %v", ci.Namespace, ci.Name, err)
-	}
-	wantLBS, desiredLBService, err := desiredLoadBalancerService(ci, deploymentRef, platform)
+func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, platformStatus *configv1.PlatformStatus) (bool, *corev1.Service, error) {
+	wantLBS, desiredLBService, err := desiredLoadBalancerService(ci, deploymentRef, platformStatus)
 	if err != nil {
 		return false, nil, err
 	}
@@ -303,7 +297,7 @@ func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController,
 		if _, ok := ci.Annotations[autoDeleteLoadBalancerAnnotation]; ok {
 			deleteIfScopeChanged = true
 		}
-		if updated, err := r.updateLoadBalancerService(currentLBService, desiredLBService, platform, deleteIfScopeChanged); err != nil {
+		if updated, err := r.updateLoadBalancerService(currentLBService, desiredLBService, platformStatus, deleteIfScopeChanged); err != nil {
 			return true, currentLBService, fmt.Errorf("failed to update load balancer service: %v", err)
 		} else if updated {
 			return r.currentLoadBalancerService(ci)

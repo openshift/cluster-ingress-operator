@@ -24,8 +24,6 @@ import (
 
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
-	oputil "github.com/openshift/cluster-ingress-operator/pkg/util"
-
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 
@@ -109,16 +107,12 @@ const (
 
 // ensureRouterDeployment ensures the router deployment exists for a given
 // ingresscontroller.
-func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, infraConfig *configv1.Infrastructure, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer, networkConfig *configv1.Network, haveClientCAConfigmap bool, clientCAConfigmap *corev1.ConfigMap) (bool, *appsv1.Deployment, error) {
+func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, infraConfig *configv1.Infrastructure, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer, networkConfig *configv1.Network, haveClientCAConfigmap bool, clientCAConfigmap *corev1.ConfigMap, platformStatus *configv1.PlatformStatus) (bool, *appsv1.Deployment, error) {
 	haveDepl, current, err := r.currentRouterDeployment(ci)
 	if err != nil {
 		return false, nil, err
 	}
-	platform, err := oputil.GetPlatformStatus(r.client, infraConfig)
-	if err != nil {
-		return false, nil, fmt.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %v", ci.Namespace, ci.Name, err)
-	}
-	proxyNeeded, err := IsProxyProtocolNeeded(ci, platform)
+	proxyNeeded, err := IsProxyProtocolNeeded(ci, platformStatus)
 	if err != nil {
 		return false, nil, fmt.Errorf("failed to determine if proxy protocol is needed for ingresscontroller %s/%s: %v", ci.Namespace, ci.Name, err)
 	}

@@ -3,16 +3,16 @@ package ingress
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
+	configv1 "github.com/openshift/api/config/v1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 	iov1 "github.com/openshift/api/operatoringress/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
-
-	operatorv1 "github.com/openshift/api/operator/v1"
-
 	corev1 "k8s.io/api/core/v1"
 
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -29,8 +29,12 @@ const defaultRecordTTL int64 = 30
 
 // ensureWildcardDNSRecord will create DNS records for the given LB service.
 // If service is nil (haveLBS is false), nothing is done.
-func (r *reconciler) ensureWildcardDNSRecord(ic *operatorv1.IngressController, service *corev1.Service, haveLBS bool) (bool, *iov1.DNSRecord, error) {
+func (r *reconciler) ensureWildcardDNSRecord(ic *operatorv1.IngressController, platformStatus *configv1.PlatformStatus, dnsConfig *configv1.DNS, service *corev1.Service, haveLBS bool) (bool, *iov1.DNSRecord, error) {
 	if !haveLBS {
+		return false, nil, nil
+	}
+
+	if !manageDNSForDomain(ic.Status.Domain, platformStatus, dnsConfig) {
 		return false, nil, nil
 	}
 
@@ -188,4 +192,22 @@ func dnsRecordChanged(current, expected *iov1.DNSRecord) (bool, *iov1.DNSRecord)
 	updated := current.DeepCopy()
 	updated.Spec = expected.Spec
 	return true, updated
+}
+
+// manageDNSForDomain returns true if the given domain contains the baseDomain
+// of the cluster DNS config. It is only used for AWS in the beginning, and will be expanded to other clouds
+// once we know there are no users depending on this.
+// See https://bugzilla.redhat.com/show_bug.cgi?id=2041616
+func manageDNSForDomain(domain string, status *configv1.PlatformStatus, dnsConfig *configv1.DNS) bool {
+	if len(domain) == 0 {
+		return false
+	}
+
+	mustContain := "." + dnsConfig.Spec.BaseDomain
+	switch status.Type {
+	case configv1.AWSPlatformType:
+		return strings.HasSuffix(domain, mustContain)
+	default:
+		return true
+	}
 }

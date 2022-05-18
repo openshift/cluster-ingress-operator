@@ -27,6 +27,7 @@ func TestAll(t *testing.T) {
 		t.Run("TestCreateSecretThenIngressController", TestCreateSecretThenIngressController)
 		t.Run("TestCustomErrorpages", TestCustomErrorpages)
 		t.Run("TestCustomIngressClass", TestCustomIngressClass)
+		t.Run("TestDomainNotMatchingBase", TestDomainNotMatchingBase)
 		t.Run("TestDynamicConfigManagerUnsupportedConfigOverride", TestDynamicConfigManagerUnsupportedConfigOverride)
 		t.Run("TestForwardedHeaderPolicyAppend", TestForwardedHeaderPolicyAppend)
 		t.Run("TestForwardedHeaderPolicyIfNone", TestForwardedHeaderPolicyIfNone)
