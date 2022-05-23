@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -79,6 +80,10 @@ const (
 	// must be between 2 and 10.
 	awsLBHealthCheckHealthyThresholdAnnotation = "service.beta.kubernetes.io/aws-load-balancer-healthcheck-healthy-threshold"
 	awsLBHealthCheckHealthyThresholdDefault    = "2"
+
+	// awsELBConnectionIdleTimeoutAnnotation specifies the timeout for idle
+	// connections for a Classic ELB.
+	awsELBConnectionIdleTimeoutAnnotation = "service.beta.kubernetes.io/aws-load-balancer-connection-idle-timeout"
 
 	// iksLBScopeAnnotation is the annotation used on a service to specify an IBM
 	// load balancer IP type.
@@ -215,6 +220,8 @@ var (
 			// AWS LB health check interval annotation (see
 			// <https://bugzilla.redhat.com/show_bug.cgi?id=1908758>).
 			awsLBHealthCheckIntervalAnnotation,
+			// AWS connection idle timeout annotation.
+			awsELBConnectionIdleTimeoutAnnotation,
 			// GCP Global Access internal Load Balancer annotation
 			// (see <https://issues.redhat.com/browse/NE-447>).
 			GCPGlobalAccessAnnotation,
@@ -336,7 +343,8 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 
 	service.Spec.Selector = controller.IngressControllerDeploymentPodSelector(ci).MatchLabels
 
-	isInternal := ci.Status.EndpointPublishingStrategy.LoadBalancer != nil && ci.Status.EndpointPublishingStrategy.LoadBalancer.Scope == operatorv1.InternalLoadBalancer
+	lb := ci.Status.EndpointPublishingStrategy.LoadBalancer
+	isInternal := lb != nil && lb.Scope == operatorv1.InternalLoadBalancer
 
 	if service.Annotations == nil {
 		service.Annotations = map[string]string{}
@@ -356,10 +364,10 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 
 			// Set the GCP Global Access annotation for internal load balancers on GCP only
 			if platform.Type == configv1.GCPPlatformType {
-				if ci.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters != nil &&
-					ci.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.Type == operatorv1.GCPLoadBalancerProvider &&
-					ci.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.GCP != nil {
-					globalAccessEnabled := ci.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.GCP.ClientAccess == operatorv1.GCPGlobalAccess
+				if lb != nil && lb.ProviderParameters != nil &&
+					lb.ProviderParameters.Type == operatorv1.GCPLoadBalancerProvider &&
+					lb.ProviderParameters.GCP != nil {
+					globalAccessEnabled := lb.ProviderParameters.GCP.ClientAccess == operatorv1.GCPGlobalAccess
 					service.Annotations[GCPGlobalAccessAnnotation] = strconv.FormatBool(globalAccessEnabled)
 				}
 			}
@@ -371,16 +379,23 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 		}
 		switch platform.Type {
 		case configv1.AWSPlatformType:
-			if ci.Status.EndpointPublishingStrategy.LoadBalancer != nil &&
-				ci.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters != nil &&
-				ci.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.Type == operatorv1.AWSLoadBalancerProvider &&
-				ci.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS != nil &&
-				ci.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.Type == operatorv1.AWSNetworkLoadBalancer {
-				service.Annotations[AWSLBTypeAnnotation] = AWSNLBAnnotation
-				// NLBs require a different health check interval than CLBs
-				service.Annotations[awsLBHealthCheckIntervalAnnotation] = awsLBHealthCheckIntervalNLB
-			} else {
-				service.Annotations[awsLBHealthCheckIntervalAnnotation] = awsLBHealthCheckIntervalDefault
+			service.Annotations[awsLBHealthCheckIntervalAnnotation] = awsLBHealthCheckIntervalDefault
+			if lb != nil && lb.ProviderParameters != nil {
+				if aws := lb.ProviderParameters.AWS; aws != nil && lb.ProviderParameters.Type == operatorv1.AWSLoadBalancerProvider {
+					switch aws.Type {
+					case operatorv1.AWSNetworkLoadBalancer:
+						service.Annotations[AWSLBTypeAnnotation] = AWSNLBAnnotation
+						// NLBs require a different health check interval than CLBs.
+						// See <https://bugzilla.redhat.com/show_bug.cgi?id=1908758>.
+						service.Annotations[awsLBHealthCheckIntervalAnnotation] = awsLBHealthCheckIntervalNLB
+					case operatorv1.AWSClassicLoadBalancer:
+						if aws.ClassicLoadBalancerParameters != nil {
+							if v := aws.ClassicLoadBalancerParameters.ConnectionIdleTimeout; v.Duration > 0 {
+								service.Annotations[awsELBConnectionIdleTimeoutAnnotation] = strconv.FormatUint(uint64(v.Round(time.Second).Seconds()), 10)
+							}
+						}
+					}
+				}
 			}
 
 			if platform.AWS != nil && len(platform.AWS.ResourceTags) > 0 {

@@ -9,10 +9,12 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"net"
+	"net/http"
 	"os"
 	"reflect"
 	"sort"
@@ -44,7 +46,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	policyv1 "k8s.io/api/policy/v1"
 
-	"k8s.io/apimachinery/pkg/api/errors"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -274,7 +276,7 @@ func TestCustomIngressClass(t *testing.T) {
 	assertIngressControllerDeleted(t, kclient, ic)
 	err = wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
 		if err := kclient.Get(context.TODO(), ingressclassName, ingressclass); err != nil {
-			if errors.IsNotFound(err) {
+			if apierrors.IsNotFound(err) {
 				return true, nil
 			}
 			t.Logf("failed to get ingressclass %q: %v", ingressclassName.Name, err)
@@ -1116,7 +1118,7 @@ func TestScopeChange(t *testing.T) {
 		err := wait.PollImmediate(5*time.Second, 5*time.Minute, func() (bool, error) {
 			service := &corev1.Service{}
 			if err := kclient.Get(context.TODO(), controller.LoadBalancerServiceName(ic), service); err != nil {
-				if errors.IsNotFound(err) {
+				if apierrors.IsNotFound(err) {
 					return false, nil
 				}
 				t.Logf("failed to get service %s: %v", controller.LoadBalancerServiceName(ic), err)
@@ -1157,7 +1159,7 @@ func TestScopeChange(t *testing.T) {
 		err := wait.PollImmediate(5*time.Second, 5*time.Minute, func() (bool, error) {
 			service := &corev1.Service{}
 			if err := kclient.Get(context.TODO(), controller.LoadBalancerServiceName(ic), service); err != nil {
-				if errors.IsNotFound(err) {
+				if apierrors.IsNotFound(err) {
 					return false, nil
 				}
 				t.Logf("failed to get ingresscontroller %s: %v", name.Name, err)
@@ -1197,7 +1199,7 @@ func TestScopeChange(t *testing.T) {
 	err := wait.PollImmediate(5*time.Second, 5*time.Minute, func() (bool, error) {
 		service := &corev1.Service{}
 		if err := kclient.Get(context.TODO(), controller.LoadBalancerServiceName(ic), service); err != nil {
-			if errors.IsNotFound(err) {
+			if apierrors.IsNotFound(err) {
 				return false, nil
 			}
 			t.Logf("failed to get service %s: %v", controller.LoadBalancerServiceName(ic), err)
@@ -1931,7 +1933,7 @@ func TestHTTPHeaderCapture(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), clientPod); err != nil {
-			if errors.IsNotFound(err) {
+			if apierrors.IsNotFound(err) {
 				return
 			}
 			t.Fatalf("failed to delete pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
@@ -2071,7 +2073,7 @@ func TestHTTPCookieCapture(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), clientPod); err != nil {
-			if errors.IsNotFound(err) {
+			if apierrors.IsNotFound(err) {
 				return
 			}
 			t.Fatalf("failed to delete pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
@@ -2165,6 +2167,226 @@ func TestNetworkLoadBalancer(t *testing.T) {
 	}
 }
 
+// TestAWSELBConnectionIdleTimeout verifies that the AWS ELB connection-idle
+// timeout works as expected.
+func TestAWSELBConnectionIdleTimeout(t *testing.T) {
+	if platform := infraConfig.Status.PlatformStatus.Type; platform != configv1.AWSPlatformType {
+		t.Skipf("test skipped on platform %q", platform)
+	}
+
+	// Create an ingresscontroller that specifies an ELB with an idle
+	// timeout of 3 seconds.
+	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "test-idle-timeout"}
+	ic := newLoadBalancerController(icName, icName.Name+"."+dnsConfig.Spec.BaseDomain)
+	lb := &operatorv1.LoadBalancerStrategy{
+		Scope: operatorv1.ExternalLoadBalancer,
+		ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+			Type: operatorv1.AWSLoadBalancerProvider,
+			AWS: &operatorv1.AWSLoadBalancerParameters{
+				Type: operatorv1.AWSClassicLoadBalancer,
+				ClassicLoadBalancerParameters: &operatorv1.AWSClassicLoadBalancerParameters{
+					ConnectionIdleTimeout: metav1.Duration{Duration: 3 * time.Second},
+				},
+			},
+		},
+	}
+	ic.Spec.EndpointPublishingStrategy.LoadBalancer = lb
+	if err := kclient.Create(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to create ingresscontroller: %v", err)
+	}
+	defer assertIngressControllerDeleted(t, kclient, ic)
+
+	// Create a pod with an HTTP application that sends delayed responses.
+	httpdPod := buildSlowHTTPDPod("idle-timeout-httpd", operatorcontroller.DefaultOperandNamespace)
+	if err := kclient.Create(context.TODO(), httpdPod); err != nil {
+		t.Fatalf("failed to create pod %s/%s: %v", httpdPod.Namespace, httpdPod.Name, err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), httpdPod); err != nil {
+			t.Fatalf("failed to delete pod %s/%s: %v", httpdPod.Namespace, httpdPod.Name, err)
+		}
+	}()
+
+	httpdService := buildEchoService(httpdPod.Name, httpdPod.Namespace, httpdPod.ObjectMeta.Labels)
+	if err := kclient.Create(context.TODO(), httpdService); err != nil {
+		t.Fatalf("failed to create service %s/%s: %v", httpdService.Namespace, httpdService.Name, err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), httpdService); err != nil {
+			t.Fatalf("failed to delete service %s/%s: %v", httpdService.Namespace, httpdService.Name, err)
+		}
+	}()
+
+	route := buildRoute(httpdPod.Name, httpdPod.Namespace, httpdService.Name)
+	route.Spec.Host = fmt.Sprintf("%s-%s.%s", route.Name, route.Namespace, ic.Spec.Domain)
+	if err := kclient.Create(context.TODO(), route); err != nil {
+		t.Fatalf("failed to create route %s/%s: %v", route.Namespace, route.Name, err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), route); err != nil {
+			t.Fatalf("failed to delete route %s/%s: %v", route.Namespace, route.Name, err)
+		}
+	}()
+
+	// Wait for the load balancer and DNS to be ready.
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	// Verify that the ingresscontroller has the expected annotation.
+	lbService := &corev1.Service{}
+	if err := kclient.Get(context.TODO(), controller.LoadBalancerServiceName(ic), lbService); err != nil {
+		t.Fatalf("failed to get LoadBalancer service: %v", err)
+	}
+
+	const key = "service.beta.kubernetes.io/aws-load-balancer-connection-idle-timeout"
+	expected := "3"
+	if v, ok := lbService.Annotations[key]; !ok {
+		t.Fatalf("missing expected %s=%s annotation: %+v", key, expected, lbService.Annotations)
+	} else if v != expected {
+		t.Fatalf("expected %s=%s, found %s=%s", key, expected, key, v)
+	}
+
+	// Make sure we can resolve the route's host name.  It may take some
+	// time for the ingresscontroller's wildcard DNS record to propagate.
+	if err := wait.PollImmediate(5*time.Second, 5*time.Minute, func() (bool, error) {
+		_, err := net.LookupIP(route.Spec.Host)
+		if err != nil {
+			t.Log(err)
+			return false, nil
+		}
+
+		return true, nil
+	}); err != nil {
+		t.Fatalf("failed to observe expected condition: %v", err)
+	}
+
+	// Open a connection to the route, send a request, and verify that the
+	// connection times out after ~10 seconds.
+	request, err := http.NewRequest("GET", "http://"+route.Spec.Host, nil)
+	if err != nil {
+		t.Fatalf("failed to create HTTP request: %v", err)
+	}
+
+	client := &http.Client{}
+
+	if err := wait.PollImmediate(5*time.Second, 1*time.Minute, func() (bool, error) {
+		start := time.Now()
+		response, err := client.Do(request)
+		if err != nil {
+			elapsed := time.Now().Sub(start)
+
+			// Ignore errors other than EOF.
+			if !errors.Is(err, io.EOF) {
+				t.Logf("got unexpected error after elapsed time %v: %v", elapsed, err)
+				return false, nil
+			}
+
+			// Allow up to 15 seconds.  This is well above the
+			// configured connection idle timeout, but it is also
+			// well below the default idle timeout, so it should be
+			// unlikely to cause false negatives or false positives.
+			if elapsed.Seconds() > float64(15) {
+				t.Logf("got expected EOF error after unexpectedly long elapsed time %v", elapsed)
+				return false, nil
+			}
+
+			t.Logf("got expected EOF after elapsed time %v", elapsed)
+			return true, nil
+		} else {
+			defer response.Body.Close()
+			body, err := ioutil.ReadAll(response.Body)
+			if err != nil {
+				t.Log(err)
+				return false, nil
+			}
+
+			elapsed := time.Now().Sub(start)
+			t.Logf("got response after elapsed time %v: %v", elapsed, string(body))
+		}
+
+		return false, nil
+	}); err != nil {
+		t.Fatalf("failed to observe expected condition: %v", err)
+	}
+
+	// Configure the ingresscontroller with a longer ELB idle timeout of 120
+	// seconds.
+	if err := kclient.Get(context.TODO(), icName, ic); err != nil {
+		t.Fatalf("failed to get ingresscontroller: %v", err)
+	}
+	ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.ClassicLoadBalancerParameters.ConnectionIdleTimeout = metav1.Duration{Duration: 2 * time.Minute}
+	if err := kclient.Update(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to update ingresscontroller: %v", err)
+	}
+
+	// Verify that the ingresscontroller has the updated annotation.
+	if err := wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), controller.LoadBalancerServiceName(ic), lbService); err != nil {
+			t.Logf("failed to get LoadBalancer service: %v", err)
+
+			return false, nil
+		}
+
+		expected := "120"
+		if v, ok := lbService.Annotations[key]; !ok {
+			t.Logf("missing expected %s=%s annotation: %+v", key, expected, lbService.Annotations)
+
+			return false, nil
+		} else if v != expected {
+			t.Logf("expected %s=%s, found %s=%s", key, expected, key, v)
+
+			return false, nil
+		}
+
+		t.Logf("found expected annotation %s=%s", key, expected)
+
+		return true, nil
+	}); err != nil {
+		t.Fatalf("failed to observe expected condition: %v", err)
+	}
+
+	// Configure the route with a 90-second timeout.
+	routeName := types.NamespacedName{Namespace: route.Namespace, Name: route.Name}
+	if err := kclient.Get(context.TODO(), routeName, route); err != nil {
+		t.Fatalf("failed to get route: %v", err)
+	}
+	if route.Annotations == nil {
+		route.Annotations = map[string]string{}
+	}
+	route.Annotations["haproxy.router.openshift.io/timeout"] = "90s"
+	if err := kclient.Update(context.TODO(), route); err != nil {
+		t.Fatalf("failed to update route: %v", err)
+	}
+
+	// Open a connection to the route, send a request, and verify that a
+	// response is received.  Use a polling loop because the ELB may need
+	// time to assume the new idle timeout value.
+	if err := wait.PollImmediate(5*time.Second, 5*time.Minute, func() (bool, error) {
+		start := time.Now()
+		response, err := client.Do(request)
+		if err != nil {
+			elapsed := time.Now().Sub(start)
+			t.Logf("got unexpected error after elapsed time %v: %v", elapsed, err)
+			return false, nil
+		}
+
+		defer response.Body.Close()
+		body, err := ioutil.ReadAll(response.Body)
+		if err != nil {
+			t.Log(err)
+			return false, nil
+		}
+
+		elapsed := time.Now().Sub(start)
+		t.Logf("got expected response after elapsed time %v: %v", elapsed, string(body))
+
+		return true, nil
+	}); err != nil {
+		t.Fatalf("failed to observe expected condition: %v", err)
+	}
+}
+
 func TestUniqueIdHeader(t *testing.T) {
 	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "uniqueid"}
 	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
@@ -2239,7 +2461,7 @@ func TestUniqueIdHeader(t *testing.T) {
 		}
 		defer func() {
 			if err := kclient.Delete(context.TODO(), clientPod); err != nil {
-				if errors.IsNotFound(err) {
+				if apierrors.IsNotFound(err) {
 					return
 				}
 				t.Fatalf("failed to delete pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
@@ -3063,7 +3285,7 @@ func deleteIngressController(t *testing.T, cl client.Client, ic *operatorv1.Ingr
 
 	err := wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
 		if err := cl.Get(context.TODO(), name, ic); err != nil {
-			if errors.IsNotFound(err) {
+			if apierrors.IsNotFound(err) {
 				return true, nil
 			}
 			t.Logf("failed to delete ingress controller %s/%s: %v", ic.Namespace, ic.Name, err)
@@ -3147,7 +3369,7 @@ u3YLAbyW/lHhOCiZu2iAI8AbmXem9lW6Tr7p/97s0w==
 		Type: corev1.SecretTypeTLS,
 	}
 
-	if err := cl.Delete(context.TODO(), secret); err != nil && !errors.IsNotFound(err) {
+	if err := cl.Delete(context.TODO(), secret); err != nil && !apierrors.IsNotFound(err) {
 		return nil, err
 	}
 

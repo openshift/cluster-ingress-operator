@@ -3,6 +3,7 @@ package ingress
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 
@@ -464,6 +465,161 @@ func TestDesiredLoadBalancerService(t *testing.T) {
 	}
 }
 
+// TestDesiredLoadBalancerServiceAWSIdleTimeout verifies that
+// desiredLoadBalancerService sets the expected annotation iff
+// spec.endpointPublishingStrategy.loadBalancer.providerParameters.aws.classicLoadBalancer.connectionIdleTimeout
+// is specified.
+func TestDesiredLoadBalancerServiceAWSIdleTimeout(t *testing.T) {
+	testCases := []struct {
+		name                    string
+		loadBalancerStrategy    *operatorv1.LoadBalancerStrategy
+		expectAnnotationPresent bool
+		expectedAnnotationValue string
+	}{
+		{
+			name:                    "nil loadBalancerStrategy",
+			loadBalancerStrategy:    nil,
+			expectAnnotationPresent: false,
+		},
+		{
+			name: "nil providerParameters",
+			loadBalancerStrategy: &operatorv1.LoadBalancerStrategy{
+				ProviderParameters: nil,
+			},
+			expectAnnotationPresent: false,
+		},
+		{
+			name: "nil providerParameters.aws",
+			loadBalancerStrategy: &operatorv1.LoadBalancerStrategy{
+				ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+					Type: operatorv1.AWSLoadBalancerProvider,
+					AWS:  nil,
+				},
+			},
+			expectAnnotationPresent: false,
+		},
+		{
+			name: "nil providerParameters.aws.classicLoadBalancer",
+			loadBalancerStrategy: &operatorv1.LoadBalancerStrategy{
+				ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+					Type: operatorv1.AWSLoadBalancerProvider,
+					AWS: &operatorv1.AWSLoadBalancerParameters{
+						Type:                          operatorv1.AWSClassicLoadBalancer,
+						ClassicLoadBalancerParameters: nil,
+					},
+				},
+			},
+			expectAnnotationPresent: false,
+		},
+		{
+			name: "nil providerParameters.aws.classicLoadBalancerParameters.connectionIdleTimeout",
+			loadBalancerStrategy: &operatorv1.LoadBalancerStrategy{
+				ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+					Type: operatorv1.AWSLoadBalancerProvider,
+					AWS: &operatorv1.AWSLoadBalancerParameters{
+						Type:                          operatorv1.AWSClassicLoadBalancer,
+						ClassicLoadBalancerParameters: &operatorv1.AWSClassicLoadBalancerParameters{},
+					},
+				},
+			},
+			expectAnnotationPresent: false,
+		},
+		{
+			name: "5 seconds",
+			loadBalancerStrategy: &operatorv1.LoadBalancerStrategy{
+				ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+					Type: operatorv1.AWSLoadBalancerProvider,
+					AWS: &operatorv1.AWSLoadBalancerParameters{
+						Type: operatorv1.AWSClassicLoadBalancer,
+						ClassicLoadBalancerParameters: &operatorv1.AWSClassicLoadBalancerParameters{
+							ConnectionIdleTimeout: metav1.Duration{Duration: 5 * time.Second},
+						},
+					},
+				},
+			},
+			expectAnnotationPresent: true,
+			expectedAnnotationValue: "5",
+		},
+		{
+			name: "1 hour",
+			loadBalancerStrategy: &operatorv1.LoadBalancerStrategy{
+				ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+					Type: operatorv1.AWSLoadBalancerProvider,
+					AWS: &operatorv1.AWSLoadBalancerParameters{
+						Type: operatorv1.AWSClassicLoadBalancer,
+						ClassicLoadBalancerParameters: &operatorv1.AWSClassicLoadBalancerParameters{
+							ConnectionIdleTimeout: metav1.Duration{Duration: time.Hour},
+						},
+					},
+				},
+			},
+			expectAnnotationPresent: true,
+			expectedAnnotationValue: "3600",
+		},
+		{
+			name: "negative 1 second",
+			loadBalancerStrategy: &operatorv1.LoadBalancerStrategy{
+				ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+					Type: operatorv1.AWSLoadBalancerProvider,
+					AWS: &operatorv1.AWSLoadBalancerParameters{
+						Type: operatorv1.AWSClassicLoadBalancer,
+						ClassicLoadBalancerParameters: &operatorv1.AWSClassicLoadBalancerParameters{
+							ConnectionIdleTimeout: metav1.Duration{Duration: -1 * time.Second},
+						},
+					},
+				},
+			},
+			expectAnnotationPresent: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ic := &operatorv1.IngressController{
+				ObjectMeta: metav1.ObjectMeta{Name: "default"},
+				Status: operatorv1.IngressControllerStatus{
+					EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+						Type:         operatorv1.LoadBalancerServiceStrategyType,
+						LoadBalancer: tc.loadBalancerStrategy,
+					},
+				},
+			}
+			trueVar := true
+			deploymentRef := metav1.OwnerReference{
+				APIVersion: "apps/v1",
+				Kind:       "Deployment",
+				Name:       "router-default",
+				UID:        "1",
+				Controller: &trueVar,
+			}
+			infraConfig := &configv1.Infrastructure{
+				Status: configv1.InfrastructureStatus{
+					PlatformStatus: &configv1.PlatformStatus{
+						Type: configv1.AWSPlatformType,
+					},
+				},
+			}
+			haveSvc, svc, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig.Status.PlatformStatus)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !haveSvc {
+				t.Fatal("desiredLoadBalancerService didn't return a service")
+			}
+			const key = "service.beta.kubernetes.io/aws-load-balancer-connection-idle-timeout"
+			switch v, ok := svc.Annotations[key]; {
+			case !tc.expectAnnotationPresent && ok:
+				t.Errorf("unexpected annotation: %s=%s", key, v)
+			case tc.expectAnnotationPresent && !ok:
+				t.Errorf("missing expected annotation: %s=%s", key, tc.expectedAnnotationValue)
+			case tc.expectAnnotationPresent && v != tc.expectedAnnotationValue:
+				t.Errorf("expected annotations %s=%s, found %s=%s", key, tc.expectedAnnotationValue, key, v)
+			}
+		})
+
+	}
+}
+
 func checkServiceHasAnnotation(svc *corev1.Service, name string, expectValue bool, expectedValue string) error {
 	var (
 		actualValue string
@@ -685,6 +841,13 @@ func TestLoadBalancerServiceChanged(t *testing.T) {
 			},
 			expect: false,
 		},
+		{
+			description: "if the service.beta.kubernetes.io/aws-load-balancer-connection-idle-timeout annotation changes",
+			mutate: func(svc *corev1.Service) {
+				svc.Annotations["service.beta.kubernetes.io/aws-load-balancer-connection-idle-timeout"] = "120"
+			},
+			expect: true,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -692,6 +855,7 @@ func TestLoadBalancerServiceChanged(t *testing.T) {
 			original := corev1.Service{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
+						"service.beta.kubernetes.io/aws-load-balancer-connection-idle-timeout":  "10",
 						"service.beta.kubernetes.io/aws-load-balancer-healthcheck-interval":     "5",
 						"service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags": "Key1=Value1,Key2=Value2",
 					},

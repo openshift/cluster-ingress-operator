@@ -243,7 +243,7 @@ github.com/modern-go/reflect2
 # github.com/oklog/ulid v1.3.1
 ## explicit
 github.com/oklog/ulid
-# github.com/openshift/api v0.0.0-20220429082003-1469fac35c75
+# github.com/openshift/api v0.0.0-20220429222041-b25f69a603a7
 ## explicit; go 1.16
 github.com/openshift/api
 github.com/openshift/api/apiserver
