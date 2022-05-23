@@ -1583,21 +1583,38 @@ func TestDurationToHAProxyTimespec(t *testing.T) {
 		inputDuration  time.Duration
 		expectedOutput string
 	}{
-		// Value below the minimum 0s returns 0s
+		// A value below the minimum 0s returns 0s
 		{-1, "0s"},
-		// Value above the maximum 2147483647ms returns 2147483647ms
+
+		// Values above the maximum 2147483647ms return 2147483647ms
 		{2147489999 * time.Millisecond, "2147483647ms"},
+		{2147483647009 * time.Microsecond, "2147483647ms"},
+		{720 * time.Hour, "2147483647ms"},
+
+		// A value less than a millisecond should return microseconds
+		{10 * time.Microsecond, "10us"},
+
+		// A value that would return fractional milliseconds should return microseconds
+		{500 * time.Microsecond, "500us"},
+		{1500 * time.Microsecond, "1500us"},
+
+		// A value that would return fractional seconds should return milliseconds
+		{time.Duration(1.5 * float64(time.Second)), "1500ms"},
+
+		// Values that can be converted to the next higher time unit should be converted
+		{2000 * time.Microsecond, "2ms"},
+		{1000 * time.Millisecond, "1s"},
+		{60 * time.Second, "1m"},
+		{120 * time.Minute, "2h"},
+
 		{0, "0s"},
 		{100 * time.Millisecond, "100ms"},
 		{1500 * time.Millisecond, "1500ms"},
 		{10 * time.Second, "10s"},
-		{60 * time.Second, "1m"},
 		{90 * time.Second, "90s"},
 		{2 * time.Minute, "2m"},
 		{75 * time.Minute, "75m"},
-		{120 * time.Minute, "2h"},
 		{48 * time.Hour, "48h"},
-		{720 * time.Hour, "2147483647ms"},
 	}
 	for _, tc := range testCases {
 		output := durationToHAProxyTimespec(tc.inputDuration)

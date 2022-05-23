@@ -1641,11 +1641,19 @@ func clipHAProxyTimeoutValue(val string) (string, error) {
 func durationToHAProxyTimespec(duration time.Duration) string {
 	haproxyMaxTimeoutMilliseconds := int64(2147483647)
 	durationMilliseconds := duration.Milliseconds()
-	if durationMilliseconds == 0 {
+
+	haproxyMaxTimeoutMicroseconds := int64(2147483647000)
+	durationMicroseconds := duration.Microseconds()
+
+	if durationMicroseconds == 0 && durationMilliseconds == 0 {
 		return "0s"
-	} else if durationMilliseconds > haproxyMaxTimeoutMilliseconds {
+	} else if durationMicroseconds != 0 && durationMilliseconds == 0 {
+		return fmt.Sprintf("%dus", durationMicroseconds)
+	} else if durationMicroseconds > haproxyMaxTimeoutMicroseconds {
 		log.V(2).Info("Time value %s exceeds the maximum timeout length of %dms. Truncating timeout to match maximum value.", duration.String(), haproxyMaxTimeoutMilliseconds)
 		return "2147483647ms"
+	} else if durationMicroseconds%time.Millisecond.Microseconds() != 0 {
+		return fmt.Sprintf("%dus", durationMicroseconds)
 	} else if durationMilliseconds%time.Second.Milliseconds() != 0 {
 		return fmt.Sprintf("%dms", durationMilliseconds)
 	} else if durationMilliseconds%time.Minute.Milliseconds() != 0 {
