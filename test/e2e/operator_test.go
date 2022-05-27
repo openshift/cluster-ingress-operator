@@ -3078,6 +3078,52 @@ func newLoadBalancerController(name types.NamespacedName, domain string) *operat
 	}
 }
 
+// TestIngressOperatorCacheIsNotGlobal validates BZ2075671: Don't include all objects in all namespaces in the
+// Ingress Operator's cache. This tests adds an Ingress Controller in another namespace that isn't in the
+// Ingress Operator's cache and ensures the Ingress Operator ignores it.
+func TestIngressOperatorCacheIsNotGlobal(t *testing.T) {
+	t.Parallel()
+	// Setup a namespace that will be ignored by the ingress operator.
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "ignored-ns",
+		},
+	}
+	if err := kclient.Create(context.TODO(), ns); err != nil {
+		t.Fatalf("failed to create namespace: %v", err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), ns); err != nil {
+			t.Fatalf("failed to delete namespace %v: %v", ns.Name, err)
+		}
+	}()
+	// Create the new private controller in a namespace that will be ignored by the Ingress Operator.
+	icName := types.NamespacedName{
+		Namespace: ns.Name,
+		Name:      "test-cache-is-not-global",
+	}
+	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
+	ic := newPrivateController(icName, domain)
+	if err := kclient.Create(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
+	}
+
+	// Clean up our new Ingress Controller after we are done.
+	defer assertIngressControllerDeleted(t, kclient, ic)
+
+	// Verify new Ingress Controller is ignored by ensuring its status never gets modified.
+	wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), icName, ic); err != nil {
+			t.Fatalf("failed to get ingresscontroller %s/%s: %v", ic.Namespace, ic.Name, err)
+		}
+
+		if len(ic.Status.Conditions) != 0 {
+			t.Fatalf("expected ingress controller %s to be ignored by the ingress operator", icName)
+		}
+		return false, nil
+	})
+}
+
 func newNodePortController(name types.NamespacedName, domain string) *operatorv1.IngressController {
 	repl := int32(1)
 	return &operatorv1.IngressController{
