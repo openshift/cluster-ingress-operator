@@ -103,6 +103,8 @@ const (
 	HTTPPortName  = "http"
 	HTTPSPortName = "https"
 	StatsPortName = "metrics"
+
+	haproxyMaxTimeoutMilliseconds = 2147483647 * time.Millisecond
 )
 
 // ensureRouterDeployment ensures the router deployment exists for a given
@@ -1632,26 +1634,28 @@ func clipHAProxyTimeoutValue(val string) (string, error) {
 
 // durationToHAProxyTimespec converts a time.Duration into a number that
 // HAProxy can consume, in the simplest unit possible. If the value would be
-// truncated by being converted to seconds, it outputs in milliseconds,
-// otherwise if the value wouldn't be truncated by converting to seconds, but
-// would if converted to minutes, it outputs in seconds, etc. up to a maximum
-// unit in hours (the largest unit natively supported by time.Duration).
+// truncated by being converted to milliseconds, it outputs in microseconds, or
+// if the value would be truncated by being converted to seconds, it outputs in
+// milliseconds, otherwise if the value wouldn't be truncated by converting to
+// seconds, but would be if converted to minutes, it outputs in seconds, etc.
+// up to a maximum unit in hours (the largest time unit natively supported by
+// time.Duration).
 //
 // Also truncates values to the maximum length HAProxy allows if the value is
-// too large.
+// too large, and truncates values to 0s if they are less than 0.
 func durationToHAProxyTimespec(duration time.Duration) string {
-	haproxyMaxTimeoutMilliseconds := int64(2147483647)
-	durationMilliseconds := duration.Milliseconds()
-	if durationMilliseconds == 0 {
+	if duration <= 0 {
 		return "0s"
-	} else if durationMilliseconds > haproxyMaxTimeoutMilliseconds {
-		log.V(2).Info("Time value %s exceeds the maximum timeout length of %dms. Truncating timeout to match maximum value.", duration.String(), haproxyMaxTimeoutMilliseconds)
+	} else if duration > haproxyMaxTimeoutMilliseconds {
+		log.V(2).Info("time value %v exceeds the maximum timeout length of %v; truncating to maximum value", duration, haproxyMaxTimeoutMilliseconds)
 		return "2147483647ms"
-	} else if durationMilliseconds%time.Second.Milliseconds() != 0 {
-		return fmt.Sprintf("%dms", durationMilliseconds)
-	} else if durationMilliseconds%time.Minute.Milliseconds() != 0 {
+	} else if µs := duration.Microseconds(); µs%1000 != 0 {
+		return fmt.Sprintf("%dus", µs)
+	} else if ms := duration.Milliseconds(); ms%1000 != 0 {
+		return fmt.Sprintf("%dms", ms)
+	} else if ms%time.Minute.Milliseconds() != 0 {
 		return fmt.Sprintf("%ds", int(math.Round(duration.Seconds())))
-	} else if durationMilliseconds%time.Hour.Milliseconds() != 0 {
+	} else if ms%time.Hour.Milliseconds() != 0 {
 		return fmt.Sprintf("%dm", int(math.Round(duration.Minutes())))
 	} else {
 		return fmt.Sprintf("%dh", int(math.Round(duration.Hours())))
