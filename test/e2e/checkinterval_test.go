@@ -24,6 +24,7 @@ const (
 )
 
 func TestHealthCheckIntervalIngressController(t *testing.T) {
+	t.Parallel()
 	name := types.NamespacedName{Namespace: operatorNamespace, Name: "healthcheckinterval"}
 	domain := name.Name + "." + dnsConfig.Spec.BaseDomain
 	ic := newPrivateController(name, domain)

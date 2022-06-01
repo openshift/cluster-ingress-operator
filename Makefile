@@ -12,7 +12,7 @@ endif
 GO=GO111MODULE=on GOFLAGS=-mod=vendor go
 GO_BUILD_RECIPE=CGO_ENABLED=0 $(GO) build -o $(BIN) $(GO_GCFLAGS) $(MAIN_PACKAGE)
 
-TEST ?= .*
+TEST ?= TestAll
 
 .PHONY: build
 build:
@@ -55,6 +55,10 @@ release-local:
 test-e2e:
 	$(GO) test -timeout 1h -count 1 -v -tags e2e -run "$(TEST)" ./test/e2e
 
+.PHONY: test-e2e-list
+test-e2e-list:
+	@(cd ./test/e2e; E2E_TEST_MAIN_SKIP_SETUP=1 $(GO) test -list . -tags e2e | grep ^Test | sort)
+
 .PHONY: clean
 clean:
 	$(GO) clean
@@ -67,6 +71,7 @@ verify:
 	hack/verify-profile-manifests.sh
 	hack/verify-generated-bindata.sh
 	hack/verify-deps.sh
+	hack/verify-e2e-test-all-presence.sh
 
 .PHONY: uninstall
 uninstall:

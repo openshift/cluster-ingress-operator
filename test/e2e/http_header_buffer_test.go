@@ -29,6 +29,7 @@ import (
 )
 
 func TestHTTPHeaderBufferSize(t *testing.T) {
+	t.Parallel()
 	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "header-buffer-size"}
 	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
 	ic := newPrivateController(icName, domain)
@@ -167,7 +168,7 @@ func TestHTTPHeaderBufferSize(t *testing.T) {
 			Name:      clientPodValidRequest.Name,
 		}
 		if err := kclient.Get(context.TODO(), podName, pod); err != nil {
-			t.Errorf("failed to get pod %s: %v", clientPodValidRequest.Name, err)
+			t.Fatalf("failed to get pod %s: %v", clientPodValidRequest.Name, err)
 		}
 
 		logs, err := cl.CoreV1().Pods(clientPodValidRequest.Namespace).GetLogs(clientPodValidRequest.Name, &corev1.PodLogOptions{
@@ -175,7 +176,7 @@ func TestHTTPHeaderBufferSize(t *testing.T) {
 			Follow:    false,
 		}).DoRaw(context.TODO())
 		if err != nil {
-			t.Errorf("failed to get logs from pod %s: %v", clientPodValidRequest.Name, err)
+			t.Fatalf("failed to get logs from pod %s: %v", clientPodValidRequest.Name, err)
 		}
 
 		output := fmt.Sprintf("failed to observe the expected output: %v\nclient pod spec: %#v\nclient pod logs:\n%s", pollErr, pod, logs)
@@ -184,7 +185,7 @@ func TestHTTPHeaderBufferSize(t *testing.T) {
 	}
 
 	if err := kclient.Get(context.TODO(), types.NamespacedName{Name: ic.Name, Namespace: ic.Namespace}, ic); err != nil {
-		t.Errorf("failed to get ingresscontroller %s: %v", ic.Name, err)
+		t.Fatalf("failed to get ingresscontroller %s: %v", ic.Name, err)
 	}
 
 	// Get the name of the current router pod for the test ingress controller
@@ -193,11 +194,11 @@ func TestHTTPHeaderBufferSize(t *testing.T) {
 		controller.ControllerDeploymentLabel: "header-buffer-size",
 	}
 	if err := kclient.List(context.TODO(), podList, client.InNamespace(deployment.Namespace), client.MatchingLabels(labels)); err != nil {
-		t.Errorf("failed to list pods for ingress controllers %s: %v", ic.Name, err)
+		t.Fatalf("failed to list pods for ingress controllers %s: %v", ic.Name, err)
 	}
 
 	if len(podList.Items) != 1 {
-		t.Errorf("expected ingress controller %s to have exactly 1 router pod, but it has %d", ic.Name, len(podList.Items))
+		t.Fatalf("expected ingress controller %s to have exactly 1 router pod, but it has %d", ic.Name, len(podList.Items))
 	}
 
 	oldRouterPodName := podList.Items[0].Name
@@ -220,7 +221,8 @@ func TestHTTPHeaderBufferSize(t *testing.T) {
 	pollErr = wait.PollImmediate(2*time.Second, 5*time.Minute, func() (bool, error) {
 		podList := &corev1.PodList{}
 		if err := kclient.List(context.TODO(), podList, client.InNamespace(deployment.Namespace), client.MatchingLabels(labels)); err != nil {
-			t.Errorf("failed to list pods for ingress controllers %s: %v", ic.Name, err)
+			t.Logf("failed to list pods for ingress controllers %s: %v, retrying...", ic.Name, err)
+			return false, nil
 		}
 
 		for _, pod := range podList.Items {
@@ -243,7 +245,7 @@ func TestHTTPHeaderBufferSize(t *testing.T) {
 	})
 
 	if pollErr != nil {
-		t.Errorf("timed out waiting for new router pod for %s to become ready: %v", ic.Name, pollErr)
+		t.Fatalf("timed out waiting for new router pod for %s to become ready: %v", ic.Name, pollErr)
 	}
 
 	name = name + "-fail-case"
@@ -294,7 +296,7 @@ func TestHTTPHeaderBufferSize(t *testing.T) {
 			Name:      clientPodInvalidRequest.Name,
 		}
 		if err := kclient.Get(context.TODO(), podName, pod); err != nil {
-			t.Errorf("failed to get pod %s: %v", clientPodInvalidRequest.Name, err)
+			t.Fatalf("failed to get pod %s: %v", clientPodInvalidRequest.Name, err)
 		}
 
 		logs, err := cl.CoreV1().Pods(clientPodInvalidRequest.Namespace).GetLogs(clientPodInvalidRequest.Name, &corev1.PodLogOptions{
@@ -302,7 +304,7 @@ func TestHTTPHeaderBufferSize(t *testing.T) {
 			Follow:    false,
 		}).DoRaw(context.TODO())
 		if err != nil {
-			t.Errorf("failed to get logs from pod %s: %v", clientPodInvalidRequest.Name, err)
+			t.Fatalf("failed to get logs from pod %s: %v", clientPodInvalidRequest.Name, err)
 		}
 
 		output := fmt.Sprintf("failed to observe the expected output: %v\nclient pod spec: %#v\nclient pod logs:\n%s", pollErr, pod, logs)
