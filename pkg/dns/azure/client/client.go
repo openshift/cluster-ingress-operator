@@ -32,6 +32,9 @@ type ARecord struct {
 
 	//TTL is the Time To Live property of the A record
 	TTL int64
+
+	//Label is the metadata label that needs to be added with the A record.
+	Label string
 }
 
 type dnsClient struct {
@@ -99,6 +102,10 @@ func (c *recordSetClient) Put(ctx context.Context, zone Zone, arec ARecord) erro
 				{Ipv4Address: &arec.Address},
 			},
 		},
+	}
+	if arec.Label != "" {
+		ownedValue := "owned"
+		rs.RecordSetProperties.Metadata = map[string]*string{arec.Label: &ownedValue}
 	}
 	_, err := c.client.CreateOrUpdate(ctx, zone.ResourceGroup, zone.Name, arec.Name, dns.A, rs, "", "")
 	if err != nil {

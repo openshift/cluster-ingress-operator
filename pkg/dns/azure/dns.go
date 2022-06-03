@@ -36,6 +36,8 @@ type Config struct {
 	// ARMEndpoint specifies a URL to use for resource management in non-sovereign clouds such as Azure Stack.
 	// The value is not needed for public Azure, Azure Government as it can be determined by the SDK.
 	ARMEndpoint string
+	// InfraID is the generated ID that is used to identify cloud resources created by the installer.
+	InfraID string
 }
 
 type provider struct {
@@ -85,20 +87,22 @@ func (m *provider) Ensure(record *iov1.DNSRecord, zone configv1.DNSZone) error {
 		return errors.Wrap(err, "failed to parse zoneID")
 	}
 
+	metadataLabel := m.config.InfraID
 	ARecordName, err := getARecordName(record.Spec.DNSName, targetZone.Name)
 	if err != nil {
 		return err
 	}
+	ARecord := client.ARecord{
+		Address: record.Spec.Targets[0],
+		Name:    ARecordName,
+		TTL:     record.Spec.RecordTTL,
+	}
+	if metadataLabel != "" {
+		ARecord.Label = fmt.Sprintf("kubernetes.io_cluster.%s", metadataLabel)
+	}
 
 	// TODO: handle >0 targets
-	err = m.client.Put(
-		context.TODO(),
-		*targetZone,
-		client.ARecord{
-			Address: record.Spec.Targets[0],
-			Name:    ARecordName,
-			TTL:     record.Spec.RecordTTL,
-		})
+	err = m.client.Put(context.TODO(), *targetZone, ARecord)
 
 	if err == nil {
 		log.Info("upserted DNS record", "record", record.Spec, "zone", zone)
