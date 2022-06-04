@@ -61,6 +61,7 @@ func TestAll(t *testing.T) {
 		t.Run("TestUniqueDomainRejection", TestUniqueDomainRejection)
 		t.Run("TestUniqueIdHeader", TestUniqueIdHeader)
 		t.Run("TestUserDefinedIngressController", TestUserDefinedIngressController)
+		t.Run("TestIngressOperatorCacheIsNotGlobal", TestIngressOperatorCacheIsNotGlobal)
 	})
 
 	t.Run("serial", func(t *testing.T) {
