@@ -73,12 +73,14 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentAvailableCondition(deployment))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentReplicasMinAvailableCondition(deployment))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentReplicasAllAvailableCondition(deployment))
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentRollingOutCondition(deployment))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeLoadBalancerStatus(ic, service, operandEvents)...)
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeLoadBalancerProgressingStatus(ic, service, platformStatus))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDNSStatus(ic, wildcardRecord, platformStatus, dnsConfig)...)
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressAvailableCondition(updated.Status.Conditions))
 	degradedCondition, err := computeIngressDegradedCondition(updated.Status.Conditions, updated.Name)
 	errs = append(errs, err)
-	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressProgressingCondition(updated.Status.Conditions, ic, service, platformStatus))
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressProgressingCondition(updated.Status.Conditions))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, degradedCondition)
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressUpgradeableCondition(ic, deploymentRef, service, platformStatus, secret))
 
@@ -457,6 +459,55 @@ func computeDeploymentReplicasAllAvailableCondition(deployment *appsv1.Deploymen
 	}
 }
 
+// computeDeploymentRollingOutCondition computes the ingress controller's
+// "DeploymentRollingOut" status condition by examining the number of updated
+// replicas reported in the deployment's status. The "DeploymentRollingOut"
+// condition is true if the number of updated replicas is not equal to the number
+// of expected or available replicas.
+// See Reference: https://github.com/kubernetes/kubectl/blob/master/pkg/polymorphichelpers/rollout_status.go
+func computeDeploymentRollingOutCondition(deployment *appsv1.Deployment) operatorv1.OperatorCondition {
+	// If have replicas is less than want replicas, then we are waiting for replicas to be updated.
+	if deployment.Spec.Replicas != nil && deployment.Status.UpdatedReplicas < *deployment.Spec.Replicas {
+		return operatorv1.OperatorCondition{
+			Type:   IngressControllerDeploymentRollingOutConditionType,
+			Status: operatorv1.ConditionTrue,
+			Reason: "DeploymentRollingOut",
+			Message: fmt.Sprintf(
+				"Waiting for router deployment rollout to finish: %d out of %d new replica(s) have been updated...\n",
+				deployment.Status.UpdatedReplicas, *deployment.Spec.Replicas),
+		}
+	}
+	// If have replicas greater than updated replicas, then we are waiting for old replicas to terminate.
+	if deployment.Status.Replicas > deployment.Status.UpdatedReplicas {
+		return operatorv1.OperatorCondition{
+			Type:   IngressControllerDeploymentRollingOutConditionType,
+			Status: operatorv1.ConditionTrue,
+			Reason: "DeploymentRollingOut",
+			Message: fmt.Sprintf(
+				"Waiting for router deployment rollout to finish: %d old replica(s) are pending termination...\n",
+				deployment.Status.Replicas-deployment.Status.UpdatedReplicas),
+		}
+	}
+	// If available replicas less than updated replicas, then we are waiting for updated replicas to become available.
+	if deployment.Status.AvailableReplicas < deployment.Status.UpdatedReplicas {
+		return operatorv1.OperatorCondition{
+			Type:   IngressControllerDeploymentRollingOutConditionType,
+			Status: operatorv1.ConditionTrue,
+			Reason: "DeploymentRollingOut",
+			Message: fmt.Sprintf(
+				"Waiting for router deployment rollout to finish: %d of %d updated replica(s) are available...\n",
+				deployment.Status.AvailableReplicas, deployment.Status.UpdatedReplicas),
+		}
+	}
+
+	return operatorv1.OperatorCondition{
+		Type:    IngressControllerDeploymentRollingOutConditionType,
+		Status:  operatorv1.ConditionFalse,
+		Reason:  "DeploymentNotRollingOut",
+		Message: "Deployment is not actively rolling out",
+	}
+}
+
 // computeIngressDegradedCondition computes the ingresscontroller's "Degraded"
 // status condition, which aggregates other status conditions that can indicate
 // a degraded state.  In addition, computeIngressDegradedCondition returns a
@@ -641,43 +692,42 @@ func formatConditions(conditions []*operatorv1.OperatorCondition) string {
 	return formatted
 }
 
-// computeIngressProgressingCondition computes the ingresscontroller's
-// "Progressing" status condition, which indicates if the ingresscontroller's
-// current state matches its desired state.
-func computeIngressProgressingCondition(conditions []operatorv1.OperatorCondition, ic *operatorv1.IngressController, service *corev1.Service, platform *configv1.PlatformStatus) operatorv1.OperatorCondition {
-	condition := operatorv1.OperatorCondition{
-		Type:   operatorv1.OperatorStatusTypeProgressing,
-		Status: operatorv1.ConditionFalse,
+// computeIngressProgressingCondition computes the IngressController's current Progressing status state
+// by inspecting the following:
+// 1) the Deployment Replicas Updated condition of the IngressController
+// 2) the LoadBalancer Progressing condition of the IngressController
+// The IngressController is judged NOT Progressing only if all 2 conditions are true; otherwise
+// it is considered to be Progressing.
+func computeIngressProgressingCondition(conditions []operatorv1.OperatorCondition) operatorv1.OperatorCondition {
+	expected := []expectedCondition{
+		{
+			condition:        IngressControllerLoadBalancerProgressingConditionType,
+			status:           operatorv1.ConditionFalse,
+			ifConditionsTrue: []string{operatorv1.LoadBalancerManagedIngressConditionType},
+		},
+		{
+			condition: IngressControllerDeploymentRollingOutConditionType,
+			status:    operatorv1.ConditionFalse,
+		},
 	}
-	if ic.Status.EndpointPublishingStrategy.Type == operatorv1.LoadBalancerServiceStrategyType {
-		switch {
-		case ic.Status.EndpointPublishingStrategy.LoadBalancer == nil:
-			condition.Message = "status.endpointPublishingStrategy.loadBalancer is not set."
-			condition.Reason = "IncompleteStatus"
-			condition.Status = operatorv1.ConditionUnknown
-		case service == nil:
-			condition.Message = "LoadBalancer Service not created."
-			condition.Reason = "NoService"
-			condition.Status = operatorv1.ConditionTrue
-		default:
-			wantScope := ic.Status.EndpointPublishingStrategy.LoadBalancer.Scope
-			haveScope := operatorv1.ExternalLoadBalancer
-			if IsServiceInternal(service) {
-				haveScope = operatorv1.InternalLoadBalancer
-			}
-			if wantScope != haveScope {
-				message := fmt.Sprintf("The IngressController scope was changed from %q to %q.", haveScope, wantScope)
-				switch platform.Type {
-				case configv1.AWSPlatformType, configv1.IBMCloudPlatformType:
-					message = fmt.Sprintf("%[1]s  To effectuate this change, you must delete the service: `oc -n %[2]s delete svc/%[3]s`; the service load-balancer will then be deprovisioned and a new one created.  This will most likely cause the new load-balancer to have a different host name and IP address from the old one's.  Alternatively, you can revert the change to the IngressController: `oc -n openshift-ingress-operator patch ingresscontrollers/%[4]s --type=merge --patch='{\"spec\":{\"endpointPublishingStrategy\":{\"loadBalancer\":{\"scope\":\"%[5]s\"}}}}'", message, service.Namespace, service.Name, ic.Name, haveScope)
-				}
-				condition.Reason = "ScopeChanged"
-				condition.Message = message
-				condition.Status = operatorv1.ConditionTrue
+
+	// Check for the rare case of no conditions
+	if len(conditions) != 0 {
+		_, progressingConditions, _ := checkConditions(expected, conditions)
+		if len(progressingConditions) != 0 {
+			progressing := formatConditions(progressingConditions)
+			return operatorv1.OperatorCondition{
+				Type:    operatorv1.OperatorStatusTypeProgressing,
+				Status:  operatorv1.ConditionTrue,
+				Reason:  "IngressControllerProgressing",
+				Message: "One or more status conditions indicate progressing: " + progressing,
 			}
 		}
 	}
-	return condition
+	return operatorv1.OperatorCondition{
+		Type:   operatorv1.OperatorStatusTypeProgressing,
+		Status: operatorv1.ConditionFalse,
+	}
 }
 
 // IngressStatusesEqual compares two IngressControllerStatus values.  Returns true
@@ -713,9 +763,11 @@ func conditionChanged(a, b operatorv1.OperatorCondition) bool {
 	return a.Status != b.Status || a.Reason != b.Reason || a.Message != b.Message
 }
 
-// computeLoadBalancerStatus returns the complete set of current
-// LoadBalancer-prefixed conditions for the given ingress controller.
+// computeLoadBalancerStatus returns the set of current
+// LoadBalancer-prefixed conditions for the given ingress controller, which are
+// used later to determine the ingress controller's Degraded or Available status.
 func computeLoadBalancerStatus(ic *operatorv1.IngressController, service *corev1.Service, operandEvents []corev1.Event) []operatorv1.OperatorCondition {
+	// Compute the LoadBalancerManagedIngressConditionType condition
 	if ic.Status.EndpointPublishingStrategy == nil ||
 		ic.Status.EndpointPublishingStrategy.Type != operatorv1.LoadBalancerServiceStrategyType {
 		return []operatorv1.OperatorCondition{
@@ -737,6 +789,7 @@ func computeLoadBalancerStatus(ic *operatorv1.IngressController, service *corev1
 		Message: "The endpoint publishing strategy supports a managed load balancer",
 	})
 
+	// Compute the LoadBalancerReadyIngressConditionType condition
 	switch {
 	case service == nil:
 		conditions = append(conditions, operatorv1.OperatorCondition{
@@ -775,8 +828,57 @@ func computeLoadBalancerStatus(ic *operatorv1.IngressController, service *corev1
 			Message: message,
 		})
 	}
-
 	return conditions
+}
+
+// computeLoadBalancerProgressingStatus returns the LoadBalancerProgressing
+// conditions for the given ingress controller. These conditions subsequently determine
+// the ingress controller's Progressing status.
+func computeLoadBalancerProgressingStatus(ic *operatorv1.IngressController, service *corev1.Service, platform *configv1.PlatformStatus) operatorv1.OperatorCondition {
+	// Compute the IngressControllerLoadBalancerProgressingConditionType condition for the LoadBalancer
+	if ic.Status.EndpointPublishingStrategy.Type == operatorv1.LoadBalancerServiceStrategyType {
+		switch {
+		case ic.Status.EndpointPublishingStrategy.LoadBalancer == nil:
+			return operatorv1.OperatorCondition{
+				Type:    IngressControllerLoadBalancerProgressingConditionType,
+				Status:  operatorv1.ConditionUnknown,
+				Reason:  "StatusIncomplete",
+				Message: "status.endpointPublishingStrategy.loadBalancer is not set.",
+			}
+		case service == nil:
+			return operatorv1.OperatorCondition{
+				Type:    IngressControllerLoadBalancerProgressingConditionType,
+				Status:  operatorv1.ConditionTrue,
+				Reason:  "NoService",
+				Message: "LoadBalancer Service not created.",
+			}
+		default:
+			wantScope := ic.Status.EndpointPublishingStrategy.LoadBalancer.Scope
+			haveScope := operatorv1.ExternalLoadBalancer
+			if IsServiceInternal(service) {
+				haveScope = operatorv1.InternalLoadBalancer
+			}
+			if wantScope != haveScope {
+				message := fmt.Sprintf("The IngressController scope was changed from %q to %q.", haveScope, wantScope)
+				switch platform.Type {
+				case configv1.AWSPlatformType, configv1.IBMCloudPlatformType:
+					message = fmt.Sprintf("%[1]s  To effectuate this change, you must delete the service: `oc -n %[2]s delete svc/%[3]s`; the service load-balancer will then be deprovisioned and a new one created.  This will most likely cause the new load-balancer to have a different host name and IP address from the old one's.  Alternatively, you can revert the change to the IngressController: `oc -n openshift-ingress-operator patch ingresscontrollers/%[4]s --type=merge --patch='{\"spec\":{\"endpointPublishingStrategy\":{\"loadBalancer\":{\"scope\":\"%[5]s\"}}}}'", message, service.Namespace, service.Name, ic.Name, haveScope)
+				}
+				return operatorv1.OperatorCondition{
+					Type:    IngressControllerLoadBalancerProgressingConditionType,
+					Status:  operatorv1.ConditionTrue,
+					Reason:  "ScopeChanged",
+					Message: message,
+				}
+			}
+		}
+	}
+	return operatorv1.OperatorCondition{
+		Type:    IngressControllerLoadBalancerProgressingConditionType,
+		Status:  operatorv1.ConditionFalse,
+		Reason:  "LoadBalancerNotProgressing",
+		Message: "LoadBalancer is not progressing",
+	}
 }
 
 func isProvisioned(service *corev1.Service) bool {

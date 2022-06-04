@@ -54,6 +54,8 @@ const (
 	IngressControllerDeploymentAvailableConditionType            = "DeploymentAvailable"
 	IngressControllerDeploymentReplicasMinAvailableConditionType = "DeploymentReplicasMinAvailable"
 	IngressControllerDeploymentReplicasAllAvailableConditionType = "DeploymentReplicasAllAvailable"
+	IngressControllerDeploymentRollingOutConditionType           = "DeploymentRollingOut"
+	IngressControllerLoadBalancerProgressingConditionType        = "LoadBalancerProgressing"
 	IngressControllerCanaryCheckSuccessConditionType             = "CanaryChecksSucceeding"
 
 	routerDefaultHeaderBufferSize           = 32768
