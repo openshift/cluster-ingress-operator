@@ -156,12 +156,12 @@ var (
 // ensureLoadBalancerService creates an LB service if one is desired but absent.
 // Always returns the current LB service if one exists (whether it already
 // existed or was created during the course of the function).
-func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, infraConfig *configv1.Infrastructure) (bool, *corev1.Service, error) {
+func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, infraConfig *configv1.Infrastructure, networkConfig *configv1.Network) (bool, *corev1.Service, error) {
 	platform, err := oputil.GetPlatformStatus(r.client, infraConfig)
 	if err != nil {
 		return false, nil, fmt.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %v", ci.Namespace, ci.Name, err)
 	}
-	wantLBS, desiredLBService, err := desiredLoadBalancerService(ci, deploymentRef, platform)
+	wantLBS, desiredLBService, err := desiredLoadBalancerService(ci, deploymentRef, platform, networkConfig.Spec.NetworkType)
 	if err != nil {
 		return false, nil, err
 	}
@@ -222,7 +222,7 @@ func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController,
 // ingresscontroller, or nil if an LB service isn't desired. An LB service is
 // desired if the high availability type is Cloud. An LB service will declare an
 // owner reference to the given deployment.
-func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, platform *configv1.PlatformStatus) (bool, *corev1.Service, error) {
+func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, platform *configv1.PlatformStatus, networkType string) (bool, *corev1.Service, error) {
 	if ci.Status.EndpointPublishingStrategy.Type != operatorv1.LoadBalancerServiceStrategyType {
 		return false, nil, nil
 	}
@@ -268,6 +268,12 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 					service.Annotations[GCPGlobalAccessAnnotation] = strconv.FormatBool(globalAccessEnabled)
 				}
 			}
+		}
+		// externalTrafficPolicy: Local is unsupported by OVN in
+		// OpenShift 4.9 and earlier; see
+		// <https://bugzilla.redhat.com/show_bug.cgi?id=2060542>.
+		if networkType == string(operatorv1.NetworkTypeOVNKubernetes) {
+			service.Spec.ExternalTrafficPolicy = corev1.ServiceExternalTrafficPolicyTypeCluster
 		}
 		switch platform.Type {
 		case configv1.AWSPlatformType:
@@ -560,8 +566,8 @@ func loadBalancerServiceTagsModified(current, expected *corev1.Service) (bool, *
 // return value is nil.  Otherwise, if something or someone else has modified
 // the service, then the return value is a non-nil error indicating that the
 // modification must be reverted before upgrading is allowed.
-func loadBalancerServiceIsUpgradeable(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference, current *corev1.Service, platform *configv1.PlatformStatus) error {
-	want, desired, err := desiredLoadBalancerService(ic, deploymentRef, platform)
+func loadBalancerServiceIsUpgradeable(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference, current *corev1.Service, platform *configv1.PlatformStatus, networkConfig *configv1.Network) error {
+	want, desired, err := desiredLoadBalancerService(ic, deploymentRef, platform, networkConfig.Spec.NetworkType)
 	if err != nil {
 		return err
 	}

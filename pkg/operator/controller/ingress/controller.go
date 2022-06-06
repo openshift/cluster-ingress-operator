@@ -760,7 +760,7 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 
 	var lbService *corev1.Service
 	var wildcardRecord *iov1.DNSRecord
-	if haveLB, lb, err := r.ensureLoadBalancerService(ci, deploymentRef, infraConfig); err != nil {
+	if haveLB, lb, err := r.ensureLoadBalancerService(ci, deploymentRef, infraConfig, networkConfig); err != nil {
 		errs = append(errs, fmt.Errorf("failed to ensure load balancer service for %s: %v", ci.Name, err))
 	} else {
 		lbService = lb
@@ -799,7 +799,7 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		errs = append(errs, fmt.Errorf("failed to list pods in namespace %q: %v", operatorcontroller.DefaultOperatorNamespace, err))
 	}
 
-	errs = append(errs, r.syncIngressControllerStatus(ci, deployment, deploymentRef, pods.Items, lbService, operandEvents.Items, wildcardRecord, dnsConfig, infraConfig))
+	errs = append(errs, r.syncIngressControllerStatus(ci, deployment, deploymentRef, pods.Items, lbService, operandEvents.Items, wildcardRecord, dnsConfig, infraConfig, networkConfig))
 
 	return retryable.NewMaybeRetryableAggregate(errs)
 }
