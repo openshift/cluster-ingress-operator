@@ -57,10 +57,6 @@ const (
 	// until the operator has ensured it's safe for deletion to proceed.
 	IngressControllerFinalizer = "ingresscontroller.operator.openshift.io/finalizer-ingresscontroller"
 
-	// LoadBalancerServiceFinalizer is used to block deletion of LoadBalancer
-	// services until the operator has ensured it's safe for deletion to proceed.
-	LoadBalancerServiceFinalizer = "ingress.openshift.io/operator"
-
 	// DNSRecordFinalizer is used to block deletion of dnsrecords until the
 	// operator has ensured it's safe for deletion to proceeed.
 	DNSRecordFinalizer = "operator.openshift.io/ingress-dns"
