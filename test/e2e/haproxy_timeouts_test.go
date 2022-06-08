@@ -141,6 +141,7 @@ func TestHAProxyTimeouts(t *testing.T) {
 		cmd := []string{
 			"grep",
 			"-oP",
+			"-m1",
 			"timeout\\s+" + timeout.Name + "\\s*\\K[0-9]+(?:us|ms|s|m|h|d)",
 			"/var/lib/haproxy/conf/haproxy.config",
 		}
@@ -279,6 +280,7 @@ func TestHAProxyTimeoutsRejection(t *testing.T) {
 		cmd := []string{
 			"grep",
 			"-oP",
+			"-m1",
 			"timeout\\s+" + timeout.Name + "\\s*\\K[0-9]+(?:us|ms|s|m|h|d)",
 			"/var/lib/haproxy/conf/haproxy.config",
 		}
