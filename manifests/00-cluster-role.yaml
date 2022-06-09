@@ -118,6 +118,7 @@ rules:
   - config.openshift.io
   resources:
   - clusteroperators/status
+  - ingresses/status
   verbs:
   - update
 

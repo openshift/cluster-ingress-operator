@@ -38,6 +38,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/util/retry"
 
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -232,6 +233,10 @@ func (o *Operator) Start(ctx context.Context) error {
 		}
 	}, 1*time.Minute, ctx.Done())
 
+	if err := o.handleSingleNode4Dot11Upgrade(); err != nil {
+		log.Error(err, "failed to handle single node 4.11 upgrade logic")
+	}
+
 	errChan := make(chan error)
 	go func() {
 		errChan <- o.manager.Start(ctx)
@@ -257,6 +262,76 @@ func (o *Operator) determineReplicasForDefaultIngressController() (int32, error)
 	}
 
 	return ingress.DetermineReplicas(ingressConfig, infraConfig), nil
+}
+
+// handleSingleNode4Dot11Upgrade sets the defaultPlacement status in the
+// ingress config CR of none-platform single node clusters to "ControlPlane" if
+// it's not already set. The situations in which this value is not set are in
+// clusters upgraded from <4.11 to >=4.11. When that field is not set, it is
+// assumed by this operator's controllers to have the value "Workers", which is
+// fine for most clusters, but not a good default for none-platform single-node
+// clusters as it causes issues when adding workers to them (and is why
+// starting with 4.11 freshly installed none-platform have it set to
+// "ControlPlane"). The purpose of this function is to then "fix" those older
+// clusters so they behave more like freshly installed >=4.11 clusters. Before
+// doing that we also verify that the cluster truly has only one node, as we
+// wouldn't want to affect clusters that have workers. That's because it's
+// likely that such clusters already have a custom ingress configuration that
+// we wouldn't want to potentially mess up, even though adding workers was
+// previously unsupported.
+// If defaultPlacement is unset and the cluster doesn't match the criteria
+// mentioned above, it is anyway given the explicit "Workers" value to ensure
+// this function doesn't affect it in the future no matter what changes (e.g.
+// number of nodes), and to make it more consistent with freshly installed
+// >=4.11 clusters.
+func (o *Operator) handleSingleNode4Dot11Upgrade() error {
+	infraConfig := &configv1.Infrastructure{}
+	if err := o.client.Get(context.TODO(), operatorcontroller.InfrastructureClusterConfigName(),
+		infraConfig); err != nil {
+		return fmt.Errorf("failed fetching infrastructure config: %w", err)
+	}
+
+	ingressConfigName := operatorcontroller.IngressClusterConfigName()
+	ingressConfig := &configv1.Ingress{}
+	if err := o.client.Get(context.TODO(), ingressConfigName, ingressConfig); err != nil {
+		return fmt.Errorf("failed fetching ingress config: %w", err)
+	}
+
+	if ingressConfig.Status.DefaultPlacement != "" {
+		return nil
+	}
+
+	desiredDefaultPlacement := configv1.DefaultPlacementWorkers
+
+	nodes := &corev1.NodeList{}
+	if err := o.client.List(context.TODO(), nodes, &client.ListOptions{}); err != nil {
+		return fmt.Errorf("failed fetching cluster nodes: %w", err)
+	}
+
+	if len(nodes.Items) == 1 &&
+		infraConfig.Status.ControlPlaneTopology == configv1.SingleReplicaTopologyMode &&
+		infraConfig.Status.InfrastructureTopology == configv1.SingleReplicaTopologyMode &&
+		infraConfig.Status.PlatformStatus.Type == configv1.NonePlatformType {
+		desiredDefaultPlacement = configv1.DefaultPlacementControlPlane
+	}
+
+	if err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		if err := o.client.Get(context.TODO(), ingressConfigName, ingressConfig); err != nil {
+			return err
+		}
+
+		patch := client.MergeFrom(ingressConfig.DeepCopy())
+		ingressConfig.Status.DefaultPlacement = desiredDefaultPlacement
+		err := o.client.Status().Patch(context.TODO(), ingressConfig, patch)
+
+		return err
+	}); err != nil {
+		return fmt.Errorf("unable to update ingress config %q: %w", ingressConfigName.Name, err)
+	}
+
+	log.Info("Patched %q ingress config defaultPlacement status to %q", ingressConfigName.Name, desiredDefaultPlacement)
+
+	return nil
 }
 
 // ensureDefaultIngressController creates the default ingresscontroller if it
