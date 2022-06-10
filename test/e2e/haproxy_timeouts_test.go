@@ -23,17 +23,19 @@ import (
 )
 
 func TestHAProxyTimeouts(t *testing.T) {
+	// Use timeout values that are more likely to be unique across the ENTIRE
+	// test suite
 	const (
-		clientTimeoutInput     = 45 * time.Second
-		clientTimeoutOutput    = "45s"
+		clientTimeoutInput     = 47 * time.Second
+		clientTimeoutOutput    = "47s"
 		clientFinTimeoutInput  = 1500 * time.Millisecond
 		clientFinTimeoutOutput = "1500ms"
-		serverTimeoutInput     = 90 * time.Second
-		serverTimeoutOutput    = "90s"
-		serverFinTimeoutInput  = 5 * time.Second
-		serverFinTimeoutOutput = "5s"
-		tunnelTimeoutInput     = 90 * time.Minute
-		tunnelTimeoutOutput    = "90m"
+		serverTimeoutInput     = 92 * time.Second
+		serverTimeoutOutput    = "92s"
+		serverFinTimeoutInput  = 7 * time.Second
+		serverFinTimeoutOutput = "7s"
+		tunnelTimeoutInput     = 93 * time.Minute
+		tunnelTimeoutOutput    = "93m"
 		tlsInspectDelayInput   = 720 * time.Hour
 		tlsInspectDelayOutput  = "2147483647ms" // 720h is greater than the maximum timeout, so it should get clipped to max
 	)
@@ -139,12 +141,12 @@ func TestHAProxyTimeouts(t *testing.T) {
 		cmd := []string{
 			"grep",
 			"-oP",
-			"timeout\\s+" + timeout.Name + "\\s*\\K[0-9]+(?:us|ms|s|m|h|d)",
+			"timeout\\s+" + timeout.Name + "\\s+\\K" + timeout.Value,
 			"/var/lib/haproxy/conf/haproxy.config",
 		}
 		if err := podExec(t, routerPod, &stdout, &stderr, cmd); err != nil {
 			t.Errorf("Error executing %s: %v", strings.Join(cmd, " "), err)
-			t.Errorf("stderr: %v", stderr)
+			t.Errorf("stderr: %s", stderr.Bytes())
 			continue
 		}
 		value := strings.TrimSpace(stdout.String())
@@ -158,12 +160,12 @@ func TestHAProxyTimeouts(t *testing.T) {
 	cmd := []string{
 		"grep",
 		"-oP",
-		"tcp-request\\s+inspect-delay\\s*\\K[0-9]+(?:us|ms|s|m|h|d)",
+		"tcp-request\\s+inspect-delay\\s+\\K" + tlsInspectDelayOutput,
 		"/var/lib/haproxy/conf/haproxy.config",
 	}
 	if err := podExec(t, routerPod, &stdout, &stderr, cmd); err != nil {
 		t.Errorf("Error executing %s: %v", strings.Join(cmd, " "), err)
-		t.Errorf("stderr: %v", stderr)
+		t.Errorf("stderr: %s", stderr.Bytes())
 	} else {
 		values := strings.Split(strings.TrimSpace(stdout.String()), "\n")
 		// tcp-request inspect-delay is set in 2 places, but both should match
@@ -276,12 +278,12 @@ func TestHAProxyTimeoutsRejection(t *testing.T) {
 		cmd := []string{
 			"grep",
 			"-oP",
-			"timeout\\s+" + timeout.Name + "\\s*\\K[0-9]+(?:us|ms|s|m|h|d)",
+			"timeout\\s+" + timeout.Name + "\\s+\\K" + timeout.Value,
 			"/var/lib/haproxy/conf/haproxy.config",
 		}
 		if err := podExec(t, routerPod, &stdout, &stderr, cmd); err != nil {
 			t.Errorf("Error executing %s: %v", strings.Join(cmd, " "), err)
-			t.Errorf("stderr: %v", stderr)
+			t.Errorf("stderr: %s", stderr.Bytes())
 			continue
 		}
 		value := strings.TrimSpace(stdout.String())
@@ -295,12 +297,12 @@ func TestHAProxyTimeoutsRejection(t *testing.T) {
 	cmd := []string{
 		"grep",
 		"-oP",
-		"tcp-request\\s+inspect-delay\\s*\\K[0-9]+(?:us|ms|s|m|h|d)",
+		"tcp-request\\s+inspect-delay\\s+\\K5s",
 		"/var/lib/haproxy/conf/haproxy.config",
 	}
 	if err := podExec(t, routerPod, &stdout, &stderr, cmd); err != nil {
 		t.Errorf("Error executing %s: %v", strings.Join(cmd, " "), err)
-		t.Errorf("stderr: %v", stderr)
+		t.Errorf("stderr: %s", stderr.Bytes())
 	} else {
 		values := strings.Split(strings.TrimSpace(stdout.String()), "\n")
 		// tcp-request inspect-delay is set in 2 places, but both should match
