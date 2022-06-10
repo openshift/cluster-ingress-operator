@@ -53,7 +53,7 @@ release-local:
 
 .PHONY: test-e2e
 test-e2e:
-	$(GO) test -timeout 1h -count 1 -v -tags e2e -run "$(TEST)" ./test/e2e
+	$(GO) test -timeout 2h -parallel 1 -count 1 -v -tags e2e -run "$(TEST)" ./test/e2e
 
 .PHONY: test-e2e-list
 test-e2e-list:
