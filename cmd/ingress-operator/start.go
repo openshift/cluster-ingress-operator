@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"strconv"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/fsnotify.v1"
@@ -32,6 +33,8 @@ const (
 	// defaultTrustedCABundle is the fully qualified path of the trusted CA bundle
 	// that is mounted from configmap openshift-ingress-operator/trusted-ca.
 	defaultTrustedCABundle = "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem"
+
+	disableDefaultIngressControllerEnvVar = "DISABLE_DEFAULT_INGRESS_CONTROLLER"
 )
 
 type StartOptions struct {
@@ -50,6 +53,9 @@ type StartOptions struct {
 	CanaryImage string
 	// ReleaseVersion is the cluster version which the operator will converge to.
 	ReleaseVersion string
+	// DisableDefaultIngressController indicates if the default ingress controller
+	// should be created automatically if it doesn't already exist
+	DisableDefaultIngressController bool
 }
 
 func NewStartCommand() *cobra.Command {
@@ -80,6 +86,8 @@ func NewStartCommand() *cobra.Command {
 	if err := cmd.MarkFlagRequired("image"); err != nil {
 		panic(err)
 	}
+
+	options.DisableDefaultIngressController, _ = strconv.ParseBool(os.Getenv(disableDefaultIngressControllerEnvVar))
 
 	return cmd
 }
@@ -117,10 +125,11 @@ func start(opts *StartOptions) error {
 	defer cancel()
 
 	operatorConfig := operatorconfig.Config{
-		OperatorReleaseVersion: opts.ReleaseVersion,
-		Namespace:              opts.OperatorNamespace,
-		IngressControllerImage: opts.IngressControllerImage,
-		CanaryImage:            opts.CanaryImage,
+		OperatorReleaseVersion:          opts.ReleaseVersion,
+		Namespace:                       opts.OperatorNamespace,
+		IngressControllerImage:          opts.IngressControllerImage,
+		CanaryImage:                     opts.CanaryImage,
+		DisableDefaultIngressController: opts.DisableDefaultIngressController,
 	}
 
 	// Start operator metrics.

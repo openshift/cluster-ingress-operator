@@ -64,6 +64,8 @@ type Operator struct {
 	manager manager.Manager
 
 	namespace string
+
+	disableDefaultIngressController bool
 }
 
 // New creates (but does not start) a new operator from configuration.
@@ -212,8 +214,9 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		manager: mgr,
 		// TODO: These are only needed for the default ingress controller stuff, which
 		// should be refactored away.
-		client:    mgr.GetClient(),
-		namespace: config.Namespace,
+		client:                          mgr.GetClient(),
+		namespace:                       config.Namespace,
+		disableDefaultIngressController: config.DisableDefaultIngressController,
 	}, nil
 }
 
@@ -221,17 +224,22 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 // synchronously until a message is received on the stop channel.
 // TODO: Move the default IngressController logic elsewhere.
 func (o *Operator) Start(ctx context.Context) error {
-	// Periodicaly ensure the default controller exists.
-	go wait.Until(func() {
-		if !o.manager.GetCache().WaitForCacheSync(ctx) {
-			log.Error(nil, "failed to sync cache before ensuring default ingresscontroller")
-			return
-		}
-		err := o.ensureDefaultIngressController()
-		if err != nil {
-			log.Error(err, "failed to ensure default ingresscontroller")
-		}
-	}, 1*time.Minute, ctx.Done())
+
+	if o.disableDefaultIngressController {
+		log.Info("skipping default ingress controller creation")
+	} else {
+		// Periodicaly ensure the default controller exists.
+		go wait.Until(func() {
+			if !o.manager.GetCache().WaitForCacheSync(ctx) {
+				log.Error(nil, "failed to sync cache before ensuring default ingresscontroller")
+				return
+			}
+			err := o.ensureDefaultIngressController()
+			if err != nil {
+				log.Error(err, "failed to ensure default ingresscontroller")
+			}
+		}, 1*time.Minute, ctx.Done())
+	}
 
 	if err := o.handleSingleNode4Dot11Upgrade(); err != nil {
 		log.Error(err, "failed to handle single node 4.11 upgrade logic")
