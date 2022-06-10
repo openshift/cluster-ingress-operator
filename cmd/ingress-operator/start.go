@@ -50,6 +50,9 @@ type StartOptions struct {
 	CanaryImage string
 	// ReleaseVersion is the cluster version which the operator will converge to.
 	ReleaseVersion string
+	// AutoCreateDefaultIngressController indicates if the controller should create the default
+	// controller if none exists
+	AutoCreateDefaultIngressController bool
 }
 
 func NewStartCommand() *cobra.Command {
@@ -73,6 +76,7 @@ func NewStartCommand() *cobra.Command {
 	cmd.Flags().StringVarP(&options.ReleaseVersion, "release-version", "", statuscontroller.UnknownVersionValue, "the release version the operator should converge to (required)")
 	cmd.Flags().StringVarP(&options.MetricsListenAddr, "metrics-listen-addr", "", "127.0.0.1:60000", "metrics endpoint listen address (required)")
 	cmd.Flags().StringVarP(&options.ShutdownFile, "shutdown-file", "s", defaultTrustedCABundle, "if provided, shut down the operator when this file changes")
+	cmd.Flags().BoolVarP(&options.AutoCreateDefaultIngressController, "auto-create-default-ingress-controller", "", true, "specifies if the ingress operator should automatically create a default ingresscontroller or not.")
 
 	if err := cmd.MarkFlagRequired("namespace"); err != nil {
 		panic(err)
@@ -117,10 +121,11 @@ func start(opts *StartOptions) error {
 	defer cancel()
 
 	operatorConfig := operatorconfig.Config{
-		OperatorReleaseVersion: opts.ReleaseVersion,
-		Namespace:              opts.OperatorNamespace,
-		IngressControllerImage: opts.IngressControllerImage,
-		CanaryImage:            opts.CanaryImage,
+		OperatorReleaseVersion:             opts.ReleaseVersion,
+		Namespace:                          opts.OperatorNamespace,
+		IngressControllerImage:             opts.IngressControllerImage,
+		CanaryImage:                        opts.CanaryImage,
+		AutoCreateDefaultIngressController: opts.AutoCreateDefaultIngressController,
 	}
 
 	// Start operator metrics.

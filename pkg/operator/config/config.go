@@ -15,5 +15,9 @@ type Config struct {
 	// CanaryImage is the ingress operator image, which runs a canary command.
 	CanaryImage string
 
+	// AutoCreateDefaultIngressController indicates if the controller should create the default
+	// controller if none exists
+	AutoCreateDefaultIngressController bool
+
 	Stop chan struct{}
 }
