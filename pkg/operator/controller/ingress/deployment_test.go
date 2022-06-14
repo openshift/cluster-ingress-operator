@@ -770,6 +770,38 @@ func TestDesiredRouterDeploymentVariety(t *testing.T) {
 	checkContainerPort(t, deployment, "metrics", 9146)
 }
 
+// TestDesiredRouterDeploymentHostNetworkNil verifies that
+// desiredRouterDeployment behaves correctly when
+// status.endpointPublishingStrategy.type is "HostNetwork" but
+// status.endpointPublishingStrategy.hostNetwork is nil, which can happen on a
+// cluster that was upgraded from a version of OpenShift that did not define any
+// subfields for spec.endpointPublishingStrategy.hostNetwork.
+// See <https://bugzilla.redhat.com/show_bug.cgi?id=2095229>.
+func TestDesiredRouterDeploymentHostNetworkNil(t *testing.T) {
+	ic, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded := getRouterDeploymentComponents(t)
+	ic.Status.EndpointPublishingStrategy.Type = operatorv1.HostNetworkStrategyType
+	proxyNeeded, err := IsProxyProtocolNeeded(ic, infraConfig.Status.PlatformStatus)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := []envData{
+		{"STATS_PORT", true, "1936"},
+		{"ROUTER_SERVICE_HTTP_PORT", true, "80"},
+		{"ROUTER_SERVICE_HTTPS_PORT", true, "443"},
+	}
+	if err := checkDeploymentEnvironment(t, deployment, env); err != nil {
+		t.Error(err)
+	}
+	checkDeploymentHasEnvSorted(t, deployment)
+	checkContainerPort(t, deployment, "http", 80)
+	checkContainerPort(t, deployment, "https", 443)
+	checkContainerPort(t, deployment, "metrics", 1936)
+}
+
 func checkContainerPort(t *testing.T, d *appsv1.Deployment, portName string, port int32) {
 	t.Helper()
 	for _, p := range d.Spec.Template.Spec.Containers[0].Ports {
