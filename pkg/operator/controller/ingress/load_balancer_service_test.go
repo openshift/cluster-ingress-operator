@@ -14,6 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/apimachinery/pkg/util/sets"
 )
 
 func TestDesiredLoadBalancerService(t *testing.T) {
@@ -896,6 +897,90 @@ func TestLoadBalancerServiceChanged(t *testing.T) {
 			} else if changed {
 				if changedAgain, _ := loadBalancerServiceChanged(mutated, updated); changedAgain {
 					t.Error("loadBalancerServiceChanged does not behave as a fixed point function")
+				}
+			}
+		})
+	}
+}
+
+// TestLoadBalancerServiceAnnotationsChanged verifies that
+// loadBalancerServiceAnnotationsChanged behaves correctly.
+func TestLoadBalancerServiceAnnotationsChanged(t *testing.T) {
+	testCases := []struct {
+		description         string
+		mutate              func(*corev1.Service)
+		currentAnnotations  map[string]string
+		expectedAnnotations map[string]string
+		managedAnnotations  sets.String
+		expect              bool
+	}{
+		{
+			description:         "if current and expected annotations are both empty",
+			currentAnnotations:  map[string]string{},
+			expectedAnnotations: map[string]string{},
+			managedAnnotations:  sets.NewString("foo"),
+			expect:              false,
+		},
+		{
+			description: "if an unmanaged annotation is updated",
+			currentAnnotations: map[string]string{
+				"foo": "bar",
+			},
+			expectedAnnotations: map[string]string{
+				"foo": "bar",
+				"baz": "quux",
+			},
+			managedAnnotations: sets.NewString("foo"),
+			expect:             false,
+		},
+		{
+			description:        "if a managed annotation is set",
+			currentAnnotations: map[string]string{},
+			expectedAnnotations: map[string]string{
+				"foo": "bar",
+			},
+			managedAnnotations: sets.NewString("foo"),
+			expect:             true,
+		},
+		{
+			description: "if a managed annotation is updated",
+			currentAnnotations: map[string]string{
+				"foo": "bar",
+			},
+			expectedAnnotations: map[string]string{
+				"foo": "baz",
+			},
+			managedAnnotations: sets.NewString("foo"),
+			expect:             true,
+		},
+		{
+			description: "if a managed annotation is deleted",
+			currentAnnotations: map[string]string{
+				"foo": "bar",
+			},
+			expectedAnnotations: map[string]string{},
+			managedAnnotations:  sets.NewString("foo"),
+			expect:              true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			current := corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: tc.currentAnnotations,
+				},
+			}
+			expected := corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: tc.expectedAnnotations,
+				},
+			}
+			if changed, updated := loadBalancerServiceAnnotationsChanged(&current, &expected, tc.managedAnnotations); changed != tc.expect {
+				t.Errorf("expected loadBalancerServiceAnnotationsChanged to be %t, got %t", tc.expect, changed)
+			} else if changed {
+				if changedAgain, _ := loadBalancerServiceAnnotationsChanged(&expected, updated, tc.managedAnnotations); changedAgain {
+					t.Error("loadBalancerServiceAnnotationsChanged does not behave as a fixed point function")
 				}
 			}
 		})
