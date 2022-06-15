@@ -3,6 +3,8 @@ package ingress
 import (
 	"context"
 	"fmt"
+	"sync"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -31,10 +33,16 @@ var (
 		Help: "Report the number of active NLBs on AWS clusters.",
 	}, []string{"name"})
 
+	ActiveNodes = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "ingress_controller_nodes_active",
+		Help: "Report the number of active nodes in the cluster.",
+	})
+
 	// metricsList is a list of metrics for this package.
 	metricsList = []prometheus.Collector{
 		ingressControllerConditions,
 		activeNLBs,
+		ActiveNodes,
 	}
 )
 
@@ -102,6 +110,8 @@ func RegisterMetrics() error {
 	return nil
 }
 
+var onlyOnce sync.Once
+
 // ensureMetricsIntegration ensures that router prometheus metrics is integrated with openshift-monitoring for the given ingresscontroller.
 func (r *reconciler) ensureMetricsIntegration(ci *operatorv1.IngressController, svc *corev1.Service, deploymentRef metav1.OwnerReference) error {
 	statsSecret := manifests.RouterStatsSecret(ci)
@@ -164,6 +174,20 @@ func (r *reconciler) ensureMetricsIntegration(ci *operatorv1.IngressController, 
 	if _, _, err := r.ensureServiceMonitor(ci, svc, deploymentRef); err != nil {
 		return fmt.Errorf("failed to ensure servicemonitor for %s: %v", ci.Name, err)
 	}
+
+	onlyOnce.Do(func() {
+		for {
+			var nodeList corev1.NodeList
+			if err := r.client.List(context.TODO(), &nodeList); err != nil {
+				fmt.Println(err.Error())
+				time.Sleep(time.Second)
+				continue
+			}
+			fmt.Println("setting ingress_controller_nodes_active", len(nodeList.Items))
+			ActiveNodes.Set(float64(len(nodeList.Items)))
+			time.Sleep(time.Second * 5)
+		}
+	})
 
 	return nil
 }

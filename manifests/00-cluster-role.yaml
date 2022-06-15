@@ -21,6 +21,7 @@ rules:
   - secrets
   - pods
   - events
+  - nodes
   verbs:
   - "*"
 

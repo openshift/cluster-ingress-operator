@@ -4,6 +4,8 @@ set -euo pipefail
 REPO="${REPO:-}"
 MANIFESTS="${MANIFESTS:-}"
 
+REPO=quay.io/amcdermo/openshift-cluster-ingress-operator
+
 if [ -z "$REPO" ]; then echo "REPO is required"; exit 1; fi
 if [ -z "$MANIFESTS" ]; then echo "MANIFESTS is required"; exit 1; fi
 

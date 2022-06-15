@@ -108,6 +108,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	if err != nil {
 		return nil, fmt.Errorf("failed to create kube client: %w", err)
 	}
+
 	namespaceInformers := informers.NewSharedInformerFactoryWithOptions(kubeClient, 24*time.Hour, informers.WithNamespace(operatorcontroller.DefaultOperandNamespace))
 	// this only handles the case for the default router which is used for oauth-server, console, and other
 	// platform services.  The scheduler bug will need to be fixed to correct the rest.
