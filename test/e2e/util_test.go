@@ -4,9 +4,12 @@
 package e2e
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"fmt"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -75,6 +78,19 @@ func buildEchoPod(name, namespace string) *corev1.Pod {
 	}
 }
 
+func waitForHTTPClientCondition(t *testing.T, httpClient *http.Client, req *http.Request, interval, timeout time.Duration, compareFunc func(*http.Response) bool) error {
+	t.Helper()
+	return wait.PollImmediate(interval, timeout, func() (done bool, err error) {
+		resp, err := httpClient.Do(req)
+		if err == nil {
+			return compareFunc(resp), nil
+		} else {
+			t.Logf("retrying client call due to: %+v", err)
+			return false, nil
+		}
+	})
+}
+
 // buildEchoService returns a service definition for an HTTP service.
 func buildEchoService(name, namespace string, labels map[string]string) *corev1.Service {
 	return &corev1.Service{
@@ -102,7 +118,6 @@ func buildCurlPod(name, namespace, image, host, address string, extraArgs ...str
 	curlArgs := []string{
 		"-s",
 		"--retry", "300", "--retry-delay", "1", "--max-time", "2",
-		"--resolve", host + ":80:" + address,
 	}
 	curlArgs = append(curlArgs, extraArgs...)
 	curlArgs = append(curlArgs, "http://"+host)
@@ -218,6 +233,23 @@ func buildRoute(name, namespace, serviceName string) *routev1.Route {
 			Namespace: namespace,
 		},
 		Spec: routev1.RouteSpec{
+			To: routev1.RouteTargetReference{
+				Kind: "Service",
+				Name: serviceName,
+			},
+		},
+	}
+}
+
+// buildRoute returns a route definition targeting the specified service.
+func buildRouteWithHost(name, namespace, serviceName, host string) *routev1.Route {
+	return &routev1.Route{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: routev1.RouteSpec{
+			Host: host,
 			To: routev1.RouteTargetReference{
 				Kind: "Service",
 				Name: serviceName,
@@ -401,4 +433,156 @@ func updateInfrastructureConfigSpecWithRetryOnConflict(t *testing.T, name types.
 		}
 		return true, nil
 	})
+}
+
+// verifyExternalIngressController verifies connectivity between the router
+// and a test workload by making a http call using the hostname passed to it.
+// This hostname must be the domain associated with the ingresscontroller under test.
+// This function overrides the HTTP HOST header with hostname argument, which is needed
+// when no DNS records have been created on the cloud provider for said hostname.
+func verifyExternalIngressController(t *testing.T, name types.NamespacedName, hostname, address string) {
+	t.Helper()
+	echoPod := buildEchoPod(name.Name, name.Namespace)
+	if err := kclient.Create(context.TODO(), echoPod); err != nil {
+		t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), echoPod); err != nil {
+			t.Fatalf("failed to delete pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
+		}
+	}()
+
+	echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels)
+	if err := kclient.Create(context.TODO(), echoService); err != nil {
+		t.Fatalf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), echoService); err != nil {
+			t.Fatalf("failed to delete service %s/%s: %v", echoService.Namespace, echoService.Name, err)
+		}
+	}()
+
+	echoRoute := buildRouteWithHost(echoPod.Name, echoPod.Namespace, echoService.Name, hostname)
+	if err := kclient.Create(context.TODO(), echoRoute); err != nil {
+		t.Fatalf("failed to create route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), echoRoute); err != nil {
+			t.Fatalf("failed to delete route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
+		}
+	}()
+
+	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("http://%s", address), nil)
+	if err != nil {
+		t.Fatalf("failed to build client request: %v", err)
+	}
+
+	// we use HOST header to map to the domain associated on the ingresscontroller.
+	// This ensures our http call is routed to the correct router.
+	req.Host = hostname
+
+	httpClient := http.Client{Timeout: 5 * time.Second}
+	err = waitForHTTPClientCondition(t, &httpClient, req, 10*time.Second, 5*time.Minute, func(r *http.Response) bool {
+		if r.StatusCode == http.StatusOK {
+			t.Logf("verified connectivity with workload with req %v and response %v", req.URL, r.StatusCode)
+			return true
+		}
+		return false
+	})
+	if err != nil {
+		t.Fatalf("failed to verify connectivity with workload with reqURL %s using external client: %v", req.URL, err)
+	}
+}
+
+// verifyInternalIngressController verifies connectivity between the router
+// and a test workload by spawning a curl pod on the internal network.
+// The hostname must be the domain associated with the ingresscontroller under test.
+// This function overrides the HTTP HOST header to the hostname argument, which ensures
+// correct routing of the curl request.
+func verifyInternalIngressController(t *testing.T, name types.NamespacedName, hostname, address, image string) {
+	kubeConfig, err := config.GetConfig()
+	if err != nil {
+		t.Fatalf("failed to get kube config: %v", err)
+	}
+	client, err := kubernetes.NewForConfig(kubeConfig)
+	if err != nil {
+		t.Fatalf("failed to create kube client: %v", err)
+	}
+
+	echoPod := buildEchoPod(name.Name, name.Namespace)
+	if err := kclient.Create(context.TODO(), echoPod); err != nil {
+		t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), echoPod); err != nil {
+			t.Fatalf("failed to delete pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
+		}
+	}()
+
+	echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels)
+	if err := kclient.Create(context.TODO(), echoService); err != nil {
+		t.Fatalf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), echoService); err != nil {
+			t.Fatalf("failed to delete service %s/%s: %v", echoService.Namespace, echoService.Name, err)
+		}
+	}()
+
+	echoRoute := buildRouteWithHost(echoPod.Name, echoPod.Namespace, echoService.Name, hostname)
+	if err := kclient.Create(context.TODO(), echoRoute); err != nil {
+		t.Fatalf("failed to create route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), echoRoute); err != nil {
+			t.Fatalf("failed to delete route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
+		}
+	}()
+
+	extraArgs := []string{
+		"--header", "HOST:" + echoRoute.Spec.Host,
+		"-v",
+		"--retry-delay", "20",
+		"--max-time", "10",
+	}
+	clientPod := buildCurlPod("curl-"+name.Name, echoRoute.Namespace, image, address, echoRoute.Spec.Host, extraArgs...)
+	if err := kclient.Create(context.TODO(), clientPod); err != nil {
+		t.Fatalf("failed to create pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), clientPod); err != nil {
+			if errors.IsNotFound(err) {
+				return
+			}
+			t.Fatalf("failed to delete pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
+		}
+	}()
+
+	err = wait.PollImmediate(10*time.Second, 5*time.Minute, func() (bool, error) {
+		readCloser, err := client.CoreV1().Pods(clientPod.Namespace).GetLogs(clientPod.Name, &corev1.PodLogOptions{
+			Container: "curl",
+			Follow:    false,
+		}).Stream(context.TODO())
+		if err != nil {
+			t.Logf("failed to read output from pod %s: %v", clientPod.Name, err)
+			return false, nil
+		}
+		scanner := bufio.NewScanner(readCloser)
+		defer func() {
+			if err := readCloser.Close(); err != nil {
+				t.Errorf("failed to close reader for pod %s: %v", clientPod.Name, err)
+			}
+		}()
+		for scanner.Scan() {
+			line := scanner.Text()
+			if strings.Contains(line, "HTTP/1.0 200 OK") {
+				t.Logf("verified connectivity with workload with address: %s with response %s", address, line)
+				return true, nil
+			}
+		}
+		return false, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to verify connectivity with workload with address: %s using internal curl client: %v", address, err)
+	}
 }

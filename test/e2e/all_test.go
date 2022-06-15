@@ -67,6 +67,9 @@ func TestAll(t *testing.T) {
 		t.Run("TestIngressControllerNamespaceSelectorUpdateShouldClearRouteStatus", TestIngressControllerNamespaceSelectorUpdateShouldClearRouteStatus)
 		t.Run("TestReloadInterval", TestReloadInterval)
 		t.Run("TestAWSLBTypeChange", TestAWSLBTypeChange)
+		t.Run("TestUnmanagedDNSToManagedDNSIngressController", TestUnmanagedDNSToManagedDNSIngressController)
+		t.Run("TestManagedDNSToUnmanagedDNSIngressController", TestManagedDNSToUnmanagedDNSIngressController)
+		t.Run("TestUnmanagedDNSToManagedDNSInternalIngressController", TestUnmanagedDNSToManagedDNSInternalIngressController)
 	})
 
 	t.Run("serial", func(t *testing.T) {

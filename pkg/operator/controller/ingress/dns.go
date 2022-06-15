@@ -29,12 +29,8 @@ const defaultRecordTTL int64 = 30
 
 // ensureWildcardDNSRecord will create DNS records for the given LB service.
 // If service is nil (haveLBS is false), nothing is done.
-func (r *reconciler) ensureWildcardDNSRecord(ic *operatorv1.IngressController, platformStatus *configv1.PlatformStatus, dnsConfig *configv1.DNS, service *corev1.Service, haveLBS bool) (bool, *iov1.DNSRecord, error) {
+func (r *reconciler) ensureWildcardDNSRecord(ic *operatorv1.IngressController, service *corev1.Service, haveLBS bool) (bool, *iov1.DNSRecord, error) {
 	if !haveLBS {
-		return false, nil, nil
-	}
-
-	if !manageDNSForDomain(ic.Status.Domain, platformStatus, dnsConfig) {
 		return false, nil, nil
 	}
 
@@ -110,6 +106,14 @@ func desiredWildcardDNSRecord(ic *operatorv1.IngressController, service *corev1.
 		target = ingress.IP
 	}
 
+	dnsPolicy := iov1.ManagedDNS
+
+	// Set the DNS management policy on the dnsrecord to "Unmanaged" if ingresscontroller has "Unmanaged" DNS policy or
+	// if the ingresscontroller domain isn't a subdomain of the cluster's base domain.
+	if ic.Status.EndpointPublishingStrategy.LoadBalancer.DNSManagementPolicy == operatorv1.UnmanagedLoadBalancerDNS {
+		dnsPolicy = iov1.UnmanagedDNS
+	}
+
 	trueVar := true
 	return true, &iov1.DNSRecord{
 		ObjectMeta: metav1.ObjectMeta{
@@ -131,10 +135,11 @@ func desiredWildcardDNSRecord(ic *operatorv1.IngressController, service *corev1.
 			Finalizers: []string{manifests.DNSRecordFinalizer},
 		},
 		Spec: iov1.DNSRecordSpec{
-			DNSName:    domain,
-			Targets:    []string{target},
-			RecordType: recordType,
-			RecordTTL:  defaultRecordTTL,
+			DNSName:             domain,
+			DNSManagementPolicy: dnsPolicy,
+			Targets:             []string{target},
+			RecordType:          recordType,
+			RecordTTL:           defaultRecordTTL,
 		},
 	}
 }
