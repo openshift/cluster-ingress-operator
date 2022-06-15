@@ -81,6 +81,7 @@ var (
 		{Type: operatorv1.LoadBalancerReadyIngressConditionType, Status: operatorv1.ConditionTrue},
 		{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionTrue},
 		{Type: operatorv1.DNSReadyIngressConditionType, Status: operatorv1.ConditionTrue},
+		{Type: operatorv1.OperatorStatusTypeProgressing, Status: operatorv1.ConditionFalse},
 		{Type: ingresscontroller.IngressControllerAdmittedConditionType, Status: operatorv1.ConditionTrue},
 	}
 	availableConditionsForIngressControllerWithHostNetwork = []operatorv1.OperatorCondition{
@@ -90,17 +91,28 @@ var (
 		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
 		{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionFalse},
 	}
+	availableConditionsForIngressControllerWithLoadBalancerUnmanagedDNS = []operatorv1.OperatorCondition{
+		{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionTrue},
+		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionTrue},
+		{Type: operatorv1.LoadBalancerReadyIngressConditionType, Status: operatorv1.ConditionTrue},
+		{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionFalse},
+		{Type: operatorv1.DNSReadyIngressConditionType, Status: operatorv1.ConditionUnknown},
+		{Type: operatorv1.OperatorStatusTypeProgressing, Status: operatorv1.ConditionFalse},
+		{Type: ingresscontroller.IngressControllerAdmittedConditionType, Status: operatorv1.ConditionTrue},
+	}
 	// The ingress canary check status condition only applies to the default ingress controller.
 	defaultAvailableConditions = append(availableConditionsForIngressControllerWithLoadBalancer, operatorv1.OperatorCondition{Type: ingresscontroller.IngressControllerCanaryCheckSuccessConditionType, Status: operatorv1.ConditionTrue})
 )
 
-var kclient client.Client
-var dnsConfig configv1.DNS
-var infraConfig configv1.Infrastructure
-var operatorNamespace = operatorcontroller.DefaultOperatorNamespace
-var operandNamespace = operatorcontroller.DefaultOperandNamespace
-var defaultName = types.NamespacedName{Namespace: operatorNamespace, Name: manifests.DefaultIngressControllerName}
-var clusterConfigName = types.NamespacedName{Namespace: operatorNamespace, Name: manifests.ClusterIngressConfigName}
+var (
+	kclient           client.Client
+	dnsConfig         configv1.DNS
+	infraConfig       configv1.Infrastructure
+	operatorNamespace = operatorcontroller.DefaultOperatorNamespace
+	operandNamespace  = operatorcontroller.DefaultOperandNamespace
+	defaultName       = types.NamespacedName{Namespace: operatorNamespace, Name: manifests.DefaultIngressControllerName}
+	clusterConfigName = types.NamespacedName{Namespace: operatorNamespace, Name: manifests.ClusterIngressConfigName}
+)
 
 func TestMain(m *testing.M) {
 	if os.Getenv("E2E_TEST_MAIN_SKIP_SETUP") == "1" {
@@ -947,7 +959,8 @@ func TestInternalLoadBalancer(t *testing.T) {
 	name := types.NamespacedName{Namespace: operatorNamespace, Name: "testinternalloadbalancer"}
 	ic := newLoadBalancerController(name, name.Name+"."+dnsConfig.Spec.BaseDomain)
 	ic.Spec.EndpointPublishingStrategy.LoadBalancer = &operatorv1.LoadBalancerStrategy{
-		Scope: operatorv1.InternalLoadBalancer,
+		DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
+		Scope:               operatorv1.InternalLoadBalancer,
 	}
 	if err := kclient.Create(context.TODO(), ic); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
@@ -1029,7 +1042,8 @@ func TestInternalLoadBalancerGlobalAccessGCP(t *testing.T) {
 	name := types.NamespacedName{Namespace: operatorNamespace, Name: "test-gcp"}
 	ic := newLoadBalancerController(name, name.Name+"."+dnsConfig.Spec.BaseDomain)
 	ic.Spec.EndpointPublishingStrategy.LoadBalancer = &operatorv1.LoadBalancerStrategy{
-		Scope: operatorv1.InternalLoadBalancer,
+		DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
+		Scope:               operatorv1.InternalLoadBalancer,
 		ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
 			Type: operatorv1.GCPLoadBalancerProvider,
 			GCP: &operatorv1.GCPLoadBalancerParameters{
@@ -1096,7 +1110,6 @@ func TestInternalLoadBalancerGlobalAccessGCP(t *testing.T) {
 		}
 		return true, nil
 	})
-
 	if err != nil {
 		t.Errorf("failed to observe expected annotations on load balancer service %s: %v", controller.LoadBalancerServiceName(ic), err)
 	}
@@ -1136,7 +1149,8 @@ func TestScopeChange(t *testing.T) {
 	name := types.NamespacedName{Namespace: operatorNamespace, Name: "scope"}
 	ic := newLoadBalancerController(name, name.Name+"."+dnsConfig.Spec.BaseDomain)
 	ic.Spec.EndpointPublishingStrategy.LoadBalancer = &operatorv1.LoadBalancerStrategy{
-		Scope: operatorv1.ExternalLoadBalancer,
+		DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
+		Scope:               operatorv1.ExternalLoadBalancer,
 	}
 	if err := kclient.Create(context.TODO(), ic); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
@@ -2216,7 +2230,8 @@ func TestNetworkLoadBalancer(t *testing.T) {
 	name := types.NamespacedName{Namespace: operatorNamespace, Name: "test-nlb"}
 	ic := newLoadBalancerController(name, name.Name+"."+dnsConfig.Spec.BaseDomain)
 	lb := &operatorv1.LoadBalancerStrategy{
-		Scope: operatorv1.ExternalLoadBalancer,
+		DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
+		Scope:               operatorv1.ExternalLoadBalancer,
 		ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
 			Type: operatorv1.AWSLoadBalancerProvider,
 			AWS: &operatorv1.AWSLoadBalancerParameters{
@@ -2264,7 +2279,8 @@ func TestAWSELBConnectionIdleTimeout(t *testing.T) {
 	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "test-idle-timeout"}
 	ic := newLoadBalancerController(icName, icName.Name+"."+dnsConfig.Spec.BaseDomain)
 	lb := &operatorv1.LoadBalancerStrategy{
-		Scope: operatorv1.ExternalLoadBalancer,
+		DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
+		Scope:               operatorv1.ExternalLoadBalancer,
 		ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
 			Type: operatorv1.AWSLoadBalancerProvider,
 			AWS: &operatorv1.AWSLoadBalancerParameters{
@@ -2541,7 +2557,10 @@ func TestUniqueIdHeader(t *testing.T) {
 	for i := 1; i <= numRequests; i++ {
 		name := fmt.Sprintf("unique-id-header-test-%d", i)
 		image := deployment.Spec.Template.Spec.Containers[0].Image
-		clientPod := buildCurlPod(name, echoRoute.Namespace, image, echoRoute.Spec.Host, service.Spec.ClusterIP)
+		extraCurlArgs := []string{
+			"--resolve", echoRoute.Spec.Host + ":80:" + service.Spec.ClusterIP,
+		}
+		clientPod := buildCurlPod(name, echoRoute.Namespace, image, echoRoute.Spec.Host, service.Spec.ClusterIP, extraCurlArgs...)
 		if err := kclient.Create(context.TODO(), clientPod); err != nil {
 			t.Fatalf("failed to create pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
 		}
@@ -3359,7 +3378,6 @@ func waitForIngressControllerCondition(t *testing.T, cl client.Client, timeout t
 
 		return conditionsMatchExpected(expected, current), nil
 	})
-
 	if err != nil {
 		t.Errorf("Expected conditions: %v\n Current conditions: %v", expected, current)
 	}

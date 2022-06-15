@@ -25,7 +25,7 @@ import (
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
-	operatorutil "github.com/openshift/cluster-ingress-operator/pkg/util"
+	oputil "github.com/openshift/cluster-ingress-operator/pkg/util"
 	awsutil "github.com/openshift/cluster-ingress-operator/pkg/util/aws"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/slice"
 
@@ -39,7 +39,6 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
-	operatoringressv1 "github.com/openshift/api/operatoringress/v1"
 
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -132,10 +131,6 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		return reconcile.Result{}, fmt.Errorf("failed to get dns 'cluster': %v", err)
 	}
 
-	if err := r.createDNSProviderIfNeeded(dnsConfig); err != nil {
-		return reconcile.Result{}, err
-	}
-
 	record := &iov1.DNSRecord{}
 	if err := r.client.Get(ctx, request.NamespacedName, record); err != nil {
 		if errors.IsNotFound(err) {
@@ -144,6 +139,16 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		}
 		log.Error(err, "failed to get dnsrecord; will retry", "dnsrecord", request.NamespacedName)
 		return reconcile.Result{RequeueAfter: 15 * time.Second}, nil
+	}
+
+	if updated, err := r.migrateRecordStatusConditions(record); err != nil {
+		return reconcile.Result{}, err
+	} else if updated {
+		return reconcile.Result{Requeue: true}, nil
+	}
+
+	if err := r.createDNSProviderIfNeeded(dnsConfig, record); err != nil {
+		return reconcile.Result{}, err
 	}
 
 	// If the DNS record was deleted, clean up and return.
@@ -190,7 +195,14 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	if dnsConfig.Spec.PublicZone != nil {
 		zones = append(zones, *dnsConfig.Spec.PublicZone)
 	}
-	statuses, result := r.publishRecordToZones(zones, record)
+	requeue, statuses := r.publishRecordToZones(zones, record)
+
+	// requeue if publishing records failed
+	result := reconcile.Result{}
+	if requeue {
+		result.RequeueAfter = 30 * time.Second
+	}
+
 	if !dnsZoneStatusSlicesEqual(statuses, record.Status.Zones) {
 		updated := record.DeepCopy()
 		updated.Status.Zones = statuses
@@ -202,6 +214,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 			log.Info("updated dnsrecord", "dnsrecord", updated)
 		}
 	}
+
 	return result, nil
 }
 
@@ -210,8 +223,12 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 // changed since the current provider was created.  After creating a new
 // provider, createDNSProviderIfNeeded updates the reconciler state
 // with the new provider and current platform status and cloud credentials.
-func (r *reconciler) createDNSProviderIfNeeded(dnsConfig *configv1.DNS) error {
+func (r *reconciler) createDNSProviderIfNeeded(dnsConfig *configv1.DNS, record *iov1.DNSRecord) error {
 	var needUpdate bool
+
+	if record.Spec.DNSManagementPolicy == iov1.UnmanagedDNS {
+		return nil
+	}
 
 	infraConfig := &configv1.Infrastructure{}
 	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, infraConfig); err != nil {
@@ -256,61 +273,107 @@ func (r *reconciler) createDNSProviderIfNeeded(dnsConfig *configv1.DNS) error {
 	return nil
 }
 
-func (r *reconciler) publishRecordToZones(zones []configv1.DNSZone, record *iov1.DNSRecord) ([]iov1.DNSZoneStatus, reconcile.Result) {
-	result := reconcile.Result{}
+// replacePublishedRecord replaces a previously published record with the given record,
+// and the result is returned as a condition. Upon errors during publishing,
+// an error object is returned.
+func (r *reconciler) replacePublishedRecord(zone configv1.DNSZone, record *iov1.DNSRecord) (iov1.DNSZoneCondition, error) {
+	condition := iov1.DNSZoneCondition{
+		Status:             string(operatorv1.ConditionUnknown),
+		Type:               iov1.DNSRecordPublishedConditionType,
+		LastTransitionTime: metav1.Now(),
+	}
+
+	err := r.dnsProvider.Replace(record, zone)
+	if err != nil {
+		log.Error(err, "failed to replace DNS record in zone", "record", record.Spec, "dnszone", zone)
+		condition.Status = string(operatorv1.ConditionFalse)
+		condition.Reason = "ProviderError"
+		condition.Message = fmt.Sprintf("The DNS provider failed to replace the record: %v", err)
+
+	} else {
+		log.Info("replaced DNS record in zone", "record", record.Spec, "dnszone", zone)
+		condition.Status = string(operatorv1.ConditionTrue)
+		condition.Reason = "ProviderSuccess"
+		condition.Message = "The DNS provider succeeded in replacing the record"
+	}
+
+	return condition, err
+}
+
+// publishRecord ensures the given record is published to the provided zone
+// and the result is returned as a condition. Upon errors during publishing
+// an error object is returned.
+func (r *reconciler) publishRecord(zone configv1.DNSZone, record *iov1.DNSRecord) (iov1.DNSZoneCondition, error) {
+	condition := iov1.DNSZoneCondition{
+		Status:             string(operatorv1.ConditionUnknown),
+		Type:               iov1.DNSRecordPublishedConditionType,
+		LastTransitionTime: metav1.Now(),
+	}
+
+	err := r.dnsProvider.Ensure(record, zone)
+	if err != nil {
+		log.Error(err, "failed to publish DNS record to zone", "record", record.Spec, "dnszone", zone)
+		condition.Status = string(operatorv1.ConditionFalse)
+		condition.Reason = "ProviderError"
+		condition.Message = fmt.Sprintf("The DNS provider failed to ensure the record: %v", err)
+	} else {
+		log.Info("published DNS record to zone", "record", record.Spec, "dnszone", zone)
+		condition.Status = string(operatorv1.ConditionTrue)
+		condition.Reason = "ProviderSuccess"
+		condition.Message = "The DNS provider succeeded in ensuring the record"
+	}
+
+	return condition, err
+}
+
+// publishRecordToZones attempts to publish records and returns a bool
+// indicating if we need to requeue due to errors and list of latest DNS Zone status.
+func (r *reconciler) publishRecordToZones(zones []configv1.DNSZone, record *iov1.DNSRecord) (bool, []iov1.DNSZoneStatus) {
 	var statuses []iov1.DNSZoneStatus
+	var requeue bool
+	dnsPolicy := record.Spec.DNSManagementPolicy
 	for i := range zones {
-		zone := zones[i]
+
+		isRecordPublished := recordIsAlreadyPublishedToZone(record, &zones[i])
 
 		// Only publish the record if the DNSRecord has been modified
 		// (which would mean the target could have changed) or its
 		// status does not indicate that it has already been published.
-		if record.Generation == record.Status.ObservedGeneration && recordIsAlreadyPublishedToZone(record, &zone) {
-			log.Info("skipping zone to which the DNS record is already published", "record", record.Spec, "dnszone", zone)
+		if record.Generation == record.Status.ObservedGeneration && dnsPolicy != iov1.UnmanagedDNS && isRecordPublished {
+			log.Info("skipping zone to which the DNS record is already published", "record", record.Spec, "dnszone", zones[i])
 			continue
 		}
 
-		condition := iov1.DNSZoneCondition{
-			Status:             string(operatorv1.ConditionUnknown),
-			Type:               iov1.DNSRecordFailedConditionType,
-			LastTransitionTime: metav1.Now(),
-		}
-
-		if recordIsAlreadyPublishedToZone(record, &zone) {
-			log.Info("replacing DNS record", "record", record.Spec, "dnszone", zone)
-
-			if err := r.dnsProvider.Replace(record, zone); err != nil {
-				log.Error(err, "failed to replace DNS record in zone", "record", record.Spec, "dnszone", zone)
-				condition.Status = string(operatorv1.ConditionTrue)
-				condition.Reason = "ProviderError"
-				condition.Message = fmt.Sprintf("The DNS provider failed to replace the record: %v", err)
-				result.RequeueAfter = 30 * time.Second
-			} else {
-				log.Info("replaced DNS record in zone", "record", record.Spec, "dnszone", zone)
-				condition.Status = string(operatorv1.ConditionFalse)
-				condition.Reason = "ProviderSuccess"
-				condition.Message = "The DNS provider succeeded in replacing the record"
+		var err error
+		var condition iov1.DNSZoneCondition
+		if dnsPolicy == iov1.UnmanagedDNS {
+			log.Info("DNS record not published", "record", record.Spec)
+			condition = iov1.DNSZoneCondition{
+				Message:            "DNS record is currently not being managed by the operator",
+				Reason:             "UnmanagedDNS",
+				Status:             string(operatorv1.ConditionUnknown),
+				Type:               iov1.DNSRecordPublishedConditionType,
+				LastTransitionTime: metav1.Now(),
 			}
+		} else if isRecordPublished {
+			condition, err = r.replacePublishedRecord(zones[i], record)
 		} else {
-			if err := r.dnsProvider.Ensure(record, zone); err != nil {
-				log.Error(err, "failed to publish DNS record to zone", "record", record.Spec, "dnszone", zone)
-				condition.Status = string(operatorv1.ConditionTrue)
-				condition.Reason = "ProviderError"
-				condition.Message = fmt.Sprintf("The DNS provider failed to ensure the record: %v", err)
-				result.RequeueAfter = 30 * time.Second
-			} else {
-				log.Info("published DNS record to zone", "record", record.Spec, "dnszone", zone)
-				condition.Status = string(operatorv1.ConditionFalse)
-				condition.Reason = "ProviderSuccess"
-				condition.Message = "The DNS provider succeeded in ensuring the record"
-			}
+			condition, err = r.publishRecord(zones[i], record)
 		}
+
+		// Check if replacing or publishing record resulted in an error.
+		// If it did, re-enqueue the request for processing.
+		if err != nil {
+			requeue = true
+		}
+
 		statuses = append(statuses, iov1.DNSZoneStatus{
-			DNSZone:    zone,
+			DNSZone:    zones[i],
 			Conditions: []iov1.DNSZoneCondition{condition},
 		})
 	}
-	return mergeStatuses(zones, record.Status.DeepCopy().Zones, statuses), result
+
+	return requeue, mergeStatuses(zones, record.Status.DeepCopy().Zones, statuses)
 }
 
 // recordIsAlreadyPublishedToZone returns a Boolean value indicating whether the
@@ -323,8 +386,8 @@ func recordIsAlreadyPublishedToZone(record *iov1.DNSRecord, zoneToPublish *confi
 		}
 
 		for _, condition := range zoneInStatus.Conditions {
-			if condition.Type == iov1.DNSRecordFailedConditionType {
-				return condition.Status == string(operatorv1.ConditionFalse)
+			if condition.Type == iov1.DNSRecordPublishedConditionType {
+				return condition.Status == string(operatorv1.ConditionTrue)
 			}
 		}
 	}
@@ -415,6 +478,67 @@ func conditionChanged(a, b iov1.DNSZoneCondition) bool {
 	return a.Status != b.Status || a.Reason != b.Reason || a.Message != b.Message
 }
 
+// migrateRecordStatusConditions purges deprecated fields from DNS Record
+// status. Removes "Failed" (DNSRecordFailedConditionType) and replaces with
+// "Published" (DNSRecordPublishedConditionType). Returns updated condition
+// list.
+//
+// This function is at least required for 1 minor release and can be removed after
+// Openshift 4.13 is released.
+func (r *reconciler) migrateRecordStatusConditions(record *iov1.DNSRecord) (bool, error) {
+	var updateConditions bool
+	for i := range record.Status.Zones {
+		var updateZone bool
+		updateZone, record.Status.Zones[i].Conditions = migrateRecordStatusCondition(record.Status.Zones[i].Conditions)
+		if updateZone {
+			updateConditions = true
+		}
+	}
+	if updateConditions {
+		if err := r.client.Status().Update(context.TODO(), record); err != nil {
+			return false, fmt.Errorf("failed to update dnsrecord status: %w", err)
+		}
+		log.Info("dnsrecord status migrated", "dnsrecord", record)
+		return true, nil
+	}
+	return false, nil
+}
+
+func migrateRecordStatusCondition(conditions []iov1.DNSZoneCondition) (bool, []iov1.DNSZoneCondition) {
+	var result []iov1.DNSZoneCondition
+	var updated bool
+	for _, cond := range conditions {
+		if cond.Type != iov1.DNSRecordFailedConditionType {
+			result = append(result, cond)
+			continue
+		}
+		updated = true
+		switch cond.Status {
+		case string(operatorv1.ConditionTrue):
+			result = append(result, iov1.DNSZoneCondition{
+				Type:               iov1.DNSRecordPublishedConditionType,
+				Status:             string(operatorv1.ConditionFalse),
+				LastTransitionTime: cond.LastTransitionTime,
+				Reason:             cond.Reason,
+				Message:            cond.Message,
+			})
+		case string(operatorv1.ConditionFalse):
+			result = append(result, iov1.DNSZoneCondition{
+				Type:               iov1.DNSRecordPublishedConditionType,
+				Status:             string(operatorv1.ConditionTrue),
+				LastTransitionTime: cond.LastTransitionTime,
+				Reason:             cond.Reason,
+				Message:            cond.Message,
+			})
+			// We don't need to map Failed=Unknown condition
+			// since the operator never set this condition to Unknown.
+			// Since no version of the operator had this condition, we
+			// don't need to migrate it.
+		}
+	}
+	return updated, result
+}
+
 // dnsZoneStatusSlicesEqual compares two DNSZoneStatus slice values.  Returns
 // true if the provided values should be considered equal for the purpose of
 // determining whether an update is necessary, false otherwise.  The comparison
@@ -437,7 +561,7 @@ func dnsZoneStatusSlicesEqual(a, b []iov1.DNSZoneStatus) bool {
 // ToDNSRecords returns reconciliation requests for all DNSRecords.
 func (r *reconciler) ToDNSRecords(o client.Object) []reconcile.Request {
 	var requests []reconcile.Request
-	records := &operatoringressv1.DNSRecordList{}
+	records := &iov1.DNSRecordList{}
 	if err := r.cache.List(context.Background(), records, client.InNamespace(r.config.Namespace)); err != nil {
 		log.Error(err, "failed to list dnsrecords", "related", o.GetSelfLink())
 		return requests
@@ -499,32 +623,32 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 					break
 				case ep.Name == awsdns.Route53Service:
 					route53Found = true
-					scheme, err := operatorutil.URI(ep.URL)
+					scheme, err := oputil.URI(ep.URL)
 					if err != nil {
 						return nil, fmt.Errorf("failed to validate URI %s: %v", ep.URL, err)
 					}
-					if scheme != operatorutil.SchemeHTTPS {
-						return nil, fmt.Errorf("invalid scheme for URI %s; must be %s", ep.URL, operatorutil.SchemeHTTPS)
+					if scheme != oputil.SchemeHTTPS {
+						return nil, fmt.Errorf("invalid scheme for URI %s; must be %s", ep.URL, oputil.SchemeHTTPS)
 					}
 					cfg.ServiceEndpoints = append(cfg.ServiceEndpoints, awsdns.ServiceEndpoint{Name: ep.Name, URL: ep.URL})
 				case ep.Name == awsdns.ELBService:
 					elbFound = true
-					scheme, err := operatorutil.URI(ep.URL)
+					scheme, err := oputil.URI(ep.URL)
 					if err != nil {
 						return nil, fmt.Errorf("failed to validate URI %s: %v", ep.URL, err)
 					}
-					if scheme != operatorutil.SchemeHTTPS {
-						return nil, fmt.Errorf("invalid scheme for URI %s; must be %s", ep.URL, operatorutil.SchemeHTTPS)
+					if scheme != oputil.SchemeHTTPS {
+						return nil, fmt.Errorf("invalid scheme for URI %s; must be %s", ep.URL, oputil.SchemeHTTPS)
 					}
 					cfg.ServiceEndpoints = append(cfg.ServiceEndpoints, awsdns.ServiceEndpoint{Name: ep.Name, URL: ep.URL})
 				case ep.Name == awsdns.TaggingService:
 					tagFound = true
-					scheme, err := operatorutil.URI(ep.URL)
+					scheme, err := oputil.URI(ep.URL)
 					if err != nil {
 						return nil, fmt.Errorf("failed to validate URI %s: %v", ep.URL, err)
 					}
-					if scheme != operatorutil.SchemeHTTPS {
-						return nil, fmt.Errorf("invalid scheme for URI %s; must be %s", ep.URL, operatorutil.SchemeHTTPS)
+					if scheme != oputil.SchemeHTTPS {
+						return nil, fmt.Errorf("invalid scheme for URI %s; must be %s", ep.URL, oputil.SchemeHTTPS)
 					}
 					cfg.ServiceEndpoints = append(cfg.ServiceEndpoints, awsdns.ServiceEndpoint{Name: ep.Name, URL: ep.URL})
 				}
@@ -591,7 +715,7 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 			return &dns.FakeProvider{}, nil
 		}
 	case configv1.PowerVSPlatformType:
-		//Power VS platform will use the ibm dns implementation
+		// Power VS platform will use the ibm dns implementation
 		var err error
 		if platformStatus.PowerVS.CISInstanceCRN != "" {
 			dnsProvider, err = getIbmDNSProvider(dnsConfig, creds, platformStatus.PowerVS.CISInstanceCRN, userAgent, true)

@@ -34,11 +34,8 @@ func (r *reconciler) ensureWildcardDNSRecord(ic *operatorv1.IngressController, p
 		return false, nil, nil
 	}
 
-	if !manageDNSForDomain(ic.Status.Domain, platformStatus, dnsConfig) {
-		return false, nil, nil
-	}
-
-	wantWC, desired := desiredWildcardDNSRecord(ic, service)
+	domainMatchesBaseDomain := manageDNSForDomain(ic.Status.Domain, platformStatus, dnsConfig)
+	wantWC, desired := desiredWildcardDNSRecord(ic, service, domainMatchesBaseDomain)
 	haveWC, current, err := r.currentWildcardDNSRecord(ic)
 	if err != nil {
 		return false, nil, err
@@ -71,7 +68,7 @@ func (r *reconciler) ensureWildcardDNSRecord(ic *operatorv1.IngressController, p
 // TODO: If .status.loadbalancer.ingress is processed once as non-empty and then
 // later becomes empty, what should we do? Currently we'll treat it as an intent
 // to not have a desired record.
-func desiredWildcardDNSRecord(ic *operatorv1.IngressController, service *corev1.Service) (bool, *iov1.DNSRecord) {
+func desiredWildcardDNSRecord(ic *operatorv1.IngressController, service *corev1.Service, domainMatchesBaseDomain bool) (bool, *iov1.DNSRecord) {
 	// If the ingresscontroller has no ingress domain, we cannot configure any
 	// DNS records.
 	if len(ic.Status.Domain) == 0 {
@@ -110,6 +107,14 @@ func desiredWildcardDNSRecord(ic *operatorv1.IngressController, service *corev1.
 		target = ingress.IP
 	}
 
+	dnsPolicy := iov1.ManagedDNS
+
+	// Set the DNS management policy on the dnsrecord to "Unmanaged" if ingresscontroller has "Unmanaged" DNS policy or
+	// if the ingresscontroller domain isn't a subdomain of the cluster's base domain.
+	if ic.Status.EndpointPublishingStrategy.LoadBalancer.DNSManagementPolicy == operatorv1.UnmanagedLoadBalancerDNS || !domainMatchesBaseDomain {
+		dnsPolicy = iov1.UnmanagedDNS
+	}
+
 	trueVar := true
 	return true, &iov1.DNSRecord{
 		ObjectMeta: metav1.ObjectMeta{
@@ -131,10 +136,11 @@ func desiredWildcardDNSRecord(ic *operatorv1.IngressController, service *corev1.
 			Finalizers: []string{manifests.DNSRecordFinalizer},
 		},
 		Spec: iov1.DNSRecordSpec{
-			DNSName:    domain,
-			Targets:    []string{target},
-			RecordType: recordType,
-			RecordTTL:  defaultRecordTTL,
+			DNSName:             domain,
+			DNSManagementPolicy: dnsPolicy,
+			Targets:             []string{target},
+			RecordType:          recordType,
+			RecordTTL:           defaultRecordTTL,
 		},
 	}
 }

@@ -279,12 +279,21 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		return reconcile.Result{Requeue: true}, nil
 	}
 
+	domainMatchesBaseDomain := manageDNSForDomain(ingress.Status.Domain, platformStatus, dnsConfig)
 	// TODO: remove this fix-up logic in 4.8
 	if ingress.Status.EndpointPublishingStrategy != nil && ingress.Status.EndpointPublishingStrategy.Type == operatorv1.LoadBalancerServiceStrategyType && ingress.Status.EndpointPublishingStrategy.LoadBalancer == nil {
 		log.Info("Setting default value for empty status.endpointPublishingStrategy.loadBalancer field", "ingresscontroller", ingress)
 		ingress.Status.EndpointPublishingStrategy.LoadBalancer = &operatorv1.LoadBalancerStrategy{
-			Scope: operatorv1.ExternalLoadBalancer,
+			Scope:               operatorv1.ExternalLoadBalancer,
+			DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
 		}
+
+		// Set dnsManagementPolicy based on current domain on the ingresscontroller
+		// and base domain on dns config.
+		if !domainMatchesBaseDomain {
+			ingress.Status.EndpointPublishingStrategy.LoadBalancer.DNSManagementPolicy = operatorv1.UnmanagedLoadBalancerDNS
+		}
+
 		if err := r.client.Status().Update(context.TODO(), ingress); err != nil {
 			return reconcile.Result{}, fmt.Errorf("failed to update status: %v", err)
 		}
@@ -312,7 +321,9 @@ func (r *reconciler) admit(current *operatorv1.IngressController, ingressConfig 
 	updated := current.DeepCopy()
 
 	setDefaultDomain(updated, ingressConfig)
-	setDefaultPublishingStrategy(updated, platformStatus)
+
+	domainMatchesBaseDomain := manageDNSForDomain(updated.Status.Domain, platformStatus, dnsConfig)
+	setDefaultPublishingStrategy(updated, platformStatus, domainMatchesBaseDomain)
 
 	// The TLS security profile need not be defaulted.  If none is set, we
 	// get the default from the APIServer config (which is assumed to be
@@ -393,7 +404,7 @@ func setDefaultDomain(ic *operatorv1.IngressController, ingressConfig *configv1.
 	return false
 }
 
-func setDefaultPublishingStrategy(ic *operatorv1.IngressController, platformStatus *configv1.PlatformStatus) bool {
+func setDefaultPublishingStrategy(ic *operatorv1.IngressController, platformStatus *configv1.PlatformStatus, domainMatchesBaseDomain bool) bool {
 	effectiveStrategy := ic.Spec.EndpointPublishingStrategy.DeepCopy()
 	if effectiveStrategy == nil {
 		var strategyType operatorv1.EndpointPublishingStrategyType
@@ -413,9 +424,17 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, platformStat
 	case operatorv1.LoadBalancerServiceStrategyType:
 		if effectiveStrategy.LoadBalancer == nil {
 			effectiveStrategy.LoadBalancer = &operatorv1.LoadBalancerStrategy{
-				Scope: operatorv1.ExternalLoadBalancer,
+				DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
+				Scope:               operatorv1.ExternalLoadBalancer,
 			}
 		}
+
+		// Set dnsManagementPolicy based on current domain on the ingresscontroller
+		// and base domain on dns config.
+		if !domainMatchesBaseDomain {
+			effectiveStrategy.LoadBalancer.DNSManagementPolicy = operatorv1.UnmanagedLoadBalancerDNS
+		}
+
 	case operatorv1.NodePortServiceStrategyType:
 		if effectiveStrategy.NodePort == nil {
 			effectiveStrategy.NodePort = &operatorv1.NodePortStrategy{}
@@ -467,6 +486,12 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, platformStat
 			// Detect changes to LB scope.
 			if specLB.Scope != statusLB.Scope {
 				ic.Status.EndpointPublishingStrategy.LoadBalancer.Scope = effectiveStrategy.LoadBalancer.Scope
+				changed = true
+			}
+
+			// Detect changes to LB dnsManagementPolicy
+			if specLB.DNSManagementPolicy != statusLB.DNSManagementPolicy {
+				ic.Status.EndpointPublishingStrategy.LoadBalancer.DNSManagementPolicy = effectiveStrategy.LoadBalancer.DNSManagementPolicy
 				changed = true
 			}
 

@@ -21,6 +21,7 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
+	iov1 "github.com/openshift/api/operatoringress/v1"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -1462,6 +1463,524 @@ func TestIngressStatusesEqual(t *testing.T) {
 	}
 }
 
+func TestComputeDNSStatus(t *testing.T) {
+	tests := []struct {
+		name           string
+		controller     *operatorv1.IngressController
+		record         *iov1.DNSRecord
+		platformStatus *configv1.PlatformStatus
+		dnsConfig      *configv1.DNS
+		expect         []operatorv1.OperatorCondition
+	}{
+		{
+			name: "DNSManaged false due to NoDNSZones",
+			dnsConfig: &configv1.DNS{
+				Spec: configv1.DNSSpec{
+					PublicZone:  nil,
+					PrivateZone: nil,
+				},
+			},
+			expect: []operatorv1.OperatorCondition{{
+				Type:   "DNSManaged",
+				Status: operatorv1.ConditionFalse,
+				Reason: "NoDNSZones",
+			}},
+		},
+		{
+			name: "DNSManaged false due to UnsupportedEndpointPublishingStrategy",
+			dnsConfig: &configv1.DNS{
+				Spec: configv1.DNSSpec{
+					PublicZone:  &configv1.DNSZone{},
+					PrivateZone: &configv1.DNSZone{},
+				},
+			},
+			controller: &operatorv1.IngressController{
+				Status: operatorv1.IngressControllerStatus{
+					EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+						Type: operatorv1.HostNetworkStrategyType,
+					},
+				},
+			},
+			expect: []operatorv1.OperatorCondition{{
+				Type:   "DNSManaged",
+				Status: operatorv1.ConditionFalse,
+				Reason: "UnsupportedEndpointPublishingStrategy",
+			}},
+		},
+		{
+			name: "DNSManaged false due to UnmanagedLoadBalancerDNS",
+			dnsConfig: &configv1.DNS{
+				Spec: configv1.DNSSpec{
+					PublicZone:  &configv1.DNSZone{},
+					PrivateZone: &configv1.DNSZone{},
+				},
+			},
+			controller: &operatorv1.IngressController{
+				Status: operatorv1.IngressControllerStatus{
+					EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+						Type: operatorv1.LoadBalancerServiceStrategyType,
+						LoadBalancer: &operatorv1.LoadBalancerStrategy{
+							DNSManagementPolicy: operatorv1.UnmanagedLoadBalancerDNS,
+						},
+					},
+				},
+			},
+			record: &iov1.DNSRecord{
+				Spec: iov1.DNSRecordSpec{
+					DNSManagementPolicy: iov1.UnmanagedDNS,
+				},
+			},
+			expect: []operatorv1.OperatorCondition{
+				{
+					Type:   "DNSManaged",
+					Status: operatorv1.ConditionFalse,
+					Reason: "UnmanagedLoadBalancerDNS",
+				},
+				{
+					Type:   "DNSReady",
+					Status: operatorv1.ConditionUnknown,
+					Reason: "UnmanagedDNS",
+				},
+			},
+		},
+		{
+			name: "DNSManaged false due to DomainNotMatching since domain is empty",
+			controller: &operatorv1.IngressController{
+				Status: operatorv1.IngressControllerStatus{
+					Domain: "",
+					EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+						Type: operatorv1.LoadBalancerServiceStrategyType,
+						LoadBalancer: &operatorv1.LoadBalancerStrategy{
+							DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
+						},
+					},
+				},
+			},
+			platformStatus: &configv1.PlatformStatus{},
+			dnsConfig: &configv1.DNS{
+				Spec: configv1.DNSSpec{
+					BaseDomain:  "",
+					PublicZone:  &configv1.DNSZone{},
+					PrivateZone: &configv1.DNSZone{},
+				},
+			},
+			expect: []operatorv1.OperatorCondition{
+				{
+					Type:   "DNSManaged",
+					Status: operatorv1.ConditionFalse,
+					Reason: "DomainNotMatching",
+				},
+				{
+					Type:   "DNSReady",
+					Status: operatorv1.ConditionFalse,
+					Reason: "RecordNotFound",
+				},
+			},
+		},
+		{
+			name: "DNSManaged false due to DomainNotMatching since domain doesn't match base domain",
+			controller: &operatorv1.IngressController{
+				Status: operatorv1.IngressControllerStatus{
+					Domain: "apps.externaldomain.com",
+					EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+						Type: operatorv1.LoadBalancerServiceStrategyType,
+						LoadBalancer: &operatorv1.LoadBalancerStrategy{
+							DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
+						},
+					},
+				},
+			},
+			platformStatus: &configv1.PlatformStatus{
+				Type: configv1.AWSPlatformType,
+			},
+			dnsConfig: &configv1.DNS{
+				Spec: configv1.DNSSpec{
+					BaseDomain:  "basedomain.com",
+					PublicZone:  &configv1.DNSZone{},
+					PrivateZone: &configv1.DNSZone{},
+				},
+			},
+			expect: []operatorv1.OperatorCondition{
+				{
+					Type:   "DNSManaged",
+					Status: operatorv1.ConditionFalse,
+					Reason: "DomainNotMatching",
+				},
+				{
+					Type:   "DNSReady",
+					Status: operatorv1.ConditionFalse,
+					Reason: "RecordNotFound",
+				},
+			},
+		},
+		{
+			name: "DNSManaged true and DNSReady is true due to NoFailedZones",
+			controller: &operatorv1.IngressController{
+				Status: operatorv1.IngressControllerStatus{
+					Domain: "apps.basedomain.com",
+					EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+						Type: operatorv1.LoadBalancerServiceStrategyType,
+						LoadBalancer: &operatorv1.LoadBalancerStrategy{
+							DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
+						},
+					},
+				},
+			},
+			record: &iov1.DNSRecord{
+				Spec: iov1.DNSRecordSpec{
+					DNSManagementPolicy: iov1.ManagedDNS,
+				},
+				Status: iov1.DNSRecordStatus{
+					Zones: []iov1.DNSZoneStatus{
+						{
+							DNSZone: configv1.DNSZone{ID: "zone1"},
+							Conditions: []iov1.DNSZoneCondition{
+								{
+									Type:               iov1.DNSRecordPublishedConditionType,
+									Status:             string(operatorv1.ConditionTrue),
+									LastTransitionTime: metav1.Now(),
+								},
+							},
+						},
+					},
+				},
+			},
+			platformStatus: &configv1.PlatformStatus{
+				Type: configv1.AWSPlatformType,
+			},
+			dnsConfig: &configv1.DNS{
+				Spec: configv1.DNSSpec{
+					BaseDomain:  "basedomain.com",
+					PublicZone:  &configv1.DNSZone{},
+					PrivateZone: &configv1.DNSZone{},
+				},
+			},
+			expect: []operatorv1.OperatorCondition{
+				{
+					Type:   "DNSManaged",
+					Status: operatorv1.ConditionTrue,
+					Reason: "Normal",
+				},
+				{
+					Type:   "DNSReady",
+					Status: operatorv1.ConditionTrue,
+					Reason: "NoFailedZones",
+				},
+			},
+		},
+		{
+			name: "DNSManaged true but DNSReady is false due to RecordNotFound",
+			controller: &operatorv1.IngressController{
+				Status: operatorv1.IngressControllerStatus{
+					Domain: "apps.basedomain.com",
+					EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+						Type: operatorv1.LoadBalancerServiceStrategyType,
+						LoadBalancer: &operatorv1.LoadBalancerStrategy{
+							DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
+						},
+					},
+				},
+			},
+			record: nil,
+			platformStatus: &configv1.PlatformStatus{
+				Type: configv1.AWSPlatformType,
+			},
+			dnsConfig: &configv1.DNS{
+				Spec: configv1.DNSSpec{
+					BaseDomain:  "basedomain.com",
+					PublicZone:  &configv1.DNSZone{},
+					PrivateZone: &configv1.DNSZone{},
+				},
+			},
+			expect: []operatorv1.OperatorCondition{
+				{
+					Type:   "DNSManaged",
+					Status: operatorv1.ConditionTrue,
+					Reason: "Normal",
+				},
+				{
+					Type:   "DNSReady",
+					Status: operatorv1.ConditionFalse,
+					Reason: "RecordNotFound",
+				},
+			},
+		},
+		{
+			name: "DNSManaged true but DNSReady is false due to NoZones",
+			controller: &operatorv1.IngressController{
+				Status: operatorv1.IngressControllerStatus{
+					Domain: "apps.basedomain.com",
+					EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+						Type: operatorv1.LoadBalancerServiceStrategyType,
+						LoadBalancer: &operatorv1.LoadBalancerStrategy{
+							DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
+						},
+					},
+				},
+			},
+			record: &iov1.DNSRecord{
+				Spec: iov1.DNSRecordSpec{
+					DNSManagementPolicy: iov1.ManagedDNS,
+				},
+				Status: iov1.DNSRecordStatus{
+					Zones: []iov1.DNSZoneStatus{},
+				},
+			},
+			platformStatus: &configv1.PlatformStatus{
+				Type: configv1.AWSPlatformType,
+			},
+			dnsConfig: &configv1.DNS{
+				Spec: configv1.DNSSpec{
+					BaseDomain:  "basedomain.com",
+					PublicZone:  &configv1.DNSZone{},
+					PrivateZone: &configv1.DNSZone{},
+				},
+			},
+			expect: []operatorv1.OperatorCondition{
+				{
+					Type:   "DNSManaged",
+					Status: operatorv1.ConditionTrue,
+					Reason: "Normal",
+				},
+				{
+					Type:   "DNSReady",
+					Status: operatorv1.ConditionFalse,
+					Reason: "NoZones",
+				},
+			},
+		},
+		{
+			name: "DNSManaged true but DNSReady is Unknown due to UnmanagedDNS",
+			controller: &operatorv1.IngressController{
+				Status: operatorv1.IngressControllerStatus{
+					Domain: "apps.basedomain.com",
+					EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+						Type: operatorv1.LoadBalancerServiceStrategyType,
+						LoadBalancer: &operatorv1.LoadBalancerStrategy{
+							DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
+						},
+					},
+				},
+			},
+			record: &iov1.DNSRecord{
+				Spec: iov1.DNSRecordSpec{
+					DNSManagementPolicy: iov1.UnmanagedDNS,
+				},
+			},
+			platformStatus: &configv1.PlatformStatus{
+				Type: configv1.AWSPlatformType,
+			},
+			dnsConfig: &configv1.DNS{
+				Spec: configv1.DNSSpec{
+					BaseDomain:  "basedomain.com",
+					PublicZone:  &configv1.DNSZone{},
+					PrivateZone: &configv1.DNSZone{},
+				},
+			},
+			expect: []operatorv1.OperatorCondition{
+				{
+					Type:   "DNSManaged",
+					Status: operatorv1.ConditionTrue,
+					Reason: "Normal",
+				},
+				{
+					Type:   "DNSReady",
+					Status: operatorv1.ConditionUnknown,
+					Reason: "UnmanagedDNS",
+				},
+			},
+		},
+		{
+			name: "DNSManaged true and DNSReady is false due to FailedZones",
+			controller: &operatorv1.IngressController{
+				Status: operatorv1.IngressControllerStatus{
+					Domain: "apps.basedomain.com",
+					EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+						Type: operatorv1.LoadBalancerServiceStrategyType,
+						LoadBalancer: &operatorv1.LoadBalancerStrategy{
+							DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
+						},
+					},
+				},
+			},
+			record: &iov1.DNSRecord{
+				Spec: iov1.DNSRecordSpec{
+					DNSManagementPolicy: iov1.ManagedDNS,
+				},
+				Status: iov1.DNSRecordStatus{
+					Zones: []iov1.DNSZoneStatus{
+						{
+							DNSZone: configv1.DNSZone{ID: "zone1"},
+							Conditions: []iov1.DNSZoneCondition{
+								{
+									Type:               iov1.DNSRecordPublishedConditionType,
+									Status:             string(operatorv1.ConditionFalse),
+									LastTransitionTime: metav1.Now(),
+									Reason:             "FailedZones",
+								},
+							},
+						},
+					},
+				},
+			},
+			platformStatus: &configv1.PlatformStatus{
+				Type: configv1.AWSPlatformType,
+			},
+			dnsConfig: &configv1.DNS{
+				Spec: configv1.DNSSpec{
+					BaseDomain: "basedomain.com",
+					PublicZone: &configv1.DNSZone{},
+					PrivateZone: &configv1.DNSZone{
+						ID: "zone1",
+					},
+				},
+			},
+			expect: []operatorv1.OperatorCondition{
+				{
+					Type:   "DNSManaged",
+					Status: operatorv1.ConditionTrue,
+					Reason: "Normal",
+				},
+				{
+					Type:   "DNSReady",
+					Status: operatorv1.ConditionFalse,
+					Reason: "FailedZones",
+				},
+			},
+		},
+		{
+			name: "DNSManaged true and DNSReady is true with even with previously FailedZones",
+			controller: &operatorv1.IngressController{
+				Status: operatorv1.IngressControllerStatus{
+					Domain: "apps.basedomain.com",
+					EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+						Type: operatorv1.LoadBalancerServiceStrategyType,
+						LoadBalancer: &operatorv1.LoadBalancerStrategy{
+							DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
+						},
+					},
+				},
+			},
+			record: &iov1.DNSRecord{
+				Spec: iov1.DNSRecordSpec{
+					DNSManagementPolicy: iov1.ManagedDNS,
+				},
+				Status: iov1.DNSRecordStatus{
+					Zones: []iov1.DNSZoneStatus{
+						{
+							DNSZone: configv1.DNSZone{ID: "zone1"},
+							Conditions: []iov1.DNSZoneCondition{
+								{
+									Type:               iov1.DNSRecordFailedConditionType,
+									Status:             string(operatorv1.ConditionTrue),
+									LastTransitionTime: metav1.NewTime(time.Now().Add(5 * time.Minute)),
+									Reason:             "FailedZones",
+								},
+								{
+									Type:               iov1.DNSRecordPublishedConditionType,
+									Status:             string(operatorv1.ConditionTrue),
+									LastTransitionTime: metav1.NewTime(time.Now().Add(15 * time.Minute)),
+									Reason:             "NoFailedZones",
+								},
+							},
+						},
+					},
+				},
+			},
+			platformStatus: &configv1.PlatformStatus{
+				Type: configv1.AWSPlatformType,
+			},
+			dnsConfig: &configv1.DNS{
+				Spec: configv1.DNSSpec{
+					BaseDomain: "basedomain.com",
+					PublicZone: &configv1.DNSZone{},
+					PrivateZone: &configv1.DNSZone{
+						ID: "zone1",
+					},
+				},
+			},
+			expect: []operatorv1.OperatorCondition{
+				{
+					Type:   "DNSManaged",
+					Status: operatorv1.ConditionTrue,
+					Reason: "Normal",
+				},
+				{
+					Type:   "DNSReady",
+					Status: operatorv1.ConditionTrue,
+					Reason: "NoFailedZones",
+				},
+			},
+		},
+		{
+			name: "DNSManaged true and DNSReady is false due to unknown condition",
+			controller: &operatorv1.IngressController{
+				Status: operatorv1.IngressControllerStatus{
+					Domain: "apps.basedomain.com",
+					EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+						Type: operatorv1.LoadBalancerServiceStrategyType,
+						LoadBalancer: &operatorv1.LoadBalancerStrategy{
+							DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
+						},
+					},
+				},
+			},
+			record: &iov1.DNSRecord{
+				Spec: iov1.DNSRecordSpec{
+					DNSManagementPolicy: iov1.ManagedDNS,
+				},
+				Status: iov1.DNSRecordStatus{
+					Zones: []iov1.DNSZoneStatus{
+						{
+							DNSZone: configv1.DNSZone{ID: "zone1"},
+							Conditions: []iov1.DNSZoneCondition{
+								{
+									Type:               iov1.DNSRecordPublishedConditionType,
+									Status:             string(operatorv1.ConditionUnknown),
+									LastTransitionTime: metav1.NewTime(time.Now().Add(15 * time.Minute)),
+									Reason:             "UnknownZones",
+								},
+							},
+						},
+					},
+				},
+			},
+			platformStatus: &configv1.PlatformStatus{
+				Type: configv1.AWSPlatformType,
+			},
+			dnsConfig: &configv1.DNS{
+				Spec: configv1.DNSSpec{
+					BaseDomain: "basedomain.com",
+					PublicZone: &configv1.DNSZone{},
+					PrivateZone: &configv1.DNSZone{
+						ID: "zone1",
+					},
+				},
+			},
+			expect: []operatorv1.OperatorCondition{
+				{
+					Type:   "DNSManaged",
+					Status: operatorv1.ConditionTrue,
+					Reason: "Normal",
+				},
+				{
+					Type:   "DNSReady",
+					Status: operatorv1.ConditionFalse,
+					Reason: "UnknownZones",
+				},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		actualConditions := computeDNSStatus(tc.controller, tc.record, tc.platformStatus, tc.dnsConfig)
+		opts := cmpopts.IgnoreFields(operatorv1.OperatorCondition{}, "Message", "LastTransitionTime")
+		if !cmp.Equal(actualConditions, tc.expect, opts) {
+			t.Fatalf("%q found diff between actual and expected operator condition:\n%s", tc.name, cmp.Diff(actualConditions, tc.expect, opts))
+		}
+	}
+}
+
 func TestMergeConditions(t *testing.T) {
 	// Inject a fake clock and don't forget to reset it
 	fakeClock := utilclock.NewFakeClock(time.Time{})
@@ -1536,37 +2055,43 @@ func TestZoneInConfig(t *testing.T) {
 			in:          "test",
 			zone:        "",
 			zoneType:    "ID",
-		}, {
+		},
+		{
 			description: "[PrivateZone] zone.ID with value (not equal should fail)",
 			expected:    false,
 			in:          "test",
 			zone:        "notest",
 			zoneType:    "ID",
-		}, {
+		},
+		{
 			description: "[PrivateZone] zone.ID with value (equal should pass)",
 			expected:    true,
 			in:          "test",
 			zone:        "test",
 			zoneType:    "ID",
-		}, {
+		},
+		{
 			description: "[PrivateZone] empty strings (should fail)",
 			expected:    false,
 			in:          "",
 			zone:        "",
 			zoneType:    "TAG",
-		}, {
+		},
+		{
 			description: "[PrivateZone] zone.Tags['Name'] empty string (should fail)",
 			expected:    false,
 			in:          "test",
 			zone:        "",
 			zoneType:    "TAG",
-		}, {
+		},
+		{
 			description: "[PrivateZone] zone.Tags['Name'] with value (not equal should fail)",
 			expected:    false,
 			in:          "test",
 			zone:        "notest",
 			zoneType:    "TAG",
-		}, {
+		},
+		{
 			description: "[PrivateZone] zone.tags['Name'] with value (equal should pass)",
 			expected:    true,
 			in:          "test",
@@ -1715,7 +2240,6 @@ func TestComputeIngressUpgradeableCondition(t *testing.T) {
 			if actual.Status != expectedStatus {
 				t.Errorf("%q: expected Upgradeable to be %q, got %q", tc.description, expectedStatus, actual.Status)
 			}
-
 		})
 	}
 }

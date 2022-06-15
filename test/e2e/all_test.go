@@ -66,6 +66,9 @@ func TestAll(t *testing.T) {
 		t.Run("TestIngressControllerRouteSelectorUpdateShouldClearRouteStatus", TestIngressControllerRouteSelectorUpdateShouldClearRouteStatus)
 		t.Run("TestIngressControllerNamespaceSelectorUpdateShouldClearRouteStatus", TestIngressControllerNamespaceSelectorUpdateShouldClearRouteStatus)
 		t.Run("TestReloadInterval", TestReloadInterval)
+		t.Run("TestUnmanagedDNSToManagedIngressController", TestUnmanagedDNSToManagedIngressController)
+		t.Run("TestManagedDNSToUnmanagedDNSIngressController", TestManagedDNSToUnmanagedDNSIngressController)
+		t.Run("TestUnmanagedDNSToManagedInternalIngressController", TestUnmanagedDNSToManagedInternalIngressController)
 	})
 
 	t.Run("serial", func(t *testing.T) {

@@ -753,10 +753,8 @@ func conditionsEqual(a, b []operatorv1.OperatorCondition) bool {
 		cmpopts.EquateEmpty(),
 		cmpopts.SortSlices(func(a, b operatorv1.OperatorCondition) bool { return a.Type < b.Type }),
 	}
-	if !cmp.Equal(a, b, conditionCmpOpts...) {
-		return false
-	}
-	return true
+
+	return cmp.Equal(a, b, conditionCmpOpts...)
 }
 
 func conditionChanged(a, b operatorv1.OperatorCondition) bool {
@@ -775,7 +773,7 @@ func computeLoadBalancerStatus(ic *operatorv1.IngressController, service *corev1
 				Type:    operatorv1.LoadBalancerManagedIngressConditionType,
 				Status:  operatorv1.ConditionFalse,
 				Reason:  "EndpointPublishingStrategyExcludesManagedLoadBalancer",
-				Message: fmt.Sprintf("The configured endpoint publishing strategy does not include a managed load balancer"),
+				Message: "The configured endpoint publishing strategy does not include a managed load balancer",
 			},
 		}
 	}
@@ -902,7 +900,6 @@ func getEventsByReason(events []corev1.Event, component, reason string) []corev1
 }
 
 func computeDNSStatus(ic *operatorv1.IngressController, wildcardRecord *iov1.DNSRecord, status *configv1.PlatformStatus, dnsConfig *configv1.DNS) []operatorv1.OperatorCondition {
-
 	if dnsConfig.Spec.PublicZone == nil && dnsConfig.Spec.PrivateZone == nil {
 		return []operatorv1.OperatorCondition{
 			{
@@ -924,25 +921,28 @@ func computeDNSStatus(ic *operatorv1.IngressController, wildcardRecord *iov1.DNS
 			},
 		}
 	}
-
-	if !manageDNSForDomain(ic.Status.Domain, status, dnsConfig) {
-		return []operatorv1.OperatorCondition{
-			{
-				Type:    operatorv1.DNSManagedIngressConditionType,
-				Status:  operatorv1.ConditionFalse,
-				Reason:  "DomainNotMatching",
-				Message: "DNS management is not supported for ingresscontrollers with domain not matching the baseDomain of the cluster DNS config.",
-			},
-		}
-	}
-
-	conditions := []operatorv1.OperatorCondition{
-		{
+	var conditions []operatorv1.OperatorCondition
+	if ic.Status.EndpointPublishingStrategy.LoadBalancer.DNSManagementPolicy == operatorv1.UnmanagedLoadBalancerDNS {
+		conditions = append(conditions, operatorv1.OperatorCondition{
+			Type:    operatorv1.DNSManagedIngressConditionType,
+			Status:  operatorv1.ConditionFalse,
+			Reason:  "UnmanagedLoadBalancerDNS",
+			Message: "The DNS management policy is set to Unmanaged.",
+		})
+	} else if !manageDNSForDomain(ic.Status.Domain, status, dnsConfig) {
+		conditions = append(conditions, operatorv1.OperatorCondition{
+			Type:    operatorv1.DNSManagedIngressConditionType,
+			Status:  operatorv1.ConditionFalse,
+			Reason:  "DomainNotMatching",
+			Message: "DNS management is not supported for ingresscontrollers with domain not matching the baseDomain of the cluster DNS config.",
+		})
+	} else {
+		conditions = append(conditions, operatorv1.OperatorCondition{
 			Type:    operatorv1.DNSManagedIngressConditionType,
 			Status:  operatorv1.ConditionTrue,
 			Reason:  "Normal",
 			Message: "DNS management is supported and zones are specified in the cluster DNS config.",
-		},
+		})
 	}
 
 	switch {
@@ -953,6 +953,13 @@ func computeDNSStatus(ic *operatorv1.IngressController, wildcardRecord *iov1.DNS
 			Reason:  "RecordNotFound",
 			Message: "The wildcard record resource was not found.",
 		})
+	case wildcardRecord.Spec.DNSManagementPolicy == iov1.UnmanagedDNS:
+		conditions = append(conditions, operatorv1.OperatorCondition{
+			Type:    operatorv1.DNSReadyIngressConditionType,
+			Status:  operatorv1.ConditionUnknown,
+			Reason:  "UnmanagedDNS",
+			Message: "The DNS management policy is set to Unmanaged.",
+		})
 	case len(wildcardRecord.Status.Zones) == 0:
 		conditions = append(conditions, operatorv1.OperatorCondition{
 			Type:    operatorv1.DNSReadyIngressConditionType,
@@ -962,31 +969,48 @@ func computeDNSStatus(ic *operatorv1.IngressController, wildcardRecord *iov1.DNS
 		})
 	case len(wildcardRecord.Status.Zones) > 0:
 		var failedZones []configv1.DNSZone
+		var unknownZones []configv1.DNSZone
 		for _, zone := range wildcardRecord.Status.Zones {
 			for _, cond := range zone.Conditions {
-				if cond.Type == iov1.DNSRecordFailedConditionType && cond.Status == string(operatorv1.ConditionTrue) {
+				if cond.Type != iov1.DNSRecordPublishedConditionType {
+					continue
+				}
+				if !checkZoneInConfig(dnsConfig, zone.DNSZone) {
+					continue
+				}
+				switch cond.Status {
+				case string(operatorv1.ConditionFalse):
 					// check to see if the zone is in the dnsConfig.Spec
 					// fix:BZ1942657 - relates to status changes when updating DNS PrivateZone config
-					if checkZoneInConfig(dnsConfig, zone.DNSZone) {
-						failedZones = append(failedZones, zone.DNSZone)
-					}
+					failedZones = append(failedZones, zone.DNSZone)
+				case string(operatorv1.ConditionUnknown):
+					unknownZones = append(failedZones, zone.DNSZone)
 				}
 			}
 		}
-		if len(failedZones) == 0 {
-			conditions = append(conditions, operatorv1.OperatorCondition{
-				Type:    operatorv1.DNSReadyIngressConditionType,
-				Status:  operatorv1.ConditionTrue,
-				Reason:  "NoFailedZones",
-				Message: "The record is provisioned in all reported zones.",
-			})
-		} else {
+		if len(failedZones) != 0 {
 			// TODO: Add failed condition reasons
 			conditions = append(conditions, operatorv1.OperatorCondition{
 				Type:    operatorv1.DNSReadyIngressConditionType,
 				Status:  operatorv1.ConditionFalse,
 				Reason:  "FailedZones",
 				Message: fmt.Sprintf("The record failed to provision in some zones: %v", failedZones),
+			})
+		} else if len(unknownZones) != 0 {
+			// This condition is an edge case where DNSManaged=True but
+			// there was an internal error during publishing record.
+			conditions = append(conditions, operatorv1.OperatorCondition{
+				Type:    operatorv1.DNSReadyIngressConditionType,
+				Status:  operatorv1.ConditionFalse,
+				Reason:  "UnknownZones",
+				Message: fmt.Sprintf("Provisioning of the record is in an unknown state in some zones: %v", unknownZones),
+			})
+		} else {
+			conditions = append(conditions, operatorv1.OperatorCondition{
+				Type:    operatorv1.DNSReadyIngressConditionType,
+				Status:  operatorv1.ConditionTrue,
+				Reason:  "NoFailedZones",
+				Message: "The record is provisioned in all reported zones.",
 			})
 		}
 	}

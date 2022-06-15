@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	iov1 "github.com/openshift/api/operatoringress/v1"
@@ -15,17 +16,28 @@ import (
 )
 
 func TestPublishRecordToZones(t *testing.T) {
-	var tests = []struct {
-		name   string
-		zones  []configv1.DNSZone
-		expect []string
+	tests := []struct {
+		name         string
+		zones        []configv1.DNSZone
+		unManagedDNS bool
+		expect       []iov1.DNSZoneStatus
 	}{
 		{
 			name: "testing for a successful update of 1 record",
-			zones: []configv1.DNSZone{{
-				ID: "/subscriptions/E540B02D-5CCE-4D47-A13B-EB05A19D696E/resourceGroups/test-rg/providers/Microsoft.Network/dnszones/dnszone.io"},
+			zones: []configv1.DNSZone{
+				{ID: "/subscriptions/E540B02D-5CCE-4D47-A13B-EB05A19D696E/resourceGroups/test-rg/providers/Microsoft.Network/dnszones/dnszone.io"},
 			},
-			expect: []string{string(operatorv1.ConditionFalse)},
+			expect: []iov1.DNSZoneStatus{{
+				DNSZone: configv1.DNSZone{
+					ID: "/subscriptions/E540B02D-5CCE-4D47-A13B-EB05A19D696E/resourceGroups/test-rg/providers/Microsoft.Network/dnszones/dnszone.io",
+				},
+				Conditions: []iov1.DNSZoneCondition{
+					{
+						Type:   "Published",
+						Status: "True",
+					},
+				},
+			}},
 		},
 		{
 			name:   "when no zones available",
@@ -36,32 +48,80 @@ func TestPublishRecordToZones(t *testing.T) {
 			name: "when one zone available and one not available",
 			zones: []configv1.DNSZone{
 				{ID: "/subscriptions/E540B02D-5CCE-4D47-A13B-EB05A19D696E/resourceGroups/test-rg/providers/Microsoft.Network/dnszones/dnszone.io"},
-				{ID: ""}},
-			expect: []string{string(operatorv1.ConditionFalse), string(operatorv1.ConditionFalse)},
+				{ID: ""},
+			},
+			expect: []iov1.DNSZoneStatus{
+				{
+					DNSZone: configv1.DNSZone{ID: "/subscriptions/E540B02D-5CCE-4D47-A13B-EB05A19D696E/resourceGroups/test-rg/providers/Microsoft.Network/dnszones/dnszone.io"},
+					Conditions: []iov1.DNSZoneCondition{
+						{
+							Type:   "Published",
+							Status: "True",
+						},
+					},
+				},
+				{
+					DNSZone: configv1.DNSZone{ID: ""},
+					Conditions: []iov1.DNSZoneCondition{
+						{
+							Type:   "Published",
+							Status: "True",
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "when one zone available and one not available and unmanaged DNS policy",
+			zones: []configv1.DNSZone{
+				{ID: "/subscriptions/E540B02D-5CCE-4D47-A13B-EB05A19D696E/resourceGroups/test-rg/providers/Microsoft.Network/dnszones/dnszone.io"},
+				{ID: ""},
+			},
+			unManagedDNS: true,
+			expect: []iov1.DNSZoneStatus{
+				{
+					DNSZone: configv1.DNSZone{ID: "/subscriptions/E540B02D-5CCE-4D47-A13B-EB05A19D696E/resourceGroups/test-rg/providers/Microsoft.Network/dnszones/dnszone.io"},
+					Conditions: []iov1.DNSZoneCondition{
+						{
+							Type:   "Published",
+							Status: "Unknown",
+						},
+					},
+				},
+				{
+					DNSZone: configv1.DNSZone{ID: ""},
+					Conditions: []iov1.DNSZoneCondition{
+						{
+							Type:   "Published",
+							Status: "Unknown",
+						},
+					},
+				},
+			},
 		},
 	}
 
 	for _, test := range tests {
 		record := &iov1.DNSRecord{
 			Spec: iov1.DNSRecordSpec{
-				DNSName:    "subdomain.dnszone.io.",
-				RecordType: iov1.ARecordType,
-				Targets:    []string{"55.11.22.33"},
+				DNSName:             "subdomain.dnszone.io.",
+				RecordType:          iov1.ARecordType,
+				DNSManagementPolicy: iov1.ManagedDNS,
+				Targets:             []string{"55.11.22.33"},
 			},
 		}
+		if test.unManagedDNS {
+			record.Spec.DNSManagementPolicy = iov1.UnmanagedDNS
+		}
 		r := &reconciler{
-			//TODO To write a fake provider that can return errors and add more test cases.
+			// TODO To write a fake provider that can return errors and add more test cases.
 			dnsProvider: &dns.FakeProvider{},
 		}
-		actual, _ := r.publishRecordToZones(test.zones, record)
-		var conditions []string
-		for _, dnsStatus := range actual {
-			for _, condition := range dnsStatus.Conditions {
-				conditions = append(conditions, condition.Status)
-			}
-		}
-		if !cmp.Equal(conditions, test.expect) {
-			t.Fatalf("%q: expected:\n%#v\ngot:\n%#v", test.name, test.expect, conditions)
+
+		_, actual := r.publishRecordToZones(test.zones, record)
+		opts := cmpopts.IgnoreFields(iov1.DNSZoneCondition{}, "Reason", "Message", "LastTransitionTime")
+		if !cmp.Equal(actual, test.expect, opts) {
+			t.Fatalf("%q: found diff between actual and expected:\n%s", test.name, cmp.Diff(actual, test.expect, opts))
 		}
 	}
 }
@@ -69,7 +129,7 @@ func TestPublishRecordToZones(t *testing.T) {
 // TestPublishRecordToZonesMergesStatus verifies that publishRecordToZones
 // correctly merges status updates.
 func TestPublishRecordToZonesMergesStatus(t *testing.T) {
-	var testCases = []struct {
+	testCases := []struct {
 		description     string
 		oldZoneStatuses []iov1.DNSZoneStatus
 		expectChange    bool
@@ -99,8 +159,8 @@ func TestPublishRecordToZonesMergesStatus(t *testing.T) {
 					},
 					Conditions: []iov1.DNSZoneCondition{
 						{
-							Type:   "Failed",
-							Status: "False",
+							Type:   "Published",
+							Status: "True",
 						},
 					},
 				},
@@ -116,8 +176,8 @@ func TestPublishRecordToZonesMergesStatus(t *testing.T) {
 					},
 					Conditions: []iov1.DNSZoneCondition{
 						{
-							Type:   "Failed",
-							Status: "True",
+							Type:   "Published",
+							Status: "False",
 						},
 					},
 				},
@@ -133,8 +193,8 @@ func TestPublishRecordToZonesMergesStatus(t *testing.T) {
 					},
 					Conditions: []iov1.DNSZoneCondition{
 						{
-							Type:    "Failed",
-							Status:  "False",
+							Type:    "Published",
+							Status:  "True",
 							Reason:  "ProviderSuccess",
 							Message: "The DNS provider succeeded in ensuring the record",
 						},
@@ -147,17 +207,82 @@ func TestPublishRecordToZonesMergesStatus(t *testing.T) {
 
 	for _, tc := range testCases {
 		record := &iov1.DNSRecord{
+			Spec: iov1.DNSRecordSpec{
+				DNSManagementPolicy: iov1.ManagedDNS,
+			},
 			Status: iov1.DNSRecordStatus{Zones: tc.oldZoneStatuses},
 		}
 		r := &reconciler{dnsProvider: &dns.FakeProvider{}}
 		zone := []configv1.DNSZone{{ID: "zone2"}}
 		oldStatuses := record.Status.DeepCopy().Zones
-		newStatuses, _ := r.publishRecordToZones(zone, record)
+		_, newStatuses := r.publishRecordToZones(zone, record)
 		if !dnsZoneStatusSlicesEqual(oldStatuses, tc.oldZoneStatuses) {
 			t.Fatalf("%q: publishRecordToZones mutated the record's status conditions\nold: %#v\nnew: %#v", tc.description, oldStatuses, tc.oldZoneStatuses)
 		}
 		if equal := dnsZoneStatusSlicesEqual(oldStatuses, newStatuses); !equal != tc.expectChange {
 			t.Fatalf("%q: expected old and new status equal to be %v, got %v\nold: %#v\nnew: %#v", tc.description, tc.expectChange, equal, oldStatuses, newStatuses)
+		}
+	}
+}
+
+func TestMigrateDNSRecordStatus(t *testing.T) {
+	tests := []struct {
+		name       string
+		conditions []iov1.DNSZoneCondition
+		expected   []iov1.DNSZoneCondition
+	}{
+		{
+			name: "DNS record has previously failed records",
+			conditions: []iov1.DNSZoneCondition{
+				{
+					Type:   iov1.DNSRecordFailedConditionType,
+					Status: string(operatorv1.ConditionTrue),
+				},
+			},
+			expected: []iov1.DNSZoneCondition{
+				{
+					Type:   iov1.DNSRecordPublishedConditionType,
+					Status: string(operatorv1.ConditionFalse),
+				},
+			},
+		},
+		{
+			name: "DNS record has previously succeeded records",
+			conditions: []iov1.DNSZoneCondition{
+				{
+					Type:   iov1.DNSRecordFailedConditionType,
+					Status: string(operatorv1.ConditionFalse),
+				},
+			},
+			expected: []iov1.DNSZoneCondition{
+				{
+					Type:   iov1.DNSRecordPublishedConditionType,
+					Status: string(operatorv1.ConditionTrue),
+				},
+			},
+		},
+		{
+			name: "DNS record has unrelated status condition",
+			conditions: []iov1.DNSZoneCondition{
+				{
+					Type:   "UnrelatedType",
+					Status: string(operatorv1.ConditionFalse),
+				},
+			},
+			expected: []iov1.DNSZoneCondition{
+				{
+					Type:   "UnrelatedType",
+					Status: string(operatorv1.ConditionFalse),
+				},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		_, actual := migrateRecordStatusCondition(tc.conditions)
+		opts := cmpopts.IgnoreFields(iov1.DNSZoneCondition{}, "Reason", "Message", "LastTransitionTime")
+		if !cmp.Equal(actual, tc.expected, opts) {
+			t.Fatalf("%q: found diff:\n%s", tc.name, cmp.Diff(actual, tc.expected, opts))
 		}
 	}
 }
@@ -193,8 +318,8 @@ func TestDnsZoneStatusSlicesEqual(t *testing.T) {
 					},
 					Conditions: []iov1.DNSZoneCondition{
 						{
-							Type:   "Failed",
-							Status: "False",
+							Type:   "Published",
+							Status: "True",
 						},
 					},
 				},
@@ -206,8 +331,8 @@ func TestDnsZoneStatusSlicesEqual(t *testing.T) {
 					},
 					Conditions: []iov1.DNSZoneCondition{
 						{
-							Type:   "Failed",
-							Status: "False",
+							Type:   "Published",
+							Status: "True",
 						},
 					},
 				},
@@ -223,8 +348,8 @@ func TestDnsZoneStatusSlicesEqual(t *testing.T) {
 					},
 					Conditions: []iov1.DNSZoneCondition{
 						{
-							Type:   "Failed",
-							Status: "True",
+							Type:   "Published",
+							Status: "False",
 						},
 					},
 				},
@@ -253,8 +378,8 @@ func TestDnsZoneStatusSlicesEqual(t *testing.T) {
 					},
 					Conditions: []iov1.DNSZoneCondition{
 						{
-							Type:   "Failed",
-							Status: "True",
+							Type:   "Published",
+							Status: "False",
 						},
 					},
 				},
@@ -266,8 +391,8 @@ func TestDnsZoneStatusSlicesEqual(t *testing.T) {
 					},
 					Conditions: []iov1.DNSZoneCondition{
 						{
-							Type:   "Failed",
-							Status: "False",
+							Type:   "Published",
+							Status: "True",
 						},
 					},
 				},
@@ -283,8 +408,8 @@ func TestDnsZoneStatusSlicesEqual(t *testing.T) {
 					},
 					Conditions: []iov1.DNSZoneCondition{
 						{
-							Type:               "Failed",
-							Status:             "True",
+							Type:               "Published",
+							Status:             "False",
 							LastTransitionTime: metav1.Unix(0, 0),
 						},
 					},
@@ -297,8 +422,8 @@ func TestDnsZoneStatusSlicesEqual(t *testing.T) {
 					},
 					Conditions: []iov1.DNSZoneCondition{
 						{
-							Type:               "Failed",
-							Status:             "True",
+							Type:               "Published",
+							Status:             "False",
 							LastTransitionTime: metav1.Unix(1, 0),
 						},
 					},
@@ -315,8 +440,8 @@ func TestDnsZoneStatusSlicesEqual(t *testing.T) {
 					},
 					Conditions: []iov1.DNSZoneCondition{
 						{
-							Type:   "Failed",
-							Status: "True",
+							Type:   "Published",
+							Status: "False",
 							Reason: "foo",
 						},
 					},
@@ -329,8 +454,8 @@ func TestDnsZoneStatusSlicesEqual(t *testing.T) {
 					},
 					Conditions: []iov1.DNSZoneCondition{
 						{
-							Type:   "Failed",
-							Status: "True",
+							Type:   "Published",
+							Status: "False",
 							Reason: "bar",
 						},
 					},
@@ -347,8 +472,8 @@ func TestDnsZoneStatusSlicesEqual(t *testing.T) {
 					},
 					Conditions: []iov1.DNSZoneCondition{
 						{
-							Type:   "Failed",
-							Status: "False",
+							Type:   "Published",
+							Status: "True",
 						},
 						{
 							Type:   "Ready",
@@ -368,8 +493,8 @@ func TestDnsZoneStatusSlicesEqual(t *testing.T) {
 							Status: "True",
 						},
 						{
-							Type:   "Failed",
-							Status: "False",
+							Type:   "Published",
+							Status: "True",
 						},
 					},
 				},
@@ -385,12 +510,12 @@ func TestDnsZoneStatusSlicesEqual(t *testing.T) {
 					},
 					Conditions: []iov1.DNSZoneCondition{
 						{
-							Type:   "Failed",
-							Status: "False",
+							Type:   "Published",
+							Status: "True",
 						},
 						{
-							Type:   "Failed",
-							Status: "False",
+							Type:   "Published",
+							Status: "True",
 						},
 					},
 				},
@@ -402,8 +527,8 @@ func TestDnsZoneStatusSlicesEqual(t *testing.T) {
 					},
 					Conditions: []iov1.DNSZoneCondition{
 						{
-							Type:   "Failed",
-							Status: "False",
+							Type:   "Published",
+							Status: "True",
 						},
 					},
 				},
@@ -423,7 +548,7 @@ func TestRecordIsAlreadyPublishedToZone(t *testing.T) {
 		zoneWithId  = configv1.DNSZone{ID: "foo"}
 		zoneWithTag = configv1.DNSZone{Tags: map[string]string{"foo": "bar"}}
 	)
-	var testCases = []struct {
+	testCases := []struct {
 		description  string
 		zone         *configv1.DNSZone
 		zoneStatuses []iov1.DNSZoneStatus
@@ -436,14 +561,14 @@ func TestRecordIsAlreadyPublishedToZone(t *testing.T) {
 			expect:       false,
 		},
 		{
-			description: "status.zones has an entry with matching id but Failed=Unknown",
+			description: "status.zones has an entry with matching id but Published=Unknown",
 			zone:        &zoneWithId,
 			zoneStatuses: []iov1.DNSZoneStatus{
 				{
 					DNSZone: zoneWithId,
 					Conditions: []iov1.DNSZoneCondition{
 						{
-							Type:   "Failed",
+							Type:   "Published",
 							Status: "Unknown",
 						},
 					},
@@ -452,7 +577,7 @@ func TestRecordIsAlreadyPublishedToZone(t *testing.T) {
 					DNSZone: zoneWithTag,
 					Conditions: []iov1.DNSZoneCondition{
 						{
-							Type:   "Failed",
+							Type:   "Published",
 							Status: "Unknown",
 						},
 					},
@@ -461,64 +586,14 @@ func TestRecordIsAlreadyPublishedToZone(t *testing.T) {
 			expect: false,
 		},
 		{
-			description: "status.zones has an entry with matching id but Failed=True",
+			description: "status.zones has an entry with matching id but Published=False",
 			zone:        &zoneWithId,
 			zoneStatuses: []iov1.DNSZoneStatus{
 				{
 					DNSZone: zoneWithId,
 					Conditions: []iov1.DNSZoneCondition{
 						{
-							Type:   "Failed",
-							Status: "True",
-						},
-					},
-				},
-				{
-					DNSZone: zoneWithTag,
-					Conditions: []iov1.DNSZoneCondition{
-						{
-							Type:   "Failed",
-							Status: "True",
-						},
-					},
-				},
-			},
-			expect: false,
-		},
-		{
-			description: "status.zones has an entry with matching tag but Failed=True",
-			zone:        &zoneWithTag,
-			zoneStatuses: []iov1.DNSZoneStatus{
-				{
-					DNSZone: zoneWithId,
-					Conditions: []iov1.DNSZoneCondition{
-						{
-							Type:   "Failed",
-							Status: "True",
-						},
-					},
-				},
-				{
-					DNSZone: zoneWithTag,
-					Conditions: []iov1.DNSZoneCondition{
-						{
-							Type:   "Failed",
-							Status: "True",
-						},
-					},
-				},
-			},
-			expect: false,
-		},
-		{
-			description: "status.zones has an entry with matching id and Failed=False",
-			zone:        &zoneWithId,
-			zoneStatuses: []iov1.DNSZoneStatus{
-				{
-					DNSZone: zoneWithId,
-					Conditions: []iov1.DNSZoneCondition{
-						{
-							Type:   "Failed",
+							Type:   "Published",
 							Status: "False",
 						},
 					},
@@ -527,7 +602,57 @@ func TestRecordIsAlreadyPublishedToZone(t *testing.T) {
 					DNSZone: zoneWithTag,
 					Conditions: []iov1.DNSZoneCondition{
 						{
-							Type:   "Failed",
+							Type:   "Published",
+							Status: "False",
+						},
+					},
+				},
+			},
+			expect: false,
+		},
+		{
+			description: "status.zones has an entry with matching tag but Published=False",
+			zone:        &zoneWithTag,
+			zoneStatuses: []iov1.DNSZoneStatus{
+				{
+					DNSZone: zoneWithId,
+					Conditions: []iov1.DNSZoneCondition{
+						{
+							Type:   "Published",
+							Status: "False",
+						},
+					},
+				},
+				{
+					DNSZone: zoneWithTag,
+					Conditions: []iov1.DNSZoneCondition{
+						{
+							Type:   "Published",
+							Status: "False",
+						},
+					},
+				},
+			},
+			expect: false,
+		},
+		{
+			description: "status.zones has an entry with matching id and Published=True",
+			zone:        &zoneWithId,
+			zoneStatuses: []iov1.DNSZoneStatus{
+				{
+					DNSZone: zoneWithId,
+					Conditions: []iov1.DNSZoneCondition{
+						{
+							Type:   "Published",
+							Status: "True",
+						},
+					},
+				},
+				{
+					DNSZone: zoneWithTag,
+					Conditions: []iov1.DNSZoneCondition{
+						{
+							Type:   "Published",
 							Status: "True",
 						},
 					},
@@ -536,15 +661,15 @@ func TestRecordIsAlreadyPublishedToZone(t *testing.T) {
 			expect: true,
 		},
 		{
-			description: "status.zones has an entry with matching tag and Failed=False",
+			description: "status.zones has an entry with matching tag and Published=True",
 			zone:        &zoneWithTag,
 			zoneStatuses: []iov1.DNSZoneStatus{
 				{
 					DNSZone: zoneWithId,
 					Conditions: []iov1.DNSZoneCondition{
 						{
-							Type:   "Failed",
-							Status: "True",
+							Type:   "Published",
+							Status: "False",
 						},
 					},
 				},
@@ -552,8 +677,8 @@ func TestRecordIsAlreadyPublishedToZone(t *testing.T) {
 					DNSZone: zoneWithTag,
 					Conditions: []iov1.DNSZoneCondition{
 						{
-							Type:   "Failed",
-							Status: "False",
+							Type:   "Published",
+							Status: "True",
 						},
 					},
 				},

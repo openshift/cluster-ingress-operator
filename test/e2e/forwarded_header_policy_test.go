@@ -51,6 +51,7 @@ func testRouteHeaders(t *testing.T, image string, route *routev1.Route, address 
 	for _, header := range headers {
 		extraCurlArgs = append(extraCurlArgs, "-H", header)
 	}
+	extraCurlArgs = append(extraCurlArgs, "--resolve", route.Spec.Host+":80:"+address)
 	testPodCount++
 	name := fmt.Sprintf("%s%d", route.Name, testPodCount)
 	clientPod := buildCurlPod(name, route.Namespace, image, route.Spec.Host, address, extraCurlArgs...)
