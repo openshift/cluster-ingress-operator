@@ -586,7 +586,7 @@ func loadBalancerServiceAnnotationsChanged(current, expected *corev1.Service, an
 		updated.Annotations = map[string]string{}
 	}
 
-	for annotation := range managedLoadBalancerServiceAnnotations {
+	for annotation := range annotations {
 		currentVal, have := current.Annotations[annotation]
 		expectedVal, want := expected.Annotations[annotation]
 		if want && (!have || currentVal != expectedVal) {
