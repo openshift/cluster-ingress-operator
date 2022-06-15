@@ -922,6 +922,20 @@ func TestLoadBalancerServiceAnnotationsChanged(t *testing.T) {
 			expect:              false,
 		},
 		{
+			description:         "if current annotations is nil and expected annotations is empty",
+			currentAnnotations:  nil,
+			expectedAnnotations: map[string]string{},
+			managedAnnotations:  sets.NewString("foo"),
+			expect:              false,
+		},
+		{
+			description:         "if current annotations is empty and expected annotations is nil",
+			currentAnnotations:  map[string]string{},
+			expectedAnnotations: nil,
+			managedAnnotations:  sets.NewString("foo"),
+			expect:              false,
+		},
+		{
 			description: "if an unmanaged annotation is updated",
 			currentAnnotations: map[string]string{
 				"foo": "bar",
