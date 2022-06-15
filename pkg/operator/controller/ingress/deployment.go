@@ -657,15 +657,16 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		deployment.Spec.Template.Spec.Containers[0].StartupProbe.ProbeHandler.HTTPGet.Host = "localhost"
 		deployment.Spec.Template.Spec.DNSPolicy = corev1.DNSClusterFirstWithHostNet
 
-		config := ci.Status.EndpointPublishingStrategy.HostNetwork
-		if config.HTTPSPort == config.HTTPPort || config.HTTPPort == config.StatsPort || config.StatsPort == config.HTTPSPort {
-			return nil, fmt.Errorf("the specified HTTPS, HTTP and Stats ports %d, %d, %d are not unique", config.HTTPSPort, config.HTTPPort, config.StatsPort)
-		}
+		if config := ci.Status.EndpointPublishingStrategy.HostNetwork; config != nil {
+			if config.HTTPSPort == config.HTTPPort || config.HTTPPort == config.StatsPort || config.StatsPort == config.HTTPSPort {
+				return nil, fmt.Errorf("the specified HTTPS, HTTP and Stats ports %d, %d, %d are not unique", config.HTTPSPort, config.HTTPPort, config.StatsPort)
+			}
 
-		// Set the ports to the values from the host network configuration
-		httpPort = config.HTTPPort
-		httpsPort = config.HTTPSPort
-		statsPort = config.StatsPort
+			// Set the ports to the values from the host network configuration
+			httpPort = config.HTTPPort
+			httpsPort = config.HTTPSPort
+			statsPort = config.StatsPort
+		}
 
 		// Append the environment variables for the HTTP and HTTPS ports
 		env = append(env,
