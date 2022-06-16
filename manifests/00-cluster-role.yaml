@@ -32,6 +32,13 @@ rules:
   - "create"
 
 - apiGroups:
+  - ""
+  resources:
+  - nodes
+  verbs:
+  - list
+
+- apiGroups:
   - apps
   resources:
   - deployments
