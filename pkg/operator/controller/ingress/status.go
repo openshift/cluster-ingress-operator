@@ -15,6 +15,7 @@ import (
 
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	"github.com/openshift/cluster-ingress-operator/pkg/util/conditionexpectations"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/retryableerror"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -36,17 +37,6 @@ import (
 
 // clock is to enable unit testing
 var clock utilclock.Clock = utilclock.RealClock{}
-
-// expectedCondition contains a condition that is expected to be checked when
-// determining Available or Degraded status of the ingress controller
-type expectedCondition struct {
-	condition string
-	status    operatorv1.ConditionStatus
-	// ifConditionsTrue is a list of prerequisite conditions that should be true
-	// or else the condition is not checked.
-	ifConditionsTrue []string
-	gracePeriod      time.Duration
-}
 
 // syncIngressControllerStatus computes the current status of ic and
 // updates status upon any changes since last sync.
@@ -225,32 +215,32 @@ func computeDeploymentPodsScheduledCondition(deployment *appsv1.Deployment, pods
 // 3) the LoadBalancerReady condition of the IngressController.
 // The ingresscontroller is judged Available only if all 3 conditions are true
 func computeIngressAvailableCondition(conditions []operatorv1.OperatorCondition) operatorv1.OperatorCondition {
-	expected := []expectedCondition{
+	expectations := conditionexpectations.MakeExpectations([]conditionexpectations.Expectation{
 		{
-			condition: IngressControllerDeploymentAvailableConditionType,
-			status:    operatorv1.ConditionTrue,
+			ConditionType:   IngressControllerDeploymentAvailableConditionType,
+			ConditionStatus: operatorv1.ConditionTrue,
 		},
 		{
-			condition: operatorv1.DNSReadyIngressConditionType,
-			status:    operatorv1.ConditionTrue,
-			ifConditionsTrue: []string{
+			ConditionType:   operatorv1.DNSReadyIngressConditionType,
+			ConditionStatus: operatorv1.ConditionTrue,
+			IfConditionsTrue: []string{
 				operatorv1.LoadBalancerManagedIngressConditionType,
 				operatorv1.LoadBalancerReadyIngressConditionType,
 				operatorv1.DNSManagedIngressConditionType,
 			},
 		},
 		{
-			condition:        operatorv1.LoadBalancerReadyIngressConditionType,
-			status:           operatorv1.ConditionTrue,
-			ifConditionsTrue: []string{operatorv1.LoadBalancerManagedIngressConditionType},
+			ConditionType:    operatorv1.LoadBalancerReadyIngressConditionType,
+			ConditionStatus:  operatorv1.ConditionTrue,
+			IfConditionsTrue: []string{operatorv1.LoadBalancerManagedIngressConditionType},
 		},
-	}
+	})
 
 	// Cover the rare case of no conditions
 	if len(conditions) == 0 {
 		return operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeAvailable, Status: operatorv1.ConditionFalse}
 	}
-	_, unavailableConditions, _ := checkConditions(expected, conditions)
+	_, unavailableConditions, _ := expectations.Check(conditions, clock.Now())
 	if len(unavailableConditions) != 0 {
 		degraded := formatConditions(unavailableConditions)
 		return operatorv1.OperatorCondition{
@@ -264,56 +254,6 @@ func computeIngressAvailableCondition(conditions []operatorv1.OperatorCondition)
 		Type:   operatorv1.IngressControllerAvailableConditionType,
 		Status: operatorv1.ConditionTrue,
 	}
-}
-
-// checkConditions compares expected operator conditions to existing operator
-// conditions and returns a list of graceConditions, degradedconditions, and a
-// requeueing wait time.
-func checkConditions(expectedConds []expectedCondition, conditions []operatorv1.OperatorCondition) ([]*operatorv1.OperatorCondition, []*operatorv1.OperatorCondition, time.Duration) {
-	var graceConditions, degradedConditions []*operatorv1.OperatorCondition
-	var requeueAfter time.Duration
-	conditionsMap := make(map[string]*operatorv1.OperatorCondition)
-
-	for i := range conditions {
-		conditionsMap[conditions[i].Type] = &conditions[i]
-	}
-	now := clock.Now()
-	for _, expected := range expectedConds {
-		condition, haveCondition := conditionsMap[expected.condition]
-		if !haveCondition {
-			continue
-		}
-		if condition.Status == expected.status {
-			continue
-		}
-		failedPredicates := false
-		for _, ifCond := range expected.ifConditionsTrue {
-			predicate, havePredicate := conditionsMap[ifCond]
-			if !havePredicate || predicate.Status != operatorv1.ConditionTrue {
-				failedPredicates = true
-				break
-			}
-		}
-		if failedPredicates {
-			continue
-		}
-		if expected.gracePeriod != 0 {
-			t1 := now.Add(-expected.gracePeriod)
-			t2 := condition.LastTransitionTime
-			if t2.After(t1) {
-				d := t2.Sub(t1)
-				if len(graceConditions) == 0 || d < requeueAfter {
-					// Recompute status conditions again
-					// after the grace period has elapsed.
-					requeueAfter = d
-				}
-				graceConditions = append(graceConditions, condition)
-				continue
-			}
-		}
-		degradedConditions = append(degradedConditions, condition)
-	}
-	return graceConditions, degradedConditions, requeueAfter
 }
 
 // computeDeploymentAvailableCondition computes the ingresscontroller's
@@ -452,61 +392,56 @@ func computeDeploymentReplicasAllAvailableCondition(deployment *appsv1.Deploymen
 // reconcile the ingresscontroller again after that period to update its status
 // conditions.
 func computeIngressDegradedCondition(conditions []operatorv1.OperatorCondition, icName string) (operatorv1.OperatorCondition, error) {
-	expectedConditions := []expectedCondition{
+	expectedConditions := []conditionexpectations.Expectation{
 		{
-			condition: IngressControllerAdmittedConditionType,
-			status:    operatorv1.ConditionTrue,
+			ConditionType:   IngressControllerAdmittedConditionType,
+			ConditionStatus: operatorv1.ConditionTrue,
 		},
 		{
-			condition:   IngressControllerPodsScheduledConditionType,
-			status:      operatorv1.ConditionTrue,
-			gracePeriod: time.Minute * 10,
+			ConditionType:   IngressControllerPodsScheduledConditionType,
+			ConditionStatus: operatorv1.ConditionTrue,
+			GracePeriod:     time.Minute * 10,
 		},
 		{
-			condition:   IngressControllerDeploymentAvailableConditionType,
-			status:      operatorv1.ConditionTrue,
-			gracePeriod: time.Second * 30,
+			ConditionType:   IngressControllerDeploymentAvailableConditionType,
+			ConditionStatus: operatorv1.ConditionTrue,
+			GracePeriod:     time.Second * 30,
 		},
 		{
-			condition:   IngressControllerDeploymentReplicasMinAvailableConditionType,
-			status:      operatorv1.ConditionTrue,
-			gracePeriod: time.Second * 60,
+			ConditionType:   IngressControllerDeploymentReplicasMinAvailableConditionType,
+			ConditionStatus: operatorv1.ConditionTrue,
+			GracePeriod:     time.Second * 60,
 		},
 		{
-			condition:   IngressControllerDeploymentReplicasAllAvailableConditionType,
-			status:      operatorv1.ConditionTrue,
-			gracePeriod: time.Minute * 60,
+			ConditionType:   IngressControllerDeploymentReplicasAllAvailableConditionType,
+			ConditionStatus: operatorv1.ConditionTrue,
+			GracePeriod:     time.Minute * 60,
 		},
 		{
-			condition:        operatorv1.LoadBalancerReadyIngressConditionType,
-			status:           operatorv1.ConditionTrue,
-			ifConditionsTrue: []string{operatorv1.LoadBalancerManagedIngressConditionType},
-			gracePeriod:      time.Second * 90,
+			ConditionType:    operatorv1.LoadBalancerReadyIngressConditionType,
+			ConditionStatus:  operatorv1.ConditionTrue,
+			IfConditionsTrue: []string{operatorv1.LoadBalancerManagedIngressConditionType},
+			GracePeriod:      time.Second * 90,
 		},
 		{
-			condition: operatorv1.DNSReadyIngressConditionType,
-			status:    operatorv1.ConditionTrue,
-			ifConditionsTrue: []string{
+			ConditionType:   operatorv1.DNSReadyIngressConditionType,
+			ConditionStatus: operatorv1.ConditionTrue,
+			IfConditionsTrue: []string{
 				operatorv1.LoadBalancerManagedIngressConditionType,
 				operatorv1.LoadBalancerReadyIngressConditionType,
 				operatorv1.DNSManagedIngressConditionType,
 			},
-			gracePeriod: time.Second * 30,
+			GracePeriod: time.Second * 30,
 		},
 	}
 
 	// Only check the default ingress controller for the canary
 	// success status condition.
 	if icName == manifests.DefaultIngressControllerName {
-		canaryCond := struct {
-			condition        string
-			status           operatorv1.ConditionStatus
-			ifConditionsTrue []string
-			gracePeriod      time.Duration
-		}{
-			condition:   IngressControllerCanaryCheckSuccessConditionType,
-			status:      operatorv1.ConditionTrue,
-			gracePeriod: time.Second * 60,
+		canaryCond := conditionexpectations.Expectation{
+			ConditionType:   IngressControllerCanaryCheckSuccessConditionType,
+			ConditionStatus: operatorv1.ConditionTrue,
+			GracePeriod:     time.Second * 60,
 		}
 
 		expectedConditions = append(expectedConditions, canaryCond)
@@ -516,7 +451,8 @@ func computeIngressDegradedCondition(conditions []operatorv1.OperatorCondition, 
 	if len(conditions) == 0 {
 		return operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeDegraded, Status: operatorv1.ConditionFalse}, nil
 	}
-	graceConditions, degradedConditions, requeueAfter := checkConditions(expectedConditions, conditions)
+	expectations := conditionexpectations.MakeExpectations(expectedConditions)
+	graceConditions, degradedConditions, requeueAfter := expectations.Check(conditions, clock.Now())
 	if len(degradedConditions) != 0 {
 		// Keep checking conditions every minute while degraded.
 		retryAfter := time.Minute
