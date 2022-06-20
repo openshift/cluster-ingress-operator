@@ -428,7 +428,7 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, infraConfig 
 
 			// Detect changes to provider-specific parameters.
 			// Currently the only platforms with configurable
-			// provider-specific parameters are AWS and GCP.
+			// provider-specific parameters are AWS, GCP and IBM.
 			var lbType operatorv1.LoadBalancerProviderType
 			if specLB.ProviderParameters != nil {
 				lbType = specLB.ProviderParameters.Type
@@ -488,6 +488,28 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, infraConfig 
 						statusLB.ProviderParameters.GCP = &operatorv1.GCPLoadBalancerParameters{}
 					}
 					statusLB.ProviderParameters.GCP.ClientAccess = specClientAccess
+					changed = true
+				}
+			case operatorv1.IBMLoadBalancerProvider:
+				// The only provider parameter that is supported
+				// for IBM is subnets
+				var subnetsSpec, subnetsStatus string
+				if specLB.ProviderParameters != nil && specLB.ProviderParameters.IBM != nil {
+					subnetsSpec = specLB.ProviderParameters.IBM.Subnets
+				}
+				if statusLB.ProviderParameters != nil && statusLB.ProviderParameters.IBM != nil {
+					subnetsStatus = statusLB.ProviderParameters.IBM.Subnets
+				}
+				if subnetsSpec != subnetsStatus {
+					if statusLB.ProviderParameters == nil {
+						statusLB.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{
+							Type: operatorv1.IBMLoadBalancerProvider,
+						}
+					}
+					if statusLB.ProviderParameters.IBM == nil {
+						statusLB.ProviderParameters.IBM = &operatorv1.IBMLoadBalancerParameters{}
+					}
+					statusLB.ProviderParameters.IBM.Subnets = subnetsSpec
 					changed = true
 				}
 			}

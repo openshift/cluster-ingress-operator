@@ -114,3 +114,25 @@ Assuming `KUBECONFIG` is set, run end-to-end tests:
 ```
 $ make test-e2e
 ```
+
+## IBM Cloud notes
+
+The cluster-version-operator (CVO) overrides changes made to the ingress operator configuration.
+
+Some of the scripts above scale down the CVO to 0 replica so that your hacks to the ingress configuration are not overwritten by the CVO.
+
+On IBM Cloud, the CVO deployment cannot be scaled down as running on a managed master node. As a workaround, to avoid overriding the changes to the ingress operator configuration, you can instead use overrides in the CVO configuration (ClusterVersion version configuration) - eg:
+
+``` yaml
+  overrides:
+    - group: apps
+      kind: Deployment
+      name: ingress-operator
+      namespace: openshift-ingress-operator
+      unmanaged: true
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      name: ingresscontrollers.operator.openshift.io
+      namespace: openshift-ingress-operator
+      unmanaged: true
+```

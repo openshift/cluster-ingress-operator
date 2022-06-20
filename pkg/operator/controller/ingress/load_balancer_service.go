@@ -94,6 +94,8 @@ const (
 	// iksLBScopePublic is the service annotation value used to specify an IBM load balancer
 	// IP as private.
 	iksLBScopePrivate = "private"
+	// iksLBSubnetsAnnotation is the annotation used on a service to specify what VPC subnets the LoadBalancer is attached to
+	iksLBSubnetsAnnotation = "service.kubernetes.io/ibm-load-balancer-cloud-provider-vpc-subnets"
 
 	// azureInternalLBAnnotation is the annotation used on a service to specify an Azure
 	// load balancer as being internal.
@@ -420,6 +422,14 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 			// LB relies on iptable rules kube-proxy puts in to send traffic from the VIP node to the cluster
 			// If policy is local, traffic is only sent to pods on the local node, as such Cluster enables traffic to flow to  all the pods in the cluster
 			service.Spec.ExternalTrafficPolicy = corev1.ServiceExternalTrafficPolicyTypeCluster
+			if lb != nil && lb.ProviderParameters != nil {
+				if ibm := lb.ProviderParameters.IBM; ibm != nil && lb.ProviderParameters.Type == operatorv1.IBMLoadBalancerProvider {
+					if subnets := ibm.Subnets; subnets != "" {
+						service.Annotations[iksLBSubnetsAnnotation] = subnets
+					}
+				}
+			}
+
 		case configv1.AlibabaCloudPlatformType:
 			if !isInternal {
 				service.Annotations[alibabaCloudLBAddressTypeAnnotation] = alibabaCloudLBAddressTypeInternet

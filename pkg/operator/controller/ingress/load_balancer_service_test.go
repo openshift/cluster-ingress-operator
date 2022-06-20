@@ -165,6 +165,21 @@ func TestDesiredLoadBalancerService(t *testing.T) {
 			expect: true,
 		},
 		{
+			description:  "external load balancer with subnets for ibm platform",
+			platform:     configv1.IBMCloudPlatformType,
+			strategyType: operatorv1.LoadBalancerServiceStrategyType,
+			lbStrategy: operatorv1.LoadBalancerStrategy{
+				Scope: operatorv1.ExternalLoadBalancer,
+				ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+					Type: operatorv1.IBMLoadBalancerProvider,
+					IBM: &operatorv1.IBMLoadBalancerParameters{
+						Subnets: "subnet-id1, subnet-id2",
+					},
+				},
+			},
+			expect: true,
+		},
+		{
 			description:  "internal load balancer for ibm platform",
 			platform:     configv1.IBMCloudPlatformType,
 			strategyType: operatorv1.LoadBalancerServiceStrategyType,
@@ -420,6 +435,17 @@ func TestDesiredLoadBalancerService(t *testing.T) {
 					t.Errorf("annotation check for test %q failed; unexpected annotation %s: %s", tc.description, iksLBScopeAnnotation, iksLBScopePrivate)
 				}
 			}
+
+			if tc.lbStrategy.ProviderParameters != nil {
+				if ibm := tc.lbStrategy.ProviderParameters.IBM; ibm != nil && tc.lbStrategy.ProviderParameters.Type == operatorv1.IBMLoadBalancerProvider {
+					subnets := ibm.Subnets
+
+					if err := checkServiceHasAnnotation(svc, iksLBSubnetsAnnotation, true, subnets); err != nil {
+						t.Errorf("annotation check for test %q failed: %v", tc.description, err)
+					}
+				}
+			}
+
 		case configv1.AzurePlatformType:
 			if isInternal {
 				if err := checkServiceHasAnnotation(svc, azureInternalLBAnnotation, true, "true"); err != nil {
