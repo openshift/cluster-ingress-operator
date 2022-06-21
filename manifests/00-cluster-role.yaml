@@ -125,9 +125,15 @@ rules:
   - config.openshift.io
   resources:
   - clusteroperators/status
-  - ingresses/status
   verbs:
   - update
+
+- apiGroups:
+  - config.openshift.io
+  resources:
+  - ingresses/status
+  verbs:
+  - patch
 
 - apiGroups:
   - networking.k8s.io
