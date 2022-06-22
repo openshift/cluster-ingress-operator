@@ -3358,7 +3358,10 @@ func waitForIngressControllerCondition(t *testing.T, cl client.Client, timeout t
 
 func assertIngressControllerDeleted(t *testing.T, cl client.Client, ing *operatorv1.IngressController) {
 	t.Helper()
-	if err := deleteIngressController(t, cl, ing, 2*time.Minute); err != nil {
+	if err := deleteIngressController(t, cl, ing, 4*time.Minute); err != nil {
+		if apierrors.IsNotFound(errors.Unwrap(err)) {
+			return
+		}
 		t.Fatalf("WARNING: cloud resources may have been leaked! failed to delete ingresscontroller %s: %v", ing.Name, err)
 	} else {
 		t.Logf("deleted ingresscontroller %s", ing.Name)
@@ -3369,7 +3372,7 @@ func deleteIngressController(t *testing.T, cl client.Client, ic *operatorv1.Ingr
 	t.Helper()
 	name := types.NamespacedName{Namespace: ic.Namespace, Name: ic.Name}
 	if err := cl.Delete(context.TODO(), ic); err != nil {
-		return fmt.Errorf("failed to delete ingresscontroller: %v", err)
+		return fmt.Errorf("failed to delete ingresscontroller: %w", err)
 	}
 
 	err := wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {

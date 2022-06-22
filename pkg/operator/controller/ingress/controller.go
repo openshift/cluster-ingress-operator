@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"regexp/syntax"
 	"strings"
+	"time"
 
 	"github.com/pkg/errors"
 
@@ -33,8 +34,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 )
@@ -98,6 +101,15 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	if err := c.Watch(&source.Kind{Type: &corev1.Service{}}, enqueueRequestForOwningIngressController(config.Namespace)); err != nil {
 		return nil, err
 	}
+	// Add watch for deleted pods specifically for ensuring ingress deletion.
+	if err := c.Watch(&source.Kind{Type: &corev1.Pod{}}, enqueueRequestForOwningIngressController(config.Namespace), predicate.Funcs{
+		CreateFunc:  func(e event.CreateEvent) bool { return false },
+		DeleteFunc:  func(e event.DeleteEvent) bool { return true },
+		UpdateFunc:  func(e event.UpdateEvent) bool { return false },
+		GenericFunc: func(e event.GenericEvent) bool { return false },
+	}); err != nil {
+		return nil, err
+	}
 	// add watch for changes in DNS config
 	if err := c.Watch(&source.Kind{Type: &configv1.DNS{}}, handler.EnqueueRequestsFromMapFunc(reconciler.ingressConfigToIngressController)); err != nil {
 		return nil, err
@@ -136,6 +148,16 @@ func enqueueRequestForOwningIngressController(namespace string) handler.EventHan
 		func(a client.Object) []reconcile.Request {
 			labels := a.GetLabels()
 			if ingressName, ok := labels[manifests.OwningIngressControllerLabel]; ok {
+				log.Info("queueing ingress", "name", ingressName, "related", a.GetSelfLink())
+				return []reconcile.Request{
+					{
+						NamespacedName: types.NamespacedName{
+							Namespace: namespace,
+							Name:      ingressName,
+						},
+					},
+				}
+			} else if ingressName, ok := labels[operatorcontroller.ControllerDeploymentLabel]; ok {
 				log.Info("queueing ingress", "name", ingressName, "related", a.GetSelfLink())
 				return []reconcile.Request{
 					{
@@ -200,7 +222,13 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	// If the ingresscontroller is deleted, handle that and return early.
 	if ingress.DeletionTimestamp != nil {
 		if err := r.ensureIngressDeleted(ingress); err != nil {
-			return reconcile.Result{}, fmt.Errorf("failed to ensure ingress deletion: %v", err)
+			switch e := err.(type) {
+			case retryable.Error:
+				log.Error(e, "got retryable error; requeueing", "after", e.After())
+				return reconcile.Result{RequeueAfter: e.After()}, nil
+			default:
+				return reconcile.Result{}, fmt.Errorf("failed to ensure ingress deletion: %v", err)
+			}
 		}
 		log.Info("ingresscontroller was successfully deleted", "ingresscontroller", ingress)
 		return reconcile.Result{}, nil
@@ -773,6 +801,22 @@ func (r *reconciler) ensureIngressDeleted(ingress *operatorv1.IngressController)
 			errs = append(errs, fmt.Errorf("failed to get deployment for ingress %s/%s: %v", ingress.Namespace, ingress.Name, err))
 		} else if haveDepl {
 			errs = append(errs, fmt.Errorf("deployment still exists for ingress %s/%s", ingress.Namespace, ingress.Name))
+		} else {
+			// Wait for all the router pods to be deleted. This is important because the router deployment
+			// gets deleted a handful of milliseconds before the router pods process the graceful shutdown. This causes
+			// a race condition in which we clear route status, then the router pod will race to re-admit the status in
+			// these few milliseconds before it initiates the graceful shutdown. The only way to avoid is to wait
+			// until all router pods are deleted.
+			if allDeleted, err := r.allRouterPodsDeleted(ingress); err != nil {
+				errs = append(errs, err)
+			} else if allDeleted {
+				// Deployment has been deleted and there are no more pods left.
+				// Clear all routes status for this ingress controller.
+				statusErrs := r.clearAllRoutesStatusForIngressController(ingress.ObjectMeta.Name)
+				errs = append(errs, statusErrs...)
+			} else {
+				errs = append(errs, retryable.New(fmt.Errorf("not all router pods have been deleted for %s/%s", ingress.Namespace, ingress.Name), 15*time.Second))
+			}
 		}
 	}
 
@@ -790,7 +834,7 @@ func (r *reconciler) ensureIngressDeleted(ingress *operatorv1.IngressController)
 			}
 		}
 	}
-	return utilerrors.NewAggregate(errs)
+	return retryable.NewMaybeRetryableAggregate(errs)
 }
 
 // ensureIngressController ensures all necessary router resources exist for a
@@ -907,9 +951,22 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		errs = append(errs, fmt.Errorf("failed to list pods in namespace %q: %v", operatorcontroller.DefaultOperatorNamespace, err))
 	}
 
-	errs = append(errs, r.syncIngressControllerStatus(ci, deployment, deploymentRef, pods.Items, lbService, operandEvents.Items, wildcardRecord, dnsConfig, infraConfig))
+	syncStatusErr, updated := r.syncIngressControllerStatus(ci, deployment, deploymentRef, pods.Items, lbService, operandEvents.Items, wildcardRecord, dnsConfig, infraConfig)
+	errs = append(errs, syncStatusErr)
+
+	// If syncIngressControllerStatus updated our ingress status, it's important we query for that new object.
+	// If we don't, then the next function syncRouteStatus would always fail because it has a stale ingress object.
+	if updated {
+		updatedIc := &operatorv1.IngressController{}
+		if err := r.client.Get(context.TODO(), types.NamespacedName{Namespace: ci.Namespace, Name: ci.Name}, updatedIc); err != nil {
+			errs = append(errs, fmt.Errorf("failed to get ingresscontroller: %w", err))
+		}
+		ci = updatedIc
+	}
 
 	SetIngressControllerNLBMetric(ci)
+
+	errs = append(errs, r.syncRouteStatus(ci)...)
 
 	return retryable.NewMaybeRetryableAggregate(errs)
 }
@@ -952,4 +1009,22 @@ func IsProxyProtocolNeeded(ic *operatorv1.IngressController, platform *configv1.
 		}
 	}
 	return false, nil
+}
+
+// allRouterPodsDeleted determines if all the router pods for a given ingress controller are deleted.
+func (r *reconciler) allRouterPodsDeleted(ingress *operatorv1.IngressController) (bool, error) {
+	// List all pods that are owned by the ingress controller.
+	podList := &corev1.PodList{}
+	labels := map[string]string{
+		operatorcontroller.ControllerDeploymentLabel: ingress.Name,
+	}
+	if err := r.client.List(context.TODO(), podList, client.InNamespace(operatorcontroller.DefaultOperandNamespace), client.MatchingLabels(labels)); err != nil {
+		return false, fmt.Errorf("failed to list all pods owned by %s: %w", ingress.Name, err)
+	}
+	// If any pods exist, return false since they haven't all been deleted.
+	if len(podList.Items) > 0 {
+		return false, nil
+	}
+
+	return true, nil
 }

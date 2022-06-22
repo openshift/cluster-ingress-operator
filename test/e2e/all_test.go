@@ -62,6 +62,9 @@ func TestAll(t *testing.T) {
 		t.Run("TestUniqueIdHeader", TestUniqueIdHeader)
 		t.Run("TestUserDefinedIngressController", TestUserDefinedIngressController)
 		t.Run("TestIngressOperatorCacheIsNotGlobal", TestIngressOperatorCacheIsNotGlobal)
+		t.Run("TestDeleteIngressControllerShouldClearRouteStatus", TestDeleteIngressControllerShouldClearRouteStatus)
+		t.Run("TestIngressControllerRouteSelectorUpdateShouldClearRouteStatus", TestIngressControllerRouteSelectorUpdateShouldClearRouteStatus)
+		t.Run("TestIngressControllerNamespaceSelectorUpdateShouldClearRouteStatus", TestIngressControllerNamespaceSelectorUpdateShouldClearRouteStatus)
 	})
 
 	t.Run("serial", func(t *testing.T) {
