@@ -135,96 +135,94 @@ func TestSetDefaultPublishingStrategySetsPlatformDefaults(t *testing.T) {
 				},
 			},
 		}
-		makeInfra = func(platform configv1.PlatformType) *configv1.Infrastructure {
-			return &configv1.Infrastructure{
-				Status: configv1.InfrastructureStatus{
-					Platform: platform,
-				},
+		makePlatformStatus = func(platform configv1.PlatformType) *configv1.PlatformStatus {
+			return &configv1.PlatformStatus{
+				Type: platform,
 			}
 		}
 	)
 
 	testCases := []struct {
-		name        string
-		infraConfig *configv1.Infrastructure
-		expectedIC  *operatorv1.IngressController
+		name           string
+		platformStatus *configv1.PlatformStatus
+		expectedIC     *operatorv1.IngressController
 	}{
 		{
-			name:        "Alibaba",
-			infraConfig: makeInfra(configv1.AlibabaCloudPlatformType),
-			expectedIC:  ingressControllerWithLoadBalancer,
+			name:           "Alibaba",
+			platformStatus: makePlatformStatus(configv1.AlibabaCloudPlatformType),
+			expectedIC:     ingressControllerWithLoadBalancer,
 		},
 		{
-			name:        "AWS",
-			infraConfig: makeInfra(configv1.AWSPlatformType),
-			expectedIC:  ingressControllerWithLoadBalancer,
+			name:           "AWS",
+			platformStatus: makePlatformStatus(configv1.AWSPlatformType),
+			expectedIC:     ingressControllerWithLoadBalancer,
 		},
 		{
-			name:        "Azure",
-			infraConfig: makeInfra(configv1.AzurePlatformType),
-			expectedIC:  ingressControllerWithLoadBalancer,
+			name:           "Azure",
+			platformStatus: makePlatformStatus(configv1.AzurePlatformType),
+			expectedIC:     ingressControllerWithLoadBalancer,
 		},
 		{
-			name:        "Bare metal",
-			infraConfig: makeInfra(configv1.BareMetalPlatformType),
-			expectedIC:  ingressControllerWithHostNetwork,
+			name:           "Bare metal",
+			platformStatus: makePlatformStatus(configv1.BareMetalPlatformType),
+			expectedIC:     ingressControllerWithHostNetwork,
 		},
 		{
-			name:        "Equinix Metal",
-			infraConfig: makeInfra(configv1.EquinixMetalPlatformType),
-			expectedIC:  ingressControllerWithHostNetwork,
+			name:           "Equinix Metal",
+			platformStatus: makePlatformStatus(configv1.EquinixMetalPlatformType),
+			expectedIC:     ingressControllerWithHostNetwork,
 		},
 		{
-			name:        "GCP",
-			infraConfig: makeInfra(configv1.GCPPlatformType),
-			expectedIC:  ingressControllerWithLoadBalancer,
+			name:           "GCP",
+			platformStatus: makePlatformStatus(configv1.GCPPlatformType),
+			expectedIC:     ingressControllerWithLoadBalancer,
 		},
 		{
-			name:        "IBM Cloud",
-			infraConfig: makeInfra(configv1.IBMCloudPlatformType),
-			expectedIC:  ingressControllerWithLoadBalancer,
+			name:           "IBM Cloud",
+			platformStatus: makePlatformStatus(configv1.IBMCloudPlatformType),
+			expectedIC:     ingressControllerWithLoadBalancer,
 		},
 		{
-			name:        "Libvirt",
-			infraConfig: makeInfra(configv1.LibvirtPlatformType),
-			expectedIC:  ingressControllerWithHostNetwork,
+			name:           "Libvirt",
+			platformStatus: makePlatformStatus(configv1.LibvirtPlatformType),
+			expectedIC:     ingressControllerWithHostNetwork,
 		},
 		{
-			name:        "No platform",
-			infraConfig: makeInfra(configv1.NonePlatformType),
-			expectedIC:  ingressControllerWithHostNetwork,
+			name:           "No platform",
+			platformStatus: makePlatformStatus(configv1.NonePlatformType),
+			expectedIC:     ingressControllerWithHostNetwork,
 		},
 		{
-			name:        "OpenStack",
-			infraConfig: makeInfra(configv1.OpenStackPlatformType),
-			expectedIC:  ingressControllerWithHostNetwork,
+			name:           "OpenStack",
+			platformStatus: makePlatformStatus(configv1.OpenStackPlatformType),
+			expectedIC:     ingressControllerWithHostNetwork,
 		},
 		{
-			name:        "Power VS",
-			infraConfig: makeInfra(configv1.PowerVSPlatformType),
-			expectedIC:  ingressControllerWithLoadBalancer,
+			name:           "Power VS",
+			platformStatus: makePlatformStatus(configv1.PowerVSPlatformType),
+			expectedIC:     ingressControllerWithLoadBalancer,
 		},
 		{
-			name:        "RHV",
-			infraConfig: makeInfra(configv1.OvirtPlatformType),
-			expectedIC:  ingressControllerWithHostNetwork,
+			name:           "RHV",
+			platformStatus: makePlatformStatus(configv1.OvirtPlatformType),
+			expectedIC:     ingressControllerWithHostNetwork,
 		},
 		{
-			name:        "vSphere",
-			infraConfig: makeInfra(configv1.VSpherePlatformType),
-			expectedIC:  ingressControllerWithHostNetwork,
+			name:           "vSphere",
+			platformStatus: makePlatformStatus(configv1.VSpherePlatformType),
+			expectedIC:     ingressControllerWithHostNetwork,
 		},
 		{
-			name:        "Nutanix",
-			infraConfig: makeInfra(configv1.NutanixPlatformType),
-			expectedIC:  ingressControllerWithHostNetwork,
+			name:           "Nutanix",
+			platformStatus: makePlatformStatus(configv1.NutanixPlatformType),
+			expectedIC:     ingressControllerWithHostNetwork,
 		},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			ic := &operatorv1.IngressController{}
-			infraConfig := tc.infraConfig.DeepCopy()
-			if actualResult := setDefaultPublishingStrategy(ic, infraConfig); actualResult != true {
+			platformStatus := tc.platformStatus.DeepCopy()
+			if actualResult := setDefaultPublishingStrategy(ic, platformStatus); actualResult != true {
 				t.Errorf("expected result %v, got %v", true, actualResult)
 			}
 			if diff := cmp.Diff(tc.expectedIC, ic); len(diff) != 0 {
@@ -506,12 +504,10 @@ func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			ic := tc.ic.DeepCopy()
-			infraConfig := &configv1.Infrastructure{
-				Status: configv1.InfrastructureStatus{
-					Platform: configv1.NonePlatformType,
-				},
+			platformStatus := &configv1.PlatformStatus{
+				Type: configv1.NonePlatformType,
 			}
-			if actualResult := setDefaultPublishingStrategy(ic, infraConfig); actualResult != tc.expectedResult {
+			if actualResult := setDefaultPublishingStrategy(ic, platformStatus); actualResult != tc.expectedResult {
 				t.Errorf("expected result %v, got %v", tc.expectedResult, actualResult)
 			}
 			if diff := cmp.Diff(tc.expectedIC, ic); len(diff) != 0 {

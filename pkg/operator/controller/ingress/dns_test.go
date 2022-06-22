@@ -7,9 +7,9 @@ import (
 
 	"gopkg.in/yaml.v2"
 
-	iov1 "github.com/openshift/api/operatoringress/v1"
-
+	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
+	iov1 "github.com/openshift/api/operatoringress/v1"
 
 	corev1 "k8s.io/api/core/v1"
 
@@ -105,6 +105,74 @@ func TestDesiredWildcardDNSRecord(t *testing.T) {
 			t.Errorf("expected nil record, got:\n%s", toYaml(actual))
 		case test.expect != nil && !haveWC:
 			t.Errorf("expected record but got nil:\n%s", toYaml(test.expect))
+		}
+	}
+}
+
+func TestManageDNSForDomain(t *testing.T) {
+	tests := []struct {
+		name         string
+		domain       string
+		baseDomain   string
+		platformType configv1.PlatformType
+		expected     bool
+	}{
+		{
+			name:       "empty domain",
+			domain:     "",
+			baseDomain: "openshift.example.com",
+			expected:   false,
+		},
+		{
+			name:         "domain matches the baseDomain",
+			domain:       "apps.openshift.example.com",
+			baseDomain:   "openshift.example.com",
+			platformType: configv1.AWSPlatformType,
+			expected:     true,
+		},
+		{
+			name:         "domain matches single segment baseDomain",
+			domain:       "openshift.example.com",
+			baseDomain:   "example.com",
+			platformType: configv1.AWSPlatformType,
+			expected:     true,
+		},
+		{
+			name:         "domain does not match the baseDomain on AWS",
+			domain:       "test.local",
+			baseDomain:   "openshift.example.com",
+			platformType: configv1.AWSPlatformType,
+			expected:     false,
+		},
+		{
+			name:         "domain does not match prematurely",
+			domain:       "testopenshift.example.com",
+			baseDomain:   "openshift.example.com",
+			platformType: configv1.AWSPlatformType,
+			expected:     false,
+		},
+		{
+			name:         "domain does not match the baseDomain on unsupported platform",
+			domain:       "test.local",
+			baseDomain:   "openshift.example.com",
+			platformType: configv1.NonePlatformType,
+			expected:     true,
+		},
+	}
+
+	for _, tc := range tests {
+		status := configv1.PlatformStatus{
+			Type: tc.platformType,
+		}
+
+		dnsConfig := configv1.DNS{
+			Spec: configv1.DNSSpec{
+				BaseDomain: tc.baseDomain,
+			},
+		}
+		actual := manageDNSForDomain(tc.domain, &status, &dnsConfig)
+		if actual != tc.expected {
+			t.Errorf("%q: expected to be %v, got %v", tc.name, tc.expected, actual)
 		}
 	}
 }

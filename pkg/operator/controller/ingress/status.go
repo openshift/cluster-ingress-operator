@@ -50,16 +50,11 @@ type expectedCondition struct {
 
 // syncIngressControllerStatus computes the current status of ic and
 // updates status upon any changes since last sync.
-func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressController, deployment *appsv1.Deployment, deploymentRef metav1.OwnerReference, pods []corev1.Pod, service *corev1.Service, operandEvents []corev1.Event, wildcardRecord *iov1.DNSRecord, dnsConfig *configv1.DNS, infraConfig *configv1.Infrastructure) (error, bool) {
+func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressController, deployment *appsv1.Deployment, deploymentRef metav1.OwnerReference, pods []corev1.Pod, service *corev1.Service, operandEvents []corev1.Event, wildcardRecord *iov1.DNSRecord, dnsConfig *configv1.DNS, platformStatus *configv1.PlatformStatus) (error, bool) {
 	updatedIc := false
 	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
 	if err != nil {
 		return fmt.Errorf("deployment has invalid spec.selector: %v", err), updatedIc
-	}
-
-	platform, err := oputil.GetPlatformStatus(r.client, infraConfig)
-	if err != nil {
-		return fmt.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %w", ic.Namespace, ic.Name, err), updatedIc
 	}
 
 	secret := &corev1.Secret{}
@@ -79,13 +74,13 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentReplicasMinAvailableCondition(deployment))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentReplicasAllAvailableCondition(deployment))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeLoadBalancerStatus(ic, service, operandEvents)...)
-	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDNSStatus(ic, wildcardRecord, dnsConfig)...)
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDNSStatus(ic, wildcardRecord, platformStatus, dnsConfig)...)
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressAvailableCondition(updated.Status.Conditions))
 	degradedCondition, err := computeIngressDegradedCondition(updated.Status.Conditions, updated.Name)
 	errs = append(errs, err)
-	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressProgressingCondition(updated.Status.Conditions, ic, service, platform))
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressProgressingCondition(updated.Status.Conditions, ic, service, platformStatus))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, degradedCondition)
-	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressUpgradeableCondition(ic, deploymentRef, service, platform, secret))
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressUpgradeableCondition(ic, deploymentRef, service, platformStatus, secret))
 
 	updated.Status.Conditions = PruneConditions(updated.Status.Conditions)
 
@@ -804,7 +799,7 @@ func getEventsByReason(events []corev1.Event, component, reason string) []corev1
 	return filtered
 }
 
-func computeDNSStatus(ic *operatorv1.IngressController, wildcardRecord *iov1.DNSRecord, dnsConfig *configv1.DNS) []operatorv1.OperatorCondition {
+func computeDNSStatus(ic *operatorv1.IngressController, wildcardRecord *iov1.DNSRecord, status *configv1.PlatformStatus, dnsConfig *configv1.DNS) []operatorv1.OperatorCondition {
 
 	if dnsConfig.Spec.PublicZone == nil && dnsConfig.Spec.PrivateZone == nil {
 		return []operatorv1.OperatorCondition{
@@ -824,6 +819,17 @@ func computeDNSStatus(ic *operatorv1.IngressController, wildcardRecord *iov1.DNS
 				Status:  operatorv1.ConditionFalse,
 				Reason:  "UnsupportedEndpointPublishingStrategy",
 				Message: "The endpoint publishing strategy doesn't support DNS management.",
+			},
+		}
+	}
+
+	if !manageDNSForDomain(ic.Status.Domain, status, dnsConfig) {
+		return []operatorv1.OperatorCondition{
+			{
+				Type:    operatorv1.DNSManagedIngressConditionType,
+				Status:  operatorv1.ConditionFalse,
+				Reason:  "DomainNotMatching",
+				Message: "DNS management is not supported for ingresscontrollers with domain not matching the baseDomain of the cluster DNS config.",
 			},
 		}
 	}
