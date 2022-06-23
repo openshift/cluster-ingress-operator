@@ -251,7 +251,7 @@ func TestCustomIngressClass(t *testing.T) {
 		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
 	}
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
-		t.Errorf("failed to observe expected conditions: %w", err)
+		t.Errorf("failed to observe expected conditions: %v", err)
 		assertIngressControllerDeleted(t, kclient, ic)
 		t.FailNow()
 	}
@@ -945,7 +945,7 @@ func TestInternalLoadBalancer(t *testing.T) {
 		}
 		lbService.Annotations[annotation] = "0.0.0.0/0"
 		if err := kclient.Update(context.TODO(), lbService); err != nil {
-			t.Errorf("failed to update LoadBalancer service: %w", err)
+			t.Errorf("failed to update LoadBalancer service: %v", err)
 		}
 
 		// Verify that the operator reverts the annotation value to
@@ -965,7 +965,7 @@ func TestInternalLoadBalancer(t *testing.T) {
 			return true, nil
 		})
 		if err != nil {
-			t.Errorf("failed to observe expected annotation on load balancer service %s: %w", controller.LoadBalancerServiceName(ic), err)
+			t.Errorf("failed to observe expected annotation on load balancer service %s: %v", controller.LoadBalancerServiceName(ic), err)
 		}
 	}
 }
@@ -2562,7 +2562,7 @@ func TestLoadBalancingAlgorithmUnsupportedConfigOverride(t *testing.T) {
 	defer assertIngressControllerDeleted(t, kclient, ic)
 
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
-		t.Errorf("failed to observe expected conditions: %w", err)
+		t.Errorf("failed to observe expected conditions: %v", err)
 	}
 
 	deployment := &appsv1.Deployment{}
@@ -2609,7 +2609,7 @@ func TestDynamicConfigManagerUnsupportedConfigOverride(t *testing.T) {
 	defer assertIngressControllerDeleted(t, kclient, ic)
 
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
-		t.Errorf("failed to observe expected conditions: %w", err)
+		t.Errorf("failed to observe expected conditions: %v", err)
 	}
 
 	deployment := &appsv1.Deployment{}
