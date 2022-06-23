@@ -157,14 +157,14 @@ func TestTuningOptions(t *testing.T) {
 	ic, ingressConfig, infraConfig, apiConfig, networkConfig, _ := getRouterDeploymentComponents(t)
 
 	// Set up tuning options
-	ic.Spec.TuningOptions.ClientTimeout = &metav1.Duration{45 * time.Second}
-	ic.Spec.TuningOptions.ClientFinTimeout = &metav1.Duration{3 * time.Second}
-	ic.Spec.TuningOptions.ServerTimeout = &metav1.Duration{60 * time.Second}
-	ic.Spec.TuningOptions.ServerFinTimeout = &metav1.Duration{4 * time.Second}
-	ic.Spec.TuningOptions.TunnelTimeout = &metav1.Duration{30 * time.Minute}
-	ic.Spec.TuningOptions.TLSInspectDelay = &metav1.Duration{5 * time.Second}
-	ic.Spec.TuningOptions.HealthCheckInterval = &metav1.Duration{15 * time.Second}
-	ic.Spec.TuningOptions.ReloadInterval = metav1.Duration{30 * time.Second}
+	ic.Spec.TuningOptions.ClientTimeout = &metav1.Duration{Duration: 45 * time.Second}
+	ic.Spec.TuningOptions.ClientFinTimeout = &metav1.Duration{Duration: 3 * time.Second}
+	ic.Spec.TuningOptions.ServerTimeout = &metav1.Duration{Duration: 60 * time.Second}
+	ic.Spec.TuningOptions.ServerFinTimeout = &metav1.Duration{Duration: 4 * time.Second}
+	ic.Spec.TuningOptions.TunnelTimeout = &metav1.Duration{Duration: 30 * time.Minute}
+	ic.Spec.TuningOptions.TLSInspectDelay = &metav1.Duration{Duration: 5 * time.Second}
+	ic.Spec.TuningOptions.HealthCheckInterval = &metav1.Duration{Duration: 15 * time.Second}
+	ic.Spec.TuningOptions.ReloadInterval = metav1.Duration{Duration: 30 * time.Second}
 
 	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, false, false, nil)
 	if err != nil {
