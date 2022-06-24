@@ -299,6 +299,41 @@ func TestCustomIngressClass(t *testing.T) {
 	}
 }
 
+// TestOperatorRecreatesItsClusterOperator verifies that the ingress operator
+// recreates the "ingress" clusteroperator if the clusteroperator is deleted.
+//
+// This is a serial test because it depends on modifying a shared resource: the
+// clusteroperator object (which means that this test could interfere with other
+// tests) and then verifying that the operator reconciles the resource
+// automatically (which means that other tests could interfere with this one).
+func TestOperatorRecreatesItsClusterOperator(t *testing.T) {
+	co := &configv1.ClusterOperator{}
+	coName := controller.IngressClusterOperatorName()
+	if err := kclient.Get(context.TODO(), coName, co); err != nil {
+		t.Fatalf("failed to get clusteroperator %q: %v", coName.Name, err)
+	}
+	oldUid := co.UID
+	if err := kclient.Delete(context.TODO(), co); err != nil {
+		t.Fatalf("failed to delete clusteroperator %q: %v", coName.Name, err)
+	}
+	err := wait.PollImmediate(1*time.Second, 30*time.Second, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), coName, co); err != nil {
+			t.Logf("failed to get clusteroperator %q: %v", coName.Name, err)
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to observe recreation of clusteroperator %q: %v", coName.Name, err)
+	}
+	if co.DeletionTimestamp != nil {
+		t.Fatalf("expected clusteroperator %q not to be marked for deletion, but its deletion timestamp is set: %v", coName.Name, co.DeletionTimestamp)
+	}
+	if co.UID == oldUid {
+		t.Fatalf("expected clusteroperator %q to have a new uid after deletion, but it still has the old uid: %v", coName.Name, co.UID)
+	}
+}
+
 func TestUserDefinedIngressController(t *testing.T) {
 	t.Parallel()
 	name := types.NamespacedName{Namespace: operatorNamespace, Name: "testuserdefinedingresscontroller"}

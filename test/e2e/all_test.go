@@ -76,6 +76,7 @@ func TestAll(t *testing.T) {
 		t.Run("TestConfigurableRouteRBAC", TestConfigurableRouteRBAC)
 		t.Run("TestDefaultIngressCertificate", TestDefaultIngressCertificate)
 		t.Run("TestDefaultIngressClass", TestDefaultIngressClass)
+		t.Run("TestOperatorRecreatesItsClusterOperator", TestOperatorRecreatesItsClusterOperator)
 		t.Run("TestHstsPolicyWorks", TestHstsPolicyWorks)
 		t.Run("TestIngressControllerCustomEndpoints", TestIngressControllerCustomEndpoints)
 		t.Run("TestIngressStatus", TestIngressStatus)
