@@ -60,7 +60,7 @@ func (r *reconciler) syncRouteStatus(ic *operatorv1.IngressController) []error {
 func (r *reconciler) isRouterDeploymentRolloutComplete(ic *operatorv1.IngressController) (bool, error) {
 	deployment := appsv1.Deployment{}
 	deploymentName := operatorcontroller.RouterDeploymentName(ic)
-	if err := r.cache.Get(context.TODO(), deploymentName, &deployment); err != nil {
+	if err := r.client.Get(context.TODO(), deploymentName, &deployment); err != nil {
 		return false, fmt.Errorf("failed to get deployment %s: %w", deploymentName, err)
 	}
 
