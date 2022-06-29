@@ -3153,7 +3153,7 @@ func TestIngressOperatorCacheIsNotGlobal(t *testing.T) {
 		}
 
 		if len(ic.Status.Conditions) != 0 {
-			t.Fatalf("expected ingress controller %s to be ignored by the ingress operator", icName)
+			t.Fatalf("expected ingress controller %s to be ignored by the ingress operator: conditions: %+v", icName, ic.Status.Conditions)
 		}
 		return false, nil
 	})
