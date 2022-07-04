@@ -119,6 +119,42 @@ func TestSetDefaultPublishingStrategySetsPlatformDefaults(t *testing.T) {
 					LoadBalancer: &operatorv1.LoadBalancerStrategy{
 						DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
 						Scope:               operatorv1.ExternalLoadBalancer,
+						ProviderParameters:  &operatorv1.ProviderLoadBalancerParameters{},
+					},
+				},
+			},
+		}
+		ingressControllerWithAWSClassicLB = &operatorv1.IngressController{
+			Status: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.LoadBalancerServiceStrategyType,
+					LoadBalancer: &operatorv1.LoadBalancerStrategy{
+						DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
+						Scope:               operatorv1.ExternalLoadBalancer,
+						ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+							Type: operatorv1.AWSLoadBalancerProvider,
+							AWS: &operatorv1.AWSLoadBalancerParameters{
+								Type:                          operatorv1.AWSClassicLoadBalancer,
+								ClassicLoadBalancerParameters: &operatorv1.AWSClassicLoadBalancerParameters{},
+							},
+						},
+					},
+				},
+			},
+		}
+		ingressControllerWithAWSNLB = &operatorv1.IngressController{
+			Status: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.LoadBalancerServiceStrategyType,
+					LoadBalancer: &operatorv1.LoadBalancerStrategy{
+						DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
+						Scope:               operatorv1.ExternalLoadBalancer,
+						ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+							Type: operatorv1.AWSLoadBalancerProvider,
+							AWS: &operatorv1.AWSLoadBalancerParameters{
+								Type: operatorv1.AWSNetworkLoadBalancer,
+							},
+						},
 					},
 				},
 			},
@@ -130,6 +166,7 @@ func TestSetDefaultPublishingStrategySetsPlatformDefaults(t *testing.T) {
 					LoadBalancer: &operatorv1.LoadBalancerStrategy{
 						DNSManagementPolicy: operatorv1.UnmanagedLoadBalancerDNS,
 						Scope:               operatorv1.ExternalLoadBalancer,
+						ProviderParameters:  &operatorv1.ProviderLoadBalancerParameters{},
 					},
 				},
 			},
@@ -152,11 +189,37 @@ func TestSetDefaultPublishingStrategySetsPlatformDefaults(t *testing.T) {
 				Type: platform,
 			}
 		}
+
+		ingressConfigWithDefaultClassicLB = &configv1.Ingress{
+			Spec: configv1.IngressSpec{
+				LoadBalancer: configv1.LoadBalancer{
+					Platform: configv1.IngressPlatformSpec{
+						Type: configv1.AWSPlatformType,
+						AWS: &configv1.AWSIngressSpec{
+							Type: configv1.Classic,
+						},
+					},
+				},
+			},
+		}
+		ingressConfigWithDefaultNLB = &configv1.Ingress{
+			Spec: configv1.IngressSpec{
+				LoadBalancer: configv1.LoadBalancer{
+					Platform: configv1.IngressPlatformSpec{
+						Type: configv1.AWSPlatformType,
+						AWS: &configv1.AWSIngressSpec{
+							Type: configv1.NLB,
+						},
+					},
+				},
+			},
+		}
 	)
 
 	testCases := []struct {
 		name                    string
 		platformStatus          *configv1.PlatformStatus
+		ingressConfig           *configv1.Ingress
 		expectedIC              *operatorv1.IngressController
 		domainMatchesBaseDomain bool
 	}{
@@ -170,6 +233,20 @@ func TestSetDefaultPublishingStrategySetsPlatformDefaults(t *testing.T) {
 			name:                    "AWS",
 			platformStatus:          makePlatformStatus(configv1.AWSPlatformType),
 			expectedIC:              ingressControllerWithLoadBalancer,
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name:                    "AWS with ingress config specifying Classic LB",
+			platformStatus:          makePlatformStatus(configv1.AWSPlatformType),
+			ingressConfig:           ingressConfigWithDefaultClassicLB,
+			expectedIC:              ingressControllerWithAWSClassicLB,
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name:                    "AWS with ingress config specifying NLB",
+			platformStatus:          makePlatformStatus(configv1.AWSPlatformType),
+			ingressConfig:           ingressConfigWithDefaultNLB,
+			expectedIC:              ingressControllerWithAWSNLB,
 			domainMatchesBaseDomain: true,
 		},
 		{
@@ -255,11 +332,16 @@ func TestSetDefaultPublishingStrategySetsPlatformDefaults(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ic := &operatorv1.IngressController{}
 			platformStatus := tc.platformStatus.DeepCopy()
-			if actualResult := setDefaultPublishingStrategy(ic, platformStatus, tc.domainMatchesBaseDomain); actualResult != true {
+			ingressConfig := tc.ingressConfig
+			if ingressConfig == nil {
+				ingressConfig = &configv1.Ingress{}
+			}
+			if actualResult := setDefaultPublishingStrategy(ic, platformStatus, tc.domainMatchesBaseDomain, ingressConfig); actualResult != true {
 				t.Errorf("expected result %v, got %v", true, actualResult)
 			}
 			if diff := cmp.Diff(tc.expectedIC, ic); len(diff) != 0 {
 				t.Errorf("got expected ingresscontroller: %s", diff)
+				//t.Errorf("got expected ingresscontroller: %s\n\n%+v", diff,ic.Status.EndpointPublishingStrategy.LoadBalancer)
 			}
 		})
 	}
@@ -287,7 +369,8 @@ func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
 		}
 		lbs = func(scope operatorv1.LoadBalancerScope, policy *operatorv1.LoadBalancerDNSManagementPolicy) *operatorv1.LoadBalancerStrategy {
 			lbs := &operatorv1.LoadBalancerStrategy{
-				Scope: scope,
+				Scope:              scope,
+				ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{},
 			}
 			if policy != nil {
 				lbs.DNSManagementPolicy = *policy
@@ -407,11 +490,37 @@ func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
 				Type: operatorv1.PrivateStrategyType,
 			}
 		}
+
+		ingressConfigWithDefaultNLB = &configv1.Ingress{
+			Spec: configv1.IngressSpec{
+				LoadBalancer: configv1.LoadBalancer{
+					Platform: configv1.IngressPlatformSpec{
+						Type: configv1.AWSPlatformType,
+						AWS: &configv1.AWSIngressSpec{
+							Type: configv1.NLB,
+						},
+					},
+				},
+			},
+		}
+		ingressConfigWithDefaultClassicLB = &configv1.Ingress{
+			Spec: configv1.IngressSpec{
+				LoadBalancer: configv1.LoadBalancer{
+					Platform: configv1.IngressPlatformSpec{
+						Type: configv1.AWSPlatformType,
+						AWS: &configv1.AWSIngressSpec{
+							Type: configv1.Classic,
+						},
+					},
+				},
+			},
+		}
 	)
 
 	testCases := []struct {
 		name                    string
 		ic                      *operatorv1.IngressController
+		ingressConfig           *configv1.Ingress
 		expectedIC              *operatorv1.IngressController
 		expectedResult          bool
 		domainMatchesBaseDomain bool
@@ -456,6 +565,30 @@ func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
 			ic:                      makeIC(spec(elb()), status(nlb())),
 			expectedResult:          true,
 			expectedIC:              makeIC(spec(elb()), status(elbWithNullParameters())),
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name:                    "loadbalancer type changed from NLB to unset, with Classic LB as default",
+			ic:                      makeIC(spec(eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS))), status(nlb())),
+			ingressConfig:           ingressConfigWithDefaultClassicLB,
+			expectedResult:          true,
+			expectedIC:              makeIC(spec(eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS))), status(elbWithNullParameters())),
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name:                    "loadbalancer type changed from Classic LB to unset, with NLB as default",
+			ic:                      makeIC(spec(eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS))), status(elb())),
+			ingressConfig:           ingressConfigWithDefaultNLB,
+			expectedResult:          true,
+			expectedIC:              makeIC(spec(eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS))), status(nlb())),
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name:                    "loadbalancer type changed from NLB to unset, with NLB as default",
+			ic:                      makeIC(spec(eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS))), status(nlb())),
+			ingressConfig:           ingressConfigWithDefaultNLB,
+			expectedResult:          false,
+			expectedIC:              makeIC(spec(eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS))), status(nlb())),
 			domainMatchesBaseDomain: true,
 		},
 		{
@@ -656,7 +789,11 @@ func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
 			platformStatus := &configv1.PlatformStatus{
 				Type: configv1.AWSPlatformType,
 			}
-			if actualResult := setDefaultPublishingStrategy(ic, platformStatus, tc.domainMatchesBaseDomain); actualResult != tc.expectedResult {
+			ingressConfig := tc.ingressConfig
+			if ingressConfig == nil {
+				ingressConfig = &configv1.Ingress{}
+			}
+			if actualResult := setDefaultPublishingStrategy(ic, platformStatus, tc.domainMatchesBaseDomain, ingressConfig); actualResult != tc.expectedResult {
 				t.Errorf("expected result %v, got %v", tc.expectedResult, actualResult)
 			}
 			if diff := cmp.Diff(tc.expectedIC, ic); len(diff) != 0 {
