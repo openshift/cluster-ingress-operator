@@ -932,6 +932,7 @@ func TestInternalLoadBalancer(t *testing.T) {
 		configv1.GCPPlatformType:          {},
 		configv1.IBMCloudPlatformType:     {},
 		configv1.AlibabaCloudPlatformType: {},
+		configv1.OpenStackPlatformType:    {},
 	}
 	if _, supported := supportedPlatforms[platform]; !supported {
 		t.Skip(fmt.Sprintf("test skipped on platform %q", platform))
