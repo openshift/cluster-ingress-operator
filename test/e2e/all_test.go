@@ -84,6 +84,7 @@ func TestAll(t *testing.T) {
 		t.Run("TestDefaultIngressCertificate", TestDefaultIngressCertificate)
 		t.Run("TestDefaultIngressClass", TestDefaultIngressClass)
 		t.Run("TestOperatorRecreatesItsClusterOperator", TestOperatorRecreatesItsClusterOperator)
+		t.Run("TestAWSLBTypeDefaulting", TestAWSLBTypeDefaulting)
 		t.Run("TestHstsPolicyWorks", TestHstsPolicyWorks)
 		t.Run("TestIngressControllerCustomEndpoints", TestIngressControllerCustomEndpoints)
 		t.Run("TestIngressStatus", TestIngressStatus)

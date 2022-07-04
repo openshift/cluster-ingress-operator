@@ -265,8 +265,9 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 
 	// Admit if necessary. Don't process until admission succeeds. If admission is
 	// successful, immediately re-queue to refresh state.
-	if !isAdmitted(ingress) || needsReadmission(ingress) {
-		if err := r.admit(ingress, ingressConfig, platformStatus, dnsConfig); err != nil {
+	alreadyAdmitted := isAdmitted(ingress)
+	if !alreadyAdmitted || needsReadmission(ingress) {
+		if err := r.admit(ingress, ingressConfig, platformStatus, dnsConfig, alreadyAdmitted); err != nil {
 			switch err := err.(type) {
 			case *admissionRejection:
 				r.recorder.Event(ingress, "Warning", "Rejected", err.Reason)
@@ -320,7 +321,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 // fields.  Returns an error value, which will have a non-nil value of type
 // admissionRejection if the ingresscontroller was rejected, or a non-nil
 // value of a different type if the ingresscontroller could not be processed.
-func (r *reconciler) admit(current *operatorv1.IngressController, ingressConfig *configv1.Ingress, platformStatus *configv1.PlatformStatus, dnsConfig *configv1.DNS) error {
+func (r *reconciler) admit(current *operatorv1.IngressController, ingressConfig *configv1.Ingress, platformStatus *configv1.PlatformStatus, dnsConfig *configv1.DNS, alreadyAdmitted bool) error {
 	updated := current.DeepCopy()
 
 	setDefaultDomain(updated, ingressConfig)
@@ -329,7 +330,7 @@ func (r *reconciler) admit(current *operatorv1.IngressController, ingressConfig 
 	// so that we can set the appropriate dnsManagementPolicy. This can only be
 	// done after status.domain has been updated in setDefaultDomain().
 	domainMatchesBaseDomain := manageDNSForDomain(updated.Status.Domain, platformStatus, dnsConfig)
-	setDefaultPublishingStrategy(updated, platformStatus, domainMatchesBaseDomain)
+	setDefaultPublishingStrategy(updated, platformStatus, domainMatchesBaseDomain, ingressConfig, alreadyAdmitted)
 
 	// The TLS security profile need not be defaulted.  If none is set, we
 	// get the default from the APIServer config (which is assumed to be
@@ -410,7 +411,7 @@ func setDefaultDomain(ic *operatorv1.IngressController, ingressConfig *configv1.
 	return false
 }
 
-func setDefaultPublishingStrategy(ic *operatorv1.IngressController, platformStatus *configv1.PlatformStatus, domainMatchesBaseDomain bool) bool {
+func setDefaultPublishingStrategy(ic *operatorv1.IngressController, platformStatus *configv1.PlatformStatus, domainMatchesBaseDomain bool, ingressConfig *configv1.Ingress, alreadyAdmitted bool) bool {
 	effectiveStrategy := ic.Spec.EndpointPublishingStrategy.DeepCopy()
 	if effectiveStrategy == nil {
 		var strategyType operatorv1.EndpointPublishingStrategyType
@@ -440,6 +441,9 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, platformStat
 		if !domainMatchesBaseDomain {
 			effectiveStrategy.LoadBalancer.DNSManagementPolicy = operatorv1.UnmanagedLoadBalancerDNS
 		}
+
+		// Set provider parameters based on the cluster ingress config.
+		setDefaultProviderParameters(effectiveStrategy.LoadBalancer, ingressConfig, alreadyAdmitted)
 
 	case operatorv1.NodePortServiceStrategyType:
 		if effectiveStrategy.NodePort == nil {
@@ -519,13 +523,8 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, platformStat
 				if statusLB.ProviderParameters.AWS == nil {
 					statusLB.ProviderParameters.AWS = &operatorv1.AWSLoadBalancerParameters{}
 				}
-				// Assume the LB type is "Classic" if the field is empty.
-				specLBType := operatorv1.AWSClassicLoadBalancer
-				if specLB.ProviderParameters.AWS != nil && len(specLB.ProviderParameters.AWS.Type) != 0 {
-					specLBType = specLB.ProviderParameters.AWS.Type
-				}
-				if specLBType != statusLB.ProviderParameters.AWS.Type {
-					statusLB.ProviderParameters.AWS.Type = specLBType
+				if specLB.ProviderParameters.AWS.Type != statusLB.ProviderParameters.AWS.Type {
+					statusLB.ProviderParameters.AWS.Type = specLB.ProviderParameters.AWS.Type
 					changed = true
 				}
 				if statusLB.ProviderParameters.AWS.Type == operatorv1.AWSClassicLoadBalancer {
@@ -552,18 +551,17 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, platformStat
 			case operatorv1.GCPLoadBalancerProvider:
 				// The only provider parameter that is supported
 				// for GCP is the ClientAccess parameter.
-				var specClientAccess, statusClientAccess operatorv1.GCPClientAccess
-				if specLB.ProviderParameters != nil && specLB.ProviderParameters.GCP != nil {
-					specClientAccess = specLB.ProviderParameters.GCP.ClientAccess
-				}
+				var statusClientAccess operatorv1.GCPClientAccess
+				specClientAccess := specLB.ProviderParameters.GCP.ClientAccess
 				if statusLB.ProviderParameters != nil && statusLB.ProviderParameters.GCP != nil {
 					statusClientAccess = statusLB.ProviderParameters.GCP.ClientAccess
 				}
 				if specClientAccess != statusClientAccess {
 					if statusLB.ProviderParameters == nil {
-						statusLB.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{
-							Type: operatorv1.GCPLoadBalancerProvider,
-						}
+						statusLB.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{}
+					}
+					if len(statusLB.ProviderParameters.Type) == 0 {
+						statusLB.ProviderParameters.Type = operatorv1.GCPLoadBalancerProvider
 					}
 					if statusLB.ProviderParameters.GCP == nil {
 						statusLB.ProviderParameters.GCP = &operatorv1.GCPLoadBalancerParameters{}
@@ -631,6 +629,57 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, platformStat
 	}
 
 	return false
+}
+
+// setDefaultProviderParameters mutates the given LoadBalancerStrategy by
+// defaulting its ProviderParameters field based on the defaults in the provided
+// ingress config object.
+func setDefaultProviderParameters(lbs *operatorv1.LoadBalancerStrategy, ingressConfig *configv1.Ingress, alreadyAdmitted bool) {
+	var provider operatorv1.LoadBalancerProviderType
+	if lbs.ProviderParameters != nil {
+		provider = lbs.ProviderParameters.Type
+	}
+	if len(provider) == 0 && !alreadyAdmitted {
+		// Infer the LB type from the cluster ingress config, but only
+		// if the ingresscontroller isn't already admitted.
+		switch ingressConfig.Spec.LoadBalancer.Platform.Type {
+		case configv1.AWSPlatformType:
+			provider = operatorv1.AWSLoadBalancerProvider
+		}
+	}
+	switch provider {
+	case operatorv1.AWSLoadBalancerProvider:
+		if lbs.ProviderParameters == nil {
+			lbs.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{}
+		}
+		lbs.ProviderParameters.Type = provider
+		defaultLBType := operatorv1.AWSClassicLoadBalancer
+		if p := ingressConfig.Spec.LoadBalancer.Platform; !alreadyAdmitted && p.Type == configv1.AWSPlatformType && p.AWS != nil {
+			if p.AWS.Type == configv1.NLB {
+				defaultLBType = operatorv1.AWSNetworkLoadBalancer
+			}
+		}
+		if lbs.ProviderParameters.AWS == nil {
+			lbs.ProviderParameters.AWS = &operatorv1.AWSLoadBalancerParameters{}
+		}
+		if len(lbs.ProviderParameters.AWS.Type) == 0 {
+			lbs.ProviderParameters.AWS.Type = defaultLBType
+		}
+		switch lbs.ProviderParameters.AWS.Type {
+		case operatorv1.AWSClassicLoadBalancer:
+			if lbs.ProviderParameters.AWS.ClassicLoadBalancerParameters == nil {
+				lbs.ProviderParameters.AWS.ClassicLoadBalancerParameters = &operatorv1.AWSClassicLoadBalancerParameters{}
+			}
+		}
+	case operatorv1.GCPLoadBalancerProvider:
+		if lbs.ProviderParameters == nil {
+			lbs.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{}
+		}
+		lbs.ProviderParameters.Type = provider
+		if lbs.ProviderParameters.GCP == nil {
+			lbs.ProviderParameters.GCP = &operatorv1.GCPLoadBalancerParameters{}
+		}
+	}
 }
 
 // tlsProfileSpecForIngressController returns a TLS profile spec based on either
