@@ -13,6 +13,7 @@ approvers:
   - lmzuccarelli
   - miheer
   - gcs278
+  - Ethany-RH
 reviewers:
   - ironcladlou
   - knobunc
@@ -28,4 +29,5 @@ reviewers:
   - lmzuccarelli
   - miheer 
   - gcs278
+  - Ethany-RH
 component: Routing
