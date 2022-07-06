@@ -24,6 +24,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	utilclock "k8s.io/apimachinery/pkg/util/clock"
+	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -273,10 +274,10 @@ func (r *reconciler) getOperatorState(ingressNamespace, canaryNamespace string) 
 }
 
 // computeOperatorStatusVersions computes the operator's current versions.
-func (r *reconciler) computeOperatorStatusVersions(oldVersions []configv1.OperandVersion, allIngressesAvailable bool) []configv1.OperandVersion {
+func (r *reconciler) computeOperatorStatusVersions(oldVersions []configv1.OperandVersion, allIngressesAvailable error) []configv1.OperandVersion {
 	// We need to report old version until the operator fully transitions to the new version.
 	// https://github.com/openshift/cluster-version-operator/blob/master/docs/dev/clusteroperator.md#version-reporting-during-an-upgrade
-	if !allIngressesAvailable {
+	if allIngressesAvailable != nil {
 		return oldVersions
 	}
 
@@ -297,21 +298,25 @@ func (r *reconciler) computeOperatorStatusVersions(oldVersions []configv1.Operan
 }
 
 // checkAllIngressesAvailable checks if all the ingress controllers are available.
-func checkAllIngressesAvailable(ingresses []operatorv1.IngressController) bool {
+func checkAllIngressesAvailable(ingresses []operatorv1.IngressController) error {
+	errs := make([]error, 0, len(ingresses))
 	for _, ing := range ingresses {
-		available := false
+		found := false
 		for _, c := range ing.Status.Conditions {
-			if c.Type == operatorv1.IngressControllerAvailableConditionType && c.Status == operatorv1.ConditionTrue {
-				available = true
+			if c.Type == operatorv1.IngressControllerAvailableConditionType {
+				if c.Status != operatorv1.ConditionTrue {
+					errs = append(errs, fmt.Errorf("ingress controller %s in namespace %s is Available=%s: %s: %s", ing.Name, ing.Namespace, c.Status, c.Reason, c.Message))
+				}
+				found = true
 				break
 			}
 		}
-		if !available {
-			return false
+		if !found {
+			errs = append(errs, fmt.Errorf("ingress controller %s in namespace %s has no Available condition.", ing.Name, ing.Namespace))
 		}
 	}
 
-	return len(ingresses) != 0
+	return utilerrors.NewAggregate(errs)
 }
 
 // computeOperatorDegradedCondition computes the operator's current Degraded status state.
@@ -402,7 +407,7 @@ func computeOperatorUpgradeableCondition(ingresses []operatorv1.IngressControlle
 }
 
 // computeOperatorProgressingCondition computes the operator's current Progressing status state.
-func computeOperatorProgressingCondition(ingresscontrollers []operatorv1.IngressController, allIngressesAvailable bool, oldVersions, curVersions []configv1.OperandVersion, operatorReleaseVersion, ingressControllerImage string, canaryImage string) configv1.ClusterOperatorStatusCondition {
+func computeOperatorProgressingCondition(ingresscontrollers []operatorv1.IngressController, allIngressesAvailable error, oldVersions, curVersions []configv1.OperandVersion, operatorReleaseVersion, ingressControllerImage string, canaryImage string) configv1.ClusterOperatorStatusCondition {
 	progressingCondition := configv1.ClusterOperatorStatusCondition{
 		Type: configv1.OperatorProgressing,
 	}
@@ -421,8 +426,8 @@ func computeOperatorProgressingCondition(ingresscontrollers []operatorv1.Ingress
 		}
 	}
 
-	if !allIngressesAvailable {
-		messages = append(messages, "Not all ingress controllers are available.")
+	if allIngressesAvailable != nil {
+		messages = append(messages, allIngressesAvailable.Error())
 		progressing = true
 	}
 

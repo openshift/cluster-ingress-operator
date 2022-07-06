@@ -1,6 +1,7 @@
 package status
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -20,7 +21,7 @@ func TestComputeOperatorProgressingCondition(t *testing.T) {
 	testCases := []struct {
 		description            string
 		noNamespace            bool
-		allIngressesAvailable  bool
+		allIngressesAvailable  error
 		someIngressProgressing bool
 		reportedVersions       versions
 		oldVersions            versions
@@ -28,83 +29,74 @@ func TestComputeOperatorProgressingCondition(t *testing.T) {
 		expectProgressing      configv1.ConditionStatus
 	}{
 		{
-			description:           "all ingress controllers are available",
-			allIngressesAvailable: true,
-			expectProgressing:     configv1.ConditionFalse,
+			description:       "all ingress controllers are available",
+			expectProgressing: configv1.ConditionFalse,
 		},
 		{
 			description:            "some ingress controller is progressing",
-			allIngressesAvailable:  true,
 			someIngressProgressing: true,
 			expectProgressing:      configv1.ConditionTrue,
 		},
 		{
-			description:       "all ingress controllers are not available",
+			description:           "all ingress controllers are not available",
+			allIngressesAvailable: errors.New("ingress controller test-1 is Available=False"),
+			expectProgressing:     configv1.ConditionTrue,
+		},
+		{
+			description:       "versions match",
+			reportedVersions:  versions{"v1", "ic-v1", "c-v1"},
+			oldVersions:       versions{"v1", "ic-v1", "c-v1"},
+			curVersions:       versions{"v1", "ic-v1", "c-v1"},
+			expectProgressing: configv1.ConditionFalse,
+		},
+		{
+			description:       "operator upgrade in progress",
+			reportedVersions:  versions{"v1", "ic-v1", "c-v1"},
+			oldVersions:       versions{"v1", "ic-v1", "c-v1"},
+			curVersions:       versions{"v2", "ic-v1", "c-v1"},
 			expectProgressing: configv1.ConditionTrue,
 		},
 		{
-			description:           "versions match",
-			allIngressesAvailable: true,
-			reportedVersions:      versions{"v1", "ic-v1", "c-v1"},
-			oldVersions:           versions{"v1", "ic-v1", "c-v1"},
-			curVersions:           versions{"v1", "ic-v1", "c-v1"},
-			expectProgressing:     configv1.ConditionFalse,
+			description:       "operand upgrade in progress",
+			reportedVersions:  versions{"v1", "ic-v1", "c-v1"},
+			oldVersions:       versions{"v1", "ic-v1", "c-v1"},
+			curVersions:       versions{"v1", "ic-v2", "c-v2"},
+			expectProgressing: configv1.ConditionTrue,
 		},
 		{
-			description:           "operator upgrade in progress",
-			allIngressesAvailable: true,
-			reportedVersions:      versions{"v1", "ic-v1", "c-v1"},
-			oldVersions:           versions{"v1", "ic-v1", "c-v1"},
-			curVersions:           versions{"v2", "ic-v1", "c-v1"},
-			expectProgressing:     configv1.ConditionTrue,
+			description:       "operator and operand upgrade in progress",
+			reportedVersions:  versions{"v1", "ic-v1", "c-v1"},
+			oldVersions:       versions{"v1", "ic-v1", "c-v1"},
+			curVersions:       versions{"v2", "ic-v2", "c-v2"},
+			expectProgressing: configv1.ConditionTrue,
 		},
 		{
-			description:           "operand upgrade in progress",
-			allIngressesAvailable: true,
-			reportedVersions:      versions{"v1", "ic-v1", "c-v1"},
-			oldVersions:           versions{"v1", "ic-v1", "c-v1"},
-			curVersions:           versions{"v1", "ic-v2", "c-v2"},
-			expectProgressing:     configv1.ConditionTrue,
+			description:       "operator upgrade done",
+			reportedVersions:  versions{"v2", "ic-v1", "c-v1"},
+			oldVersions:       versions{"v1", "ic-v1", "c-v1"},
+			curVersions:       versions{"v2", "ic-v1", "c-v1"},
+			expectProgressing: configv1.ConditionFalse,
 		},
 		{
-			description:           "operator and operand upgrade in progress",
-			allIngressesAvailable: true,
-			reportedVersions:      versions{"v1", "ic-v1", "c-v1"},
-			oldVersions:           versions{"v1", "ic-v1", "c-v1"},
-			curVersions:           versions{"v2", "ic-v2", "c-v2"},
-			expectProgressing:     configv1.ConditionTrue,
+			description:       "operand upgrade done",
+			reportedVersions:  versions{"v1", "ic-v2", "c-v2"},
+			oldVersions:       versions{"v1", "ic-v1", "c-v1"},
+			curVersions:       versions{"v1", "ic-v2", "c-v2"},
+			expectProgressing: configv1.ConditionFalse,
 		},
 		{
-			description:           "operator upgrade done",
-			allIngressesAvailable: true,
-			reportedVersions:      versions{"v2", "ic-v1", "c-v1"},
-			oldVersions:           versions{"v1", "ic-v1", "c-v1"},
-			curVersions:           versions{"v2", "ic-v1", "c-v1"},
-			expectProgressing:     configv1.ConditionFalse,
+			description:       "operator and operand upgrade done",
+			reportedVersions:  versions{"v2", "ic-v2", "c-v2"},
+			oldVersions:       versions{"v1", "ic-v1", "c-v1"},
+			curVersions:       versions{"v2", "ic-v2", "c-v2"},
+			expectProgressing: configv1.ConditionFalse,
 		},
 		{
-			description:           "operand upgrade done",
-			allIngressesAvailable: true,
-			reportedVersions:      versions{"v1", "ic-v2", "c-v2"},
-			oldVersions:           versions{"v1", "ic-v1", "c-v1"},
-			curVersions:           versions{"v1", "ic-v2", "c-v2"},
-			expectProgressing:     configv1.ConditionFalse,
-		},
-		{
-			description:           "operator and operand upgrade done",
-			allIngressesAvailable: true,
-			reportedVersions:      versions{"v2", "ic-v2", "c-v2"},
-			oldVersions:           versions{"v1", "ic-v1", "c-v1"},
-			curVersions:           versions{"v2", "ic-v2", "c-v2"},
-			expectProgressing:     configv1.ConditionFalse,
-		},
-		{
-			description:           "operator upgrade in progress, operand upgrade done",
-			allIngressesAvailable: true,
-			reportedVersions:      versions{"v2", "ic-v1", "c-v1"},
-			oldVersions:           versions{"v1", "ic-v1", "c-v1"},
-			curVersions:           versions{"v2", "ic-v2", "c-v2"},
-			expectProgressing:     configv1.ConditionTrue,
+			description:       "operator upgrade in progress, operand upgrade done",
+			reportedVersions:  versions{"v2", "ic-v1", "c-v1"},
+			oldVersions:       versions{"v1", "ic-v1", "c-v1"},
+			curVersions:       versions{"v2", "ic-v2", "c-v2"},
+			expectProgressing: configv1.ConditionTrue,
 		},
 	}
 
@@ -400,6 +392,8 @@ func TestOperatorStatusesEqual(t *testing.T) {
 }
 
 func TestComputeOperatorStatusVersions(t *testing.T) {
+	allIngressesAvailable := errors.New("ingress controller test-1 is Available=False")
+
 	type versions struct {
 		operator string
 		operand1 string
@@ -410,67 +404,66 @@ func TestComputeOperatorStatusVersions(t *testing.T) {
 		description           string
 		oldVersions           versions
 		curVersions           versions
-		allIngressesAvailable bool
+		allIngressesAvailable error
 		expectedVersions      versions
 	}{
 		{
-			description:           "initialize versions, operator is available",
-			oldVersions:           versions{UnknownVersionValue, UnknownVersionValue, UnknownVersionValue},
-			curVersions:           versions{"v1", "ic-v1", "c-v1"},
-			allIngressesAvailable: true,
-			expectedVersions:      versions{"v1", "ic-v1", "c-v1"},
-		},
-		{
-			description:      "initialize versions, operator is not available",
+			description:      "initialize versions, operator is available",
 			oldVersions:      versions{UnknownVersionValue, UnknownVersionValue, UnknownVersionValue},
 			curVersions:      versions{"v1", "ic-v1", "c-v1"},
-			expectedVersions: versions{UnknownVersionValue, UnknownVersionValue, UnknownVersionValue},
+			expectedVersions: versions{"v1", "ic-v1", "c-v1"},
 		},
 		{
-			description:           "update with no change",
-			oldVersions:           versions{"v1", "ic-v1", "c-v1"},
+			description:           "initialize versions, operator is not available",
+			oldVersions:           versions{UnknownVersionValue, UnknownVersionValue, UnknownVersionValue},
 			curVersions:           versions{"v1", "ic-v1", "c-v1"},
-			allIngressesAvailable: true,
+			allIngressesAvailable: allIngressesAvailable,
+			expectedVersions:      versions{UnknownVersionValue, UnknownVersionValue, UnknownVersionValue},
+		},
+		{
+			description:      "update with no change",
+			oldVersions:      versions{"v1", "ic-v1", "c-v1"},
+			curVersions:      versions{"v1", "ic-v1", "c-v1"},
+			expectedVersions: versions{"v1", "ic-v1", "c-v1"},
+		},
+		{
+			description:           "update operator version, operator is not available",
+			oldVersions:           versions{"v1", "ic-v1", "c-v1"},
+			curVersions:           versions{"v2", "ic-v2", "c-v2"},
+			allIngressesAvailable: allIngressesAvailable,
 			expectedVersions:      versions{"v1", "ic-v1", "c-v1"},
 		},
 		{
-			description:      "update operator version, operator is not available",
+			description:      "update operator version, operator is available",
 			oldVersions:      versions{"v1", "ic-v1", "c-v1"},
 			curVersions:      versions{"v2", "ic-v2", "c-v2"},
-			expectedVersions: versions{"v1", "ic-v1", "c-v1"},
+			expectedVersions: versions{"v2", "ic-v2", "c-v2"},
 		},
 		{
-			description:           "update operator version, operator is available",
-			oldVersions:           versions{"v1", "ic-v1", "c-v1"},
-			curVersions:           versions{"v2", "ic-v2", "c-v2"},
-			allIngressesAvailable: true,
-			expectedVersions:      versions{"v2", "ic-v2", "c-v2"},
-		},
-		{
-			description:      "update ingress controller and canary images, operator is not available",
-			oldVersions:      versions{"v1", "ic-v1", "c-v1"},
-			curVersions:      versions{"v1", "ic-v2", "c-v2"},
-			expectedVersions: versions{"v1", "ic-v1", "c-v1"},
-		},
-		{
-			description:           "update ingress controller and canary images, operator is available",
+			description:           "update ingress controller and canary images, operator is not available",
 			oldVersions:           versions{"v1", "ic-v1", "c-v1"},
 			curVersions:           versions{"v1", "ic-v2", "c-v2"},
-			allIngressesAvailable: true,
-			expectedVersions:      versions{"v1", "ic-v2", "c-v2"},
+			allIngressesAvailable: allIngressesAvailable,
+			expectedVersions:      versions{"v1", "ic-v1", "c-v1"},
 		},
 		{
-			description:      "update operator, ingress controller, and canary images, operator is not available - no match",
+			description:      "update ingress controller and canary images, operator is available",
 			oldVersions:      versions{"v1", "ic-v1", "c-v1"},
-			curVersions:      versions{"v2", "ic-v2", "c-v2"},
-			expectedVersions: versions{"v1", "ic-v1", "c-v1"},
+			curVersions:      versions{"v1", "ic-v2", "c-v2"},
+			expectedVersions: versions{"v1", "ic-v2", "c-v2"},
 		},
 		{
-			description:           "update operator, ingress controller, and canary images, operator is available",
+			description:           "update operator, ingress controller, and canary images, operator is not available - no match",
 			oldVersions:           versions{"v1", "ic-v1", "c-v1"},
 			curVersions:           versions{"v2", "ic-v2", "c-v2"},
-			allIngressesAvailable: true,
-			expectedVersions:      versions{"v2", "ic-v2", "c-v2"},
+			allIngressesAvailable: allIngressesAvailable,
+			expectedVersions:      versions{"v1", "ic-v1", "c-v1"},
+		},
+		{
+			description:      "update operator, ingress controller, and canary images, operator is available",
+			oldVersions:      versions{"v1", "ic-v1", "c-v1"},
+			curVersions:      versions{"v2", "ic-v2", "c-v2"},
+			expectedVersions: versions{"v2", "ic-v2", "c-v2"},
 		},
 	}
 
