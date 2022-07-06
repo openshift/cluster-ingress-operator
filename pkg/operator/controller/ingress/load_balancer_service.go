@@ -447,12 +447,16 @@ func loadBalancerServiceChanged(current, expected *corev1.Service) (bool, *corev
 // loadBalancerServiceAnnotationsChanged checks if the annotations on the expected Service
 // match the ones on the current Service.
 func loadBalancerServiceAnnotationsChanged(current, expected *corev1.Service, annotations sets.String) (bool, *corev1.Service) {
-	annotationCmpOpts := []cmp.Option{
-		cmpopts.IgnoreMapEntries(func(k, _ string) bool {
-			return !annotations.Has(k)
-		}),
+	changed := false
+	for annotation := range annotations {
+		currentVal, have := current.Annotations[annotation]
+		expectedVal, want := expected.Annotations[annotation]
+		if (want && (!have || currentVal != expectedVal)) || (have && !want) {
+			changed = true
+			break
+		}
 	}
-	if cmp.Equal(current.Annotations, expected.Annotations, annotationCmpOpts...) {
+	if !changed {
 		return false, nil
 	}
 
@@ -469,7 +473,7 @@ func loadBalancerServiceAnnotationsChanged(current, expected *corev1.Service, an
 		updated.Annotations = map[string]string{}
 	}
 
-	for annotation := range managedLoadBalancerServiceAnnotations {
+	for annotation := range annotations {
 		currentVal, have := current.Annotations[annotation]
 		expectedVal, want := expected.Annotations[annotation]
 		if want && (!have || currentVal != expectedVal) {
