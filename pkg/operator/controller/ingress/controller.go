@@ -433,7 +433,12 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, platformStat
 			effectiveStrategy.HostNetwork.Protocol = operatorv1.TCPProtocol
 		}
 	case operatorv1.PrivateStrategyType:
-		// No parameters.
+		if effectiveStrategy.Private == nil {
+			effectiveStrategy.Private = &operatorv1.PrivateStrategy{}
+		}
+		if effectiveStrategy.Private.Protocol == operatorv1.DefaultProtocol {
+			effectiveStrategy.Private.Protocol = operatorv1.TCPProtocol
+		}
 	}
 	if ic.Status.EndpointPublishingStrategy == nil {
 		ic.Status.EndpointPublishingStrategy = effectiveStrategy
@@ -566,6 +571,17 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, platformStat
 			}
 		}
 		return changed
+	case operatorv1.PrivateStrategyType:
+		// Update if PROXY protocol is turned on or off.
+		if ic.Status.EndpointPublishingStrategy.Private == nil {
+			ic.Status.EndpointPublishingStrategy.Private = &operatorv1.PrivateStrategy{}
+		}
+		statusPrivate := ic.Status.EndpointPublishingStrategy.Private
+		specPrivate := effectiveStrategy.Private
+		if specPrivate != nil && specPrivate.Protocol != statusPrivate.Protocol {
+			statusPrivate.Protocol = specPrivate.Protocol
+			return true
+		}
 	}
 
 	return false
@@ -1008,6 +1024,10 @@ func IsProxyProtocolNeeded(ic *operatorv1.IngressController, platform *configv1.
 	case operatorv1.NodePortServiceStrategyType:
 		if ic.Status.EndpointPublishingStrategy.NodePort != nil {
 			return ic.Status.EndpointPublishingStrategy.NodePort.Protocol == operatorv1.ProxyProtocol, nil
+		}
+	case operatorv1.PrivateStrategyType:
+		if ic.Status.EndpointPublishingStrategy.Private != nil {
+			return ic.Status.EndpointPublishingStrategy.Private.Protocol == operatorv1.ProxyProtocol, nil
 		}
 	}
 	return false, nil
