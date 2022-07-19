@@ -282,6 +282,17 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		// node.  Thus no affinity policy is required when using
 		// HostNetwork.
 	case operatorv1.PrivateStrategyType, operatorv1.LoadBalancerServiceStrategyType, operatorv1.NodePortServiceStrategyType:
+		// Non-HA ingress controllers should have default deployment
+		// strategy with no affinity policy. We need to check the cluster
+		// topology in order to determine whether the affinity rule is
+		// required. Just checking desiredReplicas would be incorrect
+		// because we need the rule on multi-node clusters, even if
+		// desiredReplicas is 1, so that a rolling update schedules
+		// the new pod to the same node as the old pod.
+		if singleReplica(ingressConfig, infraConfig) {
+			break
+		}
+
 		// To avoid downtime during a rolling update, we need two
 		// things: a deployment strategy and an affinity policy.  First,
 		// the deployment strategy: During a rolling update, we want the
@@ -1689,4 +1700,15 @@ func capReloadIntervalValue(interval time.Duration) time.Duration {
 	default:
 		return interval
 	}
+}
+
+// SingleReplica determines if ingress controllers are deployed in SingleReplica topology
+func singleReplica(ingressConfig *configv1.Ingress, infraConfig *configv1.Infrastructure) bool {
+	// DefaultPlacement affects which topology field we're interested in
+	topology := infraConfig.Status.InfrastructureTopology
+	if ingressConfig.Status.DefaultPlacement == configv1.DefaultPlacementControlPlane {
+		topology = infraConfig.Status.ControlPlaneTopology
+	}
+
+	return topology == configv1.SingleReplicaTopologyMode
 }
