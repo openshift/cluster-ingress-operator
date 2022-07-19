@@ -221,17 +221,28 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 // synchronously until a message is received on the stop channel.
 // TODO: Move the default IngressController logic elsewhere.
 func (o *Operator) Start(ctx context.Context) error {
-	// Periodicaly ensure the default controller exists.
-	go wait.Until(func() {
-		if !o.manager.GetCache().WaitForCacheSync(ctx) {
-			log.Error(nil, "failed to sync cache before ensuring default ingresscontroller")
-			return
-		}
-		err := o.ensureDefaultIngressController()
-		if err != nil {
-			log.Error(err, "failed to ensure default ingresscontroller")
-		}
-	}, 1*time.Minute, ctx.Done())
+
+	infraConfig := &configv1.Infrastructure{}
+	if err := o.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, infraConfig); err != nil {
+		return fmt.Errorf("failed fetching infrastructure config: %w", err)
+	}
+
+	if infraConfig.Status.ControlPlaneTopology == configv1.ExternalTopologyMode {
+		log.Info("skipping default ingress controller creation")
+	} else {
+		// Periodicaly ensure the default controller exists.
+		go wait.Until(func() {
+			if !o.manager.GetCache().WaitForCacheSync(ctx) {
+				log.Error(nil, "failed to sync cache before ensuring default ingresscontroller")
+				return
+			}
+			err := o.ensureDefaultIngressController(infraConfig)
+			if err != nil {
+				log.Error(err, "failed to ensure default ingresscontroller")
+			}
+		}, 1*time.Minute, ctx.Done())
+
+	}
 
 	if err := o.handleSingleNode4Dot11Upgrade(); err != nil {
 		log.Error(err, "failed to handle single node 4.11 upgrade logic")
@@ -251,11 +262,7 @@ func (o *Operator) Start(ctx context.Context) error {
 	}
 }
 
-func (o *Operator) determineReplicasForDefaultIngressController() (int32, error) {
-	infraConfig := &configv1.Infrastructure{}
-	if err := o.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, infraConfig); err != nil {
-		return 0, fmt.Errorf("failed fetching infrastructure config: %w", err)
-	}
+func (o *Operator) determineReplicasForDefaultIngressController(infraConfig *configv1.Infrastructure) (int32, error) {
 	ingressConfig := &configv1.Ingress{}
 	if err := o.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, ingressConfig); err != nil {
 		return 0, fmt.Errorf("failed fetching ingress config: %w", err)
@@ -336,7 +343,7 @@ func (o *Operator) handleSingleNode4Dot11Upgrade() error {
 
 // ensureDefaultIngressController creates the default ingresscontroller if it
 // doesn't already exist.
-func (o *Operator) ensureDefaultIngressController() error {
+func (o *Operator) ensureDefaultIngressController(infraConfig *configv1.Infrastructure) error {
 	name := types.NamespacedName{Namespace: o.namespace, Name: manifests.DefaultIngressControllerName}
 	ic := &operatorv1.IngressController{}
 	if err := o.client.Get(context.TODO(), name, ic); err == nil {
@@ -349,7 +356,7 @@ func (o *Operator) ensureDefaultIngressController() error {
 	// persisted value will be nil, which causes GETs on the /scale
 	// subresource to fail, which breaks the scaling client.  See also:
 	// https://github.com/kubernetes/kubernetes/pull/75210
-	replicas, err := o.determineReplicasForDefaultIngressController()
+	replicas, err := o.determineReplicasForDefaultIngressController(infraConfig)
 	if err != nil {
 		return fmt.Errorf("failed to determine number of replicas for default ingress controller: %w", err)
 	}
