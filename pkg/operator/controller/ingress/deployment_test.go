@@ -804,6 +804,37 @@ func TestDesiredRouterDeploymentHostNetworkNil(t *testing.T) {
 	checkContainerPort(t, deployment, "metrics", 1936)
 }
 
+func TestDesiredRouterDeploymentSingleReplica(t *testing.T) {
+	ic, ingressConfig, _, apiConfig, networkConfig, _ := getRouterDeploymentComponents(t)
+
+	infraConfig := &configv1.Infrastructure{
+		Status: configv1.InfrastructureStatus{
+			PlatformStatus: &configv1.PlatformStatus{
+				Type: configv1.IBMCloudPlatformType,
+			},
+			ControlPlaneTopology:   configv1.ExternalTopologyMode,
+			InfrastructureTopology: configv1.SingleReplicaTopologyMode,
+		},
+	}
+
+	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, false, false, nil)
+	if err != nil {
+		t.Fatalf("invalid router Deployment: %v", err)
+	}
+
+	if *deployment.Spec.Replicas != 1 {
+		t.Errorf("expected replicas to be 1, got %d", *deployment.Spec.Replicas)
+	}
+
+	if deployment.Spec.Template.Spec.Affinity != nil {
+		t.Errorf("expected no affinity, got %+v", *deployment.Spec.Template.Spec.Affinity)
+	}
+
+	if deployment.Spec.Strategy.Type != "" || deployment.Spec.Strategy.RollingUpdate != nil {
+		t.Errorf("expected default deployment strategy, got %s", deployment.Spec.Strategy.Type)
+	}
+}
+
 func checkContainerPort(t *testing.T, d *appsv1.Deployment, portName string, port int32) {
 	t.Helper()
 	for _, p := range d.Spec.Template.Spec.Containers[0].Ports {
