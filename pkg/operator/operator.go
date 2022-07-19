@@ -336,7 +336,7 @@ func (o *Operator) handleSingleNode4Dot11Upgrade() error {
 		return fmt.Errorf("unable to update ingress config %q: %w", ingressConfigName.Name, err)
 	}
 
-	log.Info("Patched %q ingress config defaultPlacement status to %q", ingressConfigName.Name, desiredDefaultPlacement)
+	log.Info("Patched ingress config defaultPlacement status", ingressConfigName.Name, desiredDefaultPlacement)
 
 	return nil
 }
