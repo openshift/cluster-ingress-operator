@@ -64,9 +64,13 @@ func (r *reconciler) isRouterDeploymentRolloutComplete(ic *operatorv1.IngressCon
 		return false, fmt.Errorf("failed to get deployment %s: %w", deploymentName, err)
 	}
 
+	if deployment.Generation != deployment.Status.ObservedGeneration {
+		return false, nil
+	}
 	if deployment.Status.Replicas != deployment.Status.UpdatedReplicas {
 		return false, nil
 	}
+
 	return true, nil
 }
 
