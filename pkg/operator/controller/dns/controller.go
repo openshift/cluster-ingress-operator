@@ -24,7 +24,6 @@ import (
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	operatorutil "github.com/openshift/cluster-ingress-operator/pkg/util"
-	oputil "github.com/openshift/cluster-ingress-operator/pkg/util"
 	awsutil "github.com/openshift/cluster-ingress-operator/pkg/util/aws"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/slice"
 
@@ -217,9 +216,9 @@ func (r *reconciler) createDNSProviderIfNeeded(dnsConfig *configv1.DNS) error {
 		return fmt.Errorf("failed to get infrastructure 'config': %v", err)
 	}
 
-	platformStatus, err := oputil.GetPlatformStatus(r.client, infraConfig)
-	if err != nil {
-		return fmt.Errorf("failed to get platform status: %v", err)
+	platformStatus := infraConfig.Status.PlatformStatus
+	if platformStatus == nil {
+		return fmt.Errorf("failed to determine infrastructure platform status: PlatformStatus is nil")
 	}
 
 	creds := &corev1.Secret{}

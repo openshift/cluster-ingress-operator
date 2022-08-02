@@ -18,9 +18,11 @@ import (
 
 func TestDomainNotMatchingBase(t *testing.T) {
 	t.Parallel()
-	if infraConfig.Status.Platform != configv1.AWSPlatformType {
+	if infraConfig.Status.PlatformStatus == nil {
+		t.Skip("test skipped on nil platform")
+	}
+	if infraConfig.Status.PlatformStatus.Type != configv1.AWSPlatformType {
 		t.Skip("test skipped on non-aws platform")
-		return
 	}
 
 	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "domain-not-matching"}
