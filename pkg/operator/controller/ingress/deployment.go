@@ -479,7 +479,6 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	var unsupportedConfigOverrides struct {
 		LoadBalancingAlgorithm string `json:"loadBalancingAlgorithm"`
 		DynamicConfigManager   string `json:"dynamicConfigManager"`
-		ReloadInterval         int32  `json:"reloadInterval"`
 	}
 	if len(ci.Spec.UnsupportedConfigOverrides.Raw) > 0 {
 		if err := json.Unmarshal(ci.Spec.UnsupportedConfigOverrides.Raw, &unsupportedConfigOverrides); err != nil {
@@ -523,15 +522,6 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 			Value: strconv.Itoa(int(v)),
 		})
 	}
-
-	reloadInterval := 5
-	if unsupportedConfigOverrides.ReloadInterval > 0 {
-		reloadInterval = int(unsupportedConfigOverrides.ReloadInterval)
-	}
-	env = append(env, corev1.EnvVar{
-		Name:  RouterReloadIntervalEnvName,
-		Value: fmt.Sprintf("%ds", reloadInterval),
-	})
 
 	dynamicConfigOverride := unsupportedConfigOverrides.DynamicConfigManager
 	if v, err := strconv.ParseBool(dynamicConfigOverride); err == nil && v {
@@ -580,6 +570,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	if ci.Spec.TuningOptions.HealthCheckInterval != nil && ci.Spec.TuningOptions.HealthCheckInterval.Duration >= 1*time.Second {
 		env = append(env, corev1.EnvVar{Name: RouterBackendCheckInterval, Value: durationToHAProxyTimespec(ci.Spec.TuningOptions.HealthCheckInterval.Duration)})
 	}
+	env = append(env, corev1.EnvVar{Name: RouterReloadIntervalEnvName, Value: durationToHAProxyTimespec(capReloadIntervalValue(ci.Spec.TuningOptions.ReloadInterval.Duration))})
 
 	nodeSelector := map[string]string{
 		"kubernetes.io/os": "linux",
@@ -1677,4 +1668,25 @@ func GetMIMETypes(mimeTypes []operatorv1.CompressionMIMEType) []string {
 	}
 
 	return mimes
+}
+
+// caps the value of ReloadInterval between the bounds of 1s and 120s
+// returns the default of 5s if the user gives a 0 value
+func capReloadIntervalValue(interval time.Duration) time.Duration {
+	const (
+		maxInterval     = 120 * time.Second
+		minInterval     = 1 * time.Second
+		defaultInterval = 5 * time.Second
+	)
+
+	switch {
+	case interval == 0:
+		return defaultInterval
+	case interval > maxInterval:
+		return maxInterval
+	case interval < minInterval:
+		return minInterval
+	default:
+		return interval
+	}
 }
