@@ -19,17 +19,17 @@ func TestRouteMetricsControllerRoutesPerShardMetric(t *testing.T) {
 			shardName: "test",
 			actions:   []string{"Initialize", "Inc", "Dec", "Delete"},
 			expectedMetricFormats: []string{`
-			# HELP route_metrics_controller_routes_per_shard_total Report the number of routes for shards (ingress controllers).
-			# TYPE route_metrics_controller_routes_per_shard_total gauge
-			route_metrics_controller_routes_per_shard_total{name="test"} 0
+			# HELP route_metrics_controller_routes_per_shard Report the number of routes for shards (ingress controllers).
+			# TYPE route_metrics_controller_routes_per_shard gauge
+			route_metrics_controller_routes_per_shard{name="test"} 0
 			`, `
-			# HELP route_metrics_controller_routes_per_shard_total Report the number of routes for shards (ingress controllers).
-			# TYPE route_metrics_controller_routes_per_shard_total gauge
-			route_metrics_controller_routes_per_shard_total{name="test"} 1
+			# HELP route_metrics_controller_routes_per_shard Report the number of routes for shards (ingress controllers).
+			# TYPE route_metrics_controller_routes_per_shard gauge
+			route_metrics_controller_routes_per_shard{name="test"} 1
 			`, `
-			# HELP route_metrics_controller_routes_per_shard_total Report the number of routes for shards (ingress controllers).
-			# TYPE route_metrics_controller_routes_per_shard_total gauge
-			route_metrics_controller_routes_per_shard_total{name="test"} 0
+			# HELP route_metrics_controller_routes_per_shard Report the number of routes for shards (ingress controllers).
+			# TYPE route_metrics_controller_routes_per_shard gauge
+			route_metrics_controller_routes_per_shard{name="test"} 0
 			`, ``},
 		},
 	}
