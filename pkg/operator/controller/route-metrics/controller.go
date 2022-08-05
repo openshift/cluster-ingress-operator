@@ -35,7 +35,7 @@ var (
 // that handles all the logic for gathering and exporting
 // metrics related to route resources.
 func New(mgr manager.Manager) (controller.Controller, error) {
-	// Create a new cluster with a new cache to watch on Route objects from every namespace.
+	// Create a copy of the cluster, but with a new cache to watch on Route objects from every namespace.
 	newCluster, err := cluster.New(mgr.GetConfig(), func(o *cluster.Options) {
 		o.Scheme = mgr.GetScheme()
 	})
