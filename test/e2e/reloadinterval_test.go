@@ -80,16 +80,19 @@ func TestReloadInterval(t *testing.T) {
 		// cases with values that pass the regex validation
 		if testCase.expectSuccess {
 			if err := setReloadIntervalValidValue(t, kclient, 1*time.Minute, testCase.reloadInterval, icName); err != nil {
-				t.Fatalf("failed to update ingresscontroller with reloadInterval=%v: %v", testCase.reloadInterval, err)
+				t.Errorf("failed to update ingresscontroller with reloadInterval=%v: %v", testCase.reloadInterval, err)
+				continue
 			}
 			// cases with values that fail the regex validation
 		} else {
 			err := setReloadIntervalInvalidValue(t, kclient, testCase.reloadInterval, icName)
 			if err == nil {
-				t.Fatalf("expected an error")
+				t.Errorf("expected an error when attempting invalid value")
+				continue
 			}
 			if !strings.Contains(err.Error(), expectedErr) {
-				t.Fatalf("expected error message %q, got %v", expectedErr, err)
+				t.Errorf("expected error message %q, got %v", expectedErr, err)
+				continue
 			}
 		}
 
@@ -125,7 +128,7 @@ func setReloadIntervalInvalidValue(t *testing.T, client client.Client, reloadInt
 
 	ic := operatorv1.IngressController{}
 	if err := client.Get(context.TODO(), name, &ic); err != nil {
-		t.Logf("Get %q failed: %v, retrying ...", name, err)
+		t.Logf("Get %q failed: %v", name, err)
 		return err
 	}
 	ic.Spec.TuningOptions.ReloadInterval = reloadInterval

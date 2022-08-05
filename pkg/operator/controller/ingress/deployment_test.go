@@ -1674,7 +1674,7 @@ func TestCapReloadIntervalValue(t *testing.T) {
 		{1 * time.Hour, 120 * time.Second},
 		{365 * time.Second, 120 * time.Second},
 
-		// Values in the allowed range returns itself (i.e. b/w 1s and 5 mins).
+		// Values in the allowed range returns itself (i.e. between 1s and 120s).
 		{1 * time.Minute, 1 * time.Minute},
 		{2 * time.Minute, 2 * time.Minute},
 		{1 * time.Second, 1 * time.Second},
