@@ -79,14 +79,6 @@ func (r *reconciler) routeCreateEventGatherMetrics(obj client.Object) bool {
 
 	log.Info("route create event", "name", routeObject.Name, "namespace", routeObject.Namespace)
 
-	// Check if the Route object has TLSConfig. If so, get the curent TLSTerminationType.
-	if routeObject.Spec.TLS != nil {
-		currentTLSTerminationType := routeObject.Spec.TLS.Termination
-		// If a TLSConfig is present, then the RouteMetricsControllerRouteType should be incremented by 1 for
-		// the current TLSTerminationType.
-		IncrementRouteMetricsControllerRouteTypeMetric(currentTLSTerminationType)
-	}
-
 	// Iterate through the related Ingress Controllers.
 	for _, ingress := range routeObject.Status.Ingress {
 		// Check if the Route has been admitted by the Ingress Controller.
@@ -107,13 +99,6 @@ func (r *reconciler) routeDeleteEventGatherMetrics(obj client.Object) bool {
 	routeObject := obj.(*routev1.Route)
 
 	log.Info("route create event", "name", routeObject.Name, "namespace", routeObject.Namespace)
-
-	// Check if the Route object has TLSConfig. If so, get the curent TLSTerminationType.
-	if routeObject.Spec.TLS != nil {
-		currentTLSTerminationType := routeObject.Spec.TLS.Termination
-		// If the Route was previously admitted then, the RouteMetricsControllerRouteType should be decremented by 1 for the same TLSTerminationType.
-		DecrementRouteMetricsControllerRouteTypeMetric(currentTLSTerminationType)
-	}
 
 	// Iterate through the related Ingress Controllers.
 	for _, ingress := range routeObject.Status.Ingress {
@@ -137,41 +122,6 @@ func (r *reconciler) routeUpdateEventGatherMetrics(oldObj client.Object, newObj 
 	routeNewObject := newObj.(*routev1.Route)
 
 	log.Info("route create event", "name", routeOldObject.Name, "namespace", routeOldObject.Namespace)
-
-	// Check if the old Route object has TLSConfig. If so, get the curent TLSTerminationType.
-	var existingTLSTerminationType routev1.TLSTerminationType
-	hasOldTLSConfig := false
-	if routeOldObject.Spec.TLS != nil {
-		existingTLSTerminationType = routeOldObject.Spec.TLS.Termination
-		hasOldTLSConfig = true
-	}
-	// Check if the new Route object has TLSConfig. If so, get the curent TLSTerminationType.
-	var currentTLSTerminationType routev1.TLSTerminationType
-	hasNewTLSConfig := false
-	if routeNewObject.Spec.TLS != nil {
-		currentTLSTerminationType = routeNewObject.Spec.TLS.Termination
-		hasNewTLSConfig = true
-	}
-
-	// If TLSTerminationType exists for both the old and new Route objects, then check if exisiting TLSTerminationType
-	// matches with that of the current one.
-	if hasOldTLSConfig && hasNewTLSConfig {
-		// If the current and existing TLSTerminationType does not match then it has changed, then
-		// the RouteMetricsControllerRouteType should be decremented by 1 for the existing TLSTerminationType and
-		// the RouteMetricsControllerRouteType should be incremented by 1 for the current TLSTerminationType.
-		if currentTLSTerminationType != existingTLSTerminationType {
-			DecrementRouteMetricsControllerRouteTypeMetric(existingTLSTerminationType)
-			IncrementRouteMetricsControllerRouteTypeMetric(currentTLSTerminationType)
-		}
-	} else if hasOldTLSConfig {
-		// If the TLSConfig was removed, then the RouteMetricsControllerRouteType should be decremented by 1 for
-		// the existing TLSTerminationType.
-		DecrementRouteMetricsControllerRouteTypeMetric(existingTLSTerminationType)
-	} else if hasNewTLSConfig {
-		// If a TLSConfig was added, then the RouteMetricsControllerRouteType should be incremented by 1 for
-		// the current TLSTerminationType.
-		IncrementRouteMetricsControllerRouteTypeMetric(currentTLSTerminationType)
-	}
 
 	// Create a map of existing Shards the Route belongs to.
 	existingShards := make(map[string]bool)

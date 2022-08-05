@@ -3,29 +3,19 @@ package routemetrics
 import (
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
-
-	routev1 "github.com/openshift/api/route/v1"
 )
 
 var (
 	// routeMetricsControllerRoutesPerShard reports the number of routes belonging to each
-	// Shard (IngressController) using the route_metrics_controller_routes_per_shard_total metric.
+	// Shard (IngressController) using the route_metrics_controller_routes_per_shard metric.
 	routeMetricsControllerRoutesPerShard = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "route_metrics_controller_routes_per_shard_total",
+		Name: "route_metrics_controller_routes_per_shard",
 		Help: "Report the number of routes for shards (ingress controllers).",
 	}, []string{"name"})
-
-	// routeMetricsControllerRouteType reports the number of routes of each
-	// Route Type (edge, reencrypt, passthrough) using the route_metrics_controller_route_type_total metric.
-	routeMetricsControllerRouteType = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "route_metrics_controller_route_type_total",
-		Help: "Report the number of routes for tls termination type.",
-	}, []string{"type"})
 
 	// metricsList is a list of metrics for this package.
 	metricsList = []prometheus.Collector{
 		routeMetricsControllerRoutesPerShard,
-		routeMetricsControllerRouteType,
 	}
 )
 
@@ -45,14 +35,6 @@ func IncrementRouteMetricsControllerRoutesPerShardMetric(shardName string) {
 
 func DecrementRouteMetricsControllerRoutesPerShardMetric(shardName string) {
 	routeMetricsControllerRoutesPerShard.WithLabelValues(shardName).Dec()
-}
-
-func IncrementRouteMetricsControllerRouteTypeMetric(tlsType routev1.TLSTerminationType) {
-	routeMetricsControllerRouteType.WithLabelValues(string(tlsType)).Inc()
-}
-
-func DecrementRouteMetricsControllerRouteTypeMetric(tlsType routev1.TLSTerminationType) {
-	routeMetricsControllerRouteType.WithLabelValues(string(tlsType)).Dec()
 }
 
 // RegisterMetrics calls prometheus.Register on each metric in metricsList, and
