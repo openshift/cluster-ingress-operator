@@ -210,7 +210,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	}
 
 	// Set up the route metrics controller.
-	if _, err := routemetricscontroller.New(mgr); err != nil {
+	if _, err := routemetricscontroller.New(mgr, config.Namespace); err != nil {
 		return nil, fmt.Errorf("failed to create route metrics controller: %w", err)
 	}
 

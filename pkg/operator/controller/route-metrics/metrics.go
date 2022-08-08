@@ -20,9 +20,18 @@ var (
 )
 
 func InitializeRouteMetricsControllerRoutesPerShardMetric(shardName string) {
-	// Write will initialize routeMetricsControllerRoutesPerShard if not already initialized. If it is already initialized,
-	// then it will just fetch the existing value.
-	routeMetricsControllerRoutesPerShard.WithLabelValues(shardName).Write(&dto.Metric{})
+	SetRouteMetricsControllerRoutesPerShardMetric(shardName, 0)
+}
+
+func GetRouteMetricsControllerRoutesPerShardMetric(shardName string) float64 {
+	metric := &dto.Metric{}
+	routeMetricsControllerRoutesPerShard.WithLabelValues(shardName).Write(metric)
+	return *metric.Gauge.Value
+
+}
+
+func SetRouteMetricsControllerRoutesPerShardMetric(shardName string, value float64) {
+	routeMetricsControllerRoutesPerShard.WithLabelValues(shardName).Set(value)
 }
 
 func DeleteRouteMetricsControllerRoutesPerShardMetric(shardName string) {

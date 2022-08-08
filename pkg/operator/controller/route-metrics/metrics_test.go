@@ -13,6 +13,7 @@ func TestRouteMetricsControllerRoutesPerShardMetric(t *testing.T) {
 		shardName             string
 		actions               []string
 		expectedMetricFormats []string
+		expectedMetricResults []float64
 	}{
 		{
 			name:      "routes per shard metrics test shard",
@@ -31,6 +32,7 @@ func TestRouteMetricsControllerRoutesPerShardMetric(t *testing.T) {
 			# TYPE route_metrics_controller_routes_per_shard gauge
 			route_metrics_controller_routes_per_shard{name="test"} 0
 			`, ``},
+			expectedMetricResults: []float64{0, 1, 0, 0},
 		},
 	}
 
@@ -50,12 +52,20 @@ func TestRouteMetricsControllerRoutesPerShardMetric(t *testing.T) {
 						t.Error(err)
 					}
 
+					if actualResult := GetRouteMetricsControllerRoutesPerShardMetric(tc.shardName); actualResult != tc.expectedMetricResults[index] {
+						t.Errorf("expected result %v, got %v", tc.expectedMetricResults[index], actualResult)
+					}
+
 				case "Inc":
 					IncrementRouteMetricsControllerRoutesPerShardMetric(tc.shardName)
 
 					err := testutil.CollectAndCompare(routeMetricsControllerRoutesPerShard, strings.NewReader(tc.expectedMetricFormats[index]))
 					if err != nil {
 						t.Error(err)
+					}
+
+					if actualResult := GetRouteMetricsControllerRoutesPerShardMetric(tc.shardName); actualResult != tc.expectedMetricResults[index] {
+						t.Errorf("expected result %v, got %v", tc.expectedMetricResults[index], actualResult)
 					}
 
 				case "Dec":
@@ -66,12 +76,20 @@ func TestRouteMetricsControllerRoutesPerShardMetric(t *testing.T) {
 						t.Error(err)
 					}
 
+					if actualResult := GetRouteMetricsControllerRoutesPerShardMetric(tc.shardName); actualResult != tc.expectedMetricResults[index] {
+						t.Errorf("expected result %v, got %v", tc.expectedMetricResults[index], actualResult)
+					}
+
 				case "Delete":
 					DeleteRouteMetricsControllerRoutesPerShardMetric(tc.shardName)
 
 					err := testutil.CollectAndCompare(routeMetricsControllerRoutesPerShard, strings.NewReader(tc.expectedMetricFormats[index]))
 					if err != nil {
 						t.Error(err)
+					}
+
+					if actualResult := GetRouteMetricsControllerRoutesPerShardMetric(tc.shardName); actualResult != tc.expectedMetricResults[index] {
+						t.Errorf("expected result %v, got %v", tc.expectedMetricResults[index], actualResult)
 					}
 				}
 
