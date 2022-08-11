@@ -50,7 +50,6 @@ func TestAll(t *testing.T) {
 		t.Run("TestNetworkLoadBalancer", TestNetworkLoadBalancer)
 		t.Run("TestNodePortServiceEndpointPublishingStrategy", TestNodePortServiceEndpointPublishingStrategy)
 		t.Run("TestProxyProtocolAPI", TestProxyProtocolAPI)
-		t.Run("TestReloadIntervalUnsupportedConfigOverride", TestReloadIntervalUnsupportedConfigOverride)
 		t.Run("TestRouteAdmissionPolicy", TestRouteAdmissionPolicy)
 		t.Run("TestRouterCompressionParsing", TestRouterCompressionParsing)
 		t.Run("TestScopeChange", TestScopeChange)
@@ -66,6 +65,7 @@ func TestAll(t *testing.T) {
 		t.Run("TestDeleteIngressControllerShouldClearRouteStatus", TestDeleteIngressControllerShouldClearRouteStatus)
 		t.Run("TestIngressControllerRouteSelectorUpdateShouldClearRouteStatus", TestIngressControllerRouteSelectorUpdateShouldClearRouteStatus)
 		t.Run("TestIngressControllerNamespaceSelectorUpdateShouldClearRouteStatus", TestIngressControllerNamespaceSelectorUpdateShouldClearRouteStatus)
+		t.Run("TestReloadInterval", TestReloadInterval)
 	})
 
 	t.Run("serial", func(t *testing.T) {

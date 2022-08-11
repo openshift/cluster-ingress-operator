@@ -164,6 +164,7 @@ func TestTuningOptions(t *testing.T) {
 	ic.Spec.TuningOptions.TunnelTimeout = &metav1.Duration{30 * time.Minute}
 	ic.Spec.TuningOptions.TLSInspectDelay = &metav1.Duration{5 * time.Second}
 	ic.Spec.TuningOptions.HealthCheckInterval = &metav1.Duration{15 * time.Second}
+	ic.Spec.TuningOptions.ReloadInterval = metav1.Duration{30 * time.Second}
 
 	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, false, false, nil)
 	if err != nil {
@@ -179,6 +180,7 @@ func TestTuningOptions(t *testing.T) {
 		{"ROUTER_DEFAULT_TUNNEL_TIMEOUT", true, "30m"},
 		{"ROUTER_INSPECT_DELAY", true, "5s"},
 		{RouterBackendCheckInterval, true, "15s"},
+		{RouterReloadIntervalEnvName, true, "30s"},
 	}
 
 	if err := checkDeploymentEnvironment(t, deployment, tests); err != nil {
@@ -286,7 +288,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	}
 	tests := []envData{
 		{"NAMESPACE_LABELS", true, "foo=bar"},
-		{"RELOAD_INTERVAL", true, "5s"},
+		{RouterReloadIntervalEnvName, true, "5s"},
 		{"ROUTE_LABELS", true, "baz=quux"},
 		{RouterBackendCheckInterval, false, ""},
 		{RouterCompressionMIMETypes, false, ""},
@@ -455,7 +457,7 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 	var expectedReplicas int32 = 8
 	ic.Spec.Replicas = &expectedReplicas
 	ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
-		Raw: []byte(`{"loadBalancingAlgorithm":"leastconn","dynamicConfigManager":"false","reloadInterval":15}`),
+		Raw: []byte(`{"loadBalancingAlgorithm":"leastconn","dynamicConfigManager":"false"}`),
 	}
 	ic.Spec.HttpErrorCodePages = configv1.ConfigMapNameReference{
 		Name: "my-custom-error-code-pages",
@@ -504,7 +506,7 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 		{"ROUTER_LOAD_BALANCE_ALGORITHM", true, "leastconn"},
 		{"ROUTER_TCP_BALANCE_SCHEME", true, "source"},
 		{"ROUTER_MAX_CONNECTIONS", true, "auto"},
-		{"RELOAD_INTERVAL", true, "15s"},
+		{RouterReloadIntervalEnvName, true, "5s"},
 		{"ROUTER_USE_PROXY_PROTOCOL", true, "true"},
 		{"ROUTER_UNIQUE_ID_HEADER_NAME", true, "unique-id"},
 		{"ROUTER_UNIQUE_ID_FORMAT", true, `"%{+X}o %ci:%cp_%fi:%fp_%Ts_%rt:%pid"`},
@@ -579,7 +581,7 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 		{"ROUTER_LOAD_BALANCE_ALGORITHM", true, "random"},
 		{"ROUTER_TCP_BALANCE_SCHEME", true, "source"},
 		{"ROUTER_MAX_CONNECTIONS", true, "40000"},
-		{"RELOAD_INTERVAL", true, "5s"},
+		{RouterReloadIntervalEnvName, true, "5s"},
 		{"ROUTER_USE_PROXY_PROTOCOL", false, ""},
 	}
 	if err := checkDeploymentEnvironment(t, deployment, tests); err != nil {
@@ -1652,6 +1654,37 @@ func TestDurationToHAProxyTimespec(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		output := durationToHAProxyTimespec(tc.inputDuration)
+		if output != tc.expectedOutput {
+			t.Errorf("Expected %q, got %q", tc.expectedOutput, output)
+		}
+	}
+}
+
+func TestCapReloadIntervalValue(t *testing.T) {
+	testCases := []struct {
+		inputDuration  time.Duration
+		expectedOutput time.Duration
+	}{
+		// Values below the minimum 1s returns 1s.
+		{1 * time.Millisecond, 1 * time.Second},
+		{-1, 1 * time.Second},
+
+		// Values above the maximum 120s returns 120s.
+		{6 * time.Minute, 120 * time.Second},
+		{1 * time.Hour, 120 * time.Second},
+		{365 * time.Second, 120 * time.Second},
+
+		// Values in the allowed range returns itself (i.e. between 1s and 120s).
+		{1 * time.Minute, 1 * time.Minute},
+		{2 * time.Minute, 2 * time.Minute},
+		{1 * time.Second, 1 * time.Second},
+		{20 * time.Second, 20 * time.Second},
+
+		// Value of 0 returns default of 5s.
+		{0, 5 * time.Second},
+	}
+	for _, tc := range testCases {
+		output := capReloadIntervalValue(tc.inputDuration)
 		if output != tc.expectedOutput {
 			t.Errorf("Expected %q, got %q", tc.expectedOutput, output)
 		}
