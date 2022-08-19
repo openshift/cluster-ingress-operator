@@ -16,6 +16,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/utils/pointer"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -56,6 +57,16 @@ func buildEchoPod(name, namespace string) *corev1.Pod {
 						{
 							ContainerPort: int32(8080),
 							Protocol:      corev1.ProtocolTCP,
+						},
+					},
+					SecurityContext: &corev1.SecurityContext{
+						AllowPrivilegeEscalation: pointer.Bool(false),
+						Capabilities: &corev1.Capabilities{
+							Drop: []corev1.Capability{"ALL"},
+						},
+						RunAsNonRoot: pointer.Bool(true),
+						SeccompProfile: &corev1.SeccompProfile{
+							Type: corev1.SeccompProfileTypeRuntimeDefault,
 						},
 					},
 				},
@@ -107,6 +118,16 @@ func buildCurlPod(name, namespace, image, host, address string, extraArgs ...str
 					Image:   image,
 					Command: []string{"/bin/curl"},
 					Args:    curlArgs,
+					SecurityContext: &corev1.SecurityContext{
+						AllowPrivilegeEscalation: pointer.Bool(false),
+						Capabilities: &corev1.Capabilities{
+							Drop: []corev1.Capability{"ALL"},
+						},
+						RunAsNonRoot: pointer.Bool(true),
+						SeccompProfile: &corev1.SeccompProfile{
+							Type: corev1.SeccompProfileTypeRuntimeDefault,
+						},
+					},
 				},
 			},
 			RestartPolicy: corev1.RestartPolicyNever,
@@ -130,6 +151,16 @@ func buildExecPod(name, namespace, image string) *corev1.Pod {
 					Image:   image,
 					Command: []string{"/bin/sleep"},
 					Args:    []string{"4h"},
+					SecurityContext: &corev1.SecurityContext{
+						AllowPrivilegeEscalation: pointer.Bool(false),
+						Capabilities: &corev1.Capabilities{
+							Drop: []corev1.Capability{"ALL"},
+						},
+						RunAsNonRoot: pointer.Bool(true),
+						SeccompProfile: &corev1.SeccompProfile{
+							Type: corev1.SeccompProfileTypeRuntimeDefault,
+						},
+					},
 				},
 			},
 			RestartPolicy: corev1.RestartPolicyNever,
@@ -161,6 +192,16 @@ func buildSlowHTTPDPod(name, namespace string) *corev1.Pod {
 						{
 							ContainerPort: int32(8080),
 							Protocol:      corev1.ProtocolTCP,
+						},
+					},
+					SecurityContext: &corev1.SecurityContext{
+						AllowPrivilegeEscalation: pointer.Bool(false),
+						Capabilities: &corev1.Capabilities{
+							Drop: []corev1.Capability{"ALL"},
+						},
+						RunAsNonRoot: pointer.Bool(true),
+						SeccompProfile: &corev1.SeccompProfile{
+							Type: corev1.SeccompProfileTypeRuntimeDefault,
 						},
 					},
 				},
