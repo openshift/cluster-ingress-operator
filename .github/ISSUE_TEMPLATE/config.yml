@@ -1,6 +1,6 @@
 contact_links:
 - name: File a Bugzilla report
-  url: https://bugzilla.redhat.com/enter_bug.cgi?product=OpenShift%20Container%20Platform&component=Routing
+  url: https://bugzilla.redhat.com/enter_bug.cgi?product=OpenShift%20Container%20Platform&component=Networking&sub_component=router
   about: Please use Bugzilla to report issues.
 - name: Ingress Operator in OpenShift Container Platform
   url: https://docs.openshift.com/container-platform/latest/networking/ingress-operator.html
