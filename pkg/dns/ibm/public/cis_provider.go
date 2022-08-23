@@ -1,4 +1,4 @@
-package ibm
+package public
 
 import (
 	"fmt"
@@ -6,11 +6,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/IBM/go-sdk-core/v4/core"
+	"github.com/IBM/go-sdk-core/v5/core"
 	"github.com/IBM/networking-go-sdk/dnsrecordsv1"
 	configv1 "github.com/openshift/api/config/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
-	dnsclient "github.com/openshift/cluster-ingress-operator/pkg/dns/ibm/client"
+	common "github.com/openshift/cluster-ingress-operator/pkg/dns/ibm"
+	dnsclient "github.com/openshift/cluster-ingress-operator/pkg/dns/ibm/public/client"
 
 	iov1 "github.com/openshift/api/operatoringress/v1"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
@@ -18,26 +19,22 @@ import (
 )
 
 var (
-	_                   dns.Provider = &Provider{}
-	log                              = logf.Logger.WithName("dns")
-	defaultCISRecordTTL              = int64(120)
+	_   dns.Provider = &Provider{}
+	log              = logf.Logger.WithName("dns")
 )
 
+// defaultCISRecordTTL is the default TTL used when a DNS record
+// does not specify a valid TTL.
+const defaultCISRecordTTL = int64(120)
+
 type Provider struct {
+	// dnsServices maps DNS zones to CIS clients.
 	dnsServices map[string]dnsclient.DnsClient
 }
 
-// Config is the necessary input to configure the manager.
-type Config struct {
-	APIKey    string
-	CISCRN    string
-	UserAgent string
-	Zones     []string
-}
-
-func NewProvider(config Config) (*Provider, error) {
+func NewProvider(config common.Config) (*Provider, error) {
 	if len(config.Zones) < 1 {
-		return nil, fmt.Errorf("missing zone data")
+		return nil, fmt.Errorf("IBM CIS DNS: missing zone data")
 	}
 	authenticator := &core.IamAuthenticator{
 		ApiKey: config.APIKey,
@@ -49,14 +46,14 @@ func NewProvider(config Config) (*Provider, error) {
 	for _, zone := range config.Zones {
 		options := &dnsrecordsv1.DnsRecordsV1Options{
 			Authenticator:  authenticator,
-			URL:            "https://api.cis.cloud.ibm.com/",
-			Crn:            &config.CISCRN,
+			URL:            dnsrecordsv1.DefaultServiceURL,
+			Crn:            &config.InstanceID,
 			ZoneIdentifier: &zone,
 		}
 
 		dnsService, err := dnsrecordsv1.NewDnsRecordsV1(options)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create a new DNS Service instance: %w", err)
+			return nil, fmt.Errorf("failed to create a new IBM CIS DNS instance: %w", err)
 		}
 		dnsService.EnableRetries(3, 5*time.Second)
 		dnsService.Service.SetUserAgent(config.UserAgent)
@@ -65,8 +62,9 @@ func NewProvider(config Config) (*Provider, error) {
 	}
 
 	if err := validateDNSServices(provider); err != nil {
-		return nil, fmt.Errorf("failed to validate ibm dns services: %w", err)
+		return nil, fmt.Errorf("failed to validate IBM CIS DNS: %w", err)
 	}
+	log.Info("successfully validated IBM CIS DNS")
 	return provider, nil
 }
 
@@ -94,7 +92,7 @@ func (p *Provider) Replace(record *iov1.DNSRecord, zone configv1.DNSZone) error 
 }
 
 func (p *Provider) Delete(record *iov1.DNSRecord, zone configv1.DNSZone) error {
-	if err := validateInputDNSData(record, zone); err != nil {
+	if err := common.ValidateInputDNSData(record, zone); err != nil {
 		return fmt.Errorf("delete: invalid dns input data: %w", err)
 	}
 	dnsService, ok := p.dnsServices[zone.ID]
@@ -103,18 +101,22 @@ func (p *Provider) Delete(record *iov1.DNSRecord, zone configv1.DNSZone) error {
 	}
 	opt := dnsService.NewListAllDnsRecordsOptions()
 	opt.SetType(string(record.Spec.RecordType))
-	opt.SetName(record.Spec.DNSName)
+	// DNS records may have an ending "." character in the DNS name.  For
+	// example, the ingress operator's ingress controller adds a trailing
+	// "." when it creates a wildcard DNS record.
+	dnsName := strings.TrimSuffix(record.Spec.DNSName, ".")
+	opt.SetName(dnsName)
 	for _, target := range record.Spec.Targets {
 		opt.SetContent(target)
 		result, response, err := dnsService.ListAllDnsRecords(opt)
 		if err != nil {
-			if response != nil && response.StatusCode != http.StatusNotFound {
+			if response == nil || response.StatusCode != http.StatusNotFound {
 				return fmt.Errorf("delete: failed to list the dns record: %w", err)
 			}
 			continue
 		}
 		if result == nil || result.Result == nil {
-			return fmt.Errorf("delete: invalid result")
+			return fmt.Errorf("delete: ListAllDnsRecords returned nil as result")
 		}
 		for _, resultData := range result.Result {
 			if resultData.ID == nil {
@@ -123,7 +125,7 @@ func (p *Provider) Delete(record *iov1.DNSRecord, zone configv1.DNSZone) error {
 			delOpt := dnsService.NewDeleteDnsRecordOptions(*resultData.ID)
 			_, delResponse, err := dnsService.DeleteDnsRecord(delOpt)
 			if err != nil {
-				if delResponse != nil && delResponse.StatusCode != http.StatusNotFound {
+				if delResponse == nil || delResponse.StatusCode != http.StatusNotFound {
 					return fmt.Errorf("delete: failed to delete the dns record: %w", err)
 				}
 			}
@@ -136,7 +138,7 @@ func (p *Provider) Delete(record *iov1.DNSRecord, zone configv1.DNSZone) error {
 }
 
 func (p *Provider) createOrUpdateDNSRecord(record *iov1.DNSRecord, zone configv1.DNSZone) error {
-	if err := validateInputDNSData(record, zone); err != nil {
+	if err := common.ValidateInputDNSData(record, zone); err != nil {
 		return fmt.Errorf("createOrUpdateDNSRecord: invalid dns input data: %w", err)
 	}
 	dnsService, ok := p.dnsServices[zone.ID]
@@ -152,9 +154,11 @@ func (p *Provider) createOrUpdateDNSRecord(record *iov1.DNSRecord, zone configv1
 
 	listOpt := dnsService.NewListAllDnsRecordsOptions()
 	listOpt.SetType(string(record.Spec.RecordType))
-	// Some dns records (e.g. wildcard record) have an ending "." character in the DNSName
-	DNSName := strings.TrimSuffix(record.Spec.DNSName, ".")
-	listOpt.SetName(DNSName)
+	// DNS records may have an ending "." character in the DNS name.  For
+	// example, the ingress operator's ingress controller adds a trailing
+	// "." when it creates a wildcard DNS record.
+	dnsName := strings.TrimSuffix(record.Spec.DNSName, ".")
+	listOpt.SetName(dnsName)
 	for _, target := range record.Spec.Targets {
 		listOpt.SetContent(target)
 		result, response, err := dnsService.ListAllDnsRecords(listOpt)
@@ -165,7 +169,7 @@ func (p *Provider) createOrUpdateDNSRecord(record *iov1.DNSRecord, zone configv1
 			continue
 		}
 		if result == nil || result.Result == nil {
-			return fmt.Errorf("createOrUpdateDNSRecord: invalid result")
+			return fmt.Errorf("createOrUpdateDNSRecord: ListAllDnsRecords returned nil as result")
 		}
 		if len(result.Result) == 0 {
 			createOpt := dnsService.NewCreateDnsRecordOptions()
@@ -193,26 +197,4 @@ func (p *Provider) createOrUpdateDNSRecord(record *iov1.DNSRecord, zone configv1
 	}
 
 	return nil
-}
-
-func validateInputDNSData(record *iov1.DNSRecord, zone configv1.DNSZone) error {
-	var errs []error
-	if record == nil {
-		errs = append(errs, fmt.Errorf("validateInputDNSData: dns record is nil"))
-	} else {
-		if len(record.Spec.DNSName) == 0 {
-			errs = append(errs, fmt.Errorf("validateInputDNSData: dns record name is empty"))
-		}
-		if len(record.Spec.RecordType) == 0 {
-			errs = append(errs, fmt.Errorf("validateInputDNSData: dns record type is empty"))
-		}
-		if len(record.Spec.Targets) == 0 {
-			errs = append(errs, fmt.Errorf("validateInputDNSData: dns record content is empty"))
-		}
-	}
-	if len(zone.ID) == 0 {
-		errs = append(errs, fmt.Errorf("validateInputDNSData: dns zone id is empty"))
-	}
-	return kerrors.NewAggregate(errs)
-
 }

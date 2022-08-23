@@ -1,14 +1,15 @@
-package ibm
+package private
 
 import (
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 
 	configv1 "github.com/openshift/api/config/v1"
 	iov1 "github.com/openshift/api/operatoringress/v1"
-
-	dnsclient "github.com/openshift/cluster-ingress-operator/pkg/dns/ibm/client"
+	dnsclient "github.com/openshift/cluster-ingress-operator/pkg/dns/ibm/private/client"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestDelete(t *testing.T) {
@@ -18,26 +19,26 @@ func TestDelete(t *testing.T) {
 
 	dnsService, err := dnsclient.NewFake()
 	if err != nil {
-		t.Fatal("failed to create fakeClient")
+		t.Fatalf("failed to create fakeClient: %v", err)
 	}
 
 	provider := &Provider{}
-	provider.dnsServices = map[string]dnsclient.DnsClient{
-		zone.ID: dnsService,
-	}
+	provider.dnsService = dnsService
 
 	testCases := []struct {
 		desc                         string
-		DNSName                      string
 		recordedCall                 string
+		DNSName                      string
+		target                       string
 		listAllDnsRecordsInputOutput dnsclient.ListAllDnsRecordsInputOutput
 		deleteDnsRecordInputOutput   dnsclient.DeleteDnsRecordInputOutput
-		expectedErr                  bool
+		expectErrorContains          string
 	}{
 		{
 			desc:         "happy path",
-			DNSName:      "testDelete",
 			recordedCall: "DELETE",
+			DNSName:      "testDelete",
+			target:       "11.22.33.44",
 			listAllDnsRecordsInputOutput: dnsclient.ListAllDnsRecordsInputOutput{
 				OutputError:      nil,
 				OutputStatusCode: http.StatusOK,
@@ -47,12 +48,12 @@ func TestDelete(t *testing.T) {
 				OutputError:      nil,
 				OutputStatusCode: http.StatusOK,
 			},
-			expectedErr: false,
 		},
 		{
-			desc:         "listFailNotFound",
-			DNSName:      "testDelete",
+			desc:         "listFail",
 			recordedCall: "DELETE",
+			DNSName:      "testDelete",
+			target:       "11.22.33.44",
 			listAllDnsRecordsInputOutput: dnsclient.ListAllDnsRecordsInputOutput{
 				OutputError:      nil,
 				OutputStatusCode: http.StatusNotFound,
@@ -62,14 +63,14 @@ func TestDelete(t *testing.T) {
 				OutputError:      nil,
 				OutputStatusCode: http.StatusOK,
 			},
-			expectedErr: false,
 		},
 		{
 			desc:         "listFailError",
-			DNSName:      "testDelete",
 			recordedCall: "DELETE",
+			DNSName:      "testDelete",
+			target:       "11.22.33.44",
 			listAllDnsRecordsInputOutput: dnsclient.ListAllDnsRecordsInputOutput{
-				OutputError:      errors.New("Error in ListAllDnsRecords"),
+				OutputError:      errors.New("error in ListAllDnsRecords"),
 				OutputStatusCode: http.StatusRequestTimeout,
 			},
 			deleteDnsRecordInputOutput: dnsclient.DeleteDnsRecordInputOutput{
@@ -77,43 +78,45 @@ func TestDelete(t *testing.T) {
 				OutputError:      nil,
 				OutputStatusCode: http.StatusOK,
 			},
-			expectedErr: true,
+			expectErrorContains: "error in ListAllDnsRecords",
 		},
 		{
 			desc:         "deleteRecordNotFound",
-			DNSName:      "testDelete",
 			recordedCall: "DELETE",
+			DNSName:      "testDelete",
+			target:       "11.22.33.44",
 			listAllDnsRecordsInputOutput: dnsclient.ListAllDnsRecordsInputOutput{
 				OutputError:      nil,
 				OutputStatusCode: http.StatusOK,
 			},
 			deleteDnsRecordInputOutput: dnsclient.DeleteDnsRecordInputOutput{
 				InputId:          "testDelete",
-				OutputError:      errors.New("Error in DeleteDnsRecord"),
+				OutputError:      errors.New("error in DeleteDnsRecord"),
 				OutputStatusCode: http.StatusNotFound,
 			},
-			expectedErr: false,
 		},
 		{
 			desc:         "deleteError",
-			DNSName:      "testDelete",
 			recordedCall: "DELETE",
+			DNSName:      "testDelete",
+			target:       "11.22.33.44",
 			listAllDnsRecordsInputOutput: dnsclient.ListAllDnsRecordsInputOutput{
 				OutputError:      nil,
 				OutputStatusCode: http.StatusOK,
 			},
 			deleteDnsRecordInputOutput: dnsclient.DeleteDnsRecordInputOutput{
 				InputId:          "testDelete",
-				OutputError:      errors.New("Error in DeleteDnsRecord"),
+				OutputError:      errors.New("error in DeleteDnsRecord"),
 				OutputStatusCode: http.StatusRequestTimeout,
 			},
-			expectedErr: true,
+			expectErrorContains: "error in DeleteDnsRecord",
 		},
 		{
-			desc:         "empty DNSName",
-			DNSName:      "",
-			recordedCall: "",
-			expectedErr:  true,
+			desc:                "empty DNSName",
+			DNSName:             "",
+			target:              "",
+			recordedCall:        "",
+			expectErrorContains: "invalid dns input data",
 		},
 	}
 	for _, tc := range testCases {
@@ -123,23 +126,25 @@ func TestDelete(t *testing.T) {
 				Spec: iov1.DNSRecordSpec{
 					DNSName:    tc.DNSName,
 					RecordType: iov1.ARecordType,
-					Targets:    []string{"11.22.33.44"},
+					Targets:    []string{tc.target},
 					RecordTTL:  120,
 				},
 			}
 
+			tc.listAllDnsRecordsInputOutput.RecordName = tc.DNSName
+			tc.listAllDnsRecordsInputOutput.RecordTarget = tc.target
 			dnsService.ListAllDnsRecordsInputOutput = tc.listAllDnsRecordsInputOutput
 
 			dnsService.DeleteDnsRecordInputOutput = tc.deleteDnsRecordInputOutput
 
 			err = provider.Delete(&record, zone)
 
-			if tc.expectedErr && err == nil {
-				t.Error("expected error, but err is nil")
+			if len(tc.expectErrorContains) != 0 && !strings.Contains(err.Error(), tc.expectErrorContains) {
+				t.Errorf("expected message to include %q, got %q", tc.expectErrorContains, err.Error())
 			}
 
-			if !tc.expectedErr && err != nil {
-				t.Errorf("expected nil err, got %v", err)
+			if len(tc.expectErrorContains) == 0 {
+				assert.NoError(t, err, "unexpected error")
 			}
 
 			recordedCall, _ := dnsService.RecordedCall(record.Spec.DNSName)
@@ -158,25 +163,25 @@ func TestCreateOrUpdate(t *testing.T) {
 
 	dnsService, err := dnsclient.NewFake()
 	if err != nil {
-		t.Fatal("failed to create fakeClient")
+		t.Fatalf("failed to create fakeClient: %v", err)
 	}
 
 	provider := &Provider{}
-	provider.dnsServices = map[string]dnsclient.DnsClient{
-		zone.ID: dnsService,
-	}
+	provider.dnsService = dnsService
 
 	testCases := []struct {
 		desc                         string
 		DNSName                      string
+		target                       string
 		recordedCall                 string
 		listAllDnsRecordsInputOutput dnsclient.ListAllDnsRecordsInputOutput
 		updateDnsRecordInputOutput   dnsclient.UpdateDnsRecordInputOutput
-		expectedErr                  bool
+		expectErrorContains          string
 	}{
 		{
 			desc:         "happy path",
 			DNSName:      "testUpdate",
+			target:       "11.22.33.44",
 			recordedCall: "PUT",
 			listAllDnsRecordsInputOutput: dnsclient.ListAllDnsRecordsInputOutput{
 				OutputError:      nil,
@@ -187,14 +192,14 @@ func TestCreateOrUpdate(t *testing.T) {
 				OutputError:      nil,
 				OutputStatusCode: http.StatusOK,
 			},
-			expectedErr: false,
 		},
 		{
 			desc:         "listFail",
 			DNSName:      "testUpdate",
+			target:       "11.22.33.44",
 			recordedCall: "PUT",
 			listAllDnsRecordsInputOutput: dnsclient.ListAllDnsRecordsInputOutput{
-				OutputError:      errors.New("Error in ListAllDnsRecords"),
+				OutputError:      errors.New("error in ListAllDnsRecords"),
 				OutputStatusCode: http.StatusNotFound,
 			},
 			updateDnsRecordInputOutput: dnsclient.UpdateDnsRecordInputOutput{
@@ -202,21 +207,22 @@ func TestCreateOrUpdate(t *testing.T) {
 				OutputError:      nil,
 				OutputStatusCode: http.StatusOK,
 			},
-			expectedErr: false,
 		},
 		{
 			desc:         "listFailError",
 			DNSName:      "testUpdate",
+			target:       "11.22.33.44",
 			recordedCall: "PUT",
 			listAllDnsRecordsInputOutput: dnsclient.ListAllDnsRecordsInputOutput{
-				OutputError:      errors.New("Error in ListAllDnsRecords"),
+				OutputError:      errors.New("error in ListAllDnsRecords"),
 				OutputStatusCode: http.StatusRequestTimeout,
 			},
-			expectedErr: true,
+			expectErrorContains: "error in ListAllDnsRecords",
 		},
 		{
 			desc:         "updateError",
 			DNSName:      "testUpdate",
+			target:       "11.22.33.44",
 			recordedCall: "PUT",
 			listAllDnsRecordsInputOutput: dnsclient.ListAllDnsRecordsInputOutput{
 				OutputError:      nil,
@@ -224,16 +230,17 @@ func TestCreateOrUpdate(t *testing.T) {
 			},
 			updateDnsRecordInputOutput: dnsclient.UpdateDnsRecordInputOutput{
 				InputId:          "testUpdate",
-				OutputError:      errors.New("Error in UpdateDnsRecord"),
+				OutputError:      errors.New("error in UpdateDnsRecord"),
 				OutputStatusCode: http.StatusRequestTimeout,
 			},
-			expectedErr: true,
+			expectErrorContains: "error in UpdateDnsRecord",
 		},
 		{
-			desc:         "empty DNSName",
-			DNSName:      "",
-			recordedCall: "",
-			expectedErr:  true,
+			desc:                "empty DNSName",
+			DNSName:             "",
+			target:              "11.22.33.44",
+			recordedCall:        "",
+			expectErrorContains: "invalid dns input data",
 		},
 	}
 	for _, tc := range testCases {
@@ -243,10 +250,13 @@ func TestCreateOrUpdate(t *testing.T) {
 				Spec: iov1.DNSRecordSpec{
 					DNSName:    tc.DNSName,
 					RecordType: iov1.ARecordType,
-					Targets:    []string{"11.22.33.44"},
+					Targets:    []string{tc.target},
 					RecordTTL:  120,
 				},
 			}
+
+			tc.listAllDnsRecordsInputOutput.RecordName = tc.DNSName
+			tc.listAllDnsRecordsInputOutput.RecordTarget = tc.target
 
 			dnsService.ListAllDnsRecordsInputOutput = tc.listAllDnsRecordsInputOutput
 
@@ -254,12 +264,12 @@ func TestCreateOrUpdate(t *testing.T) {
 
 			err = provider.createOrUpdateDNSRecord(&record, zone)
 
-			if tc.expectedErr && err == nil {
-				t.Error("expected error, but err is nil")
+			if len(tc.expectErrorContains) != 0 && !strings.Contains(err.Error(), tc.expectErrorContains) {
+				t.Errorf("expected message to include %q, got %q", tc.expectErrorContains, err.Error())
 			}
 
-			if !tc.expectedErr && err != nil {
-				t.Errorf("expected nil err, got %v", err)
+			if len(tc.expectErrorContains) == 0 {
+				assert.NoError(t, err, "unexpected error")
 			}
 
 			recordedCall, _ := dnsService.RecordedCall(record.Spec.DNSName)

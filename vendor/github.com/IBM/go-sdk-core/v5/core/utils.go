@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"reflect"
 	"regexp"
@@ -26,19 +27,19 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-openapi/strfmt"
 	validator "gopkg.in/go-playground/validator.v9"
 )
 
 // Validate is a shared validator instance used to perform validation of structs.
 var Validate *validator.Validate
-var re = regexp.MustCompile(`(?s)\[(\S*)\]`)
 
 func init() {
 	Validate = validator.New()
 }
 
 const (
-	jsonMimePattern      = "(?i)^application\\/((json)|(merge\\-patch\\+json))(;.*)?$"
+	jsonMimePattern      = "(?i)^application\\/((json)|(merge\\-patch\\+json)|(vnd\\..*\\+json))(;.*)?$"
 	jsonPatchMimePattern = "(?i)^application\\/json\\-patch\\+json(;.*)?$"
 )
 
@@ -106,6 +107,11 @@ func Float32Ptr(literal float32) *float32 {
 
 // Float64Ptr returns a pointer to float64 literal.
 func Float64Ptr(literal float64) *float64 {
+	return &literal
+}
+
+// UUIDPtr returns a pointer to strfmt.UUID literal.
+func UUIDPtr(literal strfmt.UUID) *strfmt.UUID {
 	return &literal
 }
 
@@ -182,7 +188,11 @@ func GetCurrentTime() int64 {
 	return time.Now().Unix()
 }
 
-// ConvertSlice Marshals 'slice' to a json string, performs
+// Pre-compiled regular expression used to remove the surrounding
+// [] characters from a JSON string containing a slice (e.g. `["str1", "str2", "str3"]`).
+var reJsonSlice = regexp.MustCompile(`(?s)\[(\S*)\]`)
+
+// ConvertSlice marshals 'slice' to a json string, performs
 // string manipulation on the resulting string, and converts
 // the string to a '[]string'. If 'slice' is nil, not a 'slice' type,
 // or an error occurred during conversion, an error will be returned
@@ -221,7 +231,7 @@ func ConvertSlice(slice interface{}) (s []string, err error) {
 	jsonString := string(jsonBuffer)
 
 	// Use regex to convert the json string to a string slice
-	match := re.FindStringSubmatch(jsonString)
+	match := reJsonSlice.FindStringSubmatch(jsonString)
 	if match != nil && match[1] != "" {
 		newString := match[1]
 		s = strings.Split(newString, ",")
@@ -254,4 +264,45 @@ func SliceContains(slice []string, contains string) bool {
 		}
 	}
 	return false
+}
+
+// GetQueryParam() returns a pointer to the value of query parameter `param` from urlStr,
+// or nil if not found.
+func GetQueryParam(urlStr *string, param string) (*string, error) {
+	if urlStr == nil || *urlStr == "" {
+		return nil, nil
+	}
+
+	u, err := url.Parse(*urlStr)
+	if err != nil {
+		return nil, err
+	}
+
+	q, err := url.ParseQuery(u.RawQuery)
+	if err != nil {
+		return nil, err
+	}
+
+	v := q.Get(param)
+	if v == "" {
+		return nil, nil
+	}
+	return &v, nil
+}
+
+// Pre-compiled regular expressions used by RedactSecrets().
+var reAuthHeader = regexp.MustCompile(`(?m)^(Authorization|X-Auth\S*): .*`)
+var rePassword1 = regexp.MustCompile(`(?i)(password|token|apikey|api_key|passcode)=[^&]*(&|$)`)
+var rePassword2 = regexp.MustCompile(`(?i)"([^"]*(password|token|apikey|api_key)[^"_]*)":\s*"[^\,]*"`)
+
+// RedactSecrets() returns the input string with secrets redacted.
+func RedactSecrets(input string) string {
+	var redacted = "[redacted]"
+
+	redactedString := input
+	redactedString = reAuthHeader.ReplaceAllString(redactedString, "$1: "+redacted)
+	redactedString = rePassword1.ReplaceAllString(redactedString, "$1="+redacted+"$2")
+	redactedString = rePassword2.ReplaceAllString(redactedString, fmt.Sprintf(`"$1":"%s"`, redacted))
+
+	return redactedString
 }
