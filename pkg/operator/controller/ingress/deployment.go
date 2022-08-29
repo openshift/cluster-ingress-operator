@@ -52,6 +52,7 @@ const (
 	RouterSyslogFormatEnvName    = "ROUTER_SYSLOG_FORMAT"
 	RouterSyslogFacilityEnvName  = "ROUTER_LOG_FACILITY"
 	RouterSyslogMaxLengthEnvName = "ROUTER_LOG_MAX_LENGTH"
+	RouterControllerLogLevel     = "CONTROLLER_LOG_LEVEL"
 
 	RouterCaptureHTTPRequestHeaders  = "ROUTER_CAPTURE_HTTP_REQUEST_HEADERS"
 	RouterCaptureHTTPResponseHeaders = "ROUTER_CAPTURE_HTTP_RESPONSE_HEADERS"
@@ -1088,6 +1089,15 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		env = append(env, corev1.EnvVar{Name: RouterEnableCompression, Value: "true"})
 		mimes := GetMIMETypes(ci.Spec.HTTPCompression.MimeTypes)
 		env = append(env, corev1.EnvVar{Name: RouterCompressionMIMETypes, Value: strings.Join(mimes, " ")})
+	}
+
+	switch ci.Spec.LogLevel {
+	case operatorv1.IngressLogLevelDebug:
+		env = append(env, corev1.EnvVar{Name: RouterControllerLogLevel, Value: "4"})
+	case operatorv1.IngressLogLevelTrace:
+		env = append(env, corev1.EnvVar{Name: RouterControllerLogLevel, Value: "6"})
+	default:
+		env = append(env, corev1.EnvVar{Name: RouterControllerLogLevel, Value: "2"})
 	}
 
 	// Add the environment variables to the container

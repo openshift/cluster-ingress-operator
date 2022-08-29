@@ -90,7 +90,32 @@ type IngressSpec struct {
 	// provider of the current cluster and are required for Ingress Controller to work on OpenShift.
 	// +optional
 	LoadBalancer LoadBalancer `json:"loadBalancer,omitempty"`
+	// logLevel describes the desired logging verbosity for the Ingress Operator
+	// Any one of the following values may be specified:
+	// * Normal
+	// * Debug
+	// * Trace
+	//  Setting logLevel: Trace will produce extremely verbose logs.
+	// Valid values are: "Normal", "Debug", "Trace".
+	// Defaults to "Normal".
+	// +optional
+	// +kubebuilder:default=Normal
+	OperatorLogLevel IngressOperatorLogLevel `json:"operatorLogLevel,omitempty"`
 }
+
+// +kubebuilder:validation:Enum:=Normal;Debug;Trace
+type IngressOperatorLogLevel string
+
+var (
+	// Normal is the default.  Normal, working log information, everything is fine, but helpful notices for auditing or common operations.  In kube, this is probably glog=2.
+	IngressOperatorLogLevelNormal IngressOperatorLogLevel = "Normal"
+
+	// Debug is used when something went wrong.  Even common operations may be logged, and less helpful but more quantity of notices.  In kube, this is probably glog=4.
+	IngressOperatorLogLevelDebug IngressOperatorLogLevel = "Debug"
+
+	// Trace is used when something went really badly and even more verbose logs are needed.  Logging every function call as part of a common operation, to tracing execution of a query.  In kube, this is probably glog=6.
+	IngressOperatorLogLevelTrace IngressOperatorLogLevel = "Trace"
+)
 
 // IngressPlatformSpec holds the desired state of Ingress specific to the underlying infrastructure provider
 // of the current cluster. Since these are used at spec-level for the underlying cluster, it
