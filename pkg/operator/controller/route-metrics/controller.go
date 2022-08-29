@@ -11,8 +11,8 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/cluster"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
@@ -35,17 +35,17 @@ var (
 // that handles all the logic for gathering and exporting
 // metrics related to route resources.
 func New(mgr manager.Manager, namespace string) (controller.Controller, error) {
-	// Create a copy of the cluster, but with a new cache to watch on Route objects from every namespace.
-	newCluster, err := cluster.New(mgr.GetConfig(), func(o *cluster.Options) {
-		o.Scheme = mgr.GetScheme()
+	// Create a new cache to watch on Route objects from every namespace.
+	newCache, err := cache.New(mgr.GetConfig(), cache.Options{
+		Scheme: mgr.GetScheme(),
 	})
 	if err != nil {
 		return nil, err
 	}
-	// Add the cluster to the manager so that the cluster is started along with the other runnables.
-	mgr.Add(newCluster)
+	// Add the cache to the manager so that the cache is started along with the other runnables.
+	mgr.Add(newCache)
 	reconciler := &reconciler{
-		client:    mgr.GetClient(),
+		cache:     newCache,
 		Namespace: namespace,
 	}
 	c, err := controller.New(controllerName, mgr, controller.Options{Reconciler: reconciler})
@@ -57,14 +57,14 @@ func New(mgr manager.Manager, namespace string) (controller.Controller, error) {
 		return nil, err
 	}
 	// add watch for changes in Route
-	if err := c.Watch(source.NewKindWithCache(&routev1.Route{}, newCluster.GetCache()),
+	if err := c.Watch(source.NewKindWithCache(&routev1.Route{}, newCache),
 		handler.EnqueueRequestsFromMapFunc(reconciler.routeToIngressController)); err != nil {
 		return nil, err
 	}
 	return c, nil
 }
 
-// routeToIngressController .
+// routeToIngressController creates a reconcile.Request for all the Ingres Controllers related to the Route object.
 func (r *reconciler) routeToIngressController(obj client.Object) []reconcile.Request {
 	var requests []reconcile.Request
 	// Cast the received object into Route object.
@@ -87,7 +87,7 @@ func (r *reconciler) routeToIngressController(obj client.Object) []reconcile.Req
 
 // reconciler handles the actual ingresscontroller reconciliation logic in response to events.
 type reconciler struct {
-	client    client.Client
+	cache     cache.Cache
 	Namespace string
 }
 
@@ -98,7 +98,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 
 	// Fetch the Ingress Controller object.
 	ingressController := &operatorv1.IngressController{}
-	if err := r.client.Get(ctx, request.NamespacedName, ingressController); err != nil {
+	if err := r.cache.Get(ctx, request.NamespacedName, ingressController); err != nil {
 		if kerrors.IsNotFound(err) {
 			// This means the Ingress Controller object was already deleted/finalized.
 			log.Info("Ingress Controller not found", "request", request)
@@ -113,7 +113,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	namespaceList := corev1.NamespaceList{}
 	if ingressController.Spec.NamespaceSelector != nil {
 		namespaceLabelSelector := ingressController.Spec.NamespaceSelector.MatchLabels
-		if err := r.client.List(ctx, &namespaceList, &client.ListOptions{
+		if err := r.cache.List(ctx, &namespaceList, &client.ListOptions{
 			LabelSelector: labels.SelectorFromSet(namespaceLabelSelector),
 		}); err != nil {
 			return reconcile.Result{}, fmt.Errorf("failed to list Namespaces %q: %v", request, err)
@@ -129,22 +129,17 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		routeLabelSelector = ingressController.Spec.RouteSelector.MatchLabels
 	}
 
-	// Store the previous value of the metric.
-	prevMetricValue := GetRouteMetricsControllerRoutesPerShardMetric(request.Name)
-
-	// Initialize the RouteMetricsControllerRoutesPerShard metric for Ingress Controller.
-	InitializeRouteMetricsControllerRoutesPerShardMetric(request.Name)
+	// Variable to store the number of routes admitted by the Shard (Ingress Controller).
+	routesAdmitted := 0
 
 	// Iterate through all the Namespaces.
 	for _, namespace := range namespaceList.Items {
 		// List all the Routes which matches the Route LabelSelector and the Namespace.
 		routeList := routev1.RouteList{}
-		if err := r.client.List(ctx, &routeList, &client.ListOptions{
+		if err := r.cache.List(ctx, &routeList, &client.ListOptions{
 			LabelSelector: labels.SelectorFromSet(routeLabelSelector),
 			Namespace:     namespace.Name,
 		}); err != nil {
-			// Set the value of the metric to its previous value and re-queue the request.
-			SetRouteMetricsControllerRoutesPerShardMetric(request.Name, prevMetricValue)
 			return reconcile.Result{}, fmt.Errorf("failed to list Routes for the Shard %q: %v", request, err)
 		}
 
@@ -152,11 +147,14 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		for _, route := range routeList.Items {
 			// Check if the Route was admitted by the Ingress Controller.
 			if routeAdmitted(route, ingressController.Name) {
-				// If the Route was admitted then, the RouteMetricsControllerRoutesPerShard should be incremented by 1 for the same Shard.
-				IncrementRouteMetricsControllerRoutesPerShardMetric(ingressController.Name)
+				// If the Route was admitted then, the routesAdmitted should be incremented by 1 for the Shard.
+				routesAdmitted++
 			}
 		}
 	}
+
+	// Set the value of the metric to the number of routesAdmitted for the corresponding Shard (Ingress Controller).
+	SetRouteMetricsControllerRoutesPerShardMetric(request.Name, float64(routesAdmitted))
 
 	return reconcile.Result{}, nil
 }

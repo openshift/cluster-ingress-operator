@@ -12,13 +12,14 @@ func TestRouteMetricsControllerRoutesPerShardMetric(t *testing.T) {
 		name                  string
 		shardName             string
 		actions               []string
+		metricValues          []float64
 		expectedMetricFormats []string
-		expectedMetricResults []float64
 	}{
 		{
-			name:      "routes per shard metrics test shard",
-			shardName: "test",
-			actions:   []string{"Initialize", "Inc", "Dec", "Delete"},
+			name:         "routes per shard metrics test shard",
+			shardName:    "test",
+			actions:      []string{"Set", "Set", "Set", "Delete"},
+			metricValues: []float64{0, 2, 1},
 			expectedMetricFormats: []string{`
 			# HELP route_metrics_controller_routes_per_shard Report the number of routes for shards (ingress controllers).
 			# TYPE route_metrics_controller_routes_per_shard gauge
@@ -26,13 +27,12 @@ func TestRouteMetricsControllerRoutesPerShardMetric(t *testing.T) {
 			`, `
 			# HELP route_metrics_controller_routes_per_shard Report the number of routes for shards (ingress controllers).
 			# TYPE route_metrics_controller_routes_per_shard gauge
-			route_metrics_controller_routes_per_shard{name="test"} 1
+			route_metrics_controller_routes_per_shard{name="test"} 2
 			`, `
 			# HELP route_metrics_controller_routes_per_shard Report the number of routes for shards (ingress controllers).
 			# TYPE route_metrics_controller_routes_per_shard gauge
-			route_metrics_controller_routes_per_shard{name="test"} 0
+			route_metrics_controller_routes_per_shard{name="test"} 1
 			`, ``},
-			expectedMetricResults: []float64{0, 1, 0, 0},
 		},
 	}
 
@@ -44,40 +44,12 @@ func TestRouteMetricsControllerRoutesPerShardMetric(t *testing.T) {
 			// Iterate through each action and compare the output with the corresponding expected metrics format.
 			for index, action := range tc.actions {
 				switch action {
-				case "Initialize":
-					InitializeRouteMetricsControllerRoutesPerShardMetric(tc.shardName)
+				case "Set":
+					SetRouteMetricsControllerRoutesPerShardMetric(tc.shardName, tc.metricValues[index])
 
 					err := testutil.CollectAndCompare(routeMetricsControllerRoutesPerShard, strings.NewReader(tc.expectedMetricFormats[index]))
 					if err != nil {
 						t.Error(err)
-					}
-
-					if actualResult := GetRouteMetricsControllerRoutesPerShardMetric(tc.shardName); actualResult != tc.expectedMetricResults[index] {
-						t.Errorf("expected result %v, got %v", tc.expectedMetricResults[index], actualResult)
-					}
-
-				case "Inc":
-					IncrementRouteMetricsControllerRoutesPerShardMetric(tc.shardName)
-
-					err := testutil.CollectAndCompare(routeMetricsControllerRoutesPerShard, strings.NewReader(tc.expectedMetricFormats[index]))
-					if err != nil {
-						t.Error(err)
-					}
-
-					if actualResult := GetRouteMetricsControllerRoutesPerShardMetric(tc.shardName); actualResult != tc.expectedMetricResults[index] {
-						t.Errorf("expected result %v, got %v", tc.expectedMetricResults[index], actualResult)
-					}
-
-				case "Dec":
-					DecrementRouteMetricsControllerRoutesPerShardMetric(tc.shardName)
-
-					err := testutil.CollectAndCompare(routeMetricsControllerRoutesPerShard, strings.NewReader(tc.expectedMetricFormats[index]))
-					if err != nil {
-						t.Error(err)
-					}
-
-					if actualResult := GetRouteMetricsControllerRoutesPerShardMetric(tc.shardName); actualResult != tc.expectedMetricResults[index] {
-						t.Errorf("expected result %v, got %v", tc.expectedMetricResults[index], actualResult)
 					}
 
 				case "Delete":
@@ -86,10 +58,6 @@ func TestRouteMetricsControllerRoutesPerShardMetric(t *testing.T) {
 					err := testutil.CollectAndCompare(routeMetricsControllerRoutesPerShard, strings.NewReader(tc.expectedMetricFormats[index]))
 					if err != nil {
 						t.Error(err)
-					}
-
-					if actualResult := GetRouteMetricsControllerRoutesPerShardMetric(tc.shardName); actualResult != tc.expectedMetricResults[index] {
-						t.Errorf("expected result %v, got %v", tc.expectedMetricResults[index], actualResult)
 					}
 				}
 
