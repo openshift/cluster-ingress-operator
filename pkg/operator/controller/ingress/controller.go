@@ -13,7 +13,6 @@ import (
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
-	oputil "github.com/openshift/cluster-ingress-operator/pkg/util"
 	retryable "github.com/openshift/cluster-ingress-operator/pkg/util/retryableerror"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/slice"
 
@@ -256,9 +255,9 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	if err := r.client.Get(ctx, types.NamespacedName{Name: "cluster"}, networkConfig); err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to get network 'cluster': %v", err)
 	}
-	platformStatus, err := oputil.GetPlatformStatus(r.client, infraConfig)
-	if err != nil {
-		return reconcile.Result{}, fmt.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %w", ingress.Namespace, ingress.Name, err)
+	platformStatus := infraConfig.Status.PlatformStatus
+	if platformStatus == nil {
+		return reconcile.Result{}, fmt.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: PlatformStatus is nil", ingress.Namespace, ingress.Name)
 	}
 
 	// Admit if necessary. Don't process until admission succeeds. If admission is

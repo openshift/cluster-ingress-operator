@@ -380,9 +380,11 @@ func TestUniqueDomainRejection(t *testing.T) {
 //
 // TODO: should this be a test of source IP preservation in the conformance suite?
 func TestProxyProtocolOnAWS(t *testing.T) {
-	if infraConfig.Status.Platform != configv1.AWSPlatformType {
+	if infraConfig.Status.PlatformStatus == nil {
+		t.Skip("test skipped on nil platform")
+	}
+	if infraConfig.Status.PlatformStatus.Type != configv1.AWSPlatformType {
 		t.Skip("test skipped on non-aws platform")
-		return
 	}
 
 	ic := &operatorv1.IngressController{}
@@ -924,7 +926,10 @@ func assertContainerHasPort(t *testing.T, container corev1.Container, name strin
 // the load balancer has a private IP address.
 func TestInternalLoadBalancer(t *testing.T) {
 	t.Parallel()
-	platform := infraConfig.Status.Platform
+	if infraConfig.Status.PlatformStatus == nil {
+		t.Skip("test skipped on nil platform")
+	}
+	platform := infraConfig.Status.PlatformStatus.Type
 
 	supportedPlatforms := map[configv1.PlatformType]struct{}{
 		configv1.AWSPlatformType:          {},
@@ -934,7 +939,7 @@ func TestInternalLoadBalancer(t *testing.T) {
 		configv1.AlibabaCloudPlatformType: {},
 	}
 	if _, supported := supportedPlatforms[platform]; !supported {
-		t.Skip(fmt.Sprintf("test skipped on platform %q", platform))
+		t.Skipf("test skipped on platform %q", platform)
 	}
 
 	annotation := ingresscontroller.InternalLBAnnotations[platform]
@@ -1011,13 +1016,14 @@ func TestInternalLoadBalancer(t *testing.T) {
 // Load Balancer service is created properly.
 func TestInternalLoadBalancerGlobalAccessGCP(t *testing.T) {
 	t.Parallel()
-	platform := infraConfig.Status.Platform
-
+	if infraConfig.Status.PlatformStatus == nil {
+		t.Skip("test skipped on nil platform")
+	}
 	supportedPlatforms := map[configv1.PlatformType]struct{}{
 		configv1.GCPPlatformType: {},
 	}
-	if _, supported := supportedPlatforms[platform]; !supported {
-		t.Skip(fmt.Sprintf("test skipped on platform %q", platform))
+	if _, supported := supportedPlatforms[infraConfig.Status.PlatformStatus.Type]; !supported {
+		t.Skipf("test skipped on platform %q", infraConfig.Status.PlatformStatus.Type)
 	}
 
 	name := types.NamespacedName{Namespace: operatorNamespace, Name: "test-gcp"}
@@ -1111,7 +1117,10 @@ func TestInternalLoadBalancerGlobalAccessGCP(t *testing.T) {
 // should delete and recreate the service automatically.
 func TestScopeChange(t *testing.T) {
 	t.Parallel()
-	platform := infraConfig.Status.Platform
+	if infraConfig.Status.PlatformStatus == nil {
+		t.Skip("test skipped on nil platform")
+	}
+	platform := infraConfig.Status.PlatformStatus.Type
 	supportedPlatforms := map[configv1.PlatformType]struct{}{
 		configv1.AlibabaCloudPlatformType: {},
 		configv1.AWSPlatformType:          {},
@@ -2197,10 +2206,11 @@ func TestHTTPCookieCapture(t *testing.T) {
 // an AWS Network Load Balancer (NLB).
 func TestNetworkLoadBalancer(t *testing.T) {
 	t.Parallel()
-	platform := infraConfig.Status.PlatformStatus.Type
-
-	if platform != configv1.AWSPlatformType {
-		t.Skip(fmt.Sprintf("test skipped on platform %q", platform))
+	if infraConfig.Status.PlatformStatus == nil {
+		t.Skip("test skipped on nil platform")
+	}
+	if infraConfig.Status.PlatformStatus.Type != configv1.AWSPlatformType {
+		t.Skipf("test skipped on platform %q", infraConfig.Status.PlatformStatus.Type)
 	}
 
 	name := types.NamespacedName{Namespace: operatorNamespace, Name: "test-nlb"}
@@ -2242,8 +2252,11 @@ func TestNetworkLoadBalancer(t *testing.T) {
 // timeout works as expected.
 func TestAWSELBConnectionIdleTimeout(t *testing.T) {
 	t.Parallel()
-	if platform := infraConfig.Status.PlatformStatus.Type; platform != configv1.AWSPlatformType {
-		t.Skipf("test skipped on platform %q", platform)
+	if infraConfig.Status.PlatformStatus == nil {
+		t.Skip("test skipped on nil platform")
+	}
+	if infraConfig.Status.PlatformStatus.Type != configv1.AWSPlatformType {
+		t.Skipf("test skipped on platform %q", infraConfig.Status.PlatformStatus.Type)
 	}
 
 	// Create an ingresscontroller that specifies an ELB with an idle
@@ -2682,9 +2695,11 @@ func TestLocalWithFallbackOverrideForLoadBalancerService(t *testing.T) {
 		configv1.AzurePlatformType: {},
 		configv1.GCPPlatformType:   {},
 	}
-	platform := infraConfig.Status.Platform
-	if _, supported := supportedPlatforms[platform]; !supported {
-		t.Skipf("test skipped on platform %q", platform)
+	if infraConfig.Status.PlatformStatus == nil {
+		t.Skip("test skipped on nil platform")
+	}
+	if _, supported := supportedPlatforms[infraConfig.Status.PlatformStatus.Type]; !supported {
+		t.Skipf("test skipped on platform %q", infraConfig.Status.PlatformStatus.Type)
 	}
 
 	ic := &operatorv1.IngressController{}
