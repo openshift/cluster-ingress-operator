@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
+	"go.uber.org/zap"
 
 	routemetricscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/route-metrics"
 	errorpageconfigmapcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/sync-http-error-code-configmap"
@@ -256,6 +257,8 @@ func (o *Operator) Start(ctx context.Context) error {
 
 	}
 
+	go wait.Until(o.ensureLogLevel, 1*time.Minute, ctx.Done())
+
 	if err := o.handleSingleNode4Dot11Upgrade(); err != nil {
 		log.Error(err, "failed to handle single node 4.11 upgrade logic")
 	}
@@ -272,6 +275,40 @@ func (o *Operator) Start(ctx context.Context) error {
 	case err := <-errChan:
 		return err
 	}
+}
+
+func (o *Operator) ensureLogLevel() {
+	ingressConfig := &configv1.Ingress{}
+	if err := o.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, ingressConfig); err != nil {
+		log.Error(err, "failed fetching ingress config: %w")
+		return
+	}
+
+	if ingressConfig != nil {
+		//If OperatorLogLevel is "Normal" or unset, the default is Info.
+		desiredLogLevel := zap.InfoLevel
+		switch ingressConfig.Spec.OperatorLogLevel {
+		case configv1.IngressOperatorLogLevelDebug:
+			desiredLogLevel = zap.DebugLevel
+		case configv1.IngressOperatorLogLevelTrace:
+			// TODO: does it even make sense to have 3 levels for the operator? zap.DebugLevel is the most verbose log level available
+			desiredLogLevel = zap.DebugLevel
+		default:
+		}
+
+		if logf.CurrentLogLevel.Level() != desiredLogLevel {
+			logf.CurrentLogLevel.SetLevel(desiredLogLevel)
+		}
+	}
+}
+
+func (o *Operator) determineReplicasForDefaultIngressController(infraConfig *configv1.Infrastructure) (int32, error) {
+	ingressConfig := &configv1.Ingress{}
+	if err := o.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, ingressConfig); err != nil {
+		return 0, fmt.Errorf("failed fetching ingress config: %w", err)
+	}
+
+	return ingress.DetermineReplicas(ingressConfig, infraConfig), nil
 }
 
 // handleSingleNode4Dot11Upgrade sets the defaultPlacement status in the

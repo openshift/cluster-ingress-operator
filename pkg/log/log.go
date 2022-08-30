@@ -12,9 +12,14 @@ import (
 // Logger is a simple logging interface for Go.
 var Logger logr.Logger
 
+var CurrentLogLevel zap.AtomicLevel
+
 func init() {
+	zapConfig := zap.NewDevelopmentConfig()
+	CurrentLogLevel = zap.NewAtomicLevelAt(zap.InfoLevel)
+	zapConfig.Level = CurrentLogLevel
 	// Build a zap development logger.
-	zapLogger, err := zap.NewDevelopment(zap.AddCallerSkip(1), zap.AddStacktrace(zap.FatalLevel))
+	zapLogger, err := zapConfig.Build(zap.AddCallerSkip(1), zap.AddStacktrace(zap.FatalLevel))
 	if err != nil {
 		panic(fmt.Sprintf("error building logger: %v", err))
 	}
