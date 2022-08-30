@@ -45,7 +45,7 @@ crd:
 
 .PHONY: test
 test:
-	$(GO) test ./...
+	CGO_ENABLED=0 $(GO) test ./...
 
 .PHONY: release-local
 release-local:
@@ -53,11 +53,11 @@ release-local:
 
 .PHONY: test-e2e
 test-e2e:
-	$(GO) test -timeout 1h -count 1 -v -tags e2e -run "$(TEST)" ./test/e2e
+	CGO_ENABLED=0 $(GO) test -timeout 1h -count 1 -v -tags e2e -run "$(TEST)" ./test/e2e
 
 .PHONY: test-e2e-list
 test-e2e-list:
-	@(cd ./test/e2e; E2E_TEST_MAIN_SKIP_SETUP=1 $(GO) test -list . -tags e2e | grep ^Test | sort)
+	@(cd ./test/e2e; E2E_TEST_MAIN_SKIP_SETUP=1 CGO_ENABLED=0 $(GO) test -list . -tags e2e | grep ^Test | sort)
 
 .PHONY: clean
 clean:
