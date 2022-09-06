@@ -95,14 +95,19 @@ func New(mgr manager.Manager, operatorNamespace, operandNamespace string) (runti
 // secretToIngressController maps a secret to a slice of reconcile requests,
 // one request per ingresscontroller that references the secret.
 func (r *reconciler) secretToIngressController(o client.Object) []reconcile.Request {
-	requests := []reconcile.Request{}
-	controllers, err := r.ingressControllersWithSecret(o.GetName())
-	if err != nil {
-		log.Error(err, "failed to list ingresscontrollers for secret", "related", o.GetSelfLink())
+	var (
+		requests []reconcile.Request
+		list     operatorv1.IngressControllerList
+		listOpts = client.MatchingFields(map[string]string{
+			"defaultCertificateName": o.GetName(),
+		})
+	)
+	if err := r.cache.List(context.Background(), &list, listOpts); err != nil {
+		log.Error(err, "failed to list ingresscontrollers for secret", "secret", o.GetName())
 		return requests
 	}
-	for _, ic := range controllers {
-		log.Info("queueing ingresscontroller", "name", ic.Name, "related", o.GetSelfLink())
+	for _, ic := range list.Items {
+		log.Info("queueing ingresscontroller", "name", ic.Name)
 		request := reconcile.Request{
 			NamespacedName: types.NamespacedName{
 				Namespace: ic.Namespace,
@@ -112,16 +117,6 @@ func (r *reconciler) secretToIngressController(o client.Object) []reconcile.Requ
 		requests = append(requests, request)
 	}
 	return requests
-}
-
-// ingressControllersWithSecret returns the ingresscontrollers that reference
-// the given secret.
-func (r *reconciler) ingressControllersWithSecret(secretName string) ([]operatorv1.IngressController, error) {
-	controllers := &operatorv1.IngressControllerList{}
-	if err := r.cache.List(context.Background(), controllers, client.MatchingFields(map[string]string{"defaultCertificateName": secretName})); err != nil {
-		return nil, err
-	}
-	return controllers.Items, nil
 }
 
 // hasSecret returns true if the effective default certificate secret for the
