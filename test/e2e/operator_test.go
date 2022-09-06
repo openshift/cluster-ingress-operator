@@ -464,10 +464,31 @@ func TestProxyProtocolAPI(t *testing.T) {
 	}
 }
 
-// NOTE: This test will mutate the default ingresscontroller.
+// TestUpdateDefaultIngressControllerSecret verifies that the operator properly
+// updates the "router-default" deployment, the "default-ingress-cert"
+// configmap, and the "router-certs" secret when the default ingresscontroller's
+// default- certificate secret reference is updated.
 //
-// TODO: Find a way to do this test without mutating the default ingress?
-func TestUpdateDefaultIngressController(t *testing.T) {
+// First, the test verifies that the default ingresscontroller has the cluster
+// ingress domain and that the router-default deployment is using the secret
+// reference that the ingresscontroller is initially configured with.
+//
+// Next, the test updates the default ingresscontroller to reference a
+// default-certificate secret that does not exist and verifies that the operator
+// does not update the configmap or router-certs secret.
+//
+// Next, the test creates the referenced default-certificate secret and verifies
+// that the operator updates the deployment, configmap, and router-certs secret.
+//
+// Finally, the test restores the original default-certificate secret reference
+// and verifies that the operator updates the deployment, configmap, and
+// router-certs secret to use a new, operator-generated default certificate.
+//
+// This is a serial test because it modifies the default ingresscontroller.  The
+// test needs to verify that the operator updates the default-ingress-cert
+// configmap and router-certs secret correctly, and the operator updates these
+// only when the default ingresscontroller's default certificate changes.
+func TestUpdateDefaultIngressControllerSecret(t *testing.T) {
 	ic := &operatorv1.IngressController{}
 	if err := kclient.Get(context.TODO(), defaultName, ic); err != nil {
 		t.Fatalf("failed to get default ingresscontroller: %v", err)
@@ -476,9 +497,24 @@ func TestUpdateDefaultIngressController(t *testing.T) {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
+	// Verify that the default ingresscontroller has the cluster ingress
+	// domain.
+	ingressConfig := &configv1.Ingress{}
+	if err := kclient.Get(context.TODO(), clusterConfigName, ingressConfig); err != nil {
+		t.Fatalf("failed to get the cluster ingress config: %v", err)
+	}
+	if ic.Status.Domain != ingressConfig.Spec.Domain {
+		t.Fatalf("default ingresscontroller's domain %q does not match the cluster ingress domain %q", ic.Status.Domain, ingressConfig.Spec.Domain)
+	}
+
 	defaultIngressCAConfigmap := &corev1.ConfigMap{}
 	if err := kclient.Get(context.TODO(), controller.DefaultIngressCertConfigMapName(), defaultIngressCAConfigmap); err != nil {
 		t.Fatalf("failed to get CA certificate configmap: %v", err)
+	}
+
+	routerCertsSecret := &corev1.Secret{}
+	if err := kclient.Get(context.TODO(), controller.RouterCertsGlobalSecretName(), routerCertsSecret); err != nil {
+		t.Fatalf("failed to get router-certs secret: %v", err)
 	}
 
 	// Verify that the deployment uses the secret name specified in the
@@ -498,27 +534,65 @@ func TestUpdateDefaultIngressController(t *testing.T) {
 			expectedSecretName, deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName)
 	}
 
-	// Update the ingress controller and wait for the deployment to match.
-	secret, err := createDefaultCertTestSecret(kclient, names.SimpleNameGenerator.GenerateName("test-"))
-	if err != nil {
-		t.Fatalf("creating default cert test secret: %v", err)
-	}
-	defer func() {
-		if err := kclient.Delete(context.TODO(), secret); err != nil {
-			t.Errorf("failed to delete test secret: %v", err)
-		}
-	}()
-
+	// Update the ingresscontroller to reference a non-existent secret.
+	secretName := names.SimpleNameGenerator.GenerateName("test-")
 	if err := updateIngressControllerSpecWithRetryOnConflict(t, defaultName, timeout, func(spec *operatorv1.IngressControllerSpec) {
-		spec.DefaultCertificate = &corev1.LocalObjectReference{Name: secret.Name}
+		spec.DefaultCertificate = &corev1.LocalObjectReference{Name: secretName}
 	}); err != nil {
 		t.Fatalf("failed to update default ingress controller: %v", err)
 	}
+	// One of the last steps in this test reverts the previous update, but
+	// the test also needs to revert the update if it fails midway.  If the
+	// test reaches the end, the following update is redundant but harmless.
+	defer func() {
+		if err := updateIngressControllerSpecWithRetryOnConflict(t, defaultName, timeout, func(spec *operatorv1.IngressControllerSpec) {
+			spec.DefaultCertificate = originalSecret
+		}); err != nil {
+			t.Fatalf("failed to reset default ingresscontroller: %v", err)
+		}
+	}()
 
-	name := types.NamespacedName{Namespace: deployment.Namespace, Name: deployment.Name}
-	err = wait.PollImmediate(1*time.Second, 15*time.Second, func() (bool, error) {
-		if err := kclient.Get(context.TODO(), name, deployment); err != nil {
-			t.Logf("failed to get deployment %s: %v", name, err)
+	// Verify that the default-ingress-cert configmap and router-certs
+	// secret remain unchanged.  (The operator does update the router
+	// deployment with the new secret, but the kubelet volume manager does
+	// not reflect the update as long as the referenced secret does not
+	// exist.)  If there is no update after 20 seconds, assume everything is
+	// fine.
+	previousDefaultIngressCAConfigmap := defaultIngressCAConfigmap.DeepCopy()
+	previousRouterCertsSecret := routerCertsSecret.DeepCopy()
+	wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), controller.DefaultIngressCertConfigMapName(), defaultIngressCAConfigmap); err != nil {
+			t.Fatalf("failed to get CA certificate configmap: %v", err)
+		}
+		if defaultIngressCAConfigmap.Data["ca-bundle.crt"] != previousDefaultIngressCAConfigmap.Data["ca-bundle.crt"] {
+			t.Fatalf("observed an unexpected update to the CA certificate configmap\nold ca-bundle.crt: %v\nnew ca-bundle.crt: %v", previousDefaultIngressCAConfigmap.Data["ca-bundle.crt"], defaultIngressCAConfigmap.Data["ca-bundle.crt"])
+		}
+
+		if err := kclient.Get(context.TODO(), controller.RouterCertsGlobalSecretName(), routerCertsSecret); err != nil {
+			t.Fatalf("failed to get the router-certs secret: %v", err)
+		}
+		if !reflect.DeepEqual(routerCertsSecret.Data, previousRouterCertsSecret.Data) {
+			t.Fatalf("observed an unexpected update to the router-certs secret\nold: %v\nnew: %v", previousRouterCertsSecret, routerCertsSecret)
+		}
+
+		return false, nil
+	})
+
+	// Create the secret and wait for the deployment to match.
+	secret, err := createDefaultCertTestSecret(kclient, secretName)
+	if err != nil {
+		t.Fatalf("failed to create secret %s: %v", secretName, err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), secret); err != nil {
+			t.Errorf("failed to delete secret %s: %v", secretName, err)
+		}
+	}()
+
+	// Verify that the deployment uses the new certificate.
+	err = wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), controller.RouterDeploymentName(ic), deployment); err != nil {
+			t.Logf("failed to get deployment %s: %v", controller.RouterDeploymentName(ic), err)
 			return false, nil
 		}
 		if deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName != secret.Name {
@@ -530,9 +604,8 @@ func TestUpdateDefaultIngressController(t *testing.T) {
 		t.Fatalf("failed to observe updated deployment: %v", err)
 	}
 
-	// Wait for the default ingress configmap to be updated
-	previousDefaultIngressCAConfigmap := defaultIngressCAConfigmap.DeepCopy()
-	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
+	// Verify that the default ingress configmap gets updated.
+	err = wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
 		if err := kclient.Get(context.TODO(), controller.DefaultIngressCertConfigMapName(), defaultIngressCAConfigmap); err != nil {
 			t.Logf("failed to get CA config map %s: %v", controller.DefaultIngressCertConfigMapName(), err)
 			return false, nil
@@ -546,6 +619,21 @@ func TestUpdateDefaultIngressController(t *testing.T) {
 		t.Fatalf("failed to observe update of default ingress CA certificate configmap: %v", err)
 	}
 
+	// Verify that the router-certs secret gets updated.
+	err = wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), controller.RouterCertsGlobalSecretName(), routerCertsSecret); err != nil {
+			t.Logf("failed to get the router-certs secret: %v", err)
+			return false, nil
+		}
+		if reflect.DeepEqual(routerCertsSecret.Data, previousRouterCertsSecret.Data) {
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to observe update of the router-certs secret: %v", err)
+	}
+
 	// Reset .spec.defaultCertificate to its original value.
 	if err := updateIngressControllerSpecWithRetryOnConflict(t, defaultName, timeout, func(spec *operatorv1.IngressControllerSpec) {
 		spec.DefaultCertificate = originalSecret
@@ -553,9 +641,25 @@ func TestUpdateDefaultIngressController(t *testing.T) {
 		t.Fatalf("failed to reset default ingresscontroller: %v", err)
 	}
 
-	// Wait for the default ingress configmap to be updated back to the original
+	// Verify that the default router deployment gets restored to the
+	// original secret reference.
+	err = wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), controller.RouterDeploymentName(ic), deployment); err != nil {
+			t.Logf("failed to get default router deployment: %v", err)
+			return false, nil
+		}
+		if deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName != expectedSecretName {
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to observe restored deployment: %v", err)
+	}
+
+	// Verify that the default ingress configmap gets updated.
 	previousDefaultIngressCAConfigmap = defaultIngressCAConfigmap.DeepCopy()
-	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
+	err = wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
 		if err := kclient.Get(context.TODO(), controller.DefaultIngressCertConfigMapName(), defaultIngressCAConfigmap); err != nil {
 			t.Logf("failed to get CA config map %s: %v", controller.DefaultIngressCertConfigMapName(), err)
 			return false, nil
@@ -568,6 +672,27 @@ func TestUpdateDefaultIngressController(t *testing.T) {
 	if err != nil {
 		t.Logf("secret content=%v", string(secret.Data["tls.crt"]))
 		t.Fatalf("failed to observe update of default ingress CA certificate configmap: %v\noriginal=%v\ncurrent=%v", err, previousDefaultIngressCAConfigmap.Data["ca-bundle.crt"], defaultIngressCAConfigmap.Data["ca-bundle.crt"])
+	}
+
+	// Verify that the router-certs secret gets updated.
+	previousRouterCertsSecret = routerCertsSecret.DeepCopy()
+	wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), controller.RouterCertsGlobalSecretName(), routerCertsSecret); err != nil {
+			t.Logf("failed to get secret %s: %v", controller.DefaultIngressCertConfigMapName(), err)
+			return false, nil
+		}
+		if reflect.DeepEqual(routerCertsSecret.Data, previousRouterCertsSecret.Data) {
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to observe update of the router-certs secret: %v\noriginal=%v\ncurrent=%v", err, previousRouterCertsSecret, routerCertsSecret)
+	}
+
+	// Verify that the ingresscontroller status is healthy.
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, defaultName, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 }
 

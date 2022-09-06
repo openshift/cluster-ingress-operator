@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 
+	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
@@ -16,8 +17,8 @@ import (
 
 // ensureRouterCertsGlobalSecret will create, update, or delete the global
 // certificates secret as appropriate.
-func (r *reconciler) ensureRouterCertsGlobalSecret(secrets []corev1.Secret, ingresses []operatorv1.IngressController) error {
-	desired, err := desiredRouterCertsGlobalSecret(secrets, ingresses, r.operandNamespace)
+func (r *reconciler) ensureRouterCertsGlobalSecret(secrets []corev1.Secret, ingresses []operatorv1.IngressController, ingressConfig *configv1.Ingress) error {
+	desired, err := desiredRouterCertsGlobalSecret(secrets, ingresses, r.operandNamespace, ingressConfig.Spec.Domain)
 	if err != nil {
 		return err
 	}
@@ -56,55 +57,75 @@ func (r *reconciler) ensureRouterCertsGlobalSecret(secrets []corev1.Secret, ingr
 
 // desiredRouterCertsGlobalSecret returns the desired router-certs global
 // secret.
-func desiredRouterCertsGlobalSecret(secrets []corev1.Secret, ingresses []operatorv1.IngressController, operandNamespace string) (*corev1.Secret, error) {
-	if len(ingresses) == 0 || len(secrets) == 0 {
-		return nil, nil
-	}
-
-	nameToSecret := map[string]*corev1.Secret{}
-	for i, certSecret := range secrets {
-		nameToSecret[certSecret.Name] = &secrets[i]
-	}
-
-	ingressToSecret := map[*operatorv1.IngressController]*corev1.Secret{}
-	for i, ingress := range ingresses {
-		// Check if ingress.Spec.DefaultCertificate is an available secret
-		// in the secrets slice. If it is not, attempt to fall back to the
-		// operator generated default certificate. If ingress.Spec.DefaultCertificate
-		// is updated to point to a non-existent secret, the certificate controller
-		// will not delete the operator generated default certificate.
-		// See https://bugzilla.redhat.com/show_bug.cgi?id=1887441
-		if defaultCert := ingress.Spec.DefaultCertificate; defaultCert != nil {
-			if secret, ok := nameToSecret[defaultCert.Name]; ok {
-				ingressToSecret[&ingresses[i]] = secret
-				continue
-			}
-		}
-		name := controller.RouterOperatorGeneratedDefaultCertificateSecretName(&ingress, operandNamespace)
-		if secret, ok := nameToSecret[name.Name]; ok {
-			ingressToSecret[&ingresses[i]] = secret
-		}
-	}
-
-	name := controller.RouterCertsGlobalSecretName()
-	globalSecret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name.Name,
-			Namespace: name.Namespace,
-		},
-		Data: map[string][]byte{},
-	}
-	for ingress, certSecret := range ingressToSecret {
-		if len(ingress.Status.Domain) == 0 {
+func desiredRouterCertsGlobalSecret(secrets []corev1.Secret, ingresses []operatorv1.IngressController, operandNamespace, clusterIngressDomain string) (*corev1.Secret, error) {
+	for i := range ingresses {
+		// The authentication operator only requires the certificate and
+		// key for the ingresscontroller that handles the cluster
+		// ingress domain, and publishing certificates for all
+		// ingresscontrollers could cause the secret's size to exceed
+		// the maximum secret size of 1 mebibyte.  See
+		// <https://issues.redhat.com/browse/OCPBUGS-853>.
+		if ingresses[i].Status.Domain != clusterIngressDomain {
 			continue
 		}
-		pem := bytes.Join([][]byte{
-			certSecret.Data["tls.crt"],
-			certSecret.Data["tls.key"],
-		}, nil)
-		globalSecret.Data[ingress.Status.Domain] = pem
+
+		cert := getDefaultCertificateSecretForIngressController(&ingresses[i], secrets, operandNamespace)
+		if cert == nil {
+			break
+		}
+
+		globalCertName := controller.RouterCertsGlobalSecretName()
+		return &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      globalCertName.Name,
+				Namespace: globalCertName.Namespace,
+			},
+			Data: map[string][]byte{
+				ingresses[i].Status.Domain: bytes.Join([][]byte{
+					cert.Data["tls.crt"],
+					cert.Data["tls.key"],
+				}, nil),
+			},
+		}, nil
 	}
-	return globalSecret, nil
+
+	return nil, nil
+}
+
+// getDefaultCertificateSecretForIngressController returns the appropriate
+// secret to use for the given ingresscontroller out of the provided list of
+// secrets.  If the ingresscontroller does not specify a secret or specifies a
+// secret that doesn't exist, the operator-generated default certificate is
+// returned.
+//
+// Note that if ingress.Spec.DefaultCertificate is updated to point to a
+// non-existent secret, the certificate controller does not delete the
+// operator-generated default certificate, so it is safe to fall back to using
+// it.  See <https://bugzilla.redhat.com/show_bug.cgi?id=1887441>.
+//
+// Note also that defaultCertName can be the same as customCertName; see
+// <https://bugzilla.redhat.com/show_bug.cgi?id=1912922>.
+func getDefaultCertificateSecretForIngressController(ic *operatorv1.IngressController, secrets []corev1.Secret, operandNamespace string) *corev1.Secret {
+	var (
+		defaultCertName         = controller.RouterOperatorGeneratedDefaultCertificateSecretName(ic, operandNamespace)
+		customCertName          = ic.Spec.DefaultCertificate
+		defaultCert, customCert *corev1.Secret
+	)
+	for i := range secrets {
+		if customCertName != nil && customCertName.Name == secrets[i].Name {
+			customCert = &secrets[i]
+		}
+		if defaultCertName.Name == secrets[i].Name {
+			defaultCert = &secrets[i]
+		}
+	}
+	// Prefer any custom certificate, and fall back to the default
+	// certificate if no custom certificate was specified or the specified
+	// one was not found.
+	if customCert != nil {
+		return customCert
+	}
+	return defaultCert
 }
 
 // currentRouterCertsGlobalSecret returns the current router-certs global
