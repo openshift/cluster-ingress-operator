@@ -1,8 +1,10 @@
-// The certificate-publisher controller is responsible for publishing in-use
-// certificates to the "router-certs" secret in the "openshift-config-managed"
-// namespace and for publishing the certificate for the default
-// ingresscontroller to the "default-ingress-cert" configmap in the same
-// namespace.
+// The certificate-publisher controller is responsible for publishing the
+// certificate and key of the ingresscontroller for the cluster ingress domain
+// to the "router-certs" secret in the "openshift-config-managed" namespace and
+// for publishing the certificate for the default ingresscontroller to the
+// "default-ingress-cert" configmap in the same namespace.  Note that the
+// "default" ingresscontroller is typically but not necessarily the
+// ingresscontroller with the cluster ingress domain.
 package certificatepublisher
 
 import (
@@ -17,6 +19,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
+	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -50,9 +53,10 @@ type reconciler struct {
 }
 
 // New returns a new controller that publishes a "router-certs" secret in the
-// openshift-config-managed namespace with all in-use default certificates as
-// well as a "default-ingress-cert" configmap with the certificate of the
-// "default" ingresscontroller.
+// openshift-config-managed namespace with the certificate and key for the
+// ingresscontroller for the cluster ingress domain, as well as a
+// "default-ingress-cert" configmap with the certificate for the "default"
+// ingresscontroller (which is usually the same ingresscontroller).
 func New(mgr manager.Manager, operatorNamespace, operandNamespace string) (runtimecontroller.Controller, error) {
 	operatorCache := mgr.GetCache()
 	reconciler := &reconciler{
@@ -90,7 +94,9 @@ func New(mgr manager.Manager, operatorNamespace, operandNamespace string) (runti
 		DeleteFunc:  func(e event.DeleteEvent) bool { return reconciler.hasSecret(e.Object, e.Object) },
 		UpdateFunc:  func(e event.UpdateEvent) bool { return reconciler.secretChanged(e.ObjectOld, e.ObjectNew) },
 		GenericFunc: func(e event.GenericEvent) bool { return reconciler.hasSecret(e.Object, e.Object) },
-	}); err != nil {
+	}, predicate.NewPredicateFuncs(func(o client.Object) bool {
+		return reconciler.hasClusterIngressDomain(o) || isDefaultIngressController(o)
+	})); err != nil {
 		return nil, err
 	}
 
@@ -106,12 +112,20 @@ func (r *reconciler) secretToIngressController(o client.Object) []reconcile.Requ
 		listOpts = client.MatchingFields(map[string]string{
 			"defaultCertificateName": o.GetName(),
 		})
+		ingressConfig configv1.Ingress
 	)
 	if err := r.cache.List(context.Background(), &list, listOpts); err != nil {
 		log.Error(err, "failed to list ingresscontrollers for secret", "secret", o.GetName())
 		return requests
 	}
+	if err := r.cache.Get(context.Background(), controller.IngressClusterConfigName(), &ingressConfig); err != nil {
+		log.Error(err, "failed to get ingresses.config.openshift.io", "name", controller.IngressClusterConfigName())
+		return requests
+	}
 	for _, ic := range list.Items {
+		if ic.Status.Domain != ingressConfig.Spec.Domain {
+			continue
+		}
 		log.Info("queueing ingresscontroller", "name", ic.Name)
 		request := reconcile.Request{
 			NamespacedName: types.NamespacedName{
@@ -152,6 +166,26 @@ func (r *reconciler) secretChanged(old, new runtime.Object) bool {
 	return oldSecret != newSecret || oldStatus != newStatus
 }
 
+// hasClusterIngressDomain returns true if the effective domain for the given
+// ingresscontroller is the cluster ingress domain.
+func (r *reconciler) hasClusterIngressDomain(o client.Object) bool {
+	var ingressConfig configv1.Ingress
+	if err := r.cache.Get(context.Background(), controller.IngressClusterConfigName(), &ingressConfig); err != nil {
+		log.Error(err, "failed to get ingresses.config.openshift.io", "name", controller.IngressClusterConfigName())
+		// Assume it might be a match.  Better to reconcile an extra
+		// time than to miss an update.
+		return true
+	}
+	ic := o.(*operatorv1.IngressController)
+	return ic.Status.Domain == ingressConfig.Spec.Domain
+}
+
+// isDefaultIngressController returns true if the given ingresscontroller is the
+// "default" ingresscontroller.
+func isDefaultIngressController(o client.Object) bool {
+	return o.GetNamespace() == controller.DefaultOperatorNamespace && o.GetName() == manifests.DefaultIngressControllerName
+}
+
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	log.Info("Reconciling", "request", request)
 
@@ -165,7 +199,12 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		return reconcile.Result{}, fmt.Errorf("failed to list secrets: %v", err)
 	}
 
-	if err := r.ensureRouterCertsGlobalSecret(secrets.Items, controllers.Items); err != nil {
+	var ingressConfig configv1.Ingress
+	if err := r.cache.Get(ctx, controller.IngressClusterConfigName(), &ingressConfig); err != nil {
+		return reconcile.Result{}, fmt.Errorf("failed to get ingresses.config.openshift.io %s: %v", controller.IngressClusterConfigName(), err)
+	}
+
+	if err := r.ensureRouterCertsGlobalSecret(secrets.Items, controllers.Items, &ingressConfig); err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to ensure global secret: %v", err)
 	}
 
