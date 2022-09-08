@@ -64,7 +64,7 @@ func New(mgr manager.Manager, namespace string) (controller.Controller, error) {
 	return c, nil
 }
 
-// routeToIngressController creates a reconcile.Request for all the Ingres Controllers related to the Route object.
+// routeToIngressController creates a reconcile.Request for all the Ingress Controllers related to the Route object.
 func (r *reconciler) routeToIngressController(obj client.Object) []reconcile.Request {
 	var requests []reconcile.Request
 	// Cast the received object into Route object.
