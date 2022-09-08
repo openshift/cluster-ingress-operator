@@ -2,7 +2,6 @@
 //
 //  1. Managing a CA for minting self-signed certs.
 //  2. Managing self-signed certificates for any ingresscontrollers which require them.
-//  3. Publishing the CA to the openshift-config-managed namespace.
 package certificate
 
 import (
@@ -12,7 +11,6 @@ import (
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
-	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -22,7 +20,6 @@ import (
 	"k8s.io/client-go/tools/record"
 
 	appsv1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 
@@ -108,24 +105,6 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 				errs = append(errs, fmt.Errorf("failed to ensure default cert for %s: %v", ingress.Name, err))
 			}
 		}
-	}
-
-	// We need to construct the CA bundle that can be used to verify the ingress used to serve the console and the oauth-server.
-	// In an operator maintained cluster, this is always `oc get -n openshift-ingress-operator ingresscontroller/default`, skip the rest and return here.
-	// TODO if network-edge wishes to expand the scope of the CA bundle (and you could legitimately see a need/desire to have one CA that verifies all ingress traffic).
-	// TODO this could be accomplished using union logic similar to the kube-apiserver's join of multiple CAs.
-	if ingress == nil || ingress.Namespace != operatorcontroller.DefaultOperatorNamespace || ingress.Name != "default" {
-		return result, utilerrors.NewAggregate(errs)
-	}
-
-	wildcardServingCertKeySecret := &corev1.Secret{}
-	if err := r.client.Get(ctx, controller.RouterEffectiveDefaultCertificateSecretName(ingress, operatorcontroller.DefaultOperandNamespace), wildcardServingCertKeySecret); err != nil {
-		errs = append(errs, fmt.Errorf("failed to lookup wildcard cert: %v", err))
-		return result, utilerrors.NewAggregate(errs)
-	}
-	caBundle := string(wildcardServingCertKeySecret.Data["tls.crt"])
-	if err := r.ensureDefaultIngressCertConfigMap(caBundle); err != nil {
-		errs = append(errs, fmt.Errorf("failed to publish router CA: %v", err))
 	}
 
 	return result, utilerrors.NewAggregate(errs)
