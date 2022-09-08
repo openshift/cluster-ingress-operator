@@ -63,6 +63,8 @@ type reconciler struct {
 }
 
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
+	log.Info("Reconciling", "request", request)
+
 	ca, err := r.ensureRouterCASecret()
 	if err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to ensure router CA: %v", err)
