@@ -1,5 +1,7 @@
 // The certificate-publisher controller is responsible for publishing in-use
 // certificates to the "router-certs" secret in the "openshift-config-managed"
+// namespace and for publishing the certificate for the default
+// ingresscontroller to the "default-ingress-cert" configmap in the same
 // namespace.
 package certificatepublisher
 
@@ -8,6 +10,7 @@ import (
 	"fmt"
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
+	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
 	"k8s.io/client-go/tools/record"
@@ -47,7 +50,9 @@ type reconciler struct {
 }
 
 // New returns a new controller that publishes a "router-certs" secret in the
-// openshift-config-managed namespace with all in-use default certificates.
+// openshift-config-managed namespace with all in-use default certificates as
+// well as a "default-ingress-cert" configmap with the certificate of the
+// "default" ingresscontroller.
 func New(mgr manager.Manager, operatorNamespace, operandNamespace string) (runtimecontroller.Controller, error) {
 	operatorCache := mgr.GetCache()
 	reconciler := &reconciler{
@@ -162,6 +167,42 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 
 	if err := r.ensureRouterCertsGlobalSecret(secrets.Items, controllers.Items); err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to ensure global secret: %v", err)
+	}
+
+	// We need to construct the CA bundle that can be used to verify the ingress used to serve the console and the oauth-server.
+	// In an operator maintained cluster, this is always `oc get -n openshift-ingress-operator ingresscontroller/default`, skip the rest and return here.
+	// TODO if network-edge wishes to expand the scope of the CA bundle (and you could legitimately see a need/desire to have one CA that verifies all ingress traffic).
+	// TODO this could be accomplished using union logic similar to the kube-apiserver's join of multiple CAs.
+	if request.NamespacedName.Namespace == controller.DefaultOperatorNamespace && request.NamespacedName.Name == manifests.DefaultIngressControllerName {
+		var defaultIngressController *operatorv1.IngressController
+		for i := range controllers.Items {
+			ic := &controllers.Items[i]
+			if isDefaultIngressController(ic) {
+				defaultIngressController = ic
+				break
+			}
+		}
+		if defaultIngressController == nil {
+			return reconcile.Result{}, fmt.Errorf("failed to lookup default ingresscontroller %s does not exist", manifests.DefaultIngressControllerName)
+		}
+
+		var wildcardServingCertKeySecret *corev1.Secret
+		secretName := controller.RouterEffectiveDefaultCertificateSecretName(defaultIngressController, controller.DefaultOperandNamespace)
+		for i := range secrets.Items {
+			secret := &secrets.Items[i]
+			if secret.Namespace == secretName.Namespace && secret.Name == secretName.Name {
+				wildcardServingCertKeySecret = secret
+				break
+			}
+		}
+		if wildcardServingCertKeySecret == nil {
+			return reconcile.Result{}, fmt.Errorf("failed to lookup wildcard cert: secret %s does not exist", secretName)
+		}
+
+		caBundle := string(wildcardServingCertKeySecret.Data["tls.crt"])
+		if err := r.ensureDefaultIngressCertConfigMap(caBundle); err != nil {
+			return reconcile.Result{}, fmt.Errorf("failed to publish router CA: %w", err)
+		}
 	}
 
 	return reconcile.Result{}, nil
