@@ -24,6 +24,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/utils/pointer"
 )
 
 // TestCanaryRoute tests the ingress canary route
@@ -142,6 +143,16 @@ func buildCanaryCurlPod(name, namespace, image, host string) *corev1.Pod {
 					Image:   image,
 					Command: []string{"/bin/curl"},
 					Args:    curlArgs,
+					SecurityContext: &corev1.SecurityContext{
+						AllowPrivilegeEscalation: pointer.Bool(false),
+						Capabilities: &corev1.Capabilities{
+							Drop: []corev1.Capability{"ALL"},
+						},
+						RunAsNonRoot: pointer.Bool(true),
+						SeccompProfile: &corev1.SeccompProfile{
+							Type: corev1.SeccompProfileTypeRuntimeDefault,
+						},
+					},
 				},
 			},
 			RestartPolicy: corev1.RestartPolicyNever,
