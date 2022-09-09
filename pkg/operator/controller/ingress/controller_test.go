@@ -4,9 +4,415 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 )
+
+// TestSetDefaultDomain verifies that setDefaultDomain behaves correctly.
+func TestSetDefaultDomain(t *testing.T) {
+	ingressConfig := &configv1.Ingress{
+		Spec: configv1.IngressSpec{
+			Domain: "apps.mycluster.com",
+		},
+	}
+
+	makeIC := func(specDomain, statusDomain string) *operatorv1.IngressController {
+		return &operatorv1.IngressController{
+			Spec: operatorv1.IngressControllerSpec{
+				Domain: specDomain,
+			},
+			Status: operatorv1.IngressControllerStatus{
+				Domain: statusDomain,
+			},
+		}
+	}
+
+	testCases := []struct {
+		name           string
+		ic             *operatorv1.IngressController
+		expectedIC     *operatorv1.IngressController
+		expectedResult bool
+	}{
+		{
+			name:           "empty spec, empty status",
+			ic:             makeIC("", ""),
+			expectedResult: true,
+			expectedIC:     makeIC("", ingressConfig.Spec.Domain),
+		},
+		{
+			name:           "empty spec, status has cluster ingress domain",
+			ic:             makeIC("", ingressConfig.Spec.Domain),
+			expectedResult: false,
+			expectedIC:     makeIC("", ingressConfig.Spec.Domain),
+		},
+		{
+			name:           "empty spec, status has custom domain",
+			ic:             makeIC("", "otherdomain.com"),
+			expectedResult: false,
+			expectedIC:     makeIC("", "otherdomain.com"),
+		},
+		{
+			name:           "spec has cluster ingress domain, empty status",
+			ic:             makeIC(ingressConfig.Spec.Domain, ""),
+			expectedResult: true,
+			expectedIC:     makeIC(ingressConfig.Spec.Domain, ingressConfig.Spec.Domain),
+		},
+		{
+			name:           "spec and status have cluster ingress domain",
+			ic:             makeIC(ingressConfig.Spec.Domain, ingressConfig.Spec.Domain),
+			expectedIC:     makeIC(ingressConfig.Spec.Domain, ingressConfig.Spec.Domain),
+			expectedResult: false,
+		},
+		{
+			name:           "spec has cluster ingress domain, status has custom domain",
+			ic:             makeIC(ingressConfig.Spec.Domain, "otherdomain.com"),
+			expectedIC:     makeIC(ingressConfig.Spec.Domain, "otherdomain.com"),
+			expectedResult: false,
+		},
+		{
+			name:           "spec has custom domain, empty status",
+			ic:             makeIC("otherdomain.com", ""),
+			expectedIC:     makeIC("otherdomain.com", "otherdomain.com"),
+			expectedResult: true,
+		},
+		{
+			name:           "spec has custom domain, status has cluster ingress domain",
+			ic:             makeIC(ingressConfig.Spec.Domain, "otherdomain.com"),
+			expectedIC:     makeIC(ingressConfig.Spec.Domain, "otherdomain.com"),
+			expectedResult: false,
+		},
+		{
+			name:           "spec and status have custom domain",
+			ic:             makeIC("otherdomain.com", "otherdomain.com"),
+			expectedIC:     makeIC("otherdomain.com", "otherdomain.com"),
+			expectedResult: false,
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ic := tc.ic.DeepCopy()
+			if actualResult := setDefaultDomain(ic, ingressConfig); actualResult != tc.expectedResult {
+				t.Errorf("expected result %v, got %v", tc.expectedResult, actualResult)
+			}
+			if !reflect.DeepEqual(ic, tc.expectedIC) {
+				t.Errorf("expected ingresscontroller %#v, got %#v", tc.expectedIC, ic)
+			}
+		})
+	}
+}
+
+// TestSetDefaultPublishingStrategySetsPlatformDefaults verifies that
+// setDefaultPublishingStrategy puts an appropriate default configuration in
+// status.endpointPublishingStrategy for each platform when
+// spec.endpointPublishingStrategy is nil.
+func TestSetDefaultPublishingStrategySetsPlatformDefaults(t *testing.T) {
+	var (
+		ingressControllerWithLoadBalancer = &operatorv1.IngressController{
+			Status: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.LoadBalancerServiceStrategyType,
+					LoadBalancer: &operatorv1.LoadBalancerStrategy{
+						Scope: operatorv1.ExternalLoadBalancer,
+					},
+				},
+			},
+		}
+		ingressControllerWithHostNetwork = &operatorv1.IngressController{
+			Status: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.HostNetworkStrategyType,
+					HostNetwork: &operatorv1.HostNetworkStrategy{
+						Protocol: operatorv1.TCPProtocol,
+					},
+				},
+			},
+		}
+		makeInfra = func(platform configv1.PlatformType) *configv1.Infrastructure {
+			return &configv1.Infrastructure{
+				Status: configv1.InfrastructureStatus{
+					Platform: platform,
+				},
+			}
+		}
+	)
+
+	testCases := []struct {
+		name        string
+		infraConfig *configv1.Infrastructure
+		expectedIC  *operatorv1.IngressController
+	}{
+		{
+			name:        "AWS",
+			infraConfig: makeInfra(configv1.AWSPlatformType),
+			expectedIC:  ingressControllerWithLoadBalancer,
+		},
+		{
+			name:        "Azure",
+			infraConfig: makeInfra(configv1.AzurePlatformType),
+			expectedIC:  ingressControllerWithLoadBalancer,
+		},
+		{
+			name:        "Bare metal",
+			infraConfig: makeInfra(configv1.BareMetalPlatformType),
+			expectedIC:  ingressControllerWithHostNetwork,
+		},
+		{
+			name:        "Equinix Metal",
+			infraConfig: makeInfra(configv1.EquinixMetalPlatformType),
+			expectedIC:  ingressControllerWithHostNetwork,
+		},
+		{
+			name:        "GCP",
+			infraConfig: makeInfra(configv1.GCPPlatformType),
+			expectedIC:  ingressControllerWithLoadBalancer,
+		},
+		{
+			name:        "IBM Cloud",
+			infraConfig: makeInfra(configv1.IBMCloudPlatformType),
+			expectedIC:  ingressControllerWithLoadBalancer,
+		},
+		{
+			name:        "Libvirt",
+			infraConfig: makeInfra(configv1.LibvirtPlatformType),
+			expectedIC:  ingressControllerWithHostNetwork,
+		},
+		{
+			name:        "No platform",
+			infraConfig: makeInfra(configv1.NonePlatformType),
+			expectedIC:  ingressControllerWithHostNetwork,
+		},
+		{
+			name:        "OpenStack",
+			infraConfig: makeInfra(configv1.OpenStackPlatformType),
+			expectedIC:  ingressControllerWithHostNetwork,
+		},
+		{
+			name:        "RHV",
+			infraConfig: makeInfra(configv1.OvirtPlatformType),
+			expectedIC:  ingressControllerWithHostNetwork,
+		},
+		{
+			name:        "vSphere",
+			infraConfig: makeInfra(configv1.VSpherePlatformType),
+			expectedIC:  ingressControllerWithHostNetwork,
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ic := &operatorv1.IngressController{}
+			infraConfig := tc.infraConfig.DeepCopy()
+			if actualResult := setDefaultPublishingStrategy(ic, infraConfig); actualResult != true {
+				t.Errorf("expected result %v, got %v", true, actualResult)
+			}
+			if diff := cmp.Diff(tc.expectedIC, ic); len(diff) != 0 {
+				t.Errorf("got expected ingresscontroller: %s", diff)
+			}
+		})
+	}
+}
+
+// TestSetDefaultPublishingStrategyHandlesUpdates verifies that
+// setDefaultPublishingStrategy correctly handles changes to
+// spec.endpointPublishingStrategy.
+func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
+	var (
+		makeIC = func(spec operatorv1.IngressControllerSpec, status operatorv1.IngressControllerStatus) *operatorv1.IngressController {
+			return &operatorv1.IngressController{Spec: spec, Status: status}
+		}
+		spec = func(eps *operatorv1.EndpointPublishingStrategy) operatorv1.IngressControllerSpec {
+			return operatorv1.IngressControllerSpec{
+				EndpointPublishingStrategy: eps,
+			}
+		}
+		status = func(eps *operatorv1.EndpointPublishingStrategy) operatorv1.IngressControllerStatus {
+			return operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: eps,
+			}
+		}
+		lb = func(scope operatorv1.LoadBalancerScope) *operatorv1.EndpointPublishingStrategy {
+			return &operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.LoadBalancerServiceStrategyType,
+				LoadBalancer: &operatorv1.LoadBalancerStrategy{
+					Scope: scope,
+				},
+			}
+		}
+		elb = func() *operatorv1.EndpointPublishingStrategy {
+			eps := lb(operatorv1.ExternalLoadBalancer)
+			eps.LoadBalancer.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{
+				Type: operatorv1.AWSLoadBalancerProvider,
+				AWS: &operatorv1.AWSLoadBalancerParameters{
+					Type: operatorv1.AWSClassicLoadBalancer,
+				},
+			}
+			return eps
+		}
+		nlb = func() *operatorv1.EndpointPublishingStrategy {
+			eps := lb(operatorv1.ExternalLoadBalancer)
+			eps.LoadBalancer.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{
+				Type: operatorv1.AWSLoadBalancerProvider,
+				AWS: &operatorv1.AWSLoadBalancerParameters{
+					Type: operatorv1.AWSNetworkLoadBalancer,
+				},
+			}
+			return eps
+		}
+		gcpLB = func(clientAccess operatorv1.GCPClientAccess) *operatorv1.EndpointPublishingStrategy {
+			eps := lb(operatorv1.ExternalLoadBalancer)
+			eps.LoadBalancer.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{
+				Type: operatorv1.GCPLoadBalancerProvider,
+				GCP: &operatorv1.GCPLoadBalancerParameters{
+					ClientAccess: clientAccess,
+				},
+			}
+			return eps
+		}
+		nodePort = func(proto operatorv1.IngressControllerProtocol) *operatorv1.EndpointPublishingStrategy {
+			return &operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.NodePortServiceStrategyType,
+				NodePort: &operatorv1.NodePortStrategy{
+					Protocol: proto,
+				},
+			}
+		}
+		nodePortWithNull = func() *operatorv1.EndpointPublishingStrategy {
+			return &operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.NodePortServiceStrategyType,
+			}
+		}
+		hostNetwork = func(proto operatorv1.IngressControllerProtocol) *operatorv1.EndpointPublishingStrategy {
+			return &operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.HostNetworkStrategyType,
+				HostNetwork: &operatorv1.HostNetworkStrategy{
+					Protocol: proto,
+				},
+			}
+		}
+		hostNetworkWithNull = func() *operatorv1.EndpointPublishingStrategy {
+			return &operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.HostNetworkStrategyType,
+			}
+		}
+	)
+
+	testCases := []struct {
+		name           string
+		ic             *operatorv1.IngressController
+		expectedIC     *operatorv1.IngressController
+		expectedResult bool
+	}{
+		{
+			name:           "loadbalancer scope changed from external to internal",
+			ic:             makeIC(spec(lb(operatorv1.InternalLoadBalancer)), status(lb(operatorv1.ExternalLoadBalancer))),
+			expectedResult: false,
+			expectedIC:     makeIC(spec(lb(operatorv1.InternalLoadBalancer)), status(lb(operatorv1.ExternalLoadBalancer))),
+		},
+		{
+			name:           "loadbalancer scope changed from internal to external",
+			ic:             makeIC(spec(lb(operatorv1.ExternalLoadBalancer)), status(lb(operatorv1.InternalLoadBalancer))),
+			expectedResult: false,
+			expectedIC:     makeIC(spec(lb(operatorv1.ExternalLoadBalancer)), status(lb(operatorv1.InternalLoadBalancer))),
+		},
+		{
+			name:           "loadbalancer type changed from ELB to NLB",
+			ic:             makeIC(spec(nlb()), status(elb())),
+			expectedResult: false,
+			expectedIC:     makeIC(spec(nlb()), status(elb())),
+		},
+		{
+			name:           "loadbalancer type changed from NLB to ELB",
+			ic:             makeIC(spec(elb()), status(nlb())),
+			expectedResult: false,
+			expectedIC:     makeIC(spec(elb()), status(nlb())),
+		},
+		{
+			name:           "loadbalancer GCP Global Access changed from unset to global",
+			ic:             makeIC(spec(gcpLB(operatorv1.GCPGlobalAccess)), status(lb(operatorv1.ExternalLoadBalancer))),
+			expectedResult: true,
+			expectedIC:     makeIC(spec(gcpLB(operatorv1.GCPGlobalAccess)), status(gcpLB(operatorv1.GCPGlobalAccess))),
+		},
+		{
+			name:           "loadbalancer GCP Global Access changed from global to local",
+			ic:             makeIC(spec(gcpLB(operatorv1.GCPLocalAccess)), status(gcpLB(operatorv1.GCPGlobalAccess))),
+			expectedResult: true,
+			expectedIC:     makeIC(spec(gcpLB(operatorv1.GCPLocalAccess)), status(gcpLB(operatorv1.GCPLocalAccess))),
+		},
+		{
+			// https://bugzilla.redhat.com/show_bug.cgi?id=1997226
+			name:           "nodeport protocol changed to PROXY with null status.endpointPublishingStrategy.nodePort",
+			ic:             makeIC(spec(nodePort(operatorv1.ProxyProtocol)), status(nodePortWithNull())),
+			expectedResult: true,
+			expectedIC:     makeIC(spec(nodePort(operatorv1.ProxyProtocol)), status(nodePort(operatorv1.ProxyProtocol))),
+		},
+		{
+			name:           "nodeport spec.endpointPublishingStrategy.nodePort set to null",
+			ic:             makeIC(spec(nodePortWithNull()), status(nodePort(operatorv1.TCPProtocol))),
+			expectedResult: false,
+			expectedIC:     makeIC(spec(nodePortWithNull()), status(nodePort(operatorv1.TCPProtocol))),
+		},
+		{
+			name:           "nodeport protocol changed from empty to PROXY",
+			ic:             makeIC(spec(nodePort(operatorv1.ProxyProtocol)), status(nodePort(""))),
+			expectedResult: true,
+			expectedIC:     makeIC(spec(nodePort(operatorv1.ProxyProtocol)), status(nodePort(operatorv1.ProxyProtocol))),
+		},
+		{
+			name:           "nodeport protocol changed from TCP to PROXY",
+			ic:             makeIC(spec(nodePort(operatorv1.ProxyProtocol)), status(nodePort(operatorv1.TCPProtocol))),
+			expectedResult: true,
+			expectedIC:     makeIC(spec(nodePort(operatorv1.ProxyProtocol)), status(nodePort(operatorv1.ProxyProtocol))),
+		},
+		{
+			name:           "nodeport protocol changed from PROXY to TCP",
+			ic:             makeIC(spec(nodePort(operatorv1.TCPProtocol)), status(nodePort(operatorv1.ProxyProtocol))),
+			expectedResult: true,
+			expectedIC:     makeIC(spec(nodePort(operatorv1.TCPProtocol)), status(nodePort(operatorv1.TCPProtocol))),
+		},
+		{
+			// https://bugzilla.redhat.com/show_bug.cgi?id=1997226
+			name:           "hostnetwork protocol changed to PROXY with null status.endpointPublishingStrategy.hostNetwork",
+			ic:             makeIC(spec(hostNetwork(operatorv1.ProxyProtocol)), status(hostNetworkWithNull())),
+			expectedResult: true,
+			expectedIC:     makeIC(spec(hostNetwork(operatorv1.ProxyProtocol)), status(hostNetwork(operatorv1.ProxyProtocol))),
+		},
+		{
+			name:           "hostnetwork protocol changed from empty to PROXY",
+			ic:             makeIC(spec(hostNetwork(operatorv1.ProxyProtocol)), status(hostNetwork(""))),
+			expectedResult: true,
+			expectedIC:     makeIC(spec(hostNetwork(operatorv1.ProxyProtocol)), status(hostNetwork(operatorv1.ProxyProtocol))),
+		},
+		{
+			name:           "hostnetwork protocol changed from TCP to PROXY",
+			ic:             makeIC(spec(hostNetwork(operatorv1.ProxyProtocol)), status(hostNetwork(operatorv1.TCPProtocol))),
+			expectedResult: true,
+			expectedIC:     makeIC(spec(hostNetwork(operatorv1.ProxyProtocol)), status(hostNetwork(operatorv1.ProxyProtocol))),
+		},
+		{
+			name:           "hostnetwork protocol changed from PROXY to TCP",
+			ic:             makeIC(spec(hostNetwork(operatorv1.TCPProtocol)), status(hostNetwork(operatorv1.ProxyProtocol))),
+			expectedResult: true,
+			expectedIC:     makeIC(spec(hostNetwork(operatorv1.TCPProtocol)), status(hostNetwork(operatorv1.TCPProtocol))),
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ic := tc.ic.DeepCopy()
+			infraConfig := &configv1.Infrastructure{
+				Status: configv1.InfrastructureStatus{
+					Platform: configv1.NonePlatformType,
+				},
+			}
+			if actualResult := setDefaultPublishingStrategy(ic, infraConfig); actualResult != tc.expectedResult {
+				t.Errorf("expected result %v, got %v", tc.expectedResult, actualResult)
+			}
+			if diff := cmp.Diff(tc.expectedIC, ic); len(diff) != 0 {
+				t.Errorf("got expected ingresscontroller: %s", diff)
+			}
+		})
+	}
+}
 
 func TestTLSProfileSpecForSecurityProfile(t *testing.T) {
 	invalidTLSVersion := configv1.TLSProtocolVersion("abc")
