@@ -279,25 +279,27 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		return reconcile.Result{Requeue: true}, nil
 	}
 
-	domainMatchesBaseDomain := manageDNSForDomain(ingress.Status.Domain, platformStatus, dnsConfig)
-	// TODO: remove this fix-up logic in 4.8
-	if ingress.Status.EndpointPublishingStrategy != nil && ingress.Status.EndpointPublishingStrategy.Type == operatorv1.LoadBalancerServiceStrategyType && ingress.Status.EndpointPublishingStrategy.LoadBalancer == nil {
-		log.Info("Setting default value for empty status.endpointPublishingStrategy.loadBalancer field", "ingresscontroller", ingress)
-		ingress.Status.EndpointPublishingStrategy.LoadBalancer = &operatorv1.LoadBalancerStrategy{
-			Scope:               operatorv1.ExternalLoadBalancer,
-			DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
-		}
+	// During upgrades, an already admitted controller might require overriding
+	// default dnsManagementPolicy to "Unmanaged" due to mismatch in its domain and
+	// and the pre-configured base domain.
+	// TODO: Remove this in 4.13
+	if eps := ingress.Status.EndpointPublishingStrategy; eps != nil && eps.Type == operatorv1.LoadBalancerServiceStrategyType && eps.LoadBalancer != nil {
+
+		domainMatchesBaseDomain := manageDNSForDomain(ingress.Status.Domain, platformStatus, dnsConfig)
 
 		// Set dnsManagementPolicy based on current domain on the ingresscontroller
-		// and base domain on dns config.
-		if !domainMatchesBaseDomain {
+		// and base domain on dns config. This is needed to ensure the correct dnsManagementPolicy
+		// is set on the default ingress controller since the status.domain is updated
+		// in r.admit() and spec.domain is unset on the default ingress controller.
+		if !domainMatchesBaseDomain && eps.LoadBalancer.DNSManagementPolicy != operatorv1.UnmanagedLoadBalancerDNS {
 			ingress.Status.EndpointPublishingStrategy.LoadBalancer.DNSManagementPolicy = operatorv1.UnmanagedLoadBalancerDNS
-		}
 
-		if err := r.client.Status().Update(context.TODO(), ingress); err != nil {
-			return reconcile.Result{}, fmt.Errorf("failed to update status: %v", err)
+			if err := r.client.Status().Update(context.TODO(), ingress); err != nil {
+				return reconcile.Result{}, fmt.Errorf("failed to update status: %w", err)
+			}
+			log.Info("Updated ingresscontroller status: dnsManagementPolicy as Unmanaged", "ingresscontroller", ingress.Status)
+			return reconcile.Result{Requeue: true}, nil
 		}
-		return reconcile.Result{Requeue: true}, nil
 	}
 
 	// The ingresscontroller is safe to process, so ensure it.
@@ -322,6 +324,9 @@ func (r *reconciler) admit(current *operatorv1.IngressController, ingressConfig 
 
 	setDefaultDomain(updated, ingressConfig)
 
+	// To set default publishing strategy we need to verify if the domains match
+	// so that we can set the appropriate dnsManagementPolicy. This can only be
+	// done after status.domain has been updated in setDefaultDomain().
 	domainMatchesBaseDomain := manageDNSForDomain(updated.Status.Domain, platformStatus, dnsConfig)
 	setDefaultPublishingStrategy(updated, platformStatus, domainMatchesBaseDomain)
 
@@ -355,7 +360,7 @@ func (r *reconciler) admit(current *operatorv1.IngressController, ingressConfig 
 	})
 	updated.Status.ObservedGeneration = updated.Generation
 
-	if !manageDNSForDomain(updated.Status.Domain, platformStatus, dnsConfig) {
+	if !domainMatchesBaseDomain {
 		r.recorder.Eventf(updated, "Warning", "DomainNotMatching", fmt.Sprintf("Domain [%s] of ingresscontroller does not match the baseDomain [%s] of the cluster DNS config, so DNS management is not supported.", updated.Status.Domain, dnsConfig.Spec.BaseDomain))
 	}
 
@@ -968,7 +973,7 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		errs = append(errs, fmt.Errorf("failed to ensure load balancer service for %s: %v", ci.Name, err))
 	} else {
 		lbService = lb
-		if _, record, err := r.ensureWildcardDNSRecord(ci, platformStatus, dnsConfig, lbService, haveLB); err != nil {
+		if _, record, err := r.ensureWildcardDNSRecord(ci, lbService, haveLB); err != nil {
 			errs = append(errs, fmt.Errorf("failed to ensure wildcard dnsrecord for %s: %v", ci.Name, err))
 		} else {
 			wildcardRecord = record

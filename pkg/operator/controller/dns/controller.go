@@ -197,7 +197,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	}
 	requeue, statuses := r.publishRecordToZones(zones, record)
 
-	// requeue if publishing records failed
+	// Requeue if publishing records failed.
 	result := reconcile.Result{}
 	if requeue {
 		result.RequeueAfter = 30 * time.Second
@@ -289,7 +289,6 @@ func (r *reconciler) replacePublishedRecord(zone configv1.DNSZone, record *iov1.
 		condition.Status = string(operatorv1.ConditionFalse)
 		condition.Reason = "ProviderError"
 		condition.Message = fmt.Sprintf("The DNS provider failed to replace the record: %v", err)
-
 	} else {
 		log.Info("replaced DNS record in zone", "record", record.Spec, "dnszone", zone)
 		condition.Status = string(operatorv1.ConditionTrue)
@@ -333,13 +332,12 @@ func (r *reconciler) publishRecordToZones(zones []configv1.DNSZone, record *iov1
 	var requeue bool
 	dnsPolicy := record.Spec.DNSManagementPolicy
 	for i := range zones {
-
 		isRecordPublished := recordIsAlreadyPublishedToZone(record, &zones[i])
 
 		// Only publish the record if the DNSRecord has been modified
 		// (which would mean the target could have changed) or its
 		// status does not indicate that it has already been published.
-		if record.Generation == record.Status.ObservedGeneration && dnsPolicy != iov1.UnmanagedDNS && isRecordPublished {
+		if record.Generation == record.Status.ObservedGeneration && isRecordPublished {
 			log.Info("skipping zone to which the DNS record is already published", "record", record.Spec, "dnszone", zones[i])
 			continue
 		}
@@ -480,18 +478,21 @@ func conditionChanged(a, b iov1.DNSZoneCondition) bool {
 
 // migrateRecordStatusConditions purges deprecated fields from DNS Record
 // status. Removes "Failed" (DNSRecordFailedConditionType) and replaces with
-// "Published" (DNSRecordPublishedConditionType). Returns updated condition
-// list.
+// "Published" (DNSRecordPublishedConditionType). If the status needs to be
+// updated, this function performs the update.  The function returns a Boolean
+// value indicating whether it has performed an update along with the error
+// value from any update it has performed.
 //
 // This function is at least required for 1 minor release and can be removed after
 // Openshift 4.13 is released.
 func (r *reconciler) migrateRecordStatusConditions(record *iov1.DNSRecord) (bool, error) {
 	var updateConditions bool
 	for i := range record.Status.Zones {
-		var updateZone bool
-		updateZone, record.Status.Zones[i].Conditions = migrateRecordStatusCondition(record.Status.Zones[i].Conditions)
+		zone := record.Status.DeepCopy().Zones[i]
+		updateZone, cond := migrateRecordStatusCondition(zone.Conditions)
 		if updateZone {
 			updateConditions = true
+			record.Status.Zones[i].Conditions = cond
 		}
 	}
 	if updateConditions {
@@ -506,35 +507,40 @@ func (r *reconciler) migrateRecordStatusConditions(record *iov1.DNSRecord) (bool
 
 func migrateRecordStatusCondition(conditions []iov1.DNSZoneCondition) (bool, []iov1.DNSZoneCondition) {
 	var result []iov1.DNSZoneCondition
+	var updatedCondition iov1.DNSZoneCondition
 	var updated bool
+	now := metav1.NewTime(clock.Now())
 	for _, cond := range conditions {
 		if cond.Type != iov1.DNSRecordFailedConditionType {
-			result = append(result, cond)
-			continue
+			updatedCondition = cond
+		} else {
+			updated = true
+			switch cond.Status {
+			case string(operatorv1.ConditionTrue):
+				updatedCondition = iov1.DNSZoneCondition{
+					Type:               iov1.DNSRecordPublishedConditionType,
+					Status:             string(operatorv1.ConditionFalse),
+					LastTransitionTime: now,
+					Reason:             cond.Reason,
+					Message:            cond.Message,
+				}
+			case string(operatorv1.ConditionFalse):
+				updatedCondition = iov1.DNSZoneCondition{
+					Type:               iov1.DNSRecordPublishedConditionType,
+					Status:             string(operatorv1.ConditionTrue),
+					LastTransitionTime: now,
+					Reason:             cond.Reason,
+					Message:            cond.Message,
+				}
+			default:
+				// We don't need to map Failed=Unknown condition
+				// since the operator never set this condition to Unknown.
+				// Since no version of the operator had this condition, we
+				// don't need to migrate it.
+				continue
+			}
 		}
-		updated = true
-		switch cond.Status {
-		case string(operatorv1.ConditionTrue):
-			result = append(result, iov1.DNSZoneCondition{
-				Type:               iov1.DNSRecordPublishedConditionType,
-				Status:             string(operatorv1.ConditionFalse),
-				LastTransitionTime: cond.LastTransitionTime,
-				Reason:             cond.Reason,
-				Message:            cond.Message,
-			})
-		case string(operatorv1.ConditionFalse):
-			result = append(result, iov1.DNSZoneCondition{
-				Type:               iov1.DNSRecordPublishedConditionType,
-				Status:             string(operatorv1.ConditionTrue),
-				LastTransitionTime: cond.LastTransitionTime,
-				Reason:             cond.Reason,
-				Message:            cond.Message,
-			})
-			// We don't need to map Failed=Unknown condition
-			// since the operator never set this condition to Unknown.
-			// Since no version of the operator had this condition, we
-			// don't need to migrate it.
-		}
+		result = mergeConditions(result, []iov1.DNSZoneCondition{updatedCondition})
 	}
 	return updated, result
 }

@@ -230,6 +230,7 @@ func TestMigrateDNSRecordStatus(t *testing.T) {
 		name       string
 		conditions []iov1.DNSZoneCondition
 		expected   []iov1.DNSZoneCondition
+		changed    bool
 	}{
 		{
 			name: "DNS record has previously failed records",
@@ -245,6 +246,7 @@ func TestMigrateDNSRecordStatus(t *testing.T) {
 					Status: string(operatorv1.ConditionFalse),
 				},
 			},
+			changed: true,
 		},
 		{
 			name: "DNS record has previously succeeded records",
@@ -260,6 +262,7 @@ func TestMigrateDNSRecordStatus(t *testing.T) {
 					Status: string(operatorv1.ConditionTrue),
 				},
 			},
+			changed: true,
 		},
 		{
 			name: "DNS record has unrelated status condition",
@@ -275,14 +278,85 @@ func TestMigrateDNSRecordStatus(t *testing.T) {
 					Status: string(operatorv1.ConditionFalse),
 				},
 			},
+			changed: false,
+		},
+		{
+			name: "DNS record has unrelated status and Failed condition",
+			conditions: []iov1.DNSZoneCondition{
+				{
+					Type:   "UnrelatedType",
+					Status: string(operatorv1.ConditionFalse),
+				},
+				{
+					Type:   iov1.DNSRecordFailedConditionType,
+					Status: string(operatorv1.ConditionFalse),
+				},
+			},
+			expected: []iov1.DNSZoneCondition{
+				{
+					Type:   "UnrelatedType",
+					Status: string(operatorv1.ConditionFalse),
+				},
+				{
+					Type:   iov1.DNSRecordPublishedConditionType,
+					Status: string(operatorv1.ConditionTrue),
+				},
+			},
+			changed: true,
+		},
+		{
+			name: "DNS record has Published condition and Failed condition",
+			conditions: []iov1.DNSZoneCondition{
+				{
+					Type:   iov1.DNSRecordPublishedConditionType,
+					Status: string(operatorv1.ConditionFalse),
+				},
+				{
+					Type:   iov1.DNSRecordFailedConditionType,
+					Status: string(operatorv1.ConditionFalse),
+				},
+			},
+			expected: []iov1.DNSZoneCondition{
+				{
+					Type:   iov1.DNSRecordPublishedConditionType,
+					Status: string(operatorv1.ConditionTrue),
+				},
+			},
+			changed: true,
 		},
 	}
 
+	scheme := runtime.NewScheme()
+	iov1.AddToScheme(scheme)
+
+	testDNSRecord := &iov1.DNSRecord{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "sample-dns-record",
+		},
+		Status: iov1.DNSRecordStatus{
+			Zones: []iov1.DNSZoneStatus{
+				{
+					DNSZone: configv1.DNSZone{ID: "sample-zone"},
+				},
+			},
+		},
+	}
+
+	client := fake.NewFakeClientWithScheme(scheme, testDNSRecord)
+	r := reconciler{client: client}
 	for _, tc := range tests {
-		_, actual := migrateRecordStatusCondition(tc.conditions)
+
+		testDNSRecord.Status.Zones[0].Conditions = tc.conditions
+		changed, _ := r.migrateRecordStatusConditions(testDNSRecord)
+		if changed != tc.changed {
+			t.Fatalf("DNS record status not updated, expected status condition to be updated")
+		}
+
+		t.Logf("\n%+v", testDNSRecord.Status)
+
 		opts := cmpopts.IgnoreFields(iov1.DNSZoneCondition{}, "Reason", "Message", "LastTransitionTime")
-		if !cmp.Equal(actual, tc.expected, opts) {
-			t.Fatalf("%q: found diff:\n%s", tc.name, cmp.Diff(actual, tc.expected, opts))
+		if !cmp.Equal(testDNSRecord.Status.Zones[0].Conditions, tc.expected, opts) {
+			t.Fatalf("%q: status condition found diff:\n%s", tc.name, cmp.Diff(testDNSRecord.Status.Zones[0].Conditions, tc.expected, opts))
 		}
 	}
 }

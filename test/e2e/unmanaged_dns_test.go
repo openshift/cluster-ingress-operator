@@ -18,7 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
-func TestUnmanagedDNSToManagedIngressController(t *testing.T) {
+func TestUnmanagedDNSToManagedDNSIngressController(t *testing.T) {
 	t.Parallel()
 
 	name := types.NamespacedName{Namespace: operatorNamespace, Name: "unmanaged-migrated"}
@@ -58,7 +58,8 @@ func TestUnmanagedDNSToManagedIngressController(t *testing.T) {
 
 	verifyUnmanagedDNSRecordStatus(t, wildcardRecord)
 
-	verifyExternalIngressController(t, name, "apps."+ic.Spec.Domain, wildcardRecord.Spec.Targets[0])
+	testNamespace := types.NamespacedName{Name: name.Name + "-initial", Namespace: name.Namespace}
+	verifyExternalIngressController(t, testNamespace, "apps."+ic.Spec.Domain, wildcardRecord.Spec.Targets[0])
 
 	t.Logf("Updating ingresscontroller %s to dnsManagementPolicy=Managed", ic.Name)
 
@@ -88,7 +89,8 @@ func TestUnmanagedDNSToManagedIngressController(t *testing.T) {
 		t.Fatalf("DNSRecord %s expected allocated dnsZones but found none", wildcardRecordName.Name)
 	}
 
-	verifyExternalIngressController(t, name, "apps."+ic.Spec.Domain, wildcardRecord.Spec.Targets[0])
+	testNamespace = types.NamespacedName{Name: name.Name + "-final", Namespace: name.Namespace}
+	verifyExternalIngressController(t, testNamespace, "apps."+ic.Spec.Domain, wildcardRecord.Spec.Targets[0])
 }
 
 func TestManagedDNSToUnmanagedDNSIngressController(t *testing.T) {
@@ -128,7 +130,8 @@ func TestManagedDNSToUnmanagedDNSIngressController(t *testing.T) {
 		t.Fatalf("DNSRecord %s expected in dnsManagementPolicy=ManagedDNS but got dnsManagementPolicy=%s", wildcardRecordName.Name, wildcardRecord.Spec.DNSManagementPolicy)
 	}
 
-	verifyExternalIngressController(t, name, "apps."+ic.Spec.Domain, wildcardRecord.Spec.Targets[0])
+	testNamespace := types.NamespacedName{Name: name.Name + "-initial", Namespace: name.Namespace}
+	verifyExternalIngressController(t, testNamespace, "apps."+ic.Spec.Domain, wildcardRecord.Spec.Targets[0])
 
 	t.Logf("Updating ingresscontroller %s to dnsManagementPolicy=Unmanaged", ic.Name)
 
@@ -166,14 +169,15 @@ func TestManagedDNSToUnmanagedDNSIngressController(t *testing.T) {
 	// header to map to the correct route.  This means the old DNS records from when
 	// dnsManagementPolicy=Managed was set are not used to verify the ingresscontroller (but they
 	// will continue to exist unless they are manually deleted).
-	verifyExternalIngressController(t, name, "apps."+ic.Spec.Domain, wildcardRecord.Spec.Targets[0])
+	testNamespace = types.NamespacedName{Name: name.Name + "-final", Namespace: name.Namespace}
+	verifyExternalIngressController(t, testNamespace, "apps."+ic.Spec.Domain, wildcardRecord.Spec.Targets[0])
 }
 
-// TestUnmanagedDNSToManagedInternalIngressController tests dnsManagementPolicy during
+// TestUnmanagedDNSToManagedDNSInternalIngressController tests dnsManagementPolicy during
 // transitioning from Unmanaged internal ingress controller to Managed external ingress
 // controller. During the transition it deletes the load balancer so that the lb svc
 // target changes and ensures the new updated target is published to the DNSZone.
-func TestUnmanagedDNSToManagedInternalIngressController(t *testing.T) {
+func TestUnmanagedDNSToManagedDNSInternalIngressController(t *testing.T) {
 	t.Parallel()
 
 	name := types.NamespacedName{Namespace: operatorNamespace, Name: "unmanaged-migrated-internal"}
@@ -258,7 +262,8 @@ func TestUnmanagedDNSToManagedInternalIngressController(t *testing.T) {
 		t.Fatalf("DNSRecord %s expected allocated dnsZones but found none", wildcardRecordName.Name)
 	}
 
-	verifyExternalIngressController(t, name, "apps."+ic.Spec.Domain, wildcardRecord.Spec.Targets[0])
+	testNamespace = types.NamespacedName{Name: name.Name + "-final", Namespace: name.Namespace}
+	verifyExternalIngressController(t, testNamespace, "apps."+ic.Spec.Domain, wildcardRecord.Spec.Targets[0])
 }
 
 func verifyUnmanagedDNSRecordStatus(t *testing.T, record *iov1.DNSRecord) {

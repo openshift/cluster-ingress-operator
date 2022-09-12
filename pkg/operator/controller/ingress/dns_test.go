@@ -23,10 +23,6 @@ func TestDesiredWildcardDNSRecord(t *testing.T) {
 		publish     operatorv1.EndpointPublishingStrategy
 		ingresses   []corev1.LoadBalancerIngress
 		expect      *iov1.DNSRecordSpec
-
-		// option to control mismatch of domain with domain mentioned on
-		// DNS config.
-		domainMatchesBaseDomain bool
 	}{
 		{
 			description: "no domain",
@@ -40,8 +36,7 @@ func TestDesiredWildcardDNSRecord(t *testing.T) {
 			ingresses: []corev1.LoadBalancerIngress{
 				{Hostname: "lb.cloud.example.com"},
 			},
-			expect:                  nil,
-			domainMatchesBaseDomain: true,
+			expect: nil,
 		},
 		{
 			description: "not a load balancer",
@@ -50,8 +45,7 @@ func TestDesiredWildcardDNSRecord(t *testing.T) {
 				Type:        operatorv1.HostNetworkStrategyType,
 				HostNetwork: &operatorv1.HostNetworkStrategy{},
 			},
-			expect:                  nil,
-			domainMatchesBaseDomain: true,
+			expect: nil,
 		},
 		{
 			description: "no ingresses",
@@ -62,9 +56,8 @@ func TestDesiredWildcardDNSRecord(t *testing.T) {
 					Scope: operatorv1.ExternalLoadBalancer,
 				},
 			},
-			ingresses:               []corev1.LoadBalancerIngress{},
-			expect:                  nil,
-			domainMatchesBaseDomain: true,
+			ingresses: []corev1.LoadBalancerIngress{},
+			expect:    nil,
 		},
 		{
 			description: "hostname to CNAME record",
@@ -85,7 +78,6 @@ func TestDesiredWildcardDNSRecord(t *testing.T) {
 				RecordTTL:           defaultRecordTTL,
 				DNSManagementPolicy: iov1.ManagedDNS,
 			},
-			domainMatchesBaseDomain: true,
 		},
 		{
 			description: "IP to A record",
@@ -106,7 +98,6 @@ func TestDesiredWildcardDNSRecord(t *testing.T) {
 				RecordTTL:           defaultRecordTTL,
 				DNSManagementPolicy: iov1.ManagedDNS,
 			},
-			domainMatchesBaseDomain: true,
 		},
 		{
 			description: "unmanaged DNS policy",
@@ -128,29 +119,6 @@ func TestDesiredWildcardDNSRecord(t *testing.T) {
 				RecordTTL:           defaultRecordTTL,
 				DNSManagementPolicy: iov1.UnmanagedDNS,
 			},
-			domainMatchesBaseDomain: true,
-		},
-		{
-			description: "managed DNS policy and domain mismatched, expect unmanaged DNS record",
-			publish: operatorv1.EndpointPublishingStrategy{
-				Type: operatorv1.LoadBalancerServiceStrategyType,
-				LoadBalancer: &operatorv1.LoadBalancerStrategy{
-					Scope:               operatorv1.ExternalLoadBalancer,
-					DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
-				},
-			},
-			domain: "apps.openshift.example.com",
-			ingresses: []corev1.LoadBalancerIngress{
-				{Hostname: "lb.cloud.example.com"},
-			},
-			expect: &iov1.DNSRecordSpec{
-				DNSName:             "*.apps.openshift.example.com.",
-				RecordType:          iov1.CNAMERecordType,
-				Targets:             []string{"lb.cloud.example.com"},
-				RecordTTL:           defaultRecordTTL,
-				DNSManagementPolicy: iov1.UnmanagedDNS,
-			},
-			domainMatchesBaseDomain: false,
 		},
 	}
 
@@ -171,7 +139,7 @@ func TestDesiredWildcardDNSRecord(t *testing.T) {
 			service.Status.LoadBalancer.Ingress = append(service.Status.LoadBalancer.Ingress, ingress)
 		}
 
-		haveWC, actual := desiredWildcardDNSRecord(controller, service, test.domainMatchesBaseDomain)
+		haveWC, actual := desiredWildcardDNSRecord(controller, service)
 		switch {
 		case test.expect != nil && haveWC:
 			if !cmp.Equal(actual.Spec, *test.expect) {

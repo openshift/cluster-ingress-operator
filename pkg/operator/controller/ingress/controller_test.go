@@ -295,9 +295,6 @@ func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
 			return lbs
 		}
 		eps = func(lbs *operatorv1.LoadBalancerStrategy) *operatorv1.EndpointPublishingStrategy {
-			if lbs == nil {
-				return nil
-			}
 			return &operatorv1.EndpointPublishingStrategy{
 				Type:         operatorv1.LoadBalancerServiceStrategyType,
 				LoadBalancer: lbs,
@@ -633,7 +630,7 @@ func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
 		},
 		{
 			name:                    "when endpointPublishingStrategy is nil, loadbalancer dnsManagementPolicy defaults to Unmanaged due to domain mismatch with base domain",
-			ic:                      makeIC(spec(eps(nil)), status(nil)),
+			ic:                      makeIC(spec(nil), status(nil)),
 			expectedResult:          true,
 			expectedIC:              makeIC(spec(nil), status(eps(lbs(operatorv1.ExternalLoadBalancer, &unmanagedDNS)))),
 			domainMatchesBaseDomain: false,

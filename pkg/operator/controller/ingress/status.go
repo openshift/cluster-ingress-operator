@@ -929,13 +929,6 @@ func computeDNSStatus(ic *operatorv1.IngressController, wildcardRecord *iov1.DNS
 			Reason:  "UnmanagedLoadBalancerDNS",
 			Message: "The DNS management policy is set to Unmanaged.",
 		})
-	} else if !manageDNSForDomain(ic.Status.Domain, status, dnsConfig) {
-		conditions = append(conditions, operatorv1.OperatorCondition{
-			Type:    operatorv1.DNSManagedIngressConditionType,
-			Status:  operatorv1.ConditionFalse,
-			Reason:  "DomainNotMatching",
-			Message: "DNS management is not supported for ingresscontrollers with domain not matching the baseDomain of the cluster DNS config.",
-		})
 	} else {
 		conditions = append(conditions, operatorv1.OperatorCondition{
 			Type:    operatorv1.DNSManagedIngressConditionType,
@@ -984,7 +977,7 @@ func computeDNSStatus(ic *operatorv1.IngressController, wildcardRecord *iov1.DNS
 					// fix:BZ1942657 - relates to status changes when updating DNS PrivateZone config
 					failedZones = append(failedZones, zone.DNSZone)
 				case string(operatorv1.ConditionUnknown):
-					unknownZones = append(failedZones, zone.DNSZone)
+					unknownZones = append(unknownZones, zone.DNSZone)
 				}
 			}
 		}
