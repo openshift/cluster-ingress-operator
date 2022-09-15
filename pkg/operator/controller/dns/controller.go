@@ -582,25 +582,30 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 				return nil, err
 			}
 		} else if platformStatus.IBMCloud.DNSInstanceCRN != "" {
-			matches := ibm.IBMResourceCRNRegexp.FindStringSubmatch(platformStatus.IBMCloud.DNSInstanceCRN)
-			if len(matches) <= 0 {
-				return nil, fmt.Errorf("CRN does not match expected format: %s", platformStatus.IBMCloud.DNSInstanceCRN)
-			}
-			dnsProvider, err = getIbmDNSProvider(dnsConfig, creds, matches[ibm.IBMResourceCRNRegexp.SubexpIndex("guid")], userAgent, false)
+			dnsProvider, err = getIbmDNSProvider(dnsConfig, creds, platformStatus.IBMCloud.DNSInstanceCRN, userAgent, false)
 			if err != nil {
 				return nil, err
 			}
+		} else {
+			log.Info("using fake DNS provider as both CISInstanceCRN and DNSInstanceCRN are empty")
+			return &dns.FakeProvider{}, nil
 		}
 	case configv1.PowerVSPlatformType:
 		//Power VS platform will use the ibm dns implementation
 		var err error
-		cisInstanceCRN := platformStatus.PowerVS.CISInstanceCRN
-		if cisInstanceCRN == "" {
-			return nil, fmt.Errorf("missing cis instance crn")
-		}
-		dnsProvider, err = getIbmDNSProvider(dnsConfig, creds, cisInstanceCRN, userAgent, true)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create IBM DNS manager: %v", err)
+		if platformStatus.PowerVS.CISInstanceCRN != "" {
+			dnsProvider, err = getIbmDNSProvider(dnsConfig, creds, platformStatus.PowerVS.CISInstanceCRN, userAgent, true)
+			if err != nil {
+				return nil, err
+			}
+		} else if platformStatus.PowerVS.DNSInstanceCRN != "" {
+			dnsProvider, err = getIbmDNSProvider(dnsConfig, creds, platformStatus.PowerVS.DNSInstanceCRN, userAgent, false)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			log.Info("using fake DNS provider as both CISInstanceCRN and DNSInstanceCRN are empty")
+			return &dns.FakeProvider{}, nil
 		}
 	case configv1.AlibabaCloudPlatformType:
 		if platformStatus.AlibabaCloud.Region == "" {
@@ -650,7 +655,7 @@ func (r *reconciler) customCABundle() (string, error) {
 }
 
 // getIbmDNSProvider initializes and returns an IBM DNS provider instance.
-func getIbmDNSProvider(dnsConfig *configv1.DNS, creds *corev1.Secret, instanceID, userAgent string, isPublic bool) (dns.Provider, error) {
+func getIbmDNSProvider(dnsConfig *configv1.DNS, creds *corev1.Secret, instanceCRN, userAgent string, isPublic bool) (dns.Provider, error) {
 	zones := []string{}
 	if dnsConfig.Spec.PrivateZone != nil {
 		zones = append(zones, dnsConfig.Spec.PrivateZone.ID)
@@ -660,13 +665,13 @@ func getIbmDNSProvider(dnsConfig *configv1.DNS, creds *corev1.Secret, instanceID
 	}
 
 	providerCfg := ibm.Config{
-		APIKey:     string(creds.Data["ibmcloud_api_key"]),
-		InstanceID: instanceID,
-		Zones:      zones,
-		UserAgent:  userAgent,
+		APIKey:    string(creds.Data["ibmcloud_api_key"]),
+		Zones:     zones,
+		UserAgent: userAgent,
 	}
 
 	if isPublic {
+		providerCfg.InstanceID = instanceCRN
 		provider, err := ibmpublicdns.NewProvider(providerCfg)
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize IBM CIS DNS provider: %w", err)
@@ -674,6 +679,11 @@ func getIbmDNSProvider(dnsConfig *configv1.DNS, creds *corev1.Secret, instanceID
 		log.Info("successfully initialized IBM CIS DNS provider")
 		return provider, nil
 	} else {
+		matches := ibm.IBMResourceCRNRegexp.FindStringSubmatch(instanceCRN)
+		if matches == nil {
+			return nil, fmt.Errorf("CRN: %s does not match expected format: %s", instanceCRN, ibm.IBMResourceCRNRegexp)
+		}
+		providerCfg.InstanceID = matches[ibm.IBMResourceCRNRegexp.SubexpIndex("guid")]
 		provider, err := ibmprivatedns.NewProvider(providerCfg)
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize IBM Cloud DNS Services provider: %w", err)
@@ -681,5 +691,4 @@ func getIbmDNSProvider(dnsConfig *configv1.DNS, creds *corev1.Secret, instanceID
 		log.Info("successfully initialized IBM Cloud DNS Services provider")
 		return provider, nil
 	}
-
 }
