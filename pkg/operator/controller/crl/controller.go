@@ -286,12 +286,14 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 
 	// TODO Consider letting ensureCRLConfigmap get the deployment and build
 	// the owner reference as we don't know yet whether we need it.
-	if _, _, err := r.ensureCRLConfigmap(ctx, ic, deployment.Namespace, ownerRef, haveCAConfigmap, clientCAConfigmap); err != nil {
+	if _, _, ctx, err := r.ensureCRLConfigmap(ctx, ic, deployment.Namespace, ownerRef, haveCAConfigmap, clientCAConfigmap); err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to ensure client CA CRL configmap for ingresscontroller %s: %w", request.NamespacedName, err)
+	} else {
+		if nextCRLUpdate, ok := ctx.Value("nextCRLUpdate").(time.Time); ok && !nextCRLUpdate.IsZero() {
+			log.Info("Requeueing when next CRL expires", "requeue time", nextCRLUpdate.String(), "time until requeue", time.Until(nextCRLUpdate))
+			//Re-reconcile when any of the CRLs expire
+			return reconcile.Result{RequeueAfter: time.Until(nextCRLUpdate)}, nil
+		}
 	}
-
-	// TODO Maybe parse the CRLs and set RequeueAfter based on the earliest
-	// expiration date.
-
 	return reconcile.Result{}, nil
 }

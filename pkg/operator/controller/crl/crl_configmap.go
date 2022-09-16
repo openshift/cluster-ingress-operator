@@ -38,10 +38,10 @@ var authorityKeyIdentifierOID = asn1.ObjectIdentifier{2, 5, 29, 35}
 // specifies a client CA certificate bundle in which any certificates specify
 // any CRL distribution points.  Returns a Boolean indicating whether the
 // configmap exists, the configmap if it does exist, and an error value.
-func (r *reconciler) ensureCRLConfigmap(ctx context.Context, ic *operatorv1.IngressController, namespace string, ownerRef metav1.OwnerReference, haveClientCA bool, clientCAConfigmap *corev1.ConfigMap) (bool, *corev1.ConfigMap, error) {
+func (r *reconciler) ensureCRLConfigmap(ctx context.Context, ic *operatorv1.IngressController, namespace string, ownerRef metav1.OwnerReference, haveClientCA bool, clientCAConfigmap *corev1.ConfigMap) (bool, *corev1.ConfigMap, context.Context, error) {
 	haveCM, current, err := r.currentCRLConfigMap(ctx, ic)
 	if err != nil {
-		return false, nil, err
+		return false, nil, ctx, err
 	}
 
 	var oldCRLs map[string]*pkix.CertificateList
@@ -60,45 +60,47 @@ func (r *reconciler) ensureCRLConfigmap(ctx context.Context, ic *operatorv1.Ingr
 	if haveClientCA {
 		clientCABundleFilename := "ca-bundle.pem"
 		if data, ok := clientCAConfigmap.Data[clientCABundleFilename]; !ok {
-			return haveCM, current, fmt.Errorf("client CA configmap %s/%s is missing %q", clientCAConfigmap.Namespace, clientCAConfigmap.Name, clientCABundleFilename)
+			return haveCM, current, ctx, fmt.Errorf("client CA configmap %s/%s is missing %q", clientCAConfigmap.Namespace, clientCAConfigmap.Name, clientCABundleFilename)
 		} else {
 			clientCAData = []byte(data)
 		}
 	}
 
-	wantCM, desired, err := desiredCRLConfigMap(ic, ownerRef, clientCAData, oldCRLs)
+	wantCM, desired, ctx, err := desiredCRLConfigMap(ctx, ic, ownerRef, clientCAData, oldCRLs)
 	if err != nil {
-		return false, nil, fmt.Errorf("failed to build configmap: %w", err)
+		return false, nil, ctx, fmt.Errorf("failed to build configmap: %w", err)
 	}
 
 	switch {
 	case !wantCM && !haveCM:
-		return false, nil, nil
+		return false, nil, ctx, nil
 	case !wantCM && haveCM:
 		if err := r.client.Delete(ctx, current); err != nil {
 			if !errors.IsNotFound(err) {
-				return true, current, fmt.Errorf("failed to delete configmap: %w", err)
+				return true, current, ctx, fmt.Errorf("failed to delete configmap: %w", err)
 			}
 		} else {
 			log.Info("deleted configmap", "namespace", current.Namespace, "name", current.Name)
 		}
-		return false, nil, nil
+		return false, nil, ctx, nil
 	case wantCM && !haveCM:
 		if err := r.client.Create(ctx, desired); err != nil {
-			return false, nil, fmt.Errorf("failed to create configmap: %w", err)
+			return false, nil, ctx, fmt.Errorf("failed to create configmap: %w", err)
 		}
 		log.Info("created configmap", "namespace", desired.Namespace, "name", desired.Name)
-		return r.currentCRLConfigMap(ctx, ic)
+		exists, current, err := r.currentCRLConfigMap(ctx, ic)
+		return exists, current, ctx, err
 	case wantCM && haveCM:
 		if updated, err := r.updateCRLConfigMap(ctx, current, desired); err != nil {
-			return true, current, fmt.Errorf("failed to update configmap: %w", err)
+			return true, current, ctx, fmt.Errorf("failed to update configmap: %w", err)
 		} else if updated {
 			log.Info("updated configmap", "namespace", desired.Namespace, "name", desired.Name)
-			return r.currentCRLConfigMap(ctx, ic)
+			exists, current, err := r.currentCRLConfigMap(ctx, ic)
+			return exists, current, ctx, err
 		}
 	}
 
-	return true, current, nil
+	return true, current, ctx, nil
 }
 
 // buildCRLMap builds a map of key identifier to certificate list using the
@@ -130,11 +132,12 @@ func buildCRLMap(crlData []byte) (map[string]*pkix.CertificateList, error) {
 }
 
 // desiredCRLConfigMap returns the desired CRL configmap.  Returns a Boolean
-// indicating whether a configmap is desired, as well as the configmap if one is
-// desired.
-func desiredCRLConfigMap(ic *operatorv1.IngressController, ownerRef metav1.OwnerReference, clientCAData []byte, crls map[string]*pkix.CertificateList) (bool, *corev1.ConfigMap, error) {
+// indicating whether a configmap is desired, the configmap if one is desired,
+// the context (containing the next CRL update time as "nextCRLUpdate"), and an
+// error if one occurred
+func desiredCRLConfigMap(ctx context.Context, ic *operatorv1.IngressController, ownerRef metav1.OwnerReference, clientCAData []byte, crls map[string]*pkix.CertificateList) (bool, *corev1.ConfigMap, context.Context, error) {
 	if len(ic.Spec.ClientTLS.ClientCertificatePolicy) == 0 || len(ic.Spec.ClientTLS.ClientCA.Name) == 0 {
-		return false, nil, nil
+		return false, nil, ctx, nil
 	}
 
 	if crls == nil {
@@ -142,6 +145,7 @@ func desiredCRLConfigMap(ic *operatorv1.IngressController, ownerRef metav1.Owner
 	}
 
 	var subjectKeyIds []string
+	var nextCRLUpdate time.Time
 	now := time.Now()
 	for len(clientCAData) > 0 {
 		block, data := pem.Decode(clientCAData)
@@ -151,7 +155,7 @@ func desiredCRLConfigMap(ic *operatorv1.IngressController, ownerRef metav1.Owner
 		clientCAData = data
 		cert, err := x509.ParseCertificate(block.Bytes)
 		if err != nil {
-			return false, nil, fmt.Errorf("client CA configmap has an invalid certificate: %w", err)
+			return false, nil, ctx, fmt.Errorf("client CA configmap has an invalid certificate: %w", err)
 		}
 		subjectKeyId := hex.EncodeToString(cert.SubjectKeyId)
 		if len(cert.CRLDistributionPoints) == 0 {
@@ -162,6 +166,9 @@ func desiredCRLConfigMap(ic *operatorv1.IngressController, ownerRef metav1.Owner
 				log.Info("certificate revocation list has expired", "subject key identifier", subjectKeyId)
 			} else {
 				subjectKeyIds = append(subjectKeyIds, subjectKeyId)
+				if (nextCRLUpdate.IsZero() || crl.TBSCertList.NextUpdate.Before(nextCRLUpdate)) && crl.TBSCertList.NextUpdate.After(now) {
+					nextCRLUpdate = crl.TBSCertList.NextUpdate
+				}
 				continue
 			}
 		}
@@ -170,29 +177,33 @@ func desiredCRLConfigMap(ic *operatorv1.IngressController, ownerRef metav1.Owner
 			// Creating or updating the configmap with incomplete
 			// data would compromise security by potentially
 			// permitting revoked certificates.
-			return false, nil, fmt.Errorf("failed to get certificate revocation list for certificate key %s: %w", subjectKeyId, err)
+			return false, nil, ctx, fmt.Errorf("failed to get certificate revocation list for certificate key %s: %w", subjectKeyId, err)
 		} else {
 			crls[subjectKeyId] = crl
 			subjectKeyIds = append(subjectKeyIds, subjectKeyId)
+			log.Info("new certificate revocation list", "subject key identifier", subjectKeyId, "next update", crl.TBSCertList.NextUpdate.String())
+			if (nextCRLUpdate.IsZero() || crl.TBSCertList.NextUpdate.Before(nextCRLUpdate)) && crl.TBSCertList.NextUpdate.After(now) {
+				nextCRLUpdate = crl.TBSCertList.NextUpdate
+			}
 		}
 	}
 
 	if len(subjectKeyIds) == 0 {
-		return false, nil, nil
+		return false, nil, ctx, nil
 	}
 
 	buf := &bytes.Buffer{}
 	for _, subjectKeyId := range subjectKeyIds {
 		asn1Data, err := asn1.Marshal(*crls[subjectKeyId])
 		if err != nil {
-			return false, nil, fmt.Errorf("failed to encode ASN.1 for CRL for certificate key %s: %w", subjectKeyId, err)
+			return false, nil, ctx, fmt.Errorf("failed to encode ASN.1 for CRL for certificate key %s: %w", subjectKeyId, err)
 		}
 		block := &pem.Block{
 			Type:  "X509 CRL",
 			Bytes: asn1Data,
 		}
 		if err := pem.Encode(buf, block); err != nil {
-			return false, nil, fmt.Errorf("failed to encode PEM for CRL for certificate key %s: %w", subjectKeyId, err)
+			return false, nil, ctx, fmt.Errorf("failed to encode PEM for CRL for certificate key %s: %w", subjectKeyId, err)
 		}
 	}
 	crlData := buf.String()
@@ -209,7 +220,7 @@ func desiredCRLConfigMap(ic *operatorv1.IngressController, ownerRef metav1.Owner
 	}
 	crlConfigmap.SetOwnerReferences([]metav1.OwnerReference{ownerRef})
 
-	return true, &crlConfigmap, nil
+	return true, &crlConfigmap, context.WithValue(ctx, "nextCRLUpdate", nextCRLUpdate), nil
 }
 
 // getCRL gets a certificate revocation list using the provided distribution
