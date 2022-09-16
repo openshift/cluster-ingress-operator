@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"k8s.io/utils/pointer"
 	"math/big"
 	"strings"
 	"testing"
@@ -497,9 +498,115 @@ func TestComputeIngressDegradedCondition(t *testing.T) {
 	}
 }
 
-// TestComputeIngressProgressCondition verifies that
-// computeIngressProgressingCondition returns the expected status condition.
-func TestComputeIngressProgressCondition(t *testing.T) {
+// TestComputeDeploymentRollingOutCondition verifies that
+// computeDeploymentRollingOutCondition returns the expected status condition.
+func TestComputeDeploymentRollingOutCondition(t *testing.T) {
+	tests := []struct {
+		name                  string
+		replicasWanted        *int32
+		replicasHave          *int32
+		replicasUpdated       *int32
+		replicasAvailable     *int32
+		expectStatus          operatorv1.ConditionStatus
+		expectMessageContains string
+	}{
+		{
+			name:                  "Router pod replicas not rolling out",
+			expectStatus:          operatorv1.ConditionFalse,
+			replicasHave:          pointer.Int32(2),
+			replicasWanted:        pointer.Int32(2),
+			replicasUpdated:       pointer.Int32(2),
+			replicasAvailable:     pointer.Int32(2),
+			expectMessageContains: "Deployment is not actively rolling out",
+		},
+		{
+			name:                  "Router pod replicas have/updated < want",
+			expectStatus:          operatorv1.ConditionTrue,
+			replicasHave:          pointer.Int32(1),
+			replicasWanted:        pointer.Int32(4),
+			replicasUpdated:       pointer.Int32(1),
+			replicasAvailable:     pointer.Int32(2),
+			expectMessageContains: "1 out of 4 new replica(s) have been updated",
+		},
+		{
+			name:                  "Router pod replicas have > updated",
+			expectStatus:          operatorv1.ConditionTrue,
+			replicasHave:          pointer.Int32(3),
+			replicasWanted:        pointer.Int32(1),
+			replicasUpdated:       pointer.Int32(1),
+			replicasAvailable:     pointer.Int32(1),
+			expectMessageContains: "2 old replica(s) are pending termination",
+		},
+		{
+			name:                  "Router pod replicas have > updated, but want is nil",
+			expectStatus:          operatorv1.ConditionTrue,
+			replicasHave:          pointer.Int32(3),
+			replicasWanted:        nil,
+			replicasUpdated:       pointer.Int32(1),
+			replicasAvailable:     pointer.Int32(1),
+			expectMessageContains: "2 old replica(s) are pending termination",
+		},
+		{
+			name:                  "Router pods replicas available < updated",
+			expectStatus:          operatorv1.ConditionTrue,
+			replicasHave:          pointer.Int32(4),
+			replicasWanted:        pointer.Int32(4),
+			replicasUpdated:       pointer.Int32(4),
+			replicasAvailable:     pointer.Int32(1),
+			expectMessageContains: "1 of 4 updated replica(s) are available",
+		},
+		{
+			name:                  "Router pods replicas available < updated, but want is nil",
+			expectStatus:          operatorv1.ConditionTrue,
+			replicasHave:          pointer.Int32(4),
+			replicasWanted:        nil,
+			replicasUpdated:       pointer.Int32(4),
+			replicasAvailable:     pointer.Int32(1),
+			expectMessageContains: "1 of 4 updated replica(s) are available",
+		},
+		{
+			name:                  "Router pods replicas equal but want is nil",
+			expectStatus:          operatorv1.ConditionFalse,
+			replicasHave:          pointer.Int32(1),
+			replicasWanted:        nil,
+			replicasUpdated:       pointer.Int32(1),
+			replicasAvailable:     pointer.Int32(1),
+			expectMessageContains: "Deployment is not actively rolling out",
+		},
+		{
+			name:                  "Router pods replicas have < updated/available (not a possible scenario)",
+			expectStatus:          operatorv1.ConditionFalse,
+			replicasHave:          pointer.Int32(1),
+			replicasWanted:        pointer.Int32(1),
+			replicasUpdated:       pointer.Int32(2),
+			replicasAvailable:     pointer.Int32(2),
+			expectMessageContains: "Deployment is not actively rolling out",
+		},
+	}
+	for _, test := range tests {
+		routerDeploy := &appsv1.Deployment{
+			Spec: appsv1.DeploymentSpec{
+				Replicas: test.replicasWanted,
+			},
+			Status: appsv1.DeploymentStatus{
+				Replicas:          *test.replicasHave,
+				AvailableReplicas: *test.replicasAvailable,
+				UpdatedReplicas:   *test.replicasUpdated,
+			},
+		}
+		actual := computeDeploymentRollingOutCondition(routerDeploy)
+		if actual.Status != test.expectStatus {
+			t.Errorf("%q: expected status to be %s, got %s", test.name, test.expectStatus, actual.Status)
+		}
+		if len(test.expectMessageContains) != 0 && !strings.Contains(actual.Message, test.expectMessageContains) {
+			t.Errorf("%q: expected message to include %q, got %q", test.name, test.expectMessageContains, actual.Message)
+		}
+	}
+}
+
+// TestComputeLoadBalancerProgressingStatus verifies that
+// computeLoadBalancerProgressingStatus returns the expected status condition.
+func TestComputeLoadBalancerProgressingStatus(t *testing.T) {
 	hostNetworkIngressController := operatorv1.IngressController{
 		Status: operatorv1.IngressControllerStatus{
 			EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
@@ -629,7 +736,7 @@ func TestComputeIngressProgressCondition(t *testing.T) {
 		},
 	}
 	for _, test := range tests {
-		actual := computeIngressProgressingCondition(test.conditions, test.ic, test.service, test.platformStatus)
+		actual := computeLoadBalancerProgressingStatus(test.ic, test.service, test.platformStatus)
 		if actual.Status != test.expectStatus {
 			t.Errorf("%q: expected status to be %s, got %s", test.name, test.expectStatus, actual.Status)
 		}
@@ -1027,6 +1134,130 @@ func TestComputeLoadBalancerStatus(t *testing.T) {
 		}
 		if !cmp.Equal(actual, test.expect, conditionsCmpOpts...) {
 			t.Fatalf("expected:\n%#v\ngot:\n%#v", test.expect, actual)
+		}
+	}
+}
+
+// TestComputeIngressProgressingCondition verifies that
+// computeIngressProgressingCondition returns the expected status condition.
+func TestComputeIngressProgressingCondition(t *testing.T) {
+	testCases := []struct {
+		description string
+		conditions  []operatorv1.OperatorCondition
+		expect      operatorv1.OperatorCondition
+	}{
+		{
+			description: "load balancer is not progressing and router deployment is not rolling out",
+			conditions: []operatorv1.OperatorCondition{
+				{Type: IngressControllerLoadBalancerProgressingConditionType, Status: operatorv1.ConditionFalse},
+				{Type: IngressControllerDeploymentRollingOutConditionType, Status: operatorv1.ConditionFalse},
+				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionTrue},
+			},
+			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeProgressing, Status: operatorv1.ConditionFalse},
+		},
+		{
+			description: "load balancer is progressing and router deployment is not rolling out",
+			conditions: []operatorv1.OperatorCondition{
+				{Type: IngressControllerLoadBalancerProgressingConditionType, Status: operatorv1.ConditionTrue},
+				{Type: IngressControllerDeploymentRollingOutConditionType, Status: operatorv1.ConditionFalse},
+				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionTrue},
+			},
+			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeProgressing, Status: operatorv1.ConditionTrue},
+		},
+		{
+			description: "load balancer is progressing, but unmanaged load balancer type and router deployment is not rolling out",
+			conditions: []operatorv1.OperatorCondition{
+				{Type: IngressControllerLoadBalancerProgressingConditionType, Status: operatorv1.ConditionTrue},
+				{Type: IngressControllerDeploymentRollingOutConditionType, Status: operatorv1.ConditionFalse},
+				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
+			},
+			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeProgressing, Status: operatorv1.ConditionFalse},
+		},
+		{
+			description: "load balancer is not progressing, but unmanaged load balancer type and router deployment is rolling out",
+			conditions: []operatorv1.OperatorCondition{
+				{Type: IngressControllerLoadBalancerProgressingConditionType, Status: operatorv1.ConditionFalse},
+				{Type: IngressControllerDeploymentRollingOutConditionType, Status: operatorv1.ConditionTrue},
+				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
+			},
+			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeProgressing, Status: operatorv1.ConditionTrue},
+		},
+		{
+			description: "load balancer is not progressing and router deployment is rolling out",
+			conditions: []operatorv1.OperatorCondition{
+				{Type: IngressControllerLoadBalancerProgressingConditionType, Status: operatorv1.ConditionFalse},
+				{Type: IngressControllerDeploymentRollingOutConditionType, Status: operatorv1.ConditionTrue},
+				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionTrue},
+			},
+			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeProgressing, Status: operatorv1.ConditionTrue},
+		},
+		{
+			description: "load balancer is progressing and router deployment is rolling out",
+			conditions: []operatorv1.OperatorCondition{
+				{Type: IngressControllerLoadBalancerProgressingConditionType, Status: operatorv1.ConditionTrue},
+				{Type: IngressControllerDeploymentRollingOutConditionType, Status: operatorv1.ConditionTrue},
+				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionTrue},
+			},
+			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeProgressing, Status: operatorv1.ConditionTrue},
+		},
+		{
+			description: "load balancer is unknown progressing and router deployment is not rolling out",
+			conditions: []operatorv1.OperatorCondition{
+				{Type: IngressControllerLoadBalancerProgressingConditionType, Status: operatorv1.ConditionUnknown},
+				{Type: IngressControllerDeploymentRollingOutConditionType, Status: operatorv1.ConditionFalse},
+				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionTrue},
+			},
+			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeProgressing, Status: operatorv1.ConditionTrue},
+		},
+		{
+			description: "load balancer is not progressing and router deployment is unknown",
+			conditions: []operatorv1.OperatorCondition{
+				{Type: IngressControllerLoadBalancerProgressingConditionType, Status: operatorv1.ConditionFalse},
+				{Type: IngressControllerDeploymentRollingOutConditionType, Status: operatorv1.ConditionUnknown},
+				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionTrue},
+			},
+			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeProgressing, Status: operatorv1.ConditionTrue},
+		},
+		{
+			description: "load balancer progressing condition missing and router deployment is not rolling out",
+			conditions: []operatorv1.OperatorCondition{
+				{Type: IngressControllerDeploymentRollingOutConditionType, Status: operatorv1.ConditionFalse},
+				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionTrue},
+			},
+			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeProgressing, Status: operatorv1.ConditionFalse},
+		},
+		{
+			description: "load balancer is not progressing and router rolling out is missing",
+			conditions: []operatorv1.OperatorCondition{
+				{Type: IngressControllerLoadBalancerProgressingConditionType, Status: operatorv1.ConditionFalse},
+				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionTrue},
+			},
+			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeProgressing, Status: operatorv1.ConditionFalse},
+		},
+		{
+			description: "all progressing unknown",
+			conditions: []operatorv1.OperatorCondition{
+				{Type: IngressControllerLoadBalancerProgressingConditionType, Status: operatorv1.ConditionUnknown},
+				{Type: IngressControllerDeploymentRollingOutConditionType, Status: operatorv1.ConditionUnknown},
+				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionTrue},
+			},
+			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeProgressing, Status: operatorv1.ConditionTrue},
+		},
+		{
+			description: "all progressing not present",
+			conditions:  []operatorv1.OperatorCondition{},
+			expect:      operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeProgressing, Status: operatorv1.ConditionFalse},
+		},
+	}
+
+	for _, tc := range testCases {
+		actual := computeIngressProgressingCondition(tc.conditions)
+		conditionsCmpOpts := []cmp.Option{
+			cmpopts.IgnoreFields(operatorv1.OperatorCondition{}, "LastTransitionTime", "Reason", "Message"),
+			cmpopts.EquateEmpty(),
+		}
+		if !cmp.Equal(actual, tc.expect, conditionsCmpOpts...) {
+			t.Fatalf("%q: expected %#v, got %#v", tc.description, tc.expect, actual)
 		}
 	}
 }
