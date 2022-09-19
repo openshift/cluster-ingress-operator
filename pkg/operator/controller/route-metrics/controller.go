@@ -70,13 +70,13 @@ func (r *reconciler) routeToIngressController(obj client.Object) []reconcile.Req
 	// Cast the received object into Route object.
 	routeObject := obj.(*routev1.Route)
 
-	// Iterate through the related Ingress Controllers.
-	for _, ic := range routeObject.Status.Ingress {
-		log.Info("queueing ingresscontroller", "name", ic.RouterName)
-		// Create a reconcile.Request for the Ingress Controller.
+	// Iterate through the related RouteIngresses.
+	for _, ri := range routeObject.Status.Ingress {
+		log.Info("queueing ingresscontroller", "name", ri.RouterName)
+		// Create a reconcile.Request for the router named in the RouteIngress.
 		request := reconcile.Request{
 			NamespacedName: types.NamespacedName{
-				Name:      ic.RouterName,
+				Name:      ri.RouterName,
 				Namespace: r.Namespace,
 			},
 		}
@@ -101,12 +101,19 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	if err := r.cache.Get(ctx, request.NamespacedName, ingressController); err != nil {
 		if kerrors.IsNotFound(err) {
 			// This means the Ingress Controller object was already deleted/finalized.
-			log.Info("Ingress Controller not found", "request", request)
-			// Delete the Shard label corresponding to the Ingress Controller from the RouteMetricsControllerRoutesPerShard metric.
-			DeleteRouteMetricsControllerRoutesPerShardMetric(request.Name)
+			log.Info("Ingress Controller not found; reconciliation will be skipped", "request", request)
 			return reconcile.Result{}, nil
 		}
 		return reconcile.Result{}, fmt.Errorf("failed to get Ingress Controller %q: %v", request, err)
+	}
+
+	// If the ingresscontroller is deleted, then delete the corresponding RouteMetricsControllerRoutesPerShard metric label
+	// and return early.
+	if ingressController.DeletionTimestamp != nil {
+		// Delete the Shard label corresponding to the Ingress Controller from the RouteMetricsControllerRoutesPerShard metric.
+		DeleteRouteMetricsControllerRoutesPerShardMetric(request.Name)
+		log.Info("RoutesPerShard metric label corresponding to the Ingress Controller is successfully deleted", "ingresscontroller", ingressController)
+		return reconcile.Result{}, nil
 	}
 
 	// List all the Namespaces which matches the Namespace LabelSelector.

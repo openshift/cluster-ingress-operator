@@ -10,16 +10,16 @@ import (
 func TestRouteMetricsControllerRoutesPerShardMetric(t *testing.T) {
 	testCases := []struct {
 		name                  string
-		shardName             string
+		shardNames            []string
 		actions               []string
 		metricValues          []float64
 		expectedMetricFormats []string
 	}{
 		{
 			name:         "routes per shard metrics test shard",
-			shardName:    "test",
-			actions:      []string{"Set", "Set", "Set", "Delete"},
-			metricValues: []float64{0, 2, 1},
+			shardNames:   []string{"test", "test", "test", "test", "newtest1", "newtest2"},
+			actions:      []string{"Set", "Set", "Set", "Delete", "Set", "Set"},
+			metricValues: []float64{0, 2, 1, 0, 4, 5},
 			expectedMetricFormats: []string{`
 			# HELP route_metrics_controller_routes_per_shard Report the number of routes for shards (ingress controllers).
 			# TYPE route_metrics_controller_routes_per_shard gauge
@@ -32,7 +32,16 @@ func TestRouteMetricsControllerRoutesPerShardMetric(t *testing.T) {
 			# HELP route_metrics_controller_routes_per_shard Report the number of routes for shards (ingress controllers).
 			# TYPE route_metrics_controller_routes_per_shard gauge
 			route_metrics_controller_routes_per_shard{name="test"} 1
-			`, ``},
+			`, ``, `
+			# HELP route_metrics_controller_routes_per_shard Report the number of routes for shards (ingress controllers).
+			# TYPE route_metrics_controller_routes_per_shard gauge
+			route_metrics_controller_routes_per_shard{name="newtest1"} 4
+			`, `
+			# HELP route_metrics_controller_routes_per_shard Report the number of routes for shards (ingress controllers).
+			# TYPE route_metrics_controller_routes_per_shard gauge
+			route_metrics_controller_routes_per_shard{name="newtest1"} 4
+			route_metrics_controller_routes_per_shard{name="newtest2"} 5
+			`},
 		},
 	}
 
@@ -45,7 +54,7 @@ func TestRouteMetricsControllerRoutesPerShardMetric(t *testing.T) {
 			for index, action := range tc.actions {
 				switch action {
 				case "Set":
-					SetRouteMetricsControllerRoutesPerShardMetric(tc.shardName, tc.metricValues[index])
+					SetRouteMetricsControllerRoutesPerShardMetric(tc.shardNames[index], tc.metricValues[index])
 
 					err := testutil.CollectAndCompare(routeMetricsControllerRoutesPerShard, strings.NewReader(tc.expectedMetricFormats[index]))
 					if err != nil {
@@ -53,7 +62,7 @@ func TestRouteMetricsControllerRoutesPerShardMetric(t *testing.T) {
 					}
 
 				case "Delete":
-					DeleteRouteMetricsControllerRoutesPerShardMetric(tc.shardName)
+					DeleteRouteMetricsControllerRoutesPerShardMetric(tc.shardNames[index])
 
 					err := testutil.CollectAndCompare(routeMetricsControllerRoutesPerShard, strings.NewReader(tc.expectedMetricFormats[index]))
 					if err != nil {
