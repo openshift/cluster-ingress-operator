@@ -72,15 +72,20 @@ func (r *reconciler) routeToIngressController(obj client.Object) []reconcile.Req
 
 	// Iterate through the related RouteIngresses.
 	for _, ri := range routeObject.Status.Ingress {
-		log.Info("queueing ingresscontroller", "name", ri.RouterName)
-		// Create a reconcile.Request for the router named in the RouteIngress.
-		request := reconcile.Request{
-			NamespacedName: types.NamespacedName{
-				Name:      ri.RouterName,
-				Namespace: r.Namespace,
-			},
+		// Check if the Route was admitted by the RouteIngress.
+		for _, cond := range ri.Conditions {
+			if cond.Type == routev1.RouteAdmitted && cond.Status == corev1.ConditionTrue {
+				log.Info("queueing ingresscontroller", "name", ri.RouterName)
+				// Create a reconcile.Request for the router named in the RouteIngress.
+				request := reconcile.Request{
+					NamespacedName: types.NamespacedName{
+						Name:      ri.RouterName,
+						Namespace: r.Namespace,
+					},
+				}
+				requests = append(requests, request)
+			}
 		}
-		requests = append(requests, request)
 	}
 	return requests
 }
