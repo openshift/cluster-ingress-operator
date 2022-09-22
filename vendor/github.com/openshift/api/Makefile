@@ -27,8 +27,6 @@ $(call add-crd-gen,authorization,./authorization/v1,./authorization/v1,./authori
 $(call add-crd-gen,apiserver,./apiserver/v1,./apiserver/v1,./apiserver/v1)
 $(call add-crd-gen,config,./config/v1,./config/v1,./config/v1)
 $(call add-crd-gen,config-alpha,./config/v1alpha1,./config/v1alpha1,./config/v1alpha1)
-$(call add-crd-gen-for-featureset,config,./config/v1,./config/v1,./config/v1,Default)
-$(call add-crd-gen-for-featureset,config,./config/v1,./config/v1,./config/v1,TechPreviewNoUpgrade)
 $(call add-crd-gen,helm,./helm/v1beta1,./helm/v1beta1,./helm/v1beta1)
 $(call add-crd-gen,console,./console/...,./console/v1,./console/v1)
 $(call add-crd-gen,console-alpha,./console/...,./console/v1alpha1,./console/v1alpha1)
@@ -67,7 +65,6 @@ verify-scripts:
 	hack/verify-crds.sh
 	bash -x hack/verify-types.sh
 	bash -x hack/verify-compatibility.sh
-	bash -x hack/verify-integration-tests.sh
 
 .PHONY: verify-scripts
 verify: verify-scripts verify-codegen-crds verify-codegen-TechPreviewNoUpgrade-crds verify-codegen-Default-crds

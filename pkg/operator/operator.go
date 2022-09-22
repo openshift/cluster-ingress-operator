@@ -287,13 +287,8 @@ func (o *Operator) ensureLogLevel() {
 	if ingressConfig != nil {
 		//If OperatorLogLevel is "Normal" or unset, the default is Info.
 		desiredLogLevel := zap.InfoLevel
-		switch ingressConfig.Spec.OperatorLogLevel {
-		case configv1.IngressOperatorLogLevelDebug:
+		if ingressConfig.Spec.OperatorLogLevel == configv1.IngressOperatorLogLevelDebug {
 			desiredLogLevel = zap.DebugLevel
-		case configv1.IngressOperatorLogLevelTrace:
-			// TODO: does it even make sense to have 3 levels for the operator? zap.DebugLevel is the most verbose log level available
-			desiredLogLevel = zap.DebugLevel
-		default:
 		}
 
 		if logf.CurrentLogLevel.Level() != desiredLogLevel {
