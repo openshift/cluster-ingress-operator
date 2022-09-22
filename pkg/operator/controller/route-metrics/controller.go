@@ -10,6 +10,7 @@ import (
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/sets"
 
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -121,18 +122,22 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		return reconcile.Result{}, nil
 	}
 
+	// Get the Namespace LabelSelector from the Ingress Controller.
+	var namespaceLabelSelector map[string]string
+	if ingressController.Spec.NamespaceSelector != nil {
+		namespaceLabelSelector = ingressController.Spec.NamespaceSelector.MatchLabels
+	}
 	// List all the Namespaces which matches the Namespace LabelSelector.
 	namespaceList := corev1.NamespaceList{}
-	if ingressController.Spec.NamespaceSelector != nil {
-		namespaceLabelSelector := ingressController.Spec.NamespaceSelector.MatchLabels
-		if err := r.cache.List(ctx, &namespaceList, &client.ListOptions{
-			LabelSelector: labels.SelectorFromSet(namespaceLabelSelector),
-		}); err != nil {
-			return reconcile.Result{}, fmt.Errorf("failed to list Namespaces %q: %v", request, err)
-		}
-	} else {
-		// If Namespace LabelSelector is not provided then add Namespace with empty name to indicate all Namespaces.
-		namespaceList.Items = append(namespaceList.Items, corev1.Namespace{})
+	if err := r.cache.List(ctx, &namespaceList, &client.ListOptions{
+		LabelSelector: labels.SelectorFromSet(namespaceLabelSelector),
+	}); err != nil {
+		return reconcile.Result{}, fmt.Errorf("failed to list Namespaces %q: %v", request, err)
+	}
+	// Create a set of Namespaces to easily look up Namespaces that matches the Routes assigned to the Ingress Controller.
+	namespacesSet := sets.NewString()
+	for i := range namespaceList.Items {
+		namespacesSet.Insert(namespaceList.Items[i].Name)
 	}
 
 	// Get the Route LabelSelector from the Ingress Controller.
@@ -140,28 +145,24 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	if ingressController.Spec.RouteSelector != nil {
 		routeLabelSelector = ingressController.Spec.RouteSelector.MatchLabels
 	}
+	// List all the Routes which matches the Route LabelSelector.
+	routeList := routev1.RouteList{}
+	if err := r.cache.List(ctx, &routeList, &client.ListOptions{
+		LabelSelector: labels.SelectorFromSet(routeLabelSelector),
+	}); err != nil {
+		return reconcile.Result{}, fmt.Errorf("failed to list Routes for the Shard %q: %v", request, err)
+	}
 
 	// Variable to store the number of routes admitted by the Shard (Ingress Controller).
 	routesAdmitted := 0
 
-	// Iterate through all the Namespaces.
-	for _, namespace := range namespaceList.Items {
-		// List all the Routes which matches the Route LabelSelector and the Namespace.
-		routeList := routev1.RouteList{}
-		if err := r.cache.List(ctx, &routeList, &client.ListOptions{
-			LabelSelector: labels.SelectorFromSet(routeLabelSelector),
-			Namespace:     namespace.Name,
-		}); err != nil {
-			return reconcile.Result{}, fmt.Errorf("failed to list Routes for the Shard %q: %v", request, err)
-		}
-
-		// Iterate through all the Routes.
-		for _, route := range routeList.Items {
-			// Check if the Route was admitted by the Ingress Controller.
-			if routeAdmitted(route, ingressController.Name) {
-				// If the Route was admitted then, the routesAdmitted should be incremented by 1 for the Shard.
-				routesAdmitted++
-			}
+	// Iterate through the list Routes.
+	for _, route := range routeList.Items {
+		// Check if the Route's Namespace matches one of the Namespaces in the set namespacesSet and
+		// the Route is admitted by the Ingress Controller.
+		if namespacesSet.Has(route.Namespace) && routeAdmitted(route, ingressController.Name) {
+			// If the Route is admitted then, the routesAdmitted should be incremented by 1 for the Shard.
+			routesAdmitted++
 		}
 	}
 

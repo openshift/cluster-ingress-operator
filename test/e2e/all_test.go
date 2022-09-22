@@ -73,6 +73,9 @@ func TestAll(t *testing.T) {
 		t.Run("TestUnmanagedDNSToManagedDNSIngressController", TestUnmanagedDNSToManagedDNSIngressController)
 		t.Run("TestManagedDNSToUnmanagedDNSIngressController", TestManagedDNSToUnmanagedDNSIngressController)
 		t.Run("TestUnmanagedDNSToManagedDNSInternalIngressController", TestUnmanagedDNSToManagedDNSInternalIngressController)
+		t.Run("TestRouteMetricsControllerOnlyRouteSelector", TestRouteMetricsControllerOnlyRouteSelector)
+		t.Run("TestRouteMetricsControllerOnlyNamespaceSelector", TestRouteMetricsControllerOnlyNamespaceSelector)
+		t.Run("TestRouteMetricsControllerRouteAndNamespaceSelector", TestRouteMetricsControllerRouteAndNamespaceSelector)
 	})
 
 	t.Run("serial", func(t *testing.T) {
