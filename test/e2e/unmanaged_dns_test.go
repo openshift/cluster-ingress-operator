@@ -18,6 +18,12 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
+// TODO: Remove this once this condition is added to all e2e test
+// and stability issue is fixed.
+var operatorProgressingFalse = operatorv1.OperatorCondition{
+	Type: operatorv1.OperatorStatusTypeProgressing, Status: operatorv1.ConditionFalse,
+}
+
 func TestUnmanagedDNSToManagedDNSIngressController(t *testing.T) {
 	t.Parallel()
 
@@ -33,7 +39,7 @@ func TestUnmanagedDNSToManagedDNSIngressController(t *testing.T) {
 	defer assertIngressControllerDeleted(t, kclient, ic)
 
 	// Wait for the load balancer and DNS to reach stable conditions.
-	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, availableConditionsForIngressControllerWithLoadBalancerUnmanagedDNS...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, append(availableConditionsForIngressControllerWithLoadBalancerUnmanagedDNS, operatorProgressingFalse)...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -72,7 +78,7 @@ func TestUnmanagedDNSToManagedDNSIngressController(t *testing.T) {
 	t.Logf("Waiting for stable conditions on ingresscontroller %s after dnsManagementPolicy=Managed", ic.Name)
 
 	// Wait for the load balancer and DNS to reach stable conditions.
-	if err := waitForIngressControllerCondition(t, kclient, 10*time.Minute, name, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 10*time.Minute, name, append(availableConditionsForIngressControllerWithLoadBalancer, operatorProgressingFalse)...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -107,7 +113,7 @@ func TestManagedDNSToUnmanagedDNSIngressController(t *testing.T) {
 	defer assertIngressControllerDeleted(t, kclient, ic)
 
 	// Wait for the load balancer and DNS to reach stable conditions.
-	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, append(availableConditionsForIngressControllerWithLoadBalancer, operatorProgressingFalse)...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -149,7 +155,7 @@ func TestManagedDNSToUnmanagedDNSIngressController(t *testing.T) {
 	t.Logf("Waiting for stable conditions on ingresscontroller %s after dnsManagementPolicy=Unmanaged", ic.Name)
 
 	// Wait for the load balancer and DNS to reach stable conditions.
-	if err := waitForIngressControllerCondition(t, kclient, 10*time.Minute, name, availableConditionsForIngressControllerWithLoadBalancerUnmanagedDNS...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 10*time.Minute, name, append(availableConditionsForIngressControllerWithLoadBalancerUnmanagedDNS, operatorProgressingFalse)...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -192,7 +198,7 @@ func TestUnmanagedDNSToManagedDNSInternalIngressController(t *testing.T) {
 	defer assertIngressControllerDeleted(t, kclient, ic)
 
 	// Wait for the load balancer and DNS to reach stable conditions.
-	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, availableConditionsForIngressControllerWithLoadBalancerUnmanagedDNS...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, append(availableConditionsForIngressControllerWithLoadBalancerUnmanagedDNS, operatorProgressingFalse)...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -241,7 +247,7 @@ func TestUnmanagedDNSToManagedDNSInternalIngressController(t *testing.T) {
 	t.Logf("Waiting for stable conditions on ingresscontroller %s after dnsManagementPolicy=Managed", ic.Name)
 
 	// Wait for the load balancer and DNS to reach stable conditions.
-	if err := waitForIngressControllerCondition(t, kclient, 10*time.Minute, name, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 10*time.Minute, name, append(availableConditionsForIngressControllerWithLoadBalancer, operatorProgressingFalse)...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 

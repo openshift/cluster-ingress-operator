@@ -81,7 +81,6 @@ var (
 		{Type: operatorv1.LoadBalancerReadyIngressConditionType, Status: operatorv1.ConditionTrue},
 		{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionTrue},
 		{Type: operatorv1.DNSReadyIngressConditionType, Status: operatorv1.ConditionTrue},
-		{Type: operatorv1.OperatorStatusTypeProgressing, Status: operatorv1.ConditionFalse},
 		{Type: ingresscontroller.IngressControllerAdmittedConditionType, Status: operatorv1.ConditionTrue},
 	}
 	availableConditionsForIngressControllerWithHostNetwork = []operatorv1.OperatorCondition{
