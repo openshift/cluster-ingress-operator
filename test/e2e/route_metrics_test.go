@@ -50,12 +50,12 @@ func TestRouteMetricsControllerOnlyRouteSelector(t *testing.T) {
 	}
 
 	// Create an Ingress Controller that can admit our Route.
-	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "ic-route-selector-metrics-test"}
+	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "ic-rs-metrics-test"}
 	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
 	ic := newPrivateController(icName, domain)
 	ic.Spec.RouteSelector = &metav1.LabelSelector{
 		MatchLabels: map[string]string{
-			"type": "foo",
+			"type": "rs-foo",
 		},
 	}
 
@@ -80,7 +80,7 @@ func TestRouteMetricsControllerOnlyRouteSelector(t *testing.T) {
 	// Create a Route to be immediately admitted by this Ingress Controller.
 	// Use openshift-console namespace to get a namespace outside the ingress-operator's cache.
 	routeFooLabelName := types.NamespacedName{Namespace: "openshift-console", Name: "route-rs-foo-label"}
-	routeFooLabel := newRouteWithLabel(routeFooLabelName, "foo")
+	routeFooLabel := newRouteWithLabel(routeFooLabelName, "rs-foo")
 	if err := kclient.Create(context.TODO(), routeFooLabel); err != nil {
 		t.Fatalf("failed to create route: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestRouteMetricsControllerOnlyRouteSelector(t *testing.T) {
 	}
 	ic.Spec.RouteSelector = &metav1.LabelSelector{
 		MatchLabels: map[string]string{
-			"type": "bar",
+			"type": "rs-bar",
 		},
 	}
 	if err := kclient.Update(context.TODO(), ic); err != nil {
@@ -126,7 +126,7 @@ func TestRouteMetricsControllerOnlyRouteSelector(t *testing.T) {
 	}
 	ic.Spec.RouteSelector = &metav1.LabelSelector{
 		MatchLabels: map[string]string{
-			"type": "foo",
+			"type": "rs-foo",
 		},
 	}
 	if err := kclient.Update(context.TODO(), ic); err != nil {
@@ -191,12 +191,12 @@ func TestRouteMetricsControllerOnlyNamespaceSelector(t *testing.T) {
 	}
 
 	// Create an Ingress Controller that can admit our Route.
-	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "ic-namespace-selector-metrics-test"}
+	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "ic-ns-metrics-test"}
 	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
 	ic := newPrivateController(icName, domain)
 	ic.Spec.NamespaceSelector = &metav1.LabelSelector{
 		MatchLabels: map[string]string{
-			"type": "foo",
+			"type": "ns-foo",
 		},
 	}
 
@@ -223,7 +223,7 @@ func TestRouteMetricsControllerOnlyNamespaceSelector(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "foo-namespace-selector-metrics-test",
 			Labels: map[string]string{
-				"type": "foo",
+				"type": "ns-foo",
 			},
 		},
 	}
@@ -266,7 +266,7 @@ func TestRouteMetricsControllerOnlyNamespaceSelector(t *testing.T) {
 	}
 	ic.Spec.NamespaceSelector = &metav1.LabelSelector{
 		MatchLabels: map[string]string{
-			"type": "bar",
+			"type": "ns-bar",
 		},
 	}
 	if err := kclient.Update(context.TODO(), ic); err != nil {
@@ -284,7 +284,7 @@ func TestRouteMetricsControllerOnlyNamespaceSelector(t *testing.T) {
 	}
 	ic.Spec.NamespaceSelector = &metav1.LabelSelector{
 		MatchLabels: map[string]string{
-			"type": "foo",
+			"type": "ns-foo",
 		},
 	}
 	if err := kclient.Update(context.TODO(), ic); err != nil {
@@ -351,17 +351,17 @@ func TestRouteMetricsControllerRouteAndNamespaceSelector(t *testing.T) {
 	}
 
 	// Create an Ingress Controller that can admit our Route.
-	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "ic-route-selector-test"}
+	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "ic-rs-ns-metrics-test"}
 	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
 	ic := newPrivateController(icName, domain)
 	ic.Spec.RouteSelector = &metav1.LabelSelector{
 		MatchLabels: map[string]string{
-			"type": "foo",
+			"type": "rs-ns-foo",
 		},
 	}
 	ic.Spec.NamespaceSelector = &metav1.LabelSelector{
 		MatchLabels: map[string]string{
-			"type": "foo",
+			"type": "rs-ns-foo",
 		},
 	}
 
@@ -388,7 +388,7 @@ func TestRouteMetricsControllerRouteAndNamespaceSelector(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "foo-route-namespace-selector-metrics-test",
 			Labels: map[string]string{
-				"type": "foo",
+				"type": "rs-ns-foo",
 			},
 		},
 	}
@@ -405,7 +405,7 @@ func TestRouteMetricsControllerRouteAndNamespaceSelector(t *testing.T) {
 
 	// Create a Route to be immediately admitted by this Ingress Controller.
 	routeFooLabelName := types.NamespacedName{Namespace: nsFoo.Name, Name: "route-rs-ns-foo-label"}
-	routeFooLabel := newRouteWithLabel(routeFooLabelName, "foo")
+	routeFooLabel := newRouteWithLabel(routeFooLabelName, "rs-ns-foo")
 	if err := kclient.Create(context.TODO(), routeFooLabel); err != nil {
 		t.Fatalf("failed to create route: %v", err)
 	}
@@ -433,7 +433,7 @@ func TestRouteMetricsControllerRouteAndNamespaceSelector(t *testing.T) {
 	}
 	ic.Spec.NamespaceSelector = &metav1.LabelSelector{
 		MatchLabels: map[string]string{
-			"type": "bar",
+			"type": "rs-ns-bar",
 		},
 	}
 	if err := kclient.Update(context.TODO(), ic); err != nil {
@@ -451,7 +451,7 @@ func TestRouteMetricsControllerRouteAndNamespaceSelector(t *testing.T) {
 	}
 	ic.Spec.NamespaceSelector = &metav1.LabelSelector{
 		MatchLabels: map[string]string{
-			"type": "foo",
+			"type": "rs-ns-foo",
 		},
 	}
 	if err := kclient.Update(context.TODO(), ic); err != nil {
@@ -469,7 +469,7 @@ func TestRouteMetricsControllerRouteAndNamespaceSelector(t *testing.T) {
 	}
 	ic.Spec.RouteSelector = &metav1.LabelSelector{
 		MatchLabels: map[string]string{
-			"type": "bar",
+			"type": "rs-ns-bar",
 		},
 	}
 	if err := kclient.Update(context.TODO(), ic); err != nil {
@@ -487,7 +487,7 @@ func TestRouteMetricsControllerRouteAndNamespaceSelector(t *testing.T) {
 	}
 	ic.Spec.RouteSelector = &metav1.LabelSelector{
 		MatchLabels: map[string]string{
-			"type": "foo",
+			"type": "rs-ns-foo",
 		},
 	}
 	if err := kclient.Update(context.TODO(), ic); err != nil {

@@ -46,8 +46,9 @@ func New(mgr manager.Manager, namespace string) (controller.Controller, error) {
 	// Add the cache to the manager so that the cache is started along with the other runnables.
 	mgr.Add(newCache)
 	reconciler := &reconciler{
-		cache:     newCache,
-		Namespace: namespace,
+		cache:           newCache,
+		Namespace:       namespace,
+		routeIngressMap: make(map[types.NamespacedName]sets.String),
 	}
 	c, err := controller.New(controllerName, mgr, controller.Options{Reconciler: reconciler})
 	if err != nil {
@@ -71,7 +72,16 @@ func (r *reconciler) routeToIngressController(obj client.Object) []reconcile.Req
 	// Cast the received object into Route object.
 	routeObject := obj.(*routev1.Route)
 
-	// Iterate through the related RouteIngresses.
+	// Create the NamespacedName for the Route.
+	routeNamespacedName := types.NamespacedName{
+		Namespace: routeObject.Namespace,
+		Name:      routeObject.Name,
+	}
+
+	// Create a set of current Ingresses of the Route to easily retrieve them.
+	currentRouteIngressSet := sets.NewString()
+
+	// Iterate through the related Route's Ingresses.
 	for _, ri := range routeObject.Status.Ingress {
 		// Check if the Route was admitted by the RouteIngress.
 		for _, cond := range ri.Conditions {
@@ -85,19 +95,48 @@ func (r *reconciler) routeToIngressController(obj client.Object) []reconcile.Req
 					},
 				}
 				requests = append(requests, request)
+
+				// Add the Router Name to the currentIngressSet.
+				currentRouteIngressSet.Insert(ri.RouterName)
 			}
 		}
 	}
+
+	// Get the previous set of Ingresses of the Route.
+	previousRouteIngressSet := r.routeIngressMap[routeNamespacedName]
+
+	// Iterate through the previousRouteIngressSet.
+	for routerName := range previousRouteIngressSet {
+		// Check if the currentRouteIngressSet contains the Router Name. If it does not,
+		// then the Ingress was removed from the Route Status. The reconcile loop is needed
+		// to be run for the corresponding Ingress Controller.
+		if !currentRouteIngressSet.Has(routerName) {
+			log.Info("queueing ingresscontroller", "name", routerName)
+			// Create a reconcile.Request for the router named in the RouteIngress.
+			request := reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      routerName,
+					Namespace: r.Namespace,
+				},
+			}
+			requests = append(requests, request)
+		}
+	}
+
+	// Map the currentRouteIngressSet to Route's NamespacedName.
+	r.routeIngressMap[routeNamespacedName] = currentRouteIngressSet
+
 	return requests
 }
 
 // reconciler handles the actual ingresscontroller reconciliation logic in response to events.
 type reconciler struct {
-	cache     cache.Cache
-	Namespace string
+	cache           cache.Cache
+	Namespace       string
+	routeIngressMap map[types.NamespacedName]sets.String
 }
 
-// Reconcile expects request to refer to a Ingress Controller resource, and will do all the work to gather metrics related to
+// Reconcile expects request to refer to an Ingress Controller resource, and will do all the work to gather metrics related to
 // the resource.
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	log.Info("reconciling", "request", request)
@@ -122,12 +161,15 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		return reconcile.Result{}, nil
 	}
 
+	// NOTE: Even though the route admitted status should reflect validity of the namespace labelselector, we still will validate
+	// the namespace as there are still edge scenarios where the route status may be inaccurate.
+
 	// Get the Namespace LabelSelector from the Ingress Controller.
 	var namespaceLabelSelector map[string]string
 	if ingressController.Spec.NamespaceSelector != nil {
 		namespaceLabelSelector = ingressController.Spec.NamespaceSelector.MatchLabels
 	}
-	// List all the Namespaces which matches the Namespace LabelSelector.
+	// List all the Namespaces which match the Namespace LabelSelector.
 	namespaceList := corev1.NamespaceList{}
 	if err := r.cache.List(ctx, &namespaceList, &client.ListOptions{
 		LabelSelector: labels.SelectorFromSet(namespaceLabelSelector),
