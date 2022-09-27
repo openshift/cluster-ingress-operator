@@ -386,16 +386,28 @@ func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
 			expectedIC:     makeIC(spec(lb(operatorv1.ExternalLoadBalancer)), status(lb(operatorv1.ExternalLoadBalancer))),
 		},
 		{
+			name:           "loadbalancer type set to ELB",
+			ic:             makeIC(spec(elb()), status(elb())),
+			expectedResult: false,
+			expectedIC:     makeIC(spec(elb()), status(elbWithNullParameters())),
+		},
+		{
+			name:           "loadbalancer type set to NLB",
+			ic:             makeIC(spec(nlb()), status(nlb())),
+			expectedResult: false,
+			expectedIC:     makeIC(spec(nlb()), status(nlb())),
+		},
+		{
 			name:           "loadbalancer type changed from ELB to NLB",
 			ic:             makeIC(spec(nlb()), status(elb())),
-			expectedResult: false,
-			expectedIC:     makeIC(spec(nlb()), status(elb())),
+			expectedResult: true,
+			expectedIC:     makeIC(spec(nlb()), status(nlb())),
 		},
 		{
 			name:           "loadbalancer type changed from NLB to ELB",
 			ic:             makeIC(spec(elb()), status(nlb())),
-			expectedResult: false,
-			expectedIC:     makeIC(spec(elb()), status(nlb())),
+			expectedResult: true,
+			expectedIC:     makeIC(spec(elb()), status(elbWithNullParameters())),
 		},
 		{
 			name:           "loadbalancer ELB connection idle timeout changed from unset with null provider parameters to 2m",

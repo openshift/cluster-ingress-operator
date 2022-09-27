@@ -479,38 +479,44 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, platformStat
 			}
 			switch lbType {
 			case operatorv1.AWSLoadBalancerProvider:
-				// The only provider parameter that is supported
-				// for AWS is the connection idle timeout for
-				// classic ELBs.
-				var specIdleTimeout, statusIdleTimeout metav1.Duration
-				if specLB.ProviderParameters != nil && specLB.ProviderParameters.AWS != nil && specLB.ProviderParameters.AWS.ClassicLoadBalancerParameters != nil {
-					specIdleTimeout = specLB.ProviderParameters.AWS.ClassicLoadBalancerParameters.ConnectionIdleTimeout
+				if statusLB.ProviderParameters == nil {
+					statusLB.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{}
 				}
-				if statusLB.ProviderParameters != nil && statusLB.ProviderParameters.AWS != nil && statusLB.ProviderParameters.AWS.ClassicLoadBalancerParameters != nil {
-					statusIdleTimeout = statusLB.ProviderParameters.AWS.ClassicLoadBalancerParameters.ConnectionIdleTimeout
+				if len(statusLB.ProviderParameters.Type) == 0 {
+					statusLB.ProviderParameters.Type = operatorv1.AWSLoadBalancerProvider
 				}
-				if specIdleTimeout != statusIdleTimeout {
-					if statusLB.ProviderParameters == nil {
-						statusLB.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{}
-					}
-					if len(statusLB.ProviderParameters.Type) == 0 {
-						statusLB.ProviderParameters.Type = operatorv1.AWSLoadBalancerProvider
-					}
-					if statusLB.ProviderParameters.AWS == nil {
-						statusLB.ProviderParameters.AWS = &operatorv1.AWSLoadBalancerParameters{}
-					}
-					if len(statusLB.ProviderParameters.AWS.Type) == 0 {
-						statusLB.ProviderParameters.AWS.Type = operatorv1.AWSClassicLoadBalancer
-					}
+				if statusLB.ProviderParameters.AWS == nil {
+					statusLB.ProviderParameters.AWS = &operatorv1.AWSLoadBalancerParameters{}
+				}
+				// Assume the LB type is "Classic" if the field is empty.
+				specLBType := operatorv1.AWSClassicLoadBalancer
+				if specLB.ProviderParameters.AWS != nil && len(specLB.ProviderParameters.AWS.Type) != 0 {
+					specLBType = specLB.ProviderParameters.AWS.Type
+				}
+				if specLBType != statusLB.ProviderParameters.AWS.Type {
+					statusLB.ProviderParameters.AWS.Type = specLBType
+					changed = true
+				}
+				if statusLB.ProviderParameters.AWS.Type == operatorv1.AWSClassicLoadBalancer {
 					if statusLB.ProviderParameters.AWS.ClassicLoadBalancerParameters == nil {
 						statusLB.ProviderParameters.AWS.ClassicLoadBalancerParameters = &operatorv1.AWSClassicLoadBalancerParameters{}
 					}
-					var v metav1.Duration
-					if specIdleTimeout.Duration > 0 {
-						v = specIdleTimeout
+					// The only provider parameter that is
+					// supported for AWS Classic ELBs is the
+					// connection idle timeout.
+					var specIdleTimeout metav1.Duration
+					if specLB.ProviderParameters.AWS != nil && specLB.ProviderParameters.AWS.ClassicLoadBalancerParameters != nil {
+						specIdleTimeout = specLB.ProviderParameters.AWS.ClassicLoadBalancerParameters.ConnectionIdleTimeout
 					}
-					statusLB.ProviderParameters.AWS.ClassicLoadBalancerParameters.ConnectionIdleTimeout = v
-					changed = true
+					statusIdleTimeout := statusLB.ProviderParameters.AWS.ClassicLoadBalancerParameters.ConnectionIdleTimeout
+					if specIdleTimeout != statusIdleTimeout {
+						var v metav1.Duration
+						if specIdleTimeout.Duration > 0 {
+							v = specIdleTimeout
+						}
+						statusLB.ProviderParameters.AWS.ClassicLoadBalancerParameters.ConnectionIdleTimeout = v
+						changed = true
+					}
 				}
 			case operatorv1.GCPLoadBalancerProvider:
 				// The only provider parameter that is supported

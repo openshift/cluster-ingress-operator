@@ -66,6 +66,7 @@ func TestAll(t *testing.T) {
 		t.Run("TestIngressControllerRouteSelectorUpdateShouldClearRouteStatus", TestIngressControllerRouteSelectorUpdateShouldClearRouteStatus)
 		t.Run("TestIngressControllerNamespaceSelectorUpdateShouldClearRouteStatus", TestIngressControllerNamespaceSelectorUpdateShouldClearRouteStatus)
 		t.Run("TestReloadInterval", TestReloadInterval)
+		t.Run("TestAWSLBTypeChange", TestAWSLBTypeChange)
 	})
 
 	t.Run("serial", func(t *testing.T) {

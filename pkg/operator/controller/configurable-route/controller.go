@@ -101,7 +101,7 @@ func New(mgr manager.Manager, config Config, eventRecorder events.Recorder) (con
 func (r *reconciler) resourceToClusterIngressConfig(o client.Object) []reconcile.Request {
 	return []reconcile.Request{
 		{
-			operatorcontroller.IngressClusterConfigName(),
+			NamespacedName: operatorcontroller.IngressClusterConfigName(),
 		},
 	}
 }

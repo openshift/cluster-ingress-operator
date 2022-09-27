@@ -226,6 +226,13 @@ var (
 			// local-with-fallback annotation for kube-proxy (see
 			// <https://bugzilla.redhat.com/show_bug.cgi?id=1960284>).
 			localWithFallbackAnnotation,
+			// AWS load balancer type annotation to set either CLB/ELB or NLB
+			AWSLBTypeAnnotation,
+			// awsLBProxyProtocolAnnotation is used to enable the PROXY protocol on any
+			// AWS load balancer services created.
+			//
+			// https://kubernetes.io/docs/concepts/services-networking/service/#proxy-protocol-support-on-aws
+			awsLBProxyProtocolAnnotation,
 		)
 
 		// Azure and GCP support switching between internal and external
