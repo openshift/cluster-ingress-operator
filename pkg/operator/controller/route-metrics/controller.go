@@ -46,9 +46,9 @@ func New(mgr manager.Manager, namespace string) (controller.Controller, error) {
 	// Add the cache to the manager so that the cache is started along with the other runnables.
 	mgr.Add(newCache)
 	reconciler := &reconciler{
-		cache:           newCache,
-		Namespace:       namespace,
-		routeIngressMap: make(map[types.NamespacedName]sets.String),
+		cache:          newCache,
+		Namespace:      namespace,
+		routeIngresses: make(map[types.NamespacedName]sets.String),
 	}
 	c, err := controller.New(controllerName, mgr, controller.Options{Reconciler: reconciler})
 	if err != nil {
@@ -103,7 +103,7 @@ func (r *reconciler) routeToIngressController(obj client.Object) []reconcile.Req
 	}
 
 	// Get the previous set of Ingresses of the Route.
-	previousRouteIngressSet := r.routeIngressMap[routeNamespacedName]
+	previousRouteIngressSet := r.routeIngresses[routeNamespacedName]
 
 	// Iterate through the previousRouteIngressSet.
 	for routerName := range previousRouteIngressSet {
@@ -124,16 +124,17 @@ func (r *reconciler) routeToIngressController(obj client.Object) []reconcile.Req
 	}
 
 	// Map the currentRouteIngressSet to Route's NamespacedName.
-	r.routeIngressMap[routeNamespacedName] = currentRouteIngressSet
+	r.routeIngresses[routeNamespacedName] = currentRouteIngressSet
 
 	return requests
 }
 
 // reconciler handles the actual ingresscontroller reconciliation logic in response to events.
 type reconciler struct {
-	cache           cache.Cache
-	Namespace       string
-	routeIngressMap map[types.NamespacedName]sets.String
+	cache     cache.Cache
+	Namespace string
+	// routeIngresses stores the Ingress Controllers that have admitted a given route.
+	routeIngresses map[types.NamespacedName]sets.String
 }
 
 // Reconcile expects request to refer to an Ingress Controller resource, and will do all the work to gather metrics related to
@@ -161,8 +162,8 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		return reconcile.Result{}, nil
 	}
 
-	// NOTE: Even though the route admitted status should reflect validity of the namespace labelselector, we still will validate
-	// the namespace as there are still edge scenarios where the route status may be inaccurate.
+	// NOTE: Even though the route admitted status should reflect validity of the namespace and route labelselectors, we still will validate
+	// the namespace and route labels as there are still edge scenarios where the route status may be inaccurate.
 
 	// Get the Namespace LabelSelector from the Ingress Controller.
 	var namespaceLabelSelector map[string]string
