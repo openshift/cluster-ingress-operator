@@ -1091,13 +1091,15 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		env = append(env, corev1.EnvVar{Name: RouterCompressionMIMETypes, Value: strings.Join(mimes, " ")})
 	}
 
-	switch ci.Spec.LogLevel {
-	case operatorv1.IngressLogLevelDebug:
-		env = append(env, corev1.EnvVar{Name: RouterControllerLogLevel, Value: "4"})
-	case operatorv1.IngressLogLevelTrace:
-		env = append(env, corev1.EnvVar{Name: RouterControllerLogLevel, Value: "6"})
-	default:
-		env = append(env, corev1.EnvVar{Name: RouterControllerLogLevel, Value: "2"})
+	if ci.Spec.Logging != nil {
+		switch ci.Spec.Logging.LogLevel {
+		case operatorv1.IngressLogLevelDebug:
+			env = append(env, corev1.EnvVar{Name: RouterControllerLogLevel, Value: "4"})
+		case operatorv1.IngressLogLevelTrace:
+			env = append(env, corev1.EnvVar{Name: RouterControllerLogLevel, Value: "6"})
+		default:
+			env = append(env, corev1.EnvVar{Name: RouterControllerLogLevel, Value: "2"})
+		}
 	}
 
 	// Add the environment variables to the container

@@ -127,4 +127,4 @@ require (
 	sigs.k8s.io/yaml v1.3.0 // indirect
 )
 
-replace github.com/openshift/api => github.com/rfredette/api v0.0.0-20220922154455-ea99b0c2f15e
+replace github.com/openshift/api => ../api

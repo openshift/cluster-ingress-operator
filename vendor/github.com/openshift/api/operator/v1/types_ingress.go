@@ -251,31 +251,23 @@ type IngressControllerSpec struct {
 	//
 	// +optional
 	HTTPCompression HTTPCompressionPolicy `json:"httpCompression,omitempty"`
-
-	// logLevel describes the desired logging verbosity for Router pods.
-	// Any one of the following values may be specified:
-	// * Normal
-	// * Debug
-	// * Trace
-	//  Setting logLevel: Trace will produce extremely verbose logs.
-	// Defaults to "Normal".
-	// +optional
-	// +kubebuilder:default=Normal
-	LogLevel IngressLogLevel `json:"logLevel,omitempty"`
 }
 
-// +kubebuilder:validation:Enum:=Normal;Debug;Trace
+// +kubebuilder:validation:Enum:=Normal;Debug;Trace;TraceAll;""
 type IngressLogLevel string
 
 var (
-	// Normal is the default.  Normal, working log information, everything is fine, but helpful notices for auditing or common operations.  In kube, this is probably glog=2.
+	// Normal is the default. Normal, working log information, everything is fine, but helpful notices for auditing or common operations.
 	IngressLogLevelNormal IngressLogLevel = "Normal"
 
-	// Debug is used when something went wrong.  Even common operations may be logged, and less helpful but more quantity of notices.  In kube, this is probably glog=4.
+	// Debug is used when something went wrong. Even common operations may be logged, and less helpful but more quantity of notices.
 	IngressLogLevelDebug IngressLogLevel = "Debug"
 
-	// Trace is used when something went really badly and even more verbose logs are needed.  Logging every function call as part of a common operation, to tracing execution of a query.  In kube, this is probably glog=6.
+	// Trace is used when something went really badly and even more verbose logs are needed. Logging every function call as part of a common operation, to tracing execution of a query.
 	IngressLogLevelTrace IngressLogLevel = "Trace"
+
+	// TraceAll is used when even "Trace" logging is not enough to pin-point an issue. Extremely verbose.
+	IngressLogLevelTraceAll IngressLogLevel = "TraceAll"
 )
 
 // httpCompressionPolicy turns on compression for the specified MIME types.
@@ -344,6 +336,11 @@ type NodePlacement struct {
 	//
 	// These defaults are subject to change.
 	//
+	// Note that using nodeSelector.matchExpressions is not supported.  Only
+	// nodeSelector.matchLabels may be used.  This is a limitation of the
+	// Kubernetes API: the pod spec does not allow complex expressions for
+	// node selectors.
+	//
 	// +optional
 	NodeSelector *metav1.LabelSelector `json:"nodeSelector,omitempty"`
 
@@ -392,6 +389,16 @@ var (
 	ExternalLoadBalancer LoadBalancerScope = "External"
 )
 
+// CIDR is an IP address range in CIDR notation (for example, "10.0.0.0/8"
+// or "fd00::/8").
+// +kubebuilder:validation:Pattern=`(^(([0-9]|[0-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[0-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])/([0-9]|[12][0-9]|3[0-2])$)|(^s*((([0-9A-Fa-f]{1,4}:){7}([0-9A-Fa-f]{1,4}|:))|(([0-9A-Fa-f]{1,4}:){6}(:[0-9A-Fa-f]{1,4}|((25[0-5]|2[0-4]d|1dd|[1-9]?d)(.(25[0-5]|2[0-4]d|1dd|[1-9]?d)){3})|:))|(([0-9A-Fa-f]{1,4}:){5}(((:[0-9A-Fa-f]{1,4}){1,2})|:((25[0-5]|2[0-4]d|1dd|[1-9]?d)(.(25[0-5]|2[0-4]d|1dd|[1-9]?d)){3})|:))|(([0-9A-Fa-f]{1,4}:){4}(((:[0-9A-Fa-f]{1,4}){1,3})|((:[0-9A-Fa-f]{1,4})?:((25[0-5]|2[0-4]d|1dd|[1-9]?d)(.(25[0-5]|2[0-4]d|1dd|[1-9]?d)){3}))|:))|(([0-9A-Fa-f]{1,4}:){3}(((:[0-9A-Fa-f]{1,4}){1,4})|((:[0-9A-Fa-f]{1,4}){0,2}:((25[0-5]|2[0-4]d|1dd|[1-9]?d)(.(25[0-5]|2[0-4]d|1dd|[1-9]?d)){3}))|:))|(([0-9A-Fa-f]{1,4}:){2}(((:[0-9A-Fa-f]{1,4}){1,5})|((:[0-9A-Fa-f]{1,4}){0,3}:((25[0-5]|2[0-4]d|1dd|[1-9]?d)(.(25[0-5]|2[0-4]d|1dd|[1-9]?d)){3}))|:))|(([0-9A-Fa-f]{1,4}:){1}(((:[0-9A-Fa-f]{1,4}){1,6})|((:[0-9A-Fa-f]{1,4}){0,4}:((25[0-5]|2[0-4]d|1dd|[1-9]?d)(.(25[0-5]|2[0-4]d|1dd|[1-9]?d)){3}))|:))|(:(((:[0-9A-Fa-f]{1,4}){1,7})|((:[0-9A-Fa-f]{1,4}){0,5}:((25[0-5]|2[0-4]d|1dd|[1-9]?d)(.(25[0-5]|2[0-4]d|1dd|[1-9]?d)){3}))|:)))(%.+)?s*(\/(12[0-8]|1[0-1][0-9]|[1-9][0-9]|[0-9]))$)`
+// + ---
+// + The regex for the IPv4 CIDR range was taken from other CIDR fields in the OpenShift API
+// + and the one for the IPv6 CIDR range was taken from
+// + https://blog.markhatton.co.uk/2011/03/15/regular-expressions-for-ip-addresses-cidr-ranges-and-hostnames/
+// + The resulting regex is an OR of both regexes.
+type CIDR string
+
 // LoadBalancerStrategy holds parameters for a load balancer.
 type LoadBalancerStrategy struct {
 	// scope indicates the scope at which the load balancer is exposed.
@@ -400,6 +407,23 @@ type LoadBalancerStrategy struct {
 	// +kubebuilder:validation:Required
 	// +required
 	Scope LoadBalancerScope `json:"scope"`
+
+	// allowedSourceRanges specifies an allowlist of IP address ranges to which
+	// access to the load balancer should be restricted.  Each range must be
+	// specified using CIDR notation (e.g. "10.0.0.0/8" or "fd00::/8"). If no range is
+	// specified, "0.0.0.0/0" for IPv4 and "::/0" for IPv6 are used by default,
+	// which allows all source addresses.
+	//
+	// To facilitate migration from earlier versions of OpenShift that did
+	// not have the allowedSourceRanges field, you may set the
+	// service.beta.kubernetes.io/load-balancer-source-ranges annotation on
+	// the "router-<ingresscontroller name>" service in the
+	// "openshift-ingress" namespace, and this annotation will take
+	// effect if allowedSourceRanges is empty on OpenShift 4.12.
+	//
+	// +nullable
+	// +optional
+	AllowedSourceRanges []CIDR `json:"allowedSourceRanges,omitempty"`
 
 	// providerParameters holds desired load balancer information specific to
 	// the underlying infrastructure provider.
@@ -1225,6 +1249,21 @@ type IngressControllerLogging struct {
 	//
 	// +optional
 	Access *AccessLogging `json:"access,omitempty"`
+
+	// logLevel describes the desired logging verbosity for the router's access logs.
+	// Any one of the following values may be specified:
+	// * Normal: The default log level. Errors and significant events will be logged.
+	// * Debug: Compared to the "Normal" log level, less significant events
+	//   will be logged, and in more detail.
+	// * Trace: Compared to the "Debug" log level, even more detail will be
+	//   given, and more esoteric events will be logged, possibly including
+	//   specific function calls. "Trace" log level may be very verbose.
+	// * TraceAll: All log messages the operator can generate will be logged.
+	//   Extremely verbose.
+	//
+	// When unset, logging will be performed at the "Normal" level.
+	// +optional
+	LogLevel IngressLogLevel `json:"logLevel,omitempty"`
 }
 
 // IngressControllerHTTPHeaderPolicy is a policy for setting HTTP headers.
@@ -1497,7 +1536,7 @@ type IngressControllerTuningOptions struct {
 	// 2000-2000000.
 	//
 	// If this field is empty or 0, the IngressController will use
-	// the default value of 20000, but the default is subject to
+	// the default value of 50000, but the default is subject to
 	// change in future releases.
 	//
 	// If the value is -1 then HAProxy will dynamically compute a
@@ -1505,7 +1544,7 @@ type IngressControllerTuningOptions struct {
 	// container. Selecting -1 (i.e., auto) will result in a large
 	// value being computed (~520000 on OpenShift >=4.10 clusters)
 	// and therefore each HAProxy process will incur significant
-	// memory usage compared to the current default of 20000.
+	// memory usage compared to the current default of 50000.
 	//
 	// Setting a value that is greater than the current operating
 	// system limit will prevent the HAProxy process from

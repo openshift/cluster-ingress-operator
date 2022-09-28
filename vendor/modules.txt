@@ -278,7 +278,7 @@ github.com/munnerz/goautoneg
 # github.com/oklog/ulid v1.3.1
 ## explicit
 github.com/oklog/ulid
-# github.com/openshift/api v0.0.0-20221010164355-920c3651ba3f => github.com/rfredette/api v0.0.0-20220922154455-ea99b0c2f15e
+# github.com/openshift/api v0.0.0-20221010164355-920c3651ba3f => ../api
 ## explicit; go 1.18
 github.com/openshift/api
 github.com/openshift/api/apiserver
@@ -1117,4 +1117,4 @@ sigs.k8s.io/structured-merge-diff/v4/value
 # sigs.k8s.io/yaml v1.3.0
 ## explicit; go 1.12
 sigs.k8s.io/yaml
-# github.com/openshift/api => github.com/rfredette/api v0.0.0-20220922154455-ea99b0c2f15e
+# github.com/openshift/api => ../api

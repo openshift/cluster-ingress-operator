@@ -89,27 +89,39 @@ type IngressSpec struct {
 	// loadBalancer contains the load balancer details in general which are not only specific to the underlying infrastructure
 	// provider of the current cluster and are required for Ingress Controller to work on OpenShift.
 	// +optional
-	LoadBalancer LoadBalancer `json:"loadbalancer,omitempty"`
+	LoadBalancer LoadBalancer `json:"loadBalancer,omitempty"`
 
 	// logLevel describes the desired logging verbosity for the Ingress Operator
 	// Any one of the following values may be specified:
-	// * Normal
-	// * Debug
-	// Defaults to "Normal".
+	// * Normal: The default log level. Errors and significant events will be logged.
+	// * Debug: Compared to the "Normal" log level, less significant events
+	//   will be logged, and in more detail.
+	// * Trace: Compared to the "Debug" log level, even more detail will be
+	//   given, and more esoteric events will be logged, possibly including
+	//   specific function calls. "Trace" log level may be very verbose.
+	// * TraceAll: All log messages the operator can generate will be logged.
+	//   Extremely verbose.
+	//
+	// When unset, logging will be performed at the "Normal" level.
 	// +optional
-	// +kubebuilder:default=Normal
 	OperatorLogLevel IngressOperatorLogLevel `json:"operatorLogLevel,omitempty"`
 }
 
-// +kubebuilder:validation:Enum:=Normal;Debug;Trace
+// +kubebuilder:validation:Enum:=Normal;Debug;Trace;TraceAll;""
 type IngressOperatorLogLevel string
 
 var (
-	// Normal is the default.  Normal, working log information, everything is fine, but helpful notices for auditing or common operations.  In kube, this is probably glog=2.
+	// Normal is the default. Normal, working log information, everything is fine, but helpful notices for auditing or common operations.
 	IngressOperatorLogLevelNormal IngressOperatorLogLevel = "Normal"
 
-	// Debug is used when something went wrong.  Even common operations may be logged, and less helpful but more quantity of notices.  In kube, this is probably glog=4.
+	// Debug is used when something went wrong. Even common operations may be logged, and less helpful but more quantity of notices.
 	IngressOperatorLogLevelDebug IngressOperatorLogLevel = "Debug"
+
+	// Trace is used when something went really badly and even more verbose logs are needed. Logging every function call as part of a common operation, to tracing execution of a query.
+	IngressOperatorLogLevelTrace IngressOperatorLogLevel = "Trace"
+
+	// TraceAll is used when even "Trace" logging is not enough to pin-point an issue. Extremely verbose.
+	IngressOperatorLogLevelTraceAll IngressOperatorLogLevel = "TraceAll"
 )
 
 // IngressPlatformSpec holds the desired state of Ingress specific to the underlying infrastructure provider

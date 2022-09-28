@@ -287,12 +287,16 @@ func (o *Operator) ensureLogLevel() {
 	if ingressConfig != nil {
 		//If OperatorLogLevel is "Normal" or unset, the default is Info.
 		desiredLogLevel := zap.InfoLevel
+		vLevel := 0
 		if ingressConfig.Spec.OperatorLogLevel == configv1.IngressOperatorLogLevelDebug {
 			desiredLogLevel = zap.DebugLevel
+			vLevel = 1
 		}
 
 		if logf.CurrentLogLevel.Level() != desiredLogLevel {
 			logf.CurrentLogLevel.SetLevel(desiredLogLevel)
+			log.Info("(info) Updated log level", "CurrentLogLevel", desiredLogLevel.String())
+			log.V(vLevel).Info("Updated log level", "CurrentLogLevel", desiredLogLevel.String())
 		}
 	}
 }
