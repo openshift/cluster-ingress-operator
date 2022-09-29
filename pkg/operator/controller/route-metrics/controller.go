@@ -203,7 +203,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	for _, route := range routeList.Items {
 		// Check if the Route's Namespace matches one of the Namespaces in the set namespacesSet and
 		// the Route is admitted by the Ingress Controller.
-		if namespacesSet.Has(route.Namespace) && routeAdmitted(route, ingressController.Name) {
+		if namespacesSet.Has(route.Namespace) && routeStatusAdmitted(route, ingressController.Name) {
 			// If the Route is admitted then, the routesAdmitted should be incremented by 1 for the Shard.
 			routesAdmitted++
 		}
@@ -215,8 +215,8 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	return reconcile.Result{}, nil
 }
 
-// routeAdmitted returns true if a given route has been admitted by the Ingress Controller.
-func routeAdmitted(route routev1.Route, ingressControllerName string) bool {
+// routeStatusAdmitted returns true if a given route has been admitted by the Ingress Controller.
+func routeStatusAdmitted(route routev1.Route, ingressControllerName string) bool {
 	// Iterate through the related Ingress Controllers.
 	for _, ingress := range route.Status.Ingress {
 		// Check if the RouterName matches the name of the Ingress Controller.

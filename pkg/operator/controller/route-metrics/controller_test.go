@@ -103,7 +103,7 @@ func TestRouteAdmitted(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			if actualResult := routeAdmitted(tc.route, tc.ingressControllerName); actualResult != tc.expectedResult {
+			if actualResult := routeStatusAdmitted(tc.route, tc.ingressControllerName); actualResult != tc.expectedResult {
 				t.Errorf("expected result %v, got %v", tc.expectedResult, actualResult)
 			}
 		})
