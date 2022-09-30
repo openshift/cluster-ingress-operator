@@ -171,7 +171,7 @@ func (CloudCredentialStatus) SwaggerDoc() map[string]string {
 }
 
 var map_Config = map[string]string{
-	"":       "Config provides information to configure the config operator. It handles installation, migration or synchronization of cloud based cluster configurations like AWS or Azure.\n\nCompatibility level 1: Stable within a major release for a minimum of 12 months or 3 minor releases (whichever is longer).",
+	"":       "Config specifies the behavior of the config operator which is responsible for creating the initial configuration of other components on the cluster.  The operator also handles installation, migration or synchronization of cloud configurations for AWS and Azure cloud based clusters\n\nCompatibility level 1: Stable within a major release for a minimum of 12 months or 3 minor releases (whichever is longer).",
 	"spec":   "spec is the specification of the desired behavior of the Config Operator.",
 	"status": "status defines the observed status of the Config Operator.",
 }
@@ -404,6 +404,16 @@ func (DNS) SwaggerDoc() map[string]string {
 	return map_DNS
 }
 
+var map_DNSCache = map[string]string{
+	"":            "DNSCache defines the fields for configuring DNS caching.",
+	"positiveTTL": "positiveTTL is optional and specifies the amount of time that a positive response should be cached.\n\nIf configured, it must be a value of 1s (1 second) or greater up to a theoretical maximum of several years. If not configured, the value will be 0 (zero) and OpenShift will use a default value of 900 seconds unless noted otherwise in the respective Corefile for your version of OpenShift. The default value of 900 seconds is subject to change. This field expects an unsigned duration string of decimal numbers, each with optional fraction and a unit suffix, e.g. \"100s\", \"1m30s\". Valid time units are \"s\", \"m\", and \"h\".",
+	"negativeTTL": "negativeTTL is optional and specifies the amount of time that a negative response should be cached.\n\nIf configured, it must be a value of 1s (1 second) or greater up to a theoretical maximum of several years. If not configured, the value will be 0 (zero) and OpenShift will use a default value of 30 seconds unless noted otherwise in the respective Corefile for your version of OpenShift. The default value of 30 seconds is subject to change. This field expects an unsigned duration string of decimal numbers, each with optional fraction and a unit suffix, e.g. \"100s\", \"1m30s\". Valid time units are \"s\", \"m\", and \"h\".",
+}
+
+func (DNSCache) SwaggerDoc() map[string]string {
+	return map_DNSCache
+}
+
 var map_DNSList = map[string]string{
 	"": "DNSList contains a list of DNS\n\nCompatibility level 1: Stable within a major release for a minimum of 12 months or 3 minor releases (whichever is longer).",
 }
@@ -440,6 +450,7 @@ var map_DNSSpec = map[string]string{
 	"managementState":   "managementState indicates whether the DNS operator should manage cluster DNS",
 	"operatorLogLevel":  "operatorLogLevel controls the logging level of the DNS Operator. Valid values are: \"Normal\", \"Debug\", \"Trace\". Defaults to \"Normal\". setting operatorLogLevel: Trace will produce extremely verbose logs.",
 	"logLevel":          "logLevel describes the desired logging verbosity for CoreDNS. Any one of the following values may be specified: * Normal logs errors from upstream resolvers. * Debug logs errors, NXDOMAIN responses, and NODATA responses. * Trace logs errors and all responses.\n Setting logLevel: Trace will produce extremely verbose logs.\nValid values are: \"Normal\", \"Debug\", \"Trace\". Defaults to \"Normal\".",
+	"cache":             "cache describes the caching configuration that applies to all server blocks listed in the Corefile. This field allows a cluster admin to optionally configure: * positiveTTL which is a duration for which positive responses should be cached. * negativeTTL which is a duration for which negative responses should be cached. If this is not configured, OpenShift will configure positive and negative caching with a default value that is subject to change. At the time of writing, the default positiveTTL is 900 seconds and the default negativeTTL is 30 seconds or as noted in the respective Corefile for your version of OpenShift.",
 }
 
 func (DNSSpec) SwaggerDoc() map[string]string {
@@ -782,9 +793,10 @@ func (IngressControllerTuningOptions) SwaggerDoc() map[string]string {
 }
 
 var map_LoadBalancerStrategy = map[string]string{
-	"":                   "LoadBalancerStrategy holds parameters for a load balancer.",
-	"scope":              "scope indicates the scope at which the load balancer is exposed. Possible values are \"External\" and \"Internal\".",
-	"providerParameters": "providerParameters holds desired load balancer information specific to the underlying infrastructure provider.\n\nIf empty, defaults will be applied. See specific providerParameters fields for details about their defaults.",
+	"":                    "LoadBalancerStrategy holds parameters for a load balancer.",
+	"scope":               "scope indicates the scope at which the load balancer is exposed. Possible values are \"External\" and \"Internal\".",
+	"providerParameters":  "providerParameters holds desired load balancer information specific to the underlying infrastructure provider.\n\nIf empty, defaults will be applied. See specific providerParameters fields for details about their defaults.",
+	"dnsManagementPolicy": "dnsManagementPolicy indicates if the lifecycle of the wildcard DNS record associated with the load balancer service will be managed by the ingress operator. It defaults to Managed. Valid values are: Managed and Unmanaged.",
 }
 
 func (LoadBalancerStrategy) SwaggerDoc() map[string]string {
@@ -861,6 +873,76 @@ var map_SyslogLoggingDestinationParameters = map[string]string{
 
 func (SyslogLoggingDestinationParameters) SwaggerDoc() map[string]string {
 	return map_SyslogLoggingDestinationParameters
+}
+
+var map_GatherStatus = map[string]string{
+	"":                   "gatherStatus provides information about the last known gather event.",
+	"lastGatherTime":     "lastGatherTime is the last time when Insights data gathering finished. An empty value means that no data has been gathered yet.",
+	"lastGatherDuration": "lastGatherDuration is the total time taken to process all gatherers during the last gather event.",
+	"gatherers":          "gatherers is a list of active gatherers (and their statuses) in the last gathering.",
+}
+
+func (GatherStatus) SwaggerDoc() map[string]string {
+	return map_GatherStatus
+}
+
+var map_GathererStatus = map[string]string{
+	"":                   "gathererStatus represents information about a particular data gatherer.",
+	"conditions":         "conditions provide details on the status of each gatherer.",
+	"name":               "name is the name of the gatherer.",
+	"lastGatherDuration": "lastGatherDuration represents the time spent gathering.",
+}
+
+func (GathererStatus) SwaggerDoc() map[string]string {
+	return map_GathererStatus
+}
+
+var map_HealthCheck = map[string]string{
+	"":            "healthCheck represents an Insights health check attributes.",
+	"description": "description provides basic description of the healtcheck.",
+	"totalRisk":   "totalRisk of the healthcheck. Indicator of the total risk posed by the detected issue; combination of impact and likelihood. The values can be from 1 to 4, and the higher the number, the more important the issue.",
+	"advisorURI":  "advisorURI provides the URL link to the Insights Advisor.",
+	"state":       "state determines what the current state of the health check is. Health check is enabled by default and can be disabled by the user in the Insights advisor user interface.",
+}
+
+func (HealthCheck) SwaggerDoc() map[string]string {
+	return map_HealthCheck
+}
+
+var map_InsightsOperator = map[string]string{
+	"":       "\n\nInsightsOperator holds cluster-wide information about the Insights Operator.\n\nCompatibility level 1: Stable within a major release for a minimum of 12 months or 3 minor releases (whichever is longer).",
+	"spec":   "spec is the specification of the desired behavior of the Insights.",
+	"status": "status is the most recently observed status of the Insights operator.",
+}
+
+func (InsightsOperator) SwaggerDoc() map[string]string {
+	return map_InsightsOperator
+}
+
+var map_InsightsOperatorList = map[string]string{
+	"": "InsightsOperatorList is a collection of items\n\nCompatibility level 1: Stable within a major release for a minimum of 12 months or 3 minor releases (whichever is longer).",
+}
+
+func (InsightsOperatorList) SwaggerDoc() map[string]string {
+	return map_InsightsOperatorList
+}
+
+var map_InsightsOperatorStatus = map[string]string{
+	"gatherStatus":   "gatherStatus provides basic information about the last Insights data gathering. When omitted, this means no data gathering has taken place yet.",
+	"insightsReport": "insightsReport provides general Insights analysis results. When omitted, this means no data gathering has taken place yet.",
+}
+
+func (InsightsOperatorStatus) SwaggerDoc() map[string]string {
+	return map_InsightsOperatorStatus
+}
+
+var map_InsightsReport = map[string]string{
+	"":             "insightsReport provides Insights health check report based on the most recently sent Insights data.",
+	"healthChecks": "healthChecks provides basic information about active Insights health checks in a cluster.",
+}
+
+func (InsightsReport) SwaggerDoc() map[string]string {
+	return map_InsightsReport
 }
 
 var map_KubeAPIServer = map[string]string{
@@ -978,6 +1060,16 @@ func (ExportNetworkFlows) SwaggerDoc() map[string]string {
 	return map_ExportNetworkFlows
 }
 
+var map_FeaturesMigration = map[string]string{
+	"egressIP":       "egressIP specifies whether or not the Egress IP configuration is migrated automatically when changing the cluster default network provider. If unset, this property defaults to 'true' and Egress IP configure is migrated.",
+	"egressFirewall": "egressFirewall specifies whether or not the Egress Firewall configuration is migrated automatically when changing the cluster default network provider. If unset, this property defaults to 'true' and Egress Firewall configure is migrated.",
+	"multicast":      "multicast specifies whether or not the multicast configuration is migrated automatically when changing the cluster default network provider. If unset, this property defaults to 'true' and multicast configure is migrated.",
+}
+
+func (FeaturesMigration) SwaggerDoc() map[string]string {
+	return map_FeaturesMigration
+}
+
 var map_GatewayConfig = map[string]string{
 	"":               "GatewayConfig holds node gateway-related parsed config file parameters and command-line overrides",
 	"routingViaHost": "RoutingViaHost allows pod egress traffic to exit via the ovn-k8s-mp0 management port into the host before sending it out. If this is not set, traffic will always egress directly from OVN to outside without touching the host stack. Setting this to true means hardware offload will not be supported. Default is false if GatewayConfig is specified.",
@@ -1078,6 +1170,7 @@ var map_NetworkMigration = map[string]string{
 	"":            "NetworkMigration represents the cluster network configuration.",
 	"networkType": "networkType is the target type of network migration. Set this to the target network type to allow changing the default network. If unset, the operation of changing cluster default network plugin will be rejected. The supported values are OpenShiftSDN, OVNKubernetes",
 	"mtu":         "mtu contains the MTU migration configuration. Set this to allow changing the MTU values for the default network. If unset, the operation of changing the MTU for the default network will be rejected.",
+	"features":    "features contains the features migration configuration. Set this to migrate feature configuration when changing the cluster default network provider. if unset, the default operation is to migrate all the configuration of supported features.",
 }
 
 func (NetworkMigration) SwaggerDoc() map[string]string {

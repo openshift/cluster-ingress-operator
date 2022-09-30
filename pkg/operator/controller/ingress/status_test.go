@@ -27,8 +27,9 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	utilclock "k8s.io/apimachinery/pkg/util/clock"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	utilclock "k8s.io/utils/clock"
+	utilclocktesting "k8s.io/utils/clock/testing"
 )
 
 func ingressController(name string, t operatorv1.EndpointPublishingStrategyType) *operatorv1.IngressController {
@@ -245,7 +246,7 @@ func TestComputePodsScheduledCondition(t *testing.T) {
 
 func TestComputeIngressDegradedCondition(t *testing.T) {
 	// Inject a fake clock and don't forget to reset it
-	fakeClock := utilclock.NewFakeClock(time.Time{})
+	fakeClock := utilclocktesting.NewFakeClock(time.Time{})
 	clock = fakeClock
 	defer func() {
 		clock = utilclock.RealClock{}
@@ -1464,7 +1465,7 @@ func TestIngressStatusesEqual(t *testing.T) {
 
 func TestMergeConditions(t *testing.T) {
 	// Inject a fake clock and don't forget to reset it
-	fakeClock := utilclock.NewFakeClock(time.Time{})
+	fakeClock := utilclocktesting.NewFakeClock(time.Time{})
 	clock = fakeClock
 	defer func() {
 		clock = utilclock.RealClock{}
