@@ -46,9 +46,9 @@ func New(mgr manager.Manager, namespace string) (controller.Controller, error) {
 	// Add the cache to the manager so that the cache is started along with the other runnables.
 	mgr.Add(newCache)
 	reconciler := &reconciler{
-		cache:          newCache,
-		Namespace:      namespace,
-		routeIngresses: make(map[types.NamespacedName]sets.String),
+		cache:            newCache,
+		Namespace:        namespace,
+		routeToIngresses: make(map[types.NamespacedName]sets.String),
 	}
 	c, err := controller.New(controllerName, mgr, controller.Options{Reconciler: reconciler})
 	if err != nil {
@@ -70,19 +70,19 @@ func New(mgr manager.Manager, namespace string) (controller.Controller, error) {
 func (r *reconciler) routeToIngressController(obj client.Object) []reconcile.Request {
 	var requests []reconcile.Request
 	// Cast the received object into Route object.
-	routeObject := obj.(*routev1.Route)
+	route := obj.(*routev1.Route)
 
 	// Create the NamespacedName for the Route.
 	routeNamespacedName := types.NamespacedName{
-		Namespace: routeObject.Namespace,
-		Name:      routeObject.Name,
+		Namespace: route.Namespace,
+		Name:      route.Name,
 	}
 
 	// Create a set of current Ingresses of the Route to easily retrieve them.
-	currentRouteIngressSet := sets.NewString()
+	currentRouteIngresses := sets.NewString()
 
 	// Iterate through the related Route's Ingresses.
-	for _, ri := range routeObject.Status.Ingress {
+	for _, ri := range route.Status.Ingress {
 		// Check if the Route was admitted by the RouteIngress.
 		for _, cond := range ri.Conditions {
 			if cond.Type == routev1.RouteAdmitted && cond.Status == corev1.ConditionTrue {
@@ -97,20 +97,20 @@ func (r *reconciler) routeToIngressController(obj client.Object) []reconcile.Req
 				requests = append(requests, request)
 
 				// Add the Router Name to the currentIngressSet.
-				currentRouteIngressSet.Insert(ri.RouterName)
+				currentRouteIngresses.Insert(ri.RouterName)
 			}
 		}
 	}
 
 	// Get the previous set of Ingresses of the Route.
-	previousRouteIngressSet := r.routeIngresses[routeNamespacedName]
+	previousRouteIngresses := r.routeToIngresses[routeNamespacedName]
 
-	// Iterate through the previousRouteIngressSet.
-	for routerName := range previousRouteIngressSet {
-		// Check if the currentRouteIngressSet contains the Router Name. If it does not,
+	// Iterate through the previousRouteIngresses.
+	for routerName := range previousRouteIngresses {
+		// Check if the currentRouteIngresses contains the Router Name. If it does not,
 		// then the Ingress was removed from the Route Status. The reconcile loop is needed
 		// to be run for the corresponding Ingress Controller.
-		if !currentRouteIngressSet.Has(routerName) {
+		if !currentRouteIngresses.Has(routerName) {
 			log.Info("queueing ingresscontroller", "name", routerName)
 			// Create a reconcile.Request for the router named in the RouteIngress.
 			request := reconcile.Request{
@@ -123,8 +123,8 @@ func (r *reconciler) routeToIngressController(obj client.Object) []reconcile.Req
 		}
 	}
 
-	// Map the currentRouteIngressSet to Route's NamespacedName.
-	r.routeIngresses[routeNamespacedName] = currentRouteIngressSet
+	// Map the currentRouteIngresses to Route's NamespacedName.
+	r.routeToIngresses[routeNamespacedName] = currentRouteIngresses
 
 	return requests
 }
@@ -133,8 +133,8 @@ func (r *reconciler) routeToIngressController(obj client.Object) []reconcile.Req
 type reconciler struct {
 	cache     cache.Cache
 	Namespace string
-	// routeIngresses stores the Ingress Controllers that have admitted a given route.
-	routeIngresses map[types.NamespacedName]sets.String
+	// routeToIngresses stores the Ingress Controllers that have admitted a given route.
+	routeToIngresses map[types.NamespacedName]sets.String
 }
 
 // Reconcile expects request to refer to an Ingress Controller resource, and will do all the work to gather metrics related to
@@ -215,7 +215,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	return reconcile.Result{}, nil
 }
 
-// routeStatusAdmitted returns true if a given route has been admitted by the Ingress Controller.
+// routeStatusAdmitted returns true if a given route's status shows admitted by the Ingress Controller.
 func routeStatusAdmitted(route routev1.Route, ingressControllerName string) bool {
 	// Iterate through the related Ingress Controllers.
 	for _, ingress := range route.Status.Ingress {

@@ -19,6 +19,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/apiserver/pkg/storage/names"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 )
@@ -77,9 +78,26 @@ func TestRouteMetricsControllerOnlyRouteSelector(t *testing.T) {
 	// Get the time taken for the metrics to be updated.
 	t.Logf("time taken for the metrics to be updated after the creation of the IC: %fs", time.Since(startTime).Seconds())
 
+	// Create a new namespace for the Route that we can immediately match with the IC's namespace selector.
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: names.SimpleNameGenerator.GenerateName("test-e2e-metrics-"),
+		},
+	}
+	if err := kclient.Create(context.TODO(), ns); err != nil {
+		t.Fatalf("failed to create namespace: %v", err)
+	}
+
+	// Delete the Namespace if any error occurs.
+	defer func() {
+		if err := kclient.Delete(context.TODO(), ns); err != nil {
+			t.Fatalf("failed to delete test namespace %v: %v", ns.Name, err)
+		}
+	}()
+
 	// Create a Route to be immediately admitted by this Ingress Controller.
-	// Use openshift-console namespace to get a namespace outside the ingress-operator's cache.
-	routeFooLabelName := types.NamespacedName{Namespace: "openshift-console", Name: "route-rs-foo-label"}
+	// Use the new namespace to get a namespace outside the ingress-operator's cache.
+	routeFooLabelName := types.NamespacedName{Namespace: ns.Name, Name: "route-rs-foo-label"}
 	routeFooLabel := newRouteWithLabel(routeFooLabelName, "rs-foo")
 	if err := kclient.Create(context.TODO(), routeFooLabel); err != nil {
 		t.Fatalf("failed to create route: %v", err)
@@ -134,6 +152,38 @@ func TestRouteMetricsControllerOnlyRouteSelector(t *testing.T) {
 	}
 
 	// Wait for metrics to be updated to 1 as the Route will get admitted by the IC.
+	if err := waitForRouteMetricsAddorUpdate(t, prometheusClient, ic.Name, 1); err != nil {
+		t.Fatalf("failed to fetch expected metrics: %v", err)
+	}
+
+	// Update the RouteSelector of the Ingress Controller so that the Route gets admitted again.
+	if err := kclient.Get(context.TODO(), routeFooLabelName, routeFooLabel); err != nil {
+		t.Fatalf("failed to get route resource: %v", err)
+	}
+	routeFooLabel.Labels = map[string]string{
+		"type": "rs-bar",
+	}
+	if err := kclient.Update(context.TODO(), routeFooLabel); err != nil {
+		t.Fatalf("failed to update route: %v", err)
+	}
+
+	// Wait for metrics to be updated to 0 as the Route will get un-admitted by the IC.
+	if err := waitForRouteMetricsAddorUpdate(t, prometheusClient, ic.Name, 0); err != nil {
+		t.Fatalf("failed to fetch expected metrics: %v", err)
+	}
+
+	// Update the RouteSelector of the Ingress Controller so that the Route gets admitted again.
+	if err := kclient.Get(context.TODO(), routeFooLabelName, routeFooLabel); err != nil {
+		t.Fatalf("failed to get route resource: %v", err)
+	}
+	routeFooLabel.Labels = map[string]string{
+		"type": "rs-foo",
+	}
+	if err := kclient.Update(context.TODO(), routeFooLabel); err != nil {
+		t.Fatalf("failed to update route: %v", err)
+	}
+
+	// Wait for metrics to be updated to 0 as the Route will get admitted by the IC again.
 	if err := waitForRouteMetricsAddorUpdate(t, prometheusClient, ic.Name, 1); err != nil {
 		t.Fatalf("failed to fetch expected metrics: %v", err)
 	}
@@ -221,7 +271,7 @@ func TestRouteMetricsControllerOnlyNamespaceSelector(t *testing.T) {
 	// Create a new namespace for the Route that we can immediately match with the IC's namespace selector.
 	nsFoo := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "foo-namespace-selector-metrics-test",
+			Name: names.SimpleNameGenerator.GenerateName("test-e2e-metrics-"),
 			Labels: map[string]string{
 				"type": "ns-foo",
 			},
@@ -386,7 +436,7 @@ func TestRouteMetricsControllerRouteAndNamespaceSelector(t *testing.T) {
 	// Create a new namespace for the Route that we can immediately match with the IC's namespace selector.
 	nsFoo := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "foo-route-namespace-selector-metrics-test",
+			Name: names.SimpleNameGenerator.GenerateName("test-e2e-metrics-"),
 			Labels: map[string]string{
 				"type": "rs-ns-foo",
 			},
@@ -495,6 +545,38 @@ func TestRouteMetricsControllerRouteAndNamespaceSelector(t *testing.T) {
 	}
 
 	// Wait for metrics to be updated to 1 as the Route will get admitted by the IC again.
+	if err := waitForRouteMetricsAddorUpdate(t, prometheusClient, ic.Name, 1); err != nil {
+		t.Fatalf("failed to fetch expected metrics: %v", err)
+	}
+
+	// Update the RouteSelector of the Ingress Controller so that the Route gets admitted again.
+	if err := kclient.Get(context.TODO(), routeFooLabelName, routeFooLabel); err != nil {
+		t.Fatalf("failed to get route resource: %v", err)
+	}
+	routeFooLabel.Labels = map[string]string{
+		"type": "rs-ns-bar",
+	}
+	if err := kclient.Update(context.TODO(), routeFooLabel); err != nil {
+		t.Fatalf("failed to update route: %v", err)
+	}
+
+	// Wait for metrics to be updated to 0 as the Route will get un-admitted by the IC.
+	if err := waitForRouteMetricsAddorUpdate(t, prometheusClient, ic.Name, 0); err != nil {
+		t.Fatalf("failed to fetch expected metrics: %v", err)
+	}
+
+	// Update the RouteSelector of the Ingress Controller so that the Route gets admitted again.
+	if err := kclient.Get(context.TODO(), routeFooLabelName, routeFooLabel); err != nil {
+		t.Fatalf("failed to get route resource: %v", err)
+	}
+	routeFooLabel.Labels = map[string]string{
+		"type": "rs-ns-foo",
+	}
+	if err := kclient.Update(context.TODO(), routeFooLabel); err != nil {
+		t.Fatalf("failed to update route: %v", err)
+	}
+
+	// Wait for metrics to be updated to 0 as the Route will get admitted by the IC again.
 	if err := waitForRouteMetricsAddorUpdate(t, prometheusClient, ic.Name, 1); err != nil {
 		t.Fatalf("failed to fetch expected metrics: %v", err)
 	}
