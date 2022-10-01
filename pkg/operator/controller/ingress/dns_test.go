@@ -20,14 +20,19 @@ func TestDesiredWildcardDNSRecord(t *testing.T) {
 	tests := []struct {
 		description string
 		domain      string
-		publish     operatorv1.EndpointPublishingStrategyType
+		publish     operatorv1.EndpointPublishingStrategy
 		ingresses   []corev1.LoadBalancerIngress
 		expect      *iov1.DNSRecordSpec
 	}{
 		{
 			description: "no domain",
 			domain:      "",
-			publish:     operatorv1.LoadBalancerServiceStrategyType,
+			publish: operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.LoadBalancerServiceStrategyType,
+				LoadBalancer: &operatorv1.LoadBalancerStrategy{
+					Scope: operatorv1.ExternalLoadBalancer,
+				},
+			},
 			ingresses: []corev1.LoadBalancerIngress{
 				{Hostname: "lb.cloud.example.com"},
 			},
@@ -36,42 +41,83 @@ func TestDesiredWildcardDNSRecord(t *testing.T) {
 		{
 			description: "not a load balancer",
 			domain:      "apps.openshift.example.com",
-			publish:     operatorv1.HostNetworkStrategyType,
-			expect:      nil,
+			publish: operatorv1.EndpointPublishingStrategy{
+				Type:        operatorv1.HostNetworkStrategyType,
+				HostNetwork: &operatorv1.HostNetworkStrategy{},
+			},
+			expect: nil,
 		},
 		{
 			description: "no ingresses",
 			domain:      "apps.openshift.example.com",
-			publish:     operatorv1.LoadBalancerServiceStrategyType,
-			ingresses:   []corev1.LoadBalancerIngress{},
-			expect:      nil,
+			publish: operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.LoadBalancerServiceStrategyType,
+				LoadBalancer: &operatorv1.LoadBalancerStrategy{
+					Scope: operatorv1.ExternalLoadBalancer,
+				},
+			},
+			ingresses: []corev1.LoadBalancerIngress{},
+			expect:    nil,
 		},
 		{
 			description: "hostname to CNAME record",
-			publish:     operatorv1.LoadBalancerServiceStrategyType,
-			domain:      "apps.openshift.example.com",
+			publish: operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.LoadBalancerServiceStrategyType,
+				LoadBalancer: &operatorv1.LoadBalancerStrategy{
+					Scope: operatorv1.ExternalLoadBalancer,
+				},
+			},
+			domain: "apps.openshift.example.com",
 			ingresses: []corev1.LoadBalancerIngress{
 				{Hostname: "lb.cloud.example.com"},
 			},
 			expect: &iov1.DNSRecordSpec{
-				DNSName:    "*.apps.openshift.example.com.",
-				RecordType: iov1.CNAMERecordType,
-				Targets:    []string{"lb.cloud.example.com"},
-				RecordTTL:  defaultRecordTTL,
+				DNSName:             "*.apps.openshift.example.com.",
+				RecordType:          iov1.CNAMERecordType,
+				Targets:             []string{"lb.cloud.example.com"},
+				RecordTTL:           defaultRecordTTL,
+				DNSManagementPolicy: iov1.ManagedDNS,
 			},
 		},
 		{
 			description: "IP to A record",
-			publish:     operatorv1.LoadBalancerServiceStrategyType,
-			domain:      "apps.openshift.example.com",
+			publish: operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.LoadBalancerServiceStrategyType,
+				LoadBalancer: &operatorv1.LoadBalancerStrategy{
+					Scope: operatorv1.ExternalLoadBalancer,
+				},
+			},
+			domain: "apps.openshift.example.com",
 			ingresses: []corev1.LoadBalancerIngress{
 				{IP: "192.0.2.1"},
 			},
 			expect: &iov1.DNSRecordSpec{
-				DNSName:    "*.apps.openshift.example.com.",
-				RecordType: iov1.ARecordType,
-				Targets:    []string{"192.0.2.1"},
-				RecordTTL:  defaultRecordTTL,
+				DNSName:             "*.apps.openshift.example.com.",
+				RecordType:          iov1.ARecordType,
+				Targets:             []string{"192.0.2.1"},
+				RecordTTL:           defaultRecordTTL,
+				DNSManagementPolicy: iov1.ManagedDNS,
+			},
+		},
+		{
+			description: "unmanaged DNS policy",
+			publish: operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.LoadBalancerServiceStrategyType,
+				LoadBalancer: &operatorv1.LoadBalancerStrategy{
+					Scope:               operatorv1.ExternalLoadBalancer,
+					DNSManagementPolicy: operatorv1.UnmanagedLoadBalancerDNS,
+				},
+			},
+			domain: "apps.openshift.example.com",
+			ingresses: []corev1.LoadBalancerIngress{
+				{Hostname: "lb.cloud.example.com"},
+			},
+			expect: &iov1.DNSRecordSpec{
+				DNSName:             "*.apps.openshift.example.com.",
+				RecordType:          iov1.CNAMERecordType,
+				Targets:             []string{"lb.cloud.example.com"},
+				RecordTTL:           defaultRecordTTL,
+				DNSManagementPolicy: iov1.UnmanagedDNS,
 			},
 		},
 	}
@@ -83,10 +129,8 @@ func TestDesiredWildcardDNSRecord(t *testing.T) {
 				Name: "default",
 			},
 			Status: operatorv1.IngressControllerStatus{
-				Domain: test.domain,
-				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
-					Type: test.publish,
-				},
+				Domain:                     test.domain,
+				EndpointPublishingStrategy: &test.publish,
 			},
 		}
 

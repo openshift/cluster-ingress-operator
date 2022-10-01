@@ -115,7 +115,7 @@ func TestHTTPHeaderBufferSize(t *testing.T) {
 		"-H",
 		headerString,
 	}
-
+	extraCurlArgs = append(extraCurlArgs, "--resolve", echoRoute.Spec.Host+":80:"+service.Spec.ClusterIP)
 	name := "header-buffer-size-test-large-buffers"
 	image := deployment.Spec.Template.Spec.Containers[0].Image
 	clientPodValidRequest := buildCurlPod(name, echoRoute.Namespace, image, echoRoute.Spec.Host, service.Spec.ClusterIP, extraCurlArgs...)
