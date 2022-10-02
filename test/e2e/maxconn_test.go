@@ -88,13 +88,8 @@ func TestTunableMaxConnectionsValidValues(t *testing.T) {
 // TestTunableMaxConnectionsInvalidValues tests that invalid values
 // cannot be set for tuningOptions.maxConnections.
 //
-// Valid values are:
-//    0
-//   -1
-// 2000-2000000
-//
-// so we test outside of those value and expect validation failures
-// when we attempt to set them.
+// Valid values are 0, -1, and 2000-2000000, so we test outside of those value
+// and expect validation failures when we attempt to set them.
 func TestTunableMaxConnectionsInvalidValues(t *testing.T) {
 	t.Parallel()
 	updateMaxConnections := func(t *testing.T, client client.Client, maxConnections int32, name types.NamespacedName) error {

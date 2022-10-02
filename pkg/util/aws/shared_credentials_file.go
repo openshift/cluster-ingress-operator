@@ -9,20 +9,22 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
-// SharedCredentialsFileFromSecret returns a location (path) to the shared credentials file that was created
-// using the provided secret.
-// Consumers can configure the aws Session using that file to use the credentials like,
+// SharedCredentialsFileFromSecret returns a location (path) to the shared
+// credentials file that was created using the provided secret.
 //
-// sharedCredentialsFile, err := SharedCredentialsFileFromSecret(secret)
-// if err != nil {
-// 	// handle error
-// }
-// options := session.Options{
-// 	SharedConfigState: session.SharedConfigEnable,
-// 	SharedConfigFiles: []string{sharedCredentialsFile},
-// }
-// sess := session.Must(session.NewSessionWithOptions(options))
+// Consumers can configure the aws Session using that file to use the
+// credentials as follows:
 //
+//	sharedCredentialsFile, err := SharedCredentialsFileFromSecret(secret)
+//	if err != nil {
+//		// handle error
+//	}
+//
+//	options := session.Options{
+//		SharedConfigState: session.SharedConfigEnable,
+//		SharedConfigFiles: []string{sharedCredentialsFile},
+//	}
+//	sess := session.Must(session.NewSessionWithOptions(options))
 func SharedCredentialsFileFromSecret(secret *corev1.Secret) (string, error) {
 	var data []byte
 	switch {
