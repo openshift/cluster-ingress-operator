@@ -1097,6 +1097,8 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 			env = append(env, corev1.EnvVar{Name: RouterControllerLogLevel, Value: "4"})
 		case operatorv1.IngressLogLevelTrace:
 			env = append(env, corev1.EnvVar{Name: RouterControllerLogLevel, Value: "6"})
+		case operatorv1.IngressLogLevelTraceAll:
+			env = append(env, corev1.EnvVar{Name: RouterControllerLogLevel, Value: "8"})
 		default:
 			env = append(env, corev1.EnvVar{Name: RouterControllerLogLevel, Value: "2"})
 		}

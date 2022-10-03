@@ -7,6 +7,7 @@ import (
 
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 
 	routemetricscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/route-metrics"
 	errorpageconfigmapcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/sync-http-error-code-configmap"
@@ -285,17 +286,27 @@ func (o *Operator) ensureLogLevel() {
 	}
 
 	if ingressConfig != nil {
-		//If OperatorLogLevel is "Normal" or unset, the default is Info.
+		// If OperatorLogLevel is "Normal" or unset, the default is Info. Only
+		// log.V(0).Info, log.Info, and log.Error log messages will be logged
 		desiredLogLevel := zap.InfoLevel
 		vLevel := 0
-		if ingressConfig.Spec.OperatorLogLevel == configv1.IngressOperatorLogLevelDebug {
+		switch ingressConfig.Spec.OperatorLogLevel {
+		case configv1.IngressOperatorLogLevelDebug:
+			// log.V(1).Info messages will be logged at Debug level
 			desiredLogLevel = zap.DebugLevel
 			vLevel = 1
+		case configv1.IngressOperatorLogLevelTrace:
+			// log.V(2).Info messages will be logged at Trace level
+			desiredLogLevel = zapcore.Level(-2)
+			vLevel = 2
+		case configv1.IngressOperatorLogLevelTraceAll:
+			// log.V(3).Info messages will be logged at TraceAll level
+			desiredLogLevel = zapcore.Level(-3)
+			vLevel = 3
 		}
 
 		if logf.CurrentLogLevel.Level() != desiredLogLevel {
 			logf.CurrentLogLevel.SetLevel(desiredLogLevel)
-			log.Info("(info) Updated log level", "CurrentLogLevel", desiredLogLevel.String())
 			log.V(vLevel).Info("Updated log level", "CurrentLogLevel", desiredLogLevel.String())
 		}
 	}
