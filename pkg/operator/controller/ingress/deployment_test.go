@@ -1666,6 +1666,8 @@ func TestCapReloadIntervalValue(t *testing.T) {
 		expectedOutput time.Duration
 	}{
 		// Values below the minimum 1s returns 1s.
+		{20 * time.Nanosecond, 1 * time.Second},
+		{5 * time.Microsecond, 1 * time.Second},
 		{1 * time.Millisecond, 1 * time.Second},
 		{-1, 1 * time.Second},
 

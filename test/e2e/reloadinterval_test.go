@@ -24,7 +24,7 @@ func TestReloadInterval(t *testing.T) {
 	t.Parallel()
 
 	// values that do not satisfy the regex validation will generate this error
-	const expectedErr string = `spec.tuningOptions.reloadInterval in body should match '^(0|([0-9]+(\.[0-9]+)?(s|m))+)$'`
+	const expectedErr string = `spec.tuningOptions.reloadInterval in body should match '^(0|([0-9]+(\.[0-9]+)?(ns|us|µs|μs|ms|s|m|h))+)$'`
 
 	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "reloadinterval-test"}
 	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
@@ -58,12 +58,11 @@ func TestReloadInterval(t *testing.T) {
 	}{
 		// set ReloadInterval to a value that does not pass the regex validation
 		// expect validation error
-		{"set reloadInterval 0.5s", metav1.Duration{Duration: 500 * time.Millisecond}, "5s", false},
-		{"set reloadInterval 1s", metav1.Duration{Duration: -1 * time.Second}, "5s", false},
+		{"set reloadInterval -1s", metav1.Duration{Duration: -1 * time.Second}, "5s", false},
 
 		// the following values all pass the regex validation
 		//
-		// set Spec.TuningOptions.ReloadInterval to a nondefault value within allowed bounds
+		// set Spec.TuningOptions.ReloadInterval to a non default value within allowed bounds
 		// expect no error
 		{"set reloadInterval 100s", metav1.Duration{Duration: 100 * time.Second}, "100s", true},
 		{"set reloadInterval 1m", metav1.Duration{Duration: 1 * time.Minute}, "1m", true},
@@ -72,9 +71,13 @@ func TestReloadInterval(t *testing.T) {
 		// expect no error
 		{"set reloadInterval default", metav1.Duration{Duration: 0 * time.Second}, "5s", true},
 
-		// set ReloadInterval to a value outside of allowed bounds
+		// set ReloadInterval to a value outside allowed bounds
 		// expect no error
+		{"set reloadInterval 200ns", metav1.Duration{Duration: 200 * time.Nanosecond}, "5s", true},
+		{"set reloadInterval 5us", metav1.Duration{Duration: 5 * time.Microsecond}, "5s", true},
+		{"set reloadInterval 500ms", metav1.Duration{Duration: 500 * time.Millisecond}, "5s", true},
 		{"set reloadInterval 130s", metav1.Duration{Duration: 130 * time.Second}, "2m", true},
+		{"set reloadInterval 2h", metav1.Duration{Duration: 2 * time.Hour}, "2m", true},
 	} {
 		t.Log(testCase.description)
 		// cases with values that pass the regex validation
