@@ -18,6 +18,10 @@ const (
 	CISCustomEndpointName = "cis"
 	// DNSCustomEndpointName is the key used to identify the DNS service in ServiceEndpoints
 	DNSCustomEndpointName = "dns"
+	// IAMCustomEndpointName is the key used to identify the IAM service in ServiceEndpoints
+	IAMCustomEndpointName = "iam"
+	// default iam server url
+	defaultIamTokenServerEndpoint = "https://iam.cloud.ibm.com"
 )
 
 var (
@@ -29,7 +33,7 @@ var (
 // ServiceEndpoint stores the configuration of a custom url to
 // override default IBM Service API endpoints.
 type ServiceEndpoint struct {
-	// name is the name of the Power VS service.
+	// name is the name of the IBM service.
 	// For example
 	// IAM - https://cloud.ibm.com/apidocs/iam-identity-token-api
 	Name string
@@ -75,22 +79,20 @@ func ValidateInputDNSData(record *iov1.DNSRecord, zone configv1.DNSZone) error {
 	return kerrors.NewAggregate(errs)
 }
 
-// GetCISEndpointURL return the IBM CIS url from service endpoints if exist or else returns the default url
-func GetCISEndpointURL(endpoint []ServiceEndpoint) string {
-	for _, ep := range endpoint {
-		if ep.Name == CISCustomEndpointName {
-			return ep.URL
+// GetServiceEndpointURL return the url of serviceType from endpoints if exist or else returns the default url
+func GetServiceEndpointURL(endpoints []ServiceEndpoint, serviceType string) (string, error) {
+	for _, ep := range endpoints {
+		if ep.Name == serviceType {
+			return ep.URL, nil
 		}
 	}
-	return dnsrecordsv1.DefaultServiceURL
-}
-
-// GetDNSEndpointURL return the IBM DNS url from service endpoints if exist or else returns the default url
-func GetDNSEndpointURL(endpoint []ServiceEndpoint) string {
-	for _, ep := range endpoint {
-		if ep.Name == DNSCustomEndpointName {
-			return ep.URL
-		}
+	switch serviceType {
+	case CISCustomEndpointName:
+		return dnsrecordsv1.DefaultServiceURL, nil
+	case DNSCustomEndpointName:
+		return dnssvcsv1.DefaultServiceURL, nil
+	case IAMCustomEndpointName:
+		return defaultIamTokenServerEndpoint, nil
 	}
-	return dnssvcsv1.DefaultServiceURL
+	return "", fmt.Errorf("unknown serviceType %s", serviceType)
 }

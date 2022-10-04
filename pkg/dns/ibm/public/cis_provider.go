@@ -36,17 +36,29 @@ func NewProvider(config common.Config) (*Provider, error) {
 	if len(config.Zones) < 1 {
 		return nil, fmt.Errorf("IBM CIS DNS: missing zone data")
 	}
+
+	iamUrl, err := common.GetServiceEndpointURL(config.ServiceEndpoints, common.IAMCustomEndpointName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get IAM service url: %w", err)
+	}
+
 	authenticator := &core.IamAuthenticator{
 		ApiKey: config.APIKey,
+		URL:    iamUrl,
 	}
 	provider := &Provider{}
 
 	provider.dnsServices = make(map[string]dnsclient.DnsClient)
 
+	cisUrl, err := common.GetServiceEndpointURL(config.ServiceEndpoints, common.CISCustomEndpointName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get CIS service url: %w", err)
+	}
+
 	for _, zone := range config.Zones {
 		options := &dnsrecordsv1.DnsRecordsV1Options{
 			Authenticator:  authenticator,
-			URL:            common.GetCISEndpointURL(config.ServiceEndpoints),
+			URL:            cisUrl,
 			Crn:            &config.InstanceID,
 			ZoneIdentifier: &zone,
 		}

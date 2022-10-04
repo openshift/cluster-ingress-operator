@@ -726,15 +726,22 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 		var err error
 		var serviceEndpoints []ibm.ServiceEndpoint
 		if len(platformStatus.PowerVS.ServiceEndpoints) > 0 {
+			var iamFound, dnsFound, cisFound bool
 			for _, ep := range platformStatus.PowerVS.ServiceEndpoints {
-				if ep.Name == ibm.CISCustomEndpointName {
-					serviceEndpoints = append(serviceEndpoints, ibm.ServiceEndpoint{Name: ep.Name, URL: ep.URL})
+				if iamFound && (cisFound || dnsFound) {
 					// for a cluster either cis endpoint is set or dns endpoint is set
 					break
-				} else if ep.Name == ibm.DNSCustomEndpointName {
+				}
+				switch ep.Name {
+				case ibm.CISCustomEndpointName:
 					serviceEndpoints = append(serviceEndpoints, ibm.ServiceEndpoint{Name: ep.Name, URL: ep.URL})
-					// for a cluster either cis endpoint is set or dns endpoint is set
-					break
+					cisFound = true
+				case ibm.DNSCustomEndpointName:
+					serviceEndpoints = append(serviceEndpoints, ibm.ServiceEndpoint{Name: ep.Name, URL: ep.URL})
+					dnsFound = true
+				case ibm.IAMCustomEndpointName:
+					serviceEndpoints = append(serviceEndpoints, ibm.ServiceEndpoint{Name: ep.Name, URL: ep.URL})
+					iamFound = true
 				}
 			}
 		}

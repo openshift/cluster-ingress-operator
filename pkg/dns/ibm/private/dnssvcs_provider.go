@@ -43,13 +43,24 @@ func NewProvider(config common.Config) (*Provider, error) {
 
 	provider := &Provider{}
 
+	iamUrl, err := common.GetServiceEndpointURL(config.ServiceEndpoints, common.IAMCustomEndpointName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get IAM service url: %w", err)
+	}
+
 	authenticator := &core.IamAuthenticator{
 		ApiKey: config.APIKey,
+		URL:    iamUrl,
+	}
+
+	dnsUrl, err := common.GetServiceEndpointURL(config.ServiceEndpoints, common.DNSCustomEndpointName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get DNS service url: %w", err)
 	}
 
 	options := &dnssvcsv1.DnsSvcsV1Options{
 		Authenticator: authenticator,
-		URL:           common.GetDNSEndpointURL(config.ServiceEndpoints),
+		URL:           dnsUrl,
 	}
 
 	dnsService, err := dnssvcsv1.NewDnsSvcsV1(options)

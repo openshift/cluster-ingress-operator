@@ -6,10 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/IBM/networking-go-sdk/dnssvcsv1"
 	configv1 "github.com/openshift/api/config/v1"
 	iov1 "github.com/openshift/api/operatoringress/v1"
-	common "github.com/openshift/cluster-ingress-operator/pkg/dns/ibm"
 	dnsclient "github.com/openshift/cluster-ingress-operator/pkg/dns/ibm/private/client"
 	"github.com/stretchr/testify/assert"
 )
@@ -281,28 +279,4 @@ func TestCreateOrUpdate(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestGetDNSEndpointURL(t *testing.T) {
-	var customServiceEndpoints []common.ServiceEndpoint
-
-	// with empty customServiceEndpoint
-	endpoint := common.GetDNSEndpointURL(customServiceEndpoints)
-	assert.Equal(t, dnssvcsv1.DefaultServiceURL, endpoint)
-
-	// without cis endpoint in customServiceEndpoint
-	customServiceEndpoints = append(customServiceEndpoints, common.ServiceEndpoint{
-		Name: "iam",
-		URL:  "https://iam.test.cloud.ibm.com",
-	})
-	endpoint = common.GetDNSEndpointURL(customServiceEndpoints)
-	assert.Equal(t, dnssvcsv1.DefaultServiceURL, endpoint)
-
-	// with valid cis customServiceEndpoint
-	customServiceEndpoints = append(customServiceEndpoints, common.ServiceEndpoint{
-		Name: common.DNSCustomEndpointName,
-		URL:  "https://api.dns-svcs.test.cloud.ibm.com/",
-	})
-	endpoint = common.GetDNSEndpointURL(customServiceEndpoints)
-	assert.Equal(t, "https://api.dns-svcs.test.cloud.ibm.com/", endpoint)
 }
