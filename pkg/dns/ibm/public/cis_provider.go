@@ -46,7 +46,7 @@ func NewProvider(config common.Config) (*Provider, error) {
 	for _, zone := range config.Zones {
 		options := &dnsrecordsv1.DnsRecordsV1Options{
 			Authenticator:  authenticator,
-			URL:            dnsrecordsv1.DefaultServiceURL,
+			URL:            common.GetCISEndpointURL(config.ServiceEndpoints),
 			Crn:            &config.InstanceID,
 			ZoneIdentifier: &zone,
 		}

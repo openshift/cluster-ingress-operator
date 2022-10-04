@@ -49,7 +49,7 @@ func NewProvider(config common.Config) (*Provider, error) {
 
 	options := &dnssvcsv1.DnsSvcsV1Options{
 		Authenticator: authenticator,
-		URL:           dnssvcsv1.DefaultServiceURL,
+		URL:           common.GetDNSEndpointURL(config.ServiceEndpoints),
 	}
 
 	dnsService, err := dnssvcsv1.NewDnsSvcsV1(options)

@@ -706,13 +706,14 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 		}
 
 		var err error
+		var serviceEndpoints []ibm.ServiceEndpoint
 		if platformStatus.IBMCloud.CISInstanceCRN != "" {
-			dnsProvider, err = getIbmDNSProvider(dnsConfig, creds, platformStatus.IBMCloud.CISInstanceCRN, userAgent, true)
+			dnsProvider, err = getIbmDNSProvider(dnsConfig, creds, platformStatus.IBMCloud.CISInstanceCRN, userAgent, true, serviceEndpoints)
 			if err != nil {
 				return nil, err
 			}
 		} else if platformStatus.IBMCloud.DNSInstanceCRN != "" {
-			dnsProvider, err = getIbmDNSProvider(dnsConfig, creds, platformStatus.IBMCloud.DNSInstanceCRN, userAgent, false)
+			dnsProvider, err = getIbmDNSProvider(dnsConfig, creds, platformStatus.IBMCloud.DNSInstanceCRN, userAgent, false, serviceEndpoints)
 			if err != nil {
 				return nil, err
 			}
@@ -723,13 +724,27 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 	case configv1.PowerVSPlatformType:
 		// Power VS platform will use the ibm dns implementation
 		var err error
+		var serviceEndpoints []ibm.ServiceEndpoint
+		if len(platformStatus.PowerVS.ServiceEndpoints) > 0 {
+			for _, ep := range platformStatus.PowerVS.ServiceEndpoints {
+				if ep.Name == ibm.CISCustomEndpointName {
+					serviceEndpoints = append(serviceEndpoints, ibm.ServiceEndpoint{Name: ep.Name, URL: ep.URL})
+					// for a cluster either cis endpoint is set or dns endpoint is set
+					break
+				} else if ep.Name == ibm.DNSCustomEndpointName {
+					serviceEndpoints = append(serviceEndpoints, ibm.ServiceEndpoint{Name: ep.Name, URL: ep.URL})
+					// for a cluster either cis endpoint is set or dns endpoint is set
+					break
+				}
+			}
+		}
 		if platformStatus.PowerVS.CISInstanceCRN != "" {
-			dnsProvider, err = getIbmDNSProvider(dnsConfig, creds, platformStatus.PowerVS.CISInstanceCRN, userAgent, true)
+			dnsProvider, err = getIbmDNSProvider(dnsConfig, creds, platformStatus.PowerVS.CISInstanceCRN, userAgent, true, serviceEndpoints)
 			if err != nil {
 				return nil, err
 			}
 		} else if platformStatus.PowerVS.DNSInstanceCRN != "" {
-			dnsProvider, err = getIbmDNSProvider(dnsConfig, creds, platformStatus.PowerVS.DNSInstanceCRN, userAgent, false)
+			dnsProvider, err = getIbmDNSProvider(dnsConfig, creds, platformStatus.PowerVS.DNSInstanceCRN, userAgent, false, serviceEndpoints)
 			if err != nil {
 				return nil, err
 			}
@@ -785,7 +800,7 @@ func (r *reconciler) customCABundle() (string, error) {
 }
 
 // getIbmDNSProvider initializes and returns an IBM DNS provider instance.
-func getIbmDNSProvider(dnsConfig *configv1.DNS, creds *corev1.Secret, instanceCRN, userAgent string, isPublic bool) (dns.Provider, error) {
+func getIbmDNSProvider(dnsConfig *configv1.DNS, creds *corev1.Secret, instanceCRN, userAgent string, isPublic bool, serviceEndpoints []ibm.ServiceEndpoint) (dns.Provider, error) {
 	zones := []string{}
 	if dnsConfig.Spec.PrivateZone != nil {
 		zones = append(zones, dnsConfig.Spec.PrivateZone.ID)
@@ -795,9 +810,10 @@ func getIbmDNSProvider(dnsConfig *configv1.DNS, creds *corev1.Secret, instanceCR
 	}
 
 	providerCfg := ibm.Config{
-		APIKey:    string(creds.Data["ibmcloud_api_key"]),
-		Zones:     zones,
-		UserAgent: userAgent,
+		APIKey:           string(creds.Data["ibmcloud_api_key"]),
+		Zones:            zones,
+		UserAgent:        userAgent,
+		ServiceEndpoints: serviceEndpoints,
 	}
 
 	if isPublic {
