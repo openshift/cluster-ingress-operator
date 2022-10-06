@@ -2399,6 +2399,89 @@ func TestCustomErrorpages(t *testing.T) {
 	}
 }
 
+// TestIngressControllerServiceNameCollision validates BZ2054200: Don't delete services that are not directly owned by this controller.
+// It creates a service with the same naming convention as the ingress controller creates its own load balancing services.
+// Then it triggers a reconcilation of the ingress operator to see if it will delete our service.
+func TestIngressControllerServiceNameCollision(t *testing.T) {
+	// Create the new private controller that we will later create a service to collide with the naming scheme of this.
+	icName := types.NamespacedName{
+		Namespace: operatorNamespace,
+		Name:      "e2e-name-collision-test",
+	}
+	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
+	ic := newPrivateController(icName, domain)
+	if err := kclient.Create(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
+	}
+
+	// Clean up our new Ingress Controller after we are done.
+	defer assertIngressControllerDeleted(t, kclient, ic)
+
+	// Wait for new ingress controller to come online.
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	// Create services that could collide with the new ingress controller's naming convention for loadbalancer and nodeport.
+	// TRICKY: Our private ingress controller will reconcile and delete extra loadBalancerServices, even though the
+	//         ingress controller isn't a loadbalancer type itself.
+	conflictingLoadBalancerServiceName := types.NamespacedName{
+		Name:      "router-" + icName.Name,
+		Namespace: "openshift-ingress",
+	}
+	conflictingLoadBalancerService := buildEchoService(conflictingLoadBalancerServiceName.Name, conflictingLoadBalancerServiceName.Namespace, nil)
+	if err := kclient.Create(context.TODO(), conflictingLoadBalancerService); err != nil {
+		t.Fatalf("failed to create service %s: %v", conflictingLoadBalancerServiceName, err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), conflictingLoadBalancerService); err != nil {
+			t.Fatalf("failed to delete service %s: %v", conflictingLoadBalancerServiceName, err)
+		}
+	}()
+
+	conflictingNodeportServiceName := types.NamespacedName{
+		Name:      "router-nodeport-" + icName.Name,
+		Namespace: "openshift-ingress",
+	}
+	conflictingNodeportService := buildEchoService(conflictingNodeportServiceName.Name, conflictingNodeportServiceName.Namespace, nil)
+	if err := kclient.Create(context.TODO(), conflictingNodeportService); err != nil {
+		t.Fatalf("failed to create service %s: %v", conflictingNodeportServiceName, err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), conflictingNodeportService); err != nil {
+			t.Fatalf("failed to delete service %s: %v", conflictingNodeportServiceName, err)
+		}
+	}()
+
+	ic, err := getIngressController(t, kclient, icName, 1*time.Minute)
+	if err != nil {
+		t.Fatalf("failed to get ingress controller: %v", err)
+	}
+
+	// Annotate the ingress operator, to trigger a reconcilation to determine if our service is deleted.
+	// This may not be needed, but it ensures a reconcilation occurs ASAP.
+	if ic.Annotations == nil {
+		ic.Annotations = map[string]string{}
+	}
+	ic.Annotations["ingress.operator.openshift.io/e2e-name-collision-test"] = ""
+
+	if err := kclient.Update(context.TODO(), ic); err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait to see if our service gets deleted by the operator due to name collision.
+	oldLoadBalancerUID := conflictingLoadBalancerService.UID
+	oldNodePortUID := conflictingNodeportService.UID
+	wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
+		// Check if LoadBalancer and Nodeport Service don't get deleted for the entire duration of this loop.
+		// Will throw fatal error if deleted or marked for deletion and this loop stops.
+		assertServiceNotDeleted(t, conflictingLoadBalancerServiceName, oldLoadBalancerUID)
+		assertServiceNotDeleted(t, conflictingNodeportServiceName, oldNodePortUID)
+
+		return false, nil
+	})
+}
+
 func newLoadBalancerController(name types.NamespacedName, domain string) *operatorv1.IngressController {
 	repl := int32(1)
 	return &operatorv1.IngressController{
@@ -2661,6 +2744,25 @@ func deleteIngressController(t *testing.T, cl client.Client, ic *operatorv1.Ingr
 		return fmt.Errorf("timed out waiting for ingresscontroller to be deleted: %v", err)
 	}
 	return nil
+}
+
+// assertServiceNotDeleted asserts that a provide service wasn't deleted.
+func assertServiceNotDeleted(t *testing.T, serviceName types.NamespacedName, oldUid types.UID) {
+	t.Helper()
+
+	// First check our LoadBalancer Service.
+	service := &corev1.Service{}
+	if err := kclient.Get(context.TODO(), serviceName, service); err != nil {
+		t.Fatalf("expected %s to be present: %v", serviceName, err)
+	}
+	// If there is a DeletionTimestamp, it has been marked for deletion.
+	if service.DeletionTimestamp != nil {
+		t.Fatalf("expected service %s to not be marked for deletion: %v", serviceName, service.DeletionTimestamp)
+	}
+	// If the UID has changed, then the service has been recreated.
+	if service.UID != oldUid {
+		t.Fatalf("expected service %s to have UID %v, got %v", serviceName, oldUid, service.UID)
+	}
 }
 
 func createDefaultCertTestSecret(cl client.Client, name string) (*corev1.Secret, error) {
