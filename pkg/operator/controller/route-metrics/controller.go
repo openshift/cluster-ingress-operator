@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
+	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 
 	corev1 "k8s.io/api/core/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
@@ -15,6 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -47,6 +49,7 @@ func New(mgr manager.Manager, namespace string) (controller.Controller, error) {
 	mgr.Add(newCache)
 	reconciler := &reconciler{
 		cache:            newCache,
+		client:           mgr.GetClient(),
 		Namespace:        namespace,
 		routeToIngresses: make(map[types.NamespacedName]sets.String),
 	}
@@ -132,6 +135,7 @@ func (r *reconciler) routeToIngressController(obj client.Object) []reconcile.Req
 // reconciler handles the actual ingresscontroller reconciliation logic in response to events.
 type reconciler struct {
 	cache     cache.Cache
+	client    client.Client
 	Namespace string
 	// routeToIngresses stores the Ingress Controllers that have admitted a given route.
 	routeToIngresses map[types.NamespacedName]sets.String
@@ -153,13 +157,35 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		return reconcile.Result{}, fmt.Errorf("failed to get Ingress Controller %q: %v", request, err)
 	}
 
-	// If the ingresscontroller is deleted, then delete the corresponding RouteMetricsControllerRoutesPerShard metric label
-	// and return early.
+	// If the ingresscontroller is marked to be deleted, then delete the corresponding RouteMetricsControllerRoutesPerShard metric label.
 	if ingressController.DeletionTimestamp != nil {
-		// Delete the Shard label corresponding to the Ingress Controller from the RouteMetricsControllerRoutesPerShard metric.
-		DeleteRouteMetricsControllerRoutesPerShardMetric(request.Name)
-		log.Info("RoutesPerShard metric label corresponding to the Ingress Controller is successfully deleted", "ingresscontroller", ingressController)
+		// If the routemetricscontroller finalizer is not removed, then delete the corresponding RouteMetricsControllerRoutesPerShard metric label
+		// and remove the finalizer.
+		if controllerutil.ContainsFinalizer(ingressController, manifests.RouteMetricsControllerFinalizer) {
+			// Delete the Shard label corresponding to the Ingress Controller from the RouteMetricsControllerRoutesPerShard metric.
+			DeleteRouteMetricsControllerRoutesPerShardMetric(request.Name)
+			log.Info("RoutesPerShard metric label corresponding to the Ingress Controller is successfully deleted", "ingresscontroller", ingressController)
+
+			// Remove the routemetricscontroller finalizer.
+			updated := ingressController.DeepCopy()
+			controllerutil.RemoveFinalizer(updated, manifests.RouteMetricsControllerFinalizer)
+			err := r.client.Update(ctx, updated)
+			if err != nil {
+				return reconcile.Result{}, err
+			}
+		}
 		return reconcile.Result{}, nil
+	}
+
+	// Before doing anything at all with the controller, ensure it has a finalizer
+	// so we can clean up later.
+	if !controllerutil.ContainsFinalizer(ingressController, manifests.RouteMetricsControllerFinalizer) {
+		updated := ingressController.DeepCopy()
+		controllerutil.AddFinalizer(updated, manifests.RouteMetricsControllerFinalizer)
+		err := r.client.Update(ctx, updated)
+		if err != nil {
+			return reconcile.Result{}, err
+		}
 	}
 
 	// NOTE: Even though the route admitted status should reflect validity of the namespace and route labelselectors, we still will validate
