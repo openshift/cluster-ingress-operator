@@ -57,10 +57,6 @@ const (
 	// until the operator has ensured it's safe for deletion to proceed.
 	IngressControllerFinalizer = "ingresscontroller.operator.openshift.io/finalizer-ingresscontroller"
 
-	// RouteMetricsControllerFinalizer is used to block deletion of ingresscontrollers
-	// until the route metrics are deleted and it's safe for deletion of the ingresscontrollers to proceed.
-	RouteMetricsControllerFinalizer = "ingresscontroller.operator.openshift.io/finalizer-routemetricscontroller"
-
 	// DNSRecordFinalizer is used to block deletion of dnsrecords until the
 	// operator has ensured it's safe for deletion to proceeed.
 	DNSRecordFinalizer = "operator.openshift.io/ingress-dns"
