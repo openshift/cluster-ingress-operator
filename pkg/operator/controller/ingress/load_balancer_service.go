@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +21,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/sets"
 
 	crclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -436,6 +438,17 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 		}
 	}
 
+	if ci.Spec.EndpointPublishingStrategy != nil {
+		lb := ci.Spec.EndpointPublishingStrategy.LoadBalancer
+		if lb != nil && len(lb.AllowedSourceRanges) > 0 {
+			cidrs := make([]string, len(lb.AllowedSourceRanges))
+			for i, cidr := range lb.AllowedSourceRanges {
+				cidrs[i] = string(cidr)
+			}
+			service.Spec.LoadBalancerSourceRanges = cidrs
+		}
+	}
+
 	service.SetOwnerReferences([]metav1.OwnerReference{deploymentRef})
 	return true, service, nil
 }
@@ -599,7 +612,30 @@ func loadBalancerServiceChanged(current, expected *corev1.Service) (bool, *corev
 	// avoid problems, make sure the previous release blocks upgrades when
 	// the user has modified an annotation or spec field that the new
 	// release manages.
-	return loadBalancerServiceAnnotationsChanged(current, expected, managedLoadBalancerServiceAnnotations)
+	changed, updated := loadBalancerServiceAnnotationsChanged(current, expected, managedLoadBalancerServiceAnnotations)
+
+	// If spec.loadBalancerSourceRanges is nonempty on the service, that
+	// means that allowedSourceRanges is nonempty on the ingresscontroller,
+	// which means we can clear the annotation if it's set and overwrite the
+	// value in the current service.
+	if len(expected.Spec.LoadBalancerSourceRanges) != 0 {
+		if _, ok := current.Annotations[corev1.AnnotationLoadBalancerSourceRangesKey]; ok {
+			if !changed {
+				changed = true
+				updated = current.DeepCopy()
+			}
+			delete(updated.Annotations, corev1.AnnotationLoadBalancerSourceRangesKey)
+		}
+		if !reflect.DeepEqual(current.Spec.LoadBalancerSourceRanges, expected.Spec.LoadBalancerSourceRanges) {
+			if !changed {
+				changed = true
+				updated = current.DeepCopy()
+			}
+			updated.Spec.LoadBalancerSourceRanges = expected.Spec.LoadBalancerSourceRanges
+		}
+	}
+
+	return changed, updated
 }
 
 // loadBalancerServiceAnnotationsChanged checks if the annotations on the expected Service
@@ -681,4 +717,79 @@ func loadBalancerServiceIsUpgradeable(ic *operatorv1.IngressController, deployme
 	}
 
 	return nil
+}
+
+// loadBalancerServiceIsProgressing returns an error value indicating if the
+// load balancer service is in progressing status.
+func loadBalancerServiceIsProgressing(ic *operatorv1.IngressController, service *corev1.Service, platform *configv1.PlatformStatus) error {
+	var errs []error
+	wantScope := ic.Status.EndpointPublishingStrategy.LoadBalancer.Scope
+	haveScope := operatorv1.ExternalLoadBalancer
+	if IsServiceInternal(service) {
+		haveScope = operatorv1.InternalLoadBalancer
+	}
+	if wantScope != haveScope {
+		err := fmt.Errorf("The IngressController scope was changed from %q to %q.", haveScope, wantScope)
+		switch platform.Type {
+		case configv1.AWSPlatformType, configv1.IBMCloudPlatformType:
+			err = fmt.Errorf("%[1]s  To effectuate this change, you must delete the service: `oc -n %[2]s delete svc/%[3]s`; the service load-balancer will then be deprovisioned and a new one created.  This will most likely cause the new load-balancer to have a different host name and IP address from the old one's.  Alternatively, you can revert the change to the IngressController: `oc -n openshift-ingress-operator patch ingresscontrollers/%[4]s --type=merge --patch='{\"spec\":{\"endpointPublishingStrategy\":{\"loadBalancer\":{\"scope\":\"%[5]s\"}}}}'", err.Error(), service.Namespace, service.Name, ic.Name, haveScope)
+		}
+		errs = append(errs, err)
+	}
+
+	errs = append(errs, loadBalancerSourceRangesAnnotationSet(service))
+	errs = append(errs, loadBalancerSourceRangesMatch(ic, service))
+
+	return kerrors.NewAggregate(errs)
+}
+
+// loadBalancerServiceEvaluationConditionsDetected returns an error value indicating if the
+// load balancer service is in EvaluationConditionsDetected status.
+func loadBalancerServiceEvaluationConditionsDetected(ic *operatorv1.IngressController, service *corev1.Service) error {
+	var errs []error
+	errs = append(errs, loadBalancerSourceRangesAnnotationSet(service))
+	errs = append(errs, loadBalancerSourceRangesMatch(ic, service))
+
+	return kerrors.NewAggregate(errs)
+}
+
+// loadBalancerSourceRangesAnnotationSet returns an error value indicating if the
+// ingresscontroller associated with load balancer service should report the Progressing
+// and EvaluationConditionsDetected status conditions with status True by checking
+// if it has "service.beta.kubernetes.io/load-balancer-source-ranges"
+// annotation set. If it is not set, then the service is not progressing and should not affect
+// evaluation conditions, and the return value is nil.
+// Otherwise, the return value is a non-nil error indicating that the annotation
+// must be unset. The intention is to guide the cluster
+// admin towards using the IngressController API and deprecate use of the service
+// annotation for ingress.
+func loadBalancerSourceRangesAnnotationSet(current *corev1.Service) error {
+	if a, ok := current.Annotations[corev1.AnnotationLoadBalancerSourceRangesKey]; !ok || (ok && len(a) == 0) {
+		return nil
+	}
+
+	return fmt.Errorf("You have manually edited an operator-managed object. You must revert your modifications by removing the %v annotation on service %q. You can use the new AllowedSourceRanges API field on the ingresscontroller object to configure this setting instead.", corev1.AnnotationLoadBalancerSourceRangesKey, current.Name)
+}
+
+// loadBalancerSourceRangesMatch returns an error value indicating if the
+// ingresscontroller associated with the load balancer service should report the Progressing
+// and EvaluationConditionsDetected status conditions with status True.  This function
+// checks if the service's LoadBalancerSourceRanges field is empty when AllowedSourceRanges
+// of the ingresscontroller is empty. If this is the case, then the service is not progressing
+// and has no evaluation conditions, and the return value is nil. Otherwise, if AllowedSourceRanges
+// is empty and LoadBalancerSourceRanges is nonempty, the return value is a non-nil error indicating
+// that the LoadBalancerSourceRanges field must be cleared. The intention is to guide the cluster
+// admin towards using the IngressController API and deprecate use of the LoadBalancerSourceRanges
+// field for ingress.
+func loadBalancerSourceRangesMatch(ic *operatorv1.IngressController, current *corev1.Service) error {
+	if len(current.Spec.LoadBalancerSourceRanges) < 1 {
+		return nil
+	}
+	if ic.Spec.EndpointPublishingStrategy != nil && ic.Spec.EndpointPublishingStrategy.LoadBalancer != nil {
+		if len(ic.Spec.EndpointPublishingStrategy.LoadBalancer.AllowedSourceRanges) > 0 {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("You have manually edited an operator-managed object. You must revert your modifications by removing the Spec.LoadBalancerSourceRanges field of LoadBalancer-typed service %q. You can use the new AllowedSourceRanges API field on the ingresscontroller to configure this setting instead.", current.Name)
 }
