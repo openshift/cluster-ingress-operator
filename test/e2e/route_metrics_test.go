@@ -140,6 +140,11 @@ func testRouteMetricsControllerLabelSelector(t *testing.T, testRS, testNS bool) 
 	// Cleanup step - delete the Ingress Controller.
 	defer assertIngressControllerDeleted(t, kclient, ic)
 
+	// Wait for metrics to be added and set to 0.
+	if err := waitForRouteMetricsAddorUpdate(t, prometheusClient, ic.Name, 0); err != nil {
+		t.Fatalf("failed to fetch expected metrics: %v", err)
+	}
+
 	// Create a new namespace for the Route.
 	ns := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
