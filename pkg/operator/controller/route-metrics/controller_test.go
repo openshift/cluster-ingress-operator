@@ -7,8 +7,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
-// TestRouteAdmitted verifies that routeAdmitted behaves correctly.
-func TestRouteAdmitted(t *testing.T) {
+// TestRouteStatusAdmitted verifies that routeStatusAdmitted behaves correctly.
+func TestRouteStatusAdmitted(t *testing.T) {
 	testCases := []struct {
 		name                  string
 		route                 routev1.Route
