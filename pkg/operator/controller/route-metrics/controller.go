@@ -3,16 +3,19 @@ package routemetrics
 import (
 	"context"
 	"fmt"
+	"time"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	routev1 "github.com/openshift/api/route/v1"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
+	"golang.org/x/time/rate"
 
 	corev1 "k8s.io/api/core/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/client-go/util/workqueue"
 
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -46,10 +49,20 @@ func New(mgr manager.Manager, namespace string) (controller.Controller, error) {
 	mgr.Add(newCache)
 	reconciler := &reconciler{
 		cache:            newCache,
-		Namespace:        namespace,
+		namespace:        namespace,
 		routeToIngresses: make(map[types.NamespacedName]sets.String),
 	}
-	c, err := controller.New(controllerName, mgr, controller.Options{Reconciler: reconciler})
+	c, err := controller.New(controllerName, mgr, controller.Options{
+		Reconciler: reconciler,
+		RateLimiter: workqueue.NewMaxOfRateLimiter(
+			// Rate-limit to 1 update every 5 seconds per
+			// ingresscontroller to avoid burning CPU if route
+			// updates are frequent.
+			workqueue.NewItemExponentialFailureRateLimiter(5*time.Second, 30*time.Second),
+			// 10 qps, 100 bucket size, same as DefaultControllerRateLimiter().
+			&workqueue.BucketRateLimiter{Limiter: rate.NewLimiter(rate.Limit(10), 100)},
+		),
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -90,7 +103,7 @@ func (r *reconciler) routeToIngressController(obj client.Object) []reconcile.Req
 				request := reconcile.Request{
 					NamespacedName: types.NamespacedName{
 						Name:      ri.RouterName,
-						Namespace: r.Namespace,
+						Namespace: r.namespace,
 					},
 				}
 				requests = append(requests, request)
@@ -115,7 +128,7 @@ func (r *reconciler) routeToIngressController(obj client.Object) []reconcile.Req
 			request := reconcile.Request{
 				NamespacedName: types.NamespacedName{
 					Name:      routerName,
-					Namespace: r.Namespace,
+					Namespace: r.namespace,
 				},
 			}
 			requests = append(requests, request)
@@ -131,7 +144,7 @@ func (r *reconciler) routeToIngressController(obj client.Object) []reconcile.Req
 // reconciler handles the actual ingresscontroller reconciliation logic in response to events.
 type reconciler struct {
 	cache     cache.Cache
-	Namespace string
+	namespace string
 	// routeToIngresses stores the Ingress Controllers that have admitted a given route.
 	routeToIngresses map[types.NamespacedName]sets.String
 }
@@ -149,7 +162,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 			log.Info("Ingress Controller not found; reconciliation will be skipped", "request", request)
 			return reconcile.Result{}, nil
 		}
-		return reconcile.Result{}, fmt.Errorf("failed to get Ingress Controller %q: %v", request, err)
+		return reconcile.Result{}, fmt.Errorf("failed to get Ingress Controller %q: %w", request, err)
 	}
 
 	// If the Ingress Controller is marked to be deleted, then return early. The corresponding RouteMetricsControllerRoutesPerShard metric label
@@ -171,7 +184,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	if err := r.cache.List(ctx, &namespaceList, &client.ListOptions{
 		LabelSelector: labels.SelectorFromSet(namespaceLabelSelector),
 	}); err != nil {
-		return reconcile.Result{}, fmt.Errorf("failed to list Namespaces %q: %v", request, err)
+		return reconcile.Result{}, fmt.Errorf("failed to list Namespaces %q: %w", request, err)
 	}
 	// Create a set of Namespaces to easily look up Namespaces that matches the Routes assigned to the Ingress Controller.
 	namespacesSet := sets.NewString()
@@ -189,7 +202,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	if err := r.cache.List(ctx, &routeList, &client.ListOptions{
 		LabelSelector: labels.SelectorFromSet(routeLabelSelector),
 	}); err != nil {
-		return reconcile.Result{}, fmt.Errorf("failed to list Routes for the Shard %q: %v", request, err)
+		return reconcile.Result{}, fmt.Errorf("failed to list Routes for the Shard %q: %w", request, err)
 	}
 
 	// Variable to store the number of routes admitted by the Shard (Ingress Controller).
