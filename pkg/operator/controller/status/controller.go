@@ -16,6 +16,7 @@ import (
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 	oputil "github.com/openshift/cluster-ingress-operator/pkg/util"
 
 	corev1 "k8s.io/api/core/v1"
@@ -189,6 +190,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		),
 		computeOperatorDegradedCondition(state.IngressControllers),
 		computeOperatorUpgradeableCondition(state.IngressControllers),
+		computeOperatorEvaluationConditionsDetectedCondition(state.IngressControllers),
 	)
 
 	if !operatorStatusesEqual(*oldStatus, co.Status) {
@@ -397,6 +399,44 @@ func computeOperatorUpgradeableCondition(ingresses []operatorv1.IngressControlle
 		Type:    configv1.OperatorUpgradeable,
 		Status:  configv1.ConditionFalse,
 		Reason:  "IngressControllersNotUpgradeable",
+		Message: message,
+	}
+}
+
+// computeOperatorEvaluationConditionsDetectedCondition computes the operator's EvaluationConditionsDetected condition.
+func computeOperatorEvaluationConditionsDetectedCondition(ingresses []operatorv1.IngressController) configv1.ClusterOperatorStatusCondition {
+	ingressesWithEvaluationCondition := make(map[*operatorv1.IngressController]operatorv1.OperatorCondition)
+	for i, ing := range ingresses {
+		for j, cond := range ing.Status.Conditions {
+			if cond.Type == ingress.IngressControllerEvaluationConditionsDetectedConditionType && cond.Status == operatorv1.ConditionTrue {
+				ingressesWithEvaluationCondition[&ingresses[i]] = ing.Status.Conditions[j]
+			}
+		}
+	}
+	if len(ingressesWithEvaluationCondition) == 0 {
+		return configv1.ClusterOperatorStatusCondition{
+			Type:   configv1.EvaluationConditionsDetected,
+			Status: configv1.ConditionFalse,
+			Reason: "AsExpected",
+		}
+	}
+	message := "Some ingresscontrollers have evaluation conditions:"
+	// Sort keys so that the result is deterministic.
+	keys := make([]*operatorv1.IngressController, 0, len(ingressesWithEvaluationCondition))
+	for ingress := range ingressesWithEvaluationCondition {
+		keys = append(keys, ingress)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		return oputil.ObjectLess(&keys[i].ObjectMeta, &keys[j].ObjectMeta)
+	})
+	for _, ingress := range keys {
+		cond := ingressesWithEvaluationCondition[ingress]
+		message = fmt.Sprintf("%s ingresscontroller %q has evaluation condition: %s: %s", message, ingress.Name, cond.Reason, cond.Message)
+	}
+	return configv1.ClusterOperatorStatusCondition{
+		Type:    configv1.EvaluationConditionsDetected,
+		Status:  configv1.ConditionTrue,
+		Reason:  "IngressControllersHaveEvaluationConditions",
 		Message: message,
 	}
 }
