@@ -623,44 +623,6 @@ func TestComputeLoadBalancerProgressingStatus(t *testing.T) {
 			},
 		},
 	}
-	loadBalancerIngressControllerWithAllowedSourceRanges := operatorv1.IngressController{
-		Spec: operatorv1.IngressControllerSpec{
-			EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
-				Type: operatorv1.LoadBalancerServiceStrategyType,
-				LoadBalancer: &operatorv1.LoadBalancerStrategy{
-					Scope:               operatorv1.ExternalLoadBalancer,
-					AllowedSourceRanges: []operatorv1.CIDR{"0.0.0.0/0"},
-				},
-			},
-		},
-		Status: operatorv1.IngressControllerStatus{
-			EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
-				Type: operatorv1.LoadBalancerServiceStrategyType,
-				LoadBalancer: &operatorv1.LoadBalancerStrategy{
-					Scope: operatorv1.ExternalLoadBalancer,
-				},
-			},
-		},
-	}
-	loadBalancerIngressControllerEmptyAllowedSourceRanges := operatorv1.IngressController{
-		Spec: operatorv1.IngressControllerSpec{
-			EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
-				Type: operatorv1.LoadBalancerServiceStrategyType,
-				LoadBalancer: &operatorv1.LoadBalancerStrategy{
-					Scope:               operatorv1.ExternalLoadBalancer,
-					AllowedSourceRanges: nil,
-				},
-			},
-		},
-		Status: operatorv1.IngressControllerStatus{
-			EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
-				Type: operatorv1.LoadBalancerServiceStrategyType,
-				LoadBalancer: &operatorv1.LoadBalancerStrategy{
-					Scope: operatorv1.ExternalLoadBalancer,
-				},
-			},
-		},
-	}
 	loadBalancerIngressControllerWithInternalScope := operatorv1.IngressController{
 		Status: operatorv1.IngressControllerStatus{
 			EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
@@ -701,18 +663,6 @@ func TestComputeLoadBalancerProgressingStatus(t *testing.T) {
 			Annotations: map[string]string{
 				awsInternalLBAnnotation: "true",
 			},
-		},
-	}
-	lbServiceWithSourceRangesAnnotation := &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Annotations: map[string]string{
-				corev1.AnnotationLoadBalancerSourceRangesKey: "127.0.0.0/8",
-			},
-		},
-	}
-	lbServiceWithSourceRangesField := &corev1.Service{
-		Spec: corev1.ServiceSpec{
-			LoadBalancerSourceRanges: []string{"127.0.0.0/8"},
 		},
 	}
 	awsPlatformStatus := &configv1.PlatformStatus{
@@ -783,27 +733,6 @@ func TestComputeLoadBalancerProgressingStatus(t *testing.T) {
 			name:           "LoadBalancerService, external scope",
 			ic:             &loadBalancerIngressControllerWithExternalScope,
 			service:        lbService,
-			platformStatus: awsPlatformStatus,
-			expectStatus:   operatorv1.ConditionFalse,
-		},
-		{
-			name:           "LoadBalancerService, service.beta.kubernetes.io/load-balancer-source-ranges annotation is set",
-			ic:             &loadBalancerIngressControllerEmptyAllowedSourceRanges,
-			service:        lbServiceWithSourceRangesAnnotation,
-			platformStatus: awsPlatformStatus,
-			expectStatus:   operatorv1.ConditionTrue,
-		},
-		{
-			name:           "LoadBalancerService, LoadBalancerSourceRanges is set when AllowedSourceRanges is empty",
-			ic:             &loadBalancerIngressControllerEmptyAllowedSourceRanges,
-			service:        lbServiceWithSourceRangesField,
-			platformStatus: awsPlatformStatus,
-			expectStatus:   operatorv1.ConditionTrue,
-		},
-		{
-			name:           "LoadBalancerService, LoadBalancerSourceRanges and AllowedSourceRanges are set",
-			ic:             &loadBalancerIngressControllerWithAllowedSourceRanges,
-			service:        lbServiceWithSourceRangesField,
 			platformStatus: awsPlatformStatus,
 			expectStatus:   operatorv1.ConditionFalse,
 		},
@@ -2239,20 +2168,6 @@ func TestComputeIngressUpgradeableCondition(t *testing.T) {
 			expect: false,
 		},
 		{
-			description: "if the service.beta.kubernetes.io/load-balancer-source-ranges is set",
-			mutate: func(svc *corev1.Service) {
-				svc.Annotations[corev1.AnnotationLoadBalancerSourceRangesKey] = "127.0.0.0/8"
-			},
-			expect: true,
-		},
-		{
-			description: "if the LoadBalancerSourceRanges is set when AllowedSourceRanges is empty",
-			mutate: func(svc *corev1.Service) {
-				svc.Spec.LoadBalancerSourceRanges = []string{"127.0.0.0/8"}
-			},
-			expect: true,
-		},
-		{
 			description: "if the default certificate has a SAN",
 			secret:      makeDefaultCertificateSecret(wildcardDomain, []string{wildcardDomain}),
 			expect:      true,
@@ -2321,110 +2236,6 @@ func TestComputeIngressUpgradeableCondition(t *testing.T) {
 			if actual.Status != expectedStatus {
 				t.Errorf("%q: expected Upgradeable to be %q, got %q", tc.description, expectedStatus, actual.Status)
 			}
-		})
-	}
-}
-
-func TestComputeIngressEvaluationConditionsDetectedCondition(t *testing.T) {
-	const (
-		ingressDomain = "apps.foo.com"
-	)
-	testCases := []struct {
-		description string
-		mutate      func(*corev1.Service)
-		secret      *corev1.Secret
-		expect      bool
-	}{
-		{
-			description: "if the service.beta.kubernetes.io/load-balancer-source-ranges is set to the empty string",
-			mutate: func(svc *corev1.Service) {
-				svc.Annotations[corev1.AnnotationLoadBalancerSourceRangesKey] = ""
-			},
-			expect: false,
-		},
-		{
-			description: "if the service.beta.kubernetes.io/load-balancer-source-ranges is set",
-			mutate: func(svc *corev1.Service) {
-				svc.Annotations[corev1.AnnotationLoadBalancerSourceRangesKey] = "127.0.0.0/8"
-			},
-			expect: true,
-		},
-		{
-			description: "if the LoadBalancerSourceRanges and AllowedSourceRanges are empty",
-			mutate: func(svc *corev1.Service) {
-				svc.Spec.LoadBalancerSourceRanges = []string{}
-			},
-			expect: false,
-		},
-		{
-			description: "if the LoadBalancerSourceRanges is set when AllowedSourceRanges is empty",
-			mutate: func(svc *corev1.Service) {
-				svc.Spec.LoadBalancerSourceRanges = []string{"127.0.0.0/8"}
-			},
-			expect: true,
-		},
-	}
-	for _, tc := range testCases {
-		t.Run(tc.description, func(t *testing.T) {
-			ic := &operatorv1.IngressController{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "default",
-				},
-				Spec: operatorv1.IngressControllerSpec{
-					EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
-						Type: operatorv1.LoadBalancerServiceStrategyType,
-						LoadBalancer: &operatorv1.LoadBalancerStrategy{
-							AllowedSourceRanges: []operatorv1.CIDR{},
-						},
-					},
-				},
-				Status: operatorv1.IngressControllerStatus{
-					EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
-						Type: operatorv1.LoadBalancerServiceStrategyType,
-					},
-					Domain: ingressDomain,
-				},
-			}
-			trueVar := true
-			deploymentRef := metav1.OwnerReference{
-				APIVersion: "apps/v1",
-				Kind:       "Deployment",
-				Name:       "router-default",
-				UID:        "1",
-				Controller: &trueVar,
-			}
-			platformStatus := &configv1.PlatformStatus{
-				Type: configv1.AWSPlatformType,
-				AWS: &configv1.AWSPlatformStatus{
-					ResourceTags: []configv1.AWSResourceTag{
-						{
-							Key:   "Key1",
-							Value: "Value1",
-						},
-					},
-				},
-			}
-
-			wantSvc, service, err := desiredLoadBalancerService(ic, deploymentRef, platformStatus)
-			if err != nil {
-				t.Fatalf("unexpected error from desiredLoadBalancerService: %v", err)
-			}
-			if !wantSvc {
-				t.Fatal("unexpected false value from desiredLoadBalancerService")
-			}
-			if tc.mutate != nil {
-				tc.mutate(service)
-			}
-			expectedStatus := operatorv1.ConditionFalse
-			if tc.expect {
-				expectedStatus = operatorv1.ConditionTrue
-			}
-
-			actual := computeIngressEvaluationConditionsDetectedCondition(ic, service)
-			if actual.Status != expectedStatus {
-				t.Errorf("expected EvaluationConditionDetected to be %q, got %q", expectedStatus, actual.Status)
-			}
-
 		})
 	}
 }

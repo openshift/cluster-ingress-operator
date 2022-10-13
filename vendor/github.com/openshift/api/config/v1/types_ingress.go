@@ -89,7 +89,7 @@ type IngressSpec struct {
 	// loadBalancer contains the load balancer details in general which are not only specific to the underlying infrastructure
 	// provider of the current cluster and are required for Ingress Controller to work on OpenShift.
 	// +optional
-	LoadBalancer LoadBalancer `json:"loadBalancer,omitempty"`
+	LoadBalancer LoadBalancer `json:"loadbalancer,omitempty"`
 }
 
 // IngressPlatformSpec holds the desired state of Ingress specific to the underlying infrastructure provider

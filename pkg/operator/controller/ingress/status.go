@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
@@ -70,11 +69,6 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	updated.Status.AvailableReplicas = deployment.Status.AvailableReplicas
 	updated.Status.Selector = selector.String()
 	updated.Status.TLSProfile = computeIngressTLSProfile(ic.Status.TLSProfile, deployment)
-
-	if updated.Status.EndpointPublishingStrategy != nil && updated.Status.EndpointPublishingStrategy.LoadBalancer != nil {
-		updated.Status.EndpointPublishingStrategy.LoadBalancer.AllowedSourceRanges = computeAllowedSourceRanges(service)
-	}
-
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentPodsScheduledCondition(deployment, pods))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentAvailableCondition(deployment))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentReplicasMinAvailableCondition(deployment))
@@ -89,7 +83,6 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressProgressingCondition(updated.Status.Conditions))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, degradedCondition)
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressUpgradeableCondition(ic, deploymentRef, service, platformStatus, secret))
-	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressEvaluationConditionsDetectedCondition(ic, service))
 
 	updated.Status.Conditions = PruneConditions(updated.Status.Conditions)
 
@@ -173,32 +166,6 @@ func computeIngressTLSProfile(oldProfile *configv1.TLSProfileSpec, deployment *a
 	newProfile := inferTLSProfileSpecFromDeployment(deployment)
 
 	return newProfile
-}
-
-// computeAllowedSourceRanges computes the effective AllowedSourceRanges value
-// by looking at the LoadBalancerSourceRanges field and service.beta.kubernetes.io/load-balancer-source-ranges
-// annotation of the LoadBalancer-typed Service. The field takes precedence over the annotation.
-func computeAllowedSourceRanges(service *corev1.Service) []operatorv1.CIDR {
-	cidrs := []operatorv1.CIDR{}
-	if len(service.Spec.LoadBalancerSourceRanges) > 0 {
-		for _, r := range service.Spec.LoadBalancerSourceRanges {
-			cidrs = append(cidrs, operatorv1.CIDR(r))
-		}
-		return cidrs
-	}
-
-	if a, ok := service.Annotations[corev1.AnnotationLoadBalancerSourceRangesKey]; ok {
-		a = strings.TrimSpace(a)
-		if len(a) > 0 {
-			sourceRanges := strings.Split(a, ",")
-			for _, r := range sourceRanges {
-				cidrs = append(cidrs, operatorv1.CIDR(r))
-			}
-			return cidrs
-		}
-	}
-
-	return nil
 }
 
 // computeDeploymentPodsScheduledCondition computes the ingress controller's
@@ -671,31 +638,6 @@ func computeIngressUpgradeableCondition(ic *operatorv1.IngressController, deploy
 	}
 }
 
-// computeIngressEvaluationConditionsDetectedCondition computes the IngressController's "EvaluationConditionsDetected" status condition.
-func computeIngressEvaluationConditionsDetectedCondition(ic *operatorv1.IngressController, service *corev1.Service) operatorv1.OperatorCondition {
-	var errs []error
-
-	if service != nil {
-		errs = append(errs, loadBalancerServiceEvaluationConditionsDetected(ic, service))
-	}
-
-	if err := kerrors.NewAggregate(errs); err != nil {
-		return operatorv1.OperatorCondition{
-			Type:    IngressControllerEvaluationConditionsDetectedConditionType,
-			Status:  operatorv1.ConditionTrue,
-			Reason:  "OperandsEvaluationConditionsDetected",
-			Message: fmt.Sprintf("One or more managed resources have evaluation conditions: %s", err),
-		}
-	}
-
-	return operatorv1.OperatorCondition{
-		Type:    IngressControllerEvaluationConditionsDetectedConditionType,
-		Status:  operatorv1.ConditionFalse,
-		Reason:  "NoEvaluationCondition",
-		Message: "No evaluation condition is detected.",
-	}
-}
-
 // checkDefaultCertificate returns an error value indicating whether the default
 // certificate is safe for upgrades.  In particular, if the current default
 // certificate specifies a Subject Alternative Name (SAN) for the ingress
@@ -801,12 +743,6 @@ func IngressStatusesEqual(a, b operatorv1.IngressControllerStatus) bool {
 	}
 	if !reflect.DeepEqual(a.TLSProfile, b.TLSProfile) {
 		return false
-	}
-	if a.EndpointPublishingStrategy != nil && a.EndpointPublishingStrategy.LoadBalancer != nil &&
-		b.EndpointPublishingStrategy != nil && b.EndpointPublishingStrategy.LoadBalancer != nil {
-		if !reflect.DeepEqual(a.EndpointPublishingStrategy.LoadBalancer.AllowedSourceRanges, b.EndpointPublishingStrategy.LoadBalancer.AllowedSourceRanges) {
-			return false
-		}
 	}
 
 	return true
@@ -915,12 +851,22 @@ func computeLoadBalancerProgressingStatus(ic *operatorv1.IngressController, serv
 				Message: "LoadBalancer Service not created.",
 			}
 		default:
-			if err := loadBalancerServiceIsProgressing(ic, service, platform); err != nil {
+			wantScope := ic.Status.EndpointPublishingStrategy.LoadBalancer.Scope
+			haveScope := operatorv1.ExternalLoadBalancer
+			if IsServiceInternal(service) {
+				haveScope = operatorv1.InternalLoadBalancer
+			}
+			if wantScope != haveScope {
+				message := fmt.Sprintf("The IngressController scope was changed from %q to %q.", haveScope, wantScope)
+				switch platform.Type {
+				case configv1.AWSPlatformType, configv1.IBMCloudPlatformType:
+					message = fmt.Sprintf("%[1]s  To effectuate this change, you must delete the service: `oc -n %[2]s delete svc/%[3]s`; the service load-balancer will then be deprovisioned and a new one created.  This will most likely cause the new load-balancer to have a different host name and IP address from the old one's.  Alternatively, you can revert the change to the IngressController: `oc -n openshift-ingress-operator patch ingresscontrollers/%[4]s --type=merge --patch='{\"spec\":{\"endpointPublishingStrategy\":{\"loadBalancer\":{\"scope\":\"%[5]s\"}}}}'", message, service.Namespace, service.Name, ic.Name, haveScope)
+				}
 				return operatorv1.OperatorCondition{
 					Type:    IngressControllerLoadBalancerProgressingConditionType,
 					Status:  operatorv1.ConditionTrue,
-					Reason:  "OperandsProgressing",
-					Message: fmt.Sprintf("One or more managed resources are progressing: %s", err),
+					Reason:  "ScopeChanged",
+					Message: message,
 				}
 			}
 		}

@@ -56,7 +56,6 @@ const (
 	IngressControllerDeploymentRollingOutConditionType           = "DeploymentRollingOut"
 	IngressControllerLoadBalancerProgressingConditionType        = "LoadBalancerProgressing"
 	IngressControllerCanaryCheckSuccessConditionType             = "CanaryChecksSucceeding"
-	IngressControllerEvaluationConditionsDetectedConditionType   = "EvaluationConditionsDetected"
 
 	routerDefaultHeaderBufferSize           = 32768
 	routerDefaultHeaderBufferMaxRewriteSize = 8192

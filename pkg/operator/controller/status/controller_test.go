@@ -6,9 +6,9 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
-	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
-	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
+
+	configv1 "github.com/openshift/api/config/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -582,70 +582,6 @@ func TestComputeOperatorUpgradeableCondition(t *testing.T) {
 		}
 
 		actual := computeOperatorUpgradeableCondition(ingresscontrollers)
-		conditionsCmpOpts := []cmp.Option{
-			cmpopts.IgnoreFields(configv1.ClusterOperatorStatusCondition{}, "LastTransitionTime", "Reason", "Message"),
-		}
-		if !cmp.Equal(actual, expected, conditionsCmpOpts...) {
-			t.Fatalf("%q: expected %#v, got %#v", tc.description, expected, actual)
-		}
-	}
-}
-
-func Test_computeOperatorEvaluationConditionsDetectedCondition(t *testing.T) {
-	testCases := []struct {
-		description                                string
-		ingresscontrollersHaveEvaluationConditions []bool
-		expectEvaluationConditionsDetected         bool
-	}{
-		{
-			description: "no ingresscontrollers exist",
-			ingresscontrollersHaveEvaluationConditions: []bool{},
-			expectEvaluationConditionsDetected:         false,
-		},
-		{
-			description: "all ingresscontrollers have evaluation conditions",
-			ingresscontrollersHaveEvaluationConditions: []bool{true, true},
-			expectEvaluationConditionsDetected:         true,
-		},
-		{
-			description: "some ingresscontrollers have evaluation conditions",
-			ingresscontrollersHaveEvaluationConditions: []bool{false, true},
-			expectEvaluationConditionsDetected:         true,
-		},
-		{
-			description: "no ingresscontrollers have evaluation conditions",
-			ingresscontrollersHaveEvaluationConditions: []bool{false, false},
-			expectEvaluationConditionsDetected:         false,
-		},
-	}
-
-	for _, tc := range testCases {
-		ingresscontrollers := []operatorv1.IngressController{}
-		for _, has := range tc.ingresscontrollersHaveEvaluationConditions {
-			evaluationConditionsDetectedStatus := operatorv1.ConditionFalse
-			if has {
-				evaluationConditionsDetectedStatus = operatorv1.ConditionTrue
-			}
-			ic := operatorv1.IngressController{
-				Status: operatorv1.IngressControllerStatus{
-					Conditions: []operatorv1.OperatorCondition{{
-						Type:   ingress.IngressControllerEvaluationConditionsDetectedConditionType,
-						Status: evaluationConditionsDetectedStatus,
-					}},
-				},
-			}
-			ingresscontrollers = append(ingresscontrollers, ic)
-		}
-
-		expected := configv1.ClusterOperatorStatusCondition{
-			Type:   ingress.IngressControllerEvaluationConditionsDetectedConditionType,
-			Status: configv1.ConditionFalse,
-		}
-		if tc.expectEvaluationConditionsDetected {
-			expected.Status = configv1.ConditionTrue
-		}
-
-		actual := computeOperatorEvaluationConditionsDetectedCondition(ingresscontrollers)
 		conditionsCmpOpts := []cmp.Option{
 			cmpopts.IgnoreFields(configv1.ClusterOperatorStatusCondition{}, "LastTransitionTime", "Reason", "Message"),
 		}

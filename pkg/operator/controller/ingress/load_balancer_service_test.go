@@ -2,7 +2,6 @@ package ingress
 
 import (
 	"fmt"
-	"reflect"
 	"testing"
 	"time"
 
@@ -816,13 +815,6 @@ func TestLoadBalancerServiceChanged(t *testing.T) {
 			expect: false,
 		},
 		{
-			description: "if .spec.loadBalancerSourceRanges changes",
-			mutate: func(svc *corev1.Service) {
-				svc.Spec.LoadBalancerSourceRanges = []string{"10.0.0.0/8"}
-			},
-			expect: true,
-		},
-		{
 			description: "if the service.beta.kubernetes.io/load-balancer-source-ranges annotation changes",
 			mutate: func(svc *corev1.Service) {
 				svc.Annotations["service.beta.kubernetes.io/load-balancer-source-ranges"] = "10.0.0.0/8"
@@ -1070,162 +1062,4 @@ func TestServiceIngressOwner(t *testing.T) {
 		}
 	}
 
-}
-
-func TestUpdateLoadBalancerServiceSourceRanges(t *testing.T) {
-	// Test all cases in the table presented in <https://github.com/openshift/enhancements/pull/1177>.
-	testCases := []struct {
-		name                             string
-		allowedSourceRanges              []operatorv1.CIDR
-		currentAnnotation                string
-		currentLoadBalancerSourceRanges  []string
-		expectedLoadBalancerSourceRanges []string
-		expectAnnotationToBeCleared      bool
-		expectChanged                    bool
-	}{
-		{
-			name:                             "only loadBalancerSourceRanges is set",
-			currentLoadBalancerSourceRanges:  []string{"foo"},
-			expectedLoadBalancerSourceRanges: []string{"foo"},
-			expectChanged:                    false,
-		},
-		{
-			name:                             "loadBalancerSourceRanges is different from allowedSourceRanges and annotation is not set",
-			allowedSourceRanges:              []operatorv1.CIDR{"bar"},
-			currentLoadBalancerSourceRanges:  []string{"foo"},
-			expectedLoadBalancerSourceRanges: []string{"bar"},
-			expectChanged:                    true,
-		},
-		{
-			name:                             "only allowedSourceRanges is set",
-			allowedSourceRanges:              []operatorv1.CIDR{"bar"},
-			expectedLoadBalancerSourceRanges: []string{"bar"},
-			expectChanged:                    true,
-		},
-		{
-			name:                             "annotation and loadBalancerSourceRanges are set and allowedSourceRanges is not set",
-			currentAnnotation:                "cow",
-			currentLoadBalancerSourceRanges:  []string{"foo"},
-			expectedLoadBalancerSourceRanges: []string{"foo"},
-			expectAnnotationToBeCleared:      false,
-			expectChanged:                    false,
-		},
-		{
-			name:                             "annotation, loadBalancerSourceRanges, and allowedSourceRanges are set",
-			allowedSourceRanges:              []operatorv1.CIDR{"bar"},
-			currentAnnotation:                "cow",
-			currentLoadBalancerSourceRanges:  []string{"foo"},
-			expectedLoadBalancerSourceRanges: []string{"bar"},
-			expectAnnotationToBeCleared:      true,
-			expectChanged:                    true,
-		},
-		{
-			name:                             "annotation and loadBalancerSourceRanges are set and identical, allowedSourceRanges is not set",
-			currentAnnotation:                "foo",
-			currentLoadBalancerSourceRanges:  []string{"foo"},
-			expectedLoadBalancerSourceRanges: []string{"foo"},
-			expectAnnotationToBeCleared:      false,
-			expectChanged:                    false,
-		},
-		{
-			name:                             "annotation and loadBalancerSourceRanges are set and identical, allowedSourceRanges is also set",
-			allowedSourceRanges:              []operatorv1.CIDR{"bar"},
-			currentAnnotation:                "foo",
-			currentLoadBalancerSourceRanges:  []string{"foo"},
-			expectedLoadBalancerSourceRanges: []string{"bar"},
-			expectAnnotationToBeCleared:      true,
-			expectChanged:                    true,
-		},
-		{
-			name:                        "only annotation is set",
-			currentAnnotation:           "foo",
-			expectAnnotationToBeCleared: false,
-			expectChanged:               false,
-		},
-		{
-			name:                             "annotation and allowedSourceRanges are set, loadBalancerSourceRanges is also set",
-			allowedSourceRanges:              []operatorv1.CIDR{"bar"},
-			currentAnnotation:                "foo",
-			expectedLoadBalancerSourceRanges: []string{"bar"},
-			expectAnnotationToBeCleared:      true,
-			expectChanged:                    true,
-		},
-		{
-			name:                             "allowedSourceRanges and loadBalancerSourceRanges are set and identical, annotation is also set",
-			allowedSourceRanges:              []operatorv1.CIDR{"foo"},
-			currentAnnotation:                "cow",
-			currentLoadBalancerSourceRanges:  []string{"foo"},
-			expectedLoadBalancerSourceRanges: []string{"foo"},
-			expectAnnotationToBeCleared:      true,
-			expectChanged:                    true,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			ic := &operatorv1.IngressController{
-				ObjectMeta: metav1.ObjectMeta{Name: "default"},
-				Spec: operatorv1.IngressControllerSpec{
-					EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
-						LoadBalancer: &operatorv1.LoadBalancerStrategy{
-							AllowedSourceRanges: tc.allowedSourceRanges,
-						},
-					},
-				},
-				Status: operatorv1.IngressControllerStatus{
-					EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
-						Type:         operatorv1.LoadBalancerServiceStrategyType,
-						LoadBalancer: &operatorv1.LoadBalancerStrategy{},
-					},
-				},
-			}
-			trueVar := true
-			deploymentRef := metav1.OwnerReference{
-				APIVersion: "apps/v1",
-				Kind:       "Deployment",
-				Name:       "router-default",
-				UID:        "1",
-				Controller: &trueVar,
-			}
-			infraConfig := &configv1.Infrastructure{
-				Status: configv1.InfrastructureStatus{
-					PlatformStatus: &configv1.PlatformStatus{
-						Type: configv1.AWSPlatformType,
-					},
-				},
-			}
-			wantSvc, desired, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig.Status.PlatformStatus)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !wantSvc {
-				t.Fatal("desiredLoadBalancerService didn't return a service")
-			}
-
-			current := desired.DeepCopy()
-			if len(tc.currentAnnotation) > 0 {
-				current.Annotations[corev1.AnnotationLoadBalancerSourceRangesKey] = tc.currentAnnotation
-			}
-			current.Spec.LoadBalancerSourceRanges = tc.currentLoadBalancerSourceRanges
-
-			changed, svc := loadBalancerServiceChanged(current, desired)
-			if changed != tc.expectChanged {
-				t.Errorf("expected changed to be %t, got %t", tc.expectChanged, changed)
-			}
-
-			if changed {
-				if actual := svc.Spec.LoadBalancerSourceRanges; !reflect.DeepEqual(actual, tc.expectedLoadBalancerSourceRanges) {
-					t.Errorf("expected LoadBalancerSourceRanges %v, got %v", tc.expectedLoadBalancerSourceRanges, actual)
-				}
-
-				if len(tc.currentAnnotation) > 0 {
-					if a, exists := svc.Annotations[corev1.AnnotationLoadBalancerSourceRangesKey]; (!exists || len(a) == 0) && !tc.expectAnnotationToBeCleared {
-						t.Error("expected service.beta.kubernetes.io/load-balancer-source-ranges annotation not to be cleared")
-					} else if exists && len(a) > 0 && tc.expectAnnotationToBeCleared {
-						t.Error("expected service.beta.kubernetes.io/load-balancer-source-ranges annotation to be cleared")
-					}
-				}
-			}
-		})
-	}
 }
