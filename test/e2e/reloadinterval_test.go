@@ -73,9 +73,9 @@ func TestReloadInterval(t *testing.T) {
 
 		// set ReloadInterval to a value outside allowed bounds
 		// expect no error
-		{"set reloadInterval 200ns", metav1.Duration{Duration: 200 * time.Nanosecond}, "5s", true},
-		{"set reloadInterval 5us", metav1.Duration{Duration: 5 * time.Microsecond}, "5s", true},
-		{"set reloadInterval 500ms", metav1.Duration{Duration: 500 * time.Millisecond}, "5s", true},
+		{"set reloadInterval 200ns", metav1.Duration{Duration: 200 * time.Nanosecond}, "1s", true},
+		{"set reloadInterval 5us", metav1.Duration{Duration: 5 * time.Microsecond}, "1s", true},
+		{"set reloadInterval 500ms", metav1.Duration{Duration: 500 * time.Millisecond}, "1s", true},
 		{"set reloadInterval 130s", metav1.Duration{Duration: 130 * time.Second}, "2m", true},
 		{"set reloadInterval 2h", metav1.Duration{Duration: 2 * time.Hour}, "2m", true},
 	} {
@@ -99,9 +99,31 @@ func TestReloadInterval(t *testing.T) {
 			}
 		}
 
-		if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
-			t.Fatalf("failed to observe expected conditions: %v", err)
+		// Delete the deployment to trigger a new router deployment to ensure we are looking at reconciled values
+		oldUID := deployment.UID
+		if err := kclient.Delete(context.TODO(), deployment); err != nil {
+			t.Fatalf("failed to delete router deployment: %v", err)
 		}
+
+		// Ensure the deployment has been recreated.
+		err := wait.PollImmediate(1*time.Second, 2*time.Minute, func() (bool, error) {
+			deployment := &appsv1.Deployment{}
+			if err := kclient.Get(context.TODO(), controller.RouterDeploymentName(ic), deployment); err != nil {
+				t.Logf("Get %q failed: %v, retrying ...", controller.RouterDeploymentName(ic), err)
+				return false, nil
+			}
+			// Ensure the UID of the router deployment changed.
+			if deployment.UID == oldUID {
+				t.Logf("Waiting for deployment %q to be deleted", controller.RouterDeploymentName(ic))
+				return false, nil
+			}
+			return true, nil
+		})
+
+		if err != nil {
+			t.Fatalf("failed to delete and recreate the %q deployment", controller.RouterDeploymentName(ic))
+		}
+
 		if err := waitForDeploymentEnvVar(t, kclient, deployment, 1*time.Minute, ingresscontroller.RouterReloadIntervalEnvName, testCase.expectedEnvVar); err != nil {
 			t.Fatalf("router deployment not updated with %s=%v: %v", ingresscontroller.RouterReloadIntervalEnvName, testCase.expectedEnvVar, err)
 		}
