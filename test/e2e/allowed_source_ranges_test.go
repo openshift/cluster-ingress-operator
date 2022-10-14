@@ -124,9 +124,10 @@ func TestAllowedSourceRanges(t *testing.T) {
 // in IngressController's status. Then, it sets  LoadBalancerSourceRanges
 // and verifies that it is reflected in AllowedSourceRanges instead of
 // the annotation as the field takes precedence over the annotation.
+//
+// This test is serialized because it has been observed to conflict with
+// TestScopeChange.
 func TestAllowedSourceRangesStatus(t *testing.T) {
-	t.Parallel()
-
 	if infraConfig.Status.PlatformStatus == nil {
 		t.Skip("test skipped on nil platform")
 	}
