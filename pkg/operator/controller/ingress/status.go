@@ -179,6 +179,9 @@ func computeIngressTLSProfile(oldProfile *configv1.TLSProfileSpec, deployment *a
 // by looking at the LoadBalancerSourceRanges field and service.beta.kubernetes.io/load-balancer-source-ranges
 // annotation of the LoadBalancer-typed Service. The field takes precedence over the annotation.
 func computeAllowedSourceRanges(service *corev1.Service) []operatorv1.CIDR {
+	if service == nil {
+		return nil
+	}
 	cidrs := []operatorv1.CIDR{}
 	if len(service.Spec.LoadBalancerSourceRanges) > 0 {
 		for _, r := range service.Spec.LoadBalancerSourceRanges {

@@ -8,6 +8,7 @@ import (
 	"encoding/pem"
 	"k8s.io/utils/pointer"
 	"math/big"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -2426,5 +2427,78 @@ func TestComputeIngressEvaluationConditionsDetectedCondition(t *testing.T) {
 			}
 
 		})
+	}
+}
+
+func Test_computeAllowedSourceRanges(t *testing.T) {
+	tests := []struct {
+		name    string
+		service *corev1.Service
+		expect  []operatorv1.CIDR
+	}{
+		{
+			name:    "service is nil",
+			service: nil,
+			expect:  nil,
+		},
+		{
+			name: "service doesn't have spec.LoadBalancerSourceRanges",
+			service: &corev1.Service{
+				Spec: corev1.ServiceSpec{},
+			},
+			expect: nil,
+		},
+		{
+			name: "service has spec.LoadBalancerSourceRanges",
+			service: &corev1.Service{
+				Spec: corev1.ServiceSpec{
+					LoadBalancerSourceRanges: []string{"10.0.0.0/8", "192.128.0.0/16"},
+				},
+			},
+			expect: []operatorv1.CIDR{"10.0.0.0/8", "192.128.0.0/16"},
+		},
+		{
+			name: "service has service.beta.kubernetes.io/load-balancer-source-ranges",
+			service: &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						"service.beta.kubernetes.io/load-balancer-source-ranges": "10.0.0.0/8,192.128.0.0/16",
+					},
+				},
+				Spec: corev1.ServiceSpec{},
+			},
+			expect: []operatorv1.CIDR{"10.0.0.0/8", "192.128.0.0/16"},
+		},
+		{
+			name: "service has service.beta.kubernetes.io/load-balancer-source-ranges, but it's empty",
+			service: &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						"service.beta.kubernetes.io/load-balancer-source-ranges": "",
+					},
+				},
+			},
+			expect: nil,
+		},
+		{
+			name: "service has service.beta.kubernetes.io/load-balancer-source-ranges and spec.LoadBalancerSourceRanges",
+			service: &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						"service.beta.kubernetes.io/load-balancer-source-ranges": "10.0.0.0/8,192.128.0.0/16",
+					},
+				},
+				Spec: corev1.ServiceSpec{
+					LoadBalancerSourceRanges: []string{"172.0.0.0/8", "210.128.0.0/16"},
+				},
+			},
+			expect: []operatorv1.CIDR{"172.0.0.0/8", "210.128.0.0/16"},
+		},
+	}
+	for _, test := range tests {
+		actual := computeAllowedSourceRanges(test.service)
+		if !reflect.DeepEqual(actual, test.expect) {
+			t.Errorf("%q: expected %v, got %v", test.name, test.expect, actual)
+		}
 	}
 }
