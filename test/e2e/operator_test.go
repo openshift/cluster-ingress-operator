@@ -3342,10 +3342,13 @@ func waitForDeploymentEnvVar(t *testing.T, cl client.Client, deployment *appsv1.
 			t.Logf("error getting deployment %s/%s: %v", deploymentName.Namespace, deploymentName.Name, err)
 			return false, nil
 		}
+		t.Logf("Deployment Generation: %d", deployment.ObjectMeta.Generation)
 		for _, container := range deployment.Spec.Template.Spec.Containers {
 			if container.Name == "router" {
+				t.Logf("Found the router container")
 				for _, v := range container.Env {
 					if v.Name == name {
+						t.Logf("Found the env variable %s with value %s and our desired value is %s", v.Name, v.Value, value)
 						return v.Value == value, nil
 					}
 				}
