@@ -236,7 +236,13 @@ func (o *Operator) Start(ctx context.Context) error {
 				log.Error(nil, "failed to sync cache before ensuring default ingresscontroller")
 				return
 			}
-			err := o.ensureDefaultIngressController(infraConfig)
+			ingressConfigName := operatorcontroller.IngressClusterConfigName()
+			ingressConfig := &configv1.Ingress{}
+			if err := o.client.Get(context.TODO(), ingressConfigName, ingressConfig); err != nil {
+				log.Error(err, "failed to fetch ingress config")
+				return
+			}
+			err := o.ensureDefaultIngressController(infraConfig, ingressConfig)
 			if err != nil {
 				log.Error(err, "failed to ensure default ingresscontroller")
 			}
@@ -260,15 +266,6 @@ func (o *Operator) Start(ctx context.Context) error {
 	case err := <-errChan:
 		return err
 	}
-}
-
-func (o *Operator) determineReplicasForDefaultIngressController(infraConfig *configv1.Infrastructure) (int32, error) {
-	ingressConfig := &configv1.Ingress{}
-	if err := o.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, ingressConfig); err != nil {
-		return 0, fmt.Errorf("failed fetching ingress config: %w", err)
-	}
-
-	return ingress.DetermineReplicas(ingressConfig, infraConfig), nil
 }
 
 // handleSingleNode4Dot11Upgrade sets the defaultPlacement status in the
@@ -343,7 +340,7 @@ func (o *Operator) handleSingleNode4Dot11Upgrade() error {
 
 // ensureDefaultIngressController creates the default ingresscontroller if it
 // doesn't already exist.
-func (o *Operator) ensureDefaultIngressController(infraConfig *configv1.Infrastructure) error {
+func (o *Operator) ensureDefaultIngressController(infraConfig *configv1.Infrastructure, ingressConfig *configv1.Ingress) error {
 	name := types.NamespacedName{Namespace: o.namespace, Name: manifests.DefaultIngressControllerName}
 	ic := &operatorv1.IngressController{}
 	if err := o.client.Get(context.TODO(), name, ic); err == nil {
@@ -356,10 +353,7 @@ func (o *Operator) ensureDefaultIngressController(infraConfig *configv1.Infrastr
 	// persisted value will be nil, which causes GETs on the /scale
 	// subresource to fail, which breaks the scaling client.  See also:
 	// https://github.com/kubernetes/kubernetes/pull/75210
-	replicas, err := o.determineReplicasForDefaultIngressController(infraConfig)
-	if err != nil {
-		return fmt.Errorf("failed to determine number of replicas for default ingress controller: %w", err)
-	}
+	replicas := ingress.DetermineReplicas(ingressConfig, infraConfig)
 
 	ic = &operatorv1.IngressController{
 		ObjectMeta: metav1.ObjectMeta{
@@ -370,6 +364,23 @@ func (o *Operator) ensureDefaultIngressController(infraConfig *configv1.Infrastr
 			Replicas: &replicas,
 		},
 	}
+	if ingressConfig.Spec.LoadBalancer.Platform.Type == configv1.AWSPlatformType {
+		if ingressConfig.Spec.LoadBalancer.Platform.AWS != nil && ingressConfig.Spec.LoadBalancer.Platform.AWS.Type == configv1.NLB {
+			ic.Spec.EndpointPublishingStrategy = &operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.LoadBalancerServiceStrategyType,
+				LoadBalancer: &operatorv1.LoadBalancerStrategy{
+					Scope: "External",
+					ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+						Type: operatorv1.AWSLoadBalancerProvider,
+						AWS: &operatorv1.AWSLoadBalancerParameters{
+							Type: operatorv1.AWSNetworkLoadBalancer,
+						},
+					},
+				},
+			}
+		}
+	}
+
 	if err := o.client.Create(context.TODO(), ic); err != nil {
 		return err
 	}

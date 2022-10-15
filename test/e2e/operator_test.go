@@ -1186,6 +1186,103 @@ func TestAWSLBTypeChange(t *testing.T) {
 	}
 }
 
+// TestAWSLBTypeDefaulting verifies that the ingress operator correctly sets a
+// default load balancer type on AWS when the cluster ingress config specifies
+// one.
+//
+// This test is a serial test because it modifies the cluster ingress config and
+// therefore cannot run in parallel with other tests.
+func TestAWSLBTypeDefaulting(t *testing.T) {
+	if infraConfig.Status.Platform != configv1.AWSPlatformType {
+		t.Skipf("test skipped on platform %q", infraConfig.Status.Platform)
+	}
+
+	clbName := types.NamespacedName{Namespace: operatorNamespace, Name: "aws-lb-type-defaulting-to-clb"}
+	clbIC := newLoadBalancerController(clbName, clbName.Name+"."+dnsConfig.Spec.BaseDomain)
+	t.Logf("creating ingresscontroller %s with default LB type, which is Classic", clbName)
+	if err := kclient.Create(context.TODO(), clbIC); err != nil {
+		t.Fatalf("failed to create ingresscontroller %s: %v", clbName, err)
+	}
+	defer assertIngressControllerDeleted(t, kclient, clbIC)
+
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, clbName, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	t.Logf("verifying that ingresscontroller %s's LoadBalancer service doesn't specify NLB", clbName)
+	assertServiceAnnotation(t, controller.LoadBalancerServiceName(clbIC), ingresscontroller.AWSLBTypeAnnotation, "", false)
+
+	t.Log("changing the default LB type to NLB")
+	if err := updateIngressConfigSpecWithRetryOnConflict(t, clusterConfigName, timeout, func(spec *configv1.IngressSpec) {
+		spec.LoadBalancer.Platform.Type = configv1.AWSPlatformType
+		spec.LoadBalancer.Platform.AWS = &configv1.AWSIngressSpec{
+			Type: configv1.NLB,
+		}
+	}); err != nil {
+		t.Fatalf("failed to update ingress config: %v", err)
+	}
+	defer func() {
+		t.Log("resetting the default LB type to Classic")
+		if err := updateIngressConfigSpecWithRetryOnConflict(t, clusterConfigName, timeout, func(spec *configv1.IngressSpec) {
+			spec.LoadBalancer.Platform.AWS.Type = configv1.Classic
+		}); err != nil {
+			t.Errorf("failed to restore ingress config: %v", err)
+		}
+	}()
+
+	t.Logf("updating ingresscontroller %s to trigger re-admission", clbName)
+	if err := kclient.Get(context.TODO(), clbName, clbIC); err != nil {
+		t.Fatalf("failed to get ingresscontroller: %v", err)
+	}
+	clbIC.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
+		Raw: []byte(`{"foo":"bar"}`),
+	}
+	// This unsupported config override does not cause any changes to the
+	// operands but does force the reconciler to re-admit the
+	// ingresscontroller.  The purpose of this update is to verify that
+	// re-admission does not cause the operator to update the existing
+	// ingresscontroller with the new default LB type.
+	if err := kclient.Update(context.TODO(), clbIC); err != nil {
+		t.Fatalf("failed to update ingresscontroller %s: %v", clbName, err)
+	}
+
+	nlbName := types.NamespacedName{Namespace: operatorNamespace, Name: "aws-lb-type-defaulting-to-nlb"}
+	nlbIC := newLoadBalancerController(nlbName, nlbName.Name+"."+dnsConfig.Spec.BaseDomain)
+	t.Logf("creating ingresscontroller %s with default LB type, which is now NLB", nlbName)
+	if err := kclient.Create(context.TODO(), nlbIC); err != nil {
+		t.Fatalf("failed to create ingresscontroller %s: %v", nlbName, err)
+	}
+	defer assertIngressControllerDeleted(t, kclient, nlbIC)
+
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, nlbName, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	t.Logf("verifying that ingresscontroller %s's LoadBalancer service specifies NLB", nlbName)
+	assertServiceAnnotation(t, controller.LoadBalancerServiceName(nlbIC), ingresscontroller.AWSLBTypeAnnotation, ingresscontroller.AWSNLBAnnotation, true)
+
+	t.Logf("verifying that ingresscontroller %s's LoadBalancer service still doesn't specify NLB", clbName)
+	// This is step is to verify that updating the cluster ingress config
+	// doesn't impact ingresscontrollers that have previously taken the
+	// default setting.
+	assertServiceAnnotation(t, controller.LoadBalancerServiceName(clbIC), ingresscontroller.AWSLBTypeAnnotation, "", false)
+
+	t.Log("resetting the default LB type to Classic")
+	if err := updateIngressConfigSpecWithRetryOnConflict(t, clusterConfigName, timeout, func(spec *configv1.IngressSpec) {
+		spec.LoadBalancer.Platform.Type = configv1.AWSPlatformType
+		spec.LoadBalancer.Platform.AWS = &configv1.AWSIngressSpec{
+			Type: configv1.NLB,
+		}
+	}); err != nil {
+		t.Fatalf("failed to update ingress config: %v", err)
+	}
+
+	t.Logf("verifying that ingresscontroller %s's LoadBalancer service still specifies NLB", nlbName)
+	assertServiceAnnotation(t, controller.LoadBalancerServiceName(clbIC), ingresscontroller.AWSLBTypeAnnotation, "", false)
+	t.Logf("verifying that ingresscontroller %s's LoadBalancer service still doesn't specify NLB", clbName)
+	assertServiceAnnotation(t, controller.LoadBalancerServiceName(nlbIC), ingresscontroller.AWSLBTypeAnnotation, ingresscontroller.AWSNLBAnnotation, true)
+}
+
 // TestScopeChange creates an ingresscontroller with the "LoadBalancerService"
 // endpoint publishing strategy type and verifies that the operator behaves
 // correctly when the ingresscontroller's scope is mutated.  The correct
@@ -3488,6 +3585,27 @@ func deleteIngressController(t *testing.T, cl client.Client, ic *operatorv1.Ingr
 		return fmt.Errorf("timed out waiting for ingresscontroller to be deleted: %v", err)
 	}
 	return nil
+}
+
+// assertServiceAnnotation asserts that the given service has the specified
+// annotation set (or not) as specified by the expectedValue and expected
+// arguments.
+func assertServiceAnnotation(t *testing.T, serviceName types.NamespacedName, annotationKey, expectedValue string, expected bool) {
+	t.Helper()
+
+	service := &corev1.Service{}
+	if err := kclient.Get(context.TODO(), serviceName, service); err != nil {
+		t.Fatalf("expected service %s to be present: %v", serviceName, err)
+	}
+	actualValue, ok := service.Annotations[annotationKey]
+	switch {
+	case !expected && ok:
+		t.Errorf("service %s has unexpected %s=%s annotation", serviceName, annotationKey, actualValue)
+	case expected && !ok:
+		t.Errorf("service %s is missing expected %s=%s annotation: %v", serviceName, annotationKey, expectedValue, service.Annotations)
+	case expected && expectedValue != actualValue:
+		t.Errorf("expected service %[1]s to have annotation %[2]s=%[3]s, found %[2]s=%[4]s", serviceName, annotationKey, expectedValue, actualValue)
+	}
 }
 
 // assertServiceNotDeleted asserts that a provide service wasn't deleted.
