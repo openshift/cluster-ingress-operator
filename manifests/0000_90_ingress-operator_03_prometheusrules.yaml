@@ -53,3 +53,14 @@ spec:
           message: |
             The {{ $labels.namespace }}/{{ $labels.name }} ingresscontroller is
             unavailable: {{ $labels.reason }}.
+      # Recording rules related to route metrics for sending via telemetry
+      - expr: min(route_metrics_controller_routes_per_shard)
+        record: cluster:route_metrics_controller_routes_per_shard:min
+      - expr: max(route_metrics_controller_routes_per_shard)
+        record: cluster:route_metrics_controller_routes_per_shard:max
+      - expr: avg(route_metrics_controller_routes_per_shard)
+        record: cluster:route_metrics_controller_routes_per_shard:avg
+      - expr: quantile(0.5, route_metrics_controller_routes_per_shard)
+        record: cluster:route_metrics_controller_routes_per_shard:median
+      - expr: sum (openshift_route_info) by (tls_termination)
+        record: cluster:openshift_route_info:tls_termination:sum

@@ -7,6 +7,7 @@ import (
 
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 
+	routemetricscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/route-metrics"
 	errorpageconfigmapcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/sync-http-error-code-configmap"
 	"github.com/openshift/library-go/pkg/operator/onepodpernodeccontroller"
 	corev1 "k8s.io/api/core/v1"
@@ -206,6 +207,11 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		}); err != nil {
 			return nil, fmt.Errorf("failed to create canary controller: %v", err)
 		}
+	}
+
+	// Set up the route metrics controller.
+	if _, err := routemetricscontroller.New(mgr, config.Namespace); err != nil {
+		return nil, fmt.Errorf("failed to create route metrics controller: %w", err)
 	}
 
 	return &Operator{

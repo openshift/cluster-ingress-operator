@@ -13,6 +13,7 @@ import (
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	routemetrics "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/route-metrics"
 	retryable "github.com/openshift/cluster-ingress-operator/pkg/util/retryableerror"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/slice"
 
@@ -936,6 +937,9 @@ func (r *reconciler) ensureIngressDeleted(ingress *operatorv1.IngressController)
 	// Delete the metrics related to the ingresscontroller
 	DeleteIngressControllerConditionsMetric(ingress)
 	DeleteActiveNLBMetrics(ingress)
+
+	// Delete the RoutesPerShard metric label corresponding to the Ingress Controller.
+	routemetrics.DeleteRouteMetricsControllerRoutesPerShardMetric(ingress.Name)
 
 	if len(errs) == 0 {
 		// Remove the ingresscontroller finalizer.
