@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"testing"
@@ -83,6 +84,7 @@ func waitForHTTPClientCondition(t *testing.T, httpClient *http.Client, req *http
 	return wait.PollImmediate(interval, timeout, func() (done bool, err error) {
 		resp, err := httpClient.Do(req)
 		if err == nil {
+			defer resp.Body.Close()
 			return compareFunc(resp), nil
 		} else {
 			t.Logf("retrying client call due to: %+v", err)
@@ -127,6 +129,7 @@ func buildCurlPod(name, namespace, image, host, address string, extraArgs ...str
 			Namespace: namespace,
 		},
 		Spec: corev1.PodSpec{
+			TerminationGracePeriodSeconds: pointer.Int64(0),
 			Containers: []corev1.Container{
 				{
 					Name:    "curl",
@@ -472,17 +475,31 @@ func verifyExternalIngressController(t *testing.T, name types.NamespacedName, ho
 		}
 	}()
 
+	// If we have a DNS as an external IP address, make sure we can resolve it before moving on.
+	// This just limits the number of "could not resolve host" errors which can be confusing.
+	if net.ParseIP(address) == nil {
+		if err := wait.PollImmediate(10*time.Second, 5*time.Minute, func() (bool, error) {
+			_, err := net.LookupIP(address)
+			if err != nil {
+				t.Logf("waiting for loadbalancer domain %s to resolve...", address)
+				return false, nil
+			}
+			return true, nil
+		}); err != nil {
+			t.Fatalf("loadbalancer domain %s was unable to resolve:", address)
+		}
+	}
+
 	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("http://%s", address), nil)
 	if err != nil {
 		t.Fatalf("failed to build client request: %v", err)
 	}
-
 	// we use HOST header to map to the domain associated on the ingresscontroller.
 	// This ensures our http call is routed to the correct router.
 	req.Host = hostname
 
 	httpClient := http.Client{Timeout: 5 * time.Second}
-	err = waitForHTTPClientCondition(t, &httpClient, req, 10*time.Second, 5*time.Minute, func(r *http.Response) bool {
+	err = waitForHTTPClientCondition(t, &httpClient, req, 10*time.Second, 10*time.Minute, func(r *http.Response) bool {
 		if r.StatusCode == http.StatusOK {
 			t.Logf("verified connectivity with workload with req %v and response %v", req.URL, r.StatusCode)
 			return true
@@ -545,20 +562,32 @@ func verifyInternalIngressController(t *testing.T, name types.NamespacedName, ho
 		"--retry-delay", "20",
 		"--max-time", "10",
 	}
-	clientPod := buildCurlPod("curl-"+name.Name, echoRoute.Namespace, image, address, echoRoute.Spec.Host, extraArgs...)
+	clientPodName := types.NamespacedName{Namespace: name.Namespace, Name: "curl-" + name.Name}
+	clientPodSpec := buildCurlPod(clientPodName.Name, clientPodName.Namespace, image, address, echoRoute.Spec.Host, extraArgs...)
+	clientPod := clientPodSpec.DeepCopy()
 	if err := kclient.Create(context.TODO(), clientPod); err != nil {
-		t.Fatalf("failed to create pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
+		t.Fatalf("failed to create pod %q: %v", clientPodName, err)
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), clientPod); err != nil {
 			if errors.IsNotFound(err) {
 				return
 			}
-			t.Fatalf("failed to delete pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
+			t.Fatalf("failed to delete pod %q: %v", clientPodName, err)
 		}
 	}()
 
-	err = wait.PollImmediate(10*time.Second, 5*time.Minute, func() (bool, error) {
+	var curlPodLogs string
+	err = wait.PollImmediate(10*time.Second, 10*time.Minute, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), clientPodName, clientPod); err != nil {
+			t.Logf("error getting client pod %q: %v, retrying...", clientPodName, err)
+			return false, nil
+		}
+		// First check if client curl pod is still starting or not running.
+		if clientPod.Status.Phase == corev1.PodPending {
+			t.Logf("waiting for client pod %q to start", clientPodName)
+			return false, nil
+		}
 		readCloser, err := client.CoreV1().Pods(clientPod.Namespace).GetLogs(clientPod.Name, &corev1.PodLogOptions{
 			Container: "curl",
 			Follow:    false,
@@ -573,16 +602,39 @@ func verifyInternalIngressController(t *testing.T, name types.NamespacedName, ho
 				t.Errorf("failed to close reader for pod %s: %v", clientPod.Name, err)
 			}
 		}()
+		curlPodLogs = ""
 		for scanner.Scan() {
 			line := scanner.Text()
+			curlPodLogs += line + "\n"
 			if strings.Contains(line, "HTTP/1.0 200 OK") {
 				t.Logf("verified connectivity with workload with address: %s with response %s", address, line)
 				return true, nil
 			}
 		}
+		// If failed or succeeded, the pod is stopped, but didn't provide us 200 response, let's try again.
+		if clientPod.Status.Phase == corev1.PodFailed || clientPod.Status.Phase == corev1.PodSucceeded {
+			t.Logf("client pod %q has stopped...restarting. Curl Pod Logs:\n%s", clientPodName, curlPodLogs)
+			if err := kclient.Delete(context.TODO(), clientPod); err != nil && errors.IsNotFound(err) {
+				t.Fatalf("failed to delete pod %q: %v", clientPodName, err)
+			}
+			// Wait for deletion to prevent a race condition. Use PollInfinite since we are already in a Poll.
+			wait.PollInfinite(5*time.Second, func() (bool, error) {
+				err = kclient.Get(context.TODO(), clientPodName, clientPod)
+				if !errors.IsNotFound(err) {
+					t.Logf("waiting for %q: to be deleted", clientPodName)
+					return false, nil
+				}
+				return true, nil
+			})
+			clientPod = clientPodSpec.DeepCopy()
+			if err := kclient.Create(context.TODO(), clientPod); err != nil {
+				t.Fatalf("failed to create pod %q: %v", clientPodName, err)
+			}
+			return false, nil
+		}
 		return false, nil
 	})
 	if err != nil {
-		t.Fatalf("failed to verify connectivity with workload with address: %s using internal curl client: %v", address, err)
+		t.Fatalf("failed to verify connectivity with workload with address: %s using internal curl client. Curl Pod Logs:\n%s", address, curlPodLogs)
 	}
 }
