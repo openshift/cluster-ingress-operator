@@ -5,17 +5,23 @@ package e2e
 
 import (
 	"context"
+	"fmt"
+	"reflect"
 	"testing"
 	"time"
 
+	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	iov1 "github.com/openshift/api/operatoringress/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
+
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
 )
 
 // TODO: Remove this once this condition is added to all e2e test
@@ -186,6 +192,23 @@ func TestManagedDNSToUnmanagedDNSIngressController(t *testing.T) {
 func TestUnmanagedDNSToManagedDNSInternalIngressController(t *testing.T) {
 	t.Parallel()
 
+	if infraConfig.Status.PlatformStatus == nil {
+		t.Skip("test skipped on nil platform")
+	}
+	platform := infraConfig.Status.PlatformStatus.Type
+
+	supportedPlatforms := map[configv1.PlatformType]struct{}{
+		configv1.AlibabaCloudPlatformType: {},
+		configv1.AWSPlatformType:          {},
+		configv1.AzurePlatformType:        {},
+		configv1.GCPPlatformType:          {},
+		configv1.IBMCloudPlatformType:     {},
+		configv1.PowerVSPlatformType:      {},
+	}
+	if _, supported := supportedPlatforms[platform]; !supported {
+		t.Skipf("test skipped on platform %q", platform)
+	}
+
 	name := types.NamespacedName{Namespace: operatorNamespace, Name: "unmanaged-migrated-internal"}
 	ic := newLoadBalancerController(name, name.Name+"."+dnsConfig.Spec.BaseDomain)
 	ic.Spec.EndpointPublishingStrategy.LoadBalancer = &operatorv1.LoadBalancerStrategy{
@@ -240,8 +263,35 @@ func TestUnmanagedDNSToManagedDNSInternalIngressController(t *testing.T) {
 		t.Fatalf("failed to update ingresscontroller %s: %v", name, err)
 	}
 
-	if err := kclient.Delete(context.TODO(), lbService); err != nil && !errors.IsNotFound(err) {
-		t.Fatalf("failed to delete svc %s: %v", lbService.Name, err)
+	var oldLoadBalancerStatus corev1.LoadBalancerStatus
+	lbService.Status.LoadBalancer.DeepCopyInto(&oldLoadBalancerStatus)
+
+	// Only delete the service on platforms that don't automatically update the service's scope.
+	switch platform {
+	case configv1.AlibabaCloudPlatformType, configv1.AWSPlatformType, configv1.IBMCloudPlatformType, configv1.PowerVSPlatformType:
+		if err := kclient.Delete(context.TODO(), lbService); err != nil && !errors.IsNotFound(err) {
+			t.Fatalf("failed to delete svc %s: %v", lbService.Name, err)
+		}
+	}
+
+	// Ensure the service's load-balancer status changes.
+	err := wait.PollImmediate(10*time.Second, 5*time.Minute, func() (bool, error) {
+		lbService := &corev1.Service{}
+		if err := kclient.Get(context.TODO(), controller.LoadBalancerServiceName(ic), lbService); err != nil {
+			t.Logf("Get %q failed: %v, retrying ...", controller.LoadBalancerServiceName(ic), err)
+			return false, nil
+		}
+		if reflect.DeepEqual(lbService.Status.LoadBalancer, oldLoadBalancerStatus) {
+			t.Logf("Waiting for service %q to be updated", controller.LoadBalancerServiceName(ic))
+			return false, nil
+		} else if ingresscontroller.IsServiceInternal(lbService) {
+			// The service got updated, but is not external.
+			return true, fmt.Errorf("load balancer %s is internal but should be external", lbService.Name)
+		}
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("error updating the %q service: %v", controller.LoadBalancerServiceName(ic), err)
 	}
 
 	t.Logf("Waiting for stable conditions on ingresscontroller %s after dnsManagementPolicy=Managed", ic.Name)
@@ -249,10 +299,6 @@ func TestUnmanagedDNSToManagedDNSInternalIngressController(t *testing.T) {
 	// Wait for the load balancer and DNS to reach stable conditions.
 	if err := waitForIngressControllerCondition(t, kclient, 10*time.Minute, name, append(availableConditionsForIngressControllerWithLoadBalancer, operatorProgressingFalse)...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
-	}
-
-	if !ingresscontroller.IsServiceInternal(lbService) {
-		t.Fatalf("load balancer %s is internal but should be external", lbService.Name)
 	}
 
 	// Ensure DNSRecord CR is present.
