@@ -254,7 +254,7 @@ func getHttpHeaders(client *http.Client, route *routev1.Route, addHeader bool) (
 
 	response, err := client.Do(request)
 	if err != nil {
-		return response.Header, response.StatusCode, fmt.Errorf("GET %s failed: %v", route.Spec.Host, err)
+		return nil, -1, fmt.Errorf("GET %s failed: %v", route.Spec.Host, err)
 	}
 	// Close response body
 	defer response.Body.Close()
