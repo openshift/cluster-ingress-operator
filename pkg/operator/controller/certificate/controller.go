@@ -1,8 +1,8 @@
-// The certificate controller is responsible for:
+// The certificate controller is responsible for the following:
 //
-//   1. Managing a CA for minting self-signed certs
-//   2. Managing self-signed certificates for any ingresscontrollers which require them
-//   3. Publishing the CA to `openshift-config-managed`
+//  1. Managing a CA for minting self-signed certs.
+//  2. Managing self-signed certificates for any ingresscontrollers which require them.
+//  3. Publishing the CA to the openshift-config-managed namespace.
 package certificate
 
 import (
