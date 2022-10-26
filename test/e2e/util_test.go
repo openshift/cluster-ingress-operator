@@ -479,9 +479,14 @@ func verifyExternalIngressController(t *testing.T, name types.NamespacedName, ho
 	// This just limits the number of "could not resolve host" errors which can be confusing.
 	if net.ParseIP(address) == nil {
 		if err := wait.PollImmediate(10*time.Second, 5*time.Minute, func() (bool, error) {
-			_, err := net.LookupIP(address)
+			ipList, err := net.LookupIP(address)
 			if err != nil {
 				t.Logf("waiting for loadbalancer domain %s to resolve...", address)
+				return false, nil
+			}
+			t.Logf("%q", ipList)
+			if len(ipList) == 0 {
+				t.Logf("ip list was empty")
 				return false, nil
 			}
 			return true, nil
@@ -490,6 +495,7 @@ func verifyExternalIngressController(t *testing.T, name types.NamespacedName, ho
 		}
 	}
 
+	time.Sleep(1 * time.Minute)
 	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("http://%s", address), nil)
 	if err != nil {
 		t.Fatalf("failed to build client request: %v", err)
