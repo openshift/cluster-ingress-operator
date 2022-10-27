@@ -979,7 +979,14 @@ func computeDNSStatus(ic *operatorv1.IngressController, wildcardRecord *iov1.DNS
 		}
 	}
 	var conditions []operatorv1.OperatorCondition
-	if ic.Status.EndpointPublishingStrategy.LoadBalancer.DNSManagementPolicy == operatorv1.UnmanagedLoadBalancerDNS {
+	if !manageDNSForDomain(ic.Status.Domain, status, dnsConfig) && ic.Status.EndpointPublishingStrategy.LoadBalancer.DNSManagementPolicy == operatorv1.UnmanagedLoadBalancerDNS {
+		conditions = append(conditions, operatorv1.OperatorCondition{
+			Type:    operatorv1.DNSManagedIngressConditionType,
+			Status:  operatorv1.ConditionFalse,
+			Reason:  "DomainNotMatching",
+			Message: "DNS management is not supported for ingresscontrollers with domain not matching the baseDomain of the cluster DNS config.",
+		})
+	} else if ic.Status.EndpointPublishingStrategy.LoadBalancer.DNSManagementPolicy == operatorv1.UnmanagedLoadBalancerDNS {
 		conditions = append(conditions, operatorv1.OperatorCondition{
 			Type:    operatorv1.DNSManagedIngressConditionType,
 			Status:  operatorv1.ConditionFalse,

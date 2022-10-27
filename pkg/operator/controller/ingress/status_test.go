@@ -6,12 +6,13 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
-	"k8s.io/utils/pointer"
 	"math/big"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"k8s.io/utils/pointer"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -1581,15 +1582,61 @@ func TestComputeDNSStatus(t *testing.T) {
 			}},
 		},
 		{
-			name: "DNSManaged false due to UnmanagedLoadBalancerDNS",
+			name: "DNSManaged false due to domain not matching base domain",
 			dnsConfig: &configv1.DNS{
 				Spec: configv1.DNSSpec{
+					BaseDomain:  "basedomain.com",
 					PublicZone:  &configv1.DNSZone{},
 					PrivateZone: &configv1.DNSZone{},
 				},
 			},
+			platformStatus: &configv1.PlatformStatus{
+				Type: configv1.AWSPlatformType,
+			},
 			controller: &operatorv1.IngressController{
 				Status: operatorv1.IngressControllerStatus{
+					Domain: "apps.example.com",
+					EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+						Type: operatorv1.LoadBalancerServiceStrategyType,
+						LoadBalancer: &operatorv1.LoadBalancerStrategy{
+							DNSManagementPolicy: operatorv1.UnmanagedLoadBalancerDNS,
+						},
+					},
+				},
+			},
+			record: &iov1.DNSRecord{
+				Spec: iov1.DNSRecordSpec{
+					DNSManagementPolicy: iov1.UnmanagedDNS,
+				},
+			},
+			expect: []operatorv1.OperatorCondition{
+				{
+					Type:   "DNSManaged",
+					Status: operatorv1.ConditionFalse,
+					Reason: "DomainNotMatching",
+				},
+				{
+					Type:   "DNSReady",
+					Status: operatorv1.ConditionUnknown,
+					Reason: "UnmanagedDNS",
+				},
+			},
+		},
+		{
+			name: "DNSManaged false due to UnmanagedLoadBalancerDNS",
+			dnsConfig: &configv1.DNS{
+				Spec: configv1.DNSSpec{
+					BaseDomain:  "basedomain.com",
+					PublicZone:  &configv1.DNSZone{},
+					PrivateZone: &configv1.DNSZone{},
+				},
+			},
+			platformStatus: &configv1.PlatformStatus{
+				Type: configv1.AWSPlatformType,
+			},
+			controller: &operatorv1.IngressController{
+				Status: operatorv1.IngressControllerStatus{
+					Domain: "apps.basedomain.com",
 					EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
 						Type: operatorv1.LoadBalancerServiceStrategyType,
 						LoadBalancer: &operatorv1.LoadBalancerStrategy{
