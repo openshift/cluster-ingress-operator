@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
+	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -28,12 +29,20 @@ func newSecret(name string) corev1.Secret {
 // newIngressController returns a new ingresscontroller with the specified name,
 // default certificate secret name (or nil if empty), and ingress domain, for
 // use as a test input.
-func newIngressController(name, defaultCertificateSecretName, domain string) operatorv1.IngressController {
+func newIngressController(name, defaultCertificateSecretName, domain string, admitted bool) operatorv1.IngressController {
+	admittedStatus := operatorv1.ConditionFalse
+	if admitted {
+		admittedStatus = operatorv1.ConditionTrue
+	}
 	ingresscontroller := operatorv1.IngressController{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
 		},
 		Status: operatorv1.IngressControllerStatus{
+			Conditions: []operatorv1.OperatorCondition{{
+				Type:   ingress.IngressControllerAdmittedConditionType,
+				Status: admittedStatus,
+			}},
 			Domain: domain,
 		},
 	}
@@ -61,14 +70,14 @@ func TestDesiredRouterCertsGlobalSecret(t *testing.T) {
 		// named "default" that does not specify a default certificate.
 		// The operator should use the operator-generated default
 		// certificate (the "default default certificate") in this case.
-		defaultICWithDefaultCertUnspecified = newIngressController("default", "", "apps.my.devcluster.openshift.com")
+		defaultICWithDefaultCertUnspecified = newIngressController("default", "", "apps.my.devcluster.openshift.com", true)
 
 		// defaultICWithDefaultCertSetToDefault is an ingresscontroller
 		// named "default" that specifies an explicit reference for a
 		// default certificate secret, where that secret is the same
 		// default one that the operator generates when none is
 		// specified (the "default default certificate").
-		defaultICWithDefaultCertSetToDefault = newIngressController("default", "router-certs-default", "apps.my.devcluster.openshift.com")
+		defaultICWithDefaultCertSetToDefault = newIngressController("default", "router-certs-default", "apps.my.devcluster.openshift.com", true)
 
 		customDefaultCert = newSecret("custom-router-certs-default")
 
@@ -76,17 +85,22 @@ func TestDesiredRouterCertsGlobalSecret(t *testing.T) {
 		// named "default" that specifies a reference for a default
 		// certificate secret where that secret is a custom one (a
 		// "custom default certificate").
-		defaultICWithDefaultCertSetToCustom = newIngressController("default", "custom-router-certs-default", "apps.my.devcluster.openshift.com")
+		defaultICWithDefaultCertSetToCustom = newIngressController("default", "custom-router-certs-default", "apps.my.devcluster.openshift.com", true)
 
 		// customICWithClusterIngressDomain is an ingresscontroller
 		// named "custom" that specifies a reference for a default
 		// certificate secret where that secret is a custom one.  The
 		// ingresscontroller also specifies the cluster ingress domain
 		// (which is usually owned by the "default" ingresscontroller.
-		customICWithClusterIngressDomain = newIngressController("custom", "custom-router-certs-default", "apps.my.devcluster.openshift.com")
+		customICWithClusterIngressDomain = newIngressController("custom", "custom-router-certs-default", "apps.my.devcluster.openshift.com", true)
 
-		ic1             = newIngressController("ic1", "s1", "dom1")
-		ic2             = newIngressController("ic2", "s2", "dom2")
+		// invalidCustomICWithClusterIngressDomain is the same as
+		// customICWithClusterIngressDomain except that it has not been
+		// admitted by the operator.
+		invalidCustomICWithClusterIngressDomain = newIngressController("custom", "custom-router-certs-default", "apps.my.devcluster.openshift.com", false)
+
+		ic1             = newIngressController("ic1", "s1", "dom1", true)
+		ic2             = newIngressController("ic2", "s2", "dom2", true)
 		s1              = newSecret("s1")
 		s2              = newSecret("s2")
 		defaultCertData = bytes.Join([][]byte{
@@ -178,6 +192,18 @@ func TestDesiredRouterCertsGlobalSecret(t *testing.T) {
 			output: testOutputs{
 				&corev1.Secret{
 					Data: map[string][]byte{"apps.my.devcluster.openshift.com": customDefaultCertData},
+				},
+			},
+		},
+		{
+			description: "default certificate and custom ingresscontroller that conflicts on domain",
+			inputs: testInputs{
+				[]operatorv1.IngressController{invalidCustomICWithClusterIngressDomain, defaultICWithDefaultCertUnspecified},
+				[]corev1.Secret{defaultCert, customDefaultCert},
+			},
+			output: testOutputs{
+				&corev1.Secret{
+					Data: map[string][]byte{"apps.my.devcluster.openshift.com": defaultCertData},
 				},
 			},
 		},
