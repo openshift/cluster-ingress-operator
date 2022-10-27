@@ -9,6 +9,7 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	"github.com/openshift/cluster-ingress-operator/pkg/util/ingresscontroller"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -66,6 +67,15 @@ func desiredRouterCertsGlobalSecret(secrets []corev1.Secret, ingresses []operato
 		// the maximum secret size of 1 mebibyte.  See
 		// <https://issues.redhat.com/browse/OCPBUGS-853>.
 		if ingresses[i].Status.Domain != clusterIngressDomain {
+			continue
+		}
+
+		// Multiple ingresscontrollers can have the cluster ingress
+		// domain, but only one can be admitted.  If this
+		// ingresscontroller hasn't been admitted, it should be ignored
+		// so that we use the default certificate of an
+		// ingresscontroller that has been admitted.
+		if !ingresscontroller.IsAdmitted(&ingresses[i]) {
 			continue
 		}
 
