@@ -14,6 +14,7 @@ import (
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	routemetrics "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/route-metrics"
+	"github.com/openshift/cluster-ingress-operator/pkg/util/ingresscontroller"
 	retryable "github.com/openshift/cluster-ingress-operator/pkg/util/retryableerror"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/slice"
 
@@ -266,7 +267,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 
 	// Admit if necessary. Don't process until admission succeeds. If admission is
 	// successful, immediately re-queue to refresh state.
-	alreadyAdmitted := isAdmitted(ingress)
+	alreadyAdmitted := ingresscontroller.IsAdmitted(ingress)
 	if !alreadyAdmitted || needsReadmission(ingress) {
 		if err := r.admit(ingress, ingressConfig, platformStatus, dnsConfig, alreadyAdmitted); err != nil {
 			switch err := err.(type) {
@@ -373,15 +374,6 @@ func (r *reconciler) admit(current *operatorv1.IngressController, ingressConfig 
 		}
 	}
 	return nil
-}
-
-func isAdmitted(ic *operatorv1.IngressController) bool {
-	for _, cond := range ic.Status.Conditions {
-		if cond.Type == IngressControllerAdmittedConditionType && cond.Status == operatorv1.ConditionTrue {
-			return true
-		}
-	}
-	return false
 }
 
 // needsReadmission returns a Boolean value indicating whether the given
@@ -773,7 +765,7 @@ func validateDomain(ic *operatorv1.IngressController) error {
 func validateDomainUniqueness(desired *operatorv1.IngressController, existing []operatorv1.IngressController) error {
 	for i := range existing {
 		current := existing[i]
-		if !isAdmitted(&current) {
+		if !ingresscontroller.IsAdmitted(&current) {
 			continue
 		}
 		if desired.UID != current.UID && desired.Status.Domain == current.Status.Domain {
