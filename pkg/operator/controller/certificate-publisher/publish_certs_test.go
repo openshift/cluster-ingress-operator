@@ -232,23 +232,25 @@ func TestDesiredRouterCertsGlobalSecret(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		expected := tc.output.secret
-		actual, err := desiredRouterCertsGlobalSecret(tc.inputs.secrets, tc.inputs.ingresses, "openshift-ingress", "apps.my.devcluster.openshift.com")
-		if err != nil {
-			t.Errorf("failed to get desired router-ca global secret: %v", err)
-			continue
-		}
-		if expected == nil || actual == nil {
-			if expected != nil {
-				t.Errorf("%q: expected %v, got nil", tc.description, expected)
+		t.Run(tc.description, func(t *testing.T) {
+			expected := tc.output.secret
+			actual, err := desiredRouterCertsGlobalSecret(tc.inputs.secrets, tc.inputs.ingresses, "openshift-ingress", "apps.my.devcluster.openshift.com")
+			if err != nil {
+				t.Errorf("failed to get desired router-ca global secret: %v", err)
 			}
-			if actual != nil {
-				t.Errorf("%q: expected nil, got %v", tc.description, actual)
+			if expected == nil || actual == nil {
+				if expected != nil {
+					t.Errorf("expected %v, got nil", expected)
+				}
+				if actual != nil {
+					t.Errorf("expected nil, got %v", actual)
+				}
 			}
-			continue
-		}
-		if !routerCertsSecretsEqual(expected, actual) {
-			t.Errorf("%q: expected %v, got %v", tc.description, expected, actual)
-		}
+			if expected != nil && actual != nil {
+				if !routerCertsSecretsEqual(expected, actual) {
+					t.Errorf("expected %v, got %v", expected, actual)
+				}
+			}
+		})
 	}
 }
