@@ -10,7 +10,7 @@ var (
 	routeMetricsControllerRoutesPerShard = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "route_metrics_controller_routes_per_shard",
 		Help: "Report the number of routes for shards (ingress controllers).",
-	}, []string{"name"})
+	}, []string{"shard_name"})
 
 	// metricsList is a list of metrics for this package.
 	metricsList = []prometheus.Collector{

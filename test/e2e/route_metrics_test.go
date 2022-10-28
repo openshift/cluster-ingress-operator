@@ -396,7 +396,7 @@ func updateRouteAndWaitForMetricsUpdate(t *testing.T, route *routev1.Route, prom
 func waitForRouteMetricsAddorUpdate(t *testing.T, prometheusClient prometheusv1.API, shardName string, value int) error {
 	t.Logf("waiting for route_metrics_controller_routes_per_shard{shard_name=%s} to become %d", shardName, value)
 	if err := wait.PollImmediate(1*time.Second, 2*time.Minute, func() (bool, error) {
-		result, _, err := prometheusClient.Query(context.TODO(), fmt.Sprintf(`route_metrics_controller_routes_per_shard{name="%s"}`, shardName), time.Now())
+		result, _, err := prometheusClient.Query(context.TODO(), fmt.Sprintf(`route_metrics_controller_routes_per_shard{shard_name="%s"}`, shardName), time.Now())
 		if err != nil {
 			t.Logf("failed to fetch metrics: %v", err)
 			return false, nil
@@ -430,7 +430,7 @@ func waitForRouteMetricsAddorUpdate(t *testing.T, prometheusClient prometheusv1.
 // waitForRouteMetricsDelete waits for the metrics for the corresponding shard to be deleted.
 func waitForRouteMetricsDelete(t *testing.T, prometheusClient prometheusv1.API, shardName string) error {
 	if err := wait.PollImmediate(1*time.Second, 2*time.Minute, func() (bool, error) {
-		result, _, err := prometheusClient.Query(context.TODO(), fmt.Sprintf(`route_metrics_controller_routes_per_shard{name="%s"}`, shardName), time.Now())
+		result, _, err := prometheusClient.Query(context.TODO(), fmt.Sprintf(`route_metrics_controller_routes_per_shard{shard_name="%s"}`, shardName), time.Now())
 		if err != nil {
 			t.Logf("failed to fetch metrics: %v", err)
 			return false, nil
