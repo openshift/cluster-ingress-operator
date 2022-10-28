@@ -12,6 +12,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -174,16 +175,20 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	// NOTE: Even though the route admitted status should reflect validity of the namespace and route labelselectors, we still will validate
 	// the namespace and route labels as there are still edge scenarios where the route status may be inaccurate.
 
-	// Get the Namespace LabelSelector from the Ingress Controller.
-	var namespaceLabelSelector map[string]string
+	// List all the Namespaces filtered by our ingress's Namespace selector.
+	namespaceMatchingLabelsSelector := client.MatchingLabelsSelector{Selector: labels.Everything()}
 	if ingressController.Spec.NamespaceSelector != nil {
-		namespaceLabelSelector = ingressController.Spec.NamespaceSelector.MatchLabels
+		namespaceSelector, err := metav1.LabelSelectorAsSelector(ingressController.Spec.NamespaceSelector)
+		if err != nil {
+			log.Error(err, "ingresscontroller has an invalid namespace selector", "ingresscontroller",
+				ingressController.Name, "namespaceSelector", ingressController.Spec.NamespaceSelector)
+			return reconcile.Result{}, nil
+		}
+		namespaceMatchingLabelsSelector = client.MatchingLabelsSelector{Selector: namespaceSelector}
 	}
-	// List all the Namespaces which match the Namespace LabelSelector.
+
 	namespaceList := corev1.NamespaceList{}
-	if err := r.cache.List(ctx, &namespaceList, &client.ListOptions{
-		LabelSelector: labels.SelectorFromSet(namespaceLabelSelector),
-	}); err != nil {
+	if err := r.cache.List(ctx, &namespaceList, namespaceMatchingLabelsSelector); err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to list Namespaces %q: %w", request, err)
 	}
 	// Create a set of Namespaces to easily look up Namespaces that matches the Routes assigned to the Ingress Controller.
@@ -192,16 +197,19 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		namespacesSet.Insert(namespaceList.Items[i].Name)
 	}
 
-	// Get the Route LabelSelector from the Ingress Controller.
-	var routeLabelSelector map[string]string
+	// List routes filtered by our ingress's route selector.
+	routeMatchingLabelsSelector := client.MatchingLabelsSelector{Selector: labels.Everything()}
 	if ingressController.Spec.RouteSelector != nil {
-		routeLabelSelector = ingressController.Spec.RouteSelector.MatchLabels
+		routeSelector, err := metav1.LabelSelectorAsSelector(ingressController.Spec.RouteSelector)
+		if err != nil {
+			log.Error(err, "ingresscontroller has an invalid route selector", "ingresscontroller",
+				ingressController.Name, "routeSelector", ingressController.Spec.RouteSelector)
+			return reconcile.Result{}, nil
+		}
+		routeMatchingLabelsSelector = client.MatchingLabelsSelector{Selector: routeSelector}
 	}
-	// List all the Routes which matches the Route LabelSelector.
 	routeList := routev1.RouteList{}
-	if err := r.cache.List(ctx, &routeList, &client.ListOptions{
-		LabelSelector: labels.SelectorFromSet(routeLabelSelector),
-	}); err != nil {
+	if err := r.cache.List(ctx, &routeList, routeMatchingLabelsSelector); err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to list Routes for the Shard %q: %w", request, err)
 	}
 

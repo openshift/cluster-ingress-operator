@@ -119,7 +119,14 @@ func testRouteMetricsControllerLabelSelector(t *testing.T, testRS, testNS bool) 
 	if testRS {
 		ic.Spec.RouteSelector = &metav1.LabelSelector{
 			MatchLabels: map[string]string{
-				"type": correctLabel,
+				"label": correctLabel,
+			},
+			MatchExpressions: []metav1.LabelSelectorRequirement{
+				{
+					Key:      "expression",
+					Operator: metav1.LabelSelectorOpIn,
+					Values:   []string{correctLabel},
+				},
 			},
 		}
 	}
@@ -128,7 +135,14 @@ func testRouteMetricsControllerLabelSelector(t *testing.T, testRS, testNS bool) 
 	if testNS {
 		ic.Spec.NamespaceSelector = &metav1.LabelSelector{
 			MatchLabels: map[string]string{
-				"type": correctLabel,
+				"label": correctLabel,
+			},
+			MatchExpressions: []metav1.LabelSelectorRequirement{
+				{
+					Key:      "expression",
+					Operator: metav1.LabelSelectorOpIn,
+					Values:   []string{correctLabel},
+				},
 			},
 		}
 	}
@@ -155,7 +169,8 @@ func testRouteMetricsControllerLabelSelector(t *testing.T, testRS, testNS bool) 
 	// Add Label to the Namespace if testRS is set to true.
 	if testNS {
 		ns.Labels = map[string]string{
-			"type": correctLabel,
+			"label":      correctLabel,
+			"expression": correctLabel,
 		}
 	}
 	if err := kclient.Create(context.TODO(), ns); err != nil {
@@ -171,7 +186,23 @@ func testRouteMetricsControllerLabelSelector(t *testing.T, testRS, testNS bool) 
 
 	// Create a Route to be immediately admitted by this Ingress Controller.
 	routeFooLabelName := types.NamespacedName{Namespace: ns.Name, Name: routeNameStr}
-	routeFooLabel := newRouteWithLabel(routeFooLabelName, correctLabel)
+	routeFooLabel := &routev1.Route{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: routeFooLabelName.Namespace,
+			Name:      routeFooLabelName.Name,
+			Labels: map[string]string{
+				"label":      correctLabel,
+				"expression": correctLabel,
+			},
+		},
+		Spec: routev1.RouteSpec{
+			To: routev1.RouteTargetReference{
+				Kind: "Service",
+				Name: "foo",
+			},
+		},
+	}
+
 	if err := kclient.Create(context.TODO(), routeFooLabel); err != nil {
 		t.Fatalf("failed to create route: %v", err)
 	}
@@ -200,7 +231,14 @@ func testRouteMetricsControllerLabelSelector(t *testing.T, testRS, testNS bool) 
 		// Update the NamespaceSelector of the Ingress Controller so that the Route gets un-admitted.
 		ic.Spec.NamespaceSelector = &metav1.LabelSelector{
 			MatchLabels: map[string]string{
-				"type": incorrectLabel,
+				"label": incorrectLabel,
+			},
+			MatchExpressions: []metav1.LabelSelectorRequirement{
+				{
+					Key:      "expression",
+					Operator: metav1.LabelSelectorOpIn,
+					Values:   []string{incorrectLabel},
+				},
 			},
 		}
 
@@ -215,7 +253,14 @@ func testRouteMetricsControllerLabelSelector(t *testing.T, testRS, testNS bool) 
 		// Update the NamespaceSelector of the Ingress Controller so that the Route gets admitted again.
 		ic.Spec.NamespaceSelector = &metav1.LabelSelector{
 			MatchLabels: map[string]string{
-				"type": correctLabel,
+				"label": correctLabel,
+			},
+			MatchExpressions: []metav1.LabelSelectorRequirement{
+				{
+					Key:      "expression",
+					Operator: metav1.LabelSelectorOpIn,
+					Values:   []string{correctLabel},
+				},
 			},
 		}
 
@@ -232,7 +277,14 @@ func testRouteMetricsControllerLabelSelector(t *testing.T, testRS, testNS bool) 
 		// Update the RouteSelector of the Ingress Controller so that the Route gets un-admitted again.
 		ic.Spec.RouteSelector = &metav1.LabelSelector{
 			MatchLabels: map[string]string{
-				"type": incorrectLabel,
+				"label": incorrectLabel,
+			},
+			MatchExpressions: []metav1.LabelSelectorRequirement{
+				{
+					Key:      "expression",
+					Operator: metav1.LabelSelectorOpIn,
+					Values:   []string{incorrectLabel},
+				},
 			},
 		}
 
@@ -247,7 +299,14 @@ func testRouteMetricsControllerLabelSelector(t *testing.T, testRS, testNS bool) 
 		// Update the RouteSelector of the Ingress Controller so that the Route gets admitted again.
 		ic.Spec.RouteSelector = &metav1.LabelSelector{
 			MatchLabels: map[string]string{
-				"type": correctLabel,
+				"label": correctLabel,
+			},
+			MatchExpressions: []metav1.LabelSelectorRequirement{
+				{
+					Key:      "expression",
+					Operator: metav1.LabelSelectorOpIn,
+					Values:   []string{correctLabel},
+				},
 			},
 		}
 
@@ -261,7 +320,8 @@ func testRouteMetricsControllerLabelSelector(t *testing.T, testRS, testNS bool) 
 		}
 		// Update the label of the route so that it gets un-admitted from the Ingress Controller.
 		routeFooLabel.Labels = map[string]string{
-			"type": incorrectLabel,
+			"label":      incorrectLabel,
+			"expression": incorrectLabel,
 		}
 
 		// Update the label of the route and wait for metrics to be updated to 0 as the Route will get un-admitted by the IC.
@@ -273,7 +333,8 @@ func testRouteMetricsControllerLabelSelector(t *testing.T, testRS, testNS bool) 
 		}
 		// Update the label of the route so that it gets admitted to the Ingress Controller again.
 		routeFooLabel.Labels = map[string]string{
-			"type": correctLabel,
+			"label":      correctLabel,
+			"expression": correctLabel,
 		}
 
 		// Update the Route label and wait for metrics to be updated to 1 as the Route will get admitted by the IC again.
@@ -333,6 +394,7 @@ func updateRouteAndWaitForMetricsUpdate(t *testing.T, route *routev1.Route, prom
 
 // waitForRouteMetricsAddorUpdate waits for the metrics for the corresponding shard to be added or updated to the expected value.
 func waitForRouteMetricsAddorUpdate(t *testing.T, prometheusClient prometheusv1.API, shardName string, value int) error {
+	t.Logf("waiting for route_metrics_controller_routes_per_shard{shard_name=%s} to become %d", shardName, value)
 	if err := wait.PollImmediate(1*time.Second, 2*time.Minute, func() (bool, error) {
 		result, _, err := prometheusClient.Query(context.TODO(), fmt.Sprintf(`route_metrics_controller_routes_per_shard{name="%s"}`, shardName), time.Now())
 		if err != nil {
@@ -348,11 +410,13 @@ func waitForRouteMetricsAddorUpdate(t *testing.T, prometheusClient prometheusv1.
 
 		// Check if length of returned metric Vector is zero.
 		if len(vec) == 0 {
+			t.Logf("metric vector is empty...retrying")
 			return false, nil
 		}
 
 		// Check if metrics is updated.
 		if !vec[0].Value.Equal(model.SampleValue(float64(value))) {
+			t.Logf("expected metric value %d, but got %d...retrying", value, int(vec[0].Value))
 			return false, nil
 		}
 
