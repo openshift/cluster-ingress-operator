@@ -14,6 +14,7 @@ import (
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	routemetrics "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/route-metrics"
+	routestatus "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/route-status"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/ingresscontroller"
 	retryable "github.com/openshift/cluster-ingress-operator/pkg/util/retryableerror"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/slice"
@@ -918,7 +919,7 @@ func (r *reconciler) ensureIngressDeleted(ingress *operatorv1.IngressController)
 			} else if allDeleted {
 				// Deployment has been deleted and there are no more pods left.
 				// Clear all routes status for this ingress controller.
-				statusErrs := r.clearAllRoutesStatusForIngressController(ingress.ObjectMeta.Name)
+				statusErrs := routestatus.ClearAllRoutesStatusForIngressController(r.client, ingress.ObjectMeta.Name)
 				errs = append(errs, statusErrs...)
 			} else {
 				errs = append(errs, retryable.New(fmt.Errorf("not all router pods have been deleted for %s/%s", ingress.Namespace, ingress.Name), 15*time.Second))
@@ -1064,7 +1065,7 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 	errs = append(errs, syncStatusErr)
 
 	// If syncIngressControllerStatus updated our ingress status, it's important we query for that new object.
-	// If we don't, then the next function syncRouteStatus would always fail because it has a stale ingress object.
+	// If we don't, then the next function syncRouteStatusWithSelectorChange would always fail because it has a stale ingress object.
 	if updated {
 		updatedIc := &operatorv1.IngressController{}
 		if err := r.client.Get(context.TODO(), types.NamespacedName{Namespace: ci.Namespace, Name: ci.Name}, updatedIc); err != nil {
@@ -1075,7 +1076,7 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 
 	SetIngressControllerNLBMetric(ci)
 
-	errs = append(errs, r.syncRouteStatus(ci)...)
+	errs = append(errs, r.syncRouteStatusWithSelectorChange(ci)...)
 
 	return retryable.NewMaybeRetryableAggregate(errs)
 }
@@ -1140,4 +1141,45 @@ func (r *reconciler) allRouterPodsDeleted(ingress *operatorv1.IngressController)
 	}
 
 	return true, nil
+}
+
+// isRouterDeploymentRolloutComplete determines whether the rollout of the ingress router deployment is complete.
+func (r *reconciler) isRouterDeploymentRolloutComplete(ic *operatorv1.IngressController) (bool, error) {
+	deployment := appsv1.Deployment{}
+	deploymentName := operatorcontroller.RouterDeploymentName(ic)
+	if err := r.client.Get(context.TODO(), deploymentName, &deployment); err != nil {
+		return false, fmt.Errorf("failed to get deployment %s: %w", deploymentName, err)
+	}
+
+	if deployment.Generation != deployment.Status.ObservedGeneration {
+		return false, nil
+	}
+	if deployment.Status.Replicas != deployment.Status.UpdatedReplicas {
+		return false, nil
+	}
+
+	return true, nil
+}
+
+// syncRouteStatusWithSelectorChange ensures that all routes status have been synced with the ingress controller's state.
+func (r *reconciler) syncRouteStatusWithSelectorChange(ic *operatorv1.IngressController) []error {
+	// Clear routes that are not admitted by this ingress controller if route selectors have been updated.
+	if routeSelectorsUpdated(ic) {
+		// Only clear once we are done rolling out routers.
+		// We want to avoid race condition in which we clear status and an old router re-admits it before terminated.
+		if done, err := r.isRouterDeploymentRolloutComplete(ic); err != nil {
+			return []error{err}
+		} else if done {
+			// Clear routes status not admitted by this ingress controller.
+			if errs := routestatus.ClearRoutesNotAdmittedByIngress(r.client, ic); len(errs) > 0 {
+				return errs
+			}
+
+			// Now sync the selectors from the spec to the status, so we indicate we are done clearing status.
+			if err := r.syncIngressControllerSelectorStatus(ic); err != nil {
+				return []error{err}
+			}
+		}
+	}
+	return nil
 }

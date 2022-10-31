@@ -74,6 +74,8 @@ func TestAll(t *testing.T) {
 		t.Run("TestRouteMetricsControllerOnlyRouteSelector", TestRouteMetricsControllerOnlyRouteSelector)
 		t.Run("TestRouteMetricsControllerOnlyNamespaceSelector", TestRouteMetricsControllerOnlyNamespaceSelector)
 		t.Run("TestRouteMetricsControllerRouteAndNamespaceSelector", TestRouteMetricsControllerRouteAndNamespaceSelector)
+		t.Run("TestNamespaceLabelShouldClearRouteStatus", TestNamespaceLabelShouldClearRouteStatus)
+		t.Run("TestRouteLabelShouldClearRouteStatus", TestRouteLabelShouldClearRouteStatus)
 	})
 
 	t.Run("serial", func(t *testing.T) {

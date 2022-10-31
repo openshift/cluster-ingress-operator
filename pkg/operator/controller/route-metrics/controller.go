@@ -5,15 +5,15 @@ import (
 	"fmt"
 	"time"
 
+	"golang.org/x/time/rate"
+
 	operatorv1 "github.com/openshift/api/operator/v1"
 	routev1 "github.com/openshift/api/route/v1"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
-	"golang.org/x/time/rate"
+	routestatus "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/route-status"
 
 	corev1 "k8s.io/api/core/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/util/workqueue"
@@ -38,18 +38,9 @@ var (
 // New creates the route metrics controller. This is the controller
 // that handles all the logic for gathering and exporting
 // metrics related to route resources.
-func New(mgr manager.Manager, namespace string) (controller.Controller, error) {
-	// Create a new cache to watch on Route objects from every namespace.
-	newCache, err := cache.New(mgr.GetConfig(), cache.Options{
-		Scheme: mgr.GetScheme(),
-	})
-	if err != nil {
-		return nil, err
-	}
-	// Add the cache to the manager so that the cache is started along with the other runnables.
-	mgr.Add(newCache)
+func New(mgr manager.Manager, namespace string, cache cache.Cache) (controller.Controller, error) {
 	reconciler := &reconciler{
-		cache:            newCache,
+		cache:            cache,
 		namespace:        namespace,
 		routeToIngresses: make(map[types.NamespacedName]sets.String),
 	}
@@ -72,7 +63,7 @@ func New(mgr manager.Manager, namespace string) (controller.Controller, error) {
 		return nil, err
 	}
 	// add watch for changes in Route
-	if err := c.Watch(source.NewKindWithCache(&routev1.Route{}, newCache),
+	if err := c.Watch(source.NewKindWithCache(&routev1.Route{}, cache),
 		handler.EnqueueRequestsFromMapFunc(reconciler.routeToIngressController)); err != nil {
 		return nil, err
 	}
@@ -172,55 +163,26 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		return reconcile.Result{}, nil
 	}
 
-	// NOTE: Even though the route admitted status should reflect validity of the namespace and route labelselectors, we still will validate
-	// the namespace and route labels as there are still edge scenarios where the route status may be inaccurate.
+	// List all the Namespaces filtered by our ingress's Namespace selector.
+	namespacesInShard, err := routestatus.GetNamespacesSelectedByIngressController(r.cache, ingressController)
+	if err != nil {
+		return reconcile.Result{}, err
+	}
 
 	// List all the Namespaces filtered by our ingress's Namespace selector.
-	namespaceMatchingLabelsSelector := client.MatchingLabelsSelector{Selector: labels.Everything()}
-	if ingressController.Spec.NamespaceSelector != nil {
-		namespaceSelector, err := metav1.LabelSelectorAsSelector(ingressController.Spec.NamespaceSelector)
-		if err != nil {
-			log.Error(err, "ingresscontroller has an invalid namespace selector", "ingresscontroller",
-				ingressController.Name, "namespaceSelector", ingressController.Spec.NamespaceSelector)
-			return reconcile.Result{}, nil
-		}
-		namespaceMatchingLabelsSelector = client.MatchingLabelsSelector{Selector: namespaceSelector}
-	}
-
-	namespaceList := corev1.NamespaceList{}
-	if err := r.cache.List(ctx, &namespaceList, namespaceMatchingLabelsSelector); err != nil {
-		return reconcile.Result{}, fmt.Errorf("failed to list Namespaces %q: %w", request, err)
-	}
-	// Create a set of Namespaces to easily look up Namespaces that matches the Routes assigned to the Ingress Controller.
-	namespacesSet := sets.NewString()
-	for i := range namespaceList.Items {
-		namespacesSet.Insert(namespaceList.Items[i].Name)
-	}
-
-	// List routes filtered by our ingress's route selector.
-	routeMatchingLabelsSelector := client.MatchingLabelsSelector{Selector: labels.Everything()}
-	if ingressController.Spec.RouteSelector != nil {
-		routeSelector, err := metav1.LabelSelectorAsSelector(ingressController.Spec.RouteSelector)
-		if err != nil {
-			log.Error(err, "ingresscontroller has an invalid route selector", "ingresscontroller",
-				ingressController.Name, "routeSelector", ingressController.Spec.RouteSelector)
-			return reconcile.Result{}, nil
-		}
-		routeMatchingLabelsSelector = client.MatchingLabelsSelector{Selector: routeSelector}
-	}
-	routeList := routev1.RouteList{}
-	if err := r.cache.List(ctx, &routeList, routeMatchingLabelsSelector); err != nil {
-		return reconcile.Result{}, fmt.Errorf("failed to list Routes for the Shard %q: %w", request, err)
+	routesInShard, err := routestatus.GetRoutesSelectedByIngressController(r.cache, ingressController)
+	if err != nil {
+		return reconcile.Result{}, err
 	}
 
 	// Variable to store the number of routes admitted by the Shard (Ingress Controller).
 	routesAdmitted := 0
 
 	// Iterate through the list Routes.
-	for _, route := range routeList.Items {
+	for _, route := range routesInShard.Items {
 		// Check if the Route's Namespace matches one of the Namespaces in the set namespacesSet and
 		// the Route is admitted by the Ingress Controller.
-		if namespacesSet.Has(route.Namespace) && routeStatusAdmitted(route, ingressController.Name) {
+		if namespacesInShard.Has(route.Namespace) && routestatus.IsRouteStatusAdmitted(route, ingressController.Name) {
 			// If the Route is admitted then, the routesAdmitted should be incremented by 1 for the Shard.
 			routesAdmitted++
 		}
@@ -230,22 +192,4 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	SetRouteMetricsControllerRoutesPerShardMetric(request.Name, float64(routesAdmitted))
 
 	return reconcile.Result{}, nil
-}
-
-// routeStatusAdmitted returns true if a given route's status shows admitted by the Ingress Controller.
-func routeStatusAdmitted(route routev1.Route, ingressControllerName string) bool {
-	// Iterate through the related Ingress Controllers.
-	for _, ingress := range route.Status.Ingress {
-		// Check if the RouterName matches the name of the Ingress Controller.
-		if ingress.RouterName == ingressControllerName {
-			// Check if the Route was admitted by the Ingress Controller.
-			for _, cond := range ingress.Conditions {
-				if cond.Type == routev1.RouteAdmitted && cond.Status == corev1.ConditionTrue {
-					return true
-				}
-			}
-			return false
-		}
-	}
-	return false
 }

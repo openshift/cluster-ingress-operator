@@ -120,6 +120,16 @@ func (r *reconciler) syncIngressControllerSelectorStatus(ic *operatorv1.IngressC
 	return nil
 }
 
+// routeSelectorsUpdated returns whether any of the route selectors have been updated by comparing
+// the status selector fields to the spec selector fields.
+func routeSelectorsUpdated(ingress *operatorv1.IngressController) bool {
+	if !reflect.DeepEqual(ingress.Spec.RouteSelector, ingress.Status.RouteSelector) ||
+		!reflect.DeepEqual(ingress.Spec.NamespaceSelector, ingress.Status.NamespaceSelector) {
+		return true
+	}
+	return false
+}
+
 // MergeConditions adds or updates matching conditions, and updates
 // the transition time if details of a condition have changed. Returns
 // the updated condition array.

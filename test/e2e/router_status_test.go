@@ -16,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 
+	"k8s.io/apiserver/pkg/storage/names"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -28,7 +29,7 @@ var (
 func TestDeleteIngressControllerShouldClearRouteStatus(t *testing.T) {
 	t.Parallel()
 	// Create an ingress controller that can admit our route.
-	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "ic-delete-test"}
+	icName := types.NamespacedName{Namespace: operatorNamespace, Name: names.SimpleNameGenerator.GenerateName("e2e-ic-routestatus-delete-ic-")}
 	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
 	ic := newPrivateController(icName, domain)
 	ic.Spec.RouteSelector = &metav1.LabelSelector{
@@ -43,7 +44,7 @@ func TestDeleteIngressControllerShouldClearRouteStatus(t *testing.T) {
 
 	// Create a route to be admitted by this ingress controller.
 	// Use openshift-console namespace to get a namespace outside the ingress-operator's cache.
-	routeName := types.NamespacedName{Namespace: "openshift-console", Name: "route-" + icName.Name}
+	routeName := types.NamespacedName{Namespace: "openshift-console", Name: names.SimpleNameGenerator.GenerateName("route-")}
 	route := newRouteWithLabel(routeName, icName.Name)
 	if err := kclient.Create(context.TODO(), route); err != nil {
 		t.Fatalf("failed to create route: %v", err)
@@ -73,12 +74,12 @@ func TestDeleteIngressControllerShouldClearRouteStatus(t *testing.T) {
 func TestIngressControllerRouteSelectorUpdateShouldClearRouteStatus(t *testing.T) {
 	t.Parallel()
 	// Create an ingress controller that can admit our route.
-	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "ic-route-selector-test"}
+	icName := types.NamespacedName{Namespace: operatorNamespace, Name: names.SimpleNameGenerator.GenerateName("e2e-ic-routestatus-route-selector-")}
 	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
 	ic := newPrivateController(icName, domain)
 	ic.Spec.RouteSelector = &metav1.LabelSelector{
 		MatchLabels: map[string]string{
-			"type": "foo",
+			"type": "foo-" + icName.Name,
 		},
 	}
 
@@ -90,8 +91,8 @@ func TestIngressControllerRouteSelectorUpdateShouldClearRouteStatus(t *testing.T
 	// Create a route to be immediately admitted by this ingress controller and then when the IC label selectors are
 	// updated, the status should clear.
 	// Use openshift-console namespace to get a namespace outside the ingress-operator's cache.
-	routeFooLabelName := types.NamespacedName{Namespace: "openshift-console", Name: "route-foo-label"}
-	routeFooLabel := newRouteWithLabel(routeFooLabelName, "foo")
+	routeFooLabelName := types.NamespacedName{Namespace: "openshift-console", Name: names.SimpleNameGenerator.GenerateName("route-foo-")}
+	routeFooLabel := newRouteWithLabel(routeFooLabelName, "foo-"+icName.Name)
 	if err := kclient.Create(context.TODO(), routeFooLabel); err != nil {
 		t.Fatalf("failed to create route: %v", err)
 	}
@@ -104,8 +105,8 @@ func TestIngressControllerRouteSelectorUpdateShouldClearRouteStatus(t *testing.T
 	// Create a route that will NOT be immediately admitted by the ingress controller, but will be admitted AFTER
 	// the IC selectors are updated. The status SHOULD be successfully admitted.
 	// Use openshift-console namespace to get a namespace outside the ingress-operator's cache.
-	routeBarLabelName := types.NamespacedName{Namespace: "openshift-console", Name: "route-bar-label"}
-	routeBarLabel := newRouteWithLabel(routeBarLabelName, "bar")
+	routeBarLabelName := types.NamespacedName{Namespace: "openshift-console", Name: names.SimpleNameGenerator.GenerateName("route-bar-")}
+	routeBarLabel := newRouteWithLabel(routeBarLabelName, "bar-"+icName.Name)
 	if err := kclient.Create(context.TODO(), routeBarLabel); err != nil {
 		t.Fatalf("failed to create route: %v", err)
 	}
@@ -127,7 +128,7 @@ func TestIngressControllerRouteSelectorUpdateShouldClearRouteStatus(t *testing.T
 	}
 	ic.Spec.RouteSelector = &metav1.LabelSelector{
 		MatchLabels: map[string]string{
-			"type": "bar",
+			"type": "bar-" + icName.Name,
 		},
 	}
 	if err := kclient.Update(context.TODO(), ic); err != nil {
@@ -148,12 +149,12 @@ func TestIngressControllerRouteSelectorUpdateShouldClearRouteStatus(t *testing.T
 func TestIngressControllerNamespaceSelectorUpdateShouldClearRouteStatus(t *testing.T) {
 	t.Parallel()
 	// Create an ingress controller that can admit our route.
-	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "ic-namespace-selector-test"}
+	icName := types.NamespacedName{Namespace: operatorNamespace, Name: names.SimpleNameGenerator.GenerateName("e2e-ic-routestatus-namespace-selector-")}
 	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
 	ic := newPrivateController(icName, domain)
 	ic.Spec.NamespaceSelector = &metav1.LabelSelector{
 		MatchLabels: map[string]string{
-			"type": "foo",
+			"type": "foo-" + icName.Name,
 		},
 	}
 
@@ -165,9 +166,9 @@ func TestIngressControllerNamespaceSelectorUpdateShouldClearRouteStatus(t *testi
 	// Create a new namespace for the route that we can immediately match with the IC's namespace selector.
 	nsFoo := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "foo-namespace-selector-test",
+			Name: names.SimpleNameGenerator.GenerateName("foo-namespace-selector-test-"),
 			Labels: map[string]string{
-				"type": "foo",
+				"type": "foo-" + icName.Name,
 			},
 		},
 	}
@@ -183,9 +184,9 @@ func TestIngressControllerNamespaceSelectorUpdateShouldClearRouteStatus(t *testi
 	// Create a new namespace for the route that we can NOT immediately match with the IC's namespace selector.
 	nsBar := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "bar-namespace-selector-test",
+			Name: names.SimpleNameGenerator.GenerateName("bar-namespace-selector-test-"),
 			Labels: map[string]string{
-				"type": "bar",
+				"type": "bar-" + icName.Name,
 			},
 		},
 	}
@@ -200,7 +201,7 @@ func TestIngressControllerNamespaceSelectorUpdateShouldClearRouteStatus(t *testi
 
 	// Create a route to be immediately admitted by this ingress controller and then when the IC label selectors are
 	// updated, the status should clear.
-	routeFooLabelName := types.NamespacedName{Namespace: nsFoo.Name, Name: "route-foo-label"}
+	routeFooLabelName := types.NamespacedName{Namespace: nsFoo.Name, Name: names.SimpleNameGenerator.GenerateName("route-foo-")}
 	routeFooLabel := newRouteWithLabel(routeFooLabelName, "")
 	if err := kclient.Create(context.TODO(), routeFooLabel); err != nil {
 		t.Fatalf("failed to create route: %v", err)
@@ -213,8 +214,8 @@ func TestIngressControllerNamespaceSelectorUpdateShouldClearRouteStatus(t *testi
 
 	// Create a route that will NOT be immediately admitted by the ingress controller, but will be admitted AFTER
 	// the IC selectors are updated. The status SHOULD be successfully admitted.
-	routeBarLabelName := types.NamespacedName{Namespace: nsBar.Name, Name: "route-bar-label"}
-	routeBarLabel := newRouteWithLabel(routeBarLabelName, "bar")
+	routeBarLabelName := types.NamespacedName{Namespace: nsBar.Name, Name: names.SimpleNameGenerator.GenerateName("route-bar-")}
+	routeBarLabel := newRouteWithLabel(routeBarLabelName, "bar-"+icName.Name)
 	if err := kclient.Create(context.TODO(), routeBarLabel); err != nil {
 		t.Fatalf("failed to create route: %v", err)
 	}
@@ -241,7 +242,7 @@ func TestIngressControllerNamespaceSelectorUpdateShouldClearRouteStatus(t *testi
 	}
 	ic.Spec.NamespaceSelector = &metav1.LabelSelector{
 		MatchLabels: map[string]string{
-			"type": "bar",
+			"type": "bar-" + icName.Name,
 		},
 	}
 	if err := kclient.Update(context.TODO(), ic); err != nil {
@@ -256,6 +257,139 @@ func TestIngressControllerNamespaceSelectorUpdateShouldClearRouteStatus(t *testi
 	// Wait until routeBarLabel status is admitted.
 	if err := waitForRouteIngressConditions(t, kclient, routeBarLabelName, ic.Name, admittedCondition); err != nil {
 		t.Fatalf("failed to observe route status admitted when the ingress controller route selector was updated: %v", err)
+	}
+}
+
+func TestNamespaceLabelShouldClearRouteStatus(t *testing.T) {
+	t.Parallel()
+
+	// Create an ingress controller that can admit our route.
+	icName := types.NamespacedName{Namespace: operatorNamespace, Name: names.SimpleNameGenerator.GenerateName("e2e-ic-routestatus-namespace-label-")}
+	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
+	ic := newPrivateController(icName, domain)
+	ic.Spec.NamespaceSelector = &metav1.LabelSelector{
+		MatchLabels: map[string]string{
+			"type": "foo-" + icName.Name,
+		},
+	}
+
+	if err := kclient.Create(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to create ingresscontroller: %v", err)
+	}
+	defer assertIngressControllerDeleted(t, kclient, ic)
+
+	// Create a new namespace for the Route.
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: names.SimpleNameGenerator.GenerateName("test-route-namespace-label-"),
+			Labels: map[string]string{
+				"type": "foo-" + icName.Name,
+			},
+		},
+	}
+	if err := kclient.Create(context.TODO(), ns); err != nil {
+		t.Fatalf("failed to create namespace: %v", err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), ns); err != nil {
+			t.Fatalf("failed to delete test namespace %v: %v", ns.Name, err)
+		}
+	}()
+
+	// Create a route to be immediately admitted by this ingress controller.
+	routeName := types.NamespacedName{Namespace: ns.Name, Name: names.SimpleNameGenerator.GenerateName("route-")}
+	route := newRouteWithLabel(routeName, "")
+	if err := kclient.Create(context.TODO(), route); err != nil {
+		t.Fatalf("failed to create route: %v", err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), route); err != nil {
+			t.Fatalf("failed to delete route %s: %v", routeName, err)
+		}
+	}()
+
+	// Wait for route to be admitted upon creation.
+	if err := waitForRouteIngressConditions(t, kclient, routeName, ic.Name, admittedCondition); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	// Update namespace to not match the namespaceSelector.
+	if err := kclient.Get(context.TODO(), types.NamespacedName{Name: ns.Name}, ns); err != nil {
+		t.Fatalf("failed to get namespace: %v", err)
+	}
+	ns.Labels = map[string]string{}
+	if err := kclient.Update(context.TODO(), ns); err != nil {
+		t.Fatalf("failed to update namespace: %v", err)
+	}
+
+	// Ensure route clears status.
+	if err := waitForRouteStatusClear(t, kclient, routeName, ic.Name); err != nil {
+		t.Fatalf("failed to observe route has cleared status: %v", err)
+	}
+}
+
+func TestRouteLabelShouldClearRouteStatus(t *testing.T) {
+	t.Parallel()
+
+	// Create an ingress controller that can admit our route.
+	icName := types.NamespacedName{Namespace: operatorNamespace, Name: names.SimpleNameGenerator.GenerateName("e2e-ic-routestatus-route-label-")}
+	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
+	ic := newPrivateController(icName, domain)
+	ic.Spec.RouteSelector = &metav1.LabelSelector{
+		MatchLabels: map[string]string{
+			"type": "foo-" + icName.Name,
+		},
+	}
+
+	if err := kclient.Create(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to create ingresscontroller: %v", err)
+	}
+	defer assertIngressControllerDeleted(t, kclient, ic)
+
+	// Create a new namespace for the Route.
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: names.SimpleNameGenerator.GenerateName("test-route-label-"),
+		},
+	}
+	if err := kclient.Create(context.TODO(), ns); err != nil {
+		t.Fatalf("failed to create namespace: %v", err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), ns); err != nil {
+			t.Fatalf("failed to delete test namespace %v: %v", ns.Name, err)
+		}
+	}()
+
+	// Create a route to be immediately admitted by this ingress controller.
+	routeName := types.NamespacedName{Namespace: ns.Name, Name: names.SimpleNameGenerator.GenerateName("route-")}
+	route := newRouteWithLabel(routeName, "foo-"+icName.Name)
+	if err := kclient.Create(context.TODO(), route); err != nil {
+		t.Fatalf("failed to create route: %v", err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), route); err != nil {
+			t.Fatalf("failed to delete route %s: %v", routeName, err)
+		}
+	}()
+
+	// Wait for route to be admitted upon creation.
+	if err := waitForRouteIngressConditions(t, kclient, routeName, ic.Name, admittedCondition); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	// Update namespace to not match the namespaceSelector.
+	if err := kclient.Get(context.TODO(), routeName, route); err != nil {
+		t.Fatalf("failed to get route: %v", err)
+	}
+	route.Labels = map[string]string{}
+	if err := kclient.Update(context.TODO(), route); err != nil {
+		t.Fatalf("failed to update route: %v", err)
+	}
+
+	// Ensure route clears status.
+	if err := waitForRouteStatusClear(t, kclient, routeName, ic.Name); err != nil {
+		t.Fatalf("failed to observe route has cleared status: %v", err)
 	}
 }
 

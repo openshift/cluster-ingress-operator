@@ -1,23 +1,21 @@
-package ingress
+package routestatus
 
 import (
 	"context"
 	"fmt"
-	"k8s.io/apimachinery/pkg/labels"
-	"reflect"
 	"time"
+
+	corev1 "k8s.io/api/core/v1"
+	kerrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/sets"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	routev1 "github.com/openshift/api/route/v1"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
-
-	appsv1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/sets"
-
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // A brief overview of the operator's interactions with route status:
@@ -27,67 +25,36 @@ import (
 // status when it stops managing the route. Here are the scenarios where the operator steps in:
 // #1 When the ingress controller, the corresponding router deployment, and its pods are deleted.
 //    - The operator knows when a router is deleted because it is the one responsible for deleting it. So it
-//      simply calls clearRouteStatus to clear status of routes that openshift-router has admitted.
+//      simply calls ClearRouteStatus to clear status of routes that openshift-router has admitted.
+//    - Handled by the ingress control loop.
 // #2 When the ingress controller sharding configuration (i.e., selectors) is changed.
 //    - When the selectors (routeSelector and namespaceSelector) are updated, the operator simply clears the status of
 //      any route that it is no longer selecting using the updated selectors.
 //    - We determine what routes are admitted by the current state of the selectors (just like the openshift-router).
+//    - Handled by the ingress control loop.
+// # 3 When the route's labels are changed.
+//    - When the route labels are updated, the operator will reconcile that specific route and clean up any admitted
+//      status that is now stale.
+//    - Handled by the route-status control loop.
+// # 4 When the namespace's labels are changed.
+//    - When the namespace labels are updated, the operator will reconcile all the routes in the namespace and clean up
+//      stale route statuses.
+//    - Handled by the route-status control loop.
 
-// syncRouteStatus ensures that all routes status have been synced with the ingress controller's state.
-func (r *reconciler) syncRouteStatus(ic *operatorv1.IngressController) []error {
-	// Clear routes that are not admitted by this ingress controller if route selectors have been updated.
-	if routeSelectorsUpdated(ic) {
-		// Only clear once we are done rolling out routers.
-		// We want to avoid race condition in which we clear status and an old router re-admits it before terminated.
-		if done, err := r.isRouterDeploymentRolloutComplete(ic); err != nil {
-			return []error{err}
-		} else if done {
-			// Clear routes status not admitted by this ingress controller.
-			if errs := r.clearRoutesNotAdmittedByIngress(ic); len(errs) > 0 {
-				return errs
-			}
-
-			// Now sync the selectors from the spec to the status, so we indicate we are done clearing status.
-			if err := r.syncIngressControllerSelectorStatus(ic); err != nil {
-				return []error{err}
-			}
-		}
-	}
-	return nil
-}
-
-// isRouterDeploymentRolloutComplete determines whether the rollout of the ingress router deployment is complete.
-func (r *reconciler) isRouterDeploymentRolloutComplete(ic *operatorv1.IngressController) (bool, error) {
-	deployment := appsv1.Deployment{}
-	deploymentName := operatorcontroller.RouterDeploymentName(ic)
-	if err := r.client.Get(context.TODO(), deploymentName, &deployment); err != nil {
-		return false, fmt.Errorf("failed to get deployment %s: %w", deploymentName, err)
-	}
-
-	if deployment.Generation != deployment.Status.ObservedGeneration {
-		return false, nil
-	}
-	if deployment.Status.Replicas != deployment.Status.UpdatedReplicas {
-		return false, nil
-	}
-
-	return true, nil
-}
-
-// clearAllRoutesStatusForIngressController clears any route status that have been
-// admitted by provided ingress controller.
-func (r *reconciler) clearAllRoutesStatusForIngressController(icName string) []error {
+// ClearAllRoutesStatusForIngressController clears any route status that has been admitted by the ingress controller,
+// regardless if it is actually admitted or not. This function should be used for deletions of ingress controllers.
+func ClearAllRoutesStatusForIngressController(kclient client.Client, icName string) []error {
 	// List all routes.
 	errs := []error{}
 	start := time.Now()
 	routeList := &routev1.RouteList{}
 	routesCleared := 0
-	if err := r.client.List(context.TODO(), routeList); err != nil {
+	if err := kclient.List(context.TODO(), routeList); err != nil {
 		return append(errs, fmt.Errorf("failed to list all routes in order to clear route status for deployment %s: %w", icName, err))
 	}
 	// Clear status on the routes that belonged to icName.
 	for i := range routeList.Items {
-		if cleared, err := r.clearRouteStatus(&routeList.Items[i], icName); err != nil {
+		if cleared, err := ClearRouteStatus(kclient, &routeList.Items[i], icName); err != nil {
 			errs = append(errs, err)
 		} else if cleared {
 			routesCleared++
@@ -100,8 +67,11 @@ func (r *reconciler) clearAllRoutesStatusForIngressController(icName string) []e
 	return errs
 }
 
-// clearRouteStatus clears a route's status that is admitted by a specific ingress controller.
-func (r *reconciler) clearRouteStatus(route *routev1.Route, icName string) (bool, error) {
+// ClearRouteStatus clears a route's status that is admitted by a specific ingress controller.
+func ClearRouteStatus(kclient client.Client, route *routev1.Route, icName string) (bool, error) {
+	if route == nil {
+		return false, fmt.Errorf("failed to clear route status: route is nil")
+	}
 	// Go through each route and clear status if admitted by this ingress controller.
 	var updated routev1.Route
 	for i := range route.Status.Ingress {
@@ -110,7 +80,7 @@ func (r *reconciler) clearRouteStatus(route *routev1.Route, icName string) (bool
 				// Remove this status since it matches our routerName.
 				route.DeepCopyInto(&updated)
 				updated.Status.Ingress = append(route.Status.Ingress[:i], route.Status.Ingress[i+1:]...)
-				if err := r.client.Status().Update(context.TODO(), &updated); err != nil {
+				if err := kclient.Status().Update(context.TODO(), &updated); err != nil {
 					return false, fmt.Errorf("failed to clear route status of %s/%s for routerName %s: %w",
 						route.Namespace, route.Name, icName, err)
 				}
@@ -124,42 +94,25 @@ func (r *reconciler) clearRouteStatus(route *routev1.Route, icName string) (bool
 	return false, nil
 }
 
-// routeSelectorsUpdated returns whether any of the route selectors have been updated by comparing
-// the status selector fields to the spec selector fields.
-func routeSelectorsUpdated(ingress *operatorv1.IngressController) bool {
-	if !reflect.DeepEqual(ingress.Spec.RouteSelector, ingress.Status.RouteSelector) ||
-		!reflect.DeepEqual(ingress.Spec.NamespaceSelector, ingress.Status.NamespaceSelector) {
-		return true
+// ClearRoutesNotAdmittedByIngress clears routes status that are not selected by a specific ingress controller.
+func ClearRoutesNotAdmittedByIngress(kclient client.Client, ingress *operatorv1.IngressController) []error {
+	var errs []error
+	if ingress == nil {
+		return append(errs, fmt.Errorf("ingress controller is nil"))
 	}
-	return false
-}
 
-// clearRoutesNotAdmittedByIngress clears routes status that are not selected by a specific ingress controller.
-func (r *reconciler) clearRoutesNotAdmittedByIngress(ingress *operatorv1.IngressController) []error {
 	start := time.Now()
-	errs := []error{}
 
 	// List all routes.
 	routeList := &routev1.RouteList{}
-	if err := r.client.List(context.TODO(), routeList); err != nil {
+	if err := kclient.List(context.TODO(), routeList); err != nil {
 		return append(errs, fmt.Errorf("failed to list all routes in order to clear route status: %w", err))
 	}
 
-	// List namespaces filtered by our ingress's namespace selector.
-	namespaceSelector, err := metav1.LabelSelectorAsSelector(ingress.Spec.NamespaceSelector)
+	// List all the Namespaces filtered by our ingress's Namespace selector.
+	namespacesInShard, err := GetNamespacesSelectedByIngressController(kclient, ingress)
 	if err != nil {
-		return append(errs, fmt.Errorf("ingresscontroller %s has an invalid namespace selector: %w", ingress.Name, err))
-	}
-	filteredNamespaceList := &corev1.NamespaceList{}
-	if err := r.client.List(context.TODO(), filteredNamespaceList,
-		client.MatchingLabelsSelector{Selector: namespaceSelector}); err != nil {
-		return append(errs, fmt.Errorf("failed to list all namespaces in order to clear route status for %s: %w", ingress.Name, err))
-	}
-
-	// Create a set of namespaces to easily look up namespaces in this shard.
-	namespacesInShard := sets.NewString()
-	for i := range filteredNamespaceList.Items {
-		namespacesInShard.Insert(filteredNamespaceList.Items[i].Name)
+		return append(errs, err)
 	}
 
 	// List routes filtered by our ingress's route selector.
@@ -168,7 +121,8 @@ func (r *reconciler) clearRoutesNotAdmittedByIngress(ingress *operatorv1.Ingress
 		return append(errs, fmt.Errorf("ingresscontroller %s has an invalid route selector: %w", ingress.Name, err))
 	}
 
-	// Iterate over the entire route list and clear if not selected by route selector OR namespace selector.
+	// Iterate over the entire route list and clear if either the route selector OR the namespace selector does not
+	// select it.
 	routesCleared := 0
 	for i := range routeList.Items {
 		route := &routeList.Items[i]
@@ -177,7 +131,7 @@ func (r *reconciler) clearRoutesNotAdmittedByIngress(ingress *operatorv1.Ingress
 		namespaceInShard := namespacesInShard.Has(route.Namespace)
 
 		if !routeInShard || !namespaceInShard {
-			if cleared, err := r.clearRouteStatus(route, ingress.ObjectMeta.Name); err != nil {
+			if cleared, err := ClearRouteStatus(kclient, route, ingress.ObjectMeta.Name); err != nil {
 				errs = append(errs, err)
 			} else if cleared {
 				routesCleared++
@@ -188,6 +142,150 @@ func (r *reconciler) clearRoutesNotAdmittedByIngress(ingress *operatorv1.Ingress
 	elapsed := time.Since(start)
 	log.Info("cleared route status after selector update", "Ingress Controller", ingress.Name, "Routes Status Cleared", routesCleared, "Time Elapsed", elapsed)
 	return errs
+}
+
+// clearStaleRouteAdmittedStatus cleans up a single route's admitted status by verifying it is actually admitted by
+// the ingress controller its status claims to be admitted by.
+func clearStaleRouteAdmittedStatus(kclient client.Client, route *routev1.Route) error {
+	if route == nil {
+		return fmt.Errorf("route is nil")
+	}
+	// Iterate through the Route's Ingresses.
+	for _, ri := range route.Status.Ingress {
+		// Check if the Route was admitted by the RouteIngress.
+		for _, cond := range ri.Conditions {
+			if cond.Type == routev1.RouteAdmitted && cond.Status == corev1.ConditionTrue {
+				// Get the ingress controller that this route status claims to be admitted by.
+				icName := types.NamespacedName{Name: ri.RouterName, Namespace: operatorcontroller.DefaultOperatorNamespace}
+				ic := &operatorv1.IngressController{}
+				if err := kclient.Get(context.TODO(), icName, ic); err != nil {
+					// If the Ingress Controller doesn't exist at all, skip status clear, as it should have been cleared
+					// upon Ingress Controller deletion. If it made it here, then it's probably a router status test.
+					if kerrors.IsNotFound(err) {
+						continue
+					}
+					return fmt.Errorf("failed to get ingresscontroller %q: %v", icName, err)
+				}
+
+				// If it is no longer admitted by this ingress controller, clear the status.
+				if admitted, err := isRouteAdmittedByIngressController(kclient, route, ic); err != nil {
+					return err
+				} else if !admitted {
+					ClearRouteStatus(kclient, route, ri.RouterName)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// isRouteAdmittedByIngressController returns a boolean if the route is admitted by the ingress
+// controller as determined by routeSelectors and namespaceSelectors on the ingress controller.
+// Note: This is not using route status to determine admitted (see IsRouteStatusAdmitted)
+func isRouteAdmittedByIngressController(kclient client.Reader, route *routev1.Route, ic *operatorv1.IngressController) (bool, error) {
+	if route == nil {
+		return false, fmt.Errorf("failed to check if route is admitted: route is nil")
+	}
+	if ic == nil {
+		return false, fmt.Errorf("failed to check if route is admitted: ingress controller is nil")
+	}
+	// First check if the route's labels match the RouteSelector on the Ingress Controller.
+	if ic.Spec.RouteSelector != nil {
+		routeSelector, err := metav1.LabelSelectorAsSelector(ic.Spec.RouteSelector)
+		if err != nil {
+			return false, fmt.Errorf("ingresscontroller %s has an invalid route selector: %w", ic.Name, err)
+		}
+		if !routeSelector.Matches(labels.Set(route.Labels)) {
+			return false, nil
+		}
+	}
+
+	// Next let's check if the route's namespace labels match the NamespaceSelector on the Ingress Controller.
+	if ic.Spec.NamespaceSelector != nil {
+		ns := &corev1.Namespace{}
+		nsName := types.NamespacedName{Name: route.Namespace}
+		if err := kclient.Get(context.Background(), nsName, ns); err != nil {
+			return false, fmt.Errorf("failed to get namespace %q: %v", nsName, err)
+		}
+		namespaceSelector, err := metav1.LabelSelectorAsSelector(ic.Spec.NamespaceSelector)
+		if err != nil {
+			return false, fmt.Errorf("ingresscontroller %s has an invalid namespace selector: %w", ic.Name, err)
+		}
+		if !namespaceSelector.Matches(labels.Set(ns.Labels)) {
+			return false, nil
+		}
+	}
+
+	return true, nil
+}
+
+// IsRouteStatusAdmitted returns true if a given route's status shows admitted by the Ingress Controller.
+func IsRouteStatusAdmitted(route routev1.Route, ingressControllerName string) bool {
+	// Iterate through the related Ingress Controllers.
+	for _, ingress := range route.Status.Ingress {
+		// Check if the RouterName matches the name of the Ingress Controller.
+		if ingress.RouterName == ingressControllerName {
+			// Check if the Route was admitted by the Ingress Controller.
+			for _, cond := range ingress.Conditions {
+				if cond.Type == routev1.RouteAdmitted && cond.Status == corev1.ConditionTrue {
+					return true
+				}
+			}
+			return false
+		}
+	}
+	return false
+}
+
+// GetNamespacesSelectedByIngressController gets a set of strings that represents the namespaces that were selected by
+// the ingress controller's namespacesSelector. If ingress controller's namespace selector is empty, then it returns all.
+func GetNamespacesSelectedByIngressController(kclient client.Reader, ic *operatorv1.IngressController) (sets.String, error) {
+	if ic == nil {
+		return nil, fmt.Errorf("failed to get selected namespaces: ingress controller is nil")
+	}
+	// List all the Namespaces filtered by our ingress's Namespace selector.
+	namespaceMatchingLabelsSelector := client.MatchingLabelsSelector{Selector: labels.Everything()}
+	if ic.Spec.NamespaceSelector != nil {
+		namespaceSelector, err := metav1.LabelSelectorAsSelector(ic.Spec.NamespaceSelector)
+		if err != nil {
+			return nil, fmt.Errorf("ingresscontroller %s has an invalid namespace selector %q: %w",
+				ic.Name, ic.Spec.NamespaceSelector, err)
+		}
+		namespaceMatchingLabelsSelector = client.MatchingLabelsSelector{Selector: namespaceSelector}
+	}
+	filteredNamespaceList := &corev1.NamespaceList{}
+	if err := kclient.List(context.TODO(), filteredNamespaceList, namespaceMatchingLabelsSelector); err != nil {
+		return nil, fmt.Errorf("failed to list all namespaces in order to clear route status for %s: %w", ic.Name, err)
+	}
+	// Create a set of namespaces to easily look up namespaces in this shard.
+	namespacesInShard := sets.NewString()
+	for i := range filteredNamespaceList.Items {
+		namespacesInShard.Insert(filteredNamespaceList.Items[i].Name)
+	}
+	return namespacesInShard, nil
+}
+
+// GetRoutesSelectedByIngressController gets route list that represents the routes that were selected by
+// the ingress controller's routeSelector. If ingress controller's route selector is empty, then it returns all.
+func GetRoutesSelectedByIngressController(kclient client.Reader, ic *operatorv1.IngressController) (routev1.RouteList, error) {
+	if ic == nil {
+		return routev1.RouteList{}, fmt.Errorf("failed to get selected routes: ingress controller is nil")
+	}
+	// List routes filtered by our ingress's route selector.
+	routeMatchingLabelsSelector := client.MatchingLabelsSelector{Selector: labels.Everything()}
+	if ic.Spec.RouteSelector != nil {
+		routeSelector, err := metav1.LabelSelectorAsSelector(ic.Spec.RouteSelector)
+		if err != nil {
+			return routev1.RouteList{}, fmt.Errorf("ingresscontroller %s has an invalid route selector %q: %w",
+				ic.Name, ic.Spec.RouteSelector, err)
+		}
+		routeMatchingLabelsSelector = client.MatchingLabelsSelector{Selector: routeSelector}
+	}
+	routeList := routev1.RouteList{}
+	if err := kclient.List(context.Background(), &routeList, routeMatchingLabelsSelector); err != nil {
+		return routev1.RouteList{}, fmt.Errorf("failed to list routes for the ingresscontroller %s: %w", ic.Name, err)
+	}
+	return routeList, nil
 }
 
 // findCondition locates the first condition that corresponds to the requested type.

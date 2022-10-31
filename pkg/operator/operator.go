@@ -7,8 +7,6 @@ import (
 
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 
-	routemetricscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/route-metrics"
-	errorpageconfigmapcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/sync-http-error-code-configmap"
 	"github.com/openshift/library-go/pkg/operator/onepodpernodeccontroller"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/informers"
@@ -31,7 +29,10 @@ import (
 	ingress "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 	ingressclasscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingressclass"
+	routemetricscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/route-metrics"
+	routestatuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/route-status"
 	statuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/status"
+	errorpageconfigmapcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/sync-http-error-code-configmap"
 	"github.com/openshift/library-go/pkg/operator/events"
 
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -209,9 +210,25 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		}
 	}
 
+	// Create a new cache to watch on Route objects from every namespace for the route metrics and the route status
+	// controller to share.
+	globalCache, err := cache.New(mgr.GetConfig(), cache.Options{
+		Scheme: mgr.GetScheme(),
+	})
+	if err != nil {
+		return nil, err
+	}
+	// Add the cache to the manager so that the cache is started along with the other runnables.
+	mgr.Add(globalCache)
+
 	// Set up the route metrics controller.
-	if _, err := routemetricscontroller.New(mgr, config.Namespace); err != nil {
+	if _, err := routemetricscontroller.New(mgr, config.Namespace, globalCache); err != nil {
 		return nil, fmt.Errorf("failed to create route metrics controller: %w", err)
+	}
+
+	// Set up the route status controller.
+	if _, err := routestatuscontroller.New(mgr, config.Namespace, globalCache); err != nil {
+		return nil, fmt.Errorf("failed to create route status controller: %w", err)
 	}
 
 	return &Operator{
