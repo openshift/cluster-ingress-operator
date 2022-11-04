@@ -122,7 +122,7 @@ func cond(t string, status operatorv1.ConditionStatus, reason string, lt time.Ti
 	}
 }
 
-func TestComputePodsScheduledCondition(t *testing.T) {
+func Test_checkPodsScheduledForDeployment(t *testing.T) {
 	deployment := &appsv1.Deployment{
 		Spec: appsv1.DeploymentSpec{
 			Selector: &metav1.LabelSelector{
@@ -203,46 +203,50 @@ func TestComputePodsScheduledCondition(t *testing.T) {
 		},
 	}
 	tests := []struct {
-		name       string
-		deployment *appsv1.Deployment
-		pods       []corev1.Pod
-		expect     operatorv1.ConditionStatus
+		name        string
+		deployment  *appsv1.Deployment
+		pods        []corev1.Pod
+		expectError bool
 	}{
 		{
-			name:       "no pods",
-			deployment: deployment,
-			pods:       []corev1.Pod{unrelatedPod},
-			expect:     operatorv1.ConditionTrue,
+			name:        "no pods",
+			deployment:  deployment,
+			pods:        []corev1.Pod{unrelatedPod},
+			expectError: false,
 		},
 		{
-			name:       "all pods scheduled",
-			deployment: deployment,
-			pods:       []corev1.Pod{scheduledPod},
-			expect:     operatorv1.ConditionTrue,
+			name:        "all pods scheduled",
+			deployment:  deployment,
+			pods:        []corev1.Pod{scheduledPod},
+			expectError: false,
 		},
 		{
-			name:       "some pod unscheduled",
-			deployment: deployment,
-			pods:       []corev1.Pod{scheduledPod, unscheduledPod},
-			expect:     operatorv1.ConditionFalse,
+			name:        "some pod unscheduled",
+			deployment:  deployment,
+			pods:        []corev1.Pod{scheduledPod, unscheduledPod},
+			expectError: true,
 		},
 		{
-			name:       "some pod unschedulable",
-			deployment: deployment,
-			pods:       []corev1.Pod{scheduledPod, unschedulablePod},
-			expect:     operatorv1.ConditionFalse,
+			name:        "some pod unschedulable",
+			deployment:  deployment,
+			pods:        []corev1.Pod{scheduledPod, unschedulablePod},
+			expectError: true,
 		},
 		{
-			name:       "deployment with empty label selector",
-			deployment: invalidDeployment,
-			expect:     operatorv1.ConditionUnknown,
+			name:        "deployment with empty label selector",
+			deployment:  invalidDeployment,
+			expectError: true,
 		},
 	}
 	for _, test := range tests {
-		actual := computeDeploymentPodsScheduledCondition(test.deployment, test.pods)
-		if actual.Status != test.expect {
-			t.Errorf("%q: expected %v, got %v", test.name, test.expect, actual.Status)
-		}
+		t.Run(test.name, func(t *testing.T) {
+			switch err := checkPodsScheduledForDeployment(test.deployment, test.pods); {
+			case err == nil && test.expectError:
+				t.Error("expected error, got nil")
+			case err != nil && !test.expectError:
+				t.Errorf("got unexpected error: %v", err)
+			}
+		})
 	}
 }
 
@@ -273,26 +277,6 @@ func TestComputeIngressDegradedCondition(t *testing.T) {
 			name: "not admitted",
 			conditions: []operatorv1.OperatorCondition{
 				cond(IngressControllerAdmittedConditionType, operatorv1.ConditionFalse, "", clock.Now()),
-			},
-			expectIngressDegradedStatus: operatorv1.ConditionTrue,
-			expectRequeue:               true,
-			// Just use the one minute retry duration for this degraded condition
-			expectAfter: time.Minute,
-		},
-		{
-			name: "pods not scheduled for <10m",
-			conditions: []operatorv1.OperatorCondition{
-				cond(IngressControllerPodsScheduledConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Minute*-9)),
-			},
-			expectIngressDegradedStatus: operatorv1.ConditionFalse,
-			expectRequeue:               true,
-			// Grace period is 10 minutes, subtract the 9 minute spoofed last transition time
-			expectAfter: time.Minute,
-		},
-		{
-			name: "pods not scheduled for >10m",
-			conditions: []operatorv1.OperatorCondition{
-				cond(IngressControllerPodsScheduledConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Minute*-31)),
 			},
 			expectIngressDegradedStatus: operatorv1.ConditionTrue,
 			expectRequeue:               true,
@@ -426,7 +410,6 @@ func TestComputeIngressDegradedCondition(t *testing.T) {
 			name: "DNS not ready and deployment unavailable",
 			conditions: []operatorv1.OperatorCondition{
 				cond(IngressControllerAdmittedConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
-				cond(IngressControllerPodsScheduledConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Hour*-1)),
 				cond(IngressControllerDeploymentAvailableConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Hour*-1)),
 				cond(IngressControllerDeploymentReplicasMinAvailableConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Hour*-1)),
 				cond(IngressControllerDeploymentReplicasAllAvailableConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Hour*-1)),
@@ -444,7 +427,6 @@ func TestComputeIngressDegradedCondition(t *testing.T) {
 			name: "admitted, DNS, LB, and deployment OK",
 			conditions: []operatorv1.OperatorCondition{
 				cond(IngressControllerAdmittedConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
-				cond(IngressControllerPodsScheduledConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
 				cond(IngressControllerDeploymentAvailableConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
 				cond(IngressControllerDeploymentReplicasMinAvailableConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
 				cond(IngressControllerDeploymentReplicasAllAvailableConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
@@ -1060,6 +1042,12 @@ func TestComputeDeploymentReplicasMinAvailableCondition(t *testing.T) {
 		deploy := &appsv1.Deployment{
 			Spec: appsv1.DeploymentSpec{
 				Replicas: test.replicas,
+				Selector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{
+						"ingresscontroller.operator.openshift.io/deployment-ingresscontroller": "default",
+						"ingresscontroller.operator.openshift.io/hash":                         "75678b564c",
+					},
+				},
 				Strategy: appsv1.DeploymentStrategy{
 					Type:          appsv1.RollingUpdateDeploymentStrategyType,
 					RollingUpdate: test.rollingUpdate,
@@ -1070,7 +1058,7 @@ func TestComputeDeploymentReplicasMinAvailableCondition(t *testing.T) {
 			},
 		}
 
-		actual := computeDeploymentReplicasMinAvailableCondition(deploy)
+		actual := computeDeploymentReplicasMinAvailableCondition(deploy, []corev1.Pod{})
 		if actual.Status != test.expectDeploymentReplicasMinAvailableStatus {
 			t.Errorf("%q: expected %v, got %v", test.name, test.expectDeploymentReplicasMinAvailableStatus, actual.Status)
 		}

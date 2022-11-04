@@ -75,9 +75,8 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 		updated.Status.EndpointPublishingStrategy.LoadBalancer.AllowedSourceRanges = computeAllowedSourceRanges(service)
 	}
 
-	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentPodsScheduledCondition(deployment, pods))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentAvailableCondition(deployment))
-	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentReplicasMinAvailableCondition(deployment))
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentReplicasMinAvailableCondition(deployment, pods))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentReplicasAllAvailableCondition(deployment))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentRollingOutCondition(deployment))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeLoadBalancerStatus(ic, service, operandEvents)...)
@@ -153,9 +152,9 @@ func MergeConditions(conditions []operatorv1.OperatorCondition, updates ...opera
 // Returns the updated condition array.
 func PruneConditions(conditions []operatorv1.OperatorCondition) []operatorv1.OperatorCondition {
 	for i, condition := range conditions {
-		// TODO: Remove this fix-up logic in 4.8
-		if condition.Type == "DeploymentDegraded" {
-			// DeploymentDegraded was removed in 4.6.0
+		// PodsScheduled was removed in 4.13.0.
+		// TODO: Remove this fix-up logic in 4.14.
+		if condition.Type == "PodsScheduled" {
 			conditions = append(conditions[:i], conditions[i+1:]...)
 		}
 	}
@@ -204,18 +203,14 @@ func computeAllowedSourceRanges(service *corev1.Service) []operatorv1.CIDR {
 	return nil
 }
 
-// computeDeploymentPodsScheduledCondition computes the ingress controller's
-// current PodsScheduled status condition state by inspecting the PodScheduled
-// conditions of the pods associated with the deployment.
-func computeDeploymentPodsScheduledCondition(deployment *appsv1.Deployment, pods []corev1.Pod) operatorv1.OperatorCondition {
+// checkPodsScheduledForDeployment checks whether the given deployment has a
+// valid label selector and whether all of the deployment's pods are reporting
+// PodsScheduled=True.  This function returns an error value indicating the
+// result of that check.
+func checkPodsScheduledForDeployment(deployment *appsv1.Deployment, pods []corev1.Pod) error {
 	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
 	if err != nil || selector.Empty() {
-		return operatorv1.OperatorCondition{
-			Type:    IngressControllerPodsScheduledConditionType,
-			Status:  operatorv1.ConditionUnknown,
-			Reason:  "InvalidLabelSelector",
-			Message: "Deployment has an invalid label selector.",
-		}
+		return errors.New("Deployment has an invalid label selector.")
 	}
 	unscheduled := make(map[*corev1.Pod]corev1.PodCondition)
 	for i, pod := range pods {
@@ -255,17 +250,9 @@ func computeDeploymentPodsScheduledCondition(deployment *appsv1.Deployment, pods
 		if haveUnschedulable {
 			message = message + " Make sure you have sufficient worker nodes."
 		}
-		return operatorv1.OperatorCondition{
-			Type:    IngressControllerPodsScheduledConditionType,
-			Status:  operatorv1.ConditionFalse,
-			Reason:  "PodsNotScheduled",
-			Message: message,
-		}
+		return errors.New(message)
 	}
-	return operatorv1.OperatorCondition{
-		Type:   IngressControllerPodsScheduledConditionType,
-		Status: operatorv1.ConditionTrue,
-	}
+	return nil
 }
 
 // computeIngressAvailableCondition computes the ingress controller's current Available status state
@@ -411,7 +398,7 @@ func computeDeploymentAvailableCondition(deployment *appsv1.Deployment) operator
 // update parameters.  The "DeploymentReplicasMinAvailable" condition is true if
 // the number of available replicas is equal to or greater than the number of
 // desired replicas less the number minimum available.
-func computeDeploymentReplicasMinAvailableCondition(deployment *appsv1.Deployment) operatorv1.OperatorCondition {
+func computeDeploymentReplicasMinAvailableCondition(deployment *appsv1.Deployment, pods []corev1.Pod) operatorv1.OperatorCondition {
 	replicas := int32(1)
 	if deployment.Spec.Replicas != nil {
 		replicas = *deployment.Spec.Replicas
@@ -450,11 +437,15 @@ func computeDeploymentReplicasMinAvailableCondition(deployment *appsv1.Deploymen
 		maxUnavailable = 1
 	}
 	if int(deployment.Status.AvailableReplicas) < int(replicas)-maxUnavailable {
+		message := fmt.Sprintf("%d/%d of replicas are available, max unavailable is %d", deployment.Status.AvailableReplicas, replicas, maxUnavailable)
+		if err := checkPodsScheduledForDeployment(deployment, pods); err != nil {
+			message = fmt.Sprintf("%s: %s", message, err.Error())
+		}
 		return operatorv1.OperatorCondition{
 			Type:    IngressControllerDeploymentReplicasMinAvailableConditionType,
 			Status:  operatorv1.ConditionFalse,
 			Reason:  "DeploymentMinimumReplicasNotMet",
-			Message: fmt.Sprintf("%d/%d of replicas are available, max unavailable is %d", deployment.Status.AvailableReplicas, replicas, maxUnavailable),
+			Message: message,
 		}
 	}
 
@@ -555,11 +546,6 @@ func computeIngressDegradedCondition(conditions []operatorv1.OperatorCondition, 
 		{
 			condition: IngressControllerAdmittedConditionType,
 			status:    operatorv1.ConditionTrue,
-		},
-		{
-			condition:   IngressControllerPodsScheduledConditionType,
-			status:      operatorv1.ConditionTrue,
-			gracePeriod: time.Minute * 10,
 		},
 		{
 			condition:   IngressControllerDeploymentAvailableConditionType,
