@@ -2,7 +2,9 @@ package gcp
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"strings"
 
 	"google.golang.org/api/googleapi"
 
@@ -48,10 +50,32 @@ func New(config Config) (*Provider, error) {
 	return provider, nil
 }
 
+func (p *Provider) parseZone(zone configv1.DNSZone) (string, string, error) {
+	id := zone.ID
+	project := p.config.Project
+
+	// parse the zone that was provided
+	parts := strings.Split(id, "/")
+	switch {
+	case len(parts) == 1:
+		return project, id, nil
+	case len(parts) == 4 && parts[0] == "projects" && parts[2] == "managedZones":
+		return parts[1], parts[3], nil
+	}
+
+	return "", "", fmt.Errorf("invalid managedZone: %s", zone.ID)
+}
+
 func (p *Provider) Ensure(record *iov1.DNSRecord, zone configv1.DNSZone) error {
 	change := &gdnsv1.Change{Additions: []*gdnsv1.ResourceRecordSet{resourceRecordSet(record)}}
-	call := p.dnsService.Changes.Create(p.config.Project, zone.ID, change)
-	_, err := call.Do()
+
+	project, zoneID, err := p.parseZone(zone)
+	if err != nil {
+		return err
+	}
+
+	call := p.dnsService.Changes.Create(project, zoneID, change)
+	_, err = call.Do()
 	// Since we don't yet handle updates, assume that existing records are correct.
 	if ae, ok := err.(*googleapi.Error); ok && ae.Code == http.StatusConflict {
 		return nil
@@ -61,12 +85,17 @@ func (p *Provider) Ensure(record *iov1.DNSRecord, zone configv1.DNSZone) error {
 
 func (p *Provider) Replace(record *iov1.DNSRecord, zone configv1.DNSZone) error {
 	ctx := context.Background()
-	oldRecord := p.dnsService.ResourceRecordSets.List(p.config.Project, zone.ID).Name(record.Spec.DNSName)
+
+	project, zoneID, err := p.parseZone(zone)
+	if err != nil {
+		return err
+	}
+	oldRecord := p.dnsService.ResourceRecordSets.List(project, zoneID).Name(record.Spec.DNSName)
 	if err := oldRecord.Pages(ctx, func(page *gdnsv1.ResourceRecordSetsListResponse) error {
 		for _, resourceRecordSet := range page.Rrsets {
 			log.Info("found old DNS resource record set", "resourceRecordSet", resourceRecordSet)
 			change := &gdnsv1.Change{Deletions: []*gdnsv1.ResourceRecordSet{resourceRecordSet}}
-			call := p.dnsService.Changes.Create(p.config.Project, zone.ID, change)
+			call := p.dnsService.Changes.Create(project, zoneID, change)
 			_, err := call.Do()
 			if ae, ok := err.(*googleapi.Error); ok && ae.Code == http.StatusNotFound {
 				return nil
@@ -85,8 +114,12 @@ func (p *Provider) Replace(record *iov1.DNSRecord, zone configv1.DNSZone) error 
 
 func (p *Provider) Delete(record *iov1.DNSRecord, zone configv1.DNSZone) error {
 	change := &gdnsv1.Change{Deletions: []*gdnsv1.ResourceRecordSet{resourceRecordSet(record)}}
-	call := p.dnsService.Changes.Create(p.config.Project, zone.ID, change)
-	_, err := call.Do()
+	project, zoneID, err := p.parseZone(zone)
+	if err != nil {
+		return err
+	}
+	call := p.dnsService.Changes.Create(project, zoneID, change)
+	_, err = call.Do()
 	if ae, ok := err.(*googleapi.Error); ok && ae.Code == http.StatusNotFound {
 		return nil
 	}
