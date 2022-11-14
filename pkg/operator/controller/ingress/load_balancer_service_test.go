@@ -21,33 +21,76 @@ import (
 )
 
 func Test_desiredLoadBalancerService(t *testing.T) {
+	var (
+		// lbs returns an EndpointPublishingStrategy with type
+		// "LoadBalancerService" and the specified scope.
+		lbs = func(scope operatorv1.LoadBalancerScope) *operatorv1.EndpointPublishingStrategy {
+			return &operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.LoadBalancerServiceStrategyType,
+				LoadBalancer: &operatorv1.LoadBalancerStrategy{
+					Scope: scope,
+				},
+			}
+		}
+		// nps returns an EndpointPublishingStrategy with type
+		// "NodePortService" and the specified protocol.
+		nps = func(proto operatorv1.IngressControllerProtocol) *operatorv1.EndpointPublishingStrategy {
+			return &operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.NodePortServiceStrategyType,
+				NodePort: &operatorv1.NodePortStrategy{
+					Protocol: proto,
+				},
+			}
+		}
+		// nlb returns an EndpointPublishingStrategy with type
+		// "LoadBalancerStrategy" and the specified scope and with
+		// providerParameters set to specify an NLB.
+		nlb = func(scope operatorv1.LoadBalancerScope) *operatorv1.EndpointPublishingStrategy {
+			eps := lbs(scope)
+			eps.LoadBalancer.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{
+				Type: operatorv1.AWSLoadBalancerProvider,
+				AWS: &operatorv1.AWSLoadBalancerParameters{
+					Type: operatorv1.AWSNetworkLoadBalancer,
+				},
+			}
+			return eps
+		}
+		// gcpLB returns an EndpointPublishingStrategy with type
+		// "LoadBalancerService" and the specified scope and with
+		// providerParameters set with the specified GCP ClientAccess
+		// setting.
+		gcpLB = func(scope operatorv1.LoadBalancerScope, clientAccess operatorv1.GCPClientAccess) *operatorv1.EndpointPublishingStrategy {
+			eps := lbs(scope)
+			eps.LoadBalancer.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{
+				Type: operatorv1.GCPLoadBalancerProvider,
+				GCP: &operatorv1.GCPLoadBalancerParameters{
+					ClientAccess: clientAccess,
+				},
+			}
+			return eps
+		}
+	)
+
 	testCases := []struct {
 		description          string
 		platform             configv1.PlatformType
-		strategyType         operatorv1.EndpointPublishingStrategyType
-		lbStrategy           operatorv1.LoadBalancerStrategy
+		strategy             *operatorv1.EndpointPublishingStrategy
 		proxyNeeded          bool
 		expect               bool
 		platformStatus       configv1.PlatformStatus
 		expectedResourceTags string
 	}{
 		{
-			description:  "external classic load balancer with scope for aws platform",
-			platform:     configv1.AWSPlatformType,
-			strategyType: operatorv1.LoadBalancerServiceStrategyType,
-			lbStrategy: operatorv1.LoadBalancerStrategy{
-				Scope: operatorv1.ExternalLoadBalancer,
-			},
+			description: "external classic load balancer with scope for aws platform",
+			platform:    configv1.AWSPlatformType,
+			strategy:    lbs(operatorv1.ExternalLoadBalancer),
 			proxyNeeded: true,
 			expect:      true,
 		},
 		{
-			description:  "external classic load balancer with scope for aws platform and custom user tags",
-			platform:     configv1.AWSPlatformType,
-			strategyType: operatorv1.LoadBalancerServiceStrategyType,
-			lbStrategy: operatorv1.LoadBalancerStrategy{
-				Scope: operatorv1.ExternalLoadBalancer,
-			},
+			description: "external classic load balancer with scope for aws platform and custom user tags",
+			platform:    configv1.AWSPlatformType,
+			strategy:    lbs(operatorv1.ExternalLoadBalancer),
 			proxyNeeded: true,
 			expect:      true,
 			platformStatus: configv1.PlatformStatus{
@@ -66,66 +109,37 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 			expectedResourceTags: "classic-load-balancer-key-with-value=100,classic-load-balancer-key-with-empty-value=",
 		},
 		{
-			description:  "external classic load balancer without LoadBalancerStrategy for aws platform",
-			platform:     configv1.AWSPlatformType,
-			strategyType: operatorv1.LoadBalancerServiceStrategyType,
-			proxyNeeded:  true,
-			expect:       true,
-		},
-		{
-			description:  "internal classic load balancer for aws platform",
-			platform:     configv1.AWSPlatformType,
-			strategyType: operatorv1.LoadBalancerServiceStrategyType,
-			lbStrategy: operatorv1.LoadBalancerStrategy{
-				Scope: operatorv1.InternalLoadBalancer,
-			},
+			description: "external classic load balancer without LoadBalancerStrategy for aws platform",
+			platform:    configv1.AWSPlatformType,
+			strategy:    lbs(""),
 			proxyNeeded: true,
 			expect:      true,
 		},
 		{
-			description:  "external network load balancer without scope for aws platform",
-			platform:     configv1.AWSPlatformType,
-			strategyType: operatorv1.LoadBalancerServiceStrategyType,
-			lbStrategy: operatorv1.LoadBalancerStrategy{
-				ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
-					Type: operatorv1.AWSLoadBalancerProvider,
-					AWS: &operatorv1.AWSLoadBalancerParameters{
-						Type: operatorv1.AWSNetworkLoadBalancer,
-					},
-				},
-			},
+			description: "internal classic load balancer for aws platform",
+			platform:    configv1.AWSPlatformType,
+			strategy:    lbs(operatorv1.InternalLoadBalancer),
+			proxyNeeded: true,
+			expect:      true,
+		},
+		{
+			description: "external network load balancer without scope for aws platform",
+			platform:    configv1.AWSPlatformType,
+			strategy:    nlb(""),
 			proxyNeeded: false,
 			expect:      true,
 		},
 		{
-			description:  "external network load balancer with scope for aws platform",
-			platform:     configv1.AWSPlatformType,
-			strategyType: operatorv1.LoadBalancerServiceStrategyType,
-			lbStrategy: operatorv1.LoadBalancerStrategy{
-				Scope: operatorv1.ExternalLoadBalancer,
-				ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
-					Type: operatorv1.AWSLoadBalancerProvider,
-					AWS: &operatorv1.AWSLoadBalancerParameters{
-						Type: operatorv1.AWSNetworkLoadBalancer,
-					},
-				},
-			},
+			description: "external network load balancer with scope for aws platform",
+			platform:    configv1.AWSPlatformType,
+			strategy:    nlb(operatorv1.ExternalLoadBalancer),
 			proxyNeeded: false,
 			expect:      true,
 		},
 		{
-			description:  "external network load balancer with scope for aws platform and custom user tags",
-			platform:     configv1.AWSPlatformType,
-			strategyType: operatorv1.LoadBalancerServiceStrategyType,
-			lbStrategy: operatorv1.LoadBalancerStrategy{
-				Scope: operatorv1.ExternalLoadBalancer,
-				ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
-					Type: operatorv1.AWSLoadBalancerProvider,
-					AWS: &operatorv1.AWSLoadBalancerParameters{
-						Type: operatorv1.AWSNetworkLoadBalancer,
-					},
-				},
-			},
+			description: "external network load balancer with scope for aws platform and custom user tags",
+			platform:    configv1.AWSPlatformType,
+			strategy:    nlb(operatorv1.ExternalLoadBalancer),
 			proxyNeeded: false,
 			expect:      true,
 
@@ -145,149 +159,95 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 			expectedResourceTags: "network-load-balancer-key-with-value=200,network-load-balancer-key-with-empty-value=",
 		},
 		{
-			description:  "nodePort service for aws platform",
-			platform:     configv1.AWSPlatformType,
-			strategyType: operatorv1.NodePortServiceStrategyType,
-			proxyNeeded:  false,
-			expect:       false,
+			description: "nodePort service for aws platform",
+			platform:    configv1.AWSPlatformType,
+			strategy:    nps(operatorv1.TCPProtocol),
+			proxyNeeded: false,
+			expect:      false,
 		},
 		{
-			description:  "external load balancer for ibm platform",
-			platform:     configv1.IBMCloudPlatformType,
-			strategyType: operatorv1.LoadBalancerServiceStrategyType,
-			lbStrategy: operatorv1.LoadBalancerStrategy{
-				Scope: operatorv1.ExternalLoadBalancer,
-			},
-			expect: true,
+			description: "external load balancer for ibm platform",
+			platform:    configv1.IBMCloudPlatformType,
+			strategy:    lbs(operatorv1.ExternalLoadBalancer),
+			expect:      true,
 		},
 		{
-			description:  "internal load balancer for ibm platform",
-			platform:     configv1.IBMCloudPlatformType,
-			strategyType: operatorv1.LoadBalancerServiceStrategyType,
-			lbStrategy: operatorv1.LoadBalancerStrategy{
-				Scope: operatorv1.InternalLoadBalancer,
-			},
-			expect: true,
+			description: "internal load balancer for ibm platform",
+			platform:    configv1.IBMCloudPlatformType,
+			strategy:    lbs(operatorv1.InternalLoadBalancer),
+			expect:      true,
 		},
 		{
-			description:  "external load balancer for Power VS platform",
-			platform:     configv1.PowerVSPlatformType,
-			strategyType: operatorv1.LoadBalancerServiceStrategyType,
-			lbStrategy: operatorv1.LoadBalancerStrategy{
-				Scope: operatorv1.ExternalLoadBalancer,
-			},
-			expect: true,
+			description: "external load balancer for Power VS platform",
+			platform:    configv1.PowerVSPlatformType,
+			strategy:    lbs(operatorv1.ExternalLoadBalancer),
+			expect:      true,
 		},
 		{
-			description:  "internal load balancer for Power VS platform",
-			platform:     configv1.PowerVSPlatformType,
-			strategyType: operatorv1.LoadBalancerServiceStrategyType,
-			lbStrategy: operatorv1.LoadBalancerStrategy{
-				Scope: operatorv1.InternalLoadBalancer,
-			},
-			expect: true,
+			description: "internal load balancer for Power VS platform",
+			platform:    configv1.PowerVSPlatformType,
+			strategy:    lbs(operatorv1.InternalLoadBalancer),
+			expect:      true,
 		},
 		{
-			description:  "external load balancer for azure platform",
-			platform:     configv1.AzurePlatformType,
-			strategyType: operatorv1.LoadBalancerServiceStrategyType,
-			lbStrategy: operatorv1.LoadBalancerStrategy{
-				Scope: operatorv1.ExternalLoadBalancer,
-			},
-			expect: true,
+			description: "external load balancer for azure platform",
+			platform:    configv1.AzurePlatformType,
+			strategy:    lbs(operatorv1.ExternalLoadBalancer),
+			expect:      true,
 		},
 		{
-			description:  "internal load balancer for azure platform",
-			platform:     configv1.AzurePlatformType,
-			strategyType: operatorv1.LoadBalancerServiceStrategyType,
-			lbStrategy: operatorv1.LoadBalancerStrategy{
-				Scope: operatorv1.InternalLoadBalancer,
-			},
-			expect: true,
+			description: "internal load balancer for azure platform",
+			platform:    configv1.AzurePlatformType,
+			strategy:    lbs(operatorv1.InternalLoadBalancer),
+			expect:      true,
 		},
 		{
-			description:  "external load balancer for gcp platform",
-			platform:     configv1.GCPPlatformType,
-			strategyType: operatorv1.LoadBalancerServiceStrategyType,
-			lbStrategy: operatorv1.LoadBalancerStrategy{
-				Scope: operatorv1.ExternalLoadBalancer,
-			},
-			expect: true,
+			description: "external load balancer for gcp platform",
+			platform:    configv1.GCPPlatformType,
+			strategy:    lbs(operatorv1.ExternalLoadBalancer),
+			expect:      true,
 		},
 		{
-			description:  "internal load balancer for gcp platform",
-			platform:     configv1.GCPPlatformType,
-			strategyType: operatorv1.LoadBalancerServiceStrategyType,
-			lbStrategy: operatorv1.LoadBalancerStrategy{
-				Scope: operatorv1.InternalLoadBalancer,
-			},
-			expect: true,
+			description: "internal load balancer for gcp platform",
+			platform:    configv1.GCPPlatformType,
+			strategy:    lbs(operatorv1.InternalLoadBalancer),
+			expect:      true,
 		},
 		{
-			description:  "internal load balancer for gcp platform with global ClientAccess",
-			platform:     configv1.GCPPlatformType,
-			strategyType: operatorv1.LoadBalancerServiceStrategyType,
-			lbStrategy: operatorv1.LoadBalancerStrategy{
-				Scope: operatorv1.InternalLoadBalancer,
-				ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
-					Type: operatorv1.GCPLoadBalancerProvider,
-					GCP: &operatorv1.GCPLoadBalancerParameters{
-						ClientAccess: operatorv1.GCPGlobalAccess,
-					},
-				},
-			},
-			expect: true,
+			description: "internal load balancer for gcp platform with global ClientAccess",
+			platform:    configv1.GCPPlatformType,
+			strategy:    gcpLB(operatorv1.InternalLoadBalancer, operatorv1.GCPGlobalAccess),
+			expect:      true,
 		},
 		{
-			description:  "internal load balancer for gcp platform with local ClientAccess",
-			platform:     configv1.GCPPlatformType,
-			strategyType: operatorv1.LoadBalancerServiceStrategyType,
-			lbStrategy: operatorv1.LoadBalancerStrategy{
-				Scope: operatorv1.InternalLoadBalancer,
-				ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
-					Type: operatorv1.GCPLoadBalancerProvider,
-					GCP: &operatorv1.GCPLoadBalancerParameters{
-						ClientAccess: operatorv1.GCPLocalAccess,
-					},
-				},
-			},
-			expect: true,
+			description: "internal load balancer for gcp platform with local ClientAccess",
+			platform:    configv1.GCPPlatformType,
+			strategy:    gcpLB(operatorv1.InternalLoadBalancer, operatorv1.GCPLocalAccess),
+			expect:      true,
 		},
 		{
-			description:  "external load balancer for openstack platform",
-			platform:     configv1.OpenStackPlatformType,
-			strategyType: operatorv1.LoadBalancerServiceStrategyType,
-			lbStrategy: operatorv1.LoadBalancerStrategy{
-				Scope: operatorv1.ExternalLoadBalancer,
-			},
-			expect: true,
+			description: "external load balancer for openstack platform",
+			platform:    configv1.OpenStackPlatformType,
+			strategy:    lbs(operatorv1.ExternalLoadBalancer),
+			expect:      true,
 		},
 		{
-			description:  "internal load balancer for openstack platform",
-			platform:     configv1.OpenStackPlatformType,
-			strategyType: operatorv1.LoadBalancerServiceStrategyType,
-			lbStrategy: operatorv1.LoadBalancerStrategy{
-				Scope: operatorv1.InternalLoadBalancer,
-			},
-			expect: true,
+			description: "internal load balancer for openstack platform",
+			platform:    configv1.OpenStackPlatformType,
+			strategy:    lbs(operatorv1.InternalLoadBalancer),
+			expect:      true,
 		},
 		{
-			description:  "external load balancer for alibaba platform",
-			platform:     configv1.AlibabaCloudPlatformType,
-			strategyType: operatorv1.LoadBalancerServiceStrategyType,
-			lbStrategy: operatorv1.LoadBalancerStrategy{
-				Scope: operatorv1.ExternalLoadBalancer,
-			},
-			expect: true,
+			description: "external load balancer for alibaba platform",
+			platform:    configv1.AlibabaCloudPlatformType,
+			strategy:    lbs(operatorv1.ExternalLoadBalancer),
+			expect:      true,
 		},
 		{
-			description:  "internal load balancer for alibaba platform",
-			platform:     configv1.AlibabaCloudPlatformType,
-			strategyType: operatorv1.LoadBalancerServiceStrategyType,
-			lbStrategy: operatorv1.LoadBalancerStrategy{
-				Scope: operatorv1.InternalLoadBalancer,
-			},
-			expect: true,
+			description: "internal load balancer for alibaba platform",
+			platform:    configv1.AlibabaCloudPlatformType,
+			strategy:    lbs(operatorv1.InternalLoadBalancer),
+			expect:      true,
 		},
 	}
 
@@ -298,10 +258,7 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 					Name: "default",
 				},
 				Status: operatorv1.IngressControllerStatus{
-					EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
-						Type:         tc.strategyType,
-						LoadBalancer: &tc.lbStrategy,
-					},
+					EndpointPublishingStrategy: tc.strategy,
 				},
 			}
 			trueVar := true
@@ -330,11 +287,11 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 			haveSvc, svc, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig.Status.PlatformStatus)
 			switch {
 			case err != nil:
-				t.Errorf("unexpected error from desiredLoadBalancerService for endpoint publishing strategy type %v: %v", tc.strategyType, err)
+				t.Error(err)
 			case tc.expect && !haveSvc:
-				t.Errorf("expected desiredLoadBalancerService to return a service for endpoint publishing strategy type %v, got nil", tc.strategyType)
+				t.Error("expected desiredLoadBalancerService to return a service, got none")
 			case !tc.expect && haveSvc:
-				t.Errorf("expected desiredLoadBalancerService to return nil service for endpoint publishing strategy type %v, got %#v", tc.strategyType, svc)
+				t.Errorf("expected desiredLoadBalancerService to return nil, got %#v", svc)
 			}
 
 			if !tc.expect || !haveSvc {
@@ -361,7 +318,7 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 				if err := checkServiceHasAnnotation(svc, localWithFallbackAnnotation, true, ""); err != nil {
 					t.Error(err)
 				}
-				classicLB := tc.lbStrategy.ProviderParameters == nil || tc.lbStrategy.ProviderParameters.AWS.Type == operatorv1.AWSClassicLoadBalancer
+				classicLB := ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters == nil || ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.Type == operatorv1.AWSClassicLoadBalancer
 				switch {
 				case classicLB:
 					if len(tc.expectedResourceTags) > 0 {
@@ -379,7 +336,7 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 					if err := checkServiceHasAnnotation(svc, awsLBProxyProtocolAnnotation, true, "*"); err != nil {
 						t.Error(err)
 					}
-				case tc.lbStrategy.ProviderParameters.AWS.Type == operatorv1.AWSNetworkLoadBalancer:
+				case ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.Type == operatorv1.AWSNetworkLoadBalancer:
 					if len(tc.expectedResourceTags) > 0 {
 						if err := checkServiceHasAnnotation(svc, awsLBAdditionalResourceTags, true, tc.expectedResourceTags); err != nil {
 							t.Error(err)
@@ -395,7 +352,7 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 					if err := checkServiceHasAnnotation(svc, AWSLBTypeAnnotation, true, AWSNLBAnnotation); err != nil {
 						t.Error(err)
 					}
-				case tc.lbStrategy.Scope == operatorv1.InternalLoadBalancer:
+				case ic.Status.EndpointPublishingStrategy.LoadBalancer.Scope == operatorv1.InternalLoadBalancer:
 					if err := checkServiceHasAnnotation(svc, AWSLBTypeAnnotation, true, "0.0.0.0/0"); err != nil {
 						t.Error(err)
 					}
