@@ -356,10 +356,6 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 					if err := checkServiceHasAnnotation(svc, AWSLBTypeAnnotation, true, AWSNLBAnnotation); err != nil {
 						t.Error(err)
 					}
-				case ic.Status.EndpointPublishingStrategy.LoadBalancer.Scope == operatorv1.InternalLoadBalancer:
-					if err := checkServiceHasAnnotation(svc, AWSLBTypeAnnotation, true, "0.0.0.0/0"); err != nil {
-						t.Error(err)
-					}
 				}
 			case configv1.IBMCloudPlatformType, configv1.PowerVSPlatformType:
 				if isInternal {
