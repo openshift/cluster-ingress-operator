@@ -38,7 +38,7 @@ aws_secret_access_key = som@th'n#g+/
 	}
 }
 
-func TestSharedCredentialsFileFromSecret(t *testing.T) {
+func Test_SharedCredentialsFileFromSecret(t *testing.T) {
 	cases := []struct {
 		data map[string]string
 

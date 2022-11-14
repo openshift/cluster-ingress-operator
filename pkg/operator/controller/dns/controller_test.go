@@ -15,7 +15,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-func TestPublishRecordToZones(t *testing.T) {
+func Test_publishRecordToZones(t *testing.T) {
 	tests := []struct {
 		name         string
 		zones        []configv1.DNSZone
@@ -225,7 +225,7 @@ func TestPublishRecordToZonesMergesStatus(t *testing.T) {
 	}
 }
 
-func TestMigrateDNSRecordStatus(t *testing.T) {
+func Test_migrateRecordStatusConditions(t *testing.T) {
 	tests := []struct {
 		name       string
 		conditions []iov1.DNSZoneCondition
@@ -366,7 +366,7 @@ func TestMigrateDNSRecordStatus(t *testing.T) {
 	}
 }
 
-func TestDnsZoneStatusSlicesEqual(t *testing.T) {
+func Test_dnsZoneStatusSlicesEqual(t *testing.T) {
 	testCases := []struct {
 		description string
 		expected    bool
@@ -622,7 +622,7 @@ func TestDnsZoneStatusSlicesEqual(t *testing.T) {
 	}
 }
 
-func TestRecordIsAlreadyPublishedToZone(t *testing.T) {
+func Test_recordIsAlreadyPublishedToZone(t *testing.T) {
 	var (
 		zoneWithId  = configv1.DNSZone{ID: "foo"}
 		zoneWithTag = configv1.DNSZone{Tags: map[string]string{"foo": "bar"}}
@@ -777,7 +777,7 @@ func TestRecordIsAlreadyPublishedToZone(t *testing.T) {
 	}
 }
 
-func TestCustomCABundle(t *testing.T) {
+func Test_customCABundle(t *testing.T) {
 	cases := []struct {
 		name             string
 		cm               *corev1.ConfigMap

@@ -10,7 +10,7 @@ var (
 	DefaultProject = "defaultProject"
 )
 
-func TestParseZone(t *testing.T) {
+func Test_ParseZone(t *testing.T) {
 	cases := []struct {
 		name         string
 		providedZone string

@@ -311,7 +311,7 @@ func getRouterDeploymentComponents(t *testing.T) (*operatorv1.IngressController,
 	return ic, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, clusterProxyConfig
 }
 
-func TestDesiredRouterDeployment(t *testing.T) {
+func Test_desiredRouterDeployment(t *testing.T) {
 	ic, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, clusterProxyConfig := getRouterDeploymentComponents(t)
 
 	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, false, nil, clusterProxyConfig)
@@ -897,7 +897,7 @@ func checkContainerPort(t *testing.T, d *appsv1.Deployment, portName string, por
 	t.Errorf("deployment %s container does not have port with name %s and number %d", d.Name, portName, port)
 }
 
-func TestInferTLSProfileSpecFromDeployment(t *testing.T) {
+func Test_inferTLSProfileSpecFromDeployment(t *testing.T) {
 	testCases := []struct {
 		description string
 		containers  []corev1.Container
@@ -1107,7 +1107,7 @@ func TestDeploymentHash(t *testing.T) {
 	}
 }
 
-func TestDeploymentConfigChanged(t *testing.T) {
+func Test_deploymentConfigChanged(t *testing.T) {
 	pointerTo := func(ios intstr.IntOrString) *intstr.IntOrString { return &ios }
 	testCases := []struct {
 		description string
@@ -1749,7 +1749,7 @@ func TestDeploymentConfigChanged(t *testing.T) {
 	}
 }
 
-func TestDurationToHAProxyTimespec(t *testing.T) {
+func Test_durationToHAProxyTimespec(t *testing.T) {
 	testCases := []struct {
 		inputDuration  time.Duration
 		expectedOutput string
@@ -1795,7 +1795,7 @@ func TestDurationToHAProxyTimespec(t *testing.T) {
 	}
 }
 
-func TestCapReloadIntervalValue(t *testing.T) {
+func Test_capReloadIntervalValue(t *testing.T) {
 	testCases := []struct {
 		inputDuration  time.Duration
 		expectedOutput time.Duration
@@ -1828,7 +1828,7 @@ func TestCapReloadIntervalValue(t *testing.T) {
 	}
 }
 
-func TestGetMIMETypes(t *testing.T) {
+func Test_GetMIMETypes(t *testing.T) {
 	testCases := []struct {
 		mimeArrayInput []operatorv1.CompressionMIMEType
 		expectedOutput string

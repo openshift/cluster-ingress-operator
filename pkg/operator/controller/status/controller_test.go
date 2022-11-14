@@ -12,7 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func TestComputeOperatorProgressingCondition(t *testing.T) {
+func Test_computeOperatorProgressingCondition(t *testing.T) {
 	type versions struct {
 		operator, operand1, operand2 string
 	}
@@ -167,7 +167,7 @@ func TestComputeOperatorProgressingCondition(t *testing.T) {
 	}
 }
 
-func TestOperatorStatusesEqual(t *testing.T) {
+func Test_operatorStatusesEqual(t *testing.T) {
 	testCases := []struct {
 		description string
 		expected    bool
@@ -399,7 +399,7 @@ func TestOperatorStatusesEqual(t *testing.T) {
 	}
 }
 
-func TestComputeOperatorStatusVersions(t *testing.T) {
+func Test_computeOperatorStatusVersions(t *testing.T) {
 	type versions struct {
 		operator string
 		operand1 string
@@ -527,7 +527,7 @@ func TestComputeOperatorStatusVersions(t *testing.T) {
 	}
 }
 
-func TestComputeOperatorUpgradeableCondition(t *testing.T) {
+func Test_computeOperatorUpgradeableCondition(t *testing.T) {
 	testCases := []struct {
 		description                   string
 		ingresscontrollersUpgradeable []bool

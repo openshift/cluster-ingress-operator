@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestDelete(t *testing.T) {
+func Test_Delete(t *testing.T) {
 	zone := configv1.DNSZone{
 		ID: "zoneID",
 	}
@@ -156,7 +156,7 @@ func TestDelete(t *testing.T) {
 	}
 }
 
-func TestCreateOrUpdate(t *testing.T) {
+func Test_createOrUpdateDNSRecord(t *testing.T) {
 	zone := configv1.DNSZone{
 		ID: "zoneID",
 	}

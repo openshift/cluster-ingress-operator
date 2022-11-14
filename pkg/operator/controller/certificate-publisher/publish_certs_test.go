@@ -52,10 +52,10 @@ func newIngressController(name, defaultCertificateSecretName, domain string, adm
 	return ingresscontroller
 }
 
-// TestDesiredRouterCertsGlobalSecret verifies that we get the expected global
+// Test_desiredRouterCertsGlobalSecret verifies that we get the expected global
 // secret for the default ingresscontroller and for various combinations of
 // ingresscontrollers and default certificate secrets.
-func TestDesiredRouterCertsGlobalSecret(t *testing.T) {
+func Test_desiredRouterCertsGlobalSecret(t *testing.T) {
 	type testInputs struct {
 		ingresses []operatorv1.IngressController
 		secrets   []corev1.Secret

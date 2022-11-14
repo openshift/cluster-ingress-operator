@@ -4,8 +4,9 @@ import (
 	"testing"
 )
 
-// URI validates uri as being a valid http(s) uri and returns the uri scheme.
-func TestURI(t *testing.T) {
+// Test_URI verifies that URI correctly validates uri as being a valid http(s)
+// uri and returns the uri scheme.
+func Test_URI(t *testing.T) {
 	testCases := []struct {
 		description string
 		uri, scheme string

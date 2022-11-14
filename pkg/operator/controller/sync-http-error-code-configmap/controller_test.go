@@ -50,9 +50,9 @@ func newConfigMap(name, namespace string, flag string) corev1.ConfigMap {
 	}
 }
 
-// TestDesiredHttpErrorCodeConfigMap verifies that
+// Test_desiredHttpErrorCodeConfigMap verifies that
 // desiredHttpErrorCodeConfigMap returns the expected configmap.
-func TestDesiredHttpErrorCodeConfigMap(t *testing.T) {
+func Test_desiredHttpErrorCodeConfigMap(t *testing.T) {
 	type testInputs struct {
 		configmap corev1.ConfigMap
 	}

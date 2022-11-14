@@ -10,7 +10,7 @@ import (
 	projectv1 "github.com/openshift/api/project/v1"
 )
 
-func TestCanaryNamespaceChanged(t *testing.T) {
+func Test_canaryNamespaceChanged(t *testing.T) {
 	testCases := []struct {
 		description string
 		mutate      func(*corev1.Namespace)

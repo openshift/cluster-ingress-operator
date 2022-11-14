@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestClamp(t *testing.T) {
+func Test_Clamp(t *testing.T) {
 	cases := []struct {
 		val      int64
 		min      int64

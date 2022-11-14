@@ -14,8 +14,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// TestSetDefaultDomain verifies that setDefaultDomain behaves correctly.
-func TestSetDefaultDomain(t *testing.T) {
+// Test_setDefaultDomain verifies that setDefaultDomain behaves correctly.
+func Test_setDefaultDomain(t *testing.T) {
 	ingressConfig := &configv1.Ingress{
 		Spec: configv1.IngressSpec{
 			Domain: "apps.mycluster.com",
@@ -855,7 +855,7 @@ func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
 	}
 }
 
-func TestTLSProfileSpecForSecurityProfile(t *testing.T) {
+func Test_tlsProfileSpecForSecurityProfile(t *testing.T) {
 	invalidTLSVersion := configv1.TLSProtocolVersion("abc")
 	invalidCiphers := []string{"ECDHE-ECDSA-AES256-GCM-SHA384", "invalid cipher"}
 	validCiphers := []string{"ECDHE-ECDSA-AES256-GCM-SHA384"}
@@ -1017,7 +1017,7 @@ func TestTLSProfileSpecForSecurityProfile(t *testing.T) {
 	}
 }
 
-func TestTLSProfileSpecForIngressController(t *testing.T) {
+func Test_tlsProfileSpecForIngressController(t *testing.T) {
 	testCases := []struct {
 		description  string
 		icProfile    *configv1.TLSSecurityProfile
@@ -1161,7 +1161,7 @@ func TestTLSProfileSpecForIngressController(t *testing.T) {
 	}
 }
 
-func TestValidateHTTPHeaderBufferValues(t *testing.T) {
+func Test_validateHTTPHeaderBufferValues(t *testing.T) {
 	testCases := []struct {
 		description   string
 		tuningOptions operatorv1.IngressControllerTuningOptions
@@ -1220,7 +1220,7 @@ func TestValidateHTTPHeaderBufferValues(t *testing.T) {
 
 // TestValidateClientTLS verifies the validateClientTLS accepts PCRE-compliant
 // patterns and rejects invalid patterns.
-func TestValidateClientTLS(t *testing.T) {
+func Test_validateClientTLS(t *testing.T) {
 	testCases := []struct {
 		description string
 		pattern     string
@@ -1265,10 +1265,10 @@ func TestValidateClientTLS(t *testing.T) {
 	}
 }
 
-// TestIsProxyProtocolNeeded verifies that IsProxyProtocolNeeded returns the
+// Test_IsProxyProtocolNeeded verifies that IsProxyProtocolNeeded returns the
 // expected values for various platforms and endpoint publishing strategy
 // parameters.
-func TestIsProxyProtocolNeeded(t *testing.T) {
+func Test_IsProxyProtocolNeeded(t *testing.T) {
 	var (
 		awsPlatform = configv1.PlatformStatus{
 			Type: configv1.AWSPlatformType,

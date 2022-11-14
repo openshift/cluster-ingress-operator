@@ -56,7 +56,7 @@ func newFakeProvider(public, private Service) dns.Provider {
 	}
 }
 
-func TestGetRR(t *testing.T) {
+func Test_getRR(t *testing.T) {
 	cases := []struct {
 		dnsName    string
 		domainName string
@@ -90,7 +90,7 @@ func TestGetRR(t *testing.T) {
 	}
 }
 
-func TestParseZone(t *testing.T) {
+func Test_parseZone(t *testing.T) {
 	cases := []struct {
 		id       string
 		tags     map[string]string

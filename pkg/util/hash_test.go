@@ -4,7 +4,7 @@ import (
 	"testing"
 )
 
-func TestHash(t *testing.T) {
+func Test_Hash(t *testing.T) {
 	if Hash("foo") != Hash("foo") {
 		t.Errorf("Hash function result should be reproducible")
 	}

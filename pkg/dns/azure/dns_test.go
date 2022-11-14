@@ -24,7 +24,7 @@ func fakeManager(fc *client.FakeDNSClient) (dns.Provider, error) {
 	return mgr, nil
 }
 
-func TestEnsureDNS(t *testing.T) {
+func Test_Ensure(t *testing.T) {
 	c := client.Config{}
 	fc, _ := client.NewFake(c)
 	mgr, err := fakeManager(fc)
@@ -58,7 +58,7 @@ func TestEnsureDNS(t *testing.T) {
 	}
 }
 
-func TestDeleteDNS(t *testing.T) {
+func Test_Delete(t *testing.T) {
 	c := client.Config{}
 	fc, err := client.NewFake(c)
 	if err != nil {
