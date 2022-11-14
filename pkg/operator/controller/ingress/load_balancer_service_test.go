@@ -344,6 +344,9 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 				t.Errorf("expected desiredLoadBalancerService to return nil service for endpoint publishing strategy type %v, got %#v", tc.strategyType, svc)
 			}
 
+			if !tc.expect || !haveSvc {
+				return
+			}
 			isInternal := ic.Status.EndpointPublishingStrategy.LoadBalancer == nil || ic.Status.EndpointPublishingStrategy.LoadBalancer.Scope == operatorv1.InternalLoadBalancer
 			platform := infraConfig.Status.PlatformStatus
 			switch platform.Type {
@@ -353,57 +356,55 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 						t.Error(err)
 					}
 				}
-				if tc.strategyType == operatorv1.LoadBalancerServiceStrategyType {
-					if err := checkServiceHasAnnotation(svc, awsLBHealthCheckTimeoutAnnotation, true, awsLBHealthCheckTimeoutDefault); err != nil {
+				if err := checkServiceHasAnnotation(svc, awsLBHealthCheckTimeoutAnnotation, true, awsLBHealthCheckTimeoutDefault); err != nil {
+					t.Error(err)
+				}
+				if err := checkServiceHasAnnotation(svc, awsLBHealthCheckUnhealthyThresholdAnnotation, true, awsLBHealthCheckUnhealthyThresholdDefault); err != nil {
+					t.Error(err)
+				}
+				if err := checkServiceHasAnnotation(svc, awsLBHealthCheckHealthyThresholdAnnotation, true, awsLBHealthCheckHealthyThresholdDefault); err != nil {
+					t.Error(err)
+				}
+				if err := checkServiceHasAnnotation(svc, localWithFallbackAnnotation, true, ""); err != nil {
+					t.Error(err)
+				}
+				classicLB := tc.lbStrategy.ProviderParameters == nil || tc.lbStrategy.ProviderParameters.AWS.Type == operatorv1.AWSClassicLoadBalancer
+				switch {
+				case classicLB:
+					if len(tc.expectedResourceTags) > 0 {
+						if err := checkServiceHasAnnotation(svc, awsLBAdditionalResourceTags, true, tc.expectedResourceTags); err != nil {
+							t.Error(err)
+						}
+					} else {
+						if err := checkServiceHasAnnotation(svc, awsLBAdditionalResourceTags, false, ""); err == nil {
+							t.Errorf("unexpected annotation %s", awsLBAdditionalResourceTags)
+						}
+					}
+					if err := checkServiceHasAnnotation(svc, awsLBHealthCheckIntervalAnnotation, true, awsLBHealthCheckIntervalDefault); err != nil {
 						t.Error(err)
 					}
-					if err := checkServiceHasAnnotation(svc, awsLBHealthCheckUnhealthyThresholdAnnotation, true, awsLBHealthCheckUnhealthyThresholdDefault); err != nil {
+					if err := checkServiceHasAnnotation(svc, awsLBProxyProtocolAnnotation, true, "*"); err != nil {
 						t.Error(err)
 					}
-					if err := checkServiceHasAnnotation(svc, awsLBHealthCheckHealthyThresholdAnnotation, true, awsLBHealthCheckHealthyThresholdDefault); err != nil {
+				case tc.lbStrategy.ProviderParameters.AWS.Type == operatorv1.AWSNetworkLoadBalancer:
+					if len(tc.expectedResourceTags) > 0 {
+						if err := checkServiceHasAnnotation(svc, awsLBAdditionalResourceTags, true, tc.expectedResourceTags); err != nil {
+							t.Error(err)
+						}
+					} else {
+						if err := checkServiceHasAnnotation(svc, awsLBAdditionalResourceTags, false, ""); err == nil {
+							t.Errorf("unexpected annotation %s", awsLBAdditionalResourceTags)
+						}
+					}
+					if err := checkServiceHasAnnotation(svc, awsLBHealthCheckIntervalAnnotation, true, awsLBHealthCheckIntervalNLB); err != nil {
 						t.Error(err)
 					}
-					if err := checkServiceHasAnnotation(svc, localWithFallbackAnnotation, true, ""); err != nil {
+					if err := checkServiceHasAnnotation(svc, AWSLBTypeAnnotation, true, AWSNLBAnnotation); err != nil {
 						t.Error(err)
 					}
-					classicLB := tc.lbStrategy.ProviderParameters == nil || tc.lbStrategy.ProviderParameters.AWS.Type == operatorv1.AWSClassicLoadBalancer
-					switch {
-					case classicLB:
-						if len(tc.expectedResourceTags) > 0 {
-							if err := checkServiceHasAnnotation(svc, awsLBAdditionalResourceTags, true, tc.expectedResourceTags); err != nil {
-								t.Error(err)
-							}
-						} else {
-							if err := checkServiceHasAnnotation(svc, awsLBAdditionalResourceTags, false, ""); err == nil {
-								t.Errorf("unexpected annotation %s", awsLBAdditionalResourceTags)
-							}
-						}
-						if err := checkServiceHasAnnotation(svc, awsLBHealthCheckIntervalAnnotation, true, awsLBHealthCheckIntervalDefault); err != nil {
-							t.Error(err)
-						}
-						if err := checkServiceHasAnnotation(svc, awsLBProxyProtocolAnnotation, true, "*"); err != nil {
-							t.Error(err)
-						}
-					case tc.lbStrategy.ProviderParameters.AWS.Type == operatorv1.AWSNetworkLoadBalancer:
-						if len(tc.expectedResourceTags) > 0 {
-							if err := checkServiceHasAnnotation(svc, awsLBAdditionalResourceTags, true, tc.expectedResourceTags); err != nil {
-								t.Error(err)
-							}
-						} else {
-							if err := checkServiceHasAnnotation(svc, awsLBAdditionalResourceTags, false, ""); err == nil {
-								t.Errorf("unexpected annotation %s", awsLBAdditionalResourceTags)
-							}
-						}
-						if err := checkServiceHasAnnotation(svc, awsLBHealthCheckIntervalAnnotation, true, awsLBHealthCheckIntervalNLB); err != nil {
-							t.Error(err)
-						}
-						if err := checkServiceHasAnnotation(svc, AWSLBTypeAnnotation, true, AWSNLBAnnotation); err != nil {
-							t.Error(err)
-						}
-					case tc.lbStrategy.Scope == operatorv1.InternalLoadBalancer:
-						if err := checkServiceHasAnnotation(svc, AWSLBTypeAnnotation, true, "0.0.0.0/0"); err != nil {
-							t.Error(err)
-						}
+				case tc.lbStrategy.Scope == operatorv1.InternalLoadBalancer:
+					if err := checkServiceHasAnnotation(svc, AWSLBTypeAnnotation, true, "0.0.0.0/0"); err != nil {
+						t.Error(err)
 					}
 				}
 			case configv1.IBMCloudPlatformType, configv1.PowerVSPlatformType:
