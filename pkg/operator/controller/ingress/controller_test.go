@@ -994,26 +994,25 @@ func TestTLSProfileSpecForSecurityProfile(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		ic := &operatorv1.IngressController{
-			Spec: operatorv1.IngressControllerSpec{
-				TLSSecurityProfile: tc.profile,
-			},
-		}
-		tlsProfileSpec := tlsProfileSpecForSecurityProfile(ic.Spec.TLSSecurityProfile)
-		err := validateTLSSecurityProfile(ic)
-		if tc.valid && err != nil {
-			t.Errorf("%q: unexpected error: %v\nprofile:\n%s", tc.description, err, util.ToYaml(tlsProfileSpec))
-			continue
-		}
-		if !tc.valid && err == nil {
-			t.Errorf("%q: expected error for profile:\n%s", tc.description, util.ToYaml(tlsProfileSpec))
-			continue
-		}
-		if tc.expectedSpec != nil && !reflect.DeepEqual(tc.expectedSpec, tlsProfileSpec) {
-			t.Errorf("%q: expected profile:\n%s\ngot profile:\n%s", tc.description, util.ToYaml(tc.expectedSpec), util.ToYaml(tlsProfileSpec))
-			continue
-		}
-		t.Logf("%q: got expected values; profile:\n%s\nerror value: %v", tc.description, util.ToYaml(tlsProfileSpec), err)
+		t.Run(tc.description, func(t *testing.T) {
+			ic := &operatorv1.IngressController{
+				Spec: operatorv1.IngressControllerSpec{
+					TLSSecurityProfile: tc.profile,
+				},
+			}
+			tlsProfileSpec := tlsProfileSpecForSecurityProfile(ic.Spec.TLSSecurityProfile)
+			err := validateTLSSecurityProfile(ic)
+			if tc.valid && err != nil {
+				t.Fatalf("unexpected error: %v\nprofile:\n%s", err, util.ToYaml(tlsProfileSpec))
+			}
+			if !tc.valid && err == nil {
+				t.Fatalf("expected error for profile:\n%s", util.ToYaml(tlsProfileSpec))
+			}
+			if tc.expectedSpec != nil && !reflect.DeepEqual(tc.expectedSpec, tlsProfileSpec) {
+				t.Fatalf("expected profile:\n%s\ngot profile:\n%s", util.ToYaml(tc.expectedSpec), util.ToYaml(tlsProfileSpec))
+			}
+			t.Logf("got expected values; profile:\n%s\nerror value: %v", util.ToYaml(tlsProfileSpec), err)
+		})
 	}
 }
 
@@ -1144,20 +1143,23 @@ func TestTLSProfileSpecForIngressController(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		ic := &operatorv1.IngressController{
-			Spec: operatorv1.IngressControllerSpec{
-				TLSSecurityProfile: tc.icProfile,
-			},
-		}
-		api := &configv1.APIServer{
-			Spec: configv1.APIServerSpec{
-				TLSSecurityProfile: tc.apiProfile,
-			},
-		}
-		tlsProfileSpec := tlsProfileSpecForIngressController(ic, api)
-		if !reflect.DeepEqual(tc.expectedSpec, tlsProfileSpec) {
-			t.Errorf("%q: expected profile:\n%v\ngot profile:\n%v", tc.description, util.ToYaml(tc.expectedSpec), util.ToYaml(tlsProfileSpec))
-		}
+		t.Run(tc.description, func(t *testing.T) {
+
+			ic := &operatorv1.IngressController{
+				Spec: operatorv1.IngressControllerSpec{
+					TLSSecurityProfile: tc.icProfile,
+				},
+			}
+			api := &configv1.APIServer{
+				Spec: configv1.APIServerSpec{
+					TLSSecurityProfile: tc.apiProfile,
+				},
+			}
+			tlsProfileSpec := tlsProfileSpecForIngressController(ic, api)
+			if !reflect.DeepEqual(tc.expectedSpec, tlsProfileSpec) {
+				t.Errorf("expected profile:\n%v\ngot profile:\n%v", util.ToYaml(tc.expectedSpec), util.ToYaml(tlsProfileSpec))
+			}
+		})
 	}
 }
 
@@ -1205,16 +1207,18 @@ func TestValidateHTTPHeaderBufferValues(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		ic := &operatorv1.IngressController{}
-		ic.Spec.TuningOptions = tc.tuningOptions
-		err := validateHTTPHeaderBufferValues(ic)
-		if tc.valid && err != nil {
-			t.Errorf("%q: Expected valid HTTPHeaderBuffer to not return a validation error: %v", tc.description, err)
-		}
+		t.Run(tc.description, func(t *testing.T) {
+			ic := &operatorv1.IngressController{}
+			ic.Spec.TuningOptions = tc.tuningOptions
+			err := validateHTTPHeaderBufferValues(ic)
+			if tc.valid && err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
 
-		if !tc.valid && err == nil {
-			t.Errorf("%q: Expected invalid HTTPHeaderBuffer to return a validation error", tc.description)
-		}
+			if !tc.valid && err == nil {
+				t.Error("expected error, got nil")
+			}
+		})
 	}
 }
 
@@ -1244,24 +1248,26 @@ func TestValidateClientTLS(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		clientTLS := operatorv1.ClientTLS{
-			ClientCertificatePolicy: operatorv1.ClientCertificatePolicyRequired,
-			ClientCA: configv1.ConfigMapNameReference{
-				Name: "client-tls-ca",
-			},
-			AllowedSubjectPatterns: []string{tc.pattern},
-		}
-		ic := &operatorv1.IngressController{
-			Spec: operatorv1.IngressControllerSpec{
-				ClientTLS: clientTLS,
-			},
-		}
-		switch err := validateClientTLS(ic); {
-		case err == nil && tc.expectError:
-			t.Errorf("%s: expected error, got nil", tc.description)
-		case err != nil && !tc.expectError:
-			t.Errorf("%s: expected success, got error: %v", tc.description, err)
-		}
+		t.Run(tc.description, func(t *testing.T) {
+			clientTLS := operatorv1.ClientTLS{
+				ClientCertificatePolicy: operatorv1.ClientCertificatePolicyRequired,
+				ClientCA: configv1.ConfigMapNameReference{
+					Name: "client-tls-ca",
+				},
+				AllowedSubjectPatterns: []string{tc.pattern},
+			}
+			ic := &operatorv1.IngressController{
+				Spec: operatorv1.IngressControllerSpec{
+					ClientTLS: clientTLS,
+				},
+			}
+			switch err := validateClientTLS(ic); {
+			case err == nil && tc.expectError:
+				t.Error("expected error, got nil")
+			case err != nil && !tc.expectError:
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
 	}
 }
 
@@ -1499,18 +1505,20 @@ func TestIsProxyProtocolNeeded(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		ic := &operatorv1.IngressController{
-			Status: operatorv1.IngressControllerStatus{
-				EndpointPublishingStrategy: tc.strategy,
-			},
-		}
-		switch actual, err := IsProxyProtocolNeeded(ic, tc.platform); {
-		case tc.expectError && err == nil:
-			t.Errorf("%q: expected error, got nil", tc.description)
-		case !tc.expectError && err != nil:
-			t.Errorf("%q: unexpected error: %v", tc.description, err)
-		case tc.expect != actual:
-			t.Errorf("%q: expected %t, got %t", tc.description, tc.expect, actual)
-		}
+		t.Run(tc.description, func(t *testing.T) {
+			ic := &operatorv1.IngressController{
+				Status: operatorv1.IngressControllerStatus{
+					EndpointPublishingStrategy: tc.strategy,
+				},
+			}
+			switch actual, err := IsProxyProtocolNeeded(ic, tc.platform); {
+			case tc.expectError && err == nil:
+				t.Error("expected error, got nil")
+			case !tc.expectError && err != nil:
+				t.Errorf("unexpected error: %v", err)
+			case tc.expect != actual:
+				t.Errorf("expected %t, got %t", tc.expect, actual)
+			}
+		})
 	}
 }

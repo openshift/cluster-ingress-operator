@@ -256,56 +256,58 @@ func TestNodePortServiceChanged(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		original := corev1.Service{
-			ObjectMeta: metav1.ObjectMeta{
-				Annotations: map[string]string{
-					"traffic-policy.network.alpha.openshift.io/local-with-fallback": "",
-				},
-				Namespace: "openshift-ingress",
-				Name:      "router-original",
-				UID:       "1",
-			},
-			Spec: corev1.ServiceSpec{
-				ClusterIP:             "1.2.3.4",
-				ExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyTypeLocal,
-				HealthCheckNodePort:   int32(33333),
-				Ports: []corev1.ServicePort{
-					{
-						Name:       "http",
-						NodePort:   int32(33334),
-						Port:       int32(80),
-						Protocol:   corev1.ProtocolTCP,
-						TargetPort: intstr.FromString("http"),
+		t.Run(tc.description, func(t *testing.T) {
+			original := corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						"traffic-policy.network.alpha.openshift.io/local-with-fallback": "",
 					},
-					{
-						Name:       "https",
-						NodePort:   int32(33335),
-						Port:       int32(443),
-						Protocol:   corev1.ProtocolTCP,
-						TargetPort: intstr.FromString("https"),
-					},
-					{
-						Name:       "metrics",
-						NodePort:   int32(33336),
-						Port:       int32(1936),
-						Protocol:   corev1.ProtocolTCP,
-						TargetPort: intstr.FromString("metrics"),
-					},
+					Namespace: "openshift-ingress",
+					Name:      "router-original",
+					UID:       "1",
 				},
-				Selector: map[string]string{
-					"foo": "bar",
+				Spec: corev1.ServiceSpec{
+					ClusterIP:             "1.2.3.4",
+					ExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyTypeLocal,
+					HealthCheckNodePort:   int32(33333),
+					Ports: []corev1.ServicePort{
+						{
+							Name:       "http",
+							NodePort:   int32(33334),
+							Port:       int32(80),
+							Protocol:   corev1.ProtocolTCP,
+							TargetPort: intstr.FromString("http"),
+						},
+						{
+							Name:       "https",
+							NodePort:   int32(33335),
+							Port:       int32(443),
+							Protocol:   corev1.ProtocolTCP,
+							TargetPort: intstr.FromString("https"),
+						},
+						{
+							Name:       "metrics",
+							NodePort:   int32(33336),
+							Port:       int32(1936),
+							Protocol:   corev1.ProtocolTCP,
+							TargetPort: intstr.FromString("metrics"),
+						},
+					},
+					Selector: map[string]string{
+						"foo": "bar",
+					},
+					Type: corev1.ServiceTypeNodePort,
 				},
-				Type: corev1.ServiceTypeNodePort,
-			},
-		}
-		mutated := original.DeepCopy()
-		tc.mutate(mutated)
-		if changed, updated := nodePortServiceChanged(&original, mutated); changed != tc.expect {
-			t.Errorf("%s, expect nodePortServiceChanged to be %t, got %t", tc.description, tc.expect, changed)
-		} else if changed {
-			if changedAgain, _ := nodePortServiceChanged(mutated, updated); changedAgain {
-				t.Errorf("%s, nodePortServiceChanged does not behave as a fixed point function", tc.description)
 			}
-		}
+			mutated := original.DeepCopy()
+			tc.mutate(mutated)
+			if changed, updated := nodePortServiceChanged(&original, mutated); changed != tc.expect {
+				t.Errorf("expect nodePortServiceChanged to be %t, got %t", tc.expect, changed)
+			} else if changed {
+				if changedAgain, _ := nodePortServiceChanged(mutated, updated); changedAgain {
+					t.Error("nodePortServiceChanged does not behave as a fixed point function")
+				}
+			}
+		})
 	}
 }

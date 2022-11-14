@@ -467,26 +467,27 @@ func TestComputeIngressDegradedCondition(t *testing.T) {
 		},
 	}
 	for _, test := range tests {
-		actual, err := computeIngressDegradedCondition(test.conditions, test.icName)
-		switch e := err.(type) {
-		case retryable.Error:
-			if !test.expectRequeue {
-				t.Errorf("%q: expected not to be told to requeue", test.name)
+		t.Run(test.name, func(t *testing.T) {
+			actual, err := computeIngressDegradedCondition(test.conditions, test.icName)
+			switch e := err.(type) {
+			case retryable.Error:
+				if !test.expectRequeue {
+					t.Error("expected not to be told to requeue")
+				}
+				if test.expectAfter.Seconds() != e.After().Seconds() {
+					t.Errorf("expected requeue after %s, got %s", test.expectAfter.String(), e.After().String())
+				}
+			case nil:
+				if test.expectRequeue {
+					t.Error("expected to be told to requeue")
+				}
+			default:
+				t.Fatalf("unexpected error: %v", err)
 			}
-			if test.expectAfter.Seconds() != e.After().Seconds() {
-				t.Errorf("%q: expected requeue after %s, got %s", test.name, test.expectAfter.String(), e.After().String())
+			if actual.Status != test.expectIngressDegradedStatus {
+				t.Errorf("expected status to be %s, got %s", test.expectIngressDegradedStatus, actual.Status)
 			}
-		case nil:
-			if test.expectRequeue {
-				t.Errorf("%q: expected to be told to requeue", test.name)
-			}
-		default:
-			t.Errorf("%q: unexpected error: %v", test.name, err)
-			continue
-		}
-		if actual.Status != test.expectIngressDegradedStatus {
-			t.Errorf("%q: expected status to be %s, got %s", test.name, test.expectIngressDegradedStatus, actual.Status)
-		}
+		})
 	}
 }
 
@@ -576,23 +577,25 @@ func TestComputeDeploymentRollingOutCondition(t *testing.T) {
 		},
 	}
 	for _, test := range tests {
-		routerDeploy := &appsv1.Deployment{
-			Spec: appsv1.DeploymentSpec{
-				Replicas: test.replicasWanted,
-			},
-			Status: appsv1.DeploymentStatus{
-				Replicas:          *test.replicasHave,
-				AvailableReplicas: *test.replicasAvailable,
-				UpdatedReplicas:   *test.replicasUpdated,
-			},
-		}
-		actual := computeDeploymentRollingOutCondition(routerDeploy)
-		if actual.Status != test.expectStatus {
-			t.Errorf("%q: expected status to be %s, got %s", test.name, test.expectStatus, actual.Status)
-		}
-		if len(test.expectMessageContains) != 0 && !strings.Contains(actual.Message, test.expectMessageContains) {
-			t.Errorf("%q: expected message to include %q, got %q", test.name, test.expectMessageContains, actual.Message)
-		}
+		t.Run(test.name, func(t *testing.T) {
+			routerDeploy := &appsv1.Deployment{
+				Spec: appsv1.DeploymentSpec{
+					Replicas: test.replicasWanted,
+				},
+				Status: appsv1.DeploymentStatus{
+					Replicas:          *test.replicasHave,
+					AvailableReplicas: *test.replicasAvailable,
+					UpdatedReplicas:   *test.replicasUpdated,
+				},
+			}
+			actual := computeDeploymentRollingOutCondition(routerDeploy)
+			if actual.Status != test.expectStatus {
+				t.Errorf("expected status to be %s, got %s", test.expectStatus, actual.Status)
+			}
+			if len(test.expectMessageContains) != 0 && !strings.Contains(actual.Message, test.expectMessageContains) {
+				t.Errorf("expected message to include %q, got %q", test.expectMessageContains, actual.Message)
+			}
+		})
 	}
 }
 
@@ -799,16 +802,18 @@ func TestComputeLoadBalancerProgressingStatus(t *testing.T) {
 		},
 	}
 	for _, test := range tests {
-		actual := computeLoadBalancerProgressingStatus(test.ic, test.service, test.platformStatus)
-		if actual.Status != test.expectStatus {
-			t.Errorf("%q: expected status to be %s, got %s", test.name, test.expectStatus, actual.Status)
-		}
-		if len(test.expectMessageContains) != 0 && !strings.Contains(actual.Message, test.expectMessageContains) {
-			t.Errorf("%q: expected message to include %q, got %q", test.name, test.expectMessageContains, actual.Message)
-		}
-		if len(test.expectMessageDoesNotContain) != 0 && strings.Contains(actual.Message, test.expectMessageDoesNotContain) {
-			t.Errorf("%q: expected message not to include %q, got %q", test.name, test.expectMessageDoesNotContain, actual.Message)
-		}
+		t.Run(test.name, func(t *testing.T) {
+			actual := computeLoadBalancerProgressingStatus(test.ic, test.service, test.platformStatus)
+			if actual.Status != test.expectStatus {
+				t.Errorf("expected status to be %s, got %s", test.expectStatus, actual.Status)
+			}
+			if len(test.expectMessageContains) != 0 && !strings.Contains(actual.Message, test.expectMessageContains) {
+				t.Errorf("expected message to include %q, got %q", test.expectMessageContains, actual.Message)
+			}
+			if len(test.expectMessageDoesNotContain) != 0 && strings.Contains(actual.Message, test.expectMessageDoesNotContain) {
+				t.Errorf("expected message not to include %q, got %q", test.expectMessageDoesNotContain, actual.Message)
+			}
+		})
 	}
 }
 
@@ -846,16 +851,18 @@ func TestComputeDeploymentAvailableCondition(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		deploy := &appsv1.Deployment{
-			Status: appsv1.DeploymentStatus{
-				Conditions: test.deploymentConditions,
-			},
-		}
+		t.Run(test.name, func(t *testing.T) {
+			deploy := &appsv1.Deployment{
+				Status: appsv1.DeploymentStatus{
+					Conditions: test.deploymentConditions,
+				},
+			}
 
-		actual := computeDeploymentAvailableCondition(deploy)
-		if actual.Status != test.expectDeploymentAvailableStatus {
-			t.Errorf("%q: expected %v, got %v", test.name, test.expectDeploymentAvailableStatus, actual.Status)
-		}
+			actual := computeDeploymentAvailableCondition(deploy)
+			if actual.Status != test.expectDeploymentAvailableStatus {
+				t.Errorf("expected %v, got %v", test.expectDeploymentAvailableStatus, actual.Status)
+			}
+		})
 	}
 }
 
@@ -1046,29 +1053,32 @@ func TestComputeDeploymentReplicasMinAvailableCondition(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		deploy := &appsv1.Deployment{
-			Spec: appsv1.DeploymentSpec{
-				Replicas: test.replicas,
-				Selector: &metav1.LabelSelector{
-					MatchLabels: map[string]string{
-						"ingresscontroller.operator.openshift.io/deployment-ingresscontroller": "default",
-						"ingresscontroller.operator.openshift.io/hash":                         "75678b564c",
+		t.Run(test.name, func(t *testing.T) {
+
+			deploy := &appsv1.Deployment{
+				Spec: appsv1.DeploymentSpec{
+					Replicas: test.replicas,
+					Selector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{
+							"ingresscontroller.operator.openshift.io/deployment-ingresscontroller": "default",
+							"ingresscontroller.operator.openshift.io/hash":                         "75678b564c",
+						},
+					},
+					Strategy: appsv1.DeploymentStrategy{
+						Type:          appsv1.RollingUpdateDeploymentStrategyType,
+						RollingUpdate: test.rollingUpdate,
 					},
 				},
-				Strategy: appsv1.DeploymentStrategy{
-					Type:          appsv1.RollingUpdateDeploymentStrategyType,
-					RollingUpdate: test.rollingUpdate,
+				Status: appsv1.DeploymentStatus{
+					AvailableReplicas: test.availableReplicas,
 				},
-			},
-			Status: appsv1.DeploymentStatus{
-				AvailableReplicas: test.availableReplicas,
-			},
-		}
+			}
 
-		actual := computeDeploymentReplicasMinAvailableCondition(deploy, []corev1.Pod{})
-		if actual.Status != test.expectDeploymentReplicasMinAvailableStatus {
-			t.Errorf("%q: expected %v, got %v", test.name, test.expectDeploymentReplicasMinAvailableStatus, actual.Status)
-		}
+			actual := computeDeploymentReplicasMinAvailableCondition(deploy, []corev1.Pod{})
+			if actual.Status != test.expectDeploymentReplicasMinAvailableStatus {
+				t.Errorf("%q: expected %v, got %v", test.name, test.expectDeploymentReplicasMinAvailableStatus, actual.Status)
+			}
+		})
 	}
 }
 
@@ -1113,19 +1123,21 @@ func TestComputeDeploymentReplicasAllAvailableCondition(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		deploy := &appsv1.Deployment{
-			Spec: appsv1.DeploymentSpec{
-				Replicas: test.replicas,
-			},
-			Status: appsv1.DeploymentStatus{
-				AvailableReplicas: test.availableReplicas,
-			},
-		}
+		t.Run(test.name, func(t *testing.T) {
+			deploy := &appsv1.Deployment{
+				Spec: appsv1.DeploymentSpec{
+					Replicas: test.replicas,
+				},
+				Status: appsv1.DeploymentStatus{
+					AvailableReplicas: test.availableReplicas,
+				},
+			}
 
-		actual := computeDeploymentReplicasAllAvailableCondition(deploy)
-		if actual.Status != test.expectDeploymentReplicasAllAvailableStatus {
-			t.Errorf("%q: expected %v, got %v", test.name, test.expectDeploymentReplicasAllAvailableStatus, actual.Status)
-		}
+			actual := computeDeploymentReplicasAllAvailableCondition(deploy)
+			if actual.Status != test.expectDeploymentReplicasAllAvailableStatus {
+				t.Errorf("expected %v, got %v", test.expectDeploymentReplicasAllAvailableStatus, actual.Status)
+			}
+		})
 	}
 }
 
@@ -1192,18 +1204,18 @@ func TestComputeLoadBalancerStatus(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		t.Logf("evaluating test %s", test.name)
+		t.Run(test.name, func(t *testing.T) {
+			actual := computeLoadBalancerStatus(test.controller, test.service, test.events)
 
-		actual := computeLoadBalancerStatus(test.controller, test.service, test.events)
-
-		conditionsCmpOpts := []cmp.Option{
-			cmpopts.IgnoreFields(operatorv1.OperatorCondition{}, "LastTransitionTime", "Message"),
-			cmpopts.EquateEmpty(),
-			cmpopts.SortSlices(func(a, b operatorv1.OperatorCondition) bool { return a.Type < b.Type }),
-		}
-		if !cmp.Equal(actual, test.expect, conditionsCmpOpts...) {
-			t.Fatalf("expected:\n%#v\ngot:\n%#v", test.expect, actual)
-		}
+			conditionsCmpOpts := []cmp.Option{
+				cmpopts.IgnoreFields(operatorv1.OperatorCondition{}, "LastTransitionTime", "Message"),
+				cmpopts.EquateEmpty(),
+				cmpopts.SortSlices(func(a, b operatorv1.OperatorCondition) bool { return a.Type < b.Type }),
+			}
+			if !cmp.Equal(actual, test.expect, conditionsCmpOpts...) {
+				t.Fatalf("expected:\n%#v\ngot:\n%#v", test.expect, actual)
+			}
+		})
 	}
 }
 
@@ -1320,14 +1332,16 @@ func TestComputeIngressProgressingCondition(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		actual := computeIngressProgressingCondition(tc.conditions)
-		conditionsCmpOpts := []cmp.Option{
-			cmpopts.IgnoreFields(operatorv1.OperatorCondition{}, "LastTransitionTime", "Reason", "Message"),
-			cmpopts.EquateEmpty(),
-		}
-		if !cmp.Equal(actual, tc.expect, conditionsCmpOpts...) {
-			t.Fatalf("%q: expected %#v, got %#v", tc.description, tc.expect, actual)
-		}
+		t.Run(tc.description, func(t *testing.T) {
+			actual := computeIngressProgressingCondition(tc.conditions)
+			conditionsCmpOpts := []cmp.Option{
+				cmpopts.IgnoreFields(operatorv1.OperatorCondition{}, "LastTransitionTime", "Reason", "Message"),
+				cmpopts.EquateEmpty(),
+			}
+			if !cmp.Equal(actual, tc.expect, conditionsCmpOpts...) {
+				t.Fatalf("expected %#v, got %#v", tc.expect, actual)
+			}
+		})
 	}
 }
 
@@ -1400,14 +1414,16 @@ func TestComputeIngressAvailableCondition(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		actual := computeIngressAvailableCondition(tc.conditions)
-		conditionsCmpOpts := []cmp.Option{
-			cmpopts.IgnoreFields(operatorv1.OperatorCondition{}, "LastTransitionTime", "Reason", "Message"),
-			cmpopts.EquateEmpty(),
-		}
-		if !cmp.Equal(actual, tc.expect, conditionsCmpOpts...) {
-			t.Fatalf("%q: expected %#v, got %#v", tc.description, tc.expect, actual)
-		}
+		t.Run(tc.description, func(t *testing.T) {
+			actual := computeIngressAvailableCondition(tc.conditions)
+			conditionsCmpOpts := []cmp.Option{
+				cmpopts.IgnoreFields(operatorv1.OperatorCondition{}, "LastTransitionTime", "Reason", "Message"),
+				cmpopts.EquateEmpty(),
+			}
+			if !cmp.Equal(actual, tc.expect, conditionsCmpOpts...) {
+				t.Fatalf("expected %#v, got %#v", tc.expect, actual)
+			}
+		})
 	}
 }
 
@@ -1525,9 +1541,11 @@ func TestIngressStatusesEqual(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		if actual := IngressStatusesEqual(tc.a, tc.b); actual != tc.expected {
-			t.Fatalf("%q: expected %v, got %v", tc.description, tc.expected, actual)
-		}
+		t.Run(tc.description, func(t *testing.T) {
+			if actual := IngressStatusesEqual(tc.a, tc.b); actual != tc.expected {
+				t.Fatalf("expected %v, got %v", tc.expected, actual)
+			}
+		})
 	}
 }
 
@@ -2036,11 +2054,13 @@ func TestComputeDNSStatus(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		actualConditions := computeDNSStatus(tc.controller, tc.record, tc.platformStatus, tc.dnsConfig)
-		opts := cmpopts.IgnoreFields(operatorv1.OperatorCondition{}, "Message", "LastTransitionTime")
-		if !cmp.Equal(actualConditions, tc.expect, opts) {
-			t.Fatalf("%q found diff between actual and expected operator condition:\n%s", tc.name, cmp.Diff(actualConditions, tc.expect, opts))
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			actualConditions := computeDNSStatus(tc.controller, tc.record, tc.platformStatus, tc.dnsConfig)
+			opts := cmpopts.IgnoreFields(operatorv1.OperatorCondition{}, "Message", "LastTransitionTime")
+			if !cmp.Equal(actualConditions, tc.expect, opts) {
+				t.Fatalf("found diff between actual and expected operator condition:\n%s", cmp.Diff(actualConditions, tc.expect, opts))
+			}
+		})
 	}
 }
 
@@ -2086,11 +2106,13 @@ func TestMergeConditions(t *testing.T) {
 	fakeClock.SetTime(later)
 
 	for name, test := range tests {
-		t.Logf("test: %s", name)
-		actual := MergeConditions(test.conditions, test.updates...)
-		if !conditionsEqual(test.expected, actual) {
-			t.Errorf("expected:\n%v\nactual:\n%v", util.ToYaml(test.expected), util.ToYaml(actual))
-		}
+		t.Run(name, func(t *testing.T) {
+			t.Logf("test: %s", name)
+			actual := MergeConditions(test.conditions, test.updates...)
+			if !conditionsEqual(test.expected, actual) {
+				t.Errorf("expected:\n%v\nactual:\n%v", util.ToYaml(test.expected), util.ToYaml(actual))
+			}
+		})
 	}
 }
 
@@ -2293,11 +2315,11 @@ func TestComputeIngressUpgradeableCondition(t *testing.T) {
 			}
 			wantSvc, service, err := desiredLoadBalancerService(ic, deploymentRef, platformStatus)
 			if err != nil {
-				t.Errorf("%q: unexpected error from desiredLoadBalancerService: %v", tc.description, err)
+				t.Errorf("unexpected error from desiredLoadBalancerService: %v", err)
 				return
 			}
 			if !wantSvc {
-				t.Errorf("%q: unexpected false value from desiredLoadBalancerService", tc.description)
+				t.Error("unexpected false value from desiredLoadBalancerService")
 				return
 			}
 			if tc.mutate != nil {
@@ -2315,7 +2337,7 @@ func TestComputeIngressUpgradeableCondition(t *testing.T) {
 
 			actual := computeIngressUpgradeableCondition(ic, deploymentRef, service, platformStatus, secret)
 			if actual.Status != expectedStatus {
-				t.Errorf("%q: expected Upgradeable to be %q, got %q", tc.description, expectedStatus, actual.Status)
+				t.Errorf("expected Upgradeable to be %q, got %q", expectedStatus, actual.Status)
 			}
 		})
 	}
@@ -2491,9 +2513,11 @@ func Test_computeAllowedSourceRanges(t *testing.T) {
 		},
 	}
 	for _, test := range tests {
-		actual := computeAllowedSourceRanges(test.service)
-		if !reflect.DeepEqual(actual, test.expect) {
-			t.Errorf("%q: expected %v, got %v", test.name, test.expect, actual)
-		}
+		t.Run(test.name, func(t *testing.T) {
+			actual := computeAllowedSourceRanges(test.service)
+			if !reflect.DeepEqual(actual, test.expect) {
+				t.Errorf("expected %v, got %v", test.expect, actual)
+			}
+		})
 	}
 }

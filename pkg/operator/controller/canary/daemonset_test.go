@@ -187,15 +187,17 @@ func TestCanaryDaemonsetChanged(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		original := desiredCanaryDaemonSet("")
-		mutated := original.DeepCopy()
-		tc.mutate(mutated)
-		if changed, updated := canaryDaemonSetChanged(original, mutated); changed != tc.expect {
-			t.Errorf("%s, expect canaryDaemonSetChanged to be %t, got %t", tc.description, tc.expect, changed)
-		} else if changed {
-			if changedAgain, _ := canaryDaemonSetChanged(mutated, updated); changedAgain {
-				t.Errorf("%s, canaryDaemonSetChanged does not behave as a fixed point function", tc.description)
+		t.Run(tc.description, func(t *testing.T) {
+			original := desiredCanaryDaemonSet("")
+			mutated := original.DeepCopy()
+			tc.mutate(mutated)
+			if changed, updated := canaryDaemonSetChanged(original, mutated); changed != tc.expect {
+				t.Errorf("expect canaryDaemonSetChanged to be %t, got %t", tc.expect, changed)
+			} else if changed {
+				if changedAgain, _ := canaryDaemonSetChanged(mutated, updated); changedAgain {
+					t.Error("canaryDaemonSetChanged does not behave as a fixed point function")
+				}
 			}
-		}
+		})
 	}
 }

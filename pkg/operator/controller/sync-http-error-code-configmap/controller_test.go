@@ -136,16 +136,17 @@ func TestDesiredHttpErrorCodeConfigMap(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		expected := tc.output.configMap
-		name := types.NamespacedName{Name: tc.inputs.configmap.Name, Namespace: tc.inputs.configmap.Namespace}
-		_, actual, err := desiredHttpErrorCodeConfigMap(true, &tc.inputs.configmap, name, deploymentRef)
-		if err != nil {
-			t.Errorf("failed to get error-page configmap: %v", err)
-			continue
-		}
+		t.Run(tc.description, func(t *testing.T) {
+			expected := tc.output.configMap
+			name := types.NamespacedName{Name: tc.inputs.configmap.Name, Namespace: tc.inputs.configmap.Namespace}
+			_, actual, err := desiredHttpErrorCodeConfigMap(true, &tc.inputs.configmap, name, deploymentRef)
+			if err != nil {
+				t.Fatalf("failed to get error-page configmap: %v", err)
+			}
 
-		if !reflect.DeepEqual(expected.Data, actual.Data) {
-			t.Errorf("expected configmap and actual configmap don't match\nexpected:\n%v\nactual:\n%v", expected, actual)
-		}
+			if !reflect.DeepEqual(expected.Data, actual.Data) {
+				t.Fatalf("expected configmap and actual configmap don't match\nexpected:\n%v\nactual:\n%v", expected, actual)
+			}
+		})
 	}
 }

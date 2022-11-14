@@ -102,27 +102,29 @@ func TestPublishRecordToZones(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		record := &iov1.DNSRecord{
-			Spec: iov1.DNSRecordSpec{
-				DNSName:             "subdomain.dnszone.io.",
-				RecordType:          iov1.ARecordType,
-				DNSManagementPolicy: iov1.ManagedDNS,
-				Targets:             []string{"55.11.22.33"},
-			},
-		}
-		if test.unManagedDNS {
-			record.Spec.DNSManagementPolicy = iov1.UnmanagedDNS
-		}
-		r := &reconciler{
-			// TODO To write a fake provider that can return errors and add more test cases.
-			dnsProvider: &dns.FakeProvider{},
-		}
+		t.Run(test.name, func(t *testing.T) {
+			record := &iov1.DNSRecord{
+				Spec: iov1.DNSRecordSpec{
+					DNSName:             "subdomain.dnszone.io.",
+					RecordType:          iov1.ARecordType,
+					DNSManagementPolicy: iov1.ManagedDNS,
+					Targets:             []string{"55.11.22.33"},
+				},
+			}
+			if test.unManagedDNS {
+				record.Spec.DNSManagementPolicy = iov1.UnmanagedDNS
+			}
+			r := &reconciler{
+				// TODO To write a fake provider that can return errors and add more test cases.
+				dnsProvider: &dns.FakeProvider{},
+			}
 
-		_, actual := r.publishRecordToZones(test.zones, record)
-		opts := cmpopts.IgnoreFields(iov1.DNSZoneCondition{}, "Reason", "Message", "LastTransitionTime")
-		if !cmp.Equal(actual, test.expect, opts) {
-			t.Fatalf("%q: found diff between actual and expected:\n%s", test.name, cmp.Diff(actual, test.expect, opts))
-		}
+			_, actual := r.publishRecordToZones(test.zones, record)
+			opts := cmpopts.IgnoreFields(iov1.DNSZoneCondition{}, "Reason", "Message", "LastTransitionTime")
+			if !cmp.Equal(actual, test.expect, opts) {
+				t.Fatalf("found diff between actual and expected:\n%s", cmp.Diff(actual, test.expect, opts))
+			}
+		})
 	}
 }
 
@@ -206,22 +208,24 @@ func TestPublishRecordToZonesMergesStatus(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		record := &iov1.DNSRecord{
-			Spec: iov1.DNSRecordSpec{
-				DNSManagementPolicy: iov1.ManagedDNS,
-			},
-			Status: iov1.DNSRecordStatus{Zones: tc.oldZoneStatuses},
-		}
-		r := &reconciler{dnsProvider: &dns.FakeProvider{}}
-		zone := []configv1.DNSZone{{ID: "zone2"}}
-		oldStatuses := record.Status.DeepCopy().Zones
-		_, newStatuses := r.publishRecordToZones(zone, record)
-		if !dnsZoneStatusSlicesEqual(oldStatuses, tc.oldZoneStatuses) {
-			t.Fatalf("%q: publishRecordToZones mutated the record's status conditions\nold: %#v\nnew: %#v", tc.description, oldStatuses, tc.oldZoneStatuses)
-		}
-		if equal := dnsZoneStatusSlicesEqual(oldStatuses, newStatuses); !equal != tc.expectChange {
-			t.Fatalf("%q: expected old and new status equal to be %v, got %v\nold: %#v\nnew: %#v", tc.description, tc.expectChange, equal, oldStatuses, newStatuses)
-		}
+		t.Run(tc.description, func(t *testing.T) {
+			record := &iov1.DNSRecord{
+				Spec: iov1.DNSRecordSpec{
+					DNSManagementPolicy: iov1.ManagedDNS,
+				},
+				Status: iov1.DNSRecordStatus{Zones: tc.oldZoneStatuses},
+			}
+			r := &reconciler{dnsProvider: &dns.FakeProvider{}}
+			zone := []configv1.DNSZone{{ID: "zone2"}}
+			oldStatuses := record.Status.DeepCopy().Zones
+			_, newStatuses := r.publishRecordToZones(zone, record)
+			if !dnsZoneStatusSlicesEqual(oldStatuses, tc.oldZoneStatuses) {
+				t.Fatalf("publishRecordToZones mutated the record's status conditions\nold: %#v\nnew: %#v", oldStatuses, tc.oldZoneStatuses)
+			}
+			if equal := dnsZoneStatusSlicesEqual(oldStatuses, newStatuses); !equal != tc.expectChange {
+				t.Fatalf("expected old and new status equal to be %v, got %v\nold: %#v\nnew: %#v", tc.expectChange, equal, oldStatuses, newStatuses)
+			}
+		})
 	}
 }
 
@@ -360,7 +364,7 @@ func TestMigrateDNSRecordStatus(t *testing.T) {
 
 			opts := cmpopts.IgnoreFields(iov1.DNSZoneCondition{}, "Reason", "Message", "LastTransitionTime")
 			if !cmp.Equal(testDNSRecord.Status.Zones[0].Conditions, tc.expected, opts) {
-				t.Fatalf("%q: status condition found diff:\n%s", tc.name, cmp.Diff(testDNSRecord.Status.Zones[0].Conditions, tc.expected, opts))
+				t.Fatalf("status condition found diff:\n%s", cmp.Diff(testDNSRecord.Status.Zones[0].Conditions, tc.expected, opts))
 			}
 		})
 	}
@@ -616,9 +620,11 @@ func TestDnsZoneStatusSlicesEqual(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		if actual := dnsZoneStatusSlicesEqual(tc.a, tc.b); actual != tc.expected {
-			t.Fatalf("%q: expected %v, got %v", tc.description, tc.expected, actual)
-		}
+		t.Run(tc.description, func(t *testing.T) {
+			if actual := dnsZoneStatusSlicesEqual(tc.a, tc.b); actual != tc.expected {
+				t.Fatalf("expected %v, got %v", tc.expected, actual)
+			}
+		})
 	}
 }
 
@@ -767,13 +773,15 @@ func TestRecordIsAlreadyPublishedToZone(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		record := &iov1.DNSRecord{
-			Status: iov1.DNSRecordStatus{Zones: tc.zoneStatuses},
-		}
-		actual := recordIsAlreadyPublishedToZone(record, tc.zone)
-		if actual != tc.expect {
-			t.Errorf("%q: expected %t, got %t", tc.description, tc.expect, actual)
-		}
+		t.Run(tc.description, func(t *testing.T) {
+			record := &iov1.DNSRecord{
+				Status: iov1.DNSRecordStatus{Zones: tc.zoneStatuses},
+			}
+			actual := recordIsAlreadyPublishedToZone(record, tc.zone)
+			if actual != tc.expect {
+				t.Errorf("expected %t, got %t", tc.expect, actual)
+			}
+		})
 	}
 }
 

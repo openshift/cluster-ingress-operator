@@ -109,61 +109,63 @@ func TestComputeOperatorProgressingCondition(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		oldVersions := []configv1.OperandVersion{
-			{
-				Name:    OperatorVersionName,
-				Version: tc.oldVersions.operator,
-			},
-			{
-				Name:    IngressControllerVersionName,
-				Version: tc.oldVersions.operand1,
-			},
-			{
-				Name:    CanaryImageVersionName,
-				Version: tc.oldVersions.operand2,
-			},
-		}
-		reportedVersions := []configv1.OperandVersion{
-			{
-				Name:    OperatorVersionName,
-				Version: tc.reportedVersions.operator,
-			},
-			{
-				Name:    IngressControllerVersionName,
-				Version: tc.reportedVersions.operand1,
-			},
-			{
-				Name:    CanaryImageVersionName,
-				Version: tc.reportedVersions.operand2,
-			},
-		}
+		t.Run(tc.description, func(t *testing.T) {
+			oldVersions := []configv1.OperandVersion{
+				{
+					Name:    OperatorVersionName,
+					Version: tc.oldVersions.operator,
+				},
+				{
+					Name:    IngressControllerVersionName,
+					Version: tc.oldVersions.operand1,
+				},
+				{
+					Name:    CanaryImageVersionName,
+					Version: tc.oldVersions.operand2,
+				},
+			}
+			reportedVersions := []configv1.OperandVersion{
+				{
+					Name:    OperatorVersionName,
+					Version: tc.reportedVersions.operator,
+				},
+				{
+					Name:    IngressControllerVersionName,
+					Version: tc.reportedVersions.operand1,
+				},
+				{
+					Name:    CanaryImageVersionName,
+					Version: tc.reportedVersions.operand2,
+				},
+			}
 
-		expected := configv1.ClusterOperatorStatusCondition{
-			Type:   configv1.OperatorProgressing,
-			Status: tc.expectProgressing,
-		}
+			expected := configv1.ClusterOperatorStatusCondition{
+				Type:   configv1.OperatorProgressing,
+				Status: tc.expectProgressing,
+			}
 
-		var ingresscontrollers []operatorv1.IngressController
-		ic := operatorv1.IngressController{
-			Status: operatorv1.IngressControllerStatus{
-				Conditions: []operatorv1.OperatorCondition{{
-					Type:   operatorv1.OperatorStatusTypeProgressing,
-					Status: operatorv1.ConditionFalse,
-				}},
-			},
-		}
-		ingresscontrollers = append(ingresscontrollers, ic)
-		if tc.someIngressProgressing {
-			ingresscontrollers[0].Status.Conditions[0].Status = operatorv1.ConditionTrue
-		}
+			var ingresscontrollers []operatorv1.IngressController
+			ic := operatorv1.IngressController{
+				Status: operatorv1.IngressControllerStatus{
+					Conditions: []operatorv1.OperatorCondition{{
+						Type:   operatorv1.OperatorStatusTypeProgressing,
+						Status: operatorv1.ConditionFalse,
+					}},
+				},
+			}
+			ingresscontrollers = append(ingresscontrollers, ic)
+			if tc.someIngressProgressing {
+				ingresscontrollers[0].Status.Conditions[0].Status = operatorv1.ConditionTrue
+			}
 
-		actual := computeOperatorProgressingCondition(ingresscontrollers, tc.allIngressesAvailable, oldVersions, reportedVersions, tc.curVersions.operator, tc.curVersions.operand1, tc.curVersions.operand2)
-		conditionsCmpOpts := []cmp.Option{
-			cmpopts.IgnoreFields(configv1.ClusterOperatorStatusCondition{}, "LastTransitionTime", "Reason", "Message"),
-		}
-		if !cmp.Equal(actual, expected, conditionsCmpOpts...) {
-			t.Fatalf("%q: expected %#v, got %#v", tc.description, expected, actual)
-		}
+			actual := computeOperatorProgressingCondition(ingresscontrollers, tc.allIngressesAvailable, oldVersions, reportedVersions, tc.curVersions.operator, tc.curVersions.operand1, tc.curVersions.operand2)
+			conditionsCmpOpts := []cmp.Option{
+				cmpopts.IgnoreFields(configv1.ClusterOperatorStatusCondition{}, "LastTransitionTime", "Reason", "Message"),
+			}
+			if !cmp.Equal(actual, expected, conditionsCmpOpts...) {
+				t.Fatalf("expected %#v, got %#v", expected, actual)
+			}
+		})
 	}
 }
 
@@ -393,9 +395,11 @@ func TestOperatorStatusesEqual(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		if actual := operatorStatusesEqual(tc.a, tc.b); actual != tc.expected {
-			t.Fatalf("%q: expected %v, got %v", tc.description, tc.expected, actual)
-		}
+		t.Run(tc.description, func(t *testing.T) {
+			if actual := operatorStatusesEqual(tc.a, tc.b); actual != tc.expected {
+				t.Fatalf("expected %v, got %v", tc.expected, actual)
+			}
+		})
 	}
 }
 
@@ -475,55 +479,57 @@ func TestComputeOperatorStatusVersions(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		var (
-			oldVersions      []configv1.OperandVersion
-			expectedVersions []configv1.OperandVersion
-		)
+		t.Run(tc.description, func(t *testing.T) {
+			var (
+				oldVersions      []configv1.OperandVersion
+				expectedVersions []configv1.OperandVersion
+			)
 
-		oldVersions = []configv1.OperandVersion{
-			{
-				Name:    OperatorVersionName,
-				Version: tc.oldVersions.operator,
-			},
-			{
-				Name:    IngressControllerVersionName,
-				Version: tc.oldVersions.operand1,
-			},
-			{
-				Name:    CanaryImageVersionName,
-				Version: tc.oldVersions.operand2,
-			},
-		}
-		expectedVersions = []configv1.OperandVersion{
-			{
-				Name:    OperatorVersionName,
-				Version: tc.expectedVersions.operator,
-			},
-			{
-				Name:    IngressControllerVersionName,
-				Version: tc.expectedVersions.operand1,
-			},
-			{
-				Name:    CanaryImageVersionName,
-				Version: tc.expectedVersions.operand2,
-			},
-		}
+			oldVersions = []configv1.OperandVersion{
+				{
+					Name:    OperatorVersionName,
+					Version: tc.oldVersions.operator,
+				},
+				{
+					Name:    IngressControllerVersionName,
+					Version: tc.oldVersions.operand1,
+				},
+				{
+					Name:    CanaryImageVersionName,
+					Version: tc.oldVersions.operand2,
+				},
+			}
+			expectedVersions = []configv1.OperandVersion{
+				{
+					Name:    OperatorVersionName,
+					Version: tc.expectedVersions.operator,
+				},
+				{
+					Name:    IngressControllerVersionName,
+					Version: tc.expectedVersions.operand1,
+				},
+				{
+					Name:    CanaryImageVersionName,
+					Version: tc.expectedVersions.operand2,
+				},
+			}
 
-		r := &reconciler{
-			config: Config{
-				OperatorReleaseVersion: tc.curVersions.operator,
-				IngressControllerImage: tc.curVersions.operand1,
-				CanaryImage:            tc.curVersions.operand2,
-			},
-		}
-		versions := r.computeOperatorStatusVersions(oldVersions, tc.allIngressesAvailable)
-		versionsCmpOpts := []cmp.Option{
-			cmpopts.EquateEmpty(),
-			cmpopts.SortSlices(func(a, b configv1.OperandVersion) bool { return a.Name < b.Name }),
-		}
-		if !cmp.Equal(versions, expectedVersions, versionsCmpOpts...) {
-			t.Fatalf("%q: expected %v, got %v", tc.description, expectedVersions, versions)
-		}
+			r := &reconciler{
+				config: Config{
+					OperatorReleaseVersion: tc.curVersions.operator,
+					IngressControllerImage: tc.curVersions.operand1,
+					CanaryImage:            tc.curVersions.operand2,
+				},
+			}
+			versions := r.computeOperatorStatusVersions(oldVersions, tc.allIngressesAvailable)
+			versionsCmpOpts := []cmp.Option{
+				cmpopts.EquateEmpty(),
+				cmpopts.SortSlices(func(a, b configv1.OperandVersion) bool { return a.Name < b.Name }),
+			}
+			if !cmp.Equal(versions, expectedVersions, versionsCmpOpts...) {
+				t.Fatalf("expected %v, got %v", expectedVersions, versions)
+			}
+		})
 	}
 }
 
@@ -556,38 +562,40 @@ func TestComputeOperatorUpgradeableCondition(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		ingresscontrollers := []operatorv1.IngressController{}
-		for _, upgradeable := range tc.ingresscontrollersUpgradeable {
-			upgradeableStatus := operatorv1.ConditionFalse
-			if upgradeable {
-				upgradeableStatus = operatorv1.ConditionTrue
+		t.Run(tc.description, func(t *testing.T) {
+			ingresscontrollers := []operatorv1.IngressController{}
+			for _, upgradeable := range tc.ingresscontrollersUpgradeable {
+				upgradeableStatus := operatorv1.ConditionFalse
+				if upgradeable {
+					upgradeableStatus = operatorv1.ConditionTrue
+				}
+				ic := operatorv1.IngressController{
+					Status: operatorv1.IngressControllerStatus{
+						Conditions: []operatorv1.OperatorCondition{{
+							Type:   "Upgradeable",
+							Status: upgradeableStatus,
+						}},
+					},
+				}
+				ingresscontrollers = append(ingresscontrollers, ic)
 			}
-			ic := operatorv1.IngressController{
-				Status: operatorv1.IngressControllerStatus{
-					Conditions: []operatorv1.OperatorCondition{{
-						Type:   "Upgradeable",
-						Status: upgradeableStatus,
-					}},
-				},
+
+			expected := configv1.ClusterOperatorStatusCondition{
+				Type:   configv1.OperatorUpgradeable,
+				Status: configv1.ConditionFalse,
 			}
-			ingresscontrollers = append(ingresscontrollers, ic)
-		}
+			if tc.expectUpgradeable {
+				expected.Status = configv1.ConditionTrue
+			}
 
-		expected := configv1.ClusterOperatorStatusCondition{
-			Type:   configv1.OperatorUpgradeable,
-			Status: configv1.ConditionFalse,
-		}
-		if tc.expectUpgradeable {
-			expected.Status = configv1.ConditionTrue
-		}
-
-		actual := computeOperatorUpgradeableCondition(ingresscontrollers)
-		conditionsCmpOpts := []cmp.Option{
-			cmpopts.IgnoreFields(configv1.ClusterOperatorStatusCondition{}, "LastTransitionTime", "Reason", "Message"),
-		}
-		if !cmp.Equal(actual, expected, conditionsCmpOpts...) {
-			t.Fatalf("%q: expected %#v, got %#v", tc.description, expected, actual)
-		}
+			actual := computeOperatorUpgradeableCondition(ingresscontrollers)
+			conditionsCmpOpts := []cmp.Option{
+				cmpopts.IgnoreFields(configv1.ClusterOperatorStatusCondition{}, "LastTransitionTime", "Reason", "Message"),
+			}
+			if !cmp.Equal(actual, expected, conditionsCmpOpts...) {
+				t.Fatalf("expected %#v, got %#v", expected, actual)
+			}
+		})
 	}
 }
 
@@ -620,37 +628,39 @@ func Test_computeOperatorEvaluationConditionsDetectedCondition(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		ingresscontrollers := []operatorv1.IngressController{}
-		for _, has := range tc.ingresscontrollersHaveEvaluationConditions {
-			evaluationConditionsDetectedStatus := operatorv1.ConditionFalse
-			if has {
-				evaluationConditionsDetectedStatus = operatorv1.ConditionTrue
+		t.Run(tc.description, func(t *testing.T) {
+			ingresscontrollers := []operatorv1.IngressController{}
+			for _, has := range tc.ingresscontrollersHaveEvaluationConditions {
+				evaluationConditionsDetectedStatus := operatorv1.ConditionFalse
+				if has {
+					evaluationConditionsDetectedStatus = operatorv1.ConditionTrue
+				}
+				ic := operatorv1.IngressController{
+					Status: operatorv1.IngressControllerStatus{
+						Conditions: []operatorv1.OperatorCondition{{
+							Type:   ingress.IngressControllerEvaluationConditionsDetectedConditionType,
+							Status: evaluationConditionsDetectedStatus,
+						}},
+					},
+				}
+				ingresscontrollers = append(ingresscontrollers, ic)
 			}
-			ic := operatorv1.IngressController{
-				Status: operatorv1.IngressControllerStatus{
-					Conditions: []operatorv1.OperatorCondition{{
-						Type:   ingress.IngressControllerEvaluationConditionsDetectedConditionType,
-						Status: evaluationConditionsDetectedStatus,
-					}},
-				},
+
+			expected := configv1.ClusterOperatorStatusCondition{
+				Type:   ingress.IngressControllerEvaluationConditionsDetectedConditionType,
+				Status: configv1.ConditionFalse,
 			}
-			ingresscontrollers = append(ingresscontrollers, ic)
-		}
+			if tc.expectEvaluationConditionsDetected {
+				expected.Status = configv1.ConditionTrue
+			}
 
-		expected := configv1.ClusterOperatorStatusCondition{
-			Type:   ingress.IngressControllerEvaluationConditionsDetectedConditionType,
-			Status: configv1.ConditionFalse,
-		}
-		if tc.expectEvaluationConditionsDetected {
-			expected.Status = configv1.ConditionTrue
-		}
-
-		actual := computeOperatorEvaluationConditionsDetectedCondition(ingresscontrollers)
-		conditionsCmpOpts := []cmp.Option{
-			cmpopts.IgnoreFields(configv1.ClusterOperatorStatusCondition{}, "LastTransitionTime", "Reason", "Message"),
-		}
-		if !cmp.Equal(actual, expected, conditionsCmpOpts...) {
-			t.Fatalf("%q: expected %#v, got %#v", tc.description, expected, actual)
-		}
+			actual := computeOperatorEvaluationConditionsDetectedCondition(ingresscontrollers)
+			conditionsCmpOpts := []cmp.Option{
+				cmpopts.IgnoreFields(configv1.ClusterOperatorStatusCondition{}, "LastTransitionTime", "Reason", "Message"),
+			}
+			if !cmp.Equal(actual, expected, conditionsCmpOpts...) {
+				t.Fatalf("expected %#v, got %#v", expected, actual)
+			}
+		})
 	}
 }

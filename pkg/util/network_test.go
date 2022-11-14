@@ -97,16 +97,16 @@ func TestURI(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		scheme, err := URI(tc.uri)
-		switch {
-		case err != nil && tc.expected:
-			t.Errorf("test %s failed: %v", tc.description, err)
-		case err == nil && !tc.expected:
-			t.Errorf("test %s expected to fail, but passed", tc.description)
-		case err == nil && tc.expected:
-			if scheme != tc.scheme {
-				t.Errorf("unexpected scheme %s for test %s, expected scheme %s", scheme, tc.description, tc.scheme)
+		t.Run(tc.description, func(t *testing.T) {
+			scheme, err := URI(tc.uri)
+			switch {
+			case err != nil && tc.expected:
+				t.Errorf("unexpected error: %v", err)
+			case err == nil && !tc.expected:
+				t.Error("expected error")
+			case tc.expected && scheme != tc.scheme:
+				t.Errorf("expected scheme %q, got %q", tc.scheme, scheme)
 			}
-		}
+		})
 	}
 }

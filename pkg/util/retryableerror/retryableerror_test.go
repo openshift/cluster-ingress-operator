@@ -50,14 +50,16 @@ func TestRetryableError(t *testing.T) {
 		},
 	}
 	for _, test := range tests {
-		err := NewMaybeRetryableAggregate(test.errors)
-		if retryable, gotRetryable := err.(Error); gotRetryable != test.expectRetryable {
-			t.Errorf("%q: expected retryable %T, got %T: %v", test.name, test.expectRetryable, gotRetryable, err)
-		} else if gotRetryable && retryable.After() != test.expectAfter {
-			t.Errorf("%q: expected after %v, got %v: %v", test.name, test.expectAfter, retryable.After(), err)
-		}
-		if _, gotAggregate := err.(utilerrors.Aggregate); gotAggregate != test.expectAggregate {
-			t.Errorf("%q: expected aggregate %T, got %T: %v", test.name, test.expectAggregate, gotAggregate, err)
-		}
+		t.Run(test.name, func(t *testing.T) {
+			err := NewMaybeRetryableAggregate(test.errors)
+			if retryable, gotRetryable := err.(Error); gotRetryable != test.expectRetryable {
+				t.Errorf("expected retryable %T, got %T: %v", test.expectRetryable, gotRetryable, err)
+			} else if gotRetryable && retryable.After() != test.expectAfter {
+				t.Errorf("expected after %v, got %v: %v", test.expectAfter, retryable.After(), err)
+			}
+			if _, gotAggregate := err.(utilerrors.Aggregate); gotAggregate != test.expectAggregate {
+				t.Errorf("expected aggregate %T, got %T: %v", test.expectAggregate, gotAggregate, err)
+			}
+		})
 	}
 }
