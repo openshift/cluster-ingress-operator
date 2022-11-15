@@ -1,4 +1,4 @@
-package ingress
+package dnsrecord
 
 import (
 	"testing"
@@ -248,7 +248,7 @@ func TestManageDNSForDomain(t *testing.T) {
 				BaseDomain: tc.baseDomain,
 			},
 		}
-		actual := manageDNSForDomain(tc.domain, &status, &dnsConfig)
+		actual := ManageDNSForDomain(tc.domain, &status, &dnsConfig)
 		if actual != tc.expected {
 			t.Errorf("%q: expected to be %v, got %v", tc.name, tc.expected, actual)
 		}

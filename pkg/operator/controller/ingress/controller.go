@@ -14,6 +14,7 @@ import (
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	routemetrics "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/route-metrics"
+	"github.com/openshift/cluster-ingress-operator/pkg/resources/dnsrecord"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/ingresscontroller"
 	retryable "github.com/openshift/cluster-ingress-operator/pkg/util/retryableerror"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/slice"
@@ -288,7 +289,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	// TODO: Remove this in 4.13
 	if eps := ingress.Status.EndpointPublishingStrategy; eps != nil && eps.Type == operatorv1.LoadBalancerServiceStrategyType && eps.LoadBalancer != nil {
 
-		domainMatchesBaseDomain := manageDNSForDomain(ingress.Status.Domain, platformStatus, dnsConfig)
+		domainMatchesBaseDomain := dnsrecord.ManageDNSForDomain(ingress.Status.Domain, platformStatus, dnsConfig)
 
 		// Set dnsManagementPolicy based on current domain on the ingresscontroller
 		// and base domain on dns config. This is needed to ensure the correct dnsManagementPolicy
@@ -330,7 +331,7 @@ func (r *reconciler) admit(current *operatorv1.IngressController, ingressConfig 
 	// To set default publishing strategy we need to verify if the domains match
 	// so that we can set the appropriate dnsManagementPolicy. This can only be
 	// done after status.domain has been updated in setDefaultDomain().
-	domainMatchesBaseDomain := manageDNSForDomain(updated.Status.Domain, platformStatus, dnsConfig)
+	domainMatchesBaseDomain := dnsrecord.ManageDNSForDomain(updated.Status.Domain, platformStatus, dnsConfig)
 	setDefaultPublishingStrategy(updated, platformStatus, domainMatchesBaseDomain, ingressConfig, alreadyAdmitted)
 
 	// The TLS security profile need not be defaulted.  If none is set, we
@@ -915,10 +916,10 @@ func (r *reconciler) ensureIngressDeleted(ingress *operatorv1.IngressController)
 	// Delete the wildcard DNS record, and block ingresscontroller finalization
 	// until the dnsrecord has been finalized.
 	dnsRecordName := operatorcontroller.WildcardDNSRecordName(ingress)
-	if err := deleteWildcardDNSRecord(r.client, dnsRecordName); err != nil {
+	if err := dnsrecord.DeleteWildcardDNSRecord(r.client, dnsRecordName); err != nil {
 		errs = append(errs, fmt.Errorf("failed to delete wildcard dnsrecord for ingress %s/%s: %v", ingress.Namespace, ingress.Name, err))
 	}
-	haveRec, _, err := currentWildcardDNSRecord(r.client, dnsRecordName)
+	haveRec, _, err := dnsrecord.CurrentWildcardDNSRecord(r.client, dnsRecordName)
 	switch {
 	case err != nil:
 		errs = append(errs, fmt.Errorf("failed to get current wildcard dnsrecord for ingress %s/%s: %v", ingress.Namespace, ingress.Name, err))
@@ -1065,7 +1066,7 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		dnsRecordLabels := map[string]string{
 			manifests.OwningIngressControllerLabel: ci.Name,
 		}
-		if _, record, err := ensureWildcardDNSRecord(r.client, dnsRecordName, dnsRecordLabels, icRef, ci.Status.Domain, ci.Status.EndpointPublishingStrategy, lbService, haveLB); err != nil {
+		if _, record, err := dnsrecord.EnsureWildcardDNSRecord(r.client, dnsRecordName, dnsRecordLabels, icRef, ci.Status.Domain, ci.Status.EndpointPublishingStrategy, lbService, haveLB); err != nil {
 			errs = append(errs, fmt.Errorf("failed to ensure wildcard dnsrecord for %s: %v", ci.Name, err))
 		} else {
 			wildcardRecord = record

@@ -1,4 +1,4 @@
-package ingress
+package dnsrecord
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	iov1 "github.com/openshift/api/operatoringress/v1"
+	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	corev1 "k8s.io/api/core/v1"
 
@@ -21,6 +22,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+var log = logf.Logger.WithName("dnsrecord")
+
 // defaultRecordTTL is the TTL (in seconds) assigned to all new DNS records.
 //
 // Note that TTL isn't necessarily honored by clouds providers (for example,
@@ -29,15 +32,15 @@ import (
 // [1] https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/resource-record-sets-choosing-alias-non-alias.html
 const defaultRecordTTL int64 = 30
 
-// ensureWildcardDNSRecord will create DNS records for the given LB service.
+// EnsureWildcardDNSRecord will create DNS records for the given LB service.
 // If service is nil (haveLBS is false), nothing is done.
-func ensureWildcardDNSRecord(client client.Client, name types.NamespacedName, dnsRecordLabels map[string]string, ownerRef metav1.OwnerReference, domain string, endpointPublishingStrategy *operatorv1.EndpointPublishingStrategy, service *corev1.Service, haveLBS bool) (bool, *iov1.DNSRecord, error) {
+func EnsureWildcardDNSRecord(client client.Client, name types.NamespacedName, dnsRecordLabels map[string]string, ownerRef metav1.OwnerReference, domain string, endpointPublishingStrategy *operatorv1.EndpointPublishingStrategy, service *corev1.Service, haveLBS bool) (bool, *iov1.DNSRecord, error) {
 	if !haveLBS {
 		return false, nil, nil
 	}
 
 	wantWC, desired := desiredWildcardDNSRecord(name, dnsRecordLabels, ownerRef, domain, endpointPublishingStrategy, service)
-	haveWC, current, err := currentWildcardDNSRecord(client, name)
+	haveWC, current, err := CurrentWildcardDNSRecord(client, name)
 	if err != nil {
 		return false, nil, err
 	}
@@ -48,12 +51,12 @@ func ensureWildcardDNSRecord(client client.Client, name types.NamespacedName, dn
 			return false, nil, fmt.Errorf("failed to create dnsrecord %s/%s: %v", desired.Namespace, desired.Name, err)
 		}
 		log.Info("created dnsrecord", "dnsrecord", desired)
-		return currentWildcardDNSRecord(client, name)
+		return CurrentWildcardDNSRecord(client, name)
 	case wantWC && haveWC:
 		if updated, err := updateDNSRecord(client, current, desired); err != nil {
 			return true, current, fmt.Errorf("failed to update dnsrecord %s/%s: %v", desired.Namespace, desired.Name, err)
 		} else if updated {
-			return currentWildcardDNSRecord(client, name)
+			return CurrentWildcardDNSRecord(client, name)
 		}
 	}
 
@@ -133,7 +136,7 @@ func desiredWildcardDNSRecord(name types.NamespacedName, dnsRecordLabels map[str
 	}
 }
 
-func currentWildcardDNSRecord(client client.Client, name types.NamespacedName) (bool, *iov1.DNSRecord, error) {
+func CurrentWildcardDNSRecord(client client.Client, name types.NamespacedName) (bool, *iov1.DNSRecord, error) {
 	current := &iov1.DNSRecord{}
 	err := client.Get(context.TODO(), name, current)
 	if err != nil {
@@ -145,7 +148,7 @@ func currentWildcardDNSRecord(client client.Client, name types.NamespacedName) (
 	return true, current, nil
 }
 
-func deleteWildcardDNSRecord(client client.Client, name types.NamespacedName) error {
+func DeleteWildcardDNSRecord(client client.Client, name types.NamespacedName) error {
 	record := &iov1.DNSRecord{}
 	record.Namespace = name.Namespace
 	record.Name = name.Name
@@ -187,11 +190,11 @@ func dnsRecordChanged(current, expected *iov1.DNSRecord) (bool, *iov1.DNSRecord)
 	return true, updated
 }
 
-// manageDNSForDomain returns true if the given domain contains the baseDomain
+// ManageDNSForDomain returns true if the given domain contains the baseDomain
 // of the cluster DNS config. It is only used for AWS and GCP in the beginning, and will be expanded to other clouds
 // once we know there are no users depending on this.
 // See https://bugzilla.redhat.com/show_bug.cgi?id=2041616
-func manageDNSForDomain(domain string, status *configv1.PlatformStatus, dnsConfig *configv1.DNS) bool {
+func ManageDNSForDomain(domain string, status *configv1.PlatformStatus, dnsConfig *configv1.DNS) bool {
 	if len(domain) == 0 {
 		return false
 	}
