@@ -914,10 +914,11 @@ func (r *reconciler) ensureIngressDeleted(ingress *operatorv1.IngressController)
 
 	// Delete the wildcard DNS record, and block ingresscontroller finalization
 	// until the dnsrecord has been finalized.
-	if err := r.deleteWildcardDNSRecord(ingress); err != nil {
+	dnsRecordName := operatorcontroller.WildcardDNSRecordName(ingress)
+	if err := r.deleteWildcardDNSRecord(dnsRecordName); err != nil {
 		errs = append(errs, fmt.Errorf("failed to delete wildcard dnsrecord for ingress %s/%s: %v", ingress.Namespace, ingress.Name, err))
 	}
-	haveRec, _, err := r.currentWildcardDNSRecord(ingress)
+	haveRec, _, err := r.currentWildcardDNSRecord(dnsRecordName)
 	switch {
 	case err != nil:
 		errs = append(errs, fmt.Errorf("failed to get current wildcard dnsrecord for ingress %s/%s: %v", ingress.Namespace, ingress.Name, err))
@@ -1052,7 +1053,19 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		errs = append(errs, fmt.Errorf("failed to ensure load balancer service for %s: %v", ci.Name, err))
 	} else {
 		lbService = lb
-		if _, record, err := r.ensureWildcardDNSRecord(ci, lbService, haveLB); err != nil {
+		dnsRecordName := operatorcontroller.WildcardDNSRecordName(ci)
+		icRef := metav1.OwnerReference{
+			APIVersion:         operatorv1.GroupVersion.String(),
+			Kind:               "IngressController",
+			Name:               ci.Name,
+			UID:                ci.UID,
+			Controller:         &trueVar,
+			BlockOwnerDeletion: &trueVar,
+		}
+		dnsRecordLabels := map[string]string{
+			manifests.OwningIngressControllerLabel: ci.Name,
+		}
+		if _, record, err := r.ensureWildcardDNSRecord(dnsRecordName, dnsRecordLabels, icRef, ci.Status.Domain, ci.Status.EndpointPublishingStrategy, lbService, haveLB); err != nil {
 			errs = append(errs, fmt.Errorf("failed to ensure wildcard dnsrecord for %s: %v", ci.Name, err))
 		} else {
 			wildcardRecord = record

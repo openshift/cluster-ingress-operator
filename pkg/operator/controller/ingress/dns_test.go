@@ -10,10 +10,12 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	iov1 "github.com/openshift/api/operatoringress/v1"
+	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 
 	corev1 "k8s.io/api/core/v1"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 func TestDesiredWildcardDNSRecord(t *testing.T) {
@@ -124,22 +126,27 @@ func TestDesiredWildcardDNSRecord(t *testing.T) {
 
 	for _, test := range tests {
 		t.Logf("testing %s", test.description)
-		controller := &operatorv1.IngressController{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: "default",
-			},
-			Status: operatorv1.IngressControllerStatus{
-				Domain:                     test.domain,
-				EndpointPublishingStrategy: &test.publish,
-			},
+		name := types.NamespacedName{
+			Namespace: "openshift-ingress-operator",
+			Name:      "default-wildcard",
 		}
-
+		trueVar := true
+		icRef := metav1.OwnerReference{
+			APIVersion:         operatorv1.GroupVersion.String(),
+			Kind:               "IngressController",
+			Name:               "default",
+			Controller:         &trueVar,
+			BlockOwnerDeletion: &trueVar,
+		}
+		labels := map[string]string{
+			manifests.OwningIngressControllerLabel: "default",
+		}
 		service := &corev1.Service{}
 		for _, ingress := range test.ingresses {
 			service.Status.LoadBalancer.Ingress = append(service.Status.LoadBalancer.Ingress, ingress)
 		}
 
-		haveWC, actual := desiredWildcardDNSRecord(controller, service)
+		haveWC, actual := desiredWildcardDNSRecord(name, labels, icRef, test.domain, &test.publish, service)
 		switch {
 		case test.expect != nil && haveWC:
 			if !cmp.Equal(actual.Spec, *test.expect) {

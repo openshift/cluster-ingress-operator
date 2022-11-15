@@ -12,11 +12,11 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 	iov1 "github.com/openshift/api/operatoringress/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
-	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	corev1 "k8s.io/api/core/v1"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 // defaultRecordTTL is the TTL (in seconds) assigned to all new DNS records.
@@ -29,13 +29,13 @@ const defaultRecordTTL int64 = 30
 
 // ensureWildcardDNSRecord will create DNS records for the given LB service.
 // If service is nil (haveLBS is false), nothing is done.
-func (r *reconciler) ensureWildcardDNSRecord(ic *operatorv1.IngressController, service *corev1.Service, haveLBS bool) (bool, *iov1.DNSRecord, error) {
+func (r *reconciler) ensureWildcardDNSRecord(name types.NamespacedName, dnsRecordLabels map[string]string, ownerRef metav1.OwnerReference, domain string, endpointPublishingStrategy *operatorv1.EndpointPublishingStrategy, service *corev1.Service, haveLBS bool) (bool, *iov1.DNSRecord, error) {
 	if !haveLBS {
 		return false, nil, nil
 	}
 
-	wantWC, desired := desiredWildcardDNSRecord(ic, service)
-	haveWC, current, err := r.currentWildcardDNSRecord(ic)
+	wantWC, desired := desiredWildcardDNSRecord(name, dnsRecordLabels, ownerRef, domain, endpointPublishingStrategy, service)
+	haveWC, current, err := r.currentWildcardDNSRecord(name)
 	if err != nil {
 		return false, nil, err
 	}
@@ -46,12 +46,12 @@ func (r *reconciler) ensureWildcardDNSRecord(ic *operatorv1.IngressController, s
 			return false, nil, fmt.Errorf("failed to create dnsrecord %s/%s: %v", desired.Namespace, desired.Name, err)
 		}
 		log.Info("created dnsrecord", "dnsrecord", desired)
-		return r.currentWildcardDNSRecord(ic)
+		return r.currentWildcardDNSRecord(name)
 	case wantWC && haveWC:
 		if updated, err := r.updateDNSRecord(current, desired); err != nil {
 			return true, current, fmt.Errorf("failed to update dnsrecord %s/%s: %v", desired.Namespace, desired.Name, err)
 		} else if updated {
-			return r.currentWildcardDNSRecord(ic)
+			return r.currentWildcardDNSRecord(name)
 		}
 	}
 
@@ -67,15 +67,15 @@ func (r *reconciler) ensureWildcardDNSRecord(ic *operatorv1.IngressController, s
 // TODO: If .status.loadbalancer.ingress is processed once as non-empty and then
 // later becomes empty, what should we do? Currently we'll treat it as an intent
 // to not have a desired record.
-func desiredWildcardDNSRecord(ic *operatorv1.IngressController, service *corev1.Service) (bool, *iov1.DNSRecord) {
+func desiredWildcardDNSRecord(name types.NamespacedName, dnsRecordLabels map[string]string, ownerRef metav1.OwnerReference, dnsDomain string, endpointPublishingStrategy *operatorv1.EndpointPublishingStrategy, service *corev1.Service) (bool, *iov1.DNSRecord) {
 	// If the ingresscontroller has no ingress domain, we cannot configure any
 	// DNS records.
-	if len(ic.Status.Domain) == 0 {
+	if len(dnsDomain) == 0 {
 		return false, nil
 	}
 
 	// DNS is only managed for LB publishing.
-	if ic.Status.EndpointPublishingStrategy.Type != operatorv1.LoadBalancerServiceStrategyType {
+	if endpointPublishingStrategy.Type != operatorv1.LoadBalancerServiceStrategyType {
 		return false, nil
 	}
 
@@ -92,9 +92,8 @@ func desiredWildcardDNSRecord(ic *operatorv1.IngressController, service *corev1.
 		return false, nil
 	}
 
-	name := controller.WildcardDNSRecordName(ic)
 	// Use an absolute name to prevent any ambiguity.
-	domain := fmt.Sprintf("*.%s.", ic.Status.Domain)
+	domain := fmt.Sprintf("*.%s.", dnsDomain)
 	var target string
 	var recordType iov1.DNSRecordType
 
@@ -110,29 +109,17 @@ func desiredWildcardDNSRecord(ic *operatorv1.IngressController, service *corev1.
 
 	// Set the DNS management policy on the dnsrecord to "Unmanaged" if ingresscontroller has "Unmanaged" DNS policy or
 	// if the ingresscontroller domain isn't a subdomain of the cluster's base domain.
-	if ic.Status.EndpointPublishingStrategy.LoadBalancer.DNSManagementPolicy == operatorv1.UnmanagedLoadBalancerDNS {
+	if endpointPublishingStrategy.LoadBalancer.DNSManagementPolicy == operatorv1.UnmanagedLoadBalancerDNS {
 		dnsPolicy = iov1.UnmanagedDNS
 	}
 
-	trueVar := true
 	return true, &iov1.DNSRecord{
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace: name.Namespace,
-			Name:      name.Name,
-			Labels: map[string]string{
-				manifests.OwningIngressControllerLabel: ic.Name,
-			},
-			OwnerReferences: []metav1.OwnerReference{
-				{
-					APIVersion:         operatorv1.GroupVersion.String(),
-					Kind:               "IngressController",
-					Name:               ic.Name,
-					UID:                ic.UID,
-					Controller:         &trueVar,
-					BlockOwnerDeletion: &trueVar,
-				},
-			},
-			Finalizers: []string{manifests.DNSRecordFinalizer},
+			Namespace:       name.Namespace,
+			Name:            name.Name,
+			Labels:          dnsRecordLabels,
+			OwnerReferences: []metav1.OwnerReference{ownerRef},
+			Finalizers:      []string{manifests.DNSRecordFinalizer},
 		},
 		Spec: iov1.DNSRecordSpec{
 			DNSName:             domain,
@@ -144,9 +131,9 @@ func desiredWildcardDNSRecord(ic *operatorv1.IngressController, service *corev1.
 	}
 }
 
-func (r *reconciler) currentWildcardDNSRecord(ic *operatorv1.IngressController) (bool, *iov1.DNSRecord, error) {
+func (r *reconciler) currentWildcardDNSRecord(name types.NamespacedName) (bool, *iov1.DNSRecord, error) {
 	current := &iov1.DNSRecord{}
-	err := r.client.Get(context.TODO(), controller.WildcardDNSRecordName(ic), current)
+	err := r.client.Get(context.TODO(), name, current)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			return false, nil, nil
@@ -156,8 +143,7 @@ func (r *reconciler) currentWildcardDNSRecord(ic *operatorv1.IngressController) 
 	return true, current, nil
 }
 
-func (r *reconciler) deleteWildcardDNSRecord(ic *operatorv1.IngressController) error {
-	name := controller.WildcardDNSRecordName(ic)
+func (r *reconciler) deleteWildcardDNSRecord(name types.NamespacedName) error {
 	record := &iov1.DNSRecord{}
 	record.Namespace = name.Namespace
 	record.Name = name.Name
