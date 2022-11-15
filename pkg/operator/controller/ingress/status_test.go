@@ -16,6 +16,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
+	util "github.com/openshift/cluster-ingress-operator/pkg/util"
 	retryable "github.com/openshift/cluster-ingress-operator/pkg/util/retryableerror"
 
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
@@ -2088,7 +2089,7 @@ func TestMergeConditions(t *testing.T) {
 		t.Logf("test: %s", name)
 		actual := MergeConditions(test.conditions, test.updates...)
 		if !conditionsEqual(test.expected, actual) {
-			t.Errorf("expected:\n%v\nactual:\n%v", toYaml(test.expected), toYaml(actual))
+			t.Errorf("expected:\n%v\nactual:\n%v", util.ToYaml(test.expected), util.ToYaml(actual))
 		}
 	}
 }

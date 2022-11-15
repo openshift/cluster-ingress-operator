@@ -5,12 +5,11 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"gopkg.in/yaml.v2"
-
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	iov1 "github.com/openshift/api/operatoringress/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
+	util "github.com/openshift/cluster-ingress-operator/pkg/util"
 
 	corev1 "k8s.io/api/core/v1"
 
@@ -150,12 +149,12 @@ func TestDesiredWildcardDNSRecord(t *testing.T) {
 		switch {
 		case test.expect != nil && haveWC:
 			if !cmp.Equal(actual.Spec, *test.expect) {
-				t.Errorf("expected:\n%s\n\nactual:\n%s", toYaml(test.expect), toYaml(actual.Spec))
+				t.Errorf("expected:\n%s\n\nactual:\n%s", util.ToYaml(test.expect), util.ToYaml(actual.Spec))
 			}
 		case test.expect == nil && haveWC:
-			t.Errorf("expected nil record, got:\n%s", toYaml(actual))
+			t.Errorf("expected nil record, got:\n%s", util.ToYaml(actual))
 		case test.expect != nil && !haveWC:
-			t.Errorf("expected record but got nil:\n%s", toYaml(test.expect))
+			t.Errorf("expected record but got nil:\n%s", util.ToYaml(test.expect))
 		}
 	}
 }
@@ -254,9 +253,4 @@ func TestManageDNSForDomain(t *testing.T) {
 			t.Errorf("%q: expected to be %v, got %v", tc.name, tc.expected, actual)
 		}
 	}
-}
-
-func toYaml(obj interface{}) string {
-	yml, _ := yaml.Marshal(obj)
-	return string(yml)
 }
