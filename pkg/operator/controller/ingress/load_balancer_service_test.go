@@ -183,6 +183,7 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 				awsLBHealthCheckIntervalAnnotation:           {true, awsLBHealthCheckIntervalNLB},
 				awsLBHealthCheckTimeoutAnnotation:            {true, awsLBHealthCheckTimeoutDefault},
 				awsLBHealthCheckUnhealthyThresholdAnnotation: {true, awsLBHealthCheckUnhealthyThresholdDefault},
+				awsLBProxyProtocolAnnotation:                 {false, ""},
 				AWSLBTypeAnnotation:                          {true, AWSNLBAnnotation},
 				localWithFallbackAnnotation:                  {true, ""},
 			},
@@ -200,6 +201,7 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 				awsLBHealthCheckIntervalAnnotation:           {true, awsLBHealthCheckIntervalNLB},
 				awsLBHealthCheckTimeoutAnnotation:            {true, awsLBHealthCheckTimeoutDefault},
 				awsLBHealthCheckUnhealthyThresholdAnnotation: {true, awsLBHealthCheckUnhealthyThresholdDefault},
+				awsLBProxyProtocolAnnotation:                 {false, ""},
 				AWSLBTypeAnnotation:                          {true, AWSNLBAnnotation},
 				localWithFallbackAnnotation:                  {true, ""},
 			},
@@ -303,6 +305,7 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 			strategy:       lbs(operatorv1.ExternalLoadBalancer),
 			expectService:  true,
 			expectedServiceAnnotations: map[string]annotationExpectation{
+				GCPGlobalAccessAnnotation:   {false, ""},
 				gcpLBTypeAnnotation:         {false, ""},
 				localWithFallbackAnnotation: {true, ""},
 			},
@@ -313,6 +316,7 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 			strategy:       lbs(operatorv1.InternalLoadBalancer),
 			expectService:  true,
 			expectedServiceAnnotations: map[string]annotationExpectation{
+				GCPGlobalAccessAnnotation:   {false, ""},
 				gcpLBTypeAnnotation:         {true, "Internal"},
 				localWithFallbackAnnotation: {true, ""},
 			},
@@ -323,6 +327,7 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 			strategy:       gcpLB(operatorv1.InternalLoadBalancer, operatorv1.GCPGlobalAccess),
 			expectService:  true,
 			expectedServiceAnnotations: map[string]annotationExpectation{
+				GCPGlobalAccessAnnotation:   {true, "true"},
 				gcpLBTypeAnnotation:         {true, "Internal"},
 				localWithFallbackAnnotation: {true, ""},
 			},
@@ -333,6 +338,7 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 			strategy:       gcpLB(operatorv1.InternalLoadBalancer, operatorv1.GCPLocalAccess),
 			expectService:  true,
 			expectedServiceAnnotations: map[string]annotationExpectation{
+				GCPGlobalAccessAnnotation:   {true, "false"},
 				gcpLBTypeAnnotation:         {true, "Internal"},
 				localWithFallbackAnnotation: {true, ""},
 			},
@@ -358,18 +364,24 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 			},
 		},
 		{
-			description:                "external load balancer for alibaba platform",
-			platformStatus:             platformStatus(configv1.AlibabaCloudPlatformType),
-			strategy:                   lbs(operatorv1.ExternalLoadBalancer),
-			expectService:              true,
-			expectedServiceAnnotations: map[string]annotationExpectation{},
+			description:    "external load balancer for alibaba platform",
+			platformStatus: platformStatus(configv1.AlibabaCloudPlatformType),
+			strategy:       lbs(operatorv1.ExternalLoadBalancer),
+			expectService:  true,
+			expectedServiceAnnotations: map[string]annotationExpectation{
+				alibabaCloudLBAddressTypeAnnotation: {true, alibabaCloudLBAddressTypeInternet},
+				localWithFallbackAnnotation:         {true, ""},
+			},
 		},
 		{
-			description:                "internal load balancer for alibaba platform",
-			platformStatus:             platformStatus(configv1.AlibabaCloudPlatformType),
-			strategy:                   lbs(operatorv1.InternalLoadBalancer),
-			expectService:              true,
-			expectedServiceAnnotations: map[string]annotationExpectation{},
+			description:    "internal load balancer for alibaba platform",
+			platformStatus: platformStatus(configv1.AlibabaCloudPlatformType),
+			strategy:       lbs(operatorv1.InternalLoadBalancer),
+			expectService:  true,
+			expectedServiceAnnotations: map[string]annotationExpectation{
+				alibabaCloudLBAddressTypeAnnotation: {true, alibabaCloudLBAddressTypeIntranet},
+				localWithFallbackAnnotation:         {true, ""},
+			},
 		},
 	}
 
@@ -429,6 +441,11 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 					t.Errorf("service is missing annotation %s=%s", k, expectedValue)
 				case expect && expectedValue != actualValue:
 					t.Errorf("service has unexpected annotation: expected %[1]s=%[2]s, got %[1]s=%[3]s", k, expectedValue, actualValue)
+				}
+			}
+			for k, v := range svc.Annotations {
+				if e, ok := tc.expectedServiceAnnotations[k]; !ok || !e.present {
+					t.Errorf("service has unexpected annotation: %s=%s", k, v)
 				}
 			}
 		})
