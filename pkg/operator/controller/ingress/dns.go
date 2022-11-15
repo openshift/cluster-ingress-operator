@@ -17,6 +17,8 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // defaultRecordTTL is the TTL (in seconds) assigned to all new DNS records.
@@ -29,29 +31,29 @@ const defaultRecordTTL int64 = 30
 
 // ensureWildcardDNSRecord will create DNS records for the given LB service.
 // If service is nil (haveLBS is false), nothing is done.
-func (r *reconciler) ensureWildcardDNSRecord(name types.NamespacedName, dnsRecordLabels map[string]string, ownerRef metav1.OwnerReference, domain string, endpointPublishingStrategy *operatorv1.EndpointPublishingStrategy, service *corev1.Service, haveLBS bool) (bool, *iov1.DNSRecord, error) {
+func ensureWildcardDNSRecord(client client.Client, name types.NamespacedName, dnsRecordLabels map[string]string, ownerRef metav1.OwnerReference, domain string, endpointPublishingStrategy *operatorv1.EndpointPublishingStrategy, service *corev1.Service, haveLBS bool) (bool, *iov1.DNSRecord, error) {
 	if !haveLBS {
 		return false, nil, nil
 	}
 
 	wantWC, desired := desiredWildcardDNSRecord(name, dnsRecordLabels, ownerRef, domain, endpointPublishingStrategy, service)
-	haveWC, current, err := r.currentWildcardDNSRecord(name)
+	haveWC, current, err := currentWildcardDNSRecord(client, name)
 	if err != nil {
 		return false, nil, err
 	}
 
 	switch {
 	case wantWC && !haveWC:
-		if err := r.client.Create(context.TODO(), desired); err != nil {
+		if err := client.Create(context.TODO(), desired); err != nil {
 			return false, nil, fmt.Errorf("failed to create dnsrecord %s/%s: %v", desired.Namespace, desired.Name, err)
 		}
 		log.Info("created dnsrecord", "dnsrecord", desired)
-		return r.currentWildcardDNSRecord(name)
+		return currentWildcardDNSRecord(client, name)
 	case wantWC && haveWC:
-		if updated, err := r.updateDNSRecord(current, desired); err != nil {
+		if updated, err := updateDNSRecord(client, current, desired); err != nil {
 			return true, current, fmt.Errorf("failed to update dnsrecord %s/%s: %v", desired.Namespace, desired.Name, err)
 		} else if updated {
-			return r.currentWildcardDNSRecord(name)
+			return currentWildcardDNSRecord(client, name)
 		}
 	}
 
@@ -131,9 +133,9 @@ func desiredWildcardDNSRecord(name types.NamespacedName, dnsRecordLabels map[str
 	}
 }
 
-func (r *reconciler) currentWildcardDNSRecord(name types.NamespacedName) (bool, *iov1.DNSRecord, error) {
+func currentWildcardDNSRecord(client client.Client, name types.NamespacedName) (bool, *iov1.DNSRecord, error) {
 	current := &iov1.DNSRecord{}
-	err := r.client.Get(context.TODO(), name, current)
+	err := client.Get(context.TODO(), name, current)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			return false, nil, nil
@@ -143,11 +145,11 @@ func (r *reconciler) currentWildcardDNSRecord(name types.NamespacedName) (bool, 
 	return true, current, nil
 }
 
-func (r *reconciler) deleteWildcardDNSRecord(name types.NamespacedName) error {
+func deleteWildcardDNSRecord(client client.Client, name types.NamespacedName) error {
 	record := &iov1.DNSRecord{}
 	record.Namespace = name.Namespace
 	record.Name = name.Name
-	if err := r.client.Delete(context.TODO(), record); err != nil {
+	if err := client.Delete(context.TODO(), record); err != nil {
 		if errors.IsNotFound(err) {
 			return nil
 		}
@@ -158,7 +160,7 @@ func (r *reconciler) deleteWildcardDNSRecord(name types.NamespacedName) error {
 
 // updateDNSRecord updates a DNSRecord. Returns a boolean indicating whether
 // the record was updated, and an error value.
-func (r *reconciler) updateDNSRecord(current, desired *iov1.DNSRecord) (bool, error) {
+func updateDNSRecord(client client.Client, current, desired *iov1.DNSRecord) (bool, error) {
 	changed, updated := dnsRecordChanged(current, desired)
 	if !changed {
 		return false, nil
@@ -166,7 +168,7 @@ func (r *reconciler) updateDNSRecord(current, desired *iov1.DNSRecord) (bool, er
 
 	// Diff before updating because the client may mutate the object.
 	diff := cmp.Diff(current, updated, cmpopts.EquateEmpty())
-	if err := r.client.Update(context.TODO(), updated); err != nil {
+	if err := client.Update(context.TODO(), updated); err != nil {
 		return false, err
 	}
 	log.Info("updated dnsrecord", "namespace", updated.Namespace, "name", updated.Name, "diff", diff)

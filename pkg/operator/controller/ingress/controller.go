@@ -915,10 +915,10 @@ func (r *reconciler) ensureIngressDeleted(ingress *operatorv1.IngressController)
 	// Delete the wildcard DNS record, and block ingresscontroller finalization
 	// until the dnsrecord has been finalized.
 	dnsRecordName := operatorcontroller.WildcardDNSRecordName(ingress)
-	if err := r.deleteWildcardDNSRecord(dnsRecordName); err != nil {
+	if err := deleteWildcardDNSRecord(r.client, dnsRecordName); err != nil {
 		errs = append(errs, fmt.Errorf("failed to delete wildcard dnsrecord for ingress %s/%s: %v", ingress.Namespace, ingress.Name, err))
 	}
-	haveRec, _, err := r.currentWildcardDNSRecord(dnsRecordName)
+	haveRec, _, err := currentWildcardDNSRecord(r.client, dnsRecordName)
 	switch {
 	case err != nil:
 		errs = append(errs, fmt.Errorf("failed to get current wildcard dnsrecord for ingress %s/%s: %v", ingress.Namespace, ingress.Name, err))
@@ -1065,7 +1065,7 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		dnsRecordLabels := map[string]string{
 			manifests.OwningIngressControllerLabel: ci.Name,
 		}
-		if _, record, err := r.ensureWildcardDNSRecord(dnsRecordName, dnsRecordLabels, icRef, ci.Status.Domain, ci.Status.EndpointPublishingStrategy, lbService, haveLB); err != nil {
+		if _, record, err := ensureWildcardDNSRecord(r.client, dnsRecordName, dnsRecordLabels, icRef, ci.Status.Domain, ci.Status.EndpointPublishingStrategy, lbService, haveLB); err != nil {
 			errs = append(errs, fmt.Errorf("failed to ensure wildcard dnsrecord for %s: %v", ci.Name, err))
 		} else {
 			wildcardRecord = record
