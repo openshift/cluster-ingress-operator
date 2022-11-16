@@ -3446,6 +3446,72 @@ func TestIngressOperatorCacheIsNotGlobal(t *testing.T) {
 	})
 }
 
+// Test the OperatorLogLevel API field
+func TestIngressOperatorLogLevel(t *testing.T) {
+	var clusterIngress configv1.Ingress
+	clusterIngressName := types.NamespacedName{Name: "cluster"}
+	if err := kclient.Get(context.TODO(), clusterIngressName, &clusterIngress); err != nil {
+		t.Fatalf("Failed to get cluster ingress config")
+	}
+	// Save default log level and revert to it after the test is done
+	defaultLogLevel := clusterIngress.Spec.OperatorLogLevel
+	defer func() {
+		clusterIngress.Spec.OperatorLogLevel = defaultLogLevel
+		if err := kclient.Update(context.TODO(), &clusterIngress); err != nil {
+			t.Errorf("Failed to reset ingress operator log level to %q. Future tests may not log at the expected level. Error message: %s", defaultLogLevel, err.Error())
+		}
+	}()
+
+	operatorDeploymentName := types.NamespacedName{
+		Namespace: operatorNamespace,
+		Name:      "ingress-operator",
+	}
+	var operatorDeployment appsv1.Deployment
+	if err := kclient.Get(context.TODO(), operatorDeploymentName, &operatorDeployment); err != nil {
+		t.Fatalf("Failed to get operator deployment RFTODO")
+	}
+	selector, err := metav1.LabelSelectorAsSelector(operatorDeployment.Spec.Selector)
+	if err != nil {
+		t.Fatalf("Deployment %s/%s has invalid spec.selector: %v", operatorDeployment.Namespace, operatorDeployment.Name, err)
+	}
+	var operatorPodList corev1.PodList
+	if err := kclient.List(context.TODO(), &operatorPodList, client.MatchingLabelsSelector{Selector: selector}, client.InNamespace(operatorDeployment.Namespace)); err != nil {
+		t.Fatalf("Failed to list pods for ingress-operator deployment %s/%s: %v", operatorDeployment.Namespace, operatorDeployment.Name, err)
+	}
+	operatorPod := operatorPodList.Items[0]
+
+	// If the operator is currently not at Normal log level, set it to Normal
+	// and check for the appropriate log message. If the operator was already
+	// at Normal log level, skip this, since no log message would be logged
+	// anyway
+	if !(defaultLogLevel == "" || defaultLogLevel == configv1.IngressOperatorLogLevelNormal) {
+		clusterIngress.Spec.OperatorLogLevel = configv1.IngressOperatorLogLevelNormal
+		if err := kclient.Update(context.TODO(), &clusterIngress); err != nil {
+			t.Fatalf("Failed to set ingress operator log level to %q. Error message: %s", clusterIngress.Spec.OperatorLogLevel, err.Error())
+		}
+		expectedMessage := fmt.Sprintf("{\"CurrentLogLevel\": \"info\"}")
+		if err := lookForStringInPodLog(operatorPod.Namespace, operatorPod.Name, "ingress-operator", expectedMessage, 1*time.Minute); err != nil {
+			t.Fatalf("Failed to find expected log message in ingress-operator logs.\nExpected message: %q", expectedMessage)
+		}
+	}
+	logLevelNames := map[configv1.IngressOperatorLogLevel]string{
+		configv1.IngressOperatorLogLevelNormal:   "info",
+		configv1.IngressOperatorLogLevelDebug:    "debug",
+		configv1.IngressOperatorLogLevelTrace:    "Level(-2)",
+		configv1.IngressOperatorLogLevelTraceAll: "Level(-3)",
+	}
+	for _, logLevel := range []configv1.IngressOperatorLogLevel{configv1.IngressOperatorLogLevelDebug, configv1.IngressOperatorLogLevelTrace, configv1.IngressOperatorLogLevelTraceAll} {
+		clusterIngress.Spec.OperatorLogLevel = logLevel
+		if err := kclient.Update(context.TODO(), &clusterIngress); err != nil {
+			t.Fatalf("Failed to set ingress operator log level to %q. Error message: %s", clusterIngress.Spec.OperatorLogLevel, err.Error())
+		}
+		expectedMessage := fmt.Sprintf("{\"CurrentLogLevel\": \"%s\"}", logLevelNames[logLevel])
+		if err := lookForStringInPodLog(operatorPod.Namespace, operatorPod.Name, "ingress-operator", expectedMessage, 90*time.Second); err != nil {
+			t.Fatalf("Failed to find expected log message in ingress-operator logs.\nExpected message: %q", expectedMessage)
+		}
+	}
+}
+
 func newNodePortController(name types.NamespacedName, domain string) *operatorv1.IngressController {
 	repl := int32(1)
 	return &operatorv1.IngressController{

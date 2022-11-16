@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -637,4 +638,66 @@ func verifyInternalIngressController(t *testing.T, name types.NamespacedName, ho
 	if err != nil {
 		t.Fatalf("failed to verify connectivity with workload with address: %s using internal curl client. Curl Pod Logs:\n%s", address, curlPodLogs)
 	}
+}
+
+// runCmd runs command cmd with arguments args and returns the output
+// of the command or an error.
+func runCmd(cmd string, args []string) (string, error) {
+	execCmd := exec.Command(cmd, args...)
+	result, err := execCmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("failed to run command %q with args %q: %v", cmd, args, err)
+	}
+	return string(result), nil
+}
+
+// lookForStringInPodExec looks for expectedString in the output of command
+// executed in the specified pod container every 2 seconds until the timeout
+// is reached or the string is found. Returns an error if the string was not found.
+func lookForStringInPodExec(ns, pod, container string, command []string, expectedString string, timeout time.Duration) error {
+	cmdPath, err := exec.LookPath("oc")
+	if err != nil {
+		return err
+	}
+	args := []string{"exec", pod, "-c", container, fmt.Sprintf("--namespace=%v", ns), "--"}
+	args = append(args, command...)
+	if err := lookForString(cmdPath, args, expectedString, timeout); err != nil {
+		return err
+	}
+	return nil
+}
+
+// lookForStringInPodLog looks for the given string in the log of the
+// specified pod container every 2 seconds until the timeout is reached
+// or the string is found. Returns an error if the string was not found.
+func lookForStringInPodLog(ns, pod, container, expectedString string, timeout time.Duration) error {
+	cmdPath, err := exec.LookPath("oc")
+	if err != nil {
+		return err
+	}
+	args := []string{"logs", pod, "-c", container, fmt.Sprintf("--namespace=%v", ns)}
+	if err := lookForString(cmdPath, args, expectedString, timeout); err != nil {
+		return err
+	}
+	return nil
+}
+
+// lookForString looks for the given string using cmd and args every
+// 2 seconds until the timeout is reached or the string is found.
+// Returns an error if the string was not found.
+func lookForString(cmd string, args []string, expectedString string, timeout time.Duration) error {
+	err := wait.PollImmediate(2*time.Second, timeout, func() (bool, error) {
+		result, err := runCmd(cmd, args)
+		if err != nil {
+			return false, nil
+		}
+		if !strings.Contains(result, expectedString) {
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to find %q", expectedString)
+	}
+	return nil
 }
