@@ -2,6 +2,7 @@ package gatewayapi
 
 import (
 	"context"
+	"sync"
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
@@ -35,10 +36,11 @@ var log = logf.Logger.WithName(controllerName)
 
 // New creates and returns a controller that creates Gateway API CRDs when the
 // appropriate featuregate is enabled.
-func New(mgr manager.Manager) (controller.Controller, error) {
+func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	reconciler := &reconciler{
 		client: mgr.GetClient(),
 		cache:  mgr.GetCache(),
+		config: config,
 	}
 	c, err := controller.New(controllerName, mgr, controller.Options{Reconciler: reconciler})
 	if err != nil {
@@ -58,11 +60,23 @@ func New(mgr manager.Manager) (controller.Controller, error) {
 	return c, nil
 }
 
+// Config holds all the configuration that must be provided when creating the
+// controller.
+type Config struct {
+	// DependentControllers is a list of controllers that watch Gateway API
+	// resources.  The gatewayapi controller starts these controllers once
+	// the Gateway API CRDs have been created.
+	DependentControllers []controller.Controller
+}
+
 // reconciler reconciles gatewayclasses.
 type reconciler struct {
-	client   client.Client
-	cache    cache.Cache
-	recorder record.EventRecorder
+	config Config
+
+	client           client.Client
+	cache            cache.Cache
+	recorder         record.EventRecorder
+	startControllers sync.Once
 }
 
 // Reconcile expects request to refer to a FeatureGate and creates or
@@ -86,6 +100,17 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	if err := r.ensureGatewayAPICRDs(ctx); err != nil {
 		return reconcile.Result{}, err
 	}
+
+	r.startControllers.Do(func() {
+		for i := range r.config.DependentControllers {
+			c := &r.config.DependentControllers[i]
+			go func() {
+				if err := (*c).Start(ctx); err != nil {
+					log.Error(err, "cannot start controller")
+				}
+			}()
+		}
+	})
 
 	return reconcile.Result{}, nil
 }

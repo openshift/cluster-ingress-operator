@@ -258,3 +258,23 @@ func CanaryRouteName() types.NamespacedName {
 func IngressClassName(ingressControllerName string) types.NamespacedName {
 	return types.NamespacedName{Name: "openshift-" + ingressControllerName}
 }
+
+// ServiceMeshControlPlaneName returns the namespaced name for a
+// ServiceMeshControlPlane CR.  This CR is created in the operand's namespace
+// and has a hard-coded name.  Each namespace can have only one gatewayclass, so
+// it is simplest to use the same name in every namespace.
+func ServiceMeshControlPlaneName(operandNamespace string) types.NamespacedName {
+	return types.NamespacedName{
+		Namespace: operandNamespace,
+		Name:      "openshift-gateway",
+	}
+}
+
+// ServiceMeshSubscriptionName returns the namespaced name for a Subscription CR
+// to install OpenShift Service Mesh.
+func ServiceMeshSubscriptionName() types.NamespacedName {
+	return types.NamespacedName{
+		Namespace: "openshift-operators",
+		Name:      "servicemeshoperator",
+	}
+}

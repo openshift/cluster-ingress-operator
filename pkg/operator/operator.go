@@ -29,6 +29,7 @@ import (
 	crlcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/crl"
 	dnscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/dns"
 	gatewayapicontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gatewayapi"
+	gatewayclasscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gatewayclass"
 	ingress "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 	ingressclasscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingressclass"
@@ -44,6 +45,7 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
 
@@ -215,8 +217,23 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		return nil, fmt.Errorf("failed to create route metrics controller: %w", err)
 	}
 
+	// Set up the gatewayclass controller.  This controller is unmanaged by
+	// the manager; the gatewayapi controller starts it after it creates the
+	// Gateway API CRDs.
+	gatewayClassController, err := gatewayclasscontroller.NewUnmanaged(mgr, gatewayclasscontroller.Config{
+		OperatorNamespace: config.Namespace,
+		OperandNamespace:  operatorcontroller.DefaultOperandNamespace,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create gatewayclass controller: %w", err)
+	}
+
 	// Set up the gatewayapi controller.
-	if _, err := gatewayapicontroller.New(mgr); err != nil {
+	if _, err := gatewayapicontroller.New(mgr, gatewayapicontroller.Config{
+		DependentControllers: []controller.Controller{
+			gatewayClassController,
+		},
+	}); err != nil {
 		return nil, fmt.Errorf("failed to create gatewayapi controller: %w", err)
 	}
 
