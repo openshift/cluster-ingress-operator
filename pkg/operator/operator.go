@@ -187,7 +187,11 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 
 	// Set up the DNS controller
 	if _, err := dnscontroller.New(mgr, dnscontroller.Config{
-		Namespace:              config.Namespace,
+		CredentialsRequestNamespace: config.Namespace,
+		DNSRecordNamespaces: []string{
+			config.Namespace,
+			operatorcontroller.DefaultOperandNamespace,
+		},
 		OperatorReleaseVersion: config.OperatorReleaseVersion,
 	}); err != nil {
 		return nil, fmt.Errorf("failed to create dns controller: %v", err)

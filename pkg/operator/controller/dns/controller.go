@@ -107,8 +107,9 @@ func New(mgr manager.Manager, config Config) (runtimecontroller.Controller, erro
 
 // Config holds all the things necessary for the controller to run.
 type Config struct {
-	Namespace              string
-	OperatorReleaseVersion string
+	CredentialsRequestNamespace string
+	DNSRecordNamespaces         []string
+	OperatorReleaseVersion      string
 }
 
 type reconciler struct {
@@ -227,7 +228,10 @@ func (r *reconciler) createDNSProviderIfNeeded(dnsConfig *configv1.DNS, record *
 		if platformStatus.Type == configv1.IBMCloudPlatformType && infraConfig.Status.ControlPlaneTopology == configv1.ExternalTopologyMode {
 			break
 		}
-		name := types.NamespacedName{Namespace: r.config.Namespace, Name: cloudCredentialsSecretName}
+		name := types.NamespacedName{
+			Namespace: r.config.CredentialsRequestNamespace,
+			Name:      cloudCredentialsSecretName,
+		}
 		if err := r.cache.Get(context.TODO(), name, creds); err != nil {
 			return fmt.Errorf("failed to get cloud credentials from secret %s: %v", name, err)
 		}
@@ -547,20 +551,22 @@ func dnsZoneStatusSlicesEqual(a, b []iov1.DNSZoneStatus) bool {
 // ToDNSRecords returns reconciliation requests for all DNSRecords.
 func (r *reconciler) ToDNSRecords(o client.Object) []reconcile.Request {
 	var requests []reconcile.Request
-	records := &iov1.DNSRecordList{}
-	if err := r.cache.List(context.Background(), records, client.InNamespace(r.config.Namespace)); err != nil {
-		log.Error(err, "failed to list dnsrecords", "related", o.GetSelfLink())
-		return requests
-	}
-	for _, record := range records.Items {
-		log.Info("queueing dnsrecord", "name", record.Name, "related", o.GetSelfLink())
-		request := reconcile.Request{
-			NamespacedName: types.NamespacedName{
-				Namespace: record.Namespace,
-				Name:      record.Name,
-			},
+	for _, ns := range r.config.DNSRecordNamespaces {
+		records := &iov1.DNSRecordList{}
+		if err := r.cache.List(context.Background(), records, client.InNamespace(ns)); err != nil {
+			log.Error(err, "failed to list dnsrecords", "related", o.GetSelfLink())
+			continue
 		}
-		requests = append(requests, request)
+		for _, record := range records.Items {
+			log.Info("queueing dnsrecord", "name", record.Name, "related", o.GetSelfLink())
+			request := reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Namespace: record.Namespace,
+					Name:      record.Name,
+				},
+			}
+			requests = append(requests, request)
+		}
 	}
 	return requests
 }
