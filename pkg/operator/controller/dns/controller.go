@@ -160,32 +160,12 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		return reconcile.Result{}, nil
 	}
 
-	// Only process records associated with ingresscontrollers, because this isn't
-	// intended to be a general purpose DNS management system.
-	ingressName, ok := record.Labels[manifests.OwningIngressControllerLabel]
-	if !ok {
-		log.V(2).Info("warning: dnsrecord is missing owner label", "dnsrecord", record, "ingresscontroller", ingressName)
-		return reconcile.Result{RequeueAfter: 1 * time.Minute}, nil
-	}
-
 	// Existing 4.1 records will have a zero TTL. Instead of making all the client implementations guard against
 	// zero TTLs, simply ignore the record until the TTL is updated by the ingresscontroller controller. Report
 	// this through events so we can detect problems with our migration.
 	if record.Spec.RecordTTL <= 0 {
 		r.recorder.Eventf(record, "Warning", "ZeroTTL", "Record is missing TTL and will be temporarily ignored; the TTL will be automatically updated and the record will be retried.")
 		return reconcile.Result{}, nil
-	}
-
-	if err := r.cache.Get(ctx, types.NamespacedName{Namespace: record.Namespace, Name: ingressName}, &operatorv1.IngressController{}); err != nil {
-		if errors.IsNotFound(err) {
-			// TODO: what should we do here? something upstream could detect and delete the orphan? add new conditions?
-			// is it safe to retry without verifying the owner isn't a new object?
-			log.V(2).Info("warning: dnsrecord owner not found; the dnsrecord may be orphaned; will retry", "dnsrecord", record, "ingresscontroller", ingressName)
-			return reconcile.Result{RequeueAfter: 1 * time.Minute}, nil
-		} else {
-			log.Error(err, "failed to get ingresscontroller for dnsrecord; will retry", "dnsrecord", record, "ingresscontroller", ingressName)
-			return reconcile.Result{RequeueAfter: 15 * time.Second}, nil
-		}
 	}
 
 	var zones []configv1.DNSZone
