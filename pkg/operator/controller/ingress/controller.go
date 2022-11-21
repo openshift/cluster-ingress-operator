@@ -916,10 +916,10 @@ func (r *reconciler) ensureIngressDeleted(ingress *operatorv1.IngressController)
 	// Delete the wildcard DNS record, and block ingresscontroller finalization
 	// until the dnsrecord has been finalized.
 	dnsRecordName := operatorcontroller.WildcardDNSRecordName(ingress)
-	if err := dnsrecord.DeleteWildcardDNSRecord(r.client, dnsRecordName); err != nil {
+	if err := dnsrecord.DeleteDNSRecord(r.client, dnsRecordName); err != nil {
 		errs = append(errs, fmt.Errorf("failed to delete wildcard dnsrecord for ingress %s/%s: %v", ingress.Namespace, ingress.Name, err))
 	}
-	haveRec, _, err := dnsrecord.CurrentWildcardDNSRecord(r.client, dnsRecordName)
+	haveRec, _, err := dnsrecord.CurrentDNSRecord(r.client, dnsRecordName)
 	switch {
 	case err != nil:
 		errs = append(errs, fmt.Errorf("failed to get current wildcard dnsrecord for ingress %s/%s: %v", ingress.Namespace, ingress.Name, err))

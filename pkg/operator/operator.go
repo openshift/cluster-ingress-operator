@@ -28,6 +28,7 @@ import (
 	configurableroutecontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/configurable-route"
 	crlcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/crl"
 	dnscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/dns"
+	gatewayservicednscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gateway-service-dns"
 	gatewayapicontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gatewayapi"
 	gatewayclasscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gatewayclass"
 	ingress "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
@@ -232,10 +233,21 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		return nil, fmt.Errorf("failed to create gatewayclass controller: %w", err)
 	}
 
+	// Set up the Service DNS controller.  This controller is unmanaged by
+	// the manager; the gatewayapi controller starts it after it creates the
+	// Gateway API CRDs.
+	gatewayServiceDNSController, err := gatewayservicednscontroller.NewUnmanaged(mgr, gatewayservicednscontroller.Config{
+		OperandNamespace: operatorcontroller.DefaultOperandNamespace,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create gateway-service-dns controller: %v", err)
+	}
+
 	// Set up the gatewayapi controller.
 	if _, err := gatewayapicontroller.New(mgr, gatewayapicontroller.Config{
 		DependentControllers: []controller.Controller{
 			gatewayClassController,
+			gatewayServiceDNSController,
 		},
 	}); err != nil {
 		return nil, fmt.Errorf("failed to create gatewayapi controller: %w", err)

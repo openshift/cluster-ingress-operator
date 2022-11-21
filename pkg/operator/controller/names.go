@@ -5,6 +5,10 @@ import (
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 
+	gatewayapiv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
+
+	util "github.com/openshift/cluster-ingress-operator/pkg/util"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
@@ -276,5 +280,16 @@ func ServiceMeshSubscriptionName() types.NamespacedName {
 	return types.NamespacedName{
 		Namespace: "openshift-operators",
 		Name:      "servicemeshoperator",
+	}
+}
+
+// GatewayDNSRecordName returns the namespaced name for a DNSRecord CR
+// associated with a Gateway.  This CR is created in the Gateway's namespace and
+// is named using the Gateway's name, listener's hashed host name, and the
+// suffix "-wildcard".
+func GatewayDNSRecordName(gateway *gatewayapiv1beta1.Gateway, host string) types.NamespacedName {
+	return types.NamespacedName{
+		Namespace: gateway.Namespace,
+		Name:      fmt.Sprintf("%s-%s-wildcard", gateway.Name, util.Hash(host)),
 	}
 }

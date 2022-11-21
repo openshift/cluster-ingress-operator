@@ -32,15 +32,15 @@ var log = logf.Logger.WithName("dnsrecord")
 // [1] https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/resource-record-sets-choosing-alias-non-alias.html
 const defaultRecordTTL int64 = 30
 
-// EnsureWildcardDNSRecord will create DNS records for the given LB service.
-// If service is nil (haveLBS is false), nothing is done.
+// EnsureWildcardDNSRecord will create wildcard DNS records for the given LB
+// service.  If service is nil (haveLBS is false), nothing is done.
 func EnsureWildcardDNSRecord(client client.Client, name types.NamespacedName, dnsRecordLabels map[string]string, ownerRef metav1.OwnerReference, domain string, endpointPublishingStrategy *operatorv1.EndpointPublishingStrategy, service *corev1.Service, haveLBS bool) (bool, *iov1.DNSRecord, error) {
 	if !haveLBS {
 		return false, nil, nil
 	}
 
 	wantWC, desired := desiredWildcardDNSRecord(name, dnsRecordLabels, ownerRef, domain, endpointPublishingStrategy, service)
-	haveWC, current, err := CurrentWildcardDNSRecord(client, name)
+	haveWC, current, err := CurrentDNSRecord(client, name)
 	if err != nil {
 		return false, nil, err
 	}
@@ -51,12 +51,39 @@ func EnsureWildcardDNSRecord(client client.Client, name types.NamespacedName, dn
 			return false, nil, fmt.Errorf("failed to create dnsrecord %s/%s: %v", desired.Namespace, desired.Name, err)
 		}
 		log.Info("created dnsrecord", "dnsrecord", desired)
-		return CurrentWildcardDNSRecord(client, name)
+		return CurrentDNSRecord(client, name)
 	case wantWC && haveWC:
 		if updated, err := updateDNSRecord(client, current, desired); err != nil {
 			return true, current, fmt.Errorf("failed to update dnsrecord %s/%s: %v", desired.Namespace, desired.Name, err)
 		} else if updated {
-			return CurrentWildcardDNSRecord(client, name)
+			return CurrentDNSRecord(client, name)
+		}
+	}
+
+	return haveWC, current, nil
+}
+
+// EnsureDNSRecord will create DNS records for the given LB service.  If service
+// is nil (haveLBS is false), nothing is done.
+func EnsureDNSRecord(client client.Client, name types.NamespacedName, dnsRecordLabels map[string]string, ownerRef metav1.OwnerReference, domain string, service *corev1.Service) (bool, *iov1.DNSRecord, error) {
+	wantWC, desired := desiredDNSRecord(name, dnsRecordLabels, ownerRef, domain, iov1.ManagedDNS, service)
+	haveWC, current, err := CurrentDNSRecord(client, name)
+	if err != nil {
+		return false, nil, err
+	}
+
+	switch {
+	case wantWC && !haveWC:
+		if err := client.Create(context.TODO(), desired); err != nil {
+			return false, nil, fmt.Errorf("failed to create dnsrecord %s/%s: %v", desired.Namespace, desired.Name, err)
+		}
+		log.Info("created dnsrecord", "dnsrecord", desired)
+		return CurrentDNSRecord(client, name)
+	case wantWC && haveWC:
+		if updated, err := updateDNSRecord(client, current, desired); err != nil {
+			return true, current, fmt.Errorf("failed to update dnsrecord %s/%s: %v", desired.Namespace, desired.Name, err)
+		} else if updated {
+			return CurrentDNSRecord(client, name)
 		}
 	}
 
@@ -64,14 +91,7 @@ func EnsureWildcardDNSRecord(client client.Client, name types.NamespacedName, dn
 }
 
 // desiredWildcardDNSRecord will return any necessary wildcard DNS records for the
-// ingresscontroller.
-//
-// For now, if the service has more than one .status.loadbalancer.ingress, only
-// the first will be used.
-//
-// TODO: If .status.loadbalancer.ingress is processed once as non-empty and then
-// later becomes empty, what should we do? Currently we'll treat it as an intent
-// to not have a desired record.
+// given service.
 func desiredWildcardDNSRecord(name types.NamespacedName, dnsRecordLabels map[string]string, ownerRef metav1.OwnerReference, dnsDomain string, endpointPublishingStrategy *operatorv1.EndpointPublishingStrategy, service *corev1.Service) (bool, *iov1.DNSRecord) {
 	// If the ingresscontroller has no ingress domain, we cannot configure any
 	// DNS records.
@@ -84,6 +104,30 @@ func desiredWildcardDNSRecord(name types.NamespacedName, dnsRecordLabels map[str
 		return false, nil
 	}
 
+	// Use an absolute name to prevent any ambiguity.
+	domain := fmt.Sprintf("*.%s.", dnsDomain)
+
+	dnsPolicy := iov1.ManagedDNS
+
+	// Set the DNS management policy on the dnsrecord to "Unmanaged" if ingresscontroller has "Unmanaged" DNS policy or
+	// if the ingresscontroller domain isn't a subdomain of the cluster's base domain.
+	if endpointPublishingStrategy.LoadBalancer.DNSManagementPolicy == operatorv1.UnmanagedLoadBalancerDNS {
+		dnsPolicy = iov1.UnmanagedDNS
+	}
+
+	return desiredDNSRecord(name, dnsRecordLabels, ownerRef, domain, dnsPolicy, service)
+}
+
+// desiredDNSRecord will return any necessary DNS records for the given domain
+// and service.
+//
+// For now, if the service has more than one .status.loadbalancer.ingress, only
+// the first will be used.
+//
+// TODO: If .status.loadbalancer.ingress is processed once as non-empty and then
+// later becomes empty, what should we do? Currently we'll treat it as an intent
+// to not have a desired record.
+func desiredDNSRecord(name types.NamespacedName, dnsRecordLabels map[string]string, ownerRef metav1.OwnerReference, domain string, dnsPolicy iov1.DNSManagementPolicy, service *corev1.Service) (bool, *iov1.DNSRecord) {
 	// No LB target exists for the domain record to point at.
 	if len(service.Status.LoadBalancer.Ingress) == 0 {
 		return false, nil
@@ -97,8 +141,6 @@ func desiredWildcardDNSRecord(name types.NamespacedName, dnsRecordLabels map[str
 		return false, nil
 	}
 
-	// Use an absolute name to prevent any ambiguity.
-	domain := fmt.Sprintf("*.%s.", dnsDomain)
 	var target string
 	var recordType iov1.DNSRecordType
 
@@ -108,14 +150,6 @@ func desiredWildcardDNSRecord(name types.NamespacedName, dnsRecordLabels map[str
 	} else {
 		recordType = iov1.ARecordType
 		target = ingress.IP
-	}
-
-	dnsPolicy := iov1.ManagedDNS
-
-	// Set the DNS management policy on the dnsrecord to "Unmanaged" if ingresscontroller has "Unmanaged" DNS policy or
-	// if the ingresscontroller domain isn't a subdomain of the cluster's base domain.
-	if endpointPublishingStrategy.LoadBalancer.DNSManagementPolicy == operatorv1.UnmanagedLoadBalancerDNS {
-		dnsPolicy = iov1.UnmanagedDNS
 	}
 
 	return true, &iov1.DNSRecord{
@@ -136,7 +170,7 @@ func desiredWildcardDNSRecord(name types.NamespacedName, dnsRecordLabels map[str
 	}
 }
 
-func CurrentWildcardDNSRecord(client client.Client, name types.NamespacedName) (bool, *iov1.DNSRecord, error) {
+func CurrentDNSRecord(client client.Client, name types.NamespacedName) (bool, *iov1.DNSRecord, error) {
 	current := &iov1.DNSRecord{}
 	err := client.Get(context.TODO(), name, current)
 	if err != nil {
@@ -148,7 +182,7 @@ func CurrentWildcardDNSRecord(client client.Client, name types.NamespacedName) (
 	return true, current, nil
 }
 
-func DeleteWildcardDNSRecord(client client.Client, name types.NamespacedName) error {
+func DeleteDNSRecord(client client.Client, name types.NamespacedName) error {
 	record := &iov1.DNSRecord{}
 	record.Namespace = name.Namespace
 	record.Name = name.Name
