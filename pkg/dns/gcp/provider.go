@@ -50,20 +50,28 @@ func New(config Config) (*Provider, error) {
 	return provider, nil
 }
 
-func (p *Provider) parseZone(zone configv1.DNSZone) (string, string, error) {
-	id := zone.ID
-	project := p.config.Project
-
-	// parse the zone that was provided
-	parts := strings.Split(id, "/")
+// ParseZone will parse two different string formatted zones. The first is the short name where only the
+// zone id is provided. The second is the long name where the zone and project are both available in the string
+// in the format provided by GCP projects/{projectID}/managedZones/{zoneID}.
+func ParseZone(defaultProject, zoneID string) (string, string, error) {
+	parts := strings.Split(zoneID, "/")
 	switch {
 	case len(parts) == 1:
-		return project, id, nil
+		return defaultProject, zoneID, nil
 	case len(parts) == 4 && parts[0] == "projects" && parts[2] == "managedZones":
 		return parts[1], parts[3], nil
 	}
 
-	return "", "", fmt.Errorf("invalid managedZone: %s", zone.ID)
+	return "", "", fmt.Errorf("invalid managedZone: %s", zoneID)
+}
+
+func (p *Provider) parseZone(zone configv1.DNSZone) (string, string, error) {
+	// parse the zone that was provided
+	project, zoneID, err := ParseZone(p.config.Project, zone.ID)
+	if err != nil {
+		return "", "", err
+	}
+	return project, zoneID, nil
 }
 
 func (p *Provider) Ensure(record *iov1.DNSRecord, zone configv1.DNSZone) error {
