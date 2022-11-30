@@ -592,6 +592,21 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		nodeSelector["node-role.kubernetes.io/master"] = ""
 	default:
 		nodeSelector["node-role.kubernetes.io/worker"] = ""
+		// Disabling running on remote workers.
+		if deployment.Spec.Template.Spec.Affinity == nil {
+			deployment.Spec.Template.Spec.Affinity = &corev1.Affinity{}
+		}
+		deployment.Spec.Template.Spec.Affinity.NodeAffinity = &corev1.NodeAffinity{RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+			NodeSelectorTerms: []corev1.NodeSelectorTerm{{
+				MatchExpressions: []corev1.NodeSelectorRequirement{
+					{
+						Key:      controller.RemoteWorkerLabel,
+						Operator: corev1.NodeSelectorOpNotIn,
+						Values:   []string{""},
+					},
+				},
+			}},
+		}}
 	}
 
 	if ci.Spec.NodePlacement != nil {
@@ -1301,6 +1316,15 @@ func hashableDeployment(deployment *appsv1.Deployment, onlyTemplate bool) *appsv
 				})
 			}
 		}
+		if affinity.NodeAffinity != nil {
+			terms := affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms
+			for _, term := range terms {
+				exprs := term.MatchExpressions
+				sort.Slice(exprs, func(i, j int) bool {
+					return cmpNodeMatchExpressions(exprs[i], exprs[j])
+				})
+			}
+		}
 	}
 	hashableDeployment.Spec.Template.Spec.Affinity = affinity
 	tolerations := make([]corev1.Toleration, len(deployment.Spec.Template.Spec.Tolerations))
@@ -1400,6 +1424,25 @@ func hashableDeployment(deployment *appsv1.Deployment, onlyTemplate bool) *appsv
 
 // cmpMatchExpressions is a helper for hashableDeployment.
 func cmpMatchExpressions(a, b metav1.LabelSelectorRequirement) bool {
+	if a.Key != b.Key {
+		return a.Key < b.Key
+	}
+	if a.Operator != b.Operator {
+		return a.Operator < b.Operator
+	}
+	for i := range b.Values {
+		if i == len(a.Values) {
+			return true
+		}
+		if a.Values[i] != b.Values[i] {
+			return a.Values[i] < b.Values[i]
+		}
+	}
+	return false
+}
+
+// cmpNodeMatchExpressions is a helper for hashableDeployment.
+func cmpNodeMatchExpressions(a, b corev1.NodeSelectorRequirement) bool {
 	if a.Key != b.Key {
 		return a.Key < b.Key
 	}

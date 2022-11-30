@@ -40,6 +40,10 @@ const (
 	// DefaultCanaryNamespace is the default namespace for
 	// the ingress canary check resources.
 	DefaultCanaryNamespace = "openshift-ingress-canary"
+
+	// Remote worker label, used for node affinity of router deployment.
+	// Router should not run on remote worker nodes
+	RemoteWorkerLabel = "node.openshift.io/remote-worker"
 )
 
 // IngressClusterOperatorName returns the namespaced name of the ClusterOperator
