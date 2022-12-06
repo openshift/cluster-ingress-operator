@@ -208,6 +208,9 @@ func computeAllowedSourceRanges(service *corev1.Service) []operatorv1.CIDR {
 // PodsScheduled=True.  This function returns an error value indicating the
 // result of that check.
 func checkPodsScheduledForDeployment(deployment *appsv1.Deployment, pods []corev1.Pod) error {
+	if deployment == nil {
+		return errors.New("System error detected: deployment was nil.  Please report this issue to Red Hat: https://issues.redhat.com/secure/CreateIssueDetails!init.jspa?pid=12332330&issuetype=1&components=12367900&priority=10300&customfield_12316142=26752")
+	}
 	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
 	if err != nil || selector.Empty() {
 		return errors.New("Deployment has an invalid label selector.")

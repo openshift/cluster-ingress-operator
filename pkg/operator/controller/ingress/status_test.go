@@ -209,6 +209,12 @@ func Test_checkPodsScheduledForDeployment(t *testing.T) {
 		expectError bool
 	}{
 		{
+			name:        "nil deployment",
+			deployment:  nil,
+			pods:        []corev1.Pod{scheduledPod},
+			expectError: true,
+		},
+		{
 			name:        "no pods",
 			deployment:  deployment,
 			pods:        []corev1.Pod{unrelatedPod},
