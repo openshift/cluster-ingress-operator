@@ -202,19 +202,37 @@ func TestManageDNSForDomain(t *testing.T) {
 			platformType: configv1.NonePlatformType,
 			expected:     true,
 		},
+		{
+			name:       "domain does not match because platform status is nil",
+			domain:     "apps.openshift.example.com",
+			baseDomain: "openshift.example.com",
+			expected:   false,
+		},
+		{
+			name:         "domain does not match because DNS config is nil",
+			domain:       "apps.openshift.example.com",
+			platformType: configv1.AWSPlatformType,
+			expected:     false,
+		},
 	}
 
 	for _, tc := range tests {
-		status := configv1.PlatformStatus{
-			Type: tc.platformType,
+		var status *configv1.PlatformStatus
+		if tc.platformType != "" {
+			status = &configv1.PlatformStatus{
+				Type: tc.platformType,
+			}
 		}
 
-		dnsConfig := configv1.DNS{
-			Spec: configv1.DNSSpec{
-				BaseDomain: tc.baseDomain,
-			},
+		var dnsConfig *configv1.DNS
+		if tc.baseDomain != "" {
+			dnsConfig = &configv1.DNS{
+				Spec: configv1.DNSSpec{
+					BaseDomain: tc.baseDomain,
+				},
+			}
 		}
-		actual := manageDNSForDomain(tc.domain, &status, &dnsConfig)
+		actual := manageDNSForDomain(tc.domain, status, dnsConfig)
 		if actual != tc.expected {
 			t.Errorf("%q: expected to be %v, got %v", tc.name, tc.expected, actual)
 		}

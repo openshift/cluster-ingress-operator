@@ -1664,6 +1664,45 @@ func TestComputeDNSStatus(t *testing.T) {
 			},
 		},
 		{
+			name: "DNSManaged is false due to DomainNotMatching because platformStatus is nil",
+			dnsConfig: &configv1.DNS{
+				Spec: configv1.DNSSpec{
+					BaseDomain:  "basedomain.com",
+					PublicZone:  &configv1.DNSZone{},
+					PrivateZone: &configv1.DNSZone{},
+				},
+			},
+			platformStatus: nil,
+			controller: &operatorv1.IngressController{
+				Status: operatorv1.IngressControllerStatus{
+					Domain: "apps.basedomain.com",
+					EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+						Type: operatorv1.LoadBalancerServiceStrategyType,
+						LoadBalancer: &operatorv1.LoadBalancerStrategy{
+							DNSManagementPolicy: operatorv1.UnmanagedLoadBalancerDNS,
+						},
+					},
+				},
+			},
+			record: &iov1.DNSRecord{
+				Spec: iov1.DNSRecordSpec{
+					DNSManagementPolicy: iov1.UnmanagedDNS,
+				},
+			},
+			expect: []operatorv1.OperatorCondition{
+				{
+					Type:   "DNSManaged",
+					Status: operatorv1.ConditionFalse,
+					Reason: "DomainNotMatching",
+				},
+				{
+					Type:   "DNSReady",
+					Status: operatorv1.ConditionUnknown,
+					Reason: "UnmanagedDNS",
+				},
+			},
+		},
+		{
 			name: "DNSManaged true and DNSReady is true due to NoFailedZones",
 			controller: &operatorv1.IngressController{
 				Status: operatorv1.IngressControllerStatus{

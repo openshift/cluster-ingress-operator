@@ -201,10 +201,15 @@ func dnsRecordChanged(current, expected *iov1.DNSRecord) (bool, *iov1.DNSRecord)
 
 // manageDNSForDomain returns true if the given domain contains the baseDomain
 // of the cluster DNS config. It is only used for AWS in the beginning, and will be expanded to other clouds
-// once we know there are no users depending on this.
+// once we know there are no users depending on this. Both PlatformStatus
+// and dnsConfig are required to be non-nil, failing which a false is returned.
 // See https://bugzilla.redhat.com/show_bug.cgi?id=2041616
 func manageDNSForDomain(domain string, status *configv1.PlatformStatus, dnsConfig *configv1.DNS) bool {
 	if len(domain) == 0 {
+		return false
+	}
+
+	if dnsConfig == nil || status == nil {
 		return false
 	}
 
