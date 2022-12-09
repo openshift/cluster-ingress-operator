@@ -22,33 +22,36 @@ const (
 
 // ensureInternalRouterServiceForIngress ensures that an internal service exists
 // for a given IngressController.
-func (r *reconciler) ensureInternalIngressControllerService(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference) (*corev1.Service, error) {
+func (r *reconciler) ensureInternalIngressControllerService(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference) (bool, *corev1.Service, error) {
 	desired := desiredInternalIngressControllerService(ic, deploymentRef)
-	current, err := r.currentInternalIngressControllerService(ic)
+	have, current, err := r.currentInternalIngressControllerService(ic)
 	if err != nil {
-		return nil, err
+		return false, nil, err
 	}
-	if current != nil {
-		return current, nil
+	switch {
+	case !have:
+		if err := r.client.Create(context.TODO(), desired); err != nil {
+			return false, nil, fmt.Errorf("failed to create internal ingresscontroller service: %w", err)
+		}
+		log.Info("created internal ingresscontroller service", "service", desired)
+		return r.currentInternalIngressControllerService(ic)
+	case have:
+		// TODO Handle updates.
 	}
 
-	if err := r.client.Create(context.TODO(), desired); err != nil {
-		return nil, fmt.Errorf("failed to create internal ingresscontroller service: %v", err)
-	}
-	log.Info("created internal ingresscontroller service", "service", desired)
-	return desired, nil
+	return true, current, nil
 }
 
-func (r *reconciler) currentInternalIngressControllerService(ic *operatorv1.IngressController) (*corev1.Service, error) {
+func (r *reconciler) currentInternalIngressControllerService(ic *operatorv1.IngressController) (bool, *corev1.Service, error) {
 	current := &corev1.Service{}
 	err := r.client.Get(context.TODO(), controller.InternalIngressControllerServiceName(ic), current)
 	if err != nil {
 		if errors.IsNotFound(err) {
-			return nil, nil
+			return false, nil, nil
 		}
-		return nil, err
+		return false, nil, err
 	}
-	return current, nil
+	return true, current, nil
 }
 
 func desiredInternalIngressControllerService(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference) *corev1.Service {

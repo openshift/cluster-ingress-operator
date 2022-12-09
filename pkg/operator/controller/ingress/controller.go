@@ -1036,8 +1036,10 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		errs = append(errs, err)
 	}
 
-	if internalSvc, err := r.ensureInternalIngressControllerService(ci, deploymentRef); err != nil {
+	if haveSvc, internalSvc, err := r.ensureInternalIngressControllerService(ci, deploymentRef); err != nil {
 		errs = append(errs, fmt.Errorf("failed to create internal router service for ingresscontroller %s: %v", ci.Name, err))
+	} else if !haveSvc {
+		errs = append(errs, fmt.Errorf("failed to get internal route service for ingresscontroller %s: %w", ci.Name, err))
 	} else if err := r.ensureMetricsIntegration(ci, internalSvc, deploymentRef); err != nil {
 		errs = append(errs, fmt.Errorf("failed to integrate metrics with openshift-monitoring for ingresscontroller %s: %v", ci.Name, err))
 	}
