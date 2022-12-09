@@ -362,14 +362,12 @@ func TestDesiredRouterDeploymentSpecTemplate(t *testing.T) {
 		}
 	}
 
-	if expected, got := 2, len(deployment.Spec.Template.Annotations); expected != got {
+	if expected, got := 1, len(deployment.Spec.Template.Annotations); expected != got {
 		t.Errorf("expected len(annotations)=%v, got %v", expected, got)
 	}
 
-	if val, ok := deployment.Spec.Template.Annotations[LivenessGracePeriodSecondsAnnotation]; !ok {
-		t.Errorf("missing annotation %q", LivenessGracePeriodSecondsAnnotation)
-	} else if expected := "10"; expected != val {
-		t.Errorf("expected annotation %q to be %q, got %q", LivenessGracePeriodSecondsAnnotation, expected, val)
+	if val, ok := deployment.Spec.Template.Annotations[LivenessGracePeriodSecondsAnnotation]; ok {
+		t.Errorf("expected annotation %[1]q not to be set, got %[1]s=%[2]s", LivenessGracePeriodSecondsAnnotation, val)
 	}
 
 	if val, ok := deployment.Spec.Template.Annotations[WorkloadPartitioningManagement]; !ok {
@@ -388,6 +386,9 @@ func TestDesiredRouterDeploymentSpecTemplate(t *testing.T) {
 
 	if len(deployment.Spec.Template.Spec.Containers[0].LivenessProbe.ProbeHandler.HTTPGet.Host) != 0 {
 		t.Errorf("expected empty liveness probe host, got %q", deployment.Spec.Template.Spec.Containers[0].LivenessProbe.ProbeHandler.HTTPGet.Host)
+	}
+	if deployment.Spec.Template.Spec.Containers[0].LivenessProbe.TerminationGracePeriodSeconds == nil {
+		t.Error("expected liveness probe's termination grace period to be set")
 	}
 	if len(deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.ProbeHandler.HTTPGet.Host) != 0 {
 		t.Errorf("expected empty readiness probe host, got %q", deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.ProbeHandler.HTTPGet.Host)
@@ -1328,6 +1329,14 @@ func TestDeploymentConfigChanged(t *testing.T) {
 			expect: true,
 		},
 		{
+			description: "if the liveness probe's terminationGracePeriodSeconds is changed",
+			mutate: func(deployment *appsv1.Deployment) {
+				v := int64(123)
+				deployment.Spec.Template.Spec.Containers[0].LivenessProbe.TerminationGracePeriodSeconds = &v
+			},
+			expect: true,
+		},
+		{
 			description: "if readiness probe values are set to non-default values",
 			mutate: func(deployment *appsv1.Deployment) {
 				deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.ProbeHandler.HTTPGet.Scheme = "HTTPS"
@@ -1438,6 +1447,15 @@ func TestDeploymentConfigChanged(t *testing.T) {
 			},
 			expect: true,
 		},
+		{
+			// This test case can be removed after OpenShift 4.13.
+			// See <https://issues.redhat.com/browse/OCPBUGS-4703>.
+			description: "if the unsupported.do-not-use.openshift.io/override-liveness-grace-period-seconds annotation is removed",
+			mutate: func(deployment *appsv1.Deployment) {
+				delete(deployment.Spec.Template.Annotations, LivenessGracePeriodSecondsAnnotation)
+			},
+			expect: true,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -1464,7 +1482,8 @@ func TestDeploymentConfigChanged(t *testing.T) {
 							controller.ControllerDeploymentHashLabel: "1",
 						},
 						Annotations: map[string]string{
-							WorkloadPartitioningManagement: "{\"effect\": \"PreferredDuringScheduling\"}",
+							LivenessGracePeriodSecondsAnnotation: "10",
+							WorkloadPartitioningManagement:       "{\"effect\": \"PreferredDuringScheduling\"}",
 						},
 					},
 					Spec: corev1.PodSpec{
