@@ -25,7 +25,8 @@ const (
 )
 
 // ensureInternalRouterServiceForIngress ensures that an internal service exists
-// for a given IngressController.
+// for a given IngressController.  Returns a Boolean indicating whether the
+// service exists, the current service if it does exist, and an error value.
 func (r *reconciler) ensureInternalIngressControllerService(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference) (bool, *corev1.Service, error) {
 	desired := desiredInternalIngressControllerService(ic, deploymentRef)
 	have, current, err := r.currentInternalIngressControllerService(ic)
