@@ -50,7 +50,7 @@ func Test_desiredInternalIngressControllerService(t *testing.T) {
 		Name:       "metrics",
 		Protocol:   "TCP",
 		Port:       int32(1936),
-		TargetPort: intstr.FromInt(1936),
+		TargetPort: intstr.FromString("metrics"),
 	}}, svc.Spec.Ports)
 }
 
@@ -113,6 +113,19 @@ func Test_internalServiceChanged(t *testing.T) {
 					TargetPort: intstr.FromString("foo"),
 				}
 				svc.Spec.Ports = append(svc.Spec.Ports, newPort)
+			},
+			expect: true,
+		},
+		{
+			description: "if .spec.ports changes by changing the metrics port's target port from an integer to a string",
+			mutate: func(svc *corev1.Service) {
+				for i := range svc.Spec.Ports {
+					if svc.Spec.Ports[i].Name == "metrics" {
+						svc.Spec.Ports[i].TargetPort = intstr.FromString("metrics")
+						return
+					}
+				}
+				panic("no metrics port found!")
 			},
 			expect: true,
 		},
