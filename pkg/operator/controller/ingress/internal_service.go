@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
+
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
@@ -12,6 +15,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
 )
 
 const (
@@ -36,7 +40,11 @@ func (r *reconciler) ensureInternalIngressControllerService(ic *operatorv1.Ingre
 		log.Info("created internal ingresscontroller service", "service", desired)
 		return r.currentInternalIngressControllerService(ic)
 	case have:
-		// TODO Handle updates.
+		if updated, err := r.updateInternalService(current, desired); err != nil {
+			return true, current, fmt.Errorf("failed to update internal service: %v", err)
+		} else if updated {
+			return r.currentInternalIngressControllerService(ic)
+		}
 	}
 
 	return true, current, nil
@@ -76,4 +84,89 @@ func desiredInternalIngressControllerService(ic *operatorv1.IngressController, d
 	s.SetOwnerReferences([]metav1.OwnerReference{deploymentRef})
 
 	return s
+}
+
+// updateInternalService updates a ClusterIP service.  Returns a Boolean
+// indicating whether the service was updated, and an error value.
+func (r *reconciler) updateInternalService(current, desired *corev1.Service) (bool, error) {
+	changed, updated := internalServiceChanged(current, desired)
+	if !changed {
+		return false, nil
+	}
+
+	// Diff before updating because the client may mutate the object.
+	diff := cmp.Diff(current, updated, cmpopts.EquateEmpty())
+	if err := r.client.Update(context.TODO(), updated); err != nil {
+		return false, err
+	}
+	log.Info("updated internal service", "namespace", updated.Namespace, "name", updated.Name, "diff", diff)
+	return true, nil
+}
+
+// managedInternalServiceAnnotations is a set of annotation keys for annotations
+// that the operator manages for its internal service.
+var managedInternalServiceAnnotations = sets.NewString(
+	ServingCertSecretAnnotation,
+)
+
+// internalServiceChanged checks if the current internal service annotations and
+// spec match the expected annotations and spec and if not returns an updated
+// service.
+func internalServiceChanged(current, expected *corev1.Service) (bool, *corev1.Service) {
+	changed := false
+
+	serviceCmpOpts := []cmp.Option{
+		// Ignore fields that the API, other controllers, or user may
+		// have modified.
+		cmpopts.IgnoreFields(corev1.ServicePort{}, "NodePort"),
+		cmpopts.IgnoreFields(corev1.ServiceSpec{}, "ClusterIP", "ClusterIPs", "ExternalIPs", "HealthCheckNodePort"),
+		cmp.Comparer(cmpServiceAffinity),
+		cmpopts.EquateEmpty(),
+	}
+	if !cmp.Equal(current.Spec, expected.Spec, serviceCmpOpts...) {
+		changed = true
+	}
+
+	annotationCmpOpts := []cmp.Option{
+		cmpopts.IgnoreMapEntries(func(k, _ string) bool {
+			return !managedInternalServiceAnnotations.Has(k)
+		}),
+	}
+	if !cmp.Equal(current.Annotations, expected.Annotations, annotationCmpOpts...) {
+		changed = true
+	}
+
+	if !changed {
+		return false, nil
+	}
+
+	updated := current.DeepCopy()
+	updated.Spec = expected.Spec
+
+	if updated.Annotations == nil {
+		updated.Annotations = map[string]string{}
+	}
+	for annotation := range managedInternalServiceAnnotations {
+		currentVal, have := current.Annotations[annotation]
+		expectedVal, want := expected.Annotations[annotation]
+		if want && (!have || currentVal != expectedVal) {
+			updated.Annotations[annotation] = expected.Annotations[annotation]
+		} else if have && !want {
+			delete(updated.Annotations, annotation)
+		}
+	}
+	// Preserve fields that the API, other controllers, or user may have
+	// modified.
+	updated.Spec.ClusterIP = current.Spec.ClusterIP
+	updated.Spec.ExternalIPs = current.Spec.ExternalIPs
+	updated.Spec.HealthCheckNodePort = current.Spec.HealthCheckNodePort
+	for i, updatedPort := range updated.Spec.Ports {
+		for _, currentPort := range current.Spec.Ports {
+			if currentPort.Name == updatedPort.Name {
+				updated.Spec.Ports[i].TargetPort = currentPort.TargetPort
+			}
+		}
+	}
+
+	return true, updated
 }
