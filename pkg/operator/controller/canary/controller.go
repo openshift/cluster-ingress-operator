@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -43,6 +44,9 @@ const (
 	// canaryCheckFailureCount is how many successive failing canary checks should
 	// be observed before the default ingress controller goes degraded.
 	canaryCheckFailureCount = 5
+	// canaryFailingNumErrors is how many error messages to include in the
+	// CanaryChecksSucceeding status condition when checks are failing
+	canaryFailingNumErrors = 3
 
 	// CanaryRouteRotationAnnotation is an annotation on the default ingress controller
 	// that specifies whether or not the canary check loop should periodically rotate
@@ -221,6 +225,15 @@ func (r *reconciler) isCanaryRouteRotationEnabled() bool {
 	return r.enableCanaryRouteRotation
 }
 
+type timestampedError struct {
+	timestamp time.Time
+	err       error
+}
+
+func (err timestampedError) Error() string {
+	return err.err.Error()
+}
+
 func (r *reconciler) startCanaryRoutePolling(stop <-chan struct{}) error {
 	// Keep track of how many canary checks have passed
 	// so the route endpoint can be periodically cycled
@@ -230,6 +243,8 @@ func (r *reconciler) startCanaryRoutePolling(stop <-chan struct{}) error {
 	// Keep track of successive canary check failures
 	// for status reporting.
 	successiveFail := 0
+
+	errors := []timestampedError{}
 
 	go wait.Until(func() {
 		// Get the current canary route every iteration in case it has been modified
@@ -282,9 +297,10 @@ func (r *reconciler) startCanaryRoutePolling(stop <-chan struct{}) error {
 			log.Error(err, "error performing canary route check")
 			SetCanaryRouteReachableMetric(getRouteHost(route), false)
 			successiveFail += 1
+			errors = append(errors, timestampedError{err: err, timestamp: time.Now()})
 			// Mark the default ingress controller degraded after 5 successive canary check failures
 			if successiveFail >= canaryCheckFailureCount {
-				if err := r.setCanaryFailingStatusCondition(); err != nil {
+				if err := r.setCanaryFailingStatusCondition(errors); err != nil {
 					log.Error(err, "error updating canary status condition")
 				}
 			}
@@ -296,6 +312,7 @@ func (r *reconciler) startCanaryRoutePolling(stop <-chan struct{}) error {
 			log.Error(err, "error updating canary status condition")
 		}
 		successiveFail = 0
+		errors = []timestampedError{}
 		// Only increment checkCount if periodic canary route
 		// endpoint rotation is enabled to prevent unbounded
 		// integer growth.
@@ -307,15 +324,63 @@ func (r *reconciler) startCanaryRoutePolling(stop <-chan struct{}) error {
 	return nil
 }
 
-func (r *reconciler) setCanaryFailingStatusCondition() error {
+func (r *reconciler) setCanaryFailingStatusCondition(errors []timestampedError) error {
+	errorStrings := deduplicateErrorStrings(errors, time.Now())
+	if len(errorStrings) > canaryFailingNumErrors {
+		errorStrings = errorStrings[len(errorStrings)-canaryFailingNumErrors:]
+	}
 	cond := operatorv1.OperatorCondition{
 		Type:    ingresscontroller.IngressControllerCanaryCheckSuccessConditionType,
 		Status:  operatorv1.ConditionFalse,
 		Reason:  "CanaryChecksRepetitiveFailures",
-		Message: "Canary route checks for the default ingress controller are failing",
+		Message: fmt.Sprintf("Canary route checks for the default ingress controller are failing. Last %d error messages:\n%s", len(errorStrings), strings.Join(errorStrings, "\n")),
 	}
 
 	return r.setCanaryStatusCondition(cond)
+}
+
+type dedupCounter struct {
+	Count           int
+	FirstOccurrence time.Time
+}
+
+// deduplicateErrorStrings takes a slice of errors in chronological order, prunes the list for unique error messages
+// It returns a slice of the error message as strings, with any string seen more than once incuding how many times it
+// was seen.
+// The chronological order is preserved, based on the last time each error message was seen
+func deduplicateErrorStrings(errors []timestampedError, now time.Time) []string {
+	encountered := map[string]dedupCounter{}
+	uniqueErrors := []string{}
+	// Iterate over the list of errors from newest to oldest, keeping track of how many times each error message was
+	// seen. This iteration order makes sure we preserve order based on the newest time each message was seen.
+	for i := len(errors) - 1; i >= 0; i-- {
+		err := errors[i]
+		if errCounter := encountered[err.Error()]; errCounter.Count >= 1 {
+			errCounter.Count += 1
+			if errCounter.FirstOccurrence.After(err.timestamp) {
+				errCounter.FirstOccurrence = err.timestamp
+			}
+			encountered[err.Error()] = errCounter
+			continue
+		}
+		encountered[err.Error()] = dedupCounter{
+			Count:           1,
+			FirstOccurrence: err.timestamp,
+		}
+		uniqueErrors = append(uniqueErrors, err.Error())
+	}
+	ret, j := make([]string, len(uniqueErrors)), len(uniqueErrors)-1
+	// Now that all error messages have been ordered by their most recent occurrence, reverse the list to switch it to
+	// cronological order, and append a message indicating how often an error has occurred if it has more than one
+	// occurrence.
+	for _, err := range uniqueErrors {
+		if counter := encountered[err]; counter.Count > 1 {
+			err = fmt.Sprintf("%s (x%d over %v)", err, counter.Count, now.Sub(counter.FirstOccurrence).Round(time.Second))
+		}
+		ret[j] = err
+		j--
+	}
+	return ret
 }
 
 func (r *reconciler) setCanaryPassingStatusCondition() error {
