@@ -75,6 +75,10 @@ func TestHAProxyTimeouts(t *testing.T) {
 			if envVar.Value != clientTimeoutOutput {
 				t.Errorf("expected %s = %q, got %q", envVar.Name, clientTimeoutOutput, envVar.Value)
 			}
+		case "ROUTER_SLOWLORIS_TIMEOUT":
+			if envVar.Value != httpRequestTimeout {
+				t.Errorf("expected %s = %q, got %q", envVar.Name, clientTimeoutOutput, envVar.Value)
+			}
 		case "ROUTER_CLIENT_FIN_TIMEOUT":
 			if envVar.Value != clientFinTimeoutOutput {
 				t.Errorf("expected %s = %q, got %q", envVar.Name, clientFinTimeoutOutput, envVar.Value)
@@ -227,6 +231,7 @@ func TestHAProxyTimeoutsRejection(t *testing.T) {
 	for _, envVar := range deployment.Spec.Template.Spec.Containers[0].Env {
 		switch envVar.Name {
 		case "ROUTER_DEFAULT_CLIENT_TIMEOUT",
+			"ROUTER_SLOWLORIS_TIMEOUT",
 			"ROUTER_CLIENT_FIN_TIMEOUT",
 			"ROUTER_DEFAULT_SERVER_TIMEOUT",
 			"ROUTER_DEFAULT_SERVER_FIN_TIMEOUT",

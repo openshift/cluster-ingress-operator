@@ -174,6 +174,7 @@ func TestTuningOptions(t *testing.T) {
 	// Verify tuning options
 	tests := []envData{
 		{"ROUTER_DEFAULT_CLIENT_TIMEOUT", true, "45s"},
+		{"ROUTER_SLOWLORIS_TIMEOUT", true, "10s"},
 		{"ROUTER_CLIENT_FIN_TIMEOUT", true, "3s"},
 		{"ROUTER_DEFAULT_SERVER_TIMEOUT", true, "1m"},
 		{"ROUTER_DEFAULT_SERVER_FIN_TIMEOUT", true, "4s"},
@@ -322,6 +323,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		{"ROUTER_MAX_REWRITE_SIZE", false, ""},
 		{"ROUTER_SYSLOG_ADDRESS", false, ""},
 		{"ROUTER_SYSLOG_FORMAT", false, ""},
+		{"ROUTER_SLOWLORIS_TIMEOUT", false, ""},
 		{"ROUTER_TCP_BALANCE_SCHEME", true, "source"},
 		{"ROUTER_UNIQUE_ID_FORMAT", false, ""},
 		{"ROUTER_UNIQUE_ID_HEADER_NAME", false, ""},
