@@ -826,8 +826,8 @@ func TestDesiredRouterDeploymentSingleReplica(t *testing.T) {
 		t.Errorf("expected replicas to be 1, got %d", *deployment.Spec.Replicas)
 	}
 
-	if deployment.Spec.Template.Spec.Affinity != nil {
-		t.Errorf("expected no affinity, got %+v", *deployment.Spec.Template.Spec.Affinity)
+	if deployment.Spec.Template.Spec.Affinity.PodAffinity != nil {
+		t.Errorf("expected no pod affinity, got %+v", *deployment.Spec.Template.Spec.Affinity)
 	}
 
 	if deployment.Spec.Strategy.Type != "" || deployment.Spec.Strategy.RollingUpdate != nil {
@@ -1287,6 +1287,21 @@ func TestDeploymentConfigChanged(t *testing.T) {
 			expect: false,
 		},
 		{
+			description: "if the deployment template node affinity is changed",
+			mutate: func(deployment *appsv1.Deployment) {
+				deployment.Spec.Template.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[0].MatchExpressions[0].Values = []string{"xyz"}
+			},
+			expect: true,
+		},
+		{
+			description: "if the deployment template -affinity node selector expressions change ordering",
+			mutate: func(deployment *appsv1.Deployment) {
+				exprs := deployment.Spec.Template.Spec.Affinity.PodAntiAffinity.RequiredDuringSchedulingIgnoredDuringExecution[0].LabelSelector.MatchExpressions
+				exprs[0], exprs[1] = exprs[1], exprs[0]
+			},
+			expect: false,
+		},
+		{
 			description: "if probe values are set to default values",
 			mutate: func(deployment *appsv1.Deployment) {
 				deployment.Spec.Template.Spec.Containers[0].LivenessProbe.ProbeHandler.HTTPGet.Scheme = "HTTP"
@@ -1610,6 +1625,25 @@ func TestDeploymentConfigChanged(t *testing.T) {
 											},
 										},
 									},
+								},
+							},
+							NodeAffinity: &corev1.NodeAffinity{
+								RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+									NodeSelectorTerms: []corev1.NodeSelectorTerm{{
+										MatchExpressions: []corev1.NodeSelectorRequirement{
+											{
+												Key:      controller.RemoteWorkerLabel,
+												Operator: corev1.NodeSelectorOpNotIn,
+												Values:   []string{""},
+											},
+											// this match expression was added only for ordering change test case
+											{
+												Key:      controller.ControllerDeploymentHashLabel,
+												Operator: corev1.NodeSelectorOpIn,
+												Values:   []string{"1"},
+											},
+										},
+									}},
 								},
 							},
 						},
