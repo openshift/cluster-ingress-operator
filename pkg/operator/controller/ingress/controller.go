@@ -51,7 +51,6 @@ const (
 // TODO: consider moving these to openshift/api
 const (
 	IngressControllerAdmittedConditionType                       = "Admitted"
-	IngressControllerPodsScheduledConditionType                  = "PodsScheduled"
 	IngressControllerDeploymentAvailableConditionType            = "DeploymentAvailable"
 	IngressControllerDeploymentReplicasMinAvailableConditionType = "DeploymentReplicasMinAvailable"
 	IngressControllerDeploymentReplicasAllAvailableConditionType = "DeploymentReplicasAllAvailable"
