@@ -1562,11 +1562,15 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 
 	annotations := []string{LivenessGracePeriodSecondsAnnotation, WorkloadPartitioningManagement}
 	for _, key := range annotations {
-		if val, ok := expected.Spec.Template.Annotations[key]; ok && len(val) > 0 {
+		currentVal, have := current.Spec.Template.Annotations[key]
+		expectedVal, want := expected.Spec.Template.Annotations[key]
+		if want && (!have || currentVal != expectedVal) {
 			if updated.Spec.Template.Annotations == nil {
 				updated.Spec.Template.Annotations = make(map[string]string)
 			}
-			updated.Spec.Template.Annotations[key] = val
+			updated.Spec.Template.Annotations[key] = expectedVal
+		} else if have && !want {
+			delete(updated.Spec.Template.Annotations, key)
 		}
 	}
 
@@ -1613,6 +1617,9 @@ func copyProbe(a, b *corev1.Probe) {
 		if a.ProbeHandler.HTTPGet.Scheme != "HTTP" {
 			b.ProbeHandler.HTTPGet.Scheme = a.ProbeHandler.HTTPGet.Scheme
 		}
+	}
+	if a.TerminationGracePeriodSeconds != nil {
+		b.TerminationGracePeriodSeconds = a.TerminationGracePeriodSeconds
 	}
 
 	// Users are permitted to modify the timeout, so *don't* copy it.
