@@ -290,6 +290,12 @@ func TestSetDefaultPublishingStrategySetsPlatformDefaults(t *testing.T) {
 			domainMatchesBaseDomain: true,
 		},
 		{
+			name:                    "External platform",
+			platformStatus:          makePlatformStatus(configv1.ExternalPlatformType),
+			expectedIC:              ingressControllerWithHostNetwork,
+			domainMatchesBaseDomain: true,
+		},
+		{
 			name:                    "OpenStack",
 			platformStatus:          makePlatformStatus(configv1.OpenStackPlatformType),
 			expectedIC:              ingressControllerWithHostNetwork,

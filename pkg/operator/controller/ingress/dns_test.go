@@ -223,6 +223,13 @@ func TestManageDNSForDomain(t *testing.T) {
 			platformType: configv1.NonePlatformType,
 			expected:     true,
 		},
+		{
+			name:         "domain does not match the baseDomain on external platform",
+			domain:       "test.local",
+			baseDomain:   "openshift.example.com",
+			platformType: configv1.ExternalPlatformType,
+			expected:     true,
+		},
 	}
 
 	for _, tc := range tests {

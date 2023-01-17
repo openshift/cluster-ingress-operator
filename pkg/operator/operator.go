@@ -321,7 +321,7 @@ func (o *Operator) handleSingleNode4Dot11Upgrade() error {
 	if len(nodes.Items) == 1 &&
 		infraConfig.Status.ControlPlaneTopology == configv1.SingleReplicaTopologyMode &&
 		infraConfig.Status.InfrastructureTopology == configv1.SingleReplicaTopologyMode &&
-		infraConfig.Status.PlatformStatus.Type == configv1.NonePlatformType {
+		(infraConfig.Status.PlatformStatus.Type == configv1.NonePlatformType || infraConfig.Status.PlatformStatus.Type == configv1.ExternalPlatformType) {
 		desiredDefaultPlacement = configv1.DefaultPlacementControlPlane
 	}
 
