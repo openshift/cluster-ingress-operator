@@ -389,6 +389,54 @@ func updateIngressControllerSpecWithRetryOnConflict(t *testing.T, name types.Nam
 	})
 }
 
+// updateRouteLabelsWithRetryOnConflict gets a fresh copy of
+// the named route, calls mutateSpecFn() where callers can
+// modify the labels, and then updates the route. If there
+// is a conflict error on update then the complete sequence
+// of get, mutate, and update is retried until timeout is reached.
+func updateRouteLabelsWithRetryOnConflict(t *testing.T, name types.NamespacedName, timeout time.Duration, mutateSpecFn func(map[string]string)) error {
+	route := routev1.Route{}
+	return wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), name, &route); err != nil {
+			t.Logf("error getting route %v: %v, retrying...", name, err)
+			return false, nil
+		}
+		mutateSpecFn(route.Labels)
+		if err := kclient.Update(context.TODO(), &route); err != nil {
+			if errors.IsConflict(err) {
+				t.Logf("conflict when updating route %v: %v, retrying...", name, err)
+				return false, nil
+			}
+			return false, err
+		}
+		return true, nil
+	})
+}
+
+// updateNamespaceLabelsWithRetryOnConflict gets a fresh copy of
+// the named namespace, calls mutateSpecFn() where callers can
+// modify the labels, and then updates the namespace. If there
+// is a conflict error on update then the complete sequence
+// of get, mutate, and update is retried until timeout is reached.
+func updateNamespaceLabelsWithRetryOnConflict(t *testing.T, name types.NamespacedName, timeout time.Duration, mutateSpecFn func(map[string]string)) error {
+	ns := corev1.Namespace{}
+	return wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), name, &ns); err != nil {
+			t.Logf("error getting namespace %v: %v, retrying...", name, err)
+			return false, nil
+		}
+		mutateSpecFn(ns.Labels)
+		if err := kclient.Update(context.TODO(), &ns); err != nil {
+			if errors.IsConflict(err) {
+				t.Logf("conflict when updating namespace %v: %v, retrying...", name, err)
+				return false, nil
+			}
+			return false, err
+		}
+		return true, nil
+	})
+}
+
 // updateIngressConfigSpecWithRetryOnConflict gets a fresh copy of the
 // name ingress config, calls updateSpecFn() where callers can modify
 // fields of the spec, and then updates the ingress config object. If
