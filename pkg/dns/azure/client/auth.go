@@ -45,10 +45,8 @@ func getAuthorizerForResource(config Config) (autorest.Authorizer, error) {
 		return nil, err
 	}
 
-	scope := config.Environment.TokenAudience
-	if !strings.HasSuffix(scope, "/.default") {
-		scope += "/.default"
-	}
+	scope := endpointToScope(config.Environment.TokenAudience)
+
 	// Use an adapter so azidentity in the Azure SDK can be used as
 	// Authorizer when calling the Azure Management Packages, which we
 	// currently use. Once the Azure SDK clients (found in /sdk) move to
@@ -58,4 +56,12 @@ func getAuthorizerForResource(config Config) (autorest.Authorizer, error) {
 	authorizer := azidext.NewTokenCredentialAdapter(cred, []string{scope})
 
 	return authorizer, nil
+}
+
+func endpointToScope(endpoint string) string {
+	scope := endpoint
+	if !strings.HasSuffix(scope, "/.default") {
+		scope += "/.default"
+	}
+	return scope
 }
