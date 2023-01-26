@@ -167,7 +167,8 @@ var (
 		configv1.OpenStackPlatformType: {
 			openstackInternalLBAnnotation: "true",
 		},
-		configv1.NonePlatformType: nil,
+		configv1.NonePlatformType:     nil,
+		configv1.ExternalPlatformType: nil,
 		// vSphere does not support load balancers as of 2019-06-17.
 		configv1.VSpherePlatformType: nil,
 		configv1.IBMCloudPlatformType: {
