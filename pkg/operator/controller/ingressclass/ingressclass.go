@@ -144,9 +144,9 @@ func (r *reconciler) updateIngressClass(current, desired *networkingv1.IngressCl
 	// Diff before updating because the client may mutate the object.
 	diff := cmp.Diff(current, updated, cmpopts.EquateEmpty())
 	if err := r.client.Update(context.TODO(), updated); err != nil {
-		log.Info("updated IngressClass", "name", updated.Name, "diff", diff)
 		return false, err
 	}
+	log.Info("updated IngressClass", "name", updated.Name, "diff", diff)
 	return true, nil
 }
 
