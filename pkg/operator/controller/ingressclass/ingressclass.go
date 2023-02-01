@@ -78,6 +78,7 @@ func desiredIngressClass(haveIngressController bool, ingressControllerName strin
 	}
 
 	name := controller.IngressClassName(ingressControllerName)
+	scope := networkingv1.IngressClassParametersReferenceScopeCluster
 	class := &networkingv1.IngressClass{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name.Name,
@@ -88,6 +89,7 @@ func desiredIngressClass(haveIngressController bool, ingressControllerName strin
 				APIGroup: &operatorv1.GroupName,
 				Kind:     "IngressController",
 				Name:     ingressControllerName,
+				Scope:    &scope,
 			},
 		},
 	}
