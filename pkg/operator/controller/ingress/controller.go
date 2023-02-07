@@ -561,8 +561,28 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, platformStat
 					statusLB.ProviderParameters.GCP.ClientAccess = specClientAccess
 					changed = true
 				}
+			case operatorv1.IBMLoadBalancerProvider:
+				// The only provider parameter that is supported
+				// for IBM is the Protocol parameter.
+				var statusProtocol operatorv1.IngressControllerProtocol
+				specProtocol := specLB.ProviderParameters.IBM.Protocol
+				if statusLB.ProviderParameters != nil && statusLB.ProviderParameters.IBM != nil {
+					statusProtocol = statusLB.ProviderParameters.IBM.Protocol
+				}
+				if specProtocol != statusProtocol {
+					if statusLB.ProviderParameters == nil {
+						statusLB.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{}
+					}
+					if len(statusLB.ProviderParameters.Type) == 0 {
+						statusLB.ProviderParameters.Type = operatorv1.IBMLoadBalancerProvider
+					}
+					if statusLB.ProviderParameters.IBM == nil {
+						statusLB.ProviderParameters.IBM = &operatorv1.IBMLoadBalancerParameters{}
+					}
+					statusLB.ProviderParameters.IBM.Protocol = specProtocol
+					changed = true
+				}
 			}
-
 			return changed
 		}
 	case operatorv1.NodePortServiceStrategyType:
@@ -670,6 +690,14 @@ func setDefaultProviderParameters(lbs *operatorv1.LoadBalancerStrategy, ingressC
 		lbs.ProviderParameters.Type = provider
 		if lbs.ProviderParameters.GCP == nil {
 			lbs.ProviderParameters.GCP = &operatorv1.GCPLoadBalancerParameters{}
+		}
+	case operatorv1.IBMLoadBalancerProvider:
+		if lbs.ProviderParameters == nil {
+			lbs.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{}
+		}
+		lbs.ProviderParameters.Type = provider
+		if lbs.ProviderParameters.IBM == nil {
+			lbs.ProviderParameters.IBM = &operatorv1.IBMLoadBalancerParameters{}
 		}
 	}
 }
@@ -1098,9 +1126,9 @@ func IsProxyProtocolNeeded(ic *operatorv1.IngressController, platform *configv1.
 	}
 	switch ic.Status.EndpointPublishingStrategy.Type {
 	case operatorv1.LoadBalancerServiceStrategyType:
-		// For now, check if we are on AWS. This can really be done for for any external
-		// [cloud] LBs that support the proxy protocol.
-		if platform.Type == configv1.AWSPlatformType {
+		// This can really be done for for any external [cloud] LBs that support the proxy protocol.
+		switch platform.Type {
+		case configv1.AWSPlatformType:
 			if ic.Status.EndpointPublishingStrategy.LoadBalancer == nil ||
 				ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters == nil ||
 				ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS == nil ||
@@ -1108,7 +1136,15 @@ func IsProxyProtocolNeeded(ic *operatorv1.IngressController, platform *configv1.
 					ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.Type == operatorv1.AWSClassicLoadBalancer {
 				return true, nil
 			}
+		case configv1.IBMCloudPlatformType:
+			if ic.Status.EndpointPublishingStrategy.LoadBalancer != nil &&
+				ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters != nil &&
+				ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.IBM != nil &&
+				ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.IBM.Protocol == operatorv1.ProxyProtocol {
+				return true, nil
+			}
 		}
+
 	case operatorv1.HostNetworkStrategyType:
 		if ic.Status.EndpointPublishingStrategy.HostNetwork != nil {
 			return ic.Status.EndpointPublishingStrategy.HostNetwork.Protocol == operatorv1.ProxyProtocol, nil
