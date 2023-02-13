@@ -28,6 +28,7 @@ import (
 	configurableroutecontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/configurable-route"
 	crlcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/crl"
 	dnscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/dns"
+	gatewayapicontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gatewayapi"
 	ingress "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 	ingressclasscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingressclass"
@@ -212,6 +213,11 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	// Set up the route metrics controller.
 	if _, err := routemetricscontroller.New(mgr, config.Namespace); err != nil {
 		return nil, fmt.Errorf("failed to create route metrics controller: %w", err)
+	}
+
+	// Set up the gatewayapi controller.
+	if _, err := gatewayapicontroller.New(mgr); err != nil {
+		return nil, fmt.Errorf("failed to create gatewayapi controller: %w", err)
 	}
 
 	return &Operator{

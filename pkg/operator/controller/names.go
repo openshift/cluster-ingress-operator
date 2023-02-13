@@ -70,6 +70,14 @@ func InfrastructureClusterConfigName() types.NamespacedName {
 	}
 }
 
+// FeatureGateClusterConfigName returns the namespaced name of the
+// featuregates.config.openshift.io resource of the cluster.
+func FeatureGateClusterConfigName() types.NamespacedName {
+	return types.NamespacedName{
+		Name: "cluster",
+	}
+}
+
 // RouterDeploymentName returns the namespaced name for the router deployment.
 func RouterDeploymentName(ci *operatorv1.IngressController) types.NamespacedName {
 	return types.NamespacedName{
