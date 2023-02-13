@@ -80,6 +80,12 @@ const (
 
 	RouterHAProxyConfigManager = "ROUTER_HAPROXY_CONFIG_MANAGER"
 
+	RouterBlueprintRouteNamespace = "ROUTER_BLUEPRINT_ROUTE_NAMESPACE"
+	RouterBlueprintRouteLabels    = "ROUTER_BLUEPRINT_ROUTE_LABELS"
+	RouterBlueprintRoutePoolSize  = "ROUTER_BLUEPRINT_ROUTE_POOL_SIZE"
+	RouterMaxDynamicServers       = "ROUTER_MAX_DYNAMIC_SERVERS"
+	CommitInterval                = "COMMIT_INTERVAL"
+
 	RouterHAProxyThreadsEnvName      = "ROUTER_THREADS"
 	RouterHAProxyThreadsDefaultValue = 4
 
@@ -488,8 +494,13 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	env = append(env, corev1.EnvVar{Name: "ROUTER_METRICS_TLS_KEY_FILE", Value: filepath.Join(certsVolumeMountPath, "tls.key")})
 
 	var unsupportedConfigOverrides struct {
-		LoadBalancingAlgorithm string `json:"loadBalancingAlgorithm"`
-		DynamicConfigManager   string `json:"dynamicConfigManager"`
+		LoadBalancingAlgorithm  string `json:"loadBalancingAlgorithm"`
+		DynamicConfigManager    string `json:"dynamicConfigManager"`
+		CommitInterval          string `json:"commitInterval"`
+		BlueprintRouteNamespace string `json:"blueprintRouteNamespace"`
+		BlueprintRouteLabels    string `json:"blueprintRouteLabels"`
+		BlueprintRoutePoolSize  string `json:"blueprintRoutePoolSize"`
+		MaxDynamicServers       string `json:"maxDynamicServers"`
 	}
 	if len(ci.Spec.UnsupportedConfigOverrides.Raw) > 0 {
 		if err := json.Unmarshal(ci.Spec.UnsupportedConfigOverrides.Raw, &unsupportedConfigOverrides); err != nil {
@@ -539,6 +550,46 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		env = append(env, corev1.EnvVar{
 			Name:  RouterHAProxyConfigManager,
 			Value: "true",
+		})
+	}
+
+	commitInterval := unsupportedConfigOverrides.CommitInterval
+	if _, err := time.ParseDuration(commitInterval); err == nil {
+		env = append(env, corev1.EnvVar{
+			Name:  CommitInterval,
+			Value: commitInterval,
+		})
+	}
+
+	blueprintRouteNamespace := unsupportedConfigOverrides.BlueprintRouteNamespace
+	if blueprintRouteNamespace != "" {
+		env = append(env, corev1.EnvVar{
+			Name:  RouterBlueprintRouteNamespace,
+			Value: blueprintRouteNamespace,
+		})
+	}
+
+	blueprintRouteLabels := unsupportedConfigOverrides.BlueprintRouteLabels
+	if blueprintRouteLabels != "" {
+		env = append(env, corev1.EnvVar{
+			Name:  RouterBlueprintRouteLabels,
+			Value: blueprintRouteLabels,
+		})
+	}
+
+	blueprintRoutePoolSize := unsupportedConfigOverrides.BlueprintRoutePoolSize
+	if _, err := strconv.ParseInt(blueprintRoutePoolSize, 10, 16); err == nil {
+		env = append(env, corev1.EnvVar{
+			Name:  RouterBlueprintRoutePoolSize,
+			Value: blueprintRoutePoolSize,
+		})
+	}
+
+	maxDynamicServers := unsupportedConfigOverrides.MaxDynamicServers
+	if _, err := strconv.ParseInt(maxDynamicServers, 10, 16); err == nil {
+		env = append(env, corev1.EnvVar{
+			Name:  RouterMaxDynamicServers,
+			Value: maxDynamicServers,
 		})
 	}
 
