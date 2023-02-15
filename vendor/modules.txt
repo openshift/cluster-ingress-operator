@@ -278,7 +278,7 @@ github.com/munnerz/goautoneg
 # github.com/oklog/ulid v1.3.1
 ## explicit
 github.com/oklog/ulid
-# github.com/openshift/api v0.0.0-20230207182222-3961c9d5917c
+# github.com/openshift/api v0.0.0-20230213202419-42edf4f1d905
 ## explicit; go 1.19
 github.com/openshift/api
 github.com/openshift/api/apiserver
