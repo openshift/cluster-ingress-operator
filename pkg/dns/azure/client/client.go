@@ -4,13 +4,13 @@ import (
 	"context"
 
 	"github.com/Azure/azure-sdk-for-go/profiles/2018-03-01/dns/mgmt/dns"
-	privatedns "github.com/Azure/azure-sdk-for-go/services/privatedns/mgmt/2018-09-01/privatedns"
+	"github.com/Azure/azure-sdk-for-go/services/privatedns/mgmt/2018-09-01/privatedns"
 	"github.com/Azure/go-autorest/autorest/azure"
 	"github.com/pkg/errors"
 )
 
 type DNSClient interface {
-	Put(ctx context.Context, zone Zone, arec ARecord) error
+	Put(ctx context.Context, zone Zone, arec ARecord, metadata map[string]*string) error
 	Delete(ctx context.Context, zone Zone, arec ARecord) error
 }
 
@@ -56,12 +56,12 @@ func New(config Config, userAgentExtension string) (DNSClient, error) {
 	return &dnsClient{recordSetClient: rsc, privateRecordSetClient: prsc}, nil
 }
 
-func (c *dnsClient) Put(ctx context.Context, zone Zone, arec ARecord) error {
+func (c *dnsClient) Put(ctx context.Context, zone Zone, arec ARecord, metadata map[string]*string) error {
 	switch zone.Provider {
 	case "Microsoft.Network/privateDnsZones":
-		return c.privateRecordSetClient.Put(ctx, zone, arec)
+		return c.privateRecordSetClient.Put(ctx, zone, arec, metadata)
 	case "Microsoft.Network/dnszones":
-		return c.recordSetClient.Put(ctx, zone, arec)
+		return c.recordSetClient.Put(ctx, zone, arec, metadata)
 	default:
 		return errors.Errorf("unsupported Zone provider %s", zone.Provider)
 	}
@@ -94,18 +94,15 @@ func newRecordSetClient(config Config, userAgentExtension string) (*recordSetCli
 	return &recordSetClient{client: rc}, nil
 }
 
-func (c *recordSetClient) Put(ctx context.Context, zone Zone, arec ARecord) error {
+func (c *recordSetClient) Put(ctx context.Context, zone Zone, arec ARecord, metadata map[string]*string) error {
 	rs := dns.RecordSet{
 		RecordSetProperties: &dns.RecordSetProperties{
 			TTL: &arec.TTL,
 			ARecords: &[]dns.ARecord{
 				{Ipv4Address: &arec.Address},
 			},
+			Metadata: metadata,
 		},
-	}
-	if arec.Label != "" {
-		ownedValue := "owned"
-		rs.RecordSetProperties.Metadata = map[string]*string{arec.Label: &ownedValue}
 	}
 	_, err := c.client.CreateOrUpdate(ctx, zone.ResourceGroup, zone.Name, arec.Name, dns.A, rs, "", "")
 	if err != nil {
@@ -143,13 +140,14 @@ func newPrivateRecordSetClient(config Config, userAgentExtension string) (*priva
 	return &privateRecordSetClient{client: prc}, nil
 }
 
-func (c *privateRecordSetClient) Put(ctx context.Context, zone Zone, arec ARecord) error {
+func (c *privateRecordSetClient) Put(ctx context.Context, zone Zone, arec ARecord, metadata map[string]*string) error {
 	rs := privatedns.RecordSet{
 		RecordSetProperties: &privatedns.RecordSetProperties{
 			TTL: &arec.TTL,
 			ARecords: &[]privatedns.ARecord{
 				{Ipv4Address: &arec.Address},
 			},
+			Metadata: metadata,
 		},
 	}
 	_, err := c.client.CreateOrUpdate(ctx, zone.ResourceGroup, zone.Name, privatedns.A, arec.Name, rs, "", "")
