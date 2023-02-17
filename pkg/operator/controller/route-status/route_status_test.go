@@ -5,15 +5,38 @@ import (
 	"fmt"
 	"testing"
 
-	operatorv1 "github.com/openshift/api/operator/v1"
 	v1 "github.com/openshift/api/operator/v1"
 	routev1 "github.com/openshift/api/route/v1"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	"github.com/openshift/cluster-ingress-operator/test/unit"
 
-	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+
+	"github.com/stretchr/testify/assert"
+)
+
+var (
+	ns1Name              = "ns1"
+	ns2Name              = "ns2"
+	fooRouteNsName       = types.NamespacedName{Name: "foo-route", Namespace: ns1Name}
+	barRouteNsName       = types.NamespacedName{Name: "bar-route", Namespace: ns1Name}
+	barRouteNs2Name      = types.NamespacedName{Name: "bar-route", Namespace: ns2Name}
+	fooIcName            = "foo-ic"
+	fooIcNsName          = types.NamespacedName{Name: fooIcName, Namespace: operatorcontroller.DefaultOperatorNamespace}
+	shardLabel           = map[string]string{"type": "shard-label"}
+	notShardLabel        = map[string]string{"type": "not-shard-label"}
+	shardLabelExpression = metav1.LabelSelectorRequirement{
+		Key:      "type",
+		Operator: metav1.LabelSelectorOpIn,
+		Values:   []string{"shard-label"},
+	}
+	invalidExpression = metav1.LabelSelectorRequirement{
+		Key:      "type",
+		Operator: "invalid-operator",
+		Values:   []string{"shard-label"},
+	}
 )
 
 // Test_ClearAllRoutesStatusForIngressController verifies that ClearAllRoutesStatusForIngressController behaves correctly.
@@ -28,20 +51,15 @@ func Test_ClearAllRoutesStatusForIngressController(t *testing.T) {
 			name: "clear ingress controller foo status that admitted route test",
 			routes: routev1.RouteList{
 				Items: []routev1.Route{
-					*newRouteWithAdmittedStatuses("test", "foo-ic", "bar-ic"),
-					*newRouteWithAdmittedStatuses("test2", "baz-ic", "bar-ic"),
+					*unit.NewRouteBuilder().WithName(fooRouteNsName).WithAdmittedICs(fooIcName, "bar-ic").Build(),
+					*unit.NewRouteBuilder().WithName(barRouteNsName).WithAdmittedICs("baz-ic", "bar-ic").Build(),
 				},
 			},
-			ingressController: &operatorv1.IngressController{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "foo-ic",
-					Namespace: operatorcontroller.DefaultOperatorNamespace,
-				},
-			},
+			ingressController: unit.NewIngressControllerBuilder().WithName(fooIcNsName).Build(),
 			expectedRoutes: routev1.RouteList{
 				Items: []routev1.Route{
-					*newRouteWithAdmittedStatuses("test", "bar-ic"),
-					*newRouteWithAdmittedStatuses("test2", "baz-ic", "bar-ic"),
+					*unit.NewRouteBuilder().WithName(fooRouteNsName).WithAdmittedICs("bar-ic").Build(),
+					*unit.NewRouteBuilder().WithName(barRouteNsName).WithAdmittedICs("baz-ic", "bar-ic").Build(),
 				},
 			},
 		},
@@ -49,20 +67,15 @@ func Test_ClearAllRoutesStatusForIngressController(t *testing.T) {
 			name: "don't clear ingress controller foo status that didn't admit anything",
 			routes: routev1.RouteList{
 				Items: []routev1.Route{
-					*newRouteWithAdmittedStatuses("test", "dog-ic", "bar-ic"),
-					*newRouteWithAdmittedStatuses("test2", "baz-ic", "bar-ic"),
+					*unit.NewRouteBuilder().WithName(fooRouteNsName).WithAdmittedICs("dog-ic", "bar-ic").Build(),
+					*unit.NewRouteBuilder().WithName(barRouteNsName).WithAdmittedICs("baz-ic", "bar-ic").Build(),
 				},
 			},
-			ingressController: &operatorv1.IngressController{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "foo-ic",
-					Namespace: operatorcontroller.DefaultOperatorNamespace,
-				},
-			},
+			ingressController: unit.NewIngressControllerBuilder().WithName(fooIcNsName).Build(),
 			expectedRoutes: routev1.RouteList{
 				Items: []routev1.Route{
-					*newRouteWithAdmittedStatuses("test", "dog-ic", "bar-ic"),
-					*newRouteWithAdmittedStatuses("test2", "baz-ic", "bar-ic"),
+					*unit.NewRouteBuilder().WithName(fooRouteNsName).WithAdmittedICs("dog-ic", "bar-ic").Build(),
+					*unit.NewRouteBuilder().WithName(barRouteNsName).WithAdmittedICs("baz-ic", "bar-ic").Build(),
 				},
 			},
 		},
@@ -70,20 +83,15 @@ func Test_ClearAllRoutesStatusForIngressController(t *testing.T) {
 			name: "clear ingress controller foo status that admitted everything",
 			routes: routev1.RouteList{
 				Items: []routev1.Route{
-					*newRouteWithAdmittedStatuses("test", "foo-ic"),
-					*newRouteWithAdmittedStatuses("test2", "foo-ic"),
+					*unit.NewRouteBuilder().WithName(fooRouteNsName).WithAdmittedICs(fooIcName).Build(),
+					*unit.NewRouteBuilder().WithName(barRouteNsName).WithAdmittedICs(fooIcName).Build(),
 				},
 			},
-			ingressController: &operatorv1.IngressController{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "foo-ic",
-					Namespace: operatorcontroller.DefaultOperatorNamespace,
-				},
-			},
+			ingressController: unit.NewIngressControllerBuilder().WithName(fooIcNsName).Build(),
 			expectedRoutes: routev1.RouteList{
 				Items: []routev1.Route{
-					*newRouteWithAdmittedStatuses("test"),
-					*newRouteWithAdmittedStatuses("test2"),
+					*unit.NewRouteBuilder().WithName(fooRouteNsName).Build(),
+					*unit.NewRouteBuilder().WithName(barRouteNsName).Build(),
 				},
 			},
 		},
@@ -135,20 +143,20 @@ func Test_ClearRoutesNotAdmittedByIngress(t *testing.T) {
 			name: "don't clear anything: all IC admissions are valid",
 			routes: routev1.RouteList{
 				Items: []routev1.Route{
-					*newRouteWithLabelWithAdmittedStatuses("foo-route", "ns", "shard-label", "foo-ic", "bar-ic"),
-					*newRouteWithLabelWithAdmittedStatuses("bar-route", "ns", "shard-label", "baz-ic", "foo-ic", "bar-ic"),
+					*unit.NewRouteBuilder().WithName(fooRouteNsName).WithLabels(shardLabel).WithAdmittedICs(fooIcName, "bar-ic").Build(),
+					*unit.NewRouteBuilder().WithName(barRouteNsName).WithLabels(shardLabel).WithAdmittedICs(fooIcName, "baz-ic", "bar-ic").Build(),
 				},
 			},
 			namespace: corev1.NamespaceList{
 				Items: []corev1.Namespace{
-					*newNamespace("ns", "shard-label"),
+					*unit.NewNamespaceBuilder().WithName(ns1Name).WithLabels(shardLabel).Build(),
 				},
 			},
-			ingressController: newIngressControllerWithSelectors("foo-ic", "shard-label", "", "shard-label", ""),
+			ingressController: unit.NewIngressControllerBuilder().WithName(fooIcNsName).WithRouteSelectors(shardLabel).WithNamespaceSelectors(shardLabel).Build(),
 			expectedRoutes: routev1.RouteList{
 				Items: []routev1.Route{
-					*newRouteWithLabelWithAdmittedStatuses("foo-route", "ns", "shard-label", "foo-ic", "bar-ic"),
-					*newRouteWithLabelWithAdmittedStatuses("bar-route", "ns", "shard-label", "baz-ic", "foo-ic", "bar-ic"),
+					*unit.NewRouteBuilder().WithName(fooRouteNsName).WithLabels(shardLabel).WithAdmittedICs(fooIcName, "bar-ic").Build(),
+					*unit.NewRouteBuilder().WithName(barRouteNsName).WithLabels(shardLabel).WithAdmittedICs(fooIcName, "baz-ic", "bar-ic").Build(),
 				},
 			},
 		},
@@ -156,20 +164,20 @@ func Test_ClearRoutesNotAdmittedByIngress(t *testing.T) {
 			name: "clear route that is no longer admitted by ingress controller by routeSelectors",
 			routes: routev1.RouteList{
 				Items: []routev1.Route{
-					*newRouteWithLabelWithAdmittedStatuses("foo-route", "ns", "shard-label", "foo-ic", "bar-ic"),
-					*newRouteWithLabelWithAdmittedStatuses("bar-route", "ns", "", "baz-ic", "foo-ic", "bar-ic"),
+					*unit.NewRouteBuilder().WithName(fooRouteNsName).WithLabels(shardLabel).WithAdmittedICs(fooIcName, "bar-ic").Build(),
+					*unit.NewRouteBuilder().WithName(barRouteNsName).WithAdmittedICs(fooIcName, "baz-ic", "bar-ic").Build(),
 				},
 			},
 			namespace: corev1.NamespaceList{
 				Items: []corev1.Namespace{
-					*newNamespace("ns", ""),
+					*unit.NewNamespaceBuilder().WithName(ns1Name).Build(),
 				},
 			},
-			ingressController: newIngressControllerWithSelectors("foo-ic", "shard-label", "", "", ""),
+			ingressController: unit.NewIngressControllerBuilder().WithName(fooIcNsName).WithRouteSelectors(shardLabel).Build(),
 			expectedRoutes: routev1.RouteList{
 				Items: []routev1.Route{
-					*newRouteWithLabelWithAdmittedStatuses("foo-route", "ns", "shard-label", "foo-ic", "bar-ic"),
-					*newRouteWithLabelWithAdmittedStatuses("bar-route", "ns", "", "baz-ic", "bar-ic"),
+					*unit.NewRouteBuilder().WithName(fooRouteNsName).WithLabels(shardLabel).WithAdmittedICs(fooIcName, "bar-ic").Build(),
+					*unit.NewRouteBuilder().WithName(barRouteNsName).WithAdmittedICs("baz-ic", "bar-ic").Build(),
 				},
 			},
 		},
@@ -177,20 +185,20 @@ func Test_ClearRoutesNotAdmittedByIngress(t *testing.T) {
 			name: "clear route that is no longer admitted by ingress controller by routeSelectors expression",
 			routes: routev1.RouteList{
 				Items: []routev1.Route{
-					*newRouteWithLabelWithAdmittedStatuses("foo-route", "ns", "shard-label", "foo-ic", "bar-ic"),
-					*newRouteWithLabelWithAdmittedStatuses("bar-route", "ns", "", "baz-ic", "foo-ic", "bar-ic"),
+					*unit.NewRouteBuilder().WithName(fooRouteNsName).WithLabels(shardLabel).WithAdmittedICs(fooIcName, "bar-ic").Build(),
+					*unit.NewRouteBuilder().WithName(barRouteNsName).WithAdmittedICs(fooIcName, "baz-ic", "bar-ic").Build(),
 				},
 			},
 			namespace: corev1.NamespaceList{
 				Items: []corev1.Namespace{
-					*newNamespace("ns", ""),
+					*unit.NewNamespaceBuilder().WithName(ns1Name).Build(),
 				},
 			},
-			ingressController: newIngressControllerWithSelectors("foo-ic", "", "shard-label", "", ""),
+			ingressController: unit.NewIngressControllerBuilder().WithName(fooIcNsName).WithRouteExpressionSelector(shardLabelExpression).Build(),
 			expectedRoutes: routev1.RouteList{
 				Items: []routev1.Route{
-					*newRouteWithLabelWithAdmittedStatuses("foo-route", "ns", "shard-label", "foo-ic", "bar-ic"),
-					*newRouteWithLabelWithAdmittedStatuses("bar-route", "ns", "", "baz-ic", "bar-ic"),
+					*unit.NewRouteBuilder().WithName(fooRouteNsName).WithLabels(shardLabel).WithAdmittedICs(fooIcName, "bar-ic").Build(),
+					*unit.NewRouteBuilder().WithName(barRouteNsName).WithAdmittedICs("baz-ic", "bar-ic").Build(),
 				},
 			},
 		},
@@ -198,21 +206,21 @@ func Test_ClearRoutesNotAdmittedByIngress(t *testing.T) {
 			name: "clear route that is no longer admitted by ingress controller by namespaceSelectors",
 			routes: routev1.RouteList{
 				Items: []routev1.Route{
-					*newRouteWithLabelWithAdmittedStatuses("foo-route", "ns", "", "foo-ic", "bar-ic"),
-					*newRouteWithLabelWithAdmittedStatuses("bar-route", "ns2", "", "baz-ic", "foo-ic", "bar-ic"),
+					*unit.NewRouteBuilder().WithName(fooRouteNsName).WithAdmittedICs(fooIcName, "bar-ic").Build(),
+					*unit.NewRouteBuilder().WithName(barRouteNs2Name).WithAdmittedICs(fooIcName, "baz-ic", "bar-ic").Build(),
 				},
 			},
 			namespace: corev1.NamespaceList{
 				Items: []corev1.Namespace{
-					*newNamespace("ns", "shard-label"),
-					*newNamespace("ns2", ""),
+					*unit.NewNamespaceBuilder().WithName(ns1Name).WithLabels(shardLabel).Build(),
+					*unit.NewNamespaceBuilder().WithName(ns2Name).Build(),
 				},
 			},
-			ingressController: newIngressControllerWithSelectors("foo-ic", "", "", "shard-label", ""),
+			ingressController: unit.NewIngressControllerBuilder().WithName(fooIcNsName).WithNamespaceSelectors(shardLabel).Build(),
 			expectedRoutes: routev1.RouteList{
 				Items: []routev1.Route{
-					*newRouteWithLabelWithAdmittedStatuses("foo-route", "ns", "", "foo-ic", "bar-ic"),
-					*newRouteWithLabelWithAdmittedStatuses("bar-route", "ns2", "", "baz-ic", "bar-ic"),
+					*unit.NewRouteBuilder().WithName(fooRouteNsName).WithAdmittedICs(fooIcName, "bar-ic").Build(),
+					*unit.NewRouteBuilder().WithName(barRouteNs2Name).WithAdmittedICs("baz-ic", "bar-ic").Build(),
 				},
 			},
 		},
@@ -220,21 +228,21 @@ func Test_ClearRoutesNotAdmittedByIngress(t *testing.T) {
 			name: "clear route that is no longer admitted by ingress controller by namespaceSelectors expression",
 			routes: routev1.RouteList{
 				Items: []routev1.Route{
-					*newRouteWithLabelWithAdmittedStatuses("foo-route", "ns", "", "foo-ic", "bar-ic"),
-					*newRouteWithLabelWithAdmittedStatuses("bar-route", "ns2", "", "baz-ic", "foo-ic", "bar-ic"),
+					*unit.NewRouteBuilder().WithName(fooRouteNsName).WithAdmittedICs(fooIcName, "bar-ic").Build(),
+					*unit.NewRouteBuilder().WithName(barRouteNs2Name).WithAdmittedICs(fooIcName, "baz-ic", "bar-ic").Build(),
 				},
 			},
 			namespace: corev1.NamespaceList{
 				Items: []corev1.Namespace{
-					*newNamespace("ns", "shard-label"),
-					*newNamespace("ns2", ""),
+					*unit.NewNamespaceBuilder().WithName(ns1Name).WithLabels(shardLabel).Build(),
+					*unit.NewNamespaceBuilder().WithName(ns2Name).Build(),
 				},
 			},
-			ingressController: newIngressControllerWithSelectors("foo-ic", "", "", "", "shard-label"),
+			ingressController: unit.NewIngressControllerBuilder().WithName(fooIcNsName).WithNamespaceExpressionSelector(shardLabelExpression).Build(),
 			expectedRoutes: routev1.RouteList{
 				Items: []routev1.Route{
-					*newRouteWithLabelWithAdmittedStatuses("foo-route", "ns", "shard-label", "foo-ic", "bar-ic"),
-					*newRouteWithLabelWithAdmittedStatuses("bar-route", "ns", "", "baz-ic", "bar-ic"),
+					*unit.NewRouteBuilder().WithName(fooRouteNsName).WithAdmittedICs(fooIcName, "bar-ic").Build(),
+					*unit.NewRouteBuilder().WithName(barRouteNs2Name).WithAdmittedICs("baz-ic", "bar-ic").Build(),
 				},
 			},
 		},
@@ -247,76 +255,20 @@ func Test_ClearRoutesNotAdmittedByIngress(t *testing.T) {
 			expectedErr:       true,
 		},
 		{
-			name:      "ingress controller with invalid route selector",
-			routes:    routev1.RouteList{},
-			namespace: corev1.NamespaceList{},
-			ingressController: &operatorv1.IngressController{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test",
-					Namespace: operatorcontroller.DefaultOperatorNamespace,
-				},
-				Spec: v1.IngressControllerSpec{
-					RouteSelector: &metav1.LabelSelector{
-						MatchExpressions: []metav1.LabelSelectorRequirement{
-							{
-								Key:      "type",
-								Operator: "test",
-								Values:   []string{"test"},
-							},
-						},
-					},
-				},
-			},
-			expectedRoutes: routev1.RouteList{},
-			expectedErr:    true,
+			name:              "ingress controller with invalid route selector",
+			routes:            routev1.RouteList{},
+			namespace:         corev1.NamespaceList{},
+			ingressController: unit.NewIngressControllerBuilder().WithName(fooIcNsName).WithRouteExpressionSelector(invalidExpression).Build(),
+			expectedRoutes:    routev1.RouteList{},
+			expectedErr:       true,
 		},
 		{
-			name:      "ingress controller with invalid RouteSelector",
-			routes:    routev1.RouteList{},
-			namespace: corev1.NamespaceList{},
-			ingressController: &operatorv1.IngressController{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test",
-					Namespace: operatorcontroller.DefaultOperatorNamespace,
-				},
-				Spec: v1.IngressControllerSpec{
-					RouteSelector: &metav1.LabelSelector{
-						MatchExpressions: []metav1.LabelSelectorRequirement{
-							{
-								Key:      "type",
-								Operator: "invalid-operator",
-								Values:   []string{"test"},
-							},
-						},
-					},
-				},
-			},
-			expectedRoutes: routev1.RouteList{},
-			expectedErr:    true,
-		},
-		{
-			name:      "ingress controller with invalid NamespaceSelector",
-			routes:    routev1.RouteList{},
-			namespace: corev1.NamespaceList{},
-			ingressController: &operatorv1.IngressController{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test",
-					Namespace: operatorcontroller.DefaultOperatorNamespace,
-				},
-				Spec: v1.IngressControllerSpec{
-					NamespaceSelector: &metav1.LabelSelector{
-						MatchExpressions: []metav1.LabelSelectorRequirement{
-							{
-								Key:      "type",
-								Operator: "invalid-operator",
-								Values:   []string{"test"},
-							},
-						},
-					},
-				},
-			},
-			expectedRoutes: routev1.RouteList{},
-			expectedErr:    true,
+			name:              "ingress controller with invalid route selector",
+			routes:            routev1.RouteList{},
+			namespace:         corev1.NamespaceList{},
+			ingressController: unit.NewIngressControllerBuilder().WithName(fooIcNsName).WithNamespaceExpressionSelector(invalidExpression).Build(),
+			expectedRoutes:    routev1.RouteList{},
+			expectedErr:       true,
 		},
 	}
 
@@ -373,59 +325,41 @@ func Test_IsRouteStatusAdmitted(t *testing.T) {
 		expectedResult        bool
 	}{
 		{
-			name:                  "route admitted by default",
-			route:                 *newRouteWithAdmittedStatuses("foo-route", "default-ic"),
-			ingressControllerName: "default-ic",
+			name:                  "route admitted",
+			route:                 *unit.NewRouteBuilder().WithName(fooRouteNsName).WithAdmittedICs(fooIcName).Build(),
+			ingressControllerName: fooIcName,
 			expectedResult:        true,
 		},
 		{
-			name: "route not admitted by sharded",
+			name:                  "route with false admitted condition",
+			route:                 *unit.NewRouteBuilder().WithName(fooRouteNsName).WithUnAdmittedICs(fooIcName).Build(),
+			ingressControllerName: fooIcName,
+			expectedResult:        false,
+		},
+		{
+			name:                  "route admitted by foo, not admitted by bar",
+			route:                 *unit.NewRouteBuilder().WithName(fooRouteNsName).WithAdmittedICs(fooIcName).Build(),
+			ingressControllerName: "bar-ic",
+			expectedResult:        false,
+		},
+		{
+			name: "route not admitted without conditions",
 			route: routev1.Route{
 				Status: routev1.RouteStatus{
 					Ingress: []routev1.RouteIngress{
 						{
-							RouterName: "sharded",
-							Conditions: []routev1.RouteIngressCondition{
-								{
-									Type:   routev1.RouteAdmitted,
-									Status: corev1.ConditionFalse,
-								},
-							},
+							RouterName: fooIcName,
 						},
 					},
 				},
 			},
-			ingressControllerName: "sharded",
+			ingressControllerName: fooIcName,
 			expectedResult:        false,
 		},
 		{
-			name:                  "route admitted by default, not admitted by sharded",
-			route:                 *newRouteWithAdmittedStatuses("foo-route", "default-ic"),
-			ingressControllerName: "sharded",
-			expectedResult:        false,
-		},
-		{
-			name: "route not admitted by sharded without Conditions",
-			route: routev1.Route{
-				Status: routev1.RouteStatus{
-					Ingress: []routev1.RouteIngress{
-						{
-							RouterName: "sharded",
-						},
-					},
-				},
-			},
-			ingressControllerName: "sharded",
-			expectedResult:        false,
-		},
-		{
-			name: "route not admitted by any shard",
-			route: routev1.Route{
-				Status: routev1.RouteStatus{
-					Ingress: []routev1.RouteIngress{},
-				},
-			},
-			ingressControllerName: "default-ic",
+			name:                  "route not admitted by any ic",
+			route:                 *unit.NewRouteBuilder().WithName(fooRouteNsName).Build(),
+			ingressControllerName: fooIcName,
 			expectedResult:        false,
 		},
 	}
@@ -447,11 +381,11 @@ func Test_IsInvalidSelectorError(t *testing.T) {
 		expectedInvalidSelectorError bool
 	}{
 		{
-			name:  "Is not InvalidSelectorError",
+			name:  "is not InvalidSelectorError",
 			error: fmt.Errorf("not InvalidSelectorError"),
 		},
 		{
-			name:  "Is InvalidSelectorError",
+			name:  "is InvalidSelectorError",
 			error: &InvalidSelectorError{"InvalidSelectorError"},
 		},
 	}
@@ -463,102 +397,4 @@ func Test_IsInvalidSelectorError(t *testing.T) {
 			}
 		})
 	}
-}
-
-// newIngressControllerWithSelectors returns a new ingresscontroller with the specified name,
-// routeSelectors, and namespaceSelectors based on the parameters.
-func newIngressControllerWithSelectors(name, routeMatchLabel, routeMatchExpression, namespaceMatchLabel, namespaceMatchExpression string) *operatorv1.IngressController {
-	ingresscontroller := operatorv1.IngressController{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: operatorcontroller.DefaultOperatorNamespace,
-		},
-	}
-	if len(routeMatchLabel) != 0 {
-		ingresscontroller.Spec.RouteSelector = &metav1.LabelSelector{
-			MatchLabels: map[string]string{
-				"type": routeMatchLabel,
-			},
-		}
-	}
-	if len(routeMatchExpression) != 0 {
-		ingresscontroller.Spec.RouteSelector = &metav1.LabelSelector{
-			MatchExpressions: []metav1.LabelSelectorRequirement{
-				{
-					Key:      "type",
-					Operator: metav1.LabelSelectorOpIn,
-					Values:   []string{routeMatchExpression},
-				},
-			},
-		}
-	}
-	if len(namespaceMatchLabel) != 0 {
-		ingresscontroller.Spec.NamespaceSelector = &metav1.LabelSelector{
-			MatchLabels: map[string]string{
-				"type": namespaceMatchLabel,
-			},
-		}
-	}
-	if len(namespaceMatchExpression) != 0 {
-		ingresscontroller.Spec.NamespaceSelector = &metav1.LabelSelector{
-			MatchExpressions: []metav1.LabelSelectorRequirement{
-				{
-					Key:      "type",
-					Operator: metav1.LabelSelectorOpIn,
-					Values:   []string{namespaceMatchExpression},
-				},
-			},
-		}
-	}
-	return &ingresscontroller
-}
-
-// newNamespace returns a new namespace with the specified name
-// and if label exists, with that label
-func newNamespace(name, label string) *corev1.Namespace {
-	namespace := corev1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: name,
-		},
-	}
-	if len(label) != 0 {
-		namespace.ObjectMeta.Labels = map[string]string{"type": label}
-	}
-	return &namespace
-}
-
-// newRouteWithLabelWithAdmittedStatuses returns a new route that is admitted by ingress controllers
-// and has the "type" label set with the specified value.
-func newRouteWithLabelWithAdmittedStatuses(name, namespace, label string, icAdmitted ...string) *routev1.Route {
-	route := newRouteWithAdmittedStatuses(name, icAdmitted...)
-	route.ObjectMeta.Namespace = namespace
-	if len(label) != 0 {
-		route.Labels = map[string]string{
-			"type": label,
-		}
-	}
-	return route
-}
-
-// newRouteWithAdmittedStatuses returns a new route that is admitted by ingress controllers.
-func newRouteWithAdmittedStatuses(name string, icAdmitted ...string) *routev1.Route {
-	route := routev1.Route{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: name,
-		},
-	}
-	if len(icAdmitted) != 0 {
-		for _, ic := range icAdmitted {
-			route.Status.Ingress = append(route.Status.Ingress, routev1.RouteIngress{
-				RouterName: ic,
-				Conditions: []routev1.RouteIngressCondition{
-					{
-						Type:   routev1.RouteAdmitted,
-						Status: "True",
-					},
-				},
-			})
-		}
-	}
-	return &route
 }

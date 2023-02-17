@@ -2,28 +2,27 @@ package routestatus
 
 import (
 	"context"
+	"testing"
+
 	v12 "github.com/openshift/api/operator/v1"
 	routev1 "github.com/openshift/api/route/v1"
 	"github.com/openshift/cluster-ingress-operator/test/unit"
-	"github.com/stretchr/testify/assert"
+
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // Test_Reconcile verifies Reconcile behaves as expected.
 // Note: This effectively tests clearStaleRouteAdmittedStatus as well.
 func Test_Reconcile(t *testing.T) {
-	routeName := "route"
-	routeNs := "ns"
 	reconcileRequestRoute := reconcile.Request{
-		NamespacedName: types.NamespacedName{
-			Name:      routeName,
-			Namespace: routeNs,
-		},
+		NamespacedName: fooRouteNsName,
 	}
+
 	testCases := []struct {
 		name              string
 		route             *routev1.Route
@@ -33,107 +32,107 @@ func Test_Reconcile(t *testing.T) {
 	}{
 		{
 			name:              "don't clear admitted status with no routeSelector and no namespaceSelector with route with no labels in namespace with no labels",
-			route:             newRouteWithLabelWithAdmittedStatuses(routeName, routeNs, "", "default-ic"),
-			namespace:         newNamespace(routeNs, ""),
-			ingressController: newIngressControllerWithSelectors("default-ic", "", "", "", ""),
-			expectedRoute:     newRouteWithLabelWithAdmittedStatuses(routeName, routeNs, "", "default-ic"),
+			route:             unit.NewRouteBuilder().WithName(fooRouteNsName).WithAdmittedICs(fooIcNsName.Name).Build(),
+			namespace:         unit.NewNamespaceBuilder().WithName(ns1Name).Build(),
+			ingressController: unit.NewIngressControllerBuilder().WithName(fooIcNsName).Build(),
+			expectedRoute:     unit.NewRouteBuilder().WithName(fooRouteNsName).WithAdmittedICs(fooIcNsName.Name).Build(),
 		},
 		{
 			name:              "don't clear admitted status with no routeSelector and no namespaceSelector with route with labels in namespace with no labels",
-			route:             newRouteWithLabelWithAdmittedStatuses(routeName, routeNs, "shard-label", "default-ic"),
-			namespace:         newNamespace(routeNs, ""),
-			ingressController: newIngressControllerWithSelectors("default-ic", "", "", "", ""),
-			expectedRoute:     newRouteWithLabelWithAdmittedStatuses(routeName, routeNs, "shard-label", "default-ic"),
+			route:             unit.NewRouteBuilder().WithName(fooRouteNsName).WithLabels(shardLabel).WithAdmittedICs(fooIcNsName.Name).Build(),
+			namespace:         unit.NewNamespaceBuilder().WithName(ns1Name).Build(),
+			ingressController: unit.NewIngressControllerBuilder().WithName(fooIcNsName).Build(),
+			expectedRoute:     unit.NewRouteBuilder().WithName(fooRouteNsName).WithLabels(shardLabel).WithAdmittedICs(fooIcNsName.Name).Build(),
 		},
 		{
 			name:              "don't clear admitted status with no routeSelector and no namespaceSelector with route with no labels in namespace with labels",
-			route:             newRouteWithLabelWithAdmittedStatuses(routeName, routeNs, "", "default-ic"),
-			namespace:         newNamespace(routeNs, "shard-label"),
-			ingressController: newIngressControllerWithSelectors("default-ic", "", "", "", ""),
-			expectedRoute:     newRouteWithLabelWithAdmittedStatuses(routeName, routeNs, "", "default-ic"),
+			route:             unit.NewRouteBuilder().WithName(fooRouteNsName).WithAdmittedICs(fooIcNsName.Name).Build(),
+			namespace:         unit.NewNamespaceBuilder().WithName(ns1Name).WithLabels(shardLabel).Build(),
+			ingressController: unit.NewIngressControllerBuilder().WithName(fooIcNsName).Build(),
+			expectedRoute:     unit.NewRouteBuilder().WithName(fooRouteNsName).WithAdmittedICs(fooIcNsName.Name).Build(),
 		},
 		{
 			name:              "don't clear admitted status with routeSelector and no namespaceSelector with route with matching labels in namespace with no labels",
-			route:             newRouteWithLabelWithAdmittedStatuses(routeName, routeNs, "shard-label", "default-ic"),
-			namespace:         newNamespace(routeNs, ""),
-			ingressController: newIngressControllerWithSelectors("default-ic", "shard-label", "", "", ""),
-			expectedRoute:     newRouteWithLabelWithAdmittedStatuses(routeName, routeNs, "shard-label", "default-ic"),
+			route:             unit.NewRouteBuilder().WithName(fooRouteNsName).WithLabels(shardLabel).WithAdmittedICs(fooIcNsName.Name).Build(),
+			namespace:         unit.NewNamespaceBuilder().WithName(ns1Name).Build(),
+			ingressController: unit.NewIngressControllerBuilder().WithName(fooIcNsName).WithRouteSelectors(shardLabel).Build(),
+			expectedRoute:     unit.NewRouteBuilder().WithName(fooRouteNsName).WithLabels(shardLabel).WithAdmittedICs(fooIcNsName.Name).Build(),
 		},
 		{
 			name:              "clear stale admitted status with routeSelector and no namespaceSelector with route with no labels in namespace with no labels",
-			route:             newRouteWithLabelWithAdmittedStatuses(routeName, routeNs, "", "default-ic"),
-			namespace:         newNamespace(routeNs, ""),
-			ingressController: newIngressControllerWithSelectors("default-ic", "shard-label", "", "", ""),
-			expectedRoute:     newRouteWithLabelWithAdmittedStatuses(routeName, routeNs, ""),
+			route:             unit.NewRouteBuilder().WithName(fooRouteNsName).WithAdmittedICs(fooIcNsName.Name).Build(),
+			namespace:         unit.NewNamespaceBuilder().WithName(ns1Name).Build(),
+			ingressController: unit.NewIngressControllerBuilder().WithName(fooIcNsName).WithRouteSelectors(shardLabel).Build(),
+			expectedRoute:     unit.NewRouteBuilder().WithName(fooRouteNsName).Build(),
 		},
 		{
 			name:              "clear stale admitted status with routeSelector and no namespaceSelector with route with different labels in namespace with no labels",
-			route:             newRouteWithLabelWithAdmittedStatuses(routeName, routeNs, "not-shard-label", "default-ic"),
-			namespace:         newNamespace(routeNs, ""),
-			ingressController: newIngressControllerWithSelectors("default-ic", "shard-label", "", "", ""),
-			expectedRoute:     newRouteWithLabelWithAdmittedStatuses(routeName, routeNs, "not-shard-label"),
+			route:             unit.NewRouteBuilder().WithName(fooRouteNsName).WithLabels(notShardLabel).WithAdmittedICs(fooIcNsName.Name).Build(),
+			namespace:         unit.NewNamespaceBuilder().WithName(ns1Name).Build(),
+			ingressController: unit.NewIngressControllerBuilder().WithName(fooIcNsName).WithRouteSelectors(shardLabel).Build(),
+			expectedRoute:     unit.NewRouteBuilder().WithName(fooRouteNsName).WithLabels(notShardLabel).Build(),
 		},
 		{
 			name:              "don't clear admitted status with routeSelector and namespaceSelector with route with matching labels in namespace with matching labels",
-			route:             newRouteWithLabelWithAdmittedStatuses(routeName, routeNs, "shard-label", "default-ic"),
-			namespace:         newNamespace(routeNs, "shard-label"),
-			ingressController: newIngressControllerWithSelectors("default-ic", "shard-label", "", "shard-label", ""),
-			expectedRoute:     newRouteWithLabelWithAdmittedStatuses(routeName, routeNs, "shard-label", "default-ic"),
+			route:             unit.NewRouteBuilder().WithName(fooRouteNsName).WithLabels(shardLabel).WithAdmittedICs(fooIcNsName.Name).Build(),
+			namespace:         unit.NewNamespaceBuilder().WithName(ns1Name).WithLabels(shardLabel).Build(),
+			ingressController: unit.NewIngressControllerBuilder().WithName(fooIcNsName).WithRouteSelectors(shardLabel).WithNamespaceSelectors(shardLabel).Build(),
+			expectedRoute:     unit.NewRouteBuilder().WithName(fooRouteNsName).WithLabels(shardLabel).WithAdmittedICs(fooIcNsName.Name).Build(),
 		},
 		{
 			name:              "clear stale admitted status with routeSelector and namespaceSelector with route with different labels in namespace with matching labels",
-			route:             newRouteWithLabelWithAdmittedStatuses(routeName, routeNs, "not-shard-label", "default-ic"),
-			namespace:         newNamespace(routeNs, "shard-label"),
-			ingressController: newIngressControllerWithSelectors("default-ic", "shard-label", "", "shard-label", ""),
-			expectedRoute:     newRouteWithLabelWithAdmittedStatuses(routeName, routeNs, "not-shard-label"),
+			route:             unit.NewRouteBuilder().WithName(fooRouteNsName).WithLabels(notShardLabel).WithAdmittedICs(fooIcNsName.Name).Build(),
+			namespace:         unit.NewNamespaceBuilder().WithName(ns1Name).WithLabels(shardLabel).Build(),
+			ingressController: unit.NewIngressControllerBuilder().WithName(fooIcNsName).WithRouteSelectors(shardLabel).WithNamespaceSelectors(shardLabel).Build(),
+			expectedRoute:     unit.NewRouteBuilder().WithName(fooRouteNsName).WithLabels(notShardLabel).Build(),
 		},
 		{
 			name:              "clear stale admitted status with routeSelector and namespaceSelector with route with matching labels in namespace with different labels",
-			route:             newRouteWithLabelWithAdmittedStatuses(routeName, routeNs, "shard-label", "default-ic"),
-			namespace:         newNamespace(routeNs, "not-shard-label"),
-			ingressController: newIngressControllerWithSelectors("default-ic", "shard-label", "", "shard-label", ""),
-			expectedRoute:     newRouteWithLabelWithAdmittedStatuses(routeName, routeNs, "shard-label"),
+			route:             unit.NewRouteBuilder().WithName(fooRouteNsName).WithLabels(shardLabel).WithAdmittedICs(fooIcNsName.Name).Build(),
+			namespace:         unit.NewNamespaceBuilder().WithName(ns1Name).WithLabels(notShardLabel).Build(),
+			ingressController: unit.NewIngressControllerBuilder().WithName(fooIcNsName).WithRouteSelectors(shardLabel).WithNamespaceSelectors(shardLabel).Build(),
+			expectedRoute:     unit.NewRouteBuilder().WithName(fooRouteNsName).WithLabels(shardLabel).Build(),
 		},
 		{
 			name:              "don't clear admitted status with expression routeSelector and no namespaceSelector with route with matching labels in namespace with no labels",
-			route:             newRouteWithLabelWithAdmittedStatuses(routeName, routeNs, "shard-label", "default-ic"),
-			namespace:         newNamespace(routeNs, ""),
-			ingressController: newIngressControllerWithSelectors("default-ic", "", "shard-label", "", ""),
-			expectedRoute:     newRouteWithLabelWithAdmittedStatuses(routeName, routeNs, "shard-label", "default-ic"),
+			route:             unit.NewRouteBuilder().WithName(fooRouteNsName).WithLabels(shardLabel).WithAdmittedICs(fooIcNsName.Name).Build(),
+			namespace:         unit.NewNamespaceBuilder().WithName(ns1Name).Build(),
+			ingressController: unit.NewIngressControllerBuilder().WithName(fooIcNsName).WithRouteExpressionSelector(shardLabelExpression).Build(),
+			expectedRoute:     unit.NewRouteBuilder().WithName(fooRouteNsName).WithLabels(shardLabel).WithAdmittedICs(fooIcNsName.Name).Build(),
 		},
 		{
 			name:              "clear stale admitted status with expression routeSelector and no namespaceSelector with route with different labels in namespace with no labels",
-			route:             newRouteWithLabelWithAdmittedStatuses(routeName, routeNs, "not-shard-label", "default-ic"),
-			namespace:         newNamespace(routeNs, ""),
-			ingressController: newIngressControllerWithSelectors("default-ic", "", "shard-label", "", ""),
-			expectedRoute:     newRouteWithLabelWithAdmittedStatuses(routeName, routeNs, "not-shard-label"),
+			route:             unit.NewRouteBuilder().WithName(fooRouteNsName).WithLabels(notShardLabel).WithAdmittedICs(fooIcNsName.Name).Build(),
+			namespace:         unit.NewNamespaceBuilder().WithName(ns1Name).Build(),
+			ingressController: unit.NewIngressControllerBuilder().WithName(fooIcNsName).WithRouteExpressionSelector(shardLabelExpression).Build(),
+			expectedRoute:     unit.NewRouteBuilder().WithName(fooRouteNsName).WithLabels(notShardLabel).Build(),
 		},
 		{
 			name:              "don't clear admitted status with no routeSelector and expression namespaceSelector with route with matching labels in namespace with matching labels",
-			route:             newRouteWithLabelWithAdmittedStatuses(routeName, routeNs, "", "default-ic"),
-			namespace:         newNamespace(routeNs, "shard-label"),
-			ingressController: newIngressControllerWithSelectors("default-ic", "", "", "", "shard-label"),
-			expectedRoute:     newRouteWithLabelWithAdmittedStatuses(routeName, routeNs, "", "default-ic"),
+			route:             unit.NewRouteBuilder().WithName(fooRouteNsName).WithAdmittedICs(fooIcNsName.Name).Build(),
+			namespace:         unit.NewNamespaceBuilder().WithName(ns1Name).WithLabels(shardLabel).Build(),
+			ingressController: unit.NewIngressControllerBuilder().WithName(fooIcNsName).WithNamespaceExpressionSelector(shardLabelExpression).Build(),
+			expectedRoute:     unit.NewRouteBuilder().WithName(fooRouteNsName).WithAdmittedICs(fooIcNsName.Name).Build(),
 		},
 		{
 			name:              "clear stale admitted status with no routeSelector and expression namespaceSelector with route with no labels in namespace with different labels",
-			route:             newRouteWithLabelWithAdmittedStatuses(routeName, routeNs, "", "default-ic"),
-			namespace:         newNamespace(routeNs, "not-shard-label"),
-			ingressController: newIngressControllerWithSelectors("default-ic", "", "", "", "shard-label"),
-			expectedRoute:     newRouteWithLabelWithAdmittedStatuses(routeName, routeNs, ""),
+			route:             unit.NewRouteBuilder().WithName(fooRouteNsName).WithAdmittedICs(fooIcNsName.Name).Build(),
+			namespace:         unit.NewNamespaceBuilder().WithName(ns1Name).WithLabels(notShardLabel).Build(),
+			ingressController: unit.NewIngressControllerBuilder().WithName(fooIcNsName).WithNamespaceExpressionSelector(shardLabelExpression).Build(),
+			expectedRoute:     unit.NewRouteBuilder().WithName(fooRouteNsName).Build(),
 		},
 		{
 			name:              "route is nil",
 			route:             nil,
-			namespace:         newNamespace(routeNs, "not-shard-label"),
-			ingressController: newIngressControllerWithSelectors("default-ic", "", "", "", "shard-label"),
+			namespace:         unit.NewNamespaceBuilder().WithName(fooRouteNsName.Name).Build(),
+			ingressController: unit.NewIngressControllerBuilder().WithName(fooIcNsName).Build(),
 		},
 		{
-			name:              "admitted by ingress controller that doesn't exist anymore",
-			route:             newRouteWithLabelWithAdmittedStatuses(routeName, routeNs, "", "missing-ic"),
-			namespace:         newNamespace(routeNs, "shard-label"),
+			name:              "don't clear admitted by ingress controller that doesn't exist anymore",
+			route:             unit.NewRouteBuilder().WithName(fooRouteNsName).WithAdmittedICs("missing-ic").Build(),
+			namespace:         unit.NewNamespaceBuilder().WithName(ns1Name).Build(),
 			ingressController: nil,
-			expectedRoute:     newRouteWithLabelWithAdmittedStatuses(routeName, "ns", "", "missing-ic"),
+			expectedRoute:     unit.NewRouteBuilder().WithName(fooRouteNsName).WithAdmittedICs("missing-ic").Build(),
 		},
 	}
 
