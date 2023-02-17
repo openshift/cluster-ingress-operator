@@ -2,6 +2,7 @@ package routestatus
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -366,6 +367,32 @@ func Test_IsRouteStatusAdmitted(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if actualResult := IsRouteStatusAdmitted(tc.route, tc.ingressControllerName); actualResult != tc.expectedResult {
 				t.Errorf("expected result %v, got %v", tc.expectedResult, actualResult)
+			}
+		})
+	}
+}
+
+// Test_IsInvalidSelectorError verifies that IsInvalidSelectorError behaves correctly.
+func Test_IsInvalidSelectorError(t *testing.T) {
+	testCases := []struct {
+		name                         string
+		error                        error
+		expectedInvalidSelectorError bool
+	}{
+		{
+			name:  "Is not InvalidSelectorError",
+			error: fmt.Errorf("not InvalidSelectorError"),
+		},
+		{
+			name:  "Is InvalidSelectorError",
+			error: &InvalidSelectorError{"InvalidSelectorError"},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if isInvalidSelectorError := IsInvalidSelectorError(tc.error); tc.expectedInvalidSelectorError && !isInvalidSelectorError {
+				t.Errorf("expected InvalidSelectorError, was not InvalidSelectorError")
 			}
 		})
 	}

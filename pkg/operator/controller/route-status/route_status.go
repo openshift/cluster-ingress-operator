@@ -2,6 +2,7 @@ package routestatus
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -40,6 +41,14 @@ import (
 //    - When the namespace labels are updated, the operator will reconcile all the routes in the namespace and clean up
 //      stale route statuses.
 //    - Handled by the route-status control loop.
+
+// InvalidSelectorError is an error type for namespace or route selector errors.
+type InvalidSelectorError struct {
+	msg string // description of error
+}
+
+// Error returns the message describing the invalid selector.
+func (e *InvalidSelectorError) Error() string { return e.msg }
 
 // ClearAllRoutesStatusForIngressController clears any route status that has been admitted by the ingress controller,
 // regardless if it is actually admitted or not. This function should be used for deletions of ingress controllers.
@@ -252,8 +261,7 @@ func GetNamespacesSelectedByIngressController(ctx context.Context, kclient clien
 	if ic.Spec.NamespaceSelector != nil {
 		namespaceSelector, err := metav1.LabelSelectorAsSelector(ic.Spec.NamespaceSelector)
 		if err != nil {
-			return nil, fmt.Errorf("ingresscontroller %s has an invalid namespace selector %q: %w",
-				ic.Name, ic.Spec.NamespaceSelector, err)
+			return nil, &InvalidSelectorError{err.Error()}
 		}
 		namespaceMatchingLabelsSelector = client.MatchingLabelsSelector{Selector: namespaceSelector}
 	}
@@ -280,8 +288,7 @@ func GetRoutesSelectedByIngressController(ctx context.Context, kclient client.Re
 	if ic.Spec.RouteSelector != nil {
 		routeSelector, err := metav1.LabelSelectorAsSelector(ic.Spec.RouteSelector)
 		if err != nil {
-			return routev1.RouteList{}, fmt.Errorf("ingresscontroller %s has an invalid route selector %q: %w",
-				ic.Name, ic.Spec.RouteSelector, err)
+			return routev1.RouteList{}, &InvalidSelectorError{err.Error()}
 		}
 		routeMatchingLabelsSelector = client.MatchingLabelsSelector{Selector: routeSelector}
 	}
@@ -290,6 +297,12 @@ func GetRoutesSelectedByIngressController(ctx context.Context, kclient client.Re
 		return routev1.RouteList{}, fmt.Errorf("failed to list routes for the ingresscontroller %s: %w", ic.Name, err)
 	}
 	return routeList, nil
+}
+
+// IsInvalidSelectorError determines if an error returned is of type InvalidSelectorError.
+func IsInvalidSelectorError(err error) bool {
+	invalidSelectorError := &InvalidSelectorError{}
+	return errors.As(err, &invalidSelectorError)
 }
 
 // findCondition locates the first condition that corresponds to the requested type.
