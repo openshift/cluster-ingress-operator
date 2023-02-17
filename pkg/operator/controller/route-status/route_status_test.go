@@ -201,7 +201,7 @@ func Test_ClearRoutesNotAdmittedByIngress(t *testing.T) {
 			name: "clear route that is no longer admitted by ingress controller by namespaceSelectors",
 			routes: routev1.RouteList{
 				Items: []routev1.Route{
-					*newRouteWithLabelWithAdmittedStatuses("foo-route", "ns", "shard-label", "foo-ic", "bar-ic"),
+					*newRouteWithLabelWithAdmittedStatuses("foo-route", "ns", "", "foo-ic", "bar-ic"),
 					*newRouteWithLabelWithAdmittedStatuses("bar-route", "ns2", "", "baz-ic", "foo-ic", "bar-ic"),
 				},
 			},
@@ -211,10 +211,10 @@ func Test_ClearRoutesNotAdmittedByIngress(t *testing.T) {
 					*newNamespace("ns2", ""),
 				},
 			},
-			ingressController: newIngressControllerWithSelectors("foo-ic", "shard-label", "", "shard-label", ""),
+			ingressController: newIngressControllerWithSelectors("foo-ic", "", "", "shard-label", ""),
 			expectedRoutes: routev1.RouteList{
 				Items: []routev1.Route{
-					*newRouteWithLabelWithAdmittedStatuses("foo-route", "ns", "shard-label", "foo-ic", "bar-ic"),
+					*newRouteWithLabelWithAdmittedStatuses("foo-route", "ns", "", "foo-ic", "bar-ic"),
 					*newRouteWithLabelWithAdmittedStatuses("bar-route", "ns", "", "baz-ic", "bar-ic"),
 				},
 			},
@@ -223,7 +223,7 @@ func Test_ClearRoutesNotAdmittedByIngress(t *testing.T) {
 			name: "clear route that is no longer admitted by ingress controller by namespaceSelectors expression",
 			routes: routev1.RouteList{
 				Items: []routev1.Route{
-					*newRouteWithLabelWithAdmittedStatuses("foo-route", "ns", "shard-label", "foo-ic", "bar-ic"),
+					*newRouteWithLabelWithAdmittedStatuses("foo-route", "ns", "", "foo-ic", "bar-ic"),
 					*newRouteWithLabelWithAdmittedStatuses("bar-route", "ns2", "", "baz-ic", "foo-ic", "bar-ic"),
 				},
 			},
@@ -233,10 +233,10 @@ func Test_ClearRoutesNotAdmittedByIngress(t *testing.T) {
 					*newNamespace("ns2", ""),
 				},
 			},
-			ingressController: newIngressControllerWithSelectors("foo-ic", "shard-label", "", "", "shard-label"),
+			ingressController: newIngressControllerWithSelectors("foo-ic", "", "", "", "shard-label"),
 			expectedRoutes: routev1.RouteList{
 				Items: []routev1.Route{
-					*newRouteWithLabelWithAdmittedStatuses("foo-route", "ns", "shard-label", "foo-ic", "bar-ic"),
+					*newRouteWithLabelWithAdmittedStatuses("foo-route", "ns", "", "foo-ic", "bar-ic"),
 					*newRouteWithLabelWithAdmittedStatuses("bar-route", "ns", "", "baz-ic", "bar-ic"),
 				},
 			},

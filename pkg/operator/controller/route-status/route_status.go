@@ -116,9 +116,13 @@ func ClearRoutesNotAdmittedByIngress(kclient client.Client, ingress *operatorv1.
 	}
 
 	// List routes filtered by our ingress's route selector.
-	routeSelector, err := metav1.LabelSelectorAsSelector(ingress.Spec.RouteSelector)
-	if err != nil {
-		return append(errs, fmt.Errorf("ingresscontroller %s has an invalid route selector: %w", ingress.Name, err))
+	routeMatchingLabelsSelector := client.MatchingLabelsSelector{Selector: labels.Everything()}
+	if ingress.Spec.RouteSelector != nil {
+		routeSelector, err := metav1.LabelSelectorAsSelector(ingress.Spec.RouteSelector)
+		if err != nil {
+			return append(errs, fmt.Errorf("ingresscontroller %s has an invalid route selector: %w", ingress.Name, err))
+		}
+		routeMatchingLabelsSelector = client.MatchingLabelsSelector{Selector: routeSelector}
 	}
 
 	// Iterate over the entire route list and clear if either the route selector OR the namespace selector does not
@@ -127,7 +131,7 @@ func ClearRoutesNotAdmittedByIngress(kclient client.Client, ingress *operatorv1.
 	for i := range routeList.Items {
 		route := &routeList.Items[i]
 
-		routeInShard := routeSelector.Matches(labels.Set(route.Labels))
+		routeInShard := routeMatchingLabelsSelector.Matches(labels.Set(route.Labels))
 		namespaceInShard := namespacesInShard.Has(route.Namespace)
 
 		if !routeInShard || !namespaceInShard {
