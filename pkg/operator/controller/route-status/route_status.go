@@ -12,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -159,7 +160,7 @@ func ClearRoutesNotAdmittedByIngress(ctx context.Context, kclient client.Client,
 
 // clearStaleRouteAdmittedStatus cleans up a single route's admitted status by verifying it is actually admitted by
 // the ingress controller its status claims to be admitted by.
-func clearStaleRouteAdmittedStatus(ctx context.Context, kclient client.Client, route *routev1.Route) error {
+func clearStaleRouteAdmittedStatus(ctx context.Context, kclient client.Client, kcache cache.Cache, route *routev1.Route) error {
 	if route == nil {
 		return fmt.Errorf("route is nil")
 	}
@@ -171,7 +172,7 @@ func clearStaleRouteAdmittedStatus(ctx context.Context, kclient client.Client, r
 				// Get the ingress controller that this route status claims to be admitted by.
 				icName := types.NamespacedName{Name: ri.RouterName, Namespace: operatorcontroller.DefaultOperatorNamespace}
 				ic := &operatorv1.IngressController{}
-				if err := kclient.Get(ctx, icName, ic); err != nil {
+				if err := kcache.Get(ctx, icName, ic); err != nil {
 					// If the Ingress Controller doesn't exist at all, skip status clear, as it should have been cleared
 					// upon Ingress Controller deletion. If it made it here, then it's probably a router status test.
 					if kerrors.IsNotFound(err) {
@@ -181,7 +182,7 @@ func clearStaleRouteAdmittedStatus(ctx context.Context, kclient client.Client, r
 				}
 
 				// If it is no longer admitted by this ingress controller, clear the status.
-				if admitted, err := isRouteAdmittedByIngressController(ctx, kclient, route, ic); err != nil {
+				if admitted, err := isRouteAdmittedByIngressController(ctx, kcache, route, ic); err != nil {
 					return err
 				} else if !admitted {
 					ClearRouteStatus(ctx, kclient, route, ri.RouterName)
