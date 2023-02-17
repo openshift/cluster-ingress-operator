@@ -919,7 +919,7 @@ func (r *reconciler) ensureIngressDeleted(ingress *operatorv1.IngressController)
 			} else if allDeleted {
 				// Deployment has been deleted and there are no more pods left.
 				// Clear all routes status for this ingress controller.
-				statusErrs := routestatus.ClearAllRoutesStatusForIngressController(r.client, ingress.ObjectMeta.Name)
+				statusErrs := routestatus.ClearAllRoutesStatusForIngressController(context.TODO(), r.client, ingress.ObjectMeta.Name)
 				errs = append(errs, statusErrs...)
 			} else {
 				errs = append(errs, retryable.New(fmt.Errorf("not all router pods have been deleted for %s/%s", ingress.Namespace, ingress.Name), 15*time.Second))
@@ -1171,7 +1171,7 @@ func (r *reconciler) syncRouteStatusWithSelectorChange(ic *operatorv1.IngressCon
 			return []error{err}
 		} else if done {
 			// Clear routes status not admitted by this ingress controller.
-			if errs := routestatus.ClearRoutesNotAdmittedByIngress(r.client, ic); len(errs) > 0 {
+			if errs := routestatus.ClearRoutesNotAdmittedByIngress(context.TODO(), r.client, ic); len(errs) > 0 {
 				return errs
 			}
 

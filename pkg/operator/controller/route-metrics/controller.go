@@ -164,13 +164,13 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	}
 
 	// List all the Namespaces filtered by our ingress's Namespace selector.
-	namespacesInShard, err := routestatus.GetNamespacesSelectedByIngressController(r.cache, ingressController)
+	namespacesInShard, err := routestatus.GetNamespacesSelectedByIngressController(ctx, r.cache, ingressController)
 	if err != nil {
 		return reconcile.Result{}, err
 	}
 
 	// List all the Namespaces filtered by our ingress's Namespace selector.
-	routesInShard, err := routestatus.GetRoutesSelectedByIngressController(r.cache, ingressController)
+	routesInShard, err := routestatus.GetRoutesSelectedByIngressController(ctx, r.cache, ingressController)
 	if err != nil {
 		return reconcile.Result{}, err
 	}

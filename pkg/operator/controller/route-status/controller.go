@@ -102,7 +102,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	}
 
 	// Validate and clean up route status for given route if any status is stale.
-	if err := clearStaleRouteAdmittedStatus(r.client, route); err != nil {
+	if err := clearStaleRouteAdmittedStatus(ctx, r.client, route); err != nil {
 		return reconcile.Result{}, err
 	}
 

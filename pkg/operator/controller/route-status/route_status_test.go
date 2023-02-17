@@ -99,7 +99,7 @@ func Test_ClearAllRoutesStatusForIngressController(t *testing.T) {
 				}
 			}
 
-			if errs := ClearAllRoutesStatusForIngressController(client, tc.ingressController.Name); tc.expectedErr && len(errs) == 0 {
+			if errs := ClearAllRoutesStatusForIngressController(context.Background(), client, tc.ingressController.Name); tc.expectedErr && len(errs) == 0 {
 				t.Errorf("expected errors, got no errors")
 			} else if !tc.expectedErr && len(errs) != 0 {
 				t.Errorf("did not expected errors: %v", errs)
@@ -271,7 +271,7 @@ func Test_ClearRoutesNotAdmittedByIngress(t *testing.T) {
 				}
 			}
 
-			if errs := ClearRoutesNotAdmittedByIngress(client, tc.ingressController); tc.expectedErr && len(errs) == 0 {
+			if errs := ClearRoutesNotAdmittedByIngress(context.Background(), client, tc.ingressController); tc.expectedErr && len(errs) == 0 {
 				t.Errorf("expected errors, got no errors")
 			} else if !tc.expectedErr && len(errs) != 0 {
 				t.Errorf("did not expected errors: %v", errs)
