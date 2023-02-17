@@ -26,13 +26,12 @@ var (
 	log = logf.Logger.WithName(controllerName)
 )
 
-// New creates the route status controller. This is the controller that handles reconciling route status and keeping
-// it in sync.
+// New creates the route status controller. This is the controller that handles reconciling route status and removing
+// stale status entries when a route is removed from a shard or a shard is deleted.
 func New(mgr manager.Manager, namespace string, cache cache.Cache) (controller.Controller, error) {
 	reconciler := &reconciler{
-		cache:     cache,
-		client:    mgr.GetClient(),
-		namespace: namespace,
+		cache:  cache,
+		client: mgr.GetClient(),
 	}
 	c, err := controller.New(controllerName, mgr, controller.Options{
 		Reconciler: reconciler,
@@ -60,12 +59,12 @@ func (r *reconciler) namespaceToRoutes(obj client.Object) []reconcile.Request {
 
 	routeList := routev1.RouteList{}
 	if err := r.cache.List(context.Background(), &routeList, client.InNamespace(ns.Name)); err != nil {
-		log.Error(err, "failed to list routes for namespace", "related", obj.GetSelfLink())
+		log.Error(err, "failed to list routes for namespace")
 		return requests
 	}
 
 	for _, route := range routeList.Items {
-		log.Info("queueing route", "name", route.Name, "related", obj.GetSelfLink())
+		log.Info("queueing route", "name", route.Name)
 		request := reconcile.Request{
 			NamespacedName: types.NamespacedName{
 				Namespace: route.Namespace,
@@ -80,13 +79,12 @@ func (r *reconciler) namespaceToRoutes(obj client.Object) []reconcile.Request {
 
 // reconciler handles the actual route reconciliation logic in response to events.
 type reconciler struct {
-	cache     cache.Cache
-	client    client.Client
-	namespace string
+	cache  cache.Cache
+	client client.Client
 }
 
-// Reconcile expects request to refer to a Route object, which will clear route status if it is no longer admitted
-// by each ingress controller it claims to be.
+// Reconcile expects request to refer to a Route object and clears stale route status entries if the route is no longer
+// admitted by each ingress controller it claims to be.
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	log.Info("reconciling", "request", request)
 

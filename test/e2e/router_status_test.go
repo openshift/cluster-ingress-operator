@@ -378,7 +378,7 @@ func TestRouteLabelShouldClearRouteStatus(t *testing.T) {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
-	// Update namespace to not match the namespaceSelector.
+	// Update route to not match the routeSelector.
 	if err := kclient.Get(context.TODO(), routeName, route); err != nil {
 		t.Fatalf("failed to get route: %v", err)
 	}

@@ -23,7 +23,6 @@ func Test_ClearAllRoutesStatusForIngressController(t *testing.T) {
 		routes            routev1.RouteList
 		ingressController *v1.IngressController
 		expectedRoutes    routev1.RouteList
-		expectedErr       bool
 	}{
 		{
 			name: "clear ingress controller foo status that admitted route test",
@@ -96,30 +95,27 @@ func Test_ClearAllRoutesStatusForIngressController(t *testing.T) {
 			client := unit.NewFakeClient(tc.ingressController)
 			for _, route := range tc.routes.Items {
 				if err := client.Create(context.Background(), &route); err != nil {
-					t.Errorf("error creating route: %v", err)
+					t.Fatalf("error creating route: %v", err)
 				}
 			}
 
-			if errs := ClearAllRoutesStatusForIngressController(context.Background(), client, tc.ingressController.Name); tc.expectedErr && len(errs) == 0 {
-				t.Errorf("expected errors, got no errors")
-			} else if !tc.expectedErr && len(errs) != 0 {
-				t.Errorf("did not expected errors: %v", errs)
+			if errs := ClearAllRoutesStatusForIngressController(context.Background(), client, tc.ingressController.Name); len(errs) != 0 {
+				t.Fatalf("did not expected errors: %v", errs)
 			}
 
 			actualRoutes := routev1.RouteList{}
-			if err := client.List(context.Background(), &actualRoutes); err == nil {
-				for _, expectedRoute := range tc.expectedRoutes.Items {
-					// Find the actual route that we should compare status with this expected route
-					var actualRoute routev1.Route
-					for _, route := range actualRoutes.Items {
-						if route.Name == expectedRoute.Name {
-							actualRoute = route
-						}
+			if err := client.List(context.Background(), &actualRoutes); err != nil {
+				t.Fatalf("error retrieving routes from client: %v", err)
+			}
+			for _, expectedRoute := range tc.expectedRoutes.Items {
+				// Find the actual route that we should compare status with this expected route
+				var actualRoute routev1.Route
+				for _, route := range actualRoutes.Items {
+					if route.Name == expectedRoute.Name {
+						actualRoute = route
 					}
-					assert.Equal(t, expectedRoute.Status, actualRoute.Status, "route name", expectedRoute.Name)
 				}
-			} else {
-				t.Errorf("error retrieving routes from client: %v", err)
+				assert.Equal(t, expectedRoute.Status, actualRoute.Status, "route name", expectedRoute.Name)
 			}
 		})
 	}
@@ -216,7 +212,7 @@ func Test_ClearRoutesNotAdmittedByIngress(t *testing.T) {
 			expectedRoutes: routev1.RouteList{
 				Items: []routev1.Route{
 					*newRouteWithLabelWithAdmittedStatuses("foo-route", "ns", "", "foo-ic", "bar-ic"),
-					*newRouteWithLabelWithAdmittedStatuses("bar-route", "ns", "", "baz-ic", "bar-ic"),
+					*newRouteWithLabelWithAdmittedStatuses("bar-route", "ns2", "", "baz-ic", "bar-ic"),
 				},
 			},
 		},
@@ -237,7 +233,7 @@ func Test_ClearRoutesNotAdmittedByIngress(t *testing.T) {
 			ingressController: newIngressControllerWithSelectors("foo-ic", "", "", "", "shard-label"),
 			expectedRoutes: routev1.RouteList{
 				Items: []routev1.Route{
-					*newRouteWithLabelWithAdmittedStatuses("foo-route", "ns", "", "foo-ic", "bar-ic"),
+					*newRouteWithLabelWithAdmittedStatuses("foo-route", "ns", "shard-label", "foo-ic", "bar-ic"),
 					*newRouteWithLabelWithAdmittedStatuses("bar-route", "ns", "", "baz-ic", "bar-ic"),
 				},
 			},
@@ -250,6 +246,78 @@ func Test_ClearRoutesNotAdmittedByIngress(t *testing.T) {
 			expectedRoutes:    routev1.RouteList{},
 			expectedErr:       true,
 		},
+		{
+			name:      "ingress controller with invalid route selector",
+			routes:    routev1.RouteList{},
+			namespace: corev1.NamespaceList{},
+			ingressController: &operatorv1.IngressController{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test",
+					Namespace: operatorcontroller.DefaultOperatorNamespace,
+				},
+				Spec: v1.IngressControllerSpec{
+					RouteSelector: &metav1.LabelSelector{
+						MatchExpressions: []metav1.LabelSelectorRequirement{
+							{
+								Key:      "type",
+								Operator: "test",
+								Values:   []string{"test"},
+							},
+						},
+					},
+				},
+			},
+			expectedRoutes: routev1.RouteList{},
+			expectedErr:    true,
+		},
+		{
+			name:      "ingress controller with invalid RouteSelector",
+			routes:    routev1.RouteList{},
+			namespace: corev1.NamespaceList{},
+			ingressController: &operatorv1.IngressController{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test",
+					Namespace: operatorcontroller.DefaultOperatorNamespace,
+				},
+				Spec: v1.IngressControllerSpec{
+					RouteSelector: &metav1.LabelSelector{
+						MatchExpressions: []metav1.LabelSelectorRequirement{
+							{
+								Key:      "type",
+								Operator: "invalid-operator",
+								Values:   []string{"test"},
+							},
+						},
+					},
+				},
+			},
+			expectedRoutes: routev1.RouteList{},
+			expectedErr:    true,
+		},
+		{
+			name:      "ingress controller with invalid NamespaceSelector",
+			routes:    routev1.RouteList{},
+			namespace: corev1.NamespaceList{},
+			ingressController: &operatorv1.IngressController{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test",
+					Namespace: operatorcontroller.DefaultOperatorNamespace,
+				},
+				Spec: v1.IngressControllerSpec{
+					NamespaceSelector: &metav1.LabelSelector{
+						MatchExpressions: []metav1.LabelSelectorRequirement{
+							{
+								Key:      "type",
+								Operator: "invalid-operator",
+								Values:   []string{"test"},
+							},
+						},
+					},
+				},
+			},
+			expectedRoutes: routev1.RouteList{},
+			expectedErr:    true,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -258,40 +326,39 @@ func Test_ClearRoutesNotAdmittedByIngress(t *testing.T) {
 			client := unit.NewFakeClient()
 			if tc.ingressController != nil {
 				if err := client.Create(context.Background(), tc.ingressController); err != nil {
-					t.Errorf("error ingress controller route: %v", err)
+					t.Fatalf("error ingress controller route: %v", err)
 				}
 			}
 			for _, route := range tc.routes.Items {
 				if err := client.Create(context.Background(), &route); err != nil {
-					t.Errorf("error creating route: %v", err)
+					t.Fatalf("error creating route: %v", err)
 				}
 			}
 			for _, ns := range tc.namespace.Items {
 				if err := client.Create(context.Background(), &ns); err != nil {
-					t.Errorf("error creating ns: %v", err)
+					t.Fatalf("error creating ns: %v", err)
 				}
 			}
 
 			if errs := ClearRoutesNotAdmittedByIngress(context.Background(), client, tc.ingressController); tc.expectedErr && len(errs) == 0 {
-				t.Errorf("expected errors, got no errors")
+				t.Fatal("expected errors, got no errors")
 			} else if !tc.expectedErr && len(errs) != 0 {
-				t.Errorf("did not expected errors: %v", errs)
+				t.Fatalf("did not expected errors: %v", errs)
 			}
 
 			actualRoutes := routev1.RouteList{}
-			if err := client.List(context.Background(), &actualRoutes); err == nil {
-				for _, expectedRoute := range tc.expectedRoutes.Items {
-					// Find the actual route that we should compare status with this expected route
-					var actualRoute routev1.Route
-					for _, route := range actualRoutes.Items {
-						if route.Name == expectedRoute.Name {
-							actualRoute = route
-						}
+			if err := client.List(context.Background(), &actualRoutes); err != nil {
+				t.Fatalf("error retrieving routes from client: %v", err)
+			}
+			for _, expectedRoute := range tc.expectedRoutes.Items {
+				// Find the actual route that we should compare status with this expected route
+				var actualRoute routev1.Route
+				for _, route := range actualRoutes.Items {
+					if route.Name == expectedRoute.Name {
+						actualRoute = route
 					}
-					assert.Equal(t, expectedRoute.Status, actualRoute.Status, "route name", expectedRoute.Name)
 				}
-			} else {
-				t.Errorf("error retrieving all from client: %v", err)
+				assert.Equal(t, expectedRoute.Status, actualRoute.Status, "route name", expectedRoute.Name)
 			}
 		})
 	}
@@ -366,7 +433,7 @@ func Test_IsRouteStatusAdmitted(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			if actualResult := IsRouteStatusAdmitted(tc.route, tc.ingressControllerName); actualResult != tc.expectedResult {
-				t.Errorf("expected result %v, got %v", tc.expectedResult, actualResult)
+				t.Fatalf("expected result %v, got %v", tc.expectedResult, actualResult)
 			}
 		})
 	}
@@ -392,7 +459,7 @@ func Test_IsInvalidSelectorError(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			if isInvalidSelectorError := IsInvalidSelectorError(tc.error); tc.expectedInvalidSelectorError && !isInvalidSelectorError {
-				t.Errorf("expected InvalidSelectorError, was not InvalidSelectorError")
+				t.Fatal("expected InvalidSelectorError, was not InvalidSelectorError")
 			}
 		})
 	}
@@ -460,7 +527,8 @@ func newNamespace(name, label string) *corev1.Namespace {
 	return &namespace
 }
 
-// newRouteWithAdmittedStatuses returns a new route that is admitted by ingress controllers.
+// newRouteWithLabelWithAdmittedStatuses returns a new route that is admitted by ingress controllers
+// and has the "type" label set with the specified value.
 func newRouteWithLabelWithAdmittedStatuses(name, namespace, label string, icAdmitted ...string) *routev1.Route {
 	route := newRouteWithAdmittedStatuses(name, icAdmitted...)
 	route.ObjectMeta.Namespace = namespace
