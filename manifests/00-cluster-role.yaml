@@ -100,6 +100,7 @@ rules:
   - dnses
   - apiservers
   - networks
+  - proxies
   verbs:
   - get
 
@@ -109,6 +110,7 @@ rules:
   - dnses
   - infrastructures
   - ingresses
+  - proxies
   verbs:
   - list
   - watch

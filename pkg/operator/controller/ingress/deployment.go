@@ -2,9 +2,7 @@ package ingress
 
 import (
 	"context"
-	"crypto/x509"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"hash"
 	"hash/fnv"
@@ -87,7 +85,6 @@ const (
 
 	RouterClientAuthPolicy = "ROUTER_MUTUAL_TLS_AUTH"
 	RouterClientAuthCA     = "ROUTER_MUTUAL_TLS_AUTH_CA"
-	RouterClientAuthCRL    = "ROUTER_MUTUAL_TLS_AUTH_CRL"
 	RouterClientAuthFilter = "ROUTER_MUTUAL_TLS_AUTH_FILTER"
 
 	RouterEnableCompression    = "ROUTER_ENABLE_COMPRESSION"
@@ -107,7 +104,7 @@ const (
 
 // ensureRouterDeployment ensures the router deployment exists for a given
 // ingresscontroller.
-func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, infraConfig *configv1.Infrastructure, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer, networkConfig *configv1.Network, haveClientCAConfigmap bool, clientCAConfigmap *corev1.ConfigMap, platformStatus *configv1.PlatformStatus) (bool, *appsv1.Deployment, error) {
+func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, infraConfig *configv1.Infrastructure, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer, networkConfig *configv1.Network, haveClientCAConfigmap bool, clientCAConfigmap *corev1.ConfigMap, platformStatus *configv1.PlatformStatus, clusterProxyConfig *configv1.Proxy) (bool, *appsv1.Deployment, error) {
 	haveDepl, current, err := r.currentRouterDeployment(ci)
 	if err != nil {
 		return false, nil, err
@@ -116,7 +113,7 @@ func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, in
 	if err != nil {
 		return false, nil, fmt.Errorf("failed to determine if proxy protocol is needed for ingresscontroller %s/%s: %v", ci.Namespace, ci.Name, err)
 	}
-	desired, err := desiredRouterDeployment(ci, r.config.IngressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, haveClientCAConfigmap, clientCAConfigmap)
+	desired, err := desiredRouterDeployment(ci, r.config.IngressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, haveClientCAConfigmap, clientCAConfigmap, clusterProxyConfig)
 	if err != nil {
 		return haveDepl, current, fmt.Errorf("failed to build router deployment: %v", err)
 	}
@@ -222,7 +219,7 @@ func determineDeploymentReplicas(ic *operatorv1.IngressController, ingressConfig
 }
 
 // desiredRouterDeployment returns the desired router deployment.
-func desiredRouterDeployment(ci *operatorv1.IngressController, ingressControllerImage string, ingressConfig *configv1.Ingress, infraConfig *configv1.Infrastructure, apiConfig *configv1.APIServer, networkConfig *configv1.Network, proxyNeeded bool, haveClientCAConfigmap bool, clientCAConfigmap *corev1.ConfigMap) (*appsv1.Deployment, error) {
+func desiredRouterDeployment(ci *operatorv1.IngressController, ingressControllerImage string, ingressConfig *configv1.Ingress, infraConfig *configv1.Infrastructure, apiConfig *configv1.APIServer, networkConfig *configv1.Network, proxyNeeded bool, haveClientCAConfigmap bool, clientCAConfigmap *corev1.ConfigMap, clusterProxyConfig *configv1.Proxy) (*appsv1.Deployment, error) {
 	deployment := manifests.RouterDeployment()
 	name := controller.RouterDeploymentName(ci)
 	deployment.Name = name.Name
@@ -1007,68 +1004,6 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 			clientAuthCAPath := filepath.Join(clientCAVolumeMount.MountPath, clientCABundleFilename)
 			env = append(env, corev1.EnvVar{Name: RouterClientAuthCA, Value: clientAuthCAPath})
 
-			if haveClientCAConfigmap {
-				// If any certificates in the client CA bundle
-				// specify any CRL distribution points, then we
-				// need to configure a configmap volume.  The
-				// crl controller is responsible for managing
-				// the configmap.
-				var clientCAData []byte
-				if v, ok := clientCAConfigmap.Data[clientCABundleFilename]; !ok {
-					return nil, fmt.Errorf("client CA configmap %s/%s is missing %q", clientCAConfigmap.Namespace, clientCAConfigmap.Name, clientCABundleFilename)
-				} else {
-					clientCAData = []byte(v)
-				}
-				var someClientCAHasCRL bool
-				for len(clientCAData) > 0 {
-					block, data := pem.Decode(clientCAData)
-					if block == nil {
-						break
-					}
-					clientCAData = data
-					cert, err := x509.ParseCertificate(block.Bytes)
-					if err != nil {
-						return nil, fmt.Errorf("client CA configmap %s/%s has an invalid certificate: %w", clientCAConfigmap.Namespace, clientCAConfigmap.Name, err)
-					}
-					if len(cert.CRLDistributionPoints) != 0 {
-						someClientCAHasCRL = true
-						break
-					}
-				}
-				if someClientCAHasCRL {
-					clientCACRLSecretName := controller.CRLConfigMapName(ci)
-					clientCACRLVolumeName := "client-ca-crl"
-					clientCACRLVolumeMountPath := "/etc/pki/tls/client-ca-crl"
-					clientCACRLFilename := "crl.pem"
-					clientCACRLVolume := corev1.Volume{
-						Name: clientCACRLVolumeName,
-						VolumeSource: corev1.VolumeSource{
-							ConfigMap: &corev1.ConfigMapVolumeSource{
-								LocalObjectReference: corev1.LocalObjectReference{
-									Name: clientCACRLSecretName.Name,
-								},
-								Items: []corev1.KeyToPath{
-									{
-										Key:  clientCACRLFilename,
-										Path: clientCACRLFilename,
-									},
-								},
-							},
-						},
-					}
-					clientCACRLVolumeMount := corev1.VolumeMount{
-						Name:      clientCACRLVolumeName,
-						MountPath: clientCACRLVolumeMountPath,
-						ReadOnly:  true,
-					}
-					volumes = append(volumes, clientCACRLVolume)
-					routerVolumeMounts = append(routerVolumeMounts, clientCACRLVolumeMount)
-
-					clientAuthCRLPath := filepath.Join(clientCACRLVolumeMount.MountPath, clientCACRLFilename)
-					env = append(env, corev1.EnvVar{Name: RouterClientAuthCRL, Value: clientAuthCRLPath})
-				}
-			}
-
 			if len(ci.Spec.ClientTLS.AllowedSubjectPatterns) != 0 {
 				pattern := "(?:" + strings.Join(ci.Spec.ClientTLS.AllowedSubjectPatterns, "|") + ")"
 				env = append(env, corev1.EnvVar{Name: RouterClientAuthFilter, Value: pattern})
@@ -1087,6 +1022,31 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		mimes := GetMIMETypes(ci.Spec.HTTPCompression.MimeTypes)
 		env = append(env, corev1.EnvVar{Name: RouterCompressionMIMETypes, Value: strings.Join(mimes, " ")})
 	}
+
+	// Add cluster-wide proxy environment variables if necessary.
+	if clusterProxyConfig.Status.HTTPProxy != "" {
+		env = append(env,
+			corev1.EnvVar{Name: "HTTP_PROXY", Value: clusterProxyConfig.Status.HTTPProxy},
+			corev1.EnvVar{Name: "http_proxy", Value: clusterProxyConfig.Status.HTTPProxy},
+		)
+	}
+	if clusterProxyConfig.Status.HTTPSProxy != "" {
+		env = append(env,
+			corev1.EnvVar{Name: "HTTPS_PROXY", Value: clusterProxyConfig.Status.HTTPSProxy},
+			corev1.EnvVar{Name: "https_proxy", Value: clusterProxyConfig.Status.HTTPSProxy},
+		)
+	}
+	if clusterProxyConfig.Status.NoProxy != "" {
+		env = append(env,
+			corev1.EnvVar{Name: "NO_PROXY", Value: clusterProxyConfig.Status.NoProxy},
+			corev1.EnvVar{Name: "no_proxy", Value: clusterProxyConfig.Status.NoProxy},
+		)
+	}
+
+	// TODO: The only connections from the router that may need the cluster-wide proxy are those for downloading CRLs,
+	// which, as of writing this, will always be http. If https becomes necessary, the router will need to mount the
+	// trusted CA bundle that cluster-network-operator generates. The process for adding that is described here:
+	// https://docs.openshift.com/container-platform/4.13/operators/admin/olm-configuring-proxy-support.html#olm-inject-custom-ca_olm-configuring-proxy-support
 
 	// Add the environment variables to the container
 	deployment.Spec.Template.Spec.Containers[0].Env = append(deployment.Spec.Template.Spec.Containers[0].Env, env...)
