@@ -21,8 +21,9 @@ require (
 	github.com/maistra/istio-operator v0.0.0-20230213165116-3138f8d64e59
 	github.com/openshift/api v3.9.1-0.20190924102528-32369d4db2ad+incompatible
 	github.com/openshift/client-go v0.0.0-20230120202327-72f107311084
-	github.com/openshift/library-go v0.0.0-20230209193239-2e9167362f31
-	github.com/operator-framework/api v0.3.7-0.20200528122852-759ca0d84007
+	github.com/openshift/library-go v0.0.0-20230503125631-c31a6e7b87d4
+	github.com/operator-framework/api v0.15.0
+	github.com/operator-framework/operator-lib v0.11.0
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.14.0
 	github.com/prometheus/common v0.37.0
@@ -58,7 +59,6 @@ require (
 	github.com/AzureAD/microsoft-authentication-library-for-go v0.5.1 // indirect
 	github.com/asaskevich/govalidator v0.0.0-20200907205600-7a23bdc65eef // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
-	github.com/blang/semver v3.5.1+incompatible // indirect
 	github.com/blang/semver/v4 v4.0.0 // indirect
 	github.com/cespare/xxhash/v2 v2.1.2 // indirect
 	github.com/emicklei/go-restful/v3 v3.9.0 // indirect
