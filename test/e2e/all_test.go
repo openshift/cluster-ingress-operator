@@ -22,6 +22,7 @@ func TestAll(t *testing.T) {
 	t.Run("parallel", func(t *testing.T) {
 		t.Run("TestAWSELBConnectionIdleTimeout", TestAWSELBConnectionIdleTimeout)
 		t.Run("TestClientTLS", TestClientTLS)
+		t.Run("TestMTLSWithCRLs", TestMTLSWithCRLs)
 		t.Run("TestContainerLogging", TestContainerLogging)
 		t.Run("TestCustomErrorpages", TestCustomErrorpages)
 		t.Run("TestCustomIngressClass", TestCustomIngressClass)

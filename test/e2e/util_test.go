@@ -79,6 +79,21 @@ func buildEchoPod(name, namespace string) *corev1.Pod {
 	}
 }
 
+// generateUnprivilegedSecurityContext returns a SecurityContext with the minimum possible privileges that satisfy
+// restricted pod security requirements
+func generateUnprivilegedSecurityContext() *corev1.SecurityContext {
+	return &corev1.SecurityContext{
+		AllowPrivilegeEscalation: pointer.Bool(false),
+		Capabilities: &corev1.Capabilities{
+			Drop: []corev1.Capability{"ALL"},
+		},
+		RunAsNonRoot: pointer.Bool(true),
+		SeccompProfile: &corev1.SeccompProfile{
+			Type: corev1.SeccompProfileTypeRuntimeDefault,
+		},
+	}
+}
+
 func waitForHTTPClientCondition(t *testing.T, httpClient *http.Client, req *http.Request, interval, timeout time.Duration, compareFunc func(*http.Response) bool) error {
 	t.Helper()
 	return wait.PollImmediate(interval, timeout, func() (done bool, err error) {
@@ -636,5 +651,40 @@ func verifyInternalIngressController(t *testing.T, name types.NamespacedName, ho
 	})
 	if err != nil {
 		t.Fatalf("failed to verify connectivity with workload with address: %s using internal curl client. Curl Pod Logs:\n%s", address, curlPodLogs)
+	}
+}
+
+// assertDeleted tries to delete a cluster resource, and causes test failure if the delete fails.
+func assertDeleted(t *testing.T, cl client.Client, thing client.Object) {
+	t.Helper()
+	if err := cl.Delete(context.TODO(), thing); err != nil {
+		if errors.IsNotFound(err) {
+			return
+		}
+		t.Fatalf("Failed to delete %s: %v", thing.GetName(), err)
+	} else {
+		t.Logf("Deleted %s", thing.GetName())
+	}
+}
+
+// assertDeletedWaitForCleanup tries to delete a cluster resource, and waits for it to actually be cleaned up before
+// returning. It causes test failure if the delete fails or if the cleanup times out.
+func assertDeletedWaitForCleanup(t *testing.T, cl client.Client, thing client.Object) {
+	t.Helper()
+	thingName := types.NamespacedName{
+		Name:      thing.GetName(),
+		Namespace: thing.GetNamespace(),
+	}
+	assertDeleted(t, cl, thing)
+	if err := wait.PollImmediate(5*time.Second, 2*time.Minute, func() (bool, error) {
+		if err := cl.Get(context.TODO(), thingName, thing); err != nil {
+			if errors.IsNotFound(err) {
+				return true, nil
+			}
+			return false, err
+		}
+		return false, nil
+	}); err != nil {
+		t.Fatalf("Timed out waiting for %s to be cleaned up: %v", thing.GetName(), err)
 	}
 }
