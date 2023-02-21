@@ -185,7 +185,12 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	}
 
 	if !dnsZoneStatusSlicesEqual(statuses, record.Status.Zones) {
-		updated := record.DeepCopy()
+		var current iov1.DNSRecord
+		if err := r.client.Get(ctx, request.NamespacedName, &current); err != nil {
+			log.Error(err, "failed to get dnsrecord; will retry", "dnsrecord", request.NamespacedName)
+			return reconcile.Result{RequeueAfter: 10 * time.Second}, nil
+		}
+		updated := current.DeepCopy()
 		updated.Status.Zones = statuses
 		updated.Status.ObservedGeneration = updated.Generation
 		if err := r.client.Status().Update(ctx, updated); err != nil {
@@ -593,6 +598,7 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 	case configv1.AWSPlatformType:
 		cfg := awsdns.Config{
 			Region: platformStatus.AWS.Region,
+			Client: r.client,
 		}
 
 		sharedCredsFile, err := awsutil.SharedCredentialsFileFromSecret(creds)
