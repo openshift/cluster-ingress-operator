@@ -17,7 +17,6 @@ import (
 	"github.com/davecgh/go-spew/spew"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-
 	operatorv1 "github.com/openshift/api/operator/v1"
 
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
