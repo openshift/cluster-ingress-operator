@@ -259,6 +259,37 @@ func buildRoute(name, namespace, serviceName string) *routev1.Route {
 	}
 }
 
+// buildRouteWithHTTPResponseHeaders returns a route definition targeting the specified service along with setting of header name and value.
+func buildRouteWithHTTPResponseHeaders(name, namespace, serviceName string, headerName string, headerValue string) *routev1.Route {
+	return &routev1.Route{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: routev1.RouteSpec{
+			To: routev1.RouteTargetReference{
+				Kind: "Service",
+				Name: serviceName,
+			},
+			HTTPHeaders: &routev1.RouteHTTPHeaders{
+				Actions: routev1.RouteHTTPHeaderActions{
+					Response: []routev1.RouteHTTPHeader{
+						{
+							Name: headerName,
+							Action: routev1.RouteHTTPHeaderActionUnion{
+								Type: routev1.Set,
+								Set: &routev1.RouteSetHTTPHeader{
+									Value: headerValue,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
 // buildRoute returns a route definition targeting the specified service.
 func buildRouteWithHost(name, namespace, serviceName, host string) *routev1.Route {
 	return &routev1.Route{

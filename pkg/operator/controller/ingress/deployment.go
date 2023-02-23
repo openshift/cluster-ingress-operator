@@ -8,6 +8,7 @@ import (
 	"hash/fnv"
 	"math"
 	"net"
+	"net/url"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -54,6 +55,9 @@ const (
 	RouterCaptureHTTPRequestHeaders  = "ROUTER_CAPTURE_HTTP_REQUEST_HEADERS"
 	RouterCaptureHTTPResponseHeaders = "ROUTER_CAPTURE_HTTP_RESPONSE_HEADERS"
 	RouterCaptureHTTPCookies         = "ROUTER_CAPTURE_HTTP_COOKIE"
+
+	RouterHTTPResponseHeaders = "ROUTER_HTTP_RESPONSE_HEADERS"
+	RouterHTTPRequestHeaders  = "ROUTER_HTTP_REQUEST_HEADERS"
 
 	RouterHeaderBufferSize           = "ROUTER_BUF_SIZE"
 	RouterHeaderBufferMaxRewriteSize = "ROUTER_MAX_REWRITE_SIZE"
@@ -218,6 +222,22 @@ func determineDeploymentReplicas(ic *operatorv1.IngressController, ingressConfig
 	}
 
 	return DetermineReplicas(ingressConfig, infraConfig)
+}
+
+func headerValues(values []operatorv1.IngressControllerHTTPHeader) string {
+	var headerValues string
+	var headerSpecs []string
+	for _, value := range values {
+		if value.Action.Type == operatorv1.Set && value.Action.Set != nil && len(value.Name) != 0 {
+			headerSpecs = append(headerSpecs, getHTTPHeadersListForSet(value))
+			headerValues = strings.Join(headerSpecs, ",")
+		}
+		if value.Action.Type == operatorv1.Delete && len(value.Name) != 0 {
+			headerSpecs = append(headerSpecs, getHTTPHeadersListForDelete(value))
+			headerValues = strings.Join(headerSpecs, ",")
+		}
+	}
+	return headerValues
 }
 
 // desiredRouterDeployment returns the desired router deployment.
@@ -566,6 +586,14 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		threads = int(ci.Spec.TuningOptions.ThreadCount)
 	}
 	env = append(env, corev1.EnvVar{Name: RouterHAProxyThreadsEnvName, Value: strconv.Itoa(threads)})
+
+	if ci.Spec.HTTPHeaders != nil && len(ci.Spec.HTTPHeaders.Actions.Response) != 0 {
+		env = append(env, corev1.EnvVar{Name: RouterHTTPResponseHeaders, Value: headerValues(ci.Spec.HTTPHeaders.Actions.Response)})
+	}
+
+	if ci.Spec.HTTPHeaders != nil && len(ci.Spec.HTTPHeaders.Actions.Request) != 0 {
+		env = append(env, corev1.EnvVar{Name: RouterHTTPRequestHeaders, Value: headerValues(ci.Spec.HTTPHeaders.Actions.Request)})
+	}
 
 	if ci.Spec.TuningOptions.ClientTimeout != nil && ci.Spec.TuningOptions.ClientTimeout.Duration > 0*time.Second {
 		env = append(env, corev1.EnvVar{Name: "ROUTER_DEFAULT_CLIENT_TIMEOUT", Value: durationToHAProxyTimespec(ci.Spec.TuningOptions.ClientTimeout.Duration)})
@@ -1175,6 +1203,14 @@ func serializeCaptureHeaders(captureHeaders []operatorv1.IngressControllerCaptur
 		headerSpecs = append(headerSpecs, fmt.Sprintf("%s:%d", header.Name, header.MaxLength))
 	}
 	return strings.Join(headerSpecs, ",")
+}
+
+func getHTTPHeadersListForSet(setHeaders operatorv1.IngressControllerHTTPHeader) string {
+	return fmt.Sprintf("%s:%s:%s", url.QueryEscape(setHeaders.Name), url.QueryEscape(setHeaders.Action.Set.Value), url.QueryEscape(string(setHeaders.Action.Type)))
+}
+
+func getHTTPHeadersListForDelete(deleteHeaders operatorv1.IngressControllerHTTPHeader) string {
+	return fmt.Sprintf("%s:%s", url.QueryEscape(deleteHeaders.Name), url.QueryEscape(string(deleteHeaders.Action.Type)))
 }
 
 // inferTLSProfileSpecFromDeployment examines the given deployment's pod

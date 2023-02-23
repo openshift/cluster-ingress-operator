@@ -78,6 +78,8 @@ func TestAll(t *testing.T) {
 		t.Run("TestRouteMetricsControllerOnlyRouteSelector", TestRouteMetricsControllerOnlyRouteSelector)
 		t.Run("TestRouteMetricsControllerOnlyNamespaceSelector", TestRouteMetricsControllerOnlyNamespaceSelector)
 		t.Run("TestRouteMetricsControllerRouteAndNamespaceSelector", TestRouteMetricsControllerRouteAndNamespaceSelector)
+		t.Run("TestSetIngressControllerResponseHeaders", TestSetIngressControllerResponseHeaders)
+		t.Run("TestSetRouteResponseHeaders", TestSetRouteResponseHeaders)
 	})
 
 	t.Run("serial", func(t *testing.T) {
