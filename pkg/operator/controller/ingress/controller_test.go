@@ -9,6 +9,7 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
+	util "github.com/openshift/cluster-ingress-operator/pkg/util"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -1001,18 +1002,18 @@ func TestTLSProfileSpecForSecurityProfile(t *testing.T) {
 		tlsProfileSpec := tlsProfileSpecForSecurityProfile(ic.Spec.TLSSecurityProfile)
 		err := validateTLSSecurityProfile(ic)
 		if tc.valid && err != nil {
-			t.Errorf("%q: unexpected error: %v\nprofile:\n%s", tc.description, err, toYaml(tlsProfileSpec))
+			t.Errorf("%q: unexpected error: %v\nprofile:\n%s", tc.description, err, util.ToYaml(tlsProfileSpec))
 			continue
 		}
 		if !tc.valid && err == nil {
-			t.Errorf("%q: expected error for profile:\n%s", tc.description, toYaml(tlsProfileSpec))
+			t.Errorf("%q: expected error for profile:\n%s", tc.description, util.ToYaml(tlsProfileSpec))
 			continue
 		}
 		if tc.expectedSpec != nil && !reflect.DeepEqual(tc.expectedSpec, tlsProfileSpec) {
-			t.Errorf("%q: expected profile:\n%s\ngot profile:\n%s", tc.description, toYaml(tc.expectedSpec), toYaml(tlsProfileSpec))
+			t.Errorf("%q: expected profile:\n%s\ngot profile:\n%s", tc.description, util.ToYaml(tc.expectedSpec), util.ToYaml(tlsProfileSpec))
 			continue
 		}
-		t.Logf("%q: got expected values; profile:\n%s\nerror value: %v", tc.description, toYaml(tlsProfileSpec), err)
+		t.Logf("%q: got expected values; profile:\n%s\nerror value: %v", tc.description, util.ToYaml(tlsProfileSpec), err)
 	}
 }
 
@@ -1155,7 +1156,7 @@ func TestTLSProfileSpecForIngressController(t *testing.T) {
 		}
 		tlsProfileSpec := tlsProfileSpecForIngressController(ic, api)
 		if !reflect.DeepEqual(tc.expectedSpec, tlsProfileSpec) {
-			t.Errorf("%q: expected profile:\n%v\ngot profile:\n%v", tc.description, toYaml(tc.expectedSpec), toYaml(tlsProfileSpec))
+			t.Errorf("%q: expected profile:\n%v\ngot profile:\n%v", tc.description, util.ToYaml(tc.expectedSpec), util.ToYaml(tlsProfileSpec))
 		}
 	}
 }

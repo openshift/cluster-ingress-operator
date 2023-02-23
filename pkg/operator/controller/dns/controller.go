@@ -107,8 +107,9 @@ func New(mgr manager.Manager, config Config) (runtimecontroller.Controller, erro
 
 // Config holds all the things necessary for the controller to run.
 type Config struct {
-	Namespace              string
-	OperatorReleaseVersion string
+	CredentialsRequestNamespace string
+	DNSRecordNamespaces         []string
+	OperatorReleaseVersion      string
 }
 
 type reconciler struct {
@@ -160,32 +161,12 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		return reconcile.Result{}, nil
 	}
 
-	// Only process records associated with ingresscontrollers, because this isn't
-	// intended to be a general purpose DNS management system.
-	ingressName, ok := record.Labels[manifests.OwningIngressControllerLabel]
-	if !ok {
-		log.V(2).Info("warning: dnsrecord is missing owner label", "dnsrecord", record, "ingresscontroller", ingressName)
-		return reconcile.Result{RequeueAfter: 1 * time.Minute}, nil
-	}
-
 	// Existing 4.1 records will have a zero TTL. Instead of making all the client implementations guard against
 	// zero TTLs, simply ignore the record until the TTL is updated by the ingresscontroller controller. Report
 	// this through events so we can detect problems with our migration.
 	if record.Spec.RecordTTL <= 0 {
 		r.recorder.Eventf(record, "Warning", "ZeroTTL", "Record is missing TTL and will be temporarily ignored; the TTL will be automatically updated and the record will be retried.")
 		return reconcile.Result{}, nil
-	}
-
-	if err := r.cache.Get(ctx, types.NamespacedName{Namespace: record.Namespace, Name: ingressName}, &operatorv1.IngressController{}); err != nil {
-		if errors.IsNotFound(err) {
-			// TODO: what should we do here? something upstream could detect and delete the orphan? add new conditions?
-			// is it safe to retry without verifying the owner isn't a new object?
-			log.V(2).Info("warning: dnsrecord owner not found; the dnsrecord may be orphaned; will retry", "dnsrecord", record, "ingresscontroller", ingressName)
-			return reconcile.Result{RequeueAfter: 1 * time.Minute}, nil
-		} else {
-			log.Error(err, "failed to get ingresscontroller for dnsrecord; will retry", "dnsrecord", record, "ingresscontroller", ingressName)
-			return reconcile.Result{RequeueAfter: 15 * time.Second}, nil
-		}
 	}
 
 	var zones []configv1.DNSZone
@@ -204,7 +185,12 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	}
 
 	if !dnsZoneStatusSlicesEqual(statuses, record.Status.Zones) {
-		updated := record.DeepCopy()
+		var current iov1.DNSRecord
+		if err := r.client.Get(ctx, request.NamespacedName, &current); err != nil {
+			log.Error(err, "failed to get dnsrecord; will retry", "dnsrecord", request.NamespacedName)
+			return reconcile.Result{RequeueAfter: 10 * time.Second}, nil
+		}
+		updated := current.DeepCopy()
 		updated.Status.Zones = statuses
 		updated.Status.ObservedGeneration = updated.Generation
 		if err := r.client.Status().Update(ctx, updated); err != nil {
@@ -247,7 +233,10 @@ func (r *reconciler) createDNSProviderIfNeeded(dnsConfig *configv1.DNS, record *
 		if platformStatus.Type == configv1.IBMCloudPlatformType && infraConfig.Status.ControlPlaneTopology == configv1.ExternalTopologyMode {
 			break
 		}
-		name := types.NamespacedName{Namespace: r.config.Namespace, Name: cloudCredentialsSecretName}
+		name := types.NamespacedName{
+			Namespace: r.config.CredentialsRequestNamespace,
+			Name:      cloudCredentialsSecretName,
+		}
 		if err := r.cache.Get(context.TODO(), name, creds); err != nil {
 			return fmt.Errorf("failed to get cloud credentials from secret %s: %v", name, err)
 		}
@@ -567,20 +556,22 @@ func dnsZoneStatusSlicesEqual(a, b []iov1.DNSZoneStatus) bool {
 // ToDNSRecords returns reconciliation requests for all DNSRecords.
 func (r *reconciler) ToDNSRecords(o client.Object) []reconcile.Request {
 	var requests []reconcile.Request
-	records := &iov1.DNSRecordList{}
-	if err := r.cache.List(context.Background(), records, client.InNamespace(r.config.Namespace)); err != nil {
-		log.Error(err, "failed to list dnsrecords", "related", o.GetSelfLink())
-		return requests
-	}
-	for _, record := range records.Items {
-		log.Info("queueing dnsrecord", "name", record.Name, "related", o.GetSelfLink())
-		request := reconcile.Request{
-			NamespacedName: types.NamespacedName{
-				Namespace: record.Namespace,
-				Name:      record.Name,
-			},
+	for _, ns := range r.config.DNSRecordNamespaces {
+		records := &iov1.DNSRecordList{}
+		if err := r.cache.List(context.Background(), records, client.InNamespace(ns)); err != nil {
+			log.Error(err, "failed to list dnsrecords", "related", o.GetSelfLink())
+			continue
 		}
-		requests = append(requests, request)
+		for _, record := range records.Items {
+			log.Info("queueing dnsrecord", "name", record.Name, "related", o.GetSelfLink())
+			request := reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Namespace: record.Namespace,
+					Name:      record.Name,
+				},
+			}
+			requests = append(requests, request)
+		}
 	}
 	return requests
 }
@@ -607,6 +598,7 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 	case configv1.AWSPlatformType:
 		cfg := awsdns.Config{
 			Region: platformStatus.AWS.Region,
+			Client: r.client,
 		}
 
 		sharedCredsFile, err := awsutil.SharedCredentialsFileFromSecret(creds)
