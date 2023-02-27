@@ -2,7 +2,9 @@ package ingress
 
 import (
 	"fmt"
+	"reflect"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 
@@ -13,6 +15,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/apimachinery/pkg/util/sets"
 )
 
 func TestDesiredLoadBalancerService(t *testing.T) {
@@ -464,6 +467,161 @@ func TestDesiredLoadBalancerService(t *testing.T) {
 	}
 }
 
+// TestDesiredLoadBalancerServiceAWSIdleTimeout verifies that
+// desiredLoadBalancerService sets the expected annotation iff
+// spec.endpointPublishingStrategy.loadBalancer.providerParameters.aws.classicLoadBalancer.connectionIdleTimeout
+// is specified.
+func TestDesiredLoadBalancerServiceAWSIdleTimeout(t *testing.T) {
+	testCases := []struct {
+		name                    string
+		loadBalancerStrategy    *operatorv1.LoadBalancerStrategy
+		expectAnnotationPresent bool
+		expectedAnnotationValue string
+	}{
+		{
+			name:                    "nil loadBalancerStrategy",
+			loadBalancerStrategy:    nil,
+			expectAnnotationPresent: false,
+		},
+		{
+			name: "nil providerParameters",
+			loadBalancerStrategy: &operatorv1.LoadBalancerStrategy{
+				ProviderParameters: nil,
+			},
+			expectAnnotationPresent: false,
+		},
+		{
+			name: "nil providerParameters.aws",
+			loadBalancerStrategy: &operatorv1.LoadBalancerStrategy{
+				ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+					Type: operatorv1.AWSLoadBalancerProvider,
+					AWS:  nil,
+				},
+			},
+			expectAnnotationPresent: false,
+		},
+		{
+			name: "nil providerParameters.aws.classicLoadBalancer",
+			loadBalancerStrategy: &operatorv1.LoadBalancerStrategy{
+				ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+					Type: operatorv1.AWSLoadBalancerProvider,
+					AWS: &operatorv1.AWSLoadBalancerParameters{
+						Type:                          operatorv1.AWSClassicLoadBalancer,
+						ClassicLoadBalancerParameters: nil,
+					},
+				},
+			},
+			expectAnnotationPresent: false,
+		},
+		{
+			name: "nil providerParameters.aws.classicLoadBalancerParameters.connectionIdleTimeout",
+			loadBalancerStrategy: &operatorv1.LoadBalancerStrategy{
+				ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+					Type: operatorv1.AWSLoadBalancerProvider,
+					AWS: &operatorv1.AWSLoadBalancerParameters{
+						Type:                          operatorv1.AWSClassicLoadBalancer,
+						ClassicLoadBalancerParameters: &operatorv1.AWSClassicLoadBalancerParameters{},
+					},
+				},
+			},
+			expectAnnotationPresent: false,
+		},
+		{
+			name: "5 seconds",
+			loadBalancerStrategy: &operatorv1.LoadBalancerStrategy{
+				ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+					Type: operatorv1.AWSLoadBalancerProvider,
+					AWS: &operatorv1.AWSLoadBalancerParameters{
+						Type: operatorv1.AWSClassicLoadBalancer,
+						ClassicLoadBalancerParameters: &operatorv1.AWSClassicLoadBalancerParameters{
+							ConnectionIdleTimeout: metav1.Duration{Duration: 5 * time.Second},
+						},
+					},
+				},
+			},
+			expectAnnotationPresent: true,
+			expectedAnnotationValue: "5",
+		},
+		{
+			name: "1 hour",
+			loadBalancerStrategy: &operatorv1.LoadBalancerStrategy{
+				ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+					Type: operatorv1.AWSLoadBalancerProvider,
+					AWS: &operatorv1.AWSLoadBalancerParameters{
+						Type: operatorv1.AWSClassicLoadBalancer,
+						ClassicLoadBalancerParameters: &operatorv1.AWSClassicLoadBalancerParameters{
+							ConnectionIdleTimeout: metav1.Duration{Duration: time.Hour},
+						},
+					},
+				},
+			},
+			expectAnnotationPresent: true,
+			expectedAnnotationValue: "3600",
+		},
+		{
+			name: "negative 1 second",
+			loadBalancerStrategy: &operatorv1.LoadBalancerStrategy{
+				ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+					Type: operatorv1.AWSLoadBalancerProvider,
+					AWS: &operatorv1.AWSLoadBalancerParameters{
+						Type: operatorv1.AWSClassicLoadBalancer,
+						ClassicLoadBalancerParameters: &operatorv1.AWSClassicLoadBalancerParameters{
+							ConnectionIdleTimeout: metav1.Duration{Duration: -1 * time.Second},
+						},
+					},
+				},
+			},
+			expectAnnotationPresent: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ic := &operatorv1.IngressController{
+				ObjectMeta: metav1.ObjectMeta{Name: "default"},
+				Status: operatorv1.IngressControllerStatus{
+					EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+						Type:         operatorv1.LoadBalancerServiceStrategyType,
+						LoadBalancer: tc.loadBalancerStrategy,
+					},
+				},
+			}
+			trueVar := true
+			deploymentRef := metav1.OwnerReference{
+				APIVersion: "apps/v1",
+				Kind:       "Deployment",
+				Name:       "router-default",
+				UID:        "1",
+				Controller: &trueVar,
+			}
+			infraConfig := &configv1.Infrastructure{
+				Status: configv1.InfrastructureStatus{
+					PlatformStatus: &configv1.PlatformStatus{
+						Type: configv1.AWSPlatformType,
+					},
+				},
+			}
+			haveSvc, svc, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig.Status.PlatformStatus)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !haveSvc {
+				t.Fatal("desiredLoadBalancerService didn't return a service")
+			}
+			const key = "service.beta.kubernetes.io/aws-load-balancer-connection-idle-timeout"
+			switch v, ok := svc.Annotations[key]; {
+			case !tc.expectAnnotationPresent && ok:
+				t.Errorf("unexpected annotation: %s=%s", key, v)
+			case tc.expectAnnotationPresent && !ok:
+				t.Errorf("missing expected annotation: %s=%s", key, tc.expectedAnnotationValue)
+			case tc.expectAnnotationPresent && v != tc.expectedAnnotationValue:
+				t.Errorf("expected annotations %s=%s, found %s=%s", key, tc.expectedAnnotationValue, key, v)
+			}
+		})
+
+	}
+}
+
 func checkServiceHasAnnotation(svc *corev1.Service, name string, expectValue bool, expectedValue string) error {
 	var (
 		actualValue string
@@ -658,6 +816,13 @@ func TestLoadBalancerServiceChanged(t *testing.T) {
 			expect: false,
 		},
 		{
+			description: "if .spec.loadBalancerSourceRanges changes",
+			mutate: func(svc *corev1.Service) {
+				svc.Spec.LoadBalancerSourceRanges = []string{"10.0.0.0/8"}
+			},
+			expect: true,
+		},
+		{
 			description: "if the service.beta.kubernetes.io/load-balancer-source-ranges annotation changes",
 			mutate: func(svc *corev1.Service) {
 				svc.Annotations["service.beta.kubernetes.io/load-balancer-source-ranges"] = "10.0.0.0/8"
@@ -685,6 +850,20 @@ func TestLoadBalancerServiceChanged(t *testing.T) {
 			},
 			expect: false,
 		},
+		{
+			description: "if the service.beta.kubernetes.io/aws-load-balancer-connection-idle-timeout annotation changes",
+			mutate: func(svc *corev1.Service) {
+				svc.Annotations["service.beta.kubernetes.io/aws-load-balancer-connection-idle-timeout"] = "120"
+			},
+			expect: true,
+		},
+		{
+			description: "if the service.kubernetes.io/ibm-load-balancer-cloud-provider-enable-features annotation is added",
+			mutate: func(svc *corev1.Service) {
+				svc.Annotations["service.kubernetes.io/ibm-load-balancer-cloud-provider-enable-features"] = "proxy-protocol"
+			},
+			expect: true,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -692,6 +871,7 @@ func TestLoadBalancerServiceChanged(t *testing.T) {
 			original := corev1.Service{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
+						"service.beta.kubernetes.io/aws-load-balancer-connection-idle-timeout":  "10",
 						"service.beta.kubernetes.io/aws-load-balancer-healthcheck-interval":     "5",
 						"service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags": "Key1=Value1,Key2=Value2",
 					},
@@ -732,6 +912,104 @@ func TestLoadBalancerServiceChanged(t *testing.T) {
 			} else if changed {
 				if changedAgain, _ := loadBalancerServiceChanged(mutated, updated); changedAgain {
 					t.Error("loadBalancerServiceChanged does not behave as a fixed point function")
+				}
+			}
+		})
+	}
+}
+
+// TestLoadBalancerServiceAnnotationsChanged verifies that
+// loadBalancerServiceAnnotationsChanged behaves correctly.
+func TestLoadBalancerServiceAnnotationsChanged(t *testing.T) {
+	testCases := []struct {
+		description         string
+		mutate              func(*corev1.Service)
+		currentAnnotations  map[string]string
+		expectedAnnotations map[string]string
+		managedAnnotations  sets.String
+		expect              bool
+	}{
+		{
+			description:         "if current and expected annotations are both empty",
+			currentAnnotations:  map[string]string{},
+			expectedAnnotations: map[string]string{},
+			managedAnnotations:  sets.NewString("foo"),
+			expect:              false,
+		},
+		{
+			description:         "if current annotations is nil and expected annotations is empty",
+			currentAnnotations:  nil,
+			expectedAnnotations: map[string]string{},
+			managedAnnotations:  sets.NewString("foo"),
+			expect:              false,
+		},
+		{
+			description:         "if current annotations is empty and expected annotations is nil",
+			currentAnnotations:  map[string]string{},
+			expectedAnnotations: nil,
+			managedAnnotations:  sets.NewString("foo"),
+			expect:              false,
+		},
+		{
+			description: "if an unmanaged annotation is updated",
+			currentAnnotations: map[string]string{
+				"foo": "bar",
+			},
+			expectedAnnotations: map[string]string{
+				"foo": "bar",
+				"baz": "quux",
+			},
+			managedAnnotations: sets.NewString("foo"),
+			expect:             false,
+		},
+		{
+			description:        "if a managed annotation is set",
+			currentAnnotations: map[string]string{},
+			expectedAnnotations: map[string]string{
+				"foo": "bar",
+			},
+			managedAnnotations: sets.NewString("foo"),
+			expect:             true,
+		},
+		{
+			description: "if a managed annotation is updated",
+			currentAnnotations: map[string]string{
+				"foo": "bar",
+			},
+			expectedAnnotations: map[string]string{
+				"foo": "baz",
+			},
+			managedAnnotations: sets.NewString("foo"),
+			expect:             true,
+		},
+		{
+			description: "if a managed annotation is deleted",
+			currentAnnotations: map[string]string{
+				"foo": "bar",
+			},
+			expectedAnnotations: map[string]string{},
+			managedAnnotations:  sets.NewString("foo"),
+			expect:              true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			current := corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: tc.currentAnnotations,
+				},
+			}
+			expected := corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: tc.expectedAnnotations,
+				},
+			}
+			if changed, updated := loadBalancerServiceAnnotationsChanged(&current, &expected, tc.managedAnnotations); changed != tc.expect {
+				t.Errorf("expected loadBalancerServiceAnnotationsChanged to be %t, got %t", tc.expect, changed)
+			} else if changed {
+				if changedAgain, _ := loadBalancerServiceAnnotationsChanged(&expected, updated, tc.managedAnnotations); changedAgain {
+					t.Error("loadBalancerServiceAnnotationsChanged does not behave as a fixed point function")
 				}
 			}
 		})
@@ -799,4 +1077,162 @@ func TestServiceIngressOwner(t *testing.T) {
 		}
 	}
 
+}
+
+func TestUpdateLoadBalancerServiceSourceRanges(t *testing.T) {
+	// Test all cases in the table presented in <https://github.com/openshift/enhancements/pull/1177>.
+	testCases := []struct {
+		name                             string
+		allowedSourceRanges              []operatorv1.CIDR
+		currentAnnotation                string
+		currentLoadBalancerSourceRanges  []string
+		expectedLoadBalancerSourceRanges []string
+		expectAnnotationToBeCleared      bool
+		expectChanged                    bool
+	}{
+		{
+			name:                             "only loadBalancerSourceRanges is set",
+			currentLoadBalancerSourceRanges:  []string{"foo"},
+			expectedLoadBalancerSourceRanges: []string{"foo"},
+			expectChanged:                    false,
+		},
+		{
+			name:                             "loadBalancerSourceRanges is different from allowedSourceRanges and annotation is not set",
+			allowedSourceRanges:              []operatorv1.CIDR{"bar"},
+			currentLoadBalancerSourceRanges:  []string{"foo"},
+			expectedLoadBalancerSourceRanges: []string{"bar"},
+			expectChanged:                    true,
+		},
+		{
+			name:                             "only allowedSourceRanges is set",
+			allowedSourceRanges:              []operatorv1.CIDR{"bar"},
+			expectedLoadBalancerSourceRanges: []string{"bar"},
+			expectChanged:                    true,
+		},
+		{
+			name:                             "annotation and loadBalancerSourceRanges are set and allowedSourceRanges is not set",
+			currentAnnotation:                "cow",
+			currentLoadBalancerSourceRanges:  []string{"foo"},
+			expectedLoadBalancerSourceRanges: []string{"foo"},
+			expectAnnotationToBeCleared:      false,
+			expectChanged:                    false,
+		},
+		{
+			name:                             "annotation, loadBalancerSourceRanges, and allowedSourceRanges are set",
+			allowedSourceRanges:              []operatorv1.CIDR{"bar"},
+			currentAnnotation:                "cow",
+			currentLoadBalancerSourceRanges:  []string{"foo"},
+			expectedLoadBalancerSourceRanges: []string{"bar"},
+			expectAnnotationToBeCleared:      true,
+			expectChanged:                    true,
+		},
+		{
+			name:                             "annotation and loadBalancerSourceRanges are set and identical, allowedSourceRanges is not set",
+			currentAnnotation:                "foo",
+			currentLoadBalancerSourceRanges:  []string{"foo"},
+			expectedLoadBalancerSourceRanges: []string{"foo"},
+			expectAnnotationToBeCleared:      false,
+			expectChanged:                    false,
+		},
+		{
+			name:                             "annotation and loadBalancerSourceRanges are set and identical, allowedSourceRanges is also set",
+			allowedSourceRanges:              []operatorv1.CIDR{"bar"},
+			currentAnnotation:                "foo",
+			currentLoadBalancerSourceRanges:  []string{"foo"},
+			expectedLoadBalancerSourceRanges: []string{"bar"},
+			expectAnnotationToBeCleared:      true,
+			expectChanged:                    true,
+		},
+		{
+			name:                        "only annotation is set",
+			currentAnnotation:           "foo",
+			expectAnnotationToBeCleared: false,
+			expectChanged:               false,
+		},
+		{
+			name:                             "annotation and allowedSourceRanges are set, loadBalancerSourceRanges is also set",
+			allowedSourceRanges:              []operatorv1.CIDR{"bar"},
+			currentAnnotation:                "foo",
+			expectedLoadBalancerSourceRanges: []string{"bar"},
+			expectAnnotationToBeCleared:      true,
+			expectChanged:                    true,
+		},
+		{
+			name:                             "allowedSourceRanges and loadBalancerSourceRanges are set and identical, annotation is also set",
+			allowedSourceRanges:              []operatorv1.CIDR{"foo"},
+			currentAnnotation:                "cow",
+			currentLoadBalancerSourceRanges:  []string{"foo"},
+			expectedLoadBalancerSourceRanges: []string{"foo"},
+			expectAnnotationToBeCleared:      true,
+			expectChanged:                    true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ic := &operatorv1.IngressController{
+				ObjectMeta: metav1.ObjectMeta{Name: "default"},
+				Spec: operatorv1.IngressControllerSpec{
+					EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+						LoadBalancer: &operatorv1.LoadBalancerStrategy{
+							AllowedSourceRanges: tc.allowedSourceRanges,
+						},
+					},
+				},
+				Status: operatorv1.IngressControllerStatus{
+					EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+						Type:         operatorv1.LoadBalancerServiceStrategyType,
+						LoadBalancer: &operatorv1.LoadBalancerStrategy{},
+					},
+				},
+			}
+			trueVar := true
+			deploymentRef := metav1.OwnerReference{
+				APIVersion: "apps/v1",
+				Kind:       "Deployment",
+				Name:       "router-default",
+				UID:        "1",
+				Controller: &trueVar,
+			}
+			infraConfig := &configv1.Infrastructure{
+				Status: configv1.InfrastructureStatus{
+					PlatformStatus: &configv1.PlatformStatus{
+						Type: configv1.AWSPlatformType,
+					},
+				},
+			}
+			wantSvc, desired, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig.Status.PlatformStatus)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !wantSvc {
+				t.Fatal("desiredLoadBalancerService didn't return a service")
+			}
+
+			current := desired.DeepCopy()
+			if len(tc.currentAnnotation) > 0 {
+				current.Annotations[corev1.AnnotationLoadBalancerSourceRangesKey] = tc.currentAnnotation
+			}
+			current.Spec.LoadBalancerSourceRanges = tc.currentLoadBalancerSourceRanges
+
+			changed, svc := loadBalancerServiceChanged(current, desired)
+			if changed != tc.expectChanged {
+				t.Errorf("expected changed to be %t, got %t", tc.expectChanged, changed)
+			}
+
+			if changed {
+				if actual := svc.Spec.LoadBalancerSourceRanges; !reflect.DeepEqual(actual, tc.expectedLoadBalancerSourceRanges) {
+					t.Errorf("expected LoadBalancerSourceRanges %v, got %v", tc.expectedLoadBalancerSourceRanges, actual)
+				}
+
+				if len(tc.currentAnnotation) > 0 {
+					if a, exists := svc.Annotations[corev1.AnnotationLoadBalancerSourceRangesKey]; (!exists || len(a) == 0) && !tc.expectAnnotationToBeCleared {
+						t.Error("expected service.beta.kubernetes.io/load-balancer-source-ranges annotation not to be cleared")
+					} else if exists && len(a) > 0 && tc.expectAnnotationToBeCleared {
+						t.Error("expected service.beta.kubernetes.io/load-balancer-source-ranges annotation to be cleared")
+					}
+				}
+			}
+		})
+	}
 }

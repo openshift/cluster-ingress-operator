@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
@@ -29,9 +30,9 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
-	utilclock "k8s.io/apimachinery/pkg/util/clock"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	utilclock "k8s.io/utils/clock"
 )
 
 // clock is to enable unit testing
@@ -50,21 +51,17 @@ type expectedCondition struct {
 
 // syncIngressControllerStatus computes the current status of ic and
 // updates status upon any changes since last sync.
-func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressController, deployment *appsv1.Deployment, deploymentRef metav1.OwnerReference, pods []corev1.Pod, service *corev1.Service, operandEvents []corev1.Event, wildcardRecord *iov1.DNSRecord, dnsConfig *configv1.DNS, infraConfig *configv1.Infrastructure) error {
+func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressController, deployment *appsv1.Deployment, deploymentRef metav1.OwnerReference, pods []corev1.Pod, service *corev1.Service, operandEvents []corev1.Event, wildcardRecord *iov1.DNSRecord, dnsConfig *configv1.DNS, platformStatus *configv1.PlatformStatus) (error, bool) {
+	updatedIc := false
 	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
 	if err != nil {
-		return fmt.Errorf("deployment has invalid spec.selector: %v", err)
-	}
-
-	platform, err := oputil.GetPlatformStatus(r.client, infraConfig)
-	if err != nil {
-		return fmt.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %w", ic.Namespace, ic.Name, err)
+		return fmt.Errorf("deployment has invalid spec.selector: %v", err), updatedIc
 	}
 
 	secret := &corev1.Secret{}
 	secretName := controller.RouterEffectiveDefaultCertificateSecretName(ic, deployment.Namespace)
 	if err := r.client.Get(context.TODO(), secretName, secret); err != nil && !apierrors.IsNotFound(err) {
-		return fmt.Errorf("failed to get the default certificate secret %s for ingresscontroller %s/%s: %w", secretName, ic.Namespace, ic.Name, err)
+		return fmt.Errorf("failed to get the default certificate secret %s for ingresscontroller %s/%s: %w", secretName, ic.Namespace, ic.Name, err), updatedIc
 	}
 
 	var errs []error
@@ -73,18 +70,25 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	updated.Status.AvailableReplicas = deployment.Status.AvailableReplicas
 	updated.Status.Selector = selector.String()
 	updated.Status.TLSProfile = computeIngressTLSProfile(ic.Status.TLSProfile, deployment)
-	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentPodsScheduledCondition(deployment, pods))
+
+	if updated.Status.EndpointPublishingStrategy != nil && updated.Status.EndpointPublishingStrategy.LoadBalancer != nil {
+		updated.Status.EndpointPublishingStrategy.LoadBalancer.AllowedSourceRanges = computeAllowedSourceRanges(service)
+	}
+
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentAvailableCondition(deployment))
-	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentReplicasMinAvailableCondition(deployment))
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentReplicasMinAvailableCondition(deployment, pods))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentReplicasAllAvailableCondition(deployment))
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentRollingOutCondition(deployment))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeLoadBalancerStatus(ic, service, operandEvents)...)
-	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDNSStatus(ic, wildcardRecord, dnsConfig)...)
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeLoadBalancerProgressingStatus(ic, service, platformStatus))
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDNSStatus(ic, wildcardRecord, platformStatus, dnsConfig)...)
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressAvailableCondition(updated.Status.Conditions))
 	degradedCondition, err := computeIngressDegradedCondition(updated.Status.Conditions, updated.Name)
 	errs = append(errs, err)
-	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressProgressingCondition(updated.Status.Conditions, ic, service, platform))
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressProgressingCondition(updated.Status.Conditions))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, degradedCondition)
-	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressUpgradeableCondition(ic, deploymentRef, service, platform, secret))
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressUpgradeableCondition(ic, deploymentRef, service, platformStatus, secret))
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressEvaluationConditionsDetectedCondition(ic, service))
 
 	updated.Status.Conditions = PruneConditions(updated.Status.Conditions)
 
@@ -92,11 +96,27 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 		if err := r.client.Status().Update(context.TODO(), updated); err != nil {
 			errs = append(errs, fmt.Errorf("failed to update ingresscontroller status: %v", err))
 		} else {
+			updatedIc = true
 			SetIngressControllerConditionsMetric(updated)
 		}
 	}
 
-	return retryableerror.NewMaybeRetryableAggregate(errs)
+	return retryableerror.NewMaybeRetryableAggregate(errs), updatedIc
+}
+
+// syncIngressControllerSelectorStatus syncs the routeSelector and namespaceSelector
+// from the spec to the status for tracking selector state.
+func (r *reconciler) syncIngressControllerSelectorStatus(ic *operatorv1.IngressController) error {
+	// Sync selectors from Spec to Status. This allows us to determine if either of these were updated.
+	updated := ic.DeepCopy()
+	updated.Status.RouteSelector = ic.Spec.RouteSelector
+	updated.Status.NamespaceSelector = ic.Spec.NamespaceSelector
+
+	if err := r.client.Status().Update(context.TODO(), updated); err != nil {
+		return fmt.Errorf("failed to update ingresscontroller status: %w", err)
+	}
+
+	return nil
 }
 
 // MergeConditions adds or updates matching conditions, and updates
@@ -132,9 +152,9 @@ func MergeConditions(conditions []operatorv1.OperatorCondition, updates ...opera
 // Returns the updated condition array.
 func PruneConditions(conditions []operatorv1.OperatorCondition) []operatorv1.OperatorCondition {
 	for i, condition := range conditions {
-		// TODO: Remove this fix-up logic in 4.8
-		if condition.Type == "DeploymentDegraded" {
-			// DeploymentDegraded was removed in 4.6.0
+		// PodsScheduled was removed in 4.13.0.
+		// TODO: Remove this fix-up logic in 4.14.
+		if condition.Type == "PodsScheduled" {
 			conditions = append(conditions[:i], conditions[i+1:]...)
 		}
 	}
@@ -154,18 +174,46 @@ func computeIngressTLSProfile(oldProfile *configv1.TLSProfileSpec, deployment *a
 	return newProfile
 }
 
-// computeDeploymentPodsScheduledCondition computes the ingress controller's
-// current PodsScheduled status condition state by inspecting the PodScheduled
-// conditions of the pods associated with the deployment.
-func computeDeploymentPodsScheduledCondition(deployment *appsv1.Deployment, pods []corev1.Pod) operatorv1.OperatorCondition {
+// computeAllowedSourceRanges computes the effective AllowedSourceRanges value
+// by looking at the LoadBalancerSourceRanges field and service.beta.kubernetes.io/load-balancer-source-ranges
+// annotation of the LoadBalancer-typed Service. The field takes precedence over the annotation.
+func computeAllowedSourceRanges(service *corev1.Service) []operatorv1.CIDR {
+	if service == nil {
+		return nil
+	}
+	cidrs := []operatorv1.CIDR{}
+	if len(service.Spec.LoadBalancerSourceRanges) > 0 {
+		for _, r := range service.Spec.LoadBalancerSourceRanges {
+			cidrs = append(cidrs, operatorv1.CIDR(r))
+		}
+		return cidrs
+	}
+
+	if a, ok := service.Annotations[corev1.AnnotationLoadBalancerSourceRangesKey]; ok {
+		a = strings.TrimSpace(a)
+		if len(a) > 0 {
+			sourceRanges := strings.Split(a, ",")
+			for _, r := range sourceRanges {
+				cidrs = append(cidrs, operatorv1.CIDR(r))
+			}
+			return cidrs
+		}
+	}
+
+	return nil
+}
+
+// checkPodsScheduledForDeployment checks whether the given deployment has a
+// valid label selector and whether all of the deployment's pods are reporting
+// PodsScheduled=True.  This function returns an error value indicating the
+// result of that check.
+func checkPodsScheduledForDeployment(deployment *appsv1.Deployment, pods []corev1.Pod) error {
+	if deployment == nil {
+		return errors.New("System error detected: deployment was nil.  Please report this issue to Red Hat: https://issues.redhat.com/secure/CreateIssueDetails!init.jspa?pid=12332330&issuetype=1&components=12367900&priority=10300&customfield_12316142=26752")
+	}
 	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
 	if err != nil || selector.Empty() {
-		return operatorv1.OperatorCondition{
-			Type:    IngressControllerPodsScheduledConditionType,
-			Status:  operatorv1.ConditionUnknown,
-			Reason:  "InvalidLabelSelector",
-			Message: "Deployment has an invalid label selector.",
-		}
+		return errors.New("Deployment has an invalid label selector.")
 	}
 	unscheduled := make(map[*corev1.Pod]corev1.PodCondition)
 	for i, pod := range pods {
@@ -205,17 +253,9 @@ func computeDeploymentPodsScheduledCondition(deployment *appsv1.Deployment, pods
 		if haveUnschedulable {
 			message = message + " Make sure you have sufficient worker nodes."
 		}
-		return operatorv1.OperatorCondition{
-			Type:    IngressControllerPodsScheduledConditionType,
-			Status:  operatorv1.ConditionFalse,
-			Reason:  "PodsNotScheduled",
-			Message: message,
-		}
+		return errors.New(message)
 	}
-	return operatorv1.OperatorCondition{
-		Type:   IngressControllerPodsScheduledConditionType,
-		Status: operatorv1.ConditionTrue,
-	}
+	return nil
 }
 
 // computeIngressAvailableCondition computes the ingress controller's current Available status state
@@ -361,7 +401,7 @@ func computeDeploymentAvailableCondition(deployment *appsv1.Deployment) operator
 // update parameters.  The "DeploymentReplicasMinAvailable" condition is true if
 // the number of available replicas is equal to or greater than the number of
 // desired replicas less the number minimum available.
-func computeDeploymentReplicasMinAvailableCondition(deployment *appsv1.Deployment) operatorv1.OperatorCondition {
+func computeDeploymentReplicasMinAvailableCondition(deployment *appsv1.Deployment, pods []corev1.Pod) operatorv1.OperatorCondition {
 	replicas := int32(1)
 	if deployment.Spec.Replicas != nil {
 		replicas = *deployment.Spec.Replicas
@@ -400,11 +440,15 @@ func computeDeploymentReplicasMinAvailableCondition(deployment *appsv1.Deploymen
 		maxUnavailable = 1
 	}
 	if int(deployment.Status.AvailableReplicas) < int(replicas)-maxUnavailable {
+		message := fmt.Sprintf("%d/%d of replicas are available, max unavailable is %d", deployment.Status.AvailableReplicas, replicas, maxUnavailable)
+		if err := checkPodsScheduledForDeployment(deployment, pods); err != nil {
+			message = fmt.Sprintf("%s: %s", message, err.Error())
+		}
 		return operatorv1.OperatorCondition{
 			Type:    IngressControllerDeploymentReplicasMinAvailableConditionType,
 			Status:  operatorv1.ConditionFalse,
 			Reason:  "DeploymentMinimumReplicasNotMet",
-			Message: fmt.Sprintf("%d/%d of replicas are available, max unavailable is %d", deployment.Status.AvailableReplicas, replicas, maxUnavailable),
+			Message: message,
 		}
 	}
 
@@ -445,6 +489,55 @@ func computeDeploymentReplicasAllAvailableCondition(deployment *appsv1.Deploymen
 	}
 }
 
+// computeDeploymentRollingOutCondition computes the ingress controller's
+// "DeploymentRollingOut" status condition by examining the number of updated
+// replicas reported in the deployment's status. The "DeploymentRollingOut"
+// condition is true if the number of updated replicas is not equal to the number
+// of expected or available replicas.
+// See Reference: https://github.com/kubernetes/kubectl/blob/master/pkg/polymorphichelpers/rollout_status.go
+func computeDeploymentRollingOutCondition(deployment *appsv1.Deployment) operatorv1.OperatorCondition {
+	// If have replicas is less than want replicas, then we are waiting for replicas to be updated.
+	if deployment.Spec.Replicas != nil && deployment.Status.UpdatedReplicas < *deployment.Spec.Replicas {
+		return operatorv1.OperatorCondition{
+			Type:   IngressControllerDeploymentRollingOutConditionType,
+			Status: operatorv1.ConditionTrue,
+			Reason: "DeploymentRollingOut",
+			Message: fmt.Sprintf(
+				"Waiting for router deployment rollout to finish: %d out of %d new replica(s) have been updated...\n",
+				deployment.Status.UpdatedReplicas, *deployment.Spec.Replicas),
+		}
+	}
+	// If have replicas greater than updated replicas, then we are waiting for old replicas to terminate.
+	if deployment.Status.Replicas > deployment.Status.UpdatedReplicas {
+		return operatorv1.OperatorCondition{
+			Type:   IngressControllerDeploymentRollingOutConditionType,
+			Status: operatorv1.ConditionTrue,
+			Reason: "DeploymentRollingOut",
+			Message: fmt.Sprintf(
+				"Waiting for router deployment rollout to finish: %d old replica(s) are pending termination...\n",
+				deployment.Status.Replicas-deployment.Status.UpdatedReplicas),
+		}
+	}
+	// If available replicas less than updated replicas, then we are waiting for updated replicas to become available.
+	if deployment.Status.AvailableReplicas < deployment.Status.UpdatedReplicas {
+		return operatorv1.OperatorCondition{
+			Type:   IngressControllerDeploymentRollingOutConditionType,
+			Status: operatorv1.ConditionTrue,
+			Reason: "DeploymentRollingOut",
+			Message: fmt.Sprintf(
+				"Waiting for router deployment rollout to finish: %d of %d updated replica(s) are available...\n",
+				deployment.Status.AvailableReplicas, deployment.Status.UpdatedReplicas),
+		}
+	}
+
+	return operatorv1.OperatorCondition{
+		Type:    IngressControllerDeploymentRollingOutConditionType,
+		Status:  operatorv1.ConditionFalse,
+		Reason:  "DeploymentNotRollingOut",
+		Message: "Deployment is not actively rolling out",
+	}
+}
+
 // computeIngressDegradedCondition computes the ingresscontroller's "Degraded"
 // status condition, which aggregates other status conditions that can indicate
 // a degraded state.  In addition, computeIngressDegradedCondition returns a
@@ -456,11 +549,6 @@ func computeIngressDegradedCondition(conditions []operatorv1.OperatorCondition, 
 		{
 			condition: IngressControllerAdmittedConditionType,
 			status:    operatorv1.ConditionTrue,
-		},
-		{
-			condition:   IngressControllerPodsScheduledConditionType,
-			status:      operatorv1.ConditionTrue,
-			gracePeriod: time.Minute * 10,
 		},
 		{
 			condition:   IngressControllerDeploymentAvailableConditionType,
@@ -575,6 +663,31 @@ func computeIngressUpgradeableCondition(ic *operatorv1.IngressController, deploy
 	}
 }
 
+// computeIngressEvaluationConditionsDetectedCondition computes the IngressController's "EvaluationConditionsDetected" status condition.
+func computeIngressEvaluationConditionsDetectedCondition(ic *operatorv1.IngressController, service *corev1.Service) operatorv1.OperatorCondition {
+	var errs []error
+
+	if service != nil {
+		errs = append(errs, loadBalancerServiceEvaluationConditionsDetected(ic, service))
+	}
+
+	if err := kerrors.NewAggregate(errs); err != nil {
+		return operatorv1.OperatorCondition{
+			Type:    IngressControllerEvaluationConditionsDetectedConditionType,
+			Status:  operatorv1.ConditionTrue,
+			Reason:  "OperandsEvaluationConditionsDetected",
+			Message: fmt.Sprintf("One or more managed resources have evaluation conditions: %s", err),
+		}
+	}
+
+	return operatorv1.OperatorCondition{
+		Type:    IngressControllerEvaluationConditionsDetectedConditionType,
+		Status:  operatorv1.ConditionFalse,
+		Reason:  "NoEvaluationCondition",
+		Message: "No evaluation condition is detected.",
+	}
+}
+
 // checkDefaultCertificate returns an error value indicating whether the default
 // certificate is safe for upgrades.  In particular, if the current default
 // certificate specifies a Subject Alternative Name (SAN) for the ingress
@@ -629,43 +742,42 @@ func formatConditions(conditions []*operatorv1.OperatorCondition) string {
 	return formatted
 }
 
-// computeIngressProgressingCondition computes the ingresscontroller's
-// "Progressing" status condition, which indicates if the ingresscontroller's
-// current state matches its desired state.
-func computeIngressProgressingCondition(conditions []operatorv1.OperatorCondition, ic *operatorv1.IngressController, service *corev1.Service, platform *configv1.PlatformStatus) operatorv1.OperatorCondition {
-	condition := operatorv1.OperatorCondition{
-		Type:   operatorv1.OperatorStatusTypeProgressing,
-		Status: operatorv1.ConditionFalse,
+// computeIngressProgressingCondition computes the IngressController's current Progressing status state
+// by inspecting the following:
+// 1) the Deployment Replicas Updated condition of the IngressController
+// 2) the LoadBalancer Progressing condition of the IngressController
+// The IngressController is judged NOT Progressing only if all 2 conditions are true; otherwise
+// it is considered to be Progressing.
+func computeIngressProgressingCondition(conditions []operatorv1.OperatorCondition) operatorv1.OperatorCondition {
+	expected := []expectedCondition{
+		{
+			condition:        IngressControllerLoadBalancerProgressingConditionType,
+			status:           operatorv1.ConditionFalse,
+			ifConditionsTrue: []string{operatorv1.LoadBalancerManagedIngressConditionType},
+		},
+		{
+			condition: IngressControllerDeploymentRollingOutConditionType,
+			status:    operatorv1.ConditionFalse,
+		},
 	}
-	if ic.Status.EndpointPublishingStrategy.Type == operatorv1.LoadBalancerServiceStrategyType {
-		switch {
-		case ic.Status.EndpointPublishingStrategy.LoadBalancer == nil:
-			condition.Message = "status.endpointPublishingStrategy.loadBalancer is not set."
-			condition.Reason = "IncompleteStatus"
-			condition.Status = operatorv1.ConditionUnknown
-		case service == nil:
-			condition.Message = "LoadBalancer Service not created."
-			condition.Reason = "NoService"
-			condition.Status = operatorv1.ConditionTrue
-		default:
-			wantScope := ic.Status.EndpointPublishingStrategy.LoadBalancer.Scope
-			haveScope := operatorv1.ExternalLoadBalancer
-			if IsServiceInternal(service) {
-				haveScope = operatorv1.InternalLoadBalancer
-			}
-			if wantScope != haveScope {
-				message := fmt.Sprintf("The IngressController scope was changed from %q to %q.", haveScope, wantScope)
-				switch platform.Type {
-				case configv1.AWSPlatformType, configv1.IBMCloudPlatformType:
-					message = fmt.Sprintf("%[1]s  To effectuate this change, you must delete the service: `oc -n %[2]s delete svc/%[3]s`; the service load-balancer will then be deprovisioned and a new one created.  This will most likely cause the new load-balancer to have a different host name and IP address from the old one's.  Alternatively, you can revert the change to the IngressController: `oc -n openshift-ingress-operator patch ingresscontrollers/%[4]s --type=merge --patch='{\"spec\":{\"endpointPublishingStrategy\":{\"loadBalancer\":{\"scope\":\"%[5]s\"}}}}'", message, service.Namespace, service.Name, ic.Name, haveScope)
-				}
-				condition.Reason = "ScopeChanged"
-				condition.Message = message
-				condition.Status = operatorv1.ConditionTrue
+
+	// Check for the rare case of no conditions
+	if len(conditions) != 0 {
+		_, progressingConditions, _ := checkConditions(expected, conditions)
+		if len(progressingConditions) != 0 {
+			progressing := formatConditions(progressingConditions)
+			return operatorv1.OperatorCondition{
+				Type:    operatorv1.OperatorStatusTypeProgressing,
+				Status:  operatorv1.ConditionTrue,
+				Reason:  "IngressControllerProgressing",
+				Message: "One or more status conditions indicate progressing: " + progressing,
 			}
 		}
 	}
-	return condition
+	return operatorv1.OperatorCondition{
+		Type:   operatorv1.OperatorStatusTypeProgressing,
+		Status: operatorv1.ConditionFalse,
+	}
 }
 
 // IngressStatusesEqual compares two IngressControllerStatus values.  Returns true
@@ -682,6 +794,12 @@ func IngressStatusesEqual(a, b operatorv1.IngressControllerStatus) bool {
 	if !reflect.DeepEqual(a.TLSProfile, b.TLSProfile) {
 		return false
 	}
+	if a.EndpointPublishingStrategy != nil && a.EndpointPublishingStrategy.LoadBalancer != nil &&
+		b.EndpointPublishingStrategy != nil && b.EndpointPublishingStrategy.LoadBalancer != nil {
+		if !reflect.DeepEqual(a.EndpointPublishingStrategy.LoadBalancer.AllowedSourceRanges, b.EndpointPublishingStrategy.LoadBalancer.AllowedSourceRanges) {
+			return false
+		}
+	}
 
 	return true
 }
@@ -691,19 +809,19 @@ func conditionsEqual(a, b []operatorv1.OperatorCondition) bool {
 		cmpopts.EquateEmpty(),
 		cmpopts.SortSlices(func(a, b operatorv1.OperatorCondition) bool { return a.Type < b.Type }),
 	}
-	if !cmp.Equal(a, b, conditionCmpOpts...) {
-		return false
-	}
-	return true
+
+	return cmp.Equal(a, b, conditionCmpOpts...)
 }
 
 func conditionChanged(a, b operatorv1.OperatorCondition) bool {
 	return a.Status != b.Status || a.Reason != b.Reason || a.Message != b.Message
 }
 
-// computeLoadBalancerStatus returns the complete set of current
-// LoadBalancer-prefixed conditions for the given ingress controller.
+// computeLoadBalancerStatus returns the set of current
+// LoadBalancer-prefixed conditions for the given ingress controller, which are
+// used later to determine the ingress controller's Degraded or Available status.
 func computeLoadBalancerStatus(ic *operatorv1.IngressController, service *corev1.Service, operandEvents []corev1.Event) []operatorv1.OperatorCondition {
+	// Compute the LoadBalancerManagedIngressConditionType condition
 	if ic.Status.EndpointPublishingStrategy == nil ||
 		ic.Status.EndpointPublishingStrategy.Type != operatorv1.LoadBalancerServiceStrategyType {
 		return []operatorv1.OperatorCondition{
@@ -711,7 +829,7 @@ func computeLoadBalancerStatus(ic *operatorv1.IngressController, service *corev1
 				Type:    operatorv1.LoadBalancerManagedIngressConditionType,
 				Status:  operatorv1.ConditionFalse,
 				Reason:  "EndpointPublishingStrategyExcludesManagedLoadBalancer",
-				Message: fmt.Sprintf("The configured endpoint publishing strategy does not include a managed load balancer"),
+				Message: "The configured endpoint publishing strategy does not include a managed load balancer",
 			},
 		}
 	}
@@ -725,6 +843,7 @@ func computeLoadBalancerStatus(ic *operatorv1.IngressController, service *corev1
 		Message: "The endpoint publishing strategy supports a managed load balancer",
 	})
 
+	// Compute the LoadBalancerReadyIngressConditionType condition
 	switch {
 	case service == nil:
 		conditions = append(conditions, operatorv1.OperatorCondition{
@@ -763,8 +882,47 @@ func computeLoadBalancerStatus(ic *operatorv1.IngressController, service *corev1
 			Message: message,
 		})
 	}
-
 	return conditions
+}
+
+// computeLoadBalancerProgressingStatus returns the LoadBalancerProgressing
+// conditions for the given ingress controller. These conditions subsequently determine
+// the ingress controller's Progressing status.
+func computeLoadBalancerProgressingStatus(ic *operatorv1.IngressController, service *corev1.Service, platform *configv1.PlatformStatus) operatorv1.OperatorCondition {
+	// Compute the IngressControllerLoadBalancerProgressingConditionType condition for the LoadBalancer
+	if ic.Status.EndpointPublishingStrategy.Type == operatorv1.LoadBalancerServiceStrategyType {
+		switch {
+		case ic.Status.EndpointPublishingStrategy.LoadBalancer == nil:
+			return operatorv1.OperatorCondition{
+				Type:    IngressControllerLoadBalancerProgressingConditionType,
+				Status:  operatorv1.ConditionUnknown,
+				Reason:  "StatusIncomplete",
+				Message: "status.endpointPublishingStrategy.loadBalancer is not set.",
+			}
+		case service == nil:
+			return operatorv1.OperatorCondition{
+				Type:    IngressControllerLoadBalancerProgressingConditionType,
+				Status:  operatorv1.ConditionTrue,
+				Reason:  "NoService",
+				Message: "LoadBalancer Service not created.",
+			}
+		default:
+			if err := loadBalancerServiceIsProgressing(ic, service, platform); err != nil {
+				return operatorv1.OperatorCondition{
+					Type:    IngressControllerLoadBalancerProgressingConditionType,
+					Status:  operatorv1.ConditionTrue,
+					Reason:  "OperandsProgressing",
+					Message: fmt.Sprintf("One or more managed resources are progressing: %s", err),
+				}
+			}
+		}
+	}
+	return operatorv1.OperatorCondition{
+		Type:    IngressControllerLoadBalancerProgressingConditionType,
+		Status:  operatorv1.ConditionFalse,
+		Reason:  "LoadBalancerNotProgressing",
+		Message: "LoadBalancer is not progressing",
+	}
 }
 
 func isProvisioned(service *corev1.Service) bool {
@@ -787,8 +945,7 @@ func getEventsByReason(events []corev1.Event, component, reason string) []corev1
 	return filtered
 }
 
-func computeDNSStatus(ic *operatorv1.IngressController, wildcardRecord *iov1.DNSRecord, dnsConfig *configv1.DNS) []operatorv1.OperatorCondition {
-
+func computeDNSStatus(ic *operatorv1.IngressController, wildcardRecord *iov1.DNSRecord, status *configv1.PlatformStatus, dnsConfig *configv1.DNS) []operatorv1.OperatorCondition {
 	if dnsConfig.Spec.PublicZone == nil && dnsConfig.Spec.PrivateZone == nil {
 		return []operatorv1.OperatorCondition{
 			{
@@ -810,14 +967,21 @@ func computeDNSStatus(ic *operatorv1.IngressController, wildcardRecord *iov1.DNS
 			},
 		}
 	}
-
-	conditions := []operatorv1.OperatorCondition{
-		{
+	var conditions []operatorv1.OperatorCondition
+	if ic.Status.EndpointPublishingStrategy.LoadBalancer.DNSManagementPolicy == operatorv1.UnmanagedLoadBalancerDNS {
+		conditions = append(conditions, operatorv1.OperatorCondition{
+			Type:    operatorv1.DNSManagedIngressConditionType,
+			Status:  operatorv1.ConditionFalse,
+			Reason:  "UnmanagedLoadBalancerDNS",
+			Message: "The DNS management policy is set to Unmanaged.",
+		})
+	} else {
+		conditions = append(conditions, operatorv1.OperatorCondition{
 			Type:    operatorv1.DNSManagedIngressConditionType,
 			Status:  operatorv1.ConditionTrue,
 			Reason:  "Normal",
 			Message: "DNS management is supported and zones are specified in the cluster DNS config.",
-		},
+		})
 	}
 
 	switch {
@@ -828,6 +992,13 @@ func computeDNSStatus(ic *operatorv1.IngressController, wildcardRecord *iov1.DNS
 			Reason:  "RecordNotFound",
 			Message: "The wildcard record resource was not found.",
 		})
+	case wildcardRecord.Spec.DNSManagementPolicy == iov1.UnmanagedDNS:
+		conditions = append(conditions, operatorv1.OperatorCondition{
+			Type:    operatorv1.DNSReadyIngressConditionType,
+			Status:  operatorv1.ConditionUnknown,
+			Reason:  "UnmanagedDNS",
+			Message: "The DNS management policy is set to Unmanaged.",
+		})
 	case len(wildcardRecord.Status.Zones) == 0:
 		conditions = append(conditions, operatorv1.OperatorCondition{
 			Type:    operatorv1.DNSReadyIngressConditionType,
@@ -837,31 +1008,48 @@ func computeDNSStatus(ic *operatorv1.IngressController, wildcardRecord *iov1.DNS
 		})
 	case len(wildcardRecord.Status.Zones) > 0:
 		var failedZones []configv1.DNSZone
+		var unknownZones []configv1.DNSZone
 		for _, zone := range wildcardRecord.Status.Zones {
 			for _, cond := range zone.Conditions {
-				if cond.Type == iov1.DNSRecordFailedConditionType && cond.Status == string(operatorv1.ConditionTrue) {
+				if cond.Type != iov1.DNSRecordPublishedConditionType {
+					continue
+				}
+				if !checkZoneInConfig(dnsConfig, zone.DNSZone) {
+					continue
+				}
+				switch cond.Status {
+				case string(operatorv1.ConditionFalse):
 					// check to see if the zone is in the dnsConfig.Spec
 					// fix:BZ1942657 - relates to status changes when updating DNS PrivateZone config
-					if checkZoneInConfig(dnsConfig, zone.DNSZone) {
-						failedZones = append(failedZones, zone.DNSZone)
-					}
+					failedZones = append(failedZones, zone.DNSZone)
+				case string(operatorv1.ConditionUnknown):
+					unknownZones = append(unknownZones, zone.DNSZone)
 				}
 			}
 		}
-		if len(failedZones) == 0 {
-			conditions = append(conditions, operatorv1.OperatorCondition{
-				Type:    operatorv1.DNSReadyIngressConditionType,
-				Status:  operatorv1.ConditionTrue,
-				Reason:  "NoFailedZones",
-				Message: "The record is provisioned in all reported zones.",
-			})
-		} else {
+		if len(failedZones) != 0 {
 			// TODO: Add failed condition reasons
 			conditions = append(conditions, operatorv1.OperatorCondition{
 				Type:    operatorv1.DNSReadyIngressConditionType,
 				Status:  operatorv1.ConditionFalse,
 				Reason:  "FailedZones",
 				Message: fmt.Sprintf("The record failed to provision in some zones: %v", failedZones),
+			})
+		} else if len(unknownZones) != 0 {
+			// This condition is an edge case where DNSManaged=True but
+			// there was an internal error during publishing record.
+			conditions = append(conditions, operatorv1.OperatorCondition{
+				Type:    operatorv1.DNSReadyIngressConditionType,
+				Status:  operatorv1.ConditionFalse,
+				Reason:  "UnknownZones",
+				Message: fmt.Sprintf("Provisioning of the record is in an unknown state in some zones: %v", unknownZones),
+			})
+		} else {
+			conditions = append(conditions, operatorv1.OperatorCondition{
+				Type:    operatorv1.DNSReadyIngressConditionType,
+				Status:  operatorv1.ConditionTrue,
+				Reason:  "NoFailedZones",
+				Message: "The record is provisioned in all reported zones.",
 			})
 		}
 	}

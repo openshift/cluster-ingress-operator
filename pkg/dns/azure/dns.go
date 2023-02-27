@@ -6,14 +6,24 @@ import (
 	"strings"
 
 	"github.com/Azure/go-autorest/autorest/azure"
+	"github.com/Azure/go-autorest/autorest/to"
 	"github.com/pkg/errors"
 
 	configv1 "github.com/openshift/api/config/v1"
-
 	iov1 "github.com/openshift/api/operatoringress/v1"
-	dns "github.com/openshift/cluster-ingress-operator/pkg/dns"
+	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns/azure/client"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
+)
+
+const (
+	// OCPClusterIDTagKeyPrefix is the cluster identifying tag key prefix that is added to
+	// the Azure resources created by OCP.
+	OCPClusterIDTagKeyPrefix = "kubernetes.io_cluster"
+
+	// OCPClusterIDTagValue is the value of the cluster identifying tag that is added to
+	// the Azure resources created by OCP.
+	OCPClusterIDTagValue = "owned"
 )
 
 var (
@@ -36,6 +46,10 @@ type Config struct {
 	// ARMEndpoint specifies a URL to use for resource management in non-sovereign clouds such as Azure Stack.
 	// The value is not needed for public Azure, Azure Government as it can be determined by the SDK.
 	ARMEndpoint string
+	// InfraID is the generated ID that is used to identify cloud resources created by the installer.
+	InfraID string
+	// Tags is a map of user-defined tags which should be applied to new resources created by the operator.
+	Tags map[string]*string
 }
 
 type provider struct {
@@ -85,20 +99,22 @@ func (m *provider) Ensure(record *iov1.DNSRecord, zone configv1.DNSZone) error {
 		return errors.Wrap(err, "failed to parse zoneID")
 	}
 
+	metadataLabel := m.config.InfraID
 	ARecordName, err := getARecordName(record.Spec.DNSName, targetZone.Name)
 	if err != nil {
 		return err
 	}
+	ARecord := client.ARecord{
+		Address: record.Spec.Targets[0],
+		Name:    ARecordName,
+		TTL:     record.Spec.RecordTTL,
+	}
+	if metadataLabel != "" {
+		ARecord.Label = fmt.Sprintf("kubernetes.io_cluster.%s", metadataLabel)
+	}
 
 	// TODO: handle >0 targets
-	err = m.client.Put(
-		context.TODO(),
-		*targetZone,
-		client.ARecord{
-			Address: record.Spec.Targets[0],
-			Name:    ARecordName,
-			TTL:     record.Spec.RecordTTL,
-		})
+	err = m.client.Put(context.TODO(), *targetZone, ARecord, m.config.Tags)
 
 	if err == nil {
 		log.Info("upserted DNS record", "record", record.Spec, "zone", zone)
@@ -149,4 +165,20 @@ func getARecordName(recordDomain string, zoneName string) (string, error) {
 			"which might be unexpected", "domain", recordDomain, "zone", zoneName)
 	}
 	return strings.TrimSuffix(trimmedDomain, "."+zoneName), nil
+}
+
+// GetTagList returns a list of tags by merging the OCP default tags
+// and the user-defined tags present in the Infrastructure.Status
+func GetTagList(infraStatus *configv1.InfrastructureStatus) map[string]*string {
+	tags := map[string]*string{
+		fmt.Sprintf("%s.%v", OCPClusterIDTagKeyPrefix, infraStatus.InfrastructureName): to.StringPtr(OCPClusterIDTagValue),
+	}
+	if infraStatus.PlatformStatus != nil &&
+		infraStatus.PlatformStatus.Azure != nil &&
+		infraStatus.PlatformStatus.Azure.ResourceTags != nil {
+		for _, tag := range infraStatus.PlatformStatus.Azure.ResourceTags {
+			tags[tag.Key] = to.StringPtr(tag.Value)
+		}
+	}
+	return tags
 }

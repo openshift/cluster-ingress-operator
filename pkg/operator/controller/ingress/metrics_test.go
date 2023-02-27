@@ -77,7 +77,6 @@ func TestDeleteIngressControllerConditionsMetric(t *testing.T) {
 				{Type: "Available", Status: operatorv1.ConditionFalse},
 				{Type: "Degraded", Status: operatorv1.ConditionTrue},
 				{Type: "Admitted", Status: operatorv1.ConditionTrue},
-				{Type: "PodsScheduled", Status: operatorv1.ConditionTrue},
 			}),
 			expectedMetricFormat: `
             # HELP ingress_controller_conditions Report the conditions for ingress controllers. 0 is False and 1 is True.

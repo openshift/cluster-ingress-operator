@@ -157,13 +157,14 @@ func TestTuningOptions(t *testing.T) {
 	ic, ingressConfig, infraConfig, apiConfig, networkConfig, _ := getRouterDeploymentComponents(t)
 
 	// Set up tuning options
-	ic.Spec.TuningOptions.ClientTimeout = &metav1.Duration{45 * time.Second}
-	ic.Spec.TuningOptions.ClientFinTimeout = &metav1.Duration{3 * time.Second}
-	ic.Spec.TuningOptions.ServerTimeout = &metav1.Duration{60 * time.Second}
-	ic.Spec.TuningOptions.ServerFinTimeout = &metav1.Duration{4 * time.Second}
-	ic.Spec.TuningOptions.TunnelTimeout = &metav1.Duration{30 * time.Minute}
-	ic.Spec.TuningOptions.TLSInspectDelay = &metav1.Duration{5 * time.Second}
-	ic.Spec.TuningOptions.HealthCheckInterval = &metav1.Duration{15 * time.Second}
+	ic.Spec.TuningOptions.ClientTimeout = &metav1.Duration{Duration: 45 * time.Second}
+	ic.Spec.TuningOptions.ClientFinTimeout = &metav1.Duration{Duration: 3 * time.Second}
+	ic.Spec.TuningOptions.ServerTimeout = &metav1.Duration{Duration: 60 * time.Second}
+	ic.Spec.TuningOptions.ServerFinTimeout = &metav1.Duration{Duration: 4 * time.Second}
+	ic.Spec.TuningOptions.TunnelTimeout = &metav1.Duration{Duration: 30 * time.Minute}
+	ic.Spec.TuningOptions.TLSInspectDelay = &metav1.Duration{Duration: 5 * time.Second}
+	ic.Spec.TuningOptions.HealthCheckInterval = &metav1.Duration{Duration: 15 * time.Second}
+	ic.Spec.TuningOptions.ReloadInterval = metav1.Duration{Duration: 30 * time.Second}
 
 	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, false, false, nil)
 	if err != nil {
@@ -179,6 +180,7 @@ func TestTuningOptions(t *testing.T) {
 		{"ROUTER_DEFAULT_TUNNEL_TIMEOUT", true, "30m"},
 		{"ROUTER_INSPECT_DELAY", true, "5s"},
 		{RouterBackendCheckInterval, true, "15s"},
+		{RouterReloadIntervalEnvName, true, "30s"},
 	}
 
 	if err := checkDeploymentEnvironment(t, deployment, tests); err != nil {
@@ -286,7 +288,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	}
 	tests := []envData{
 		{"NAMESPACE_LABELS", true, "foo=bar"},
-		{"RELOAD_INTERVAL", true, "5s"},
+		{RouterReloadIntervalEnvName, true, "5s"},
 		{"ROUTE_LABELS", true, "baz=quux"},
 		{RouterBackendCheckInterval, false, ""},
 		{RouterCompressionMIMETypes, false, ""},
@@ -312,7 +314,7 @@ func TestDesiredRouterDeployment(t *testing.T) {
 		{"ROUTER_H1_CASE_ADJUST", false, ""},
 		{"ROUTER_INSPECT_DELAY", false, ""},
 		{"ROUTER_IP_V4_V6_MODE", false, ""},
-		{"ROUTER_LOAD_BALANCE_ALGORITHM", true, "leastconn"},
+		{"ROUTER_LOAD_BALANCE_ALGORITHM", true, "random"},
 		{"ROUTER_LOG_FACILITY", false, ""},
 		{"ROUTER_LOG_LEVEL", false, ""},
 		{"ROUTER_LOG_MAX_LENGTH", false, ""},
@@ -360,14 +362,12 @@ func TestDesiredRouterDeploymentSpecTemplate(t *testing.T) {
 		}
 	}
 
-	if expected, got := 2, len(deployment.Spec.Template.Annotations); expected != got {
+	if expected, got := 1, len(deployment.Spec.Template.Annotations); expected != got {
 		t.Errorf("expected len(annotations)=%v, got %v", expected, got)
 	}
 
-	if val, ok := deployment.Spec.Template.Annotations[LivenessGracePeriodSecondsAnnotation]; !ok {
-		t.Errorf("missing annotation %q", LivenessGracePeriodSecondsAnnotation)
-	} else if expected := "10"; expected != val {
-		t.Errorf("expected annotation %q to be %q, got %q", LivenessGracePeriodSecondsAnnotation, expected, val)
+	if val, ok := deployment.Spec.Template.Annotations[LivenessGracePeriodSecondsAnnotation]; ok {
+		t.Errorf("expected annotation %[1]q not to be set, got %[1]s=%[2]s", LivenessGracePeriodSecondsAnnotation, val)
 	}
 
 	if val, ok := deployment.Spec.Template.Annotations[WorkloadPartitioningManagement]; !ok {
@@ -386,6 +386,9 @@ func TestDesiredRouterDeploymentSpecTemplate(t *testing.T) {
 
 	if len(deployment.Spec.Template.Spec.Containers[0].LivenessProbe.ProbeHandler.HTTPGet.Host) != 0 {
 		t.Errorf("expected empty liveness probe host, got %q", deployment.Spec.Template.Spec.Containers[0].LivenessProbe.ProbeHandler.HTTPGet.Host)
+	}
+	if deployment.Spec.Template.Spec.Containers[0].LivenessProbe.TerminationGracePeriodSeconds == nil {
+		t.Error("expected liveness probe's termination grace period to be set")
 	}
 	if len(deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.ProbeHandler.HTTPGet.Host) != 0 {
 		t.Errorf("expected empty readiness probe host, got %q", deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.ProbeHandler.HTTPGet.Host)
@@ -431,6 +434,7 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 		HeaderBufferBytes:           16384,
 		HeaderBufferMaxRewriteBytes: 4096,
 		ThreadCount:                 RouterHAProxyThreadsDefaultValue * 2,
+		MaxConnections:              -1,
 	}
 	ic.Spec.HTTPEmptyRequestsPolicy = "Ignore"
 
@@ -454,7 +458,7 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 	var expectedReplicas int32 = 8
 	ic.Spec.Replicas = &expectedReplicas
 	ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
-		Raw: []byte(`{"loadBalancingAlgorithm":"random","dynamicConfigManager":"false","maxConnections":-1,"reloadInterval":15}`),
+		Raw: []byte(`{"loadBalancingAlgorithm":"leastconn","dynamicConfigManager":"false"}`),
 	}
 	ic.Spec.HttpErrorCodePages = configv1.ConfigMapNameReference{
 		Name: "my-custom-error-code-pages",
@@ -500,10 +504,10 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 	checkDeploymentHasContainer(t, deployment, operatorv1.ContainerLoggingSidecarContainerName, true)
 	tests := []envData{
 		{"ROUTER_HAPROXY_CONFIG_MANAGER", false, ""},
-		{"ROUTER_LOAD_BALANCE_ALGORITHM", true, "random"},
+		{"ROUTER_LOAD_BALANCE_ALGORITHM", true, "leastconn"},
 		{"ROUTER_TCP_BALANCE_SCHEME", true, "source"},
 		{"ROUTER_MAX_CONNECTIONS", true, "auto"},
-		{"RELOAD_INTERVAL", true, "15s"},
+		{RouterReloadIntervalEnvName, true, "5s"},
 		{"ROUTER_USE_PROXY_PROTOCOL", true, "true"},
 		{"ROUTER_UNIQUE_ID_HEADER_NAME", true, "unique-id"},
 		{"ROUTER_UNIQUE_ID_FORMAT", true, `"%{+X}o %ci:%cp_%fi:%fp_%Ts_%rt:%pid"`},
@@ -535,11 +539,12 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 
 	checkDeploymentHasEnvSorted(t, deployment)
 
-	// Any value for loadBalancingAlgorithm other than "random" should be
+	// Any value for loadBalancingAlgorithm other than "leastconn" should be
 	// ignored.
 	ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
-		Raw: []byte(`{"loadBalancingAlgorithm":"source","dynamicConfigManager":"true","maxConnections":40000}`),
+		Raw: []byte(`{"loadBalancingAlgorithm":"source","dynamicConfigManager":"true"}`),
 	}
+	ic.Spec.TuningOptions.MaxConnections = 40000
 	ic.Status.EndpointPublishingStrategy.LoadBalancer = &operatorv1.LoadBalancerStrategy{
 		Scope: operatorv1.ExternalLoadBalancer,
 		ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
@@ -574,10 +579,10 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 
 	tests = []envData{
 		{"ROUTER_HAPROXY_CONFIG_MANAGER", true, "true"},
-		{"ROUTER_LOAD_BALANCE_ALGORITHM", true, "leastconn"},
+		{"ROUTER_LOAD_BALANCE_ALGORITHM", true, "random"},
 		{"ROUTER_TCP_BALANCE_SCHEME", true, "source"},
 		{"ROUTER_MAX_CONNECTIONS", true, "40000"},
-		{"RELOAD_INTERVAL", true, "5s"},
+		{RouterReloadIntervalEnvName, true, "5s"},
 		{"ROUTER_USE_PROXY_PROTOCOL", false, ""},
 	}
 	if err := checkDeploymentEnvironment(t, deployment, tests); err != nil {
@@ -766,6 +771,69 @@ func TestDesiredRouterDeploymentVariety(t *testing.T) {
 	checkContainerPort(t, deployment, "http", 8080)
 	checkContainerPort(t, deployment, "https", 8443)
 	checkContainerPort(t, deployment, "metrics", 9146)
+}
+
+// TestDesiredRouterDeploymentHostNetworkNil verifies that
+// desiredRouterDeployment behaves correctly when
+// status.endpointPublishingStrategy.type is "HostNetwork" but
+// status.endpointPublishingStrategy.hostNetwork is nil, which can happen on a
+// cluster that was upgraded from a version of OpenShift that did not define any
+// subfields for spec.endpointPublishingStrategy.hostNetwork.
+// See <https://bugzilla.redhat.com/show_bug.cgi?id=2095229>.
+func TestDesiredRouterDeploymentHostNetworkNil(t *testing.T) {
+	ic, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded := getRouterDeploymentComponents(t)
+	ic.Status.EndpointPublishingStrategy.Type = operatorv1.HostNetworkStrategyType
+	proxyNeeded, err := IsProxyProtocolNeeded(ic, infraConfig.Status.PlatformStatus)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := []envData{
+		{"STATS_PORT", true, "1936"},
+		{"ROUTER_SERVICE_HTTP_PORT", true, "80"},
+		{"ROUTER_SERVICE_HTTPS_PORT", true, "443"},
+	}
+	if err := checkDeploymentEnvironment(t, deployment, env); err != nil {
+		t.Error(err)
+	}
+	checkDeploymentHasEnvSorted(t, deployment)
+	checkContainerPort(t, deployment, "http", 80)
+	checkContainerPort(t, deployment, "https", 443)
+	checkContainerPort(t, deployment, "metrics", 1936)
+}
+
+func TestDesiredRouterDeploymentSingleReplica(t *testing.T) {
+	ic, ingressConfig, _, apiConfig, networkConfig, _ := getRouterDeploymentComponents(t)
+
+	infraConfig := &configv1.Infrastructure{
+		Status: configv1.InfrastructureStatus{
+			PlatformStatus: &configv1.PlatformStatus{
+				Type: configv1.IBMCloudPlatformType,
+			},
+			ControlPlaneTopology:   configv1.ExternalTopologyMode,
+			InfrastructureTopology: configv1.SingleReplicaTopologyMode,
+		},
+	}
+
+	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, false, false, nil)
+	if err != nil {
+		t.Fatalf("invalid router Deployment: %v", err)
+	}
+
+	if *deployment.Spec.Replicas != 1 {
+		t.Errorf("expected replicas to be 1, got %d", *deployment.Spec.Replicas)
+	}
+
+	if deployment.Spec.Template.Spec.Affinity.PodAffinity != nil {
+		t.Errorf("expected no pod affinity, got %+v", *deployment.Spec.Template.Spec.Affinity)
+	}
+
+	if deployment.Spec.Strategy.Type != "" || deployment.Spec.Strategy.RollingUpdate != nil {
+		t.Errorf("expected default deployment strategy, got %s", deployment.Spec.Strategy.Type)
+	}
 }
 
 func checkContainerPort(t *testing.T, d *appsv1.Deployment, portName string, port int32) {
@@ -1220,6 +1288,21 @@ func TestDeploymentConfigChanged(t *testing.T) {
 			expect: false,
 		},
 		{
+			description: "if the deployment template node affinity is changed",
+			mutate: func(deployment *appsv1.Deployment) {
+				deployment.Spec.Template.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[0].MatchExpressions[0].Values = []string{"xyz"}
+			},
+			expect: true,
+		},
+		{
+			description: "if the deployment template -affinity node selector expressions change ordering",
+			mutate: func(deployment *appsv1.Deployment) {
+				exprs := deployment.Spec.Template.Spec.Affinity.PodAntiAffinity.RequiredDuringSchedulingIgnoredDuringExecution[0].LabelSelector.MatchExpressions
+				exprs[0], exprs[1] = exprs[1], exprs[0]
+			},
+			expect: false,
+		},
+		{
 			description: "if probe values are set to default values",
 			mutate: func(deployment *appsv1.Deployment) {
 				deployment.Spec.Template.Spec.Containers[0].LivenessProbe.ProbeHandler.HTTPGet.Scheme = "HTTP"
@@ -1257,6 +1340,14 @@ func TestDeploymentConfigChanged(t *testing.T) {
 				deployment.Spec.Template.Spec.Containers[0].LivenessProbe.PeriodSeconds = int32(20)
 				deployment.Spec.Template.Spec.Containers[0].LivenessProbe.SuccessThreshold = int32(2)
 				deployment.Spec.Template.Spec.Containers[0].LivenessProbe.FailureThreshold = int32(30)
+			},
+			expect: true,
+		},
+		{
+			description: "if the liveness probe's terminationGracePeriodSeconds is changed",
+			mutate: func(deployment *appsv1.Deployment) {
+				v := int64(123)
+				deployment.Spec.Template.Spec.Containers[0].LivenessProbe.TerminationGracePeriodSeconds = &v
 			},
 			expect: true,
 		},
@@ -1371,6 +1462,15 @@ func TestDeploymentConfigChanged(t *testing.T) {
 			},
 			expect: true,
 		},
+		{
+			// This test case can be removed after OpenShift 4.13.
+			// See <https://issues.redhat.com/browse/OCPBUGS-4703>.
+			description: "if the unsupported.do-not-use.openshift.io/override-liveness-grace-period-seconds annotation is removed",
+			mutate: func(deployment *appsv1.Deployment) {
+				delete(deployment.Spec.Template.Annotations, LivenessGracePeriodSecondsAnnotation)
+			},
+			expect: true,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -1397,7 +1497,8 @@ func TestDeploymentConfigChanged(t *testing.T) {
 							controller.ControllerDeploymentHashLabel: "1",
 						},
 						Annotations: map[string]string{
-							WorkloadPartitioningManagement: "{\"effect\": \"PreferredDuringScheduling\"}",
+							LivenessGracePeriodSecondsAnnotation: "10",
+							WorkloadPartitioningManagement:       "{\"effect\": \"PreferredDuringScheduling\"}",
 						},
 					},
 					Spec: corev1.PodSpec{
@@ -1545,6 +1646,25 @@ func TestDeploymentConfigChanged(t *testing.T) {
 									},
 								},
 							},
+							NodeAffinity: &corev1.NodeAffinity{
+								RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+									NodeSelectorTerms: []corev1.NodeSelectorTerm{{
+										MatchExpressions: []corev1.NodeSelectorRequirement{
+											{
+												Key:      controller.RemoteWorkerLabel,
+												Operator: corev1.NodeSelectorOpNotIn,
+												Values:   []string{""},
+											},
+											// this match expression was added only for ordering change test case
+											{
+												Key:      controller.ControllerDeploymentHashLabel,
+												Operator: corev1.NodeSelectorOpIn,
+												Values:   []string{"1"},
+											},
+										},
+									}},
+								},
+							},
 						},
 						Tolerations: []corev1.Toleration{toleration, otherToleration},
 						TopologySpreadConstraints: []corev1.TopologySpreadConstraint{{
@@ -1618,6 +1738,39 @@ func TestDurationToHAProxyTimespec(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		output := durationToHAProxyTimespec(tc.inputDuration)
+		if output != tc.expectedOutput {
+			t.Errorf("Expected %q, got %q", tc.expectedOutput, output)
+		}
+	}
+}
+
+func TestCapReloadIntervalValue(t *testing.T) {
+	testCases := []struct {
+		inputDuration  time.Duration
+		expectedOutput time.Duration
+	}{
+		// Values below the minimum 1s returns 1s.
+		{20 * time.Nanosecond, 1 * time.Second},
+		{5 * time.Microsecond, 1 * time.Second},
+		{1 * time.Millisecond, 1 * time.Second},
+		{-1, 1 * time.Second},
+
+		// Values above the maximum 120s returns 120s.
+		{6 * time.Minute, 120 * time.Second},
+		{1 * time.Hour, 120 * time.Second},
+		{365 * time.Second, 120 * time.Second},
+
+		// Values in the allowed range returns itself (i.e. between 1s and 120s).
+		{1 * time.Minute, 1 * time.Minute},
+		{2 * time.Minute, 2 * time.Minute},
+		{1 * time.Second, 1 * time.Second},
+		{20 * time.Second, 20 * time.Second},
+
+		// Value of 0 returns default of 5s.
+		{0, 5 * time.Second},
+	}
+	for _, tc := range testCases {
+		output := capReloadIntervalValue(tc.inputDuration)
 		if output != tc.expectedOutput {
 			t.Errorf("Expected %q, got %q", tc.expectedOutput, output)
 		}

@@ -119,10 +119,19 @@ func canaryDaemonSetChanged(current, expected *appsv1.DaemonSet) (bool, *appsv1.
 			updated.Spec.Template.Spec.Containers[0].Name = expected.Spec.Template.Spec.Containers[0].Name
 			changed = true
 		}
+		if !cmp.Equal(current.Spec.Template.Spec.Containers[0].SecurityContext, expected.Spec.Template.Spec.Containers[0].SecurityContext) {
+			updated.Spec.Template.Spec.Containers[0].SecurityContext = expected.Spec.Template.Spec.Containers[0].SecurityContext
+			changed = true
+		}
 	}
 
 	if !cmp.Equal(current.Spec.Template.Spec.NodeSelector, expected.Spec.Template.Spec.NodeSelector, cmpopts.EquateEmpty()) {
 		updated.Spec.Template.Spec.NodeSelector = expected.Spec.Template.Spec.NodeSelector
+		changed = true
+	}
+
+	if !cmp.Equal(current.Spec.Template.Spec.SecurityContext, expected.Spec.Template.Spec.SecurityContext, cmpopts.EquateEmpty()) {
+		updated.Spec.Template.Spec.SecurityContext = expected.Spec.Template.Spec.SecurityContext
 		changed = true
 	}
 

@@ -24,8 +24,6 @@ import (
 
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
-	oputil "github.com/openshift/cluster-ingress-operator/pkg/util"
-
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 
@@ -103,20 +101,18 @@ const (
 	HTTPPortName  = "http"
 	HTTPSPortName = "https"
 	StatsPortName = "metrics"
+
+	haproxyMaxTimeoutMilliseconds = 2147483647 * time.Millisecond
 )
 
 // ensureRouterDeployment ensures the router deployment exists for a given
 // ingresscontroller.
-func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, infraConfig *configv1.Infrastructure, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer, networkConfig *configv1.Network, haveClientCAConfigmap bool, clientCAConfigmap *corev1.ConfigMap) (bool, *appsv1.Deployment, error) {
+func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, infraConfig *configv1.Infrastructure, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer, networkConfig *configv1.Network, haveClientCAConfigmap bool, clientCAConfigmap *corev1.ConfigMap, platformStatus *configv1.PlatformStatus) (bool, *appsv1.Deployment, error) {
 	haveDepl, current, err := r.currentRouterDeployment(ci)
 	if err != nil {
 		return false, nil, err
 	}
-	platform, err := oputil.GetPlatformStatus(r.client, infraConfig)
-	if err != nil {
-		return false, nil, fmt.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %v", ci.Namespace, ci.Name, err)
-	}
-	proxyNeeded, err := IsProxyProtocolNeeded(ci, platform)
+	proxyNeeded, err := IsProxyProtocolNeeded(ci, platformStatus)
 	if err != nil {
 		return false, nil, fmt.Errorf("failed to determine if proxy protocol is needed for ingresscontroller %s/%s: %v", ci.Namespace, ci.Name, err)
 	}
@@ -286,6 +282,17 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		// node.  Thus no affinity policy is required when using
 		// HostNetwork.
 	case operatorv1.PrivateStrategyType, operatorv1.LoadBalancerServiceStrategyType, operatorv1.NodePortServiceStrategyType:
+		// Non-HA ingress controllers should have default deployment
+		// strategy with no affinity policy. We need to check the cluster
+		// topology in order to determine whether the affinity rule is
+		// required. Just checking desiredReplicas would be incorrect
+		// because we need the rule on multi-node clusters, even if
+		// desiredReplicas is 1, so that a rolling update schedules
+		// the new pod to the same node as the old pod.
+		if singleReplica(ingressConfig, infraConfig) {
+			break
+		}
+
 		// To avoid downtime during a rolling update, we need two
 		// things: a deployment strategy and an affinity policy.  First,
 		// the deployment strategy: During a rolling update, we want the
@@ -483,8 +490,6 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	var unsupportedConfigOverrides struct {
 		LoadBalancingAlgorithm string `json:"loadBalancingAlgorithm"`
 		DynamicConfigManager   string `json:"dynamicConfigManager"`
-		MaxConnections         int32  `json:"maxConnections"`
-		ReloadInterval         int32  `json:"reloadInterval"`
 	}
 	if len(ci.Spec.UnsupportedConfigOverrides.Raw) > 0 {
 		if err := json.Unmarshal(ci.Spec.UnsupportedConfigOverrides.Raw, &unsupportedConfigOverrides); err != nil {
@@ -493,18 +498,20 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	}
 
 	// For non-TLS, edge-terminated, and reencrypt routes, use the
-	// "leastconn" balancing algorithm by default, but allow an unsupported
+	// "random" balancing algorithm by default, but allow an unsupported
 	// config override to override it.  For passthrough routes, use the
 	// "source" balancing algorithm in order to provide some
-	// session-affinity.  This code at one time used "random" as the default
-	// for non-passthrough routes, but we changed it to "leastconn" upon
-	// discovering that "random" incurs significant memory overhead for each
-	// backend that uses it.  See
-	// <https://bugzilla.redhat.com/show_bug.cgi?id=2007581>.
-	loadBalancingAlgorithm := "leastconn"
+	// session-affinity.
+	// We've had issues with "random" in the past due to it incurring significant
+	// memory overhead with large weights on the server lines in haproxy config;
+	// however we mitigated that in openshift-router by effectively setting all
+	// servers lines in "random" backends to weight 1 to avoid incurring extraneous
+	// memory allocations.
+	// Reference: https://issues.redhat.com/browse/NE-709
+	loadBalancingAlgorithm := "random"
 	switch unsupportedConfigOverrides.LoadBalancingAlgorithm {
-	case "random":
-		loadBalancingAlgorithm = "random"
+	case "leastconn":
+		loadBalancingAlgorithm = "leastconn"
 	}
 	env = append(env, corev1.EnvVar{
 		Name:  RouterLoadBalancingAlgorithmEnvName,
@@ -514,7 +521,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		Value: "source",
 	})
 
-	switch v := unsupportedConfigOverrides.MaxConnections; {
+	switch v := ci.Spec.TuningOptions.MaxConnections; {
 	case v == -1:
 		env = append(env, corev1.EnvVar{
 			Name:  RouterMaxConnectionsEnvName,
@@ -526,15 +533,6 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 			Value: strconv.Itoa(int(v)),
 		})
 	}
-
-	reloadInterval := 5
-	if unsupportedConfigOverrides.ReloadInterval > 0 {
-		reloadInterval = int(unsupportedConfigOverrides.ReloadInterval)
-	}
-	env = append(env, corev1.EnvVar{
-		Name:  RouterReloadIntervalEnvName,
-		Value: fmt.Sprintf("%ds", reloadInterval),
-	})
 
 	dynamicConfigOverride := unsupportedConfigOverrides.DynamicConfigManager
 	if v, err := strconv.ParseBool(dynamicConfigOverride); err == nil && v {
@@ -583,6 +581,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	if ci.Spec.TuningOptions.HealthCheckInterval != nil && ci.Spec.TuningOptions.HealthCheckInterval.Duration >= 1*time.Second {
 		env = append(env, corev1.EnvVar{Name: RouterBackendCheckInterval, Value: durationToHAProxyTimespec(ci.Spec.TuningOptions.HealthCheckInterval.Duration)})
 	}
+	env = append(env, corev1.EnvVar{Name: RouterReloadIntervalEnvName, Value: durationToHAProxyTimespec(capReloadIntervalValue(ci.Spec.TuningOptions.ReloadInterval.Duration))})
 
 	nodeSelector := map[string]string{
 		"kubernetes.io/os": "linux",
@@ -593,6 +592,21 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		nodeSelector["node-role.kubernetes.io/master"] = ""
 	default:
 		nodeSelector["node-role.kubernetes.io/worker"] = ""
+		// Disabling running on remote workers.
+		if deployment.Spec.Template.Spec.Affinity == nil {
+			deployment.Spec.Template.Spec.Affinity = &corev1.Affinity{}
+		}
+		deployment.Spec.Template.Spec.Affinity.NodeAffinity = &corev1.NodeAffinity{RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+			NodeSelectorTerms: []corev1.NodeSelectorTerm{{
+				MatchExpressions: []corev1.NodeSelectorRequirement{
+					{
+						Key:      controller.RemoteWorkerLabel,
+						Operator: corev1.NodeSelectorOpNotIn,
+						Values:   []string{""},
+					},
+				},
+			}},
+		}}
 	}
 
 	if ci.Spec.NodePlacement != nil {
@@ -654,15 +668,16 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		deployment.Spec.Template.Spec.Containers[0].StartupProbe.ProbeHandler.HTTPGet.Host = "localhost"
 		deployment.Spec.Template.Spec.DNSPolicy = corev1.DNSClusterFirstWithHostNet
 
-		config := ci.Status.EndpointPublishingStrategy.HostNetwork
-		if config.HTTPSPort == config.HTTPPort || config.HTTPPort == config.StatsPort || config.StatsPort == config.HTTPSPort {
-			return nil, fmt.Errorf("the specified HTTPS, HTTP and Stats ports %d, %d, %d are not unique", config.HTTPSPort, config.HTTPPort, config.StatsPort)
-		}
+		if config := ci.Status.EndpointPublishingStrategy.HostNetwork; config != nil {
+			if config.HTTPSPort == config.HTTPPort || config.HTTPPort == config.StatsPort || config.StatsPort == config.HTTPSPort {
+				return nil, fmt.Errorf("the specified HTTPS, HTTP and Stats ports %d, %d, %d are not unique", config.HTTPSPort, config.HTTPPort, config.StatsPort)
+			}
 
-		// Set the ports to the values from the host network configuration
-		httpPort = config.HTTPPort
-		httpsPort = config.HTTPSPort
-		statsPort = config.StatsPort
+			// Set the ports to the values from the host network configuration
+			httpPort = config.HTTPPort
+			httpsPort = config.HTTPSPort
+			statsPort = config.StatsPort
+		}
 
 		// Append the environment variables for the HTTP and HTTPS ports
 		env = append(env,
@@ -1301,6 +1316,15 @@ func hashableDeployment(deployment *appsv1.Deployment, onlyTemplate bool) *appsv
 				})
 			}
 		}
+		if affinity.NodeAffinity != nil {
+			terms := affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms
+			for _, term := range terms {
+				exprs := term.MatchExpressions
+				sort.Slice(exprs, func(i, j int) bool {
+					return cmpNodeMatchExpressions(exprs[i], exprs[j])
+				})
+			}
+		}
 	}
 	hashableDeployment.Spec.Template.Spec.Affinity = affinity
 	tolerations := make([]corev1.Toleration, len(deployment.Spec.Template.Spec.Tolerations))
@@ -1400,6 +1424,25 @@ func hashableDeployment(deployment *appsv1.Deployment, onlyTemplate bool) *appsv
 
 // cmpMatchExpressions is a helper for hashableDeployment.
 func cmpMatchExpressions(a, b metav1.LabelSelectorRequirement) bool {
+	if a.Key != b.Key {
+		return a.Key < b.Key
+	}
+	if a.Operator != b.Operator {
+		return a.Operator < b.Operator
+	}
+	for i := range b.Values {
+		if i == len(a.Values) {
+			return true
+		}
+		if a.Values[i] != b.Values[i] {
+			return a.Values[i] < b.Values[i]
+		}
+	}
+	return false
+}
+
+// cmpNodeMatchExpressions is a helper for hashableDeployment.
+func cmpNodeMatchExpressions(a, b corev1.NodeSelectorRequirement) bool {
 	if a.Key != b.Key {
 		return a.Key < b.Key
 	}
@@ -1519,11 +1562,15 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 
 	annotations := []string{LivenessGracePeriodSecondsAnnotation, WorkloadPartitioningManagement}
 	for _, key := range annotations {
-		if val, ok := expected.Spec.Template.Annotations[key]; ok && len(val) > 0 {
+		currentVal, have := current.Spec.Template.Annotations[key]
+		expectedVal, want := expected.Spec.Template.Annotations[key]
+		if want && (!have || currentVal != expectedVal) {
 			if updated.Spec.Template.Annotations == nil {
 				updated.Spec.Template.Annotations = make(map[string]string)
 			}
-			updated.Spec.Template.Annotations[key] = val
+			updated.Spec.Template.Annotations[key] = expectedVal
+		} else if have && !want {
+			delete(updated.Spec.Template.Annotations, key)
 		}
 	}
 
@@ -1570,6 +1617,9 @@ func copyProbe(a, b *corev1.Probe) {
 		if a.ProbeHandler.HTTPGet.Scheme != "HTTP" {
 			b.ProbeHandler.HTTPGet.Scheme = a.ProbeHandler.HTTPGet.Scheme
 		}
+	}
+	if a.TerminationGracePeriodSeconds != nil {
+		b.TerminationGracePeriodSeconds = a.TerminationGracePeriodSeconds
 	}
 
 	// Users are permitted to modify the timeout, so *don't* copy it.
@@ -1631,34 +1681,28 @@ func clipHAProxyTimeoutValue(val string) (string, error) {
 
 // durationToHAProxyTimespec converts a time.Duration into a number that
 // HAProxy can consume, in the simplest unit possible. If the value would be
-// truncated by being converted to seconds, it outputs in milliseconds,
-// otherwise if the value wouldn't be truncated by converting to seconds, but
-// would if converted to minutes, it outputs in seconds, etc. up to a maximum
-// unit in hours (the largest unit natively supported by time.Duration).
+// truncated by being converted to milliseconds, it outputs in microseconds, or
+// if the value would be truncated by being converted to seconds, it outputs in
+// milliseconds, otherwise if the value wouldn't be truncated by converting to
+// seconds, but would be if converted to minutes, it outputs in seconds, etc.
+// up to a maximum unit in hours (the largest time unit natively supported by
+// time.Duration).
 //
 // Also truncates values to the maximum length HAProxy allows if the value is
-// too large.
+// too large, and truncates values to 0s if they are less than 0.
 func durationToHAProxyTimespec(duration time.Duration) string {
-	haproxyMaxTimeoutMilliseconds := int64(2147483647)
-	durationMilliseconds := duration.Milliseconds()
-
-	haproxyMaxTimeoutMicroseconds := int64(2147483647000)
-	durationMicroseconds := duration.Microseconds()
-
-	if durationMicroseconds == 0 && durationMilliseconds == 0 {
+	if duration <= 0 {
 		return "0s"
-	} else if durationMicroseconds != 0 && durationMilliseconds == 0 {
-		return fmt.Sprintf("%dus", durationMicroseconds)
-	} else if durationMicroseconds > haproxyMaxTimeoutMicroseconds {
-		log.V(2).Info("Time value %s exceeds the maximum timeout length of %dms. Truncating timeout to match maximum value.", duration.String(), haproxyMaxTimeoutMilliseconds)
+	} else if duration > haproxyMaxTimeoutMilliseconds {
+		log.V(2).Info("time value %v exceeds the maximum timeout length of %v; truncating to maximum value", duration, haproxyMaxTimeoutMilliseconds)
 		return "2147483647ms"
-	} else if durationMicroseconds%time.Millisecond.Microseconds() != 0 {
-		return fmt.Sprintf("%dus", durationMicroseconds)
-	} else if durationMilliseconds%time.Second.Milliseconds() != 0 {
-		return fmt.Sprintf("%dms", durationMilliseconds)
-	} else if durationMilliseconds%time.Minute.Milliseconds() != 0 {
+	} else if µs := duration.Microseconds(); µs%1000 != 0 {
+		return fmt.Sprintf("%dus", µs)
+	} else if ms := duration.Milliseconds(); ms%1000 != 0 {
+		return fmt.Sprintf("%dms", ms)
+	} else if ms%time.Minute.Milliseconds() != 0 {
 		return fmt.Sprintf("%ds", int(math.Round(duration.Seconds())))
-	} else if durationMilliseconds%time.Hour.Milliseconds() != 0 {
+	} else if ms%time.Hour.Milliseconds() != 0 {
 		return fmt.Sprintf("%dm", int(math.Round(duration.Minutes())))
 	} else {
 		return fmt.Sprintf("%dh", int(math.Round(duration.Hours())))
@@ -1685,4 +1729,36 @@ func GetMIMETypes(mimeTypes []operatorv1.CompressionMIMEType) []string {
 	}
 
 	return mimes
+}
+
+// caps the value of ReloadInterval between the bounds of 1s and 120s
+// returns the default of 5s if the user gives a 0 value
+func capReloadIntervalValue(interval time.Duration) time.Duration {
+	const (
+		maxInterval     = 120 * time.Second
+		minInterval     = 1 * time.Second
+		defaultInterval = 5 * time.Second
+	)
+
+	switch {
+	case interval == 0:
+		return defaultInterval
+	case interval > maxInterval:
+		return maxInterval
+	case interval < minInterval:
+		return minInterval
+	default:
+		return interval
+	}
+}
+
+// SingleReplica determines if ingress controllers are deployed in SingleReplica topology
+func singleReplica(ingressConfig *configv1.Ingress, infraConfig *configv1.Infrastructure) bool {
+	// DefaultPlacement affects which topology field we're interested in
+	topology := infraConfig.Status.InfrastructureTopology
+	if ingressConfig.Status.DefaultPlacement == configv1.DefaultPlacementControlPlane {
+		topology = infraConfig.Status.ControlPlaneTopology
+	}
+
+	return topology == configv1.SingleReplicaTopologyMode
 }

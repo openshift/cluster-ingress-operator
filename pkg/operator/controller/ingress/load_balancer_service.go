@@ -4,16 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
-	oputil "github.com/openshift/cluster-ingress-operator/pkg/util"
-
 	corev1 "k8s.io/api/core/v1"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -21,6 +21,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/sets"
 
 	crclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -80,6 +81,10 @@ const (
 	awsLBHealthCheckHealthyThresholdAnnotation = "service.beta.kubernetes.io/aws-load-balancer-healthcheck-healthy-threshold"
 	awsLBHealthCheckHealthyThresholdDefault    = "2"
 
+	// awsELBConnectionIdleTimeoutAnnotation specifies the timeout for idle
+	// connections for a Classic ELB.
+	awsELBConnectionIdleTimeoutAnnotation = "service.beta.kubernetes.io/aws-load-balancer-connection-idle-timeout"
+
 	// iksLBScopeAnnotation is the annotation used on a service to specify an IBM
 	// load balancer IP type.
 	iksLBScopeAnnotation = "service.kubernetes.io/ibm-load-balancer-cloud-provider-ip-type"
@@ -89,6 +94,12 @@ const (
 	// iksLBScopePublic is the service annotation value used to specify an IBM load balancer
 	// IP as private.
 	iksLBScopePrivate = "private"
+
+	// iksLBEnableFeaturesAnnotation is the annotation used on a service to enable features
+	// on the load balancer.
+	iksLBEnableFeaturesAnnotation = "service.kubernetes.io/ibm-load-balancer-cloud-provider-enable-features"
+	// iksLBEnableFeaturesProxyProtocol is the service annotation value used to enable proxy protocol on an IBM load balancer
+	iksLBEnableFeaturesProxyProtocol = "proxy-protocol"
 
 	// azureInternalLBAnnotation is the annotation used on a service to specify an Azure
 	// load balancer as being internal.
@@ -162,7 +173,8 @@ var (
 		configv1.OpenStackPlatformType: {
 			openstackInternalLBAnnotation: "true",
 		},
-		configv1.NonePlatformType: nil,
+		configv1.NonePlatformType:     nil,
+		configv1.ExternalPlatformType: nil,
 		// vSphere does not support load balancers as of 2019-06-17.
 		configv1.VSpherePlatformType: nil,
 		configv1.IBMCloudPlatformType: {
@@ -215,12 +227,26 @@ var (
 			// AWS LB health check interval annotation (see
 			// <https://bugzilla.redhat.com/show_bug.cgi?id=1908758>).
 			awsLBHealthCheckIntervalAnnotation,
+			// AWS connection idle timeout annotation.
+			awsELBConnectionIdleTimeoutAnnotation,
 			// GCP Global Access internal Load Balancer annotation
 			// (see <https://issues.redhat.com/browse/NE-447>).
 			GCPGlobalAccessAnnotation,
 			// local-with-fallback annotation for kube-proxy (see
 			// <https://bugzilla.redhat.com/show_bug.cgi?id=1960284>).
 			localWithFallbackAnnotation,
+			// AWS load balancer type annotation to set either CLB/ELB or NLB
+			AWSLBTypeAnnotation,
+			// awsLBProxyProtocolAnnotation is used to enable the PROXY protocol on any
+			// AWS load balancer services created.
+			//
+			// https://kubernetes.io/docs/concepts/services-networking/service/#proxy-protocol-support-on-aws
+			awsLBProxyProtocolAnnotation,
+			// iksLBEnableFeaturesAnnotation annotation used on a service to enable features
+			// on the load balancer.
+			//
+			// https://cloud.ibm.com/docs/containers?topic=containers-vpc-lbaas
+			iksLBEnableFeaturesAnnotation,
 		)
 
 		// Azure and GCP support switching between internal and external
@@ -246,12 +272,8 @@ var (
 // ensureLoadBalancerService creates an LB service if one is desired but absent.
 // Always returns the current LB service if one exists (whether it already
 // existed or was created during the course of the function).
-func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, infraConfig *configv1.Infrastructure) (bool, *corev1.Service, error) {
-	platform, err := oputil.GetPlatformStatus(r.client, infraConfig)
-	if err != nil {
-		return false, nil, fmt.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %v", ci.Namespace, ci.Name, err)
-	}
-	wantLBS, desiredLBService, err := desiredLoadBalancerService(ci, deploymentRef, platform)
+func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, platformStatus *configv1.PlatformStatus) (bool, *corev1.Service, error) {
+	wantLBS, desiredLBService, err := desiredLoadBalancerService(ci, deploymentRef, platformStatus)
 	if err != nil {
 		return false, nil, err
 	}
@@ -296,7 +318,7 @@ func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController,
 		if _, ok := ci.Annotations[autoDeleteLoadBalancerAnnotation]; ok {
 			deleteIfScopeChanged = true
 		}
-		if updated, err := r.updateLoadBalancerService(currentLBService, desiredLBService, platform, deleteIfScopeChanged); err != nil {
+		if updated, err := r.updateLoadBalancerService(currentLBService, desiredLBService, platformStatus, deleteIfScopeChanged); err != nil {
 			return true, currentLBService, fmt.Errorf("failed to update load balancer service: %v", err)
 		} else if updated {
 			return r.currentLoadBalancerService(ci)
@@ -336,15 +358,16 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 
 	service.Spec.Selector = controller.IngressControllerDeploymentPodSelector(ci).MatchLabels
 
-	isInternal := ci.Status.EndpointPublishingStrategy.LoadBalancer != nil && ci.Status.EndpointPublishingStrategy.LoadBalancer.Scope == operatorv1.InternalLoadBalancer
+	lb := ci.Status.EndpointPublishingStrategy.LoadBalancer
+	isInternal := lb != nil && lb.Scope == operatorv1.InternalLoadBalancer
 
 	if service.Annotations == nil {
 		service.Annotations = map[string]string{}
 	}
-	if proxyNeeded, err := IsProxyProtocolNeeded(ci, platform); err != nil {
+
+	proxyNeeded, err := IsProxyProtocolNeeded(ci, platform)
+	if err != nil {
 		return false, nil, fmt.Errorf("failed to determine if proxy protocol is proxyNeeded for ingresscontroller %q: %v", ci.Name, err)
-	} else if proxyNeeded {
-		service.Annotations[awsLBProxyProtocolAnnotation] = "*"
 	}
 
 	if platform != nil {
@@ -356,10 +379,10 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 
 			// Set the GCP Global Access annotation for internal load balancers on GCP only
 			if platform.Type == configv1.GCPPlatformType {
-				if ci.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters != nil &&
-					ci.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.Type == operatorv1.GCPLoadBalancerProvider &&
-					ci.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.GCP != nil {
-					globalAccessEnabled := ci.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.GCP.ClientAccess == operatorv1.GCPGlobalAccess
+				if lb != nil && lb.ProviderParameters != nil &&
+					lb.ProviderParameters.Type == operatorv1.GCPLoadBalancerProvider &&
+					lb.ProviderParameters.GCP != nil {
+					globalAccessEnabled := lb.ProviderParameters.GCP.ClientAccess == operatorv1.GCPGlobalAccess
 					service.Annotations[GCPGlobalAccessAnnotation] = strconv.FormatBool(globalAccessEnabled)
 				}
 			}
@@ -371,16 +394,26 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 		}
 		switch platform.Type {
 		case configv1.AWSPlatformType:
-			if ci.Status.EndpointPublishingStrategy.LoadBalancer != nil &&
-				ci.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters != nil &&
-				ci.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.Type == operatorv1.AWSLoadBalancerProvider &&
-				ci.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS != nil &&
-				ci.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.Type == operatorv1.AWSNetworkLoadBalancer {
-				service.Annotations[AWSLBTypeAnnotation] = AWSNLBAnnotation
-				// NLBs require a different health check interval than CLBs
-				service.Annotations[awsLBHealthCheckIntervalAnnotation] = awsLBHealthCheckIntervalNLB
-			} else {
-				service.Annotations[awsLBHealthCheckIntervalAnnotation] = awsLBHealthCheckIntervalDefault
+			service.Annotations[awsLBHealthCheckIntervalAnnotation] = awsLBHealthCheckIntervalDefault
+			if proxyNeeded {
+				service.Annotations[awsLBProxyProtocolAnnotation] = "*"
+			}
+			if lb != nil && lb.ProviderParameters != nil {
+				if aws := lb.ProviderParameters.AWS; aws != nil && lb.ProviderParameters.Type == operatorv1.AWSLoadBalancerProvider {
+					switch aws.Type {
+					case operatorv1.AWSNetworkLoadBalancer:
+						service.Annotations[AWSLBTypeAnnotation] = AWSNLBAnnotation
+						// NLBs require a different health check interval than CLBs.
+						// See <https://bugzilla.redhat.com/show_bug.cgi?id=1908758>.
+						service.Annotations[awsLBHealthCheckIntervalAnnotation] = awsLBHealthCheckIntervalNLB
+					case operatorv1.AWSClassicLoadBalancer:
+						if aws.ClassicLoadBalancerParameters != nil {
+							if v := aws.ClassicLoadBalancerParameters.ConnectionIdleTimeout; v.Duration > 0 {
+								service.Annotations[awsELBConnectionIdleTimeoutAnnotation] = strconv.FormatUint(uint64(v.Round(time.Second).Seconds()), 10)
+							}
+						}
+					}
+				}
 			}
 
 			if platform.AWS != nil && len(platform.AWS.ResourceTags) > 0 {
@@ -405,6 +438,10 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 			// LB relies on iptable rules kube-proxy puts in to send traffic from the VIP node to the cluster
 			// If policy is local, traffic is only sent to pods on the local node, as such Cluster enables traffic to flow to  all the pods in the cluster
 			service.Spec.ExternalTrafficPolicy = corev1.ServiceExternalTrafficPolicyTypeCluster
+			if proxyNeeded {
+				service.Annotations[iksLBEnableFeaturesAnnotation] = iksLBEnableFeaturesProxyProtocol
+			}
+
 		case configv1.AlibabaCloudPlatformType:
 			if !isInternal {
 				service.Annotations[alibabaCloudLBAddressTypeAnnotation] = alibabaCloudLBAddressTypeInternet
@@ -417,6 +454,17 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 			return true, service, err
 		} else if v {
 			service.Annotations[localWithFallbackAnnotation] = ""
+		}
+	}
+
+	if ci.Spec.EndpointPublishingStrategy != nil {
+		lb := ci.Spec.EndpointPublishingStrategy.LoadBalancer
+		if lb != nil && len(lb.AllowedSourceRanges) > 0 {
+			cidrs := make([]string, len(lb.AllowedSourceRanges))
+			for i, cidr := range lb.AllowedSourceRanges {
+				cidrs[i] = string(cidr)
+			}
+			service.Spec.LoadBalancerSourceRanges = cidrs
 		}
 	}
 
@@ -583,18 +631,45 @@ func loadBalancerServiceChanged(current, expected *corev1.Service) (bool, *corev
 	// avoid problems, make sure the previous release blocks upgrades when
 	// the user has modified an annotation or spec field that the new
 	// release manages.
-	return loadBalancerServiceAnnotationsChanged(current, expected, managedLoadBalancerServiceAnnotations)
+	changed, updated := loadBalancerServiceAnnotationsChanged(current, expected, managedLoadBalancerServiceAnnotations)
+
+	// If spec.loadBalancerSourceRanges is nonempty on the service, that
+	// means that allowedSourceRanges is nonempty on the ingresscontroller,
+	// which means we can clear the annotation if it's set and overwrite the
+	// value in the current service.
+	if len(expected.Spec.LoadBalancerSourceRanges) != 0 {
+		if _, ok := current.Annotations[corev1.AnnotationLoadBalancerSourceRangesKey]; ok {
+			if !changed {
+				changed = true
+				updated = current.DeepCopy()
+			}
+			delete(updated.Annotations, corev1.AnnotationLoadBalancerSourceRangesKey)
+		}
+		if !reflect.DeepEqual(current.Spec.LoadBalancerSourceRanges, expected.Spec.LoadBalancerSourceRanges) {
+			if !changed {
+				changed = true
+				updated = current.DeepCopy()
+			}
+			updated.Spec.LoadBalancerSourceRanges = expected.Spec.LoadBalancerSourceRanges
+		}
+	}
+
+	return changed, updated
 }
 
 // loadBalancerServiceAnnotationsChanged checks if the annotations on the expected Service
 // match the ones on the current Service.
 func loadBalancerServiceAnnotationsChanged(current, expected *corev1.Service, annotations sets.String) (bool, *corev1.Service) {
-	annotationCmpOpts := []cmp.Option{
-		cmpopts.IgnoreMapEntries(func(k, _ string) bool {
-			return !annotations.Has(k)
-		}),
+	changed := false
+	for annotation := range annotations {
+		currentVal, have := current.Annotations[annotation]
+		expectedVal, want := expected.Annotations[annotation]
+		if (want && (!have || currentVal != expectedVal)) || (have && !want) {
+			changed = true
+			break
+		}
 	}
-	if cmp.Equal(current.Annotations, expected.Annotations, annotationCmpOpts...) {
+	if !changed {
 		return false, nil
 	}
 
@@ -604,7 +679,7 @@ func loadBalancerServiceAnnotationsChanged(current, expected *corev1.Service, an
 		updated.Annotations = map[string]string{}
 	}
 
-	for annotation := range managedLoadBalancerServiceAnnotations {
+	for annotation := range annotations {
 		currentVal, have := current.Annotations[annotation]
 		expectedVal, want := expected.Annotations[annotation]
 		if want && (!have || currentVal != expectedVal) {
@@ -661,4 +736,79 @@ func loadBalancerServiceIsUpgradeable(ic *operatorv1.IngressController, deployme
 	}
 
 	return nil
+}
+
+// loadBalancerServiceIsProgressing returns an error value indicating if the
+// load balancer service is in progressing status.
+func loadBalancerServiceIsProgressing(ic *operatorv1.IngressController, service *corev1.Service, platform *configv1.PlatformStatus) error {
+	var errs []error
+	wantScope := ic.Status.EndpointPublishingStrategy.LoadBalancer.Scope
+	haveScope := operatorv1.ExternalLoadBalancer
+	if IsServiceInternal(service) {
+		haveScope = operatorv1.InternalLoadBalancer
+	}
+	if wantScope != haveScope {
+		err := fmt.Errorf("The IngressController scope was changed from %q to %q.", haveScope, wantScope)
+		switch platform.Type {
+		case configv1.AWSPlatformType, configv1.IBMCloudPlatformType:
+			err = fmt.Errorf("%[1]s  To effectuate this change, you must delete the service: `oc -n %[2]s delete svc/%[3]s`; the service load-balancer will then be deprovisioned and a new one created.  This will most likely cause the new load-balancer to have a different host name and IP address from the old one's.  Alternatively, you can revert the change to the IngressController: `oc -n openshift-ingress-operator patch ingresscontrollers/%[4]s --type=merge --patch='{\"spec\":{\"endpointPublishingStrategy\":{\"loadBalancer\":{\"scope\":\"%[5]s\"}}}}'", err.Error(), service.Namespace, service.Name, ic.Name, haveScope)
+		}
+		errs = append(errs, err)
+	}
+
+	errs = append(errs, loadBalancerSourceRangesAnnotationSet(service))
+	errs = append(errs, loadBalancerSourceRangesMatch(ic, service))
+
+	return kerrors.NewAggregate(errs)
+}
+
+// loadBalancerServiceEvaluationConditionsDetected returns an error value indicating if the
+// load balancer service is in EvaluationConditionsDetected status.
+func loadBalancerServiceEvaluationConditionsDetected(ic *operatorv1.IngressController, service *corev1.Service) error {
+	var errs []error
+	errs = append(errs, loadBalancerSourceRangesAnnotationSet(service))
+	errs = append(errs, loadBalancerSourceRangesMatch(ic, service))
+
+	return kerrors.NewAggregate(errs)
+}
+
+// loadBalancerSourceRangesAnnotationSet returns an error value indicating if the
+// ingresscontroller associated with load balancer service should report the Progressing
+// and EvaluationConditionsDetected status conditions with status True by checking
+// if it has "service.beta.kubernetes.io/load-balancer-source-ranges"
+// annotation set. If it is not set, then the service is not progressing and should not affect
+// evaluation conditions, and the return value is nil.
+// Otherwise, the return value is a non-nil error indicating that the annotation
+// must be unset. The intention is to guide the cluster
+// admin towards using the IngressController API and deprecate use of the service
+// annotation for ingress.
+func loadBalancerSourceRangesAnnotationSet(current *corev1.Service) error {
+	if a, ok := current.Annotations[corev1.AnnotationLoadBalancerSourceRangesKey]; !ok || (ok && len(a) == 0) {
+		return nil
+	}
+
+	return fmt.Errorf("You have manually edited an operator-managed object. You must revert your modifications by removing the %v annotation on service %q. You can use the new AllowedSourceRanges API field on the ingresscontroller object to configure this setting instead.", corev1.AnnotationLoadBalancerSourceRangesKey, current.Name)
+}
+
+// loadBalancerSourceRangesMatch returns an error value indicating if the
+// ingresscontroller associated with the load balancer service should report the Progressing
+// and EvaluationConditionsDetected status conditions with status True.  This function
+// checks if the service's LoadBalancerSourceRanges field is empty when AllowedSourceRanges
+// of the ingresscontroller is empty. If this is the case, then the service is not progressing
+// and has no evaluation conditions, and the return value is nil. Otherwise, if AllowedSourceRanges
+// is empty and LoadBalancerSourceRanges is nonempty, the return value is a non-nil error indicating
+// that the LoadBalancerSourceRanges field must be cleared. The intention is to guide the cluster
+// admin towards using the IngressController API and deprecate use of the LoadBalancerSourceRanges
+// field for ingress.
+func loadBalancerSourceRangesMatch(ic *operatorv1.IngressController, current *corev1.Service) error {
+	if len(current.Spec.LoadBalancerSourceRanges) < 1 {
+		return nil
+	}
+	if ic.Spec.EndpointPublishingStrategy != nil && ic.Spec.EndpointPublishingStrategy.LoadBalancer != nil {
+		if len(ic.Spec.EndpointPublishingStrategy.LoadBalancer.AllowedSourceRanges) > 0 {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("You have manually edited an operator-managed object. You must revert your modifications by removing the Spec.LoadBalancerSourceRanges field of LoadBalancer-typed service %q. You can use the new AllowedSourceRanges API field on the ingresscontroller to configure this setting instead.", current.Name)
 }

@@ -24,6 +24,7 @@ const (
 )
 
 func TestHealthCheckIntervalIngressController(t *testing.T) {
+	t.Parallel()
 	name := types.NamespacedName{Namespace: operatorNamespace, Name: "healthcheckinterval"}
 	domain := name.Name + "." + dnsConfig.Spec.BaseDomain
 	ic := newPrivateController(name, domain)
@@ -47,7 +48,7 @@ func TestHealthCheckIntervalIngressController(t *testing.T) {
 	}
 
 	// set spec.tuningOptions.healthCheckInterval to a nondefault value, double the default
-	if err := setHealthCheckInterval(t, kclient, 10*time.Second, &metav1.Duration{2 * defaultHealthCheckInterval}, ic); err != nil {
+	if err := setHealthCheckInterval(t, kclient, 10*time.Second, &metav1.Duration{Duration: 2 * defaultHealthCheckInterval}, ic); err != nil {
 		t.Fatalf("failed to update ingresscontroller: %v", err)
 	}
 
@@ -61,7 +62,7 @@ func TestHealthCheckIntervalIngressController(t *testing.T) {
 	}
 
 	// set spec.healthCheckInterval to an unacceptable value, 0s
-	if err := setHealthCheckInterval(t, kclient, 1*time.Minute, &metav1.Duration{0 * time.Second}, ic); err != nil {
+	if err := setHealthCheckInterval(t, kclient, 1*time.Minute, &metav1.Duration{Duration: 0 * time.Second}, ic); err != nil {
 		t.Fatalf("failed to update ingresscontroller: %v", err)
 	}
 

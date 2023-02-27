@@ -6,13 +6,9 @@ package e2e
 import (
 	"bufio"
 	"context"
-	"fmt"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/google/go-cmp/cmp"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	routev1 "github.com/openshift/api/route/v1"
@@ -28,6 +24,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/utils/pointer"
 )
 
 // TestCanaryRoute tests the ingress canary route
@@ -146,90 +143,19 @@ func buildCanaryCurlPod(name, namespace, image, host string) *corev1.Pod {
 					Image:   image,
 					Command: []string{"/bin/curl"},
 					Args:    curlArgs,
+					SecurityContext: &corev1.SecurityContext{
+						AllowPrivilegeEscalation: pointer.Bool(false),
+						Capabilities: &corev1.Capabilities{
+							Drop: []corev1.Capability{"ALL"},
+						},
+						RunAsNonRoot: pointer.Bool(true),
+						SeccompProfile: &corev1.SeccompProfile{
+							Type: corev1.SeccompProfileTypeRuntimeDefault,
+						},
+					},
 				},
 			},
 			RestartPolicy: corev1.RestartPolicyNever,
 		},
 	}
-}
-
-// TestCanaryRouteRotationAnnotation verifies that the
-// canary controller respects the canary route rotation
-// annotation for the default ingress controller.
-//
-// Note that this test will mutate the default ingress controller
-func TestCanaryRouteRotationAnnotation(t *testing.T) {
-	// Set the CanaryRouteRotation annotation to true
-	// on the default ingress controller.
-	if err := setDefaultIngressControllerRotationAnnotation(t, true); err != nil {
-		t.Fatalf("failed to set canary route rotation annotation: %v", err)
-	}
-
-	// Cleanup default ingress controller by setting the canary rotation
-	// annotation to false (and verifying that we were successful in doing so).
-	defer func() {
-		if err := setDefaultIngressControllerRotationAnnotation(t, false); err != nil {
-			t.Fatalf("failed to set canary route rotation annotation: %v", err)
-		}
-	}()
-
-	// Get canary route.
-	canaryRoute := &routev1.Route{}
-	name := controller.CanaryRouteName()
-	err := wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
-		if err := kclient.Get(context.TODO(), name, canaryRoute); err != nil {
-			t.Logf("failed to get canary route %s: %v", name, err)
-			return false, nil
-		}
-		return true, nil
-	})
-
-	if err != nil {
-		t.Fatalf("failed to observe canary route: %v", err)
-	}
-
-	// The canary controller should update the canary route after 5 successful
-	// canary checks. Canary checks happen once a minute.
-	updatedCanaryRoute := &routev1.Route{}
-	err = wait.PollImmediate(5*time.Second, 10*time.Minute, func() (bool, error) {
-		if err := kclient.Get(context.TODO(), name, updatedCanaryRoute); err != nil {
-			t.Logf("failed to get canary route %s: %v", name, err)
-			return false, nil
-		}
-		// If the canaryRoute and updatedCanaryRoute do not have the same targetPort,
-		// then the canary route rotation annotation is working.
-		if cmp.Equal(canaryRoute.Spec.Port.TargetPort, updatedCanaryRoute.Spec.Port.TargetPort) {
-			return false, nil
-		}
-
-		return true, nil
-	})
-
-	if err != nil {
-		t.Fatalf("failed to observe canary route rotation: %v", err)
-	}
-}
-
-func setDefaultIngressControllerRotationAnnotation(t *testing.T, val bool) error {
-	t.Helper()
-	ic := &operatorv1.IngressController{}
-	if err := wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
-		if err := kclient.Get(context.TODO(), defaultName, ic); err != nil {
-			t.Logf("Get failed: %v, retrying...", err)
-			return false, nil
-		}
-		if ic.Annotations == nil {
-			ic.Annotations = map[string]string{}
-		}
-		ic.Annotations[canarycontroller.CanaryRouteRotationAnnotation] = strconv.FormatBool(val)
-		if err := kclient.Update(context.TODO(), ic); err != nil {
-			t.Logf("failed to update ingress controller: %v", err)
-			return false, nil
-		}
-		return true, nil
-	}); err != nil {
-		return fmt.Errorf("failed to update ingress controller: %v", err)
-	}
-
-	return nil
 }

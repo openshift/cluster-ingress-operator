@@ -6,7 +6,9 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"k8s.io/utils/pointer"
 	"math/big"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -14,20 +16,23 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
+	util "github.com/openshift/cluster-ingress-operator/pkg/util"
 	retryable "github.com/openshift/cluster-ingress-operator/pkg/util/retryableerror"
 
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
+	iov1 "github.com/openshift/api/operatoringress/v1"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	types "k8s.io/apimachinery/pkg/types"
-	utilclock "k8s.io/apimachinery/pkg/util/clock"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	utilclock "k8s.io/utils/clock"
+	utilclocktesting "k8s.io/utils/clock/testing"
 )
 
 func ingressController(name string, t operatorv1.EndpointPublishingStrategyType) *operatorv1.IngressController {
@@ -118,7 +123,7 @@ func cond(t string, status operatorv1.ConditionStatus, reason string, lt time.Ti
 	}
 }
 
-func TestComputePodsScheduledCondition(t *testing.T) {
+func Test_checkPodsScheduledForDeployment(t *testing.T) {
 	deployment := &appsv1.Deployment{
 		Spec: appsv1.DeploymentSpec{
 			Selector: &metav1.LabelSelector{
@@ -199,52 +204,62 @@ func TestComputePodsScheduledCondition(t *testing.T) {
 		},
 	}
 	tests := []struct {
-		name       string
-		deployment *appsv1.Deployment
-		pods       []corev1.Pod
-		expect     operatorv1.ConditionStatus
+		name        string
+		deployment  *appsv1.Deployment
+		pods        []corev1.Pod
+		expectError bool
 	}{
 		{
-			name:       "no pods",
-			deployment: deployment,
-			pods:       []corev1.Pod{unrelatedPod},
-			expect:     operatorv1.ConditionTrue,
+			name:        "nil deployment",
+			deployment:  nil,
+			pods:        []corev1.Pod{scheduledPod},
+			expectError: true,
 		},
 		{
-			name:       "all pods scheduled",
-			deployment: deployment,
-			pods:       []corev1.Pod{scheduledPod},
-			expect:     operatorv1.ConditionTrue,
+			name:        "no pods",
+			deployment:  deployment,
+			pods:        []corev1.Pod{unrelatedPod},
+			expectError: false,
 		},
 		{
-			name:       "some pod unscheduled",
-			deployment: deployment,
-			pods:       []corev1.Pod{scheduledPod, unscheduledPod},
-			expect:     operatorv1.ConditionFalse,
+			name:        "all pods scheduled",
+			deployment:  deployment,
+			pods:        []corev1.Pod{scheduledPod},
+			expectError: false,
 		},
 		{
-			name:       "some pod unschedulable",
-			deployment: deployment,
-			pods:       []corev1.Pod{scheduledPod, unschedulablePod},
-			expect:     operatorv1.ConditionFalse,
+			name:        "some pod unscheduled",
+			deployment:  deployment,
+			pods:        []corev1.Pod{scheduledPod, unscheduledPod},
+			expectError: true,
 		},
 		{
-			name:       "deployment with empty label selector",
-			deployment: invalidDeployment,
-			expect:     operatorv1.ConditionUnknown,
+			name:        "some pod unschedulable",
+			deployment:  deployment,
+			pods:        []corev1.Pod{scheduledPod, unschedulablePod},
+			expectError: true,
+		},
+		{
+			name:        "deployment with empty label selector",
+			deployment:  invalidDeployment,
+			expectError: true,
 		},
 	}
 	for _, test := range tests {
-		actual := computeDeploymentPodsScheduledCondition(test.deployment, test.pods)
-		if actual.Status != test.expect {
-			t.Errorf("%q: expected %v, got %v", test.name, test.expect, actual.Status)
-		}
+		t.Run(test.name, func(t *testing.T) {
+			switch err := checkPodsScheduledForDeployment(test.deployment, test.pods); {
+			case err == nil && test.expectError:
+				t.Error("expected error, got nil")
+			case err != nil && !test.expectError:
+				t.Errorf("got unexpected error: %v", err)
+			}
+		})
 	}
 }
 
 func TestComputeIngressDegradedCondition(t *testing.T) {
 	// Inject a fake clock and don't forget to reset it
-	fakeClock := utilclock.NewFakeClock(time.Time{})
+	fakeClock := utilclocktesting.NewFakeClock(time.Time{})
 	clock = fakeClock
 	defer func() {
 		clock = utilclock.RealClock{}
@@ -269,26 +284,6 @@ func TestComputeIngressDegradedCondition(t *testing.T) {
 			name: "not admitted",
 			conditions: []operatorv1.OperatorCondition{
 				cond(IngressControllerAdmittedConditionType, operatorv1.ConditionFalse, "", clock.Now()),
-			},
-			expectIngressDegradedStatus: operatorv1.ConditionTrue,
-			expectRequeue:               true,
-			// Just use the one minute retry duration for this degraded condition
-			expectAfter: time.Minute,
-		},
-		{
-			name: "pods not scheduled for <10m",
-			conditions: []operatorv1.OperatorCondition{
-				cond(IngressControllerPodsScheduledConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Minute*-9)),
-			},
-			expectIngressDegradedStatus: operatorv1.ConditionFalse,
-			expectRequeue:               true,
-			// Grace period is 10 minutes, subtract the 9 minute spoofed last transition time
-			expectAfter: time.Minute,
-		},
-		{
-			name: "pods not scheduled for >10m",
-			conditions: []operatorv1.OperatorCondition{
-				cond(IngressControllerPodsScheduledConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Minute*-31)),
 			},
 			expectIngressDegradedStatus: operatorv1.ConditionTrue,
 			expectRequeue:               true,
@@ -422,7 +417,6 @@ func TestComputeIngressDegradedCondition(t *testing.T) {
 			name: "DNS not ready and deployment unavailable",
 			conditions: []operatorv1.OperatorCondition{
 				cond(IngressControllerAdmittedConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
-				cond(IngressControllerPodsScheduledConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Hour*-1)),
 				cond(IngressControllerDeploymentAvailableConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Hour*-1)),
 				cond(IngressControllerDeploymentReplicasMinAvailableConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Hour*-1)),
 				cond(IngressControllerDeploymentReplicasAllAvailableConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Hour*-1)),
@@ -440,7 +434,6 @@ func TestComputeIngressDegradedCondition(t *testing.T) {
 			name: "admitted, DNS, LB, and deployment OK",
 			conditions: []operatorv1.OperatorCondition{
 				cond(IngressControllerAdmittedConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
-				cond(IngressControllerPodsScheduledConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
 				cond(IngressControllerDeploymentAvailableConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
 				cond(IngressControllerDeploymentReplicasMinAvailableConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
 				cond(IngressControllerDeploymentReplicasAllAvailableConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
@@ -497,9 +490,115 @@ func TestComputeIngressDegradedCondition(t *testing.T) {
 	}
 }
 
-// TestComputeIngressProgressCondition verifies that
-// computeIngressProgressingCondition returns the expected status condition.
-func TestComputeIngressProgressCondition(t *testing.T) {
+// TestComputeDeploymentRollingOutCondition verifies that
+// computeDeploymentRollingOutCondition returns the expected status condition.
+func TestComputeDeploymentRollingOutCondition(t *testing.T) {
+	tests := []struct {
+		name                  string
+		replicasWanted        *int32
+		replicasHave          *int32
+		replicasUpdated       *int32
+		replicasAvailable     *int32
+		expectStatus          operatorv1.ConditionStatus
+		expectMessageContains string
+	}{
+		{
+			name:                  "Router pod replicas not rolling out",
+			expectStatus:          operatorv1.ConditionFalse,
+			replicasHave:          pointer.Int32(2),
+			replicasWanted:        pointer.Int32(2),
+			replicasUpdated:       pointer.Int32(2),
+			replicasAvailable:     pointer.Int32(2),
+			expectMessageContains: "Deployment is not actively rolling out",
+		},
+		{
+			name:                  "Router pod replicas have/updated < want",
+			expectStatus:          operatorv1.ConditionTrue,
+			replicasHave:          pointer.Int32(1),
+			replicasWanted:        pointer.Int32(4),
+			replicasUpdated:       pointer.Int32(1),
+			replicasAvailable:     pointer.Int32(2),
+			expectMessageContains: "1 out of 4 new replica(s) have been updated",
+		},
+		{
+			name:                  "Router pod replicas have > updated",
+			expectStatus:          operatorv1.ConditionTrue,
+			replicasHave:          pointer.Int32(3),
+			replicasWanted:        pointer.Int32(1),
+			replicasUpdated:       pointer.Int32(1),
+			replicasAvailable:     pointer.Int32(1),
+			expectMessageContains: "2 old replica(s) are pending termination",
+		},
+		{
+			name:                  "Router pod replicas have > updated, but want is nil",
+			expectStatus:          operatorv1.ConditionTrue,
+			replicasHave:          pointer.Int32(3),
+			replicasWanted:        nil,
+			replicasUpdated:       pointer.Int32(1),
+			replicasAvailable:     pointer.Int32(1),
+			expectMessageContains: "2 old replica(s) are pending termination",
+		},
+		{
+			name:                  "Router pods replicas available < updated",
+			expectStatus:          operatorv1.ConditionTrue,
+			replicasHave:          pointer.Int32(4),
+			replicasWanted:        pointer.Int32(4),
+			replicasUpdated:       pointer.Int32(4),
+			replicasAvailable:     pointer.Int32(1),
+			expectMessageContains: "1 of 4 updated replica(s) are available",
+		},
+		{
+			name:                  "Router pods replicas available < updated, but want is nil",
+			expectStatus:          operatorv1.ConditionTrue,
+			replicasHave:          pointer.Int32(4),
+			replicasWanted:        nil,
+			replicasUpdated:       pointer.Int32(4),
+			replicasAvailable:     pointer.Int32(1),
+			expectMessageContains: "1 of 4 updated replica(s) are available",
+		},
+		{
+			name:                  "Router pods replicas equal but want is nil",
+			expectStatus:          operatorv1.ConditionFalse,
+			replicasHave:          pointer.Int32(1),
+			replicasWanted:        nil,
+			replicasUpdated:       pointer.Int32(1),
+			replicasAvailable:     pointer.Int32(1),
+			expectMessageContains: "Deployment is not actively rolling out",
+		},
+		{
+			name:                  "Router pods replicas have < updated/available (not a possible scenario)",
+			expectStatus:          operatorv1.ConditionFalse,
+			replicasHave:          pointer.Int32(1),
+			replicasWanted:        pointer.Int32(1),
+			replicasUpdated:       pointer.Int32(2),
+			replicasAvailable:     pointer.Int32(2),
+			expectMessageContains: "Deployment is not actively rolling out",
+		},
+	}
+	for _, test := range tests {
+		routerDeploy := &appsv1.Deployment{
+			Spec: appsv1.DeploymentSpec{
+				Replicas: test.replicasWanted,
+			},
+			Status: appsv1.DeploymentStatus{
+				Replicas:          *test.replicasHave,
+				AvailableReplicas: *test.replicasAvailable,
+				UpdatedReplicas:   *test.replicasUpdated,
+			},
+		}
+		actual := computeDeploymentRollingOutCondition(routerDeploy)
+		if actual.Status != test.expectStatus {
+			t.Errorf("%q: expected status to be %s, got %s", test.name, test.expectStatus, actual.Status)
+		}
+		if len(test.expectMessageContains) != 0 && !strings.Contains(actual.Message, test.expectMessageContains) {
+			t.Errorf("%q: expected message to include %q, got %q", test.name, test.expectMessageContains, actual.Message)
+		}
+	}
+}
+
+// TestComputeLoadBalancerProgressingStatus verifies that
+// computeLoadBalancerProgressingStatus returns the expected status condition.
+func TestComputeLoadBalancerProgressingStatus(t *testing.T) {
 	hostNetworkIngressController := operatorv1.IngressController{
 		Status: operatorv1.IngressControllerStatus{
 			EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
@@ -511,6 +610,44 @@ func TestComputeIngressProgressCondition(t *testing.T) {
 		Status: operatorv1.IngressControllerStatus{
 			EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
 				Type: operatorv1.LoadBalancerServiceStrategyType,
+			},
+		},
+	}
+	loadBalancerIngressControllerWithAllowedSourceRanges := operatorv1.IngressController{
+		Spec: operatorv1.IngressControllerSpec{
+			EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.LoadBalancerServiceStrategyType,
+				LoadBalancer: &operatorv1.LoadBalancerStrategy{
+					Scope:               operatorv1.ExternalLoadBalancer,
+					AllowedSourceRanges: []operatorv1.CIDR{"0.0.0.0/0"},
+				},
+			},
+		},
+		Status: operatorv1.IngressControllerStatus{
+			EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.LoadBalancerServiceStrategyType,
+				LoadBalancer: &operatorv1.LoadBalancerStrategy{
+					Scope: operatorv1.ExternalLoadBalancer,
+				},
+			},
+		},
+	}
+	loadBalancerIngressControllerEmptyAllowedSourceRanges := operatorv1.IngressController{
+		Spec: operatorv1.IngressControllerSpec{
+			EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.LoadBalancerServiceStrategyType,
+				LoadBalancer: &operatorv1.LoadBalancerStrategy{
+					Scope:               operatorv1.ExternalLoadBalancer,
+					AllowedSourceRanges: nil,
+				},
+			},
+		},
+		Status: operatorv1.IngressControllerStatus{
+			EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.LoadBalancerServiceStrategyType,
+				LoadBalancer: &operatorv1.LoadBalancerStrategy{
+					Scope: operatorv1.ExternalLoadBalancer,
+				},
 			},
 		},
 	}
@@ -554,6 +691,18 @@ func TestComputeIngressProgressCondition(t *testing.T) {
 			Annotations: map[string]string{
 				awsInternalLBAnnotation: "true",
 			},
+		},
+	}
+	lbServiceWithSourceRangesAnnotation := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Annotations: map[string]string{
+				corev1.AnnotationLoadBalancerSourceRangesKey: "127.0.0.0/8",
+			},
+		},
+	}
+	lbServiceWithSourceRangesField := &corev1.Service{
+		Spec: corev1.ServiceSpec{
+			LoadBalancerSourceRanges: []string{"127.0.0.0/8"},
 		},
 	}
 	awsPlatformStatus := &configv1.PlatformStatus{
@@ -627,9 +776,30 @@ func TestComputeIngressProgressCondition(t *testing.T) {
 			platformStatus: awsPlatformStatus,
 			expectStatus:   operatorv1.ConditionFalse,
 		},
+		{
+			name:           "LoadBalancerService, service.beta.kubernetes.io/load-balancer-source-ranges annotation is set",
+			ic:             &loadBalancerIngressControllerEmptyAllowedSourceRanges,
+			service:        lbServiceWithSourceRangesAnnotation,
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionTrue,
+		},
+		{
+			name:           "LoadBalancerService, LoadBalancerSourceRanges is set when AllowedSourceRanges is empty",
+			ic:             &loadBalancerIngressControllerEmptyAllowedSourceRanges,
+			service:        lbServiceWithSourceRangesField,
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionTrue,
+		},
+		{
+			name:           "LoadBalancerService, LoadBalancerSourceRanges and AllowedSourceRanges are set",
+			ic:             &loadBalancerIngressControllerWithAllowedSourceRanges,
+			service:        lbServiceWithSourceRangesField,
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionFalse,
+		},
 	}
 	for _, test := range tests {
-		actual := computeIngressProgressingCondition(test.conditions, test.ic, test.service, test.platformStatus)
+		actual := computeLoadBalancerProgressingStatus(test.ic, test.service, test.platformStatus)
 		if actual.Status != test.expectStatus {
 			t.Errorf("%q: expected status to be %s, got %s", test.name, test.expectStatus, actual.Status)
 		}
@@ -879,6 +1049,12 @@ func TestComputeDeploymentReplicasMinAvailableCondition(t *testing.T) {
 		deploy := &appsv1.Deployment{
 			Spec: appsv1.DeploymentSpec{
 				Replicas: test.replicas,
+				Selector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{
+						"ingresscontroller.operator.openshift.io/deployment-ingresscontroller": "default",
+						"ingresscontroller.operator.openshift.io/hash":                         "75678b564c",
+					},
+				},
 				Strategy: appsv1.DeploymentStrategy{
 					Type:          appsv1.RollingUpdateDeploymentStrategyType,
 					RollingUpdate: test.rollingUpdate,
@@ -889,7 +1065,7 @@ func TestComputeDeploymentReplicasMinAvailableCondition(t *testing.T) {
 			},
 		}
 
-		actual := computeDeploymentReplicasMinAvailableCondition(deploy)
+		actual := computeDeploymentReplicasMinAvailableCondition(deploy, []corev1.Pod{})
 		if actual.Status != test.expectDeploymentReplicasMinAvailableStatus {
 			t.Errorf("%q: expected %v, got %v", test.name, test.expectDeploymentReplicasMinAvailableStatus, actual.Status)
 		}
@@ -1027,6 +1203,130 @@ func TestComputeLoadBalancerStatus(t *testing.T) {
 		}
 		if !cmp.Equal(actual, test.expect, conditionsCmpOpts...) {
 			t.Fatalf("expected:\n%#v\ngot:\n%#v", test.expect, actual)
+		}
+	}
+}
+
+// TestComputeIngressProgressingCondition verifies that
+// computeIngressProgressingCondition returns the expected status condition.
+func TestComputeIngressProgressingCondition(t *testing.T) {
+	testCases := []struct {
+		description string
+		conditions  []operatorv1.OperatorCondition
+		expect      operatorv1.OperatorCondition
+	}{
+		{
+			description: "load balancer is not progressing and router deployment is not rolling out",
+			conditions: []operatorv1.OperatorCondition{
+				{Type: IngressControllerLoadBalancerProgressingConditionType, Status: operatorv1.ConditionFalse},
+				{Type: IngressControllerDeploymentRollingOutConditionType, Status: operatorv1.ConditionFalse},
+				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionTrue},
+			},
+			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeProgressing, Status: operatorv1.ConditionFalse},
+		},
+		{
+			description: "load balancer is progressing and router deployment is not rolling out",
+			conditions: []operatorv1.OperatorCondition{
+				{Type: IngressControllerLoadBalancerProgressingConditionType, Status: operatorv1.ConditionTrue},
+				{Type: IngressControllerDeploymentRollingOutConditionType, Status: operatorv1.ConditionFalse},
+				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionTrue},
+			},
+			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeProgressing, Status: operatorv1.ConditionTrue},
+		},
+		{
+			description: "load balancer is progressing, but unmanaged load balancer type and router deployment is not rolling out",
+			conditions: []operatorv1.OperatorCondition{
+				{Type: IngressControllerLoadBalancerProgressingConditionType, Status: operatorv1.ConditionTrue},
+				{Type: IngressControllerDeploymentRollingOutConditionType, Status: operatorv1.ConditionFalse},
+				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
+			},
+			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeProgressing, Status: operatorv1.ConditionFalse},
+		},
+		{
+			description: "load balancer is not progressing, but unmanaged load balancer type and router deployment is rolling out",
+			conditions: []operatorv1.OperatorCondition{
+				{Type: IngressControllerLoadBalancerProgressingConditionType, Status: operatorv1.ConditionFalse},
+				{Type: IngressControllerDeploymentRollingOutConditionType, Status: operatorv1.ConditionTrue},
+				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
+			},
+			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeProgressing, Status: operatorv1.ConditionTrue},
+		},
+		{
+			description: "load balancer is not progressing and router deployment is rolling out",
+			conditions: []operatorv1.OperatorCondition{
+				{Type: IngressControllerLoadBalancerProgressingConditionType, Status: operatorv1.ConditionFalse},
+				{Type: IngressControllerDeploymentRollingOutConditionType, Status: operatorv1.ConditionTrue},
+				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionTrue},
+			},
+			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeProgressing, Status: operatorv1.ConditionTrue},
+		},
+		{
+			description: "load balancer is progressing and router deployment is rolling out",
+			conditions: []operatorv1.OperatorCondition{
+				{Type: IngressControllerLoadBalancerProgressingConditionType, Status: operatorv1.ConditionTrue},
+				{Type: IngressControllerDeploymentRollingOutConditionType, Status: operatorv1.ConditionTrue},
+				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionTrue},
+			},
+			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeProgressing, Status: operatorv1.ConditionTrue},
+		},
+		{
+			description: "load balancer is unknown progressing and router deployment is not rolling out",
+			conditions: []operatorv1.OperatorCondition{
+				{Type: IngressControllerLoadBalancerProgressingConditionType, Status: operatorv1.ConditionUnknown},
+				{Type: IngressControllerDeploymentRollingOutConditionType, Status: operatorv1.ConditionFalse},
+				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionTrue},
+			},
+			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeProgressing, Status: operatorv1.ConditionTrue},
+		},
+		{
+			description: "load balancer is not progressing and router deployment is unknown",
+			conditions: []operatorv1.OperatorCondition{
+				{Type: IngressControllerLoadBalancerProgressingConditionType, Status: operatorv1.ConditionFalse},
+				{Type: IngressControllerDeploymentRollingOutConditionType, Status: operatorv1.ConditionUnknown},
+				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionTrue},
+			},
+			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeProgressing, Status: operatorv1.ConditionTrue},
+		},
+		{
+			description: "load balancer progressing condition missing and router deployment is not rolling out",
+			conditions: []operatorv1.OperatorCondition{
+				{Type: IngressControllerDeploymentRollingOutConditionType, Status: operatorv1.ConditionFalse},
+				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionTrue},
+			},
+			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeProgressing, Status: operatorv1.ConditionFalse},
+		},
+		{
+			description: "load balancer is not progressing and router rolling out is missing",
+			conditions: []operatorv1.OperatorCondition{
+				{Type: IngressControllerLoadBalancerProgressingConditionType, Status: operatorv1.ConditionFalse},
+				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionTrue},
+			},
+			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeProgressing, Status: operatorv1.ConditionFalse},
+		},
+		{
+			description: "all progressing unknown",
+			conditions: []operatorv1.OperatorCondition{
+				{Type: IngressControllerLoadBalancerProgressingConditionType, Status: operatorv1.ConditionUnknown},
+				{Type: IngressControllerDeploymentRollingOutConditionType, Status: operatorv1.ConditionUnknown},
+				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionTrue},
+			},
+			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeProgressing, Status: operatorv1.ConditionTrue},
+		},
+		{
+			description: "all progressing not present",
+			conditions:  []operatorv1.OperatorCondition{},
+			expect:      operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeProgressing, Status: operatorv1.ConditionFalse},
+		},
+	}
+
+	for _, tc := range testCases {
+		actual := computeIngressProgressingCondition(tc.conditions)
+		conditionsCmpOpts := []cmp.Option{
+			cmpopts.IgnoreFields(operatorv1.OperatorCondition{}, "LastTransitionTime", "Reason", "Message"),
+			cmpopts.EquateEmpty(),
+		}
+		if !cmp.Equal(actual, tc.expect, conditionsCmpOpts...) {
+			t.Fatalf("%q: expected %#v, got %#v", tc.description, tc.expect, actual)
 		}
 	}
 }
@@ -1231,9 +1531,522 @@ func TestIngressStatusesEqual(t *testing.T) {
 	}
 }
 
+func TestComputeDNSStatus(t *testing.T) {
+	tests := []struct {
+		name           string
+		controller     *operatorv1.IngressController
+		record         *iov1.DNSRecord
+		platformStatus *configv1.PlatformStatus
+		dnsConfig      *configv1.DNS
+		expect         []operatorv1.OperatorCondition
+	}{
+		{
+			name: "DNSManaged false due to NoDNSZones",
+			dnsConfig: &configv1.DNS{
+				Spec: configv1.DNSSpec{
+					PublicZone:  nil,
+					PrivateZone: nil,
+				},
+			},
+			expect: []operatorv1.OperatorCondition{{
+				Type:   "DNSManaged",
+				Status: operatorv1.ConditionFalse,
+				Reason: "NoDNSZones",
+			}},
+		},
+		{
+			name: "DNSManaged false due to UnsupportedEndpointPublishingStrategy",
+			dnsConfig: &configv1.DNS{
+				Spec: configv1.DNSSpec{
+					PublicZone:  &configv1.DNSZone{},
+					PrivateZone: &configv1.DNSZone{},
+				},
+			},
+			controller: &operatorv1.IngressController{
+				Status: operatorv1.IngressControllerStatus{
+					EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+						Type: operatorv1.HostNetworkStrategyType,
+					},
+				},
+			},
+			expect: []operatorv1.OperatorCondition{{
+				Type:   "DNSManaged",
+				Status: operatorv1.ConditionFalse,
+				Reason: "UnsupportedEndpointPublishingStrategy",
+			}},
+		},
+		{
+			name: "DNSManaged false due to UnmanagedLoadBalancerDNS",
+			dnsConfig: &configv1.DNS{
+				Spec: configv1.DNSSpec{
+					PublicZone:  &configv1.DNSZone{},
+					PrivateZone: &configv1.DNSZone{},
+				},
+			},
+			controller: &operatorv1.IngressController{
+				Status: operatorv1.IngressControllerStatus{
+					EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+						Type: operatorv1.LoadBalancerServiceStrategyType,
+						LoadBalancer: &operatorv1.LoadBalancerStrategy{
+							DNSManagementPolicy: operatorv1.UnmanagedLoadBalancerDNS,
+						},
+					},
+				},
+			},
+			record: &iov1.DNSRecord{
+				Spec: iov1.DNSRecordSpec{
+					DNSManagementPolicy: iov1.UnmanagedDNS,
+				},
+			},
+			expect: []operatorv1.OperatorCondition{
+				{
+					Type:   "DNSManaged",
+					Status: operatorv1.ConditionFalse,
+					Reason: "UnmanagedLoadBalancerDNS",
+				},
+				{
+					Type:   "DNSReady",
+					Status: operatorv1.ConditionUnknown,
+					Reason: "UnmanagedDNS",
+				},
+			},
+		},
+		{
+			name: "DNSManaged true and DNSReady is true due to NoFailedZones",
+			controller: &operatorv1.IngressController{
+				Status: operatorv1.IngressControllerStatus{
+					Domain: "apps.basedomain.com",
+					EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+						Type: operatorv1.LoadBalancerServiceStrategyType,
+						LoadBalancer: &operatorv1.LoadBalancerStrategy{
+							DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
+						},
+					},
+				},
+			},
+			record: &iov1.DNSRecord{
+				Spec: iov1.DNSRecordSpec{
+					DNSManagementPolicy: iov1.ManagedDNS,
+				},
+				Status: iov1.DNSRecordStatus{
+					Zones: []iov1.DNSZoneStatus{
+						{
+							DNSZone: configv1.DNSZone{ID: "zone1"},
+							Conditions: []iov1.DNSZoneCondition{
+								{
+									Type:               iov1.DNSRecordPublishedConditionType,
+									Status:             string(operatorv1.ConditionTrue),
+									LastTransitionTime: metav1.Now(),
+								},
+							},
+						},
+					},
+				},
+			},
+			platformStatus: &configv1.PlatformStatus{
+				Type: configv1.AWSPlatformType,
+			},
+			dnsConfig: &configv1.DNS{
+				Spec: configv1.DNSSpec{
+					BaseDomain:  "basedomain.com",
+					PublicZone:  &configv1.DNSZone{},
+					PrivateZone: &configv1.DNSZone{},
+				},
+			},
+			expect: []operatorv1.OperatorCondition{
+				{
+					Type:   "DNSManaged",
+					Status: operatorv1.ConditionTrue,
+					Reason: "Normal",
+				},
+				{
+					Type:   "DNSReady",
+					Status: operatorv1.ConditionTrue,
+					Reason: "NoFailedZones",
+				},
+			},
+		},
+		{
+			name: "DNSManaged true but DNSReady is false due to RecordNotFound",
+			controller: &operatorv1.IngressController{
+				Status: operatorv1.IngressControllerStatus{
+					Domain: "apps.basedomain.com",
+					EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+						Type: operatorv1.LoadBalancerServiceStrategyType,
+						LoadBalancer: &operatorv1.LoadBalancerStrategy{
+							DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
+						},
+					},
+				},
+			},
+			record: nil,
+			platformStatus: &configv1.PlatformStatus{
+				Type: configv1.AWSPlatformType,
+			},
+			dnsConfig: &configv1.DNS{
+				Spec: configv1.DNSSpec{
+					BaseDomain:  "basedomain.com",
+					PublicZone:  &configv1.DNSZone{},
+					PrivateZone: &configv1.DNSZone{},
+				},
+			},
+			expect: []operatorv1.OperatorCondition{
+				{
+					Type:   "DNSManaged",
+					Status: operatorv1.ConditionTrue,
+					Reason: "Normal",
+				},
+				{
+					Type:   "DNSReady",
+					Status: operatorv1.ConditionFalse,
+					Reason: "RecordNotFound",
+				},
+			},
+		},
+		{
+			name: "DNSManaged true but DNSReady is false due to NoZones",
+			controller: &operatorv1.IngressController{
+				Status: operatorv1.IngressControllerStatus{
+					Domain: "apps.basedomain.com",
+					EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+						Type: operatorv1.LoadBalancerServiceStrategyType,
+						LoadBalancer: &operatorv1.LoadBalancerStrategy{
+							DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
+						},
+					},
+				},
+			},
+			record: &iov1.DNSRecord{
+				Spec: iov1.DNSRecordSpec{
+					DNSManagementPolicy: iov1.ManagedDNS,
+				},
+				Status: iov1.DNSRecordStatus{
+					Zones: []iov1.DNSZoneStatus{},
+				},
+			},
+			platformStatus: &configv1.PlatformStatus{
+				Type: configv1.AWSPlatformType,
+			},
+			dnsConfig: &configv1.DNS{
+				Spec: configv1.DNSSpec{
+					BaseDomain:  "basedomain.com",
+					PublicZone:  &configv1.DNSZone{},
+					PrivateZone: &configv1.DNSZone{},
+				},
+			},
+			expect: []operatorv1.OperatorCondition{
+				{
+					Type:   "DNSManaged",
+					Status: operatorv1.ConditionTrue,
+					Reason: "Normal",
+				},
+				{
+					Type:   "DNSReady",
+					Status: operatorv1.ConditionFalse,
+					Reason: "NoZones",
+				},
+			},
+		},
+		{
+			name: "DNSManaged true but DNSReady is Unknown due to UnmanagedDNS",
+			controller: &operatorv1.IngressController{
+				Status: operatorv1.IngressControllerStatus{
+					Domain: "apps.basedomain.com",
+					EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+						Type: operatorv1.LoadBalancerServiceStrategyType,
+						LoadBalancer: &operatorv1.LoadBalancerStrategy{
+							DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
+						},
+					},
+				},
+			},
+			record: &iov1.DNSRecord{
+				Spec: iov1.DNSRecordSpec{
+					DNSManagementPolicy: iov1.UnmanagedDNS,
+				},
+			},
+			platformStatus: &configv1.PlatformStatus{
+				Type: configv1.AWSPlatformType,
+			},
+			dnsConfig: &configv1.DNS{
+				Spec: configv1.DNSSpec{
+					BaseDomain:  "basedomain.com",
+					PublicZone:  &configv1.DNSZone{},
+					PrivateZone: &configv1.DNSZone{},
+				},
+			},
+			expect: []operatorv1.OperatorCondition{
+				{
+					Type:   "DNSManaged",
+					Status: operatorv1.ConditionTrue,
+					Reason: "Normal",
+				},
+				{
+					Type:   "DNSReady",
+					Status: operatorv1.ConditionUnknown,
+					Reason: "UnmanagedDNS",
+				},
+			},
+		},
+		{
+			name: "DNSManaged true and DNSReady is false due to FailedZones",
+			controller: &operatorv1.IngressController{
+				Status: operatorv1.IngressControllerStatus{
+					Domain: "apps.basedomain.com",
+					EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+						Type: operatorv1.LoadBalancerServiceStrategyType,
+						LoadBalancer: &operatorv1.LoadBalancerStrategy{
+							DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
+						},
+					},
+				},
+			},
+			record: &iov1.DNSRecord{
+				Spec: iov1.DNSRecordSpec{
+					DNSManagementPolicy: iov1.ManagedDNS,
+				},
+				Status: iov1.DNSRecordStatus{
+					Zones: []iov1.DNSZoneStatus{
+						{
+							DNSZone: configv1.DNSZone{ID: "zone1"},
+							Conditions: []iov1.DNSZoneCondition{
+								{
+									Type:               iov1.DNSRecordPublishedConditionType,
+									Status:             string(operatorv1.ConditionFalse),
+									LastTransitionTime: metav1.Now(),
+									Reason:             "FailedZones",
+								},
+							},
+						},
+					},
+				},
+			},
+			platformStatus: &configv1.PlatformStatus{
+				Type: configv1.AWSPlatformType,
+			},
+			dnsConfig: &configv1.DNS{
+				Spec: configv1.DNSSpec{
+					BaseDomain: "basedomain.com",
+					PublicZone: &configv1.DNSZone{},
+					PrivateZone: &configv1.DNSZone{
+						ID: "zone1",
+					},
+				},
+			},
+			expect: []operatorv1.OperatorCondition{
+				{
+					Type:   "DNSManaged",
+					Status: operatorv1.ConditionTrue,
+					Reason: "Normal",
+				},
+				{
+					Type:   "DNSReady",
+					Status: operatorv1.ConditionFalse,
+					Reason: "FailedZones",
+				},
+			},
+		},
+		{
+			name: "DNSManaged true and DNSReady is true with even with previously FailedZones",
+			controller: &operatorv1.IngressController{
+				Status: operatorv1.IngressControllerStatus{
+					Domain: "apps.basedomain.com",
+					EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+						Type: operatorv1.LoadBalancerServiceStrategyType,
+						LoadBalancer: &operatorv1.LoadBalancerStrategy{
+							DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
+						},
+					},
+				},
+			},
+			record: &iov1.DNSRecord{
+				Spec: iov1.DNSRecordSpec{
+					DNSManagementPolicy: iov1.ManagedDNS,
+				},
+				Status: iov1.DNSRecordStatus{
+					Zones: []iov1.DNSZoneStatus{
+						{
+							DNSZone: configv1.DNSZone{ID: "zone1"},
+							Conditions: []iov1.DNSZoneCondition{
+								{
+									Type:               iov1.DNSRecordFailedConditionType,
+									Status:             string(operatorv1.ConditionTrue),
+									LastTransitionTime: metav1.NewTime(time.Now().Add(5 * time.Minute)),
+									Reason:             "FailedZones",
+								},
+								{
+									Type:               iov1.DNSRecordPublishedConditionType,
+									Status:             string(operatorv1.ConditionTrue),
+									LastTransitionTime: metav1.NewTime(time.Now().Add(15 * time.Minute)),
+									Reason:             "NoFailedZones",
+								},
+							},
+						},
+					},
+				},
+			},
+			platformStatus: &configv1.PlatformStatus{
+				Type: configv1.AWSPlatformType,
+			},
+			dnsConfig: &configv1.DNS{
+				Spec: configv1.DNSSpec{
+					BaseDomain: "basedomain.com",
+					PublicZone: &configv1.DNSZone{},
+					PrivateZone: &configv1.DNSZone{
+						ID: "zone1",
+					},
+				},
+			},
+			expect: []operatorv1.OperatorCondition{
+				{
+					Type:   "DNSManaged",
+					Status: operatorv1.ConditionTrue,
+					Reason: "Normal",
+				},
+				{
+					Type:   "DNSReady",
+					Status: operatorv1.ConditionTrue,
+					Reason: "NoFailedZones",
+				},
+			},
+		},
+		{
+			name: "DNSManaged true and DNSReady is false due to unknown condition",
+			controller: &operatorv1.IngressController{
+				Status: operatorv1.IngressControllerStatus{
+					Domain: "apps.basedomain.com",
+					EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+						Type: operatorv1.LoadBalancerServiceStrategyType,
+						LoadBalancer: &operatorv1.LoadBalancerStrategy{
+							DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
+						},
+					},
+				},
+			},
+			record: &iov1.DNSRecord{
+				Spec: iov1.DNSRecordSpec{
+					DNSManagementPolicy: iov1.ManagedDNS,
+				},
+				Status: iov1.DNSRecordStatus{
+					Zones: []iov1.DNSZoneStatus{
+						{
+							DNSZone: configv1.DNSZone{ID: "zone1"},
+							Conditions: []iov1.DNSZoneCondition{
+								{
+									Type:               iov1.DNSRecordPublishedConditionType,
+									Status:             string(operatorv1.ConditionUnknown),
+									LastTransitionTime: metav1.NewTime(time.Now().Add(15 * time.Minute)),
+									Reason:             "UnknownZones",
+								},
+							},
+						},
+					},
+				},
+			},
+			platformStatus: &configv1.PlatformStatus{
+				Type: configv1.AWSPlatformType,
+			},
+			dnsConfig: &configv1.DNS{
+				Spec: configv1.DNSSpec{
+					BaseDomain: "basedomain.com",
+					PublicZone: &configv1.DNSZone{},
+					PrivateZone: &configv1.DNSZone{
+						ID: "zone1",
+					},
+				},
+			},
+			expect: []operatorv1.OperatorCondition{
+				{
+					Type:   "DNSManaged",
+					Status: operatorv1.ConditionTrue,
+					Reason: "Normal",
+				},
+				{
+					Type:   "DNSReady",
+					Status: operatorv1.ConditionFalse,
+					Reason: "UnknownZones",
+				},
+			},
+		},
+		{
+			// This text checks if precedence is given to failed zones over unknown zones.
+			name: "DNSManaged true and DNSReady is false due to failed and unknown conditions",
+			controller: &operatorv1.IngressController{
+				Status: operatorv1.IngressControllerStatus{
+					Domain: "apps.basedomain.com",
+					EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+						Type: operatorv1.LoadBalancerServiceStrategyType,
+						LoadBalancer: &operatorv1.LoadBalancerStrategy{
+							DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
+						},
+					},
+				},
+			},
+			record: &iov1.DNSRecord{
+				Spec: iov1.DNSRecordSpec{
+					DNSManagementPolicy: iov1.ManagedDNS,
+				},
+				Status: iov1.DNSRecordStatus{
+					Zones: []iov1.DNSZoneStatus{
+						{
+							DNSZone: configv1.DNSZone{ID: "zone1"},
+							Conditions: []iov1.DNSZoneCondition{
+								{
+									Type:               iov1.DNSRecordPublishedConditionType,
+									Status:             string(operatorv1.ConditionUnknown),
+									LastTransitionTime: metav1.NewTime(time.Now().Add(15 * time.Minute)),
+									Reason:             "UnknownZones",
+								},
+								{
+									Type:               iov1.DNSRecordPublishedConditionType,
+									Status:             string(operatorv1.ConditionFalse),
+									LastTransitionTime: metav1.NewTime(time.Now().Add(15 * time.Minute)),
+									Reason:             "FailedZones",
+								},
+							},
+						},
+					},
+				},
+			},
+			platformStatus: &configv1.PlatformStatus{
+				Type: configv1.AWSPlatformType,
+			},
+			dnsConfig: &configv1.DNS{
+				Spec: configv1.DNSSpec{
+					BaseDomain: "basedomain.com",
+					PublicZone: &configv1.DNSZone{},
+					PrivateZone: &configv1.DNSZone{
+						ID: "zone1",
+					},
+				},
+			},
+			expect: []operatorv1.OperatorCondition{
+				{
+					Type:   "DNSManaged",
+					Status: operatorv1.ConditionTrue,
+					Reason: "Normal",
+				},
+				{
+					Type:   "DNSReady",
+					Status: operatorv1.ConditionFalse,
+					Reason: "FailedZones",
+				},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		actualConditions := computeDNSStatus(tc.controller, tc.record, tc.platformStatus, tc.dnsConfig)
+		opts := cmpopts.IgnoreFields(operatorv1.OperatorCondition{}, "Message", "LastTransitionTime")
+		if !cmp.Equal(actualConditions, tc.expect, opts) {
+			t.Fatalf("%q found diff between actual and expected operator condition:\n%s", tc.name, cmp.Diff(actualConditions, tc.expect, opts))
+		}
+	}
+}
+
 func TestMergeConditions(t *testing.T) {
 	// Inject a fake clock and don't forget to reset it
-	fakeClock := utilclock.NewFakeClock(time.Time{})
+	fakeClock := utilclocktesting.NewFakeClock(time.Time{})
 	clock = fakeClock
 	defer func() {
 		clock = utilclock.RealClock{}
@@ -1276,7 +2089,7 @@ func TestMergeConditions(t *testing.T) {
 		t.Logf("test: %s", name)
 		actual := MergeConditions(test.conditions, test.updates...)
 		if !conditionsEqual(test.expected, actual) {
-			t.Errorf("expected:\n%v\nactual:\n%v", toYaml(test.expected), toYaml(actual))
+			t.Errorf("expected:\n%v\nactual:\n%v", util.ToYaml(test.expected), util.ToYaml(actual))
 		}
 	}
 }
@@ -1305,37 +2118,43 @@ func TestZoneInConfig(t *testing.T) {
 			in:          "test",
 			zone:        "",
 			zoneType:    "ID",
-		}, {
+		},
+		{
 			description: "[PrivateZone] zone.ID with value (not equal should fail)",
 			expected:    false,
 			in:          "test",
 			zone:        "notest",
 			zoneType:    "ID",
-		}, {
+		},
+		{
 			description: "[PrivateZone] zone.ID with value (equal should pass)",
 			expected:    true,
 			in:          "test",
 			zone:        "test",
 			zoneType:    "ID",
-		}, {
+		},
+		{
 			description: "[PrivateZone] empty strings (should fail)",
 			expected:    false,
 			in:          "",
 			zone:        "",
 			zoneType:    "TAG",
-		}, {
+		},
+		{
 			description: "[PrivateZone] zone.Tags['Name'] empty string (should fail)",
 			expected:    false,
 			in:          "test",
 			zone:        "",
 			zoneType:    "TAG",
-		}, {
+		},
+		{
 			description: "[PrivateZone] zone.Tags['Name'] with value (not equal should fail)",
 			expected:    false,
 			in:          "test",
 			zone:        "notest",
 			zoneType:    "TAG",
-		}, {
+		},
+		{
 			description: "[PrivateZone] zone.tags['Name'] with value (equal should pass)",
 			expected:    true,
 			in:          "test",
@@ -1416,6 +2235,20 @@ func TestComputeIngressUpgradeableCondition(t *testing.T) {
 			expect: false,
 		},
 		{
+			description: "if the service.beta.kubernetes.io/load-balancer-source-ranges is set",
+			mutate: func(svc *corev1.Service) {
+				svc.Annotations[corev1.AnnotationLoadBalancerSourceRangesKey] = "127.0.0.0/8"
+			},
+			expect: true,
+		},
+		{
+			description: "if the LoadBalancerSourceRanges is set when AllowedSourceRanges is empty",
+			mutate: func(svc *corev1.Service) {
+				svc.Spec.LoadBalancerSourceRanges = []string{"127.0.0.0/8"}
+			},
+			expect: true,
+		},
+		{
 			description: "if the default certificate has a SAN",
 			secret:      makeDefaultCertificateSecret(wildcardDomain, []string{wildcardDomain}),
 			expect:      true,
@@ -1484,7 +2317,183 @@ func TestComputeIngressUpgradeableCondition(t *testing.T) {
 			if actual.Status != expectedStatus {
 				t.Errorf("%q: expected Upgradeable to be %q, got %q", tc.description, expectedStatus, actual.Status)
 			}
+		})
+	}
+}
+
+func TestComputeIngressEvaluationConditionsDetectedCondition(t *testing.T) {
+	const (
+		ingressDomain = "apps.foo.com"
+	)
+	testCases := []struct {
+		description string
+		mutate      func(*corev1.Service)
+		secret      *corev1.Secret
+		expect      bool
+	}{
+		{
+			description: "if the service.beta.kubernetes.io/load-balancer-source-ranges is set to the empty string",
+			mutate: func(svc *corev1.Service) {
+				svc.Annotations[corev1.AnnotationLoadBalancerSourceRangesKey] = ""
+			},
+			expect: false,
+		},
+		{
+			description: "if the service.beta.kubernetes.io/load-balancer-source-ranges is set",
+			mutate: func(svc *corev1.Service) {
+				svc.Annotations[corev1.AnnotationLoadBalancerSourceRangesKey] = "127.0.0.0/8"
+			},
+			expect: true,
+		},
+		{
+			description: "if the LoadBalancerSourceRanges and AllowedSourceRanges are empty",
+			mutate: func(svc *corev1.Service) {
+				svc.Spec.LoadBalancerSourceRanges = []string{}
+			},
+			expect: false,
+		},
+		{
+			description: "if the LoadBalancerSourceRanges is set when AllowedSourceRanges is empty",
+			mutate: func(svc *corev1.Service) {
+				svc.Spec.LoadBalancerSourceRanges = []string{"127.0.0.0/8"}
+			},
+			expect: true,
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			ic := &operatorv1.IngressController{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "default",
+				},
+				Spec: operatorv1.IngressControllerSpec{
+					EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+						Type: operatorv1.LoadBalancerServiceStrategyType,
+						LoadBalancer: &operatorv1.LoadBalancerStrategy{
+							AllowedSourceRanges: []operatorv1.CIDR{},
+						},
+					},
+				},
+				Status: operatorv1.IngressControllerStatus{
+					EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+						Type: operatorv1.LoadBalancerServiceStrategyType,
+					},
+					Domain: ingressDomain,
+				},
+			}
+			trueVar := true
+			deploymentRef := metav1.OwnerReference{
+				APIVersion: "apps/v1",
+				Kind:       "Deployment",
+				Name:       "router-default",
+				UID:        "1",
+				Controller: &trueVar,
+			}
+			platformStatus := &configv1.PlatformStatus{
+				Type: configv1.AWSPlatformType,
+				AWS: &configv1.AWSPlatformStatus{
+					ResourceTags: []configv1.AWSResourceTag{
+						{
+							Key:   "Key1",
+							Value: "Value1",
+						},
+					},
+				},
+			}
+
+			wantSvc, service, err := desiredLoadBalancerService(ic, deploymentRef, platformStatus)
+			if err != nil {
+				t.Fatalf("unexpected error from desiredLoadBalancerService: %v", err)
+			}
+			if !wantSvc {
+				t.Fatal("unexpected false value from desiredLoadBalancerService")
+			}
+			if tc.mutate != nil {
+				tc.mutate(service)
+			}
+			expectedStatus := operatorv1.ConditionFalse
+			if tc.expect {
+				expectedStatus = operatorv1.ConditionTrue
+			}
+
+			actual := computeIngressEvaluationConditionsDetectedCondition(ic, service)
+			if actual.Status != expectedStatus {
+				t.Errorf("expected EvaluationConditionDetected to be %q, got %q", expectedStatus, actual.Status)
+			}
 
 		})
+	}
+}
+
+func Test_computeAllowedSourceRanges(t *testing.T) {
+	tests := []struct {
+		name    string
+		service *corev1.Service
+		expect  []operatorv1.CIDR
+	}{
+		{
+			name:    "service is nil",
+			service: nil,
+			expect:  nil,
+		},
+		{
+			name: "service doesn't have spec.LoadBalancerSourceRanges",
+			service: &corev1.Service{
+				Spec: corev1.ServiceSpec{},
+			},
+			expect: nil,
+		},
+		{
+			name: "service has spec.LoadBalancerSourceRanges",
+			service: &corev1.Service{
+				Spec: corev1.ServiceSpec{
+					LoadBalancerSourceRanges: []string{"10.0.0.0/8", "192.128.0.0/16"},
+				},
+			},
+			expect: []operatorv1.CIDR{"10.0.0.0/8", "192.128.0.0/16"},
+		},
+		{
+			name: "service has service.beta.kubernetes.io/load-balancer-source-ranges",
+			service: &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						"service.beta.kubernetes.io/load-balancer-source-ranges": "10.0.0.0/8,192.128.0.0/16",
+					},
+				},
+				Spec: corev1.ServiceSpec{},
+			},
+			expect: []operatorv1.CIDR{"10.0.0.0/8", "192.128.0.0/16"},
+		},
+		{
+			name: "service has service.beta.kubernetes.io/load-balancer-source-ranges, but it's empty",
+			service: &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						"service.beta.kubernetes.io/load-balancer-source-ranges": "",
+					},
+				},
+			},
+			expect: nil,
+		},
+		{
+			name: "service has service.beta.kubernetes.io/load-balancer-source-ranges and spec.LoadBalancerSourceRanges",
+			service: &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						"service.beta.kubernetes.io/load-balancer-source-ranges": "10.0.0.0/8,192.128.0.0/16",
+					},
+				},
+				Spec: corev1.ServiceSpec{
+					LoadBalancerSourceRanges: []string{"172.0.0.0/8", "210.128.0.0/16"},
+				},
+			},
+			expect: []operatorv1.CIDR{"172.0.0.0/8", "210.128.0.0/16"},
+		},
+	}
+	for _, test := range tests {
+		actual := computeAllowedSourceRanges(test.service)
+		if !reflect.DeepEqual(actual, test.expect) {
+			t.Errorf("%q: expected %v, got %v", test.name, test.expect, actual)
+		}
 	}
 }

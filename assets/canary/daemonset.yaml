@@ -10,9 +10,17 @@ spec:
       annotations:
         target.workload.openshift.io/management: '{"effect": "PreferredDuringScheduling"}'
     spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       priorityClassName: system-cluster-critical
       containers:
         - name: serve-healthcheck-canary
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           # Image and command are set at runtime
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError

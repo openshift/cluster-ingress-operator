@@ -53,3 +53,35 @@ spec:
           message: |
             The {{ $labels.namespace }}/{{ $labels.name }} ingresscontroller is
             unavailable: {{ $labels.reason }}.
+      # Recording rules related to route metrics for sending via telemetry
+      - expr: min(route_metrics_controller_routes_per_shard)
+        record: cluster:route_metrics_controller_routes_per_shard:min
+      - expr: max(route_metrics_controller_routes_per_shard)
+        record: cluster:route_metrics_controller_routes_per_shard:max
+      - expr: avg(route_metrics_controller_routes_per_shard)
+        record: cluster:route_metrics_controller_routes_per_shard:avg
+      - expr: quantile(0.5, route_metrics_controller_routes_per_shard)
+        record: cluster:route_metrics_controller_routes_per_shard:median
+      - expr: sum (openshift_route_info) by (tls_termination)
+        record: cluster:openshift_route_info:tls_termination:sum
+    - name: openshift-ingress-to-route-controller.rules
+      rules:
+        - alert: IngressWithoutClassName
+          expr: openshift_ingress_to_route_controller_ingress_without_class_name == 1
+          for: 1d
+          labels:
+            severity: warning
+          annotations:
+            summary: Ingress without IngressClassName for 1 day
+            description: "This alert fires when there is an Ingress with an unset IngressClassName for longer than one day."
+            message: "Ingress {{ $labels.name }} is missing the IngressClassName for 1 day."
+        - alert: UnmanagedRoutes
+          expr: openshift_ingress_to_route_controller_route_with_unmanaged_owner == 1
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: Route owned by an Ingress no longer managed
+            description: "This alert fires when there is a Route owned by an unmanaged Ingress."
+            message: "Route {{ $labels.name }} is owned by an unmanaged Ingress."
+

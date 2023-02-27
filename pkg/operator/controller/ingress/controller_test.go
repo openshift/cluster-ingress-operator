@@ -3,11 +3,15 @@ package ingress
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
+	util "github.com/openshift/cluster-ingress-operator/pkg/util"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // TestSetDefaultDomain verifies that setDefaultDomain behaves correctly.
@@ -79,8 +83,8 @@ func TestSetDefaultDomain(t *testing.T) {
 		},
 		{
 			name:           "spec has custom domain, status has cluster ingress domain",
-			ic:             makeIC(ingressConfig.Spec.Domain, "otherdomain.com"),
-			expectedIC:     makeIC(ingressConfig.Spec.Domain, "otherdomain.com"),
+			ic:             makeIC("otherdomain.com", ingressConfig.Spec.Domain),
+			expectedIC:     makeIC("otherdomain.com", ingressConfig.Spec.Domain),
 			expectedResult: false,
 		},
 		{
@@ -114,7 +118,54 @@ func TestSetDefaultPublishingStrategySetsPlatformDefaults(t *testing.T) {
 				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
 					Type: operatorv1.LoadBalancerServiceStrategyType,
 					LoadBalancer: &operatorv1.LoadBalancerStrategy{
-						Scope: operatorv1.ExternalLoadBalancer,
+						DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
+						Scope:               operatorv1.ExternalLoadBalancer,
+					},
+				},
+			},
+		}
+		ingressControllerWithAWSClassicLB = &operatorv1.IngressController{
+			Status: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.LoadBalancerServiceStrategyType,
+					LoadBalancer: &operatorv1.LoadBalancerStrategy{
+						DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
+						Scope:               operatorv1.ExternalLoadBalancer,
+						ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+							Type: operatorv1.AWSLoadBalancerProvider,
+							AWS: &operatorv1.AWSLoadBalancerParameters{
+								Type:                          operatorv1.AWSClassicLoadBalancer,
+								ClassicLoadBalancerParameters: &operatorv1.AWSClassicLoadBalancerParameters{},
+							},
+						},
+					},
+				},
+			},
+		}
+		ingressControllerWithAWSNLB = &operatorv1.IngressController{
+			Status: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.LoadBalancerServiceStrategyType,
+					LoadBalancer: &operatorv1.LoadBalancerStrategy{
+						DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
+						Scope:               operatorv1.ExternalLoadBalancer,
+						ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+							Type: operatorv1.AWSLoadBalancerProvider,
+							AWS: &operatorv1.AWSLoadBalancerParameters{
+								Type: operatorv1.AWSNetworkLoadBalancer,
+							},
+						},
+					},
+				},
+			},
+		}
+		ingressControllerWithLoadBalancerUnmanagedDNS = &operatorv1.IngressController{
+			Status: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.LoadBalancerServiceStrategyType,
+					LoadBalancer: &operatorv1.LoadBalancerStrategy{
+						DNSManagementPolicy: operatorv1.UnmanagedLoadBalancerDNS,
+						Scope:               operatorv1.ExternalLoadBalancer,
 					},
 				},
 			},
@@ -132,96 +183,166 @@ func TestSetDefaultPublishingStrategySetsPlatformDefaults(t *testing.T) {
 				},
 			},
 		}
-		makeInfra = func(platform configv1.PlatformType) *configv1.Infrastructure {
-			return &configv1.Infrastructure{
-				Status: configv1.InfrastructureStatus{
-					Platform: platform,
-				},
+		makePlatformStatus = func(platform configv1.PlatformType) *configv1.PlatformStatus {
+			return &configv1.PlatformStatus{
+				Type: platform,
 			}
+		}
+
+		ingressConfigWithDefaultClassicLB = &configv1.Ingress{
+			Spec: configv1.IngressSpec{
+				LoadBalancer: configv1.LoadBalancer{
+					Platform: configv1.IngressPlatformSpec{
+						Type: configv1.AWSPlatformType,
+						AWS: &configv1.AWSIngressSpec{
+							Type: configv1.Classic,
+						},
+					},
+				},
+			},
+		}
+		ingressConfigWithDefaultNLB = &configv1.Ingress{
+			Spec: configv1.IngressSpec{
+				LoadBalancer: configv1.LoadBalancer{
+					Platform: configv1.IngressPlatformSpec{
+						Type: configv1.AWSPlatformType,
+						AWS: &configv1.AWSIngressSpec{
+							Type: configv1.NLB,
+						},
+					},
+				},
+			},
 		}
 	)
 
 	testCases := []struct {
-		name        string
-		infraConfig *configv1.Infrastructure
-		expectedIC  *operatorv1.IngressController
+		name                    string
+		platformStatus          *configv1.PlatformStatus
+		ingressConfig           *configv1.Ingress
+		expectedIC              *operatorv1.IngressController
+		domainMatchesBaseDomain bool
 	}{
 		{
-			name:        "Alibaba",
-			infraConfig: makeInfra(configv1.AlibabaCloudPlatformType),
-			expectedIC:  ingressControllerWithLoadBalancer,
+			name:                    "Alibaba",
+			platformStatus:          makePlatformStatus(configv1.AlibabaCloudPlatformType),
+			expectedIC:              ingressControllerWithLoadBalancer,
+			domainMatchesBaseDomain: true,
 		},
 		{
-			name:        "AWS",
-			infraConfig: makeInfra(configv1.AWSPlatformType),
-			expectedIC:  ingressControllerWithLoadBalancer,
+			name:                    "AWS",
+			platformStatus:          makePlatformStatus(configv1.AWSPlatformType),
+			expectedIC:              ingressControllerWithLoadBalancer,
+			domainMatchesBaseDomain: true,
 		},
 		{
-			name:        "Azure",
-			infraConfig: makeInfra(configv1.AzurePlatformType),
-			expectedIC:  ingressControllerWithLoadBalancer,
+			name:                    "AWS with ingress config specifying Classic LB",
+			platformStatus:          makePlatformStatus(configv1.AWSPlatformType),
+			ingressConfig:           ingressConfigWithDefaultClassicLB,
+			expectedIC:              ingressControllerWithAWSClassicLB,
+			domainMatchesBaseDomain: true,
 		},
 		{
-			name:        "Bare metal",
-			infraConfig: makeInfra(configv1.BareMetalPlatformType),
-			expectedIC:  ingressControllerWithHostNetwork,
+			name:                    "AWS with ingress config specifying NLB",
+			platformStatus:          makePlatformStatus(configv1.AWSPlatformType),
+			ingressConfig:           ingressConfigWithDefaultNLB,
+			expectedIC:              ingressControllerWithAWSNLB,
+			domainMatchesBaseDomain: true,
 		},
 		{
-			name:        "Equinix Metal",
-			infraConfig: makeInfra(configv1.EquinixMetalPlatformType),
-			expectedIC:  ingressControllerWithHostNetwork,
+			name:                    "Azure",
+			platformStatus:          makePlatformStatus(configv1.AzurePlatformType),
+			expectedIC:              ingressControllerWithLoadBalancer,
+			domainMatchesBaseDomain: true,
 		},
 		{
-			name:        "GCP",
-			infraConfig: makeInfra(configv1.GCPPlatformType),
-			expectedIC:  ingressControllerWithLoadBalancer,
+			name:                    "Bare metal",
+			platformStatus:          makePlatformStatus(configv1.BareMetalPlatformType),
+			expectedIC:              ingressControllerWithHostNetwork,
+			domainMatchesBaseDomain: true,
 		},
 		{
-			name:        "IBM Cloud",
-			infraConfig: makeInfra(configv1.IBMCloudPlatformType),
-			expectedIC:  ingressControllerWithLoadBalancer,
+			name:                    "Equinix Metal",
+			platformStatus:          makePlatformStatus(configv1.EquinixMetalPlatformType),
+			expectedIC:              ingressControllerWithHostNetwork,
+			domainMatchesBaseDomain: true,
 		},
 		{
-			name:        "Libvirt",
-			infraConfig: makeInfra(configv1.LibvirtPlatformType),
-			expectedIC:  ingressControllerWithHostNetwork,
+			name:                    "GCP",
+			platformStatus:          makePlatformStatus(configv1.GCPPlatformType),
+			expectedIC:              ingressControllerWithLoadBalancer,
+			domainMatchesBaseDomain: true,
 		},
 		{
-			name:        "No platform",
-			infraConfig: makeInfra(configv1.NonePlatformType),
-			expectedIC:  ingressControllerWithHostNetwork,
+			name:                    "IBM Cloud",
+			platformStatus:          makePlatformStatus(configv1.IBMCloudPlatformType),
+			expectedIC:              ingressControllerWithLoadBalancer,
+			domainMatchesBaseDomain: true,
 		},
 		{
-			name:        "OpenStack",
-			infraConfig: makeInfra(configv1.OpenStackPlatformType),
-			expectedIC:  ingressControllerWithHostNetwork,
+			name:                    "Libvirt",
+			platformStatus:          makePlatformStatus(configv1.LibvirtPlatformType),
+			expectedIC:              ingressControllerWithHostNetwork,
+			domainMatchesBaseDomain: true,
 		},
 		{
-			name:        "Power VS",
-			infraConfig: makeInfra(configv1.PowerVSPlatformType),
-			expectedIC:  ingressControllerWithLoadBalancer,
+			name:                    "No platform",
+			platformStatus:          makePlatformStatus(configv1.NonePlatformType),
+			expectedIC:              ingressControllerWithHostNetwork,
+			domainMatchesBaseDomain: true,
 		},
 		{
-			name:        "RHV",
-			infraConfig: makeInfra(configv1.OvirtPlatformType),
-			expectedIC:  ingressControllerWithHostNetwork,
+			name:                    "External platform",
+			platformStatus:          makePlatformStatus(configv1.ExternalPlatformType),
+			expectedIC:              ingressControllerWithHostNetwork,
+			domainMatchesBaseDomain: true,
 		},
 		{
-			name:        "vSphere",
-			infraConfig: makeInfra(configv1.VSpherePlatformType),
-			expectedIC:  ingressControllerWithHostNetwork,
+			name:                    "OpenStack",
+			platformStatus:          makePlatformStatus(configv1.OpenStackPlatformType),
+			expectedIC:              ingressControllerWithHostNetwork,
+			domainMatchesBaseDomain: true,
 		},
 		{
-			name:        "Nutanix",
-			infraConfig: makeInfra(configv1.NutanixPlatformType),
-			expectedIC:  ingressControllerWithHostNetwork,
+			name:                    "Power VS",
+			platformStatus:          makePlatformStatus(configv1.PowerVSPlatformType),
+			expectedIC:              ingressControllerWithLoadBalancer,
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name:                    "RHV",
+			platformStatus:          makePlatformStatus(configv1.OvirtPlatformType),
+			expectedIC:              ingressControllerWithHostNetwork,
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name:                    "vSphere",
+			platformStatus:          makePlatformStatus(configv1.VSpherePlatformType),
+			expectedIC:              ingressControllerWithHostNetwork,
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name:                    "Nutanix",
+			platformStatus:          makePlatformStatus(configv1.NutanixPlatformType),
+			expectedIC:              ingressControllerWithHostNetwork,
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name:                    "AWS Unmanaged DNS",
+			platformStatus:          makePlatformStatus(configv1.AWSPlatformType),
+			expectedIC:              ingressControllerWithLoadBalancerUnmanagedDNS,
+			domainMatchesBaseDomain: false,
 		},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			ic := &operatorv1.IngressController{}
-			infraConfig := tc.infraConfig.DeepCopy()
-			if actualResult := setDefaultPublishingStrategy(ic, infraConfig); actualResult != true {
+			platformStatus := tc.platformStatus.DeepCopy()
+			ingressConfig := tc.ingressConfig
+			if ingressConfig == nil {
+				ingressConfig = &configv1.Ingress{}
+			}
+			alreadyAdmitted := false
+			if actualResult := setDefaultPublishingStrategy(ic, platformStatus, tc.domainMatchesBaseDomain, ingressConfig, alreadyAdmitted); actualResult != true {
 				t.Errorf("expected result %v, got %v", true, actualResult)
 			}
 			if diff := cmp.Diff(tc.expectedIC, ic); len(diff) != 0 {
@@ -236,7 +357,9 @@ func TestSetDefaultPublishingStrategySetsPlatformDefaults(t *testing.T) {
 // spec.endpointPublishingStrategy.
 func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
 	var (
-		makeIC = func(spec operatorv1.IngressControllerSpec, status operatorv1.IngressControllerStatus) *operatorv1.IngressController {
+		managedDNS   = operatorv1.ManagedLoadBalancerDNS
+		unmanagedDNS = operatorv1.UnmanagedLoadBalancerDNS
+		makeIC       = func(spec operatorv1.IngressControllerSpec, status operatorv1.IngressControllerStatus) *operatorv1.IngressController {
 			return &operatorv1.IngressController{Spec: spec, Status: status}
 		}
 		spec = func(eps *operatorv1.EndpointPublishingStrategy) operatorv1.IngressControllerSpec {
@@ -249,16 +372,23 @@ func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
 				EndpointPublishingStrategy: eps,
 			}
 		}
-		lb = func(scope operatorv1.LoadBalancerScope) *operatorv1.EndpointPublishingStrategy {
+		lbs = func(scope operatorv1.LoadBalancerScope, policy *operatorv1.LoadBalancerDNSManagementPolicy) *operatorv1.LoadBalancerStrategy {
+			lbs := &operatorv1.LoadBalancerStrategy{
+				Scope: scope,
+			}
+			if policy != nil {
+				lbs.DNSManagementPolicy = *policy
+			}
+			return lbs
+		}
+		eps = func(lbs *operatorv1.LoadBalancerStrategy) *operatorv1.EndpointPublishingStrategy {
 			return &operatorv1.EndpointPublishingStrategy{
-				Type: operatorv1.LoadBalancerServiceStrategyType,
-				LoadBalancer: &operatorv1.LoadBalancerStrategy{
-					Scope: scope,
-				},
+				Type:         operatorv1.LoadBalancerServiceStrategyType,
+				LoadBalancer: lbs,
 			}
 		}
 		elb = func() *operatorv1.EndpointPublishingStrategy {
-			eps := lb(operatorv1.ExternalLoadBalancer)
+			eps := eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS))
 			eps.LoadBalancer.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{
 				Type: operatorv1.AWSLoadBalancerProvider,
 				AWS: &operatorv1.AWSLoadBalancerParameters{
@@ -267,8 +397,32 @@ func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
 			}
 			return eps
 		}
+		elbWithNullParameters = func() *operatorv1.EndpointPublishingStrategy {
+			eps := eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS))
+			eps.LoadBalancer.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{
+				Type: operatorv1.AWSLoadBalancerProvider,
+				AWS: &operatorv1.AWSLoadBalancerParameters{
+					Type:                          operatorv1.AWSClassicLoadBalancer,
+					ClassicLoadBalancerParameters: &operatorv1.AWSClassicLoadBalancerParameters{},
+				},
+			}
+			return eps
+		}
+		elbWithIdleTimeout = func(timeout metav1.Duration) *operatorv1.EndpointPublishingStrategy {
+			eps := eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS))
+			eps.LoadBalancer.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{
+				Type: operatorv1.AWSLoadBalancerProvider,
+				AWS: &operatorv1.AWSLoadBalancerParameters{
+					Type: operatorv1.AWSClassicLoadBalancer,
+					ClassicLoadBalancerParameters: &operatorv1.AWSClassicLoadBalancerParameters{
+						ConnectionIdleTimeout: timeout,
+					},
+				},
+			}
+			return eps
+		}
 		nlb = func() *operatorv1.EndpointPublishingStrategy {
-			eps := lb(operatorv1.ExternalLoadBalancer)
+			eps := eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS))
 			eps.LoadBalancer.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{
 				Type: operatorv1.AWSLoadBalancerProvider,
 				AWS: &operatorv1.AWSLoadBalancerParameters{
@@ -278,11 +432,21 @@ func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
 			return eps
 		}
 		gcpLB = func(clientAccess operatorv1.GCPClientAccess) *operatorv1.EndpointPublishingStrategy {
-			eps := lb(operatorv1.ExternalLoadBalancer)
+			eps := eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS))
 			eps.LoadBalancer.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{
 				Type: operatorv1.GCPLoadBalancerProvider,
 				GCP: &operatorv1.GCPLoadBalancerParameters{
 					ClientAccess: clientAccess,
+				},
+			}
+			return eps
+		}
+		ibmLB = func(protocol operatorv1.IngressControllerProtocol) *operatorv1.EndpointPublishingStrategy {
+			eps := eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS))
+			eps.LoadBalancer.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{
+				Type: operatorv1.IBMLoadBalancerProvider,
+				IBM: &operatorv1.IBMLoadBalancerParameters{
+					Protocol: protocol,
 				},
 			}
 			return eps
@@ -327,140 +491,361 @@ func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
 				Type: operatorv1.HostNetworkStrategyType,
 			}
 		}
+		private = func(proto operatorv1.IngressControllerProtocol) *operatorv1.EndpointPublishingStrategy {
+			return &operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.PrivateStrategyType,
+				Private: &operatorv1.PrivateStrategy{
+					Protocol: proto,
+				},
+			}
+		}
+		privateWithNull = func() *operatorv1.EndpointPublishingStrategy {
+			return &operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.PrivateStrategyType,
+			}
+		}
+
+		ingressConfigWithDefaultNLB = &configv1.Ingress{
+			Spec: configv1.IngressSpec{
+				LoadBalancer: configv1.LoadBalancer{
+					Platform: configv1.IngressPlatformSpec{
+						Type: configv1.AWSPlatformType,
+						AWS: &configv1.AWSIngressSpec{
+							Type: configv1.NLB,
+						},
+					},
+				},
+			},
+		}
+		ingressConfigWithDefaultClassicLB = &configv1.Ingress{
+			Spec: configv1.IngressSpec{
+				LoadBalancer: configv1.LoadBalancer{
+					Platform: configv1.IngressPlatformSpec{
+						Type: configv1.AWSPlatformType,
+						AWS: &configv1.AWSIngressSpec{
+							Type: configv1.Classic,
+						},
+					},
+				},
+			},
+		}
 	)
 
 	testCases := []struct {
-		name           string
-		ic             *operatorv1.IngressController
-		expectedIC     *operatorv1.IngressController
-		expectedResult bool
+		name                    string
+		ic                      *operatorv1.IngressController
+		ingressConfig           *configv1.Ingress
+		expectedIC              *operatorv1.IngressController
+		expectedResult          bool
+		domainMatchesBaseDomain bool
 	}{
 		{
-			name:           "loadbalancer scope changed from external to internal",
-			ic:             makeIC(spec(lb(operatorv1.InternalLoadBalancer)), status(lb(operatorv1.ExternalLoadBalancer))),
-			expectedResult: true,
-			expectedIC:     makeIC(spec(lb(operatorv1.InternalLoadBalancer)), status(lb(operatorv1.InternalLoadBalancer))),
+			name:                    "loadbalancer scope changed from external to internal",
+			ic:                      makeIC(spec(eps(lbs(operatorv1.InternalLoadBalancer, &managedDNS))), status(eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS)))),
+			expectedResult:          true,
+			expectedIC:              makeIC(spec(eps(lbs(operatorv1.InternalLoadBalancer, &managedDNS))), status(eps(lbs(operatorv1.InternalLoadBalancer, &managedDNS)))),
+			domainMatchesBaseDomain: true,
 		},
 		{
-			name:           "loadbalancer scope changed from internal to external",
-			ic:             makeIC(spec(lb(operatorv1.ExternalLoadBalancer)), status(lb(operatorv1.InternalLoadBalancer))),
-			expectedResult: true,
-			expectedIC:     makeIC(spec(lb(operatorv1.ExternalLoadBalancer)), status(lb(operatorv1.ExternalLoadBalancer))),
+			name:                    "loadbalancer scope changed from internal to external",
+			ic:                      makeIC(spec(eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS))), status(eps(lbs(operatorv1.InternalLoadBalancer, &managedDNS)))),
+			expectedResult:          true,
+			expectedIC:              makeIC(spec(eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS))), status(eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS)))),
+			domainMatchesBaseDomain: true,
 		},
 		{
-			name:           "loadbalancer type changed from ELB to NLB",
-			ic:             makeIC(spec(nlb()), status(elb())),
-			expectedResult: false,
-			expectedIC:     makeIC(spec(nlb()), status(elb())),
+			name:                    "loadbalancer type set to ELB",
+			ic:                      makeIC(spec(elb()), status(elb())),
+			expectedResult:          false,
+			expectedIC:              makeIC(spec(elb()), status(elbWithNullParameters())),
+			domainMatchesBaseDomain: true,
 		},
 		{
-			name:           "loadbalancer type changed from NLB to ELB",
-			ic:             makeIC(spec(elb()), status(nlb())),
-			expectedResult: false,
-			expectedIC:     makeIC(spec(elb()), status(nlb())),
+			name:                    "loadbalancer type set to NLB",
+			ic:                      makeIC(spec(nlb()), status(nlb())),
+			expectedResult:          false,
+			expectedIC:              makeIC(spec(nlb()), status(nlb())),
+			domainMatchesBaseDomain: true,
 		},
 		{
-			name:           "loadbalancer GCP Global Access changed from unset to global",
-			ic:             makeIC(spec(gcpLB(operatorv1.GCPGlobalAccess)), status(lb(operatorv1.ExternalLoadBalancer))),
-			expectedResult: true,
-			expectedIC:     makeIC(spec(gcpLB(operatorv1.GCPGlobalAccess)), status(gcpLB(operatorv1.GCPGlobalAccess))),
+			name:                    "loadbalancer type changed from ELB to NLB",
+			ic:                      makeIC(spec(nlb()), status(elb())),
+			expectedResult:          true,
+			expectedIC:              makeIC(spec(nlb()), status(nlb())),
+			domainMatchesBaseDomain: true,
 		},
 		{
-			name:           "loadbalancer GCP Global Access changed from global to local",
-			ic:             makeIC(spec(gcpLB(operatorv1.GCPLocalAccess)), status(gcpLB(operatorv1.GCPGlobalAccess))),
-			expectedResult: true,
-			expectedIC:     makeIC(spec(gcpLB(operatorv1.GCPLocalAccess)), status(gcpLB(operatorv1.GCPLocalAccess))),
+			name:                    "loadbalancer type changed from NLB to ELB",
+			ic:                      makeIC(spec(elb()), status(nlb())),
+			expectedResult:          true,
+			expectedIC:              makeIC(spec(elb()), status(elbWithNullParameters())),
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name:                    "loadbalancer type changed from NLB to unset, with Classic LB as default",
+			ic:                      makeIC(spec(eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS))), status(nlb())),
+			ingressConfig:           ingressConfigWithDefaultClassicLB,
+			expectedResult:          false,
+			expectedIC:              makeIC(spec(eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS))), status(nlb())),
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name:                    "loadbalancer type changed from Classic LB to unset, with NLB as default",
+			ic:                      makeIC(spec(eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS))), status(elb())),
+			ingressConfig:           ingressConfigWithDefaultNLB,
+			expectedResult:          false,
+			expectedIC:              makeIC(spec(eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS))), status(elb())),
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name:                    "loadbalancer type changed from NLB to unset, with NLB as default",
+			ic:                      makeIC(spec(eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS))), status(nlb())),
+			ingressConfig:           ingressConfigWithDefaultNLB,
+			expectedResult:          false,
+			expectedIC:              makeIC(spec(eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS))), status(nlb())),
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name:                    "loadbalancer ELB connection idle timeout changed from unset with null provider parameters to 2m",
+			ic:                      makeIC(spec(elbWithIdleTimeout(metav1.Duration{Duration: 2 * time.Minute})), status(elbWithNullParameters())),
+			expectedResult:          true,
+			expectedIC:              makeIC(spec(elbWithIdleTimeout(metav1.Duration{Duration: 2 * time.Minute})), status(elbWithIdleTimeout(metav1.Duration{Duration: 2 * time.Minute}))),
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name:                    "loadbalancer ELB connection idle timeout changed from unset with empty provider parameters to 2m",
+			ic:                      makeIC(spec(elbWithIdleTimeout(metav1.Duration{Duration: 2 * time.Minute})), status(elbWithIdleTimeout(metav1.Duration{}))),
+			expectedResult:          true,
+			expectedIC:              makeIC(spec(elbWithIdleTimeout(metav1.Duration{Duration: 2 * time.Minute})), status(elbWithIdleTimeout(metav1.Duration{Duration: 2 * time.Minute}))),
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name:                    "loadbalancer ELB connection idle timeout changed from unset to -1s",
+			ic:                      makeIC(spec(elbWithIdleTimeout(metav1.Duration{Duration: -1 * time.Second})), status(elb())),
+			expectedResult:          true,
+			expectedIC:              makeIC(spec(elbWithIdleTimeout(metav1.Duration{Duration: -1 * time.Second})), status(elbWithIdleTimeout(metav1.Duration{}))),
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name:                    "loadbalancer ELB connection idle timeout changed from 2m to unset",
+			ic:                      makeIC(spec(elb()), status(elbWithIdleTimeout(metav1.Duration{Duration: 2 * time.Minute}))),
+			expectedResult:          true,
+			expectedIC:              makeIC(spec(elb()), status(elbWithIdleTimeout(metav1.Duration{}))),
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name:                    "loadbalancer GCP Global Access changed from unset to global",
+			ic:                      makeIC(spec(gcpLB(operatorv1.GCPGlobalAccess)), status(eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS)))),
+			expectedResult:          true,
+			expectedIC:              makeIC(spec(gcpLB(operatorv1.GCPGlobalAccess)), status(gcpLB(operatorv1.GCPGlobalAccess))),
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name:                    "loadbalancer GCP Global Access changed from global to local",
+			ic:                      makeIC(spec(gcpLB(operatorv1.GCPLocalAccess)), status(gcpLB(operatorv1.GCPGlobalAccess))),
+			expectedResult:          true,
+			expectedIC:              makeIC(spec(gcpLB(operatorv1.GCPLocalAccess)), status(gcpLB(operatorv1.GCPLocalAccess))),
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name:                    "loadbalancer IBM Protocol changed from unset to PROXY",
+			ic:                      makeIC(spec(ibmLB(operatorv1.ProxyProtocol)), status(eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS)))),
+			expectedResult:          true,
+			expectedIC:              makeIC(spec(ibmLB(operatorv1.ProxyProtocol)), status(ibmLB(operatorv1.ProxyProtocol))),
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name:                    "loadbalancer IBM Protocol changed from TCP to PROXY",
+			ic:                      makeIC(spec(ibmLB(operatorv1.ProxyProtocol)), status(ibmLB(operatorv1.TCPProtocol))),
+			expectedResult:          true,
+			expectedIC:              makeIC(spec(ibmLB(operatorv1.ProxyProtocol)), status(ibmLB(operatorv1.ProxyProtocol))),
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name:                    "loadbalancer IBM Protocol changed from PROXY to TCP",
+			ic:                      makeIC(spec(ibmLB(operatorv1.TCPProtocol)), status(ibmLB(operatorv1.ProxyProtocol))),
+			expectedResult:          true,
+			expectedIC:              makeIC(spec(ibmLB(operatorv1.TCPProtocol)), status(ibmLB(operatorv1.TCPProtocol))),
+			domainMatchesBaseDomain: true,
 		},
 		{
 			// https://bugzilla.redhat.com/show_bug.cgi?id=1997226
-			name:           "nodeport protocol changed to PROXY with null status.endpointPublishingStrategy.nodePort",
-			ic:             makeIC(spec(nodePort(operatorv1.ProxyProtocol)), status(nodePortWithNull())),
-			expectedResult: true,
-			expectedIC:     makeIC(spec(nodePort(operatorv1.ProxyProtocol)), status(nodePort(operatorv1.ProxyProtocol))),
+			name:                    "nodeport protocol changed to PROXY with null status.endpointPublishingStrategy.nodePort",
+			ic:                      makeIC(spec(nodePort(operatorv1.ProxyProtocol)), status(nodePortWithNull())),
+			expectedResult:          true,
+			expectedIC:              makeIC(spec(nodePort(operatorv1.ProxyProtocol)), status(nodePort(operatorv1.ProxyProtocol))),
+			domainMatchesBaseDomain: true,
 		},
 		{
-			name:           "nodeport spec.endpointPublishingStrategy.nodePort set to null",
-			ic:             makeIC(spec(nodePortWithNull()), status(nodePort(operatorv1.TCPProtocol))),
-			expectedResult: false,
-			expectedIC:     makeIC(spec(nodePortWithNull()), status(nodePort(operatorv1.TCPProtocol))),
+			name:                    "nodeport spec.endpointPublishingStrategy.nodePort set to null",
+			ic:                      makeIC(spec(nodePortWithNull()), status(nodePort(operatorv1.TCPProtocol))),
+			expectedResult:          false,
+			expectedIC:              makeIC(spec(nodePortWithNull()), status(nodePort(operatorv1.TCPProtocol))),
+			domainMatchesBaseDomain: true,
 		},
 		{
-			name:           "nodeport protocol changed from empty to PROXY",
-			ic:             makeIC(spec(nodePort(operatorv1.ProxyProtocol)), status(nodePort(""))),
-			expectedResult: true,
-			expectedIC:     makeIC(spec(nodePort(operatorv1.ProxyProtocol)), status(nodePort(operatorv1.ProxyProtocol))),
+			name:                    "nodeport protocol changed from empty to PROXY",
+			ic:                      makeIC(spec(nodePort(operatorv1.ProxyProtocol)), status(nodePort(""))),
+			expectedResult:          true,
+			expectedIC:              makeIC(spec(nodePort(operatorv1.ProxyProtocol)), status(nodePort(operatorv1.ProxyProtocol))),
+			domainMatchesBaseDomain: true,
 		},
 		{
-			name:           "nodeport protocol changed from TCP to PROXY",
-			ic:             makeIC(spec(nodePort(operatorv1.ProxyProtocol)), status(nodePort(operatorv1.TCPProtocol))),
-			expectedResult: true,
-			expectedIC:     makeIC(spec(nodePort(operatorv1.ProxyProtocol)), status(nodePort(operatorv1.ProxyProtocol))),
+			name:                    "nodeport protocol changed from TCP to PROXY",
+			ic:                      makeIC(spec(nodePort(operatorv1.ProxyProtocol)), status(nodePort(operatorv1.TCPProtocol))),
+			expectedResult:          true,
+			expectedIC:              makeIC(spec(nodePort(operatorv1.ProxyProtocol)), status(nodePort(operatorv1.ProxyProtocol))),
+			domainMatchesBaseDomain: true,
 		},
 		{
-			name:           "nodeport protocol changed from PROXY to TCP",
-			ic:             makeIC(spec(nodePort(operatorv1.TCPProtocol)), status(nodePort(operatorv1.ProxyProtocol))),
-			expectedResult: true,
-			expectedIC:     makeIC(spec(nodePort(operatorv1.TCPProtocol)), status(nodePort(operatorv1.TCPProtocol))),
+			name:                    "nodeport protocol changed from PROXY to TCP",
+			ic:                      makeIC(spec(nodePort(operatorv1.TCPProtocol)), status(nodePort(operatorv1.ProxyProtocol))),
+			expectedResult:          true,
+			expectedIC:              makeIC(spec(nodePort(operatorv1.TCPProtocol)), status(nodePort(operatorv1.TCPProtocol))),
+			domainMatchesBaseDomain: true,
 		},
 		{
 			// https://bugzilla.redhat.com/show_bug.cgi?id=1997226
-			name:           "hostnetwork protocol changed to PROXY with null status.endpointPublishingStrategy.hostNetwork",
-			ic:             makeIC(spec(hostNetwork(operatorv1.ProxyProtocol)), status(hostNetworkWithNull())),
-			expectedResult: true,
-			expectedIC:     makeIC(spec(hostNetwork(operatorv1.ProxyProtocol)), status(hostNetwork(operatorv1.ProxyProtocol))),
+			name:                    "hostnetwork protocol changed to PROXY with null status.endpointPublishingStrategy.hostNetwork",
+			ic:                      makeIC(spec(hostNetwork(operatorv1.ProxyProtocol)), status(hostNetworkWithNull())),
+			expectedResult:          true,
+			expectedIC:              makeIC(spec(hostNetwork(operatorv1.ProxyProtocol)), status(hostNetwork(operatorv1.ProxyProtocol))),
+			domainMatchesBaseDomain: true,
 		},
 		{
-			name:           "hostnetwork protocol changed from empty to PROXY",
-			ic:             makeIC(spec(hostNetwork(operatorv1.ProxyProtocol)), status(hostNetwork(""))),
-			expectedResult: true,
-			expectedIC:     makeIC(spec(hostNetwork(operatorv1.ProxyProtocol)), status(hostNetwork(operatorv1.ProxyProtocol))),
+			name:                    "hostnetwork protocol changed from empty to PROXY",
+			ic:                      makeIC(spec(hostNetwork(operatorv1.ProxyProtocol)), status(hostNetwork(""))),
+			expectedResult:          true,
+			expectedIC:              makeIC(spec(hostNetwork(operatorv1.ProxyProtocol)), status(hostNetwork(operatorv1.ProxyProtocol))),
+			domainMatchesBaseDomain: true,
 		},
 		{
-			name:           "hostnetwork protocol changed from TCP to PROXY",
-			ic:             makeIC(spec(hostNetwork(operatorv1.ProxyProtocol)), status(hostNetwork(operatorv1.TCPProtocol))),
-			expectedResult: true,
-			expectedIC:     makeIC(spec(hostNetwork(operatorv1.ProxyProtocol)), status(hostNetwork(operatorv1.ProxyProtocol))),
+			name:                    "hostnetwork protocol changed from TCP to PROXY",
+			ic:                      makeIC(spec(hostNetwork(operatorv1.ProxyProtocol)), status(hostNetwork(operatorv1.TCPProtocol))),
+			expectedResult:          true,
+			expectedIC:              makeIC(spec(hostNetwork(operatorv1.ProxyProtocol)), status(hostNetwork(operatorv1.ProxyProtocol))),
+			domainMatchesBaseDomain: true,
 		},
 		{
-			name:           "hostnetwork protocol changed from PROXY to TCP",
-			ic:             makeIC(spec(hostNetwork(operatorv1.TCPProtocol)), status(hostNetwork(operatorv1.ProxyProtocol))),
-			expectedResult: true,
-			expectedIC:     makeIC(spec(hostNetwork(operatorv1.TCPProtocol)), status(hostNetwork(operatorv1.TCPProtocol))),
+			name:                    "hostnetwork protocol changed from PROXY to TCP",
+			ic:                      makeIC(spec(hostNetwork(operatorv1.TCPProtocol)), status(hostNetwork(operatorv1.ProxyProtocol))),
+			expectedResult:          true,
+			expectedIC:              makeIC(spec(hostNetwork(operatorv1.TCPProtocol)), status(hostNetwork(operatorv1.TCPProtocol))),
+			domainMatchesBaseDomain: true,
 		},
 		{
-			name:           "hostnetwork ports changed",
-			ic:             makeIC(spec(customHostNetwork(8080, 8443, 8136, operatorv1.TCPProtocol)), status(hostNetwork(operatorv1.TCPProtocol))),
-			expectedResult: true,
-			expectedIC:     makeIC(spec(customHostNetwork(8080, 8443, 8136, operatorv1.TCPProtocol)), status(customHostNetwork(8080, 8443, 8136, operatorv1.TCPProtocol))),
+			name:                    "hostnetwork ports changed",
+			ic:                      makeIC(spec(customHostNetwork(8080, 8443, 8136, operatorv1.TCPProtocol)), status(hostNetwork(operatorv1.TCPProtocol))),
+			expectedResult:          true,
+			expectedIC:              makeIC(spec(customHostNetwork(8080, 8443, 8136, operatorv1.TCPProtocol)), status(customHostNetwork(8080, 8443, 8136, operatorv1.TCPProtocol))),
+			domainMatchesBaseDomain: true,
 		},
 		{
-			name:           "hostnetwork ports changed, with status null",
-			ic:             makeIC(spec(customHostNetwork(8080, 8443, 8136, operatorv1.TCPProtocol)), status(hostNetworkWithNull())),
-			expectedResult: true,
-			expectedIC:     makeIC(spec(customHostNetwork(8080, 8443, 8136, operatorv1.TCPProtocol)), status(customHostNetwork(8080, 8443, 8136, operatorv1.TCPProtocol))),
+			name:                    "hostnetwork ports changed, with status null",
+			ic:                      makeIC(spec(customHostNetwork(8080, 8443, 8136, operatorv1.TCPProtocol)), status(hostNetworkWithNull())),
+			expectedResult:          true,
+			expectedIC:              makeIC(spec(customHostNetwork(8080, 8443, 8136, operatorv1.TCPProtocol)), status(customHostNetwork(8080, 8443, 8136, operatorv1.TCPProtocol))),
+			domainMatchesBaseDomain: true,
 		},
 		{
-			name:           "hostnetwork ports removed",
-			ic:             makeIC(spec(hostNetwork(operatorv1.TCPProtocol)), status(customHostNetwork(8080, 8443, 8136, operatorv1.TCPProtocol))),
-			expectedResult: true,
-			expectedIC:     makeIC(spec(hostNetwork(operatorv1.TCPProtocol)), status(hostNetwork(operatorv1.TCPProtocol))),
+			name:                    "hostnetwork ports removed",
+			ic:                      makeIC(spec(hostNetwork(operatorv1.TCPProtocol)), status(customHostNetwork(8080, 8443, 8136, operatorv1.TCPProtocol))),
+			expectedResult:          true,
+			expectedIC:              makeIC(spec(hostNetwork(operatorv1.TCPProtocol)), status(hostNetwork(operatorv1.TCPProtocol))),
+			domainMatchesBaseDomain: true,
 		},
 		{
-			name:           "hostnetwork ports removed, with spec null",
-			ic:             makeIC(spec(hostNetworkWithNull()), status(customHostNetwork(8080, 8443, 8136, operatorv1.TCPProtocol))),
-			expectedResult: true,
-			expectedIC:     makeIC(spec(hostNetworkWithNull()), status(hostNetwork(operatorv1.TCPProtocol))),
+			name:                    "hostnetwork ports removed, with spec null",
+			ic:                      makeIC(spec(hostNetworkWithNull()), status(customHostNetwork(8080, 8443, 8136, operatorv1.TCPProtocol))),
+			expectedResult:          true,
+			expectedIC:              makeIC(spec(hostNetworkWithNull()), status(hostNetwork(operatorv1.TCPProtocol))),
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name:                    "private protocol changed to PROXY with null status.endpointPublishingStrategy.private",
+			ic:                      makeIC(spec(private(operatorv1.ProxyProtocol)), status(privateWithNull())),
+			expectedResult:          true,
+			expectedIC:              makeIC(spec(private(operatorv1.ProxyProtocol)), status(private(operatorv1.ProxyProtocol))),
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name:                    "private spec.endpointPublishingStrategy.private set to null",
+			ic:                      makeIC(spec(privateWithNull()), status(private(operatorv1.TCPProtocol))),
+			expectedResult:          false,
+			expectedIC:              makeIC(spec(privateWithNull()), status(private(operatorv1.TCPProtocol))),
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name:                    "private protocol changed from empty to PROXY",
+			ic:                      makeIC(spec(private(operatorv1.ProxyProtocol)), status(private(""))),
+			expectedResult:          true,
+			expectedIC:              makeIC(spec(private(operatorv1.ProxyProtocol)), status(private(operatorv1.ProxyProtocol))),
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name:                    "private protocol changed from TCP to PROXY",
+			ic:                      makeIC(spec(private(operatorv1.ProxyProtocol)), status(private(operatorv1.TCPProtocol))),
+			expectedResult:          true,
+			expectedIC:              makeIC(spec(private(operatorv1.ProxyProtocol)), status(private(operatorv1.ProxyProtocol))),
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name:                    "private protocol changed from PROXY to TCP",
+			ic:                      makeIC(spec(private(operatorv1.TCPProtocol)), status(private(operatorv1.ProxyProtocol))),
+			expectedResult:          true,
+			expectedIC:              makeIC(spec(private(operatorv1.TCPProtocol)), status(private(operatorv1.TCPProtocol))),
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name:                    "loadbalancer dnsManagementPolicy changed from Managed to Unmanaged",
+			ic:                      makeIC(spec(eps(lbs(operatorv1.ExternalLoadBalancer, &unmanagedDNS))), status(eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS)))),
+			expectedResult:          true,
+			expectedIC:              makeIC(spec(eps(lbs(operatorv1.ExternalLoadBalancer, &unmanagedDNS))), status(eps(lbs(operatorv1.ExternalLoadBalancer, &unmanagedDNS)))),
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name:                    "loadbalancer dnsManagementPolicy changed from Unmanaged to Managed",
+			ic:                      makeIC(spec(eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS))), status(eps(lbs(operatorv1.ExternalLoadBalancer, &unmanagedDNS)))),
+			expectedResult:          true,
+			expectedIC:              makeIC(spec(eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS))), status(eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS)))),
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name:                    "when endpointPublishingStrategy is nil, loadbalancer dnsManagementPolicy defaults to Unmanaged due to domain mismatch with base domain",
+			ic:                      makeIC(spec(nil), status(nil)),
+			expectedResult:          true,
+			expectedIC:              makeIC(spec(nil), status(eps(lbs(operatorv1.ExternalLoadBalancer, &unmanagedDNS)))),
+			domainMatchesBaseDomain: false,
+		},
+		{
+			name:                    "when endpointPublishingStrategy is nil and lbType in ingress config is set to Classic",
+			ic:                      makeIC(spec(nil), status(nil)),
+			ingressConfig:           ingressConfigWithDefaultClassicLB,
+			expectedResult:          true,
+			expectedIC:              makeIC(spec(nil), status(eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS)))),
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name:                    "when endpointPublishingStrategy is nil and lbType in ingress config is set to NLB",
+			ic:                      makeIC(spec(nil), status(nil)),
+			ingressConfig:           ingressConfigWithDefaultNLB,
+			expectedResult:          true,
+			expectedIC:              makeIC(spec(nil), status(eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS)))),
+			domainMatchesBaseDomain: true,
 		},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			ic := tc.ic.DeepCopy()
-			infraConfig := &configv1.Infrastructure{
-				Status: configv1.InfrastructureStatus{
-					Platform: configv1.NonePlatformType,
-				},
+			platformStatus := &configv1.PlatformStatus{
+				Type: configv1.AWSPlatformType,
 			}
-			if actualResult := setDefaultPublishingStrategy(ic, infraConfig); actualResult != tc.expectedResult {
+			ingressConfig := tc.ingressConfig
+			if ingressConfig == nil {
+				ingressConfig = &configv1.Ingress{}
+			}
+			alreadyAdmitted := true
+			if actualResult := setDefaultPublishingStrategy(ic, platformStatus, tc.domainMatchesBaseDomain, ingressConfig, alreadyAdmitted); actualResult != tc.expectedResult {
 				t.Errorf("expected result %v, got %v", tc.expectedResult, actualResult)
 			}
 			if diff := cmp.Diff(tc.expectedIC, ic); len(diff) != 0 {
@@ -474,9 +859,11 @@ func TestTLSProfileSpecForSecurityProfile(t *testing.T) {
 	invalidTLSVersion := configv1.TLSProtocolVersion("abc")
 	invalidCiphers := []string{"ECDHE-ECDSA-AES256-GCM-SHA384", "invalid cipher"}
 	validCiphers := []string{"ECDHE-ECDSA-AES256-GCM-SHA384"}
-	tlsVersion13Ciphers := []string{"TLS_AES_128_GCM_SHA256", "TLS_AES_256_GCM_SHA384", "TLS_CHACHA20_POLY1305_SHA256",
+	tlsVersion13Ciphers := []string{
+		"TLS_AES_128_GCM_SHA256", "TLS_AES_256_GCM_SHA384", "TLS_CHACHA20_POLY1305_SHA256",
 		"TLS_AES_128_CCM_SHA256", "TLS_AES_128_CCM_8_SHA256", "TLS_AES_128_GCM_SHA256", "TLS_AES_256_GCM_SHA384",
-		"TLS_CHACHA20_POLY1305_SHA256", "TLS_AES_128_CCM_SHA256", "TLS_AES_128_CCM_8_SHA256"}
+		"TLS_CHACHA20_POLY1305_SHA256", "TLS_AES_128_CCM_SHA256", "TLS_AES_128_CCM_8_SHA256",
+	}
 	tlsVersion1213Ciphers := []string{"TLS_AES_128_GCM_SHA256", "TLS_AES_256_GCM_SHA384", "ECDHE-ECDSA-AES256-GCM-SHA384"}
 	testCases := []struct {
 		description  string
@@ -484,7 +871,6 @@ func TestTLSProfileSpecForSecurityProfile(t *testing.T) {
 		valid        bool
 		expectedSpec *configv1.TLSProfileSpec
 	}{
-
 		{
 			description:  "default (nil)",
 			profile:      nil,
@@ -616,18 +1002,18 @@ func TestTLSProfileSpecForSecurityProfile(t *testing.T) {
 		tlsProfileSpec := tlsProfileSpecForSecurityProfile(ic.Spec.TLSSecurityProfile)
 		err := validateTLSSecurityProfile(ic)
 		if tc.valid && err != nil {
-			t.Errorf("%q: unexpected error: %v\nprofile:\n%s", tc.description, err, toYaml(tlsProfileSpec))
+			t.Errorf("%q: unexpected error: %v\nprofile:\n%s", tc.description, err, util.ToYaml(tlsProfileSpec))
 			continue
 		}
 		if !tc.valid && err == nil {
-			t.Errorf("%q: expected error for profile:\n%s", tc.description, toYaml(tlsProfileSpec))
+			t.Errorf("%q: expected error for profile:\n%s", tc.description, util.ToYaml(tlsProfileSpec))
 			continue
 		}
 		if tc.expectedSpec != nil && !reflect.DeepEqual(tc.expectedSpec, tlsProfileSpec) {
-			t.Errorf("%q: expected profile:\n%s\ngot profile:\n%s", tc.description, toYaml(tc.expectedSpec), toYaml(tlsProfileSpec))
+			t.Errorf("%q: expected profile:\n%s\ngot profile:\n%s", tc.description, util.ToYaml(tc.expectedSpec), util.ToYaml(tlsProfileSpec))
 			continue
 		}
-		t.Logf("%q: got expected values; profile:\n%s\nerror value: %v", tc.description, toYaml(tlsProfileSpec), err)
+		t.Logf("%q: got expected values; profile:\n%s\nerror value: %v", tc.description, util.ToYaml(tlsProfileSpec), err)
 	}
 }
 
@@ -638,7 +1024,6 @@ func TestTLSProfileSpecForIngressController(t *testing.T) {
 		apiProfile   *configv1.TLSSecurityProfile
 		expectedSpec *configv1.TLSProfileSpec
 	}{
-
 		{
 			description:  "nil, nil -> intermediate",
 			icProfile:    nil,
@@ -771,7 +1156,7 @@ func TestTLSProfileSpecForIngressController(t *testing.T) {
 		}
 		tlsProfileSpec := tlsProfileSpecForIngressController(ic, api)
 		if !reflect.DeepEqual(tc.expectedSpec, tlsProfileSpec) {
-			t.Errorf("%q: expected profile:\n%v\ngot profile:\n%v", tc.description, toYaml(tc.expectedSpec), toYaml(tlsProfileSpec))
+			t.Errorf("%q: expected profile:\n%v\ngot profile:\n%v", tc.description, util.ToYaml(tc.expectedSpec), util.ToYaml(tlsProfileSpec))
 		}
 	}
 }
@@ -841,7 +1226,6 @@ func TestValidateClientTLS(t *testing.T) {
 		pattern     string
 		expectError bool
 	}{
-
 		{
 			description: "glob",
 			pattern:     "*.openshift.com",
@@ -898,6 +1282,9 @@ func TestIsProxyProtocolNeeded(t *testing.T) {
 		bareMetalPlatform = configv1.PlatformStatus{
 			Type: configv1.BareMetalPlatformType,
 		}
+		ibmcloudPlatform = configv1.PlatformStatus{
+			Type: configv1.IBMCloudPlatformType,
+		}
 
 		hostNetworkStrategy = operatorv1.EndpointPublishingStrategy{
 			Type: operatorv1.HostNetworkStrategyType,
@@ -934,6 +1321,17 @@ func TestIsProxyProtocolNeeded(t *testing.T) {
 				},
 			},
 		}
+		loadBalancerStrategyWithIBMCloudPROXY = operatorv1.EndpointPublishingStrategy{
+			Type: operatorv1.LoadBalancerServiceStrategyType,
+			LoadBalancer: &operatorv1.LoadBalancerStrategy{
+				ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+					Type: operatorv1.IBMLoadBalancerProvider,
+					IBM: &operatorv1.IBMLoadBalancerParameters{
+						Protocol: operatorv1.ProxyProtocol,
+					},
+				},
+			},
+		}
 		nodePortStrategy = operatorv1.EndpointPublishingStrategy{
 			Type: operatorv1.NodePortServiceStrategyType,
 		}
@@ -958,6 +1356,24 @@ func TestIsProxyProtocolNeeded(t *testing.T) {
 		privateStrategy = operatorv1.EndpointPublishingStrategy{
 			Type: operatorv1.PrivateStrategyType,
 		}
+		privateStrategyWithDefault = operatorv1.EndpointPublishingStrategy{
+			Type: operatorv1.PrivateStrategyType,
+			Private: &operatorv1.PrivateStrategy{
+				Protocol: operatorv1.DefaultProtocol,
+			},
+		}
+		privateStrategyWithTCP = operatorv1.EndpointPublishingStrategy{
+			Type: operatorv1.PrivateStrategyType,
+			Private: &operatorv1.PrivateStrategy{
+				Protocol: operatorv1.TCPProtocol,
+			},
+		}
+		privateStrategyWithPROXY = operatorv1.EndpointPublishingStrategy{
+			Type: operatorv1.PrivateStrategyType,
+			Private: &operatorv1.PrivateStrategy{
+				Protocol: operatorv1.ProxyProtocol,
+			},
+		}
 	)
 	testCases := []struct {
 		description string
@@ -966,7 +1382,6 @@ func TestIsProxyProtocolNeeded(t *testing.T) {
 		expect      bool
 		expectError bool
 	}{
-
 		{
 			description: "nil platformStatus should cause an error",
 			strategy:    &loadBalancerStrategy,
@@ -1022,6 +1437,18 @@ func TestIsProxyProtocolNeeded(t *testing.T) {
 			expect:      false,
 		},
 		{
+			description: "loadbalancer strategy shouldn't use PROXY on IBMCloud",
+			strategy:    &loadBalancerStrategy,
+			platform:    &ibmcloudPlatform,
+			expect:      false,
+		},
+		{
+			description: "loadbalancer strategy with ProxyProtocol enabled on IBMCloud should use PROXY",
+			strategy:    &loadBalancerStrategyWithIBMCloudPROXY,
+			platform:    &ibmcloudPlatform,
+			expect:      true,
+		},
+		{
 			description: "empty nodeport strategy shouldn't use PROXY",
 			strategy:    &nodePortStrategy,
 			platform:    &awsPlatform,
@@ -1046,10 +1473,28 @@ func TestIsProxyProtocolNeeded(t *testing.T) {
 			expect:      true,
 		},
 		{
-			description: "private strategy shouldn't use PROXY",
+			description: "empty private strategy shouldn't use PROXY",
 			strategy:    &privateStrategy,
 			platform:    &awsPlatform,
 			expect:      false,
+		},
+		{
+			description: "private strategy specifying default shouldn't use PROXY",
+			strategy:    &privateStrategyWithDefault,
+			platform:    &awsPlatform,
+			expect:      false,
+		},
+		{
+			description: "private strategy specifying TCP shouldn't use PROXY",
+			strategy:    &privateStrategyWithTCP,
+			platform:    &awsPlatform,
+			expect:      false,
+		},
+		{
+			description: "private strategy specifying PROXY should use PROXY",
+			strategy:    &privateStrategyWithPROXY,
+			platform:    &awsPlatform,
+			expect:      true,
 		},
 	}
 

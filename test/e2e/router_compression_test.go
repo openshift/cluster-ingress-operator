@@ -24,6 +24,7 @@ import (
 )
 
 func TestRouterCompressionParsing(t *testing.T) {
+	t.Parallel()
 	// Test compression policies for the ingress config
 	mimeTypesNormative := []operatorv1.CompressionMIMEType{"text/html", "application/json", "x-custom/allow-custom"}
 	compressionPolicyNormative := operatorv1.HTTPCompressionPolicy{MimeTypes: mimeTypesNormative}
@@ -253,7 +254,7 @@ func getHttpHeaders(client *http.Client, route *routev1.Route, addHeader bool) (
 
 	response, err := client.Do(request)
 	if err != nil {
-		return response.Header, response.StatusCode, fmt.Errorf("GET %s failed: %v", route.Spec.Host, err)
+		return nil, -1, fmt.Errorf("GET %s failed: %v", route.Spec.Host, err)
 	}
 	// Close response body
 	defer response.Body.Close()

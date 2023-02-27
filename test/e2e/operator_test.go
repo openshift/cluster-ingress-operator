@@ -9,10 +9,12 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"net"
+	"net/http"
 	"os"
 	"reflect"
 	"sort"
@@ -44,7 +46,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	policyv1 "k8s.io/api/policy/v1"
 
-	"k8s.io/apimachinery/pkg/api/errors"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -88,19 +90,39 @@ var (
 		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
 		{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionFalse},
 	}
+	availableConditionsForIngressControllerWithLoadBalancerUnmanagedDNS = []operatorv1.OperatorCondition{
+		{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionTrue},
+		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionTrue},
+		{Type: operatorv1.LoadBalancerReadyIngressConditionType, Status: operatorv1.ConditionTrue},
+		{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionFalse},
+		{Type: operatorv1.DNSReadyIngressConditionType, Status: operatorv1.ConditionUnknown},
+		{Type: operatorv1.OperatorStatusTypeProgressing, Status: operatorv1.ConditionFalse},
+		{Type: ingresscontroller.IngressControllerAdmittedConditionType, Status: operatorv1.ConditionTrue},
+	}
 	// The ingress canary check status condition only applies to the default ingress controller.
 	defaultAvailableConditions = append(availableConditionsForIngressControllerWithLoadBalancer, operatorv1.OperatorCondition{Type: ingresscontroller.IngressControllerCanaryCheckSuccessConditionType, Status: operatorv1.ConditionTrue})
 )
 
-var kclient client.Client
-var dnsConfig configv1.DNS
-var infraConfig configv1.Infrastructure
-var operatorNamespace = operatorcontroller.DefaultOperatorNamespace
-var operandNamespace = operatorcontroller.DefaultOperandNamespace
-var defaultName = types.NamespacedName{Namespace: operatorNamespace, Name: manifests.DefaultIngressControllerName}
-var clusterConfigName = types.NamespacedName{Namespace: operatorNamespace, Name: manifests.ClusterIngressConfigName}
+var (
+	kclient           client.Client
+	dnsConfig         configv1.DNS
+	infraConfig       configv1.Infrastructure
+	operatorNamespace = operatorcontroller.DefaultOperatorNamespace
+	operandNamespace  = operatorcontroller.DefaultOperandNamespace
+	defaultName       = types.NamespacedName{Namespace: operatorNamespace, Name: manifests.DefaultIngressControllerName}
+	clusterConfigName = types.NamespacedName{Namespace: operatorNamespace, Name: manifests.ClusterIngressConfigName}
+)
 
 func TestMain(m *testing.M) {
+	if os.Getenv("E2E_TEST_MAIN_SKIP_SETUP") == "1" {
+		// If we are deriving the set of tests via `go test
+		// -list` then we don't always have a KUBECONFIG
+		// (e.g., CI, or local dev) so we do none of the
+		// overall test setup below because calls to
+		// getConfig() will fail and no test names will be
+		// discovered.
+		os.Exit(m.Run())
+	}
 	kubeConfig, err := config.GetConfig()
 	if err != nil {
 		fmt.Printf("failed to get kube config: %s\n", err)
@@ -229,6 +251,7 @@ func TestDefaultIngressClass(t *testing.T) {
 // ingressclass for a custom ingresscontroller and deletes the ingressclass if
 // the ingresscontroller is deleted.
 func TestCustomIngressClass(t *testing.T) {
+	t.Parallel()
 	icName := types.NamespacedName{
 		Namespace: operatorNamespace,
 		Name:      "testcustomingressclass",
@@ -239,7 +262,7 @@ func TestCustomIngressClass(t *testing.T) {
 		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
 	}
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
-		t.Errorf("failed to observe expected conditions: %w", err)
+		t.Errorf("failed to observe expected conditions: %v", err)
 		assertIngressControllerDeleted(t, kclient, ic)
 		t.FailNow()
 	}
@@ -274,7 +297,7 @@ func TestCustomIngressClass(t *testing.T) {
 	assertIngressControllerDeleted(t, kclient, ic)
 	err = wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
 		if err := kclient.Get(context.TODO(), ingressclassName, ingressclass); err != nil {
-			if errors.IsNotFound(err) {
+			if apierrors.IsNotFound(err) {
 				return true, nil
 			}
 			t.Logf("failed to get ingressclass %q: %v", ingressclassName.Name, err)
@@ -287,8 +310,44 @@ func TestCustomIngressClass(t *testing.T) {
 	}
 }
 
+// TestOperatorRecreatesItsClusterOperator verifies that the ingress operator
+// recreates the "ingress" clusteroperator if the clusteroperator is deleted.
+//
+// This is a serial test because it depends on modifying a shared resource: the
+// clusteroperator object (which means that this test could interfere with other
+// tests) and then verifying that the operator reconciles the resource
+// automatically (which means that other tests could interfere with this one).
+func TestOperatorRecreatesItsClusterOperator(t *testing.T) {
+	co := &configv1.ClusterOperator{}
+	coName := controller.IngressClusterOperatorName()
+	if err := kclient.Get(context.TODO(), coName, co); err != nil {
+		t.Fatalf("failed to get clusteroperator %q: %v", coName.Name, err)
+	}
+	oldUid := co.UID
+	if err := kclient.Delete(context.TODO(), co); err != nil {
+		t.Fatalf("failed to delete clusteroperator %q: %v", coName.Name, err)
+	}
+	err := wait.PollImmediate(1*time.Second, 30*time.Second, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), coName, co); err != nil {
+			t.Logf("failed to get clusteroperator %q: %v", coName.Name, err)
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to observe recreation of clusteroperator %q: %v", coName.Name, err)
+	}
+	if co.DeletionTimestamp != nil {
+		t.Fatalf("expected clusteroperator %q not to be marked for deletion, but its deletion timestamp is set: %v", coName.Name, co.DeletionTimestamp)
+	}
+	if co.UID == oldUid {
+		t.Fatalf("expected clusteroperator %q to have a new uid after deletion, but it still has the old uid: %v", coName.Name, co.UID)
+	}
+}
+
 func TestUserDefinedIngressController(t *testing.T) {
-	name := types.NamespacedName{Namespace: operatorNamespace, Name: "test"}
+	t.Parallel()
+	name := types.NamespacedName{Namespace: operatorNamespace, Name: "testuserdefinedingresscontroller"}
 	ing := newLoadBalancerController(name, name.Name+"."+dnsConfig.Spec.BaseDomain)
 	if err := kclient.Create(context.TODO(), ing); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
@@ -301,6 +360,7 @@ func TestUserDefinedIngressController(t *testing.T) {
 }
 
 func TestUniqueDomainRejection(t *testing.T) {
+	t.Parallel()
 	def := &operatorv1.IngressController{}
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, defaultName, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
@@ -331,9 +391,11 @@ func TestUniqueDomainRejection(t *testing.T) {
 //
 // TODO: should this be a test of source IP preservation in the conformance suite?
 func TestProxyProtocolOnAWS(t *testing.T) {
-	if infraConfig.Status.Platform != configv1.AWSPlatformType {
+	if infraConfig.Status.PlatformStatus == nil {
+		t.Skip("test skipped on nil platform")
+	}
+	if infraConfig.Status.PlatformStatus.Type != configv1.AWSPlatformType {
 		t.Skip("test skipped on non-aws platform")
-		return
 	}
 
 	ic := &operatorv1.IngressController{}
@@ -367,6 +429,7 @@ func TestProxyProtocolOnAWS(t *testing.T) {
 // TestProxyProtocolAPI verifies that the operator configures router pod
 // replicas to use PROXY protocol if it is specified on an ingresscontroller.
 func TestProxyProtocolAPI(t *testing.T) {
+	t.Parallel()
 	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "proxy-protocol"}
 	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
 	ic := newNodePortController(icName, domain)
@@ -401,10 +464,31 @@ func TestProxyProtocolAPI(t *testing.T) {
 	}
 }
 
-// NOTE: This test will mutate the default ingresscontroller.
+// TestUpdateDefaultIngressControllerSecret verifies that the operator properly
+// updates the "router-default" deployment, the "default-ingress-cert"
+// configmap, and the "router-certs" secret when the default ingresscontroller's
+// default- certificate secret reference is updated.
 //
-// TODO: Find a way to do this test without mutating the default ingress?
-func TestUpdateDefaultIngressController(t *testing.T) {
+// First, the test verifies that the default ingresscontroller has the cluster
+// ingress domain and that the router-default deployment is using the secret
+// reference that the ingresscontroller is initially configured with.
+//
+// Next, the test updates the default ingresscontroller to reference a
+// default-certificate secret that does not exist and verifies that the operator
+// does not update the configmap or router-certs secret.
+//
+// Next, the test creates the referenced default-certificate secret and verifies
+// that the operator updates the deployment, configmap, and router-certs secret.
+//
+// Finally, the test restores the original default-certificate secret reference
+// and verifies that the operator updates the deployment, configmap, and
+// router-certs secret to use a new, operator-generated default certificate.
+//
+// This is a serial test because it modifies the default ingresscontroller.  The
+// test needs to verify that the operator updates the default-ingress-cert
+// configmap and router-certs secret correctly, and the operator updates these
+// only when the default ingresscontroller's default certificate changes.
+func TestUpdateDefaultIngressControllerSecret(t *testing.T) {
 	ic := &operatorv1.IngressController{}
 	if err := kclient.Get(context.TODO(), defaultName, ic); err != nil {
 		t.Fatalf("failed to get default ingresscontroller: %v", err)
@@ -413,9 +497,24 @@ func TestUpdateDefaultIngressController(t *testing.T) {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
+	// Verify that the default ingresscontroller has the cluster ingress
+	// domain.
+	ingressConfig := &configv1.Ingress{}
+	if err := kclient.Get(context.TODO(), clusterConfigName, ingressConfig); err != nil {
+		t.Fatalf("failed to get the cluster ingress config: %v", err)
+	}
+	if ic.Status.Domain != ingressConfig.Spec.Domain {
+		t.Fatalf("default ingresscontroller's domain %q does not match the cluster ingress domain %q", ic.Status.Domain, ingressConfig.Spec.Domain)
+	}
+
 	defaultIngressCAConfigmap := &corev1.ConfigMap{}
 	if err := kclient.Get(context.TODO(), controller.DefaultIngressCertConfigMapName(), defaultIngressCAConfigmap); err != nil {
 		t.Fatalf("failed to get CA certificate configmap: %v", err)
+	}
+
+	routerCertsSecret := &corev1.Secret{}
+	if err := kclient.Get(context.TODO(), controller.RouterCertsGlobalSecretName(), routerCertsSecret); err != nil {
+		t.Fatalf("failed to get router-certs secret: %v", err)
 	}
 
 	// Verify that the deployment uses the secret name specified in the
@@ -435,25 +534,65 @@ func TestUpdateDefaultIngressController(t *testing.T) {
 			expectedSecretName, deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName)
 	}
 
-	// Update the ingress controller and wait for the deployment to match.
-	secret, err := createDefaultCertTestSecret(kclient, names.SimpleNameGenerator.GenerateName("test-"))
-	if err != nil {
-		t.Fatalf("creating default cert test secret: %v", err)
+	// Update the ingresscontroller to reference a non-existent secret.
+	secretName := names.SimpleNameGenerator.GenerateName("test-")
+	if err := updateIngressControllerSpecWithRetryOnConflict(t, defaultName, timeout, func(spec *operatorv1.IngressControllerSpec) {
+		spec.DefaultCertificate = &corev1.LocalObjectReference{Name: secretName}
+	}); err != nil {
+		t.Fatalf("failed to update default ingress controller: %v", err)
 	}
+	// One of the last steps in this test reverts the previous update, but
+	// the test also needs to revert the update if it fails midway.  If the
+	// test reaches the end, the following update is redundant but harmless.
 	defer func() {
-		if err := kclient.Delete(context.TODO(), secret); err != nil {
-			t.Errorf("failed to delete test secret: %v", err)
+		if err := updateIngressControllerSpecWithRetryOnConflict(t, defaultName, timeout, func(spec *operatorv1.IngressControllerSpec) {
+			spec.DefaultCertificate = originalSecret
+		}); err != nil {
+			t.Fatalf("failed to reset default ingresscontroller: %v", err)
 		}
 	}()
 
-	ic.Spec.DefaultCertificate = &corev1.LocalObjectReference{Name: secret.Name}
-	if err := kclient.Update(context.TODO(), ic); err != nil {
-		t.Fatalf("failed to update default ingresscontroller: %v", err)
+	// Verify that the default-ingress-cert configmap and router-certs
+	// secret remain unchanged.  (The operator does update the router
+	// deployment with the new secret, but the kubelet volume manager does
+	// not reflect the update as long as the referenced secret does not
+	// exist.)  If there is no update after 20 seconds, assume everything is
+	// fine.
+	previousDefaultIngressCAConfigmap := defaultIngressCAConfigmap.DeepCopy()
+	previousRouterCertsSecret := routerCertsSecret.DeepCopy()
+	wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), controller.DefaultIngressCertConfigMapName(), defaultIngressCAConfigmap); err != nil {
+			t.Fatalf("failed to get CA certificate configmap: %v", err)
+		}
+		if defaultIngressCAConfigmap.Data["ca-bundle.crt"] != previousDefaultIngressCAConfigmap.Data["ca-bundle.crt"] {
+			t.Fatalf("observed an unexpected update to the CA certificate configmap\nold ca-bundle.crt: %v\nnew ca-bundle.crt: %v", previousDefaultIngressCAConfigmap.Data["ca-bundle.crt"], defaultIngressCAConfigmap.Data["ca-bundle.crt"])
+		}
+
+		if err := kclient.Get(context.TODO(), controller.RouterCertsGlobalSecretName(), routerCertsSecret); err != nil {
+			t.Fatalf("failed to get the router-certs secret: %v", err)
+		}
+		if !reflect.DeepEqual(routerCertsSecret.Data, previousRouterCertsSecret.Data) {
+			t.Fatalf("observed an unexpected update to the router-certs secret\nold: %v\nnew: %v", previousRouterCertsSecret, routerCertsSecret)
+		}
+
+		return false, nil
+	})
+
+	// Create the secret and wait for the deployment to match.
+	secret, err := createDefaultCertTestSecret(kclient, secretName)
+	if err != nil {
+		t.Fatalf("failed to create secret %s: %v", secretName, err)
 	}
-	name := types.NamespacedName{Namespace: deployment.Namespace, Name: deployment.Name}
-	err = wait.PollImmediate(1*time.Second, 15*time.Second, func() (bool, error) {
-		if err := kclient.Get(context.TODO(), name, deployment); err != nil {
-			t.Logf("failed to get deployment %s: %v", name, err)
+	defer func() {
+		if err := kclient.Delete(context.TODO(), secret); err != nil {
+			t.Errorf("failed to delete secret %s: %v", secretName, err)
+		}
+	}()
+
+	// Verify that the deployment uses the new certificate.
+	err = wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), controller.RouterDeploymentName(ic), deployment); err != nil {
+			t.Logf("failed to get deployment %s: %v", controller.RouterDeploymentName(ic), err)
 			return false, nil
 		}
 		if deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName != secret.Name {
@@ -465,9 +604,8 @@ func TestUpdateDefaultIngressController(t *testing.T) {
 		t.Fatalf("failed to observe updated deployment: %v", err)
 	}
 
-	// Wait for the default ingress configmap to be updated
-	previousDefaultIngressCAConfigmap := defaultIngressCAConfigmap.DeepCopy()
-	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
+	// Verify that the default ingress configmap gets updated.
+	err = wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
 		if err := kclient.Get(context.TODO(), controller.DefaultIngressCertConfigMapName(), defaultIngressCAConfigmap); err != nil {
 			t.Logf("failed to get CA config map %s: %v", controller.DefaultIngressCertConfigMapName(), err)
 			return false, nil
@@ -481,18 +619,47 @@ func TestUpdateDefaultIngressController(t *testing.T) {
 		t.Fatalf("failed to observe update of default ingress CA certificate configmap: %v", err)
 	}
 
-	// Reset .spec.defaultCertificate to its original value.
-	if err := kclient.Get(context.TODO(), defaultName, ic); err != nil {
-		t.Fatalf("failed to get default ingresscontroller: %v", err)
-	}
-	ic.Spec.DefaultCertificate = originalSecret
-	if err := kclient.Update(context.TODO(), ic); err != nil {
-		t.Errorf("failed to reset default ingresscontroller: %v", err)
+	// Verify that the router-certs secret gets updated.
+	err = wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), controller.RouterCertsGlobalSecretName(), routerCertsSecret); err != nil {
+			t.Logf("failed to get the router-certs secret: %v", err)
+			return false, nil
+		}
+		if reflect.DeepEqual(routerCertsSecret.Data, previousRouterCertsSecret.Data) {
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to observe update of the router-certs secret: %v", err)
 	}
 
-	// Wait for the default ingress configmap to be updated back to the original
+	// Reset .spec.defaultCertificate to its original value.
+	if err := updateIngressControllerSpecWithRetryOnConflict(t, defaultName, timeout, func(spec *operatorv1.IngressControllerSpec) {
+		spec.DefaultCertificate = originalSecret
+	}); err != nil {
+		t.Fatalf("failed to reset default ingresscontroller: %v", err)
+	}
+
+	// Verify that the default router deployment gets restored to the
+	// original secret reference.
+	err = wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), controller.RouterDeploymentName(ic), deployment); err != nil {
+			t.Logf("failed to get default router deployment: %v", err)
+			return false, nil
+		}
+		if deployment.Spec.Template.Spec.Volumes[0].Secret.SecretName != expectedSecretName {
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to observe restored deployment: %v", err)
+	}
+
+	// Verify that the default ingress configmap gets updated.
 	previousDefaultIngressCAConfigmap = defaultIngressCAConfigmap.DeepCopy()
-	err = wait.PollImmediate(1*time.Second, 10*time.Second, func() (bool, error) {
+	err = wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
 		if err := kclient.Get(context.TODO(), controller.DefaultIngressCertConfigMapName(), defaultIngressCAConfigmap); err != nil {
 			t.Logf("failed to get CA config map %s: %v", controller.DefaultIngressCertConfigMapName(), err)
 			return false, nil
@@ -506,6 +673,27 @@ func TestUpdateDefaultIngressController(t *testing.T) {
 		t.Logf("secret content=%v", string(secret.Data["tls.crt"]))
 		t.Fatalf("failed to observe update of default ingress CA certificate configmap: %v\noriginal=%v\ncurrent=%v", err, previousDefaultIngressCAConfigmap.Data["ca-bundle.crt"], defaultIngressCAConfigmap.Data["ca-bundle.crt"])
 	}
+
+	// Verify that the router-certs secret gets updated.
+	previousRouterCertsSecret = routerCertsSecret.DeepCopy()
+	wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), controller.RouterCertsGlobalSecretName(), routerCertsSecret); err != nil {
+			t.Logf("failed to get secret %s: %v", controller.DefaultIngressCertConfigMapName(), err)
+			return false, nil
+		}
+		if reflect.DeepEqual(routerCertsSecret.Data, previousRouterCertsSecret.Data) {
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to observe update of the router-certs secret: %v\noriginal=%v\ncurrent=%v", err, previousRouterCertsSecret, routerCertsSecret)
+	}
+
+	// Verify that the ingresscontroller status is healthy.
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, defaultName, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
 }
 
 // TestIngressControllerScale exercises a simple scale up/down scenario.  This
@@ -513,6 +701,7 @@ func TestUpdateDefaultIngressController(t *testing.T) {
 // scale client and uses it to scale the ingresscontroller up to 2 replicas and
 // then back down to 1 replica.
 func TestIngressControllerScale(t *testing.T) {
+	t.Parallel()
 	// Create a new ingresscontroller.
 	name := types.NamespacedName{Namespace: operatorNamespace, Name: "scale"}
 	domain := name.Name + "." + dnsConfig.Spec.BaseDomain
@@ -746,7 +935,8 @@ func TestPodDisruptionBudgetExists(t *testing.T) {
 // the "HostNetwork" endpoint publishing strategy type and verifies that the
 // operator creates a router and that the router becomes available.
 func TestHostNetworkEndpointPublishingStrategy(t *testing.T) {
-	name := types.NamespacedName{Namespace: operatorNamespace, Name: "host"}
+	t.Parallel()
+	name := types.NamespacedName{Namespace: operatorNamespace, Name: "hostnetworkendpointpublishingstrategy"}
 	ing := newHostNetworkController(name, name.Name+"."+dnsConfig.Spec.BaseDomain)
 	if err := kclient.Create(context.TODO(), ing); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
@@ -768,8 +958,9 @@ func TestHostNetworkEndpointPublishingStrategy(t *testing.T) {
 // TestHostNetworkPortBinding creates two ingresscontrollers on the same node
 // with different port bindings and verifies that both routers are available.
 func TestHostNetworkPortBinding(t *testing.T) {
+	t.Parallel()
 	// deploy first ingresscontroller with the default port bindings
-	name1 := types.NamespacedName{Namespace: operatorNamespace, Name: "host"}
+	name1 := types.NamespacedName{Namespace: operatorNamespace, Name: "hostnetworkportbinding"}
 	ing1 := newHostNetworkController(name1, name1.Name+"."+dnsConfig.Spec.BaseDomain)
 	if err := kclient.Create(context.TODO(), ing1); err != nil {
 		t.Fatalf("failed to create the first ingresscontroller: %v", err)
@@ -870,7 +1061,11 @@ func assertContainerHasPort(t *testing.T, container corev1.Container, name strin
 // "Internal" and verifies that the operator creates a load balancer and that
 // the load balancer has a private IP address.
 func TestInternalLoadBalancer(t *testing.T) {
-	platform := infraConfig.Status.Platform
+	t.Parallel()
+	if infraConfig.Status.PlatformStatus == nil {
+		t.Skip("test skipped on nil platform")
+	}
+	platform := infraConfig.Status.PlatformStatus.Type
 
 	supportedPlatforms := map[configv1.PlatformType]struct{}{
 		configv1.AWSPlatformType:          {},
@@ -880,15 +1075,16 @@ func TestInternalLoadBalancer(t *testing.T) {
 		configv1.AlibabaCloudPlatformType: {},
 	}
 	if _, supported := supportedPlatforms[platform]; !supported {
-		t.Skip(fmt.Sprintf("test skipped on platform %q", platform))
+		t.Skipf("test skipped on platform %q", platform)
 	}
 
 	annotation := ingresscontroller.InternalLBAnnotations[platform]
 
-	name := types.NamespacedName{Namespace: operatorNamespace, Name: "test"}
+	name := types.NamespacedName{Namespace: operatorNamespace, Name: "testinternalloadbalancer"}
 	ic := newLoadBalancerController(name, name.Name+"."+dnsConfig.Spec.BaseDomain)
 	ic.Spec.EndpointPublishingStrategy.LoadBalancer = &operatorv1.LoadBalancerStrategy{
-		Scope: operatorv1.InternalLoadBalancer,
+		DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
+		Scope:               operatorv1.InternalLoadBalancer,
 	}
 	if err := kclient.Create(context.TODO(), ic); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
@@ -926,7 +1122,7 @@ func TestInternalLoadBalancer(t *testing.T) {
 		}
 		lbService.Annotations[annotation] = "0.0.0.0/0"
 		if err := kclient.Update(context.TODO(), lbService); err != nil {
-			t.Errorf("failed to update LoadBalancer service: %w", err)
+			t.Errorf("failed to update LoadBalancer service: %v", err)
 		}
 
 		// Verify that the operator reverts the annotation value to
@@ -946,7 +1142,7 @@ func TestInternalLoadBalancer(t *testing.T) {
 			return true, nil
 		})
 		if err != nil {
-			t.Errorf("failed to observe expected annotation on load balancer service %s: %w", controller.LoadBalancerServiceName(ic), err)
+			t.Errorf("failed to observe expected annotation on load balancer service %s: %v", controller.LoadBalancerServiceName(ic), err)
 		}
 	}
 }
@@ -956,19 +1152,22 @@ func TestInternalLoadBalancer(t *testing.T) {
 // parameter set to both "Global" and "local" to verify that the
 // Load Balancer service is created properly.
 func TestInternalLoadBalancerGlobalAccessGCP(t *testing.T) {
-	platform := infraConfig.Status.Platform
-
+	t.Parallel()
+	if infraConfig.Status.PlatformStatus == nil {
+		t.Skip("test skipped on nil platform")
+	}
 	supportedPlatforms := map[configv1.PlatformType]struct{}{
 		configv1.GCPPlatformType: {},
 	}
-	if _, supported := supportedPlatforms[platform]; !supported {
-		t.Skip(fmt.Sprintf("test skipped on platform %q", platform))
+	if _, supported := supportedPlatforms[infraConfig.Status.PlatformStatus.Type]; !supported {
+		t.Skipf("test skipped on platform %q", infraConfig.Status.PlatformStatus.Type)
 	}
 
 	name := types.NamespacedName{Namespace: operatorNamespace, Name: "test-gcp"}
 	ic := newLoadBalancerController(name, name.Name+"."+dnsConfig.Spec.BaseDomain)
 	ic.Spec.EndpointPublishingStrategy.LoadBalancer = &operatorv1.LoadBalancerStrategy{
-		Scope: operatorv1.InternalLoadBalancer,
+		DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
+		Scope:               operatorv1.InternalLoadBalancer,
 		ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
 			Type: operatorv1.GCPLoadBalancerProvider,
 			GCP: &operatorv1.GCPLoadBalancerParameters{
@@ -1035,10 +1234,178 @@ func TestInternalLoadBalancerGlobalAccessGCP(t *testing.T) {
 		}
 		return true, nil
 	})
-
 	if err != nil {
 		t.Errorf("failed to observe expected annotations on load balancer service %s: %v", controller.LoadBalancerServiceName(ic), err)
 	}
+}
+
+func TestAWSLBTypeChange(t *testing.T) {
+	t.Parallel()
+
+	if infraConfig.Status.Platform != "AWS" {
+		t.Skipf("test skipped on platform %q", infraConfig.Status.Platform)
+	}
+
+	name := types.NamespacedName{Namespace: operatorNamespace, Name: "awslb"}
+	ic := newLoadBalancerController(name, name.Name+"."+dnsConfig.Spec.BaseDomain)
+	ic.Spec.EndpointPublishingStrategy.LoadBalancer = &operatorv1.LoadBalancerStrategy{
+		Scope: operatorv1.ExternalLoadBalancer,
+	}
+	if err := kclient.Create(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to create ingresscontroller: %v", err)
+	}
+	defer assertIngressControllerDeleted(t, kclient, ic)
+
+	// Wait for the load balancer and DNS to be ready.
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	lbService := &corev1.Service{}
+	if err := kclient.Get(context.TODO(), controller.LoadBalancerServiceName(ic), lbService); err != nil {
+		t.Fatalf("failed to get LoadBalancer service: %v", err)
+	}
+	if v := lbService.Annotations[ingresscontroller.AWSLBTypeAnnotation]; len(v) != 0 {
+		t.Fatalf("load balancer service has unexpected %s=%s annotation", ingresscontroller.AWSLBTypeAnnotation, v)
+	}
+
+	if err := kclient.Get(context.TODO(), name, ic); err != nil {
+		t.Fatalf("failed to get ingresscontroller %s: %v", name, err)
+	}
+
+	pp := &operatorv1.ProviderLoadBalancerParameters{
+		Type: operatorv1.AWSLoadBalancerProvider,
+		AWS: &operatorv1.AWSLoadBalancerParameters{
+			Type: operatorv1.AWSNetworkLoadBalancer,
+		},
+	}
+	ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters = pp
+
+	if err := kclient.Update(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to update ingresscontroller: %v", err)
+	}
+
+	// Wait for the load balancer and DNS to be ready.
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	err := wait.PollImmediate(5*time.Second, 5*time.Minute, func() (bool, error) {
+		service := &corev1.Service{}
+		if err := kclient.Get(context.TODO(), controller.LoadBalancerServiceName(ic), service); err != nil {
+			t.Logf("failed to get service %s: %v", controller.LoadBalancerServiceName(ic), err)
+			return false, nil
+		}
+		if actual, ok := service.Annotations[ingresscontroller.AWSLBTypeAnnotation]; !ok {
+			t.Logf("load balancer has no %q annotation: %v", ingresscontroller.AWSLBTypeAnnotation, service.Annotations)
+			return false, nil
+		} else if actual != ingresscontroller.AWSNLBAnnotation {
+			t.Logf("expected %s=%s, found %s=%s", ingresscontroller.AWSLBTypeAnnotation, ingresscontroller.AWSNLBAnnotation,
+				ingresscontroller.AWSLBTypeAnnotation, actual)
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("timed out waiting for the service LB type annotation to be updated: %v", err)
+	}
+}
+
+// TestAWSLBTypeDefaulting verifies that the ingress operator correctly sets a
+// default load balancer type on AWS when the cluster ingress config specifies
+// one.
+//
+// This test is a serial test because it modifies the cluster ingress config and
+// therefore cannot run in parallel with other tests.
+func TestAWSLBTypeDefaulting(t *testing.T) {
+	if infraConfig.Status.Platform != configv1.AWSPlatformType {
+		t.Skipf("test skipped on platform %q", infraConfig.Status.Platform)
+	}
+
+	clbName := types.NamespacedName{Namespace: operatorNamespace, Name: "aws-lb-type-defaulting-to-clb"}
+	clbIC := newLoadBalancerController(clbName, clbName.Name+"."+dnsConfig.Spec.BaseDomain)
+	t.Logf("creating ingresscontroller %s with default LB type, which is Classic", clbName)
+	if err := kclient.Create(context.TODO(), clbIC); err != nil {
+		t.Fatalf("failed to create ingresscontroller %s: %v", clbName, err)
+	}
+	defer assertIngressControllerDeleted(t, kclient, clbIC)
+
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, clbName, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	t.Logf("verifying that ingresscontroller %s's LoadBalancer service doesn't specify NLB", clbName)
+	assertServiceAnnotation(t, controller.LoadBalancerServiceName(clbIC), ingresscontroller.AWSLBTypeAnnotation, "", false)
+
+	t.Log("changing the default LB type to NLB")
+	if err := updateIngressConfigSpecWithRetryOnConflict(t, clusterConfigName, timeout, func(spec *configv1.IngressSpec) {
+		spec.LoadBalancer.Platform.Type = configv1.AWSPlatformType
+		spec.LoadBalancer.Platform.AWS = &configv1.AWSIngressSpec{
+			Type: configv1.NLB,
+		}
+	}); err != nil {
+		t.Fatalf("failed to update ingress config: %v", err)
+	}
+	defer func() {
+		t.Log("resetting the default LB type to Classic")
+		if err := updateIngressConfigSpecWithRetryOnConflict(t, clusterConfigName, timeout, func(spec *configv1.IngressSpec) {
+			spec.LoadBalancer.Platform.AWS.Type = configv1.Classic
+		}); err != nil {
+			t.Errorf("failed to restore ingress config: %v", err)
+		}
+	}()
+
+	t.Logf("updating ingresscontroller %s to trigger re-admission", clbName)
+	if err := kclient.Get(context.TODO(), clbName, clbIC); err != nil {
+		t.Fatalf("failed to get ingresscontroller: %v", err)
+	}
+	clbIC.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
+		Raw: []byte(`{"foo":"bar"}`),
+	}
+	// This unsupported config override does not cause any changes to the
+	// operands but does force the reconciler to re-admit the
+	// ingresscontroller.  The purpose of this update is to verify that
+	// re-admission does not cause the operator to update the existing
+	// ingresscontroller with the new default LB type.
+	if err := kclient.Update(context.TODO(), clbIC); err != nil {
+		t.Fatalf("failed to update ingresscontroller %s: %v", clbName, err)
+	}
+
+	nlbName := types.NamespacedName{Namespace: operatorNamespace, Name: "aws-lb-type-defaulting-to-nlb"}
+	nlbIC := newLoadBalancerController(nlbName, nlbName.Name+"."+dnsConfig.Spec.BaseDomain)
+	t.Logf("creating ingresscontroller %s with default LB type, which is now NLB", nlbName)
+	if err := kclient.Create(context.TODO(), nlbIC); err != nil {
+		t.Fatalf("failed to create ingresscontroller %s: %v", nlbName, err)
+	}
+	defer assertIngressControllerDeleted(t, kclient, nlbIC)
+
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, nlbName, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	t.Logf("verifying that ingresscontroller %s's LoadBalancer service specifies NLB", nlbName)
+	assertServiceAnnotation(t, controller.LoadBalancerServiceName(nlbIC), ingresscontroller.AWSLBTypeAnnotation, ingresscontroller.AWSNLBAnnotation, true)
+
+	t.Logf("verifying that ingresscontroller %s's LoadBalancer service still doesn't specify NLB", clbName)
+	// This is step is to verify that updating the cluster ingress config
+	// doesn't impact ingresscontrollers that have previously taken the
+	// default setting.
+	assertServiceAnnotation(t, controller.LoadBalancerServiceName(clbIC), ingresscontroller.AWSLBTypeAnnotation, "", false)
+
+	t.Log("resetting the default LB type to Classic")
+	if err := updateIngressConfigSpecWithRetryOnConflict(t, clusterConfigName, timeout, func(spec *configv1.IngressSpec) {
+		spec.LoadBalancer.Platform.Type = configv1.AWSPlatformType
+		spec.LoadBalancer.Platform.AWS = &configv1.AWSIngressSpec{
+			Type: configv1.NLB,
+		}
+	}); err != nil {
+		t.Fatalf("failed to update ingress config: %v", err)
+	}
+
+	t.Logf("verifying that ingresscontroller %s's LoadBalancer service still specifies NLB", nlbName)
+	assertServiceAnnotation(t, controller.LoadBalancerServiceName(clbIC), ingresscontroller.AWSLBTypeAnnotation, "", false)
+	t.Logf("verifying that ingresscontroller %s's LoadBalancer service still doesn't specify NLB", clbName)
+	assertServiceAnnotation(t, controller.LoadBalancerServiceName(nlbIC), ingresscontroller.AWSLBTypeAnnotation, ingresscontroller.AWSNLBAnnotation, true)
 }
 
 // TestScopeChange creates an ingresscontroller with the "LoadBalancerService"
@@ -1055,7 +1422,11 @@ func TestInternalLoadBalancerGlobalAccessGCP(t *testing.T) {
 // recreating the LoadBalancer service to change its scope, then the operator
 // should delete and recreate the service automatically.
 func TestScopeChange(t *testing.T) {
-	platform := infraConfig.Status.Platform
+	t.Parallel()
+	if infraConfig.Status.PlatformStatus == nil {
+		t.Skip("test skipped on nil platform")
+	}
+	platform := infraConfig.Status.PlatformStatus.Type
 	supportedPlatforms := map[configv1.PlatformType]struct{}{
 		configv1.AlibabaCloudPlatformType: {},
 		configv1.AWSPlatformType:          {},
@@ -1071,7 +1442,8 @@ func TestScopeChange(t *testing.T) {
 	name := types.NamespacedName{Namespace: operatorNamespace, Name: "scope"}
 	ic := newLoadBalancerController(name, name.Name+"."+dnsConfig.Spec.BaseDomain)
 	ic.Spec.EndpointPublishingStrategy.LoadBalancer = &operatorv1.LoadBalancerStrategy{
-		Scope: operatorv1.ExternalLoadBalancer,
+		DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
+		Scope:               operatorv1.ExternalLoadBalancer,
 	}
 	if err := kclient.Create(context.TODO(), ic); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
@@ -1116,7 +1488,7 @@ func TestScopeChange(t *testing.T) {
 		err := wait.PollImmediate(5*time.Second, 5*time.Minute, func() (bool, error) {
 			service := &corev1.Service{}
 			if err := kclient.Get(context.TODO(), controller.LoadBalancerServiceName(ic), service); err != nil {
-				if errors.IsNotFound(err) {
+				if apierrors.IsNotFound(err) {
 					return false, nil
 				}
 				t.Logf("failed to get service %s: %v", controller.LoadBalancerServiceName(ic), err)
@@ -1157,7 +1529,7 @@ func TestScopeChange(t *testing.T) {
 		err := wait.PollImmediate(5*time.Second, 5*time.Minute, func() (bool, error) {
 			service := &corev1.Service{}
 			if err := kclient.Get(context.TODO(), controller.LoadBalancerServiceName(ic), service); err != nil {
-				if errors.IsNotFound(err) {
+				if apierrors.IsNotFound(err) {
 					return false, nil
 				}
 				t.Logf("failed to get ingresscontroller %s: %v", name.Name, err)
@@ -1197,7 +1569,7 @@ func TestScopeChange(t *testing.T) {
 	err := wait.PollImmediate(5*time.Second, 5*time.Minute, func() (bool, error) {
 		service := &corev1.Service{}
 		if err := kclient.Get(context.TODO(), controller.LoadBalancerServiceName(ic), service); err != nil {
-			if errors.IsNotFound(err) {
+			if apierrors.IsNotFound(err) {
 				return false, nil
 			}
 			t.Logf("failed to get service %s: %v", controller.LoadBalancerServiceName(ic), err)
@@ -1223,6 +1595,7 @@ func TestScopeChange(t *testing.T) {
 // verifies that the operator does not add the port back.  See
 // <https://bugzilla.redhat.com/show_bug.cgi?id=1881210>.
 func TestNodePortServiceEndpointPublishingStrategy(t *testing.T) {
+	t.Parallel()
 	name := types.NamespacedName{Namespace: operatorNamespace, Name: "nodeport"}
 	ing := newNodePortController(name, name.Name+"."+dnsConfig.Spec.BaseDomain)
 	if err := kclient.Create(context.TODO(), ing); err != nil {
@@ -1295,7 +1668,8 @@ func TestNodePortServiceEndpointPublishingStrategy(t *testing.T) {
 // profile, then updates the ingresscontroller to use a custom TLS profile, and
 // then verifies that the operator reflects the custom profile in its status.
 func TestTLSSecurityProfile(t *testing.T) {
-	name := types.NamespacedName{Namespace: operatorNamespace, Name: "test"}
+	t.Parallel()
+	name := types.NamespacedName{Namespace: operatorNamespace, Name: "testtlssecurityprofile"}
 	domain := name.Name + "." + dnsConfig.Spec.BaseDomain
 	ic := newPrivateController(name, domain)
 	if err := kclient.Create(context.TODO(), ic); err != nil {
@@ -1356,6 +1730,7 @@ func TestTLSSecurityProfile(t *testing.T) {
 }
 
 func TestRouteAdmissionPolicy(t *testing.T) {
+	t.Parallel()
 	// Set up an ingresscontroller which only selects routes created by this test
 	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "routeadmission"}
 	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
@@ -1570,6 +1945,7 @@ func TestRouteAdmissionPolicy(t *testing.T) {
 }
 
 func TestSyslogLogging(t *testing.T) {
+	t.Parallel()
 	ic := &operatorv1.IngressController{}
 	if err := kclient.Get(context.TODO(), defaultName, ic); err != nil {
 		t.Fatalf("failed to get default ingresscontroller: %v", err)
@@ -1741,6 +2117,7 @@ $ModLoad omstdout.so
 }
 
 func TestContainerLogging(t *testing.T) {
+	t.Parallel()
 	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "containerlogging"}
 	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
 	ic := newPrivateController(icName, domain)
@@ -1796,14 +2173,27 @@ func TestIngressControllerCustomEndpoints(t *testing.T) {
 			Name: "elasticloadbalancing",
 			URL:  fmt.Sprintf("https://elasticloadbalancing.%s.amazonaws.com", platform.AWS.Region),
 		}
-		endpoints := []configv1.AWSServiceEndpoint{route53Endpoint, taggingEndpoint, elbEndpoint}
-		awsSpec := configv1.AWSPlatformSpec{ServiceEndpoints: endpoints}
-		infraConfig.Spec.PlatformSpec.AWS = &awsSpec
-		if err := kclient.Update(context.TODO(), &infraConfig); err != nil {
+		if err := updateInfrastructureConfigSpecWithRetryOnConflict(t, types.NamespacedName{Name: "cluster"}, timeout, func(spec *configv1.InfrastructureSpec) {
+			spec.PlatformSpec.AWS = &configv1.AWSPlatformSpec{
+				ServiceEndpoints: []configv1.AWSServiceEndpoint{
+					route53Endpoint,
+					taggingEndpoint,
+					elbEndpoint,
+				},
+			}
+		}); err != nil {
 			t.Fatalf("failed to update infrastructure config: %v\n", err)
 		}
+		defer func() {
+			// Remove the custom endpoints from the infrastructure config.
+			if err := updateInfrastructureConfigSpecWithRetryOnConflict(t, types.NamespacedName{Name: "cluster"}, timeout, func(spec *configv1.InfrastructureSpec) {
+				spec.PlatformSpec.AWS = nil
+			}); err != nil {
+				t.Fatalf("failed to update infrastructure config: %v", err)
+			}
+		}()
 		// Wait for infrastructure status to update with custom endpoints.
-		err := wait.PollImmediate(1*time.Second, 15*time.Second, func() (bool, error) {
+		if err := wait.PollImmediate(1*time.Second, 15*time.Second, func() (bool, error) {
 			if err := kclient.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, &infraConfig); err != nil {
 				t.Logf("failed to get infrastructure config: %v\n", err)
 				return false, err
@@ -1812,17 +2202,9 @@ func TestIngressControllerCustomEndpoints(t *testing.T) {
 				return false, nil
 			}
 			return true, nil
-		})
-		if err != nil {
+		}); err != nil {
 			t.Fatalf("failed to observe status update for infrastructure config %s", infraConfig.Name)
 		}
-		defer func() {
-			// Remove the custom endpoints from the infrastructure config.
-			infraConfig.Spec.PlatformSpec.AWS = nil
-			if err := kclient.Update(context.TODO(), &infraConfig); err != nil {
-				t.Fatalf("failed to update infrastructure config: %v\n", err)
-			}
-		}()
 	default:
 		t.Skipf("skipping TestIngressControllerCustomEndpoints test due to platform type: %s", platform.Type)
 	}
@@ -1844,6 +2226,7 @@ func TestIngressControllerCustomEndpoints(t *testing.T) {
 }
 
 func TestHTTPHeaderCapture(t *testing.T) {
+	t.Parallel()
 	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "headercapture"}
 	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
 	ic := newNodePortController(icName, domain)
@@ -1891,8 +2274,12 @@ func TestHTTPHeaderCapture(t *testing.T) {
 	if err := kclient.List(context.TODO(), podList, client.MatchingLabelsSelector{Selector: selector}); err != nil {
 		t.Fatalf("failed to list pods for ingresscontroller: %v", err)
 	}
-	if len(podList.Items) < 1 {
-		t.Fatalf("found no pods for ingresscontroller: %v", err)
+	if len(podList.Items) != 1 {
+		var podNames []string
+		for i := range podList.Items {
+			podNames = append(podNames, podList.Items[i].Name)
+		}
+		t.Fatalf("expected ingress controller %s to have exactly 1 router pod, but it has %d: %s", ic.Name, len(podList.Items), strings.Join(podNames, ", "))
 	}
 
 	// Make a request to the console route.
@@ -1931,7 +2318,7 @@ func TestHTTPHeaderCapture(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), clientPod); err != nil {
-			if errors.IsNotFound(err) {
+			if apierrors.IsNotFound(err) {
 				return
 			}
 			t.Fatalf("failed to delete pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
@@ -1985,6 +2372,7 @@ func TestHTTPHeaderCapture(t *testing.T) {
 }
 
 func TestHTTPCookieCapture(t *testing.T) {
+	t.Parallel()
 	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "cookiecapture"}
 	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
 	ic := newNodePortController(icName, domain)
@@ -2030,8 +2418,8 @@ func TestHTTPCookieCapture(t *testing.T) {
 	if err := kclient.List(context.TODO(), podList, client.MatchingLabelsSelector{Selector: selector}); err != nil {
 		t.Fatalf("failed to list pods for ingresscontroller: %v", err)
 	}
-	if len(podList.Items) < 1 {
-		t.Fatalf("found no pods for ingresscontroller: %v", err)
+	if len(podList.Items) != 1 {
+		t.Fatalf("expected ingress controller %s to have exactly 1 router pod, but it has %d", ic.Name, len(podList.Items))
 	}
 
 	// Make a request to the console route.
@@ -2071,7 +2459,7 @@ func TestHTTPCookieCapture(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), clientPod); err != nil {
-			if errors.IsNotFound(err) {
+			if apierrors.IsNotFound(err) {
 				return
 			}
 			t.Fatalf("failed to delete pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
@@ -2124,16 +2512,19 @@ func TestHTTPCookieCapture(t *testing.T) {
 // "LoadBalancerService" endpoint publishing strategy type with
 // an AWS Network Load Balancer (NLB).
 func TestNetworkLoadBalancer(t *testing.T) {
-	platform := infraConfig.Status.PlatformStatus.Type
-
-	if platform != configv1.AWSPlatformType {
-		t.Skip(fmt.Sprintf("test skipped on platform %q", platform))
+	t.Parallel()
+	if infraConfig.Status.PlatformStatus == nil {
+		t.Skip("test skipped on nil platform")
+	}
+	if infraConfig.Status.PlatformStatus.Type != configv1.AWSPlatformType {
+		t.Skipf("test skipped on platform %q", infraConfig.Status.PlatformStatus.Type)
 	}
 
 	name := types.NamespacedName{Namespace: operatorNamespace, Name: "test-nlb"}
 	ic := newLoadBalancerController(name, name.Name+"."+dnsConfig.Spec.BaseDomain)
 	lb := &operatorv1.LoadBalancerStrategy{
-		Scope: operatorv1.ExternalLoadBalancer,
+		DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
+		Scope:               operatorv1.ExternalLoadBalancer,
 		ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
 			Type: operatorv1.AWSLoadBalancerProvider,
 			AWS: &operatorv1.AWSLoadBalancerParameters{
@@ -2165,7 +2556,233 @@ func TestNetworkLoadBalancer(t *testing.T) {
 	}
 }
 
+// TestAWSELBConnectionIdleTimeout verifies that the AWS ELB connection-idle
+// timeout works as expected.
+func TestAWSELBConnectionIdleTimeout(t *testing.T) {
+	t.Parallel()
+	if infraConfig.Status.PlatformStatus == nil {
+		t.Skip("test skipped on nil platform")
+	}
+	if infraConfig.Status.PlatformStatus.Type != configv1.AWSPlatformType {
+		t.Skipf("test skipped on platform %q", infraConfig.Status.PlatformStatus.Type)
+	}
+
+	// Create an ingresscontroller that specifies an ELB with an idle
+	// timeout of 3 seconds.
+	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "test-idle-timeout"}
+	ic := newLoadBalancerController(icName, icName.Name+"."+dnsConfig.Spec.BaseDomain)
+	lb := &operatorv1.LoadBalancerStrategy{
+		DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
+		Scope:               operatorv1.ExternalLoadBalancer,
+		ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+			Type: operatorv1.AWSLoadBalancerProvider,
+			AWS: &operatorv1.AWSLoadBalancerParameters{
+				Type: operatorv1.AWSClassicLoadBalancer,
+				ClassicLoadBalancerParameters: &operatorv1.AWSClassicLoadBalancerParameters{
+					ConnectionIdleTimeout: metav1.Duration{Duration: 3 * time.Second},
+				},
+			},
+		},
+	}
+	ic.Spec.EndpointPublishingStrategy.LoadBalancer = lb
+	if err := kclient.Create(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to create ingresscontroller: %v", err)
+	}
+	defer assertIngressControllerDeleted(t, kclient, ic)
+
+	// Create a pod with an HTTP application that sends delayed responses.
+	httpdPod := buildSlowHTTPDPod("idle-timeout-httpd", operatorcontroller.DefaultOperandNamespace)
+	if err := kclient.Create(context.TODO(), httpdPod); err != nil {
+		t.Fatalf("failed to create pod %s/%s: %v", httpdPod.Namespace, httpdPod.Name, err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), httpdPod); err != nil {
+			t.Fatalf("failed to delete pod %s/%s: %v", httpdPod.Namespace, httpdPod.Name, err)
+		}
+	}()
+
+	httpdService := buildEchoService(httpdPod.Name, httpdPod.Namespace, httpdPod.ObjectMeta.Labels)
+	if err := kclient.Create(context.TODO(), httpdService); err != nil {
+		t.Fatalf("failed to create service %s/%s: %v", httpdService.Namespace, httpdService.Name, err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), httpdService); err != nil {
+			t.Fatalf("failed to delete service %s/%s: %v", httpdService.Namespace, httpdService.Name, err)
+		}
+	}()
+
+	route := buildRoute(httpdPod.Name, httpdPod.Namespace, httpdService.Name)
+	route.Spec.Host = fmt.Sprintf("%s-%s.%s", route.Name, route.Namespace, ic.Spec.Domain)
+	if err := kclient.Create(context.TODO(), route); err != nil {
+		t.Fatalf("failed to create route %s/%s: %v", route.Namespace, route.Name, err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), route); err != nil {
+			t.Fatalf("failed to delete route %s/%s: %v", route.Namespace, route.Name, err)
+		}
+	}()
+
+	// Wait for the load balancer and DNS to be ready.
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	// Verify that the ingresscontroller has the expected annotation.
+	lbService := &corev1.Service{}
+	if err := kclient.Get(context.TODO(), controller.LoadBalancerServiceName(ic), lbService); err != nil {
+		t.Fatalf("failed to get LoadBalancer service: %v", err)
+	}
+
+	const key = "service.beta.kubernetes.io/aws-load-balancer-connection-idle-timeout"
+	expected := "3"
+	if v, ok := lbService.Annotations[key]; !ok {
+		t.Fatalf("missing expected %s=%s annotation: %+v", key, expected, lbService.Annotations)
+	} else if v != expected {
+		t.Fatalf("expected %s=%s, found %s=%s", key, expected, key, v)
+	}
+
+	// Make sure we can resolve the route's host name.  It may take some
+	// time for the ingresscontroller's wildcard DNS record to propagate.
+	if err := wait.PollImmediate(5*time.Second, 5*time.Minute, func() (bool, error) {
+		_, err := net.LookupIP(route.Spec.Host)
+		if err != nil {
+			t.Log(err)
+			return false, nil
+		}
+
+		return true, nil
+	}); err != nil {
+		t.Fatalf("failed to observe expected condition: %v", err)
+	}
+
+	// Open a connection to the route, send a request, and verify that the
+	// connection times out after ~10 seconds.
+	request, err := http.NewRequest("GET", "http://"+route.Spec.Host, nil)
+	if err != nil {
+		t.Fatalf("failed to create HTTP request: %v", err)
+	}
+
+	client := &http.Client{}
+
+	if err := wait.PollImmediate(5*time.Second, 1*time.Minute, func() (bool, error) {
+		start := time.Now()
+		response, err := client.Do(request)
+		if err != nil {
+			elapsed := time.Now().Sub(start)
+
+			// Ignore errors other than EOF.
+			if !errors.Is(err, io.EOF) {
+				t.Logf("got unexpected error after elapsed time %v: %v", elapsed, err)
+				return false, nil
+			}
+
+			// Allow up to 15 seconds.  This is well above the
+			// configured connection idle timeout, but it is also
+			// well below the default idle timeout, so it should be
+			// unlikely to cause false negatives or false positives.
+			if elapsed.Seconds() > float64(15) {
+				t.Logf("got expected EOF error after unexpectedly long elapsed time %v", elapsed)
+				return false, nil
+			}
+
+			t.Logf("got expected EOF after elapsed time %v", elapsed)
+			return true, nil
+		} else {
+			defer response.Body.Close()
+			body, err := ioutil.ReadAll(response.Body)
+			if err != nil {
+				t.Log(err)
+				return false, nil
+			}
+
+			elapsed := time.Now().Sub(start)
+			t.Logf("got response after elapsed time %v: %v", elapsed, string(body))
+		}
+
+		return false, nil
+	}); err != nil {
+		t.Fatalf("failed to observe expected condition: %v", err)
+	}
+
+	// Configure the ingresscontroller with a longer ELB idle timeout of 120
+	// seconds.
+	if err := kclient.Get(context.TODO(), icName, ic); err != nil {
+		t.Fatalf("failed to get ingresscontroller: %v", err)
+	}
+	ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.ClassicLoadBalancerParameters.ConnectionIdleTimeout = metav1.Duration{Duration: 2 * time.Minute}
+	if err := kclient.Update(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to update ingresscontroller: %v", err)
+	}
+
+	// Verify that the ingresscontroller has the updated annotation.
+	if err := wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), controller.LoadBalancerServiceName(ic), lbService); err != nil {
+			t.Logf("failed to get LoadBalancer service: %v", err)
+
+			return false, nil
+		}
+
+		expected := "120"
+		if v, ok := lbService.Annotations[key]; !ok {
+			t.Logf("missing expected %s=%s annotation: %+v", key, expected, lbService.Annotations)
+
+			return false, nil
+		} else if v != expected {
+			t.Logf("expected %s=%s, found %s=%s", key, expected, key, v)
+
+			return false, nil
+		}
+
+		t.Logf("found expected annotation %s=%s", key, expected)
+
+		return true, nil
+	}); err != nil {
+		t.Fatalf("failed to observe expected condition: %v", err)
+	}
+
+	// Configure the route with a 90-second timeout.
+	routeName := types.NamespacedName{Namespace: route.Namespace, Name: route.Name}
+	if err := kclient.Get(context.TODO(), routeName, route); err != nil {
+		t.Fatalf("failed to get route: %v", err)
+	}
+	if route.Annotations == nil {
+		route.Annotations = map[string]string{}
+	}
+	route.Annotations["haproxy.router.openshift.io/timeout"] = "90s"
+	if err := kclient.Update(context.TODO(), route); err != nil {
+		t.Fatalf("failed to update route: %v", err)
+	}
+
+	// Open a connection to the route, send a request, and verify that a
+	// response is received.  Use a polling loop because the ELB may need
+	// time to assume the new idle timeout value.
+	if err := wait.PollImmediate(5*time.Second, 5*time.Minute, func() (bool, error) {
+		start := time.Now()
+		response, err := client.Do(request)
+		if err != nil {
+			elapsed := time.Now().Sub(start)
+			t.Logf("got unexpected error after elapsed time %v: %v", elapsed, err)
+			return false, nil
+		}
+
+		defer response.Body.Close()
+		body, err := ioutil.ReadAll(response.Body)
+		if err != nil {
+			t.Log(err)
+			return false, nil
+		}
+
+		elapsed := time.Now().Sub(start)
+		t.Logf("got expected response after elapsed time %v: %v", elapsed, string(body))
+
+		return true, nil
+	}); err != nil {
+		t.Fatalf("failed to observe expected condition: %v", err)
+	}
+}
+
 func TestUniqueIdHeader(t *testing.T) {
+	t.Parallel()
 	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "uniqueid"}
 	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
 	ic := newPrivateController(icName, domain)
@@ -2233,13 +2850,16 @@ func TestUniqueIdHeader(t *testing.T) {
 	for i := 1; i <= numRequests; i++ {
 		name := fmt.Sprintf("unique-id-header-test-%d", i)
 		image := deployment.Spec.Template.Spec.Containers[0].Image
-		clientPod := buildCurlPod(name, echoRoute.Namespace, image, echoRoute.Spec.Host, service.Spec.ClusterIP)
+		extraCurlArgs := []string{
+			"--resolve", echoRoute.Spec.Host + ":80:" + service.Spec.ClusterIP,
+		}
+		clientPod := buildCurlPod(name, echoRoute.Namespace, image, echoRoute.Spec.Host, service.Spec.ClusterIP, extraCurlArgs...)
 		if err := kclient.Create(context.TODO(), clientPod); err != nil {
 			t.Fatalf("failed to create pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
 		}
 		defer func() {
 			if err := kclient.Delete(context.TODO(), clientPod); err != nil {
-				if errors.IsNotFound(err) {
+				if apierrors.IsNotFound(err) {
 					return
 				}
 				t.Fatalf("failed to delete pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
@@ -2286,12 +2906,13 @@ func TestUniqueIdHeader(t *testing.T) {
 }
 
 // TestLoadBalancingAlgorithmUnsupportedConfigOverride verifies that the
-// operator configures router pod replicas to use the "random" load-balancing
+// operator configures router pod replicas to use the "leastconn" load-balancing
 // algorithm for non-passthrough routes if the ingresscontroller is so
 // configured using an unsupported config override.  The test also verifies that
 // the operator always configures router pod replicas to use the "source"
 // algorithm for passthrough routes irrespective of the override.
 func TestLoadBalancingAlgorithmUnsupportedConfigOverride(t *testing.T) {
+	t.Parallel()
 	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "leastconn"}
 	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
 	ic := newPrivateController(icName, domain)
@@ -2301,14 +2922,14 @@ func TestLoadBalancingAlgorithmUnsupportedConfigOverride(t *testing.T) {
 	defer assertIngressControllerDeleted(t, kclient, ic)
 
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
-		t.Errorf("failed to observe expected conditions: %w", err)
+		t.Errorf("failed to observe expected conditions: %v", err)
 	}
 
 	deployment := &appsv1.Deployment{}
 	if err := kclient.Get(context.TODO(), controller.RouterDeploymentName(ic), deployment); err != nil {
 		t.Fatalf("failed to get ingresscontroller deployment: %v", err)
 	}
-	expectedAlgorithm := "leastconn"
+	expectedAlgorithm := "random"
 	if err := waitForDeploymentEnvVar(t, kclient, deployment, 30*time.Second, "ROUTER_LOAD_BALANCE_ALGORITHM", expectedAlgorithm); err != nil {
 		t.Fatalf("expected initial deployment to have ROUTER_LOAD_BALANCE_ALGORITHM=%s: %v", expectedAlgorithm, err)
 	}
@@ -2320,12 +2941,12 @@ func TestLoadBalancingAlgorithmUnsupportedConfigOverride(t *testing.T) {
 		t.Fatalf("failed to get ingresscontroller: %v", err)
 	}
 	ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
-		Raw: []byte(`{"loadBalancingAlgorithm":"random"}`),
+		Raw: []byte(`{"loadBalancingAlgorithm":"leastconn"}`),
 	}
 	if err := kclient.Update(context.TODO(), ic); err != nil {
 		t.Fatalf("failed to update ingresscontroller: %v", err)
 	}
-	expectedAlgorithm = "random"
+	expectedAlgorithm = "leastconn"
 	if err := waitForDeploymentEnvVar(t, kclient, deployment, 1*time.Minute, "ROUTER_LOAD_BALANCE_ALGORITHM", expectedAlgorithm); err != nil {
 		t.Fatalf("expected updated deployment to have ROUTER_LOAD_BALANCE_ALGORITHM=%s: %v", expectedAlgorithm, err)
 	}
@@ -2338,6 +2959,7 @@ func TestLoadBalancingAlgorithmUnsupportedConfigOverride(t *testing.T) {
 // configures router pod replicas to use the dynamic config manager if the
 // ingresscontroller is so configured using an unsupported config override.
 func TestDynamicConfigManagerUnsupportedConfigOverride(t *testing.T) {
+	t.Parallel()
 	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "dynamic-config-manager"}
 	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
 	ic := newPrivateController(icName, domain)
@@ -2347,7 +2969,7 @@ func TestDynamicConfigManagerUnsupportedConfigOverride(t *testing.T) {
 	defer assertIngressControllerDeleted(t, kclient, ic)
 
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
-		t.Errorf("failed to observe expected conditions: %w", err)
+		t.Errorf("failed to observe expected conditions: %v", err)
 	}
 
 	deployment := &appsv1.Deployment{}
@@ -2385,9 +3007,11 @@ func TestLocalWithFallbackOverrideForLoadBalancerService(t *testing.T) {
 		configv1.AzurePlatformType: {},
 		configv1.GCPPlatformType:   {},
 	}
-	platform := infraConfig.Status.Platform
-	if _, supported := supportedPlatforms[platform]; !supported {
-		t.Skipf("test skipped on platform %q", platform)
+	if infraConfig.Status.PlatformStatus == nil {
+		t.Skip("test skipped on nil platform")
+	}
+	if _, supported := supportedPlatforms[infraConfig.Status.PlatformStatus.Type]; !supported {
+		t.Skipf("test skipped on platform %q", infraConfig.Status.PlatformStatus.Type)
 	}
 
 	ic := &operatorv1.IngressController{}
@@ -2418,11 +3042,9 @@ func TestLocalWithFallbackOverrideForLoadBalancerService(t *testing.T) {
 		t.Fatalf("failed to update ingresscontroller %q with override: %v", defaultName, err)
 	}
 	defer func() {
-		if err := kclient.Get(context.TODO(), defaultName, ic); err != nil {
-			t.Fatalf("failed to get ingresscontroller %q: %v", defaultName, err)
-		}
-		ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{}
-		if err := kclient.Update(context.TODO(), ic); err != nil {
+		if err := updateIngressControllerSpecWithRetryOnConflict(t, defaultName, timeout, func(spec *operatorv1.IngressControllerSpec) {
+			spec.UnsupportedConfigOverrides = runtime.RawExtension{}
+		}); err != nil {
 			t.Fatalf("failed to update ingresscontroller %q to remove the override: %v", defaultName, err)
 		}
 	}()
@@ -2444,6 +3066,7 @@ func TestLocalWithFallbackOverrideForLoadBalancerService(t *testing.T) {
 // does not set the local-with-fallback annotation on a NodePort service if the
 // the localWithFallback unsupported config override is set to "false".
 func TestLocalWithFallbackOverrideForNodePortService(t *testing.T) {
+	t.Parallel()
 	icName := types.NamespacedName{
 		Namespace: operatorNamespace,
 		Name:      "local-with-fallback",
@@ -2494,102 +3117,12 @@ func TestLocalWithFallbackOverrideForNodePortService(t *testing.T) {
 	}
 }
 
-// TestMaxConnectionsUnsupportedConfigOverride verifies that the operator
-// configures router pod replicas with the appropriate value for
-// ROUTER_MAX_CONNECTIONS if a value is specified using an unsupported config
-// override on the ingresscontroller.
-func TestMaxConnectionsUnsupportedConfigOverride(t *testing.T) {
-	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "max-connections"}
-	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
-	ic := newPrivateController(icName, domain)
-	if err := kclient.Create(context.TODO(), ic); err != nil {
-		t.Fatalf("failed to create ingresscontroller: %v", err)
-	}
-	defer assertIngressControllerDeleted(t, kclient, ic)
-
-	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
-		t.Fatalf("failed to observe expected conditions: %v", err)
-	}
-
-	deployment := &appsv1.Deployment{}
-	if err := kclient.Get(context.TODO(), controller.RouterDeploymentName(ic), deployment); err != nil {
-		t.Fatalf("failed to get ingresscontroller deployment: %v", err)
-	}
-	if err := waitForDeploymentEnvVar(t, kclient, deployment, 30*time.Second, "ROUTER_MAX_CONNECTIONS", ""); err != nil {
-		t.Fatalf("expected initial deployment not to set ROUTER_MAX_CONNECTIONS: %v", err)
-	}
-
-	if err := kclient.Get(context.TODO(), icName, ic); err != nil {
-		t.Fatalf("failed to get ingresscontroller: %v", err)
-	}
-	ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
-		Raw: []byte(`{"maxConnections":-1}`),
-	}
-	if err := kclient.Update(context.TODO(), ic); err != nil {
-		t.Fatalf("failed to update ingresscontroller: %v", err)
-	}
-	if err := waitForDeploymentEnvVar(t, kclient, deployment, 1*time.Minute, "ROUTER_MAX_CONNECTIONS", "auto"); err != nil {
-		t.Fatalf("expected updated deployment to set ROUTER_MAX_CONNECTIONS=auto: %v", err)
-	}
-
-	if err := kclient.Get(context.TODO(), icName, ic); err != nil {
-		t.Fatalf("failed to get ingresscontroller: %v", err)
-	}
-	ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
-		Raw: []byte(`{"maxConnections":40000}`),
-	}
-	if err := kclient.Update(context.TODO(), ic); err != nil {
-		t.Fatalf("failed to update ingresscontroller: %v", err)
-	}
-	if err := waitForDeploymentEnvVar(t, kclient, deployment, 1*time.Minute, "ROUTER_MAX_CONNECTIONS", "40000"); err != nil {
-		t.Fatalf("expected twice-updated deployment to set ROUTER_MAX_CONNECTIONS=40000: %v", err)
-	}
-}
-
-// TestReloadIntervalUnsupportedConfigOverride verifies that the operator
-// configures router pod replicas with the specified value for RELOAD_INTERVAL
-// if one is specified using an unsupported config override on the
-// ingresscontroller.
-func TestReloadIntervalUnsupportedConfigOverride(t *testing.T) {
-	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "reload-interval"}
-	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
-	ic := newPrivateController(icName, domain)
-	if err := kclient.Create(context.TODO(), ic); err != nil {
-		t.Fatalf("failed to create ingresscontroller: %v", err)
-	}
-	defer assertIngressControllerDeleted(t, kclient, ic)
-
-	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
-		t.Fatalf("failed to observe expected conditions: %v", err)
-	}
-
-	deployment := &appsv1.Deployment{}
-	if err := kclient.Get(context.TODO(), controller.RouterDeploymentName(ic), deployment); err != nil {
-		t.Fatalf("failed to get ingresscontroller deployment: %v", err)
-	}
-	if err := waitForDeploymentEnvVar(t, kclient, deployment, 30*time.Second, "RELOAD_INTERVAL", "5s"); err != nil {
-		t.Fatalf("expected initial deployment to set RELOAD_INTERVAL=5s: %v", err)
-	}
-
-	if err := kclient.Get(context.TODO(), icName, ic); err != nil {
-		t.Fatalf("failed to get ingresscontroller: %v", err)
-	}
-	ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
-		Raw: []byte(`{"reloadInterval":60}`),
-	}
-	if err := kclient.Update(context.TODO(), ic); err != nil {
-		t.Fatalf("failed to update ingresscontroller: %v", err)
-	}
-	if err := waitForDeploymentEnvVar(t, kclient, deployment, 1*time.Minute, "RELOAD_INTERVAL", "60s"); err != nil {
-		t.Fatalf("expected updated deployment to set RELOAD_INTERVAL=60s: %v", err)
-	}
-}
-
 // TestCustomErrorpages verifies that the custom error-pages API works properly,
 // and that the error-page configmap controller properly synchs the operator's
 // error-page configmap when it is deleted or when the user-provided configmap
 // is updated.
 func TestCustomErrorpages(t *testing.T) {
+	t.Parallel()
 	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "errorpage"}
 	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
 	ic := newPrivateController(icName, domain)
@@ -2697,6 +3230,7 @@ func TestCustomErrorpages(t *testing.T) {
 // operator allows changes to the kubelet probe timeouts for the router
 // deployment associated with a custom ingresscontroller.
 func TestTunableRouterKubeletProbesForCustomIngressController(t *testing.T) {
+	t.Parallel()
 	icName := types.NamespacedName{
 		Namespace: operatorNamespace,
 		Name:      "tunable-kubelet-probes",
@@ -2769,6 +3303,7 @@ func TestTunableRouterKubeletProbesForCustomIngressController(t *testing.T) {
 // It creates a service with the same naming convention as the ingress controller creates its own load balancing services.
 // Then it triggers a reconcilation of the ingress operator to see if it will delete our service.
 func TestIngressControllerServiceNameCollision(t *testing.T) {
+	t.Parallel()
 	// Create the new private controller that we will later create a service to collide with the naming scheme of this.
 	icName := types.NamespacedName{
 		Namespace: operatorNamespace,
@@ -2863,6 +3398,52 @@ func newLoadBalancerController(name types.NamespacedName, domain string) *operat
 			},
 		},
 	}
+}
+
+// TestIngressOperatorCacheIsNotGlobal validates BZ2075671: Don't include all objects in all namespaces in the
+// Ingress Operator's cache. This tests adds an Ingress Controller in another namespace that isn't in the
+// Ingress Operator's cache and ensures the Ingress Operator ignores it.
+func TestIngressOperatorCacheIsNotGlobal(t *testing.T) {
+	t.Parallel()
+	// Setup a namespace that will be ignored by the ingress operator.
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "ignored-ns",
+		},
+	}
+	if err := kclient.Create(context.TODO(), ns); err != nil {
+		t.Fatalf("failed to create namespace: %v", err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), ns); err != nil {
+			t.Fatalf("failed to delete namespace %v: %v", ns.Name, err)
+		}
+	}()
+	// Create the new private controller in a namespace that will be ignored by the Ingress Operator.
+	icName := types.NamespacedName{
+		Namespace: ns.Name,
+		Name:      "test-cache-is-not-global",
+	}
+	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
+	ic := newPrivateController(icName, domain)
+	if err := kclient.Create(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
+	}
+
+	// Clean up our new Ingress Controller after we are done.
+	defer assertIngressControllerDeleted(t, kclient, ic)
+
+	// Verify new Ingress Controller is ignored by ensuring its status never gets modified.
+	wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), icName, ic); err != nil {
+			t.Fatalf("failed to get ingresscontroller %s/%s: %v", ic.Namespace, ic.Name, err)
+		}
+
+		if len(ic.Status.Conditions) != 0 {
+			t.Fatalf("expected ingress controller %s to be ignored by the ingress operator: conditions: %+v", icName, ic.Status.Conditions)
+		}
+		return false, nil
+	})
 }
 
 func newNodePortController(name types.NamespacedName, domain string) *operatorv1.IngressController {
@@ -3090,7 +3671,6 @@ func waitForIngressControllerCondition(t *testing.T, cl client.Client, timeout t
 
 		return conditionsMatchExpected(expected, current), nil
 	})
-
 	if err != nil {
 		t.Errorf("Expected conditions: %v\n Current conditions: %v", expected, current)
 	}
@@ -3099,7 +3679,10 @@ func waitForIngressControllerCondition(t *testing.T, cl client.Client, timeout t
 
 func assertIngressControllerDeleted(t *testing.T, cl client.Client, ing *operatorv1.IngressController) {
 	t.Helper()
-	if err := deleteIngressController(t, cl, ing, 2*time.Minute); err != nil {
+	if err := deleteIngressController(t, cl, ing, 4*time.Minute); err != nil {
+		if apierrors.IsNotFound(errors.Unwrap(err)) {
+			return
+		}
 		t.Fatalf("WARNING: cloud resources may have been leaked! failed to delete ingresscontroller %s: %v", ing.Name, err)
 	} else {
 		t.Logf("deleted ingresscontroller %s", ing.Name)
@@ -3110,12 +3693,12 @@ func deleteIngressController(t *testing.T, cl client.Client, ic *operatorv1.Ingr
 	t.Helper()
 	name := types.NamespacedName{Namespace: ic.Namespace, Name: ic.Name}
 	if err := cl.Delete(context.TODO(), ic); err != nil {
-		return fmt.Errorf("failed to delete ingresscontroller: %v", err)
+		return fmt.Errorf("failed to delete ingresscontroller: %w", err)
 	}
 
 	err := wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
 		if err := cl.Get(context.TODO(), name, ic); err != nil {
-			if errors.IsNotFound(err) {
+			if apierrors.IsNotFound(err) {
 				return true, nil
 			}
 			t.Logf("failed to delete ingress controller %s/%s: %v", ic.Namespace, ic.Name, err)
@@ -3127,6 +3710,27 @@ func deleteIngressController(t *testing.T, cl client.Client, ic *operatorv1.Ingr
 		return fmt.Errorf("timed out waiting for ingresscontroller to be deleted: %v", err)
 	}
 	return nil
+}
+
+// assertServiceAnnotation asserts that the given service has the specified
+// annotation set (or not) as specified by the expectedValue and expected
+// arguments.
+func assertServiceAnnotation(t *testing.T, serviceName types.NamespacedName, annotationKey, expectedValue string, expected bool) {
+	t.Helper()
+
+	service := &corev1.Service{}
+	if err := kclient.Get(context.TODO(), serviceName, service); err != nil {
+		t.Fatalf("expected service %s to be present: %v", serviceName, err)
+	}
+	actualValue, ok := service.Annotations[annotationKey]
+	switch {
+	case !expected && ok:
+		t.Errorf("service %s has unexpected %s=%s annotation", serviceName, annotationKey, actualValue)
+	case expected && !ok:
+		t.Errorf("service %s is missing expected %s=%s annotation: %v", serviceName, annotationKey, expectedValue, service.Annotations)
+	case expected && expectedValue != actualValue:
+		t.Errorf("expected service %[1]s to have annotation %[2]s=%[3]s, found %[2]s=%[4]s", serviceName, annotationKey, expectedValue, actualValue)
+	}
 }
 
 // assertServiceNotDeleted asserts that a provide service wasn't deleted.
@@ -3199,7 +3803,7 @@ u3YLAbyW/lHhOCiZu2iAI8AbmXem9lW6Tr7p/97s0w==
 		Type: corev1.SecretTypeTLS,
 	}
 
-	if err := cl.Delete(context.TODO(), secret); err != nil && !errors.IsNotFound(err) {
+	if err := cl.Delete(context.TODO(), secret); err != nil && !apierrors.IsNotFound(err) {
 		return nil, err
 	}
 

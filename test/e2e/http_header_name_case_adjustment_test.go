@@ -27,6 +27,7 @@ import (
 )
 
 func TestHeaderNameCaseAdjustment(t *testing.T) {
+	t.Parallel()
 	testHeaderNames := []operatorv1.IngressControllerHTTPHeaderNameCaseAdjustment{
 		"X-Forwarded-For",
 		"Cache-Control",
@@ -102,9 +103,13 @@ func TestHeaderNameCaseAdjustment(t *testing.T) {
 		t.Fatalf("failed to create kube client: %v", err)
 	}
 
+	extraCurlArgs := []string{
+		"-v",
+		"--resolve", echoRoute.Spec.Host + ":80:" + service.Spec.ClusterIP,
+	}
 	name := "header-name-case-adjustment-test"
 	image := deployment.Spec.Template.Spec.Containers[0].Image
-	clientPod := buildCurlPod(name, echoRoute.Namespace, image, echoRoute.Spec.Host, service.Spec.ClusterIP, "-v")
+	clientPod := buildCurlPod(name, echoRoute.Namespace, image, echoRoute.Spec.Host, service.Spec.ClusterIP, extraCurlArgs...)
 	if err := kclient.Create(context.TODO(), clientPod); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
 	}

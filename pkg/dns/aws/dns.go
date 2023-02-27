@@ -1,6 +1,7 @@
 package aws
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 	"regexp"
@@ -23,9 +24,12 @@ import (
 	"github.com/aws/aws-sdk-go/service/resourcegroupstaggingapi"
 	"github.com/aws/aws-sdk-go/service/route53"
 
+	"k8s.io/apimachinery/pkg/types"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 
 	configv1 "github.com/openshift/api/config/v1"
+
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
@@ -42,6 +46,11 @@ const (
 	govCloudTaggingEndpoint = "https://tagging.us-gov-west-1.amazonaws.com"
 	// chinaRoute53Endpoint is the Route 53 service endpoint used for AWS China regions.
 	chinaRoute53Endpoint = "https://route53.amazonaws.com.cn"
+	// targetHostedZoneIdAnnotationKey is the key of an annotation that this
+	// provider adds to DNSRecord CRs to track the target hosted zone id of
+	// the ELB that is associated with the record, which is needed when
+	// deleting the record.
+	targetHostedZoneIdAnnotationKey = "ingress.operator.openshift.io/target-hosted-zone-id"
 )
 
 var (
@@ -91,6 +100,10 @@ type Config struct {
 	ServiceEndpoints []ServiceEndpoint
 	// CustomCABundle is a custom CA bundle to use when accessing the AWS API
 	CustomCABundle string
+
+	// Client is a Kubernetes client, which the provider uses to annotate
+	// DNSRecord CRs.
+	Client client.Client
 }
 
 // ServiceEndpoint stores the configuration of a custom url to
@@ -142,15 +155,20 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 	elbConfig := aws.NewConfig().WithRegion(region)
 	tagConfig := aws.NewConfig()
 
+	partition, ok := endpoints.PartitionForRegion(endpoints.DefaultPartitions(), region)
+	if !ok {
+		log.Info("unable to determine partition from region", "region name", region)
+	}
+
 	// If the region is in aws china, cn-north-1 or cn-northwest-1, we should:
 	// 1. hard code route53 api endpoint to https://route53.amazonaws.com.cn and region to "cn-northwest-1"
 	//    as route53 is not GA in AWS China and aws sdk didn't have the endpoint.
 	// 2. use the aws china region cn-northwest-1 to setup tagging api correctly instead of "us-east-1"
-	switch region {
-	case endpoints.CnNorth1RegionID, endpoints.CnNorthwest1RegionID:
+	switch partition.ID() {
+	case endpoints.AwsCnPartitionID:
 		tagConfig = tagConfig.WithRegion(endpoints.CnNorthwest1RegionID)
 		r53Config = r53Config.WithRegion(endpoints.CnNorthwest1RegionID).WithEndpoint(chinaRoute53Endpoint)
-	case endpoints.UsGovEast1RegionID, endpoints.UsGovWest1RegionID:
+	case endpoints.AwsUsGovPartitionID:
 		// Route53 for GovCloud uses the "us-gov-west-1" region id:
 		// https://docs.aws.amazon.com/govcloud-us/latest/UserGuide/using-govcloud-endpoints.html
 		r53Config = r53Config.WithRegion(endpoints.UsGovWest1RegionID)
@@ -158,10 +176,10 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 		// in the same region as the Route53 client to find the hosted zone
 		// of managed records.
 		tagConfig = tagConfig.WithRegion(endpoints.UsGovWest1RegionID)
-	case endpoints.UsIsoEast1RegionID:
-		// The resourcetagging API is not available in C2S
+	case endpoints.AwsIsoPartitionID, endpoints.AwsIsoBPartitionID:
+		// The resourcetagging API is not available in C2S or SC2S
 		tagConfig = nil
-		// Do not override the region in C2s
+		// Do not override the region in C2S or SC2S
 		r53Config = r53Config.WithRegion(region)
 	default:
 		// Since Route 53 is not a regionalized service, the Tagging API will
@@ -498,7 +516,40 @@ func (m *Provider) change(record *iov1.DNSRecord, zone configv1.DNSZone, action 
 	// Find the target hosted zone of the load balancer attached to the service.
 	targetHostedZoneID, err := m.getLBHostedZone(target)
 	if err != nil {
-		return fmt.Errorf("failed to get hosted zone for load balancer target %q: %v", target, err)
+		err = fmt.Errorf("failed to get hosted zone for load balancer target %q: %v", target, err)
+		if v, ok := record.Annotations[targetHostedZoneIdAnnotationKey]; !ok {
+			return err
+		} else {
+			log.Error(err, "falling back to the "+targetHostedZoneIdAnnotationKey+" annotation", "value", v)
+			targetHostedZoneID = v
+		}
+	}
+	// If this is an upsert, store the target hosted zone id in an
+	// annotation on the DNSRecord CR in case we later on need the id
+	// and for whatever reason cannot look it up using the AWS API.
+	if action == upsertAction {
+		var current iov1.DNSRecord
+		name := types.NamespacedName{
+			Namespace: record.Namespace,
+			Name:      record.Name,
+		}
+		if err := m.config.Client.Get(context.TODO(), name, &current); err != nil {
+			// Log the error and continue.  The annotation is only
+			// needed as a fallback mechanism, and anyway we might
+			// succeed in adding it on the next upsert.
+			log.Error(err, "failed to get dnsrecord", "dnsrecord", name)
+		} else if _, ok := current.Annotations[targetHostedZoneIdAnnotationKey]; !ok {
+			updated := current.DeepCopy()
+			if updated.Annotations == nil {
+				updated.Annotations = map[string]string{}
+			}
+			updated.Annotations[targetHostedZoneIdAnnotationKey] = targetHostedZoneID
+			if err := m.config.Client.Update(context.TODO(), updated); err != nil {
+				log.Error(err, "failed to annotate dnsrecord", "dnsrecord", name)
+			} else {
+				log.Info("annotated dnsrecord", "dnsrecord", name, "key", targetHostedZoneIdAnnotationKey, "value", targetHostedZoneID)
+			}
+		}
 	}
 
 	// Configure records.

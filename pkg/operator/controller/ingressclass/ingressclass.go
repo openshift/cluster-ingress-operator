@@ -78,6 +78,7 @@ func desiredIngressClass(haveIngressController bool, ingressControllerName strin
 	}
 
 	name := controller.IngressClassName(ingressControllerName)
+	scope := networkingv1.IngressClassParametersReferenceScopeCluster
 	class := &networkingv1.IngressClass{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name.Name,
@@ -88,6 +89,7 @@ func desiredIngressClass(haveIngressController bool, ingressControllerName strin
 				APIGroup: &operatorv1.GroupName,
 				Kind:     "IngressController",
 				Name:     ingressControllerName,
+				Scope:    &scope,
 			},
 		},
 	}
@@ -144,9 +146,9 @@ func (r *reconciler) updateIngressClass(current, desired *networkingv1.IngressCl
 	// Diff before updating because the client may mutate the object.
 	diff := cmp.Diff(current, updated, cmpopts.EquateEmpty())
 	if err := r.client.Update(context.TODO(), updated); err != nil {
-		log.Info("updated IngressClass", "name", updated.Name, "diff", diff)
 		return false, err
 	}
+	log.Info("updated IngressClass", "name", updated.Name, "diff", diff)
 	return true, nil
 }
 

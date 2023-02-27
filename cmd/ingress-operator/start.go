@@ -16,6 +16,7 @@ import (
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	canarycontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/canary"
 	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
+	routemetricscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/route-metrics"
 	statuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/status"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -132,6 +133,10 @@ func start(opts *StartOptions) error {
 	log.Info("registering Prometheus metrics for ingress_controller")
 	if err := ingresscontroller.RegisterMetrics(); err != nil {
 		log.Error(err, "unable to register metrics for ingress_controller")
+	}
+	log.Info("registering Prometheus metrics for route_metrics_controller")
+	if err := routemetricscontroller.RegisterMetrics(); err != nil {
+		log.Error(err, "unable to register metrics for route_metrics_controller")
 	}
 
 	// Set up and start the file watcher.
