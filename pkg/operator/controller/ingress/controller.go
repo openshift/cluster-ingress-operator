@@ -14,6 +14,7 @@ import (
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	routemetrics "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/route-metrics"
+	"github.com/openshift/cluster-ingress-operator/pkg/resources/dnsrecord"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/ingresscontroller"
 	retryable "github.com/openshift/cluster-ingress-operator/pkg/util/retryableerror"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/slice"
@@ -51,7 +52,6 @@ const (
 // TODO: consider moving these to openshift/api
 const (
 	IngressControllerAdmittedConditionType                       = "Admitted"
-	IngressControllerPodsScheduledConditionType                  = "PodsScheduled"
 	IngressControllerDeploymentAvailableConditionType            = "DeploymentAvailable"
 	IngressControllerDeploymentReplicasMinAvailableConditionType = "DeploymentReplicasMinAvailable"
 	IngressControllerDeploymentReplicasAllAvailableConditionType = "DeploymentReplicasAllAvailable"
@@ -289,7 +289,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	// TODO: Remove this in 4.13
 	if eps := ingress.Status.EndpointPublishingStrategy; eps != nil && eps.Type == operatorv1.LoadBalancerServiceStrategyType && eps.LoadBalancer != nil {
 
-		domainMatchesBaseDomain := manageDNSForDomain(ingress.Status.Domain, platformStatus, dnsConfig)
+		domainMatchesBaseDomain := dnsrecord.ManageDNSForDomain(ingress.Status.Domain, platformStatus, dnsConfig)
 
 		// Set dnsManagementPolicy based on current domain on the ingresscontroller
 		// and base domain on dns config. This is needed to ensure the correct dnsManagementPolicy
@@ -331,7 +331,7 @@ func (r *reconciler) admit(current *operatorv1.IngressController, ingressConfig 
 	// To set default publishing strategy we need to verify if the domains match
 	// so that we can set the appropriate dnsManagementPolicy. This can only be
 	// done after status.domain has been updated in setDefaultDomain().
-	domainMatchesBaseDomain := manageDNSForDomain(updated.Status.Domain, platformStatus, dnsConfig)
+	domainMatchesBaseDomain := dnsrecord.ManageDNSForDomain(updated.Status.Domain, platformStatus, dnsConfig)
 	setDefaultPublishingStrategy(updated, platformStatus, domainMatchesBaseDomain, ingressConfig, alreadyAdmitted)
 
 	// The TLS security profile need not be defaulted.  If none is set, we
@@ -562,8 +562,28 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, platformStat
 					statusLB.ProviderParameters.GCP.ClientAccess = specClientAccess
 					changed = true
 				}
+			case operatorv1.IBMLoadBalancerProvider:
+				// The only provider parameter that is supported
+				// for IBM is the Protocol parameter.
+				var statusProtocol operatorv1.IngressControllerProtocol
+				specProtocol := specLB.ProviderParameters.IBM.Protocol
+				if statusLB.ProviderParameters != nil && statusLB.ProviderParameters.IBM != nil {
+					statusProtocol = statusLB.ProviderParameters.IBM.Protocol
+				}
+				if specProtocol != statusProtocol {
+					if statusLB.ProviderParameters == nil {
+						statusLB.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{}
+					}
+					if len(statusLB.ProviderParameters.Type) == 0 {
+						statusLB.ProviderParameters.Type = operatorv1.IBMLoadBalancerProvider
+					}
+					if statusLB.ProviderParameters.IBM == nil {
+						statusLB.ProviderParameters.IBM = &operatorv1.IBMLoadBalancerParameters{}
+					}
+					statusLB.ProviderParameters.IBM.Protocol = specProtocol
+					changed = true
+				}
 			}
-
 			return changed
 		}
 	case operatorv1.NodePortServiceStrategyType:
@@ -671,6 +691,14 @@ func setDefaultProviderParameters(lbs *operatorv1.LoadBalancerStrategy, ingressC
 		lbs.ProviderParameters.Type = provider
 		if lbs.ProviderParameters.GCP == nil {
 			lbs.ProviderParameters.GCP = &operatorv1.GCPLoadBalancerParameters{}
+		}
+	case operatorv1.IBMLoadBalancerProvider:
+		if lbs.ProviderParameters == nil {
+			lbs.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{}
+		}
+		lbs.ProviderParameters.Type = provider
+		if lbs.ProviderParameters.IBM == nil {
+			lbs.ProviderParameters.IBM = &operatorv1.IBMLoadBalancerParameters{}
 		}
 	}
 }
@@ -887,10 +915,11 @@ func (r *reconciler) ensureIngressDeleted(ingress *operatorv1.IngressController)
 
 	// Delete the wildcard DNS record, and block ingresscontroller finalization
 	// until the dnsrecord has been finalized.
-	if err := r.deleteWildcardDNSRecord(ingress); err != nil {
+	dnsRecordName := operatorcontroller.WildcardDNSRecordName(ingress)
+	if err := dnsrecord.DeleteDNSRecord(r.client, dnsRecordName); err != nil {
 		errs = append(errs, fmt.Errorf("failed to delete wildcard dnsrecord for ingress %s/%s: %v", ingress.Namespace, ingress.Name, err))
 	}
-	haveRec, _, err := r.currentWildcardDNSRecord(ingress)
+	haveRec, _, err := dnsrecord.CurrentDNSRecord(r.client, dnsRecordName)
 	switch {
 	case err != nil:
 		errs = append(errs, fmt.Errorf("failed to get current wildcard dnsrecord for ingress %s/%s: %v", ingress.Namespace, ingress.Name, err))
@@ -1025,7 +1054,19 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		errs = append(errs, fmt.Errorf("failed to ensure load balancer service for %s: %v", ci.Name, err))
 	} else {
 		lbService = lb
-		if _, record, err := r.ensureWildcardDNSRecord(ci, lbService, haveLB); err != nil {
+		dnsRecordName := operatorcontroller.WildcardDNSRecordName(ci)
+		icRef := metav1.OwnerReference{
+			APIVersion:         operatorv1.GroupVersion.String(),
+			Kind:               "IngressController",
+			Name:               ci.Name,
+			UID:                ci.UID,
+			Controller:         &trueVar,
+			BlockOwnerDeletion: &trueVar,
+		}
+		dnsRecordLabels := map[string]string{
+			manifests.OwningIngressControllerLabel: ci.Name,
+		}
+		if _, record, err := dnsrecord.EnsureWildcardDNSRecord(r.client, dnsRecordName, dnsRecordLabels, icRef, ci.Status.Domain, ci.Status.EndpointPublishingStrategy, lbService, haveLB); err != nil {
 			errs = append(errs, fmt.Errorf("failed to ensure wildcard dnsrecord for %s: %v", ci.Name, err))
 		} else {
 			wildcardRecord = record
@@ -1036,8 +1077,10 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		errs = append(errs, err)
 	}
 
-	if internalSvc, err := r.ensureInternalIngressControllerService(ci, deploymentRef); err != nil {
+	if haveSvc, internalSvc, err := r.ensureInternalIngressControllerService(ci, deploymentRef); err != nil {
 		errs = append(errs, fmt.Errorf("failed to create internal router service for ingresscontroller %s: %v", ci.Name, err))
+	} else if !haveSvc {
+		errs = append(errs, fmt.Errorf("failed to get internal route service for ingresscontroller %s: %w", ci.Name, err))
 	} else if err := r.ensureMetricsIntegration(ci, internalSvc, deploymentRef); err != nil {
 		errs = append(errs, fmt.Errorf("failed to integrate metrics with openshift-monitoring for ingresscontroller %s: %v", ci.Name, err))
 	}
@@ -1097,9 +1140,9 @@ func IsProxyProtocolNeeded(ic *operatorv1.IngressController, platform *configv1.
 	}
 	switch ic.Status.EndpointPublishingStrategy.Type {
 	case operatorv1.LoadBalancerServiceStrategyType:
-		// For now, check if we are on AWS. This can really be done for for any external
-		// [cloud] LBs that support the proxy protocol.
-		if platform.Type == configv1.AWSPlatformType {
+		// This can really be done for for any external [cloud] LBs that support the proxy protocol.
+		switch platform.Type {
+		case configv1.AWSPlatformType:
 			if ic.Status.EndpointPublishingStrategy.LoadBalancer == nil ||
 				ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters == nil ||
 				ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS == nil ||
@@ -1107,7 +1150,15 @@ func IsProxyProtocolNeeded(ic *operatorv1.IngressController, platform *configv1.
 					ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.Type == operatorv1.AWSClassicLoadBalancer {
 				return true, nil
 			}
+		case configv1.IBMCloudPlatformType:
+			if ic.Status.EndpointPublishingStrategy.LoadBalancer != nil &&
+				ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters != nil &&
+				ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.IBM != nil &&
+				ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.IBM.Protocol == operatorv1.ProxyProtocol {
+				return true, nil
+			}
 		}
+
 	case operatorv1.HostNetworkStrategyType:
 		if ic.Status.EndpointPublishingStrategy.HostNetwork != nil {
 			return ic.Status.EndpointPublishingStrategy.HostNetwork.Protocol == operatorv1.ProxyProtocol, nil

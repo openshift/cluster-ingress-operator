@@ -9,6 +9,13 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 	routev1 "github.com/openshift/api/route/v1"
 
+	maistrav1 "github.com/maistra/istio-operator/pkg/apis/maistra/v1"
+	maistrav2 "github.com/maistra/istio-operator/pkg/apis/maistra/v2"
+	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
+	gatewayapiv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
+
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+
 	kscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 
@@ -40,6 +47,21 @@ func init() {
 		panic(err)
 	}
 	if err := routev1.Install(scheme); err != nil {
+		panic(err)
+	}
+	if err := apiextensionsv1.AddToScheme(scheme); err != nil {
+		panic(err)
+	}
+	if err := gatewayapiv1beta1.Install(scheme); err != nil {
+		panic(err)
+	}
+	if err := operatorsv1alpha1.AddToScheme(scheme); err != nil {
+		panic(err)
+	}
+	if err := maistrav1.SchemeBuilder.AddToScheme(scheme); err != nil {
+		panic(err)
+	}
+	if err := maistrav2.SchemeBuilder.AddToScheme(scheme); err != nil {
 		panic(err)
 	}
 }

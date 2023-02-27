@@ -28,6 +28,9 @@ import (
 	configurableroutecontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/configurable-route"
 	crlcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/crl"
 	dnscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/dns"
+	gatewayservicednscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gateway-service-dns"
+	gatewayapicontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gatewayapi"
+	gatewayclasscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gatewayclass"
 	ingress "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 	ingressclasscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingressclass"
@@ -43,6 +46,7 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
 
@@ -184,7 +188,11 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 
 	// Set up the DNS controller
 	if _, err := dnscontroller.New(mgr, dnscontroller.Config{
-		Namespace:              config.Namespace,
+		CredentialsRequestNamespace: config.Namespace,
+		DNSRecordNamespaces: []string{
+			config.Namespace,
+			operatorcontroller.DefaultOperandNamespace,
+		},
 		OperatorReleaseVersion: config.OperatorReleaseVersion,
 	}); err != nil {
 		return nil, fmt.Errorf("failed to create dns controller: %v", err)
@@ -212,6 +220,37 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	// Set up the route metrics controller.
 	if _, err := routemetricscontroller.New(mgr, config.Namespace); err != nil {
 		return nil, fmt.Errorf("failed to create route metrics controller: %w", err)
+	}
+
+	// Set up the gatewayclass controller.  This controller is unmanaged by
+	// the manager; the gatewayapi controller starts it after it creates the
+	// Gateway API CRDs.
+	gatewayClassController, err := gatewayclasscontroller.NewUnmanaged(mgr, gatewayclasscontroller.Config{
+		OperatorNamespace: config.Namespace,
+		OperandNamespace:  operatorcontroller.DefaultOperandNamespace,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create gatewayclass controller: %w", err)
+	}
+
+	// Set up the Service DNS controller.  This controller is unmanaged by
+	// the manager; the gatewayapi controller starts it after it creates the
+	// Gateway API CRDs.
+	gatewayServiceDNSController, err := gatewayservicednscontroller.NewUnmanaged(mgr, gatewayservicednscontroller.Config{
+		OperandNamespace: operatorcontroller.DefaultOperandNamespace,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create gateway-service-dns controller: %v", err)
+	}
+
+	// Set up the gatewayapi controller.
+	if _, err := gatewayapicontroller.New(mgr, gatewayapicontroller.Config{
+		DependentControllers: []controller.Controller{
+			gatewayClassController,
+			gatewayServiceDNSController,
+		},
+	}); err != nil {
+		return nil, fmt.Errorf("failed to create gatewayapi controller: %w", err)
 	}
 
 	return &Operator{
@@ -321,7 +360,7 @@ func (o *Operator) handleSingleNode4Dot11Upgrade() error {
 	if len(nodes.Items) == 1 &&
 		infraConfig.Status.ControlPlaneTopology == configv1.SingleReplicaTopologyMode &&
 		infraConfig.Status.InfrastructureTopology == configv1.SingleReplicaTopologyMode &&
-		infraConfig.Status.PlatformStatus.Type == configv1.NonePlatformType {
+		(infraConfig.Status.PlatformStatus.Type == configv1.NonePlatformType || infraConfig.Status.PlatformStatus.Type == configv1.ExternalPlatformType) {
 		desiredDefaultPlacement = configv1.DefaultPlacementControlPlane
 	}
 
@@ -339,7 +378,7 @@ func (o *Operator) handleSingleNode4Dot11Upgrade() error {
 		return fmt.Errorf("unable to update ingress config %q: %w", ingressConfigName.Name, err)
 	}
 
-	log.Info("Patched %q ingress config defaultPlacement status to %q", ingressConfigName.Name, desiredDefaultPlacement)
+	log.Info("Patched ingress config defaultPlacement status", ingressConfigName.Name, desiredDefaultPlacement)
 
 	return nil
 }

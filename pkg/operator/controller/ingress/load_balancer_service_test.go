@@ -857,6 +857,13 @@ func TestLoadBalancerServiceChanged(t *testing.T) {
 			},
 			expect: true,
 		},
+		{
+			description: "if the service.kubernetes.io/ibm-load-balancer-cloud-provider-enable-features annotation is added",
+			mutate: func(svc *corev1.Service) {
+				svc.Annotations["service.kubernetes.io/ibm-load-balancer-cloud-provider-enable-features"] = "proxy-protocol"
+			},
+			expect: true,
+		},
 	}
 
 	for _, tc := range testCases {

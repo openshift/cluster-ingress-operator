@@ -9,6 +9,7 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
+	util "github.com/openshift/cluster-ingress-operator/pkg/util"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -290,6 +291,12 @@ func TestSetDefaultPublishingStrategySetsPlatformDefaults(t *testing.T) {
 			domainMatchesBaseDomain: true,
 		},
 		{
+			name:                    "External platform",
+			platformStatus:          makePlatformStatus(configv1.ExternalPlatformType),
+			expectedIC:              ingressControllerWithHostNetwork,
+			domainMatchesBaseDomain: true,
+		},
+		{
 			name:                    "OpenStack",
 			platformStatus:          makePlatformStatus(configv1.OpenStackPlatformType),
 			expectedIC:              ingressControllerWithHostNetwork,
@@ -430,6 +437,16 @@ func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
 				Type: operatorv1.GCPLoadBalancerProvider,
 				GCP: &operatorv1.GCPLoadBalancerParameters{
 					ClientAccess: clientAccess,
+				},
+			}
+			return eps
+		}
+		ibmLB = func(protocol operatorv1.IngressControllerProtocol) *operatorv1.EndpointPublishingStrategy {
+			eps := eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS))
+			eps.LoadBalancer.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{
+				Type: operatorv1.IBMLoadBalancerProvider,
+				IBM: &operatorv1.IBMLoadBalancerParameters{
+					Protocol: protocol,
 				},
 			}
 			return eps
@@ -628,6 +645,27 @@ func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
 			ic:                      makeIC(spec(gcpLB(operatorv1.GCPLocalAccess)), status(gcpLB(operatorv1.GCPGlobalAccess))),
 			expectedResult:          true,
 			expectedIC:              makeIC(spec(gcpLB(operatorv1.GCPLocalAccess)), status(gcpLB(operatorv1.GCPLocalAccess))),
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name:                    "loadbalancer IBM Protocol changed from unset to PROXY",
+			ic:                      makeIC(spec(ibmLB(operatorv1.ProxyProtocol)), status(eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS)))),
+			expectedResult:          true,
+			expectedIC:              makeIC(spec(ibmLB(operatorv1.ProxyProtocol)), status(ibmLB(operatorv1.ProxyProtocol))),
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name:                    "loadbalancer IBM Protocol changed from TCP to PROXY",
+			ic:                      makeIC(spec(ibmLB(operatorv1.ProxyProtocol)), status(ibmLB(operatorv1.TCPProtocol))),
+			expectedResult:          true,
+			expectedIC:              makeIC(spec(ibmLB(operatorv1.ProxyProtocol)), status(ibmLB(operatorv1.ProxyProtocol))),
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name:                    "loadbalancer IBM Protocol changed from PROXY to TCP",
+			ic:                      makeIC(spec(ibmLB(operatorv1.TCPProtocol)), status(ibmLB(operatorv1.ProxyProtocol))),
+			expectedResult:          true,
+			expectedIC:              makeIC(spec(ibmLB(operatorv1.TCPProtocol)), status(ibmLB(operatorv1.TCPProtocol))),
 			domainMatchesBaseDomain: true,
 		},
 		{
@@ -964,18 +1002,18 @@ func TestTLSProfileSpecForSecurityProfile(t *testing.T) {
 		tlsProfileSpec := tlsProfileSpecForSecurityProfile(ic.Spec.TLSSecurityProfile)
 		err := validateTLSSecurityProfile(ic)
 		if tc.valid && err != nil {
-			t.Errorf("%q: unexpected error: %v\nprofile:\n%s", tc.description, err, toYaml(tlsProfileSpec))
+			t.Errorf("%q: unexpected error: %v\nprofile:\n%s", tc.description, err, util.ToYaml(tlsProfileSpec))
 			continue
 		}
 		if !tc.valid && err == nil {
-			t.Errorf("%q: expected error for profile:\n%s", tc.description, toYaml(tlsProfileSpec))
+			t.Errorf("%q: expected error for profile:\n%s", tc.description, util.ToYaml(tlsProfileSpec))
 			continue
 		}
 		if tc.expectedSpec != nil && !reflect.DeepEqual(tc.expectedSpec, tlsProfileSpec) {
-			t.Errorf("%q: expected profile:\n%s\ngot profile:\n%s", tc.description, toYaml(tc.expectedSpec), toYaml(tlsProfileSpec))
+			t.Errorf("%q: expected profile:\n%s\ngot profile:\n%s", tc.description, util.ToYaml(tc.expectedSpec), util.ToYaml(tlsProfileSpec))
 			continue
 		}
-		t.Logf("%q: got expected values; profile:\n%s\nerror value: %v", tc.description, toYaml(tlsProfileSpec), err)
+		t.Logf("%q: got expected values; profile:\n%s\nerror value: %v", tc.description, util.ToYaml(tlsProfileSpec), err)
 	}
 }
 
@@ -1118,7 +1156,7 @@ func TestTLSProfileSpecForIngressController(t *testing.T) {
 		}
 		tlsProfileSpec := tlsProfileSpecForIngressController(ic, api)
 		if !reflect.DeepEqual(tc.expectedSpec, tlsProfileSpec) {
-			t.Errorf("%q: expected profile:\n%v\ngot profile:\n%v", tc.description, toYaml(tc.expectedSpec), toYaml(tlsProfileSpec))
+			t.Errorf("%q: expected profile:\n%v\ngot profile:\n%v", tc.description, util.ToYaml(tc.expectedSpec), util.ToYaml(tlsProfileSpec))
 		}
 	}
 }
@@ -1244,6 +1282,9 @@ func TestIsProxyProtocolNeeded(t *testing.T) {
 		bareMetalPlatform = configv1.PlatformStatus{
 			Type: configv1.BareMetalPlatformType,
 		}
+		ibmcloudPlatform = configv1.PlatformStatus{
+			Type: configv1.IBMCloudPlatformType,
+		}
 
 		hostNetworkStrategy = operatorv1.EndpointPublishingStrategy{
 			Type: operatorv1.HostNetworkStrategyType,
@@ -1276,6 +1317,17 @@ func TestIsProxyProtocolNeeded(t *testing.T) {
 					Type: operatorv1.AWSLoadBalancerProvider,
 					AWS: &operatorv1.AWSLoadBalancerParameters{
 						Type: operatorv1.AWSNetworkLoadBalancer,
+					},
+				},
+			},
+		}
+		loadBalancerStrategyWithIBMCloudPROXY = operatorv1.EndpointPublishingStrategy{
+			Type: operatorv1.LoadBalancerServiceStrategyType,
+			LoadBalancer: &operatorv1.LoadBalancerStrategy{
+				ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+					Type: operatorv1.IBMLoadBalancerProvider,
+					IBM: &operatorv1.IBMLoadBalancerParameters{
+						Protocol: operatorv1.ProxyProtocol,
 					},
 				},
 			},
@@ -1383,6 +1435,18 @@ func TestIsProxyProtocolNeeded(t *testing.T) {
 			strategy:    &loadBalancerStrategy,
 			platform:    &gcpPlatform,
 			expect:      false,
+		},
+		{
+			description: "loadbalancer strategy shouldn't use PROXY on IBMCloud",
+			strategy:    &loadBalancerStrategy,
+			platform:    &ibmcloudPlatform,
+			expect:      false,
+		},
+		{
+			description: "loadbalancer strategy with ProxyProtocol enabled on IBMCloud should use PROXY",
+			strategy:    &loadBalancerStrategyWithIBMCloudPROXY,
+			platform:    &ibmcloudPlatform,
+			expect:      true,
 		},
 		{
 			description: "empty nodeport strategy shouldn't use PROXY",

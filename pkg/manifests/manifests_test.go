@@ -43,4 +43,9 @@ func TestManifests(t *testing.T) {
 	RouterDeployment()
 	InternalIngressControllerService()
 	LoadBalancerService()
+
+	GatewayClassCRD()
+	GatewayCRD()
+	HTTPRouteCRD()
+	ReferenceGrantCRD()
 }

@@ -95,6 +95,12 @@ const (
 	// IP as private.
 	iksLBScopePrivate = "private"
 
+	// iksLBEnableFeaturesAnnotation is the annotation used on a service to enable features
+	// on the load balancer.
+	iksLBEnableFeaturesAnnotation = "service.kubernetes.io/ibm-load-balancer-cloud-provider-enable-features"
+	// iksLBEnableFeaturesProxyProtocol is the service annotation value used to enable proxy protocol on an IBM load balancer
+	iksLBEnableFeaturesProxyProtocol = "proxy-protocol"
+
 	// azureInternalLBAnnotation is the annotation used on a service to specify an Azure
 	// load balancer as being internal.
 	azureInternalLBAnnotation = "service.beta.kubernetes.io/azure-load-balancer-internal"
@@ -167,7 +173,8 @@ var (
 		configv1.OpenStackPlatformType: {
 			openstackInternalLBAnnotation: "true",
 		},
-		configv1.NonePlatformType: nil,
+		configv1.NonePlatformType:     nil,
+		configv1.ExternalPlatformType: nil,
 		// vSphere does not support load balancers as of 2019-06-17.
 		configv1.VSpherePlatformType: nil,
 		configv1.IBMCloudPlatformType: {
@@ -235,6 +242,11 @@ var (
 			//
 			// https://kubernetes.io/docs/concepts/services-networking/service/#proxy-protocol-support-on-aws
 			awsLBProxyProtocolAnnotation,
+			// iksLBEnableFeaturesAnnotation annotation used on a service to enable features
+			// on the load balancer.
+			//
+			// https://cloud.ibm.com/docs/containers?topic=containers-vpc-lbaas
+			iksLBEnableFeaturesAnnotation,
 		)
 
 		// Azure and GCP support switching between internal and external
@@ -352,10 +364,10 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 	if service.Annotations == nil {
 		service.Annotations = map[string]string{}
 	}
-	if proxyNeeded, err := IsProxyProtocolNeeded(ci, platform); err != nil {
+
+	proxyNeeded, err := IsProxyProtocolNeeded(ci, platform)
+	if err != nil {
 		return false, nil, fmt.Errorf("failed to determine if proxy protocol is proxyNeeded for ingresscontroller %q: %v", ci.Name, err)
-	} else if proxyNeeded {
-		service.Annotations[awsLBProxyProtocolAnnotation] = "*"
 	}
 
 	if platform != nil {
@@ -383,6 +395,9 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 		switch platform.Type {
 		case configv1.AWSPlatformType:
 			service.Annotations[awsLBHealthCheckIntervalAnnotation] = awsLBHealthCheckIntervalDefault
+			if proxyNeeded {
+				service.Annotations[awsLBProxyProtocolAnnotation] = "*"
+			}
 			if lb != nil && lb.ProviderParameters != nil {
 				if aws := lb.ProviderParameters.AWS; aws != nil && lb.ProviderParameters.Type == operatorv1.AWSLoadBalancerProvider {
 					switch aws.Type {
@@ -423,6 +438,10 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 			// LB relies on iptable rules kube-proxy puts in to send traffic from the VIP node to the cluster
 			// If policy is local, traffic is only sent to pods on the local node, as such Cluster enables traffic to flow to  all the pods in the cluster
 			service.Spec.ExternalTrafficPolicy = corev1.ServiceExternalTrafficPolicyTypeCluster
+			if proxyNeeded {
+				service.Annotations[iksLBEnableFeaturesAnnotation] = iksLBEnableFeaturesProxyProtocol
+			}
+
 		case configv1.AlibabaCloudPlatformType:
 			if !isInternal {
 				service.Annotations[alibabaCloudLBAddressTypeAnnotation] = alibabaCloudLBAddressTypeInternet

@@ -13,6 +13,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/yaml"
@@ -39,6 +40,11 @@ const (
 	CanaryDaemonSetAsset = "assets/canary/daemonset.yaml"
 	CanaryServiceAsset   = "assets/canary/service.yaml"
 	CanaryRouteAsset     = "assets/canary/route.yaml"
+
+	GatewayClassCRDAsset   = "assets/gateway-api/gateway.networking.k8s.io_gatewayclasses.yaml"
+	GatewayCRDAsset        = "assets/gateway-api/gateway.networking.k8s.io_gateways.yaml"
+	HTTPRouteCRDAsset      = "assets/gateway-api/gateway.networking.k8s.io_httproutes.yaml"
+	ReferenceGrantCRDAsset = "assets/gateway-api/gateway.networking.k8s.io_referencegrants.yaml"
 
 	// Annotation used to inform the certificate generation service to
 	// generate a cluster-signed certificate and populate the secret.
@@ -213,6 +219,38 @@ func CanaryRoute() *routev1.Route {
 	return route
 }
 
+func GatewayClassCRD() *apiextensionsv1.CustomResourceDefinition {
+	crd, err := NewCustomResourceDefinition(MustAssetReader(GatewayClassCRDAsset))
+	if err != nil {
+		panic(err)
+	}
+	return crd
+}
+
+func GatewayCRD() *apiextensionsv1.CustomResourceDefinition {
+	crd, err := NewCustomResourceDefinition(MustAssetReader(GatewayCRDAsset))
+	if err != nil {
+		panic(err)
+	}
+	return crd
+}
+
+func HTTPRouteCRD() *apiextensionsv1.CustomResourceDefinition {
+	crd, err := NewCustomResourceDefinition(MustAssetReader(HTTPRouteCRDAsset))
+	if err != nil {
+		panic(err)
+	}
+	return crd
+}
+
+func ReferenceGrantCRD() *apiextensionsv1.CustomResourceDefinition {
+	crd, err := NewCustomResourceDefinition(MustAssetReader(ReferenceGrantCRDAsset))
+	if err != nil {
+		panic(err)
+	}
+	return crd
+}
+
 func NewServiceAccount(manifest io.Reader) (*corev1.ServiceAccount, error) {
 	sa := corev1.ServiceAccount{}
 	if err := yaml.NewYAMLOrJSONDecoder(manifest, 100).Decode(&sa); err != nil {
@@ -296,6 +334,15 @@ func NewDaemonSet(manifest io.Reader) (*appsv1.DaemonSet, error) {
 
 func NewRoute(manifest io.Reader) (*routev1.Route, error) {
 	o := routev1.Route{}
+	if err := yaml.NewYAMLOrJSONDecoder(manifest, 100).Decode(&o); err != nil {
+		return nil, err
+	}
+
+	return &o, nil
+}
+
+func NewCustomResourceDefinition(manifest io.Reader) (*apiextensionsv1.CustomResourceDefinition, error) {
+	o := apiextensionsv1.CustomResourceDefinition{}
 	if err := yaml.NewYAMLOrJSONDecoder(manifest, 100).Decode(&o); err != nil {
 		return nil, err
 	}

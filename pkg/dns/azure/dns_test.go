@@ -1,12 +1,14 @@
 package azure_test
 
 import (
+	"fmt"
+	"reflect"
 	"testing"
 
+	"github.com/Azure/go-autorest/autorest/to"
 	"github.com/pkg/errors"
 
 	configv1 "github.com/openshift/api/config/v1"
-
 	iov1 "github.com/openshift/api/operatoringress/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns/azure"
@@ -94,5 +96,57 @@ func TestDeleteDNS(t *testing.T) {
 
 	if recordedCall != "DELETE" {
 		t.Fatalf("expected the dns client 'Delete' func to be called, but found %s instead", recordedCall)
+	}
+}
+
+func Test_GetTagList(t *testing.T) {
+	infra := configv1.Infrastructure{
+		Status: configv1.InfrastructureStatus{
+			InfrastructureName: "test-sdfhy",
+			PlatformStatus: &configv1.PlatformStatus{
+				Azure: &configv1.AzurePlatformStatus{
+					ResourceGroupName: "test-sdfhy-rg",
+					CloudName:         configv1.AzureStackCloud,
+				},
+			},
+		},
+	}
+
+	testCases := []struct {
+		name         string
+		userTags     []configv1.AzureResourceTag
+		expectedTags map[string]*string
+	}{
+		{
+			name:     "user tags not defined in Infrastructure.Status",
+			userTags: nil,
+			expectedTags: map[string]*string{
+				fmt.Sprintf("%s.%v", azure.OCPClusterIDTagKeyPrefix, infra.Status.InfrastructureName): to.StringPtr(azure.OCPClusterIDTagValue),
+			},
+		},
+		{
+			name: "user tags defined in Infrastructure.Status",
+			userTags: []configv1.AzureResourceTag{
+				{
+					Key:   "environment",
+					Value: "test",
+				},
+			},
+			expectedTags: map[string]*string{
+				fmt.Sprintf("%s.%v", azure.OCPClusterIDTagKeyPrefix, infra.Status.InfrastructureName): to.StringPtr(azure.OCPClusterIDTagValue),
+				"environment": to.StringPtr("test"),
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		infra.Status.PlatformStatus.Azure.ResourceTags = tc.userTags
+		t.Run(tc.name, func(t *testing.T) {
+			tags := azure.GetTagList(&infra.Status)
+
+			if !reflect.DeepEqual(tags, tc.expectedTags) {
+				t.Errorf("Expected %+v, got: %+v infra: %+v", tc.expectedTags, tags, infra)
+			}
+		})
 	}
 }

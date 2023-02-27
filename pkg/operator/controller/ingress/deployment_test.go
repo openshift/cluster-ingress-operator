@@ -362,14 +362,12 @@ func TestDesiredRouterDeploymentSpecTemplate(t *testing.T) {
 		}
 	}
 
-	if expected, got := 2, len(deployment.Spec.Template.Annotations); expected != got {
+	if expected, got := 1, len(deployment.Spec.Template.Annotations); expected != got {
 		t.Errorf("expected len(annotations)=%v, got %v", expected, got)
 	}
 
-	if val, ok := deployment.Spec.Template.Annotations[LivenessGracePeriodSecondsAnnotation]; !ok {
-		t.Errorf("missing annotation %q", LivenessGracePeriodSecondsAnnotation)
-	} else if expected := "10"; expected != val {
-		t.Errorf("expected annotation %q to be %q, got %q", LivenessGracePeriodSecondsAnnotation, expected, val)
+	if val, ok := deployment.Spec.Template.Annotations[LivenessGracePeriodSecondsAnnotation]; ok {
+		t.Errorf("expected annotation %[1]q not to be set, got %[1]s=%[2]s", LivenessGracePeriodSecondsAnnotation, val)
 	}
 
 	if val, ok := deployment.Spec.Template.Annotations[WorkloadPartitioningManagement]; !ok {
@@ -388,6 +386,9 @@ func TestDesiredRouterDeploymentSpecTemplate(t *testing.T) {
 
 	if len(deployment.Spec.Template.Spec.Containers[0].LivenessProbe.ProbeHandler.HTTPGet.Host) != 0 {
 		t.Errorf("expected empty liveness probe host, got %q", deployment.Spec.Template.Spec.Containers[0].LivenessProbe.ProbeHandler.HTTPGet.Host)
+	}
+	if deployment.Spec.Template.Spec.Containers[0].LivenessProbe.TerminationGracePeriodSeconds == nil {
+		t.Error("expected liveness probe's termination grace period to be set")
 	}
 	if len(deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.ProbeHandler.HTTPGet.Host) != 0 {
 		t.Errorf("expected empty readiness probe host, got %q", deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.ProbeHandler.HTTPGet.Host)
@@ -802,6 +803,37 @@ func TestDesiredRouterDeploymentHostNetworkNil(t *testing.T) {
 	checkContainerPort(t, deployment, "http", 80)
 	checkContainerPort(t, deployment, "https", 443)
 	checkContainerPort(t, deployment, "metrics", 1936)
+}
+
+func TestDesiredRouterDeploymentSingleReplica(t *testing.T) {
+	ic, ingressConfig, _, apiConfig, networkConfig, _ := getRouterDeploymentComponents(t)
+
+	infraConfig := &configv1.Infrastructure{
+		Status: configv1.InfrastructureStatus{
+			PlatformStatus: &configv1.PlatformStatus{
+				Type: configv1.IBMCloudPlatformType,
+			},
+			ControlPlaneTopology:   configv1.ExternalTopologyMode,
+			InfrastructureTopology: configv1.SingleReplicaTopologyMode,
+		},
+	}
+
+	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, false, false, nil)
+	if err != nil {
+		t.Fatalf("invalid router Deployment: %v", err)
+	}
+
+	if *deployment.Spec.Replicas != 1 {
+		t.Errorf("expected replicas to be 1, got %d", *deployment.Spec.Replicas)
+	}
+
+	if deployment.Spec.Template.Spec.Affinity.PodAffinity != nil {
+		t.Errorf("expected no pod affinity, got %+v", *deployment.Spec.Template.Spec.Affinity)
+	}
+
+	if deployment.Spec.Strategy.Type != "" || deployment.Spec.Strategy.RollingUpdate != nil {
+		t.Errorf("expected default deployment strategy, got %s", deployment.Spec.Strategy.Type)
+	}
 }
 
 func checkContainerPort(t *testing.T, d *appsv1.Deployment, portName string, port int32) {
@@ -1256,6 +1288,21 @@ func TestDeploymentConfigChanged(t *testing.T) {
 			expect: false,
 		},
 		{
+			description: "if the deployment template node affinity is changed",
+			mutate: func(deployment *appsv1.Deployment) {
+				deployment.Spec.Template.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[0].MatchExpressions[0].Values = []string{"xyz"}
+			},
+			expect: true,
+		},
+		{
+			description: "if the deployment template -affinity node selector expressions change ordering",
+			mutate: func(deployment *appsv1.Deployment) {
+				exprs := deployment.Spec.Template.Spec.Affinity.PodAntiAffinity.RequiredDuringSchedulingIgnoredDuringExecution[0].LabelSelector.MatchExpressions
+				exprs[0], exprs[1] = exprs[1], exprs[0]
+			},
+			expect: false,
+		},
+		{
 			description: "if probe values are set to default values",
 			mutate: func(deployment *appsv1.Deployment) {
 				deployment.Spec.Template.Spec.Containers[0].LivenessProbe.ProbeHandler.HTTPGet.Scheme = "HTTP"
@@ -1293,6 +1340,14 @@ func TestDeploymentConfigChanged(t *testing.T) {
 				deployment.Spec.Template.Spec.Containers[0].LivenessProbe.PeriodSeconds = int32(20)
 				deployment.Spec.Template.Spec.Containers[0].LivenessProbe.SuccessThreshold = int32(2)
 				deployment.Spec.Template.Spec.Containers[0].LivenessProbe.FailureThreshold = int32(30)
+			},
+			expect: true,
+		},
+		{
+			description: "if the liveness probe's terminationGracePeriodSeconds is changed",
+			mutate: func(deployment *appsv1.Deployment) {
+				v := int64(123)
+				deployment.Spec.Template.Spec.Containers[0].LivenessProbe.TerminationGracePeriodSeconds = &v
 			},
 			expect: true,
 		},
@@ -1407,6 +1462,15 @@ func TestDeploymentConfigChanged(t *testing.T) {
 			},
 			expect: true,
 		},
+		{
+			// This test case can be removed after OpenShift 4.13.
+			// See <https://issues.redhat.com/browse/OCPBUGS-4703>.
+			description: "if the unsupported.do-not-use.openshift.io/override-liveness-grace-period-seconds annotation is removed",
+			mutate: func(deployment *appsv1.Deployment) {
+				delete(deployment.Spec.Template.Annotations, LivenessGracePeriodSecondsAnnotation)
+			},
+			expect: true,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -1433,7 +1497,8 @@ func TestDeploymentConfigChanged(t *testing.T) {
 							controller.ControllerDeploymentHashLabel: "1",
 						},
 						Annotations: map[string]string{
-							WorkloadPartitioningManagement: "{\"effect\": \"PreferredDuringScheduling\"}",
+							LivenessGracePeriodSecondsAnnotation: "10",
+							WorkloadPartitioningManagement:       "{\"effect\": \"PreferredDuringScheduling\"}",
 						},
 					},
 					Spec: corev1.PodSpec{
@@ -1579,6 +1644,25 @@ func TestDeploymentConfigChanged(t *testing.T) {
 											},
 										},
 									},
+								},
+							},
+							NodeAffinity: &corev1.NodeAffinity{
+								RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+									NodeSelectorTerms: []corev1.NodeSelectorTerm{{
+										MatchExpressions: []corev1.NodeSelectorRequirement{
+											{
+												Key:      controller.RemoteWorkerLabel,
+												Operator: corev1.NodeSelectorOpNotIn,
+												Values:   []string{""},
+											},
+											// this match expression was added only for ordering change test case
+											{
+												Key:      controller.ControllerDeploymentHashLabel,
+												Operator: corev1.NodeSelectorOpIn,
+												Values:   []string{"1"},
+											},
+										},
+									}},
 								},
 							},
 						},

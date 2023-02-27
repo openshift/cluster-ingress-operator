@@ -12,7 +12,7 @@ func NewFake(config Config) (*FakeDNSClient, error) {
 	return &FakeDNSClient{fakeARM: map[string]string{}}, nil
 }
 
-func (c *FakeDNSClient) Put(ctx context.Context, zone Zone, arec ARecord) error {
+func (c *FakeDNSClient) Put(ctx context.Context, zone Zone, arec ARecord, metadata map[string]*string) error {
 	c.fakeARM[zone.ResourceGroup+zone.Name+arec.Name] = "PUT"
 	return nil
 }
