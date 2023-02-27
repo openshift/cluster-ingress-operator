@@ -7,6 +7,10 @@ metadata:
   namespace: openshift-ingress
   labels:
     app: router
+  annotations:
+    cloud.google.com/load-balancer-type: "External"
+    cloud.google.com/load-balancer-healthcheck-interval: "4s"
+    cloud.google.com/load-balancer-healthcheck-timeout: "3s"
 spec:
   type: LoadBalancer
   selector:
