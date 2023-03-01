@@ -108,5 +108,7 @@ func TestAll(t *testing.T) {
 		t.Run("TestRouteHardStopAfterEnableOnIngressConfig", TestRouteHardStopAfterEnableOnIngressConfig)
 		t.Run("TestRouteHardStopAfterEnableOnIngressControllerHasPriorityOverIngressConfig", TestRouteHardStopAfterEnableOnIngressControllerHasPriorityOverIngressConfig)
 		t.Run("TestHostNetworkPortBinding", TestHostNetworkPortBinding)
+		// Enabling the feature gate restarts all nodes, do this serially
+		t.Run("TestGatewayAPIResources", TestGatewayAPIResources)
 	})
 }
