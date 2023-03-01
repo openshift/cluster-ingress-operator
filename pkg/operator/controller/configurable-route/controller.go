@@ -86,11 +86,11 @@ func New(mgr manager.Manager, config Config, eventRecorder events.Recorder) (con
 		return ok
 	})
 
-	if err := c.Watch(source.NewKindWithCache(&rbacv1.Role{}, mgr.GetCache()), handler.EnqueueRequestsFromMapFunc(reconciler.resourceToClusterIngressConfig), defaultPredicate); err != nil {
+	if err := c.Watch(&source.Kind{Type: &rbacv1.Role{}}, handler.EnqueueRequestsFromMapFunc(reconciler.resourceToClusterIngressConfig), defaultPredicate); err != nil {
 		return nil, err
 	}
 
-	if err := c.Watch(source.NewKindWithCache(&rbacv1.RoleBinding{}, mgr.GetCache()), handler.EnqueueRequestsFromMapFunc(reconciler.resourceToClusterIngressConfig), defaultPredicate); err != nil {
+	if err := c.Watch(&source.Kind{Type: &rbacv1.RoleBinding{}}, handler.EnqueueRequestsFromMapFunc(reconciler.resourceToClusterIngressConfig), defaultPredicate); err != nil {
 		return nil, err
 	}
 
