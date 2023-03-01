@@ -60,33 +60,33 @@ func TestGetRR(t *testing.T) {
 	cases := []struct {
 		dnsName    string
 		domainName string
-		excepted   string
+		expected   string
 	}{
 		{
 			dnsName:    "test.example.com.",
 			domainName: "example.com",
-			excepted:   "test",
+			expected:   "test",
 		},
 		{
 			dnsName:    "test.subdomain.example.com.",
 			domainName: "example.com",
-			excepted:   "test.subdomain",
+			expected:   "test.subdomain",
 		},
 		{
 			dnsName:    "test.subdomain.example.com.",
 			domainName: "subdomain.example.com",
-			excepted:   "test",
+			expected:   "test",
 		},
 		{
 			dnsName:    "without.domain.",
 			domainName: "example.com",
-			excepted:   "without.domain",
+			expected:   "without.domain",
 		},
 	}
 
 	for _, c := range cases {
 		rr := getRR(c.dnsName, c.domainName)
-		assert.Equal(t, c.excepted, rr)
+		assert.Equal(t, c.expected, rr)
 	}
 }
 
