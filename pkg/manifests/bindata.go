@@ -24,6 +24,8 @@
 // manifests/00-custom-resource-definition.yaml (105.24kB)
 // manifests/00-ingress-credentials-request.yaml (4.861kB)
 // manifests/00-namespace.yaml (508B)
+// manifests/0000_10_ingress-operator_00_ingress-namespace.yaml (499B)
+// manifests/0000_10_ingress-operator_01_ingress-canary-namespace.yaml (506B)
 // manifests/0000_90_ingress-operator_00_prometheusrole.yaml (446B)
 // manifests/0000_90_ingress-operator_01_prometheusrolebinding.yaml (514B)
 // manifests/0000_90_ingress-operator_02_servicemonitor.yaml (720B)
@@ -586,6 +588,46 @@ func manifests00NamespaceYaml() (*asset, error) {
 	return a, nil
 }
 
+var _manifests0000_10_ingressOperator_00_ingressNamespaceYaml = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x94\x91\x4d\x6e\xe3\x30\x0c\x85\xf7\x3e\x05\x91\x59\x2b\x83\xd9\xfa\x0e\x33\x9b\x01\xba\xa7\xa5\x17\x9b\x0d\x4d\x1a\x12\xed\xa0\xb7\x2f\x9c\xf4\x27\x41\x17\x45\x97\x82\xbe\xef\x91\x4f\x3a\x8b\x95\x9e\xfe\xf1\x8c\xb6\x70\x46\xc7\x8b\x3c\xa1\x36\x71\xeb\x69\xfb\xd3\xcd\x08\x2e\x1c\xdc\x77\x44\x6c\xe6\xc1\x21\x6e\x6d\x3f\x12\x89\x65\x5d\x0b\x8e\x15\x0a\x6e\x38\xfa\x02\x6b\x93\x9c\xe2\x28\xfe\x5b\x86\x39\x65\xf5\xb5\xa4\x99\x8d\x47\x94\x9e\x0e\x51\x57\x1c\xbe\x57\x1b\xf4\xf4\x6e\xa5\x49\xc6\x29\xf1\xc6\xa2\x3c\x88\x4a\xbc\xfc\x20\x47\x6c\x54\x24\xf3\x82\x54\xb0\x41\x7d\x41\x7d\xd0\x1f\xf0\x2b\xd7\xa0\xc8\xe1\x3b\x76\x43\x2e\x5e\xcf\xea\x5c\x1e\xa3\x59\xd5\x2f\xd7\x4e\xb7\x3d\x67\x58\xec\xbc\xf2\x00\x7d\x7b\x9e\x5f\x74\xa5\x3e\x87\xa4\xd9\x4d\xc2\xab\xd8\x48\xe1\xa4\xee\x67\x3a\x79\xa5\xff\xa8\x9b\x64\xfc\xbd\xdd\x92\x0f\xcf\xc8\xd1\x48\x8c\x62\x92\x46\xf6\xf1\x39\x5f\x56\xce\xba\xb6\x40\xbd\x0b\xbe\xab\xb7\x7b\xfd\xdd\x74\xb1\xb1\xa2\xb5\xee\x35\x00\x00\xff\xff\x2f\xd3\x0e\x85\xf3\x01\x00\x00")
+
+func manifests0000_10_ingressOperator_00_ingressNamespaceYamlBytes() ([]byte, error) {
+	return bindataRead(
+		_manifests0000_10_ingressOperator_00_ingressNamespaceYaml,
+		"manifests/0000_10_ingress-operator_00_ingress-namespace.yaml",
+	)
+}
+
+func manifests0000_10_ingressOperator_00_ingressNamespaceYaml() (*asset, error) {
+	bytes, err := manifests0000_10_ingressOperator_00_ingressNamespaceYamlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "manifests/0000_10_ingress-operator_00_ingress-namespace.yaml", size: 499, mode: os.FileMode(420), modTime: time.Unix(1, 0)}
+	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0xec, 0x7b, 0xe8, 0x99, 0x89, 0xf1, 0x80, 0xac, 0x98, 0x2e, 0x62, 0x99, 0x98, 0x20, 0xf9, 0xfe, 0xbd, 0x63, 0x10, 0x9f, 0xe, 0x71, 0x4d, 0xe3, 0x3f, 0xdb, 0xf5, 0x63, 0x76, 0x87, 0x6, 0x4}}
+	return a, nil
+}
+
+var _manifests0000_10_ingressOperator_01_ingressCanaryNamespaceYaml = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x94\x91\x4d\x8e\xdb\x30\x0c\x85\xf7\x3e\x05\x91\xae\x95\xa2\x5b\xdf\xa1\xdd\x14\xe8\x9e\x96\x5e\x6c\x36\x34\x69\x48\xb4\x83\xdc\x7e\xe0\x64\x7e\x12\xcc\x62\x30\x4b\x41\xdf\xf7\xc8\x27\x9d\xc5\x4a\x4f\x7f\x78\x46\x5b\x38\xa3\xe3\x45\xfe\xa1\x36\x71\xeb\x69\xfb\xd5\xcd\x08\x2e\x1c\xdc\x77\x44\x6c\xe6\xc1\x21\x6e\x6d\x3f\x12\x89\x65\x5d\x0b\x8e\x15\x0a\x6e\x38\xfa\x02\x6b\x93\x9c\xe2\x28\xfe\x53\x86\x39\x65\xf5\xb5\xa4\x99\x8d\x47\x94\x9e\x0e\x51\x57\x1c\xbe\x56\x1b\xf4\xf4\x66\xa5\x49\xc6\x29\xf1\xc6\xa2\x3c\x88\x4a\x5c\xbf\x91\x23\x36\x2a\x92\x79\x41\x2a\xd8\xa0\xbe\xa0\x3e\xe9\x4f\xf8\x8d\x6b\x50\xe4\xf0\x1d\xbb\x23\x17\xaf\x67\x75\x2e\xcf\xd1\xac\xea\x97\x5b\xa7\xfb\x9e\x33\x2c\x76\x5e\x79\x80\xbe\x3e\xcf\x0f\xba\x51\x1f\x43\xd2\xec\x26\xe1\x55\x6c\xa4\x70\x52\xf7\x33\x9d\xbc\xd2\x5f\xd4\x4d\x32\x7e\xdf\x6f\xc9\x87\xff\xc8\xd1\x48\x8c\x62\x92\x46\xf6\xfe\x39\x9f\x56\xce\xba\xb6\x40\x7d\x08\x7e\xa8\xb7\x7b\xfd\xc3\x74\xb1\xb1\xa2\xb5\x94\xd9\xb8\x5e\xbb\x97\x00\x00\x00\xff\xff\xff\x2f\x04\x33\xfa\x01\x00\x00")
+
+func manifests0000_10_ingressOperator_01_ingressCanaryNamespaceYamlBytes() ([]byte, error) {
+	return bindataRead(
+		_manifests0000_10_ingressOperator_01_ingressCanaryNamespaceYaml,
+		"manifests/0000_10_ingress-operator_01_ingress-canary-namespace.yaml",
+	)
+}
+
+func manifests0000_10_ingressOperator_01_ingressCanaryNamespaceYaml() (*asset, error) {
+	bytes, err := manifests0000_10_ingressOperator_01_ingressCanaryNamespaceYamlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "manifests/0000_10_ingress-operator_01_ingress-canary-namespace.yaml", size: 506, mode: os.FileMode(420), modTime: time.Unix(1, 0)}
+	a := &asset{bytes: bytes, info: info, digest: [32]uint8{0xf0, 0xce, 0x64, 0xd1, 0x75, 0xf1, 0xed, 0x2b, 0xa8, 0x1e, 0xac, 0xdb, 0x62, 0x85, 0x1e, 0xc, 0x45, 0x5c, 0x9f, 0x34, 0x12, 0x68, 0xce, 0x13, 0x9c, 0xae, 0x65, 0xbe, 0x71, 0xb9, 0x97, 0xcf}}
+	return a, nil
+}
+
 var _manifests0000_90_ingressOperator_00_prometheusroleYaml = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x94\x8f\xb1\x6e\xe3\x30\x10\x44\x7b\x7d\x05\xe1\x9e\x3a\x5c\x67\xe8\x07\xae\xbf\x22\xfd\x8a\x1c\x4b\x0b\x53\xbb\xc4\x2e\xa9\x20\xf9\xfa\x40\xb2\xe3\x36\x48\xc5\x99\x01\xdf\x90\x43\x95\xdf\x60\xce\x2a\x53\xb0\x99\xd2\x48\xbd\xad\x6a\xfc\x49\x8d\x55\xc6\xfb\xd5\x47\xd6\x3f\xfb\xdf\xe1\xce\x92\xa7\xf0\x5f\x0b\x86\x0d\x8d\x32\x35\x9a\x86\x10\x84\x36\x4c\xa1\x9a\x6e\x68\x2b\xba\xc7\xfb\xd5\x9f\xb1\x57\x4a\x98\x82\x56\x88\xaf\x7c\x6b\x91\x65\x31\xb8\x47\xad\x30\x6a\x6a\x43\x08\x24\xa2\xed\x7c\xca\x8f\xb6\x10\x58\x52\xe9\x19\xa3\xa1\x80\x1c\xe3\x8b\x3e\xbe\xc1\xf3\x16\x53\xd1\x9e\xe3\x46\x42\x0b\xf2\x14\x2e\xcd\x3a\x2e\x3f\xa3\x8e\x72\xfb\xa6\xe2\xca\xcb\x1a\x69\x27\x2e\x34\x73\xe1\xf6\xf1\x8b\x1e\x96\xa5\x20\x8a\x66\xc4\x8c\x1d\xe5\x18\xf3\xc2\xad\x17\xf8\x34\xc4\x40\x95\xff\x99\xf6\x7a\xae\x8a\xe1\x72\x34\x1b\x5c\xbb\x25\x3c\x33\x87\xed\x9c\xe0\xa7\x81\xe4\xaa\x2c\xed\xe1\xaa\xe6\x43\xec\xb0\xf9\x79\x79\x41\x3b\xcf\xc2\xfe\x10\xef\xd4\xd2\x3a\x7c\x05\x00\x00\xff\xff\xd4\x51\x0b\x8b\xbe\x01\x00\x00")
 
 func manifests0000_90_ingressOperator_00_prometheusroleYamlBytes() ([]byte, error) {
@@ -1005,6 +1047,10 @@ var _bindata = map[string]func() (*asset, error){
 
 	"manifests/00-namespace.yaml": manifests00NamespaceYaml,
 
+	"manifests/0000_10_ingress-operator_00_ingress-namespace.yaml": manifests0000_10_ingressOperator_00_ingressNamespaceYaml,
+
+	"manifests/0000_10_ingress-operator_01_ingress-canary-namespace.yaml": manifests0000_10_ingressOperator_01_ingressCanaryNamespaceYaml,
+
 	"manifests/0000_90_ingress-operator_00_prometheusrole.yaml": manifests0000_90_ingressOperator_00_prometheusroleYaml,
 
 	"manifests/0000_90_ingress-operator_01_prometheusrolebinding.yaml": manifests0000_90_ingressOperator_01_prometheusrolebindingYaml,
@@ -1107,25 +1153,27 @@ var _bintree = &bintree{nil, map[string]*bintree{
 		}},
 	}},
 	"manifests": {nil, map[string]*bintree{
-		"00-cluster-role.yaml":                                   {manifests00ClusterRoleYaml, map[string]*bintree{}},
-		"00-custom-resource-definition-internal.yaml":            {manifests00CustomResourceDefinitionInternalYaml, map[string]*bintree{}},
-		"00-custom-resource-definition.yaml":                     {manifests00CustomResourceDefinitionYaml, map[string]*bintree{}},
-		"00-ingress-credentials-request.yaml":                    {manifests00IngressCredentialsRequestYaml, map[string]*bintree{}},
-		"00-namespace.yaml":                                      {manifests00NamespaceYaml, map[string]*bintree{}},
-		"0000_90_ingress-operator_00_prometheusrole.yaml":        {manifests0000_90_ingressOperator_00_prometheusroleYaml, map[string]*bintree{}},
-		"0000_90_ingress-operator_01_prometheusrolebinding.yaml": {manifests0000_90_ingressOperator_01_prometheusrolebindingYaml, map[string]*bintree{}},
-		"0000_90_ingress-operator_02_servicemonitor.yaml":        {manifests0000_90_ingressOperator_02_servicemonitorYaml, map[string]*bintree{}},
-		"0000_90_ingress-operator_03_prometheusrules.yaml":       {manifests0000_90_ingressOperator_03_prometheusrulesYaml, map[string]*bintree{}},
-		"01-cluster-role-binding.yaml":                           {manifests01ClusterRoleBindingYaml, map[string]*bintree{}},
-		"01-role-binding.yaml":                                   {manifests01RoleBindingYaml, map[string]*bintree{}},
-		"01-role.yaml":                                           {manifests01RoleYaml, map[string]*bintree{}},
-		"01-service-account.yaml":                                {manifests01ServiceAccountYaml, map[string]*bintree{}},
-		"01-service.yaml":                                        {manifests01ServiceYaml, map[string]*bintree{}},
-		"01-trusted-ca-configmap.yaml":                           {manifests01TrustedCaConfigmapYaml, map[string]*bintree{}},
-		"02-deployment-ibm-cloud-managed.yaml":                   {manifests02DeploymentIbmCloudManagedYaml, map[string]*bintree{}},
-		"02-deployment.yaml":                                     {manifests02DeploymentYaml, map[string]*bintree{}},
-		"03-cluster-operator.yaml":                               {manifests03ClusterOperatorYaml, map[string]*bintree{}},
-		"image-references":                                       {manifestsImageReferences, map[string]*bintree{}},
+		"00-cluster-role.yaml":                                      {manifests00ClusterRoleYaml, map[string]*bintree{}},
+		"00-custom-resource-definition-internal.yaml":               {manifests00CustomResourceDefinitionInternalYaml, map[string]*bintree{}},
+		"00-custom-resource-definition.yaml":                        {manifests00CustomResourceDefinitionYaml, map[string]*bintree{}},
+		"00-ingress-credentials-request.yaml":                       {manifests00IngressCredentialsRequestYaml, map[string]*bintree{}},
+		"00-namespace.yaml":                                         {manifests00NamespaceYaml, map[string]*bintree{}},
+		"0000_10_ingress-operator_00_ingress-namespace.yaml":        {manifests0000_10_ingressOperator_00_ingressNamespaceYaml, map[string]*bintree{}},
+		"0000_10_ingress-operator_01_ingress-canary-namespace.yaml": {manifests0000_10_ingressOperator_01_ingressCanaryNamespaceYaml, map[string]*bintree{}},
+		"0000_90_ingress-operator_00_prometheusrole.yaml":           {manifests0000_90_ingressOperator_00_prometheusroleYaml, map[string]*bintree{}},
+		"0000_90_ingress-operator_01_prometheusrolebinding.yaml":    {manifests0000_90_ingressOperator_01_prometheusrolebindingYaml, map[string]*bintree{}},
+		"0000_90_ingress-operator_02_servicemonitor.yaml":           {manifests0000_90_ingressOperator_02_servicemonitorYaml, map[string]*bintree{}},
+		"0000_90_ingress-operator_03_prometheusrules.yaml":          {manifests0000_90_ingressOperator_03_prometheusrulesYaml, map[string]*bintree{}},
+		"01-cluster-role-binding.yaml":                              {manifests01ClusterRoleBindingYaml, map[string]*bintree{}},
+		"01-role-binding.yaml":                                      {manifests01RoleBindingYaml, map[string]*bintree{}},
+		"01-role.yaml":                                              {manifests01RoleYaml, map[string]*bintree{}},
+		"01-service-account.yaml":                                   {manifests01ServiceAccountYaml, map[string]*bintree{}},
+		"01-service.yaml":                                           {manifests01ServiceYaml, map[string]*bintree{}},
+		"01-trusted-ca-configmap.yaml":                              {manifests01TrustedCaConfigmapYaml, map[string]*bintree{}},
+		"02-deployment-ibm-cloud-managed.yaml":                      {manifests02DeploymentIbmCloudManagedYaml, map[string]*bintree{}},
+		"02-deployment.yaml":                                        {manifests02DeploymentYaml, map[string]*bintree{}},
+		"03-cluster-operator.yaml":                                  {manifests03ClusterOperatorYaml, map[string]*bintree{}},
+		"image-references":                                          {manifestsImageReferences, map[string]*bintree{}},
 	}},
 }}
 
