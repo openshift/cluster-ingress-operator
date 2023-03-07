@@ -144,7 +144,7 @@ func desiredCRLConfigMap(ctx context.Context, ic *operatorv1.IngressController, 
 		crls = make(map[string]*pkix.CertificateList)
 	}
 
-	var subjectKeyIds []string
+	subjectKeyIds := make(map[string]struct{})
 	var nextCRLUpdate time.Time
 	now := time.Now()
 	for len(clientCAData) > 0 {
@@ -165,7 +165,7 @@ func desiredCRLConfigMap(ctx context.Context, ic *operatorv1.IngressController, 
 			if crl.HasExpired(now) {
 				log.Info("certificate revocation list has expired", "subject key identifier", subjectKeyId)
 			} else {
-				subjectKeyIds = append(subjectKeyIds, subjectKeyId)
+				subjectKeyIds[subjectKeyId] = struct{}{}
 				if (nextCRLUpdate.IsZero() || crl.TBSCertList.NextUpdate.Before(nextCRLUpdate)) && crl.TBSCertList.NextUpdate.After(now) {
 					nextCRLUpdate = crl.TBSCertList.NextUpdate
 				}
@@ -180,7 +180,7 @@ func desiredCRLConfigMap(ctx context.Context, ic *operatorv1.IngressController, 
 			return false, nil, ctx, fmt.Errorf("failed to get certificate revocation list for certificate key %s: %w", subjectKeyId, err)
 		} else {
 			crls[subjectKeyId] = crl
-			subjectKeyIds = append(subjectKeyIds, subjectKeyId)
+			subjectKeyIds[subjectKeyId] = struct{}{}
 			log.Info("new certificate revocation list", "subject key identifier", subjectKeyId, "next update", crl.TBSCertList.NextUpdate.String())
 			if (nextCRLUpdate.IsZero() || crl.TBSCertList.NextUpdate.Before(nextCRLUpdate)) && crl.TBSCertList.NextUpdate.After(now) {
 				nextCRLUpdate = crl.TBSCertList.NextUpdate
@@ -193,7 +193,7 @@ func desiredCRLConfigMap(ctx context.Context, ic *operatorv1.IngressController, 
 	}
 
 	buf := &bytes.Buffer{}
-	for _, subjectKeyId := range subjectKeyIds {
+	for subjectKeyId := range subjectKeyIds {
 		asn1Data, err := asn1.Marshal(*crls[subjectKeyId])
 		if err != nil {
 			return false, nil, ctx, fmt.Errorf("failed to encode ASN.1 for CRL for certificate key %s: %w", subjectKeyId, err)
