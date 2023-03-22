@@ -837,8 +837,8 @@ github.com/mailru/easyjson v0.0.0-20190626092158-b2ccc519800e/go.mod h1:C1wdFJiN
 github.com/mailru/easyjson v0.7.0/go.mod h1:KAzv3t3aY1NaHWoQz1+4F1ccyAH66Jk7yos7ldAVICs=
 github.com/mailru/easyjson v0.7.6 h1:8yTIVnZgCoiM1TgqoeTl+LfU5Jg6/xL3QhGQnimLYnA=
 github.com/mailru/easyjson v0.7.6/go.mod h1:xzfreul335JAWq5oZzymOObrkdz5UnU4kGfJJLY9Nlc=
-github.com/maistra/istio-operator v0.0.0-20230213165116-3138f8d64e59 h1:JI/0TPDapa9gBljIcFwb66+xNtp+uh0iihROQJ7gQHM=
-github.com/maistra/istio-operator v0.0.0-20230213165116-3138f8d64e59/go.mod h1:Ls3+Sa4I7ZFjKm6myTbYYLsodrEKLiB3hi831fTbCk8=
+github.com/maistra/istio-operator v0.0.0-20230322122339-793794762e67 h1:MKacYZbpog8jM+uN3/TQS/FUO+Emz/qdAhma63x1pCk=
+github.com/maistra/istio-operator v0.0.0-20230322122339-793794762e67/go.mod h1:OTwsAjzSt6870+UXseGMkEPwiyif2xr8A6xyTUrGXVg=
 github.com/markbates/inflect v1.0.4/go.mod h1:1fR9+pO2KHEO9ZRtto13gDwwZaAKstQzferVeWqbgNs=
 github.com/markbates/oncer v0.0.0-20181203154359-bf2de49a0be2/go.mod h1:Ld9puTsIW75CHf65OeIOkyKbteujpZVXDpWK6YGZbxE=
 github.com/markbates/safe v1.0.1/go.mod h1:nAqgmRi7cY2nqMc92/bSEeQA+R4OheNU2T1kNSCBdG0=
