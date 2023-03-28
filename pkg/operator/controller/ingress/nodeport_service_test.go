@@ -186,14 +186,14 @@ func TestNodePortServiceChanged(t *testing.T) {
 		{
 			description: "if the local-with-fallback annotation changes",
 			mutate: func(svc *corev1.Service) {
-				svc.Annotations["traffic-policy.network.alpha.openshift.io/local-with-fallback"] = "x"
+				svc.Annotations["testing.without.this.annotation/aaa"] = "x"
 			},
 			expect: true,
 		},
 		{
 			description: "if the local-with-fallback annotation is deleted",
 			mutate: func(svc *corev1.Service) {
-				delete(svc.Annotations, "traffic-policy.network.alpha.openshift.io/local-with-fallback")
+				delete(svc.Annotations, "testing.without.this.annotation/aaa")
 			},
 			expect: true,
 		},
@@ -259,7 +259,7 @@ func TestNodePortServiceChanged(t *testing.T) {
 		original := corev1.Service{
 			ObjectMeta: metav1.ObjectMeta{
 				Annotations: map[string]string{
-					"traffic-policy.network.alpha.openshift.io/local-with-fallback": "",
+					"testing.without.this.annotation/aaa": "",
 				},
 				Namespace: "openshift-ingress",
 				Name:      "router-original",

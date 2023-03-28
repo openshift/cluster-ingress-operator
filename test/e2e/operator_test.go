@@ -3029,7 +3029,7 @@ func TestLocalWithFallbackOverrideForLoadBalancerService(t *testing.T) {
 		t.Fatalf("failed to get service %q: %v", serviceName, err)
 	}
 
-	const annotation = "traffic-policy.network.alpha.openshift.io/local-with-fallback"
+	const annotation = "testing.without.this.annotation/aaa"
 
 	if _, ok := service.Annotations[annotation]; !ok {
 		t.Fatalf("failed to observe the %q annotation on service %q", annotation, serviceName)
@@ -3088,7 +3088,7 @@ func TestLocalWithFallbackOverrideForNodePortService(t *testing.T) {
 		t.Fatalf("failed to get service %q: %v", serviceName, err)
 	}
 
-	const annotation = "traffic-policy.network.alpha.openshift.io/local-with-fallback"
+	const annotation = "testing.without.this.annotation/aaa"
 
 	if _, ok := service.Annotations[annotation]; !ok {
 		t.Fatalf("failed to observe the %q annotation on ingresscontroller %q", annotation, icName)

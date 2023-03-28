@@ -121,7 +121,8 @@ const (
 	// has "Local" external traffic policy to indicate that the service
 	// proxy should prefer using a local endpoint but forward traffic to any
 	// available endpoint if no local endpoint is available.
-	localWithFallbackAnnotation = "traffic-policy.network.alpha.openshift.io/local-with-fallback"
+	localWithFallbackAnnotation    = "testing.without.this.annotation/aaa"
+	localWithFallbackAnnotationOld = "traffic-policy.network.alpha.openshift.io/local-with-fallback"
 
 	// alibabaCloudLBAddressTypeAnnotation is the annotation used on a service
 	// to specify the network type of an Aliyun SLB
@@ -235,6 +236,7 @@ var (
 			// local-with-fallback annotation for kube-proxy (see
 			// <https://bugzilla.redhat.com/show_bug.cgi?id=1960284>).
 			localWithFallbackAnnotation,
+			localWithFallbackAnnotationOld,
 			// AWS load balancer type annotation to set either CLB/ELB or NLB
 			AWSLBTypeAnnotation,
 			// awsLBProxyProtocolAnnotation is used to enable the PROXY protocol on any
