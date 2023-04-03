@@ -41,7 +41,7 @@ spec:
             fieldRef:
               fieldPath: metadata.namespace
         - name: IMAGE
-          value: openshift/origin-haproxy-router:v4.0
+          value: quay.io/rfredette/openshift-router:haproxy-router-c0f5c8ef
         - name: CANARY_IMAGE
           value: openshift/origin-cluster-ingress-operator:latest
         image: openshift/origin-cluster-ingress-operator:latest
