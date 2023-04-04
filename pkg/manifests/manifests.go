@@ -2,6 +2,7 @@ package manifests
 
 import (
 	"bytes"
+	"embed"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -74,9 +75,44 @@ const (
 	// ClusterIngressConfigName is the name of the cluster Ingress Config
 	ClusterIngressConfigName = "cluster"
 
-	NamespaceManifest                = "manifests/00-namespace.yaml"
+	// NamespaceManifest is the asset for the operator namespace manifest.
+	// This manifest is usually installed by CVO, but it is also used by the
+	// "ingress-operator render" command to write out manifests that are
+	// required in order to customize ingress at installation time, before
+	// CVO installs the manifests.
+	NamespaceManifest = "manifests/00-namespace.yaml"
+	// CustomResourceDefinitionManifest is the asset for the
+	// ingresscontrollers CRD.  This manifest is usually installed by CVO,
+	// but it is also used by the "ingress-operator render" command to write
+	// out manifests that are required in order to customize ingress at
+	// installation time, before CVO installs the manifests.
 	CustomResourceDefinitionManifest = "manifests/00-custom-resource-definition.yaml"
 )
+
+// Copy needed files from the manifests/ directory.  This is necessary in order
+// to embed these files here because manifests/ is a top-level directory in the
+// source tree, and go:embed does not allow paths containing "../".
+//
+//go:generate mkdir -p manifests
+//go:generate cp ../../manifests/00-namespace.yaml manifests/
+//go:generate cp ../../manifests/00-custom-resource-definition.yaml manifests/
+
+//go:embed assets manifests
+var content embed.FS
+
+// MustAsset returns the bytes for the named asset.
+func MustAsset(asset string) []byte {
+	b, err := content.ReadFile(asset)
+	if err != nil {
+		panic(err)
+	}
+	return b
+}
+
+// MustAssetString returns a string with the named asset.
+func MustAssetString(asset string) string {
+	return string(MustAsset(asset))
+}
 
 func MustAssetReader(asset string) io.Reader {
 	return bytes.NewReader(MustAsset(asset))

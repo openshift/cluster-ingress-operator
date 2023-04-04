@@ -1,4 +1,5 @@
 /ingress-operator
+/pkg/manifests/manifests
 
 tmp/
 _output/
