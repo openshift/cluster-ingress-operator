@@ -349,8 +349,8 @@ func TestClientTLS(t *testing.T) {
 	if err := waitForDeploymentEnvVar(t, kclient, deployment, 1*time.Minute, "ROUTER_MUTUAL_TLS_AUTH", "required"); err != nil {
 		t.Fatalf("expected updated deployment to have ROUTER_MUTUAL_TLS_AUTH=required: %v", err)
 	}
-	if err := waitForDeploymentComplete(t, kclient, deployment, 3*time.Minute); err != nil {
-		t.Fatalf("failed to observe expected conditions: %v", err)
+	if err := waitForDeploymentCompleteWithCleanup(t, kclient, deploymentName, 3*time.Minute); err != nil {
+		t.Fatalf("timed out waiting for old router generation to be cleaned up: %v", err)
 	}
 
 	requiredPolicyTestCases := []struct {
