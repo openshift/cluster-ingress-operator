@@ -15,11 +15,24 @@ type DNSClient interface {
 }
 
 type Config struct {
-	Environment    azure.Environment
+	// Environment describes the Azure environment: ChinaCloud,
+	// USGovernmentCloud, PublicCloud, or AzureStackCloud.  If empty,
+	// AzureStackCloud is assumed.
+	Environment azure.Environment
+	// SubscriptionID is the subscription id for the Azure identity.
 	SubscriptionID string
-	ClientID       string
-	ClientSecret   string
-	TenantID       string
+	// ClientID is an Azure application client id.
+	ClientID string
+	// ClientSecret is an Azure application client secret.  It is required
+	// if Azure workload identity is not used.
+	ClientSecret string
+	// FederatedTokenFile is the path to a file containing a workload
+	// identity token.  If FederatedTokenFile is specified and
+	// AzureWorkloadIdentityEnabled is true, then Azure workload identity is
+	// used instead of using a client secret.
+	FederatedTokenFile string
+	// TenantID is the Azure tenant ID.
+	TenantID string
 }
 
 // ARecord is a DNS A record.
