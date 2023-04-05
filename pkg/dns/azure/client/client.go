@@ -15,11 +15,12 @@ type DNSClient interface {
 }
 
 type Config struct {
-	Environment    azure.Environment
-	SubscriptionID string
-	ClientID       string
-	ClientSecret   string
-	TenantID       string
+	Environment        azure.Environment
+	SubscriptionID     string
+	ClientID           string
+	ClientSecret       string
+	FederatedTokenFile string
+	TenantID           string
 }
 
 // ARecord is a DNS A record.

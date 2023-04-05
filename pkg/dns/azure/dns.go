@@ -39,6 +39,8 @@ type Config struct {
 	ClientID string
 	// ClientSecret is an azure service principal's credential.
 	ClientSecret string
+	// FederatedTokenFile is an azure federated token file.
+	FederatedTokenFile string
 	// TenantID is the azure identity's tenant ID.
 	TenantID string
 	// SubscriptionID is the azure identity's subscription ID.
@@ -73,11 +75,12 @@ func NewProvider(config Config, operatorReleaseVersion string) (dns.Provider, er
 		return nil, fmt.Errorf("could not determine cloud environment: %w", err)
 	}
 	c, err := client.New(client.Config{
-		Environment:    env,
-		SubscriptionID: config.SubscriptionID,
-		ClientID:       config.ClientID,
-		ClientSecret:   config.ClientSecret,
-		TenantID:       config.TenantID,
+		Environment:        env,
+		SubscriptionID:     config.SubscriptionID,
+		ClientID:           config.ClientID,
+		ClientSecret:       config.ClientSecret,
+		FederatedTokenFile: config.FederatedTokenFile,
+		TenantID:           config.TenantID,
 	}, userAgent(operatorReleaseVersion))
 	if err != nil {
 		return nil, err
