@@ -251,7 +251,14 @@ func (r *reconciler) createDNSProviderIfNeeded(dnsConfig *configv1.DNS, record *
 	}
 
 	if needUpdate {
-		dnsProvider, err := r.createDNSProvider(dnsConfig, platformStatus, &infraConfig.Status, creds)
+		featureGates := &configv1.FeatureGate{}
+		if err := r.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, featureGates); err != nil {
+			return fmt.Errorf("failed to get featureGate 'cluster': %v", err)
+		}
+
+		featureSet := featureGates.Spec.FeatureSet
+
+		dnsProvider, err := r.createDNSProvider(dnsConfig, platformStatus, &infraConfig.Status, creds, featureSet)
 		if err != nil {
 			return fmt.Errorf("failed to create DNS provider: %v", err)
 		}
@@ -578,7 +585,7 @@ func (r *reconciler) ToDNSRecords(o client.Object) []reconcile.Request {
 
 // createDNSProvider creates a DNS manager compatible with the given cluster
 // configuration.
-func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *configv1.PlatformStatus, infraStatus *configv1.InfrastructureStatus, creds *corev1.Secret) (dns.Provider, error) {
+func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *configv1.PlatformStatus, infraStatus *configv1.InfrastructureStatus, creds *corev1.Secret, featureSet configv1.FeatureSet) (dns.Provider, error) {
 	// If no DNS configuration is provided, don't try to set up provider clients.
 	// TODO: the provider configuration can be refactored into the provider
 	// implementations themselves, so this part of the code won't need to
@@ -677,7 +684,7 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 			ARMEndpoint:    platformStatus.Azure.ARMEndpoint,
 			InfraID:        infraStatus.InfrastructureName,
 			Tags:           azuredns.GetTagList(infraStatus),
-		}, r.config.OperatorReleaseVersion)
+		}, r.config.OperatorReleaseVersion, featureSet)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create Azure DNS manager: %v", err)
 		}

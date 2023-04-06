@@ -11,6 +11,9 @@ import (
 	"github.com/Azure/go-autorest/autorest"
 	"github.com/Azure/go-autorest/autorest/azure"
 	"github.com/jongio/azidext/go/azidext"
+	"k8s.io/apimachinery/pkg/util/sets"
+
+	configv1 "github.com/openshift/api/config/v1"
 )
 
 func getAuthorizerForResource(config Config) (autorest.Authorizer, error) {
@@ -73,7 +76,8 @@ func getAuthorizerForResource(config Config) (autorest.Authorizer, error) {
 		cred azcore.TokenCredential
 		err  error
 	)
-	if strings.TrimSpace(config.ClientSecret) == "" {
+	if sets.NewString(configv1.FeatureSets[config.FeatureSet].Enabled...).Has("AzureWorkloadIdentity") &&
+		strings.TrimSpace(config.ClientSecret) == "" {
 		options := azidentity.WorkloadIdentityCredentialOptions{
 			ClientOptions: azcore.ClientOptions{
 				Cloud: cloudConfig,

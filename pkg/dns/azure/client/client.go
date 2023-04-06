@@ -7,6 +7,8 @@ import (
 	"github.com/Azure/azure-sdk-for-go/services/privatedns/mgmt/2018-09-01/privatedns"
 	"github.com/Azure/go-autorest/autorest/azure"
 	"github.com/pkg/errors"
+
+	configv1 "github.com/openshift/api/config/v1"
 )
 
 type DNSClient interface {
@@ -21,6 +23,7 @@ type Config struct {
 	ClientSecret       string
 	FederatedTokenFile string
 	TenantID           string
+	FeatureSet         configv1.FeatureSet
 }
 
 // ARecord is a DNS A record.

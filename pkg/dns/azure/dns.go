@@ -62,7 +62,7 @@ type provider struct {
 
 // NewProvider creates a new dns.Provider for Azure. It only supports DNSRecords with
 // type A.
-func NewProvider(config Config, operatorReleaseVersion string) (dns.Provider, error) {
+func NewProvider(config Config, operatorReleaseVersion string, featureSet configv1.FeatureSet) (dns.Provider, error) {
 	var env azure.Environment
 	var err error
 	switch config.Environment {
@@ -81,6 +81,7 @@ func NewProvider(config Config, operatorReleaseVersion string) (dns.Provider, er
 		ClientSecret:       config.ClientSecret,
 		FederatedTokenFile: config.FederatedTokenFile,
 		TenantID:           config.TenantID,
+		FeatureSet:         featureSet,
 	}, userAgent(operatorReleaseVersion))
 	if err != nil {
 		return nil, err
