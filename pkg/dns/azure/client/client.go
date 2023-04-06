@@ -33,6 +33,9 @@ type Config struct {
 	FederatedTokenFile string
 	// TenantID is the Azure tenant ID.
 	TenantID string
+	// AzureWorkloadIdentityEnabled indicates whether the
+	// "AzureWorkloadIdentity" feature gate is enabled.
+	AzureWorkloadIdentityEnabled bool
 }
 
 // ARecord is a DNS A record.

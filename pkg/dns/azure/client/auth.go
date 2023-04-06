@@ -70,7 +70,7 @@ func getAuthorizerForResource(config Config) (autorest.Authorizer, error) {
 	}
 
 	var cred azcore.TokenCredential
-	if strings.TrimSpace(config.ClientSecret) == "" {
+	if config.AzureWorkloadIdentityEnabled && strings.TrimSpace(config.ClientSecret) == "" {
 		options := azidentity.WorkloadIdentityCredentialOptions{
 			ClientOptions: azcore.ClientOptions{
 				Cloud: cloudConfig,

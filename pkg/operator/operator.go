@@ -127,7 +127,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	if err != nil {
 		return nil, err
 	}
-	// example of future featuregate read and usage to set a variable to pass to a controller
+	azureWorkloadIdentityEnabled := featureGates.Enabled(configv1.FeatureGateAzureWorkloadIdentity)
 	gatewayAPIEnabled := featureGates.Enabled(configv1.FeatureGateGatewayAPI)
 
 	// Set up an operator manager for the operator namespace.
@@ -242,7 +242,8 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 			config.Namespace,
 			operatorcontroller.DefaultOperandNamespace,
 		},
-		OperatorReleaseVersion: config.OperatorReleaseVersion,
+		OperatorReleaseVersion:       config.OperatorReleaseVersion,
+		AzureWorkloadIdentityEnabled: azureWorkloadIdentityEnabled,
 	}); err != nil {
 		return nil, fmt.Errorf("failed to create dns controller: %v", err)
 	}
