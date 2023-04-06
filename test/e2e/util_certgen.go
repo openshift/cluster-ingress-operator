@@ -111,20 +111,26 @@ func MustCreateTLSKeyCert(commonName string, notBefore, notAfter time.Time, isCA
 
 // CreateCRL generates a pem-encoded CRL for issuer, valid between thisUpdate and nextUpdate, that lists revokedCerts as
 // revoked. Returns the logical form of the CRL, as well as a pem-encoded version.
-func CreateCRL(revocationList *x509.RevocationList, issuer KeyCert, thisUpdate, nextUpdate time.Time, revokedCerts []pkix.RevokedCertificate) (*x509.RevocationList, string, error) {
-	if revocationList == nil {
-		revocationList = &x509.RevocationList{
+func CreateCRL(existingRevocationList *x509.RevocationList, issuer KeyCert, thisUpdate, nextUpdate time.Time, revokedCerts []pkix.RevokedCertificate) (*x509.RevocationList, string, error) {
+	revocationList := x509.RevocationList{}
+	if existingRevocationList == nil {
+		revocationList = x509.RevocationList{
 			Issuer: issuer.Cert.Subject,
 			Number: big.NewInt(1),
 		}
 	} else {
+		revocationList = *existingRevocationList
+		// revocationList.Number is a pointer, so create a copy in order to avoid overwriting the number in
+		// existingRevocationList
+		number := *revocationList.Number
+		revocationList.Number = &number
 		revocationList.Number.Add(revocationList.Number, big.NewInt(1))
 	}
 	revocationList.ThisUpdate = thisUpdate
 	revocationList.NextUpdate = nextUpdate
 	revocationList.RevokedCertificates = revokedCerts
 
-	crlBytes, err := x509.CreateRevocationList(rand.Reader, revocationList, issuer.Cert, issuer.Key)
+	crlBytes, err := x509.CreateRevocationList(rand.Reader, &revocationList, issuer.Cert, issuer.Key)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to create CRL for issuer %s: %w", issuer.Cert.Subject.CommonName, err)
 	}
@@ -137,7 +143,7 @@ func CreateCRL(revocationList *x509.RevocationList, issuer KeyCert, thisUpdate, 
 		return nil, "", fmt.Errorf("failed to pem encode CRL for issuer %s: %w", issuer.Cert.Subject.CommonName, err)
 	}
 
-	return revocationList, crlBuffer.String(), nil
+	return &revocationList, crlBuffer.String(), nil
 }
 
 // MustCreateCRL calls CreateCRL, but instead of returning an error, it panics if an error occurs
