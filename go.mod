@@ -21,7 +21,7 @@ require (
 	github.com/maistra/istio-operator v0.0.0-20230213165116-3138f8d64e59
 	github.com/openshift/api v3.9.1-0.20190924102528-32369d4db2ad+incompatible
 	github.com/openshift/client-go v0.0.0-20230120202327-72f107311084
-	github.com/openshift/library-go v0.0.0-20230209193239-2e9167362f31
+	github.com/openshift/library-go v0.0.0-20230411150541-a704a5774e20
 	github.com/operator-framework/api v0.3.7-0.20200528122852-759ca0d84007
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.14.0
@@ -41,6 +41,7 @@ require (
 	k8s.io/apimachinery v0.26.1
 	k8s.io/apiserver v0.26.1
 	k8s.io/client-go v12.0.0+incompatible
+	k8s.io/klog/v2 v2.80.1
 	k8s.io/utils v0.0.0-20230209194617-a36077c30491
 	sigs.k8s.io/controller-runtime v0.14.4
 	sigs.k8s.io/gateway-api v0.5.1-0.20220921185115-ee7a83814203
@@ -129,7 +130,6 @@ require (
 	gopkg.in/ini.v1 v1.62.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/component-base v0.26.1 // indirect
-	k8s.io/klog/v2 v2.80.1 // indirect
 	k8s.io/kube-aggregator v0.26.1 // indirect
 	k8s.io/kube-openapi v0.0.0-20221012153701-172d655c2280 // indirect
 	sigs.k8s.io/json v0.0.0-20220713155537-f223a00ba0e2 // indirect

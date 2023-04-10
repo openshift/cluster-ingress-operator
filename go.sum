@@ -983,8 +983,8 @@ github.com/openshift/client-go v0.0.0-20200116152001-92a2713fa240/go.mod h1:4riO
 github.com/openshift/client-go v0.0.0-20230120202327-72f107311084 h1:66uaqNwA+qYyQDwsMWUfjjau8ezmg1dzCqub13KZOcE=
 github.com/openshift/client-go v0.0.0-20230120202327-72f107311084/go.mod h1:M3h9m001PWac3eAudGG3isUud6yBjr5XpzLYLLTlHKo=
 github.com/openshift/library-go v0.0.0-20200214084717-e77ad9dd8ebd/go.mod h1:0rRwY0q5NuKHdiP88Pe5+OVNU8mi0mv5XQ7f7nUbYVc=
-github.com/openshift/library-go v0.0.0-20230209193239-2e9167362f31 h1:GYaeuwjUyjIOVvIVfYwExbPcQtGDpDZdH2e8jp6kl2Y=
-github.com/openshift/library-go v0.0.0-20230209193239-2e9167362f31/go.mod h1:xO4nAf0qa56dgvEJWVD1WuwSJ8JWPU1TYLBQrlutWnE=
+github.com/openshift/library-go v0.0.0-20230411150541-a704a5774e20 h1:b+kW4MvEE53VhgRTTz0/JuA4k3ccphpwAPFP1AoqSHc=
+github.com/openshift/library-go v0.0.0-20230411150541-a704a5774e20/go.mod h1:OspkL5FZZapzNcka6UkNMFD7ifLT/dWUNvtwErpRK9k=
 github.com/openshift/origin v0.0.0-20160503220234-8f127d736703/go.mod h1:0Rox5r9C8aQn6j1oAOQ0c1uC86mYbUFObzjBRvUKHII=
 github.com/openshift/prom-label-proxy v0.1.1-0.20191016113035-b8153a7f39f1/go.mod h1:p5MuxzsYP1JPsNGwtjtcgRHHlGziCJJfztff91nNixw=
 github.com/opentracing-contrib/go-stdlib v0.0.0-20190519235532-cf7a6c988dc9/go.mod h1:PLldrQSroqzH70Xl+1DQcGnefIbqsKR7UDaiux3zV+w=
