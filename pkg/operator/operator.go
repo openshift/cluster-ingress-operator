@@ -104,7 +104,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	}
 	configInformers := configinformers.NewSharedInformerFactory(configClient, 10*time.Minute)
 	desiredVersion := config.OperatorReleaseVersion
-	missingVersion := statuscontroller.UnknownVersionValue
+	missingVersion := "0.0.1-snapshot"
 
 	// By default, this will exit(0) the process if the featuregates ever change to a different set of values.
 	featureGateAccessor := featuregates.NewFeatureGateAccess(
@@ -129,7 +129,8 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		return nil, err
 	}
 	// example of future featuregate read and usage to set a variable to pass to a controller
-	_ = sets.NewString(enabled...).Has("AzureWorkloadIdentity")
+	_ = sets.New[configv1.FeatureGateName](enabled...).Has("AzureWorkloadIdentity")
+	gatewayAPIEnabled := sets.New[configv1.FeatureGateName](enabled...).Has("GatewayAPI")
 
 	// Set up an operator manager for the operator namespace.
 	mgr, err := manager.New(kubeConfig, manager.Options{
@@ -292,6 +293,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 
 	// Set up the gatewayapi controller.
 	if _, err := gatewayapicontroller.New(mgr, gatewayapicontroller.Config{
+		GatewayAPIEnabled: gatewayAPIEnabled,
 		DependentControllers: []controller.Controller{
 			gatewayClassController,
 			gatewayServiceDNSController,

@@ -21,7 +21,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	"sigs.k8s.io/controller-runtime/pkg/cache"
-	"sigs.k8s.io/controller-runtime/pkg/cache/informertest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -38,76 +37,25 @@ func Test_Reconcile(t *testing.T) {
 		}
 	}
 	tests := []struct {
-		name            string
-		existingObjects []runtime.Object
-		expectCreate    []client.Object
-		expectUpdate    []client.Object
-		expectDelete    []client.Object
-		expectStartCtrl bool
+		name              string
+		gatewayAPIEnabled bool
+		existingObjects   []runtime.Object
+		expectCreate      []client.Object
+		expectUpdate      []client.Object
+		expectDelete      []client.Object
+		expectStartCtrl   bool
 	}{
 		{
-			name:            "featuregates.config.openshift.io/cluster doesn't exist",
-			existingObjects: []runtime.Object{},
-			expectCreate:    []client.Object{},
-			expectUpdate:    []client.Object{},
-			expectDelete:    []client.Object{},
-			expectStartCtrl: false,
+			name:              "gateway API disabled",
+			gatewayAPIEnabled: false,
+			expectCreate:      []client.Object{},
+			expectUpdate:      []client.Object{},
+			expectDelete:      []client.Object{},
+			expectStartCtrl:   false,
 		},
 		{
-			name: "featuregates.config.openshift.io/cluster specifies CustomNoUpgrade but doesn't specify GatewayAPI",
-			existingObjects: []runtime.Object{
-				&configv1.FeatureGate{
-					ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
-					Spec: configv1.FeatureGateSpec{
-						FeatureGateSelection: configv1.FeatureGateSelection{
-							FeatureSet: configv1.CustomNoUpgrade,
-							CustomNoUpgrade: &configv1.CustomFeatureGates{
-								Enabled: []string{"Foo", "Bar", "Baz"},
-							},
-						},
-					},
-				},
-			},
-			expectCreate:    []client.Object{},
-			expectUpdate:    []client.Object{},
-			expectDelete:    []client.Object{},
-			expectStartCtrl: false,
-		},
-		{
-			name: "featuregates.config.openshift.io/cluster specifies CustomNoUpgrade but disables GatewayAPI",
-			existingObjects: []runtime.Object{
-				&configv1.FeatureGate{
-					ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
-					Spec: configv1.FeatureGateSpec{
-						FeatureGateSelection: configv1.FeatureGateSelection{
-							FeatureSet: configv1.CustomNoUpgrade,
-							CustomNoUpgrade: &configv1.CustomFeatureGates{
-								Disabled: []string{"GatewayAPI"},
-							},
-						},
-					},
-				},
-			},
-			expectCreate:    []client.Object{},
-			expectUpdate:    []client.Object{},
-			expectDelete:    []client.Object{},
-			expectStartCtrl: false,
-		},
-		{
-			name: "featuregates.config.openshift.io/cluster specifies CustomNoUpgrade and enables GatewayAPI",
-			existingObjects: []runtime.Object{
-				&configv1.FeatureGate{
-					ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
-					Spec: configv1.FeatureGateSpec{
-						FeatureGateSelection: configv1.FeatureGateSelection{
-							FeatureSet: configv1.CustomNoUpgrade,
-							CustomNoUpgrade: &configv1.CustomFeatureGates{
-								Enabled: []string{"GatewayAPI"},
-							},
-						},
-					},
-				},
-			},
+			name:              "gateway API enabled",
+			gatewayAPIEnabled: true,
 			expectCreate: []client.Object{
 				crd("gatewayclasses.gateway.networking.k8s.io"),
 				crd("gateways.gateway.networking.k8s.io"),
@@ -117,46 +65,6 @@ func Test_Reconcile(t *testing.T) {
 			expectUpdate:    []client.Object{},
 			expectDelete:    []client.Object{},
 			expectStartCtrl: true,
-		},
-		{
-			name: "featuregates.config.openshift.io/cluster specifies TechPreviewNoUpgrade",
-			existingObjects: []runtime.Object{
-				&configv1.FeatureGate{
-					ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
-					Spec: configv1.FeatureGateSpec{
-						FeatureGateSelection: configv1.FeatureGateSelection{
-							FeatureSet: configv1.TechPreviewNoUpgrade,
-						},
-					},
-				},
-			},
-			// TODO Update expectCreate and expectStartCtrl when
-			// "GatewayAPI" is added to
-			// configv1.FeatureSets["TechPreviewNoUpgrade"].Enabled.
-			expectCreate:    []client.Object{},
-			expectUpdate:    []client.Object{},
-			expectDelete:    []client.Object{},
-			expectStartCtrl: false,
-		},
-		{
-			name: "featuregates.config.openshift.io/bogus enables GatewayAPI",
-			existingObjects: []runtime.Object{
-				&configv1.FeatureGate{
-					ObjectMeta: metav1.ObjectMeta{Name: "bogus"},
-					Spec: configv1.FeatureGateSpec{
-						FeatureGateSelection: configv1.FeatureGateSelection{
-							FeatureSet: configv1.CustomNoUpgrade,
-							CustomNoUpgrade: &configv1.CustomFeatureGates{
-								Enabled: []string{"GatewayAPI"},
-							},
-						},
-					},
-				},
-			},
-			expectCreate:    []client.Object{},
-			expectUpdate:    []client.Object{},
-			expectDelete:    []client.Object{},
-			expectStartCtrl: false,
 		},
 	}
 
@@ -171,13 +79,11 @@ func Test_Reconcile(t *testing.T) {
 				WithRuntimeObjects(tc.existingObjects...).
 				Build()
 			cl := &fakeClientRecorder{fakeClient, t, []client.Object{}, []client.Object{}, []client.Object{}}
-			informer := informertest.FakeInformers{Scheme: scheme}
-			cache := fakeCache{Informers: &informer, Reader: cl}
 			ctrl := &fakeController{t, false, nil}
 			reconciler := &reconciler{
-				cache:  cache,
 				client: cl,
 				config: Config{
+					GatewayAPIEnabled:    tc.gatewayAPIEnabled,
 					DependentControllers: []controller.Controller{ctrl},
 				},
 			}
@@ -221,26 +127,13 @@ func TestReconcileOnlyStartsControllerOnce(t *testing.T) {
 	scheme := runtime.NewScheme()
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
-	fg := &configv1.FeatureGate{
-		ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
-		Spec: configv1.FeatureGateSpec{
-			FeatureGateSelection: configv1.FeatureGateSelection{
-				FeatureSet: configv1.CustomNoUpgrade,
-				CustomNoUpgrade: &configv1.CustomFeatureGates{
-					Enabled: []string{"GatewayAPI"},
-				},
-			},
-		},
-	}
-	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(fg).Build()
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects().Build()
 	cl := &fakeClientRecorder{fakeClient, t, []client.Object{}, []client.Object{}, []client.Object{}}
-	informer := informertest.FakeInformers{Scheme: scheme}
-	cache := fakeCache{Informers: &informer, Reader: cl}
 	ctrl := &fakeController{t, false, make(chan struct{})}
 	reconciler := &reconciler{
-		cache:  cache,
 		client: cl,
 		config: Config{
+			GatewayAPIEnabled:    true,
 			DependentControllers: []controller.Controller{ctrl},
 		},
 	}

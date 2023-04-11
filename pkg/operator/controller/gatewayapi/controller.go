@@ -11,10 +11,8 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 
-	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -26,10 +24,6 @@ import (
 
 const (
 	controllerName = "gatewayapi_controller"
-
-	// featureGateName is the name of the feature gate that enables Gateway
-	// API support in cluster-ingress-operator.
-	featureGateName = "GatewayAPI"
 )
 
 var log = logf.Logger.WithName(controllerName)
@@ -39,7 +33,6 @@ var log = logf.Logger.WithName(controllerName)
 func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	reconciler := &reconciler{
 		client: mgr.GetClient(),
-		cache:  mgr.GetCache(),
 		config: config,
 	}
 	c, err := controller.New(controllerName, mgr, controller.Options{Reconciler: reconciler})
@@ -63,6 +56,9 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 // Config holds all the configuration that must be provided when creating the
 // controller.
 type Config struct {
+	// GatewayAPIEnabled indicates that the "GatewayAPI" featuregate is enabled.
+	GatewayAPIEnabled bool
+
 	// DependentControllers is a list of controllers that watch Gateway API
 	// resources.  The gatewayapi controller starts these controllers once
 	// the Gateway API CRDs have been created.
@@ -74,7 +70,6 @@ type reconciler struct {
 	config Config
 
 	client           client.Client
-	cache            cache.Cache
 	recorder         record.EventRecorder
 	startControllers sync.Once
 }
@@ -84,16 +79,7 @@ type reconciler struct {
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	log.Info("reconciling", "request", request)
 
-	var fg configv1.FeatureGate
-	if err := r.cache.Get(ctx, request.NamespacedName, &fg); err != nil {
-		if apierrors.IsNotFound(err) {
-			log.Info("featuregate not found; reconciliation will be skipped", "request", request)
-			return reconcile.Result{}, nil
-		}
-		return reconcile.Result{}, err
-	}
-
-	if !featureIsEnabled(featureGateName, &fg) {
+	if !r.config.GatewayAPIEnabled {
 		return reconcile.Result{}, nil
 	}
 
@@ -113,41 +99,4 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	})
 
 	return reconcile.Result{}, nil
-}
-
-// featureIsEnabled takes a feature name and a featuregate config API object and
-// returns a Boolean indicating whether the named feature is enabled.
-//
-// This function determines whether a named feature is enabled as follows:
-//
-//   - First, if the featuregate's spec.featureGateSelection.featureSet field is
-//     set to "CustomNoUpgrade", then the feature is enabled if, and only if, it
-//     is specified in spec.featureGateSelection.customNoUpgrade.enabled.
-//
-//   - Second, if spec.featureGateSelection.featureSet is set to a value that
-//     isn't defined in configv1.FeatureSets, then the feature is *not* enabled.
-//
-//   - Finally, the feature is enabled if, and only if, the feature is specified
-//     in configv1.FeatureSets[spec.featureGateSelection.featureSet].enabled.
-func featureIsEnabled(feature string, fg *configv1.FeatureGate) bool {
-	if fg.Spec.FeatureSet == configv1.CustomNoUpgrade {
-		if fg.Spec.FeatureGateSelection.CustomNoUpgrade == nil {
-			return false
-		}
-		for _, f := range fg.Spec.FeatureGateSelection.CustomNoUpgrade.Enabled {
-			if f == feature {
-				return true
-			}
-		}
-		return false
-	}
-
-	if fs, ok := configv1.FeatureSets[fg.Spec.FeatureSet]; ok {
-		for _, f := range fs.Enabled {
-			if f == feature {
-				return true
-			}
-		}
-	}
-	return false
 }
