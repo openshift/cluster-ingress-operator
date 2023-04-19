@@ -3581,17 +3581,15 @@ func waitForDeploymentEnvVar(t *testing.T, cl client.Client, deployment *appsv1.
 
 // waitForDeploymentCompleteWithCleanup waits for a deployment to complete its rollout, then waits for the old
 // generation's pods to finish terminating.
-func waitForDeploymentCompleteWithCleanup(t *testing.T, cl client.Client, deploymentName types.NamespacedName, timeout time.Duration) error {
+func waitForDeploymentCompleteWithOldPodTermination(t *testing.T, cl client.Client, deploymentName types.NamespacedName, timeout time.Duration) error {
 	t.Helper()
 	deployment := &appsv1.Deployment{}
 	if err := cl.Get(context.TODO(), deploymentName, deployment); err != nil {
 		return fmt.Errorf("failed to get deployment %s: %w", deploymentName.Name, err)
 	}
 
-	if deployment.Generation != deployment.Status.ObservedGeneration {
-		if err := waitForDeploymentComplete(t, cl, deployment, timeout); err != nil {
-			return fmt.Errorf("timed out waiting for deployment %s to complete rollout: %w", deploymentName.Name, err)
-		}
+	if err := waitForDeploymentComplete(t, cl, deployment, timeout); err != nil {
+		return fmt.Errorf("timed out waiting for deployment %s to complete rollout: %w", deploymentName.Name, err)
 	}
 
 	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
@@ -3599,13 +3597,26 @@ func waitForDeploymentCompleteWithCleanup(t *testing.T, cl client.Client, deploy
 		return fmt.Errorf("deployment %s has invalid spec.selector: %w", deploymentName.Name, err)
 	}
 
+	expectedReplicas := 1
+	if deployment.Spec.Replicas != nil && int(*deployment.Spec.Replicas) != 0 {
+		expectedReplicas = int(*deployment.Spec.Replicas)
+	}
+
 	return wait.PollImmediate(2*time.Second, timeout, func() (bool, error) {
-		pods := &corev1.PodList{}
-		if err := cl.List(context.TODO(), pods, client.MatchingLabelsSelector{Selector: selector}); err != nil {
+		podList := &corev1.PodList{}
+		if err := cl.List(context.TODO(), podList, client.MatchingLabelsSelector{Selector: selector}); err != nil {
 			t.Logf("failed to list pods for deployment %q: %v", deploymentName.Name, err)
 			return false, nil
 		}
-		return len(pods.Items) == int(*deployment.Spec.Replicas), nil
+		readyPods := 0
+		for _, pod := range podList.Items {
+			for _, condition := range pod.Status.Conditions {
+				if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
+					readyPods++
+				}
+			}
+		}
+		return readyPods == expectedReplicas, nil
 	})
 }
 
