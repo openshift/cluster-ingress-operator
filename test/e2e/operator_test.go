@@ -53,6 +53,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/utils/pointer"
 
 	"k8s.io/apiserver/pkg/storage/names"
 
@@ -3579,8 +3580,9 @@ func waitForDeploymentEnvVar(t *testing.T, cl client.Client, deployment *appsv1.
 	return err
 }
 
-// waitForDeploymentCompleteWithCleanup waits for a deployment to complete its rollout, then waits for the old
-// generation's pods to finish terminating.
+// waitForDeploymentCompleteWithOldPodTermination waits for a deployment to
+// complete its rollout, then waits for the old generation's pods to finish
+// terminating.
 func waitForDeploymentCompleteWithOldPodTermination(t *testing.T, cl client.Client, deploymentName types.NamespacedName, timeout time.Duration) error {
 	t.Helper()
 	deployment := &appsv1.Deployment{}
@@ -3597,10 +3599,8 @@ func waitForDeploymentCompleteWithOldPodTermination(t *testing.T, cl client.Clie
 		return fmt.Errorf("deployment %s has invalid spec.selector: %w", deploymentName.Name, err)
 	}
 
-	expectedReplicas := 1
-	if deployment.Spec.Replicas != nil && int(*deployment.Spec.Replicas) != 0 {
-		expectedReplicas = int(*deployment.Spec.Replicas)
-	}
+	// If spec.replicas is null, the default value is 1, per the API spec.
+	expectedReplicas := int(pointer.Int32Deref(deployment.Spec.Replicas, 1))
 
 	return wait.PollImmediate(2*time.Second, timeout, func() (bool, error) {
 		podList := &corev1.PodList{}
