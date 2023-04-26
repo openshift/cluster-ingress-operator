@@ -820,7 +820,8 @@ func (NodePortStrategy) SwaggerDoc() map[string]string {
 }
 
 var map_PrivateStrategy = map[string]string{
-	"": "PrivateStrategy holds parameters for the Private endpoint publishing strategy.",
+	"":         "PrivateStrategy holds parameters for the Private endpoint publishing strategy.",
+	"protocol": "protocol specifies whether the IngressController expects incoming connections to use plain TCP or whether the IngressController expects PROXY protocol.\n\nPROXY protocol can be used with load balancers that support it to communicate the source addresses of client connections when forwarding those connections to the IngressController.  Using PROXY protocol enables the IngressController to report those source addresses instead of reporting the load balancer's address in HTTP headers and logs.  Note that enabling PROXY protocol on the IngressController will cause connections to fail if you are not using a load balancer that uses PROXY protocol to forward connections to the IngressController.  See http://www.haproxy.org/download/2.2/doc/proxy-protocol.txt for information about PROXY protocol.\n\nThe following values are valid for this field:\n\n* The empty string. * \"TCP\". * \"PROXY\".\n\nThe empty string specifies the default, which is TCP without PROXY protocol.  Note that the default is subject to change.",
 }
 
 func (PrivateStrategy) SwaggerDoc() map[string]string {
@@ -877,6 +878,23 @@ var map_KubeAPIServerList = map[string]string{
 
 func (KubeAPIServerList) SwaggerDoc() map[string]string {
 	return map_KubeAPIServerList
+}
+
+var map_KubeAPIServerStatus = map[string]string{
+	"serviceAccountIssuers": "serviceAccountIssuers tracks history of used service account issuers. The item without expiration time represents the currently used service account issuer. The other items represents service account issuers that were used previously and are still being trusted. The default expiration for the items is set by the platform and it defaults to 24h. see: https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/#service-account-token-volume-projection",
+}
+
+func (KubeAPIServerStatus) SwaggerDoc() map[string]string {
+	return map_KubeAPIServerStatus
+}
+
+var map_ServiceAccountIssuerStatus = map[string]string{
+	"name":           "name is the name of the service account issuer",
+	"expirationTime": "expirationTime is the time after which this service account issuer will be pruned and removed from the trusted list of service account issuers.",
+}
+
+func (ServiceAccountIssuerStatus) SwaggerDoc() map[string]string {
+	return map_ServiceAccountIssuerStatus
 }
 
 var map_KubeControllerManager = map[string]string{
