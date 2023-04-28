@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +19,8 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	routev1 "github.com/openshift/api/route/v1"
+	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
+	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -507,6 +511,9 @@ func verifyExternalIngressController(t *testing.T, name types.NamespacedName, ho
 		return false
 	})
 	if err != nil {
+		if err := dumpDebugIngressHealthCheckNodePorts(t); err != nil {
+			t.Errorf("failed to dump ingress healthCheckNodePort info: %v", err)
+		}
 		t.Fatalf("failed to verify connectivity with workload with reqURL %s using external client: %v", req.URL, err)
 	}
 }
@@ -635,6 +642,67 @@ func verifyInternalIngressController(t *testing.T, name types.NamespacedName, ho
 		return false, nil
 	})
 	if err != nil {
+		if err := dumpDebugIngressHealthCheckNodePorts(t); err != nil {
+			t.Errorf("failed to dump ingress healthCheckNodePort info: %v", err)
+		}
 		t.Fatalf("failed to verify connectivity with workload with address: %s using internal curl client. Curl Pod Logs:\n%s", address, curlPodLogs)
 	}
+}
+
+// dumpDebugIngressHealthCheckNodePorts dumps the status of HealthCheckNodePort for ingress controller's
+// load balancer services.
+// We are getting flakes on the e2e tests in unmanaged_dns_test.go such as
+// TestUnmanagedDNSToManagedDNSInternalIngressController when switching the
+// scope of an ingress controller. We want to confirm https://issues.redhat.com/browse/OCPBUGS-6013
+// isn't an issue, so dumping healthCheckNodePort for the load balancer services when it fails.
+// TODO: Remove when tests in unmanaged_dns_test.go stops flaking
+func dumpDebugIngressHealthCheckNodePorts(t *testing.T) error {
+	t.Helper()
+	t.Logf("# DEBUG HealthCheckNodePort (localEndpoints should always be 1)")
+	listServiceOpts := []client.ListOption{
+		client.InNamespace("openshift-ingress"),
+	}
+	services := corev1.ServiceList{}
+	if err := kclient.List(context.Background(), &services, listServiceOpts...); err != nil {
+		return fmt.Errorf("failed to list services %v", err)
+	}
+
+	for _, service := range services.Items {
+		if service.Spec.Type == corev1.ServiceTypeLoadBalancer {
+			t.Logf("Loadbalancer Service: %s/%s", service.Namespace, service.Name)
+			ingressControllerName := service.Labels[manifests.OwningIngressControllerLabel]
+			routers := corev1.PodList{}
+			labels := map[string]string{
+				controller.ControllerDeploymentLabel: ingressControllerName,
+			}
+			listRouterOpts := []client.ListOption{
+				client.InNamespace("openshift-ingress"),
+				client.MatchingLabels(labels),
+			}
+			if err := kclient.List(context.Background(), &routers, listRouterOpts...); err != nil {
+				return fmt.Errorf("failed to list pods %v", err)
+			}
+
+			// For each of the routers, exec in and curl the HealthCheckNodePort
+			for _, router := range routers.Items {
+				t.Logf("- Router %s/%s, phase=%s, ready=%t", router.Namespace, router.Name, router.Status.Phase, router.Status.ContainerStatuses[0].Ready)
+				healthCheckURL := router.Spec.NodeName + ":" + strconv.Itoa(int(service.Spec.HealthCheckNodePort))
+
+				healthCheckCurlCommand := []string{"curl", healthCheckURL}
+				args := []string{"exec", router.Name, fmt.Sprintf("--namespace=%v", router.Namespace), "--"}
+				args = append(args, healthCheckCurlCommand...)
+				cmdPath, err := exec.LookPath("oc")
+				if err != nil {
+					return err
+				}
+				execCmd := exec.Command(cmdPath, args...)
+				healthCheckResult, err := execCmd.Output()
+				if err != nil {
+					return fmt.Errorf("failed to run command %q with args %q: %v", cmdPath, args, err)
+				}
+				t.Logf("-- HealthCheckNodePort: " + string(healthCheckResult))
+			}
+		}
+	}
+	return nil
 }
