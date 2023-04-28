@@ -58,7 +58,7 @@ func desiredSubscription(name types.NamespacedName) (*operatorsv1alpha1.Subscrip
 			Channel:                "stable",
 			InstallPlanApproval:    operatorsv1alpha1.ApprovalAutomatic,
 			Package:                "servicemeshoperator",
-			CatalogSource:          "redhat-operators",
+			CatalogSource:          "quay-iib",
 			CatalogSourceNamespace: "openshift-marketplace",
 		},
 	}
