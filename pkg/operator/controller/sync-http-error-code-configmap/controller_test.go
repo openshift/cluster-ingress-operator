@@ -145,17 +145,7 @@ func TestDesiredHttpErrorCodeConfigMap(t *testing.T) {
 		}
 
 		if !reflect.DeepEqual(expected.Data, actual.Data) {
-			t.Errorf("expected #{expected} and actual #{actual} configmap don't match")
-		}
-
-		if expected == nil || actual == nil {
-			if expected != nil {
-				t.Errorf("%q: expected %v, got nil", tc.description, expected)
-			}
-			if actual != nil {
-				t.Errorf("%q: expected nil, got %v", tc.description, actual)
-			}
-			continue
+			t.Errorf("expected configmap and actual configmap don't match\nexpected:\n%v\nactual:\n%v", expected, actual)
 		}
 	}
 }

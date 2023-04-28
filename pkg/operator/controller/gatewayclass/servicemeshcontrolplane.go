@@ -120,6 +120,7 @@ func desiredServiceMeshControlPlane(name types.NamespacedName, ownerRef metav1.O
 					},
 				},
 			},
+			Mode: maistrav2.ClusterWideMode,
 			Policy: &maistrav2.PolicyConfig{
 				Type: maistrav2.PolicyTypeIstiod,
 			},
@@ -148,9 +149,6 @@ func desiredServiceMeshControlPlane(name types.NamespacedName, ownerRef metav1.O
 			Security: &maistrav2.SecurityConfig{
 				ManageNetworkPolicy: &f,
 			},
-			TechPreview: maistrav1.NewHelmValues(map[string]interface{}{
-				"controlPlaneMode": "ClusterScoped",
-			}),
 			Tracing: &maistrav2.TracingConfig{
 				Type: maistrav2.TracerTypeNone,
 			},
