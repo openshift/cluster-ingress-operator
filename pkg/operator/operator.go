@@ -14,7 +14,6 @@ import (
 	errorpageconfigmapcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/sync-http-error-code-configmap"
 	"github.com/openshift/library-go/pkg/operator/onepodpernodeccontroller"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 
@@ -117,20 +116,19 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 
 	select {
 	case <-featureGateAccessor.InitialFeatureGatesObserved():
-		enabled, disabled, _ := featureGateAccessor.CurrentFeatureGates()
-		log.Info("FeatureGates initialized", "enabled", enabled, "disabled", disabled)
+		featureGates, _ := featureGateAccessor.CurrentFeatureGates()
+		log.Info("FeatureGates initialized", "knownFeatures", featureGates.KnownFeatures())
 	case <-time.After(1 * time.Minute):
 		log.Error(nil, "timed out waiting for FeatureGate detection")
 		return nil, fmt.Errorf("timed out waiting for FeatureGate detection")
 	}
 
-	enabled, _, err := featureGateAccessor.CurrentFeatureGates()
+	featureGates, err := featureGateAccessor.CurrentFeatureGates()
 	if err != nil {
 		return nil, err
 	}
 	// example of future featuregate read and usage to set a variable to pass to a controller
-	_ = sets.New[configv1.FeatureGateName](enabled...).Has("AzureWorkloadIdentity")
-	gatewayAPIEnabled := sets.New[configv1.FeatureGateName](enabled...).Has("GatewayAPI")
+	gatewayAPIEnabled := featureGates.Enabled(configv1.FeatureGateGatewayAPI)
 
 	// Set up an operator manager for the operator namespace.
 	mgr, err := manager.New(kubeConfig, manager.Options{
