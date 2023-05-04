@@ -1,8 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
-REPO="${REPO:-}"
-MANIFESTS="${MANIFESTS:-}"
+: "${REPO:=}"
+: "${MANIFESTS:=}"
+: "${DOCKERFILE:=Dockerfile}"
 
 if [ -z "$REPO" ]; then echo "REPO is required"; exit 1; fi
 if [ -z "$MANIFESTS" ]; then echo "MANIFESTS is required"; exit 1; fi
@@ -19,10 +20,13 @@ REV=$(git rev-parse --short HEAD)
 TAG="${TAG:-$REV}"
 
 if [[ -z "${DOCKER+1}" ]] && command -v buildah >& /dev/null; then
-  buildah bud -t $REPO:$TAG .
+  buildah bud -t $REPO:$TAG -f "${DOCKERFILE}" .
   buildah push $REPO:$TAG docker://$REPO:$TAG
+elif [[ -z "${DOCKER+1}" ]] && command -v podman >& /dev/null; then
+  podman build -t $REPO:$TAG -f "${DOCKERFILE}" .
+  podman push $REPO:$TAG
 else
-  docker build -t $REPO:$TAG .
+  docker build -t $REPO:$TAG -f "${DOCKERFILE}" .
   docker push $REPO:$TAG
 fi
 
