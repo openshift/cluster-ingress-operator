@@ -352,6 +352,19 @@ func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
 				Type: operatorv1.HostNetworkStrategyType,
 			}
 		}
+		private = func(proto operatorv1.IngressControllerProtocol) *operatorv1.EndpointPublishingStrategy {
+			return &operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.PrivateStrategyType,
+				Private: &operatorv1.PrivateStrategy{
+					Protocol: proto,
+				},
+			}
+		}
+		privateWithNull = func() *operatorv1.EndpointPublishingStrategy {
+			return &operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.PrivateStrategyType,
+			}
+		}
 	)
 
 	testCases := []struct {
@@ -499,6 +512,36 @@ func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
 			ic:             makeIC(spec(hostNetworkWithNull()), status(customHostNetwork(8080, 8443, 8136, operatorv1.TCPProtocol))),
 			expectedResult: true,
 			expectedIC:     makeIC(spec(hostNetworkWithNull()), status(hostNetwork(operatorv1.TCPProtocol))),
+		},
+		{
+			name:           "private protocol changed to PROXY with null status.endpointPublishingStrategy.private",
+			ic:             makeIC(spec(private(operatorv1.ProxyProtocol)), status(privateWithNull())),
+			expectedResult: true,
+			expectedIC:     makeIC(spec(private(operatorv1.ProxyProtocol)), status(private(operatorv1.ProxyProtocol))),
+		},
+		{
+			name:           "private spec.endpointPublishingStrategy.private set to null",
+			ic:             makeIC(spec(privateWithNull()), status(private(operatorv1.TCPProtocol))),
+			expectedResult: false,
+			expectedIC:     makeIC(spec(privateWithNull()), status(private(operatorv1.TCPProtocol))),
+		},
+		{
+			name:           "private protocol changed from empty to PROXY",
+			ic:             makeIC(spec(private(operatorv1.ProxyProtocol)), status(private(""))),
+			expectedResult: true,
+			expectedIC:     makeIC(spec(private(operatorv1.ProxyProtocol)), status(private(operatorv1.ProxyProtocol))),
+		},
+		{
+			name:           "private protocol changed from TCP to PROXY",
+			ic:             makeIC(spec(private(operatorv1.ProxyProtocol)), status(private(operatorv1.TCPProtocol))),
+			expectedResult: true,
+			expectedIC:     makeIC(spec(private(operatorv1.ProxyProtocol)), status(private(operatorv1.ProxyProtocol))),
+		},
+		{
+			name:           "private protocol changed from PROXY to TCP",
+			ic:             makeIC(spec(private(operatorv1.TCPProtocol)), status(private(operatorv1.ProxyProtocol))),
+			expectedResult: true,
+			expectedIC:     makeIC(spec(private(operatorv1.TCPProtocol)), status(private(operatorv1.TCPProtocol))),
 		},
 	}
 	for _, tc := range testCases {
@@ -1005,6 +1048,24 @@ func TestIsProxyProtocolNeeded(t *testing.T) {
 		privateStrategy = operatorv1.EndpointPublishingStrategy{
 			Type: operatorv1.PrivateStrategyType,
 		}
+		privateStrategyWithDefault = operatorv1.EndpointPublishingStrategy{
+			Type: operatorv1.PrivateStrategyType,
+			Private: &operatorv1.PrivateStrategy{
+				Protocol: operatorv1.DefaultProtocol,
+			},
+		}
+		privateStrategyWithTCP = operatorv1.EndpointPublishingStrategy{
+			Type: operatorv1.PrivateStrategyType,
+			Private: &operatorv1.PrivateStrategy{
+				Protocol: operatorv1.TCPProtocol,
+			},
+		}
+		privateStrategyWithPROXY = operatorv1.EndpointPublishingStrategy{
+			Type: operatorv1.PrivateStrategyType,
+			Private: &operatorv1.PrivateStrategy{
+				Protocol: operatorv1.ProxyProtocol,
+			},
+		}
 	)
 	testCases := []struct {
 		description string
@@ -1093,10 +1154,28 @@ func TestIsProxyProtocolNeeded(t *testing.T) {
 			expect:      true,
 		},
 		{
-			description: "private strategy shouldn't use PROXY",
+			description: "empty private strategy shouldn't use PROXY",
 			strategy:    &privateStrategy,
 			platform:    &awsPlatform,
 			expect:      false,
+		},
+		{
+			description: "private strategy specifying default shouldn't use PROXY",
+			strategy:    &privateStrategyWithDefault,
+			platform:    &awsPlatform,
+			expect:      false,
+		},
+		{
+			description: "private strategy specifying TCP shouldn't use PROXY",
+			strategy:    &privateStrategyWithTCP,
+			platform:    &awsPlatform,
+			expect:      false,
+		},
+		{
+			description: "private strategy specifying PROXY should use PROXY",
+			strategy:    &privateStrategyWithPROXY,
+			platform:    &awsPlatform,
+			expect:      true,
 		},
 	}
 
