@@ -53,6 +53,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/utils/pointer"
 
 	"k8s.io/apiserver/pkg/storage/names"
 
@@ -3577,6 +3578,46 @@ func waitForDeploymentEnvVar(t *testing.T, cl client.Client, deployment *appsv1.
 		return false, nil
 	})
 	return err
+}
+
+// waitForDeploymentCompleteWithOldPodTermination waits for a deployment to
+// complete its rollout, then waits for the old generation's pods to finish
+// terminating.
+func waitForDeploymentCompleteWithOldPodTermination(t *testing.T, cl client.Client, deploymentName types.NamespacedName, timeout time.Duration) error {
+	t.Helper()
+	deployment := &appsv1.Deployment{}
+	if err := cl.Get(context.TODO(), deploymentName, deployment); err != nil {
+		return fmt.Errorf("failed to get deployment %s: %w", deploymentName.Name, err)
+	}
+
+	if err := waitForDeploymentComplete(t, cl, deployment, timeout); err != nil {
+		return fmt.Errorf("timed out waiting for deployment %s to complete rollout: %w", deploymentName.Name, err)
+	}
+
+	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
+	if err != nil {
+		return fmt.Errorf("deployment %s has invalid spec.selector: %w", deploymentName.Name, err)
+	}
+
+	// If spec.replicas is null, the default value is 1, per the API spec.
+	expectedReplicas := int(pointer.Int32Deref(deployment.Spec.Replicas, 1))
+
+	return wait.PollImmediate(2*time.Second, timeout, func() (bool, error) {
+		podList := &corev1.PodList{}
+		if err := cl.List(context.TODO(), podList, client.MatchingLabelsSelector{Selector: selector}); err != nil {
+			t.Logf("failed to list pods for deployment %q: %v", deploymentName.Name, err)
+			return false, nil
+		}
+		readyPods := 0
+		for _, pod := range podList.Items {
+			for _, condition := range pod.Status.Conditions {
+				if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
+					readyPods++
+				}
+			}
+		}
+		return readyPods == expectedReplicas, nil
+	})
 }
 
 func clusterOperatorConditionMap(conditions ...configv1.ClusterOperatorStatusCondition) map[string]string {
