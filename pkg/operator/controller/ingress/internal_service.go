@@ -120,7 +120,12 @@ func internalServiceChanged(current, expected *corev1.Service) (bool, *corev1.Se
 		// Ignore fields that the API, other controllers, or user may
 		// have modified.
 		cmpopts.IgnoreFields(corev1.ServicePort{}, "NodePort"),
-		cmpopts.IgnoreFields(corev1.ServiceSpec{}, "ClusterIP", "ClusterIPs", "ExternalIPs", "HealthCheckNodePort"),
+		cmpopts.IgnoreFields(corev1.ServiceSpec{},
+			"ClusterIP", "ClusterIPs",
+			"ExternalIPs",
+			"HealthCheckNodePort",
+			"IPFamilies", "IPFamilyPolicy",
+		),
 		cmp.Comparer(cmpServiceAffinity),
 		cmpopts.EquateEmpty(),
 	}

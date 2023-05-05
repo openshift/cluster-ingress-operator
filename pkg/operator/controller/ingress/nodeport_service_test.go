@@ -14,6 +14,7 @@ import (
 
 func TestDesiredNodePortService(t *testing.T) {
 	trueVar := true
+	internalTrafficPolicyCluster := corev1.ServiceInternalTrafficPolicyCluster
 	deploymentRef := metav1.OwnerReference{
 		APIVersion: "apps/v1",
 		Kind:       "Deployment",
@@ -51,6 +52,7 @@ func TestDesiredNodePortService(t *testing.T) {
 				},
 				Spec: corev1.ServiceSpec{
 					ExternalTrafficPolicy: "Local",
+					InternalTrafficPolicy: &internalTrafficPolicyCluster,
 					Ports: []corev1.ServicePort{
 						{
 							Name:       "http",
@@ -92,6 +94,7 @@ func TestDesiredNodePortService(t *testing.T) {
 				},
 				Spec: corev1.ServiceSpec{
 					ExternalTrafficPolicy: "Local",
+					InternalTrafficPolicy: &internalTrafficPolicyCluster,
 					Ports: []corev1.ServicePort{
 						{
 							Name:       "http",
@@ -184,6 +187,14 @@ func TestNodePortServiceChanged(t *testing.T) {
 			expect: true,
 		},
 		{
+			description: "if .spec.internalTrafficPolicy changes",
+			mutate: func(svc *corev1.Service) {
+				v := corev1.ServiceInternalTrafficPolicyLocal
+				svc.Spec.InternalTrafficPolicy = &v
+			},
+			expect: true,
+		},
+		{
 			description: "if the local-with-fallback annotation changes",
 			mutate: func(svc *corev1.Service) {
 				svc.Annotations["traffic-policy.network.alpha.openshift.io/local-with-fallback"] = "x"
@@ -252,6 +263,21 @@ func TestNodePortServiceChanged(t *testing.T) {
 				svc.Spec.Type = corev1.ServiceTypeLoadBalancer
 			},
 			expect: true,
+		},
+		{
+			description: "if .spec.ipFamilies is defaulted",
+			mutate: func(service *corev1.Service) {
+				service.Spec.IPFamilies = []corev1.IPFamily{corev1.IPv4Protocol}
+			},
+			expect: false,
+		},
+		{
+			description: "if .spec.ipFamilyPolicy is defaulted",
+			mutate: func(service *corev1.Service) {
+				v := corev1.IPFamilyPolicySingleStack
+				service.Spec.IPFamilyPolicy = &v
+			},
+			expect: false,
 		},
 	}
 
