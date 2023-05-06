@@ -173,8 +173,7 @@ func TestRouterCompressionOperation(t *testing.T) {
 	}()
 
 	// Wait until the new compressionPolicy is active in the router deployment
-	deployment, err := getDeployment(t, kclient, controller.RouterDeploymentName(ic), 2*time.Minute)
-	if err := waitForDeploymentComplete(t, kclient, deployment, 3*time.Minute); err != nil {
+	if err := waitForDeploymentCompleteWithOldPodTermination(t, kclient, controller.RouterDeploymentName(ic), 3*time.Minute); err != nil {
 		t.Fatalf("failed to observe deployment completion: %v", err)
 	}
 
