@@ -21,7 +21,7 @@ require (
 	github.com/maistra/istio-operator v0.0.0-20230322122339-793794762e67
 	github.com/openshift/api v3.9.1-0.20190924102528-32369d4db2ad+incompatible
 	github.com/openshift/client-go v0.0.0-20230120202327-72f107311084
-	github.com/openshift/library-go v0.0.0-20230209193239-2e9167362f31
+	github.com/openshift/library-go v0.0.0-20230503125631-c31a6e7b87d4
 	github.com/operator-framework/api v0.3.7-0.20200528122852-759ca0d84007
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.14.0
@@ -143,6 +143,6 @@ require (
 // github.com/operator-framework/operator-sdk.
 replace (
 	bitbucket.org/ww/goautoneg => github.com/munnerz/goautoneg v0.0.0-20120707110453-a547fc61f48d
-	github.com/openshift/api => github.com/openshift/api v0.0.0-20230213202419-42edf4f1d905
+	github.com/openshift/api => github.com/openshift/api v0.0.0-20230503123822-b6cc8ba8ba17
 	k8s.io/client-go => k8s.io/client-go v0.26.1
 )
