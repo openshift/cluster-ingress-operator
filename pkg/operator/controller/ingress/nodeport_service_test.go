@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+
 	operatorv1 "github.com/openshift/api/operator/v1"
 
 	corev1 "k8s.io/api/core/v1"
@@ -333,5 +335,34 @@ func TestNodePortServiceChanged(t *testing.T) {
 				t.Errorf("%s, nodePortServiceChanged does not behave as a fixed point function", tc.description)
 			}
 		}
+	}
+}
+
+// TestNodePortServiceChangedEmptyAnnotations verifies that a service with null
+// .metadata.annotations and a service with empty .metadata.annotations are
+// considered equal.
+func TestNodePortServiceChangedEmptyAnnotations(t *testing.T) {
+	svc1 := corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Annotations: nil,
+		},
+	}
+	svc2 := corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Annotations: map[string]string{},
+		},
+	}
+	testCases := []struct {
+		description      string
+		current, desired *corev1.Service
+	}{
+		{"null to empty", &svc1, &svc2},
+		{"empty to null", &svc2, &svc1},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			changed, _ := nodePortServiceChanged(tc.current, tc.desired)
+			assert.False(t, changed)
+		})
 	}
 }

@@ -234,3 +234,32 @@ func Test_internalServiceChanged(t *testing.T) {
 		})
 	}
 }
+
+// TestInternalServiceChangedEmptyAnnotations verifies that a service with null
+// .metadata.annotations and a service with empty .metadata.annotations are
+// considered equal.
+func TestInternalServiceChangedEmptyAnnotations(t *testing.T) {
+	svc1 := corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Annotations: nil,
+		},
+	}
+	svc2 := corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Annotations: map[string]string{},
+		},
+	}
+	testCases := []struct {
+		description      string
+		current, desired *corev1.Service
+	}{
+		{"null to empty", &svc1, &svc2},
+		{"empty to null", &svc2, &svc1},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			changed, _ := internalServiceChanged(tc.current, tc.desired)
+			assert.False(t, changed)
+		})
+	}
+}

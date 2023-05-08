@@ -137,6 +137,7 @@ func internalServiceChanged(current, expected *corev1.Service) (bool, *corev1.Se
 		cmpopts.IgnoreMapEntries(func(k, _ string) bool {
 			return !managedInternalServiceAnnotations.Has(k)
 		}),
+		cmpopts.EquateEmpty(),
 	}
 	if !cmp.Equal(current.Annotations, expected.Annotations, annotationCmpOpts...) {
 		changed = true
