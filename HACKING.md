@@ -23,10 +23,14 @@ To build the operator on your local machine and deploy it to the cluster, first 
 $ make uninstall
 ```
 
-Build a new image and custom manifests:
+Build a new image and custom manifests using default Dockerfile:
 
 ```
 $ REPO=docker.io/you/cluster-ingress-operator make release-local
+```
+or using the UBI based Dockerfile:
+```
+$ DOCKERFILE=Dockerfile.ubi REPO=docker.io/you/cluster-ingress-operator make release-local
 ```
 
 Follow the instructions to install the operator, e.g.:
