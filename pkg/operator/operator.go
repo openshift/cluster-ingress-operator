@@ -140,6 +140,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 			operatorcontroller.DefaultOperandNamespace,
 			operatorcontroller.DefaultCanaryNamespace,
 			operatorcontroller.GlobalMachineSpecifiedConfigNamespace,
+			operatorcontroller.GlobalOperatorsNamespace,
 			operatorcontroller.SourceConfigMapNamespace,
 		}),
 		// Use a non-caching client everywhere. The default split client does not
@@ -195,6 +196,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		IngressControllerImage: config.IngressControllerImage,
 		CanaryImage:            config.CanaryImage,
 		OperatorReleaseVersion: config.OperatorReleaseVersion,
+		GatewayAPIEnabled:      gatewayAPIEnabled,
 	}); err != nil {
 		return nil, fmt.Errorf("failed to create status controller: %v", err)
 	}

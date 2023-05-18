@@ -48,6 +48,10 @@ const (
 	// Remote worker label, used for node affinity of router deployment.
 	// Router should not run on remote worker nodes
 	RemoteWorkerLabel = "node.openshift.io/remote-worker"
+
+	// GlobalOperatorsNamespace is the namespace for OLM-managed operators,
+	// such as the Service Mesh operator.
+	GlobalOperatorsNamespace = "openshift-operators"
 )
 
 // IngressClusterOperatorName returns the namespaced name of the ClusterOperator
@@ -278,7 +282,7 @@ func ServiceMeshControlPlaneName(operandNamespace string) types.NamespacedName {
 // to install OpenShift Service Mesh.
 func ServiceMeshSubscriptionName() types.NamespacedName {
 	return types.NamespacedName{
-		Namespace: "openshift-operators",
+		Namespace: GlobalOperatorsNamespace,
 		Name:      "servicemeshoperator",
 	}
 }
