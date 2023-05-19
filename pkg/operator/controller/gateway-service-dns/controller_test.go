@@ -62,14 +62,21 @@ func Test_Reconcile(t *testing.T) {
 			},
 		}
 	}
+	gatewayManagedLabel := map[string]string{
+		"gateway.istio.io/managed": "example-gateway",
+	}
+	exampleGatewayLabel := map[string]string{
+		"istio.io/gateway-name": "example-gateway",
+	}
 	ingHost := func(hostname string) corev1.LoadBalancerIngress {
 		return corev1.LoadBalancerIngress{
 			Hostname: hostname,
 		}
 	}
-	dnsrecord := func(name, dnsName string, targets ...string) *iov1.DNSRecord {
+	dnsrecord := func(name, dnsName string, labels map[string]string, targets ...string) *iov1.DNSRecord {
 		return &iov1.DNSRecord{
 			ObjectMeta: metav1.ObjectMeta{
+				Labels:    labels,
 				Namespace: "openshift-ingress",
 				Name:      name,
 			},
@@ -96,25 +103,18 @@ func Test_Reconcile(t *testing.T) {
 		reconcileRequest reconcile.Request
 		expectCreate     []client.Object
 		expectUpdate     []client.Object
+		expectDelete     []client.Object
 	}{
 		{
 			name: "gateway with no listeners",
 			existingObjects: []runtime.Object{
 				gw("example-gateway"),
-				svc(
-					"example-gateway",
-					map[string]string{
-						"gateway.istio.io/managed": "example-gateway",
-					},
-					map[string]string{
-						"istio.io/gateway-name": "example-gateway",
-					},
-					ingHost("lb.example.com"),
-				),
+				svc("example-gateway", gatewayManagedLabel, exampleGatewayLabel, ingHost("lb.example.com")),
 			},
 			reconcileRequest: req("openshift-ingress", "example-gateway"),
 			expectCreate:     []client.Object{},
 			expectUpdate:     []client.Object{},
+			expectDelete:     []client.Object{},
 		},
 		{
 			name: "gateway with three listeners and two unique host names, no dnsrecords",
@@ -125,23 +125,15 @@ func Test_Reconcile(t *testing.T) {
 					l("stage-https", "*.stage.example.com", 443),
 					l("prod-https", "*.prod.example.com", 443),
 				),
-				svc(
-					"example-gateway",
-					map[string]string{
-						"gateway.istio.io/managed": "example-gateway",
-					},
-					map[string]string{
-						"istio.io/gateway-name": "example-gateway",
-					},
-					ingHost("lb.example.com"),
-				),
+				svc("example-gateway", gatewayManagedLabel, exampleGatewayLabel, ingHost("lb.example.com")),
 			},
 			reconcileRequest: req("openshift-ingress", "example-gateway"),
 			expectCreate: []client.Object{
-				dnsrecord("example-gateway-76456f8647-wildcard", "*.prod.example.com.", "lb.example.com"),
-				dnsrecord("example-gateway-64754456b8-wildcard", "*.stage.example.com.", "lb.example.com"),
+				dnsrecord("example-gateway-76456f8647-wildcard", "*.prod.example.com.", exampleGatewayLabel, "lb.example.com"),
+				dnsrecord("example-gateway-64754456b8-wildcard", "*.stage.example.com.", exampleGatewayLabel, "lb.example.com"),
 			},
 			expectUpdate: []client.Object{},
+			expectDelete: []client.Object{},
 		},
 		{
 			name: "gateway with two listeners and one dnsrecord with a stale target, hostname already has trailing dot",
@@ -151,48 +143,47 @@ func Test_Reconcile(t *testing.T) {
 					l("http", "*.example.com", 80),
 					l("https", "*.example.com", 443),
 				),
-				svc(
-					"example-gateway",
-					map[string]string{
-						"gateway.istio.io/managed": "example-gateway",
-					},
-					map[string]string{
-						"istio.io/gateway-name": "example-gateway",
-					},
-					ingHost("newlb.example.com"),
-				),
-				dnsrecord("example-gateway-7bdcfc8f68-wildcard", "*.example.com.", "oldlb.example.com"),
+				svc("example-gateway", gatewayManagedLabel, exampleGatewayLabel, ingHost("newlb.example.com")),
+				dnsrecord("example-gateway-7bdcfc8f68-wildcard", "*.example.com.", exampleGatewayLabel, "oldlb.example.com"),
 			},
 			reconcileRequest: req("openshift-ingress", "example-gateway"),
 			expectCreate:     []client.Object{},
 			expectUpdate: []client.Object{
-				dnsrecord("example-gateway-7bdcfc8f68-wildcard", "*.example.com.", "newlb.example.com"),
+				dnsrecord("example-gateway-7bdcfc8f68-wildcard", "*.example.com.", exampleGatewayLabel, "newlb.example.com"),
+			},
+			expectDelete: []client.Object{},
+		},
+		{
+			name: "gateway with a stale dnsrecord",
+			existingObjects: []runtime.Object{
+				gw(
+					"example-gateway",
+					l("http", "*.new.example.com", 80),
+				),
+				svc("example-gateway", gatewayManagedLabel, exampleGatewayLabel, ingHost("lb.example.com")),
+				dnsrecord("example-gateway-64754456b8-wildcard", "*.old.example.com.", exampleGatewayLabel, "lb.example.com"),
+			},
+			reconcileRequest: req("openshift-ingress", "example-gateway"),
+			expectCreate: []client.Object{
+				dnsrecord("example-gateway-68ffc6d64-wildcard", "*.new.example.com.", exampleGatewayLabel, "lb.example.com"),
+			},
+			expectUpdate: []client.Object{},
+			expectDelete: []client.Object{
+				dnsrecord("example-gateway-64754456b8-wildcard", "*.old.example.com.", exampleGatewayLabel, "lb.example.com"),
 			},
 		},
 		{
 			name: "gateway with two listeners and one host name, no dnsrecords, name ends up with trailing dot",
 			existingObjects: []runtime.Object{
-				gw(
-					"example-gateway",
-					l("stage-http", "*.stage.example.com", 80),
-					l("stage-https", "*.stage.example.com", 443),
-				),
-				svc(
-					"example-gateway",
-					map[string]string{
-						"gateway.istio.io/managed": "example-gateway",
-					},
-					map[string]string{
-						"istio.io/gateway-name": "example-gateway",
-					},
-					ingHost("lb.example.com"),
-				),
+				gw("example-gateway", l("stage-http", "*.stage.example.com", 80), l("stage-https", "*.stage.example.com", 443)),
+				svc("example-gateway", gatewayManagedLabel, exampleGatewayLabel, ingHost("lb.example.com")),
 			},
 			reconcileRequest: req("openshift-ingress", "example-gateway"),
 			expectCreate: []client.Object{
-				dnsrecord("example-gateway-64754456b8-wildcard", "*.stage.example.com.", "lb.example.com"),
+				dnsrecord("example-gateway-64754456b8-wildcard", "*.stage.example.com.", exampleGatewayLabel, "lb.example.com"),
 			},
 			expectUpdate: []client.Object{},
+			expectDelete: []client.Object{},
 		},
 	}
 
@@ -207,7 +198,7 @@ func Test_Reconcile(t *testing.T) {
 				WithScheme(scheme).
 				WithRuntimeObjects(tc.existingObjects...).
 				Build()
-			cl := &fakeClientRecorder{fakeClient, t, []client.Object{}, []client.Object{}}
+			cl := &fakeClientRecorder{fakeClient, t, []client.Object{}, []client.Object{}, []client.Object{}}
 			informer := informertest.FakeInformers{Scheme: scheme}
 			cache := fakeCache{Informers: &informer, Reader: cl}
 			reconciler := &reconciler{
@@ -231,6 +222,11 @@ func Test_Reconcile(t *testing.T) {
 			if diff := cmp.Diff(tc.expectUpdate, cl.updated, cmpOpts...); diff != "" {
 				t.Fatalf("found diff between expected and actual updates: %s", diff)
 			}
+			// A deleted object has zero spec.
+			delCmpOpts := append(cmpOpts, cmpopts.IgnoreTypes(iov1.DNSRecordSpec{}))
+			if diff := cmp.Diff(tc.expectDelete, cl.deleted, delCmpOpts...); diff != "" {
+				t.Fatalf("found diff between expected and actual deletes: %s", diff)
+			}
 		})
 	}
 }
@@ -246,6 +242,7 @@ type fakeClientRecorder struct {
 
 	added   []client.Object
 	updated []client.Object
+	deleted []client.Object
 }
 
 func (c *fakeClientRecorder) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
@@ -266,11 +263,13 @@ func (c *fakeClientRecorder) RESTMapper() meta.RESTMapper {
 
 func (c *fakeClientRecorder) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
 	c.added = append(c.added, obj)
-	c.T.Log(obj)
+	c.T.Log("CREATE", obj)
 	return c.Client.Create(ctx, obj, opts...)
 }
 
 func (c *fakeClientRecorder) Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error {
+	c.deleted = append(c.deleted, obj)
+	c.T.Log("DELETE", obj)
 	return c.Client.Delete(ctx, obj, opts...)
 }
 
@@ -280,6 +279,7 @@ func (c *fakeClientRecorder) DeleteAllOf(ctx context.Context, obj client.Object,
 
 func (c *fakeClientRecorder) Update(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error {
 	c.updated = append(c.updated, obj)
+	c.T.Log("UPDATE", obj)
 	return c.Client.Update(ctx, obj, opts...)
 }
 
