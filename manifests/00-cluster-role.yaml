@@ -101,8 +101,11 @@ rules:
   - featuregates
   - apiservers
   - networks
+  - clusterversions
   verbs:
   - get
+  - list
+  - watch
 
 - apiGroups:
   - config.openshift.io

@@ -1,33 +1,26 @@
 approvers:
-  - ironcladlou
   - knobunc
-  - pravisankar
-  - ramr
   - Miciah
   - frobware
-  - danehans
-  - sgreene570
   - candita
   - rfredette
   - alebedev87
-  - lmzuccarelli
   - miheer
   - gcs278
-  - Ethany-RH
 reviewers:
-  - ironcladlou
   - knobunc
-  - pravisankar
-  - ramr
   - Miciah
   - frobware
-  - danehans
-  - sgreene570
   - candita
   - rfredette
   - alebedev87
-  - lmzuccarelli
   - miheer 
   - gcs278
+emeritus_approvers:
+  - ironcladlou
+  - pravisankar
+  - ramr
+  - danehans
+  - sgreene570
+  - lmzuccarelli
   - Ethany-RH
-component: Routing

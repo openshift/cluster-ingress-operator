@@ -21,7 +21,7 @@ require (
 	github.com/maistra/istio-operator v0.0.0-20230322122339-793794762e67
 	github.com/openshift/api v3.9.1-0.20190924102528-32369d4db2ad+incompatible
 	github.com/openshift/client-go v0.0.0-20230120202327-72f107311084
-	github.com/openshift/library-go v0.0.0-20230209193239-2e9167362f31
+	github.com/openshift/library-go v0.0.0-20230503125631-c31a6e7b87d4
 	github.com/operator-framework/api v0.3.7-0.20200528122852-759ca0d84007
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.14.0
@@ -42,7 +42,7 @@ require (
 	k8s.io/apiserver v0.26.1
 	k8s.io/client-go v12.0.0+incompatible
 	k8s.io/utils v0.0.0-20230209194617-a36077c30491
-	sigs.k8s.io/controller-runtime v0.14.4
+	sigs.k8s.io/controller-runtime v0.14.7-0.20230424121949-57b0968cccaf
 	sigs.k8s.io/gateway-api v0.5.1-0.20220921185115-ee7a83814203
 )
 
@@ -116,11 +116,11 @@ require (
 	go.uber.org/atomic v1.7.0 // indirect
 	go.uber.org/multierr v1.6.0 // indirect
 	golang.org/x/crypto v0.1.0 // indirect
-	golang.org/x/net v0.5.0 // indirect
+	golang.org/x/net v0.7.0 // indirect
 	golang.org/x/oauth2 v0.0.0-20220411215720-9780585627b5 // indirect
-	golang.org/x/sys v0.4.0 // indirect
-	golang.org/x/term v0.4.0 // indirect
-	golang.org/x/text v0.6.0 // indirect
+	golang.org/x/sys v0.5.0 // indirect
+	golang.org/x/term v0.5.0 // indirect
+	golang.org/x/text v0.7.0 // indirect
 	gomodules.xyz/jsonpatch/v2 v2.2.0 // indirect
 	google.golang.org/appengine v1.6.7 // indirect
 	google.golang.org/genproto v0.0.0-20220502173005-c8bf987b8c21 // indirect
@@ -143,6 +143,6 @@ require (
 // github.com/operator-framework/operator-sdk.
 replace (
 	bitbucket.org/ww/goautoneg => github.com/munnerz/goautoneg v0.0.0-20120707110453-a547fc61f48d
-	github.com/openshift/api => github.com/openshift/api v0.0.0-20230213202419-42edf4f1d905
+	github.com/openshift/api => github.com/openshift/api v0.0.0-20230503123822-b6cc8ba8ba17
 	k8s.io/client-go => k8s.io/client-go v0.26.1
 )

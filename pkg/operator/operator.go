@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"time"
 
+	configclient "github.com/openshift/client-go/config/clientset/versioned"
+	configinformers "github.com/openshift/client-go/config/informers/externalversions"
+	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 
 	routemetricscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/route-metrics"
@@ -73,7 +76,60 @@ type Operator struct {
 
 // New creates (but does not start) a new operator from configuration.
 func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, error) {
+	ctx := context.Background()
+	ctx, cancelFn := context.WithCancel(ctx)
+	go func() {
+		defer cancelFn()
+		<-config.Stop
+	}()
+
 	scheme := operatorclient.GetScheme()
+
+	kubeClient, err := kubernetes.NewForConfig(kubeConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create kube client: %w", err)
+	}
+	namespaceInformers := informers.NewSharedInformerFactoryWithOptions(kubeClient, 24*time.Hour, informers.WithNamespace(operatorcontroller.DefaultOperandNamespace))
+	eventRecorder := events.NewKubeRecorder(kubeClient.CoreV1().Events(config.Namespace), "cluster-ingress-operator", &corev1.ObjectReference{
+		APIVersion: "apps/v1",
+		Kind:       "Deployment",
+		Namespace:  config.Namespace,
+		Name:       "ingress-operator",
+	})
+
+	configClient, err := configclient.NewForConfig(kubeConfig)
+	if err != nil {
+		return nil, err
+	}
+	configInformers := configinformers.NewSharedInformerFactory(configClient, 10*time.Minute)
+	desiredVersion := config.OperatorReleaseVersion
+	missingVersion := "0.0.1-snapshot"
+
+	// By default, this will exit(0) the process if the featuregates ever change to a different set of values.
+	featureGateAccessor := featuregates.NewFeatureGateAccess(
+		desiredVersion, missingVersion,
+		configInformers.Config().V1().ClusterVersions(), configInformers.Config().V1().FeatureGates(),
+		eventRecorder,
+	)
+	go featureGateAccessor.Run(ctx)
+	go configInformers.Start(config.Stop)
+
+	select {
+	case <-featureGateAccessor.InitialFeatureGatesObserved():
+		featureGates, _ := featureGateAccessor.CurrentFeatureGates()
+		log.Info("FeatureGates initialized", "knownFeatures", featureGates.KnownFeatures())
+	case <-time.After(1 * time.Minute):
+		log.Error(nil, "timed out waiting for FeatureGate detection")
+		return nil, fmt.Errorf("timed out waiting for FeatureGate detection")
+	}
+
+	featureGates, err := featureGateAccessor.CurrentFeatureGates()
+	if err != nil {
+		return nil, err
+	}
+	// example of future featuregate read and usage to set a variable to pass to a controller
+	gatewayAPIEnabled := featureGates.Enabled(configv1.FeatureGateGatewayAPI)
+
 	// Set up an operator manager for the operator namespace.
 	mgr, err := manager.New(kubeConfig, manager.Options{
 		Namespace: config.Namespace,
@@ -109,11 +165,6 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		return nil, fmt.Errorf("failed to create ingress controller: %v", err)
 	}
 
-	kubeClient, err := kubernetes.NewForConfig(kubeConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create kube client: %w", err)
-	}
-	namespaceInformers := informers.NewSharedInformerFactoryWithOptions(kubeClient, 24*time.Hour, informers.WithNamespace(operatorcontroller.DefaultOperandNamespace))
 	// this only handles the case for the default router which is used for oauth-server, console, and other
 	// platform services.  The scheduler bug will need to be fixed to correct the rest.
 	// Once https://bugzilla.redhat.com/show_bug.cgi?id=2062459 is fixed, this controller can be removed.
@@ -122,12 +173,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		operatorcontroller.DefaultOperandNamespace,
 		operatorcontroller.IngressControllerDeploymentPodSelector(&operatorv1.IngressController{ObjectMeta: metav1.ObjectMeta{Name: "default"}}),
 		30, // minReadySeconds from deployments.apps/router-default
-		events.NewKubeRecorder(kubeClient.CoreV1().Events(config.Namespace), "cluster-ingress-operator", &corev1.ObjectReference{
-			APIVersion: "apps/v1",
-			Kind:       "Deployment",
-			Namespace:  config.Namespace,
-			Name:       "ingress-operator",
-		}),
+		eventRecorder,
 		// ingress operator appears to be wired to a namespaced resource
 		v1helpers.NewFakeOperatorClient(&operatorv1.OperatorSpec{ManagementState: operatorv1.Managed}, &operatorv1.OperatorStatus{}, nil),
 		kubeClient,
@@ -245,6 +291,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 
 	// Set up the gatewayapi controller.
 	if _, err := gatewayapicontroller.New(mgr, gatewayapicontroller.Config{
+		GatewayAPIEnabled: gatewayAPIEnabled,
 		DependentControllers: []controller.Controller{
 			gatewayClassController,
 			gatewayServiceDNSController,
