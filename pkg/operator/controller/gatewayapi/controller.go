@@ -31,6 +31,7 @@ var log = logf.Logger.WithName(controllerName)
 // New creates and returns a controller that creates Gateway API CRDs when the
 // appropriate featuregate is enabled.
 func New(mgr manager.Manager, config Config) (controller.Controller, error) {
+	operatorCache := mgr.GetCache()
 	reconciler := &reconciler{
 		client: mgr.GetClient(),
 		config: config,
@@ -47,7 +48,7 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 		}
 		return expectedName == actualName
 	})
-	if err := c.Watch(&source.Kind{Type: &configv1.FeatureGate{}}, &handler.EnqueueRequestForObject{}, clusterNamePredicate); err != nil {
+	if err := c.Watch(source.Kind(operatorCache, &configv1.FeatureGate{}), &handler.EnqueueRequestForObject{}, clusterNamePredicate); err != nil {
 		return nil, err
 	}
 	return c, nil

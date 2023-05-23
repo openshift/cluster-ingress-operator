@@ -38,6 +38,7 @@ const (
 var log = logf.Logger.WithName(controllerName)
 
 func New(mgr manager.Manager, operatorNamespace string) (runtimecontroller.Controller, error) {
+	operatorCache := mgr.GetCache()
 	reconciler := &reconciler{
 		client:            mgr.GetClient(),
 		recorder:          mgr.GetEventRecorderFor(controllerName),
@@ -47,7 +48,7 @@ func New(mgr manager.Manager, operatorNamespace string) (runtimecontroller.Contr
 	if err != nil {
 		return nil, err
 	}
-	if err := c.Watch(&source.Kind{Type: &operatorv1.IngressController{}}, &handler.EnqueueRequestForObject{}); err != nil {
+	if err := c.Watch(source.Kind(operatorCache, &operatorv1.IngressController{}), &handler.EnqueueRequestForObject{}); err != nil {
 		return nil, err
 	}
 	return c, nil

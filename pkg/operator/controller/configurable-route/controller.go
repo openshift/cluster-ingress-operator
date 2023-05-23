@@ -56,11 +56,12 @@ func New(mgr manager.Manager, config Config, eventRecorder events.Recorder) (con
 		return nil, err
 	}
 
+	operatorCache := mgr.GetCache()
 	reconciler := &reconciler{
 		kclient:       kubeClient,
 		config:        config,
 		client:        mgr.GetClient(),
-		cache:         mgr.GetCache(),
+		cache:         operatorCache,
 		eventRecorder: eventRecorder,
 	}
 
@@ -75,7 +76,7 @@ func New(mgr manager.Manager, config Config, eventRecorder events.Recorder) (con
 		return o.GetName() == clusterIngressResource.Name && o.GetNamespace() == clusterIngressResource.Namespace
 	})
 
-	if err := c.Watch(&source.Kind{Type: &configv1.Ingress{}}, &handler.EnqueueRequestForObject{}, clusterNamePredicate); err != nil {
+	if err := c.Watch(source.Kind(operatorCache, &configv1.Ingress{}), &handler.EnqueueRequestForObject{}, clusterNamePredicate); err != nil {
 		return nil, err
 	}
 
@@ -86,11 +87,11 @@ func New(mgr manager.Manager, config Config, eventRecorder events.Recorder) (con
 		return ok
 	})
 
-	if err := c.Watch(&source.Kind{Type: &rbacv1.Role{}}, handler.EnqueueRequestsFromMapFunc(reconciler.resourceToClusterIngressConfig), defaultPredicate); err != nil {
+	if err := c.Watch(source.Kind(operatorCache, &rbacv1.Role{}), handler.EnqueueRequestsFromMapFunc(reconciler.resourceToClusterIngressConfig), defaultPredicate); err != nil {
 		return nil, err
 	}
 
-	if err := c.Watch(&source.Kind{Type: &rbacv1.RoleBinding{}}, handler.EnqueueRequestsFromMapFunc(reconciler.resourceToClusterIngressConfig), defaultPredicate); err != nil {
+	if err := c.Watch(source.Kind(operatorCache, &rbacv1.RoleBinding{}), handler.EnqueueRequestsFromMapFunc(reconciler.resourceToClusterIngressConfig), defaultPredicate); err != nil {
 		return nil, err
 	}
 
@@ -98,7 +99,7 @@ func New(mgr manager.Manager, config Config, eventRecorder events.Recorder) (con
 }
 
 // resourceToClusterIngressConfig is used to only trigger reconciles on the cluster ingress config.
-func (r *reconciler) resourceToClusterIngressConfig(o client.Object) []reconcile.Request {
+func (r *reconciler) resourceToClusterIngressConfig(ctx context.Context, o client.Object) []reconcile.Request {
 	return []reconcile.Request{
 		{
 			NamespacedName: operatorcontroller.IngressClusterConfigName(),

@@ -48,6 +48,7 @@ func New(mgr manager.Manager, namespace string) (controller.Controller, error) {
 	}
 	// Add the cache to the manager so that the cache is started along with the other runnables.
 	mgr.Add(newCache)
+	operatorCache := mgr.GetCache()
 	reconciler := &reconciler{
 		cache:            newCache,
 		namespace:        namespace,
@@ -68,11 +69,11 @@ func New(mgr manager.Manager, namespace string) (controller.Controller, error) {
 		return nil, err
 	}
 	// add watch for changes in IngressController
-	if err := c.Watch(&source.Kind{Type: &operatorv1.IngressController{}}, &handler.EnqueueRequestForObject{}); err != nil {
+	if err := c.Watch(source.Kind(operatorCache, &operatorv1.IngressController{}), &handler.EnqueueRequestForObject{}); err != nil {
 		return nil, err
 	}
 	// add watch for changes in Route
-	if err := c.Watch(source.NewKindWithCache(&routev1.Route{}, newCache),
+	if err := c.Watch(source.Kind(newCache, &routev1.Route{}),
 		handler.EnqueueRequestsFromMapFunc(reconciler.routeToIngressController)); err != nil {
 		return nil, err
 	}
@@ -80,7 +81,7 @@ func New(mgr manager.Manager, namespace string) (controller.Controller, error) {
 }
 
 // routeToIngressController creates a reconcile.Request for all the Ingress Controllers related to the Route object.
-func (r *reconciler) routeToIngressController(obj client.Object) []reconcile.Request {
+func (r *reconciler) routeToIngressController(context context.Context, obj client.Object) []reconcile.Request {
 	var requests []reconcile.Request
 	// Cast the received object into Route object.
 	route := obj.(*routev1.Route)

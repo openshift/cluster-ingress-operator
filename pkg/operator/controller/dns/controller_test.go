@@ -327,7 +327,7 @@ func TestMigrateDNSRecordStatus(t *testing.T) {
 	}
 
 	scheme := runtime.NewScheme()
-	iov1.AddToScheme(scheme)
+	iov1.Install(scheme)
 
 	testDNSRecord := &iov1.DNSRecord{
 		ObjectMeta: metav1.ObjectMeta{
@@ -342,22 +342,27 @@ func TestMigrateDNSRecordStatus(t *testing.T) {
 		},
 	}
 
-	client := fake.NewFakeClientWithScheme(scheme, testDNSRecord)
+	client := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(testDNSRecord).
+		WithRuntimeObjects(testDNSRecord).
+		Build()
 	r := reconciler{client: client}
 	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			testDNSRecord.Status.Zones[0].Conditions = tc.conditions
+			changed, _ := r.migrateRecordStatusConditions(testDNSRecord)
+			if changed != tc.changed {
+				t.Fatalf("DNS record status not updated, expected status condition to be updated")
+			}
 
-		testDNSRecord.Status.Zones[0].Conditions = tc.conditions
-		changed, _ := r.migrateRecordStatusConditions(testDNSRecord)
-		if changed != tc.changed {
-			t.Fatalf("DNS record status not updated, expected status condition to be updated")
-		}
+			t.Logf("\n%+v", testDNSRecord.Status)
 
-		t.Logf("\n%+v", testDNSRecord.Status)
-
-		opts := cmpopts.IgnoreFields(iov1.DNSZoneCondition{}, "Reason", "Message", "LastTransitionTime")
-		if !cmp.Equal(testDNSRecord.Status.Zones[0].Conditions, tc.expected, opts) {
-			t.Fatalf("%q: status condition found diff:\n%s", tc.name, cmp.Diff(testDNSRecord.Status.Zones[0].Conditions, tc.expected, opts))
-		}
+			opts := cmpopts.IgnoreFields(iov1.DNSZoneCondition{}, "Reason", "Message", "LastTransitionTime")
+			if !cmp.Equal(testDNSRecord.Status.Zones[0].Conditions, tc.expected, opts) {
+				t.Fatalf("%q: status condition found diff:\n%s", tc.name, cmp.Diff(testDNSRecord.Status.Zones[0].Conditions, tc.expected, opts))
+			}
+		})
 	}
 }
 

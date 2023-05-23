@@ -33,8 +33,9 @@ var log = logf.Logger.WithName(controllerName)
 // New creates a new controller that syncs client CA configmaps between the
 // config and operand namespaces.
 func New(mgr manager.Manager, config Config) (controller.Controller, error) {
+	operatorCache := mgr.GetCache()
 	reconciler := &reconciler{
-		cache:  mgr.GetCache(),
+		cache:  operatorCache,
 		client: mgr.GetClient(),
 		config: config,
 	}
@@ -53,7 +54,7 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	// If the ingresscontroller's configmap reference changes, reconcile the
 	// ingresscontroller.
 	if err := c.Watch(
-		&source.Kind{Type: &operatorv1.IngressController{}},
+		source.Kind(operatorCache, &operatorv1.IngressController{}),
 		&handler.EnqueueRequestForObject{},
 		predicate.Funcs{
 			CreateFunc: func(e event.CreateEvent) bool {
@@ -113,11 +114,11 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	}
 
 	makeMapFunc := func(indexKey string) handler.MapFunc {
-		return func(o client.Object) []reconcile.Request {
+		return func(ctx context.Context, o client.Object) []reconcile.Request {
 			controllers := &operatorv1.IngressControllerList{}
 			listOpts := client.MatchingFields{indexKey: o.GetName()}
 			requests := []reconcile.Request{}
-			if err := reconciler.cache.List(context.Background(), controllers, listOpts); err != nil {
+			if err := reconciler.cache.List(ctx, controllers, listOpts); err != nil {
 				log.Error(err, "failed to list ingresscontrollers for configmap")
 				return requests
 			}
@@ -143,7 +144,7 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 
 	userCMToIC := makeMapFunc(clientCAUserConfigmapIndexFieldName)
 	if err := c.Watch(
-		&source.Kind{Type: &corev1.ConfigMap{}},
+		source.Kind(operatorCache, &corev1.ConfigMap{}),
 		handler.EnqueueRequestsFromMapFunc(userCMToIC),
 		predicate.NewPredicateFuncs(isInNS(config.SourceNamespace)),
 	); err != nil {
@@ -152,7 +153,7 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 
 	operatorCMToIC := makeMapFunc(clientCAOperatorConfigmapIndexFieldName)
 	if err := c.Watch(
-		&source.Kind{Type: &corev1.ConfigMap{}},
+		source.Kind(operatorCache, &corev1.ConfigMap{}),
 		handler.EnqueueRequestsFromMapFunc(operatorCMToIC),
 		predicate.NewPredicateFuncs(isInNS(config.TargetNamespace)),
 	); err != nil {

@@ -52,16 +52,19 @@ var log = logf.Logger.WithName(controllerName)
 // associated with gateways and creates dnsrecord objects for them.  This is an
 // unmanaged controller, which means that the manager does not start it.
 func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, error) {
+	operatorCache := mgr.GetCache()
 	reconciler := &reconciler{
 		config:   config,
 		client:   mgr.GetClient(),
-		cache:    mgr.GetCache(),
+		cache:    operatorCache,
 		recorder: mgr.GetEventRecorderFor(controllerName),
 	}
 	c, err := controller.NewUnmanaged(controllerName, mgr, controller.Options{Reconciler: reconciler})
 	if err != nil {
 		return nil, err
 	}
+	scheme := mgr.GetClient().Scheme()
+	mapper := mgr.GetClient().RESTMapper()
 	isServiceNeedingDNS := predicate.NewPredicateFuncs(func(o client.Object) bool {
 		_, ok := o.(*corev1.Service).Labels[managedByIstioLabelKey]
 		return ok
@@ -79,14 +82,14 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 	isInOperandNamespace := predicate.NewPredicateFuncs(func(o client.Object) bool {
 		return o.GetNamespace() == config.OperandNamespace
 	})
-	gatewayToService := func(o client.Object) []reconcile.Request {
+	gatewayToService := func(ctx context.Context, o client.Object) []reconcile.Request {
 		var services corev1.ServiceList
 		listOpts := []client.ListOption{
 			client.MatchingLabels{gatewayNameLabelKey: o.GetName()},
 			client.InNamespace(config.OperandNamespace),
 		}
 		requests := []reconcile.Request{}
-		if err := reconciler.cache.List(context.Background(), &services, listOpts...); err != nil {
+		if err := reconciler.cache.List(ctx, &services, listOpts...); err != nil {
 			log.Error(err, "failed to list services for gateway", "gateway", o.GetName())
 			return requests
 		}
@@ -101,13 +104,13 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 		}
 		return requests
 	}
-	if err := c.Watch(&source.Kind{Type: &gatewayapiv1beta1.Gateway{}}, handler.EnqueueRequestsFromMapFunc(gatewayToService), isInOperandNamespace, gatewayListenersChanged); err != nil {
+	if err := c.Watch(source.Kind(operatorCache, &gatewayapiv1beta1.Gateway{}), handler.EnqueueRequestsFromMapFunc(gatewayToService), isInOperandNamespace, gatewayListenersChanged); err != nil {
 		return nil, err
 	}
-	if err := c.Watch(&source.Kind{Type: &corev1.Service{}}, &handler.EnqueueRequestForObject{}, isServiceNeedingDNS, isInOperandNamespace); err != nil {
+	if err := c.Watch(source.Kind(operatorCache, &corev1.Service{}), &handler.EnqueueRequestForObject{}, isServiceNeedingDNS, isInOperandNamespace); err != nil {
 		return nil, err
 	}
-	if err := c.Watch(&source.Kind{Type: &iov1.DNSRecord{}}, &handler.EnqueueRequestForOwner{OwnerType: &corev1.Service{}}, isInOperandNamespace); err != nil {
+	if err := c.Watch(source.Kind(operatorCache, &iov1.DNSRecord{}), handler.EnqueueRequestForOwner(scheme, mapper, &corev1.Service{}), isInOperandNamespace); err != nil {
 		return nil, err
 	}
 	return c, nil

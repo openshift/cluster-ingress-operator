@@ -132,16 +132,17 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 
 	// Set up an operator manager for the operator namespace.
 	mgr, err := manager.New(kubeConfig, manager.Options{
-		Namespace: config.Namespace,
-		Scheme:    scheme,
-		NewCache: cache.MultiNamespacedCacheBuilder([]string{
-			config.Namespace,
-			operatorcontroller.GlobalUserSpecifiedConfigNamespace,
-			operatorcontroller.DefaultOperandNamespace,
-			operatorcontroller.DefaultCanaryNamespace,
-			operatorcontroller.GlobalMachineSpecifiedConfigNamespace,
-			operatorcontroller.SourceConfigMapNamespace,
-		}),
+		Scheme: scheme,
+		Cache: cache.Options{
+			Namespaces: []string{
+				config.Namespace,
+				operatorcontroller.GlobalUserSpecifiedConfigNamespace,
+				operatorcontroller.DefaultOperandNamespace,
+				operatorcontroller.DefaultCanaryNamespace,
+				operatorcontroller.GlobalMachineSpecifiedConfigNamespace,
+				operatorcontroller.SourceConfigMapNamespace,
+			},
+		},
 		// Use a non-caching client everywhere. The default split client does not
 		// promise to invalidate the cache during writes (nor does it promise
 		// sequential create/get coherence), and we have code which (probably
@@ -149,7 +150,9 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		// return the updated resource. All client consumers will need audited to
 		// ensure they are tolerant of stale data (or we need a cache or client that
 		// makes stronger coherence guarantees).
-		NewClient: func(_ cache.Cache, config *rest.Config, options client.Options, uncachedObjects ...client.Object) (client.Client, error) {
+		NewClient: func(config *rest.Config, options client.Options) (client.Client, error) {
+			// Must override cache option, otherwise client will use cache
+			options.Cache = nil
 			return client.New(config, options)
 		},
 	})
