@@ -132,6 +132,10 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	if err := c.Watch(source.Kind(operatorCache, &configv1.Proxy{}), handler.EnqueueRequestsFromMapFunc(reconciler.ingressConfigToIngressController)); err != nil {
 		return nil, err
 	}
+	// Watch for changes to cluster-wide proxy config.
+	if err := c.Watch(&source.Kind{Type: &configv1.Proxy{}}, handler.EnqueueRequestsFromMapFunc(reconciler.ingressConfigToIngressController)); err != nil {
+		return nil, err
+	}
 	return c, nil
 }
 

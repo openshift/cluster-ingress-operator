@@ -101,7 +101,10 @@ rules:
   - featuregates
   - apiservers
   - networks
+<<<<<<< HEAD
   - clusterversions
+=======
+>>>>>>> 0ac4585e (Pull operand proxy variables from the cluster proxy config instead of the ingress operator's environment)
   - proxies
   verbs:
   - get
@@ -115,6 +118,7 @@ rules:
   - featuregates
   - infrastructures
   - ingresses
+  - proxies
   verbs:
   - list
   - watch
