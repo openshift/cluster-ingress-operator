@@ -1,12 +1,9 @@
-package v1alpha1
+package operators
 
 import (
 	"encoding/json"
 	"fmt"
 	"sort"
-	"strings"
-
-	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 
 	appsv1 "k8s.io/api/apps/v1"
 	rbac "k8s.io/api/rbac/v1"
@@ -15,12 +12,8 @@ import (
 	"github.com/operator-framework/api/pkg/lib/version"
 )
 
-const (
-	ClusterServiceVersionAPIVersion     = GroupName + "/" + GroupVersion
-	ClusterServiceVersionKind           = "ClusterServiceVersion"
-	OperatorGroupNamespaceAnnotationKey = "olm.operatorNamespace"
-	InstallStrategyNameDeployment       = "deployment"
-)
+// ClusterServiceVersionKind is the PascalCase name of a CSV's kind.
+const ClusterServiceVersionKind = "ClusterServiceVersion"
 
 // InstallModeType is a supported type of install mode for CSV installation
 type InstallModeType string
@@ -34,13 +27,14 @@ const (
 	InstallModeTypeMultiNamespace InstallModeType = "MultiNamespace"
 	// InstallModeTypeAllNamespaces indicates that the operator can be a member of an `OperatorGroup` that selects all namespaces (target namespace set is the empty string "").
 	InstallModeTypeAllNamespaces InstallModeType = "AllNamespaces"
+
+	InstallStrategyNameDeployment = "deployment"
 )
 
 // InstallMode associates an InstallModeType with a flag representing if the CSV supports it
-// +k8s:openapi-gen=true
 type InstallMode struct {
-	Type      InstallModeType `json:"type"`
-	Supported bool            `json:"supported"`
+	Type      InstallModeType
+	Supported bool
 }
 
 // InstallModeSet is a mapping of unique InstallModeTypes to whether they are supported.
@@ -49,28 +43,28 @@ type InstallModeSet map[InstallModeType]bool
 // NamedInstallStrategy represents the block of an ClusterServiceVersion resource
 // where the install strategy is specified.
 type NamedInstallStrategy struct {
-	StrategyName string                    `json:"strategy"`
-	StrategySpec StrategyDetailsDeployment `json:"spec,omitempty"`
+	StrategyName string
+	StrategySpec StrategyDetailsDeployment
 }
 
 // StrategyDeploymentPermissions describe the rbac rules and service account needed by the install strategy
 type StrategyDeploymentPermissions struct {
-	ServiceAccountName string            `json:"serviceAccountName"`
-	Rules              []rbac.PolicyRule `json:"rules"`
+	ServiceAccountName string
+	Rules              []rbac.PolicyRule
 }
 
 // StrategyDeploymentSpec contains the name and spec for the deployment ALM should create
 type StrategyDeploymentSpec struct {
-	Name string                `json:"name"`
-	Spec appsv1.DeploymentSpec `json:"spec"`
+	Name string
+	Spec appsv1.DeploymentSpec
 }
 
 // StrategyDetailsDeployment represents the parsed details of a Deployment
 // InstallStrategy.
 type StrategyDetailsDeployment struct {
-	DeploymentSpecs    []StrategyDeploymentSpec        `json:"deployments"`
-	Permissions        []StrategyDeploymentPermissions `json:"permissions,omitempty"`
-	ClusterPermissions []StrategyDeploymentPermissions `json:"clusterPermissions,omitempty"`
+	DeploymentSpecs    []StrategyDeploymentSpec
+	Permissions        []StrategyDeploymentPermissions
+	ClusterPermissions []StrategyDeploymentPermissions
 }
 
 func (d *StrategyDetailsDeployment) GetStrategyName() string {
@@ -78,72 +72,66 @@ func (d *StrategyDetailsDeployment) GetStrategyName() string {
 }
 
 // StatusDescriptor describes a field in a status block of a CRD so that OLM can consume it
-// +k8s:openapi-gen=true
 type StatusDescriptor struct {
-	Path         string          `json:"path"`
-	DisplayName  string          `json:"displayName,omitempty"`
-	Description  string          `json:"description,omitempty"`
-	XDescriptors []string        `json:"x-descriptors,omitempty"`
-	Value        json.RawMessage `json:"value,omitempty"`
+	Path         string
+	DisplayName  string
+	Description  string
+	XDescriptors []string
+	Value        json.RawMessage
 }
 
 // SpecDescriptor describes a field in a spec block of a CRD so that OLM can consume it
-// +k8s:openapi-gen=true
 type SpecDescriptor struct {
-	Path         string          `json:"path"`
-	DisplayName  string          `json:"displayName,omitempty"`
-	Description  string          `json:"description,omitempty"`
-	XDescriptors []string        `json:"x-descriptors,omitempty"`
-	Value        json.RawMessage `json:"value,omitempty"`
+	Path         string
+	DisplayName  string
+	Description  string
+	XDescriptors []string
+	Value        json.RawMessage
 }
 
 // ActionDescriptor describes a declarative action that can be performed on a custom resource instance
-// +k8s:openapi-gen=true
 type ActionDescriptor struct {
-	Path         string          `json:"path"`
-	DisplayName  string          `json:"displayName,omitempty"`
-	Description  string          `json:"description,omitempty"`
-	XDescriptors []string        `json:"x-descriptors,omitempty"`
-	Value        json.RawMessage `json:"value,omitempty"`
+	Path         string
+	DisplayName  string
+	Description  string
+	XDescriptors []string
+	Value        json.RawMessage
 }
 
 // CRDDescription provides details to OLM about the CRDs
-// +k8s:openapi-gen=true
 type CRDDescription struct {
-	Name              string                 `json:"name"`
-	Version           string                 `json:"version"`
-	Kind              string                 `json:"kind"`
-	DisplayName       string                 `json:"displayName,omitempty"`
-	Description       string                 `json:"description,omitempty"`
-	Resources         []APIResourceReference `json:"resources,omitempty"`
-	StatusDescriptors []StatusDescriptor     `json:"statusDescriptors,omitempty"`
-	SpecDescriptors   []SpecDescriptor       `json:"specDescriptors,omitempty"`
-	ActionDescriptor  []ActionDescriptor     `json:"actionDescriptors,omitempty"`
+	Name              string
+	Version           string
+	Kind              string
+	DisplayName       string
+	Description       string
+	Resources         []APIResourceReference
+	StatusDescriptors []StatusDescriptor
+	SpecDescriptors   []SpecDescriptor
+	ActionDescriptor  []ActionDescriptor
 }
 
 // APIServiceDescription provides details to OLM about apis provided via aggregation
-// +k8s:openapi-gen=true
 type APIServiceDescription struct {
-	Name              string                 `json:"name"`
-	Group             string                 `json:"group"`
-	Version           string                 `json:"version"`
-	Kind              string                 `json:"kind"`
-	DeploymentName    string                 `json:"deploymentName,omitempty"`
-	ContainerPort     int32                  `json:"containerPort,omitempty"`
-	DisplayName       string                 `json:"displayName,omitempty"`
-	Description       string                 `json:"description,omitempty"`
-	Resources         []APIResourceReference `json:"resources,omitempty"`
-	StatusDescriptors []StatusDescriptor     `json:"statusDescriptors,omitempty"`
-	SpecDescriptors   []SpecDescriptor       `json:"specDescriptors,omitempty"`
-	ActionDescriptor  []ActionDescriptor     `json:"actionDescriptors,omitempty"`
+	Name              string
+	Group             string
+	Version           string
+	Kind              string
+	DeploymentName    string
+	ContainerPort     int32
+	DisplayName       string
+	Description       string
+	Resources         []APIResourceReference
+	StatusDescriptors []StatusDescriptor
+	SpecDescriptors   []SpecDescriptor
+	ActionDescriptor  []ActionDescriptor
 }
 
 // APIResourceReference is a Kubernetes resource type used by a custom resource
-// +k8s:openapi-gen=true
 type APIResourceReference struct {
-	Name    string `json:"name"`
-	Kind    string `json:"kind"`
-	Version string `json:"version"`
+	Name    string
+	Kind    string
+	Version string
 }
 
 // GetName returns the name of an APIService as derived from its group and version.
@@ -151,163 +139,76 @@ func (d APIServiceDescription) GetName() string {
 	return fmt.Sprintf("%s.%s", d.Version, d.Group)
 }
 
-// WebhookAdmissionType is the type of admission webhooks supported by OLM
-type WebhookAdmissionType string
-
-const (
-	// ValidatingAdmissionWebhook is for validating admission webhooks
-	ValidatingAdmissionWebhook WebhookAdmissionType = "ValidatingAdmissionWebhook"
-	// MutatingAdmissionWebhook is for mutating admission webhooks
-	MutatingAdmissionWebhook WebhookAdmissionType = "MutatingAdmissionWebhook"
-)
-
-// WebhookDescription provides details to OLM about required webhooks
-// +k8s:openapi-gen=true
-type WebhookDescription struct {
-	GenerateName string `json:"generateName"`
-	// +kubebuilder:validation:Enum=ValidatingAdmissionWebhook;MutatingAdmissionWebhook
-	Type                    WebhookAdmissionType                            `json:"type"`
-	DeploymentName          string                                          `json:"deploymentName,omitempty"`
-	ContainerPort           int32                                           `json:"containerPort,omitempty"`
-	Rules                   []admissionregistrationv1.RuleWithOperations    `json:"rules,omitempty"`
-	FailurePolicy           *admissionregistrationv1.FailurePolicyType      `json:"failurePolicy,omitempty"`
-	MatchPolicy             *admissionregistrationv1.MatchPolicyType        `json:"matchPolicy,omitempty"`
-	ObjectSelector          *metav1.LabelSelector                           `json:"objectSelector,omitempty"`
-	SideEffects             *admissionregistrationv1.SideEffectClass        `json:"sideEffects"`
-	TimeoutSeconds          *int32                                          `json:"timeoutSeconds,omitempty"`
-	AdmissionReviewVersions []string                                        `json:"admissionReviewVersions"`
-	ReinvocationPolicy      *admissionregistrationv1.ReinvocationPolicyType `json:"reinvocationPolicy,omitempty"`
-	WebhookPath             *string                                         `json:"webhookPath,omitempty"`
-}
-
-// GetValidatingWebhook returns a ValidatingWebhook generated from the WebhookDescription
-func (w *WebhookDescription) GetValidatingWebhook(namespace string, namespaceSelector *metav1.LabelSelector, caBundle []byte) admissionregistrationv1.ValidatingWebhook {
-	return admissionregistrationv1.ValidatingWebhook{
-		Name:                    w.GenerateName,
-		Rules:                   w.Rules,
-		FailurePolicy:           w.FailurePolicy,
-		MatchPolicy:             w.MatchPolicy,
-		NamespaceSelector:       namespaceSelector,
-		ObjectSelector:          w.ObjectSelector,
-		SideEffects:             w.SideEffects,
-		TimeoutSeconds:          w.TimeoutSeconds,
-		AdmissionReviewVersions: w.AdmissionReviewVersions,
-		ClientConfig: admissionregistrationv1.WebhookClientConfig{
-			Service: &admissionregistrationv1.ServiceReference{
-				Name:      w.DomainName() + "-service",
-				Namespace: namespace,
-				Path:      w.WebhookPath,
-				Port:      &w.ContainerPort,
-			},
-			CABundle: caBundle,
-		},
-	}
-}
-
-// GetMutatingWebhook returns a MutatingWebhook generated from the WebhookDescription
-func (w *WebhookDescription) GetMutatingWebhook(namespace string, namespaceSelector *metav1.LabelSelector, caBundle []byte) admissionregistrationv1.MutatingWebhook {
-	return admissionregistrationv1.MutatingWebhook{
-		Name:                    w.GenerateName,
-		Rules:                   w.Rules,
-		FailurePolicy:           w.FailurePolicy,
-		MatchPolicy:             w.MatchPolicy,
-		NamespaceSelector:       namespaceSelector,
-		ObjectSelector:          w.ObjectSelector,
-		SideEffects:             w.SideEffects,
-		TimeoutSeconds:          w.TimeoutSeconds,
-		AdmissionReviewVersions: w.AdmissionReviewVersions,
-		ClientConfig: admissionregistrationv1.WebhookClientConfig{
-			Service: &admissionregistrationv1.ServiceReference{
-				Name:      w.DomainName() + "-service",
-				Namespace: namespace,
-				Path:      w.WebhookPath,
-				Port:      &w.ContainerPort,
-			},
-			CABundle: caBundle,
-		},
-		ReinvocationPolicy: w.ReinvocationPolicy,
-	}
-}
-
-// DomainName returns the result of replacing all periods in the given Webhook name with hyphens
-func (w *WebhookDescription) DomainName() string {
-	// Replace all '.'s with "-"s to convert to a DNS-1035 label
-	return strings.Replace(w.DeploymentName, ".", "-", -1)
-}
-
 // CustomResourceDefinitions declares all of the CRDs managed or required by
 // an operator being ran by ClusterServiceVersion.
 //
 // If the CRD is present in the Owned list, it is implicitly required.
-// +k8s:openapi-gen=true
 type CustomResourceDefinitions struct {
-	Owned    []CRDDescription `json:"owned,omitempty"`
-	Required []CRDDescription `json:"required,omitempty"`
+	Owned    []CRDDescription
+	Required []CRDDescription
 }
 
 // APIServiceDefinitions declares all of the extension apis managed or required by
 // an operator being ran by ClusterServiceVersion.
-// +k8s:openapi-gen=true
 type APIServiceDefinitions struct {
-	Owned    []APIServiceDescription `json:"owned,omitempty"`
-	Required []APIServiceDescription `json:"required,omitempty"`
+	Owned    []APIServiceDescription
+	Required []APIServiceDescription
 }
 
 // ClusterServiceVersionSpec declarations tell OLM how to install an operator
 // that can manage apps for a given version.
 type ClusterServiceVersionSpec struct {
-	InstallStrategy           NamedInstallStrategy      `json:"install"`
-	Version                   version.OperatorVersion   `json:"version,omitempty"`
-	Maturity                  string                    `json:"maturity,omitempty"`
-	CustomResourceDefinitions CustomResourceDefinitions `json:"customresourcedefinitions,omitempty"`
-	APIServiceDefinitions     APIServiceDefinitions     `json:"apiservicedefinitions,omitempty"`
-	WebhookDefinitions        []WebhookDescription      `json:"webhookdefinitions,omitempty"`
-	NativeAPIs                []metav1.GroupVersionKind `json:"nativeAPIs,omitempty"`
-	MinKubeVersion            string                    `json:"minKubeVersion,omitempty"`
-	DisplayName               string                    `json:"displayName"`
-	Description               string                    `json:"description,omitempty"`
-	Keywords                  []string                  `json:"keywords,omitempty"`
-	Maintainers               []Maintainer              `json:"maintainers,omitempty"`
-	Provider                  AppLink                   `json:"provider,omitempty"`
-	Links                     []AppLink                 `json:"links,omitempty"`
-	Icon                      []Icon                    `json:"icon,omitempty"`
+	InstallStrategy           NamedInstallStrategy
+	Version                   version.OperatorVersion
+	Maturity                  string
+	CustomResourceDefinitions CustomResourceDefinitions
+	APIServiceDefinitions     APIServiceDefinitions
+	NativeAPIs                []metav1.GroupVersionKind
+	MinKubeVersion            string
+	DisplayName               string
+	Description               string
+	Keywords                  []string
+	Maintainers               []Maintainer
+	Provider                  AppLink
+	Links                     []AppLink
+	Icon                      []Icon
 
 	// InstallModes specify supported installation types
 	// +optional
-	InstallModes []InstallMode `json:"installModes,omitempty"`
+	InstallModes []InstallMode
 
 	// The name of a CSV this one replaces. Should match the `metadata.Name` field of the old CSV.
 	// +optional
-	Replaces string `json:"replaces,omitempty"`
+	Replaces string
 
 	// Map of string keys and values that can be used to organize and categorize
 	// (scope and select) objects.
 	// +optional
-	Labels map[string]string `json:"labels,omitempty" protobuf:"bytes,11,rep,name=labels"`
+	Labels map[string]string
 
 	// Annotations is an unstructured key value map stored with a resource that may be
 	// set by external tools to store and retrieve arbitrary metadata.
 	// +optional
-	Annotations map[string]string `json:"annotations,omitempty" protobuf:"bytes,12,rep,name=annotations"`
+	Annotations map[string]string
 
 	// Label selector for related resources.
 	// +optional
-	Selector *metav1.LabelSelector `json:"selector,omitempty" protobuf:"bytes,2,opt,name=selector"`
+	Selector *metav1.LabelSelector
 }
 
 type Maintainer struct {
-	Name  string `json:"name,omitempty"`
-	Email string `json:"email,omitempty"`
+	Name  string
+	Email string
 }
 
 type AppLink struct {
-	Name string `json:"name,omitempty"`
-	URL  string `json:"url,omitempty"`
+	Name string
+	URL  string
 }
 
 type Icon struct {
-	Data      string `json:"base64data"`
-	MediaType string `json:"mediatype"`
+	Data      string
+	MediaType string
 }
 
 // ClusterServiceVersionPhase is a label for the condition of a ClusterServiceVersion at the current time.
@@ -346,7 +247,6 @@ const (
 	CSVReasonRequirementsMet                             ConditionReason = "AllRequirementsMet"
 	CSVReasonOwnerConflict                               ConditionReason = "OwnerConflict"
 	CSVReasonComponentFailed                             ConditionReason = "InstallComponentFailed"
-	CSVReasonComponentFailedNoRetry                      ConditionReason = "InstallComponentFailedNoRetry"
 	CSVReasonInvalidStrategy                             ConditionReason = "InvalidInstallStrategy"
 	CSVReasonWaiting                                     ConditionReason = "InstallWaiting"
 	CSVReasonInstallSuccessful                           ConditionReason = "InstallSucceeded"
@@ -367,39 +267,28 @@ const (
 	CSVReasonTooManyOperatorGroups                       ConditionReason = "TooManyOperatorGroups"
 	CSVReasonInterOperatorGroupOwnerConflict             ConditionReason = "InterOperatorGroupOwnerConflict"
 	CSVReasonCannotModifyStaticOperatorGroupProvidedAPIs ConditionReason = "CannotModifyStaticOperatorGroupProvidedAPIs"
-	CSVReasonDetectedClusterChange                       ConditionReason = "DetectedClusterChange"
-	CSVReasonInvalidWebhookDescription                   ConditionReason = "InvalidWebhookDescription"
 )
-
-// HasCaResources returns true if the CSV has owned APIServices or Webhooks.
-func (c *ClusterServiceVersion) HasCAResources() bool {
-	// Return early if there are no owned APIServices
-	if len(c.Spec.APIServiceDefinitions.Owned)+len(c.Spec.WebhookDefinitions) == 0 {
-		return false
-	}
-	return true
-}
 
 // Conditions appear in the status as a record of state transitions on the ClusterServiceVersion
 type ClusterServiceVersionCondition struct {
 	// Condition of the ClusterServiceVersion
-	Phase ClusterServiceVersionPhase `json:"phase,omitempty"`
+	Phase ClusterServiceVersionPhase
 	// A human readable message indicating details about why the ClusterServiceVersion is in this condition.
 	// +optional
-	Message string `json:"message,omitempty"`
+	Message string
 	// A brief CamelCase message indicating details about why the ClusterServiceVersion is in this state.
 	// e.g. 'RequirementsNotMet'
 	// +optional
-	Reason ConditionReason `json:"reason,omitempty"`
+	Reason ConditionReason
 	// Last time we updated the status
 	// +optional
-	LastUpdateTime *metav1.Time `json:"lastUpdateTime,omitempty"`
+	LastUpdateTime *metav1.Time
 	// Last time the status transitioned from one status to another.
 	// +optional
-	LastTransitionTime *metav1.Time `json:"lastTransitionTime,omitempty"`
+	LastTransitionTime *metav1.Time
 }
 
-// OwnsCRD determines whether the current CSV owns a particular CRD.
+// OwnsCRD determines whether the current CSV owns a paritcular CRD.
 func (csv ClusterServiceVersion) OwnsCRD(name string) bool {
 	for _, desc := range csv.Spec.CustomResourceDefinitions.Owned {
 		if desc.Name == name {
@@ -410,7 +299,7 @@ func (csv ClusterServiceVersion) OwnsCRD(name string) bool {
 	return false
 }
 
-// OwnsAPIService determines whether the current CSV owns a particular APIService.
+// OwnsAPIService determines whether the current CSV owns a paritcular APIService.
 func (csv ClusterServiceVersion) OwnsAPIService(name string) bool {
 	for _, desc := range csv.Spec.APIServiceDefinitions.Owned {
 		apiServiceName := fmt.Sprintf("%s.%s", desc.Version, desc.Group)
@@ -437,83 +326,75 @@ const (
 
 // DependentStatus is the status for a dependent requirement (to prevent infinite nesting)
 type DependentStatus struct {
-	Group   string       `json:"group"`
-	Version string       `json:"version"`
-	Kind    string       `json:"kind"`
-	Status  StatusReason `json:"status"`
-	UUID    string       `json:"uuid,omitempty"`
-	Message string       `json:"message,omitempty"`
+	Group   string
+	Version string
+	Kind    string
+	Status  StatusReason
+	UUID    string
+	Message string
 }
 
 type RequirementStatus struct {
-	Group      string            `json:"group"`
-	Version    string            `json:"version"`
-	Kind       string            `json:"kind"`
-	Name       string            `json:"name"`
-	Status     StatusReason      `json:"status"`
-	Message    string            `json:"message"`
-	UUID       string            `json:"uuid,omitempty"`
-	Dependents []DependentStatus `json:"dependents,omitempty"`
+	Group      string
+	Version    string
+	Kind       string
+	Name       string
+	Status     StatusReason
+	Message    string
+	UUID       string
+	Dependents []DependentStatus
 }
 
 // ClusterServiceVersionStatus represents information about the status of a pod. Status may trail the actual
 // state of a system.
 type ClusterServiceVersionStatus struct {
 	// Current condition of the ClusterServiceVersion
-	Phase ClusterServiceVersionPhase `json:"phase,omitempty"`
+	Phase ClusterServiceVersionPhase
 	// A human readable message indicating details about why the ClusterServiceVersion is in this condition.
 	// +optional
-	Message string `json:"message,omitempty"`
+	Message string
 	// A brief CamelCase message indicating details about why the ClusterServiceVersion is in this state.
 	// e.g. 'RequirementsNotMet'
 	// +optional
-	Reason ConditionReason `json:"reason,omitempty"`
+	Reason ConditionReason
 	// Last time we updated the status
 	// +optional
-	LastUpdateTime *metav1.Time `json:"lastUpdateTime,omitempty"`
+	LastUpdateTime *metav1.Time
 	// Last time the status transitioned from one status to another.
 	// +optional
-	LastTransitionTime *metav1.Time `json:"lastTransitionTime,omitempty"`
+	LastTransitionTime *metav1.Time
 	// List of conditions, a history of state transitions
-	Conditions []ClusterServiceVersionCondition `json:"conditions,omitempty"`
+	Conditions []ClusterServiceVersionCondition
 	// The status of each requirement for this CSV
-	RequirementStatus []RequirementStatus `json:"requirementStatus,omitempty"`
+	RequirementStatus []RequirementStatus
 	// Last time the owned APIService certs were updated
 	// +optional
-	CertsLastUpdated *metav1.Time `json:"certsLastUpdated,omitempty"`
+	CertsLastUpdated *metav1.Time
 	// Time the owned APIService certs will rotate next
 	// +optional
-	CertsRotateAt *metav1.Time `json:"certsRotateAt,omitempty"`
+	CertsRotateAt *metav1.Time
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 // +genclient
-// +kubebuilder:storageversion
-// +kubebuilder:resource:shortName={csv, csvs},categories=olm
-// +kubebuilder:subresource:status
-// +kubebuilder:printcolumn:name="Display",type=string,JSONPath=`.spec.displayName`,description="The name of the CSV"
-// +kubebuilder:printcolumn:name="Version",type=string,JSONPath=`.spec.version`,description="The version of the CSV"
-// +kubebuilder:printcolumn:name="Replaces",type=string,JSONPath=`.spec.replaces`,description="The name of a CSV that this one replaces"
-// +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
 
 // ClusterServiceVersion is a Custom Resource of type `ClusterServiceVersionSpec`.
 type ClusterServiceVersion struct {
-	metav1.TypeMeta   `json:",inline"`
-	metav1.ObjectMeta `json:"metadata"`
+	metav1.TypeMeta
+	metav1.ObjectMeta
 
-	Spec ClusterServiceVersionSpec `json:"spec"`
-	// +optional
-	Status ClusterServiceVersionStatus `json:"status"`
+	Spec   ClusterServiceVersionSpec
+	Status ClusterServiceVersionStatus
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
 // ClusterServiceVersionList represents a list of ClusterServiceVersions.
 type ClusterServiceVersionList struct {
-	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata"`
+	metav1.TypeMeta
+	metav1.ListMeta
 
-	Items []ClusterServiceVersion `json:"items"`
+	Items []ClusterServiceVersion
 }
 
 // GetAllCRDDescriptions returns a deduplicated set of CRDDescriptions that is
