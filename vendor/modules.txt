@@ -155,6 +155,9 @@ github.com/aws/aws-sdk-go/service/sts/stsiface
 # github.com/beorn7/perks v1.0.1
 ## explicit; go 1.11
 github.com/beorn7/perks/quantile
+# github.com/blang/semver v3.5.1+incompatible
+## explicit
+github.com/blang/semver
 # github.com/blang/semver/v4 v4.0.0
 ## explicit; go 1.14
 github.com/blang/semver/v4
@@ -447,14 +450,11 @@ github.com/openshift/library-go/pkg/operator/resource/resourceread
 github.com/openshift/library-go/pkg/operator/resourcesynccontroller
 github.com/openshift/library-go/pkg/operator/v1helpers
 github.com/openshift/library-go/test/library/metrics
-# github.com/operator-framework/api v0.15.0
-## explicit; go 1.17
+# github.com/operator-framework/api v0.3.7-0.20200528122852-759ca0d84007
+## explicit; go 1.13
 github.com/operator-framework/api/pkg/lib/version
 github.com/operator-framework/api/pkg/operators
 github.com/operator-framework/api/pkg/operators/v1alpha1
-# github.com/operator-framework/operator-lib v0.11.0
-## explicit; go 1.17
-github.com/operator-framework/operator-lib/proxy
 # github.com/operator-framework/operator-sdk v0.18.0
 ## explicit; go 1.13
 github.com/operator-framework/operator-sdk/version

@@ -1,4 +1,4 @@
-package v1alpha1
+package operators
 
 import (
 	corev1 "k8s.io/api/core/v1"
@@ -6,10 +6,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
-const (
-	SubscriptionKind          = "Subscription"
-	SubscriptionCRDAPIVersion = GroupName + "/" + GroupVersion
-)
+// SubscriptionKind is the PascalCase name of a Subscription's kind.
+const SubscriptionKind = "Subscription"
 
 // SubscriptionState tracks when updates are available, installing, or service is up to date
 type SubscriptionState string
@@ -29,19 +27,18 @@ const (
 
 // SubscriptionSpec defines an Application that can be installed
 type SubscriptionSpec struct {
-	CatalogSource          string             `json:"source"`
-	CatalogSourceNamespace string             `json:"sourceNamespace"`
-	Package                string             `json:"name"`
-	Channel                string             `json:"channel,omitempty"`
-	StartingCSV            string             `json:"startingCSV,omitempty"`
-	InstallPlanApproval    Approval           `json:"installPlanApproval,omitempty"`
-	Config                 SubscriptionConfig `json:"config,omitempty"`
+	CatalogSource          string
+	CatalogSourceNamespace string
+	Package                string
+	Channel                string
+	StartingCSV            string
+	InstallPlanApproval    Approval
+	Config                 SubscriptionConfig
 }
 
 // SubscriptionConfig contains configuration specified for a subscription.
 type SubscriptionConfig struct {
-	// Selector is the label selector for pods to be configured.
-	// Existing ReplicaSets whose pods are
+	// Label selector for pods. Existing ReplicaSets whose pods are
 	// selected by this will be the ones affected by this deployment.
 	// It must match the pod template's labels.
 	Selector *metav1.LabelSelector `json:"selector,omitempty"`
@@ -52,30 +49,30 @@ type SubscriptionConfig struct {
 	// +optional
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 
-	// Tolerations are the pod's tolerations.
+	// If specified, the pod's tolerations.
 	// +optional
 	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
 
-	// Resources represents compute resources required by this container.
-	// Immutable.
+	// Compute Resources required by this container.
+	// Cannot be updated.
 	// More info: https://kubernetes.io/docs/concepts/configuration/manage-compute-resources-container/
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 
-	// EnvFrom is a list of sources to populate environment variables in the container.
+	// List of sources to populate environment variables in the container.
 	// The keys defined within a source must be a C_IDENTIFIER. All invalid keys
 	// will be reported as an event when the container is starting. When a key exists in multiple
 	// sources, the value associated with the last source will take precedence.
 	// Values defined by an Env with a duplicate key will take precedence.
-	// Immutable.
+	// Cannot be updated.
 	// +optional
 	EnvFrom []corev1.EnvFromSource `json:"envFrom,omitempty"`
-	// Env is a list of environment variables to set in the container.
+	// List of environment variables to set in the container.
 	// Cannot be updated.
+	// +optional
 	// +patchMergeKey=name
 	// +patchStrategy=merge
-	// +optional
-	Env []corev1.EnvVar `json:"env,omitempty" patchMergeKey:"name" patchStrategy:"merge"`
+	Env []corev1.EnvVar `json:"env,omitempty"`
 
 	// List of Volumes to set in the podSpec.
 	// +optional
@@ -136,26 +133,26 @@ const (
 // SubscriptionCondition represents the latest available observations of a Subscription's state.
 type SubscriptionCondition struct {
 	// Type is the type of Subscription condition.
-	Type SubscriptionConditionType `json:"type" description:"type of Subscription condition"`
+	Type SubscriptionConditionType
 
 	// Status is the status of the condition, one of True, False, Unknown.
-	Status corev1.ConditionStatus `json:"status" description:"status of the condition, one of True, False, Unknown"`
+	Status corev1.ConditionStatus
 
 	// Reason is a one-word CamelCase reason for the condition's last transition.
 	// +optional
-	Reason string `json:"reason,omitempty" description:"one-word CamelCase reason for the condition's last transition"`
+	Reason string
 
 	// Message is a human-readable message indicating details about last transition.
 	// +optional
-	Message string `json:"message,omitempty" description:"human-readable message indicating details about last transition"`
+	Message string
 
 	// LastHeartbeatTime is the last time we got an update on a given condition
 	// +optional
-	LastHeartbeatTime *metav1.Time `json:"lastHeartbeatTime,omitempty" description:"last time we got an update on a given condition"`
+	LastHeartbeatTime *metav1.Time
 
 	// LastTransitionTime is the last time the condition transit from one status to another
 	// +optional
-	LastTransitionTime *metav1.Time `json:"lastTransitionTime,omitempty" description:"last time the condition transit from one status to another" hash:"ignore"`
+	LastTransitionTime *metav1.Time
 }
 
 // Equals returns true if a SubscriptionCondition equals the one given, false otherwise.
@@ -167,44 +164,40 @@ func (s SubscriptionCondition) Equals(condition SubscriptionCondition) bool {
 type SubscriptionStatus struct {
 	// CurrentCSV is the CSV the Subscription is progressing to.
 	// +optional
-	CurrentCSV string `json:"currentCSV,omitempty"`
+	CurrentCSV string
 
 	// InstalledCSV is the CSV currently installed by the Subscription.
 	// +optional
-	InstalledCSV string `json:"installedCSV,omitempty"`
+	InstalledCSV string
 
 	// Install is a reference to the latest InstallPlan generated for the Subscription.
 	// DEPRECATED: InstallPlanRef
 	// +optional
-	Install *InstallPlanReference `json:"installplan,omitempty"`
+	Install *InstallPlanReference
 
 	// State represents the current state of the Subscription
 	// +optional
-	State SubscriptionState `json:"state,omitempty"`
+	State SubscriptionState
 
 	// Reason is the reason the Subscription was transitioned to its current state.
 	// +optional
-	Reason ConditionReason `json:"reason,omitempty"`
-
-	// InstallPlanGeneration is the current generation of the installplan
-	// +optional
-	InstallPlanGeneration int `json:"installPlanGeneration,omitempty"`
+	Reason ConditionReason
 
 	// InstallPlanRef is a reference to the latest InstallPlan that contains the Subscription's current CSV.
 	// +optional
-	InstallPlanRef *corev1.ObjectReference `json:"installPlanRef,omitempty"`
+	InstallPlanRef *corev1.ObjectReference
 
 	// CatalogHealth contains the Subscription's view of its relevant CatalogSources' status.
 	// It is used to determine SubscriptionStatusConditions related to CatalogSources.
 	// +optional
-	CatalogHealth []SubscriptionCatalogHealth `json:"catalogHealth,omitempty"`
+	CatalogHealth []SubscriptionCatalogHealth
 
 	// Conditions is a list of the latest available observations about a Subscription's current state.
 	// +optional
-	Conditions []SubscriptionCondition `json:"conditions,omitempty" hash:"set"`
+	Conditions []SubscriptionCondition `hash:"set"`
 
 	// LastUpdated represents the last time that the Subscription status was updated.
-	LastUpdated metav1.Time `json:"lastUpdated"`
+	LastUpdated metav1.Time
 }
 
 // GetCondition returns the SubscriptionCondition of the given type if it exists in the SubscriptionStatus' Conditions.
@@ -254,22 +247,22 @@ func (s *SubscriptionStatus) RemoveConditions(remove ...SubscriptionConditionTyp
 }
 
 type InstallPlanReference struct {
-	APIVersion string    `json:"apiVersion"`
-	Kind       string    `json:"kind"`
-	Name       string    `json:"name"`
-	UID        types.UID `json:"uuid"`
+	APIVersion string
+	Kind       string
+	Name       string
+	UID        types.UID
 }
 
 // SubscriptionCatalogHealth describes the health of a CatalogSource the Subscription knows about.
 type SubscriptionCatalogHealth struct {
 	// CatalogSourceRef is a reference to a CatalogSource.
-	CatalogSourceRef *corev1.ObjectReference `json:"catalogSourceRef"`
+	CatalogSourceRef *corev1.ObjectReference
 
 	// LastUpdated represents the last time that the CatalogSourceHealth changed
-	LastUpdated *metav1.Time `json:"lastUpdated"`
+	LastUpdated *metav1.Time
 
 	// Healthy is true if the CatalogSource is healthy; false otherwise.
-	Healthy bool `json:"healthy"`
+	Healthy bool
 }
 
 // Equals returns true if a SubscriptionCatalogHealth equals the one given, false otherwise.
@@ -280,30 +273,24 @@ func (s SubscriptionCatalogHealth) Equals(health SubscriptionCatalogHealth) bool
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 // +genclient
-// +kubebuilder:resource:shortName={sub, subs},categories=olm
-// +kubebuilder:subresource:status
-// +kubebuilder:printcolumn:name="Package",type=string,JSONPath=`.spec.name`,description="The package subscribed to"
-// +kubebuilder:printcolumn:name="Source",type=string,JSONPath=`.spec.source`,description="The catalog source for the specified package"
-// +kubebuilder:printcolumn:name="Channel",type=string,JSONPath=`.spec.channel`,description="The channel of updates to subscribe to"
 
 // Subscription keeps operators up to date by tracking changes to Catalogs.
 type Subscription struct {
-	metav1.TypeMeta   `json:",inline"`
-	metav1.ObjectMeta `json:"metadata"`
+	metav1.TypeMeta
+	metav1.ObjectMeta
 
-	Spec *SubscriptionSpec `json:"spec"`
-	// +optional
-	Status SubscriptionStatus `json:"status"`
+	Spec   *SubscriptionSpec
+	Status SubscriptionStatus
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
 // SubscriptionList is a list of Subscription resources.
 type SubscriptionList struct {
-	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata"`
+	metav1.TypeMeta
+	metav1.ListMeta
 
-	Items []Subscription `json:"items"`
+	Items []Subscription
 }
 
 // GetInstallPlanApproval gets the configured install plan approval or the default
