@@ -2,9 +2,7 @@ package ingress
 
 import (
 	"context"
-	"crypto/x509"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"hash"
 	"hash/fnv"
@@ -19,6 +17,7 @@ import (
 	"github.com/davecgh/go-spew/spew"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/operator-framework/operator-lib/proxy"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 
@@ -87,7 +86,6 @@ const (
 
 	RouterClientAuthPolicy = "ROUTER_MUTUAL_TLS_AUTH"
 	RouterClientAuthCA     = "ROUTER_MUTUAL_TLS_AUTH_CA"
-	RouterClientAuthCRL    = "ROUTER_MUTUAL_TLS_AUTH_CRL"
 	RouterClientAuthFilter = "ROUTER_MUTUAL_TLS_AUTH_FILTER"
 
 	RouterEnableCompression    = "ROUTER_ENABLE_COMPRESSION"
@@ -1024,68 +1022,6 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 			clientAuthCAPath := filepath.Join(clientCAVolumeMount.MountPath, clientCABundleFilename)
 			env = append(env, corev1.EnvVar{Name: RouterClientAuthCA, Value: clientAuthCAPath})
 
-			if haveClientCAConfigmap {
-				// If any certificates in the client CA bundle
-				// specify any CRL distribution points, then we
-				// need to configure a configmap volume.  The
-				// crl controller is responsible for managing
-				// the configmap.
-				var clientCAData []byte
-				if v, ok := clientCAConfigmap.Data[clientCABundleFilename]; !ok {
-					return nil, fmt.Errorf("client CA configmap %s/%s is missing %q", clientCAConfigmap.Namespace, clientCAConfigmap.Name, clientCABundleFilename)
-				} else {
-					clientCAData = []byte(v)
-				}
-				var someClientCAHasCRL bool
-				for len(clientCAData) > 0 {
-					block, data := pem.Decode(clientCAData)
-					if block == nil {
-						break
-					}
-					clientCAData = data
-					cert, err := x509.ParseCertificate(block.Bytes)
-					if err != nil {
-						return nil, fmt.Errorf("client CA configmap %s/%s has an invalid certificate: %w", clientCAConfigmap.Namespace, clientCAConfigmap.Name, err)
-					}
-					if len(cert.CRLDistributionPoints) != 0 {
-						someClientCAHasCRL = true
-						break
-					}
-				}
-				if someClientCAHasCRL {
-					clientCACRLSecretName := controller.CRLConfigMapName(ci)
-					clientCACRLVolumeName := "client-ca-crl"
-					clientCACRLVolumeMountPath := "/etc/pki/tls/client-ca-crl"
-					clientCACRLFilename := "crl.pem"
-					clientCACRLVolume := corev1.Volume{
-						Name: clientCACRLVolumeName,
-						VolumeSource: corev1.VolumeSource{
-							ConfigMap: &corev1.ConfigMapVolumeSource{
-								LocalObjectReference: corev1.LocalObjectReference{
-									Name: clientCACRLSecretName.Name,
-								},
-								Items: []corev1.KeyToPath{
-									{
-										Key:  clientCACRLFilename,
-										Path: clientCACRLFilename,
-									},
-								},
-							},
-						},
-					}
-					clientCACRLVolumeMount := corev1.VolumeMount{
-						Name:      clientCACRLVolumeName,
-						MountPath: clientCACRLVolumeMountPath,
-						ReadOnly:  true,
-					}
-					volumes = append(volumes, clientCACRLVolume)
-					routerVolumeMounts = append(routerVolumeMounts, clientCACRLVolumeMount)
-
-					clientAuthCRLPath := filepath.Join(clientCACRLVolumeMount.MountPath, clientCACRLFilename)
-					env = append(env, corev1.EnvVar{Name: RouterClientAuthCRL, Value: clientAuthCRLPath})
-				}
-			}
-
 			if len(ci.Spec.ClientTLS.AllowedSubjectPatterns) != 0 {
 				pattern := "(?:" + strings.Join(ci.Spec.ClientTLS.AllowedSubjectPatterns, "|") + ")"
 				env = append(env, corev1.EnvVar{Name: RouterClientAuthFilter, Value: pattern})
@@ -1103,6 +1039,11 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		env = append(env, corev1.EnvVar{Name: RouterEnableCompression, Value: "true"})
 		mimes := GetMIMETypes(ci.Spec.HTTPCompression.MimeTypes)
 		env = append(env, corev1.EnvVar{Name: RouterCompressionMIMETypes, Value: strings.Join(mimes, " ")})
+	}
+
+	proxyVars := proxy.ReadProxyVarsFromEnv()
+	if len(proxyVars) != 0 {
+		env = append(env, proxyVars...)
 	}
 
 	// Add the environment variables to the container
