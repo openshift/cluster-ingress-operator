@@ -23,7 +23,6 @@ require (
 	github.com/openshift/client-go v0.0.0-20230120202327-72f107311084
 	github.com/openshift/library-go v0.0.0-20230503125631-c31a6e7b87d4
 	github.com/operator-framework/api v0.15.0
-	github.com/operator-framework/operator-lib v0.11.0
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.14.0
 	github.com/prometheus/common v0.37.0

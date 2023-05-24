@@ -747,6 +747,12 @@ func TestMTLSWithCRLs(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.Name, func(t *testing.T) {
 			tcCerts := tc.CreateCerts()
+			// Get the URL path of one of the CRLs to use in the CRL host pod's readiness probe.
+			readinessProbePath := ""
+			for crlName := range tcCerts.CRLs {
+				readinessProbePath = fmt.Sprintf("/%s/%s.crl", crlName, crlName)
+				break
+			}
 			// Create a pod which will host the CRLs.
 			crlHostPod := corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
@@ -763,6 +769,17 @@ func TestMTLSWithCRLs(t *testing.T) {
 							Name:          "http-svc",
 						}},
 						SecurityContext: generateUnprivilegedSecurityContext(),
+						ReadinessProbe: &corev1.Probe{
+							ProbeHandler: corev1.ProbeHandler{
+								HTTPGet: &corev1.HTTPGetAction{
+									Path: readinessProbePath,
+									Port: intstr.IntOrString{
+										Type:   intstr.String,
+										StrVal: "http-svc",
+									},
+								},
+							},
+						},
 					}},
 				},
 			}
@@ -1184,6 +1201,17 @@ func TestCRLUpdate(t *testing.T) {
 							ReadOnly:  true,
 						}},
 						SecurityContext: generateUnprivilegedSecurityContext(),
+						ReadinessProbe: &corev1.Probe{
+							ProbeHandler: corev1.ProbeHandler{
+								HTTPGet: &corev1.HTTPGetAction{
+									Path: fmt.Sprintf("/%s.crl", tc.ExpectedCRLs[0]),
+									Port: intstr.IntOrString{
+										Type:   intstr.String,
+										StrVal: "http-svc",
+									},
+								},
+							},
+						},
 					}},
 					Volumes: []corev1.Volume{{
 						Name: "data",

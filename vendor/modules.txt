@@ -434,9 +434,6 @@ github.com/openshift/library-go/test/library/metrics
 github.com/operator-framework/api/pkg/lib/version
 github.com/operator-framework/api/pkg/operators
 github.com/operator-framework/api/pkg/operators/v1alpha1
-# github.com/operator-framework/operator-lib v0.11.0
-## explicit; go 1.17
-github.com/operator-framework/operator-lib/proxy
 # github.com/operator-framework/operator-sdk v0.18.0
 ## explicit; go 1.13
 github.com/operator-framework/operator-sdk/version
