@@ -17,8 +17,6 @@ import (
 	"github.com/davecgh/go-spew/spew"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-	"github.com/operator-framework/operator-lib/proxy"
-
 	operatorv1 "github.com/openshift/api/operator/v1"
 
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
@@ -1040,12 +1038,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		mimes := GetMIMETypes(ci.Spec.HTTPCompression.MimeTypes)
 		env = append(env, corev1.EnvVar{Name: RouterCompressionMIMETypes, Value: strings.Join(mimes, " ")})
 	}
-
-	proxyVars := proxy.ReadProxyVarsFromEnv()
-	if len(proxyVars) != 0 {
-		env = append(env, proxyVars...)
-	}
-
+	
 	// Add the environment variables to the container
 	deployment.Spec.Template.Spec.Containers[0].Env = append(deployment.Spec.Template.Spec.Containers[0].Env, env...)
 
