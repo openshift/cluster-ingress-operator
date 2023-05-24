@@ -128,6 +128,10 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	if err := c.Watch(source.Kind(operatorCache, &configv1.Ingress{}), handler.EnqueueRequestsFromMapFunc(reconciler.ingressConfigToIngressController)); err != nil {
 		return nil, err
 	}
+	// Watch for changes to cluster-wide proxy config.
+	if err := c.Watch(source.Kind(operatorCache, &configv1.Proxy{}), handler.EnqueueRequestsFromMapFunc(reconciler.ingressConfigToIngressController)); err != nil {
+		return nil, err
+	}
 	return c, nil
 }
 
@@ -267,6 +271,12 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	if platformStatus == nil {
 		return reconcile.Result{}, fmt.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: PlatformStatus is nil", ingress.Namespace, ingress.Name)
 	}
+	clusterProxyConfig := &configv1.Proxy{}
+	if err := r.client.Get(ctx, types.NamespacedName{Name: "cluster"}, clusterProxyConfig); err != nil {
+		if !kerrors.IsNotFound(err) {
+			return reconcile.Result{}, fmt.Errorf("failed to get proxy 'cluster': %v", err)
+		}
+	}
 
 	// Admit if necessary. Don't process until admission succeeds. If admission is
 	// successful, immediately re-queue to refresh state.
@@ -310,7 +320,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	}
 
 	// The ingresscontroller is safe to process, so ensure it.
-	if err := r.ensureIngressController(ingress, dnsConfig, infraConfig, platformStatus, ingressConfig, apiConfig, networkConfig); err != nil {
+	if err := r.ensureIngressController(ingress, dnsConfig, infraConfig, platformStatus, ingressConfig, apiConfig, networkConfig, clusterProxyConfig); err != nil {
 		switch e := err.(type) {
 		case retryable.Error:
 			log.Error(e, "got retryable error; requeueing", "after", e.After())
@@ -982,7 +992,7 @@ func (r *reconciler) ensureIngressDeleted(ingress *operatorv1.IngressController)
 // given ingresscontroller.  Any error values are collected into either a
 // retryable.Error value, if any of the error values are retryable, or else an
 // Aggregate error value.
-func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, dnsConfig *configv1.DNS, infraConfig *configv1.Infrastructure, platformStatus *configv1.PlatformStatus, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer, networkConfig *configv1.Network) error {
+func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, dnsConfig *configv1.DNS, infraConfig *configv1.Infrastructure, platformStatus *configv1.PlatformStatus, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer, networkConfig *configv1.Network, clusterProxyConfig *configv1.Proxy) error {
 	// Before doing anything at all with the controller, ensure it has a finalizer
 	// so we can clean up later.
 	if !slice.ContainsString(ci.Finalizers, manifests.IngressControllerFinalizer) {
@@ -1033,7 +1043,7 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		haveClientCAConfigmap = true
 	}
 
-	haveDepl, deployment, err := r.ensureRouterDeployment(ci, infraConfig, ingressConfig, apiConfig, networkConfig, haveClientCAConfigmap, clientCAConfigmap, platformStatus)
+	haveDepl, deployment, err := r.ensureRouterDeployment(ci, infraConfig, ingressConfig, apiConfig, networkConfig, haveClientCAConfigmap, clientCAConfigmap, platformStatus, clusterProxyConfig)
 	if err != nil {
 		errs = append(errs, fmt.Errorf("failed to ensure deployment: %v", err))
 		return utilerrors.NewAggregate(errs)

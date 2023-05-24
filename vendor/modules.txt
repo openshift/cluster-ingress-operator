@@ -337,6 +337,8 @@ github.com/munnerz/goautoneg
 # github.com/oklog/ulid v1.3.1
 ## explicit
 github.com/oklog/ulid
+# github.com/onsi/ginkgo v1.16.5
+## explicit; go 1.16
 # github.com/openshift/api v3.9.1-0.20190924102528-32369d4db2ad+incompatible => github.com/openshift/api v0.0.0-20230503123822-b6cc8ba8ba17
 ## explicit; go 1.19
 github.com/openshift/api
@@ -452,9 +454,6 @@ github.com/openshift/library-go/test/library/metrics
 github.com/operator-framework/api/pkg/lib/version
 github.com/operator-framework/api/pkg/operators
 github.com/operator-framework/api/pkg/operators/v1alpha1
-# github.com/operator-framework/operator-lib v0.11.0
-## explicit; go 1.17
-github.com/operator-framework/operator-lib/proxy
 # github.com/operator-framework/operator-sdk v0.18.0
 ## explicit; go 1.13
 github.com/operator-framework/operator-sdk/version
