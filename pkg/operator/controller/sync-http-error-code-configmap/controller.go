@@ -52,7 +52,7 @@ func New(mgr manager.Manager, config Config) (runtimecontroller.Controller, erro
 
 	// If the ingresscontroller's error-page configmap reference changes,
 	// reconcile the ingresscontroller.
-	if err := c.Watch(&source.Kind{Type: &operatorv1.IngressController{}}, &handler.EnqueueRequestForObject{}, predicate.Funcs{
+	if err := c.Watch(source.Kind(operatorCache, &operatorv1.IngressController{}), &handler.EnqueueRequestForObject{}, predicate.Funcs{
 		CreateFunc:  func(e event.CreateEvent) bool { return reconciler.hasConfigMap(e.Object) },
 		DeleteFunc:  func(e event.DeleteEvent) bool { return reconciler.hasConfigMap(e.Object) },
 		UpdateFunc:  func(e event.UpdateEvent) bool { return reconciler.configMapChanged(e.ObjectOld, e.ObjectNew) },
@@ -86,7 +86,7 @@ func New(mgr manager.Manager, config Config) (runtimecontroller.Controller, erro
 	// If a configmap in the source namespace that is referenced by an
 	// ingresscontroller changes, reconcile the ingresscontroller.
 	if err := c.Watch(
-		&source.Kind{Type: &corev1.ConfigMap{}},
+		source.Kind(operatorCache, &corev1.ConfigMap{}),
 		handler.EnqueueRequestsFromMapFunc(reconciler.userConfigMapToIngressController),
 		predicate.NewPredicateFuncs(isInNamespace(config.ConfigNamespace)),
 		predicate.NewPredicateFuncs(reconciler.configmapIsInUse),
@@ -98,7 +98,7 @@ func New(mgr manager.Manager, config Config) (runtimecontroller.Controller, erro
 	// an ingresscontroller's deployment changes, reconcile the
 	// ingresscontroller.
 	if err := c.Watch(
-		&source.Kind{Type: &corev1.ConfigMap{}},
+		source.Kind(operatorCache, &corev1.ConfigMap{}),
 		handler.EnqueueRequestsFromMapFunc(reconciler.operatorConfigMapToIngressController),
 		predicate.NewPredicateFuncs(isInNamespace(config.OperandNamespace)),
 	); err != nil {
@@ -125,9 +125,9 @@ type reconciler struct {
 // userConfigMapToIngressController maps a user-created error-page configmap to
 // a slice of reconcile requests, one request per ingresscontroller that
 // references the configmap for custom error pages.
-func (r *reconciler) userConfigMapToIngressController(o client.Object) []reconcile.Request {
+func (r *reconciler) userConfigMapToIngressController(ctx context.Context, o client.Object) []reconcile.Request {
 	requests := []reconcile.Request{}
-	controllers, err := r.ingressControllersWithConfigMap(o.GetName())
+	controllers, err := r.ingressControllersWithConfigMap(ctx, o.GetName())
 	if err != nil {
 		log.Error(err, "failed to list ingresscontrollers for configmap", "related", o.GetSelfLink())
 		return requests
@@ -148,7 +148,7 @@ func (r *reconciler) userConfigMapToIngressController(o client.Object) []reconci
 // operatorConfigMapToIngressController maps an operator-created error-page
 // configmap to a slice of reconcile requests, one request per ingresscontroller
 // that references the configmap for custom error pages.
-func (r *reconciler) operatorConfigMapToIngressController(o client.Object) []reconcile.Request {
+func (r *reconciler) operatorConfigMapToIngressController(ctx context.Context, o client.Object) []reconcile.Request {
 	configmapName := o.GetName()
 	if !strings.HasSuffix(configmapName, "-errorpages") {
 		return []reconcile.Request{}
@@ -166,9 +166,9 @@ func (r *reconciler) operatorConfigMapToIngressController(o client.Object) []rec
 
 // ingressControllersWithConfigMap returns the ingresscontrollers that reference
 // the given configmap for custom error pages.
-func (r *reconciler) ingressControllersWithConfigMap(configmapName string) ([]operatorv1.IngressController, error) {
+func (r *reconciler) ingressControllersWithConfigMap(ctx context.Context, configmapName string) ([]operatorv1.IngressController, error) {
 	controllers := &operatorv1.IngressControllerList{}
-	if err := r.cache.List(context.Background(), controllers, client.MatchingFields{"spec.httpErrorCodePages.name": configmapName}); err != nil {
+	if err := r.cache.List(ctx, controllers, client.MatchingFields{"spec.httpErrorCodePages.name": configmapName}); err != nil {
 		return nil, err
 	}
 	names := []string{}
@@ -181,7 +181,7 @@ func (r *reconciler) ingressControllersWithConfigMap(configmapName string) ([]op
 // configmapIsInUse returns true if the given configmap is used for custom error
 // pages by some ingresscontroller.
 func (r *reconciler) configmapIsInUse(o client.Object) bool {
-	controllers, err := r.ingressControllersWithConfigMap(o.GetName())
+	controllers, err := r.ingressControllersWithConfigMap(context.Background(), o.GetName())
 	if err != nil {
 		log.Error(err, "failed to list ingresscontrollers for configmap", "related", o.GetSelfLink())
 		return false

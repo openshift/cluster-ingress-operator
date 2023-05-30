@@ -119,7 +119,7 @@ func New(mgr manager.Manager) (controller.Controller, error) {
 		return nil, err
 	}
 
-	if err := c.Watch(&source.Kind{Type: &operatorv1.IngressController{}}, &handler.EnqueueRequestForObject{}, predicate.Funcs{
+	if err := c.Watch(source.Kind(operatorCache, &operatorv1.IngressController{}), &handler.EnqueueRequestForObject{}, predicate.Funcs{
 		CreateFunc:  func(e event.CreateEvent) bool { return reconciler.hasConfigmap(e.Object, e.Object) },
 		DeleteFunc:  func(e event.DeleteEvent) bool { return false },
 		UpdateFunc:  func(e event.UpdateEvent) bool { return reconciler.configmapReferenceChanged(e.ObjectOld, e.ObjectNew) },
@@ -134,12 +134,12 @@ func New(mgr manager.Manager) (controller.Controller, error) {
 // ingressControllersWithClientCAConfigmap returns the ingresscontrollers that
 // reference the specified client CA configmap in the "openshift-ingress"
 // operand namespace.
-func (r *reconciler) ingressControllersWithClientCAConfigmap(name string) ([]operatorv1.IngressController, error) {
+func (r *reconciler) ingressControllersWithClientCAConfigmap(ctx context.Context, name string) ([]operatorv1.IngressController, error) {
 	controllers := &operatorv1.IngressControllerList{}
 	listOpts := client.MatchingFields(map[string]string{
 		clientCAConfigmapIndexFieldName: name,
 	})
-	if err := r.cache.List(context.Background(), controllers, listOpts); err != nil {
+	if err := r.cache.List(ctx, controllers, listOpts); err != nil {
 		return nil, err
 	}
 	return controllers.Items, nil
@@ -148,12 +148,12 @@ func (r *reconciler) ingressControllersWithClientCAConfigmap(name string) ([]ope
 // clientCAConfigmapToIngressController maps a CRL configmap to a slice of
 // reconcile requests, one request per ingresscontroller that references the
 // configmap.
-func (r *reconciler) clientCAConfigmapToIngressController(o client.Object) []reconcile.Request {
+func (r *reconciler) clientCAConfigmapToIngressController(ctx context.Context, o client.Object) []reconcile.Request {
 	requests := []reconcile.Request{}
 	if o.GetNamespace() != operatorcontroller.DefaultOperandNamespace {
 		return requests
 	}
-	controllers, err := r.ingressControllersWithClientCAConfigmap(o.GetName())
+	controllers, err := r.ingressControllersWithClientCAConfigmap(ctx, o.GetName())
 	if err != nil {
 		log.Error(err, "failed to list ingresscontrollers for client CA configmap", "related", o.GetSelfLink())
 		return requests
@@ -174,12 +174,12 @@ func (r *reconciler) clientCAConfigmapToIngressController(o client.Object) []rec
 // ingressControllersWithCRLConfigmap returns the ingresscontrollers that
 // reference the specified CRL configmap in the "openshift-ingress" operand
 // namespace.
-func (r *reconciler) ingressControllersWithCRLConfigmap(name string) ([]operatorv1.IngressController, error) {
+func (r *reconciler) ingressControllersWithCRLConfigmap(ctx context.Context, name string) ([]operatorv1.IngressController, error) {
 	controllers := &operatorv1.IngressControllerList{}
 	listOpts := client.MatchingFields(map[string]string{
 		crlConfigmapIndexFieldName: name,
 	})
-	if err := r.cache.List(context.Background(), controllers, listOpts); err != nil {
+	if err := r.cache.List(ctx, controllers, listOpts); err != nil {
 		return nil, err
 	}
 	return controllers.Items, nil
@@ -188,12 +188,12 @@ func (r *reconciler) ingressControllersWithCRLConfigmap(name string) ([]operator
 // crlConfigmapToIngressController maps a configmap to a slice of reconcile
 // requests, one request per ingresscontroller that references the client CA
 // configmap.
-func (r *reconciler) crlConfigmapToIngressController(o client.Object) []reconcile.Request {
+func (r *reconciler) crlConfigmapToIngressController(ctx context.Context, o client.Object) []reconcile.Request {
 	requests := []reconcile.Request{}
 	if o.GetNamespace() != operatorcontroller.DefaultOperandNamespace {
 		return requests
 	}
-	controllers, err := r.ingressControllersWithCRLConfigmap(o.GetName())
+	controllers, err := r.ingressControllersWithCRLConfigmap(ctx, o.GetName())
 	if err != nil {
 		log.Error(err, "failed to list ingresscontrollers for CRL configmap", "related", o.GetSelfLink())
 		return requests

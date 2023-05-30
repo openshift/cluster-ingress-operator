@@ -89,7 +89,7 @@ func New(mgr manager.Manager, operatorNamespace, operandNamespace string) (runti
 		return nil, err
 	}
 
-	if err := c.Watch(&source.Kind{Type: &operatorv1.IngressController{}}, &handler.EnqueueRequestForObject{}, predicate.Funcs{
+	if err := c.Watch(source.Kind(operatorCache, &operatorv1.IngressController{}), &handler.EnqueueRequestForObject{}, predicate.Funcs{
 		CreateFunc:  func(e event.CreateEvent) bool { return reconciler.hasSecret(e.Object, e.Object) },
 		DeleteFunc:  func(e event.DeleteEvent) bool { return reconciler.hasSecret(e.Object, e.Object) },
 		UpdateFunc:  func(e event.UpdateEvent) bool { return reconciler.secretChanged(e.ObjectOld, e.ObjectNew) },
@@ -105,7 +105,7 @@ func New(mgr manager.Manager, operatorNamespace, operandNamespace string) (runti
 
 // secretToIngressController maps a secret to a slice of reconcile requests,
 // one request per ingresscontroller that references the secret.
-func (r *reconciler) secretToIngressController(o client.Object) []reconcile.Request {
+func (r *reconciler) secretToIngressController(ctx context.Context, o client.Object) []reconcile.Request {
 	var (
 		requests []reconcile.Request
 		list     operatorv1.IngressControllerList
@@ -114,11 +114,11 @@ func (r *reconciler) secretToIngressController(o client.Object) []reconcile.Requ
 		})
 		ingressConfig configv1.Ingress
 	)
-	if err := r.cache.List(context.Background(), &list, listOpts); err != nil {
+	if err := r.cache.List(ctx, &list, listOpts); err != nil {
 		log.Error(err, "failed to list ingresscontrollers for secret", "secret", o.GetName())
 		return requests
 	}
-	if err := r.cache.Get(context.Background(), controller.IngressClusterConfigName(), &ingressConfig); err != nil {
+	if err := r.cache.Get(ctx, controller.IngressClusterConfigName(), &ingressConfig); err != nil {
 		log.Error(err, "failed to get ingresses.config.openshift.io", "name", controller.IngressClusterConfigName())
 		return requests
 	}

@@ -40,10 +40,11 @@ var log = logf.Logger.WithName(controllerName)
 // installs and configures Istio.  This is an unmanaged controller, which means
 // that the manager does not start it.
 func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, error) {
+	operatorCache := mgr.GetCache()
 	reconciler := &reconciler{
 		config:   config,
 		client:   mgr.GetClient(),
-		cache:    mgr.GetCache(),
+		cache:    operatorCache,
 		recorder: mgr.GetEventRecorderFor(controllerName),
 	}
 	c, err := controller.NewUnmanaged(controllerName, mgr, controller.Options{Reconciler: reconciler})
@@ -57,7 +58,7 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 	isIstioGatewayClass := predicate.NewPredicateFuncs(func(o client.Object) bool {
 		return o.GetName() == "istio"
 	})
-	if err := c.Watch(&source.Kind{Type: &gatewayapiv1beta1.GatewayClass{}}, &handler.EnqueueRequestForObject{}, isOurGatewayClass, predicate.Not(isIstioGatewayClass)); err != nil {
+	if err := c.Watch(source.Kind(operatorCache, &gatewayapiv1beta1.GatewayClass{}), &handler.EnqueueRequestForObject{}, isOurGatewayClass, predicate.Not(isIstioGatewayClass)); err != nil {
 		return nil, err
 	}
 	return c, nil

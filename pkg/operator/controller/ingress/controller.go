@@ -87,27 +87,30 @@ var (
 // The controller will be pre-configured to watch for IngressController resources
 // in the manager namespace.
 func New(mgr manager.Manager, config Config) (controller.Controller, error) {
+	operatorCache := mgr.GetCache()
 	reconciler := &reconciler{
 		config:   config,
 		client:   mgr.GetClient(),
-		cache:    mgr.GetCache(),
+		cache:    operatorCache,
 		recorder: mgr.GetEventRecorderFor(controllerName),
 	}
 	c, err := controller.New(controllerName, mgr, controller.Options{Reconciler: reconciler})
 	if err != nil {
 		return nil, err
 	}
-	if err := c.Watch(&source.Kind{Type: &operatorv1.IngressController{}}, &handler.EnqueueRequestForObject{}); err != nil {
+	scheme := mgr.GetClient().Scheme()
+	mapper := mgr.GetClient().RESTMapper()
+	if err := c.Watch(source.Kind(operatorCache, &operatorv1.IngressController{}), &handler.EnqueueRequestForObject{}); err != nil {
 		return nil, err
 	}
-	if err := c.Watch(&source.Kind{Type: &appsv1.Deployment{}}, enqueueRequestForOwningIngressController(config.Namespace)); err != nil {
+	if err := c.Watch(source.Kind(operatorCache, &appsv1.Deployment{}), enqueueRequestForOwningIngressController(config.Namespace)); err != nil {
 		return nil, err
 	}
-	if err := c.Watch(&source.Kind{Type: &corev1.Service{}}, enqueueRequestForOwningIngressController(config.Namespace)); err != nil {
+	if err := c.Watch(source.Kind(operatorCache, &corev1.Service{}), enqueueRequestForOwningIngressController(config.Namespace)); err != nil {
 		return nil, err
 	}
 	// Add watch for deleted pods specifically for ensuring ingress deletion.
-	if err := c.Watch(&source.Kind{Type: &corev1.Pod{}}, enqueueRequestForOwningIngressController(config.Namespace), predicate.Funcs{
+	if err := c.Watch(source.Kind(operatorCache, &corev1.Pod{}), enqueueRequestForOwningIngressController(config.Namespace), predicate.Funcs{
 		CreateFunc:  func(e event.CreateEvent) bool { return false },
 		DeleteFunc:  func(e event.DeleteEvent) bool { return true },
 		UpdateFunc:  func(e event.UpdateEvent) bool { return false },
@@ -116,22 +119,22 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 		return nil, err
 	}
 	// add watch for changes in DNS config
-	if err := c.Watch(&source.Kind{Type: &configv1.DNS{}}, handler.EnqueueRequestsFromMapFunc(reconciler.ingressConfigToIngressController)); err != nil {
+	if err := c.Watch(source.Kind(operatorCache, &configv1.DNS{}), handler.EnqueueRequestsFromMapFunc(reconciler.ingressConfigToIngressController)); err != nil {
 		return nil, err
 	}
-	if err := c.Watch(&source.Kind{Type: &iov1.DNSRecord{}}, &handler.EnqueueRequestForOwner{OwnerType: &operatorv1.IngressController{}}); err != nil {
+	if err := c.Watch(source.Kind(operatorCache, &iov1.DNSRecord{}), handler.EnqueueRequestForOwner(scheme, mapper, &operatorv1.IngressController{})); err != nil {
 		return nil, err
 	}
-	if err := c.Watch(&source.Kind{Type: &configv1.Ingress{}}, handler.EnqueueRequestsFromMapFunc(reconciler.ingressConfigToIngressController)); err != nil {
+	if err := c.Watch(source.Kind(operatorCache, &configv1.Ingress{}), handler.EnqueueRequestsFromMapFunc(reconciler.ingressConfigToIngressController)); err != nil {
 		return nil, err
 	}
 	return c, nil
 }
 
-func (r *reconciler) ingressConfigToIngressController(o client.Object) []reconcile.Request {
+func (r *reconciler) ingressConfigToIngressController(ctx context.Context, o client.Object) []reconcile.Request {
 	var requests []reconcile.Request
 	controllers := &operatorv1.IngressControllerList{}
-	if err := r.cache.List(context.Background(), controllers, client.InNamespace(r.config.Namespace)); err != nil {
+	if err := r.cache.List(ctx, controllers, client.InNamespace(r.config.Namespace)); err != nil {
 		log.Error(err, "failed to list ingresscontrollers for ingress", "related", o.GetSelfLink())
 		return requests
 	}
@@ -150,7 +153,7 @@ func (r *reconciler) ingressConfigToIngressController(o client.Object) []reconci
 
 func enqueueRequestForOwningIngressController(namespace string) handler.EventHandler {
 	return handler.EnqueueRequestsFromMapFunc(
-		func(a client.Object) []reconcile.Request {
+		func(ctx context.Context, a client.Object) []reconcile.Request {
 			labels := a.GetLabels()
 			if ingressName, ok := labels[manifests.OwningIngressControllerLabel]; ok {
 				log.Info("queueing ingress", "name", ingressName, "related", a.GetSelfLink())

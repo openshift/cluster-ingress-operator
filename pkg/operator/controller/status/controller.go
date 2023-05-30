@@ -60,24 +60,25 @@ var clock utilclock.Clock = utilclock.RealClock{}
 // clusteroperators resource so that it reconciles the ingress clusteroperator
 // in case something else updates or deletes it.
 func New(mgr manager.Manager, config Config) (controller.Controller, error) {
+	operatorCache := mgr.GetCache()
 	reconciler := &reconciler{
 		config: config,
 		client: mgr.GetClient(),
-		cache:  mgr.GetCache(),
+		cache:  operatorCache,
 	}
 	c, err := controller.New(controllerName, mgr, controller.Options{Reconciler: reconciler})
 	if err != nil {
 		return nil, err
 	}
 
-	if err := c.Watch(&source.Kind{Type: &operatorv1.IngressController{}}, &handler.EnqueueRequestForObject{}); err != nil {
+	if err := c.Watch(source.Kind(operatorCache, &operatorv1.IngressController{}), &handler.EnqueueRequestForObject{}); err != nil {
 		return nil, err
 	}
 
 	isIngressClusterOperator := func(o client.Object) bool {
 		return o.GetName() == operatorcontroller.IngressClusterOperatorName().Name
 	}
-	toDefaultIngressController := func(_ client.Object) []reconcile.Request {
+	toDefaultIngressController := func(ctx context.Context, _ client.Object) []reconcile.Request {
 		return []reconcile.Request{{
 			NamespacedName: types.NamespacedName{
 				Namespace: config.Namespace,
@@ -86,7 +87,7 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 		}}
 	}
 	if err := c.Watch(
-		&source.Kind{Type: &configv1.ClusterOperator{}},
+		source.Kind(operatorCache, &configv1.ClusterOperator{}),
 		// The status controller doesn't care which ingresscontroller it
 		// is reconciling, so just enqueue a request to reconcile the
 		// default ingresscontroller.
