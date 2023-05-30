@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/tools/remotecommand"
 	"net"
 	"net/http"
 	"os"
@@ -2560,7 +2562,7 @@ func TestNetworkLoadBalancer(t *testing.T) {
 // TestAWSELBConnectionIdleTimeout verifies that the AWS ELB connection-idle
 // timeout works as expected.
 func TestAWSELBConnectionIdleTimeout(t *testing.T) {
-	t.Parallel()
+	//t.Parallel()
 	if infraConfig.Status.PlatformStatus == nil {
 		t.Skip("test skipped on nil platform")
 	}
@@ -2642,14 +2644,237 @@ func TestAWSELBConnectionIdleTimeout(t *testing.T) {
 		t.Fatalf("expected %s=%s, found %s=%s", key, expected, key, v)
 	}
 
+	// We need an image that we can use for test clients.  The router image
+	// has Curl, so we can use that image.
+	deployment := &appsv1.Deployment{}
+	deploymentName := controller.RouterDeploymentName(ic)
+	if err := kclient.Get(context.TODO(), deploymentName, deployment); err != nil {
+		t.Fatalf("failed to get deployment %q: %v", deploymentName, err)
+	}
+
+	// We need a client-go client in order to execute commands in the client
+	// pod.
+	kubeConfig, err := config.GetConfig()
+	if err != nil {
+		t.Fatalf("failed to get kube config: %v", err)
+	}
+	cl, err := kubernetes.NewForConfig(kubeConfig)
+	if err != nil {
+		t.Fatalf("failed to create kube client: %v", err)
+	}
+
+	// Create a test client pod with the client certificates.  We will exec
+	// curl commands in this pod to perform the tests.
+	podName := "client-local-netlookup"
+	image := deployment.Spec.Template.Spec.Containers[0].Image
+	clientPod := buildExecPod(podName, "openshift-ingress", image)
+	clientPodName := types.NamespacedName{
+		Name:      clientPod.Name,
+		Namespace: clientPod.Namespace,
+	}
+	if err := kclient.Create(context.TODO(), clientPod); err != nil {
+		t.Fatalf("failed to create pod %q: %v", clientPodName, err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), clientPod); err != nil {
+			if apierrors.IsNotFound(err) {
+				return
+			}
+			t.Fatalf("failed to delete pod %q: %v", clientPodName, err)
+		}
+	}()
+
+	err = wait.PollImmediate(2*time.Second, 3*time.Minute, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), clientPodName, clientPod); err != nil {
+			t.Logf("failed to get client pod %q: %v", clientPodName, err)
+			return false, nil
+		}
+		for _, cond := range clientPod.Status.Conditions {
+			if cond.Type == corev1.PodReady {
+				return cond.Status == corev1.ConditionTrue, nil
+			}
+		}
+		return false, nil
+	})
+	if err != nil {
+		t.Fatalf("timed out waiting for pod %q to become ready: %v", clientPodName, err)
+	}
+
+	// Create a test client pod with the client certificates.  We will exec
+	// curl commands in this pod to perform the tests.
+	podName = "client-nodedns-netlookup"
+	clientPodNodeDNS := buildExecPodNodeDNS(podName, "openshift-ingress", image)
+	clientPodNodeDNSName := types.NamespacedName{
+		Name:      clientPodNodeDNS.Name,
+		Namespace: clientPodNodeDNS.Namespace,
+	}
+	if err := kclient.Create(context.TODO(), clientPodNodeDNS); err != nil {
+		t.Fatalf("failed to create pod %q: %v", clientPodNodeDNSName, err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), clientPodNodeDNS); err != nil {
+			if apierrors.IsNotFound(err) {
+				return
+			}
+			t.Fatalf("failed to delete pod %q: %v", clientPodNodeDNSName, err)
+		}
+	}()
+
+	err = wait.PollImmediate(2*time.Second, 3*time.Minute, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), clientPodNodeDNSName, clientPodNodeDNS); err != nil {
+			t.Logf("failed to get client pod %q: %v", clientPodNodeDNSName, err)
+			return false, nil
+		}
+		for _, cond := range clientPodNodeDNS.Status.Conditions {
+			if cond.Type == corev1.PodReady {
+				return cond.Status == corev1.ConditionTrue, nil
+			}
+		}
+		return false, nil
+	})
+	if err != nil {
+		t.Fatalf("timed out waiting for pod %q to become ready: %v", clientPodNodeDNSName, err)
+	}
+
+	clusterLocalNetLookup := func(host string, resolver string, useTcp bool) error {
+		req := cl.CoreV1().RESTClient().Post().Resource("pods").
+			Namespace(clientPod.Namespace).Name(clientPod.Name).
+			SubResource("exec").
+			Param("container", clientPod.Spec.Containers[0].Name)
+		cmd := []string{
+			"/bin/dig", "+noall", "+comments", "+answer", "+stats", host,
+		}
+		if resolver != "" {
+			cmd = append(cmd, "@"+resolver)
+		}
+		if useTcp {
+			cmd = append(cmd, "+tcp")
+		}
+		req.VersionedParams(&corev1.PodExecOptions{
+			Command: cmd,
+			Stdout:  true,
+			Stderr:  true,
+		}, scheme.ParameterCodec)
+		exec, err := remotecommand.NewSPDYExecutor(kubeConfig, "POST", req.URL())
+		if err != nil {
+			return err
+		}
+		var stdout, stderr bytes.Buffer
+		err = exec.Stream(remotecommand.StreamOptions{
+			Stdout: &stdout,
+			Stderr: &stderr,
+		})
+		stdoutStr := stdout.String()
+		t.Logf("command: %s\nstdout:\n%s\nstderr:\n%s\n",
+			strings.Join(cmd, " "), stdoutStr, stderr.String())
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+
+	clusterLocalNetLookupNodeDNS := func(host string, resolver string, useTcp bool) error {
+		req := cl.CoreV1().RESTClient().Post().Resource("pods").
+			Namespace(clientPodNodeDNS.Namespace).Name(clientPodNodeDNS.Name).
+			SubResource("exec").
+			Param("container", clientPodNodeDNS.Spec.Containers[0].Name)
+		cmd := []string{
+			"/bin/dig", "+noall", "+comments", "+answer", "+stats", host,
+		}
+		if resolver != "" {
+			cmd = append(cmd, "@"+resolver)
+		}
+		if useTcp {
+			cmd = append(cmd, "+tcp")
+		}
+		req.VersionedParams(&corev1.PodExecOptions{
+			Command: cmd,
+			Stdout:  true,
+			Stderr:  true,
+		}, scheme.ParameterCodec)
+		exec, err := remotecommand.NewSPDYExecutor(kubeConfig, "POST", req.URL())
+		if err != nil {
+			return err
+		}
+		var stdout, stderr bytes.Buffer
+		err = exec.Stream(remotecommand.StreamOptions{
+			Stdout: &stdout,
+			Stderr: &stderr,
+		})
+		stdoutStr := stdout.String()
+		t.Logf("command [nodedns]: %s\nstdout:\n%s\nstderr:\n%s\n",
+			strings.Join(cmd, " "), stdoutStr, stderr.String())
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+
 	// Make sure we can resolve the route's host name.  It may take some
 	// time for the ingresscontroller's wildcard DNS record to propagate.
-	if err := wait.PollImmediate(5*time.Second, 5*time.Minute, func() (bool, error) {
-		_, err := net.LookupIP(route.Spec.Host)
+	if err := wait.PollImmediate(5*time.Second, 20*time.Minute, func() (bool, error) {
+		// Resolve directly via 8.8.8.8, not via CoreDNS
+		r := &net.Resolver{
+			PreferGo: true,
+			Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+				d := net.Dialer{
+					Timeout: time.Millisecond * time.Duration(20000),
+				}
+				return d.DialContext(ctx, network, "8.8.8.8:53")
+			},
+		}
+		now := time.Now()
+		ips_direct, errDirect := r.LookupHost(context.Background(), route.Spec.Host)
+
+		if errDirect != nil {
+			t.Logf("[@8.8.8.8] took %s failed to resolve: %v", time.Now().Sub(now), errDirect)
+		} else {
+			t.Logf("[@8.8.8.8] took %s resolved %s to %v", time.Now().Sub(now), route.Spec.Host, ips_direct)
+		}
+
+		err = clusterLocalNetLookup(route.Spec.Host, "", false)
+		if err != nil {
+			t.Error(err)
+		}
+
+		err = clusterLocalNetLookupNodeDNS(route.Spec.Host, "", false)
+		if err != nil {
+			t.Error(err)
+		}
+
+		lbService := &corev1.Service{}
+		if err := kclient.Get(context.TODO(), controller.LoadBalancerServiceName(ic), lbService); err != nil {
+			t.Fatalf("failed to get LoadBalancer service: %v", err)
+		}
+
+		ips, err := net.LookupIP(lbService.Status.LoadBalancer.Ingress[0].Hostname)
+		if err != nil {
+			t.Logf("[loadbalancer_hostname] failed to resolve %s", lbService.Status.LoadBalancer.Ingress[0].Hostname)
+		} else {
+			t.Logf("[loadbalancer_hostname] resolved %s to %v", lbService.Status.LoadBalancer.Ingress[0].Hostname, ips)
+		}
+
+		testHostname := fmt.Sprintf("test.%s", ic.Spec.Domain)
+		ips, err = net.LookupIP(testHostname)
+		if err != nil {
+			t.Logf("[test_hostname] failed to resolve %s", testHostname)
+		} else {
+			t.Logf("[test_hostname] resolved %s to %v", testHostname, ips)
+		}
+
+		ips, err = net.LookupIP(route.Spec.Host)
+		if err != nil {
+			t.Logf("[route-host] failed to resolve %s", route.Spec.Host)
+		} else {
+			t.Logf("[route-host] resolved %s to %v", route.Spec.Host, ips)
+		}
+
+		ips, err = net.LookupIP(route.Spec.Host)
 		if err != nil {
 			t.Log(err)
 			return false, nil
 		}
+		t.Logf("resolved %s to %v", route.Spec.Host, ips)
 
 		return true, nil
 	}); err != nil {
@@ -2757,7 +2982,7 @@ func TestAWSELBConnectionIdleTimeout(t *testing.T) {
 	// Open a connection to the route, send a request, and verify that a
 	// response is received.  Use a polling loop because the ELB may need
 	// time to assume the new idle timeout value.
-	if err := wait.PollImmediate(5*time.Second, 5*time.Minute, func() (bool, error) {
+	if err := wait.PollImmediate(5*time.Second, 10*time.Minute, func() (bool, error) {
 		start := time.Now()
 		response, err := client.Do(request)
 		if err != nil {
@@ -2780,6 +3005,70 @@ func TestAWSELBConnectionIdleTimeout(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("failed to observe expected condition: %v", err)
 	}
+	t.Logf("Everything resolved, now just testing DNS resolution for 10 minutes")
+	// Make sure we can resolve the route's host name.  It may take some
+	// time for the ingresscontroller's wildcard DNS record to propagate.
+	wait.PollImmediate(5*time.Second, 10*time.Minute, func() (bool, error) {
+		// Resolve directly via 8.8.8.8, not via CoreDNS
+		r := &net.Resolver{
+			PreferGo: true,
+			Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+				d := net.Dialer{
+					Timeout: time.Millisecond * time.Duration(20000),
+				}
+				return d.DialContext(ctx, network, "8.8.8.8:53")
+			},
+		}
+		now := time.Now()
+		ips_direct, errDirect := r.LookupHost(context.Background(), route.Spec.Host)
+
+		if errDirect != nil {
+			t.Logf("[@8.8.8.8] took %s failed to resolve: %v", time.Now().Sub(now), errDirect)
+		} else {
+			t.Logf("[@8.8.8.8] took %s resolved %s to %v", time.Now().Sub(now), route.Spec.Host, ips_direct)
+		}
+
+		err = clusterLocalNetLookup(route.Spec.Host, "", false)
+		if err != nil {
+			t.Error(err)
+		}
+
+		err = clusterLocalNetLookupNodeDNS(route.Spec.Host, "", false)
+		if err != nil {
+			t.Error(err)
+		}
+
+		lbService := &corev1.Service{}
+		if err := kclient.Get(context.TODO(), controller.LoadBalancerServiceName(ic), lbService); err != nil {
+			t.Fatalf("failed to get LoadBalancer service: %v", err)
+		}
+
+		ips, err := net.LookupIP(lbService.Status.LoadBalancer.Ingress[0].Hostname)
+		if err != nil {
+			t.Logf("[loadbalancer_hostname] failed to resolve %s", lbService.Status.LoadBalancer.Ingress[0].Hostname)
+		} else {
+			t.Logf("[loadbalancer_hostname] resolved %s to %v", lbService.Status.LoadBalancer.Ingress[0].Hostname, ips)
+		}
+
+		testHostname := fmt.Sprintf("test.%s", ic.Spec.Domain)
+		ips, err = net.LookupIP(testHostname)
+		if err != nil {
+			t.Logf("[test_hostname] failed to resolve %s", testHostname)
+		} else {
+			t.Logf("[test_hostname] resolved %s to %v", testHostname, ips)
+		}
+
+		ips, err = net.LookupIP(route.Spec.Host)
+		if err != nil {
+			t.Log(err)
+			return false, nil
+		}
+		t.Logf("resolved %s to %v", route.Spec.Host, ips)
+
+		return false, nil
+	})
+
+	t.Fatalf("SUCCESS ACTUALLY IM JUST EXITING EARLY SO YOU CAN SEE THE LOGS")
 }
 
 func TestUniqueIdHeader(t *testing.T) {
@@ -3849,4 +4138,35 @@ u3YLAbyW/lHhOCiZu2iAI8AbmXem9lW6Tr7p/97s0w==
 	}
 
 	return secret, cl.Create(context.TODO(), secret)
+}
+
+func buildExecPodNodeDNS(name, namespace, image string) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name:    "execpod",
+					Image:   image,
+					Command: []string{"/bin/sleep"},
+					Args:    []string{"4h"},
+					SecurityContext: &corev1.SecurityContext{
+						AllowPrivilegeEscalation: pointer.Bool(false),
+						Capabilities: &corev1.Capabilities{
+							Drop: []corev1.Capability{"ALL"},
+						},
+						RunAsNonRoot: pointer.Bool(true),
+						SeccompProfile: &corev1.SeccompProfile{
+							Type: corev1.SeccompProfileTypeRuntimeDefault,
+						},
+					},
+				},
+			},
+			RestartPolicy: corev1.RestartPolicyNever,
+			DNSPolicy:     corev1.DNSDefault,
+		},
+	}
 }
