@@ -3,7 +3,7 @@ package version
 import (
 	"encoding/json"
 
-	semver "github.com/blang/semver/v4"
+	"github.com/blang/semver"
 )
 
 // +k8s:openapi-gen=true
