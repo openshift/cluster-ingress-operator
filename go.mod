@@ -18,7 +18,7 @@ require (
 	github.com/google/go-cmp v0.5.9
 	github.com/jongio/azidext/go/azidext v0.4.0
 	github.com/kevinburke/go-bindata v3.11.0+incompatible
-	github.com/maistra/istio-operator v0.0.0-20230213165116-3138f8d64e59
+	github.com/maistra/istio-operator v0.0.0-20230322122339-793794762e67
 	github.com/openshift/api v3.9.1-0.20190924102528-32369d4db2ad+incompatible
 	github.com/openshift/client-go v0.0.0-20230120202327-72f107311084
 	github.com/openshift/library-go v0.0.0-20230209193239-2e9167362f31

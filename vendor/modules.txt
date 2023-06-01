@@ -306,7 +306,7 @@ github.com/leodido/go-urn
 github.com/mailru/easyjson/buffer
 github.com/mailru/easyjson/jlexer
 github.com/mailru/easyjson/jwriter
-# github.com/maistra/istio-operator v0.0.0-20230213165116-3138f8d64e59
+# github.com/maistra/istio-operator v0.0.0-20230322122339-793794762e67
 ## explicit; go 1.15
 github.com/maistra/istio-operator/pkg/apis/maistra/status
 github.com/maistra/istio-operator/pkg/apis/maistra/v1
