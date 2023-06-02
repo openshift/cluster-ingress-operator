@@ -111,26 +111,8 @@ func MustCreateTLSKeyCert(commonName string, notBefore, notAfter time.Time, isCA
 
 // CreateCRL generates a pem-encoded CRL for issuer, valid between thisUpdate and nextUpdate, that lists revokedCerts as
 // revoked. Returns the logical form of the CRL, as well as a pem-encoded version.
-func CreateCRL(existingRevocationList *x509.RevocationList, issuer KeyCert, thisUpdate, nextUpdate time.Time, revokedCerts []pkix.RevokedCertificate) (*x509.RevocationList, string, error) {
-	revocationList := x509.RevocationList{}
-	if existingRevocationList == nil {
-		revocationList = x509.RevocationList{
-			Issuer: issuer.Cert.Subject,
-			Number: big.NewInt(1),
-		}
-	} else {
-		revocationList = *existingRevocationList
-		// revocationList.Number is a pointer, so create a copy in order to avoid overwriting the number in
-		// existingRevocationList
-		number := *revocationList.Number
-		revocationList.Number = &number
-		revocationList.Number.Add(revocationList.Number, big.NewInt(1))
-	}
-	revocationList.ThisUpdate = thisUpdate
-	revocationList.NextUpdate = nextUpdate
-	revocationList.RevokedCertificates = revokedCerts
-
-	crlBytes, err := x509.CreateRevocationList(rand.Reader, &revocationList, issuer.Cert, issuer.Key)
+func CreateCRL(existingRevocationList *pkix.CertificateList, issuer KeyCert, thisUpdate, nextUpdate time.Time, revokedCerts []pkix.RevokedCertificate) (*pkix.CertificateList, string, error) {
+	crlBytes, err := issuer.Cert.CreateCRL(rand.Reader, issuer.Key, revokedCerts, thisUpdate, nextUpdate)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to create CRL for issuer %s: %w", issuer.Cert.Subject.CommonName, err)
 	}
@@ -143,11 +125,18 @@ func CreateCRL(existingRevocationList *x509.RevocationList, issuer KeyCert, this
 		return nil, "", fmt.Errorf("failed to pem encode CRL for issuer %s: %w", issuer.Cert.Subject.CommonName, err)
 	}
 
-	return &revocationList, crlBuffer.String(), nil
+	return &pkix.CertificateList{
+		TBSCertList: pkix.TBSCertificateList{
+			Issuer:              issuer.Cert.Subject.ToRDNSequence(),
+			ThisUpdate:          thisUpdate.UTC().Truncate(time.Second),
+			NextUpdate:          nextUpdate.UTC().Truncate(time.Second),
+			RevokedCertificates: revokedCerts,
+		},
+	}, crlBuffer.String(), nil
 }
 
 // MustCreateCRL calls CreateCRL, but instead of returning an error, it panics if an error occurs
-func MustCreateCRL(revocationList *x509.RevocationList, issuer KeyCert, thisUpdate, nextUpdate time.Time, revokedCerts []pkix.RevokedCertificate) (*x509.RevocationList, string) {
+func MustCreateCRL(revocationList *pkix.CertificateList, issuer KeyCert, thisUpdate, nextUpdate time.Time, revokedCerts []pkix.RevokedCertificate) (*pkix.CertificateList, string) {
 	crl, crlPem, err := CreateCRL(revocationList, issuer, thisUpdate, nextUpdate, revokedCerts)
 	if err != nil {
 		panic(err)

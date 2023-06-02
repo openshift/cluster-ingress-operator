@@ -989,11 +989,13 @@ func TestMTLSWithCRLs(t *testing.T) {
 				}
 				// Parse the first CRL. If CRLs haven't been downloaded yet, it will be the placeholder CRL.
 				block, _ := pem.Decode(stdout.Bytes())
-				crl, err := x509.ParseRevocationList(block.Bytes)
+				crl, err := x509.ParseCRL(block.Bytes)
 				if err != nil {
 					return false, fmt.Errorf("invalid CRL: %v", err)
 				}
-				return crl.Issuer.CommonName != "Placeholder CA", nil
+				issuer := &pkix.Name{}
+				issuer.FillFromRDNSequence(&crl.TBSCertList.Issuer)
+				return issuer.CommonName != "Placeholder CA", nil
 			})
 
 			// Get the canary route to use as the target for curl.
@@ -1156,7 +1158,7 @@ func TestCRLUpdate(t *testing.T) {
 		t.Run(tc.Name, func(t *testing.T) {
 			caCerts := tc.CreateCerts()
 			// Generate CRLs. Offset the expiration times by 1 minute each so that we can verify that only the correct CRLs get updated at each expiration
-			currentCRLs := map[string]*x509.RevocationList{}
+			currentCRLs := map[string]*pkix.CertificateList{}
 			crlPems := map[string]string{}
 			caBundle := []string{}
 			validTime := 3 * time.Minute
@@ -1326,7 +1328,7 @@ func TestCRLUpdate(t *testing.T) {
 			}
 			// Once initial CRLs are downloaded, generate new CRLs, and update the crl-host configmap. These new CRLs
 			// should be downloaded as the old ones expire.
-			newCRLs := map[string]*x509.RevocationList{}
+			newCRLs := map[string]*pkix.CertificateList{}
 			for _, caName := range tc.ExpectedCRLs {
 				newCRLs[caName], crlPems[caName+".crl"] = MustCreateCRL(currentCRLs[caName], caCerts[caName], time.Now(), time.Now().Add(1*time.Hour), nil)
 			}
@@ -1340,8 +1342,8 @@ func TestCRLUpdate(t *testing.T) {
 				nextExpiration := time.Time{}
 				expiringCRLCAName := ""
 				for caName, CRL := range currentCRLs {
-					if nextExpiration.IsZero() || CRL.NextUpdate.Before(nextExpiration) {
-						nextExpiration = CRL.NextUpdate
+					if nextExpiration.IsZero() || CRL.TBSCertList.NextUpdate.Before(nextExpiration) {
+						nextExpiration = CRL.TBSCertList.NextUpdate
 						// keep track of the index of the next crl to expire
 						expiringCRLCAName = caName
 					}
@@ -1365,7 +1367,7 @@ func TestCRLUpdate(t *testing.T) {
 	}
 }
 
-func verifyCRLs(t *testing.T, pod *corev1.Pod, expectedCRLs map[string]*x509.RevocationList) (bool, error) {
+func verifyCRLs(t *testing.T, pod *corev1.Pod, expectedCRLs map[string]*pkix.CertificateList) (bool, error) {
 	t.Helper()
 	activeCRLs, err := getActiveCRLs(t, pod)
 	if err != nil {
@@ -1375,9 +1377,13 @@ func verifyCRLs(t *testing.T, pod *corev1.Pod, expectedCRLs map[string]*x509.Rev
 		// 0 CRLs probably means the router hasn't completed startup yet. Retry.
 		return false, nil
 	}
-	if len(activeCRLs) == 1 && activeCRLs[0].Issuer.CommonName == "Placeholder CA" {
-		// Placeholder CA CRL means the actual CRLs haven't been downloaded yet.
-		return false, nil
+	if len(activeCRLs) == 1 {
+		issuer := &pkix.Name{}
+		issuer.FillFromRDNSequence(&activeCRLs[0].TBSCertList.Issuer)
+		if issuer.CommonName == "Placeholder CA" {
+			// Placeholder CA CRL means the actual CRLs haven't been downloaded yet.
+			return false, nil
+		}
 	}
 	if len(activeCRLs) != len(expectedCRLs) {
 		return false, fmt.Errorf("incorrect number of CRLs found in pod %s/%s. expected %d, got %d", pod.Namespace, pod.Name, len(expectedCRLs), len(activeCRLs))
@@ -1385,14 +1391,14 @@ func verifyCRLs(t *testing.T, pod *corev1.Pod, expectedCRLs map[string]*x509.Rev
 	matchingCRLs := 0
 	for _, expectedCRL := range expectedCRLs {
 		for _, foundCRL := range activeCRLs {
-			if foundCRL.Issuer.String() == expectedCRL.Issuer.String() {
-				if foundCRL.Number.Cmp(expectedCRL.Number) == 0 {
-					// Name and sequence number match, so the CRLs should be equivalent.
+			if foundCRL.TBSCertList.Issuer.String() == expectedCRL.TBSCertList.Issuer.String() {
+				if foundCRL.TBSCertList.ThisUpdate.Equal(expectedCRL.TBSCertList.ThisUpdate) {
+					// Name and creation time match, so the CRLs should be equivalent.
 					matchingCRLs++
 					break
 				} else {
-					// Name matches but version doesn't. Wait for it to potentially be updated
-					t.Logf("Found %s but version does not match. expected %d, got %d", expectedCRL.Issuer.String(), expectedCRL.Number, foundCRL.Number)
+					// Name matches but creation time doesn't. Wait for it to potentially be updated
+					t.Logf("Found %s but thisUpdate does not match. expected %s, got %s", expectedCRL.TBSCertList.Issuer.String(), expectedCRL.TBSCertList.ThisUpdate, foundCRL.TBSCertList.ThisUpdate)
 					return false, nil
 				}
 			}
@@ -1401,11 +1407,11 @@ func verifyCRLs(t *testing.T, pod *corev1.Pod, expectedCRLs map[string]*x509.Rev
 	if len(expectedCRLs) != matchingCRLs {
 		t.Errorf("Expected:")
 		for _, crl := range expectedCRLs {
-			t.Errorf("%q version %d", crl.Issuer.String(), crl.Number)
+			t.Errorf("%q version %s", crl.TBSCertList.Issuer.String(), crl.TBSCertList.ThisUpdate)
 		}
 		t.Errorf("Found:")
 		for _, crl := range activeCRLs {
-			t.Errorf("%q version %d", crl.Issuer.String(), crl.Number)
+			t.Errorf("%q version %s", crl.TBSCertList.Issuer.String(), crl.TBSCertList.ThisUpdate)
 		}
 		return false, fmt.Errorf("found %d CRLs, but only %d matched", len(activeCRLs), matchingCRLs)
 	}
@@ -1425,7 +1431,7 @@ func getPods(t *testing.T, cl client.Client, deployment *appsv1.Deployment) (*co
 	return podList, nil
 }
 
-func getActiveCRLs(t *testing.T, clientPod *corev1.Pod) ([]*x509.RevocationList, error) {
+func getActiveCRLs(t *testing.T, clientPod *corev1.Pod) ([]*pkix.CertificateList, error) {
 	t.Helper()
 	cmd := []string{
 		"cat",
@@ -1439,14 +1445,14 @@ func getActiveCRLs(t *testing.T, clientPod *corev1.Pod) ([]*x509.RevocationList,
 		t.Logf("stderr:\n%s", stderr.String())
 		return nil, err
 	}
-	crls := []*x509.RevocationList{}
+	crls := []*pkix.CertificateList{}
 	crlData := []byte(stdout.String())
 	for len(crlData) > 0 {
 		block, data := pem.Decode(crlData)
 		if block == nil {
 			break
 		}
-		crl, err := x509.ParseRevocationList(block.Bytes)
+		crl, err := x509.ParseCRL(block.Bytes)
 		if err != nil {
 			return nil, err
 		}
