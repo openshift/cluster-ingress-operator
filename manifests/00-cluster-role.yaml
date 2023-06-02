@@ -102,6 +102,7 @@ rules:
   - apiservers
   - networks
   - clusterversions
+  - proxies
   verbs:
   - get
   - list
