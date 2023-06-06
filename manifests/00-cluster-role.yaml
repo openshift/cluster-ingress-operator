@@ -101,6 +101,7 @@ rules:
   - featuregates
   - apiservers
   - networks
+  - proxies
   verbs:
   - get
 
@@ -111,6 +112,7 @@ rules:
   - featuregates
   - infrastructures
   - ingresses
+  - proxies
   verbs:
   - list
   - watch
