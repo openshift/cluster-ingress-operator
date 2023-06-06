@@ -1,6 +1,8 @@
 package client
 
 import (
+	"errors"
+	"os"
 	"strings"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
@@ -35,14 +37,64 @@ func getAuthorizerForResource(config Config) (autorest.Authorizer, error) {
 			},
 		}
 	}
-	options := azidentity.ClientSecretCredentialOptions{
-		ClientOptions: azcore.ClientOptions{
-			Cloud: cloudConfig,
-		},
+
+	// Fallback to using tenant ID from env variable if not set.
+	if strings.TrimSpace(config.TenantID) == "" {
+		config.TenantID = os.Getenv("AZURE_TENANT_ID")
+		if strings.TrimSpace(config.TenantID) == "" {
+			return nil, errors.New("empty tenant ID")
+		}
 	}
-	cred, err := azidentity.NewClientSecretCredential(config.TenantID, config.ClientID, config.ClientSecret, &options)
-	if err != nil {
-		return nil, err
+
+	// Fallback to using client ID from env variable if not set.
+	if strings.TrimSpace(config.ClientID) == "" {
+		config.ClientID = os.Getenv("AZURE_CLIENT_ID")
+		if strings.TrimSpace(config.ClientID) == "" {
+			return nil, errors.New("empty client ID")
+		}
+	}
+
+	// Fallback to using client secret from env variable if not set.
+	if strings.TrimSpace(config.ClientSecret) == "" {
+		config.ClientSecret = os.Getenv("AZURE_CLIENT_SECRET")
+		// Skip validation; fallback to token (below) if env variable is also not set.
+	}
+
+	// Fallback to using federated token file from env variable if not set.
+	if strings.TrimSpace(config.FederatedTokenFile) == "" {
+		config.FederatedTokenFile = os.Getenv("AZURE_FEDERATED_TOKEN_FILE")
+		if strings.TrimSpace(config.FederatedTokenFile) == "" {
+			// Default to a generic token file location.
+			config.FederatedTokenFile = "/var/run/secrets/openshift/serviceaccount/token"
+		}
+	}
+
+	var cred azcore.TokenCredential
+	if config.AzureWorkloadIdentityEnabled && strings.TrimSpace(config.ClientSecret) == "" {
+		options := azidentity.WorkloadIdentityCredentialOptions{
+			ClientOptions: azcore.ClientOptions{
+				Cloud: cloudConfig,
+			},
+			ClientID:      config.ClientID,
+			TenantID:      config.TenantID,
+			TokenFilePath: config.FederatedTokenFile,
+		}
+		var err error
+		cred, err = azidentity.NewWorkloadIdentityCredential(&options)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		options := azidentity.ClientSecretCredentialOptions{
+			ClientOptions: azcore.ClientOptions{
+				Cloud: cloudConfig,
+			},
+		}
+		var err error
+		cred, err = azidentity.NewClientSecretCredential(config.TenantID, config.ClientID, config.ClientSecret, &options)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	scope := endpointToScope(config.Environment.TokenAudience)

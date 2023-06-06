@@ -19,6 +19,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/internal/shared"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/internal/errorinfo"
+	"github.com/Azure/azure-sdk-for-go/sdk/internal/exported"
 )
 
 const (
@@ -31,18 +32,21 @@ func setDefaults(o *policy.RetryOptions) {
 	} else if o.MaxRetries < 0 {
 		o.MaxRetries = 0
 	}
+
+	// SDK guidelines specify the default MaxRetryDelay is 60 seconds
 	if o.MaxRetryDelay == 0 {
-		o.MaxRetryDelay = 120 * time.Second
+		o.MaxRetryDelay = 60 * time.Second
 	} else if o.MaxRetryDelay < 0 {
 		// not really an unlimited cap, but sufficiently large enough to be considered as such
 		o.MaxRetryDelay = math.MaxInt64
 	}
 	if o.RetryDelay == 0 {
-		o.RetryDelay = 4 * time.Second
+		o.RetryDelay = 800 * time.Millisecond
 	} else if o.RetryDelay < 0 {
 		o.RetryDelay = 0
 	}
 	if o.StatusCodes == nil {
+		// NOTE: if you change this list, you MUST update the docs in policy/policy.go
 		o.StatusCodes = []int{
 			http.StatusRequestTimeout,      // 408
 			http.StatusTooManyRequests,     // 429
@@ -106,7 +110,7 @@ func (p *retryPolicy) Do(req *policy.Request) (resp *http.Response, err error) {
 	try := int32(1)
 	for {
 		resp = nil // reset
-		log.Writef(log.EventRetryPolicy, "\n=====> Try=%d %s %s", try, req.Raw().Method, req.Raw().URL.String())
+		log.Writef(log.EventRetryPolicy, "=====> Try=%d", try)
 
 		// For each try, seek to the beginning of the Body stream. We do this even for the 1st try because
 		// the stream may not be at offset 0 when we first get it and we want the same behavior for the
@@ -130,7 +134,7 @@ func (p *retryPolicy) Do(req *policy.Request) (resp *http.Response, err error) {
 			// if the body was already downloaded or there was an error it's safe to cancel the context now
 			if err != nil {
 				tryCancel()
-			} else if _, ok := resp.Body.(*shared.NopClosingBytesReader); ok {
+			} else if exported.PayloadDownloaded(resp) {
 				tryCancel()
 			} else {
 				// must cancel the context after the body has been read and closed
@@ -143,10 +147,7 @@ func (p *retryPolicy) Do(req *policy.Request) (resp *http.Response, err error) {
 			log.Writef(log.EventRetryPolicy, "error %v", err)
 		}
 
-		if err == nil && !HasStatusCode(resp, options.StatusCodes...) {
-			// if there is no error and the response code isn't in the list of retry codes then we're done.
-			return
-		} else if ctxErr := req.Raw().Context().Err(); ctxErr != nil {
+		if ctxErr := req.Raw().Context().Err(); ctxErr != nil {
 			// don't retry if the parent context has been cancelled or its deadline exceeded
 			err = ctxErr
 			log.Writef(log.EventRetryPolicy, "abort due to %v", err)
@@ -161,20 +162,38 @@ func (p *retryPolicy) Do(req *policy.Request) (resp *http.Response, err error) {
 			return
 		}
 
+		if options.ShouldRetry != nil {
+			// a non-nil ShouldRetry overrides our HTTP status code check
+			if !options.ShouldRetry(resp, err) {
+				// predicate says we shouldn't retry
+				log.Write(log.EventRetryPolicy, "exit due to ShouldRetry")
+				return
+			}
+		} else if err == nil && !HasStatusCode(resp, options.StatusCodes...) {
+			// if there is no error and the response code isn't in the list of retry codes then we're done.
+			log.Write(log.EventRetryPolicy, "exit due to non-retriable status code")
+			return
+		}
+
 		if try == options.MaxRetries+1 {
 			// max number of tries has been reached, don't sleep again
 			log.Writef(log.EventRetryPolicy, "MaxRetries %d exceeded", options.MaxRetries)
 			return
 		}
 
-		// drain before retrying so nothing is leaked
-		Drain(resp)
-
 		// use the delay from retry-after if available
 		delay := shared.RetryAfter(resp)
 		if delay <= 0 {
 			delay = calcDelay(options, try)
+		} else if delay > options.MaxRetryDelay {
+			// the retry-after delay exceeds the the cap so don't retry
+			log.Writef(log.EventRetryPolicy, "Retry-After delay %s exceeds MaxRetryDelay of %s", delay, options.MaxRetryDelay)
+			return
 		}
+
+		// drain before retrying so nothing is leaked
+		Drain(resp)
+
 		log.Writef(log.EventRetryPolicy, "End Try #%d, Delay=%v", try, delay)
 		select {
 		case <-time.After(delay):
