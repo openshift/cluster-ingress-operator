@@ -2560,7 +2560,6 @@ func TestNetworkLoadBalancer(t *testing.T) {
 // TestAWSELBConnectionIdleTimeout verifies that the AWS ELB connection-idle
 // timeout works as expected.
 func TestAWSELBConnectionIdleTimeout(t *testing.T) {
-	t.Parallel()
 	if infraConfig.Status.PlatformStatus == nil {
 		t.Skip("test skipped on nil platform")
 	}

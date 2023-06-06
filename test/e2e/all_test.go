@@ -20,7 +20,6 @@ func TestAll(t *testing.T) {
 	// parallel subtests complete. Each "parallel" test must
 	// invoke t.Parallel().
 	t.Run("parallel", func(t *testing.T) {
-		t.Run("TestAWSELBConnectionIdleTimeout", TestAWSELBConnectionIdleTimeout)
 		t.Run("TestClientTLS", TestClientTLS)
 		t.Run("TestMTLSWithCRLs", TestMTLSWithCRLs)
 		t.Run("TestCRLUpdate", TestCRLUpdate)
@@ -79,6 +78,7 @@ func TestAll(t *testing.T) {
 	})
 
 	t.Run("serial", func(t *testing.T) {
+		t.Run("TestAWSELBConnectionIdleTimeout", TestAWSELBConnectionIdleTimeout)
 		t.Run("TestDefaultIngressControllerSteadyConditions", TestDefaultIngressControllerSteadyConditions)
 		t.Run("TestClusterOperatorStatusRelatedObjects", TestClusterOperatorStatusRelatedObjects)
 		t.Run("TestConfigurableRouteNoConsumingUserNoRBAC", TestConfigurableRouteNoConsumingUserNoRBAC)
