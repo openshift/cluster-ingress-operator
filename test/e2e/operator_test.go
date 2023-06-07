@@ -38,8 +38,11 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws/endpoints"
 
+	"github.com/go-logr/logr"
+
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
+	ctrlruntimelog "sigs.k8s.io/controller-runtime/pkg/log"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -113,6 +116,13 @@ var (
 	defaultName       = types.NamespacedName{Namespace: operatorNamespace, Name: manifests.DefaultIngressControllerName}
 	clusterConfigName = types.NamespacedName{Namespace: operatorNamespace, Name: manifests.ClusterIngressConfigName}
 )
+
+func init() {
+	// This is required because controller-runtime expects its consumers to
+	// set a logger through log.SetLogger within 30 seconds of the program's
+	// initalization.
+	ctrlruntimelog.SetLogger(logr.New(ctrlruntimelog.NullLogSink{}))
+}
 
 func TestMain(m *testing.M) {
 	if os.Getenv("E2E_TEST_MAIN_SKIP_SETUP") == "1" {
