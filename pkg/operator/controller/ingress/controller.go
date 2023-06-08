@@ -87,27 +87,30 @@ var (
 // The controller will be pre-configured to watch for IngressController resources
 // in the manager namespace.
 func New(mgr manager.Manager, config Config) (controller.Controller, error) {
+	operatorCache := mgr.GetCache()
 	reconciler := &reconciler{
 		config:   config,
 		client:   mgr.GetClient(),
-		cache:    mgr.GetCache(),
+		cache:    operatorCache,
 		recorder: mgr.GetEventRecorderFor(controllerName),
 	}
 	c, err := controller.New(controllerName, mgr, controller.Options{Reconciler: reconciler})
 	if err != nil {
 		return nil, err
 	}
-	if err := c.Watch(&source.Kind{Type: &operatorv1.IngressController{}}, &handler.EnqueueRequestForObject{}); err != nil {
+	scheme := mgr.GetClient().Scheme()
+	mapper := mgr.GetClient().RESTMapper()
+	if err := c.Watch(source.Kind(operatorCache, &operatorv1.IngressController{}), &handler.EnqueueRequestForObject{}); err != nil {
 		return nil, err
 	}
-	if err := c.Watch(&source.Kind{Type: &appsv1.Deployment{}}, enqueueRequestForOwningIngressController(config.Namespace)); err != nil {
+	if err := c.Watch(source.Kind(operatorCache, &appsv1.Deployment{}), enqueueRequestForOwningIngressController(config.Namespace)); err != nil {
 		return nil, err
 	}
-	if err := c.Watch(&source.Kind{Type: &corev1.Service{}}, enqueueRequestForOwningIngressController(config.Namespace)); err != nil {
+	if err := c.Watch(source.Kind(operatorCache, &corev1.Service{}), enqueueRequestForOwningIngressController(config.Namespace)); err != nil {
 		return nil, err
 	}
 	// Add watch for deleted pods specifically for ensuring ingress deletion.
-	if err := c.Watch(&source.Kind{Type: &corev1.Pod{}}, enqueueRequestForOwningIngressController(config.Namespace), predicate.Funcs{
+	if err := c.Watch(source.Kind(operatorCache, &corev1.Pod{}), enqueueRequestForOwningIngressController(config.Namespace), predicate.Funcs{
 		CreateFunc:  func(e event.CreateEvent) bool { return false },
 		DeleteFunc:  func(e event.DeleteEvent) bool { return true },
 		UpdateFunc:  func(e event.UpdateEvent) bool { return false },
@@ -116,22 +119,26 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 		return nil, err
 	}
 	// add watch for changes in DNS config
-	if err := c.Watch(&source.Kind{Type: &configv1.DNS{}}, handler.EnqueueRequestsFromMapFunc(reconciler.ingressConfigToIngressController)); err != nil {
+	if err := c.Watch(source.Kind(operatorCache, &configv1.DNS{}), handler.EnqueueRequestsFromMapFunc(reconciler.ingressConfigToIngressController)); err != nil {
 		return nil, err
 	}
-	if err := c.Watch(&source.Kind{Type: &iov1.DNSRecord{}}, &handler.EnqueueRequestForOwner{OwnerType: &operatorv1.IngressController{}}); err != nil {
+	if err := c.Watch(source.Kind(operatorCache, &iov1.DNSRecord{}), handler.EnqueueRequestForOwner(scheme, mapper, &operatorv1.IngressController{})); err != nil {
 		return nil, err
 	}
-	if err := c.Watch(&source.Kind{Type: &configv1.Ingress{}}, handler.EnqueueRequestsFromMapFunc(reconciler.ingressConfigToIngressController)); err != nil {
+	if err := c.Watch(source.Kind(operatorCache, &configv1.Ingress{}), handler.EnqueueRequestsFromMapFunc(reconciler.ingressConfigToIngressController)); err != nil {
+		return nil, err
+	}
+	// Watch for changes to cluster-wide proxy config.
+	if err := c.Watch(source.Kind(operatorCache, &configv1.Proxy{}), handler.EnqueueRequestsFromMapFunc(reconciler.ingressConfigToIngressController)); err != nil {
 		return nil, err
 	}
 	return c, nil
 }
 
-func (r *reconciler) ingressConfigToIngressController(o client.Object) []reconcile.Request {
+func (r *reconciler) ingressConfigToIngressController(ctx context.Context, o client.Object) []reconcile.Request {
 	var requests []reconcile.Request
 	controllers := &operatorv1.IngressControllerList{}
-	if err := r.cache.List(context.Background(), controllers, client.InNamespace(r.config.Namespace)); err != nil {
+	if err := r.cache.List(ctx, controllers, client.InNamespace(r.config.Namespace)); err != nil {
 		log.Error(err, "failed to list ingresscontrollers for ingress", "related", o.GetSelfLink())
 		return requests
 	}
@@ -150,7 +157,7 @@ func (r *reconciler) ingressConfigToIngressController(o client.Object) []reconci
 
 func enqueueRequestForOwningIngressController(namespace string) handler.EventHandler {
 	return handler.EnqueueRequestsFromMapFunc(
-		func(a client.Object) []reconcile.Request {
+		func(ctx context.Context, a client.Object) []reconcile.Request {
 			labels := a.GetLabels()
 			if ingressName, ok := labels[manifests.OwningIngressControllerLabel]; ok {
 				log.Info("queueing ingress", "name", ingressName, "related", a.GetSelfLink())
@@ -264,6 +271,12 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	if platformStatus == nil {
 		return reconcile.Result{}, fmt.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: PlatformStatus is nil", ingress.Namespace, ingress.Name)
 	}
+	clusterProxyConfig := &configv1.Proxy{}
+	if err := r.client.Get(ctx, types.NamespacedName{Name: "cluster"}, clusterProxyConfig); err != nil {
+		if !kerrors.IsNotFound(err) {
+			return reconcile.Result{}, fmt.Errorf("failed to get proxy 'cluster': %v", err)
+		}
+	}
 
 	// Admit if necessary. Don't process until admission succeeds. If admission is
 	// successful, immediately re-queue to refresh state.
@@ -307,7 +320,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	}
 
 	// The ingresscontroller is safe to process, so ensure it.
-	if err := r.ensureIngressController(ingress, dnsConfig, infraConfig, platformStatus, ingressConfig, apiConfig, networkConfig); err != nil {
+	if err := r.ensureIngressController(ingress, dnsConfig, infraConfig, platformStatus, ingressConfig, apiConfig, networkConfig, clusterProxyConfig); err != nil {
 		switch e := err.(type) {
 		case retryable.Error:
 			log.Error(e, "got retryable error; requeueing", "after", e.After())
@@ -979,7 +992,7 @@ func (r *reconciler) ensureIngressDeleted(ingress *operatorv1.IngressController)
 // given ingresscontroller.  Any error values are collected into either a
 // retryable.Error value, if any of the error values are retryable, or else an
 // Aggregate error value.
-func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, dnsConfig *configv1.DNS, infraConfig *configv1.Infrastructure, platformStatus *configv1.PlatformStatus, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer, networkConfig *configv1.Network) error {
+func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, dnsConfig *configv1.DNS, infraConfig *configv1.Infrastructure, platformStatus *configv1.PlatformStatus, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer, networkConfig *configv1.Network, clusterProxyConfig *configv1.Proxy) error {
 	// Before doing anything at all with the controller, ensure it has a finalizer
 	// so we can clean up later.
 	if !slice.ContainsString(ci.Finalizers, manifests.IngressControllerFinalizer) {
@@ -1030,7 +1043,7 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		haveClientCAConfigmap = true
 	}
 
-	haveDepl, deployment, err := r.ensureRouterDeployment(ci, infraConfig, ingressConfig, apiConfig, networkConfig, haveClientCAConfigmap, clientCAConfigmap, platformStatus)
+	haveDepl, deployment, err := r.ensureRouterDeployment(ci, infraConfig, ingressConfig, apiConfig, networkConfig, haveClientCAConfigmap, clientCAConfigmap, platformStatus, clusterProxyConfig)
 	if err != nil {
 		errs = append(errs, fmt.Errorf("failed to ensure deployment: %v", err))
 		return utilerrors.NewAggregate(errs)

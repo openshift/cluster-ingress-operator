@@ -69,6 +69,7 @@ var (
 // The canary controller will watch the Default IngressController, as well as
 // the canary service, daemonset, and route resources.
 func New(mgr manager.Manager, config Config) (controller.Controller, error) {
+	operatorCache := mgr.GetCache()
 	reconciler := &reconciler{
 		config:                    config,
 		client:                    mgr.GetClient(),
@@ -84,7 +85,7 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 		return o.GetName() == manifests.DefaultIngressControllerName
 	})
 
-	if err := c.Watch(&source.Kind{Type: &operatorv1.IngressController{}}, &handler.EnqueueRequestForObject{}, defaultIcPredicate); err != nil {
+	if err := c.Watch(source.Kind(operatorCache, &operatorv1.IngressController{}), &handler.EnqueueRequestForObject{}, defaultIcPredicate); err != nil {
 		return nil, err
 	}
 
@@ -110,7 +111,7 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 		},
 	}
 
-	if err := c.Watch(&source.Kind{Type: &routev1.Route{}}, enqueueRequestForDefaultIngressController(config.Namespace), canaryRoutePredicate, updateFilter); err != nil {
+	if err := c.Watch(source.Kind(operatorCache, &routev1.Route{}), enqueueRequestForDefaultIngressController(config.Namespace), canaryRoutePredicate, updateFilter); err != nil {
 		return nil, err
 	}
 
@@ -119,7 +120,7 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 
 func enqueueRequestForDefaultIngressController(namespace string) handler.EventHandler {
 	return handler.EnqueueRequestsFromMapFunc(
-		func(a client.Object) []reconcile.Request {
+		func(ctx context.Context, a client.Object) []reconcile.Request {
 			return []reconcile.Request{
 				{
 					NamespacedName: types.NamespacedName{

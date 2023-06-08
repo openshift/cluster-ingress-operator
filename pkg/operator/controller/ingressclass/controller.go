@@ -37,20 +37,21 @@ var (
 // New creates and returns a controller that creates and manages IngressClass
 // objects for IngressControllers.
 func New(mgr manager.Manager, config Config) (controller.Controller, error) {
+	operatorCache := mgr.GetCache()
 	reconciler := &reconciler{
 		config:   config,
 		client:   mgr.GetClient(),
-		cache:    mgr.GetCache(),
+		cache:    operatorCache,
 		recorder: mgr.GetEventRecorderFor(controllerName),
 	}
 	c, err := controller.New(controllerName, mgr, controller.Options{Reconciler: reconciler})
 	if err != nil {
 		return nil, err
 	}
-	if err := c.Watch(&source.Kind{Type: &operatorv1.IngressController{}}, &handler.EnqueueRequestForObject{}); err != nil {
+	if err := c.Watch(source.Kind(operatorCache, &operatorv1.IngressController{}), &handler.EnqueueRequestForObject{}); err != nil {
 		return nil, err
 	}
-	if err := c.Watch(&source.Kind{Type: &networkingv1.IngressClass{}}, handler.EnqueueRequestsFromMapFunc(reconciler.ingressClassToIngressController), predicate.NewPredicateFuncs(ingressClassHasIngressController)); err != nil {
+	if err := c.Watch(source.Kind(operatorCache, &networkingv1.IngressClass{}), handler.EnqueueRequestsFromMapFunc(reconciler.ingressClassToIngressController), predicate.NewPredicateFuncs(ingressClassHasIngressController)); err != nil {
 		return nil, err
 	}
 	return c, nil
@@ -70,7 +71,7 @@ func ingressClassHasIngressController(o client.Object) bool {
 // ingressClassToIngressController takes an ingressclass and returns a slice of
 // reconcile.Request with a request to reconcile the ingresscontroller that is
 // associated with the ingressclass.
-func (r *reconciler) ingressClassToIngressController(o client.Object) []reconcile.Request {
+func (r *reconciler) ingressClassToIngressController(ctx context.Context, o client.Object) []reconcile.Request {
 	class := o.(*networkingv1.IngressClass)
 	return []reconcile.Request{{
 		NamespacedName: types.NamespacedName{

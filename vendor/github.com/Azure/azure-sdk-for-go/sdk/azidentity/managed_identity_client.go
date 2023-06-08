@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"net/http"
 	"net/url"
 	"os"
@@ -24,6 +23,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/streaming"
 	"github.com/Azure/azure-sdk-for-go/sdk/internal/log"
+	"github.com/AzureAD/microsoft-authentication-library-for-go/apps/confidential"
 )
 
 const (
@@ -55,11 +55,10 @@ const (
 // managedIdentityClient provides the base for authenticating in managed identity environments
 // This type includes an runtime.Pipeline and TokenCredentialOptions.
 type managedIdentityClient struct {
-	pipeline    runtime.Pipeline
-	msiType     msiType
-	endpoint    string
-	id          ManagedIDKind
-	imdsTimeout time.Duration
+	pipeline runtime.Pipeline
+	msiType  msiType
+	endpoint string
+	id       ManagedIDKind
 }
 
 type wrappedNumber json.Number
@@ -149,17 +148,19 @@ func newManagedIdentityClient(options *ManagedIdentityCredentialOptions) (*manag
 	return &c, nil
 }
 
-// authenticate creates an authentication request for a Managed Identity and returns the resulting Access Token if successful.
-// ctx: The current context for controlling the request lifetime.
-// clientID: The client (application) ID of the service principal.
-// scopes: The scopes required for the token.
-func (c *managedIdentityClient) authenticate(ctx context.Context, id ManagedIDKind, scopes []string) (azcore.AccessToken, error) {
-	var cancel context.CancelFunc
-	if c.imdsTimeout > 0 && c.msiType == msiTypeIMDS {
-		ctx, cancel = context.WithTimeout(ctx, c.imdsTimeout)
-		defer cancel()
+// provideToken acquires a token for MSAL's confidential.Client, which caches the token
+func (c *managedIdentityClient) provideToken(ctx context.Context, params confidential.TokenProviderParameters) (confidential.TokenProviderResult, error) {
+	result := confidential.TokenProviderResult{}
+	tk, err := c.authenticate(ctx, c.id, params.Scopes)
+	if err == nil {
+		result.AccessToken = tk.Token
+		result.ExpiresInSeconds = int(time.Until(tk.ExpiresOn).Seconds())
 	}
+	return result, err
+}
 
+// authenticate acquires an access token
+func (c *managedIdentityClient) authenticate(ctx context.Context, id ManagedIDKind, scopes []string) (azcore.AccessToken, error) {
 	msg, err := c.createAuthRequest(ctx, id, scopes)
 	if err != nil {
 		return azcore.AccessToken{}, err
@@ -167,14 +168,8 @@ func (c *managedIdentityClient) authenticate(ctx context.Context, id ManagedIDKi
 
 	resp, err := c.pipeline.Do(msg)
 	if err != nil {
-		if cancel != nil && errors.Is(err, context.DeadlineExceeded) {
-			return azcore.AccessToken{}, newCredentialUnavailableError(credNameManagedIdentity, "IMDS token request timed out")
-		}
-		return azcore.AccessToken{}, newAuthenticationFailedError(credNameManagedIdentity, err.Error(), nil)
+		return azcore.AccessToken{}, newAuthenticationFailedError(credNameManagedIdentity, err.Error(), nil, err)
 	}
-
-	// got a response, remove the IMDS timeout so future requests use the transport's configuration
-	c.imdsTimeout = 0
 
 	if runtime.HasStatusCode(resp, http.StatusOK, http.StatusCreated) {
 		return c.createAccessToken(resp)
@@ -182,12 +177,12 @@ func (c *managedIdentityClient) authenticate(ctx context.Context, id ManagedIDKi
 
 	if c.msiType == msiTypeIMDS && resp.StatusCode == 400 {
 		if id != nil {
-			return azcore.AccessToken{}, newAuthenticationFailedError(credNameManagedIdentity, "the requested identity isn't assigned to this resource", resp)
+			return azcore.AccessToken{}, newAuthenticationFailedError(credNameManagedIdentity, "the requested identity isn't assigned to this resource", resp, nil)
 		}
 		return azcore.AccessToken{}, newCredentialUnavailableError(credNameManagedIdentity, "no default identity is assigned to this resource")
 	}
 
-	return azcore.AccessToken{}, newAuthenticationFailedError(credNameManagedIdentity, "authentication failed", resp)
+	return azcore.AccessToken{}, newAuthenticationFailedError(credNameManagedIdentity, "authentication failed", resp, nil)
 }
 
 func (c *managedIdentityClient) createAccessToken(res *http.Response) (azcore.AccessToken, error) {
@@ -215,10 +210,10 @@ func (c *managedIdentityClient) createAccessToken(res *http.Response) (azcore.Ac
 		if expiresOn, err := strconv.Atoi(v); err == nil {
 			return azcore.AccessToken{Token: value.Token, ExpiresOn: time.Unix(int64(expiresOn), 0).UTC()}, nil
 		}
-		return azcore.AccessToken{}, newAuthenticationFailedError(credNameManagedIdentity, "unexpected expires_on value: "+v, res)
+		return azcore.AccessToken{}, newAuthenticationFailedError(credNameManagedIdentity, "unexpected expires_on value: "+v, res, nil)
 	default:
 		msg := fmt.Sprintf("unsupported type received in expires_on: %T, %v", v, v)
-		return azcore.AccessToken{}, newAuthenticationFailedError(credNameManagedIdentity, msg, res)
+		return azcore.AccessToken{}, newAuthenticationFailedError(credNameManagedIdentity, msg, res, nil)
 	}
 }
 
@@ -233,7 +228,7 @@ func (c *managedIdentityClient) createAuthRequest(ctx context.Context, id Manage
 		key, err := c.getAzureArcSecretKey(ctx, scopes)
 		if err != nil {
 			msg := fmt.Sprintf("failed to retreive secret key from the identity endpoint: %v", err)
-			return nil, newAuthenticationFailedError(credNameManagedIdentity, msg, nil)
+			return nil, newAuthenticationFailedError(credNameManagedIdentity, msg, nil, err)
 		}
 		return c.createAzureArcAuthRequest(ctx, id, scopes, key)
 	case msiTypeServiceFabric:
@@ -327,7 +322,7 @@ func (c *managedIdentityClient) getAzureArcSecretKey(ctx context.Context, resour
 	// of the secret key file. Any other status code indicates an error in the request.
 	if response.StatusCode != 401 {
 		msg := fmt.Sprintf("expected a 401 response, received %d", response.StatusCode)
-		return "", newAuthenticationFailedError(credNameManagedIdentity, msg, response)
+		return "", newAuthenticationFailedError(credNameManagedIdentity, msg, response, nil)
 	}
 	header := response.Header.Get("WWW-Authenticate")
 	if len(header) == 0 {
@@ -338,7 +333,7 @@ func (c *managedIdentityClient) getAzureArcSecretKey(ctx context.Context, resour
 	if pos == -1 {
 		return "", fmt.Errorf("did not receive a correct value from WWW-Authenticate header: %s", header)
 	}
-	key, err := ioutil.ReadFile(header[pos+1:])
+	key, err := os.ReadFile(header[pos+1:])
 	if err != nil {
 		return "", fmt.Errorf("could not read file (%s) contents: %v", header[pos+1:], err)
 	}

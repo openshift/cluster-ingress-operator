@@ -72,7 +72,11 @@ func GetScheme() *runtime.Scheme {
 
 // NewClient builds an operator-compatible kube client from the given REST config.
 func NewClient(kubeConfig *rest.Config) (client.Client, error) {
-	mapper, err := apiutil.NewDiscoveryRESTMapper(kubeConfig)
+	httpClient, err := rest.HTTPClientFor(kubeConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create http client: %v", err)
+	}
+	mapper, err := apiutil.NewDiscoveryRESTMapper(kubeConfig, httpClient)
 	if err != nil {
 		return nil, fmt.Errorf("failed to discover api rest mapper: %v", err)
 	}
