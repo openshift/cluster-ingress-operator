@@ -22,6 +22,7 @@ import (
 	ibm "github.com/openshift/cluster-ingress-operator/pkg/dns/ibm"
 	ibmprivatedns "github.com/openshift/cluster-ingress-operator/pkg/dns/ibm/private"
 	ibmpublicdns "github.com/openshift/cluster-ingress-operator/pkg/dns/ibm/public"
+	splitdns "github.com/openshift/cluster-ingress-operator/pkg/dns/split"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
@@ -112,6 +113,9 @@ type Config struct {
 	DNSRecordNamespaces          []string
 	OperatorReleaseVersion       string
 	AzureWorkloadIdentityEnabled bool
+	// PrivateHostedZoneAWSEnabled indicates whether the "SharedVPC" feature gate is
+	// enabled.
+	PrivateHostedZoneAWSEnabled bool
 }
 
 type reconciler struct {
@@ -664,7 +668,21 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 		if err != nil {
 			return nil, fmt.Errorf("failed to create AWS DNS manager: %v", err)
 		}
-		dnsProvider = provider
+		var roleARN string
+		if dnsConfig.Spec.Platform.AWS != nil {
+			roleARN = dnsConfig.Spec.Platform.AWS.PrivateZoneIAMRole
+		}
+		if roleARN != "" && r.config.PrivateHostedZoneAWSEnabled {
+			cfg := cfg
+			cfg.RoleARN = roleARN
+			privateProvider, err := awsdns.NewProvider(cfg, r.config.OperatorReleaseVersion)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create AWS DNS manager for shared VPC: %v", err)
+			}
+			dnsProvider = splitdns.NewProvider(provider, privateProvider, dnsConfig.Spec.PrivateZone)
+		} else {
+			dnsProvider = provider
+		}
 	case configv1.AzurePlatformType:
 		environment := platformStatus.Azure.CloudName
 		if environment == "" {
