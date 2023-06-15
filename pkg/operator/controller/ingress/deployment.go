@@ -646,9 +646,21 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	deployment.Spec.Template.Spec.DNSPolicy = corev1.DNSClusterFirst
 
 	var (
-		statsPort int32 = routerDefaultHostNetworkStatsPort
-		httpPort  int32 = routerDefaultHostNetworkHTTPPort
-		httpsPort int32 = routerDefaultHostNetworkHTTPSPort
+		statsPort = corev1.ContainerPort{
+			Name:          StatsPortName,
+			ContainerPort: routerDefaultHostNetworkStatsPort,
+			Protocol:      corev1.ProtocolTCP,
+		}
+		httpPort = corev1.ContainerPort{
+			Name:          HTTPPortName,
+			ContainerPort: routerDefaultHostNetworkHTTPPort,
+			Protocol:      corev1.ProtocolTCP,
+		}
+		httpsPort = corev1.ContainerPort{
+			Name:          HTTPSPortName,
+			ContainerPort: routerDefaultHostNetworkHTTPSPort,
+			Protocol:      corev1.ProtocolTCP,
+		}
 	)
 
 	if ci.Status.EndpointPublishingStrategy.Type == operatorv1.HostNetworkStrategyType {
@@ -671,33 +683,39 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 			}
 
 			// Set the ports to the values from the host network configuration
-			httpPort = config.HTTPPort
-			httpsPort = config.HTTPSPort
-			statsPort = config.StatsPort
+			httpPort.ContainerPort = config.HTTPPort
+			httpsPort.ContainerPort = config.HTTPSPort
+			statsPort.ContainerPort = config.StatsPort
 		}
+
+		// When HostNetwork is true, the host port must match the
+		// container port.
+		httpPort.HostPort = httpPort.ContainerPort
+		httpsPort.HostPort = httpsPort.ContainerPort
+		statsPort.HostPort = statsPort.ContainerPort
 
 		// Append the environment variables for the HTTP and HTTPS ports
 		env = append(env,
 			corev1.EnvVar{
 				Name:  RouterServiceHTTPSPort,
-				Value: strconv.Itoa(int(httpsPort)),
+				Value: strconv.Itoa(int(httpsPort.ContainerPort)),
 			},
 			corev1.EnvVar{
 				Name:  RouterServiceHTTPPort,
-				Value: strconv.Itoa(int(httpPort)),
+				Value: strconv.Itoa(int(httpPort.ContainerPort)),
 			},
 		)
 	}
 
 	// Set the port for the probes from the host network configuration
-	deployment.Spec.Template.Spec.Containers[0].LivenessProbe.ProbeHandler.HTTPGet.Port.IntVal = statsPort
-	deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.ProbeHandler.HTTPGet.Port.IntVal = statsPort
-	deployment.Spec.Template.Spec.Containers[0].StartupProbe.ProbeHandler.HTTPGet.Port.IntVal = statsPort
+	deployment.Spec.Template.Spec.Containers[0].LivenessProbe.ProbeHandler.HTTPGet.Port.IntVal = statsPort.ContainerPort
+	deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.ProbeHandler.HTTPGet.Port.IntVal = statsPort.ContainerPort
+	deployment.Spec.Template.Spec.Containers[0].StartupProbe.ProbeHandler.HTTPGet.Port.IntVal = statsPort.ContainerPort
 
 	// append the value for the metrics port to the list of environment variables
 	env = append(env, corev1.EnvVar{
 		Name:  StatsPort,
-		Value: strconv.Itoa(int(statsPort)),
+		Value: strconv.Itoa(int(statsPort.ContainerPort)),
 	})
 
 	// Fill in the default certificate secret name.
@@ -1071,21 +1089,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	// Add the ports to the container
 	deployment.Spec.Template.Spec.Containers[0].Ports = append(
 		deployment.Spec.Template.Spec.Containers[0].Ports,
-		corev1.ContainerPort{
-			Name:          HTTPPortName,
-			ContainerPort: httpPort,
-			Protocol:      corev1.ProtocolTCP,
-		},
-		corev1.ContainerPort{
-			Name:          HTTPSPortName,
-			ContainerPort: httpsPort,
-			Protocol:      corev1.ProtocolTCP,
-		},
-		corev1.ContainerPort{
-			Name:          StatsPortName,
-			ContainerPort: statsPort,
-			Protocol:      corev1.ProtocolTCP,
-		},
+		httpPort, httpsPort, statsPort,
 	)
 
 	// Compute the hash for topology spread constraints and possibly
