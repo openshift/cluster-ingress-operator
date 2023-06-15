@@ -31,7 +31,9 @@ const (
 var log = logf.Logger.WithName(controllerName)
 
 // New creates a new controller that syncs client CA configmaps between the
-// config and operand namespaces.
+// config and operand namespaces.  This controller also adds a finalizer to the
+// IngressController so that the controller can delete the configmap from the
+// operand namespace when the IngressController is marked for deletion.
 func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	operatorCache := mgr.GetCache()
 	reconciler := &reconciler{
@@ -191,7 +193,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	}
 
 	const finalizer = "ingresscontroller.operator.openshift.io/finalizer-clientca-configmap"
-	if len(ic.Spec.ClientTLS.ClientCA.Name) != 0 && !slice.ContainsString(ic.Finalizers, finalizer) {
+	if len(ic.Spec.ClientTLS.ClientCA.Name) != 0 && ic.DeletionTimestamp == nil && !slice.ContainsString(ic.Finalizers, finalizer) {
 		// Ensure the ingresscontroller has a finalizer so we get a
 		// chance to delete the configmap when the ingresscontroller is
 		// deleted.
