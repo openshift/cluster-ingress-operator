@@ -891,6 +891,9 @@ func checkContainerPort(t *testing.T, d *appsv1.Deployment, portName string, por
 	t.Helper()
 	for _, p := range d.Spec.Template.Spec.Containers[0].Ports {
 		if p.Name == portName && p.ContainerPort == port {
+			if d.Spec.Template.Spec.HostNetwork && p.ContainerPort != p.HostPort {
+				t.Errorf("deployment %q specifies HostNetwork but specifies port %q with container port %d and hostport %d", d.Name, portName, p.ContainerPort, p.HostPort)
+			}
 			return
 		}
 	}
