@@ -3,6 +3,7 @@ package gateway_service_dns
 import (
 	"context"
 	"reflect"
+	"strings"
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
@@ -219,6 +220,10 @@ func (r *reconciler) ensureDNSRecordsForGateway(ctx context.Context, gateway *ga
 	var errs []error
 	for _, domain := range domains {
 		name := operatorcontroller.GatewayDNSRecordName(gateway, domain)
+		// If domain doesn't have a trailing dot, add it
+		if !strings.HasSuffix(domain, ".") {
+			domain = domain + "."
+		}
 		_, _, err := dnsrecord.EnsureDNSRecord(r.client, name, labels, ownerRef, domain, service)
 		errs = append(errs, err)
 	}
