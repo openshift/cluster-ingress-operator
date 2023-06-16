@@ -5,55 +5,70 @@ import (
 	"reflect"
 	"strings"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/util/sets"
 
 	configv1 "github.com/openshift/api/config/v1"
+	configlistersv1 "github.com/openshift/client-go/config/listers/config/v1"
 	"github.com/openshift/library-go/pkg/operator/configobserver"
 	"github.com/openshift/library-go/pkg/operator/events"
 )
+
+type FeatureGateLister interface {
+	FeatureGateLister() configlistersv1.FeatureGateLister
+}
 
 // NewObserveFeatureFlagsFunc produces a configobserver for feature gates.  If non-nil, the featureWhitelist filters
 // feature gates to a known subset (instead of everything).  The featureBlacklist will stop certain features from making
 // it through the list.  The featureBlacklist should be empty, but for a brief time, some featuregates may need to skipped.
 // @smarterclayton will live forever in shame for being the first to require this for "IPv6DualStack".
-func NewObserveFeatureFlagsFunc(featureWhitelist sets.Set[configv1.FeatureGateName], featureBlacklist sets.Set[configv1.FeatureGateName], configPath []string, featureGateAccess FeatureGateAccess) configobserver.ObserveConfigFunc {
+func NewObserveFeatureFlagsFunc(featureWhitelist sets.String, featureBlacklist sets.String, configPath []string) configobserver.ObserveConfigFunc {
 	return (&featureFlags{
-		allowAll:          len(featureWhitelist) == 0,
-		featureWhitelist:  featureWhitelist,
-		featureBlacklist:  featureBlacklist,
-		configPath:        configPath,
-		featureGateAccess: featureGateAccess,
+		allowAll:         len(featureWhitelist) == 0,
+		featureWhitelist: featureWhitelist,
+		featureBlacklist: featureBlacklist,
+		configPath:       configPath,
 	}).ObserveFeatureFlags
 }
 
 type featureFlags struct {
 	allowAll         bool
-	featureWhitelist sets.Set[configv1.FeatureGateName]
+	featureWhitelist sets.String
 	// we add a forceDisableFeature list because we've now had bad featuregates break individual operators.  Awesome.
-	featureBlacklist  sets.Set[configv1.FeatureGateName]
-	configPath        []string
-	featureGateAccess FeatureGateAccess
+	featureBlacklist sets.String
+	configPath       []string
 }
 
 // ObserveFeatureFlags fills in --feature-flags for the kube-apiserver
-func (f *featureFlags) ObserveFeatureFlags(genericListers configobserver.Listers, recorder events.Recorder, existingConfig map[string]interface{}) (map[string]interface{}, []error) {
-	prunedExistingConfig := configobserver.Pruned(existingConfig, f.configPath)
+func (f *featureFlags) ObserveFeatureFlags(genericListers configobserver.Listers, recorder events.Recorder, existingConfig map[string]interface{}) (ret map[string]interface{}, _ []error) {
+	defer func() {
+		ret = configobserver.Pruned(ret, f.configPath)
+	}()
 
+	listers := genericListers.(FeatureGateLister)
 	errs := []error{}
 
-	if !f.featureGateAccess.AreInitialFeatureGatesObserved() {
-		// if we haven't observed featuregates yet, return the existing
-		return prunedExistingConfig, nil
-	}
-
-	featureGates, err := f.featureGateAccess.CurrentFeatureGates()
-	if err != nil {
-		return prunedExistingConfig, append(errs, err)
-	}
 	observedConfig := map[string]interface{}{}
-	newConfigValue := f.getWhitelistedFeatureNames(featureGates)
+	configResource, err := listers.FeatureGateLister().Get("cluster")
+	// if we have no featuregate, then the installer and MCO probably still have way to reconcile certain custom resources
+	// we will assume that this means the same as default and hope for the best
+	if apierrors.IsNotFound(err) {
+		configResource = &configv1.FeatureGate{
+			Spec: configv1.FeatureGateSpec{
+				FeatureGateSelection: configv1.FeatureGateSelection{
+					FeatureSet: configv1.Default,
+				},
+			},
+		}
+	} else if err != nil {
+		return existingConfig, append(errs, err)
+	}
 
+	newConfigValue, err := f.getWhitelistedFeatureNames(configResource)
+	if err != nil {
+		return existingConfig, append(errs, err)
+	}
 	currentConfigValue, _, err := unstructured.NestedStringSlice(existingConfig, f.configPath...)
 	if err != nil {
 		errs = append(errs, err)
@@ -65,54 +80,64 @@ func (f *featureFlags) ObserveFeatureFlags(genericListers configobserver.Listers
 
 	if err := unstructured.SetNestedStringSlice(observedConfig, newConfigValue, f.configPath...); err != nil {
 		recorder.Warningf("ObserveFeatureFlags", "Failed setting %v: %v", strings.Join(f.configPath, "."), err)
-		return prunedExistingConfig, append(errs, err)
+		return existingConfig, append(errs, err)
 	}
 
-	return configobserver.Pruned(observedConfig, f.configPath), errs
+	return observedConfig, errs
 }
 
-func (f *featureFlags) getWhitelistedFeatureNames(featureGates FeatureGate) []string {
+func (f *featureFlags) getWhitelistedFeatureNames(fg *configv1.FeatureGate) ([]string, error) {
+	var err error
 	newConfigValue := []string{}
-	formatEnabledFunc := func(fs configv1.FeatureGateName) string {
-		return fmt.Sprintf("%v=true", fs)
+	enabledFeatures := []string{}
+	disabledFeatures := []string{}
+	formatEnabledFunc := func(fs string) string {
+		return fmt.Sprintf("%s=true", fs)
 	}
-	formatDisabledFunc := func(fs configv1.FeatureGateName) string {
-		return fmt.Sprintf("%v=false", fs)
+	formatDisabledFunc := func(fs string) string {
+		return fmt.Sprintf("%s=false", fs)
 	}
 
-	for _, knownFeatureGate := range featureGates.KnownFeatures() {
-		if f.featureBlacklist.Has(knownFeatureGate) {
+	enabledFeatures, disabledFeatures, err = FeaturesGatesFromFeatureSets(fg)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, enable := range enabledFeatures {
+		if f.featureBlacklist.Has(enable) {
 			continue
 		}
 		// only add whitelisted feature flags
-		if !f.allowAll && !f.featureWhitelist.Has(knownFeatureGate) {
+		if !f.allowAll && !f.featureWhitelist.Has(enable) {
 			continue
 		}
-
-		if featureGates.Enabled(knownFeatureGate) {
-			newConfigValue = append(newConfigValue, formatEnabledFunc(knownFeatureGate))
-		} else {
-			newConfigValue = append(newConfigValue, formatDisabledFunc(knownFeatureGate))
+		newConfigValue = append(newConfigValue, formatEnabledFunc(enable))
+	}
+	for _, disable := range disabledFeatures {
+		if f.featureBlacklist.Has(disable) {
+			continue
 		}
+		// only add whitelisted feature flags
+		if !f.allowAll && !f.featureWhitelist.Has(disable) {
+			continue
+		}
+		newConfigValue = append(newConfigValue, formatDisabledFunc(disable))
 	}
 
-	return newConfigValue
+	return newConfigValue, nil
 }
 
-func StringsToFeatureGateNames(in []string) []configv1.FeatureGateName {
-	out := []configv1.FeatureGateName{}
-	for _, curr := range in {
-		out = append(out, configv1.FeatureGateName(curr))
+func FeaturesGatesFromFeatureSets(fg *configv1.FeatureGate) ([]string, []string, error) {
+	if fg.Spec.FeatureSet == configv1.CustomNoUpgrade {
+		if fg.Spec.FeatureGateSelection.CustomNoUpgrade != nil {
+			return fg.Spec.FeatureGateSelection.CustomNoUpgrade.Enabled, fg.Spec.FeatureGateSelection.CustomNoUpgrade.Disabled, nil
+		}
+		return []string{}, []string{}, nil
 	}
 
-	return out
-}
-
-func FeatureGateNamesToStrings(in []configv1.FeatureGateName) []string {
-	out := []string{}
-	for _, curr := range in {
-		out = append(out, string(curr))
+	featureSet, ok := configv1.FeatureSets[fg.Spec.FeatureSet]
+	if !ok {
+		return []string{}, []string{}, fmt.Errorf(".spec.featureSet %q not found", featureSet)
 	}
-
-	return out
+	return featureSet.Enabled, featureSet.Disabled, nil
 }
