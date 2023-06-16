@@ -16,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/arn"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/client/metadata"
+	"github.com/aws/aws-sdk-go/aws/credentials/stscreds"
 	"github.com/aws/aws-sdk-go/aws/endpoints"
 	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -93,6 +94,9 @@ type Config struct {
 	// that is used by SDK to configure the credentials.
 	SharedCredentialFile string
 
+	// RoleARN is an optional ARN to use for the AWS client session.
+	RoleARN string
+
 	// Region is the AWS region ELBs are created in.
 	Region string
 	// ServiceEndpoints is the list of AWS API endpoints to use for
@@ -140,6 +144,9 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 		Name: "openshift.io/ingress-operator",
 		Fn:   request.MakeAddToUserAgentHandler("openshift.io ingress-operator", operatorReleaseVersion),
 	})
+	if config.RoleARN != "" {
+		sess.Config.WithCredentials(stscreds.NewCredentials(sess, config.RoleARN))
+	}
 
 	if len(region) == 0 {
 		if sess.Config.Region != nil {
