@@ -3,6 +3,7 @@
   value:
     config.openshift.io/inject-proxy: ingress-operator
     include.release.openshift.io/ibm-cloud-managed: "true"
+    capability.openshift.io/name: Ingress
 - op: replace
   path: /spec/template/spec/nodeSelector
   value:
