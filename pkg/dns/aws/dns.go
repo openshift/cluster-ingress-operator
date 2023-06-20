@@ -85,7 +85,8 @@ type Config struct {
 	// that is used by SDK to configure the credentials.
 	SharedCredentialFile string
 
-	// RoleARN is an optional ARN to use for the AWS client session.
+	// RoleARN is an optional ARN to use for the AWS client session that is
+	// intended to only provide access to another account's Route 53 service.
 	RoleARN string
 
 	// Region is the AWS region ELBs are created in.
@@ -131,9 +132,6 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 		Name: "openshift.io/ingress-operator",
 		Fn:   request.MakeAddToUserAgentHandler("openshift.io ingress-operator", operatorReleaseVersion),
 	})
-	if config.RoleARN != "" {
-		sess.Config.WithCredentials(stscreds.NewCredentials(sess, config.RoleARN))
-	}
 
 	if len(region) == 0 {
 		if sess.Config.Region != nil {
@@ -142,6 +140,14 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 		} else {
 			return nil, fmt.Errorf("region is required")
 		}
+	}
+
+	// When RoleARN is provided, make a copy of the Route 53 session and configure it to use RoleARN.
+	// RoleARN is intended to only provide access to another account's Route 53 service, not for ELBs.
+	sessRoute53 := sess
+	if config.RoleARN != "" {
+		sessRoute53 = sess.Copy()
+		sessRoute53.Config.WithCredentials(stscreds.NewCredentials(sessRoute53, config.RoleARN))
 	}
 
 	r53Config := aws.NewConfig()
@@ -225,7 +231,7 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 		// TODO: Add custom endpoint support for elbv2. See the following for details:
 		// https://docs.aws.amazon.com/general/latest/gr/elb.html
 		elbv2:     elbv2.New(sess, aws.NewConfig().WithRegion(region)),
-		route53:   route53.New(sess, r53Config),
+		route53:   route53.New(sessRoute53, r53Config),
 		tags:      tags,
 		config:    config,
 		idsToTags: map[string]map[string]string{},
