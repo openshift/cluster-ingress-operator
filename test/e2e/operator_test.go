@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -3725,6 +3726,13 @@ func waitForIngressControllerCondition(t *testing.T, cl client.Client, timeout t
 	})
 	if err != nil {
 		t.Errorf("Expected conditions: %v\n Current conditions: %v", expected, current)
+		if ic != nil {
+			if icStatusPretty, err := json.MarshalIndent(ic.Status, "", "  "); err != nil {
+				t.Fatal(err)
+			} else {
+				t.Logf("Ingress Controller %s/%s status: %s\n", ic.Namespace, ic.Name, string(icStatusPretty))
+			}
+		}
 	}
 	return err
 }
