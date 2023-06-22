@@ -25,6 +25,8 @@ func TestAll(t *testing.T) {
 		t.Run("TestMTLSWithCRLs", TestMTLSWithCRLs)
 		t.Run("TestCRLUpdate", TestCRLUpdate)
 		t.Run("TestContainerLogging", TestContainerLogging)
+		t.Run("TestContainerLoggingMaxLength", TestContainerLoggingMaxLength)
+		t.Run("TestContainerLoggingMinLength", TestContainerLoggingMinLength)
 		t.Run("TestCustomErrorpages", TestCustomErrorpages)
 		t.Run("TestCustomIngressClass", TestCustomIngressClass)
 		t.Run("TestDomainNotMatchingBase", TestDomainNotMatchingBase)

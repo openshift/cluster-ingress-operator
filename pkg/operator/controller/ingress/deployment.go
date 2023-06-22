@@ -45,11 +45,11 @@ const (
 
 	RouterHTTPHeaderNameCaseAdjustments = "ROUTER_H1_CASE_ADJUST"
 
-	RouterLogLevelEnvName        = "ROUTER_LOG_LEVEL"
-	RouterSyslogAddressEnvName   = "ROUTER_SYSLOG_ADDRESS"
-	RouterSyslogFormatEnvName    = "ROUTER_SYSLOG_FORMAT"
-	RouterSyslogFacilityEnvName  = "ROUTER_LOG_FACILITY"
-	RouterSyslogMaxLengthEnvName = "ROUTER_LOG_MAX_LENGTH"
+	RouterLogLevelEnvName       = "ROUTER_LOG_LEVEL"
+	RouterLogMaxLengthEnvName   = "ROUTER_LOG_MAX_LENGTH"
+	RouterSyslogAddressEnvName  = "ROUTER_SYSLOG_ADDRESS"
+	RouterSyslogFormatEnvName   = "ROUTER_SYSLOG_FORMAT"
+	RouterSyslogFacilityEnvName = "ROUTER_LOG_FACILITY"
 
 	RouterCaptureHTTPRequestHeaders  = "ROUTER_CAPTURE_HTTP_REQUEST_HEADERS"
 	RouterCaptureHTTPResponseHeaders = "ROUTER_CAPTURE_HTTP_RESPONSE_HEADERS"
@@ -764,6 +764,12 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 				},
 			}
 
+			if accessLogging.Destination.Container.MaxLength > 0 {
+				env = append(env, corev1.EnvVar{
+					Name:  RouterLogMaxLengthEnvName,
+					Value: fmt.Sprintf("%d", accessLogging.Destination.Container.MaxLength),
+				})
+			}
 			env = append(env,
 				corev1.EnvVar{Name: RouterSyslogAddressEnvName, Value: socketPath},
 				corev1.EnvVar{Name: RouterLogLevelEnvName, Value: "info"},
@@ -771,13 +777,14 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 			volumes = append(volumes, rsyslogConfigVolume, rsyslogSocketVolume)
 			routerVolumeMounts = append(routerVolumeMounts, rsyslogSocketVolumeMount)
 			deployment.Spec.Template.Spec.Containers = append(deployment.Spec.Template.Spec.Containers, syslogContainer)
+
 		case accessLogging.Destination.Type == operatorv1.SyslogLoggingDestinationType:
 			if len(accessLogging.Destination.Syslog.Facility) > 0 {
 				env = append(env, corev1.EnvVar{Name: RouterSyslogFacilityEnvName, Value: accessLogging.Destination.Syslog.Facility})
 			}
 			if accessLogging.Destination.Syslog.MaxLength > 0 {
 				env = append(env, corev1.EnvVar{
-					Name:  RouterSyslogMaxLengthEnvName,
+					Name:  RouterLogMaxLengthEnvName,
 					Value: fmt.Sprintf("%d", accessLogging.Destination.Syslog.MaxLength),
 				})
 			}
@@ -1113,10 +1120,14 @@ func accessLoggingForIngressController(ic *operatorv1.IngressController) *operat
 
 	switch ic.Spec.Logging.Access.Destination.Type {
 	case operatorv1.ContainerLoggingDestinationType:
+		var containerLoggingParameters operatorv1.ContainerLoggingDestinationParameters
+		if ic.Spec.Logging.Access.Destination.Container != nil {
+			containerLoggingParameters.MaxLength = ic.Spec.Logging.Access.Destination.Container.MaxLength
+		}
 		return &operatorv1.AccessLogging{
 			Destination: operatorv1.LoggingDestination{
 				Type:      operatorv1.ContainerLoggingDestinationType,
-				Container: &operatorv1.ContainerLoggingDestinationParameters{},
+				Container: &containerLoggingParameters,
 			},
 			HttpLogFormat:      ic.Spec.Logging.Access.HttpLogFormat,
 			HTTPCaptureHeaders: ic.Spec.Logging.Access.HTTPCaptureHeaders,

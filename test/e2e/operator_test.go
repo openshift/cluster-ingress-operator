@@ -2139,6 +2139,290 @@ func TestContainerLogging(t *testing.T) {
 	}
 }
 
+func TestContainerLoggingMaxLength(t *testing.T) {
+	t.Parallel()
+	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "containerloggingmaxlength"}
+	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
+	ic := newPrivateController(icName, domain)
+	ic.Spec.Logging = &operatorv1.IngressControllerLogging{
+		Access: &operatorv1.AccessLogging{
+			Destination: operatorv1.LoggingDestination{
+				Type: operatorv1.ContainerLoggingDestinationType,
+				Container: &operatorv1.ContainerLoggingDestinationParameters{
+					MaxLength: int32(8192),
+				},
+			},
+			// String with more than 8192 characters
+			HttpLogFormat: "8192" + strings.Repeat("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@@@@@@@=", 120),
+		},
+	}
+	if err := kclient.Create(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
+	}
+	defer assertIngressControllerDeleted(t, kclient, ic)
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	// Get the deployment's pods.  We will use these to curl a route and to
+	// scan access logs.
+	deployment := &appsv1.Deployment{}
+	if err := kclient.Get(context.TODO(), controller.RouterDeploymentName(ic), deployment); err != nil {
+		t.Fatalf("failed to get ingresscontroller deployment: %v", err)
+	}
+	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
+	if err != nil {
+		t.Fatalf("router deployment has invalid spec.selector: %v", err)
+	}
+	podList := &corev1.PodList{}
+	if err := kclient.List(context.TODO(), podList, client.MatchingLabelsSelector{Selector: selector}); err != nil {
+		t.Fatalf("failed to list pods for ingresscontroller: %v", err)
+	}
+	if len(podList.Items) != 1 {
+		var podNames []string
+		for i := range podList.Items {
+			podNames = append(podNames, podList.Items[i].Name)
+		}
+		t.Fatalf("expected ingress controller %s to have exactly 1 router pod, but it has %d: %s", ic.Name, len(podList.Items), strings.Join(podNames, ", "))
+	}
+
+	// Make a request to the console route.
+	routeName := types.NamespacedName{Namespace: "openshift-console", Name: "console"}
+	route := &routev1.Route{}
+	if err := kclient.Get(context.TODO(), routeName, route); err != nil {
+		t.Fatalf("failed to get the console route: %v", err)
+	}
+	clientPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "loggingmaxlengthtest",
+			Namespace: podList.Items[0].Namespace,
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name:    "curl",
+					Image:   podList.Items[0].Spec.Containers[0].Image,
+					Command: []string{"/bin/curl"},
+					Args: []string{
+						"-k",
+						"-o", "/dev/null", "-s",
+						"--resolve",
+						route.Spec.Host + ":443:" + podList.Items[0].Status.PodIP,
+						"https://" + route.Spec.Host,
+					},
+				},
+			},
+			RestartPolicy: corev1.RestartPolicyNever,
+		},
+	}
+	if err := kclient.Create(context.TODO(), clientPod); err != nil {
+		t.Fatalf("failed to create pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), clientPod); err != nil {
+			if apierrors.IsNotFound(err) {
+				return
+			}
+			t.Fatalf("failed to delete pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
+		}
+	}()
+
+	kubeConfig, err := config.GetConfig()
+	if err != nil {
+		t.Fatalf("failed to get kube config: %v", err)
+	}
+	client, err := kubernetes.NewForConfig(kubeConfig)
+	if err != nil {
+		t.Fatalf("failed to create kube client: %v", err)
+	}
+
+	err = wait.PollImmediate(1*time.Second, 3*time.Minute, func() (bool, error) {
+		pod := podList.Items[0]
+		readCloser, err := client.CoreV1().Pods(pod.Namespace).GetLogs(pod.Name, &corev1.PodLogOptions{
+			Container: "logs",
+			Follow:    false,
+		}).Stream(context.TODO())
+		if err != nil {
+			t.Logf("failed to read logs from pod %s: %v", pod.Name, err)
+			return false, nil
+		}
+		data, err := ioutil.ReadAll(readCloser)
+		if err != nil {
+			t.Logf("failed to read logs from pod %s: %v", pod.Name, err)
+			return false, nil
+		}
+		scanner := bufio.NewScanner(bytes.NewBuffer(data))
+		var found bool
+		defer func() {
+			if err := readCloser.Close(); err != nil {
+				t.Errorf("failed to close logs reader: %v", err)
+			}
+		}()
+		for scanner.Scan() {
+			var length int
+			line := scanner.Text()
+			length = len(line)
+			// rsyslog generate a little overhead in the logline, the overhead is based on the name of the POD where the router is running
+			// the POD name can be different for each test and how the name is build can be changed in the future, so it is not possible to
+			// set a fixed value for the test
+			if strings.Contains(line, "8192abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@@@@@@@=") && (length >= 8100 && length <= 8400) {
+				t.Logf("found log message for maxLength and the length is equals to 8192 chars in pod %s logs", pod.Name)
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Logf("failed to find log message for maxLength test")
+		}
+		return found, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to observe the expected log message: %v", err)
+	}
+}
+
+func TestContainerLoggingMinLength(t *testing.T) {
+	t.Parallel()
+	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "containerloggingminlength"}
+	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
+	ic := newPrivateController(icName, domain)
+	ic.Spec.Logging = &operatorv1.IngressControllerLogging{
+		Access: &operatorv1.AccessLogging{
+			Destination: operatorv1.LoggingDestination{
+				Type: operatorv1.ContainerLoggingDestinationType,
+				Container: &operatorv1.ContainerLoggingDestinationParameters{
+					MaxLength: int32(480),
+				},
+			},
+			// String with more than 480 characters
+			HttpLogFormat: "0480" + strings.Repeat("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@@@@@@@=", 40),
+		},
+	}
+	if err := kclient.Create(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
+	}
+	defer assertIngressControllerDeleted(t, kclient, ic)
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	// Get the deployment's pods.  We will use these to curl a route and to
+	// scan access logs.
+	deployment := &appsv1.Deployment{}
+	if err := kclient.Get(context.TODO(), controller.RouterDeploymentName(ic), deployment); err != nil {
+		t.Fatalf("failed to get ingresscontroller deployment: %v", err)
+	}
+	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
+	if err != nil {
+		t.Fatalf("router deployment has invalid spec.selector: %v", err)
+	}
+	podList := &corev1.PodList{}
+	if err := kclient.List(context.TODO(), podList, client.MatchingLabelsSelector{Selector: selector}); err != nil {
+		t.Fatalf("failed to list pods for ingresscontroller: %v", err)
+	}
+	if len(podList.Items) != 1 {
+		var podNames []string
+		for i := range podList.Items {
+			podNames = append(podNames, podList.Items[i].Name)
+		}
+		t.Fatalf("expected ingress controller %s to have exactly 1 router pod, but it has %d: %s", ic.Name, len(podList.Items), strings.Join(podNames, ", "))
+	}
+
+	// Make a request to the console route.
+	routeName := types.NamespacedName{Namespace: "openshift-console", Name: "console"}
+	route := &routev1.Route{}
+	if err := kclient.Get(context.TODO(), routeName, route); err != nil {
+		t.Fatalf("failed to get the console route: %v", err)
+	}
+	clientPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "loggingminlengthtest",
+			Namespace: podList.Items[0].Namespace,
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name:    "curl",
+					Image:   podList.Items[0].Spec.Containers[0].Image,
+					Command: []string{"/bin/curl"},
+					Args: []string{
+						"-k",
+						"-o", "/dev/null", "-s",
+						"--resolve",
+						route.Spec.Host + ":443:" + podList.Items[0].Status.PodIP,
+						"https://" + route.Spec.Host,
+					},
+				},
+			},
+			RestartPolicy: corev1.RestartPolicyNever,
+		},
+	}
+	if err := kclient.Create(context.TODO(), clientPod); err != nil {
+		t.Fatalf("failed to create pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), clientPod); err != nil {
+			if apierrors.IsNotFound(err) {
+				return
+			}
+			t.Fatalf("failed to delete pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
+		}
+	}()
+
+	kubeConfig, err := config.GetConfig()
+	if err != nil {
+		t.Fatalf("failed to get kube config: %v", err)
+	}
+	client, err := kubernetes.NewForConfig(kubeConfig)
+	if err != nil {
+		t.Fatalf("failed to create kube client: %v", err)
+	}
+
+	err = wait.PollImmediate(1*time.Second, 3*time.Minute, func() (bool, error) {
+		pod := podList.Items[0]
+		readCloser, err := client.CoreV1().Pods(pod.Namespace).GetLogs(pod.Name, &corev1.PodLogOptions{
+			Container: "logs",
+			Follow:    false,
+		}).Stream(context.TODO())
+		if err != nil {
+			t.Logf("failed to read logs from pod %s: %v", pod.Name, err)
+			return false, nil
+		}
+		data, err := ioutil.ReadAll(readCloser)
+		if err != nil {
+			t.Logf("failed to read logs from pod %s: %v", pod.Name, err)
+			return false, nil
+		}
+		scanner := bufio.NewScanner(bytes.NewBuffer(data))
+		var found bool
+		defer func() {
+			if err := readCloser.Close(); err != nil {
+				t.Errorf("failed to close logs reader: %v", err)
+			}
+		}()
+		for scanner.Scan() {
+			var length int
+			line := scanner.Text()
+			length = len(line)
+			// rsyslog generate a little overhead in the logline, the overhead is based on the name of the POD where the router is running
+			// the POD name can be different for each test and how the name is build can be changed in the future, so it is not possible to
+			// set a fixed value for the test
+			if strings.Contains(line, "0480abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@@@@@@@=") && (length >= 450 && length <= 650) {
+				t.Logf("found log message for minLength and the length is equals to 480 chars in pod %s logs", pod.Name)
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Logf("failed to find log message for minLength test")
+		}
+		return found, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to observe the expected log message: %v", err)
+	}
+}
+
 func TestIngressControllerCustomEndpoints(t *testing.T) {
 	platform := infraConfig.Status.PlatformStatus
 	if platform == nil {
