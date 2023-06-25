@@ -30,7 +30,7 @@ func (r *reconciler) ensureNodePortService(ic *operatorv1.IngressController, dep
 		return false, nil, err
 	}
 
-	// For compatibility, omit the "metrics" port iff the service already
+	// For compatibility, omit the "metrics" port if the service already
 	// exists and doesn't have a "metrics" port.  This serves two purposes:
 	// (1) It avoids exhausting the nodeport range on upgrades if the
 	// cluster has many nodeport services and few available nodeports.
