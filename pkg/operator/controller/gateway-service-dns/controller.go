@@ -192,14 +192,19 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 }
 
 // getGatewayHostnames returns a sets.String with the hostnames from the given
-// gateway's listeners.
+// gateway's listeners.  Adds a trailing dot if it's missing from the hostname.
 func getGatewayHostnames(gateway *gatewayapiv1beta1.Gateway) sets.String {
 	domains := sets.NewString()
 	for _, listener := range gateway.Spec.Listeners {
 		if listener.Hostname == nil || len(*listener.Hostname) == 0 {
 			continue
 		}
-		domains.Insert(string(*listener.Hostname))
+		domain := string(*listener.Hostname)
+		// If domain doesn't have a trailing dot, add it.
+		if !strings.HasSuffix(domain, ".") {
+			domain = domain + "."
+		}
+		domains.Insert(domain)
 	}
 	return domains
 }
@@ -223,10 +228,6 @@ func (r *reconciler) ensureDNSRecordsForGateway(ctx context.Context, gateway *ga
 	var errs []error
 	for _, domain := range domains {
 		name := operatorcontroller.GatewayDNSRecordName(gateway, domain)
-		// If domain doesn't have a trailing dot, add it
-		if !strings.HasSuffix(domain, ".") {
-			domain = domain + "."
-		}
 		_, _, err := dnsrecord.EnsureDNSRecord(r.client, name, labels, ownerRef, domain, service)
 		errs = append(errs, err)
 	}
