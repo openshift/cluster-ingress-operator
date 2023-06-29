@@ -5,6 +5,7 @@ apiVersion: v1
 # name, namespace and annotations are set at runtime.
 spec:
   type: ClusterIP
+  internalTrafficPolicy: Cluster
   ports:
   - name: http
     port: 80

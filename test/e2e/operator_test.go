@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -38,8 +39,11 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws/endpoints"
 
+	"github.com/go-logr/logr"
+
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
+	ctrlruntimelog "sigs.k8s.io/controller-runtime/pkg/log"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -113,6 +117,13 @@ var (
 	defaultName       = types.NamespacedName{Namespace: operatorNamespace, Name: manifests.DefaultIngressControllerName}
 	clusterConfigName = types.NamespacedName{Namespace: operatorNamespace, Name: manifests.ClusterIngressConfigName}
 )
+
+func init() {
+	// This is required because controller-runtime expects its consumers to
+	// set a logger through log.SetLogger within 30 seconds of the program's
+	// initalization.
+	ctrlruntimelog.SetLogger(logr.New(ctrlruntimelog.NullLogSink{}))
+}
 
 func TestMain(m *testing.M) {
 	if os.Getenv("E2E_TEST_MAIN_SKIP_SETUP") == "1" {
@@ -2642,10 +2653,17 @@ func TestAWSELBConnectionIdleTimeout(t *testing.T) {
 		t.Fatalf("expected %s=%s, found %s=%s", key, expected, key, v)
 	}
 
-	// Make sure we can resolve the route's host name.  It may take some
-	// time for the ingresscontroller's wildcard DNS record to propagate.
+	// Get the ELB's hostname via the wildcard DNS record
+	wildcardRecordName := controller.WildcardDNSRecordName(ic)
+	wildcardRecord := &iov1.DNSRecord{}
+	if err := kclient.Get(context.TODO(), wildcardRecordName, wildcardRecord); err != nil {
+		t.Fatalf("failed to get wildcard dnsrecord %s: %v", wildcardRecordName, err)
+	}
+	elbHostname := wildcardRecord.Spec.Targets[0]
+
+	// Wait until we can resolve the ELB's hostname
 	if err := wait.PollImmediate(5*time.Second, 5*time.Minute, func() (bool, error) {
-		_, err := net.LookupIP(route.Spec.Host)
+		_, err := net.LookupIP(elbHostname)
 		if err != nil {
 			t.Log(err)
 			return false, nil
@@ -2658,10 +2676,14 @@ func TestAWSELBConnectionIdleTimeout(t *testing.T) {
 
 	// Open a connection to the route, send a request, and verify that the
 	// connection times out after ~10 seconds.
-	request, err := http.NewRequest("GET", "http://"+route.Spec.Host, nil)
+	request, err := http.NewRequest("GET", "http://"+elbHostname, nil)
 	if err != nil {
 		t.Fatalf("failed to create HTTP request: %v", err)
 	}
+	// Add the "Host" header to direct request to ELB to the route we are testing which bypasses the need
+	// for the wildcard DNS record to propagate to the CI test runner cluster's DNS servers which has gotten very slow.
+	// See https://issues.redhat.com/browse/OCPBUGS-13810
+	request.Host = route.Spec.Host
 
 	client := &http.Client{}
 
@@ -3714,6 +3736,13 @@ func waitForIngressControllerCondition(t *testing.T, cl client.Client, timeout t
 	})
 	if err != nil {
 		t.Errorf("Expected conditions: %v\n Current conditions: %v", expected, current)
+		if ic != nil {
+			if icStatusPretty, err := json.MarshalIndent(ic.Status, "", "  "); err != nil {
+				t.Fatal(err)
+			} else {
+				t.Logf("Ingress Controller %s/%s status: %s\n", ic.Namespace, ic.Name, string(icStatusPretty))
+			}
+		}
 	}
 	return err
 }
