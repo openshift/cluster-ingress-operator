@@ -17,10 +17,7 @@ import (
 	"github.com/davecgh/go-spew/spew"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-<<<<<<< HEAD
-=======
 
->>>>>>> 0ac4585e (Pull operand proxy variables from the cluster proxy config instead of the ingress operator's environment)
 	operatorv1 "github.com/openshift/api/operator/v1"
 
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"

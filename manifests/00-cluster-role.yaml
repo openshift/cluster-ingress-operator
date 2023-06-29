@@ -115,7 +115,6 @@ rules:
   - featuregates
   - infrastructures
   - ingresses
-  - proxies
   verbs:
   - list
   - watch
