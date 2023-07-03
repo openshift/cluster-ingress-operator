@@ -277,7 +277,7 @@ func (r *reconciler) startCanaryRoutePolling(stop <-chan struct{}) error {
 			return
 		}
 
-		err = probeRouteEndpoint(route)
+		err = r.probeRouteEndpoint(route)
 		if err != nil {
 			log.Error(err, "error performing canary route check")
 			SetCanaryRouteReachableMetric(getRouteHost(route), false)
@@ -427,4 +427,17 @@ func cycleServicePort(service *corev1.Service, route *routev1.Route) (*routev1.R
 	}
 
 	return updated, nil
+}
+
+func (r *reconciler) isMTLSRequired() (bool, error) {
+	ic := &operatorv1.IngressController{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      manifests.DefaultIngressControllerName,
+			Namespace: r.config.Namespace,
+		},
+	}
+	if err := r.client.Get(context.TODO(), types.NamespacedName{Namespace: ic.Namespace, Name: ic.Name}, ic); err != nil {
+		return false, fmt.Errorf("failed to get ingress controller %s: %v", ic.Name, err)
+	}
+	return ic.Spec.ClientTLS.ClientCertificatePolicy == operatorv1.ClientCertificatePolicyRequired, nil
 }
