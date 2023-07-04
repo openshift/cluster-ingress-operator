@@ -138,13 +138,13 @@ func Test_Reconcile(t *testing.T) {
 			},
 			reconcileRequest: req("openshift-ingress", "example-gateway"),
 			expectCreate: []client.Object{
-				dnsrecord("example-gateway-5bfc88bc87-wildcard", "*.prod.example.com", "lb.example.com"),
-				dnsrecord("example-gateway-57b76476b6-wildcard", "*.stage.example.com", "lb.example.com"),
+				dnsrecord("example-gateway-76456f8647-wildcard", "*.prod.example.com.", "lb.example.com"),
+				dnsrecord("example-gateway-64754456b8-wildcard", "*.stage.example.com.", "lb.example.com"),
 			},
 			expectUpdate: []client.Object{},
 		},
 		{
-			name: "gateway with two listeners and one dnsrecord with a stale target",
+			name: "gateway with two listeners and one dnsrecord with a stale target, hostname already has trailing dot",
 			existingObjects: []runtime.Object{
 				gw(
 					"example-gateway",
@@ -161,13 +161,38 @@ func Test_Reconcile(t *testing.T) {
 					},
 					ingHost("newlb.example.com"),
 				),
-				dnsrecord("example-gateway-55bcfdb97d-wildcard", "*.example.com", "oldlb.example.com"),
+				dnsrecord("example-gateway-7bdcfc8f68-wildcard", "*.example.com.", "oldlb.example.com"),
 			},
 			reconcileRequest: req("openshift-ingress", "example-gateway"),
 			expectCreate:     []client.Object{},
 			expectUpdate: []client.Object{
-				dnsrecord("example-gateway-55bcfdb97d-wildcard", "*.example.com", "newlb.example.com"),
+				dnsrecord("example-gateway-7bdcfc8f68-wildcard", "*.example.com.", "newlb.example.com"),
 			},
+		},
+		{
+			name: "gateway with two listeners and one host name, no dnsrecords, name ends up with trailing dot",
+			existingObjects: []runtime.Object{
+				gw(
+					"example-gateway",
+					l("stage-http", "*.stage.example.com", 80),
+					l("stage-https", "*.stage.example.com", 443),
+				),
+				svc(
+					"example-gateway",
+					map[string]string{
+						"gateway.istio.io/managed": "example-gateway",
+					},
+					map[string]string{
+						"istio.io/gateway-name": "example-gateway",
+					},
+					ingHost("lb.example.com"),
+				),
+			},
+			reconcileRequest: req("openshift-ingress", "example-gateway"),
+			expectCreate: []client.Object{
+				dnsrecord("example-gateway-64754456b8-wildcard", "*.stage.example.com.", "lb.example.com"),
+			},
+			expectUpdate: []client.Object{},
 		},
 	}
 
