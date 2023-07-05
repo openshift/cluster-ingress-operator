@@ -10,6 +10,7 @@ import (
 	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 
+	monitoringdashboard "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/monitoring-dashboard"
 	routemetricscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/route-metrics"
 	errorpageconfigmapcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/sync-http-error-code-configmap"
 	"github.com/openshift/library-go/pkg/operator/onepodpernodeccontroller"
@@ -272,6 +273,11 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	// Set up the route metrics controller.
 	if _, err := routemetricscontroller.New(mgr, config.Namespace); err != nil {
 		return nil, fmt.Errorf("failed to create route metrics controller: %w", err)
+	}
+
+	// Set up the route monitoring dashboard controller.
+	if _, err := monitoringdashboard.New(mgr); err != nil {
+		return nil, fmt.Errorf("failed to create monitoring dashboard controller: %w", err)
 	}
 
 	// Set up the gatewayclass controller.  This controller is unmanaged by

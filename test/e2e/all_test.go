@@ -81,6 +81,7 @@ func TestAll(t *testing.T) {
 		t.Run("TestRouteMetricsControllerRouteAndNamespaceSelector", TestRouteMetricsControllerRouteAndNamespaceSelector)
 		t.Run("TestSetIngressControllerResponseHeaders", TestSetIngressControllerResponseHeaders)
 		t.Run("TestSetRouteResponseHeaders", TestSetRouteResponseHeaders)
+		t.Run("TestDashboardCreation", TestDashboardCreation)
 	})
 
 	t.Run("serial", func(t *testing.T) {
