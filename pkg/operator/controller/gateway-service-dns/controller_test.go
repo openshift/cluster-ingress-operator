@@ -138,8 +138,8 @@ func Test_Reconcile(t *testing.T) {
 			},
 			reconcileRequest: req("openshift-ingress", "example-gateway"),
 			expectCreate: []client.Object{
-				dnsrecord("example-gateway-5bfc88bc87-wildcard", "*.prod.example.com.", "lb.example.com"),
-				dnsrecord("example-gateway-57b76476b6-wildcard", "*.stage.example.com.", "lb.example.com"),
+				dnsrecord("example-gateway-76456f8647-wildcard", "*.prod.example.com.", "lb.example.com"),
+				dnsrecord("example-gateway-64754456b8-wildcard", "*.stage.example.com.", "lb.example.com"),
 			},
 			expectUpdate: []client.Object{},
 		},
@@ -161,12 +161,12 @@ func Test_Reconcile(t *testing.T) {
 					},
 					ingHost("newlb.example.com"),
 				),
-				dnsrecord("example-gateway-55bcfdb97d-wildcard", "*.example.com.", "oldlb.example.com"),
+				dnsrecord("example-gateway-7bdcfc8f68-wildcard", "*.example.com.", "oldlb.example.com"),
 			},
 			reconcileRequest: req("openshift-ingress", "example-gateway"),
 			expectCreate:     []client.Object{},
 			expectUpdate: []client.Object{
-				dnsrecord("example-gateway-55bcfdb97d-wildcard", "*.example.com.", "newlb.example.com"),
+				dnsrecord("example-gateway-7bdcfc8f68-wildcard", "*.example.com.", "newlb.example.com"),
 			},
 		},
 		{
@@ -190,7 +190,7 @@ func Test_Reconcile(t *testing.T) {
 			},
 			reconcileRequest: req("openshift-ingress", "example-gateway"),
 			expectCreate: []client.Object{
-				dnsrecord("example-gateway-57b76476b6-wildcard", "*.stage.example.com.", "lb.example.com"),
+				dnsrecord("example-gateway-64754456b8-wildcard", "*.stage.example.com.", "lb.example.com"),
 			},
 			expectUpdate: []client.Object{},
 		},

@@ -69,7 +69,8 @@ func desiredRouterPodDisruptionBudget(ic *operatorv1.IngressController, deployme
 	}
 
 	maxUnavailable := "50%"
-	if ic.Spec.Replicas != nil && int(*ic.Spec.Replicas) >= 4 {
+	// OCPBUGS-7546 - make sure number of available pods is always 2 when there are only 3 replicas.
+	if ic.Spec.Replicas != nil && int(*ic.Spec.Replicas) >= 3 {
 		maxUnavailable = "25%"
 	}
 
