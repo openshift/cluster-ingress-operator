@@ -4,8 +4,10 @@
 package e2e
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -14,9 +16,12 @@ import (
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/config"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apiserver/pkg/storage/names"
+	"k8s.io/client-go/kubernetes"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -318,5 +323,226 @@ func TestHAProxyTimeoutsRejection(t *testing.T) {
 				t.Errorf("Expected value for \"tcp-request inspect-delay\" to be %v, got %v", []string{inspectDelayDefault, inspectDelayDefault}, values)
 			}
 		}
+	}
+}
+
+// TestCookieLen verifies that when logging is enabled and a cookie capture is specified, any captured cookies are
+// truncated at the expected max length.
+func TestCookieLen(t *testing.T) {
+	testCases := []struct {
+		name      string
+		maxLength int
+	}{
+		// 63 bytes is maximum cookie length allowed when tune.http.cookielen is unset in the HAProxy config.
+		{"63 bytes", 63},
+		// 64 bytes is the smallest number requires tune.http.cookielen to be set.
+		{"64 bytes", 64},
+		// 128 bytes is an arbitrary number between the 64 and 1024 bytes. It requires tune.http.cookielen to be set,
+		// but is between the boundaries.
+		{"128 bytes", 128},
+		// The upper bound. 1024 bytes is the maximum allowed by the OpenShift API.
+		{"1024 bytes", 1024},
+	}
+	testNamespace := "openshift-ingress"
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			maxLength := testCase.maxLength
+			t.Parallel()
+			icName := types.NamespacedName{
+				Namespace: operatorNamespace,
+				Name:      names.SimpleNameGenerator.GenerateName("test-cookielen-"),
+			}
+			domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
+			ic := newPrivateController(icName, domain)
+
+			cookieName := "X-foo-bar"
+			ic.Spec.Logging = &operatorv1.IngressControllerLogging{
+				Access: &operatorv1.AccessLogging{
+					Destination: operatorv1.LoggingDestination{
+						Type: "Container",
+						Container: &operatorv1.ContainerLoggingDestinationParameters{
+							MaxLength: 2048,
+						},
+					},
+					HTTPCaptureCookies: []operatorv1.IngressControllerCaptureHTTPCookie{{
+						IngressControllerCaptureHTTPCookieUnion: operatorv1.IngressControllerCaptureHTTPCookieUnion{
+							MatchType: operatorv1.CookieMatchTypeExact,
+							Name:      cookieName,
+						},
+						MaxLength: maxLength,
+					}},
+					HttpLogFormat: "cookie: %CC",
+				},
+			}
+
+			if err := kclient.Create(context.TODO(), ic); err != nil {
+				t.Fatalf("Failed to create ingresscontroller %s: %v", icName, err)
+			}
+			defer assertIngressControllerDeleted(t, kclient, ic)
+
+			if err := waitForIngressControllerCondition(t, kclient, 2*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
+				t.Fatalf("Timed out waiting for ingresscontroller %s to become available: %v", icName.Name, err)
+			}
+
+			echoPod := buildEchoPod(names.SimpleNameGenerator.GenerateName("echo-pod-"), testNamespace)
+			if err := kclient.Create(context.TODO(), echoPod); err != nil {
+				t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
+			}
+			defer assertDeleted(t, kclient, echoPod)
+
+			echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels)
+			if err := kclient.Create(context.TODO(), echoService); err != nil {
+				t.Fatalf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
+			}
+			defer assertDeleted(t, kclient, echoService)
+
+			echoRoute := buildRoute(echoPod.Name, echoPod.Namespace, echoService.Name)
+			if err := kclient.Create(context.TODO(), echoRoute); err != nil {
+				t.Fatalf("failed to create route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
+			}
+			defer assertDeleted(t, kclient, echoRoute)
+
+			// Wait for echo pod to be ready
+			err := wait.PollImmediate(2*time.Second, 1*time.Minute, func() (bool, error) {
+				if err := kclient.Get(context.TODO(), types.NamespacedName{Name: echoPod.Name, Namespace: echoPod.Namespace}, echoPod); err != nil {
+					t.Logf("failed to get client pod %q: %v", echoPod.Name, err)
+					return false, nil
+				}
+				for _, cond := range echoPod.Status.Conditions {
+					if cond.Type == corev1.PodReady {
+						return cond.Status == corev1.ConditionTrue, nil
+					}
+				}
+				return false, nil
+			})
+
+			if err != nil {
+				t.Fatalf("timed out waiting for pod %s to become ready: %v", echoPod.Name, err)
+			}
+
+			// Send a request through the router that includes the captured cookie, and verify that it's truncated as expected.
+
+			// Use the router image for the client pod since it includes curl.
+			routerDeployment := &appsv1.Deployment{}
+			routerDeploymentName := controller.RouterDeploymentName(ic)
+			if err := kclient.Get(context.TODO(), routerDeploymentName, routerDeployment); err != nil {
+				t.Fatalf("Failed to get router deployment for ingresscontroller %s: %v", icName.Name, err)
+			}
+
+			curlPodImage := ""
+			for _, container := range routerDeployment.Spec.Template.Spec.Containers {
+				if container.Name == "router" {
+					curlPodImage = container.Image
+					break
+				}
+			}
+			if curlPodImage == "" {
+				t.Fatalf("Failed to find container \"router\" in deployment %s", routerDeployment.Name)
+			}
+			curlPodName := types.NamespacedName{
+				Name:      names.SimpleNameGenerator.GenerateName("cookielen-curl-"),
+				Namespace: testNamespace,
+			}
+
+			icInternalService := &corev1.Service{}
+			icInternalServiceName := controller.InternalIngressControllerServiceName(ic)
+			if err := kclient.Get(context.TODO(), icInternalServiceName, icInternalService); err != nil {
+				t.Fatalf("failed to get service %q: %v", icInternalServiceName, err)
+			}
+
+			// Create a cookie that's one character over the max length of a captured cookie. Pad the cookie with a bunch of
+			// 'a's, and include an x at the end that should get truncated. The name of the cookie and the '=' are included in
+			// the max length, so account for that in the size of the padding.
+			padding := strings.Repeat("a", maxLength-len(cookieName)-1)
+			cookieString := fmt.Sprintf("%s=%sx", cookieName, padding)
+
+			curlArgs := []string{
+				"-b", cookieString,
+				// --resolve used this way makes curl send the request to our ingress controller's internal service address as
+				// if it was directed to it by a load balancer. This ensures the request is handled by our ingress controller
+				// without having to wait extra time for a load balancer to be provisioned.
+				"--resolve", fmt.Sprintf("%s:80:%s", echoRoute.Spec.Host, icInternalService.Spec.ClusterIP),
+			}
+
+			curlPod := buildCurlPod(curlPodName.Name, curlPodName.Namespace, curlPodImage, echoRoute.Spec.Host, "", curlArgs...)
+			if err := kclient.Create(context.TODO(), curlPod); err != nil {
+				t.Fatalf("failed to create pod %q: %v", curlPodName.Name, err)
+			}
+			defer assertDeleted(t, kclient, curlPod)
+
+			// Wait for the curl pod to complete its request
+			err = wait.PollImmediate(2*time.Second, 3*time.Minute, func() (bool, error) {
+				if err := kclient.Get(context.TODO(), curlPodName, curlPod); err != nil {
+					t.Logf("failed to get client pod %q: %v", curlPodName, err)
+					return false, nil
+				}
+				return curlPod.Status.Phase == corev1.PodSucceeded, nil
+			})
+
+			if err != nil {
+				t.Fatalf("timed out waiting for pod %q to transition to \"Succeeded\". current phase is %q. error: %v", curlPodName, curlPod.Status.Phase, err)
+			}
+
+			// Find the router pod for our ingress controller so we can check its logs. This ingress controller specifies
+			// replicas=1, so there will only be one.
+			routerPodList, err := getPods(t, kclient, routerDeployment)
+			if err != nil {
+				t.Fatalf("failed to get pods in deployment %s: %v", routerDeploymentName, err)
+			} else if len(routerPodList.Items) != 1 {
+				t.Fatalf("expected to find 1 pod in deployment %s, found %d", routerDeploymentName, len(routerPodList.Items))
+			}
+			routerPod := routerPodList.Items[0]
+
+			// Get the logs from the router pod.
+			kubeConfig, err := config.GetConfig()
+			if err != nil {
+				t.Fatalf("failed to get kube config: %v", err)
+			}
+
+			client, err := kubernetes.NewForConfig(kubeConfig)
+			if err != nil {
+				t.Fatalf("failed to create kube client: %v", err)
+			}
+
+			logsContainerName := "logs"
+			foundExpectedCookie := false
+			expectedTruncatedCookieString := fmt.Sprintf("%s=%s", cookieName, padding) // Same as cookieString, minus the 'x' at the end.
+			err = wait.PollImmediate(1*time.Second, 30*time.Second, func() (bool, error) {
+				readCloser, err := client.CoreV1().Pods(routerPod.Namespace).GetLogs(routerPod.Name, &corev1.PodLogOptions{
+					Container: logsContainerName,
+					Follow:    false,
+				}).Stream(context.TODO())
+				if err != nil {
+					t.Logf("Failed to read logs from pod %s container %s: %v", routerPod.Name, logsContainerName, err)
+					return false, nil
+				}
+
+				defer func() {
+					if err := readCloser.Close(); err != nil {
+						t.Logf("Failed to close reader for pod %s container %s: %v", routerPod.Name, logsContainerName, err)
+					}
+				}()
+
+				// Search the logs container for the specified cookie, making sure that it exactly matches the expected truncated value.
+				scanner := bufio.NewScanner(readCloser)
+				for scanner.Scan() {
+					line := strings.TrimSpace(scanner.Text())
+					if strings.Contains(line, cookieString) {
+						t.Fatalf("found untruncated cookie string: %v", cookieString)
+					}
+					if strings.Contains(line, expectedTruncatedCookieString) {
+						foundExpectedCookie = true
+					}
+				}
+				if err := scanner.Err(); err != nil {
+					t.Logf("Error while reading container logs: %v", err)
+					return false, nil
+				}
+				return foundExpectedCookie, nil
+			})
+			if !foundExpectedCookie {
+				t.Fatalf("did not find expected truncated cookie string: %v", expectedTruncatedCookieString)
+			}
+		})
 	}
 }
