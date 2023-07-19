@@ -36,8 +36,7 @@ spec:
       nodeSelector:
         kubernetes.io/os: linux
       tolerations:
-        - effect: NoSchedule
-          key: node-role.kubernetes.io/infra
+        - key: node-role.kubernetes.io/infra
           operator: Exists
   updateStrategy:
     type: RollingUpdate

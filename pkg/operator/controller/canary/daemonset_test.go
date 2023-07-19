@@ -78,7 +78,6 @@ func TestDesiredCanaryDaemonSet(t *testing.T) {
 		{
 			Key:      "node-role.kubernetes.io/infra",
 			Operator: "Exists",
-			Effect:   "NoSchedule",
 		},
 	}
 	if !cmp.Equal(tolerations, expectedTolerations) {
@@ -118,6 +117,13 @@ func TestCanaryDaemonsetChanged(t *testing.T) {
 						Effect:   "bar",
 					},
 				}
+			},
+			expect: true,
+		},
+		{
+			description: "if pod template toleration effect changes",
+			mutate: func(ds *appsv1.DaemonSet) {
+				ds.Spec.Template.Spec.Tolerations[0].Effect = "NoExecute"
 			},
 			expect: true,
 		},
