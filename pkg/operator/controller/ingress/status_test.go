@@ -2128,56 +2128,56 @@ func Test_checkZoneInConfig(t *testing.T) {
 		in, zone, zoneType string
 	}{
 		{
-			description: "[PrivateZone] empty strings (should fail)",
+			description: "empty strings (should fail)",
 			expected:    false,
 			in:          "",
 			zone:        "",
 			zoneType:    "ID",
 		},
 		{
-			description: "[PrivateZone] zone.ID empty string (should fail)",
+			description: "zone.ID empty string (should fail)",
 			expected:    false,
 			in:          "test",
 			zone:        "",
 			zoneType:    "ID",
 		},
 		{
-			description: "[PrivateZone] zone.ID with value (not equal should fail)",
+			description: "zone.ID with value (not equal should fail)",
 			expected:    false,
 			in:          "test",
 			zone:        "notest",
 			zoneType:    "ID",
 		},
 		{
-			description: "[PrivateZone] zone.ID with value (equal should pass)",
+			description: "zone.ID with value (equal should pass)",
 			expected:    true,
 			in:          "test",
 			zone:        "test",
 			zoneType:    "ID",
 		},
 		{
-			description: "[PrivateZone] empty strings (should fail)",
+			description: "empty strings (should fail)",
 			expected:    false,
 			in:          "",
 			zone:        "",
 			zoneType:    "TAG",
 		},
 		{
-			description: "[PrivateZone] zone.Tags['Name'] empty string (should fail)",
+			description: "zone.Tags['Name'] empty string (should fail)",
 			expected:    false,
 			in:          "test",
 			zone:        "",
 			zoneType:    "TAG",
 		},
 		{
-			description: "[PrivateZone] zone.Tags['Name'] with value (not equal should fail)",
+			description: "zone.Tags['Name'] with value (not equal should fail)",
 			expected:    false,
 			in:          "test",
 			zone:        "notest",
 			zoneType:    "TAG",
 		},
 		{
-			description: "[PrivateZone] zone.tags['Name'] with value (equal should pass)",
+			description: "zone.tags['Name'] with value (equal should pass)",
 			expected:    true,
 			in:          "test",
 			zone:        "test",
@@ -2199,6 +2199,12 @@ func Test_checkZoneInConfig(t *testing.T) {
 			dnsSpec := configv1.DNSSpec{PrivateZone: z}
 			dnsConfig := &configv1.DNS{Spec: dnsSpec}
 			actual := checkZoneInConfig(dnsConfig, dnsZone)
+			if actual != test.expected {
+				t.Errorf("expected:%v actual:%v\n", test.expected, actual)
+			}
+			dnsSpec = configv1.DNSSpec{PublicZone: z}
+			dnsConfig = &configv1.DNS{Spec: dnsSpec}
+			actual = checkZoneInConfig(dnsConfig, dnsZone)
 			if actual != test.expected {
 				t.Errorf("expected:%v actual:%v\n", test.expected, actual)
 			}
