@@ -734,6 +734,15 @@ func (ConsoleStatus) SwaggerDoc() map[string]string {
 	return map_ConsoleStatus
 }
 
+var map_AWSDNSSpec = map[string]string{
+	"":                   "AWSDNSSpec contains DNS configuration specific to the Amazon Web Services cloud provider.",
+	"privateZoneIAMRole": "privateZoneIAMRole contains the ARN of an IAM role that should be assumed when performing operations on the cluster's private hosted zone specified in the cluster DNS config. When left empty, no role should be assumed.",
+}
+
+func (AWSDNSSpec) SwaggerDoc() map[string]string {
+	return map_AWSDNSSpec
+}
+
 var map_DNS = map[string]string{
 	"":       "DNS holds cluster-wide information about DNS. The canonical name is `cluster`\n\nCompatibility level 1: Stable within a major release for a minimum of 12 months or 3 minor releases (whichever is longer).",
 	"spec":   "spec holds user settable values for configuration",
@@ -752,10 +761,21 @@ func (DNSList) SwaggerDoc() map[string]string {
 	return map_DNSList
 }
 
+var map_DNSPlatformSpec = map[string]string{
+	"":     "DNSPlatformSpec holds cloud-provider-specific configuration for DNS administration.",
+	"type": "type is the underlying infrastructure provider for the cluster. Allowed values: \"\", \"AWS\".\n\nIndividual components may not support all platforms, and must handle unrecognized platforms with best-effort defaults.",
+	"aws":  "aws contains DNS configuration specific to the Amazon Web Services cloud provider.",
+}
+
+func (DNSPlatformSpec) SwaggerDoc() map[string]string {
+	return map_DNSPlatformSpec
+}
+
 var map_DNSSpec = map[string]string{
 	"baseDomain":  "baseDomain is the base domain of the cluster. All managed DNS records will be sub-domains of this base.\n\nFor example, given the base domain `openshift.example.com`, an API server DNS record may be created for `cluster-api.openshift.example.com`.\n\nOnce set, this field cannot be changed.",
 	"publicZone":  "publicZone is the location where all the DNS records that are publicly accessible to the internet exist.\n\nIf this field is nil, no public records should be created.\n\nOnce set, this field cannot be changed.",
 	"privateZone": "privateZone is the location where all the DNS records that are only available internally to the cluster exist.\n\nIf this field is nil, no private records should be created.\n\nOnce set, this field cannot be changed.",
+	"platform":    "platform holds configuration specific to the underlying infrastructure provider for DNS. When omitted, this means the user has no opinion and the platform is left to choose reasonable defaults. These defaults are subject to change over time.",
 }
 
 func (DNSSpec) SwaggerDoc() map[string]string {
@@ -1112,15 +1132,6 @@ func (BareMetalPlatformStatus) SwaggerDoc() map[string]string {
 	return map_BareMetalPlatformStatus
 }
 
-var map_CloudControllerManagerSpec = map[string]string{
-	"":      "CloudControllerManagerSpec holds Cloud Controller Manager (a.k.a. CCM or CPI) related settings",
-	"state": "state determines whether or not an external Cloud Controller Manager is expected to be installed within the cluster. https://kubernetes.io/docs/tasks/administer-cluster/running-cloud-controller/#running-cloud-controller-manager\n\nWhen set to \"External\", new nodes will be tainted as uninitialized when created, preventing them from running workloads until they are initialized by the cloud controller manager. When omitted or set to \"None\", new nodes will be not tainted and no extra initialization from the cloud controller manager is expected.",
-}
-
-func (CloudControllerManagerSpec) SwaggerDoc() map[string]string {
-	return map_CloudControllerManagerSpec
-}
-
 var map_EquinixMetalPlatformSpec = map[string]string{
 	"": "EquinixMetalPlatformSpec holds the desired state of the Equinix Metal infrastructure provider. This only includes fields that can be modified in the cluster.",
 }
@@ -1140,9 +1151,8 @@ func (EquinixMetalPlatformStatus) SwaggerDoc() map[string]string {
 }
 
 var map_ExternalPlatformSpec = map[string]string{
-	"":                       "ExternalPlatformSpec holds the desired state for the generic External infrastructure provider.",
-	"platformName":           "PlatformName holds the arbitrary string representing the infrastructure provider name, expected to be set at the installation time. This field is solely for informational and reporting purposes and is not expected to be used for decision-making.",
-	"cloudControllerManager": "CloudControllerManager contains settings specific to the external Cloud Controller Manager (a.k.a. CCM or CPI)",
+	"":             "ExternalPlatformSpec holds the desired state for the generic External infrastructure provider.",
+	"platformName": "PlatformName holds the arbitrary string representing the infrastructure provider name, expected to be set at the installation time. This field is solely for informational and reporting purposes and is not expected to be used for decision-making.",
 }
 
 func (ExternalPlatformSpec) SwaggerDoc() map[string]string {
