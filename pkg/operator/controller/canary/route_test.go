@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/stretchr/testify/assert"
 
 	routev1 "github.com/openshift/api/route/v1"
 
@@ -30,34 +31,20 @@ func Test_desiredCanaryRoute(t *testing.T) {
 		Name:      "canary",
 	}
 
-	if !cmp.Equal(route.Name, expectedRouteName.Name) {
-		t.Errorf("expected route name to be %s, but got %s", expectedRouteName.Name, route.Name)
-	}
-
-	if !cmp.Equal(route.Namespace, expectedRouteName.Namespace) {
-		t.Errorf("expected route namespace to be %s, but got %s", expectedRouteName.Namespace, route.Namespace)
-	}
+	assert.Equal(t, route.Name, expectedRouteName.Name, "unexpected route name")
+	assert.Equal(t, route.Namespace, expectedRouteName.Namespace, "unexpected route namespace")
 
 	expectedAnnotations := map[string]string{
 		"haproxy.router.openshift.io/balance": "roundrobin",
 	}
-
-	if !cmp.Equal(route.Annotations, expectedAnnotations) {
-		t.Errorf("expected route annotations to be %s, but got %s", expectedAnnotations, route.Annotations)
-	}
+	assert.Equal(t, route.Annotations, expectedAnnotations, "unexpected route annotations")
 
 	expectedLabels := map[string]string{
 		manifests.OwningIngressCanaryCheckLabel: canaryControllerName,
 	}
+	assert.Equal(t, route.Labels, expectedLabels, "unexpected route labels")
 
-	if !cmp.Equal(route.Labels, expectedLabels) {
-		t.Errorf("expected route labels to be %q, but got %q", expectedLabels, route.Labels)
-	}
-
-	routeToName := route.Spec.To.Name
-	if !cmp.Equal(routeToName, service.Name) {
-		t.Errorf("expected route.Spec.To.Name to be %q, but got %q", service.Name, routeToName)
-	}
+	assert.Equal(t, route.Spec.To.Name, service.Name, "route's spec.to.name does not match service name")
 
 	routeTarget := route.Spec.Port.TargetPort
 	validTarget := false
@@ -66,26 +53,17 @@ func Test_desiredCanaryRoute(t *testing.T) {
 			validTarget = true
 		}
 	}
-
-	if !validTarget {
-		t.Errorf("expected %v to be a port in the %v. Route targetPort not in service targetPort list", route.Spec.Port.TargetPort, service.Spec.Ports)
-	}
+	assert.True(t, validTarget, "route's target port does not match any of the service's target ports: expected %v to match some port in %v", route.Spec.Port.TargetPort, service.Spec.Ports)
 
 	expectedOwnerRefs := []metav1.OwnerReference{daemonsetRef}
-	if !cmp.Equal(route.OwnerReferences, expectedOwnerRefs) {
-		t.Errorf("expected route owner references %#v, but got %#v", expectedOwnerRefs, route.OwnerReferences)
-	}
-	if !cmp.Equal(service.OwnerReferences, expectedOwnerRefs) {
-		t.Errorf("expected service owner references %#v, but got %#v", expectedOwnerRefs, service.OwnerReferences)
-	}
+	assert.Equal(t, route.OwnerReferences, expectedOwnerRefs, "unexpected route owner references")
+	assert.Equal(t, service.OwnerReferences, expectedOwnerRefs, "unexpected service owner references")
 
 	expectedTLS := &routev1.TLSConfig{
 		Termination:                   routev1.TLSTerminationEdge,
 		InsecureEdgeTerminationPolicy: routev1.InsecureEdgeTerminationPolicyRedirect,
 	}
-	if !cmp.Equal(route.Spec.TLS, expectedTLS) {
-		t.Errorf("expected route TLS config to be %v, but got %v", route.Spec.TLS, expectedTLS)
-	}
+	assert.Equal(t, route.Spec.TLS, expectedTLS, "unexpected route TLS config")
 }
 
 func Test_canaryRouteChanged(t *testing.T) {
