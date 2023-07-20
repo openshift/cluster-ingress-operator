@@ -1,6 +1,7 @@
 package canary
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -33,6 +34,7 @@ func Test_desiredCanaryRoute(t *testing.T) {
 
 	assert.Equal(t, route.Name, expectedRouteName.Name, "unexpected route name")
 	assert.Equal(t, route.Namespace, expectedRouteName.Namespace, "unexpected route namespace")
+	assert.Equal(t, route.Spec.Subdomain, "canary-openshift-ingress-canary", "unexpected route spec.subdomain")
 
 	expectedAnnotations := map[string]string{
 		"haproxy.router.openshift.io/balance": "roundrobin",
@@ -76,6 +78,20 @@ func Test_canaryRouteChanged(t *testing.T) {
 			description: "if nothing changes",
 			mutate:      func(_ *routev1.Route) {},
 			expect:      false,
+		},
+		{
+			description: "if route spec.host is changes",
+			mutate: func(route *routev1.Route) {
+				route.Spec.Host = "test"
+			},
+			expect: true,
+		},
+		{
+			description: "if route spec.subdomain changes",
+			mutate: func(route *routev1.Route) {
+				route.Spec.Subdomain = "test"
+			},
+			expect: true,
 		},
 		{
 			description: "if route spec.To changes",
@@ -122,6 +138,70 @@ func Test_canaryRouteChanged(t *testing.T) {
 					t.Error("canaryRouteChanged does not behave as a fixed point function")
 				}
 			}
+		})
+	}
+}
+
+// Test_getRouteHost verifies that getRouteHost returns the expected value for a
+// route.
+func Test_getRouteHost(t *testing.T) {
+	canaryRoute := func(ingresses []routev1.RouteIngress) *routev1.Route {
+		return &routev1.Route{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "openshift-ingress-canary",
+				Name:      "canary",
+			},
+			Status: routev1.RouteStatus{
+				Ingress: ingresses,
+			},
+		}
+	}
+	admittedBy := func(names ...string) []routev1.RouteIngress {
+		ingresses := []routev1.RouteIngress{}
+		for _, name := range names {
+			ingress := routev1.RouteIngress{
+				RouterName: name,
+				Host:       fmt.Sprintf("%s.apps.example.xyz", name),
+			}
+			ingresses = append(ingresses, ingress)
+		}
+		return ingresses
+	}
+	testCases := []struct {
+		name   string
+		route  *routev1.Route
+		expect string
+	}{
+		{
+			name:   "nil route",
+			route:  nil,
+			expect: "",
+		},
+		{
+			name:   "not admitted route",
+			route:  canaryRoute(admittedBy()),
+			expect: "",
+		},
+		{
+			name:   "admitted by some other ingresscontroller",
+			route:  canaryRoute(admittedBy("foo")),
+			expect: "",
+		},
+		{
+			name:   "admitted by default ingresscontroller",
+			route:  canaryRoute(admittedBy("default")),
+			expect: "default.apps.example.xyz",
+		},
+		{
+			name:   "admitted by default and others",
+			route:  canaryRoute(admittedBy("foo", "default", "bar")),
+			expect: "default.apps.example.xyz",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.expect, getRouteHost(tc.route))
 		})
 	}
 }

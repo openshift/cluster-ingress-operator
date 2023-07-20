@@ -198,13 +198,15 @@ func TestRouterCompressionOperation(t *testing.T) {
 		t.Fatalf("failed to get route: %v", err)
 	}
 
+	routeHost := getRouteHost(t, r, ic.Name)
+
 	// curl to canary, without the Accept-Encoding header set to gzip
-	if err := testContentEncoding(t, client, r, false, ""); err != nil {
+	if err := testContentEncoding(t, client, routeHost, false, ""); err != nil {
 		t.Error(err)
 	}
 
 	// curl to canary, WITH the Accept-Encoding header set to gzip
-	if err := testContentEncoding(t, client, r, true, "gzip"); err != nil {
+	if err := testContentEncoding(t, client, routeHost, true, "gzip"); err != nil {
 		t.Error(err)
 	}
 }
@@ -212,24 +214,24 @@ func TestRouterCompressionOperation(t *testing.T) {
 // testContentEncoding makes a call to the provided route, adds a gzip content header if addHeader is true, and
 // compares the returned Content-Encoding header to the given expectedContentEncoding.  If expectedContentEncoding
 // is the same as the returned Content-Encoding header, then the test succeeds.  Otherwise it fails.
-func testContentEncoding(t *testing.T, client *http.Client, route *routev1.Route, addHeader bool, expectedContentEncoding string) error {
+func testContentEncoding(t *testing.T, client *http.Client, routeHost string, addHeader bool, expectedContentEncoding string) error {
 	t.Helper()
 
 	if err := wait.PollImmediate(2*time.Second, 5*time.Minute, func() (bool, error) {
-		header, code, err := getHttpHeaders(client, route, addHeader)
+		header, code, err := getHttpHeaders(client, routeHost, addHeader)
 
 		if err != nil {
-			t.Logf("GET %s failed: %v, retrying...", route.Spec.Host, err)
+			t.Logf("GET %s failed: %v, retrying...", routeHost, err)
 			return false, nil
 		}
 		if code != http.StatusOK {
-			t.Logf("GET %s failed: status %v, expected %v, retrying...", route.Spec.Host, code, http.StatusOK)
+			t.Logf("GET %s failed: status %v, expected %v, retrying...", routeHost, code, http.StatusOK)
 			return false, nil // retry on 503 as pod/service may not be ready
 		}
 
 		contentEncoding := header.Get("Content-Encoding")
 		if contentEncoding != expectedContentEncoding {
-			return false, fmt.Errorf("compression error: expected %q, got %q for %s route", expectedContentEncoding, contentEncoding, route.Name)
+			return false, fmt.Errorf("compression error: expected %q, got %q for %s route", expectedContentEncoding, contentEncoding, routeHost)
 		}
 		return true, nil
 	}); err != nil {
@@ -239,9 +241,9 @@ func testContentEncoding(t *testing.T, client *http.Client, route *routev1.Route
 }
 
 // getHttpHeaders returns the HTTP Headers, and first adds the request header "Accept-Encoding: gzip" if requested.
-func getHttpHeaders(client *http.Client, route *routev1.Route, addHeader bool) (http.Header, int, error) {
+func getHttpHeaders(client *http.Client, routeHost string, addHeader bool) (http.Header, int, error) {
 	// Create the HTTPS request
-	request, err := http.NewRequest("GET", "https://"+route.Spec.Host, nil)
+	request, err := http.NewRequest("GET", "https://"+routeHost, nil)
 	if err != nil {
 		return nil, -1, fmt.Errorf("New request failed: %v", err)
 	}
@@ -253,7 +255,7 @@ func getHttpHeaders(client *http.Client, route *routev1.Route, addHeader bool) (
 
 	response, err := client.Do(request)
 	if err != nil {
-		return nil, -1, fmt.Errorf("GET %s failed: %v", route.Spec.Host, err)
+		return nil, -1, fmt.Errorf("GET %s failed: %v", routeHost, err)
 	}
 	// Close response body
 	defer response.Body.Close()

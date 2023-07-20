@@ -280,7 +280,7 @@ func (r *reconciler) startCanaryRoutePolling(stop <-chan struct{}) error {
 		err = probeRouteEndpoint(route)
 		if err != nil {
 			log.Error(err, "error performing canary route check")
-			SetCanaryRouteReachableMetric(route.Spec.Host, false)
+			SetCanaryRouteReachableMetric(getRouteHost(route), false)
 			successiveFail += 1
 			// Mark the default ingress controller degraded after 5 successive canary check failures
 			if successiveFail >= canaryCheckFailureCount {
@@ -291,7 +291,7 @@ func (r *reconciler) startCanaryRoutePolling(stop <-chan struct{}) error {
 			return
 		}
 
-		SetCanaryRouteReachableMetric(route.Spec.Host, true)
+		SetCanaryRouteReachableMetric(getRouteHost(route), true)
 		if err := r.setCanaryPassingStatusCondition(); err != nil {
 			log.Error(err, "error updating canary status condition")
 		}

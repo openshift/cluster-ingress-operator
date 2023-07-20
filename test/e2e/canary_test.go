@@ -68,13 +68,14 @@ func TestCanaryRoute(t *testing.T) {
 
 		return true, nil
 	})
-
 	if err != nil {
 		t.Fatalf("failed to observe canary route: %v", err)
 	}
 
+	canaryRouteHost := getRouteHost(t, canaryRoute, defaultName.Name)
+
 	image := deployment.Spec.Template.Spec.Containers[0].Image
-	clientPod := buildCanaryCurlPod("canary-route-check", canaryRoute.Namespace, image, canaryRoute.Spec.Host)
+	clientPod := buildCanaryCurlPod("canary-route-check", canaryRoute.Namespace, image, canaryRouteHost)
 	if err := kclient.Create(context.TODO(), clientPod); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
 	}
