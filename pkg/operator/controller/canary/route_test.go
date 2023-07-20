@@ -73,7 +73,10 @@ func Test_desiredCanaryRoute(t *testing.T) {
 
 	expectedOwnerRefs := []metav1.OwnerReference{daemonsetRef}
 	if !cmp.Equal(route.OwnerReferences, expectedOwnerRefs) {
-		t.Errorf("expected service owner references %#v, but got %#v", expectedOwnerRefs, route.OwnerReferences)
+		t.Errorf("expected route owner references %#v, but got %#v", expectedOwnerRefs, route.OwnerReferences)
+	}
+	if !cmp.Equal(service.OwnerReferences, expectedOwnerRefs) {
+		t.Errorf("expected service owner references %#v, but got %#v", expectedOwnerRefs, service.OwnerReferences)
 	}
 
 	expectedTLS := &routev1.TLSConfig{
