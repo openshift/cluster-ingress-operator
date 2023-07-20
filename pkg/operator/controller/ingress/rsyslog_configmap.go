@@ -18,9 +18,13 @@ import (
 
 const (
 	// rsyslogConfiguration is the contents for rsyslog.conf.
+	// The parameter "$MaxMessageSize 10k" is needed to allow messages with
+	// 8192 characters, because the default value only allows messages with
+	// maximum 8096 characters.
 	rsyslogConfiguration = `$ModLoad imuxsock
 $SystemLogSocketName /var/lib/rsyslog/rsyslog.sock
 $ModLoad omstdout.so
+$MaxMessageSize 10k
 *.* :omstdout:
 `
 )
