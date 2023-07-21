@@ -48,4 +48,7 @@ func TestManifests(t *testing.T) {
 	GatewayCRD()
 	HTTPRouteCRD()
 	ReferenceGrantCRD()
+
+	MustAsset(CustomResourceDefinitionManifest)
+	MustAsset(NamespaceManifest)
 }
