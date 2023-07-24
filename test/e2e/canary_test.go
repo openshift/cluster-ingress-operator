@@ -6,15 +6,18 @@ package e2e
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	routev1 "github.com/openshift/api/route/v1"
 
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	canarycontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/canary"
+	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 
@@ -158,5 +161,100 @@ func buildCanaryCurlPod(name, namespace, image, host string) *corev1.Pod {
 			},
 			RestartPolicy: corev1.RestartPolicyNever,
 		},
+	}
+}
+
+func TestCanaryWithMTLS(t *testing.T) {
+	defaultIC := &operatorv1.IngressController{}
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, defaultName, defaultAvailableConditions...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	caCert := MustCreateTLSKeyCert("root-ca", time.Now(), time.Now().Add(24*time.Hour), true, nil, nil)
+
+	clientCAConfigmap := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "canary-with-mtls-client-ca",
+			Namespace: "openshift-config",
+		},
+		Data: map[string]string{
+			"ca-bundle.pem": caCert.CertPem,
+		},
+	}
+
+	if err := kclient.Create(context.TODO(), clientCAConfigmap); err != nil {
+		t.Fatalf("Failed to create configmap %s: %v", clientCAConfigmap.Name, err)
+	}
+
+	defer assertDeleted(t, kclient, clientCAConfigmap)
+
+	if err := kclient.Get(context.TODO(), defaultName, defaultIC); err != nil {
+		t.Fatalf("failed to get default ingresscontroller: %v", err)
+	}
+
+	// Save the current clientTLS config so it can be restored at the end of the test.
+	originalClientTLS := defaultIC.Spec.ClientTLS
+
+	// Set client TLS (mTLS) to required, and use clientCAConfigmap as the CA bundle.
+	defaultIC.Spec.ClientTLS = operatorv1.ClientTLS{
+		ClientCertificatePolicy: operatorv1.ClientCertificatePolicyRequired,
+		ClientCA: configv1.ConfigMapNameReference{
+			Name: clientCAConfigmap.Name,
+		},
+	}
+	if err := kclient.Update(context.TODO(), defaultIC); err != nil {
+		t.Fatalf("Failed to enable mTLS on default ingress controller: %v", err)
+	}
+
+	defer func() {
+		// Reset client TLS.
+		if err := kclient.Get(context.TODO(), defaultName, defaultIC); err != nil {
+			panic(fmt.Errorf("failed to get default ingresscontroller: %v", err))
+		}
+		defaultIC.Spec.ClientTLS = originalClientTLS
+		if err := kclient.Update(context.TODO(), defaultIC); err != nil {
+			panic(fmt.Errorf("Failed to restore default ingress configuration: %w", err))
+		}
+	}()
+
+	// Wait for IC update to completely roll out.
+	routerDeployment := &appsv1.Deployment{}
+	routerDeploymentName := controller.RouterDeploymentName(defaultIC)
+	if err := kclient.Get(context.TODO(), routerDeploymentName, routerDeployment); err != nil {
+		t.Fatalf("Failed to get router deployment for ingresscontroller %s: %v", defaultIC.Name, err)
+	}
+
+	if err := waitForDeploymentComplete(t, kclient, routerDeployment, 3*time.Minute); err != nil {
+		t.Fatalf("Timed out waiting for ingress update to complete: %v", err)
+	}
+
+	// Verify that canary does not fail.
+	err := wait.PollImmediate(10*time.Second, 6*time.Minute, func() (bool, error) {
+		ic := &operatorv1.IngressController{}
+		if err := kclient.Get(context.TODO(), defaultName, ic); err != nil {
+			return false, err
+		}
+		foundCondition := false
+		for _, condition := range ic.Status.Conditions {
+			if condition.Type == ingresscontroller.IngressControllerCanaryCheckSuccessConditionType {
+				foundCondition = true
+				if condition.Status == operatorv1.ConditionFalse {
+					t.Errorf("Canary failed: %s", condition.Reason)
+					return true, nil
+				}
+				break
+			}
+		}
+		if !foundCondition {
+			t.Errorf("Canary status condition not found")
+			return false, nil
+		}
+		return false, nil
+	})
+
+	// Timeout means the canary succeeded for the entire polling interval, so only consider non-timeout errors a
+	// failure.
+	if err != nil && err != wait.ErrWaitTimeout {
+		t.Fatalf("Got unexpected error %v", err)
 	}
 }

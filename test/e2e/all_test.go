@@ -108,6 +108,7 @@ func TestAll(t *testing.T) {
 		t.Run("TestRouterCompressionOperation", TestRouterCompressionOperation)
 		t.Run("TestUpdateDefaultIngressControllerSecret", TestUpdateDefaultIngressControllerSecret)
 		t.Run("TestCanaryRoute", TestCanaryRoute)
+		t.Run("TestCanaryWithMTLS", TestCanaryWithMTLS)
 		t.Run("TestRouteHTTP2EnableAndDisableIngressConfig", TestRouteHTTP2EnableAndDisableIngressConfig)
 		t.Run("TestRouteHardStopAfterEnableOnIngressConfig", TestRouteHardStopAfterEnableOnIngressConfig)
 		t.Run("TestRouteHardStopAfterEnableOnIngressControllerHasPriorityOverIngressConfig", TestRouteHardStopAfterEnableOnIngressControllerHasPriorityOverIngressConfig)
