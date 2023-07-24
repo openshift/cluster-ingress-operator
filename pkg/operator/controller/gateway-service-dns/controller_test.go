@@ -26,7 +26,7 @@ import (
 )
 
 func Test_Reconcile(t *testing.T) {
-	gw := func(name string, listeners ...gatewayapiv1beta1.Listener) *gatewayapiv1beta1.Gateway {
+	gw := func(name string, listeners []gatewayapiv1beta1.Listener) *gatewayapiv1beta1.Gateway {
 		return &gatewayapiv1beta1.Gateway{
 			ObjectMeta: metav1.ObjectMeta{
 				Namespace: "openshift-ingress",
@@ -100,7 +100,7 @@ func Test_Reconcile(t *testing.T) {
 		{
 			name: "gateway with no listeners",
 			existingObjects: []runtime.Object{
-				gw("example-gateway"),
+				gw("example-gateway", []gatewayapiv1beta1.Listener{}),
 				svc(
 					"example-gateway",
 					map[string]string{
@@ -121,9 +121,11 @@ func Test_Reconcile(t *testing.T) {
 			existingObjects: []runtime.Object{
 				gw(
 					"example-gateway",
-					l("stage-http", "*.stage.example.com", 80),
-					l("stage-https", "*.stage.example.com", 443),
-					l("prod-https", "*.prod.example.com", 443),
+					[]gatewayapiv1beta1.Listener{
+						l("stage-http", "*.stage.example.com", 80),
+						l("stage-https", "*.stage.example.com", 443),
+						l("prod-https", "*.prod.example.com", 443),
+					},
 				),
 				svc(
 					"example-gateway",
@@ -148,8 +150,10 @@ func Test_Reconcile(t *testing.T) {
 			existingObjects: []runtime.Object{
 				gw(
 					"example-gateway",
-					l("http", "*.example.com", 80),
-					l("https", "*.example.com", 443),
+					[]gatewayapiv1beta1.Listener{
+						l("http", "*.example.com", 80),
+						l("https", "*.example.com", 443),
+					},
 				),
 				svc(
 					"example-gateway",
@@ -174,8 +178,10 @@ func Test_Reconcile(t *testing.T) {
 			existingObjects: []runtime.Object{
 				gw(
 					"example-gateway",
-					l("stage-http", "*.stage.example.com", 80),
-					l("stage-https", "*.stage.example.com", 443),
+					[]gatewayapiv1beta1.Listener{
+						l("stage-http", "*.stage.example.com", 80),
+						l("stage-https", "*.stage.example.com", 443),
+					},
 				),
 				svc(
 					"example-gateway",
