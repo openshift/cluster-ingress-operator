@@ -127,18 +127,20 @@ func Test_canaryRouteChanged(t *testing.T) {
 	service := desiredCanaryService(daemonsetRef)
 
 	for _, tc := range testCases {
-		original, err := desiredCanaryRoute(service)
-		if err != nil {
-			t.Fatalf("desiredCanaryService returned an error: %v", err)
-		}
-		mutated := original.DeepCopy()
-		tc.mutate(mutated)
-		if changed, updated := canaryRouteChanged(original, mutated); changed != tc.expect {
-			t.Errorf("%s, expect canaryRouteChanged to be %t, got %t", tc.description, tc.expect, changed)
-		} else if changed {
-			if changedAgain, _ := canaryRouteChanged(mutated, updated); changedAgain {
-				t.Errorf("%s, canaryRouteChanged does not behave as a fixed point function", tc.description)
+		t.Run(tc.description, func(t *testing.T) {
+			original, err := desiredCanaryRoute(service)
+			if err != nil {
+				t.Fatalf("desiredCanaryService returned an error: %v", err)
 			}
-		}
+			mutated := original.DeepCopy()
+			tc.mutate(mutated)
+			if changed, updated := canaryRouteChanged(original, mutated); changed != tc.expect {
+				t.Errorf("expected canaryRouteChanged to be %t, got %t", tc.expect, changed)
+			} else if changed {
+				if changedAgain, _ := canaryRouteChanged(mutated, updated); changedAgain {
+					t.Error("canaryRouteChanged does not behave as a fixed point function")
+				}
+			}
+		})
 	}
 }

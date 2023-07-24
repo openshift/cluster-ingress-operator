@@ -299,173 +299,175 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		ic := &operatorv1.IngressController{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: "default",
-			},
-			Status: operatorv1.IngressControllerStatus{
-				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
-					Type:         tc.strategyType,
-					LoadBalancer: &tc.lbStrategy,
+		t.Run(tc.description, func(t *testing.T) {
+			ic := &operatorv1.IngressController{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "default",
 				},
-			},
-		}
-		trueVar := true
-		deploymentRef := metav1.OwnerReference{
-			APIVersion: "apps/v1",
-			Kind:       "Deployment",
-			Name:       "router-default",
-			UID:        "1",
-			Controller: &trueVar,
-		}
-		infraConfig := &configv1.Infrastructure{
-			Status: configv1.InfrastructureStatus{
-				PlatformStatus: &tc.platformStatus,
-			},
-		}
-		infraConfig.Status.PlatformStatus.Type = tc.platform
-
-		proxyNeeded, err := IsProxyProtocolNeeded(ic, infraConfig.Status.PlatformStatus)
-		switch {
-		case err != nil:
-			t.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %v", ic.Namespace, ic.Name, err)
-		case tc.proxyNeeded && !proxyNeeded || !tc.proxyNeeded && proxyNeeded:
-			t.Errorf("test %q failed; expected IsProxyProtocolNeeded to return %v, got %v", tc.description, tc.proxyNeeded, proxyNeeded)
-		}
-
-		haveSvc, svc, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig.Status.PlatformStatus)
-		switch {
-		case err != nil:
-			t.Errorf("test %q failed; unexpected error from desiredLoadBalancerService for endpoint publishing strategy type %v: %v", tc.description, tc.strategyType, err)
-		case tc.expect && !haveSvc:
-			t.Errorf("test %q failed; expected desiredLoadBalancerService to return a service for endpoint publishing strategy type %v, got nil", tc.description, tc.strategyType)
-		case !tc.expect && haveSvc:
-			t.Errorf("test %q failed; expected desiredLoadBalancerService to return nil service for endpoint publishing strategy type %v, got %#v", tc.description, tc.strategyType, svc)
-		}
-
-		isInternal := ic.Status.EndpointPublishingStrategy.LoadBalancer == nil || ic.Status.EndpointPublishingStrategy.LoadBalancer.Scope == operatorv1.InternalLoadBalancer
-		platform := infraConfig.Status.PlatformStatus
-		switch platform.Type {
-		case configv1.AWSPlatformType:
-			if isInternal {
-				if err := checkServiceHasAnnotation(svc, awsInternalLBAnnotation, true, "true"); err != nil {
-					t.Errorf("annotation check for test %q failed: %v", tc.description, err)
-				}
+				Status: operatorv1.IngressControllerStatus{
+					EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+						Type:         tc.strategyType,
+						LoadBalancer: &tc.lbStrategy,
+					},
+				},
 			}
-			if tc.strategyType == operatorv1.LoadBalancerServiceStrategyType {
-				if err := checkServiceHasAnnotation(svc, awsLBHealthCheckTimeoutAnnotation, true, awsLBHealthCheckTimeoutDefault); err != nil {
-					t.Errorf("annotation check for test %q failed: %v", tc.description, err)
+			trueVar := true
+			deploymentRef := metav1.OwnerReference{
+				APIVersion: "apps/v1",
+				Kind:       "Deployment",
+				Name:       "router-default",
+				UID:        "1",
+				Controller: &trueVar,
+			}
+			infraConfig := &configv1.Infrastructure{
+				Status: configv1.InfrastructureStatus{
+					PlatformStatus: &tc.platformStatus,
+				},
+			}
+			infraConfig.Status.PlatformStatus.Type = tc.platform
+
+			proxyNeeded, err := IsProxyProtocolNeeded(ic, infraConfig.Status.PlatformStatus)
+			switch {
+			case err != nil:
+				t.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %v", ic.Namespace, ic.Name, err)
+			case tc.proxyNeeded && !proxyNeeded || !tc.proxyNeeded && proxyNeeded:
+				t.Errorf("expected IsProxyProtocolNeeded to return %v, got %v", tc.proxyNeeded, proxyNeeded)
+			}
+
+			haveSvc, svc, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig.Status.PlatformStatus)
+			switch {
+			case err != nil:
+				t.Errorf("unexpected error from desiredLoadBalancerService for endpoint publishing strategy type %v: %v", tc.strategyType, err)
+			case tc.expect && !haveSvc:
+				t.Errorf("expected desiredLoadBalancerService to return a service for endpoint publishing strategy type %v, got nil", tc.strategyType)
+			case !tc.expect && haveSvc:
+				t.Errorf("expected desiredLoadBalancerService to return nil service for endpoint publishing strategy type %v, got %#v", tc.strategyType, svc)
+			}
+
+			isInternal := ic.Status.EndpointPublishingStrategy.LoadBalancer == nil || ic.Status.EndpointPublishingStrategy.LoadBalancer.Scope == operatorv1.InternalLoadBalancer
+			platform := infraConfig.Status.PlatformStatus
+			switch platform.Type {
+			case configv1.AWSPlatformType:
+				if isInternal {
+					if err := checkServiceHasAnnotation(svc, awsInternalLBAnnotation, true, "true"); err != nil {
+						t.Error(err)
+					}
 				}
-				if err := checkServiceHasAnnotation(svc, awsLBHealthCheckUnhealthyThresholdAnnotation, true, awsLBHealthCheckUnhealthyThresholdDefault); err != nil {
-					t.Errorf("annotation check for test %q failed: %v", tc.description, err)
+				if tc.strategyType == operatorv1.LoadBalancerServiceStrategyType {
+					if err := checkServiceHasAnnotation(svc, awsLBHealthCheckTimeoutAnnotation, true, awsLBHealthCheckTimeoutDefault); err != nil {
+						t.Error(err)
+					}
+					if err := checkServiceHasAnnotation(svc, awsLBHealthCheckUnhealthyThresholdAnnotation, true, awsLBHealthCheckUnhealthyThresholdDefault); err != nil {
+						t.Error(err)
+					}
+					if err := checkServiceHasAnnotation(svc, awsLBHealthCheckHealthyThresholdAnnotation, true, awsLBHealthCheckHealthyThresholdDefault); err != nil {
+						t.Error(err)
+					}
+					if err := checkServiceHasAnnotation(svc, localWithFallbackAnnotation, true, ""); err != nil {
+						t.Error(err)
+					}
+					classicLB := tc.lbStrategy.ProviderParameters == nil || tc.lbStrategy.ProviderParameters.AWS.Type == operatorv1.AWSClassicLoadBalancer
+					switch {
+					case classicLB:
+						if len(tc.expectedResourceTags) > 0 {
+							if err := checkServiceHasAnnotation(svc, awsLBAdditionalResourceTags, true, tc.expectedResourceTags); err != nil {
+								t.Error(err)
+							}
+						} else {
+							if err := checkServiceHasAnnotation(svc, awsLBAdditionalResourceTags, false, ""); err == nil {
+								t.Errorf("unexpected annotation %s", awsLBAdditionalResourceTags)
+							}
+						}
+						if err := checkServiceHasAnnotation(svc, awsLBHealthCheckIntervalAnnotation, true, awsLBHealthCheckIntervalDefault); err != nil {
+							t.Error(err)
+						}
+						if err := checkServiceHasAnnotation(svc, awsLBProxyProtocolAnnotation, true, "*"); err != nil {
+							t.Error(err)
+						}
+					case tc.lbStrategy.ProviderParameters.AWS.Type == operatorv1.AWSNetworkLoadBalancer:
+						if len(tc.expectedResourceTags) > 0 {
+							if err := checkServiceHasAnnotation(svc, awsLBAdditionalResourceTags, true, tc.expectedResourceTags); err != nil {
+								t.Error(err)
+							}
+						} else {
+							if err := checkServiceHasAnnotation(svc, awsLBAdditionalResourceTags, false, ""); err == nil {
+								t.Errorf("unexpected annotation %s", awsLBAdditionalResourceTags)
+							}
+						}
+						if err := checkServiceHasAnnotation(svc, awsLBHealthCheckIntervalAnnotation, true, awsLBHealthCheckIntervalNLB); err != nil {
+							t.Error(err)
+						}
+						if err := checkServiceHasAnnotation(svc, AWSLBTypeAnnotation, true, AWSNLBAnnotation); err != nil {
+							t.Error(err)
+						}
+					case tc.lbStrategy.Scope == operatorv1.InternalLoadBalancer:
+						if err := checkServiceHasAnnotation(svc, AWSLBTypeAnnotation, true, "0.0.0.0/0"); err != nil {
+							t.Error(err)
+						}
+					}
 				}
-				if err := checkServiceHasAnnotation(svc, awsLBHealthCheckHealthyThresholdAnnotation, true, awsLBHealthCheckHealthyThresholdDefault); err != nil {
-					t.Errorf("annotation check for test %q failed: %v", tc.description, err)
+			case configv1.IBMCloudPlatformType, configv1.PowerVSPlatformType:
+				if isInternal {
+					if err := checkServiceHasAnnotation(svc, iksLBScopeAnnotation, true, iksLBScopePrivate); err != nil {
+						t.Error(err)
+					}
+					// The ibm public annotation value should not exist for an internal LB.
+					if err := checkServiceHasAnnotation(svc, iksLBScopeAnnotation, true, iksLBScopePublic); err == nil {
+						t.Errorf("unexpected annotation %s: %s", iksLBScopeAnnotation, iksLBScopePublic)
+					}
+				} else {
+					if err := checkServiceHasAnnotation(svc, iksLBScopeAnnotation, true, iksLBScopePublic); err != nil {
+						t.Error(err)
+					}
+					// The ibm private annotation value should not exist for an external LB.
+					if err := checkServiceHasAnnotation(svc, iksLBScopeAnnotation, true, iksLBScopePrivate); err == nil {
+						t.Errorf("unexpected annotation %s: %s", iksLBScopeAnnotation, iksLBScopePrivate)
+					}
+				}
+			case configv1.AzurePlatformType:
+				if isInternal {
+					if err := checkServiceHasAnnotation(svc, azureInternalLBAnnotation, true, "true"); err != nil {
+						t.Error(err)
+					}
+				} else {
+					// The azure private annotation should not exist for external LBs.
+					if err := checkServiceHasAnnotation(svc, azureInternalLBAnnotation, false, ""); err == nil {
+						t.Errorf("unexpected annotation %s", azureInternalLBAnnotation)
+					}
 				}
 				if err := checkServiceHasAnnotation(svc, localWithFallbackAnnotation, true, ""); err != nil {
-					t.Errorf("local-with-fallback annotation check for test %q failed: %v", tc.description, err)
+					t.Error(err)
 				}
-				classicLB := tc.lbStrategy.ProviderParameters == nil || tc.lbStrategy.ProviderParameters.AWS.Type == operatorv1.AWSClassicLoadBalancer
-				switch {
-				case classicLB:
-					if len(tc.expectedResourceTags) > 0 {
-						if err := checkServiceHasAnnotation(svc, awsLBAdditionalResourceTags, true, tc.expectedResourceTags); err != nil {
-							t.Errorf("annotation check for test %q failed: %v, unexpected value", tc.description, err)
-						}
-					} else {
-						if err := checkServiceHasAnnotation(svc, awsLBAdditionalResourceTags, false, ""); err == nil {
-							t.Errorf("annotation check for test %q failed; unexpected annotation %s", tc.description, awsLBAdditionalResourceTags)
-						}
+			case configv1.GCPPlatformType:
+				if isInternal {
+					if err := checkServiceHasAnnotation(svc, gcpLBTypeAnnotation, true, "Internal"); err != nil {
+						t.Error(err)
 					}
-					if err := checkServiceHasAnnotation(svc, awsLBHealthCheckIntervalAnnotation, true, awsLBHealthCheckIntervalDefault); err != nil {
-						t.Errorf("annotation check for test %q failed: %v", tc.description, err)
-					}
-					if err := checkServiceHasAnnotation(svc, awsLBProxyProtocolAnnotation, true, "*"); err != nil {
-						t.Errorf("annotation check for test %q failed: %v", tc.description, err)
-					}
-				case tc.lbStrategy.ProviderParameters.AWS.Type == operatorv1.AWSNetworkLoadBalancer:
-					if len(tc.expectedResourceTags) > 0 {
-						if err := checkServiceHasAnnotation(svc, awsLBAdditionalResourceTags, true, tc.expectedResourceTags); err != nil {
-							t.Errorf("annotation check for test %q failed: %v, unexpected value", tc.description, err)
-						}
-					} else {
-						if err := checkServiceHasAnnotation(svc, awsLBAdditionalResourceTags, false, ""); err == nil {
-							t.Errorf("annotation check for test %q failed; unexpected annotation %s", tc.description, awsLBAdditionalResourceTags)
-						}
-					}
-					if err := checkServiceHasAnnotation(svc, awsLBHealthCheckIntervalAnnotation, true, awsLBHealthCheckIntervalNLB); err != nil {
-						t.Errorf("annotation check for test %q failed: %v", tc.description, err)
-					}
-					if err := checkServiceHasAnnotation(svc, AWSLBTypeAnnotation, true, AWSNLBAnnotation); err != nil {
-						t.Errorf("annotation check for test %q failed: %v", tc.description, err)
-					}
-				case tc.lbStrategy.Scope == operatorv1.InternalLoadBalancer:
-					if err := checkServiceHasAnnotation(svc, AWSLBTypeAnnotation, true, "0.0.0.0/0"); err != nil {
-						t.Errorf("annotation check for test %q failed: %v", tc.description, err)
+				} else {
+					// The internal gcp annotation should not exist for an external LB.
+					if err := checkServiceHasAnnotation(svc, gcpLBTypeAnnotation, false, ""); err == nil {
+						t.Errorf("unexpected annotation %s", gcpLBTypeAnnotation)
 					}
 				}
-			}
-		case configv1.IBMCloudPlatformType, configv1.PowerVSPlatformType:
-			if isInternal {
-				if err := checkServiceHasAnnotation(svc, iksLBScopeAnnotation, true, iksLBScopePrivate); err != nil {
-					t.Errorf("annotation check for test %q failed: %v", tc.description, err)
+				if err := checkServiceHasAnnotation(svc, localWithFallbackAnnotation, true, ""); err != nil {
+					t.Error(err)
 				}
-				// The ibm public annotation value should not exist for an internal LB.
-				if err := checkServiceHasAnnotation(svc, iksLBScopeAnnotation, true, iksLBScopePublic); err == nil {
-					t.Errorf("annotation check for test %q failed; unexpected annotation %s: %s", tc.description, iksLBScopeAnnotation, iksLBScopePublic)
+			case configv1.OpenStackPlatformType:
+				if isInternal {
+					if err := checkServiceHasAnnotation(svc, openstackInternalLBAnnotation, true, "true"); err != nil {
+						t.Error(err)
+					}
+				} else {
+					// The internal openstack annotation should not exist for an external LB.
+					if err := checkServiceHasAnnotation(svc, openstackInternalLBAnnotation, false, ""); err == nil {
+						t.Errorf("unexpected annotation %s", openstackInternalLBAnnotation)
+					}
 				}
-			} else {
-				if err := checkServiceHasAnnotation(svc, iksLBScopeAnnotation, true, iksLBScopePublic); err != nil {
-					t.Errorf("annotation check for test %q failed: %v", tc.description, err)
-				}
-				// The ibm private annotation value should not exist for an external LB.
-				if err := checkServiceHasAnnotation(svc, iksLBScopeAnnotation, true, iksLBScopePrivate); err == nil {
-					t.Errorf("annotation check for test %q failed; unexpected annotation %s: %s", tc.description, iksLBScopeAnnotation, iksLBScopePrivate)
-				}
-			}
-		case configv1.AzurePlatformType:
-			if isInternal {
-				if err := checkServiceHasAnnotation(svc, azureInternalLBAnnotation, true, "true"); err != nil {
-					t.Errorf("annotation check for test %q failed: %v", tc.description, err)
-				}
-			} else {
-				// The azure private annotation should not exist for external LBs.
-				if err := checkServiceHasAnnotation(svc, azureInternalLBAnnotation, false, ""); err == nil {
-					t.Errorf("annotation check for test %q failed; unexpected annotation %s", tc.description, azureInternalLBAnnotation)
+				if err := checkServiceHasAnnotation(svc, localWithFallbackAnnotation, true, ""); err != nil {
+					t.Error(err)
 				}
 			}
-			if err := checkServiceHasAnnotation(svc, localWithFallbackAnnotation, true, ""); err != nil {
-				t.Errorf("local-with-fallback annotation check for test %q failed: %v", tc.description, err)
-			}
-		case configv1.GCPPlatformType:
-			if isInternal {
-				if err := checkServiceHasAnnotation(svc, gcpLBTypeAnnotation, true, "Internal"); err != nil {
-					t.Errorf("annotation check for test %q failed: %v", tc.description, err)
-				}
-			} else {
-				// The internal gcp annotation should not exist for an external LB.
-				if err := checkServiceHasAnnotation(svc, gcpLBTypeAnnotation, false, ""); err == nil {
-					t.Errorf("annotation check for test %q failed; unexpected annotation %s", tc.description, gcpLBTypeAnnotation)
-				}
-			}
-			if err := checkServiceHasAnnotation(svc, localWithFallbackAnnotation, true, ""); err != nil {
-				t.Errorf("local-with-fallback annotation check for test %q failed: %v", tc.description, err)
-			}
-		case configv1.OpenStackPlatformType:
-			if isInternal {
-				if err := checkServiceHasAnnotation(svc, openstackInternalLBAnnotation, true, "true"); err != nil {
-					t.Errorf("annotation check for test %q failed: %v", tc.description, err)
-				}
-			} else {
-				// The internal openstack annotation should not exist for an external LB.
-				if err := checkServiceHasAnnotation(svc, openstackInternalLBAnnotation, false, ""); err == nil {
-					t.Errorf("annotation check for test %q failed; unexpected annotation %s", tc.description, openstackInternalLBAnnotation)
-				}
-			}
-			if err := checkServiceHasAnnotation(svc, localWithFallbackAnnotation, true, ""); err != nil {
-				t.Errorf("local-with-fallback annotation check for test %q failed: %v", tc.description, err)
-			}
-		}
+		})
 	}
 }
 
@@ -683,35 +685,37 @@ func Test_shouldUseLocalWithFallback(t *testing.T) {
 		},
 	}
 	for _, tc := range testCases {
-		var override []byte
-		if len(tc.override) != 0 {
-			override = []byte(tc.override)
-		}
-		ic := &operatorv1.IngressController{
-			Spec: operatorv1.IngressControllerSpec{
-				UnsupportedConfigOverrides: runtime.RawExtension{
-					Raw: override,
+		t.Run(tc.description, func(t *testing.T) {
+			var override []byte
+			if len(tc.override) != 0 {
+				override = []byte(tc.override)
+			}
+			ic := &operatorv1.IngressController{
+				Spec: operatorv1.IngressControllerSpec{
+					UnsupportedConfigOverrides: runtime.RawExtension{
+						Raw: override,
+					},
 				},
-			},
-		}
-		policy := corev1.ServiceExternalTrafficPolicyTypeCluster
-		if tc.local {
-			policy = corev1.ServiceExternalTrafficPolicyTypeLocal
-		}
-		service := corev1.Service{
-			Spec: corev1.ServiceSpec{
-				ExternalTrafficPolicy: policy,
-			},
-		}
-		actual, err := shouldUseLocalWithFallback(ic, &service)
-		switch {
-		case !tc.expectError && err != nil:
-			t.Errorf("%q: unexpected error: %v", tc.description, err)
-		case tc.expectError && err == nil:
-			t.Errorf("%q: expected error, got nil", tc.description)
-		case tc.expect != actual:
-			t.Errorf("%q: expected %t, got %t", tc.description, tc.expect, actual)
-		}
+			}
+			policy := corev1.ServiceExternalTrafficPolicyTypeCluster
+			if tc.local {
+				policy = corev1.ServiceExternalTrafficPolicyTypeLocal
+			}
+			service := corev1.Service{
+				Spec: corev1.ServiceSpec{
+					ExternalTrafficPolicy: policy,
+				},
+			}
+			actual, err := shouldUseLocalWithFallback(ic, &service)
+			switch {
+			case !tc.expectError && err != nil:
+				t.Errorf("unexpected error: %v", err)
+			case tc.expectError && err == nil:
+				t.Error("expected error, got nil")
+			case tc.expect != actual:
+				t.Errorf("expected %t, got %t", tc.expect, actual)
+			}
+		})
 	}
 }
 
@@ -1066,17 +1070,19 @@ func Test_isServiceOwnedByIngressController(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		ic := &operatorv1.IngressController{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: tc.ingressName,
-			},
-			Spec:   operatorv1.IngressControllerSpec{},
-			Status: operatorv1.IngressControllerStatus{},
-		}
+		t.Run(tc.description, func(t *testing.T) {
+			ic := &operatorv1.IngressController{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: tc.ingressName,
+				},
+				Spec:   operatorv1.IngressControllerSpec{},
+				Status: operatorv1.IngressControllerStatus{},
+			}
 
-		if actual := isServiceOwnedByIngressController(tc.service, ic); actual != tc.expect {
-			t.Errorf("expected ownership %t got %t", tc.expect, actual)
-		}
+			if actual := isServiceOwnedByIngressController(tc.service, ic); actual != tc.expect {
+				t.Errorf("expected ownership %t got %t", tc.expect, actual)
+			}
+		})
 	}
 
 }

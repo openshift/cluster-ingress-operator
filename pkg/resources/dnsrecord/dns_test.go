@@ -124,38 +124,40 @@ func Test_desiredWildcardDNSRecord(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		t.Logf("testing %s", test.description)
-		name := types.NamespacedName{
-			Namespace: "openshift-ingress-operator",
-			Name:      "default-wildcard",
-		}
-		trueVar := true
-		icRef := metav1.OwnerReference{
-			APIVersion:         operatorv1.GroupVersion.String(),
-			Kind:               "IngressController",
-			Name:               "default",
-			Controller:         &trueVar,
-			BlockOwnerDeletion: &trueVar,
-		}
-		labels := map[string]string{
-			manifests.OwningIngressControllerLabel: "default",
-		}
-		service := &corev1.Service{}
-		for _, ingress := range test.ingresses {
-			service.Status.LoadBalancer.Ingress = append(service.Status.LoadBalancer.Ingress, ingress)
-		}
-
-		haveWC, actual := desiredWildcardDNSRecord(name, labels, icRef, test.domain, &test.publish, service)
-		switch {
-		case test.expect != nil && haveWC:
-			if !cmp.Equal(actual.Spec, *test.expect) {
-				t.Errorf("expected:\n%s\n\nactual:\n%s", util.ToYaml(test.expect), util.ToYaml(actual.Spec))
+		t.Run(test.description, func(t *testing.T) {
+			t.Logf("testing %s", test.description)
+			name := types.NamespacedName{
+				Namespace: "openshift-ingress-operator",
+				Name:      "default-wildcard",
 			}
-		case test.expect == nil && haveWC:
-			t.Errorf("expected nil record, got:\n%s", util.ToYaml(actual))
-		case test.expect != nil && !haveWC:
-			t.Errorf("expected record but got nil:\n%s", util.ToYaml(test.expect))
-		}
+			trueVar := true
+			icRef := metav1.OwnerReference{
+				APIVersion:         operatorv1.GroupVersion.String(),
+				Kind:               "IngressController",
+				Name:               "default",
+				Controller:         &trueVar,
+				BlockOwnerDeletion: &trueVar,
+			}
+			labels := map[string]string{
+				manifests.OwningIngressControllerLabel: "default",
+			}
+			service := &corev1.Service{}
+			for _, ingress := range test.ingresses {
+				service.Status.LoadBalancer.Ingress = append(service.Status.LoadBalancer.Ingress, ingress)
+			}
+
+			haveWC, actual := desiredWildcardDNSRecord(name, labels, icRef, test.domain, &test.publish, service)
+			switch {
+			case test.expect != nil && haveWC:
+				if !cmp.Equal(actual.Spec, *test.expect) {
+					t.Errorf("expected:\n%s\n\nactual:\n%s", util.ToYaml(test.expect), util.ToYaml(actual.Spec))
+				}
+			case test.expect == nil && haveWC:
+				t.Errorf("expected nil record, got:\n%s", util.ToYaml(actual))
+			case test.expect != nil && !haveWC:
+				t.Errorf("expected record but got nil:\n%s", util.ToYaml(test.expect))
+			}
+		})
 	}
 }
 
@@ -239,18 +241,20 @@ func Test_manageDNSForDomain(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		status := configv1.PlatformStatus{
-			Type: tc.platformType,
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			status := configv1.PlatformStatus{
+				Type: tc.platformType,
+			}
 
-		dnsConfig := configv1.DNS{
-			Spec: configv1.DNSSpec{
-				BaseDomain: tc.baseDomain,
-			},
-		}
-		actual := ManageDNSForDomain(tc.domain, &status, &dnsConfig)
-		if actual != tc.expected {
-			t.Errorf("%q: expected to be %v, got %v", tc.name, tc.expected, actual)
-		}
+			dnsConfig := configv1.DNS{
+				Spec: configv1.DNSSpec{
+					BaseDomain: tc.baseDomain,
+				},
+			}
+			actual := ManageDNSForDomain(tc.domain, &status, &dnsConfig)
+			if actual != tc.expected {
+				t.Errorf("%q: expected to be %v, got %v", tc.name, tc.expected, actual)
+			}
+		})
 	}
 }

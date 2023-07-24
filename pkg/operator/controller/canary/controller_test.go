@@ -126,22 +126,22 @@ func Test_cycleServicePort(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		route, err := cycleServicePort(tc.service, tc.route)
-		if tc.success {
-			if err != nil {
-				t.Errorf("expected test case %s to not return an err, but got err %v", tc.description, err)
-			}
+		t.Run(tc.description, func(t *testing.T) {
+			route, err := cycleServicePort(tc.service, tc.route)
+			if tc.success {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
 
-			routeTargetPort := route.Spec.Port.TargetPort
-			cycledIndex := (tc.index + 1) % len(tc.service.Spec.Ports)
-			expectedPort := tc.service.Spec.Ports[cycledIndex].TargetPort
-			if !cmp.Equal(expectedPort, routeTargetPort) {
-				t.Errorf("expected route to have port %s, but has port %s", expectedPort.String(), routeTargetPort.String())
+				routeTargetPort := route.Spec.Port.TargetPort
+				cycledIndex := (tc.index + 1) % len(tc.service.Spec.Ports)
+				expectedPort := tc.service.Spec.Ports[cycledIndex].TargetPort
+				if !cmp.Equal(expectedPort, routeTargetPort) {
+					t.Errorf("expected route to have port %s, but it has port %s", expectedPort.String(), routeTargetPort.String())
+				}
+			} else if err == nil {
+				t.Error("expected an error")
 			}
-		} else {
-			if err == nil {
-				t.Errorf("expected test case %s to return an err, but it did not", tc.description)
-			}
-		}
+		})
 	}
 }

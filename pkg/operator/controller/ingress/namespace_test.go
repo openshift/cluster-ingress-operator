@@ -51,15 +51,17 @@ func Test_routerNamespaceChanged(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		desired := manifests.RouterNamespace()
-		mutated := desired.DeepCopy()
-		tc.mutate(mutated)
-		if changed, updated := routerNamespaceChanged(mutated, desired); changed != tc.expect {
-			t.Errorf("%s, expect routerNamespaceChanged to be %t, got %t", tc.description, tc.expect, changed)
-		} else if changed {
-			if changedAgain, _ := routerNamespaceChanged(desired, updated); changedAgain {
-				t.Errorf("%s, routerNamespaceChanged does not behave as a fixed point function", tc.description)
+		t.Run(tc.description, func(t *testing.T) {
+			desired := manifests.RouterNamespace()
+			mutated := desired.DeepCopy()
+			tc.mutate(mutated)
+			if changed, updated := routerNamespaceChanged(mutated, desired); changed != tc.expect {
+				t.Errorf("expect routerNamespaceChanged to be %t, got %t", tc.expect, changed)
+			} else if changed {
+				if changedAgain, _ := routerNamespaceChanged(desired, updated); changedAgain {
+					t.Error("routerNamespaceChanged does not behave as a fixed point function")
+				}
 			}
-		}
+		})
 	}
 }

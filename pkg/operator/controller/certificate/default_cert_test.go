@@ -121,16 +121,16 @@ func Test_desiredRouterDefaultCertificateSecret(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		wantCert, _, err := desiredRouterDefaultCertificateSecret(ca, "test-namespace", metav1.OwnerReference{Name: "test-ref"}, tc.ic)
-		if err != nil {
-			t.Fatalf("%s, unexpected error: %v", tc.description, err)
-		}
-		if tc.wantCert {
-			if !wantCert {
-				t.Fatalf("%s, expected a default certificate", tc.description)
+		t.Run(tc.description, func(t *testing.T) {
+			wantCert, _, err := desiredRouterDefaultCertificateSecret(ca, "test-namespace", metav1.OwnerReference{Name: "test-ref"}, tc.ic)
+			switch {
+			case err != nil:
+				t.Fatalf("unexpected error: %v", err)
+			case tc.wantCert && !wantCert:
+				t.Fatal("expected a default certificate")
+			case !tc.wantCert && wantCert:
+				t.Fatal("expected no default certificate")
 			}
-		} else if wantCert {
-			t.Fatalf("%s, expected no default certificate", tc.description)
-		}
+		})
 	}
 }
