@@ -257,7 +257,7 @@ func Test_checkPodsScheduledForDeployment(t *testing.T) {
 	}
 }
 
-func TestComputeIngressDegradedCondition(t *testing.T) {
+func Test_computeIngressDegradedCondition(t *testing.T) {
 	// Inject a fake clock and don't forget to reset it
 	fakeClock := utilclocktesting.NewFakeClock(time.Time{})
 	clock = fakeClock
@@ -490,9 +490,9 @@ func TestComputeIngressDegradedCondition(t *testing.T) {
 	}
 }
 
-// TestComputeDeploymentRollingOutCondition verifies that
+// Test_computeDeploymentRollingOutCondition verifies that
 // computeDeploymentRollingOutCondition returns the expected status condition.
-func TestComputeDeploymentRollingOutCondition(t *testing.T) {
+func Test_computeDeploymentRollingOutCondition(t *testing.T) {
 	tests := []struct {
 		name                  string
 		replicasWanted        *int32
@@ -596,9 +596,9 @@ func TestComputeDeploymentRollingOutCondition(t *testing.T) {
 	}
 }
 
-// TestComputeLoadBalancerProgressingStatus verifies that
+// Test_computeLoadBalancerProgressingStatus verifies that
 // computeLoadBalancerProgressingStatus returns the expected status condition.
-func TestComputeLoadBalancerProgressingStatus(t *testing.T) {
+func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 	hostNetworkIngressController := operatorv1.IngressController{
 		Status: operatorv1.IngressControllerStatus{
 			EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
@@ -812,7 +812,7 @@ func TestComputeLoadBalancerProgressingStatus(t *testing.T) {
 	}
 }
 
-func TestComputeDeploymentAvailableCondition(t *testing.T) {
+func Test_computeDeploymentAvailableCondition(t *testing.T) {
 	tests := []struct {
 		name                            string
 		deploymentConditions            []appsv1.DeploymentCondition
@@ -859,7 +859,7 @@ func TestComputeDeploymentAvailableCondition(t *testing.T) {
 	}
 }
 
-func TestComputeDeploymentReplicasMinAvailableCondition(t *testing.T) {
+func Test_computeDeploymentReplicasMinAvailableCondition(t *testing.T) {
 	pointerToInt32 := func(i int32) *int32 { return &i }
 	pointerToIntVal := func(val intstr.IntOrString) *intstr.IntOrString { return &val }
 	tests := []struct {
@@ -1072,7 +1072,7 @@ func TestComputeDeploymentReplicasMinAvailableCondition(t *testing.T) {
 	}
 }
 
-func TestComputeDeploymentReplicasAllAvailableCondition(t *testing.T) {
+func Test_computeDeploymentReplicasAllAvailableCondition(t *testing.T) {
 	pointerTo := func(i int32) *int32 { return &i }
 	tests := []struct {
 		name                                       string
@@ -1129,7 +1129,7 @@ func TestComputeDeploymentReplicasAllAvailableCondition(t *testing.T) {
 	}
 }
 
-func TestComputeLoadBalancerStatus(t *testing.T) {
+func Test_computeLoadBalancerStatus(t *testing.T) {
 	tests := []struct {
 		name       string
 		controller *operatorv1.IngressController
@@ -1207,9 +1207,9 @@ func TestComputeLoadBalancerStatus(t *testing.T) {
 	}
 }
 
-// TestComputeIngressProgressingCondition verifies that
+// Test_computeIngressProgressingCondition verifies that
 // computeIngressProgressingCondition returns the expected status condition.
-func TestComputeIngressProgressingCondition(t *testing.T) {
+func Test_computeIngressProgressingCondition(t *testing.T) {
 	testCases := []struct {
 		description string
 		conditions  []operatorv1.OperatorCondition
@@ -1331,7 +1331,7 @@ func TestComputeIngressProgressingCondition(t *testing.T) {
 	}
 }
 
-func TestComputeIngressAvailableCondition(t *testing.T) {
+func Test_computeIngressAvailableCondition(t *testing.T) {
 	testCases := []struct {
 		description string
 		conditions  []operatorv1.OperatorCondition
@@ -1411,7 +1411,7 @@ func TestComputeIngressAvailableCondition(t *testing.T) {
 	}
 }
 
-func TestIngressStatusesEqual(t *testing.T) {
+func Test_ingressStatusesEqual(t *testing.T) {
 	testCases := []struct {
 		description string
 		expected    bool
@@ -1531,7 +1531,7 @@ func TestIngressStatusesEqual(t *testing.T) {
 	}
 }
 
-func TestComputeDNSStatus(t *testing.T) {
+func Test_computeDNSStatus(t *testing.T) {
 	tests := []struct {
 		name           string
 		controller     *operatorv1.IngressController
@@ -2044,7 +2044,7 @@ func TestComputeDNSStatus(t *testing.T) {
 	}
 }
 
-func TestMergeConditions(t *testing.T) {
+func Test_MergeConditions(t *testing.T) {
 	// Inject a fake clock and don't forget to reset it
 	fakeClock := utilclocktesting.NewFakeClock(time.Time{})
 	clock = fakeClock
@@ -2094,7 +2094,7 @@ func TestMergeConditions(t *testing.T) {
 	}
 }
 
-func TestZoneInConfig(t *testing.T) {
+func Test_checkZoneInConfig(t *testing.T) {
 	var z *configv1.DNSZone
 	var dnsZone configv1.DNSZone
 	tag := make(map[string]string)
@@ -2184,7 +2184,7 @@ func TestZoneInConfig(t *testing.T) {
 	}
 }
 
-func TestComputeIngressUpgradeableCondition(t *testing.T) {
+func Test_computeIngressUpgradeableCondition(t *testing.T) {
 	makeDefaultCertificateSecret := func(cn string, sans []string) *corev1.Secret {
 		key, err := rsa.GenerateKey(rand.Reader, 2048)
 		if err != nil {
@@ -2321,7 +2321,7 @@ func TestComputeIngressUpgradeableCondition(t *testing.T) {
 	}
 }
 
-func TestComputeIngressEvaluationConditionsDetectedCondition(t *testing.T) {
+func Test_computeIngressEvaluationConditionsDetectedCondition(t *testing.T) {
 	const (
 		ingressDomain = "apps.foo.com"
 	)

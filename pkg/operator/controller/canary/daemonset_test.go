@@ -13,7 +13,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func TestDesiredCanaryDaemonSet(t *testing.T) {
+func Test_desiredCanaryDaemonSet(t *testing.T) {
 	// canaryImageName is the ingress-operator image
 	canaryImageName := "openshift/origin-cluster-ingress-operator:latest"
 	daemonset := desiredCanaryDaemonSet(canaryImageName)
@@ -85,7 +85,7 @@ func TestDesiredCanaryDaemonSet(t *testing.T) {
 	}
 }
 
-func TestCanaryDaemonsetChanged(t *testing.T) {
+func Test_canaryDaemonsetChanged(t *testing.T) {
 	testCases := []struct {
 		description string
 		mutate      func(*appsv1.DaemonSet)

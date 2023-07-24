@@ -14,7 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
-func TestDesiredCanaryRoute(t *testing.T) {
+func Test_desiredCanaryRoute(t *testing.T) {
 	daemonsetRef := metav1.OwnerReference{
 		Name: "test",
 	}
@@ -85,7 +85,7 @@ func TestDesiredCanaryRoute(t *testing.T) {
 	}
 }
 
-func TestCanaryRouteChanged(t *testing.T) {
+func Test_canaryRouteChanged(t *testing.T) {
 	testCases := []struct {
 		description string
 		mutate      func(*routev1.Route)

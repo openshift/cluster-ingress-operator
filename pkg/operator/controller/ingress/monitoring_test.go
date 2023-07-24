@@ -11,7 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
-func TestServiceMonitorChanged(t *testing.T) {
+func Test_serviceMonitorChanged(t *testing.T) {
 	trueVar := true
 	ic := &operatorv1.IngressController{
 		ObjectMeta: metav1.ObjectMeta{

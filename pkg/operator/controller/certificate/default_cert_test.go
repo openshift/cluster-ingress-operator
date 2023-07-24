@@ -52,7 +52,7 @@ u3YLAbyW/lHhOCiZu2iAI8AbmXem9lW6Tr7p/97s0w==
 `
 )
 
-func TestDesiredRouterDefaultCertificateSecret(t *testing.T) {
+func Test_desiredRouterDefaultCertificateSecret(t *testing.T) {
 	ca, err := crypto.GetCAFromBytes([]byte(cert), []byte(key))
 	if err != nil {
 		t.Fatalf("failed to create CA")

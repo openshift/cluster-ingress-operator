@@ -11,9 +11,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// TestDesiredIngressClass verifies that desiredIngressClass behaves as
+// Test_desiredIngressClass verifies that desiredIngressClass behaves as
 // expected.
-func TestDesiredIngressClass(t *testing.T) {
+func Test_desiredIngressClass(t *testing.T) {
 	scope := "Cluster"
 	makeIngressClass := func(icName string, annotateAsDefault bool) *networkingv1.IngressClass {
 		apiGroup := "operator.openshift.io"
@@ -122,9 +122,9 @@ func TestDesiredIngressClass(t *testing.T) {
 	}
 }
 
-// TestIngressClassChanged verifies that ingressClassChanged behaves as
+// Test_ingressClassChanged verifies that ingressClassChanged behaves as
 // expected.
-func TestIngressClassChanged(t *testing.T) {
+func Test_ingressClassChanged(t *testing.T) {
 	testCases := []struct {
 		description string
 		mutate      func(*networkingv1.IngressClass)

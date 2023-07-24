@@ -14,7 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
-func TestDesiredNodePortService(t *testing.T) {
+func Test_desiredNodePortService(t *testing.T) {
 	trueVar := true
 	internalTrafficPolicyCluster := corev1.ServiceInternalTrafficPolicyCluster
 	deploymentRef := metav1.OwnerReference{
@@ -148,7 +148,7 @@ func TestDesiredNodePortService(t *testing.T) {
 	}
 }
 
-func TestNodePortServiceChanged(t *testing.T) {
+func Test_nodePortServiceChanged(t *testing.T) {
 	testCases := []struct {
 		description string
 		mutate      func(*corev1.Service)

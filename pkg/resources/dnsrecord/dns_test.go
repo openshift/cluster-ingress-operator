@@ -17,7 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
-func TestDesiredWildcardDNSRecord(t *testing.T) {
+func Test_desiredWildcardDNSRecord(t *testing.T) {
 	tests := []struct {
 		description string
 		domain      string
@@ -159,7 +159,7 @@ func TestDesiredWildcardDNSRecord(t *testing.T) {
 	}
 }
 
-func TestManageDNSForDomain(t *testing.T) {
+func Test_manageDNSForDomain(t *testing.T) {
 	tests := []struct {
 		name         string
 		domain       string

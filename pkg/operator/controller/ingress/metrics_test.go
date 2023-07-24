@@ -14,7 +14,7 @@ type metricValue struct {
 	value  float64
 }
 
-func TestDeleteIngressControllerConditionsMetric(t *testing.T) {
+func Test_DeleteIngressControllerConditionsMetric(t *testing.T) {
 
 	testCases := []struct {
 		name                 string
@@ -139,7 +139,7 @@ func TestDeleteIngressControllerConditionsMetric(t *testing.T) {
 	}
 }
 
-func TestIngressControllerNLBMetric(t *testing.T) {
+func Test_SetIngressControllerNLBMetric(t *testing.T) {
 	testCases := []struct {
 		name                 string
 		inputIngress         *operatorv1.IngressController

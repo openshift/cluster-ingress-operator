@@ -8,7 +8,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
-func TestRouterNamespaceChanged(t *testing.T) {
+func Test_routerNamespaceChanged(t *testing.T) {
 	testCases := []struct {
 		description string
 		mutate      func(*corev1.Namespace)

@@ -11,7 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
-func TestCycleServicePort(t *testing.T) {
+func Test_cycleServicePort(t *testing.T) {
 	tPort1 := intstr.IntOrString{
 		StrVal: "80",
 	}

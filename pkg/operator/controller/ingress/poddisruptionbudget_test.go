@@ -9,7 +9,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
-func TestDesiredPodDisruptionBudget(t *testing.T) {
+func Test_desiredRouterPodDisruptionBudget(t *testing.T) {
 	pointerTo := func(v_ int) *int32 { v := int32(v_); return &v }
 	testCases := []struct {
 		description          string
@@ -88,7 +88,7 @@ func TestDesiredPodDisruptionBudget(t *testing.T) {
 	}
 }
 
-func TestPodDisruptionBudgetChange(t *testing.T) {
+func Test_podDisruptionBudgetChange(t *testing.T) {
 	two := int32(2)
 	three := int32(3)
 	trueVar := true

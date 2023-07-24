@@ -20,7 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 )
 
-func TestDesiredLoadBalancerService(t *testing.T) {
+func Test_desiredLoadBalancerService(t *testing.T) {
 	testCases := []struct {
 		description          string
 		platform             configv1.PlatformType
@@ -649,9 +649,9 @@ func checkServiceHasAnnotation(svc *corev1.Service, name string, expectValue boo
 	}
 }
 
-// TestShouldUseLocalWithFallback verifies that shouldUseLocalWithFallback
+// Test_shouldUseLocalWithFallback verifies that shouldUseLocalWithFallback
 // behaves as expected.
-func TestShouldUseLocalWithFallback(t *testing.T) {
+func Test_shouldUseLocalWithFallback(t *testing.T) {
 	testCases := []struct {
 		description string
 		local       bool
@@ -715,7 +715,7 @@ func TestShouldUseLocalWithFallback(t *testing.T) {
 	}
 }
 
-func TestLoadBalancerServiceChanged(t *testing.T) {
+func Test_loadBalancerServiceChanged(t *testing.T) {
 	testCases := []struct {
 		description string
 		mutate      func(*corev1.Service)
@@ -920,9 +920,9 @@ func TestLoadBalancerServiceChanged(t *testing.T) {
 	}
 }
 
-// TestLoadBalancerServiceAnnotationsChanged verifies that
+// Test_loadBalancerServiceAnnotationsChanged verifies that
 // loadBalancerServiceAnnotationsChanged behaves correctly.
-func TestLoadBalancerServiceAnnotationsChanged(t *testing.T) {
+func Test_loadBalancerServiceAnnotationsChanged(t *testing.T) {
 	testCases := []struct {
 		description         string
 		mutate              func(*corev1.Service)
@@ -1018,7 +1018,7 @@ func TestLoadBalancerServiceAnnotationsChanged(t *testing.T) {
 	}
 }
 
-func TestServiceIngressOwner(t *testing.T) {
+func Test_isServiceOwnedByIngressController(t *testing.T) {
 	testCases := []struct {
 		description string
 		service     *corev1.Service
