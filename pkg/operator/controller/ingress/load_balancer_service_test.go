@@ -66,13 +66,6 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 			expectedResourceTags: "classic-load-balancer-key-with-value=100,classic-load-balancer-key-with-empty-value=",
 		},
 		{
-			description:  "external classic load balancer without scope for aws platform",
-			platform:     configv1.AWSPlatformType,
-			strategyType: operatorv1.LoadBalancerServiceStrategyType,
-			proxyNeeded:  true,
-			expect:       true,
-		},
-		{
 			description:  "external classic load balancer without LoadBalancerStrategy for aws platform",
 			platform:     configv1.AWSPlatformType,
 			strategyType: operatorv1.LoadBalancerServiceStrategyType,
