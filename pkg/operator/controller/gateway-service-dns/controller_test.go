@@ -67,7 +67,7 @@ func Test_Reconcile(t *testing.T) {
 			Hostname: hostname,
 		}
 	}
-	dnsrecord := func(name, dnsName string, targets ...string) *iov1.DNSRecord {
+	dnsrecord := func(name, dnsName string, recordType string, targets ...string) *iov1.DNSRecord {
 		return &iov1.DNSRecord{
 			ObjectMeta: metav1.ObjectMeta{
 				Namespace: "openshift-ingress",
@@ -75,7 +75,7 @@ func Test_Reconcile(t *testing.T) {
 			},
 			Spec: iov1.DNSRecordSpec{
 				DNSName:             dnsName,
-				RecordType:          iov1.CNAMERecordType,
+				RecordType:          iov1.DNSRecordType(recordType),
 				Targets:             targets,
 				RecordTTL:           30,
 				DNSManagementPolicy: iov1.ManagedDNS,
@@ -138,8 +138,8 @@ func Test_Reconcile(t *testing.T) {
 			},
 			reconcileRequest: req("openshift-ingress", "example-gateway"),
 			expectCreate: []client.Object{
-				dnsrecord("example-gateway-76456f8647-wildcard", "*.prod.example.com.", "lb.example.com"),
-				dnsrecord("example-gateway-64754456b8-wildcard", "*.stage.example.com.", "lb.example.com"),
+				dnsrecord("example-gateway-76456f8647-wildcard", "*.prod.example.com.", "CNAME", "lb.example.com"),
+				dnsrecord("example-gateway-64754456b8-wildcard", "*.stage.example.com.", "CNAME", "lb.example.com"),
 			},
 			expectUpdate: []client.Object{},
 		},
@@ -161,12 +161,12 @@ func Test_Reconcile(t *testing.T) {
 					},
 					ingHost("newlb.example.com"),
 				),
-				dnsrecord("example-gateway-7bdcfc8f68-wildcard", "*.example.com.", "oldlb.example.com"),
+				dnsrecord("example-gateway-7bdcfc8f68-wildcard", "*.example.com.", "CNAME", "oldlb.example.com"),
 			},
 			reconcileRequest: req("openshift-ingress", "example-gateway"),
 			expectCreate:     []client.Object{},
 			expectUpdate: []client.Object{
-				dnsrecord("example-gateway-7bdcfc8f68-wildcard", "*.example.com.", "newlb.example.com"),
+				dnsrecord("example-gateway-7bdcfc8f68-wildcard", "*.example.com.", "CNAME", "newlb.example.com"),
 			},
 		},
 		{
@@ -190,7 +190,7 @@ func Test_Reconcile(t *testing.T) {
 			},
 			reconcileRequest: req("openshift-ingress", "example-gateway"),
 			expectCreate: []client.Object{
-				dnsrecord("example-gateway-64754456b8-wildcard", "*.stage.example.com.", "lb.example.com"),
+				dnsrecord("example-gateway-64754456b8-wildcard", "*.stage.example.com.", "CNAME", "lb.example.com"),
 			},
 			expectUpdate: []client.Object{},
 		},
