@@ -78,6 +78,8 @@ const (
 
 	RouterHAProxyConfigManager = "ROUTER_HAPROXY_CONFIG_MANAGER"
 
+	RouterHAProxyContstats = "ROUTER_HAPROXY_CONTSTATS"
+
 	RouterHAProxyThreadsEnvName      = "ROUTER_THREADS"
 	RouterHAProxyThreadsDefaultValue = 4
 
@@ -487,6 +489,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	var unsupportedConfigOverrides struct {
 		LoadBalancingAlgorithm string `json:"loadBalancingAlgorithm"`
 		DynamicConfigManager   string `json:"dynamicConfigManager"`
+		ContStats              string `json:"contStats"`
 	}
 	if len(ci.Spec.UnsupportedConfigOverrides.Raw) > 0 {
 		if err := json.Unmarshal(ci.Spec.UnsupportedConfigOverrides.Raw, &unsupportedConfigOverrides); err != nil {
@@ -535,6 +538,13 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	if v, err := strconv.ParseBool(dynamicConfigOverride); err == nil && v {
 		env = append(env, corev1.EnvVar{
 			Name:  RouterHAProxyConfigManager,
+			Value: "true",
+		})
+	}
+	contStats := unsupportedConfigOverrides.ContStats
+	if v, err := strconv.ParseBool(contStats); err == nil && v {
+		env = append(env, corev1.EnvVar{
+			Name:  RouterHAProxyContstats,
 			Value: "true",
 		})
 	}
