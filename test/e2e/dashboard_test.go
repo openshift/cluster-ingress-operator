@@ -5,26 +5,36 @@ package e2e
 
 import (
 	"context"
+	"reflect"
 	"testing"
-	"time"
 
+	configv1 "github.com/openshift/api/config/v1"
 	monitoringdashboard "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/monitoring-dashboard"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
-	monitoringdashboard "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/monitoring-dashboard"
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/util/wait"
-	"testing"
 	"time"
 )
 
 func TestDashboardCreation(t *testing.T) {
 	t.Parallel()
 
+	infraConfig := &configv1.Infrastructure{}
+	if err := kclient.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, infraConfig); err != nil {
+		t.Fatalf("failed to get infraConfig: %v", err)
+	}
+
 	dashboardCM := &corev1.ConfigMap{}
 	if err := kclient.Get(context.TODO(), monitoringdashboard.ConfigMapName(), dashboardCM); err != nil {
+		if errors.IsNotFound(err) && infraConfig.Status.ControlPlaneTopology == configv1.ExternalTopologyMode {
+			// Dashboard is not created when external topology is externel
+			return
+		}
 		t.Fatalf("failed to get dashboard configmap: %v", err)
 	}
+
+	initialData := dashboardCM.Data
 
 	// Change dashboard in configmap and check for update from the operator
 	dashboardCM.Data = map[string]string{
@@ -58,7 +68,7 @@ func TestDashboardCreation(t *testing.T) {
 	}
 	err = wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
 		if err := kclient.Get(context.TODO(), monitoringdashboard.ConfigMapName(), dashboardCM); err != nil {
-			t.Logf("failed to get configmap: %v", err)
+			t.Logf("failed to get configmap: %v, retying...", err)
 			return false, nil
 		}
 		return true, nil
@@ -66,5 +76,7 @@ func TestDashboardCreation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to observe configmap: %v", err)
 	}
-
+	if !reflect.DeepEqual(dashboardCM.Data, initialData) {
+		t.Fatalf("data mismatch")
+	}
 }

@@ -10,7 +10,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
-	runtimecontroller "sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
@@ -31,13 +30,13 @@ func New(mgr manager.Manager) (controller.Controller, error) {
 	reconciler := &reconciler{
 		client: mgr.GetClient(),
 	}
-	c, err := runtimecontroller.New(controllerName, mgr, runtimecontroller.Options{Reconciler: reconciler})
+	c, err := controller.New(controllerName, mgr, controller.Options{Reconciler: reconciler})
 	if err != nil {
 		return nil, err
 	}
 
 	CMPredicate := predicate.NewPredicateFuncs(func(o client.Object) bool {
-		return o.GetName() == dashboardConfigmapName
+		return o.GetName() == dashboardConfigMapName
 	})
 
 	if err := c.Watch(source.Kind(operatorCache, &corev1.ConfigMap{}), &handler.EnqueueRequestForObject{}, CMPredicate); err != nil {

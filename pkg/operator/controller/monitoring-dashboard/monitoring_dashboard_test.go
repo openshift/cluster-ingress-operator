@@ -13,19 +13,19 @@ import (
 func newConfigMap() *corev1.ConfigMap {
 	return &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "ingress-operator-dashboard",
+			Name:      dashboardConfigMapName,
 			Namespace: "openshift-config-managed",
 			Labels: map[string]string{
-				"console.openshift.io/dashboard": "true",
+				consoleDashboardLabel: "true",
 			},
 		},
 		Data: map[string]string{
-			"dashboard.json": dashboardEmbed,
+			"dashboard.json": dashboardJSON,
 		},
 	}
 }
 
-// TestDashboardNeedsUpdate checks if the dashboardNeedsUpdate function 
+// TestDashboardNeedsUpdate checks if the dashboardNeedsUpdate function
 // accurately determines the need for dashboard ConfigMap updates under various scenarios.
 func TestDashboardNeedsUpdate(t *testing.T) {
 	type testInputs struct {
@@ -33,7 +33,7 @@ func TestDashboardNeedsUpdate(t *testing.T) {
 		desired *corev1.ConfigMap
 	}
 	type testOutputs struct {
-		res bool
+		updateNeeded bool
 	}
 	testCases := []struct {
 		description string
@@ -47,7 +47,7 @@ func TestDashboardNeedsUpdate(t *testing.T) {
 				desired: newConfigMap(),
 			},
 			output: testOutputs{
-				res: false,
+				updateNeeded: false,
 			},
 		},
 		{
@@ -55,10 +55,10 @@ func TestDashboardNeedsUpdate(t *testing.T) {
 			inputs: testInputs{
 				current: &corev1.ConfigMap{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:      "ingress-controller-dashboard",
+						Name:      "dashboardConfigMapName",
 						Namespace: "openshift-config-managed",
 						Labels: map[string]string{
-							"console.openshift.io/dashboard": "true",
+							consoleDashboardLabel: "true",
 						},
 					},
 					Data: map[string]string{},
@@ -66,7 +66,7 @@ func TestDashboardNeedsUpdate(t *testing.T) {
 				desired: newConfigMap(),
 			},
 			output: testOutputs{
-				res: true,
+				updateNeeded: true,
 			},
 		},
 		{
@@ -74,10 +74,10 @@ func TestDashboardNeedsUpdate(t *testing.T) {
 			inputs: testInputs{
 				current: &corev1.ConfigMap{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:      "ingress-controller-dashboard",
+						Name:      "dashboardConfigMapName",
 						Namespace: "openshift-config-managed",
 						Labels: map[string]string{
-							"console.openshift.io/dashboard": "true",
+							consoleDashboardLabel: "true",
 						},
 					},
 					Data: map[string]string{
@@ -87,7 +87,7 @@ func TestDashboardNeedsUpdate(t *testing.T) {
 				desired: newConfigMap(),
 			},
 			output: testOutputs{
-				res: true,
+				updateNeeded: true,
 			},
 		},
 		{
@@ -95,28 +95,68 @@ func TestDashboardNeedsUpdate(t *testing.T) {
 			inputs: testInputs{
 				current: &corev1.ConfigMap{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:      "ingress-controller-dashboard",
+						Name:      "dashboardConfigMapName",
 						Namespace: "openshift-config-managed",
 						Labels: map[string]string{
-							"console.openshift.io/dashboard": "true",
+							consoleDashboardLabel: "true",
 						},
 					},
 					Data: map[string]string{
-						"dashboard.json":  dashboardEmbed,
-						"dashboard2.json": dashboardEmbed,
+						"dashboard.json":  dashboardJSON,
+						"dashboard2.json": dashboardJSON,
 					},
 				},
 				desired: newConfigMap(),
 			},
 			output: testOutputs{
-				res: true,
+				updateNeeded: true,
+			},
+		},
+		{
+			description: "Missing label",
+			inputs: testInputs{
+				current: &corev1.ConfigMap{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "dashboardConfigMapName",
+						Namespace: "openshift-config-managed",
+						Labels:    map[string]string{},
+					},
+					Data: map[string]string{
+						"dashboard.json": dashboardJSON,
+					},
+				},
+				desired: newConfigMap(),
+			},
+			output: testOutputs{
+				updateNeeded: true,
+			},
+		},
+		{
+			description: "Label set to false",
+			inputs: testInputs{
+				current: &corev1.ConfigMap{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "dashboardConfigMapName",
+						Namespace: "openshift-config-managed",
+						Labels: map[string]string{
+							consoleDashboardLabel: "false",
+						},
+					},
+					Data: map[string]string{
+						"dashboard.json": dashboardJSON,
+					},
+				},
+				desired: newConfigMap(),
+			},
+			output: testOutputs{
+				updateNeeded: true,
 			},
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
-			expected := tc.output.res
+			expected := tc.output.updateNeeded
 			actual := dashboardNeedsUpdate(tc.inputs.current, tc.inputs.desired)
 			if expected != actual {
 				t.Errorf("expected %v, got %v", expected, actual)
@@ -128,11 +168,12 @@ func TestDashboardNeedsUpdate(t *testing.T) {
 // TestDesiredMonitoringDashboard verifies that the function
 // desiredMonitoringDashboard correctly creates a monitoring dashboard
 // ConfigMap based on the ControlPlaneTopology value. It ensures no ConfigMap
-// is returned for ExternalTopologyMode and checks for a correct ConfigMap in 
+// is returned for ExternalTopologyMode and checks for a correct ConfigMap in
 // other cases.
 func TestDesiredMonitoringDashboard(t *testing.T) {
 	type testInputs struct {
 		infraStatus configv1.InfrastructureStatus
+		current     *corev1.ConfigMap
 	}
 	type testOutputs struct {
 		configMap *corev1.ConfigMap
@@ -148,6 +189,7 @@ func TestDesiredMonitoringDashboard(t *testing.T) {
 				infraStatus: configv1.InfrastructureStatus{
 					ControlPlaneTopology: configv1.ExternalTopologyMode,
 				},
+				current: nil,
 			},
 			output: testOutputs{
 				configMap: nil,
@@ -159,9 +201,46 @@ func TestDesiredMonitoringDashboard(t *testing.T) {
 				infraStatus: configv1.InfrastructureStatus{
 					ControlPlaneTopology: configv1.SingleReplicaTopologyMode,
 				},
+				current: nil,
 			},
 			output: testOutputs{
 				configMap: newConfigMap(),
+			},
+		},
+		{
+			description: "Desired must use current resource version",
+			inputs: testInputs{
+				infraStatus: configv1.InfrastructureStatus{
+					ControlPlaneTopology: configv1.SingleReplicaTopologyMode,
+				},
+				current: &corev1.ConfigMap{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      dashboardConfigMapName,
+						Namespace: "openshift-config-managed",
+						Labels: map[string]string{
+							consoleDashboardLabel: "true",
+						},
+						ResourceVersion: "32",
+					},
+					Data: map[string]string{
+						"dashboard.json": dashboardJSON,
+					},
+				},
+			},
+			output: testOutputs{
+				configMap: &corev1.ConfigMap{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      dashboardConfigMapName,
+						Namespace: "openshift-config-managed",
+						Labels: map[string]string{
+							consoleDashboardLabel: "true",
+						},
+						ResourceVersion: "32",
+					},
+					Data: map[string]string{
+						"dashboard.json": dashboardJSON,
+					},
+				},
 			},
 		},
 	}
@@ -169,7 +248,7 @@ func TestDesiredMonitoringDashboard(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
 			expected := tc.output.configMap
-			actual := desiredMonitoringDashboard(context.TODO(), tc.inputs.infraStatus)
+			actual := desiredMonitoringDashboard(context.TODO(), tc.inputs.infraStatus, tc.inputs.current)
 			if expected == nil && actual != nil {
 				t.Errorf("expected %v, got %v", expected, actual)
 			} else if expected != nil && actual == nil {
