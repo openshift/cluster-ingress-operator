@@ -25,8 +25,8 @@ func newConfigMap() *corev1.ConfigMap {
 	}
 }
 
-// TestDashboardNeedsUpdate verifies that we update the dashboard when needed
-// and we do not when not needed
+// TestDashboardNeedsUpdate checks if the dashboardNeedsUpdate function 
+// accurately determines the need for dashboard ConfigMap updates under various scenarios.
 func TestDashboardNeedsUpdate(t *testing.T) {
 	type testInputs struct {
 		current *corev1.ConfigMap
@@ -41,7 +41,7 @@ func TestDashboardNeedsUpdate(t *testing.T) {
 		output      testOutputs
 	}{
 		{
-			description: "Identicals configmaps",
+			description: "Identical configmaps",
 			inputs: testInputs{
 				current: newConfigMap(),
 				desired: newConfigMap(),
@@ -125,9 +125,11 @@ func TestDashboardNeedsUpdate(t *testing.T) {
 	}
 }
 
-// TestDesiredRouterCertsGlobalSecret verifies that we get the expected global
-// secret for the default ingresscontroller and for various combinations of
-// ingresscontrollers and default certificate secrets.
+// TestDesiredMonitoringDashboard verifies that the function
+// desiredMonitoringDashboard correctly creates a monitoring dashboard
+// ConfigMap based on the ControlPlaneTopology value. It ensures no ConfigMap
+// is returned for ExternalTopologyMode and checks for a correct ConfigMap in 
+// other cases.
 func TestDesiredMonitoringDashboard(t *testing.T) {
 	type testInputs struct {
 		infraStatus configv1.InfrastructureStatus
@@ -141,7 +143,7 @@ func TestDesiredMonitoringDashboard(t *testing.T) {
 		output      testOutputs
 	}{
 		{
-			description: "No dashboad if topology is external",
+			description: "No dashboard if topology is external",
 			inputs: testInputs{
 				infraStatus: configv1.InfrastructureStatus{
 					ControlPlaneTopology: configv1.ExternalTopologyMode,
@@ -152,7 +154,7 @@ func TestDesiredMonitoringDashboard(t *testing.T) {
 			},
 		},
 		{
-			description: "Dashboard if topology is not external",
+			description: "Dashboard expected if topology is not external",
 			inputs: testInputs{
 				infraStatus: configv1.InfrastructureStatus{
 					ControlPlaneTopology: configv1.SingleReplicaTopologyMode,

@@ -41,7 +41,7 @@ func (r *reconciler) ensureMonitoringDashboard(ctx context.Context, infraStatus 
 	case current != nil && desired == nil:
 		err = r.client.Delete(ctx, current)
 	case current == nil && desired == nil:
-		//nothing to do
+		// nothing to do
 
 	}
 
@@ -55,7 +55,8 @@ func ConfigMapName() types.NamespacedName {
 	}
 }
 
-// currentMonitoringDashboard return the existing configmap if exist or nil, as well as any errors
+// currentMonitoringDashboard retrieves the existing monitoring dashboard ConfigMap if it exists, otherwise returns nil.
+// If an error occurs during the retrieval, it returns the error.
 func (r *reconciler) currentMonitoringDashboard(ctx context.Context) (*corev1.ConfigMap, error) {
 	configmap := &corev1.ConfigMap{}
 	name := ConfigMapName()
@@ -68,8 +69,9 @@ func (r *reconciler) currentMonitoringDashboard(ctx context.Context) (*corev1.Co
 	return configmap, nil
 }
 
+// dashboardJSON is the string representation of the embedded 'dashboard.json' file.
 //go:embed dashboard.json
-var dashboardEmbed string
+var dashboardJSON string
 
 // desiredMonitoringDashboard return the desired configmap for the monitoring dashboard or nil if the
 // configmap should not be deployed

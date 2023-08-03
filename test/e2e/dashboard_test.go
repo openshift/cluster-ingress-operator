@@ -5,6 +5,12 @@ package e2e
 
 import (
 	"context"
+	"testing"
+	"time"
+
+	monitoringdashboard "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/monitoring-dashboard"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
 	monitoringdashboard "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/monitoring-dashboard"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -29,12 +35,12 @@ func TestDashboardCreation(t *testing.T) {
 	}
 	err := wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
 		if err := kclient.Get(context.TODO(), monitoringdashboard.ConfigMapName(), dashboardCM); err != nil {
-			t.Logf("failed to get configmap: %v", err)
+			t.Logf("failed to get configmap: %v, retrying...", err)
 			return false, nil
 		}
 		dashboard, ok := dashboardCM.Data["dashboard.json"]
 		if !(ok && len(dashboard) > 0) {
-			t.Logf("Controller did not modify back the configmap")
+			t.Logf("Controller did not modify the ConfigMap back to its original state, retrying...")
 			return false, nil
 		}
 		return true, nil
