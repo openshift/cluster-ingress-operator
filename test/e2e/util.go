@@ -51,7 +51,7 @@ func buildEchoPod(name, namespace string) *corev1.Pod {
 						`EXEC:'/bin/bash -c \"printf \\\"HTTP/1.0 200 OK\r\n\r\n\\\"; sed -e \\\"/^\r/q\\\"\"'`,
 					},
 					Command: []string{"/bin/socat"},
-					Image:   "openshift/origin-node",
+					Image:   "image-registry.openshift-image-registry.svc:5000/openshift/tools:latest",
 					Name:    "echo",
 					Ports: []corev1.ContainerPort{
 						{
@@ -171,7 +171,7 @@ func buildSlowHTTPDPod(name, namespace string) *corev1.Pod {
 						`EXEC:'/bin/bash -c \"sleep 40; printf \\\"HTTP/1.0 200 OK\r\n\r\nfin\r\n\\\"\"'`,
 					},
 					Command: []string{"/bin/socat"},
-					Image:   "openshift/origin-node",
+					Image:   "image-registry.openshift-image-registry.svc:5000/openshift/tools:latest",
 					Name:    "echo",
 					Ports: []corev1.ContainerPort{
 						{
