@@ -65,21 +65,21 @@ func EnsureWildcardDNSRecord(client client.Client, name types.NamespacedName, dn
 
 // EnsureDNSRecord will create DNS records for the given LB service.  If service
 // is nil (haveLBS is false), nothing is done.
-func EnsureDNSRecord(client client.Client, name types.NamespacedName, dnsRecordLabels map[string]string, ownerRef metav1.OwnerReference, domain string, service *corev1.Service) (bool, *iov1.DNSRecord, error) {
-	wantWC, desired := desiredDNSRecord(name, dnsRecordLabels, ownerRef, domain, iov1.ManagedDNS, service)
+func EnsureDNSRecord(client client.Client, name types.NamespacedName, dnsRecordLabels map[string]string, ownerRef metav1.OwnerReference, domain string, targets []string, recordType iov1.DNSRecordType) (bool, *iov1.DNSRecord, error) {
+	desired := desiredDNSRecord(name, dnsRecordLabels, ownerRef, domain, iov1.ManagedDNS, targets, recordType)
 	haveWC, current, err := CurrentDNSRecord(client, name)
 	if err != nil {
 		return false, nil, err
 	}
 
 	switch {
-	case wantWC && !haveWC:
+	case !haveWC:
 		if err := client.Create(context.TODO(), desired); err != nil {
 			return false, nil, fmt.Errorf("failed to create dnsrecord %s/%s: %v", desired.Namespace, desired.Name, err)
 		}
 		log.Info("created dnsrecord", "dnsrecord", desired)
 		return CurrentDNSRecord(client, name)
-	case wantWC && haveWC:
+	case haveWC:
 		if updated, err := updateDNSRecord(client, current, desired); err != nil {
 			return true, current, fmt.Errorf("failed to update dnsrecord %s/%s: %v", desired.Namespace, desired.Name, err)
 		} else if updated {
@@ -92,11 +92,41 @@ func EnsureDNSRecord(client client.Client, name types.NamespacedName, dnsRecordL
 
 // desiredWildcardDNSRecord will return any necessary wildcard DNS records for the
 // given service.
+//
+// For now, if the service has more than one .status.loadbalancer.ingress, only
+// the first will be used.
+//
+// TODO: If .status.loadbalancer.ingress is processed once as non-empty and then
+// later becomes empty, what should we do? Currently we'll treat it as an intent
+// to not have a desired record.
 func desiredWildcardDNSRecord(name types.NamespacedName, dnsRecordLabels map[string]string, ownerRef metav1.OwnerReference, dnsDomain string, endpointPublishingStrategy *operatorv1.EndpointPublishingStrategy, service *corev1.Service) (bool, *iov1.DNSRecord) {
 	// If the ingresscontroller has no ingress domain, we cannot configure any
 	// DNS records.
 	if len(dnsDomain) == 0 {
 		return false, nil
+	}
+
+	// No LB target exists for the domain record to point at.
+	if len(service.Status.LoadBalancer.Ingress) == 0 {
+		return false, nil
+	}
+
+	ingress := service.Status.LoadBalancer.Ingress[0]
+
+	// Quick sanity check since we don't know how to handle both being set (is
+	// that even a valid state?)
+	if len(ingress.Hostname) > 0 && len(ingress.IP) > 0 {
+		return false, nil
+	}
+
+	var target string
+	var recordType iov1.DNSRecordType
+	if len(ingress.Hostname) > 0 {
+		recordType = iov1.CNAMERecordType
+		target = ingress.Hostname
+	} else {
+		recordType = iov1.ARecordType
+		target = ingress.IP
 	}
 
 	// DNS is only managed for LB publishing.
@@ -115,44 +145,12 @@ func desiredWildcardDNSRecord(name types.NamespacedName, dnsRecordLabels map[str
 		dnsPolicy = iov1.UnmanagedDNS
 	}
 
-	return desiredDNSRecord(name, dnsRecordLabels, ownerRef, domain, dnsPolicy, service)
+	return true, desiredDNSRecord(name, dnsRecordLabels, ownerRef, domain, dnsPolicy, []string{target}, recordType)
 }
 
-// desiredDNSRecord will return any necessary DNS records for the given domain
-// and service.
-//
-// For now, if the service has more than one .status.loadbalancer.ingress, only
-// the first will be used.
-//
-// TODO: If .status.loadbalancer.ingress is processed once as non-empty and then
-// later becomes empty, what should we do? Currently we'll treat it as an intent
-// to not have a desired record.
-func desiredDNSRecord(name types.NamespacedName, dnsRecordLabels map[string]string, ownerRef metav1.OwnerReference, domain string, dnsPolicy iov1.DNSManagementPolicy, service *corev1.Service) (bool, *iov1.DNSRecord) {
-	// No LB target exists for the domain record to point at.
-	if len(service.Status.LoadBalancer.Ingress) == 0 {
-		return false, nil
-	}
-
-	ingress := service.Status.LoadBalancer.Ingress[0]
-
-	// Quick sanity check since we don't know how to handle both being set (is
-	// that even a valid state?)
-	if len(ingress.Hostname) > 0 && len(ingress.IP) > 0 {
-		return false, nil
-	}
-
-	var target string
-	var recordType iov1.DNSRecordType
-
-	if len(ingress.Hostname) > 0 {
-		recordType = iov1.CNAMERecordType
-		target = ingress.Hostname
-	} else {
-		recordType = iov1.ARecordType
-		target = ingress.IP
-	}
-
-	return true, &iov1.DNSRecord{
+// desiredDNSRecord will return a DNSRecord CR for the given domain and target.
+func desiredDNSRecord(name types.NamespacedName, dnsRecordLabels map[string]string, ownerRef metav1.OwnerReference, domain string, dnsPolicy iov1.DNSManagementPolicy, targets []string, recordType iov1.DNSRecordType) *iov1.DNSRecord {
+	return &iov1.DNSRecord{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace:       name.Namespace,
 			Name:            name.Name,
@@ -163,7 +161,7 @@ func desiredDNSRecord(name types.NamespacedName, dnsRecordLabels map[string]stri
 		Spec: iov1.DNSRecordSpec{
 			DNSName:             domain,
 			DNSManagementPolicy: dnsPolicy,
-			Targets:             []string{target},
+			Targets:             targets,
 			RecordType:          recordType,
 			RecordTTL:           defaultRecordTTL,
 		},

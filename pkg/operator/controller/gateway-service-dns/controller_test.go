@@ -26,7 +26,7 @@ import (
 )
 
 func Test_Reconcile(t *testing.T) {
-	gw := func(name string, listeners ...gatewayapiv1beta1.Listener) *gatewayapiv1beta1.Gateway {
+	gw := func(name string, addresses []gatewayapiv1beta1.GatewayAddress, listeners []gatewayapiv1beta1.Listener) *gatewayapiv1beta1.Gateway {
 		return &gatewayapiv1beta1.Gateway{
 			ObjectMeta: metav1.ObjectMeta{
 				Namespace: "openshift-ingress",
@@ -34,6 +34,9 @@ func Test_Reconcile(t *testing.T) {
 			},
 			Spec: gatewayapiv1beta1.GatewaySpec{
 				Listeners: listeners,
+			},
+			Status: gatewayapiv1beta1.GatewayStatus{
+				Addresses: addresses,
 			},
 		}
 	}
@@ -45,29 +48,17 @@ func Test_Reconcile(t *testing.T) {
 			Port:     gatewayapiv1beta1.PortNumber(port),
 		}
 	}
-	svc := func(name string, labels, selector map[string]string, ingresses ...corev1.LoadBalancerIngress) *corev1.Service {
-		return &corev1.Service{
-			ObjectMeta: metav1.ObjectMeta{
-				Labels:    labels,
-				Namespace: "openshift-ingress",
-				Name:      name,
-			},
-			Spec: corev1.ServiceSpec{
-				Selector: selector,
-			},
-			Status: corev1.ServiceStatus{
-				LoadBalancer: corev1.LoadBalancerStatus{
-					Ingress: ingresses,
-				},
-			},
+	a := func(addressType, value string) gatewayapiv1beta1.GatewayAddress {
+		var typePtr *gatewayapiv1beta1.AddressType
+		if addressType != "" {
+			typePtr = (*gatewayapiv1beta1.AddressType)(&addressType)
+		}
+		return gatewayapiv1beta1.GatewayAddress{
+			Type:  typePtr,
+			Value: value,
 		}
 	}
-	ingHost := func(hostname string) corev1.LoadBalancerIngress {
-		return corev1.LoadBalancerIngress{
-			Hostname: hostname,
-		}
-	}
-	dnsrecord := func(name, dnsName string, targets ...string) *iov1.DNSRecord {
+	dnsrecord := func(name, dnsName string, recordType string, targets ...string) *iov1.DNSRecord {
 		return &iov1.DNSRecord{
 			ObjectMeta: metav1.ObjectMeta{
 				Namespace: "openshift-ingress",
@@ -75,7 +66,7 @@ func Test_Reconcile(t *testing.T) {
 			},
 			Spec: iov1.DNSRecordSpec{
 				DNSName:             dnsName,
-				RecordType:          iov1.CNAMERecordType,
+				RecordType:          iov1.DNSRecordType(recordType),
 				Targets:             targets,
 				RecordTTL:           30,
 				DNSManagementPolicy: iov1.ManagedDNS,
@@ -98,18 +89,29 @@ func Test_Reconcile(t *testing.T) {
 		expectUpdate     []client.Object
 	}{
 		{
-			name: "gateway with no listeners",
+			name: "gateway with address but no listeners",
 			existingObjects: []runtime.Object{
-				gw("example-gateway"),
-				svc(
+				gw(
 					"example-gateway",
-					map[string]string{
-						"gateway.istio.io/managed": "example-gateway",
+					[]gatewayapiv1beta1.GatewayAddress{
+						a("IPAddress", "lb.example.com"),
 					},
-					map[string]string{
-						"istio.io/gateway-name": "example-gateway",
+					[]gatewayapiv1beta1.Listener{},
+				),
+			},
+			reconcileRequest: req("openshift-ingress", "example-gateway"),
+			expectCreate:     []client.Object{},
+			expectUpdate:     []client.Object{},
+		},
+		{
+			name: "gateway with listener but no addresses",
+			existingObjects: []runtime.Object{
+				gw(
+					"example-gateway",
+					[]gatewayapiv1beta1.GatewayAddress{},
+					[]gatewayapiv1beta1.Listener{
+						l("stage-http", "*.stage.example.com", 80),
 					},
-					ingHost("lb.example.com"),
 				),
 			},
 			reconcileRequest: req("openshift-ingress", "example-gateway"),
@@ -121,25 +123,20 @@ func Test_Reconcile(t *testing.T) {
 			existingObjects: []runtime.Object{
 				gw(
 					"example-gateway",
-					l("stage-http", "*.stage.example.com", 80),
-					l("stage-https", "*.stage.example.com", 443),
-					l("prod-https", "*.prod.example.com", 443),
-				),
-				svc(
-					"example-gateway",
-					map[string]string{
-						"gateway.istio.io/managed": "example-gateway",
+					[]gatewayapiv1beta1.GatewayAddress{
+						a("IPAddress", "lb.example.com"),
 					},
-					map[string]string{
-						"istio.io/gateway-name": "example-gateway",
+					[]gatewayapiv1beta1.Listener{
+						l("stage-http", "*.stage.example.com", 80),
+						l("stage-https", "*.stage.example.com", 443),
+						l("prod-https", "*.prod.example.com", 443),
 					},
-					ingHost("lb.example.com"),
 				),
 			},
 			reconcileRequest: req("openshift-ingress", "example-gateway"),
 			expectCreate: []client.Object{
-				dnsrecord("example-gateway-76456f8647-wildcard", "*.prod.example.com.", "lb.example.com"),
-				dnsrecord("example-gateway-64754456b8-wildcard", "*.stage.example.com.", "lb.example.com"),
+				dnsrecord("example-gateway-76456f8647-wildcard", "*.prod.example.com.", "CNAME", "lb.example.com"),
+				dnsrecord("example-gateway-64754456b8-wildcard", "*.stage.example.com.", "CNAME", "lb.example.com"),
 			},
 			expectUpdate: []client.Object{},
 		},
@@ -148,25 +145,20 @@ func Test_Reconcile(t *testing.T) {
 			existingObjects: []runtime.Object{
 				gw(
 					"example-gateway",
-					l("http", "*.example.com", 80),
-					l("https", "*.example.com", 443),
-				),
-				svc(
-					"example-gateway",
-					map[string]string{
-						"gateway.istio.io/managed": "example-gateway",
+					[]gatewayapiv1beta1.GatewayAddress{
+						a("IPAddress", "newlb.example.com"),
 					},
-					map[string]string{
-						"istio.io/gateway-name": "example-gateway",
+					[]gatewayapiv1beta1.Listener{
+						l("http", "*.example.com", 80),
+						l("https", "*.example.com", 443),
 					},
-					ingHost("newlb.example.com"),
 				),
-				dnsrecord("example-gateway-7bdcfc8f68-wildcard", "*.example.com.", "oldlb.example.com"),
+				dnsrecord("example-gateway-7bdcfc8f68-wildcard", "*.example.com.", "CNAME", "oldlb.example.com"),
 			},
 			reconcileRequest: req("openshift-ingress", "example-gateway"),
 			expectCreate:     []client.Object{},
 			expectUpdate: []client.Object{
-				dnsrecord("example-gateway-7bdcfc8f68-wildcard", "*.example.com.", "newlb.example.com"),
+				dnsrecord("example-gateway-7bdcfc8f68-wildcard", "*.example.com.", "CNAME", "newlb.example.com"),
 			},
 		},
 		{
@@ -174,23 +166,63 @@ func Test_Reconcile(t *testing.T) {
 			existingObjects: []runtime.Object{
 				gw(
 					"example-gateway",
-					l("stage-http", "*.stage.example.com", 80),
-					l("stage-https", "*.stage.example.com", 443),
-				),
-				svc(
-					"example-gateway",
-					map[string]string{
-						"gateway.istio.io/managed": "example-gateway",
+					[]gatewayapiv1beta1.GatewayAddress{
+						a("IPAddress", "lb.example.com"),
 					},
-					map[string]string{
-						"istio.io/gateway-name": "example-gateway",
+					[]gatewayapiv1beta1.Listener{
+						l("stage-http", "*.stage.example.com", 80),
+						l("stage-https", "*.stage.example.com", 443),
 					},
-					ingHost("lb.example.com"),
 				),
 			},
 			reconcileRequest: req("openshift-ingress", "example-gateway"),
 			expectCreate: []client.Object{
-				dnsrecord("example-gateway-64754456b8-wildcard", "*.stage.example.com.", "lb.example.com"),
+				dnsrecord("example-gateway-64754456b8-wildcard", "*.stage.example.com.", "CNAME", "lb.example.com"),
+			},
+			expectUpdate: []client.Object{},
+		},
+		{
+			name: "gateway with two address that are host names and one listener with a host name, no dnsrecords",
+			existingObjects: []runtime.Object{
+				gw(
+					"example-gateway",
+					[]gatewayapiv1beta1.GatewayAddress{
+						a("IPAddress", "lb1.example.com"),
+						a("IPAddress", "lb2.example.com"),
+					},
+					[]gatewayapiv1beta1.Listener{
+						l("stage-http", "*.stage.example.com", 80),
+						l("stage-https", "*.stage.example.com", 443),
+					},
+				),
+			},
+			reconcileRequest: req("openshift-ingress", "example-gateway"),
+			expectCreate: []client.Object{
+				dnsrecord("example-gateway-64754456b8-wildcard", "*.stage.example.com.", "CNAME", "lb1.example.com"),
+			},
+			expectUpdate: []client.Object{},
+		},
+		{
+			name: "gateway with three addresses that are IP addresses and two that are host names and one listener with a host name, no dnsrecords",
+			existingObjects: []runtime.Object{
+				gw(
+					"example-gateway",
+					[]gatewayapiv1beta1.GatewayAddress{
+						a("IPAddress", "1.2.3.4"),
+						a("IPAddress", "lb1.example.com"),
+						a("IPAddress", "2.3.4.1"),
+						a("IPAddress", "lb2.example.com"),
+						a("IPAddress", "3.4.1.2"),
+					},
+					[]gatewayapiv1beta1.Listener{
+						l("stage-http", "*.stage.example.com", 80),
+						l("stage-https", "*.stage.example.com", 443),
+					},
+				),
+			},
+			reconcileRequest: req("openshift-ingress", "example-gateway"),
+			expectCreate: []client.Object{
+				dnsrecord("example-gateway-64754456b8-wildcard", "*.stage.example.com.", "A", "1.2.3.4", "2.3.4.1", "3.4.1.2"),
 			},
 			expectUpdate: []client.Object{},
 		},
@@ -358,6 +390,109 @@ func Test_gatewayListenersHostnamesChanged(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.expect, gatewayListenersHostnamesChanged(tc.old, tc.new))
+		})
+	}
+}
+
+// Test_gatewayAddressesChanged verifies that gatewayAddressesChanged behaves as
+// expected.
+func Test_gatewayAddressesChanged(t *testing.T) {
+	a := func(addressType, value string) gatewayapiv1beta1.GatewayAddress {
+		var typePtr *gatewayapiv1beta1.AddressType
+		if addressType != "" {
+			typePtr = (*gatewayapiv1beta1.AddressType)(&addressType)
+		}
+		return gatewayapiv1beta1.GatewayAddress{
+			Type:  typePtr,
+			Value: value,
+		}
+	}
+	tests := []struct {
+		name     string
+		old, new []gatewayapiv1beta1.GatewayAddress
+		expect   bool
+	}{
+		{
+			name:   "no addresses",
+			old:    []gatewayapiv1beta1.GatewayAddress{},
+			new:    []gatewayapiv1beta1.GatewayAddress{},
+			expect: false,
+		},
+		{
+			name: "three addresses, no changes",
+			old: []gatewayapiv1beta1.GatewayAddress{
+				a("", "1.2.3.4"),
+				a("IPAddress", "128::1"),
+				a("Hostname", "istio-ingressgateway.openshift-ingress.svc.cluster.local"),
+				a("NamedAddress", "my-ip-address"),
+			},
+			new: []gatewayapiv1beta1.GatewayAddress{
+				a("", "1.2.3.4"),
+				a("IPAddress", "128::1"),
+				a("Hostname", "istio-ingressgateway.openshift-ingress.svc.cluster.local"),
+				a("NamedAddress", "my-ip-address"),
+			},
+			expect: false,
+		},
+		{
+			name: "three addresses, reverse ordering",
+			old: []gatewayapiv1beta1.GatewayAddress{
+				a("", "1.2.3.4"),
+				a("IPAddress", "128::1"),
+				a("Hostname", "istio-ingressgateway.openshift-ingress.svc.cluster.local"),
+				a("NamedAddress", "my-ip-address"),
+			},
+			new: []gatewayapiv1beta1.GatewayAddress{
+				a("NamedAddress", "my-ip-address"),
+				a("Hostname", "istio-ingressgateway.openshift-ingress.svc.cluster.local"),
+				a("IPAddress", "128::1"),
+				a("", "1.2.3.4"),
+			},
+			expect: false,
+		},
+		{
+			name: "add an address",
+			old: []gatewayapiv1beta1.GatewayAddress{
+				a("Hostname", "foo.openshift-ingress.svc.cluster.local"),
+			},
+			new: []gatewayapiv1beta1.GatewayAddress{
+				a("Hostname", "foo.openshift-ingress.svc.cluster.local"),
+				a("Hostname", "bar.openshift-ingress.svc.cluster.local"),
+			},
+			expect: true,
+		},
+		{
+			name: "remove an address",
+			old: []gatewayapiv1beta1.GatewayAddress{
+				a("Hostname", "foo.openshift-ingress.svc.cluster.local"),
+			},
+			new:    []gatewayapiv1beta1.GatewayAddress{},
+			expect: true,
+		},
+		{
+			name: "change an address's hostname",
+			old: []gatewayapiv1beta1.GatewayAddress{
+				a("Hostname", "foo.openshift-ingress.svc.cluster.local"),
+			},
+			new: []gatewayapiv1beta1.GatewayAddress{
+				a("Hostname", "bar.openshift-ingress.svc.cluster.local"),
+			},
+			expect: true,
+		},
+		{
+			name: "change an address's type",
+			old: []gatewayapiv1beta1.GatewayAddress{
+				a("Hostname", "foo.openshift-ingress.svc.cluster.local"),
+			},
+			new: []gatewayapiv1beta1.GatewayAddress{
+				a("NamedAddress", "foo.openshift-ingress.svc.cluster.local"),
+			},
+			expect: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.expect, gatewayAddressesChanged(tc.old, tc.new))
 		})
 	}
 }

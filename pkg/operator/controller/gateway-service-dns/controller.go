@@ -2,8 +2,12 @@ package gateway_service_dns
 
 import (
 	"context"
+	"net"
 	"reflect"
 	"strings"
+
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
@@ -12,8 +16,6 @@ import (
 	gatewayapiv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
 	"k8s.io/client-go/tools/record"
-
-	corev1 "k8s.io/api/core/v1"
 
 	iov1 "github.com/openshift/api/operatoringress/v1"
 
@@ -42,16 +44,13 @@ const (
 	// this label in the selector of any service that it creates for a
 	// gateway.
 	gatewayNameLabelKey = "istio.io/gateway-name"
-	// managedByIstioLabelKey is the key of a label that Istio adds to
-	// resources that it manages.
-	managedByIstioLabelKey = "gateway.istio.io/managed"
 )
 
 var log = logf.Logger.WithName(controllerName)
 
-// NewUnmanaged creates and returns a controller that watches services that are
-// associated with gateways and creates dnsrecord objects for them.  This is an
-// unmanaged controller, which means that the manager does not start it.
+// NewUnmanaged creates and returns a controller that watches gateways and
+// creates dnsrecord objects for them.  This is an unmanaged controller, which
+// means that the manager does not start it.
 func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, error) {
 	operatorCache := mgr.GetCache()
 	reconciler := &reconciler{
@@ -66,55 +65,59 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 	}
 	scheme := mgr.GetClient().Scheme()
 	mapper := mgr.GetClient().RESTMapper()
-	isServiceNeedingDNS := predicate.NewPredicateFuncs(func(o client.Object) bool {
-		_, ok := o.(*corev1.Service).Labels[managedByIstioLabelKey]
-		return ok
-	})
-	gatewayListenersChanged := predicate.Funcs{
+	gatewayAddressesChangedPredicate := predicate.Funcs{
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			old := e.ObjectOld.(*gatewayapiv1beta1.Gateway).Status.Addresses
+			new := e.ObjectNew.(*gatewayapiv1beta1.Gateway).Status.Addresses
+			// The targets of associated DNSRecord CRs may need to
+			// be updated if the addresses have changed.
+			return gatewayAddressesChanged(old, new)
+		},
+	}
+	gatewayListenersChangedPredicate := predicate.Funcs{
 		UpdateFunc: func(e event.UpdateEvent) bool {
 			old := e.ObjectOld.(*gatewayapiv1beta1.Gateway).Spec.Listeners
 			new := e.ObjectNew.(*gatewayapiv1beta1.Gateway).Spec.Listeners
-			// A DNSRecord CR needs to be updated if, and only if,
-			// the hostname has changed (a listener's port and
-			// protocol have no bearing on the DNS record).
+			// The DNS names of associated DNSRecord CRs need to be
+			// updated if the host name has changed (a listener's
+			// port and protocol have no bearing on the DNS record).
 			return gatewayListenersHostnamesChanged(old, new)
 		},
 	}
 	isInOperandNamespace := predicate.NewPredicateFuncs(func(o client.Object) bool {
 		return o.GetNamespace() == config.OperandNamespace
 	})
-	gatewayToService := func(ctx context.Context, o client.Object) []reconcile.Request {
-		var services corev1.ServiceList
-		listOpts := []client.ListOption{
-			client.MatchingLabels{gatewayNameLabelKey: o.GetName()},
-			client.InNamespace(config.OperandNamespace),
-		}
-		requests := []reconcile.Request{}
-		if err := reconciler.cache.List(ctx, &services, listOpts...); err != nil {
-			log.Error(err, "failed to list services for gateway", "gateway", o.GetName())
-			return requests
-		}
-		for i := range services.Items {
-			request := reconcile.Request{
-				NamespacedName: types.NamespacedName{
-					Namespace: services.Items[i].Namespace,
-					Name:      services.Items[i].Name,
-				},
-			}
-			requests = append(requests, request)
-		}
-		return requests
-	}
-	if err := c.Watch(source.Kind(operatorCache, &gatewayapiv1beta1.Gateway{}), handler.EnqueueRequestsFromMapFunc(gatewayToService), isInOperandNamespace, gatewayListenersChanged); err != nil {
+	if err := c.Watch(source.Kind(operatorCache, &gatewayapiv1beta1.Gateway{}), &handler.EnqueueRequestForObject{}, isInOperandNamespace, predicate.Or(gatewayAddressesChangedPredicate, gatewayListenersChangedPredicate)); err != nil {
 		return nil, err
 	}
-	if err := c.Watch(source.Kind(operatorCache, &corev1.Service{}), &handler.EnqueueRequestForObject{}, isServiceNeedingDNS, isInOperandNamespace); err != nil {
-		return nil, err
-	}
-	if err := c.Watch(source.Kind(operatorCache, &iov1.DNSRecord{}), handler.EnqueueRequestForOwner(scheme, mapper, &corev1.Service{}), isInOperandNamespace); err != nil {
+	if err := c.Watch(source.Kind(operatorCache, &iov1.DNSRecord{}), handler.EnqueueRequestForOwner(scheme, mapper, &gatewayapiv1beta1.Gateway{}), isInOperandNamespace); err != nil {
 		return nil, err
 	}
 	return c, nil
+}
+
+// gatewayAddressesChanged returns a Boolean indicating whether any
+// addresses changed in the given list of gateway addresses.
+func gatewayAddressesChanged(xs, ys []gatewayapiv1beta1.GatewayAddress) bool {
+	cmpAddresses := func(a, b gatewayapiv1beta1.GatewayAddress) bool {
+		const defaultType = gatewayapiv1beta1.IPAddressType
+		var (
+			aType = defaultType
+			bType = defaultType
+		)
+		if a.Type != nil {
+			aType = *a.Type
+		}
+		if b.Type != nil {
+			bType = *b.Type
+		}
+		return aType < bType || aType == bType && a.Value < b.Value
+	}
+	cmpOpts := []cmp.Option{
+		cmpopts.EquateEmpty(),
+		cmpopts.SortSlices(cmpAddresses),
+	}
+	return !cmp.Equal(xs, ys, cmpOpts...)
 }
 
 // gatewayListenersHostnamesChanged returns a Boolean indicating whether any
@@ -138,12 +141,13 @@ func gatewayListenersHostnamesChanged(xs, ys []gatewayapiv1beta1.Listener) bool 
 // Config holds all the configuration that must be provided when creating the
 // controller.
 type Config struct {
-	// OperandNamespace is the namespace in which to watch for services and
+	// OperandNamespace is the namespace in which to watch for gateways and
 	// dnsrecords and in which to create dnsrecords.
 	OperandNamespace string
 }
 
-// reconciler handles the actual service reconciliation logic.
+// reconciler handles the actual reconciliation logic for gateways and
+// dnsrecords.
 type reconciler struct {
 	config Config
 
@@ -152,30 +156,20 @@ type reconciler struct {
 	recorder record.EventRecorder
 }
 
-// Reconcile expects request to refer to a service and creates or reconciles a
-// dnsrecord.
+// Reconcile expects request to refer to a gateway and creates or reconciles
+// dnsrecords.
+//
+// Reconciliation ensures that there is a DNSRecord CR for every gateway
+// listener, with targets coming from the gateway addresses.  The listeners are
+// read from the gateway spec because it has required information that is not
+// reported in status, namely the host name.  The addresses are read from the
+// gateway status because it has required information that is not specified in
+// spec, namely the address that was assigned by Istio's gateway controller.
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	log.Info("reconciling", "request", request)
 
-	var service corev1.Service
-	if err := r.cache.Get(ctx, request.NamespacedName, &service); err != nil {
-		if apierrors.IsNotFound(err) {
-			log.Info("service not found; reconciliation will be skipped", "request", request)
-			return reconcile.Result{}, nil
-		}
-		return reconcile.Result{}, err
-	}
-
-	if len(service.Spec.Selector[gatewayNameLabelKey]) == 0 {
-		log.Info(`service selector has no "`+gatewayNameLabelKey+`" label; reconciliation will be skipped`, "request", request)
-		return reconcile.Result{}, nil
-	}
-
 	var gateway gatewayapiv1beta1.Gateway
-	gatewayName := types.NamespacedName{
-		Namespace: service.Namespace,
-		Name:      service.Spec.Selector[gatewayNameLabelKey],
-	}
+	gatewayName := request.NamespacedName
 	if err := r.cache.Get(ctx, gatewayName, &gateway); err != nil {
 		if apierrors.IsNotFound(err) {
 			log.Info("gateway not found; reconciliation will be skipped", "request", request)
@@ -184,11 +178,76 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		return reconcile.Result{}, err
 	}
 
+	targets, recordType := getGatewayAddresses(&gateway)
+	if len(targets) == 0 {
+		log.Info("gateway has no addresses; reconciliation will be skipped", "request", request, "addresses", gateway.Spec.Addresses)
+		return reconcile.Result{}, nil
+	}
+
 	domains := getGatewayHostnames(&gateway)
+
 	var errs []error
-	errs = append(errs, r.ensureDNSRecordsForGateway(ctx, &gateway, &service, domains.List())...)
-	errs = append(errs, r.deleteStaleDNSRecordsForGateway(ctx, &gateway, &service, domains)...)
+	errs = append(errs, r.ensureDNSRecordsForGateway(ctx, &gateway, domains.List(), sets.List(targets), recordType)...)
+	errs = append(errs, r.deleteStaleDNSRecordsForGateway(ctx, &gateway, domains, targets)...)
 	return reconcile.Result{}, utilerrors.NewAggregate(errs)
+}
+
+// getGatewayAddresses returns a slice of DNS targets and a DNS record type
+// derived from the given gateway's addresses, as reported in the gateway's
+// status.
+//
+// The Gateway API spec puts few restrictions on allowed addresses.  Notably, a
+// gateway can specify that an address has type "IPAddress" while specifying a
+// host name as the value, which Istio does to indicate that the address is
+// external to the cluster (for example, to represent a public cloud
+// load-balancer).
+
+// Also of note, a gateway can specify multiple addresses, including multiple
+// host names.  In the case of IP addresses, we can create A records for all the
+// addresses.  However, DNS does not allow multiple canonical names for the same
+// host name, so if the gateway has multiple addresses that are host names, we
+// must pick just one of them.
+//
+// This function looks through all the gateway's addresses.  If the first one is
+// an IP address, this function returns the set of all IP addresses and the "A"
+// record type.  If the first address is a host name, this function uses this
+// address, ignores any other addresses, and returns the "CNAME" record type.
+func getGatewayAddresses(gateway *gatewayapiv1beta1.Gateway) (sets.Set[string], iov1.DNSRecordType) {
+	var (
+		targets    = sets.New[string]()
+		recordType iov1.DNSRecordType
+	)
+
+	for _, address := range gateway.Status.Addresses {
+		// Istio specifies "IPAddress" if the address is an external
+		// address, irrespective of whether it be IP address or whether
+		// it be host name.
+		if address.Type == nil || *address.Type != gatewayapiv1beta1.IPAddressType {
+			continue
+		}
+
+		// A DNS name can have multiple A record targets or a single
+		// CNAME record.  If the first address is a host name, we just
+		// create a CNAME for that host name.  Otherwise, we accumulate
+		// any IP addresses and create A's for the lot of them.
+		if net.ParseIP(address.Value) == nil {
+			if targets.Len() > 0 {
+				// Ignore host names if we are already
+				// accumulating IP addresses.
+				continue
+			}
+			// If the first address we got is a host name, use it.
+			recordType = iov1.CNAMERecordType
+			targets.Insert(address.Value)
+			break
+		} else {
+			// Accumulate IP addresses for A record targets.
+			recordType = iov1.ARecordType
+			targets.Insert(address.Value)
+		}
+	}
+
+	return targets, recordType
 }
 
 // getGatewayHostnames returns a sets.String with the hostnames from the given
@@ -210,25 +269,26 @@ func getGatewayHostnames(gateway *gatewayapiv1beta1.Gateway) sets.String {
 }
 
 // ensureDNSRecordsForGateway ensures that a DNSRecord CR exists, associated
-// with the given gateway and service, for each of the given domains.  It
-// returns a list of any errors that result from ensuring those DNSRecord CRs.
-func (r *reconciler) ensureDNSRecordsForGateway(ctx context.Context, gateway *gatewayapiv1beta1.Gateway, service *corev1.Service, domains []string) []error {
+// with the given gateway, for each of the given domains and target addresses.
+// It returns a list of any errors that result from ensuring those DNSRecord
+// CRs.
+func (r *reconciler) ensureDNSRecordsForGateway(ctx context.Context, gateway *gatewayapiv1beta1.Gateway, domains, targets []string, recordType iov1.DNSRecordType) []error {
 	labels := map[string]string{
 		gatewayNameLabelKey: gateway.Name,
 	}
-	for k, v := range service.Labels {
+	for k, v := range gateway.Labels {
 		labels[k] = v
 	}
 	ownerRef := metav1.OwnerReference{
-		APIVersion: corev1.SchemeGroupVersion.String(),
-		Kind:       "Service",
-		Name:       service.Name,
-		UID:        service.UID,
+		APIVersion: gatewayapiv1beta1.GroupVersion.String(),
+		Kind:       "Gateway",
+		Name:       gateway.Name,
+		UID:        gateway.UID,
 	}
 	var errs []error
 	for _, domain := range domains {
 		name := operatorcontroller.GatewayDNSRecordName(gateway, domain)
-		_, _, err := dnsrecord.EnsureDNSRecord(r.client, name, labels, ownerRef, domain, service)
+		_, _, err := dnsrecord.EnsureDNSRecord(r.client, name, labels, ownerRef, domain, targets, recordType)
 		errs = append(errs, err)
 	}
 	return errs
@@ -239,7 +299,7 @@ func (r *reconciler) ensureDNSRecordsForGateway(ctx context.Context, gateway *ga
 // domains.  Such DNSRecord CRs may exist if a hostname was modified or deleted
 // on the gateway.  deleteStaleDNSRecordsForGateway returns a list of any errors
 // that result from deleting those DNSRecord CRs.
-func (r *reconciler) deleteStaleDNSRecordsForGateway(ctx context.Context, gateway *gatewayapiv1beta1.Gateway, service *corev1.Service, domains sets.String) []error {
+func (r *reconciler) deleteStaleDNSRecordsForGateway(ctx context.Context, gateway *gatewayapiv1beta1.Gateway, domains sets.String, targets sets.Set[string]) []error {
 	listOpts := []client.ListOption{
 		client.MatchingLabels{gatewayNameLabelKey: gateway.Name},
 		client.InNamespace(r.config.OperandNamespace),
@@ -252,7 +312,7 @@ func (r *reconciler) deleteStaleDNSRecordsForGateway(ctx context.Context, gatewa
 	}
 	var errs []error
 	for i := range dnsrecords.Items {
-		if domains.Has(dnsrecords.Items[i].Spec.DNSName) {
+		if domains.Has(dnsrecords.Items[i].Spec.DNSName) && targets.HasAny(dnsrecords.Items[i].Spec.Targets...) {
 			continue
 		}
 		name := types.NamespacedName{
