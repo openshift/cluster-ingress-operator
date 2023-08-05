@@ -688,3 +688,19 @@ func assertDeletedWaitForCleanup(t *testing.T, cl client.Client, thing client.Ob
 		t.Fatalf("Timed out waiting for %s to be cleaned up: %v", thing.GetName(), err)
 	}
 }
+
+// dumpEventsInNamespace gets the events in the specified namespace and logs
+// them.
+func dumpEventsInNamespace(t *testing.T, ns string) {
+	t.Helper()
+
+	eventList := &corev1.EventList{}
+	if err := kclient.List(context.TODO(), eventList, client.InNamespace(ns)); err != nil {
+		t.Errorf("failed to list events for namespace %s: %v", ns, err)
+		return
+	}
+
+	for _, e := range eventList.Items {
+		t.Log(e.FirstTimestamp, e.Source, e.InvolvedObject.Kind, e.InvolvedObject.Name, e.Reason, e.Message)
+	}
+}
