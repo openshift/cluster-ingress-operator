@@ -65,8 +65,8 @@ func EnsureWildcardDNSRecord(client client.Client, name types.NamespacedName, dn
 
 // EnsureDNSRecord will create DNS records for the given LB service.  If service
 // is nil (haveLBS is false), nothing is done.
-func EnsureDNSRecord(client client.Client, name types.NamespacedName, dnsRecordLabels map[string]string, ownerRef metav1.OwnerReference, domain string, service *corev1.Service) (bool, *iov1.DNSRecord, error) {
-	wantWC, desired := desiredDNSRecord(name, dnsRecordLabels, ownerRef, domain, iov1.ManagedDNS, service)
+func EnsureDNSRecord(client client.Client, name types.NamespacedName, dnsRecordLabels map[string]string, ownerRef metav1.OwnerReference, domain string, dnsPolicy iov1.DNSManagementPolicy, service *corev1.Service) (bool, *iov1.DNSRecord, error) {
+	wantWC, desired := desiredDNSRecord(name, dnsRecordLabels, ownerRef, domain, dnsPolicy, service)
 	haveWC, current, err := CurrentDNSRecord(client, name)
 	if err != nil {
 		return false, nil, err
@@ -229,11 +229,20 @@ func dnsRecordChanged(current, expected *iov1.DNSRecord) (bool, *iov1.DNSRecord)
 // once we know there are no users depending on this.
 // See https://bugzilla.redhat.com/show_bug.cgi?id=2041616
 func ManageDNSForDomain(domain string, status *configv1.PlatformStatus, dnsConfig *configv1.DNS) bool {
-	if len(domain) == 0 {
+	if len(domain) == 0 || len(dnsConfig.Spec.BaseDomain) == 0 {
 		return false
 	}
 
 	mustContain := "." + dnsConfig.Spec.BaseDomain
+
+	// Ignore any trailing dot for comparison.
+	if strings.HasSuffix(mustContain, ".") {
+		mustContain = mustContain[:len(mustContain)-1]
+	}
+	if strings.HasSuffix(domain, ".") {
+		domain = domain[:len(domain)-1]
+	}
+
 	switch status.Type {
 	case configv1.AWSPlatformType, configv1.GCPPlatformType:
 		return strings.HasSuffix(domain, mustContain)
