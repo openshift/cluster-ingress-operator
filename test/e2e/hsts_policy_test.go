@@ -144,6 +144,7 @@ func TestHstsPolicyWorks(t *testing.T) {
 		t.Logf("request to %s got correct HSTS header: [%s]", validRoute.Spec.Host, header)
 		return true, nil
 	}); err != nil {
+		dumpEventsInNamespace(t, echoPod.Namespace)
 		t.Fatalf("failed to find header [%s]: %v", exampleHeader, err)
 	}
 }

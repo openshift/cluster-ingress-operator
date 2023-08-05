@@ -712,3 +712,19 @@ func getRouteHost(t *testing.T, route *routev1.Route, router string) string {
 	t.Fatalf("failed to find host name for default router in route: %#v", route)
 	return ""
 }
+
+// dumpEventsInNamespace gets the events in the specified namespace and logs
+// them.
+func dumpEventsInNamespace(t *testing.T, ns string) {
+	t.Helper()
+
+	eventList := &corev1.EventList{}
+	if err := kclient.List(context.TODO(), eventList, client.InNamespace(ns)); err != nil {
+		t.Errorf("failed to list events for namespace %s: %v", ns, err)
+		return
+	}
+
+	for _, e := range eventList.Items {
+		t.Log(e.FirstTimestamp, e.Source, e.InvolvedObject.Kind, e.InvolvedObject.Name, e.Reason, e.Message)
+	}
+}
