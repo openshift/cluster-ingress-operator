@@ -101,6 +101,16 @@ func canaryRouteChanged(current, expected *routev1.Route) (bool, *routev1.Route)
 	changed := false
 	updated := current.DeepCopy()
 
+	if current.Spec.Host != expected.Spec.Host {
+		updated.Spec.Host = expected.Spec.Host
+		changed = true
+	}
+
+	if current.Spec.Subdomain != expected.Spec.Subdomain {
+		updated.Spec.Subdomain = expected.Spec.Subdomain
+		changed = true
+	}
+
 	if !cmp.Equal(current.Spec.Port, expected.Spec.Port, cmpopts.EquateEmpty()) {
 		updated.Spec.Port = expected.Spec.Port
 		changed = true
@@ -131,6 +141,7 @@ func desiredCanaryRoute(service *corev1.Service) (*routev1.Route, error) {
 
 	route.Namespace = name.Namespace
 	route.Name = name.Name
+	route.Spec.Subdomain = fmt.Sprintf("%s-%s", route.Name, route.Namespace)
 
 	if service == nil {
 		return route, fmt.Errorf("expected non-nil canary service for canary route %s/%s", route.Namespace, route.Name)
@@ -174,4 +185,24 @@ func checkRouteAdmitted(route *routev1.Route) bool {
 	}
 
 	return false
+}
+
+// getRouteHost returns the host name of the route for the default
+// IngressController.  If the default IngressController has not added its host
+// name to the route's status, this function returns the empty string.  For
+// simplicity, this function does not check the "Admitted" status condition, so
+// it will return the host name if it is set even if the IngressController has
+// rejected the route.
+func getRouteHost(route *routev1.Route) string {
+	if route == nil {
+		return ""
+	}
+
+	for _, ingress := range route.Status.Ingress {
+		if ingress.RouterName == manifests.DefaultIngressControllerName {
+			return ingress.Host
+		}
+	}
+
+	return ""
 }

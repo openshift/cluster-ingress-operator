@@ -23,8 +23,9 @@ const (
 // probeRouteEndpoint probes the given route's host
 // and returns an error when applicable.
 func probeRouteEndpoint(route *routev1.Route) error {
-	if len(route.Spec.Host) == 0 {
-		return fmt.Errorf("route.Spec.Host is empty, cannot test route")
+	routeHost := getRouteHost(route)
+	if len(routeHost) == 0 {
+		return fmt.Errorf("route host is empty, cannot test route")
 	}
 
 	// Create HTTP request
@@ -33,7 +34,7 @@ func probeRouteEndpoint(route *routev1.Route) error {
 	// via an external load balancer drop all traffic on port 80,
 	// in which case redirecting insecure traffic is not possible.
 	// See https://bugzilla.redhat.com/show_bug.cgi?id=1934773.
-	request, err := http.NewRequest("GET", "https://"+route.Spec.Host, nil)
+	request, err := http.NewRequest("GET", "https://"+routeHost, nil)
 	if err != nil {
 		return fmt.Errorf("error creating canary HTTP request %v: %v", request, err)
 	}
@@ -71,7 +72,7 @@ func probeRouteEndpoint(route *routev1.Route) error {
 		dnsErr := &net.DNSError{}
 		if errors.As(err, &dnsErr) {
 			// Handle DNS error
-			CanaryRouteDNSError.WithLabelValues(route.Spec.Host, dnsErr.Server).Inc()
+			CanaryRouteDNSError.WithLabelValues(routeHost, dnsErr.Server).Inc()
 			return fmt.Errorf("error sending canary HTTP request: DNS error: %v", err)
 		}
 		// Check if err is a timeout error
@@ -79,7 +80,7 @@ func probeRouteEndpoint(route *routev1.Route) error {
 			// Handle timeout error
 			return fmt.Errorf("error sending canary HTTP Request: Timeout: %v", err)
 		}
-		return fmt.Errorf("error sending canary HTTP request to %q: %v", route.Spec.Host, err)
+		return fmt.Errorf("error sending canary HTTP request to %q: %v", routeHost, err)
 	}
 
 	// Close response body even if read fails
@@ -121,7 +122,7 @@ func probeRouteEndpoint(route *routev1.Route) error {
 	switch status := response.StatusCode; status {
 	case http.StatusOK:
 		// Register total time in metrics (use milliseconds)
-		CanaryRequestTime.WithLabelValues(route.Spec.Host).Observe(float64(totalTime.Milliseconds()))
+		CanaryRequestTime.WithLabelValues(routeHost).Observe(float64(totalTime.Milliseconds()))
 	case http.StatusRequestTimeout:
 		return fmt.Errorf("status code %d: request timed out", status)
 	case http.StatusServiceUnavailable:

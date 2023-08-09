@@ -138,6 +138,8 @@ func TestClientTLS(t *testing.T) {
 		t.Fatalf("failed to observe route %q: %v", routeName, err)
 	}
 
+	routeHost := getRouteHost(t, route, ic.Name)
+
 	// We need an IP address to which to send requests.  The test client
 	// runs inside the cluster, so we can use the custom router's internal
 	// service address.
@@ -260,7 +262,7 @@ func TestClientTLS(t *testing.T) {
 		expectAllowed: false,
 	}}
 	for _, tc := range optionalPolicyTestCases {
-		_, err := curlGetStatusCode(t, clientPod, tc.cert, route.Spec.Host, service.Spec.ClusterIP, true)
+		_, err := curlGetStatusCode(t, clientPod, tc.cert, routeHost, service.Spec.ClusterIP, true)
 		if err == nil && !tc.expectAllowed {
 			t.Errorf("%q: expected error, got success", tc.description)
 		}
@@ -306,7 +308,7 @@ func TestClientTLS(t *testing.T) {
 		expectAllowed: false,
 	}}
 	for _, tc := range requiredPolicyTestCases {
-		_, err := curlGetStatusCode(t, clientPod, tc.cert, route.Spec.Host, service.Spec.ClusterIP, true)
+		_, err := curlGetStatusCode(t, clientPod, tc.cert, routeHost, service.Spec.ClusterIP, true)
 		if err == nil && !tc.expectAllowed {
 			t.Errorf("%q: expected error, got success", tc.description)
 		}
@@ -1010,6 +1012,8 @@ func TestMTLSWithCRLs(t *testing.T) {
 				t.Fatalf("failed to observe route %q: %v", routeName, err)
 			}
 
+			routeHost := getRouteHost(t, route, ic.Name)
+
 			// If the canary route is used, normally the default ingress controller will handle the request, but by
 			// using curl's --resolve flag, we can send an HTTP request intended for the canary pod directly to our
 			// ingress controller instead. In order to do that, we need the ingress controller's service IP.
@@ -1020,12 +1024,12 @@ func TestMTLSWithCRLs(t *testing.T) {
 			}
 
 			for certName := range tcCerts.ClientCerts.Accepted {
-				if _, err := curlGetStatusCode(t, clientPod, certName, route.Spec.Host, service.Spec.ClusterIP, false); err != nil {
+				if _, err := curlGetStatusCode(t, clientPod, certName, routeHost, service.Spec.ClusterIP, false); err != nil {
 					t.Errorf("Failed to curl route with cert %q: %v", certName, err)
 				}
 			}
 			for certName := range tcCerts.ClientCerts.Rejected {
-				if httpStatusCode, err := curlGetStatusCode(t, clientPod, certName, route.Spec.Host, service.Spec.ClusterIP, false); err != nil {
+				if httpStatusCode, err := curlGetStatusCode(t, clientPod, certName, routeHost, service.Spec.ClusterIP, false); err != nil {
 					if httpStatusCode == 0 {
 						// TLS/SSL verification failures result in a 0 http status code (no connection is made to the backend, so no http status code is returned).
 						continue

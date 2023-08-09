@@ -2584,6 +2584,7 @@ func TestHTTPHeaderCapture(t *testing.T) {
 	if err := kclient.Get(context.TODO(), routeName, route); err != nil {
 		t.Fatalf("failed to get the console route: %v", err)
 	}
+	routeHost := getRouteHost(t, route, ic.Name)
 	clientPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "headertest",
@@ -2601,8 +2602,8 @@ func TestHTTPHeaderCapture(t *testing.T) {
 						"-H", "x-test-header-1:foo",
 						"-H", "x-test-header-2:bar",
 						"--resolve",
-						route.Spec.Host + ":443:" + podList.Items[0].Status.PodIP,
-						"https://" + route.Spec.Host,
+						routeHost + ":443:" + podList.Items[0].Status.PodIP,
+						"https://" + routeHost,
 					},
 				},
 			},
@@ -2724,6 +2725,7 @@ func TestHTTPCookieCapture(t *testing.T) {
 	if err := kclient.Get(context.TODO(), routeName, route); err != nil {
 		t.Fatalf("failed to get the console route: %v", err)
 	}
+	routeHost := getRouteHost(t, route, ic.Name)
 	clientPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "cookietest",
@@ -2742,8 +2744,8 @@ func TestHTTPCookieCapture(t *testing.T) {
 						"-H", "cookie:foo=xyzzypop",
 						"-H", "cookie:foobaz=abc",
 						"--resolve",
-						route.Spec.Host + ":443:" + podList.Items[0].Status.PodIP,
-						"https://" + route.Spec.Host,
+						routeHost + ":443:" + podList.Items[0].Status.PodIP,
+						"https://" + routeHost,
 					},
 				},
 			},
