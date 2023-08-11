@@ -245,6 +245,8 @@ func getRouterDeploymentComponents(t *testing.T) (*operatorv1.IngressController,
 	t.Helper()
 
 	var one int32 = 1
+	var headerNameXFrame string = "X-Frame-Options"
+	var headerNameXSS string = "X-XSS-Protection"
 
 	ingressConfig := &configv1.Ingress{}
 	ic := &operatorv1.IngressController{
@@ -261,6 +263,73 @@ func getRouterDeploymentComponents(t *testing.T) (*operatorv1.IngressController,
 			RouteSelector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{
 					"baz": "quux",
+				},
+			},
+			HTTPHeaders: &operatorv1.IngressControllerHTTPHeaders{
+
+				Actions: operatorv1.IngressControllerHTTPHeaderActions{
+					Response: []operatorv1.IngressControllerHTTPHeader{
+						{
+							Name: headerNameXFrame,
+							Action: operatorv1.IngressControllerHTTPHeaderActionUnion{
+								Type: operatorv1.Set,
+								Set: &operatorv1.IngressControllerSetHTTPHeader{
+									Value: "DENY",
+								},
+							},
+						},
+						{
+							Name: headerNameXSS,
+							Action: operatorv1.IngressControllerHTTPHeaderActionUnion{
+								Type: operatorv1.Set,
+								Set: &operatorv1.IngressControllerSetHTTPHeader{
+									Value: "1;mode=block",
+								},
+							},
+						},
+						{
+							Name: "x-forwarded-client-cert",
+							Action: operatorv1.IngressControllerHTTPHeaderActionUnion{
+								Type: operatorv1.Set,
+								Set: &operatorv1.IngressControllerSetHTTPHeader{
+									Value: "%{+Q}[ssl_c_der,base64]",
+								},
+							},
+						},
+						{
+
+							Name: headerNameXFrame,
+							Action: operatorv1.IngressControllerHTTPHeaderActionUnion{
+								Type: operatorv1.Delete,
+							},
+						},
+						{
+
+							Name: headerNameXSS,
+							Action: operatorv1.IngressControllerHTTPHeaderActionUnion{
+								Type: operatorv1.Delete,
+							},
+						},
+					},
+
+					Request: []operatorv1.IngressControllerHTTPHeader{
+						{
+							Name: "Accept",
+							Action: operatorv1.IngressControllerHTTPHeaderActionUnion{
+								Type: operatorv1.Set,
+								Set: &operatorv1.IngressControllerSetHTTPHeader{
+									Value: "text/plain, text/html",
+								},
+							},
+						},
+						{
+
+							Name: "Accept-Encoding",
+							Action: operatorv1.IngressControllerHTTPHeaderActionUnion{
+								Type: operatorv1.Delete,
+							},
+						},
+					},
 				},
 			},
 		},
@@ -382,6 +451,8 @@ func Test_desiredRouterDeployment(t *testing.T) {
 		{"SSL_MIN_VERSION", true, "TLSv1.1"},
 		{WildcardRouteAdmissionPolicy, true, "false"},
 		{"ROUTER_DOMAIN", false, ""},
+		{"ROUTER_HTTP_RESPONSE_HEADERS", true, "X-Frame-Options:DENY:Set,X-XSS-Protection:1%3Bmode%3Dblock:Set,x-forwarded-client-cert:%25%7B%2BQ%7D%5Bssl_c_der%2Cbase64%5D:Set,X-Frame-Options:Delete,X-XSS-Protection:Delete"},
+		{"ROUTER_HTTP_REQUEST_HEADERS", true, "Accept:text%2Fplain%2C+text%2Fhtml:Set,Accept-Encoding:Delete"},
 	}
 	if err := checkDeploymentEnvironment(t, deployment, tests); err != nil {
 		t.Error(err)
@@ -1227,6 +1298,32 @@ func Test_deploymentConfigChanged(t *testing.T) {
 			expect: true,
 		},
 		{
+			description: "if ROUTER_HTTP_RESPONSE_HEADERS changes",
+			mutate: func(deployment *appsv1.Deployment) {
+				envs := deployment.Spec.Template.Spec.Containers[0].Env
+				for i, env := range envs {
+					if env.Name == "ROUTER_HTTP_RESPONSE_HEADERS" {
+						envs[i].Value = "X-Frame-Options%3ASAMEORIGIN%3ASet%2CX-XSS-Protection%3A1%253Bmode%253Dblock%3ASet%2Cx-forwarded-client-cert%3A%2525%257B%252BQ%257D%255Bssl_c_der%252Cbase64%255D%3ASet%2CX-Frame-Options%3ADelete%2CX-XSS-Protection%3ADelete"
+					}
+				}
+				deployment.Spec.Template.Spec.Containers[0].Env = envs
+			},
+			expect: true,
+		},
+		{
+			description: "if ROUTER_HTTP_REQUEST_HEADERS changes",
+			mutate: func(deployment *appsv1.Deployment) {
+				envs := deployment.Spec.Template.Spec.Containers[0].Env
+				for i, env := range envs {
+					if env.Name == "ROUTER_HTTP_REQUEST_HEADERS" {
+						envs[i].Value = "Accept%3Atext%252Fplain%252C%2Bapplication%252Fxml%3ASet%2CAccept-Encoding%3ADelete"
+					}
+				}
+				deployment.Spec.Template.Spec.Containers[0].Env = envs
+			},
+			expect: true,
+		},
+		{
 			description: "if ROUTER_USE_PROXY_PROTOCOL changes",
 			mutate: func(deployment *appsv1.Deployment) {
 				envs := deployment.Spec.Template.Spec.Containers[0].Env
@@ -1607,6 +1704,14 @@ func Test_deploymentConfigChanged(t *testing.T) {
 										{
 											Name:  "ROUTE_LABELS",
 											Value: "foo=bar",
+										},
+										{
+											Name:  "ROUTER_HTTP_RESPONSE_HEADERS",
+											Value: "X-Frame-Options%3ADENY%3ASet%2CX-XSS-Protection%3A1%253Bmode%253Dblock%3ASet%2Cx-forwarded-client-cert%3A%2525%257B%252BQ%257D%255Bssl_c_der%252Cbase64%255D%3ASet%2CX-Frame-Options%3ADelete%2CX-XSS-Protection%3ADelete",
+										},
+										{
+											Name:  "ROUTER_HTTP_REQUEST_HEADERS",
+											Value: "Accept%3Atext%252Fplain%252C%2Btext%252Fhtml%3ASet%2CAccept-Encoding%3ADelete",
 										},
 									},
 									Image: "openshift/origin-cluster-ingress-operator:v4.0",
