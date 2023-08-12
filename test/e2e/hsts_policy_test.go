@@ -14,9 +14,6 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	routev1 "github.com/openshift/api/route/v1"
 
-	corev1 "k8s.io/api/core/v1"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 
 	"k8s.io/utils/pointer"
@@ -72,20 +69,7 @@ func TestHstsPolicyWorks(t *testing.T) {
 	t.Logf("created a RequiredHSTSPolicy with DomainPatterns: %v,\n preload policy: %s,\n includeSubDomains policy: %s,\n largest age: %d,\n smallest age: %d\n", p.DomainPatterns, p.PreloadPolicy, p.IncludeSubDomainsPolicy, *p.MaxAge.LargestMaxAge, *p.MaxAge.SmallestMaxAge)
 
 	// Use the same namespace for route, service, and pod
-	ns := &corev1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "hsts-policy-namespace",
-		},
-	}
-	if err := kclient.Create(context.TODO(), ns); err != nil {
-		t.Fatalf("failed to create namespace: %v", err)
-	}
-	defer func() {
-		// this will cleanup all components in this namespace
-		if err := kclient.Delete(context.TODO(), ns); err != nil {
-			t.Fatalf("failed to delete test namespace %s: %v", ns.Name, err)
-		}
-	}()
+	ns := createNamespace(t, "hsts-policy-namespace")
 
 	// Create pod
 	echoPod := buildEchoPod("hsts-policy-echo", ns.Name)
