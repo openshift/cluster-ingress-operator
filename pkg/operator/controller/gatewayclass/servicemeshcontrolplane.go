@@ -63,11 +63,12 @@ func (r *reconciler) ensureServiceMeshControlPlane(ctx context.Context, gatewayc
 // desiredServiceMeshControlPlane returns the desired servicemeshcontrolplane.
 func desiredServiceMeshControlPlane(name types.NamespacedName, ownerRef metav1.OwnerReference) (*maistrav2.ServiceMeshControlPlane, error) {
 	pilotContainerEnv := map[string]string{
-		"PILOT_ENABLE_GATEWAY_API":                       "true",
-		"PILOT_ENABLE_GATEWAY_API_DEPLOYMENT_CONTROLLER": "true",
-		"PILOT_ENABLE_GATEWAY_API_STATUS":                "true",
-		"PILOT_GATEWAY_API_CONTROLLER_NAME":              OpenShiftGatewayClassControllerName,
-		"PILOT_GATEWAY_API_DEFAULT_GATEWAYCLASS":         OpenShiftDefaultGatewayClassName,
+		"PILOT_ENABLE_GATEWAY_API":                         "true",
+		"PILOT_ENABLE_GATEWAY_API_DEPLOYMENT_CONTROLLER":   "true",
+		"PILOT_ENABLE_GATEWAY_API_STATUS":                  "true",
+		"PILOT_GATEWAY_API_CONTROLLER_NAME":                OpenShiftGatewayClassControllerName,
+		"PILOT_GATEWAY_API_DEFAULT_GATEWAYCLASS":           OpenShiftDefaultGatewayClassName,
+		"PILOT_ENABLE_GATEWAY_API_GATEWAYCLASS_CONTROLLER": "false",
 	}
 	f := false
 	t := true
