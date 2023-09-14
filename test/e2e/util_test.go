@@ -352,6 +352,19 @@ func getDeployment(t *testing.T, client client.Client, name types.NamespacedName
 	return &dep, nil
 }
 
+func getPods(t *testing.T, cl client.Client, deployment *appsv1.Deployment) (*corev1.PodList, error) {
+	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
+	if err != nil {
+		return nil, fmt.Errorf("deployment %s has invalid spec.selector: %w", deployment.Name, err)
+	}
+	podList := &corev1.PodList{}
+	if err := cl.List(context.TODO(), podList, client.MatchingLabelsSelector{Selector: selector}); err != nil {
+		t.Logf("failed to list pods for deployment %q: %v", deployment.Name, err)
+		return nil, err
+	}
+	return podList, nil
+}
+
 func podExec(t *testing.T, pod corev1.Pod, stdout, stderr *bytes.Buffer, cmd []string) error {
 	t.Helper()
 	kubeConfig, err := config.GetConfig()

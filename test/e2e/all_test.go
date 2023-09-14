@@ -37,6 +37,7 @@ func TestAll(t *testing.T) {
 		t.Run("TestForwardedHeaderPolicyReplace", TestForwardedHeaderPolicyReplace)
 		t.Run("TestHAProxyTimeouts", TestHAProxyTimeouts)
 		t.Run("TestHAProxyTimeoutsRejection", TestHAProxyTimeoutsRejection)
+		t.Run("TestCookieLen", TestCookieLen)
 		t.Run("TestHTTPCookieCapture", TestHTTPCookieCapture)
 		t.Run("TestHTTPHeaderBufferSize", TestHTTPHeaderBufferSize)
 		t.Run("TestHTTPHeaderCapture", TestHTTPHeaderCapture)

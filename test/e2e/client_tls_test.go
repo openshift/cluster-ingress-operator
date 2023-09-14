@@ -1408,19 +1408,6 @@ func verifyCRLs(t *testing.T, pod *corev1.Pod, expectedCRLs map[string]*x509.Rev
 	return true, nil
 }
 
-func getPods(t *testing.T, cl client.Client, deployment *appsv1.Deployment) (*corev1.PodList, error) {
-	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
-	if err != nil {
-		return nil, fmt.Errorf("deployment %s has invalid spec.selector: %w", deployment.Name, err)
-	}
-	podList := &corev1.PodList{}
-	if err := cl.List(context.TODO(), podList, client.MatchingLabelsSelector{Selector: selector}); err != nil {
-		t.Logf("failed to list pods for deployment %q: %v", deployment.Name, err)
-		return nil, err
-	}
-	return podList, nil
-}
-
 func getActiveCRLs(t *testing.T, clientPod *corev1.Pod) ([]*x509.RevocationList, error) {
 	t.Helper()
 	cmd := []string{
