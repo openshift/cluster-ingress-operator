@@ -1566,6 +1566,16 @@ func curlGetStatusCode(t *testing.T, clientPod *corev1.Pod, certName, endpoint, 
 	stdoutStr := stdout.String()
 	t.Logf("command: %s\nstdout:\n%s\n\nstderr:\n%s\n",
 		strings.Join(cmd, " "), stdoutStr, stderr.String())
+	// due to the '-w %{http_code}' option in the curl command, we should expect stdout to contain exactly one 3-digit
+	// number representing the HTTP code (or 000 if curl exited without completing the request). If stdoutStr is less
+	// than 3 bytes long, something major has gone wrong. Return curlErr if it's set, or generate our own error message
+	// if curErr is unset.
+	if len(stdoutStr) < 3 {
+		if curlErr != nil {
+			return -1, curlErr
+		}
+		return -1, fmt.Errorf("invalid output from curl: %q", stdoutStr)
+	}
 	// Try to parse the http status code even if curl returns an error; it may still be relevant.
 	httpStatusCode := stdoutStr[len(stdoutStr)-3:]
 	httpStatusCodeInt, err := strconv.ParseInt(httpStatusCode, 10, 64)
