@@ -18,9 +18,12 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 	routev1 "github.com/openshift/api/route/v1"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/apiserver/pkg/storage/names"
 )
 
 func TestRouterCompressionParsing(t *testing.T) {
@@ -134,25 +137,23 @@ func testCompressionPolicy(t *testing.T, name string, compressionPolicy operator
 }
 
 func TestRouterCompressionOperation(t *testing.T) {
-	// Get the default ingress controller
+	// Get the default ingress controller.
 	ic, err := getIngressController(t, kclient, defaultName, 1*time.Minute)
 	if err != nil {
 		t.Fatalf("failed to get ingress controller: %v", err)
 	}
 
-	// Configure the default ingress controller to apply compression to the canary route's
-	// MIME type, which is "text/plain; charset=utf-8"
-	mimeType := []operatorv1.CompressionMIMEType{"text/plain; charset=utf-8"}
+	mimeType := []operatorv1.CompressionMIMEType{"text/html; charset=utf-8"}
 	if err := testCompressionPolicy(t, defaultName.Name, operatorv1.HTTPCompressionPolicy{MimeTypes: mimeType}); err != nil {
 		t.Fatalf("failed to apply the required MIME type for test: %v", err)
 	}
 
-	// Cleanup the ic.Spec.CompressionPolicy
-	defer func() {
+	// Cleanup the ic.Spec.CompressionPolicy.
+	t.Cleanup(func() {
 
 		mimeType := []operatorv1.CompressionMIMEType{}
 		compressionPolicy := operatorv1.HTTPCompressionPolicy{MimeTypes: mimeType}
-		// Remove the mimeType that was added
+		// Remove the mimeType that was added.
 		if err := wait.PollImmediate(10*time.Second, 1*time.Minute, func() (bool, error) {
 			ic, err := getIngressController(t, kclient, defaultName, 1*time.Minute)
 			if err != nil {
@@ -170,14 +171,14 @@ func TestRouterCompressionOperation(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("failed to cleanup ingress controller: %v", err)
 		}
-	}()
+	})
 
-	// Wait until the new compressionPolicy is active in the router deployment
+	// Wait until the new compressionPolicy is active in the router deployment.
 	if err := waitForDeploymentCompleteWithOldPodTermination(t, kclient, controller.RouterDeploymentName(ic), 3*time.Minute); err != nil {
 		t.Fatalf("failed to observe deployment completion: %v", err)
 	}
 
-	// Create the http client to check the Content-Encoding header
+	// Create the http client to check the Content-Encoding header.
 	client := &http.Client{
 		Timeout: 10 * time.Second,
 		Transport: &http.Transport{
@@ -185,11 +186,95 @@ func TestRouterCompressionOperation(t *testing.T) {
 		},
 	}
 
-	// get the canary route
-	r := &routev1.Route{}
-	var routeName = types.NamespacedName{Namespace: "openshift-ingress-canary", Name: "canary"}
+	helloPodName := names.SimpleNameGenerator.GenerateName("hello-pod-")
+
+	helloConfigMap := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      helloPodName,
+			Namespace: "openshift-ingress",
+		},
+		Data: map[string]string{
+			"index.html": "Hello World!",
+		},
+	}
+	if err := kclient.Create(context.TODO(), helloConfigMap); err != nil {
+		t.Fatalf("failed to create configmap %s/%s: %v", helloConfigMap.Namespace, helloConfigMap.Name, err)
+	}
+	t.Cleanup(func() { assertDeleted(t, kclient, helloConfigMap) })
+
+	helloPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      helloPodName,
+			Namespace: "openshift-ingress",
+			Labels:    map[string]string{"app": helloPodName},
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{
+				Name:  "httpd",
+				Image: "quay.io/centos7/httpd-24-centos7:centos7",
+				Ports: []corev1.ContainerPort{{
+					ContainerPort: 8080,
+					Name:          "http-svc",
+				}},
+				VolumeMounts: []corev1.VolumeMount{{
+					Name:      "data",
+					MountPath: "/var/www/html",
+					ReadOnly:  true,
+				}},
+				SecurityContext: generateUnprivilegedSecurityContext(),
+			}},
+			Volumes: []corev1.Volume{{
+				Name: "data",
+				VolumeSource: corev1.VolumeSource{
+					ConfigMap: &corev1.ConfigMapVolumeSource{
+						LocalObjectReference: corev1.LocalObjectReference{
+							Name: helloConfigMap.Name,
+						},
+					},
+				},
+			}},
+		},
+	}
+	if err := kclient.Create(context.TODO(), helloPod); err != nil {
+		t.Fatalf("failed to create pod %s/%s: %v", helloPod.Namespace, helloPod.Name, err)
+	}
+	t.Cleanup(func() { assertDeleted(t, kclient, helloPod) })
+
+	helloService := buildEchoService(helloPod.Name, helloPod.Namespace, helloPod.ObjectMeta.Labels)
+	if err := kclient.Create(context.TODO(), helloService); err != nil {
+		t.Fatalf("failed to create service %s/%s: %v", helloService.Namespace, helloService.Name, err)
+	}
+	t.Cleanup(func() { assertDeleted(t, kclient, helloService) })
+
+	helloRoute := buildRoute(helloPod.Name, helloPod.Namespace, helloService.Name)
+	helloRoute.Spec.TLS = &routev1.TLSConfig{
+		Termination:                   routev1.TLSTerminationEdge,
+		InsecureEdgeTerminationPolicy: routev1.InsecureEdgeTerminationPolicyRedirect,
+	}
+	if err := kclient.Create(context.TODO(), helloRoute); err != nil {
+		t.Fatalf("failed to create route %s/%s: %v", helloRoute.Namespace, helloRoute.Name, err)
+	}
+	t.Cleanup(func() { assertDeleted(t, kclient, helloRoute) })
+
+	// Wait for hello pod to be ready.
+	if err = wait.PollImmediate(2*time.Second, 1*time.Minute, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), types.NamespacedName{Name: helloPod.Name, Namespace: helloPod.Namespace}, helloPod); err != nil {
+			t.Logf("failed to get client pod %q: %v", helloPod.Name, err)
+			return false, nil
+		}
+		for _, cond := range helloPod.Status.Conditions {
+			if cond.Type == corev1.PodReady {
+				return cond.Status == corev1.ConditionTrue, nil
+			}
+		}
+		return false, nil
+	}); err != nil {
+		t.Fatalf("timed out waiting for %s to become ready: %v", helloPod.Name, err)
+	}
+
+	var routeName = types.NamespacedName{Namespace: helloRoute.Namespace, Name: helloRoute.Name}
 	if err := wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
-		if err := kclient.Get(context.TODO(), routeName, r); err != nil {
+		if err := kclient.Get(context.TODO(), routeName, helloRoute); err != nil {
 			t.Logf("couldn't get route %s: %v, retrying...", routeName, err)
 			return false, nil
 		}
@@ -198,14 +283,14 @@ func TestRouterCompressionOperation(t *testing.T) {
 		t.Fatalf("failed to get route: %v", err)
 	}
 
-	routeHost := getRouteHost(t, r, ic.Name)
+	routeHost := getRouteHost(t, helloRoute, ic.Name)
 
-	// curl to canary, without the Accept-Encoding header set to gzip
+	// curl to hello pod, without the Accept-Encoding header set to gzip.
 	if err := testContentEncoding(t, client, routeHost, false, ""); err != nil {
 		t.Error(err)
 	}
 
-	// curl to canary, WITH the Accept-Encoding header set to gzip
+	// curl to hello pod, WITH the Accept-Encoding header set to gzip.
 	if err := testContentEncoding(t, client, routeHost, true, "gzip"); err != nil {
 		t.Error(err)
 	}
