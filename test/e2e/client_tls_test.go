@@ -98,11 +98,11 @@ func TestClientTLS(t *testing.T) {
 	if err := kclient.Create(context.TODO(), clientCAConfigmap); err != nil {
 		t.Fatalf("failed to create configmap %q: %v", clientCAConfigmapName, err)
 	}
-	defer func() {
+	t.Cleanup(func() {
 		if err := kclient.Delete(context.TODO(), clientCAConfigmap); err != nil {
 			t.Fatalf("failed to delete configmap %q: %v", clientCAConfigmapName, err)
 		}
-	}()
+	})
 
 	// Create the custom ingresscontroller.
 	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "client-tls"}
@@ -117,28 +117,65 @@ func TestClientTLS(t *testing.T) {
 	if err := kclient.Create(context.TODO(), ic); err != nil {
 		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
-	// We need some route to which to send requests.  The canary route
-	// should always exist and be responsive, so use that.
-	route := &routev1.Route{}
-	routeName := controller.CanaryRouteName()
-	err = wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
-		if err := kclient.Get(context.TODO(), routeName, route); err != nil {
-			t.Logf("failed to get route %q: %v", routeName, err)
+	echoPod := buildEchoPod(names.SimpleNameGenerator.GenerateName("echo-pod-"), "openshift-ingress")
+	if err := kclient.Create(context.TODO(), echoPod); err != nil {
+		t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
+	}
+	t.Cleanup(func() { assertDeleted(t, kclient, echoPod) })
+
+	echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels)
+	if err := kclient.Create(context.TODO(), echoService); err != nil {
+		t.Fatalf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
+	}
+	t.Cleanup(func() { assertDeleted(t, kclient, echoService) })
+
+	echoRoute := buildRoute(echoPod.Name, echoPod.Namespace, echoService.Name)
+	echoRoute.Spec.TLS = &routev1.TLSConfig{
+		Termination:                   routev1.TLSTerminationEdge,
+		InsecureEdgeTerminationPolicy: routev1.InsecureEdgeTerminationPolicyRedirect,
+	}
+	if err := kclient.Create(context.TODO(), echoRoute); err != nil {
+		t.Fatalf("failed to create route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
+	}
+	t.Cleanup(func() { assertDeleted(t, kclient, echoRoute) })
+
+	// Wait for echo pod to be ready.
+	err = wait.PollImmediate(2*time.Second, 1*time.Minute, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), types.NamespacedName{Name: echoPod.Name, Namespace: echoPod.Namespace}, echoPod); err != nil {
+			t.Logf("failed to get client pod %q: %v", echoPod.Name, err)
 			return false, nil
 		}
-		return true, nil
+		for _, cond := range echoPod.Status.Conditions {
+			if cond.Type == corev1.PodReady {
+				return cond.Status == corev1.ConditionTrue, nil
+			}
+		}
+		return false, nil
 	})
+
 	if err != nil {
-		t.Fatalf("failed to observe route %q: %v", routeName, err)
+		t.Fatalf("timed out waiting for %s to become ready: %v", echoPod.Name, err)
 	}
 
-	routeHost := getRouteHost(t, route, ic.Name)
+	// Get echoRoute's full hostname.
+	routeHost := ""
+	err = wait.PollImmediate(2*time.Second, 1*time.Minute, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), types.NamespacedName{Name: echoRoute.Name, Namespace: echoRoute.Namespace}, echoRoute); err != nil {
+			return false, fmt.Errorf("failed to get route %q: %w", echoRoute.Name, err)
+		}
+		routeHost = getRouteHost(t, echoRoute, ic.Name)
+		return routeHost != "", nil
+	})
+
+	if err != nil {
+		t.Fatalf("failed to get hostname of route %q", echoRoute.Name)
+	}
 
 	// We need an IP address to which to send requests.  The test client
 	// runs inside the cluster, so we can use the custom router's internal
@@ -180,11 +217,11 @@ func TestClientTLS(t *testing.T) {
 	if err := kclient.Create(context.TODO(), clientCertsConfigmap); err != nil {
 		t.Fatalf("failed to create configmap %q: %v", clientCertsConfigmapName, err)
 	}
-	defer func() {
+	t.Cleanup(func() {
 		if err := kclient.Delete(context.TODO(), clientCertsConfigmap); err != nil {
 			t.Fatalf("failed to delete configmap %q: %v", clientCertsConfigmapName, err)
 		}
-	}()
+	})
 
 	// Create a test client pod with the client certificates.  We will exec
 	// curl commands in this pod to perform the tests.
@@ -213,14 +250,14 @@ func TestClientTLS(t *testing.T) {
 	if err := kclient.Create(context.TODO(), clientPod); err != nil {
 		t.Fatalf("failed to create pod %q: %v", clientPodName, err)
 	}
-	defer func() {
+	t.Cleanup(func() {
 		if err := kclient.Delete(context.TODO(), clientPod); err != nil {
 			if errors.IsNotFound(err) {
 				return
 			}
 			t.Fatalf("failed to delete pod %q: %v", clientPodName, err)
 		}
-	}()
+	})
 
 	err = wait.PollImmediate(2*time.Second, 3*time.Minute, func() (bool, error) {
 		if err := kclient.Get(context.TODO(), clientPodName, clientPod); err != nil {
@@ -344,7 +381,7 @@ func TestMTLSWithCRLs(t *testing.T) {
 		Name:      "crl-host",
 		Namespace: namespaceName,
 	}
-	// When generating certificates, the CRL distribution points need to be specified by URL
+	// When generating certificates, the CRL distribution points need to be specified by URL.
 	crlHostServiceName := "crl-host-service"
 	crlHostURL := crlHostServiceName + "." + crlHostName.Namespace + ".svc"
 	testCases := []struct {
@@ -356,14 +393,14 @@ func TestMTLSWithCRLs(t *testing.T) {
 	}{
 		{
 			// This test case has CA certificates including a CRL distribution point (CDP) for the CRL that they
-			// generate and sign. This is the default way to distribute CRLs according to RFC-5280
+			// generate and sign. This is the default way to distribute CRLs according to RFC-5280.
 			//
 			// CA Bundle:
 			// - Intermediate CA
-			//   - Includes CRL distribution point for intermediate-ca.crl
+			//   - Includes CRL distribution point for intermediate-ca.crl.
 			//   - Signed by Root CA.
 			// - Root CA
-			//   - Includes CRL distribution point for root-ca.crl
+			//   - Includes CRL distribution point for root-ca.crl.
 			//   - Self signed.
 			//
 			// Client Certificates:
@@ -378,11 +415,11 @@ func TestMTLSWithCRLs(t *testing.T) {
 			//   - Has been revoked.
 			//   - Should be rejected due to revocation.
 			// - revoked-by-intermediate
-			//   - Signed by Intermediate CA
-			//   - Has been revoked
+			//   - Signed by Intermediate CA.
+			//   - Has been revoked.
 			//   - Should be rejected due to revocation.
 			// - self-signed
-			//   - Self signed
+			//   - Self signed.
 			//   - Should be rejected because it's not signed by any trusted CA.
 			Name: "certificate-distributes-its-own-crl",
 			CreateCerts: func() TestMTLSWithCRLsCerts {
@@ -434,7 +471,7 @@ func TestMTLSWithCRLs(t *testing.T) {
 			//
 			// CA Bundle:
 			// - Intermediate CA
-			//   - Includes CRL distribution point for root-ca.crl
+			//   - Includes CRL distribution point for root-ca.crl.
 			//   - Signed by Root CA.
 			// - Root CA
 			//   - No CRL distribution point.
@@ -444,25 +481,25 @@ func TestMTLSWithCRLs(t *testing.T) {
 			//
 			// Client Certificates:
 			// - signed-by-root
-			//   - Includes CRL distribution point for root-ca.crl
+			//   - Includes CRL distribution point for root-ca.crl.
 			//   - Signed by Root CA.
 			//   - Should successfully connect.
 			// - signed-by-intermediate
-			//   - Includes CRL distribution point for intermediate-ca.crl
+			//   - Includes CRL distribution point for intermediate-ca.crl.
 			//   - Signed by Intermediate CA.
 			//   - Should be rejected because HAProxy doesn't have intermediate-ca.crl (SSL error "unknown ca").
 			// - revoked-by-root
-			//   - Includes CRL distribution point for root-ca.crl
+			//   - Includes CRL distribution point for root-ca.crl.
 			//   - Signed by Root CA.
 			//   - Has been revoked.
 			//   - Should be rejected due to revocation.
 			// - revoked-by-intermediate
-			//   - Includes CRL distribution point for intermediate-ca.crl
-			//   - Signed by Intermediate CA
-			//   - Has been revoked
+			//   - Includes CRL distribution point for intermediate-ca.crl.
+			//   - Signed by Intermediate CA.
+			//   - Has been revoked.
 			//   - Should be rejected because HAProxy doesn't have intermediate-ca.crl (SSL error "unknown ca").
 			// - self-signed
-			//   - Self signed
+			//   - Self signed.
 			//   - Should be rejected because it's not signed by any trusted CA (SSL error "unknown ca").
 			Name: "certificate-distributes-its-signers-crl",
 			CreateCerts: func() TestMTLSWithCRLsCerts {
@@ -515,10 +552,10 @@ func TestMTLSWithCRLs(t *testing.T) {
 			//
 			// CA Bundle:
 			// - revoked-by-intermediate
-			//   - Includes CRL distribution point for intermediate-ca.crl
-			//   - Signed by Intermediate CA
+			//   - Includes CRL distribution point for intermediate-ca.crl.
+			//   - Signed by Intermediate CA.
 			// - Intermediate CA
-			//   - Includes CRL distribution point for root-ca.crl
+			//   - Includes CRL distribution point for root-ca.crl.
 			//   - Signed by Root CA.
 			// - Root CA
 			//   - No CRL distribution point.
@@ -529,25 +566,25 @@ func TestMTLSWithCRLs(t *testing.T) {
 			//
 			// Client Certificates:
 			// - signed-by-root
-			//   - Includes CRL distribution point for root-ca.crl
+			//   - Includes CRL distribution point for root-ca.crl.
 			//   - Signed by Root CA.
 			//   - Should successfully connect.
 			// - signed-by-intermediate
-			//   - Includes CRL distribution point for intermediate-ca.crl
+			//   - Includes CRL distribution point for intermediate-ca.crl.
 			//   - Signed by Intermediate CA.
 			//   - Should successfully connect.
 			// - revoked-by-root
-			//   - Includes CRL distribution point for root-ca.crl
+			//   - Includes CRL distribution point for root-ca.crl.
 			//   - Signed by Root CA.
 			//   - Has been revoked.
 			//   - Should be rejected due to revocation.
 			// - revoked-by-intermediate
-			//   - Includes CRL distribution point for intermediate-ca.crl
-			//   - Signed by Intermediate CA
-			//   - Has been revoked
+			//   - Includes CRL distribution point for intermediate-ca.crl.
+			//   - Signed by Intermediate CA.
+			//   - Has been revoked.
 			//   - Should be rejected due to revocation.
 			// - self-signed
-			//   - Self signed
+			//   - Self signed.
 			//   - Should be rejected because it's not signed by any trusted CA (SSL error "unknown ca").
 			Name: "certificate-distributes-its-signers-crl-with-workaround",
 			CreateCerts: func() TestMTLSWithCRLsCerts {
@@ -594,7 +631,7 @@ func TestMTLSWithCRLs(t *testing.T) {
 			},
 		},
 		{
-			// large-crl verifies that CRLs larger than 1MB can be used. This tests the fix for OCPBUGS-6661
+			// large-crl verifies that CRLs larger than 1MB can be used. This tests the fix for OCPBUGS-6661.
 			Name: "large-crl",
 			CreateCerts: func() TestMTLSWithCRLsCerts {
 				maxDummyRevokedSerialNumber := 25000
@@ -613,7 +650,7 @@ func TestMTLSWithCRLs(t *testing.T) {
 				// Generate a set of CRL files that are larger than 1MB by revoking a large number of certificates. The
 				// revocation list only includes the serial number of the certificate and the time of revocation, so we
 				// don't actually need to generate real certificates, just some serial numbers. We can also repeat the
-				// same serial numbers in each CRL, cutting down on the number we need to generate by half
+				// same serial numbers in each CRL, cutting down on the number we need to generate by half.
 				revokedCerts := []pkix.RevokedCertificate{}
 				for i := int64(1); i <= int64(maxDummyRevokedSerialNumber); i++ {
 					serialNumber := big.NewInt(i)
@@ -807,7 +844,7 @@ func TestMTLSWithCRLs(t *testing.T) {
 				if err := kclient.Create(context.TODO(), &crlConfigMap); err != nil {
 					t.Fatalf("Failed to create configmap %q: %v", crlConfigMap.Name, err)
 				}
-				defer assertDeleted(t, kclient, &crlConfigMap)
+				t.Cleanup(func() { assertDeleted(t, kclient, &crlConfigMap) })
 			}
 
 			if err := kclient.Create(context.TODO(), &crlHostPod); err != nil {
@@ -819,7 +856,7 @@ func TestMTLSWithCRLs(t *testing.T) {
 			// won't be clashing. As of this writing, the other resources are normally cleaned up before the next test
 			// case comes through and creates a new one, but if that stops being true in the future, their assertDeleted
 			// calls may need to be replaced by the slower assertDeletedWaitForCleanup option.
-			defer assertDeletedWaitForCleanup(t, kclient, &crlHostPod)
+			t.Cleanup(func() { assertDeletedWaitForCleanup(t, kclient, &crlHostPod) })
 			crlHostService := corev1.Service{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      crlHostServiceName,
@@ -838,7 +875,7 @@ func TestMTLSWithCRLs(t *testing.T) {
 			if err := kclient.Create(context.TODO(), &crlHostService); err != nil {
 				t.Fatalf("Failed to create service %q: %v", crlHostService.Name, err)
 			}
-			defer assertDeleted(t, kclient, &crlHostService)
+			t.Cleanup(func() { assertDeleted(t, kclient, &crlHostService) })
 			// Wait for CRL host to be ready.
 			err := wait.PollImmediate(2*time.Second, 3*time.Minute, func() (bool, error) {
 				if err := kclient.Get(context.TODO(), crlHostName, &crlHostPod); err != nil {
@@ -852,7 +889,7 @@ func TestMTLSWithCRLs(t *testing.T) {
 				}
 				return false, nil
 			})
-			// Create CA cert bundle
+			// Create CA cert bundle.
 			clientCAConfigmapName := "client-ca-cm-" + namespace.Name
 			clientCAConfigmap := corev1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
@@ -866,7 +903,7 @@ func TestMTLSWithCRLs(t *testing.T) {
 			if err := kclient.Create(context.TODO(), &clientCAConfigmap); err != nil {
 				t.Fatalf("Failed to create CA cert configmap: %v", err)
 			}
-			defer assertDeleted(t, kclient, &clientCAConfigmap)
+			t.Cleanup(func() { assertDeleted(t, kclient, &clientCAConfigmap) })
 			icName := types.NamespacedName{
 				Name:      "mtls-with-crls",
 				Namespace: operatorNamespace,
@@ -882,7 +919,7 @@ func TestMTLSWithCRLs(t *testing.T) {
 			if err := kclient.Create(context.TODO(), ic); err != nil {
 				t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
 			}
-			defer assertIngressControllerDeleted(t, kclient, ic)
+			t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 
 			if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
 				t.Fatalf("failed to observe expected conditions: %v", err)
@@ -908,7 +945,7 @@ func TestMTLSWithCRLs(t *testing.T) {
 			if err := kclient.Create(context.TODO(), &clientCertsConfigmap); err != nil {
 				t.Fatalf("failed to create configmap %q: %v", clientCertsConfigmap.Name, err)
 			}
-			defer assertDeleted(t, kclient, &clientCertsConfigmap)
+			t.Cleanup(func() { assertDeleted(t, kclient, &clientCertsConfigmap) })
 
 			// Use the router image for the exec pod since it has curl.
 			routerDeployment := &appsv1.Deployment{}
@@ -942,7 +979,7 @@ func TestMTLSWithCRLs(t *testing.T) {
 			if err := kclient.Create(context.TODO(), clientPod); err != nil {
 				t.Fatalf("failed to create pod %q: %v", clientPodName, err)
 			}
-			defer assertDeleted(t, kclient, clientPod)
+			t.Cleanup(func() { assertDeleted(t, kclient, clientPod) })
 
 			err = wait.PollImmediate(2*time.Second, 3*time.Minute, func() (bool, error) {
 				if err := kclient.Get(context.TODO(), clientPodName, clientPod); err != nil {
@@ -960,7 +997,7 @@ func TestMTLSWithCRLs(t *testing.T) {
 				t.Fatalf("timed out waiting for pod %q to become ready: %v", clientPodName, err)
 			}
 
-			// Wait until the CRLs are downloaded
+			// Wait until the CRLs are downloaded.
 			podList := &corev1.PodList{}
 			labels := map[string]string{
 				controller.ControllerDeploymentLabel: icName.Name,
@@ -973,7 +1010,7 @@ func TestMTLSWithCRLs(t *testing.T) {
 			}
 			routerPod := podList.Items[0]
 			err = wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
-				// Get the current CRL file from the router container
+				// Get the current CRL file from the router container.
 				cmd := []string{"cat", "/var/lib/haproxy/mtls/latest/crls.pem"}
 				stdout := bytes.Buffer{}
 				stderr := bytes.Buffer{}
@@ -990,25 +1027,62 @@ func TestMTLSWithCRLs(t *testing.T) {
 				return crl.Issuer.CommonName != "Placeholder CA", nil
 			})
 
-			// Get the canary route to use as the target for curl.
-			route := &routev1.Route{}
-			routeName := controller.CanaryRouteName()
-			err = wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
-				if err := kclient.Get(context.TODO(), routeName, route); err != nil {
-					t.Logf("failed to get route %q: %v", routeName, err)
+			echoPod := buildEchoPod(names.SimpleNameGenerator.GenerateName("echo-pod-"), "openshift-ingress")
+			if err := kclient.Create(context.TODO(), echoPod); err != nil {
+				t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
+			}
+			t.Cleanup(func() { assertDeleted(t, kclient, echoPod) })
+
+			echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels)
+			if err := kclient.Create(context.TODO(), echoService); err != nil {
+				t.Fatalf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
+			}
+			t.Cleanup(func() { assertDeleted(t, kclient, echoService) })
+
+			echoRoute := buildRoute(echoPod.Name, echoPod.Namespace, echoService.Name)
+			echoRoute.Spec.TLS = &routev1.TLSConfig{
+				Termination:                   routev1.TLSTerminationEdge,
+				InsecureEdgeTerminationPolicy: routev1.InsecureEdgeTerminationPolicyRedirect,
+			}
+			if err := kclient.Create(context.TODO(), echoRoute); err != nil {
+				t.Fatalf("failed to create route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
+			}
+			t.Cleanup(func() { assertDeleted(t, kclient, echoRoute) })
+
+			// Wait for echo pod to be ready.
+			err = wait.PollImmediate(2*time.Second, 1*time.Minute, func() (bool, error) {
+				if err := kclient.Get(context.TODO(), types.NamespacedName{Name: echoPod.Name, Namespace: echoPod.Namespace}, echoPod); err != nil {
+					t.Logf("failed to get client pod %q: %v", echoPod.Name, err)
 					return false, nil
 				}
-				return true, nil
+				for _, cond := range echoPod.Status.Conditions {
+					if cond.Type == corev1.PodReady {
+						return cond.Status == corev1.ConditionTrue, nil
+					}
+				}
+				return false, nil
 			})
+
 			if err != nil {
-				t.Fatalf("failed to observe route %q: %v", routeName, err)
+				t.Fatalf("timed out waiting for %s to become ready: %v", echoPod.Name, err)
 			}
 
-			routeHost := getRouteHost(t, route, ic.Name)
+			// Get echoRoute's full hostname.
+			routeHost := ""
+			err = wait.PollImmediate(2*time.Second, 1*time.Minute, func() (bool, error) {
+				if err := kclient.Get(context.TODO(), types.NamespacedName{Name: echoRoute.Name, Namespace: echoRoute.Namespace}, echoRoute); err != nil {
+					return false, fmt.Errorf("failed to get route %q: %w", echoRoute.Name, err)
+				}
+				routeHost = getRouteHost(t, echoRoute, ic.Name)
+				return routeHost != "", nil
+			})
 
-			// If the canary route is used, normally the default ingress controller will handle the request, but by
-			// using curl's --resolve flag, we can send an HTTP request intended for the canary pod directly to our
-			// ingress controller instead. In order to do that, we need the ingress controller's service IP.
+			if err != nil {
+				t.Fatalf("failed to get hostname of route %q", echoRoute.Name)
+			}
+
+			// Get ic's internal service IP. It will be used with curl's --resolve option to force ic's router pod to
+			// handle our curl requests.
 			service := &corev1.Service{}
 			serviceName := controller.InternalIngressControllerServiceName(ic)
 			if err := kclient.Get(context.TODO(), serviceName, service); err != nil {
@@ -1035,7 +1109,7 @@ func TestMTLSWithCRLs(t *testing.T) {
 	}
 }
 
-// TestCRLUpdate verifies that CRLs are updated when they expire
+// TestCRLUpdate verifies that CRLs are updated when they expire.
 func TestCRLUpdate(t *testing.T) {
 	t.Parallel()
 	testName := names.SimpleNameGenerator.GenerateName("crl-update")
@@ -1043,7 +1117,7 @@ func TestCRLUpdate(t *testing.T) {
 		Name:      "crl-host",
 		Namespace: testName,
 	}
-	// When generating certificates, the CRL distribution points need to be specified by URL
+	// When generating certificates, the CRL distribution points need to be specified by URL.
 	crlHostServiceName := "crl-host-service"
 	crlHostURL := crlHostServiceName + "." + crlHostName.Namespace + ".svc"
 	namespace := corev1.Namespace{
@@ -1054,7 +1128,7 @@ func TestCRLUpdate(t *testing.T) {
 	if err := kclient.Create(context.TODO(), &namespace); err != nil {
 		t.Fatalf("Failed to create namespace %q: %v", namespace.Name, err)
 	}
-	defer assertDeleted(t, kclient, &namespace)
+	t.Cleanup(func() { assertDeleted(t, kclient, &namespace) })
 	testCases := []struct {
 		// Test case name
 		Name string
@@ -1062,7 +1136,7 @@ func TestCRLUpdate(t *testing.T) {
 		// bundle, and will be used to generate CRLs during the test.
 		CreateCerts func() map[string]KeyCert
 		// The names of the CAs whose CRLs are expected to be downloaded by the router pod. Only the certs with the
-		// corresponding names will be used to generate CRLs
+		// corresponding names will be used to generate CRLs.
 		ExpectedCRLs []string
 	}{
 		{
@@ -1151,7 +1225,7 @@ func TestCRLUpdate(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.Name, func(t *testing.T) {
 			caCerts := tc.CreateCerts()
-			// Generate CRLs. Offset the expiration times by 1 minute each so that we can verify that only the correct CRLs get updated at each expiration
+			// Generate CRLs. Offset the expiration times by 1 minute each so that we can verify that only the correct CRLs get updated at each expiration.
 			currentCRLs := map[string]*x509.RevocationList{}
 			crlPems := map[string]string{}
 			caBundle := []string{}
@@ -1176,7 +1250,7 @@ func TestCRLUpdate(t *testing.T) {
 			if err := kclient.Create(context.TODO(), &crlConfigMap); err != nil {
 				t.Fatalf("Failed to create configmap %q: %v", crlConfigMap.Name, err)
 			}
-			defer assertDeleted(t, kclient, &crlConfigMap)
+			t.Cleanup(func() { assertDeleted(t, kclient, &crlConfigMap) })
 			crlHostPod := corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      crlHostName.Name,
@@ -1231,7 +1305,7 @@ func TestCRLUpdate(t *testing.T) {
 			// won't be clashing. As of this writing, the other resources are normally cleaned up before the next test
 			// case comes through and creates a new one, but if that stops being true in the future, their assertDeleted
 			// calls may need to be replaced by the slower assertDeletedWaitForCleanup option.
-			defer assertDeletedWaitForCleanup(t, kclient, &crlHostPod)
+			t.Cleanup(func() { assertDeletedWaitForCleanup(t, kclient, &crlHostPod) })
 			crlHostService := corev1.Service{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      crlHostServiceName,
@@ -1250,7 +1324,7 @@ func TestCRLUpdate(t *testing.T) {
 			if err := kclient.Create(context.TODO(), &crlHostService); err != nil {
 				t.Fatalf("Failed to create service %q: %v", crlHostService.Name, err)
 			}
-			defer assertDeleted(t, kclient, &crlHostService)
+			t.Cleanup(func() { assertDeleted(t, kclient, &crlHostService) })
 			// Wait for CRL host to be ready.
 			err := wait.PollImmediate(2*time.Second, 3*time.Minute, func() (bool, error) {
 				if err := kclient.Get(context.TODO(), crlHostName, &crlHostPod); err != nil {
@@ -1278,7 +1352,7 @@ func TestCRLUpdate(t *testing.T) {
 			if err := kclient.Create(context.TODO(), &clientCAConfigmap); err != nil {
 				t.Fatalf("Failed to create CA cert configmap: %v", err)
 			}
-			defer assertDeleted(t, kclient, &clientCAConfigmap)
+			t.Cleanup(func() { assertDeleted(t, kclient, &clientCAConfigmap) })
 			icName := types.NamespacedName{
 				Name:      testName,
 				Namespace: operatorNamespace,
@@ -1294,7 +1368,7 @@ func TestCRLUpdate(t *testing.T) {
 			if err := kclient.Create(context.TODO(), ic); err != nil {
 				t.Fatalf("failed to create ingresscontroller %s/%s: %v", icName.Namespace, icName.Name, err)
 			}
-			defer assertIngressControllerDeleted(t, kclient, ic)
+			t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 
 			if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
 				t.Fatalf("failed to observe expected conditions: %v", err)
@@ -1330,7 +1404,7 @@ func TestCRLUpdate(t *testing.T) {
 			if err := kclient.Update(context.TODO(), &crlConfigMap); err != nil {
 				t.Fatalf("Failed to update crl-host configmap: %v", err)
 			}
-			// Wait until each update CRL is updated, and verify that the updated CRL file matches the expected CRLs
+			// Wait until each update CRL is updated, and verify that the updated CRL file matches the expected CRLs.
 			for updates := 0; updates < len(currentCRLs); updates++ {
 				// Find the CRL that will expire first, and wait until its expiration.
 				nextExpiration := time.Time{}
@@ -1338,7 +1412,7 @@ func TestCRLUpdate(t *testing.T) {
 				for caName, CRL := range currentCRLs {
 					if nextExpiration.IsZero() || CRL.NextUpdate.Before(nextExpiration) {
 						nextExpiration = CRL.NextUpdate
-						// keep track of the index of the next crl to expire
+						// keep track of the index of the next crl to expire.
 						expiringCRLCAName = caName
 					}
 				}
@@ -1346,9 +1420,9 @@ func TestCRLUpdate(t *testing.T) {
 				// Replace the expiring CRL with its updated version in currentCRLs, and when the expiration time
 				// occurs, verify that the CRL file in the router pod is updated.
 				currentCRLs[expiringCRLCAName] = newCRLs[expiringCRLCAName]
-				// Wait for expiration
+				// Wait for expiration.
 				<-time.After(time.Until(nextExpiration))
-				// Verify correct CRLs are present
+				// Verify correct CRLs are present.
 				if err := wait.PollImmediate(5*time.Second, 1*time.Minute, func() (bool, error) {
 					return verifyCRLs(t, &routerPod, currentCRLs)
 				}); err != nil {
@@ -1387,7 +1461,7 @@ func verifyCRLs(t *testing.T, pod *corev1.Pod, expectedCRLs map[string]*x509.Rev
 					matchingCRLs++
 					break
 				} else {
-					// Name matches but version doesn't. Wait for it to potentially be updated
+					// Name matches but version doesn't. Wait for it to potentially be updated.
 					t.Logf("Found %s but version does not match. expected %d, got %d", expectedCRL.Issuer.String(), expectedCRL.Number, foundCRL.Number)
 					return false, nil
 				}
@@ -1530,10 +1604,10 @@ func encodeKey(key *rsa.PrivateKey) string {
 }
 
 // curlGetStatusCode execs a Curl command in the test client pod and returns an error value.  The Curl command uses the
-// specified certificate from the client certificates configmap, sends a request for the canary route via the router's
-// internal service. Returns the HTTP status code returned from curl, and an error either if there is an HTTP error, or
-// if there's another error in running the command. If the error was not an HTTP error, the HTTP status code returned
-// will be -1.
+// specified certificate from the client certificates configmap, sends a request for the specified endpoint via the
+// router's internal service. Returns the HTTP status code returned from curl, and an error either if there is an HTTP
+// error, or if there's another error in running the command. If the error was not an HTTP error, the HTTP status code
+// returned will be -1.
 func curlGetStatusCode(t *testing.T, clientPod *corev1.Pod, certName, endpoint, ingressControllerIP string, verbose bool) (int64, error) {
 	t.Helper()
 	cmd := []string{
