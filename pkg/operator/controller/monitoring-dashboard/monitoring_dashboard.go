@@ -79,7 +79,6 @@ func desiredMonitoringDashboard(ctx context.Context, infraStatus configv1.Infras
 	if infraStatus.ControlPlaneTopology == configv1.ExternalTopologyMode {
 		return nil
 	}
-
 	desired := corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      dashboardConfigMapName,
@@ -92,11 +91,9 @@ func desiredMonitoringDashboard(ctx context.Context, infraStatus configv1.Infras
 			"dashboard.json": dashboardJSON,
 		},
 	}
-
 	if current != nil {
 		desired.SetResourceVersion(current.GetResourceVersion())
 	}
-
 	return &desired
 }
 
