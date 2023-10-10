@@ -16,6 +16,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/utils/pointer"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -76,8 +77,11 @@ func checkRouterContainerSecurityContext(t *testing.T, deployment *appsv1.Deploy
 
 	for _, container := range deployment.Spec.Template.Spec.Containers {
 		if container.Name == routerContainerName {
-			if v := container.SecurityContext.AllowPrivilegeEscalation; v == nil || *v != true {
+			if allowPrivEsc := container.SecurityContext.AllowPrivilegeEscalation; allowPrivEsc == nil || !*allowPrivEsc {
 				t.Errorf("%s container does not have securityContext.allowPrivilegeEscalation: true", routerContainerName)
+			}
+			if readOnlyFS := container.SecurityContext.ReadOnlyRootFilesystem; readOnlyFS == nil || *readOnlyFS {
+				t.Errorf("%s container does not have securityContext.readOnlyRootFilesystem: false", routerContainerName)
 			}
 		}
 	}
@@ -1568,13 +1572,16 @@ func Test_deploymentConfigChanged(t *testing.T) {
 			expect: true,
 		},
 		{
-			description: "if the router container security context changes",
+			description: "if the router container .securityContext.allowPrivilegeEscalation changes",
 			mutate: func(deployment *appsv1.Deployment) {
-				v := true
-				sc := &corev1.SecurityContext{
-					AllowPrivilegeEscalation: &v,
-				}
-				deployment.Spec.Template.Spec.Containers[0].SecurityContext = sc
+				deployment.Spec.Template.Spec.Containers[0].SecurityContext.AllowPrivilegeEscalation = pointer.Bool(false)
+			},
+			expect: true,
+		},
+		{
+			description: "if the router container .securityContext.readOnlyRootFilesystem changes",
+			mutate: func(deployment *appsv1.Deployment) {
+				deployment.Spec.Template.Spec.Containers[0].SecurityContext.ReadOnlyRootFilesystem = pointer.Bool(true)
 			},
 			expect: true,
 		},
@@ -1761,6 +1768,10 @@ func Test_deploymentConfigChanged(t *testing.T) {
 											ContainerPort: 1936,
 											Protocol:      corev1.ProtocolTCP,
 										},
+									},
+									SecurityContext: &corev1.SecurityContext{
+										AllowPrivilegeEscalation: pointer.Bool(true),
+										ReadOnlyRootFilesystem:   pointer.Bool(false),
 									},
 								},
 							},

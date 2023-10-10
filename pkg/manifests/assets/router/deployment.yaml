@@ -20,6 +20,7 @@ spec:
           securityContext:
             # See https://bugzilla.redhat.com/2007246
             allowPrivilegeEscalation: true
+            readOnlyRootFilesystem: false
           terminationMessagePolicy: FallbackToLogsOnError
           # Merged at runtime.
           env:
