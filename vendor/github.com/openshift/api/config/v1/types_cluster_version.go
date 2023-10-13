@@ -13,8 +13,6 @@ import (
 //
 // Compatibility level 1: Stable within a major release for a minimum of 12 months or 3 minor releases (whichever is longer).
 // +openshift:compatibility-gen:level=1
-// +kubebuilder:validation:XValidation:rule="has(self.spec.capabilities) && has(self.spec.capabilities.additionalEnabledCapabilities) && self.spec.capabilities.baselineCapabilitySet == 'None' && 'baremetal' in self.spec.capabilities.additionalEnabledCapabilities ? 'MachineAPI' in self.spec.capabilities.additionalEnabledCapabilities || (has(self.status) && has(self.status.capabilities) && has(self.status.capabilities.enabledCapabilities) && 'MachineAPI' in self.status.capabilities.enabledCapabilities) : true",message="the `baremetal` capability requires the `MachineAPI` capability, which is neither explicitly or implicitly enabled in this cluster, please enable the `MachineAPI` capability"
-// +kubebuilder:validation:XValidation:rule="has(self.spec.capabilities) && has(self.spec.capabilities.additionalEnabledCapabilities) && self.spec.capabilities.baselineCapabilitySet == 'None' && 'marketplace' in self.spec.capabilities.additionalEnabledCapabilities ? 'OperatorLifecycleManager' in self.spec.capabilities.additionalEnabledCapabilities || (has(self.status) && has(self.status.capabilities) && has(self.status.capabilities.enabledCapabilities) && 'OperatorLifecycleManager' in self.status.capabilities.enabledCapabilities) : true",message="the `marketplace` capability requires the `OperatorLifecycleManager` capability, which is neither explicitly or implicitly enabled in this cluster, please enable the `OperatorLifecycleManager` capability"
 type ClusterVersion struct {
 	metav1.TypeMeta `json:",inline"`
 
@@ -249,7 +247,7 @@ const (
 )
 
 // ClusterVersionCapability enumerates optional, core cluster components.
-// +kubebuilder:validation:Enum=openshift-samples;baremetal;marketplace;Console;Insights;Storage;CSISnapshot;NodeTuning;MachineAPI;Build;DeploymentConfig;ImageRegistry;OperatorLifecycleManager
+// +kubebuilder:validation:Enum=openshift-samples;baremetal;marketplace;Console;Insights;Storage;CSISnapshot;NodeTuning;MachineAPI;Build;DeploymentConfig
 type ClusterVersionCapability string
 
 const (
@@ -268,9 +266,6 @@ const (
 	// ClusterVersionCapabilityMarketplace manages the Marketplace operator which
 	// supplies Operator Lifecycle Manager (OLM) users with default catalogs of
 	// "optional" operators.
-	//
-	// Note that Marketplace has a hard requirement on OLM. OLM can not be disabled
-	// while Marketplace is enabled.
 	ClusterVersionCapabilityMarketplace ClusterVersionCapability = "marketplace"
 
 	// ClusterVersionCapabilityConsole manages the Console operator which
@@ -335,14 +330,6 @@ const (
 	// The following resources are taken into account:
 	// - deploymentconfigs
 	ClusterVersionCapabilityDeploymentConfig ClusterVersionCapability = "DeploymentConfig"
-
-	// ClusterVersionCapabilityImageRegistry manages the image registry which
-	// allows to distribute Docker images
-	ClusterVersionCapabilityImageRegistry ClusterVersionCapability = "ImageRegistry"
-
-	// ClusterVersionCapabilityOperatorLifecycleManager manages the Operator Lifecycle Manager
-	// which itself manages the lifecycle of operators
-	ClusterVersionCapabilityOperatorLifecycleManager ClusterVersionCapability = "OperatorLifecycleManager"
 )
 
 // KnownClusterVersionCapabilities includes all known optional, core cluster components.
@@ -358,8 +345,6 @@ var KnownClusterVersionCapabilities = []ClusterVersionCapability{
 	ClusterVersionCapabilityMachineAPI,
 	ClusterVersionCapabilityBuild,
 	ClusterVersionCapabilityDeploymentConfig,
-	ClusterVersionCapabilityImageRegistry,
-	ClusterVersionCapabilityOperatorLifecycleManager,
 }
 
 // ClusterVersionCapabilitySet defines sets of cluster version capabilities.
@@ -408,7 +393,6 @@ var ClusterVersionCapabilitySets = map[ClusterVersionCapabilitySet][]ClusterVers
 		ClusterVersionCapabilityBaremetal,
 		ClusterVersionCapabilityMarketplace,
 		ClusterVersionCapabilityOpenShiftSamples,
-		ClusterVersionCapabilityMachineAPI,
 	},
 	ClusterVersionCapabilitySet4_12: {
 		ClusterVersionCapabilityBaremetal,
@@ -418,7 +402,6 @@ var ClusterVersionCapabilitySets = map[ClusterVersionCapabilitySet][]ClusterVers
 		ClusterVersionCapabilityStorage,
 		ClusterVersionCapabilityOpenShiftSamples,
 		ClusterVersionCapabilityCSISnapshot,
-		ClusterVersionCapabilityMachineAPI,
 	},
 	ClusterVersionCapabilitySet4_13: {
 		ClusterVersionCapabilityBaremetal,
@@ -429,7 +412,6 @@ var ClusterVersionCapabilitySets = map[ClusterVersionCapabilitySet][]ClusterVers
 		ClusterVersionCapabilityOpenShiftSamples,
 		ClusterVersionCapabilityCSISnapshot,
 		ClusterVersionCapabilityNodeTuning,
-		ClusterVersionCapabilityMachineAPI,
 	},
 	ClusterVersionCapabilitySet4_14: {
 		ClusterVersionCapabilityBaremetal,
@@ -443,7 +425,6 @@ var ClusterVersionCapabilitySets = map[ClusterVersionCapabilitySet][]ClusterVers
 		ClusterVersionCapabilityMachineAPI,
 		ClusterVersionCapabilityBuild,
 		ClusterVersionCapabilityDeploymentConfig,
-		ClusterVersionCapabilityImageRegistry,
 	},
 	ClusterVersionCapabilitySetCurrent: {
 		ClusterVersionCapabilityBaremetal,
@@ -457,8 +438,6 @@ var ClusterVersionCapabilitySets = map[ClusterVersionCapabilitySet][]ClusterVers
 		ClusterVersionCapabilityMachineAPI,
 		ClusterVersionCapabilityBuild,
 		ClusterVersionCapabilityDeploymentConfig,
-		ClusterVersionCapabilityImageRegistry,
-		ClusterVersionCapabilityOperatorLifecycleManager,
 	},
 }
 
