@@ -71,6 +71,7 @@ func TestTunableMaxConnectionsValidValues(t *testing.T) {
 		{"set maxconn 12345", 12345, "12345"},
 		{"set maxconn auto", -1, "auto"},
 		{"set maxconn to default", 0, ""},
+		{"set maxconn to 2000000", 2000000, "2000000"},
 	} {
 		t.Log(testCase.description)
 		if err := updateMaxConnections(t, kclient, time.Minute, testCase.maxConnections, icName); err != nil {
