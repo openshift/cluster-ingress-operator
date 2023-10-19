@@ -174,9 +174,8 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 
 	// Set up the client CA configmap controller
 	if _, err := clientcacontroller.New(mgr, clientcacontroller.Config{
-		OperatorNamespace: config.Namespace,
-		SourceNamespace:   operatorcontroller.GlobalUserSpecifiedConfigNamespace,
-		TargetNamespace:   operatorcontroller.DefaultOperandNamespace,
+		SourceNamespace: operatorcontroller.GlobalUserSpecifiedConfigNamespace,
+		TargetNamespace: operatorcontroller.DefaultOperandNamespace,
 	}); err != nil {
 		return nil, fmt.Errorf("failed to create client CA configmap controller: %w", err)
 	}
