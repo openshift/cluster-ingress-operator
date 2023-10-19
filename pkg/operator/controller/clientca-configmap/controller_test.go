@@ -261,9 +261,8 @@ func Test_Reconcile(t *testing.T) {
 			reconciler := &reconciler{
 				client: cl,
 				config: Config{
-					OperatorNamespace: "openshift-ingress-operator",
-					SourceNamespace:   "openshift-config",
-					TargetNamespace:   "openshift-ingress",
+					SourceNamespace: "openshift-config",
+					TargetNamespace: "openshift-ingress",
 				},
 			}
 			req := reconcile.Request{

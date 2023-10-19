@@ -166,9 +166,8 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 
 // Config holds all the things necessary for the controller to run.
 type Config struct {
-	OperatorNamespace string
-	SourceNamespace   string
-	TargetNamespace   string
+	SourceNamespace string
+	TargetNamespace string
 }
 
 type reconciler struct {
