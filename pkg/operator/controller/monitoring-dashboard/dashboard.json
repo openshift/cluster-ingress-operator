@@ -65,7 +65,7 @@
           "thresholds": [],
           "timeFrom": null,
           "timeShift": null,
-          "title": "Total incoming bytes",
+          "title": "Current total incoming bandwidth",
           "tooltip": {
             "shared": false,
             "sort": 2,
@@ -146,7 +146,7 @@
           "thresholds": [],
           "timeFrom": null,
           "timeShift": null,
-          "title": "Total outgoing bytes",
+          "title": "Current total outgoing bandwidth",
           "tooltip": {
             "shared": false,
             "sort": 2,
@@ -402,7 +402,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "(sum(rate(haproxy_server_bytes_in_total[1m])) by (route))",
+              "expr": "topk(10,sum(rate(haproxy_server_bytes_in_total[1m])) by (route))",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{ route }}",
@@ -480,7 +480,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "(sum(rate(haproxy_server_bytes_out_total[1m])) by (route))",
+              "expr": "topk(10,sum(rate(haproxy_server_bytes_out_total[1m])) by (route))",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{ route }}",
@@ -558,7 +558,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "(sum(irate(haproxy_server_response_errors_total[180s])) by (route))",
+              "expr": "topk(10,sum(irate(haproxy_server_response_errors_total[180s])) by (route))",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{ route }}",
@@ -636,7 +636,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "(avg(haproxy_server_http_average_response_latency_milliseconds != 0) by (route))",
+              "expr": "topk(10,avg(haproxy_server_http_average_response_latency_milliseconds != 0) by (route))",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{ route }}",
@@ -676,7 +676,7 @@
       "repeatIteration": null,
       "repeatRowId": null,
       "showTitle": true,
-      "title": "Per route",
+      "title": "Top 10 per route",
       "titleSize": "h6"
     },
     {
@@ -726,7 +726,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "(sum(rate(haproxy_server_bytes_in_total[1m])) by (exported_namespace))",
+              "expr": "topk(10,sum(rate(haproxy_server_bytes_in_total[1m])) by (exported_namespace))",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{ exported_namespace }}",
@@ -804,7 +804,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "(sum(rate(haproxy_server_bytes_out_total[1m])) by (exported_namespace))",
+              "expr": "topk(10,sum(rate(haproxy_server_bytes_out_total[1m])) by (exported_namespace))",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{ exported_namespace }}",
@@ -882,7 +882,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "(sum(irate(haproxy_server_response_errors_total[180s])) by (exported_namespace))",
+              "expr": "topk(10,sum(irate(haproxy_server_response_errors_total[180s])) by (exported_namespace))",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{ exported_namespace }}",
@@ -960,7 +960,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "(avg(haproxy_server_http_average_response_latency_milliseconds != 0) by (exported_namespace))",
+              "expr": "topk(10,avg(haproxy_server_http_average_response_latency_milliseconds != 0) by (exported_namespace))",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{ exported_namespace }}",
@@ -1000,7 +1000,7 @@
       "repeatIteration": null,
       "repeatRowId": null,
       "showTitle": true,
-      "title": "Per namespace",
+      "title": "Top 10 per namespace",
       "titleSize": "h6"
     },
     {
@@ -1050,7 +1050,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "(sum(rate(haproxy_server_bytes_in_total[1m])) by (service))",
+              "expr": "topk(10,sum(rate(haproxy_server_bytes_in_total[1m])) by (service))",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{ service }}",
@@ -1128,7 +1128,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "(sum(rate(haproxy_server_bytes_out_total[1m])) by (service))",
+              "expr": "topk(10,sum(rate(haproxy_server_bytes_out_total[1m])) by (service))",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{ service }}",
@@ -1206,7 +1206,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "(sum(irate(haproxy_server_response_errors_total[180s])) by (service))",
+              "expr": "topk(10,sum(irate(haproxy_server_response_errors_total[180s])) by (service))",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{ service }}",
@@ -1284,7 +1284,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "(avg(haproxy_server_http_average_response_latency_milliseconds != 0) by (service))",
+              "expr": "topk(10,avg(haproxy_server_http_average_response_latency_milliseconds != 0) by (service))",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{ service }}",
@@ -1362,7 +1362,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "count(count(haproxy_server_up == 1) by (route, service)) by (service)",
+              "expr": "topk(10,count(count(haproxy_server_up == 1) by (route, service)) by (service))",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{ service }}",
@@ -1402,7 +1402,7 @@
       "repeatIteration": null,
       "repeatRowId": null,
       "showTitle": true,
-      "title": "Per shard",
+      "title": "Top 10 per shard",
       "titleSize": "h6"
     }
   ],
