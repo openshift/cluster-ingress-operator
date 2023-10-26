@@ -735,15 +735,7 @@ func TestMTLSWithCRLs(t *testing.T) {
 		},
 	}
 
-	namespace := corev1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: namespaceName,
-		},
-	}
-	if err := kclient.Create(context.TODO(), &namespace); err != nil {
-		t.Fatalf("Failed to create namespace %q: %v", namespace.Name, err)
-	}
-	defer assertDeletedWaitForCleanup(t, kclient, &namespace)
+	namespace := createNamespace(t, namespaceName)
 	for _, tc := range testCases {
 		t.Run(tc.Name, func(t *testing.T) {
 			tcCerts := tc.CreateCerts()
