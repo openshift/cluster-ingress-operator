@@ -646,7 +646,7 @@
           "thresholds": [],
           "timeFrom": null,
           "timeShift": null,
-          "title": "HTTP server average response latency in milliseconds",
+          "title": "Average HTTP Server Response Latency (ms)",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -970,7 +970,7 @@
           "thresholds": [],
           "timeFrom": null,
           "timeShift": null,
-          "title": "HTTP server average response latency in milliseconds",
+          "title": "Average HTTP Server Response Latency (ms)",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -1294,7 +1294,7 @@
           "thresholds": [],
           "timeFrom": null,
           "timeShift": null,
-          "title": "HTTP server average response latency in milliseconds",
+          "title": "Average HTTP Server Response Latency (ms)",
           "tooltip": {
             "shared": true,
             "sort": 0,
