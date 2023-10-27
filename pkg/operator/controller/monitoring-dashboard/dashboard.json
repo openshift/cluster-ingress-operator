@@ -65,7 +65,7 @@
           "thresholds": [],
           "timeFrom": null,
           "timeShift": null,
-          "title": "Current total incoming bandwidth",
+          "title": "Current Total Incoming Bandwidth",
           "tooltip": {
             "shared": false,
             "sort": 2,
@@ -146,7 +146,7 @@
           "thresholds": [],
           "timeFrom": null,
           "timeShift": null,
-          "title": "Current total outgoing bandwidth",
+          "title": "Current Total Outgoing Bandwidth",
           "tooltip": {
             "shared": false,
             "sort": 2,
@@ -230,7 +230,7 @@
           ],
           "timeFrom": null,
           "timeShift": null,
-          "title": "Total HTTP response error",
+          "title": "Total HTTP Server Response Error",
           "tooltip": {
             "shared": false,
             "sort": 2,
@@ -314,7 +314,7 @@
           ],
           "timeFrom": null,
           "timeShift": null,
-          "title": "HTTP server average response latency",
+          "title": "HTTP Server Average Response Latency",
           "tooltip": {
             "shared": false,
             "sort": 2,
@@ -402,7 +402,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "topk(10,sum(rate(haproxy_server_bytes_in_total{route!=\"\"}[1m])) by (route))",
+              "expr": "topk(10,sum(rate(haproxy_server_bytes_in_total{route!=\"\"}[1m])) by (route) != 0)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{ route }}",
@@ -412,7 +412,7 @@
           "thresholds": [],
           "timeFrom": null,
           "timeShift": null,
-          "title": "Incoming bytes",
+          "title": "Incoming Bytes",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -480,7 +480,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "topk(10,sum(rate(haproxy_server_bytes_out_total{route!=\"\"}[1m])) by (route))",
+              "expr": "topk(10,sum(rate(haproxy_server_bytes_out_total{route!=\"\"}[1m])) by (route) != 0)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{ route }}",
@@ -490,7 +490,7 @@
           "thresholds": [],
           "timeFrom": null,
           "timeShift": null,
-          "title": "Outgoing bytes",
+          "title": "Outgoing Bytes",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -558,7 +558,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "topk(10,sum(irate(haproxy_server_response_errors_total{route!=\"\"}[180s])) by (route))",
+              "expr": "topk(10,sum(irate(haproxy_server_response_errors_total{route!=\"\"}[180s])) by (route) != 0)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{ route }}",
@@ -568,7 +568,7 @@
           "thresholds": [],
           "timeFrom": null,
           "timeShift": null,
-          "title": "HTTP response errors rate",
+          "title": "HTTP Server Response Error Rate",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -636,7 +636,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "topk(10,avg(haproxy_server_http_average_response_latency_milliseconds{route!=\"\"} != 0) by (route))",
+              "expr": "topk(10,avg(haproxy_server_http_average_response_latency_milliseconds{route!=\"\"} != 0) by (route) != 0)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{ route }}",
@@ -676,7 +676,7 @@
       "repeatIteration": null,
       "repeatRowId": null,
       "showTitle": true,
-      "title": "Top 10 per route",
+      "title": "Top 10 Per Route",
       "titleSize": "h6"
     },
     {
@@ -726,7 +726,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "topk(10,sum(rate(haproxy_server_bytes_in_total{exported_namespace!=\"\"}[1m])) by (exported_namespace))",
+              "expr": "topk(10,sum(rate(haproxy_server_bytes_in_total{exported_namespace!=\"\"}[1m])) by (exported_namespace) != 0)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{ exported_namespace }}",
@@ -736,7 +736,7 @@
           "thresholds": [],
           "timeFrom": null,
           "timeShift": null,
-          "title": "Incoming bytes",
+          "title": "Incoming Bytes",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -804,7 +804,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "topk(10,sum(rate(haproxy_server_bytes_out_total{exported_namespace!=\"\"}[1m])) by (exported_namespace))",
+              "expr": "topk(10,sum(rate(haproxy_server_bytes_out_total{exported_namespace!=\"\"}[1m])) by (exported_namespace) != 0)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{ exported_namespace }}",
@@ -814,7 +814,7 @@
           "thresholds": [],
           "timeFrom": null,
           "timeShift": null,
-          "title": "Outgoing bytes",
+          "title": "Outgoing Bytes",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -882,7 +882,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "topk(10,sum(irate(haproxy_server_response_errors_total{exported_namespace!=\"\"}[180s])) by (exported_namespace))",
+              "expr": "topk(10,sum(irate(haproxy_server_response_errors_total{exported_namespace!=\"\"}[180s])) by (exported_namespace) != 0)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{ exported_namespace }}",
@@ -892,7 +892,7 @@
           "thresholds": [],
           "timeFrom": null,
           "timeShift": null,
-          "title": "HTTP response errors rate",
+          "title": "HTTP Server Response Error Rate",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -960,7 +960,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "topk(10,avg(haproxy_server_http_average_response_latency_milliseconds{exported_namespace!=\"\"} != 0) by (exported_namespace))",
+              "expr": "topk(10,avg(haproxy_server_http_average_response_latency_milliseconds{exported_namespace!=\"\"} != 0) by (exported_namespace) != 0)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{ exported_namespace }}",
@@ -1000,7 +1000,7 @@
       "repeatIteration": null,
       "repeatRowId": null,
       "showTitle": true,
-      "title": "Top 10 per namespace",
+      "title": "Top 10 Per Namespace",
       "titleSize": "h6"
     },
     {
@@ -1050,7 +1050,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "topk(10,sum(rate(haproxy_server_bytes_in_total[1m])) by (service))",
+              "expr": "topk(10,sum(rate(haproxy_server_bytes_in_total{route!=\"\"}[1m])) by (service) != 0)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{ service }}",
@@ -1060,7 +1060,7 @@
           "thresholds": [],
           "timeFrom": null,
           "timeShift": null,
-          "title": "Incoming bytes",
+          "title": "Incoming Bytes",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -1128,7 +1128,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "topk(10,sum(rate(haproxy_server_bytes_out_total[1m])) by (service))",
+              "expr": "topk(10,sum(rate(haproxy_server_bytes_out_total{route!=\"\"}[1m])) by (service) != 0)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{ service }}",
@@ -1138,7 +1138,7 @@
           "thresholds": [],
           "timeFrom": null,
           "timeShift": null,
-          "title": "Outgoing bytes",
+          "title": "Outgoing Bytes",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -1206,7 +1206,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "topk(10,sum(irate(haproxy_server_response_errors_total[180s])) by (service))",
+              "expr": "topk(10,sum(irate(haproxy_server_response_errors_total{route!=\"\"}[180s])) by (service) != 0)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{ service }}",
@@ -1216,7 +1216,7 @@
           "thresholds": [],
           "timeFrom": null,
           "timeShift": null,
-          "title": "HTTP response errors rate",
+          "title": "HTTP Server Response Error Rate",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -1284,7 +1284,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "topk(10,avg(haproxy_server_http_average_response_latency_milliseconds != 0) by (service))",
+              "expr": "topk(10,avg(haproxy_server_http_average_response_latency_milliseconds{route!=\"\"} != 0) by (service) != 0)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{ service }}",
@@ -1362,7 +1362,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "topk(10,count(count(haproxy_server_up == 1) by (route, service)) by (service))",
+              "expr": "topk(10,count(count(haproxy_server_up == 1) by (route, service)) by (service) != 0)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{ service }}",
@@ -1372,7 +1372,7 @@
           "thresholds": [],
           "timeFrom": null,
           "timeShift": null,
-          "title": "Number of routes",
+          "title": "Number of Routes",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -1402,7 +1402,7 @@
       "repeatIteration": null,
       "repeatRowId": null,
       "showTitle": true,
-      "title": "Top 10 per shard",
+      "title": "Top 10 Per Shard",
       "titleSize": "h6"
     }
   ],
