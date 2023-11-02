@@ -2,6 +2,7 @@ package gateway_service_dns
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"strings"
 
@@ -15,6 +16,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
+	configv1 "github.com/openshift/api/config/v1"
 	iov1 "github.com/openshift/api/operatoringress/v1"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -184,9 +186,23 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		return reconcile.Result{}, err
 	}
 
+	dnsConfig := &configv1.DNS{}
+	if err := r.client.Get(ctx, types.NamespacedName{Name: "cluster"}, dnsConfig); err != nil {
+		return reconcile.Result{}, fmt.Errorf("failed to get dns 'cluster': %v", err)
+	}
+
+	infraConfig := &configv1.Infrastructure{}
+	if err := r.client.Get(ctx, types.NamespacedName{Name: "cluster"}, infraConfig); err != nil {
+		return reconcile.Result{}, fmt.Errorf("failed to get infrastructure 'cluster': %v", err)
+	}
+	if infraConfig.Status.PlatformStatus == nil {
+		log.Info("infrastructure 'cluster' has nil status.platformStatus; reconciliation will be skipped")
+		return reconcile.Result{}, nil
+	}
+
 	domains := getGatewayHostnames(&gateway)
 	var errs []error
-	errs = append(errs, r.ensureDNSRecordsForGateway(ctx, &gateway, &service, domains.List())...)
+	errs = append(errs, r.ensureDNSRecordsForGateway(ctx, &gateway, &service, domains.List(), infraConfig, dnsConfig)...)
 	errs = append(errs, r.deleteStaleDNSRecordsForGateway(ctx, &gateway, &service, domains)...)
 	return reconcile.Result{}, utilerrors.NewAggregate(errs)
 }
@@ -212,7 +228,7 @@ func getGatewayHostnames(gateway *gatewayapiv1beta1.Gateway) sets.String {
 // ensureDNSRecordsForGateway ensures that a DNSRecord CR exists, associated
 // with the given gateway and service, for each of the given domains.  It
 // returns a list of any errors that result from ensuring those DNSRecord CRs.
-func (r *reconciler) ensureDNSRecordsForGateway(ctx context.Context, gateway *gatewayapiv1beta1.Gateway, service *corev1.Service, domains []string) []error {
+func (r *reconciler) ensureDNSRecordsForGateway(ctx context.Context, gateway *gatewayapiv1beta1.Gateway, service *corev1.Service, domains []string, infraConfig *configv1.Infrastructure, dnsConfig *configv1.DNS) []error {
 	labels := map[string]string{
 		gatewayNameLabelKey: gateway.Name,
 	}
@@ -228,7 +244,11 @@ func (r *reconciler) ensureDNSRecordsForGateway(ctx context.Context, gateway *ga
 	var errs []error
 	for _, domain := range domains {
 		name := operatorcontroller.GatewayDNSRecordName(gateway, domain)
-		_, _, err := dnsrecord.EnsureDNSRecord(r.client, name, labels, ownerRef, domain, service)
+		dnsPolicy := iov1.UnmanagedDNS
+		if dnsrecord.ManageDNSForDomain(domain, infraConfig.Status.PlatformStatus, dnsConfig) {
+			dnsPolicy = iov1.ManagedDNS
+		}
+		_, _, err := dnsrecord.EnsureDNSRecord(r.client, name, labels, ownerRef, domain, dnsPolicy, service)
 		errs = append(errs, err)
 	}
 	return errs

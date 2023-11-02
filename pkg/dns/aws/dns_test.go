@@ -10,7 +10,7 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 )
 
-func TestZoneMatchesTags(t *testing.T) {
+func Test_zoneMatchesTags(t *testing.T) {
 	cases := []struct {
 		name        string
 		tagsForZone map[string]string
@@ -90,7 +90,7 @@ func TestZoneMatchesTags(t *testing.T) {
 	}
 }
 
-func TestZoneIDFromResource(t *testing.T) {
+func Test_zoneIDFromResource(t *testing.T) {
 	cases := []struct {
 		resource       string
 		expectedZoneID string

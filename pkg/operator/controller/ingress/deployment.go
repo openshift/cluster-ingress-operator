@@ -8,6 +8,7 @@ import (
 	"hash/fnv"
 	"math"
 	"net"
+	"net/url"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -45,15 +46,18 @@ const (
 
 	RouterHTTPHeaderNameCaseAdjustments = "ROUTER_H1_CASE_ADJUST"
 
-	RouterLogLevelEnvName        = "ROUTER_LOG_LEVEL"
-	RouterSyslogAddressEnvName   = "ROUTER_SYSLOG_ADDRESS"
-	RouterSyslogFormatEnvName    = "ROUTER_SYSLOG_FORMAT"
-	RouterSyslogFacilityEnvName  = "ROUTER_LOG_FACILITY"
-	RouterSyslogMaxLengthEnvName = "ROUTER_LOG_MAX_LENGTH"
+	RouterLogLevelEnvName       = "ROUTER_LOG_LEVEL"
+	RouterLogMaxLengthEnvName   = "ROUTER_LOG_MAX_LENGTH"
+	RouterSyslogAddressEnvName  = "ROUTER_SYSLOG_ADDRESS"
+	RouterSyslogFormatEnvName   = "ROUTER_SYSLOG_FORMAT"
+	RouterSyslogFacilityEnvName = "ROUTER_LOG_FACILITY"
 
 	RouterCaptureHTTPRequestHeaders  = "ROUTER_CAPTURE_HTTP_REQUEST_HEADERS"
 	RouterCaptureHTTPResponseHeaders = "ROUTER_CAPTURE_HTTP_RESPONSE_HEADERS"
 	RouterCaptureHTTPCookies         = "ROUTER_CAPTURE_HTTP_COOKIE"
+
+	RouterHTTPResponseHeaders = "ROUTER_HTTP_RESPONSE_HEADERS"
+	RouterHTTPRequestHeaders  = "ROUTER_HTTP_REQUEST_HEADERS"
 
 	RouterHeaderBufferSize           = "ROUTER_BUF_SIZE"
 	RouterHeaderBufferMaxRewriteSize = "ROUTER_MAX_REWRITE_SIZE"
@@ -77,6 +81,8 @@ const (
 	LivenessGracePeriodSecondsAnnotation = "unsupported.do-not-use.openshift.io/override-liveness-grace-period-seconds"
 
 	RouterHAProxyConfigManager = "ROUTER_HAPROXY_CONFIG_MANAGER"
+
+	RouterHAProxyContstats = "ROUTER_HAPROXY_CONTSTATS"
 
 	RouterHAProxyThreadsEnvName      = "ROUTER_THREADS"
 	RouterHAProxyThreadsDefaultValue = 4
@@ -216,6 +222,22 @@ func determineDeploymentReplicas(ic *operatorv1.IngressController, ingressConfig
 	}
 
 	return DetermineReplicas(ingressConfig, infraConfig)
+}
+
+func headerValues(values []operatorv1.IngressControllerHTTPHeader) string {
+	var headerValues string
+	var headerSpecs []string
+	for _, value := range values {
+		if value.Action.Type == operatorv1.Set && value.Action.Set != nil && len(value.Name) != 0 {
+			headerSpecs = append(headerSpecs, getHTTPHeadersListForSet(value))
+			headerValues = strings.Join(headerSpecs, ",")
+		}
+		if value.Action.Type == operatorv1.Delete && len(value.Name) != 0 {
+			headerSpecs = append(headerSpecs, getHTTPHeadersListForDelete(value))
+			headerValues = strings.Join(headerSpecs, ",")
+		}
+	}
+	return headerValues
 }
 
 // desiredRouterDeployment returns the desired router deployment.
@@ -487,6 +509,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	var unsupportedConfigOverrides struct {
 		LoadBalancingAlgorithm string `json:"loadBalancingAlgorithm"`
 		DynamicConfigManager   string `json:"dynamicConfigManager"`
+		ContStats              string `json:"contStats"`
 	}
 	if len(ci.Spec.UnsupportedConfigOverrides.Raw) > 0 {
 		if err := json.Unmarshal(ci.Spec.UnsupportedConfigOverrides.Raw, &unsupportedConfigOverrides); err != nil {
@@ -538,6 +561,13 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 			Value: "true",
 		})
 	}
+	contStats := unsupportedConfigOverrides.ContStats
+	if v, err := strconv.ParseBool(contStats); err == nil && v {
+		env = append(env, corev1.EnvVar{
+			Name:  RouterHAProxyContstats,
+			Value: "true",
+		})
+	}
 
 	if len(ci.Status.Domain) > 0 {
 		cName := "router-" + ci.Name + "." + ci.Status.Domain
@@ -556,6 +586,14 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		threads = int(ci.Spec.TuningOptions.ThreadCount)
 	}
 	env = append(env, corev1.EnvVar{Name: RouterHAProxyThreadsEnvName, Value: strconv.Itoa(threads)})
+
+	if ci.Spec.HTTPHeaders != nil && len(ci.Spec.HTTPHeaders.Actions.Response) != 0 {
+		env = append(env, corev1.EnvVar{Name: RouterHTTPResponseHeaders, Value: headerValues(ci.Spec.HTTPHeaders.Actions.Response)})
+	}
+
+	if ci.Spec.HTTPHeaders != nil && len(ci.Spec.HTTPHeaders.Actions.Request) != 0 {
+		env = append(env, corev1.EnvVar{Name: RouterHTTPRequestHeaders, Value: headerValues(ci.Spec.HTTPHeaders.Actions.Request)})
+	}
 
 	if ci.Spec.TuningOptions.ClientTimeout != nil && ci.Spec.TuningOptions.ClientTimeout.Duration > 0*time.Second {
 		env = append(env, corev1.EnvVar{Name: "ROUTER_DEFAULT_CLIENT_TIMEOUT", Value: durationToHAProxyTimespec(ci.Spec.TuningOptions.ClientTimeout.Duration)})
@@ -646,9 +684,21 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	deployment.Spec.Template.Spec.DNSPolicy = corev1.DNSClusterFirst
 
 	var (
-		statsPort int32 = routerDefaultHostNetworkStatsPort
-		httpPort  int32 = routerDefaultHostNetworkHTTPPort
-		httpsPort int32 = routerDefaultHostNetworkHTTPSPort
+		statsPort = corev1.ContainerPort{
+			Name:          StatsPortName,
+			ContainerPort: routerDefaultHostNetworkStatsPort,
+			Protocol:      corev1.ProtocolTCP,
+		}
+		httpPort = corev1.ContainerPort{
+			Name:          HTTPPortName,
+			ContainerPort: routerDefaultHostNetworkHTTPPort,
+			Protocol:      corev1.ProtocolTCP,
+		}
+		httpsPort = corev1.ContainerPort{
+			Name:          HTTPSPortName,
+			ContainerPort: routerDefaultHostNetworkHTTPSPort,
+			Protocol:      corev1.ProtocolTCP,
+		}
 	)
 
 	if ci.Status.EndpointPublishingStrategy.Type == operatorv1.HostNetworkStrategyType {
@@ -671,33 +721,39 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 			}
 
 			// Set the ports to the values from the host network configuration
-			httpPort = config.HTTPPort
-			httpsPort = config.HTTPSPort
-			statsPort = config.StatsPort
+			httpPort.ContainerPort = config.HTTPPort
+			httpsPort.ContainerPort = config.HTTPSPort
+			statsPort.ContainerPort = config.StatsPort
 		}
+
+		// When HostNetwork is true, the host port must match the
+		// container port.
+		httpPort.HostPort = httpPort.ContainerPort
+		httpsPort.HostPort = httpsPort.ContainerPort
+		statsPort.HostPort = statsPort.ContainerPort
 
 		// Append the environment variables for the HTTP and HTTPS ports
 		env = append(env,
 			corev1.EnvVar{
 				Name:  RouterServiceHTTPSPort,
-				Value: strconv.Itoa(int(httpsPort)),
+				Value: strconv.Itoa(int(httpsPort.ContainerPort)),
 			},
 			corev1.EnvVar{
 				Name:  RouterServiceHTTPPort,
-				Value: strconv.Itoa(int(httpPort)),
+				Value: strconv.Itoa(int(httpPort.ContainerPort)),
 			},
 		)
 	}
 
 	// Set the port for the probes from the host network configuration
-	deployment.Spec.Template.Spec.Containers[0].LivenessProbe.ProbeHandler.HTTPGet.Port.IntVal = statsPort
-	deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.ProbeHandler.HTTPGet.Port.IntVal = statsPort
-	deployment.Spec.Template.Spec.Containers[0].StartupProbe.ProbeHandler.HTTPGet.Port.IntVal = statsPort
+	deployment.Spec.Template.Spec.Containers[0].LivenessProbe.ProbeHandler.HTTPGet.Port.IntVal = statsPort.ContainerPort
+	deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.ProbeHandler.HTTPGet.Port.IntVal = statsPort.ContainerPort
+	deployment.Spec.Template.Spec.Containers[0].StartupProbe.ProbeHandler.HTTPGet.Port.IntVal = statsPort.ContainerPort
 
 	// append the value for the metrics port to the list of environment variables
 	env = append(env, corev1.EnvVar{
 		Name:  StatsPort,
-		Value: strconv.Itoa(int(statsPort)),
+		Value: strconv.Itoa(int(statsPort.ContainerPort)),
 	})
 
 	// Fill in the default certificate secret name.
@@ -764,6 +820,12 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 				},
 			}
 
+			if accessLogging.Destination.Container.MaxLength > 0 {
+				env = append(env, corev1.EnvVar{
+					Name:  RouterLogMaxLengthEnvName,
+					Value: fmt.Sprintf("%d", accessLogging.Destination.Container.MaxLength),
+				})
+			}
 			env = append(env,
 				corev1.EnvVar{Name: RouterSyslogAddressEnvName, Value: socketPath},
 				corev1.EnvVar{Name: RouterLogLevelEnvName, Value: "info"},
@@ -771,13 +833,14 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 			volumes = append(volumes, rsyslogConfigVolume, rsyslogSocketVolume)
 			routerVolumeMounts = append(routerVolumeMounts, rsyslogSocketVolumeMount)
 			deployment.Spec.Template.Spec.Containers = append(deployment.Spec.Template.Spec.Containers, syslogContainer)
+
 		case accessLogging.Destination.Type == operatorv1.SyslogLoggingDestinationType:
 			if len(accessLogging.Destination.Syslog.Facility) > 0 {
 				env = append(env, corev1.EnvVar{Name: RouterSyslogFacilityEnvName, Value: accessLogging.Destination.Syslog.Facility})
 			}
 			if accessLogging.Destination.Syslog.MaxLength > 0 {
 				env = append(env, corev1.EnvVar{
-					Name:  RouterSyslogMaxLengthEnvName,
+					Name:  RouterLogMaxLengthEnvName,
 					Value: fmt.Sprintf("%d", accessLogging.Destination.Syslog.MaxLength),
 				})
 			}
@@ -1071,21 +1134,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	// Add the ports to the container
 	deployment.Spec.Template.Spec.Containers[0].Ports = append(
 		deployment.Spec.Template.Spec.Containers[0].Ports,
-		corev1.ContainerPort{
-			Name:          HTTPPortName,
-			ContainerPort: httpPort,
-			Protocol:      corev1.ProtocolTCP,
-		},
-		corev1.ContainerPort{
-			Name:          HTTPSPortName,
-			ContainerPort: httpsPort,
-			Protocol:      corev1.ProtocolTCP,
-		},
-		corev1.ContainerPort{
-			Name:          StatsPortName,
-			ContainerPort: statsPort,
-			Protocol:      corev1.ProtocolTCP,
-		},
+		httpPort, httpsPort, statsPort,
 	)
 
 	// Compute the hash for topology spread constraints and possibly
@@ -1113,10 +1162,14 @@ func accessLoggingForIngressController(ic *operatorv1.IngressController) *operat
 
 	switch ic.Spec.Logging.Access.Destination.Type {
 	case operatorv1.ContainerLoggingDestinationType:
+		var containerLoggingParameters operatorv1.ContainerLoggingDestinationParameters
+		if ic.Spec.Logging.Access.Destination.Container != nil {
+			containerLoggingParameters.MaxLength = ic.Spec.Logging.Access.Destination.Container.MaxLength
+		}
 		return &operatorv1.AccessLogging{
 			Destination: operatorv1.LoggingDestination{
 				Type:      operatorv1.ContainerLoggingDestinationType,
-				Container: &operatorv1.ContainerLoggingDestinationParameters{},
+				Container: &containerLoggingParameters,
 			},
 			HttpLogFormat:      ic.Spec.Logging.Access.HttpLogFormat,
 			HTTPCaptureHeaders: ic.Spec.Logging.Access.HTTPCaptureHeaders,
@@ -1154,6 +1207,14 @@ func serializeCaptureHeaders(captureHeaders []operatorv1.IngressControllerCaptur
 		headerSpecs = append(headerSpecs, fmt.Sprintf("%s:%d", header.Name, header.MaxLength))
 	}
 	return strings.Join(headerSpecs, ",")
+}
+
+func getHTTPHeadersListForSet(setHeaders operatorv1.IngressControllerHTTPHeader) string {
+	return fmt.Sprintf("%s:%s:%s", url.QueryEscape(setHeaders.Name), url.QueryEscape(setHeaders.Action.Set.Value), url.QueryEscape(string(setHeaders.Action.Type)))
+}
+
+func getHTTPHeadersListForDelete(deleteHeaders operatorv1.IngressControllerHTTPHeader) string {
+	return fmt.Sprintf("%s:%s", url.QueryEscape(deleteHeaders.Name), url.QueryEscape(string(deleteHeaders.Action.Type)))
 }
 
 // inferTLSProfileSpecFromDeployment examines the given deployment's pod

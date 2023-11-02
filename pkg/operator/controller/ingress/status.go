@@ -1059,19 +1059,23 @@ func computeDNSStatus(ic *operatorv1.IngressController, wildcardRecord *iov1.DNS
 
 // checkZoneInConfig - private utility to check for a zone in the current config
 func checkZoneInConfig(dnsConfig *configv1.DNS, zone configv1.DNSZone) bool {
-	// check PrivateZone settings only
-	// check for private zone ID
-	if dnsConfig.Spec.PrivateZone != nil && dnsConfig.Spec.PrivateZone.ID != "" && zone.ID != "" {
-		if dnsConfig.Spec.PrivateZone.ID == zone.ID {
-			return true
-		}
+	return zonesMatch(&zone, dnsConfig.Spec.PublicZone) || zonesMatch(&zone, dnsConfig.Spec.PrivateZone)
+}
+
+// zonesMatch returns a Boolean value indicating whether two DNS zones have the
+// matching ID or "Name" tag.  If either or both zones are nil, this function
+// returns false.
+func zonesMatch(a, b *configv1.DNSZone) bool {
+	if a == nil || b == nil {
+		return false
 	}
 
-	// check for private zone Tags
-	if dnsConfig.Spec.PrivateZone != nil && dnsConfig.Spec.PrivateZone.Tags["Name"] != "" && zone.Tags["Name"] != "" {
-		if dnsConfig.Spec.PrivateZone.Tags["Name"] == zone.Tags["Name"] {
-			return true
-		}
+	if a.ID != "" && b.ID != "" && a.ID == b.ID {
+		return true
+	}
+
+	if a.Tags["Name"] != "" && b.Tags["Name"] != "" && a.Tags["Name"] == b.Tags["Name"] {
+		return true
 	}
 
 	return false

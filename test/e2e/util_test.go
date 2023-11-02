@@ -20,6 +20,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/utils/pointer"
 
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -55,7 +56,7 @@ func buildEchoPod(name, namespace string) *corev1.Pod {
 						`EXEC:'/bin/bash -c \"printf \\\"HTTP/1.0 200 OK\r\n\r\n\\\"; sed -e \\\"/^\r/q\\\"\"'`,
 					},
 					Command: []string{"/bin/socat"},
-					Image:   "openshift/origin-node",
+					Image:   "image-registry.openshift-image-registry.svc:5000/openshift/tools:latest",
 					Name:    "echo",
 					Ports: []corev1.ContainerPort{
 						{
@@ -219,7 +220,7 @@ func buildSlowHTTPDPod(name, namespace string) *corev1.Pod {
 						`EXEC:'/bin/bash -c \"sleep 40; printf \\\"HTTP/1.0 200 OK\r\n\r\nfin\r\n\\\"\"'`,
 					},
 					Command: []string{"/bin/socat"},
-					Image:   "openshift/origin-node",
+					Image:   "image-registry.openshift-image-registry.svc:5000/openshift/tools:latest",
 					Name:    "echo",
 					Ports: []corev1.ContainerPort{
 						{
@@ -254,6 +255,37 @@ func buildRoute(name, namespace, serviceName string) *routev1.Route {
 			To: routev1.RouteTargetReference{
 				Kind: "Service",
 				Name: serviceName,
+			},
+		},
+	}
+}
+
+// buildRouteWithHTTPResponseHeaders returns a route definition targeting the specified service along with setting of header name and value.
+func buildRouteWithHTTPResponseHeaders(name, namespace, serviceName string, headerName string, headerValue string) *routev1.Route {
+	return &routev1.Route{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: routev1.RouteSpec{
+			To: routev1.RouteTargetReference{
+				Kind: "Service",
+				Name: serviceName,
+			},
+			HTTPHeaders: &routev1.RouteHTTPHeaders{
+				Actions: routev1.RouteHTTPHeaderActions{
+					Response: []routev1.RouteHTTPHeader{
+						{
+							Name: headerName,
+							Action: routev1.RouteHTTPHeaderActionUnion{
+								Type: routev1.Set,
+								Set: &routev1.RouteSetHTTPHeader{
+									Value: headerValue,
+								},
+							},
+						},
+					},
+				},
 			},
 		},
 	}
@@ -318,6 +350,19 @@ func getDeployment(t *testing.T, client client.Client, name types.NamespacedName
 		return nil, fmt.Errorf("Failed to get %q: %v", name, err)
 	}
 	return &dep, nil
+}
+
+func getPods(t *testing.T, cl client.Client, deployment *appsv1.Deployment) (*corev1.PodList, error) {
+	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
+	if err != nil {
+		return nil, fmt.Errorf("deployment %s has invalid spec.selector: %w", deployment.Name, err)
+	}
+	podList := &corev1.PodList{}
+	if err := cl.List(context.TODO(), podList, client.MatchingLabelsSelector{Selector: selector}); err != nil {
+		t.Logf("failed to list pods for deployment %q: %v", deployment.Name, err)
+		return nil, err
+	}
+	return podList, nil
 }
 
 func podExec(t *testing.T, pod corev1.Pod, stdout, stderr *bytes.Buffer, cmd []string) error {
@@ -687,4 +732,114 @@ func assertDeletedWaitForCleanup(t *testing.T, cl client.Client, thing client.Ob
 	}); err != nil {
 		t.Fatalf("Timed out waiting for %s to be cleaned up: %v", thing.GetName(), err)
 	}
+}
+
+// getRouteHost returns the host name of the given route for the named
+// IngressController.  If the IngressController has not added its host name to
+// the route's status, this function causes a fatal error.  For simplicity, this
+// function does not check the "Admitted" status condition, so it will return
+// the host name if it is set even if the IngressController has rejected the
+// route.
+func getRouteHost(t *testing.T, route *routev1.Route, router string) string {
+	t.Helper()
+
+	if route == nil {
+		t.Fatal("route is nil")
+		return ""
+	}
+
+	for _, ingress := range route.Status.Ingress {
+		if ingress.RouterName == router {
+			return ingress.Host
+		}
+	}
+
+	t.Fatalf("failed to find host name for default router in route: %#v", route)
+	return ""
+}
+
+// dumpEventsInNamespace gets the events in the specified namespace and logs
+// them.
+func dumpEventsInNamespace(t *testing.T, ns string) {
+	t.Helper()
+
+	eventList := &corev1.EventList{}
+	if err := kclient.List(context.TODO(), eventList, client.InNamespace(ns)); err != nil {
+		t.Errorf("failed to list events for namespace %s: %v", ns, err)
+		return
+	}
+
+	for _, e := range eventList.Items {
+		t.Log(e.FirstTimestamp, e.Source, e.InvolvedObject.Kind, e.InvolvedObject.Name, e.Reason, e.Message)
+	}
+}
+
+// createNamespace creates a namespace with the specified name and registers a
+// cleanup handler to delete the namespace when the test finishes.
+//
+// After creating the namespace, this function waits for the "default"
+// ServiceAccount and "system:image-pullers" RoleBinding to be created as well,
+// which is necessary in order for pods in the new namespace to be able to pull
+// images.
+func createNamespace(t *testing.T, name string) *corev1.Namespace {
+	t.Helper()
+
+	t.Logf("Creating namespace %q...", name)
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name}}
+	if err := kclient.Create(context.TODO(), ns); err != nil {
+		t.Fatalf("failed to create namespace: %v", err)
+	}
+	t.Cleanup(func() {
+		t.Logf("Dumping events in namespace %q...", name)
+		if t.Failed() {
+			dumpEventsInNamespace(t, name)
+		}
+		t.Logf("Deleting namespace %q...", name)
+		if err := kclient.Delete(context.TODO(), ns); err != nil {
+			t.Errorf("failed to delete namespace %s: %v", ns.Name, err)
+		}
+	})
+
+	saName := types.NamespacedName{
+		Namespace: name,
+		Name:      "default",
+	}
+	t.Logf("Waiting for ServiceAccount %s to be provisioned...", saName)
+	if err := wait.PollImmediate(1*time.Second, 3*time.Minute, func() (bool, error) {
+		var sa corev1.ServiceAccount
+		if err := kclient.Get(context.TODO(), saName, &sa); err != nil {
+			if errors.IsNotFound(err) {
+				return false, nil
+			}
+			return false, err
+		}
+		for _, s := range sa.Secrets {
+			if strings.Contains(s.Name, "dockercfg") {
+				return true, nil
+			}
+		}
+		return false, nil
+	}); err != nil {
+		t.Fatalf(`Timed out waiting for ServiceAccount %s to be provisioned: %v`, saName, err)
+	}
+
+	rbName := types.NamespacedName{
+		Namespace: name,
+		Name:      "system:image-pullers",
+	}
+	t.Logf("Waiting for RoleBinding %s to be created...", rbName)
+	if err := wait.PollImmediate(1*time.Second, 3*time.Minute, func() (bool, error) {
+		var rb rbacv1.RoleBinding
+		if err := kclient.Get(context.TODO(), rbName, &rb); err != nil {
+			if errors.IsNotFound(err) {
+				return false, nil
+			}
+			return false, err
+		}
+		return true, nil
+	}); err != nil {
+		t.Fatalf(`Timed out waiting for RoleBinding "default" to be provisioned: %v`, err)
+	}
+
+	return ns
 }

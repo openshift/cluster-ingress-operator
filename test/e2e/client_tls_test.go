@@ -138,6 +138,8 @@ func TestClientTLS(t *testing.T) {
 		t.Fatalf("failed to observe route %q: %v", routeName, err)
 	}
 
+	routeHost := getRouteHost(t, route, ic.Name)
+
 	// We need an IP address to which to send requests.  The test client
 	// runs inside the cluster, so we can use the custom router's internal
 	// service address.
@@ -260,7 +262,7 @@ func TestClientTLS(t *testing.T) {
 		expectAllowed: false,
 	}}
 	for _, tc := range optionalPolicyTestCases {
-		_, err := curlGetStatusCode(t, clientPod, tc.cert, route.Spec.Host, service.Spec.ClusterIP, true)
+		_, err := curlGetStatusCode(t, clientPod, tc.cert, routeHost, service.Spec.ClusterIP, true)
 		if err == nil && !tc.expectAllowed {
 			t.Errorf("%q: expected error, got success", tc.description)
 		}
@@ -306,7 +308,7 @@ func TestClientTLS(t *testing.T) {
 		expectAllowed: false,
 	}}
 	for _, tc := range requiredPolicyTestCases {
-		_, err := curlGetStatusCode(t, clientPod, tc.cert, route.Spec.Host, service.Spec.ClusterIP, true)
+		_, err := curlGetStatusCode(t, clientPod, tc.cert, routeHost, service.Spec.ClusterIP, true)
 		if err == nil && !tc.expectAllowed {
 			t.Errorf("%q: expected error, got success", tc.description)
 		}
@@ -735,15 +737,7 @@ func TestMTLSWithCRLs(t *testing.T) {
 		},
 	}
 
-	namespace := corev1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: namespaceName,
-		},
-	}
-	if err := kclient.Create(context.TODO(), &namespace); err != nil {
-		t.Fatalf("Failed to create namespace %q: %v", namespace.Name, err)
-	}
-	defer assertDeletedWaitForCleanup(t, kclient, &namespace)
+	namespace := createNamespace(t, namespaceName)
 	for _, tc := range testCases {
 		t.Run(tc.Name, func(t *testing.T) {
 			tcCerts := tc.CreateCerts()
@@ -1010,6 +1004,8 @@ func TestMTLSWithCRLs(t *testing.T) {
 				t.Fatalf("failed to observe route %q: %v", routeName, err)
 			}
 
+			routeHost := getRouteHost(t, route, ic.Name)
+
 			// If the canary route is used, normally the default ingress controller will handle the request, but by
 			// using curl's --resolve flag, we can send an HTTP request intended for the canary pod directly to our
 			// ingress controller instead. In order to do that, we need the ingress controller's service IP.
@@ -1020,12 +1016,12 @@ func TestMTLSWithCRLs(t *testing.T) {
 			}
 
 			for certName := range tcCerts.ClientCerts.Accepted {
-				if _, err := curlGetStatusCode(t, clientPod, certName, route.Spec.Host, service.Spec.ClusterIP, false); err != nil {
+				if _, err := curlGetStatusCode(t, clientPod, certName, routeHost, service.Spec.ClusterIP, false); err != nil {
 					t.Errorf("Failed to curl route with cert %q: %v", certName, err)
 				}
 			}
 			for certName := range tcCerts.ClientCerts.Rejected {
-				if httpStatusCode, err := curlGetStatusCode(t, clientPod, certName, route.Spec.Host, service.Spec.ClusterIP, false); err != nil {
+				if httpStatusCode, err := curlGetStatusCode(t, clientPod, certName, routeHost, service.Spec.ClusterIP, false); err != nil {
 					if httpStatusCode == 0 {
 						// TLS/SSL verification failures result in a 0 http status code (no connection is made to the backend, so no http status code is returned).
 						continue
@@ -1412,19 +1408,6 @@ func verifyCRLs(t *testing.T, pod *corev1.Pod, expectedCRLs map[string]*x509.Rev
 	return true, nil
 }
 
-func getPods(t *testing.T, cl client.Client, deployment *appsv1.Deployment) (*corev1.PodList, error) {
-	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
-	if err != nil {
-		return nil, fmt.Errorf("deployment %s has invalid spec.selector: %w", deployment.Name, err)
-	}
-	podList := &corev1.PodList{}
-	if err := cl.List(context.TODO(), podList, client.MatchingLabelsSelector{Selector: selector}); err != nil {
-		t.Logf("failed to list pods for deployment %q: %v", deployment.Name, err)
-		return nil, err
-	}
-	return podList, nil
-}
-
 func getActiveCRLs(t *testing.T, clientPod *corev1.Pod) ([]*x509.RevocationList, error) {
 	t.Helper()
 	cmd := []string{
@@ -1583,6 +1566,16 @@ func curlGetStatusCode(t *testing.T, clientPod *corev1.Pod, certName, endpoint, 
 	stdoutStr := stdout.String()
 	t.Logf("command: %s\nstdout:\n%s\n\nstderr:\n%s\n",
 		strings.Join(cmd, " "), stdoutStr, stderr.String())
+	// due to the '-w %{http_code}' option in the curl command, we should expect stdout to contain exactly one 3-digit
+	// number representing the HTTP code (or 000 if curl exited without completing the request). If stdoutStr is less
+	// than 3 bytes long, something major has gone wrong. Return curlErr if it's set, or generate our own error message
+	// if curErr is unset.
+	if len(stdoutStr) < 3 {
+		if curlErr != nil {
+			return -1, curlErr
+		}
+		return -1, fmt.Errorf("invalid output from curl: %q", stdoutStr)
+	}
 	// Try to parse the http status code even if curl returns an error; it may still be relevant.
 	httpStatusCode := stdoutStr[len(stdoutStr)-3:]
 	httpStatusCodeInt, err := strconv.ParseInt(httpStatusCode, 10, 64)

@@ -13,7 +13,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func TestDesiredCanaryDaemonSet(t *testing.T) {
+func Test_desiredCanaryDaemonSet(t *testing.T) {
 	// canaryImageName is the ingress-operator image
 	canaryImageName := "openshift/origin-cluster-ingress-operator:latest"
 	daemonset := desiredCanaryDaemonSet(canaryImageName)
@@ -78,7 +78,6 @@ func TestDesiredCanaryDaemonSet(t *testing.T) {
 		{
 			Key:      "node-role.kubernetes.io/infra",
 			Operator: "Exists",
-			Effect:   "NoSchedule",
 		},
 	}
 	if !cmp.Equal(tolerations, expectedTolerations) {
@@ -86,7 +85,7 @@ func TestDesiredCanaryDaemonSet(t *testing.T) {
 	}
 }
 
-func TestCanaryDaemonsetChanged(t *testing.T) {
+func Test_canaryDaemonsetChanged(t *testing.T) {
 	testCases := []struct {
 		description string
 		mutate      func(*appsv1.DaemonSet)
@@ -118,6 +117,13 @@ func TestCanaryDaemonsetChanged(t *testing.T) {
 						Effect:   "bar",
 					},
 				}
+			},
+			expect: true,
+		},
+		{
+			description: "if pod template toleration effect changes",
+			mutate: func(ds *appsv1.DaemonSet) {
+				ds.Spec.Template.Spec.Tolerations[0].Effect = "NoExecute"
 			},
 			expect: true,
 		},
@@ -187,15 +193,17 @@ func TestCanaryDaemonsetChanged(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		original := desiredCanaryDaemonSet("")
-		mutated := original.DeepCopy()
-		tc.mutate(mutated)
-		if changed, updated := canaryDaemonSetChanged(original, mutated); changed != tc.expect {
-			t.Errorf("%s, expect canaryDaemonSetChanged to be %t, got %t", tc.description, tc.expect, changed)
-		} else if changed {
-			if changedAgain, _ := canaryDaemonSetChanged(mutated, updated); changedAgain {
-				t.Errorf("%s, canaryDaemonSetChanged does not behave as a fixed point function", tc.description)
+		t.Run(tc.description, func(t *testing.T) {
+			original := desiredCanaryDaemonSet("")
+			mutated := original.DeepCopy()
+			tc.mutate(mutated)
+			if changed, updated := canaryDaemonSetChanged(original, mutated); changed != tc.expect {
+				t.Errorf("expect canaryDaemonSetChanged to be %t, got %t", tc.expect, changed)
+			} else if changed {
+				if changedAgain, _ := canaryDaemonSetChanged(mutated, updated); changedAgain {
+					t.Error("canaryDaemonSetChanged does not behave as a fixed point function")
+				}
 			}
-		}
+		})
 	}
 }

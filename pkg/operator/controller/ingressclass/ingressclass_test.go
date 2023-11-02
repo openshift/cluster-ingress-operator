@@ -11,9 +11,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// TestDesiredIngressClass verifies that desiredIngressClass behaves as
+// Test_desiredIngressClass verifies that desiredIngressClass behaves as
 // expected.
-func TestDesiredIngressClass(t *testing.T) {
+func Test_desiredIngressClass(t *testing.T) {
 	scope := "Cluster"
 	makeIngressClass := func(icName string, annotateAsDefault bool) *networkingv1.IngressClass {
 		apiGroup := "operator.openshift.io"
@@ -112,19 +112,21 @@ func TestDesiredIngressClass(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		want, class := desiredIngressClass(tc.haveIngressController, tc.ingressControllerName, tc.ingressClasses)
-		if want != tc.expectWant {
-			t.Errorf("%q: expected desiredIngressClass to return %t, got %t", tc.description, tc.expectWant, want)
-		}
-		if !reflect.DeepEqual(class, tc.expectIngressClass) {
-			t.Errorf("%q: expected desiredIngressClass to return %+v, got %+v", tc.description, tc.expectIngressClass, class)
-		}
+		t.Run(tc.description, func(t *testing.T) {
+			want, class := desiredIngressClass(tc.haveIngressController, tc.ingressControllerName, tc.ingressClasses)
+			if want != tc.expectWant {
+				t.Errorf("expected desiredIngressClass to return %t, got %t", tc.expectWant, want)
+			}
+			if !reflect.DeepEqual(class, tc.expectIngressClass) {
+				t.Errorf("expected desiredIngressClass to return %+v, got %+v", tc.expectIngressClass, class)
+			}
+		})
 	}
 }
 
-// TestIngressClassChanged verifies that ingressClassChanged behaves as
+// Test_ingressClassChanged verifies that ingressClassChanged behaves as
 // expected.
-func TestIngressClassChanged(t *testing.T) {
+func Test_ingressClassChanged(t *testing.T) {
 	testCases := []struct {
 		description string
 		mutate      func(*networkingv1.IngressClass)
@@ -159,29 +161,31 @@ func TestIngressClassChanged(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		apiGroup := "operator.openshift.io"
-		original := networkingv1.IngressClass{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: "openshift-custom",
-				UID:  "1",
-			},
-			Spec: networkingv1.IngressClassSpec{
-				Controller: routev1.IngressToRouteIngressClassControllerName,
-				Parameters: &networkingv1.IngressClassParametersReference{
-					APIGroup: &apiGroup,
-					Kind:     "IngressController",
-					Name:     "custom",
+		t.Run(tc.description, func(t *testing.T) {
+			apiGroup := "operator.openshift.io"
+			original := networkingv1.IngressClass{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "openshift-custom",
+					UID:  "1",
 				},
-			},
-		}
-		mutated := original.DeepCopy()
-		tc.mutate(mutated)
-		if changed, updated := ingressClassChanged(&original, mutated); changed != tc.expect {
-			t.Errorf("%s, expect ingressClassChanged to be %t, got %t", tc.description, tc.expect, changed)
-		} else if changed {
-			if changedAgain, _ := ingressClassChanged(mutated, updated); changedAgain {
-				t.Errorf("%s, ingressClassChanged does not behave as a fixed point function", tc.description)
+				Spec: networkingv1.IngressClassSpec{
+					Controller: routev1.IngressToRouteIngressClassControllerName,
+					Parameters: &networkingv1.IngressClassParametersReference{
+						APIGroup: &apiGroup,
+						Kind:     "IngressController",
+						Name:     "custom",
+					},
+				},
 			}
-		}
+			mutated := original.DeepCopy()
+			tc.mutate(mutated)
+			if changed, updated := ingressClassChanged(&original, mutated); changed != tc.expect {
+				t.Errorf("expect ingressClassChanged to be %t, got %t", tc.expect, changed)
+			} else if changed {
+				if changedAgain, _ := ingressClassChanged(mutated, updated); changedAgain {
+					t.Error("ingressClassChanged does not behave as a fixed point function")
+				}
+			}
+		})
 	}
 }

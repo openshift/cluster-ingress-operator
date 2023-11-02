@@ -10,7 +10,7 @@ import (
 	projectv1 "github.com/openshift/api/project/v1"
 )
 
-func TestCanaryNamespaceChanged(t *testing.T) {
+func Test_canaryNamespaceChanged(t *testing.T) {
 	testCases := []struct {
 		description string
 		mutate      func(*corev1.Namespace)
@@ -31,15 +31,17 @@ func TestCanaryNamespaceChanged(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		original := manifests.CanaryNamespace()
-		mutated := original.DeepCopy()
-		tc.mutate(mutated)
-		if changed, updated := canaryNamespaceChanged(original, mutated); changed != tc.expect {
-			t.Errorf("%s, expect canaryNamespaceChanged to be %t, got %t", tc.description, tc.expect, changed)
-		} else if changed {
-			if changedAgain, _ := canaryNamespaceChanged(mutated, updated); changedAgain {
-				t.Errorf("%s, canaryNamespaceChanged does not behave as a fixed point function", tc.description)
+		t.Run(tc.description, func(t *testing.T) {
+			original := manifests.CanaryNamespace()
+			mutated := original.DeepCopy()
+			tc.mutate(mutated)
+			if changed, updated := canaryNamespaceChanged(original, mutated); changed != tc.expect {
+				t.Errorf("expect canaryNamespaceChanged to be %t, got %t", tc.expect, changed)
+			} else if changed {
+				if changedAgain, _ := canaryNamespaceChanged(mutated, updated); changedAgain {
+					t.Error("canaryNamespaceChanged does not behave as a fixed point function")
+				}
 			}
-		}
+		})
 	}
 }

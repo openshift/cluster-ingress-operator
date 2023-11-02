@@ -9,7 +9,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
-func TestDesiredPodDisruptionBudget(t *testing.T) {
+func Test_desiredRouterPodDisruptionBudget(t *testing.T) {
 	pointerTo := func(v_ int) *int32 { v := int32(v_); return &v }
 	testCases := []struct {
 		description          string
@@ -55,40 +55,44 @@ func TestDesiredPodDisruptionBudget(t *testing.T) {
 		},
 	}
 	for _, tc := range testCases {
-		trueVar := true
-		ic := &operatorv1.IngressController{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: "default",
-			},
-			Spec: operatorv1.IngressControllerSpec{
-				Replicas: tc.replicas,
-			},
-		}
-		deploymentRef := metav1.OwnerReference{
-			APIVersion: "apps/v1",
-			Kind:       "Deployment",
-			Name:       "router-default",
-			UID:        "1",
-			Controller: &trueVar,
-		}
-		wantPDB, pdb, err := desiredRouterPodDisruptionBudget(ic, deploymentRef)
-		if err != nil {
-			t.Errorf("%q: unexpected error: %v", tc.description, err)
-		} else if !wantPDB {
-			if tc.expectPDB {
-				t.Errorf("%q: expected true, got false", tc.description)
+		t.Run(tc.description, func(t *testing.T) {
+			trueVar := true
+			ic := &operatorv1.IngressController{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "default",
+				},
+				Spec: operatorv1.IngressControllerSpec{
+					Replicas: tc.replicas,
+				},
 			}
-		} else if pdb == nil {
-			t.Errorf("%q: expected pointer, got nil", tc.description)
-		} else if pdb.Spec.MaxUnavailable == nil {
-			t.Errorf("%q: expected PDB with non-nil MaxUnavailable, got %#v", tc.description, pdb)
-		} else if *pdb.Spec.MaxUnavailable != tc.expectMaxUnavailable {
-			t.Errorf("%q: expected %#v, got %#v", tc.description, tc.expectMaxUnavailable, pdb.Spec.MaxUnavailable)
-		}
+			deploymentRef := metav1.OwnerReference{
+				APIVersion: "apps/v1",
+				Kind:       "Deployment",
+				Name:       "router-default",
+				UID:        "1",
+				Controller: &trueVar,
+			}
+			wantPDB, pdb, err := desiredRouterPodDisruptionBudget(ic, deploymentRef)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			switch {
+			case !wantPDB:
+				if tc.expectPDB {
+					t.Error("expected true, got false")
+				}
+			case pdb == nil:
+				t.Error("expected pointer, got nil")
+			case pdb.Spec.MaxUnavailable == nil:
+				t.Errorf("expected PDB with non-nil MaxUnavailable, got %#v", pdb)
+			case *pdb.Spec.MaxUnavailable != tc.expectMaxUnavailable:
+				t.Errorf("expected %#v, got %#v", tc.expectMaxUnavailable, pdb.Spec.MaxUnavailable)
+			}
+		})
 	}
 }
 
-func TestPodDisruptionBudgetChange(t *testing.T) {
+func Test_podDisruptionBudgetChange(t *testing.T) {
 	two := int32(2)
 	three := int32(3)
 	trueVar := true

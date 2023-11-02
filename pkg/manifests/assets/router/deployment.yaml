@@ -1,0 +1,71 @@
+# Deployment with default values
+# Ingress Controller specific values are applied at runtime.
+kind: Deployment
+apiVersion: apps/v1
+# name and namespace are set at runtime.
+spec:
+  progressDeadlineSeconds: 600
+  template:
+    metadata:
+      annotations:
+        target.workload.openshift.io/management: '{"effect": "PreferredDuringScheduling"}'
+    spec:
+      serviceAccountName: router
+      # nodeSelector is set at runtime.
+      priorityClassName: system-cluster-critical
+      containers:
+        - name: router
+          # image is set at runtime.
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            # See https://bugzilla.redhat.com/2007246
+            allowPrivilegeEscalation: true
+            readOnlyRootFilesystem: false
+          terminationMessagePolicy: FallbackToLogsOnError
+          # Merged at runtime.
+          env:
+          - name: ROUTER_SERVICE_NAMESPACE
+            value: openshift-ingress
+          - name: DEFAULT_CERTIFICATE_DIR
+            value: /etc/pki/tls/private
+          - name: DEFAULT_DESTINATION_CA_PATH
+            value: /var/run/configmaps/service-ca/service-ca.crt
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 1936
+            terminationGracePeriodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz/ready
+              port: 1936
+          startupProbe:
+            failureThreshold: 120
+            httpGet:
+              path: /healthz/ready
+              port: 1936
+            periodSeconds: 1
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+          volumeMounts:
+          - mountPath: /etc/pki/tls/private
+            name: default-certificate
+            readOnly: true
+          - mountPath: /var/run/configmaps/service-ca
+            name: service-ca-bundle
+            readOnly: true
+      volumes:
+      - name: default-certificate
+        secret:
+          defaultMode: 420
+          # SecretName is set at run-time.
+      - name: service-ca-bundle
+        configMap:
+          items:
+          - key: service-ca.crt
+            path: service-ca.crt
+          name: service-ca-bundle
+          optional: false
+        defaultMode: 420

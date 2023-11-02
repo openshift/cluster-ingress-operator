@@ -8,6 +8,7 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 	routev1 "github.com/openshift/api/route/v1"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
+	"github.com/openshift/cluster-ingress-operator/pkg/util/ingresscontroller"
 	"golang.org/x/time/rate"
 
 	corev1 "k8s.io/api/core/v1"
@@ -170,6 +171,11 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	// If the Ingress Controller is marked to be deleted, then return early. The corresponding RouteMetricsControllerRoutesPerShard metric label
 	// will be deleted in "ensureIngressDeleted" function of ingresscontroller.
 	if ingressController.DeletionTimestamp != nil {
+		return reconcile.Result{}, nil
+	}
+
+	// If the Ingress Controller is not admitted, don't provide metrics for it.
+	if !ingresscontroller.IsAdmitted(ingressController) {
 		return reconcile.Result{}, nil
 	}
 

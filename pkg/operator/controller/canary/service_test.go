@@ -12,7 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
-func TestDesiredCanaryService(t *testing.T) {
+func Test_desiredCanaryService(t *testing.T) {
 	daemonsetRef := metav1.OwnerReference{
 		Name: "test",
 	}
