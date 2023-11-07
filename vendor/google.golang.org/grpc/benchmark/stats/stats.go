@@ -52,10 +52,6 @@ const (
 	CompModesIndex
 	EnableChannelzIndex
 	EnablePreloaderIndex
-	ClientReadBufferSize
-	ClientWriteBufferSize
-	ServerReadBufferSize
-	ServerWriteBufferSize
 
 	// MaxFeatureIndex is a place holder to indicate the total number of feature
 	// indices we have. Any new feature indices should be added above this.
@@ -113,14 +109,6 @@ type Features struct {
 	EnableChannelz bool
 	// EnablePreloader indicates if preloading was turned on.
 	EnablePreloader bool
-	// ClientReadBufferSize is the size of the client read buffer in bytes. If negative, use the default buffer size.
-	ClientReadBufferSize int
-	// ClientWriteBufferSize is the size of the client write buffer in bytes. If negative, use the default buffer size.
-	ClientWriteBufferSize int
-	// ServerReadBufferSize is the size of the server read buffer in bytes. If negative, use the default buffer size.
-	ServerReadBufferSize int
-	// ServerWriteBufferSize is the size of the server write buffer in bytes. If negative, use the default buffer size.
-	ServerWriteBufferSize int
 }
 
 // String returns all the feature values as a string.
@@ -138,13 +126,10 @@ func (f Features) String() string {
 	}
 	return fmt.Sprintf("networkMode_%v-bufConn_%v-keepalive_%v-benchTime_%v-"+
 		"trace_%v-latency_%v-kbps_%v-MTU_%v-maxConcurrentCalls_%v-%s-%s-"+
-		"compressor_%v-channelz_%v-preloader_%v-clientReadBufferSize_%v-"+
-		"clientWriteBufferSize_%v-serverReadBufferSize_%v-serverWriteBufferSize_%v-",
+		"compressor_%v-channelz_%v-preloader_%v",
 		f.NetworkMode, f.UseBufConn, f.EnableKeepalive, f.BenchTime, f.EnableTrace,
 		f.Latency, f.Kbps, f.MTU, f.MaxConcurrentCalls, reqPayloadString,
-		respPayloadString, f.ModeCompressor, f.EnableChannelz, f.EnablePreloader,
-		f.ClientReadBufferSize, f.ClientWriteBufferSize, f.ServerReadBufferSize,
-		f.ServerWriteBufferSize)
+		respPayloadString, f.ModeCompressor, f.EnableChannelz, f.EnablePreloader)
 }
 
 // SharedFeatures returns the shared features as a pretty printable string.
@@ -208,14 +193,6 @@ func (f Features) partialString(b *bytes.Buffer, wantFeatures []bool, sep, delim
 				b.WriteString(fmt.Sprintf("Channelz%v%v%v", sep, f.EnableChannelz, delim))
 			case EnablePreloaderIndex:
 				b.WriteString(fmt.Sprintf("Preloader%v%v%v", sep, f.EnablePreloader, delim))
-			case ClientReadBufferSize:
-				b.WriteString(fmt.Sprintf("ClientReadBufferSize%v%v%v", sep, f.ClientReadBufferSize, delim))
-			case ClientWriteBufferSize:
-				b.WriteString(fmt.Sprintf("ClientWriteBufferSize%v%v%v", sep, f.ClientWriteBufferSize, delim))
-			case ServerReadBufferSize:
-				b.WriteString(fmt.Sprintf("ServerReadBufferSize%v%v%v", sep, f.ServerReadBufferSize, delim))
-			case ServerWriteBufferSize:
-				b.WriteString(fmt.Sprintf("ServerWriteBufferSize%v%v%v", sep, f.ServerWriteBufferSize, delim))
 			default:
 				log.Fatalf("Unknown feature index %v. maxFeatureIndex is %v", i, MaxFeatureIndex)
 			}

@@ -23,16 +23,6 @@ var (
 )
 
 var (
-	FeatureGateValidatingAdmissionPolicy = FeatureGateName("ValidatingAdmissionPolicy")
-	validatingAdmissionPolicy            = FeatureGateDescription{
-		FeatureGateAttributes: FeatureGateAttributes{
-			Name: FeatureGateValidatingAdmissionPolicy,
-		},
-		OwningJiraComponent: "kube-apiserver",
-		ResponsiblePerson:   "benluddy",
-		OwningProduct:       kubernetes,
-	}
-
 	FeatureGateGatewayAPI = FeatureGateName("GatewayAPI")
 	gateGatewayAPI        = FeatureGateDescription{
 		FeatureGateAttributes: FeatureGateAttributes{
@@ -151,6 +141,16 @@ var (
 		OwningJiraComponent: "insights",
 		ResponsiblePerson:   "tremes",
 		OwningProduct:       ocpSpecific,
+	}
+
+	FeatureGatePDBUnhealthyPodEvictionPolicy = FeatureGateName("PDBUnhealthyPodEvictionPolicy")
+	pdbUnhealthyPodEvictionPolicy            = FeatureGateDescription{
+		FeatureGateAttributes: FeatureGateAttributes{
+			Name: FeatureGatePDBUnhealthyPodEvictionPolicy,
+		},
+		OwningJiraComponent: "apps",
+		ResponsiblePerson:   "atiratree",
+		OwningProduct:       kubernetes,
 	}
 
 	FeatureGateDynamicResourceAllocation = FeatureGateName("DynamicResourceAllocation")
