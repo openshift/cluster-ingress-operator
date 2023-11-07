@@ -20,7 +20,7 @@ func newConfigMap() *corev1.ConfigMap {
 			},
 		},
 		Data: map[string]string{
-			"dashboard.json": dashboardJSON,
+			DashboardFileName: dashboardJSON,
 		},
 	}
 }
@@ -81,7 +81,7 @@ func TestDashboardNeedsUpdate(t *testing.T) {
 						},
 					},
 					Data: map[string]string{
-						"dashboard.json": "corrupted text",
+						DashboardFileName: "corrupted text",
 					},
 				},
 				desired: newConfigMap(),
@@ -102,7 +102,7 @@ func TestDashboardNeedsUpdate(t *testing.T) {
 						},
 					},
 					Data: map[string]string{
-						"dashboard.json":  dashboardJSON,
+						DashboardFileName: dashboardJSON,
 						"dashboard2.json": dashboardJSON,
 					},
 				},
@@ -122,7 +122,7 @@ func TestDashboardNeedsUpdate(t *testing.T) {
 						Labels:    map[string]string{},
 					},
 					Data: map[string]string{
-						"dashboard.json": dashboardJSON,
+						DashboardFileName: dashboardJSON,
 					},
 				},
 				desired: newConfigMap(),
@@ -143,7 +143,7 @@ func TestDashboardNeedsUpdate(t *testing.T) {
 						},
 					},
 					Data: map[string]string{
-						"dashboard.json": dashboardJSON,
+						DashboardFileName: dashboardJSON,
 					},
 				},
 				desired: newConfigMap(),
@@ -223,7 +223,7 @@ func TestDesiredMonitoringDashboard(t *testing.T) {
 						ResourceVersion: "32",
 					},
 					Data: map[string]string{
-						"dashboard.json": dashboardJSON,
+						DashboardFileName: dashboardJSON,
 					},
 				},
 			},
@@ -238,7 +238,7 @@ func TestDesiredMonitoringDashboard(t *testing.T) {
 						ResourceVersion: "32",
 					},
 					Data: map[string]string{
-						"dashboard.json": dashboardJSON,
+						DashboardFileName: dashboardJSON,
 					},
 				},
 			},

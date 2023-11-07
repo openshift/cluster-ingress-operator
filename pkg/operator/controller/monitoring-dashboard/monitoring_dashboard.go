@@ -17,9 +17,10 @@ const (
 	dashboardConfigMapName      = "grafana-dashboard-ingress-operator"
 	dashboardConfigMapNamespace = "openshift-config-managed"
 	consoleDashboardLabel       = "console.openshift.io/dashboard"
+	DashboardFileName           = "dashboard.json"
 )
 
-// ensureMonitoringDashboard creates or deletes an operator generated
+// ensureMonitoringDashboard creates, updates or deletes an operator generated
 // configmap containing the dashboard for ingress operator monitoring.
 // Return any errors.
 func (r *reconciler) ensureMonitoringDashboard(ctx context.Context, infraStatus configv1.InfrastructureStatus) error {
@@ -88,7 +89,7 @@ func desiredMonitoringDashboard(ctx context.Context, infraStatus configv1.Infras
 			},
 		},
 		Data: map[string]string{
-			"dashboard.json": dashboardJSON,
+			DashboardFileName: dashboardJSON,
 		},
 	}
 	if current != nil {
@@ -97,10 +98,10 @@ func desiredMonitoringDashboard(ctx context.Context, infraStatus configv1.Infras
 	return &desired
 }
 
-// dashboardDataNeedsUpdate compares the dashboard data within current
+// dashboardNeedsUpdate compares the current dashboard configmap
 // and desired ConfigMaps. It returns true if the data within the
 // current ConfigMap does not match the desired ConfigMap, or if the
-// console label dashboard is false or not present. This indicate
+// console label dashboard is false or not present. This indicates
 // that the dashboard data requires an update.
 func dashboardNeedsUpdate(current *corev1.ConfigMap, desired *corev1.ConfigMap) bool {
 	if labelValue, ok := current.ObjectMeta.Labels[consoleDashboardLabel]; !ok || labelValue != "true" {

@@ -38,22 +38,22 @@ func TestDashboardCreation(t *testing.T) {
 
 	// Change dashboard in configmap and check for update from the operator
 	dashboardCM.Data = map[string]string{
-		"dashboard.json": "",
+		monitoringdashboard.DashboardFileName: "",
 	}
 	if err := kclient.Update(context.TODO(), dashboardCM); err != nil {
 		t.Fatalf("failed to update dashboard configmap: %v", err)
 	}
 	err := wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
-		if err := kclient.Get(context.TODO(), monitoringdashboard.ConfigMapName(), dashboardCM); err != nil {
-			t.Logf("failed to get configmap: %v, retrying...", err)
+		err := kclient.Get(context.TODO(), monitoringdashboard.ConfigMapName(), dashboardCM)
+		if err != nil {
+			t.Logf("Failed to get ConfigMap, retrying... Error: %v", err)
 			return false, nil
 		}
-		dashboard, ok := dashboardCM.Data["dashboard.json"]
-		if !(ok && len(dashboard) > 0) {
-			t.Logf("Controller did not modify the ConfigMap back to its original state, retrying...")
-			return false, nil
+		if dashboard, ok := dashboardCM.Data[monitoringdashboard.DashboardFileName]; ok && dashboard != "" {
+			return true, nil
 		}
-		return true, nil
+		t.Logf("ConfigMap not yet updated, retrying...")
+		return false, nil
 	})
 	if err != nil {
 		t.Fatalf("failed to observe configmap: %v", err)
@@ -61,7 +61,7 @@ func TestDashboardCreation(t *testing.T) {
 
 	// Delete configmap and check for update from the operator
 	dashboardCM.Data = map[string]string{
-		"dashboard.json": "",
+		monitoringdashboard.DashboardFileName: "",
 	}
 	if err := kclient.Delete(context.TODO(), dashboardCM); err != nil {
 		t.Fatalf("failed to delete dashboard configmap: %v", err)

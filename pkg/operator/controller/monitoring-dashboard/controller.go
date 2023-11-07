@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	configv1 "github.com/openshift/api/config/v1"
-	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -20,8 +19,6 @@ import (
 const (
 	controllerName = "monitoring_dashboard_controller"
 )
-
-var log = logf.Logger.WithName(controllerName)
 
 // New creates the monitoring dashboard controller. This is the controller
 // that handles all the logic about the monitoring dashboard
