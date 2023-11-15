@@ -283,6 +283,15 @@ func ServiceMeshSubscriptionName() types.NamespacedName {
 	}
 }
 
+// IstioOperatorSubscriptionName returns the namespaced name for a Subscription CR
+// to install Istio Operator.
+func IstioOperatorSubscriptionName() types.NamespacedName {
+	return types.NamespacedName{
+		Namespace: "openshift-operators",
+		Name:      "sailoperator",
+	}
+}
+
 // GatewayDNSRecordName returns the namespaced name for a DNSRecord CR
 // associated with a Gateway.  This CR is created in the Gateway's namespace and
 // is named using the Gateway's name, listener's hashed host name, and the

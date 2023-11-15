@@ -47,20 +47,64 @@ func (r *reconciler) ensureServiceMeshOperatorSubscription(ctx context.Context) 
 	return true, current, nil
 }
 
+// ensureIstioOperatorSubscription attempts to ensure that a subscription
+// for Istio Operator is present and returns a Boolean indicating whether
+// it exists, the subscription if it exists, and an error value.
+func (r *reconciler) ensureIstioOperatorSubscription(ctx context.Context) (bool, *operatorsv1alpha1.Subscription, error) {
+	name := operatorcontroller.IstioOperatorSubscriptionName()
+	have, current, err := r.currentSubscription(ctx, name)
+	if err != nil {
+		return false, nil, err
+	}
+
+	desired, err := desiredSubscription(name)
+	if err != nil {
+		return have, current, err
+	}
+
+	switch {
+	case !have:
+		if err := r.createSubscription(ctx, desired); err != nil {
+			return false, nil, err
+		}
+		return r.currentSubscription(ctx, name)
+	case have:
+		if updated, err := r.updateSubscription(ctx, current, desired); err != nil {
+			return have, current, err
+		} else if updated {
+			return r.currentSubscription(ctx, name)
+		}
+	}
+	return true, current, nil
+}
+
 // desiredSubscription returns the desired subscription.
 func desiredSubscription(name types.NamespacedName) (*operatorsv1alpha1.Subscription, error) {
-	subscription := operatorsv1alpha1.Subscription{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace: name.Namespace,
-			Name:      name.Name,
-		},
-		Spec: &operatorsv1alpha1.SubscriptionSpec{
+	var spec operatorsv1alpha1.SubscriptionSpec
+
+	if name == operatorcontroller.ServiceMeshSubscriptionName() {
+		spec = operatorsv1alpha1.SubscriptionSpec{
 			Channel:                "stable",
 			InstallPlanApproval:    operatorsv1alpha1.ApprovalAutomatic,
 			Package:                "servicemeshoperator",
 			CatalogSource:          "redhat-operators",
 			CatalogSourceNamespace: "openshift-marketplace",
+		}
+	} else {
+		spec = operatorsv1alpha1.SubscriptionSpec{
+			Channel:                "3.0-nightly",
+			InstallPlanApproval:    operatorsv1alpha1.ApprovalAutomatic,
+			Package:                "sailoperator",
+			CatalogSource:          "community-operators",
+			CatalogSourceNamespace: "openshift-marketplace",
+		}
+	}
+	subscription := operatorsv1alpha1.Subscription{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: name.Namespace,
+			Name:      name.Name,
 		},
+		Spec: &spec,
 	}
 	return &subscription, nil
 }

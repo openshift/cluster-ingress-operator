@@ -94,11 +94,14 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	}
 
 	var errs []error
-	if _, _, err := r.ensureServiceMeshOperatorSubscription(ctx); err != nil {
+	if _, _, err := r.ensureIstioOperatorSubscription(ctx); err != nil {
+		errs = append(errs, err)
+	}
+	/*if _, _, err := r.ensureServiceMeshOperatorSubscription(ctx); err != nil {
 		errs = append(errs, err)
 	}
 	if _, _, err := r.ensureServiceMeshControlPlane(ctx, &gatewayclass); err != nil {
 		errs = append(errs, err)
-	}
+	}*/
 	return reconcile.Result{}, utilerrors.NewAggregate(errs)
 }
