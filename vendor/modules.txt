@@ -385,6 +385,7 @@ github.com/oklog/ulid
 # github.com/openshift/api v3.9.1-0.20190924102528-32369d4db2ad+incompatible => github.com/openshift/api v0.0.0-20240405164942-0cc42a39da45
 ## explicit; go 1.21
 github.com/openshift/api
+github.com/openshift/api/annotations
 github.com/openshift/api/apiserver
 github.com/openshift/api/apiserver/v1
 github.com/openshift/api/apps
