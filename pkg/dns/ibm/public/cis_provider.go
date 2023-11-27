@@ -38,6 +38,7 @@ func NewProvider(config common.Config) (*Provider, error) {
 	}
 	authenticator := &core.IamAuthenticator{
 		ApiKey: config.APIKey,
+		URL:    config.ServiceEndpointOverrides.GetIAMEndpoint(),
 	}
 	provider := &Provider{}
 
@@ -46,7 +47,7 @@ func NewProvider(config common.Config) (*Provider, error) {
 	for _, zone := range config.Zones {
 		options := &dnsrecordsv1.DnsRecordsV1Options{
 			Authenticator:  authenticator,
-			URL:            dnsrecordsv1.DefaultServiceURL,
+			URL:            config.ServiceEndpointOverrides.GetCISEndpoint(),
 			Crn:            &config.InstanceID,
 			ZoneIdentifier: &zone,
 		}
