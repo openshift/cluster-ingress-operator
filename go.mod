@@ -36,9 +36,9 @@ require (
 	gopkg.in/fsnotify.v1 v1.4.7
 	gopkg.in/yaml.v2 v2.4.0
 	k8s.io/api v0.28.2
-	k8s.io/apiextensions-apiserver v0.28.2
+	k8s.io/apiextensions-apiserver v0.28.0
 	k8s.io/apimachinery v0.28.2
-	k8s.io/apiserver v0.28.2
+	k8s.io/apiserver v0.28.0
 	k8s.io/client-go v12.0.0+incompatible
 	k8s.io/utils v0.0.0-20230406110748-d93618cff8a2
 	sigs.k8s.io/controller-runtime v0.15.0
@@ -61,7 +61,7 @@ require (
 	github.com/blang/semver/v4 v4.0.0 // indirect
 	github.com/cespare/xxhash/v2 v2.2.0 // indirect
 	github.com/emicklei/go-restful/v3 v3.9.0 // indirect
-	github.com/evanphx/json-patch v4.12.0+incompatible // indirect
+	github.com/evanphx/json-patch v5.6.0+incompatible // indirect
 	github.com/evanphx/json-patch/v5 v5.6.0 // indirect
 	github.com/fatih/color v1.12.0 // indirect
 	github.com/fsnotify/fsnotify v1.6.0 // indirect
@@ -129,7 +129,7 @@ require (
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/ini.v1 v1.62.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-	k8s.io/component-base v0.28.2 // indirect
+	k8s.io/component-base v0.28.0 // indirect
 	k8s.io/klog/v2 v2.100.1 // indirect
 	k8s.io/kube-aggregator v0.26.1 // indirect
 	k8s.io/kube-openapi v0.0.0-20230717233707-2695361300d9 // indirect
@@ -143,6 +143,6 @@ require (
 // github.com/operator-framework/operator-sdk.
 replace (
 	bitbucket.org/ww/goautoneg => github.com/munnerz/goautoneg v0.0.0-20120707110453-a547fc61f48d
-	github.com/openshift/api => github.com/openshift/api v0.0.0-20231006150950-bbe1a26bbafc
-	k8s.io/client-go => k8s.io/client-go v0.28.2
+	github.com/openshift/api => github.com/openshift/api v0.0.0-20231113114413-39964e6af314
+	k8s.io/client-go => k8s.io/client-go v0.28.0
 )

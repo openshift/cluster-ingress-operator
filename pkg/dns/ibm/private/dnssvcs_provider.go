@@ -45,11 +45,12 @@ func NewProvider(config common.Config) (*Provider, error) {
 
 	authenticator := &core.IamAuthenticator{
 		ApiKey: config.APIKey,
+		URL:    config.ServiceEndpointOverrides.GetIAMEndpoint(),
 	}
 
 	options := &dnssvcsv1.DnsSvcsV1Options{
 		Authenticator: authenticator,
-		URL:           dnssvcsv1.DefaultServiceURL,
+		URL:           config.ServiceEndpointOverrides.GetDNSEndpoint(),
 	}
 
 	dnsService, err := dnssvcsv1.NewDnsSvcsV1(options)

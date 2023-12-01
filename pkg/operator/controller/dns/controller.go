@@ -718,14 +718,28 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 			return &dns.FakeProvider{}, nil
 		}
 
+		// Read custom service endpoints from the infra status and set when configured.
+		// When no custom endpoint is configured for a given service, the provider will use the default value.
+		var serviceEndpointOverrides ibm.ServiceEndpointOverrides
+		for _, endpointConfig := range infraStatus.PlatformStatus.IBMCloud.ServiceEndpoints {
+			switch endpointConfig.Name {
+			case configv1.IBMCloudServiceCIS:
+				serviceEndpointOverrides.CIS = endpointConfig.URL
+			case configv1.IBMCloudServiceDNSServices:
+				serviceEndpointOverrides.DNS = endpointConfig.URL
+			case configv1.IBMCloudServiceIAM:
+				serviceEndpointOverrides.IAM = endpointConfig.URL
+			}
+		}
+
 		var err error
 		if platformStatus.IBMCloud.CISInstanceCRN != "" {
-			dnsProvider, err = getIbmDNSProvider(dnsConfig, creds, platformStatus.IBMCloud.CISInstanceCRN, userAgent, true)
+			dnsProvider, err = getIbmDNSProvider(dnsConfig, creds, platformStatus.IBMCloud.CISInstanceCRN, userAgent, true, serviceEndpointOverrides)
 			if err != nil {
 				return nil, err
 			}
 		} else if platformStatus.IBMCloud.DNSInstanceCRN != "" {
-			dnsProvider, err = getIbmDNSProvider(dnsConfig, creds, platformStatus.IBMCloud.DNSInstanceCRN, userAgent, false)
+			dnsProvider, err = getIbmDNSProvider(dnsConfig, creds, platformStatus.IBMCloud.DNSInstanceCRN, userAgent, false, serviceEndpointOverrides)
 			if err != nil {
 				return nil, err
 			}
@@ -735,14 +749,29 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 		}
 	case configv1.PowerVSPlatformType:
 		// Power VS platform will use the ibm dns implementation
+
+		// Read custom service endpoints from the infra status and set when configured.
+		// When no custom endpoint is configured for a given service, the provider will use the default value.
+		var serviceEndpointOverrides ibm.ServiceEndpointOverrides
+		for _, endpointConfig := range infraStatus.PlatformStatus.PowerVS.ServiceEndpoints {
+			switch endpointConfig.Name {
+			case string(configv1.IBMCloudServiceCIS):
+				serviceEndpointOverrides.CIS = endpointConfig.URL
+			case string(configv1.IBMCloudServiceDNSServices):
+				serviceEndpointOverrides.DNS = endpointConfig.URL
+			case string(configv1.IBMCloudServiceIAM):
+				serviceEndpointOverrides.IAM = endpointConfig.URL
+			}
+		}
+
 		var err error
 		if platformStatus.PowerVS.CISInstanceCRN != "" {
-			dnsProvider, err = getIbmDNSProvider(dnsConfig, creds, platformStatus.PowerVS.CISInstanceCRN, userAgent, true)
+			dnsProvider, err = getIbmDNSProvider(dnsConfig, creds, platformStatus.PowerVS.CISInstanceCRN, userAgent, true, serviceEndpointOverrides)
 			if err != nil {
 				return nil, err
 			}
 		} else if platformStatus.PowerVS.DNSInstanceCRN != "" {
-			dnsProvider, err = getIbmDNSProvider(dnsConfig, creds, platformStatus.PowerVS.DNSInstanceCRN, userAgent, false)
+			dnsProvider, err = getIbmDNSProvider(dnsConfig, creds, platformStatus.PowerVS.DNSInstanceCRN, userAgent, false, serviceEndpointOverrides)
 			if err != nil {
 				return nil, err
 			}
@@ -798,7 +827,7 @@ func (r *reconciler) customCABundle() (string, error) {
 }
 
 // getIbmDNSProvider initializes and returns an IBM DNS provider instance.
-func getIbmDNSProvider(dnsConfig *configv1.DNS, creds *corev1.Secret, instanceCRN, userAgent string, isPublic bool) (dns.Provider, error) {
+func getIbmDNSProvider(dnsConfig *configv1.DNS, creds *corev1.Secret, instanceCRN, userAgent string, isPublic bool, serviceEndpointOverrides ibm.ServiceEndpointOverrides) (dns.Provider, error) {
 	zones := []string{}
 	if dnsConfig.Spec.PrivateZone != nil {
 		zones = append(zones, dnsConfig.Spec.PrivateZone.ID)
@@ -808,9 +837,10 @@ func getIbmDNSProvider(dnsConfig *configv1.DNS, creds *corev1.Secret, instanceCR
 	}
 
 	providerCfg := ibm.Config{
-		APIKey:    string(creds.Data["ibmcloud_api_key"]),
-		Zones:     zones,
-		UserAgent: userAgent,
+		APIKey:                   string(creds.Data["ibmcloud_api_key"]),
+		Zones:                    zones,
+		UserAgent:                userAgent,
+		ServiceEndpointOverrides: serviceEndpointOverrides,
 	}
 
 	if isPublic {
