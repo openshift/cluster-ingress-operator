@@ -828,7 +828,7 @@ func Test_customCABundle(t *testing.T) {
 			if tc.cm != nil {
 				resources = append(resources, tc.cm)
 			}
-			client := fake.NewFakeClientWithScheme(scheme, resources...)
+			client := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(resources...).Build()
 			r := reconciler{client: client}
 			actualCABundle, err := r.customCABundle()
 			if err != nil {

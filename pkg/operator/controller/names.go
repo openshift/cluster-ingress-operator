@@ -39,7 +39,6 @@ const (
 
 	DefaultOperatorNamespace = "openshift-ingress-operator"
 	DefaultOperandNamespace  = "openshift-ingress"
-	SourceConfigMapNamespace = "openshift-config"
 
 	// DefaultCanaryNamespace is the default namespace for
 	// the ingress canary check resources.
