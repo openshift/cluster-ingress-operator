@@ -6,7 +6,6 @@ package e2e
 import (
 	"context"
 	"fmt"
-	"reflect"
 	"testing"
 	"time"
 
@@ -256,6 +255,10 @@ func TestUnmanagedDNSToManagedDNSInternalIngressController(t *testing.T) {
 
 	t.Logf("Updating ingresscontroller %s to dnsManagementPolicy=Managed", ic.Name)
 
+	var oldLoadBalancerStatus corev1.LoadBalancerStatus
+	lbService.Status.LoadBalancer.DeepCopyInto(&oldLoadBalancerStatus)
+	oldUID := lbService.UID
+
 	if err := updateIngressControllerSpecWithRetryOnConflict(t, name, 5*time.Minute, func(ics *operatorv1.IngressControllerSpec) {
 		ics.EndpointPublishingStrategy.LoadBalancer.Scope = operatorv1.ExternalLoadBalancer
 		ics.EndpointPublishingStrategy.LoadBalancer.DNSManagementPolicy = operatorv1.ManagedLoadBalancerDNS
@@ -263,8 +266,10 @@ func TestUnmanagedDNSToManagedDNSInternalIngressController(t *testing.T) {
 		t.Fatalf("failed to update ingresscontroller %s: %v", name, err)
 	}
 
-	var oldLoadBalancerStatus corev1.LoadBalancerStatus
-	lbService.Status.LoadBalancer.DeepCopyInto(&oldLoadBalancerStatus)
+	// Wait for the load balancer and DNS to reach stable conditions.
+	if err := waitForIngressControllerCondition(t, kclient, 10*time.Minute, name, append(availableConditionsForIngressControllerWithLoadBalancer, operatorProgressingFalse)...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
 
 	// Only delete the service on platforms that don't automatically update the service's scope.
 	switch platform {
@@ -274,6 +279,11 @@ func TestUnmanagedDNSToManagedDNSInternalIngressController(t *testing.T) {
 		}
 	}
 
+	// Wait for the load balancer and DNS to reach stable conditions.
+	if err := waitForIngressControllerCondition(t, kclient, 10*time.Minute, name, append(availableConditionsForIngressControllerWithLoadBalancer, operatorProgressingFalse)...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
 	// Ensure the service's load-balancer status changes.
 	err := wait.PollImmediate(10*time.Second, 5*time.Minute, func() (bool, error) {
 		lbService := &corev1.Service{}
@@ -281,8 +291,9 @@ func TestUnmanagedDNSToManagedDNSInternalIngressController(t *testing.T) {
 			t.Logf("Get %q failed: %v, retrying ...", controller.LoadBalancerServiceName(ic), err)
 			return false, nil
 		}
-		if reflect.DeepEqual(lbService.Status.LoadBalancer, oldLoadBalancerStatus) {
-			t.Logf("Waiting for service %q to be updated", controller.LoadBalancerServiceName(ic))
+		//if reflect.DeepEqual(lbService.Status.LoadBalancer, oldLoadBalancerStatus) {
+		if oldUID != lbService.UID {
+			t.Logf("Waiting for service %q to be updated/n new: %v /n old: %v", controller.LoadBalancerServiceName(ic), lbService.UID, oldUID)
 			return false, nil
 		} else if ingresscontroller.IsServiceInternal(lbService) {
 			// The service got updated, but is not external.
