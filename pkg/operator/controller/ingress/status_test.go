@@ -758,12 +758,12 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 			expectMessageContains: "delete",
 		},
 		{
-			name:                        "LoadBalancerService, inconsistent scope on Azure",
-			ic:                          &loadBalancerIngressControllerWithInternalScope,
-			service:                     lbService,
-			platformStatus:              azurePlatformStatus,
-			expectStatus:                operatorv1.ConditionTrue,
-			expectMessageDoesNotContain: "delete",
+			name:                  "LoadBalancerService, inconsistent scope on Azure",
+			ic:                    &loadBalancerIngressControllerWithInternalScope,
+			service:               lbService,
+			platformStatus:        azurePlatformStatus,
+			expectStatus:          operatorv1.ConditionTrue,
+			expectMessageContains: "delete",
 		},
 		{
 			name:           "LoadBalancerService, internal scope",

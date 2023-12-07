@@ -68,7 +68,9 @@ func TestUnmanagedDNSToManagedDNSIngressController(t *testing.T) {
 		t.Fatalf("DNSRecord %s expected in dnsManagementPolicy=UnmanagedDNS but got dnsManagementPolicy=%s", wildcardRecordName.Name, wildcardRecord.Spec.DNSManagementPolicy)
 	}
 
-	verifyUnmanagedDNSRecordStatus(t, wildcardRecord)
+	if err := verifyUnmanagedDNSRecordStatus(wildcardRecord); err != nil {
+		t.Fatal(err)
+	}
 
 	testNamespace := types.NamespacedName{Name: name.Name + "-initial", Namespace: name.Namespace}
 	verifyExternalIngressController(t, testNamespace, "apps."+ic.Spec.Domain, wildcardRecord.Spec.Targets[0])
@@ -165,16 +167,8 @@ func TestManagedDNSToUnmanagedDNSIngressController(t *testing.T) {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
-	// Ensure DNSRecord CR is present.
-	if err := kclient.Get(context.TODO(), wildcardRecordName, wildcardRecord); err != nil {
-		t.Fatalf("failed to get wildcard dnsrecord %s: %v", wildcardRecordName, err)
-	}
-
-	if wildcardRecord.Spec.DNSManagementPolicy != iov1.UnmanagedDNS {
-		t.Fatalf("DNSRecord %s expected in dnsManagementPolicy=UnmanagedDNS but got dnsManagementPolicy=%s", wildcardRecordName.Name, wildcardRecord.Spec.DNSManagementPolicy)
-	}
-
-	verifyUnmanagedDNSRecordStatus(t, wildcardRecord)
+	// Ensure DNSRecord CR is present and accurate.
+	verifyUnmanagedDNSRecordStatusWithPoll(t, wildcardRecordName)
 
 	// To verify the external ingresscontroller after updating dnsManagementPolicy=Unmanaged, we use
 	// the IP address from the dnsrecord to route to the correct router pod, and we use the HTTP host
@@ -243,8 +237,9 @@ func TestUnmanagedDNSToManagedDNSInternalIngressController(t *testing.T) {
 	if wildcardRecord.Spec.DNSManagementPolicy != iov1.UnmanagedDNS {
 		t.Fatalf("DNSRecord %s expected in dnsManagementPolicy=UnmanagedDNS but got dnsManagementPolicy=%s", wildcardRecordName.Name, wildcardRecord.Spec.DNSManagementPolicy)
 	}
-
-	verifyUnmanagedDNSRecordStatus(t, wildcardRecord)
+	if err := verifyUnmanagedDNSRecordStatus(wildcardRecord); err != nil {
+		t.Fatal(err)
+	}
 
 	routerDeployment := &appsv1.Deployment{}
 	if err := kclient.Get(context.TODO(), controller.RouterDeploymentName(ic), routerDeployment); err != nil {
@@ -254,7 +249,7 @@ func TestUnmanagedDNSToManagedDNSInternalIngressController(t *testing.T) {
 	testNamespace := types.NamespacedName{Name: name.Name, Namespace: routerDeployment.Namespace}
 	verifyInternalIngressController(t, testNamespace, "apps."+ic.Spec.Domain, wildcardRecord.Spec.Targets[0], routerDeployment.Spec.Template.Spec.Containers[0].Image)
 
-	t.Logf("Updating ingresscontroller %s to dnsManagementPolicy=Managed", ic.Name)
+	t.Logf("Updating ingresscontroller %s to dnsManagementPolicy=Managed and scope=External", ic.Name)
 
 	if err := updateIngressControllerSpecWithRetryOnConflict(t, name, 5*time.Minute, func(ics *operatorv1.IngressControllerSpec) {
 		ics.EndpointPublishingStrategy.LoadBalancer.Scope = operatorv1.ExternalLoadBalancer
@@ -266,12 +261,9 @@ func TestUnmanagedDNSToManagedDNSInternalIngressController(t *testing.T) {
 	var oldLoadBalancerStatus corev1.LoadBalancerStatus
 	lbService.Status.LoadBalancer.DeepCopyInto(&oldLoadBalancerStatus)
 
-	// Only delete the service on platforms that don't automatically update the service's scope.
-	switch platform {
-	case configv1.AlibabaCloudPlatformType, configv1.AWSPlatformType, configv1.IBMCloudPlatformType, configv1.PowerVSPlatformType:
-		if err := kclient.Delete(context.TODO(), lbService); err != nil && !errors.IsNotFound(err) {
-			t.Fatalf("failed to delete svc %s: %v", lbService.Name, err)
-		}
+	// Delete the service on all platforms, in order to update the service's scope.
+	if err := kclient.Delete(context.TODO(), lbService); err != nil && !errors.IsNotFound(err) {
+		t.Fatalf("failed to delete svc %s: %v", lbService.Name, err)
 	}
 
 	// Ensure the service's load-balancer status changes.
@@ -318,22 +310,47 @@ func TestUnmanagedDNSToManagedDNSInternalIngressController(t *testing.T) {
 	verifyExternalIngressController(t, testNamespace, "apps."+ic.Spec.Domain, wildcardRecord.Spec.Targets[0])
 }
 
-func verifyUnmanagedDNSRecordStatus(t *testing.T, record *iov1.DNSRecord) {
-	t.Helper()
+// verifyUnmanagedDNSRecordStatusWithPoll calls verifyUnmanagedDNSRecordStatus in a loop while the DNS record
+// is potentially changing.
+func verifyUnmanagedDNSRecordStatusWithPoll(t *testing.T, wildcardRecordName types.NamespacedName) {
+	err := wait.PollImmediate(5*time.Second, 2*time.Minute, func() (bool, error) {
+		wildcardRecord := &iov1.DNSRecord{}
+		if err := kclient.Get(context.TODO(), wildcardRecordName, wildcardRecord); err != nil {
+			if errors.IsNotFound(err) {
+				return false, nil
+			}
+			return false, fmt.Errorf("failed to get wildcard dnsrecord %s: %v", wildcardRecordName.Name, err)
+		}
+		if wildcardRecord.Spec.DNSManagementPolicy != iov1.UnmanagedDNS {
+			return false, fmt.Errorf("DNSRecord %s expected in dnsManagementPolicy=UnmanagedDNS but got dnsManagementPolicy=%s", wildcardRecordName.Name, wildcardRecord.Spec.DNSManagementPolicy)
+		}
+		if err := verifyUnmanagedDNSRecordStatus(wildcardRecord); err != nil {
+			return false, err
+		} else {
+			return true, nil
+		}
+	})
+	if err != nil {
+		t.Fatalf("DNSRecord %s failed to update in time: %v", wildcardRecordName.Name, err)
+	}
+
+}
+
+func verifyUnmanagedDNSRecordStatus(record *iov1.DNSRecord) error {
 	for _, zoneInStatus := range record.Status.Zones {
 		if len(zoneInStatus.Conditions) == 0 {
-			t.Fatalf("DNSRecord zone %+v expected to have conditions", zoneInStatus.DNSZone)
+			return fmt.Errorf("DNSRecord zone %+v expected to have conditions", zoneInStatus.DNSZone)
 		}
 
-		t.Logf("verifying conditions on DNSRecord zone %+v", zoneInStatus.DNSZone)
 		for _, condition := range zoneInStatus.Conditions {
 			if condition.Type != iov1.DNSRecordPublishedConditionType {
-				t.Fatalf("DNSRecord zone expected to have condition type=Published but got type=%s", condition.Type)
+				return fmt.Errorf("DNSRecord zone expected to have condition type=Published but got type=%s", condition.Type)
 			}
 
 			if condition.Status != string(operatorv1.ConditionUnknown) {
-				t.Fatalf("DNSRecord zone expected to have status=Unknown but got status=%s", condition.Status)
+				return fmt.Errorf("DNSRecord zone expected to have status=Unknown but got status=%s", condition.Status)
 			}
 		}
 	}
+	return nil
 }

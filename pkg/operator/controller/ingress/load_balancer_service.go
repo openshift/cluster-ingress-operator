@@ -205,11 +205,11 @@ var (
 
 	// platformsWithMutableScope is the set of platforms that support
 	// mutating load-balancer scope without deleting and recreating a
-	// service load-balancer.
-	platformsWithMutableScope = map[configv1.PlatformType]struct{}{
-		configv1.AzurePlatformType: {},
-		configv1.GCPPlatformType:   {},
-	}
+	// service load-balancer.  Prior to 4.15 this included Azure and GCP.
+	// As of 4.15, there are no longer any documented platforms with
+	// this behavior, so the map is now empty and reserved for the
+	// future.  See <https://issues.redhat.com/browse/OCPBUGS-24531>.
+	platformsWithMutableScope = map[configv1.PlatformType]struct{}{}
 
 	// managedLoadBalancerServiceAnnotations is a set of annotation keys for
 	// annotations that the operator manages for LoadBalancer-type services.
@@ -256,6 +256,8 @@ var (
 		// the service, so the operator doesn't update the annotations
 		// that specify load-balancer scope for those platforms.  See
 		// <https://issues.redhat.com/browse/NE-621>.
+		// UPDATE: As of 4.15, this scope-switching support has disappeared,
+		// see <https://issues.redhat.com/browse/OCPBUGS-24531>.
 		for platform := range platformsWithMutableScope {
 			for name := range InternalLBAnnotations[platform] {
 				result.Insert(name)
@@ -749,10 +751,10 @@ func loadBalancerServiceIsProgressing(ic *operatorv1.IngressController, service 
 	}
 	if wantScope != haveScope {
 		err := fmt.Errorf("The IngressController scope was changed from %q to %q.", haveScope, wantScope)
-		switch platform.Type {
-		case configv1.AWSPlatformType, configv1.IBMCloudPlatformType:
-			err = fmt.Errorf("%[1]s  To effectuate this change, you must delete the service: `oc -n %[2]s delete svc/%[3]s`; the service load-balancer will then be deprovisioned and a new one created.  This will most likely cause the new load-balancer to have a different host name and IP address from the old one's.  Alternatively, you can revert the change to the IngressController: `oc -n openshift-ingress-operator patch ingresscontrollers/%[4]s --type=merge --patch='{\"spec\":{\"endpointPublishingStrategy\":{\"loadBalancer\":{\"scope\":\"%[5]s\"}}}}'", err.Error(), service.Namespace, service.Name, ic.Name, haveScope)
-		}
+		// A load balancer scope change must add this error in order to mark the LB service as Progressing,
+		// and indicate a manual change is required. When the LB service is progressing, it subsequently
+		// marks the ingress operator as Progressing and informs the admin to make the change.
+		err = fmt.Errorf("%[1]s  To effectuate this change, you must delete the service: `oc -n %[2]s delete svc/%[3]s`; the service load-balancer will then be deprovisioned and a new one created.  This will most likely cause the new load-balancer to have a different host name and IP address from the old one's.  Alternatively, you can revert the change to the IngressController: `oc -n openshift-ingress-operator patch ingresscontrollers/%[4]s --type=merge --patch='{\"spec\":{\"endpointPublishingStrategy\":{\"loadBalancer\":{\"scope\":\"%[5]s\"}}}}'", err.Error(), service.Namespace, service.Name, ic.Name, haveScope)
 		errs = append(errs, err)
 	}
 
