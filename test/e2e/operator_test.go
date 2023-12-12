@@ -1435,6 +1435,9 @@ func TestAWSLBTypeDefaulting(t *testing.T) {
 // should delete and recreate the service automatically.
 func TestScopeChange(t *testing.T) {
 	t.Parallel()
+
+	t.Skip("test skipped until resolution in hand for https://issues.redhat.com/browse/OCPBUGS-24044")
+
 	if infraConfig.Status.PlatformStatus == nil {
 		t.Skip("test skipped on nil platform")
 	}
