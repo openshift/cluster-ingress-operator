@@ -1442,10 +1442,11 @@ func TestScopeChange(t *testing.T) {
 	supportedPlatforms := map[configv1.PlatformType]struct{}{
 		configv1.AlibabaCloudPlatformType: {},
 		configv1.AWSPlatformType:          {},
-		configv1.AzurePlatformType:        {},
-		configv1.GCPPlatformType:          {},
-		configv1.IBMCloudPlatformType:     {},
-		configv1.PowerVSPlatformType:      {},
+		// Test skipped on Azure/GCP until resolution in hand for https://issues.redhat.com/browse/OCPBUGS-24044
+		//configv1.AzurePlatformType:        {},
+		//configv1.GCPPlatformType:          {},
+		configv1.IBMCloudPlatformType: {},
+		configv1.PowerVSPlatformType:  {},
 	}
 	if _, supported := supportedPlatforms[platform]; !supported {
 		t.Skipf("test skipped on platform %q", platform)
