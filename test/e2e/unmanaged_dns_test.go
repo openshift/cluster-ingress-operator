@@ -108,8 +108,6 @@ func TestUnmanagedDNSToManagedDNSIngressController(t *testing.T) {
 func TestManagedDNSToUnmanagedDNSIngressController(t *testing.T) {
 	t.Parallel()
 
-	t.Skip("test skipped until resolution in hand for https://issues.redhat.com/browse/OCPBUGS-24044")
-
 	name := types.NamespacedName{Namespace: operatorNamespace, Name: "managed-migrated"}
 	ic := newLoadBalancerController(name, name.Name+"."+dnsConfig.Spec.BaseDomain)
 	ic.Spec.EndpointPublishingStrategy.LoadBalancer = &operatorv1.LoadBalancerStrategy{
@@ -193,8 +191,6 @@ func TestManagedDNSToUnmanagedDNSIngressController(t *testing.T) {
 // target changes and ensures the new updated target is published to the DNSZone.
 func TestUnmanagedDNSToManagedDNSInternalIngressController(t *testing.T) {
 	t.Parallel()
-
-	t.Skip("test skipped until resolution in hand for https://issues.redhat.com/browse/OCPBUGS-24044")
 
 	if infraConfig.Status.PlatformStatus == nil {
 		t.Skip("test skipped on nil platform")
