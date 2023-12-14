@@ -108,7 +108,23 @@ func TestUnmanagedDNSToManagedDNSIngressController(t *testing.T) {
 func TestManagedDNSToUnmanagedDNSIngressController(t *testing.T) {
 	t.Parallel()
 
-	t.Skip("test skipped until resolution in hand for https://issues.redhat.com/browse/OCPBUGS-24044")
+	if infraConfig.Status.PlatformStatus == nil {
+		t.Skip("test skipped on nil platform")
+	}
+	platform := infraConfig.Status.PlatformStatus.Type
+
+	supportedPlatforms := map[configv1.PlatformType]struct{}{
+		configv1.AlibabaCloudPlatformType: {},
+		configv1.AWSPlatformType:          {},
+		// Test skipped on Azure/GCP until resolution in hand for https://issues.redhat.com/browse/OCPBUGS-24044
+		//configv1.AzurePlatformType:    {},
+		//configv1.GCPPlatformType:      {},
+		configv1.IBMCloudPlatformType: {},
+		configv1.PowerVSPlatformType:  {},
+	}
+	if _, supported := supportedPlatforms[platform]; !supported {
+		t.Skipf("test skipped on platform %q", platform)
+	}
 
 	name := types.NamespacedName{Namespace: operatorNamespace, Name: "managed-migrated"}
 	ic := newLoadBalancerController(name, name.Name+"."+dnsConfig.Spec.BaseDomain)
@@ -194,8 +210,6 @@ func TestManagedDNSToUnmanagedDNSIngressController(t *testing.T) {
 func TestUnmanagedDNSToManagedDNSInternalIngressController(t *testing.T) {
 	t.Parallel()
 
-	t.Skip("test skipped until resolution in hand for https://issues.redhat.com/browse/OCPBUGS-24044")
-
 	if infraConfig.Status.PlatformStatus == nil {
 		t.Skip("test skipped on nil platform")
 	}
@@ -204,10 +218,11 @@ func TestUnmanagedDNSToManagedDNSInternalIngressController(t *testing.T) {
 	supportedPlatforms := map[configv1.PlatformType]struct{}{
 		configv1.AlibabaCloudPlatformType: {},
 		configv1.AWSPlatformType:          {},
-		configv1.AzurePlatformType:        {},
-		configv1.GCPPlatformType:          {},
-		configv1.IBMCloudPlatformType:     {},
-		configv1.PowerVSPlatformType:      {},
+		// Test skipped on Azure/GCP until resolution in hand for https://issues.redhat.com/browse/OCPBUGS-24044
+		//configv1.AzurePlatformType:    {},
+		//configv1.GCPPlatformType:      {},
+		configv1.IBMCloudPlatformType: {},
+		configv1.PowerVSPlatformType:  {},
 	}
 	if _, supported := supportedPlatforms[platform]; !supported {
 		t.Skipf("test skipped on platform %q", platform)
