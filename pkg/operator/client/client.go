@@ -12,7 +12,7 @@ import (
 	maistrav1 "github.com/maistra/istio-operator/pkg/apis/maistra/v1"
 	maistrav2 "github.com/maistra/istio-operator/pkg/apis/maistra/v2"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
-	gatewayapiv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
+	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 
@@ -52,7 +52,7 @@ func init() {
 	if err := apiextensionsv1.AddToScheme(scheme); err != nil {
 		panic(err)
 	}
-	if err := gatewayapiv1beta1.Install(scheme); err != nil {
+	if err := gatewayapiv1.Install(scheme); err != nil {
 		panic(err)
 	}
 	if err := operatorsv1alpha1.AddToScheme(scheme); err != nil {
