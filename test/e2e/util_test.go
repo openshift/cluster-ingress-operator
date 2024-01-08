@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net"
 	"net/http"
@@ -38,6 +39,8 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
+
+	"github.com/gorilla/websocket"
 )
 
 // buildEchoPod returns a pod definition for an socat-based echo server.
@@ -296,6 +299,50 @@ func buildDelayConnectHTTPPod(name, namespace, initImage, image string) *corev1.
 	}
 }
 
+// buildWebSocketServerPod returns a pod that responds to WebSocket requests after the given timeout.
+func buildWebSocketServerPod(name, namespace, image, timeout string) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Labels: map[string]string{
+				"app": name,
+			},
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Image: image,
+					Name:  "echo",
+					Env: []corev1.EnvVar{
+						{
+							Name:  "TIMEOUT",
+							Value: timeout,
+						},
+					},
+					Args: []string{"serve-ws-test-server"},
+					Ports: []corev1.ContainerPort{
+						{
+							ContainerPort: int32(8080),
+							Protocol:      corev1.ProtocolTCP,
+						},
+					},
+					SecurityContext: &corev1.SecurityContext{
+						AllowPrivilegeEscalation: pointer.Bool(false),
+						Capabilities: &corev1.Capabilities{
+							Drop: []corev1.Capability{"ALL"},
+						},
+						RunAsNonRoot: pointer.Bool(true),
+						SeccompProfile: &corev1.SeccompProfile{
+							Type: corev1.SeccompProfileTypeRuntimeDefault,
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
 // buildRoute returns a route definition targeting the specified service.
 func buildRoute(name, namespace, serviceName string) *routev1.Route {
 	return &routev1.Route{
@@ -372,6 +419,25 @@ func buildRouteWithHSTS(podName, namespace, serviceName, domain, annotation stri
 	route.Annotations["haproxy.router.openshift.io/hsts_header"] = annotation
 
 	return route
+}
+
+// buildEdgeRoute returns a route definition with edge termination targeting the specified service.
+func buildEdgeRoute(name, namespace, serviceName string) *routev1.Route {
+	return &routev1.Route{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: routev1.RouteSpec{
+			To: routev1.RouteTargetReference{
+				Kind: "Service",
+				Name: serviceName,
+			},
+			TLS: &routev1.TLSConfig{
+				Termination: routev1.TLSTerminationEdge,
+			},
+		},
+	}
 }
 
 func getIngressController(t *testing.T, client client.Client, name types.NamespacedName, timeout time.Duration) (*operatorv1.IngressController, error) {
@@ -1196,4 +1262,28 @@ func getIngressControllerLBAddress(t *testing.T, ic *operatorv1.IngressControlle
 		t.Fatalf("error getting IngressController's service address: %v", err)
 	}
 	return lbAddress
+}
+
+// webSocketClientDo sends the given message to the given websocket server and returns a response or an error.
+func webSocketClientDo(addr, msg string, skipTLSVerify bool) (string, error) {
+	dialer := websocket.DefaultDialer
+	dialer.TLSClientConfig = &tls.Config{
+		InsecureSkipVerify: skipTLSVerify,
+	}
+	conn, _, err := dialer.Dial(addr, nil)
+	if err != nil {
+		return "", err
+	}
+	defer conn.Close()
+
+	err = conn.WriteMessage(websocket.TextMessage, []byte(msg))
+	if err != nil {
+		return "", err
+	}
+
+	_, response, err := conn.ReadMessage()
+	if err != nil {
+		return "", err
+	}
+	return string(response), nil
 }

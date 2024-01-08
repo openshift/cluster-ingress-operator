@@ -88,6 +88,8 @@ func TestAll(t *testing.T) {
 		t.Run("TestUnmanagedAWSLBSubnets", TestUnmanagedAWSLBSubnets)
 		t.Run("TestAWSEIPAllocationsForNLB", TestAWSEIPAllocationsForNLB)
 		t.Run("TestUnmanagedAWSEIPAllocations", TestUnmanagedAWSEIPAllocations)
+		t.Run("TestServerTimeout", TestServerTimeout)
+		t.Run("TestTunnelTimeout", TestTunnelTimeout)
 	})
 
 	t.Run("serial", func(t *testing.T) {
