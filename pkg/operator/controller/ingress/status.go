@@ -690,13 +690,12 @@ func computeIngressEvaluationConditionsDetectedCondition(ic *operatorv1.IngressC
 
 // checkDefaultCertificate returns an error value indicating whether the default
 // certificate is safe for upgrades.  In particular, if the current default
-// certificate specifies a Subject Alternative Name (SAN) for the ingress
-// domain, then it is safe to upgrade, and the return value is nil.  Otherwise,
-// if the certificate has a legacy Common Name (CN) and no SAN, then the return
-// value is an error indicating that the certificate must be replaced by one
-// with a SAN before upgrading is allowed.  This check is necessary because
-// OpenShift 4.10 and newer are built using Go 1.17, which rejects certificates
-// without SANs.  Note that this function only checks the validity of the
+// certificate uses a SHA1-based signature algorithm, then it is not safe to upgrade,
+// and the return value is an error.  Otherwise, if the certificate uses greater than
+// a SHA1-based signature algorithm then upgrading is allowed, and the return value is nil.
+// This check is necessary because the router image in OpenShift 4.16 and newer uses
+// RHEL9 as its base which subsequently uses OpenSSL3.0, prohibiting the use of SHA1.
+// Note that this function only checks the validity of the
 // certificate insofar as it affects upgrades.
 func checkDefaultCertificate(secret *corev1.Secret, domain string) error {
 	var certData []byte
@@ -716,14 +715,8 @@ func checkDefaultCertificate(secret *corev1.Secret, domain string) error {
 		if err != nil {
 			continue
 		}
-		foundSAN := false
-		for i := range cert.DNSNames {
-			if cert.DNSNames[i] == domain {
-				foundSAN = true
-			}
-		}
-		if cert.Subject.CommonName == domain && !foundSAN {
-			return fmt.Errorf("certificate in secret %s/%s has legacy Common Name (CN) but has no Subject Alternative Name (SAN) for domain: %s", secret.Namespace, secret.Name, domain)
+		if cert.SignatureAlgorithm == x509.SHA1WithRSA || cert.SignatureAlgorithm == x509.ECDSAWithSHA1 {
+			return fmt.Errorf("certificate in secret %s/%s has weak SHA1 signature algorithm: %s", secret.Namespace, secret.Name, domain)
 		}
 	}
 

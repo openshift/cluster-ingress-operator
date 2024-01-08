@@ -1,6 +1,8 @@
 package ingress
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -2213,20 +2215,40 @@ func Test_checkZoneInConfig(t *testing.T) {
 }
 
 func Test_computeIngressUpgradeableCondition(t *testing.T) {
-	makeDefaultCertificateSecret := func(cn string, sans []string) *corev1.Secret {
-		key, err := rsa.GenerateKey(rand.Reader, 2048)
-		if err != nil {
-			t.Fatalf("failed to generate key: %v", err)
+	const (
+		ingressDomain  = "apps.foo.com"
+		wildcardDomain = "*." + ingressDomain
+	)
+	makeDefaultCertificateSecret := func(cn string, signatureAlgorithm x509.SignatureAlgorithm) *corev1.Secret {
+		certTemplate := &x509.Certificate{
+			SerialNumber:       big.NewInt(1),
+			Subject:            pkix.Name{CommonName: cn},
+			DNSNames:           []string{wildcardDomain},
+			SignatureAlgorithm: signatureAlgorithm,
 		}
 
-		certTemplate := &x509.Certificate{
-			SerialNumber: big.NewInt(1),
-			Subject:      pkix.Name{CommonName: cn},
-			DNSNames:     sans,
-		}
-		cert, err := x509.CreateCertificate(rand.Reader, certTemplate, certTemplate, &key.PublicKey, key)
-		if err != nil {
-			t.Fatalf("failed to generate certificate: %v", err)
+		var cert []byte
+		switch signatureAlgorithm {
+		case x509.SHA1WithRSA, x509.SHA256WithRSA, x509.SHA384WithRSA, x509.SHA512WithRSA:
+			key, err := rsa.GenerateKey(rand.Reader, 2048)
+			if err != nil {
+				t.Fatalf("failed to generate RSA key: %v", err)
+			}
+			cert, err = x509.CreateCertificate(rand.Reader, certTemplate, certTemplate, &key.PublicKey, key)
+			if err != nil {
+				t.Fatalf("failed to generate RSA certificate: %v", err)
+			}
+		case x509.ECDSAWithSHA1, x509.ECDSAWithSHA256, x509.ECDSAWithSHA384, x509.ECDSAWithSHA512:
+			key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+			if err != nil {
+				t.Fatalf("failed to generate ECDSA key: %v", err)
+			}
+			cert, err = x509.CreateCertificate(rand.Reader, certTemplate, certTemplate, &key.PublicKey, key)
+			if err != nil {
+				t.Fatalf("failed to generate ECDSA certificate: %v", err)
+			}
+		default:
+			t.Fatal("unsupported signature algorithm")
 		}
 
 		certData := pem.EncodeToMemory(&pem.Block{
@@ -2238,10 +2260,6 @@ func Test_computeIngressUpgradeableCondition(t *testing.T) {
 			Data: map[string][]byte{"tls.crt": certData},
 		}
 	}
-	const (
-		ingressDomain  = "apps.foo.com"
-		wildcardDomain = "*." + ingressDomain
-	)
 	testCases := []struct {
 		description string
 		mutate      func(*corev1.Service)
@@ -2277,14 +2295,24 @@ func Test_computeIngressUpgradeableCondition(t *testing.T) {
 			expect: true,
 		},
 		{
-			description: "if the default certificate has a SAN",
-			secret:      makeDefaultCertificateSecret(wildcardDomain, []string{wildcardDomain}),
+			description: "if the default certificate uses ECDSA SHA1",
+			secret:      makeDefaultCertificateSecret(wildcardDomain, x509.ECDSAWithSHA1),
+			expect:      false,
+		},
+		{
+			description: "if the default certificate uses RSA SHA1",
+			secret:      makeDefaultCertificateSecret(wildcardDomain, x509.SHA1WithRSA),
+			expect:      false,
+		},
+		{
+			description: "if the default certificate uses RSA SHA256",
+			secret:      makeDefaultCertificateSecret(wildcardDomain, x509.SHA256WithRSA),
 			expect:      true,
 		},
 		{
-			description: "if the default certificate has no SAN",
-			secret:      makeDefaultCertificateSecret(wildcardDomain, []string{}),
-			expect:      false,
+			description: "if the default certificate uses ECDSA SHA256",
+			secret:      makeDefaultCertificateSecret(wildcardDomain, x509.ECDSAWithSHA256),
+			expect:      true,
 		},
 	}
 	for _, tc := range testCases {
@@ -2333,7 +2361,7 @@ func Test_computeIngressUpgradeableCondition(t *testing.T) {
 			}
 			secret := tc.secret
 			if secret == nil {
-				secret = makeDefaultCertificateSecret("", []string{wildcardDomain})
+				secret = makeDefaultCertificateSecret("", x509.SHA256WithRSA)
 			}
 
 			expectedStatus := operatorv1.ConditionFalse
