@@ -16,6 +16,7 @@ require (
 	github.com/go-logr/logr v1.3.0
 	github.com/go-logr/zapr v1.2.4
 	github.com/google/go-cmp v0.6.0
+	github.com/gorilla/websocket v1.5.1
 	github.com/jongio/azidext/go/azidext v0.4.0
 	github.com/maistra/istio-operator v0.0.0-20230322122339-793794762e67
 	github.com/openshift/api v3.9.1-0.20190924102528-32369d4db2ad+incompatible
@@ -87,7 +88,6 @@ require (
 	github.com/google/uuid v1.3.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.2.3 // indirect
 	github.com/googleapis/gax-go/v2 v2.11.0 // indirect
-	github.com/gorilla/websocket v1.5.0 // indirect
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
 	github.com/hashicorp/go-retryablehttp v0.7.0 // indirect
 	github.com/imdario/mergo v0.3.12 // indirect

@@ -10,6 +10,7 @@ import (
 	h2specclient "github.com/openshift/cluster-ingress-operator/test/h2spec"
 	httphealthcheck "github.com/openshift/cluster-ingress-operator/test/http"
 	http2testserver "github.com/openshift/cluster-ingress-operator/test/http2"
+	wstestserver "github.com/openshift/cluster-ingress-operator/test/ws"
 )
 
 var log = logf.Logger.WithName("main")
@@ -36,6 +37,7 @@ func main() {
 		},
 	})
 	rootCmd.AddCommand(h2specclient.NewClientCommand())
+	rootCmd.AddCommand(wstestserver.NewServeWebSocketCommand())
 
 	if err := rootCmd.Execute(); err != nil {
 		log.Error(err, "error")
