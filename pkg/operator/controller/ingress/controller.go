@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/pkg/errors"
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
@@ -1061,12 +1063,11 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		Controller: &trueVar,
 	}
 
-	var lbService *corev1.Service
 	var wildcardRecord *iov1.DNSRecord
-	if haveLB, lb, err := r.ensureLoadBalancerService(ci, deploymentRef, platformStatus); err != nil {
+	haveLB, lbService, err := r.ensureLoadBalancerService(ci, deploymentRef, platformStatus)
+	if err != nil {
 		errs = append(errs, fmt.Errorf("failed to ensure load balancer service for %s: %v", ci.Name, err))
 	} else {
-		lbService = lb
 		dnsRecordName := operatorcontroller.WildcardDNSRecordName(ci)
 		icRef := metav1.OwnerReference{
 			APIVersion:         operatorv1.GroupVersion.String(),
@@ -1130,6 +1131,18 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 	}
 
 	SetIngressControllerNLBMetric(ci)
+
+	// If the lbService exists for the "default" IngressController, then update Infra CR's PlatformStatus with the Ingress LB IPs.
+	if haveLB && ci.Name == manifests.DefaultIngressControllerName {
+		if updated, err := computeUpdatedInfraFromService(lbService, infraConfig); err != nil {
+			errs = append(errs, fmt.Errorf("failed to update Infrastructure PlatformStatus: %w", err))
+		} else if updated {
+			if err := r.client.Status().Update(context.TODO(), infraConfig); err != nil {
+				errs = append(errs, fmt.Errorf("failed to update Infrastructure CR after updating Ingress LB IPs: %w", err))
+			}
+		}
+		log.Info("successfully updated Infra CR with Ingress Load Balancer IPs")
+	}
 
 	errs = append(errs, r.syncRouteStatus(ci)...)
 
@@ -1204,4 +1217,44 @@ func (r *reconciler) allRouterPodsDeleted(ingress *operatorv1.IngressController)
 	}
 
 	return true, nil
+}
+
+// computeUpdatedInfraFromService updates GCP's PlatformStatus with Ingress LB IPs when the DNSType is `ClusterHosted`.
+func computeUpdatedInfraFromService(service *corev1.Service, infraConfig *configv1.Infrastructure) (bool, error) {
+	platformStatus := infraConfig.Status.PlatformStatus
+	if platformStatus == nil {
+		return false, fmt.Errorf("invalid PlatformStatus within Infrastructure config")
+	}
+	switch platformStatus.Type {
+	case configv1.GCPPlatformType:
+		if platformStatus.GCP != nil && platformStatus.GCP.CloudLoadBalancerConfig != nil && platformStatus.GCP.CloudLoadBalancerConfig.DNSType == configv1.ClusterHostedDNSType {
+			// The cluster has to run its own CoreDNS pod for DNS. Update Infra CR
+			// with the Ingress LB IPs. These values are used to configure the
+			// in-cluster DNS to provide resolution for *.apps.
+			if platformStatus.GCP.CloudLoadBalancerConfig.ClusterHosted == nil {
+				platformStatus.GCP.CloudLoadBalancerConfig.ClusterHosted = &configv1.CloudLoadBalancerIPs{}
+			}
+			ingresses := service.Status.LoadBalancer.Ingress
+			ingressLBIPs := []configv1.IP{}
+			for _, ingress := range ingresses {
+				if len(ingress.IP) > 0 {
+					ingressLBIPs = append(ingressLBIPs, configv1.IP(ingress.IP))
+				}
+			}
+			ipCmpOpts := []cmp.Option{
+				cmpopts.EquateEmpty(),
+				cmpopts.SortSlices(func(a, b configv1.IP) bool {
+					return a < b
+				}),
+			}
+			if !cmp.Equal(platformStatus.GCP.CloudLoadBalancerConfig.ClusterHosted.IngressLoadBalancerIPs, ingressLBIPs, ipCmpOpts...) {
+				platformStatus.GCP.CloudLoadBalancerConfig.ClusterHosted.IngressLoadBalancerIPs = ingressLBIPs
+				return true, nil
+			}
+		}
+		return false, nil
+	default:
+		return false, nil
+	}
+	return false, nil
 }
