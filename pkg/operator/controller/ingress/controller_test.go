@@ -189,6 +189,29 @@ func TestSetDefaultPublishingStrategySetsPlatformDefaults(t *testing.T) {
 			}
 		}
 
+		makeDefaultGCPPlatformStatus = func(platform configv1.PlatformType) *configv1.PlatformStatus {
+			return &configv1.PlatformStatus{
+				Type: platform,
+				GCP: &configv1.GCPPlatformStatus{
+					CloudLoadBalancerConfig: &configv1.CloudLoadBalancerConfig{
+						DNSType: configv1.PlatformDefaultDNSType,
+					},
+				},
+			}
+		}
+
+		makeBYODNSGCPPlatformStatus = func(platform configv1.PlatformType) *configv1.PlatformStatus {
+			return &configv1.PlatformStatus{
+				Type: platform,
+				GCP: &configv1.GCPPlatformStatus{
+					CloudLoadBalancerConfig: &configv1.CloudLoadBalancerConfig{
+						DNSType:       configv1.ClusterHostedDNSType,
+						ClusterHosted: &configv1.CloudLoadBalancerIPs{},
+					},
+				},
+			}
+		}
+
 		ingressConfigWithDefaultClassicLB = &configv1.Ingress{
 			Spec: configv1.IngressSpec{
 				LoadBalancer: configv1.LoadBalancer{
@@ -268,8 +291,14 @@ func TestSetDefaultPublishingStrategySetsPlatformDefaults(t *testing.T) {
 		},
 		{
 			name:                    "GCP",
-			platformStatus:          makePlatformStatus(configv1.GCPPlatformType),
+			platformStatus:          makeDefaultGCPPlatformStatus(configv1.GCPPlatformType),
 			expectedIC:              ingressControllerWithLoadBalancer,
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name:                    "GCP With BYO DNS",
+			platformStatus:          makeBYODNSGCPPlatformStatus(configv1.GCPPlatformType),
+			expectedIC:              ingressControllerWithLoadBalancerUnmanagedDNS,
 			domainMatchesBaseDomain: true,
 		},
 		{
