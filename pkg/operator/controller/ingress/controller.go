@@ -450,6 +450,15 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, platformStat
 			effectiveStrategy.LoadBalancer.DNSManagementPolicy = operatorv1.UnmanagedLoadBalancerDNS
 		}
 
+		// When the platform's default DNS solution cannot be used, set the DNSManagementPolicy
+		// accordingly. This feature is currently being implemented first for GCP. Will be
+		// extended to AWS and Azure platforms later.
+		if platformStatus.Type == configv1.GCPPlatformType && platformStatus.GCP != nil && platformStatus.GCP.CloudLoadBalancerConfig != nil {
+			if platformStatus.GCP.CloudLoadBalancerConfig.DNSType == configv1.ClusterHostedDNSType {
+				effectiveStrategy.LoadBalancer.DNSManagementPolicy = operatorv1.UnmanagedLoadBalancerDNS
+			}
+		}
+
 		// Set provider parameters based on the cluster ingress config.
 		setDefaultProviderParameters(effectiveStrategy.LoadBalancer, ingressConfig, alreadyAdmitted)
 
