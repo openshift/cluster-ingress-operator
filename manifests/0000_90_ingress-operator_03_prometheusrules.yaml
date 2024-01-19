@@ -74,7 +74,7 @@ spec:
           annotations:
             summary: Ingress without IngressClassName for 1 day
             description: "This alert fires when there is an Ingress with an unset IngressClassName for longer than one day."
-            message: "Ingress {{ $labels.name }} is missing the IngressClassName for 1 day."
+            message: "Ingress {{ $labels.namespace }}/{{ $labels.name }} is missing the IngressClassName for 1 day."
         - alert: UnmanagedRoutes
           expr: openshift_ingress_to_route_controller_route_with_unmanaged_owner == 1
           for: 1h
@@ -83,5 +83,5 @@ spec:
           annotations:
             summary: Route owned by an Ingress no longer managed
             description: "This alert fires when there is a Route owned by an unmanaged Ingress."
-            message: "Route {{ $labels.name }} is owned by an unmanaged Ingress."
+            message: "Route {{ $labels.namespace }}/{{ $labels.name }} is owned by an unmanaged Ingress."
 
