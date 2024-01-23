@@ -29,7 +29,7 @@ spec:
           - name: DEFAULT_CERTIFICATE_DIR
             value: /etc/pki/tls/private
           - name: DEFAULT_DESTINATION_CA_PATH
-            value: /var/run/configmaps/service-ca/service-ca.crt
+            value: /var/run/configmaps/ca-trust/ca-bundle.crt
           livenessProbe:
             httpGet:
               path: /healthz
@@ -53,19 +53,19 @@ spec:
           - mountPath: /etc/pki/tls/private
             name: default-certificate
             readOnly: true
-          - mountPath: /var/run/configmaps/service-ca
-            name: service-ca-bundle
+          - mountPath: /var/run/configmaps/ca-trust
+            name: ingress-ca-bundle
             readOnly: true
       volumes:
       - name: default-certificate
         secret:
           defaultMode: 420
           # SecretName is set at run-time.
-      - name: service-ca-bundle
+      - name: ingress-ca-bundle
         configMap:
           items:
-          - key: service-ca.crt
-            path: service-ca.crt
-          name: service-ca-bundle
+          - key: ca-bundle.crt
+            path: ca-bundle.crt
+          name: ingress-ca-bundle
           optional: false
         defaultMode: 420

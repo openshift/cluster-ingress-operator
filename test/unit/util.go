@@ -10,6 +10,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 type routeBuilder struct {
@@ -227,4 +228,42 @@ func (b *namespaceBuilder) Build() *corev1.Namespace {
 			Labels: b.labels,
 		},
 	}
+}
+
+type caBundleConfigMapBuilder struct {
+	name      string
+	namespace string
+	keys      map[string]string
+}
+
+func NewCABundleConfigMapBuilder() *caBundleConfigMapBuilder {
+	return &caBundleConfigMapBuilder{
+		name:      "admin-ca-bundle",
+		namespace: "openshift-config",
+		keys:      make(map[string]string),
+	}
+}
+
+func (b *caBundleConfigMapBuilder) WithNamespacedName(nn types.NamespacedName) *caBundleConfigMapBuilder {
+	b.name = nn.Name
+	b.namespace = nn.Namespace
+	return b
+}
+
+func (b *caBundleConfigMapBuilder) WithKey(keys map[string]string) *caBundleConfigMapBuilder {
+	for k, v := range keys {
+		b.keys[k] = v
+	}
+	return b
+}
+
+func (b *caBundleConfigMapBuilder) Build() *corev1.ConfigMap {
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      b.name,
+			Namespace: b.namespace,
+		},
+		Data: b.keys,
+	}
+	return cm
 }

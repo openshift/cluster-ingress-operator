@@ -25,6 +25,7 @@ import (
 	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
 	operatorconfig "github.com/openshift/cluster-ingress-operator/pkg/operator/config"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	cabundlecontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/cabundle-configmap"
 	canarycontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/canary"
 	certcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/certificate"
 	certpublishercontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/certificate-publisher"
@@ -308,6 +309,15 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		},
 	}); err != nil {
 		return nil, fmt.Errorf("failed to create gatewayapi controller: %w", err)
+	}
+
+	// Set up the ingress CA bundle configmap controller
+	if _, err := cabundlecontroller.New(mgr, cabundlecontroller.Config{
+		ServiceCAConfigMapName: operatorcontroller.ServiceCAConfigMapName(),
+		AdminCAConfigMapName:   operatorcontroller.AdminCAConfigMapName(),
+		IngressCAConfigMapName: operatorcontroller.IngressCAConfigMapName(),
+	}, eventRecorder); err != nil {
+		return nil, fmt.Errorf("failed to create ingress CA bundle controller: %w", err)
 	}
 
 	return &Operator{
