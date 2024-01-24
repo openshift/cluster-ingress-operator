@@ -162,7 +162,7 @@ func desiredServiceMeshControlPlane(name types.NamespacedName, ownerRef metav1.O
 // currentServiceMeshControlPlane returns the current servicemeshcontrolplane.
 func (r *reconciler) currentServiceMeshControlPlane(ctx context.Context, name types.NamespacedName) (bool, *maistrav2.ServiceMeshControlPlane, error) {
 	var smcp maistrav2.ServiceMeshControlPlane
-	if err := r.cache.Get(ctx, name, &smcp); err != nil {
+	if err := r.client.Get(ctx, name, &smcp); err != nil {
 		if errors.IsNotFound(err) {
 			return false, nil, nil
 		}

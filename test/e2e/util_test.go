@@ -843,3 +843,16 @@ func createNamespace(t *testing.T, name string) *corev1.Namespace {
 
 	return ns
 }
+
+// getClusterVersion returns the ClusterVersion if found.  If one is not found, it returns an error.
+func getClusterVersion() (*configv1.ClusterVersion, error) {
+	clusterVersion := &configv1.ClusterVersion{}
+	versionName := types.NamespacedName{"", "version"}
+	err := wait.PollImmediate(1*time.Second, 30*time.Second, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), versionName, clusterVersion); err != nil {
+			return false, nil
+		}
+		return true, nil
+	})
+	return clusterVersion, err
+}
