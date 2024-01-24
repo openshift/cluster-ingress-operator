@@ -81,6 +81,7 @@ func TestAll(t *testing.T) {
 		t.Run("TestRouteMetricsControllerRouteAndNamespaceSelector", TestRouteMetricsControllerRouteAndNamespaceSelector)
 		t.Run("TestSetIngressControllerResponseHeaders", TestSetIngressControllerResponseHeaders)
 		t.Run("TestSetRouteResponseHeaders", TestSetRouteResponseHeaders)
+		t.Run("TestGatewayAPIIstioInstallation", TestGatewayAPIIstioInstallation)
 	})
 
 	t.Run("serial", func(t *testing.T) {
@@ -114,5 +115,7 @@ func TestAll(t *testing.T) {
 		t.Run("TestRouteHardStopAfterEnableOnIngressControllerHasPriorityOverIngressConfig", TestRouteHardStopAfterEnableOnIngressControllerHasPriorityOverIngressConfig)
 		t.Run("TestHostNetworkPortBinding", TestHostNetworkPortBinding)
 		t.Run("TestDashboardCreation", TestDashboardCreation)
+		t.Run("TestGatewayAPIResources", TestGatewayAPIResources)
+		t.Run("TestGatewayAPIObjects", TestGatewayAPIObjects)
 	})
 }
