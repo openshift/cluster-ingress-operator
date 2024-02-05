@@ -22,6 +22,7 @@ spec:
           summary: HAProxy reload failure
           description: "This alert fires when HAProxy fails to reload its configuration, which will result in the router not picking up recently created or modified routes."
           message: "HAProxy reloads are failing on {{ $labels.pod }}. Router is not respecting recently created or modified routes"
+          runbook_url: "https://github.com/openshift/runbooks/blob/master/alerts/HAProxyReloadFail.md"
       - alert: HAProxyDown
         expr: haproxy_up == 0
         for: 5m
@@ -31,6 +32,7 @@ spec:
           summary: HAProxy is down
           description: "This alert fires when metrics report that HAProxy is down."
           message: "HAProxy metrics are reporting that HAProxy is down on pod {{ $labels.namespace }} / {{ $labels.pod }}"
+          runbook_url: "https://github.com/openshift/runbooks/blob/master/alerts/HAProxyDown.md"
       - alert: IngressControllerDegraded
         expr: ingress_controller_conditions{condition="Degraded"} == 1
         for: 5m
@@ -39,6 +41,7 @@ spec:
         annotations:
           summary: IngressController is degraded
           description: "This alert fires when the IngressController status is degraded."
+          runbook_url: "https://github.com/openshift/runbooks/blob/master/alerts/IngressControllerDegraded.md"
           message: |
             The {{ $labels.namespace }}/{{ $labels.name }} ingresscontroller is
             degraded: {{ $labels.reason }}.
@@ -53,6 +56,7 @@ spec:
           message: |
             The {{ $labels.namespace }}/{{ $labels.name }} ingresscontroller is
             unavailable: {{ $labels.reason }}.
+          runbook_url: "https://github.com/openshift/runbooks/blob/master/alerts/IngressControllerUnavailable.md"
       # Recording rules related to route metrics for sending via telemetry
       - expr: min(route_metrics_controller_routes_per_shard)
         record: cluster:route_metrics_controller_routes_per_shard:min
@@ -75,6 +79,7 @@ spec:
             summary: Ingress without IngressClassName for 1 day
             description: "This alert fires when there is an Ingress with an unset IngressClassName for longer than one day."
             message: "Ingress {{ $labels.namespace }}/{{ $labels.name }} is missing the IngressClassName for 1 day."
+            runbook_url: "https://github.com/openshift/runbooks/blob/master/alerts/IngressWithoutClassName.md"
         - alert: UnmanagedRoutes
           expr: openshift_ingress_to_route_controller_route_with_unmanaged_owner == 1
           for: 1h
@@ -84,4 +89,5 @@ spec:
             summary: Route owned by an Ingress no longer managed
             description: "This alert fires when there is a Route owned by an unmanaged Ingress."
             message: "Route {{ $labels.namespace }}/{{ $labels.name }} is owned by an unmanaged Ingress."
+            runbook_url: "https://github.com/openshift/runbooks/blob/master/alerts/UnmanagedRoutes.md"
 
