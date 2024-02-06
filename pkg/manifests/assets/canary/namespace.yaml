@@ -5,3 +5,7 @@ metadata:
   annotations:
     openshift.io/node-selector: "" # Override global default node selector
     workload.openshift.io/allowed: "management"
+  labels:
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/warn: restricted
