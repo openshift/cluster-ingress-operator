@@ -6,11 +6,13 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"golang.org/x/exp/slices"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	util "github.com/openshift/cluster-ingress-operator/pkg/util"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -189,6 +191,29 @@ func TestSetDefaultPublishingStrategySetsPlatformDefaults(t *testing.T) {
 			}
 		}
 
+		makeDefaultGCPPlatformStatus = func(platform configv1.PlatformType) *configv1.PlatformStatus {
+			return &configv1.PlatformStatus{
+				Type: platform,
+				GCP: &configv1.GCPPlatformStatus{
+					CloudLoadBalancerConfig: &configv1.CloudLoadBalancerConfig{
+						DNSType: configv1.PlatformDefaultDNSType,
+					},
+				},
+			}
+		}
+
+		makeBYODNSGCPPlatformStatus = func(platform configv1.PlatformType) *configv1.PlatformStatus {
+			return &configv1.PlatformStatus{
+				Type: platform,
+				GCP: &configv1.GCPPlatformStatus{
+					CloudLoadBalancerConfig: &configv1.CloudLoadBalancerConfig{
+						DNSType:       configv1.ClusterHostedDNSType,
+						ClusterHosted: &configv1.CloudLoadBalancerIPs{},
+					},
+				},
+			}
+		}
+
 		ingressConfigWithDefaultClassicLB = &configv1.Ingress{
 			Spec: configv1.IngressSpec{
 				LoadBalancer: configv1.LoadBalancer{
@@ -268,8 +293,14 @@ func TestSetDefaultPublishingStrategySetsPlatformDefaults(t *testing.T) {
 		},
 		{
 			name:                    "GCP",
-			platformStatus:          makePlatformStatus(configv1.GCPPlatformType),
+			platformStatus:          makeDefaultGCPPlatformStatus(configv1.GCPPlatformType),
 			expectedIC:              ingressControllerWithLoadBalancer,
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name:                    "GCP With BYO DNS",
+			platformStatus:          makeBYODNSGCPPlatformStatus(configv1.GCPPlatformType),
+			expectedIC:              ingressControllerWithLoadBalancerUnmanagedDNS,
 			domainMatchesBaseDomain: true,
 		},
 		{
@@ -1518,6 +1549,137 @@ func Test_IsProxyProtocolNeeded(t *testing.T) {
 				t.Errorf("unexpected error: %v", err)
 			case tc.expect != actual:
 				t.Errorf("expected %t, got %t", tc.expect, actual)
+			}
+		})
+	}
+}
+
+func Test_computeUpdatedInfraFromService(t *testing.T) {
+	var (
+		awsPlatform = configv1.PlatformStatus{
+			Type: configv1.AWSPlatformType,
+		}
+		gcpPlatform = configv1.PlatformStatus{
+			Type: configv1.GCPPlatformType,
+		}
+		gcpPlatformWithDNSType = configv1.PlatformStatus{
+			Type: configv1.GCPPlatformType,
+			GCP: &configv1.GCPPlatformStatus{
+				CloudLoadBalancerConfig: &configv1.CloudLoadBalancerConfig{
+					DNSType: configv1.ClusterHostedDNSType,
+				},
+			},
+		}
+		ingresses = []corev1.LoadBalancerIngress{
+			{IP: "196.78.125.4"},
+		}
+		IngressLBIP         = configv1.IP("196.78.125.4")
+		gcpPlatformWithLBIP = configv1.PlatformStatus{
+			Type: configv1.GCPPlatformType,
+			GCP: &configv1.GCPPlatformStatus{
+				CloudLoadBalancerConfig: &configv1.CloudLoadBalancerConfig{
+					DNSType: configv1.ClusterHostedDNSType,
+					ClusterHosted: &configv1.CloudLoadBalancerIPs{
+						IngressLoadBalancerIPs: []configv1.IP{
+							IngressLBIP,
+						},
+					},
+				},
+			},
+		}
+		ingressesWithMultipleIPs = []corev1.LoadBalancerIngress{
+			{IP: "196.78.125.4"},
+			{IP: "10.10.10.4"},
+		}
+	)
+	testCases := []struct {
+		description   string
+		platform      *configv1.PlatformStatus
+		ingresses     []corev1.LoadBalancerIngress
+		expectedInfra configv1.Infrastructure
+		expectUpdated bool
+		expectError   bool
+	}{
+		{
+			description:   "nil platformStatus should cause an error",
+			platform:      nil,
+			ingresses:     []corev1.LoadBalancerIngress{},
+			expectUpdated: false,
+			expectError:   true,
+		},
+		{
+			description:   "unsupported platform should not cause an error",
+			platform:      &awsPlatform,
+			ingresses:     []corev1.LoadBalancerIngress{},
+			expectUpdated: false,
+			expectError:   false,
+		},
+		{
+			description:   "gcp platform without DNSType set",
+			platform:      &gcpPlatform,
+			ingresses:     []corev1.LoadBalancerIngress{},
+			expectUpdated: false,
+			expectError:   false,
+		},
+		{
+			description:   "gcp platform with DNSType and no LB IP",
+			platform:      &gcpPlatformWithDNSType,
+			ingresses:     []corev1.LoadBalancerIngress{},
+			expectUpdated: false,
+			expectError:   false,
+		},
+		{
+			description:   "gcp platform with DNSType and no LB IP in infra config, service has 1 IP",
+			platform:      &gcpPlatformWithDNSType,
+			ingresses:     ingresses,
+			expectUpdated: true,
+			expectError:   false,
+		},
+		{
+			description:   "gcp platform with no change to LB IPs",
+			platform:      &gcpPlatformWithLBIP,
+			ingresses:     ingresses,
+			expectUpdated: false,
+			expectError:   false,
+		},
+		{
+			description:   "gcp platform with DNSType and LB IP",
+			platform:      &gcpPlatformWithLBIP,
+			ingresses:     ingressesWithMultipleIPs,
+			expectUpdated: true,
+			expectError:   false,
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			infraConfig := &configv1.Infrastructure{
+				Status: configv1.InfrastructureStatus{
+					PlatformStatus: tc.platform,
+				},
+			}
+			service := &corev1.Service{}
+			for _, ingress := range tc.ingresses {
+				service.Status.LoadBalancer.Ingress = append(service.Status.LoadBalancer.Ingress, ingress)
+			}
+
+			updated, err := computeUpdatedInfraFromService(service, infraConfig)
+			switch {
+			case tc.expectError && err == nil:
+				t.Error("expected error, got nil")
+			case !tc.expectError && err != nil:
+				t.Errorf("unexpected error: %v", err)
+			case tc.expectUpdated != updated:
+				t.Errorf("expected %t, got %t", tc.expectUpdated, updated)
+			}
+			if updated {
+				ingressLBs := service.Status.LoadBalancer.Ingress
+				for _, ingress := range ingressLBs {
+					if len(ingress.IP) > 0 {
+						if !slices.Contains(infraConfig.Status.PlatformStatus.GCP.CloudLoadBalancerConfig.ClusterHosted.IngressLoadBalancerIPs, configv1.IP(ingress.IP)) {
+							t.Errorf("expected Infra CR to contain %s", ingress.IP)
+						}
+					}
+				}
 			}
 		})
 	}
