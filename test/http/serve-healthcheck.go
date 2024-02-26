@@ -33,9 +33,11 @@ func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func listenAndServeTLS(port, certFile, keyFile string) {
-	fmt.Printf("serving TLS on %s\n", port)
-	err := http.ListenAndServeTLS(":"+port, certFile, keyFile, nil)
+// listenAndServeTLS starts a server listening on port, using certFile and keyFile as the certificate and key for TLS
+// connections.
+func listenAndServeTLS(port int32, certFile, keyFile string) {
+	fmt.Printf("serving TLS on %d\n", port)
+	err := http.ListenAndServeTLS(":"+strconv.Itoa(int(port)), certFile, keyFile, nil)
 	if err != nil {
 		panic("ListenAndServeTLS: " + err.Error())
 	}
@@ -60,17 +62,9 @@ func serveHealthCheck() {
 	tlsCertFile := os.Getenv("TLS_CERT")
 	tlsKeyFile := os.Getenv("TLS_KEY")
 
-	port := os.Getenv("PORT")
-	if len(port) == 0 {
-		port = "8443"
+	for _, port := range canarycontroller.CanaryPorts {
+		go listenAndServeTLS(port, tlsCertFile, tlsKeyFile)
 	}
-	go listenAndServeTLS(port, tlsCertFile, tlsKeyFile)
-
-	port = os.Getenv("SECOND_PORT")
-	if len(port) == 0 {
-		port = "8888"
-	}
-	go listenAndServeTLS(port, tlsCertFile, tlsKeyFile)
 
 	select {}
 }

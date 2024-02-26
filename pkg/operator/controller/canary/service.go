@@ -12,6 +12,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 // CanaryPorts is the list of ports exposed by the canary service
@@ -118,5 +119,22 @@ func desiredCanaryService(daemonsetRef metav1.OwnerReference) *corev1.Service {
 
 	s.SetOwnerReferences([]metav1.OwnerReference{daemonsetRef})
 
+	s.Spec.Ports = desiredCanaryServicePorts()
+
 	return s
+}
+
+// desiredCanaryServicePorts returns the list of desired service ports, generated from CanaryPorts.
+func desiredCanaryServicePorts() []corev1.ServicePort {
+	servicePorts := []corev1.ServicePort{}
+	for _, port := range CanaryPorts {
+		servicePort := corev1.ServicePort{
+			Name:       fmt.Sprintf("%d-tcp", port),
+			Protocol:   corev1.ProtocolTCP,
+			Port:       port,
+			TargetPort: intstr.FromInt32(port),
+		}
+		servicePorts = append(servicePorts, servicePort)
+	}
+	return servicePorts
 }

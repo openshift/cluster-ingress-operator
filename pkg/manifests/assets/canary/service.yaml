@@ -8,12 +8,4 @@ metadata:
       service.beta.openshift.io/serving-cert-secret-name: canary-serving-cert
 spec:
   type: ClusterIP
-  ports:
-  - name: 8443-tcp
-    port: 8443
-    protocol: TCP
-    targetPort: 8443
-  - name: 8888-tcp
-    port: 8888
-    protocol: TCP
-    targetPort: 8888
+  # ports are set at runtime.
