@@ -170,7 +170,7 @@ func TestTuningOptions(t *testing.T) {
 	ic.Spec.TuningOptions.HealthCheckInterval = &metav1.Duration{Duration: 15 * time.Second}
 	ic.Spec.TuningOptions.ReloadInterval = metav1.Duration{Duration: 30 * time.Second}
 
-	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, false, false, nil, clusterProxyConfig)
+	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, false, false, nil, clusterProxyConfig, false)
 	if err != nil {
 		t.Fatalf("invalid router Deployment: %v", err)
 	}
@@ -198,7 +198,7 @@ func TestTuningOptions(t *testing.T) {
 func TestClusterProxy(t *testing.T) {
 	ic, ingressConfig, infraConfig, apiConfig, networkConfig, _, clusterProxyConfig := getRouterDeploymentComponents(t)
 
-	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, false, false, nil, clusterProxyConfig)
+	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, false, false, nil, clusterProxyConfig, false)
 	if err != nil {
 		t.Fatalf("invalid router Deployment: %v", err)
 	}
@@ -222,7 +222,7 @@ func TestClusterProxy(t *testing.T) {
 	clusterProxyConfig.Status.HTTPSProxy = "bar"
 	clusterProxyConfig.Status.NoProxy = "baz"
 
-	deployment, err = desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, false, false, nil, clusterProxyConfig)
+	deployment, err = desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, false, false, nil, clusterProxyConfig, false)
 	if err != nil {
 		t.Fatalf("invalid router Deployment: %v", err)
 	}
@@ -387,7 +387,7 @@ func getRouterDeploymentComponents(t *testing.T) (*operatorv1.IngressController,
 func Test_desiredRouterDeployment(t *testing.T) {
 	ic, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, clusterProxyConfig := getRouterDeploymentComponents(t)
 
-	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, false, nil, clusterProxyConfig)
+	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, false, nil, clusterProxyConfig, false)
 	if err != nil {
 		t.Fatalf("invalid router Deployment: %v", err)
 	}
@@ -468,7 +468,7 @@ func Test_desiredRouterDeployment(t *testing.T) {
 func TestDesiredRouterDeploymentSpecTemplate(t *testing.T) {
 	ic, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, clusterProxyConfig := getRouterDeploymentComponents(t)
 
-	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, false, nil, clusterProxyConfig)
+	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, false, nil, clusterProxyConfig, false)
 	if err != nil {
 		t.Fatalf("invalid router Deployment: %v", err)
 	}
@@ -597,7 +597,7 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 	if err != nil {
 		t.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %v", ic.Namespace, ic.Name, err)
 	}
-	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, false, nil, clusterProxyConfig)
+	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, false, nil, clusterProxyConfig, false)
 	if err != nil {
 		t.Fatalf("invalid router Deployment: %v", err)
 	}
@@ -684,7 +684,7 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 	if err != nil {
 		t.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %v", ic.Namespace, ic.Name, err)
 	}
-	deployment, err = desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, false, nil, clusterProxyConfig)
+	deployment, err = desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, false, nil, clusterProxyConfig, false)
 	if err != nil {
 		t.Fatalf("invalid router Deployment: %v", err)
 	}
@@ -799,7 +799,7 @@ func TestDesiredRouterDeploymentVariety(t *testing.T) {
 	if err != nil {
 		t.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %v", ic.Namespace, ic.Name, err)
 	}
-	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, false, nil, clusterProxyConfig)
+	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, false, nil, clusterProxyConfig, false)
 	if err != nil {
 		t.Fatalf("invalid router Deployment: %v", err)
 	}
@@ -913,7 +913,7 @@ func TestDesiredRouterDeploymentHostNetworkNil(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, false, nil, clusterProxyConfig)
+	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, false, nil, clusterProxyConfig, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -944,7 +944,7 @@ func TestDesiredRouterDeploymentSingleReplica(t *testing.T) {
 		},
 	}
 
-	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, false, false, nil, clusterProxyConfig)
+	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, false, false, nil, clusterProxyConfig, false)
 	if err != nil {
 		t.Fatalf("invalid router Deployment: %v", err)
 	}
@@ -2248,7 +2248,7 @@ func TestDesiredRouterDeploymentDefaultPlacement(t *testing.T) {
 			// This value does not matter in the context of this test, just use a dummy value
 			dummyProxyNeeded := true
 
-			deployment, err := desiredRouterDeployment(ic, ingressControllerImage, tc.ingressConfig, tc.infraConfig, apiConfig, networkConfig, dummyProxyNeeded, false, nil, &configv1.Proxy{})
+			deployment, err := desiredRouterDeployment(ic, ingressControllerImage, tc.ingressConfig, tc.infraConfig, apiConfig, networkConfig, dummyProxyNeeded, false, nil, &configv1.Proxy{}, false)
 			if err != nil {
 				t.Error(err)
 			}
@@ -2264,4 +2264,38 @@ func TestDesiredRouterDeploymentDefaultPlacement(t *testing.T) {
 		})
 	}
 
+}
+
+func TestDesiredRouterDeploymentRouterExternalCertificate(t *testing.T) {
+	ic, ingressConfig, infraConfig, apiConfig, networkConfig, _, clusterProxyConfig := getRouterDeploymentComponents(t)
+
+	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, false, false, nil, clusterProxyConfig, false)
+	if err != nil {
+		t.Fatalf("invalid router Deployment: %v", err)
+	}
+
+	// Verify that router external certificate env var is not added.
+	expectedEnv := []envData{
+		{"ROUTER_ENABLE_EXTERNAL_CERTIFICATE", false, ""},
+	}
+
+	if err := checkDeploymentEnvironment(t, deployment, expectedEnv); err != nil {
+		t.Error(err)
+	}
+
+	deployment, err = desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, false, false, nil, clusterProxyConfig, true)
+	if err != nil {
+		t.Fatalf("invalid router Deployment: %v", err)
+	}
+
+	// Verify that router external certificate env var is set to true.
+	expectedEnv = []envData{
+		{"ROUTER_ENABLE_EXTERNAL_CERTIFICATE", true, "true"},
+	}
+
+	if err := checkDeploymentEnvironment(t, deployment, expectedEnv); err != nil {
+		t.Error(err)
+	}
+
+	checkDeploymentHasEnvSorted(t, deployment)
 }

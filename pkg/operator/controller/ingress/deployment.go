@@ -119,7 +119,7 @@ func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, in
 	if err != nil {
 		return false, nil, fmt.Errorf("failed to determine if proxy protocol is needed for ingresscontroller %s/%s: %v", ci.Namespace, ci.Name, err)
 	}
-	desired, err := desiredRouterDeployment(ci, r.config.IngressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, haveClientCAConfigmap, clientCAConfigmap, clusterProxyConfig)
+	desired, err := desiredRouterDeployment(ci, r.config.IngressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, haveClientCAConfigmap, clientCAConfigmap, clusterProxyConfig, r.config.RouteExternalCertificateEnabled)
 	if err != nil {
 		return haveDepl, current, fmt.Errorf("failed to build router deployment: %v", err)
 	}
@@ -241,7 +241,7 @@ func headerValues(values []operatorv1.IngressControllerHTTPHeader) string {
 }
 
 // desiredRouterDeployment returns the desired router deployment.
-func desiredRouterDeployment(ci *operatorv1.IngressController, ingressControllerImage string, ingressConfig *configv1.Ingress, infraConfig *configv1.Infrastructure, apiConfig *configv1.APIServer, networkConfig *configv1.Network, proxyNeeded bool, haveClientCAConfigmap bool, clientCAConfigmap *corev1.ConfigMap, clusterProxyConfig *configv1.Proxy) (*appsv1.Deployment, error) {
+func desiredRouterDeployment(ci *operatorv1.IngressController, ingressControllerImage string, ingressConfig *configv1.Ingress, infraConfig *configv1.Infrastructure, apiConfig *configv1.APIServer, networkConfig *configv1.Network, proxyNeeded bool, haveClientCAConfigmap bool, clientCAConfigmap *corev1.ConfigMap, clusterProxyConfig *configv1.Proxy, routeExternalCertificateEnabled bool) (*appsv1.Deployment, error) {
 	deployment := manifests.RouterDeployment()
 	name := controller.RouterDeploymentName(ci)
 	deployment.Name = name.Name
@@ -1120,6 +1120,13 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		env = append(env,
 			corev1.EnvVar{Name: "NO_PROXY", Value: clusterProxyConfig.Status.NoProxy},
 			corev1.EnvVar{Name: "no_proxy", Value: clusterProxyConfig.Status.NoProxy},
+		)
+	}
+
+	// Add router external certificate environment variable.
+	if routeExternalCertificateEnabled {
+		env = append(env,
+			corev1.EnvVar{Name: "ROUTER_ENABLE_EXTERNAL_CERTIFICATE", Value: "true"},
 		)
 	}
 
