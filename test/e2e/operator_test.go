@@ -970,7 +970,6 @@ func TestHostNetworkEndpointPublishingStrategy(t *testing.T) {
 // TestHostNetworkPortBinding creates two ingresscontrollers on the same node
 // with different port bindings and verifies that both routers are available.
 func TestHostNetworkPortBinding(t *testing.T) {
-	t.Parallel()
 	// deploy first ingresscontroller with the default port bindings
 	name1 := types.NamespacedName{Namespace: operatorNamespace, Name: "hostnetworkportbinding"}
 	ing1 := newHostNetworkController(name1, name1.Name+"."+dnsConfig.Spec.BaseDomain)
