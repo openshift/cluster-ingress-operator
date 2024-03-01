@@ -532,6 +532,8 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	switch unsupportedConfigOverrides.LoadBalancingAlgorithm {
 	case "leastconn":
 		loadBalancingAlgorithm = "leastconn"
+	case "roundrobin":
+		loadBalancingAlgorithm = "roundrobin"
 	}
 	env = append(env, corev1.EnvVar{
 		Name:  RouterLoadBalancingAlgorithmEnvName,
