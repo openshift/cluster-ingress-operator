@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"reflect"
 	"strconv"
 	"strings"
@@ -49,6 +50,18 @@ const (
 
 	// AWSNLBAnnotation is the annotation value of an AWS Network Load Balancer (NLB).
 	AWSNLBAnnotation = "nlb"
+
+	// AWSLBTypeAnnotationEIPAllocations is an annotation used to
+	// specify Elastic IP (EIP) allocations for an AWS Network
+	// Load Balancer (NLB) when the load balancer type is set to
+	// 'nlb'. It expects a comma-separated list of Elastic IP
+	// allocation IDs (e.g., eipalloc-07b360a81c612ffff). This is
+	// used to associate EIPs with the NLB created by the
+	// Kubernetes service. The number of EIPs must match the
+	// number of public subnets.
+	//
+	// https://kubernetes-sigs.github.io/aws-load-balancer-controller/v2.4/guide/service/annotations/#eip-allocations
+	AWSLBTypeAnnotationEIPAllocations = "service.beta.kubernetes.io/aws-load-balancer-eip-allocations"
 
 	// awsInternalLBAnnotation is the annotation used on a service to specify an AWS
 	// load balancer as being internal.
@@ -402,6 +415,14 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 				if aws := lb.ProviderParameters.AWS; aws != nil && lb.ProviderParameters.Type == operatorv1.AWSLoadBalancerProvider {
 					switch aws.Type {
 					case operatorv1.AWSNetworkLoadBalancer:
+						// This is a hack to enable EIPs for a newly created ingresscontroller.
+						eipKey := fmt.Sprintf("%s_EIP_ALLOCATIONS", ci.ObjectMeta.Name)
+						eipVal := os.Getenv(eipKey)
+						log.Info("***** NE1398 **** checking environment for EIP_ALLOCATIONS", "namespace", ci.ObjectMeta.Namespace, "name", ci.ObjectMeta.Name, "key", eipKey, "value", os.Getenv(eipKey))
+						if eipVal != "" {
+							service.Annotations[AWSLBTypeAnnotationEIPAllocations] = eipVal
+							log.Info("adding EIP allocations", ci.ObjectMeta.Namespace, "namespace", ci.ObjectMeta.Name, "name", eipVal, "eipAllocations")
+						}
 						service.Annotations[AWSLBTypeAnnotation] = AWSNLBAnnotation
 						// NLBs require a different health check interval than CLBs.
 						// See <https://bugzilla.redhat.com/show_bug.cgi?id=1908758>.
