@@ -483,7 +483,7 @@ func TestDesiredRouterDeploymentSpecTemplate(t *testing.T) {
 			if volume.Secret.SecretName != secretName {
 				t.Errorf("router Deployment expected volume %s to have secret %s, got %s", volume.Name, secretName, volume.Secret.SecretName)
 			}
-		} else if volume.Name != "service-ca-bundle" {
+		} else if volume.Name != controller.IngressCAConfigMapName().Name {
 			t.Errorf("router deployment has unexpected volume %s", volume.Name)
 		}
 	}
@@ -853,7 +853,7 @@ func TestDesiredRouterDeploymentVariety(t *testing.T) {
 			if volume.Secret.SecretName != secretName {
 				t.Errorf("router Deployment expected volume %s to have secret %s, got %s", volume.Name, secretName, volume.Secret.SecretName)
 			}
-		} else if volume.Name != "service-ca-bundle" && volume.Name != "error-pages" {
+		} else if volume.Name != controller.IngressCAConfigMapName().Name && volume.Name != "error-pages" {
 			t.Errorf("router deployment has unexpected volume %s", volume.Name)
 		}
 	}
