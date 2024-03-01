@@ -8,7 +8,7 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/stretchr/testify/assert"
 
-	gatewayapiv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
+	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	configv1 "github.com/openshift/api/config/v1"
 	iov1 "github.com/openshift/api/operatoringress/v1"
@@ -41,23 +41,23 @@ func Test_Reconcile(t *testing.T) {
 			},
 		},
 	}
-	gw := func(name string, listeners ...gatewayapiv1beta1.Listener) *gatewayapiv1beta1.Gateway {
-		return &gatewayapiv1beta1.Gateway{
+	gw := func(name string, listeners ...gatewayapiv1.Listener) *gatewayapiv1.Gateway {
+		return &gatewayapiv1.Gateway{
 			ObjectMeta: metav1.ObjectMeta{
 				Namespace: "openshift-ingress",
 				Name:      name,
 			},
-			Spec: gatewayapiv1beta1.GatewaySpec{
+			Spec: gatewayapiv1.GatewaySpec{
 				Listeners: listeners,
 			},
 		}
 	}
-	l := func(name, hostname string, port int) gatewayapiv1beta1.Listener {
-		h := gatewayapiv1beta1.Hostname(hostname)
-		return gatewayapiv1beta1.Listener{
-			Name:     gatewayapiv1beta1.SectionName(name),
+	l := func(name, hostname string, port int) gatewayapiv1.Listener {
+		h := gatewayapiv1.Hostname(hostname)
+		return gatewayapiv1.Listener{
+			Name:     gatewayapiv1.SectionName(name),
 			Hostname: &h,
-			Port:     gatewayapiv1beta1.PortNumber(port),
+			Port:     gatewayapiv1.PortNumber(port),
 		}
 	}
 	svc := func(name string, labels, selector map[string]string, ingresses ...corev1.LoadBalancerIngress) *corev1.Service {
@@ -251,7 +251,7 @@ func Test_Reconcile(t *testing.T) {
 	scheme := runtime.NewScheme()
 	iov1.AddToScheme(scheme)
 	corev1.AddToScheme(scheme)
-	gatewayapiv1beta1.AddToScheme(scheme)
+	gatewayapiv1.AddToScheme(scheme)
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -359,32 +359,32 @@ func (c *fakeClientRecorder) Status() client.StatusWriter {
 }
 
 func Test_gatewayListenersHostnamesChanged(t *testing.T) {
-	l := func(name, hostname string) gatewayapiv1beta1.Listener {
-		h := gatewayapiv1beta1.Hostname(hostname)
-		return gatewayapiv1beta1.Listener{
-			Name:     gatewayapiv1beta1.SectionName(name),
+	l := func(name, hostname string) gatewayapiv1.Listener {
+		h := gatewayapiv1.Hostname(hostname)
+		return gatewayapiv1.Listener{
+			Name:     gatewayapiv1.SectionName(name),
 			Hostname: &h,
 		}
 	}
 	tests := []struct {
 		name     string
-		old, new []gatewayapiv1beta1.Listener
+		old, new []gatewayapiv1.Listener
 		expect   bool
 	}{
 		{
 			name:   "no listeners",
-			old:    []gatewayapiv1beta1.Listener{},
-			new:    []gatewayapiv1beta1.Listener{},
+			old:    []gatewayapiv1.Listener{},
+			new:    []gatewayapiv1.Listener{},
 			expect: false,
 		},
 		{
 			name: "three listeners, no changes",
-			old: []gatewayapiv1beta1.Listener{
+			old: []gatewayapiv1.Listener{
 				l("http", "xyz.xyz"),
 				l("https", "xyz.xyz"),
 				l("foo", "bar.baz"),
 			},
-			new: []gatewayapiv1beta1.Listener{
+			new: []gatewayapiv1.Listener{
 				l("http", "xyz.xyz"),
 				l("https", "xyz.xyz"),
 				l("foo", "bar.baz"),
@@ -393,32 +393,32 @@ func Test_gatewayListenersHostnamesChanged(t *testing.T) {
 		},
 		{
 			name:   "add a listener",
-			old:    []gatewayapiv1beta1.Listener{},
-			new:    []gatewayapiv1beta1.Listener{l("http", "xyz.xyz")},
+			old:    []gatewayapiv1.Listener{},
+			new:    []gatewayapiv1.Listener{l("http", "xyz.xyz")},
 			expect: true,
 		},
 		{
 			name:   "remove a listener",
-			old:    []gatewayapiv1beta1.Listener{l("http", "xyz.xyz")},
-			new:    []gatewayapiv1beta1.Listener{},
+			old:    []gatewayapiv1.Listener{l("http", "xyz.xyz")},
+			new:    []gatewayapiv1.Listener{},
 			expect: true,
 		},
 		{
 			name:   "rename a listener",
-			old:    []gatewayapiv1beta1.Listener{l("http", "xyz.xyz")},
-			new:    []gatewayapiv1beta1.Listener{l("https", "xyz.xyz")},
+			old:    []gatewayapiv1.Listener{l("http", "xyz.xyz")},
+			new:    []gatewayapiv1.Listener{l("https", "xyz.xyz")},
 			expect: true,
 		},
 		{
 			name:   "change a listener's hostname",
-			old:    []gatewayapiv1beta1.Listener{l("https", "xyz.xyz")},
-			new:    []gatewayapiv1beta1.Listener{l("https", "abc.xyz")},
+			old:    []gatewayapiv1.Listener{l("https", "xyz.xyz")},
+			new:    []gatewayapiv1.Listener{l("https", "abc.xyz")},
 			expect: true,
 		},
 		{
 			name:   "replace a listener",
-			old:    []gatewayapiv1beta1.Listener{l("http", "xyz.xyz")},
-			new:    []gatewayapiv1beta1.Listener{l("https", "abc.xyz")},
+			old:    []gatewayapiv1.Listener{l("http", "xyz.xyz")},
+			new:    []gatewayapiv1.Listener{l("https", "abc.xyz")},
 			expect: true,
 		},
 	}
