@@ -1,7 +1,10 @@
 package canary
 
 import (
+	"fmt"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -141,6 +144,94 @@ func Test_cycleServicePort(t *testing.T) {
 				}
 			} else if err == nil {
 				t.Error("expected an error")
+			}
+		})
+	}
+}
+
+func Test_deduplicateErrorStrings(t *testing.T) {
+	now := time.Now()
+	testCases := []struct {
+		Name           string
+		ErrorMessages  []timestampedError
+		ExpectedResult []string
+	}{
+		{
+			Name:           "Empty input",
+			ErrorMessages:  []timestampedError{},
+			ExpectedResult: []string{},
+		},
+		{
+			Name: "Multiple errors, no repetition",
+			ErrorMessages: []timestampedError{
+				{err: fmt.Errorf("foo"), timestamp: now.Add(-10 * time.Second)},
+				{err: fmt.Errorf("bar"), timestamp: now.Add(-9 * time.Second)},
+				{err: fmt.Errorf("baz"), timestamp: now.Add(-8 * time.Second)},
+				{err: fmt.Errorf("quux"), timestamp: now.Add(-7 * time.Second)},
+			},
+			ExpectedResult: []string{
+				"foo",
+				"bar",
+				"baz",
+				"quux",
+			},
+		},
+		{
+			Name: "All identical errors",
+			ErrorMessages: []timestampedError{
+				{err: fmt.Errorf("foo"), timestamp: now.Add(-10 * time.Second)},
+				{err: fmt.Errorf("foo"), timestamp: now.Add(-9 * time.Second)},
+				{err: fmt.Errorf("foo"), timestamp: now.Add(-8 * time.Second)},
+				{err: fmt.Errorf("foo"), timestamp: now.Add(-7 * time.Second)},
+			},
+			ExpectedResult: []string{
+				"foo (x4 over 10s)",
+			},
+		},
+		{
+			Name: "Multiple errors, with repetition",
+			ErrorMessages: []timestampedError{
+				{err: fmt.Errorf("foo"), timestamp: now.Add(-10 * time.Second)},
+				{err: fmt.Errorf("bar"), timestamp: now.Add(-9 * time.Second)},
+				{err: fmt.Errorf("foo"), timestamp: now.Add(-8 * time.Second)},
+				{err: fmt.Errorf("baz"), timestamp: now.Add(-7 * time.Second)},
+			},
+			ExpectedResult: []string{
+				"bar",
+				"foo (x2 over 10s)",
+				"baz",
+			},
+		},
+		{
+			Name: "Many errors, with repetition",
+			ErrorMessages: []timestampedError{
+				{err: fmt.Errorf("foo"), timestamp: now.Add(-20 * time.Second)},
+				{err: fmt.Errorf("bar"), timestamp: now.Add(-19 * time.Second)},
+				{err: fmt.Errorf("foo"), timestamp: now.Add(-18 * time.Second)},
+				{err: fmt.Errorf("bar"), timestamp: now.Add(-17 * time.Second)},
+				{err: fmt.Errorf("baz"), timestamp: now.Add(-16 * time.Second)},
+				{err: fmt.Errorf("foo"), timestamp: now.Add(-15 * time.Second)},
+				{err: fmt.Errorf("foo"), timestamp: now.Add(-14 * time.Second)},
+				{err: fmt.Errorf("quux"), timestamp: now.Add(-13 * time.Second)},
+				{err: fmt.Errorf("quux"), timestamp: now.Add(-12 * time.Second)},
+				{err: fmt.Errorf("foo"), timestamp: now.Add(-11 * time.Second)},
+				{err: fmt.Errorf("foo"), timestamp: now.Add(-10 * time.Second)},
+				{err: fmt.Errorf("quux"), timestamp: now.Add(-9 * time.Second)},
+			},
+			ExpectedResult: []string{
+				"bar (x2 over 19s)",
+				"baz",
+				"foo (x6 over 20s)",
+				"quux (x3 over 13s)",
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.Name, func(t *testing.T) {
+			result := deduplicateErrorStrings(tc.ErrorMessages, now)
+			if !cmp.Equal(tc.ExpectedResult, result) {
+				t.Errorf("Expected result:\n%s\nbut got:\n%s", strings.Join(tc.ExpectedResult, "\n"), strings.Join(result, "\n"))
 			}
 		})
 	}
