@@ -18,9 +18,11 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 	routev1 "github.com/openshift/api/route/v1"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/wait"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -106,12 +108,48 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 			if !ok {
 				return false
 			}
-			// if Spec.Port has changed, do not trigger a reconcile
-			return cmp.Equal(oldRoute.Spec.Port, newRoute.Spec.Port)
+
+			// Check if the port in newRoute is one of the ports exposed by the canary service.
+			isValidPort := false
+			for _, portNum := range CanaryPorts {
+				switch newRoute.Spec.Port.TargetPort.Type {
+				case intstr.Int:
+					if newRoute.Spec.Port.TargetPort.IntVal == portNum {
+						isValidPort = true
+						break
+					}
+				case intstr.String:
+				}
+			}
+
+			// If newRoute's port isn't one of the canary service ports, reconcile the route.
+			if !isValidPort {
+				return true
+			}
+
+			// If newRoute's port is one of the canary service ports, the change may just be the ingress operator
+			// rotating canary ports. If the *only* change between oldRoute and newRoute is the port change, skip
+			// reconciling.
+			oldRoute.Spec.Port = newRoute.Spec.Port
+			return !cmp.Equal(oldRoute.Spec, newRoute.Spec)
 		},
 	}
 
 	if err := c.Watch(source.Kind(operatorCache, &routev1.Route{}), enqueueRequestForDefaultIngressController(config.Namespace), canaryRoutePredicate, updateFilter); err != nil {
+		return nil, err
+	}
+	canaryDaemonSetPredicate := predicate.NewPredicateFuncs(func(o client.Object) bool {
+		canaryDaemonSet := operatorcontroller.CanaryDaemonSetName()
+		return o.GetNamespace() == canaryDaemonSet.Namespace && o.GetName() == canaryDaemonSet.Name
+	})
+	if err := c.Watch(source.Kind(operatorCache, &appsv1.DaemonSet{}), enqueueRequestForDefaultIngressController(config.Namespace), canaryDaemonSetPredicate); err != nil {
+		return nil, err
+	}
+	canaryServicePredicate := predicate.NewPredicateFuncs(func(o client.Object) bool {
+		canaryService := operatorcontroller.CanaryServiceName()
+		return o.GetNamespace() == canaryService.Namespace && o.GetName() == canaryService.Name
+	})
+	if err := c.Watch(source.Kind(operatorCache, &corev1.Service{}), enqueueRequestForDefaultIngressController(config.Namespace), canaryServicePredicate); err != nil {
 		return nil, err
 	}
 
@@ -184,6 +222,10 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		v, _ := strconv.ParseBool(val)
 		r.mu.Lock()
 		r.enableCanaryRouteRotation = v
+		r.mu.Unlock()
+	} else {
+		r.mu.Lock()
+		r.enableCanaryRouteRotation = false
 		r.mu.Unlock()
 	}
 

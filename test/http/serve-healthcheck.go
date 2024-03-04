@@ -33,11 +33,11 @@ func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func listenAndServe(port string) {
-	fmt.Printf("serving on %s\n", port)
-	err := http.ListenAndServe(":"+port, nil)
+func listenAndServeTLS(port, certFile, keyFile string) {
+	fmt.Printf("serving TLS on %s\n", port)
+	err := http.ListenAndServeTLS(":"+port, certFile, keyFile, nil)
 	if err != nil {
-		panic("ListenAndServe: " + err.Error())
+		panic("ListenAndServeTLS: " + err.Error())
 	}
 }
 
@@ -56,17 +56,21 @@ func NewServeHealthCheckCommand() *cobra.Command {
 
 func serveHealthCheck() {
 	http.HandleFunc("/", healthCheckHandler)
+
+	tlsCertFile := os.Getenv("TLS_CERT")
+	tlsKeyFile := os.Getenv("TLS_KEY")
+
 	port := os.Getenv("PORT")
 	if len(port) == 0 {
-		port = "8080"
+		port = "8443"
 	}
-	go listenAndServe(port)
+	go listenAndServeTLS(port, tlsCertFile, tlsKeyFile)
 
 	port = os.Getenv("SECOND_PORT")
 	if len(port) == 0 {
 		port = "8888"
 	}
-	go listenAndServe(port)
+	go listenAndServeTLS(port, tlsCertFile, tlsKeyFile)
 
 	select {}
 }

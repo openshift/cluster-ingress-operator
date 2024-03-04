@@ -2,14 +2,17 @@
 # Specific values are applied at runtime
 kind: Service
 apiVersion: v1
-# name and namespace are set at runtime.
+metadata:
+  # name and namespace are set at runtime.
+  annotations:
+      service.beta.openshift.io/serving-cert-secret-name: canary-serving-cert
 spec:
   type: ClusterIP
   ports:
-  - name: 8080-tcp
-    port: 8080
+  - name: 8443-tcp
+    port: 8443
     protocol: TCP
-    targetPort: 8080
+    targetPort: 8443
   - name: 8888-tcp
     port: 8888
     protocol: TCP

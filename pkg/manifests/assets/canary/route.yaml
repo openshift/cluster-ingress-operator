@@ -8,12 +8,12 @@ metadata:
     haproxy.router.openshift.io/balance: "roundrobin"
 spec:
   port:
-    targetPort: 8080-tcp
+    targetPort: 8443-tcp
   to:
     kind: Service
     # Service name set at run time
     weight: 100
   tls:
-    termination: edge
+    termination: passthrough
     insecureEdgeTerminationPolicy: Redirect
   wildcardPolicy: None

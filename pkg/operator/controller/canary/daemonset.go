@@ -70,10 +70,11 @@ func (r *reconciler) updateCanaryDaemonSet(current, desired *appsv1.DaemonSet) (
 		return false, nil
 	}
 
+	diff := cmp.Diff(current, updated, cmpopts.EquateEmpty())
 	if err := r.client.Update(context.TODO(), updated); err != nil {
 		return false, fmt.Errorf("failed to update canary daemonset %s/%s: %v", updated.Namespace, updated.Name, err)
 	}
-	log.Info("updated canary daemonset", "namespace", updated.Namespace, "name", updated.Name)
+	log.Info("updated canary daemonset", "namespace", updated.Namespace, "name", updated.Name, "diff", diff)
 	return true, nil
 }
 
@@ -123,6 +124,18 @@ func canaryDaemonSetChanged(current, expected *appsv1.DaemonSet) (bool, *appsv1.
 			updated.Spec.Template.Spec.Containers[0].SecurityContext = expected.Spec.Template.Spec.Containers[0].SecurityContext
 			changed = true
 		}
+		if !cmp.Equal(current.Spec.Template.Spec.Containers[0].Env, expected.Spec.Template.Spec.Containers[0].Env, cmpopts.EquateEmpty(), cmpopts.SortSlices(func(a, b corev1.EnvVar) bool { return a.Name < b.Name })) {
+			updated.Spec.Template.Spec.Containers[0].Env = expected.Spec.Template.Spec.Containers[0].Env
+			changed = true
+		}
+		if !cmp.Equal(current.Spec.Template.Spec.Containers[0].VolumeMounts, expected.Spec.Template.Spec.Containers[0].VolumeMounts, cmpopts.EquateEmpty(), cmpopts.SortSlices(func(a, b corev1.VolumeMount) bool { return a.Name < b.Name })) {
+			updated.Spec.Template.Spec.Containers[0].VolumeMounts = expected.Spec.Template.Spec.Containers[0].VolumeMounts
+			changed = true
+		}
+		if !cmp.Equal(current.Spec.Template.Spec.Containers[0].Ports, expected.Spec.Template.Spec.Containers[0].Ports, cmpopts.EquateEmpty(), cmpopts.SortSlices(func(a, b corev1.ContainerPort) bool { return a.Name < b.Name })) {
+			updated.Spec.Template.Spec.Containers[0].Ports = expected.Spec.Template.Spec.Containers[0].Ports
+			changed = true
+		}
 	}
 
 	if !cmp.Equal(current.Spec.Template.Spec.NodeSelector, expected.Spec.Template.Spec.NodeSelector, cmpopts.EquateEmpty()) {
@@ -142,6 +155,11 @@ func canaryDaemonSetChanged(current, expected *appsv1.DaemonSet) (bool, *appsv1.
 
 	if current.Spec.Template.Spec.PriorityClassName != expected.Spec.Template.Spec.PriorityClassName {
 		updated.Spec.Template.Spec.PriorityClassName = expected.Spec.Template.Spec.PriorityClassName
+		changed = true
+	}
+
+	if !cmp.Equal(current.Spec.Template.Spec.Volumes, expected.Spec.Template.Spec.Volumes, cmpopts.EquateEmpty(), cmpopts.SortSlices(func(a, b corev1.Volume) bool { return a.Name < b.Name })) {
+		updated.Spec.Template.Spec.Volumes = expected.Spec.Template.Spec.Volumes
 		changed = true
 	}
 
