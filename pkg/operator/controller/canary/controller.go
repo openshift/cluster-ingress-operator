@@ -12,6 +12,7 @@ import (
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
@@ -19,9 +20,11 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 	routev1 "github.com/openshift/api/route/v1"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/wait"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -110,12 +113,51 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 			if !ok {
 				return false
 			}
-			// if Spec.Port has changed, do not trigger a reconcile
-			return cmp.Equal(oldRoute.Spec.Port, newRoute.Spec.Port)
+
+			// Check if the port in newRoute is one of the ports exposed by the canary service.
+			isValidPort := false
+			for _, portNum := range CanaryPorts {
+				switch newRoute.Spec.Port.TargetPort.Type {
+				case intstr.Int:
+					if newRoute.Spec.Port.TargetPort.IntVal == portNum {
+						isValidPort = true
+					}
+				case intstr.String:
+					// Not currently supported; for simplicity, the canary check doesn't do name to port translations,
+					// so if the canary's target port is a port name, we want to treat it as an invalid port and
+					// reconcile the route.
+				}
+				if isValidPort {
+					break
+				}
+			}
+
+			// If newRoute's port isn't one of the canary service ports, reconcile the route.
+			if !isValidPort {
+				return true
+			}
+
+			// If newRoute's port is one of the canary service ports, the change may just be the ingress operator
+			// rotating canary ports. If the *only* change between oldRoute and newRoute is the port change, ignore it.
+			return !cmp.Equal(oldRoute.Spec, newRoute.Spec, cmpopts.IgnoreFields(routev1.RouteSpec{}, "Port"))
 		},
 	}
 
 	if err := c.Watch(source.Kind(operatorCache, &routev1.Route{}), enqueueRequestForDefaultIngressController(config.Namespace), canaryRoutePredicate, updateFilter); err != nil {
+		return nil, err
+	}
+	canaryDaemonSetPredicate := predicate.NewPredicateFuncs(func(o client.Object) bool {
+		canaryDaemonSet := operatorcontroller.CanaryDaemonSetName()
+		return o.GetNamespace() == canaryDaemonSet.Namespace && o.GetName() == canaryDaemonSet.Name
+	})
+	if err := c.Watch(source.Kind(operatorCache, &appsv1.DaemonSet{}), enqueueRequestForDefaultIngressController(config.Namespace), canaryDaemonSetPredicate); err != nil {
+		return nil, err
+	}
+	canaryServicePredicate := predicate.NewPredicateFuncs(func(o client.Object) bool {
+		canaryService := operatorcontroller.CanaryServiceName()
+		return o.GetNamespace() == canaryService.Namespace && o.GetName() == canaryService.Name
+	})
+	if err := c.Watch(source.Kind(operatorCache, &corev1.Service{}), enqueueRequestForDefaultIngressController(config.Namespace), canaryServicePredicate); err != nil {
 		return nil, err
 	}
 
@@ -184,12 +226,11 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		return result, fmt.Errorf("failed to get ingress controller %s: %v", request.NamespacedName.Name, err)
 	}
 
-	if val, ok := ic.Annotations[CanaryRouteRotationAnnotation]; ok {
-		v, _ := strconv.ParseBool(val)
-		r.mu.Lock()
-		r.enableCanaryRouteRotation = v
-		r.mu.Unlock()
-	}
+	val, ok := ic.Annotations[CanaryRouteRotationAnnotation]
+	v, _ := strconv.ParseBool(val)
+	r.mu.Lock()
+	r.enableCanaryRouteRotation = ok && v
+	r.mu.Unlock()
 
 	// Start probing the canary route.
 	routeProbeRunner.Do(func() {
@@ -246,7 +287,8 @@ func (r *reconciler) startCanaryRoutePolling(stop <-chan struct{}) error {
 
 	errors := []timestampedError{}
 
-	go wait.Until(func() {
+	// using wait.NonSlidingUntil so that the canary runs every canaryCheckFrequency, regardless of how long the function takes
+	go wait.NonSlidingUntil(func() {
 		// Get the current canary route every iteration in case it has been modified
 		haveRoute, route, err := r.currentCanaryRoute()
 		if err != nil {
@@ -265,30 +307,6 @@ func (r *reconciler) startCanaryRoutePolling(stop <-chan struct{}) error {
 			if err := r.setCanaryNotAdmittedStatusCondition(); err != nil {
 				log.Error(err, "error updating canary status condition")
 			}
-			return
-		}
-
-		// Check if canary route rotations are enabled every iteration.
-		rotationEnabled := r.isCanaryRouteRotationEnabled()
-
-		// Periodically rotate the canary route endpoint if
-		// rotationEnabled is true.
-		if rotationEnabled && checkCount > canaryCheckCycleCount {
-			haveService, service, err := r.currentCanaryService()
-			if err != nil {
-				log.Error(err, "failed to get canary service")
-				return
-			} else if !haveService {
-				log.Info("canary check service does not exist")
-				return
-			}
-			route, err = r.rotateRouteEndpoint(service, route)
-			if err != nil {
-				log.Error(err, "failed to rotate canary route endpoint")
-				return
-			}
-			checkCount = 0
-			// Give the router time to reload by returning here.
 			return
 		}
 
@@ -313,11 +331,28 @@ func (r *reconciler) startCanaryRoutePolling(stop <-chan struct{}) error {
 		}
 		successiveFail = 0
 		errors = []timestampedError{}
-		// Only increment checkCount if periodic canary route
-		// endpoint rotation is enabled to prevent unbounded
-		// integer growth.
+
+		// Check if canary route rotations are enabled every iteration.
+		rotationEnabled := r.isCanaryRouteRotationEnabled()
+		// Increment checkCount and periodically rotate the canary route endpoint if canary route rotation is enabled.
 		if rotationEnabled {
 			checkCount++
+			if checkCount >= canaryCheckCycleCount {
+				haveService, service, err := r.currentCanaryService()
+				if err != nil {
+					log.Error(err, "failed to get canary service")
+					return
+				} else if !haveService {
+					log.Info("canary check service does not exist")
+					return
+				}
+				route, err = r.rotateRouteEndpoint(service, route)
+				if err != nil {
+					log.Error(err, "failed to rotate canary route endpoint")
+					return
+				}
+				checkCount = 0
+			}
 		}
 	}, canaryCheckFrequency, stop)
 

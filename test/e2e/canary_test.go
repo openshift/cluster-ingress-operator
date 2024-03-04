@@ -6,15 +6,18 @@ package e2e
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	routev1 "github.com/openshift/api/route/v1"
 
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	canarycontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/canary"
+	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 
@@ -41,7 +44,7 @@ func TestCanaryRoute(t *testing.T) {
 		t.Fatalf("failed to create kube client: %v", err)
 	}
 
-	// check that the default ingress controller is ready
+	// check that the default ingress controller is ready.
 	def := &operatorv1.IngressController{}
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, defaultName, defaultAvailableConditions...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
@@ -51,13 +54,13 @@ func TestCanaryRoute(t *testing.T) {
 		t.Fatalf("failed to get default ingresscontroller: %v", err)
 	}
 
-	// Get default ingress controller deployment
+	// Get default ingress controller deployment.
 	deployment := &appsv1.Deployment{}
 	if err := kclient.Get(context.TODO(), controller.RouterDeploymentName(def), deployment); err != nil {
 		t.Fatalf("failed to get ingresscontroller deployment: %v", err)
 	}
 
-	// Get canary route
+	// Get canary route.
 	canaryRoute := &routev1.Route{}
 	name := controller.CanaryRouteName()
 	err = wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
@@ -79,14 +82,14 @@ func TestCanaryRoute(t *testing.T) {
 	if err := kclient.Create(context.TODO(), clientPod); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
 	}
-	defer func() {
+	t.Cleanup(func() {
 		if err := kclient.Delete(context.TODO(), clientPod); err != nil {
 			if errors.IsNotFound(err) {
 				return
 			}
 			t.Errorf("failed to delete pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
 		}
-	}()
+	})
 
 	// Test canary route and verify that the hello-openshift echo pod is running properly.
 	err = wait.PollImmediate(1*time.Second, 5*time.Minute, func() (bool, error) {
@@ -98,11 +101,11 @@ func TestCanaryRoute(t *testing.T) {
 			return false, nil
 		}
 		scanner := bufio.NewScanner(readCloser)
-		defer func() {
+		t.Cleanup(func() {
 			if err := readCloser.Close(); err != nil {
 				t.Errorf("failed to close reader for pod %s: %v", clientPod.Name, err)
 			}
-		}()
+		})
 		foundBody := false
 		foundRequestPortHeader := false
 		for scanner.Scan() {
@@ -158,5 +161,148 @@ func buildCanaryCurlPod(name, namespace, image, host string) *corev1.Pod {
 			},
 			RestartPolicy: corev1.RestartPolicyNever,
 		},
+	}
+}
+
+// TestCanaryWithMTLS enables mTLS on the default ingress controller, then verifies that the CanaryChecksSucceeding
+// condition remains true.
+func TestCanaryWithMTLS(t *testing.T) {
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, defaultName, defaultAvailableConditions...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	caCert := MustCreateTLSKeyCert("root-ca", time.Now(), time.Now().Add(24*time.Hour), true, nil, nil)
+
+	clientCAConfigmap := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "canary-with-mtls-client-ca",
+			Namespace: "openshift-config",
+		},
+		Data: map[string]string{
+			"ca-bundle.pem": caCert.CertPem,
+		},
+	}
+
+	if err := kclient.Create(context.TODO(), clientCAConfigmap); err != nil {
+		t.Fatalf("Failed to create configmap %s: %v", clientCAConfigmap.Name, err)
+	}
+
+	t.Cleanup(func() { assertDeleted(t, kclient, clientCAConfigmap) })
+
+	defaultIC := &operatorv1.IngressController{}
+	if err := kclient.Get(context.TODO(), defaultName, defaultIC); err != nil {
+		t.Fatalf("failed to get default ingresscontroller: %v", err)
+	}
+
+	// Save the current clientTLS config so it can be restored at the end of the test.
+	originalClientTLS := defaultIC.Spec.ClientTLS.DeepCopy()
+
+	// Set client TLS (mTLS) to required, and use clientCAConfigmap as the CA bundle.
+	defaultIC.Spec.ClientTLS = operatorv1.ClientTLS{
+		ClientCertificatePolicy: operatorv1.ClientCertificatePolicyRequired,
+		ClientCA: configv1.ConfigMapNameReference{
+			Name: clientCAConfigmap.Name,
+		},
+	}
+	if err := kclient.Update(context.TODO(), defaultIC); err != nil {
+		t.Fatalf("Failed to enable mTLS on default ingress controller: %v", err)
+	}
+
+	t.Cleanup(func() {
+		// Reset client TLS.
+		if err := kclient.Get(context.TODO(), defaultName, defaultIC); err != nil {
+			t.Fatalf("Failed to get default ingresscontroller: %v", err)
+		}
+		defaultIC.Spec.ClientTLS = *originalClientTLS
+		if err := kclient.Update(context.TODO(), defaultIC); err != nil {
+			t.Fatalf("Failed to restore default ingress configuration: %v", err)
+		}
+		t.Log("Restored clientTLS config for default ingresscontroller.")
+	})
+
+	// Watch for the RouterClientAuthCA env variable to be non-empty, indicating that the router update has begun to
+	// roll out.
+	routerDeployment := &appsv1.Deployment{}
+	routerDeploymentName := controller.RouterDeploymentName(defaultIC)
+
+	err := wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), routerDeploymentName, routerDeployment); err != nil {
+			t.Logf("error getting deployment %s/%s: %v", routerDeploymentName.Namespace, routerDeploymentName.Name, err)
+			return false, nil
+		}
+		for _, container := range routerDeployment.Spec.Template.Spec.Containers {
+			if container.Name == "router" {
+				for _, v := range container.Env {
+					if v.Name == ingresscontroller.RouterClientAuthCA {
+						return v.Value != "", nil
+					}
+				}
+			}
+		}
+		return false, nil
+	})
+	if err != nil {
+		t.Fatalf("Failed while waiting for router update to start: %v", err)
+	}
+
+	// Wait for the router update to complete.
+	if err := waitForDeploymentComplete(t, kclient, routerDeployment, 3*time.Minute); err != nil {
+		t.Fatalf("Timed out waiting for ingress update to complete: %v", err)
+	}
+
+	// checkCanarySuccessCondition examines the
+	// IngressController's status conditions to check for the
+	// IngressControllerCanaryCheckSuccessConditionType condition.
+	//
+	// Returns:
+	//
+	// - true, nil:    if the canary is succeeding.
+	//
+	// - false, nil:   if the canary is failing.
+	//
+	// - false, error: if the canary's status is unknown, or no status
+	//                 condition is found.
+	checkCanarySuccessCondition := func(ic *operatorv1.IngressController) (bool, error) {
+		for _, condition := range ic.Status.Conditions {
+			if condition.Type == ingresscontroller.IngressControllerCanaryCheckSuccessConditionType {
+				switch condition.Status {
+				case operatorv1.ConditionUnknown:
+					return false, fmt.Errorf("Canary status is Unknown: %s", condition.Reason)
+				default:
+					return condition.Status == operatorv1.ConditionTrue, nil
+				}
+			}
+		}
+		return false, fmt.Errorf("Canary success condition not found.")
+	}
+
+	// Verify that canary does not fail using PollImmediate.
+	// PollImmediate will continue polling until either the canary fails
+	// (indicating the test failed), or the timeout is reached (indicating
+	// success).
+	err = wait.PollImmediate(20*time.Second, 6*time.Minute, func() (bool, error) {
+		t.Log("Polling for canary success condition...")
+		ic := &operatorv1.IngressController{}
+		if err := kclient.Get(context.TODO(), defaultName, ic); err != nil {
+			t.Logf("Failed to get IngressController: %v", err)
+			return false, err
+		}
+		canarySuccess, err := checkCanarySuccessCondition(ic)
+		if err != nil {
+			t.Log("Canary success condition not found. Continuing poll.")
+		} else if canarySuccess {
+			t.Log("Canary check passed. Continuing poll.")
+		} else {
+			t.Fatalf("Canary check failed. Stopping poll.")
+		}
+		return false, err
+	})
+
+	if err != nil && err != wait.ErrWaitTimeout {
+		t.Fatalf("Polling terminated with unexpected error: %v", err)
+	} else if err == wait.ErrWaitTimeout {
+		t.Log("Polling terminated due to timeout. Assuming canary succeeded for the entire polling interval.")
+	} else {
+		t.Fatalf("Expected poll to time out.")
 	}
 }

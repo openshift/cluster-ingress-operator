@@ -25,7 +25,7 @@ spec:
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           ports:
-          - containerPort: 8080
+          - containerPort: 8443
             protocol: TCP
           - containerPort: 8888
             protocol: TCP
@@ -33,11 +33,24 @@ spec:
             requests:
               cpu: 10m
               memory: 20Mi
+          volumeMounts:
+          - name: cert
+            mountPath: /etc/tls-cert
+          env:
+          - name: TLS_CERT
+            value: /etc/tls-cert/tls.crt
+          - name: TLS_KEY
+            value: /etc/tls-cert/tls.key
       nodeSelector:
         kubernetes.io/os: linux
       tolerations:
         - key: node-role.kubernetes.io/infra
           operator: Exists
+      volumes:
+      - name: cert
+        secret:
+          secretName: canary-serving-cert
+          defaultMode: 0420
   updateStrategy:
     type: RollingUpdate
     rollingUpdate:
