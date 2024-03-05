@@ -1957,26 +1957,10 @@ func TestRouteAdmissionPolicy(t *testing.T) {
 
 func TestSyslogLogging(t *testing.T) {
 	t.Parallel()
-	ic := &operatorv1.IngressController{}
-	if err := kclient.Get(context.TODO(), defaultName, ic); err != nil {
-		t.Fatalf("failed to get default ingresscontroller: %v", err)
-	}
-	deployment := &appsv1.Deployment{}
-	if err := kclient.Get(context.TODO(), controller.RouterDeploymentName(ic), deployment); err != nil {
-		t.Fatalf("failed to get default ingresscontroller's deployment: %v", err)
-	}
-	var (
-		image      string
-		foundImage bool
-	)
-	for _, container := range deployment.Spec.Template.Spec.Containers {
-		if container.Name == "router" {
-			image = container.Image
-			foundImage = true
-		}
-	}
-	if !foundImage {
-		t.Fatal("failed to determine default ingresscontroller deployment's image")
+
+	image, err := getIngressControllerDeploymentImage(t, kclient, defaultName, 1*time.Minute)
+	if err != nil {
+		t.Fatal("failed to determine default ingresscontroller deployment's image: ", err)
 	}
 
 	// Set up rsyslog.
@@ -2050,7 +2034,7 @@ $ModLoad omstdout.so
 	// Get the rsyslog endpoint.
 	var syslogAddress string
 	name := types.NamespacedName{Namespace: syslogPod.Namespace, Name: syslogPod.Name}
-	err := wait.PollImmediate(1*time.Second, 3*time.Minute, func() (bool, error) {
+	err = wait.PollImmediate(1*time.Second, 3*time.Minute, func() (bool, error) {
 		if err := kclient.Get(context.TODO(), name, syslogPod); err != nil {
 			t.Logf("failed to get syslog pod %s/%s: %v", name.Namespace, name.Name, err)
 			return false, nil
@@ -2068,7 +2052,7 @@ $ModLoad omstdout.so
 	// Create an ingresscontroller that logs to the endpoint.
 	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "syslog"}
 	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
-	ic = newPrivateController(icName, domain)
+	ic := newPrivateController(icName, domain)
 	ic.Spec.Logging = &operatorv1.IngressControllerLogging{
 		Access: &operatorv1.AccessLogging{
 			Destination: operatorv1.LoggingDestination{
@@ -3086,6 +3070,396 @@ func TestAWSELBConnectionIdleTimeout(t *testing.T) {
 		return true, nil
 	}); err != nil {
 		t.Fatalf("failed to observe expected condition: %v", err)
+	}
+}
+
+// TestServerTimeout verifies that the router's server timeout works as expected.
+func TestServerTimeout(t *testing.T) {
+	t.Parallel()
+
+	if infraConfig.Status.PlatformStatus == nil {
+		t.Skip("test skipped on nil platform")
+	}
+
+	// Create a dedicated ingresscontroller with the server timeout set to 10s
+	// instead of the default 30s to distance it from the idle timeout of the test application (40s).
+	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "test-server-timeout"}
+	ic := newLoadBalancerController(icName, icName.Name+"."+dnsConfig.Spec.BaseDomain)
+	ic.Spec.TuningOptions = operatorv1.IngressControllerTuningOptions{
+		ServerTimeout: &metav1.Duration{Duration: 10 * time.Second},
+	}
+	if err := kclient.Create(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to create ingresscontroller: %v", err)
+	}
+	defer assertIngressControllerDeleted(t, kclient, ic)
+
+	// Create a pod with an HTTP application that sends delayed responses.
+	// The delay is 40s which is enough to test the default server timeout.
+	pod := buildSlowHTTPDPod("slow-httpd", operatorcontroller.DefaultOperandNamespace)
+	if err := kclient.Create(context.TODO(), pod); err != nil {
+		t.Fatalf("failed to create pod %s/%s: %v", pod.Namespace, pod.Name, err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), pod); err != nil {
+			t.Fatalf("failed to delete pod %s/%s: %v", pod.Namespace, pod.Name, err)
+		}
+	}()
+
+	service := buildEchoService(pod.Name, pod.Namespace, pod.ObjectMeta.Labels)
+	if err := kclient.Create(context.TODO(), service); err != nil {
+		t.Fatalf("failed to create service %s/%s: %v", service.Namespace, service.Name, err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), service); err != nil {
+			t.Fatalf("failed to delete service %s/%s: %v", service.Namespace, service.Name, err)
+		}
+	}()
+
+	route := buildEdgeRoute(pod.Name, pod.Namespace, service.Name)
+	route.Spec.Host = fmt.Sprintf("%s-%s.%s", route.Name, route.Namespace, ic.Spec.Domain)
+	if err := kclient.Create(context.TODO(), route); err != nil {
+		t.Fatalf("failed to create route %s/%s: %v", route.Namespace, route.Name, err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), route); err != nil {
+			t.Fatalf("failed to delete route %s/%s: %v", route.Namespace, route.Name, err)
+		}
+	}()
+
+	// Wait for the load balancer and DNS to be ready
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	// Wait until we can resolve the route's hostname (controller's wildcard DNSRecord)
+	if err := wait.PollImmediate(5*time.Second, 5*time.Minute, func() (bool, error) {
+		_, err := net.LookupIP(route.Spec.Host)
+		if err != nil {
+			t.Log(err)
+			return false, nil
+		}
+
+		return true, nil
+	}); err != nil {
+		t.Fatalf("failed to observe expected condition: %v", err)
+	}
+
+	// HTTPS scheme is used to involve middle level backends
+	// from the router's config. They may influence the timeout behavior.
+	// The chain of proxies would look as follows:
+	// public_ssl -> be_sni -> fe_sni -> be_edge_http:openshift-ingress:slow-httpd
+	request, err := http.NewRequest("GET", "https://"+route.Spec.Host, nil)
+	if err != nil {
+		t.Fatalf("failed to create HTTP request: %v", err)
+	}
+	request.Host = route.Spec.Host
+
+	client := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true,
+			},
+		},
+	}
+
+	t.Log("checking the default timeout of 10s")
+	if err := wait.PollUntilContextTimeout(context.TODO(), 5*time.Second, 1*time.Minute, true, func(_ context.Context) (bool, error) {
+		start := time.Now()
+		response, err := client.Do(request)
+		if err != nil {
+			t.Logf("got unexpected error: %v", err)
+			return false, nil
+		}
+		defer response.Body.Close()
+		if response.StatusCode != http.StatusGatewayTimeout {
+			t.Logf("got unexpected response code: %v", response.StatusCode)
+			return false, nil
+		}
+		elapsed := time.Now().Sub(start)
+
+		// Allow up to 2 seconds more to avoid false negatives.
+		if elapsed.Seconds() > float64(12) {
+			t.Logf("got expected gateway timeout after unexpectedly long elapsed time %v", elapsed)
+			return false, nil
+		}
+
+		t.Logf("got expected gateway timeout after elapsed time %v", elapsed)
+		return true, nil
+	}); err != nil {
+		t.Fatalf("failed to observe expected timeout behavior: %v", err)
+	}
+
+	// Configure the route with a server timeout less than the default one.
+	routeName := types.NamespacedName{Namespace: route.Namespace, Name: route.Name}
+	if err := kclient.Get(context.TODO(), routeName, route); err != nil {
+		t.Fatalf("failed to get route: %v", err)
+	}
+	if route.Annotations == nil {
+		route.Annotations = map[string]string{}
+	}
+	route.Annotations["haproxy.router.openshift.io/timeout"] = "3s"
+	if err := kclient.Update(context.TODO(), route); err != nil {
+		t.Fatalf("failed to update route: %v", err)
+	}
+
+	t.Log("checking the route timeout of 3s")
+	// Wait the interval before trying to connect to let the router reload new config.
+	if err := wait.PollUntilContextTimeout(context.TODO(), 5*time.Second, 1*time.Minute, false, func(_ context.Context) (bool, error) {
+		start := time.Now()
+		response, err := client.Do(request)
+		if err != nil {
+			t.Logf("got unexpected error: %v", err)
+			return false, nil
+		}
+		defer response.Body.Close()
+		if response.StatusCode != http.StatusGatewayTimeout {
+			t.Logf("got unexpected response code: %v", response.StatusCode)
+			return false, nil
+		}
+		elapsed := time.Now().Sub(start)
+
+		// Allow up to 2 seconds more to avoid false negatives.
+		if elapsed.Seconds() > float64(5) {
+			t.Logf("got expected gateway timeout after unexpectedly long elapsed time %v", elapsed)
+			return false, nil
+		}
+
+		t.Logf("got expected gateway timeout after elapsed time %v", elapsed)
+		return true, nil
+	}); err != nil {
+		t.Fatalf("failed to observe expected timeout behavior: %v", err)
+	}
+
+	// Configure the route with a server timeout greater than the default one.
+	if err := kclient.Get(context.TODO(), routeName, route); err != nil {
+		t.Fatalf("failed to get route: %v", err)
+	}
+	route.Annotations["haproxy.router.openshift.io/timeout"] = "15s"
+	if err := kclient.Update(context.TODO(), route); err != nil {
+		t.Fatalf("failed to update route: %v", err)
+	}
+
+	t.Log("checking the route timeout of 15s")
+	// Wait the interval before trying to connect to let the router reload new config.
+	if err := wait.PollUntilContextTimeout(context.TODO(), 5*time.Second, 1*time.Minute, false, func(_ context.Context) (bool, error) {
+		start := time.Now()
+		response, err := client.Do(request)
+		if err != nil {
+			t.Logf("got unexpected error: %v", err)
+			return false, nil
+		}
+		defer response.Body.Close()
+		if response.StatusCode != http.StatusGatewayTimeout {
+			t.Logf("got unexpected response code: %v", response.StatusCode)
+			return false, nil
+		}
+		elapsed := time.Now().Sub(start)
+
+		// Allow up to 2 seconds more to avoid false negatives.
+		if elapsed.Seconds() > float64(17) {
+			t.Logf("got expected gateway timeout after unexpectedly long elapsed time %v", elapsed)
+			return false, nil
+		}
+		if elapsed.Seconds() < float64(15) {
+			t.Logf("got expected gateway timeout after unexpectedly short elapsed time %v", elapsed)
+			return false, nil
+		}
+
+		t.Logf("got expected gateway timeout after elapsed time %v", elapsed)
+		return true, nil
+	}); err != nil {
+		t.Fatalf("failed to observe expected timeout behavior: %v", err)
+	}
+}
+
+// TestTunnelTimeout verifies that the router's tunnel timeout works as expected.
+func TestTunnelTimeout(t *testing.T) {
+	t.Parallel()
+
+	if infraConfig.Status.PlatformStatus == nil {
+		t.Skip("test skipped on nil platform")
+	}
+
+	// Create a dedicated ingresscontroller with the tunnel timeout set to 10s
+	// instead of the default 1h to let the test run faster.
+	// It's also far enough from the idle timeout of the test application (40s).
+	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "test-tunnel-timeout"}
+	ic := newLoadBalancerController(icName, icName.Name+"."+dnsConfig.Spec.BaseDomain)
+	ic.Spec.TuningOptions = operatorv1.IngressControllerTuningOptions{
+		TunnelTimeout: &metav1.Duration{Duration: 10 * time.Second},
+	}
+	if err := kclient.Create(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to create ingresscontroller: %v", err)
+	}
+	defer assertIngressControllerDeleted(t, kclient, ic)
+
+	icImage, err := getIngressControllerDeploymentImage(t, kclient, icName, 1*time.Minute)
+	if err != nil {
+		t.Fatal("failed to determine ingresscontroller deployment's image: ", err)
+	}
+
+	// Create a pod with an HTTP application that sends delayed responses.
+	// The delay is 40s which is enough to test the default tunnel timeout.
+	pod := buildWebSocketServerPod("slow-wssrv", operatorcontroller.DefaultOperandNamespace, icImage, "40s")
+	if err := kclient.Create(context.TODO(), pod); err != nil {
+		t.Fatalf("failed to create pod %s/%s: %v", pod.Namespace, pod.Name, err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), pod); err != nil {
+			t.Fatalf("failed to delete pod %s/%s: %v", pod.Namespace, pod.Name, err)
+		}
+	}()
+
+	service := buildEchoService(pod.Name, pod.Namespace, pod.ObjectMeta.Labels)
+	if err := kclient.Create(context.TODO(), service); err != nil {
+		t.Fatalf("failed to create service %s/%s: %v", service.Namespace, service.Name, err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), service); err != nil {
+			t.Fatalf("failed to delete service %s/%s: %v", service.Namespace, service.Name, err)
+		}
+	}()
+
+	route := buildEdgeRoute(pod.Name, pod.Namespace, service.Name)
+	route.Spec.Host = fmt.Sprintf("%s-%s.%s", route.Name, route.Namespace, ic.Spec.Domain)
+	if err := kclient.Create(context.TODO(), route); err != nil {
+		t.Fatalf("failed to create route %s/%s: %v", route.Namespace, route.Name, err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), route); err != nil {
+			t.Fatalf("failed to delete route %s/%s: %v", route.Namespace, route.Name, err)
+		}
+	}()
+
+	// Wait for the load balancer and DNS to be ready
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
+		t.Fatalf("failed to observe expected ingresscontroller conditions: %v", err)
+	}
+
+	// Wait until we can resolve the route's hostname (controller's wildcard DNSRecord)
+	if err := wait.PollImmediate(5*time.Second, 5*time.Minute, func() (bool, error) {
+		_, err := net.LookupIP(route.Spec.Host)
+		if err != nil {
+			t.Log(err)
+			return false, nil
+		}
+
+		return true, nil
+	}); err != nil {
+		t.Fatalf("failed to observe expected loadbalancer condition: %v", err)
+	}
+
+	t.Log("checking the default timeout of 10s")
+	if err := wait.PollUntilContextTimeout(context.TODO(), 5*time.Second, 1*time.Minute, true, func(_ context.Context) (bool, error) {
+		start := time.Now()
+		// WSS scheme is used to involve middle level backends
+		// from the router's config. They may influence the timeout behavior.
+		// The chain of proxies would look as follows:
+		// public_ssl -> be_sni -> fe_sni -> be_edge:openshift-ingress:slow-wssrv
+		response, err := webSocketClientDo("wss://"+route.Spec.Host+"/ws", "hello", true)
+		if err != nil {
+			if !strings.Contains(err.Error(), "close 1006") {
+				t.Logf("got unexpected error: %v", err)
+				return false, nil
+			}
+		} else {
+			t.Logf("got unexpected response: %s", response)
+			return false, nil
+		}
+		elapsed := time.Now().Sub(start)
+
+		// Allow up to 2 seconds more to avoid false negatives.
+		if elapsed.Seconds() > float64(12) {
+			t.Logf("got expected timeout after unexpectedly long elapsed time %v", elapsed)
+			return false, nil
+		}
+
+		t.Logf("got expected timeout after elapsed time %v", elapsed)
+		return true, nil
+	}); err != nil {
+		t.Fatalf("failed to observe expected timeout behavior: %v", err)
+	}
+
+	// Configure the route with a server timeout less than the default one.
+	routeName := types.NamespacedName{Namespace: route.Namespace, Name: route.Name}
+	if err := kclient.Get(context.TODO(), routeName, route); err != nil {
+		t.Fatalf("failed to get route: %v", err)
+	}
+	if route.Annotations == nil {
+		route.Annotations = map[string]string{}
+	}
+	route.Annotations["haproxy.router.openshift.io/timeout-tunnel"] = "3s"
+	if err := kclient.Update(context.TODO(), route); err != nil {
+		t.Fatalf("failed to update route: %v", err)
+	}
+
+	t.Log("checking the route timeout of 3s")
+	// Wait the interval before trying to connect to let the router reload new config.
+	if err := wait.PollUntilContextTimeout(context.TODO(), 5*time.Second, 1*time.Minute, false, func(_ context.Context) (bool, error) {
+		start := time.Now()
+		response, err := webSocketClientDo("wss://"+route.Spec.Host+"/ws", "hello", true)
+		if err != nil {
+			if !strings.Contains(err.Error(), "close 1006") {
+				t.Logf("got unexpected error: %v", err)
+				return false, nil
+			}
+		} else {
+			t.Logf("got unexpected response: %s", response)
+			return false, nil
+		}
+		elapsed := time.Now().Sub(start)
+
+		// Allow up to 2 seconds more to avoid false negatives.
+		if elapsed.Seconds() > float64(5) {
+			t.Logf("got expected gateway timeout after unexpectedly long elapsed time %v", elapsed)
+			return false, nil
+		}
+
+		t.Logf("got expected timeout after elapsed time %v", elapsed)
+		return true, nil
+	}); err != nil {
+		t.Fatalf("failed to observe expected timeout behavior: %v", err)
+	}
+
+	// Configure the route with a server timeout greater than the default one.
+	if err := kclient.Get(context.TODO(), routeName, route); err != nil {
+		t.Fatalf("failed to get route: %v", err)
+	}
+	route.Annotations["haproxy.router.openshift.io/timeout-tunnel"] = "15s"
+	if err := kclient.Update(context.TODO(), route); err != nil {
+		t.Fatalf("failed to update route: %v", err)
+	}
+
+	t.Log("checking the route timeout of 15s")
+	// Wait the interval before trying to connect to let the router reload new config.
+	if err := wait.PollUntilContextTimeout(context.TODO(), 5*time.Second, 1*time.Minute, false, func(_ context.Context) (bool, error) {
+		start := time.Now()
+		response, err := webSocketClientDo("wss://"+route.Spec.Host+"/ws", "hello", true)
+		if err != nil {
+			if !strings.Contains(err.Error(), "close 1006") {
+				t.Logf("got unexpected error: %v", err)
+				return false, nil
+			}
+		} else {
+			t.Logf("got unexpected response: %s", response)
+			return false, nil
+		}
+		elapsed := time.Now().Sub(start)
+
+		// Allow up to 2 seconds more to avoid false negatives.
+		if elapsed.Seconds() > float64(17) {
+			t.Logf("got expected timeout after unexpectedly long elapsed time %v", elapsed)
+			return false, nil
+		}
+		if elapsed.Seconds() < float64(15) {
+			t.Logf("got expected timeout after unexpectedly short elapsed time %v", elapsed)
+			return false, nil
+		}
+
+		t.Logf("got expected timeout after elapsed time %v", elapsed)
+		return true, nil
+	}); err != nil {
+		t.Fatalf("failed to observe expected timeout behavior: %v", err)
 	}
 }
 

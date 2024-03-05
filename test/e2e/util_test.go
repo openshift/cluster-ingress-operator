@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net"
 	"net/http"
@@ -17,6 +18,8 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	routev1 "github.com/openshift/api/route/v1"
+
+	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -35,6 +38,8 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
+
+	"github.com/gorilla/websocket"
 )
 
 // buildEchoPod returns a pod definition for an socat-based echo server.
@@ -244,6 +249,50 @@ func buildSlowHTTPDPod(name, namespace string) *corev1.Pod {
 	}
 }
 
+// buildWebSocketServerPod returns a pod that responds to WebSocket requests after the given timeout.
+func buildWebSocketServerPod(name, namespace, image, timeout string) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Labels: map[string]string{
+				"app": name,
+			},
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Image: image,
+					Name:  "echo",
+					Env: []corev1.EnvVar{
+						{
+							Name:  "TIMEOUT",
+							Value: timeout,
+						},
+					},
+					Args: []string{"serve-ws-test-server"},
+					Ports: []corev1.ContainerPort{
+						{
+							ContainerPort: int32(8080),
+							Protocol:      corev1.ProtocolTCP,
+						},
+					},
+					SecurityContext: &corev1.SecurityContext{
+						AllowPrivilegeEscalation: pointer.Bool(false),
+						Capabilities: &corev1.Capabilities{
+							Drop: []corev1.Capability{"ALL"},
+						},
+						RunAsNonRoot: pointer.Bool(true),
+						SeccompProfile: &corev1.SeccompProfile{
+							Type: corev1.SeccompProfileTypeRuntimeDefault,
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
 // buildRoute returns a route definition targeting the specified service.
 func buildRoute(name, namespace, serviceName string) *routev1.Route {
 	return &routev1.Route{
@@ -322,6 +371,25 @@ func buildRouteWithHSTS(podName, namespace, serviceName, domain, annotation stri
 	return route
 }
 
+// buildEdgeRoute returns a route definition with edge termination targeting the specified service.
+func buildEdgeRoute(name, namespace, serviceName string) *routev1.Route {
+	return &routev1.Route{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: routev1.RouteSpec{
+			To: routev1.RouteTargetReference{
+				Kind: "Service",
+				Name: serviceName,
+			},
+			TLS: &routev1.TLSConfig{
+				Termination: routev1.TLSTerminationEdge,
+			},
+		},
+	}
+}
+
 func getIngressController(t *testing.T, client client.Client, name types.NamespacedName, timeout time.Duration) (*operatorv1.IngressController, error) {
 	t.Helper()
 	ic := operatorv1.IngressController{}
@@ -350,6 +418,24 @@ func getDeployment(t *testing.T, client client.Client, name types.NamespacedName
 		return nil, fmt.Errorf("Failed to get %q: %v", name, err)
 	}
 	return &dep, nil
+}
+
+func getIngressControllerDeploymentImage(t *testing.T, client client.Client, name types.NamespacedName, timeout time.Duration) (string, error) {
+	ic, err := getIngressController(t, client, name, timeout)
+	if err := kclient.Get(context.TODO(), name, ic); err != nil {
+		return "", err
+	}
+
+	deployment, err := getDeployment(t, client, controller.RouterDeploymentName(ic), timeout)
+	if err != nil {
+		return "", err
+	}
+	for _, container := range deployment.Spec.Template.Spec.Containers {
+		if container.Name == "router" {
+			return container.Image, nil
+		}
+	}
+	return "", nil
 }
 
 func getPods(t *testing.T, cl client.Client, deployment *appsv1.Deployment) (*corev1.PodList, error) {
@@ -754,7 +840,7 @@ func getRouteHost(t *testing.T, route *routev1.Route, router string) string {
 		}
 	}
 
-	t.Fatalf("failed to find host name for default router in route: %#v", route)
+	t.Fatalf("failed to find host name for %q router in route: %#v", router, route)
 	return ""
 }
 
@@ -842,4 +928,28 @@ func createNamespace(t *testing.T, name string) *corev1.Namespace {
 	}
 
 	return ns
+}
+
+// webSocketClientDo sends the given message to the given websocket server and returns a response or an error.
+func webSocketClientDo(addr, msg string, skipTLSVerify bool) (string, error) {
+	dialer := websocket.DefaultDialer
+	dialer.TLSClientConfig = &tls.Config{
+		InsecureSkipVerify: skipTLSVerify,
+	}
+	conn, _, err := dialer.Dial(addr, nil)
+	if err != nil {
+		return "", err
+	}
+	defer conn.Close()
+
+	err = conn.WriteMessage(websocket.TextMessage, []byte(msg))
+	if err != nil {
+		return "", err
+	}
+
+	_, response, err := conn.ReadMessage()
+	if err != nil {
+		return "", err
+	}
+	return string(response), nil
 }
