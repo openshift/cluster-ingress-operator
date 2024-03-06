@@ -33,11 +33,13 @@ func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func listenAndServe(port string) {
-	fmt.Printf("serving on %s\n", port)
-	err := http.ListenAndServe(":"+port, nil)
+// listenAndServeTLS starts a server listening on port, using certFile and keyFile as the certificate and key for TLS
+// connections.
+func listenAndServeTLS(port int32, certFile, keyFile string) {
+	fmt.Printf("serving TLS on %d\n", port)
+	err := http.ListenAndServeTLS(":"+strconv.Itoa(int(port)), certFile, keyFile, nil)
 	if err != nil {
-		panic("ListenAndServe: " + err.Error())
+		panic("ListenAndServeTLS: " + err.Error())
 	}
 }
 
@@ -56,17 +58,13 @@ func NewServeHealthCheckCommand() *cobra.Command {
 
 func serveHealthCheck() {
 	http.HandleFunc("/", healthCheckHandler)
-	port := os.Getenv("PORT")
-	if len(port) == 0 {
-		port = "8080"
-	}
-	go listenAndServe(port)
 
-	port = os.Getenv("SECOND_PORT")
-	if len(port) == 0 {
-		port = "8888"
+	tlsCertFile := os.Getenv("TLS_CERT")
+	tlsKeyFile := os.Getenv("TLS_KEY")
+
+	for _, port := range canarycontroller.CanaryPorts {
+		go listenAndServeTLS(port, tlsCertFile, tlsKeyFile)
 	}
-	go listenAndServe(port)
 
 	select {}
 }
