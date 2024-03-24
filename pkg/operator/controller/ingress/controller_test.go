@@ -1,19 +1,18 @@
 package ingress
 
 import (
+	"github.com/google/go-cmp/cmp"
+	"golang.org/x/exp/slices"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"reflect"
 	"testing"
 	"time"
-
-	"github.com/google/go-cmp/cmp"
-	"golang.org/x/exp/slices"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	util "github.com/openshift/cluster-ingress-operator/pkg/util"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // Test_setDefaultDomain verifies that setDefaultDomain behaves correctly.
@@ -154,7 +153,8 @@ func TestSetDefaultPublishingStrategySetsPlatformDefaults(t *testing.T) {
 						ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
 							Type: operatorv1.AWSLoadBalancerProvider,
 							AWS: &operatorv1.AWSLoadBalancerParameters{
-								Type: operatorv1.AWSNetworkLoadBalancer,
+								Type:                          operatorv1.AWSNetworkLoadBalancer,
+								NetworkLoadBalancerParameters: &operatorv1.AWSNetworkLoadBalancerParameters{},
 							},
 						},
 					},
@@ -457,7 +457,8 @@ func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
 			eps.LoadBalancer.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{
 				Type: operatorv1.AWSLoadBalancerProvider,
 				AWS: &operatorv1.AWSLoadBalancerParameters{
-					Type: operatorv1.AWSNetworkLoadBalancer,
+					Type:                          operatorv1.AWSNetworkLoadBalancer,
+					NetworkLoadBalancerParameters: &operatorv1.AWSNetworkLoadBalancerParameters{},
 				},
 			}
 			return eps

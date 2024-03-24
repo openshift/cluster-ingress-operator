@@ -51,13 +51,19 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 		// nlb returns an EndpointPublishingStrategy with type
 		// "LoadBalancerStrategy" and the specified scope and with
 		// providerParameters set to specify an NLB.
-		nlb = func(scope operatorv1.LoadBalancerScope) *operatorv1.EndpointPublishingStrategy {
+		nlb = func(scope operatorv1.LoadBalancerScope, eips []operatorv1.EIPAllocation) *operatorv1.EndpointPublishingStrategy {
 			eps := lbs(scope)
 			eps.LoadBalancer.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{
 				Type: operatorv1.AWSLoadBalancerProvider,
 				AWS: &operatorv1.AWSLoadBalancerParameters{
 					Type: operatorv1.AWSNetworkLoadBalancer,
 				},
+			}
+			eps.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{}
+			if len(eips) != 0 && eips != nil {
+				eps.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{
+					EIPAllocations: eips,
+				}
 			}
 			return eps
 		}
@@ -178,7 +184,7 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 		{
 			description:                   "external network load balancer without scope for aws platform",
 			platformStatus:                platformStatus(configv1.AWSPlatformType),
-			strategy:                      nlb(""),
+			strategy:                      nlb("", []operatorv1.EIPAllocation{}),
 			proxyNeeded:                   false,
 			expectService:                 true,
 			expectedExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyLocal,
@@ -195,9 +201,29 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 			},
 		},
 		{
+			description:                   "external network load balancer without scope External and EIP for aws platform",
+			platformStatus:                platformStatus(configv1.AWSPlatformType),
+			strategy:                      nlb(operatorv1.ExternalLoadBalancer, []operatorv1.EIPAllocation{"eipalloc-xxxxxxxxxxxxxxxxx", "eipalloc-yyyyyyyyyyyyyyyyy"}),
+			proxyNeeded:                   false,
+			expectService:                 true,
+			expectedExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyLocal,
+			expectedServiceAnnotations: map[string]annotationExpectation{
+				awsInternalLBAnnotation:                      {false, ""},
+				awsLBAdditionalResourceTags:                  {false, ""},
+				awsLBHealthCheckHealthyThresholdAnnotation:   {true, awsLBHealthCheckHealthyThresholdDefault},
+				awsLBHealthCheckIntervalAnnotation:           {true, awsLBHealthCheckIntervalNLB},
+				awsLBHealthCheckTimeoutAnnotation:            {true, awsLBHealthCheckTimeoutDefault},
+				awsLBHealthCheckUnhealthyThresholdAnnotation: {true, awsLBHealthCheckUnhealthyThresholdDefault},
+				awsLBProxyProtocolAnnotation:                 {false, ""},
+				AWSLBTypeAnnotation:                          {true, AWSNLBAnnotation},
+				localWithFallbackAnnotation:                  {true, ""},
+				AwsEIPAllocations:                            {present: true, value: "eipalloc-xxxxxxxxxxxxxxxxx,eipalloc-yyyyyyyyyyyyyyyyy"},
+			},
+		},
+		{
 			description:                   "external network load balancer with scope for aws platform",
 			platformStatus:                platformStatus(configv1.AWSPlatformType),
-			strategy:                      nlb(operatorv1.ExternalLoadBalancer),
+			strategy:                      nlb(operatorv1.ExternalLoadBalancer, []operatorv1.EIPAllocation{}),
 			proxyNeeded:                   false,
 			expectService:                 true,
 			expectedExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyLocal,
@@ -215,7 +241,7 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 		},
 		{
 			description:   "external network load balancer with scope for aws platform and custom user tags",
-			strategy:      nlb(operatorv1.ExternalLoadBalancer),
+			strategy:      nlb(operatorv1.ExternalLoadBalancer, []operatorv1.EIPAllocation{}),
 			proxyNeeded:   false,
 			expectService: true,
 			platformStatus: &configv1.PlatformStatus{
@@ -412,6 +438,9 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 			ic := &operatorv1.IngressController{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "default",
+				},
+				Spec: operatorv1.IngressControllerSpec{
+					EndpointPublishingStrategy: tc.strategy,
 				},
 				Status: operatorv1.IngressControllerStatus{
 					EndpointPublishingStrategy: tc.strategy,

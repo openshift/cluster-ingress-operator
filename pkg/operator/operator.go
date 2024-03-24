@@ -482,6 +482,16 @@ func (o *Operator) ensureDefaultIngressController(infraConfig *configv1.Infrastr
 					},
 				},
 			}
+
+			if ingressConfig.Spec.LoadBalancer.Platform.AWS.NetworkLoadBalancerParameters != nil && ingressConfig.Spec.LoadBalancer.Platform.AWS.NetworkLoadBalancerParameters.EIPAllocations != nil && len(ingressConfig.Spec.LoadBalancer.Platform.AWS.NetworkLoadBalancerParameters.EIPAllocations) > 0 {
+				var eipAllocations []operatorv1.EIPAllocation
+				for _, eipAllocation := range ingressConfig.Spec.LoadBalancer.Platform.AWS.NetworkLoadBalancerParameters.EIPAllocations {
+					eipAllocations = append(eipAllocations, operatorv1.EIPAllocation(eipAllocation))
+				}
+				ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{
+					EIPAllocations: eipAllocations,
+				}
+			}
 		}
 	}
 

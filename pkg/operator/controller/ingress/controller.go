@@ -3,6 +3,7 @@ package ingress
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"regexp"
 	"regexp/syntax"
 	"strings"
@@ -545,25 +546,51 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, platformStat
 					statusLB.ProviderParameters.AWS.Type = specLB.ProviderParameters.AWS.Type
 					changed = true
 				}
+
 				if statusLB.ProviderParameters.AWS.Type == operatorv1.AWSClassicLoadBalancer {
-					if statusLB.ProviderParameters.AWS.ClassicLoadBalancerParameters == nil {
-						statusLB.ProviderParameters.AWS.ClassicLoadBalancerParameters = &operatorv1.AWSClassicLoadBalancerParameters{}
-					}
 					// The only provider parameter that is
 					// supported for AWS Classic ELBs is the
 					// connection idle timeout.
 					var specIdleTimeout metav1.Duration
-					if specLB.ProviderParameters.AWS != nil && specLB.ProviderParameters.AWS.ClassicLoadBalancerParameters != nil {
-						specIdleTimeout = specLB.ProviderParameters.AWS.ClassicLoadBalancerParameters.ConnectionIdleTimeout
+
+					if statusLB.ProviderParameters.AWS.ClassicLoadBalancerParameters == nil && specLB.ProviderParameters.AWS.Type == operatorv1.AWSClassicLoadBalancer {
+						statusLB.ProviderParameters.AWS.ClassicLoadBalancerParameters = &operatorv1.AWSClassicLoadBalancerParameters{}
 					}
-					statusIdleTimeout := statusLB.ProviderParameters.AWS.ClassicLoadBalancerParameters.ConnectionIdleTimeout
-					if specIdleTimeout != statusIdleTimeout {
-						var v metav1.Duration
-						if specIdleTimeout.Duration > 0 {
-							v = specIdleTimeout
+
+					if statusLB.ProviderParameters.AWS.NetworkLoadBalancerParameters != nil {
+						statusLB.ProviderParameters.AWS.NetworkLoadBalancerParameters = nil
+					}
+
+					if specLB.ProviderParameters.AWS != nil && specLB.ProviderParameters.AWS.Type == operatorv1.AWSClassicLoadBalancer && specLB.ProviderParameters.AWS.ClassicLoadBalancerParameters != nil {
+						specIdleTimeout = specLB.ProviderParameters.AWS.ClassicLoadBalancerParameters.ConnectionIdleTimeout
+						statusIdleTimeout := statusLB.ProviderParameters.AWS.ClassicLoadBalancerParameters.ConnectionIdleTimeout
+						if specIdleTimeout != statusIdleTimeout {
+							var v metav1.Duration
+							if specIdleTimeout.Duration > 0 {
+								v = specIdleTimeout
+							}
+							statusLB.ProviderParameters.AWS.ClassicLoadBalancerParameters.ConnectionIdleTimeout = v
+							changed = true
 						}
-						statusLB.ProviderParameters.AWS.ClassicLoadBalancerParameters.ConnectionIdleTimeout = v
-						changed = true
+					}
+				} else if statusLB.ProviderParameters.AWS.Type == operatorv1.AWSNetworkLoadBalancer {
+					var specEIPAllocations []operatorv1.EIPAllocation
+					if statusLB.ProviderParameters.AWS.NetworkLoadBalancerParameters == nil && specLB.ProviderParameters.AWS.Type == operatorv1.AWSNetworkLoadBalancer {
+						statusLB.ProviderParameters.AWS.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{}
+					}
+					if statusLB.ProviderParameters.AWS.ClassicLoadBalancerParameters != nil {
+						statusLB.ProviderParameters.AWS.ClassicLoadBalancerParameters = nil
+					}
+					if specLB.ProviderParameters.AWS.Type == operatorv1.AWSNetworkLoadBalancer && specLB.ProviderParameters.AWS != nil && specLB.ProviderParameters.AWS.NetworkLoadBalancerParameters != nil && specLB.ProviderParameters.AWS.NetworkLoadBalancerParameters.EIPAllocations != nil {
+						specEIPAllocations = specLB.ProviderParameters.AWS.NetworkLoadBalancerParameters.EIPAllocations
+						if statusLB.ProviderParameters.AWS != nil && statusLB.ProviderParameters.AWS.NetworkLoadBalancerParameters != nil && statusLB.ProviderParameters.AWS.NetworkLoadBalancerParameters.EIPAllocations != nil {
+							statusEIPAllocations := statusLB.ProviderParameters.AWS.NetworkLoadBalancerParameters.EIPAllocations
+							if !reflect.DeepEqual(specEIPAllocations, statusEIPAllocations) {
+								statusEIPAllocations = specEIPAllocations
+								changed = true
+							}
+						}
+
 					}
 				}
 			case operatorv1.GCPLoadBalancerProvider:
@@ -707,6 +734,10 @@ func setDefaultProviderParameters(lbs *operatorv1.LoadBalancerStrategy, ingressC
 		case operatorv1.AWSClassicLoadBalancer:
 			if lbs.ProviderParameters.AWS.ClassicLoadBalancerParameters == nil {
 				lbs.ProviderParameters.AWS.ClassicLoadBalancerParameters = &operatorv1.AWSClassicLoadBalancerParameters{}
+			}
+		case operatorv1.AWSNetworkLoadBalancer:
+			if lbs.ProviderParameters.AWS.NetworkLoadBalancerParameters == nil {
+				lbs.ProviderParameters.AWS.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{}
 			}
 		}
 	case operatorv1.GCPLoadBalancerProvider:

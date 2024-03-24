@@ -92,6 +92,18 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 
 	updated.Status.Conditions = PruneConditions(updated.Status.Conditions)
 
+	if ic.Spec.EndpointPublishingStrategy != nil && ic.Spec.EndpointPublishingStrategy.LoadBalancer != nil && ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters != nil && ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS != nil && ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters != nil && ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters.EIPAllocations != nil && len(ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters.EIPAllocations) > 0 && ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters.EIPAllocations != nil {
+		if len(service.Annotations[AwsEIPAllocations]) != 0 {
+			var eipAnnotations []operatorv1.EIPAllocation
+			for _, eipAnnotation := range strings.Split(service.Annotations[AwsEIPAllocations], ",") {
+				eipAnnotations = append(eipAnnotations, operatorv1.EIPAllocation(eipAnnotation))
+			}
+			if updated.Status.EndpointPublishingStrategy != nil && updated.Status.EndpointPublishingStrategy.LoadBalancer != nil && updated.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters != nil && updated.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS != nil && updated.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters != nil && updated.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters.EIPAllocations != nil && len(updated.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters.EIPAllocations) > 0 {
+				updated.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters.EIPAllocations = eipAnnotations
+			}
+		}
+	}
+
 	if !IngressStatusesEqual(updated.Status, ic.Status) {
 		if err := r.client.Status().Update(context.TODO(), updated); err != nil {
 			errs = append(errs, fmt.Errorf("failed to update ingresscontroller status: %v", err))

@@ -73,6 +73,8 @@ func TestAll(t *testing.T) {
 		t.Run("TestAllowedSourceRanges", TestAllowedSourceRanges)
 		t.Run("TestAllowedSourceRangesStatus", TestAllowedSourceRangesStatus)
 		t.Run("TestSourceRangesProgressingAndEvaluationConditionsDetectedStatuses", TestSourceRangesProgressingAndEvaluationConditionsDetectedStatuses)
+		t.Run("TestAWSEIPForNLB", TestAWSEIPForNLB)
+		t.Run("TestAWSInvalidEIP", TestAWSInvalidEIP)
 		t.Run("TestUnmanagedDNSToManagedDNSIngressController", TestUnmanagedDNSToManagedDNSIngressController)
 		t.Run("TestManagedDNSToUnmanagedDNSIngressController", TestManagedDNSToUnmanagedDNSIngressController)
 		t.Run("TestUnmanagedDNSToManagedDNSInternalIngressController", TestUnmanagedDNSToManagedDNSInternalIngressController)
