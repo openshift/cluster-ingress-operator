@@ -141,6 +141,13 @@ const (
 	// scope changes if changing scope requires deleting service
 	// load-balancers on the current platform.
 	autoDeleteLoadBalancerAnnotation = "ingress.operator.openshift.io/auto-delete-load-balancer"
+
+	// You can assign Elastic IP addresses to the Network Load Balancer by adding the following annotation.
+	// The number of Allocation IDs must match the number of subnets that are used for the load balancer.
+	// service.beta.kubernetes.io/aws-load-balancer-eip-allocations: eipalloc-xxxxxxxxxxxxxxxxx,eipalloc-yyyyyyyyyyyyyyyyy
+	// https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/elastic-ip-addresses-eip.html
+	// https://kubernetes-sigs.github.io/aws-load-balancer-controller/v2.7/guide/service/annotations/#eip-allocations
+	awsEIPAllocations = "service.beta.kubernetes.io/aws-load-balancer-eip-allocations"
 )
 
 var (
@@ -247,6 +254,13 @@ var (
 			//
 			// https://cloud.ibm.com/docs/containers?topic=containers-vpc-lbaas
 			iksLBEnableFeaturesAnnotation,
+
+			// You can assign Elastic IP addresses to the Network Load Balancer by adding the following annotation.
+			// The number of Allocation IDs must match the number of subnets that are used for the load balancer.
+			// service.beta.kubernetes.io/aws-load-balancer-eip-allocations: eipalloc-xxxxxxxxxxxxxxxxx,eipalloc-yyyyyyyyyyyyyyyyy
+			// https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/elastic-ip-addresses-eip.html
+			// https://kubernetes-sigs.github.io/aws-load-balancer-controller/v2.7/guide/service/annotations/#eip-allocations
+			awsEIPAllocations,
 		)
 
 		// Azure and GCP support switching between internal and external
@@ -406,6 +420,9 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 						// NLBs require a different health check interval than CLBs.
 						// See <https://bugzilla.redhat.com/show_bug.cgi?id=1908758>.
 						service.Annotations[awsLBHealthCheckIntervalAnnotation] = awsLBHealthCheckIntervalNLB
+						if lb.ProviderParameters.AWS.NetworkLoadBalancerParameters != nil && len(lb.ProviderParameters.AWS.NetworkLoadBalancerParameters.EIPAllocations) != 0 {
+							service.Annotations[awsEIPAllocations] = string(lb.ProviderParameters.AWS.NetworkLoadBalancerParameters.EIPAllocations)
+						}
 					case operatorv1.AWSClassicLoadBalancer:
 						if aws.ClassicLoadBalancerParameters != nil {
 							if v := aws.ClassicLoadBalancerParameters.ConnectionIdleTimeout; v.Duration > 0 {
