@@ -1,6 +1,8 @@
 module github.com/openshift/cluster-ingress-operator
 
-go 1.20
+go 1.21
+
+toolchain go1.21.5
 
 require (
 	github.com/Azure/azure-sdk-for-go v46.0.0+incompatible
@@ -148,6 +150,6 @@ require (
 // github.com/operator-framework/operator-sdk.
 replace (
 	bitbucket.org/ww/goautoneg => github.com/munnerz/goautoneg v0.0.0-20120707110453-a547fc61f48d
-	github.com/openshift/api => github.com/openshift/api v0.0.0-20240108220607-355cd2586ec4
+	github.com/openshift/api => github.com/miheer/api v0.0.0-20240323101609-ed72b7713dad
 	k8s.io/client-go => k8s.io/client-go v0.29.0
 )
