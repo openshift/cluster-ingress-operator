@@ -166,6 +166,7 @@ func TestTuningOptions(t *testing.T) {
 	ic.Spec.TuningOptions.ServerTimeout = &metav1.Duration{Duration: 60 * time.Second}
 	ic.Spec.TuningOptions.ServerFinTimeout = &metav1.Duration{Duration: 4 * time.Second}
 	ic.Spec.TuningOptions.TunnelTimeout = &metav1.Duration{Duration: 30 * time.Minute}
+	ic.Spec.TuningOptions.ConnectTimeout = &metav1.Duration{Duration: 30 * time.Second}
 	ic.Spec.TuningOptions.TLSInspectDelay = &metav1.Duration{Duration: 5 * time.Second}
 	ic.Spec.TuningOptions.HealthCheckInterval = &metav1.Duration{Duration: 15 * time.Second}
 	ic.Spec.TuningOptions.ReloadInterval = metav1.Duration{Duration: 30 * time.Second}
@@ -182,6 +183,7 @@ func TestTuningOptions(t *testing.T) {
 		{"ROUTER_DEFAULT_SERVER_TIMEOUT", true, "1m"},
 		{"ROUTER_DEFAULT_SERVER_FIN_TIMEOUT", true, "4s"},
 		{"ROUTER_DEFAULT_TUNNEL_TIMEOUT", true, "30m"},
+		{"ROUTER_DEFAULT_CONNECT_TIMEOUT", true, "30s"},
 		{"ROUTER_INSPECT_DELAY", true, "5s"},
 		{RouterBackendCheckInterval, true, "15s"},
 		{RouterReloadIntervalEnvName, true, "30s"},
@@ -432,6 +434,7 @@ func Test_desiredRouterDeployment(t *testing.T) {
 		{"ROUTER_DEFAULT_SERVER_FIN_TIMEOUT", false, ""},
 		{"ROUTER_DEFAULT_SERVER_TIMEOUT", false, ""},
 		{"ROUTER_DEFAULT_TUNNEL_TIMEOUT", false, ""},
+		{"ROUTER_DEFAULT_CONNECT_TIMEOUT", false, ""},
 		{"ROUTER_ERRORFILE_503", false, ""},
 		{"ROUTER_ERRORFILE_404", false, ""},
 		{"ROUTER_HAPROXY_CONFIG_MANAGER", false, ""},
