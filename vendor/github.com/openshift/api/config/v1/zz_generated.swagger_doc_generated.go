@@ -1439,7 +1439,7 @@ func (IBMCloudPlatformStatus) SwaggerDoc() map[string]string {
 
 var map_IBMCloudServiceEndpoint = map[string]string{
 	"":     "IBMCloudServiceEndpoint stores the configuration of a custom url to override existing defaults of IBM Cloud Services.",
-	"name": "name is the name of the IBM Cloud service. Possible values are: CIS, COS, DNSServices, GlobalSearch, GlobalTagging, HyperProtect, IAM, KeyProtect, ResourceController, ResourceManager, or VPC. For example, the IBM Cloud Private IAM service could be configured with the service `name` of `IAM` and `url` of `https://private.iam.cloud.ibm.com` Whereas the IBM Cloud Private VPC service for US South (Dallas) could be configured with the service `name` of `VPC` and `url` of `https://us.south.private.iaas.cloud.ibm.com`",
+	"name": "name is the name of the IBM Cloud service. Possible values are: CIS, COS, COSConfig, DNSServices, GlobalCatalog, GlobalSearch, GlobalTagging, HyperProtect, IAM, KeyProtect, ResourceController, ResourceManager, or VPC. For example, the IBM Cloud Private IAM service could be configured with the service `name` of `IAM` and `url` of `https://private.iam.cloud.ibm.com` Whereas the IBM Cloud Private VPC service for US South (Dallas) could be configured with the service `name` of `VPC` and `url` of `https://us.south.private.iaas.cloud.ibm.com`",
 	"url":  "url is fully qualified URI with scheme https, that overrides the default generated endpoint for a client. This must be provided and cannot be empty.",
 }
 
@@ -1832,12 +1832,22 @@ func (VSpherePlatformVCenterSpec) SwaggerDoc() map[string]string {
 }
 
 var map_AWSIngressSpec = map[string]string{
-	"":     "AWSIngressSpec holds the desired state of the Ingress for Amazon Web Services infrastructure provider. This only includes fields that can be modified in the cluster.",
-	"type": "type allows user to set a load balancer type. When this field is set the default ingresscontroller will get created using the specified LBType. If this field is not set then the default ingress controller of LBType Classic will be created. Valid values are:\n\n* \"Classic\": A Classic Load Balancer that makes routing decisions at either\n  the transport layer (TCP/SSL) or the application layer (HTTP/HTTPS). See\n  the following for additional details:\n\n    https://docs.aws.amazon.com/AmazonECS/latest/developerguide/load-balancer-types.html#clb\n\n* \"NLB\": A Network Load Balancer that makes routing decisions at the\n  transport layer (TCP/SSL). See the following for additional details:\n\n    https://docs.aws.amazon.com/AmazonECS/latest/developerguide/load-balancer-types.html#nlb",
+	"":                    "AWSIngressSpec holds the desired state of the Ingress for Amazon Web Services infrastructure provider. This only includes fields that can be modified in the cluster.",
+	"type":                "type allows user to set a load balancer type. When this field is set the default ingresscontroller will get created using the specified LBType. If this field is not set then the default ingress controller of LBType Classic will be created. Valid values are:\n\n* \"Classic\": A Classic Load Balancer that makes routing decisions at either\n  the transport layer (TCP/SSL) or the application layer (HTTP/HTTPS). See\n  the following for additional details:\n\n    https://docs.aws.amazon.com/AmazonECS/latest/developerguide/load-balancer-types.html#clb\n\n* \"NLB\": A Network Load Balancer that makes routing decisions at the\n  transport layer (TCP/SSL). See the following for additional details:\n\n    https://docs.aws.amazon.com/AmazonECS/latest/developerguide/load-balancer-types.html#nlb",
+	"networkLoadBalancer": "networkLoadBalancerParameters holds configuration parameters for an AWS Network Load Balancer. This field is optional and permitted only if the type field is set to NLB.",
 }
 
 func (AWSIngressSpec) SwaggerDoc() map[string]string {
 	return map_AWSIngressSpec
+}
+
+var map_AWSNetworkLoadBalancerParameters = map[string]string{
+	"":               "AWSNetworkLoadBalancerParameters holds configuration parameters for an AWS Network Load Balancer.",
+	"eipAllocations": "eipAllocations assign Elastic IP addresses to the Network Load Balancer. The number of Allocation IDs must match the number of subnets that are used for the load balancer. See https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/elastic-ip-addresses-eip.html for general information about configuration, characteristics, and limitations of Elastic IP addresses. See the documentation for the IngressController spec.endpointPublishingStrategy.loadBalancer.providerParameters.aws.networkLoadBalancer.eipAllocations API field for limitations on the use of Elastic IP addresses in the context of IngressControllers. This field only specifies EIPs for the default IngressController. It is not a default value for all IngressControllers. If the cluster config and the default IngressController both specify eipAllocations and if we manually create the default IngressController before the polling loop of Ingress Operator to check existence of default IngressController to spin an Ingress Controller from with the values from config object then default IC from manual creation will be created with the eipAllocations mentioned in it.\n\nEach entry in the eipAllocations list must be unique A maximum of 10 IP allocations are permitted",
+}
+
+func (AWSNetworkLoadBalancerParameters) SwaggerDoc() map[string]string {
+	return map_AWSNetworkLoadBalancerParameters
 }
 
 var map_ComponentRouteSpec = map[string]string{
@@ -2505,6 +2515,41 @@ var map_SchedulerSpec = map[string]string{
 
 func (SchedulerSpec) SwaggerDoc() map[string]string {
 	return map_SchedulerSpec
+}
+
+var map_FeatureGateTests = map[string]string{
+	"featureGate": "FeatureGate is the name of the FeatureGate as it appears in The FeatureGate CR instance.",
+	"tests":       "Tests contains an item for every TestName",
+}
+
+func (FeatureGateTests) SwaggerDoc() map[string]string {
+	return map_FeatureGateTests
+}
+
+var map_TestDetails = map[string]string{
+	"testName": "TestName is the name of the test as it appears in junit XMLs. It does not include the suite name since the same test can be executed in many suites.",
+}
+
+func (TestDetails) SwaggerDoc() map[string]string {
+	return map_TestDetails
+}
+
+var map_TestReporting = map[string]string{
+	"":         "TestReporting is used for origin (and potentially others) to report the test names for a given FeatureGate into the payload for later analysis on a per-payload basis. This doesn't need any CRD because it's never stored in the cluster.\n\nCompatibility level 4: No compatibility is provided, the API can change at any point for any reason. These capabilities should not be used by applications needing long term support.",
+	"metadata": "metadata is the standard object's metadata. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#metadata",
+	"status":   "status holds observed values from the cluster. They may not be overridden.",
+}
+
+func (TestReporting) SwaggerDoc() map[string]string {
+	return map_TestReporting
+}
+
+var map_TestReportingSpec = map[string]string{
+	"testsForFeatureGates": "TestsForFeatureGates is a list, indexed by FeatureGate and includes information about testing.",
+}
+
+func (TestReportingSpec) SwaggerDoc() map[string]string {
+	return map_TestReportingSpec
 }
 
 var map_CustomTLSProfile = map[string]string{
