@@ -144,6 +144,7 @@ github.com/aws/aws-sdk-go/internal/shareddefaults
 github.com/aws/aws-sdk-go/internal/strings
 github.com/aws/aws-sdk-go/internal/sync/singleflight
 github.com/aws/aws-sdk-go/private/protocol
+github.com/aws/aws-sdk-go/private/protocol/ec2query
 github.com/aws/aws-sdk-go/private/protocol/json/jsonutil
 github.com/aws/aws-sdk-go/private/protocol/jsonrpc
 github.com/aws/aws-sdk-go/private/protocol/query
@@ -152,6 +153,7 @@ github.com/aws/aws-sdk-go/private/protocol/rest
 github.com/aws/aws-sdk-go/private/protocol/restjson
 github.com/aws/aws-sdk-go/private/protocol/restxml
 github.com/aws/aws-sdk-go/private/protocol/xml/xmlutil
+github.com/aws/aws-sdk-go/service/ec2
 github.com/aws/aws-sdk-go/service/elb
 github.com/aws/aws-sdk-go/service/elbv2
 github.com/aws/aws-sdk-go/service/resourcegroupstaggingapi
@@ -381,7 +383,7 @@ github.com/mxk/go-flowrate/flowrate
 github.com/oklog/ulid
 # github.com/onsi/ginkgo v1.16.5
 ## explicit; go 1.16
-# github.com/openshift/api v3.9.1-0.20190924102528-32369d4db2ad+incompatible => github.com/openshift/api v0.0.0-20240405164942-0cc42a39da45
+# github.com/openshift/api v3.9.1-0.20190924102528-32369d4db2ad+incompatible => github.com/miheer/api v0.0.0-20240425073202-24253ce8e0ca
 ## explicit; go 1.21
 github.com/openshift/api
 github.com/openshift/api/apiserver
@@ -400,6 +402,7 @@ github.com/openshift/api/config/v1alpha1
 github.com/openshift/api/console
 github.com/openshift/api/console/v1
 github.com/openshift/api/console/v1alpha1
+github.com/openshift/api/features
 github.com/openshift/api/helm
 github.com/openshift/api/helm/v1beta1
 github.com/openshift/api/image
@@ -416,7 +419,7 @@ github.com/openshift/api/machine/v1
 github.com/openshift/api/machine/v1alpha1
 github.com/openshift/api/machine/v1beta1
 github.com/openshift/api/monitoring
-github.com/openshift/api/monitoring/v1alpha1
+github.com/openshift/api/monitoring/v1
 github.com/openshift/api/network
 github.com/openshift/api/network/v1
 github.com/openshift/api/network/v1alpha1
@@ -1317,5 +1320,5 @@ sigs.k8s.io/structured-merge-diff/v4/value
 ## explicit; go 1.12
 sigs.k8s.io/yaml
 # bitbucket.org/ww/goautoneg => github.com/munnerz/goautoneg v0.0.0-20120707110453-a547fc61f48d
-# github.com/openshift/api => github.com/openshift/api v0.0.0-20240405164942-0cc42a39da45
 # k8s.io/client-go => k8s.io/client-go v0.29.0
+# github.com/openshift/api => github.com/miheer/api v0.0.0-20240425073202-24253ce8e0ca

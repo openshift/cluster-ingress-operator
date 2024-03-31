@@ -501,8 +501,11 @@ func (IBMCloudCSIDriverConfigSpec) SwaggerDoc() map[string]string {
 }
 
 var map_VSphereCSIDriverConfigSpec = map[string]string{
-	"":                   "VSphereCSIDriverConfigSpec defines properties that can be configured for vsphere CSI driver.",
-	"topologyCategories": "topologyCategories indicates tag categories with which vcenter resources such as hostcluster or datacenter were tagged with. If cluster Infrastructure object has a topology, values specified in Infrastructure object will be used and modifications to topologyCategories will be rejected.",
+	"":                                 "VSphereCSIDriverConfigSpec defines properties that can be configured for vsphere CSI driver.",
+	"topologyCategories":               "topologyCategories indicates tag categories with which vcenter resources such as hostcluster or datacenter were tagged with. If cluster Infrastructure object has a topology, values specified in Infrastructure object will be used and modifications to topologyCategories will be rejected.",
+	"globalMaxSnapshotsPerBlockVolume": "globalMaxSnapshotsPerBlockVolume is a global configuration parameter that applies to volumes on all kinds of datastores. If omitted, the platform chooses a default, which is subject to change over time, currently that default is 3. Snapshots can not be disabled using this parameter. Increasing number of snapshots above 3 can have negative impact on performance, for more details see: https://kb.vmware.com/s/article/1025279 Volume snapshot documentation: https://docs.vmware.com/en/VMware-vSphere-Container-Storage-Plug-in/3.0/vmware-vsphere-csp-getting-started/GUID-E0B41C69-7EEB-450F-A73D-5FD2FF39E891.html",
+	"granularMaxSnapshotsPerBlockVolumeInVSAN": "granularMaxSnapshotsPerBlockVolumeInVSAN is a granular configuration parameter on vSAN datastore only. It overrides GlobalMaxSnapshotsPerBlockVolume if set, while it falls back to the global constraint if unset. Snapshots for VSAN can not be disabled using this parameter.",
+	"granularMaxSnapshotsPerBlockVolumeInVVOL": "granularMaxSnapshotsPerBlockVolumeInVVOL is a granular configuration parameter on Virtual Volumes datastore only. It overrides GlobalMaxSnapshotsPerBlockVolume if set, while it falls back to the global constraint if unset. Snapshots for VVOL can not be disabled using this parameter.",
 }
 
 func (VSphereCSIDriverConfigSpec) SwaggerDoc() map[string]string {
@@ -717,7 +720,7 @@ var map_AWSLoadBalancerParameters = map[string]string{
 	"":                    "AWSLoadBalancerParameters provides configuration settings that are specific to AWS load balancers.",
 	"type":                "type is the type of AWS load balancer to instantiate for an ingresscontroller.\n\nValid values are:\n\n* \"Classic\": A Classic Load Balancer that makes routing decisions at either\n  the transport layer (TCP/SSL) or the application layer (HTTP/HTTPS). See\n  the following for additional details:\n\n    https://docs.aws.amazon.com/AmazonECS/latest/developerguide/load-balancer-types.html#clb\n\n* \"NLB\": A Network Load Balancer that makes routing decisions at the\n  transport layer (TCP/SSL). See the following for additional details:\n\n    https://docs.aws.amazon.com/AmazonECS/latest/developerguide/load-balancer-types.html#nlb",
 	"classicLoadBalancer": "classicLoadBalancerParameters holds configuration parameters for an AWS classic load balancer. Present only if type is Classic.",
-	"networkLoadBalancer": "networkLoadBalancerParameters holds configuration parameters for an AWS network load balancer. Present only if type is NLB.",
+	"nlbParameters":       "networkLoadBalancerParameters holds configuration parameters for an AWS network load balancer. Present only if type is NLB.",
 }
 
 func (AWSLoadBalancerParameters) SwaggerDoc() map[string]string {
@@ -725,7 +728,8 @@ func (AWSLoadBalancerParameters) SwaggerDoc() map[string]string {
 }
 
 var map_AWSNetworkLoadBalancerParameters = map[string]string{
-	"": "AWSNetworkLoadBalancerParameters holds configuration parameters for an AWS Network load balancer.",
+	"":               "AWSNetworkLoadBalancerParameters holds configuration parameters for an AWS Network load balancer. For Example: Setting AWS EIPs https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/elastic-ip-addresses-eip.html",
+	"eipAllocations": "You can assign Elastic IP addresses to the Network Load Balancer by adding the following annotation. The number of Allocation IDs must match the number of subnets that are used for the load balancer. service.beta.kubernetes.io/aws-load-balancer-eip-allocations: eipalloc-xxxxxxxxxxxxxxxxx,eipalloc-yyyyyyyyyyyyyyyyy https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/elastic-ip-addresses-eip.html https://kubernetes-sigs.github.io/aws-load-balancer-controller/v2.7/guide/service/annotations/#eip-allocations",
 }
 
 func (AWSNetworkLoadBalancerParameters) SwaggerDoc() map[string]string {
@@ -1343,7 +1347,7 @@ func (NodeDisruptionPolicyConfig) SwaggerDoc() map[string]string {
 }
 
 var map_NodeDisruptionPolicySpecAction = map[string]string{
-	"type":    "type represents the commands that will be carried out if this NodeDisruptionPolicySpecActionType is executed Valid value are Reboot, Drain, Reload, Restart, DaemonReload, None and Special reload/restart requires a corresponding service target specified in the reload/restart field. Other values require no further configuration",
+	"type":    "type represents the commands that will be carried out if this NodeDisruptionPolicySpecActionType is executed Valid values are Reboot, Drain, Reload, Restart, DaemonReload and None. reload/restart requires a corresponding service target specified in the reload/restart field. Other values require no further configuration",
 	"reload":  "reload specifies the service to reload, only valid if type is reload",
 	"restart": "restart specifies the service to restart, only valid if type is restart",
 }
@@ -1390,7 +1394,7 @@ func (NodeDisruptionPolicyStatus) SwaggerDoc() map[string]string {
 }
 
 var map_NodeDisruptionPolicyStatusAction = map[string]string{
-	"type":    "type represents the commands that will be carried out if this NodeDisruptionPolicyStatusActionType is executed Valid value are Reboot, Drain, Reload, Restart, DaemonReload, None and Special reload/restart requires a corresponding service target specified in the reload/restart field. Other values require no further configuration",
+	"type":    "type represents the commands that will be carried out if this NodeDisruptionPolicyStatusActionType is executed Valid values are Reboot, Drain, Reload, Restart, DaemonReload, None and Special. reload/restart requires a corresponding service target specified in the reload/restart field. Other values require no further configuration",
 	"reload":  "reload specifies the service to reload, only valid if type is reload",
 	"restart": "restart specifies the service to restart, only valid if type is restart",
 }

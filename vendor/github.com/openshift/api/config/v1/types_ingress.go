@@ -130,6 +130,7 @@ type LoadBalancer struct {
 
 // AWSIngressSpec holds the desired state of the Ingress for Amazon Web Services infrastructure provider.
 // This only includes fields that can be modified in the cluster.
+// +kubebuilder:validation:XValidation:rule="self.type != 'Classic' || !has(self.nlbParameters)",message="Network load balancer parameters are allowed only when load balancer type is NLB."
 // +union
 type AWSIngressSpec struct {
 	// type allows user to set a load balancer type.
@@ -151,7 +152,27 @@ type AWSIngressSpec struct {
 	// +kubebuilder:validation:Enum:=NLB;Classic
 	// +kubebuilder:validation:Required
 	Type AWSLBType `json:"type,omitempty"`
+
+	// networkLoadBalancerParameters holds configuration parameters for an AWS
+	// network load balancer. Present only if type is NLB.
+	//
+	// +optional
+	NetworkLoadBalancerParameters *AWSNetworkLoadBalancerParameters `json:"nlbParameters,omitempty"`
 }
+
+// AWSNetworkLoadBalancerParameters holds configuration parameters for an
+// AWS Network load balancer. For Example: Setting AWS EIPs https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/elastic-ip-addresses-eip.html
+type AWSNetworkLoadBalancerParameters struct {
+	// You can assign Elastic IP addresses to the Network Load Balancer by adding the following annotation.
+	// The number of Allocation IDs must match the number of subnets that are used for the load balancer.
+	// service.beta.kubernetes.io/aws-load-balancer-eip-allocations: eipalloc-xxxxxxxxxxxxxxxxx,eipalloc-yyyyyyyyyyyyyyyyy
+	// https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/elastic-ip-addresses-eip.html
+	// https://kubernetes-sigs.github.io/aws-load-balancer-controller/v2.7/guide/service/annotations/#eip-allocations
+	// +openshift:enable:FeatureGate=SetEIPForNLBIngressController
+	EIPAllocations []EIPAllocations `json:"eipAllocations"`
+}
+
+type EIPAllocations string
 
 type AWSLBType string
 
