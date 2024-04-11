@@ -34,6 +34,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/rand"
 
 	configv1 "github.com/openshift/api/config/v1"
+	securityv1 "github.com/openshift/api/security/v1"
 )
 
 const (
@@ -1136,6 +1137,14 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		deployment.Spec.Template.Spec.Containers[0].Ports,
 		httpPort, httpsPort, statsPort,
 	)
+
+	if deployment.Spec.Template.Annotations == nil {
+		deployment.Spec.Template.Annotations = make(map[string]string)
+	}
+	deployment.Spec.Template.Annotations[securityv1.RequiredSCCAnnotation] = "restricted"
+	if ci.Status.EndpointPublishingStrategy.Type == operatorv1.HostNetworkStrategyType {
+		deployment.Spec.Template.Annotations[securityv1.RequiredSCCAnnotation] = "hostnetwork"
+	}
 
 	// Compute the hash for topology spread constraints and possibly
 	// affinity policy now, after all the other fields have been computed,

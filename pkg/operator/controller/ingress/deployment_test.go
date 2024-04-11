@@ -503,9 +503,13 @@ func TestDesiredRouterDeploymentSpecTemplate(t *testing.T) {
 		t.Errorf("expected annotation %q to be %q, got %q", WorkloadPartitioningManagement, expected, val)
 	}
 
+	expected := "restricted"
+	if ic.Status.EndpointPublishingStrategy.Type == operatorv1.HostNetworkStrategyType {
+		expected = "hostnetwork"
+	}
 	if val, ok := deployment.Spec.Template.Annotations[securityv1.RequiredSCCAnnotation]; !ok {
 		t.Errorf("missing annotation %q", securityv1.RequiredSCCAnnotation)
-	} else if expected := "hostnetwork"; expected != val {
+	} else if expected != val {
 		t.Errorf("expected annotation %q to be %q, got %q", securityv1.RequiredSCCAnnotation, expected, val)
 	}
 
