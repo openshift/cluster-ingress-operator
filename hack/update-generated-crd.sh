@@ -12,9 +12,9 @@ function install_crd {
 
 # Can't rely on associative arrays for old Bash versions (e.g. OSX)
 install_crd \
-  "vendor/github.com/openshift/api/operator/v1/0000_50_ingress-operator_00-ingresscontroller.crd.yaml" \
+  "vendor/github.com/openshift/api/operator/v1/zz_generated.crd-manifests/0000_50_ingress_00_ingresscontrollers.crd.yaml" \
   "manifests/00-custom-resource-definition.yaml"
 
 install_crd \
-  "vendor/github.com/openshift/api/operatoringress/v1/0000_50_dns-record.yaml" \
+  "vendor/github.com/openshift/api/operatoringress/v1/zz_generated.crd-manifests/0000_50_dns_01_dnsrecords.crd.yaml" \
   "manifests/00-custom-resource-definition-internal.yaml"
