@@ -3,6 +3,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   annotations:
+    capability.openshift.io/name: Ingress
     config.openshift.io/inject-proxy: ingress-operator
     include.release.openshift.io/ibm-cloud-managed: "true"
   name: ingress-operator

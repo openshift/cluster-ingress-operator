@@ -4,6 +4,7 @@ metadata:
   name: ingress-operator
   namespace: openshift-ingress-operator
   annotations:
+    capability.openshift.io/name: Ingress
     config.openshift.io/inject-proxy: ingress-operator
     include.release.openshift.io/self-managed-high-availability: "true"
     include.release.openshift.io/single-node-developer: "true"
