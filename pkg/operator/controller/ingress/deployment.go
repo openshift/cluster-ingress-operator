@@ -610,6 +610,9 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	if ci.Spec.TuningOptions.TunnelTimeout != nil && ci.Spec.TuningOptions.TunnelTimeout.Duration > 0*time.Second {
 		env = append(env, corev1.EnvVar{Name: "ROUTER_DEFAULT_TUNNEL_TIMEOUT", Value: durationToHAProxyTimespec(ci.Spec.TuningOptions.TunnelTimeout.Duration)})
 	}
+	if ci.Spec.TuningOptions.ConnectTimeout != nil && ci.Spec.TuningOptions.ConnectTimeout.Duration > 0*time.Second {
+		env = append(env, corev1.EnvVar{Name: "ROUTER_DEFAULT_CONNECT_TIMEOUT", Value: durationToHAProxyTimespec(ci.Spec.TuningOptions.ConnectTimeout.Duration)})
+	}
 	if ci.Spec.TuningOptions.TLSInspectDelay != nil && ci.Spec.TuningOptions.TLSInspectDelay.Duration > 0*time.Second {
 		env = append(env, corev1.EnvVar{Name: "ROUTER_INSPECT_DELAY", Value: durationToHAProxyTimespec(ci.Spec.TuningOptions.TLSInspectDelay.Duration)})
 	}
