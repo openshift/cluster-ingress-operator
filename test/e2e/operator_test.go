@@ -1758,6 +1758,44 @@ func TestRouteAdmissionPolicy(t *testing.T) {
 		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
 	}
 	defer assertIngressControllerDeleted(t, kclient, ic)
+
+	// Add verbose logging to the router deployment
+	routerDeployment, err := getDeployment(t, kclient, controller.RouterDeploymentName(ic), 1*time.Minute)
+	if err != nil {
+		t.Fatalf("failed to get router deployment: %v", err)
+	}
+	routerDeployment.Spec.Template.Spec.Containers[0].Args = []string{"--v=10"}
+	if err := kclient.Update(context.TODO(), routerDeployment); err != nil {
+		t.Fatalf("failed to update router deployment: %v", err)
+	}
+
+	defer func() {
+		kubeConfig, err := config.GetConfig()
+		if err != nil {
+			t.Fatalf("failed to get kube config: %v", err)
+		}
+		client, err := kubernetes.NewForConfig(kubeConfig)
+		if err != nil {
+			t.Fatalf("failed to create kube client: %v", err)
+		}
+
+		routerPods, err := getPods(t, kclient, routerDeployment)
+		if err != nil {
+			t.Fatalf("failed to get router pods: %v", err)
+		}
+
+		for _, pod := range routerPods.Items {
+			logs, err := client.CoreV1().Pods(pod.Namespace).GetLogs(pod.Name, &corev1.PodLogOptions{
+				Container: routerDeployment.Spec.Template.Spec.Containers[0].Name,
+				Follow:    false,
+			}).DoRaw(context.TODO())
+			if err != nil {
+				t.Errorf("failed to get logs from pod %s: %v", pod.Name, err)
+			}
+			t.Logf("Router Pod Logs from %s/%s:\n%s", pod.Namespace, pod.Name, logs)
+		}
+	}()
+
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
@@ -1856,7 +1894,7 @@ func TestRouteAdmissionPolicy(t *testing.T) {
 	// roll out, so make sure that it is updated, and then make sure that it
 	// has finished rolling out before checking the route.
 	deployment := &appsv1.Deployment{}
-	err := wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
+	err = wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
 		if err := kclient.Get(context.TODO(), controller.RouterDeploymentName(ic), deployment); err != nil {
 			t.Logf("failed to get deployment %s: %v", controller.RouterDeploymentName(ic), err)
 			return false, nil
@@ -1953,6 +1991,7 @@ func TestRouteAdmissionPolicy(t *testing.T) {
 	if err := waitForRouteIngressConditions(t, kclient, route4Name, ic.Name, admittedCondition); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
+	t.Fatalf("dying anyways because I want to see the router logs...")
 }
 
 func TestSyslogLogging(t *testing.T) {
@@ -3992,7 +4031,7 @@ func waitForClusterOperatorConditions(t *testing.T, cl client.Client, conditions
 }
 
 func waitForRouteIngressConditions(t *testing.T, cl client.Client, routeName types.NamespacedName, routerName string, conditions ...routev1.RouteIngressCondition) error {
-	return wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
+	return wait.PollImmediate(1*time.Second, 3*time.Minute, func() (bool, error) {
 		route := &routev1.Route{}
 		if err := cl.Get(context.TODO(), routeName, route); err != nil {
 			t.Logf("failed to get route %s: %v", routeName.Name, err)
@@ -4003,7 +4042,11 @@ func waitForRouteIngressConditions(t *testing.T, cl client.Client, routeName typ
 			if ingress.RouterName == routerName {
 				expected := routeConditionMap(conditions...)
 				current := routeConditionMap(ingress.Conditions...)
-				return conditionsMatchExpected(expected, current), nil
+				if !conditionsMatchExpected(expected, current) {
+					errMsg := fmt.Sprintf("conditions mismatch: got %v, expected %v", current, expected)
+					return false, fmt.Errorf(errMsg)
+				}
+				return true, nil
 			}
 		}
 
