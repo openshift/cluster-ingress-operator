@@ -872,6 +872,9 @@ func Test_loadBalancerServiceChanged(t *testing.T) {
 			if changed, updated := loadBalancerServiceChanged(&original, mutated); changed != tc.expect {
 				t.Errorf("expected loadBalancerServiceChanged to be %t, got %t", tc.expect, changed)
 			} else if changed {
+				if updatedChanged, _ := loadBalancerServiceChanged(&original, updated); !updatedChanged {
+					t.Error("loadBalancerServiceChanged reported changes but did not make any update")
+				}
 				if changedAgain, _ := loadBalancerServiceChanged(mutated, updated); changedAgain {
 					t.Error("loadBalancerServiceChanged does not behave as a fixed point function")
 				}
@@ -970,6 +973,9 @@ func Test_loadBalancerServiceAnnotationsChanged(t *testing.T) {
 			if changed, updated := loadBalancerServiceAnnotationsChanged(&current, &expected, tc.managedAnnotations); changed != tc.expect {
 				t.Errorf("expected loadBalancerServiceAnnotationsChanged to be %t, got %t", tc.expect, changed)
 			} else if changed {
+				if updatedChanged, _ := loadBalancerServiceAnnotationsChanged(&current, updated, tc.managedAnnotations); !updatedChanged {
+					t.Error("loadBalancerServiceAnnotationsChanged reported changes but did not make any update")
+				}
 				if changedAgain, _ := loadBalancerServiceAnnotationsChanged(&expected, updated, tc.managedAnnotations); changedAgain {
 					t.Error("loadBalancerServiceAnnotationsChanged does not behave as a fixed point function")
 				}
