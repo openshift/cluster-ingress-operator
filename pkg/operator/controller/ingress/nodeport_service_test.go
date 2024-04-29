@@ -332,6 +332,9 @@ func Test_nodePortServiceChanged(t *testing.T) {
 			if changed, updated := nodePortServiceChanged(&original, mutated); changed != tc.expect {
 				t.Errorf("expect nodePortServiceChanged to be %t, got %t", tc.expect, changed)
 			} else if changed {
+				if updatedChanged, _ := nodePortServiceChanged(&original, updated); !updatedChanged {
+					t.Error("nodePortServiceChanged reported changes but did not make any update")
+				}
 				if changedAgain, _ := nodePortServiceChanged(mutated, updated); changedAgain {
 					t.Error("nodePortServiceChanged does not behave as a fixed point function")
 				}
