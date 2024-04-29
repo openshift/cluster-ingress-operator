@@ -126,6 +126,14 @@ func Test_internalServiceChanged(t *testing.T) {
 			expect: true,
 		},
 		{
+			description: "if .spec.ports[*].nodePort changes",
+			mutate: func(svc *corev1.Service) {
+				svc.Spec.Ports[0].NodePort = int32(33337)
+				svc.Spec.Ports[1].NodePort = int32(33338)
+			},
+			expect: false,
+		},
+		{
 			description: "if .spec.ports changes by changing the metrics port's target port from an integer to a string",
 			mutate: func(svc *corev1.Service) {
 				for i := range svc.Spec.Ports {
@@ -227,6 +235,9 @@ func Test_internalServiceChanged(t *testing.T) {
 			if changed, updated := internalServiceChanged(&original, mutated); changed != tc.expect {
 				t.Errorf("expected internalServiceChanged to be %t, got %t", tc.expect, changed)
 			} else if changed {
+				if updatedChanged, _ := internalServiceChanged(&original, updated); !updatedChanged {
+					t.Error("internalServiceChanged reported changes but did not make any update")
+				}
 				if changedAgain, _ := internalServiceChanged(mutated, updated); changedAgain {
 					t.Error("internalServiceChanged does not behave as a fixed point function")
 				}
