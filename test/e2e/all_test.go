@@ -76,6 +76,7 @@ func TestAll(t *testing.T) {
 		t.Run("TestRouteMetricsControllerOnlyRouteSelector", TestRouteMetricsControllerOnlyRouteSelector)
 		t.Run("TestRouteMetricsControllerOnlyNamespaceSelector", TestRouteMetricsControllerOnlyNamespaceSelector)
 		t.Run("TestRouteMetricsControllerRouteAndNamespaceSelector", TestRouteMetricsControllerRouteAndNamespaceSelector)
+		t.Run("TestReconcileInternalService", TestReconcileInternalService)
 	})
 
 	t.Run("serial", func(t *testing.T) {
