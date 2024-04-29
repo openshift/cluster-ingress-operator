@@ -182,6 +182,9 @@ func Test_ingressClassChanged(t *testing.T) {
 			if changed, updated := ingressClassChanged(&original, mutated); changed != tc.expect {
 				t.Errorf("expect ingressClassChanged to be %t, got %t", tc.expect, changed)
 			} else if changed {
+				if updatedChanged, _ := ingressClassChanged(&original, updated); !updatedChanged {
+					t.Error("ingressClassChanged reported changes but did not make any update")
+				}
 				if changedAgain, _ := ingressClassChanged(mutated, updated); changedAgain {
 					t.Error("ingressClassChanged does not behave as a fixed point function")
 				}
