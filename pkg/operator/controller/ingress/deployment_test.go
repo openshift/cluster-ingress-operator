@@ -1740,13 +1740,17 @@ func TestDeploymentConfigChanged(t *testing.T) {
 				Replicas: &nineteen,
 			},
 		}
+
 		mutated := original.DeepCopy()
 		tc.mutate(mutated)
 		if changed, updated := deploymentConfigChanged(&original, mutated); changed != tc.expect {
-			t.Errorf("%s, expect deploymentConfigChanged to be %t, got %t", tc.description, tc.expect, changed)
+			t.Errorf("expect deploymentConfigChanged to be %t, got %t", tc.expect, changed)
 		} else if changed {
+			if updatedChanged, _ := deploymentConfigChanged(&original, updated); !updatedChanged {
+				t.Error("deploymentConfigChanged reported changes but did not make any update")
+			}
 			if changedAgain, _ := deploymentConfigChanged(mutated, updated); changedAgain {
-				t.Errorf("%s, deploymentConfigChanged does not behave as a fixed point function", tc.description)
+				t.Error("deploymentConfigChanged does not behave as a fixed point function")
 			}
 		}
 	}
