@@ -55,6 +55,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/utils/pointer"
@@ -4178,4 +4179,64 @@ u3YLAbyW/lHhOCiZu2iAI8AbmXem9lW6Tr7p/97s0w==
 	}
 
 	return secret, cl.Create(context.TODO(), secret)
+}
+
+// TestReconcileInternalService verifies that the operator reverts changes to
+// the router-internal service.
+func TestReconcileInternalService(t *testing.T) {
+	t.Parallel()
+	icName := types.NamespacedName{
+		Namespace: operatorNamespace,
+		Name:      "reconcile-internal-service",
+	}
+	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
+	ic := newPrivateController(icName, domain)
+	if err := kclient.Create(context.TODO(), ic); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
+
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	serviceName := controller.InternalIngressControllerServiceName(ic)
+	service := &corev1.Service{}
+	if err := kclient.Get(context.TODO(), serviceName, service); err != nil {
+		t.Fatal(err)
+	}
+
+	findPort := func(name string, service *corev1.Service) *corev1.ServicePort {
+		for i := range service.Spec.Ports {
+			if service.Spec.Ports[i].Name == name {
+				return &service.Spec.Ports[i]
+			}
+		}
+		return nil
+	}
+
+	metricsPort := findPort("metrics", service)
+	if metricsPort == nil {
+		t.Fatalf(`"metrics" port was not found among the service's ports: %v`, service.Spec.Ports)
+	}
+	originalMetricsPortTargetPort := metricsPort.TargetPort
+	metricsPort.TargetPort = intstr.FromInt(12345)
+	if err := kclient.Update(context.TODO(), service); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := wait.PollImmediate(1*time.Second, time.Minute, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), serviceName, service); err != nil {
+			t.Log(err)
+			return false, nil
+		}
+		if metricsPort := findPort("metrics", service); metricsPort == nil {
+			t.Fatalf(`"metrics" port was removed from the service's ports: %v`, service.Spec.Ports)
+		} else if metricsPort.TargetPort == originalMetricsPortTargetPort {
+			return true, nil
+		}
+		return false, nil
+	}); err != nil {
+		t.Errorf("failed to observe expected conditions: %v", err)
+	}
 }
