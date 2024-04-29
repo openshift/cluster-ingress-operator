@@ -148,6 +148,9 @@ func Test_podDisruptionBudgetChange(t *testing.T) {
 		if changed, updatedPdb := podDisruptionBudgetChanged(originalPdb, mutatedPdb); changed != tc.expect {
 			t.Errorf("%s, expect podDisruptionBudgetChanged to be %t, got %t", tc.description, tc.expect, changed)
 		} else if changed {
+			if updatedChanged, _ := podDisruptionBudgetChanged(originalPdb, updatedPdb); !updatedChanged {
+				t.Error("podDisruptionBudgetChanged reported changes but did not make any update")
+			}
 			if changedAgain, _ := podDisruptionBudgetChanged(mutatedPdb, updatedPdb); changedAgain {
 				t.Errorf("%s, podDisruptionBudgetChanged does not behave as a fixed point function", tc.description)
 			}
