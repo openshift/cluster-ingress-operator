@@ -1495,143 +1495,166 @@ func TestDeploymentConfigChanged(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		nineteen := int32(19)
-		fourTwenty := int32(420) // = 0644 octal.
-		original := appsv1.Deployment{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "router-original",
-				Namespace: "openshift-ingress",
-				UID:       "1",
-			},
-			Spec: appsv1.DeploymentSpec{
-				MinReadySeconds: 30,
-				Strategy: appsv1.DeploymentStrategy{
-					Type: appsv1.RollingUpdateDeploymentStrategyType,
-					RollingUpdate: &appsv1.RollingUpdateDeployment{
-						MaxUnavailable: pointerTo(intstr.FromString("25%")),
-						MaxSurge:       pointerTo(intstr.FromInt(0)),
-					},
+		t.Run(tc.description, func(t *testing.T) {
+			nineteen := int32(19)
+			fourTwenty := int32(420) // = 0644 octal.
+			original := appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "router-original",
+					Namespace: "openshift-ingress",
+					UID:       "1",
 				},
-				Template: corev1.PodTemplateSpec{
-					ObjectMeta: metav1.ObjectMeta{
-						Labels: map[string]string{
-							controller.ControllerDeploymentHashLabel: "1",
-						},
-						Annotations: map[string]string{
-							WorkloadPartitioningManagement: "{\"effect\": \"PreferredDuringScheduling\"}",
+				Spec: appsv1.DeploymentSpec{
+					MinReadySeconds: 30,
+					Strategy: appsv1.DeploymentStrategy{
+						Type: appsv1.RollingUpdateDeploymentStrategyType,
+						RollingUpdate: &appsv1.RollingUpdateDeployment{
+							MaxUnavailable: pointerTo(intstr.FromString("25%")),
+							MaxSurge:       pointerTo(intstr.FromInt(0)),
 						},
 					},
-					Spec: corev1.PodSpec{
-						DNSPolicy: corev1.DNSClusterFirst,
-						Volumes: []corev1.Volume{
-							{
-								Name: "default-certificate",
-								VolumeSource: corev1.VolumeSource{
-									Secret: &corev1.SecretVolumeSource{
-										SecretName:  "secrets-volume",
-										DefaultMode: &fourTwenty,
-									},
-								},
+					Template: corev1.PodTemplateSpec{
+						ObjectMeta: metav1.ObjectMeta{
+							Labels: map[string]string{
+								controller.ControllerDeploymentHashLabel: "1",
 							},
-							{
-								Name: "metrics-certs",
-								VolumeSource: corev1.VolumeSource{
-									Secret: &corev1.SecretVolumeSource{
-										SecretName: "router-metrics-certs-default",
-									},
-								},
-							},
-							{
-								Name: "stats-auth",
-								VolumeSource: corev1.VolumeSource{
-									Secret: &corev1.SecretVolumeSource{
-										SecretName: "router-stats-default",
-									},
-								},
+							Annotations: map[string]string{
+								WorkloadPartitioningManagement: "{\"effect\": \"PreferredDuringScheduling\"}",
 							},
 						},
-						Containers: []corev1.Container{
-							{
-								Env: []corev1.EnvVar{
-									{
-										Name:  "ROUTER_CANONICAL_HOSTNAME",
-										Value: "example.com",
-									},
-									{
-										Name:  "ROUTER_USE_PROXY_PROTOCOL",
-										Value: "false",
-									},
-									{
-										Name:  "ROUTER_ALLOW_WILDCARD_ROUTES",
-										Value: "false",
-									},
-									{
-										Name:  "ROUTE_LABELS",
-										Value: "foo=bar",
-									},
-								},
-								Image: "openshift/origin-cluster-ingress-operator:v4.0",
-								LivenessProbe: &corev1.Probe{
-									ProbeHandler: corev1.ProbeHandler{
-										HTTPGet: &corev1.HTTPGetAction{
-											Path: "/healthz",
-											Port: intstr.IntOrString{
-												IntVal: int32(1936),
-											},
+						Spec: corev1.PodSpec{
+							DNSPolicy: corev1.DNSClusterFirst,
+							Volumes: []corev1.Volume{
+								{
+									Name: "default-certificate",
+									VolumeSource: corev1.VolumeSource{
+										Secret: &corev1.SecretVolumeSource{
+											SecretName:  "secrets-volume",
+											DefaultMode: &fourTwenty,
 										},
 									},
 								},
-								ReadinessProbe: &corev1.Probe{
-									ProbeHandler: corev1.ProbeHandler{
-										HTTPGet: &corev1.HTTPGetAction{
-											Path: "/healthz/ready",
-											Port: intstr.IntOrString{
-												IntVal: int32(1936),
-											},
+								{
+									Name: "metrics-certs",
+									VolumeSource: corev1.VolumeSource{
+										Secret: &corev1.SecretVolumeSource{
+											SecretName: "router-metrics-certs-default",
 										},
 									},
 								},
-								StartupProbe: &corev1.Probe{
-									ProbeHandler: corev1.ProbeHandler{
-										HTTPGet: &corev1.HTTPGetAction{
-											Path: "/healthz/ready",
-											Port: intstr.IntOrString{
-												IntVal: int32(1936),
-											},
+								{
+									Name: "stats-auth",
+									VolumeSource: corev1.VolumeSource{
+										Secret: &corev1.SecretVolumeSource{
+											SecretName: "router-stats-default",
 										},
-									},
-								},
-								Ports: []corev1.ContainerPort{
-									{
-										Name:          "http",
-										ContainerPort: int32(80),
-										Protocol:      corev1.ProtocolTCP,
-									},
-									{
-										Name:          "https",
-										ContainerPort: 443,
-										Protocol:      corev1.ProtocolTCP,
-									},
-									{
-										Name:          "metrics",
-										ContainerPort: 1936,
-										Protocol:      corev1.ProtocolTCP,
 									},
 								},
 							},
-						},
-						Affinity: &corev1.Affinity{
-							PodAffinity: &corev1.PodAffinity{
-								PreferredDuringSchedulingIgnoredDuringExecution: []corev1.WeightedPodAffinityTerm{
-									{
-										Weight: int32(100),
-										PodAffinityTerm: corev1.PodAffinityTerm{
+							Containers: []corev1.Container{
+								{
+									Env: []corev1.EnvVar{
+										{
+											Name:  "ROUTER_CANONICAL_HOSTNAME",
+											Value: "example.com",
+										},
+										{
+											Name:  "ROUTER_USE_PROXY_PROTOCOL",
+											Value: "false",
+										},
+										{
+											Name:  "ROUTER_ALLOW_WILDCARD_ROUTES",
+											Value: "false",
+										},
+										{
+											Name:  "ROUTE_LABELS",
+											Value: "foo=bar",
+										},
+									},
+									Image: "openshift/origin-cluster-ingress-operator:v4.0",
+									LivenessProbe: &corev1.Probe{
+										ProbeHandler: corev1.ProbeHandler{
+											HTTPGet: &corev1.HTTPGetAction{
+												Path: "/healthz",
+												Port: intstr.IntOrString{
+													IntVal: int32(1936),
+												},
+											},
+										},
+									},
+									ReadinessProbe: &corev1.Probe{
+										ProbeHandler: corev1.ProbeHandler{
+											HTTPGet: &corev1.HTTPGetAction{
+												Path: "/healthz/ready",
+												Port: intstr.IntOrString{
+													IntVal: int32(1936),
+												},
+											},
+										},
+									},
+									StartupProbe: &corev1.Probe{
+										ProbeHandler: corev1.ProbeHandler{
+											HTTPGet: &corev1.HTTPGetAction{
+												Path: "/healthz/ready",
+												Port: intstr.IntOrString{
+													IntVal: int32(1936),
+												},
+											},
+										},
+									},
+									Ports: []corev1.ContainerPort{
+										{
+											Name:          "http",
+											ContainerPort: int32(80),
+											Protocol:      corev1.ProtocolTCP,
+										},
+										{
+											Name:          "https",
+											ContainerPort: 443,
+											Protocol:      corev1.ProtocolTCP,
+										},
+										{
+											Name:          "metrics",
+											ContainerPort: 1936,
+											Protocol:      corev1.ProtocolTCP,
+										},
+									},
+								},
+							},
+							Affinity: &corev1.Affinity{
+								PodAffinity: &corev1.PodAffinity{
+									PreferredDuringSchedulingIgnoredDuringExecution: []corev1.WeightedPodAffinityTerm{
+										{
+											Weight: int32(100),
+											PodAffinityTerm: corev1.PodAffinityTerm{
+												TopologyKey: "kubernetes.io/hostname",
+												LabelSelector: &metav1.LabelSelector{
+													MatchExpressions: []metav1.LabelSelectorRequirement{
+														{
+															Key:      controller.ControllerDeploymentHashLabel,
+															Operator: metav1.LabelSelectorOpNotIn,
+															Values:   []string{"1"},
+														},
+														{
+															Key:      controller.ControllerDeploymentLabel,
+															Operator: metav1.LabelSelectorOpIn,
+															Values:   []string{"default"},
+														},
+													},
+												},
+											},
+										},
+									},
+								},
+								PodAntiAffinity: &corev1.PodAntiAffinity{
+									RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+										{
 											TopologyKey: "kubernetes.io/hostname",
 											LabelSelector: &metav1.LabelSelector{
 												MatchExpressions: []metav1.LabelSelectorRequirement{
 													{
 														Key:      controller.ControllerDeploymentHashLabel,
-														Operator: metav1.LabelSelectorOpNotIn,
+														Operator: metav1.LabelSelectorOpIn,
 														Values:   []string{"1"},
 													},
 													{
@@ -1645,57 +1668,39 @@ func TestDeploymentConfigChanged(t *testing.T) {
 									},
 								},
 							},
-							PodAntiAffinity: &corev1.PodAntiAffinity{
-								RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
-									{
-										TopologyKey: "kubernetes.io/hostname",
-										LabelSelector: &metav1.LabelSelector{
-											MatchExpressions: []metav1.LabelSelectorRequirement{
-												{
-													Key:      controller.ControllerDeploymentHashLabel,
-													Operator: metav1.LabelSelectorOpIn,
-													Values:   []string{"1"},
-												},
-												{
-													Key:      controller.ControllerDeploymentLabel,
-													Operator: metav1.LabelSelectorOpIn,
-													Values:   []string{"default"},
-												},
-											},
+							Tolerations: []corev1.Toleration{toleration, otherToleration},
+							TopologySpreadConstraints: []corev1.TopologySpreadConstraint{{
+								MaxSkew:           int32(1),
+								TopologyKey:       "topology.kubernetes.io/zone",
+								WhenUnsatisfiable: corev1.ScheduleAnyway,
+								LabelSelector: &metav1.LabelSelector{
+									MatchExpressions: []metav1.LabelSelectorRequirement{
+										{
+											Key:      controller.ControllerDeploymentHashLabel,
+											Operator: metav1.LabelSelectorOpIn,
+											Values:   []string{"default"},
 										},
 									},
 								},
-							},
+							}},
 						},
-						Tolerations: []corev1.Toleration{toleration, otherToleration},
-						TopologySpreadConstraints: []corev1.TopologySpreadConstraint{{
-							MaxSkew:           int32(1),
-							TopologyKey:       "topology.kubernetes.io/zone",
-							WhenUnsatisfiable: corev1.ScheduleAnyway,
-							LabelSelector: &metav1.LabelSelector{
-								MatchExpressions: []metav1.LabelSelectorRequirement{
-									{
-										Key:      controller.ControllerDeploymentHashLabel,
-										Operator: metav1.LabelSelectorOpIn,
-										Values:   []string{"default"},
-									},
-								},
-							},
-						}},
 					},
+					Replicas: &nineteen,
 				},
-				Replicas: &nineteen,
-			},
-		}
-		mutated := original.DeepCopy()
-		tc.mutate(mutated)
-		if changed, updated := deploymentConfigChanged(&original, mutated); changed != tc.expect {
-			t.Errorf("%s, expect deploymentConfigChanged to be %t, got %t", tc.description, tc.expect, changed)
-		} else if changed {
-			if changedAgain, _ := deploymentConfigChanged(mutated, updated); changedAgain {
-				t.Errorf("%s, deploymentConfigChanged does not behave as a fixed point function", tc.description)
 			}
-		}
+			mutated := original.DeepCopy()
+			tc.mutate(mutated)
+			if changed, updated := deploymentConfigChanged(&original, mutated); changed != tc.expect {
+				t.Errorf("expect deploymentConfigChanged to be %t, got %t", tc.expect, changed)
+			} else if changed {
+				if updatedChanged, _ := deploymentConfigChanged(&original, updated); !updatedChanged {
+					t.Error("deploymentConfigChanged reported changes but did not make any update")
+				}
+				if changedAgain, _ := deploymentConfigChanged(mutated, updated); changedAgain {
+					t.Error("deploymentConfigChanged does not behave as a fixed point function")
+				}
+			}
+		})
 	}
 }
 
