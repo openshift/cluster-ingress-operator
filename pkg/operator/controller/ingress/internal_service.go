@@ -118,7 +118,8 @@ func internalServiceChanged(current, expected *corev1.Service) (bool, *corev1.Se
 
 	serviceCmpOpts := []cmp.Option{
 		// Ignore fields that the API, other controllers, or user may
-		// have modified.
+		// have modified.  Note: This list must be kept consistent with
+		// the updated.Spec.Foo = current.Spec.Foo assignments below!
 		cmpopts.IgnoreFields(corev1.ServicePort{}, "NodePort"),
 		cmpopts.IgnoreFields(corev1.ServiceSpec{},
 			"ClusterIP", "ClusterIPs",
@@ -163,14 +164,18 @@ func internalServiceChanged(current, expected *corev1.Service) (bool, *corev1.Se
 		}
 	}
 	// Preserve fields that the API, other controllers, or user may have
-	// modified.
+	// modified.  Note: This list must be kept consistent with
+	// serviceCmpOpts above!
 	updated.Spec.ClusterIP = current.Spec.ClusterIP
+	updated.Spec.ClusterIPs = current.Spec.ClusterIPs
 	updated.Spec.ExternalIPs = current.Spec.ExternalIPs
 	updated.Spec.HealthCheckNodePort = current.Spec.HealthCheckNodePort
+	updated.Spec.IPFamilies = current.Spec.IPFamilies
+	updated.Spec.IPFamilyPolicy = current.Spec.IPFamilyPolicy
 	for i, updatedPort := range updated.Spec.Ports {
 		for _, currentPort := range current.Spec.Ports {
 			if currentPort.Name == updatedPort.Name {
-				updated.Spec.Ports[i].TargetPort = currentPort.TargetPort
+				updated.Spec.Ports[i].NodePort = currentPort.NodePort
 			}
 		}
 	}
