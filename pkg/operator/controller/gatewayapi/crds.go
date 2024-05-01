@@ -114,7 +114,9 @@ func (r *reconciler) updateCRD(ctx context.Context, current, desired *apiextensi
 // the expected spec and if not returns an updated one.
 func crdChanged(current, expected *apiextensionsv1.CustomResourceDefinition) (bool, *apiextensionsv1.CustomResourceDefinition) {
 	crdCmpOpts := []cmp.Option{
-		// Ignore fields that the API may have modified.
+		// Ignore fields that the API may have modified.  Note: This
+		// list must be kept consistent with the updated.Spec.Foo =
+		// current.Spec.Foo assignments below!
 		cmpopts.IgnoreFields(apiextensionsv1.CustomResourceDefinitionSpec{}, "Conversion"),
 		cmpopts.EquateEmpty(),
 	}
@@ -124,6 +126,10 @@ func crdChanged(current, expected *apiextensionsv1.CustomResourceDefinition) (bo
 
 	updated := current.DeepCopy()
 	updated.Spec = expected.Spec
+	// Preserve fields that the API, other controllers, or user may have
+	// modified.  Note: This list must be kept consistent with crdCmpOpts
+	// above!
+	updated.Spec.Conversion = current.Spec.Conversion
 
 	return true, updated
 }
