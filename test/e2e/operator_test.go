@@ -960,23 +960,23 @@ func TestHostNetworkEndpointPublishingStrategy(t *testing.T) {
 // TestHostNetworkPortBinding creates two ingresscontrollers on the same node
 // with different port bindings and verifies that both routers are available.
 func TestHostNetworkPortBinding(t *testing.T) {
-	// deploy first ingresscontroller with the default port bindings
+	t.Log("creating an ingresscontroller with the default port bindings")
 	name1 := types.NamespacedName{Namespace: operatorNamespace, Name: "hostnetworkportbinding"}
 	ing1 := newHostNetworkController(name1, name1.Name+"."+dnsConfig.Spec.BaseDomain)
 	if err := kclient.Create(context.TODO(), ing1); err != nil {
 		t.Fatalf("failed to create the first ingresscontroller: %v", err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, ing1)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ing1) })
 
 	err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name1, availableConditionsForIngressControllerWithHostNetwork...)
 	if err != nil {
 		t.Errorf("failed to observe expected conditions for the first ingresscontroller: %v", err)
 	}
 
-	// get first router's single replica
+	t.Log("getting pod list for the first ingresscontroller")
 	pods := &corev1.PodList{}
 	if err := kclient.List(context.TODO(), pods, client.InNamespace(operandNamespace)); err != nil {
-		t.Fatalf("failed to list the first ingresscontroller's PODs: %v", err)
+		t.Fatalf("failed to list the first ingresscontroller's pods: %v", err)
 	}
 	var pod1 *corev1.Pod
 	for _, p := range pods.Items {
@@ -986,7 +986,7 @@ func TestHostNetworkPortBinding(t *testing.T) {
 		}
 	}
 	if pod1 == nil {
-		t.Fatal("failed to find the first ingresscontroller's POD")
+		t.Fatal("failed to find the first ingresscontroller's pod")
 	}
 
 	routerContainer := pod1.Spec.Containers[0]
@@ -997,14 +997,16 @@ func TestHostNetworkPortBinding(t *testing.T) {
 		t.Errorf("pod %s is not running on the host's network", pod1.Name)
 	}
 
-	// create second ingresscontroller on the same node but with different port bindings
+	t.Log("creating a second ingresscontroller on the same node but with different port bindings")
 	name2 := types.NamespacedName{Namespace: operatorNamespace, Name: "samehost"}
 	strategy := &operatorv1.HostNetworkStrategy{
 		HTTPPort:  9080,
 		HTTPSPort: 9443,
 		StatsPort: 9936,
 	}
-	// take the node placement of the first router
+	// Take the node name of the first ingresscontroller and configure a
+	// node selector on the second ingresscontroller to force the router
+	// pods all to land on the same node host.
 	placement := &operatorv1.NodePlacement{
 		Tolerations: pod1.Spec.Tolerations,
 		NodeSelector: &metav1.LabelSelector{
@@ -1018,15 +1020,16 @@ func TestHostNetworkPortBinding(t *testing.T) {
 	if err := kclient.Create(context.TODO(), ing2); err != nil {
 		t.Fatalf("failed to create the second ingresscontroller: %v", err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, ing2)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ing2) })
 
 	err = waitForIngressControllerCondition(t, kclient, 5*time.Minute, name2, availableConditionsForIngressControllerWithHostNetwork...)
 	if err != nil {
 		t.Errorf("failed to observe expected conditions for the second ingresscontroller: %v", err)
 	}
 
+	t.Log("getting pod list for the second ingresscontroller")
 	if err := kclient.List(context.TODO(), pods, client.InNamespace(operandNamespace)); err != nil {
-		t.Fatalf("failed to list the first ingresscontroller's PODs: %v", err)
+		t.Fatalf("failed to list the first ingresscontroller's pods: %v", err)
 	}
 	var pod2 *corev1.Pod
 	for _, p := range pods.Items {
@@ -1036,7 +1039,7 @@ func TestHostNetworkPortBinding(t *testing.T) {
 		}
 	}
 	if pod2 == nil {
-		t.Fatalf("failed to find the second ingresscontroller's POD")
+		t.Fatalf("failed to find the second ingresscontroller's pod")
 	}
 	routerContainer = pod2.Spec.Containers[0]
 	assertContainerHasPort(t, routerContainer, "http", 9080)
