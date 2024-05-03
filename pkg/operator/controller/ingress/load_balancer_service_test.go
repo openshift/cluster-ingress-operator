@@ -466,6 +466,10 @@ func TestDesiredLoadBalancerService(t *testing.T) {
 				t.Errorf("local-with-fallback annotation check for test %q failed: %v", tc.description, err)
 			}
 		}
+		// Only make this assertion if we expect a service.
+		if tc.expect {
+			assert.Equal(t, "None", string(svc.Spec.SessionAffinity))
+		}
 	}
 }
 
