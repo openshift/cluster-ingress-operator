@@ -448,6 +448,7 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 					t.Errorf("service has unexpected annotation: %s=%s", k, v)
 				}
 			}
+			assert.Equal(t, "None", string(svc.Spec.SessionAffinity))
 		})
 	}
 }
