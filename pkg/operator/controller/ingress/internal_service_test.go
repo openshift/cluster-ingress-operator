@@ -13,7 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
-// test_desiredInternalIngressControllerService verifies that
+// Test_desiredInternalIngressControllerService verifies that
 // desiredInternalIngressControllerService returns the expected service.
 func Test_desiredInternalIngressControllerService(t *testing.T) {
 	ic := &operatorv1.IngressController{
