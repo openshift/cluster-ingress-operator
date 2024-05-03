@@ -134,8 +134,9 @@ func desiredNodePortService(ic *operatorv1.IngressController, deploymentRef meta
 					TargetPort: intstr.FromString("metrics"),
 				},
 			},
-			Selector: controller.IngressControllerDeploymentPodSelector(ic).MatchLabels,
-			Type:     corev1.ServiceTypeNodePort,
+			Selector:        controller.IngressControllerDeploymentPodSelector(ic).MatchLabels,
+			SessionAffinity: corev1.ServiceAffinityNone,
+			Type:            corev1.ServiceTypeNodePort,
 		},
 	}
 	if !wantMetricsPort {
