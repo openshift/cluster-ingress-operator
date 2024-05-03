@@ -40,6 +40,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/endpoints"
 
 	"github.com/go-logr/logr"
+	"github.com/stretchr/testify/assert"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
@@ -1008,6 +1009,30 @@ func TestHostNetworkPortBinding(t *testing.T) {
 		t.Errorf("pod %s is not running on the host's network", pod1.Name)
 	}
 
+	t.Log("verifying that the first ingresscontroller's internal service has the expected ports")
+	ing1ServiceName := controller.InternalIngressControllerServiceName(ing1)
+	ing1Service := &corev1.Service{}
+	if err := kclient.Get(context.TODO(), ing1ServiceName, ing1Service); err != nil {
+		t.Fatal(err)
+	}
+	expectedInternalServicePorts := []corev1.ServicePort{{
+		Name:       "http",
+		Protocol:   "TCP",
+		Port:       int32(80),
+		TargetPort: intstr.FromString("http"),
+	}, {
+		Name:       "https",
+		Protocol:   "TCP",
+		Port:       int32(443),
+		TargetPort: intstr.FromString("https"),
+	}, {
+		Name:       "metrics",
+		Protocol:   "TCP",
+		Port:       int32(1936),
+		TargetPort: intstr.FromString("metrics"),
+	}}
+	assert.Equal(t, expectedInternalServicePorts, ing1Service.Spec.Ports)
+
 	t.Log("creating a second ingresscontroller on the same node but with different port bindings")
 	name2 := types.NamespacedName{Namespace: operatorNamespace, Name: "samehost"}
 	strategy := &operatorv1.HostNetworkStrategy{
@@ -1059,6 +1084,14 @@ func TestHostNetworkPortBinding(t *testing.T) {
 	if !pod2.Spec.HostNetwork {
 		t.Errorf("pod %s is not running on the host's network", pod2.Name)
 	}
+
+	t.Log("verifying that the second ingresscontroller's internal service has the expected ports")
+	ing2ServiceName := controller.InternalIngressControllerServiceName(ing2)
+	ing2Service := &corev1.Service{}
+	if err := kclient.Get(context.TODO(), ing2ServiceName, ing2Service); err != nil {
+		t.Fatal(err)
+	}
+	assert.Equal(t, expectedInternalServicePorts, ing2Service.Spec.Ports)
 }
 
 func assertContainerHasPort(t *testing.T, container corev1.Container, name string, port int32) {
