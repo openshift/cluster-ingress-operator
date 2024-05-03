@@ -53,6 +53,7 @@ func Test_desiredInternalIngressControllerService(t *testing.T) {
 		Port:       int32(1936),
 		TargetPort: intstr.FromString("metrics"),
 	}}, svc.Spec.Ports)
+	assert.Equal(t, "None", string(svc.Spec.SessionAffinity))
 }
 
 // Test_internalServiceChanged verifies that internalServiceChanged properly

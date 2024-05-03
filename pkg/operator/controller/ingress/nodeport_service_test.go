@@ -72,7 +72,8 @@ func TestDesiredNodePortService(t *testing.T) {
 					Selector: map[string]string{
 						"ingresscontroller.operator.openshift.io/deployment-ingresscontroller": "default",
 					},
-					Type: "NodePort",
+					SessionAffinity: corev1.ServiceAffinityNone,
+					Type:            "NodePort",
 				},
 			},
 		},
@@ -120,7 +121,8 @@ func TestDesiredNodePortService(t *testing.T) {
 					Selector: map[string]string{
 						"ingresscontroller.operator.openshift.io/deployment-ingresscontroller": "default",
 					},
-					Type: "NodePort",
+					SessionAffinity: corev1.ServiceAffinityNone,
+					Type:            "NodePort",
 				},
 			},
 		},
