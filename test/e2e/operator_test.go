@@ -550,8 +550,8 @@ func TestUpdateDefaultIngressControllerSecret(t *testing.T) {
 
 	// Update the ingresscontroller to reference a non-existent secret.
 	secretName := names.SimpleNameGenerator.GenerateName("test-")
-	if err := updateIngressControllerSpecWithRetryOnConflict(t, defaultName, timeout, func(spec *operatorv1.IngressControllerSpec) {
-		spec.DefaultCertificate = &corev1.LocalObjectReference{Name: secretName}
+	if err := updateIngressControllerWithRetryOnConflict(t, defaultName, timeout, func(ic *operatorv1.IngressController) {
+		ic.Spec.DefaultCertificate = &corev1.LocalObjectReference{Name: secretName}
 	}); err != nil {
 		t.Fatalf("failed to update default ingress controller: %v", err)
 	}
@@ -559,8 +559,8 @@ func TestUpdateDefaultIngressControllerSecret(t *testing.T) {
 	// the test also needs to revert the update if it fails midway.  If the
 	// test reaches the end, the following update is redundant but harmless.
 	defer func() {
-		if err := updateIngressControllerSpecWithRetryOnConflict(t, defaultName, timeout, func(spec *operatorv1.IngressControllerSpec) {
-			spec.DefaultCertificate = originalSecret
+		if err := updateIngressControllerWithRetryOnConflict(t, defaultName, timeout, func(ic *operatorv1.IngressController) {
+			ic.Spec.DefaultCertificate = originalSecret
 		}); err != nil {
 			t.Fatalf("failed to reset default ingresscontroller: %v", err)
 		}
@@ -649,8 +649,8 @@ func TestUpdateDefaultIngressControllerSecret(t *testing.T) {
 	}
 
 	// Reset .spec.defaultCertificate to its original value.
-	if err := updateIngressControllerSpecWithRetryOnConflict(t, defaultName, timeout, func(spec *operatorv1.IngressControllerSpec) {
-		spec.DefaultCertificate = originalSecret
+	if err := updateIngressControllerWithRetryOnConflict(t, defaultName, timeout, func(ic *operatorv1.IngressController) {
+		ic.Spec.DefaultCertificate = originalSecret
 	}); err != nil {
 		t.Fatalf("failed to reset default ingresscontroller: %v", err)
 	}
@@ -3535,8 +3535,8 @@ func TestLocalWithFallbackOverrideForLoadBalancerService(t *testing.T) {
 		t.Fatalf("failed to update ingresscontroller %q with override: %v", defaultName, err)
 	}
 	defer func() {
-		if err := updateIngressControllerSpecWithRetryOnConflict(t, defaultName, timeout, func(spec *operatorv1.IngressControllerSpec) {
-			spec.UnsupportedConfigOverrides = runtime.RawExtension{}
+		if err := updateIngressControllerWithRetryOnConflict(t, defaultName, timeout, func(ic *operatorv1.IngressController) {
+			ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{}
 		}); err != nil {
 			t.Fatalf("failed to update ingresscontroller %q to remove the override: %v", defaultName, err)
 		}

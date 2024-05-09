@@ -123,8 +123,8 @@ func TestIngressControllerRouteSelectorUpdateShouldClearRouteStatus(t *testing.T
 
 	// Update the ingress controller to not select routeFooLabel to be admitted, but to select
 	// routeBarLabel instead.
-	if err := updateIngressControllerSpecWithRetryOnConflict(t, icName, 5*time.Minute, func(spec *operatorv1.IngressControllerSpec) {
-		spec.RouteSelector = &metav1.LabelSelector{
+	if err := updateIngressControllerWithRetryOnConflict(t, icName, 5*time.Minute, func(ic *operatorv1.IngressController) {
+		ic.Spec.RouteSelector = &metav1.LabelSelector{
 			MatchLabels: map[string]string{
 				"type": "bar",
 			},
@@ -235,8 +235,8 @@ func TestIngressControllerNamespaceSelectorUpdateShouldClearRouteStatus(t *testi
 
 	// Update the ingress controller to not select routeFooLabel to be admitted, but to select
 	// routeBarLabel instead.
-	if err := updateIngressControllerSpecWithRetryOnConflict(t, icName, 5*time.Minute, func(spec *operatorv1.IngressControllerSpec) {
-		spec.NamespaceSelector = &metav1.LabelSelector{
+	if err := updateIngressControllerWithRetryOnConflict(t, icName, 5*time.Minute, func(ic *operatorv1.IngressController) {
+		ic.Spec.NamespaceSelector = &metav1.LabelSelector{
 			MatchLabels: map[string]string{
 				"type": "bar",
 			},
