@@ -84,6 +84,8 @@ func TestAll(t *testing.T) {
 		t.Run("TestReconcileInternalService", TestReconcileInternalService)
 		t.Run("TestConnectTimeout", TestConnectTimeout)
 		t.Run("TestGatewayAPI", TestGatewayAPI)
+		t.Run("TestAWSLBSubnets", TestAWSLBSubnets)
+		t.Run("TestUnmanagedAWSLBSubnets", TestUnmanagedAWSLBSubnets)
 	})
 
 	t.Run("serial", func(t *testing.T) {

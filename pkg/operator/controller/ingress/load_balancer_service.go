@@ -85,6 +85,9 @@ const (
 	// connections for a Classic ELB.
 	awsELBConnectionIdleTimeoutAnnotation = "service.beta.kubernetes.io/aws-load-balancer-connection-idle-timeout"
 
+	// awsLBSubnetsAnnotation specifies a list of subnets for both NLBs and CLBs.
+	awsLBSubnetsAnnotation = "service.beta.kubernetes.io/aws-load-balancer-subnets"
+
 	// iksLBScopeAnnotation is the annotation used on a service to specify an IBM
 	// load balancer IP type.
 	iksLBScopeAnnotation = "service.kubernetes.io/ibm-load-balancer-cloud-provider-ip-type"
@@ -137,8 +140,8 @@ const (
 
 	// autoDeleteLoadBalancerAnnotation is an annotation that can be set on
 	// an IngressController to indicate that the operator should
-	// automatically delete any associated service load-balancer when its
-	// scope changes if changing scope requires deleting service
+	// automatically delete and recreate any associated service load-balancer when a
+	// configuration is changed that requires deleting the service
 	// load-balancers on the current platform.
 	autoDeleteLoadBalancerAnnotation = "ingress.operator.openshift.io/auto-delete-load-balancer"
 )
@@ -273,7 +276,7 @@ var (
 // Always returns the current LB service if one exists (whether it already
 // existed or was created during the course of the function).
 func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, platformStatus *configv1.PlatformStatus) (bool, *corev1.Service, error) {
-	wantLBS, desiredLBService, err := desiredLoadBalancerService(ci, deploymentRef, platformStatus)
+	wantLBS, desiredLBService, err := desiredLoadBalancerService(ci, deploymentRef, platformStatus, r.config.IngressControllerLBSubnetsAWSEnabled)
 	if err != nil {
 		return false, nil, err
 	}
@@ -314,11 +317,11 @@ func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController,
 				return haveLBS, currentLBService, err
 			}
 		}
-		deleteIfScopeChanged := false
+		autoDeleteLB := false
 		if _, ok := ci.Annotations[autoDeleteLoadBalancerAnnotation]; ok {
-			deleteIfScopeChanged = true
+			autoDeleteLB = true
 		}
-		if updated, err := r.updateLoadBalancerService(currentLBService, desiredLBService, platformStatus, deleteIfScopeChanged); err != nil {
+		if updated, err := r.updateLoadBalancerService(currentLBService, desiredLBService, platformStatus, autoDeleteLB); err != nil {
 			return true, currentLBService, fmt.Errorf("failed to update load balancer service: %v", err)
 		} else if updated {
 			return r.currentLoadBalancerService(ci)
@@ -339,7 +342,7 @@ func isServiceOwnedByIngressController(service *corev1.Service, ic *operatorv1.I
 // ingresscontroller, or nil if an LB service isn't desired. An LB service is
 // desired if the high availability type is Cloud. An LB service will declare an
 // owner reference to the given deployment.
-func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, platform *configv1.PlatformStatus) (bool, *corev1.Service, error) {
+func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, platform *configv1.PlatformStatus, subnetsAWSEnabled bool) (bool, *corev1.Service, error) {
 	if ci.Status.EndpointPublishingStrategy.Type != operatorv1.LoadBalancerServiceStrategyType {
 		return false, nil, nil
 	}
@@ -406,10 +409,24 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 						// NLBs require a different health check interval than CLBs.
 						// See <https://bugzilla.redhat.com/show_bug.cgi?id=1908758>.
 						service.Annotations[awsLBHealthCheckIntervalAnnotation] = awsLBHealthCheckIntervalNLB
+
+						if subnetsAWSEnabled {
+							nlbParams := getAWSNetworkLoadBalancerParametersInSpec(ci)
+							if nlbParams != nil && awsSubnetsExist(nlbParams.Subnets) {
+								service.Annotations[awsLBSubnetsAnnotation] = JoinAWSSubnets(nlbParams.Subnets, ",")
+							}
+						}
 					case operatorv1.AWSClassicLoadBalancer:
 						if aws.ClassicLoadBalancerParameters != nil {
 							if v := aws.ClassicLoadBalancerParameters.ConnectionIdleTimeout; v.Duration > 0 {
 								service.Annotations[awsELBConnectionIdleTimeoutAnnotation] = strconv.FormatUint(uint64(v.Round(time.Second).Seconds()), 10)
+							}
+						}
+
+						if subnetsAWSEnabled {
+							clbParams := getAWSClassicLoadBalancerParametersInSpec(ci)
+							if clbParams != nil && awsSubnetsExist(clbParams.Subnets) {
+								service.Annotations[awsLBSubnetsAnnotation] = JoinAWSSubnets(clbParams.Subnets, ",")
 							}
 						}
 					}
@@ -568,10 +585,9 @@ func (r *reconciler) deleteLoadBalancerService(service *corev1.Service, options 
 
 // updateLoadBalancerService updates a load balancer service.  Returns a Boolean
 // indicating whether the service was updated, and an error value.
-func (r *reconciler) updateLoadBalancerService(current, desired *corev1.Service, platform *configv1.PlatformStatus, deleteIfScopeChanged bool) (bool, error) {
-	_, platformHasMutableScope := platformsWithMutableScope[platform.Type]
-	if !platformHasMutableScope && deleteIfScopeChanged && !scopeEqual(current, desired, platform) {
-		log.Info("deleting and recreating the load balancer because its scope changed", "namespace", desired.Namespace, "name", desired.Name)
+func (r *reconciler) updateLoadBalancerService(current, desired *corev1.Service, platform *configv1.PlatformStatus, autoDeleteLB bool) (bool, error) {
+	if shouldRecreateLB, reason := shouldRecreateLoadBalancer(current, desired, platform); shouldRecreateLB && autoDeleteLB {
+		log.Info("deleting and recreating the load balancer because "+reason, "namespace", desired.Namespace, "name", desired.Name)
 		foreground := metav1.DeletePropagationForeground
 		deleteOptions := crclient.DeleteOptions{PropagationPolicy: &foreground}
 		if err := r.deleteLoadBalancerService(current, &deleteOptions); err != nil {
@@ -618,6 +634,19 @@ func scopeEqual(a, b *corev1.Service, platform *configv1.PlatformStatus) bool {
 		}
 	}
 	return true
+}
+
+// shouldRecreateLoadBalancer determines whether a load balancer needs to be
+// recreated and returns the reason for its recreation.
+func shouldRecreateLoadBalancer(current, desired *corev1.Service, platform *configv1.PlatformStatus) (bool, string) {
+	_, platformHasMutableScope := platformsWithMutableScope[platform.Type]
+	if !platformHasMutableScope && !scopeEqual(current, desired, platform) {
+		return true, "its scope changed"
+	}
+	if platform.Type == configv1.AWSPlatformType && !serviceSubnetsEqual(current, desired) {
+		return true, "its subnets changed"
+	}
+	return false, ""
 }
 
 // loadBalancerServiceChanged checks if the current load balancer service
@@ -719,8 +748,8 @@ func loadBalancerServiceTagsModified(current, expected *corev1.Service) (bool, *
 // return value is nil.  Otherwise, if something or someone else has modified
 // the service, then the return value is a non-nil error indicating that the
 // modification must be reverted before upgrading is allowed.
-func loadBalancerServiceIsUpgradeable(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference, current *corev1.Service, platform *configv1.PlatformStatus) error {
-	want, desired, err := desiredLoadBalancerService(ic, deploymentRef, platform)
+func loadBalancerServiceIsUpgradeable(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference, current *corev1.Service, platform *configv1.PlatformStatus, subnetsAWSEnabled bool) error {
+	want, desired, err := desiredLoadBalancerService(ic, deploymentRef, platform, subnetsAWSEnabled)
 	if err != nil {
 		return err
 	}
@@ -740,7 +769,7 @@ func loadBalancerServiceIsUpgradeable(ic *operatorv1.IngressController, deployme
 
 // loadBalancerServiceIsProgressing returns an error value indicating if the
 // load balancer service is in progressing status.
-func loadBalancerServiceIsProgressing(ic *operatorv1.IngressController, service *corev1.Service, platform *configv1.PlatformStatus) error {
+func loadBalancerServiceIsProgressing(ic *operatorv1.IngressController, service *corev1.Service, platform *configv1.PlatformStatus, subnetsAWSEnabled bool) error {
 	var errs []error
 	wantScope := ic.Status.EndpointPublishingStrategy.LoadBalancer.Scope
 	haveScope := operatorv1.ExternalLoadBalancer
@@ -756,10 +785,80 @@ func loadBalancerServiceIsProgressing(ic *operatorv1.IngressController, service 
 		errs = append(errs, err)
 	}
 
+	if platform.Type == configv1.AWSPlatformType && subnetsAWSEnabled {
+		var (
+			wantSubnets, haveSubnets *operatorv1.AWSSubnets
+			paramsFieldName          string
+		)
+		switch getAWSLoadBalancerTypeInStatus(ic) {
+		case operatorv1.AWSNetworkLoadBalancer:
+			if nlbParams := getAWSNetworkLoadBalancerParametersInSpec(ic); nlbParams != nil {
+				wantSubnets = nlbParams.Subnets
+			}
+			if nlbParams := getAWSNetworkLoadBalancerParametersInStatus(ic); nlbParams != nil {
+				haveSubnets = nlbParams.Subnets
+			}
+			paramsFieldName = "networkLoadBalancer"
+		case operatorv1.AWSClassicLoadBalancer:
+			if clbParams := getAWSClassicLoadBalancerParametersInSpec(ic); clbParams != nil {
+				wantSubnets = clbParams.Subnets
+			}
+			if clbParams := getAWSClassicLoadBalancerParametersInStatus(ic); clbParams != nil {
+				haveSubnets = clbParams.Subnets
+			}
+			paramsFieldName = "classicLoadBalancer"
+		}
+		if !awsSubnetsEqual(wantSubnets, haveSubnets) {
+			// Generate JSON for the oc patch command as well as "pretty" json
+			// that will be used for a more human-readable error message.
+			haveSubnetsPatchJson := convertAWSSubnetListToPatchJson(haveSubnets, "null", "null")
+			haveSubnetsPrettyJson := convertAWSSubnetListToPatchJson(haveSubnets, "{}", "[]")
+			wantSubnetsPrettyJson := convertAWSSubnetListToPatchJson(wantSubnets, "{}", "[]")
+			changedMsg := fmt.Sprintf("The IngressController subnets were changed from %q to %q.", haveSubnetsPrettyJson, wantSubnetsPrettyJson)
+			ocPatchRevertCmd := fmt.Sprintf("oc -n openshift-ingress-operator patch ingresscontrollers/%[1]s --type=merge --patch='{\"spec\":{\"endpointPublishingStrategy\":{\"type\":\"LoadBalancerService\",\"loadBalancer\":{\"providerParameters\":{\"type\":\"AWS\",\"aws\":{\"type\":\"%[2]s\",\"%[3]s\":{\"subnets\":%[4]s}}}}}}}'", ic.Name, getAWSLoadBalancerTypeInStatus(ic), paramsFieldName, haveSubnetsPatchJson)
+			err := fmt.Errorf("%[1]s  To effectuate this change, you must delete the service: `oc -n %[2]s delete svc/%[3]s`; the service load-balancer will then be deprovisioned and a new one created. This will most likely cause the new load-balancer to have a different host name and IP address and cause disruption. To return to the previous state, you can revert the change to the IngressController: `%[4]s`", changedMsg, service.Namespace, service.Name, ocPatchRevertCmd)
+			errs = append(errs, err)
+		}
+	}
+
 	errs = append(errs, loadBalancerSourceRangesAnnotationSet(service))
 	errs = append(errs, loadBalancerSourceRangesMatch(ic, service))
 
 	return kerrors.NewAggregate(errs)
+}
+
+// convertAWSSubnetListToPatchJson converts an AWSSubnets object to a JSON formatted string
+// to build an oc patch command. It defaults nil or no subnet values to emptySubnetValue
+// and empty ids or names slices to emptySubnetSliceValue.
+func convertAWSSubnetListToPatchJson(subnets *operatorv1.AWSSubnets, emptySubnetValue, emptySubnetSliceValue string) string {
+	// If subnets are nil, or an empty list, return the emptySubnetValue.
+	if subnets == nil || (len(subnets.Names) == 0 && len(subnets.IDs) == 0) {
+		return emptySubnetValue
+	}
+
+	// Default empty slice for subnet names and IDs to emptySubnetSliceValue.
+	namesJSON, idsJSON := emptySubnetSliceValue, emptySubnetSliceValue
+
+	// Marshal names and IDs separately.
+	if len(subnets.Names) > 0 {
+		namesJSONBytes, err := json.Marshal(subnets.Names)
+		if err != nil {
+			log.Error(err, "error marshaling subnet names")
+			return ""
+		}
+		namesJSON = string(namesJSONBytes)
+	}
+	if len(subnets.IDs) > 0 {
+		idsJSONBytes, err := json.Marshal(subnets.IDs)
+		if err != nil {
+			log.Error(err, "error marshaling subnet IDs")
+			return ""
+		}
+		idsJSON = string(idsJSONBytes)
+	}
+
+	// Combine the JSON of subnet names and IDs.
+	return fmt.Sprintf("{\"ids\":%s,\"names\":%s}", idsJSON, namesJSON)
 }
 
 // loadBalancerServiceEvaluationConditionsDetected returns an error value indicating if the
@@ -811,4 +910,187 @@ func loadBalancerSourceRangesMatch(ic *operatorv1.IngressController, current *co
 	}
 
 	return fmt.Errorf("You have manually edited an operator-managed object. You must revert your modifications by removing the Spec.LoadBalancerSourceRanges field of LoadBalancer-typed service %q. You can use the new AllowedSourceRanges API field on the ingresscontroller to configure this setting instead.", current.Name)
+}
+
+// getSubnetsFromServiceAnnotation gets the effective subnets by looking at the
+// service.beta.kubernetes.io/aws-load-balancer-subnets annotation of the LoadBalancer-type Service.
+// If no subnets are specified in the annotation, this function returns nil.
+func getSubnetsFromServiceAnnotation(service *corev1.Service) *operatorv1.AWSSubnets {
+	if service == nil {
+		return nil
+	}
+
+	awsSubnets := &operatorv1.AWSSubnets{}
+	if a, ok := service.Annotations[awsLBSubnetsAnnotation]; ok {
+		var subnets []string
+		a = strings.TrimSpace(a)
+		if len(a) > 0 {
+			subnets = strings.Split(a, ",")
+		}
+
+		// Cast the slice of strings to AWSSubnets object while distinguishing between subnet IDs and Names.
+		for _, subnet := range subnets {
+			if strings.HasPrefix(subnet, "subnet-") {
+				awsSubnets.IDs = append(awsSubnets.IDs, operatorv1.AWSSubnetID(subnet))
+			} else {
+				awsSubnets.Names = append(awsSubnets.Names, operatorv1.AWSSubnetName(subnet))
+			}
+		}
+	}
+
+	// Return nil if no subnets are found.
+	if len(awsSubnets.IDs) == 0 && len(awsSubnets.Names) == 0 {
+		return nil
+	}
+
+	return awsSubnets
+}
+
+// serviceSubnetsEqual compares the subnet annotations on two services to determine if they are equivalent,
+// ignoring the order of the subnets.
+func serviceSubnetsEqual(a, b *corev1.Service) bool {
+	return awsSubnetsEqual(getSubnetsFromServiceAnnotation(a), getSubnetsFromServiceAnnotation(b))
+}
+
+// awsSubnetsEqual compares two AWSSubnets objects and returns a boolean
+// whether they are equal are not. The order of the subnets is ignored.
+func awsSubnetsEqual(subnets1, subnets2 *operatorv1.AWSSubnets) bool {
+	// If they are both nil, they are equal.
+	if subnets1 == nil && subnets2 == nil {
+		return true
+	}
+
+	// If one is nil and the other is not, they are equal only if the non-nil one is empty.
+	if subnets1 == nil {
+		return len(subnets2.IDs) == 0 && len(subnets2.Names) == 0
+	}
+	if subnets2 == nil {
+		return len(subnets1.IDs) == 0 && len(subnets1.Names) == 0
+	}
+
+	// If they both are non-nil, compare the length first, then do a more detailed comparison if needed.
+	if len(subnets1.Names) != len(subnets2.Names) || len(subnets1.IDs) != len(subnets2.IDs) {
+		return false
+	}
+
+	// Create maps to track the IDs from each subnet object for comparison.
+	subnetIDMap1 := make(map[operatorv1.AWSSubnetID]struct{})
+	subnetIDMap2 := make(map[operatorv1.AWSSubnetID]struct{})
+	for _, id := range subnets1.IDs {
+		subnetIDMap1[id] = struct{}{}
+	}
+	for _, id := range subnets2.IDs {
+		subnetIDMap2[id] = struct{}{}
+	}
+	// Check if maps contain the same IDs.
+	for id := range subnetIDMap1 {
+		if _, found := subnetIDMap2[id]; !found {
+			return false
+		}
+	}
+	// Create maps to track the names from each subnet object for comparison.
+	subnetNameMap1 := make(map[operatorv1.AWSSubnetName]struct{})
+	subnetNameMap2 := make(map[operatorv1.AWSSubnetName]struct{})
+	for _, name := range subnets1.Names {
+		subnetNameMap1[name] = struct{}{}
+	}
+	for _, name := range subnets2.Names {
+		subnetNameMap2[name] = struct{}{}
+	}
+	// Check if maps contain the same names.
+	for name := range subnetNameMap1 {
+		if _, found := subnetNameMap2[name]; !found {
+			return false
+		}
+	}
+
+	return true
+}
+
+// awsSubnetsExist checks if any subnets exist in an AWSSubnets structure.
+func awsSubnetsExist(subnets *operatorv1.AWSSubnets) bool {
+	return subnets != nil && (len(subnets.Names) > 0 || len(subnets.IDs) > 0)
+}
+
+// JoinAWSSubnets joins an AWS Subnets object into a string seperated by sep.
+func JoinAWSSubnets(subnets *operatorv1.AWSSubnets, sep string) string {
+	if subnets == nil {
+		return ""
+	}
+	joinedSubnets := ""
+	subnetCount := 0
+	for _, subnet := range subnets.IDs {
+		if subnetCount > 0 {
+			joinedSubnets += sep
+		}
+		joinedSubnets += string(subnet)
+		subnetCount++
+	}
+	for _, subnet := range subnets.Names {
+		if subnetCount > 0 {
+			joinedSubnets += sep
+		}
+		joinedSubnets += string(subnet)
+		subnetCount++
+	}
+	return joinedSubnets
+}
+
+// getAWSLoadBalancerTypeInStatus gets the AWS Load Balancer Type reported in the status.
+func getAWSLoadBalancerTypeInStatus(ic *operatorv1.IngressController) operatorv1.AWSLoadBalancerType {
+	if ic.Status.EndpointPublishingStrategy != nil &&
+		ic.Status.EndpointPublishingStrategy.LoadBalancer != nil &&
+		ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters != nil &&
+		ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS != nil {
+		return ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.Type
+	}
+	return ""
+}
+
+// getAWSClassicLoadBalancerParametersInSpec gets the ClassicLoadBalancerParameter struct
+// defined in the IngressController spec.
+func getAWSClassicLoadBalancerParametersInSpec(ic *operatorv1.IngressController) *operatorv1.AWSClassicLoadBalancerParameters {
+	if ic.Spec.EndpointPublishingStrategy != nil &&
+		ic.Spec.EndpointPublishingStrategy.LoadBalancer != nil &&
+		ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters != nil &&
+		ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS != nil {
+		return ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.ClassicLoadBalancerParameters
+	}
+	return nil
+}
+
+// getAWSNetworkLoadBalancerParametersInSpec gets the NetworkLoadBalancerParameter struct
+// defined in the IngressController spec.
+func getAWSNetworkLoadBalancerParametersInSpec(ic *operatorv1.IngressController) *operatorv1.AWSNetworkLoadBalancerParameters {
+	if ic.Spec.EndpointPublishingStrategy != nil &&
+		ic.Spec.EndpointPublishingStrategy.LoadBalancer != nil &&
+		ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters != nil &&
+		ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS != nil {
+		return ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters
+	}
+	return nil
+}
+
+// getAWSClassicLoadBalancerParametersInStatus gets the ClassicLoadBalancerParameter struct
+// reported in the IngressController status.
+func getAWSClassicLoadBalancerParametersInStatus(ic *operatorv1.IngressController) *operatorv1.AWSClassicLoadBalancerParameters {
+	if ic.Status.EndpointPublishingStrategy != nil &&
+		ic.Status.EndpointPublishingStrategy.LoadBalancer != nil &&
+		ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters != nil &&
+		ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS != nil {
+		return ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.ClassicLoadBalancerParameters
+	}
+	return nil
+}
+
+// getAWSNetworkLoadBalancerParametersInStatus gets the NetworkLoadBalancerParameter struct
+// reported in the IngressController status.
+func getAWSNetworkLoadBalancerParametersInStatus(ic *operatorv1.IngressController) *operatorv1.AWSNetworkLoadBalancerParameters {
+	if ic.Status.EndpointPublishingStrategy != nil &&
+		ic.Status.EndpointPublishingStrategy.LoadBalancer != nil &&
+		ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters != nil &&
+		ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS != nil {
+		return ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters
+	}
+	return nil
 }

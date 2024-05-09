@@ -942,6 +942,7 @@ func createNamespace(t *testing.T, name string) *corev1.Namespace {
 
 // isFeatureGateEnabled returns a boolean for it the provided feature gate is enabled
 // and an error if unable to get feature gate.
+// Adapted from logic in https://github.com/openshift/origin/blob/c67fdc20626ad3178513621d2a114c482ab47fb6/pkg/clioptions/suiteselection/feature_filter.go#L18
 func isFeatureGateEnabled(featureGateName configv1.FeatureGateName) (bool, error) {
 	// Get desired cluster version.
 	version, err := getClusterVersion()
@@ -983,12 +984,79 @@ func isFeatureGateEnabled(featureGateName configv1.FeatureGateName) (bool, error
 // getClusterVersion returns the ClusterVersion if found.  If one is not found, it returns an error.
 func getClusterVersion() (*configv1.ClusterVersion, error) {
 	clusterVersion := &configv1.ClusterVersion{}
-	versionName := types.NamespacedName{"", "version"}
-	err := wait.PollImmediate(1*time.Second, 30*time.Second, func() (bool, error) {
-		if err := kclient.Get(context.TODO(), versionName, clusterVersion); err != nil {
+	versionName := types.NamespacedName{Name: "version"}
+	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, versionName, clusterVersion); err != nil {
 			return false, nil
 		}
 		return true, nil
 	})
 	return clusterVersion, err
+}
+
+// recreateIngressControllerService deletes the service for the IngressController and waits for it
+// to be recreated by the Ingress Operator.
+func recreateIngressControllerService(t *testing.T, ic *operatorv1.IngressController) error {
+	lbService := &corev1.Service{}
+	serviceName := controller.LoadBalancerServiceName(ic)
+	if err := kclient.Get(context.Background(), serviceName, lbService); err != nil {
+		return fmt.Errorf("failed to get service: %v", err)
+	}
+	oldUid := lbService.UID
+
+	if err := kclient.Delete(context.Background(), lbService); err != nil {
+		return fmt.Errorf("failed to delete service: %v", err)
+	}
+
+	// Wait for the service to be recreated by Ingress Operator.
+	err := wait.PollUntilContextTimeout(context.Background(), 10*time.Second, 3*time.Minute, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(context.Background(), controller.LoadBalancerServiceName(ic), lbService); err != nil {
+			t.Logf("failed to get service %s/%s: %v, retrying ...", serviceName.Namespace, serviceName.Namespace, err)
+			return false, nil
+		}
+		if oldUid == lbService.UID {
+			t.Logf("service %s/%s UID has not changed yet, retrying...", serviceName.Namespace, serviceName.Namespace)
+			return false, nil
+		}
+		return true, nil
+	})
+	return err
+}
+
+// classicLoadBalancerParametersSpecExist checks if ClassicLoadBalancerParameters exist in the IngressController spec.
+func classicLoadBalancerParametersSpecExist(ic *operatorv1.IngressController) bool {
+	return ic.Spec.EndpointPublishingStrategy != nil &&
+		ic.Spec.EndpointPublishingStrategy.LoadBalancer != nil &&
+		ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters != nil &&
+		ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS != nil &&
+		ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.ClassicLoadBalancerParameters != nil
+}
+
+// networkLoadBalancerParametersSpecExists checks if NetworkLoadBalancerParameters exist in the IngressController spec.
+func networkLoadBalancerParametersSpecExists(ic *operatorv1.IngressController) bool {
+	return ic.Spec.EndpointPublishingStrategy != nil &&
+		ic.Spec.EndpointPublishingStrategy.LoadBalancer != nil &&
+		ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters != nil &&
+		ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS != nil &&
+		ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters != nil
+}
+
+// networkLoadBalancerParametersStatusExist checks if NetworkLoadBalancerParameters exist in the IngressController
+// status.
+func networkLoadBalancerParametersStatusExist(ic *operatorv1.IngressController) bool {
+	return ic.Status.EndpointPublishingStrategy != nil &&
+		ic.Status.EndpointPublishingStrategy.LoadBalancer != nil &&
+		ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters != nil &&
+		ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS != nil &&
+		ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters != nil
+}
+
+// classicLoadBalancerParametersStatusExists checks if ClassicLoadBalancerParameters exist in the IngressController
+// status.
+func classicLoadBalancerParametersStatusExists(ic *operatorv1.IngressController) bool {
+	return ic.Status.EndpointPublishingStrategy != nil &&
+		ic.Status.EndpointPublishingStrategy.LoadBalancer != nil &&
+		ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters != nil &&
+		ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS != nil &&
+		ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.ClassicLoadBalancerParameters != nil
 }

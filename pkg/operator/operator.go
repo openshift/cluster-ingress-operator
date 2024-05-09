@@ -133,6 +133,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	sharedVPCEnabled := featureGates.Enabled(features.FeatureGatePrivateHostedZoneAWS)
 	gatewayAPIEnabled := featureGates.Enabled(features.FeatureGateGatewayAPI)
 	routeExternalCertificateEnabled := featureGates.Enabled(features.FeatureGateRouteExternalCertificate)
+	ingressControllerLBSubnetsAWSEnabled := featureGates.Enabled(features.FeatureGateIngressControllerLBSubnetsAWS)
 
 	// Set up an operator manager for the operator namespace.
 	mgr, err := manager.New(kubeConfig, manager.Options{
@@ -165,9 +166,10 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 
 	// Create and register the ingress controller with the operator manager.
 	if _, err := ingresscontroller.New(mgr, ingresscontroller.Config{
-		Namespace:                       config.Namespace,
-		IngressControllerImage:          config.IngressControllerImage,
-		RouteExternalCertificateEnabled: routeExternalCertificateEnabled,
+		Namespace:                            config.Namespace,
+		IngressControllerImage:               config.IngressControllerImage,
+		RouteExternalCertificateEnabled:      routeExternalCertificateEnabled,
+		IngressControllerLBSubnetsAWSEnabled: ingressControllerLBSubnetsAWSEnabled,
 	}); err != nil {
 		return nil, fmt.Errorf("failed to create ingress controller: %v", err)
 	}

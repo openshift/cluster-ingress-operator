@@ -654,6 +654,47 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 			},
 		},
 	}
+
+	loadBalancerIngressControllerWithAWSSubnets := func(lbType operatorv1.AWSLoadBalancerType, subnetSpec *operatorv1.AWSSubnets, subnetStatus *operatorv1.AWSSubnets) *operatorv1.IngressController {
+		eps := &operatorv1.EndpointPublishingStrategy{
+			Type: operatorv1.LoadBalancerServiceStrategyType,
+			LoadBalancer: &operatorv1.LoadBalancerStrategy{
+				Scope: operatorv1.ExternalLoadBalancer,
+				ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+					Type: operatorv1.AWSLoadBalancerProvider,
+					AWS: &operatorv1.AWSLoadBalancerParameters{
+						Type: lbType,
+					},
+				},
+			},
+		}
+		ic := &operatorv1.IngressController{
+			Spec: operatorv1.IngressControllerSpec{
+				EndpointPublishingStrategy: eps.DeepCopy(),
+			},
+			Status: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: eps.DeepCopy(),
+			},
+		}
+		switch lbType {
+		case operatorv1.AWSNetworkLoadBalancer:
+			ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{
+				Subnets: subnetSpec,
+			}
+			ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{
+				Subnets: subnetStatus,
+			}
+		case operatorv1.AWSClassicLoadBalancer:
+			ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.ClassicLoadBalancerParameters = &operatorv1.AWSClassicLoadBalancerParameters{
+				Subnets: subnetSpec,
+			}
+			ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.ClassicLoadBalancerParameters = &operatorv1.AWSClassicLoadBalancerParameters{
+				Subnets: subnetStatus,
+			}
+		}
+		return ic
+	}
+
 	loadBalancerIngressControllerWithInternalScope := operatorv1.IngressController{
 		Status: operatorv1.IngressControllerStatus{
 			EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
@@ -720,6 +761,7 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 		ic                          *operatorv1.IngressController
 		service                     *corev1.Service
 		platformStatus              *configv1.PlatformStatus
+		awsSubnetsEnabled           bool
 		expectStatus                operatorv1.ConditionStatus
 		expectMessageContains       string
 		expectMessageDoesNotContain string
@@ -800,10 +842,272 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 			platformStatus: awsPlatformStatus,
 			expectStatus:   operatorv1.ConditionFalse,
 		},
+		{
+			name: "NLB LoadBalancerService, AWS Subnets nil spec and nil status",
+			ic: loadBalancerIngressControllerWithAWSSubnets(
+				operatorv1.AWSNetworkLoadBalancer,
+				nil,
+				nil,
+			),
+			service:           &corev1.Service{},
+			awsSubnetsEnabled: true,
+			platformStatus:    awsPlatformStatus,
+			expectStatus:      operatorv1.ConditionFalse,
+		},
+		{
+			name: "NLB LoadBalancerService, AWS Subnets nil spec and empty status",
+			ic: loadBalancerIngressControllerWithAWSSubnets(
+				operatorv1.AWSNetworkLoadBalancer,
+				nil,
+				&operatorv1.AWSSubnets{},
+			),
+			service:           &corev1.Service{},
+			awsSubnetsEnabled: true,
+			platformStatus:    awsPlatformStatus,
+			expectStatus:      operatorv1.ConditionFalse,
+		},
+		{
+			name: "NLB LoadBalancerService, AWS Subnets spec with names and nil status, but feature gate disabled",
+			ic: loadBalancerIngressControllerWithAWSSubnets(
+				operatorv1.AWSNetworkLoadBalancer,
+				&operatorv1.AWSSubnets{
+					Names: []operatorv1.AWSSubnetName{"name-12345"},
+				},
+				nil,
+			),
+			service:           &corev1.Service{},
+			awsSubnetsEnabled: false,
+			platformStatus:    awsPlatformStatus,
+			expectStatus:      operatorv1.ConditionFalse,
+		},
+		{
+			name: "NLB LoadBalancerService, AWS Subnets spec with names and nil status",
+			ic: loadBalancerIngressControllerWithAWSSubnets(
+				operatorv1.AWSNetworkLoadBalancer,
+				&operatorv1.AWSSubnets{
+					Names: []operatorv1.AWSSubnetName{"name-12345"},
+				},
+				nil,
+			),
+			service:           &corev1.Service{},
+			awsSubnetsEnabled: true,
+			platformStatus:    awsPlatformStatus,
+			expectStatus:      operatorv1.ConditionTrue,
+		},
+		{
+			name: "NLB LoadBalancerService, AWS Subnets nil spec and status with ids",
+			ic: loadBalancerIngressControllerWithAWSSubnets(
+				operatorv1.AWSNetworkLoadBalancer,
+				nil,
+				&operatorv1.AWSSubnets{
+					IDs: []operatorv1.AWSSubnetID{"subnet-12345"},
+				},
+			),
+			service:           &corev1.Service{},
+			awsSubnetsEnabled: true,
+			platformStatus:    awsPlatformStatus,
+			expectStatus:      operatorv1.ConditionTrue,
+		},
+		{
+			name: "NLB LoadBalancerService, AWS Subnets spec and status are equal",
+			ic: loadBalancerIngressControllerWithAWSSubnets(
+				operatorv1.AWSNetworkLoadBalancer,
+				&operatorv1.AWSSubnets{
+					IDs:   []operatorv1.AWSSubnetID{"subnet-12345"},
+					Names: []operatorv1.AWSSubnetName{"name-12345"},
+				},
+				&operatorv1.AWSSubnets{
+					IDs:   []operatorv1.AWSSubnetID{"subnet-12345"},
+					Names: []operatorv1.AWSSubnetName{"name-12345"},
+				},
+			),
+			service:           &corev1.Service{},
+			awsSubnetsEnabled: true,
+			platformStatus:    awsPlatformStatus,
+			expectStatus:      operatorv1.ConditionFalse,
+		},
+		{
+			name: "NLB LoadBalancerService, AWS Subnets spec and status are NOT equal",
+			ic: loadBalancerIngressControllerWithAWSSubnets(
+				operatorv1.AWSNetworkLoadBalancer,
+				&operatorv1.AWSSubnets{
+					IDs:   []operatorv1.AWSSubnetID{"subnet-12345"},
+					Names: []operatorv1.AWSSubnetName{"name-12345"},
+				},
+				&operatorv1.AWSSubnets{
+					IDs:   []operatorv1.AWSSubnetID{"subnet-67890"},
+					Names: []operatorv1.AWSSubnetName{"name-67890"},
+				},
+			),
+			service:           &corev1.Service{},
+			awsSubnetsEnabled: true,
+			platformStatus:    awsPlatformStatus,
+			expectStatus:      operatorv1.ConditionTrue,
+		},
+		{
+			name: "NLB LoadBalancerService, AWS Subnets spec and status are equal with different order",
+			ic: loadBalancerIngressControllerWithAWSSubnets(
+				operatorv1.AWSNetworkLoadBalancer,
+				&operatorv1.AWSSubnets{
+					IDs:   []operatorv1.AWSSubnetID{"subnet-12345", "subnet-67890"},
+					Names: []operatorv1.AWSSubnetName{"name-12345", "name-67890"},
+				},
+				&operatorv1.AWSSubnets{
+					IDs:   []operatorv1.AWSSubnetID{"subnet-67890", "subnet-12345"},
+					Names: []operatorv1.AWSSubnetName{"name-67890", "name-12345"},
+				},
+			),
+			service:           &corev1.Service{},
+			awsSubnetsEnabled: true,
+			platformStatus:    awsPlatformStatus,
+			expectStatus:      operatorv1.ConditionFalse,
+		},
+		{
+			name: "NLB LoadBalancerService, AWS Subnets spec and status have extra items",
+			ic: loadBalancerIngressControllerWithAWSSubnets(
+				operatorv1.AWSNetworkLoadBalancer,
+				&operatorv1.AWSSubnets{
+					IDs:   []operatorv1.AWSSubnetID{"subnet-67890", "subnet-12345", "subnet-54321"},
+					Names: []operatorv1.AWSSubnetName{"name-12345", "name-67890"},
+				},
+				&operatorv1.AWSSubnets{
+					IDs:   []operatorv1.AWSSubnetID{"subnet-12345", "subnet-67890"},
+					Names: []operatorv1.AWSSubnetName{"name-67890", "name-12345", "name-54321"},
+				},
+			),
+			service:           &corev1.Service{},
+			awsSubnetsEnabled: true,
+			platformStatus:    awsPlatformStatus,
+			expectStatus:      operatorv1.ConditionTrue,
+		},
+		{
+			name: "CLB LoadBalancerService, AWS Subnets nil spec and nil status",
+			ic: loadBalancerIngressControllerWithAWSSubnets(
+				operatorv1.AWSClassicLoadBalancer,
+				nil,
+				nil,
+			),
+			service:           &corev1.Service{},
+			awsSubnetsEnabled: true,
+			platformStatus:    awsPlatformStatus,
+			expectStatus:      operatorv1.ConditionFalse,
+		},
+		{
+			name: "CLB LoadBalancerService, AWS Subnets nil spec and empty status",
+			ic: loadBalancerIngressControllerWithAWSSubnets(
+				operatorv1.AWSClassicLoadBalancer,
+				nil,
+				&operatorv1.AWSSubnets{},
+			),
+			service:           &corev1.Service{},
+			awsSubnetsEnabled: true,
+			platformStatus:    awsPlatformStatus,
+			expectStatus:      operatorv1.ConditionFalse,
+		},
+		{
+			name: "CLB LoadBalancerService, AWS Subnets spec with names and nil status",
+			ic: loadBalancerIngressControllerWithAWSSubnets(
+				operatorv1.AWSClassicLoadBalancer,
+				&operatorv1.AWSSubnets{
+					Names: []operatorv1.AWSSubnetName{"name-12345"},
+				},
+				nil,
+			),
+			service:           &corev1.Service{},
+			awsSubnetsEnabled: true,
+			platformStatus:    awsPlatformStatus,
+			expectStatus:      operatorv1.ConditionTrue,
+		},
+		{
+			name: "CLB LoadBalancerService, AWS Subnets nil spec and status with ids",
+			ic: loadBalancerIngressControllerWithAWSSubnets(
+				operatorv1.AWSClassicLoadBalancer,
+				nil,
+				&operatorv1.AWSSubnets{
+					IDs: []operatorv1.AWSSubnetID{"subnet-12345"},
+				},
+			),
+			service:           &corev1.Service{},
+			awsSubnetsEnabled: true,
+			platformStatus:    awsPlatformStatus,
+			expectStatus:      operatorv1.ConditionTrue,
+		},
+		{
+			name: "CLB LoadBalancerService, AWS Subnets spec and status are equal",
+			ic: loadBalancerIngressControllerWithAWSSubnets(
+				operatorv1.AWSClassicLoadBalancer,
+				&operatorv1.AWSSubnets{
+					IDs:   []operatorv1.AWSSubnetID{"subnet-12345"},
+					Names: []operatorv1.AWSSubnetName{"name-12345"},
+				},
+				&operatorv1.AWSSubnets{
+					IDs:   []operatorv1.AWSSubnetID{"subnet-12345"},
+					Names: []operatorv1.AWSSubnetName{"name-12345"},
+				},
+			),
+			service:           &corev1.Service{},
+			awsSubnetsEnabled: true,
+			platformStatus:    awsPlatformStatus,
+			expectStatus:      operatorv1.ConditionFalse,
+		},
+		{
+			name: "CLB LoadBalancerService, AWS Subnets spec and status are NOT equal",
+			ic: loadBalancerIngressControllerWithAWSSubnets(
+				operatorv1.AWSClassicLoadBalancer,
+				&operatorv1.AWSSubnets{
+					IDs:   []operatorv1.AWSSubnetID{"subnet-12345"},
+					Names: []operatorv1.AWSSubnetName{"name-12345"},
+				},
+				&operatorv1.AWSSubnets{
+					IDs:   []operatorv1.AWSSubnetID{"subnet-67890"},
+					Names: []operatorv1.AWSSubnetName{"name-67890"},
+				},
+			),
+			service:           &corev1.Service{},
+			awsSubnetsEnabled: true,
+			platformStatus:    awsPlatformStatus,
+			expectStatus:      operatorv1.ConditionTrue,
+		},
+		{
+			name: "CLB LoadBalancerService, AWS Subnets spec and status are equal with different order",
+			ic: loadBalancerIngressControllerWithAWSSubnets(
+				operatorv1.AWSClassicLoadBalancer,
+				&operatorv1.AWSSubnets{
+					IDs:   []operatorv1.AWSSubnetID{"subnet-12345", "subnet-67890"},
+					Names: []operatorv1.AWSSubnetName{"name-12345", "name-67890"},
+				},
+				&operatorv1.AWSSubnets{
+					IDs:   []operatorv1.AWSSubnetID{"subnet-67890", "subnet-12345"},
+					Names: []operatorv1.AWSSubnetName{"name-67890", "name-12345"},
+				},
+			),
+			service:           &corev1.Service{},
+			awsSubnetsEnabled: true,
+			platformStatus:    awsPlatformStatus,
+			expectStatus:      operatorv1.ConditionFalse,
+		},
+		{
+			name: "CLB LoadBalancerService, AWS Subnets spec and status have extra items",
+			ic: loadBalancerIngressControllerWithAWSSubnets(
+				operatorv1.AWSClassicLoadBalancer,
+				&operatorv1.AWSSubnets{
+					IDs:   []operatorv1.AWSSubnetID{"subnet-67890", "subnet-12345", "subnet-54321"},
+					Names: []operatorv1.AWSSubnetName{"name-12345", "name-67890"},
+				},
+				&operatorv1.AWSSubnets{
+					IDs:   []operatorv1.AWSSubnetID{"subnet-12345", "subnet-67890"},
+					Names: []operatorv1.AWSSubnetName{"name-67890", "name-12345", "name-54321"},
+				},
+			),
+			service:           &corev1.Service{},
+			awsSubnetsEnabled: true,
+			platformStatus:    awsPlatformStatus,
+			expectStatus:      operatorv1.ConditionTrue,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			actual := computeLoadBalancerProgressingStatus(test.ic, test.service, test.platformStatus)
+			actual := computeLoadBalancerProgressingStatus(test.ic, test.service, test.platformStatus, test.awsSubnetsEnabled)
 			if actual.Status != test.expectStatus {
 				t.Errorf("expected status to be %s, got %s", test.expectStatus, actual.Status)
 			}
@@ -1427,7 +1731,32 @@ func Test_computeIngressAvailableCondition(t *testing.T) {
 	}
 }
 
-func Test_ingressStatusesEqual(t *testing.T) {
+func Test_IngressStatusesEqual(t *testing.T) {
+	icStatusWithSubnets := func(lbType operatorv1.AWSLoadBalancerType, subnets *operatorv1.AWSSubnets) operatorv1.IngressControllerStatus {
+		icStatus := operatorv1.IngressControllerStatus{
+			EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.LoadBalancerServiceStrategyType,
+				LoadBalancer: &operatorv1.LoadBalancerStrategy{
+					ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+						AWS: &operatorv1.AWSLoadBalancerParameters{
+							Type: lbType,
+						},
+					},
+				},
+			},
+		}
+		switch lbType {
+		case operatorv1.AWSNetworkLoadBalancer:
+			icStatus.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{
+				Subnets: subnets,
+			}
+		case operatorv1.AWSClassicLoadBalancer:
+			icStatus.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.ClassicLoadBalancerParameters = &operatorv1.AWSClassicLoadBalancerParameters{
+				Subnets: subnets,
+			}
+		}
+		return icStatus
+	}
 	testCases := []struct {
 		description string
 		expected    bool
@@ -1537,6 +1866,134 @@ func Test_ingressStatusesEqual(t *testing.T) {
 					},
 				},
 			},
+		},
+		{
+			description: "NLB Subnets names changed",
+			expected:    false,
+			a: icStatusWithSubnets(
+				operatorv1.AWSNetworkLoadBalancer,
+				&operatorv1.AWSSubnets{
+					Names: []operatorv1.AWSSubnetName{"name-567890"},
+				},
+			),
+			b: icStatusWithSubnets(
+				operatorv1.AWSNetworkLoadBalancer,
+				&operatorv1.AWSSubnets{
+					Names: []operatorv1.AWSSubnetName{"name-123456"},
+				},
+			),
+		},
+		{
+			description: "NLB Subnets names changed with multiple",
+			expected:    false,
+			a: icStatusWithSubnets(
+				operatorv1.AWSNetworkLoadBalancer,
+				&operatorv1.AWSSubnets{
+					Names: []operatorv1.AWSSubnetName{"name-123456", "name-890123"},
+				},
+			),
+			b: icStatusWithSubnets(
+				operatorv1.AWSNetworkLoadBalancer,
+				&operatorv1.AWSSubnets{
+					Names: []operatorv1.AWSSubnetName{"name-123456"},
+				},
+			),
+		},
+		{
+			description: "NLB Subnets names equal",
+			expected:    true,
+			a: icStatusWithSubnets(
+				operatorv1.AWSNetworkLoadBalancer,
+				&operatorv1.AWSSubnets{
+					Names: []operatorv1.AWSSubnetName{"name-123456"},
+				},
+			),
+			b: icStatusWithSubnets(
+				operatorv1.AWSNetworkLoadBalancer,
+				&operatorv1.AWSSubnets{
+					Names: []operatorv1.AWSSubnetName{"name-123456"},
+				},
+			),
+		},
+		{
+			description: "NLB Subnets different order names equal",
+			expected:    true,
+			a: icStatusWithSubnets(
+				operatorv1.AWSNetworkLoadBalancer,
+				&operatorv1.AWSSubnets{
+					Names: []operatorv1.AWSSubnetName{"name-123456", "name-890123"},
+				},
+			),
+			b: icStatusWithSubnets(
+				operatorv1.AWSNetworkLoadBalancer,
+				&operatorv1.AWSSubnets{
+					Names: []operatorv1.AWSSubnetName{"name-890123", "name-123456"},
+				},
+			),
+		},
+		{
+			description: "CLB Subnets IDs changed",
+			expected:    false,
+			a: icStatusWithSubnets(
+				operatorv1.AWSClassicLoadBalancer,
+				&operatorv1.AWSSubnets{
+					IDs: []operatorv1.AWSSubnetID{"subnet-890123"},
+				},
+			),
+			b: icStatusWithSubnets(
+				operatorv1.AWSClassicLoadBalancer,
+				&operatorv1.AWSSubnets{
+					IDs: []operatorv1.AWSSubnetID{"subnet-123456"},
+				},
+			),
+		},
+		{
+			description: "CLB Subnets IDs changed with multiple",
+			expected:    false,
+			a: icStatusWithSubnets(
+				operatorv1.AWSClassicLoadBalancer,
+				&operatorv1.AWSSubnets{
+					IDs: []operatorv1.AWSSubnetID{"subnet-123456", "subnet-890123"},
+				},
+			),
+			b: icStatusWithSubnets(
+				operatorv1.AWSClassicLoadBalancer,
+				&operatorv1.AWSSubnets{
+					IDs: []operatorv1.AWSSubnetID{"subnet-123456"},
+				},
+			),
+		},
+		{
+			description: "CLB Subnets IDs equal",
+			expected:    true,
+			a: icStatusWithSubnets(
+				operatorv1.AWSClassicLoadBalancer,
+				&operatorv1.AWSSubnets{
+					IDs: []operatorv1.AWSSubnetID{"name-123456"},
+				},
+			),
+			b: icStatusWithSubnets(
+				operatorv1.AWSClassicLoadBalancer,
+				&operatorv1.AWSSubnets{
+					IDs: []operatorv1.AWSSubnetID{"name-123456"},
+				},
+			),
+		},
+		{
+			description: "CLB Subnets different order IDs equal",
+			expected:    true,
+			a: icStatusWithSubnets(
+				operatorv1.AWSClassicLoadBalancer,
+				&operatorv1.AWSSubnets{
+					IDs: []operatorv1.AWSSubnetID{"subnet-123456", "subnet-890123"},
+				},
+			),
+			b: icStatusWithSubnets(
+				operatorv1.AWSClassicLoadBalancer,
+				&operatorv1.AWSSubnets{
+					IDs: []operatorv1.AWSSubnetID{"subnet-890123", "subnet-123456"},
+				},
+			),
 		},
 	}
 
@@ -2319,7 +2776,7 @@ func Test_computeIngressUpgradeableCondition(t *testing.T) {
 					},
 				},
 			}
-			wantSvc, service, err := desiredLoadBalancerService(ic, deploymentRef, platformStatus)
+			wantSvc, service, err := desiredLoadBalancerService(ic, deploymentRef, platformStatus, true)
 			if err != nil {
 				t.Errorf("unexpected error from desiredLoadBalancerService: %v", err)
 				return
@@ -2341,7 +2798,7 @@ func Test_computeIngressUpgradeableCondition(t *testing.T) {
 				expectedStatus = operatorv1.ConditionTrue
 			}
 
-			actual := computeIngressUpgradeableCondition(ic, deploymentRef, service, platformStatus, secret)
+			actual := computeIngressUpgradeableCondition(ic, deploymentRef, service, platformStatus, secret, true)
 			if actual.Status != expectedStatus {
 				t.Errorf("expected Upgradeable to be %q, got %q", expectedStatus, actual.Status)
 			}
@@ -2429,7 +2886,7 @@ func Test_computeIngressEvaluationConditionsDetectedCondition(t *testing.T) {
 				},
 			}
 
-			wantSvc, service, err := desiredLoadBalancerService(ic, deploymentRef, platformStatus)
+			wantSvc, service, err := desiredLoadBalancerService(ic, deploymentRef, platformStatus, true)
 			if err != nil {
 				t.Fatalf("unexpected error from desiredLoadBalancerService: %v", err)
 			}
