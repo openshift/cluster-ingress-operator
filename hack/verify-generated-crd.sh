@@ -11,7 +11,7 @@ function verify_crd {
 }
 
 verify_crd \
-  "vendor/github.com/openshift/api/operator/v1/zz_generated.crd-manifests/0000_50_ingress_00_ingresscontrollers.crd.yaml" \
+  "vendor/github.com/openshift/api/operator/v1/zz_generated.crd-manifests/0000_50_ingress_00_ingresscontrollers-Default.crd.yaml" \
   "manifests/00-custom-resource-definition.yaml"
 
 verify_crd \
