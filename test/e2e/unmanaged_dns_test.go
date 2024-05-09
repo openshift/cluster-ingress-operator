@@ -71,8 +71,9 @@ func TestUnmanagedDNSToManagedDNSIngressController(t *testing.T) {
 	verifyUnmanagedDNSRecordStatus(t, wildcardRecord)
 
 	testNamespace := types.NamespacedName{Name: name.Name + "-initial", Namespace: name.Namespace}
-	verifyExternalIngressController(t, testNamespace, "apps."+ic.Spec.Domain, wildcardRecord.Spec.Targets[0])
-
+	if err := verifyExternalIngressController(t, testNamespace, "apps."+ic.Spec.Domain, wildcardRecord.Spec.Targets[0], 10*time.Minute); err != nil {
+		t.Fatalf("failed to verify connectivity with workload with hostname %s using external client: %v", "apps."+ic.Spec.Domain, err)
+	}
 	t.Logf("Updating ingresscontroller %s to dnsManagementPolicy=Managed", ic.Name)
 
 	if err := updateIngressControllerWithRetryOnConflict(t, name, 5*time.Minute, func(ic *operatorv1.IngressController) {
@@ -102,7 +103,9 @@ func TestUnmanagedDNSToManagedDNSIngressController(t *testing.T) {
 	}
 
 	testNamespace = types.NamespacedName{Name: name.Name + "-final", Namespace: name.Namespace}
-	verifyExternalIngressController(t, testNamespace, "apps."+ic.Spec.Domain, wildcardRecord.Spec.Targets[0])
+	if err := verifyExternalIngressController(t, testNamespace, "apps."+ic.Spec.Domain, wildcardRecord.Spec.Targets[0], 10*time.Minute); err != nil {
+		t.Fatalf("failed to verify connectivity with workload with hostname %s using external client: %v", "apps."+ic.Spec.Domain, err)
+	}
 }
 
 func TestManagedDNSToUnmanagedDNSIngressController(t *testing.T) {
@@ -143,7 +146,9 @@ func TestManagedDNSToUnmanagedDNSIngressController(t *testing.T) {
 	}
 
 	testNamespace := types.NamespacedName{Name: name.Name + "-initial", Namespace: name.Namespace}
-	verifyExternalIngressController(t, testNamespace, "apps."+ic.Spec.Domain, wildcardRecord.Spec.Targets[0])
+	if err := verifyExternalIngressController(t, testNamespace, "apps."+ic.Spec.Domain, wildcardRecord.Spec.Targets[0], 10*time.Minute); err != nil {
+		t.Fatalf("failed to verify connectivity with workload with hostname %s using external client: %v", "apps."+ic.Spec.Domain, err)
+	}
 	t.Logf("Updating ingresscontroller %s to dnsManagementPolicy=Unmanaged", ic.Name)
 
 	// Updating the ingresscontroller's DNSManagementPolicy to Unmanaged, meaning
@@ -181,7 +186,9 @@ func TestManagedDNSToUnmanagedDNSIngressController(t *testing.T) {
 	// dnsManagementPolicy=Managed was set are not used to verify the ingresscontroller (but they
 	// will continue to exist unless they are manually deleted).
 	testNamespace = types.NamespacedName{Name: name.Name + "-final", Namespace: name.Namespace}
-	verifyExternalIngressController(t, testNamespace, "apps."+ic.Spec.Domain, wildcardRecord.Spec.Targets[0])
+	if err := verifyExternalIngressController(t, testNamespace, "apps."+ic.Spec.Domain, wildcardRecord.Spec.Targets[0], 10*time.Minute); err != nil {
+		t.Fatalf("failed to verify connectivity with workload with hostname %s using external client: %v", "apps."+ic.Spec.Domain, err)
+	}
 }
 
 // TestUnmanagedDNSToManagedDNSInternalIngressController tests dnsManagementPolicy during
@@ -314,7 +321,9 @@ func TestUnmanagedDNSToManagedDNSInternalIngressController(t *testing.T) {
 	}
 
 	testNamespace = types.NamespacedName{Name: name.Name + "-final", Namespace: name.Namespace}
-	verifyExternalIngressController(t, testNamespace, "apps."+ic.Spec.Domain, wildcardRecord.Spec.Targets[0])
+	if err := verifyExternalIngressController(t, testNamespace, "apps."+ic.Spec.Domain, wildcardRecord.Spec.Targets[0], 10*time.Minute); err != nil {
+		t.Fatalf("failed to verify connectivity with workload with hostname %s using external client: %v", "apps."+ic.Spec.Domain, err)
+	}
 }
 
 func verifyUnmanagedDNSRecordStatus(t *testing.T, record *iov1.DNSRecord) {

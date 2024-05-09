@@ -85,6 +85,9 @@ const (
 	// connections for a Classic ELB.
 	awsELBConnectionIdleTimeoutAnnotation = "service.beta.kubernetes.io/aws-load-balancer-connection-idle-timeout"
 
+	// awsLBSubnetsAnnotation specifies a list of subnets for both NLBs and CLBs.
+	awsLBSubnetsAnnotation = "service.beta.kubernetes.io/aws-load-balancer-subnets"
+
 	// iksLBScopeAnnotation is the annotation used on a service to specify an IBM
 	// load balancer IP type.
 	iksLBScopeAnnotation = "service.kubernetes.io/ibm-load-balancer-cloud-provider-ip-type"
@@ -137,8 +140,8 @@ const (
 
 	// autoDeleteLoadBalancerAnnotation is an annotation that can be set on
 	// an IngressController to indicate that the operator should
-	// automatically delete any associated service load-balancer when its
-	// scope changes if changing scope requires deleting service
+	// automatically delete any associated service load-balancer when a
+	// configuration is changed that requires deleting the service
 	// load-balancers on the current platform.
 	autoDeleteLoadBalancerAnnotation = "ingress.operator.openshift.io/auto-delete-load-balancer"
 )
@@ -273,7 +276,7 @@ var (
 // Always returns the current LB service if one exists (whether it already
 // existed or was created during the course of the function).
 func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, platformStatus *configv1.PlatformStatus) (bool, *corev1.Service, error) {
-	wantLBS, desiredLBService, err := desiredLoadBalancerService(ci, deploymentRef, platformStatus)
+	wantLBS, desiredLBService, err := desiredLoadBalancerService(ci, deploymentRef, platformStatus, r.config.IngressControllerLBSubnetsAWSEnabled)
 	if err != nil {
 		return false, nil, err
 	}
@@ -314,11 +317,11 @@ func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController,
 				return haveLBS, currentLBService, err
 			}
 		}
-		deleteIfScopeChanged := false
+		autoDeleteLB := false
 		if _, ok := ci.Annotations[autoDeleteLoadBalancerAnnotation]; ok {
-			deleteIfScopeChanged = true
+			autoDeleteLB = true
 		}
-		if updated, err := r.updateLoadBalancerService(currentLBService, desiredLBService, platformStatus, deleteIfScopeChanged); err != nil {
+		if updated, err := r.updateLoadBalancerService(currentLBService, desiredLBService, platformStatus, autoDeleteLB); err != nil {
 			return true, currentLBService, fmt.Errorf("failed to update load balancer service: %v", err)
 		} else if updated {
 			return r.currentLoadBalancerService(ci)
@@ -339,7 +342,7 @@ func isServiceOwnedByIngressController(service *corev1.Service, ic *operatorv1.I
 // ingresscontroller, or nil if an LB service isn't desired. An LB service is
 // desired if the high availability type is Cloud. An LB service will declare an
 // owner reference to the given deployment.
-func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, platform *configv1.PlatformStatus) (bool, *corev1.Service, error) {
+func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, platform *configv1.PlatformStatus, subnetsAWSEnabled bool) (bool, *corev1.Service, error) {
 	if ci.Status.EndpointPublishingStrategy.Type != operatorv1.LoadBalancerServiceStrategyType {
 		return false, nil, nil
 	}
@@ -466,6 +469,13 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 			}
 			service.Spec.LoadBalancerSourceRanges = cidrs
 		}
+
+		if lb != nil && lb.ProviderParameters != nil && lb.ProviderParameters.AWS != nil {
+			if subnetsAWSEnabled && lb.ProviderParameters.AWS.Subnets != nil &&
+				len(lb.ProviderParameters.AWS.Subnets.Names)+len(lb.ProviderParameters.AWS.Subnets.IDs) > 0 {
+				service.Annotations[awsLBSubnetsAnnotation] = JoinAWSSubnets(lb.ProviderParameters.AWS.Subnets, ",")
+			}
+		}
 	}
 
 	service.SetOwnerReferences([]metav1.OwnerReference{deploymentRef})
@@ -568,10 +578,9 @@ func (r *reconciler) deleteLoadBalancerService(service *corev1.Service, options 
 
 // updateLoadBalancerService updates a load balancer service.  Returns a Boolean
 // indicating whether the service was updated, and an error value.
-func (r *reconciler) updateLoadBalancerService(current, desired *corev1.Service, platform *configv1.PlatformStatus, deleteIfScopeChanged bool) (bool, error) {
-	_, platformHasMutableScope := platformsWithMutableScope[platform.Type]
-	if !platformHasMutableScope && deleteIfScopeChanged && !scopeEqual(current, desired, platform) {
-		log.Info("deleting and recreating the load balancer because its scope changed", "namespace", desired.Namespace, "name", desired.Name)
+func (r *reconciler) updateLoadBalancerService(current, desired *corev1.Service, platform *configv1.PlatformStatus, autoDeleteLB bool) (bool, error) {
+	if shouldRecreateLB, reason := shouldRecreateLoadBalancer(current, desired, platform); shouldRecreateLB && autoDeleteLB {
+		log.Info("deleting and recreating the load balancer because "+reason, "namespace", desired.Namespace, "name", desired.Name)
 		foreground := metav1.DeletePropagationForeground
 		deleteOptions := crclient.DeleteOptions{PropagationPolicy: &foreground}
 		if err := r.deleteLoadBalancerService(current, &deleteOptions); err != nil {
@@ -618,6 +627,19 @@ func scopeEqual(a, b *corev1.Service, platform *configv1.PlatformStatus) bool {
 		}
 	}
 	return true
+}
+
+// shouldRecreateLoadBalancer determines whether a load balancer needs to be
+// recreated and returns the reason for its recreation.
+func shouldRecreateLoadBalancer(current, desired *corev1.Service, platform *configv1.PlatformStatus) (bool, string) {
+	_, platformHasMutableScope := platformsWithMutableScope[platform.Type]
+	if !platformHasMutableScope && !scopeEqual(current, desired, platform) {
+		return true, "its scope changed"
+	}
+	if platform.Type == configv1.AWSPlatformType && current.Annotations[awsLBSubnetsAnnotation] != desired.Annotations[awsLBSubnetsAnnotation] {
+		return true, "its subnets changed"
+	}
+	return false, ""
 }
 
 // loadBalancerServiceChanged checks if the current load balancer service
@@ -719,8 +741,8 @@ func loadBalancerServiceTagsModified(current, expected *corev1.Service) (bool, *
 // return value is nil.  Otherwise, if something or someone else has modified
 // the service, then the return value is a non-nil error indicating that the
 // modification must be reverted before upgrading is allowed.
-func loadBalancerServiceIsUpgradeable(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference, current *corev1.Service, platform *configv1.PlatformStatus) error {
-	want, desired, err := desiredLoadBalancerService(ic, deploymentRef, platform)
+func loadBalancerServiceIsUpgradeable(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference, current *corev1.Service, platform *configv1.PlatformStatus, subnetsAWSEnabled bool) error {
+	want, desired, err := desiredLoadBalancerService(ic, deploymentRef, platform, subnetsAWSEnabled)
 	if err != nil {
 		return err
 	}
@@ -751,8 +773,27 @@ func loadBalancerServiceIsProgressing(ic *operatorv1.IngressController, service 
 		err := fmt.Errorf("The IngressController scope was changed from %q to %q.", haveScope, wantScope)
 		switch platform.Type {
 		case configv1.AWSPlatformType, configv1.IBMCloudPlatformType:
-			err = fmt.Errorf("%[1]s  To effectuate this change, you must delete the service: `oc -n %[2]s delete svc/%[3]s`; the service load-balancer will then be deprovisioned and a new one created.  This will most likely cause the new load-balancer to have a different host name and IP address from the old one's.  Alternatively, you can revert the change to the IngressController: `oc -n openshift-ingress-operator patch ingresscontrollers/%[4]s --type=merge --patch='{\"spec\":{\"endpointPublishingStrategy\":{\"loadBalancer\":{\"scope\":\"%[5]s\"}}}}'", err.Error(), service.Namespace, service.Name, ic.Name, haveScope)
+			err = fmt.Errorf("%[1]s  To effectuate this change, you must delete the service: `oc -n %[2]s delete svc/%[3]s`; the service load-balancer will then be deprovisioned and a new one created.  This will most likely cause the new load-balancer to have a different host name and IP address from the old one's.  Alternatively, you can revert the change to the IngressController: `oc -n openshift-ingress-operator patch ingresscontrollers/%[4]s --type=merge --patch='{\"spec\":{\"endpointPublishingStrategy\":{\"loadBalancer\":{\"scope\":\"%[5]s\"}}}}'`", err.Error(), service.Namespace, service.Name, ic.Name, haveScope)
 		}
+		errs = append(errs, err)
+	}
+
+	var wantSubnets, haveSubnets *operatorv1.AWSSubnets
+	if ic.Spec.EndpointPublishingStrategy != nil &&
+		ic.Spec.EndpointPublishingStrategy.LoadBalancer != nil &&
+		ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters != nil &&
+		ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS != nil {
+		wantSubnets = ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.Subnets
+	}
+	if ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters != nil &&
+		ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS != nil {
+		haveSubnets = ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.Subnets
+	}
+	if !compareSubnets(wantSubnets, haveSubnets) {
+		haveSubnetsJson := convertAWSSubnetListToJson(haveSubnets)
+		wantSubnetsJson := convertAWSSubnetListToJson(wantSubnets)
+		err := fmt.Errorf("The IngressController subnets were changed from %q to %q.", haveSubnetsJson, wantSubnetsJson)
+		err = fmt.Errorf("%[1]s  To effectuate this change, you must delete the service: `oc -n %[2]s delete svc/%[3]s`; the service load-balancer will then be deprovisioned and a new one created. This will most likely cause the new load-balancer to have a different host name and IP address and cause disruption. To return to the previous state, you can revert the change to the IngressController: `oc -n openshift-ingress-operator patch ingresscontrollers/%[4]s --type=merge --patch='{\"spec\":{\"endpointPublishingStrategy\":{\"type\":\"LoadBalancerService\",\"loadBalancer\":{\"providerParameters\":{\"type\":\"AWS\",\"aws\":{\"type\":\"Classic\",\"subnets\":%[5]s}}}}}}'`", err.Error(), service.Namespace, service.Name, ic.Name, haveSubnetsJson)
 		errs = append(errs, err)
 	}
 
@@ -760,6 +801,40 @@ func loadBalancerServiceIsProgressing(ic *operatorv1.IngressController, service 
 	errs = append(errs, loadBalancerSourceRangesMatch(ic, service))
 
 	return kerrors.NewAggregate(errs)
+}
+
+// convertAWSSubnetListToJson converts an AWSSubnets object to a JSON formatted string
+// to build an oc patch command. It defaults nil slices to empty JSON arrays [] in order
+// for the oc patch command to appropriately overwrite values.
+func convertAWSSubnetListToJson(subnets *operatorv1.AWSSubnets) string {
+	// Default subnet names and IDs to empty JSON array.
+	namesJSON := "[]"
+	idsJSON := "[]"
+	if subnets != nil {
+		// Marshal names and IDs separately.
+		if len(subnets.Names) > 0 {
+			var err error
+			namesJSONBytes, err := json.Marshal(subnets.Names)
+			if err != nil {
+				log.Error(err, "error marshaling subnet names")
+				return ""
+			}
+			namesJSON = string(namesJSONBytes)
+		}
+		if len(subnets.IDs) > 0 {
+			var err error
+			idsJSONBytes, err := json.Marshal(subnets.IDs)
+			if err != nil {
+				log.Error(err, "error marshaling subnet IDs")
+				return ""
+			}
+			idsJSON = string(idsJSONBytes)
+		}
+	}
+
+	// Combine the JSON of subnet names and IDs.
+	resultJSON := fmt.Sprintf("{\"ids\":%s,\"names\":%s}", idsJSON, namesJSON)
+	return resultJSON
 }
 
 // loadBalancerServiceEvaluationConditionsDetected returns an error value indicating if the
@@ -811,4 +886,102 @@ func loadBalancerSourceRangesMatch(ic *operatorv1.IngressController, current *co
 	}
 
 	return fmt.Errorf("You have manually edited an operator-managed object. You must revert your modifications by removing the Spec.LoadBalancerSourceRanges field of LoadBalancer-typed service %q. You can use the new AllowedSourceRanges API field on the ingresscontroller to configure this setting instead.", current.Name)
+}
+
+// getLBSubnets gets the effective subnets by looking at the service.beta.kubernetes.io/aws-load-balancer-subnets
+// annotation of the LoadBalancer-type Service.
+func getLBSubnets(service *corev1.Service) *operatorv1.AWSSubnets {
+	if service == nil {
+		return nil
+	}
+
+	awsSubnets := &operatorv1.AWSSubnets{}
+	if a, ok := service.Annotations[awsLBSubnetsAnnotation]; ok {
+		var subnets []string
+		a = strings.TrimSpace(a)
+		if len(a) > 0 {
+			subnets = strings.Split(a, ",")
+		}
+
+		// Cast the slice of strings to AWSSubnets object while distinguishing between subnet IDs and Names.
+		for _, subnet := range subnets {
+			if strings.HasPrefix(subnet, "subnet-") {
+				awsSubnets.IDs = append(awsSubnets.IDs, operatorv1.AWSSubnetID(subnet))
+			} else {
+				awsSubnets.Names = append(awsSubnets.Names, operatorv1.AWSSubnetName(subnet))
+			}
+		}
+	}
+
+	return awsSubnets
+}
+
+// compareSubnets compares two AWSSubnets objects and returns a boolean
+// whether they are equal are not.
+func compareSubnets(subnets1, subnets2 *operatorv1.AWSSubnets) bool {
+	// If either are nil, they both must be nil to be equal.
+	if subnets1 == nil || subnets2 == nil {
+		return subnets1 == subnets2
+	}
+
+	if len(subnets1.Names) != len(subnets2.Names) || len(subnets1.IDs) != len(subnets2.IDs) {
+		return false
+	}
+
+	// Create maps to track the IDs from each subnet object for comparison.
+	subnetIDMap1 := make(map[operatorv1.AWSSubnetID]bool)
+	subnetIDMap2 := make(map[operatorv1.AWSSubnetID]bool)
+	for _, id := range subnets1.IDs {
+		subnetIDMap1[id] = true
+	}
+	for _, id := range subnets2.IDs {
+		subnetIDMap2[id] = true
+	}
+	// Check if maps contain the same IDs.
+	for id := range subnetIDMap1 {
+		if !subnetIDMap2[id] {
+			return false
+		}
+	}
+	// Create maps to track the names from each subnet object for comparison.
+	subnetNameMap1 := make(map[operatorv1.AWSSubnetName]bool)
+	subnetNameMap2 := make(map[operatorv1.AWSSubnetName]bool)
+	for _, name := range subnets1.Names {
+		subnetNameMap1[name] = true
+	}
+	for _, name := range subnets2.Names {
+		subnetNameMap2[name] = true
+	}
+	// Check if maps contain the same names.
+	for name := range subnetNameMap1 {
+		if !subnetNameMap2[name] {
+			return false
+		}
+	}
+
+	return true
+}
+
+// JoinAWSSubnets joins an AWS Subnets object into a string seperated by sep.
+func JoinAWSSubnets(subnets *operatorv1.AWSSubnets, sep string) string {
+	if subnets == nil {
+		return ""
+	}
+	joinedSubnets := ""
+	subnetCount := 0
+	for _, subnet := range subnets.IDs {
+		if subnetCount > 0 {
+			joinedSubnets += sep
+		}
+		joinedSubnets += string(subnet)
+		subnetCount++
+	}
+	for _, subnet := range subnets.Names {
+		if subnetCount > 0 {
+			joinedSubnets += sep
+		}
+		joinedSubnets += string(subnet)
+		subnetCount++
+	}
+	return joinedSubnets
 }
