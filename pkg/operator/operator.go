@@ -19,6 +19,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	configv1 "github.com/openshift/api/config/v1"
+	"github.com/openshift/api/features"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
@@ -128,10 +129,10 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	if err != nil {
 		return nil, err
 	}
-	azureWorkloadIdentityEnabled := featureGates.Enabled(configv1.FeatureGateAzureWorkloadIdentity)
-	sharedVPCEnabled := featureGates.Enabled(configv1.FeatureGatePrivateHostedZoneAWS)
-	gatewayAPIEnabled := featureGates.Enabled(configv1.FeatureGateGatewayAPI)
-	routeExternalCertificateEnabled := featureGates.Enabled(configv1.FeatureGateRouteExternalCertificate)
+	azureWorkloadIdentityEnabled := featureGates.Enabled(features.FeatureGateAzureWorkloadIdentity)
+	sharedVPCEnabled := featureGates.Enabled(features.FeatureGatePrivateHostedZoneAWS)
+	gatewayAPIEnabled := featureGates.Enabled(features.FeatureGateGatewayAPI)
+	routeExternalCertificateEnabled := featureGates.Enabled(features.FeatureGateRouteExternalCertificate)
 
 	// Set up an operator manager for the operator namespace.
 	mgr, err := manager.New(kubeConfig, manager.Options{
