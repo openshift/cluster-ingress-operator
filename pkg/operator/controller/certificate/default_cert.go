@@ -82,7 +82,7 @@ func desiredRouterDefaultCertificateSecret(ca *crypto.CA, namespace string, depl
 		return false, nil, nil
 	}
 
-	hostnames := sets.NewString(fmt.Sprintf("*.%s", ci.Status.Domain))
+	hostnames := sets.New(fmt.Sprintf("*.%s", ci.Status.Domain))
 	cert, err := ca.MakeServerCert(hostnames, 0)
 	if err != nil {
 		return false, nil, fmt.Errorf("failed to make certificate: %v", err)
