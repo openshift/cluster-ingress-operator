@@ -31,6 +31,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/rand"
+	"k8s.io/utils/ptr"
 
 	configv1 "github.com/openshift/api/config/v1"
 )
@@ -410,7 +411,8 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		Name: statsVolumeName,
 		VolumeSource: corev1.VolumeSource{
 			Secret: &corev1.SecretVolumeSource{
-				SecretName: statsSecretName,
+				DefaultMode: ptr.To[int32](0644),
+				SecretName:  statsSecretName,
 			},
 		},
 	}
@@ -437,7 +439,8 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		Name: certsVolumeName,
 		VolumeSource: corev1.VolumeSource{
 			Secret: &corev1.SecretVolumeSource{
-				SecretName: certsSecretName,
+				DefaultMode: ptr.To[int32](0644),
+				SecretName:  certsSecretName,
 			},
 		},
 	}
@@ -456,6 +459,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 			Name: "error-pages",
 			VolumeSource: corev1.VolumeSource{
 				ConfigMap: &corev1.ConfigMapVolumeSource{
+					DefaultMode: ptr.To[int32](0644),
 					LocalObjectReference: corev1.LocalObjectReference{
 						Name: configmapName.Name,
 					},
@@ -729,6 +733,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 				Name: "rsyslog-config",
 				VolumeSource: corev1.VolumeSource{
 					ConfigMap: &corev1.ConfigMapVolumeSource{
+						DefaultMode: ptr.To[int32](0644),
 						LocalObjectReference: corev1.LocalObjectReference{
 							Name: controller.RsyslogConfigMapName(ci).Name,
 						},
@@ -1016,6 +1021,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 				Name: clientCAVolumeName,
 				VolumeSource: corev1.VolumeSource{
 					ConfigMap: &corev1.ConfigMapVolumeSource{
+						DefaultMode: ptr.To[int32](0644),
 						LocalObjectReference: corev1.LocalObjectReference{
 							Name: clientCAConfigmapName.Name,
 						},
