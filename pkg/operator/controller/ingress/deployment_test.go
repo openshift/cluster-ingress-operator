@@ -492,6 +492,45 @@ func assertVolumeHasDefaultMode(t *testing.T, expected int32, actual *int32, vol
 	}
 }
 
+// checkProbes asserts that the given container specifies liveness, readiness,
+// and startup probes, and that these probes have the expected parameters.  If
+// useLocalhost is true, checkProbes asserts that the probe's HTTP action
+// specifies host "localhost"; else, checkProbes asserts that the probe does not
+// specify a host.
+func checkProbes(t *testing.T, container *corev1.Container, useLocalhost bool) {
+	t.Helper()
+
+	checkHandler := func(probe *corev1.Probe) {
+		if assert.NotNil(t, probe.HTTPGet) {
+			assert.Equal(t, corev1.URIScheme("HTTP"), probe.HTTPGet.Scheme)
+			if useLocalhost {
+				assert.Equal(t, "localhost", probe.HTTPGet.Host)
+			} else {
+				assert.Empty(t, probe.HTTPGet.Host)
+			}
+		}
+	}
+
+	assert.Equal(t, int32(3), container.LivenessProbe.FailureThreshold)
+	assert.Equal(t, int32(10), container.LivenessProbe.PeriodSeconds)
+	assert.Equal(t, int32(1), container.LivenessProbe.SuccessThreshold)
+	assert.Equal(t, int32(1), container.LivenessProbe.TimeoutSeconds)
+	checkHandler(container.LivenessProbe)
+	assert.NotNil(t, container.LivenessProbe.TerminationGracePeriodSeconds, "expected liveness probe's termination grace period to be set")
+
+	assert.Equal(t, int32(3), container.ReadinessProbe.FailureThreshold)
+	assert.Equal(t, int32(10), container.ReadinessProbe.PeriodSeconds)
+	assert.Equal(t, int32(1), container.ReadinessProbe.SuccessThreshold)
+	assert.Equal(t, int32(1), container.ReadinessProbe.TimeoutSeconds)
+	checkHandler(container.ReadinessProbe)
+
+	assert.Equal(t, int32(120), container.StartupProbe.FailureThreshold)
+	assert.Equal(t, int32(1), container.StartupProbe.PeriodSeconds)
+	assert.Equal(t, int32(1), container.StartupProbe.SuccessThreshold)
+	assert.Equal(t, int32(1), container.StartupProbe.TimeoutSeconds)
+	checkHandler(container.StartupProbe)
+}
+
 func TestDesiredRouterDeploymentSpecTemplate(t *testing.T) {
 	ic, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, clusterProxyConfig := getRouterDeploymentComponents(t)
 
@@ -550,18 +589,7 @@ func TestDesiredRouterDeploymentSpecTemplate(t *testing.T) {
 		t.Errorf("expected dnsPolicy to be %s, got %s", corev1.DNSClusterFirst, deployment.Spec.Template.Spec.DNSPolicy)
 	}
 
-	if len(deployment.Spec.Template.Spec.Containers[0].LivenessProbe.ProbeHandler.HTTPGet.Host) != 0 {
-		t.Errorf("expected empty liveness probe host, got %q", deployment.Spec.Template.Spec.Containers[0].LivenessProbe.ProbeHandler.HTTPGet.Host)
-	}
-	if deployment.Spec.Template.Spec.Containers[0].LivenessProbe.TerminationGracePeriodSeconds == nil {
-		t.Error("expected liveness probe's termination grace period to be set")
-	}
-	if len(deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.ProbeHandler.HTTPGet.Host) != 0 {
-		t.Errorf("expected empty readiness probe host, got %q", deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.ProbeHandler.HTTPGet.Host)
-	}
-	if len(deployment.Spec.Template.Spec.Containers[0].StartupProbe.ProbeHandler.HTTPGet.Host) != 0 {
-		t.Errorf("expected empty startup probe host, got %q", deployment.Spec.Template.Spec.Containers[0].StartupProbe.ProbeHandler.HTTPGet.Host)
-	}
+	checkProbes(t, &deployment.Spec.Template.Spec.Containers[0], false)
 
 	checkDeploymentHasContainer(t, deployment, operatorv1.ContainerLoggingSidecarContainerName, false)
 
@@ -651,15 +679,8 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 	if deployment.Spec.Template.Spec.DNSPolicy != corev1.DNSClusterFirst {
 		t.Errorf("expected dnsPolicy to be %s, got %s", corev1.DNSClusterFirst, deployment.Spec.Template.Spec.DNSPolicy)
 	}
-	if len(deployment.Spec.Template.Spec.Containers[0].LivenessProbe.ProbeHandler.HTTPGet.Host) != 0 {
-		t.Errorf("expected empty liveness probe host, got %q", deployment.Spec.Template.Spec.Containers[0].LivenessProbe.ProbeHandler.HTTPGet.Host)
-	}
-	if len(deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.ProbeHandler.HTTPGet.Host) != 0 {
-		t.Errorf("expected empty readiness probe host, got %q", deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.ProbeHandler.HTTPGet.Host)
-	}
-	if len(deployment.Spec.Template.Spec.Containers[0].StartupProbe.ProbeHandler.HTTPGet.Host) != 0 {
-		t.Errorf("expected empty startup probe host, got %q", deployment.Spec.Template.Spec.Containers[0].StartupProbe.ProbeHandler.HTTPGet.Host)
-	}
+
+	checkProbes(t, &deployment.Spec.Template.Spec.Containers[0], false)
 
 	expectedVolumes := []string{
 		"default-certificate",
@@ -749,15 +770,8 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 	if deployment.Spec.Template.Spec.HostNetwork != false {
 		t.Error("expected host network to be false")
 	}
-	if len(deployment.Spec.Template.Spec.Containers[0].LivenessProbe.ProbeHandler.HTTPGet.Host) != 0 {
-		t.Errorf("expected empty liveness probe host, got %q", deployment.Spec.Template.Spec.Containers[0].LivenessProbe.ProbeHandler.HTTPGet.Host)
-	}
-	if len(deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.ProbeHandler.HTTPGet.Host) != 0 {
-		t.Errorf("expected empty readiness probe host, got %q", deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.ProbeHandler.HTTPGet.Host)
-	}
-	if len(deployment.Spec.Template.Spec.Containers[0].StartupProbe.ProbeHandler.HTTPGet.Host) != 0 {
-		t.Errorf("expected empty startup probe host, got %q", deployment.Spec.Template.Spec.Containers[0].StartupProbe.ProbeHandler.HTTPGet.Host)
-	}
+
+	checkProbes(t, &deployment.Spec.Template.Spec.Containers[0], false)
 
 	tests = []envData{
 		{"ROUTER_HAPROXY_CONFIG_MANAGER", true, "true"},
@@ -888,15 +902,7 @@ func TestDesiredRouterDeploymentVariety(t *testing.T) {
 		t.Errorf("expected dnsPolicy to be %s, got %s", corev1.DNSClusterFirstWithHostNet, deployment.Spec.Template.Spec.DNSPolicy)
 	}
 
-	if deployment.Spec.Template.Spec.Containers[0].LivenessProbe.ProbeHandler.HTTPGet.Host != "localhost" {
-		t.Errorf("expected liveness probe host to be \"localhost\", got %q", deployment.Spec.Template.Spec.Containers[0].LivenessProbe.ProbeHandler.HTTPGet.Host)
-	}
-	if deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.ProbeHandler.HTTPGet.Host != "localhost" {
-		t.Errorf("expected readiness probe host to be \"localhost\", got %q", deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.ProbeHandler.HTTPGet.Host)
-	}
-	if deployment.Spec.Template.Spec.Containers[0].StartupProbe.ProbeHandler.HTTPGet.Host != "localhost" {
-		t.Errorf("expected startup probe host to be \"localhost\", got %q", deployment.Spec.Template.Spec.Containers[0].StartupProbe.ProbeHandler.HTTPGet.Host)
-	}
+	checkProbes(t, &deployment.Spec.Template.Spec.Containers[0], true)
 
 	expectedVolumeSecretPairs := map[string]string{
 		"default-certificate": secretName,
