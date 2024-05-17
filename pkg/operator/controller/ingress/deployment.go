@@ -1520,7 +1520,7 @@ func hashableProbe(probe *corev1.Probe) *corev1.Probe {
 
 	var hashableProbe corev1.Probe
 
-	copyProbe(probe, &hashableProbe)
+	copyProbe(probe, &hashableProbe, false)
 
 	return &hashableProbe
 }
@@ -1621,9 +1621,9 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 	updated.Spec.Template.Spec.Containers[0].SecurityContext = expected.Spec.Template.Spec.Containers[0].SecurityContext
 	updated.Spec.Template.Spec.Containers[0].Env = expected.Spec.Template.Spec.Containers[0].Env
 	updated.Spec.Template.Spec.Containers[0].Image = expected.Spec.Template.Spec.Containers[0].Image
-	copyProbe(expected.Spec.Template.Spec.Containers[0].LivenessProbe, updated.Spec.Template.Spec.Containers[0].LivenessProbe)
-	copyProbe(expected.Spec.Template.Spec.Containers[0].ReadinessProbe, updated.Spec.Template.Spec.Containers[0].ReadinessProbe)
-	copyProbe(expected.Spec.Template.Spec.Containers[0].StartupProbe, updated.Spec.Template.Spec.Containers[0].StartupProbe)
+	copyProbe(expected.Spec.Template.Spec.Containers[0].LivenessProbe, updated.Spec.Template.Spec.Containers[0].LivenessProbe, true)
+	copyProbe(expected.Spec.Template.Spec.Containers[0].ReadinessProbe, updated.Spec.Template.Spec.Containers[0].ReadinessProbe, true)
+	copyProbe(expected.Spec.Template.Spec.Containers[0].StartupProbe, updated.Spec.Template.Spec.Containers[0].StartupProbe, true)
 	updated.Spec.Template.Spec.Containers[0].VolumeMounts = expected.Spec.Template.Spec.Containers[0].VolumeMounts
 	updated.Spec.Template.Spec.Containers[0].Ports = expected.Spec.Template.Spec.Containers[0].Ports
 	updated.Spec.Template.Spec.Tolerations = expected.Spec.Template.Spec.Tolerations
@@ -1639,8 +1639,9 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 }
 
 // copyProbe copies probe parameters that the operator manages from probe a to
-// probe b.
-func copyProbe(a, b *corev1.Probe) {
+// probe b.  If a field in probe a has the default value, then the value is
+// copied to probe b only if copyDefaultValues is true.
+func copyProbe(a, b *corev1.Probe, copyDefaultValues bool) {
 	if a == nil || b == nil {
 		return
 	}
@@ -1651,7 +1652,7 @@ func copyProbe(a, b *corev1.Probe) {
 			Port: a.ProbeHandler.HTTPGet.Port,
 			Host: a.ProbeHandler.HTTPGet.Host,
 		}
-		if a.ProbeHandler.HTTPGet.Scheme != "HTTP" {
+		if copyDefaultValues || a.ProbeHandler.HTTPGet.Scheme != "HTTP" {
 			b.ProbeHandler.HTTPGet.Scheme = a.ProbeHandler.HTTPGet.Scheme
 		}
 	}
@@ -1661,14 +1662,14 @@ func copyProbe(a, b *corev1.Probe) {
 
 	// Users are permitted to modify the timeout, so *don't* copy it.
 
-	// Don't copy default values that the API set.
-	if a.PeriodSeconds != int32(10) {
+	// Conditionally copy default values that the API sets.
+	if copyDefaultValues || a.PeriodSeconds != int32(10) {
 		b.PeriodSeconds = a.PeriodSeconds
 	}
-	if a.SuccessThreshold != int32(1) {
+	if copyDefaultValues || a.SuccessThreshold != int32(1) {
 		b.SuccessThreshold = a.SuccessThreshold
 	}
-	if a.FailureThreshold != int32(3) {
+	if copyDefaultValues || a.FailureThreshold != int32(3) {
 		b.FailureThreshold = a.FailureThreshold
 	}
 }
