@@ -8,7 +8,6 @@ import (
 	"github.com/robfig/cron"
 	"k8s.io/apimachinery/pkg/runtime"
 	errorutil "k8s.io/apimachinery/pkg/util/errors"
-	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/tools/cache"
 
 	"github.com/openshift/library-go/pkg/operator/events"
@@ -26,18 +25,17 @@ func DefaultQueueKeysFunc(_ runtime.Object) []string {
 // Factory is generator that generate standard Kubernetes controllers.
 // Factory is really generic and should be only used for simple controllers that does not require special stuff..
 type Factory struct {
-	sync                  SyncFunc
-	syncContext           SyncContext
-	syncDegradedClient    operatorv1helpers.OperatorClient
-	resyncInterval        time.Duration
-	resyncSchedules       []string
-	informers             []filteredInformers
-	informerQueueKeys     []informersWithQueueKey
-	bareInformers         []Informer
-	postStartHooks        []PostStartHook
-	namespaceInformers    []*namespaceInformer
-	cachesToSync          []cache.InformerSynced
-	interestingNamespaces sets.String
+	sync               SyncFunc
+	syncContext        SyncContext
+	syncDegradedClient operatorv1helpers.OperatorClient
+	resyncInterval     time.Duration
+	resyncSchedules    []string
+	informers          []filteredInformers
+	informerQueueKeys  []informersWithQueueKey
+	bareInformers      []Informer
+	postStartHooks     []PostStartHook
+	namespaceInformers []*namespaceInformer
+	cachesToSync       []cache.InformerSynced
 }
 
 // Informer represents any structure that allow to register event handlers and informs if caches are synced.
@@ -277,12 +275,6 @@ func (f *Factory) ToController(name string, eventRecorder events.Recorder) Contr
 		syncContext:        ctx,
 		postStartHooks:     f.postStartHooks,
 		cacheSyncTimeout:   defaultCacheSyncTimeout,
-	}
-
-	// Warn about too fast resyncs as they might drain the operators QPS.
-	// This event is cheap as it is only emitted on operator startup.
-	if c.resyncEvery.Seconds() < 60 {
-		ctx.Recorder().Warningf("FastControllerResync", "Controller %q resync interval is set to %s which might lead to client request throttling", name, c.resyncEvery)
 	}
 
 	for i := range f.informerQueueKeys {
