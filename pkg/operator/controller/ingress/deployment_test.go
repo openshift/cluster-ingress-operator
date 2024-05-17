@@ -16,7 +16,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -1577,14 +1577,14 @@ func Test_deploymentConfigChanged(t *testing.T) {
 		{
 			description: "if the router container .securityContext.allowPrivilegeEscalation changes",
 			mutate: func(deployment *appsv1.Deployment) {
-				deployment.Spec.Template.Spec.Containers[0].SecurityContext.AllowPrivilegeEscalation = pointer.Bool(false)
+				deployment.Spec.Template.Spec.Containers[0].SecurityContext.AllowPrivilegeEscalation = ptr.To[bool](false)
 			},
 			expect: true,
 		},
 		{
 			description: "if the router container .securityContext.readOnlyRootFilesystem changes",
 			mutate: func(deployment *appsv1.Deployment) {
-				deployment.Spec.Template.Spec.Containers[0].SecurityContext.ReadOnlyRootFilesystem = pointer.Bool(true)
+				deployment.Spec.Template.Spec.Containers[0].SecurityContext.ReadOnlyRootFilesystem = ptr.To[bool](true)
 			},
 			expect: true,
 		},
@@ -1773,8 +1773,8 @@ func Test_deploymentConfigChanged(t *testing.T) {
 										},
 									},
 									SecurityContext: &corev1.SecurityContext{
-										AllowPrivilegeEscalation: pointer.Bool(true),
-										ReadOnlyRootFilesystem:   pointer.Bool(false),
+										AllowPrivilegeEscalation: ptr.To[bool](true),
+										ReadOnlyRootFilesystem:   ptr.To[bool](false),
 									},
 								},
 							},
