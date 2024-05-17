@@ -467,6 +467,21 @@ func Test_desiredRouterDeployment(t *testing.T) {
 	checkDeploymentHasEnvSorted(t, deployment)
 }
 
+// assertHasVolumes asserts that the given slice of volumes has all of the
+// named volumes.
+func assertHasVolumes(t *testing.T, volumes []corev1.Volume, expectedVolumeNames []string) {
+	t.Helper()
+
+	actualVolumeNames := []string{}
+	for _, volume := range volumes {
+		actualVolumeNames = append(actualVolumeNames, volume.Name)
+	}
+	assert.Equal(t, len(expectedVolumeNames), len(actualVolumeNames))
+	for _, volume := range expectedVolumeNames {
+		assert.Contains(t, actualVolumeNames, volume)
+	}
+}
+
 // assertVolumeHasDefaultMode asserts that the given int32 pointer points to a
 // value that is equal to the given int32 value.
 func assertVolumeHasDefaultMode(t *testing.T, expected int32, actual *int32, volumeName string) {
@@ -490,11 +505,19 @@ func TestDesiredRouterDeploymentSpecTemplate(t *testing.T) {
 		"metrics-certs":       fmt.Sprintf("router-metrics-certs-%s", ic.Name),
 		"stats-auth":          fmt.Sprintf("router-stats-%s", ic.Name),
 	}
+	expectedVolumes := []string{
+		"default-certificate",
+		"metrics-certs",
+		"stats-auth",
+		"service-ca-bundle",
+	}
+	assertHasVolumes(t, deployment.Spec.Template.Spec.Volumes, expectedVolumes)
 	for _, volume := range deployment.Spec.Template.Spec.Volumes {
 		if secretName, ok := expectedVolumeSecretPairs[volume.Name]; ok {
 			if volume.Secret.SecretName != secretName {
 				t.Errorf("router Deployment expected volume %s to have secret %s, got %s", volume.Name, secretName, volume.Secret.SecretName)
 			}
+			assertVolumeHasDefaultMode(t, int32(0644), volume.Secret.DefaultMode, volume.Name)
 			continue
 		}
 		switch volume.Name {
@@ -638,10 +661,26 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 		t.Errorf("expected empty startup probe host, got %q", deployment.Spec.Template.Spec.Containers[0].StartupProbe.ProbeHandler.HTTPGet.Host)
 	}
 
-	if len(deployment.Spec.Template.Spec.Containers[0].VolumeMounts) <= 4 || deployment.Spec.Template.Spec.Containers[0].VolumeMounts[4].Name != "error-pages" {
-		t.Errorf("deployment.Spec.Template.Spec.Containers[0].VolumeMounts[4].Name %v", deployment.Spec.Template.Spec.Containers[0].VolumeMounts)
-		//log.Info(fmt.Sprintf("deployment.Spec.Template.Spec.Containers[0].VolumeMounts[4].Name %v", deployment.Spec.Template.Spec.Containers[0]))
-		t.Error("router Deployment is missing error code pages volume mount")
+	expectedVolumes := []string{
+		"default-certificate",
+		"metrics-certs",
+		"stats-auth",
+		"service-ca-bundle",
+		"error-pages",
+		"rsyslog-config",
+		"rsyslog-socket",
+	}
+	assertHasVolumes(t, deployment.Spec.Template.Spec.Volumes, expectedVolumes)
+	for _, volume := range deployment.Spec.Template.Spec.Volumes {
+		switch volume.Name {
+		case "default-certificate", "metrics-certs", "stats-auth":
+			assertVolumeHasDefaultMode(t, int32(0644), volume.Secret.DefaultMode, volume.Name)
+		case "error-pages", "rsyslog-config", "service-ca-bundle":
+			assertVolumeHasDefaultMode(t, int32(0644), volume.ConfigMap.DefaultMode, volume.Name)
+		case "rsyslog-socket":
+		default:
+			t.Errorf("router deployment has unexpected volume %s", volume.Name)
+		}
 	}
 
 	checkDeploymentHasContainer(t, deployment, operatorv1.ContainerLoggingSidecarContainerName, true)
@@ -864,18 +903,24 @@ func TestDesiredRouterDeploymentVariety(t *testing.T) {
 		"metrics-certs":       fmt.Sprintf("router-metrics-certs-%s", ic.Name),
 		"stats-auth":          fmt.Sprintf("router-stats-%s", ic.Name),
 	}
-
+	expectedVolumes := []string{
+		"default-certificate",
+		"metrics-certs",
+		"stats-auth",
+		"service-ca-bundle",
+	}
+	assertHasVolumes(t, deployment.Spec.Template.Spec.Volumes, expectedVolumes)
 	for _, volume := range deployment.Spec.Template.Spec.Volumes {
 		if secretName, ok := expectedVolumeSecretPairs[volume.Name]; ok {
 			if volume.Secret.SecretName != secretName {
 				t.Errorf("router Deployment expected volume %s to have secret %s, got %s", volume.Name, secretName, volume.Secret.SecretName)
 			}
+			assertVolumeHasDefaultMode(t, int32(0644), volume.Secret.DefaultMode, volume.Name)
 			continue
 		}
 		switch volume.Name {
 		case "service-ca-bundle":
 			assertVolumeHasDefaultMode(t, int32(0644), volume.ConfigMap.DefaultMode, volume.Name)
-		case "error-pages":
 		default:
 			t.Errorf("router deployment has unexpected volume %s", volume.Name)
 		}
@@ -982,6 +1027,54 @@ func TestDesiredRouterDeploymentSingleReplica(t *testing.T) {
 
 	if deployment.Spec.Strategy.Type != "" || deployment.Spec.Strategy.RollingUpdate != nil {
 		t.Errorf("expected default deployment strategy, got %s", deployment.Spec.Strategy.Type)
+	}
+}
+
+// TestDesiredRouterDeploymentClientTLS verifies that desiredRouterDeployment
+// returns the expected deployment when client TLS is enabled.
+func TestDesiredRouterDeploymentClientTLS(t *testing.T) {
+	ic, ingressConfig, infraConfig, apiConfig, networkConfig, _, clusterProxyConfig := getRouterDeploymentComponents(t)
+	ic.Spec.ClientTLS = operatorv1.ClientTLS{
+		AllowedSubjectPatterns:  []string{"foo", "bar"},
+		ClientCertificatePolicy: "Optional",
+		ClientCA: configv1.ConfigMapNameReference{
+			Name: "baz",
+		},
+	}
+	clientCAConfigmap := &corev1.ConfigMap{}
+	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, false, true, clientCAConfigmap, clusterProxyConfig, false)
+	if err != nil {
+		t.Fatalf("invalid router deployment: %v", err)
+	}
+
+	env := []envData{
+		{"ROUTER_MUTUAL_TLS_AUTH", true, "optional"},
+		{"ROUTER_MUTUAL_TLS_AUTH_CA", true, "/etc/pki/tls/client-ca/ca-bundle.pem"},
+		{"ROUTER_MUTUAL_TLS_AUTH_FILTER", true, `(?:foo|bar)`},
+	}
+	if err := checkDeploymentEnvironment(t, deployment, env); err != nil {
+		t.Error(err)
+	}
+	expectedVolumes := []string{
+		"default-certificate",
+		"metrics-certs",
+		"stats-auth",
+		"service-ca-bundle",
+		"client-ca",
+	}
+	assertHasVolumes(t, deployment.Spec.Template.Spec.Volumes, expectedVolumes)
+	for _, volume := range deployment.Spec.Template.Spec.Volumes {
+		switch volume.Name {
+		case "default-certificate", "metrics-certs", "stats-auth":
+			assertVolumeHasDefaultMode(t, int32(0644), volume.Secret.DefaultMode, volume.Name)
+		case "service-ca-bundle":
+			assertVolumeHasDefaultMode(t, int32(0644), volume.ConfigMap.DefaultMode, volume.Name)
+		case "client-ca":
+			assertVolumeHasDefaultMode(t, int32(0644), volume.ConfigMap.DefaultMode, volume.Name)
+			assert.Equal(t, "router-client-ca-default", volume.VolumeSource.ConfigMap.LocalObjectReference.Name)
+		default:
+			t.Errorf("router deployment has unexpected volume %s", volume.Name)
+		}
 	}
 }
 
