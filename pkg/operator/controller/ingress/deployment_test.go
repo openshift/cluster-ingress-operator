@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 
@@ -390,6 +392,16 @@ func TestDesiredRouterDeployment(t *testing.T) {
 	checkDeploymentHasEnvSorted(t, deployment)
 }
 
+// assertVolumeHasDefaultMode asserts that the given int32 pointer points to a
+// value that is equal to the given int32 value.
+func assertVolumeHasDefaultMode(t *testing.T, expected int32, actual *int32, volumeName string) {
+	t.Helper()
+
+	if assert.NotNil(t, actual, "router deployment volume %s does not specify defaultMode", volumeName) {
+		assert.Equal(t, expected, *actual, "router deployment volume %s has unexpected defaultMode; expected: %O, got %O", volumeName, expected, *actual)
+	}
+}
+
 func TestDesiredRouterDeploymentSpecTemplate(t *testing.T) {
 	ic, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, clusterProxyConfig := getRouterDeploymentComponents(t)
 
@@ -408,7 +420,12 @@ func TestDesiredRouterDeploymentSpecTemplate(t *testing.T) {
 			if volume.Secret.SecretName != secretName {
 				t.Errorf("router Deployment expected volume %s to have secret %s, got %s", volume.Name, secretName, volume.Secret.SecretName)
 			}
-		} else if volume.Name != "service-ca-bundle" {
+			continue
+		}
+		switch volume.Name {
+		case "service-ca-bundle":
+			assertVolumeHasDefaultMode(t, int32(0644), volume.ConfigMap.DefaultMode, volume.Name)
+		default:
 			t.Errorf("router deployment has unexpected volume %s", volume.Name)
 		}
 	}
@@ -777,7 +794,13 @@ func TestDesiredRouterDeploymentVariety(t *testing.T) {
 			if volume.Secret.SecretName != secretName {
 				t.Errorf("router Deployment expected volume %s to have secret %s, got %s", volume.Name, secretName, volume.Secret.SecretName)
 			}
-		} else if volume.Name != "service-ca-bundle" && volume.Name != "error-pages" {
+			continue
+		}
+		switch volume.Name {
+		case "service-ca-bundle":
+			assertVolumeHasDefaultMode(t, int32(0644), volume.ConfigMap.DefaultMode, volume.Name)
+		case "error-pages":
+		default:
 			t.Errorf("router deployment has unexpected volume %s", volume.Name)
 		}
 	}
