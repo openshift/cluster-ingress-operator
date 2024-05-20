@@ -512,6 +512,8 @@ const (
 
 // AWSLoadBalancerParameters provides configuration settings that are
 // specific to AWS load balancers.
+// +kubebuilder:validation:XValidation:rule="self.type != 'Classic' || !has(self.nlbParameters)",message="Network load balancer parameters are allowed only when load balancer type is NLB."
+// +kubebuilder:validation:XValidation:rule="self.type != 'NLB' || !has(self.classicLoadBalancer)",message="Classic load balancer parameters are allowed only when load balancer type is Classic."
 // +union
 type AWSLoadBalancerParameters struct {
 	// type is the type of AWS load balancer to instantiate for an ingresscontroller.
@@ -544,7 +546,7 @@ type AWSLoadBalancerParameters struct {
 	// network load balancer. Present only if type is NLB.
 	//
 	// +optional
-	NetworkLoadBalancerParameters *AWSNetworkLoadBalancerParameters `json:"networkLoadBalancer,omitempty"`
+	NetworkLoadBalancerParameters *AWSNetworkLoadBalancerParameters `json:"nlbParameters,omitempty"`
 }
 
 // AWSLoadBalancerType is the type of AWS load balancer to instantiate.
@@ -633,8 +635,15 @@ type AWSClassicLoadBalancerParameters struct {
 }
 
 // AWSNetworkLoadBalancerParameters holds configuration parameters for an
-// AWS Network load balancer.
+// AWS Network load balancer. For Example: Setting AWS EIPs https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/elastic-ip-addresses-eip.html
 type AWSNetworkLoadBalancerParameters struct {
+	// You can assign Elastic IP addresses to the Network Load Balancer by adding the following annotation.
+	// The number of Allocation IDs must match the number of subnets that are used for the load balancer.
+	// service.beta.kubernetes.io/aws-load-balancer-eip-allocations: eipalloc-xxxxxxxxxxxxxxxxx,eipalloc-yyyyyyyyyyyyyyyyy
+	// https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/elastic-ip-addresses-eip.html
+	// https://kubernetes-sigs.github.io/aws-load-balancer-controller/v2.7/guide/service/annotations/#eip-allocations
+	// +openshift:enable:FeatureGate=SetEIPForNLBIngressController
+	EIPAllocations []configv1.EIPAllocations `json:"eipAllocations"`
 }
 
 // HostNetworkStrategy holds parameters for the HostNetwork endpoint publishing

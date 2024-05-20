@@ -141,6 +141,13 @@ const (
 	// scope changes if changing scope requires deleting service
 	// load-balancers on the current platform.
 	autoDeleteLoadBalancerAnnotation = "ingress.operator.openshift.io/auto-delete-load-balancer"
+
+	// You can assign Elastic IP addresses to the Network Load Balancer by adding the following annotation.
+	// The number of Allocation IDs must match the number of subnets that are used for the load balancer.
+	// service.beta.kubernetes.io/aws-load-balancer-eip-allocations: eipalloc-xxxxxxxxxxxxxxxxx,eipalloc-yyyyyyyyyyyyyyyyy
+	// https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/elastic-ip-addresses-eip.html
+	// https://kubernetes-sigs.github.io/aws-load-balancer-controller/v2.7/guide/service/annotations/#eip-allocations
+	AwsEIPAllocations = "service.beta.kubernetes.io/aws-load-balancer-eip-allocations"
 )
 
 var (
@@ -315,10 +322,13 @@ func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController,
 			}
 		}
 		deleteIfScopeChanged := false
+		deleteIfEIPsChanged := false
 		if _, ok := ci.Annotations[autoDeleteLoadBalancerAnnotation]; ok {
 			deleteIfScopeChanged = true
+			deleteIfEIPsChanged = true
 		}
-		if updated, err := r.updateLoadBalancerService(currentLBService, desiredLBService, platformStatus, deleteIfScopeChanged); err != nil {
+
+		if updated, err := r.updateLoadBalancerService(currentLBService, desiredLBService, platformStatus, deleteIfScopeChanged, deleteIfEIPsChanged); err != nil {
 			return true, currentLBService, fmt.Errorf("failed to update load balancer service: %v", err)
 		} else if updated {
 			return r.currentLoadBalancerService(ci)
@@ -406,6 +416,21 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 						// NLBs require a different health check interval than CLBs.
 						// See <https://bugzilla.redhat.com/show_bug.cgi?id=1908758>.
 						service.Annotations[awsLBHealthCheckIntervalAnnotation] = awsLBHealthCheckIntervalNLB
+						var eipAllocationsOfTypeString []string
+						if ci.Spec.EndpointPublishingStrategy != nil {
+							lbSpec := ci.Spec.EndpointPublishingStrategy.LoadBalancer
+							if lbSpec.ProviderParameters.AWS.NetworkLoadBalancerParameters != nil || lbSpec.ProviderParameters.AWS.NetworkLoadBalancerParameters.EIPAllocations != nil || len(lbSpec.ProviderParameters.AWS.NetworkLoadBalancerParameters.EIPAllocations) > 0 {
+								eipAllocations := lbSpec.ProviderParameters.AWS.NetworkLoadBalancerParameters.EIPAllocations
+								if len(eipAllocations) > 0 {
+									for _, eipAllocation := range eipAllocations {
+										if len(string(eipAllocation)) != 0 {
+											eipAllocationsOfTypeString = append(eipAllocationsOfTypeString, string(eipAllocation))
+										}
+									}
+									service.Annotations[AwsEIPAllocations] = strings.Join(eipAllocationsOfTypeString, ",")
+								}
+							}
+						}
 					case operatorv1.AWSClassicLoadBalancer:
 						if aws.ClassicLoadBalancerParameters != nil {
 							if v := aws.ClassicLoadBalancerParameters.ConnectionIdleTimeout; v.Duration > 0 {
@@ -568,10 +593,23 @@ func (r *reconciler) deleteLoadBalancerService(service *corev1.Service, options 
 
 // updateLoadBalancerService updates a load balancer service.  Returns a Boolean
 // indicating whether the service was updated, and an error value.
-func (r *reconciler) updateLoadBalancerService(current, desired *corev1.Service, platform *configv1.PlatformStatus, deleteIfScopeChanged bool) (bool, error) {
+func (r *reconciler) updateLoadBalancerService(current, desired *corev1.Service, platform *configv1.PlatformStatus, deleteIfScopeChanged bool, deleteIfEIPsChanged bool) (bool, error) {
 	_, platformHasMutableScope := platformsWithMutableScope[platform.Type]
 	if !platformHasMutableScope && deleteIfScopeChanged && !scopeEqual(current, desired, platform) {
 		log.Info("deleting and recreating the load balancer because its scope changed", "namespace", desired.Namespace, "name", desired.Name)
+		foreground := metav1.DeletePropagationForeground
+		deleteOptions := crclient.DeleteOptions{PropagationPolicy: &foreground}
+		if err := r.deleteLoadBalancerService(current, &deleteOptions); err != nil {
+			return false, err
+		}
+		if err := r.createLoadBalancerService(desired); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+
+	if platform.Type == configv1.AWSPlatformType && deleteIfEIPsChanged && !eipEqual(current, desired) {
+		log.Info("deleting and recreating the load balancer because its EIP changed", "namespace", desired.Namespace, "name", desired.Name)
 		foreground := metav1.DeletePropagationForeground
 		deleteOptions := crclient.DeleteOptions{PropagationPolicy: &foreground}
 		if err := r.deleteLoadBalancerService(current, &deleteOptions); err != nil {
@@ -618,6 +656,10 @@ func scopeEqual(a, b *corev1.Service, platform *configv1.PlatformStatus) bool {
 		}
 	}
 	return true
+}
+
+func eipEqual(a, b *corev1.Service) bool {
+	return a.Annotations[AwsEIPAllocations] == b.Annotations[AwsEIPAllocations]
 }
 
 // loadBalancerServiceChanged checks if the current load balancer service
@@ -756,6 +798,48 @@ func loadBalancerServiceIsProgressing(ic *operatorv1.IngressController, service 
 		errs = append(errs, err)
 	}
 
+	var eipAllocationsOfTypeStringForSpec []string
+	if ic.Spec.EndpointPublishingStrategy != nil && ic.Spec.EndpointPublishingStrategy.LoadBalancer != nil && ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters != nil && ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS != nil && ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters != nil && ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters.EIPAllocations != nil && len(ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters.EIPAllocations) > 0 {
+		eipAllocations := ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters.EIPAllocations
+		if len(eipAllocations) > 0 {
+			for _, eipAllocation := range eipAllocations {
+				if len(string(eipAllocation)) != 0 {
+					eipAllocationsOfTypeStringForSpec = append(eipAllocationsOfTypeStringForSpec, string(eipAllocation))
+				}
+			}
+		}
+	}
+	wantEIPAllocation := strings.Join(eipAllocationsOfTypeStringForSpec, ",")
+
+	var err error
+	hasDeleteAnnotation := false
+	if _, ok := ic.Annotations[autoDeleteLoadBalancerAnnotation]; ok {
+		hasDeleteAnnotation = true
+	}
+
+	var haveEIPAllocation string
+	if a, ok := service.Annotations[AwsEIPAllocations]; ok || (ok && len(a) != 0) {
+		haveEIPAllocation = service.Annotations[AwsEIPAllocations]
+	}
+
+	if wantEIPAllocation != haveEIPAllocation && !hasDeleteAnnotation {
+		err = fmt.Errorf("The IngressController scope was changed from %q to %q.", haveEIPAllocation, wantEIPAllocation)
+		switch platform.Type {
+		case configv1.AWSPlatformType:
+			err = fmt.Errorf("%[1]s  To effectuate this change, you must delete the service: `oc -n %[2]s delete svc/%[3]s`; the service load-balancer will then be deprovisioned and a new one created.  This will most likely cause the new load-balancer to have a different host name and IP address from the old one's.", err.Error(), service.Namespace, service.Name)
+		}
+		errs = append(errs, err)
+		var eipAllocationWithQuotes []string
+		if ic.Status.EndpointPublishingStrategy != nil && ic.Status.EndpointPublishingStrategy.LoadBalancer != nil && ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters != nil && ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS != nil && ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters != nil && ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters.EIPAllocations != nil {
+			for _, eipAllocationWithQuote := range ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters.EIPAllocations {
+				eipAllocationWithQuotes = append(eipAllocationWithQuotes, fmt.Sprintf("%q", string(eipAllocationWithQuote)))
+			}
+			err = fmt.Errorf("Alternatively, you can revert the change to the IngressController: oc -n openshift-ingress-operator patch ingresscontrollers/%[1]s --type=merge --patch='{\"spec\":{\"endpointPublishingStrategy\":{\"type\":\"LoadBalancerService\",\"loadBalancer\":{\"providerParameters\":{\"type\":\"AWS\",\"aws\":{\"type\":\"NLB\",\"networkLoadBalancer\":{\"eip-allocations\":[%[2]s]}}}}}}}'", ic.Name, strings.Join(eipAllocationWithQuotes, ","))
+		}
+		errs = append(errs, err)
+	}
+
+	//TODO: check if the service is not modified manually for eips or else display a message.
 	errs = append(errs, loadBalancerSourceRangesAnnotationSet(service))
 	errs = append(errs, loadBalancerSourceRangesMatch(ic, service))
 

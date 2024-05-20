@@ -218,6 +218,14 @@ func LoadBalancerServiceName(ic *operatorv1.IngressController) types.NamespacedN
 	return types.NamespacedName{Namespace: DefaultOperandNamespace, Name: "router-" + ic.Name}
 }
 
+func AWSSecretNameInKubeSystemNS() types.NamespacedName {
+	return types.NamespacedName{Namespace: "kube-system", Name: "aws-creds"}
+}
+
+func AWSSecretNameIngressOperatorNS() types.NamespacedName {
+	return types.NamespacedName{Namespace: DefaultOperatorNamespace, Name: "cloud-credentials"}
+}
+
 func NodePortServiceName(ic *operatorv1.IngressController) types.NamespacedName {
 	return types.NamespacedName{Namespace: DefaultOperandNamespace, Name: "router-nodeport-" + ic.Name}
 }

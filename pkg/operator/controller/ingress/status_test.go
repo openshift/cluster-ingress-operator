@@ -655,6 +655,9 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 		},
 	}
 	loadBalancerIngressControllerWithInternalScope := operatorv1.IngressController{
+		Spec: operatorv1.IngressControllerSpec{
+			EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{},
+		},
 		Status: operatorv1.IngressControllerStatus{
 			EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
 				Type: operatorv1.LoadBalancerServiceStrategyType,
