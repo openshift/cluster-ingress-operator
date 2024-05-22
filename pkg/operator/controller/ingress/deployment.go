@@ -563,12 +563,10 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 			Name:  RouterHAProxyConfigManager,
 			Value: "true",
 		})
-		if isSet, value := MaxDynamicServersIsSet(ci, ingressConfig); isSet {
-			env = append(env, corev1.EnvVar{
-				Name:  RouterMaxDynamicServersEnvName,
-				Value: value,
-			})
-		}
+		env = append(env, corev1.EnvVar{
+			Name:  RouterMaxDynamicServersEnvName,
+			Value: "100", // for testing in CI
+		})
 	}
 	contStats := unsupportedConfigOverrides.ContStats
 	if v, err := strconv.ParseBool(contStats); err == nil && v {
