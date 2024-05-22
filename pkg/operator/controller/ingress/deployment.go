@@ -106,6 +106,9 @@ const (
 	StatsPortName = "metrics"
 
 	haproxyMaxTimeoutMilliseconds = 2147483647 * time.Millisecond
+
+	RouterMaxDynamicServersEnvName    = "ROUTER_MAX_DYNAMIC_SERVERS"
+	RouterMaxDynamicServersAnnotation = "ingress.operator.openshift.io/max-dynamic-servers"
 )
 
 // ensureRouterDeployment ensures the router deployment exists for a given
@@ -560,6 +563,12 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 			Name:  RouterHAProxyConfigManager,
 			Value: "true",
 		})
+		if isSet, value := MaxDynamicServersIsSet(ci, ingressConfig); isSet {
+			env = append(env, corev1.EnvVar{
+				Name:  RouterMaxDynamicServersEnvName,
+				Value: value,
+			})
+		}
 	}
 	contStats := unsupportedConfigOverrides.ContStats
 	if v, err := strconv.ParseBool(contStats); err == nil && v {
@@ -1792,4 +1801,33 @@ func singleReplica(ingressConfig *configv1.Ingress, infraConfig *configv1.Infras
 	}
 
 	return topology == configv1.SingleReplicaTopologyMode
+}
+
+// MaxDynamicServersIsEnabledByAnnotation returns true if the map m
+// has the key RouterMaxDynamicServersAnnotation and it is an integer
+// value > 0.
+func MaxDynamicServersIsEnabledByAnnotation(m map[string]string) (bool, string) {
+	if val, ok := m[RouterMaxDynamicServersAnnotation]; ok && len(val) > 0 {
+		value, err := strconv.Atoi(val)
+		if err != nil || value < 0 {
+			log.Error(err, "invalid value", "annotation", RouterMaxDynamicServersAnnotation, "value", val)
+			return false, ""
+		} else {
+			return true, val
+		}
+	}
+
+	return false, ""
+}
+
+// MaxDynamicServersIsSet returns true if either the ingress
+// controller or the ingress config has the "max-dynamic-servers"
+// annotation. The presence of the annotation on the ingress
+// controller, irrespective of its value, always overrides any setting
+// on the ingress config.
+func MaxDynamicServersIsSet(ic *operatorv1.IngressController, ingressConfig *configv1.Ingress) (bool, string) {
+	if controllerAnnotation, controllerValue := MaxDynamicServersIsEnabledByAnnotation(ic.Annotations); controllerAnnotation {
+		return controllerAnnotation, controllerValue
+	}
+	return MaxDynamicServersIsEnabledByAnnotation(ingressConfig.Annotations)
 }

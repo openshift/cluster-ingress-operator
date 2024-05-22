@@ -890,6 +890,7 @@ func TestDesiredRouterDeploymentVariety(t *testing.T) {
 		{"STATS_PORT", true, "9146"},
 		{"ROUTER_SERVICE_HTTP_PORT", true, "8080"},
 		{"ROUTER_SERVICE_HTTPS_PORT", true, "8443"},
+		{RouterMaxDynamicServersEnvName, false, ""},
 	}
 	if err := checkDeploymentEnvironment(t, deployment, tests); err != nil {
 		t.Error(err)
