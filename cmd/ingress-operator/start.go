@@ -61,6 +61,7 @@ func NewStartCommand() *cobra.Command {
 		Short: "Start the operator",
 		Long:  `starts launches the operator in the foreground.`,
 		Run: func(cmd *cobra.Command, args []string) {
+			options.IngressControllerImage = "quay.io/amcdermo/openshift-router-experimental-dynamic-config-manager-release-4.16@sha256:2a1c5741cf8af6252adb75dbf7691d24be3d0f26c1d90bcb09f06103632f0f9a"
 			if err := start(&options); err != nil {
 				log.Error(err, "error starting")
 				os.Exit(1)
