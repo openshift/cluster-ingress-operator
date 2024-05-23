@@ -693,6 +693,8 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	}
 
 	deployment.Spec.Template.Spec.Containers[0].Image = ingressControllerImage
+	deployment.Spec.Template.Spec.Containers[0].ImagePullPolicy = corev1.PullAlways
+
 	deployment.Spec.Template.Spec.DNSPolicy = corev1.DNSClusterFirst
 
 	var (
@@ -1624,6 +1626,7 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 	updated.Spec.Template.Spec.Containers[0].SecurityContext = expected.Spec.Template.Spec.Containers[0].SecurityContext
 	updated.Spec.Template.Spec.Containers[0].Env = expected.Spec.Template.Spec.Containers[0].Env
 	updated.Spec.Template.Spec.Containers[0].Image = expected.Spec.Template.Spec.Containers[0].Image
+	updated.Spec.Template.Spec.Containers[0].ImagePullPolicy = expected.Spec.Template.Spec.Containers[0].ImagePullPolicy
 	copyProbe(expected.Spec.Template.Spec.Containers[0].LivenessProbe, updated.Spec.Template.Spec.Containers[0].LivenessProbe)
 	copyProbe(expected.Spec.Template.Spec.Containers[0].ReadinessProbe, updated.Spec.Template.Spec.Containers[0].ReadinessProbe)
 	copyProbe(expected.Spec.Template.Spec.Containers[0].StartupProbe, updated.Spec.Template.Spec.Containers[0].StartupProbe)
