@@ -239,6 +239,7 @@ rules:
   - use
   resourceNames:
   - hostnetwork
+  - restricted
 
 # Mirrored from assets/router/cluster-role.yaml
 - apiGroups:
