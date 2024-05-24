@@ -6,15 +6,12 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-
 	gatewayapiv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
 	maistrav1 "github.com/maistra/istio-operator/pkg/apis/maistra/v1"
 	maistrav2 "github.com/maistra/istio-operator/pkg/apis/maistra/v2"
 
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
-
-	corev1 "k8s.io/api/core/v1"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -63,12 +60,11 @@ func (r *reconciler) ensureServiceMeshControlPlane(ctx context.Context, gatewayc
 // desiredServiceMeshControlPlane returns the desired servicemeshcontrolplane.
 func desiredServiceMeshControlPlane(name types.NamespacedName, ownerRef metav1.OwnerReference) (*maistrav2.ServiceMeshControlPlane, error) {
 	pilotContainerEnv := map[string]string{
-		"PILOT_ENABLE_GATEWAY_API":                         "true",
-		"PILOT_ENABLE_GATEWAY_API_DEPLOYMENT_CONTROLLER":   "true",
-		"PILOT_ENABLE_GATEWAY_API_STATUS":                  "true",
-		"PILOT_GATEWAY_API_CONTROLLER_NAME":                OpenShiftGatewayClassControllerName,
-		"PILOT_GATEWAY_API_DEFAULT_GATEWAYCLASS":           OpenShiftDefaultGatewayClassName,
-		"PILOT_ENABLE_GATEWAY_API_GATEWAYCLASS_CONTROLLER": "false",
+		"PILOT_ENABLE_GATEWAY_CONTROLLER_MODE":   "true",
+		"PILOT_GATEWAY_API_CONTROLLER_NAME":      OpenShiftGatewayClassControllerName,
+		"PILOT_GATEWAY_API_DEFAULT_GATEWAYCLASS": OpenShiftDefaultGatewayClassName,
+		// OSSM will only reconcile the default gateway class if this is true.
+		"PILOT_ENABLE_GATEWAY_API_GATEWAYCLASS_CONTROLLER": "true",
 	}
 	f := false
 	t := true
@@ -97,18 +93,15 @@ func desiredServiceMeshControlPlane(name types.NamespacedName, ownerRef metav1.O
 					Enablement: maistrav2.Enablement{Enabled: &f},
 				},
 			},
+			// Both ingress and egress gateways are enabled by default in OSSM.
+			// We don't need them, so we have to explicitly disable them.
 			Gateways: &maistrav2.GatewaysConfig{
 				ClusterIngress: &maistrav2.ClusterIngressGatewayConfig{
-					IngressEnabled: &t,
+					IngressEnabled: &f,
 					IngressGatewayConfig: maistrav2.IngressGatewayConfig{
 						GatewayConfig: maistrav2.GatewayConfig{
 							Enablement: maistrav2.Enablement{
-								Enabled: &t,
-							},
-							Service: maistrav2.GatewayServiceConfig{
-								ServiceSpec: corev1.ServiceSpec{
-									Type: corev1.ServiceTypeLoadBalancer,
-								},
+								Enabled: &f,
 							},
 						},
 					},
@@ -153,7 +146,12 @@ func desiredServiceMeshControlPlane(name types.NamespacedName, ownerRef metav1.O
 			Tracing: &maistrav2.TracingConfig{
 				Type: maistrav2.TracerTypeNone,
 			},
-			Version: "v2.4",
+			Version: "v2.5",
+			TechPreview: maistrav1.NewHelmValues(map[string]interface{}{
+				"gatewayAPI": map[string]interface{}{
+					"enabled": &t,
+				},
+			}),
 		},
 	}
 	return &smcp, nil
