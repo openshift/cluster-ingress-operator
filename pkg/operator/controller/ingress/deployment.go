@@ -1579,13 +1579,16 @@ func copyProbe(a, b *corev1.Probe, copyDefaultValues bool) {
 		return
 	}
 
+	// Always copy values that differ from the default values, as well as
+	// values where the default value is the same as the zero value.
+
 	if a.ProbeHandler.HTTPGet != nil {
 		b.ProbeHandler.HTTPGet = &corev1.HTTPGetAction{
 			Path: a.ProbeHandler.HTTPGet.Path,
 			Port: a.ProbeHandler.HTTPGet.Port,
 			Host: a.ProbeHandler.HTTPGet.Host,
 		}
-		if copyDefaultValues || a.ProbeHandler.HTTPGet.Scheme != "HTTP" {
+		if a.ProbeHandler.HTTPGet.Scheme != "HTTP" {
 			b.ProbeHandler.HTTPGet.Scheme = a.ProbeHandler.HTTPGet.Scheme
 		}
 	}
@@ -1595,14 +1598,24 @@ func copyProbe(a, b *corev1.Probe, copyDefaultValues bool) {
 
 	// Users are permitted to modify the timeout, so *don't* copy it.
 
-	// Conditionally copy default values that the API sets.
-	if copyDefaultValues || a.PeriodSeconds != int32(10) {
+	if a.PeriodSeconds != int32(10) {
 		b.PeriodSeconds = a.PeriodSeconds
 	}
-	if copyDefaultValues || a.SuccessThreshold != int32(1) {
+	if a.SuccessThreshold != int32(1) {
 		b.SuccessThreshold = a.SuccessThreshold
 	}
-	if copyDefaultValues || a.FailureThreshold != int32(3) {
+	if a.FailureThreshold != int32(3) {
+		b.FailureThreshold = a.FailureThreshold
+	}
+
+	// If copyDefaultValues is true, copy values even if they are the
+	// default values that the API sets.
+	if copyDefaultValues {
+		if a.ProbeHandler.HTTPGet != nil {
+			b.ProbeHandler.HTTPGet.Scheme = a.ProbeHandler.HTTPGet.Scheme
+		}
+		b.PeriodSeconds = a.PeriodSeconds
+		b.SuccessThreshold = a.SuccessThreshold
 		b.FailureThreshold = a.FailureThreshold
 	}
 }
