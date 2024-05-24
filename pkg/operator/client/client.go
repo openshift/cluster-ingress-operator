@@ -6,6 +6,7 @@ import (
 	iov1 "github.com/openshift/api/operatoringress/v1"
 
 	configv1 "github.com/openshift/api/config/v1"
+	machinev1 "github.com/openshift/api/machine/v1beta1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	routev1 "github.com/openshift/api/route/v1"
 
@@ -62,6 +63,9 @@ func init() {
 		panic(err)
 	}
 	if err := maistrav2.SchemeBuilder.AddToScheme(scheme); err != nil {
+		panic(err)
+	}
+	if err := machinev1.Install(scheme); err != nil {
 		panic(err)
 	}
 }

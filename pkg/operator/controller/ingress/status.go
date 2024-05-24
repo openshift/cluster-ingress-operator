@@ -73,6 +73,10 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 
 	if updated.Status.EndpointPublishingStrategy != nil && updated.Status.EndpointPublishingStrategy.LoadBalancer != nil {
 		updated.Status.EndpointPublishingStrategy.LoadBalancer.AllowedSourceRanges = computeAllowedSourceRanges(service)
+
+		if updated.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters != nil && updated.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS != nil {
+			updated.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.Subnets = getLBSubnets(service)
+		}
 	}
 
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentAvailableCondition(deployment))
@@ -87,7 +91,7 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	errs = append(errs, err)
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressProgressingCondition(updated.Status.Conditions))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, degradedCondition)
-	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressUpgradeableCondition(ic, deploymentRef, service, platformStatus, secret))
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressUpgradeableCondition(ic, deploymentRef, service, platformStatus, secret, r.config.IngressControllerLBSubnetsAWSEnabled))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressEvaluationConditionsDetectedCondition(ic, service))
 
 	updated.Status.Conditions = PruneConditions(updated.Status.Conditions)
@@ -637,13 +641,13 @@ func computeIngressDegradedCondition(conditions []operatorv1.OperatorCondition, 
 }
 
 // computeIngressUpgradeableCondition computes the IngressController's "Upgradeable" status condition.
-func computeIngressUpgradeableCondition(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference, service *corev1.Service, platform *configv1.PlatformStatus, secret *corev1.Secret) operatorv1.OperatorCondition {
+func computeIngressUpgradeableCondition(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference, service *corev1.Service, platform *configv1.PlatformStatus, secret *corev1.Secret, subnetsAWSEnabled bool) operatorv1.OperatorCondition {
 	var errs []error
 
 	errs = append(errs, checkDefaultCertificate(secret, "*."+ic.Status.Domain))
 
 	if service != nil {
-		errs = append(errs, loadBalancerServiceIsUpgradeable(ic, deploymentRef, service, platform))
+		errs = append(errs, loadBalancerServiceIsUpgradeable(ic, deploymentRef, service, platform, subnetsAWSEnabled))
 	}
 
 	if err := kerrors.NewAggregate(errs); err != nil {
@@ -798,6 +802,12 @@ func IngressStatusesEqual(a, b operatorv1.IngressControllerStatus) bool {
 		b.EndpointPublishingStrategy != nil && b.EndpointPublishingStrategy.LoadBalancer != nil {
 		if !reflect.DeepEqual(a.EndpointPublishingStrategy.LoadBalancer.AllowedSourceRanges, b.EndpointPublishingStrategy.LoadBalancer.AllowedSourceRanges) {
 			return false
+		}
+		if a.EndpointPublishingStrategy.LoadBalancer.ProviderParameters != nil && b.EndpointPublishingStrategy.LoadBalancer.ProviderParameters != nil &&
+			a.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS != nil && b.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS != nil {
+			if !reflect.DeepEqual(a.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.Subnets, b.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.Subnets) {
+				return false
+			}
 		}
 	}
 

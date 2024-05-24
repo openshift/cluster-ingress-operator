@@ -654,6 +654,40 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 			},
 		},
 	}
+
+	loadBalancerIngressControllerWithAWSSubnets := func(subnetIDsSpec []operatorv1.AWSSubnetID, subnetNamesSpec []operatorv1.AWSSubnetName, subnetIDsStatus []operatorv1.AWSSubnetID, subnetNamesStatus []operatorv1.AWSSubnetName) *operatorv1.IngressController {
+		eps := &operatorv1.EndpointPublishingStrategy{
+			Type: operatorv1.LoadBalancerServiceStrategyType,
+			LoadBalancer: &operatorv1.LoadBalancerStrategy{
+				Scope: operatorv1.ExternalLoadBalancer,
+				ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+					Type: AWSLBTypeAnnotation,
+					AWS:  &operatorv1.AWSLoadBalancerParameters{},
+				},
+			},
+		}
+		ic := &operatorv1.IngressController{
+			Spec: operatorv1.IngressControllerSpec{
+				EndpointPublishingStrategy: eps.DeepCopy(),
+			},
+			Status: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: eps.DeepCopy(),
+			},
+		}
+		newAWSSubnets := func(subnetIDs []operatorv1.AWSSubnetID, subnetNames []operatorv1.AWSSubnetName) *operatorv1.AWSSubnets {
+			if len(subnetIDs) == 0 && len(subnetNames) == 0 {
+				return nil
+			}
+			return &operatorv1.AWSSubnets{
+				IDs:   subnetIDs,
+				Names: subnetNames,
+			}
+		}
+		ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.Subnets = newAWSSubnets(subnetIDsSpec, subnetNamesSpec)
+		ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.Subnets = newAWSSubnets(subnetIDsStatus, subnetNamesStatus)
+		return ic
+	}
+
 	loadBalancerIngressControllerWithInternalScope := operatorv1.IngressController{
 		Status: operatorv1.IngressControllerStatus{
 			EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
@@ -799,6 +833,150 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 			service:        lbServiceWithSourceRangesField,
 			platformStatus: awsPlatformStatus,
 			expectStatus:   operatorv1.ConditionFalse,
+		},
+		{
+			name: "LoadBalancerService, AWS Subnets spec and status are equal, using both IDs and names",
+			ic: loadBalancerIngressControllerWithAWSSubnets(
+				[]operatorv1.AWSSubnetID{"subnet-00000000000000001", "subnet-00000000000000002"},
+				[]operatorv1.AWSSubnetName{"subnetA", "subnetB"},
+				[]operatorv1.AWSSubnetID{"subnet-00000000000000001", "subnet-00000000000000002"},
+				[]operatorv1.AWSSubnetName{"subnetA", "subnetB"},
+			),
+			service:        &corev1.Service{},
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionFalse,
+		},
+		{
+			name: "LoadBalancerService, AWS Subnets spec and status are nil",
+			ic: loadBalancerIngressControllerWithAWSSubnets(
+				nil,
+				nil,
+				nil,
+				nil,
+			),
+			service:        &corev1.Service{},
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionFalse,
+		},
+		{
+			name: "LoadBalancerService, AWS Subnets spec and status are equal, using both IDs and names, with different order",
+			ic: loadBalancerIngressControllerWithAWSSubnets(
+				[]operatorv1.AWSSubnetID{"subnet-00000000000000001", "subnet-00000000000000002"},
+				[]operatorv1.AWSSubnetName{"subnetB", "subnetA"},
+				[]operatorv1.AWSSubnetID{"subnet-00000000000000002", "subnet-00000000000000001"},
+				[]operatorv1.AWSSubnetName{"subnetA", "subnetB"},
+			),
+			service:        &corev1.Service{},
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionFalse,
+		},
+		{
+			name: "LoadBalancerService, AWS Subnets spec and status are equal, using IDs",
+			ic: loadBalancerIngressControllerWithAWSSubnets(
+				[]operatorv1.AWSSubnetID{"subnet-00000000000000001", "subnet-00000000000000002"},
+				nil,
+				[]operatorv1.AWSSubnetID{"subnet-00000000000000001", "subnet-00000000000000002"},
+				nil,
+			),
+			service:        &corev1.Service{},
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionFalse,
+		},
+		{
+			name: "LoadBalancerService, AWS Subnets spec and status are equal, using names",
+			ic: loadBalancerIngressControllerWithAWSSubnets(
+				nil,
+				[]operatorv1.AWSSubnetName{"subnetA", "subnetB"},
+				nil,
+				[]operatorv1.AWSSubnetName{"subnetA", "subnetB"},
+			),
+			service:        &corev1.Service{},
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionFalse,
+		},
+		{
+			name: "LoadBalancerService, AWS Subnets spec and status are NOT equal, using different IDs, but same names",
+			ic: loadBalancerIngressControllerWithAWSSubnets(
+				[]operatorv1.AWSSubnetID{"subnet-00000000000000001", "subnet-00000000000000002"},
+				[]operatorv1.AWSSubnetName{"subnetA", "subnetB"},
+				[]operatorv1.AWSSubnetID{"subnet-00000000000000003", "subnet-00000000000000004"},
+				[]operatorv1.AWSSubnetName{"subnetA", "subnetB"},
+			),
+			service:        &corev1.Service{},
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionTrue,
+		},
+		{
+			name: "LoadBalancerService, AWS Subnets spec and status are NOT equal, with ID equal to Name",
+			ic: loadBalancerIngressControllerWithAWSSubnets(
+				[]operatorv1.AWSSubnetID{"subnet-00000000000000001"},
+				nil,
+				nil,
+				[]operatorv1.AWSSubnetName{"subnet-00000000000000001"},
+			),
+			service:        &corev1.Service{},
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionTrue,
+		},
+		{
+			name: "LoadBalancerService, AWS Subnets spec and status are NOT equal, using names",
+			ic: loadBalancerIngressControllerWithAWSSubnets(
+				nil,
+				[]operatorv1.AWSSubnetName{"subnetA", "subnetB"},
+				nil,
+				[]operatorv1.AWSSubnetName{"subnetB", "subnetD"},
+			),
+			service:        &corev1.Service{},
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionTrue,
+		},
+		{
+			name: "LoadBalancerService, AWS Subnets spec set, but status is empty, using both IDs and names",
+			ic: loadBalancerIngressControllerWithAWSSubnets(
+				[]operatorv1.AWSSubnetID{"subnet-00000000000000001", "subnet-00000000000000002"},
+				[]operatorv1.AWSSubnetName{"subnetA", "subnetB"},
+				nil,
+				nil,
+			),
+			service:        &corev1.Service{},
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionTrue,
+		},
+		{
+			name: "LoadBalancerService, AWS Subnets status set, but spec is empty, using both IDs and names",
+			ic: loadBalancerIngressControllerWithAWSSubnets(
+				nil,
+				nil,
+				[]operatorv1.AWSSubnetID{"subnet-00000000000000001", "subnet-00000000000000002"},
+				[]operatorv1.AWSSubnetName{"subnetA", "subnetB"},
+			),
+			service:        &corev1.Service{},
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionTrue,
+		},
+		{
+			name: "LoadBalancerService, AWS Subnets spec set, but status is empty, using names",
+			ic: loadBalancerIngressControllerWithAWSSubnets(
+				nil,
+				[]operatorv1.AWSSubnetName{"subnetA", "subnetB"},
+				nil,
+				nil,
+			),
+			service:        &corev1.Service{},
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionTrue,
+		},
+		{
+			name: "LoadBalancerService, AWS Subnets status set, but spec is empty, using IDs",
+			ic: loadBalancerIngressControllerWithAWSSubnets(
+				nil,
+				nil,
+				[]operatorv1.AWSSubnetID{"subnet-00000000000000001", "subnet-00000000000000002"},
+				nil,
+			),
+			service:        &corev1.Service{},
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionTrue,
 		},
 	}
 	for _, test := range tests {
@@ -2319,7 +2497,7 @@ func Test_computeIngressUpgradeableCondition(t *testing.T) {
 					},
 				},
 			}
-			wantSvc, service, err := desiredLoadBalancerService(ic, deploymentRef, platformStatus)
+			wantSvc, service, err := desiredLoadBalancerService(ic, deploymentRef, platformStatus, true)
 			if err != nil {
 				t.Errorf("unexpected error from desiredLoadBalancerService: %v", err)
 				return
@@ -2341,7 +2519,7 @@ func Test_computeIngressUpgradeableCondition(t *testing.T) {
 				expectedStatus = operatorv1.ConditionTrue
 			}
 
-			actual := computeIngressUpgradeableCondition(ic, deploymentRef, service, platformStatus, secret)
+			actual := computeIngressUpgradeableCondition(ic, deploymentRef, service, platformStatus, secret, true)
 			if actual.Status != expectedStatus {
 				t.Errorf("expected Upgradeable to be %q, got %q", expectedStatus, actual.Status)
 			}
@@ -2429,7 +2607,7 @@ func Test_computeIngressEvaluationConditionsDetectedCondition(t *testing.T) {
 				},
 			}
 
-			wantSvc, service, err := desiredLoadBalancerService(ic, deploymentRef, platformStatus)
+			wantSvc, service, err := desiredLoadBalancerService(ic, deploymentRef, platformStatus, true)
 			if err != nil {
 				t.Fatalf("unexpected error from desiredLoadBalancerService: %v", err)
 			}

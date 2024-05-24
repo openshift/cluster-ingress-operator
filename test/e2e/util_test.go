@@ -424,20 +424,20 @@ func probe(timeout, period, success, failure int) *corev1.Probe {
 	}
 }
 
-// updateIngressControllerSpecWithRetryOnConflict gets a fresh copy of
-// the named ingresscontroller, calls mutateSpecFn() where callers can
-// modify fields of the spec, and then updates the ingresscontroller
-// object. If there is a conflict error on update then the complete
-// sequence of get, mutate, and update is retried until timeout is
-// reached.
-func updateIngressControllerSpecWithRetryOnConflict(t *testing.T, name types.NamespacedName, timeout time.Duration, mutateSpecFn func(*operatorv1.IngressControllerSpec)) error {
+// updateIngressControllerWithRetryOnConflict gets a fresh copy of
+// the named ingresscontroller, calls mutateIngressControllerFn() where
+// callers can modify fields of the ingresscontroller, and then updates
+// the ingresscontroller object. If there is a conflict error on update
+// then the complete sequence of get, mutate, and update is retried until
+// timeout is reached.
+func updateIngressControllerWithRetryOnConflict(t *testing.T, name types.NamespacedName, timeout time.Duration, mutateIngressControllerFn func(controller *operatorv1.IngressController)) error {
 	ic := operatorv1.IngressController{}
 	return wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
 		if err := kclient.Get(context.TODO(), name, &ic); err != nil {
 			t.Logf("error getting ingress controller %v: %v, retrying...", name, err)
 			return false, nil
 		}
-		mutateSpecFn(&ic.Spec)
+		mutateIngressControllerFn(&ic)
 		if err := kclient.Update(context.TODO(), &ic); err != nil {
 			if errors.IsConflict(err) {
 				t.Logf("conflict when updating ingress controller %v: %v, retrying...", name, err)
@@ -503,7 +503,7 @@ func updateInfrastructureConfigSpecWithRetryOnConflict(t *testing.T, name types.
 // This hostname must be the domain associated with the ingresscontroller under test.
 // This function overrides the HTTP HOST header with hostname argument, which is needed
 // when no DNS records have been created on the cloud provider for said hostname.
-func verifyExternalIngressController(t *testing.T, name types.NamespacedName, hostname, address string) {
+func verifyExternalIngressController(t *testing.T, name types.NamespacedName, hostname, address string, observationTime time.Duration) error {
 	t.Helper()
 	echoPod := buildEchoPod(name.Name, name.Namespace)
 	if err := kclient.Create(context.TODO(), echoPod); err != nil {
@@ -559,16 +559,14 @@ func verifyExternalIngressController(t *testing.T, name types.NamespacedName, ho
 	req.Host = hostname
 
 	httpClient := http.Client{Timeout: 5 * time.Second}
-	err = waitForHTTPClientCondition(t, &httpClient, req, 10*time.Second, 10*time.Minute, func(r *http.Response) bool {
+	err = waitForHTTPClientCondition(t, &httpClient, req, 10*time.Second, observationTime, func(r *http.Response) bool {
 		if r.StatusCode == http.StatusOK {
 			t.Logf("verified connectivity with workload with req %v and response %v", req.URL, r.StatusCode)
 			return true
 		}
 		return false
 	})
-	if err != nil {
-		t.Fatalf("failed to verify connectivity with workload with reqURL %s using external client: %v", req.URL, err)
-	}
+	return err
 }
 
 // verifyInternalIngressController verifies connectivity between the router
@@ -842,4 +840,57 @@ func createNamespace(t *testing.T, name string) *corev1.Namespace {
 	}
 
 	return ns
+}
+
+// isFeatureGateEnabled returns a boolean for it the provided feature gate is enabled
+// and an error if unable to get feature gate.
+func isFeatureGateEnabled(featureGateName configv1.FeatureGateName) (bool, error) {
+	// Get desired cluster version.
+	version, err := getClusterVersion()
+	if err != nil {
+		return false, fmt.Errorf("cluster version not found: %v", err)
+	}
+	desiredVersion := version.Status.Desired.Version
+	if len(desiredVersion) == 0 && len(version.Status.History) > 0 {
+		desiredVersion = version.Status.History[0].Version
+	}
+
+	// Get the cluster feature gate.
+	var clusterFeatureGate = &configv1.FeatureGate{}
+	name := types.NamespacedName{Name: "cluster"}
+	err = wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, name, clusterFeatureGate); err != nil {
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("failed to get cluster feature gate: %v", err)
+	}
+
+	// Check if provided feature gate is enabled.
+	for _, fg := range clusterFeatureGate.Status.FeatureGates {
+		if fg.Version != desiredVersion {
+			continue
+		}
+		for _, fgAttribs := range fg.Enabled {
+			if fgAttribs.Name == featureGateName {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+// getClusterVersion returns the ClusterVersion if found.  If one is not found, it returns an error.
+func getClusterVersion() (*configv1.ClusterVersion, error) {
+	clusterVersion := &configv1.ClusterVersion{}
+	versionName := types.NamespacedName{Name: "version"}
+	err := wait.PollUntilContextTimeout(context.TODO(), 1*time.Second, 1*time.Minute, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, versionName, clusterVersion); err != nil {
+			return false, nil
+		}
+		return true, nil
+	})
+	return clusterVersion, err
 }
