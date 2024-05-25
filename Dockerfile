@@ -1,9 +1,9 @@
-FROM registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.21-openshift-4.16 AS builder
+FROM registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.22-openshift-4.17 AS builder
 WORKDIR /ingress-operator
 COPY . .
 RUN make build
 
-FROM registry.ci.openshift.org/ocp/4.16:base-rhel9
+FROM registry.ci.openshift.org/ocp/4.17:base-rhel9
 COPY --from=builder /ingress-operator/ingress-operator /usr/bin/
 COPY manifests /manifests
 ENTRYPOINT ["/usr/bin/ingress-operator"]
