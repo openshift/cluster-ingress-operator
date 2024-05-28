@@ -755,7 +755,7 @@ func TestMTLSWithCRLs(t *testing.T) {
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{{
 						Name:  "httpd",
-						Image: "quay.io/centos7/httpd-24-centos7",
+						Image: "quay.io/centos7/httpd-24-centos7:centos7",
 						Ports: []corev1.ContainerPort{{
 							ContainerPort: 8080,
 							Name:          "http-svc",
@@ -1182,7 +1182,7 @@ func TestCRLUpdate(t *testing.T) {
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{{
 						Name:  "httpd",
-						Image: "quay.io/centos7/httpd-24-centos7",
+						Image: "quay.io/centos7/httpd-24-centos7:centos7",
 						Ports: []corev1.ContainerPort{{
 							ContainerPort: 8080,
 							Name:          "http-svc",
