@@ -292,3 +292,21 @@ func GatewayDNSRecordName(gateway *gatewayapiv1beta1.Gateway, host string) types
 		Name:      fmt.Sprintf("%s-%s-wildcard", gateway.Name, util.Hash(host)),
 	}
 }
+
+// AdminCAConfigMapName returns the namespaced name for the
+// configmap with the admin CA bundle.
+func AdminCAConfigMapName() types.NamespacedName {
+	return types.NamespacedName{
+		Namespace: GlobalUserSpecifiedConfigNamespace,
+		Name:      "admin-ca-bundle",
+	}
+}
+
+// IngressCAConfigMapName returns the namespaced name for the
+// configmap with the ingress CA bundle.
+func IngressCAConfigMapName() types.NamespacedName {
+	return types.NamespacedName{
+		Namespace: DefaultOperandNamespace,
+		Name:      "ingress-ca-bundle",
+	}
+}
