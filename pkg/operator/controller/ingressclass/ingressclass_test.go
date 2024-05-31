@@ -14,6 +14,7 @@ import (
 // TestDesiredIngressClass verifies that desiredIngressClass behaves as
 // expected.
 func TestDesiredIngressClass(t *testing.T) {
+	scope := "Cluster"
 	makeIngressClass := func(icName string, annotateAsDefault bool) *networkingv1.IngressClass {
 		apiGroup := "operator.openshift.io"
 		name := "openshift-" + icName
@@ -27,6 +28,7 @@ func TestDesiredIngressClass(t *testing.T) {
 					APIGroup: &apiGroup,
 					Kind:     "IngressController",
 					Name:     icName,
+					Scope:    &scope,
 				},
 			},
 		}
