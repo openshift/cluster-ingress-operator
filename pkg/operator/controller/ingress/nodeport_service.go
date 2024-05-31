@@ -98,6 +98,7 @@ func desiredNodePortService(ic *operatorv1.IngressController, deploymentRef meta
 	}
 
 	name := controller.NodePortServiceName(ic)
+	internalTrafficPolicyCluster := corev1.ServiceInternalTrafficPolicyCluster
 	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Annotations: map[string]string{},
@@ -112,6 +113,7 @@ func desiredNodePortService(ic *operatorv1.IngressController, deploymentRef meta
 		},
 		Spec: corev1.ServiceSpec{
 			ExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyTypeLocal,
+			InternalTrafficPolicy: &internalTrafficPolicyCluster,
 			Ports: []corev1.ServicePort{
 				{
 					Name:       "http",
@@ -195,7 +197,12 @@ func nodePortServiceChanged(current, expected *corev1.Service) (bool, *corev1.Se
 		// Ignore fields that the API, other controllers, or user may
 		// have modified.
 		cmpopts.IgnoreFields(corev1.ServicePort{}, "NodePort"),
-		cmpopts.IgnoreFields(corev1.ServiceSpec{}, "ClusterIP", "ClusterIPs", "ExternalIPs", "HealthCheckNodePort"),
+		cmpopts.IgnoreFields(corev1.ServiceSpec{},
+			"ClusterIP", "ClusterIPs",
+			"ExternalIPs",
+			"HealthCheckNodePort",
+			"IPFamilies", "IPFamilyPolicy",
+		),
 		cmp.Comparer(cmpServiceAffinity),
 		cmpopts.EquateEmpty(),
 	}
@@ -207,6 +214,7 @@ func nodePortServiceChanged(current, expected *corev1.Service) (bool, *corev1.Se
 		cmpopts.IgnoreMapEntries(func(k, _ string) bool {
 			return !managedNodePortServiceAnnotations.Has(k)
 		}),
+		cmpopts.EquateEmpty(),
 	}
 	if !cmp.Equal(current.Annotations, expected.Annotations, annotationCmpOpts...) {
 		changed = true

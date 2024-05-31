@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+
 	operatorv1 "github.com/openshift/api/operator/v1"
 
 	corev1 "k8s.io/api/core/v1"
@@ -14,6 +16,7 @@ import (
 
 func TestDesiredNodePortService(t *testing.T) {
 	trueVar := true
+	internalTrafficPolicyCluster := corev1.ServiceInternalTrafficPolicyCluster
 	deploymentRef := metav1.OwnerReference{
 		APIVersion: "apps/v1",
 		Kind:       "Deployment",
@@ -51,6 +54,7 @@ func TestDesiredNodePortService(t *testing.T) {
 				},
 				Spec: corev1.ServiceSpec{
 					ExternalTrafficPolicy: "Local",
+					InternalTrafficPolicy: &internalTrafficPolicyCluster,
 					Ports: []corev1.ServicePort{
 						{
 							Name:       "http",
@@ -92,6 +96,7 @@ func TestDesiredNodePortService(t *testing.T) {
 				},
 				Spec: corev1.ServiceSpec{
 					ExternalTrafficPolicy: "Local",
+					InternalTrafficPolicy: &internalTrafficPolicyCluster,
 					Ports: []corev1.ServicePort{
 						{
 							Name:       "http",
@@ -184,6 +189,14 @@ func TestNodePortServiceChanged(t *testing.T) {
 			expect: true,
 		},
 		{
+			description: "if .spec.internalTrafficPolicy changes",
+			mutate: func(svc *corev1.Service) {
+				v := corev1.ServiceInternalTrafficPolicyLocal
+				svc.Spec.InternalTrafficPolicy = &v
+			},
+			expect: true,
+		},
+		{
 			description: "if the local-with-fallback annotation changes",
 			mutate: func(svc *corev1.Service) {
 				svc.Annotations["traffic-policy.network.alpha.openshift.io/local-with-fallback"] = "x"
@@ -253,6 +266,21 @@ func TestNodePortServiceChanged(t *testing.T) {
 			},
 			expect: true,
 		},
+		{
+			description: "if .spec.ipFamilies is defaulted",
+			mutate: func(service *corev1.Service) {
+				service.Spec.IPFamilies = []corev1.IPFamily{corev1.IPv4Protocol}
+			},
+			expect: false,
+		},
+		{
+			description: "if .spec.ipFamilyPolicy is defaulted",
+			mutate: func(service *corev1.Service) {
+				v := corev1.IPFamilyPolicySingleStack
+				service.Spec.IPFamilyPolicy = &v
+			},
+			expect: false,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -307,5 +335,34 @@ func TestNodePortServiceChanged(t *testing.T) {
 				t.Errorf("%s, nodePortServiceChanged does not behave as a fixed point function", tc.description)
 			}
 		}
+	}
+}
+
+// TestNodePortServiceChangedEmptyAnnotations verifies that a service with null
+// .metadata.annotations and a service with empty .metadata.annotations are
+// considered equal.
+func TestNodePortServiceChangedEmptyAnnotations(t *testing.T) {
+	svc1 := corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Annotations: nil,
+		},
+	}
+	svc2 := corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Annotations: map[string]string{},
+		},
+	}
+	testCases := []struct {
+		description      string
+		current, desired *corev1.Service
+	}{
+		{"null to empty", &svc1, &svc2},
+		{"empty to null", &svc2, &svc1},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			changed, _ := nodePortServiceChanged(tc.current, tc.desired)
+			assert.False(t, changed)
+		})
 	}
 }
