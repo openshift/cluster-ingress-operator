@@ -41,7 +41,12 @@ func Test_serviceMonitorChanged(t *testing.T) {
 	}
 	if changed, sm3 := serviceMonitorChanged(sm1, sm2); !changed {
 		t.Fatal("expected changed to be true after clearing servicemonitor's selector")
-	} else if changedAgain, _ := serviceMonitorChanged(sm2, sm3); changedAgain {
-		t.Fatal("serviceMonitorChanged does not behave as a fixed-point function")
+	} else {
+		if updatedChanged, _ := serviceMonitorChanged(sm1, sm3); !updatedChanged {
+			t.Error("serviceMonitorChanged reported changes but did not make any update")
+		}
+		if changedAgain, _ := serviceMonitorChanged(sm2, sm3); changedAgain {
+			t.Fatal("serviceMonitorChanged does not behave as a fixed-point function")
+		}
 	}
 }

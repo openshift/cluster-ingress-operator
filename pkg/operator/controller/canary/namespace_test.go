@@ -38,6 +38,9 @@ func Test_canaryNamespaceChanged(t *testing.T) {
 			if changed, updated := canaryNamespaceChanged(original, mutated); changed != tc.expect {
 				t.Errorf("expect canaryNamespaceChanged to be %t, got %t", tc.expect, changed)
 			} else if changed {
+				if updatedChanged, _ := canaryNamespaceChanged(original, updated); !updatedChanged {
+					t.Error("canaryNamespaceChanged reported changes but did not make any update")
+				}
 				if changedAgain, _ := canaryNamespaceChanged(mutated, updated); changedAgain {
 					t.Error("canaryNamespaceChanged does not behave as a fixed point function")
 				}
