@@ -33,6 +33,7 @@ func Test_desiredInternalIngressControllerService(t *testing.T) {
 	svc := desiredInternalIngressControllerService(ic, deploymentRef)
 
 	assert.Equal(t, "ClusterIP", string(svc.Spec.Type))
+	assert.Equal(t, "Cluster", string(*svc.Spec.InternalTrafficPolicy))
 	assert.Equal(t, map[string]string{
 		"service.alpha.openshift.io/serving-cert-secret-name": "router-metrics-certs-default",
 	}, svc.Annotations)
@@ -88,6 +89,14 @@ func Test_internalServiceChanged(t *testing.T) {
 				svc.Spec.ExternalIPs = []string{"3.4.5.6"}
 			},
 			expect: false,
+		},
+		{
+			description: "if .spec.internalTrafficPolicy changes",
+			mutate: func(svc *corev1.Service) {
+				v := corev1.ServiceInternalTrafficPolicyLocal
+				svc.Spec.InternalTrafficPolicy = &v
+			},
+			expect: true,
 		},
 		{
 			description: "if the service.alpha.openshift.io/serving-cert-secret-name annotation changes",
@@ -157,6 +166,21 @@ func Test_internalServiceChanged(t *testing.T) {
 			},
 			expect: true,
 		},
+		{
+			description: "if .spec.ipFamilies is defaulted",
+			mutate: func(service *corev1.Service) {
+				service.Spec.IPFamilies = []corev1.IPFamily{corev1.IPv4Protocol}
+			},
+			expect: false,
+		},
+		{
+			description: "if .spec.ipFamilyPolicy is defaulted",
+			mutate: func(service *corev1.Service) {
+				v := corev1.IPFamilyPolicySingleStack
+				service.Spec.IPFamilyPolicy = &v
+			},
+			expect: false,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -207,6 +231,35 @@ func Test_internalServiceChanged(t *testing.T) {
 					t.Error("internalServiceChanged does not behave as a fixed point function")
 				}
 			}
+		})
+	}
+}
+
+// TestInternalServiceChangedEmptyAnnotations verifies that a service with null
+// .metadata.annotations and a service with empty .metadata.annotations are
+// considered equal.
+func TestInternalServiceChangedEmptyAnnotations(t *testing.T) {
+	svc1 := corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Annotations: nil,
+		},
+	}
+	svc2 := corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Annotations: map[string]string{},
+		},
+	}
+	testCases := []struct {
+		description      string
+		current, desired *corev1.Service
+	}{
+		{"null to empty", &svc1, &svc2},
+		{"empty to null", &svc2, &svc1},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			changed, _ := internalServiceChanged(tc.current, tc.desired)
+			assert.False(t, changed)
 		})
 	}
 }
