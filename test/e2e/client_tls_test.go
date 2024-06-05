@@ -1383,6 +1383,221 @@ func TestCRLUpdate(t *testing.T) {
 	}
 }
 
+// TestRouterWaitsForCRLs verifies that router pods only report ready once all CRLs are downloaded.
+func TestRouterWaitsForCRLs(t *testing.T) {
+	t.Parallel()
+	namespaceName := names.SimpleNameGenerator.GenerateName("router-waits-for-crls-")
+	namespace := createNamespace(t, namespaceName)
+
+	// Create certs.
+	crlHostName := types.NamespacedName{
+		Name:      "crl-host",
+		Namespace: namespaceName,
+	}
+	crlHostServiceName := "crl-host-service"
+	crlHostURL := crlHostServiceName + "." + crlHostName.Namespace + ".svc"
+
+	rootCDP := "http://" + crlHostURL + "/root.crl"
+	intermediateCDP := "http://" + crlHostURL + "/intermediate.crl"
+
+	rootCA := MustCreateTLSKeyCert("testing root CA", time.Now(), time.Now().Add(24*time.Hour), true, []string{rootCDP}, nil)
+	intermediateCA := MustCreateTLSKeyCert("testing intermediate CA", time.Now(), time.Now().Add(24*time.Hour), true, []string{intermediateCDP}, &rootCA)
+
+	rootCRL, rootCRLPem := MustCreateCRL(nil, rootCA, time.Now(), time.Now().Add(1*time.Hour), nil)
+	intermediateCRL, intermediateCRLPem := MustCreateCRL(nil, intermediateCA, time.Now(), time.Now().Add(1*time.Hour), nil)
+
+	// Create an ingress controller with mTLS enabled.
+	clientCAConfigMapName := "client-ca-cm"
+	clientCAConfigMap := corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      clientCAConfigMapName,
+			Namespace: "openshift-config",
+		},
+		Data: map[string]string{
+			"ca-bundle.pem": strings.Join([]string{intermediateCA.CertPem, rootCA.CertPem}, "\n"),
+		},
+	}
+	assertCreated(t, kclient, &clientCAConfigMap)
+	t.Cleanup(func() { assertDeleted(t, kclient, &clientCAConfigMap) })
+	icName := types.NamespacedName{
+		Name:      "router-waits-for-crls",
+		Namespace: operatorNamespace,
+	}
+	icDomain := icName.Name + "." + dnsConfig.Spec.BaseDomain
+	ic := newPrivateController(icName, icDomain)
+	ic.Spec.ClientTLS = operatorv1.ClientTLS{
+		ClientCA: configv1.ConfigMapNameReference{
+			Name: clientCAConfigMapName,
+		},
+		ClientCertificatePolicy: operatorv1.ClientCertificatePolicyRequired,
+	}
+	if err := kclient.Create(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to create ingresscontroller %s/%s: %v", icName.Namespace, icName.Name, err)
+	}
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
+
+	// Verify that the router is not ready, and that the reason includes that the "crls-updated" health check failed.
+	routerPod := corev1.Pod{}
+	err := wait.PollImmediate(10*time.Second, 5*time.Minute, func() (bool, error) {
+		podList := &corev1.PodList{}
+		labels := map[string]string{
+			controller.ControllerDeploymentLabel: icName.Name,
+		}
+		if err := kclient.List(context.TODO(), podList, client.InNamespace("openshift-ingress"), client.MatchingLabels(labels)); err != nil {
+			t.Logf("failed to list pods for ingress controllers %s: %v", ic.Name, err)
+			return false, nil
+		}
+		if len(podList.Items) == 0 {
+			t.Logf("no router pods found for ingresscontroller %s", ic.Name)
+			return false, nil
+		}
+		routerPod = podList.Items[0]
+		routerPodName := types.NamespacedName{
+			Name:      routerPod.Name,
+			Namespace: routerPod.Namespace,
+		}
+		if err := kclient.Get(context.TODO(), routerPodName, &routerPod); err != nil {
+			t.Logf("failed to get pod %s: %v", routerPod.Name, err)
+			return false, nil
+		}
+		for _, condition := range routerPod.Status.Conditions {
+			if condition.Type == corev1.PodReady {
+				if condition.Status != corev1.ConditionFalse {
+					t.Fatalf("expected %s %q condition to be False, got %s", routerPod.Name, corev1.PodReady, condition.Status)
+				}
+				t.Logf("Found router pod %s", routerPod.Name)
+				return true, nil
+			}
+		}
+		t.Logf("pod %s condition %s not found. retrying.", routerPod.Name, corev1.PodReady)
+		return false, nil
+	})
+	if err != nil {
+		t.Fatalf("Expected router to be unready: %v", err)
+	}
+	err = wait.PollImmediate(10*time.Second, 5*time.Minute, func() (bool, error) {
+		events := &corev1.EventList{}
+		if err := kclient.List(context.TODO(), events, client.InNamespace("openshift-ingress")); err != nil {
+			t.Log("Failed to list events in openshift-ingress namespace. retrying.")
+			return false, nil
+		}
+		for _, event := range events.Items {
+			if event.Reason == "ProbeError" && event.InvolvedObject.Name == routerPod.Name {
+				if strings.Contains(event.Message, "crls-updated failed") {
+					return true, nil
+				}
+			}
+		}
+		return false, nil
+	})
+	if err != nil {
+		t.Fatalf("Failed to find ProbeError event for %s containing \"crls-updated failed\"", routerPod.Name)
+	}
+	// Create a CRL host that has the root CRL, but not the intermediate one.
+	crlConfigMapName := names.SimpleNameGenerator.GenerateName(crlHostName.Name + "-configmap-")
+	crlConfigMap := corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      crlConfigMapName,
+			Namespace: namespace.Name,
+		},
+		Data: map[string]string{
+			"root.crl": rootCRLPem,
+		},
+	}
+	assertCreated(t, kclient, &crlConfigMap)
+	t.Cleanup(func() { assertDeleted(t, kclient, &crlConfigMap) })
+
+	crlHostPod := buildCRLHostPod(crlHostName.Name, namespace.Name, crlConfigMap.Name, "root")
+	assertCreated(t, kclient, &crlHostPod)
+	t.Cleanup(func() { assertDeleted(t, kclient, &crlHostPod) })
+
+	crlHostService := buildCRLHostService(crlHostServiceName, namespace.Name, crlHostName.Name)
+	assertCreated(t, kclient, &crlHostService)
+	t.Cleanup(func() { assertDeleted(t, kclient, &crlHostService) })
+
+	err = wait.PollImmediate(10*time.Second, 5*time.Minute, func() (bool, error) {
+		podList := &corev1.PodList{}
+		labels := map[string]string{
+			controller.ControllerDeploymentLabel: icName.Name,
+		}
+		if err := kclient.List(context.TODO(), podList, client.InNamespace("openshift-ingress"), client.MatchingLabels(labels)); err != nil {
+			t.Logf("failed to list pods for ingress controllers %s: %v", ic.Name, err)
+			return false, nil
+		}
+		if len(podList.Items) == 0 {
+			t.Logf("no router pods found for ingresscontroller %s: %v", ic.Name, err)
+			return false, nil
+		}
+		routerPod = podList.Items[0]
+		for _, condition := range routerPod.Status.Conditions {
+			if condition.Type == corev1.PodReady {
+				if condition.Status != corev1.ConditionFalse {
+					t.Fatalf("expected %s %q condition to be False, got %s", routerPod.Name, corev1.PodReady, condition.Status)
+				}
+				return true, nil
+			}
+		}
+		t.Logf("pod %s condition %s not found. retrying.", routerPod.Name, corev1.PodReady)
+		return false, nil
+	})
+	if err != nil {
+		t.Fatalf("Expected router to be unready: %v", err)
+	}
+	err = wait.PollImmediate(10*time.Second, 2*time.Minute, func() (bool, error) {
+		events := &corev1.EventList{}
+		if err := kclient.List(context.TODO(), events, client.InNamespace("openshift-ingress")); err != nil {
+			t.Log("Failed to list events in openshift-ingress namespace. retrying.")
+			return false, nil
+		}
+		for _, event := range events.Items {
+			if event.Reason == "ProbeError" && event.InvolvedObject.Name == routerPod.Name {
+				if strings.Contains(event.Message, "crls-updated failed") {
+					return true, nil
+				}
+			}
+		}
+		return false, nil
+	})
+	if err != nil {
+		t.Fatalf("Failed to find ProbeError event for %s containing \"crls-updated failed\"", routerPod.Name)
+	}
+	// Add the intermediate CRL to the route host.
+	crlConfigMap.Data["intermediate.crl"] = intermediateCRLPem
+	if err := kclient.Update(context.TODO(), &crlConfigMap); err != nil {
+		t.Fatalf("Failed to update %s: %v", crlConfigMap.Name, err)
+	}
+	// Verify that both the root and intermediate CRLs are downloaded, and that the router is now ready.
+	err = wait.PollImmediate(10*time.Second, 5*time.Minute, func() (bool, error) {
+		podList := &corev1.PodList{}
+		labels := map[string]string{
+			controller.ControllerDeploymentLabel: icName.Name,
+		}
+		if err := kclient.List(context.TODO(), podList, client.InNamespace("openshift-ingress"), client.MatchingLabels(labels)); err != nil {
+			t.Logf("failed to list pods for ingress controllers %s: %v", ic.Name, err)
+			return false, nil
+		}
+		if len(podList.Items) == 0 {
+			t.Logf("no router pods found for ingresscontroller %s: %v", ic.Name, err)
+			return false, nil
+		}
+		routerPod = podList.Items[0]
+		for _, condition := range routerPod.Status.Conditions {
+			if condition.Type == corev1.PodReady {
+				return condition.Status == corev1.ConditionTrue, nil
+			}
+		}
+		t.Logf("pod %s condition %s not found. retrying.", routerPod.Name, corev1.PodReady)
+		return false, nil
+	})
+	expectedCRLs := map[string]*x509.RevocationList{
+		"root.crl":         rootCRL,
+		"intermediate.crl": intermediateCRL,
+	}
+	err = wait.PollImmediate(5*time.Second, 2*time.Minute, func() (bool, error) {
+		return verifyCRLs(t, &routerPod, expectedCRLs)
+	})
+}
+
 func verifyCRLs(t *testing.T, pod *corev1.Pod, expectedCRLs map[string]*x509.RevocationList) (bool, error) {
 	t.Helper()
 	activeCRLs, err := getActiveCRLs(t, pod)
