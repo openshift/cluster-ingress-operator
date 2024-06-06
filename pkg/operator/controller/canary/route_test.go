@@ -134,6 +134,9 @@ func Test_canaryRouteChanged(t *testing.T) {
 			if changed, updated := canaryRouteChanged(original, mutated); changed != tc.expect {
 				t.Errorf("expected canaryRouteChanged to be %t, got %t", tc.expect, changed)
 			} else if changed {
+				if updatedChanged, _ := canaryRouteChanged(original, updated); !updatedChanged {
+					t.Error("canaryRouteChanged reported changes but did not make any update")
+				}
 				if changedAgain, _ := canaryRouteChanged(mutated, updated); changedAgain {
 					t.Error("canaryRouteChanged does not behave as a fixed point function")
 				}

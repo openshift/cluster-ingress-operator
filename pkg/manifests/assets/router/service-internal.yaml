@@ -19,3 +19,4 @@ spec:
     port: 1936
     protocol: TCP
     targetPort: metrics
+  sessionAffinity: None

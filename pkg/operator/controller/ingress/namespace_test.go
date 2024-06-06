@@ -58,6 +58,9 @@ func Test_routerNamespaceChanged(t *testing.T) {
 			if changed, updated := routerNamespaceChanged(mutated, desired); changed != tc.expect {
 				t.Errorf("expect routerNamespaceChanged to be %t, got %t", tc.expect, changed)
 			} else if changed {
+				if updatedChanged, _ := routerNamespaceChanged(mutated, updated); !updatedChanged {
+					t.Error("routerNamespaceChanged reported changes but did not make any update")
+				}
 				if changedAgain, _ := routerNamespaceChanged(desired, updated); changedAgain {
 					t.Error("routerNamespaceChanged does not behave as a fixed point function")
 				}
