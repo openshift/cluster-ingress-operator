@@ -39,20 +39,11 @@ var (
 // New creates the route metrics controller. This is the controller
 // that handles all the logic for gathering and exporting
 // metrics related to route resources.
-func New(mgr manager.Manager, namespace string) (controller.Controller, error) {
-	// Create a new cache to watch on Route objects from every namespace.
-	newCache, err := cache.New(mgr.GetConfig(), cache.Options{
-		Scheme: mgr.GetScheme(),
-	})
-	if err != nil {
-		return nil, err
-	}
-	// Add the cache to the manager so that the cache is started along with the other runnables.
-	mgr.Add(newCache)
+func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	operatorCache := mgr.GetCache()
 	reconciler := &reconciler{
-		cache:            newCache,
-		namespace:        namespace,
+		cache:            config.Cache,
+		namespace:        config.Namespace,
 		routeToIngresses: make(map[types.NamespacedName]sets.String),
 	}
 	c, err := controller.New(controllerName, mgr, controller.Options{
@@ -74,7 +65,7 @@ func New(mgr manager.Manager, namespace string) (controller.Controller, error) {
 		return nil, err
 	}
 	// add watch for changes in Route
-	if err := c.Watch(source.Kind(newCache, &routev1.Route{}),
+	if err := c.Watch(source.Kind(reconciler.cache, &routev1.Route{}),
 		handler.EnqueueRequestsFromMapFunc(reconciler.routeToIngressController)); err != nil {
 		return nil, err
 	}
@@ -142,6 +133,16 @@ func (r *reconciler) routeToIngressController(context context.Context, obj clien
 	r.routeToIngresses[routeNamespacedName] = currentRouteIngresses
 
 	return requests
+}
+
+// Config holds all the configuration that must be provided when creating the
+// controller.
+type Config struct {
+	// Namespace specifies the namespace where IngressControllers reside.
+	Namespace string
+	// Cache should be a namespace global cache since routes
+	// are not restricted to any particular namespace.
+	Cache cache.Cache
 }
 
 // reconciler handles the actual ingresscontroller reconciliation logic in response to events.
