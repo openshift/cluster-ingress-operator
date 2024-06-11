@@ -61,11 +61,11 @@ func TestClientTLS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to generate client CA certificate: %v", err)
 	}
-	validMatchingCert, validMatchingKey, err := generateCertificate(ca, caKey, "allowed")
+	validMatchingCert, validMatchingKey, err := generateCertificate(ca, caKey, "allowed", x509.SHA256WithRSA)
 	if err != nil {
 		t.Fatalf("failed to generate first client certificate: %v", err)
 	}
-	validMismatchingCert, validMismatchingKey, err := generateCertificate(ca, caKey, "disallowed")
+	validMismatchingCert, validMismatchingKey, err := generateCertificate(ca, caKey, "disallowed", x509.SHA256WithRSA)
 	if err != nil {
 		t.Fatalf("failed to generate second client certificate: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestClientTLS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to generate other CA certificate: %v", err)
 	}
-	invalidMatchingCert, invalidMatchingKey, err := generateCertificate(otherCA, otherCAKey, "allowed")
+	invalidMatchingCert, invalidMatchingKey, err := generateCertificate(otherCA, otherCAKey, "allowed", x509.SHA256WithRSA)
 	if err != nil {
 		t.Fatalf("failed to generate third client certificate: %v", err)
 	}
@@ -1477,7 +1477,7 @@ func generateCA() (*x509.Certificate, *rsa.PrivateKey, error) {
 
 // generateCertificate generates and returns a certificate and key
 // where the certificate is signed by the provided CA certificate.
-func generateCertificate(caCert *x509.Certificate, caKey *rsa.PrivateKey, cn string) (*x509.Certificate, *rsa.PrivateKey, error) {
+func generateCertificate(caCert *x509.Certificate, caKey *rsa.PrivateKey, cn string, signatureAlgorithm x509.SignatureAlgorithm) (*x509.Certificate, *rsa.PrivateKey, error) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return nil, nil, err
@@ -1488,7 +1488,7 @@ func generateCertificate(caCert *x509.Certificate, caKey *rsa.PrivateKey, cn str
 			CommonName:   cn,
 			Organization: []string{"OpenShift"},
 		},
-		SignatureAlgorithm:    x509.SHA256WithRSA,
+		SignatureAlgorithm:    signatureAlgorithm,
 		NotBefore:             time.Now().Add(-24 * time.Hour),
 		NotAfter:              time.Now().Add(24 * time.Hour),
 		SerialNumber:          big.NewInt(1),
