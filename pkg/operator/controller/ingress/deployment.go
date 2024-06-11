@@ -32,6 +32,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/rand"
+	"k8s.io/utils/ptr"
 
 	configv1 "github.com/openshift/api/config/v1"
 )
@@ -432,7 +433,8 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		Name: statsVolumeName,
 		VolumeSource: corev1.VolumeSource{
 			Secret: &corev1.SecretVolumeSource{
-				SecretName: statsSecretName,
+				DefaultMode: ptr.To[int32](0644),
+				SecretName:  statsSecretName,
 			},
 		},
 	}
@@ -459,7 +461,8 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		Name: certsVolumeName,
 		VolumeSource: corev1.VolumeSource{
 			Secret: &corev1.SecretVolumeSource{
-				SecretName: certsSecretName,
+				DefaultMode: ptr.To[int32](0644),
+				SecretName:  certsSecretName,
 			},
 		},
 	}
@@ -478,6 +481,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 			Name: "error-pages",
 			VolumeSource: corev1.VolumeSource{
 				ConfigMap: &corev1.ConfigMapVolumeSource{
+					DefaultMode: ptr.To[int32](0644),
 					LocalObjectReference: corev1.LocalObjectReference{
 						Name: configmapName.Name,
 					},
@@ -767,6 +771,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 				Name: "rsyslog-config",
 				VolumeSource: corev1.VolumeSource{
 					ConfigMap: &corev1.ConfigMapVolumeSource{
+						DefaultMode: ptr.To[int32](0644),
 						LocalObjectReference: corev1.LocalObjectReference{
 							Name: controller.RsyslogConfigMapName(ci).Name,
 						},
@@ -1061,6 +1066,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 				Name: clientCAVolumeName,
 				VolumeSource: corev1.VolumeSource{
 					ConfigMap: &corev1.ConfigMapVolumeSource{
+						DefaultMode: ptr.To[int32](0644),
 						LocalObjectReference: corev1.LocalObjectReference{
 							Name: clientCAConfigmapName.Name,
 						},
@@ -1504,7 +1510,7 @@ func hashableProbe(probe *corev1.Probe) *corev1.Probe {
 
 	var hashableProbe corev1.Probe
 
-	copyProbe(probe, &hashableProbe)
+	copyProbe(probe, &hashableProbe, false)
 
 	return &hashableProbe
 }
@@ -1605,9 +1611,9 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 	updated.Spec.Template.Spec.Containers[0].SecurityContext = expected.Spec.Template.Spec.Containers[0].SecurityContext
 	updated.Spec.Template.Spec.Containers[0].Env = expected.Spec.Template.Spec.Containers[0].Env
 	updated.Spec.Template.Spec.Containers[0].Image = expected.Spec.Template.Spec.Containers[0].Image
-	copyProbe(expected.Spec.Template.Spec.Containers[0].LivenessProbe, updated.Spec.Template.Spec.Containers[0].LivenessProbe)
-	copyProbe(expected.Spec.Template.Spec.Containers[0].ReadinessProbe, updated.Spec.Template.Spec.Containers[0].ReadinessProbe)
-	copyProbe(expected.Spec.Template.Spec.Containers[0].StartupProbe, updated.Spec.Template.Spec.Containers[0].StartupProbe)
+	copyProbe(expected.Spec.Template.Spec.Containers[0].LivenessProbe, updated.Spec.Template.Spec.Containers[0].LivenessProbe, true)
+	copyProbe(expected.Spec.Template.Spec.Containers[0].ReadinessProbe, updated.Spec.Template.Spec.Containers[0].ReadinessProbe, true)
+	copyProbe(expected.Spec.Template.Spec.Containers[0].StartupProbe, updated.Spec.Template.Spec.Containers[0].StartupProbe, true)
 	updated.Spec.Template.Spec.Containers[0].VolumeMounts = expected.Spec.Template.Spec.Containers[0].VolumeMounts
 	updated.Spec.Template.Spec.Containers[0].Ports = expected.Spec.Template.Spec.Containers[0].Ports
 	updated.Spec.Template.Spec.Tolerations = expected.Spec.Template.Spec.Tolerations
@@ -1623,11 +1629,15 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 }
 
 // copyProbe copies probe parameters that the operator manages from probe a to
-// probe b.
-func copyProbe(a, b *corev1.Probe) {
+// probe b.  If a field in probe a has the default value, then the value is
+// copied to probe b only if copyDefaultValues is true.
+func copyProbe(a, b *corev1.Probe, copyDefaultValues bool) {
 	if a == nil || b == nil {
 		return
 	}
+
+	// Always copy values that differ from the default values, as well as
+	// values where the default value is the same as the zero value.
 
 	if a.ProbeHandler.HTTPGet != nil {
 		b.ProbeHandler.HTTPGet = &corev1.HTTPGetAction{
@@ -1645,7 +1655,6 @@ func copyProbe(a, b *corev1.Probe) {
 
 	// Users are permitted to modify the timeout, so *don't* copy it.
 
-	// Don't copy default values that the API set.
 	if a.PeriodSeconds != int32(10) {
 		b.PeriodSeconds = a.PeriodSeconds
 	}
@@ -1653,6 +1662,17 @@ func copyProbe(a, b *corev1.Probe) {
 		b.SuccessThreshold = a.SuccessThreshold
 	}
 	if a.FailureThreshold != int32(3) {
+		b.FailureThreshold = a.FailureThreshold
+	}
+
+	// If copyDefaultValues is true, copy values even if they are the
+	// default values that the API sets.
+	if copyDefaultValues {
+		if a.ProbeHandler.HTTPGet != nil {
+			b.ProbeHandler.HTTPGet.Scheme = a.ProbeHandler.HTTPGet.Scheme
+		}
+		b.PeriodSeconds = a.PeriodSeconds
+		b.SuccessThreshold = a.SuccessThreshold
 		b.FailureThreshold = a.FailureThreshold
 	}
 }

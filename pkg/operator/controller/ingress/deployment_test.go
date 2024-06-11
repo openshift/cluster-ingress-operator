@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 
@@ -16,7 +18,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -465,6 +467,70 @@ func Test_desiredRouterDeployment(t *testing.T) {
 	checkDeploymentHasEnvSorted(t, deployment)
 }
 
+// assertHasVolumes asserts that the given slice of volumes has all of the
+// named volumes.
+func assertHasVolumes(t *testing.T, volumes []corev1.Volume, expectedVolumeNames []string) {
+	t.Helper()
+
+	actualVolumeNames := []string{}
+	for _, volume := range volumes {
+		actualVolumeNames = append(actualVolumeNames, volume.Name)
+	}
+	assert.Equal(t, len(expectedVolumeNames), len(actualVolumeNames))
+	for _, volume := range expectedVolumeNames {
+		assert.Contains(t, actualVolumeNames, volume)
+	}
+}
+
+// assertVolumeHasDefaultMode asserts that the given int32 pointer points to a
+// value that is equal to the given int32 value.
+func assertVolumeHasDefaultMode(t *testing.T, expected int32, actual *int32, volumeName string) {
+	t.Helper()
+
+	if assert.NotNil(t, actual, "router deployment volume %s does not specify defaultMode", volumeName) {
+		assert.Equal(t, expected, *actual, "router deployment volume %s has unexpected defaultMode; expected: %O, got %O", volumeName, expected, *actual)
+	}
+}
+
+// checkProbes asserts that the given container specifies liveness, readiness,
+// and startup probes, and that these probes have the expected parameters.  If
+// useLocalhost is true, checkProbes asserts that the probe's HTTP action
+// specifies host "localhost"; else, checkProbes asserts that the probe does not
+// specify a host.
+func checkProbes(t *testing.T, container *corev1.Container, useLocalhost bool) {
+	t.Helper()
+
+	checkHandler := func(probe *corev1.Probe) {
+		if assert.NotNil(t, probe.HTTPGet) {
+			assert.Equal(t, corev1.URIScheme("HTTP"), probe.HTTPGet.Scheme)
+			if useLocalhost {
+				assert.Equal(t, "localhost", probe.HTTPGet.Host)
+			} else {
+				assert.Empty(t, probe.HTTPGet.Host)
+			}
+		}
+	}
+
+	assert.Equal(t, int32(3), container.LivenessProbe.FailureThreshold)
+	assert.Equal(t, int32(10), container.LivenessProbe.PeriodSeconds)
+	assert.Equal(t, int32(1), container.LivenessProbe.SuccessThreshold)
+	assert.Equal(t, int32(1), container.LivenessProbe.TimeoutSeconds)
+	checkHandler(container.LivenessProbe)
+	assert.NotNil(t, container.LivenessProbe.TerminationGracePeriodSeconds, "expected liveness probe's termination grace period to be set")
+
+	assert.Equal(t, int32(3), container.ReadinessProbe.FailureThreshold)
+	assert.Equal(t, int32(10), container.ReadinessProbe.PeriodSeconds)
+	assert.Equal(t, int32(1), container.ReadinessProbe.SuccessThreshold)
+	assert.Equal(t, int32(1), container.ReadinessProbe.TimeoutSeconds)
+	checkHandler(container.ReadinessProbe)
+
+	assert.Equal(t, int32(120), container.StartupProbe.FailureThreshold)
+	assert.Equal(t, int32(1), container.StartupProbe.PeriodSeconds)
+	assert.Equal(t, int32(1), container.StartupProbe.SuccessThreshold)
+	assert.Equal(t, int32(1), container.StartupProbe.TimeoutSeconds)
+	checkHandler(container.StartupProbe)
+}
+
 func TestDesiredRouterDeploymentSpecTemplate(t *testing.T) {
 	ic, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, clusterProxyConfig := getRouterDeploymentComponents(t)
 
@@ -478,12 +544,25 @@ func TestDesiredRouterDeploymentSpecTemplate(t *testing.T) {
 		"metrics-certs":       fmt.Sprintf("router-metrics-certs-%s", ic.Name),
 		"stats-auth":          fmt.Sprintf("router-stats-%s", ic.Name),
 	}
+	expectedVolumes := []string{
+		"default-certificate",
+		"metrics-certs",
+		"stats-auth",
+		"service-ca-bundle",
+	}
+	assertHasVolumes(t, deployment.Spec.Template.Spec.Volumes, expectedVolumes)
 	for _, volume := range deployment.Spec.Template.Spec.Volumes {
 		if secretName, ok := expectedVolumeSecretPairs[volume.Name]; ok {
 			if volume.Secret.SecretName != secretName {
 				t.Errorf("router Deployment expected volume %s to have secret %s, got %s", volume.Name, secretName, volume.Secret.SecretName)
 			}
-		} else if volume.Name != "service-ca-bundle" {
+			assertVolumeHasDefaultMode(t, int32(0644), volume.Secret.DefaultMode, volume.Name)
+			continue
+		}
+		switch volume.Name {
+		case "service-ca-bundle":
+			assertVolumeHasDefaultMode(t, int32(0644), volume.ConfigMap.DefaultMode, volume.Name)
+		default:
 			t.Errorf("router deployment has unexpected volume %s", volume.Name)
 		}
 	}
@@ -510,18 +589,7 @@ func TestDesiredRouterDeploymentSpecTemplate(t *testing.T) {
 		t.Errorf("expected dnsPolicy to be %s, got %s", corev1.DNSClusterFirst, deployment.Spec.Template.Spec.DNSPolicy)
 	}
 
-	if len(deployment.Spec.Template.Spec.Containers[0].LivenessProbe.ProbeHandler.HTTPGet.Host) != 0 {
-		t.Errorf("expected empty liveness probe host, got %q", deployment.Spec.Template.Spec.Containers[0].LivenessProbe.ProbeHandler.HTTPGet.Host)
-	}
-	if deployment.Spec.Template.Spec.Containers[0].LivenessProbe.TerminationGracePeriodSeconds == nil {
-		t.Error("expected liveness probe's termination grace period to be set")
-	}
-	if len(deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.ProbeHandler.HTTPGet.Host) != 0 {
-		t.Errorf("expected empty readiness probe host, got %q", deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.ProbeHandler.HTTPGet.Host)
-	}
-	if len(deployment.Spec.Template.Spec.Containers[0].StartupProbe.ProbeHandler.HTTPGet.Host) != 0 {
-		t.Errorf("expected empty startup probe host, got %q", deployment.Spec.Template.Spec.Containers[0].StartupProbe.ProbeHandler.HTTPGet.Host)
-	}
+	checkProbes(t, &deployment.Spec.Template.Spec.Containers[0], false)
 
 	checkDeploymentHasContainer(t, deployment, operatorv1.ContainerLoggingSidecarContainerName, false)
 
@@ -611,20 +679,29 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 	if deployment.Spec.Template.Spec.DNSPolicy != corev1.DNSClusterFirst {
 		t.Errorf("expected dnsPolicy to be %s, got %s", corev1.DNSClusterFirst, deployment.Spec.Template.Spec.DNSPolicy)
 	}
-	if len(deployment.Spec.Template.Spec.Containers[0].LivenessProbe.ProbeHandler.HTTPGet.Host) != 0 {
-		t.Errorf("expected empty liveness probe host, got %q", deployment.Spec.Template.Spec.Containers[0].LivenessProbe.ProbeHandler.HTTPGet.Host)
-	}
-	if len(deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.ProbeHandler.HTTPGet.Host) != 0 {
-		t.Errorf("expected empty readiness probe host, got %q", deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.ProbeHandler.HTTPGet.Host)
-	}
-	if len(deployment.Spec.Template.Spec.Containers[0].StartupProbe.ProbeHandler.HTTPGet.Host) != 0 {
-		t.Errorf("expected empty startup probe host, got %q", deployment.Spec.Template.Spec.Containers[0].StartupProbe.ProbeHandler.HTTPGet.Host)
-	}
 
-	if len(deployment.Spec.Template.Spec.Containers[0].VolumeMounts) <= 4 || deployment.Spec.Template.Spec.Containers[0].VolumeMounts[4].Name != "error-pages" {
-		t.Errorf("deployment.Spec.Template.Spec.Containers[0].VolumeMounts[4].Name %v", deployment.Spec.Template.Spec.Containers[0].VolumeMounts)
-		//log.Info(fmt.Sprintf("deployment.Spec.Template.Spec.Containers[0].VolumeMounts[4].Name %v", deployment.Spec.Template.Spec.Containers[0]))
-		t.Error("router Deployment is missing error code pages volume mount")
+	checkProbes(t, &deployment.Spec.Template.Spec.Containers[0], false)
+
+	expectedVolumes := []string{
+		"default-certificate",
+		"metrics-certs",
+		"stats-auth",
+		"service-ca-bundle",
+		"error-pages",
+		"rsyslog-config",
+		"rsyslog-socket",
+	}
+	assertHasVolumes(t, deployment.Spec.Template.Spec.Volumes, expectedVolumes)
+	for _, volume := range deployment.Spec.Template.Spec.Volumes {
+		switch volume.Name {
+		case "default-certificate", "metrics-certs", "stats-auth":
+			assertVolumeHasDefaultMode(t, int32(0644), volume.Secret.DefaultMode, volume.Name)
+		case "error-pages", "rsyslog-config", "service-ca-bundle":
+			assertVolumeHasDefaultMode(t, int32(0644), volume.ConfigMap.DefaultMode, volume.Name)
+		case "rsyslog-socket":
+		default:
+			t.Errorf("router deployment has unexpected volume %s", volume.Name)
+		}
 	}
 
 	checkDeploymentHasContainer(t, deployment, operatorv1.ContainerLoggingSidecarContainerName, true)
@@ -693,15 +770,8 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 	if deployment.Spec.Template.Spec.HostNetwork != false {
 		t.Error("expected host network to be false")
 	}
-	if len(deployment.Spec.Template.Spec.Containers[0].LivenessProbe.ProbeHandler.HTTPGet.Host) != 0 {
-		t.Errorf("expected empty liveness probe host, got %q", deployment.Spec.Template.Spec.Containers[0].LivenessProbe.ProbeHandler.HTTPGet.Host)
-	}
-	if len(deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.ProbeHandler.HTTPGet.Host) != 0 {
-		t.Errorf("expected empty readiness probe host, got %q", deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.ProbeHandler.HTTPGet.Host)
-	}
-	if len(deployment.Spec.Template.Spec.Containers[0].StartupProbe.ProbeHandler.HTTPGet.Host) != 0 {
-		t.Errorf("expected empty startup probe host, got %q", deployment.Spec.Template.Spec.Containers[0].StartupProbe.ProbeHandler.HTTPGet.Host)
-	}
+
+	checkProbes(t, &deployment.Spec.Template.Spec.Containers[0], false)
 
 	tests = []envData{
 		{"ROUTER_HAPROXY_CONFIG_MANAGER", true, "true"},
@@ -832,28 +902,32 @@ func TestDesiredRouterDeploymentVariety(t *testing.T) {
 		t.Errorf("expected dnsPolicy to be %s, got %s", corev1.DNSClusterFirstWithHostNet, deployment.Spec.Template.Spec.DNSPolicy)
 	}
 
-	if deployment.Spec.Template.Spec.Containers[0].LivenessProbe.ProbeHandler.HTTPGet.Host != "localhost" {
-		t.Errorf("expected liveness probe host to be \"localhost\", got %q", deployment.Spec.Template.Spec.Containers[0].LivenessProbe.ProbeHandler.HTTPGet.Host)
-	}
-	if deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.ProbeHandler.HTTPGet.Host != "localhost" {
-		t.Errorf("expected readiness probe host to be \"localhost\", got %q", deployment.Spec.Template.Spec.Containers[0].ReadinessProbe.ProbeHandler.HTTPGet.Host)
-	}
-	if deployment.Spec.Template.Spec.Containers[0].StartupProbe.ProbeHandler.HTTPGet.Host != "localhost" {
-		t.Errorf("expected startup probe host to be \"localhost\", got %q", deployment.Spec.Template.Spec.Containers[0].StartupProbe.ProbeHandler.HTTPGet.Host)
-	}
+	checkProbes(t, &deployment.Spec.Template.Spec.Containers[0], true)
 
 	expectedVolumeSecretPairs := map[string]string{
 		"default-certificate": secretName,
 		"metrics-certs":       fmt.Sprintf("router-metrics-certs-%s", ic.Name),
 		"stats-auth":          fmt.Sprintf("router-stats-%s", ic.Name),
 	}
-
+	expectedVolumes := []string{
+		"default-certificate",
+		"metrics-certs",
+		"stats-auth",
+		"service-ca-bundle",
+	}
+	assertHasVolumes(t, deployment.Spec.Template.Spec.Volumes, expectedVolumes)
 	for _, volume := range deployment.Spec.Template.Spec.Volumes {
 		if secretName, ok := expectedVolumeSecretPairs[volume.Name]; ok {
 			if volume.Secret.SecretName != secretName {
 				t.Errorf("router Deployment expected volume %s to have secret %s, got %s", volume.Name, secretName, volume.Secret.SecretName)
 			}
-		} else if volume.Name != "service-ca-bundle" && volume.Name != "error-pages" {
+			assertVolumeHasDefaultMode(t, int32(0644), volume.Secret.DefaultMode, volume.Name)
+			continue
+		}
+		switch volume.Name {
+		case "service-ca-bundle":
+			assertVolumeHasDefaultMode(t, int32(0644), volume.ConfigMap.DefaultMode, volume.Name)
+		default:
 			t.Errorf("router deployment has unexpected volume %s", volume.Name)
 		}
 	}
@@ -959,6 +1033,54 @@ func TestDesiredRouterDeploymentSingleReplica(t *testing.T) {
 
 	if deployment.Spec.Strategy.Type != "" || deployment.Spec.Strategy.RollingUpdate != nil {
 		t.Errorf("expected default deployment strategy, got %s", deployment.Spec.Strategy.Type)
+	}
+}
+
+// TestDesiredRouterDeploymentClientTLS verifies that desiredRouterDeployment
+// returns the expected deployment when client TLS is enabled.
+func TestDesiredRouterDeploymentClientTLS(t *testing.T) {
+	ic, ingressConfig, infraConfig, apiConfig, networkConfig, _, clusterProxyConfig := getRouterDeploymentComponents(t)
+	ic.Spec.ClientTLS = operatorv1.ClientTLS{
+		AllowedSubjectPatterns:  []string{"foo", "bar"},
+		ClientCertificatePolicy: "Optional",
+		ClientCA: configv1.ConfigMapNameReference{
+			Name: "baz",
+		},
+	}
+	clientCAConfigmap := &corev1.ConfigMap{}
+	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, false, true, clientCAConfigmap, clusterProxyConfig)
+	if err != nil {
+		t.Fatalf("invalid router deployment: %v", err)
+	}
+
+	env := []envData{
+		{"ROUTER_MUTUAL_TLS_AUTH", true, "optional"},
+		{"ROUTER_MUTUAL_TLS_AUTH_CA", true, "/etc/pki/tls/client-ca/ca-bundle.pem"},
+		{"ROUTER_MUTUAL_TLS_AUTH_FILTER", true, `(?:foo|bar)`},
+	}
+	if err := checkDeploymentEnvironment(t, deployment, env); err != nil {
+		t.Error(err)
+	}
+	expectedVolumes := []string{
+		"default-certificate",
+		"metrics-certs",
+		"stats-auth",
+		"service-ca-bundle",
+		"client-ca",
+	}
+	assertHasVolumes(t, deployment.Spec.Template.Spec.Volumes, expectedVolumes)
+	for _, volume := range deployment.Spec.Template.Spec.Volumes {
+		switch volume.Name {
+		case "default-certificate", "metrics-certs", "stats-auth":
+			assertVolumeHasDefaultMode(t, int32(0644), volume.Secret.DefaultMode, volume.Name)
+		case "service-ca-bundle":
+			assertVolumeHasDefaultMode(t, int32(0644), volume.ConfigMap.DefaultMode, volume.Name)
+		case "client-ca":
+			assertVolumeHasDefaultMode(t, int32(0644), volume.ConfigMap.DefaultMode, volume.Name)
+			assert.Equal(t, "router-client-ca-default", volume.VolumeSource.ConfigMap.LocalObjectReference.Name)
+		default:
+			t.Errorf("router deployment has unexpected volume %s", volume.Name)
+		}
 	}
 }
 
@@ -1574,14 +1696,14 @@ func Test_deploymentConfigChanged(t *testing.T) {
 		{
 			description: "if the router container .securityContext.allowPrivilegeEscalation changes",
 			mutate: func(deployment *appsv1.Deployment) {
-				deployment.Spec.Template.Spec.Containers[0].SecurityContext.AllowPrivilegeEscalation = pointer.Bool(false)
+				deployment.Spec.Template.Spec.Containers[0].SecurityContext.AllowPrivilegeEscalation = ptr.To[bool](false)
 			},
 			expect: true,
 		},
 		{
 			description: "if the router container .securityContext.readOnlyRootFilesystem changes",
 			mutate: func(deployment *appsv1.Deployment) {
-				deployment.Spec.Template.Spec.Containers[0].SecurityContext.ReadOnlyRootFilesystem = pointer.Bool(true)
+				deployment.Spec.Template.Spec.Containers[0].SecurityContext.ReadOnlyRootFilesystem = ptr.To[bool](true)
 			},
 			expect: true,
 		},
@@ -1770,8 +1892,8 @@ func Test_deploymentConfigChanged(t *testing.T) {
 										},
 									},
 									SecurityContext: &corev1.SecurityContext{
-										AllowPrivilegeEscalation: pointer.Bool(true),
-										ReadOnlyRootFilesystem:   pointer.Bool(false),
+										AllowPrivilegeEscalation: ptr.To[bool](true),
+										ReadOnlyRootFilesystem:   ptr.To[bool](false),
 									},
 								},
 							},
@@ -1866,6 +1988,9 @@ func Test_deploymentConfigChanged(t *testing.T) {
 			if changed, updated := deploymentConfigChanged(&original, mutated); changed != tc.expect {
 				t.Errorf("expect deploymentConfigChanged to be %t, got %t", tc.expect, changed)
 			} else if changed {
+				if updatedChanged, _ := deploymentConfigChanged(&original, updated); !updatedChanged {
+					t.Error("deploymentConfigChanged reported changes but did not make any update")
+				}
 				if changedAgain, _ := deploymentConfigChanged(mutated, updated); changedAgain {
 					t.Error("deploymentConfigChanged does not behave as a fixed point function")
 				}

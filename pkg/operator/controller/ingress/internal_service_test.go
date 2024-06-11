@@ -13,7 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
-// test_desiredInternalIngressControllerService verifies that
+// Test_desiredInternalIngressControllerService verifies that
 // desiredInternalIngressControllerService returns the expected service.
 func Test_desiredInternalIngressControllerService(t *testing.T) {
 	ic := &operatorv1.IngressController{
@@ -53,6 +53,7 @@ func Test_desiredInternalIngressControllerService(t *testing.T) {
 		Port:       int32(1936),
 		TargetPort: intstr.FromString("metrics"),
 	}}, svc.Spec.Ports)
+	assert.Equal(t, "None", string(svc.Spec.SessionAffinity))
 }
 
 // Test_internalServiceChanged verifies that internalServiceChanged properly
@@ -124,6 +125,14 @@ func Test_internalServiceChanged(t *testing.T) {
 				svc.Spec.Ports = append(svc.Spec.Ports, newPort)
 			},
 			expect: true,
+		},
+		{
+			description: "if .spec.ports[*].nodePort changes",
+			mutate: func(svc *corev1.Service) {
+				svc.Spec.Ports[0].NodePort = int32(33337)
+				svc.Spec.Ports[1].NodePort = int32(33338)
+			},
+			expect: false,
 		},
 		{
 			description: "if .spec.ports changes by changing the metrics port's target port from an integer to a string",
@@ -227,6 +236,9 @@ func Test_internalServiceChanged(t *testing.T) {
 			if changed, updated := internalServiceChanged(&original, mutated); changed != tc.expect {
 				t.Errorf("expected internalServiceChanged to be %t, got %t", tc.expect, changed)
 			} else if changed {
+				if updatedChanged, _ := internalServiceChanged(&original, updated); !updatedChanged {
+					t.Error("internalServiceChanged reported changes but did not make any update")
+				}
 				if changedAgain, _ := internalServiceChanged(mutated, updated); changedAgain {
 					t.Error("internalServiceChanged does not behave as a fixed point function")
 				}
