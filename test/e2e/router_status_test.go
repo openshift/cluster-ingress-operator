@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	operatorv1 "github.com/openshift/api/operator/v1"
 	routev1 "github.com/openshift/api/route/v1"
 
 	corev1 "k8s.io/api/core/v1"
@@ -122,15 +123,13 @@ func TestIngressControllerRouteSelectorUpdateShouldClearRouteStatus(t *testing.T
 
 	// Update the ingress controller to not select routeFooLabel to be admitted, but to select
 	// routeBarLabel instead.
-	if err := kclient.Get(context.TODO(), icName, ic); err != nil {
-		t.Fatalf("failed to get ingress resource: %v", err)
-	}
-	ic.Spec.RouteSelector = &metav1.LabelSelector{
-		MatchLabels: map[string]string{
-			"type": "bar",
-		},
-	}
-	if err := kclient.Update(context.TODO(), ic); err != nil {
+	if err := updateIngressControllerSpecWithRetryOnConflict(t, icName, 5*time.Minute, func(spec *operatorv1.IngressControllerSpec) {
+		spec.RouteSelector = &metav1.LabelSelector{
+			MatchLabels: map[string]string{
+				"type": "bar",
+			},
+		}
+	}); err != nil {
 		t.Fatalf("failed to update ingresscontroller: %v", err)
 	}
 
@@ -236,15 +235,13 @@ func TestIngressControllerNamespaceSelectorUpdateShouldClearRouteStatus(t *testi
 
 	// Update the ingress controller to not select routeFooLabel to be admitted, but to select
 	// routeBarLabel instead.
-	if err := kclient.Get(context.TODO(), icName, ic); err != nil {
-		t.Fatalf("failed to get ingress resource: %v", err)
-	}
-	ic.Spec.NamespaceSelector = &metav1.LabelSelector{
-		MatchLabels: map[string]string{
-			"type": "bar",
-		},
-	}
-	if err := kclient.Update(context.TODO(), ic); err != nil {
+	if err := updateIngressControllerSpecWithRetryOnConflict(t, icName, 5*time.Minute, func(spec *operatorv1.IngressControllerSpec) {
+		spec.NamespaceSelector = &metav1.LabelSelector{
+			MatchLabels: map[string]string{
+				"type": "bar",
+			},
+		}
+	}); err != nil {
 		t.Fatalf("failed to update ingresscontroller: %v", err)
 	}
 
