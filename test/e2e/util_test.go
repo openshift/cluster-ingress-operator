@@ -17,6 +17,7 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	routev1 "github.com/openshift/api/route/v1"
+	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -842,4 +843,29 @@ func createNamespace(t *testing.T, name string) *corev1.Namespace {
 	}
 
 	return ns
+}
+
+// waitForAdminGate waits for an admin gate specified by adminGateKey
+// to either exist or not exist based on the expectExists argument.
+func waitForAdminGate(t *testing.T, adminGateKey string, expectExists bool, interval, timeout time.Duration) error {
+	t.Helper()
+	err := wait.PollUntilContextTimeout(context.Background(), interval, timeout, false, func(ctx context.Context) (bool, error) {
+		adminGateConfigMap := &corev1.ConfigMap{}
+		if err := kclient.Get(ctx, operatorcontroller.AdminGatesConfigMapName(), adminGateConfigMap); err != nil {
+			t.Logf("failed to get configmap %s: %v", operatorcontroller.AdminGatesConfigMapName(), err)
+			return false, nil
+		}
+
+		if _, ok := adminGateConfigMap.Data[adminGateKey]; ok == expectExists {
+			return true, nil
+		}
+
+		t.Logf("waiting for admin gate %q to become %t", adminGateKey, expectExists)
+		return false, nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to observe admin gate %q as %t: %w", adminGateKey, expectExists, err)
+	}
+	t.Logf("admin gate %q is %t as expected", adminGateKey, expectExists)
+	return nil
 }

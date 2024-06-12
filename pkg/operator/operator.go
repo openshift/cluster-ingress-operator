@@ -8,12 +8,9 @@ import (
 	configclient "github.com/openshift/client-go/config/clientset/versioned"
 	configinformers "github.com/openshift/client-go/config/informers/externalversions"
 	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
+	"github.com/openshift/library-go/pkg/operator/onepodpernodeccontroller"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 
-	monitoringdashboard "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/monitoring-dashboard"
-	routemetricscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/route-metrics"
-	errorpageconfigmapcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/sync-http-error-code-configmap"
-	"github.com/openshift/library-go/pkg/operator/onepodpernodeccontroller"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
@@ -38,7 +35,11 @@ import (
 	ingress "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 	ingressclasscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingressclass"
+	monitoringdashboard "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/monitoring-dashboard"
+	routemetricscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/route-metrics"
+	routeupgradeablecontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/route-upgradeable"
 	statuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/status"
+	errorpageconfigmapcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/sync-http-error-code-configmap"
 	"github.com/openshift/library-go/pkg/operator/events"
 
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -268,8 +269,21 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		}
 	}
 
+	// Create a new global cache to watch on Route objects from every namespace.
+	globalCache, err := cache.New(mgr.GetConfig(), cache.Options{
+		Scheme: mgr.GetScheme(),
+	})
+	if err != nil {
+		return nil, err
+	}
+	// Add the cache to the manager so that the cache is started along with the other runnables.
+	mgr.Add(globalCache)
+
 	// Set up the route metrics controller.
-	if _, err := routemetricscontroller.New(mgr, config.Namespace); err != nil {
+	if _, err := routemetricscontroller.New(mgr, routemetricscontroller.Config{
+		Namespace: config.Namespace,
+		Cache:     globalCache,
+	}); err != nil {
 		return nil, fmt.Errorf("failed to create route metrics controller: %w", err)
 	}
 
@@ -308,6 +322,13 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		},
 	}); err != nil {
 		return nil, fmt.Errorf("failed to create gatewayapi controller: %w", err)
+	}
+
+	// Set up the route upgradeable controller.
+	if _, err := routeupgradeablecontroller.New(mgr, routeupgradeablecontroller.Config{
+		Cache: globalCache,
+	}); err != nil {
+		return nil, fmt.Errorf("failed to create route upgradeable controller: %w", err)
 	}
 
 	return &Operator{

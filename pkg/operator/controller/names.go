@@ -292,3 +292,12 @@ func GatewayDNSRecordName(gateway *gatewayapiv1beta1.Gateway, host string) types
 		Name:      fmt.Sprintf("%s-%s-wildcard", gateway.Name, util.Hash(host)),
 	}
 }
+
+// AdminGatesConfigMapName returns the namespaced name for the
+// configmap that contains admin gates.
+func AdminGatesConfigMapName() types.NamespacedName {
+	return types.NamespacedName{
+		Name:      "admin-gates",
+		Namespace: GlobalMachineSpecifiedConfigNamespace,
+	}
+}

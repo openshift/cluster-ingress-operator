@@ -57,25 +57,25 @@ func TestClientTLS(t *testing.T) {
 	t.Parallel()
 	// We will configure the ingresscontroller to recognize certificates
 	// signed by this CA.
-	ca, caKey, err := generateClientCA()
+	ca, caKey, err := generateCA()
 	if err != nil {
 		t.Fatalf("failed to generate client CA certificate: %v", err)
 	}
-	validMatchingCert, validMatchingKey, err := generateClientCertificate(ca, caKey, "allowed")
+	validMatchingCert, validMatchingKey, err := generateCertificate(ca, caKey, "allowed", x509.SHA256WithRSA)
 	if err != nil {
 		t.Fatalf("failed to generate first client certificate: %v", err)
 	}
-	validMismatchingCert, validMismatchingKey, err := generateClientCertificate(ca, caKey, "disallowed")
+	validMismatchingCert, validMismatchingKey, err := generateCertificate(ca, caKey, "disallowed", x509.SHA256WithRSA)
 	if err != nil {
 		t.Fatalf("failed to generate second client certificate: %v", err)
 	}
 	// The ingresscontroller will not recognize certificates signed by this
 	// other CA.
-	otherCA, otherCAKey, err := generateClientCA()
+	otherCA, otherCAKey, err := generateCA()
 	if err != nil {
 		t.Fatalf("failed to generate other CA certificate: %v", err)
 	}
-	invalidMatchingCert, invalidMatchingKey, err := generateClientCertificate(otherCA, otherCAKey, "allowed")
+	invalidMatchingCert, invalidMatchingKey, err := generateCertificate(otherCA, otherCAKey, "allowed", x509.SHA256WithRSA)
 	if err != nil {
 		t.Fatalf("failed to generate third client certificate: %v", err)
 	}
@@ -1439,8 +1439,8 @@ func getActiveCRLs(t *testing.T, clientPod *corev1.Pod) ([]*x509.RevocationList,
 	return crls, nil
 }
 
-// generateClientCA generates and returns a CA certificate and key.
-func generateClientCA() (*x509.Certificate, *rsa.PrivateKey, error) {
+// generateCA generates and returns a CA certificate and key.
+func generateCA() (*x509.Certificate, *rsa.PrivateKey, error) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return nil, nil, err
@@ -1475,9 +1475,9 @@ func generateClientCA() (*x509.Certificate, *rsa.PrivateKey, error) {
 	return certs[0], key, nil
 }
 
-// generateClientCertificate generates and returns a client certificate and key
+// generateCertificate generates and returns a certificate and key
 // where the certificate is signed by the provided CA certificate.
-func generateClientCertificate(caCert *x509.Certificate, caKey *rsa.PrivateKey, cn string) (*x509.Certificate, *rsa.PrivateKey, error) {
+func generateCertificate(caCert *x509.Certificate, caKey *rsa.PrivateKey, cn string, signatureAlgorithm x509.SignatureAlgorithm) (*x509.Certificate, *rsa.PrivateKey, error) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return nil, nil, err
@@ -1488,7 +1488,7 @@ func generateClientCertificate(caCert *x509.Certificate, caKey *rsa.PrivateKey, 
 			CommonName:   cn,
 			Organization: []string{"OpenShift"},
 		},
-		SignatureAlgorithm:    x509.SHA256WithRSA,
+		SignatureAlgorithm:    signatureAlgorithm,
 		NotBefore:             time.Now().Add(-24 * time.Hour),
 		NotAfter:              time.Now().Add(24 * time.Hour),
 		SerialNumber:          big.NewInt(1),

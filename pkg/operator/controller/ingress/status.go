@@ -689,15 +689,18 @@ func computeIngressEvaluationConditionsDetectedCondition(ic *operatorv1.IngressC
 }
 
 // checkDefaultCertificate returns an error value indicating whether the default
-// certificate is safe for upgrades.  In particular, if the current default
-// certificate specifies a Subject Alternative Name (SAN) for the ingress
-// domain, then it is safe to upgrade, and the return value is nil.  Otherwise,
-// if the certificate has a legacy Common Name (CN) and no SAN, then the return
+// certificate is safe for upgrades. There are two scenarios we handle:
+// 1.If the current default certificate specifies a legacy Common Name (CN) and no
+// Subject Alternative Name (SAN) for the ingress domain, then the return
 // value is an error indicating that the certificate must be replaced by one
-// with a SAN before upgrading is allowed.  This check is necessary because
-// OpenShift 4.10 and newer are built using Go 1.17, which rejects certificates
-// without SANs.  Note that this function only checks the validity of the
-// certificate insofar as it affects upgrades.
+// with a SAN. This check is necessary because OpenShift 4.10 and newer are
+// built using Go 1.17, which rejects certificates without SANs.
+// 2. If the current default certificate uses a SHA1-based signature algorithm, then
+// the return value is an error indicating SHA1 is too weak. This check is necessary
+// because OpenShift 4.16+ uses RHEL 9 and OpenSSL 3.0, which disallow SHA1.
+// Note that this function only checks the validity of the certificate insofar as it
+// affects upgrades. If the default certificate is safe for upgrades, then the return
+// value is nil.
 func checkDefaultCertificate(secret *corev1.Secret, domain string) error {
 	var certData []byte
 	if v, ok := secret.Data["tls.crt"]; !ok {
@@ -724,6 +727,10 @@ func checkDefaultCertificate(secret *corev1.Secret, domain string) error {
 		}
 		if cert.Subject.CommonName == domain && !foundSAN {
 			return fmt.Errorf("certificate in secret %s/%s has legacy Common Name (CN) but has no Subject Alternative Name (SAN) for domain: %s", secret.Namespace, secret.Name, domain)
+		}
+		switch cert.SignatureAlgorithm {
+		case x509.SHA1WithRSA, x509.ECDSAWithSHA1:
+			return fmt.Errorf("certificate in secret %s/%s has weak SHA1 signature algorithm: %s (see https://docs.openshift.com/container-platform/4.16/release_notes/ocp-4-16-release-notes.html#ocp-4-16-sha-haproxy-support-removed_release-notes for more details)", secret.Namespace, secret.Name, cert.SignatureAlgorithm)
 		}
 	}
 
