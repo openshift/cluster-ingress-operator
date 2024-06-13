@@ -1,6 +1,7 @@
 package canary
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -8,8 +9,10 @@ import (
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 func Test_desiredCanaryService(t *testing.T) {
@@ -49,5 +52,80 @@ func Test_desiredCanaryService(t *testing.T) {
 	expectedOwnerRefs := []metav1.OwnerReference{daemonsetRef}
 	if !cmp.Equal(service.OwnerReferences, expectedOwnerRefs) {
 		t.Errorf("expected service owner references %#v, but got %#v", expectedOwnerRefs, service.OwnerReferences)
+	}
+
+	expectedAnnotations := map[string]string{
+		"service.beta.openshift.io/serving-cert-secret-name": "canary-serving-cert",
+	}
+	if !cmp.Equal(service.Annotations, expectedAnnotations) {
+		t.Errorf("expected service annotations to be %q, but got %q", expectedAnnotations, service.Annotations)
+	}
+
+	expectedPorts := []corev1.ServicePort{}
+	for _, port := range CanaryPorts {
+		servicePort := corev1.ServicePort{
+			Name:       fmt.Sprintf("%d-tcp", port),
+			Port:       port,
+			Protocol:   corev1.ProtocolTCP,
+			TargetPort: intstr.FromInt32(port),
+		}
+		expectedPorts = append(expectedPorts, servicePort)
+	}
+	if !cmp.Equal(service.Spec.Ports, expectedPorts) {
+		t.Errorf("expected service ports to be %#v, but got %#v", expectedPorts, service.Spec.Ports)
+	}
+}
+
+func Test_canaryServiceChanged(t *testing.T) {
+	testcases := []struct {
+		description string
+		mutate      func(service *corev1.Service)
+		expected    bool
+	}{
+		{
+			description: "no change",
+			mutate:      func(service *corev1.Service) {},
+			expected:    false,
+		},
+		{
+			description: "changed annotation",
+			mutate: func(service *corev1.Service) {
+				service.Annotations["foo"] = "bar"
+			},
+			expected: true,
+		},
+		{
+			description: "changed ports",
+			mutate: func(service *corev1.Service) {
+				service.Spec.Ports = append(service.Spec.Ports, corev1.ServicePort{
+					Name:       "",
+					Protocol:   corev1.ProtocolTCP,
+					Port:       int32(100),
+					TargetPort: intstr.FromInt(100),
+				})
+			},
+			expected: true,
+		},
+	}
+	for _, tc := range testcases {
+		t.Run(tc.description, func(t *testing.T) {
+			trueVar := true
+			original := desiredCanaryService(metav1.OwnerReference{
+				APIVersion: "apps/v1",
+				Kind:       "daemonset",
+				Name:       "foo",
+				UID:        "bar",
+				Controller: &trueVar,
+			})
+			mutated := original.DeepCopy()
+			tc.mutate(mutated)
+			if changed, updated := canaryServiceChanged(original, mutated); changed != tc.expected {
+				t.Errorf("expected canaryServiceChanged to be %v, got %v", tc.expected, changed)
+			} else if changed {
+				if changedAgain, _ := canaryServiceChanged(mutated, updated); changedAgain {
+					t.Error("canaryServiceChanged does not behave as a fixed-point function")
+				}
+			}
+		})
 	}
 }

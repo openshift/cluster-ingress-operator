@@ -62,7 +62,7 @@ func Test_desiredCanaryRoute(t *testing.T) {
 	assert.Equal(t, service.OwnerReferences, expectedOwnerRefs, "unexpected service owner references")
 
 	expectedTLS := &routev1.TLSConfig{
-		Termination:                   routev1.TLSTerminationEdge,
+		Termination:                   routev1.TLSTerminationPassthrough,
 		InsecureEdgeTerminationPolicy: routev1.InsecureEdgeTerminationPolicyRedirect,
 	}
 	assert.Equal(t, route.Spec.TLS, expectedTLS, "unexpected route TLS config")
