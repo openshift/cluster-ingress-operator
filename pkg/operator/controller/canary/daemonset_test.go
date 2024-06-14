@@ -200,6 +200,9 @@ func Test_canaryDaemonsetChanged(t *testing.T) {
 			if changed, updated := canaryDaemonSetChanged(original, mutated); changed != tc.expect {
 				t.Errorf("expect canaryDaemonSetChanged to be %t, got %t", tc.expect, changed)
 			} else if changed {
+				if updatedChanged, _ := canaryDaemonSetChanged(original, updated); !updatedChanged {
+					t.Error("canaryDaemonSetChanged reported changes but did not make any update")
+				}
 				if changedAgain, _ := canaryDaemonSetChanged(mutated, updated); changedAgain {
 					t.Error("canaryDaemonSetChanged does not behave as a fixed point function")
 				}

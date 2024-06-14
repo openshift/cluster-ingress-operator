@@ -82,19 +82,21 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 		value   string
 	}
 	testCases := []struct {
-		description                string
-		strategy                   *operatorv1.EndpointPublishingStrategy
-		proxyNeeded                bool
-		expectService              bool
-		expectedServiceAnnotations map[string]annotationExpectation
-		platformStatus             *configv1.PlatformStatus
+		description                   string
+		strategy                      *operatorv1.EndpointPublishingStrategy
+		proxyNeeded                   bool
+		expectService                 bool
+		expectedServiceAnnotations    map[string]annotationExpectation
+		expectedExternalTrafficPolicy corev1.ServiceExternalTrafficPolicy
+		platformStatus                *configv1.PlatformStatus
 	}{
 		{
-			description:    "external classic load balancer with scope for aws platform",
-			platformStatus: platformStatus(configv1.AWSPlatformType),
-			strategy:       lbs(operatorv1.ExternalLoadBalancer),
-			proxyNeeded:    true,
-			expectService:  true,
+			description:                   "external classic load balancer with scope for aws platform",
+			platformStatus:                platformStatus(configv1.AWSPlatformType),
+			strategy:                      lbs(operatorv1.ExternalLoadBalancer),
+			proxyNeeded:                   true,
+			expectService:                 true,
+			expectedExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyLocal,
 			expectedServiceAnnotations: map[string]annotationExpectation{
 				awsInternalLBAnnotation:                      {false, ""},
 				awsLBAdditionalResourceTags:                  {false, ""},
@@ -107,10 +109,11 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 			},
 		},
 		{
-			description:   "external classic load balancer with scope for aws platform and custom user tags",
-			strategy:      lbs(operatorv1.ExternalLoadBalancer),
-			proxyNeeded:   true,
-			expectService: true,
+			description:                   "external classic load balancer with scope for aws platform and custom user tags",
+			strategy:                      lbs(operatorv1.ExternalLoadBalancer),
+			proxyNeeded:                   true,
+			expectService:                 true,
+			expectedExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyLocal,
 			expectedServiceAnnotations: map[string]annotationExpectation{
 				awsInternalLBAnnotation:                      {false, ""},
 				awsLBAdditionalResourceTags:                  {true, "classic-load-balancer-key-with-value=100,classic-load-balancer-key-with-empty-value="},
@@ -137,11 +140,12 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 			},
 		},
 		{
-			description:    "external classic load balancer without LoadBalancerStrategy for aws platform",
-			platformStatus: platformStatus(configv1.AWSPlatformType),
-			strategy:       lbs(""),
-			proxyNeeded:    true,
-			expectService:  true,
+			description:                   "external classic load balancer without LoadBalancerStrategy for aws platform",
+			platformStatus:                platformStatus(configv1.AWSPlatformType),
+			strategy:                      lbs(""),
+			proxyNeeded:                   true,
+			expectService:                 true,
+			expectedExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyLocal,
 			expectedServiceAnnotations: map[string]annotationExpectation{
 				awsInternalLBAnnotation:                      {false, ""},
 				awsLBAdditionalResourceTags:                  {false, ""},
@@ -154,11 +158,12 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 			},
 		},
 		{
-			description:    "internal classic load balancer for aws platform",
-			platformStatus: platformStatus(configv1.AWSPlatformType),
-			strategy:       lbs(operatorv1.InternalLoadBalancer),
-			proxyNeeded:    true,
-			expectService:  true,
+			description:                   "internal classic load balancer for aws platform",
+			platformStatus:                platformStatus(configv1.AWSPlatformType),
+			strategy:                      lbs(operatorv1.InternalLoadBalancer),
+			proxyNeeded:                   true,
+			expectService:                 true,
+			expectedExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyLocal,
 			expectedServiceAnnotations: map[string]annotationExpectation{
 				awsInternalLBAnnotation:                      {true, "true"},
 				awsLBAdditionalResourceTags:                  {false, ""},
@@ -171,11 +176,12 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 			},
 		},
 		{
-			description:    "external network load balancer without scope for aws platform",
-			platformStatus: platformStatus(configv1.AWSPlatformType),
-			strategy:       nlb(""),
-			proxyNeeded:    false,
-			expectService:  true,
+			description:                   "external network load balancer without scope for aws platform",
+			platformStatus:                platformStatus(configv1.AWSPlatformType),
+			strategy:                      nlb(""),
+			proxyNeeded:                   false,
+			expectService:                 true,
+			expectedExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyLocal,
 			expectedServiceAnnotations: map[string]annotationExpectation{
 				awsInternalLBAnnotation:                      {false, ""},
 				awsLBAdditionalResourceTags:                  {false, ""},
@@ -189,11 +195,12 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 			},
 		},
 		{
-			description:    "external network load balancer with scope for aws platform",
-			platformStatus: platformStatus(configv1.AWSPlatformType),
-			strategy:       nlb(operatorv1.ExternalLoadBalancer),
-			proxyNeeded:    false,
-			expectService:  true,
+			description:                   "external network load balancer with scope for aws platform",
+			platformStatus:                platformStatus(configv1.AWSPlatformType),
+			strategy:                      nlb(operatorv1.ExternalLoadBalancer),
+			proxyNeeded:                   false,
+			expectService:                 true,
+			expectedExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyLocal,
 			expectedServiceAnnotations: map[string]annotationExpectation{
 				awsInternalLBAnnotation:                      {false, ""},
 				awsLBAdditionalResourceTags:                  {false, ""},
@@ -225,6 +232,7 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 					}},
 				},
 			},
+			expectedExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyLocal,
 			expectedServiceAnnotations: map[string]annotationExpectation{
 				awsInternalLBAnnotation:                      {false, ""},
 				awsLBAdditionalResourceTags:                  {true, "network-load-balancer-key-with-value=200,network-load-balancer-key-with-empty-value="},
@@ -244,66 +252,73 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 			expectService:  false,
 		},
 		{
-			description:    "external load balancer for ibm platform",
-			platformStatus: platformStatus(configv1.IBMCloudPlatformType),
-			strategy:       lbs(operatorv1.ExternalLoadBalancer),
-			expectService:  true,
+			description:                   "external load balancer for ibm platform",
+			platformStatus:                platformStatus(configv1.IBMCloudPlatformType),
+			strategy:                      lbs(operatorv1.ExternalLoadBalancer),
+			expectService:                 true,
+			expectedExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyCluster,
 			expectedServiceAnnotations: map[string]annotationExpectation{
 				iksLBScopeAnnotation: {true, iksLBScopePublic},
 			},
 		},
 		{
-			description:    "internal load balancer for ibm platform",
-			platformStatus: platformStatus(configv1.IBMCloudPlatformType),
-			strategy:       lbs(operatorv1.InternalLoadBalancer),
-			expectService:  true,
+			description:                   "internal load balancer for ibm platform",
+			platformStatus:                platformStatus(configv1.IBMCloudPlatformType),
+			strategy:                      lbs(operatorv1.InternalLoadBalancer),
+			expectService:                 true,
+			expectedExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyCluster,
 			expectedServiceAnnotations: map[string]annotationExpectation{
 				iksLBScopeAnnotation: {true, iksLBScopePrivate},
 			},
 		},
 		{
-			description:    "external load balancer for Power VS platform",
-			platformStatus: platformStatus(configv1.PowerVSPlatformType),
-			strategy:       lbs(operatorv1.ExternalLoadBalancer),
-			expectService:  true,
+			description:                   "external load balancer for Power VS platform",
+			platformStatus:                platformStatus(configv1.PowerVSPlatformType),
+			strategy:                      lbs(operatorv1.ExternalLoadBalancer),
+			expectService:                 true,
+			expectedExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyCluster,
 			expectedServiceAnnotations: map[string]annotationExpectation{
 				iksLBScopeAnnotation: {true, iksLBScopePublic},
 			},
 		},
 		{
-			description:    "internal load balancer for Power VS platform",
-			platformStatus: platformStatus(configv1.PowerVSPlatformType),
-			strategy:       lbs(operatorv1.InternalLoadBalancer),
-			expectService:  true,
+			description:                   "internal load balancer for Power VS platform",
+			platformStatus:                platformStatus(configv1.PowerVSPlatformType),
+			strategy:                      lbs(operatorv1.InternalLoadBalancer),
+			expectService:                 true,
+			expectedExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyCluster,
 			expectedServiceAnnotations: map[string]annotationExpectation{
 				iksLBScopeAnnotation: {true, iksLBScopePrivate},
 			},
 		},
 		{
-			description:    "external load balancer for azure platform",
-			platformStatus: platformStatus(configv1.AzurePlatformType),
-			strategy:       lbs(operatorv1.ExternalLoadBalancer),
-			expectService:  true,
+			description:                   "external load balancer for azure platform",
+			platformStatus:                platformStatus(configv1.AzurePlatformType),
+			strategy:                      lbs(operatorv1.ExternalLoadBalancer),
+			expectService:                 true,
+			expectedExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyLocal,
 			expectedServiceAnnotations: map[string]annotationExpectation{
 				azureInternalLBAnnotation:   {false, ""},
 				localWithFallbackAnnotation: {true, ""},
 			},
 		},
 		{
-			description:    "internal load balancer for azure platform",
-			platformStatus: platformStatus(configv1.AzurePlatformType),
-			strategy:       lbs(operatorv1.InternalLoadBalancer),
-			expectService:  true,
+			description:                   "internal load balancer for azure platform",
+			platformStatus:                platformStatus(configv1.AzurePlatformType),
+			strategy:                      lbs(operatorv1.InternalLoadBalancer),
+			expectService:                 true,
+			expectedExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyLocal,
 			expectedServiceAnnotations: map[string]annotationExpectation{
 				azureInternalLBAnnotation:   {true, "true"},
 				localWithFallbackAnnotation: {true, ""},
 			},
 		},
 		{
-			description:    "external load balancer for gcp platform",
-			platformStatus: platformStatus(configv1.GCPPlatformType),
-			strategy:       lbs(operatorv1.ExternalLoadBalancer),
-			expectService:  true,
+			description:                   "external load balancer for gcp platform",
+			platformStatus:                platformStatus(configv1.GCPPlatformType),
+			strategy:                      lbs(operatorv1.ExternalLoadBalancer),
+			expectService:                 true,
+			expectedExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyLocal,
 			expectedServiceAnnotations: map[string]annotationExpectation{
 				GCPGlobalAccessAnnotation:   {false, ""},
 				gcpLBTypeAnnotation:         {false, ""},
@@ -311,10 +326,11 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 			},
 		},
 		{
-			description:    "internal load balancer for gcp platform",
-			platformStatus: platformStatus(configv1.GCPPlatformType),
-			strategy:       lbs(operatorv1.InternalLoadBalancer),
-			expectService:  true,
+			description:                   "internal load balancer for gcp platform",
+			platformStatus:                platformStatus(configv1.GCPPlatformType),
+			strategy:                      lbs(operatorv1.InternalLoadBalancer),
+			expectService:                 true,
+			expectedExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyLocal,
 			expectedServiceAnnotations: map[string]annotationExpectation{
 				GCPGlobalAccessAnnotation:   {false, ""},
 				gcpLBTypeAnnotation:         {true, "Internal"},
@@ -322,10 +338,11 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 			},
 		},
 		{
-			description:    "internal load balancer for gcp platform with global ClientAccess",
-			platformStatus: platformStatus(configv1.GCPPlatformType),
-			strategy:       gcpLB(operatorv1.InternalLoadBalancer, operatorv1.GCPGlobalAccess),
-			expectService:  true,
+			description:                   "internal load balancer for gcp platform with global ClientAccess",
+			platformStatus:                platformStatus(configv1.GCPPlatformType),
+			strategy:                      gcpLB(operatorv1.InternalLoadBalancer, operatorv1.GCPGlobalAccess),
+			expectService:                 true,
+			expectedExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyLocal,
 			expectedServiceAnnotations: map[string]annotationExpectation{
 				GCPGlobalAccessAnnotation:   {true, "true"},
 				gcpLBTypeAnnotation:         {true, "Internal"},
@@ -333,10 +350,11 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 			},
 		},
 		{
-			description:    "internal load balancer for gcp platform with local ClientAccess",
-			platformStatus: platformStatus(configv1.GCPPlatformType),
-			strategy:       gcpLB(operatorv1.InternalLoadBalancer, operatorv1.GCPLocalAccess),
-			expectService:  true,
+			description:                   "internal load balancer for gcp platform with local ClientAccess",
+			platformStatus:                platformStatus(configv1.GCPPlatformType),
+			strategy:                      gcpLB(operatorv1.InternalLoadBalancer, operatorv1.GCPLocalAccess),
+			expectService:                 true,
+			expectedExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyLocal,
 			expectedServiceAnnotations: map[string]annotationExpectation{
 				GCPGlobalAccessAnnotation:   {true, "false"},
 				gcpLBTypeAnnotation:         {true, "Internal"},
@@ -344,40 +362,44 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 			},
 		},
 		{
-			description:    "external load balancer for openstack platform",
-			platformStatus: platformStatus(configv1.OpenStackPlatformType),
-			strategy:       lbs(operatorv1.ExternalLoadBalancer),
-			expectService:  true,
+			description:                   "external load balancer for openstack platform",
+			platformStatus:                platformStatus(configv1.OpenStackPlatformType),
+			strategy:                      lbs(operatorv1.ExternalLoadBalancer),
+			expectService:                 true,
+			expectedExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyLocal,
 			expectedServiceAnnotations: map[string]annotationExpectation{
 				openstackInternalLBAnnotation: {false, ""},
 				localWithFallbackAnnotation:   {true, ""},
 			},
 		},
 		{
-			description:    "internal load balancer for openstack platform",
-			platformStatus: platformStatus(configv1.OpenStackPlatformType),
-			strategy:       lbs(operatorv1.InternalLoadBalancer),
-			expectService:  true,
+			description:                   "internal load balancer for openstack platform",
+			platformStatus:                platformStatus(configv1.OpenStackPlatformType),
+			strategy:                      lbs(operatorv1.InternalLoadBalancer),
+			expectService:                 true,
+			expectedExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyLocal,
 			expectedServiceAnnotations: map[string]annotationExpectation{
 				openstackInternalLBAnnotation: {true, "true"},
 				localWithFallbackAnnotation:   {true, ""},
 			},
 		},
 		{
-			description:    "external load balancer for alibaba platform",
-			platformStatus: platformStatus(configv1.AlibabaCloudPlatformType),
-			strategy:       lbs(operatorv1.ExternalLoadBalancer),
-			expectService:  true,
+			description:                   "external load balancer for alibaba platform",
+			platformStatus:                platformStatus(configv1.AlibabaCloudPlatformType),
+			strategy:                      lbs(operatorv1.ExternalLoadBalancer),
+			expectService:                 true,
+			expectedExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyLocal,
 			expectedServiceAnnotations: map[string]annotationExpectation{
 				alibabaCloudLBAddressTypeAnnotation: {true, alibabaCloudLBAddressTypeInternet},
 				localWithFallbackAnnotation:         {true, ""},
 			},
 		},
 		{
-			description:    "internal load balancer for alibaba platform",
-			platformStatus: platformStatus(configv1.AlibabaCloudPlatformType),
-			strategy:       lbs(operatorv1.InternalLoadBalancer),
-			expectService:  true,
+			description:                   "internal load balancer for alibaba platform",
+			platformStatus:                platformStatus(configv1.AlibabaCloudPlatformType),
+			strategy:                      lbs(operatorv1.InternalLoadBalancer),
+			expectService:                 true,
+			expectedExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyLocal,
 			expectedServiceAnnotations: map[string]annotationExpectation{
 				alibabaCloudLBAddressTypeAnnotation: {true, alibabaCloudLBAddressTypeIntranet},
 				localWithFallbackAnnotation:         {true, ""},
@@ -448,6 +470,21 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 					t.Errorf("service has unexpected annotation: %s=%s", k, v)
 				}
 			}
+			assert.Equal(t, "LoadBalancer", string(svc.Spec.Type))
+			assert.Equal(t, tc.expectedExternalTrafficPolicy, svc.Spec.ExternalTrafficPolicy)
+			assert.Equal(t, "Cluster", string(*svc.Spec.InternalTrafficPolicy))
+			assert.Equal(t, []corev1.ServicePort{{
+				Name:       "http",
+				Protocol:   "TCP",
+				Port:       int32(80),
+				TargetPort: intstr.FromString("http"),
+			}, {
+				Name:       "https",
+				Protocol:   "TCP",
+				Port:       int32(443),
+				TargetPort: intstr.FromString("https"),
+			}}, svc.Spec.Ports)
+			assert.Equal(t, "None", string(svc.Spec.SessionAffinity))
 		})
 	}
 }
@@ -872,6 +909,9 @@ func Test_loadBalancerServiceChanged(t *testing.T) {
 			if changed, updated := loadBalancerServiceChanged(&original, mutated); changed != tc.expect {
 				t.Errorf("expected loadBalancerServiceChanged to be %t, got %t", tc.expect, changed)
 			} else if changed {
+				if updatedChanged, _ := loadBalancerServiceChanged(&original, updated); !updatedChanged {
+					t.Error("loadBalancerServiceChanged reported changes but did not make any update")
+				}
 				if changedAgain, _ := loadBalancerServiceChanged(mutated, updated); changedAgain {
 					t.Error("loadBalancerServiceChanged does not behave as a fixed point function")
 				}
@@ -970,6 +1010,9 @@ func Test_loadBalancerServiceAnnotationsChanged(t *testing.T) {
 			if changed, updated := loadBalancerServiceAnnotationsChanged(&current, &expected, tc.managedAnnotations); changed != tc.expect {
 				t.Errorf("expected loadBalancerServiceAnnotationsChanged to be %t, got %t", tc.expect, changed)
 			} else if changed {
+				if updatedChanged, _ := loadBalancerServiceAnnotationsChanged(&current, updated, tc.managedAnnotations); !updatedChanged {
+					t.Error("loadBalancerServiceAnnotationsChanged reported changes but did not make any update")
+				}
 				if changedAgain, _ := loadBalancerServiceAnnotationsChanged(&expected, updated, tc.managedAnnotations); changedAgain {
 					t.Error("loadBalancerServiceAnnotationsChanged does not behave as a fixed point function")
 				}
