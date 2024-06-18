@@ -7,6 +7,7 @@ approvers:
   - alebedev87
   - miheer
   - gcs278
+  - Thealisyed
 reviewers:
   - knobunc
   - Miciah
@@ -16,6 +17,7 @@ reviewers:
   - alebedev87
   - miheer 
   - gcs278
+  - Thealisyed
 emeritus_approvers:
   - ironcladlou
   - pravisankar
