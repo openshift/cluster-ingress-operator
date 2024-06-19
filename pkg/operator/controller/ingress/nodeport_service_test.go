@@ -72,7 +72,8 @@ func TestDesiredNodePortService(t *testing.T) {
 					Selector: map[string]string{
 						"ingresscontroller.operator.openshift.io/deployment-ingresscontroller": "default",
 					},
-					Type: "NodePort",
+					SessionAffinity: corev1.ServiceAffinityNone,
+					Type:            "NodePort",
 				},
 			},
 		},
@@ -120,7 +121,8 @@ func TestDesiredNodePortService(t *testing.T) {
 					Selector: map[string]string{
 						"ingresscontroller.operator.openshift.io/deployment-ingresscontroller": "default",
 					},
-					Type: "NodePort",
+					SessionAffinity: corev1.ServiceAffinityNone,
+					Type:            "NodePort",
 				},
 			},
 		},
@@ -329,10 +331,13 @@ func TestNodePortServiceChanged(t *testing.T) {
 		mutated := original.DeepCopy()
 		tc.mutate(mutated)
 		if changed, updated := nodePortServiceChanged(&original, mutated); changed != tc.expect {
-			t.Errorf("%s, expect nodePortServiceChanged to be %t, got %t", tc.description, tc.expect, changed)
+			t.Errorf("expect nodePortServiceChanged to be %t, got %t", tc.expect, changed)
 		} else if changed {
+			if updatedChanged, _ := nodePortServiceChanged(&original, updated); !updatedChanged {
+				t.Error("nodePortServiceChanged reported changes but did not make any update")
+			}
 			if changedAgain, _ := nodePortServiceChanged(mutated, updated); changedAgain {
-				t.Errorf("%s, nodePortServiceChanged does not behave as a fixed point function", tc.description)
+				t.Error("nodePortServiceChanged does not behave as a fixed point function")
 			}
 		}
 	}
