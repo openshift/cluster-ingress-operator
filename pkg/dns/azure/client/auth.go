@@ -70,19 +70,35 @@ func getAuthorizerForResource(config Config) (autorest.Authorizer, error) {
 	}
 
 	var cred azcore.TokenCredential
-	if config.AzureWorkloadIdentityEnabled && strings.TrimSpace(config.ClientSecret) == "" {
-		options := azidentity.WorkloadIdentityCredentialOptions{
-			ClientOptions: azcore.ClientOptions{
-				Cloud: cloudConfig,
-			},
-			ClientID:      config.ClientID,
-			TenantID:      config.TenantID,
-			TokenFilePath: config.FederatedTokenFile,
-		}
-		var err error
-		cred, err = azidentity.NewWorkloadIdentityCredential(&options)
-		if err != nil {
-			return nil, err
+	if strings.TrimSpace(config.ClientSecret) == "" {
+		if config.AzureWorkloadIdentityEnabled && strings.TrimSpace(config.FederatedTokenFile) != "" {
+			options := azidentity.WorkloadIdentityCredentialOptions{
+				ClientOptions: azcore.ClientOptions{
+					Cloud: cloudConfig,
+				},
+				ClientID:      config.ClientID,
+				TenantID:      config.TenantID,
+				TokenFilePath: config.FederatedTokenFile,
+			}
+			var err error
+			cred, err = azidentity.NewWorkloadIdentityCredential(&options)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			options := azidentity.ManagedIdentityCredentialOptions{
+				ClientOptions: azcore.ClientOptions{
+					Cloud: cloudConfig,
+				},
+			}
+			if config.ClientID != "" {
+				options.ID = azidentity.ClientID(config.ClientID)
+			}
+			var err error
+			cred, err = azidentity.NewManagedIdentityCredential(&options)
+			if err != nil {
+				return nil, err
+			}
 		}
 	} else {
 		options := azidentity.ClientSecretCredentialOptions{
