@@ -117,5 +117,6 @@ func TestAll(t *testing.T) {
 		t.Run("TestRouteHardStopAfterEnableOnIngressControllerHasPriorityOverIngressConfig", TestRouteHardStopAfterEnableOnIngressControllerHasPriorityOverIngressConfig)
 		t.Run("TestHostNetworkPortBinding", TestHostNetworkPortBinding)
 		t.Run("TestDashboardCreation", TestDashboardCreation)
+		t.Run("TestGatewayAPI", TestGatewayAPI)
 	})
 }
