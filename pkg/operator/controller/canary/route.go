@@ -14,6 +14,8 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // ensureCanaryRoute ensures the canary route exists
@@ -75,6 +77,21 @@ func (r *reconciler) updateCanaryRoute(current, desired *routev1.Route) (bool, e
 		return false, nil
 	}
 
+	if len(updated.Spec.Host) == 0 && len(current.Spec.Host) != 0 {
+		// Attempts to clear spec.host may be ignored.  Thus, to clear
+		// spec.host, it is necessary to delete and recreate the route.
+		log.Info("deleting and recreating the canary route to clear spec.host", "namespace", current.Namespace, "name", current.Name, "old spec.host", current.Spec.Host)
+		foreground := metav1.DeletePropagationForeground
+		deleteOptions := crclient.DeleteOptions{PropagationPolicy: &foreground}
+		if _, err := r.deleteCanaryRoute(current, &deleteOptions); err != nil {
+			return false, err
+		}
+		if err := r.createCanaryRoute(desired); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+
 	// Diff before updating because the client may mutate the object.
 	diff := cmp.Diff(current, updated, cmpopts.EquateEmpty())
 	if err := r.client.Update(context.TODO(), updated); err != nil {
@@ -85,9 +102,9 @@ func (r *reconciler) updateCanaryRoute(current, desired *routev1.Route) (bool, e
 }
 
 // deleteCanaryRoute deletes a given route
-func (r *reconciler) deleteCanaryRoute(route *routev1.Route) (bool, error) {
+func (r *reconciler) deleteCanaryRoute(route *routev1.Route, options *crclient.DeleteOptions) (bool, error) {
 
-	if err := r.client.Delete(context.TODO(), route); err != nil {
+	if err := r.client.Delete(context.TODO(), route, options); err != nil {
 		return false, fmt.Errorf("failed to delete canary route %s/%s: %v", route.Namespace, route.Name, err)
 	}
 
