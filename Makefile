@@ -12,7 +12,7 @@ endif
 GO=GO111MODULE=on GOFLAGS=-mod=vendor go
 GO_BUILD_RECIPE=CGO_ENABLED=1 $(GO) build -o $(BIN) $(GO_GCFLAGS) $(MAIN_PACKAGE)
 
-TEST ?= TestAll
+TEST ?= ^TestAll$
 
 .PHONY: build
 build: generate
