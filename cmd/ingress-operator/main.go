@@ -36,6 +36,7 @@ func main() {
 		},
 	})
 	rootCmd.AddCommand(h2specclient.NewClientCommand())
+	rootCmd.AddCommand(httphealthcheck.NewServeDelayConnectCommand())
 
 	if err := rootCmd.Execute(); err != nil {
 		log.Error(err, "error")
