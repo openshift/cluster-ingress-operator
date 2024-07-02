@@ -83,6 +83,8 @@ func TestAll(t *testing.T) {
 		t.Run("TestSetRouteResponseHeaders", TestSetRouteResponseHeaders)
 		t.Run("TestReconcileInternalService", TestReconcileInternalService)
 		t.Run("TestConnectTimeout", TestConnectTimeout)
+		t.Run("TestServerTimeout", TestServerTimeout)
+		t.Run("TestTunnelTimeout", TestTunnelTimeout)
 	})
 
 	t.Run("serial", func(t *testing.T) {
