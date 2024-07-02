@@ -751,7 +751,7 @@ func loadBalancerServiceIsProgressing(ic *operatorv1.IngressController, service 
 		err := fmt.Errorf("The IngressController scope was changed from %q to %q.", haveScope, wantScope)
 		switch platform.Type {
 		case configv1.AWSPlatformType, configv1.IBMCloudPlatformType:
-			err = fmt.Errorf("%[1]s  To effectuate this change, you must delete the service: `oc -n %[2]s delete svc/%[3]s`; the service load-balancer will then be deprovisioned and a new one created.  This will most likely cause the new load-balancer to have a different host name and IP address from the old one's.  Alternatively, you can revert the change to the IngressController: `oc -n openshift-ingress-operator patch ingresscontrollers/%[4]s --type=merge --patch='{\"spec\":{\"endpointPublishingStrategy\":{\"loadBalancer\":{\"scope\":\"%[5]s\"}}}}'", err.Error(), service.Namespace, service.Name, ic.Name, haveScope)
+			err = fmt.Errorf("%[1]s  To effectuate this change, you must delete the service: `oc -n %[2]s delete svc/%[3]s`; the service load-balancer will then be deprovisioned and a new one created.  This will most likely cause the new load-balancer to have a different host name and IP address from the old one's.  Alternatively, you can revert the change to the IngressController: `oc -n openshift-ingress-operator patch ingresscontrollers/%[4]s --type=merge --patch='{\"spec\":{\"endpointPublishingStrategy\":{\"loadBalancer\":{\"scope\":\"%[5]s\"}}}}'`", err.Error(), service.Namespace, service.Name, ic.Name, haveScope)
 		}
 		errs = append(errs, err)
 	}
