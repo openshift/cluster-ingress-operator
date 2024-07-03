@@ -177,10 +177,13 @@ func TestIngressClassChanged(t *testing.T) {
 		mutated := original.DeepCopy()
 		tc.mutate(mutated)
 		if changed, updated := ingressClassChanged(&original, mutated); changed != tc.expect {
-			t.Errorf("%s, expect ingressClassChanged to be %t, got %t", tc.description, tc.expect, changed)
+			t.Errorf("expect ingressClassChanged to be %t, got %t", tc.expect, changed)
 		} else if changed {
+			if updatedChanged, _ := ingressClassChanged(&original, updated); !updatedChanged {
+				t.Error("ingressClassChanged reported changes but did not make any update")
+			}
 			if changedAgain, _ := ingressClassChanged(mutated, updated); changedAgain {
-				t.Errorf("%s, ingressClassChanged does not behave as a fixed point function", tc.description)
+				t.Error("ingressClassChanged does not behave as a fixed point function")
 			}
 		}
 	}
