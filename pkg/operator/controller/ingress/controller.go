@@ -1149,11 +1149,11 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		} else if updated {
 			if err := r.client.Status().Update(context.TODO(), infraConfig); err != nil {
 				errs = append(errs, fmt.Errorf("failed to update Infrastructure CR after updating Ingress LB IPs: %w", err))
+			} else {
+				log.Info("successfully updated Infra CR with Ingress Load Balancer IPs")
 			}
 		}
-		log.Info("successfully updated Infra CR with Ingress Load Balancer IPs")
 	}
-
 	errs = append(errs, r.syncRouteStatus(ci)...)
 
 	return retryable.NewMaybeRetryableAggregate(errs)
