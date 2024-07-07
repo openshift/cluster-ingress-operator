@@ -9,8 +9,10 @@ import (
 	"encoding/pem"
 	"fmt"
 	"math/big"
+	"reflect"
 	"time"
 
+	"github.com/openshift/api/annotations"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
 	corev1 "k8s.io/api/core/v1"
@@ -41,6 +43,13 @@ func (r *reconciler) ensureRouterCASecret() (*corev1.Secret, error) {
 		r.recorder.Event(new, "Normal", "CreatedWildcardCACert", "Created a default wildcard CA certificate")
 		return new, nil
 
+	} else if !reflect.DeepEqual(current.Annotations, desired.Annotations) {
+		updated := current.DeepCopy()
+		updated.Data = desired.Data
+		updated.Annotations = desired.Annotations
+		if err := r.client.Update(context.TODO(), updated); err != nil {
+			return updated, err
+		}
 	}
 	return r.currentRouterCASecret()
 }
@@ -125,6 +134,9 @@ func desiredRouterCASecret(namespace string) (*corev1.Secret, error) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name.Name,
 			Namespace: name.Namespace,
+			Annotations: map[string]string{
+				annotations.OpenShiftComponent: "Networking / router",
+			},
 		},
 		Data: map[string][]byte{
 			"tls.crt": certBytes,
