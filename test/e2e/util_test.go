@@ -245,6 +245,55 @@ func buildSlowHTTPDPod(name, namespace string) *corev1.Pod {
 	}
 }
 
+// buildDelayConnectHTTPPod returns a pod that delays the connection initiation and sends echo response.
+// The connection acceptance is delayed by integrating with packet filtering and delaying SYN packets.
+func buildDelayConnectHTTPPod(name, namespace, initImage, image string) *corev1.Pod {
+	t := true
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Labels: map[string]string{
+				"app": name,
+			},
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: corev1.PodSpec{
+			InitContainers: []corev1.Container{
+				{
+					Image: initImage,
+					Name:  "init-iptables",
+					// Integrate with the iptables rules to handle incoming traffic for the echo container.
+					// The echo container opens the netfilter queue with the same number to delay incoming SYN packets.
+					Command: []string{
+						"/bin/sh",
+						"-c",
+						"iptables -I INPUT -p tcp --dport 8080 -m conntrack --ctstate NEW -j NFQUEUE --queue-num 100",
+					},
+					SecurityContext: &corev1.SecurityContext{
+						Privileged: &t,
+					},
+				},
+			},
+			Containers: []corev1.Container{
+				{
+					Image: image,
+					Name:  "echo",
+					Args:  []string{"serve-delay-connect-test-server"},
+					Ports: []corev1.ContainerPort{
+						{
+							ContainerPort: int32(8080),
+							Protocol:      corev1.ProtocolTCP,
+						},
+					},
+					SecurityContext: &corev1.SecurityContext{
+						Privileged: &t,
+					},
+				},
+			},
+		},
+	}
+}
+
 // buildRoute returns a route definition targeting the specified service.
 func buildRoute(name, namespace, serviceName string) *routev1.Route {
 	return &routev1.Route{
@@ -338,6 +387,37 @@ func getIngressController(t *testing.T, client client.Client, name types.Namespa
 	return &ic, nil
 }
 
+// getIngressOperatorDeploymentImage returns the image of the cluster ingress operator.
+// This image can be used to spawn test servers implemented in the operator.
+func getIngressOperatorDeploymentImage(t *testing.T, client client.Client, timeout time.Duration) (string, error) {
+	t.Helper()
+	deployment, err := getDeployment(t, client, types.NamespacedName{Namespace: operatorcontroller.DefaultOperatorNamespace, Name: "ingress-operator"}, timeout)
+	if err != nil {
+		return "", err
+	}
+	for _, container := range deployment.Spec.Template.Spec.Containers {
+		if container.Name == "ingress-operator" {
+			return container.Image, nil
+		}
+	}
+	return "", fmt.Errorf("image not found")
+}
+
+// getIptablesImage returns the image with the iptables tool installed in it.
+func getIptablesImage(t *testing.T, client client.Client, timeout time.Duration) (string, error) {
+	t.Helper()
+	daemonset, err := getDaemonSet(t, client, types.NamespacedName{Namespace: "openshift-ovn-kubernetes", Name: "ovnkube-node"}, timeout)
+	if err != nil {
+		return "", err
+	}
+	for _, container := range daemonset.Spec.Template.Spec.Containers {
+		if container.Name == "ovn-controller" {
+			return container.Image, nil
+		}
+	}
+	return "", fmt.Errorf("image not found")
+}
+
 func getDeployment(t *testing.T, client client.Client, name types.NamespacedName, timeout time.Duration) (*appsv1.Deployment, error) {
 	t.Helper()
 	dep := appsv1.Deployment{}
@@ -351,6 +431,21 @@ func getDeployment(t *testing.T, client client.Client, name types.NamespacedName
 		return nil, fmt.Errorf("Failed to get %q: %v", name, err)
 	}
 	return &dep, nil
+}
+
+func getDaemonSet(t *testing.T, client client.Client, name types.NamespacedName, timeout time.Duration) (*appsv1.DaemonSet, error) {
+	t.Helper()
+	ds := appsv1.DaemonSet{}
+	if err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
+		if err := client.Get(ctx, name, &ds); err != nil {
+			t.Logf("Get %q failed: %v, retrying...", name, err)
+			return false, nil
+		}
+		return true, nil
+	}); err != nil {
+		return nil, fmt.Errorf("Failed to get %q: %v", name, err)
+	}
+	return &ds, nil
 }
 
 func getPods(t *testing.T, cl client.Client, deployment *appsv1.Deployment) (*corev1.PodList, error) {
