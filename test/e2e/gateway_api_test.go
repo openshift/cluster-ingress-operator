@@ -90,7 +90,7 @@ func testGatewayAPIResources(t *testing.T) {
 // the following installation operations complete automatically and successfully:
 // - the required Subscription and CatalogSource are created.
 // - the OSSM Istio operator is installed successfully and has status Running and Ready. e.g. istio-operator-9f5c88857-2xfrr  -n openshift-operators
-// - the Istiod proxy is installed successfully and has status Running and Ready.  e.g istiod-openshift-gateway-867bb8d5c7-4z6mp -n openshift-ingress
+// - Istiod is installed successfully and has status Running and Ready.  e.g istiod-openshift-gateway-867bb8d5c7-4z6mp -n openshift-ingress
 // - the SMCP is created successfully (OSSM 2.x).
 func testGatewayAPIIstioInstallation(t *testing.T) {
 	t.Helper()
@@ -99,13 +99,13 @@ func testGatewayAPIIstioInstallation(t *testing.T) {
 		t.Fatalf("failed to find expected Subscription %s: %v", expectedSubscriptionName, err)
 	}
 	if err := assertCatalogSource(t, expectedCatalogSourceNamespace, expectedCatalogSourceName); err != nil {
-		t.Fatalf("failed to find expected CatalogSource %s", expectedCatalogSourceName)
+		t.Fatalf("failed to find expected CatalogSource %s: %v", expectedCatalogSourceName, err)
 	}
 	if err := assertOSSMOperator(t); err != nil {
-		t.Fatal("failed to find expected Istio operator")
+		t.Fatalf("failed to find expected Istio operator: %v", err)
 	}
 	if err := assertIstiodControlPlane(t); err != nil {
-		t.Fatal("failed to find expected Istiod control plane")
+		t.Fatalf("failed to find expected Istiod control plane: %v", err)
 	}
 	// TODO - In OSSM 3.x the configuration object to check will be different.
 	if err := assertSMCP(t); err != nil {
@@ -163,7 +163,7 @@ func ensureGatewayObjectCreation(ns *corev1.Namespace) error {
 	if err != nil {
 		return fmt.Errorf("feature gate was enabled, but gateway object could not be created: %v", err)
 	}
-	// The gateway is cleaned up in testGatewayAPIObjects.
+	// The gateway is cleaned up in TestGatewayAPI.
 
 	hostname := names.SimpleNameGenerator.GenerateName("test-hostname-")
 	defaultRoutename = hostname + "." + domain

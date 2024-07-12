@@ -39,7 +39,7 @@ const (
 	openshiftOperatorsNamespace = "openshift-operators"
 	// openshiftIstioOperatorDeploymentName holds the expected istio-operator deployment name.
 	openshiftIstioOperatorDeploymentName = "istio-operator"
-	// openshiftIstiodDeploymentName holds the expected istiod proxy deployment name
+	// openshiftIstiodDeploymentName holds the expected istiod deployment name
 	openshiftIstiodDeploymentName = "istiod-openshift-gateway"
 	// openshiftSMCPName holds the expected OSSM ServiceMeshControlPlane name
 	openshiftSMCPName = "openshift-gateway"
@@ -105,17 +105,15 @@ func assertCrdExists(t *testing.T, crdname string) (string, error) {
 
 // createHttpRoute checks if the HTTPRoute can be created.
 // If it can't an error is returned.
-func createHttpRoute(namespace, routename, parentnamespace, hostname, backendrefname string, gateway *gwapi.Gateway) (*gwapi.HTTPRoute, error) {
-	// Just in case gateway creation failed, supply a fake gateway name.
-	name := "NONE"
-	if gateway != nil {
-		name = gateway.Name
+func createHttpRoute(namespace, routeName, parentNamespace, hostname, backendRefname string, gateway *gwapi.Gateway) (*gwapi.HTTPRoute, error) {
+	if gateway == nil {
+		return nil, errors.New("unable to create httpRoute, no gateway available")
 	}
 
 	// Create the backend (service and pod) needed for the route to have resolvedRefs=true.
 	// The http route, service, and pod are cleaned up when the namespace is automatically deleted.
 	// buildEchoPod builds a pod that listens on port 8080.
-	echoPod := buildEchoPod(backendrefname, namespace)
+	echoPod := buildEchoPod(backendRefname, namespace)
 	if err := kclient.Create(context.TODO(), echoPod); err != nil {
 		return nil, fmt.Errorf("failed to create pod %s/%s: %v", namespace, echoPod.Name, err)
 	}
@@ -125,10 +123,10 @@ func createHttpRoute(namespace, routename, parentnamespace, hostname, backendref
 		return nil, fmt.Errorf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 	}
 
-	httpRoute := buildHTTPRoute(routename, namespace, name, parentnamespace, hostname, backendrefname)
+	httpRoute := buildHTTPRoute(routeName, namespace, gateway.Name, parentNamespace, hostname, backendRefname)
 	if err := kclient.Create(context.TODO(), httpRoute); err != nil {
 		if kerrors.IsAlreadyExists(err) {
-			name := types.NamespacedName{Namespace: namespace, Name: routename}
+			name := types.NamespacedName{Namespace: namespace, Name: routeName}
 			if err = kclient.Get(context.TODO(), name, httpRoute); err == nil {
 				return httpRoute, nil
 			} else {
@@ -203,15 +201,15 @@ func buildGateway(name, namespace, gcname, fromNs, domain string) *gwapi.Gateway
 }
 
 // buildHTTPRoute initializes the HTTPRoute and returns its address.
-func buildHTTPRoute(routename, namespace, parentgateway, parentnamespace, hostname, backendrefname string) *gwapi.HTTPRoute {
-	parentns := gwapi.Namespace(parentnamespace)
+func buildHTTPRoute(routeName, namespace, parentgateway, parentNamespace, hostname, backendRefname string) *gwapi.HTTPRoute {
+	parentns := gwapi.Namespace(parentNamespace)
 	parent := gwapi.ParentReference{Name: gwapi.ObjectName(parentgateway), Namespace: &parentns}
 	port := gwapi.PortNumber(defaultPortNumber)
 	rule := gwapi.HTTPRouteRule{
 		BackendRefs: []gwapi.HTTPBackendRef{{
 			BackendRef: gwapi.BackendRef{
 				BackendObjectReference: gwapi.BackendObjectReference{
-					Name: gwapi.ObjectName(backendrefname),
+					Name: gwapi.ObjectName(backendRefname),
 					Port: &port,
 				},
 			},
@@ -219,7 +217,7 @@ func buildHTTPRoute(routename, namespace, parentgateway, parentnamespace, hostna
 	}
 
 	return &gwapi.HTTPRoute{
-		ObjectMeta: metav1.ObjectMeta{Name: routename, Namespace: namespace},
+		ObjectMeta: metav1.ObjectMeta{Name: routeName, Namespace: namespace},
 		Spec: gwapi.HTTPRouteSpec{
 			CommonRouteSpec: gwapi.CommonRouteSpec{ParentRefs: []gwapi.ParentReference{parent}},
 			Hostnames:       []gwapi.Hostname{gwapi.Hostname(hostname)},
@@ -310,7 +308,7 @@ func assertIstiodControlPlane(t *testing.T) error {
 	}
 	pod := podlist.Items[0]
 	if pod.Status.Phase != corev1.PodRunning {
-		return fmt.Errorf("Istiod proxy failure: pod %s is not running, it is %v", pod.Name, pod.Status.Phase)
+		return fmt.Errorf("Istiod failure: pod %s is not running, it is %v", pod.Name, pod.Status.Phase)
 	}
 
 	t.Logf("found istiod pod %s/%s to be %s", pod.Namespace, pod.Name, pod.Status.Phase)
@@ -333,7 +331,7 @@ func assertGatewayClassSuccessful(t *testing.T, name string) (*gwapi.GatewayClas
 			return false, nil
 		}
 		for _, condition := range gwc.Status.Conditions {
-			if condition.Type == string(gwapi.GatewayClassReasonAccepted) {
+			if condition.Type == string(gwapi.GatewayClassConditionStatusAccepted) {
 				recordedConditionMsg = condition.Message
 				if condition.Status == metav1.ConditionTrue {
 					return true, nil
@@ -344,7 +342,7 @@ func assertGatewayClassSuccessful(t *testing.T, name string) (*gwapi.GatewayClas
 		return false, nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("gateway class %s not %v, last recorded status message: %s", name, gwapi.GatewayClassReasonAccepted, recordedConditionMsg)
+		return nil, fmt.Errorf("gateway class %s not %v, last recorded status message: %s", name, gwapi.GatewayClassConditionStatusAccepted, recordedConditionMsg)
 	}
 
 	t.Logf("gateway class %s successful", name)
@@ -366,7 +364,7 @@ func assertGatewaySuccessful(t *testing.T, namespace, name string) (*gwapi.Gatew
 			return false, nil
 		}
 		for _, condition := range gw.Status.Conditions {
-			if condition.Type == string(gwapi.GatewayClassReasonAccepted) { // there is no GatewayReasonAccepted!
+			if condition.Type == string(gwapi.GatewayClassConditionStatusAccepted) { // TODO: Use GatewayConditionAccepted when updating to v1.
 				recordedConditionMsg = condition.Message
 				if condition.Status == metav1.ConditionTrue {
 					t.Logf("found gateway %s/%s as Accepted", namespace, name)
@@ -377,7 +375,7 @@ func assertGatewaySuccessful(t *testing.T, namespace, name string) (*gwapi.Gatew
 		return false, nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("gateway %s not %v, last recorded status message: %s", name, gwapi.GatewayClassReasonAccepted, recordedConditionMsg)
+		return nil, fmt.Errorf("gateway %s not %v, last recorded status message: %s", name, gwapi.GatewayClassConditionStatusAccepted, recordedConditionMsg)
 	}
 
 	return gw, nil
@@ -601,10 +599,8 @@ func assertDNSRecord(t *testing.T, recordName types.NamespacedName) error {
 					}
 				}
 			}
-		} else {
-			t.Logf("found DNSRecord %s/%s but could not determine its readiness. Retrying...", recordName.Namespace, recordName.Name)
-			return false, nil
 		}
+		t.Logf("found DNSRecord %s/%s but could not determine its readiness. Retrying...", recordName.Namespace, recordName.Name)
 		return false, nil
 	})
 	return err
