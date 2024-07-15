@@ -6,6 +6,7 @@ package e2e
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -121,6 +122,64 @@ func TestCanaryRoute(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("failed to observe the expected canary response body: %v", err)
+	}
+}
+
+// TestCanaryRouteClearsSpecHost verifies that the operator clears the canary
+// route's spec.host field (which requires deleting and recreating the route) if
+// spec.host gets set.
+//
+// This is a serial test because it modifies the canary route.
+func TestCanaryRouteClearsSpecHost(t *testing.T) {
+	t.Log("Waiting for the default IngressController to be available...")
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, defaultName, defaultAvailableConditions...); err != nil {
+		t.Fatal(err)
+	}
+
+	var canaryRoute routev1.Route
+	canaryRouteName := controller.CanaryRouteName()
+	t.Log("Getting the canary route...")
+	if err := wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), canaryRouteName, &canaryRoute); err != nil {
+			t.Log(err)
+			return false, nil
+		}
+
+		return true, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if v := canaryRoute.Spec.Host; len(v) != 0 {
+		t.Fatalf("Expected canary route to have empty spec.host, found %q.", v)
+	}
+
+	const bogusHost = "foo.bar"
+	canaryRoute.Spec.Host = bogusHost
+	t.Log("Setting a bogus spec.host...")
+	if err := kclient.Update(context.TODO(), &canaryRoute); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Log("Waiting for the operator to clear spec.host...")
+	if err := wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), canaryRouteName, &canaryRoute); err != nil {
+			t.Log(err)
+			return false, nil
+		}
+
+		switch v := canaryRoute.Spec.Host; v {
+		case bogusHost:
+			t.Log("The operator has not yet cleared spec.host.")
+			return false, nil
+		case "":
+			t.Log("The operator has cleared spec.host.")
+			return true, nil
+		default:
+			return true, fmt.Errorf("found unexpected spec.host: %q", v)
+		}
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
 
