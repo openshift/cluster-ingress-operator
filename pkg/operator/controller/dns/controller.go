@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
@@ -755,11 +756,11 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 		var serviceEndpointOverrides ibm.ServiceEndpointOverrides
 		for _, endpointConfig := range infraStatus.PlatformStatus.PowerVS.ServiceEndpoints {
 			switch endpointConfig.Name {
-			case string(configv1.IBMCloudServiceCIS):
+			case strings.ToLower(string(configv1.IBMCloudServiceCIS)):
 				serviceEndpointOverrides.CIS = endpointConfig.URL
-			case string(configv1.IBMCloudServiceDNSServices):
+			case strings.ToLower(string(configv1.IBMCloudServiceDNSServices)):
 				serviceEndpointOverrides.DNS = endpointConfig.URL
-			case string(configv1.IBMCloudServiceIAM):
+			case strings.ToLower(string(configv1.IBMCloudServiceIAM)):
 				serviceEndpointOverrides.IAM = endpointConfig.URL
 			}
 		}
