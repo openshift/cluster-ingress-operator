@@ -284,7 +284,7 @@ func ServiceMeshControlPlaneName(operandNamespace string) types.NamespacedName {
 // to install OpenShift Service Mesh.
 func ServiceMeshSubscriptionName() types.NamespacedName {
 	return types.NamespacedName{
-		Namespace: "openshift-operators",
+		Namespace: OpenshiftOperatorNamespace,
 		Name:      "servicemeshoperator",
 	}
 }
