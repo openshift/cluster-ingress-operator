@@ -64,6 +64,10 @@ spec:
           - "$(CANARY_IMAGE)"
           - --release-version
           - "$(RELEASE_VERSION)"
+          - --gateway-api-operator-channel
+          - "$(GATEWAY_API_OPERATOR_CHANNEL)"
+          - --gateway-api-operator-version
+          - "$(GATEWAY_API_OPERATOR_VERSION)"
           env:
             - name: RELEASE_VERSION
               value: "0.0.1-snapshot"
@@ -75,6 +79,10 @@ spec:
               value: openshift/origin-haproxy-router:v4.0
             - name: CANARY_IMAGE
               value: openshift/origin-cluster-ingress-operator:latest
+            - name: GATEWAY_API_OPERATOR_CHANNEL
+              value: stable
+            - name: GATEWAY_API_OPERATOR_VERSION
+              value: servicemeshoperator.v2.6.2
           resources:
             requests:
               cpu: 10m
