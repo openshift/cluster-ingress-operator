@@ -44,9 +44,10 @@ const (
 	// this label in the selector of any service that it creates for a
 	// gateway.
 	gatewayNameLabelKey = "istio.io/gateway-name"
-	// managedByIstioLabelKey is the key of a label that Istio adds to
-	// resources that it manages.
-	managedByIstioLabelKey = "gateway.istio.io/managed"
+	// ManagedByIstioLabelKey is the key of a label that Istio adds to
+	// resources that it manages.  Exported for use as a filter in
+	// dns_controller.
+	ManagedByIstioLabelKey = "gateway.istio.io/managed"
 )
 
 var log = logf.Logger.WithName(controllerName)
@@ -69,7 +70,11 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 	scheme := mgr.GetClient().Scheme()
 	mapper := mgr.GetClient().RESTMapper()
 	isServiceNeedingDNS := predicate.NewPredicateFuncs(func(o client.Object) bool {
-		_, ok := o.(*corev1.Service).Labels[managedByIstioLabelKey]
+		_, ok := o.(*corev1.Service).Labels[ManagedByIstioLabelKey]
+		return ok
+	})
+	isDNSRecordForGatewayAPI := predicate.NewPredicateFuncs(func(o client.Object) bool {
+		_, ok := o.(*iov1.DNSRecord).Labels[ManagedByIstioLabelKey]
 		return ok
 	})
 	gatewayListenersChanged := predicate.Funcs{
@@ -79,17 +84,19 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 			// A DNSRecord CR needs to be updated if, and only if,
 			// the hostname has changed (a listener's port and
 			// protocol have no bearing on the DNS record).
+			// TODO - do backendRefs changes matter?
 			return gatewayListenersHostnamesChanged(old, new)
 		},
 	}
 	isInOperandNamespace := predicate.NewPredicateFuncs(func(o client.Object) bool {
 		return o.GetNamespace() == config.OperandNamespace
 	})
+
 	gatewayToService := func(ctx context.Context, o client.Object) []reconcile.Request {
 		var services corev1.ServiceList
 		listOpts := []client.ListOption{
 			client.MatchingLabels{gatewayNameLabelKey: o.GetName()},
-			client.InNamespace(config.OperandNamespace),
+			// TODO - can we watch other namespaces? client.InNamespace(config.OperandNamespace),
 		}
 		requests := []reconcile.Request{}
 		if err := reconciler.cache.List(ctx, &services, listOpts...); err != nil {
@@ -110,10 +117,10 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 	if err := c.Watch(source.Kind(operatorCache, &gatewayapiv1beta1.Gateway{}), handler.EnqueueRequestsFromMapFunc(gatewayToService), isInOperandNamespace, gatewayListenersChanged); err != nil {
 		return nil, err
 	}
-	if err := c.Watch(source.Kind(operatorCache, &corev1.Service{}), &handler.EnqueueRequestForObject{}, isServiceNeedingDNS, isInOperandNamespace); err != nil {
+	if err := c.Watch(source.Kind(operatorCache, &corev1.Service{}), &handler.EnqueueRequestForObject{}, isServiceNeedingDNS); err != nil {
 		return nil, err
 	}
-	if err := c.Watch(source.Kind(operatorCache, &iov1.DNSRecord{}), handler.EnqueueRequestForOwner(scheme, mapper, &corev1.Service{}), isInOperandNamespace); err != nil {
+	if err := c.Watch(source.Kind(operatorCache, &iov1.DNSRecord{}), handler.EnqueueRequestForOwner(scheme, mapper, &corev1.Service{}), isInOperandNamespace, isDNSRecordForGatewayAPI); err != nil {
 		return nil, err
 	}
 	return c, nil
@@ -248,6 +255,7 @@ func (r *reconciler) ensureDNSRecordsForGateway(ctx context.Context, gateway *ga
 		if dnsrecord.ManageDNSForDomain(domain, infraConfig.Status.PlatformStatus, dnsConfig) {
 			dnsPolicy = iov1.ManagedDNS
 		}
+		log.Info("ensuring dnsRecord", "name", name, "domain", domain, "service", service.Name)
 		_, _, err := dnsrecord.EnsureDNSRecord(r.client, name, labels, ownerRef, domain, dnsPolicy, service)
 		errs = append(errs, err)
 	}
@@ -275,6 +283,7 @@ func (r *reconciler) deleteStaleDNSRecordsForGateway(ctx context.Context, gatewa
 		if domains.Has(dnsrecords.Items[i].Spec.DNSName) {
 			continue
 		}
+		log.Info("deleting dnsRecord not in domains", "dnsName", dnsrecords.Items[i].Spec.DNSName, "domains", domains.List())
 		name := types.NamespacedName{
 			Namespace: dnsrecords.Items[i].Namespace,
 			Name:      dnsrecords.Items[i].Name,
