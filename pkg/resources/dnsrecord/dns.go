@@ -71,6 +71,10 @@ func EnsureDNSRecord(client client.Client, name types.NamespacedName, dnsRecordL
 	if err != nil {
 		return false, nil, err
 	}
+	if !wantWC {
+		log.Info("no dnsRecord desired", "domain", domain, "service", service)
+		return haveWC, current, nil
+	}
 
 	switch {
 	case wantWC && !haveWC:
@@ -83,6 +87,7 @@ func EnsureDNSRecord(client client.Client, name types.NamespacedName, dnsRecordL
 		if updated, err := updateDNSRecord(client, current, desired); err != nil {
 			return true, current, fmt.Errorf("failed to update dnsrecord %s/%s: %v", desired.Namespace, desired.Name, err)
 		} else if updated {
+			log.Info("updated dnsrecord", "olddnsrecord", current, "desireddnsrecord", desired)
 			return CurrentDNSRecord(client, name)
 		}
 	}

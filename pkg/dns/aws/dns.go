@@ -592,6 +592,8 @@ func (m *Provider) change(record *iov1.DNSRecord, zone configv1.DNSZone, action 
 		log.Info("upserted DNS record", "record", record.Spec, "zone", zone)
 	case deleteAction:
 		log.Info("deleted DNS record", "record", record.Spec, "zone", zone)
+	default:
+		log.Info("unrecognized action verb", "action", string(action))
 	}
 	return nil
 }
@@ -648,7 +650,7 @@ func (m *Provider) updateRecord(domain, zoneID, target, targetHostedZoneID, acti
 		}
 		return fmt.Errorf("couldn't update DNS record in zone %s: %v", zoneID, err)
 	}
-	log.Info("updated DNS record", "zone id", zoneID, "domain", domain, "target", target, "response", resp)
+	log.Info("upserted DNS record", "zone id", zoneID, "domain", domain, "target", target, "response", resp)
 	return nil
 }
 
