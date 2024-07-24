@@ -939,3 +939,56 @@ func createNamespace(t *testing.T, name string) *corev1.Namespace {
 
 	return ns
 }
+
+// isFeatureGateEnabled returns a boolean for it the provided feature gate is enabled
+// and an error if unable to get feature gate.
+func isFeatureGateEnabled(featureGateName configv1.FeatureGateName) (bool, error) {
+	// Get desired cluster version.
+	version, err := getClusterVersion()
+	if err != nil {
+		return false, fmt.Errorf("cluster version not found: %v", err)
+	}
+	desiredVersion := version.Status.Desired.Version
+	if len(desiredVersion) == 0 && len(version.Status.History) > 0 {
+		desiredVersion = version.Status.History[0].Version
+	}
+
+	// Get the cluster feature gate.
+	var clusterFeatureGate = &configv1.FeatureGate{}
+	name := types.NamespacedName{Name: "cluster"}
+	err = wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, name, clusterFeatureGate); err != nil {
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("failed to get cluster feature gate: %v", err)
+	}
+
+	// Check if provided feature gate is enabled.
+	for _, fg := range clusterFeatureGate.Status.FeatureGates {
+		if fg.Version != desiredVersion {
+			continue
+		}
+		for _, fgAttribs := range fg.Enabled {
+			if fgAttribs.Name == featureGateName {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+// getClusterVersion returns the ClusterVersion if found.  If one is not found, it returns an error.
+func getClusterVersion() (*configv1.ClusterVersion, error) {
+	clusterVersion := &configv1.ClusterVersion{}
+	versionName := types.NamespacedName{"", "version"}
+	err := wait.PollImmediate(1*time.Second, 30*time.Second, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), versionName, clusterVersion); err != nil {
+			return false, nil
+		}
+		return true, nil
+	})
+	return clusterVersion, err
+}
