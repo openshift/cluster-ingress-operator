@@ -3072,14 +3072,12 @@ func TestAWSELBConnectionIdleTimeout(t *testing.T) {
 
 	// Configure the route with a 90-second timeout.
 	routeName := types.NamespacedName{Namespace: route.Namespace, Name: route.Name}
-	if err := kclient.Get(context.TODO(), routeName, route); err != nil {
-		t.Fatalf("failed to get route: %v", err)
-	}
-	if route.Annotations == nil {
-		route.Annotations = map[string]string{}
-	}
-	route.Annotations["haproxy.router.openshift.io/timeout"] = "90s"
-	if err := kclient.Update(context.TODO(), route); err != nil {
+	if err := updateRouteWithRetryOnConflict(t, routeName, timeout, func(route *routev1.Route) {
+		if route.Annotations == nil {
+			route.Annotations = map[string]string{}
+		}
+		route.Annotations["haproxy.router.openshift.io/timeout"] = "90s"
+	}); err != nil {
 		t.Fatalf("failed to update route: %v", err)
 	}
 
