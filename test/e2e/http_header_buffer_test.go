@@ -184,10 +184,6 @@ func TestHTTPHeaderBufferSize(t *testing.T) {
 		t.Fatal(output)
 	}
 
-	if err := kclient.Get(context.TODO(), types.NamespacedName{Name: ic.Name, Namespace: ic.Namespace}, ic); err != nil {
-		t.Fatalf("failed to get ingresscontroller %s: %v", ic.Name, err)
-	}
-
 	// Get the name of the current router pod for the test ingress controller
 	podList := &corev1.PodList{}
 	labels := map[string]string{
@@ -204,12 +200,12 @@ func TestHTTPHeaderBufferSize(t *testing.T) {
 	oldRouterPodName := podList.Items[0].Name
 
 	// Mutate the ic to use header buffer values that are 1/2 the default.
-	ic.Spec.TuningOptions = operatorv1.IngressControllerTuningOptions{
-		HeaderBufferBytes:           16384,
-		HeaderBufferMaxRewriteBytes: 4096,
-	}
-
-	if err := kclient.Update(context.TODO(), ic); err != nil {
+	if err := updateIngressControllerWithRetryOnConflict(t, icName, timeout, func(ic *operatorv1.IngressController) {
+		ic.Spec.TuningOptions = operatorv1.IngressControllerTuningOptions{
+			HeaderBufferBytes:           16384,
+			HeaderBufferMaxRewriteBytes: 4096,
+		}
+	}); err != nil {
 		t.Fatalf("failed to update ingresscontroller %s: %v", icName, err)
 	}
 

@@ -203,7 +203,6 @@ func IngressControllerDeploymentPodSelector(ic *operatorv1.IngressController) *m
 }
 
 func InternalIngressControllerServiceName(ic *operatorv1.IngressController) types.NamespacedName {
-	// TODO: remove hard-coded namespace
 	return types.NamespacedName{Namespace: DefaultOperandNamespace, Name: "router-internal-" + ic.Name}
 }
 
@@ -215,7 +214,11 @@ func IngressControllerServiceMonitorName(ic *operatorv1.IngressController) types
 }
 
 func LoadBalancerServiceName(ic *operatorv1.IngressController) types.NamespacedName {
-	return types.NamespacedName{Namespace: DefaultOperandNamespace, Name: "router-" + ic.Name}
+	return LoadBalancerServiceNameFromICName(ic.Name)
+}
+
+func LoadBalancerServiceNameFromICName(icName string) types.NamespacedName {
+	return types.NamespacedName{Namespace: DefaultOperandNamespace, Name: "router-" + icName}
 }
 
 func NodePortServiceName(ic *operatorv1.IngressController) types.NamespacedName {
