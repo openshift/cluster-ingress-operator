@@ -467,13 +467,11 @@ func TestProxyProtocolAPI(t *testing.T) {
 		t.Fatalf("expected initial deployment not to enable PROXY protocol: %v", err)
 	}
 
-	if err := kclient.Get(context.TODO(), icName, ic); err != nil {
-		t.Fatalf("failed to get ingresscontroller: %v", err)
-	}
-	ic.Spec.EndpointPublishingStrategy.NodePort = &operatorv1.NodePortStrategy{
-		Protocol: operatorv1.ProxyProtocol,
-	}
-	if err := kclient.Update(context.TODO(), ic); err != nil {
+	if err := updateIngressControllerWithRetryOnConflict(t, icName, timeout, func(ic *operatorv1.IngressController) {
+		ic.Spec.EndpointPublishingStrategy.NodePort = &operatorv1.NodePortStrategy{
+			Protocol: operatorv1.ProxyProtocol,
+		}
+	}); err != nil {
 		t.Fatalf("failed to update ingresscontroller: %v", err)
 	}
 	if err := waitForDeploymentEnvVar(t, kclient, deployment, 1*time.Minute, "ROUTER_USE_PROXY_PROTOCOL", "true"); err != nil {
@@ -1254,13 +1252,9 @@ func TestInternalLoadBalancerGlobalAccessGCP(t *testing.T) {
 	}
 
 	// Update ingress controller to use "Local" Global Access
-	if err := kclient.Get(context.TODO(), name, ic); err != nil {
-		t.Fatalf("failed to get ingresscontroller %s: %v", name, err)
-	}
-
-	ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.GCP.ClientAccess = operatorv1.GCPLocalAccess
-
-	if err := kclient.Update(context.TODO(), ic); err != nil {
+	if err := updateIngressControllerWithRetryOnConflict(t, name, timeout, func(ic *operatorv1.IngressController) {
+		ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.GCP.ClientAccess = operatorv1.GCPLocalAccess
+	}); err != nil {
 		t.Errorf("failed to update ingresscontroller %s: %v", name, err)
 	}
 
@@ -1320,19 +1314,16 @@ func TestAWSLBTypeChange(t *testing.T) {
 		t.Fatalf("load balancer service has unexpected %s=%s annotation", ingresscontroller.AWSLBTypeAnnotation, v)
 	}
 
-	if err := kclient.Get(context.TODO(), name, ic); err != nil {
-		t.Fatalf("failed to get ingresscontroller %s: %v", name, err)
-	}
-
 	pp := &operatorv1.ProviderLoadBalancerParameters{
 		Type: operatorv1.AWSLoadBalancerProvider,
 		AWS: &operatorv1.AWSLoadBalancerParameters{
 			Type: operatorv1.AWSNetworkLoadBalancer,
 		},
 	}
-	ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters = pp
 
-	if err := kclient.Update(context.TODO(), ic); err != nil {
+	if err := updateIngressControllerWithRetryOnConflict(t, name, timeout, func(ic *operatorv1.IngressController) {
+		ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters = pp
+	}); err != nil {
 		t.Fatalf("failed to update ingresscontroller: %v", err)
 	}
 
@@ -1517,12 +1508,9 @@ func TestScopeChange(t *testing.T) {
 
 	// Change the scope to internal and wait for everything to come back to
 	// normal.
-	if err := kclient.Get(context.TODO(), name, ic); err != nil {
-		t.Fatalf("failed to get ingresscontroller %s: %v", name, err)
-	}
-	ic.Spec.EndpointPublishingStrategy.LoadBalancer.Scope = operatorv1.InternalLoadBalancer
-
-	if err := kclient.Update(context.TODO(), ic); err != nil {
+	if err := updateIngressControllerWithRetryOnConflict(t, name, timeout, func(ic *operatorv1.IngressController) {
+		ic.Spec.EndpointPublishingStrategy.LoadBalancer.Scope = operatorv1.InternalLoadBalancer
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1558,12 +1546,9 @@ func TestScopeChange(t *testing.T) {
 
 	// Change the scope back to external and wait for everything to come
 	// back to normal.
-	if err := kclient.Get(context.TODO(), name, ic); err != nil {
-		t.Fatalf("failed to get ingresscontroller %s: %v", name, err)
-	}
-	ic.Spec.EndpointPublishingStrategy.LoadBalancer.Scope = operatorv1.ExternalLoadBalancer
-
-	if err := kclient.Update(context.TODO(), ic); err != nil {
+	if err := updateIngressControllerWithRetryOnConflict(t, name, timeout, func(ic *operatorv1.IngressController) {
+		ic.Spec.EndpointPublishingStrategy.LoadBalancer.Scope = operatorv1.ExternalLoadBalancer
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1604,16 +1589,13 @@ func TestScopeChange(t *testing.T) {
 	// Annotate the ingresscontroller to tell the operator to automatically
 	// delete and recreate the LoadBalancer service if necessary when the
 	// scope changes, and change the scope.
-	if err := kclient.Get(context.TODO(), name, ic); err != nil {
-		t.Fatalf("failed to get ingresscontroller %s: %v", name, err)
-	}
-	if ic.Annotations == nil {
-		ic.Annotations = map[string]string{}
-	}
-	ic.Annotations["ingress.operator.openshift.io/auto-delete-load-balancer"] = ""
-	ic.Spec.EndpointPublishingStrategy.LoadBalancer.Scope = operatorv1.InternalLoadBalancer
-
-	if err := kclient.Update(context.TODO(), ic); err != nil {
+	if err := updateIngressControllerWithRetryOnConflict(t, name, timeout, func(ic *operatorv1.IngressController) {
+		if ic.Annotations == nil {
+			ic.Annotations = map[string]string{}
+		}
+		ic.Annotations["ingress.operator.openshift.io/auto-delete-load-balancer"] = ""
+		ic.Spec.EndpointPublishingStrategy.LoadBalancer.Scope = operatorv1.InternalLoadBalancer
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1884,11 +1866,9 @@ func TestRouteAdmissionPolicy(t *testing.T) {
 	}
 
 	// Update the ingresscontroller to a different route admission policy
-	if err := kclient.Get(context.TODO(), icName, ic); err != nil {
-		t.Fatalf("failed to get ingresscontroller: %v", err)
-	}
-	ic.Spec.RouteAdmission.NamespaceOwnership = operatorv1.InterNamespaceAllowedOwnershipCheck
-	if err := kclient.Update(context.TODO(), ic); err != nil {
+	if err := updateIngressControllerWithRetryOnConflict(t, icName, timeout, func(ic *operatorv1.IngressController) {
+		ic.Spec.RouteAdmission.NamespaceOwnership = operatorv1.InterNamespaceAllowedOwnershipCheck
+	}); err != nil {
 		t.Fatalf("failed to update ingresscontroller: %v", err)
 	}
 
@@ -1952,11 +1932,9 @@ func TestRouteAdmissionPolicy(t *testing.T) {
 	}
 
 	// Update the ingresscontroller wildcard policy to WildcardsAllowed.
-	if err := kclient.Get(context.TODO(), icName, ic); err != nil {
-		t.Fatalf("failed to get ingresscontroller: %v", err)
-	}
-	ic.Spec.RouteAdmission.WildcardPolicy = operatorv1.WildcardPolicyAllowed
-	if err := kclient.Update(context.TODO(), ic); err != nil {
+	if err := updateIngressControllerWithRetryOnConflict(t, icName, timeout, func(ic *operatorv1.IngressController) {
+		ic.Spec.RouteAdmission.WildcardPolicy = operatorv1.WildcardPolicyAllowed
+	}); err != nil {
 		t.Fatalf("failed to update ingresscontroller: %v", err)
 	}
 	err = wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
@@ -3060,11 +3038,9 @@ func TestAWSELBConnectionIdleTimeout(t *testing.T) {
 
 	// Configure the ingresscontroller with a longer ELB idle timeout of 120
 	// seconds.
-	if err := kclient.Get(context.TODO(), icName, ic); err != nil {
-		t.Fatalf("failed to get ingresscontroller: %v", err)
-	}
-	ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.ClassicLoadBalancerParameters.ConnectionIdleTimeout = metav1.Duration{Duration: 2 * time.Minute}
-	if err := kclient.Update(context.TODO(), ic); err != nil {
+	if err := updateIngressControllerWithRetryOnConflict(t, icName, timeout, func(ic *operatorv1.IngressController) {
+		ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.ClassicLoadBalancerParameters.ConnectionIdleTimeout = metav1.Duration{Duration: 2 * time.Minute}
+	}); err != nil {
 		t.Fatalf("failed to update ingresscontroller: %v", err)
 	}
 
@@ -3424,13 +3400,11 @@ func TestLoadBalancingAlgorithmUnsupportedConfigOverride(t *testing.T) {
 		t.Fatalf("expected initial deployment to have ROUTER_TCP_BALANCE_SCHEME=source: %v", err)
 	}
 
-	if err := kclient.Get(context.TODO(), icName, ic); err != nil {
-		t.Fatalf("failed to get ingresscontroller: %v", err)
-	}
-	ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
-		Raw: []byte(`{"loadBalancingAlgorithm":"leastconn"}`),
-	}
-	if err := kclient.Update(context.TODO(), ic); err != nil {
+	if err := updateIngressControllerWithRetryOnConflict(t, icName, timeout, func(ic *operatorv1.IngressController) {
+		ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
+			Raw: []byte(`{"loadBalancingAlgorithm":"leastconn"}`),
+		}
+	}); err != nil {
 		t.Fatalf("failed to update ingresscontroller: %v", err)
 	}
 	expectedAlgorithm = "leastconn"
@@ -3479,13 +3453,11 @@ func TestUnsupportedConfigOverride(t *testing.T) {
 				t.Fatalf("expected initial deployment not to set %s=true: %v", tt.env, err)
 			}
 
-			if err := kclient.Get(context.TODO(), icName, ic); err != nil {
-				t.Fatalf("failed to get ingresscontroller: %v", err)
-			}
-			ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
-				Raw: []byte(fmt.Sprintf(`{"%s":"true"}`, tt.unsupportedConfigOverride)),
-			}
-			if err := kclient.Update(context.TODO(), ic); err != nil {
+			if err := updateIngressControllerWithRetryOnConflict(t, icName, timeout, func(ic *operatorv1.IngressController) {
+				ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
+					Raw: []byte(fmt.Sprintf(`{"%s":"true"}`, tt.unsupportedConfigOverride)),
+				}
+			}); err != nil {
 				t.Fatalf("failed to update ingresscontroller: %v", err)
 			}
 			if err := waitForDeploymentEnvVar(t, kclient, deployment, 1*time.Minute, tt.env, "true"); err != nil {
@@ -3516,17 +3488,12 @@ func TestLocalWithFallbackOverrideForLoadBalancerService(t *testing.T) {
 		t.Skipf("test skipped on platform %q", infraConfig.Status.PlatformStatus.Type)
 	}
 
-	ic := &operatorv1.IngressController{}
-	if err := kclient.Get(context.TODO(), defaultName, ic); err != nil {
-		t.Fatalf("failed to get ingresscontroller %q: %v", defaultName, err)
-	}
-
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, defaultName, defaultAvailableConditions...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
 	service := &corev1.Service{}
-	serviceName := controller.LoadBalancerServiceName(ic)
+	serviceName := controller.LoadBalancerServiceNameFromICName(defaultName.Name)
 	if err := kclient.Get(context.TODO(), serviceName, service); err != nil {
 		t.Fatalf("failed to get service %q: %v", serviceName, err)
 	}
@@ -3537,10 +3504,11 @@ func TestLocalWithFallbackOverrideForLoadBalancerService(t *testing.T) {
 		t.Fatalf("failed to observe the %q annotation on service %q", annotation, serviceName)
 	}
 
-	ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
-		Raw: []byte(`{"localWithFallback":"false"}`),
-	}
-	if err := kclient.Update(context.TODO(), ic); err != nil {
+	if err := updateIngressControllerWithRetryOnConflict(t, defaultName, timeout, func(ic *operatorv1.IngressController) {
+		ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
+			Raw: []byte(`{"localWithFallback":"false"}`),
+		}
+	}); err != nil {
 		t.Fatalf("failed to update ingresscontroller %q with override: %v", defaultName, err)
 	}
 	defer func() {
@@ -3596,13 +3564,11 @@ func TestLocalWithFallbackOverrideForNodePortService(t *testing.T) {
 		t.Fatalf("failed to observe the %q annotation on ingresscontroller %q", annotation, icName)
 	}
 
-	if err := kclient.Get(context.TODO(), icName, ic); err != nil {
-		t.Fatalf("failed to get ingresscontroller %q: %v", icName, err)
-	}
-	ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
-		Raw: []byte(`{"localWithFallback":"false"}`),
-	}
-	if err := kclient.Update(context.TODO(), ic); err != nil {
+	if err := updateIngressControllerWithRetryOnConflict(t, icName, timeout, func(ic *operatorv1.IngressController) {
+		ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
+			Raw: []byte(`{"localWithFallback":"false"}`),
+		}
+	}); err != nil {
 		t.Fatalf("failed to update ingresscontroller %q with override: %v", icName, err)
 	}
 
@@ -3863,12 +3829,12 @@ func TestIngressControllerServiceNameCollision(t *testing.T) {
 
 	// Annotate the ingress operator, to trigger a reconcilation to determine if our service is deleted.
 	// This may not be needed, but it ensures a reconcilation occurs ASAP.
-	if ic.Annotations == nil {
-		ic.Annotations = map[string]string{}
-	}
-	ic.Annotations["ingress.operator.openshift.io/e2e-name-collision-test"] = ""
-
-	if err := kclient.Update(context.TODO(), ic); err != nil {
+	if err := updateIngressControllerWithRetryOnConflict(t, icName, timeout, func(ic *operatorv1.IngressController) {
+		if ic.Annotations == nil {
+			ic.Annotations = map[string]string{}
+		}
+		ic.Annotations["ingress.operator.openshift.io/e2e-name-collision-test"] = ""
+	}); err != nil {
 		t.Fatal(err)
 	}
 

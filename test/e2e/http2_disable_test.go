@@ -113,15 +113,12 @@ func TestRouteHTTP2EnableAndDisableIngressConfig(t *testing.T) {
 	// setHTTP2EnabledForIngressController() as we preserve the
 	// annotation if the value is "false".
 	if err := wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
-		if err := kclient.Get(context.TODO(), defaultName, ic); err != nil {
-			t.Logf("Get failed: %v, retrying...", err)
-			return false, nil
-		}
-		if ic.Annotations == nil {
-			ic.Annotations = map[string]string{}
-		}
-		ic.Annotations[ingress.RouterDefaultEnableHTTP2Annotation] = "false"
-		if err := kclient.Update(context.TODO(), ic); err != nil {
+		if err := updateIngressControllerWithRetryOnConflict(t, defaultName, timeout, func(ic *operatorv1.IngressController) {
+			if ic.Annotations == nil {
+				ic.Annotations = map[string]string{}
+			}
+			ic.Annotations[ingress.RouterDefaultEnableHTTP2Annotation] = "false"
+		}); err != nil {
 			t.Logf("failed to update ingress controller: %v", err)
 			return false, nil
 		}
