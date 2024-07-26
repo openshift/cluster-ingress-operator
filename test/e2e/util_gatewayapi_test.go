@@ -103,6 +103,52 @@ func assertCrdExists(t *testing.T, crdname string) (string, error) {
 	return crdVersion, err
 }
 
+// deleteExistingCRD deletes if the CRD of the given name exists and returns an error if not.
+func deleteExistingCRD(t *testing.T, crdName string) error {
+	t.Helper()
+	crd := &apiextensionsv1.CustomResourceDefinition{}
+	newCRD := &apiextensionsv1.CustomResourceDefinition{}
+	name := types.NamespacedName{Namespace: "", Name: crdName}
+
+	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(context context.Context) (bool, error) {
+		if err := kclient.Get(context, name, crd); err != nil {
+			t.Logf("failed to get crd %s: %v", name, err)
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		t.Errorf("failed to get crd %s: %v", name, err)
+		return err
+	}
+	// deleting CRD.
+	err = kclient.Delete(context.Background(), crd)
+	if err != nil {
+		t.Errorf("failed to delete crd %s: %v", name, err)
+		return err
+	}
+	err = wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, name, newCRD); err != nil {
+			if kerrors.IsNotFound(err) {
+				return true, nil
+			}
+			t.Logf("failed to delete gatewayAPI CRD %s: %v", crdName, err)
+			return false, nil
+		}
+		// if new CRD got recreated while the poll ensures the CRD is deleted.
+		if newCRD != nil && newCRD.UID != crd.UID {
+			return true, nil
+		}
+		t.Logf("crd %s still exists", crdName)
+		return false, nil
+	})
+	if err != nil {
+		return fmt.Errorf("timed out waiting for gatewayAPI CRD %s to be deleted: %v", crdName, err)
+	}
+	t.Logf("deleted crd %s", crdName)
+	return nil
+}
+
 // createHttpRoute checks if the HTTPRoute can be created.
 // If it can't an error is returned.
 func createHttpRoute(namespace, routeName, parentNamespace, hostname, backendRefname string, gateway *gwapi.Gateway) (*gwapi.HTTPRoute, error) {

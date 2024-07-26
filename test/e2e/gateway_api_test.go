@@ -80,9 +80,16 @@ func TestGatewayAPI(t *testing.T) {
 // testGatewayAPIResources tests that Gateway API Custom Resource Definitions are available.
 // It specifically verifies that when the GatewayAPI feature gate is enabled, that the Gateway API
 // CRDs are created.
+// It also deletes and ensure the CRDs are recreated.
 func testGatewayAPIResources(t *testing.T) {
 	t.Helper()
 	// Make sure all the *.gateway.networking.k8s.io CRDs are available since the FeatureGate is enabled.
+	ensureCRDs(t)
+
+	// Deleting CRDs to ensure they gets recreated again
+	deleteCRDs(t)
+
+	// Make sure all the *.gateway.networking.k8s.io CRDs are available since they should be recreated after manual deletion.
 	ensureCRDs(t)
 }
 
@@ -143,6 +150,17 @@ func ensureCRDs(t *testing.T) {
 			t.Fatalf("failed to find crd %s: %v", crdName, err)
 		}
 		t.Logf("found crd %s at version %s", crdName, crdVersion)
+	}
+}
+
+// deleteCRDs deletes Gateway API custom resource definitions.
+func deleteCRDs(t *testing.T) {
+	t.Helper()
+	for _, crdName := range crdNames {
+		err := deleteExistingCRD(t, crdName)
+		if err != nil {
+			t.Errorf("failed to delete crd %s: %v", crdName, err)
+		}
 	}
 }
 
