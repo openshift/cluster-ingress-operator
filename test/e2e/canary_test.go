@@ -75,7 +75,10 @@ func TestCanaryRoute(t *testing.T) {
 		t.Fatalf("failed to observe canary route: %v", err)
 	}
 
-	canaryRouteHost := getRouteHost(t, canaryRoute, defaultName.Name)
+	canaryRouteHost := getRouteHost(canaryRoute, defaultName.Name)
+	if canaryRouteHost == "" {
+		t.Fatalf("failed to find host name for the %q router in route %s/%s: %#v", defaultName.Name, name.Namespace, name.Name, canaryRoute)
+	}
 
 	image := deployment.Spec.Template.Spec.Containers[0].Image
 	clientPod := buildCanaryCurlPod("canary-route-check", canaryRoute.Namespace, image, canaryRouteHost)

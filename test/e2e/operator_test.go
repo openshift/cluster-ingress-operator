@@ -2620,7 +2620,10 @@ func TestHTTPHeaderCapture(t *testing.T) {
 	if err := kclient.Get(context.TODO(), routeName, route); err != nil {
 		t.Fatalf("failed to get the console route: %v", err)
 	}
-	routeHost := getRouteHost(t, route, ic.Name)
+	routeHost := getRouteHost(route, ic.Name)
+	if routeHost == "" {
+		t.Fatalf("failed to find host name for the %q router in route %s/%s: %#v", ic.Name, routeName.Name, routeName.Name, route)
+	}
 	clientPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "headertest",
@@ -2761,7 +2764,10 @@ func TestHTTPCookieCapture(t *testing.T) {
 	if err := kclient.Get(context.TODO(), routeName, route); err != nil {
 		t.Fatalf("failed to get the console route: %v", err)
 	}
-	routeHost := getRouteHost(t, route, ic.Name)
+	routeHost := getRouteHost(route, ic.Name)
+	if routeHost == "" {
+		t.Fatalf("failed to find host name for the %q router in route %s/%s: %#v", ic.Name, routeName.Name, routeName.Name, route)
+	}
 	clientPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "cookietest",
