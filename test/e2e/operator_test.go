@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/aws/aws-sdk-go/service/ec2"
 	"io"
 	"io/ioutil"
 	"net"
@@ -4248,6 +4249,22 @@ func waitForIngressControllerCondition(t *testing.T, cl client.Client, timeout t
 		}
 	}
 	return err
+}
+
+// assertEIPAllocationDeleted cleans the EIPs having a tag key and value and the polling to clean EIPs continues until all the unassociated EIPs are released.
+func assertEIPAllocationDeleted(t *testing.T, svc *ec2.EC2, timeout time.Duration, clusterName string) {
+	t.Helper()
+	t.Log("Starting cleanup of EIPs")
+	if err := wait.PollUntilContextTimeout(context.Background(), 10*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
+		if cleanupEIPAllocations(t, svc, clusterName) {
+			return true, nil
+		} else {
+			t.Log("failed to release the EIPs created...retrying")
+			return false, nil
+		}
+	}); err != nil {
+		t.Fatalf("failed to poll eipAllocations due to error: %v", err)
+	}
 }
 
 func assertIngressControllerDeleted(t *testing.T, cl client.Client, ing *operatorv1.IngressController) {

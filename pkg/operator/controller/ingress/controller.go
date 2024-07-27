@@ -189,10 +189,11 @@ func enqueueRequestForOwningIngressController(namespace string) handler.EventHan
 
 // Config holds all the things necessary for the controller to run.
 type Config struct {
-	Namespace                            string
-	IngressControllerImage               string
-	RouteExternalCertificateEnabled      bool
-	IngressControllerLBSubnetsAWSEnabled bool
+	Namespace                                 string
+	IngressControllerImage                    string
+	RouteExternalCertificateEnabled           bool
+	IngressControllerLBSubnetsAWSEnabled      bool
+	IngressControllerEIPAllocationsAWSEnabled bool
 }
 
 // reconciler handles the actual ingress reconciliation logic in response to

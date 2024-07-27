@@ -81,6 +81,22 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 			}
 			return eps
 		}
+
+		// nlbWithEIPAllocations returns an AWS NLB with the specified EIP allocations.
+		nlbWithEIPAllocations = func(scope operatorv1.LoadBalancerScope, eipAllocations []operatorv1.EIPAllocation) *operatorv1.EndpointPublishingStrategy {
+			eps := lbs(scope)
+			eps.LoadBalancer.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{
+				Type: operatorv1.AWSLoadBalancerProvider,
+				AWS: &operatorv1.AWSLoadBalancerParameters{
+					Type: operatorv1.AWSNetworkLoadBalancer,
+					NetworkLoadBalancerParameters: &operatorv1.AWSNetworkLoadBalancerParameters{
+						EIPAllocations: eipAllocations,
+					},
+				},
+			}
+			return eps
+		}
+
 		// gcpLB returns an EndpointPublishingStrategy with type
 		// "LoadBalancerService" and the specified scope and with
 		// providerParameters set with the specified GCP ClientAccess
@@ -102,15 +118,16 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 		value   string
 	}
 	testCases := []struct {
-		description                   string
-		strategySpec                  *operatorv1.EndpointPublishingStrategy
-		strategyStatus                *operatorv1.EndpointPublishingStrategy
-		proxyNeeded                   bool
-		expectService                 bool
-		expectedServiceAnnotations    map[string]annotationExpectation
-		expectedExternalTrafficPolicy corev1.ServiceExternalTrafficPolicy
-		platformStatus                *configv1.PlatformStatus
-		subnetsAWSFeatureEnabled      bool
+		description                     string
+		strategySpec                    *operatorv1.EndpointPublishingStrategy
+		strategyStatus                  *operatorv1.EndpointPublishingStrategy
+		proxyNeeded                     bool
+		expectService                   bool
+		expectedServiceAnnotations      map[string]annotationExpectation
+		expectedExternalTrafficPolicy   corev1.ServiceExternalTrafficPolicy
+		platformStatus                  *configv1.PlatformStatus
+		subnetsAWSFeatureEnabled        bool
+		eipAllocationsAWSFeatureEnabled bool
 	}{
 		{
 			description:                   "external classic load balancer with scope for aws platform",
@@ -438,6 +455,87 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 			},
 		},
 		{
+			description:    "network load balancer with eipAllocations for aws platform when feature gate is enabled",
+			platformStatus: platformStatus(configv1.AWSPlatformType),
+			strategySpec: nlbWithEIPAllocations(operatorv1.ExternalLoadBalancer,
+				[]operatorv1.EIPAllocation{"eipalloc-xxxxxxxxxxxxxxxxx", "eipalloc-yyyyyyyyyyyyyyyyy"},
+			),
+			strategyStatus: nlbWithEIPAllocations(operatorv1.ExternalLoadBalancer,
+				[]operatorv1.EIPAllocation{"eipalloc-xxxxxxxxxxxxxxxxx", "eipalloc-yyyyyyyyyyyyyyyyy"},
+			),
+			proxyNeeded:                     false,
+			expectService:                   true,
+			eipAllocationsAWSFeatureEnabled: true,
+			expectedExternalTrafficPolicy:   corev1.ServiceExternalTrafficPolicyLocal,
+			expectedServiceAnnotations: map[string]annotationExpectation{
+				awsInternalLBAnnotation:                      {false, ""},
+				awsLBAdditionalResourceTags:                  {false, ""},
+				awsLBHealthCheckHealthyThresholdAnnotation:   {true, awsLBHealthCheckHealthyThresholdDefault},
+				awsLBHealthCheckIntervalAnnotation:           {true, awsLBHealthCheckIntervalNLB},
+				awsLBHealthCheckTimeoutAnnotation:            {true, awsLBHealthCheckTimeoutDefault},
+				awsLBHealthCheckUnhealthyThresholdAnnotation: {true, awsLBHealthCheckUnhealthyThresholdDefault},
+				awsLBProxyProtocolAnnotation:                 {false, ""},
+				AWSLBTypeAnnotation:                          {true, AWSNLBAnnotation},
+				localWithFallbackAnnotation:                  {true, ""},
+				awsLBSubnetsAnnotation:                       {false, ""},
+				awsEIPAllocationsAnnotation:                  {true, "eipalloc-xxxxxxxxxxxxxxxxx,eipalloc-yyyyyyyyyyyyyyyyy"},
+			},
+		},
+		{
+			description:    "network load balancer with eipAllocations for aws platform when feature gate is disabled",
+			platformStatus: platformStatus(configv1.AWSPlatformType),
+			strategySpec: nlbWithEIPAllocations(operatorv1.ExternalLoadBalancer,
+				[]operatorv1.EIPAllocation{"eipalloc-xxxxxxxxxxxxxxxxx", "eipalloc-yyyyyyyyyyyyyyyyy"},
+			),
+			strategyStatus: nlbWithEIPAllocations(operatorv1.ExternalLoadBalancer,
+				[]operatorv1.EIPAllocation{"eipalloc-xxxxxxxxxxxxxxxxx", "eipalloc-yyyyyyyyyyyyyyyyy"},
+			),
+			proxyNeeded:                     false,
+			expectService:                   true,
+			eipAllocationsAWSFeatureEnabled: false,
+			expectedExternalTrafficPolicy:   corev1.ServiceExternalTrafficPolicyLocal,
+			expectedServiceAnnotations: map[string]annotationExpectation{
+				awsInternalLBAnnotation:                      {false, ""},
+				awsLBAdditionalResourceTags:                  {false, ""},
+				awsLBHealthCheckHealthyThresholdAnnotation:   {true, awsLBHealthCheckHealthyThresholdDefault},
+				awsLBHealthCheckIntervalAnnotation:           {true, awsLBHealthCheckIntervalNLB},
+				awsLBHealthCheckTimeoutAnnotation:            {true, awsLBHealthCheckTimeoutDefault},
+				awsLBHealthCheckUnhealthyThresholdAnnotation: {true, awsLBHealthCheckUnhealthyThresholdDefault},
+				awsLBProxyProtocolAnnotation:                 {false, ""},
+				AWSLBTypeAnnotation:                          {true, AWSNLBAnnotation},
+				localWithFallbackAnnotation:                  {true, ""},
+				awsLBSubnetsAnnotation:                       {false, ""},
+				awsEIPAllocationsAnnotation:                  {false, ""},
+			},
+		},
+		{
+			description:    "network load balancer with nil eipAllocations for aws platform when feature gate is enabled",
+			platformStatus: platformStatus(configv1.AWSPlatformType),
+			strategySpec: nlbWithEIPAllocations(operatorv1.ExternalLoadBalancer,
+				nil,
+			),
+			strategyStatus: nlbWithEIPAllocations(operatorv1.ExternalLoadBalancer,
+				nil,
+			),
+			proxyNeeded:                     false,
+			expectService:                   true,
+			eipAllocationsAWSFeatureEnabled: true,
+			expectedExternalTrafficPolicy:   corev1.ServiceExternalTrafficPolicyLocal,
+			expectedServiceAnnotations: map[string]annotationExpectation{
+				awsInternalLBAnnotation:                      {false, ""},
+				awsLBAdditionalResourceTags:                  {false, ""},
+				awsLBHealthCheckHealthyThresholdAnnotation:   {true, awsLBHealthCheckHealthyThresholdDefault},
+				awsLBHealthCheckIntervalAnnotation:           {true, awsLBHealthCheckIntervalNLB},
+				awsLBHealthCheckTimeoutAnnotation:            {true, awsLBHealthCheckTimeoutDefault},
+				awsLBHealthCheckUnhealthyThresholdAnnotation: {true, awsLBHealthCheckUnhealthyThresholdDefault},
+				awsLBProxyProtocolAnnotation:                 {false, ""},
+				AWSLBTypeAnnotation:                          {true, AWSNLBAnnotation},
+				localWithFallbackAnnotation:                  {true, ""},
+				awsLBSubnetsAnnotation:                       {false, ""},
+				awsEIPAllocationsAnnotation:                  {false, ""},
+			},
+		},
+		{
 			description:    "nodePort service for aws platform",
 			platformStatus: platformStatus(configv1.AWSPlatformType),
 			strategyStatus: nps(operatorv1.TCPProtocol),
@@ -635,7 +733,7 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 				t.Errorf("expected IsProxyProtocolNeeded to return %v, got %v", tc.proxyNeeded, proxyNeeded)
 			}
 
-			haveSvc, svc, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig.Status.PlatformStatus, tc.subnetsAWSFeatureEnabled)
+			haveSvc, svc, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig.Status.PlatformStatus, tc.subnetsAWSFeatureEnabled, tc.eipAllocationsAWSFeatureEnabled)
 			switch {
 			case err != nil:
 				t.Error(err)
@@ -819,7 +917,7 @@ func TestDesiredLoadBalancerServiceAWSIdleTimeout(t *testing.T) {
 					},
 				},
 			}
-			haveSvc, svc, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig.Status.PlatformStatus, true)
+			haveSvc, svc, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig.Status.PlatformStatus, true, true)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1073,6 +1171,13 @@ func Test_loadBalancerServiceChanged(t *testing.T) {
 				svc.Annotations["service.beta.kubernetes.io/aws-load-balancer-type"] = "NLB"
 			},
 			expect: true,
+		},
+		{
+			description: "if the service.beta.kubernetes.io/aws-load-balancer-eip-allocations annotation added",
+			mutate: func(svc *corev1.Service) {
+				svc.Annotations["service.beta.kubernetes.io/aws-load-balancer-eip-allocations"] = "eipalloc-xxxxxxxxxxxxxxxxx,eipalloc-yyyyyyyyyyyyyyyyy"
+			},
+			expect: false,
 		},
 	}
 
@@ -1419,7 +1524,7 @@ func TestUpdateLoadBalancerServiceSourceRanges(t *testing.T) {
 					},
 				},
 			}
-			wantSvc, desired, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig.Status.PlatformStatus, true)
+			wantSvc, desired, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig.Status.PlatformStatus, true, true)
 			if err != nil {
 				t.Fatal(err)
 			}

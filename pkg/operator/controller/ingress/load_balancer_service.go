@@ -1,6 +1,7 @@
 package ingress
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -87,6 +88,9 @@ const (
 
 	// awsLBSubnetsAnnotation specifies a list of subnets for both NLBs and CLBs.
 	awsLBSubnetsAnnotation = "service.beta.kubernetes.io/aws-load-balancer-subnets"
+
+	// awsEIPAllocationsAnnotation specifies a list of eips for NLBs.
+	awsEIPAllocationsAnnotation = "service.beta.kubernetes.io/aws-load-balancer-eip-allocations"
 
 	// iksLBScopeAnnotation is the annotation used on a service to specify an IBM
 	// load balancer IP type.
@@ -276,7 +280,7 @@ var (
 // Always returns the current LB service if one exists (whether it already
 // existed or was created during the course of the function).
 func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, platformStatus *configv1.PlatformStatus) (bool, *corev1.Service, error) {
-	wantLBS, desiredLBService, err := desiredLoadBalancerService(ci, deploymentRef, platformStatus, r.config.IngressControllerLBSubnetsAWSEnabled)
+	wantLBS, desiredLBService, err := desiredLoadBalancerService(ci, deploymentRef, platformStatus, r.config.IngressControllerLBSubnetsAWSEnabled, r.config.IngressControllerEIPAllocationsAWSEnabled)
 	if err != nil {
 		return false, nil, err
 	}
@@ -342,7 +346,7 @@ func isServiceOwnedByIngressController(service *corev1.Service, ic *operatorv1.I
 // ingresscontroller, or nil if an LB service isn't desired. An LB service is
 // desired if the high availability type is Cloud. An LB service will declare an
 // owner reference to the given deployment.
-func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, platform *configv1.PlatformStatus, subnetsAWSEnabled bool) (bool, *corev1.Service, error) {
+func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, platform *configv1.PlatformStatus, subnetsAWSEnabled bool, eipAllocationsAWSEnabled bool) (bool, *corev1.Service, error) {
 	if ci.Status.EndpointPublishingStrategy.Type != operatorv1.LoadBalancerServiceStrategyType {
 		return false, nil, nil
 	}
@@ -416,6 +420,14 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 								service.Annotations[awsLBSubnetsAnnotation] = JoinAWSSubnets(nlbParams.Subnets, ",")
 							}
 						}
+
+						if eipAllocationsAWSEnabled {
+							nlbParams := getAWSNetworkLoadBalancerParametersInSpec(ci)
+							if nlbParams != nil && awsEIPAllocationsExist(nlbParams.EIPAllocations) {
+								service.Annotations[awsEIPAllocationsAnnotation] = JoinAWSEIPAllocations(nlbParams.EIPAllocations, ",")
+							}
+						}
+
 					case operatorv1.AWSClassicLoadBalancer:
 						if aws.ClassicLoadBalancerParameters != nil {
 							if v := aws.ClassicLoadBalancerParameters.ConnectionIdleTimeout; v.Duration > 0 {
@@ -646,6 +658,9 @@ func shouldRecreateLoadBalancer(current, desired *corev1.Service, platform *conf
 	if platform.Type == configv1.AWSPlatformType && !serviceSubnetsEqual(current, desired) {
 		return true, "its subnets changed"
 	}
+	if platform.Type == configv1.AWSPlatformType && !serviceEIPAllocationsEqual(current, desired) {
+		return true, "its eipAllocations changed"
+	}
 	return false, ""
 }
 
@@ -748,8 +763,8 @@ func loadBalancerServiceTagsModified(current, expected *corev1.Service) (bool, *
 // return value is nil.  Otherwise, if something or someone else has modified
 // the service, then the return value is a non-nil error indicating that the
 // modification must be reverted before upgrading is allowed.
-func loadBalancerServiceIsUpgradeable(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference, current *corev1.Service, platform *configv1.PlatformStatus, subnetsAWSEnabled bool) error {
-	want, desired, err := desiredLoadBalancerService(ic, deploymentRef, platform, subnetsAWSEnabled)
+func loadBalancerServiceIsUpgradeable(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference, current *corev1.Service, platform *configv1.PlatformStatus, subnetsAWSEnabled bool, eipAllocationsAWSEnabled bool) error {
+	want, desired, err := desiredLoadBalancerService(ic, deploymentRef, platform, subnetsAWSEnabled, eipAllocationsAWSEnabled)
 	if err != nil {
 		return err
 	}
@@ -769,7 +784,7 @@ func loadBalancerServiceIsUpgradeable(ic *operatorv1.IngressController, deployme
 
 // loadBalancerServiceIsProgressing returns an error value indicating if the
 // load balancer service is in progressing status.
-func loadBalancerServiceIsProgressing(ic *operatorv1.IngressController, service *corev1.Service, platform *configv1.PlatformStatus, subnetsAWSEnabled bool) error {
+func loadBalancerServiceIsProgressing(ic *operatorv1.IngressController, service *corev1.Service, platform *configv1.PlatformStatus, subnetsAWSEnabled bool, eipAllocationsAWSEnabled bool) error {
 	var errs []error
 	wantScope := ic.Status.EndpointPublishingStrategy.LoadBalancer.Scope
 	haveScope := operatorv1.ExternalLoadBalancer
@@ -821,10 +836,50 @@ func loadBalancerServiceIsProgressing(ic *operatorv1.IngressController, service 
 		}
 	}
 
+	if platform.Type == configv1.AWSPlatformType && eipAllocationsAWSEnabled && getAWSLoadBalancerTypeInStatus(ic) == operatorv1.AWSNetworkLoadBalancer {
+		var (
+			wantEIPAllocations, haveEIPAllocations []operatorv1.EIPAllocation
+		)
+		if nlbParams := getAWSNetworkLoadBalancerParametersInSpec(ic); nlbParams != nil {
+			wantEIPAllocations = nlbParams.EIPAllocations
+		}
+		if nlbParams := getAWSNetworkLoadBalancerParametersInStatus(ic); nlbParams != nil {
+			haveEIPAllocations = nlbParams.EIPAllocations
+		}
+		if !awsEIPAllocationsEqual(wantEIPAllocations, haveEIPAllocations) {
+			// Generate JSON for the oc patch command as well as "pretty" json
+			// that will be used for a more human-readable error message.
+			haveEIPAllocationsPatchJson := convertAWSEIPAllocationsListToPatchJson(haveEIPAllocations, "null")
+			haveEIPAllocationsPrettyJson := convertAWSEIPAllocationsListToPatchJson(haveEIPAllocations, "[]")
+			wantEIPAllocationsPrettyJson := convertAWSEIPAllocationsListToPatchJson(wantEIPAllocations, "[]")
+			changedMsg := fmt.Sprintf("The IngressController eipAllocations were changed from %q to %q.", haveEIPAllocationsPrettyJson, wantEIPAllocationsPrettyJson)
+			ocPatchRevertCmd := fmt.Sprintf("oc -n openshift-ingress-operator patch ingresscontrollers/%[1]s --type=merge --patch='{\"spec\":{\"endpointPublishingStrategy\":{\"type\":\"LoadBalancerService\",\"loadBalancer\":{\"providerParameters\":{\"type\":\"AWS\",\"aws\":{\"type\":\"%[2]s\",\"%[3]s\":{\"eipAllocations\":%[4]s}}}}}}}'", ic.Name, getAWSLoadBalancerTypeInStatus(ic), "networkLoadBalancer", haveEIPAllocationsPatchJson)
+			err := fmt.Errorf("%[1]s  To effectuate this change, you must delete the service: `oc -n %[2]s delete svc/%[3]s`; the service load-balancer will then be deprovisioned and a new one created. This will most likely cause the new load-balancer to have a different host name and IP address and cause disruption. To return to the previous state, you can revert the change to the IngressController: `%[4]s`", changedMsg, service.Namespace, service.Name, ocPatchRevertCmd)
+			errs = append(errs, err)
+		}
+	}
+
 	errs = append(errs, loadBalancerSourceRangesAnnotationSet(service))
 	errs = append(errs, loadBalancerSourceRangesMatch(ic, service))
 
 	return kerrors.NewAggregate(errs)
+}
+
+// convertAWSEIPAllocationsListToPatchJson converts an AWSEIPAllocations object to a JSON formatted string
+// to build an oc patch command. It defaults nil or no eipAllocation values i.e an empty slice to emptyEIPAllocationValue
+func convertAWSEIPAllocationsListToPatchJson(eipAllocations []operatorv1.EIPAllocation, emptyEIPAllocationValue string) string {
+	// If eipAllocations are nil, or an empty list, return the emptyEIPAllocationValue.
+	if len(eipAllocations) == 0 {
+		return emptyEIPAllocationValue
+	}
+
+	// Marshal eipAllocations.
+	eipAllocationsJSONBytes, err := json.Marshal(eipAllocations)
+	if err != nil {
+		log.Error(err, "error marshaling eipAllocations")
+		return ""
+	}
+	return string(eipAllocationsJSONBytes)
 }
 
 // convertAWSSubnetListToPatchJson converts an AWSSubnets object to a JSON formatted string
@@ -946,10 +1001,79 @@ func getSubnetsFromServiceAnnotation(service *corev1.Service) *operatorv1.AWSSub
 	return awsSubnets
 }
 
+// getEIPAllocationsFromServiceAnnotation gets the effective eipAllocations by looking at the
+// service.beta.kubernetes.io/aws-load-balancer-eip-allocations annotation of the LoadBalancer-type Service.
+// If no eipAllocations are specified in the annotation, this function returns nil.
+func getEIPAllocationsFromServiceAnnotation(service *corev1.Service) []operatorv1.EIPAllocation {
+	if service == nil {
+		return nil
+	}
+
+	var awsEIPAllocations []operatorv1.EIPAllocation
+	if a, ok := service.Annotations[awsEIPAllocationsAnnotation]; ok {
+		var eipAllocations []string
+		a = strings.TrimSpace(a)
+		if len(a) > 0 {
+			eipAllocations = strings.Split(a, ",")
+		}
+
+		// Cast the slice of strings to EIPAllocations object.
+		for _, eipAllocation := range eipAllocations {
+			awsEIPAllocations = append(awsEIPAllocations, operatorv1.EIPAllocation(eipAllocation))
+		}
+	}
+
+	return awsEIPAllocations
+}
+
 // serviceSubnetsEqual compares the subnet annotations on two services to determine if they are equivalent,
 // ignoring the order of the subnets.
 func serviceSubnetsEqual(a, b *corev1.Service) bool {
 	return awsSubnetsEqual(getSubnetsFromServiceAnnotation(a), getSubnetsFromServiceAnnotation(b))
+}
+
+func serviceEIPAllocationsEqual(a, b *corev1.Service) bool {
+	return awsEIPAllocationsEqual(getEIPAllocationsFromServiceAnnotation(a), getEIPAllocationsFromServiceAnnotation(b))
+}
+
+// awsEIPAllocationsEqual compares two AWSEIPAllocation slices and returns a boolean
+// whether they are equal are not. The order of the EIP Allocations are ignored.
+func awsEIPAllocationsEqual(eipAllocations1, eipAllocations2 []operatorv1.EIPAllocation) bool {
+	// If they are both nil, they are equal.
+	if eipAllocations1 == nil && eipAllocations2 == nil {
+		return true
+	}
+
+	// If one is nil and the other is not, they are equal only if the non-nil one is empty.
+	if eipAllocations1 == nil {
+		return len(eipAllocations2) == 0
+	}
+	if eipAllocations2 == nil {
+		return len(eipAllocations1) == 0
+	}
+
+	// If they both are non-nil, compare the length first, then do a more detailed comparison if needed.
+	if len(eipAllocations1) != len(eipAllocations2) {
+		return false
+	}
+
+	// Create maps to track the IDs from each eipAllocation object for comparison.
+	eipAllocationMap1 := make(map[operatorv1.EIPAllocation]struct{})
+	eipAllocationMap2 := make(map[operatorv1.EIPAllocation]struct{})
+	for _, eipAllocation := range eipAllocations1 {
+		eipAllocationMap1[eipAllocation] = struct{}{}
+	}
+	for _, eipAllocation := range eipAllocations2 {
+		eipAllocationMap2[eipAllocation] = struct{}{}
+	}
+	// Check if maps contain the same eipAllocations.
+	for eipAllocation := range eipAllocationMap1 {
+		if _, found := eipAllocationMap2[eipAllocation]; !found {
+			return false
+		}
+	}
+
+	return true
 }
 
 // awsSubnetsEqual compares two AWSSubnets objects and returns a boolean
@@ -1012,6 +1136,10 @@ func awsSubnetsExist(subnets *operatorv1.AWSSubnets) bool {
 	return subnets != nil && (len(subnets.Names) > 0 || len(subnets.IDs) > 0)
 }
 
+func awsEIPAllocationsExist(eipAllocations []operatorv1.EIPAllocation) bool {
+	return len(eipAllocations) > 0
+}
+
 // JoinAWSSubnets joins an AWS Subnets object into a string seperated by sep.
 func JoinAWSSubnets(subnets *operatorv1.AWSSubnets, sep string) string {
 	if subnets == nil {
@@ -1034,6 +1162,23 @@ func JoinAWSSubnets(subnets *operatorv1.AWSSubnets, sep string) string {
 		subnetCount++
 	}
 	return joinedSubnets
+}
+
+// JoinAWSEIPAllocations joins an AWS EIPAllocations object into a string seperated by sep.
+func JoinAWSEIPAllocations(eipAllocations []operatorv1.EIPAllocation, sep string) string {
+	var buffer bytes.Buffer
+	first := true
+	for _, eipAllocation := range eipAllocations {
+		if len(string(eipAllocation)) != 0 {
+			if !first {
+				buffer.WriteString(sep)
+			} else {
+				first = false
+			}
+			buffer.WriteString(string(eipAllocation))
+		}
+	}
+	return buffer.String()
 }
 
 // getAWSLoadBalancerTypeInStatus gets the AWS Load Balancer Type reported in the status.

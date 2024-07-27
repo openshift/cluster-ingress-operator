@@ -25,6 +25,7 @@ import (
 	"k8s.io/utils/pointer"
 
 	"k8s.io/apimachinery/pkg/api/errors"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -1055,4 +1056,59 @@ func classicLoadBalancerParametersStatusExists(ic *operatorv1.IngressController)
 		ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters != nil &&
 		ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS != nil &&
 		ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.ClassicLoadBalancerParameters != nil
+}
+
+// waitForIngressControllerServiceDeleted checks if the service was deleted and return true if it is not found.
+func waitForIngressControllerServiceDeleted(t *testing.T, ic *operatorv1.IngressController, timeout time.Duration) error {
+	lbService := &corev1.Service{}
+	serviceName := controller.LoadBalancerServiceName(ic)
+
+	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, timeout, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(context.TODO(), serviceName, lbService); err != nil {
+			if apierrors.IsNotFound(err) {
+				return true, nil
+			}
+			t.Logf("failed to get the load balancer service %s/%s for Ingress Controller %s due to error: %v", serviceName.Namespace, serviceName.Name, ic.Name, err)
+			return false, nil
+		}
+		t.Logf("waiting for service %s/%s to be deleted", serviceName.Namespace, serviceName.Name)
+		return false, nil
+	})
+	if err != nil {
+		return fmt.Errorf("timed out waiting for the load balancer service to be deleted: %v", err)
+	}
+	return nil
+}
+
+// waitForLBAnnotation waits for the provided annoation to appear on the LoadBalancer-type service for the
+// given IngressController. It will return an error if it fails to observe the given annotation.
+func waitForLBAnnotation(t *testing.T, ic *operatorv1.IngressController, expectedAnnotation string, expectedExist bool, expectedValue string) {
+	t.Helper()
+
+	lbService := &corev1.Service{}
+	t.Logf("waiting for %q service with %q annotation of %q to exist: %t", controller.LoadBalancerServiceName(ic), expectedAnnotation, expectedValue, expectedExist)
+	err := wait.PollUntilContextTimeout(context.Background(), 10*time.Second, 5*time.Minute, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, controller.LoadBalancerServiceName(ic), lbService); err != nil {
+			t.Logf("failed to get %q service: %v, retrying ...", controller.LoadBalancerServiceName(ic), err)
+			return false, nil
+		}
+		val, ok := lbService.Annotations[expectedAnnotation]
+		// Handle the case where annotation should not exist.
+		if !expectedExist {
+			if ok {
+				t.Logf("expected %q annotation to be removed got %q, retrying...", expectedAnnotation, val)
+				return false, nil
+			}
+			return true, nil
+		}
+		// Handle the case where should exist and match.
+		if !ok || val != expectedValue {
+			t.Logf("expected %q annotation %q got %q, retrying...", expectedAnnotation, expectedValue, val)
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("error updating the %q service: %v", controller.LoadBalancerServiceName(ic), err)
+	}
 }
