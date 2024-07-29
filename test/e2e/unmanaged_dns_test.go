@@ -197,12 +197,11 @@ func TestUnmanagedDNSToManagedDNSInternalIngressController(t *testing.T) {
 	platform := infraConfig.Status.PlatformStatus.Type
 
 	supportedPlatforms := map[configv1.PlatformType]struct{}{
-		configv1.AlibabaCloudPlatformType: {},
-		configv1.AWSPlatformType:          {},
-		configv1.AzurePlatformType:        {},
-		configv1.GCPPlatformType:          {},
-		configv1.IBMCloudPlatformType:     {},
-		configv1.PowerVSPlatformType:      {},
+		configv1.AWSPlatformType:      {},
+		configv1.AzurePlatformType:    {},
+		configv1.GCPPlatformType:      {},
+		configv1.IBMCloudPlatformType: {},
+		configv1.PowerVSPlatformType:  {},
 	}
 	if _, supported := supportedPlatforms[platform]; !supported {
 		t.Skipf("test skipped on platform %q", platform)
@@ -267,7 +266,7 @@ func TestUnmanagedDNSToManagedDNSInternalIngressController(t *testing.T) {
 
 	// Only delete the service on platforms that don't automatically update the service's scope.
 	switch platform {
-	case configv1.AlibabaCloudPlatformType, configv1.AWSPlatformType, configv1.IBMCloudPlatformType, configv1.PowerVSPlatformType:
+	case configv1.AWSPlatformType, configv1.IBMCloudPlatformType, configv1.PowerVSPlatformType:
 		if err := kclient.Delete(context.TODO(), lbService); err != nil && !errors.IsNotFound(err) {
 			t.Fatalf("failed to delete svc %s: %v", lbService.Name, err)
 		}
