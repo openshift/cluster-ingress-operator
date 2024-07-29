@@ -12,7 +12,6 @@ require (
 	github.com/Azure/go-autorest/autorest/to v0.4.0
 	github.com/IBM/go-sdk-core/v5 v5.8.0
 	github.com/IBM/networking-go-sdk v0.26.0
-	github.com/aliyun/alibaba-cloud-sdk-go v1.61.1286
 	github.com/aws/aws-sdk-go v1.38.49
 	github.com/davecgh/go-spew v1.1.1
 	github.com/florianl/go-nfqueue v1.3.2
@@ -141,7 +140,6 @@ require (
 	google.golang.org/protobuf v1.33.0 // indirect
 	gopkg.in/go-playground/validator.v9 v9.31.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
-	gopkg.in/ini.v1 v1.62.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/component-base v0.30.2 // indirect
 	k8s.io/klog/v2 v2.120.1 // indirect
