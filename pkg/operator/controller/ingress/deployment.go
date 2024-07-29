@@ -84,6 +84,9 @@ const (
 
 	RouterHAProxyConfigManager = "ROUTER_HAPROXY_CONFIG_MANAGER"
 
+	RouterHAProxyMaxDynamicServers             = "ROUTER_MAX_DYNAMIC_SERVERS"
+	RouterHAProxyMaxDynamicServersDefaultValue = 2
+
 	RouterHAProxyContstats = "ROUTER_HAPROXY_CONTSTATS"
 
 	RouterHAProxyThreadsEnvName      = "ROUTER_THREADS"
@@ -523,6 +526,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		LoadBalancingAlgorithm string `json:"loadBalancingAlgorithm"`
 		DynamicConfigManager   string `json:"dynamicConfigManager"`
 		ContStats              string `json:"contStats"`
+		MaxDynamicServers      string `json:"maxDynamicServers"`
 	}
 	if len(ci.Spec.UnsupportedConfigOverrides.Raw) > 0 {
 		if err := json.Unmarshal(ci.Spec.UnsupportedConfigOverrides.Raw, &unsupportedConfigOverrides); err != nil {
@@ -568,10 +572,27 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	}
 
 	dynamicConfigOverride := unsupportedConfigOverrides.DynamicConfigManager
-	if v, err := strconv.ParseBool(dynamicConfigOverride); err == nil && v {
+	if v, err := strconv.ParseBool(dynamicConfigOverride); err == nil && !v {
+		env = append(env, corev1.EnvVar{
+			Name:  RouterHAProxyConfigManager,
+			Value: "false",
+		})
+	} else {
 		env = append(env, corev1.EnvVar{
 			Name:  RouterHAProxyConfigManager,
 			Value: "true",
+		})
+	}
+	maxDynamicServersOverride := unsupportedConfigOverrides.MaxDynamicServers
+	if len(maxDynamicServersOverride) > 0 {
+		env = append(env, corev1.EnvVar{
+			Name:  RouterHAProxyMaxDynamicServers,
+			Value: maxDynamicServersOverride,
+		})
+	} else {
+		env = append(env, corev1.EnvVar{
+			Name:  RouterHAProxyMaxDynamicServers,
+			Value: strconv.Itoa(RouterHAProxyMaxDynamicServersDefaultValue),
 		})
 	}
 	contStats := unsupportedConfigOverrides.ContStats
