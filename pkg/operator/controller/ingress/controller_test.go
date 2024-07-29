@@ -249,12 +249,6 @@ func TestSetDefaultPublishingStrategySetsPlatformDefaults(t *testing.T) {
 		domainMatchesBaseDomain bool
 	}{
 		{
-			name:                    "Alibaba",
-			platformStatus:          makePlatformStatus(configv1.AlibabaCloudPlatformType),
-			expectedIC:              ingressControllerWithLoadBalancer,
-			domainMatchesBaseDomain: true,
-		},
-		{
 			name:                    "AWS",
 			platformStatus:          makePlatformStatus(configv1.AWSPlatformType),
 			expectedIC:              ingressControllerWithLoadBalancer,

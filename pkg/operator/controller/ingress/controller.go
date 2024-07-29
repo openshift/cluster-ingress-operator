@@ -442,7 +442,7 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, platformStat
 	if effectiveStrategy == nil {
 		var strategyType operatorv1.EndpointPublishingStrategyType
 		switch platformStatus.Type {
-		case configv1.AWSPlatformType, configv1.AzurePlatformType, configv1.GCPPlatformType, configv1.IBMCloudPlatformType, configv1.PowerVSPlatformType, configv1.AlibabaCloudPlatformType:
+		case configv1.AWSPlatformType, configv1.AzurePlatformType, configv1.GCPPlatformType, configv1.IBMCloudPlatformType, configv1.PowerVSPlatformType:
 			strategyType = operatorv1.LoadBalancerServiceStrategyType
 		case configv1.LibvirtPlatformType:
 			strategyType = operatorv1.HostNetworkStrategyType

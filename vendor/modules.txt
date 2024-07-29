@@ -92,20 +92,6 @@ github.com/IBM/go-sdk-core/v5/core
 github.com/IBM/networking-go-sdk/common
 github.com/IBM/networking-go-sdk/dnsrecordsv1
 github.com/IBM/networking-go-sdk/dnssvcsv1
-# github.com/aliyun/alibaba-cloud-sdk-go v1.61.1286
-## explicit; go 1.13
-github.com/aliyun/alibaba-cloud-sdk-go/sdk
-github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth
-github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth/credentials
-github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth/credentials/provider
-github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth/signers
-github.com/aliyun/alibaba-cloud-sdk-go/sdk/endpoints
-github.com/aliyun/alibaba-cloud-sdk-go/sdk/errors
-github.com/aliyun/alibaba-cloud-sdk-go/sdk/requests
-github.com/aliyun/alibaba-cloud-sdk-go/sdk/responses
-github.com/aliyun/alibaba-cloud-sdk-go/sdk/utils
-github.com/aliyun/alibaba-cloud-sdk-go/services/alidns
-github.com/aliyun/alibaba-cloud-sdk-go/services/pvtz
 # github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2
 ## explicit; go 1.13
 github.com/asaskevich/govalidator
@@ -854,9 +840,6 @@ gopkg.in/fsnotify.v1
 # gopkg.in/inf.v0 v0.9.1
 ## explicit
 gopkg.in/inf.v0
-# gopkg.in/ini.v1 v1.62.0
-## explicit
-gopkg.in/ini.v1
 # gopkg.in/yaml.v2 v2.4.0
 ## explicit; go 1.15
 gopkg.in/yaml.v2
