@@ -1435,6 +1435,7 @@ func hashableDeployment(deployment *appsv1.Deployment, onlyTemplate bool) *appsv
 		})
 		containers[i] = corev1.Container{
 			Command:         container.Command,
+			Args:            container.Args,
 			Env:             env,
 			Image:           container.Image,
 			ImagePullPolicy: container.ImagePullPolicy,
@@ -1659,6 +1660,7 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 	updated.Spec.Template.Spec.Containers[0].SecurityContext = expected.Spec.Template.Spec.Containers[0].SecurityContext
 	updated.Spec.Template.Spec.Containers[0].Env = expected.Spec.Template.Spec.Containers[0].Env
 	updated.Spec.Template.Spec.Containers[0].Image = expected.Spec.Template.Spec.Containers[0].Image
+	updated.Spec.Template.Spec.Containers[0].Args = expected.Spec.Template.Spec.Containers[0].Args
 	copyProbe(expected.Spec.Template.Spec.Containers[0].LivenessProbe, updated.Spec.Template.Spec.Containers[0].LivenessProbe, true)
 	copyProbe(expected.Spec.Template.Spec.Containers[0].ReadinessProbe, updated.Spec.Template.Spec.Containers[0].ReadinessProbe, true)
 	copyProbe(expected.Spec.Template.Spec.Containers[0].StartupProbe, updated.Spec.Template.Spec.Containers[0].StartupProbe, true)
