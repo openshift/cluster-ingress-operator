@@ -439,7 +439,8 @@ func Test_desiredRouterDeployment(t *testing.T) {
 		{"ROUTER_DEFAULT_CONNECT_TIMEOUT", false, ""},
 		{"ROUTER_ERRORFILE_503", false, ""},
 		{"ROUTER_ERRORFILE_404", false, ""},
-		{"ROUTER_HAPROXY_CONFIG_MANAGER", false, ""},
+		{"ROUTER_HAPROXY_CONFIG_MANAGER", true, "true"},
+		{"ROUTER_MAX_DYNAMIC_SERVERS", true, "2"},
 		{"ROUTER_H1_CASE_ADJUST", false, ""},
 		{"ROUTER_INSPECT_DELAY", false, ""},
 		{"ROUTER_IP_V4_V6_MODE", false, ""},
@@ -709,8 +710,9 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 
 	checkDeploymentHasContainer(t, deployment, operatorv1.ContainerLoggingSidecarContainerName, true)
 	tests := []envData{
-		{"ROUTER_HAPROXY_CONFIG_MANAGER", false, ""},
+		{"ROUTER_HAPROXY_CONFIG_MANAGER", true, "false"},
 		{"ROUTER_LOAD_BALANCE_ALGORITHM", true, "leastconn"},
+		{"ROUTER_MAX_DYNAMIC_SERVERS", true, "2"},
 		{"ROUTER_TCP_BALANCE_SCHEME", true, "source"},
 		{"ROUTER_MAX_CONNECTIONS", true, "auto"},
 		{RouterReloadIntervalEnvName, true, "5s"},
@@ -748,7 +750,7 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 	// Any value for loadBalancingAlgorithm other than "leastconn" should be
 	// ignored.
 	ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
-		Raw: []byte(`{"loadBalancingAlgorithm":"source","dynamicConfigManager":"true"}`),
+		Raw: []byte(`{"loadBalancingAlgorithm":"source","dynamicConfigManager":"true","maxDynamicServers":"7"}`),
 	}
 	ic.Spec.TuningOptions.MaxConnections = 40000
 	ic.Status.EndpointPublishingStrategy.LoadBalancer = &operatorv1.LoadBalancerStrategy{
@@ -779,6 +781,7 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 	tests = []envData{
 		{"ROUTER_HAPROXY_CONFIG_MANAGER", true, "true"},
 		{"ROUTER_LOAD_BALANCE_ALGORITHM", true, "random"},
+		{"ROUTER_MAX_DYNAMIC_SERVERS", true, "7"},
 		{"ROUTER_TCP_BALANCE_SCHEME", true, "source"},
 		{"ROUTER_MAX_CONNECTIONS", true, "40000"},
 		{RouterReloadIntervalEnvName, true, "5s"},
