@@ -283,7 +283,10 @@ func TestRouterCompressionOperation(t *testing.T) {
 		t.Fatalf("failed to get route: %v", err)
 	}
 
-	routeHost := getRouteHost(t, helloRoute, ic.Name)
+	routeHost := getRouteHost(helloRoute, ic.Name)
+	if routeHost == "" {
+		t.Fatalf("failed to find host name for the %q router in route %s/%s: %#v", ic.Name, routeName.Name, routeName.Name, helloRoute)
+	}
 
 	// curl to hello pod, without the Accept-Encoding header set to gzip.
 	if err := testContentEncoding(t, client, routeHost, false, ""); err != nil {

@@ -832,15 +832,12 @@ func assertDeletedWaitForCleanup(t *testing.T, cl client.Client, thing client.Ob
 
 // getRouteHost returns the host name of the given route for the named
 // IngressController.  If the IngressController has not added its host name to
-// the route's status, this function causes a fatal error.  For simplicity, this
+// the route's status, this function returns an empty string.  For simplicity, this
 // function does not check the "Admitted" status condition, so it will return
 // the host name if it is set even if the IngressController has rejected the
 // route.
-func getRouteHost(t *testing.T, route *routev1.Route, router string) string {
-	t.Helper()
-
+func getRouteHost(route *routev1.Route, router string) string {
 	if route == nil {
-		t.Fatal("route is nil")
 		return ""
 	}
 
@@ -850,7 +847,6 @@ func getRouteHost(t *testing.T, route *routev1.Route, router string) string {
 		}
 	}
 
-	t.Fatalf("failed to find host name for default router in route: %#v", route)
 	return ""
 }
 

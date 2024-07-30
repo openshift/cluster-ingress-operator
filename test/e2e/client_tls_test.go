@@ -169,7 +169,7 @@ func TestClientTLS(t *testing.T) {
 		if err := kclient.Get(context.TODO(), types.NamespacedName{Name: echoRoute.Name, Namespace: echoRoute.Namespace}, echoRoute); err != nil {
 			return false, fmt.Errorf("failed to get route %q: %w", echoRoute.Name, err)
 		}
-		routeHost = getRouteHost(t, echoRoute, ic.Name)
+		routeHost = getRouteHost(echoRoute, ic.Name)
 		return routeHost != "", nil
 	})
 
@@ -1073,7 +1073,7 @@ func TestMTLSWithCRLs(t *testing.T) {
 				if err := kclient.Get(context.TODO(), types.NamespacedName{Name: echoRoute.Name, Namespace: echoRoute.Namespace}, echoRoute); err != nil {
 					return false, fmt.Errorf("failed to get route %q: %w", echoRoute.Name, err)
 				}
-				routeHost = getRouteHost(t, echoRoute, ic.Name)
+				routeHost = getRouteHost(echoRoute, ic.Name)
 				return routeHost != "", nil
 			})
 
