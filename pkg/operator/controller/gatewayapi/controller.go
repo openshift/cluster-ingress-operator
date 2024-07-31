@@ -15,6 +15,7 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
@@ -50,6 +51,24 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	})
 	if err := c.Watch(source.Kind(operatorCache, &configv1.FeatureGate{}), &handler.EnqueueRequestForObject{}, clusterNamePredicate); err != nil {
 		return nil, err
+	}
+
+	toFeatureGate := func(ctx context.Context, _ client.Object) []reconcile.Request {
+		return []reconcile.Request{{
+			NamespacedName: operatorcontroller.FeatureGateClusterConfigName(),
+		}}
+	}
+
+	// watch for CRDs
+	for i := range managedCRDs {
+		if err = c.Watch(source.Kind(operatorCache, managedCRDs[i]), handler.EnqueueRequestsFromMapFunc(toFeatureGate), predicate.Funcs{
+			CreateFunc:  func(e event.CreateEvent) bool { return false },
+			DeleteFunc:  func(e event.DeleteEvent) bool { return true },
+			UpdateFunc:  func(e event.UpdateEvent) bool { return false },
+			GenericFunc: func(e event.GenericEvent) bool { return false },
+		}); err != nil {
+			return nil, err
+		}
 	}
 	return c, nil
 }
