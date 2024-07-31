@@ -11,8 +11,20 @@ function verify_crd {
 }
 
 verify_crd \
-  "vendor/github.com/openshift/api/operator/v1/zz_generated.crd-manifests/0000_50_ingress_00_ingresscontrollers.crd.yaml" \
+  "vendor/github.com/openshift/api/operator/v1/zz_generated.crd-manifests/0000_50_ingress_00_ingresscontrollers-Default.crd.yaml" \
   "manifests/00-custom-resource-definition.yaml"
+
+verify_crd \
+  "vendor/github.com/openshift/api/operator/v1/zz_generated.crd-manifests/0000_50_ingress_00_ingresscontrollers-CustomNoUpgrade.crd.yaml" \
+  "manifests/00-custom-resource-definition-CustomNoUpgrade.yaml"
+
+verify_crd \
+  "vendor/github.com/openshift/api/operator/v1/zz_generated.crd-manifests/0000_50_ingress_00_ingresscontrollers-DevPreviewNoUpgrade.crd.yaml" \
+  "manifests/00-custom-resource-definition-DevPreviewNoUpgrade.yaml"
+
+verify_crd \
+  "vendor/github.com/openshift/api/operator/v1/zz_generated.crd-manifests/0000_50_ingress_00_ingresscontrollers-TechPreviewNoUpgrade.crd.yaml" \
+  "manifests/00-custom-resource-definition-TechPreviewNoUpgrade.yaml"
 
 verify_crd \
   "vendor/github.com/openshift/api/operatoringress/v1/zz_generated.crd-manifests/0000_50_dns_01_dnsrecords.crd.yaml" \

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	configv1 "github.com/openshift/api/config/v1"
+	"github.com/openshift/api/features"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gatewayclass"
 
@@ -54,7 +54,7 @@ func TestGatewayAPI(t *testing.T) {
 	t.Parallel()
 
 	// Skip if feature is not enabled
-	if gatewayAPIEnabled, err := isFeatureGateEnabled(configv1.FeatureGateGatewayAPI); err != nil {
+	if gatewayAPIEnabled, err := isFeatureGateEnabled(features.FeatureGateGatewayAPI); err != nil {
 		t.Fatalf("error checking feature gate enabled status: %v", err)
 	} else if !gatewayAPIEnabled {
 		t.Skip("Gateway API not enabled, skipping TestGatewayAPI")

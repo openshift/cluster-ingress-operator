@@ -74,20 +74,23 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	if updated.Status.EndpointPublishingStrategy != nil && updated.Status.EndpointPublishingStrategy.LoadBalancer != nil {
 		updated.Status.EndpointPublishingStrategy.LoadBalancer.AllowedSourceRanges = computeAllowedSourceRanges(service)
 	}
+	if platformStatus.Type == configv1.AWSPlatformType && r.config.IngressControllerLBSubnetsAWSEnabled {
+		updateIngressControllerAWSSubnetStatus(updated, service)
+	}
 
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentAvailableCondition(deployment))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentReplicasMinAvailableCondition(deployment, pods))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentReplicasAllAvailableCondition(deployment))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentRollingOutCondition(deployment))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeLoadBalancerStatus(ic, service, operandEvents)...)
-	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeLoadBalancerProgressingStatus(ic, service, platformStatus))
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeLoadBalancerProgressingStatus(updated, service, platformStatus, r.config.IngressControllerLBSubnetsAWSEnabled))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDNSStatus(ic, wildcardRecord, platformStatus, dnsConfig)...)
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressAvailableCondition(updated.Status.Conditions))
 	degradedCondition, err := computeIngressDegradedCondition(updated.Status.Conditions, updated.Name)
 	errs = append(errs, err)
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressProgressingCondition(updated.Status.Conditions))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, degradedCondition)
-	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressUpgradeableCondition(ic, deploymentRef, service, platformStatus, secret))
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressUpgradeableCondition(ic, deploymentRef, service, platformStatus, secret, r.config.IngressControllerLBSubnetsAWSEnabled))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressEvaluationConditionsDetectedCondition(ic, service))
 
 	updated.Status.Conditions = PruneConditions(updated.Status.Conditions)
@@ -637,13 +640,13 @@ func computeIngressDegradedCondition(conditions []operatorv1.OperatorCondition, 
 }
 
 // computeIngressUpgradeableCondition computes the IngressController's "Upgradeable" status condition.
-func computeIngressUpgradeableCondition(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference, service *corev1.Service, platform *configv1.PlatformStatus, secret *corev1.Secret) operatorv1.OperatorCondition {
+func computeIngressUpgradeableCondition(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference, service *corev1.Service, platform *configv1.PlatformStatus, secret *corev1.Secret, subnetsAWSEnabled bool) operatorv1.OperatorCondition {
 	var errs []error
 
 	errs = append(errs, checkDefaultCertificate(secret, "*."+ic.Status.Domain))
 
 	if service != nil {
-		errs = append(errs, loadBalancerServiceIsUpgradeable(ic, deploymentRef, service, platform))
+		errs = append(errs, loadBalancerServiceIsUpgradeable(ic, deploymentRef, service, platform, subnetsAWSEnabled))
 	}
 
 	if err := kerrors.NewAggregate(errs); err != nil {
@@ -799,6 +802,19 @@ func IngressStatusesEqual(a, b operatorv1.IngressControllerStatus) bool {
 		if !reflect.DeepEqual(a.EndpointPublishingStrategy.LoadBalancer.AllowedSourceRanges, b.EndpointPublishingStrategy.LoadBalancer.AllowedSourceRanges) {
 			return false
 		}
+		if a.EndpointPublishingStrategy.LoadBalancer.ProviderParameters != nil && b.EndpointPublishingStrategy.LoadBalancer.ProviderParameters != nil &&
+			a.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS != nil && b.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS != nil {
+			if a.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters != nil && b.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters != nil {
+				if !awsSubnetsEqual(a.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters.Subnets, b.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters.Subnets) {
+					return false
+				}
+			}
+			if a.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.ClassicLoadBalancerParameters != nil && b.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.ClassicLoadBalancerParameters != nil {
+				if !awsSubnetsEqual(a.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.ClassicLoadBalancerParameters.Subnets, b.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.ClassicLoadBalancerParameters.Subnets) {
+					return false
+				}
+			}
+		}
 	}
 
 	return true
@@ -888,7 +904,7 @@ func computeLoadBalancerStatus(ic *operatorv1.IngressController, service *corev1
 // computeLoadBalancerProgressingStatus returns the LoadBalancerProgressing
 // conditions for the given ingress controller. These conditions subsequently determine
 // the ingress controller's Progressing status.
-func computeLoadBalancerProgressingStatus(ic *operatorv1.IngressController, service *corev1.Service, platform *configv1.PlatformStatus) operatorv1.OperatorCondition {
+func computeLoadBalancerProgressingStatus(ic *operatorv1.IngressController, service *corev1.Service, platform *configv1.PlatformStatus, subnetsAWSEnabled bool) operatorv1.OperatorCondition {
 	// Compute the IngressControllerLoadBalancerProgressingConditionType condition for the LoadBalancer
 	if ic.Status.EndpointPublishingStrategy.Type == operatorv1.LoadBalancerServiceStrategyType {
 		switch {
@@ -907,7 +923,7 @@ func computeLoadBalancerProgressingStatus(ic *operatorv1.IngressController, serv
 				Message: "LoadBalancer Service not created.",
 			}
 		default:
-			if err := loadBalancerServiceIsProgressing(ic, service, platform); err != nil {
+			if err := loadBalancerServiceIsProgressing(ic, service, platform, subnetsAWSEnabled); err != nil {
 				return operatorv1.OperatorCondition{
 					Type:    IngressControllerLoadBalancerProgressingConditionType,
 					Status:  operatorv1.ConditionTrue,
@@ -922,6 +938,37 @@ func computeLoadBalancerProgressingStatus(ic *operatorv1.IngressController, serv
 		Status:  operatorv1.ConditionFalse,
 		Reason:  "LoadBalancerNotProgressing",
 		Message: "LoadBalancer is not progressing",
+	}
+}
+
+// updateIngressControllerAWSSubnetStatus mutates the provided IngressController object to
+// sync its status to the effective subnets on the LoadBalancer-type service.
+func updateIngressControllerAWSSubnetStatus(ic *operatorv1.IngressController, service *corev1.Service) {
+	// Set the subnets status based on the actual service annotation and the load balancer type,
+	// as NLBs and CLBs have separate subnet configuration fields.
+	clbParams := getAWSClassicLoadBalancerParametersInStatus(ic)
+	nlbParams := getAWSNetworkLoadBalancerParametersInStatus(ic)
+	switch getAWSLoadBalancerTypeInStatus(ic) {
+	case operatorv1.AWSNetworkLoadBalancer:
+		// NetworkLoadBalancerParameters should be initialized by setDefaultPublishingStrategy
+		// when an IngressController is admitted, so we don't need to initialize here.
+		if nlbParams != nil {
+			nlbParams.Subnets = getSubnetsFromServiceAnnotation(service)
+		}
+		// Clear CLB status as the IngressController is now using a NLB.
+		if clbParams != nil {
+			clbParams.Subnets = nil
+		}
+	case operatorv1.AWSClassicLoadBalancer:
+		// ClassicLoadBalancerParameters should be initialized by setDefaultPublishingStrategy
+		// when an IngressController is admitted, so we don't need to initialize here.
+		if clbParams != nil {
+			clbParams.Subnets = getSubnetsFromServiceAnnotation(service)
+		}
+		// Clear NLB status as the IngressController is now using a CLB.
+		if nlbParams != nil {
+			nlbParams.Subnets = nil
+		}
 	}
 }
 

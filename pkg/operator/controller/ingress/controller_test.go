@@ -462,6 +462,17 @@ func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
 			}
 			return eps
 		}
+		nlbWithNullParameters = func() *operatorv1.EndpointPublishingStrategy {
+			eps := eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS))
+			eps.LoadBalancer.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{
+				Type: operatorv1.AWSLoadBalancerProvider,
+				AWS: &operatorv1.AWSLoadBalancerParameters{
+					Type:                          operatorv1.AWSNetworkLoadBalancer,
+					NetworkLoadBalancerParameters: &operatorv1.AWSNetworkLoadBalancerParameters{},
+				},
+			}
+			return eps
+		}
 		gcpLB = func(clientAccess operatorv1.GCPClientAccess) *operatorv1.EndpointPublishingStrategy {
 			eps := eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS))
 			eps.LoadBalancer.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{
@@ -595,14 +606,14 @@ func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
 			name:                    "loadbalancer type set to NLB",
 			ic:                      makeIC(spec(nlb()), status(nlb())),
 			expectedResult:          false,
-			expectedIC:              makeIC(spec(nlb()), status(nlb())),
+			expectedIC:              makeIC(spec(nlb()), status(nlbWithNullParameters())),
 			domainMatchesBaseDomain: true,
 		},
 		{
 			name:                    "loadbalancer type changed from ELB to NLB",
 			ic:                      makeIC(spec(nlb()), status(elb())),
 			expectedResult:          true,
-			expectedIC:              makeIC(spec(nlb()), status(nlb())),
+			expectedIC:              makeIC(spec(nlb()), status(nlbWithNullParameters())),
 			domainMatchesBaseDomain: true,
 		},
 		{

@@ -189,9 +189,10 @@ func enqueueRequestForOwningIngressController(namespace string) handler.EventHan
 
 // Config holds all the things necessary for the controller to run.
 type Config struct {
-	Namespace                       string
-	IngressControllerImage          string
-	RouteExternalCertificateEnabled bool
+	Namespace                            string
+	IngressControllerImage               string
+	RouteExternalCertificateEnabled      bool
+	IngressControllerLBSubnetsAWSEnabled bool
 }
 
 // reconciler handles the actual ingress reconciliation logic in response to
@@ -564,6 +565,11 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, platformStat
 						}
 						statusLB.ProviderParameters.AWS.ClassicLoadBalancerParameters.ConnectionIdleTimeout = v
 						changed = true
+					}
+				}
+				if statusLB.ProviderParameters.AWS.Type == operatorv1.AWSNetworkLoadBalancer {
+					if statusLB.ProviderParameters.AWS.NetworkLoadBalancerParameters == nil {
+						statusLB.ProviderParameters.AWS.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{}
 					}
 				}
 			case operatorv1.GCPLoadBalancerProvider:
