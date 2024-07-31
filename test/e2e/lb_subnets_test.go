@@ -79,7 +79,7 @@ func TestAWSLBSubnets(t *testing.T) {
 	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 
 	// Wait for the load balancer and DNS to be ready.
-	if err = waitForIngressControllerCondition(t, kclient, 10*time.Minute, icName, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
+	if err = waitForIngressControllerCondition(t, kclient, 10*time.Minute, icName, availableNotProgressingConditionsForIngressControllerWithLoadBalancer...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -114,12 +114,19 @@ func TestAWSLBSubnets(t *testing.T) {
 		t.Fatalf("failed to update ingresscontroller: %v", err)
 	}
 
-	// Since the subnets are invalid, the load balancer will fail to provision and set LoadBalancerReady=False.
-	loadBalancerReadyFalse := operatorv1.OperatorCondition{
-		Type:   operatorv1.LoadBalancerReadyIngressConditionType,
-		Status: operatorv1.ConditionFalse,
+	// Since the subnets are invalid, the load balancer will fail to provision and set LoadBalancerReady=False, but
+	// it shouldn't be Progressing either.
+	loadBalancerNotReadyNotProgressing := []operatorv1.OperatorCondition{
+		{
+			Type:   operatorv1.LoadBalancerReadyIngressConditionType,
+			Status: operatorv1.ConditionFalse,
+		},
+		{
+			Type:   operatorv1.OperatorStatusTypeProgressing,
+			Status: operatorv1.ConditionFalse,
+		},
 	}
-	effectuateIngressControllerSubnets(t, ic, invalidSubnets, loadBalancerReadyFalse)
+	effectuateIngressControllerSubnets(t, ic, invalidSubnets, loadBalancerNotReadyNotProgressing...)
 
 	// Now, update the IngressController to change to use a NLB and the public subnets again.
 	t.Logf("updating ingresscontroller %q to use an NLB and public subnets", ic.Name)
@@ -132,7 +139,7 @@ func TestAWSLBSubnets(t *testing.T) {
 		t.Fatalf("failed to update ingresscontroller: %v", err)
 	}
 
-	effectuateIngressControllerSubnets(t, ic, publicSubnets, availableConditionsForIngressControllerWithLoadBalancer...)
+	effectuateIngressControllerSubnets(t, ic, publicSubnets, availableNotProgressingConditionsForIngressControllerWithLoadBalancer...)
 
 	// Verify we can still reach the NLB with the provided public subnets.
 	t.Logf("verifying external connectivity for ingresscontroller %q using an NLB with specified public subnets", ic.Name)
@@ -158,7 +165,7 @@ func TestAWSLBSubnets(t *testing.T) {
 	waitForLBSubnetAnnotation(t, ic, nil)
 
 	// Expect the load balancer to provision successfully with the subnets removed.
-	if err = waitForIngressControllerCondition(t, kclient, 10*time.Minute, icName, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
+	if err = waitForIngressControllerCondition(t, kclient, 10*time.Minute, icName, availableNotProgressingConditionsForIngressControllerWithLoadBalancer...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -201,7 +208,7 @@ func TestUnmanagedAWSLBSubnets(t *testing.T) {
 	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 
 	// Wait for the load balancer and DNS to be ready.
-	if err = waitForIngressControllerCondition(t, kclient, 10*time.Minute, icName, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
+	if err = waitForIngressControllerCondition(t, kclient, 10*time.Minute, icName, availableNotProgressingConditionsForIngressControllerWithLoadBalancer...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
@@ -254,7 +261,7 @@ func TestUnmanagedAWSLBSubnets(t *testing.T) {
 	}
 
 	// The LoadBalancerProgressing=True condition should be resolved and the IngressController should be available.
-	if err = waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
+	if err = waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableNotProgressingConditionsForIngressControllerWithLoadBalancer...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
