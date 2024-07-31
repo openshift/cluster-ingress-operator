@@ -326,7 +326,7 @@ func verifyIngressControllerSubnetStatus(t *testing.T, icName types.NamespacedNa
 			if classicLoadBalancerParametersStatusExists(ic) {
 				subnetStatus = ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.ClassicLoadBalancerParameters.Subnets
 			}
-			if networkLoadBalancerParametersStatusExist(ic) {
+			if networkLoadBalancerParametersStatusExist(ic) && ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters.Subnets != nil {
 				t.Logf("expected subnets in NetworkLoadBalancerParameters to be nil when LB type is Classic, got: %v, retrying...", ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters.Subnets)
 				return false, nil
 			}
@@ -337,7 +337,7 @@ func verifyIngressControllerSubnetStatus(t *testing.T, icName types.NamespacedNa
 			if networkLoadBalancerParametersStatusExist(ic) {
 				subnetStatus = ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters.Subnets
 			}
-			if classicLoadBalancerParametersStatusExists(ic) {
+			if classicLoadBalancerParametersStatusExists(ic) && ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.ClassicLoadBalancerParameters.Subnets != nil {
 				t.Logf("expected subnets in ClassicLoadBalancerParameters to be nil when LB type is NLB, got: %v, retrying...", ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.ClassicLoadBalancerParameters.Subnets)
 				return false, nil
 			}
