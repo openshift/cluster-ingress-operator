@@ -24,7 +24,7 @@ import (
 func (r *reconciler) ensureServiceMeshControlPlane(ctx context.Context, gatewayclass *gatewayapiv1beta1.GatewayClass) (bool, *maistrav2.ServiceMeshControlPlane, error) {
 	name := controller.ServiceMeshControlPlaneName(r.config.OperandNamespace)
 	have, current, err := r.currentServiceMeshControlPlane(ctx, name)
-	if err != nil {
+	if err != nil && !errors.IsNotFound(err) {
 		return false, nil, err
 	}
 
@@ -162,7 +162,7 @@ func (r *reconciler) currentServiceMeshControlPlane(ctx context.Context, name ty
 	var smcp maistrav2.ServiceMeshControlPlane
 	if err := r.cache.Get(ctx, name, &smcp); err != nil {
 		if errors.IsNotFound(err) {
-			return false, nil, nil
+			return false, nil, err
 		}
 		return false, nil, fmt.Errorf("failed to get ServiceMeshControlPlane %s: %w", name, err)
 	}
