@@ -34,8 +34,16 @@ if [[ "${TEMP_COMMIT}" == "true" ]]; then
   git reset --soft HEAD~1
 fi
 
+if [[ -n "$GET_IMAGE" ]]; then
+  IMAGE=$(oc get -n openshift-ingress-operator deployments/ingress-operator -o json | jq -r '.spec.template.spec.containers[0].env[] | select(.name=="IMAGE").value')
+fi
+
 cp -R manifests/* $MANIFESTS
-cat manifests/02-deployment.yaml | sed "s~openshift/origin-cluster-ingress-operator:latest~$REPO:$TAG~" > "$MANIFESTS/02-deployment.yaml"
+if [ -z $IMAGE ]; then
+  cat manifests/02-deployment.yaml | sed "s~openshift/origin-cluster-ingress-operator:latest~$REPO:$TAG~" > "$MANIFESTS/02-deployment.yaml"
+else
+  cat manifests/02-deployment.yaml | sed -e "s~openshift/origin-cluster-ingress-operator:latest~$REPO:$TAG~" -e "s~openshift/origin-haproxy-router:v4.0~$IMAGE~" > "$MANIFESTS/02-deployment.yaml"
+fi
 # To simulate CVO, ClusterOperator resource need to be created by the operator.
 rm $MANIFESTS/03-cluster-operator.yaml
 
