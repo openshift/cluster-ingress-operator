@@ -99,6 +99,7 @@ func testGatewayAPIResources(t *testing.T) {
 // - the OSSM Istio operator is installed successfully and has status Running and Ready. e.g. istio-operator-9f5c88857-2xfrr  -n openshift-operators
 // - Istiod is installed successfully and has status Running and Ready.  e.g istiod-openshift-gateway-867bb8d5c7-4z6mp -n openshift-ingress
 // - the SMCP is created successfully (OSSM 2.x).
+// - deletes SMCP and subscription and tests if it gets recreated
 func testGatewayAPIIstioInstallation(t *testing.T) {
 	t.Helper()
 
@@ -117,6 +118,22 @@ func testGatewayAPIIstioInstallation(t *testing.T) {
 	// TODO - In OSSM 3.x the configuration object to check will be different.
 	if err := assertSMCP(t); err != nil {
 		t.Fatalf("failed to find expected SMCP: %v", err)
+	}
+	// delete existing SMCP to test it gets recreated
+	if err := deleteExistingSMCP(t); err != nil {
+		t.Fatalf("failed to delete existing SMCP: %v", err)
+	}
+	// check if SMCP gets recreated
+	if err := assertSMCP(t); err != nil {
+		t.Fatalf("failed to find expected SMCP: %v", err)
+	}
+	// delete existing Subscription to test it gets recreated
+	if err := deleteExistingSubscription(t, openshiftOperatorsNamespace, expectedSubscriptionName); err != nil {
+		t.Fatalf("failed to delete existing Subscription %s: %v", expectedSubscriptionName, err)
+	}
+	// checks if subscription gets recreated.
+	if err := assertSubscription(t, openshiftOperatorsNamespace, expectedSubscriptionName); err != nil {
+		t.Fatalf("failed to find expected Subscription %s: %v", expectedSubscriptionName, err)
 	}
 }
 
