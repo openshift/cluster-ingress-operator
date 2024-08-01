@@ -108,6 +108,9 @@ var (
 	}
 	// The ingress canary check status condition only applies to the default ingress controller.
 	defaultAvailableConditions = append(availableConditionsForIngressControllerWithLoadBalancer, operatorv1.OperatorCondition{Type: ingresscontroller.IngressControllerCanaryCheckSuccessConditionType, Status: operatorv1.ConditionTrue})
+
+	// IngressController must be Available AND Progressing must also be False.
+	availableNotProgressingConditionsForIngressControllerWithLoadBalancer = append(availableConditionsForIngressControllerWithLoadBalancer, operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeProgressing, Status: operatorv1.ConditionFalse})
 )
 
 var (

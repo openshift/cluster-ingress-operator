@@ -154,7 +154,8 @@ func TestSetDefaultPublishingStrategySetsPlatformDefaults(t *testing.T) {
 						ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
 							Type: operatorv1.AWSLoadBalancerProvider,
 							AWS: &operatorv1.AWSLoadBalancerParameters{
-								Type: operatorv1.AWSNetworkLoadBalancer,
+								Type:                          operatorv1.AWSNetworkLoadBalancer,
+								NetworkLoadBalancerParameters: &operatorv1.AWSNetworkLoadBalancerParameters{},
 							},
 						},
 					},

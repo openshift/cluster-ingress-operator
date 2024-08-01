@@ -714,7 +714,12 @@ func setDefaultProviderParameters(lbs *operatorv1.LoadBalancerStrategy, ingressC
 			if lbs.ProviderParameters.AWS.ClassicLoadBalancerParameters == nil {
 				lbs.ProviderParameters.AWS.ClassicLoadBalancerParameters = &operatorv1.AWSClassicLoadBalancerParameters{}
 			}
+		case operatorv1.AWSNetworkLoadBalancer:
+			if lbs.ProviderParameters.AWS.NetworkLoadBalancerParameters == nil {
+				lbs.ProviderParameters.AWS.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{}
+			}
 		}
+
 	case operatorv1.GCPLoadBalancerProvider:
 		if lbs.ProviderParameters == nil {
 			lbs.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{}
