@@ -144,6 +144,7 @@ github.com/aws/aws-sdk-go/internal/shareddefaults
 github.com/aws/aws-sdk-go/internal/strings
 github.com/aws/aws-sdk-go/internal/sync/singleflight
 github.com/aws/aws-sdk-go/private/protocol
+github.com/aws/aws-sdk-go/private/protocol/ec2query
 github.com/aws/aws-sdk-go/private/protocol/json/jsonutil
 github.com/aws/aws-sdk-go/private/protocol/jsonrpc
 github.com/aws/aws-sdk-go/private/protocol/query
@@ -152,6 +153,7 @@ github.com/aws/aws-sdk-go/private/protocol/rest
 github.com/aws/aws-sdk-go/private/protocol/restjson
 github.com/aws/aws-sdk-go/private/protocol/restxml
 github.com/aws/aws-sdk-go/private/protocol/xml/xmlutil
+github.com/aws/aws-sdk-go/service/ec2
 github.com/aws/aws-sdk-go/service/elb
 github.com/aws/aws-sdk-go/service/elbv2
 github.com/aws/aws-sdk-go/service/resourcegroupstaggingapi
@@ -233,6 +235,16 @@ github.com/go-playground/universal-translator
 # github.com/go-stack/stack v1.8.0
 ## explicit
 github.com/go-stack/stack
+# github.com/goccy/go-yaml v1.8.8
+## explicit; go 1.12
+github.com/goccy/go-yaml
+github.com/goccy/go-yaml/ast
+github.com/goccy/go-yaml/internal/errors
+github.com/goccy/go-yaml/lexer
+github.com/goccy/go-yaml/parser
+github.com/goccy/go-yaml/printer
+github.com/goccy/go-yaml/scanner
+github.com/goccy/go-yaml/token
 # github.com/gogo/protobuf v1.3.2
 ## explicit; go 1.15
 github.com/gogo/protobuf/proto
@@ -351,7 +363,7 @@ github.com/leodido/go-urn
 github.com/mailru/easyjson/buffer
 github.com/mailru/easyjson/jlexer
 github.com/mailru/easyjson/jwriter
-# github.com/maistra/istio-operator v0.0.0-20230322122339-793794762e67
+# github.com/maistra/istio-operator v0.0.0-20240712143246-fd7dfc8af831
 ## explicit; go 1.15
 github.com/maistra/istio-operator/pkg/apis/maistra/status
 github.com/maistra/istio-operator/pkg/apis/maistra/v1
@@ -397,7 +409,7 @@ github.com/mxk/go-flowrate/flowrate
 github.com/oklog/ulid
 # github.com/onsi/ginkgo v1.16.5
 ## explicit; go 1.16
-# github.com/openshift/api v3.9.1-0.20190924102528-32369d4db2ad+incompatible => github.com/openshift/api v0.0.0-20240715101244-b0adfa1f6357
+# github.com/openshift/api v3.9.1-0.20190924102528-32369d4db2ad+incompatible => github.com/openshift/api v0.0.0-20240802135124-8b2b377d9d42
 ## explicit; go 1.22.0
 github.com/openshift/api
 github.com/openshift/api/annotations
@@ -684,6 +696,10 @@ golang.org/x/text/unicode/norm
 # golang.org/x/time v0.3.0
 ## explicit
 golang.org/x/time/rate
+# golang.org/x/xerrors v0.0.0-20220907171357-04be3eba64a2
+## explicit; go 1.17
+golang.org/x/xerrors
+golang.org/x/xerrors/internal
 # gomodules.xyz/jsonpatch/v2 v2.4.0
 ## explicit; go 1.20
 gomodules.xyz/jsonpatch/v2
@@ -1346,5 +1362,5 @@ sigs.k8s.io/structured-merge-diff/v4/value
 sigs.k8s.io/yaml
 sigs.k8s.io/yaml/goyaml.v2
 # bitbucket.org/ww/goautoneg => github.com/munnerz/goautoneg v0.0.0-20120707110453-a547fc61f48d
-# github.com/openshift/api => github.com/openshift/api v0.0.0-20240715101244-b0adfa1f6357
+# github.com/openshift/api => github.com/openshift/api v0.0.0-20240802135124-8b2b377d9d42
 # k8s.io/client-go => k8s.io/client-go v0.29.0

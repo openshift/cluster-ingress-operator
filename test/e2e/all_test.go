@@ -86,6 +86,8 @@ func TestAll(t *testing.T) {
 		t.Run("TestGatewayAPI", TestGatewayAPI)
 		t.Run("TestAWSLBSubnets", TestAWSLBSubnets)
 		t.Run("TestUnmanagedAWSLBSubnets", TestUnmanagedAWSLBSubnets)
+		t.Run("TestAWSEIPAllocationsForNLB", TestAWSEIPAllocationsForNLB)
+		t.Run("TestUnmanagedAWSEIPAllocations", TestUnmanagedAWSEIPAllocations)
 	})
 
 	t.Run("serial", func(t *testing.T) {

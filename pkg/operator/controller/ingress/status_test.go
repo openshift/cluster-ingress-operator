@@ -695,6 +695,38 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 		return ic
 	}
 
+	loadBalancerIngressControllerWithAWSEIPAllocations := func(eipAllocationSpec []operatorv1.EIPAllocation, eipAllocationStatus []operatorv1.EIPAllocation) *operatorv1.IngressController {
+		eps := &operatorv1.EndpointPublishingStrategy{
+			Type: operatorv1.LoadBalancerServiceStrategyType,
+			LoadBalancer: &operatorv1.LoadBalancerStrategy{
+				Scope: operatorv1.ExternalLoadBalancer,
+				ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+					Type: operatorv1.AWSLoadBalancerProvider,
+					AWS: &operatorv1.AWSLoadBalancerParameters{
+						Type: operatorv1.AWSNetworkLoadBalancer,
+					},
+				},
+			},
+		}
+		ic := &operatorv1.IngressController{
+			Spec: operatorv1.IngressControllerSpec{
+				EndpointPublishingStrategy: eps.DeepCopy(),
+			},
+			Status: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: eps.DeepCopy(),
+			},
+		}
+
+		ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{
+			EIPAllocations: eipAllocationSpec,
+		}
+		ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{
+			EIPAllocations: eipAllocationStatus,
+		}
+
+		return ic
+	}
+
 	loadBalancerIngressControllerWithInternalScope := operatorv1.IngressController{
 		Status: operatorv1.IngressControllerStatus{
 			EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
@@ -756,12 +788,14 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 		Type: configv1.AzurePlatformType,
 	}
 	tests := []struct {
-		name                        string
-		conditions                  []operatorv1.OperatorCondition
-		ic                          *operatorv1.IngressController
-		service                     *corev1.Service
-		platformStatus              *configv1.PlatformStatus
-		awsSubnetsEnabled           bool
+		name                     string
+		conditions               []operatorv1.OperatorCondition
+		ic                       *operatorv1.IngressController
+		service                  *corev1.Service
+		platformStatus           *configv1.PlatformStatus
+		awsSubnetsEnabled        bool
+		awsEIPAllocationsEnabled bool
+
 		expectStatus                operatorv1.ConditionStatus
 		expectMessageContains       string
 		expectMessageDoesNotContain string
@@ -1104,10 +1138,109 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 			platformStatus:    awsPlatformStatus,
 			expectStatus:      operatorv1.ConditionTrue,
 		},
+		{
+			name: "NLB LoadBalancerService, AWS EIPAllocations nil spec and nil status",
+			ic: loadBalancerIngressControllerWithAWSEIPAllocations(
+				nil,
+				nil,
+			),
+			service:                  &corev1.Service{},
+			awsEIPAllocationsEnabled: true,
+			platformStatus:           awsPlatformStatus,
+			expectStatus:             operatorv1.ConditionFalse,
+		},
+		{
+			name: "NLB LoadBalancerService, AWS EIPAllocations nil spec and empty status",
+			ic: loadBalancerIngressControllerWithAWSEIPAllocations(
+				nil,
+				[]operatorv1.EIPAllocation{},
+			),
+			service:                  &corev1.Service{},
+			awsEIPAllocationsEnabled: true,
+			platformStatus:           awsPlatformStatus,
+			expectStatus:             operatorv1.ConditionFalse,
+		},
+		{
+			name: "NLB LoadBalancerService, AWS EIPAllocations spec with eipAllocations and nil status, but feature gate disabled",
+			ic: loadBalancerIngressControllerWithAWSEIPAllocations(
+				[]operatorv1.EIPAllocation{"eipalloc-xxxxxxxxxxxxxxxxx", "eipalloc-yyyyyyyyyyyyyyyyy"},
+				nil,
+			),
+			service:                  &corev1.Service{},
+			awsEIPAllocationsEnabled: false,
+			platformStatus:           awsPlatformStatus,
+			expectStatus:             operatorv1.ConditionFalse,
+		},
+		{
+			name: "NLB LoadBalancerService, AWS EIPAllocations spec with eipAllocations and nil status",
+			ic: loadBalancerIngressControllerWithAWSEIPAllocations(
+				[]operatorv1.EIPAllocation{"eipalloc-xxxxxxxxxxxxxxxxx", "eipalloc-yyyyyyyyyyyyyyyyy"},
+				nil,
+			),
+			service:                  &corev1.Service{},
+			awsEIPAllocationsEnabled: true,
+			platformStatus:           awsPlatformStatus,
+			expectStatus:             operatorv1.ConditionTrue,
+		},
+		{
+			name: "NLB LoadBalancerService, AWS EIPAllocation nil spec and status with eipAllocations",
+			ic: loadBalancerIngressControllerWithAWSEIPAllocations(
+				nil,
+				[]operatorv1.EIPAllocation{"eipalloc-xxxxxxxxxxxxxxxxx", "eipalloc-yyyyyyyyyyyyyyyyy"},
+			),
+			service:                  &corev1.Service{},
+			awsEIPAllocationsEnabled: true,
+			platformStatus:           awsPlatformStatus,
+			expectStatus:             operatorv1.ConditionTrue,
+		},
+		{
+			name: "NLB LoadBalancerService, AWS EIPAllocations spec and status are equal",
+			ic: loadBalancerIngressControllerWithAWSEIPAllocations(
+				[]operatorv1.EIPAllocation{"eipalloc-xxxxxxxxxxxxxxxxx", "eipalloc-yyyyyyyyyyyyyyyyy"},
+				[]operatorv1.EIPAllocation{"eipalloc-xxxxxxxxxxxxxxxxx", "eipalloc-yyyyyyyyyyyyyyyyy"},
+			),
+			service:                  &corev1.Service{},
+			awsEIPAllocationsEnabled: true,
+			platformStatus:           awsPlatformStatus,
+			expectStatus:             operatorv1.ConditionFalse,
+		},
+		{
+			name: "NLB LoadBalancerService, AWS EIPAllocations spec and status are NOT equal",
+			ic: loadBalancerIngressControllerWithAWSEIPAllocations(
+				[]operatorv1.EIPAllocation{"eipalloc-xxxxxxxxxxxxxxxxx", "eipalloc-yyyyyyyyyyyyyyyyy"},
+				[]operatorv1.EIPAllocation{"eipalloc-aaaaaaaaaaaaaaaaa", "eipalloc-bbbbbbbbbbbbbbbbb"},
+			),
+			service:                  &corev1.Service{},
+			awsEIPAllocationsEnabled: true,
+			platformStatus:           awsPlatformStatus,
+			expectStatus:             operatorv1.ConditionTrue,
+		},
+		{
+			name: "NLB LoadBalancerService, AWS EIPAllocations spec and status are equal with different order",
+			ic: loadBalancerIngressControllerWithAWSEIPAllocations(
+				[]operatorv1.EIPAllocation{"eipalloc-xxxxxxxxxxxxxxxxx", "eipalloc-yyyyyyyyyyyyyyyyy"},
+				[]operatorv1.EIPAllocation{"eipalloc-yyyyyyyyyyyyyyyyy", "eipalloc-xxxxxxxxxxxxxxxxx"},
+			),
+			service:                  &corev1.Service{},
+			awsEIPAllocationsEnabled: true,
+			platformStatus:           awsPlatformStatus,
+			expectStatus:             operatorv1.ConditionFalse,
+		},
+		{
+			name: "NLB LoadBalancerService, AWS EIPAllocations spec and status have extra items",
+			ic: loadBalancerIngressControllerWithAWSEIPAllocations(
+				[]operatorv1.EIPAllocation{"eipalloc-xxxxxxxxxxxxxxxxx", "eipalloc-yyyyyyyyyyyyyyyyy", "eipalloc-zzzzzzzzzzzzz"},
+				[]operatorv1.EIPAllocation{"eipalloc-yyyyyyyyyyyyyyyyy", "eipalloc-xxxxxxxxxxxxxxxxx"},
+			),
+			service:                  &corev1.Service{},
+			awsEIPAllocationsEnabled: true,
+			platformStatus:           awsPlatformStatus,
+			expectStatus:             operatorv1.ConditionTrue,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			actual := computeLoadBalancerProgressingStatus(test.ic, test.service, test.platformStatus, test.awsSubnetsEnabled)
+			actual := computeLoadBalancerProgressingStatus(test.ic, test.service, test.platformStatus, test.awsSubnetsEnabled, test.awsEIPAllocationsEnabled)
 			if actual.Status != test.expectStatus {
 				t.Errorf("expected status to be %s, got %s", test.expectStatus, actual.Status)
 			}
@@ -1732,7 +1865,7 @@ func Test_computeIngressAvailableCondition(t *testing.T) {
 }
 
 func Test_IngressStatusesEqual(t *testing.T) {
-	icStatusWithSubnets := func(lbType operatorv1.AWSLoadBalancerType, subnets *operatorv1.AWSSubnets) operatorv1.IngressControllerStatus {
+	icStatusWithSubnetsOrEIPAllocations := func(lbType operatorv1.AWSLoadBalancerType, subnets *operatorv1.AWSSubnets, eipAllocations []operatorv1.EIPAllocation) operatorv1.IngressControllerStatus {
 		icStatus := operatorv1.IngressControllerStatus{
 			EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
 				Type: operatorv1.LoadBalancerServiceStrategyType,
@@ -1748,7 +1881,8 @@ func Test_IngressStatusesEqual(t *testing.T) {
 		switch lbType {
 		case operatorv1.AWSNetworkLoadBalancer:
 			icStatus.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{
-				Subnets: subnets,
+				Subnets:        subnets,
+				EIPAllocations: eipAllocations,
 			}
 		case operatorv1.AWSClassicLoadBalancer:
 			icStatus.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.ClassicLoadBalancerParameters = &operatorv1.AWSClassicLoadBalancerParameters{
@@ -1870,129 +2004,201 @@ func Test_IngressStatusesEqual(t *testing.T) {
 		{
 			description: "NLB Subnets names changed",
 			expected:    false,
-			a: icStatusWithSubnets(
+			a: icStatusWithSubnetsOrEIPAllocations(
 				operatorv1.AWSNetworkLoadBalancer,
 				&operatorv1.AWSSubnets{
 					Names: []operatorv1.AWSSubnetName{"name-567890"},
 				},
+				nil,
 			),
-			b: icStatusWithSubnets(
+			b: icStatusWithSubnetsOrEIPAllocations(
 				operatorv1.AWSNetworkLoadBalancer,
 				&operatorv1.AWSSubnets{
 					Names: []operatorv1.AWSSubnetName{"name-123456"},
 				},
+				nil,
 			),
 		},
 		{
 			description: "NLB Subnets names changed with multiple",
 			expected:    false,
-			a: icStatusWithSubnets(
+			a: icStatusWithSubnetsOrEIPAllocations(
 				operatorv1.AWSNetworkLoadBalancer,
 				&operatorv1.AWSSubnets{
 					Names: []operatorv1.AWSSubnetName{"name-123456", "name-890123"},
 				},
+				nil,
 			),
-			b: icStatusWithSubnets(
+			b: icStatusWithSubnetsOrEIPAllocations(
 				operatorv1.AWSNetworkLoadBalancer,
 				&operatorv1.AWSSubnets{
 					Names: []operatorv1.AWSSubnetName{"name-123456"},
 				},
+				nil,
 			),
 		},
 		{
 			description: "NLB Subnets names equal",
 			expected:    true,
-			a: icStatusWithSubnets(
+			a: icStatusWithSubnetsOrEIPAllocations(
 				operatorv1.AWSNetworkLoadBalancer,
 				&operatorv1.AWSSubnets{
 					Names: []operatorv1.AWSSubnetName{"name-123456"},
 				},
+				nil,
 			),
-			b: icStatusWithSubnets(
+			b: icStatusWithSubnetsOrEIPAllocations(
 				operatorv1.AWSNetworkLoadBalancer,
 				&operatorv1.AWSSubnets{
 					Names: []operatorv1.AWSSubnetName{"name-123456"},
 				},
+				nil,
 			),
 		},
 		{
 			description: "NLB Subnets different order names equal",
 			expected:    true,
-			a: icStatusWithSubnets(
+			a: icStatusWithSubnetsOrEIPAllocations(
 				operatorv1.AWSNetworkLoadBalancer,
 				&operatorv1.AWSSubnets{
 					Names: []operatorv1.AWSSubnetName{"name-123456", "name-890123"},
 				},
+				nil,
 			),
-			b: icStatusWithSubnets(
+			b: icStatusWithSubnetsOrEIPAllocations(
 				operatorv1.AWSNetworkLoadBalancer,
 				&operatorv1.AWSSubnets{
 					Names: []operatorv1.AWSSubnetName{"name-890123", "name-123456"},
 				},
+				nil,
 			),
 		},
 		{
 			description: "CLB Subnets IDs changed",
 			expected:    false,
-			a: icStatusWithSubnets(
+			a: icStatusWithSubnetsOrEIPAllocations(
 				operatorv1.AWSClassicLoadBalancer,
 				&operatorv1.AWSSubnets{
 					IDs: []operatorv1.AWSSubnetID{"subnet-890123"},
 				},
+				nil,
 			),
-			b: icStatusWithSubnets(
+			b: icStatusWithSubnetsOrEIPAllocations(
 				operatorv1.AWSClassicLoadBalancer,
 				&operatorv1.AWSSubnets{
 					IDs: []operatorv1.AWSSubnetID{"subnet-123456"},
 				},
+				nil,
 			),
 		},
 		{
 			description: "CLB Subnets IDs changed with multiple",
 			expected:    false,
-			a: icStatusWithSubnets(
+			a: icStatusWithSubnetsOrEIPAllocations(
 				operatorv1.AWSClassicLoadBalancer,
 				&operatorv1.AWSSubnets{
 					IDs: []operatorv1.AWSSubnetID{"subnet-123456", "subnet-890123"},
 				},
+				nil,
 			),
-			b: icStatusWithSubnets(
+			b: icStatusWithSubnetsOrEIPAllocations(
 				operatorv1.AWSClassicLoadBalancer,
 				&operatorv1.AWSSubnets{
 					IDs: []operatorv1.AWSSubnetID{"subnet-123456"},
 				},
+				nil,
 			),
 		},
 		{
 			description: "CLB Subnets IDs equal",
 			expected:    true,
-			a: icStatusWithSubnets(
+			a: icStatusWithSubnetsOrEIPAllocations(
 				operatorv1.AWSClassicLoadBalancer,
 				&operatorv1.AWSSubnets{
 					IDs: []operatorv1.AWSSubnetID{"name-123456"},
 				},
+				nil,
 			),
-			b: icStatusWithSubnets(
+			b: icStatusWithSubnetsOrEIPAllocations(
 				operatorv1.AWSClassicLoadBalancer,
 				&operatorv1.AWSSubnets{
 					IDs: []operatorv1.AWSSubnetID{"name-123456"},
 				},
+				nil,
 			),
 		},
 		{
 			description: "CLB Subnets different order IDs equal",
 			expected:    true,
-			a: icStatusWithSubnets(
+			a: icStatusWithSubnetsOrEIPAllocations(
 				operatorv1.AWSClassicLoadBalancer,
 				&operatorv1.AWSSubnets{
 					IDs: []operatorv1.AWSSubnetID{"subnet-123456", "subnet-890123"},
 				},
+				nil,
 			),
-			b: icStatusWithSubnets(
+			b: icStatusWithSubnetsOrEIPAllocations(
 				operatorv1.AWSClassicLoadBalancer,
 				&operatorv1.AWSSubnets{
 					IDs: []operatorv1.AWSSubnetID{"subnet-890123", "subnet-123456"},
 				},
+				nil,
+			),
+		},
+		{
+			description: "NLB EIPAllocations changed",
+			expected:    false,
+			a: icStatusWithSubnetsOrEIPAllocations(
+				operatorv1.AWSNetworkLoadBalancer,
+				nil,
+				[]operatorv1.EIPAllocation{"eipalloc-xxxxxxxxxxxxxxxxx"},
+			),
+			b: icStatusWithSubnetsOrEIPAllocations(
+				operatorv1.AWSNetworkLoadBalancer,
+				nil,
+				[]operatorv1.EIPAllocation{"eipalloc-yyyyyyyyyyyyyyyyy"},
+			),
+		},
+		{
+			description: "NLB EIPAllocations changed with multiple",
+			expected:    false,
+			a: icStatusWithSubnetsOrEIPAllocations(
+				operatorv1.AWSNetworkLoadBalancer,
+				nil,
+				[]operatorv1.EIPAllocation{"eipalloc-xxxxxxxxxxxxxxxxx", "eipalloc-yyyyyyyyyyyyyyyyy"},
+			),
+			b: icStatusWithSubnetsOrEIPAllocations(
+				operatorv1.AWSNetworkLoadBalancer,
+				nil,
+				[]operatorv1.EIPAllocation{"eipalloc-xxxxxxxxxxxxxxxxx"},
+			),
+		},
+		{
+			description: "NLB EIPAllocations equal",
+			expected:    true,
+			a: icStatusWithSubnetsOrEIPAllocations(
+				operatorv1.AWSNetworkLoadBalancer,
+				nil,
+				[]operatorv1.EIPAllocation{"eipalloc-xxxxxxxxxxxxxxxxx"},
+			),
+			b: icStatusWithSubnetsOrEIPAllocations(
+				operatorv1.AWSNetworkLoadBalancer,
+				nil,
+				[]operatorv1.EIPAllocation{"eipalloc-xxxxxxxxxxxxxxxxx"},
+			),
+		},
+		{
+			description: "NLB EIPAllocations different order but equal",
+			expected:    true,
+			a: icStatusWithSubnetsOrEIPAllocations(
+				operatorv1.AWSNetworkLoadBalancer,
+				nil,
+				[]operatorv1.EIPAllocation{"eipalloc-xxxxxxxxxxxxxxxxx", "eipalloc-yyyyyyyyyyyyyyyyy"},
+			),
+			b: icStatusWithSubnetsOrEIPAllocations(
+				operatorv1.AWSNetworkLoadBalancer,
+				nil,
+				[]operatorv1.EIPAllocation{"eipalloc-yyyyyyyyyyyyyyyyy", "eipalloc-xxxxxxxxxxxxxxxxx"},
 			),
 		},
 	}
@@ -2776,7 +2982,7 @@ func Test_computeIngressUpgradeableCondition(t *testing.T) {
 					},
 				},
 			}
-			wantSvc, service, err := desiredLoadBalancerService(ic, deploymentRef, platformStatus, true)
+			wantSvc, service, err := desiredLoadBalancerService(ic, deploymentRef, platformStatus, true, true)
 			if err != nil {
 				t.Errorf("unexpected error from desiredLoadBalancerService: %v", err)
 				return
@@ -2798,7 +3004,7 @@ func Test_computeIngressUpgradeableCondition(t *testing.T) {
 				expectedStatus = operatorv1.ConditionTrue
 			}
 
-			actual := computeIngressUpgradeableCondition(ic, deploymentRef, service, platformStatus, secret, true)
+			actual := computeIngressUpgradeableCondition(ic, deploymentRef, service, platformStatus, secret, true, true)
 			if actual.Status != expectedStatus {
 				t.Errorf("expected Upgradeable to be %q, got %q", expectedStatus, actual.Status)
 			}
@@ -2886,7 +3092,7 @@ func Test_computeIngressEvaluationConditionsDetectedCondition(t *testing.T) {
 				},
 			}
 
-			wantSvc, service, err := desiredLoadBalancerService(ic, deploymentRef, platformStatus, true)
+			wantSvc, service, err := desiredLoadBalancerService(ic, deploymentRef, platformStatus, true, true)
 			if err != nil {
 				t.Fatalf("unexpected error from desiredLoadBalancerService: %v", err)
 			}
