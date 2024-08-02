@@ -1056,3 +1056,36 @@ func classicLoadBalancerParametersStatusExists(ic *operatorv1.IngressController)
 		ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS != nil &&
 		ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.ClassicLoadBalancerParameters != nil
 }
+
+// waitForLBAnnotation waits for the provided annoation to appear on the LoadBalancer-type service for the
+// given IngressController. It will return an error if it fails to observe the given annotation.
+func waitForLBAnnotation(t *testing.T, ic *operatorv1.IngressController, expectedAnnotation string, expectedExist bool, expectedValue string) {
+	t.Helper()
+
+	lbService := &corev1.Service{}
+	t.Logf("waiting for %q service with %q annotation of %q to exist: %t", controller.LoadBalancerServiceName(ic), expectedAnnotation, expectedValue, expectedExist)
+	err := wait.PollUntilContextTimeout(context.Background(), 10*time.Second, 5*time.Minute, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, controller.LoadBalancerServiceName(ic), lbService); err != nil {
+			t.Logf("failed to get %q service: %v, retrying ...", controller.LoadBalancerServiceName(ic), err)
+			return false, nil
+		}
+		val, ok := lbService.Annotations[expectedAnnotation]
+		// Handle the case where annotation should not exist.
+		if !expectedExist {
+			if ok {
+				t.Logf("expected %q annotation to be removed got %q, retrying...", expectedAnnotation, val)
+				return false, nil
+			}
+			return true, nil
+		}
+		// Handle the case where should exist and match.
+		if !ok || val != expectedValue {
+			t.Logf("expected %q annotation %q got %q, retrying...", expectedAnnotation, expectedValue, val)
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("error updating the %q service: %v", controller.LoadBalancerServiceName(ic), err)
+	}
+}

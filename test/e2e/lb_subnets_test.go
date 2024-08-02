@@ -85,7 +85,7 @@ func TestAWSLBSubnets(t *testing.T) {
 	}
 
 	// Ensure the expected subnet annotation is on the service.
-	waitForLBSubnetAnnotation(t, ic, publicSubnets)
+	waitForLBAnnotation(t, ic, awsLBSubnetAnnotation, true, ingress.JoinAWSSubnets(publicSubnets, ","))
 
 	// Verify the subnets status field is configured to what we expect.
 	verifyIngressControllerSubnetStatus(t, icName)
@@ -163,7 +163,7 @@ func TestAWSLBSubnets(t *testing.T) {
 	}
 
 	// Verify the subnet annotation is removed on the service.
-	waitForLBSubnetAnnotation(t, ic, nil)
+	waitForLBAnnotation(t, ic, awsLBSubnetAnnotation, false, "")
 
 	// Expect the load balancer to provision successfully with the subnets removed.
 	if err = waitForIngressControllerCondition(t, kclient, 10*time.Minute, icName, availableNotProgressingConditionsForIngressControllerWithLoadBalancer...); err != nil {
@@ -239,7 +239,7 @@ func TestUnmanagedAWSLBSubnets(t *testing.T) {
 			}
 
 			// Ensure there is no subnet annotation on the service.
-			waitForLBSubnetAnnotation(t, ic, nil)
+			waitForLBAnnotation(t, ic, awsLBSubnetAnnotation, false, "")
 
 			// Now, update the subnet annotation directly on the service.
 			serviceName := controller.LoadBalancerServiceName(ic)
@@ -264,7 +264,7 @@ func TestUnmanagedAWSLBSubnets(t *testing.T) {
 			}
 
 			// Verify the subnet annotation didn't get removed.
-			waitForLBSubnetAnnotation(t, ic, publicSubnets)
+			waitForLBAnnotation(t, ic, awsLBSubnetAnnotation, true, ingress.JoinAWSSubnets(publicSubnets, ","))
 
 			// Now, update the IngressController to specify the same unmanaged subnets.
 			t.Logf("updating ingresscontroller %q to specify the subnets in the unmanaged subnets annotation", ic.Name)
@@ -291,41 +291,8 @@ func TestUnmanagedAWSLBSubnets(t *testing.T) {
 			}
 
 			// Verify the subnet annotation is still the same.
-			waitForLBSubnetAnnotation(t, ic, publicSubnets)
+			waitForLBAnnotation(t, ic, awsLBSubnetAnnotation, true, ingress.JoinAWSSubnets(publicSubnets, ","))
 		})
-	}
-}
-
-// waitForLBSubnetAnnotation waits for the provided subnets to appear on the LoadBalancer-type service for the
-// IngressController. It will call t.Fatal if it fails to observe the updated subnet annotation.
-func waitForLBSubnetAnnotation(t *testing.T, ic *operatorv1.IngressController, subnets *operatorv1.AWSSubnets) {
-	t.Helper()
-	lbService := &corev1.Service{}
-	expectedSubnetAnnotation := ingress.JoinAWSSubnets(subnets, ",")
-	t.Logf("waiting for %q service to have subnet annotation of %q", controller.LoadBalancerServiceName(ic), expectedSubnetAnnotation)
-	err := wait.PollUntilContextTimeout(context.Background(), 10*time.Second, 5*time.Minute, false, func(ctx context.Context) (bool, error) {
-		if err := kclient.Get(ctx, controller.LoadBalancerServiceName(ic), lbService); err != nil {
-			t.Logf("failed to get %q service: %v, retrying ...", controller.LoadBalancerServiceName(ic), err)
-			return false, nil
-		}
-		val, ok := lbService.Annotations[awsLBSubnetAnnotation]
-		// Handle the case where subnets are expected to be nil (annotation should not exist).
-		if subnets == nil {
-			if ok {
-				t.Logf("expected %q annotation to be removed got %q, retrying...", awsLBSubnetAnnotation, val)
-				return false, nil
-			}
-			return true, nil
-		}
-		// Handle the case where subnets are expected (annotation should exist and match).
-		if !ok || val != expectedSubnetAnnotation {
-			t.Logf("expected %q annotation %q got %q, retrying...", awsLBSubnetAnnotation, expectedSubnetAnnotation, val)
-			return false, nil
-		}
-		return true, nil
-	})
-	if err != nil {
-		t.Fatalf("error updating the %q service: %v", controller.LoadBalancerServiceName(ic), err)
 	}
 }
 
@@ -413,7 +380,7 @@ func effectuateIngressControllerSubnets(t *testing.T, ic *operatorv1.IngressCont
 	}
 
 	// Ensure the service's load-balancer status changes, and verify we get the expected subnet annotation on the service.
-	waitForLBSubnetAnnotation(t, ic, expectedSubnets)
+	waitForLBAnnotation(t, ic, awsLBSubnetAnnotation, true, ingress.JoinAWSSubnets(expectedSubnets, ","))
 
 	// Expect the load balancer to provision successfully with the new subnets.
 	if err := waitForIngressControllerCondition(t, kclient, 10*time.Minute, icName, expectedOperatorConditions...); err != nil {
