@@ -26,6 +26,7 @@ import (
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	//gwapidns "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gateway-service-dns"
 	oputil "github.com/openshift/cluster-ingress-operator/pkg/util"
 	awsutil "github.com/openshift/cluster-ingress-operator/pkg/util/aws"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/slice"
@@ -80,6 +81,13 @@ func New(mgr manager.Manager, config Config) (runtimecontroller.Controller, erro
 	if err != nil {
 		return nil, err
 	}
+
+	// dnsRecords for GatewayAPI are reconciled separately and should be skipped by the dnsRecord watcher.
+	//skipDNSRecordForGatewayAPI := predicate.NewPredicateFuncs(func(o client.Object) bool {
+	//	_, isGatewayAPI := o.(*iov1.DNSRecord).Labels[gwapidns.ManagedByIstioLabelKey]
+	//		return !isGatewayAPI
+	//	})
+
 	if err := c.Watch(source.Kind(operatorCache, &iov1.DNSRecord{}), &handler.EnqueueRequestForObject{}, predicate.GenerationChangedPredicate{}); err != nil {
 		return nil, err
 	}
