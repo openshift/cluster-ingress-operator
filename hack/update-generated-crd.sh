@@ -4,15 +4,36 @@ set -euo pipefail
 function install_crd {
   local SRC="$1"
   local DST="$2"
-  if ! diff -Naup "$SRC" "$DST"; then
-    cp "$SRC" "$DST"
-    echo "installed CRD: $SRC => $DST"
+  if [[ -e "$SRC" ]]
+  then
+    if [[ -e "$DST" ]]
+    then
+      if ! diff -Naup "$SRC" "$DST"; then
+        cp "$SRC" "$DST"
+        echo "updated CRD: $SRC => $DST"
+      else
+        echo "skipped CRD that is already up to date: $DST"
+      fi
+    else
+      cp "$SRC" "$DST"
+      echo "updated CRD: $SRC => $DST"
+    fi
+  else
+    if [[ -e "$DST" ]]
+    then
+      rm "$DST"
+      echo "removed CRD that not vendored: $DST"
+    else
+      echo "skipped CRD that is not vendored: $SRC"
+    fi
   fi
 }
 
 # Can't rely on associative arrays for old Bash versions (e.g. OSX)
+
+shopt -s extglob
 install_crd \
-  "vendor/github.com/openshift/api/operator/v1/zz_generated.crd-manifests/0000_50_ingress_00_ingresscontrollers-Default.crd.yaml" \
+  vendor/github.com/openshift/api/operator/v1/zz_generated.crd-manifests/0000_50_ingress_00_ingresscontrollers?(-Default).crd.yaml \
   "manifests/00-custom-resource-definition.yaml"
 
 install_crd \
