@@ -48,10 +48,10 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := c.Watch(source.Kind(operatorCache, &operatorv1.IngressController{}), &handler.EnqueueRequestForObject{}); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorv1.IngressController{}, &handler.EnqueueRequestForObject{})); err != nil {
 		return nil, err
 	}
-	if err := c.Watch(source.Kind(operatorCache, &networkingv1.IngressClass{}), handler.EnqueueRequestsFromMapFunc(reconciler.ingressClassToIngressController), predicate.NewPredicateFuncs(ingressClassHasIngressController)); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &networkingv1.IngressClass{}, handler.EnqueueRequestsFromMapFunc(reconciler.ingressClassToIngressController), predicate.NewPredicateFuncs(ingressClassHasIngressController))); err != nil {
 		return nil, err
 	}
 	return c, nil

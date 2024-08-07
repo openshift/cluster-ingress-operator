@@ -48,7 +48,7 @@ func New(mgr manager.Manager, operatorNamespace string) (runtimecontroller.Contr
 	if err != nil {
 		return nil, err
 	}
-	if err := c.Watch(source.Kind(operatorCache, &operatorv1.IngressController{}), &handler.EnqueueRequestForObject{}); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorv1.IngressController{}, &handler.EnqueueRequestForObject{})); err != nil {
 		return nil, err
 	}
 	return c, nil

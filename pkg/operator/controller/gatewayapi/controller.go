@@ -49,7 +49,7 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 		}
 		return expectedName == actualName
 	})
-	if err := c.Watch(source.Kind(operatorCache, &configv1.FeatureGate{}), &handler.EnqueueRequestForObject{}, clusterNamePredicate); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &configv1.FeatureGate{}, &handler.EnqueueRequestForObject{}, clusterNamePredicate)); err != nil {
 		return nil, err
 	}
 
@@ -61,12 +61,12 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 
 	// watch for CRDs
 	for i := range managedCRDs {
-		if err = c.Watch(source.Kind(operatorCache, managedCRDs[i]), handler.EnqueueRequestsFromMapFunc(toFeatureGate), predicate.Funcs{
+		if err = c.Watch(source.Kind[client.Object](operatorCache, managedCRDs[i], handler.EnqueueRequestsFromMapFunc(toFeatureGate), predicate.Funcs{
 			CreateFunc:  func(e event.CreateEvent) bool { return false },
 			DeleteFunc:  func(e event.DeleteEvent) bool { return true },
 			UpdateFunc:  func(e event.UpdateEvent) bool { return false },
 			GenericFunc: func(e event.GenericEvent) bool { return false },
-		}); err != nil {
+		})); err != nil {
 			return nil, err
 		}
 	}

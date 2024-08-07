@@ -80,16 +80,16 @@ func New(mgr manager.Manager, config Config) (runtimecontroller.Controller, erro
 	if err != nil {
 		return nil, err
 	}
-	if err := c.Watch(source.Kind(operatorCache, &iov1.DNSRecord{}), &handler.EnqueueRequestForObject{}, predicate.GenerationChangedPredicate{}); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &iov1.DNSRecord{}, &handler.EnqueueRequestForObject{}, predicate.GenerationChangedPredicate{})); err != nil {
 		return nil, err
 	}
-	if err := c.Watch(source.Kind(operatorCache, &configv1.DNS{}), handler.EnqueueRequestsFromMapFunc(reconciler.ToDNSRecords)); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &configv1.DNS{}, handler.EnqueueRequestsFromMapFunc(reconciler.ToDNSRecords))); err != nil {
 		return nil, err
 	}
-	if err := c.Watch(source.Kind(operatorCache, &configv1.Infrastructure{}), handler.EnqueueRequestsFromMapFunc(reconciler.ToDNSRecords)); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &configv1.Infrastructure{}, handler.EnqueueRequestsFromMapFunc(reconciler.ToDNSRecords))); err != nil {
 		return nil, err
 	}
-	if err := c.Watch(source.Kind(operatorCache, &corev1.Secret{}), handler.EnqueueRequestsFromMapFunc(reconciler.ToDNSRecords), predicate.Funcs{
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(reconciler.ToDNSRecords), predicate.Funcs{
 		CreateFunc: func(e event.CreateEvent) bool { return e.Object.GetName() == cloudCredentialsSecretName },
 		DeleteFunc: func(e event.DeleteEvent) bool { return false },
 		UpdateFunc: func(e event.UpdateEvent) bool {
@@ -101,7 +101,7 @@ func New(mgr manager.Manager, config Config) (runtimecontroller.Controller, erro
 			return !reflect.DeepEqual(oldSecret.Data, newSecret.Data)
 		},
 		GenericFunc: func(e event.GenericEvent) bool { return false },
-	}); err != nil {
+	})); err != nil {
 		return nil, err
 	}
 	return c, nil

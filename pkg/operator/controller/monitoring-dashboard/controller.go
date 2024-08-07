@@ -36,11 +36,11 @@ func New(mgr manager.Manager) (controller.Controller, error) {
 		return o.GetName() == dashboardConfigMapName
 	})
 
-	if err := c.Watch(source.Kind(operatorCache, &corev1.ConfigMap{}), &handler.EnqueueRequestForObject{}, CMPredicate); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &corev1.ConfigMap{}, &handler.EnqueueRequestForObject{}, CMPredicate)); err != nil {
 		return nil, err
 	}
 
-	if err := c.Watch(source.Kind(operatorCache, &configv1.Infrastructure{}), &handler.EnqueueRequestForObject{}); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &configv1.Infrastructure{}, &handler.EnqueueRequestForObject{})); err != nil {
 		return nil, err
 	}
 

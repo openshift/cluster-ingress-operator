@@ -107,7 +107,7 @@ func New(mgr manager.Manager) (controller.Controller, error) {
 	// namespace, and then this controller reads the configmap from the
 	// latter namespace.  This controller does not react directly to updates
 	// to the configmap in the "openshift-config" namespace.
-	if err := c.Watch(&source.Informer{Informer: configmapsInformer}, handler.EnqueueRequestsFromMapFunc(reconciler.clientCAConfigmapToIngressController)); err != nil {
+	if err := c.Watch(&source.Informer{Informer: configmapsInformer, Handler: handler.EnqueueRequestsFromMapFunc(reconciler.clientCAConfigmapToIngressController)}); err != nil {
 		return nil, err
 	}
 	// Watch configmaps using crlConfigmapToIngressController to map events
@@ -115,16 +115,16 @@ func New(mgr manager.Manager) (controller.Controller, error) {
 	// reconciliation of an ingresscontroller when a CRL configmap that this
 	// controller created for that ingresscontroller is updated.  Events for
 	// other configmaps are ignored.
-	if err := c.Watch(&source.Informer{Informer: configmapsInformer}, handler.EnqueueRequestsFromMapFunc(reconciler.crlConfigmapToIngressController)); err != nil {
+	if err := c.Watch(&source.Informer{Informer: configmapsInformer, Handler: handler.EnqueueRequestsFromMapFunc(reconciler.crlConfigmapToIngressController)}); err != nil {
 		return nil, err
 	}
 
-	if err := c.Watch(source.Kind(operatorCache, &operatorv1.IngressController{}), &handler.EnqueueRequestForObject{}, predicate.Funcs{
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorv1.IngressController{}, &handler.EnqueueRequestForObject{}, predicate.Funcs{
 		CreateFunc:  func(e event.CreateEvent) bool { return reconciler.hasConfigmap(e.Object, e.Object) },
 		DeleteFunc:  func(e event.DeleteEvent) bool { return false },
 		UpdateFunc:  func(e event.UpdateEvent) bool { return reconciler.configmapReferenceChanged(e.ObjectOld, e.ObjectNew) },
 		GenericFunc: func(e event.GenericEvent) bool { return reconciler.hasConfigmap(e.Object, e.Object) },
-	}); err != nil {
+	})); err != nil {
 		return nil, err
 	}
 

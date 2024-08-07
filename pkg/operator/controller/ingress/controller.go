@@ -102,36 +102,36 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	}
 	scheme := mgr.GetClient().Scheme()
 	mapper := mgr.GetClient().RESTMapper()
-	if err := c.Watch(source.Kind(operatorCache, &operatorv1.IngressController{}), &handler.EnqueueRequestForObject{}); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorv1.IngressController{}, &handler.EnqueueRequestForObject{})); err != nil {
 		return nil, err
 	}
-	if err := c.Watch(source.Kind(operatorCache, &appsv1.Deployment{}), enqueueRequestForOwningIngressController(config.Namespace)); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &appsv1.Deployment{}, enqueueRequestForOwningIngressController(config.Namespace))); err != nil {
 		return nil, err
 	}
-	if err := c.Watch(source.Kind(operatorCache, &corev1.Service{}), enqueueRequestForOwningIngressController(config.Namespace)); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &corev1.Service{}, enqueueRequestForOwningIngressController(config.Namespace))); err != nil {
 		return nil, err
 	}
 	// Add watch for deleted pods specifically for ensuring ingress deletion.
-	if err := c.Watch(source.Kind(operatorCache, &corev1.Pod{}), enqueueRequestForOwningIngressController(config.Namespace), predicate.Funcs{
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &corev1.Pod{}, enqueueRequestForOwningIngressController(config.Namespace), predicate.Funcs{
 		CreateFunc:  func(e event.CreateEvent) bool { return false },
 		DeleteFunc:  func(e event.DeleteEvent) bool { return true },
 		UpdateFunc:  func(e event.UpdateEvent) bool { return false },
 		GenericFunc: func(e event.GenericEvent) bool { return false },
-	}); err != nil {
+	})); err != nil {
 		return nil, err
 	}
 	// add watch for changes in DNS config
-	if err := c.Watch(source.Kind(operatorCache, &configv1.DNS{}), handler.EnqueueRequestsFromMapFunc(reconciler.ingressConfigToIngressController)); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &configv1.DNS{}, handler.EnqueueRequestsFromMapFunc(reconciler.ingressConfigToIngressController))); err != nil {
 		return nil, err
 	}
-	if err := c.Watch(source.Kind(operatorCache, &iov1.DNSRecord{}), handler.EnqueueRequestForOwner(scheme, mapper, &operatorv1.IngressController{})); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &iov1.DNSRecord{}, handler.EnqueueRequestForOwner(scheme, mapper, &operatorv1.IngressController{}))); err != nil {
 		return nil, err
 	}
-	if err := c.Watch(source.Kind(operatorCache, &configv1.Ingress{}), handler.EnqueueRequestsFromMapFunc(reconciler.ingressConfigToIngressController)); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &configv1.Ingress{}, handler.EnqueueRequestsFromMapFunc(reconciler.ingressConfigToIngressController))); err != nil {
 		return nil, err
 	}
 	// Watch for changes to cluster-wide proxy config.
-	if err := c.Watch(source.Kind(operatorCache, &configv1.Proxy{}), handler.EnqueueRequestsFromMapFunc(reconciler.ingressConfigToIngressController)); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &configv1.Proxy{}, handler.EnqueueRequestsFromMapFunc(reconciler.ingressConfigToIngressController))); err != nil {
 		return nil, err
 	}
 	return c, nil

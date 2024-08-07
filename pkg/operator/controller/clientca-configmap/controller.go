@@ -55,29 +55,25 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 
 	// If the ingresscontroller's configmap reference changes, reconcile the
 	// ingresscontroller.
-	if err := c.Watch(
-		source.Kind(operatorCache, &operatorv1.IngressController{}),
-		&handler.EnqueueRequestForObject{},
-		predicate.Funcs{
-			CreateFunc: func(e event.CreateEvent) bool {
-				return hasConfigMap(e.Object)
-			},
-			DeleteFunc: func(e event.DeleteEvent) bool {
-				return hasConfigMap(e.Object)
-			},
-			UpdateFunc: func(e event.UpdateEvent) bool {
-				oldIC := e.ObjectOld.(*operatorv1.IngressController)
-				newIC := e.ObjectNew.(*operatorv1.IngressController)
-				oldName := oldIC.Spec.ClientTLS.ClientCA.Name
-				newName := newIC.Spec.ClientTLS.ClientCA.Name
-				return oldName != newName ||
-					oldIC.DeletionTimestamp != newIC.DeletionTimestamp
-			},
-			GenericFunc: func(e event.GenericEvent) bool {
-				return hasConfigMap(e.Object)
-			},
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorv1.IngressController{}, &handler.EnqueueRequestForObject{}, predicate.Funcs{
+		CreateFunc: func(e event.CreateEvent) bool {
+			return hasConfigMap(e.Object)
 		},
-	); err != nil {
+		DeleteFunc: func(e event.DeleteEvent) bool {
+			return hasConfigMap(e.Object)
+		},
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			oldIC := e.ObjectOld.(*operatorv1.IngressController)
+			newIC := e.ObjectNew.(*operatorv1.IngressController)
+			oldName := oldIC.Spec.ClientTLS.ClientCA.Name
+			newName := newIC.Spec.ClientTLS.ClientCA.Name
+			return oldName != newName ||
+				oldIC.DeletionTimestamp != newIC.DeletionTimestamp
+		},
+		GenericFunc: func(e event.GenericEvent) bool {
+			return hasConfigMap(e.Object)
+		},
+	})); err != nil {
 		return nil, err
 	}
 
@@ -145,20 +141,12 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	}
 
 	userCMToIC := makeMapFunc(clientCAUserConfigmapIndexFieldName)
-	if err := c.Watch(
-		source.Kind(operatorCache, &corev1.ConfigMap{}),
-		handler.EnqueueRequestsFromMapFunc(userCMToIC),
-		predicate.NewPredicateFuncs(isInNS(config.SourceNamespace)),
-	); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &corev1.ConfigMap{}, handler.EnqueueRequestsFromMapFunc(userCMToIC), predicate.NewPredicateFuncs(isInNS(config.SourceNamespace)))); err != nil {
 		return nil, err
 	}
 
 	operatorCMToIC := makeMapFunc(clientCAOperatorConfigmapIndexFieldName)
-	if err := c.Watch(
-		source.Kind(operatorCache, &corev1.ConfigMap{}),
-		handler.EnqueueRequestsFromMapFunc(operatorCMToIC),
-		predicate.NewPredicateFuncs(isInNS(config.TargetNamespace)),
-	); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &corev1.ConfigMap{}, handler.EnqueueRequestsFromMapFunc(operatorCMToIC), predicate.NewPredicateFuncs(isInNS(config.TargetNamespace)))); err != nil {
 		return nil, err
 	}
 
