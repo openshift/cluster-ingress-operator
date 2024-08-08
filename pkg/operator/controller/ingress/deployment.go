@@ -83,6 +83,9 @@ const (
 
 	RouterHAProxyConfigManager = "ROUTER_HAPROXY_CONFIG_MANAGER"
 
+	RouterHAProxyMaxDynamicServers             = "ROUTER_HAPROXY_MAX_DYNAMIC_SERVERS"
+	RouterHAProxyMaxDynamicServersDefaultValue = 2
+
 	RouterHAProxyContstats = "ROUTER_HAPROXY_CONTSTATS"
 
 	RouterHAProxyThreadsEnvName      = "ROUTER_THREADS"
@@ -514,6 +517,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		LoadBalancingAlgorithm string `json:"loadBalancingAlgorithm"`
 		DynamicConfigManager   string `json:"dynamicConfigManager"`
 		ContStats              string `json:"contStats"`
+		MaxDynamicServers      string `json:"maxDynamicServers"`
 	}
 	if len(ci.Spec.UnsupportedConfigOverrides.Raw) > 0 {
 		if err := json.Unmarshal(ci.Spec.UnsupportedConfigOverrides.Raw, &unsupportedConfigOverrides); err != nil {
@@ -559,10 +563,27 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	}
 
 	dynamicConfigOverride := unsupportedConfigOverrides.DynamicConfigManager
-	if v, err := strconv.ParseBool(dynamicConfigOverride); err == nil && v {
+	if v, err := strconv.ParseBool(dynamicConfigOverride); err == nil && !v {
+		env = append(env, corev1.EnvVar{
+			Name:  RouterHAProxyConfigManager,
+			Value: "false",
+		})
+	} else {
 		env = append(env, corev1.EnvVar{
 			Name:  RouterHAProxyConfigManager,
 			Value: "true",
+		})
+	}
+	maxDynamicServersOverride := unsupportedConfigOverrides.MaxDynamicServers
+	if len(maxDynamicServersOverride) > 0 {
+		env = append(env, corev1.EnvVar{
+			Name:  RouterHAProxyMaxDynamicServers,
+			Value: maxDynamicServersOverride,
+		})
+	} else {
+		env = append(env, corev1.EnvVar{
+			Name:  RouterHAProxyMaxDynamicServers,
+			Value: strconv.Itoa(RouterHAProxyMaxDynamicServersDefaultValue),
 		})
 	}
 	contStats := unsupportedConfigOverrides.ContStats
@@ -1397,6 +1418,7 @@ func hashableDeployment(deployment *appsv1.Deployment, onlyTemplate bool) *appsv
 		})
 		containers[i] = corev1.Container{
 			Command:         container.Command,
+			Args:            container.Args,
 			Env:             env,
 			Image:           container.Image,
 			ImagePullPolicy: container.ImagePullPolicy,
@@ -1621,6 +1643,7 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 	updated.Spec.Template.Spec.Containers[0].SecurityContext = expected.Spec.Template.Spec.Containers[0].SecurityContext
 	updated.Spec.Template.Spec.Containers[0].Env = expected.Spec.Template.Spec.Containers[0].Env
 	updated.Spec.Template.Spec.Containers[0].Image = expected.Spec.Template.Spec.Containers[0].Image
+	updated.Spec.Template.Spec.Containers[0].Args = expected.Spec.Template.Spec.Containers[0].Args
 	copyProbe(expected.Spec.Template.Spec.Containers[0].LivenessProbe, updated.Spec.Template.Spec.Containers[0].LivenessProbe, true)
 	copyProbe(expected.Spec.Template.Spec.Containers[0].ReadinessProbe, updated.Spec.Template.Spec.Containers[0].ReadinessProbe, true)
 	copyProbe(expected.Spec.Template.Spec.Containers[0].StartupProbe, updated.Spec.Template.Spec.Containers[0].StartupProbe, true)
