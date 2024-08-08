@@ -1,6 +1,6 @@
 package core
 
-// (C) Copyright IBM Corp. 2019, 2021.
+// (C) Copyright IBM Corp. 2019, 2023.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -23,6 +23,7 @@ const (
 	AUTHTYPE_CP4D         = "cp4d"
 	AUTHTYPE_CONTAINER    = "container"
 	AUTHTYPE_VPC          = "vpc"
+	AUTHTYPE_MCSP         = "mcsp"
 
 	// Names of properties that can be defined as part of an external configuration (credential file, env vars, etc.).
 	// Example:  export MYSERVICE_URL=https://myurl
@@ -43,6 +44,7 @@ const (
 	PROPNAME_AUTH_URL         = "AUTH_URL"
 	PROPNAME_AUTH_DISABLE_SSL = "AUTH_DISABLE_SSL"
 	PROPNAME_APIKEY           = "APIKEY"
+	PROPNAME_REFRESH_TOKEN    = "REFRESH_TOKEN" // #nosec G101
 	PROPNAME_CLIENT_ID        = "CLIENT_ID"
 	PROPNAME_CLIENT_SECRET    = "CLIENT_SECRET"
 	PROPNAME_SCOPE            = "SCOPE"
@@ -70,16 +72,18 @@ const (
 	ERRORMSG_AUTHENTICATE_ERROR      = "An error occurred while performing the 'authenticate' step: %s"
 	ERRORMSG_READ_RESPONSE_BODY      = "An error occurred while reading the response body: %s"
 	ERRORMSG_UNEXPECTED_RESPONSE     = "The response contained unexpected content, Content-Type=%s, operation resultType=%s"
-	ERRORMSG_UNMARSHAL_RESPONSE_BODY = "An error occurred while unmarshalling the response body: %s"
+	ERRORMSG_UNMARSHAL_RESPONSE_BODY = "An error occurred while processing the HTTP response: %s"
 	ERRORMSG_NIL_SLICE               = "The 'slice' parameter cannot be nil"
 	ERRORMSG_PARAM_NOT_SLICE         = "The 'slice' parameter must be a slice"
 	ERRORMSG_MARSHAL_SLICE           = "An error occurred while marshalling the slice: %s"
 	ERRORMSG_CONVERT_SLICE           = "An error occurred while converting 'slice' to string slice"
-	ERRORMSG_CREATE_RETRYABLE_REQ    = "An error occurred while creating a retryable http Request: %s"
 	ERRORMSG_UNEXPECTED_STATUS_CODE  = "Unexpected HTTP status code %d (%s)"
 	ERRORMSG_UNMARSHAL_AUTH_RESPONSE = "error unmarshalling authentication response: %s"
 	ERRORMSG_UNABLE_RETRIEVE_CRTOKEN = "unable to retrieve compute resource token value: %s"          // #nosec G101
 	ERRORMSG_IAM_GETTOKEN_ERROR      = "IAM 'get token' error, status code %d received from '%s': %s" // #nosec G101
 	ERRORMSG_UNABLE_RETRIEVE_IITOKEN = "unable to retrieve instance identity token value: %s"         // #nosec G101
 	ERRORMSG_VPCMDS_OPERATION_ERROR  = "VPC metadata service error, status code %d received from '%s': %s"
+
+	// The name of this module - matches the value in the go.mod file.
+	MODULE_NAME = "github.com/IBM/go-sdk-core/v5"
 )
