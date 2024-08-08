@@ -309,12 +309,10 @@ func TestClientTLS(t *testing.T) {
 	}
 
 	// Now make the client certificate TLS mandatory, and add a filter.
-	if err := kclient.Get(context.TODO(), icName, ic); err != nil {
-		t.Fatalf("failed to get ingresscontroller %q: %v", icName, err)
-	}
-	ic.Spec.ClientTLS.ClientCertificatePolicy = "Required"
-	ic.Spec.ClientTLS.AllowedSubjectPatterns = []string{"/CN=allowed"}
-	if err := kclient.Update(context.TODO(), ic); err != nil {
+	if err := updateIngressControllerWithRetryOnConflict(t, icName, timeout, func(ic *operatorv1.IngressController) {
+		ic.Spec.ClientTLS.ClientCertificatePolicy = "Required"
+		ic.Spec.ClientTLS.AllowedSubjectPatterns = []string{"/CN=allowed"}
+	}); err != nil {
 		t.Fatalf("failed to update ingresscontroller %q: %v", icName, err)
 	}
 	if err := waitForDeploymentEnvVar(t, kclient, deployment, 1*time.Minute, "ROUTER_MUTUAL_TLS_AUTH", "required"); err != nil {

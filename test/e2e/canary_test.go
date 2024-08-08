@@ -271,11 +271,9 @@ func TestCanaryWithMTLS(t *testing.T) {
 
 	t.Cleanup(func() {
 		// Reset client TLS.
-		if err := kclient.Get(context.TODO(), defaultName, defaultIC); err != nil {
-			t.Fatalf("Failed to get default ingresscontroller: %v", err)
-		}
-		defaultIC.Spec.ClientTLS = *originalClientTLS
-		if err := kclient.Update(context.TODO(), defaultIC); err != nil {
+		if err := updateIngressControllerWithRetryOnConflict(t, defaultName, timeout, func(defaultIC *operatorv1.IngressController) {
+			defaultIC.Spec.ClientTLS = *originalClientTLS
+		}); err != nil {
 			t.Fatalf("Failed to restore default ingress configuration: %v", err)
 		}
 		t.Log("Restored clientTLS config for default ingresscontroller.")

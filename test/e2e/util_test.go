@@ -521,6 +521,30 @@ func probe(timeout, period, success, failure int) *corev1.Probe {
 	}
 }
 
+// updateRouteWithRetryOnConflict gets a fresh copy of the named route,
+// calls mutateRouteFn() where callers can modify fields of the route,
+// and then updates the route object. If there is a conflict error
+// on update then the complete sequence of get, mutate, and update
+// is retried until timeout is reached.
+func updateRouteWithRetryOnConflict(t *testing.T, name types.NamespacedName, timeout time.Duration, mutateRouteFn func(route *routev1.Route)) error {
+	route := routev1.Route{}
+	return wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
+		if err := kclient.Get(context.TODO(), name, &route); err != nil {
+			t.Logf("error getting route %v: %v, retrying...", name, err)
+			return false, nil
+		}
+		mutateRouteFn(&route)
+		if err := kclient.Update(context.TODO(), &route); err != nil {
+			if errors.IsConflict(err) {
+				t.Logf("conflict when updating route %v: %v, retrying...", name, err)
+				return false, nil
+			}
+			return false, err
+		}
+		return true, nil
+	})
+}
+
 // updateIngressControllerWithRetryOnConflict gets a fresh copy of
 // the named ingresscontroller, calls mutateIngressControllerFn() where
 // callers can modify fields of the ingresscontroller, and then updates
