@@ -58,7 +58,7 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 	isIstioGatewayClass := predicate.NewPredicateFuncs(func(o client.Object) bool {
 		return o.GetName() == "istio"
 	})
-	if err := c.Watch(source.Kind(operatorCache, &gatewayapiv1beta1.GatewayClass{}), &handler.EnqueueRequestForObject{}, isOurGatewayClass, predicate.Not(isIstioGatewayClass)); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &gatewayapiv1beta1.GatewayClass{}, &handler.EnqueueRequestForObject{}, isOurGatewayClass, predicate.Not(isIstioGatewayClass))); err != nil {
 		return nil, err
 	}
 	return c, nil

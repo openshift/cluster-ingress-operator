@@ -85,18 +85,18 @@ func New(mgr manager.Manager, operatorNamespace, operandNamespace string) (runti
 	if err != nil {
 		return nil, fmt.Errorf("failed to create informer for secrets: %v", err)
 	}
-	if err := c.Watch(&source.Informer{Informer: secretsInformer}, handler.EnqueueRequestsFromMapFunc(reconciler.secretToIngressController)); err != nil {
+	if err := c.Watch(&source.Informer{Informer: secretsInformer, Handler: handler.EnqueueRequestsFromMapFunc(reconciler.secretToIngressController)}); err != nil {
 		return nil, err
 	}
 
-	if err := c.Watch(source.Kind(operatorCache, &operatorv1.IngressController{}), &handler.EnqueueRequestForObject{}, predicate.Funcs{
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorv1.IngressController{}, &handler.EnqueueRequestForObject{}, predicate.Funcs{
 		CreateFunc:  func(e event.CreateEvent) bool { return reconciler.hasSecret(e.Object, e.Object) },
 		DeleteFunc:  func(e event.DeleteEvent) bool { return reconciler.hasSecret(e.Object, e.Object) },
 		UpdateFunc:  func(e event.UpdateEvent) bool { return reconciler.secretChanged(e.ObjectOld, e.ObjectNew) },
 		GenericFunc: func(e event.GenericEvent) bool { return reconciler.hasSecret(e.Object, e.Object) },
 	}, predicate.NewPredicateFuncs(func(o client.Object) bool {
 		return reconciler.hasClusterIngressDomain(o) || isDefaultIngressController(o)
-	})); err != nil {
+	}))); err != nil {
 		return nil, err
 	}
 

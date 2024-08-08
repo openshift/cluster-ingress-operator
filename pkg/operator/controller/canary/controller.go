@@ -92,7 +92,7 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 		return o.GetName() == manifests.DefaultIngressControllerName
 	})
 
-	if err := c.Watch(source.Kind(operatorCache, &operatorv1.IngressController{}), &handler.EnqueueRequestForObject{}, defaultIcPredicate); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorv1.IngressController{}, &handler.EnqueueRequestForObject{}, defaultIcPredicate)); err != nil {
 		return nil, err
 	}
 
@@ -143,21 +143,21 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 		},
 	}
 
-	if err := c.Watch(source.Kind(operatorCache, &routev1.Route{}), enqueueRequestForDefaultIngressController(config.Namespace), canaryRoutePredicate, updateFilter); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &routev1.Route{}, enqueueRequestForDefaultIngressController(config.Namespace), canaryRoutePredicate, updateFilter)); err != nil {
 		return nil, err
 	}
 	canaryDaemonSetPredicate := predicate.NewPredicateFuncs(func(o client.Object) bool {
 		canaryDaemonSet := operatorcontroller.CanaryDaemonSetName()
 		return o.GetNamespace() == canaryDaemonSet.Namespace && o.GetName() == canaryDaemonSet.Name
 	})
-	if err := c.Watch(source.Kind(operatorCache, &appsv1.DaemonSet{}), enqueueRequestForDefaultIngressController(config.Namespace), canaryDaemonSetPredicate); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &appsv1.DaemonSet{}, enqueueRequestForDefaultIngressController(config.Namespace), canaryDaemonSetPredicate)); err != nil {
 		return nil, err
 	}
 	canaryServicePredicate := predicate.NewPredicateFuncs(func(o client.Object) bool {
 		canaryService := operatorcontroller.CanaryServiceName()
 		return o.GetNamespace() == canaryService.Namespace && o.GetName() == canaryService.Name
 	})
-	if err := c.Watch(source.Kind(operatorCache, &corev1.Service{}), enqueueRequestForDefaultIngressController(config.Namespace), canaryServicePredicate); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &corev1.Service{}, enqueueRequestForDefaultIngressController(config.Namespace), canaryServicePredicate)); err != nil {
 		return nil, err
 	}
 

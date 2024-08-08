@@ -71,7 +71,7 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 		return nil, err
 	}
 
-	if err := c.Watch(source.Kind(operatorCache, &operatorv1.IngressController{}), &handler.EnqueueRequestForObject{}); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorv1.IngressController{}, &handler.EnqueueRequestForObject{})); err != nil {
 		return nil, err
 	}
 
@@ -86,14 +86,10 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 			},
 		}}
 	}
-	if err := c.Watch(
-		source.Kind(operatorCache, &configv1.ClusterOperator{}),
-		// The status controller doesn't care which ingresscontroller it
-		// is reconciling, so just enqueue a request to reconcile the
-		// default ingresscontroller.
-		handler.EnqueueRequestsFromMapFunc(toDefaultIngressController),
-		predicate.NewPredicateFuncs(isIngressClusterOperator),
-	); err != nil {
+	// The status controller doesn't care which ingresscontroller it
+	// is reconciling, so just enqueue a request to reconcile the
+	// default ingresscontroller.
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &configv1.ClusterOperator{}, handler.EnqueueRequestsFromMapFunc(toDefaultIngressController), predicate.NewPredicateFuncs(isIngressClusterOperator))); err != nil {
 		return nil, err
 	}
 	return c, nil

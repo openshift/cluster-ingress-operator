@@ -76,7 +76,7 @@ func New(mgr manager.Manager, config Config, eventRecorder events.Recorder) (con
 		return o.GetName() == clusterIngressResource.Name && o.GetNamespace() == clusterIngressResource.Namespace
 	})
 
-	if err := c.Watch(source.Kind(operatorCache, &configv1.Ingress{}), &handler.EnqueueRequestForObject{}, clusterNamePredicate); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &configv1.Ingress{}, &handler.EnqueueRequestForObject{}, clusterNamePredicate)); err != nil {
 		return nil, err
 	}
 
@@ -87,11 +87,11 @@ func New(mgr manager.Manager, config Config, eventRecorder events.Recorder) (con
 		return ok
 	})
 
-	if err := c.Watch(source.Kind(operatorCache, &rbacv1.Role{}), handler.EnqueueRequestsFromMapFunc(reconciler.resourceToClusterIngressConfig), defaultPredicate); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &rbacv1.Role{}, handler.EnqueueRequestsFromMapFunc(reconciler.resourceToClusterIngressConfig), defaultPredicate)); err != nil {
 		return nil, err
 	}
 
-	if err := c.Watch(source.Kind(operatorCache, &rbacv1.RoleBinding{}), handler.EnqueueRequestsFromMapFunc(reconciler.resourceToClusterIngressConfig), defaultPredicate); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &rbacv1.RoleBinding{}, handler.EnqueueRequestsFromMapFunc(reconciler.resourceToClusterIngressConfig), defaultPredicate)); err != nil {
 		return nil, err
 	}
 

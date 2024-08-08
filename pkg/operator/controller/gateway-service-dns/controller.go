@@ -107,13 +107,13 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 		}
 		return requests
 	}
-	if err := c.Watch(source.Kind(operatorCache, &gatewayapiv1beta1.Gateway{}), handler.EnqueueRequestsFromMapFunc(gatewayToService), isInOperandNamespace, gatewayListenersChanged); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &gatewayapiv1beta1.Gateway{}, handler.EnqueueRequestsFromMapFunc(gatewayToService), isInOperandNamespace, gatewayListenersChanged)); err != nil {
 		return nil, err
 	}
-	if err := c.Watch(source.Kind(operatorCache, &corev1.Service{}), &handler.EnqueueRequestForObject{}, isServiceNeedingDNS, isInOperandNamespace); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &corev1.Service{}, &handler.EnqueueRequestForObject{}, isServiceNeedingDNS, isInOperandNamespace)); err != nil {
 		return nil, err
 	}
-	if err := c.Watch(source.Kind(operatorCache, &iov1.DNSRecord{}), handler.EnqueueRequestForOwner(scheme, mapper, &corev1.Service{}), isInOperandNamespace); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &iov1.DNSRecord{}, handler.EnqueueRequestForOwner(scheme, mapper, &corev1.Service{}), isInOperandNamespace)); err != nil {
 		return nil, err
 	}
 	return c, nil

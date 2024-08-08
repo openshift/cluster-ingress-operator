@@ -46,7 +46,7 @@ require (
 	k8s.io/apiserver v0.30.2
 	k8s.io/client-go v12.0.0+incompatible
 	k8s.io/utils v0.0.0-20230726121419-3b25d923346b
-	sigs.k8s.io/controller-runtime v0.17.3
+	sigs.k8s.io/controller-runtime v0.18.4
 	sigs.k8s.io/gateway-api v0.5.1-0.20220921185115-ee7a83814203
 )
 
@@ -69,7 +69,7 @@ require (
 	github.com/emicklei/go-restful/v3 v3.11.0 // indirect
 	github.com/envoyproxy/protoc-gen-validate v1.0.2 // indirect
 	github.com/evanphx/json-patch v5.6.0+incompatible // indirect
-	github.com/evanphx/json-patch/v5 v5.8.0 // indirect
+	github.com/evanphx/json-patch/v5 v5.9.0 // indirect
 	github.com/fatih/color v1.12.0 // indirect
 	github.com/fsnotify/fsnotify v1.7.0 // indirect
 	github.com/go-openapi/errors v0.19.8 // indirect
@@ -158,5 +158,5 @@ require (
 replace (
 	bitbucket.org/ww/goautoneg => github.com/munnerz/goautoneg v0.0.0-20120707110453-a547fc61f48d
 	github.com/openshift/api => github.com/openshift/api v0.0.0-20240806152114-6b4a57ec20b0
-	k8s.io/client-go => k8s.io/client-go v0.29.0
+	k8s.io/client-go => k8s.io/client-go v0.30.2
 )

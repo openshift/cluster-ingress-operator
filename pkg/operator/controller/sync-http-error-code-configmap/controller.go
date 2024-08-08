@@ -52,12 +52,12 @@ func New(mgr manager.Manager, config Config) (runtimecontroller.Controller, erro
 
 	// If the ingresscontroller's error-page configmap reference changes,
 	// reconcile the ingresscontroller.
-	if err := c.Watch(source.Kind(operatorCache, &operatorv1.IngressController{}), &handler.EnqueueRequestForObject{}, predicate.Funcs{
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorv1.IngressController{}, &handler.EnqueueRequestForObject{}, predicate.Funcs{
 		CreateFunc:  func(e event.CreateEvent) bool { return reconciler.hasConfigMap(e.Object) },
 		DeleteFunc:  func(e event.DeleteEvent) bool { return reconciler.hasConfigMap(e.Object) },
 		UpdateFunc:  func(e event.UpdateEvent) bool { return reconciler.configMapChanged(e.ObjectOld, e.ObjectNew) },
 		GenericFunc: func(e event.GenericEvent) bool { return reconciler.hasConfigMap(e.Object) },
-	}); err != nil {
+	})); err != nil {
 		return nil, err
 	}
 
@@ -85,23 +85,14 @@ func New(mgr manager.Manager, config Config) (runtimecontroller.Controller, erro
 	}
 	// If a configmap in the source namespace that is referenced by an
 	// ingresscontroller changes, reconcile the ingresscontroller.
-	if err := c.Watch(
-		source.Kind(operatorCache, &corev1.ConfigMap{}),
-		handler.EnqueueRequestsFromMapFunc(reconciler.userConfigMapToIngressController),
-		predicate.NewPredicateFuncs(isInNamespace(config.ConfigNamespace)),
-		predicate.NewPredicateFuncs(reconciler.configmapIsInUse),
-	); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &corev1.ConfigMap{}, handler.EnqueueRequestsFromMapFunc(reconciler.userConfigMapToIngressController), predicate.NewPredicateFuncs(isInNamespace(config.ConfigNamespace)), predicate.NewPredicateFuncs(reconciler.configmapIsInUse))); err != nil {
 		return nil, err
 	}
 
 	// If a configmap in the destination (operand) namespace that is used by
 	// an ingresscontroller's deployment changes, reconcile the
 	// ingresscontroller.
-	if err := c.Watch(
-		source.Kind(operatorCache, &corev1.ConfigMap{}),
-		handler.EnqueueRequestsFromMapFunc(reconciler.operatorConfigMapToIngressController),
-		predicate.NewPredicateFuncs(isInNamespace(config.OperandNamespace)),
-	); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &corev1.ConfigMap{}, handler.EnqueueRequestsFromMapFunc(reconciler.operatorConfigMapToIngressController), predicate.NewPredicateFuncs(isInNamespace(config.OperandNamespace)))); err != nil {
 		return nil, err
 	}
 

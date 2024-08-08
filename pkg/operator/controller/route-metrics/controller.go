@@ -70,12 +70,11 @@ func New(mgr manager.Manager, namespace string) (controller.Controller, error) {
 		return nil, err
 	}
 	// add watch for changes in IngressController
-	if err := c.Watch(source.Kind(operatorCache, &operatorv1.IngressController{}), &handler.EnqueueRequestForObject{}); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorv1.IngressController{}, &handler.EnqueueRequestForObject{})); err != nil {
 		return nil, err
 	}
 	// add watch for changes in Route
-	if err := c.Watch(source.Kind(newCache, &routev1.Route{}),
-		handler.EnqueueRequestsFromMapFunc(reconciler.routeToIngressController)); err != nil {
+	if err := c.Watch(source.Kind[client.Object](newCache, &routev1.Route{}, handler.EnqueueRequestsFromMapFunc(reconciler.routeToIngressController))); err != nil {
 		return nil, err
 	}
 	return c, nil
