@@ -22,6 +22,13 @@ var managedCRDs = []*apiextensionsv1.CustomResourceDefinition{
 	manifests.GatewayCRD(),
 	manifests.HTTPRouteCRD(),
 	manifests.ReferenceGrantCRD(),
+	// experimental - beta version CRDs
+	manifests.GRPCRouteCRD(),
+	manifests.TCPRouteCRD(),
+	manifests.UDPRouteCRD(),
+	manifests.TLSRouteCRD(),
+	manifests.BackendLBPolicyCRD(),
+	manifests.BackendTLSPolicyCRD(),
 }
 
 // ensureCRD attempts to ensure that the specified CRD exists and returns a
