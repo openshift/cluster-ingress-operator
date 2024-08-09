@@ -559,7 +559,7 @@ func computeOperatorAvailableCondition(ingresses []operatorv1.IngressController)
 }
 
 // mergeConditions adds or updates matching conditions, and updates
-// the transition time if details of a condition have changed. Returns
+// the transition time if the status of a condition changed. Returns
 // the updated condition array.
 func mergeConditions(conditions []configv1.ClusterOperatorStatusCondition, updates ...configv1.ClusterOperatorStatusCondition) []configv1.ClusterOperatorStatusCondition {
 	now := metav1.NewTime(clock.Now())
@@ -569,13 +569,13 @@ func mergeConditions(conditions []configv1.ClusterOperatorStatusCondition, updat
 		for j, cond := range conditions {
 			if cond.Type == update.Type {
 				add = false
-				if conditionChanged(cond, update) {
-					conditions[j].Status = update.Status
-					conditions[j].Reason = update.Reason
-					conditions[j].Message = update.Message
+				if update.Status != conditions[j].Status {
 					conditions[j].LastTransitionTime = now
-					break
 				}
+				conditions[j].Reason = update.Reason
+				conditions[j].Message = update.Message
+				conditions[j].Status = update.Status
+				break
 			}
 		}
 		if add {
@@ -585,10 +585,6 @@ func mergeConditions(conditions []configv1.ClusterOperatorStatusCondition, updat
 	}
 	conditions = append(conditions, additions...)
 	return conditions
-}
-
-func conditionChanged(a, b configv1.ClusterOperatorStatusCondition) bool {
-	return a.Status != b.Status || a.Reason != b.Reason || a.Message != b.Message
 }
 
 // operatorStatusesEqual compares two ClusterOperatorStatus values.  Returns
