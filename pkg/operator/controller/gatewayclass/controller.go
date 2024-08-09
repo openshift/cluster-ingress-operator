@@ -4,8 +4,12 @@ import (
 	"context"
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
+	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
 	"k8s.io/client-go/tools/record"
+
+	maistrav2 "github.com/maistra/istio-operator/pkg/apis/maistra/v2"
+	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 
 	gatewayapiv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
@@ -14,6 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
@@ -61,6 +66,46 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 	if err := c.Watch(source.Kind[client.Object](operatorCache, &gatewayapiv1beta1.GatewayClass{}, &handler.EnqueueRequestForObject{}, isOurGatewayClass, predicate.Not(isIstioGatewayClass))); err != nil {
 		return nil, err
 	}
+
+	toServiceMeshControlPlane := func(ctx context.Context, _ client.Object) []reconcile.Request {
+		return []reconcile.Request{{
+			NamespacedName: operatorcontroller.ServiceMeshControlPlaneName(config.OperandNamespace),
+		}}
+	}
+
+	isOurSMCP := predicate.NewPredicateFuncs(func(o client.Object) bool {
+		return o.GetName() == operatorcontroller.ServiceMeshControlPlaneName(config.OperandNamespace).Name
+	})
+
+	if err = c.Watch(source.Kind[client.Object](operatorCache, &maistrav2.ServiceMeshControlPlane{},
+		handler.EnqueueRequestsFromMapFunc(toServiceMeshControlPlane), isOurSMCP, predicate.Funcs{
+			CreateFunc:  func(e event.CreateEvent) bool { return false },
+			DeleteFunc:  func(e event.DeleteEvent) bool { return true },
+			UpdateFunc:  func(e event.UpdateEvent) bool { return false },
+			GenericFunc: func(e event.GenericEvent) bool { return false },
+		})); err != nil {
+		return nil, err
+	}
+
+	toServiceMeshSubscription := func(ctx context.Context, _ client.Object) []reconcile.Request {
+		return []reconcile.Request{{
+			NamespacedName: operatorcontroller.ServiceMeshSubscriptionName(),
+		}}
+	}
+
+	isServiceMeshSubscription := predicate.NewPredicateFuncs(func(o client.Object) bool {
+		return o.GetName() == operatorcontroller.ServiceMeshSubscriptionName().Name &&
+			o.GetNamespace() == operatorcontroller.ServiceMeshSubscriptionName().Namespace
+	})
+	if err = c.Watch(source.Kind[client.Object](operatorCache, &operatorsv1alpha1.Subscription{},
+		handler.EnqueueRequestsFromMapFunc(toServiceMeshSubscription), isServiceMeshSubscription, predicate.Funcs{
+			CreateFunc:  func(e event.CreateEvent) bool { return false },
+			DeleteFunc:  func(e event.DeleteEvent) bool { return true },
+			UpdateFunc:  func(e event.UpdateEvent) bool { return false },
+			GenericFunc: func(e event.GenericEvent) bool { return false },
+		})); err != nil {
+		return nil, err
+	}
 	return c, nil
 }
 
@@ -90,14 +135,17 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 
 	var gatewayclass gatewayapiv1beta1.GatewayClass
 	if err := r.cache.Get(ctx, request.NamespacedName, &gatewayclass); err != nil {
+		log.Error(err, "failed to get gatewayclass", "request", request)
 		return reconcile.Result{}, err
 	}
 
 	var errs []error
 	if _, _, err := r.ensureServiceMeshOperatorSubscription(ctx); err != nil {
+		log.Error(err, "failed to ensure ServiceMeshOperatorSubscription", "request", request)
 		errs = append(errs, err)
 	}
 	if _, _, err := r.ensureServiceMeshControlPlane(ctx, &gatewayclass); err != nil {
+		log.Error(err, "failed to ensure ServiceMeshControlPlane", "request", request)
 		errs = append(errs, err)
 	}
 	return reconcile.Result{}, utilerrors.NewAggregate(errs)

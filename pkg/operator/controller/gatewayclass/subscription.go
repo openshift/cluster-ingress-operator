@@ -22,7 +22,7 @@ import (
 func (r *reconciler) ensureServiceMeshOperatorSubscription(ctx context.Context) (bool, *operatorsv1alpha1.Subscription, error) {
 	name := operatorcontroller.ServiceMeshSubscriptionName()
 	have, current, err := r.currentSubscription(ctx, name)
-	if err != nil {
+	if err != nil && !errors.IsNotFound(err) {
 		return false, nil, err
 	}
 
@@ -70,7 +70,7 @@ func (r *reconciler) currentSubscription(ctx context.Context, name types.Namespa
 	var subscription operatorsv1alpha1.Subscription
 	if err := r.client.Get(ctx, name, &subscription); err != nil {
 		if errors.IsNotFound(err) {
-			return false, nil, nil
+			return false, nil, err
 		}
 		return false, nil, fmt.Errorf("failed to get subscription %s: %w", name, err)
 	}
