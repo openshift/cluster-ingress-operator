@@ -126,7 +126,7 @@ func (r *reconciler) syncIngressControllerSelectorStatus(ic *operatorv1.IngressC
 }
 
 // MergeConditions adds or updates matching conditions, and updates
-// the transition time if details of a condition have changed. Returns
+// the transition time if the status of a condition changed. Returns
 // the updated condition array.
 func MergeConditions(conditions []operatorv1.OperatorCondition, updates ...operatorv1.OperatorCondition) []operatorv1.OperatorCondition {
 	now := metav1.NewTime(clock.Now())
@@ -136,13 +136,13 @@ func MergeConditions(conditions []operatorv1.OperatorCondition, updates ...opera
 		for j, cond := range conditions {
 			if cond.Type == update.Type {
 				add = false
-				if conditionChanged(cond, update) {
-					conditions[j].Status = update.Status
-					conditions[j].Reason = update.Reason
-					conditions[j].Message = update.Message
+				if update.Status != conditions[j].Status {
 					conditions[j].LastTransitionTime = now
-					break
 				}
+				conditions[j].Reason = update.Reason
+				conditions[j].Message = update.Message
+				conditions[j].Status = update.Status
+				break
 			}
 		}
 		if add {
@@ -833,10 +833,6 @@ func conditionsEqual(a, b []operatorv1.OperatorCondition) bool {
 	}
 
 	return cmp.Equal(a, b, conditionCmpOpts...)
-}
-
-func conditionChanged(a, b operatorv1.OperatorCondition) bool {
-	return a.Status != b.Status || a.Reason != b.Reason || a.Message != b.Message
 }
 
 // computeLoadBalancerStatus returns the set of current
