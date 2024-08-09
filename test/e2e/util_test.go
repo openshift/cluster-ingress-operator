@@ -632,18 +632,18 @@ func verifyExternalIngressController(t *testing.T, name types.NamespacedName, ho
 		}
 	}()
 
-	// If we have a DNS as an external IP address, make sure we can resolve it before moving on.
-	// This just limits the number of "could not resolve host" errors which can be confusing.
+	// Wait and check that the dns name resolves first. Takes a long time, so
+	// if the hostname is actually an IP address, skip this.
 	if net.ParseIP(address) == nil {
-		if err := wait.PollImmediate(10*time.Second, 5*time.Minute, func() (bool, error) {
-			_, err := net.LookupIP(address)
+		if err := wait.PollUntilContextTimeout(context.Background(), 10*time.Second, 20*time.Minute, false, func(context context.Context) (bool, error) {
+			_, err := net.LookupHost(address)
 			if err != nil {
-				t.Logf("waiting for loadbalancer domain %s to resolve...", address)
+				t.Logf("%v waiting for HTTP route name %s to resolve (%v)", time.Now(), address, err)
 				return false, nil
 			}
 			return true, nil
 		}); err != nil {
-			t.Fatalf("loadbalancer domain %s was unable to resolve:", address)
+			t.Fatalf("HTTP route name %s was unable to be resolved: %v", address, err)
 		}
 	}
 
@@ -651,6 +651,7 @@ func verifyExternalIngressController(t *testing.T, name types.NamespacedName, ho
 	if err != nil {
 		t.Fatalf("failed to build client request: %v", err)
 	}
+
 	// we use HOST header to map to the domain associated on the ingresscontroller.
 	// This ensures our http call is routed to the correct router.
 	req.Host = hostname
