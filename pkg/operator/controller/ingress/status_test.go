@@ -6,12 +6,13 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
-	"k8s.io/utils/pointer"
 	"math/big"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"k8s.io/utils/pointer"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -2749,18 +2750,120 @@ func Test_MergeConditions(t *testing.T) {
 				cond("A", "False", "Reason", start),
 				cond("B", "True", "Reason", start),
 				cond("Ignored", "True", "Reason", start),
+				cond("D", "True", "Reason", start),
 			},
 			updates: []operatorv1.OperatorCondition{
 				cond("A", "True", "Reason", middle),
 				cond("B", "True", "Reason", middle),
 				cond("C", "False", "Reason", middle),
+				cond("D", "True", "NewReason", start),
 			},
 			expected: []operatorv1.OperatorCondition{
 				cond("A", "True", "Reason", later),
 				cond("B", "True", "Reason", start),
+				// Test case C has lastTransitionTime update because it is a new condition.
 				cond("C", "False", "Reason", later),
 				cond("Ignored", "True", "Reason", start),
+				// Test case D does not change lastTransitionTime because status did not change.
+				cond("D", "True", "NewReason", start),
 			},
+		},
+		"an update to only the message in CanaryChecksSucceeding should not change lastTransitionTime": {
+			conditions: []operatorv1.OperatorCondition{{
+				Type:               "CanaryChecksSucceeding",
+				Status:             "False",
+				LastTransitionTime: metav1.NewTime(start),
+				Reason:             "CanaryChecksRepetitiveFailures",
+				Message:            "Canary route checks for the default ingress controller are failing. Last 1 error messages:\nerror sending canary HTTP Request: Timeout: Get \"https://canary-openshift-ingress-canary.apps.example.local\": context deadline exceeded (Client.Timeout exceeded while awaiting headers) (x5 over 4m40s)",
+			}},
+			updates: []operatorv1.OperatorCondition{{
+				Type:               "CanaryChecksSucceeding",
+				Status:             "False",
+				LastTransitionTime: metav1.NewTime(start),
+				Reason:             "CanaryChecksRepetitiveFailures",
+				Message:            "Canary route checks for the default ingress controller are failing. Last 1 error messages:\nerror sending canary HTTP Request: Timeout: Get \"https://canary-openshift-ingress-canary.apps.example.local\": context deadline exceeded (Client.Timeout exceeded while awaiting headers) (x14 over 15m10s)",
+			}},
+			expected: []operatorv1.OperatorCondition{{
+				Type:   "CanaryChecksSucceeding",
+				Status: "False",
+				// A change to the condition's message should not change the lastTransitionTime.
+				LastTransitionTime: metav1.NewTime(start),
+				Reason:             "CanaryChecksRepetitiveFailures",
+				// Use the updated message.
+				Message: "Canary route checks for the default ingress controller are failing. Last 1 error messages:\nerror sending canary HTTP Request: Timeout: Get \"https://canary-openshift-ingress-canary.apps.example.local\": context deadline exceeded (Client.Timeout exceeded while awaiting headers) (x14 over 15m10s)",
+			}},
+		},
+		"an update to message, reason, and status in CanaryChecksSucceeding should change lastTransitionTime, message, reason, and status": {
+			conditions: []operatorv1.OperatorCondition{{
+				Type:               "CanaryChecksSucceeding",
+				Status:             "True",
+				LastTransitionTime: metav1.NewTime(start),
+				Reason:             "CanaryChecksSucceeding",
+				Message:            "Canary route checks for the default ingress controller are successful",
+			}},
+			updates: []operatorv1.OperatorCondition{{
+				Type:               "CanaryChecksSucceeding",
+				Status:             "False",
+				LastTransitionTime: metav1.NewTime(middle),
+				Reason:             "CanaryChecksRepetitiveFailures",
+				Message:            "Canary route checks for the default ingress controller are failing. Last 1 error messages:\nerror sending canary HTTP Request: Timeout: Get \"https://canary-openshift-ingress-canary.apps.example.local\": context deadline exceeded (Client.Timeout exceeded while awaiting headers) (x5 over 4m40s)",
+			}},
+			expected: []operatorv1.OperatorCondition{{
+				Type:   "CanaryChecksSucceeding",
+				Status: "False",
+				// Update lastTransitionTime if status changed.
+				LastTransitionTime: metav1.NewTime(later),
+				Reason:             "CanaryChecksRepetitiveFailures",
+				Message:            "Canary route checks for the default ingress controller are failing. Last 1 error messages:\nerror sending canary HTTP Request: Timeout: Get \"https://canary-openshift-ingress-canary.apps.example.local\": context deadline exceeded (Client.Timeout exceeded while awaiting headers) (x5 over 4m40s)",
+			}},
+		},
+		"an update to only the status in CanaryChecksSucceeding should change lastTransitionTime and status": {
+			conditions: []operatorv1.OperatorCondition{{
+				Type:               "CanaryChecksSucceeding",
+				Status:             "Unknown",
+				LastTransitionTime: metav1.NewTime(start),
+				Reason:             "CanaryChecksSucceeding",
+				Message:            "Canary route checks for the default ingress controller are successful",
+			}},
+			updates: []operatorv1.OperatorCondition{{
+				Type:               "CanaryChecksSucceeding",
+				Status:             "True",
+				LastTransitionTime: metav1.NewTime(middle),
+				Reason:             "CanaryChecksSucceeding",
+				Message:            "Canary route checks for the default ingress controller are successful",
+			}},
+			expected: []operatorv1.OperatorCondition{{
+				Type:   "CanaryChecksSucceeding",
+				Status: "True",
+				// Update lastTransitionTime if status changed.
+				LastTransitionTime: metav1.NewTime(later),
+				Reason:             "CanaryChecksSucceeding",
+				Message:            "Canary route checks for the default ingress controller are successful",
+			}},
+		},
+		"an update to only the lastTransitionTime in CanaryChecksSucceeding should not change anything": {
+			conditions: []operatorv1.OperatorCondition{{
+				Type:               "CanaryChecksSucceeding",
+				Status:             "True",
+				LastTransitionTime: metav1.NewTime(start),
+				Reason:             "CanaryChecksSucceeding",
+				Message:            "Canary route checks for the default ingress controller are successful",
+			}},
+			updates: []operatorv1.OperatorCondition{{
+				Type:               "CanaryChecksSucceeding",
+				Status:             "True",
+				LastTransitionTime: metav1.NewTime(middle),
+				Reason:             "CanaryChecksSucceeding",
+				Message:            "Canary route checks for the default ingress controller are successful",
+			}},
+			expected: []operatorv1.OperatorCondition{{
+				Type:   "CanaryChecksSucceeding",
+				Status: "True",
+				// Don't update lastTransitionTime since status did not change.
+				LastTransitionTime: metav1.NewTime(start),
+				Reason:             "CanaryChecksSucceeding",
+				Message:            "Canary route checks for the default ingress controller are successful",
+			}},
 		},
 	}
 
