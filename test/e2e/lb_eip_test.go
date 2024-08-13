@@ -106,6 +106,10 @@ func TestAWSEIPAllocationsForNLB(t *testing.T) {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
+	// Get ELB host name from the service status for use with verifyExternalIngressController.
+	// Using the ELB host name (not the IngressController wildcard domain) results in much quicker DNS resolution.
+	elbHostname := getIngressControllerLBAddress(t, ic)
+
 	// Ensure the expected eipAllocation annotation is on the service.
 	waitForLBAnnotation(t, ic, awsLBEIPAllocationAnnotation, true, ingress.JoinAWSEIPAllocations(eipAllocations, ","))
 
@@ -116,7 +120,7 @@ func TestAWSEIPAllocationsForNLB(t *testing.T) {
 	externalTestPodName := types.NamespacedName{Name: name.Name + "-external-verify", Namespace: name.Namespace}
 	testHostname := "apps." + ic.Spec.Domain
 	t.Logf("verifying external connectivity for ingresscontroller %q using an NLB with specified eipAllocations", ic.Name)
-	verifyExternalIngressController(t, externalTestPodName, testHostname, testHostname)
+	verifyExternalIngressController(t, externalTestPodName, testHostname, elbHostname)
 
 	// Now, update the IngressController to use invalid (non-existent) eipAllocations.
 	t.Logf("updating ingresscontroller %q to use invalid eipAllocations", ic.Name)
@@ -169,8 +173,11 @@ func TestAWSEIPAllocationsForNLB(t *testing.T) {
 	// Verify the eipAllocations status field is configured to what we expect.
 	verifyIngressControllerEIPAllocationStatus(t, name)
 
+	// Refresh ELB host name since it's been recreated.
+	elbHostname = getIngressControllerLBAddress(t, ic)
+
 	t.Logf("verifying external connectivity for ingresscontroller %q using an NLB with specified eipAllocations", ic.Name)
-	verifyExternalIngressController(t, externalTestPodName, testHostname, testHostname)
+	verifyExternalIngressController(t, externalTestPodName, testHostname, elbHostname)
 }
 
 // TestUnmanagedAWSEIPAllocations tests compatibility for unmanaged service.beta.kubernetes.io/aws-load-balancer-eip-allocations
