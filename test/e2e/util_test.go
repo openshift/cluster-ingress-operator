@@ -643,7 +643,7 @@ func verifyExternalIngressController(t *testing.T, name types.NamespacedName, ho
 			}
 			return true, nil
 		}); err != nil {
-			t.Fatalf("loadbalancer domain %s was unable to resolve:", address)
+			t.Fatalf("loadbalancer domain %s was unable to resolve: %v", address, err)
 		}
 	}
 
