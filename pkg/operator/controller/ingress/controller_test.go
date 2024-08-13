@@ -625,6 +625,20 @@ func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
 			domainMatchesBaseDomain: true,
 		},
 		{
+			name:                    "loadbalancer type changed from ELB to NLB, with old ELB parameters removal",
+			ic:                      makeIC(spec(nlb()), status(elbWithNullParameters())),
+			expectedResult:          true,
+			expectedIC:              makeIC(spec(nlb()), status(nlbWithNullParameters())),
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name:                    "loadbalancer type changed from NLB to ELB, with old NLB parameters removal",
+			ic:                      makeIC(spec(elb()), status(nlbWithNullParameters())),
+			expectedResult:          true,
+			expectedIC:              makeIC(spec(elb()), status(elbWithNullParameters())),
+			domainMatchesBaseDomain: true,
+		},
+		{
 			name:                    "loadbalancer type changed from NLB to unset, with Classic LB as default",
 			ic:                      makeIC(spec(eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS))), status(nlb())),
 			ingressConfig:           ingressConfigWithDefaultClassicLB,
