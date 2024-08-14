@@ -65,6 +65,8 @@ func desiredServiceMeshControlPlane(name types.NamespacedName, ownerRef metav1.O
 		"PILOT_GATEWAY_API_DEFAULT_GATEWAYCLASS": OpenShiftDefaultGatewayClassName,
 		// OSSM will only reconcile the default gateway class if this is true.
 		"PILOT_ENABLE_GATEWAY_API_GATEWAYCLASS_CONTROLLER": "true",
+		// Enable support for alpha Gateway APIs
+		"PILOT_ENABLE_ALPHA_GATEWAY_API": "true",
 	}
 	f := false
 	t := true
