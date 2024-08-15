@@ -643,7 +643,7 @@ func verifyExternalIngressController(t *testing.T, name types.NamespacedName, ho
 			}
 			return true, nil
 		}); err != nil {
-			t.Fatalf("loadbalancer domain %s was unable to resolve:", address)
+			t.Fatalf("loadbalancer domain %s was unable to resolve: %v", address, err)
 		}
 	}
 
@@ -1111,4 +1111,36 @@ func waitForLBAnnotation(t *testing.T, ic *operatorv1.IngressController, expecte
 	if err != nil {
 		t.Fatalf("error updating the %q service: %v", controller.LoadBalancerServiceName(ic), err)
 	}
+}
+
+// getIngressControllerLBAddress waits for and returns the address (hostname or IP) for an
+// IngressController's load-balancer type service. It will call t.Fatal if the address is never found.
+func getIngressControllerLBAddress(t *testing.T, ic *operatorv1.IngressController) string {
+	t.Helper()
+	var lbAddress string
+	err := wait.PollUntilContextTimeout(context.Background(), 5*time.Second, 10*time.Minute, false, func(ctx context.Context) (bool, error) {
+		lbServiceName := controller.LoadBalancerServiceName(ic)
+		lbService := &corev1.Service{}
+		if err := kclient.Get(ctx, lbServiceName, lbService); err != nil {
+			t.Logf("failed to get service %q: %v...retrying", lbServiceName, err)
+			return false, nil
+		}
+
+		if len(lbService.Status.LoadBalancer.Ingress) == 0 {
+			t.Logf("load balancer address doesn't exist for service %q...retrying", lbServiceName)
+			return false, nil
+		}
+		ingress := lbService.Status.LoadBalancer.Ingress[0]
+		if len(ingress.Hostname) > 0 {
+			lbAddress = ingress.Hostname
+		} else {
+			lbAddress = ingress.IP
+		}
+
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("error getting IngressController's service address: %v", err)
+	}
+	return lbAddress
 }
