@@ -952,28 +952,18 @@ func computeLoadBalancerProgressingStatus(ic *operatorv1.IngressController, serv
 func updateIngressControllerAWSSubnetStatus(ic *operatorv1.IngressController, service *corev1.Service) {
 	// Set the subnets status based on the actual service annotation and the load balancer type,
 	// as NLBs and CLBs have separate subnet configuration fields.
-	clbParams := getAWSClassicLoadBalancerParametersInStatus(ic)
-	nlbParams := getAWSNetworkLoadBalancerParametersInStatus(ic)
 	switch getAWSLoadBalancerTypeInStatus(ic) {
 	case operatorv1.AWSNetworkLoadBalancer:
 		// NetworkLoadBalancerParameters should be initialized by setDefaultPublishingStrategy
 		// when an IngressController is admitted, so we don't need to initialize here.
-		if nlbParams != nil {
+		if nlbParams := getAWSNetworkLoadBalancerParametersInStatus(ic); nlbParams != nil {
 			nlbParams.Subnets = getSubnetsFromServiceAnnotation(service)
-		}
-		// Clear CLB status as the IngressController is now using a NLB.
-		if clbParams != nil {
-			clbParams.Subnets = nil
 		}
 	case operatorv1.AWSClassicLoadBalancer:
 		// ClassicLoadBalancerParameters should be initialized by setDefaultPublishingStrategy
 		// when an IngressController is admitted, so we don't need to initialize here.
-		if clbParams != nil {
+		if clbParams := getAWSClassicLoadBalancerParametersInStatus(ic); clbParams != nil {
 			clbParams.Subnets = getSubnetsFromServiceAnnotation(service)
-		}
-		// Clear NLB status as the IngressController is now using a CLB.
-		if nlbParams != nil {
-			nlbParams.Subnets = nil
 		}
 	}
 }

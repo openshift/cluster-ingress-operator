@@ -548,6 +548,7 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, platformStat
 					changed = true
 				}
 				if statusLB.ProviderParameters.AWS.Type == operatorv1.AWSClassicLoadBalancer {
+					statusLB.ProviderParameters.AWS.NetworkLoadBalancerParameters = nil
 					if statusLB.ProviderParameters.AWS.ClassicLoadBalancerParameters == nil {
 						statusLB.ProviderParameters.AWS.ClassicLoadBalancerParameters = &operatorv1.AWSClassicLoadBalancerParameters{}
 					}
@@ -569,6 +570,7 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, platformStat
 					}
 				}
 				if statusLB.ProviderParameters.AWS.Type == operatorv1.AWSNetworkLoadBalancer {
+					statusLB.ProviderParameters.AWS.ClassicLoadBalancerParameters = nil
 					if statusLB.ProviderParameters.AWS.NetworkLoadBalancerParameters == nil {
 						statusLB.ProviderParameters.AWS.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{}
 					}
