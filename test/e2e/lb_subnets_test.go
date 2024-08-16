@@ -79,6 +79,10 @@ func TestAWSLBSubnets(t *testing.T) {
 	}
 	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 
+	// Get ELB host name from the service status for use with verifyExternalIngressController.
+	// Using the ELB host name (not the IngressController wildcard domain) results in much quicker DNS resolution.
+	elbHostname := getIngressControllerLBAddress(t, ic)
+
 	// Wait for the load balancer and DNS to be ready.
 	if err = waitForIngressControllerCondition(t, kclient, 10*time.Minute, icName, availableNotProgressingConditionsForIngressControllerWithLoadBalancer...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
@@ -94,7 +98,7 @@ func TestAWSLBSubnets(t *testing.T) {
 	externalTestPodName := types.NamespacedName{Name: icName.Name + "-external-verify", Namespace: icName.Namespace}
 	testHostname := "apps." + ic.Spec.Domain
 	t.Logf("verifying external connectivity for ingresscontroller %q using an CLB with specified public subnets", ic.Name)
-	verifyExternalIngressController(t, externalTestPodName, testHostname, testHostname)
+	verifyExternalIngressController(t, externalTestPodName, testHostname, elbHostname)
 
 	// Now, update the IngressController to use invalid (non-existent) subnets.
 	t.Logf("updating ingresscontroller %q to use invalid subnets", ic.Name)
@@ -142,9 +146,12 @@ func TestAWSLBSubnets(t *testing.T) {
 
 	effectuateIngressControllerSubnets(t, ic, publicSubnets, availableNotProgressingConditionsForIngressControllerWithLoadBalancer...)
 
+	// Refresh ELB host name since it's been recreated.
+	elbHostname = getIngressControllerLBAddress(t, ic)
+
 	// Verify we can still reach the NLB with the provided public subnets.
 	t.Logf("verifying external connectivity for ingresscontroller %q using an NLB with specified public subnets", ic.Name)
-	verifyExternalIngressController(t, externalTestPodName, testHostname, testHostname)
+	verifyExternalIngressController(t, externalTestPodName, testHostname, elbHostname)
 
 	// Now, update the IngressController to not specify subnets, but let's use the
 	// auto-delete-load-balancer annotation, so we don't have to manually delete the service.
