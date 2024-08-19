@@ -441,6 +441,16 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 								service.Annotations[awsLBSubnetsAnnotation] = JoinAWSSubnets(clbParams.Subnets, ",")
 							}
 						}
+
+						if eipAllocationsAWSEnabled {
+							nlbParams := getAWSNetworkLoadBalancerParametersInSpec(ci)
+							if nlbParams != nil && awsEIPAllocationsExist(nlbParams.EIPAllocations) {
+								// Remove the annotation
+								if _, exists := service.Annotations[awsEIPAllocationsAnnotation]; exists {
+									delete(service.Annotations, awsEIPAllocationsAnnotation)
+								}
+							}
+						}
 					}
 				}
 			}
@@ -617,11 +627,28 @@ func (r *reconciler) updateLoadBalancerService(current, desired *corev1.Service,
 	}
 	// Diff before updating because the client may mutate the object.
 	diff := cmp.Diff(current, updated, cmpopts.EquateEmpty())
-	if err := r.client.Update(context.TODO(), updated); err != nil {
-		return false, err
+	// Recreate lb service in AWS if the lbType has changed and if the current service has `service.beta.kubernetes.io/aws-load-balancer-eip-allocations` annotation
+	if platform.Type == configv1.AWSPlatformType && current.Annotations[AWSLBTypeAnnotation] != desired.Annotations[AWSLBTypeAnnotation] {
+		if _, exists := current.Annotations[awsEIPAllocationsAnnotation]; exists {
+			log.Info("deleting and recreating the load balancer ", "namespace", updated.Namespace, "name", updated.Name)
+			foreground := metav1.DeletePropagationForeground
+			deleteOptions := crclient.DeleteOptions{PropagationPolicy: &foreground}
+			if err := r.deleteLoadBalancerService(current, &deleteOptions); err != nil {
+				return false, err
+			}
+			if err := r.createLoadBalancerService(updated); err != nil {
+				return false, err
+			}
+			return true, nil
+		}
+	} else {
+		if err := r.client.Update(context.TODO(), updated); err != nil {
+			return false, err
+		}
+		log.Info("updated load balancer service", "namespace", updated.Namespace, "name", updated.Name, "diff", diff)
+		return true, nil
 	}
-	log.Info("updated load balancer service", "namespace", updated.Namespace, "name", updated.Name, "diff", diff)
-	return true, nil
+	return false, nil
 }
 
 // scopeEqual returns true if the scope is the same between the two given
@@ -675,7 +702,16 @@ func loadBalancerServiceChanged(current, expected *corev1.Service) (bool, *corev
 	// avoid problems, make sure the previous release blocks upgrades when
 	// the user has modified an annotation or spec field that the new
 	// release manages.
-	changed, updated := loadBalancerServiceAnnotationsChanged(current, expected, managedLoadBalancerServiceAnnotations)
+
+	// Make eipAllocation annotation managed ONLY when LB type annotation changes.
+	// Ordinarily, the eipAllocation annotation is not managed, so they are not immediately effectuated.
+	// However, since eipAllocations are specific to NLB type, when LB type is changed from NLB to Classic, we MUST not use
+	// eipAllocations associated with the NLB for Classic.
+	managedAnnotationsUpdated := managedLoadBalancerServiceAnnotations
+	if current.Annotations[AWSLBTypeAnnotation] != expected.Annotations[AWSLBTypeAnnotation] {
+		managedAnnotationsUpdated = managedLoadBalancerServiceAnnotations.Union(sets.NewString(awsEIPAllocationsAnnotation))
+	}
+	changed, updated := loadBalancerServiceAnnotationsChanged(current, expected, managedAnnotationsUpdated)
 
 	// If spec.loadBalancerSourceRanges is nonempty on the service, that
 	// means that allowedSourceRanges is nonempty on the ingresscontroller,

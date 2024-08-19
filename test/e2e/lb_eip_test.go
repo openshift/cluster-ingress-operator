@@ -180,6 +180,121 @@ func TestAWSEIPAllocationsForNLB(t *testing.T) {
 	verifyExternalIngressController(t, externalTestPodName, testHostname, elbHostname)
 }
 
+func TestAWSEIPAllocationsLBTypeChangeFromNLBToClassic(t *testing.T) {
+	t.Parallel()
+	if infraConfig.Status.PlatformStatus == nil {
+		t.Skip("test skipped on nil platform")
+	}
+	if infraConfig.Status.PlatformStatus.Type != configv1.AWSPlatformType {
+		t.Skipf("test skipped on platform %q", infraConfig.Status.PlatformStatus.Type)
+	}
+	if enabled, err := isFeatureGateEnabled(features.FeatureGateSetEIPForNLBIngressController); err != nil {
+		t.Fatalf("failed to get feature gate: %v", err)
+	} else if !enabled {
+		t.Skipf("test skipped because %q feature gate is not enabled", features.FeatureGateSetEIPForNLBIngressController)
+	}
+
+	// Create an ingress controller with EIPs mentioned in the Ingress Controller CR.
+	var eipAllocations []operatorv1.EIPAllocation
+
+	ec2ServiceClient := createEC2ServiceClient(t, infraConfig)
+	clusterName, err := getClusterName(infraConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vpcID, err := getVPCId(ec2ServiceClient, clusterName)
+	if err != nil {
+		t.Fatalf("failed to get VPC ID due to error: %v", err)
+	}
+	validEIPAllocations, err := createAWSEIPs(t, ec2ServiceClient, clusterName, vpcID)
+	if err != nil {
+		t.Fatalf("failed to create EIPs due to error: %v", err)
+	}
+	t.Cleanup(func() { assertEIPAllocationDeleted(t, ec2ServiceClient, 5*time.Minute, clusterName) })
+
+	for _, validEIPAllocation := range validEIPAllocations {
+		eipAllocations = append(eipAllocations, operatorv1.EIPAllocation(validEIPAllocation))
+	}
+
+	t.Logf("creating ingresscontroller with valid EIPs: %s", validEIPAllocations)
+	name := types.NamespacedName{Namespace: operatorNamespace, Name: "lbtypechange"}
+	domain := name.Name + "." + dnsConfig.Spec.BaseDomain
+	ic := newLoadBalancerController(name, domain)
+	ic.Spec.EndpointPublishingStrategy.LoadBalancer = &operatorv1.LoadBalancerStrategy{
+		Scope:               operatorv1.ExternalLoadBalancer,
+		DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
+		ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+			Type: operatorv1.AWSLoadBalancerProvider,
+			AWS: &operatorv1.AWSLoadBalancerParameters{
+				Type: operatorv1.AWSNetworkLoadBalancer,
+				NetworkLoadBalancerParameters: &operatorv1.AWSNetworkLoadBalancerParameters{
+					EIPAllocations: eipAllocations,
+				},
+			},
+		},
+	}
+
+	if err := kclient.Create(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to create ingresscontroller: %v", err)
+	}
+	t.Cleanup(func() {
+		assertIngressControllerDeleted(t, kclient, ic)
+		serviceName := controller.LoadBalancerServiceName(ic)
+		// Waits for the service to clean up so EIPs can be released in the next t.Cleanup.
+		if err := waitForIngressControllerServiceDeleted(t, ic, 4*time.Minute); err != nil {
+			t.Errorf("failed to delete IngressController service %s/%s due to error: %v", serviceName.Namespace, serviceName.Name, err)
+		}
+	})
+
+	// Wait for the load balancer and DNS to be ready.
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, availableNotProgressingConditionsForIngressControllerWithLoadBalancer...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	// Get ELB host name from the service status for use with verifyExternalIngressController.
+	// Using the ELB host name (not the IngressController wildcard domain) results in much quicker DNS resolution.
+	elbHostname := getIngressControllerLBAddress(t, ic)
+
+	// Ensure the expected eipAllocation annotation is on the service.
+	waitForLBAnnotation(t, ic, awsLBEIPAllocationAnnotation, true, ingress.JoinAWSEIPAllocations(eipAllocations, ","))
+
+	// Verify the eipAllocations status field is configured to what we expect.
+	verifyIngressControllerEIPAllocationStatus(t, name)
+
+	// Verify we can reach the NLB with the provided eipAllocations.
+	externalTestPodName := types.NamespacedName{Name: name.Name + "-external-verify", Namespace: name.Namespace}
+	testHostname := "apps." + ic.Spec.Domain
+	t.Logf("verifying external connectivity for ingresscontroller %q using an NLB with specified eipAllocations", ic.Name)
+	verifyExternalIngressController(t, externalTestPodName, testHostname, elbHostname)
+
+	// Now, update the IngressController to change from NLB to Classic LBType.
+	t.Logf("updating ingresscontroller %q to Classic LBType", ic.Name)
+	if err := updateIngressControllerWithRetryOnConflict(t, name, 5*time.Minute, func(ic *operatorv1.IngressController) {
+		ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.Type = operatorv1.AWSClassicLoadBalancer
+	}); err != nil {
+		t.Fatalf("failed to update ingresscontroller: %v", err)
+	}
+
+	//effectuateIngressControllerEIPAllocations(t, ic, nil, availableNotProgressingConditionsForIngressControllerWithLoadBalancer...)
+	// Wait for the load balancer and DNS to be ready.
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, availableNotProgressingConditionsForIngressControllerWithLoadBalancer...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	// Ensure the expected eipAllocation annotation is on the service.
+	waitForLBAnnotation(t, ic, awsLBEIPAllocationAnnotation, false, "")
+
+	// Get ELB host name from the service status for use with verifyExternalIngressController.
+	// Using the ELB host name (not the IngressController wildcard domain) results in much quicker DNS resolution.
+	elbHostname = getIngressControllerLBAddress(t, ic)
+
+	// Verify we can reach the CLB with the no eipAllocations.
+	externalTestPodName = types.NamespacedName{Name: name.Name + "-external-verify", Namespace: name.Namespace}
+	testHostname = "apps." + ic.Spec.Domain
+	t.Logf("verifying external connectivity for ingresscontroller %q using an NLB with specified eipAllocations", ic.Name)
+	verifyExternalIngressController(t, externalTestPodName, testHostname, elbHostname)
+}
+
 // TestUnmanagedAWSEIPAllocations tests compatibility for unmanaged service.beta.kubernetes.io/aws-load-balancer-eip-allocations
 // annotations on the IngressController service. This is done by directly configuring the annotation on the service
 // and then updating the IngressController to match the unmanaged eipAllocation annotation.
@@ -357,7 +472,7 @@ func effectuateIngressControllerEIPAllocations(t *testing.T, ic *operatorv1.Ingr
 	}
 
 	// Delete and recreate the IngressController service to effectuate.
-	t.Logf("recreating the service to effectuate the subnets: %s/%s", controller.LoadBalancerServiceName(ic).Namespace, controller.LoadBalancerServiceName(ic).Namespace)
+	t.Logf("recreating the service to effectuate the eipAllocations: %s/%s", controller.LoadBalancerServiceName(ic).Namespace, controller.LoadBalancerServiceName(ic).Namespace)
 	if err := recreateIngressControllerService(t, ic); err != nil {
 		t.Fatalf("failed to delete and recreate service: %v", err)
 	}
