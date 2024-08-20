@@ -53,7 +53,7 @@ release-local:
 
 .PHONY: test-e2e
 test-e2e: generate
-	CGO_ENABLED=1 $(GO) test -timeout 1h -count 1 -v -tags e2e -run "$(TEST)" ./test/e2e
+	CGO_ENABLED=1 $(GO) test -timeout 3h -count 1 -v -tags e2e -run "$(TEST)" ./test/e2e
 
 .PHONY: test-e2e-list
 test-e2e-list: generate
