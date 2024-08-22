@@ -258,14 +258,20 @@ func Test_createOrUpdateDNSRecord(t *testing.T) {
 			},
 		},
 		{
-			desc:    "list failure with 404",
-			DNSName: "testUpdate",
+			desc:         "list failure with 404",
+			DNSName:      "testCreate",
+			recordedCall: "CREATE",
 			listAllDnsRecordsInputOutput: dnsclient.ListAllDnsRecordsInputOutput{
 				OutputError:    errors.New("error in ListAllDnsRecords"),
 				OutputResponse: &core.DetailedResponse{StatusCode: http.StatusNotFound},
 				OutputResult: &dnsrecordsv1.ListDnsrecordsResp{
 					Result: []dnsrecordsv1.DnsrecordDetails{},
 				},
+			},
+			createDnsRecordInputOutput: dnsclient.CreateDnsRecordInputOutput{
+				InputId:        "testCreate",
+				OutputError:    nil,
+				OutputResponse: &core.DetailedResponse{StatusCode: http.StatusOK},
 			},
 		},
 		{
@@ -334,6 +340,21 @@ func Test_createOrUpdateDNSRecord(t *testing.T) {
 			expectErrorContains: "error in CreateDnsRecord",
 		},
 		{
+			desc:    "list success but missing ID",
+			DNSName: "testList",
+			listAllDnsRecordsInputOutput: dnsclient.ListAllDnsRecordsInputOutput{
+				OutputError:    nil,
+				OutputResponse: &core.DetailedResponse{StatusCode: http.StatusOK},
+				OutputResult: &dnsrecordsv1.ListDnsrecordsResp{
+					Result: []dnsrecordsv1.DnsrecordDetails{{
+						Name:    pointer.String("testList"),
+						Content: pointer.String("11.22.33.44"),
+					}},
+				},
+			},
+			expectErrorContains: "createOrUpdateDNSRecord: record id is nil",
+		},
+		{
 			desc:    "list success but nil results",
 			DNSName: "testList",
 			listAllDnsRecordsInputOutput: dnsclient.ListAllDnsRecordsInputOutput{
@@ -360,6 +381,7 @@ func Test_createOrUpdateDNSRecord(t *testing.T) {
 				OutputResponse: nil,
 				OutputResult:   &dnsrecordsv1.ListDnsrecordsResp{},
 			},
+			expectErrorContains: "createOrUpdateDNSRecord: failed to list the dns record: error in ListAllDnsRecords",
 		},
 		{
 			desc:                "empty DNSName",

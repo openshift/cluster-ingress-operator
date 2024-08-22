@@ -103,6 +103,9 @@ func (p *Provider) Delete(record *iov1.DNSRecord, zone configv1.DNSZone) error {
 
 	for _, resourceRecord := range result.ResourceRecords {
 		var resourceRecordTarget string
+		if resourceRecord.ID == nil {
+			return fmt.Errorf("delete: record id is nil")
+		}
 		rData, ok := resourceRecord.Rdata.(map[string]interface{})
 		if !ok {
 			return fmt.Errorf("delete: failed to get resource data: %v", resourceRecord.Rdata)
@@ -126,7 +129,8 @@ func (p *Provider) Delete(record *iov1.DNSRecord, zone configv1.DNSZone) error {
 		default:
 			return fmt.Errorf("delete: resource data has record with unknown type: %v", *resourceRecord.Type)
 		}
-
+		// While creating DNS records with multiple targets is unsupported, we still
+		// iterate through all targets during deletion to be extra cautious.
 		for _, target := range record.Spec.Targets {
 			if *resourceRecord.Name == dnsName {
 				if resourceRecordTarget != target {
@@ -190,9 +194,14 @@ func (p *Provider) createOrUpdateDNSRecord(record *iov1.DNSRecord, zone configv1
 		log.Info("Warning: TTL must be one of [1 60 120 300 600 900 1800 3600 7200 18000 43200]. RecordTTL set to default", "default DSNSVCS record TTL", defaultDNSSVCSRecordTTL)
 		record.Spec.RecordTTL = defaultDNSSVCSRecordTTL
 	}
+	if len(record.Spec.Targets) > 1 {
+		return fmt.Errorf("createOrUpdateDNSRecord: only one target is supported, but found %d: targets=%v", len(record.Spec.Targets), record.Spec.Targets)
+	}
 
 	listResult, response, err := p.dnsService.ListResourceRecords(listOpt)
 	if err != nil {
+		// Avoid continuing with an invalid list response, as we can't determine
+		// whether to create or update the DNS record, which may lead to further issues.
 		if response == nil || response.StatusCode != http.StatusNotFound {
 			return fmt.Errorf("createOrUpdateDNSRecord: failed to list the dns record: %w", err)
 		}
@@ -201,72 +210,74 @@ func (p *Provider) createOrUpdateDNSRecord(record *iov1.DNSRecord, zone configv1
 		return fmt.Errorf("createOrUpdateDNSRecord: ListResourceRecords returned nil as result")
 	}
 
-	for _, target := range record.Spec.Targets {
-		updated := false
-		for _, resourceRecord := range listResult.ResourceRecords {
-			if *resourceRecord.Name == dnsName {
-				updateOpt := p.dnsService.NewUpdateResourceRecordOptions(p.config.InstanceID, zone.ID, *resourceRecord.ID)
-				updateOpt.SetName(dnsName)
-
-				if resourceRecord.Type == nil {
-					return fmt.Errorf("createOrUpdateDNSRecord: failed to get resource type, resourceRecord.Type is nil")
-				}
-
-				// TODO DNS record update should handle the case where we have an A record and want a CNAME record or vice versa
-				switch *resourceRecord.Type {
-				case string(iov1.CNAMERecordType):
-					inputRData, err := p.dnsService.NewResourceRecordUpdateInputRdataRdataCnameRecord(target)
-					if err != nil {
-						return fmt.Errorf("createOrUpdateDNSRecord: failed to create CNAME inputRData for the dns record: %w", err)
-					}
-					updateOpt.SetRdata(inputRData)
-				case string(iov1.ARecordType):
-					inputRData, err := p.dnsService.NewResourceRecordUpdateInputRdataRdataARecord(target)
-					if err != nil {
-						return fmt.Errorf("createOrUpdateDNSRecord: failed to create A inputRData for the dns record: %w", err)
-					}
-					updateOpt.SetRdata(inputRData)
-				default:
-					return fmt.Errorf("createOrUpdateDNSRecord: resource data has record with unknown type: %v", *resourceRecord.Type)
-				}
-				updateOpt.SetTTL(record.Spec.RecordTTL)
-				_, _, err := p.dnsService.UpdateResourceRecord(updateOpt)
-				if err != nil {
-					return fmt.Errorf("createOrUpdateDNSRecord: failed to update the dns record: %w", err)
-				}
-				updated = true
-				log.Info("updated DNS record", "record", record.Spec, "zone", zone, "target", target)
+	target := record.Spec.Targets[0]
+	updated := false
+	for _, resourceRecord := range listResult.ResourceRecords {
+		if *resourceRecord.Name == dnsName {
+			if resourceRecord.ID == nil {
+				return fmt.Errorf("createOrUpdateDNSRecord: record id is nil")
 			}
-		}
-		if !updated {
-			createOpt := p.dnsService.NewCreateResourceRecordOptions(p.config.InstanceID, zone.ID)
-			createOpt.SetName(dnsName)
-			createOpt.SetType(string(record.Spec.RecordType))
+			updateOpt := p.dnsService.NewUpdateResourceRecordOptions(p.config.InstanceID, zone.ID, *resourceRecord.ID)
+			updateOpt.SetName(dnsName)
 
-			switch record.Spec.RecordType {
-			case iov1.CNAMERecordType:
-				inputRData, err := p.dnsService.NewResourceRecordInputRdataRdataCnameRecord(target)
+			if resourceRecord.Type == nil {
+				return fmt.Errorf("createOrUpdateDNSRecord: failed to get resource type, resourceRecord.Type is nil")
+			}
+
+			// TODO DNS record update should handle the case where we have an A record and want a CNAME record or vice versa
+			switch *resourceRecord.Type {
+			case string(iov1.CNAMERecordType):
+				inputRData, err := p.dnsService.NewResourceRecordUpdateInputRdataRdataCnameRecord(target)
 				if err != nil {
 					return fmt.Errorf("createOrUpdateDNSRecord: failed to create CNAME inputRData for the dns record: %w", err)
 				}
-				createOpt.SetRdata(inputRData)
-			case iov1.ARecordType:
-				inputRData, err := p.dnsService.NewResourceRecordInputRdataRdataARecord(target)
+				updateOpt.SetRdata(inputRData)
+			case string(iov1.ARecordType):
+				inputRData, err := p.dnsService.NewResourceRecordUpdateInputRdataRdataARecord(target)
 				if err != nil {
 					return fmt.Errorf("createOrUpdateDNSRecord: failed to create A inputRData for the dns record: %w", err)
 				}
-				createOpt.SetRdata(inputRData)
+				updateOpt.SetRdata(inputRData)
 			default:
-				return fmt.Errorf("createOrUpdateDNSRecord: resource data has record with unknown type: %v", record.Spec.RecordType)
-
+				return fmt.Errorf("createOrUpdateDNSRecord: resource data has record with unknown type: %v", *resourceRecord.Type)
 			}
-			createOpt.SetTTL(record.Spec.RecordTTL)
-			_, _, err := p.dnsService.CreateResourceRecord(createOpt)
+			updateOpt.SetTTL(record.Spec.RecordTTL)
+			_, _, err := p.dnsService.UpdateResourceRecord(updateOpt)
 			if err != nil {
-				return fmt.Errorf("createOrUpdateDNSRecord: failed to create the dns record: %w", err)
+				return fmt.Errorf("createOrUpdateDNSRecord: failed to update the dns record: %w", err)
 			}
-			log.Info("created DNS record", "record", record.Spec, "zone", zone, "target", target)
+			updated = true
+			log.Info("updated DNS record", "record", record.Spec, "zone", zone, "target", target)
 		}
+	}
+	if !updated {
+		createOpt := p.dnsService.NewCreateResourceRecordOptions(p.config.InstanceID, zone.ID)
+		createOpt.SetName(dnsName)
+		createOpt.SetType(string(record.Spec.RecordType))
+
+		switch record.Spec.RecordType {
+		case iov1.CNAMERecordType:
+			inputRData, err := p.dnsService.NewResourceRecordInputRdataRdataCnameRecord(target)
+			if err != nil {
+				return fmt.Errorf("createOrUpdateDNSRecord: failed to create CNAME inputRData for the dns record: %w", err)
+			}
+			createOpt.SetRdata(inputRData)
+		case iov1.ARecordType:
+			inputRData, err := p.dnsService.NewResourceRecordInputRdataRdataARecord(target)
+			if err != nil {
+				return fmt.Errorf("createOrUpdateDNSRecord: failed to create A inputRData for the dns record: %w", err)
+			}
+			createOpt.SetRdata(inputRData)
+		default:
+			return fmt.Errorf("createOrUpdateDNSRecord: resource data has record with unknown type: %v", record.Spec.RecordType)
+
+		}
+		createOpt.SetTTL(record.Spec.RecordTTL)
+		_, _, err := p.dnsService.CreateResourceRecord(createOpt)
+		if err != nil {
+			return fmt.Errorf("createOrUpdateDNSRecord: failed to create the dns record: %w", err)
+		}
+		log.Info("created DNS record", "record", record.Spec, "zone", zone, "target", target)
 	}
 	return nil
 }

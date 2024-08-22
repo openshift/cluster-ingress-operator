@@ -109,6 +109,23 @@ func Test_Delete(t *testing.T) {
 			expectErrorContains: "error in ListAllDnsRecords",
 		},
 		{
+			desc:    "list success but missing ID",
+			DNSName: "testList",
+			target:  "11.22.33.44",
+			listAllDnsRecordsInputOutput: dnsclient.ListAllDnsRecordsInputOutput{
+				OutputError:    nil,
+				OutputResponse: &core.DetailedResponse{StatusCode: http.StatusOK},
+				OutputResult: &dnssvcsv1.ListResourceRecords{
+					ResourceRecords: []dnssvcsv1.ResourceRecord{{
+						Name:  pointer.String("testList"),
+						Rdata: map[string]interface{}{"ip": "11.22.33.44"},
+						Type:  pointer.String(string(iov1.ARecordType)),
+					}},
+				},
+			},
+			expectErrorContains: "delete: record id is nil",
+		},
+		{
 			desc:         "delete failure with 404 (record disappears)",
 			recordedCall: "DELETE",
 			DNSName:      "testDelete",
@@ -359,6 +376,23 @@ func Test_createOrUpdateDNSRecord(t *testing.T) {
 			expectErrorContains: "error in ListAllDnsRecords",
 		},
 		{
+			desc:    "list success but missing ID",
+			DNSName: "testList",
+			target:  "11.22.33.44",
+			listAllDnsRecordsInputOutput: dnsclient.ListAllDnsRecordsInputOutput{
+				OutputError:    nil,
+				OutputResponse: &core.DetailedResponse{StatusCode: http.StatusRequestTimeout},
+				OutputResult: &dnssvcsv1.ListResourceRecords{
+					ResourceRecords: []dnssvcsv1.ResourceRecord{{
+						Name:  pointer.String("testList"),
+						Rdata: map[string]interface{}{"ip": "11.22.33.44"},
+						Type:  pointer.String(string(iov1.ARecordType)),
+					}},
+				},
+			},
+			expectErrorContains: "createOrUpdateDNSRecord: record id is nil",
+		},
+		{
 			desc:         "update error",
 			DNSName:      "testUpdate",
 			target:       "11.22.33.44",
@@ -441,7 +475,7 @@ func Test_createOrUpdateDNSRecord(t *testing.T) {
 			expectErrorContains: "createOrUpdateDNSRecord: ListResourceRecords returned nil as result",
 		},
 		{
-			desc:         "list success but nil dns record list",
+			desc:         "list success but empty target",
 			DNSName:      "testCreate",
 			recordedCall: "CREATE",
 			listAllDnsRecordsInputOutput: dnsclient.ListAllDnsRecordsInputOutput{
