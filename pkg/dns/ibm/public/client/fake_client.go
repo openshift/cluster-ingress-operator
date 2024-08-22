@@ -10,25 +10,33 @@ import (
 type FakeDnsClient struct {
 	CallHistory                  map[string]string
 	DeleteDnsRecordInputOutput   DeleteDnsRecordInputOutput
+	CreateDnsRecordInputOutput   CreateDnsRecordInputOutput
 	ListAllDnsRecordsInputOutput ListAllDnsRecordsInputOutput
 	UpdateDnsRecordInputOutput   UpdateDnsRecordInputOutput
 }
 
 type DeleteDnsRecordInputOutput struct {
-	InputId          string
-	OutputError      error
-	OutputStatusCode int
+	InputId        string
+	OutputError    error
+	OutputResponse *core.DetailedResponse
 }
 
 type UpdateDnsRecordInputOutput struct {
-	InputId          string
-	OutputError      error
-	OutputStatusCode int
+	InputId        string
+	OutputError    error
+	OutputResponse *core.DetailedResponse
+}
+
+type CreateDnsRecordInputOutput struct {
+	InputId        string
+	OutputError    error
+	OutputResponse *core.DetailedResponse
 }
 
 type ListAllDnsRecordsInputOutput struct {
-	OutputError      error
-	OutputStatusCode int
+	OutputResult   *dnsrecordsv1.ListDnsrecordsResp
+	OutputError    error
+	OutputResponse *core.DetailedResponse
 }
 
 func NewFake() (*FakeDnsClient, error) {
@@ -45,54 +53,41 @@ func (c *FakeDnsClient) ClearCallHistory() {
 }
 
 func (fdc FakeDnsClient) ListAllDnsRecords(listAllDnsRecordsOptions *dnsrecordsv1.ListAllDnsRecordsOptions) (result *dnsrecordsv1.ListDnsrecordsResp, response *core.DetailedResponse, err error) {
-	fakeListDnsrecordsResp := &dnsrecordsv1.ListDnsrecordsResp{}
-
-	fakeListDnsrecordsResp.Result = append(fakeListDnsrecordsResp.Result, dnsrecordsv1.DnsrecordDetails{ID: listAllDnsRecordsOptions.Name})
-
-	resp := &core.DetailedResponse{
-		StatusCode: fdc.ListAllDnsRecordsInputOutput.OutputStatusCode,
-		Headers:    map[string][]string{},
-		Result:     result,
-		RawResult:  []byte{},
-	}
-
-	return fakeListDnsrecordsResp, resp, fdc.ListAllDnsRecordsInputOutput.OutputError
+	// Return the fields in ListAllDnsRecordsInputOutput which will be populated in each of the unit test cases.
+	return fdc.ListAllDnsRecordsInputOutput.OutputResult, fdc.ListAllDnsRecordsInputOutput.OutputResponse, fdc.ListAllDnsRecordsInputOutput.OutputError
 }
 
-func (FakeDnsClient) CreateDnsRecord(createDnsRecordOptions *dnsrecordsv1.CreateDnsRecordOptions) (result *dnsrecordsv1.DnsrecordResp, response *core.DetailedResponse, err error) {
-	return nil, nil, nil
+func (fdc FakeDnsClient) CreateDnsRecord(createDnsRecordOptions *dnsrecordsv1.CreateDnsRecordOptions) (result *dnsrecordsv1.DnsrecordResp, response *core.DetailedResponse, err error) {
+	// Check InputID against the incoming createDnsRecordOptions to ensure the
+	// createOrUpdateDNSRecord method is using the correct record name in createDnsRecordOptions.
+	if fdc.CreateDnsRecordInputOutput.InputId != *createDnsRecordOptions.Name {
+		return nil, nil, errors.New("createDnsRecord: inputs don't match")
+	}
+
+	fdc.CallHistory[*createDnsRecordOptions.Name] = "CREATE"
+	return nil, fdc.CreateDnsRecordInputOutput.OutputResponse, fdc.CreateDnsRecordInputOutput.OutputError
 }
 
 func (fdc FakeDnsClient) DeleteDnsRecord(deleteDnsRecordOptions *dnsrecordsv1.DeleteDnsRecordOptions) (result *dnsrecordsv1.DeleteDnsrecordResp, response *core.DetailedResponse, err error) {
+	// Check InputID against the incoming deleteDnsRecordOptions to ensure the
+	// Delete method is using the correct dnsrecordIdentifier in deleteDnsRecordOptions.
 	if fdc.DeleteDnsRecordInputOutput.InputId != *deleteDnsRecordOptions.DnsrecordIdentifier {
 		return nil, nil, errors.New("deleteDnsRecord: inputs don't match")
 	}
 
-	resp := &core.DetailedResponse{
-		StatusCode: fdc.DeleteDnsRecordInputOutput.OutputStatusCode,
-		Headers:    map[string][]string{},
-		Result:     result,
-		RawResult:  []byte{},
-	}
-
 	fdc.CallHistory[*deleteDnsRecordOptions.DnsrecordIdentifier] = "DELETE"
-	return nil, resp, fdc.DeleteDnsRecordInputOutput.OutputError
+	return nil, fdc.DeleteDnsRecordInputOutput.OutputResponse, fdc.DeleteDnsRecordInputOutput.OutputError
 }
 
 func (fdc FakeDnsClient) UpdateDnsRecord(updateDnsRecordOptions *dnsrecordsv1.UpdateDnsRecordOptions) (result *dnsrecordsv1.DnsrecordResp, response *core.DetailedResponse, err error) {
+	// Check InputID against the incoming updateDnsRecordOptions to ensure the
+	// createOrUpdateDNSRecord method is using the correct dnsrecordIdentifier in updateDnsRecordOptions.
 	if fdc.UpdateDnsRecordInputOutput.InputId != *updateDnsRecordOptions.DnsrecordIdentifier {
 		return nil, nil, errors.New("updateDnsRecord: inputs don't match")
 	}
 
-	resp := &core.DetailedResponse{
-		StatusCode: fdc.UpdateDnsRecordInputOutput.OutputStatusCode,
-		Headers:    map[string][]string{},
-		Result:     result,
-		RawResult:  []byte{},
-	}
-
 	fdc.CallHistory[*updateDnsRecordOptions.DnsrecordIdentifier] = "PUT"
-	return nil, resp, fdc.UpdateDnsRecordInputOutput.OutputError
+	return nil, fdc.UpdateDnsRecordInputOutput.OutputResponse, fdc.UpdateDnsRecordInputOutput.OutputError
 }
 
 func (FakeDnsClient) NewCreateDnsRecordOptions() *dnsrecordsv1.CreateDnsRecordOptions {

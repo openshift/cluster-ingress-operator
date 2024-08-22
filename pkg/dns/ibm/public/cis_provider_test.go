@@ -6,11 +6,16 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/IBM/go-sdk-core/v5/core"
+	"github.com/IBM/networking-go-sdk/dnsrecordsv1"
+
 	configv1 "github.com/openshift/api/config/v1"
 	iov1 "github.com/openshift/api/operatoringress/v1"
+	dnsclient "github.com/openshift/cluster-ingress-operator/pkg/dns/ibm/public/client"
+
 	"github.com/stretchr/testify/assert"
 
-	dnsclient "github.com/openshift/cluster-ingress-operator/pkg/dns/ibm/public/client"
+	"k8s.io/utils/pointer"
 )
 
 func Test_Delete(t *testing.T) {
@@ -37,70 +42,132 @@ func Test_Delete(t *testing.T) {
 		expectErrorContains          string
 	}{
 		{
-			desc:         "happy path",
+			desc:         "delete happy path",
 			DNSName:      "testDelete",
 			recordedCall: "DELETE",
 			listAllDnsRecordsInputOutput: dnsclient.ListAllDnsRecordsInputOutput{
-				OutputError:      nil,
-				OutputStatusCode: http.StatusOK,
+				OutputError:    nil,
+				OutputResponse: &core.DetailedResponse{StatusCode: http.StatusOK},
+				OutputResult: &dnsrecordsv1.ListDnsrecordsResp{
+					Result: []dnsrecordsv1.DnsrecordDetails{{
+						ID:      pointer.String("testDelete"),
+						Name:    pointer.String("testDelete"),
+						Content: pointer.String("11.22.33.44"),
+					}},
+				},
 			},
 			deleteDnsRecordInputOutput: dnsclient.DeleteDnsRecordInputOutput{
-				InputId:          "testDelete",
-				OutputError:      nil,
-				OutputStatusCode: http.StatusOK,
+				InputId:        "testDelete",
+				OutputError:    nil,
+				OutputResponse: &core.DetailedResponse{StatusCode: http.StatusOK},
 			},
 		},
 		{
-			desc:         "listFailNotFound",
-			DNSName:      "testDelete",
-			recordedCall: "DELETE",
-			listAllDnsRecordsInputOutput: dnsclient.ListAllDnsRecordsInputOutput{
-				OutputError:      nil,
-				OutputStatusCode: http.StatusNotFound,
-			},
-			deleteDnsRecordInputOutput: dnsclient.DeleteDnsRecordInputOutput{
-				InputId:          "testDelete",
-				OutputError:      nil,
-				OutputStatusCode: http.StatusOK,
-			},
-		},
-		{
-			desc:    "listFailError",
+			desc:    "list failure with 404",
 			DNSName: "testDelete",
 			listAllDnsRecordsInputOutput: dnsclient.ListAllDnsRecordsInputOutput{
-				OutputError:      errors.New("error in ListAllDnsRecords"),
-				OutputStatusCode: http.StatusRequestTimeout,
+				OutputError:    errors.New("error in ListAllDnsRecords"),
+				OutputResponse: &core.DetailedResponse{StatusCode: http.StatusNotFound},
+				OutputResult: &dnsrecordsv1.ListDnsrecordsResp{
+					Result: []dnsrecordsv1.DnsrecordDetails{{}},
+				},
+			},
+		},
+		{
+			desc:    "list failure (fake timeout)",
+			DNSName: "testDelete",
+			listAllDnsRecordsInputOutput: dnsclient.ListAllDnsRecordsInputOutput{
+				OutputError:    errors.New("error in ListAllDnsRecords"),
+				OutputResponse: &core.DetailedResponse{StatusCode: http.StatusRequestTimeout},
 			},
 			expectErrorContains: "error in ListAllDnsRecords",
 		},
 		{
-			desc:         "deleteRecordNotFound",
+			desc:         "delete failure with 404 (record disappears)",
 			DNSName:      "testDelete",
 			recordedCall: "DELETE",
 			listAllDnsRecordsInputOutput: dnsclient.ListAllDnsRecordsInputOutput{
-				OutputError:      nil,
-				OutputStatusCode: http.StatusOK,
+				OutputError:    nil,
+				OutputResponse: &core.DetailedResponse{StatusCode: http.StatusOK},
+				OutputResult: &dnsrecordsv1.ListDnsrecordsResp{
+					Result: []dnsrecordsv1.DnsrecordDetails{{
+						ID:      pointer.String("testDelete"),
+						Name:    pointer.String("testDelete"),
+						Content: pointer.String("11.22.33.44"),
+					}},
+				},
 			},
 			deleteDnsRecordInputOutput: dnsclient.DeleteDnsRecordInputOutput{
-				InputId:          "testDelete",
-				OutputError:      errors.New("error in DeleteDnsRecord"),
-				OutputStatusCode: http.StatusNotFound,
+				InputId:        "testDelete",
+				OutputError:    errors.New("error in DeleteDnsRecord"),
+				OutputResponse: &core.DetailedResponse{StatusCode: http.StatusNotFound},
 			},
 		},
 		{
-			desc:         "deleteError",
+			desc:         "delete failure (fake timeout)",
 			DNSName:      "testDelete",
 			recordedCall: "DELETE",
 			listAllDnsRecordsInputOutput: dnsclient.ListAllDnsRecordsInputOutput{
-				OutputError:      nil,
-				OutputStatusCode: http.StatusOK,
+				OutputError:    nil,
+				OutputResponse: &core.DetailedResponse{StatusCode: http.StatusOK},
+				OutputResult: &dnsrecordsv1.ListDnsrecordsResp{
+					Result: []dnsrecordsv1.DnsrecordDetails{{
+						ID:      pointer.String("testDelete"),
+						Name:    pointer.String("testDelete"),
+						Content: pointer.String("11.22.33.44"),
+					}},
+				},
 			},
 			deleteDnsRecordInputOutput: dnsclient.DeleteDnsRecordInputOutput{
-				InputId:          "testDelete",
-				OutputError:      errors.New("error in DeleteDnsRecord"),
-				OutputStatusCode: http.StatusRequestTimeout,
+				InputId:        "testDelete",
+				OutputError:    errors.New("error in DeleteDnsRecord"),
+				OutputResponse: &core.DetailedResponse{StatusCode: http.StatusRequestTimeout},
 			},
 			expectErrorContains: "error in DeleteDnsRecord",
+		},
+		{
+			desc:    "list success but missing ID",
+			DNSName: "testDelete",
+			listAllDnsRecordsInputOutput: dnsclient.ListAllDnsRecordsInputOutput{
+				OutputError:    nil,
+				OutputResponse: &core.DetailedResponse{StatusCode: http.StatusOK},
+				OutputResult: &dnsrecordsv1.ListDnsrecordsResp{
+					Result: []dnsrecordsv1.DnsrecordDetails{{
+						Name:    pointer.String("testDelete"),
+						Content: pointer.String("11.22.33.44"),
+					}},
+				},
+			},
+			expectErrorContains: "delete: record id is nil",
+		},
+		{
+			desc:    "list success but nil results",
+			DNSName: "testDelete",
+			listAllDnsRecordsInputOutput: dnsclient.ListAllDnsRecordsInputOutput{
+				OutputError:    nil,
+				OutputResponse: &core.DetailedResponse{StatusCode: http.StatusOK},
+			},
+			expectErrorContains: "delete: ListAllDnsRecords returned nil as result",
+		},
+		{
+			desc:    "list success but nil dns record list",
+			DNSName: "testDelete",
+			listAllDnsRecordsInputOutput: dnsclient.ListAllDnsRecordsInputOutput{
+				OutputError:    nil,
+				OutputResponse: &core.DetailedResponse{StatusCode: http.StatusOK},
+				OutputResult:   &dnsrecordsv1.ListDnsrecordsResp{},
+			},
+			expectErrorContains: "delete: ListAllDnsRecords returned nil as result",
+		},
+		{
+			desc:    "list failure and nil response",
+			DNSName: "testDelete",
+			listAllDnsRecordsInputOutput: dnsclient.ListAllDnsRecordsInputOutput{
+				OutputError:    errors.New("error in ListAllDnsRecords"),
+				OutputResponse: nil,
+				OutputResult:   &dnsrecordsv1.ListDnsrecordsResp{},
+			},
+			expectErrorContains: "delete: failed to list the dns record: error in ListAllDnsRecords",
 		},
 		{
 			desc:                "empty DNSName",
@@ -166,53 +233,133 @@ func Test_createOrUpdateDNSRecord(t *testing.T) {
 		recordedCall                 string
 		listAllDnsRecordsInputOutput dnsclient.ListAllDnsRecordsInputOutput
 		updateDnsRecordInputOutput   dnsclient.UpdateDnsRecordInputOutput
+		createDnsRecordInputOutput   dnsclient.CreateDnsRecordInputOutput
 		expectErrorContains          string
 	}{
 		{
-			desc:         "happy path",
+			desc:         "update happy path",
 			DNSName:      "testUpdate",
 			recordedCall: "PUT",
 			listAllDnsRecordsInputOutput: dnsclient.ListAllDnsRecordsInputOutput{
-				OutputError:      nil,
-				OutputStatusCode: http.StatusOK,
+				OutputError:    nil,
+				OutputResponse: &core.DetailedResponse{StatusCode: http.StatusOK},
+				OutputResult: &dnsrecordsv1.ListDnsrecordsResp{
+					Result: []dnsrecordsv1.DnsrecordDetails{{
+						ID:      pointer.String("testUpdate"),
+						Name:    pointer.String("testUpdate"),
+						Content: pointer.String("11.22.33.44"),
+					}},
+				},
 			},
 			updateDnsRecordInputOutput: dnsclient.UpdateDnsRecordInputOutput{
-				InputId:          "testUpdate",
-				OutputError:      nil,
-				OutputStatusCode: http.StatusOK,
+				InputId:        "testUpdate",
+				OutputError:    nil,
+				OutputResponse: &core.DetailedResponse{StatusCode: http.StatusOK},
 			},
 		},
 		{
-			desc:    "listFail",
+			desc:    "list failure with 404",
 			DNSName: "testUpdate",
 			listAllDnsRecordsInputOutput: dnsclient.ListAllDnsRecordsInputOutput{
-				OutputError:      errors.New("error in ListAllDnsRecords"),
-				OutputStatusCode: http.StatusNotFound,
+				OutputError:    errors.New("error in ListAllDnsRecords"),
+				OutputResponse: &core.DetailedResponse{StatusCode: http.StatusNotFound},
+				OutputResult: &dnsrecordsv1.ListDnsrecordsResp{
+					Result: []dnsrecordsv1.DnsrecordDetails{},
+				},
 			},
 		},
 		{
-			desc:    "listFailError",
+			desc:    "list failure (fake timeout)",
 			DNSName: "testUpdate",
 			listAllDnsRecordsInputOutput: dnsclient.ListAllDnsRecordsInputOutput{
-				OutputError:      errors.New("error in ListAllDnsRecords"),
-				OutputStatusCode: http.StatusRequestTimeout,
+				OutputError:    errors.New("error in ListAllDnsRecords"),
+				OutputResponse: &core.DetailedResponse{StatusCode: http.StatusRequestTimeout},
 			},
 			expectErrorContains: "error in ListAllDnsRecords",
 		},
 		{
-			desc:         "updateError",
+			desc:         "update error",
 			DNSName:      "testUpdate",
 			recordedCall: "PUT",
 			listAllDnsRecordsInputOutput: dnsclient.ListAllDnsRecordsInputOutput{
-				OutputError:      nil,
-				OutputStatusCode: http.StatusOK,
+				OutputError:    nil,
+				OutputResponse: &core.DetailedResponse{StatusCode: http.StatusOK},
+				OutputResult: &dnsrecordsv1.ListDnsrecordsResp{
+					Result: []dnsrecordsv1.DnsrecordDetails{{
+						ID:      pointer.String("testUpdate"),
+						Name:    pointer.String("testUpdate"),
+						Content: pointer.String("11.22.33.44"),
+					}},
+				},
 			},
 			updateDnsRecordInputOutput: dnsclient.UpdateDnsRecordInputOutput{
-				InputId:          "testUpdate",
-				OutputError:      errors.New("error in UpdateDnsRecord"),
-				OutputStatusCode: http.StatusRequestTimeout,
+				InputId:        "testUpdate",
+				OutputError:    errors.New("error in UpdateDnsRecord"),
+				OutputResponse: &core.DetailedResponse{StatusCode: http.StatusRequestTimeout},
 			},
 			expectErrorContains: "error in UpdateDnsRecord",
+		},
+		{
+			desc:         "create happy path",
+			DNSName:      "testCreate",
+			recordedCall: "CREATE",
+			listAllDnsRecordsInputOutput: dnsclient.ListAllDnsRecordsInputOutput{
+				OutputError:    nil,
+				OutputResponse: &core.DetailedResponse{StatusCode: http.StatusOK},
+				OutputResult: &dnsrecordsv1.ListDnsrecordsResp{
+					Result: []dnsrecordsv1.DnsrecordDetails{},
+				},
+			},
+			createDnsRecordInputOutput: dnsclient.CreateDnsRecordInputOutput{
+				InputId:        "testCreate",
+				OutputError:    nil,
+				OutputResponse: &core.DetailedResponse{StatusCode: http.StatusOK},
+			},
+		},
+		{
+			desc:         "create error",
+			DNSName:      "testCreate",
+			recordedCall: "CREATE",
+			listAllDnsRecordsInputOutput: dnsclient.ListAllDnsRecordsInputOutput{
+				OutputError:    nil,
+				OutputResponse: &core.DetailedResponse{StatusCode: http.StatusOK},
+				OutputResult: &dnsrecordsv1.ListDnsrecordsResp{
+					Result: []dnsrecordsv1.DnsrecordDetails{},
+				}},
+			createDnsRecordInputOutput: dnsclient.CreateDnsRecordInputOutput{
+				InputId:        "testCreate",
+				OutputError:    errors.New("error in CreateDnsRecord"),
+				OutputResponse: &core.DetailedResponse{StatusCode: http.StatusRequestTimeout},
+			},
+			expectErrorContains: "error in CreateDnsRecord",
+		},
+		{
+			desc:    "list success but nil results",
+			DNSName: "testList",
+			listAllDnsRecordsInputOutput: dnsclient.ListAllDnsRecordsInputOutput{
+				OutputError:    nil,
+				OutputResponse: &core.DetailedResponse{StatusCode: http.StatusOK},
+			},
+			expectErrorContains: "createOrUpdateDNSRecord: ListAllDnsRecords returned nil as result",
+		},
+		{
+			desc:    "list success but nil dns record list",
+			DNSName: "testList",
+			listAllDnsRecordsInputOutput: dnsclient.ListAllDnsRecordsInputOutput{
+				OutputError:    nil,
+				OutputResponse: &core.DetailedResponse{StatusCode: http.StatusOK},
+				OutputResult:   &dnsrecordsv1.ListDnsrecordsResp{},
+			},
+			expectErrorContains: "createOrUpdateDNSRecord: ListAllDnsRecords returned nil as result",
+		},
+		{
+			desc:    "list failure and nil response",
+			DNSName: "testList",
+			listAllDnsRecordsInputOutput: dnsclient.ListAllDnsRecordsInputOutput{
+				OutputError:    errors.New("error in ListAllDnsRecords"),
+				OutputResponse: nil,
+				OutputResult:   &dnsrecordsv1.ListDnsrecordsResp{},
+			},
 		},
 		{
 			desc:                "empty DNSName",
@@ -234,8 +381,8 @@ func Test_createOrUpdateDNSRecord(t *testing.T) {
 				},
 			}
 			dnsService.ListAllDnsRecordsInputOutput = tc.listAllDnsRecordsInputOutput
-
 			dnsService.UpdateDnsRecordInputOutput = tc.updateDnsRecordInputOutput
+			dnsService.CreateDnsRecordInputOutput = tc.createDnsRecordInputOutput
 
 			err = provider.createOrUpdateDNSRecord(&record, zone)
 
