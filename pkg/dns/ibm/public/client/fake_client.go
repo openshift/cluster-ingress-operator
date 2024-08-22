@@ -40,6 +40,10 @@ func (c *FakeDnsClient) RecordedCall(zoneID string) (string, bool) {
 	return call, ok
 }
 
+func (c *FakeDnsClient) ClearCallHistory() {
+	c.CallHistory = map[string]string{}
+}
+
 func (fdc FakeDnsClient) ListAllDnsRecords(listAllDnsRecordsOptions *dnsrecordsv1.ListAllDnsRecordsOptions) (result *dnsrecordsv1.ListDnsrecordsResp, response *core.DetailedResponse, err error) {
 	fakeListDnsrecordsResp := &dnsrecordsv1.ListDnsrecordsResp{}
 

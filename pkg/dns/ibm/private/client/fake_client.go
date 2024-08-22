@@ -43,6 +43,10 @@ func (c *FakeDnsClient) RecordedCall(zoneID string) (string, bool) {
 	return call, ok
 }
 
+func (c *FakeDnsClient) ClearCallHistory() {
+	c.CallHistory = map[string]string{}
+}
+
 func (FakeDnsClient) NewListResourceRecordsOptions(instanceID string, dnszoneID string) *dnssvcsv1.ListResourceRecordsOptions {
 	return &dnssvcsv1.ListResourceRecordsOptions{}
 }

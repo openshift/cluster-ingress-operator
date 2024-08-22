@@ -65,17 +65,11 @@ func Test_Delete(t *testing.T) {
 			},
 		},
 		{
-			desc:         "listFailError",
-			DNSName:      "testDelete",
-			recordedCall: "DELETE",
+			desc:    "listFailError",
+			DNSName: "testDelete",
 			listAllDnsRecordsInputOutput: dnsclient.ListAllDnsRecordsInputOutput{
 				OutputError:      errors.New("error in ListAllDnsRecords"),
 				OutputStatusCode: http.StatusRequestTimeout,
-			},
-			deleteDnsRecordInputOutput: dnsclient.DeleteDnsRecordInputOutput{
-				InputId:          "testDelete",
-				OutputError:      nil,
-				OutputStatusCode: http.StatusOK,
 			},
 			expectErrorContains: "error in ListAllDnsRecords",
 		},
@@ -117,6 +111,7 @@ func Test_Delete(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		t.Run(tc.desc, func(t *testing.T) {
+			dnsService.ClearCallHistory()
 
 			record := iov1.DNSRecord{
 				Spec: iov1.DNSRecordSpec{
@@ -188,23 +183,16 @@ func Test_createOrUpdateDNSRecord(t *testing.T) {
 			},
 		},
 		{
-			desc:         "listFail",
-			DNSName:      "testUpdate",
-			recordedCall: "PUT",
+			desc:    "listFail",
+			DNSName: "testUpdate",
 			listAllDnsRecordsInputOutput: dnsclient.ListAllDnsRecordsInputOutput{
-				OutputError:      errors.New("Error in ListAllDnsRecords"),
+				OutputError:      errors.New("error in ListAllDnsRecords"),
 				OutputStatusCode: http.StatusNotFound,
-			},
-			updateDnsRecordInputOutput: dnsclient.UpdateDnsRecordInputOutput{
-				InputId:          "testUpdate",
-				OutputError:      nil,
-				OutputStatusCode: http.StatusOK,
 			},
 		},
 		{
-			desc:         "listFailError",
-			DNSName:      "testUpdate",
-			recordedCall: "PUT",
+			desc:    "listFailError",
+			DNSName: "testUpdate",
 			listAllDnsRecordsInputOutput: dnsclient.ListAllDnsRecordsInputOutput{
 				OutputError:      errors.New("error in ListAllDnsRecords"),
 				OutputStatusCode: http.StatusRequestTimeout,
@@ -235,6 +223,7 @@ func Test_createOrUpdateDNSRecord(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		t.Run(tc.desc, func(t *testing.T) {
+			dnsService.ClearCallHistory()
 
 			record := iov1.DNSRecord{
 				Spec: iov1.DNSRecordSpec{
@@ -244,7 +233,6 @@ func Test_createOrUpdateDNSRecord(t *testing.T) {
 					RecordTTL:  120,
 				},
 			}
-
 			dnsService.ListAllDnsRecordsInputOutput = tc.listAllDnsRecordsInputOutput
 
 			dnsService.UpdateDnsRecordInputOutput = tc.updateDnsRecordInputOutput
