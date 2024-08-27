@@ -1034,8 +1034,13 @@ func TestDesiredRouterDeploymentSingleReplica(t *testing.T) {
 		t.Errorf("expected no pod affinity, got %+v", *deployment.Spec.Template.Spec.Affinity)
 	}
 
-	if deployment.Spec.Strategy.Type != "" || deployment.Spec.Strategy.RollingUpdate != nil {
-		t.Errorf("expected default deployment strategy, got %s", deployment.Spec.Strategy.Type)
+	if deployment.Spec.Strategy.Type != appsv1.RollingUpdateDeploymentStrategyType ||
+		deployment.Spec.Strategy.RollingUpdate == nil ||
+		deployment.Spec.Strategy.RollingUpdate.MaxUnavailable == nil ||
+		deployment.Spec.Strategy.RollingUpdate.MaxSurge == nil ||
+		*deployment.Spec.Strategy.RollingUpdate.MaxUnavailable != intstr.FromString("25%") ||
+		*deployment.Spec.Strategy.RollingUpdate.MaxSurge != intstr.FromString("25%") {
+		t.Errorf("expected default deployment strategy, got %+v", deployment.Spec.Strategy)
 	}
 }
 

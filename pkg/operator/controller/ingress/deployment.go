@@ -309,7 +309,16 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		// because we need the rule on multi-node clusters, even if
 		// desiredReplicas is 1, so that a rolling update schedules
 		// the new pod to the same node as the old pod.
+		pointerTo := func(ios intstr.IntOrString) *intstr.IntOrString { return &ios }
 		if singleReplica(ingressConfig, infraConfig) {
+			// We must explicitly set deployment strategy to the kube defaults to avoid a reconcile loop
+			deployment.Spec.Strategy = appsv1.DeploymentStrategy{
+				Type: appsv1.RollingUpdateDeploymentStrategyType,
+				RollingUpdate: &appsv1.RollingUpdateDeployment{
+					MaxUnavailable: pointerTo(intstr.FromString("25%")),
+					MaxSurge:       pointerTo(intstr.FromString("25%")),
+				},
+			}
 			break
 		}
 
@@ -327,7 +336,6 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		if desiredReplicas >= 4 {
 			maxUnavailable = "25%"
 		}
-		pointerTo := func(ios intstr.IntOrString) *intstr.IntOrString { return &ios }
 		deployment.Spec.Strategy = appsv1.DeploymentStrategy{
 			Type: appsv1.RollingUpdateDeploymentStrategyType,
 			RollingUpdate: &appsv1.RollingUpdateDeployment{
