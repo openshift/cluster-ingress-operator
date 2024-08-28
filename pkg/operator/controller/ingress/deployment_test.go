@@ -11,6 +11,7 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
+	securityv1 "github.com/openshift/api/security/v1"
 
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
@@ -488,7 +489,7 @@ func TestDesiredRouterDeploymentSpecTemplate(t *testing.T) {
 		}
 	}
 
-	if expected, got := 1, len(deployment.Spec.Template.Annotations); expected != got {
+	if expected, got := 2, len(deployment.Spec.Template.Annotations); expected != got {
 		t.Errorf("expected len(annotations)=%v, got %v", expected, got)
 	}
 
@@ -500,6 +501,16 @@ func TestDesiredRouterDeploymentSpecTemplate(t *testing.T) {
 		t.Errorf("missing annotation %q", WorkloadPartitioningManagement)
 	} else if expected := "{\"effect\": \"PreferredDuringScheduling\"}"; expected != val {
 		t.Errorf("expected annotation %q to be %q, got %q", WorkloadPartitioningManagement, expected, val)
+	}
+
+	expected := "restricted"
+	if ic.Status.EndpointPublishingStrategy.Type == operatorv1.HostNetworkStrategyType {
+		expected = "hostnetwork"
+	}
+	if val, ok := deployment.Spec.Template.Annotations[securityv1.RequiredSCCAnnotation]; !ok {
+		t.Errorf("missing annotation %q", securityv1.RequiredSCCAnnotation)
+	} else if expected != val {
+		t.Errorf("expected annotation %q to be %q, got %q", securityv1.RequiredSCCAnnotation, expected, val)
 	}
 
 	if deployment.Spec.Template.Spec.HostNetwork != false {
