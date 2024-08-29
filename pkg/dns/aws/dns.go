@@ -207,6 +207,8 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 		elbFound := false
 		tagFound := false
 		for _, ep := range config.ServiceEndpoints {
+			// TODO: Add custom endpoint support for elbv2. See the following for details:
+			// https://docs.aws.amazon.com/general/latest/gr/elb.html
 			switch {
 			case route53Found && elbFound && tagFound:
 				break
@@ -240,9 +242,7 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 		tags = resourcegroupstaggingapi.New(sess, tagConfig)
 	}
 	p := &Provider{
-		elb: elb.New(sess, elbConfig),
-		// TODO: Add custom endpoint support for elbv2. See the following for details:
-		// https://docs.aws.amazon.com/general/latest/gr/elb.html
+		elb:       elb.New(sess, elbConfig),
 		elbv2:     elbv2.New(sess, aws.NewConfig().WithRegion(region)),
 		route53:   route53.New(sessRoute53, r53Config),
 		tags:      tags,
