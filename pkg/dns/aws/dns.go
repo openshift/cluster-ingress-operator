@@ -213,10 +213,10 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 			case Route53Service:
 				route53Found = true
 				r53Config = r53Config.WithEndpoint(ep.URL)
-				log.Info("using route53 custom endpoint", "url", ep.URL)
+				log.Info("Found route53 custom endpoint", "url", ep.URL)
 			case TaggingService:
 				if tagConfig == nil {
-					log.Info("found resourcegroupstaggingapi custom endpoint which will be ignored since the %s region does not support that API", region)
+					log.Info(fmt.Sprintf("Found resourcegroupstaggingapi custom endpoint, which will be ignored since the %s region does not support that API", region))
 					continue
 				}
 				tagFound = true
@@ -227,11 +227,11 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 					url = govCloudTaggingEndpoint
 				}
 				tagConfig = tagConfig.WithEndpoint(url)
-				log.Info("using group tagging custom endpoint", "url", url)
+				log.Info("Found resourcegroupstaggingapi custom endpoint", "url", url)
 			case ELBService:
 				elbFound = true
 				elbConfig = elbConfig.WithEndpoint(ep.URL)
-				log.Info("using elb custom endpoint", "url", ep.URL)
+				log.Info("Found elb custom endpoint", "url", ep.URL)
 			}
 			// Once the three service endpoints have been found,
 			// ignore any further service endpoint specifications.
