@@ -166,6 +166,7 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 	r53Config := aws.NewConfig()
 	// elb requires no special region treatment.
 	elbConfig := aws.NewConfig().WithRegion(region)
+	elbv2Config := aws.NewConfig().WithRegion(region)
 	tagConfig := aws.NewConfig()
 
 	partition, ok := endpoints.PartitionForRegion(endpoints.DefaultPartitions(), region)
@@ -241,13 +242,22 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 		}
 	}
 	var tags *resourcegroupstaggingapi.ResourceGroupsTaggingAPI
-	if tagConfig != nil {
+	if tagConfig == nil {
+		log.Info("No tags client configured")
+	} else {
 		tags = resourcegroupstaggingapi.New(sess, tagConfig)
+		log.Info("Created tags client", "endpoint", tags.Client.Endpoint)
 	}
+	elbClient := elb.New(sess, elbConfig)
+	log.Info("Created elb client", "endpoint", elbClient.Client.Endpoint)
+	elbv2Client := elbv2.New(sess, elbv2Config)
+	log.Info("Created elbv2 client", "endpoint", elbv2Client.Client.Endpoint)
+	r53client := route53.New(sessRoute53, r53Config)
+	log.Info("Created route53 client", "endpoint", r53client.Client.Endpoint)
 	p := &Provider{
-		elb:       elb.New(sess, elbConfig),
-		elbv2:     elbv2.New(sess, aws.NewConfig().WithRegion(region)),
-		route53:   route53.New(sessRoute53, r53Config),
+		elb:       elbClient,
+		elbv2:     elbv2Client,
+		route53:   r53client,
 		tags:      tags,
 		config:    config,
 		idsToTags: map[string]map[string]string{},
