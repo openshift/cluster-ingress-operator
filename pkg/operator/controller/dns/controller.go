@@ -439,7 +439,7 @@ func mergeStatuses(zones []configv1.DNSZone, statuses, updates []iov1.DNSZoneSta
 var clock utilclock.Clock = utilclock.RealClock{}
 
 // mergeConditions adds or updates matching conditions, and updates
-// the transition time if details of a condition have changed. Returns
+// the transition time if the status of a condition changed. Returns
 // the updated condition array.
 func mergeConditions(conditions, updates []iov1.DNSZoneCondition) []iov1.DNSZoneCondition {
 	now := metav1.NewTime(clock.Now())
@@ -449,13 +449,13 @@ func mergeConditions(conditions, updates []iov1.DNSZoneCondition) []iov1.DNSZone
 		for j, cond := range conditions {
 			if cond.Type == update.Type {
 				add = false
-				if conditionChanged(cond, update) {
-					conditions[j].Status = update.Status
-					conditions[j].Reason = update.Reason
-					conditions[j].Message = update.Message
+				if update.Status != conditions[j].Status {
 					conditions[j].LastTransitionTime = now
-					break
 				}
+				conditions[j].Reason = update.Reason
+				conditions[j].Message = update.Message
+				conditions[j].Status = update.Status
+				break
 			}
 		}
 		if add {
@@ -465,10 +465,6 @@ func mergeConditions(conditions, updates []iov1.DNSZoneCondition) []iov1.DNSZone
 	}
 	conditions = append(conditions, additions...)
 	return conditions
-}
-
-func conditionChanged(a, b iov1.DNSZoneCondition) bool {
-	return a.Status != b.Status || a.Reason != b.Reason || a.Message != b.Message
 }
 
 // migrateRecordStatusConditions purges deprecated fields from DNS Record
