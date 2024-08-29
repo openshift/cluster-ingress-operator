@@ -209,14 +209,12 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 		for _, ep := range config.ServiceEndpoints {
 			// TODO: Add custom endpoint support for elbv2. See the following for details:
 			// https://docs.aws.amazon.com/general/latest/gr/elb.html
-			switch {
-			case route53Found && elbFound && tagFound:
-				break
-			case ep.Name == Route53Service:
+			switch ep.Name {
+			case Route53Service:
 				route53Found = true
 				r53Config = r53Config.WithEndpoint(ep.URL)
 				log.Info("using route53 custom endpoint", "url", ep.URL)
-			case ep.Name == TaggingService:
+			case TaggingService:
 				if tagConfig == nil {
 					log.Info("found resourcegroupstaggingapi custom endpoint which will be ignored since the %s region does not support that API", region)
 					continue
@@ -230,10 +228,15 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 				}
 				tagConfig = tagConfig.WithEndpoint(url)
 				log.Info("using group tagging custom endpoint", "url", url)
-			case ep.Name == ELBService:
+			case ELBService:
 				elbFound = true
 				elbConfig = elbConfig.WithEndpoint(ep.URL)
 				log.Info("using elb custom endpoint", "url", ep.URL)
+			}
+			// Once the three service endpoints have been found,
+			// ignore any further service endpoint specifications.
+			if route53Found && elbFound && tagFound {
+				break
 			}
 		}
 	}
