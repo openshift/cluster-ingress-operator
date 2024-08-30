@@ -250,7 +250,7 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 		idsToTags: map[string]map[string]string{},
 		lbZones:   map[string]string{},
 	}
-	if err := validateServiceEndpoints(p); err != nil {
+	if err := validateServiceEndpointsFn(p); err != nil {
 		return nil, fmt.Errorf("failed to validate aws provider service endpoints: %v", err)
 	}
 	return p, nil
@@ -280,6 +280,10 @@ func validateServiceEndpoints(provider *Provider) error {
 	}
 	return kerrors.NewAggregate(errs)
 }
+
+// validateServiceEndpointsFn is an alias for validateServiceEndpoints in normal
+// operation but can be overridden in unit tests.
+var validateServiceEndpointsFn = validateServiceEndpoints
 
 // getZoneID finds the ID of given zoneConfig in Route53. If an ID is already
 // known, return that; otherwise, use tags to search for the zone. Returns an
