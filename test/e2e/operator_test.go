@@ -3452,10 +3452,11 @@ func TestUnsupportedConfigOverride(t *testing.T) {
 	t.Parallel()
 
 	var tests = []struct {
-		name, unsupportedConfigOverride, env string
+		name, unsupportedConfigOverride, env, defaultValue, value string
 	}{
-		{"dynamic-config-manager", "dynamicConfigManager", "ROUTER_HAPROXY_CONFIG_MANAGER"},
-		{"contstats", "contStats", "ROUTER_HAPROXY_CONTSTATS"},
+		{"dynamic-config-manager", "dynamicConfigManager", "ROUTER_HAPROXY_CONFIG_MANAGER", "true", "false"},
+		{"contstats", "contStats", "ROUTER_HAPROXY_CONTSTATS", "", "true"},
+		{"max-dynamic-servers", "maxDynamicServers", "ROUTER_MAX_DYNAMIC_SERVERS", "2", "7"},
 	}
 
 	for _, tt := range tests {
@@ -3476,21 +3477,21 @@ func TestUnsupportedConfigOverride(t *testing.T) {
 			if err := kclient.Get(context.TODO(), controller.RouterDeploymentName(ic), deployment); err != nil {
 				t.Fatalf("failed to get ingresscontroller deployment: %v", err)
 			}
-			if err := waitForDeploymentEnvVar(t, kclient, deployment, 30*time.Second, tt.env, ""); err != nil {
-				t.Fatalf("expected initial deployment not to set %s=true: %v", tt.env, err)
+			if err := waitForDeploymentEnvVar(t, kclient, deployment, 30*time.Second, tt.env, tt.defaultValue); err != nil {
+				t.Fatalf("expected initial deployment not to set %s=%s: %v", tt.env, tt.defaultValue, err)
 			}
 
 			if err := kclient.Get(context.TODO(), icName, ic); err != nil {
 				t.Fatalf("failed to get ingresscontroller: %v", err)
 			}
 			ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
-				Raw: []byte(fmt.Sprintf(`{"%s":"true"}`, tt.unsupportedConfigOverride)),
+				Raw: []byte(fmt.Sprintf(`{"%s":"%s"}`, tt.unsupportedConfigOverride, tt.value)),
 			}
 			if err := kclient.Update(context.TODO(), ic); err != nil {
 				t.Fatalf("failed to update ingresscontroller: %v", err)
 			}
-			if err := waitForDeploymentEnvVar(t, kclient, deployment, 1*time.Minute, tt.env, "true"); err != nil {
-				t.Fatalf("expected updated deployment to set %s=true: %v", tt.env, err)
+			if err := waitForDeploymentEnvVar(t, kclient, deployment, 1*time.Minute, tt.env, tt.value); err != nil {
+				t.Fatalf("expected updated deployment to set %s=%s: %v", tt.env, tt.value, err)
 			}
 		})
 
