@@ -655,8 +655,7 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 			},
 		},
 	}
-
-	loadBalancerIngressControllerWithAWSSubnets := func(lbType operatorv1.AWSLoadBalancerType, subnetSpec *operatorv1.AWSSubnets, subnetStatus *operatorv1.AWSSubnets) *operatorv1.IngressController {
+	loadBalancerIngressControllerWithLBType := func(lbType operatorv1.AWSLoadBalancerType) *operatorv1.IngressController {
 		eps := &operatorv1.EndpointPublishingStrategy{
 			Type: operatorv1.LoadBalancerServiceStrategyType,
 			LoadBalancer: &operatorv1.LoadBalancerStrategy{
@@ -677,6 +676,11 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 				EndpointPublishingStrategy: eps.DeepCopy(),
 			},
 		}
+		return ic
+	}
+	loadBalancerIngressControllerWithAWSSubnets := func(lbType operatorv1.AWSLoadBalancerType, subnetSpec *operatorv1.AWSSubnets, subnetStatus *operatorv1.AWSSubnets) *operatorv1.IngressController {
+		ic := loadBalancerIngressControllerWithLBType(lbType)
+
 		switch lbType {
 		case operatorv1.AWSNetworkLoadBalancer:
 			ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{
@@ -884,7 +888,7 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 				nil,
 				nil,
 			),
-			service:           &corev1.Service{},
+			service:           lbServiceWithNLB,
 			awsSubnetsEnabled: true,
 			platformStatus:    awsPlatformStatus,
 			expectStatus:      operatorv1.ConditionFalse,
@@ -896,7 +900,7 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 				nil,
 				&operatorv1.AWSSubnets{},
 			),
-			service:           &corev1.Service{},
+			service:           lbServiceWithNLB,
 			awsSubnetsEnabled: true,
 			platformStatus:    awsPlatformStatus,
 			expectStatus:      operatorv1.ConditionFalse,
@@ -910,7 +914,7 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 				},
 				nil,
 			),
-			service:           &corev1.Service{},
+			service:           lbServiceWithNLB,
 			awsSubnetsEnabled: false,
 			platformStatus:    awsPlatformStatus,
 			expectStatus:      operatorv1.ConditionFalse,
@@ -1145,7 +1149,7 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 				nil,
 				nil,
 			),
-			service:                  &corev1.Service{},
+			service:                  lbServiceWithNLB,
 			awsEIPAllocationsEnabled: true,
 			platformStatus:           awsPlatformStatus,
 			expectStatus:             operatorv1.ConditionFalse,
@@ -1156,7 +1160,7 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 				nil,
 				[]operatorv1.EIPAllocation{},
 			),
-			service:                  &corev1.Service{},
+			service:                  lbServiceWithNLB,
 			awsEIPAllocationsEnabled: true,
 			platformStatus:           awsPlatformStatus,
 			expectStatus:             operatorv1.ConditionFalse,
@@ -1167,7 +1171,7 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 				[]operatorv1.EIPAllocation{"eipalloc-xxxxxxxxxxxxxxxxx", "eipalloc-yyyyyyyyyyyyyyyyy"},
 				nil,
 			),
-			service:                  &corev1.Service{},
+			service:                  lbServiceWithNLB,
 			awsEIPAllocationsEnabled: false,
 			platformStatus:           awsPlatformStatus,
 			expectStatus:             operatorv1.ConditionFalse,
@@ -1237,6 +1241,27 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 			awsEIPAllocationsEnabled: true,
 			platformStatus:           awsPlatformStatus,
 			expectStatus:             operatorv1.ConditionTrue,
+		},
+		{
+			name:           "LBType Empty LoadBalancerService (default Classic), AWS LBType Classic",
+			ic:             loadBalancerIngressControllerWithLBType(operatorv1.AWSClassicLoadBalancer),
+			service:        lbService,
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionFalse,
+		},
+		{
+			name:           "LBType Classic LoadBalancerService, AWS LBType NLB",
+			ic:             loadBalancerIngressControllerWithLBType(operatorv1.AWSNetworkLoadBalancer),
+			service:        lbService,
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionTrue,
+		},
+		{
+			name:           "LBType NLB LoadBalancerService, AWS LBType Classic",
+			ic:             loadBalancerIngressControllerWithLBType(operatorv1.AWSClassicLoadBalancer),
+			service:        lbServiceWithNLB,
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionTrue,
 		},
 	}
 	for _, test := range tests {

@@ -1169,7 +1169,14 @@ func Test_loadBalancerServiceChanged(t *testing.T) {
 				svc.Annotations["service.beta.kubernetes.io/aws-load-balancer-subnets"] = "foo-subnet"
 				svc.Annotations["service.beta.kubernetes.io/aws-load-balancer-type"] = "NLB"
 			},
-			expect: true,
+			expect: false,
+		},
+		{
+			description: "if the service.beta.kubernetes.io/aws-load-balancer-type is added",
+			mutate: func(svc *corev1.Service) {
+				svc.Annotations["service.beta.kubernetes.io/aws-load-balancer-type"] = "NLB"
+			},
+			expect: false,
 		},
 		{
 			description: "if the service.beta.kubernetes.io/aws-load-balancer-eip-allocations annotation added",

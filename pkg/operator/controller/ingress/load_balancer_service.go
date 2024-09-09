@@ -242,8 +242,6 @@ var (
 			// local-with-fallback annotation for kube-proxy (see
 			// <https://bugzilla.redhat.com/show_bug.cgi?id=1960284>).
 			localWithFallbackAnnotation,
-			// AWS load balancer type annotation to set either CLB/ELB or NLB
-			AWSLBTypeAnnotation,
 			// awsLBProxyProtocolAnnotation is used to enable the PROXY protocol on any
 			// AWS load balancer services created.
 			//
@@ -288,6 +286,11 @@ var (
 	managedAtServiceCreationLBServiceAnnotations = func() map[configv1.PlatformType][]string {
 		result := map[configv1.PlatformType][]string{
 			configv1.AWSPlatformType: {
+				// Annotation to set either CLB/ELB or NLB.
+				// This annotation was previously fully managed (https://issues.redhat.com/browse/NE-865),
+				// but now required service recreation due to issues with AWS leaking resources when updating
+				// LB Type without recreating the service (see https://issues.redhat.com/browse/OCPBUGS-16728).
+				AWSLBTypeAnnotation,
 				// Annotation for configuring load balancer subnets.
 				// This requires service recreation because NLBs do not support updates to subnets,
 				// the operator cannot detect errors if the subnets are invalid, and to prevent
@@ -785,6 +788,19 @@ func loadBalancerServiceIsUpgradeable(ic *operatorv1.IngressController, deployme
 	return nil
 }
 
+// effectuateMessage returns a message describing how to effectuate a
+// change that requires the service to be deleted.
+func effectuateMessage(changedMsg, ocPatchRevertCmd string, service *corev1.Service) string {
+	return fmt.Sprintf(
+		"%[1]s  To effectuate this change, you must delete the service: `oc -n %[2]s delete svc/%[3]s`; "+
+			"the service load-balancer will then be deprovisioned and a new one created. This will most likely "+
+			"cause the new load-balancer to have a different host name and IP address and cause disruption. To "+
+			"return to the previous state, you can revert the change to the IngressController: `%[4]s`. "+
+			"Direct updates to the service annotations are not supported.",
+		changedMsg, service.Namespace, service.Name, ocPatchRevertCmd,
+	)
+}
+
 // loadBalancerServiceIsProgressing returns an error value indicating if the
 // load balancer service is in progressing status.
 func loadBalancerServiceIsProgressing(ic *operatorv1.IngressController, service *corev1.Service, platform *configv1.PlatformStatus, subnetsAWSEnabled bool, eipAllocationsAWSEnabled bool) error {
@@ -795,11 +811,25 @@ func loadBalancerServiceIsProgressing(ic *operatorv1.IngressController, service 
 		haveScope = operatorv1.InternalLoadBalancer
 	}
 	if wantScope != haveScope {
-		err := fmt.Errorf("The IngressController scope was changed from %q to %q.", haveScope, wantScope)
+		changedMsg := fmt.Sprintf("The IngressController scope was changed from %q to %q.", haveScope, wantScope)
+		err := fmt.Errorf(changedMsg)
 		if _, ok := platformsWithMutableScope[platform.Type]; !ok {
-			err = fmt.Errorf("%[1]s  To effectuate this change, you must delete the service: `oc -n %[2]s delete svc/%[3]s`; the service load-balancer will then be deprovisioned and a new one created.  This will most likely cause the new load-balancer to have a different host name and IP address from the old one's.  Alternatively, you can revert the change to the IngressController: `oc -n openshift-ingress-operator patch ingresscontrollers/%[4]s --type=merge --patch='{\"spec\":{\"endpointPublishingStrategy\":{\"loadBalancer\":{\"scope\":\"%[5]s\"}}}}'`", err.Error(), service.Namespace, service.Name, ic.Name, haveScope)
+			ocPatchRevertCmd := fmt.Sprintf("oc -n openshift-ingress-operator patch ingresscontrollers/%[1]s --type=merge --patch='{\"spec\":{\"endpointPublishingStrategy\":{\"loadBalancer\":{\"scope\":\"%[2]s\"}}}}'", ic.Name, haveScope)
+			err = fmt.Errorf(effectuateMessage(changedMsg, ocPatchRevertCmd, service))
 		}
 		errs = append(errs, err)
+	}
+
+	if platform.Type == configv1.AWSPlatformType {
+		wantLBType := getAWSLoadBalancerTypeInSpec(ic)
+		haveLBType := getAWSLoadBalancerTypeFromServiceAnnotation(service)
+
+		if wantLBType != haveLBType {
+			changedMsg := fmt.Sprintf("The IngressController load balancer type was changed from %q to %q.", haveLBType, wantLBType)
+			ocPatchRevertCmd := fmt.Sprintf("oc -n openshift-ingress-operator patch ingresscontrollers/%[1]s --type=merge --patch='{\"spec\":{\"endpointPublishingStrategy\":{\"type\":\"LoadBalancerService\",\"loadBalancer\":{\"providerParameters\":{\"type\":\"AWS\",\"aws\":{\"type\":\"%[2]s\"}}}}}}'", ic.Name, haveLBType)
+			err := fmt.Errorf(effectuateMessage(changedMsg, ocPatchRevertCmd, service))
+			errs = append(errs, err)
+		}
 	}
 
 	if platform.Type == configv1.AWSPlatformType && subnetsAWSEnabled {
@@ -833,7 +863,7 @@ func loadBalancerServiceIsProgressing(ic *operatorv1.IngressController, service 
 			wantSubnetsPrettyJson := convertAWSSubnetListToPatchJson(wantSubnets, "{}", "[]")
 			changedMsg := fmt.Sprintf("The IngressController subnets were changed from %q to %q.", haveSubnetsPrettyJson, wantSubnetsPrettyJson)
 			ocPatchRevertCmd := fmt.Sprintf("oc -n openshift-ingress-operator patch ingresscontrollers/%[1]s --type=merge --patch='{\"spec\":{\"endpointPublishingStrategy\":{\"type\":\"LoadBalancerService\",\"loadBalancer\":{\"providerParameters\":{\"type\":\"AWS\",\"aws\":{\"type\":\"%[2]s\",\"%[3]s\":{\"subnets\":%[4]s}}}}}}}'", ic.Name, getAWSLoadBalancerTypeInStatus(ic), paramsFieldName, haveSubnetsPatchJson)
-			err := fmt.Errorf("%[1]s  To effectuate this change, you must delete the service: `oc -n %[2]s delete svc/%[3]s`; the service load-balancer will then be deprovisioned and a new one created. This will most likely cause the new load-balancer to have a different host name and IP address and cause disruption. To return to the previous state, you can revert the change to the IngressController: `%[4]s`", changedMsg, service.Namespace, service.Name, ocPatchRevertCmd)
+			err := fmt.Errorf(effectuateMessage(changedMsg, ocPatchRevertCmd, service))
 			errs = append(errs, err)
 		}
 	}
@@ -856,7 +886,7 @@ func loadBalancerServiceIsProgressing(ic *operatorv1.IngressController, service 
 			wantEIPAllocationsPrettyJson := convertAWSEIPAllocationsListToPatchJson(wantEIPAllocations, "[]")
 			changedMsg := fmt.Sprintf("The IngressController eipAllocations were changed from %q to %q.", haveEIPAllocationsPrettyJson, wantEIPAllocationsPrettyJson)
 			ocPatchRevertCmd := fmt.Sprintf("oc -n openshift-ingress-operator patch ingresscontrollers/%[1]s --type=merge --patch='{\"spec\":{\"endpointPublishingStrategy\":{\"type\":\"LoadBalancerService\",\"loadBalancer\":{\"providerParameters\":{\"type\":\"AWS\",\"aws\":{\"type\":\"%[2]s\",\"%[3]s\":{\"eipAllocations\":%[4]s}}}}}}}'", ic.Name, getAWSLoadBalancerTypeInStatus(ic), "networkLoadBalancer", haveEIPAllocationsPatchJson)
-			err := fmt.Errorf("%[1]s  To effectuate this change, you must delete the service: `oc -n %[2]s delete svc/%[3]s`; the service load-balancer will then be deprovisioned and a new one created. This will most likely cause the new load-balancer to have a different host name and IP address and cause disruption. To return to the previous state, you can revert the change to the IngressController: `%[4]s`", changedMsg, service.Namespace, service.Name, ocPatchRevertCmd)
+			err := fmt.Errorf(effectuateMessage(changedMsg, ocPatchRevertCmd, service))
 			errs = append(errs, err)
 		}
 	}
@@ -967,6 +997,21 @@ func loadBalancerSourceRangesMatch(ic *operatorv1.IngressController, current *co
 	}
 
 	return fmt.Errorf("You have manually edited an operator-managed object. You must revert your modifications by removing the Spec.LoadBalancerSourceRanges field of LoadBalancer-typed service %q. You can use the new AllowedSourceRanges API field on the ingresscontroller to configure this setting instead.", current.Name)
+}
+
+// getAWSLoadBalancerTypeFromServiceAnnotation gets the effective load balancer type by looking at the
+// service.beta.kubernetes.io/aws-load-balancer-type annotation of the LoadBalancer-type Service.
+// If the annotation isn't specified, the function returns the default of Classic.
+func getAWSLoadBalancerTypeFromServiceAnnotation(service *corev1.Service) operatorv1.AWSLoadBalancerType {
+	if service == nil {
+		return ""
+	}
+
+	if a, ok := service.Annotations[AWSLBTypeAnnotation]; ok && a == AWSNLBAnnotation {
+		return operatorv1.AWSNetworkLoadBalancer
+	}
+
+	return operatorv1.AWSClassicLoadBalancer
 }
 
 // getSubnetsFromServiceAnnotation gets the effective subnets by looking at the
@@ -1171,6 +1216,18 @@ func JoinAWSEIPAllocations(eipAllocations []operatorv1.EIPAllocation, sep string
 		}
 	}
 	return buffer.String()
+}
+
+// getAWSLoadBalancerTypeInSpec gets the AWS Load Balancer Type reported in the status.
+// If nothing is configured, then it returns the default of Classic.
+func getAWSLoadBalancerTypeInSpec(ic *operatorv1.IngressController) operatorv1.AWSLoadBalancerType {
+	if ic.Spec.EndpointPublishingStrategy != nil &&
+		ic.Spec.EndpointPublishingStrategy.LoadBalancer != nil &&
+		ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters != nil &&
+		ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS != nil {
+		return ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.Type
+	}
+	return operatorv1.AWSClassicLoadBalancer
 }
 
 // getAWSLoadBalancerTypeInStatus gets the AWS Load Balancer Type reported in the status.
