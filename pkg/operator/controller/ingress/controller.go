@@ -440,6 +440,10 @@ func setDefaultDomain(ic *operatorv1.IngressController, ingressConfig *configv1.
 }
 
 func setDefaultPublishingStrategy(ic *operatorv1.IngressController, platformStatus *configv1.PlatformStatus, domainMatchesBaseDomain bool, ingressConfig *configv1.Ingress, alreadyAdmitted bool) bool {
+	// WARNING: setDefaultPublishingStrategy follows an outdated pattern of using spec and status. It uses the status
+	// to represent the *desired* state (spec + defaulting), but per Kubernetes standards, the status should reflect
+	// the *actual* state. As a result, this function is considered legacy. For new API fields, use spec as the desired
+	// state and syncIngressControllerStatus to populate the status with the actual state.
 	effectiveStrategy := ic.Spec.EndpointPublishingStrategy.DeepCopy()
 	if effectiveStrategy == nil {
 		var strategyType operatorv1.EndpointPublishingStrategyType
