@@ -17,6 +17,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	configv1 "github.com/openshift/api/config/v1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 	iov1 "github.com/openshift/api/operatoringress/v1"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -241,8 +242,28 @@ func (r *reconciler) ensureDNSRecordsForGateway(ctx context.Context, gateway *ga
 		Name:       service.Name,
 		UID:        service.UID,
 	}
+	ics := operatorv1.IngressControllerList{}
+	if err := r.cache.List(ctx, &ics); err != nil {
+		log.Error(err, "failed to list Ingress Controllers")
+		return []error{err}
+	}
 	var errs []error
 	for _, domain := range domains {
+		// Check if the domain matches one from an existing ingress controller. If so, log an error and ignore the invalid domain.
+		domainClashes := false
+		for _, ic := range ics.Items {
+			if len(ic.Status.Domain) == 0 {
+				continue
+			}
+			if domainsEqual(domain, "*."+ic.Status.Domain) {
+				log.Error(fmt.Errorf("gateway %s domain %q matches existing domain from ingress controller %s.", gateway.Name, domain, ic.Name), "ignoring invalid gateway domain")
+				domainClashes = true
+				break
+			}
+		}
+		if domainClashes {
+			continue
+		}
 		name := operatorcontroller.GatewayDNSRecordName(gateway, domain)
 		dnsPolicy := iov1.UnmanagedDNS
 		if dnsrecord.ManageDNSForDomain(domain, infraConfig.Status.PlatformStatus, dnsConfig) {
@@ -252,6 +273,18 @@ func (r *reconciler) ensureDNSRecordsForGateway(ctx context.Context, gateway *ga
 		errs = append(errs, err)
 	}
 	return errs
+}
+
+// domainsEqual compares 2 DNS domains and returns if they are equivalent. Domains will be compared as if they were
+// fully qualified (ending with ".").
+func domainsEqual(a, b string) bool {
+	if !strings.HasSuffix(a, ".") {
+		a = a + "."
+	}
+	if !strings.HasSuffix(b, ".") {
+		b = b + "."
+	}
+	return a == b
 }
 
 // deleteStaleDNSRecordsForGateway deletes any DNSRecord CRs that are associated
