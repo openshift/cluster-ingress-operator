@@ -461,6 +461,22 @@ func setDefaultDomain(ic *operatorv1.IngressController, ingressConfig *configv1.
 // sub-field if either of these fields is nil.  This function returns a Boolean
 // value indicating whether it updated the status.  This function also mutates
 // the given ingresscontroller's status.
+//
+// NOTE: This function represents status as desired state (spec + defaults)
+// rather than observed actual state. Two approaches exist for modeling status:
+//
+//  1. Status as desired state (this function):
+//     Status fields contain spec values + defaults, providing a single source
+//     for "effective configuration" but may not reflect actual resource state.
+//
+//  2. Status as actual state (recommended for new fields):
+//     Status reflects observed state from managed resources. Spec is the source
+//     of desired state. Use syncIngressControllerStatus() to populate status.
+//
+// The API documents status.endpointPublishingStrategy as "the actual strategy
+// in use", but this function implements approach #1 for historical reasons.
+// Consider approach #2 for new fields to align with API documentation and
+// Kubernetes conventions.
 func setDefaultPublishingStrategy(ic *operatorv1.IngressController, platformStatus *configv1.PlatformStatus, domainMatchesBaseDomain bool, ingressConfig *configv1.Ingress, alreadyAdmitted bool) bool {
 	effectiveStrategy := computeEffectivePublishingStrategy(ic, platformStatus, domainMatchesBaseDomain, ingressConfig, alreadyAdmitted)
 

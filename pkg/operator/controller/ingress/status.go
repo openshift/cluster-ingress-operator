@@ -1085,7 +1085,7 @@ func computeLoadBalancerProgressingStatus(ic *operatorv1.IngressController, serv
 func updateIngressControllerAWSSubnetStatus(ic *operatorv1.IngressController, service *corev1.Service) {
 	// Set the subnets status based on the actual service annotation and the load balancer type,
 	// as NLBs and CLBs have separate subnet configuration fields.
-	switch getAWSLoadBalancerTypeInStatus(ic) {
+	switch getAWSLoadBalancerTypeFromServiceAnnotation(service) {
 	case operatorv1.AWSNetworkLoadBalancer:
 		// NetworkLoadBalancerParameters should be initialized by setDefaultPublishingStrategy
 		// when an IngressController is admitted, so we don't need to initialize here.
@@ -1105,7 +1105,7 @@ func updateIngressControllerAWSSubnetStatus(ic *operatorv1.IngressController, se
 // sync its status to the effective eipAllocations on the LoadBalancer-type service.
 func updateIngressControllerAWSEIPAllocationStatus(ic *operatorv1.IngressController, service *corev1.Service) {
 	// Set the eipAllocations status based on the actual service annotation and on the load balancer type `NLB`.
-	switch getAWSLoadBalancerTypeInStatus(ic) {
+	switch getAWSLoadBalancerTypeFromServiceAnnotation(service) {
 	case operatorv1.AWSNetworkLoadBalancer:
 		// NetworkLoadBalancerParameters should be initialized by setDefaultPublishingStrategy
 		// when an IngressController is admitted, so we don't need to initialize here.
