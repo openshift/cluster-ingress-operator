@@ -2,6 +2,7 @@ package controller
 
 import (
 	"fmt"
+	"strings"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 
@@ -287,8 +288,12 @@ func ServiceMeshSubscriptionName() types.NamespacedName {
 // is named using the Gateway's name, listener's hashed host name, and the
 // suffix "-wildcard".
 func GatewayDNSRecordName(gateway *gatewayapiv1beta1.Gateway, host string) types.NamespacedName {
+	name := fmt.Sprintf("%s-%s", gateway.Name, util.Hash(host))
+	if strings.HasPrefix(host, "*.") {
+		name = name + "-wildcard"
+	}
 	return types.NamespacedName{
 		Namespace: gateway.Namespace,
-		Name:      fmt.Sprintf("%s-%s-wildcard", gateway.Name, util.Hash(host)),
+		Name:      name,
 	}
 }

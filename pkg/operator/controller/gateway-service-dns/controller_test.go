@@ -11,6 +11,7 @@ import (
 	gatewayapiv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
 	configv1 "github.com/openshift/api/config/v1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 	iov1 "github.com/openshift/api/operatoringress/v1"
 
 	corev1 "k8s.io/api/core/v1"
@@ -40,6 +41,17 @@ func Test_Reconcile(t *testing.T) {
 				Type: configv1.AWSPlatformType,
 			},
 		},
+	}
+	ic := func(name, domain string) *operatorv1.IngressController {
+		return &operatorv1.IngressController{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "openshift-ingress-operator",
+				Name:      name,
+			},
+			Status: operatorv1.IngressControllerStatus{
+				Domain: domain,
+			},
+		}
 	}
 	gw := func(name string, listeners ...gatewayapiv1beta1.Listener) *gatewayapiv1beta1.Gateway {
 		return &gatewayapiv1beta1.Gateway{
@@ -127,6 +139,7 @@ func Test_Reconcile(t *testing.T) {
 				infraConfig,
 				gw("example-gateway", l("stage-http", "*.stage.example.com", 80)),
 				svc("example-gateway", gatewayManagedLabel, exampleGatewayLabel, ingHost("lb.example.com")),
+				ic("default", "apps.example.com"),
 			},
 			reconcileRequest: req("openshift-ingress", "example-gateway"),
 			expectCreate:     []client.Object{},
@@ -140,6 +153,7 @@ func Test_Reconcile(t *testing.T) {
 				dnsConfig,
 				gw("example-gateway", l("stage-http", "*.stage.example.com", 80)),
 				svc("example-gateway", gatewayManagedLabel, exampleGatewayLabel, ingHost("lb.example.com")),
+				ic("default", "apps.example.com"),
 			},
 			reconcileRequest: req("openshift-ingress", "example-gateway"),
 			expectCreate:     []client.Object{},
@@ -153,6 +167,7 @@ func Test_Reconcile(t *testing.T) {
 				dnsConfig, infraConfig,
 				gw("example-gateway"),
 				svc("example-gateway", gatewayManagedLabel, exampleGatewayLabel, ingHost("lb.example.com")),
+				ic("default", "apps.example.com"),
 			},
 			reconcileRequest: req("openshift-ingress", "example-gateway"),
 			expectCreate:     []client.Object{},
@@ -170,6 +185,7 @@ func Test_Reconcile(t *testing.T) {
 					l("prod-https", "*.prod.example.com", 443),
 				),
 				svc("example-gateway", gatewayManagedLabel, exampleGatewayLabel, ingHost("lb.example.com")),
+				ic("default", "apps.example.com"),
 			},
 			reconcileRequest: req("openshift-ingress", "example-gateway"),
 			expectCreate: []client.Object{
@@ -190,6 +206,7 @@ func Test_Reconcile(t *testing.T) {
 				),
 				svc("example-gateway", gatewayManagedLabel, exampleGatewayLabel, ingHost("newlb.example.com")),
 				dnsrecord("example-gateway-7bdcfc8f68-wildcard", "*.example.com.", iov1.ManagedDNS, exampleGatewayLabel, "oldlb.example.com"),
+				ic("default", "apps.example.com"),
 			},
 			reconcileRequest: req("openshift-ingress", "example-gateway"),
 			expectCreate:     []client.Object{},
@@ -208,6 +225,7 @@ func Test_Reconcile(t *testing.T) {
 				),
 				svc("example-gateway", gatewayManagedLabel, exampleGatewayLabel, ingHost("lb.example.com")),
 				dnsrecord("example-gateway-64754456b8-wildcard", "*.old.example.com.", iov1.ManagedDNS, exampleGatewayLabel, "lb.example.com"),
+				ic("default", "apps.example.com"),
 			},
 			reconcileRequest: req("openshift-ingress", "example-gateway"),
 			expectCreate: []client.Object{
@@ -224,6 +242,7 @@ func Test_Reconcile(t *testing.T) {
 				dnsConfig, infraConfig,
 				gw("example-gateway", l("stage-http", "*.stage.example.com", 80), l("stage-https", "*.stage.example.com", 443)),
 				svc("example-gateway", gatewayManagedLabel, exampleGatewayLabel, ingHost("lb.example.com")),
+				ic("default", "apps.example.com"),
 			},
 			reconcileRequest: req("openshift-ingress", "example-gateway"),
 			expectCreate: []client.Object{
@@ -238,10 +257,52 @@ func Test_Reconcile(t *testing.T) {
 				dnsConfig, infraConfig,
 				gw("example-gateway", l("http", "*.foo.com", 80)),
 				svc("example-gateway", gatewayManagedLabel, exampleGatewayLabel, ingHost("lb.example.com")),
+				ic("default", "apps.example.com"),
 			},
 			reconcileRequest: req("openshift-ingress", "example-gateway"),
 			expectCreate: []client.Object{
 				dnsrecord("example-gateway-795d4b47fd-wildcard", "*.foo.com.", iov1.UnmanagedDNS, exampleGatewayLabel, "lb.example.com"),
+			},
+			expectUpdate: []client.Object{},
+			expectDelete: []client.Object{},
+		},
+		{
+			name: "gateway with two unique host names, one of which clashes with an existing ingress controller",
+			existingObjects: []runtime.Object{
+				dnsConfig, infraConfig,
+				gw(
+					"example-gateway",
+					l("stage-https", "*.stage.apps.example.com", 443),
+					l("apps-https", "*.apps.example.com", 443),
+				),
+				svc("example-gateway", gatewayManagedLabel, exampleGatewayLabel, ingHost("lb.example.com")),
+				ic("default", "apps.example.com"),
+			},
+			reconcileRequest: req("openshift-ingress", "example-gateway"),
+			expectCreate: []client.Object{
+				dnsrecord("example-gateway-644bf77744-wildcard", "*.stage.apps.example.com.", iov1.ManagedDNS, exampleGatewayLabel, "lb.example.com"),
+			},
+			expectUpdate: []client.Object{},
+			expectDelete: []client.Object{},
+		},
+		{
+			name: "gateway with two unique host names, neither of which clashes with an existing ingress controller",
+			existingObjects: []runtime.Object{
+				dnsConfig, infraConfig,
+				gw(
+					"example-gateway",
+					l("stage-https", "*.stage.apps.example.com", 443),
+					// apps.example.com looks like it'll clash with the default ic below, but the ic creates a record
+					// for *.apps.example.com, which doesn't actually clash with apps.example.com
+					l("apps-https", "apps.example.com", 443),
+				),
+				svc("example-gateway", gatewayManagedLabel, exampleGatewayLabel, ingHost("lb.example.com")),
+				ic("default", "apps.example.com"),
+			},
+			reconcileRequest: req("openshift-ingress", "example-gateway"),
+			expectCreate: []client.Object{
+				dnsrecord("example-gateway-644bf77744-wildcard", "*.stage.apps.example.com.", iov1.ManagedDNS, exampleGatewayLabel, "lb.example.com"),
+				dnsrecord("example-gateway-54b5446744", "apps.example.com.", iov1.ManagedDNS, exampleGatewayLabel, "lb.example.com"),
 			},
 			expectUpdate: []client.Object{},
 			expectDelete: []client.Object{},
@@ -252,6 +313,7 @@ func Test_Reconcile(t *testing.T) {
 	iov1.AddToScheme(scheme)
 	corev1.AddToScheme(scheme)
 	gatewayapiv1beta1.AddToScheme(scheme)
+	operatorv1.AddToScheme(scheme)
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
