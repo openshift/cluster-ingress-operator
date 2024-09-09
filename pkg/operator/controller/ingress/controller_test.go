@@ -537,6 +537,30 @@ func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
 			}
 			return eps
 		}
+		nlbWithBothNullParameters = func() *operatorv1.EndpointPublishingStrategy {
+			eps := eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS))
+			eps.LoadBalancer.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{
+				Type: operatorv1.AWSLoadBalancerProvider,
+				AWS: &operatorv1.AWSLoadBalancerParameters{
+					Type:                          operatorv1.AWSNetworkLoadBalancer,
+					NetworkLoadBalancerParameters: &operatorv1.AWSNetworkLoadBalancerParameters{},
+					ClassicLoadBalancerParameters: &operatorv1.AWSClassicLoadBalancerParameters{},
+				},
+			}
+			return eps
+		}
+		elbWithBothNullParameters = func() *operatorv1.EndpointPublishingStrategy {
+			eps := eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS))
+			eps.LoadBalancer.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{
+				Type: operatorv1.AWSLoadBalancerProvider,
+				AWS: &operatorv1.AWSLoadBalancerParameters{
+					Type:                          operatorv1.AWSClassicLoadBalancer,
+					ClassicLoadBalancerParameters: &operatorv1.AWSClassicLoadBalancerParameters{},
+					NetworkLoadBalancerParameters: &operatorv1.AWSNetworkLoadBalancerParameters{},
+				},
+			}
+			return eps
+		}
 		gcpLB = func(clientAccess operatorv1.GCPClientAccess) *operatorv1.EndpointPublishingStrategy {
 			eps := eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS))
 			eps.LoadBalancer.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{
@@ -695,17 +719,17 @@ func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
 			domainMatchesBaseDomain: true,
 		},
 		{
-			name:                    "loadbalancer type changed from ELB to NLB, with old ELB parameters removal",
+			name:                    "loadbalancer type changed from ELB to NLB, with old ELB parameters preserved",
 			ic:                      makeIC(spec(nlb()), status(elbWithNullParameters())),
 			expectedResult:          true,
-			expectedIC:              makeIC(spec(nlb()), status(nlbWithNullParameters())),
+			expectedIC:              makeIC(spec(nlb()), status(nlbWithBothNullParameters())),
 			domainMatchesBaseDomain: true,
 		},
 		{
-			name:                    "loadbalancer type changed from NLB to ELB, with old NLB parameters removal",
+			name:                    "loadbalancer type changed from NLB to ELB, with old NLB parameters preserved",
 			ic:                      makeIC(spec(elb()), status(nlbWithNullParameters())),
 			expectedResult:          true,
-			expectedIC:              makeIC(spec(elb()), status(elbWithNullParameters())),
+			expectedIC:              makeIC(spec(elb()), status(elbWithBothNullParameters())),
 			domainMatchesBaseDomain: true,
 		},
 		{
@@ -1507,11 +1531,20 @@ func Test_IsProxyProtocolNeeded(t *testing.T) {
 				Protocol: operatorv1.ProxyProtocol,
 			},
 		}
+		serviceWithCLB = corev1.Service{}
+		serviceWithNLB = corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{
+				Annotations: map[string]string{
+					AWSLBTypeAnnotation: AWSNLBAnnotation,
+				},
+			},
+		}
 	)
 	testCases := []struct {
 		description string
 		strategy    *operatorv1.EndpointPublishingStrategy
 		platform    *configv1.PlatformStatus
+		service     *corev1.Service
 		expect      bool
 		expectError bool
 	}{
@@ -1555,6 +1588,20 @@ func Test_IsProxyProtocolNeeded(t *testing.T) {
 			description: "loadbalancer strategy with NLB shouldn't use PROXY",
 			strategy:    &loadBalancerStrategyWithNLB,
 			platform:    &awsPlatform,
+			expect:      false,
+		},
+		{
+			description: "loadbalancer strategy with NLB, but a service with ELB should use PROXY",
+			strategy:    &loadBalancerStrategyWithNLB,
+			platform:    &awsPlatform,
+			service:     &serviceWithCLB,
+			expect:      true,
+		},
+		{
+			description: "loadbalancer strategy with ELB, but a service with NLB shouldn't use PROXY",
+			strategy:    &loadBalancerStrategy,
+			platform:    &awsPlatform,
+			service:     &serviceWithNLB,
 			expect:      false,
 		},
 		{
@@ -1638,7 +1685,7 @@ func Test_IsProxyProtocolNeeded(t *testing.T) {
 					EndpointPublishingStrategy: tc.strategy,
 				},
 			}
-			switch actual, err := IsProxyProtocolNeeded(ic, tc.platform); {
+			switch actual, err := IsProxyProtocolNeeded(ic, tc.platform, tc.service); {
 			case tc.expectError && err == nil:
 				t.Error("expected error, got nil")
 			case !tc.expectError && err != nil:

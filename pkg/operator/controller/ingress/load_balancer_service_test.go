@@ -679,7 +679,7 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 				},
 			}
 
-			proxyNeeded, err := IsProxyProtocolNeeded(ic, infraConfig.Status.PlatformStatus)
+			proxyNeeded, err := IsProxyProtocolNeeded(ic, infraConfig.Status.PlatformStatus, nil)
 			switch {
 			case err != nil:
 				t.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %v", ic.Namespace, ic.Name, err)
@@ -687,7 +687,7 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 				t.Errorf("expected IsProxyProtocolNeeded to return %v, got %v", tc.proxyNeeded, proxyNeeded)
 			}
 
-			haveSvc, svc, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig.Status.PlatformStatus)
+			haveSvc, svc, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig.Status.PlatformStatus, proxyNeeded)
 			switch {
 			case err != nil:
 				t.Error(err)
@@ -872,7 +872,7 @@ func TestDesiredLoadBalancerServiceAWSIdleTimeout(t *testing.T) {
 					},
 				},
 			}
-			haveSvc, svc, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig.Status.PlatformStatus)
+			haveSvc, svc, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig.Status.PlatformStatus, false)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1132,7 +1132,14 @@ func Test_loadBalancerServiceChanged(t *testing.T) {
 				svc.Annotations["service.beta.kubernetes.io/aws-load-balancer-subnets"] = "foo-subnet"
 				svc.Annotations["service.beta.kubernetes.io/aws-load-balancer-type"] = "NLB"
 			},
-			expect: true,
+			expect: false,
+		},
+		{
+			description: "if the service.beta.kubernetes.io/aws-load-balancer-type annotation is added",
+			mutate: func(svc *corev1.Service) {
+				svc.Annotations["service.beta.kubernetes.io/aws-load-balancer-type"] = "NLB"
+			},
+			expect: false,
 		},
 		{
 			description: "if the service.beta.kubernetes.io/aws-load-balancer-eip-allocations annotation added",
@@ -1491,7 +1498,7 @@ func TestUpdateLoadBalancerServiceSourceRanges(t *testing.T) {
 					},
 				},
 			}
-			wantSvc, desired, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig.Status.PlatformStatus)
+			wantSvc, desired, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig.Status.PlatformStatus, false)
 			if err != nil {
 				t.Fatal(err)
 			}

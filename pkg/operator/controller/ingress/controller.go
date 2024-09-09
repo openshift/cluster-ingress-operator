@@ -461,6 +461,20 @@ func setDefaultDomain(ic *operatorv1.IngressController, ingressConfig *configv1.
 // sub-field if either of these fields is nil.  This function returns a Boolean
 // value indicating whether it updated the status.  This function also mutates
 // the given ingresscontroller's status.
+//
+// NOTE: This function represents status as desired state (spec + defaults)
+// rather than observed actual state. Two approaches exist for modeling status:
+//
+//  1. Status as desired state (this function):
+//     Status fields contain spec values + defaults, providing a single source
+//     for "effective configuration" but may not reflect actual resource state.
+//
+//  2. Status as actual state (recommended for new fields):
+//     Status reflects observed state from managed resources. Spec is the source
+//     of desired state. Use syncIngressControllerStatus() to populate status.
+//
+// Approach #2 is preferred for new fields. Use approach #1 only when you need
+// defaulting that cannot be performed in the spec.
 func setDefaultPublishingStrategy(ic *operatorv1.IngressController, platformStatus *configv1.PlatformStatus, domainMatchesBaseDomain bool, ingressConfig *configv1.Ingress, alreadyAdmitted bool) bool {
 	effectiveStrategy := computeEffectivePublishingStrategy(ic, platformStatus, domainMatchesBaseDomain, ingressConfig, alreadyAdmitted)
 
@@ -636,7 +650,6 @@ func updatePublishingStrategy(ic *operatorv1.IngressController, effectiveStrateg
 				changed = true
 			}
 			if statusLB.ProviderParameters.AWS.Type == operatorv1.AWSClassicLoadBalancer {
-				statusLB.ProviderParameters.AWS.NetworkLoadBalancerParameters = nil
 				if statusLB.ProviderParameters.AWS.ClassicLoadBalancerParameters == nil {
 					statusLB.ProviderParameters.AWS.ClassicLoadBalancerParameters = &operatorv1.AWSClassicLoadBalancerParameters{}
 				}
@@ -658,7 +671,6 @@ func updatePublishingStrategy(ic *operatorv1.IngressController, effectiveStrateg
 				}
 			}
 			if statusLB.ProviderParameters.AWS.Type == operatorv1.AWSNetworkLoadBalancer {
-				statusLB.ProviderParameters.AWS.ClassicLoadBalancerParameters = nil
 				if statusLB.ProviderParameters.AWS.NetworkLoadBalancerParameters == nil {
 					statusLB.ProviderParameters.AWS.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{}
 				}
@@ -1161,7 +1173,19 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		haveClientCAConfigmap = true
 	}
 
-	haveDepl, deployment, err := r.ensureRouterDeployment(ci, infraConfig, ingressConfig, apiConfig, networkConfig, haveClientCAConfigmap, clientCAConfigmap, platformStatus, clusterProxyConfig)
+	_, currentLBService, err := r.currentLoadBalancerService(ci)
+	if err != nil {
+		errs = append(errs, fmt.Errorf("failed to get load balancer service for %s: %w", ci.Name, err))
+		return utilerrors.NewAggregate(errs)
+	}
+
+	proxyNeeded, err := IsProxyProtocolNeeded(ci, platformStatus, currentLBService)
+	if err != nil {
+		errs = append(errs, fmt.Errorf("failed to determine if proxy protocol is needed for ingresscontroller %s/%s: %w", ci.Namespace, ci.Name, err))
+		return utilerrors.NewAggregate(errs)
+	}
+
+	haveDepl, deployment, err := r.ensureRouterDeployment(ci, infraConfig, ingressConfig, apiConfig, networkConfig, haveClientCAConfigmap, clientCAConfigmap, clusterProxyConfig, proxyNeeded)
 	if err != nil {
 		errs = append(errs, fmt.Errorf("failed to ensure deployment: %v", err))
 		return utilerrors.NewAggregate(errs)
@@ -1180,7 +1204,7 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 	}
 
 	var wildcardRecord *iov1.DNSRecord
-	haveLB, lbService, err := r.ensureLoadBalancerService(ci, deploymentRef, platformStatus)
+	haveLB, lbService, err := r.ensureLoadBalancerService(ci, deploymentRef, platformStatus, proxyNeeded)
 	if err != nil {
 		errs = append(errs, fmt.Errorf("failed to ensure load balancer service for %s: %v", ci.Name, err))
 	} else {
@@ -1275,23 +1299,26 @@ func IsStatusDomainSet(ingress *operatorv1.IngressController) bool {
 
 // IsProxyProtocolNeeded checks whether proxy protocol is needed based
 // upon the given ic and platform.
-func IsProxyProtocolNeeded(ic *operatorv1.IngressController, platform *configv1.PlatformStatus) (bool, error) {
+func IsProxyProtocolNeeded(ic *operatorv1.IngressController, platform *configv1.PlatformStatus, service *corev1.Service) (bool, error) {
 	if platform == nil {
 		return false, fmt.Errorf("platform status is missing; failed to determine if proxy protocol is needed for %s/%s",
 			ic.Namespace, ic.Name)
 	}
 	switch ic.Status.EndpointPublishingStrategy.Type {
 	case operatorv1.LoadBalancerServiceStrategyType:
-		// This can really be done for for any external [cloud] LBs that support the proxy protocol.
+		// This can really be done for any external [cloud] LBs that support the proxy protocol.
 		switch platform.Type {
 		case configv1.AWSPlatformType:
-			if ic.Status.EndpointPublishingStrategy.LoadBalancer == nil ||
-				ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters == nil ||
-				ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS == nil ||
-				ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.Type == operatorv1.AWSLoadBalancerProvider &&
-					ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.Type == operatorv1.AWSClassicLoadBalancer {
-				return true, nil
+			// TRICKY: If the service exists, use the LB Type annotation from the service,
+			//         as status will be inaccurate if a LB Type update is pending.
+			//         If the service does not exist, the status WILL be what determines the next LB Type.
+			var lbType operatorv1.AWSLoadBalancerType
+			if service != nil {
+				lbType = getAWSLoadBalancerTypeFromServiceAnnotation(service)
+			} else {
+				lbType = getAWSLoadBalancerTypeInStatus(ic)
 			}
+			return lbType == operatorv1.AWSClassicLoadBalancer, nil
 		case configv1.IBMCloudPlatformType:
 			if ic.Status.EndpointPublishingStrategy.LoadBalancer != nil &&
 				ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters != nil &&

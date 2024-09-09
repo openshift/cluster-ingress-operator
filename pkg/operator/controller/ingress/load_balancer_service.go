@@ -229,8 +229,6 @@ var (
 			// local-with-fallback annotation for kube-proxy (see
 			// <https://bugzilla.redhat.com/show_bug.cgi?id=1960284>).
 			localWithFallbackAnnotation,
-			// AWS load balancer type annotation to set either CLB/ELB or NLB
-			AWSLBTypeAnnotation,
 			// awsLBProxyProtocolAnnotation is used to enable the PROXY protocol on any
 			// AWS load balancer services created.
 			//
@@ -280,6 +278,11 @@ var (
 	managedAtServiceCreationLBServiceAnnotations = func() map[configv1.PlatformType]sets.Set[string] {
 		result := map[configv1.PlatformType]sets.Set[string]{
 			configv1.AWSPlatformType: sets.New[string](
+				// Annotation to specify either CLB or NLB.
+				// This annotation was previously fully managed (https://issues.redhat.com/browse/NE-865),
+				// but now requires service recreation due to issues with AWS leaking resources when updating
+				// LB Type without recreating the service (see https://issues.redhat.com/browse/OCPBUGS-16728).
+				AWSLBTypeAnnotation,
 				// Annotation for configuring load balancer subnets.
 				// This requires service recreation because NLBs do not support updates to subnets,
 				// the operator cannot detect errors if the subnets are invalid, and to prevent
@@ -322,8 +325,9 @@ var (
 // ensureLoadBalancerService creates an LB service if one is desired but absent.
 // Always returns the current LB service if one exists (whether it already
 // existed or was created during the course of the function).
-func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, platformStatus *configv1.PlatformStatus) (bool, *corev1.Service, error) {
-	wantLBS, desiredLBService, err := desiredLoadBalancerService(ci, deploymentRef, platformStatus)
+
+func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, platformStatus *configv1.PlatformStatus, proxyNeeded bool) (bool, *corev1.Service, error) {
+	wantLBS, desiredLBService, err := desiredLoadBalancerService(ci, deploymentRef, platformStatus, proxyNeeded)
 	if err != nil {
 		return false, nil, err
 	}
@@ -389,7 +393,7 @@ func isServiceOwnedByIngressController(service *corev1.Service, ic *operatorv1.I
 // ingresscontroller, or nil if an LB service isn't desired. An LB service is
 // desired if the high availability type is Cloud. An LB service will declare an
 // owner reference to the given deployment.
-func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, platform *configv1.PlatformStatus) (bool, *corev1.Service, error) {
+func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, platform *configv1.PlatformStatus, proxyNeeded bool) (bool, *corev1.Service, error) {
 	if ci.Status.EndpointPublishingStrategy.Type != operatorv1.LoadBalancerServiceStrategyType {
 		return false, nil, nil
 	}
@@ -417,11 +421,6 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 
 	if service.Annotations == nil {
 		service.Annotations = map[string]string{}
-	}
-
-	proxyNeeded, err := IsProxyProtocolNeeded(ci, platform)
-	if err != nil {
-		return false, nil, fmt.Errorf("failed to determine if proxy protocol is proxyNeeded for ingresscontroller %q: %v", ci.Name, err)
 	}
 
 	if platform != nil {
@@ -775,7 +774,11 @@ func IsServiceInternal(service *corev1.Service) bool {
 // the service, then the return value is a non-nil error indicating that the
 // modification must be reverted before upgrading is allowed.
 func loadBalancerServiceIsUpgradeable(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference, current *corev1.Service, platform *configv1.PlatformStatus) error {
-	want, desired, err := desiredLoadBalancerService(ic, deploymentRef, platform)
+	proxyNeeded, err := IsProxyProtocolNeeded(ic, platform, current)
+	if err != nil {
+		return fmt.Errorf("failed to determine if proxy protocol is needed for ingresscontroller %s/%s: %w", ic.Namespace, ic.Name, err)
+	}
+	want, desired, err := desiredLoadBalancerService(ic, deploymentRef, platform, proxyNeeded)
 	if err != nil {
 		return err
 	}
@@ -848,12 +851,22 @@ func loadBalancerServiceIsProgressing(ic *operatorv1.IngressController, service 
 	}
 
 	if platform.Type == configv1.AWSPlatformType {
+		// Tricky: LB Type in the status indicates the *desired* type (user desire + defaulting).
+		haveLBType := getAWSLoadBalancerTypeFromServiceAnnotation(service)
+		wantLBType := getAWSLoadBalancerTypeInStatus(ic)
+
+		if wantLBType != haveLBType {
+			patchSpec := fmt.Sprintf(`{"spec":{"endpointPublishingStrategy":{"type":"LoadBalancerService","loadBalancer":{"providerParameters":{"type":"AWS","aws":{"type":"%s"}}}}}}`, haveLBType)
+			err := createEffectuationMessage("loadBalancer.providerParameters.aws.type", string(haveLBType), string(wantLBType), patchSpec, ic, service)
+			errs = append(errs, err)
+		}
+
 		var (
 			// Tricky: Subnets in the status indicates the *actual* scope.
 			wantSubnets, haveSubnets *operatorv1.AWSSubnets
 			paramsFieldName          string
 		)
-		switch getAWSLoadBalancerTypeInStatus(ic) {
+		switch haveLBType {
 		case operatorv1.AWSNetworkLoadBalancer:
 			if nlbParams := getAWSNetworkLoadBalancerParametersInSpec(ic); nlbParams != nil {
 				wantSubnets = nlbParams.Subnets
@@ -877,32 +890,32 @@ func loadBalancerServiceIsProgressing(ic *operatorv1.IngressController, service 
 			haveSubnetsPatchJson := convertAWSSubnetListToPatchJson(haveSubnets, "null", "null")
 			haveSubnetsPrettyJson := convertAWSSubnetListToPatchJson(haveSubnets, "{}", "[]")
 			wantSubnetsPrettyJson := convertAWSSubnetListToPatchJson(wantSubnets, "{}", "[]")
-			patchSpec := fmt.Sprintf(`{"spec":{"endpointPublishingStrategy":{"type":"LoadBalancerService","loadBalancer":{"providerParameters":{"type":"AWS","aws":{"type":"%s","%s":{"subnets":%s}}}}}}}`, getAWSLoadBalancerTypeInStatus(ic), paramsFieldName, haveSubnetsPatchJson)
+			patchSpec := fmt.Sprintf(`{"spec":{"endpointPublishingStrategy":{"type":"LoadBalancerService","loadBalancer":{"providerParameters":{"type":"AWS","aws":{"type":"%s","%s":{"subnets":%s}}}}}}}`, haveLBType, paramsFieldName, haveSubnetsPatchJson)
 			err := createEffectuationMessage("subnets", haveSubnetsPrettyJson, wantSubnetsPrettyJson, patchSpec, ic, service)
 			errs = append(errs, err)
 		}
-	}
 
-	if platform.Type == configv1.AWSPlatformType && getAWSLoadBalancerTypeInStatus(ic) == operatorv1.AWSNetworkLoadBalancer {
-		var (
-			// Tricky: EIP Allocations in the status indicate the *actual* scope.
-			wantEIPAllocations, haveEIPAllocations []operatorv1.EIPAllocation
-		)
-		if nlbParams := getAWSNetworkLoadBalancerParametersInSpec(ic); nlbParams != nil {
-			wantEIPAllocations = nlbParams.EIPAllocations
-		}
-		if nlbParams := getAWSNetworkLoadBalancerParametersInStatus(ic); nlbParams != nil {
-			haveEIPAllocations = nlbParams.EIPAllocations
-		}
-		if !awsEIPAllocationsEqual(wantEIPAllocations, haveEIPAllocations) {
-			// Generate JSON for the oc patch command as well as "pretty" json
-			// that will be used for a more human-readable error message.
-			haveEIPAllocationsPatchJson := convertAWSEIPAllocationsListToPatchJson(haveEIPAllocations, "null")
-			haveEIPAllocationsPrettyJson := convertAWSEIPAllocationsListToPatchJson(haveEIPAllocations, "[]")
-			wantEIPAllocationsPrettyJson := convertAWSEIPAllocationsListToPatchJson(wantEIPAllocations, "[]")
-			patchSpec := fmt.Sprintf(`{"spec":{"endpointPublishingStrategy":{"type":"LoadBalancerService","loadBalancer":{"providerParameters":{"type":"AWS","aws":{"type":"NLB","networkLoadBalancer":{"eipAllocations":%s}}}}}}}`, haveEIPAllocationsPatchJson)
-			err := createEffectuationMessage("eipAllocations", haveEIPAllocationsPrettyJson, wantEIPAllocationsPrettyJson, patchSpec, ic, service)
-			errs = append(errs, err)
+		if haveLBType == operatorv1.AWSNetworkLoadBalancer {
+			var (
+				// Tricky: EIP Allocations in the status indicate the *actual* scope.
+				wantEIPAllocations, haveEIPAllocations []operatorv1.EIPAllocation
+			)
+			if nlbParams := getAWSNetworkLoadBalancerParametersInSpec(ic); nlbParams != nil {
+				wantEIPAllocations = nlbParams.EIPAllocations
+			}
+			if nlbParams := getAWSNetworkLoadBalancerParametersInStatus(ic); nlbParams != nil {
+				haveEIPAllocations = nlbParams.EIPAllocations
+			}
+			if !awsEIPAllocationsEqual(wantEIPAllocations, haveEIPAllocations) {
+				// Generate JSON for the oc patch command as well as "pretty" json
+				// that will be used for a more human-readable error message.
+				haveEIPAllocationsPatchJson := convertAWSEIPAllocationsListToPatchJson(haveEIPAllocations, "null")
+				haveEIPAllocationsPrettyJson := convertAWSEIPAllocationsListToPatchJson(haveEIPAllocations, "[]")
+				wantEIPAllocationsPrettyJson := convertAWSEIPAllocationsListToPatchJson(wantEIPAllocations, "[]")
+				patchSpec := fmt.Sprintf(`{"spec":{"endpointPublishingStrategy":{"type":"LoadBalancerService","loadBalancer":{"providerParameters":{"type":"AWS","aws":{"type":"NLB","networkLoadBalancer":{"eipAllocations":%s}}}}}}}`, haveEIPAllocationsPatchJson)
+				err := createEffectuationMessage("eipAllocations", haveEIPAllocationsPrettyJson, wantEIPAllocationsPrettyJson, patchSpec, ic, service)
+				errs = append(errs, err)
+			}
 		}
 	}
 
@@ -1024,6 +1037,21 @@ func loadBalancerSourceRangesMatch(ic *operatorv1.IngressController, current *co
 	}
 
 	return fmt.Errorf("You have manually edited an operator-managed object. You must revert your modifications by removing the Spec.LoadBalancerSourceRanges field of LoadBalancer-typed service %q. You can use the new AllowedSourceRanges API field on the ingresscontroller to configure this setting instead.", current.Name)
+}
+
+// getAWSLoadBalancerTypeFromServiceAnnotation gets the effective load balancer type by looking at the
+// service.beta.kubernetes.io/aws-load-balancer-type annotation of the LoadBalancer-type Service.
+// If the annotation isn't specified, the function returns the default of Classic.
+func getAWSLoadBalancerTypeFromServiceAnnotation(service *corev1.Service) operatorv1.AWSLoadBalancerType {
+	if service == nil {
+		return ""
+	}
+
+	if a, ok := service.Annotations[AWSLBTypeAnnotation]; ok && a == AWSNLBAnnotation {
+		return operatorv1.AWSNetworkLoadBalancer
+	}
+
+	return operatorv1.AWSClassicLoadBalancer
 }
 
 // getSubnetsFromServiceAnnotation gets the effective subnets by looking at the
@@ -1247,7 +1275,7 @@ func getAWSLoadBalancerTypeInStatus(ic *operatorv1.IngressController) operatorv1
 		ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS != nil {
 		return ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.Type
 	}
-	return ""
+	return operatorv1.AWSClassicLoadBalancer
 }
 
 // getAWSClassicLoadBalancerParametersInSpec gets the ClassicLoadBalancerParameter struct
