@@ -70,13 +70,14 @@ func getAuthorizerForResource(config Config) (autorest.Authorizer, error) {
 	}
 
 	var cred azcore.TokenCredential
-	// MSI Override for ARO HCP
-	msi := os.Getenv("AZURE_MSI_AUTHENTICATION")
-	if msi == "true" {
+	// Managed Identity Override for ARO HCP
+	managedIdentityClientID := os.Getenv("ARO_HCP_MI_CLIENT_ID")
+	if managedIdentityClientID != "" {
 		options := azidentity.ManagedIdentityCredentialOptions{
 			ClientOptions: azcore.ClientOptions{
 				Cloud: cloudConfig,
 			},
+			ID: azidentity.ClientID(managedIdentityClientID),
 		}
 
 		var err error
