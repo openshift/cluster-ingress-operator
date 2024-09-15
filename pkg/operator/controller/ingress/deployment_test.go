@@ -410,9 +410,15 @@ func Test_desiredRouterDeployment(t *testing.T) {
 	if len(deployment.Spec.Template.Spec.NodeSelector) == 0 {
 		t.Error("router Deployment has no default node selector")
 	}
-	if len(deployment.Spec.Template.Spec.Tolerations) != 0 {
-		t.Errorf("router Deployment has unexpected toleration: %#v",
-			deployment.Spec.Template.Spec.Tolerations)
+	e2eToleration := corev1.Toleration{
+		Key:      "kubernetes.io/e2e-evict-taint-key",
+		Value:    "evictTaintVal",
+		Operator: corev1.TolerationOpEqual,
+		Effect:   corev1.TaintEffectNoExecute,
+	}
+	expectedTolerations := []corev1.Toleration{e2eToleration}
+	if !reflect.DeepEqual(deployment.Spec.Template.Spec.Tolerations, expectedTolerations) {
+		t.Errorf("router Deployment has unexpected tolerations, expected: %#v, got: %#v", expectedTolerations, deployment.Spec.Template.Spec.Tolerations)
 	}
 	tests := []envData{
 		{"NAMESPACE_LABELS", true, "foo=bar"},
