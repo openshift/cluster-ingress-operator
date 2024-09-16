@@ -48,14 +48,14 @@ func (r *reconciler) ensureDefaultCertificateForIngress(caSecret *corev1.Secret,
 		if deleted, err := r.deleteRouterDefaultCertificate(current); err != nil {
 			return true, fmt.Errorf("failed to delete default certificate: %v", err)
 		} else if deleted {
-			r.recorder.Eventf(ci, "Normal", "DeletedDefaultCertificate", "Deleted default wildcard certificate %q", current.Name)
+			r.recorder.Eventf(ci, "Normal", "DeletedDefaultCertificate", "Deleted default wildcard certificate %q in namespace %q", current.Name, current.Namespace)
 			return false, nil
 		}
 	case wantCert && !haveCert:
 		if created, err := r.createRouterDefaultCertificate(desired); err != nil {
 			return false, fmt.Errorf("failed to create default certificate: %v", err)
 		} else if created {
-			r.recorder.Eventf(ci, "Normal", "CreatedDefaultCertificate", "Created default wildcard certificate %q", desired.Name)
+			r.recorder.Eventf(ci, "Normal", "CreatedDefaultCertificate", "Created default wildcard certificate %q in namespace %q", desired.Name, desired.Namespace)
 			return true, nil
 		}
 	case wantCert && haveCert:

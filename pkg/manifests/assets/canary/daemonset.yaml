@@ -50,7 +50,7 @@ spec:
       volumes:
       - name: cert
         secret:
-          secretName: canary-serving-cert
+          # secret name is set at runtime
           defaultMode: 0420
   updateStrategy:
     type: RollingUpdate

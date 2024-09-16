@@ -16,7 +16,8 @@ import (
 func Test_desiredCanaryDaemonSet(t *testing.T) {
 	// canaryImageName is the ingress-operator image
 	canaryImageName := "openshift/origin-cluster-ingress-operator:latest"
-	daemonset := desiredCanaryDaemonSet(canaryImageName)
+	certSecretName := "test_secret_name"
+	daemonset := desiredCanaryDaemonSet(canaryImageName, certSecretName)
 
 	expectedDaemonSetName := controller.CanaryDaemonSetName()
 
@@ -82,6 +83,23 @@ func Test_desiredCanaryDaemonSet(t *testing.T) {
 	}
 	if !cmp.Equal(tolerations, expectedTolerations) {
 		t.Errorf("expected daemonset tolerations to be %v, but got %v", expectedTolerations, tolerations)
+	}
+
+	volumes := daemonset.Spec.Template.Spec.Volumes
+	secretMode := int32(0420)
+	expectedVolumes := []corev1.Volume{
+		{
+			Name: "cert",
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName:  certSecretName,
+					DefaultMode: &secretMode,
+				},
+			},
+		},
+	}
+	if !cmp.Equal(volumes, expectedVolumes) {
+		t.Errorf("expected daemonset volumes to be %v, but got %v", expectedVolumes, volumes)
 	}
 }
 
@@ -229,7 +247,7 @@ func Test_canaryDaemonsetChanged(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
-			original := desiredCanaryDaemonSet("")
+			original := desiredCanaryDaemonSet("", "foobar")
 			mutated := original.DeepCopy()
 			tc.mutate(mutated)
 			if changed, updated := canaryDaemonSetChanged(original, mutated); changed != tc.expect {
