@@ -14,8 +14,6 @@ import (
 
 	iov1 "github.com/openshift/api/operatoringress/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
-	alidns "github.com/openshift/cluster-ingress-operator/pkg/dns/alibaba"
-	aliutil "github.com/openshift/cluster-ingress-operator/pkg/dns/alibaba/util"
 	awsdns "github.com/openshift/cluster-ingress-operator/pkg/dns/aws"
 	azuredns "github.com/openshift/cluster-ingress-operator/pkg/dns/azure"
 	gcpdns "github.com/openshift/cluster-ingress-operator/pkg/dns/gcp"
@@ -235,7 +233,7 @@ func (r *reconciler) createDNSProviderIfNeeded(dnsConfig *configv1.DNS, record *
 	creds := &corev1.Secret{}
 	switch platformStatus.Type {
 	case configv1.AWSPlatformType, configv1.AzurePlatformType, configv1.GCPPlatformType,
-		configv1.IBMCloudPlatformType, configv1.PowerVSPlatformType, configv1.AlibabaCloudPlatformType:
+		configv1.IBMCloudPlatformType, configv1.PowerVSPlatformType:
 		if platformStatus.Type == configv1.IBMCloudPlatformType && infraConfig.Status.ControlPlaneTopology == configv1.ExternalTopologyMode {
 			break
 		}
@@ -775,25 +773,6 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 			log.Info("using fake DNS provider as both CISInstanceCRN and DNSInstanceCRN are empty")
 			return &dns.FakeProvider{}, nil
 		}
-	case configv1.AlibabaCloudPlatformType:
-		if platformStatus.AlibabaCloud.Region == "" {
-			return nil, fmt.Errorf("missing region id in platform status")
-		}
-
-		cred, err := aliutil.FetchAlibabaCredentialsIniFromSecret(creds)
-		if err != nil {
-			return nil, err
-		}
-
-		provider, err := alidns.NewProvider(alidns.Config{
-			Region:       platformStatus.AlibabaCloud.Region,
-			AccessKeyID:  cred.AccessKeyID,
-			AccessSecret: cred.AccessKeySecret,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to create AlibabaCloud DNS manager: %v", err)
-		}
-		dnsProvider = provider
 	default:
 		dnsProvider = &dns.FakeProvider{}
 	}
