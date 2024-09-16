@@ -617,6 +617,27 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, platformStat
 					statusLB.ProviderParameters.IBM.Protocol = specProtocol
 					changed = true
 				}
+			case operatorv1.OpenStackLoadBalancerProvider:
+				// The only provider parameter that is supported
+				// for OpenStack is the FloatingIP parameter.
+				var statusFloatingIP string
+				specFloatingIP := specLB.ProviderParameters.OpenStack.FloatingIP
+				if statusLB.ProviderParameters != nil && statusLB.ProviderParameters.OpenStack != nil {
+					statusFloatingIP = statusLB.ProviderParameters.OpenStack.FloatingIP
+				}
+				if specFloatingIP != statusFloatingIP {
+					if statusLB.ProviderParameters == nil {
+						statusLB.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{}
+					}
+					if len(statusLB.ProviderParameters.Type) == 0 {
+						statusLB.ProviderParameters.Type = operatorv1.OpenStackLoadBalancerProvider
+					}
+					if statusLB.ProviderParameters.OpenStack == nil {
+						statusLB.ProviderParameters.OpenStack = &operatorv1.OpenStackLoadBalancerParameters{}
+					}
+					statusLB.ProviderParameters.OpenStack.FloatingIP = specFloatingIP
+					changed = true
+				}
 			}
 			return changed
 		}
@@ -738,6 +759,14 @@ func setDefaultProviderParameters(lbs *operatorv1.LoadBalancerStrategy, ingressC
 		lbs.ProviderParameters.Type = provider
 		if lbs.ProviderParameters.IBM == nil {
 			lbs.ProviderParameters.IBM = &operatorv1.IBMLoadBalancerParameters{}
+		}
+	case operatorv1.OpenStackLoadBalancerProvider:
+		if lbs.ProviderParameters == nil {
+			lbs.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{}
+		}
+		lbs.ProviderParameters.Type = provider
+		if lbs.ProviderParameters.OpenStack == nil {
+			lbs.ProviderParameters.OpenStack = &operatorv1.OpenStackLoadBalancerParameters{}
 		}
 	}
 }
