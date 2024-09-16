@@ -398,6 +398,15 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 			for name, value := range annotation {
 				service.Annotations[name] = value
 			}
+
+			// Set the Load Balancer IP for external load balancers on OpenStack only
+			if platform.Type == configv1.OpenStackPlatformType {
+				if lb != nil && lb.ProviderParameters != nil &&
+					lb.ProviderParameters.Type == operatorv1.OpenStackLoadBalancerProvider &&
+					lb.ProviderParameters.OpenStack != nil {
+					service.Spec.LoadBalancerIP = lb.ProviderParameters.OpenStack.LoadBalancerIP
+				}
+			}
 		}
 		switch platform.Type {
 		case configv1.AWSPlatformType:
