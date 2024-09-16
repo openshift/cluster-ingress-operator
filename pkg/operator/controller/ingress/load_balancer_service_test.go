@@ -38,6 +38,20 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 				},
 			}
 		}
+		openstackLbWithFloatingIP = func(scope operatorv1.LoadBalancerScope, floatingIP string) *operatorv1.EndpointPublishingStrategy {
+			return &operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.LoadBalancerServiceStrategyType,
+				LoadBalancer: &operatorv1.LoadBalancerStrategy{
+					Scope: scope,
+					ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+						Type: operatorv1.OpenStackLoadBalancerProvider,
+						OpenStack: &operatorv1.OpenStackLoadBalancerParameters{
+							FloatingIP: floatingIP,
+						},
+					},
+				},
+			}
+		}
 		// nps returns an EndpointPublishingStrategy with type
 		// "NodePortService" and the specified protocol.
 		nps = func(proto operatorv1.IngressControllerProtocol) *operatorv1.EndpointPublishingStrategy {
@@ -128,6 +142,7 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 		platformStatus                  *configv1.PlatformStatus
 		subnetsAWSFeatureEnabled        bool
 		eipAllocationsAWSFeatureEnabled bool
+		expectedFloatingIP              string
 	}{
 		{
 			description:                   "external classic load balancer with scope for aws platform",
@@ -664,6 +679,19 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 			},
 		},
 		{
+			description:                   "external load balancer for openstack platform with floating IP",
+			platformStatus:                platformStatus(configv1.OpenStackPlatformType),
+			strategySpec:                  openstackLbWithFloatingIP(operatorv1.ExternalLoadBalancer, "1.2.3.4"),
+			strategyStatus:                openstackLbWithFloatingIP(operatorv1.ExternalLoadBalancer, "1.2.3.4"),
+			expectService:                 true,
+			expectedFloatingIP:            "1.2.3.4",
+			expectedExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyLocal,
+			expectedServiceAnnotations: map[string]annotationExpectation{
+				openstackInternalLBAnnotation: {false, ""},
+				localWithFallbackAnnotation:   {true, ""},
+			},
+		},
+		{
 			description:                   "internal load balancer for openstack platform",
 			platformStatus:                platformStatus(configv1.OpenStackPlatformType),
 			strategyStatus:                lbs(operatorv1.InternalLoadBalancer),
@@ -673,6 +701,20 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 				openstackInternalLBAnnotation: {true, "true"},
 				localWithFallbackAnnotation:   {true, ""},
 			},
+		},
+		{
+			description:                   "internal load balancer for openstack platform with floating IP being ignored",
+			platformStatus:                platformStatus(configv1.OpenStackPlatformType),
+			strategySpec:                  openstackLbWithFloatingIP(operatorv1.InternalLoadBalancer, "1.2.3.4"),
+			strategyStatus:                lbs(operatorv1.InternalLoadBalancer),
+			expectedExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyLocal,
+			expectedServiceAnnotations: map[string]annotationExpectation{
+				openstackInternalLBAnnotation: {true, "true"},
+				localWithFallbackAnnotation:   {true, ""},
+			},
+			expectService: true,
+			// floatingIP is ignored for internal scope
+			expectedFloatingIP: "",
 		},
 		{
 			description:                   "external load balancer for alibaba platform",
@@ -779,6 +821,7 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 				TargetPort: intstr.FromString("https"),
 			}}, svc.Spec.Ports)
 			assert.Equal(t, "None", string(svc.Spec.SessionAffinity))
+			assert.Equal(t, tc.expectedFloatingIP, svc.Spec.LoadBalancerIP)
 		})
 	}
 }
@@ -1114,6 +1157,13 @@ func Test_loadBalancerServiceChanged(t *testing.T) {
 				svc.Spec.LoadBalancerSourceRanges = []string{"10.0.0.0/8"}
 			},
 			expect: true,
+		},
+		{
+			description: "if .spec.loadBalancerIP changes",
+			mutate: func(svc *corev1.Service) {
+				svc.Spec.LoadBalancerIP = "3.4.5.6"
+			},
+			expect: false,
 		},
 		{
 			description: "if the service.beta.kubernetes.io/load-balancer-source-ranges annotation changes",

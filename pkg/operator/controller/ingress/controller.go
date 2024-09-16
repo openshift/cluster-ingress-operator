@@ -468,6 +468,11 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, platformStat
 			effectiveStrategy.LoadBalancer.DNSManagementPolicy = operatorv1.UnmanagedLoadBalancerDNS
 		}
 
+		// OpenStack platform does not support managed DNS for load balancers.
+		if platformStatus.Type == configv1.OpenStackPlatformType {
+			effectiveStrategy.LoadBalancer.DNSManagementPolicy = operatorv1.UnmanagedLoadBalancerDNS
+		}
+
 		// When the platform's default DNS solution cannot be used, set the DNSManagementPolicy
 		// accordingly. This feature is currently being implemented first for GCP. Will be
 		// extended to AWS and Azure platforms later.
@@ -753,6 +758,14 @@ func setDefaultProviderParameters(lbs *operatorv1.LoadBalancerStrategy, ingressC
 		lbs.ProviderParameters.Type = provider
 		if lbs.ProviderParameters.IBM == nil {
 			lbs.ProviderParameters.IBM = &operatorv1.IBMLoadBalancerParameters{}
+		}
+	case operatorv1.OpenStackLoadBalancerProvider:
+		if lbs.ProviderParameters == nil {
+			lbs.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{}
+		}
+		lbs.ProviderParameters.Type = provider
+		if lbs.ProviderParameters.OpenStack == nil {
+			lbs.ProviderParameters.OpenStack = &operatorv1.OpenStackLoadBalancerParameters{}
 		}
 	}
 }

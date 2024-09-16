@@ -370,6 +370,10 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 
 	service.Spec.Selector = controller.IngressControllerDeploymentPodSelector(ci).MatchLabels
 
+	var lbSpec *operatorv1.LoadBalancerStrategy
+	if ci.Spec.EndpointPublishingStrategy != nil {
+		lbSpec = ci.Spec.EndpointPublishingStrategy.LoadBalancer
+	}
 	lbStatus := ci.Status.EndpointPublishingStrategy.LoadBalancer
 	isInternal := lbStatus != nil && lbStatus.Scope == operatorv1.InternalLoadBalancer
 
@@ -479,6 +483,17 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 		case configv1.AlibabaCloudPlatformType:
 			if !isInternal {
 				service.Annotations[alibabaCloudLBAddressTypeAnnotation] = alibabaCloudLBAddressTypeInternet
+			}
+		case configv1.OpenStackPlatformType:
+			// Set a floating IP only if the load balancer scope is external.
+			if !isInternal {
+				if lbSpec != nil && lbSpec.ProviderParameters != nil &&
+					lbSpec.ProviderParameters.Type == operatorv1.OpenStackLoadBalancerProvider &&
+					lbSpec.ProviderParameters.OpenStack != nil {
+					// We know that LoadBalancerIP is deprecated but in this current version of Service, this won't be removed.
+					// It'll probably be removed in Service v2 which is not going to happen in the near future.
+					service.Spec.LoadBalancerIP = lbSpec.ProviderParameters.OpenStack.FloatingIP
+				}
 			}
 		}
 		// Azure load balancers are not customizable and are set to (2 fail @ 5s interval, 2 healthy)
@@ -665,6 +680,9 @@ func shouldRecreateLoadBalancer(current, desired *corev1.Service, platform *conf
 	}
 	if platform.Type == configv1.AWSPlatformType && !serviceEIPAllocationsEqual(current, desired) {
 		return true, "its eipAllocations changed"
+	}
+	if platform.Type == configv1.OpenStackPlatformType && current.Spec.LoadBalancerIP != desired.Spec.LoadBalancerIP {
+		return true, "its load balancer IP changed"
 	}
 	return false, ""
 }
@@ -861,6 +879,18 @@ func loadBalancerServiceIsProgressing(ic *operatorv1.IngressController, service 
 		}
 	}
 
+	if platform.Type == configv1.OpenStackPlatformType {
+		wantFloatingIP := getOpenStackFloatingIPInSpec(ic)
+		haveFloatingIP := getOpenStackFloatingIPInStatus(ic)
+		// OpenStack CCM does not support updating Service.Spec.LoadBalancerIP after creation, the load balancer will never be updated.
+		if wantFloatingIP != haveFloatingIP {
+			changeMsg := fmt.Sprintf("The IngressController floatingIP was changed from %q to %q.", haveFloatingIP, wantFloatingIP)
+			ocPatchRevertCmd := fmt.Sprintf(`oc -n %[1]s patch ingresscontrollers/%[2]s --type=merge --patch='{"spec":{"endpointPublishingStrategy":{"type":"LoadBalancerService","loadBalancer":{"providerParameters":{"type":"OpenStack","openstack":{"floatingIP":"%[3]s"}}}}}}'`, ic.Namespace, ic.Name, haveFloatingIP)
+			err := fmt.Errorf("%[1]s  To effectuate this change, you must delete the service: `oc -n %[2]s delete svc/%[3]s`; the service load-balancer will then be deprovisioned and a new one created. This will most likely cause the new load-balancer to have a different host name and IP address and cause disruption. To return to the previous state, you can revert the change to the IngressController: `%[4]s`", changeMsg, service.Namespace, service.Name, ocPatchRevertCmd)
+			errs = append(errs, err)
+		}
+	}
+
 	errs = append(errs, loadBalancerSourceRangesAnnotationSet(service))
 	errs = append(errs, loadBalancerSourceRangesMatch(ic, service))
 
@@ -1001,6 +1031,15 @@ func getSubnetsFromServiceAnnotation(service *corev1.Service) *operatorv1.AWSSub
 	}
 
 	return awsSubnets
+}
+
+// getLoadBalancerIPFromService gets the effective loadBalancerIP by looking at the Service.Spec.LoadBalancerIP.
+func getLoadBalancerIPFromService(service *corev1.Service) string {
+	if service == nil {
+		return ""
+	}
+
+	return service.Spec.LoadBalancerIP
 }
 
 // getEIPAllocationsFromServiceAnnotation gets the effective eipAllocations by looking at the
@@ -1240,4 +1279,25 @@ func getAWSNetworkLoadBalancerParametersInStatus(ic *operatorv1.IngressControlle
 		return ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters
 	}
 	return nil
+}
+
+// getOpenStackFloatingIPInSpec gets the OpenStack Floating IP reported in the spec.
+func getOpenStackFloatingIPInSpec(ic *operatorv1.IngressController) string {
+	return getOpenStackFloatingIPInEPS(ic.Spec.EndpointPublishingStrategy)
+}
+
+// getOpenStackFloatingIPInStatus gets the OpenStack Floating IP reported in the status.
+func getOpenStackFloatingIPInStatus(ic *operatorv1.IngressController) string {
+	return getOpenStackFloatingIPInEPS(ic.Status.EndpointPublishingStrategy)
+}
+
+// getOpenStackFloatingIPInEPS gets the OpenStack Floating IP reported in the EndpointPublishingStrategy.
+func getOpenStackFloatingIPInEPS(eps *operatorv1.EndpointPublishingStrategy) string {
+	if eps != nil &&
+		eps.LoadBalancer != nil &&
+		eps.LoadBalancer.ProviderParameters != nil &&
+		eps.LoadBalancer.ProviderParameters.OpenStack != nil {
+		return eps.LoadBalancer.ProviderParameters.OpenStack.FloatingIP
+	}
+	return ""
 }

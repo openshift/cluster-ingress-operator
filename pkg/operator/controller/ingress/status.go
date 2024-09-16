@@ -80,6 +80,9 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	if platformStatus.Type == configv1.AWSPlatformType && r.config.IngressControllerEIPAllocationsAWSEnabled {
 		updateIngressControllerAWSEIPAllocationStatus(updated, service)
 	}
+	if platformStatus.Type == configv1.OpenStackPlatformType {
+		updateIngressControllerFloatingIPOpenStackStatus(updated, service)
+	}
 
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentAvailableCondition(deployment))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentReplicasMinAvailableCondition(deployment, pods))
@@ -821,6 +824,9 @@ func IngressStatusesEqual(a, b operatorv1.IngressControllerStatus) bool {
 				}
 			}
 		}
+		if getOpenStackFloatingIPInEPS(a.EndpointPublishingStrategy) != getOpenStackFloatingIPInEPS(b.EndpointPublishingStrategy) {
+			return false
+		}
 	}
 
 	return true
@@ -976,6 +982,17 @@ func updateIngressControllerAWSEIPAllocationStatus(ic *operatorv1.IngressControl
 		if nlbParams != nil {
 			nlbParams.EIPAllocations = getEIPAllocationsFromServiceAnnotation(service)
 		}
+	}
+}
+
+// updateIngressControllerFloatingIPOpenStackStatus mutates the provided IngressController object to
+// sync its status to the effective floatingIP on the LoadBalancer-type service.
+func updateIngressControllerFloatingIPOpenStackStatus(ic *operatorv1.IngressController, service *corev1.Service) {
+	if ic.Status.EndpointPublishingStrategy != nil &&
+		ic.Status.EndpointPublishingStrategy.LoadBalancer != nil &&
+		ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters != nil &&
+		ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.OpenStack != nil {
+		ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.OpenStack.FloatingIP = getLoadBalancerIPFromService(service)
 	}
 }
 
