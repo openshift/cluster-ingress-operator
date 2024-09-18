@@ -747,7 +747,7 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 				},
 			}
 
-			proxyNeeded, err := IsProxyProtocolNeeded(ic, infraConfig.Status.PlatformStatus)
+			proxyNeeded, err := IsProxyProtocolNeeded(ic, infraConfig.Status.PlatformStatus, nil)
 			switch {
 			case err != nil:
 				t.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %v", ic.Namespace, ic.Name, err)
@@ -755,7 +755,7 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 				t.Errorf("expected IsProxyProtocolNeeded to return %v, got %v", tc.proxyNeeded, proxyNeeded)
 			}
 
-			haveSvc, svc, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig.Status.PlatformStatus, tc.subnetsAWSFeatureEnabled, tc.eipAllocationsAWSFeatureEnabled)
+			haveSvc, svc, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig.Status.PlatformStatus, tc.subnetsAWSFeatureEnabled, tc.eipAllocationsAWSFeatureEnabled, proxyNeeded)
 			switch {
 			case err != nil:
 				t.Error(err)
@@ -940,7 +940,7 @@ func TestDesiredLoadBalancerServiceAWSIdleTimeout(t *testing.T) {
 					},
 				},
 			}
-			haveSvc, svc, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig.Status.PlatformStatus, true, true)
+			haveSvc, svc, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig.Status.PlatformStatus, true, true, false)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1566,7 +1566,7 @@ func TestUpdateLoadBalancerServiceSourceRanges(t *testing.T) {
 					},
 				},
 			}
-			wantSvc, desired, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig.Status.PlatformStatus, true, true)
+			wantSvc, desired, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig.Status.PlatformStatus, true, true, false)
 			if err != nil {
 				t.Fatal(err)
 			}
