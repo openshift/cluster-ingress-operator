@@ -1437,11 +1437,20 @@ func Test_IsProxyProtocolNeeded(t *testing.T) {
 				Protocol: operatorv1.ProxyProtocol,
 			},
 		}
+		serviceWithELB = corev1.Service{}
+		serviceWithNLB = corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{
+				Annotations: map[string]string{
+					AWSLBTypeAnnotation: AWSNLBAnnotation,
+				},
+			},
+		}
 	)
 	testCases := []struct {
 		description string
 		strategy    *operatorv1.EndpointPublishingStrategy
 		platform    *configv1.PlatformStatus
+		service     *corev1.Service
 		expect      bool
 		expectError bool
 	}{
@@ -1485,6 +1494,20 @@ func Test_IsProxyProtocolNeeded(t *testing.T) {
 			description: "loadbalancer strategy with NLB shouldn't use PROXY",
 			strategy:    &loadBalancerStrategyWithNLB,
 			platform:    &awsPlatform,
+			expect:      false,
+		},
+		{
+			description: "loadbalancer strategy with NLB, but a service with ELB should use PROXY",
+			strategy:    &loadBalancerStrategyWithNLB,
+			platform:    &awsPlatform,
+			service:     &serviceWithELB,
+			expect:      true,
+		},
+		{
+			description: "loadbalancer strategy with ELB, but a service with NLB shouldn't use PROXY",
+			strategy:    &loadBalancerStrategyWithNLB,
+			platform:    &awsPlatform,
+			service:     &serviceWithNLB,
 			expect:      false,
 		},
 		{
@@ -1568,7 +1591,7 @@ func Test_IsProxyProtocolNeeded(t *testing.T) {
 					EndpointPublishingStrategy: tc.strategy,
 				},
 			}
-			switch actual, err := IsProxyProtocolNeeded(ic, tc.platform); {
+			switch actual, err := IsProxyProtocolNeeded(ic, tc.platform, tc.service); {
 			case tc.expectError && err == nil:
 				t.Error("expected error, got nil")
 			case !tc.expectError && err != nil:

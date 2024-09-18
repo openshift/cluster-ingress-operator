@@ -325,8 +325,8 @@ var (
 // ensureLoadBalancerService creates an LB service if one is desired but absent.
 // Always returns the current LB service if one exists (whether it already
 // existed or was created during the course of the function).
-func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, platformStatus *configv1.PlatformStatus) (bool, *corev1.Service, error) {
-	wantLBS, desiredLBService, err := desiredLoadBalancerService(ci, deploymentRef, platformStatus, r.config.IngressControllerLBSubnetsAWSEnabled, r.config.IngressControllerEIPAllocationsAWSEnabled)
+func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, platformStatus *configv1.PlatformStatus, proxyNeeded bool) (bool, *corev1.Service, error) {
+	wantLBS, desiredLBService, err := desiredLoadBalancerService(ci, deploymentRef, platformStatus, r.config.IngressControllerLBSubnetsAWSEnabled, r.config.IngressControllerEIPAllocationsAWSEnabled, proxyNeeded)
 	if err != nil {
 		return false, nil, err
 	}
@@ -392,7 +392,7 @@ func isServiceOwnedByIngressController(service *corev1.Service, ic *operatorv1.I
 // ingresscontroller, or nil if an LB service isn't desired. An LB service is
 // desired if the high availability type is Cloud. An LB service will declare an
 // owner reference to the given deployment.
-func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, platform *configv1.PlatformStatus, subnetsAWSEnabled bool, eipAllocationsAWSEnabled bool) (bool, *corev1.Service, error) {
+func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, platform *configv1.PlatformStatus, subnetsAWSEnabled bool, eipAllocationsAWSEnabled bool, proxyNeeded bool) (bool, *corev1.Service, error) {
 	if ci.Status.EndpointPublishingStrategy.Type != operatorv1.LoadBalancerServiceStrategyType {
 		return false, nil, nil
 	}
@@ -411,16 +411,13 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 
 	service.Spec.Selector = controller.IngressControllerDeploymentPodSelector(ci).MatchLabels
 
+	// TODO: The IngressController status should represent the actual state of the load balancer,
+	//       while the spec should be the sole source for the desired load balancer state.
 	lb := ci.Status.EndpointPublishingStrategy.LoadBalancer
 	isInternal := lb != nil && lb.Scope == operatorv1.InternalLoadBalancer
 
 	if service.Annotations == nil {
 		service.Annotations = map[string]string{}
-	}
-
-	proxyNeeded, err := IsProxyProtocolNeeded(ci, platform)
-	if err != nil {
-		return false, nil, fmt.Errorf("failed to determine if proxy protocol is proxyNeeded for ingresscontroller %q: %v", ci.Name, err)
 	}
 
 	if platform != nil {
@@ -770,7 +767,11 @@ func loadBalancerServiceTagsModified(current, expected *corev1.Service) (bool, [
 // the service, then the return value is a non-nil error indicating that the
 // modification must be reverted before upgrading is allowed.
 func loadBalancerServiceIsUpgradeable(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference, current *corev1.Service, platform *configv1.PlatformStatus, subnetsAWSEnabled bool, eipAllocationsAWSEnabled bool) error {
-	want, desired, err := desiredLoadBalancerService(ic, deploymentRef, platform, subnetsAWSEnabled, eipAllocationsAWSEnabled)
+	proxyNeeded, err := IsProxyProtocolNeeded(ic, platform, current)
+	if err != nil {
+		return fmt.Errorf("failed to determine if proxy protocol is needed for ingresscontroller %s/%s: %v", ic.Namespace, ic.Name, err)
+	}
+	want, desired, err := desiredLoadBalancerService(ic, deploymentRef, platform, subnetsAWSEnabled, eipAllocationsAWSEnabled, proxyNeeded)
 	if err != nil {
 		return err
 	}
@@ -837,7 +838,7 @@ func loadBalancerServiceIsProgressing(ic *operatorv1.IngressController, service 
 			wantSubnets, haveSubnets *operatorv1.AWSSubnets
 			paramsFieldName          string
 		)
-		switch getAWSLoadBalancerTypeInStatus(ic) {
+		switch getAWSLoadBalancerTypeFromServiceAnnotation(service) {
 		case operatorv1.AWSNetworkLoadBalancer:
 			if nlbParams := getAWSNetworkLoadBalancerParametersInSpec(ic); nlbParams != nil {
 				wantSubnets = nlbParams.Subnets
@@ -868,7 +869,7 @@ func loadBalancerServiceIsProgressing(ic *operatorv1.IngressController, service 
 		}
 	}
 
-	if platform.Type == configv1.AWSPlatformType && eipAllocationsAWSEnabled && getAWSLoadBalancerTypeInStatus(ic) == operatorv1.AWSNetworkLoadBalancer {
+	if platform.Type == configv1.AWSPlatformType && eipAllocationsAWSEnabled && getAWSLoadBalancerTypeFromServiceAnnotation(service) == operatorv1.AWSNetworkLoadBalancer {
 		var (
 			wantEIPAllocations, haveEIPAllocations []operatorv1.EIPAllocation
 		)
@@ -1238,7 +1239,7 @@ func getAWSLoadBalancerTypeInStatus(ic *operatorv1.IngressController) operatorv1
 		ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS != nil {
 		return ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.Type
 	}
-	return ""
+	return operatorv1.AWSClassicLoadBalancer
 }
 
 // getAWSClassicLoadBalancerParametersInSpec gets the ClassicLoadBalancerParameter struct

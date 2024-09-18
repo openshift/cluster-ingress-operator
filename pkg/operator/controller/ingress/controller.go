@@ -1069,7 +1069,19 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		haveClientCAConfigmap = true
 	}
 
-	haveDepl, deployment, err := r.ensureRouterDeployment(ci, infraConfig, ingressConfig, apiConfig, networkConfig, haveClientCAConfigmap, clientCAConfigmap, platformStatus, clusterProxyConfig)
+	_, currentLBService, err := r.currentLoadBalancerService(ci)
+	if err != nil {
+		errs = append(errs, fmt.Errorf("failed to get load balancer service for %s: %v", ci.Name, err))
+		return utilerrors.NewAggregate(errs)
+	}
+
+	proxyNeeded, err := IsProxyProtocolNeeded(ci, platformStatus, currentLBService)
+	if err != nil {
+		errs = append(errs, fmt.Errorf("failed to determine if proxy protocol is needed for ingresscontroller %s/%s: %v", ci.Namespace, ci.Name, err))
+		return utilerrors.NewAggregate(errs)
+	}
+
+	haveDepl, deployment, err := r.ensureRouterDeployment(ci, infraConfig, ingressConfig, apiConfig, networkConfig, haveClientCAConfigmap, clientCAConfigmap, platformStatus, clusterProxyConfig, proxyNeeded)
 	if err != nil {
 		errs = append(errs, fmt.Errorf("failed to ensure deployment: %v", err))
 		return utilerrors.NewAggregate(errs)
@@ -1088,7 +1100,7 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 	}
 
 	var wildcardRecord *iov1.DNSRecord
-	haveLB, lbService, err := r.ensureLoadBalancerService(ci, deploymentRef, platformStatus)
+	haveLB, lbService, err := r.ensureLoadBalancerService(ci, deploymentRef, platformStatus, proxyNeeded)
 	if err != nil {
 		errs = append(errs, fmt.Errorf("failed to ensure load balancer service for %s: %v", ci.Name, err))
 	} else {
@@ -1183,23 +1195,26 @@ func IsStatusDomainSet(ingress *operatorv1.IngressController) bool {
 
 // IsProxyProtocolNeeded checks whether proxy protocol is needed based
 // upon the given ic and platform.
-func IsProxyProtocolNeeded(ic *operatorv1.IngressController, platform *configv1.PlatformStatus) (bool, error) {
+func IsProxyProtocolNeeded(ic *operatorv1.IngressController, platform *configv1.PlatformStatus, service *corev1.Service) (bool, error) {
 	if platform == nil {
 		return false, fmt.Errorf("platform status is missing; failed to determine if proxy protocol is needed for %s/%s",
 			ic.Namespace, ic.Name)
 	}
 	switch ic.Status.EndpointPublishingStrategy.Type {
 	case operatorv1.LoadBalancerServiceStrategyType:
-		// This can really be done for for any external [cloud] LBs that support the proxy protocol.
+		// This can really be done for any external [cloud] LBs that support the proxy protocol.
 		switch platform.Type {
 		case configv1.AWSPlatformType:
-			if ic.Status.EndpointPublishingStrategy.LoadBalancer == nil ||
-				ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters == nil ||
-				ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS == nil ||
-				ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.Type == operatorv1.AWSLoadBalancerProvider &&
-					ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.Type == operatorv1.AWSClassicLoadBalancer {
-				return true, nil
+			// TRICKY: If the service exists, use the LB Type annotation from the service,
+			//         as status will be inaccurate if a LB Type update is pending.
+			//         If the service does not exist, the status WILL be what determines the next LB Type.
+			var lbType operatorv1.AWSLoadBalancerType
+			if service != nil {
+				lbType = getAWSLoadBalancerTypeFromServiceAnnotation(service)
+			} else {
+				lbType = getAWSLoadBalancerTypeInStatus(ic)
 			}
+			return lbType == operatorv1.AWSClassicLoadBalancer, nil
 		case configv1.IBMCloudPlatformType:
 			if ic.Status.EndpointPublishingStrategy.LoadBalancer != nil &&
 				ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters != nil &&
