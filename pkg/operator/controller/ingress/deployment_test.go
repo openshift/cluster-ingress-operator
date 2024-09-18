@@ -381,7 +381,7 @@ func getRouterDeploymentComponents(t *testing.T) (*operatorv1.IngressController,
 			},
 		},
 	}
-	proxyNeeded, err := IsProxyProtocolNeeded(ic, infraConfig.Status.PlatformStatus)
+	proxyNeeded, err := IsProxyProtocolNeeded(ic, infraConfig.Status.PlatformStatus, nil)
 	if err != nil {
 		t.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %v", ic.Namespace, ic.Name, err)
 	}
@@ -686,7 +686,7 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 	ic.Status.Domain = "example.com"
 	ic.Status.EndpointPublishingStrategy.Type = operatorv1.LoadBalancerServiceStrategyType
 
-	proxyNeeded, err := IsProxyProtocolNeeded(ic, infraConfig.Status.PlatformStatus)
+	proxyNeeded, err := IsProxyProtocolNeeded(ic, infraConfig.Status.PlatformStatus, nil)
 	if err != nil {
 		t.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %v", ic.Namespace, ic.Name, err)
 	}
@@ -784,7 +784,7 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 			},
 		},
 	}
-	proxyNeeded, err = IsProxyProtocolNeeded(ic, infraConfig.Status.PlatformStatus)
+	proxyNeeded, err = IsProxyProtocolNeeded(ic, infraConfig.Status.PlatformStatus, nil)
 	if err != nil {
 		t.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %v", ic.Namespace, ic.Name, err)
 	}
@@ -894,7 +894,7 @@ func TestDesiredRouterDeploymentVariety(t *testing.T) {
 	networkConfig.Status.ClusterNetwork = []configv1.ClusterNetworkEntry{
 		{CIDR: "2620:0:2d0:200::7/32"},
 	}
-	proxyNeeded, err := IsProxyProtocolNeeded(ic, infraConfig.Status.PlatformStatus)
+	proxyNeeded, err := IsProxyProtocolNeeded(ic, infraConfig.Status.PlatformStatus, nil)
 	if err != nil {
 		t.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %v", ic.Namespace, ic.Name, err)
 	}
@@ -1012,7 +1012,7 @@ func TestDesiredRouterDeploymentVariety(t *testing.T) {
 func TestDesiredRouterDeploymentHostNetworkNil(t *testing.T) {
 	ic, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, clusterProxyConfig := getRouterDeploymentComponents(t)
 	ic.Status.EndpointPublishingStrategy.Type = operatorv1.HostNetworkStrategyType
-	proxyNeeded, err := IsProxyProtocolNeeded(ic, infraConfig.Status.PlatformStatus)
+	proxyNeeded, err := IsProxyProtocolNeeded(ic, infraConfig.Status.PlatformStatus, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
