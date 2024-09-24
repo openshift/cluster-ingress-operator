@@ -796,6 +796,12 @@ func verifyInternalIngressController(t *testing.T, name types.NamespacedName, ho
 	}
 }
 
+func assertCreated(t *testing.T, cl client.Client, thing client.Object) {
+	if err := cl.Create(context.TODO(), thing); err != nil {
+		t.Fatalf("Failed to create %s: %v", thing.GetName(), err)
+	}
+}
+
 // assertDeleted tries to delete a cluster resource, and causes test failure if the delete fails.
 func assertDeleted(t *testing.T, cl client.Client, thing client.Object) {
 	t.Helper()
