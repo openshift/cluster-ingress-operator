@@ -655,8 +655,7 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 			},
 		},
 	}
-
-	loadBalancerIngressControllerWithAWSSubnets := func(lbType operatorv1.AWSLoadBalancerType, subnetSpec *operatorv1.AWSSubnets, subnetStatus *operatorv1.AWSSubnets) *operatorv1.IngressController {
+	loadBalancerIngressControllerWithLBType := func(lbType operatorv1.AWSLoadBalancerType) *operatorv1.IngressController {
 		eps := &operatorv1.EndpointPublishingStrategy{
 			Type: operatorv1.LoadBalancerServiceStrategyType,
 			LoadBalancer: &operatorv1.LoadBalancerStrategy{
@@ -677,6 +676,11 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 				EndpointPublishingStrategy: eps.DeepCopy(),
 			},
 		}
+		return ic
+	}
+	loadBalancerIngressControllerWithAWSSubnets := func(lbType operatorv1.AWSLoadBalancerType, subnetSpec *operatorv1.AWSSubnets, subnetStatus *operatorv1.AWSSubnets) *operatorv1.IngressController {
+		ic := loadBalancerIngressControllerWithLBType(lbType)
+
 		switch lbType {
 		case operatorv1.AWSNetworkLoadBalancer:
 			ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{
@@ -763,6 +767,13 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 		},
 	}
 	lbService := &corev1.Service{}
+	lbServiceWithNLB := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Annotations: map[string]string{
+				AWSLBTypeAnnotation: AWSNLBAnnotation,
+			},
+		},
+	}
 	lbServiceWithInternalScopeOnAWS := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Annotations: map[string]string{
@@ -884,7 +895,7 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 				nil,
 				nil,
 			),
-			service:           &corev1.Service{},
+			service:           lbServiceWithNLB,
 			awsSubnetsEnabled: true,
 			platformStatus:    awsPlatformStatus,
 			expectStatus:      operatorv1.ConditionFalse,
@@ -896,7 +907,7 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 				nil,
 				&operatorv1.AWSSubnets{},
 			),
-			service:           &corev1.Service{},
+			service:           lbServiceWithNLB,
 			awsSubnetsEnabled: true,
 			platformStatus:    awsPlatformStatus,
 			expectStatus:      operatorv1.ConditionFalse,
@@ -910,7 +921,7 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 				},
 				nil,
 			),
-			service:           &corev1.Service{},
+			service:           lbServiceWithNLB,
 			awsSubnetsEnabled: false,
 			platformStatus:    awsPlatformStatus,
 			expectStatus:      operatorv1.ConditionFalse,
@@ -924,7 +935,7 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 				},
 				nil,
 			),
-			service:           &corev1.Service{},
+			service:           lbServiceWithNLB,
 			awsSubnetsEnabled: true,
 			platformStatus:    awsPlatformStatus,
 			expectStatus:      operatorv1.ConditionTrue,
@@ -938,7 +949,7 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 					IDs: []operatorv1.AWSSubnetID{"subnet-12345"},
 				},
 			),
-			service:           &corev1.Service{},
+			service:           lbServiceWithNLB,
 			awsSubnetsEnabled: true,
 			platformStatus:    awsPlatformStatus,
 			expectStatus:      operatorv1.ConditionTrue,
@@ -956,7 +967,7 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 					Names: []operatorv1.AWSSubnetName{"name-12345"},
 				},
 			),
-			service:           &corev1.Service{},
+			service:           lbServiceWithNLB,
 			awsSubnetsEnabled: true,
 			platformStatus:    awsPlatformStatus,
 			expectStatus:      operatorv1.ConditionFalse,
@@ -974,7 +985,7 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 					Names: []operatorv1.AWSSubnetName{"name-67890"},
 				},
 			),
-			service:           &corev1.Service{},
+			service:           lbServiceWithNLB,
 			awsSubnetsEnabled: true,
 			platformStatus:    awsPlatformStatus,
 			expectStatus:      operatorv1.ConditionTrue,
@@ -992,7 +1003,7 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 					Names: []operatorv1.AWSSubnetName{"name-67890", "name-12345"},
 				},
 			),
-			service:           &corev1.Service{},
+			service:           lbServiceWithNLB,
 			awsSubnetsEnabled: true,
 			platformStatus:    awsPlatformStatus,
 			expectStatus:      operatorv1.ConditionFalse,
@@ -1010,7 +1021,7 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 					Names: []operatorv1.AWSSubnetName{"name-67890", "name-12345", "name-54321"},
 				},
 			),
-			service:           &corev1.Service{},
+			service:           lbServiceWithNLB,
 			awsSubnetsEnabled: true,
 			platformStatus:    awsPlatformStatus,
 			expectStatus:      operatorv1.ConditionTrue,
@@ -1145,7 +1156,7 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 				nil,
 				nil,
 			),
-			service:                  &corev1.Service{},
+			service:                  lbServiceWithNLB,
 			awsEIPAllocationsEnabled: true,
 			platformStatus:           awsPlatformStatus,
 			expectStatus:             operatorv1.ConditionFalse,
@@ -1156,7 +1167,7 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 				nil,
 				[]operatorv1.EIPAllocation{},
 			),
-			service:                  &corev1.Service{},
+			service:                  lbServiceWithNLB,
 			awsEIPAllocationsEnabled: true,
 			platformStatus:           awsPlatformStatus,
 			expectStatus:             operatorv1.ConditionFalse,
@@ -1167,7 +1178,7 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 				[]operatorv1.EIPAllocation{"eipalloc-xxxxxxxxxxxxxxxxx", "eipalloc-yyyyyyyyyyyyyyyyy"},
 				nil,
 			),
-			service:                  &corev1.Service{},
+			service:                  lbServiceWithNLB,
 			awsEIPAllocationsEnabled: false,
 			platformStatus:           awsPlatformStatus,
 			expectStatus:             operatorv1.ConditionFalse,
@@ -1178,7 +1189,7 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 				[]operatorv1.EIPAllocation{"eipalloc-xxxxxxxxxxxxxxxxx", "eipalloc-yyyyyyyyyyyyyyyyy"},
 				nil,
 			),
-			service:                  &corev1.Service{},
+			service:                  lbServiceWithNLB,
 			awsEIPAllocationsEnabled: true,
 			platformStatus:           awsPlatformStatus,
 			expectStatus:             operatorv1.ConditionTrue,
@@ -1189,7 +1200,7 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 				nil,
 				[]operatorv1.EIPAllocation{"eipalloc-xxxxxxxxxxxxxxxxx", "eipalloc-yyyyyyyyyyyyyyyyy"},
 			),
-			service:                  &corev1.Service{},
+			service:                  lbServiceWithNLB,
 			awsEIPAllocationsEnabled: true,
 			platformStatus:           awsPlatformStatus,
 			expectStatus:             operatorv1.ConditionTrue,
@@ -1200,7 +1211,7 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 				[]operatorv1.EIPAllocation{"eipalloc-xxxxxxxxxxxxxxxxx", "eipalloc-yyyyyyyyyyyyyyyyy"},
 				[]operatorv1.EIPAllocation{"eipalloc-xxxxxxxxxxxxxxxxx", "eipalloc-yyyyyyyyyyyyyyyyy"},
 			),
-			service:                  &corev1.Service{},
+			service:                  lbServiceWithNLB,
 			awsEIPAllocationsEnabled: true,
 			platformStatus:           awsPlatformStatus,
 			expectStatus:             operatorv1.ConditionFalse,
@@ -1211,7 +1222,7 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 				[]operatorv1.EIPAllocation{"eipalloc-xxxxxxxxxxxxxxxxx", "eipalloc-yyyyyyyyyyyyyyyyy"},
 				[]operatorv1.EIPAllocation{"eipalloc-aaaaaaaaaaaaaaaaa", "eipalloc-bbbbbbbbbbbbbbbbb"},
 			),
-			service:                  &corev1.Service{},
+			service:                  lbServiceWithNLB,
 			awsEIPAllocationsEnabled: true,
 			platformStatus:           awsPlatformStatus,
 			expectStatus:             operatorv1.ConditionTrue,
@@ -1222,7 +1233,7 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 				[]operatorv1.EIPAllocation{"eipalloc-xxxxxxxxxxxxxxxxx", "eipalloc-yyyyyyyyyyyyyyyyy"},
 				[]operatorv1.EIPAllocation{"eipalloc-yyyyyyyyyyyyyyyyy", "eipalloc-xxxxxxxxxxxxxxxxx"},
 			),
-			service:                  &corev1.Service{},
+			service:                  lbServiceWithNLB,
 			awsEIPAllocationsEnabled: true,
 			platformStatus:           awsPlatformStatus,
 			expectStatus:             operatorv1.ConditionFalse,
@@ -1233,10 +1244,31 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 				[]operatorv1.EIPAllocation{"eipalloc-xxxxxxxxxxxxxxxxx", "eipalloc-yyyyyyyyyyyyyyyyy", "eipalloc-zzzzzzzzzzzzz"},
 				[]operatorv1.EIPAllocation{"eipalloc-yyyyyyyyyyyyyyyyy", "eipalloc-xxxxxxxxxxxxxxxxx"},
 			),
-			service:                  &corev1.Service{},
+			service:                  lbServiceWithNLB,
 			awsEIPAllocationsEnabled: true,
 			platformStatus:           awsPlatformStatus,
 			expectStatus:             operatorv1.ConditionTrue,
+		},
+		{
+			name:           "LBType Empty LoadBalancerService (default Classic), AWS LBType Classic",
+			ic:             loadBalancerIngressControllerWithLBType(operatorv1.AWSClassicLoadBalancer),
+			service:        lbService,
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionFalse,
+		},
+		{
+			name:           "LBType Classic LoadBalancerService, AWS LBType NLB",
+			ic:             loadBalancerIngressControllerWithLBType(operatorv1.AWSNetworkLoadBalancer),
+			service:        lbService,
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionTrue,
+		},
+		{
+			name:           "LBType NLB LoadBalancerService, AWS LBType Classic",
+			ic:             loadBalancerIngressControllerWithLBType(operatorv1.AWSClassicLoadBalancer),
+			service:        lbServiceWithNLB,
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionTrue,
 		},
 	}
 	for _, test := range tests {
@@ -3085,7 +3117,7 @@ func Test_computeIngressUpgradeableCondition(t *testing.T) {
 					},
 				},
 			}
-			wantSvc, service, err := desiredLoadBalancerService(ic, deploymentRef, platformStatus, true, true)
+			wantSvc, service, err := desiredLoadBalancerService(ic, deploymentRef, platformStatus, true, true, true)
 			if err != nil {
 				t.Errorf("unexpected error from desiredLoadBalancerService: %v", err)
 				return
@@ -3195,7 +3227,7 @@ func Test_computeIngressEvaluationConditionsDetectedCondition(t *testing.T) {
 				},
 			}
 
-			wantSvc, service, err := desiredLoadBalancerService(ic, deploymentRef, platformStatus, true, true)
+			wantSvc, service, err := desiredLoadBalancerService(ic, deploymentRef, platformStatus, true, true, false)
 			if err != nil {
 				t.Fatalf("unexpected error from desiredLoadBalancerService: %v", err)
 			}
