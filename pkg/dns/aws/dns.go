@@ -166,6 +166,7 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 	r53Config := aws.NewConfig()
 	// elb requires no special region treatment.
 	elbConfig := aws.NewConfig().WithRegion(region)
+	elbv2Config := aws.NewConfig().WithRegion(region)
 	tagConfig := aws.NewConfig()
 
 	partition, ok := endpoints.PartitionForRegion(endpoints.DefaultPartitions(), region)
@@ -207,16 +208,16 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 		elbFound := false
 		tagFound := false
 		for _, ep := range config.ServiceEndpoints {
-			switch {
-			case route53Found && elbFound && tagFound:
-				break
-			case ep.Name == Route53Service:
+			// TODO: Add custom endpoint support for elbv2. See the following for details:
+			// https://docs.aws.amazon.com/general/latest/gr/elb.html
+			switch ep.Name {
+			case Route53Service:
 				route53Found = true
 				r53Config = r53Config.WithEndpoint(ep.URL)
-				log.Info("using route53 custom endpoint", "url", ep.URL)
-			case ep.Name == TaggingService:
+				log.Info("Found route53 custom endpoint", "url", ep.URL)
+			case TaggingService:
 				if tagConfig == nil {
-					log.Info("found resourcegroupstaggingapi custom endpoint which will be ignored since the %s region does not support that API", region)
+					log.Info(fmt.Sprintf("Found resourcegroupstaggingapi custom endpoint, which will be ignored since the %s region does not support that API", region))
 					continue
 				}
 				tagFound = true
@@ -227,30 +228,42 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 					url = govCloudTaggingEndpoint
 				}
 				tagConfig = tagConfig.WithEndpoint(url)
-				log.Info("using group tagging custom endpoint", "url", url)
-			case ep.Name == ELBService:
+				log.Info("Found resourcegroupstaggingapi custom endpoint", "url", url)
+			case ELBService:
 				elbFound = true
 				elbConfig = elbConfig.WithEndpoint(ep.URL)
-				log.Info("using elb custom endpoint", "url", ep.URL)
+				log.Info("Found elb custom endpoint", "url", ep.URL)
+			}
+			// Once the three service endpoints have been found,
+			// ignore any further service endpoint specifications.
+			if route53Found && elbFound && tagFound {
+				break
 			}
 		}
 	}
 	var tags *resourcegroupstaggingapi.ResourceGroupsTaggingAPI
-	if tagConfig != nil {
+	if tagConfig == nil {
+		log.Info("No tags client configured")
+	} else {
 		tags = resourcegroupstaggingapi.New(sess, tagConfig)
+		log.Info("Created tags client", "endpoint", tags.Client.Endpoint)
 	}
+	elbClient := elb.New(sess, elbConfig)
+	log.Info("Created elb client", "endpoint", elbClient.Client.Endpoint)
+	elbv2Client := elbv2.New(sess, elbv2Config)
+	log.Info("Created elbv2 client", "endpoint", elbv2Client.Client.Endpoint)
+	r53client := route53.New(sessRoute53, r53Config)
+	log.Info("Created route53 client", "endpoint", r53client.Client.Endpoint)
 	p := &Provider{
-		elb: elb.New(sess, elbConfig),
-		// TODO: Add custom endpoint support for elbv2. See the following for details:
-		// https://docs.aws.amazon.com/general/latest/gr/elb.html
-		elbv2:     elbv2.New(sess, aws.NewConfig().WithRegion(region)),
-		route53:   route53.New(sessRoute53, r53Config),
+		elb:       elbClient,
+		elbv2:     elbv2Client,
+		route53:   r53client,
 		tags:      tags,
 		config:    config,
 		idsToTags: map[string]map[string]string{},
 		lbZones:   map[string]string{},
 	}
-	if err := validateServiceEndpoints(p); err != nil {
+	if err := validateServiceEndpointsFn(p); err != nil {
 		return nil, fmt.Errorf("failed to validate aws provider service endpoints: %v", err)
 	}
 	return p, nil
@@ -280,6 +293,10 @@ func validateServiceEndpoints(provider *Provider) error {
 	}
 	return kerrors.NewAggregate(errs)
 }
+
+// validateServiceEndpointsFn is an alias for validateServiceEndpoints in normal
+// operation but can be overridden in unit tests.
+var validateServiceEndpointsFn = validateServiceEndpoints
 
 // getZoneID finds the ID of given zoneConfig in Route53. If an ID is already
 // known, return that; otherwise, use tags to search for the zone. Returns an
