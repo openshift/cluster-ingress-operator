@@ -194,13 +194,11 @@ func TestForwardedHeaderPolicyAppend(t *testing.T) {
 
 	// Verify that we get the expected behavior if we set the policy to
 	// "append" explicitly.
-	if err := kclient.Get(context.TODO(), icName, ic); err != nil {
-		t.Fatalf("failed to get ingresscontroller: %v", err)
-	}
-	ic.Spec.HTTPHeaders = &operatorv1.IngressControllerHTTPHeaders{
-		ForwardedHeaderPolicy: operatorv1.AppendHTTPHeaderPolicy,
-	}
-	if err := kclient.Update(context.TODO(), ic); err != nil {
+	if err := updateIngressControllerWithRetryOnConflict(t, icName, timeout, func(ic *operatorv1.IngressController) {
+		ic.Spec.HTTPHeaders = &operatorv1.IngressControllerHTTPHeaders{
+			ForwardedHeaderPolicy: operatorv1.AppendHTTPHeaderPolicy,
+		}
+	}); err != nil {
 		t.Fatalf("failed to update ingresscontroller: %v", err)
 	}
 	if err := waitForDeploymentEnvVar(t, kclient, deployment, 1*time.Minute, "ROUTER_SET_FORWARDED_HEADERS", "append"); err != nil {

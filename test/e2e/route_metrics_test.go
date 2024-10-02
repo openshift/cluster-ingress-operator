@@ -224,121 +224,91 @@ func testRouteMetricsControllerLabelSelector(t *testing.T, testRS, testNS bool) 
 	}
 
 	if testNS {
-		// Fetch the latest version of the Ingress Controller resource.
-		if err := kclient.Get(context.TODO(), icName, ic); err != nil {
-			t.Fatalf("failed to get ingress resource: %v", err)
-		}
-		// Update the NamespaceSelector of the Ingress Controller so that the Route gets un-admitted.
-		ic.Spec.NamespaceSelector = &metav1.LabelSelector{
-			MatchLabels: map[string]string{
-				"label": incorrectLabel,
-			},
-			MatchExpressions: []metav1.LabelSelectorRequirement{
-				{
-					Key:      "expression",
-					Operator: metav1.LabelSelectorOpIn,
-					Values:   []string{incorrectLabel},
-				},
-			},
-		}
-
 		// Update the NamespaceSelector of the Ingress Controller and wait for metrics to be updated to 0 as
 		// the Route will get un-admitted by the IC.
-		updateICAndWaitForMetricsUpdate(t, ic, prometheusClient, 0)
-
-		// Fetch the latest version of the Ingress Controller resource.
-		if err := kclient.Get(context.TODO(), icName, ic); err != nil {
-			t.Fatalf("failed to get ingress resource: %v", err)
-		}
-		// Update the NamespaceSelector of the Ingress Controller so that the Route gets admitted again.
-		ic.Spec.NamespaceSelector = &metav1.LabelSelector{
-			MatchLabels: map[string]string{
-				"label": correctLabel,
-			},
-			MatchExpressions: []metav1.LabelSelectorRequirement{
-				{
-					Key:      "expression",
-					Operator: metav1.LabelSelectorOpIn,
-					Values:   []string{correctLabel},
+		updateICAndWaitForMetricsUpdate(t, icName, prometheusClient, 0, func(ic *operatorv1.IngressController) {
+			ic.Spec.NamespaceSelector = &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"label": incorrectLabel,
 				},
-			},
-		}
+				MatchExpressions: []metav1.LabelSelectorRequirement{
+					{
+						Key:      "expression",
+						Operator: metav1.LabelSelectorOpIn,
+						Values:   []string{incorrectLabel},
+					},
+				},
+			}
+		})
 
 		// Update the NamespaceSelector of the Ingress Controller and wait for metrics to be updated to 1 as
 		// the Route will get admitted by the IC again.
-		updateICAndWaitForMetricsUpdate(t, ic, prometheusClient, 1)
+		updateICAndWaitForMetricsUpdate(t, icName, prometheusClient, 1, func(ic *operatorv1.IngressController) {
+			ic.Spec.NamespaceSelector = &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"label": correctLabel,
+				},
+				MatchExpressions: []metav1.LabelSelectorRequirement{
+					{
+						Key:      "expression",
+						Operator: metav1.LabelSelectorOpIn,
+						Values:   []string{correctLabel},
+					},
+				},
+			}
+		})
 	}
 
 	if testRS {
-		// Fetch the latest version of the Ingress Controller resource.
-		if err := kclient.Get(context.TODO(), icName, ic); err != nil {
-			t.Fatalf("failed to get ingress resource: %v", err)
-		}
-		// Update the RouteSelector of the Ingress Controller so that the Route gets un-admitted again.
-		ic.Spec.RouteSelector = &metav1.LabelSelector{
-			MatchLabels: map[string]string{
-				"label": incorrectLabel,
-			},
-			MatchExpressions: []metav1.LabelSelectorRequirement{
-				{
-					Key:      "expression",
-					Operator: metav1.LabelSelectorOpIn,
-					Values:   []string{incorrectLabel},
-				},
-			},
-		}
-
 		// Update the RouteSelector of the Ingress Controller and wait for metrics to be updated to 1 as
 		// the Route will get un-admitted by the IC again.
-		updateICAndWaitForMetricsUpdate(t, ic, prometheusClient, 0)
-
-		// Fetch the latest version of the Ingress Controller resource.
-		if err := kclient.Get(context.TODO(), icName, ic); err != nil {
-			t.Fatalf("failed to get ingress resource: %v", err)
-		}
-		// Update the RouteSelector of the Ingress Controller so that the Route gets admitted again.
-		ic.Spec.RouteSelector = &metav1.LabelSelector{
-			MatchLabels: map[string]string{
-				"label": correctLabel,
-			},
-			MatchExpressions: []metav1.LabelSelectorRequirement{
-				{
-					Key:      "expression",
-					Operator: metav1.LabelSelectorOpIn,
-					Values:   []string{correctLabel},
+		updateICAndWaitForMetricsUpdate(t, icName, prometheusClient, 0, func(ic *operatorv1.IngressController) {
+			ic.Spec.RouteSelector = &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"label": incorrectLabel,
 				},
-			},
-		}
+				MatchExpressions: []metav1.LabelSelectorRequirement{
+					{
+						Key:      "expression",
+						Operator: metav1.LabelSelectorOpIn,
+						Values:   []string{incorrectLabel},
+					},
+				},
+			}
+		})
 
 		// Update the RouteSelector of the Ingress Controller and wait for metrics to be updated to 1 as
 		// the Route will get admitted by the IC again.
-		updateICAndWaitForMetricsUpdate(t, ic, prometheusClient, 1)
-
-		// Fetch the latest version of the Route resource.
-		if err := kclient.Get(context.TODO(), routeFooLabelName, routeFooLabel); err != nil {
-			t.Fatalf("failed to get route resource: %v", err)
-		}
-		// Update the label of the route so that it gets un-admitted from the Ingress Controller.
-		routeFooLabel.Labels = map[string]string{
-			"label":      incorrectLabel,
-			"expression": incorrectLabel,
-		}
+		updateICAndWaitForMetricsUpdate(t, icName, prometheusClient, 1, func(ic *operatorv1.IngressController) {
+			ic.Spec.RouteSelector = &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"label": correctLabel,
+				},
+				MatchExpressions: []metav1.LabelSelectorRequirement{
+					{
+						Key:      "expression",
+						Operator: metav1.LabelSelectorOpIn,
+						Values:   []string{correctLabel},
+					},
+				},
+			}
+		})
 
 		// Update the label of the route and wait for metrics to be updated to 0 as the Route will get un-admitted by the IC.
-		updateRouteAndWaitForMetricsUpdate(t, routeFooLabel, prometheusClient, ic.Name, 0)
-
-		// Fetch the latest version of the Route resource.
-		if err := kclient.Get(context.TODO(), routeFooLabelName, routeFooLabel); err != nil {
-			t.Fatalf("failed to get route resource: %v", err)
-		}
-		// Update the label of the route so that it gets admitted to the Ingress Controller again.
-		routeFooLabel.Labels = map[string]string{
-			"label":      correctLabel,
-			"expression": correctLabel,
-		}
+		updateRouteAndWaitForMetricsUpdate(t, routeFooLabelName, prometheusClient, ic.Name, 0, func(routeFooLabel *routev1.Route) {
+			routeFooLabel.Labels = map[string]string{
+				"label":      incorrectLabel,
+				"expression": incorrectLabel,
+			}
+		})
 
 		// Update the Route label and wait for metrics to be updated to 1 as the Route will get admitted by the IC again.
-		updateRouteAndWaitForMetricsUpdate(t, routeFooLabel, prometheusClient, ic.Name, 1)
+		updateRouteAndWaitForMetricsUpdate(t, routeFooLabelName, prometheusClient, ic.Name, 1, func(routeFooLabel *routev1.Route) {
+			routeFooLabel.Labels = map[string]string{
+				"label":      correctLabel,
+				"expression": correctLabel,
+			}
+		})
 	}
 
 	// Delete the Route routeFooLabel.
@@ -367,22 +337,22 @@ func testRouteMetricsControllerLabelSelector(t *testing.T, testRS, testNS bool) 
 }
 
 // updateICAndWaitForMetricsUpdate updates the Ingress Controller and waits for metric to be updated to the expected value.
-func updateICAndWaitForMetricsUpdate(t *testing.T, ic *operatorv1.IngressController, prometheusClient prometheusv1.API, value int) {
+func updateICAndWaitForMetricsUpdate(t *testing.T, name types.NamespacedName, prometheusClient prometheusv1.API, value int, mutateIngressControllerFn func(ic *operatorv1.IngressController)) {
 	// Update the Ingress Controller resource.
-	if err := kclient.Update(context.TODO(), ic); err != nil {
+	if err := updateIngressControllerWithRetryOnConflict(t, name, timeout, mutateIngressControllerFn); err != nil {
 		t.Fatalf("failed to update ingresscontroller: %v", err)
 	}
 
 	// Wait for metrics to be updated to the expected value.
-	if err := waitForRouteMetricsAddorUpdate(t, prometheusClient, ic.Name, value); err != nil {
+	if err := waitForRouteMetricsAddorUpdate(t, prometheusClient, name.Name, value); err != nil {
 		t.Fatalf("failed to fetch expected metrics: %v", err)
 	}
 }
 
 // updateRouteAndWaitForMetricsUpdate updates the Route and waits for metric to be updated to the expected value.
-func updateRouteAndWaitForMetricsUpdate(t *testing.T, route *routev1.Route, prometheusClient prometheusv1.API, shardName string, value int) {
+func updateRouteAndWaitForMetricsUpdate(t *testing.T, name types.NamespacedName, prometheusClient prometheusv1.API, shardName string, value int, mutateRouteFn func(route *routev1.Route)) {
 	// Update the Route resource.
-	if err := kclient.Update(context.TODO(), route); err != nil {
+	if err := updateRouteWithRetryOnConflict(t, name, timeout, mutateRouteFn); err != nil {
 		t.Fatalf("failed to update route: %v", err)
 	}
 

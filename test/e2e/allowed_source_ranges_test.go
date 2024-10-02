@@ -92,11 +92,9 @@ func TestAllowedSourceRanges(t *testing.T) {
 	// Update the AllowedSourceRanges and verify that LoadBalancerSourceRanges field is updated as well.
 	updatedCIDR := "10.0.0.0/8"
 	t.Log("Updating AllowedSourceRanges")
-	if err := kclient.Get(context.TODO(), name, ic); err != nil {
-		t.Fatalf("failed to get ingresscontroller %s: %v", name, err)
-	}
-	ic.Spec.EndpointPublishingStrategy.LoadBalancer.AllowedSourceRanges = []operatorv1.CIDR{operatorv1.CIDR(updatedCIDR)}
-	if err := kclient.Update(context.TODO(), ic); err != nil {
+	if err := updateIngressControllerWithRetryOnConflict(t, name, timeout, func(ic *operatorv1.IngressController) {
+		ic.Spec.EndpointPublishingStrategy.LoadBalancer.AllowedSourceRanges = []operatorv1.CIDR{operatorv1.CIDR(updatedCIDR)}
+	}); err != nil {
 		t.Fatal(err)
 	}
 
