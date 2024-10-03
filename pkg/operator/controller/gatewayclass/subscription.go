@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 
@@ -14,6 +15,11 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+)
+
+var (
+	serviceMeshOperatorDesiredVersion = "servicemeshoperator.v2.5.0"
+	serviceMeshOperatorNamespace      = "openshift-operators"
 )
 
 // ensureServiceMeshOperatorSubscription attempts to ensure that a subscription
@@ -56,10 +62,11 @@ func desiredSubscription(name types.NamespacedName) (*operatorsv1alpha1.Subscrip
 		},
 		Spec: &operatorsv1alpha1.SubscriptionSpec{
 			Channel:                "stable",
-			InstallPlanApproval:    operatorsv1alpha1.ApprovalAutomatic,
+			InstallPlanApproval:    operatorsv1alpha1.ApprovalManual,
 			Package:                "servicemeshoperator",
 			CatalogSource:          "redhat-operators",
 			CatalogSourceNamespace: "openshift-marketplace",
+			StartingCSV:            serviceMeshOperatorDesiredVersion,
 		},
 	}
 	return &subscription, nil
@@ -114,4 +121,41 @@ func subscriptionChanged(current, expected *operatorsv1alpha1.Subscription) (boo
 	updated.Spec = expected.Spec
 
 	return true, updated
+}
+
+// ensureServiceMeshOperatorInstallPlan attempts to ensure that the install plan for the appropriate OSSM operator
+// version is approved.
+func (r *reconciler) ensureServiceMeshOperatorInstallPlan(ctx context.Context) (bool, *operatorsv1alpha1.InstallPlan, error) {
+	currentInstallPlan, err := r.getCurrentInstallPlan(ctx)
+	if err != nil {
+		return false, nil, err
+	} else if currentInstallPlan == nil {
+		return false, nil, nil
+	}
+	if !currentInstallPlan.Spec.Approved {
+		currentInstallPlan.Spec.Approved = true
+		if err := r.client.Update(ctx, currentInstallPlan); err != nil {
+			return false, nil, fmt.Errorf("Failed to update %s/%s: %w", currentInstallPlan.Namespace, currentInstallPlan.Name, err)
+		}
+		return true, currentInstallPlan, nil
+	}
+	return false, currentInstallPlan, nil
+}
+
+func (r *reconciler) getCurrentInstallPlan(ctx context.Context) (*operatorsv1alpha1.InstallPlan, error) {
+	InstallPlans := &operatorsv1alpha1.InstallPlanList{}
+	if err := r.client.List(ctx, InstallPlans, client.InNamespace(serviceMeshOperatorNamespace)); err != nil {
+		return nil, err
+	}
+	if InstallPlans == nil || len(InstallPlans.Items) == 0 {
+		return nil, nil
+	}
+	for _, InstallPlan := range InstallPlans.Items {
+		for _, CSVName := range InstallPlan.Spec.ClusterServiceVersionNames {
+			if CSVName == serviceMeshOperatorDesiredVersion {
+				return &InstallPlan, nil
+			}
+		}
+	}
+	return nil, fmt.Errorf("No InstallPlan with cluster service version %s found", serviceMeshOperatorDesiredVersion)
 }
