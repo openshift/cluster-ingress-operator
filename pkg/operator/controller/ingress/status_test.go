@@ -3026,7 +3026,7 @@ func Test_computeIngressUpgradeableCondition(t *testing.T) {
 			mutate: func(svc *corev1.Service) {
 				svc.Annotations[awsLBAdditionalResourceTags] = "Key2=Value2"
 			},
-			expect: false,
+			expect: true,
 		},
 		{
 			description: "if the service.beta.kubernetes.io/load-balancer-source-ranges is set",
