@@ -47,6 +47,14 @@ const (
 	HTTPRouteCRDAsset      = "assets/gateway-api/gateway.networking.k8s.io_httproutes.yaml"
 	ReferenceGrantCRDAsset = "assets/gateway-api/gateway.networking.k8s.io_referencegrants.yaml"
 
+	GRPCRouteCRDAsset = "assets/gateway-api/gateway.networking.k8s.io_grpcroutes.yaml"
+	TCPRouteCRDAsset  = "assets/gateway-api/gateway.networking.k8s.io_tcproutes.yaml"
+	UDPRouteCRDAsset  = "assets/gateway-api/gateway.networking.k8s.io_udproutes.yaml"
+	TLSRouteCRDAsset  = "assets/gateway-api/gateway.networking.k8s.io_tlsroutes.yaml"
+
+	BackendLBPolicyCRDAsset  = "assets/gateway-api/gateway.networking.k8s.io_backendlbpolicies.yaml"
+	BackendTLSPolicyCRDAsset = "assets/gateway-api/gateway.networking.k8s.io_backendtlspolicies.yaml"
+
 	// Annotation used to inform the certificate generation service to
 	// generate a cluster-signed certificate and populate the secret.
 	ServingCertSecretAnnotation = "service.alpha.openshift.io/serving-cert-secret-name"
@@ -281,6 +289,54 @@ func HTTPRouteCRD() *apiextensionsv1.CustomResourceDefinition {
 
 func ReferenceGrantCRD() *apiextensionsv1.CustomResourceDefinition {
 	crd, err := NewCustomResourceDefinition(MustAssetReader(ReferenceGrantCRDAsset))
+	if err != nil {
+		panic(err)
+	}
+	return crd
+}
+
+func GRPCRouteCRD() *apiextensionsv1.CustomResourceDefinition {
+	crd, err := NewCustomResourceDefinition(MustAssetReader(GRPCRouteCRDAsset))
+	if err != nil {
+		panic(err)
+	}
+	return crd
+}
+
+func TCPRouteCRD() *apiextensionsv1.CustomResourceDefinition {
+	crd, err := NewCustomResourceDefinition(MustAssetReader(TCPRouteCRDAsset))
+	if err != nil {
+		panic(err)
+	}
+	return crd
+}
+
+func UDPRouteCRD() *apiextensionsv1.CustomResourceDefinition {
+	crd, err := NewCustomResourceDefinition(MustAssetReader(UDPRouteCRDAsset))
+	if err != nil {
+		panic(err)
+	}
+	return crd
+}
+
+func TLSRouteCRD() *apiextensionsv1.CustomResourceDefinition {
+	crd, err := NewCustomResourceDefinition(MustAssetReader(TLSRouteCRDAsset))
+	if err != nil {
+		panic(err)
+	}
+	return crd
+}
+
+func BackendLBPolicyCRD() *apiextensionsv1.CustomResourceDefinition {
+	crd, err := NewCustomResourceDefinition(MustAssetReader(BackendLBPolicyCRDAsset))
+	if err != nil {
+		panic(err)
+	}
+	return crd
+}
+
+func BackendTLSPolicyCRD() *apiextensionsv1.CustomResourceDefinition {
+	crd, err := NewCustomResourceDefinition(MustAssetReader(BackendTLSPolicyCRDAsset))
 	if err != nil {
 		panic(err)
 	}
