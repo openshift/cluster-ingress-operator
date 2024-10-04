@@ -22,6 +22,10 @@ const (
 	// GlobalUserSpecifiedConfigNamespace is the namespace for configuring OpenShift.
 	GlobalUserSpecifiedConfigNamespace = "openshift-config"
 
+	// IngressOperatorOwnedAnnotation is the key for the annotation that
+	// indicates that the ingress operator owns the annotated resource.
+	IngressOperatorOwnedAnnotation = "ingress.operator.openshift.io/owned"
+
 	// ControllerDeploymentLabel identifies a deployment as an ingress controller
 	// deployment, and the value is the name of the owning ingress controller.
 	ControllerDeploymentLabel = "ingresscontroller.operator.openshift.io/deployment-ingresscontroller"
@@ -269,23 +273,21 @@ func IngressClassName(ingressControllerName string) types.NamespacedName {
 	return types.NamespacedName{Name: "openshift-" + ingressControllerName}
 }
 
-// ServiceMeshControlPlaneName returns the namespaced name for a
-// ServiceMeshControlPlane CR.  This CR is created in the operand's namespace
-// and has a hard-coded name.  Each namespace can have only one gatewayclass, so
-// it is simplest to use the same name in every namespace.
-func ServiceMeshControlPlaneName(operandNamespace string) types.NamespacedName {
+// IstioName returns the namespaced name for the Istio CR that the ingress
+// operator creates when Gateway API is enabled.
+func IstioName(operandNamespace string) types.NamespacedName {
 	return types.NamespacedName{
-		Namespace: operandNamespace,
+		Namespace: "", // The Istio CR is cluster-scoped.
 		Name:      "openshift-gateway",
 	}
 }
 
-// ServiceMeshSubscriptionName returns the namespaced name for a Subscription CR
-// to install OpenShift Service Mesh.
-func ServiceMeshSubscriptionName() types.NamespacedName {
+// ServiceMeshOperatorSubscriptionName returns the namespaced name for a
+// Subscription CR to install the OpenShift Service Mesh Operator.
+func ServiceMeshOperatorSubscriptionName() types.NamespacedName {
 	return types.NamespacedName{
 		Namespace: "openshift-operators",
-		Name:      "servicemeshoperator",
+		Name:      "servicemeshoperator3",
 	}
 }
 
