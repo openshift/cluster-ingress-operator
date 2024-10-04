@@ -7,19 +7,20 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"math"
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strconv"
 	"time"
+
+	"golang.org/x/xerrors"
 
 	"github.com/goccy/go-yaml/ast"
 	"github.com/goccy/go-yaml/internal/errors"
 	"github.com/goccy/go-yaml/parser"
 	"github.com/goccy/go-yaml/token"
-	"golang.org/x/xerrors"
 )
 
 // Decoder reads and decodes YAML values from an input stream.
@@ -28,6 +29,8 @@ type Decoder struct {
 	referenceReaders     []io.Reader
 	anchorNodeMap        map[string]ast.Node
 	anchorValueMap       map[string]reflect.Value
+	customUnmarshalerMap map[reflect.Type]func(interface{}, []byte) error
+	toCommentMap         CommentMap
 	opts                 []DecodeOption
 	referenceFiles       []string
 	referenceDirs        []string
@@ -48,6 +51,7 @@ func NewDecoder(r io.Reader, opts ...DecodeOption) *Decoder {
 		reader:               r,
 		anchorNodeMap:        map[string]ast.Node{},
 		anchorValueMap:       map[string]reflect.Value{},
+		customUnmarshalerMap: map[reflect.Type]func(interface{}, []byte) error{},
 		opts:                 opts,
 		referenceReaders:     []io.Reader{},
 		referenceFiles:       []string{},
@@ -103,7 +107,7 @@ func (d *Decoder) mergeValueNode(value ast.Node) ast.Node {
 	return value
 }
 
-func (d *Decoder) mapKeyNodeToString(node ast.Node) string {
+func (d *Decoder) mapKeyNodeToString(node ast.MapKeyNode) string {
 	key := d.nodeToValue(node)
 	if key == nil {
 		return "null"
@@ -115,6 +119,7 @@ func (d *Decoder) mapKeyNodeToString(node ast.Node) string {
 }
 
 func (d *Decoder) setToMapValue(node ast.Node, m map[string]interface{}) {
+	d.setPathToCommentMap(node)
 	switch n := node.(type) {
 	case *ast.MappingValueNode:
 		if n.Key.Type() == ast.MergeKeyType {
@@ -127,6 +132,9 @@ func (d *Decoder) setToMapValue(node ast.Node, m map[string]interface{}) {
 		for _, value := range n.Values {
 			d.setToMapValue(value, m)
 		}
+	case *ast.AnchorNode:
+		anchorName := n.Name.GetToken().Value
+		d.anchorNodeMap[anchorName] = n.Value
 	}
 }
 
@@ -146,7 +154,114 @@ func (d *Decoder) setToOrderedMapValue(node ast.Node, m *MapSlice) {
 	}
 }
 
+func (d *Decoder) setPathToCommentMap(node ast.Node) {
+	if d.toCommentMap == nil {
+		return
+	}
+	d.addHeadOrLineCommentToMap(node)
+	d.addFootCommentToMap(node)
+}
+
+func (d *Decoder) addHeadOrLineCommentToMap(node ast.Node) {
+	sequence, ok := node.(*ast.SequenceNode)
+	if ok {
+		d.addSequenceNodeCommentToMap(sequence)
+		return
+	}
+	commentGroup := node.GetComment()
+	if commentGroup == nil {
+		return
+	}
+	texts := []string{}
+	targetLine := node.GetToken().Position.Line
+	minCommentLine := math.MaxInt
+	for _, comment := range commentGroup.Comments {
+		if minCommentLine > comment.Token.Position.Line {
+			minCommentLine = comment.Token.Position.Line
+		}
+		texts = append(texts, comment.Token.Value)
+	}
+	if len(texts) == 0 {
+		return
+	}
+	commentPath := node.GetPath()
+	if minCommentLine < targetLine {
+		d.addCommentToMap(commentPath, HeadComment(texts...))
+	} else {
+		d.addCommentToMap(commentPath, LineComment(texts[0]))
+	}
+}
+
+func (d *Decoder) addSequenceNodeCommentToMap(node *ast.SequenceNode) {
+	if len(node.ValueHeadComments) != 0 {
+		for idx, headComment := range node.ValueHeadComments {
+			if headComment == nil {
+				continue
+			}
+			texts := make([]string, 0, len(headComment.Comments))
+			for _, comment := range headComment.Comments {
+				texts = append(texts, comment.Token.Value)
+			}
+			if len(texts) != 0 {
+				d.addCommentToMap(node.Values[idx].GetPath(), HeadComment(texts...))
+			}
+		}
+	}
+	firstElemHeadComment := node.GetComment()
+	if firstElemHeadComment != nil {
+		texts := make([]string, 0, len(firstElemHeadComment.Comments))
+		for _, comment := range firstElemHeadComment.Comments {
+			texts = append(texts, comment.Token.Value)
+		}
+		if len(texts) != 0 {
+			d.addCommentToMap(node.Values[0].GetPath(), HeadComment(texts...))
+		}
+	}
+}
+
+func (d *Decoder) addFootCommentToMap(node ast.Node) {
+	var (
+		footComment     *ast.CommentGroupNode
+		footCommentPath string = node.GetPath()
+	)
+	switch n := node.(type) {
+	case *ast.SequenceNode:
+		if len(n.Values) != 0 {
+			footCommentPath = n.Values[len(n.Values)-1].GetPath()
+		}
+		footComment = n.FootComment
+	case *ast.MappingNode:
+		footComment = n.FootComment
+	case *ast.MappingValueNode:
+		footComment = n.FootComment
+	}
+	if footComment == nil {
+		return
+	}
+	var texts []string
+	for _, comment := range footComment.Comments {
+		texts = append(texts, comment.Token.Value)
+	}
+	if len(texts) != 0 {
+		d.addCommentToMap(footCommentPath, FootComment(texts...))
+	}
+}
+
+func (d *Decoder) addCommentToMap(path string, comment *Comment) {
+	for _, c := range d.toCommentMap[path] {
+		if c.Position == comment.Position {
+			// already added same comment
+			return
+		}
+	}
+	d.toCommentMap[path] = append(d.toCommentMap[path], comment)
+	sort.Slice(d.toCommentMap[path], func(i, j int) bool {
+		return d.toCommentMap[path][i].Position < d.toCommentMap[path][j].Position
+	})
+}
+
 func (d *Decoder) nodeToValue(node ast.Node) interface{} {
+	d.setPathToCommentMap(node)
 	switch n := node.(type) {
 	case *ast.NullNode:
 		return nil
@@ -237,36 +352,67 @@ func (d *Decoder) nodeToValue(node ast.Node) interface{} {
 	return nil
 }
 
-func (d *Decoder) resolveAlias(node ast.Node) ast.Node {
+func (d *Decoder) resolveAlias(node ast.Node) (ast.Node, error) {
 	switch n := node.(type) {
 	case *ast.MappingNode:
-		for idx, value := range n.Values {
-			n.Values[idx] = d.resolveAlias(value).(*ast.MappingValueNode)
+		for idx, v := range n.Values {
+			value, err := d.resolveAlias(v)
+			if err != nil {
+				return nil, err
+			}
+			n.Values[idx] = value.(*ast.MappingValueNode)
 		}
 	case *ast.TagNode:
-		n.Value = d.resolveAlias(n.Value)
+		value, err := d.resolveAlias(n.Value)
+		if err != nil {
+			return nil, err
+		}
+		n.Value = value
 	case *ast.MappingKeyNode:
-		n.Value = d.resolveAlias(n.Value)
+		value, err := d.resolveAlias(n.Value)
+		if err != nil {
+			return nil, err
+		}
+		n.Value = value
 	case *ast.MappingValueNode:
 		if n.Key.Type() == ast.MergeKeyType && n.Value.Type() == ast.AliasType {
-			value := d.resolveAlias(n.Value)
+			value, err := d.resolveAlias(n.Value)
+			if err != nil {
+				return nil, err
+			}
 			keyColumn := n.Key.GetToken().Position.Column
 			requiredColumn := keyColumn + 2
 			value.AddColumn(requiredColumn)
 			n.Value = value
 		} else {
-			n.Key = d.resolveAlias(n.Key)
-			n.Value = d.resolveAlias(n.Value)
+			key, err := d.resolveAlias(n.Key)
+			if err != nil {
+				return nil, err
+			}
+			n.Key = key.(ast.MapKeyNode)
+			value, err := d.resolveAlias(n.Value)
+			if err != nil {
+				return nil, err
+			}
+			n.Value = value
 		}
 	case *ast.SequenceNode:
-		for idx, value := range n.Values {
-			n.Values[idx] = d.resolveAlias(value)
+		for idx, v := range n.Values {
+			value, err := d.resolveAlias(v)
+			if err != nil {
+				return nil, err
+			}
+			n.Values[idx] = value
 		}
 	case *ast.AliasNode:
 		aliasName := n.Value.GetToken().Value
-		return d.resolveAlias(d.anchorNodeMap[aliasName])
+		node := d.anchorNodeMap[aliasName]
+		if node == nil {
+			return nil, xerrors.Errorf("cannot find anchor by alias name %s", aliasName)
+		}
+		return d.resolveAlias(node)
 	}
-	return node
+	return node, nil
 }
 
 func (d *Decoder) getMapNode(node ast.Node) (ast.MapNode, error) {
@@ -278,7 +424,7 @@ func (d *Decoder) getMapNode(node ast.Node) (ast.MapNode, error) {
 		if ok {
 			return mapNode, nil
 		}
-		return nil, xerrors.Errorf("%s node found where MapNode is expected", anchor.Value.Type())
+		return nil, errUnexpectedNodeType(anchor.Value.Type(), ast.MappingType, node.GetToken())
 	}
 	if alias, ok := node.(*ast.AliasNode); ok {
 		aliasName := alias.Value.GetToken().Value
@@ -290,11 +436,11 @@ func (d *Decoder) getMapNode(node ast.Node) (ast.MapNode, error) {
 		if ok {
 			return mapNode, nil
 		}
-		return nil, xerrors.Errorf("%s node found where MapNode is expected", node.Type())
+		return nil, errUnexpectedNodeType(node.Type(), ast.MappingType, node.GetToken())
 	}
 	mapNode, ok := node.(ast.MapNode)
 	if !ok {
-		return nil, xerrors.Errorf("%s node found where MapNode is expected", node.Type())
+		return nil, errUnexpectedNodeType(node.Type(), ast.MappingType, node.GetToken())
 	}
 	return mapNode, nil
 }
@@ -308,7 +454,8 @@ func (d *Decoder) getArrayNode(node ast.Node) (ast.ArrayNode, error) {
 		if ok {
 			return arrayNode, nil
 		}
-		return nil, xerrors.Errorf("%s node found where ArrayNode is expected", anchor.Value.Type())
+
+		return nil, errUnexpectedNodeType(anchor.Value.Type(), ast.SequenceType, node.GetToken())
 	}
 	if alias, ok := node.(*ast.AliasNode); ok {
 		aliasName := alias.Value.GetToken().Value
@@ -320,11 +467,11 @@ func (d *Decoder) getArrayNode(node ast.Node) (ast.ArrayNode, error) {
 		if ok {
 			return arrayNode, nil
 		}
-		return nil, xerrors.Errorf("%s node found where ArrayNode is expected", node.Type())
+		return nil, errUnexpectedNodeType(node.Type(), ast.SequenceType, node.GetToken())
 	}
 	arrayNode, ok := node.(ast.ArrayNode)
 	if !ok {
-		return nil, xerrors.Errorf("%s node found where ArrayNode is expected", node.Type())
+		return nil, errUnexpectedNodeType(node.Type(), ast.SequenceType, node.GetToken())
 	}
 	return arrayNode, nil
 }
@@ -338,10 +485,25 @@ func (d *Decoder) fileToNode(f *ast.File) ast.Node {
 	return nil
 }
 
-func (d *Decoder) convertValue(v reflect.Value, typ reflect.Type) (reflect.Value, error) {
+func (d *Decoder) convertValue(v reflect.Value, typ reflect.Type, src ast.Node) (reflect.Value, error) {
 	if typ.Kind() != reflect.String {
 		if !v.Type().ConvertibleTo(typ) {
-			return reflect.Zero(typ), errTypeMismatch(typ, v.Type())
+
+			// Special case for "strings -> floats" aka scientific notation
+			// If the destination type is a float and the source type is a string, check if we can
+			// use strconv.ParseFloat to convert the string to a float.
+			if (typ.Kind() == reflect.Float32 || typ.Kind() == reflect.Float64) &&
+				v.Type().Kind() == reflect.String {
+				if f, err := strconv.ParseFloat(v.String(), 64); err == nil {
+					if typ.Kind() == reflect.Float32 {
+						return reflect.ValueOf(float32(f)), nil
+					} else if typ.Kind() == reflect.Float64 {
+						return reflect.ValueOf(f), nil
+					}
+					// else, fall through to the error below
+				}
+			}
+			return reflect.Zero(typ), errTypeMismatch(typ, v.Type(), src.GetToken())
 		}
 		return v.Convert(typ), nil
 	}
@@ -357,7 +519,7 @@ func (d *Decoder) convertValue(v reflect.Value, typ reflect.Type) (reflect.Value
 		return reflect.ValueOf(fmt.Sprint(v.Bool())), nil
 	}
 	if !v.Type().ConvertibleTo(typ) {
-		return reflect.Zero(typ), errTypeMismatch(typ, v.Type())
+		return reflect.Zero(typ), errTypeMismatch(typ, v.Type(), src.GetToken())
 	}
 	return v.Convert(typ), nil
 }
@@ -375,21 +537,8 @@ func errOverflow(dstType reflect.Type, num string) *overflowError {
 	return &overflowError{dstType: dstType, srcNum: num}
 }
 
-type typeError struct {
-	dstType         reflect.Type
-	srcType         reflect.Type
-	structFieldName *string
-}
-
-func (e *typeError) Error() string {
-	if e.structFieldName != nil {
-		return fmt.Sprintf("cannot unmarshal %s into Go struct field %s of type %s", e.srcType, *e.structFieldName, e.dstType)
-	}
-	return fmt.Sprintf("cannot unmarshal %s into Go value of type %s", e.srcType, e.dstType)
-}
-
-func errTypeMismatch(dstType, srcType reflect.Type) *typeError {
-	return &typeError{dstType: dstType, srcType: srcType}
+func errTypeMismatch(dstType, srcType reflect.Type, token *token.Token) *errors.TypeError {
+	return &errors.TypeError{DstType: dstType, SrcType: srcType, Token: token}
 }
 
 type unknownFieldError struct {
@@ -402,6 +551,10 @@ func (e *unknownFieldError) Error() string {
 
 func errUnknownField(msg string, tk *token.Token) *unknownFieldError {
 	return &unknownFieldError{err: errors.ErrSyntax(msg, tk)}
+}
+
+func errUnexpectedNodeType(actual, expected ast.NodeType, tk *token.Token) error {
+	return errors.ErrSyntax(fmt.Sprintf("%s was used where %s is expected", actual.YAMLName(), expected.YAMLName()), tk)
 }
 
 type duplicateKeyError struct {
@@ -461,41 +614,79 @@ func (d *Decoder) lastNode(node ast.Node) ast.Node {
 	return node
 }
 
-func (d *Decoder) unmarshalableDocument(node ast.Node) []byte {
-	node = d.resolveAlias(node)
+func (d *Decoder) unmarshalableDocument(node ast.Node) ([]byte, error) {
+	var err error
+	node, err = d.resolveAlias(node)
+	if err != nil {
+		return nil, err
+	}
 	doc := node.String()
 	last := d.lastNode(node)
 	if last != nil && last.Type() == ast.LiteralType {
 		doc += "\n"
 	}
-	return []byte(doc)
+	return []byte(doc), nil
 }
 
-func (d *Decoder) unmarshalableText(node ast.Node) ([]byte, bool) {
-	node = d.resolveAlias(node)
+func (d *Decoder) unmarshalableText(node ast.Node) ([]byte, bool, error) {
+	var err error
+	node, err = d.resolveAlias(node)
+	if err != nil {
+		return nil, false, err
+	}
 	if node.Type() == ast.AnchorType {
 		node = node.(*ast.AnchorNode).Value
 	}
 	switch n := node.(type) {
 	case *ast.StringNode:
-		return []byte(n.Value), true
+		return []byte(n.Value), true, nil
 	case *ast.LiteralNode:
-		return []byte(n.Value.GetToken().Value), true
+		return []byte(n.Value.GetToken().Value), true, nil
 	default:
 		scalar, ok := n.(ast.ScalarNode)
 		if ok {
-			return []byte(fmt.Sprint(scalar.GetValue())), true
+			return []byte(fmt.Sprint(scalar.GetValue())), true, nil
 		}
 	}
-	return nil, false
+	return nil, false, nil
 }
 
 type jsonUnmarshaler interface {
 	UnmarshalJSON([]byte) error
 }
 
+func (d *Decoder) existsTypeInCustomUnmarshalerMap(t reflect.Type) bool {
+	if _, exists := d.customUnmarshalerMap[t]; exists {
+		return true
+	}
+
+	globalCustomUnmarshalerMu.Lock()
+	defer globalCustomUnmarshalerMu.Unlock()
+	if _, exists := globalCustomUnmarshalerMap[t]; exists {
+		return true
+	}
+	return false
+}
+
+func (d *Decoder) unmarshalerFromCustomUnmarshalerMap(t reflect.Type) (func(interface{}, []byte) error, bool) {
+	if unmarshaler, exists := d.customUnmarshalerMap[t]; exists {
+		return unmarshaler, exists
+	}
+
+	globalCustomUnmarshalerMu.Lock()
+	defer globalCustomUnmarshalerMu.Unlock()
+	if unmarshaler, exists := globalCustomUnmarshalerMap[t]; exists {
+		return unmarshaler, exists
+	}
+	return nil, false
+}
+
 func (d *Decoder) canDecodeByUnmarshaler(dst reflect.Value) bool {
-	iface := dst.Addr().Interface()
+	ptrValue := dst.Addr()
+	if d.existsTypeInCustomUnmarshalerMap(ptrValue.Type()) {
+		return true
+	}
+	iface := ptrValue.Interface()
 	switch iface.(type) {
 	case BytesUnmarshalerContext:
 		return true
@@ -507,6 +698,8 @@ func (d *Decoder) canDecodeByUnmarshaler(dst reflect.Value) bool {
 		return true
 	case *time.Time:
 		return true
+	case *time.Duration:
+		return true
 	case encoding.TextUnmarshaler:
 		return true
 	case jsonUnmarshaler:
@@ -516,17 +709,36 @@ func (d *Decoder) canDecodeByUnmarshaler(dst reflect.Value) bool {
 }
 
 func (d *Decoder) decodeByUnmarshaler(ctx context.Context, dst reflect.Value, src ast.Node) error {
-	iface := dst.Addr().Interface()
+	ptrValue := dst.Addr()
+	if unmarshaler, exists := d.unmarshalerFromCustomUnmarshalerMap(ptrValue.Type()); exists {
+		b, err := d.unmarshalableDocument(src)
+		if err != nil {
+			return errors.Wrapf(err, "failed to UnmarshalYAML")
+		}
+		if err := unmarshaler(ptrValue.Interface(), b); err != nil {
+			return errors.Wrapf(err, "failed to UnmarshalYAML")
+		}
+		return nil
+	}
+	iface := ptrValue.Interface()
 
 	if unmarshaler, ok := iface.(BytesUnmarshalerContext); ok {
-		if err := unmarshaler.UnmarshalYAML(ctx, d.unmarshalableDocument(src)); err != nil {
+		b, err := d.unmarshalableDocument(src)
+		if err != nil {
+			return errors.Wrapf(err, "failed to UnmarshalYAML")
+		}
+		if err := unmarshaler.UnmarshalYAML(ctx, b); err != nil {
 			return errors.Wrapf(err, "failed to UnmarshalYAML")
 		}
 		return nil
 	}
 
 	if unmarshaler, ok := iface.(BytesUnmarshaler); ok {
-		if err := unmarshaler.UnmarshalYAML(d.unmarshalableDocument(src)); err != nil {
+		b, err := d.unmarshalableDocument(src)
+		if err != nil {
+			return errors.Wrapf(err, "failed to UnmarshalYAML")
+		}
+		if err := unmarshaler.UnmarshalYAML(b); err != nil {
 			return errors.Wrapf(err, "failed to UnmarshalYAML")
 		}
 		return nil
@@ -568,8 +780,15 @@ func (d *Decoder) decodeByUnmarshaler(ctx context.Context, dst reflect.Value, sr
 		return d.decodeTime(ctx, dst, src)
 	}
 
+	if _, ok := iface.(*time.Duration); ok {
+		return d.decodeDuration(ctx, dst, src)
+	}
+
 	if unmarshaler, isText := iface.(encoding.TextUnmarshaler); isText {
-		b, ok := d.unmarshalableText(src)
+		b, ok, err := d.unmarshalableText(src)
+		if err != nil {
+			return errors.Wrapf(err, "failed to UnmarshalText")
+		}
 		if ok {
 			if err := unmarshaler.UnmarshalText(b); err != nil {
 				return errors.Wrapf(err, "failed to UnmarshalText")
@@ -580,7 +799,11 @@ func (d *Decoder) decodeByUnmarshaler(ctx context.Context, dst reflect.Value, sr
 
 	if d.useJSONUnmarshaler {
 		if unmarshaler, ok := iface.(jsonUnmarshaler); ok {
-			jsonBytes, err := YAMLToJSON(d.unmarshalableDocument(src))
+			b, err := d.unmarshalableDocument(src)
+			if err != nil {
+				return errors.Wrapf(err, "failed to UnmarshalJSON")
+			}
+			jsonBytes, err := YAMLToJSON(b)
 			if err != nil {
 				return errors.Wrapf(err, "failed to convert yaml to json")
 			}
@@ -594,6 +817,10 @@ func (d *Decoder) decodeByUnmarshaler(ctx context.Context, dst reflect.Value, sr
 
 	return xerrors.Errorf("does not implemented Unmarshaler")
 }
+
+var (
+	astNodeType = reflect.TypeOf((*ast.Node)(nil)).Elem()
+)
 
 func (d *Decoder) decodeValue(ctx context.Context, dst reflect.Value, src ast.Node) error {
 	if src.Type() == ast.AnchorType {
@@ -625,6 +852,10 @@ func (d *Decoder) decodeValue(ctx context.Context, dst reflect.Value, src ast.No
 		}
 		dst.Set(d.castToAssignableValue(v, dst.Type()))
 	case reflect.Interface:
+		if dst.Type() == astNodeType {
+			dst.Set(reflect.ValueOf(src))
+			return nil
+		}
 		v := reflect.ValueOf(d.nodeToValue(src))
 		if v.IsValid() {
 			dst.Set(v)
@@ -661,8 +892,17 @@ func (d *Decoder) decodeValue(ctx context.Context, dst reflect.Value, src ast.No
 				dst.SetInt(int64(vv))
 				return nil
 			}
+		case string: // handle scientific notation
+			if i, err := strconv.ParseFloat(vv, 64); err == nil {
+				if 0 <= i && i <= math.MaxUint64 && !dst.OverflowInt(int64(i)) {
+					dst.SetInt(int64(i))
+					return nil
+				}
+			} else { // couldn't be parsed as float
+				return errTypeMismatch(valueType, reflect.TypeOf(v), src.GetToken())
+			}
 		default:
-			return errTypeMismatch(valueType, reflect.TypeOf(v))
+			return errTypeMismatch(valueType, reflect.TypeOf(v), src.GetToken())
 		}
 		return errOverflow(valueType, fmt.Sprint(v))
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
@@ -683,14 +923,24 @@ func (d *Decoder) decodeValue(ctx context.Context, dst reflect.Value, src ast.No
 				dst.SetUint(uint64(vv))
 				return nil
 			}
+		case string: // handle scientific notation
+			if i, err := strconv.ParseFloat(vv, 64); err == nil {
+				if 0 <= i && i <= math.MaxUint64 && !dst.OverflowUint(uint64(i)) {
+					dst.SetUint(uint64(i))
+					return nil
+				}
+			} else { // couldn't be parsed as float
+				return errTypeMismatch(valueType, reflect.TypeOf(v), src.GetToken())
+			}
+
 		default:
-			return errTypeMismatch(valueType, reflect.TypeOf(v))
+			return errTypeMismatch(valueType, reflect.TypeOf(v), src.GetToken())
 		}
 		return errOverflow(valueType, fmt.Sprint(v))
 	}
 	v := reflect.ValueOf(d.nodeToValue(src))
 	if v.IsValid() {
-		convertedValue, err := d.convertValue(v, dst.Type())
+		convertedValue, err := d.convertValue(v, dst.Type(), src)
 		if err != nil {
 			return errors.Wrapf(err, "failed to convert value")
 		}
@@ -729,7 +979,9 @@ func (d *Decoder) castToAssignableValue(value reflect.Value, target reflect.Type
 	return value
 }
 
-func (d *Decoder) createDecodedNewValue(ctx context.Context, typ reflect.Type, node ast.Node) (reflect.Value, error) {
+func (d *Decoder) createDecodedNewValue(
+	ctx context.Context, typ reflect.Type, defaultVal reflect.Value, node ast.Node,
+) (reflect.Value, error) {
 	if node.Type() == ast.AliasType {
 		aliasName := node.(*ast.AliasNode).Value.GetToken().Value
 		newValue := d.anchorValueMap[aliasName]
@@ -741,6 +993,12 @@ func (d *Decoder) createDecodedNewValue(ctx context.Context, typ reflect.Type, n
 		return reflect.Zero(typ), nil
 	}
 	newValue := d.createDecodableValue(typ)
+	for defaultVal.Kind() == reflect.Ptr {
+		defaultVal = defaultVal.Elem()
+	}
+	if defaultVal.IsValid() && defaultVal.Type().AssignableTo(newValue.Type()) {
+		newValue.Set(defaultVal)
+	}
 	if err := d.decodeValue(ctx, newValue, node); err != nil {
 		return newValue, errors.Wrapf(err, "failed to decode value")
 	}
@@ -850,7 +1108,7 @@ func (d *Decoder) castToTime(src ast.Node) (time.Time, error) {
 	}
 	s, ok := v.(string)
 	if !ok {
-		return time.Time{}, errTypeMismatch(reflect.TypeOf(time.Time{}), reflect.TypeOf(v))
+		return time.Time{}, errTypeMismatch(reflect.TypeOf(time.Time{}), reflect.TypeOf(v), src.GetToken())
 	}
 	for _, format := range allowedTimestampFormats {
 		t, err := time.Parse(format, s)
@@ -866,7 +1124,35 @@ func (d *Decoder) castToTime(src ast.Node) (time.Time, error) {
 func (d *Decoder) decodeTime(ctx context.Context, dst reflect.Value, src ast.Node) error {
 	t, err := d.castToTime(src)
 	if err != nil {
-		return err
+		return errors.Wrapf(err, "failed to convert to time")
+	}
+	dst.Set(reflect.ValueOf(t))
+	return nil
+}
+
+func (d *Decoder) castToDuration(src ast.Node) (time.Duration, error) {
+	if src == nil {
+		return 0, nil
+	}
+	v := d.nodeToValue(src)
+	if t, ok := v.(time.Duration); ok {
+		return t, nil
+	}
+	s, ok := v.(string)
+	if !ok {
+		return 0, errTypeMismatch(reflect.TypeOf(time.Duration(0)), reflect.TypeOf(v), src.GetToken())
+	}
+	t, err := time.ParseDuration(s)
+	if err != nil {
+		return 0, errors.Wrapf(err, "failed to parse duration")
+	}
+	return t, nil
+}
+
+func (d *Decoder) decodeDuration(ctx context.Context, dst reflect.Value, src ast.Node) error {
+	t, err := d.castToDuration(src)
+	if err != nil {
+		return errors.Wrapf(err, "failed to convert to duration")
 	}
 	dst.Set(reflect.ValueOf(t))
 	return nil
@@ -897,6 +1183,17 @@ func (d *Decoder) decodeStruct(ctx context.Context, dst reflect.Value, src ast.N
 		return nil
 	}
 	structType := dst.Type()
+	srcValue := reflect.ValueOf(src)
+	srcType := srcValue.Type()
+	if srcType.Kind() == reflect.Ptr {
+		srcType = srcType.Elem()
+		srcValue = srcValue.Elem()
+	}
+	if structType == srcType {
+		// dst value implements ast.Node
+		dst.Set(srcValue)
+		return nil
+	}
 	structFieldMap, err := structFieldMap(structType)
 	if err != nil {
 		return errors.Wrapf(err, "failed to create struct field map")
@@ -947,14 +1244,9 @@ func (d *Decoder) decodeStruct(ctx context.Context, dst reflect.Value, src ast.N
 				key := &ast.StringNode{BaseNode: &ast.BaseNode{}, Value: k}
 				mapNode.Values = append(mapNode.Values, ast.MappingValue(nil, key, v))
 			}
-			newFieldValue, err := d.createDecodedNewValue(ctx, fieldValue.Type(), mapNode)
+			newFieldValue, err := d.createDecodedNewValue(ctx, fieldValue.Type(), fieldValue, mapNode)
 			if d.disallowUnknownField {
-				var ufe *unknownFieldError
-				if xerrors.As(err, &ufe) {
-					err = nil
-				}
-
-				if err = d.deleteStructKeys(fieldValue.Type(), unknownFields); err != nil {
+				if err := d.deleteStructKeys(fieldValue.Type(), unknownFields); err != nil {
 					return errors.Wrapf(err, "cannot delete struct keys")
 				}
 			}
@@ -963,14 +1255,14 @@ func (d *Decoder) decodeStruct(ctx context.Context, dst reflect.Value, src ast.N
 				if foundErr != nil {
 					continue
 				}
-				var te *typeError
+				var te *errors.TypeError
 				if xerrors.As(err, &te) {
-					if te.structFieldName != nil {
-						fieldName := fmt.Sprintf("%s.%s", structType.Name(), *te.structFieldName)
-						te.structFieldName = &fieldName
+					if te.StructFieldName != nil {
+						fieldName := fmt.Sprintf("%s.%s", structType.Name(), *te.StructFieldName)
+						te.StructFieldName = &fieldName
 					} else {
 						fieldName := fmt.Sprintf("%s.%s", structType.Name(), field.Name)
-						te.structFieldName = &fieldName
+						te.StructFieldName = &fieldName
 					}
 					foundErr = te
 					continue
@@ -994,15 +1286,15 @@ func (d *Decoder) decodeStruct(ctx context.Context, dst reflect.Value, src ast.N
 			fieldValue.Set(reflect.Zero(fieldValue.Type()))
 			continue
 		}
-		newFieldValue, err := d.createDecodedNewValue(ctx, fieldValue.Type(), v)
+		newFieldValue, err := d.createDecodedNewValue(ctx, fieldValue.Type(), fieldValue, v)
 		if err != nil {
 			if foundErr != nil {
 				continue
 			}
-			var te *typeError
+			var te *errors.TypeError
 			if xerrors.As(err, &te) {
 				fieldName := fmt.Sprintf("%s.%s", structType.Name(), field.Name)
-				te.structFieldName = &fieldName
+				te.StructFieldName = &fieldName
 				foundErr = te
 			} else {
 				foundErr = err
@@ -1015,7 +1307,9 @@ func (d *Decoder) decodeStruct(ctx context.Context, dst reflect.Value, src ast.N
 		return errors.Wrapf(foundErr, "failed to decode value")
 	}
 
-	if len(unknownFields) != 0 && d.disallowUnknownField {
+	// Ignore unknown fields when parsing an inline struct (recognized by a nil token).
+	// Unknown fields are expected (they could be fields from the parent struct).
+	if len(unknownFields) != 0 && d.disallowUnknownField && src.GetToken() != nil {
 		for key, node := range unknownFields {
 			return errUnknownField(fmt.Sprintf(`unknown field "%s"`, key), node.GetToken())
 		}
@@ -1039,9 +1333,14 @@ func (d *Decoder) decodeStruct(ctx context.Context, dst reflect.Value, src ast.N
 					if exists {
 						// TODO: to make FieldError message cutomizable
 						return errors.ErrSyntax(fmt.Sprintf("%s", err), node.GetToken())
+					} else if t := src.GetToken(); t != nil && t.Prev != nil && t.Prev.Prev != nil {
+						// A missing required field will not be in the keyToNodeMap
+						// the error needs to be associated with the parent of the source node
+						return errors.ErrSyntax(fmt.Sprintf("%s", err), t.Prev.Prev)
 					}
 				}
 			}
+			return err
 		}
 	}
 	return nil
@@ -1068,7 +1367,7 @@ func (d *Decoder) decodeArray(ctx context.Context, dst reflect.Value, src ast.No
 			// set nil value to pointer
 			arrayValue.Index(idx).Set(reflect.Zero(elemType))
 		} else {
-			dstValue, err := d.createDecodedNewValue(ctx, elemType, v)
+			dstValue, err := d.createDecodedNewValue(ctx, elemType, reflect.Value{}, v)
 			if err != nil {
 				if foundErr == nil {
 					foundErr = err
@@ -1108,7 +1407,7 @@ func (d *Decoder) decodeSlice(ctx context.Context, dst reflect.Value, src ast.No
 			sliceValue = reflect.Append(sliceValue, reflect.Zero(elemType))
 			continue
 		}
-		dstValue, err := d.createDecodedNewValue(ctx, elemType, v)
+		dstValue, err := d.createDecodedNewValue(ctx, elemType, reflect.Value{}, v)
 		if err != nil {
 			if foundErr == nil {
 				foundErr = err
@@ -1236,10 +1535,19 @@ func (d *Decoder) decodeMap(ctx context.Context, dst reflect.Value, src ast.Node
 			}
 			continue
 		}
-		k := reflect.ValueOf(d.nodeToValue(key))
-		if k.IsValid() && k.Type().ConvertibleTo(keyType) {
-			k = k.Convert(keyType)
+
+		k := d.createDecodableValue(keyType)
+		if d.canDecodeByUnmarshaler(k) {
+			if err := d.decodeByUnmarshaler(ctx, k, key); err != nil {
+				return errors.Wrapf(err, "failed to decode by unmarshaler")
+			}
+		} else {
+			k = reflect.ValueOf(d.nodeToValue(key))
+			if k.IsValid() && k.Type().ConvertibleTo(keyType) {
+				k = k.Convert(keyType)
+			}
 		}
+
 		if k.IsValid() {
 			if err := d.validateDuplicateKey(keyMap, k.Interface(), key); err != nil {
 				return errors.Wrapf(err, "invalid map key")
@@ -1250,7 +1558,7 @@ func (d *Decoder) decodeMap(ctx context.Context, dst reflect.Value, src ast.Node
 			mapValue.SetMapIndex(k, reflect.Zero(valueType))
 			continue
 		}
-		dstValue, err := d.createDecodedNewValue(ctx, valueType, value)
+		dstValue, err := d.createDecodedNewValue(ctx, valueType, reflect.Value{}, value)
 		if err != nil {
 			if foundErr == nil {
 				foundErr = err
@@ -1356,7 +1664,7 @@ func (d *Decoder) resolveReference() error {
 		}
 	}
 	for _, reader := range d.referenceReaders {
-		bytes, err := ioutil.ReadAll(reader)
+		bytes, err := io.ReadAll(reader)
 		if err != nil {
 			return errors.Wrapf(err, "failed to read buffer")
 		}
@@ -1371,7 +1679,11 @@ func (d *Decoder) resolveReference() error {
 }
 
 func (d *Decoder) parse(bytes []byte) (*ast.File, error) {
-	f, err := parser.ParseBytes(bytes, 0)
+	var parseMode parser.Mode
+	if d.toCommentMap != nil {
+		parseMode = parser.ParseComments
+	}
+	f, err := parser.ParseBytes(bytes, parseMode)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to parse yaml")
 	}
@@ -1448,13 +1760,37 @@ func (d *Decoder) DecodeContext(ctx context.Context, v interface{}) error {
 		return nil
 	}
 	if err := d.decodeInit(); err != nil {
-		return errors.Wrapf(err, "failed to decodInit")
+		return errors.Wrapf(err, "failed to decodeInit")
 	}
 	if err := d.decode(ctx, rv); err != nil {
 		if err == io.EOF {
 			return err
 		}
 		return errors.Wrapf(err, "failed to decode")
+	}
+	return nil
+}
+
+// DecodeFromNode decodes node into the value pointed to by v.
+func (d *Decoder) DecodeFromNode(node ast.Node, v interface{}) error {
+	return d.DecodeFromNodeContext(context.Background(), node, v)
+}
+
+// DecodeFromNodeContext decodes node into the value pointed to by v with context.Context.
+func (d *Decoder) DecodeFromNodeContext(ctx context.Context, node ast.Node, v interface{}) error {
+	rv := reflect.ValueOf(v)
+	if rv.Type().Kind() != reflect.Ptr {
+		return errors.ErrDecodeRequiredPointerType
+	}
+	if !d.isInitialized() {
+		if err := d.decodeInit(); err != nil {
+			return errors.Wrapf(err, "failed to decodInit")
+		}
+	}
+	// resolve references to the anchor on the same file
+	d.nodeToValue(node)
+	if err := d.decodeValue(ctx, rv.Elem(), node); err != nil {
+		return errors.Wrapf(err, "failed to decode value")
 	}
 	return nil
 }
