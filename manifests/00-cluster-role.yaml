@@ -182,9 +182,9 @@ rules:
   - '*'
 
 - apiGroups:
-  - maistra.io
+  - sailoperator.io
   resources:
-  - servicemeshcontrolplanes
+  - istios
   verbs:
   - '*'
 

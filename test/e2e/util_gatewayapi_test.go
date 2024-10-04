@@ -14,14 +14,12 @@ import (
 	"testing"
 	"time"
 
-	maistrav2 "github.com/maistra/istio-operator/pkg/apis/maistra/v2"
 	v1 "github.com/openshift/api/operatoringress/v1"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	rbacv1 "k8s.io/api/rbac/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -37,41 +35,11 @@ const (
 
 	// openshiftOperatorsNamespace holds the expected OSSM subscription and Istio operator pod.
 	openshiftOperatorsNamespace = "openshift-operators"
-	// openshiftIstioOperatorDeploymentName holds the expected istio-operator deployment name.
-	openshiftIstioOperatorDeploymentName = "istio-operator"
+	// openshiftIstioOperatorDeploymentName holds the expected operator deployment name.
+	openshiftIstioOperatorDeploymentName = "sail-operator"
 	// openshiftIstiodDeploymentName holds the expected istiod deployment name
 	openshiftIstiodDeploymentName = "istiod-openshift-gateway"
-	// openshiftSMCPName holds the expected OSSM ServiceMeshControlPlane name
-	openshiftSMCPName = "openshift-gateway"
 )
-
-// updateIngressOperatorRole updates the ingress-operator cluster role with cluster-admin privilege.
-// TODO - Remove this function after https://issues.redhat.com/browse/OSSM-3508 is fixed.
-func updateIngressOperatorRole(t *testing.T) error {
-	t.Helper()
-
-	// Create the same rolebinding that the `oc adm policy add-cluster-role-to-user` command creates.
-	// Caller must remove this after setting it.
-	crb := &rbacv1.ClusterRoleBinding{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "cluster-admin-e2e",
-		},
-		RoleRef:  rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: "cluster-admin"},
-		Subjects: []rbacv1.Subject{{Kind: rbacv1.ServiceAccountKind, Name: "ingress-operator", Namespace: operatorcontroller.DefaultOperatorNamespace}},
-	}
-
-	// Add the rolebinding to the ingress-operator user.
-	if err := kclient.Create(context.TODO(), crb); err != nil {
-		if kerrors.IsAlreadyExists(err) {
-			t.Logf("rolebinding already exists")
-			return nil
-		}
-		t.Logf("error adding rolebinding: %v", err)
-		return err
-	}
-	t.Log("rolebinding has been added")
-	return nil
-}
 
 // assertCrdExists checks if the CRD of the given name exists and returns an error if not.
 // Otherwise returns the CRD version.
@@ -590,36 +558,6 @@ func assertCatalogSource(t *testing.T, namespace, csName string) error {
 			return true, nil
 		}
 		t.Logf("found catalogSource %s but could not determine last observed state, retrying...", catalogSource.Name)
-		return false, nil
-	})
-	return err
-}
-
-// assertSMCP checks if the ServiceMeshControlPlane exists in a ready state,
-// and returns an error if not.
-func assertSMCP(t *testing.T) error {
-	t.Helper()
-	smcp := &maistrav2.ServiceMeshControlPlane{}
-	nsName := types.NamespacedName{Namespace: operatorcontroller.DefaultOperandNamespace, Name: openshiftSMCPName}
-
-	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 3*time.Minute, false, func(context context.Context) (bool, error) {
-		if err := kclient.Get(context, nsName, smcp); err != nil {
-			t.Logf("failed to get ServiceMeshControlPlane %s/%s: %v, retrying...", nsName.Namespace, nsName.Name, err)
-			return false, nil
-		}
-		if smcp.Status.Readiness.Components != nil {
-			pending := len(smcp.Status.Readiness.Components["pending"]) > 0
-			unready := len(smcp.Status.Readiness.Components["unready"]) > 0
-			if pending || unready {
-				t.Logf("found ServiceMeshControlPlane %s/%s, but it isn't ready. Retrying...", smcp.Namespace, smcp.Name)
-				return false, nil
-			}
-			if len(smcp.Status.Readiness.Components["ready"]) > 0 {
-				t.Logf("found ServiceMeshControlPlane %s/%s with ready components: %v", smcp.Namespace, smcp.Name, smcp.Status.Readiness.Components["ready"])
-				return true, nil
-			}
-		}
-		t.Logf("found ServiceMeshControlPlane %s/%s but could not determine its readiness. Retrying...", smcp.Namespace, smcp.Name)
 		return false, nil
 	})
 	return err
