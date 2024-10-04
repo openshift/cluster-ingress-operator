@@ -265,23 +265,21 @@ func IngressClassName(ingressControllerName string) types.NamespacedName {
 	return types.NamespacedName{Name: "openshift-" + ingressControllerName}
 }
 
-// ServiceMeshControlPlaneName returns the namespaced name for a
-// ServiceMeshControlPlane CR.  This CR is created in the operand's namespace
-// and has a hard-coded name.  Each namespace can have only one gatewayclass, so
-// it is simplest to use the same name in every namespace.
-func ServiceMeshControlPlaneName(operandNamespace string) types.NamespacedName {
+// IstioName returns the namespaced name for the Istio CR that the ingress
+// operator creates when Gateway API is enabled.
+func IstioName(operandNamespace string) types.NamespacedName {
 	return types.NamespacedName{
-		Namespace: operandNamespace,
+		Namespace: "", // The Istio CR is cluster-scoped.
 		Name:      "openshift-gateway",
 	}
 }
 
-// ServiceMeshSubscriptionName returns the namespaced name for a Subscription CR
-// to install OpenShift Service Mesh.
-func ServiceMeshSubscriptionName() types.NamespacedName {
+// SailOperatorSubscriptionName returns the namespaced name for a Subscription
+// CR to install the Sail Operator for OpenShift Service Mesh.
+func SailOperatorSubscriptionName() types.NamespacedName {
 	return types.NamespacedName{
 		Namespace: "openshift-operators",
-		Name:      "servicemeshoperator",
+		Name:      "sailoperator",
 	}
 }
 

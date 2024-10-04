@@ -2,6 +2,7 @@ package yaml
 
 import (
 	"io"
+	"reflect"
 
 	"github.com/goccy/go-yaml/ast"
 )
@@ -94,6 +95,20 @@ func UseJSONUnmarshaler() DecodeOption {
 	}
 }
 
+// CustomUnmarshaler overrides any decoding process for the type specified in generics.
+//
+// NOTE: If RegisterCustomUnmarshaler and CustomUnmarshaler of DecodeOption are specified for the same type,
+// the CustomUnmarshaler specified in DecodeOption takes precedence.
+func CustomUnmarshaler[T any](unmarshaler func(*T, []byte) error) DecodeOption {
+	return func(d *Decoder) error {
+		var typ *T
+		d.customUnmarshalerMap[reflect.TypeOf(typ)] = func(v interface{}, b []byte) error {
+			return unmarshaler(v.(*T), b)
+		}
+		return nil
+	}
+}
+
 // EncodeOption functional option type for Encoder
 type EncodeOption func(e *Encoder) error
 
@@ -101,6 +116,22 @@ type EncodeOption func(e *Encoder) error
 func Indent(spaces int) EncodeOption {
 	return func(e *Encoder) error {
 		e.indent = spaces
+		return nil
+	}
+}
+
+// IndentSequence causes sequence values to be indented the same value as Indent
+func IndentSequence(indent bool) EncodeOption {
+	return func(e *Encoder) error {
+		e.indentSequence = indent
+		return nil
+	}
+}
+
+// UseSingleQuote determines if single or double quotes should be preferred for strings.
+func UseSingleQuote(sq bool) EncodeOption {
+	return func(e *Encoder) error {
+		e.singleQuote = sq
 		return nil
 	}
 }
@@ -145,6 +176,103 @@ func MarshalAnchor(callback func(*ast.AnchorNode, interface{}) error) EncodeOpti
 func UseJSONMarshaler() EncodeOption {
 	return func(e *Encoder) error {
 		e.useJSONMarshaler = true
+		return nil
+	}
+}
+
+// CustomMarshaler overrides any encoding process for the type specified in generics.
+//
+// NOTE: If type T implements MarshalYAML for pointer receiver, the type specified in CustomMarshaler must be *T.
+// If RegisterCustomMarshaler and CustomMarshaler of EncodeOption are specified for the same type,
+// the CustomMarshaler specified in EncodeOption takes precedence.
+func CustomMarshaler[T any](marshaler func(T) ([]byte, error)) EncodeOption {
+	return func(e *Encoder) error {
+		var typ T
+		e.customMarshalerMap[reflect.TypeOf(typ)] = func(v interface{}) ([]byte, error) {
+			return marshaler(v.(T))
+		}
+		return nil
+	}
+}
+
+// CommentPosition type of the position for comment.
+type CommentPosition int
+
+const (
+	CommentHeadPosition CommentPosition = CommentPosition(iota)
+	CommentLinePosition
+	CommentFootPosition
+)
+
+func (p CommentPosition) String() string {
+	switch p {
+	case CommentHeadPosition:
+		return "Head"
+	case CommentLinePosition:
+		return "Line"
+	case CommentFootPosition:
+		return "Foot"
+	default:
+		return ""
+	}
+}
+
+// LineComment create a one-line comment for CommentMap.
+func LineComment(text string) *Comment {
+	return &Comment{
+		Texts:    []string{text},
+		Position: CommentLinePosition,
+	}
+}
+
+// HeadComment create a multiline comment for CommentMap.
+func HeadComment(texts ...string) *Comment {
+	return &Comment{
+		Texts:    texts,
+		Position: CommentHeadPosition,
+	}
+}
+
+// FootComment create a multiline comment for CommentMap.
+func FootComment(texts ...string) *Comment {
+	return &Comment{
+		Texts:    texts,
+		Position: CommentFootPosition,
+	}
+}
+
+// Comment raw data for comment.
+type Comment struct {
+	Texts    []string
+	Position CommentPosition
+}
+
+// CommentMap map of the position of the comment and the comment information.
+type CommentMap map[string][]*Comment
+
+// WithComment add a comment using the location and text information given in the CommentMap.
+func WithComment(cm CommentMap) EncodeOption {
+	return func(e *Encoder) error {
+		commentMap := map[*Path][]*Comment{}
+		for k, v := range cm {
+			path, err := PathString(k)
+			if err != nil {
+				return err
+			}
+			commentMap[path] = v
+		}
+		e.commentMap = commentMap
+		return nil
+	}
+}
+
+// CommentToMap apply the position and content of comments in a YAML document to a CommentMap.
+func CommentToMap(cm CommentMap) DecodeOption {
+	return func(d *Decoder) error {
+		if cm == nil {
+			return ErrInvalidCommentMapValue
+		}
+		d.toCommentMap = cm
 		return nil
 	}
 }
