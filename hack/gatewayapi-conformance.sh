@@ -47,7 +47,7 @@ go mod vendor
 # because the AWS ELB needs extra ~60s for DNS propagation
 sed -i "s/MaxTimeToConsistency:              30/MaxTimeToConsistency:              90/g" conformance/utils/config/timeout.go
 
-SUPPORTED_FEATURES="Gateway,HTTPRoute,ReferenceGrant,GatewayPort8080,HTTPRouteQueryParamMatching,HTTPRouteMethodMatching,HTTPRouteResponseHeaderModification,HTTPRoutePortRedirect,HTTPRouteSchemeRedirect,HTTPRoutePathRedirect,HTTPRouteHostRewrite,HTTPRoutePathRewrite,HTTPRouteRequestMirror,HTTPRouteRequestMultipleMirrors,HTTPRouteBackendProtocolH2C,HTTPRouteBackendProtocolWebSocket"
+SUPPORTED_FEATURES='Gateway,HTTPRoute,ReferenceGrant,GatewayHTTPListenerIsolation,GatewayInfrastructurePropagation,GatewayPort8080,GatewayStaticAddresses,HTTPRouteBackendProtocolH2C,HTTPRouteBackendProtocolWebSocket,HTTPRouteBackendRequestHeaderModification,HTTPRouteBackendTimeout,HTTPRouteDestinationPortMatching,HTTPRouteHostRewrite,HTTPRouteMethodMatching,HTTPRouteParentRefPort,HTTPRoutePathRedirect,HTTPRoutePathRewrite,HTTPRoutePortRedirect,HTTPRouteQueryParamMatching,HTTPRouteRequestMirror,HTTPRouteRequestMultipleMirrors,HTTPRouteRequestTimeout,HTTPRouteResponseHeaderModification,HTTPRouteSchemeRedirect,MeshConsumerRoute'
 
 echo "Start Gateway API Conformance Testing"
-go test ./conformance -v -timeout 10m -run TestConformance -args --supported-features=${SUPPORTED_FEATURES}
+go test ./conformance -v -timeout 20m -run TestConformance -args --supported-features=${SUPPORTED_FEATURES}

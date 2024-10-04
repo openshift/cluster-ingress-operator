@@ -20,7 +20,7 @@ import (
 // for servicemeshoperator is present and returns a Boolean indicating whether
 // it exists, the subscription if it exists, and an error value.
 func (r *reconciler) ensureServiceMeshOperatorSubscription(ctx context.Context) (bool, *operatorsv1alpha1.Subscription, error) {
-	name := operatorcontroller.ServiceMeshSubscriptionName()
+	name := operatorcontroller.ServiceMeshOperatorSubscriptionName()
 	have, current, err := r.currentSubscription(ctx, name)
 	if err != nil {
 		return false, nil, err
@@ -53,11 +53,14 @@ func desiredSubscription(name types.NamespacedName) (*operatorsv1alpha1.Subscrip
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: name.Namespace,
 			Name:      name.Name,
+			Annotations: map[string]string{
+				operatorcontroller.IngressOperatorOwnedAnnotation: "",
+			},
 		},
 		Spec: &operatorsv1alpha1.SubscriptionSpec{
 			Channel:                "stable",
 			InstallPlanApproval:    operatorsv1alpha1.ApprovalAutomatic,
-			Package:                "servicemeshoperator",
+			Package:                "servicemeshoperator3",
 			CatalogSource:          "redhat-operators",
 			CatalogSourceNamespace: "openshift-marketplace",
 		},
