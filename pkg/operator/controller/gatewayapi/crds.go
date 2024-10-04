@@ -20,6 +20,7 @@ import (
 var managedCRDs = []*apiextensionsv1.CustomResourceDefinition{
 	manifests.GatewayClassCRD(),
 	manifests.GatewayCRD(),
+	manifests.GRPCRouteCRD(),
 	manifests.HTTPRouteCRD(),
 	manifests.ReferenceGrantCRD(),
 }

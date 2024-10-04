@@ -82,7 +82,7 @@ spec:
             - name: GATEWAY_API_OPERATOR_CHANNEL
               value: stable
             - name: GATEWAY_API_OPERATOR_VERSION
-              value: servicemeshoperator.v2.6.2
+              value: servicemeshoperator3.v3.0.0
           resources:
             requests:
               cpu: 10m

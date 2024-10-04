@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	maistrav2 "github.com/maistra/istio-operator/pkg/apis/maistra/v2"
+	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
 	v1 "github.com/openshift/api/operatoringress/v1"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
@@ -22,7 +22,6 @@ import (
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	rbacv1 "k8s.io/api/rbac/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -38,45 +37,18 @@ const (
 
 	// openshiftOperatorsNamespace holds the expected OSSM subscription and Istio operator pod.
 	openshiftOperatorsNamespace = "openshift-operators"
-	// openshiftIstioOperatorDeploymentName holds the expected istio-operator deployment name.
-	openshiftIstioOperatorDeploymentName = "istio-operator"
+	// openshiftIstioOperatorDeploymentName holds the expected Service Mesh
+	// operator deployment name.
+	openshiftIstioOperatorDeploymentName = "servicemesh-operator3"
 	// openshiftIstiodDeploymentName holds the expected istiod deployment name
 	openshiftIstiodDeploymentName = "istiod-openshift-gateway"
-	// openshiftSMCPName holds the expected OSSM ServiceMeshControlPlane name
-	openshiftSMCPName = "openshift-gateway"
+	// openshiftIstioName holds the expected Istio CR name.
+	openshiftIstioName = "openshift-gateway"
 	// cvoNamespace is the namespace of cluster version operator (CVO).
 	cvoNamespace = "openshift-cluster-version"
 	// cvoDeploymentName is the name of cluster version operator's deployment.
 	cvoDeploymentName = "cluster-version-operator"
 )
-
-// updateIngressOperatorRole updates the ingress-operator cluster role with cluster-admin privilege.
-// TODO - Remove this function after https://issues.redhat.com/browse/OSSM-3508 is fixed.
-func updateIngressOperatorRole(t *testing.T) error {
-	t.Helper()
-
-	// Create the same rolebinding that the `oc adm policy add-cluster-role-to-user` command creates.
-	// Caller must remove this after setting it.
-	crb := &rbacv1.ClusterRoleBinding{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "cluster-admin-e2e",
-		},
-		RoleRef:  rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: "cluster-admin"},
-		Subjects: []rbacv1.Subject{{Kind: rbacv1.ServiceAccountKind, Name: "ingress-operator", Namespace: operatorcontroller.DefaultOperatorNamespace}},
-	}
-
-	// Add the rolebinding to the ingress-operator user.
-	if err := kclient.Create(context.TODO(), crb); err != nil {
-		if kerrors.IsAlreadyExists(err) {
-			t.Logf("rolebinding already exists")
-			return nil
-		}
-		t.Logf("error adding rolebinding: %v", err)
-		return err
-	}
-	t.Log("rolebinding has been added")
-	return nil
-}
 
 // assertCrdExists checks if the CRD of the given name exists and returns an error if not.
 // Otherwise returns the CRD version.
@@ -590,7 +562,7 @@ func assertGatewaySuccessful(t *testing.T, namespace, name string) (*gatewayapiv
 			return false, nil
 		}
 		for _, condition := range gw.Status.Conditions {
-			if condition.Type == string(gatewayapiv1.GatewayClassConditionStatusAccepted) { // TODO: Use GatewayConditionAccepted when updating to v1.
+			if condition.Type == string(gatewayapiv1.GatewayConditionAccepted) {
 				recordedConditionMsg = condition.Message
 				if condition.Status == metav1.ConditionTrue {
 					t.Logf("found gateway %s/%s as Accepted", namespace, name)
@@ -601,7 +573,7 @@ func assertGatewaySuccessful(t *testing.T, namespace, name string) (*gatewayapiv
 		return false, nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("gateway %s not %v, last recorded status message: %s", name, gatewayapiv1.GatewayClassConditionStatusAccepted, recordedConditionMsg)
+		return nil, fmt.Errorf("gateway %s not %v, last recorded status message: %s", name, gatewayapiv1.GatewayConditionAccepted, recordedConditionMsg)
 	}
 
 	return gw, nil
@@ -762,91 +734,85 @@ func assertCatalogSource(t *testing.T, namespace, csName string) error {
 
 	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(context context.Context) (bool, error) {
 		if err := kclient.Get(context, nsName, catalogSource); err != nil {
-			t.Logf("failed to get catalogSource %s: %v, retrying...", csName, err)
+			t.Logf("Failed to get CatalogSource %s: %v.  Retrying...", csName, err)
 			return false, nil
 		}
 		if catalogSource.Status.GRPCConnectionState != nil && catalogSource.Status.GRPCConnectionState.LastObservedState == "READY" {
-			t.Logf("found catalogSource %s with last observed state %s", catalogSource.Name, catalogSource.Status.GRPCConnectionState.LastObservedState)
+			t.Logf("Found CatalogSource %s with last observed state: %s", catalogSource.Name, catalogSource.Status.GRPCConnectionState.LastObservedState)
 			return true, nil
 		}
-		t.Logf("found catalogSource %s but could not determine last observed state, retrying...", catalogSource.Name)
+		t.Logf("Found CatalogSource %s but could not determine last observed state.  Retrying...", catalogSource.Name)
 		return false, nil
 	})
 	return err
 }
 
-// assertSMCP checks if the ServiceMeshControlPlane exists in a ready state,
+// assertIstio checks if the Istio exists in a ready state,
 // and returns an error if not.
-func assertSMCP(t *testing.T) error {
+func assertIstio(t *testing.T) error {
 	t.Helper()
-	smcp := &maistrav2.ServiceMeshControlPlane{}
-	nsName := types.NamespacedName{Namespace: operatorcontroller.DefaultOperandNamespace, Name: openshiftSMCPName}
+	istio := &sailv1.Istio{}
+	nsName := types.NamespacedName{Namespace: operatorcontroller.DefaultOperandNamespace, Name: openshiftIstioName}
 
 	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 3*time.Minute, false, func(context context.Context) (bool, error) {
-		if err := kclient.Get(context, nsName, smcp); err != nil {
-			t.Logf("failed to get ServiceMeshControlPlane %s/%s: %v, retrying...", nsName.Namespace, nsName.Name, err)
+		if err := kclient.Get(context, nsName, istio); err != nil {
+			t.Logf("Failed to get Istio %s/%s: %v.  Retrying...", nsName.Namespace, nsName.Name, err)
 			return false, nil
 		}
-		if smcp.Status.Readiness.Components != nil {
-			pending := len(smcp.Status.Readiness.Components["pending"]) > 0
-			unready := len(smcp.Status.Readiness.Components["unready"]) > 0
-			if pending || unready {
-				t.Logf("found ServiceMeshControlPlane %s/%s, but it isn't ready. Retrying...", smcp.Namespace, smcp.Name)
-				return false, nil
-			}
-			if len(smcp.Status.Readiness.Components["ready"]) > 0 {
-				t.Logf("found ServiceMeshControlPlane %s/%s with ready components: %v", smcp.Namespace, smcp.Name, smcp.Status.Readiness.Components["ready"])
-				return true, nil
-			}
+		if istio.Status.GetCondition(sailv1.IstioConditionReady).Status == metav1.ConditionTrue {
+			t.Logf("Found Istio %s/%s, and it reports ready", istio.Namespace, istio.Name)
+			return true, nil
 		}
-		t.Logf("found ServiceMeshControlPlane %s/%s but could not determine its readiness. Retrying...", smcp.Namespace, smcp.Name)
+		t.Logf("Found Istio %s/%s, but it isn't ready.  Retrying...", istio.Namespace, istio.Name)
 		return false, nil
 	})
 	return err
 }
 
-// deleteExistingSMCP deletes if the SMCP exists and returns an error if not.
-func deleteExistingSMCP(t *testing.T) error {
+// deleteExistingIstio deletes if the Istio exists and returns an error if not.
+func deleteExistingIstio(t *testing.T) error {
 	t.Helper()
-	existingSMCP := &maistrav2.ServiceMeshControlPlane{}
-	newSMCP := &maistrav2.ServiceMeshControlPlane{}
-	nsName := types.NamespacedName{Namespace: operatorcontroller.DefaultOperandNamespace, Name: openshiftSMCPName}
+	existingIstio := &sailv1.Istio{}
+	newIstio := &sailv1.Istio{}
+	nsName := types.NamespacedName{Namespace: operatorcontroller.DefaultOperandNamespace, Name: openshiftIstioName}
 
 	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(context context.Context) (bool, error) {
-		if err := kclient.Get(context, nsName, existingSMCP); err != nil {
-			t.Logf("failed to get smcp %s: %v", nsName.Name, err)
+		if err := kclient.Get(context, nsName, existingIstio); err != nil {
+			t.Logf("Failed to get Istio %s: %v", nsName.Name, err)
 			return false, nil
 		}
 		return true, nil
 	})
 	if err != nil {
-		return fmt.Errorf("timed out getting smcp %s: %w", nsName.Name, err)
+		return fmt.Errorf("timed out getting Istio %s: %w", nsName.Name, err)
 	}
-	// deleting SMCP.
-	err = kclient.Delete(context.Background(), existingSMCP)
+	t.Logf("Deleting Istio %s...", existingIstio.Name)
+	err = kclient.Delete(context.Background(), existingIstio)
 	if err != nil {
-		t.Errorf("failed to delete smcp %s: %v", nsName.Name, err)
+		t.Errorf("Failed to delete Istio %s: %v", nsName.Name, err)
 		return err
 	}
 	err = wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(ctx context.Context) (bool, error) {
-		if err := kclient.Get(ctx, nsName, newSMCP); err != nil {
+		if err := kclient.Get(ctx, nsName, newIstio); err != nil {
 			if kerrors.IsNotFound(err) {
 				return true, nil
 			}
-			t.Logf("failed to get deleted SMCP %s: %v", nsName.Name, err)
+			t.Logf("Got unexpected error when trying to get Istio %s after deletion: %v", nsName.Name, err)
 			return false, nil
 		}
-		// if new SMCP got recreated while the poll ensures the SMCP is deleted.
-		if newSMCP != nil && newSMCP.UID != existingSMCP.UID {
+		// Compare the UID to determine whether it is the same object
+		// or whether it is a new one with the same name.
+		if newIstio.UID != existingIstio.UID {
+			t.Logf("Istio %s has been recreated (old UID: %v, new UID: %v)", nsName.Name, existingIstio.UID, newIstio.UID)
 			return true, nil
 		}
-		t.Logf("smcp %s still exists", nsName.Name)
+		t.Logf("Istio %s still exists (UID: %v)", nsName.Name, existingIstio.UID)
 		return false, nil
 	})
 	if err != nil {
-		return fmt.Errorf("timed out waiting for SMCP %s to be deleted: %v", nsName.Name, err)
+		return fmt.Errorf("Timed out waiting for Istio %s to be deleted: %v", nsName.Name, err)
 	}
-	t.Logf("deleted smcp %s", nsName.Name)
+	t.Logf("Deleted Istio %s", nsName.Name)
 	return nil
 }
 

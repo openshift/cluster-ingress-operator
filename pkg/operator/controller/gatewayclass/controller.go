@@ -8,7 +8,7 @@ import (
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
-	maistrav2 "github.com/maistra/istio-operator/pkg/apis/maistra/v2"
+	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 
 	"k8s.io/client-go/tools/record"
@@ -71,7 +71,7 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 	}
 
 	isServiceMeshSubscription := predicate.NewPredicateFuncs(func(o client.Object) bool {
-		return o.GetName() == operatorcontroller.ServiceMeshSubscriptionName().Name
+		return o.GetName() == operatorcontroller.ServiceMeshOperatorSubscriptionName().Name
 	})
 	if err = c.Watch(source.Kind[client.Object](operatorCache, &operatorsv1alpha1.Subscription{},
 		enqueueRequestForDefaultGatewayClassController(config.OperandNamespace), isServiceMeshSubscription)); err != nil {
@@ -107,7 +107,7 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 // controller.
 type Config struct {
 	// OperatorNamespace is the namespace in which the operator should
-	// create the ServiceMeshControlPlane CR.
+	// create the Istio CR.
 	OperatorNamespace string
 	// OperandNamespace is the namespace in which Istio should be deployed.
 	OperandNamespace string
@@ -125,7 +125,7 @@ type reconciler struct {
 	cache    cache.Cache
 	recorder record.EventRecorder
 
-	startSMCPWatch sync.Once
+	startIstioWatch sync.Once
 }
 
 func enqueueRequestForDefaultGatewayClassController(namespace string) handler.EventHandler {
@@ -160,17 +160,19 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	if _, _, err := r.ensureServiceMeshOperatorInstallPlan(ctx); err != nil {
 		errs = append(errs, err)
 	}
-	if _, _, err := r.ensureServiceMeshControlPlane(ctx, &gatewayclass); err != nil {
+	if _, _, err := r.ensureIstio(ctx, &gatewayclass); err != nil {
 		errs = append(errs, err)
 	} else {
-		// The OSSM operator installs the maistra.io CRDs, Need to create the SMCP watch after the OSSM operator is installed.
-		// Using sync.Once here, to start the watch for SMCP, which should run only once.
-		r.startSMCPWatch.Do(func() {
-			isOurSMCP := predicate.NewPredicateFuncs(func(o client.Object) bool {
-				return o.GetName() == operatorcontroller.ServiceMeshControlPlaneName(r.config.OperandNamespace).Name
+		// The OSSM operator installs the istios.sailoperator.io CRD.
+		// We must create the watch for this resource only after the
+		// operator is installed.  We use sync.Once here to start the
+		// watch for istios only once.
+		r.startIstioWatch.Do(func() {
+			isOurIstio := predicate.NewPredicateFuncs(func(o client.Object) bool {
+				return o.GetName() == operatorcontroller.IstioName(r.config.OperandNamespace).Name
 			})
-			if err = gatewayClassController.Watch(source.Kind[client.Object](r.cache, &maistrav2.ServiceMeshControlPlane{}, enqueueRequestForDefaultGatewayClassController(r.config.OperandNamespace), isOurSMCP)); err != nil {
-				log.Error(err, "failed to watch ServiceMeshControlPlane", "request", request)
+			if err = gatewayClassController.Watch(source.Kind[client.Object](r.cache, &sailv1.Istio{}, enqueueRequestForDefaultGatewayClassController(r.config.OperandNamespace), isOurIstio)); err != nil {
+				log.Error(err, "failed to watch istios.sailoperator.io", "request", request)
 				errs = append(errs, err)
 			}
 		})
