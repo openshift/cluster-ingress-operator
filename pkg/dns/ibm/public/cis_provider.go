@@ -107,6 +107,8 @@ func (p *Provider) Delete(record *iov1.DNSRecord, zone configv1.DNSZone) error {
 	// "." when it creates a wildcard DNS record.
 	dnsName := strings.TrimSuffix(record.Spec.DNSName, ".")
 	opt.SetName(dnsName)
+	// While creating DNS records with multiple targets is unsupported, we still
+	// iterate through all targets during deletion to be extra cautious.
 	for _, target := range record.Spec.Targets {
 		opt.SetContent(target)
 		result, response, err := dnsService.ListAllDnsRecords(opt)
@@ -152,6 +154,10 @@ func (p *Provider) createOrUpdateDNSRecord(record *iov1.DNSRecord, zone configv1
 		log.Info("Warning: TTL must be between 120 and 2,147,483,647 seconds, or 1 for Automatic. RecordTTL set to default", "default CIS record TTL", defaultCISRecordTTL)
 		record.Spec.RecordTTL = defaultCISRecordTTL
 	}
+	// We only support one target, warn the user.
+	if len(record.Spec.Targets) > 1 {
+		log.Info("Warning: Only one DNSRecord target is supported. Additional targets will be ignored.", "targets", record.Spec.Targets)
+	}
 
 	listOpt := dnsService.NewListAllDnsRecordsOptions()
 	listOpt.SetType(string(record.Spec.RecordType))
@@ -160,41 +166,43 @@ func (p *Provider) createOrUpdateDNSRecord(record *iov1.DNSRecord, zone configv1
 	// "." when it creates a wildcard DNS record.
 	dnsName := strings.TrimSuffix(record.Spec.DNSName, ".")
 	listOpt.SetName(dnsName)
-	for _, target := range record.Spec.Targets {
-		listOpt.SetContent(target)
-		result, response, err := dnsService.ListAllDnsRecords(listOpt)
+
+	result, response, err := dnsService.ListAllDnsRecords(listOpt)
+	if err != nil {
+		if response == nil || response.StatusCode != http.StatusNotFound {
+			return fmt.Errorf("createOrUpdateDNSRecord: failed to list the dns record: %w", err)
+		}
+	}
+	if result == nil || result.Result == nil {
+		return fmt.Errorf("createOrUpdateDNSRecord: ListAllDnsRecords returned nil as result")
+	}
+
+	target := record.Spec.Targets[0]
+	if len(result.Result) == 0 {
+		createOpt := dnsService.NewCreateDnsRecordOptions()
+		createOpt.SetName(record.Spec.DNSName)
+		createOpt.SetType(string(record.Spec.RecordType))
+		createOpt.SetContent(target)
+		createOpt.SetTTL(record.Spec.RecordTTL)
+		_, _, err := dnsService.CreateDnsRecord(createOpt)
 		if err != nil {
-			if response != nil && response.StatusCode != http.StatusNotFound {
-				return fmt.Errorf("createOrUpdateDNSRecord: failed to list the dns record: %w", err)
-			}
-			continue
+			return fmt.Errorf("createOrUpdateDNSRecord: failed to create the dns record: %w", err)
 		}
-		if result == nil || result.Result == nil {
-			return fmt.Errorf("createOrUpdateDNSRecord: ListAllDnsRecords returned nil as result")
+		log.Info("created DNS record", "record", record.Spec, "zone", zone, "target", target)
+	} else {
+		if result.Result[0].ID == nil {
+			return fmt.Errorf("createOrUpdateDNSRecord: record id is nil")
 		}
-		if len(result.Result) == 0 {
-			createOpt := dnsService.NewCreateDnsRecordOptions()
-			createOpt.SetName(record.Spec.DNSName)
-			createOpt.SetType(string(record.Spec.RecordType))
-			createOpt.SetContent(target)
-			createOpt.SetTTL(record.Spec.RecordTTL)
-			_, _, err := dnsService.CreateDnsRecord(createOpt)
-			if err != nil {
-				return fmt.Errorf("createOrUpdateDNSRecord: failed to create the dns record: %w", err)
-			}
-			log.Info("created DNS record", "record", record.Spec, "zone", zone, "target", target)
-		} else {
-			updateOpt := dnsService.NewUpdateDnsRecordOptions(*result.Result[0].ID)
-			updateOpt.SetName(record.Spec.DNSName)
-			updateOpt.SetType(string(record.Spec.RecordType))
-			updateOpt.SetContent(target)
-			updateOpt.SetTTL(record.Spec.RecordTTL)
-			_, _, err := dnsService.UpdateDnsRecord(updateOpt)
-			if err != nil {
-				return fmt.Errorf("createOrUpdateDNSRecord: failed to update the dns record: %w", err)
-			}
-			log.Info("updated DNS record", "record", record.Spec, "zone", zone, "target", target)
+		updateOpt := dnsService.NewUpdateDnsRecordOptions(*result.Result[0].ID)
+		updateOpt.SetName(record.Spec.DNSName)
+		updateOpt.SetType(string(record.Spec.RecordType))
+		updateOpt.SetContent(target)
+		updateOpt.SetTTL(record.Spec.RecordTTL)
+		_, _, err := dnsService.UpdateDnsRecord(updateOpt)
+		if err != nil {
+			return fmt.Errorf("createOrUpdateDNSRecord: failed to update the dns record: %w", err)
 		}
+		log.Info("updated DNS record", "record", record.Spec, "zone", zone, "target", target)
 	}
 
 	return nil
