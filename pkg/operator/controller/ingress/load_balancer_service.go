@@ -254,6 +254,8 @@ var (
 			//
 			// https://cloud.ibm.com/docs/containers?topic=containers-vpc-lbaas
 			iksLBEnableFeaturesAnnotation,
+			// awsLBAdditionalResourceTags annotation is populated by user tags present in `platform.AWS.ResourceTags`
+			awsLBAdditionalResourceTags,
 		)
 
 		// Azure and GCP support switching between internal and external
@@ -751,9 +753,10 @@ func IsServiceInternal(service *corev1.Service) bool {
 	return false
 }
 
-// loadBalancerServiceTagsModified verifies that none of the managedAnnotations have been changed and also the AWS tags annotation
+// loadBalancerServiceTagsModified verifies that none of the managedAnnotations except awsLBAdditionalResourceTags have been changed
 func loadBalancerServiceTagsModified(current, expected *corev1.Service) (bool, *corev1.Service) {
-	ignoredAnnotations := managedLoadBalancerServiceAnnotations.Union(sets.NewString(awsLBAdditionalResourceTags))
+	ignoredAnnotations := managedLoadBalancerServiceAnnotations.Clone()
+	ignoredAnnotations.Delete(awsLBAdditionalResourceTags)
 	return loadBalancerServiceAnnotationsChanged(current, expected, ignoredAnnotations)
 }
 
