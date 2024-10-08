@@ -61,6 +61,34 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 			}
 			return eps
 		}
+
+		clb = func(scope operatorv1.LoadBalancerScope) *operatorv1.EndpointPublishingStrategy {
+			eps := lbs(scope)
+			eps.LoadBalancer.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{
+				Type: operatorv1.AWSLoadBalancerProvider,
+				AWS: &operatorv1.AWSLoadBalancerParameters{
+					Type:                          operatorv1.AWSClassicLoadBalancer,
+					ClassicLoadBalancerParameters: &operatorv1.AWSClassicLoadBalancerParameters{},
+				},
+			}
+			return eps
+		}
+
+		clbWithEIPAllocations = func(scope operatorv1.LoadBalancerScope, eipAllocations []operatorv1.EIPAllocation) *operatorv1.EndpointPublishingStrategy {
+			eps := lbs(scope)
+			eps.LoadBalancer.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{
+				Type: operatorv1.AWSLoadBalancerProvider,
+				AWS: &operatorv1.AWSLoadBalancerParameters{
+					Type: operatorv1.AWSClassicLoadBalancer,
+					NetworkLoadBalancerParameters: &operatorv1.AWSNetworkLoadBalancerParameters{
+						EIPAllocations: eipAllocations,
+					},
+				},
+			}
+			eps.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters.EIPAllocations = eipAllocations
+			return eps
+		}
+
 		awsLbWithSubnets = func(lbType operatorv1.AWSLoadBalancerType, subnets *operatorv1.AWSSubnets) *operatorv1.EndpointPublishingStrategy {
 			eps := lbs(operatorv1.ExternalLoadBalancer)
 			eps.LoadBalancer.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{
@@ -452,6 +480,33 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 				awsLBProxyProtocolAnnotation:                 {true, "*"},
 				localWithFallbackAnnotation:                  {true, ""},
 				awsLBSubnetsAnnotation:                       {true, "subnet-00000000000000001,subnet-00000000000000002,subnetA,subnetB"},
+			},
+		},
+		{
+			description:    "change from network load balancer with eipAllocations to classic load balancer type for aws platform when feature gate is enabled",
+			platformStatus: platformStatus(configv1.AWSPlatformType),
+			strategySpec: clbWithEIPAllocations(operatorv1.ExternalLoadBalancer,
+				[]operatorv1.EIPAllocation{"eipalloc-xxxxxxxxxxxxxxxxx", "eipalloc-yyyyyyyyyyyyyyyyy"},
+			),
+			// setDefaultPublishingStrategy sets CLB empty provider parameters in the status of IC once the LB Type is changed from NLB to CLB.
+			strategyStatus:                  clb(operatorv1.ExternalLoadBalancer),
+			proxyNeeded:                     true,
+			expectService:                   true,
+			eipAllocationsAWSFeatureEnabled: true,
+			expectedExternalTrafficPolicy:   corev1.ServiceExternalTrafficPolicyLocal,
+			expectedServiceAnnotations: map[string]annotationExpectation{
+				awsInternalLBAnnotation:                      {false, ""},
+				awsLBAdditionalResourceTags:                  {false, ""},
+				awsLBHealthCheckHealthyThresholdAnnotation:   {true, awsLBHealthCheckHealthyThresholdDefault},
+				awsLBHealthCheckIntervalAnnotation:           {true, "5"},
+				awsLBHealthCheckTimeoutAnnotation:            {true, awsLBHealthCheckTimeoutDefault},
+				awsLBHealthCheckUnhealthyThresholdAnnotation: {true, awsLBHealthCheckUnhealthyThresholdDefault},
+				awsLBProxyProtocolAnnotation:                 {true, "*"},
+				AWSLBTypeAnnotation:                          {false, AWSNLBAnnotation},
+				localWithFallbackAnnotation:                  {true, ""},
+				awsLBSubnetsAnnotation:                       {false, ""},
+				// The CIO removes the `service.beta.kubernetes.io/aws-load-balancer-eip-allocations` from service.
+				awsEIPAllocationsAnnotation: {false, ""},
 			},
 		},
 		{
