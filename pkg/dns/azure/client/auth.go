@@ -1,8 +1,9 @@
 package client
 
 import (
-	"errors"
+	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
@@ -10,7 +11,20 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/go-autorest/autorest"
 	"github.com/Azure/go-autorest/autorest/azure"
+
+	"github.com/fsnotify/fsnotify"
 	"github.com/jongio/azidext/go/azidext"
+	"k8s.io/klog/v2"
+	"k8s.io/kubernetes/pkg/util/interrupt"
+)
+
+const (
+	azureClientCertPath      = "AZURE_CLIENT_CERTIFICATE_PATH"
+	azureClientID            = "AZURE_CLIENT_ID"
+	azureClientSecret        = "AZURE_CLIENT_SECRET"
+	azureClientSendCertChain = "AZURE_CLIENT_SEND_CERTIFICATE_CHAIN"
+	azureFederatedTokenFile  = "AZURE_FEDERATED_TOKEN_FILE"
+	azureTenantID            = "AZURE_TENANT_ID"
 )
 
 func getAuthorizerForResource(config Config) (autorest.Authorizer, error) {
@@ -38,78 +52,49 @@ func getAuthorizerForResource(config Config) (autorest.Authorizer, error) {
 		}
 	}
 
-	// Fallback to using tenant ID from env variable if not set.
-	if strings.TrimSpace(config.TenantID) == "" {
-		config.TenantID = os.Getenv("AZURE_TENANT_ID")
-		if strings.TrimSpace(config.TenantID) == "" {
-			return nil, errors.New("empty tenant ID")
+	// For each of the following configuration values, if the environment variable is already set, use it over any
+	// configuration value: AZURE_TENANT_ID, AZURE_CLIENT_ID, and AZURE_CLIENT_SECRET. Otherwise, set the environment
+	// variable to the configuration value. The Azure SDK for Go function, NewDefaultAzureCredential, checks environment
+	// variables first.
+	if os.Getenv(azureTenantID) == "" {
+		if err := os.Setenv(azureTenantID, strings.TrimSpace(config.TenantID)); err != nil {
+			return nil, fmt.Errorf("failed to set environment variable %s: %w", azureTenantID, err)
+		}
+	}
+	if os.Getenv(azureClientID) == "" {
+		if err := os.Setenv(azureClientID, strings.TrimSpace(config.ClientID)); err != nil {
+			return nil, fmt.Errorf("failed to set environment variable %s: %w", azureClientID, err)
+		}
+	}
+	if os.Getenv(azureClientSecret) == "" {
+		if err := os.Setenv(azureClientSecret, strings.TrimSpace(config.ClientSecret)); err != nil {
+			return nil, fmt.Errorf("failed to set environment variable %s: %w", azureClientSecret, err)
+		}
+	}
+	if os.Getenv(azureFederatedTokenFile) == "" {
+		if err := os.Setenv(azureFederatedTokenFile, strings.TrimSpace(config.FederatedTokenFile)); err != nil {
+			return nil, fmt.Errorf("failed to set environment variable %s: %w", azureFederatedTokenFile, err)
+		}
+	}
+	if config.AzureWorkloadIdentityEnabled {
+		if os.Getenv(azureClientSecret) == "" {
+			if os.Getenv(azureFederatedTokenFile) == "" {
+				if err := os.Setenv(azureFederatedTokenFile, "/var/run/secrets/openshift/serviceaccount/token"); err != nil {
+					return nil, fmt.Errorf("failed to set environment variable %s: %w", azureFederatedTokenFile, err)
+				}
+			}
 		}
 	}
 
-	// Fallback to using client ID from env variable if not set.
-	if strings.TrimSpace(config.ClientID) == "" {
-		config.ClientID = os.Getenv("AZURE_CLIENT_ID")
-		if strings.TrimSpace(config.ClientID) == "" {
-			return nil, errors.New("empty client ID")
-		}
+	options := &azidentity.DefaultAzureCredentialOptions{
+		ClientOptions: azcore.ClientOptions{
+			Cloud: cloudConfig,
+		},
 	}
 
-	// Fallback to using client secret from env variable if not set.
-	if strings.TrimSpace(config.ClientSecret) == "" {
-		config.ClientSecret = os.Getenv("AZURE_CLIENT_SECRET")
-		// Skip validation; fallback to token (below) if env variable is also not set.
-	}
-
-	// Fallback to using federated token file from env variable if not set.
-	if strings.TrimSpace(config.FederatedTokenFile) == "" {
-		config.FederatedTokenFile = os.Getenv("AZURE_FEDERATED_TOKEN_FILE")
-		if strings.TrimSpace(config.FederatedTokenFile) == "" {
-			// Default to a generic token file location.
-			config.FederatedTokenFile = "/var/run/secrets/openshift/serviceaccount/token"
-		}
-	}
-
-	var cred azcore.TokenCredential
-	// Managed Identity Override for ARO HCP
-	managedIdentityClientID := os.Getenv("ARO_HCP_MI_CLIENT_ID")
-	if managedIdentityClientID != "" {
-		options := azidentity.ManagedIdentityCredentialOptions{
-			ClientOptions: azcore.ClientOptions{
-				Cloud: cloudConfig,
-			},
-			ID: azidentity.ClientID(managedIdentityClientID),
-		}
-
-		var err error
-		cred, err = azidentity.NewManagedIdentityCredential(&options)
-		if err != nil {
-			return nil, err
-		}
-	} else if config.AzureWorkloadIdentityEnabled && strings.TrimSpace(config.ClientSecret) == "" {
-		options := azidentity.WorkloadIdentityCredentialOptions{
-			ClientOptions: azcore.ClientOptions{
-				Cloud: cloudConfig,
-			},
-			ClientID:      config.ClientID,
-			TenantID:      config.TenantID,
-			TokenFilePath: config.FederatedTokenFile,
-		}
-		var err error
-		cred, err = azidentity.NewWorkloadIdentityCredential(&options)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		options := azidentity.ClientSecretCredentialOptions{
-			ClientOptions: azcore.ClientOptions{
-				Cloud: cloudConfig,
-			},
-		}
-		var err error
-		cred, err = azidentity.NewClientSecretCredential(config.TenantID, config.ClientID, config.ClientSecret, &options)
-		if err != nil {
-			return nil, err
-		}
+	cred, err := azureCreds(options)
+	if err != nil {
+		return nil, err
 	}
 
 	scope := endpointToScope(config.Environment.TokenAudience)
@@ -131,4 +116,99 @@ func endpointToScope(endpoint string) string {
 		scope += "/.default"
 	}
 	return scope
+}
+
+// azureCreds uses the Azure SDK for Go's standard default credential chain. It attempts to authenticate with each of
+// these credential types, in the following order, stopping when one provides a token:
+//   - [EnvironmentCredential]
+//   - [WorkloadIdentityCredential], if environment variable configuration is set by the Azure workload
+//     identity webhook. Use [WorkloadIdentityCredential] directly when not using the webhook or needing
+//     more control over its configuration.
+//   - [ManagedIdentityCredential]
+//   - [AzureCLICredential]
+func azureCreds(options *azidentity.DefaultAzureCredentialOptions) (*azidentity.DefaultAzureCredential, error) {
+	if err := os.Setenv(azureClientSendCertChain, "true"); err != nil {
+		return nil, fmt.Errorf("could not set %s", azureClientSendCertChain)
+	}
+
+	if certPath := os.Getenv(azureClientCertPath); certPath != "" {
+		// Set up a watch on our config file; if it changes, we should exit -
+		// (we don't have the ability to dynamically reload config changes).
+		stopCh := make(chan struct{})
+		err := interrupt.New(func(s os.Signal) {
+			_, _ = fmt.Fprintf(os.Stderr, "interrupt: Gracefully shutting down ...\n")
+			close(stopCh)
+		}).Run(func() error {
+			if err := watchForChanges(certPath, stopCh); err != nil {
+				return err
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return azidentity.NewDefaultAzureCredential(options)
+}
+
+// watchForChanges closes stopCh if the configuration file changed.
+func watchForChanges(configPath string, stopCh chan struct{}) error {
+	configPath, err := filepath.Abs(configPath)
+	if err != nil {
+		return err
+	}
+
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return err
+	}
+
+	// Watch all symlinks for changes
+	p := configPath
+	maxDepth := 100
+	for depth := 0; depth < maxDepth; depth++ {
+		if err := watcher.Add(p); err != nil {
+			return err
+		}
+		klog.V(2).Infof("Watching config file %s for changes", p)
+
+		stat, err := os.Lstat(p)
+		if err != nil {
+			return err
+		}
+
+		// configmaps are usually symlinks
+		if stat.Mode()&os.ModeSymlink > 0 {
+			p, err = filepath.EvalSymlinks(p)
+			if err != nil {
+				return err
+			}
+		} else {
+			break
+		}
+	}
+
+	go func() {
+		for {
+			select {
+			case <-stopCh:
+			case event, ok := <-watcher.Events:
+				if !ok {
+					klog.Errorf("failed to watch config file %s", p)
+					return
+				}
+				klog.V(2).Infof("Configuration file %s changed, exiting...", event.Name)
+				close(stopCh)
+				return
+			case err, ok := <-watcher.Errors:
+				if !ok {
+					klog.Errorf("failed to watch config file %s", p)
+					return
+				}
+				klog.Errorf("fsnotify error: %v", err)
+			}
+		}
+	}()
+	return nil
 }
