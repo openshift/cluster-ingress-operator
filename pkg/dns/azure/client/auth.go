@@ -70,22 +70,7 @@ func getAuthorizerForResource(config Config) (autorest.Authorizer, error) {
 	}
 
 	var cred azcore.TokenCredential
-	// Managed Identity Override for ARO HCP
-	managedIdentityClientID := os.Getenv("ARO_HCP_MI_CLIENT_ID")
-	if managedIdentityClientID != "" {
-		options := azidentity.ManagedIdentityCredentialOptions{
-			ClientOptions: azcore.ClientOptions{
-				Cloud: cloudConfig,
-			},
-			ID: azidentity.ClientID(managedIdentityClientID),
-		}
-
-		var err error
-		cred, err = azidentity.NewManagedIdentityCredential(&options)
-		if err != nil {
-			return nil, err
-		}
-	} else if config.AzureWorkloadIdentityEnabled && strings.TrimSpace(config.ClientSecret) == "" {
+	if config.AzureWorkloadIdentityEnabled && strings.TrimSpace(config.ClientSecret) == "" {
 		options := azidentity.WorkloadIdentityCredentialOptions{
 			ClientOptions: azcore.ClientOptions{
 				Cloud: cloudConfig,
