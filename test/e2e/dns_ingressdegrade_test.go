@@ -10,6 +10,7 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
 
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 
 	"k8s.io/apimachinery/pkg/types"
@@ -35,6 +36,23 @@ func TestIngressStatus(t *testing.T) {
 		t.Fatalf("failed to create kube client: %v", err)
 	}
 
+	if err := kubeClient.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, &dnsConfig); err != nil {
+		t.Fatalf("failed to get DNS config: %v", err)
+	}
+
+	// Run DNS Config update tests on private and public zones when
+	// they are defined in the DNS config (which depends on the platform).
+	if dnsConfig.Spec.PrivateZone != nil {
+		t.Log("Testing private zone")
+		testUpdateDNSConfig(t, kubeClient)
+	}
+	if dnsConfig.Spec.PublicZone != nil {
+		t.Log("Testing public zone")
+		testUpdateDNSConfig(t, kubeClient)
+	}
+}
+
+func testUpdateDNSConfig(t *testing.T, kubeClient client.Client) {
 	if err := kubeClient.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, &dnsConfig); err != nil {
 		t.Fatalf("failed to get DNS config: %v", err)
 	}
