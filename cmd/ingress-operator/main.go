@@ -10,6 +10,7 @@ import (
 	h2specclient "github.com/openshift/cluster-ingress-operator/test/h2spec"
 	httphealthcheck "github.com/openshift/cluster-ingress-operator/test/http"
 	http2testserver "github.com/openshift/cluster-ingress-operator/test/http2"
+	ocpbugs40850 "github.com/openshift/cluster-ingress-operator/test/ocpbugs48050"
 )
 
 var log = logf.Logger.WithName("main")
@@ -33,6 +34,14 @@ func main() {
 		Long:  "serve-http2-test-server runs a HTTP/2 test server.",
 		Run: func(cmd *cobra.Command, args []string) {
 			http2testserver.Serve()
+		},
+	})
+	rootCmd.AddCommand(&cobra.Command{
+		Use:   "serve-ocpbugs40850-test-server",
+		Short: "serve HTTP test server for OCPBUGS-40850 validation",
+		Long:  "serve-ocpbugs40850-test-server runs a HTTP test server that serves responses with duplicate Transfer-Encoding headers.",
+		Run: func(cmd *cobra.Command, args []string) {
+			ocpbugs40850.Serve()
 		},
 	})
 	rootCmd.AddCommand(h2specclient.NewClientCommand())
