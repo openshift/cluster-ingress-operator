@@ -1,6 +1,7 @@
 package ingress
 
 import (
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -2215,51 +2216,96 @@ func Test_checkZoneInConfig(t *testing.T) {
 }
 
 func Test_computeIngressUpgradeableCondition(t *testing.T) {
-	makeDefaultCertificateSecret := func(cn string, sans []string, signatureAlgorithm x509.SignatureAlgorithm) *corev1.Secret {
+	makeCertificateSecret := func(certs ...*x509.Certificate) *corev1.Secret {
+		var certData []byte
+		for _, cert := range certs {
+			pemBlock := &pem.Block{
+				Type:  "CERTIFICATE",
+				Bytes: cert.Raw,
+			}
+			certData = append(certData, pem.EncodeToMemory(pemBlock)...)
+		}
+		return &corev1.Secret{
+			Data: map[string][]byte{
+				"tls.crt": certData,
+			},
+		}
+	}
+	makeCertificate := func(cn string, sans []string, signatureAlgorithm x509.SignatureAlgorithm, rootCert *x509.Certificate, rootCertPrivateKey crypto.PrivateKey, isCA bool) (*x509.Certificate, any) {
 		certTemplate := &x509.Certificate{
 			SerialNumber:       big.NewInt(1),
 			Subject:            pkix.Name{CommonName: cn},
 			DNSNames:           sans,
 			SignatureAlgorithm: signatureAlgorithm,
 		}
-
-		var cert []byte
+		if isCA {
+			certTemplate.IsCA = true
+			certTemplate.KeyUsage = x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign
+			certTemplate.BasicConstraintsValid = true
+		}
+		// If root cert is not provided, use the certTemplate to create a self-signed cert.
+		if rootCert == nil {
+			rootCert = certTemplate
+		}
+		var certBytes []byte
+		var privateKey crypto.PrivateKey
 		switch signatureAlgorithm {
 		case x509.SHA1WithRSA, x509.SHA256WithRSA, x509.SHA384WithRSA, x509.SHA512WithRSA:
-			key, err := rsa.GenerateKey(rand.Reader, 2048)
+			rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
 			if err != nil {
 				t.Fatalf("failed to generate RSA key: %v", err)
 			}
-			cert, err = x509.CreateCertificate(rand.Reader, certTemplate, certTemplate, &key.PublicKey, key)
+			if rootCertPrivateKey == nil {
+				rootCertPrivateKey = rsaKey
+			}
+			certBytes, err = x509.CreateCertificate(rand.Reader, certTemplate, rootCert, &rsaKey.PublicKey, rootCertPrivateKey)
 			if err != nil {
 				t.Fatalf("failed to generate RSA certificate: %v", err)
 			}
+			privateKey = rsaKey
 		case x509.ECDSAWithSHA1, x509.ECDSAWithSHA256, x509.ECDSAWithSHA384, x509.ECDSAWithSHA512:
-			key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+			ecdsaKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 			if err != nil {
 				t.Fatalf("failed to generate ECDSA key: %v", err)
 			}
-			cert, err = x509.CreateCertificate(rand.Reader, certTemplate, certTemplate, &key.PublicKey, key)
+			if rootCertPrivateKey == nil {
+				rootCertPrivateKey = ecdsaKey
+			}
+			certBytes, err = x509.CreateCertificate(rand.Reader, certTemplate, rootCert, &ecdsaKey.PublicKey, rootCertPrivateKey)
 			if err != nil {
 				t.Fatalf("failed to generate ECDSA certificate: %v", err)
 			}
+			privateKey = ecdsaKey
 		default:
 			t.Fatal("unsupported signature algorithm")
 		}
 
-		certData := pem.EncodeToMemory(&pem.Block{
-			Type:  "CERTIFICATE",
-			Bytes: cert,
-		})
-
-		return &corev1.Secret{
-			Data: map[string][]byte{"tls.crt": certData},
+		certs, err := x509.ParseCertificates(certBytes)
+		if err != nil {
+			t.Fatalf("failed to parse certificates: %v", err)
 		}
+		if len(certs) != 1 {
+			t.Fatalf("expected a single certificate from x509.ParseCertificates, got %d: %v", len(certs), certs)
+		}
+		return certs[0], privateKey
 	}
 	const (
 		ingressDomain  = "apps.foo.com"
 		wildcardDomain = "*." + ingressDomain
 	)
+
+	sha256ECDSACertWithSans, _ := makeCertificate(wildcardDomain, []string{wildcardDomain}, x509.ECDSAWithSHA256, nil, nil, false)
+	sha256ECDSACertWithNoSans, _ := makeCertificate(wildcardDomain, []string{}, x509.ECDSAWithSHA256, nil, nil, false)
+
+	sha1ECDSACert, _ := makeCertificate(wildcardDomain, []string{wildcardDomain}, x509.ECDSAWithSHA1, nil, nil, false)
+	sha1RSACert, _ := makeCertificate(wildcardDomain, []string{wildcardDomain}, x509.SHA1WithRSA, nil, nil, false)
+
+	sha1RSARootCA, sha1RSARootCAKey := makeCertificate(wildcardDomain, []string{wildcardDomain}, x509.SHA1WithRSA, nil, nil, true)
+	sha256RSACertSignedBySha1RSA, _ := makeCertificate(wildcardDomain, []string{wildcardDomain}, x509.SHA256WithRSA, sha1RSARootCA, sha1RSARootCAKey, false)
+
+	sha256RSARootCA, sha256RSARootCAKey := makeCertificate(wildcardDomain, []string{wildcardDomain}, x509.SHA256WithRSA, nil, nil, true)
+	sha1RSACertSignedBySha256RSA, _ := makeCertificate(wildcardDomain, []string{wildcardDomain}, x509.SHA1WithRSA, sha256RSARootCA, sha256RSARootCAKey, false)
+
 	testCases := []struct {
 		description string
 		mutate      func(*corev1.Service)
@@ -2295,23 +2341,38 @@ func Test_computeIngressUpgradeableCondition(t *testing.T) {
 			expect: true,
 		},
 		{
-			description: "if the default certificate has a SAN",
-			secret:      makeDefaultCertificateSecret(wildcardDomain, []string{wildcardDomain}, x509.ECDSAWithSHA256),
+			description: "if the self-signed default certificate has a SAN",
+			secret:      makeCertificateSecret(sha256ECDSACertWithSans),
 			expect:      true,
 		},
 		{
-			description: "if the default certificate has no SAN",
-			secret:      makeDefaultCertificateSecret(wildcardDomain, []string{}, x509.ECDSAWithSHA256),
+			description: "if the self-signed default certificate has no SAN",
+			secret:      makeCertificateSecret(sha256ECDSACertWithNoSans),
 			expect:      false,
 		},
 		{
-			description: "if the default certificate uses ECDSA SHA1",
-			secret:      makeDefaultCertificateSecret(wildcardDomain, []string{wildcardDomain}, x509.ECDSAWithSHA1),
+			description: "if the self-signed default certificate uses ECDSA SHA1",
+			secret:      makeCertificateSecret(sha1ECDSACert),
 			expect:      false,
 		},
 		{
-			description: "if the default certificate uses RSA SHA1",
-			secret:      makeDefaultCertificateSecret(wildcardDomain, []string{wildcardDomain}, x509.SHA1WithRSA),
+			description: "if the self-signed default certificate uses RSA SHA1",
+			secret:      makeCertificateSecret(sha1RSACert),
+			expect:      false,
+		},
+		{
+			description: "if the default leaf certificate uses RSA SHA256 included with its root certificate that uses RSA SHA1",
+			secret:      makeCertificateSecret(sha256RSACertSignedBySha1RSA, sha1RSARootCA),
+			expect:      true,
+		},
+		{
+			description: "if the default leaf certificate uses RSA SHA1 included with its root certificate that uses RSA SHA256",
+			secret:      makeCertificateSecret(sha1RSACertSignedBySha256RSA, sha256RSARootCA),
+			expect:      false,
+		},
+		{
+			description: "if the default leaf certificate uses RSA SHA1 included with its root certificate that uses RSA SHA256, but the order is reversed",
+			secret:      makeCertificateSecret(sha256RSARootCA, sha1RSACertSignedBySha256RSA),
 			expect:      false,
 		},
 	}
@@ -2361,7 +2422,7 @@ func Test_computeIngressUpgradeableCondition(t *testing.T) {
 			}
 			secret := tc.secret
 			if secret == nil {
-				secret = makeDefaultCertificateSecret("", []string{wildcardDomain}, x509.SHA256WithRSA)
+				secret = makeCertificateSecret(sha256ECDSACertWithSans)
 			}
 
 			expectedStatus := operatorv1.ConditionFalse
