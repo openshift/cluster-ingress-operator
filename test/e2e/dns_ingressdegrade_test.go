@@ -10,6 +10,7 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
 
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 
 	"k8s.io/apimachinery/pkg/types"
@@ -39,6 +40,21 @@ func TestIngressStatus(t *testing.T) {
 		t.Fatalf("failed to get DNS config: %v", err)
 	}
 
+	// Run DNS Config update tests on private and public zones when
+	// they are defined in the DNS config (which depends on the platform).
+	if dnsConfig.Spec.PrivateZone != nil {
+		testUpdateDNSConfig(t, kubeClient, dnsConfig.Spec.PrivateZone)
+	}
+	if dnsConfig.Spec.PublicZone != nil {
+		testUpdateDNSConfig(t, kubeClient, dnsConfig.Spec.PublicZone)
+	}
+}
+
+func testUpdateDNSConfig(t *testing.T, kubeClient client.Client, zone *configv1.DNSZone) {
+	if err := kubeClient.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, &dnsConfig); err != nil {
+		t.Fatalf("failed to get DNS config: %v", err)
+	}
+
 	// step 1
 	expected := []configv1.ClusterOperatorStatusCondition{
 		{Type: configv1.OperatorAvailable, Status: configv1.ConditionTrue},
@@ -50,7 +66,7 @@ func TestIngressStatus(t *testing.T) {
 
 	// step 2
 	updCfg := dnsConfig.DeepCopy()
-	updateDNSConfig(true, updCfg)
+	updateDNSConfig(true, zone)
 	if err := kclient.Update(context.TODO(), updCfg); err != nil {
 		t.Fatalf("failed to update DNS config: %v", err)
 	}
@@ -64,7 +80,7 @@ func TestIngressStatus(t *testing.T) {
 	}
 
 	// step 4
-	updateDNSConfig(false, updCfg)
+	updateDNSConfig(false, zone)
 	if err := kclient.Update(context.TODO(), updCfg); err != nil {
 		t.Fatalf("failed to update DNS config: %v", err)
 	}
@@ -79,27 +95,27 @@ func TestIngressStatus(t *testing.T) {
 	}
 }
 
-// updateDNSConfig sets an invalid Tag or ID for the cluster DNS config's
-// PrivateZone if the set argument is true and reverts the DNS config back to
+// updateDNSConfig sets an invalid Tag or ID for a given cluster DNS config's
+// zone if the set argument is true and reverts the DNS config back to
 // its original setting if the set argument is false.
-func updateDNSConfig(set bool, dnsConfig *configv1.DNS) {
-	// Tested on Azure, AWS, and GCP.  Azure privateZone uses "/" notation,
+func updateDNSConfig(set bool, zone *configv1.DNSZone) {
+	// Tested on Azure, AWS, and GCP. Azure zone  uses "/" notation,
 	// so prepending "error-" without "/" does not cause a failure on Azure.
 	const injectError = "/error"
-	if dnsConfig.Spec.PrivateZone.ID != "" {
+	if zone.ID != "" {
 		if set {
-			dnsConfig.Spec.PrivateZone.ID = injectError + dnsConfig.Spec.PrivateZone.ID
+			zone.ID = injectError + zone.ID
 		} else {
 			// Remove injectError from prefix.
-			dnsConfig.Spec.PrivateZone.ID = dnsConfig.Spec.PrivateZone.ID[len(injectError):]
+			zone.ID = zone.ID[len(injectError):]
 		}
 	}
-	if dnsConfig.Spec.PrivateZone.Tags["Name"] != "" {
+	if zone.Tags["Name"] != "" {
 		if set {
-			dnsConfig.Spec.PrivateZone.Tags["Name"] = injectError + dnsConfig.Spec.PrivateZone.Tags["Name"]
+			zone.Tags["Name"] = injectError + zone.Tags["Name"]
 		} else {
 			// Remove injectError from prefix.
-			dnsConfig.Spec.PrivateZone.Tags["Name"] = dnsConfig.Spec.PrivateZone.Tags["Name"][len(injectError):]
+			zone.Tags["Name"] = zone.Tags["Name"][len(injectError):]
 		}
 	}
 }
