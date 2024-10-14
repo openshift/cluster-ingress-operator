@@ -4,6 +4,7 @@ import (
 	"context"
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
+	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 
 	"k8s.io/client-go/tools/record"
 
@@ -61,6 +62,22 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 	if err := c.Watch(source.Kind[client.Object](operatorCache, &gatewayapiv1beta1.GatewayClass{}, &handler.EnqueueRequestForObject{}, isOurGatewayClass, predicate.Not(isIstioGatewayClass))); err != nil {
 		return nil, err
 	}
+	isOurInstallPlan := predicate.NewPredicateFuncs(func(o client.Object) bool {
+		installPlan := o.(*operatorsv1alpha1.InstallPlan)
+		for _, csv := range installPlan.Spec.ClusterServiceVersionNames {
+			if csv == serviceMeshOperatorDesiredVersion {
+				return true
+			}
+		}
+		return false
+	})
+	isInstallPlanApproved := predicate.NewPredicateFuncs(func(o client.Object) bool {
+		installPlan := o.(*operatorsv1alpha1.InstallPlan)
+		return installPlan.Spec.Approved
+	})
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorsv1alpha1.InstallPlan{}, &handler.EnqueueRequestForObject{}, isOurInstallPlan, predicate.Not(isInstallPlanApproved))); err != nil {
+		return nil, err
+	}
 	return c, nil
 }
 
@@ -95,6 +112,9 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 
 	var errs []error
 	if _, _, err := r.ensureServiceMeshOperatorSubscription(ctx); err != nil {
+		errs = append(errs, err)
+	}
+	if _, _, err := r.ensureServiceMeshOperatorInstallPlan(ctx); err != nil {
 		errs = append(errs, err)
 	}
 	if _, _, err := r.ensureServiceMeshControlPlane(ctx, &gatewayclass); err != nil {
