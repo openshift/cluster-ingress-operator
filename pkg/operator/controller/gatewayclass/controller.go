@@ -68,7 +68,7 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 // controller.
 type Config struct {
 	// OperatorNamespace is the namespace in which the operator should
-	// create the ServiceMeshControlPlane CR.
+	// create the Istio CR.
 	OperatorNamespace string
 	// OperandNamespace is the namespace in which Istio should be deployed.
 	OperandNamespace string
@@ -97,7 +97,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	if _, _, err := r.ensureServiceMeshOperatorSubscription(ctx); err != nil {
 		errs = append(errs, err)
 	}
-	if _, _, err := r.ensureServiceMeshControlPlane(ctx, &gatewayclass); err != nil {
+	if _, _, err := r.ensureIstio(ctx, &gatewayclass); err != nil {
 		errs = append(errs, err)
 	}
 	return reconcile.Result{}, utilerrors.NewAggregate(errs)

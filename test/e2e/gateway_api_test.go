@@ -23,7 +23,7 @@ import (
 
 const (
 	// The expected OSSM subscription name.
-	expectedSubscriptionName = "servicemeshoperator"
+	expectedSubscriptionName = "servicemeshoperator3"
 	// The expected OSSM catalog source name.
 	expectedCatalogSourceName = "redhat-operators"
 	// The expected catalog source namespace.
@@ -98,7 +98,6 @@ func testGatewayAPIResources(t *testing.T) {
 // - the required Subscription and CatalogSource are created.
 // - the OSSM Istio operator is installed successfully and has status Running and Ready. e.g. istio-operator-9f5c88857-2xfrr  -n openshift-operators
 // - Istiod is installed successfully and has status Running and Ready.  e.g istiod-openshift-gateway-867bb8d5c7-4z6mp -n openshift-ingress
-// - the SMCP is created successfully (OSSM 2.x).
 func testGatewayAPIIstioInstallation(t *testing.T) {
 	t.Helper()
 
@@ -113,10 +112,6 @@ func testGatewayAPIIstioInstallation(t *testing.T) {
 	}
 	if err := assertIstiodControlPlane(t); err != nil {
 		t.Fatalf("failed to find expected Istiod control plane: %v", err)
-	}
-	// TODO - In OSSM 3.x the configuration object to check will be different.
-	if err := assertSMCP(t); err != nil {
-		t.Fatalf("failed to find expected SMCP: %v", err)
 	}
 }
 
