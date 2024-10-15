@@ -494,6 +494,16 @@ func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
 			}
 			return eps
 		}
+		openstackLB = func(floatingIP string) *operatorv1.EndpointPublishingStrategy {
+			eps := eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS))
+			eps.LoadBalancer.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{
+				Type: operatorv1.OpenStackLoadBalancerProvider,
+				OpenStack: &operatorv1.OpenStackLoadBalancerParameters{
+					FloatingIP: floatingIP,
+				},
+			}
+			return eps
+		}
 		nodePort = func(proto operatorv1.IngressControllerProtocol) *operatorv1.EndpointPublishingStrategy {
 			return &operatorv1.EndpointPublishingStrategy{
 				Type: operatorv1.NodePortServiceStrategyType,
@@ -723,6 +733,13 @@ func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
 			ic:                      makeIC(spec(ibmLB(operatorv1.TCPProtocol)), status(ibmLB(operatorv1.ProxyProtocol))),
 			expectedResult:          true,
 			expectedIC:              makeIC(spec(ibmLB(operatorv1.TCPProtocol)), status(ibmLB(operatorv1.TCPProtocol))),
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name:                    "loadbalancer OpenStack floating IP changed",
+			ic:                      makeIC(spec(openstackLB("1.2.3.4")), status(openstackLB("192.168.0.1"))),
+			expectedResult:          true,
+			expectedIC:              makeIC(spec(openstackLB("1.2.3.4")), status(openstackLB("1.2.3.4"))),
 			domainMatchesBaseDomain: true,
 		},
 		{

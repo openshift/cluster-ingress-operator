@@ -475,6 +475,15 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 			if !isInternal {
 				service.Annotations[alibabaCloudLBAddressTypeAnnotation] = alibabaCloudLBAddressTypeInternet
 			}
+		case configv1.OpenStackPlatformType:
+			// Set a floating IP only if the load balancer scope is external.
+			if !isInternal {
+				if lb != nil && lb.ProviderParameters != nil &&
+					lb.ProviderParameters.Type == operatorv1.OpenStackLoadBalancerProvider &&
+					lb.ProviderParameters.OpenStack != nil {
+					service.Spec.LoadBalancerIP = lb.ProviderParameters.OpenStack.FloatingIP
+				}
+			}
 		}
 		// Azure load balancers are not customizable and are set to (2 fail @ 5s interval, 2 healthy)
 		// GCP load balancers are not customizable and are set to (3 fail @ 8s interval, 1 healthy)

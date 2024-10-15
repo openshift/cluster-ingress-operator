@@ -38,6 +38,20 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 				},
 			}
 		}
+		openstackLbWithFloatingIP = func(scope operatorv1.LoadBalancerScope, floatingIP string) *operatorv1.EndpointPublishingStrategy {
+			return &operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.LoadBalancerServiceStrategyType,
+				LoadBalancer: &operatorv1.LoadBalancerStrategy{
+					Scope: scope,
+					ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+						Type: operatorv1.OpenStackLoadBalancerProvider,
+						OpenStack: &operatorv1.OpenStackLoadBalancerParameters{
+							FloatingIP: floatingIP,
+						},
+					},
+				},
+			}
+		}
 		// nps returns an EndpointPublishingStrategy with type
 		// "NodePortService" and the specified protocol.
 		nps = func(proto operatorv1.IngressControllerProtocol) *operatorv1.EndpointPublishingStrategy {
@@ -656,6 +670,17 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 			description:                   "external load balancer for openstack platform",
 			platformStatus:                platformStatus(configv1.OpenStackPlatformType),
 			strategyStatus:                lbs(operatorv1.ExternalLoadBalancer),
+			expectService:                 true,
+			expectedExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyLocal,
+			expectedServiceAnnotations: map[string]annotationExpectation{
+				openstackInternalLBAnnotation: {false, ""},
+				localWithFallbackAnnotation:   {true, ""},
+			},
+		},
+		{
+			description:                   "external load balancer for openstack platform with floating IP",
+			platformStatus:                platformStatus(configv1.OpenStackPlatformType),
+			strategyStatus:                openstackLbWithFloatingIP(operatorv1.ExternalLoadBalancer, "1.2.3.4"),
 			expectService:                 true,
 			expectedExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyLocal,
 			expectedServiceAnnotations: map[string]annotationExpectation{

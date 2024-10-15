@@ -57,13 +57,13 @@ func New(mgr manager.Manager, namespace string) (controller.Controller, error) {
 	}
 	c, err := controller.New(controllerName, mgr, controller.Options{
 		Reconciler: reconciler,
-		RateLimiter: workqueue.NewMaxOfRateLimiter(
+		RateLimiter: workqueue.NewTypedMaxOfRateLimiter(
 			// Rate-limit to 1 update every 5 seconds per
 			// ingresscontroller to avoid burning CPU if route
 			// updates are frequent.
-			workqueue.NewItemExponentialFailureRateLimiter(5*time.Second, 30*time.Second),
+			workqueue.NewTypedItemExponentialFailureRateLimiter[reconcile.Request](5*time.Second, 30*time.Second),
 			// 10 qps, 100 bucket size, same as DefaultControllerRateLimiter().
-			&workqueue.BucketRateLimiter{Limiter: rate.NewLimiter(rate.Limit(10), 100)},
+			&workqueue.TypedBucketRateLimiter[reconcile.Request]{Limiter: rate.NewLimiter(rate.Limit(10), 100)},
 		),
 	})
 	if err != nil {
