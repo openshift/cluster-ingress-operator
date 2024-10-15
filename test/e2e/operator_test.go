@@ -12,7 +12,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/aws/aws-sdk-go/service/ec2"
 	"io"
 	"io/ioutil"
 	"net"
@@ -24,6 +23,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/aws/aws-sdk-go/service/ec2"
 
 	"gopkg.in/yaml.v2"
 
@@ -409,6 +410,7 @@ func TestUniqueDomainRejection(t *testing.T) {
 //
 // TODO: should this be a test of source IP preservation in the conformance suite?
 func TestProxyProtocolOnAWS(t *testing.T) {
+	// foo
 	if infraConfig.Status.PlatformStatus == nil {
 		t.Skip("test skipped on nil platform")
 	}
