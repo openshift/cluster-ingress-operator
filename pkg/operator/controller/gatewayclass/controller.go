@@ -2,13 +2,19 @@ package gatewayclass
 
 import (
 	"context"
+	"sync"
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
+	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
 	"k8s.io/client-go/tools/record"
 
+	maistrav2 "github.com/maistra/istio-operator/pkg/apis/maistra/v2"
+	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
+
 	gatewayapiv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
+	"k8s.io/apimachinery/pkg/types"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 
 	"sigs.k8s.io/controller-runtime/pkg/cache"
@@ -35,6 +41,7 @@ const (
 )
 
 var log = logf.Logger.WithName(controllerName)
+var gatewayClassController controller.Controller
 
 // NewUnmanaged creates and returns a controller that watches gatewayclasses and
 // installs and configures Istio.  This is an unmanaged controller, which means
@@ -61,6 +68,15 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 	if err := c.Watch(source.Kind[client.Object](operatorCache, &gatewayapiv1beta1.GatewayClass{}, &handler.EnqueueRequestForObject{}, isOurGatewayClass, predicate.Not(isIstioGatewayClass))); err != nil {
 		return nil, err
 	}
+
+	isServiceMeshSubscription := predicate.NewPredicateFuncs(func(o client.Object) bool {
+		return o.GetName() == operatorcontroller.ServiceMeshSubscriptionName().Name
+	})
+	if err = c.Watch(source.Kind[client.Object](operatorCache, &operatorsv1alpha1.Subscription{},
+		enqueueRequestForDefaultGatewayClassController(config.OperandNamespace), isServiceMeshSubscription)); err != nil {
+		return nil, err
+	}
+	gatewayClassController = c
 	return c, nil
 }
 
@@ -81,6 +97,23 @@ type reconciler struct {
 	client   client.Client
 	cache    cache.Cache
 	recorder record.EventRecorder
+
+	startSMCPWatch sync.Once
+}
+
+func enqueueRequestForDefaultGatewayClassController(namespace string) handler.EventHandler {
+	return handler.EnqueueRequestsFromMapFunc(
+		func(ctx context.Context, a client.Object) []reconcile.Request {
+			return []reconcile.Request{
+				{
+					NamespacedName: types.NamespacedName{
+						Namespace: namespace,
+						Name:      OpenShiftDefaultGatewayClassName,
+					},
+				},
+			}
+		},
+	)
 }
 
 // Reconcile expects request to refer to a GatewayClass and creates or
@@ -90,15 +123,29 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 
 	var gatewayclass gatewayapiv1beta1.GatewayClass
 	if err := r.cache.Get(ctx, request.NamespacedName, &gatewayclass); err != nil {
+		log.Error(err, "failed to get gatewayclass", "request", request)
 		return reconcile.Result{}, err
 	}
 
 	var errs []error
 	if _, _, err := r.ensureServiceMeshOperatorSubscription(ctx); err != nil {
+		log.Error(err, "failed to ensure ServiceMeshOperatorSubscription", "request", request)
 		errs = append(errs, err)
 	}
 	if _, _, err := r.ensureServiceMeshControlPlane(ctx, &gatewayclass); err != nil {
+		log.Error(err, "failed to ensure ServiceMeshControlPlane", "request", request)
 		errs = append(errs, err)
+	} else {
+		r.startSMCPWatch.Do(func() {
+			isOurSMCP := predicate.NewPredicateFuncs(func(o client.Object) bool {
+				return o.GetName() == operatorcontroller.ServiceMeshControlPlaneName(r.config.OperandNamespace).Name
+			})
+			if err = gatewayClassController.Watch(source.Kind[client.Object](r.cache, &maistrav2.ServiceMeshControlPlane{}, enqueueRequestForDefaultGatewayClassController(r.config.OperandNamespace), isOurSMCP)); err != nil {
+				log.Error(err, "failed to watch ServiceMeshControlPlane", "request", request)
+				errs = append(errs, err)
+			}
+		})
 	}
+
 	return reconcile.Result{}, utilerrors.NewAggregate(errs)
 }
