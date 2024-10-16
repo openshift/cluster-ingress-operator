@@ -48,6 +48,7 @@ func TestAll(t *testing.T) {
 		t.Run("TestIngressControllerServiceNameCollision", TestIngressControllerServiceNameCollision)
 		t.Run("TestInternalLoadBalancer", TestInternalLoadBalancer)
 		t.Run("TestInternalLoadBalancerGlobalAccessGCP", TestInternalLoadBalancerGlobalAccessGCP)
+		t.Run("TestAWSResourceTagsChanged", TestAWSResourceTagsChanged)
 		t.Run("TestLoadBalancingAlgorithmUnsupportedConfigOverride", TestLoadBalancingAlgorithmUnsupportedConfigOverride)
 		t.Run("TestLocalWithFallbackOverrideForNodePortService", TestLocalWithFallbackOverrideForNodePortService)
 		t.Run("TestNetworkLoadBalancer", TestNetworkLoadBalancer)

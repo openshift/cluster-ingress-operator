@@ -12,7 +12,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/aws/aws-sdk-go/service/ec2"
 	"io"
 	"io/ioutil"
 	"net"
@@ -25,6 +24,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go/service/ec2"
+	"k8s.io/client-go/util/retry"
+
 	"gopkg.in/yaml.v2"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -32,6 +34,7 @@ import (
 	iov1 "github.com/openshift/api/operatoringress/v1"
 	routev1 "github.com/openshift/api/route/v1"
 
+	configclientset "github.com/openshift/client-go/config/clientset/versioned"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
@@ -116,6 +119,7 @@ var (
 
 var (
 	kclient           client.Client
+	configClient      *configclientset.Clientset
 	dnsConfig         configv1.DNS
 	infraConfig       configv1.Infrastructure
 	operatorNamespace = operatorcontroller.DefaultOperatorNamespace
@@ -152,6 +156,12 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	kclient = kubeClient
+
+	configClient, err = configclientset.NewForConfig(kubeConfig)
+	if err != nil {
+		fmt.Printf("failed to create config client: %s\n", err)
+		os.Exit(1)
+	}
 
 	if err := kclient.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, &dnsConfig); err != nil {
 		fmt.Printf("failed to get DNS config: %v\n", err)
@@ -1288,6 +1298,74 @@ func TestInternalLoadBalancerGlobalAccessGCP(t *testing.T) {
 	})
 	if err != nil {
 		t.Errorf("failed to observe expected annotations on load balancer service %s: %v", controller.LoadBalancerServiceName(ic), err)
+	}
+}
+
+// TestAWSResourceTagsChanged tests the functionality of updating AWS resource tags
+// in the infrastructure configuration and validates that the expected
+// awsLBAdditionalResourceTags is set correctly on the
+// loadBalancer service associated with the default Ingress Controller.
+func TestAWSResourceTagsChanged(t *testing.T) {
+	t.Parallel()
+
+	if infraConfig.Status.Platform != "AWS" {
+		t.Skipf("test skipped on platform %q", infraConfig.Status.Platform)
+	}
+	if err := waitForIngressControllerCondition(t, kclient, 10*time.Second, defaultName, defaultAvailableConditions...); err != nil {
+		t.Errorf("did not get expected conditions: %v", err)
+	}
+
+	// Update AWS ResourceTags at infraConfig
+	retryErr := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		infra, err := configClient.ConfigV1().Infrastructures().Get(context.TODO(), "cluster", metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		if infra.Status.PlatformStatus == nil {
+			infra.Status.PlatformStatus = &configv1.PlatformStatus{}
+		}
+		if infra.Status.PlatformStatus.AWS == nil {
+			infra.Status.PlatformStatus.AWS = &configv1.AWSPlatformStatus{}
+		}
+
+		infra.Status.PlatformStatus.AWS.ResourceTags = []configv1.AWSResourceTag{
+			{Key: "Key1", Value: "Value1"},
+			{Key: "Key2", Value: "Value2"},
+		}
+		_, updateErr := configClient.ConfigV1().Infrastructures().UpdateStatus(context.TODO(), infra, metav1.UpdateOptions{})
+		return updateErr
+	})
+
+	if retryErr != nil {
+		t.Errorf("failed to update infrastructure status: %v", retryErr)
+	}
+
+	awsLBAdditionalResourceTags := "service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags"
+	expectedTags := "Key1=Value1,Key2=Value2"
+	defaultIC := &operatorv1.IngressController{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: defaultName.Namespace,
+			Name:      defaultName.Name,
+		},
+	}
+	// validate awsLBAdditionalResourceTags for load balancer service of default ingress controller.
+	err := wait.PollImmediate(5*time.Second, 5*time.Minute, func() (bool, error) {
+		service := &corev1.Service{}
+		if err := kclient.Get(context.Background(), controller.LoadBalancerServiceName(defaultIC), service); err != nil {
+			t.Logf("failed to get service %s: %v", controller.LoadBalancerServiceName(defaultIC), err)
+			return false, nil
+		}
+		if actualTags, ok := service.Annotations[awsLBAdditionalResourceTags]; !ok {
+			t.Logf("load balancer has no %q annotation: %v", awsLBAdditionalResourceTags, service.Annotations)
+			return false, nil
+		} else if actualTags != expectedTags {
+			t.Logf("expected %s, found %s", expectedTags, actualTags)
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("timed out waiting for the %s annotation to be updated: %v", awsLBAdditionalResourceTags, err)
 	}
 }
 
