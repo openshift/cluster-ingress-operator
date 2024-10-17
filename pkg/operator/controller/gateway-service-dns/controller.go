@@ -17,6 +17,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	configv1 "github.com/openshift/api/config/v1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 	iov1 "github.com/openshift/api/operatoringress/v1"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -241,8 +242,18 @@ func (r *reconciler) ensureDNSRecordsForGateway(ctx context.Context, gateway *ga
 		Name:       service.Name,
 		UID:        service.UID,
 	}
+	ics := operatorv1.IngressControllerList{}
+	if err := r.cache.List(ctx, &ics); err != nil {
+		log.Error(err, "failed to list Ingress Controllers")
+		return []error{err}
+	}
 	var errs []error
 	for _, domain := range domains {
+		// Check if the domain matches one from an existing ingress controller. If so, log an error and ignore the invalid domain.
+		if err := domainClashes(domain, ics); err != nil {
+			log.Error(fmt.Errorf("error creating DNS record for gateway %s: %w", gateway.Name, err), "ignoring invalid gateway domain")
+			continue
+		}
 		name := operatorcontroller.GatewayDNSRecordName(gateway, domain)
 		dnsPolicy := iov1.UnmanagedDNS
 		if dnsrecord.ManageDNSForDomain(domain, infraConfig.Status.PlatformStatus, dnsConfig) {
@@ -252,6 +263,20 @@ func (r *reconciler) ensureDNSRecordsForGateway(ctx context.Context, gateway *ga
 		errs = append(errs, err)
 	}
 	return errs
+}
+
+// domainClashes checks if domain clashes with any of the wildcard records of the ingress controllers in icList. If
+// there is a clash, an error is returned describing which ingress controller already uses the specified domain name.
+func domainClashes(domain string, icList operatorv1.IngressControllerList) error {
+	for _, ic := range icList.Items {
+		if len(ic.Status.Domain) == 0 {
+			continue
+		}
+		if strings.Compare(domain, "*."+ic.Status.Domain+".") == 0 {
+			return fmt.Errorf("listener hostname %q conflicts with the domain from ingress controller %s.", domain, ic.Name)
+		}
+	}
+	return nil
 }
 
 // deleteStaleDNSRecordsForGateway deletes any DNSRecord CRs that are associated
