@@ -33,19 +33,19 @@ const (
 	// Key=Value pairs that are additionally recorded on
 	// load balancer resources and security groups.
 	//
-	// https://kubernetes.io/docs/concepts/services-networking/service/#aws-load-balancer-additional-resource-tags
+	// https://kubernetes.io/docs/reference/labels-annotations-taints/#service-beta-kubernetes-io-aws-load-balancer-additional-resource-tags
 	awsLBAdditionalResourceTags = "service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags"
 
 	// awsLBProxyProtocolAnnotation is used to enable the PROXY protocol on any
 	// AWS load balancer services created.
 	//
-	// https://kubernetes.io/docs/concepts/services-networking/service/#proxy-protocol-support-on-aws
+	// https://kubernetes.io/docs/reference/labels-annotations-taints/#service-beta-kubernetes-io-aws-load-balancer-proxy-protocol
 	awsLBProxyProtocolAnnotation = "service.beta.kubernetes.io/aws-load-balancer-proxy-protocol"
 
 	// AWSLBTypeAnnotation is a Service annotation used to specify an AWS load
 	// balancer type. See the following for additional details:
 	//
-	// https://kubernetes.io/docs/concepts/services-networking/service/#aws-nlb-support
+	// https://kubernetes.io/docs/reference/labels-annotations-taints/#service-beta-kubernetes-io-aws-load-balancer-type
 	AWSLBTypeAnnotation = "service.beta.kubernetes.io/aws-load-balancer-type"
 
 	// AWSNLBAnnotation is the annotation value of an AWS Network Load Balancer (NLB).
