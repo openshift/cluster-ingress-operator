@@ -2,8 +2,10 @@ package client
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/cloud"
@@ -11,7 +13,11 @@ import (
 	"github.com/Azure/go-autorest/autorest"
 	"github.com/Azure/go-autorest/autorest/azure"
 	"github.com/jongio/azidext/go/azidext"
+
+	"github.com/openshift/cluster-ingress-operator/pkg/util/filewatcher"
 )
+
+var watchCertificateFileOnce sync.Once
 
 func getAuthorizerForResource(config Config) (autorest.Authorizer, error) {
 	var cloudConfig cloud.Configuration
@@ -70,18 +76,43 @@ func getAuthorizerForResource(config Config) (autorest.Authorizer, error) {
 	}
 
 	var cred azcore.TokenCredential
-	// Managed Identity Override for ARO HCP
+	// Managed Identity Override for ARO HCP. In ARO HCP, we ignore the values provided for AZURE_TENANT_ID and
+	// AZURE_CLIENT_ID and use ARO_HCP_TENANT_ID and ARO_HCP_MI_CLIENT_ID instead.
 	managedIdentityClientID := os.Getenv("ARO_HCP_MI_CLIENT_ID")
 	if managedIdentityClientID != "" {
-		options := azidentity.ManagedIdentityCredentialOptions{
+		options := &azidentity.ClientCertificateCredentialOptions{
 			ClientOptions: azcore.ClientOptions{
 				Cloud: cloudConfig,
 			},
-			ID: azidentity.ClientID(managedIdentityClientID),
+			SendCertificateChain: true,
 		}
 
-		var err error
-		cred, err = azidentity.NewManagedIdentityCredential(&options)
+		tenantID := os.Getenv("ARO_HCP_TENANT_ID")
+		certPath := os.Getenv("ARO_HCP_CLIENT_CERTIFICATE_PATH")
+
+		certData, err := os.ReadFile(certPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read certificate file %q: %w", certPath, err)
+		}
+
+		certs, key, err := azidentity.ParseCertificates(certData, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse certificate data %q: %w", certPath, err)
+		}
+
+		// Watch the certificate for changes; if the certificate changes, the pod will be restarted.
+		// This starts only one occurrence of the file watcher, which watches the file, certPath.
+		var fileWatcherError error
+		watchCertificateFileOnce.Do(func() {
+			if err = filewatcher.WatchFileForChanges(certPath); err != nil {
+				fileWatcherError = err
+			}
+		})
+		if fileWatcherError != nil {
+			return nil, fmt.Errorf("failed to watch certificate file %q: %w", certPath, fileWatcherError)
+		}
+
+		cred, err = azidentity.NewClientCertificateCredential(tenantID, managedIdentityClientID, certs, key, options)
 		if err != nil {
 			return nil, err
 		}
