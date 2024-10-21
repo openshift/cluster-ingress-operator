@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"github.com/stretchr/testify/assert"
 	"math/big"
 	"reflect"
 	"strings"
@@ -2324,6 +2325,44 @@ func Test_IngressStatusesEqual(t *testing.T) {
 				[]operatorv1.EIPAllocation{"eipalloc-yyyyyyyyyyyyyyyyy", "eipalloc-xxxxxxxxxxxxxxxxx"},
 			),
 		},
+		{
+			description: "classicLoadBalancer parameters cleared",
+			expected:    false,
+			a: icStatusWithSubnetsOrEIPAllocations(
+				operatorv1.AWSClassicLoadBalancer,
+				nil,
+				[]operatorv1.EIPAllocation{"eipalloc-xxxxxxxxxxxxxxxxx"},
+			),
+			b: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.LoadBalancerServiceStrategyType,
+					LoadBalancer: &operatorv1.LoadBalancerStrategy{
+						ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+							AWS: &operatorv1.AWSLoadBalancerParameters{},
+						},
+					},
+				},
+			},
+		},
+		{
+			description: "networkLoadBalancer parameters cleared",
+			expected:    false,
+			a: icStatusWithSubnetsOrEIPAllocations(
+				operatorv1.AWSNetworkLoadBalancer,
+				nil,
+				[]operatorv1.EIPAllocation{"eipalloc-xxxxxxxxxxxxxxxxx"},
+			),
+			b: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.LoadBalancerServiceStrategyType,
+					LoadBalancer: &operatorv1.LoadBalancerStrategy{
+						ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+							AWS: &operatorv1.AWSLoadBalancerParameters{},
+						},
+					},
+				},
+			},
+		},
 	}
 
 	for _, tc := range testCases {
@@ -3412,6 +3451,80 @@ func Test_computeAllowedSourceRanges(t *testing.T) {
 			if !reflect.DeepEqual(actual, test.expect) {
 				t.Errorf("expected %v, got %v", test.expect, actual)
 			}
+		})
+	}
+}
+
+func Test_clearIngressControllerInactiveAWSLBTypeParametersStatus(t *testing.T) {
+	awsPlatformStatus := &configv1.PlatformStatus{
+		Type: configv1.AWSPlatformType,
+	}
+	lbServiceWithNLB := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Annotations: map[string]string{
+				AWSLBTypeAnnotation: AWSNLBAnnotation,
+			},
+		},
+	}
+	lbServiceWithCLB := &corev1.Service{}
+	icStatusWithAWSLBParams := func(lbType operatorv1.AWSLoadBalancerType, nlbParams, clbParams bool) operatorv1.IngressControllerStatus {
+		icStatus := operatorv1.IngressControllerStatus{
+			EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+				LoadBalancer: &operatorv1.LoadBalancerStrategy{
+					ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+						AWS: &operatorv1.AWSLoadBalancerParameters{
+							Type: lbType,
+						},
+					},
+				},
+			},
+		}
+		if nlbParams {
+			icStatus.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{}
+		}
+		if clbParams {
+			icStatus.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.ClassicLoadBalancerParameters = &operatorv1.AWSClassicLoadBalancerParameters{}
+		}
+		return icStatus
+	}
+	testCases := []struct {
+		name           string
+		service        *corev1.Service
+		icStatus       operatorv1.IngressControllerStatus
+		expectICStatus operatorv1.IngressControllerStatus
+	}{
+		{
+			name:           "service is nil",
+			service:        nil,
+			icStatus:       icStatusWithAWSLBParams(operatorv1.AWSNetworkLoadBalancer, true, true),
+			expectICStatus: icStatusWithAWSLBParams(operatorv1.AWSNetworkLoadBalancer, true, true),
+		},
+		{
+			name:           "clear clb params when lb type change is not pending",
+			service:        lbServiceWithNLB,
+			icStatus:       icStatusWithAWSLBParams(operatorv1.AWSNetworkLoadBalancer, true, true),
+			expectICStatus: icStatusWithAWSLBParams(operatorv1.AWSNetworkLoadBalancer, true, false),
+		},
+		{
+			name:           "clear nlb params when lb type change is not pending",
+			service:        lbServiceWithCLB,
+			icStatus:       icStatusWithAWSLBParams(operatorv1.AWSClassicLoadBalancer, true, true),
+			expectICStatus: icStatusWithAWSLBParams(operatorv1.AWSClassicLoadBalancer, false, true),
+		},
+		{
+			name:           "don't clear any params when lb type change is pending",
+			service:        lbServiceWithCLB,
+			icStatus:       icStatusWithAWSLBParams(operatorv1.AWSNetworkLoadBalancer, true, true),
+			expectICStatus: icStatusWithAWSLBParams(operatorv1.AWSNetworkLoadBalancer, true, true),
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ic := &operatorv1.IngressController{
+				Status: tc.icStatus,
+			}
+			clearIngressControllerInactiveAWSLBTypeParametersStatus(awsPlatformStatus, ic, tc.service)
+			assert.Equal(t, tc.expectICStatus, ic.Status)
 		})
 	}
 }
