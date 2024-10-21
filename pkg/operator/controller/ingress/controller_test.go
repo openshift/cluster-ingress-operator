@@ -537,6 +537,30 @@ func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
 			}
 			return eps
 		}
+		nlbWithBothNullParameters = func() *operatorv1.EndpointPublishingStrategy {
+			eps := eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS))
+			eps.LoadBalancer.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{
+				Type: operatorv1.AWSLoadBalancerProvider,
+				AWS: &operatorv1.AWSLoadBalancerParameters{
+					Type:                          operatorv1.AWSNetworkLoadBalancer,
+					NetworkLoadBalancerParameters: &operatorv1.AWSNetworkLoadBalancerParameters{},
+					ClassicLoadBalancerParameters: &operatorv1.AWSClassicLoadBalancerParameters{},
+				},
+			}
+			return eps
+		}
+		elbWithBothNullParameters = func() *operatorv1.EndpointPublishingStrategy {
+			eps := eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS))
+			eps.LoadBalancer.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{
+				Type: operatorv1.AWSLoadBalancerProvider,
+				AWS: &operatorv1.AWSLoadBalancerParameters{
+					Type:                          operatorv1.AWSClassicLoadBalancer,
+					ClassicLoadBalancerParameters: &operatorv1.AWSClassicLoadBalancerParameters{},
+					NetworkLoadBalancerParameters: &operatorv1.AWSNetworkLoadBalancerParameters{},
+				},
+			}
+			return eps
+		}
 		gcpLB = func(clientAccess operatorv1.GCPClientAccess) *operatorv1.EndpointPublishingStrategy {
 			eps := eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS))
 			eps.LoadBalancer.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{
@@ -695,17 +719,17 @@ func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
 			domainMatchesBaseDomain: true,
 		},
 		{
-			name:                    "loadbalancer type changed from ELB to NLB, with old ELB parameters removal",
+			name:                    "loadbalancer type changed from ELB to NLB, with old ELB parameters preserved",
 			ic:                      makeIC(spec(nlb()), status(elbWithNullParameters())),
 			expectedResult:          true,
-			expectedIC:              makeIC(spec(nlb()), status(nlbWithNullParameters())),
+			expectedIC:              makeIC(spec(nlb()), status(nlbWithBothNullParameters())),
 			domainMatchesBaseDomain: true,
 		},
 		{
-			name:                    "loadbalancer type changed from NLB to ELB, with old NLB parameters removal",
+			name:                    "loadbalancer type changed from NLB to ELB, with old NLB parameters preserved",
 			ic:                      makeIC(spec(elb()), status(nlbWithNullParameters())),
 			expectedResult:          true,
-			expectedIC:              makeIC(spec(elb()), status(elbWithNullParameters())),
+			expectedIC:              makeIC(spec(elb()), status(elbWithBothNullParameters())),
 			domainMatchesBaseDomain: true,
 		},
 		{
