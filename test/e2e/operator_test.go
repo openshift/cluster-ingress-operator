@@ -1285,19 +1285,23 @@ func TestInternalLoadBalancerGlobalAccessGCP(t *testing.T) {
 	}
 }
 
+// TestAWSLBTypeChange verifies that process of changing the IngressController's
+// load balancer type, ensuring that it requires the associated service to be deleted
+// and recreated for the change to take effect.
 func TestAWSLBTypeChange(t *testing.T) {
 	t.Parallel()
 
-	if infraConfig.Status.Platform != "AWS" {
-		t.Skipf("test skipped on platform %q", infraConfig.Status.Platform)
+	if infraConfig.Status.PlatformStatus.Type != configv1.AWSPlatformType {
+		t.Skipf("test skipped on platform %q", infraConfig.Status.PlatformStatus.Type)
 	}
 
-	name := types.NamespacedName{Namespace: operatorNamespace, Name: "awslb"}
+	name := types.NamespacedName{Namespace: operatorNamespace, Name: "aws-lb-type-change"}
 	ic := newLoadBalancerController(name, name.Name+"."+dnsConfig.Spec.BaseDomain)
 	ic.Spec.EndpointPublishingStrategy.LoadBalancer = &operatorv1.LoadBalancerStrategy{
 		Scope: operatorv1.ExternalLoadBalancer,
 	}
-	if err := kclient.Create(context.TODO(), ic); err != nil {
+	t.Logf("creating ingresscontroller %q without specifying LB type", ic.Name)
+	if err := kclient.Create(context.Background(), ic); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
 	}
 	defer assertIngressControllerDeleted(t, kclient, ic)
@@ -1307,50 +1311,81 @@ func TestAWSLBTypeChange(t *testing.T) {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
-	lbService := &corev1.Service{}
-	if err := kclient.Get(context.TODO(), controller.LoadBalancerServiceName(ic), lbService); err != nil {
-		t.Fatalf("failed to get LoadBalancer service: %v", err)
-	}
-	if v := lbService.Annotations[ingresscontroller.AWSLBTypeAnnotation]; len(v) != 0 {
-		t.Fatalf("load balancer service has unexpected %s=%s annotation", ingresscontroller.AWSLBTypeAnnotation, v)
-	}
+	// LB Annotation should be empty by default (meaning CLB).
+	waitForLBAnnotation(t, ic, ingresscontroller.AWSLBTypeAnnotation, false, "")
 
-	pp := &operatorv1.ProviderLoadBalancerParameters{
-		Type: operatorv1.AWSLoadBalancerProvider,
-		AWS: &operatorv1.AWSLoadBalancerParameters{
-			Type: operatorv1.AWSNetworkLoadBalancer,
-		},
-	}
-
-	if err := updateIngressControllerWithRetryOnConflict(t, name, timeout, func(ic *operatorv1.IngressController) {
-		ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters = pp
+	// Update IngressController to use NLB.
+	t.Logf("updating ingresscontroller %q to change the LB type to NLB", ic.Name)
+	if err := updateIngressControllerWithRetryOnConflict(t, name, 5*time.Minute, func(ic *operatorv1.IngressController) {
+		ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{
+			Type: operatorv1.AWSLoadBalancerProvider,
+			AWS: &operatorv1.AWSLoadBalancerParameters{
+				Type: operatorv1.AWSNetworkLoadBalancer,
+			},
+		}
 	}); err != nil {
 		t.Fatalf("failed to update ingresscontroller: %v", err)
 	}
 
-	// Wait for the load balancer and DNS to be ready.
-	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
+	// Effectuate the LB Type change.
+	effectuateIngressControllerLBType(t, ic, operatorv1.AWSNetworkLoadBalancer, availableNotProgressingConditionsForIngressControllerWithLoadBalancer...)
+
+	// Now, update the IngressController switch back to CLB, but let's use the
+	// auto-delete-load-balancer annotation, so we don't have to manually delete the service.
+	t.Logf("updating ingresscontroller %q to use CLB while using the auto-delete-load-balancer annotation", ic.Name)
+	if err := updateIngressControllerWithRetryOnConflict(t, name, 5*time.Minute, func(ic *operatorv1.IngressController) {
+		if ic.Annotations == nil {
+			ic.Annotations = map[string]string{}
+		}
+		ic.Annotations["ingress.operator.openshift.io/auto-delete-load-balancer"] = ""
+		ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.Type = operatorv1.AWSClassicLoadBalancer
+	}); err != nil {
+		t.Fatalf("failed to update ingresscontroller: %v", err)
+	}
+
+	// Verify the LB type annotation is removed on the service (default to CLB).
+	waitForLBAnnotation(t, ic, ingresscontroller.AWSLBTypeAnnotation, false, "")
+
+	// Expect the load balancer to provision successfully.
+	if err := waitForIngressControllerCondition(t, kclient, 10*time.Minute, name, availableNotProgressingConditionsForIngressControllerWithLoadBalancer...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+}
+
+// effectuateIngressControllerLBType manually effectuates updated IngressController LB type by
+// confirming IngressController is in a progressing state, deleting the service, and waiting for
+// the expected LB type annotation to appear on the service. It waits for the provided operator
+// conditions after the LB type has been effectuated.
+func effectuateIngressControllerLBType(t *testing.T, ic *operatorv1.IngressController, expectedLBType operatorv1.AWSLoadBalancerType, expectedOperatorConditions ...operatorv1.OperatorCondition) {
+	t.Helper()
+	t.Logf("effectuating LB type for IngressController %s", ic.Name)
+	icName := types.NamespacedName{Name: ic.Name, Namespace: ic.Namespace}
+	progressingTrue := operatorv1.OperatorCondition{
+		Type:   ingresscontroller.IngressControllerLoadBalancerProgressingConditionType,
+		Status: operatorv1.ConditionTrue,
+	}
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, progressingTrue); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
-	err := wait.PollImmediate(5*time.Second, 5*time.Minute, func() (bool, error) {
-		service := &corev1.Service{}
-		if err := kclient.Get(context.TODO(), controller.LoadBalancerServiceName(ic), service); err != nil {
-			t.Logf("failed to get service %s: %v", controller.LoadBalancerServiceName(ic), err)
-			return false, nil
-		}
-		if actual, ok := service.Annotations[ingresscontroller.AWSLBTypeAnnotation]; !ok {
-			t.Logf("load balancer has no %q annotation: %v", ingresscontroller.AWSLBTypeAnnotation, service.Annotations)
-			return false, nil
-		} else if actual != ingresscontroller.AWSNLBAnnotation {
-			t.Logf("expected %s=%s, found %s=%s", ingresscontroller.AWSLBTypeAnnotation, ingresscontroller.AWSNLBAnnotation,
-				ingresscontroller.AWSLBTypeAnnotation, actual)
-			return false, nil
-		}
-		return true, nil
-	})
-	if err != nil {
-		t.Fatalf("timed out waiting for the service LB type annotation to be updated: %v", err)
+	// Delete and recreate the IngressController service to effectuate.
+	t.Logf("recreating the service to effectuate the LB type: %s/%s", controller.LoadBalancerServiceName(ic).Namespace, controller.LoadBalancerServiceName(ic).Name)
+	if err := recreateIngressControllerService(t, ic); err != nil {
+		t.Fatalf("failed to delete and recreate service: %v", err)
+	}
+
+	// Verify we get the expected LB type annotation on the service.
+	if expectedLBType == operatorv1.AWSClassicLoadBalancer {
+		waitForLBAnnotation(t, ic, ingresscontroller.AWSLBTypeAnnotation, false, "")
+	} else if expectedLBType == operatorv1.AWSNetworkLoadBalancer {
+		waitForLBAnnotation(t, ic, ingresscontroller.AWSLBTypeAnnotation, true, ingresscontroller.AWSNLBAnnotation)
+	} else {
+		t.Fatalf("unsupported LB type: %s", expectedLBType)
+	}
+
+	// Expect the load balancer to provision successfully with the new LB type.
+	if err := waitForIngressControllerCondition(t, kclient, 10*time.Minute, icName, expectedOperatorConditions...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 }
 

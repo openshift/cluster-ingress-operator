@@ -112,14 +112,10 @@ const (
 
 // ensureRouterDeployment ensures the router deployment exists for a given
 // ingresscontroller.
-func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, infraConfig *configv1.Infrastructure, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer, networkConfig *configv1.Network, haveClientCAConfigmap bool, clientCAConfigmap *corev1.ConfigMap, platformStatus *configv1.PlatformStatus, clusterProxyConfig *configv1.Proxy) (bool, *appsv1.Deployment, error) {
+func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, infraConfig *configv1.Infrastructure, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer, networkConfig *configv1.Network, haveClientCAConfigmap bool, clientCAConfigmap *corev1.ConfigMap, platformStatus *configv1.PlatformStatus, clusterProxyConfig *configv1.Proxy, proxyNeeded bool) (bool, *appsv1.Deployment, error) {
 	haveDepl, current, err := r.currentRouterDeployment(ci)
 	if err != nil {
 		return false, nil, err
-	}
-	proxyNeeded, err := IsProxyProtocolNeeded(ci, platformStatus)
-	if err != nil {
-		return false, nil, fmt.Errorf("failed to determine if proxy protocol is needed for ingresscontroller %s/%s: %v", ci.Namespace, ci.Name, err)
 	}
 	desired, err := desiredRouterDeployment(ci, r.config.IngressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, haveClientCAConfigmap, clientCAConfigmap, clusterProxyConfig, r.config.RouteExternalCertificateEnabled)
 	if err != nil {

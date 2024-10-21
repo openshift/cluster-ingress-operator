@@ -23,8 +23,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
-	"k8s.io/apimachinery/pkg/util/sets"
-
 	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -33,19 +31,19 @@ const (
 	// Key=Value pairs that are additionally recorded on
 	// load balancer resources and security groups.
 	//
-	// https://kubernetes.io/docs/concepts/services-networking/service/#aws-load-balancer-additional-resource-tags
+	// https://kubernetes.io/docs/reference/labels-annotations-taints/#service-beta-kubernetes-io-aws-load-balancer-additional-resource-tags
 	awsLBAdditionalResourceTags = "service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags"
 
 	// awsLBProxyProtocolAnnotation is used to enable the PROXY protocol on any
 	// AWS load balancer services created.
 	//
-	// https://kubernetes.io/docs/concepts/services-networking/service/#proxy-protocol-support-on-aws
+	// https://kubernetes.io/docs/reference/labels-annotations-taints/#service-beta-kubernetes-io-aws-load-balancer-proxy-protocol
 	awsLBProxyProtocolAnnotation = "service.beta.kubernetes.io/aws-load-balancer-proxy-protocol"
 
 	// AWSLBTypeAnnotation is a Service annotation used to specify an AWS load
 	// balancer type. See the following for additional details:
 	//
-	// https://kubernetes.io/docs/concepts/services-networking/service/#aws-nlb-support
+	// https://kubernetes.io/docs/reference/labels-annotations-taints/#service-beta-kubernetes-io-aws-load-balancer-type
 	AWSLBTypeAnnotation = "service.beta.kubernetes.io/aws-load-balancer-type"
 
 	// AWSNLBAnnotation is the annotation value of an AWS Network Load Balancer (NLB).
@@ -218,9 +216,11 @@ var (
 		configv1.GCPPlatformType:   {},
 	}
 
-	// managedLoadBalancerServiceAnnotations is a set of annotation keys for
-	// annotations that the operator manages for LoadBalancer-type services.
-	// The operator preserves all other annotations.
+	// managedLBServiceAnnotations is a set of annotation keys for
+	// annotations that the operator fully manages for LoadBalancer-type services.
+	// The operator preserves all other annotations. Any desired updates to
+	// these annotations are immediately applied to the service without
+	// requiring service deletion.
 	//
 	// Be careful when adding annotation keys to this set.  If a new release
 	// of the operator starts managing an annotation that it previously
@@ -229,8 +229,8 @@ var (
 	// <https://bugzilla.redhat.com/show_bug.cgi?id=1905490>).  In order to
 	// avoid problems, make sure the previous release blocks upgrades when
 	// the user has modified an annotation that the new release manages.
-	managedLoadBalancerServiceAnnotations = func() sets.String {
-		result := sets.NewString(
+	managedLBServiceAnnotations = func() []string {
+		result := []string{
 			// AWS LB health check interval annotation (see
 			// <https://bugzilla.redhat.com/show_bug.cgi?id=1908758>).
 			awsLBHealthCheckIntervalAnnotation,
@@ -242,8 +242,6 @@ var (
 			// local-with-fallback annotation for kube-proxy (see
 			// <https://bugzilla.redhat.com/show_bug.cgi?id=1960284>).
 			localWithFallbackAnnotation,
-			// AWS load balancer type annotation to set either CLB/ELB or NLB
-			AWSLBTypeAnnotation,
 			// awsLBProxyProtocolAnnotation is used to enable the PROXY protocol on any
 			// AWS load balancer services created.
 			//
@@ -254,7 +252,7 @@ var (
 			//
 			// https://cloud.ibm.com/docs/containers?topic=containers-vpc-lbaas
 			iksLBEnableFeaturesAnnotation,
-		)
+		}
 
 		// Azure and GCP support switching between internal and external
 		// scope by changing the annotation, so the operator manages the
@@ -265,13 +263,61 @@ var (
 		// <https://issues.redhat.com/browse/NE-621>.
 		for platform := range platformsWithMutableScope {
 			for name := range InternalLBAnnotations[platform] {
-				result.Insert(name)
+				result = append(result, name)
 			}
 			for name := range externalLBAnnotations[platform] {
-				result.Insert(name)
+				result = append(result, name)
 			}
 		}
 
+		return result
+	}()
+
+	// managedAtServiceCreationLBServiceAnnotations maps platform to annotation keys
+	// that the operator manages, but only during service creation. This means that
+	// the operator will not apply a desired annotation update right away.
+	// Instead, it will set a Progressing=True status condition with a message explaining
+	// how to apply the change manually (e.g., by deleting the service so that it can be
+	// recreated).
+	//
+	// Note that the ingress.operator.openshift.io/auto-delete-load-balancer annotation enables
+	// these annotations to be applied immediately by automatically deleting and recreating the
+	// service.
+	managedAtServiceCreationLBServiceAnnotations = func() map[configv1.PlatformType][]string {
+		result := map[configv1.PlatformType][]string{
+			configv1.AWSPlatformType: {
+				// Annotation to set either CLB/ELB or NLB.
+				// This annotation was previously fully managed (https://issues.redhat.com/browse/NE-865),
+				// but now required service recreation due to issues with AWS leaking resources when updating
+				// LB Type without recreating the service (see https://issues.redhat.com/browse/OCPBUGS-16728).
+				AWSLBTypeAnnotation,
+				// Annotation for configuring load balancer subnets.
+				// This requires service recreation because NLBs do not support updates to subnets,
+				// the operator cannot detect errors if the subnets are invalid, and to prevent
+				// compatibility issues during upgrades since this annotation was previously unmanaged.
+				awsLBSubnetsAnnotation,
+				// Annotation for configuring load balancer EIPs.
+				// This requires service recreation to prevent compatibility issues during upgrades since
+				// this annotation was previously unmanaged.
+				awsEIPAllocationsAnnotation,
+			},
+		}
+
+		// Add the annotations that do NOT support mutable scope.
+		for platform, annotation := range InternalLBAnnotations {
+			if _, ok := platformsWithMutableScope[platform]; !ok {
+				for name := range annotation {
+					result[platform] = append(result[platform], name)
+				}
+			}
+		}
+		for platform, annotation := range externalLBAnnotations {
+			if _, ok := platformsWithMutableScope[platform]; !ok {
+				for name := range annotation {
+					result[platform] = append(result[platform], name)
+				}
+			}
+		}
 		return result
 	}()
 )
@@ -279,8 +325,8 @@ var (
 // ensureLoadBalancerService creates an LB service if one is desired but absent.
 // Always returns the current LB service if one exists (whether it already
 // existed or was created during the course of the function).
-func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, platformStatus *configv1.PlatformStatus) (bool, *corev1.Service, error) {
-	wantLBS, desiredLBService, err := desiredLoadBalancerService(ci, deploymentRef, platformStatus, r.config.IngressControllerLBSubnetsAWSEnabled, r.config.IngressControllerEIPAllocationsAWSEnabled)
+func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, platformStatus *configv1.PlatformStatus, proxyNeeded bool) (bool, *corev1.Service, error) {
+	wantLBS, desiredLBService, err := desiredLoadBalancerService(ci, deploymentRef, platformStatus, r.config.IngressControllerLBSubnetsAWSEnabled, r.config.IngressControllerEIPAllocationsAWSEnabled, proxyNeeded)
 	if err != nil {
 		return false, nil, err
 	}
@@ -346,7 +392,7 @@ func isServiceOwnedByIngressController(service *corev1.Service, ic *operatorv1.I
 // ingresscontroller, or nil if an LB service isn't desired. An LB service is
 // desired if the high availability type is Cloud. An LB service will declare an
 // owner reference to the given deployment.
-func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, platform *configv1.PlatformStatus, subnetsAWSEnabled bool, eipAllocationsAWSEnabled bool) (bool, *corev1.Service, error) {
+func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, platform *configv1.PlatformStatus, subnetsAWSEnabled bool, eipAllocationsAWSEnabled bool, proxyNeeded bool) (bool, *corev1.Service, error) {
 	if ci.Status.EndpointPublishingStrategy.Type != operatorv1.LoadBalancerServiceStrategyType {
 		return false, nil, nil
 	}
@@ -370,11 +416,6 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 
 	if service.Annotations == nil {
 		service.Annotations = map[string]string{}
-	}
-
-	proxyNeeded, err := IsProxyProtocolNeeded(ci, platform)
-	if err != nil {
-		return false, nil, fmt.Errorf("failed to determine if proxy protocol is proxyNeeded for ingresscontroller %q: %v", ci.Name, err)
 	}
 
 	if platform != nil {
@@ -598,8 +639,8 @@ func (r *reconciler) deleteLoadBalancerService(service *corev1.Service, options 
 // updateLoadBalancerService updates a load balancer service.  Returns a Boolean
 // indicating whether the service was updated, and an error value.
 func (r *reconciler) updateLoadBalancerService(current, desired *corev1.Service, platform *configv1.PlatformStatus, autoDeleteLB bool) (bool, error) {
-	if shouldRecreateLB, reason := shouldRecreateLoadBalancer(current, desired, platform); shouldRecreateLB && autoDeleteLB {
-		log.Info("deleting and recreating the load balancer because "+reason, "namespace", desired.Namespace, "name", desired.Name)
+	if shouldRecreateLB, changedAnnotations, _ := loadBalancerServiceAnnotationsChanged(current, desired, managedAtServiceCreationLBServiceAnnotations[platform.Type]); shouldRecreateLB && autoDeleteLB {
+		log.Info("deleting and recreating the load balancer", "annotations", changedAnnotations, "namespace", desired.Namespace, "name", desired.Name)
 		foreground := metav1.DeletePropagationForeground
 		deleteOptions := crclient.DeleteOptions{PropagationPolicy: &foreground}
 		if err := r.deleteLoadBalancerService(current, &deleteOptions); err != nil {
@@ -624,46 +665,6 @@ func (r *reconciler) updateLoadBalancerService(current, desired *corev1.Service,
 	return true, nil
 }
 
-// scopeEqual returns true if the scope is the same between the two given
-// services and false if the scope is different.
-func scopeEqual(a, b *corev1.Service, platform *configv1.PlatformStatus) bool {
-	aAnnotations := a.Annotations
-	if aAnnotations == nil {
-		aAnnotations = map[string]string{}
-	}
-	bAnnotations := b.Annotations
-	if bAnnotations == nil {
-		bAnnotations = map[string]string{}
-	}
-	for name := range InternalLBAnnotations[platform.Type] {
-		if aAnnotations[name] != bAnnotations[name] {
-			return false
-		}
-	}
-	for name := range externalLBAnnotations[platform.Type] {
-		if aAnnotations[name] != bAnnotations[name] {
-			return false
-		}
-	}
-	return true
-}
-
-// shouldRecreateLoadBalancer determines whether a load balancer needs to be
-// recreated and returns the reason for its recreation.
-func shouldRecreateLoadBalancer(current, desired *corev1.Service, platform *configv1.PlatformStatus) (bool, string) {
-	_, platformHasMutableScope := platformsWithMutableScope[platform.Type]
-	if !platformHasMutableScope && !scopeEqual(current, desired, platform) {
-		return true, "its scope changed"
-	}
-	if platform.Type == configv1.AWSPlatformType && !serviceSubnetsEqual(current, desired) {
-		return true, "its subnets changed"
-	}
-	if platform.Type == configv1.AWSPlatformType && !serviceEIPAllocationsEqual(current, desired) {
-		return true, "its eipAllocations changed"
-	}
-	return false, ""
-}
-
 // loadBalancerServiceChanged checks if the current load balancer service
 // matches the expected and if not returns an updated one.
 func loadBalancerServiceChanged(current, expected *corev1.Service) (bool, *corev1.Service) {
@@ -675,7 +676,7 @@ func loadBalancerServiceChanged(current, expected *corev1.Service) (bool, *corev
 	// avoid problems, make sure the previous release blocks upgrades when
 	// the user has modified an annotation or spec field that the new
 	// release manages.
-	changed, updated := loadBalancerServiceAnnotationsChanged(current, expected, managedLoadBalancerServiceAnnotations)
+	changed, _, updated := loadBalancerServiceAnnotationsChanged(current, expected, managedLBServiceAnnotations)
 
 	// If spec.loadBalancerSourceRanges is nonempty on the service, that
 	// means that allowedSourceRanges is nonempty on the ingresscontroller,
@@ -703,18 +704,18 @@ func loadBalancerServiceChanged(current, expected *corev1.Service) (bool, *corev
 
 // loadBalancerServiceAnnotationsChanged checks if the annotations on the expected Service
 // match the ones on the current Service.
-func loadBalancerServiceAnnotationsChanged(current, expected *corev1.Service, annotations sets.String) (bool, *corev1.Service) {
-	changed := false
-	for annotation := range annotations {
+func loadBalancerServiceAnnotationsChanged(current, expected *corev1.Service, annotations []string) (bool, []string, *corev1.Service) {
+	var changedAnnotations []string
+	for _, annotation := range annotations {
 		currentVal, have := current.Annotations[annotation]
 		expectedVal, want := expected.Annotations[annotation]
 		if (want && (!have || currentVal != expectedVal)) || (have && !want) {
-			changed = true
+			changedAnnotations = append(changedAnnotations, annotation)
 			break
 		}
 	}
-	if !changed {
-		return false, nil
+	if len(changedAnnotations) == 0 {
+		return false, nil, nil
 	}
 
 	updated := current.DeepCopy()
@@ -723,7 +724,7 @@ func loadBalancerServiceAnnotationsChanged(current, expected *corev1.Service, an
 		updated.Annotations = map[string]string{}
 	}
 
-	for annotation := range annotations {
+	for _, annotation := range annotations {
 		currentVal, have := current.Annotations[annotation]
 		expectedVal, want := expected.Annotations[annotation]
 		if want && (!have || currentVal != expectedVal) {
@@ -733,7 +734,7 @@ func loadBalancerServiceAnnotationsChanged(current, expected *corev1.Service, an
 		}
 	}
 
-	return true, updated
+	return true, changedAnnotations, updated
 }
 
 // IsServiceInternal returns a Boolean indicating whether the provided service
@@ -752,8 +753,8 @@ func IsServiceInternal(service *corev1.Service) bool {
 }
 
 // loadBalancerServiceTagsModified verifies that none of the managedAnnotations have been changed and also the AWS tags annotation
-func loadBalancerServiceTagsModified(current, expected *corev1.Service) (bool, *corev1.Service) {
-	ignoredAnnotations := managedLoadBalancerServiceAnnotations.Union(sets.NewString(awsLBAdditionalResourceTags))
+func loadBalancerServiceTagsModified(current, expected *corev1.Service) (bool, []string, *corev1.Service) {
+	ignoredAnnotations := append(managedLBServiceAnnotations, awsLBAdditionalResourceTags)
 	return loadBalancerServiceAnnotationsChanged(current, expected, ignoredAnnotations)
 }
 
@@ -764,7 +765,11 @@ func loadBalancerServiceTagsModified(current, expected *corev1.Service) (bool, *
 // the service, then the return value is a non-nil error indicating that the
 // modification must be reverted before upgrading is allowed.
 func loadBalancerServiceIsUpgradeable(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference, current *corev1.Service, platform *configv1.PlatformStatus, subnetsAWSEnabled bool, eipAllocationsAWSEnabled bool) error {
-	want, desired, err := desiredLoadBalancerService(ic, deploymentRef, platform, subnetsAWSEnabled, eipAllocationsAWSEnabled)
+	proxyNeeded, err := IsProxyProtocolNeeded(ic, platform, current)
+	if err != nil {
+		return fmt.Errorf("failed to determine if proxy protocol is needed for ingresscontroller %s/%s: %v", ic.Namespace, ic.Name, err)
+	}
+	want, desired, err := desiredLoadBalancerService(ic, deploymentRef, platform, subnetsAWSEnabled, eipAllocationsAWSEnabled, proxyNeeded)
 	if err != nil {
 		return err
 	}
@@ -773,7 +778,7 @@ func loadBalancerServiceIsUpgradeable(ic *operatorv1.IngressController, deployme
 		return nil
 	}
 
-	changed, updated := loadBalancerServiceTagsModified(current, desired)
+	changed, _, updated := loadBalancerServiceTagsModified(current, desired)
 	if changed {
 		diff := cmp.Diff(current, updated, cmpopts.EquateEmpty())
 		return fmt.Errorf("load balancer service has been modified; changes must be reverted before upgrading: %s", diff)
@@ -782,29 +787,61 @@ func loadBalancerServiceIsUpgradeable(ic *operatorv1.IngressController, deployme
 	return nil
 }
 
+// effectuateMessage returns a message describing how to effectuate a
+// change that requires the service to be deleted.
+func effectuateMessage(changedMsg, ocPatchRevertCmd string, service *corev1.Service) string {
+	return fmt.Sprintf(
+		"%[1]s  To effectuate this change, you must delete the service: `oc -n %[2]s delete svc/%[3]s`; "+
+			"the service load-balancer will then be deprovisioned and a new one created. This will most likely "+
+			"cause the new load-balancer to have a different host name and IP address and cause disruption. To "+
+			"return to the previous state, you can revert the change to the IngressController: `%[4]s`. "+
+			"Direct updates to the service annotations are not supported.",
+		changedMsg, service.Namespace, service.Name, ocPatchRevertCmd,
+	)
+}
+
 // loadBalancerServiceIsProgressing returns an error value indicating if the
 // load balancer service is in progressing status.
+// Tricky: Status fields have mixed functions. Older status fields often represent the
+// *desired* state, while some newer fields reflect the *actual* state of the object.
 func loadBalancerServiceIsProgressing(ic *operatorv1.IngressController, service *corev1.Service, platform *configv1.PlatformStatus, subnetsAWSEnabled bool, eipAllocationsAWSEnabled bool) error {
 	var errs []error
+	// Tricky: Scope in the status indicates the *desired* scope.
 	wantScope := ic.Status.EndpointPublishingStrategy.LoadBalancer.Scope
 	haveScope := operatorv1.ExternalLoadBalancer
 	if IsServiceInternal(service) {
 		haveScope = operatorv1.InternalLoadBalancer
 	}
 	if wantScope != haveScope {
-		err := fmt.Errorf("The IngressController scope was changed from %q to %q.", haveScope, wantScope)
+		changedMsg := fmt.Sprintf("The IngressController scope was changed from %q to %q.", haveScope, wantScope)
+		err := fmt.Errorf(changedMsg)
 		if _, ok := platformsWithMutableScope[platform.Type]; !ok {
-			err = fmt.Errorf("%[1]s  To effectuate this change, you must delete the service: `oc -n %[2]s delete svc/%[3]s`; the service load-balancer will then be deprovisioned and a new one created.  This will most likely cause the new load-balancer to have a different host name and IP address from the old one's.  Alternatively, you can revert the change to the IngressController: `oc -n openshift-ingress-operator patch ingresscontrollers/%[4]s --type=merge --patch='{\"spec\":{\"endpointPublishingStrategy\":{\"loadBalancer\":{\"scope\":\"%[5]s\"}}}}'`", err.Error(), service.Namespace, service.Name, ic.Name, haveScope)
+			ocPatchRevertCmd := fmt.Sprintf("oc -n openshift-ingress-operator patch ingresscontrollers/%[1]s --type=merge --patch='{\"spec\":{\"endpointPublishingStrategy\":{\"loadBalancer\":{\"scope\":\"%[2]s\"}}}}'", ic.Name, haveScope)
+			err = fmt.Errorf(effectuateMessage(changedMsg, ocPatchRevertCmd, service))
 		}
 		errs = append(errs, err)
 	}
 
+	haveLBType := getAWSLoadBalancerTypeFromServiceAnnotation(service)
+	if platform.Type == configv1.AWSPlatformType {
+		// Tricky: LB Type in the status indicates the *desired* scope.
+		wantLBType := getAWSLoadBalancerTypeInStatus(ic)
+
+		if wantLBType != haveLBType {
+			changedMsg := fmt.Sprintf("The IngressController load balancer type was changed from %q to %q.", haveLBType, wantLBType)
+			ocPatchRevertCmd := fmt.Sprintf("oc -n openshift-ingress-operator patch ingresscontrollers/%[1]s --type=merge --patch='{\"spec\":{\"endpointPublishingStrategy\":{\"type\":\"LoadBalancerService\",\"loadBalancer\":{\"providerParameters\":{\"type\":\"AWS\",\"aws\":{\"type\":\"%[2]s\"}}}}}}'", ic.Name, haveLBType)
+			err := fmt.Errorf(effectuateMessage(changedMsg, ocPatchRevertCmd, service))
+			errs = append(errs, err)
+		}
+	}
+
 	if platform.Type == configv1.AWSPlatformType && subnetsAWSEnabled {
 		var (
+			// Tricky: Subnets in the status indicates the *actual* scope.
 			wantSubnets, haveSubnets *operatorv1.AWSSubnets
 			paramsFieldName          string
 		)
-		switch getAWSLoadBalancerTypeInStatus(ic) {
+		switch haveLBType {
 		case operatorv1.AWSNetworkLoadBalancer:
 			if nlbParams := getAWSNetworkLoadBalancerParametersInSpec(ic); nlbParams != nil {
 				wantSubnets = nlbParams.Subnets
@@ -829,14 +866,15 @@ func loadBalancerServiceIsProgressing(ic *operatorv1.IngressController, service 
 			haveSubnetsPrettyJson := convertAWSSubnetListToPatchJson(haveSubnets, "{}", "[]")
 			wantSubnetsPrettyJson := convertAWSSubnetListToPatchJson(wantSubnets, "{}", "[]")
 			changedMsg := fmt.Sprintf("The IngressController subnets were changed from %q to %q.", haveSubnetsPrettyJson, wantSubnetsPrettyJson)
-			ocPatchRevertCmd := fmt.Sprintf("oc -n openshift-ingress-operator patch ingresscontrollers/%[1]s --type=merge --patch='{\"spec\":{\"endpointPublishingStrategy\":{\"type\":\"LoadBalancerService\",\"loadBalancer\":{\"providerParameters\":{\"type\":\"AWS\",\"aws\":{\"type\":\"%[2]s\",\"%[3]s\":{\"subnets\":%[4]s}}}}}}}'", ic.Name, getAWSLoadBalancerTypeInStatus(ic), paramsFieldName, haveSubnetsPatchJson)
-			err := fmt.Errorf("%[1]s  To effectuate this change, you must delete the service: `oc -n %[2]s delete svc/%[3]s`; the service load-balancer will then be deprovisioned and a new one created. This will most likely cause the new load-balancer to have a different host name and IP address and cause disruption. To return to the previous state, you can revert the change to the IngressController: `%[4]s`", changedMsg, service.Namespace, service.Name, ocPatchRevertCmd)
+			ocPatchRevertCmd := fmt.Sprintf("oc -n openshift-ingress-operator patch ingresscontrollers/%[1]s --type=merge --patch='{\"spec\":{\"endpointPublishingStrategy\":{\"type\":\"LoadBalancerService\",\"loadBalancer\":{\"providerParameters\":{\"type\":\"AWS\",\"aws\":{\"type\":\"%[2]s\",\"%[3]s\":{\"subnets\":%[4]s}}}}}}}'", ic.Name, haveLBType, paramsFieldName, haveSubnetsPatchJson)
+			err := fmt.Errorf(effectuateMessage(changedMsg, ocPatchRevertCmd, service))
 			errs = append(errs, err)
 		}
 	}
 
-	if platform.Type == configv1.AWSPlatformType && eipAllocationsAWSEnabled && getAWSLoadBalancerTypeInStatus(ic) == operatorv1.AWSNetworkLoadBalancer {
+	if platform.Type == configv1.AWSPlatformType && eipAllocationsAWSEnabled && haveLBType == operatorv1.AWSNetworkLoadBalancer {
 		var (
+			// Tricky: EIP Allocations in the status indicate the *actual* scope.
 			wantEIPAllocations, haveEIPAllocations []operatorv1.EIPAllocation
 		)
 		if nlbParams := getAWSNetworkLoadBalancerParametersInSpec(ic); nlbParams != nil {
@@ -852,8 +890,8 @@ func loadBalancerServiceIsProgressing(ic *operatorv1.IngressController, service 
 			haveEIPAllocationsPrettyJson := convertAWSEIPAllocationsListToPatchJson(haveEIPAllocations, "[]")
 			wantEIPAllocationsPrettyJson := convertAWSEIPAllocationsListToPatchJson(wantEIPAllocations, "[]")
 			changedMsg := fmt.Sprintf("The IngressController eipAllocations were changed from %q to %q.", haveEIPAllocationsPrettyJson, wantEIPAllocationsPrettyJson)
-			ocPatchRevertCmd := fmt.Sprintf("oc -n openshift-ingress-operator patch ingresscontrollers/%[1]s --type=merge --patch='{\"spec\":{\"endpointPublishingStrategy\":{\"type\":\"LoadBalancerService\",\"loadBalancer\":{\"providerParameters\":{\"type\":\"AWS\",\"aws\":{\"type\":\"%[2]s\",\"%[3]s\":{\"eipAllocations\":%[4]s}}}}}}}'", ic.Name, getAWSLoadBalancerTypeInStatus(ic), "networkLoadBalancer", haveEIPAllocationsPatchJson)
-			err := fmt.Errorf("%[1]s  To effectuate this change, you must delete the service: `oc -n %[2]s delete svc/%[3]s`; the service load-balancer will then be deprovisioned and a new one created. This will most likely cause the new load-balancer to have a different host name and IP address and cause disruption. To return to the previous state, you can revert the change to the IngressController: `%[4]s`", changedMsg, service.Namespace, service.Name, ocPatchRevertCmd)
+			ocPatchRevertCmd := fmt.Sprintf("oc -n openshift-ingress-operator patch ingresscontrollers/%[1]s --type=merge --patch='{\"spec\":{\"endpointPublishingStrategy\":{\"type\":\"LoadBalancerService\",\"loadBalancer\":{\"providerParameters\":{\"type\":\"AWS\",\"aws\":{\"type\":\"%[2]s\",\"%[3]s\":{\"eipAllocations\":%[4]s}}}}}}}'", ic.Name, haveLBType, "networkLoadBalancer", haveEIPAllocationsPatchJson)
+			err := fmt.Errorf(effectuateMessage(changedMsg, ocPatchRevertCmd, service))
 			errs = append(errs, err)
 		}
 	}
@@ -966,6 +1004,21 @@ func loadBalancerSourceRangesMatch(ic *operatorv1.IngressController, current *co
 	return fmt.Errorf("You have manually edited an operator-managed object. You must revert your modifications by removing the Spec.LoadBalancerSourceRanges field of LoadBalancer-typed service %q. You can use the new AllowedSourceRanges API field on the ingresscontroller to configure this setting instead.", current.Name)
 }
 
+// getAWSLoadBalancerTypeFromServiceAnnotation gets the effective load balancer type by looking at the
+// service.beta.kubernetes.io/aws-load-balancer-type annotation of the LoadBalancer-type Service.
+// If the annotation isn't specified, the function returns the default of Classic.
+func getAWSLoadBalancerTypeFromServiceAnnotation(service *corev1.Service) operatorv1.AWSLoadBalancerType {
+	if service == nil {
+		return ""
+	}
+
+	if a, ok := service.Annotations[AWSLBTypeAnnotation]; ok && a == AWSNLBAnnotation {
+		return operatorv1.AWSNetworkLoadBalancer
+	}
+
+	return operatorv1.AWSClassicLoadBalancer
+}
+
 // getSubnetsFromServiceAnnotation gets the effective subnets by looking at the
 // service.beta.kubernetes.io/aws-load-balancer-subnets annotation of the LoadBalancer-type Service.
 // If no subnets are specified in the annotation, this function returns nil.
@@ -1023,16 +1076,6 @@ func getEIPAllocationsFromServiceAnnotation(service *corev1.Service) []operatorv
 	}
 
 	return awsEIPAllocations
-}
-
-// serviceSubnetsEqual compares the subnet annotations on two services to determine if they are equivalent,
-// ignoring the order of the subnets.
-func serviceSubnetsEqual(a, b *corev1.Service) bool {
-	return awsSubnetsEqual(getSubnetsFromServiceAnnotation(a), getSubnetsFromServiceAnnotation(b))
-}
-
-func serviceEIPAllocationsEqual(a, b *corev1.Service) bool {
-	return awsEIPAllocationsEqual(getEIPAllocationsFromServiceAnnotation(a), getEIPAllocationsFromServiceAnnotation(b))
 }
 
 // awsEIPAllocationsEqual compares two AWSEIPAllocation slices and returns a boolean
@@ -1188,7 +1231,7 @@ func getAWSLoadBalancerTypeInStatus(ic *operatorv1.IngressController) operatorv1
 		ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS != nil {
 		return ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.Type
 	}
-	return ""
+	return operatorv1.AWSClassicLoadBalancer
 }
 
 // getAWSClassicLoadBalancerParametersInSpec gets the ClassicLoadBalancerParameter struct
