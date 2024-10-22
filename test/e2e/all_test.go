@@ -109,5 +109,6 @@ func TestAll(t *testing.T) {
 		t.Run("TestRouteHardStopAfterEnableOnIngressConfig", TestRouteHardStopAfterEnableOnIngressConfig)
 		t.Run("TestRouteHardStopAfterEnableOnIngressControllerHasPriorityOverIngressConfig", TestRouteHardStopAfterEnableOnIngressControllerHasPriorityOverIngressConfig)
 		t.Run("TestHostNetworkPortBinding", TestHostNetworkPortBinding)
+		t.Run("TestOCPBUGS48050", TestOCPBUGS48050)
 	})
 }
