@@ -413,6 +413,14 @@ func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
 			}
 			return lbs
 		}
+		// providerParameters.type is set, but providerParameters.<platform> is not.
+		lbsWithEmptyPlatformParameters = func(providerType operatorv1.LoadBalancerProviderType) *operatorv1.LoadBalancerStrategy {
+			lbsWithEmptyPP := lbs(operatorv1.ExternalLoadBalancer, &managedDNS)
+			lbsWithEmptyPP.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{
+				Type: providerType,
+			}
+			return lbsWithEmptyPP
+		}
 		eps = func(lbs *operatorv1.LoadBalancerStrategy) *operatorv1.EndpointPublishingStrategy {
 			return &operatorv1.EndpointPublishingStrategy{
 				Type:         operatorv1.LoadBalancerServiceStrategyType,
@@ -663,6 +671,14 @@ func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
 			domainMatchesBaseDomain: true,
 		},
 		{
+			name:                    "loadbalancer type with empty platform parameters changed from NLB to unset, with NLB as default (OCPBUGS-43692)",
+			ic:                      makeIC(spec(eps(lbsWithEmptyPlatformParameters(operatorv1.AWSLoadBalancerProvider))), status(nlb())),
+			ingressConfig:           ingressConfigWithDefaultNLB,
+			expectedResult:          false,
+			expectedIC:              makeIC(spec(eps(lbsWithEmptyPlatformParameters(operatorv1.AWSLoadBalancerProvider))), status(nlbWithNullParameters())),
+			domainMatchesBaseDomain: true,
+		},
+		{
 			name:                    "loadbalancer ELB connection idle timeout changed from unset with null provider parameters to 2m",
 			ic:                      makeIC(spec(elbWithIdleTimeout(metav1.Duration{Duration: 2 * time.Minute})), status(elbWithNullParameters())),
 			expectedResult:          true,
@@ -705,6 +721,13 @@ func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
 			domainMatchesBaseDomain: true,
 		},
 		{
+			name:                    "loadbalancer GCP Global Access with empty platform provider parameters changed from global to unset (OCPBUGS-43692)",
+			ic:                      makeIC(spec(eps(lbsWithEmptyPlatformParameters(operatorv1.GCPLoadBalancerProvider))), status(gcpLB(operatorv1.GCPGlobalAccess))),
+			expectedResult:          true,
+			expectedIC:              makeIC(spec(eps(lbsWithEmptyPlatformParameters(operatorv1.GCPLoadBalancerProvider))), status(gcpLB(""))),
+			domainMatchesBaseDomain: true,
+		},
+		{
 			name:                    "loadbalancer IBM Protocol changed from unset to PROXY",
 			ic:                      makeIC(spec(ibmLB(operatorv1.ProxyProtocol)), status(eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS)))),
 			expectedResult:          true,
@@ -723,6 +746,13 @@ func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
 			ic:                      makeIC(spec(ibmLB(operatorv1.TCPProtocol)), status(ibmLB(operatorv1.ProxyProtocol))),
 			expectedResult:          true,
 			expectedIC:              makeIC(spec(ibmLB(operatorv1.TCPProtocol)), status(ibmLB(operatorv1.TCPProtocol))),
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name:                    "loadbalancer IBM Protocol with empty platlform parameters changed from PROXY to TCP",
+			ic:                      makeIC(spec(eps(lbsWithEmptyPlatformParameters(operatorv1.IBMLoadBalancerProvider))), status(ibmLB(operatorv1.ProxyProtocol))),
+			expectedResult:          true,
+			expectedIC:              makeIC(spec(eps(lbsWithEmptyPlatformParameters(operatorv1.IBMLoadBalancerProvider))), status(ibmLB(""))),
 			domainMatchesBaseDomain: true,
 		},
 		{
