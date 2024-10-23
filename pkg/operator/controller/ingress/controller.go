@@ -100,6 +100,16 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Index IngressControllers over the default certificate name so that
+	// secretToIngressController can look up IngressControllers that
+	// reference the secret.
+	if err := operatorCache.IndexField(context.Background(), &operatorv1.IngressController{}, "ingressDefaultCertificateName", func(o client.Object) []string {
+		secret := operatorcontroller.RouterEffectiveDefaultCertificateSecretName(o.(*operatorv1.IngressController), o.GetNamespace())
+		return []string{secret.Name}
+	}); err != nil {
+		return nil, fmt.Errorf("failed to create index for ingresscontroller: %w", err)
+	}
+
 	scheme := mgr.GetClient().Scheme()
 	mapper := mgr.GetClient().RESTMapper()
 	if err := c.Watch(source.Kind(operatorCache, &operatorv1.IngressController{}), &handler.EnqueueRequestForObject{}); err != nil {
@@ -134,7 +144,47 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	if err := c.Watch(source.Kind(operatorCache, &configv1.Proxy{}), handler.EnqueueRequestsFromMapFunc(reconciler.ingressConfigToIngressController)); err != nil {
 		return nil, err
 	}
+	// Watch secrets in the operand namespace that are referenced as default certificates so that
+	// checkDefaultCertificate can determine whether changes to the default certificate affect upgradeability.
+	if err := c.Watch(source.Kind(operatorCache, &corev1.Secret{}), handler.EnqueueRequestsFromMapFunc(reconciler.secretToIngressController), predicate.Funcs{
+		CreateFunc: func(e event.CreateEvent) bool {
+			return e.Object.GetNamespace() == operatorcontroller.DefaultOperandNamespace
+		},
+		DeleteFunc: func(e event.DeleteEvent) bool {
+			return e.Object.GetNamespace() == operatorcontroller.DefaultOperandNamespace
+		},
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			return e.ObjectNew.GetNamespace() == operatorcontroller.DefaultOperandNamespace
+		},
+		GenericFunc: func(e event.GenericEvent) bool { return false },
+	}); err != nil {
+		return nil, err
+	}
 	return c, nil
+}
+
+// secretToIngressController maps a secret to a slice of reconcile requests,
+// one request per IngressController that references the secret as its default certificate.
+func (r *reconciler) secretToIngressController(ctx context.Context, o client.Object) []reconcile.Request {
+	var requests []reconcile.Request
+	controllers := &operatorv1.IngressControllerList{}
+	listOpts := client.MatchingFields(map[string]string{
+		"ingressDefaultCertificateName": o.GetName(),
+	})
+	if err := r.cache.List(ctx, controllers, client.InNamespace(r.config.Namespace), listOpts); err != nil {
+		log.Error(err, "failed to list ingresscontrollers for default certificate secret", "related", o.GetSelfLink())
+		return requests
+	}
+	for _, ic := range controllers.Items {
+		request := reconcile.Request{
+			NamespacedName: types.NamespacedName{
+				Namespace: ic.Namespace,
+				Name:      ic.Name,
+			},
+		}
+		requests = append(requests, request)
+	}
+	return requests
 }
 
 func (r *reconciler) ingressConfigToIngressController(ctx context.Context, o client.Object) []reconcile.Request {
