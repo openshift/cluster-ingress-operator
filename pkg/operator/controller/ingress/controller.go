@@ -463,7 +463,12 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, platformStat
 		}
 
 		// Set provider parameters based on the cluster ingress config.
-		setDefaultProviderParameters(effectiveStrategy.LoadBalancer, ingressConfig, alreadyAdmitted)
+		var currentLBStrategy *operatorv1.LoadBalancerStrategy
+		if ic.Status.EndpointPublishingStrategy != nil {
+			currentLBStrategy = ic.Status.EndpointPublishingStrategy.LoadBalancer
+		}
+		effectiveLBStrategy := effectiveStrategy.LoadBalancer
+		setDefaultProviderParameters(effectiveLBStrategy, currentLBStrategy, ingressConfig, alreadyAdmitted)
 
 	case operatorv1.NodePortServiceStrategyType:
 		if effectiveStrategy.NodePort == nil {
@@ -678,13 +683,14 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, platformStat
 	return false
 }
 
-// setDefaultProviderParameters mutates the given LoadBalancerStrategy by
+// setDefaultProviderParameters mutates the given effective LoadBalancerStrategy by
 // defaulting its ProviderParameters field based on the defaults in the provided
-// ingress config object.
-func setDefaultProviderParameters(lbs *operatorv1.LoadBalancerStrategy, ingressConfig *configv1.Ingress, alreadyAdmitted bool) {
+// ingress config object if it hasn't been admitted yet. If already admitted, it
+// bases the effective LoadBalancerStrategy on the current LoadBalancerStrategy.
+func setDefaultProviderParameters(lbsEffective, lbsCurrent *operatorv1.LoadBalancerStrategy, ingressConfig *configv1.Ingress, alreadyAdmitted bool) {
 	var provider operatorv1.LoadBalancerProviderType
-	if lbs.ProviderParameters != nil {
-		provider = lbs.ProviderParameters.Type
+	if lbsEffective.ProviderParameters != nil {
+		provider = lbsEffective.ProviderParameters.Type
 	}
 	if len(provider) == 0 && !alreadyAdmitted {
 		// Infer the LB type from the cluster ingress config, but only
@@ -696,48 +702,48 @@ func setDefaultProviderParameters(lbs *operatorv1.LoadBalancerStrategy, ingressC
 	}
 	switch provider {
 	case operatorv1.AWSLoadBalancerProvider:
-		if lbs.ProviderParameters == nil {
-			lbs.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{}
+		if lbsEffective.ProviderParameters == nil {
+			lbsEffective.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{}
 		}
-		lbs.ProviderParameters.Type = provider
+		lbsEffective.ProviderParameters.Type = provider
 		defaultLBType := operatorv1.AWSClassicLoadBalancer
-		if p := ingressConfig.Spec.LoadBalancer.Platform; !alreadyAdmitted && p.Type == configv1.AWSPlatformType && p.AWS != nil {
-			if p.AWS.Type == configv1.NLB {
-				defaultLBType = operatorv1.AWSNetworkLoadBalancer
-			}
+		if alreadyAdmitted {
+			defaultLBType = lbsCurrent.ProviderParameters.AWS.Type
+		} else if p := ingressConfig.Spec.LoadBalancer.Platform; p.Type == configv1.AWSPlatformType && p.AWS != nil && p.AWS.Type == configv1.NLB {
+			defaultLBType = operatorv1.AWSNetworkLoadBalancer
 		}
-		if lbs.ProviderParameters.AWS == nil {
-			lbs.ProviderParameters.AWS = &operatorv1.AWSLoadBalancerParameters{}
+		if lbsEffective.ProviderParameters.AWS == nil {
+			lbsEffective.ProviderParameters.AWS = &operatorv1.AWSLoadBalancerParameters{}
 		}
-		if len(lbs.ProviderParameters.AWS.Type) == 0 {
-			lbs.ProviderParameters.AWS.Type = defaultLBType
+		if len(lbsEffective.ProviderParameters.AWS.Type) == 0 {
+			lbsEffective.ProviderParameters.AWS.Type = defaultLBType
 		}
-		switch lbs.ProviderParameters.AWS.Type {
+		switch lbsEffective.ProviderParameters.AWS.Type {
 		case operatorv1.AWSClassicLoadBalancer:
-			if lbs.ProviderParameters.AWS.ClassicLoadBalancerParameters == nil {
-				lbs.ProviderParameters.AWS.ClassicLoadBalancerParameters = &operatorv1.AWSClassicLoadBalancerParameters{}
+			if lbsEffective.ProviderParameters.AWS.ClassicLoadBalancerParameters == nil {
+				lbsEffective.ProviderParameters.AWS.ClassicLoadBalancerParameters = &operatorv1.AWSClassicLoadBalancerParameters{}
 			}
 		case operatorv1.AWSNetworkLoadBalancer:
-			if lbs.ProviderParameters.AWS.NetworkLoadBalancerParameters == nil {
-				lbs.ProviderParameters.AWS.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{}
+			if lbsEffective.ProviderParameters.AWS.NetworkLoadBalancerParameters == nil {
+				lbsEffective.ProviderParameters.AWS.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{}
 			}
 		}
 
 	case operatorv1.GCPLoadBalancerProvider:
-		if lbs.ProviderParameters == nil {
-			lbs.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{}
+		if lbsEffective.ProviderParameters == nil {
+			lbsEffective.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{}
 		}
-		lbs.ProviderParameters.Type = provider
-		if lbs.ProviderParameters.GCP == nil {
-			lbs.ProviderParameters.GCP = &operatorv1.GCPLoadBalancerParameters{}
+		lbsEffective.ProviderParameters.Type = provider
+		if lbsEffective.ProviderParameters.GCP == nil {
+			lbsEffective.ProviderParameters.GCP = &operatorv1.GCPLoadBalancerParameters{}
 		}
 	case operatorv1.IBMLoadBalancerProvider:
-		if lbs.ProviderParameters == nil {
-			lbs.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{}
+		if lbsEffective.ProviderParameters == nil {
+			lbsEffective.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{}
 		}
-		lbs.ProviderParameters.Type = provider
-		if lbs.ProviderParameters.IBM == nil {
-			lbs.ProviderParameters.IBM = &operatorv1.IBMLoadBalancerParameters{}
+		lbsEffective.ProviderParameters.Type = provider
+		if lbsEffective.ProviderParameters.IBM == nil {
+			lbsEffective.ProviderParameters.IBM = &operatorv1.IBMLoadBalancerParameters{}
 		}
 	}
 }
