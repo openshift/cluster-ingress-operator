@@ -809,54 +809,6 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 	}
 
 	checkDeploymentHasEnvSorted(t, deployment)
-
-	// Set max dynamic server when DCM feature gate is on.
-	ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
-		Raw: []byte(`{"maxDynamicServers":"7"}`),
-	}
-	deployment, err = desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, false, nil, clusterProxyConfig, false, true)
-	if err != nil {
-		t.Fatalf("invalid router Deployment: %v", err)
-	}
-	tests = []envData{
-		{"ROUTER_HAPROXY_CONFIG_MANAGER", true, "true"},
-		{"ROUTER_MAX_DYNAMIC_SERVERS", true, "7"},
-	}
-	if err := checkDeploymentEnvironment(t, deployment, tests); err != nil {
-		t.Error(err)
-	}
-
-	// Set max dynamic server to a wrong value when DCM feature gate is on.
-	ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
-		Raw: []byte(`{"maxDynamicServers":"wrong"}`),
-	}
-	deployment, err = desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, false, nil, clusterProxyConfig, false, true)
-	if err != nil {
-		t.Fatalf("invalid router Deployment: %v", err)
-	}
-	tests = []envData{
-		{"ROUTER_HAPROXY_CONFIG_MANAGER", true, "true"},
-		{"ROUTER_MAX_DYNAMIC_SERVERS", true, "1"},
-	}
-	if err := checkDeploymentEnvironment(t, deployment, tests); err != nil {
-		t.Error(err)
-	}
-
-	// Opt out from DCM via unsupportedConfigOverride.
-	ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
-		Raw: []byte(`{"dynamicConfigManager":"false", "maxDynamicServers":"7"}`),
-	}
-	deployment, err = desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, false, nil, clusterProxyConfig, false, true)
-	if err != nil {
-		t.Fatalf("invalid router Deployment: %v", err)
-	}
-	tests = []envData{
-		{"ROUTER_HAPROXY_CONFIG_MANAGER", false, ""},
-		{"ROUTER_MAX_DYNAMIC_SERVERS", false, "0"},
-	}
-	if err := checkDeploymentEnvironment(t, deployment, tests); err != nil {
-		t.Error(err)
-	}
 }
 
 func TestDesiredRouterDeploymentVariety(t *testing.T) {

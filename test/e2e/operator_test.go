@@ -3423,12 +3423,72 @@ func TestLoadBalancingAlgorithmUnsupportedConfigOverride(t *testing.T) {
 func TestUnsupportedConfigOverride(t *testing.T) {
 	t.Parallel()
 
+	type envVar struct {
+		name  string
+		value string
+	}
+
 	var tests = []struct {
-		name, unsupportedConfigOverride, env, defaultValue, value string
+		name                      string
+		initialEnv                []envVar
+		unsupportedConfigOverride string
+		expectedEnv               []envVar
 	}{
-		{"dynamic-config-manager", "dynamicConfigManager", "ROUTER_HAPROXY_CONFIG_MANAGER", "true", "false"},
-		{"contstats", "contStats", "ROUTER_HAPROXY_CONTSTATS", "", "true"},
-		{"max-dynamic-servers", "maxDynamicServers", "ROUTER_MAX_DYNAMIC_SERVERS", "2", "7"},
+		{
+			name: "contstats",
+			initialEnv: []envVar{
+				{
+					name: "ROUTER_HAPROXY_CONTSTATS",
+				},
+			},
+			unsupportedConfigOverride: `{"contStats":"true"}`,
+			expectedEnv: []envVar{
+				{
+					name:  "ROUTER_HAPROXY_CONTSTATS",
+					value: "true",
+				},
+			},
+		},
+		{
+			name:                      "dynamic-config-manager",
+			unsupportedConfigOverride: `{"dynamicConfigManager":"true","maxDynamicServers":"7"}`,
+			expectedEnv: []envVar{
+				{
+					name:  "ROUTER_HAPROXY_CONFIG_MANAGER",
+					value: "true",
+				},
+				{
+					name:  "ROUTER_MAX_DYNAMIC_SERVERS",
+					value: "7",
+				},
+			},
+		},
+		{
+			name:                      "max-dynamic-servers-no-dcm",
+			unsupportedConfigOverride: `{"dynamicConfigManager":"false","maxDynamicServers":"7"}`,
+			expectedEnv: []envVar{
+				{
+					name: "ROUTER_HAPROXY_CONFIG_MANAGER",
+				},
+				{
+					name: "ROUTER_MAX_DYNAMIC_SERVERS",
+				},
+			},
+		},
+		{
+			name:                      "max-dynamic-servers-invalid",
+			unsupportedConfigOverride: `{"dynamicConfigManager":"true","maxDynamicServers":"invalid"}`,
+			expectedEnv: []envVar{
+				{
+					name:  "ROUTER_HAPROXY_CONFIG_MANAGER",
+					value: "true",
+				},
+				{
+					name:  "ROUTER_MAX_DYNAMIC_SERVERS",
+					value: "1",
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -3449,22 +3509,25 @@ func TestUnsupportedConfigOverride(t *testing.T) {
 			if err := kclient.Get(context.TODO(), controller.RouterDeploymentName(ic), deployment); err != nil {
 				t.Fatalf("failed to get ingresscontroller deployment: %v", err)
 			}
-			if err := waitForDeploymentEnvVar(t, kclient, deployment, 30*time.Second, tt.env, tt.defaultValue); err != nil {
-				t.Fatalf("expected initial deployment not to set %s=%s: %v", tt.env, tt.defaultValue, err)
+			for _, env := range tt.initialEnv {
+				if err := waitForDeploymentEnvVar(t, kclient, deployment, 30*time.Second, env.name, env.value); err != nil {
+					t.Fatalf("expected initial deployment not to set %s=%s: %v", env.name, env.value, err)
+				}
 			}
 
 			if err := updateIngressControllerWithRetryOnConflict(t, icName, timeout, func(ic *operatorv1.IngressController) {
 				ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
-					Raw: []byte(fmt.Sprintf(`{"%s":"%s"}`, tt.unsupportedConfigOverride, tt.value)),
+					Raw: []byte(tt.unsupportedConfigOverride),
 				}
 			}); err != nil {
 				t.Fatalf("failed to update ingresscontroller: %v", err)
 			}
-			if err := waitForDeploymentEnvVar(t, kclient, deployment, 1*time.Minute, tt.env, tt.value); err != nil {
-				t.Fatalf("expected updated deployment to set %s=%s: %v", tt.env, tt.value, err)
+			for _, env := range tt.expectedEnv {
+				if err := waitForDeploymentEnvVar(t, kclient, deployment, 1*time.Minute, env.name, env.value); err != nil {
+					t.Fatalf("expected updated deployment not to set %s=%s: %v", env.name, env.value, err)
+				}
 			}
 		})
-
 	}
 }
 

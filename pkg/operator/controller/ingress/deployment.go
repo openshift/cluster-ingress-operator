@@ -571,10 +571,17 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		})
 	}
 
+	enableDCM := false
+	if ingressControllerDCMEnabled {
+		enableDCM = true
+	}
 	dynamicConfigOverride := unsupportedConfigOverrides.DynamicConfigManager
-	if v, err := strconv.ParseBool(dynamicConfigOverride); (err == nil && v) || (err != nil && ingressControllerDCMEnabled) {
-		// Enable DCM only if user requested it explicitly via config override
-		// or if ingressControllerDCMEnabled is enabled.
+	if v, err := strconv.ParseBool(dynamicConfigOverride); err == nil {
+		// Config override can still be used to opt out from DCM.
+		enableDCM = v
+	}
+
+	if enableDCM {
 		env = append(env, corev1.EnvVar{
 			Name:  RouterHAProxyConfigManager,
 			Value: "true",
