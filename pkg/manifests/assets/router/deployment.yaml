@@ -17,6 +17,7 @@ spec:
         - name: router
           # image is set at runtime.
           imagePullPolicy: IfNotPresent
+          args: ["--blueprint-route-pool-size=0"]
           securityContext:
             # See https://bugzilla.redhat.com/2007246
             allowPrivilegeEscalation: true

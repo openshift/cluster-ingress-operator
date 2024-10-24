@@ -194,6 +194,7 @@ type Config struct {
 	RouteExternalCertificateEnabled           bool
 	IngressControllerLBSubnetsAWSEnabled      bool
 	IngressControllerEIPAllocationsAWSEnabled bool
+	IngressControllerDCMEnabled               bool
 }
 
 // reconciler handles the actual ingress reconciliation logic in response to

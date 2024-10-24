@@ -84,6 +84,9 @@ const (
 
 	RouterHAProxyConfigManager = "ROUTER_HAPROXY_CONFIG_MANAGER"
 
+	RouterHAProxyMaxDynamicServers             = "ROUTER_MAX_DYNAMIC_SERVERS"
+	RouterHAProxyMaxDynamicServersDefaultValue = 1
+
 	RouterHAProxyContstats = "ROUTER_HAPROXY_CONTSTATS"
 
 	RouterHAProxyThreadsEnvName      = "ROUTER_THREADS"
@@ -121,7 +124,7 @@ func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, in
 	if err != nil {
 		return false, nil, fmt.Errorf("failed to determine if proxy protocol is needed for ingresscontroller %s/%s: %v", ci.Namespace, ci.Name, err)
 	}
-	desired, err := desiredRouterDeployment(ci, r.config.IngressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, haveClientCAConfigmap, clientCAConfigmap, clusterProxyConfig, r.config.RouteExternalCertificateEnabled)
+	desired, err := desiredRouterDeployment(ci, r.config.IngressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, haveClientCAConfigmap, clientCAConfigmap, clusterProxyConfig, r.config.RouteExternalCertificateEnabled, r.config.IngressControllerDCMEnabled)
 	if err != nil {
 		return haveDepl, current, fmt.Errorf("failed to build router deployment: %v", err)
 	}
@@ -243,7 +246,7 @@ func headerValues(values []operatorv1.IngressControllerHTTPHeader) string {
 }
 
 // desiredRouterDeployment returns the desired router deployment.
-func desiredRouterDeployment(ci *operatorv1.IngressController, ingressControllerImage string, ingressConfig *configv1.Ingress, infraConfig *configv1.Infrastructure, apiConfig *configv1.APIServer, networkConfig *configv1.Network, proxyNeeded bool, haveClientCAConfigmap bool, clientCAConfigmap *corev1.ConfigMap, clusterProxyConfig *configv1.Proxy, routeExternalCertificateEnabled bool) (*appsv1.Deployment, error) {
+func desiredRouterDeployment(ci *operatorv1.IngressController, ingressControllerImage string, ingressConfig *configv1.Ingress, infraConfig *configv1.Infrastructure, apiConfig *configv1.APIServer, networkConfig *configv1.Network, proxyNeeded bool, haveClientCAConfigmap bool, clientCAConfigmap *corev1.ConfigMap, clusterProxyConfig *configv1.Proxy, routeExternalCertificateEnabled, ingressControllerDCMEnabled bool) (*appsv1.Deployment, error) {
 	deployment := manifests.RouterDeployment()
 	name := controller.RouterDeploymentName(ci)
 	deployment.Name = name.Name
@@ -523,6 +526,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		LoadBalancingAlgorithm string `json:"loadBalancingAlgorithm"`
 		DynamicConfigManager   string `json:"dynamicConfigManager"`
 		ContStats              string `json:"contStats"`
+		MaxDynamicServers      string `json:"maxDynamicServers"`
 	}
 	if len(ci.Spec.UnsupportedConfigOverrides.Raw) > 0 {
 		if err := json.Unmarshal(ci.Spec.UnsupportedConfigOverrides.Raw, &unsupportedConfigOverrides); err != nil {
@@ -567,13 +571,33 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		})
 	}
 
+	enableDCM := false
+	if ingressControllerDCMEnabled {
+		enableDCM = true
+	}
 	dynamicConfigOverride := unsupportedConfigOverrides.DynamicConfigManager
-	if v, err := strconv.ParseBool(dynamicConfigOverride); err == nil && v {
+	if v, err := strconv.ParseBool(dynamicConfigOverride); err == nil {
+		// Config override can still be used to opt out from DCM.
+		enableDCM = v
+	}
+
+	if enableDCM {
 		env = append(env, corev1.EnvVar{
 			Name:  RouterHAProxyConfigManager,
 			Value: "true",
 		})
+
+		// Max dynamic servers override is only taken into account when DCM is enabled.
+		routerHAProxyMaxDynamicServersValue := RouterHAProxyMaxDynamicServersDefaultValue
+		if v, err := strconv.Atoi(unsupportedConfigOverrides.MaxDynamicServers); err == nil && v > 0 {
+			routerHAProxyMaxDynamicServersValue = v
+		}
+		env = append(env, corev1.EnvVar{
+			Name:  RouterHAProxyMaxDynamicServers,
+			Value: strconv.Itoa(routerHAProxyMaxDynamicServersValue),
+		})
 	}
+
 	contStats := unsupportedConfigOverrides.ContStats
 	if v, err := strconv.ParseBool(contStats); err == nil && v {
 		env = append(env, corev1.EnvVar{
@@ -1414,6 +1438,7 @@ func hashableDeployment(deployment *appsv1.Deployment, onlyTemplate bool) *appsv
 		})
 		containers[i] = corev1.Container{
 			Command:         container.Command,
+			Args:            container.Args,
 			Env:             env,
 			Image:           container.Image,
 			ImagePullPolicy: container.ImagePullPolicy,
@@ -1638,6 +1663,7 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 	updated.Spec.Template.Spec.Containers[0].SecurityContext = expected.Spec.Template.Spec.Containers[0].SecurityContext
 	updated.Spec.Template.Spec.Containers[0].Env = expected.Spec.Template.Spec.Containers[0].Env
 	updated.Spec.Template.Spec.Containers[0].Image = expected.Spec.Template.Spec.Containers[0].Image
+	updated.Spec.Template.Spec.Containers[0].Args = expected.Spec.Template.Spec.Containers[0].Args
 	copyProbe(expected.Spec.Template.Spec.Containers[0].LivenessProbe, updated.Spec.Template.Spec.Containers[0].LivenessProbe, true)
 	copyProbe(expected.Spec.Template.Spec.Containers[0].ReadinessProbe, updated.Spec.Template.Spec.Containers[0].ReadinessProbe, true)
 	copyProbe(expected.Spec.Template.Spec.Containers[0].StartupProbe, updated.Spec.Template.Spec.Containers[0].StartupProbe, true)
