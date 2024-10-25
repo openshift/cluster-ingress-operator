@@ -28,7 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 
-	gwapi "sigs.k8s.io/gateway-api/apis/v1beta1"
+	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
 const (
@@ -151,7 +151,7 @@ func deleteExistingCRD(t *testing.T, crdName string) error {
 
 // createHttpRoute checks if the HTTPRoute can be created.
 // If it can't an error is returned.
-func createHttpRoute(namespace, routeName, parentNamespace, hostname, backendRefname string, gateway *gwapi.Gateway) (*gwapi.HTTPRoute, error) {
+func createHttpRoute(namespace, routeName, parentNamespace, hostname, backendRefname string, gateway *gatewayapiv1.Gateway) (*gatewayapiv1.HTTPRoute, error) {
 	if gateway == nil {
 		return nil, errors.New("unable to create httpRoute, no gateway available")
 	}
@@ -187,7 +187,7 @@ func createHttpRoute(namespace, routeName, parentNamespace, hostname, backendRef
 
 // createGateway checks if the Gateway can be created.
 // If it can, it is returned.  If it can't an error is returned.
-func createGateway(gatewayClass *gwapi.GatewayClass, name, namespace, domain string) (*gwapi.Gateway, error) {
+func createGateway(gatewayClass *gatewayapiv1.GatewayClass, name, namespace, domain string) (*gatewayapiv1.Gateway, error) {
 	gateway := buildGateway(name, namespace, gatewayClass.Name, allNamespaces, domain)
 	if err := kclient.Create(context.TODO(), gateway); err != nil {
 		if kerrors.IsAlreadyExists(err) {
@@ -204,7 +204,7 @@ func createGateway(gatewayClass *gwapi.GatewayClass, name, namespace, domain str
 
 // createGatewayClass checks if the GatewayClass can be created.
 // If it can, it is returned.  If it can't an error is returned.
-func createGatewayClass(name, controllerName string) (*gwapi.GatewayClass, error) {
+func createGatewayClass(name, controllerName string) (*gatewayapiv1.GatewayClass, error) {
 	gatewayClass := buildGatewayClass(name, controllerName)
 	if err := kclient.Create(context.TODO(), gatewayClass); err != nil {
 		if kerrors.IsAlreadyExists(err) {
@@ -220,54 +220,54 @@ func createGatewayClass(name, controllerName string) (*gwapi.GatewayClass, error
 }
 
 // buildGatewayClass initializes the GatewayClass and returns its address.
-func buildGatewayClass(name, controllerName string) *gwapi.GatewayClass {
-	return &gwapi.GatewayClass{
+func buildGatewayClass(name, controllerName string) *gatewayapiv1.GatewayClass {
+	return &gatewayapiv1.GatewayClass{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
-		Spec: gwapi.GatewayClassSpec{
-			ControllerName: gwapi.GatewayController(controllerName),
+		Spec: gatewayapiv1.GatewayClassSpec{
+			ControllerName: gatewayapiv1.GatewayController(controllerName),
 		},
 	}
 }
 
 // buildGateway initializes the Gateway and returns its address.
-func buildGateway(name, namespace, gcname, fromNs, domain string) *gwapi.Gateway {
-	hostname := gwapi.Hostname("*." + domain)
-	fromNamespace := gwapi.FromNamespaces(fromNs)
+func buildGateway(name, namespace, gcname, fromNs, domain string) *gatewayapiv1.Gateway {
+	hostname := gatewayapiv1.Hostname("*." + domain)
+	fromNamespace := gatewayapiv1.FromNamespaces(fromNs)
 	// Tell the gateway listener to allow routes from the namespace/s in the fromNamespaces variable, which could be "All".
-	allowedRoutes := gwapi.AllowedRoutes{Namespaces: &gwapi.RouteNamespaces{From: &fromNamespace}}
-	listener1 := gwapi.Listener{Name: "http", Hostname: &hostname, Port: 80, Protocol: "HTTP", AllowedRoutes: &allowedRoutes}
+	allowedRoutes := gatewayapiv1.AllowedRoutes{Namespaces: &gatewayapiv1.RouteNamespaces{From: &fromNamespace}}
+	listener1 := gatewayapiv1.Listener{Name: "http", Hostname: &hostname, Port: 80, Protocol: "HTTP", AllowedRoutes: &allowedRoutes}
 
-	return &gwapi.Gateway{
+	return &gatewayapiv1.Gateway{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
-		Spec: gwapi.GatewaySpec{
-			GatewayClassName: gwapi.ObjectName(gcname),
-			Listeners:        []gwapi.Listener{listener1},
+		Spec: gatewayapiv1.GatewaySpec{
+			GatewayClassName: gatewayapiv1.ObjectName(gcname),
+			Listeners:        []gatewayapiv1.Listener{listener1},
 		},
 	}
 }
 
 // buildHTTPRoute initializes the HTTPRoute and returns its address.
-func buildHTTPRoute(routeName, namespace, parentgateway, parentNamespace, hostname, backendRefname string) *gwapi.HTTPRoute {
-	parentns := gwapi.Namespace(parentNamespace)
-	parent := gwapi.ParentReference{Name: gwapi.ObjectName(parentgateway), Namespace: &parentns}
-	port := gwapi.PortNumber(defaultPortNumber)
-	rule := gwapi.HTTPRouteRule{
-		BackendRefs: []gwapi.HTTPBackendRef{{
-			BackendRef: gwapi.BackendRef{
-				BackendObjectReference: gwapi.BackendObjectReference{
-					Name: gwapi.ObjectName(backendRefname),
+func buildHTTPRoute(routeName, namespace, parentgateway, parentNamespace, hostname, backendRefname string) *gatewayapiv1.HTTPRoute {
+	parentns := gatewayapiv1.Namespace(parentNamespace)
+	parent := gatewayapiv1.ParentReference{Name: gatewayapiv1.ObjectName(parentgateway), Namespace: &parentns}
+	port := gatewayapiv1.PortNumber(defaultPortNumber)
+	rule := gatewayapiv1.HTTPRouteRule{
+		BackendRefs: []gatewayapiv1.HTTPBackendRef{{
+			BackendRef: gatewayapiv1.BackendRef{
+				BackendObjectReference: gatewayapiv1.BackendObjectReference{
+					Name: gatewayapiv1.ObjectName(backendRefname),
 					Port: &port,
 				},
 			},
 		}},
 	}
 
-	return &gwapi.HTTPRoute{
+	return &gatewayapiv1.HTTPRoute{
 		ObjectMeta: metav1.ObjectMeta{Name: routeName, Namespace: namespace},
-		Spec: gwapi.HTTPRouteSpec{
-			CommonRouteSpec: gwapi.CommonRouteSpec{ParentRefs: []gwapi.ParentReference{parent}},
-			Hostnames:       []gwapi.Hostname{gwapi.Hostname(hostname)},
-			Rules:           []gwapi.HTTPRouteRule{rule},
+		Spec: gatewayapiv1.HTTPRouteSpec{
+			CommonRouteSpec: gatewayapiv1.CommonRouteSpec{ParentRefs: []gatewayapiv1.ParentReference{parent}},
+			Hostnames:       []gatewayapiv1.Hostname{gatewayapiv1.Hostname(hostname)},
+			Rules:           []gatewayapiv1.HTTPRouteRule{rule},
 		},
 	}
 }
@@ -363,10 +363,10 @@ func assertIstiodControlPlane(t *testing.T) error {
 
 // assertGatewayClassSuccessful checks if the gateway class was created and accepted successfully
 // and returns an error if not.
-func assertGatewayClassSuccessful(t *testing.T, name string) (*gwapi.GatewayClass, error) {
+func assertGatewayClassSuccessful(t *testing.T, name string) (*gatewayapiv1.GatewayClass, error) {
 	t.Helper()
 
-	gwc := &gwapi.GatewayClass{}
+	gwc := &gatewayapiv1.GatewayClass{}
 	nsName := types.NamespacedName{Namespace: "", Name: name}
 	recordedConditionMsg := "not found"
 
@@ -377,7 +377,7 @@ func assertGatewayClassSuccessful(t *testing.T, name string) (*gwapi.GatewayClas
 			return false, nil
 		}
 		for _, condition := range gwc.Status.Conditions {
-			if condition.Type == string(gwapi.GatewayClassConditionStatusAccepted) {
+			if condition.Type == string(gatewayapiv1.GatewayClassConditionStatusAccepted) {
 				recordedConditionMsg = condition.Message
 				if condition.Status == metav1.ConditionTrue {
 					return true, nil
@@ -388,7 +388,7 @@ func assertGatewayClassSuccessful(t *testing.T, name string) (*gwapi.GatewayClas
 		return false, nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("gateway class %s not %v, last recorded status message: %s", name, gwapi.GatewayClassConditionStatusAccepted, recordedConditionMsg)
+		return nil, fmt.Errorf("gateway class %s not %v, last recorded status message: %s", name, gatewayapiv1.GatewayClassConditionStatusAccepted, recordedConditionMsg)
 	}
 
 	t.Logf("gateway class %s successful", name)
@@ -397,10 +397,10 @@ func assertGatewayClassSuccessful(t *testing.T, name string) (*gwapi.GatewayClas
 
 // assertGatewaySuccessful checks if the gateway was created and accepted successfully
 // and returns an error if not.
-func assertGatewaySuccessful(t *testing.T, namespace, name string) (*gwapi.Gateway, error) {
+func assertGatewaySuccessful(t *testing.T, namespace, name string) (*gatewayapiv1.Gateway, error) {
 	t.Helper()
 
-	gw := &gwapi.Gateway{}
+	gw := &gatewayapiv1.Gateway{}
 	nsName := types.NamespacedName{Namespace: namespace, Name: name}
 	recordedConditionMsg := "not found"
 
@@ -410,7 +410,7 @@ func assertGatewaySuccessful(t *testing.T, namespace, name string) (*gwapi.Gatew
 			return false, nil
 		}
 		for _, condition := range gw.Status.Conditions {
-			if condition.Type == string(gwapi.GatewayClassConditionStatusAccepted) { // TODO: Use GatewayConditionAccepted when updating to v1.
+			if condition.Type == string(gatewayapiv1.GatewayClassConditionStatusAccepted) { // TODO: Use GatewayConditionAccepted when updating to v1.
 				recordedConditionMsg = condition.Message
 				if condition.Status == metav1.ConditionTrue {
 					t.Logf("found gateway %s/%s as Accepted", namespace, name)
@@ -421,7 +421,7 @@ func assertGatewaySuccessful(t *testing.T, namespace, name string) (*gwapi.Gatew
 		return false, nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("gateway %s not %v, last recorded status message: %s", name, gwapi.GatewayClassConditionStatusAccepted, recordedConditionMsg)
+		return nil, fmt.Errorf("gateway %s not %v, last recorded status message: %s", name, gatewayapiv1.GatewayClassConditionStatusAccepted, recordedConditionMsg)
 	}
 
 	return gw, nil
@@ -429,13 +429,13 @@ func assertGatewaySuccessful(t *testing.T, namespace, name string) (*gwapi.Gatew
 
 // assertHttpRouteSuccessful checks if the http route was created and has parent conditions that indicate
 // it was accepted successfully.  A parent is usually a gateway.  Returns an error not accepted and/or not resolved.
-func assertHttpRouteSuccessful(t *testing.T, namespace, name string, gateway *gwapi.Gateway) (*gwapi.HTTPRoute, error) {
+func assertHttpRouteSuccessful(t *testing.T, namespace, name string, gateway *gatewayapiv1.Gateway) (*gatewayapiv1.HTTPRoute, error) {
 	t.Helper()
 
 	if gateway == nil {
 		return nil, errors.New("unable to validate httpRoute, no gateway available")
 	}
-	httproute := &gwapi.HTTPRoute{}
+	httproute := &gatewayapiv1.HTTPRoute{}
 	nsName := types.NamespacedName{Namespace: namespace, Name: name}
 
 	// Wait 1 minute for parent/s to update
@@ -467,12 +467,12 @@ func assertHttpRouteSuccessful(t *testing.T, namespace, name string, gateway *gw
 		// For each parent conditions should be true for both Accepted and ResolvedRefs
 		for _, condition := range parent.Conditions {
 			switch condition.Type {
-			case string(gwapi.RouteConditionAccepted):
+			case string(gatewayapiv1.RouteConditionAccepted):
 				acceptedConditionMsg = condition.Message
 				if condition.Status == metav1.ConditionTrue {
 					accepted = true
 				}
-			case string(gwapi.RouteConditionResolvedRefs):
+			case string(gatewayapiv1.RouteConditionResolvedRefs):
 				resolvedRefConditionMsg = condition.Message
 				if condition.Status == metav1.ConditionTrue {
 					resolvedRefs = true
@@ -482,11 +482,11 @@ func assertHttpRouteSuccessful(t *testing.T, namespace, name string, gateway *gw
 		// Check the results for each parent.
 		switch {
 		case !accepted && !resolvedRefs:
-			return nil, fmt.Errorf("httpRoute %s/%s, parent %v/%v neither %v nor %v, last recorded status messages: %s, %s", namespace, name, parent.ParentRef.Namespace, parent.ParentRef.Name, gwapi.RouteConditionAccepted, gwapi.RouteConditionResolvedRefs, acceptedConditionMsg, resolvedRefConditionMsg)
+			return nil, fmt.Errorf("httpRoute %s/%s, parent %v/%v neither %v nor %v, last recorded status messages: %s, %s", namespace, name, parent.ParentRef.Namespace, parent.ParentRef.Name, gatewayapiv1.RouteConditionAccepted, gatewayapiv1.RouteConditionResolvedRefs, acceptedConditionMsg, resolvedRefConditionMsg)
 		case !accepted:
-			return nil, fmt.Errorf("httpRoute %s/%s, parent %v/%v not %v, last recorded status message: %s", namespace, name, parent.ParentRef.Namespace, parent.ParentRef.Name, gwapi.RouteConditionAccepted, acceptedConditionMsg)
+			return nil, fmt.Errorf("httpRoute %s/%s, parent %v/%v not %v, last recorded status message: %s", namespace, name, parent.ParentRef.Namespace, parent.ParentRef.Name, gatewayapiv1.RouteConditionAccepted, acceptedConditionMsg)
 		case !resolvedRefs:
-			return nil, fmt.Errorf("httpRoute %s/%s, parent %v/%v not %v, last recorded status message: %s", namespace, name, parent.ParentRef.Namespace, parent.ParentRef.Name, gwapi.RouteConditionResolvedRefs, resolvedRefConditionMsg)
+			return nil, fmt.Errorf("httpRoute %s/%s, parent %v/%v not %v, last recorded status message: %s", namespace, name, parent.ParentRef.Namespace, parent.ParentRef.Name, gatewayapiv1.RouteConditionResolvedRefs, resolvedRefConditionMsg)
 		}
 	}
 	t.Logf("httpRoute %s/%s successful", namespace, name)
@@ -495,7 +495,7 @@ func assertHttpRouteSuccessful(t *testing.T, namespace, name string, gateway *gw
 
 // assertHttpRouteConnection checks if the http route of the given name replies successfully,
 // and returns an error if not
-func assertHttpRouteConnection(t *testing.T, hostname string, gateway *gwapi.Gateway) error {
+func assertHttpRouteConnection(t *testing.T, hostname string, gateway *gatewayapiv1.Gateway) error {
 	t.Helper()
 	domain := ""
 

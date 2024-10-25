@@ -6,7 +6,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-	gatewayapiv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
+	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	maistrav1 "github.com/maistra/istio-operator/pkg/apis/maistra/v1"
 	maistrav2 "github.com/maistra/istio-operator/pkg/apis/maistra/v2"
@@ -21,7 +21,7 @@ import (
 // ensureServiceMeshControlPlane attempts to ensure that a
 // servicemeshcontrolplane is present and returns a Boolean indicating whether
 // it exists, the servicemeshcontrolplane if it exists, and an error value.
-func (r *reconciler) ensureServiceMeshControlPlane(ctx context.Context, gatewayclass *gatewayapiv1beta1.GatewayClass) (bool, *maistrav2.ServiceMeshControlPlane, error) {
+func (r *reconciler) ensureServiceMeshControlPlane(ctx context.Context, gatewayclass *gatewayapiv1.GatewayClass) (bool, *maistrav2.ServiceMeshControlPlane, error) {
 	name := controller.ServiceMeshControlPlaneName(r.config.OperandNamespace)
 	have, current, err := r.currentServiceMeshControlPlane(ctx, name)
 	if err != nil {
@@ -31,7 +31,7 @@ func (r *reconciler) ensureServiceMeshControlPlane(ctx context.Context, gatewayc
 	// TODO If we have a current SMCP with a different owner reference,
 	// should we append the new gatewayclass?
 	ownerRef := metav1.OwnerReference{
-		APIVersion: gatewayapiv1beta1.SchemeGroupVersion.String(),
+		APIVersion: gatewayapiv1.SchemeGroupVersion.String(),
 		Kind:       "GatewayClass",
 		Name:       gatewayclass.Name,
 		UID:        gatewayclass.UID,
@@ -146,7 +146,7 @@ func desiredServiceMeshControlPlane(name types.NamespacedName, ownerRef metav1.O
 			Tracing: &maistrav2.TracingConfig{
 				Type: maistrav2.TracerTypeNone,
 			},
-			Version: "v2.5",
+			Version: "v2.6",
 			TechPreview: maistrav1.NewHelmValues(map[string]interface{}{
 				"gatewayAPI": map[string]interface{}{
 					"enabled": &t,

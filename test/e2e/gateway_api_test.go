@@ -18,7 +18,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apiserver/pkg/storage/names"
 
-	gwapi "sigs.k8s.io/gateway-api/apis/v1beta1"
+	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
 const (
@@ -62,7 +62,7 @@ func TestGatewayAPI(t *testing.T) {
 
 	// Defer the cleanup of the test gateway.
 	t.Cleanup(func() {
-		testGateway := gwapi.Gateway{ObjectMeta: metav1.ObjectMeta{Name: testGatewayName, Namespace: operatorcontroller.DefaultOperandNamespace}}
+		testGateway := gatewayapiv1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: testGatewayName, Namespace: operatorcontroller.DefaultOperandNamespace}}
 		if err := kclient.Delete(context.TODO(), &testGateway); err != nil {
 			if errors.IsNotFound(err) {
 				return
@@ -200,7 +200,7 @@ func ensureGatewayObjectCreation(ns *corev1.Namespace) error {
 func ensureGatewayObjectSuccess(t *testing.T, ns *corev1.Namespace) []string {
 	t.Helper()
 	errs := []string{}
-	gateway := &gwapi.Gateway{}
+	gateway := &gatewayapiv1.Gateway{}
 
 	// Make sure gateway class was created successfully.
 	_, err := assertGatewayClassSuccessful(t, gatewayclass.OpenShiftDefaultGatewayClassName)

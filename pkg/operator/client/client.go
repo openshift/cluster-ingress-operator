@@ -3,18 +3,16 @@ package client
 import (
 	"fmt"
 
-	iov1 "github.com/openshift/api/operatoringress/v1"
-
 	configv1 "github.com/openshift/api/config/v1"
 	machinev1 "github.com/openshift/api/machine/v1beta1"
 	operatorv1 "github.com/openshift/api/operator/v1"
+	iov1 "github.com/openshift/api/operatoringress/v1"
 	routev1 "github.com/openshift/api/route/v1"
+	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	maistrav1 "github.com/maistra/istio-operator/pkg/apis/maistra/v1"
 	maistrav2 "github.com/maistra/istio-operator/pkg/apis/maistra/v2"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
-	gatewayapiv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
-
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 
 	kscheme "k8s.io/client-go/kubernetes/scheme"
@@ -53,7 +51,7 @@ func init() {
 	if err := apiextensionsv1.AddToScheme(scheme); err != nil {
 		panic(err)
 	}
-	if err := gatewayapiv1beta1.Install(scheme); err != nil {
+	if err := gatewayapiv1.Install(scheme); err != nil {
 		panic(err)
 	}
 	if err := operatorsv1alpha1.AddToScheme(scheme); err != nil {
