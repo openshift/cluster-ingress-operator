@@ -13,6 +13,17 @@ spec:
   groups:
     - name: openshift-ingress.rules
       rules:
+      - alert: DuplicateTransferEncodingHeadersDetected
+        expr: group (haproxy_backend_duplicate_te_header_total > 0)
+        labels:
+          severity: warning
+        annotations:
+          summary: Duplicate Transfer-Encoding headers detected from backend servers.
+          description: |
+            This alert fires when the router has detected that a backend server sent a response with duplicated Transfer-Encoding headers, which violates RFC 7230. HAProxy 2.6, used in OpenShift 4.14 and later, enforces this compliance, resulting in responses being rejected with a 502 Bad Gateway status. Cluster administrators are advised to proactively detect and resolve these issues before upgrading to OpenShift 4.14.
+          message: |
+            One or more backend servers associated with Routes have been detected sending duplicate Transfer-Encoding headers.
+          runbook_url: https://access.redhat.com/solutions/7055002
       - alert: HAProxyReloadFail
         expr: template_router_reload_failure == 1
         for: 5m
