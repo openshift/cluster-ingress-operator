@@ -122,6 +122,13 @@ var (
 	operandNamespace  = operatorcontroller.DefaultOperandNamespace
 	defaultName       = types.NamespacedName{Namespace: operatorNamespace, Name: manifests.DefaultIngressControllerName}
 	clusterConfigName = types.NamespacedName{Namespace: operatorNamespace, Name: manifests.ClusterIngressConfigName}
+
+	// Platforms that require resolving DNS hostnames within the cluster.
+	// This is often necessary because new DNS hostnames may not propagate to the test runner cluster quickly enough.
+	platformsNeedInternalDNSResolutionAndWarmup = map[configv1.PlatformType]time.Duration{
+		// 7 minutes of warmup was required past testing for IBMCloud.
+		configv1.IBMCloudPlatformType: 7 * time.Minute,
+	}
 )
 
 func init() {
@@ -3186,21 +3193,14 @@ func TestConnectTimeout(t *testing.T) {
 	lbHostname := wildcardRecord.Spec.Targets[0]
 
 	// Wait until we can resolve the LB's hostname
-	if err := wait.PollUntilContextTimeout(context.Background(), 5*time.Second, 5*time.Minute, true, func(ctx context.Context) (bool, error) {
-		_, err := net.LookupIP(lbHostname)
-		if err != nil {
-			t.Log(err)
-			return false, nil
-		}
-
-		return true, nil
-	}); err != nil {
-		t.Fatalf("failed to observe expected condition: %v", err)
+	lbIPAddress, err := waitForLookupIP(t, lbHostname, 5*time.Minute, false)
+	if err != nil {
+		t.Fatalf("failed to wait for load balancer hostname: %v", err)
 	}
 
 	// Open a connection to the route, send a request, and verify that the
 	// connection times out.
-	request, err := http.NewRequest("GET", "http://"+lbHostname, nil)
+	request, err := http.NewRequest("GET", "http://"+lbIPAddress, nil)
 	if err != nil {
 		t.Fatalf("failed to create HTTP request: %v", err)
 	}
@@ -4107,6 +4107,32 @@ func waitForPodReady(t *testing.T, cl client.Client, pod *corev1.Pod, timeout ti
 	if err != nil {
 		return fmt.Errorf("failed to wait for pod %s to become ready", name)
 	}
+	return nil
+}
+
+// waitForPodReady waits for a pod to complete and will return an error if the pod fails.
+func waitForPodComplete(t *testing.T, cl client.Client, pod *corev1.Pod, timeout time.Duration) error {
+	t.Helper()
+	name := types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}
+	p := &corev1.Pod{}
+	err := wait.PollUntilContextTimeout(context.Background(), 5*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
+		if err := cl.Get(ctx, name, p); err != nil {
+			t.Logf("error getting pod %s: %v", name, err)
+			return false, nil
+		}
+		if p.Status.Phase == corev1.PodSucceeded || p.Status.Phase == corev1.PodFailed {
+			return true, nil
+		}
+		t.Logf("pod %s has not completed yet", name)
+		return false, nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to wait for pod %s to complete", name)
+	}
+	if p.Status.Phase == corev1.PodFailed {
+		return fmt.Errorf("pod %s failed with reason: %s, message: %s", name, p.Status.Reason, p.Status.Message)
+	}
+
 	return nil
 }
 
