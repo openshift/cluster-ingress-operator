@@ -254,6 +254,11 @@ var (
 			//
 			// https://cloud.ibm.com/docs/containers?topic=containers-vpc-lbaas
 			iksLBEnableFeaturesAnnotation,
+			// awsLBAdditionalResourceTags annotation is populated
+			// by user tags present in
+			// Status.PlatformStatus.AWS.ResourceTags in the
+			// infrastructure config.
+			awsLBAdditionalResourceTags,
 		)
 
 		// Azure and GCP support switching between internal and external
@@ -751,12 +756,6 @@ func IsServiceInternal(service *corev1.Service) bool {
 	return false
 }
 
-// loadBalancerServiceTagsModified verifies that none of the managedAnnotations have been changed and also the AWS tags annotation
-func loadBalancerServiceTagsModified(current, expected *corev1.Service) (bool, *corev1.Service) {
-	ignoredAnnotations := managedLoadBalancerServiceAnnotations.Union(sets.NewString(awsLBAdditionalResourceTags))
-	return loadBalancerServiceAnnotationsChanged(current, expected, ignoredAnnotations)
-}
-
 // loadBalancerServiceIsUpgradeable returns an error value indicating if the
 // load balancer service is safe to upgrade.  In particular, if the current
 // service matches the desired service, then the service is upgradeable, and the
@@ -773,7 +772,11 @@ func loadBalancerServiceIsUpgradeable(ic *operatorv1.IngressController, deployme
 		return nil
 	}
 
-	changed, updated := loadBalancerServiceTagsModified(current, desired)
+	// Verify that none of the managedAnnotations have been changed by something or someone.
+	// Since the status logic runs after the controller sets the annotations, it checks for
+	// any discrepancy (in case modified) between the desired annotation values of the controller
+	// and the current annotation values.
+	changed, updated := loadBalancerServiceAnnotationsChanged(current, desired, managedLoadBalancerServiceAnnotations)
 	if changed {
 		diff := cmp.Diff(current, updated, cmpopts.EquateEmpty())
 		return fmt.Errorf("load balancer service has been modified; changes must be reverted before upgrading: %s", diff)

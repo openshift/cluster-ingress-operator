@@ -17,6 +17,7 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	routev1 "github.com/openshift/api/route/v1"
+	configclientset "github.com/openshift/client-go/config/clientset/versioned"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -587,6 +588,32 @@ func updateInfrastructureConfigSpecWithRetryOnConflict(t *testing.T, name types.
 		if err := kclient.Update(context.TODO(), &infraConfig); err != nil {
 			if errors.IsConflict(err) {
 				t.Logf("conflict when updating infrastructure config %v: %v, retrying...", name, err)
+				return false, nil
+			}
+			return false, err
+		}
+		return true, nil
+	})
+}
+
+// updateInfrastructureStatus updates the Infrastructure status by applying
+// the given update function to the current Infrastructure object.
+// If there is a conflict error on update then the complete operation
+// is retried until timeout is reached.
+func updateInfrastructureConfigStatusWithRetryOnConflict(t *testing.T, timeout time.Duration, configClient *configclientset.Clientset, updateFunc func(*configv1.Infrastructure) *configv1.Infrastructure) error {
+	return wait.PollUntilContextTimeout(context.Background(), 5*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
+		infra, err := configClient.ConfigV1().Infrastructures().Get(ctx, "cluster", metav1.GetOptions{})
+		if err != nil {
+			t.Logf("error getting 'cluster' infrastructure config: %v, retrying...", err)
+			return false, nil
+		}
+
+		// Apply the update function to the Infrastructure object.
+		updatedInfra := updateFunc(infra.DeepCopy())
+
+		if _, err := configClient.ConfigV1().Infrastructures().UpdateStatus(ctx, updatedInfra, metav1.UpdateOptions{}); err != nil {
+			if errors.IsConflict(err) {
+				t.Logf("conflict when updating 'cluster' infrastructure config: %v, retrying...", err)
 				return false, nil
 			}
 			return false, err

@@ -1141,7 +1141,7 @@ func Test_loadBalancerServiceChanged(t *testing.T) {
 			mutate: func(svc *corev1.Service) {
 				svc.Annotations["service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags"] = "Key3=Value3,Key4=Value4"
 			},
-			expect: false,
+			expect: true,
 		},
 		{
 			description: "if the service.beta.kubernetes.io/aws-load-balancer-connection-idle-timeout annotation changes",

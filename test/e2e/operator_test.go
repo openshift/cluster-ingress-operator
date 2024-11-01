@@ -12,7 +12,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/aws/aws-sdk-go/service/ec2"
 	"io"
 	"io/ioutil"
 	"net"
@@ -32,6 +31,7 @@ import (
 	iov1 "github.com/openshift/api/operatoringress/v1"
 	routev1 "github.com/openshift/api/route/v1"
 
+	configclientset "github.com/openshift/client-go/config/clientset/versioned"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
@@ -39,6 +39,7 @@ import (
 	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 
 	"github.com/aws/aws-sdk-go/aws/endpoints"
+	"github.com/aws/aws-sdk-go/service/ec2"
 
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
@@ -116,6 +117,7 @@ var (
 
 var (
 	kclient           client.Client
+	configClient      *configclientset.Clientset
 	dnsConfig         configv1.DNS
 	infraConfig       configv1.Infrastructure
 	operatorNamespace = operatorcontroller.DefaultOperatorNamespace
@@ -152,6 +154,12 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	kclient = kubeClient
+
+	configClient, err = configclientset.NewForConfig(kubeConfig)
+	if err != nil {
+		fmt.Printf("failed to create config client: %s\n", err)
+		os.Exit(1)
+	}
 
 	if err := kclient.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, &dnsConfig); err != nil {
 		fmt.Printf("failed to get DNS config: %v\n", err)
@@ -1289,6 +1297,83 @@ func TestInternalLoadBalancerGlobalAccessGCP(t *testing.T) {
 	if err != nil {
 		t.Errorf("failed to observe expected annotations on load balancer service %s: %v", controller.LoadBalancerServiceName(ic), err)
 	}
+}
+
+// TestAWSResourceTagsChanged tests the functionality of updating AWS resource tags
+// in the infrastructure configuration and validates that the expected
+// awsLBAdditionalResourceTags is set correctly on the
+// loadBalancer service associated with the default Ingress Controller.
+//
+// This test is a serial test because it modifies the cluster infrastructure config and
+// therefore should not run in parallel with other tests.
+func TestAWSResourceTagsChanged(t *testing.T) {
+	if infraConfig.Status.Platform != "AWS" {
+		t.Skipf("test skipped on platform %q", infraConfig.Status.Platform)
+	}
+	if err := waitForIngressControllerCondition(t, kclient, 10*time.Second, defaultName, defaultAvailableConditions...); err != nil {
+		t.Errorf("did not get expected conditions: %v", err)
+	}
+	defaultIC := &operatorv1.IngressController{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: defaultName.Namespace,
+			Name:      defaultName.Name,
+		},
+	}
+	awsLBAdditionalResourceTags := "service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags"
+
+	// Save a copy of the original infraConfig, to revert changes before exiting.
+	originalInfra := infraConfig.DeepCopy()
+	t.Cleanup(func() {
+		err := updateInfrastructureConfigStatusWithRetryOnConflict(t, 5*time.Minute, configClient, func(infra *configv1.Infrastructure) *configv1.Infrastructure {
+			infra.Status = originalInfra.Status
+			return infra
+		})
+		if err != nil {
+			t.Logf("Unable to remove changes from the infraConfig, possible corruption of test environment: %v", err)
+		}
+	})
+
+	initialTags := []configv1.AWSResourceTag{
+		{Key: "Key1", Value: "Value1"},
+		{Key: "Key2", Value: "Value2"},
+	}
+	t.Logf("Updating AWS ResourceTags in the cluster infrastructure config: %v", initialTags)
+	err := updateInfrastructureConfigStatusWithRetryOnConflict(t, 5*time.Minute, configClient, func(infra *configv1.Infrastructure) *configv1.Infrastructure {
+		if infra.Status.PlatformStatus == nil {
+			infra.Status.PlatformStatus = &configv1.PlatformStatus{}
+		}
+		if infra.Status.PlatformStatus.AWS == nil {
+			infra.Status.PlatformStatus.AWS = &configv1.AWSPlatformStatus{}
+		}
+		infra.Status.PlatformStatus.AWS.ResourceTags = initialTags
+		return infra
+	})
+	if err != nil {
+		t.Errorf("failed to update infrastructure status: %v", err)
+	}
+
+	// Check awsLBAdditionalResourceTags annotation with initial tags.
+	expectedTags := "Key1=Value1,Key2=Value2"
+	t.Logf("Validating the %s annotation for the load balancer service of the default ingresscontroller", awsLBAdditionalResourceTags)
+	assertLoadBalancerServiceAnnotationWithPollImmediate(t, kclient, defaultIC, awsLBAdditionalResourceTags, expectedTags)
+
+	// Update the status again, removing one tag.
+	updatedTags := []configv1.AWSResourceTag{
+		{Key: "Key1", Value: "Value1"},
+	}
+	t.Logf("Updating AWS ResourceTags in the cluster infrastructure config: %v", updatedTags)
+	err = updateInfrastructureConfigStatusWithRetryOnConflict(t, 5*time.Minute, configClient, func(infra *configv1.Infrastructure) *configv1.Infrastructure {
+		infra.Status.PlatformStatus.AWS.ResourceTags = updatedTags
+		return infra
+	})
+	if err != nil {
+		t.Errorf("failed to update infrastructure status: %v", err)
+	}
+
+	// Check awsLBAdditionalResourceTags annotation with updated tags.
+	expectedTags = "Key1=Value1"
+	t.Logf("Validating the %s annotation for the load balancer service of the default ingresscontroller", awsLBAdditionalResourceTags)
+	assertLoadBalancerServiceAnnotationWithPollImmediate(t, kclient, defaultIC, awsLBAdditionalResourceTags, expectedTags)
 }
 
 func TestAWSLBTypeChange(t *testing.T) {
@@ -4320,6 +4405,29 @@ func assertServiceAnnotation(t *testing.T, serviceName types.NamespacedName, ann
 		t.Errorf("service %s is missing expected %s=%s annotation: %v", serviceName, annotationKey, expectedValue, service.Annotations)
 	case expected && expectedValue != actualValue:
 		t.Errorf("expected service %[1]s to have annotation %[2]s=%[3]s, found %[2]s=%[4]s", serviceName, annotationKey, expectedValue, actualValue)
+	}
+}
+
+// assertLoadBalancerServiceAnnotationWithPollImmediate checks if the specified annotation on the
+// LoadBalancer Service of the given IngressController matches the expected value.
+func assertLoadBalancerServiceAnnotationWithPollImmediate(t *testing.T, kclient client.Client, ic *operatorv1.IngressController, annotationKey, expectedValue string) {
+	err := wait.PollUntilContextTimeout(context.Background(), 5*time.Second, 5*time.Minute, true, func(ctx context.Context) (bool, error) {
+		service := &corev1.Service{}
+		if err := kclient.Get(ctx, controller.LoadBalancerServiceName(ic), service); err != nil {
+			t.Logf("failed to get service %s: %v, retrying...", controller.LoadBalancerServiceName(ic), err)
+			return false, nil
+		}
+		if actualValue, ok := service.Annotations[annotationKey]; !ok {
+			t.Logf("load balancer has no %q annotation yet: %v, retrying...", annotationKey, service.Annotations)
+			return false, nil
+		} else if actualValue != expectedValue {
+			t.Logf("expected %s, found %s", expectedValue, actualValue)
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("timed out waiting for the %s annotation to be updated: %v", annotationKey, err)
 	}
 }
 
