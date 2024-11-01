@@ -49,6 +49,8 @@ import (
 
 const (
 	controllerName = "ingress_controller"
+	// clusterInfrastructureName is the name of the 'cluster' infrastructure object.
+	clusterInfrastructureName = "cluster"
 )
 
 // TODO: consider moving these to openshift/api
@@ -134,6 +136,12 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	if err := c.Watch(source.Kind[client.Object](operatorCache, &configv1.Proxy{}, handler.EnqueueRequestsFromMapFunc(reconciler.ingressConfigToIngressController))); err != nil {
 		return nil, err
 	}
+	// Watch for changes to infrastructure config to update user defined tags.
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &configv1.Infrastructure{}, handler.EnqueueRequestsFromMapFunc(reconciler.ingressConfigToIngressController),
+		predicate.NewPredicateFuncs(hasName(clusterInfrastructureName)),
+	)); err != nil {
+		return nil, err
+	}
 	return c, nil
 }
 
@@ -185,6 +193,13 @@ func enqueueRequestForOwningIngressController(namespace string) handler.EventHan
 				return []reconcile.Request{}
 			}
 		})
+}
+
+// hasName returns a predicate which checks whether an object has the given name.
+func hasName(name string) func(o client.Object) bool {
+	return func(o client.Object) bool {
+		return o.GetName() == name
+	}
 }
 
 // Config holds all the things necessary for the controller to run.

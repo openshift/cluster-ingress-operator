@@ -3022,7 +3022,7 @@ func Test_computeIngressUpgradeableCondition(t *testing.T) {
 			expect: true,
 		},
 		{
-			description: "if the service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags annotation changes",
+			description: "if the service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags annotation changes not by ingress controller",
 			mutate: func(svc *corev1.Service) {
 				svc.Annotations[awsLBAdditionalResourceTags] = "Key2=Value2"
 			},
