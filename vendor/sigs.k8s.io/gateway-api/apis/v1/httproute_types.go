@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package v1beta1
+package v1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -23,7 +23,6 @@ import (
 // +genclient
 // +kubebuilder:object:root=true
 // +kubebuilder:resource:categories=gateway-api
-// +kubebuilder:storageversion
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Hostnames",type=string,JSONPath=`.spec.hostnames`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
@@ -56,9 +55,14 @@ type HTTPRouteList struct {
 type HTTPRouteSpec struct {
 	CommonRouteSpec `json:",inline"`
 
-	// Hostnames defines a set of hostname that should match against the HTTP
-	// Host header to select a HTTPRoute to process the request. This matches
-	// the RFC 1123 definition of a hostname with 2 notable exceptions:
+	// Hostnames defines a set of hostnames that should match against the HTTP Host
+	// header to select a HTTPRoute used to process the request. Implementations
+	// MUST ignore any port value specified in the HTTP Host header while
+	// performing a match and (absent of any applicable header modification
+	// configuration) MUST forward this header unmodified to the backend.
+	//
+	// Valid values for Hostnames are determined by RFC 1123 definition of a
+	// hostname with 2 notable exceptions:
 	//
 	// 1. IPs are not allowed.
 	// 2. A hostname may be prefixed with a wildcard label (`*.`). The wildcard
@@ -93,6 +97,16 @@ type HTTPRouteSpec struct {
 	// implementation must raise an 'Accepted' Condition with a status of
 	// `False` in the corresponding RouteParentStatus.
 	//
+	// In the event that multiple HTTPRoutes specify intersecting hostnames (e.g.
+	// overlapping wildcard matching and exact matching hostnames), precedence must
+	// be given to rules from the HTTPRoute with the largest number of:
+	//
+	// * Characters in a matching non-wildcard hostname.
+	// * Characters in a matching hostname.
+	//
+	// If ties exist across multiple Routes, the matching precedence rules for
+	// HTTPRouteMatches takes over.
+	//
 	// Support: Core
 	//
 	// +optional
@@ -110,6 +124,12 @@ type HTTPRouteSpec struct {
 // HTTPRouteRule defines semantics for matching an HTTP request based on
 // conditions (matches), processing it (filters), and forwarding the request to
 // an API object (backendRefs).
+//
+// +kubebuilder:validation:XValidation:message="RequestRedirect filter must not be used together with backendRefs",rule="(has(self.backendRefs) && size(self.backendRefs) > 0) ? (!has(self.filters) || self.filters.all(f, !has(f.requestRedirect))): true"
+// +kubebuilder:validation:XValidation:message="When using RequestRedirect filter with path.replacePrefixMatch, exactly one PathPrefix match must be specified",rule="(has(self.filters) && self.filters.exists_one(f, has(f.requestRedirect) && has(f.requestRedirect.path) && f.requestRedirect.path.type == 'ReplacePrefixMatch' && has(f.requestRedirect.path.replacePrefixMatch))) ? ((size(self.matches) != 1 || !has(self.matches[0].path) || self.matches[0].path.type != 'PathPrefix') ? false : true) : true"
+// +kubebuilder:validation:XValidation:message="When using URLRewrite filter with path.replacePrefixMatch, exactly one PathPrefix match must be specified",rule="(has(self.filters) && self.filters.exists_one(f, has(f.urlRewrite) && has(f.urlRewrite.path) && f.urlRewrite.path.type == 'ReplacePrefixMatch' && has(f.urlRewrite.path.replacePrefixMatch))) ? ((size(self.matches) != 1 || !has(self.matches[0].path) || self.matches[0].path.type != 'PathPrefix') ? false : true) : true"
+// +kubebuilder:validation:XValidation:message="Within backendRefs, when using RequestRedirect filter with path.replacePrefixMatch, exactly one PathPrefix match must be specified",rule="(has(self.backendRefs) && self.backendRefs.exists_one(b, (has(b.filters) && b.filters.exists_one(f, has(f.requestRedirect) && has(f.requestRedirect.path) && f.requestRedirect.path.type == 'ReplacePrefixMatch' && has(f.requestRedirect.path.replacePrefixMatch))) )) ? ((size(self.matches) != 1 || !has(self.matches[0].path) || self.matches[0].path.type != 'PathPrefix') ? false : true) : true"
+// +kubebuilder:validation:XValidation:message="Within backendRefs, When using URLRewrite filter with path.replacePrefixMatch, exactly one PathPrefix match must be specified",rule="(has(self.backendRefs) && self.backendRefs.exists_one(b, (has(b.filters) && b.filters.exists_one(f, has(f.urlRewrite) && has(f.urlRewrite.path) && f.urlRewrite.path.type == 'ReplacePrefixMatch' && has(f.urlRewrite.path.replacePrefixMatch))) )) ? ((size(self.matches) != 1 || !has(self.matches[0].path) || self.matches[0].path.type != 'PathPrefix') ? false : true) : true"
 type HTTPRouteRule struct {
 	// Matches define conditions used for matching the rule against incoming
 	// HTTP requests. Each match is independent, i.e. this rule will be matched
@@ -142,15 +162,17 @@ type HTTPRouteRule struct {
 	// HTTP request.
 	//
 	// Proxy or Load Balancer routing configuration generated from HTTPRoutes
-	// MUST prioritize rules based on the following criteria, continuing on
-	// ties. Precedence must be given to the Rule with the largest number
-	// of:
+	// MUST prioritize matches based on the following criteria, continuing on
+	// ties. Across all rules specified on applicable Routes, precedence must be
+	// given to the match having:
 	//
-	// * Characters in a matching non-wildcard hostname.
-	// * Characters in a matching hostname.
-	// * Characters in a matching path.
-	// * Header matches.
-	// * Query param matches.
+	// * "Exact" path match.
+	// * "Prefix" path match with largest number of characters.
+	// * Method match.
+	// * Largest number of header matches.
+	// * Largest number of query param matches.
+	//
+	// Note: The precedence of RegularExpression path matches are implementation-specific.
 	//
 	// If ties still exist across multiple Routes, matching precedence MUST be
 	// determined in order of the following criteria, continuing on ties:
@@ -159,9 +181,9 @@ type HTTPRouteRule struct {
 	// * The Route appearing first in alphabetical order by
 	//   "{namespace}/{name}".
 	//
-	// If ties still exist within the Route that has been given precedence,
-	// matching precedence MUST be granted to the FIRST matching rule (in list
-	// order) meeting the above criteria.
+	// If ties still exist within an HTTPRoute, matching precedence MUST be granted
+	// to the FIRST matching rule (in list order) with a match meeting the above
+	// criteria.
 	//
 	// When no rules matching a request have been successfully attached to the
 	// parent a request is coming from, a HTTP 404 status code MUST be returned.
@@ -184,19 +206,26 @@ type HTTPRouteRule struct {
 	// - Implementation-specific custom filters have no API guarantees across
 	//   implementations.
 	//
-	// Specifying a core filter multiple times has unspecified or custom
-	// conformance.
+	// Specifying the same filter multiple times is not supported unless explicitly
+	// indicated in the filter.
 	//
 	// All filters are expected to be compatible with each other except for the
 	// URLRewrite and RequestRedirect filters, which may not be combined. If an
 	// implementation can not support other combinations of filters, they must clearly
-	// document that limitation. In all cases where incompatible or unsupported
-	// filters are specified, implementations MUST add a warning condition to status.
+	// document that limitation. In cases where incompatible or unsupported
+	// filters are specified and cause the `Accepted` condition to be set to status
+	// `False`, implementations may use the `IncompatibleFilters` reason to specify
+	// this configuration error.
 	//
 	// Support: Core
 	//
 	// +optional
 	// +kubebuilder:validation:MaxItems=16
+	// +kubebuilder:validation:XValidation:message="May specify either httpRouteFilterRequestRedirect or httpRouteFilterRequestRewrite, but not both",rule="!(self.exists(f, f.type == 'RequestRedirect') && self.exists(f, f.type == 'URLRewrite'))"
+	// +kubebuilder:validation:XValidation:message="RequestHeaderModifier filter cannot be repeated",rule="self.filter(f, f.type == 'RequestHeaderModifier').size() <= 1"
+	// +kubebuilder:validation:XValidation:message="ResponseHeaderModifier filter cannot be repeated",rule="self.filter(f, f.type == 'ResponseHeaderModifier').size() <= 1"
+	// +kubebuilder:validation:XValidation:message="RequestRedirect filter cannot be repeated",rule="self.filter(f, f.type == 'RequestRedirect').size() <= 1"
+	// +kubebuilder:validation:XValidation:message="URLRewrite filter cannot be repeated",rule="self.filter(f, f.type == 'URLRewrite').size() <= 1"
 	Filters []HTTPRouteFilter `json:"filters,omitempty"`
 
 	// BackendRefs defines the backend(s) where matching requests should be
@@ -224,21 +253,74 @@ type HTTPRouteRule struct {
 	//
 	// Support: Core for Kubernetes Service
 	//
-	// Support: Custom for any other resource
+	// Support: Extended for Kubernetes ServiceImport
+	//
+	// Support: Implementation-specific for any other resource
 	//
 	// Support for weight: Core
 	//
 	// +optional
 	// +kubebuilder:validation:MaxItems=16
 	BackendRefs []HTTPBackendRef `json:"backendRefs,omitempty"`
+
+	// Timeouts defines the timeouts that can be configured for an HTTP request.
+	//
+	// Support: Extended
+	//
+	// +optional
+	// <gateway:experimental>
+	Timeouts *HTTPRouteTimeouts `json:"timeouts,omitempty"`
+}
+
+// HTTPRouteTimeouts defines timeouts that can be configured for an HTTPRoute.
+// Timeout values are represented with Gateway API Duration formatting.
+// Specifying a zero value such as "0s" is interpreted as no timeout.
+//
+// +kubebuilder:validation:XValidation:message="backendRequest timeout cannot be longer than request timeout",rule="!(has(self.request) && has(self.backendRequest) && duration(self.request) != duration('0s') && duration(self.backendRequest) > duration(self.request))"
+type HTTPRouteTimeouts struct {
+	// Request specifies the maximum duration for a gateway to respond to an HTTP request.
+	// If the gateway has not been able to respond before this deadline is met, the gateway
+	// MUST return a timeout error.
+	//
+	// For example, setting the `rules.timeouts.request` field to the value `10s` in an
+	// `HTTPRoute` will cause a timeout if a client request is taking longer than 10 seconds
+	// to complete.
+	//
+	// This timeout is intended to cover as close to the whole request-response transaction
+	// as possible although an implementation MAY choose to start the timeout after the entire
+	// request stream has been received instead of immediately after the transaction is
+	// initiated by the client.
+	//
+	// When this field is unspecified, request timeout behavior is implementation-specific.
+	//
+	// Support: Extended
+	//
+	// +optional
+	Request *Duration `json:"request,omitempty"`
+
+	// BackendRequest specifies a timeout for an individual request from the gateway
+	// to a backend. This covers the time from when the request first starts being
+	// sent from the gateway to when the full response has been received from the backend.
+	//
+	// An entire client HTTP transaction with a gateway, covered by the Request timeout,
+	// may result in more than one call from the gateway to the destination backend,
+	// for example, if automatic retries are supported.
+	//
+	// Because the Request timeout encompasses the BackendRequest timeout, the value of
+	// BackendRequest must be <= the value of Request timeout.
+	//
+	// Support: Extended
+	//
+	// +optional
+	BackendRequest *Duration `json:"backendRequest,omitempty"`
 }
 
 // PathMatchType specifies the semantics of how HTTP paths should be compared.
-// Valid PathMatchType values are:
+// Valid PathMatchType values, along with their support levels, are:
 //
-// * "Exact"
-// * "PathPrefix"
-// * "RegularExpression"
+// * "Exact" - Core
+// * "PathPrefix" - Core
+// * "RegularExpression" - Implementation Specific
 //
 // PathPrefix and Exact paths must be syntactically valid:
 //
@@ -249,14 +331,16 @@ type HTTPRouteRule struct {
 // must ensure that unknown values will not cause a crash.
 //
 // Unknown values here must result in the implementation setting the
-// Attached Condition for the Route to `status: False`, with a
+// Accepted Condition for the Route to `status: False`, with a
 // Reason of `UnsupportedValue`.
 //
 // +kubebuilder:validation:Enum=Exact;PathPrefix;RegularExpression
 type PathMatchType string
 
 const (
-	// Matches the URL path exactly and with case sensitivity.
+	// Matches the URL path exactly and with case sensitivity. This means that
+	// an exact path match on `/abc` will only match requests to `/abc`, NOT
+	// `/abc/`, `/Abc`, or `/abcd`.
 	PathMatchExact PathMatchType = "Exact"
 
 	// Matches based on a URL path prefix split by `/`. Matching is
@@ -274,20 +358,33 @@ const (
 	// Matches if the URL path matches the given regular expression with
 	// case sensitivity.
 	//
-	// Since `"RegularExpression"` has custom conformance, implementations
-	// can support POSIX, PCRE, RE2 or any other regular expression dialect.
+	// Since `"RegularExpression"` has implementation-specific conformance,
+	// implementations can support POSIX, PCRE, RE2 or any other regular expression
+	// dialect.
 	// Please read the implementation's documentation to determine the supported
 	// dialect.
 	PathMatchRegularExpression PathMatchType = "RegularExpression"
 )
 
 // HTTPPathMatch describes how to select a HTTP route by matching the HTTP request path.
+//
+// +kubebuilder:validation:XValidation:message="value must be an absolute path and start with '/' when type one of ['Exact', 'PathPrefix']",rule="(self.type in ['Exact','PathPrefix']) ? self.value.startsWith('/') : true"
+// +kubebuilder:validation:XValidation:message="must not contain '//' when type one of ['Exact', 'PathPrefix']",rule="(self.type in ['Exact','PathPrefix']) ? !self.value.contains('//') : true"
+// +kubebuilder:validation:XValidation:message="must not contain '/./' when type one of ['Exact', 'PathPrefix']",rule="(self.type in ['Exact','PathPrefix']) ? !self.value.contains('/./') : true"
+// +kubebuilder:validation:XValidation:message="must not contain '/../' when type one of ['Exact', 'PathPrefix']",rule="(self.type in ['Exact','PathPrefix']) ? !self.value.contains('/../') : true"
+// +kubebuilder:validation:XValidation:message="must not contain '%2f' when type one of ['Exact', 'PathPrefix']",rule="(self.type in ['Exact','PathPrefix']) ? !self.value.contains('%2f') : true"
+// +kubebuilder:validation:XValidation:message="must not contain '%2F' when type one of ['Exact', 'PathPrefix']",rule="(self.type in ['Exact','PathPrefix']) ? !self.value.contains('%2F') : true"
+// +kubebuilder:validation:XValidation:message="must not contain '#' when type one of ['Exact', 'PathPrefix']",rule="(self.type in ['Exact','PathPrefix']) ? !self.value.contains('#') : true"
+// +kubebuilder:validation:XValidation:message="must not end with '/..' when type one of ['Exact', 'PathPrefix']",rule="(self.type in ['Exact','PathPrefix']) ? !self.value.endsWith('/..') : true"
+// +kubebuilder:validation:XValidation:message="must not end with '/.' when type one of ['Exact', 'PathPrefix']",rule="(self.type in ['Exact','PathPrefix']) ? !self.value.endsWith('/.') : true"
+// +kubebuilder:validation:XValidation:message="type must be one of ['Exact', 'PathPrefix', 'RegularExpression']",rule="self.type in ['Exact','PathPrefix'] || self.type == 'RegularExpression'"
+// +kubebuilder:validation:XValidation:message="must only contain valid characters (matching ^(?:[-A-Za-z0-9/._~!$&'()*+,;=:@]|[%][0-9a-fA-F]{2})+$) for types ['Exact', 'PathPrefix']",rule="(self.type in ['Exact','PathPrefix']) ? self.value.matches(r\"\"\"^(?:[-A-Za-z0-9/._~!$&'()*+,;=:@]|[%][0-9a-fA-F]{2})+$\"\"\") : true"
 type HTTPPathMatch struct {
 	// Type specifies how to match against the path Value.
 	//
 	// Support: Core (Exact, PathPrefix)
 	//
-	// Support: Custom (RegularExpression)
+	// Support: Implementation-specific (RegularExpression)
 	//
 	// +optional
 	// +kubebuilder:default=PathPrefix
@@ -302,16 +399,16 @@ type HTTPPathMatch struct {
 }
 
 // HeaderMatchType specifies the semantics of how HTTP header values should be
-// compared. Valid HeaderMatchType values are:
+// compared. Valid HeaderMatchType values, along with their conformance levels, are:
 //
-// * "Exact"
-// * "RegularExpression"
+// * "Exact" - Core
+// * "RegularExpression" - Implementation Specific
 //
 // Note that values may be added to this enum, implementations
 // must ensure that unknown values will not cause a crash.
 //
 // Unknown values here must result in the implementation setting the
-// Attached Condition for the Route to `status: False`, with a
+// Accepted Condition for the Route to `status: False`, with a
 // Reason of `UnsupportedValue`.
 //
 // +kubebuilder:validation:Enum=Exact;RegularExpression
@@ -332,14 +429,10 @@ const (
 //
 // Invalid values include:
 //
-// * ":method" - ":" is an invalid character. This means that HTTP/2 pseudo
-//   headers are not currently supported by this type.
-// * "/invalid" - "/" is an invalid character
-//
-// +kubebuilder:validation:MinLength=1
-// +kubebuilder:validation:MaxLength=256
-// +kubebuilder:validation:Pattern=`^[A-Za-z0-9!#$%&'*+\-.^_\x60|~]+$`
-type HTTPHeaderName string
+//   - ":method" - ":" is an invalid character. This means that HTTP/2 pseudo
+//     headers are not currently supported by this type.
+//   - "/invalid" - "/ " is an invalid character
+type HTTPHeaderName HeaderName
 
 // HTTPHeaderMatch describes how to select a HTTP route by matching HTTP request
 // headers.
@@ -348,12 +441,12 @@ type HTTPHeaderMatch struct {
 	//
 	// Support: Core (Exact)
 	//
-	// Support: Custom (RegularExpression)
+	// Support: Implementation-specific (RegularExpression)
 	//
-	// Since RegularExpression HeaderMatchType has custom conformance,
-	// implementations can support POSIX, PCRE or any other dialects of regular
-	// expressions. Please read the implementation's documentation to determine
-	// the supported dialect.
+	// Since RegularExpression HeaderMatchType has implementation-specific
+	// conformance, implementations can support POSIX, PCRE or any other dialects
+	// of regular expressions. Please read the implementation's documentation to
+	// determine the supported dialect.
 	//
 	// +optional
 	// +kubebuilder:default=Exact
@@ -383,16 +476,17 @@ type HTTPHeaderMatch struct {
 }
 
 // QueryParamMatchType specifies the semantics of how HTTP query parameter
-// values should be compared. Valid QueryParamMatchType values are:
+// values should be compared. Valid QueryParamMatchType values, along with their
+// conformance levels, are:
 //
-// * "Exact"
-// * "RegularExpression"
+// * "Exact" - Core
+// * "RegularExpression" - Implementation Specific
 //
 // Note that values may be added to this enum, implementations
 // must ensure that unknown values will not cause a crash.
 //
 // Unknown values here must result in the implementation setting the
-// Attached Condition for the Route to `status: False`, with a
+// Accepted Condition for the Route to `status: False`, with a
 // Reason of `UnsupportedValue`.
 //
 // +kubebuilder:validation:Enum=Exact;RegularExpression
@@ -411,12 +505,12 @@ type HTTPQueryParamMatch struct {
 	//
 	// Support: Extended (Exact)
 	//
-	// Support: Custom (RegularExpression)
+	// Support: Implementation-specific (RegularExpression)
 	//
-	// Since RegularExpression QueryParamMatchType has custom conformance,
-	// implementations can support POSIX, PCRE or any other dialects of regular
-	// expressions. Please read the implementation's documentation to determine
-	// the supported dialect.
+	// Since RegularExpression QueryParamMatchType has Implementation-specific
+	// conformance, implementations can support POSIX, PCRE or any other
+	// dialects of regular expressions. Please read the implementation's
+	// documentation to determine the supported dialect.
 	//
 	// +optional
 	// +kubebuilder:default=Exact
@@ -430,18 +524,16 @@ type HTTPQueryParamMatch struct {
 	// entry with an equivalent name MUST be considered for a match. Subsequent
 	// entries with an equivalent query param name MUST be ignored.
 	//
-	// If a query param is repeated in an HTTP request, the behavior
-	// is purposely left undefined, since different data planes have different
-	// capabilities. However, it's *recommended* that implementations should
+	// If a query param is repeated in an HTTP request, the behavior is
+	// purposely left undefined, since different data planes have different
+	// capabilities. However, it is *recommended* that implementations should
 	// match against the first value of the param if the data plane supports it,
 	// as this behavior is expected in other load balancing contexts outside of
 	// the Gateway API.
-	// Users should not route traffic based on repeated query params to guard
-	// themselves against potential differences in the implementations.
 	//
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=256
-	Name string `json:"name"`
+	// Users SHOULD NOT route traffic based on repeated query params to guard
+	// themselves against potential differences in the implementations.
+	Name HTTPHeaderName `json:"name"`
 
 	// Value is the value of HTTP query param to be matched.
 	//
@@ -460,7 +552,7 @@ type HTTPQueryParamMatch struct {
 // must ensure that unknown values will not cause a crash.
 //
 // Unknown values here must result in the implementation setting the
-// Attached Condition for the Route to `status: False`, with a
+// Accepted Condition for the Route to `status: False`, with a
 // Reason of `UnsupportedValue`.
 //
 // +kubebuilder:validation:Enum=GET;HEAD;POST;PUT;DELETE;CONNECT;OPTIONS;TRACE;PATCH
@@ -487,11 +579,13 @@ const (
 //
 // ```
 // match:
-//   path:
-//     value: "/foo"
-//   headers:
-//   - name: "version"
-//     value "v1"
+//
+//	path:
+//	  value: "/foo"
+//	headers:
+//	- name: "version"
+//	  value "v1"
+//
 // ```
 type HTTPRouteMatch struct {
 	// Path specifies a HTTP request path matcher. If this field is not
@@ -515,6 +609,8 @@ type HTTPRouteMatch struct {
 	// values are ANDed together, meaning, a request must match all the
 	// specified query parameters to select the route.
 	//
+	// Support: Extended
+	//
 	// +listType=map
 	// +listMapKey=name
 	// +optional
@@ -537,6 +633,19 @@ type HTTPRouteMatch struct {
 // examples include request or response modification, implementing
 // authentication strategies, rate-limiting, and traffic shaping. API
 // guarantee/conformance is defined based on the type of the filter.
+//
+// +kubebuilder:validation:XValidation:message="filter.requestHeaderModifier must be nil if the filter.type is not RequestHeaderModifier",rule="!(has(self.requestHeaderModifier) && self.type != 'RequestHeaderModifier')"
+// +kubebuilder:validation:XValidation:message="filter.requestHeaderModifier must be specified for RequestHeaderModifier filter.type",rule="!(!has(self.requestHeaderModifier) && self.type == 'RequestHeaderModifier')"
+// +kubebuilder:validation:XValidation:message="filter.responseHeaderModifier must be nil if the filter.type is not ResponseHeaderModifier",rule="!(has(self.responseHeaderModifier) && self.type != 'ResponseHeaderModifier')"
+// +kubebuilder:validation:XValidation:message="filter.responseHeaderModifier must be specified for ResponseHeaderModifier filter.type",rule="!(!has(self.responseHeaderModifier) && self.type == 'ResponseHeaderModifier')"
+// +kubebuilder:validation:XValidation:message="filter.requestMirror must be nil if the filter.type is not RequestMirror",rule="!(has(self.requestMirror) && self.type != 'RequestMirror')"
+// +kubebuilder:validation:XValidation:message="filter.requestMirror must be specified for RequestMirror filter.type",rule="!(!has(self.requestMirror) && self.type == 'RequestMirror')"
+// +kubebuilder:validation:XValidation:message="filter.requestRedirect must be nil if the filter.type is not RequestRedirect",rule="!(has(self.requestRedirect) && self.type != 'RequestRedirect')"
+// +kubebuilder:validation:XValidation:message="filter.requestRedirect must be specified for RequestRedirect filter.type",rule="!(!has(self.requestRedirect) && self.type == 'RequestRedirect')"
+// +kubebuilder:validation:XValidation:message="filter.urlRewrite must be nil if the filter.type is not URLRewrite",rule="!(has(self.urlRewrite) && self.type != 'URLRewrite')"
+// +kubebuilder:validation:XValidation:message="filter.urlRewrite must be specified for URLRewrite filter.type",rule="!(!has(self.urlRewrite) && self.type == 'URLRewrite')"
+// +kubebuilder:validation:XValidation:message="filter.extensionRef must be nil if the filter.type is not ExtensionRef",rule="!(has(self.extensionRef) && self.type != 'ExtensionRef')"
+// +kubebuilder:validation:XValidation:message="filter.extensionRef must be specified for ExtensionRef filter.type",rule="!(!has(self.extensionRef) && self.type == 'ExtensionRef')"
 type HTTPRouteFilter struct {
 	// Type identifies the type of filter to apply. As with other API fields,
 	// types are classified into three conformance levels:
@@ -549,7 +658,8 @@ type HTTPRouteFilter struct {
 	//   "Support: Extended" in this package, e.g. "RequestMirror". Implementers
 	//   are encouraged to support extended filters.
 	//
-	// - Custom: Filters that are defined and supported by specific vendors.
+	// - Implementation-specific: Filters that are defined and supported by
+	//   specific vendors.
 	//   In the future, filters showing convergence in behavior across multiple
 	//   implementations will be considered for inclusion in extended or core
 	//   conformance levels. Filter-specific configuration for such filters
@@ -567,12 +677,11 @@ type HTTPRouteFilter struct {
 	// must ensure that unknown values will not cause a crash.
 	//
 	// Unknown values here must result in the implementation setting the
-	// Attached Condition for the Route to `status: False`, with a
+	// Accepted Condition for the Route to `status: False`, with a
 	// Reason of `UnsupportedValue`.
 	//
 	// +unionDiscriminator
-	// +kubebuilder:validation:Enum=RequestHeaderModifier;RequestMirror;RequestRedirect;ExtensionRef
-	// <gateway:experimental:validation:Enum=RequestHeaderModifier;RequestMirror;RequestRedirect;URLRewrite;ExtensionRef>
+	// +kubebuilder:validation:Enum=RequestHeaderModifier;ResponseHeaderModifier;RequestMirror;RequestRedirect;URLRewrite;ExtensionRef
 	Type HTTPRouteFilterType `json:"type"`
 
 	// RequestHeaderModifier defines a schema for a filter that modifies request
@@ -581,11 +690,23 @@ type HTTPRouteFilter struct {
 	// Support: Core
 	//
 	// +optional
-	RequestHeaderModifier *HTTPRequestHeaderFilter `json:"requestHeaderModifier,omitempty"`
+	RequestHeaderModifier *HTTPHeaderFilter `json:"requestHeaderModifier,omitempty"`
+
+	// ResponseHeaderModifier defines a schema for a filter that modifies response
+	// headers.
+	//
+	// Support: Extended
+	//
+	// +optional
+	ResponseHeaderModifier *HTTPHeaderFilter `json:"responseHeaderModifier,omitempty"`
 
 	// RequestMirror defines a schema for a filter that mirrors requests.
 	// Requests are sent to the specified destination, but responses from
 	// that destination are ignored.
+	//
+	// This filter can be used multiple times within the same rule. Note that
+	// not all implementations will be able to support mirroring to multiple
+	// backends.
 	//
 	// Support: Extended
 	//
@@ -604,7 +725,6 @@ type HTTPRouteFilter struct {
 	//
 	// Support: Extended
 	//
-	// <gateway:experimental>
 	// +optional
 	URLRewrite *HTTPURLRewriteFilter `json:"urlRewrite,omitempty"`
 
@@ -612,6 +732,8 @@ type HTTPRouteFilter struct {
 	// "filter" behavior.  For example, resource "myroutefilter" in group
 	// "networking.example.net"). ExtensionRef MUST NOT be used for core and
 	// extended filters.
+	//
+	// This filter can be used multiple times within the same rule.
 	//
 	// Support: Implementation-specific
 	//
@@ -631,6 +753,14 @@ const (
 	// Support in HTTPBackendRef: Extended
 	HTTPRouteFilterRequestHeaderModifier HTTPRouteFilterType = "RequestHeaderModifier"
 
+	// HTTPRouteFilterResponseHeaderModifier can be used to add or remove an HTTP
+	// header from an HTTP response before it is sent to the client.
+	//
+	// Support in HTTPRouteRule: Extended
+	//
+	// Support in HTTPBackendRef: Extended
+	HTTPRouteFilterResponseHeaderModifier HTTPRouteFilterType = "ResponseHeaderModifier"
+
 	// HTTPRouteFilterRequestRedirect can be used to redirect a request to
 	// another location. This filter can also be used for HTTP to HTTPS
 	// redirects. This may not be used on the same Route rule or BackendRef as a
@@ -649,8 +779,6 @@ const (
 	// Support in HTTPRouteRule: Extended
 	//
 	// Support in HTTPBackendRef: Extended
-	//
-	// <gateway:experimental>
 	HTTPRouteFilterURLRewrite HTTPRouteFilterType = "URLRewrite"
 
 	// HTTPRouteFilterRequestMirror can be used to mirror HTTP requests to a
@@ -665,9 +793,9 @@ const (
 	// HTTPRouteFilterExtensionRef should be used for configuring custom
 	// HTTP filters.
 	//
-	// Support in HTTPRouteRule: Custom
+	// Support in HTTPRouteRule: Implementation-specific
 	//
-	// Support in HTTPBackendRef: Custom
+	// Support in HTTPBackendRef: Implementation-specific
 	HTTPRouteFilterExtensionRef HTTPRouteFilterType = "ExtensionRef"
 )
 
@@ -690,9 +818,13 @@ type HTTPHeader struct {
 	Value string `json:"value"`
 }
 
-// HTTPRequestHeaderFilter defines configuration for the RequestHeaderModifier
-// filter.
-type HTTPRequestHeaderFilter struct {
+// HTTPHeaderFilter defines a filter that modifies the headers of an HTTP
+// request or response. Only one action for a given header name is permitted.
+// Filters specifying multiple actions of the same or different type for any one
+// header name are invalid and will be rejected by the webhook if installed.
+// Configuration to set or add multiple values for a header must use RFC 7230
+// header value formatting, separating each value with a comma.
+type HTTPHeaderFilter struct {
 	// Set overwrites the request with the given header (name, value)
 	// before the action.
 	//
@@ -726,12 +858,11 @@ type HTTPRequestHeaderFilter struct {
 	// Config:
 	//   add:
 	//   - name: "my-header"
-	//     value: "bar"
+	//     value: "bar,baz"
 	//
 	// Output:
 	//   GET /foo HTTP/1.1
-	//   my-header: foo
-	//   my-header: bar
+	//   my-header: foo,bar,baz
 	//
 	// +optional
 	// +listType=map
@@ -758,6 +889,7 @@ type HTTPRequestHeaderFilter struct {
 	//   my-header2: bar
 	//
 	// +optional
+	// +listType=set
 	// +kubebuilder:validation:MaxItems=16
 	Remove []string `json:"remove,omitempty"`
 }
@@ -784,7 +916,11 @@ const (
 )
 
 // HTTPPathModifier defines configuration for path modifiers.
-// <gateway:experimental>
+//
+// +kubebuilder:validation:XValidation:message="replaceFullPath must be specified when type is set to 'ReplaceFullPath'",rule="self.type == 'ReplaceFullPath' ? has(self.replaceFullPath) : true"
+// +kubebuilder:validation:XValidation:message="type must be 'ReplaceFullPath' when replaceFullPath is set",rule="has(self.replaceFullPath) ? self.type == 'ReplaceFullPath' : true"
+// +kubebuilder:validation:XValidation:message="replacePrefixMatch must be specified when type is set to 'ReplacePrefixMatch'",rule="self.type == 'ReplacePrefixMatch' ? has(self.replacePrefixMatch) : true"
+// +kubebuilder:validation:XValidation:message="type must be 'ReplacePrefixMatch' when replacePrefixMatch is set",rule="has(self.replacePrefixMatch) ? self.type == 'ReplacePrefixMatch' : true"
 type HTTPPathModifier struct {
 	// Type defines the type of path modifier. Additional types may be
 	// added in a future release of the API.
@@ -793,24 +929,23 @@ type HTTPPathModifier struct {
 	// must ensure that unknown values will not cause a crash.
 	//
 	// Unknown values here must result in the implementation setting the
-	// Attached Condition for the Route to `status: False`, with a
+	// Accepted Condition for the Route to `status: False`, with a
 	// Reason of `UnsupportedValue`.
 	//
-	// <gateway:experimental>
 	// +kubebuilder:validation:Enum=ReplaceFullPath;ReplacePrefixMatch
 	Type HTTPPathModifierType `json:"type"`
 
 	// ReplaceFullPath specifies the value with which to replace the full path
 	// of a request during a rewrite or redirect.
 	//
-	// <gateway:experimental>
 	// +kubebuilder:validation:MaxLength=1024
 	// +optional
 	ReplaceFullPath *string `json:"replaceFullPath,omitempty"`
 
 	// ReplacePrefixMatch specifies the value with which to replace the prefix
 	// match of a request during a rewrite or redirect. For example, a request
-	// to "/foo/bar" with a prefix match of "/foo" would be modified to "/bar".
+	// to "/foo/bar" with a prefix match of "/foo" and a ReplacePrefixMatch
+	// of "/xyz" would be modified to "/xyz/bar".
 	//
 	// Note that this matches the behavior of the PathPrefix match type. This
 	// matches full path elements. A path element refers to the list of labels
@@ -818,7 +953,24 @@ type HTTPPathModifier struct {
 	// ignored. For example, the paths `/abc`, `/abc/`, and `/abc/def` would all
 	// match the prefix `/abc`, but the path `/abcd` would not.
 	//
-	// <gateway:experimental>
+	// ReplacePrefixMatch is only compatible with a `PathPrefix` HTTPRouteMatch.
+	// Using any other HTTPRouteMatch type on the same HTTPRouteRule will result in
+	// the implementation setting the Accepted Condition for the Route to `status: False`.
+	//
+	// Request Path | Prefix Match | Replace Prefix | Modified Path
+	// -------------|--------------|----------------|----------
+	// /foo/bar     | /foo         | /xyz           | /xyz/bar
+	// /foo/bar     | /foo         | /xyz/          | /xyz/bar
+	// /foo/bar     | /foo/        | /xyz           | /xyz/bar
+	// /foo/bar     | /foo/        | /xyz/          | /xyz/bar
+	// /foo         | /foo         | /xyz           | /xyz
+	// /foo/        | /foo         | /xyz           | /xyz/
+	// /foo/bar     | /foo         | <empty string> | /bar
+	// /foo/        | /foo         | <empty string> | /
+	// /foo         | /foo         | <empty string> | /
+	// /foo/        | /foo         | /              | /
+	// /foo         | /foo         | /              | /
+	//
 	// +kubebuilder:validation:MaxLength=1024
 	// +optional
 	ReplacePrefixMatch *string `json:"replacePrefixMatch,omitempty"`
@@ -827,18 +979,20 @@ type HTTPPathModifier struct {
 // HTTPRequestRedirect defines a filter that redirects a request. This filter
 // MUST NOT be used on the same Route rule as a HTTPURLRewrite filter.
 type HTTPRequestRedirectFilter struct {
-	// Scheme is the scheme to be used in the value of the `Location`
-	// header in the response.
-	// When empty, the scheme of the request is used.
+	// Scheme is the scheme to be used in the value of the `Location` header in
+	// the response. When empty, the scheme of the request is used.
 	//
-	// Support: Extended
+	// Scheme redirects can affect the port of the redirect, for more information,
+	// refer to the documentation for the port field of this filter.
 	//
 	// Note that values may be added to this enum, implementations
 	// must ensure that unknown values will not cause a crash.
 	//
 	// Unknown values here must result in the implementation setting the
-	// Attached Condition for the Route to `status: False`, with a
+	// Accepted Condition for the Route to `status: False`, with a
 	// Reason of `UnsupportedValue`.
+	//
+	// Support: Extended
 	//
 	// +optional
 	// +kubebuilder:validation:Enum=http;https
@@ -846,7 +1000,7 @@ type HTTPRequestRedirectFilter struct {
 
 	// Hostname is the hostname to be used in the value of the `Location`
 	// header in the response.
-	// When empty, the hostname of the request is used.
+	// When empty, the hostname in the `Host` header of the request is used.
 	//
 	// Support: Core
 	//
@@ -859,13 +1013,29 @@ type HTTPRequestRedirectFilter struct {
 	//
 	// Support: Extended
 	//
-	// <gateway:experimental>
 	// +optional
 	Path *HTTPPathModifier `json:"path,omitempty"`
 
 	// Port is the port to be used in the value of the `Location`
 	// header in the response.
-	// When empty, port (if specified) of the request is used.
+	//
+	// If no port is specified, the redirect port MUST be derived using the
+	// following rules:
+	//
+	// * If redirect scheme is not-empty, the redirect port MUST be the well-known
+	//   port associated with the redirect scheme. Specifically "http" to port 80
+	//   and "https" to port 443. If the redirect scheme does not have a
+	//   well-known port, the listener port of the Gateway SHOULD be used.
+	// * If redirect scheme is empty, the redirect port MUST be the Gateway
+	//   Listener port.
+	//
+	// Implementations SHOULD NOT add the port number in the 'Location'
+	// header in the following cases:
+	//
+	// * A Location header that will use HTTP (whether that is determined via
+	//   the Listener protocol or the Scheme field) _and_ use port 80.
+	// * A Location header that will use HTTPS (whether that is determined via
+	//   the Listener protocol or the Scheme field) _and_ use port 443.
 	//
 	// Support: Extended
 	//
@@ -874,14 +1044,14 @@ type HTTPRequestRedirectFilter struct {
 
 	// StatusCode is the HTTP status code to be used in response.
 	//
-	// Support: Core
-	//
 	// Note that values may be added to this enum, implementations
 	// must ensure that unknown values will not cause a crash.
 	//
 	// Unknown values here must result in the implementation setting the
-	// Attached Condition for the Route to `status: False`, with a
+	// Accepted Condition for the Route to `status: False`, with a
 	// Reason of `UnsupportedValue`.
+	//
+	// Support: Core
 	//
 	// +optional
 	// +kubebuilder:default=302
@@ -894,15 +1064,12 @@ type HTTPRequestRedirectFilter struct {
 // MUST NOT be used on the same Route rule as a HTTPRequestRedirect filter.
 //
 // Support: Extended
-//
-// <gateway:experimental>
 type HTTPURLRewriteFilter struct {
 	// Hostname is the value to be used to replace the Host header value during
 	// forwarding.
 	//
 	// Support: Extended
 	//
-	// <gateway:experimental>
 	// +optional
 	Hostname *PreciseHostname `json:"hostname,omitempty"`
 
@@ -910,7 +1077,6 @@ type HTTPURLRewriteFilter struct {
 	//
 	// Support: Extended
 	//
-	// <gateway:experimental>
 	// +optional
 	Path *HTTPPathModifier `json:"path,omitempty"`
 }
@@ -918,6 +1084,10 @@ type HTTPURLRewriteFilter struct {
 // HTTPRequestMirrorFilter defines configuration for the RequestMirror filter.
 type HTTPRequestMirrorFilter struct {
 	// BackendRef references a resource where mirrored requests are sent.
+	//
+	// Mirrored requests must be sent only to a single destination endpoint
+	// within this BackendRef, irrespective of how many endpoints are present
+	// within this BackendRef.
 	//
 	// If the referent cannot be found, this BackendRef is invalid and must be
 	// dropped from the Gateway. The controller must ensure the "ResolvedRefs"
@@ -935,11 +1105,34 @@ type HTTPRequestMirrorFilter struct {
 	//
 	// Support: Extended for Kubernetes Service
 	//
-	// Support: Custom for any other resource
+	// Support: Implementation-specific for any other resource
 	BackendRef BackendObjectReference `json:"backendRef"`
 }
 
-// HTTPBackendRef defines how a HTTPRoute should forward an HTTP request.
+// HTTPBackendRef defines how a HTTPRoute forwards a HTTP request.
+//
+// Note that when a namespace different than the local namespace is specified, a
+// ReferenceGrant object is required in the referent namespace to allow that
+// namespace's owner to accept the reference. See the ReferenceGrant
+// documentation for details.
+//
+// <gateway:experimental:description>
+//
+// When the BackendRef points to a Kubernetes Service, implementations SHOULD
+// honor the appProtocol field if it is set for the target Service Port.
+//
+// Implementations supporting appProtocol SHOULD recognize the Kubernetes
+// Standard Application Protocols defined in KEP-3726.
+//
+// If a Service appProtocol isn't specified, an implementation MAY infer the
+// backend protocol through its own means. Implementations MAY infer the
+// protocol from the Route type referring to the backend Service.
+//
+// If a Route is not able to send traffic to the backend using the specified
+// protocol then the backend is considered invalid. Implementations MUST set the
+// "ResolvedRefs" condition to "False" with the "UnsupportedProtocol" reason.
+//
+// </gateway:experimental:description>
 type HTTPBackendRef struct {
 	// BackendRef is a reference to a backend to forward matched requests to.
 	//
@@ -963,11 +1156,24 @@ type HTTPBackendRef struct {
 	//   case, the Reason must be set to `RefNotPermitted` and the Message of the
 	//   Condition must explain which cross-namespace reference is not allowed.
 	//
+	// * It refers to a Kubernetes Service that has an incompatible appProtocol
+	//   for the given Route type
+	//
+	// * The BackendTLSPolicy object is installed in the cluster, a BackendTLSPolicy
+	//   is present that refers to the Service, and the implementation is unable
+	//   to meet the requirement. At the time of writing, BackendTLSPolicy is
+	//   experimental, but once it becomes standard, this will become a MUST
+	//   requirement.
+	//
 	// Support: Core for Kubernetes Service
 	//
-	// Support: Custom for any other resource
+	// Support: Implementation-specific for any other resource
 	//
 	// Support for weight: Core
+	//
+	// Support for Kubernetes Service appProtocol: Extended
+	//
+	// Support for BackendTLSPolicy: Experimental and ImplementationSpecific
 	//
 	// +optional
 	BackendRef `json:",inline"`
@@ -975,11 +1181,17 @@ type HTTPBackendRef struct {
 	// Filters defined at this level should be executed if and only if the
 	// request is being forwarded to the backend defined here.
 	//
-	// Support: Custom (For broader support of filters, use the Filters field
-	// in HTTPRouteRule.)
+	// Support: Implementation-specific (For broader support of filters, use the
+	// Filters field in HTTPRouteRule.)
 	//
 	// +optional
 	// +kubebuilder:validation:MaxItems=16
+	// +kubebuilder:validation:XValidation:message="May specify either httpRouteFilterRequestRedirect or httpRouteFilterRequestRewrite, but not both",rule="!(self.exists(f, f.type == 'RequestRedirect') && self.exists(f, f.type == 'URLRewrite'))"
+	// +kubebuilder:validation:XValidation:message="May specify either httpRouteFilterRequestRedirect or httpRouteFilterRequestRewrite, but not both",rule="!(self.exists(f, f.type == 'RequestRedirect') && self.exists(f, f.type == 'URLRewrite'))"
+	// +kubebuilder:validation:XValidation:message="RequestHeaderModifier filter cannot be repeated",rule="self.filter(f, f.type == 'RequestHeaderModifier').size() <= 1"
+	// +kubebuilder:validation:XValidation:message="ResponseHeaderModifier filter cannot be repeated",rule="self.filter(f, f.type == 'ResponseHeaderModifier').size() <= 1"
+	// +kubebuilder:validation:XValidation:message="RequestRedirect filter cannot be repeated",rule="self.filter(f, f.type == 'RequestRedirect').size() <= 1"
+	// +kubebuilder:validation:XValidation:message="URLRewrite filter cannot be repeated",rule="self.filter(f, f.type == 'URLRewrite').size() <= 1"
 	Filters []HTTPRouteFilter `json:"filters,omitempty"`
 }
 

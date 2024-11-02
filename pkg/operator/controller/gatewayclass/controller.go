@@ -7,7 +7,7 @@ import (
 
 	"k8s.io/client-go/tools/record"
 
-	gatewayapiv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
+	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 
@@ -52,13 +52,13 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 		return nil, err
 	}
 	isOurGatewayClass := predicate.NewPredicateFuncs(func(o client.Object) bool {
-		class := o.(*gatewayapiv1beta1.GatewayClass)
+		class := o.(*gatewayapiv1.GatewayClass)
 		return class.Spec.ControllerName == OpenShiftGatewayClassControllerName
 	})
-	isIstioGatewayClass := predicate.NewPredicateFuncs(func(o client.Object) bool {
-		return o.GetName() == "istio"
+	notIstioGatewayClass := predicate.NewPredicateFuncs(func(o client.Object) bool {
+		return o.GetName() != "istio"
 	})
-	if err := c.Watch(source.Kind[client.Object](operatorCache, &gatewayapiv1beta1.GatewayClass{}, &handler.EnqueueRequestForObject{}, isOurGatewayClass, predicate.Not(isIstioGatewayClass))); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &gatewayapiv1.GatewayClass{}, &handler.EnqueueRequestForObject{}, isOurGatewayClass, notIstioGatewayClass)); err != nil {
 		return nil, err
 	}
 	return c, nil
@@ -88,7 +88,7 @@ type reconciler struct {
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	log.Info("reconciling", "request", request)
 
-	var gatewayclass gatewayapiv1beta1.GatewayClass
+	var gatewayclass gatewayapiv1.GatewayClass
 	if err := r.cache.Get(ctx, request.NamespacedName, &gatewayclass); err != nil {
 		return reconcile.Result{}, err
 	}

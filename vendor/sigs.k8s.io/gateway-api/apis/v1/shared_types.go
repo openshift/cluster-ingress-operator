@@ -14,21 +14,29 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package v1beta1
+package v1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // ParentReference identifies an API object (usually a Gateway) that can be considered
-// a parent of this resource (usually a route). The only kind of parent resource
-// with "Core" support is Gateway. This API may be extended in the future to
-// support additional kinds of parent resources, such as HTTPRoute.
+// a parent of this resource (usually a route). There are two kinds of parent resources
+// with "Core" support:
+//
+// * Gateway (Gateway conformance profile)
+// * Service (Mesh conformance profile, experimental, ClusterIP Services only)
+//
+// This API may be extended in the future to support additional kinds of parent
+// resources.
 //
 // The API object must be valid in the cluster; the Group and Kind must
 // be registered in the cluster for this reference to be valid.
 type ParentReference struct {
 	// Group is the group of the referent.
+	// When unspecified, "gateway.networking.k8s.io" is inferred.
+	// To set the core API group (such as for a "Service" kind referent),
+	// Group must be explicitly set to "" (empty string).
 	//
 	// Support: Core
 	//
@@ -38,9 +46,12 @@ type ParentReference struct {
 
 	// Kind is kind of the referent.
 	//
-	// Support: Core (Gateway)
+	// There are two kinds of parent resources with "Core" support:
 	//
-	// Support: Custom (Other Resources)
+	// * Gateway (Gateway conformance profile)
+	// * Service (Mesh conformance profile, experimental, ClusterIP Services only)
+	//
+	// Support for other resources is Implementation-Specific.
 	//
 	// +kubebuilder:default=Gateway
 	// +optional
@@ -48,6 +59,24 @@ type ParentReference struct {
 
 	// Namespace is the namespace of the referent. When unspecified, this refers
 	// to the local namespace of the Route.
+	//
+	// Note that there are specific rules for ParentRefs which cross namespace
+	// boundaries. Cross-namespace references are only valid if they are explicitly
+	// allowed by something in the namespace they are referring to. For example:
+	// Gateway has the AllowedRoutes field, and ReferenceGrant provides a
+	// generic way to enable any other kind of cross-namespace reference.
+	//
+	// <gateway:experimental:description>
+	// ParentRefs from a Route to a Service in the same namespace are "producer"
+	// routes, which apply default routing rules to inbound connections from
+	// any namespace to the Service.
+	//
+	// ParentRefs from a Route to a Service in a different namespace are
+	// "consumer" routes, and these routing rules are only applied to outbound
+	// connections originating from the same namespace as the Route, for which
+	// the intended destination of the connections are a Service targeted as a
+	// ParentRef of the Route.
+	// </gateway:experimental:description>
 	//
 	// Support: Core
 	//
@@ -65,6 +94,11 @@ type ParentReference struct {
 	// * Gateway: Listener Name. When both Port (experimental) and SectionName
 	// are specified, the name and port of the selected listener must match
 	// both specified values.
+	// * Service: Port Name. When both Port (experimental) and SectionName
+	// are specified, the name and port of the selected listener must match
+	// both specified values. Note that attaching Routes to Services as Parents
+	// is part of experimental Mesh support and is not supported for any other
+	// purpose.
 	//
 	// Implementations MAY choose to support attaching Routes to other resources.
 	// If that is the case, they MUST clearly document how SectionName is
@@ -95,6 +129,12 @@ type ParentReference struct {
 	// and SectionName are specified, the name and port of the selected listener
 	// must match both specified values.
 	//
+	// <gateway:experimental:description>
+	// When the parent resource is a Service, this targets a specific port in the
+	// Service spec. When both Port (experimental) and SectionName are specified,
+	// the name and port of the selected port must match both specified values.
+	// </gateway:experimental:description>
+	//
 	// Implementations MAY choose to support other parent resources.
 	// Implementations supporting other types of parent resources MUST clearly
 	// document how/if Port is interpreted.
@@ -121,15 +161,41 @@ type CommonRouteSpec struct {
 	// to be attached to. Note that the referenced parent resource needs to
 	// allow this for the attachment to be complete. For Gateways, that means
 	// the Gateway needs to allow attachment from Routes of this kind and
-	// namespace.
+	// namespace. For Services, that means the Service must either be in the same
+	// namespace for a "producer" route, or the mesh implementation must support
+	// and allow "consumer" routes for the referenced Service. ReferenceGrant is
+	// not applicable for governing ParentRefs to Services - it is not possible to
+	// create a "producer" route for a Service in a different namespace from the
+	// Route.
 	//
-	// The only kind of parent resource with "Core" support is Gateway. This API
-	// may be extended in the future to support additional kinds of parent
-	// resources such as one of the route kinds.
+	// There are two kinds of parent resources with "Core" support:
 	//
-	// It is invalid to reference an identical parent more than once. It is
-	// valid to reference multiple distinct sections within the same parent
-	// resource, such as 2 Listeners within a Gateway.
+	// * Gateway (Gateway conformance profile)
+	// <gateway:experimental:description>
+	// * Service (Mesh conformance profile, experimental, ClusterIP Services only)
+	// </gateway:experimental:description>
+	// This API may be extended in the future to support additional kinds of parent
+	// resources.
+	//
+	// ParentRefs must be _distinct_. This means either that:
+	//
+	// * They select different objects.  If this is the case, then parentRef
+	//   entries are distinct. In terms of fields, this means that the
+	//   multi-part key defined by `group`, `kind`, `namespace`, and `name` must
+	//   be unique across all parentRef entries in the Route.
+	// * They do not select different objects, but for each optional field used,
+	//   each ParentRef that selects the same object must set the same set of
+	//   optional fields to different values. If one ParentRef sets a
+	//   combination of optional fields, all must set the same combination.
+	//
+	// Some examples:
+	//
+	// * If one ParentRef sets `sectionName`, all ParentRefs referencing the
+	//   same object must also set `sectionName`.
+	// * If one ParentRef sets `port`, all ParentRefs referencing the same
+	//   object must also set `port`.
+	// * If one ParentRef sets `sectionName` and `port`, all ParentRefs
+	//   referencing the same object must also set `sectionName` and `port`.
 	//
 	// It is possible to separately reference multiple distinct objects that may
 	// be collapsed by an implementation. For example, some implementations may
@@ -137,8 +203,30 @@ type CommonRouteSpec struct {
 	// case, the list of routes attached to those resources should also be
 	// merged.
 	//
+	// Note that for ParentRefs that cross namespace boundaries, there are specific
+	// rules. Cross-namespace references are only valid if they are explicitly
+	// allowed by something in the namespace they are referring to. For example,
+	// Gateway has the AllowedRoutes field, and ReferenceGrant provides a
+	// generic way to enable other kinds of cross-namespace reference.
+	//
+	// <gateway:experimental:description>
+	// ParentRefs from a Route to a Service in the same namespace are "producer"
+	// routes, which apply default routing rules to inbound connections from
+	// any namespace to the Service.
+	//
+	// ParentRefs from a Route to a Service in a different namespace are
+	// "consumer" routes, and these routing rules are only applied to outbound
+	// connections originating from the same namespace as the Route, for which
+	// the intended destination of the connections are a Service targeted as a
+	// ParentRef of the Route.
+	// </gateway:experimental:description>
+	//
 	// +optional
 	// +kubebuilder:validation:MaxItems=32
+	// <gateway:standard:validation:XValidation:message="sectionName must be specified when parentRefs includes 2 or more references to the same parent",rule="self.all(p1, self.all(p2, p1.group == p2.group && p1.kind == p2.kind && p1.name == p2.name && (((!has(p1.__namespace__) || p1.__namespace__ == '') && (!has(p2.__namespace__) || p2.__namespace__ == '')) || (has(p1.__namespace__) && has(p2.__namespace__) && p1.__namespace__ == p2.__namespace__ )) ? ((!has(p1.sectionName) || p1.sectionName == '') == (!has(p2.sectionName) || p2.sectionName == '')) : true))">
+	// <gateway:standard:validation:XValidation:message="sectionName must be unique when parentRefs includes 2 or more references to the same parent",rule="self.all(p1, self.exists_one(p2, p1.group == p2.group && p1.kind == p2.kind && p1.name == p2.name && (((!has(p1.__namespace__) || p1.__namespace__ == '') && (!has(p2.__namespace__) || p2.__namespace__ == '')) || (has(p1.__namespace__) && has(p2.__namespace__) && p1.__namespace__ == p2.__namespace__ )) && (((!has(p1.sectionName) || p1.sectionName == '') && (!has(p2.sectionName) || p2.sectionName == '')) || (has(p1.sectionName) && has(p2.sectionName) && p1.sectionName == p2.sectionName))))">
+	// <gateway:experimental:validation:XValidation:message="sectionName or port must be specified when parentRefs includes 2 or more references to the same parent",rule="self.all(p1, self.all(p2, p1.group == p2.group && p1.kind == p2.kind && p1.name == p2.name && (((!has(p1.__namespace__) || p1.__namespace__ == '') && (!has(p2.__namespace__) || p2.__namespace__ == '')) || (has(p1.__namespace__) && has(p2.__namespace__) && p1.__namespace__ == p2.__namespace__)) ? ((!has(p1.sectionName) || p1.sectionName == '') == (!has(p2.sectionName) || p2.sectionName == '') && (!has(p1.port) || p1.port == 0) == (!has(p2.port) || p2.port == 0)): true))">
+	// <gateway:experimental:validation:XValidation:message="sectionName or port must be unique when parentRefs includes 2 or more references to the same parent",rule="self.all(p1, self.exists_one(p2, p1.group == p2.group && p1.kind == p2.kind && p1.name == p2.name && (((!has(p1.__namespace__) || p1.__namespace__ == '') && (!has(p2.__namespace__) || p2.__namespace__ == '')) || (has(p1.__namespace__) && has(p2.__namespace__) && p1.__namespace__ == p2.__namespace__ )) && (((!has(p1.sectionName) || p1.sectionName == '') && (!has(p2.sectionName) || p2.sectionName == '')) || ( has(p1.sectionName) && has(p2.sectionName) && p1.sectionName == p2.sectionName)) && (((!has(p1.port) || p1.port == 0) && (!has(p2.port) || p2.port == 0)) || (has(p1.port) && has(p2.port) && p1.port == p2.port))))">
 	ParentRefs []ParentReference `json:"parentRefs,omitempty"`
 }
 
@@ -151,10 +239,32 @@ type PortNumber int32
 // BackendRef defines how a Route should forward a request to a Kubernetes
 // resource.
 //
-// Note that when a namespace is specified, a ReferenceGrant object
-// is required in the referent namespace to allow that namespace's
-// owner to accept the reference. See the ReferenceGrant documentation
-// for details.
+// Note that when a namespace different than the local namespace is specified, a
+// ReferenceGrant object is required in the referent namespace to allow that
+// namespace's owner to accept the reference. See the ReferenceGrant
+// documentation for details.
+//
+// <gateway:experimental:description>
+//
+// When the BackendRef points to a Kubernetes Service, implementations SHOULD
+// honor the appProtocol field if it is set for the target Service Port.
+//
+// Implementations supporting appProtocol SHOULD recognize the Kubernetes
+// Standard Application Protocols defined in KEP-3726.
+//
+// If a Service appProtocol isn't specified, an implementation MAY infer the
+// backend protocol through its own means. Implementations MAY infer the
+// protocol from the Route type referring to the backend Service.
+//
+// If a Route is not able to send traffic to the backend using the specified
+// protocol then the backend is considered invalid. Implementations MUST set the
+// "ResolvedRefs" condition to "False" with the "UnsupportedProtocol" reason.
+//
+// </gateway:experimental:description>
+//
+// Note that when the BackendTLSPolicy object is enabled by the implementation,
+// there are some extra rules about validity to consider here. See the fields
+// where this struct is used for more information about the exact behavior.
 type BackendRef struct {
 	// BackendObjectReference references a Kubernetes object.
 	BackendObjectReference `json:",inline"`
@@ -190,7 +300,7 @@ const (
 	// This condition indicates whether the route has been accepted or rejected
 	// by a Gateway, and why.
 	//
-	// Possible reasons for this condition to be true are:
+	// Possible reasons for this condition to be True are:
 	//
 	// * "Accepted"
 	//
@@ -198,7 +308,12 @@ const (
 	//
 	// * "NotAllowedByListeners"
 	// * "NoMatchingListenerHostname"
+	// * "NoMatchingParent"
 	// * "UnsupportedValue"
+	//
+	// Possible reasons for this condition to be Unknown are:
+	//
+	// * "Pending"
 	//
 	// Controllers may raise this condition with other reasons,
 	// but should prefer to use the reasons listed above to improve
@@ -218,22 +333,40 @@ const (
 	// compatible Listeners whose Hostname matches the route
 	RouteReasonNoMatchingListenerHostname RouteConditionReason = "NoMatchingListenerHostname"
 
+	// This reason is used with the "Accepted" condition when there are
+	// no matching Parents. In the case of Gateways, this can occur when
+	// a Route ParentRef specifies a Port and/or SectionName that does not
+	// match any Listeners in the Gateway.
+	RouteReasonNoMatchingParent RouteConditionReason = "NoMatchingParent"
+
 	// This reason is used with the "Accepted" condition when a value for an Enum
 	// is not recognized.
 	RouteReasonUnsupportedValue RouteConditionReason = "UnsupportedValue"
 
+	// This reason is used with the "Accepted" when a controller has not yet
+	// reconciled the route.
+	RouteReasonPending RouteConditionReason = "Pending"
+
+	// This reason is used with the "Accepted" condition when there
+	// are incompatible filters present on a route rule (for example if
+	// the URLRewrite and RequestRedirect are both present on an HTTPRoute).
+	RouteReasonIncompatibleFilters RouteConditionReason = "IncompatibleFilters"
+)
+
+const (
 	// This condition indicates whether the controller was able to resolve all
 	// the object references for the Route.
 	//
-	// Possible reasons for this condition to be true are:
+	// Possible reasons for this condition to be True are:
 	//
 	// * "ResolvedRefs"
 	//
-	// Possible reasons for this condition to be false are:
+	// Possible reasons for this condition to be False are:
 	//
 	// * "RefNotPermitted"
 	// * "InvalidKind"
 	// * "BackendNotFound"
+	// * "UnsupportedProtocol"
 	//
 	// Controllers may raise this condition with other reasons,
 	// but should prefer to use the reasons listed above to improve
@@ -258,6 +391,48 @@ const (
 	// This reason is used with the "ResolvedRefs" condition when one of the
 	// Route's rules has a reference to a resource that does not exist.
 	RouteReasonBackendNotFound RouteConditionReason = "BackendNotFound"
+
+	// This reason is used with the "ResolvedRefs" condition when one of the
+	// Route's rules has a reference to a resource with an app protocol that
+	// is not supported by this implementation.
+	RouteReasonUnsupportedProtocol RouteConditionReason = "UnsupportedProtocol"
+)
+
+const (
+	// This condition indicates that the Route contains a combination of both
+	// valid and invalid rules.
+	//
+	// When this happens, implementations MUST take one of the following
+	// approaches:
+	//
+	// 1) Drop Rule(s): With this approach, implementations will drop the
+	//    invalid Route Rule(s) until they are fully valid again. The message
+	//    for this condition MUST start with the prefix "Dropped Rule" and
+	//    include information about which Rules have been dropped. In this
+	//    state, the "Accepted" condition MUST be set to "True" with the latest
+	//    generation of the resource.
+	// 2) Fall Back: With this approach, implementations will fall back to the
+	//    last known good state of the entire Route. The message for this
+	//    condition MUST start with the prefix "Fall Back" and include
+	//    information about why the current Rule(s) are invalid. To represent
+	//    this, the "Accepted" condition MUST be set to "True" with the
+	//    generation of the last known good state of the resource.
+	//
+	// Reverting to the last known good state should only be done by
+	// implementations that have a means of restoring that state if/when they
+	// are restarted.
+	//
+	// This condition MUST NOT be set if a Route is fully valid, fully invalid,
+	// or not accepted. By extension, that means that this condition MUST only
+	// be set when it is "True".
+	//
+	// Possible reasons for this condition to be True are:
+	//
+	// * "UnsupportedValue"
+	//
+	// Controllers may raise this condition with other reasons, but should
+	// prefer to use the reasons listed above to improve interoperability.
+	RouteConditionPartiallyInvalid RouteConditionType = "PartiallyInvalid"
 )
 
 // RouteParentStatus describes the status of a route with respect to an
@@ -334,9 +509,9 @@ type RouteStatus struct {
 // Hostname is the fully qualified domain name of a network host. This matches
 // the RFC 1123 definition of a hostname with 2 notable exceptions:
 //
-// 1. IPs are not allowed.
-// 2. A hostname may be prefixed with a wildcard label (`*.`). The wildcard
-//    label must appear by itself as the first label.
+//  1. IPs are not allowed.
+//  2. A hostname may be prefixed with a wildcard label (`*.`). The wildcard
+//     label must appear by itself as the first label.
 //
 // Hostname can be "precise" which is a domain name without the terminating
 // dot of a network host (e.g. "foo.example.com") or "wildcard", which is a
@@ -373,7 +548,7 @@ type PreciseHostname string
 // Valid values include:
 //
 // * "" - empty string implies core Kubernetes API group
-// * "networking.k8s.io"
+// * "gateway.networking.k8s.io"
 // * "foo.example.com"
 //
 // Invalid values include:
@@ -507,14 +682,28 @@ type AnnotationValue string
 // The `NamedAddress` value has been deprecated in favor of implementation
 // specific domain-prefixed strings.
 //
-// All other values, including domain-prefixed values have Custom support, which
-// are used in implementation-specific behaviors. Support for additional
+// All other values, including domain-prefixed values have Implementation-specific support,
+// which are used in implementation-specific behaviors. Support for additional
 // predefined CamelCase identifiers may be added in future releases.
 //
 // +kubebuilder:validation:MinLength=1
 // +kubebuilder:validation:MaxLength=253
 // +kubebuilder:validation:Pattern=`^Hostname|IPAddress|NamedAddress|[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*\/[A-Za-z0-9\/\-._~%!$&'()*+,;=:]+$`
 type AddressType string
+
+// HeaderName is the name of a header or query parameter.
+//
+// +kubebuilder:validation:MinLength=1
+// +kubebuilder:validation:MaxLength=256
+// +kubebuilder:validation:Pattern=`^[A-Za-z0-9!#$%&'*+\-.^_\x60|~]+$`
+// +k8s:deepcopy-gen=false
+type HeaderName string
+
+// Duration is a string value representing a duration in time. The format is as specified
+// in GEP-2257, a strict subset of the syntax parsed by Golang time.ParseDuration.
+//
+// +kubebuilder:validation:Pattern=`^([0-9]{1,5}(h|m|s|ms)){1,4}$`
+type Duration string
 
 const (
 	// A textual representation of a numeric IP address. IPv4
@@ -544,6 +733,6 @@ const (
 	// The `NamedAddress` type has been deprecated in favor of implementation
 	// specific domain-prefixed strings.
 	//
-	// Support: Implementation-Specific
+	// Support: Implementation-specific
 	NamedAddressType AddressType = "NamedAddress"
 )

@@ -9,8 +9,7 @@ import (
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	"github.com/openshift/cluster-ingress-operator/pkg/resources/dnsrecord"
-
-	gatewayapiv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
+	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"k8s.io/client-go/tools/record"
 
@@ -74,8 +73,8 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 	})
 	gatewayListenersChanged := predicate.Funcs{
 		UpdateFunc: func(e event.UpdateEvent) bool {
-			old := e.ObjectOld.(*gatewayapiv1beta1.Gateway).Spec.Listeners
-			new := e.ObjectNew.(*gatewayapiv1beta1.Gateway).Spec.Listeners
+			old := e.ObjectOld.(*gatewayapiv1.Gateway).Spec.Listeners
+			new := e.ObjectNew.(*gatewayapiv1.Gateway).Spec.Listeners
 			// A DNSRecord CR needs to be updated if, and only if,
 			// the hostname has changed (a listener's port and
 			// protocol have no bearing on the DNS record).
@@ -107,7 +106,7 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 		}
 		return requests
 	}
-	if err := c.Watch(source.Kind[client.Object](operatorCache, &gatewayapiv1beta1.Gateway{}, handler.EnqueueRequestsFromMapFunc(gatewayToService), isInOperandNamespace, gatewayListenersChanged)); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &gatewayapiv1.Gateway{}, handler.EnqueueRequestsFromMapFunc(gatewayToService), isInOperandNamespace, gatewayListenersChanged)); err != nil {
 		return nil, err
 	}
 	if err := c.Watch(source.Kind[client.Object](operatorCache, &corev1.Service{}, &handler.EnqueueRequestForObject{}, isServiceNeedingDNS, isInOperandNamespace)); err != nil {
@@ -121,7 +120,7 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 
 // gatewayListenersHostnamesChanged returns a Boolean indicating whether any
 // hostnames changed in the given gateway listeners.
-func gatewayListenersHostnamesChanged(xs, ys []gatewayapiv1beta1.Listener) bool {
+func gatewayListenersHostnamesChanged(xs, ys []gatewayapiv1.Listener) bool {
 	x := map[string]string{}
 	y := map[string]string{}
 	for i := range xs {
@@ -173,7 +172,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		return reconcile.Result{}, nil
 	}
 
-	var gateway gatewayapiv1beta1.Gateway
+	var gateway gatewayapiv1.Gateway
 	gatewayName := types.NamespacedName{
 		Namespace: service.Namespace,
 		Name:      service.Spec.Selector[gatewayNameLabelKey],
@@ -209,7 +208,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 
 // getGatewayHostnames returns a sets.String with the hostnames from the given
 // gateway's listeners.  Adds a trailing dot if it's missing from the hostname.
-func getGatewayHostnames(gateway *gatewayapiv1beta1.Gateway) sets.String {
+func getGatewayHostnames(gateway *gatewayapiv1.Gateway) sets.String {
 	domains := sets.NewString()
 	for _, listener := range gateway.Spec.Listeners {
 		if listener.Hostname == nil || len(*listener.Hostname) == 0 {
@@ -228,7 +227,7 @@ func getGatewayHostnames(gateway *gatewayapiv1beta1.Gateway) sets.String {
 // ensureDNSRecordsForGateway ensures that a DNSRecord CR exists, associated
 // with the given gateway and service, for each of the given domains.  It
 // returns a list of any errors that result from ensuring those DNSRecord CRs.
-func (r *reconciler) ensureDNSRecordsForGateway(ctx context.Context, gateway *gatewayapiv1beta1.Gateway, service *corev1.Service, domains []string, infraConfig *configv1.Infrastructure, dnsConfig *configv1.DNS) []error {
+func (r *reconciler) ensureDNSRecordsForGateway(ctx context.Context, gateway *gatewayapiv1.Gateway, service *corev1.Service, domains []string, infraConfig *configv1.Infrastructure, dnsConfig *configv1.DNS) []error {
 	labels := map[string]string{
 		gatewayNameLabelKey: gateway.Name,
 	}
@@ -259,7 +258,7 @@ func (r *reconciler) ensureDNSRecordsForGateway(ctx context.Context, gateway *ga
 // domains.  Such DNSRecord CRs may exist if a hostname was modified or deleted
 // on the gateway.  deleteStaleDNSRecordsForGateway returns a list of any errors
 // that result from deleting those DNSRecord CRs.
-func (r *reconciler) deleteStaleDNSRecordsForGateway(ctx context.Context, gateway *gatewayapiv1beta1.Gateway, service *corev1.Service, domains sets.String) []error {
+func (r *reconciler) deleteStaleDNSRecordsForGateway(ctx context.Context, gateway *gatewayapiv1.Gateway, service *corev1.Service, domains sets.String) []error {
 	listOpts := []client.ListOption{
 		client.MatchingLabels{gatewayNameLabelKey: gateway.Name},
 		client.InNamespace(r.config.OperandNamespace),
