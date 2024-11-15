@@ -696,6 +696,33 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 		return ic
 	}
 
+	loadBalancerIngressControllerWithFloatingIP := func(floatingIPSpec, floatingIPStatus string) *operatorv1.IngressController {
+		eps := &operatorv1.EndpointPublishingStrategy{
+			Type: operatorv1.LoadBalancerServiceStrategyType,
+			LoadBalancer: &operatorv1.LoadBalancerStrategy{
+				Scope: operatorv1.ExternalLoadBalancer,
+				ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+					Type: operatorv1.OpenStackLoadBalancerProvider,
+				},
+			},
+		}
+		ic := &operatorv1.IngressController{
+			Spec: operatorv1.IngressControllerSpec{
+				EndpointPublishingStrategy: eps.DeepCopy(),
+			},
+			Status: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: eps.DeepCopy(),
+			},
+		}
+		ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.OpenStack = &operatorv1.OpenStackLoadBalancerParameters{
+			FloatingIP: floatingIPSpec,
+		}
+		ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.OpenStack = &operatorv1.OpenStackLoadBalancerParameters{
+			FloatingIP: floatingIPStatus,
+		}
+		return ic
+	}
+
 	loadBalancerIngressControllerWithAWSEIPAllocations := func(eipAllocationSpec []operatorv1.EIPAllocation, eipAllocationStatus []operatorv1.EIPAllocation) *operatorv1.IngressController {
 		eps := &operatorv1.EndpointPublishingStrategy{
 			Type: operatorv1.LoadBalancerServiceStrategyType,
@@ -788,6 +815,9 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 	azurePlatformStatus := &configv1.PlatformStatus{
 		Type: configv1.AzurePlatformType,
 	}
+	openstackPlatformStatus := &configv1.PlatformStatus{
+		Type: configv1.OpenStackPlatformType,
+	}
 	tests := []struct {
 		name                     string
 		conditions               []operatorv1.OperatorCondition
@@ -876,6 +906,27 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 			service:        lbServiceWithSourceRangesField,
 			platformStatus: awsPlatformStatus,
 			expectStatus:   operatorv1.ConditionFalse,
+		},
+		{
+			name:           "LoadBalancerService, OpenStack floating IP spec and status are empty",
+			ic:             loadBalancerIngressControllerWithFloatingIP("", ""),
+			service:        lbService,
+			platformStatus: openstackPlatformStatus,
+			expectStatus:   operatorv1.ConditionFalse,
+		},
+		{
+			name:           "LoadBalancerService, OpenStack floating IP spec and status are the same",
+			ic:             loadBalancerIngressControllerWithFloatingIP("192.168.0.1", "192.168.0.1"),
+			service:        lbService,
+			platformStatus: openstackPlatformStatus,
+			expectStatus:   operatorv1.ConditionFalse,
+		},
+		{
+			name:           "LoadBalancerService, OpenStack floating IP spec and status are not the same",
+			ic:             loadBalancerIngressControllerWithFloatingIP("192.168.0.1", ""),
+			service:        lbService,
+			platformStatus: openstackPlatformStatus,
+			expectStatus:   operatorv1.ConditionTrue,
 		},
 		{
 			name: "NLB LoadBalancerService, AWS Subnets nil spec and nil status",
@@ -1892,6 +1943,20 @@ func Test_IngressStatusesEqual(t *testing.T) {
 		}
 		return icStatus
 	}
+	icStatusWithFloatingIP := func(floatingIP string) operatorv1.IngressControllerStatus {
+		return operatorv1.IngressControllerStatus{
+			EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.LoadBalancerServiceStrategyType,
+				LoadBalancer: &operatorv1.LoadBalancerStrategy{
+					ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+						OpenStack: &operatorv1.OpenStackLoadBalancerParameters{
+							FloatingIP: floatingIP,
+						},
+					},
+				},
+			},
+		}
+	}
 	testCases := []struct {
 		description string
 		expected    bool
@@ -1998,6 +2063,31 @@ func Test_IngressStatusesEqual(t *testing.T) {
 					{
 						Type:    operatorv1.IngressControllerAvailableConditionType,
 						Message: "foo",
+					},
+				},
+			},
+		},
+		{
+			description: "OpenStack FloatingIP differs",
+			expected:    false,
+			a:           icStatusWithFloatingIP("1.2.3.4"),
+			b:           icStatusWithFloatingIP("1.2.4.5"),
+		},
+		{
+			description: "OpenStack FloatingIP equal",
+			expected:    true,
+			a:           icStatusWithFloatingIP("1.2.3.4"),
+			b:           icStatusWithFloatingIP("1.2.3.4"),
+		},
+		{
+			description: "OpenStack providerParameters present for a but nil for b",
+			expected:    false,
+			a:           icStatusWithFloatingIP("1.2.3.4"),
+			b: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.LoadBalancerServiceStrategyType,
+					LoadBalancer: &operatorv1.LoadBalancerStrategy{
+						ProviderParameters: nil,
 					},
 				},
 			},
