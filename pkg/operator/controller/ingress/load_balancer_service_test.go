@@ -1638,3 +1638,155 @@ func TestLoadBalancerServiceChangedEmptyAnnotations(t *testing.T) {
 		})
 	}
 }
+
+// Test_shouldRecreateLoadBalancer verifies that a load balancer should be
+// recreated if the annotations or spec of the service have changed.
+func Test_shouldRecreateLoadBalancer(t *testing.T) {
+	testCases := []struct {
+		description string
+		current     *corev1.Service
+		desired     *corev1.Service
+		platform    *configv1.PlatformStatus
+		expect      bool
+		reason      string
+	}{
+		{
+			description: "AWS platform with different subnets",
+			current: &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						awsLBSubnetsAnnotation: "subnet-1",
+					},
+				},
+			},
+			desired: &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						awsLBSubnetsAnnotation: "subnet-2",
+					},
+				},
+			},
+			platform: &configv1.PlatformStatus{
+				Type: configv1.AWSPlatformType,
+			},
+			expect: true,
+			reason: "its subnets changed",
+		},
+		{
+			description: "AWS platform with different EIP allocations",
+			current: &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						awsEIPAllocationsAnnotation: "eipalloc-1",
+					},
+				},
+			},
+			desired: &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						awsEIPAllocationsAnnotation: "eipalloc-2",
+					},
+				},
+			},
+			platform: &configv1.PlatformStatus{
+				Type: configv1.AWSPlatformType,
+			},
+			expect: true,
+			reason: "its eipAllocations changed",
+		},
+		{
+			description: "OpenStack platform with different LoadBalancerIP",
+			current: &corev1.Service{
+				Spec: corev1.ServiceSpec{
+					LoadBalancerIP: "1.2.3.4",
+				},
+			},
+			desired: &corev1.Service{
+				Spec: corev1.ServiceSpec{
+					LoadBalancerIP: "5.6.7.8",
+				},
+			},
+			platform: &configv1.PlatformStatus{
+				Type: configv1.OpenStackPlatformType,
+			},
+			expect: true,
+			reason: "its load balancer IP changed",
+		},
+		{
+			description: "Platform with mutable scope and same scope",
+			current: &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						azureInternalLBAnnotation: "true",
+					},
+				},
+			},
+			desired: &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						azureInternalLBAnnotation: "true",
+					},
+				},
+			},
+			platform: &configv1.PlatformStatus{
+				Type: configv1.AzurePlatformType,
+			},
+			expect: false,
+		},
+		{
+			description: "Platform with immutable scope and different scope",
+			current: &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						awsInternalLBAnnotation: "true",
+					},
+				},
+			},
+			desired: &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						awsInternalLBAnnotation: "false",
+					},
+				},
+			},
+			platform: &configv1.PlatformStatus{
+				Type: configv1.AWSPlatformType,
+			},
+			expect: true,
+			reason: "its scope changed",
+		},
+		{
+			description: "Platform with same configuration",
+			current: &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						awsInternalLBAnnotation: "true",
+					},
+				},
+			},
+			desired: &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						awsInternalLBAnnotation: "true",
+					},
+				},
+			},
+			platform: &configv1.PlatformStatus{
+				Type: configv1.AWSPlatformType,
+			},
+			expect: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			changed, reason := shouldRecreateLoadBalancer(tc.current, tc.desired, tc.platform)
+			if changed != tc.expect {
+				t.Errorf("expected %t, got %t", tc.expect, changed)
+			}
+			if reason != tc.reason {
+				t.Errorf("expected reason %s, got %s", tc.reason, reason)
+			}
+		})
+	}
+}
