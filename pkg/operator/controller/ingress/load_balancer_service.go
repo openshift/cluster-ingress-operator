@@ -370,8 +370,8 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 
 	service.Spec.Selector = controller.IngressControllerDeploymentPodSelector(ci).MatchLabels
 
-	lb := ci.Status.EndpointPublishingStrategy.LoadBalancer
-	isInternal := lb != nil && lb.Scope == operatorv1.InternalLoadBalancer
+	lbStatus := ci.Status.EndpointPublishingStrategy.LoadBalancer
+	isInternal := lbStatus != nil && lbStatus.Scope == operatorv1.InternalLoadBalancer
 
 	if service.Annotations == nil {
 		service.Annotations = map[string]string{}
@@ -391,10 +391,10 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 
 			// Set the GCP Global Access annotation for internal load balancers on GCP only
 			if platform.Type == configv1.GCPPlatformType {
-				if lb != nil && lb.ProviderParameters != nil &&
-					lb.ProviderParameters.Type == operatorv1.GCPLoadBalancerProvider &&
-					lb.ProviderParameters.GCP != nil {
-					globalAccessEnabled := lb.ProviderParameters.GCP.ClientAccess == operatorv1.GCPGlobalAccess
+				if lbStatus != nil && lbStatus.ProviderParameters != nil &&
+					lbStatus.ProviderParameters.Type == operatorv1.GCPLoadBalancerProvider &&
+					lbStatus.ProviderParameters.GCP != nil {
+					globalAccessEnabled := lbStatus.ProviderParameters.GCP.ClientAccess == operatorv1.GCPGlobalAccess
 					service.Annotations[GCPGlobalAccessAnnotation] = strconv.FormatBool(globalAccessEnabled)
 				}
 			}
@@ -410,8 +410,8 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 			if proxyNeeded {
 				service.Annotations[awsLBProxyProtocolAnnotation] = "*"
 			}
-			if lb != nil && lb.ProviderParameters != nil {
-				if aws := lb.ProviderParameters.AWS; aws != nil && lb.ProviderParameters.Type == operatorv1.AWSLoadBalancerProvider {
+			if lbStatus != nil && lbStatus.ProviderParameters != nil {
+				if aws := lbStatus.ProviderParameters.AWS; aws != nil && lbStatus.ProviderParameters.Type == operatorv1.AWSLoadBalancerProvider {
 					switch aws.Type {
 					case operatorv1.AWSNetworkLoadBalancer:
 						service.Annotations[AWSLBTypeAnnotation] = AWSNLBAnnotation
