@@ -3,6 +3,7 @@ package ingress
 import (
 	"context"
 	"fmt"
+	"net"
 	"regexp"
 	"regexp/syntax"
 	"strings"
@@ -475,10 +476,17 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, platformStat
 		}
 
 		// When the platform's default DNS solution cannot be used, set the DNSManagementPolicy
-		// accordingly. This feature is currently being implemented first for GCP. Will be
-		// extended to AWS and Azure platforms later.
-		if platformStatus.Type == configv1.GCPPlatformType && platformStatus.GCP != nil && platformStatus.GCP.CloudLoadBalancerConfig != nil {
-			if platformStatus.GCP.CloudLoadBalancerConfig.DNSType == configv1.ClusterHostedDNSType {
+		// accordingly. This feature is currently being implemented for GCP and AWS. Will be
+		// extended to the Azure platform later.
+		switch platformStatus.Type {
+		case configv1.AWSPlatformType:
+			if platformStatus.AWS != nil && platformStatus.AWS.CloudLoadBalancerConfig != nil &&
+				platformStatus.AWS.CloudLoadBalancerConfig.DNSType == configv1.ClusterHostedDNSType {
+				effectiveStrategy.LoadBalancer.DNSManagementPolicy = operatorv1.UnmanagedLoadBalancerDNS
+			}
+		case configv1.GCPPlatformType:
+			if platformStatus.GCP != nil && platformStatus.GCP.CloudLoadBalancerConfig != nil &&
+				platformStatus.GCP.CloudLoadBalancerConfig.DNSType == configv1.ClusterHostedDNSType {
 				effectiveStrategy.LoadBalancer.DNSManagementPolicy = operatorv1.UnmanagedLoadBalancerDNS
 			}
 		}
@@ -1272,18 +1280,51 @@ func (r *reconciler) allRouterPodsDeleted(ingress *operatorv1.IngressController)
 	return true, nil
 }
 
-// computeUpdatedInfraFromService updates GCP's PlatformStatus with Ingress LB IPs when the DNSType is `ClusterHosted`.
+// computeUpdatedInfraFromService updates PlatformStatus for GCP and AWS with Ingress LB IPs when the DNSType is `ClusterHosted`.
 func computeUpdatedInfraFromService(service *corev1.Service, infraConfig *configv1.Infrastructure) (bool, error) {
 	platformStatus := infraConfig.Status.PlatformStatus
 	if platformStatus == nil {
 		return false, fmt.Errorf("invalid PlatformStatus within Infrastructure config")
 	}
+	ipCmpOpts := []cmp.Option{
+		cmpopts.EquateEmpty(),
+		cmpopts.SortSlices(func(a, b configv1.IP) bool {
+			return a < b
+		}),
+	}
+	// The cluster has to run its own CoreDNS pod for DNS. Update Infra CR with the Ingress LB IPs.
+	// These values are used to configure the in-cluster DNS to provide resolution for *.apps.
 	switch platformStatus.Type {
+	case configv1.AWSPlatformType:
+		// On the AWS platform, only the Ingress LB's Hostname is available.
+		// Resolve this Hostname to its IPs before adding to the Infra CR.
+		if platformStatus.AWS != nil && platformStatus.AWS.CloudLoadBalancerConfig != nil && platformStatus.AWS.CloudLoadBalancerConfig.DNSType == configv1.ClusterHostedDNSType {
+			if platformStatus.AWS.CloudLoadBalancerConfig.ClusterHosted == nil {
+				platformStatus.AWS.CloudLoadBalancerConfig.ClusterHosted = &configv1.CloudLoadBalancerIPs{}
+			}
+			ingresses := service.Status.LoadBalancer.Ingress
+			ingressLBIPs := []configv1.IP{}
+			for _, ingress := range ingresses {
+				// Resolving the LoadBalancer's IPs is not ideal because they may change, but currently there is no better alternative.
+				ingressIPs, err := net.LookupIP(ingress.Hostname)
+				if err != nil {
+					return false, fmt.Errorf("failed to lookup IP addresses corresponding to AWS LB hostname: %w", err)
+				}
+
+				if len(ingressIPs) > 0 {
+					for _, ingressIP := range ingressIPs {
+						ingressLBIPs = append(ingressLBIPs, configv1.IP(ingressIP.String()))
+					}
+				}
+			}
+			if !cmp.Equal(platformStatus.AWS.CloudLoadBalancerConfig.ClusterHosted.IngressLoadBalancerIPs, ingressLBIPs, ipCmpOpts...) {
+				platformStatus.AWS.CloudLoadBalancerConfig.ClusterHosted.IngressLoadBalancerIPs = ingressLBIPs
+				return true, nil
+			}
+		}
+		return false, nil
 	case configv1.GCPPlatformType:
 		if platformStatus.GCP != nil && platformStatus.GCP.CloudLoadBalancerConfig != nil && platformStatus.GCP.CloudLoadBalancerConfig.DNSType == configv1.ClusterHostedDNSType {
-			// The cluster has to run its own CoreDNS pod for DNS. Update Infra CR
-			// with the Ingress LB IPs. These values are used to configure the
-			// in-cluster DNS to provide resolution for *.apps.
 			if platformStatus.GCP.CloudLoadBalancerConfig.ClusterHosted == nil {
 				platformStatus.GCP.CloudLoadBalancerConfig.ClusterHosted = &configv1.CloudLoadBalancerIPs{}
 			}
@@ -1293,12 +1334,6 @@ func computeUpdatedInfraFromService(service *corev1.Service, infraConfig *config
 				if len(ingress.IP) > 0 {
 					ingressLBIPs = append(ingressLBIPs, configv1.IP(ingress.IP))
 				}
-			}
-			ipCmpOpts := []cmp.Option{
-				cmpopts.EquateEmpty(),
-				cmpopts.SortSlices(func(a, b configv1.IP) bool {
-					return a < b
-				}),
 			}
 			if !cmp.Equal(platformStatus.GCP.CloudLoadBalancerConfig.ClusterHosted.IngressLoadBalancerIPs, ingressLBIPs, ipCmpOpts...) {
 				platformStatus.GCP.CloudLoadBalancerConfig.ClusterHosted.IngressLoadBalancerIPs = ingressLBIPs
