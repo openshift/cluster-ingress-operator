@@ -215,6 +215,29 @@ func TestSetDefaultPublishingStrategySetsPlatformDefaults(t *testing.T) {
 			}
 		}
 
+		makeDefaultAWSPlatformStatus = func(platform configv1.PlatformType) *configv1.PlatformStatus {
+			return &configv1.PlatformStatus{
+				Type: platform,
+				AWS: &configv1.AWSPlatformStatus{
+					CloudLoadBalancerConfig: &configv1.CloudLoadBalancerConfig{
+						DNSType: configv1.PlatformDefaultDNSType,
+					},
+				},
+			}
+		}
+
+		makeBYODNSAWSPlatformStatus = func(platform configv1.PlatformType) *configv1.PlatformStatus {
+			return &configv1.PlatformStatus{
+				Type: platform,
+				AWS: &configv1.AWSPlatformStatus{
+					CloudLoadBalancerConfig: &configv1.CloudLoadBalancerConfig{
+						DNSType:       configv1.ClusterHostedDNSType,
+						ClusterHosted: &configv1.CloudLoadBalancerIPs{},
+					},
+				},
+			}
+		}
+
 		ingressConfigWithDefaultClassicLB = &configv1.Ingress{
 			Spec: configv1.IngressSpec{
 				LoadBalancer: configv1.LoadBalancer{
@@ -290,6 +313,18 @@ func TestSetDefaultPublishingStrategySetsPlatformDefaults(t *testing.T) {
 			name:                    "Equinix Metal",
 			platformStatus:          makePlatformStatus(configv1.EquinixMetalPlatformType),
 			expectedIC:              ingressControllerWithHostNetwork,
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name:                    "AWS",
+			platformStatus:          makeDefaultAWSPlatformStatus(configv1.AWSPlatformType),
+			expectedIC:              ingressControllerWithLoadBalancer,
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name:                    "AWS With BYO DNS",
+			platformStatus:          makeBYODNSAWSPlatformStatus(configv1.AWSPlatformType),
+			expectedIC:              ingressControllerWithLoadBalancerUnmanagedDNS,
 			domainMatchesBaseDomain: true,
 		},
 		{
