@@ -27,6 +27,7 @@ import (
 	"gopkg.in/yaml.v2"
 
 	configv1 "github.com/openshift/api/config/v1"
+	"github.com/openshift/api/features"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	iov1 "github.com/openshift/api/operatoringress/v1"
 	routev1 "github.com/openshift/api/route/v1"
@@ -3508,11 +3509,32 @@ func TestLoadBalancingAlgorithmUnsupportedConfigOverride(t *testing.T) {
 func TestUnsupportedConfigOverride(t *testing.T) {
 	t.Parallel()
 
+	var (
+		dcmDefaultValue         = ""
+		dcmUpdateValue          = "true"
+		dcmExpectedValue        = "true"
+		maxServersDefaultValue  = ""
+		maxServersUpdateValue   = "2"
+		maxServersExpectedValue = "" // max dynamic servers cannot be set if DCM is off
+	)
+
+	if dcmEnabled, err := isFeatureGateEnabled(features.FeatureGateIngressControllerDynamicConfigurationManager); err != nil {
+		t.Fatalf("failed to get dynamic config manager feature gate: %v", err)
+	} else if dcmEnabled {
+		dcmDefaultValue = "true"
+		dcmUpdateValue = "false"
+		dcmExpectedValue = ""
+		maxServersDefaultValue = "1"
+		maxServersUpdateValue = "2"
+		maxServersExpectedValue = "2"
+	}
+
 	var tests = []struct {
-		name, unsupportedConfigOverride, env string
+		name, unsupportedConfigOverride, env, defaultValue, updateValue, expectedValue string
 	}{
-		{"dynamic-config-manager", "dynamicConfigManager", "ROUTER_HAPROXY_CONFIG_MANAGER"},
-		{"contstats", "contStats", "ROUTER_HAPROXY_CONTSTATS"},
+		{"dynamic-config-manager", "dynamicConfigManager", "ROUTER_HAPROXY_CONFIG_MANAGER", dcmDefaultValue, dcmUpdateValue, dcmExpectedValue},
+		{"contstats", "contStats", "ROUTER_HAPROXY_CONTSTATS", "", "true", "true"},
+		{"max-dynamic-servers", "maxDynamicServers", "ROUTER_MAX_DYNAMIC_SERVERS", maxServersDefaultValue, maxServersUpdateValue, maxServersExpectedValue},
 	}
 
 	for _, tt := range tests {
@@ -3533,22 +3555,21 @@ func TestUnsupportedConfigOverride(t *testing.T) {
 			if err := kclient.Get(context.TODO(), controller.RouterDeploymentName(ic), deployment); err != nil {
 				t.Fatalf("failed to get ingresscontroller deployment: %v", err)
 			}
-			if err := waitForDeploymentEnvVar(t, kclient, deployment, 30*time.Second, tt.env, ""); err != nil {
-				t.Fatalf("expected initial deployment not to set %s=true: %v", tt.env, err)
+			if err := waitForDeploymentEnvVar(t, kclient, deployment, 30*time.Second, tt.env, tt.defaultValue); err != nil {
+				t.Fatalf("expected initial deployment not to set %s=%s: %v", tt.env, tt.defaultValue, err)
 			}
 
 			if err := updateIngressControllerWithRetryOnConflict(t, icName, timeout, func(ic *operatorv1.IngressController) {
 				ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
-					Raw: []byte(fmt.Sprintf(`{"%s":"true"}`, tt.unsupportedConfigOverride)),
+					Raw: []byte(fmt.Sprintf(`{"%s":"%s"}`, tt.unsupportedConfigOverride, tt.updateValue)),
 				}
 			}); err != nil {
 				t.Fatalf("failed to update ingresscontroller: %v", err)
 			}
-			if err := waitForDeploymentEnvVar(t, kclient, deployment, 1*time.Minute, tt.env, "true"); err != nil {
-				t.Fatalf("expected updated deployment to set %s=true: %v", tt.env, err)
+			if err := waitForDeploymentEnvVar(t, kclient, deployment, 1*time.Minute, tt.env, tt.expectedValue); err != nil {
+				t.Fatalf("expected updated deployment to set %s=%s: %v", tt.env, tt.expectedValue, err)
 			}
 		})
-
 	}
 }
 

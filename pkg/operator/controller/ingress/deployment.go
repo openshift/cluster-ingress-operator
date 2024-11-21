@@ -84,6 +84,11 @@ const (
 
 	RouterHAProxyConfigManager = "ROUTER_HAPROXY_CONFIG_MANAGER"
 
+	RouterHAProxyMaxDynamicServers             = "ROUTER_MAX_DYNAMIC_SERVERS"
+	RouterHAProxyMaxDynamicServersDefaultValue = 1
+
+	RouterHAProxyBlueprintRoutePoolSize = "ROUTER_BLUEPRINT_ROUTE_POOL_SIZE"
+
 	RouterHAProxyContstats = "ROUTER_HAPROXY_CONTSTATS"
 
 	RouterHAProxyThreadsEnvName      = "ROUTER_THREADS"
@@ -121,7 +126,7 @@ func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, in
 	if err != nil {
 		return false, nil, fmt.Errorf("failed to determine if proxy protocol is needed for ingresscontroller %s/%s: %v", ci.Namespace, ci.Name, err)
 	}
-	desired, err := desiredRouterDeployment(ci, r.config.IngressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, haveClientCAConfigmap, clientCAConfigmap, clusterProxyConfig, r.config.RouteExternalCertificateEnabled)
+	desired, err := desiredRouterDeployment(ci, r.config.IngressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, haveClientCAConfigmap, clientCAConfigmap, clusterProxyConfig, r.config.RouteExternalCertificateEnabled, r.config.IngressControllerDCMEnabled)
 	if err != nil {
 		return haveDepl, current, fmt.Errorf("failed to build router deployment: %v", err)
 	}
@@ -243,7 +248,7 @@ func headerValues(values []operatorv1.IngressControllerHTTPHeader) string {
 }
 
 // desiredRouterDeployment returns the desired router deployment.
-func desiredRouterDeployment(ci *operatorv1.IngressController, ingressControllerImage string, ingressConfig *configv1.Ingress, infraConfig *configv1.Infrastructure, apiConfig *configv1.APIServer, networkConfig *configv1.Network, proxyNeeded bool, haveClientCAConfigmap bool, clientCAConfigmap *corev1.ConfigMap, clusterProxyConfig *configv1.Proxy, routeExternalCertificateEnabled bool) (*appsv1.Deployment, error) {
+func desiredRouterDeployment(ci *operatorv1.IngressController, ingressControllerImage string, ingressConfig *configv1.Ingress, infraConfig *configv1.Infrastructure, apiConfig *configv1.APIServer, networkConfig *configv1.Network, proxyNeeded bool, haveClientCAConfigmap bool, clientCAConfigmap *corev1.ConfigMap, clusterProxyConfig *configv1.Proxy, routeExternalCertificateEnabled, ingressControllerDCMEnabled bool) (*appsv1.Deployment, error) {
 	deployment := manifests.RouterDeployment()
 	name := controller.RouterDeploymentName(ci)
 	deployment.Name = name.Name
@@ -523,6 +528,15 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		LoadBalancingAlgorithm string `json:"loadBalancingAlgorithm"`
 		DynamicConfigManager   string `json:"dynamicConfigManager"`
 		ContStats              string `json:"contStats"`
+		// maxDynamicServers specifies the number of dynamic server slots that will be added to each route.
+		// This setting can only be configured if dynamicConfigManager is `true`.
+		// The default value is 1, with a maximum of 10.
+		// Dynamic server slots help to avoid reloads during endpoint scale-ups. The more dynamic servers
+		// added, the fewer reloads required when scaling up.
+		// Note, however, that dynamic servers consume memory even when not enabled.
+		// Use this analysis of the memory usage to assess the impact of different numbers of servers:
+		// https://gist.github.com/frobware/2b527ce3f040797909eff482a4776e0b
+		MaxDynamicServers string `json:"maxDynamicServers"`
 	}
 	if len(ci.Spec.UnsupportedConfigOverrides.Raw) > 0 {
 		if err := json.Unmarshal(ci.Spec.UnsupportedConfigOverrides.Raw, &unsupportedConfigOverrides); err != nil {
@@ -567,13 +581,36 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		})
 	}
 
+	enableDCM := false
+	if ingressControllerDCMEnabled {
+		enableDCM = true
+	}
 	dynamicConfigOverride := unsupportedConfigOverrides.DynamicConfigManager
-	if v, err := strconv.ParseBool(dynamicConfigOverride); err == nil && v {
+	if v, err := strconv.ParseBool(dynamicConfigOverride); err == nil {
+		// Config override can still be used to opt out from DCM.
+		enableDCM = v
+	}
+
+	if enableDCM {
 		env = append(env, corev1.EnvVar{
 			Name:  RouterHAProxyConfigManager,
 			Value: "true",
+		}, corev1.EnvVar{
+			Name:  RouterHAProxyBlueprintRoutePoolSize,
+			Value: "0",
+		})
+
+		// Max dynamic servers override is only taken into account when DCM is enabled.
+		routerHAProxyMaxDynamicServersValue := RouterHAProxyMaxDynamicServersDefaultValue
+		if v, err := strconv.Atoi(unsupportedConfigOverrides.MaxDynamicServers); err == nil && v > 0 {
+			routerHAProxyMaxDynamicServersValue = v
+		}
+		env = append(env, corev1.EnvVar{
+			Name:  RouterHAProxyMaxDynamicServers,
+			Value: strconv.Itoa(routerHAProxyMaxDynamicServersValue),
 		})
 	}
+
 	contStats := unsupportedConfigOverrides.ContStats
 	if v, err := strconv.ParseBool(contStats); err == nil && v {
 		env = append(env, corev1.EnvVar{
