@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
-	"golang.org/x/exp/slices"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -215,6 +214,29 @@ func TestSetDefaultPublishingStrategySetsPlatformDefaults(t *testing.T) {
 			}
 		}
 
+		makeDefaultAWSPlatformStatus = func(platform configv1.PlatformType) *configv1.PlatformStatus {
+			return &configv1.PlatformStatus{
+				Type: platform,
+				AWS: &configv1.AWSPlatformStatus{
+					CloudLoadBalancerConfig: &configv1.CloudLoadBalancerConfig{
+						DNSType: configv1.PlatformDefaultDNSType,
+					},
+				},
+			}
+		}
+
+		makeBYODNSAWSPlatformStatus = func(platform configv1.PlatformType) *configv1.PlatformStatus {
+			return &configv1.PlatformStatus{
+				Type: platform,
+				AWS: &configv1.AWSPlatformStatus{
+					CloudLoadBalancerConfig: &configv1.CloudLoadBalancerConfig{
+						DNSType:       configv1.ClusterHostedDNSType,
+						ClusterHosted: &configv1.CloudLoadBalancerIPs{},
+					},
+				},
+			}
+		}
+
 		ingressConfigWithDefaultClassicLB = &configv1.Ingress{
 			Spec: configv1.IngressSpec{
 				LoadBalancer: configv1.LoadBalancer{
@@ -290,6 +312,18 @@ func TestSetDefaultPublishingStrategySetsPlatformDefaults(t *testing.T) {
 			name:                    "Equinix Metal",
 			platformStatus:          makePlatformStatus(configv1.EquinixMetalPlatformType),
 			expectedIC:              ingressControllerWithHostNetwork,
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name:                    "AWS",
+			platformStatus:          makeDefaultAWSPlatformStatus(configv1.AWSPlatformType),
+			expectedIC:              ingressControllerWithLoadBalancer,
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name:                    "AWS With BYO DNS",
+			platformStatus:          makeBYODNSAWSPlatformStatus(configv1.AWSPlatformType),
+			expectedIC:              ingressControllerWithLoadBalancerUnmanagedDNS,
 			domainMatchesBaseDomain: true,
 		},
 		{
@@ -1582,8 +1616,33 @@ func Test_IsProxyProtocolNeeded(t *testing.T) {
 
 func Test_computeUpdatedInfraFromService(t *testing.T) {
 	var (
+		IngressLBIP = configv1.IP("196.78.125.4")
 		awsPlatform = configv1.PlatformStatus{
 			Type: configv1.AWSPlatformType,
+		}
+		awsPlatformWithDNSType = configv1.PlatformStatus{
+			Type: configv1.AWSPlatformType,
+			AWS: &configv1.AWSPlatformStatus{
+				CloudLoadBalancerConfig: &configv1.CloudLoadBalancerConfig{
+					DNSType: configv1.ClusterHostedDNSType,
+				},
+			},
+		}
+		awsPlatformWithLBIP = configv1.PlatformStatus{
+			Type: configv1.AWSPlatformType,
+			AWS: &configv1.AWSPlatformStatus{
+				CloudLoadBalancerConfig: &configv1.CloudLoadBalancerConfig{
+					DNSType: configv1.ClusterHostedDNSType,
+					ClusterHosted: &configv1.CloudLoadBalancerIPs{
+						IngressLoadBalancerIPs: []configv1.IP{
+							IngressLBIP,
+						},
+					},
+				},
+			},
+		}
+		azurePlatform = configv1.PlatformStatus{
+			Type: configv1.AzurePlatformType,
 		}
 		gcpPlatform = configv1.PlatformStatus{
 			Type: configv1.GCPPlatformType,
@@ -1596,10 +1655,6 @@ func Test_computeUpdatedInfraFromService(t *testing.T) {
 				},
 			},
 		}
-		ingresses = []corev1.LoadBalancerIngress{
-			{IP: "196.78.125.4"},
-		}
-		IngressLBIP         = configv1.IP("196.78.125.4")
 		gcpPlatformWithLBIP = configv1.PlatformStatus{
 			Type: configv1.GCPPlatformType,
 			GCP: &configv1.GCPPlatformStatus{
@@ -1613,16 +1668,26 @@ func Test_computeUpdatedInfraFromService(t *testing.T) {
 				},
 			},
 		}
+		ingresses = []corev1.LoadBalancerIngress{
+			{IP: "196.78.125.4"},
+		}
 		ingressesWithMultipleIPs = []corev1.LoadBalancerIngress{
 			{IP: "196.78.125.4"},
 			{IP: "10.10.10.4"},
+		}
+		// Hostname is intentionally assigned an IP address for unit testing purposes since net.LookupIP simply returns the provided IP.
+		awsIngresses = []corev1.LoadBalancerIngress{
+			{Hostname: "196.78.125.4"},
+		}
+		awsUpdatedIngresses = []corev1.LoadBalancerIngress{
+			{Hostname: "10.10.10.4"},
 		}
 	)
 	testCases := []struct {
 		description   string
 		platform      *configv1.PlatformStatus
 		ingresses     []corev1.LoadBalancerIngress
-		expectedInfra configv1.Infrastructure
+		expectedLBIPs []configv1.IP
 		expectUpdated bool
 		expectError   bool
 	}{
@@ -1635,7 +1700,7 @@ func Test_computeUpdatedInfraFromService(t *testing.T) {
 		},
 		{
 			description:   "unsupported platform should not cause an error",
-			platform:      &awsPlatform,
+			platform:      &azurePlatform,
 			ingresses:     []corev1.LoadBalancerIngress{},
 			expectUpdated: false,
 			expectError:   false,
@@ -1658,6 +1723,7 @@ func Test_computeUpdatedInfraFromService(t *testing.T) {
 			description:   "gcp platform with DNSType and no LB IP in infra config, service has 1 IP",
 			platform:      &gcpPlatformWithDNSType,
 			ingresses:     ingresses,
+			expectedLBIPs: []configv1.IP{IngressLBIP},
 			expectUpdated: true,
 			expectError:   false,
 		},
@@ -1665,6 +1731,7 @@ func Test_computeUpdatedInfraFromService(t *testing.T) {
 			description:   "gcp platform with no change to LB IPs",
 			platform:      &gcpPlatformWithLBIP,
 			ingresses:     ingresses,
+			expectedLBIPs: []configv1.IP{IngressLBIP},
 			expectUpdated: false,
 			expectError:   false,
 		},
@@ -1672,6 +1739,45 @@ func Test_computeUpdatedInfraFromService(t *testing.T) {
 			description:   "gcp platform with DNSType and LB IP",
 			platform:      &gcpPlatformWithLBIP,
 			ingresses:     ingressesWithMultipleIPs,
+			expectedLBIPs: []configv1.IP{IngressLBIP, configv1.IP("10.10.10.4")},
+			expectUpdated: true,
+			expectError:   false,
+		},
+		{
+			description:   "aws platform without DNSType set",
+			platform:      &awsPlatform,
+			ingresses:     []corev1.LoadBalancerIngress{},
+			expectUpdated: false,
+			expectError:   false,
+		},
+		{
+			description:   "aws platform with DNSType and no LB IP",
+			platform:      &awsPlatformWithDNSType,
+			ingresses:     []corev1.LoadBalancerIngress{},
+			expectUpdated: false,
+			expectError:   false,
+		},
+		{
+			description:   "aws platform with DNSType and no LB IP in infra config, service has 1 IP",
+			platform:      &awsPlatformWithDNSType,
+			ingresses:     awsIngresses,
+			expectedLBIPs: []configv1.IP{IngressLBIP},
+			expectUpdated: true,
+			expectError:   false,
+		},
+		{
+			description:   "aws platform with no change to LB IPs",
+			platform:      &awsPlatformWithLBIP,
+			ingresses:     awsIngresses,
+			expectedLBIPs: []configv1.IP{IngressLBIP},
+			expectUpdated: false,
+			expectError:   false,
+		},
+		{
+			description:   "aws platform with 1 LB IP with change in hostname",
+			platform:      &awsPlatformWithLBIP,
+			ingresses:     awsUpdatedIngresses,
+			expectedLBIPs: []configv1.IP{configv1.IP("10.10.10.4")},
 			expectUpdated: true,
 			expectError:   false,
 		},
@@ -1698,12 +1804,14 @@ func Test_computeUpdatedInfraFromService(t *testing.T) {
 				t.Errorf("expected %t, got %t", tc.expectUpdated, updated)
 			}
 			if updated {
-				ingressLBs := service.Status.LoadBalancer.Ingress
-				for _, ingress := range ingressLBs {
-					if len(ingress.IP) > 0 {
-						if !slices.Contains(infraConfig.Status.PlatformStatus.GCP.CloudLoadBalancerConfig.ClusterHosted.IngressLoadBalancerIPs, configv1.IP(ingress.IP)) {
-							t.Errorf("expected Infra CR to contain %s", ingress.IP)
-						}
+				switch tc.platform.Type {
+				case configv1.AWSPlatformType:
+					if !reflect.DeepEqual(infraConfig.Status.PlatformStatus.AWS.CloudLoadBalancerConfig.ClusterHosted.IngressLoadBalancerIPs, tc.expectedLBIPs) {
+						t.Errorf("expected Infra CR to contain %s but found %s", tc.expectedLBIPs, infraConfig.Status.PlatformStatus.AWS.CloudLoadBalancerConfig.ClusterHosted.IngressLoadBalancerIPs)
+					}
+				case configv1.GCPPlatformType:
+					if !reflect.DeepEqual(infraConfig.Status.PlatformStatus.GCP.CloudLoadBalancerConfig.ClusterHosted.IngressLoadBalancerIPs, tc.expectedLBIPs) {
+						t.Errorf("expected Infra CR to contain %s but found %s", tc.expectedLBIPs, infraConfig.Status.PlatformStatus.GCP.CloudLoadBalancerConfig.ClusterHosted.IngressLoadBalancerIPs)
 					}
 				}
 			}
