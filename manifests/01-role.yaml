@@ -38,8 +38,10 @@ rules:
   verbs:
   - "*"
 ---
-# Role for the operator to delete Role and RoleBindings
-# in the openshift-config namespace.
+# Role for the operator to manage the following resources in openshift-config namespace:
+# - Role and RoleBindings to manage RBAC for componentRoutes (configurable-route controller).
+# - ConfigMaps to sync error code pages and client CAs (?) (sync-http-error-code-configmap, clientca-configmap  controllers).
+# - Secrets as roles created for component routes grant read access to secrets (?).
 kind: Role
 apiVersion: rbac.authorization.k8s.io/v1
 metadata:
@@ -58,3 +60,112 @@ rules:
   - rolebindings
   verbs:
   - delete
+  - create
+  - update
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  - secrets
+  verbs:
+  - get
+  - list
+  - watch
+---
+# Role for the operator to publish the router certificates
+# in openshift-config-managed namespace (certificate-publisher controller).
+kind: Role
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: ingress-operator
+  namespace: openshift-config-managed
+  annotations:
+    capability.openshift.io/name: Ingress
+    include.release.openshift.io/ibm-cloud-managed: "true"
+    include.release.openshift.io/self-managed-high-availability: "true"
+    include.release.openshift.io/single-node-developer: "true"
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  - configmaps
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  resourceNames:
+  - router-certs
+  verbs:
+  - "*"
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  resourceNames:
+  - default-ingress-cert
+  verbs:
+  - "*"
+---
+# Role for the operator to manage ingress controllers
+# in openshift-ingress namespace.
+kind: Role
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: ingress-operator
+  namespace: openshift-ingress
+  annotations:
+    capability.openshift.io/name: Ingress
+    include.release.openshift.io/ibm-cloud-managed: "true"
+    include.release.openshift.io/self-managed-high-availability: "true"
+    include.release.openshift.io/single-node-developer: "true"
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  - configmaps
+  - serviceaccounts
+  verbs:
+  - "*"
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  verbs:
+  - "*"
+---
+# Role for the operator to manage canary deployment
+# in openshift-ingress-canary namespace.
+kind: Role
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: ingress-operator
+  namespace: openshift-ingress-canary
+  annotations:
+    capability.openshift.io/name: Ingress
+    include.release.openshift.io/ibm-cloud-managed: "true"
+    include.release.openshift.io/self-managed-high-availability: "true"
+    include.release.openshift.io/single-node-developer: "true"
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  - configmaps
+  - serviceaccounts
+  verbs:
+  - "*"
+- apiGroups:
+  - apps
+  resources:
+  - daemonsets
+  verbs:
+  - "*"
