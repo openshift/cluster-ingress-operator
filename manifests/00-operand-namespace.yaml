@@ -1,0 +1,40 @@
+# Define operand namespaces to be able to restrict the operator's RBAC permissions.
+# This enables limiting the access to sensitive resources (e.g., Secrets, ServiceAccounts, ConfigMaps)
+# from cluster-wide scope to specific namespaces.
+---
+kind: Namespace
+apiVersion: v1
+metadata:
+  annotations:
+    capability.openshift.io/name: Ingress
+    include.release.openshift.io/ibm-cloud-managed: "true"
+    include.release.openshift.io/self-managed-high-availability: "true"
+    include.release.openshift.io/single-node-developer: "true"
+    openshift.io/node-selector: ""
+    workload.openshift.io/allowed: "management"
+  labels:
+    # allow openshift-monitoring to look for ServiceMonitor objects in this namespace
+    openshift.io/cluster-monitoring: "true"
+    name: openshift-ingress
+    # old and new forms of the label for matching with NetworkPolicy
+    network.openshift.io/policy-group: ingress
+    policy-group.network.openshift.io/ingress: ""
+    # Router deployment needs to allow privilege escalation, as well as host
+    # network and host ports for the "HostNetwork" endpoint publishing strategy,
+    # which is the default for on-premise platforms.
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/audit: privileged
+    pod-security.kubernetes.io/warn: privileged
+  name: openshift-ingress
+---
+kind: Namespace
+apiVersion: v1
+metadata:
+  annotations:
+    capability.openshift.io/name: Ingress
+    include.release.openshift.io/ibm-cloud-managed: "true"
+    include.release.openshift.io/self-managed-high-availability: "true"
+    include.release.openshift.io/single-node-developer: "true"
+    openshift.io/node-selector: ""
+    workload.openshift.io/allowed: "management"
+  name: openshift-ingress-canary
