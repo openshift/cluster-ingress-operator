@@ -1,6 +1,7 @@
 package ingress
 
 import (
+	"bytes"
 	"context"
 	"crypto/x509"
 	"encoding/pem"
@@ -728,17 +729,23 @@ func checkDefaultCertificate(secret *corev1.Secret, domain string) error {
 		if cert.Subject.CommonName == domain && !foundSAN {
 			return fmt.Errorf("certificate in secret %s/%s has legacy Common Name (CN) but has no Subject Alternative Name (SAN) for domain: %s", secret.Namespace, secret.Name, domain)
 		}
-		// Prevent the upgrade only if the leaf certificate (the first certificate) uses a SHA1 signature algorithm.
-		// SHA1 can still be used by other certificates in the chain, such as the root and intermediate certificates.
-		if !cert.IsCA {
+		// Block the upgrade only if CA-signed certificates (not self-signed) uses a SHA1 signature algorithm.
+		// SHA1 can still be used by the root CA certificate.
+		if !isSelfSignedCert(cert) {
 			switch cert.SignatureAlgorithm {
 			case x509.SHA1WithRSA, x509.ECDSAWithSHA1:
-				return fmt.Errorf("certificate in secret %s/%s has weak SHA1 signature algorithm: %s (see https://docs.openshift.com/container-platform/4.16/release_notes/ocp-4-16-release-notes.html#ocp-4-16-sha-haproxy-support-removed_release-notes for more details)", secret.Namespace, secret.Name, cert.SignatureAlgorithm)
+				return fmt.Errorf("a CA-signed certificate in secret %s/%s has weak SHA1 signature algorithm: %s (see https://docs.openshift.com/container-platform/4.16/release_notes/ocp-4-16-release-notes.html#ocp-4-16-sha-haproxy-support-removed_release-notes for more details)", secret.Namespace, secret.Name, cert.SignatureAlgorithm)
 			}
 		}
 	}
 
 	return nil
+}
+
+// isSelfSignedCert determines if a provided certificate is
+// self-signed by checking if the issuer is equal to the subject.
+func isSelfSignedCert(cert *x509.Certificate) bool {
+	return bytes.Equal(cert.RawIssuer, cert.RawSubject)
 }
 
 func formatConditions(conditions []*operatorv1.OperatorCondition) string {
