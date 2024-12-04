@@ -1,6 +1,7 @@
 package ingress
 
 import (
+	"bytes"
 	"context"
 	"crypto/x509"
 	"encoding/pem"
@@ -728,17 +729,61 @@ func checkDefaultCertificate(secret *corev1.Secret, domain string) error {
 		if cert.Subject.CommonName == domain && !foundSAN {
 			return fmt.Errorf("certificate in secret %s/%s has legacy Common Name (CN) but has no Subject Alternative Name (SAN) for domain: %s", secret.Namespace, secret.Name, domain)
 		}
-		// Prevent the upgrade only if the leaf certificate (the first certificate) uses a SHA1 signature algorithm.
-		// SHA1 can still be used by other certificates in the chain, such as the root and intermediate certificates.
-		if !cert.IsCA {
+		// Block the upgrade only if CA-signed certificates (not self-signed) uses a SHA1 signature algorithm.
+		// SHA1 can still be used by the root CA certificate.
+		if !isSelfSignedCert(cert) {
 			switch cert.SignatureAlgorithm {
 			case x509.SHA1WithRSA, x509.ECDSAWithSHA1:
-				return fmt.Errorf("certificate in secret %s/%s has weak SHA1 signature algorithm: %s (see https://docs.openshift.com/container-platform/4.16/release_notes/ocp-4-16-release-notes.html#ocp-4-16-sha-haproxy-support-removed_release-notes for more details)", secret.Namespace, secret.Name, cert.SignatureAlgorithm)
+				return fmt.Errorf("a CA-signed certificate in secret %s/%s has weak SHA1 signature algorithm: %s (see https://docs.openshift.com/container-platform/4.16/release_notes/ocp-4-16-release-notes.html#ocp-4-16-sha-haproxy-support-removed_release-notes for more details)", secret.Namespace, secret.Name, cert.SignatureAlgorithm)
 			}
 		}
 	}
 
 	return nil
+}
+
+// isSelfSignedCert determines if a certificate is self-signed by verifying that the issuer matches the subject,
+// the authority key identifier matches the subject key identifier, and the public key algorithm matches the
+// signature algorithm. This logic mirrors the approach that OpenSSL uses to set the EXFLAG_SS flag, which
+// indicates a certificate is self-signed.
+// Ref: https://github.com/openssl/openssl/blob/b85e6f534906f0bf9114386d227e481d2336a0ff/crypto/x509/v3_purp.c#L557
+func isSelfSignedCert(cert *x509.Certificate) bool {
+	issuerIsEqualToSubject := bytes.Equal(cert.RawIssuer, cert.RawSubject)
+	authorityKeyIsEqualToSubjectKey := bytes.Equal(cert.AuthorityKeyId, cert.SubjectKeyId)
+	algorithmIsConsistent := signatureAlgorithmToPublicKeyAlgorithm(cert.SignatureAlgorithm) == cert.PublicKeyAlgorithm
+	return issuerIsEqualToSubject &&
+		(cert.AuthorityKeyId == nil || authorityKeyIsEqualToSubjectKey) &&
+		algorithmIsConsistent
+}
+
+// signatureAlgorithmToPublicKeyAlgorithm maps a SignatureAlgorithm to its corresponding PublicKeyAlgorithm.
+// Unfortunately, the x509 library does not expose a public mapping function for this.
+// Returns UnknownPublicKeyAlgorithm if the mapping is not recognized.
+func signatureAlgorithmToPublicKeyAlgorithm(sigAlgo x509.SignatureAlgorithm) x509.PublicKeyAlgorithm {
+	switch sigAlgo {
+	case x509.MD2WithRSA,
+		x509.MD5WithRSA,
+		x509.SHA1WithRSA,
+		x509.SHA256WithRSA,
+		x509.SHA384WithRSA,
+		x509.SHA512WithRSA,
+		x509.SHA256WithRSAPSS,
+		x509.SHA384WithRSAPSS,
+		x509.SHA512WithRSAPSS:
+		return x509.RSA
+	case x509.DSAWithSHA1,
+		x509.DSAWithSHA256:
+		return x509.DSA
+	case x509.ECDSAWithSHA1,
+		x509.ECDSAWithSHA256,
+		x509.ECDSAWithSHA384,
+		x509.ECDSAWithSHA512:
+		return x509.ECDSA
+	case x509.PureEd25519:
+		return x509.Ed25519
+	default:
+		return x509.UnknownPublicKeyAlgorithm
+	}
 }
 
 func formatConditions(conditions []*operatorv1.OperatorCondition) string {

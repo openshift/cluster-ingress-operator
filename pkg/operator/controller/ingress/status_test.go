@@ -2246,6 +2246,11 @@ func Test_computeIngressUpgradeableCondition(t *testing.T) {
 		// If root cert is not provided, use the certTemplate to create a self-signed cert.
 		if rootCert == nil {
 			rootCert = certTemplate
+		} else {
+			// Go's x509.CreateCertificate assumes that if subject == issuer, the certificate is self-signed and does
+			// not add AuthorityKeyId. This fallback ensures AuthorityKeyId is included in cases where subject == issuer
+			// but the certificate is NOT self-signed. See https://github.com/golang/go/issues/62060.
+			certTemplate.AuthorityKeyId = rootCert.SubjectKeyId
 		}
 		var certBytes []byte
 		var privateKey crypto.PrivateKey
@@ -2297,14 +2302,21 @@ func Test_computeIngressUpgradeableCondition(t *testing.T) {
 	sha256ECDSACertWithSans, _ := makeCertificate(wildcardDomain, []string{wildcardDomain}, x509.ECDSAWithSHA256, nil, nil, false)
 	sha256ECDSACertWithNoSans, _ := makeCertificate(wildcardDomain, []string{}, x509.ECDSAWithSHA256, nil, nil, false)
 
-	sha1ECDSACert, _ := makeCertificate(wildcardDomain, []string{wildcardDomain}, x509.ECDSAWithSHA1, nil, nil, false)
-	sha1RSACert, _ := makeCertificate(wildcardDomain, []string{wildcardDomain}, x509.SHA1WithRSA, nil, nil, false)
+	sha1ECDSACertSelfSigned, _ := makeCertificate(wildcardDomain, []string{wildcardDomain}, x509.ECDSAWithSHA1, nil, nil, false)
+	sha1RSACertSelfSigned, _ := makeCertificate(wildcardDomain, []string{wildcardDomain}, x509.SHA1WithRSA, nil, nil, false)
 
-	sha1RSARootCA, sha1RSARootCAKey := makeCertificate(wildcardDomain, []string{wildcardDomain}, x509.SHA1WithRSA, nil, nil, true)
+	// CA's need to use different common name to make the subject != issuer.
+	sha1RSARootCA, sha1RSARootCAKey := makeCertificate("sha1RootCA.com", []string{wildcardDomain}, x509.SHA1WithRSA, nil, nil, true)
 	sha256RSACertSignedBySha1RSA, _ := makeCertificate(wildcardDomain, []string{wildcardDomain}, x509.SHA256WithRSA, sha1RSARootCA, sha1RSARootCAKey, false)
 
-	sha256RSARootCA, sha256RSARootCAKey := makeCertificate(wildcardDomain, []string{wildcardDomain}, x509.SHA256WithRSA, nil, nil, true)
-	sha1RSACertSignedBySha256RSA, _ := makeCertificate(wildcardDomain, []string{wildcardDomain}, x509.SHA1WithRSA, sha256RSARootCA, sha256RSARootCAKey, false)
+	sha256RSARootCA, sha256RSARootCAKey := makeCertificate("sha256RootCA.com", []string{wildcardDomain}, x509.SHA256WithRSA, nil, nil, true)
+	sha1RSACertSignedBySha256RSARootCA, _ := makeCertificate(wildcardDomain, []string{wildcardDomain}, x509.SHA1WithRSA, sha256RSARootCA, sha256RSARootCAKey, false)
+
+	sha1RSAIntCASignedBySha256RSARootCA, sha1RSAIntCASignedBySha256RSARootCAKey := makeCertificate("sha1IntCA.com", []string{wildcardDomain}, x509.SHA1WithRSA, sha256RSARootCA, sha256RSARootCAKey, true)
+	sha256RSACertSignedBySha1RSAIntCA, _ := makeCertificate(wildcardDomain, []string{wildcardDomain}, x509.SHA256WithRSA, sha1RSAIntCASignedBySha256RSARootCA, sha1RSAIntCASignedBySha256RSARootCAKey, false)
+
+	// Intentionally making the subject == issuer.
+	sha1RSACertSignedBySha256RSARootCASameSubjectIssuer, _ := makeCertificate("sha256RootCA.com", []string{wildcardDomain}, x509.SHA1WithRSA, sha256RSARootCA, sha256RSARootCAKey, false)
 
 	testCases := []struct {
 		description string
@@ -2352,13 +2364,13 @@ func Test_computeIngressUpgradeableCondition(t *testing.T) {
 		},
 		{
 			description: "if the self-signed default certificate uses ECDSA SHA1",
-			secret:      makeCertificateSecret(sha1ECDSACert),
-			expect:      false,
+			secret:      makeCertificateSecret(sha1ECDSACertSelfSigned),
+			expect:      true,
 		},
 		{
 			description: "if the self-signed default certificate uses RSA SHA1",
-			secret:      makeCertificateSecret(sha1RSACert),
-			expect:      false,
+			secret:      makeCertificateSecret(sha1RSACertSelfSigned),
+			expect:      true,
 		},
 		{
 			description: "if the default leaf certificate uses RSA SHA256 included with its root certificate that uses RSA SHA1",
@@ -2367,12 +2379,22 @@ func Test_computeIngressUpgradeableCondition(t *testing.T) {
 		},
 		{
 			description: "if the default leaf certificate uses RSA SHA1 included with its root certificate that uses RSA SHA256",
-			secret:      makeCertificateSecret(sha1RSACertSignedBySha256RSA, sha256RSARootCA),
+			secret:      makeCertificateSecret(sha1RSACertSignedBySha256RSARootCA, sha256RSARootCA),
 			expect:      false,
 		},
 		{
 			description: "if the default leaf certificate uses RSA SHA1 included with its root certificate that uses RSA SHA256, but the order is reversed",
-			secret:      makeCertificateSecret(sha256RSARootCA, sha1RSACertSignedBySha256RSA),
+			secret:      makeCertificateSecret(sha256RSARootCA, sha1RSACertSignedBySha256RSARootCA),
+			expect:      false,
+		},
+		{
+			description: "if the default root and leaf certificate uses RSA SHA256, but the intermediate certificate uses RSA SHA1",
+			secret:      makeCertificateSecret(sha256RSARootCA, sha1RSAIntCASignedBySha256RSARootCA, sha256RSACertSignedBySha1RSAIntCA),
+			expect:      false,
+		},
+		{
+			description: "if the default leaf certificate uses RSA SHA1, but the subject is the same as issuer's subject",
+			secret:      makeCertificateSecret(sha1RSACertSignedBySha256RSARootCASameSubjectIssuer),
 			expect:      false,
 		},
 	}
