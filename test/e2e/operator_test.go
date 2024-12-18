@@ -1127,11 +1127,10 @@ func TestInternalLoadBalancer(t *testing.T) {
 	platform := infraConfig.Status.PlatformStatus.Type
 
 	supportedPlatforms := map[configv1.PlatformType]struct{}{
-		configv1.AWSPlatformType:          {},
-		configv1.AzurePlatformType:        {},
-		configv1.GCPPlatformType:          {},
-		configv1.IBMCloudPlatformType:     {},
-		configv1.AlibabaCloudPlatformType: {},
+		configv1.AWSPlatformType:      {},
+		configv1.AzurePlatformType:    {},
+		configv1.GCPPlatformType:      {},
+		configv1.IBMCloudPlatformType: {},
 	}
 	if _, supported := supportedPlatforms[platform]; !supported {
 		t.Skipf("test skipped on platform %q", platform)
@@ -1557,12 +1556,11 @@ func TestScopeChange(t *testing.T) {
 	}
 	platform := infraConfig.Status.PlatformStatus.Type
 	supportedPlatforms := map[configv1.PlatformType]struct{}{
-		configv1.AlibabaCloudPlatformType: {},
-		configv1.AWSPlatformType:          {},
-		configv1.AzurePlatformType:        {},
-		configv1.GCPPlatformType:          {},
-		configv1.IBMCloudPlatformType:     {},
-		configv1.PowerVSPlatformType:      {},
+		configv1.AWSPlatformType:      {},
+		configv1.AzurePlatformType:    {},
+		configv1.GCPPlatformType:      {},
+		configv1.IBMCloudPlatformType: {},
+		configv1.PowerVSPlatformType:  {},
 	}
 	if _, supported := supportedPlatforms[platform]; !supported {
 		t.Skipf("test skipped on platform %q", platform)
@@ -1602,7 +1600,7 @@ func TestScopeChange(t *testing.T) {
 	}
 
 	switch platform {
-	case configv1.AlibabaCloudPlatformType, configv1.AWSPlatformType, configv1.IBMCloudPlatformType, configv1.PowerVSPlatformType:
+	case configv1.AWSPlatformType, configv1.IBMCloudPlatformType, configv1.PowerVSPlatformType:
 		progressingTrue := operatorv1.OperatorCondition{
 			Type:   operatorv1.OperatorStatusTypeProgressing,
 			Status: operatorv1.ConditionTrue,

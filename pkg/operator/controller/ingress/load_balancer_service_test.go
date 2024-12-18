@@ -716,28 +716,6 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 			// floatingIP is ignored for internal scope
 			expectedFloatingIP: "",
 		},
-		{
-			description:                   "external load balancer for alibaba platform",
-			platformStatus:                platformStatus(configv1.AlibabaCloudPlatformType),
-			strategyStatus:                lbs(operatorv1.ExternalLoadBalancer),
-			expectService:                 true,
-			expectedExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyLocal,
-			expectedServiceAnnotations: map[string]annotationExpectation{
-				alibabaCloudLBAddressTypeAnnotation: {true, alibabaCloudLBAddressTypeInternet},
-				localWithFallbackAnnotation:         {true, ""},
-			},
-		},
-		{
-			description:                   "internal load balancer for alibaba platform",
-			platformStatus:                platformStatus(configv1.AlibabaCloudPlatformType),
-			strategyStatus:                lbs(operatorv1.InternalLoadBalancer),
-			expectService:                 true,
-			expectedExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyLocal,
-			expectedServiceAnnotations: map[string]annotationExpectation{
-				alibabaCloudLBAddressTypeAnnotation: {true, alibabaCloudLBAddressTypeIntranet},
-				localWithFallbackAnnotation:         {true, ""},
-			},
-		},
 	}
 
 	for _, tc := range testCases {

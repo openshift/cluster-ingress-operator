@@ -130,18 +130,6 @@ const (
 	// available endpoint if no local endpoint is available.
 	localWithFallbackAnnotation = "traffic-policy.network.alpha.openshift.io/local-with-fallback"
 
-	// alibabaCloudLBAddressTypeAnnotation is the annotation used on a service
-	// to specify the network type of an Aliyun SLB
-	alibabaCloudLBAddressTypeAnnotation = "service.beta.kubernetes.io/alibaba-cloud-loadbalancer-address-type"
-
-	// alibabaCloudLBAddressTypeInternet is the service annotation value used to specify an Aliyun SLB
-	// IP is exposed to the internet (public)
-	alibabaCloudLBAddressTypeInternet = "internet"
-
-	// alibabaCloudLBAddressTypeIntranet is the service annotation value used to specify an Aliyun SLB
-	// IP is exposed to the intranet (private)
-	alibabaCloudLBAddressTypeIntranet = "intranet"
-
 	// autoDeleteLoadBalancerAnnotation is an annotation that can be set on
 	// an IngressController to indicate that the operator should
 	// automatically delete and recreate any associated service load-balancer when a
@@ -189,9 +177,6 @@ var (
 		},
 		configv1.PowerVSPlatformType: {
 			iksLBScopeAnnotation: iksLBScopePrivate,
-		},
-		configv1.AlibabaCloudPlatformType: {
-			alibabaCloudLBAddressTypeAnnotation: alibabaCloudLBAddressTypeIntranet,
 		},
 		configv1.NutanixPlatformType: nil,
 	}
@@ -478,11 +463,6 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 			service.Spec.ExternalTrafficPolicy = corev1.ServiceExternalTrafficPolicyTypeCluster
 			if proxyNeeded {
 				service.Annotations[iksLBEnableFeaturesAnnotation] = iksLBEnableFeaturesProxyProtocol
-			}
-
-		case configv1.AlibabaCloudPlatformType:
-			if !isInternal {
-				service.Annotations[alibabaCloudLBAddressTypeAnnotation] = alibabaCloudLBAddressTypeInternet
 			}
 		case configv1.OpenStackPlatformType:
 			// Set a floating IP only if the load balancer scope is external.
