@@ -126,7 +126,7 @@ func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, in
 	if err != nil {
 		return false, nil, fmt.Errorf("failed to determine if proxy protocol is needed for ingresscontroller %s/%s: %v", ci.Namespace, ci.Name, err)
 	}
-	desired, err := desiredRouterDeployment(ci, r.config.IngressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, haveClientCAConfigmap, clientCAConfigmap, clusterProxyConfig, r.config.RouteExternalCertificateEnabled, r.config.IngressControllerDCMEnabled)
+	desired, err := desiredRouterDeployment(ci, &r.config, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, haveClientCAConfigmap, clientCAConfigmap, clusterProxyConfig)
 	if err != nil {
 		return haveDepl, current, fmt.Errorf("failed to build router deployment: %v", err)
 	}
@@ -248,7 +248,7 @@ func headerValues(values []operatorv1.IngressControllerHTTPHeader) string {
 }
 
 // desiredRouterDeployment returns the desired router deployment.
-func desiredRouterDeployment(ci *operatorv1.IngressController, ingressControllerImage string, ingressConfig *configv1.Ingress, infraConfig *configv1.Infrastructure, apiConfig *configv1.APIServer, networkConfig *configv1.Network, proxyNeeded bool, haveClientCAConfigmap bool, clientCAConfigmap *corev1.ConfigMap, clusterProxyConfig *configv1.Proxy, routeExternalCertificateEnabled, ingressControllerDCMEnabled bool) (*appsv1.Deployment, error) {
+func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, ingressConfig *configv1.Ingress, infraConfig *configv1.Infrastructure, apiConfig *configv1.APIServer, networkConfig *configv1.Network, proxyNeeded bool, haveClientCAConfigmap bool, clientCAConfigmap *corev1.ConfigMap, clusterProxyConfig *configv1.Proxy) (*appsv1.Deployment, error) {
 	deployment := manifests.RouterDeployment()
 	name := controller.RouterDeploymentName(ci)
 	deployment.Name = name.Name
@@ -530,7 +530,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		ContStats              string `json:"contStats"`
 		// maxDynamicServers specifies the number of dynamic server slots that will be added to each route.
 		// This setting can only be configured if dynamicConfigManager is `true`.
-		// The default value is 1, with a maximum of 10.
+		// The default value is 1.
 		// Dynamic server slots help to avoid reloads during endpoint scale-ups. The more dynamic servers
 		// added, the fewer reloads required when scaling up.
 		// Note, however, that dynamic servers consume memory even when not enabled.
@@ -582,7 +582,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	}
 
 	enableDCM := false
-	if ingressControllerDCMEnabled {
+	if config.IngressControllerDCMEnabled {
 		enableDCM = true
 	}
 	dynamicConfigOverride := unsupportedConfigOverrides.DynamicConfigManager
@@ -733,7 +733,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 		env = append(env, corev1.EnvVar{Name: "ROUTE_LABELS", Value: routeSelector.String()})
 	}
 
-	deployment.Spec.Template.Spec.Containers[0].Image = ingressControllerImage
+	deployment.Spec.Template.Spec.Containers[0].Image = config.IngressControllerImage
 	deployment.Spec.Template.Spec.DNSPolicy = corev1.DNSClusterFirst
 
 	var (
@@ -853,7 +853,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 			syslogContainer := corev1.Container{
 				Name: operatorv1.ContainerLoggingSidecarContainerName,
 				// The ingresscontroller image has rsyslog built in.
-				Image: ingressControllerImage,
+				Image: config.IngressControllerImage,
 				Command: []string{
 					"/sbin/rsyslogd", "-n",
 					// TODO: Once we have rsyslog 8.32 or later,
@@ -1179,7 +1179,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, ingressController
 	}
 
 	// Add router external certificate environment variable.
-	if routeExternalCertificateEnabled {
+	if config.RouteExternalCertificateEnabled {
 		env = append(env,
 			corev1.EnvVar{Name: "ROUTER_ENABLE_EXTERNAL_CERTIFICATE", Value: "true"},
 		)
