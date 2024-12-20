@@ -60,6 +60,7 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	}
 
 	// watch for CRDs
+	// testing for CI
 	for i := range managedCRDs {
 		if err = c.Watch(source.Kind[client.Object](operatorCache, managedCRDs[i], handler.EnqueueRequestsFromMapFunc(toFeatureGate), predicate.Funcs{
 			CreateFunc:  func(e event.CreateEvent) bool { return false },
