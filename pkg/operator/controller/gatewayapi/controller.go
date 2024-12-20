@@ -2,6 +2,8 @@ package gatewayapi
 
 import (
 	"context"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 	"sync"
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
@@ -15,7 +17,6 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
-	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
@@ -60,16 +61,13 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	}
 
 	// watch for CRDs
-	// testing for CI
-	for i := range managedCRDs {
-		if err = c.Watch(source.Kind[client.Object](operatorCache, managedCRDs[i], handler.EnqueueRequestsFromMapFunc(toFeatureGate), predicate.Funcs{
-			CreateFunc:  func(e event.CreateEvent) bool { return false },
-			DeleteFunc:  func(e event.DeleteEvent) bool { return true },
-			UpdateFunc:  func(e event.UpdateEvent) bool { return false },
-			GenericFunc: func(e event.GenericEvent) bool { return false },
-		})); err != nil {
-			return nil, err
-		}
+	//testing with my changes to see
+	crdPredicate := predicate.NewPredicateFuncs(func(o client.Object) bool {
+		return o.(*apiextensionsv1.CustomResourceDefinition).Spec.Group == gatewayapiv1.GroupName
+	})
+
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &apiextensionsv1.CustomResourceDefinition{}, handler.EnqueueRequestsFromMapFunc(toFeatureGate), crdPredicate)); err != nil {
+		return nil, err
 	}
 	return c, nil
 }
