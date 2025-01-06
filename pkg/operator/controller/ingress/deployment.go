@@ -1185,6 +1185,13 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 		)
 	}
 
+	if ci.Spec.IdleConnectionTerminationPolicy == operatorv1.IngressControllerConnectionTerminationPolicyDeferred {
+		env = append(env, corev1.EnvVar{
+			Name:  "ROUTER_IDLE_CLOSE_ON_RESPONSE",
+			Value: "true",
+		})
+	}
+
 	// TODO: The only connections from the router that may need the cluster-wide proxy are those for downloading CRLs,
 	// which, as of writing this, will always be http. If https becomes necessary, the router will need to mount the
 	// trusted CA bundle that cluster-network-operator generates. The process for adding that is described here:
