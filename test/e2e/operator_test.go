@@ -3503,6 +3503,7 @@ func TestLoadBalancingAlgorithmUnsupportedConfigOverride(t *testing.T) {
 // configures router pod replicas to use the:
 // - dynamic config manager
 // - contstats
+// - max dynamic servers
 // if the ingresscontroller is so configured using an unsupported config override.
 func TestUnsupportedConfigOverride(t *testing.T) {
 	t.Parallel()
@@ -3519,6 +3520,7 @@ func TestUnsupportedConfigOverride(t *testing.T) {
 	if dcmEnabled, err := isFeatureGateEnabled(features.FeatureGateIngressControllerDynamicConfigurationManager); err != nil {
 		t.Fatalf("failed to get dynamic config manager feature gate: %v", err)
 	} else if dcmEnabled {
+		t.Logf("DynamicConfigurationManager feature gate is enabled for this test")
 		dcmDefaultValue = "true"
 		dcmUpdateValue = "false"
 		dcmExpectedValue = ""
