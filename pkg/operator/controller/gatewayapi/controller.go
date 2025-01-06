@@ -11,16 +11,17 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/types"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
-	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
+	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
 const (
@@ -60,15 +61,12 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	}
 
 	// watch for CRDs
-	for i := range managedCRDs {
-		if err = c.Watch(source.Kind[client.Object](operatorCache, managedCRDs[i], handler.EnqueueRequestsFromMapFunc(toFeatureGate), predicate.Funcs{
-			CreateFunc:  func(e event.CreateEvent) bool { return false },
-			DeleteFunc:  func(e event.DeleteEvent) bool { return true },
-			UpdateFunc:  func(e event.UpdateEvent) bool { return false },
-			GenericFunc: func(e event.GenericEvent) bool { return false },
-		})); err != nil {
-			return nil, err
-		}
+	crdPredicate := predicate.NewPredicateFuncs(func(o client.Object) bool {
+		return o.(*apiextensionsv1.CustomResourceDefinition).Spec.Group == gatewayapiv1.GroupName
+	})
+
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &apiextensionsv1.CustomResourceDefinition{}, handler.EnqueueRequestsFromMapFunc(toFeatureGate), crdPredicate)); err != nil {
+		return nil, err
 	}
 	return c, nil
 }
