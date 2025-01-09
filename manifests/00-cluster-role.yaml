@@ -14,12 +14,9 @@ rules:
 - apiGroups:
   - ""
   resources:
-  - configmaps
   - namespaces
-  - serviceaccounts
   - endpoints
   - services
-  - secrets
   - pods
   - events
   verbs:
