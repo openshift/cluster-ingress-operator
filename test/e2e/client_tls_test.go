@@ -374,20 +374,13 @@ type TestMTLSWithCRLsCerts struct {
 // TestMTLSWithCRLs verifies that mTLS works when the client auth chain includes certificate revocation lists (CRLs).
 func TestMTLSWithCRLs(t *testing.T) {
 	t.Parallel()
-	namespaceName := names.SimpleNameGenerator.GenerateName("mtls-with-crls")
-	crlHostName := types.NamespacedName{
-		Name:      "crl-host",
-		Namespace: namespaceName,
-	}
-	// When generating certificates, the CRL distribution points need to be specified by URL.
-	crlHostServiceName := "crl-host-service"
-	crlHostURL := crlHostServiceName + "." + crlHostName.Namespace + ".svc"
 	testCases := []struct {
 		// Name is the name of the test case.
-		Name string
+		Name      string
+		ShortName string
 		// CreateCerts generates the certificates for the test case. Certificates and CRLs must not have expired at the
 		// time of the run, so they must be generated at runtime.
-		CreateCerts func() TestMTLSWithCRLsCerts
+		CreateCerts func(string) TestMTLSWithCRLsCerts
 	}{
 		{
 			// This test case has CA certificates including a CRL distribution point (CDP) for the CRL that they
@@ -419,8 +412,9 @@ func TestMTLSWithCRLs(t *testing.T) {
 			// - self-signed
 			//   - Self signed.
 			//   - Should be rejected because it's not signed by any trusted CA.
-			Name: "certificate-distributes-its-own-crl",
-			CreateCerts: func() TestMTLSWithCRLsCerts {
+			Name:      "certificate-distributes-its-own-crl",
+			ShortName: "own-crl",
+			CreateCerts: func(crlHostURL string) TestMTLSWithCRLsCerts {
 				rootCDP := "http://" + crlHostURL + "/root/root.crl"
 				intermediateCDP := "http://" + crlHostURL + "/intermediate/intermediate.crl"
 
@@ -499,8 +493,9 @@ func TestMTLSWithCRLs(t *testing.T) {
 			// - self-signed
 			//   - Self signed.
 			//   - Should be rejected because it's not signed by any trusted CA (SSL error "unknown ca").
-			Name: "certificate-distributes-its-signers-crl",
-			CreateCerts: func() TestMTLSWithCRLsCerts {
+			Name:      "certificate-distributes-its-signers-crl",
+			ShortName: "signer-crl",
+			CreateCerts: func(crlHostURL string) TestMTLSWithCRLsCerts {
 				rootCDP := "http://" + crlHostURL + "/root/root.crl"
 				intermediateCDP := "http://" + crlHostURL + "/intermediate/intermediate.crl"
 
@@ -584,8 +579,9 @@ func TestMTLSWithCRLs(t *testing.T) {
 			// - self-signed
 			//   - Self signed.
 			//   - Should be rejected because it's not signed by any trusted CA (SSL error "unknown ca").
-			Name: "certificate-distributes-its-signers-crl-with-workaround",
-			CreateCerts: func() TestMTLSWithCRLsCerts {
+			Name:      "certificate-distributes-its-signers-crl-with-workaround",
+			ShortName: "signer-wa",
+			CreateCerts: func(crlHostURL string) TestMTLSWithCRLsCerts {
 				rootCDP := "http://" + crlHostURL + "/root/root.crl"
 				intermediateCDP := "http://" + crlHostURL + "/intermediate/intermediate.crl"
 
@@ -630,8 +626,9 @@ func TestMTLSWithCRLs(t *testing.T) {
 		},
 		{
 			// large-crl verifies that CRLs larger than 1MB can be used. This tests the fix for OCPBUGS-6661.
-			Name: "large-crl",
-			CreateCerts: func() TestMTLSWithCRLsCerts {
+			Name:      "large-crl",
+			ShortName: "large-crl",
+			CreateCerts: func(crlHostURL string) TestMTLSWithCRLsCerts {
 				maxDummyRevokedSerialNumber := 25000
 				rootCDP := "http://" + crlHostURL + "/root/root.crl"
 				intermediateCDP := "http://" + crlHostURL + "/intermediate/intermediate.crl"
@@ -717,8 +714,9 @@ func TestMTLSWithCRLs(t *testing.T) {
 		},
 		{
 			// multiple-intermediate-ca tests that more than 2 CAs can be used. Each CA lists its own CRL's distribution point.
-			Name: "multiple-intermediate-ca",
-			CreateCerts: func() TestMTLSWithCRLsCerts {
+			Name:      "multiple-intermediate-ca",
+			ShortName: "many-ca",
+			CreateCerts: func(crlHostURL string) TestMTLSWithCRLsCerts {
 				CANames := []string{
 					"root",
 					"foo",
@@ -772,10 +770,20 @@ func TestMTLSWithCRLs(t *testing.T) {
 		},
 	}
 
+	namespaceName := names.SimpleNameGenerator.GenerateName("mtls-with-crls-")
 	namespace := createNamespace(t, namespaceName)
-	for _, tc := range testCases {
+	for i := range testCases {
+		tc := testCases[i]
 		t.Run(tc.Name, func(t *testing.T) {
-			tcCerts := tc.CreateCerts()
+			t.Parallel()
+			crlHostName := types.NamespacedName{
+				Name:      fmt.Sprintf("crl-host-%s", tc.ShortName),
+				Namespace: namespaceName,
+			}
+			// When generating certificates, the CRL distribution points need to be specified by URL.
+			crlHostServiceName := fmt.Sprintf("crl-host-service-%s", tc.ShortName)
+			crlHostURL := crlHostServiceName + "." + crlHostName.Namespace + ".svc"
+			tcCerts := tc.CreateCerts(crlHostURL)
 			// Get the URL path of one of the CRLs to use in the CRL host pod's readiness probe.
 			readinessProbePath := ""
 			for crlName := range tcCerts.CRLs {
@@ -813,7 +821,7 @@ func TestMTLSWithCRLs(t *testing.T) {
 				},
 			}
 			for name, crl := range tcCerts.CRLs {
-				crlConfigMapName := name + "-crl"
+				crlConfigMapName := fmt.Sprintf("%s-crl-%s", name, tc.ShortName)
 				crlConfigMap := corev1.ConfigMap{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      crlConfigMapName,
@@ -855,21 +863,7 @@ func TestMTLSWithCRLs(t *testing.T) {
 			// case comes through and creates a new one, but if that stops being true in the future, their assertDeleted
 			// calls may need to be replaced by the slower assertDeletedWaitForCleanup option.
 			t.Cleanup(func() { assertDeletedWaitForCleanup(t, kclient, &crlHostPod) })
-			crlHostService := corev1.Service{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      crlHostServiceName,
-					Namespace: namespace.Name,
-				},
-				Spec: corev1.ServiceSpec{
-					Selector: map[string]string{"app": crlHostName.Name},
-					Ports: []corev1.ServicePort{{
-						Name:       "http",
-						Port:       80,
-						Protocol:   corev1.ProtocolTCP,
-						TargetPort: intstr.FromString("http-svc"),
-					}},
-				},
-			}
+			crlHostService := buildCRLHostService(crlHostServiceName, namespace.Name, crlHostName.Name)
 			if err := kclient.Create(context.TODO(), &crlHostService); err != nil {
 				t.Fatalf("Failed to create service %q: %v", crlHostService.Name, err)
 			}
@@ -888,7 +882,7 @@ func TestMTLSWithCRLs(t *testing.T) {
 				return false, nil
 			})
 			// Create CA cert bundle.
-			clientCAConfigmapName := "client-ca-cm-" + namespace.Name
+			clientCAConfigmapName := fmt.Sprintf("client-ca-cm-%s", tc.ShortName)
 			clientCAConfigmap := corev1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      clientCAConfigmapName,
@@ -903,7 +897,7 @@ func TestMTLSWithCRLs(t *testing.T) {
 			}
 			t.Cleanup(func() { assertDeleted(t, kclient, &clientCAConfigmap) })
 			icName := types.NamespacedName{
-				Name:      "mtls-with-crls",
+				Name:      fmt.Sprintf("mtls-with-crls-%s", tc.ShortName),
 				Namespace: operatorNamespace,
 			}
 			icDomain := icName.Name + "." + dnsConfig.Spec.BaseDomain
@@ -927,7 +921,7 @@ func TestMTLSWithCRLs(t *testing.T) {
 			// certificates and keys, and mount that to the client pod.
 			clientCertsConfigmap := corev1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      "client-certificates",
+					Name:      fmt.Sprintf("client-certificates-%s", tc.ShortName),
 					Namespace: namespace.Name,
 				},
 				Data: map[string]string{},
@@ -952,7 +946,7 @@ func TestMTLSWithCRLs(t *testing.T) {
 				t.Fatalf("failed to get routerDeployment %q: %v", routerDeploymentName, err)
 			}
 
-			podName := "mtls-with-crls-client"
+			podName := fmt.Sprintf("mtls-with-crls-client-%s", tc.ShortName)
 			image := routerDeployment.Spec.Template.Spec.Containers[0].Image
 			clientPod := buildExecPod(podName, namespace.Name, image)
 			clientPod.Spec.Volumes = []corev1.Volume{{
@@ -1025,7 +1019,7 @@ func TestMTLSWithCRLs(t *testing.T) {
 				return crl.Issuer.CommonName != "Placeholder CA", nil
 			})
 
-			echoPod := buildEchoPod(names.SimpleNameGenerator.GenerateName("echo-pod-"), "openshift-ingress")
+			echoPod := buildEchoPod(fmt.Sprintf("echo-pod-%s", tc.ShortName), "openshift-ingress")
 			if err := kclient.Create(context.TODO(), echoPod); err != nil {
 				t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 			}
@@ -1110,36 +1104,20 @@ func TestMTLSWithCRLs(t *testing.T) {
 // TestCRLUpdate verifies that CRLs are updated when they expire.
 func TestCRLUpdate(t *testing.T) {
 	t.Parallel()
-	testName := names.SimpleNameGenerator.GenerateName("crl-update")
-	crlHostName := types.NamespacedName{
-		Name:      "crl-host",
-		Namespace: testName,
-	}
-	// When generating certificates, the CRL distribution points need to be specified by URL.
-	crlHostServiceName := "crl-host-service"
-	crlHostURL := crlHostServiceName + "." + crlHostName.Namespace + ".svc"
-	namespace := corev1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: testName,
-		},
-	}
-	if err := kclient.Create(context.TODO(), &namespace); err != nil {
-		t.Fatalf("Failed to create namespace %q: %v", namespace.Name, err)
-	}
-	t.Cleanup(func() { assertDeleted(t, kclient, &namespace) })
 	testCases := []struct {
-		// Test case name
-		Name string
+		Name      string
+		ShortName string
 		// Function to generate the necessary certificates. These will be put into the ingresscontroller's client CA
 		// bundle, and will be used to generate CRLs during the test.
-		CreateCerts func() map[string]KeyCert
+		CreateCerts func(string) map[string]KeyCert
 		// The names of the CAs whose CRLs are expected to be downloaded by the router pod. Only the certs with the
 		// corresponding names will be used to generate CRLs.
 		ExpectedCRLs []string
 	}{
 		{
-			Name: "certificate-distributes-its-own-crl",
-			CreateCerts: func() map[string]KeyCert {
+			Name:      "certificate-distributes-its-own-crl",
+			ShortName: "own-crl",
+			CreateCerts: func(crlHostURL string) map[string]KeyCert {
 				rootCDP := "http://" + crlHostURL + "/root.crl"
 				intermediateCDP := "http://" + crlHostURL + "/intermediate.crl"
 
@@ -1156,8 +1134,9 @@ func TestCRLUpdate(t *testing.T) {
 			},
 		},
 		{
-			Name: "certificate-distributes-its-signers-crl",
-			CreateCerts: func() map[string]KeyCert {
+			Name:      "certificate-distributes-its-signers-crl",
+			ShortName: "signers-crl",
+			CreateCerts: func(crlHostURL string) map[string]KeyCert {
 				rootCDP := "http://" + crlHostURL + "/root.crl"
 
 				rootCA := MustCreateTLSKeyCert("testing root CA", time.Now(), time.Now().Add(24*time.Hour), true, []string{}, nil)
@@ -1172,8 +1151,9 @@ func TestCRLUpdate(t *testing.T) {
 			},
 		},
 		{
-			Name: "certificate-distributes-its-signers-crl-with-workaround",
-			CreateCerts: func() map[string]KeyCert {
+			Name:      "certificate-distributes-its-signers-crl-with-workaround",
+			ShortName: "signer-wa",
+			CreateCerts: func(crlHostURL string) map[string]KeyCert {
 				rootCDP := "http://" + crlHostURL + "/root.crl"
 				intermediateCDP := "http://" + crlHostURL + "/intermediate.crl"
 
@@ -1192,8 +1172,9 @@ func TestCRLUpdate(t *testing.T) {
 			},
 		},
 		{
-			Name: "many-CAs-with-signers-crl-workaround",
-			CreateCerts: func() map[string]KeyCert {
+			Name:      "many-CAs-with-signers-crl-workaround",
+			ShortName: "many-ca",
+			CreateCerts: func(crlHostURL string) map[string]KeyCert {
 				rootCDP := "http://" + crlHostURL + "/root.crl"
 				intermediateCDP := "http://" + crlHostURL + "/intermediate.crl"
 				fooCDP := "http://" + crlHostURL + "/foo.crl"
@@ -1220,15 +1201,25 @@ func TestCRLUpdate(t *testing.T) {
 			},
 		},
 	}
-	for _, tc := range testCases {
+	namespaceName := names.SimpleNameGenerator.GenerateName("crl-update-")
+	namespace := createNamespace(t, namespaceName)
+	for i := range testCases {
+		tc := testCases[i]
 		t.Run(tc.Name, func(t *testing.T) {
-			caCerts := tc.CreateCerts()
+			t.Parallel()
+			crlHostName := types.NamespacedName{
+				Name:      fmt.Sprintf("crl-host-%s", tc.ShortName),
+				Namespace: namespaceName,
+			}
+			// When generating certificates, the CRL distribution points need to be specified by URL.
+			crlHostServiceName := fmt.Sprintf("crl-host-service-%s", tc.ShortName)
+			crlHostURL := crlHostServiceName + "." + crlHostName.Namespace + ".svc"
+			caCerts := tc.CreateCerts(crlHostURL)
 			// Generate CRLs. Offset the expiration times by 1 minute each so that we can verify that only the correct CRLs get updated at each expiration.
 			currentCRLs := map[string]*x509.RevocationList{}
 			crlPems := map[string]string{}
 			caBundle := []string{}
 			validTime := 3 * time.Minute
-			//expirations := []time.Time{}
 			for _, caName := range tc.ExpectedCRLs {
 				currentCRLs[caName], crlPems[caName+".crl"] = MustCreateCRL(nil, caCerts[caName], time.Now(), time.Now().Add(validTime), nil)
 				validTime += time.Minute
@@ -1249,50 +1240,7 @@ func TestCRLUpdate(t *testing.T) {
 				t.Fatalf("Failed to create configmap %q: %v", crlConfigMap.Name, err)
 			}
 			t.Cleanup(func() { assertDeleted(t, kclient, &crlConfigMap) })
-			crlHostPod := corev1.Pod{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      crlHostName.Name,
-					Namespace: namespace.Name,
-					Labels:    map[string]string{"app": crlHostName.Name},
-				},
-				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{{
-						Name:  "httpd",
-						Image: "quay.io/centos7/httpd-24-centos7:centos7",
-						Ports: []corev1.ContainerPort{{
-							ContainerPort: 8080,
-							Name:          "http-svc",
-						}},
-						VolumeMounts: []corev1.VolumeMount{{
-							Name:      "data",
-							MountPath: "/var/www/html",
-							ReadOnly:  true,
-						}},
-						SecurityContext: generateUnprivilegedSecurityContext(),
-						ReadinessProbe: &corev1.Probe{
-							ProbeHandler: corev1.ProbeHandler{
-								HTTPGet: &corev1.HTTPGetAction{
-									Path: fmt.Sprintf("/%s.crl", tc.ExpectedCRLs[0]),
-									Port: intstr.IntOrString{
-										Type:   intstr.String,
-										StrVal: "http-svc",
-									},
-								},
-							},
-						},
-					}},
-					Volumes: []corev1.Volume{{
-						Name: "data",
-						VolumeSource: corev1.VolumeSource{
-							ConfigMap: &corev1.ConfigMapVolumeSource{
-								LocalObjectReference: corev1.LocalObjectReference{
-									Name: crlConfigMap.Name,
-								},
-							},
-						},
-					}},
-				},
-			}
+			crlHostPod := buildCRLHostPod(crlHostName.Name, namespace.Name, crlConfigMap.Name, tc.ExpectedCRLs[0])
 
 			if err := kclient.Create(context.TODO(), &crlHostPod); err != nil {
 				t.Fatalf("Failed to create pod %q: %v", crlHostPod.Name, err)
@@ -1337,7 +1285,7 @@ func TestCRLUpdate(t *testing.T) {
 				return false, nil
 			})
 			// Create CA cert bundle.
-			clientCAConfigmapName := "client-ca-cm-" + namespace.Name
+			clientCAConfigmapName := fmt.Sprintf("client-ca-cm-%s", tc.ShortName)
 			clientCAConfigmap := corev1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      clientCAConfigmapName,
@@ -1352,7 +1300,7 @@ func TestCRLUpdate(t *testing.T) {
 			}
 			t.Cleanup(func() { assertDeleted(t, kclient, &clientCAConfigmap) })
 			icName := types.NamespacedName{
-				Name:      testName,
+				Name:      fmt.Sprintf("crl-update-%s", tc.ShortName),
 				Namespace: operatorNamespace,
 			}
 			icDomain := icName.Name + "." + dnsConfig.Spec.BaseDomain
@@ -1433,11 +1381,227 @@ func TestCRLUpdate(t *testing.T) {
 	}
 }
 
+// TestRouterWaitsForCRLs verifies that router pods only report ready once all CRLs are downloaded.
+func TestRouterWaitsForCRLs(t *testing.T) {
+	t.Parallel()
+	namespaceName := names.SimpleNameGenerator.GenerateName("router-waits-for-crls-")
+	namespace := createNamespace(t, namespaceName)
+
+	// Create certs.
+	crlHostName := types.NamespacedName{
+		Name:      "crl-host",
+		Namespace: namespaceName,
+	}
+	crlHostServiceName := "crl-host-service"
+	crlHostURL := crlHostServiceName + "." + crlHostName.Namespace + ".svc"
+
+	rootCDP := "http://" + crlHostURL + "/root.crl"
+	intermediateCDP := "http://" + crlHostURL + "/intermediate.crl"
+
+	rootCA := MustCreateTLSKeyCert("testing root CA", time.Now(), time.Now().Add(24*time.Hour), true, []string{rootCDP}, nil)
+	intermediateCA := MustCreateTLSKeyCert("testing intermediate CA", time.Now(), time.Now().Add(24*time.Hour), true, []string{intermediateCDP}, &rootCA)
+
+	rootCRL, rootCRLPem := MustCreateCRL(nil, rootCA, time.Now(), time.Now().Add(1*time.Hour), nil)
+	intermediateCRL, intermediateCRLPem := MustCreateCRL(nil, intermediateCA, time.Now(), time.Now().Add(1*time.Hour), nil)
+
+	// Create an ingress controller with mTLS enabled.
+	clientCAConfigMapName := "client-ca-cm"
+	clientCAConfigMap := corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      clientCAConfigMapName,
+			Namespace: "openshift-config",
+		},
+		Data: map[string]string{
+			"ca-bundle.pem": strings.Join([]string{intermediateCA.CertPem, rootCA.CertPem}, "\n"),
+		},
+	}
+	assertCreated(t, kclient, &clientCAConfigMap)
+	t.Cleanup(func() { assertDeleted(t, kclient, &clientCAConfigMap) })
+	icName := types.NamespacedName{
+		Name:      "router-waits-for-crls",
+		Namespace: operatorNamespace,
+	}
+	icDomain := icName.Name + "." + dnsConfig.Spec.BaseDomain
+	ic := newPrivateController(icName, icDomain)
+	ic.Spec.ClientTLS = operatorv1.ClientTLS{
+		ClientCA: configv1.ConfigMapNameReference{
+			Name: clientCAConfigMapName,
+		},
+		ClientCertificatePolicy: operatorv1.ClientCertificatePolicyRequired,
+	}
+	if err := kclient.Create(context.TODO(), ic); err != nil {
+		t.Fatalf("failed to create ingresscontroller %s/%s: %v", icName.Namespace, icName.Name, err)
+	}
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
+
+	// Verify that the router is not ready, and that the reason includes that the "crls-updated" health check failed.
+	routerPod := corev1.Pod{}
+	err := wait.PollImmediate(10*time.Second, 5*time.Minute, func() (bool, error) {
+		podList := &corev1.PodList{}
+		labels := map[string]string{
+			controller.ControllerDeploymentLabel: icName.Name,
+		}
+		if err := kclient.List(context.TODO(), podList, client.InNamespace("openshift-ingress"), client.MatchingLabels(labels)); err != nil {
+			t.Logf("failed to list pods for ingress controllers %s: %v", ic.Name, err)
+			return false, nil
+		}
+		if len(podList.Items) == 0 {
+			t.Logf("no router pods found for ingresscontroller %s", ic.Name)
+			return false, nil
+		}
+		routerPod = podList.Items[0]
+		routerPodName := types.NamespacedName{
+			Name:      routerPod.Name,
+			Namespace: routerPod.Namespace,
+		}
+		if err := kclient.Get(context.TODO(), routerPodName, &routerPod); err != nil {
+			t.Logf("failed to get pod %s: %v", routerPod.Name, err)
+			return false, nil
+		}
+		for _, condition := range routerPod.Status.Conditions {
+			if condition.Type == corev1.PodReady {
+				if condition.Status != corev1.ConditionFalse {
+					t.Fatalf("expected %s %q condition to be False, got %s", routerPod.Name, corev1.PodReady, condition.Status)
+				}
+				t.Logf("Found router pod %s", routerPod.Name)
+				return true, nil
+			}
+		}
+		t.Logf("pod %s condition %s not found. retrying.", routerPod.Name, corev1.PodReady)
+		return false, nil
+	})
+	if err != nil {
+		t.Fatalf("Expected router to be unready: %v", err)
+	}
+	err = wait.PollImmediate(10*time.Second, 5*time.Minute, func() (bool, error) {
+		events := &corev1.EventList{}
+		if err := kclient.List(context.TODO(), events, client.InNamespace("openshift-ingress")); err != nil {
+			t.Log("Failed to list events in openshift-ingress namespace. retrying.")
+			return false, nil
+		}
+		for _, event := range events.Items {
+			if event.Reason == "ProbeError" && event.InvolvedObject.Name == routerPod.Name {
+				if strings.Contains(event.Message, "crls-updated failed") {
+					return true, nil
+				}
+			}
+		}
+		return false, nil
+	})
+	if err != nil {
+		t.Fatalf("Failed to find ProbeError event for %s containing \"crls-updated failed\"", routerPod.Name)
+	}
+	// Create a CRL host that has the root CRL, but not the intermediate one.
+	crlConfigMapName := names.SimpleNameGenerator.GenerateName(crlHostName.Name + "-configmap-")
+	crlConfigMap := corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      crlConfigMapName,
+			Namespace: namespace.Name,
+		},
+		Data: map[string]string{
+			"root.crl": rootCRLPem,
+		},
+	}
+	assertCreated(t, kclient, &crlConfigMap)
+	t.Cleanup(func() { assertDeleted(t, kclient, &crlConfigMap) })
+
+	crlHostPod := buildCRLHostPod(crlHostName.Name, namespace.Name, crlConfigMap.Name, "root")
+	assertCreated(t, kclient, &crlHostPod)
+	t.Cleanup(func() { assertDeleted(t, kclient, &crlHostPod) })
+
+	crlHostService := buildCRLHostService(crlHostServiceName, namespace.Name, crlHostName.Name)
+	assertCreated(t, kclient, &crlHostService)
+	t.Cleanup(func() { assertDeleted(t, kclient, &crlHostService) })
+
+	err = wait.PollImmediate(10*time.Second, 5*time.Minute, func() (bool, error) {
+		podList := &corev1.PodList{}
+		labels := map[string]string{
+			controller.ControllerDeploymentLabel: icName.Name,
+		}
+		if err := kclient.List(context.TODO(), podList, client.InNamespace("openshift-ingress"), client.MatchingLabels(labels)); err != nil {
+			t.Logf("failed to list pods for ingress controllers %s: %v", ic.Name, err)
+			return false, nil
+		}
+		if len(podList.Items) == 0 {
+			t.Logf("no router pods found for ingresscontroller %s: %v", ic.Name, err)
+			return false, nil
+		}
+		routerPod = podList.Items[0]
+		for _, condition := range routerPod.Status.Conditions {
+			if condition.Type == corev1.PodReady {
+				if condition.Status != corev1.ConditionFalse {
+					t.Fatalf("expected %s %q condition to be False, got %s", routerPod.Name, corev1.PodReady, condition.Status)
+				}
+				return true, nil
+			}
+		}
+		t.Logf("pod %s condition %s not found. retrying.", routerPod.Name, corev1.PodReady)
+		return false, nil
+	})
+	if err != nil {
+		t.Fatalf("Expected router to be unready: %v", err)
+	}
+	err = wait.PollImmediate(10*time.Second, 2*time.Minute, func() (bool, error) {
+		events := &corev1.EventList{}
+		if err := kclient.List(context.TODO(), events, client.InNamespace("openshift-ingress")); err != nil {
+			t.Log("Failed to list events in openshift-ingress namespace. retrying.")
+			return false, nil
+		}
+		for _, event := range events.Items {
+			if event.Reason == "ProbeError" && event.InvolvedObject.Name == routerPod.Name {
+				if strings.Contains(event.Message, "crls-updated failed") {
+					return true, nil
+				}
+			}
+		}
+		return false, nil
+	})
+	if err != nil {
+		t.Fatalf("Failed to find ProbeError event for %s containing \"crls-updated failed\"", routerPod.Name)
+	}
+	// Add the intermediate CRL to the route host.
+	crlConfigMap.Data["intermediate.crl"] = intermediateCRLPem
+	if err := kclient.Update(context.TODO(), &crlConfigMap); err != nil {
+		t.Fatalf("Failed to update %s: %v", crlConfigMap.Name, err)
+	}
+	// Verify that both the root and intermediate CRLs are downloaded, and that the router is now ready.
+	err = wait.PollImmediate(10*time.Second, 5*time.Minute, func() (bool, error) {
+		podList := &corev1.PodList{}
+		labels := map[string]string{
+			controller.ControllerDeploymentLabel: icName.Name,
+		}
+		if err := kclient.List(context.TODO(), podList, client.InNamespace("openshift-ingress"), client.MatchingLabels(labels)); err != nil {
+			t.Logf("failed to list pods for ingress controllers %s: %v", ic.Name, err)
+			return false, nil
+		}
+		if len(podList.Items) == 0 {
+			t.Logf("no router pods found for ingresscontroller %s: %v", ic.Name, err)
+			return false, nil
+		}
+		routerPod = podList.Items[0]
+		for _, condition := range routerPod.Status.Conditions {
+			if condition.Type == corev1.PodReady {
+				return condition.Status == corev1.ConditionTrue, nil
+			}
+		}
+		t.Logf("pod %s condition %s not found. retrying.", routerPod.Name, corev1.PodReady)
+		return false, nil
+	})
+	expectedCRLs := map[string]*x509.RevocationList{
+		"root.crl":         rootCRL,
+		"intermediate.crl": intermediateCRL,
+	}
+	err = wait.PollImmediate(5*time.Second, 2*time.Minute, func() (bool, error) {
+		return verifyCRLs(t, &routerPod, expectedCRLs)
+	})
+}
+
 func verifyCRLs(t *testing.T, pod *corev1.Pod, expectedCRLs map[string]*x509.RevocationList) (bool, error) {
 	t.Helper()
 	activeCRLs, err := getActiveCRLs(t, pod)
 	if err != nil {
-		return false, err
+		t.Errorf("Failed to get active CRLs: %v", err)
+		return false, nil
 	}
 	if len(activeCRLs) == 0 {
 		// 0 CRLs probably means the router hasn't completed startup yet. Retry.
@@ -1445,6 +1609,7 @@ func verifyCRLs(t *testing.T, pod *corev1.Pod, expectedCRLs map[string]*x509.Rev
 	}
 	if len(activeCRLs) == 1 && activeCRLs[0].Issuer.CommonName == "Placeholder CA" {
 		// Placeholder CA CRL means the actual CRLs haven't been downloaded yet.
+		t.Logf("Found placeholder CRL. Waiting for CRLs to be downloaded")
 		return false, nil
 	}
 	if len(activeCRLs) != len(expectedCRLs) {
@@ -1477,6 +1642,7 @@ func verifyCRLs(t *testing.T, pod *corev1.Pod, expectedCRLs map[string]*x509.Rev
 		}
 		return false, fmt.Errorf("found %d CRLs, but only %d matched", len(activeCRLs), matchingCRLs)
 	}
+	t.Log("all CRLs are up to date")
 	return true, nil
 }
 
@@ -1666,5 +1832,70 @@ func curlGetStatusCode(t *testing.T, clientPod *corev1.Pod, certName, endpoint, 
 		return httpStatusCodeInt, fmt.Errorf("got HTTP %s status code", httpStatusCode)
 	default:
 		return httpStatusCodeInt, nil
+	}
+}
+
+func buildCRLHostPod(podName, namespaceName, crlConfigMapName, crlName string) corev1.Pod {
+	return corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      podName,
+			Namespace: namespaceName,
+			Labels:    map[string]string{"app": podName},
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{
+				Name:  "httpd",
+				Image: "quay.io/centos7/httpd-24-centos7:centos7",
+				Ports: []corev1.ContainerPort{{
+					ContainerPort: 8080,
+					Name:          "http-svc",
+				}},
+				VolumeMounts: []corev1.VolumeMount{{
+					Name:      "data",
+					MountPath: "/var/www/html",
+					ReadOnly:  true,
+				}},
+				SecurityContext: generateUnprivilegedSecurityContext(),
+				ReadinessProbe: &corev1.Probe{
+					ProbeHandler: corev1.ProbeHandler{
+						HTTPGet: &corev1.HTTPGetAction{
+							Path: fmt.Sprintf("/%s.crl", crlName),
+							Port: intstr.IntOrString{
+								Type:   intstr.String,
+								StrVal: "http-svc",
+							},
+						},
+					},
+				},
+			}},
+			Volumes: []corev1.Volume{{
+				Name: "data",
+				VolumeSource: corev1.VolumeSource{
+					ConfigMap: &corev1.ConfigMapVolumeSource{
+						LocalObjectReference: corev1.LocalObjectReference{
+							Name: crlConfigMapName,
+						},
+					},
+				},
+			}},
+		},
+	}
+}
+
+func buildCRLHostService(serviceName, namespaceName, podName string) corev1.Service {
+	return corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      serviceName,
+			Namespace: namespaceName,
+		},
+		Spec: corev1.ServiceSpec{
+			Selector: map[string]string{"app": podName},
+			Ports: []corev1.ServicePort{{
+				Name:       "http",
+				Port:       80,
+				Protocol:   corev1.ProtocolTCP,
+				TargetPort: intstr.FromString("http-svc"),
+			}},
+		},
 	}
 }
