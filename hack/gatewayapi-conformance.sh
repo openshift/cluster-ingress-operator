@@ -11,7 +11,7 @@ if [[ "${BUNDLE_VERSION}" == "null" ]]; then
 fi
 echo "Gateway API CRD bundle-version: ${BUNDLE_VERSION}"
 
-echo "Creat GatewayClass gateway-conformance"
+echo "Create GatewayClass gateway-conformance"
 oc apply -f -<<EOF
 apiVersion: gateway.networking.k8s.io/v1
 kind: GatewayClass
@@ -23,7 +23,7 @@ EOF
 
 oc wait --for=condition=Accepted=true gatewayclass/gateway-conformance --timeout=300s
 
-echo "All gatewayclass ststus:"
+echo "All gatewayclass status:"
 oc get gatewayclass -A
 
 echo "Go version: $(go version)"
@@ -50,4 +50,4 @@ go mod vendor
 sed -i "s/MaxTimeToConsistency:              30/MaxTimeToConsistency:              90/g" conformance/utils/config/timeout.go
 
 echo "Start Gateway API Conformance Testing"
-go test ./conformance -v -timeout 0 -run TestConformance -args --supported-features=Gateway,HTTPRoute
+go test ./conformance -v -timeout 0 -run TestConformance -args --supported-features=Gateway,HTTPRoute,ReferenceGrant
