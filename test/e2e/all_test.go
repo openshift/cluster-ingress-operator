@@ -88,10 +88,10 @@ func TestAll(t *testing.T) {
 		t.Run("TestUnmanagedAWSLBSubnets", TestUnmanagedAWSLBSubnets)
 		t.Run("TestAWSEIPAllocationsForNLB", TestAWSEIPAllocationsForNLB)
 		t.Run("TestUnmanagedAWSEIPAllocations", TestUnmanagedAWSEIPAllocations)
-		t.Run("Test_IdleConnectionTerminationPolicy", Test_IdleConnectionTerminationPolicy)
 	})
 
 	t.Run("serial", func(t *testing.T) {
+		t.Run("Test_IdleConnectionTerminationPolicy", Test_IdleConnectionTerminationPolicy)
 		t.Run("TestDefaultIngressControllerSteadyConditions", TestDefaultIngressControllerSteadyConditions)
 		t.Run("TestClusterOperatorStatusRelatedObjects", TestClusterOperatorStatusRelatedObjects)
 		t.Run("TestConfigurableRouteNoConsumingUserNoRBAC", TestConfigurableRouteNoConsumingUserNoRBAC)

@@ -332,8 +332,6 @@ func idleConnectionSwitchIdleTerminationPolicy(t *testing.T, ic *operatorv1.Ingr
 // behaviour and validates subsequent requests route correctly to the
 // new backend.
 func Test_IdleConnectionTerminationPolicy(t *testing.T) {
-	t.Parallel()
-
 	canaryImageReference := func(t *testing.T) (string, error) {
 		ingressOperatorName := types.NamespacedName{
 			Name:      "ingress-operator",
