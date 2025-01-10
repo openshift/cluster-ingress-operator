@@ -24,6 +24,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apiserver/pkg/storage/names"
+
+	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 func TestRouterCompressionParsing(t *testing.T) {
@@ -269,6 +271,29 @@ func TestRouterCompressionOperation(t *testing.T) {
 		}
 		return false, nil
 	}); err != nil {
+		getPodEvents := func(namespace, podName string) ([]corev1.Event, error) {
+			eventList := &corev1.EventList{}
+			if err := kclient.List(context.TODO(), eventList, runtimeclient.InNamespace(namespace)); err != nil {
+				return nil, err
+			}
+			var podEvents []corev1.Event
+			for _, event := range eventList.Items {
+				if event.InvolvedObject.Name == podName {
+					podEvents = append(podEvents, event)
+				}
+			}
+			return podEvents, nil
+		}
+
+		t.Logf("pod %q status: %+v", helloPod.Name, helloPod.Status)
+		if podEvents, err := getPodEvents(helloPod.Namespace, helloPod.Name); err == nil {
+			for _, event := range podEvents {
+				t.Logf("pod %q event: %s - %s", helloPod.Name, event.Reason, event.Message)
+			}
+		} else {
+			t.Logf("failed to fetch events for pod %q: %v", helloPod.Name, err)
+		}
+
 		t.Fatalf("timed out waiting for %s to become ready: %v", helloPod.Name, err)
 	}
 
