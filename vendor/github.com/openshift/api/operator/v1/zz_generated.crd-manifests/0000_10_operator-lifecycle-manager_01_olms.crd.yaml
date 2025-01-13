@@ -2,24 +2,25 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    api-approved.openshift.io: https://github.com/openshift/api/pull/475
+    api-approved.openshift.io: https://github.com/openshift/api/pull/1504
     api.openshift.io/merged-by-featuregates: "true"
+    capability.openshift.io/name: OperatorLifecycleManagerV1
     include.release.openshift.io/self-managed-high-availability: "true"
-  name: authentications.operator.openshift.io
+  name: olms.operator.openshift.io
 spec:
   group: operator.openshift.io
   names:
-    kind: Authentication
-    listKind: AuthenticationList
-    plural: authentications
-    singular: authentication
+    kind: OLM
+    listKind: OLMList
+    plural: olms
+    singular: olm
   scope: Cluster
   versions:
   - name: v1
     schema:
       openAPIV3Schema:
         description: |-
-          Authentication provides information to configure an operator to manage authentication.
+          OLM provides information to configure an operator to manage the OLM controllers
 
           Compatibility level 1: Stable within a major release for a minimum of 12 months or 3 minor releases (whichever is longer).
         properties:
@@ -41,6 +42,7 @@ spec:
           metadata:
             type: object
           spec:
+            description: spec holds user settable values for configuration
             properties:
               logLevel:
                 default: Normal
@@ -96,6 +98,8 @@ spec:
                 x-kubernetes-preserve-unknown-fields: true
             type: object
           status:
+            description: status holds observed values from the cluster. They may not
+              be overridden.
             properties:
               conditions:
                 description: conditions is a list of conditions and their status
@@ -184,17 +188,6 @@ spec:
                 x-kubernetes-validations:
                 - message: must only increase
                   rule: self >= oldSelf
-              oauthAPIServer:
-                description: oauthAPIServer holds status specific only to oauth-apiserver
-                properties:
-                  latestAvailableRevision:
-                    description: |-
-                      latestAvailableRevision is the latest revision used as suffix of revisioned
-                      secrets like encryption-config. A new revision causes a new deployment of pods.
-                    format: int32
-                    minimum: 0
-                    type: integer
-                type: object
               observedGeneration:
                 description: observedGeneration is the last generation change you've
                   dealt with
@@ -212,6 +205,9 @@ spec:
         required:
         - spec
         type: object
+        x-kubernetes-validations:
+        - message: olm is a singleton, .metadata.name must be 'cluster'
+          rule: self.metadata.name == 'cluster'
     served: true
     storage: true
     subresources:
