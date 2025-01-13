@@ -88,7 +88,6 @@ func TestAll(t *testing.T) {
 		t.Run("TestUnmanagedAWSLBSubnets", TestUnmanagedAWSLBSubnets)
 		t.Run("TestAWSEIPAllocationsForNLB", TestAWSEIPAllocationsForNLB)
 		t.Run("TestUnmanagedAWSEIPAllocations", TestUnmanagedAWSEIPAllocations)
-		t.Run("Test_IdleConnectionTerminationPolicy", Test_IdleConnectionTerminationPolicy)
 	})
 
 	t.Run("serial", func(t *testing.T) {
@@ -125,5 +124,6 @@ func TestAll(t *testing.T) {
 		t.Run("TestRouteHardStopAfterEnableOnIngressControllerHasPriorityOverIngressConfig", TestRouteHardStopAfterEnableOnIngressControllerHasPriorityOverIngressConfig)
 		t.Run("TestHostNetworkPortBinding", TestHostNetworkPortBinding)
 		t.Run("TestDashboardCreation", TestDashboardCreation)
+		t.Run("Test_IdleConnectionTerminationPolicy", Test_IdleConnectionTerminationPolicy)
 	})
 }

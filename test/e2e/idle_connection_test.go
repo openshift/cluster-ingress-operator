@@ -310,12 +310,6 @@ func idleConnectionFetchResponse(httpClient *idleConnectionHTTPClient, hostname 
 // behaviour and validates subsequent requests route correctly to the
 // new backend.
 func Test_IdleConnectionTerminationPolicy(t *testing.T) {
-	// This is a parallel test because the subtests are marked
-	// with t.Parallel(), allowing each subtest to run
-	// concurrently in isolation. Resources such as namespaces and
-	// ingress controllers are uniquely created for each subtest
-	// to avoid conflicts.
-
 	const (
 		webService1 = "web-service-1"
 		webService2 = "web-service-2"
@@ -588,8 +582,6 @@ func Test_IdleConnectionTerminationPolicy(t *testing.T) {
 	for _, tc := range testCases {
 		tc := tc
 		t.Run(string(tc.policy), func(t *testing.T) {
-			t.Parallel()
-
 			testName := names.SimpleNameGenerator.GenerateName(strings.ToLower(fmt.Sprintf("idle-connection-%s-", tc.policy)))
 			ns := createNamespace(t, testName)
 
