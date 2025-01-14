@@ -275,7 +275,6 @@ func getRouterDeploymentComponents(t *testing.T) (*operatorv1.IngressController,
 				},
 			},
 			HTTPHeaders: &operatorv1.IngressControllerHTTPHeaders{
-
 				Actions: operatorv1.IngressControllerHTTPHeaderActions{
 					Response: []operatorv1.IngressControllerHTTPHeader{
 						{
@@ -306,14 +305,12 @@ func getRouterDeploymentComponents(t *testing.T) (*operatorv1.IngressController,
 							},
 						},
 						{
-
 							Name: headerNameXFrame,
 							Action: operatorv1.IngressControllerHTTPHeaderActionUnion{
 								Type: operatorv1.Delete,
 							},
 						},
 						{
-
 							Name: headerNameXSS,
 							Action: operatorv1.IngressControllerHTTPHeaderActionUnion{
 								Type: operatorv1.Delete,
@@ -332,7 +329,6 @@ func getRouterDeploymentComponents(t *testing.T) (*operatorv1.IngressController,
 							},
 						},
 						{
-
 							Name: "Accept-Encoding",
 							Action: operatorv1.IngressControllerHTTPHeaderActionUnion{
 								Type: operatorv1.Delete,
@@ -2528,7 +2524,6 @@ func TestDesiredRouterDeploymentDefaultPlacement(t *testing.T) {
 			}
 		})
 	}
-
 }
 
 func TestDesiredRouterDeploymentRouterExternalCertificate(t *testing.T) {
@@ -2596,7 +2591,7 @@ func Test_IdleConnectionTerminationPolicy(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ic.Spec.IdleConnectionTerminationPolicy = tc.policy
 
-			deployment, err := desiredRouterDeployment(ic, &Config{IngressControllerImage: ingressControllerImage}, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, false, nil, clusterProxyConfig)
+			deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, false, nil, clusterProxyConfig, true, false)
 			if err != nil {
 				t.Fatalf("failed to generate desired router Deployment: %v", err)
 			}
