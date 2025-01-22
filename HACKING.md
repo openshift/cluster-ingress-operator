@@ -118,3 +118,5 @@ Assuming `KUBECONFIG` is set, run end-to-end tests:
 ```
 $ make test-e2e
 ```
+
+hackity-hack
