@@ -687,20 +687,12 @@ func verifyExternalIngressController(t *testing.T, name types.NamespacedName, ho
 
 	// If we have a DNS as an external IP address, make sure we can resolve it before moving on.
 	// This just limits the number of "could not resolve host" errors which can be confusing.
-	if net.ParseIP(address) == nil {
-		if err := wait.PollImmediate(10*time.Second, 5*time.Minute, func() (bool, error) {
-			_, err := net.LookupIP(address)
-			if err != nil {
-				t.Logf("waiting for loadbalancer domain %s to resolve...", address)
-				return false, nil
-			}
-			return true, nil
-		}); err != nil {
-			t.Fatalf("loadbalancer domain %s was unable to resolve: %v", address, err)
-		}
+	ipAddress, err := waitForLookupIP(t, address, 5*time.Minute, false)
+	if err != nil {
+		t.Fatalf("failed to wait for load balancer hostname: %v", err)
 	}
 
-	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("http://%s", address), nil)
+	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("http://%s", ipAddress), nil)
 	if err != nil {
 		t.Fatalf("failed to build client request: %v", err)
 	}
@@ -765,6 +757,9 @@ func verifyInternalIngressController(t *testing.T, name types.NamespacedName, ho
 			t.Fatalf("failed to delete route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
 		}
 	}()
+
+	// Wait for DNS to resolve, including warmup period if needed.
+	waitForLookupIP(t, address, 5*time.Minute, true)
 
 	extraArgs := []string{
 		"--header", "HOST:" + echoRoute.Spec.Host,
@@ -847,6 +842,115 @@ func verifyInternalIngressController(t *testing.T, name types.NamespacedName, ho
 	if err != nil {
 		t.Fatalf("failed to verify connectivity with workload with address: %s using internal curl client. Curl Pod Logs:\n%s", address, curlPodLogs)
 	}
+}
+
+// waitForLookupIP attempts to resolve the IP address for a given hostname within a specified timeout period.
+// It handles platform-specific DNS requirements, particularly for environments that may need internal cluster
+// DNS resolution or a DNS warmup period to avoid negative caching (like IBMCloud). It returns the first IP
+// address from the resolved list of IPs.
+func waitForLookupIP(t *testing.T, host string, timeout time.Duration, forceInternal bool) (string, error) {
+	// If already an IP, return as is.
+	if net.ParseIP(host) != nil {
+		return host, nil
+	}
+
+	warmup, needsInternalDNSResolution := platformsNeedInternalDNSResolutionAndWarmup[infraConfig.Status.PlatformStatus.Type]
+	if warmup > 0 {
+		t.Logf("this platform requires DNS warmup time to avoid negative caching...waiting for %s", warmup)
+		time.Sleep(warmup)
+	}
+
+	var ip []net.IP
+	var err error
+	if err := wait.PollUntilContextTimeout(context.Background(), 10*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
+		if needsInternalDNSResolution || forceInternal {
+			ip, err = lookupIPInsideCluster(t, host)
+		} else {
+			ip, err = net.LookupIP(host)
+		}
+		if err != nil {
+			t.Logf("waiting for hostname %s to resolve...", host)
+			return false, nil
+		}
+		return true, nil
+	}); err != nil {
+		t.Fatalf("hostname %s was unable to resolve: %v", host, err)
+	}
+
+	return ip[0].String(), nil
+}
+
+// lookupIPInsideCluster looks up a host inside a cluster by running the
+// dig command inside a pod and returning a list of IP addresses.
+func lookupIPInsideCluster(t *testing.T, host string) ([]net.IP, error) {
+	// Get current router image so we can use it for running dig.
+	deployment := &appsv1.Deployment{}
+	deploymentName := types.NamespacedName{Namespace: controller.DefaultOperandNamespace, Name: "router-default"}
+	if err := kclient.Get(context.Background(), deploymentName, deployment); err != nil {
+		return nil, err
+	}
+	image := deployment.Spec.Template.Spec.Containers[0].Image
+	digPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "dig-lookup-",
+			Namespace:    controller.DefaultOperandNamespace,
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name:    "dig",
+					Image:   image,
+					Command: []string{"sh", "-c", fmt.Sprintf("dig +short %s", host)},
+				},
+			},
+			RestartPolicy: corev1.RestartPolicyNever,
+		},
+	}
+	if err := kclient.Create(context.Background(), digPod); err != nil {
+		return nil, fmt.Errorf("failed to create dig pod %s/%s: %v", digPod.Namespace, digPod.Name, err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.Background(), digPod); err != nil {
+			if !errors.IsNotFound(err) {
+				t.Fatalf("failed to delete dig pod %s/%s: %v", digPod.Namespace, digPod.Name, err)
+			}
+		}
+	}()
+
+	if err := waitForPodComplete(t, kclient, digPod, 1*time.Minute); err != nil {
+		return nil, fmt.Errorf("failed to observe dig pod completion: %v", err)
+	}
+	// Get client-go ClientSet for retrieving logs.
+	kubeConfig, err := config.GetConfig()
+	if err != nil {
+		t.Fatalf("failed to get kube config: %v", err)
+	}
+	cl, err := kubernetes.NewForConfig(kubeConfig)
+	if err != nil {
+		t.Fatalf("failed to create kube client: %v", err)
+	}
+
+	// Retrieve logs from dig pod.
+	logs, err := cl.CoreV1().Pods(controller.DefaultOperandNamespace).GetLogs(digPod.Name, &corev1.PodLogOptions{
+		Container: "dig",
+		Follow:    false,
+	}).DoRaw(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("failed to get %s/%s pod logs: %v", digPod.Namespace, digPod.Name, err)
+	}
+
+	// Attempt to parse out the IP from the logs.
+	var ips []net.IP
+	for _, line := range strings.Split(string(logs), "\n") {
+		if ip := net.ParseIP(line); ip != nil {
+			ips = append(ips, ip)
+		}
+	}
+	if len(ips) == 0 {
+		return nil, fmt.Errorf("no valid IP addresses found for host using internal-cluster dig: %s", host)
+	}
+
+	return ips, nil
 }
 
 // assertDeleted tries to delete a cluster resource, and causes test failure if the delete fails.
