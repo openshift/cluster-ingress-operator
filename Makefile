@@ -59,6 +59,10 @@ test-e2e: generate
 test-e2e-list: generate
 	@(cd ./test/e2e; E2E_TEST_MAIN_SKIP_SETUP=1 $(GO) test -list . -tags e2e | grep ^Test | sort)
 
+.PHONY: gatewayapi-conformance
+gatewayapi-conformance:
+	hack/gatewayapi-conformance.sh
+
 .PHONY: clean
 clean:
 	$(GO) clean
