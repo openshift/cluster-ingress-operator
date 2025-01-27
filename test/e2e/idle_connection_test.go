@@ -24,6 +24,8 @@ import (
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/openshift/api/features"
+
 	operatorv1 "github.com/openshift/api/operator/v1"
 	routev1 "github.com/openshift/api/route/v1"
 )
@@ -594,6 +596,13 @@ func Test_IdleConnectionTerminationPolicyImmediate(t *testing.T) {
 //     persists during the backend switch.
 func Test_IdleConnectionTerminationPolicyDeferred(t *testing.T) {
 	t.Parallel()
+
+	if dcmEnabled, err := isFeatureGateEnabled(features.FeatureGateIngressControllerDynamicConfigurationManager); err != nil {
+		t.Fatalf("failed to get dynamic config manager feature gate: %v", err)
+	} else if dcmEnabled {
+		// Ref: https://issues.redhat.com/browse/OCPBUGS-48560
+		t.Skipf("Skipping Test_IdleConnectionTerminationPolicyDeferred when DynamicConfigurationManager feature gate is enabled until OCPBUGS-48560 is fixed")
+	}
 
 	idleConnectionTerminationPolicyRunTest(t, operatorv1.IngressControllerConnectionTerminationPolicyDeferred, []idleConnectionTestAction{
 		{
