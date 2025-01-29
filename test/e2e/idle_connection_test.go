@@ -415,7 +415,7 @@ func idleConnectionTerminationPolicyRunTest(t *testing.T, policy operatorv1.Ingr
 		elbAddress := elbHostname
 
 		if net.ParseIP(elbHostname) == nil {
-			if err := wait.PollUntilContextTimeout(context.Background(), 10*time.Second, 5*time.Minute, false, func(ctx context.Context) (bool, error) {
+			if err := wait.PollUntilContextTimeout(context.Background(), 10*time.Second, dnsResolutionTimeout, false, func(ctx context.Context) (bool, error) {
 				addrs, err := net.LookupHost(elbHostname)
 				if err != nil {
 					t.Logf("%v error resolving %s: %v, retrying...", time.Now(), elbHostname, err)

@@ -688,7 +688,7 @@ func verifyExternalIngressController(t *testing.T, name types.NamespacedName, ho
 	// If we have a DNS as an external IP address, make sure we can resolve it before moving on.
 	// This just limits the number of "could not resolve host" errors which can be confusing.
 	if net.ParseIP(address) == nil {
-		if err := wait.PollImmediate(10*time.Second, 5*time.Minute, func() (bool, error) {
+		if err := wait.PollImmediate(10*time.Second, dnsResolutionTimeout, func() (bool, error) {
 			_, err := net.LookupIP(address)
 			if err != nil {
 				t.Logf("waiting for loadbalancer domain %s to resolve...", address)

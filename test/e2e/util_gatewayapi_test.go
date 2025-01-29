@@ -527,7 +527,7 @@ func assertHttpRouteConnection(t *testing.T, hostname string, gateway *gatewayap
 	// Wait and check that the dns name resolves first. Takes a long time, so
 	// if the hostname is actually an IP address, skip this.
 	if net.ParseIP(hostname) == nil {
-		if err := wait.PollUntilContextTimeout(context.Background(), 10*time.Second, 5*time.Minute, false, func(context context.Context) (bool, error) {
+		if err := wait.PollUntilContextTimeout(context.Background(), 10*time.Second, dnsResolutionTimeout, false, func(context context.Context) (bool, error) {
 			_, err := net.LookupHost(hostname)
 			if err != nil {
 				t.Logf("%v waiting for HTTP route name %s to resolve (%v)", time.Now(), hostname, err)
