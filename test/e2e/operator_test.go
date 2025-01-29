@@ -125,6 +125,14 @@ var (
 	operandNamespace  = operatorcontroller.DefaultOperandNamespace
 	defaultName       = types.NamespacedName{Namespace: operatorNamespace, Name: manifests.DefaultIngressControllerName}
 	clusterConfigName = types.NamespacedName{Namespace: operatorNamespace, Name: manifests.ClusterIngressConfigName}
+
+	// Platforms that need a DNS "warmup" period for internal (inside the test cluster) DNS resolution.
+	// The warmup period is a period of delay before the first query is executed to avoid negative caching.
+	// This is not intended for external (i.e. the test runner cluster) DNS resolution.
+	platformsNeedInternalDNSWarmup = map[configv1.PlatformType]time.Duration{
+		// 7 minutes of warmup was required past testing for internal IBMCloud DNS queries.
+		configv1.IBMCloudPlatformType: 7 * time.Minute,
+	}
 )
 
 const (
