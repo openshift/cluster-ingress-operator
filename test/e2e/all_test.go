@@ -24,6 +24,7 @@ func TestAll(t *testing.T) {
 		t.Run("TestClientTLS", TestClientTLS)
 		t.Run("TestMTLSWithCRLs", TestMTLSWithCRLs)
 		t.Run("TestCRLUpdate", TestCRLUpdate)
+		t.Run("TestRouterWaitsForCRLs", TestRouterWaitsForCRLs)
 		t.Run("TestContainerLogging", TestContainerLogging)
 		t.Run("TestContainerLoggingMaxLength", TestContainerLoggingMaxLength)
 		t.Run("TestContainerLoggingMinLength", TestContainerLoggingMinLength)
