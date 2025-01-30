@@ -733,7 +733,7 @@ func checkDefaultCertificate(secret *corev1.Secret, domain string) error {
 		// SHA1 can still be used by the root CA certificate.
 		if !isSelfSignedCert(cert) {
 			switch cert.SignatureAlgorithm {
-			case x509.SHA1WithRSA, x509.ECDSAWithSHA1:
+			case x509.SHA1WithRSA, x509.ECDSAWithSHA1, x509.DSAWithSHA1:
 				return fmt.Errorf("a CA-signed certificate in secret %s/%s has weak SHA1 signature algorithm: %s (see https://docs.openshift.com/container-platform/4.16/release_notes/ocp-4-16-release-notes.html#ocp-4-16-sha-haproxy-support-removed_release-notes for more details)", secret.Namespace, secret.Name, cert.SignatureAlgorithm)
 			}
 		}
