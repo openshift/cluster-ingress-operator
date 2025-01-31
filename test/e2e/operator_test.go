@@ -1661,7 +1661,7 @@ func TestScopeChange(t *testing.T) {
 			Status: operatorv1.ConditionFalse,
 		}
 		if err := waitForIngressControllerCondition(t, kclient, 1*time.Minute, name, progressingFalse); err != nil {
-			t.Fatalf("failed to observe the ingresscontroller report Progressing=True: %v", err)
+			t.Fatalf("failed to observe the ingresscontroller report Progressing=False: %v", err)
 		}
 	case configv1.AzurePlatformType, configv1.GCPPlatformType:
 		err := wait.PollImmediate(5*time.Second, 5*time.Minute, func() (bool, error) {
@@ -1719,6 +1719,12 @@ func TestScopeChange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected load balancer to become internal: %v", err)
 	}
+
+	// Verify that the IngressController provisions successfully to identify bugs like OCPBUGS-32776.
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, availableNotProgressingConditionsForIngressControllerWithLoadBalancer...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
 }
 
 // TestNodePortServiceEndpointPublishingStrategy creates an ingresscontroller
