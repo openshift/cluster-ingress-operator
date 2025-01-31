@@ -125,6 +125,23 @@ var (
 	operandNamespace  = operatorcontroller.DefaultOperandNamespace
 	defaultName       = types.NamespacedName{Namespace: operatorNamespace, Name: manifests.DefaultIngressControllerName}
 	clusterConfigName = types.NamespacedName{Namespace: operatorNamespace, Name: manifests.ClusterIngressConfigName}
+
+	// Platforms that need a DNS "warmup" period for internal (inside the test cluster) DNS resolution.
+	// The warmup period is a period of delay before the first query is executed to avoid negative caching.
+	// This is not intended for external (i.e. the test runner cluster) DNS resolution.
+	platformsNeedInternalDNSWarmup = map[configv1.PlatformType]time.Duration{
+		// 7 minutes of warmup was required past testing for internal IBMCloud DNS queries.
+		configv1.IBMCloudPlatformType: 7 * time.Minute,
+	}
+)
+
+const (
+	// dnsResolutionTimeout is the maximum time allowed for the test runner cluster to resolve a newly created
+	// DNS record. This record may be a wildcard DNS record or a load balancer hostname (for AWS & IBMCloud). This
+	// timeout accounts for both DNS propagation time from the test cluster's hosted zone to the test runner
+	// cluster (which may be on different platforms) and any negative caching along the way. As of writing this, AWS
+	// typically resolves within ~1 minute (see OCPBUGS-14966), while IBMCloud takes ~7 minutes (see OCPBUGS-48780).
+	dnsResolutionTimeout = 10 * time.Minute
 )
 
 func init() {
@@ -3056,7 +3073,7 @@ func TestAWSELBConnectionIdleTimeout(t *testing.T) {
 	elbHostname := wildcardRecord.Spec.Targets[0]
 
 	// Wait until we can resolve the ELB's hostname
-	if err := wait.PollImmediate(5*time.Second, 5*time.Minute, func() (bool, error) {
+	if err := wait.PollImmediate(5*time.Second, dnsResolutionTimeout, func() (bool, error) {
 		_, err := net.LookupIP(elbHostname)
 		if err != nil {
 			t.Log(err)
@@ -3270,7 +3287,7 @@ func TestConnectTimeout(t *testing.T) {
 	lbHostname := wildcardRecord.Spec.Targets[0]
 
 	// Wait until we can resolve the LB's hostname
-	if err := wait.PollUntilContextTimeout(context.Background(), 5*time.Second, 5*time.Minute, true, func(ctx context.Context) (bool, error) {
+	if err := wait.PollUntilContextTimeout(context.Background(), 5*time.Second, dnsResolutionTimeout, true, func(ctx context.Context) (bool, error) {
 		_, err := net.LookupIP(lbHostname)
 		if err != nil {
 			t.Log(err)

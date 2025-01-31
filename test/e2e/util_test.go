@@ -688,7 +688,7 @@ func verifyExternalIngressController(t *testing.T, name types.NamespacedName, ho
 	// If we have a DNS as an external IP address, make sure we can resolve it before moving on.
 	// This just limits the number of "could not resolve host" errors which can be confusing.
 	if net.ParseIP(address) == nil {
-		if err := wait.PollImmediate(10*time.Second, 5*time.Minute, func() (bool, error) {
+		if err := wait.PollImmediate(10*time.Second, dnsResolutionTimeout, func() (bool, error) {
 			_, err := net.LookupIP(address)
 			if err != nil {
 				t.Logf("waiting for loadbalancer domain %s to resolve...", address)
@@ -765,6 +765,10 @@ func verifyInternalIngressController(t *testing.T, name types.NamespacedName, ho
 			t.Fatalf("failed to delete route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
 		}
 	}()
+
+	// Since we've created a new IngressController, and we are about to use a curl pod to query the
+	// wildcard DNS record, we need to wait for platforms that require a warmup period for internal queries.
+	waitForInternalDNSWarmup(t)
 
 	extraArgs := []string{
 		"--header", "HOST:" + echoRoute.Spec.Host,
@@ -846,6 +850,16 @@ func verifyInternalIngressController(t *testing.T, name types.NamespacedName, ho
 	})
 	if err != nil {
 		t.Fatalf("failed to verify connectivity with workload with address: %s using internal curl client. Curl Pod Logs:\n%s", address, curlPodLogs)
+	}
+}
+
+// waitForInternalDNSWarmup waits for a designated "warmup" period
+// to prevent negative caching on platforms that require it.
+func waitForInternalDNSWarmup(t *testing.T) {
+	warmup, _ := platformsNeedInternalDNSWarmup[infraConfig.Status.PlatformStatus.Type]
+	if warmup > 0 {
+		t.Logf("this platform requires DNS warmup time to avoid negative caching...waiting for %s", warmup)
+		time.Sleep(warmup)
 	}
 }
 
