@@ -26,6 +26,24 @@ func Test_desiredWildcardDNSRecord(t *testing.T) {
 		expect      *iov1.DNSRecordSpec
 	}{
 		{
+			description: "null endpointPublishingStrategy.loadBalancer",
+			domain:      "lb.cloud.example.com",
+			publish: operatorv1.EndpointPublishingStrategy{
+				Type:         operatorv1.LoadBalancerServiceStrategyType,
+				LoadBalancer: nil,
+			},
+			ingresses: []corev1.LoadBalancerIngress{
+				{Hostname: "lb.cloud.example.com"},
+			},
+			expect: &iov1.DNSRecordSpec{
+				DNSName:             "*.lb.cloud.example.com.",
+				RecordType:          iov1.CNAMERecordType,
+				Targets:             []string{"lb.cloud.example.com"},
+				RecordTTL:           defaultRecordTTL,
+				DNSManagementPolicy: iov1.ManagedDNS,
+			},
+		},
+		{
 			description: "no domain",
 			domain:      "",
 			publish: operatorv1.EndpointPublishingStrategy{
