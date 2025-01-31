@@ -147,6 +147,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 				operatorcontroller.DefaultOperandNamespace:               {},
 				operatorcontroller.DefaultCanaryNamespace:                {},
 				operatorcontroller.GlobalMachineSpecifiedConfigNamespace: {},
+				operatorcontroller.OpenshiftOperatorNamespace:            {},
 			},
 		},
 		// Use a non-caching client everywhere. The default split client does not
