@@ -1039,7 +1039,8 @@ func computeDNSStatus(ic *operatorv1.IngressController, wildcardRecord *iov1.DNS
 		}
 	}
 	var conditions []operatorv1.OperatorCondition
-	if ic.Status.EndpointPublishingStrategy.LoadBalancer.DNSManagementPolicy == operatorv1.UnmanagedLoadBalancerDNS {
+	// The default value for DNSManagementPolicy is "Managed".
+	if lb := ic.Status.EndpointPublishingStrategy.LoadBalancer; lb != nil && lb.DNSManagementPolicy == operatorv1.UnmanagedLoadBalancerDNS {
 		conditions = append(conditions, operatorv1.OperatorCondition{
 			Type:    operatorv1.DNSManagedIngressConditionType,
 			Status:  operatorv1.ConditionFalse,

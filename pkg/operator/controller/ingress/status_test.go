@@ -2384,7 +2384,7 @@ func Test_computeDNSStatus(t *testing.T) {
 			},
 		},
 		{
-			name: "DNSManaged true and DNSReady is true due to NoFailedZones",
+			name: "DNSManaged true due to dnsManagementPolicy=Managed, and DNSReady is true due to NoFailedZones",
 			controller: &operatorv1.IngressController{
 				Status: operatorv1.IngressControllerStatus{
 					Domain: "apps.basedomain.com",
@@ -2393,6 +2393,59 @@ func Test_computeDNSStatus(t *testing.T) {
 						LoadBalancer: &operatorv1.LoadBalancerStrategy{
 							DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
 						},
+					},
+				},
+			},
+			record: &iov1.DNSRecord{
+				Spec: iov1.DNSRecordSpec{
+					DNSManagementPolicy: iov1.ManagedDNS,
+				},
+				Status: iov1.DNSRecordStatus{
+					Zones: []iov1.DNSZoneStatus{
+						{
+							DNSZone: configv1.DNSZone{ID: "zone1"},
+							Conditions: []iov1.DNSZoneCondition{
+								{
+									Type:               iov1.DNSRecordPublishedConditionType,
+									Status:             string(operatorv1.ConditionTrue),
+									LastTransitionTime: metav1.Now(),
+								},
+							},
+						},
+					},
+				},
+			},
+			platformStatus: &configv1.PlatformStatus{
+				Type: configv1.AWSPlatformType,
+			},
+			dnsConfig: &configv1.DNS{
+				Spec: configv1.DNSSpec{
+					BaseDomain:  "basedomain.com",
+					PublicZone:  &configv1.DNSZone{},
+					PrivateZone: &configv1.DNSZone{},
+				},
+			},
+			expect: []operatorv1.OperatorCondition{
+				{
+					Type:   "DNSManaged",
+					Status: operatorv1.ConditionTrue,
+					Reason: "Normal",
+				},
+				{
+					Type:   "DNSReady",
+					Status: operatorv1.ConditionTrue,
+					Reason: "NoFailedZones",
+				},
+			},
+		},
+		{
+			name: "DNSManaged true due to nil status.endpointPublishingStrategy.loadBalancer, and DNSReady is true due to NoFailedZones",
+			controller: &operatorv1.IngressController{
+				Status: operatorv1.IngressControllerStatus{
+					Domain: "apps.basedomain.com",
+					EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+						Type:         operatorv1.LoadBalancerServiceStrategyType,
+						LoadBalancer: nil,
 					},
 				},
 			},
