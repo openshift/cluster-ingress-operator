@@ -567,13 +567,14 @@ func computeEffectivePublishingStrategy(ic *operatorv1.IngressController, platfo
 // accordingly.  Finally, this function returns a Boolean value indicating
 // whether it detected changes.
 func updatePublishingStrategy(ic *operatorv1.IngressController, effectiveStrategy *operatorv1.EndpointPublishingStrategy) bool {
+	changed := false
+
 	switch effectiveStrategy.Type {
 	case operatorv1.LoadBalancerServiceStrategyType:
 		// Update if LB provider parameters changed.
 		statusLB := ic.Status.EndpointPublishingStrategy.LoadBalancer
 		specLB := effectiveStrategy.LoadBalancer
 		if specLB != nil && statusLB != nil {
-			changed := false
 
 			// Detect changes to LB scope.
 			if specLB.Scope != statusLB.Scope {
@@ -680,7 +681,6 @@ func updatePublishingStrategy(ic *operatorv1.IngressController, effectiveStrateg
 					changed = true
 				}
 			}
-			return changed
 		}
 	case operatorv1.NodePortServiceStrategyType:
 		// Update if PROXY protocol is turned on or off.
@@ -691,7 +691,7 @@ func updatePublishingStrategy(ic *operatorv1.IngressController, effectiveStrateg
 		specNP := effectiveStrategy.NodePort
 		if specNP != nil && specNP.Protocol != statusNP.Protocol {
 			statusNP.Protocol = specNP.Protocol
-			return true
+			changed = true
 		}
 	case operatorv1.HostNetworkStrategyType:
 		if ic.Status.EndpointPublishingStrategy.HostNetwork == nil {
@@ -701,7 +701,6 @@ func updatePublishingStrategy(ic *operatorv1.IngressController, effectiveStrateg
 		statusHN := ic.Status.EndpointPublishingStrategy.HostNetwork
 		specHN := effectiveStrategy.HostNetwork
 
-		var changed bool
 		if specHN != nil {
 			// Update if PROXY protocol is turned on or off.
 			if specHN.Protocol != statusHN.Protocol {
@@ -723,7 +722,6 @@ func updatePublishingStrategy(ic *operatorv1.IngressController, effectiveStrateg
 				changed = true
 			}
 		}
-		return changed
 	case operatorv1.PrivateStrategyType:
 		// Update if PROXY protocol is turned on or off.
 		if ic.Status.EndpointPublishingStrategy.Private == nil {
@@ -733,11 +731,11 @@ func updatePublishingStrategy(ic *operatorv1.IngressController, effectiveStrateg
 		specPrivate := effectiveStrategy.Private
 		if specPrivate != nil && specPrivate.Protocol != statusPrivate.Protocol {
 			statusPrivate.Protocol = specPrivate.Protocol
-			return true
+			changed = true
 		}
 	}
 
-	return false
+	return changed
 }
 
 // setDefaultProviderParameters mutates the given LoadBalancerStrategy by
