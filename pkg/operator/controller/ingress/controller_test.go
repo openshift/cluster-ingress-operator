@@ -611,6 +611,13 @@ func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
 		domainMatchesBaseDomain bool
 	}{
 		{
+			name:                    "loadbalancer spec.endpointPublishingStrategy.loadBalancer set to null",
+			ic:                      makeIC(spec(eps(nil)), status(eps(nil))),
+			domainMatchesBaseDomain: true,
+			expectedResult:          false,
+			expectedIC:              makeIC(spec(eps(nil)), status(eps(nil))),
+		},
+		{
 			name:                    "loadbalancer scope changed from external to internal",
 			ic:                      makeIC(spec(eps(lbs(operatorv1.InternalLoadBalancer, &managedDNS))), status(eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS)))),
 			expectedResult:          true,
