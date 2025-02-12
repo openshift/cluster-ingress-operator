@@ -406,7 +406,7 @@ func TestSetDefaultPublishingStrategySetsPlatformDefaults(t *testing.T) {
 				t.Errorf("expected result %v, got %v", true, actualResult)
 			}
 			if diff := cmp.Diff(tc.expectedIC, ic); len(diff) != 0 {
-				t.Errorf("got expected ingresscontroller: %s", diff)
+				t.Errorf("got unexpected ingresscontroller: %s", diff)
 			}
 		})
 	}
@@ -934,7 +934,7 @@ func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
 				t.Errorf("expected result %v, got %v", tc.expectedResult, actualResult)
 			}
 			if diff := cmp.Diff(tc.expectedIC, ic); len(diff) != 0 {
-				t.Errorf("got expected ingresscontroller: %s", diff)
+				t.Errorf("got unexpected ingresscontroller: %s", diff)
 			}
 		})
 	}
