@@ -439,7 +439,37 @@ func setDefaultDomain(ic *operatorv1.IngressController, ingressConfig *configv1.
 	return false
 }
 
+// setDefaultPublishingStrategy sets a default value for the given
+// ingresscontroller's status.endpointPublishingStrategy field and union member
+// sub-field if either of these fields is nil.  This function returns a Boolean
+// value indicating whether it updated the status.  This function also mutates
+// the given ingresscontroller's status.
 func setDefaultPublishingStrategy(ic *operatorv1.IngressController, platformStatus *configv1.PlatformStatus, domainMatchesBaseDomain bool, ingressConfig *configv1.Ingress, alreadyAdmitted bool) bool {
+	effectiveStrategy := computeEffectivePublishingStrategy(ic, platformStatus, domainMatchesBaseDomain, ingressConfig, alreadyAdmitted)
+
+	// updatePublishingStrategy expects ic.Status.EndpointPublishingStrategy
+	// not to be nil.  However, updatePublishingStrategy also expects
+	// ic.Status.EndpointPublishingStrategy to have the stored status so
+	// that updatePublishingStrategy can identify changes from the effective
+	// strategy.  Thus it is necessary to set status here if, and only if,
+	// it is nil.  Note that updatePublishingStrategy mutates
+	// ic.Status.EndpointPublishingStrategy (and thus effectiveStrategy).
+	if ic.Status.EndpointPublishingStrategy == nil {
+		ic.Status.EndpointPublishingStrategy = effectiveStrategy
+		return true
+	}
+
+	if updatePublishingStrategy(ic, effectiveStrategy) {
+		return true
+	}
+
+	return false
+}
+
+// computeEffectivePublishingStrategy takes an endpoint publishing strategy,
+// fills in missing fields with empty structs or default values, and returns
+// the result.
+func computeEffectivePublishingStrategy(ic *operatorv1.IngressController, platformStatus *configv1.PlatformStatus, domainMatchesBaseDomain bool, ingressConfig *configv1.Ingress, alreadyAdmitted bool) *operatorv1.EndpointPublishingStrategy {
 	effectiveStrategy := ic.Spec.EndpointPublishingStrategy.DeepCopy()
 	if effectiveStrategy == nil {
 		var strategyType operatorv1.EndpointPublishingStrategyType
@@ -527,13 +557,16 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, platformStat
 			effectiveStrategy.Private.Protocol = operatorv1.TCPProtocol
 		}
 	}
-	if ic.Status.EndpointPublishingStrategy == nil {
-		ic.Status.EndpointPublishingStrategy = effectiveStrategy
-		return true
-	}
 
-	// Detect changes to endpoint publishing strategy parameters that the
-	// operator can safely update.
+	return effectiveStrategy
+}
+
+// updatePublishingStrategy detects changes to endpoint publishing strategy
+// parameters in spec that the operator can safely update.  If such changes are
+// detected, this function mutates the given ingresscontroller's status
+// accordingly.  Finally, this function returns a Boolean value indicating
+// whether it detected changes.
+func updatePublishingStrategy(ic *operatorv1.IngressController, effectiveStrategy *operatorv1.EndpointPublishingStrategy) bool {
 	switch effectiveStrategy.Type {
 	case operatorv1.LoadBalancerServiceStrategyType:
 		// Update if LB provider parameters changed.
