@@ -2163,7 +2163,7 @@ func Test_IngressStatusesEqual(t *testing.T) {
 		},
 		{
 			description: "AWS CLB connection idle timeout differs",
-			expected:    true,
+			expected:    false,
 			a: operatorv1.IngressControllerStatus{
 				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
 					Type: operatorv1.LoadBalancerServiceStrategyType,
