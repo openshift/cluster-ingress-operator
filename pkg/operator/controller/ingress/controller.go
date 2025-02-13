@@ -384,6 +384,8 @@ func (r *reconciler) admit(current *operatorv1.IngressController, ingressConfig 
 			})
 			updated.Status.ObservedGeneration = updated.Generation
 			if !IngressStatusesEqual(current.Status, updated.Status) {
+				diff := cmp.Diff(current.Status, updated.Status, cmpopts.EquateEmpty())
+				log.Info("updated ingresscontroller status", "namespace", updated.Namespace, "name", updated.Name, "diff", diff)
 				if err := r.client.Status().Update(context.TODO(), updated); err != nil {
 					return fmt.Errorf("failed to update status: %v", err)
 				}
@@ -404,6 +406,8 @@ func (r *reconciler) admit(current *operatorv1.IngressController, ingressConfig 
 	}
 
 	if !IngressStatusesEqual(current.Status, updated.Status) {
+		diff := cmp.Diff(current.Status, updated.Status, cmpopts.EquateEmpty())
+		log.Info("updated ingresscontroller status", "namespace", updated.Namespace, "name", updated.Name, "diff", diff)
 		if err := r.client.Status().Update(context.TODO(), updated); err != nil {
 			return fmt.Errorf("failed to update status: %v", err)
 		}
