@@ -2111,7 +2111,7 @@ func Test_IngressStatusesEqual(t *testing.T) {
 		},
 		{
 			description: "DNS management policy differs",
-			expected:    true,
+			expected:    false,
 			a: operatorv1.IngressControllerStatus{
 				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
 					Type: operatorv1.LoadBalancerServiceStrategyType,
