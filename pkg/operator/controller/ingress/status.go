@@ -803,6 +803,9 @@ func IngressStatusesEqual(a, b operatorv1.IngressControllerStatus) bool {
 	if !reflect.DeepEqual(a.TLSProfile, b.TLSProfile) {
 		return false
 	}
+	if getEndpointPublishingStrategyType(a.EndpointPublishingStrategy) != getEndpointPublishingStrategyType(b.EndpointPublishingStrategy) {
+		return false
+	}
 	if !reflect.DeepEqual(getAllowedSourceRanges(a.EndpointPublishingStrategy), getAllowedSourceRanges(b.EndpointPublishingStrategy)) {
 		return false
 	}
@@ -820,6 +823,14 @@ func IngressStatusesEqual(a, b operatorv1.IngressControllerStatus) bool {
 	}
 
 	return true
+}
+
+func getEndpointPublishingStrategyType(eps *operatorv1.EndpointPublishingStrategy) operatorv1.EndpointPublishingStrategyType {
+	if eps != nil {
+		return eps.Type
+	}
+
+	return ""
 }
 
 func conditionsEqual(a, b []operatorv1.OperatorCondition) bool {
