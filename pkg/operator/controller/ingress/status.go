@@ -818,6 +818,9 @@ func IngressStatusesEqual(a, b operatorv1.IngressControllerStatus) bool {
 	if getEndpointPublishingStrategyAWSCLBConnectionIdleTimeout(a.EndpointPublishingStrategy) != getEndpointPublishingStrategyAWSCLBConnectionIdleTimeout(b.EndpointPublishingStrategy) {
 		return false
 	}
+	if getEndpointPublishingStrategyGCPClientAccess(a.EndpointPublishingStrategy) != getEndpointPublishingStrategyGCPClientAccess(b.EndpointPublishingStrategy) {
+		return false
+	}
 	if !reflect.DeepEqual(getAllowedSourceRanges(a.EndpointPublishingStrategy), getAllowedSourceRanges(b.EndpointPublishingStrategy)) {
 		return false
 	}
@@ -875,6 +878,14 @@ func getEndpointPublishingStrategyAWSCLBConnectionIdleTimeout(eps *operatorv1.En
 	}
 
 	return metav1.Duration{}
+}
+
+func getEndpointPublishingStrategyGCPClientAccess(eps *operatorv1.EndpointPublishingStrategy) operatorv1.GCPClientAccess {
+	if eps != nil && eps.LoadBalancer != nil && eps.LoadBalancer.ProviderParameters != nil && eps.LoadBalancer.ProviderParameters.GCP != nil {
+		return eps.LoadBalancer.ProviderParameters.GCP.ClientAccess
+	}
+
+	return ""
 }
 
 func conditionsEqual(a, b []operatorv1.OperatorCondition) bool {
