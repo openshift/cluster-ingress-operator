@@ -1261,6 +1261,36 @@ func getAWSNetworkLoadBalancerParametersInStatus(ic *operatorv1.IngressControlle
 	return nil
 }
 
+// getAWSNLBEIPAllocations returns theEIP allocations for the NLB reported in
+// the endpoint publishing strategy.
+func getAWSNLBEIPAllocations(eps *operatorv1.EndpointPublishingStrategy) []operatorv1.EIPAllocation {
+	if eps != nil && eps.LoadBalancer != nil && eps.LoadBalancer.ProviderParameters != nil && eps.LoadBalancer.ProviderParameters.AWS != nil && eps.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters != nil {
+		return eps.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters.EIPAllocations
+	}
+
+	return nil
+}
+
+// getAWSCLBSubnets returns the subnets for the CLB reported in the
+// endpoint publishing strategy.
+func getAWSCLBSubnets(eps *operatorv1.EndpointPublishingStrategy) *operatorv1.AWSSubnets {
+	if eps != nil && eps.LoadBalancer != nil && eps.LoadBalancer.ProviderParameters != nil && eps.LoadBalancer.ProviderParameters.AWS != nil && eps.LoadBalancer.ProviderParameters.AWS.ClassicLoadBalancerParameters != nil {
+		return eps.LoadBalancer.ProviderParameters.AWS.ClassicLoadBalancerParameters.Subnets
+	}
+
+	return nil
+}
+
+// getAWSNLBSubnets returns the subnets for the NLB reported in the
+// endpoint publishing strategy.
+func getAWSNLBSubnets(eps *operatorv1.EndpointPublishingStrategy) *operatorv1.AWSSubnets {
+	if eps != nil && eps.LoadBalancer != nil && eps.LoadBalancer.ProviderParameters != nil && eps.LoadBalancer.ProviderParameters.AWS != nil && eps.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters != nil {
+		return eps.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters.Subnets
+	}
+
+	return nil
+}
+
 // getOpenStackFloatingIPInSpec gets the OpenStack Floating IP reported in the spec.
 func getOpenStackFloatingIPInSpec(ic *operatorv1.IngressController) string {
 	return getOpenStackFloatingIPInEPS(ic.Spec.EndpointPublishingStrategy)
@@ -1280,4 +1310,14 @@ func getOpenStackFloatingIPInEPS(eps *operatorv1.EndpointPublishingStrategy) str
 		return eps.LoadBalancer.ProviderParameters.OpenStack.FloatingIP
 	}
 	return ""
+}
+
+// getAllowedSourceRanges returns the allowed source ranges reported in the
+// endpoint publishing strategy.
+func getAllowedSourceRanges(eps *operatorv1.EndpointPublishingStrategy) []operatorv1.CIDR {
+	if eps != nil && eps.LoadBalancer != nil {
+		return eps.LoadBalancer.AllowedSourceRanges
+	}
+
+	return nil
 }

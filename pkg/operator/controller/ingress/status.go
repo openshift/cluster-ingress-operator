@@ -803,30 +803,20 @@ func IngressStatusesEqual(a, b operatorv1.IngressControllerStatus) bool {
 	if !reflect.DeepEqual(a.TLSProfile, b.TLSProfile) {
 		return false
 	}
-	if a.EndpointPublishingStrategy != nil && a.EndpointPublishingStrategy.LoadBalancer != nil &&
-		b.EndpointPublishingStrategy != nil && b.EndpointPublishingStrategy.LoadBalancer != nil {
-		if !reflect.DeepEqual(a.EndpointPublishingStrategy.LoadBalancer.AllowedSourceRanges, b.EndpointPublishingStrategy.LoadBalancer.AllowedSourceRanges) {
-			return false
-		}
-		if a.EndpointPublishingStrategy.LoadBalancer.ProviderParameters != nil && b.EndpointPublishingStrategy.LoadBalancer.ProviderParameters != nil &&
-			a.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS != nil && b.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS != nil {
-			if a.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters != nil && b.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters != nil {
-				if !awsSubnetsEqual(a.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters.Subnets, b.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters.Subnets) {
-					return false
-				}
-				if !awsEIPAllocationsEqual(a.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters.EIPAllocations, b.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters.EIPAllocations) {
-					return false
-				}
-			}
-			if a.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.ClassicLoadBalancerParameters != nil && b.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.ClassicLoadBalancerParameters != nil {
-				if !awsSubnetsEqual(a.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.ClassicLoadBalancerParameters.Subnets, b.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.ClassicLoadBalancerParameters.Subnets) {
-					return false
-				}
-			}
-		}
-		if getOpenStackFloatingIPInEPS(a.EndpointPublishingStrategy) != getOpenStackFloatingIPInEPS(b.EndpointPublishingStrategy) {
-			return false
-		}
+	if !reflect.DeepEqual(getAllowedSourceRanges(a.EndpointPublishingStrategy), getAllowedSourceRanges(b.EndpointPublishingStrategy)) {
+		return false
+	}
+	if !awsSubnetsEqual(getAWSNLBSubnets(a.EndpointPublishingStrategy), getAWSNLBSubnets(b.EndpointPublishingStrategy)) {
+		return false
+	}
+	if !awsEIPAllocationsEqual(getAWSNLBEIPAllocations(a.EndpointPublishingStrategy), getAWSNLBEIPAllocations(b.EndpointPublishingStrategy)) {
+		return false
+	}
+	if !awsSubnetsEqual(getAWSCLBSubnets(a.EndpointPublishingStrategy), getAWSCLBSubnets(b.EndpointPublishingStrategy)) {
+		return false
+	}
+	if getOpenStackFloatingIPInEPS(a.EndpointPublishingStrategy) != getOpenStackFloatingIPInEPS(b.EndpointPublishingStrategy) {
+		return false
 	}
 
 	return true

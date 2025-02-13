@@ -2166,7 +2166,7 @@ func Test_IngressStatusesEqual(t *testing.T) {
 		},
 		{
 			description: "NLB providerParameters nil for a but present for b",
-			expected:    true,
+			expected:    false,
 			a: operatorv1.IngressControllerStatus{
 				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
 					Type: operatorv1.LoadBalancerServiceStrategyType,
@@ -2193,7 +2193,7 @@ func Test_IngressStatusesEqual(t *testing.T) {
 		},
 		{
 			description: "NLB providerParameters present for a but nil for b",
-			expected:    true,
+			expected:    false,
 			a: operatorv1.IngressControllerStatus{
 				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
 					Type: operatorv1.LoadBalancerServiceStrategyType,
@@ -2292,7 +2292,7 @@ func Test_IngressStatusesEqual(t *testing.T) {
 		},
 		{
 			description: "CLB providerParameters nil for a but present for b",
-			expected:    true,
+			expected:    false,
 			a: operatorv1.IngressControllerStatus{
 				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
 					Type: operatorv1.LoadBalancerServiceStrategyType,
@@ -2321,7 +2321,7 @@ func Test_IngressStatusesEqual(t *testing.T) {
 		},
 		{
 			description: "CLB providerParameters present for a but nil for b",
-			expected:    true,
+			expected:    false,
 			a: operatorv1.IngressControllerStatus{
 				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
 					Type: operatorv1.LoadBalancerServiceStrategyType,
