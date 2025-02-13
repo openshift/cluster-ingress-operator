@@ -2089,7 +2089,7 @@ func Test_IngressStatusesEqual(t *testing.T) {
 		},
 		{
 			description: "load balancer scope differs",
-			expected:    true,
+			expected:    false,
 			a: operatorv1.IngressControllerStatus{
 				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
 					Type: operatorv1.LoadBalancerServiceStrategyType,
