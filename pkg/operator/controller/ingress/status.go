@@ -812,6 +812,9 @@ func IngressStatusesEqual(a, b operatorv1.IngressControllerStatus) bool {
 	if getEndpointPublishingStrategyDNSManagementPolicy(a.EndpointPublishingStrategy) != getEndpointPublishingStrategyDNSManagementPolicy(b.EndpointPublishingStrategy) {
 		return false
 	}
+	if getEndpointPublishingStrategyAWSELBType(a.EndpointPublishingStrategy) != getEndpointPublishingStrategyAWSELBType(b.EndpointPublishingStrategy) {
+		return false
+	}
 	if !reflect.DeepEqual(getAllowedSourceRanges(a.EndpointPublishingStrategy), getAllowedSourceRanges(b.EndpointPublishingStrategy)) {
 		return false
 	}
@@ -850,6 +853,14 @@ func getEndpointPublishingStrategyLBScope(eps *operatorv1.EndpointPublishingStra
 func getEndpointPublishingStrategyDNSManagementPolicy(eps *operatorv1.EndpointPublishingStrategy) operatorv1.LoadBalancerDNSManagementPolicy {
 	if eps != nil && eps.LoadBalancer != nil {
 		return eps.LoadBalancer.DNSManagementPolicy
+	}
+
+	return ""
+}
+
+func getEndpointPublishingStrategyAWSELBType(eps *operatorv1.EndpointPublishingStrategy) operatorv1.AWSLoadBalancerType {
+	if eps != nil && eps.LoadBalancer != nil && eps.LoadBalancer.ProviderParameters != nil && eps.LoadBalancer.ProviderParameters.AWS != nil {
+		return eps.LoadBalancer.ProviderParameters.AWS.Type
 	}
 
 	return ""
