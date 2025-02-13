@@ -821,6 +821,9 @@ func IngressStatusesEqual(a, b operatorv1.IngressControllerStatus) bool {
 	if getEndpointPublishingStrategyGCPClientAccess(a.EndpointPublishingStrategy) != getEndpointPublishingStrategyGCPClientAccess(b.EndpointPublishingStrategy) {
 		return false
 	}
+	if getEndpointPublishingStrategyIBMProtocol(a.EndpointPublishingStrategy) != getEndpointPublishingStrategyIBMProtocol(b.EndpointPublishingStrategy) {
+		return false
+	}
 	if !reflect.DeepEqual(getAllowedSourceRanges(a.EndpointPublishingStrategy), getAllowedSourceRanges(b.EndpointPublishingStrategy)) {
 		return false
 	}
@@ -883,6 +886,14 @@ func getEndpointPublishingStrategyAWSCLBConnectionIdleTimeout(eps *operatorv1.En
 func getEndpointPublishingStrategyGCPClientAccess(eps *operatorv1.EndpointPublishingStrategy) operatorv1.GCPClientAccess {
 	if eps != nil && eps.LoadBalancer != nil && eps.LoadBalancer.ProviderParameters != nil && eps.LoadBalancer.ProviderParameters.GCP != nil {
 		return eps.LoadBalancer.ProviderParameters.GCP.ClientAccess
+	}
+
+	return ""
+}
+
+func getEndpointPublishingStrategyIBMProtocol(eps *operatorv1.EndpointPublishingStrategy) operatorv1.IngressControllerProtocol {
+	if eps != nil && eps.LoadBalancer != nil && eps.LoadBalancer.ProviderParameters != nil && eps.LoadBalancer.ProviderParameters.IBM != nil {
+		return eps.LoadBalancer.ProviderParameters.IBM.Protocol
 	}
 
 	return ""
