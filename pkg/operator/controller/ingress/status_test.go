@@ -2165,6 +2165,60 @@ func Test_IngressStatusesEqual(t *testing.T) {
 			),
 		},
 		{
+			description: "NLB providerParameters nil for a but present for b",
+			expected:    true,
+			a: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.LoadBalancerServiceStrategyType,
+					LoadBalancer: &operatorv1.LoadBalancerStrategy{
+						ProviderParameters: nil,
+					},
+				},
+			},
+			b: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.LoadBalancerServiceStrategyType,
+					LoadBalancer: &operatorv1.LoadBalancerStrategy{
+						ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+							AWS: &operatorv1.AWSLoadBalancerParameters{
+								Type: operatorv1.AWSNetworkLoadBalancer,
+								NetworkLoadBalancerParameters: &operatorv1.AWSNetworkLoadBalancerParameters{
+									EIPAllocations: []operatorv1.EIPAllocation{"eipalloc-xxxxxxxxxxxxxxxxx"},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			description: "NLB providerParameters present for a but nil for b",
+			expected:    true,
+			a: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.LoadBalancerServiceStrategyType,
+					LoadBalancer: &operatorv1.LoadBalancerStrategy{
+						ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+							AWS: &operatorv1.AWSLoadBalancerParameters{
+								Type: operatorv1.AWSNetworkLoadBalancer,
+								NetworkLoadBalancerParameters: &operatorv1.AWSNetworkLoadBalancerParameters{
+									EIPAllocations: []operatorv1.EIPAllocation{"eipalloc-xxxxxxxxxxxxxxxxx"},
+								},
+							},
+						},
+					},
+				},
+			},
+			b: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.LoadBalancerServiceStrategyType,
+					LoadBalancer: &operatorv1.LoadBalancerStrategy{
+						ProviderParameters: nil,
+					},
+				},
+			},
+		},
+		{
 			description: "CLB Subnets IDs changed",
 			expected:    false,
 			a: icStatusWithSubnetsOrEIPAllocations(
@@ -2235,6 +2289,64 @@ func Test_IngressStatusesEqual(t *testing.T) {
 				},
 				nil,
 			),
+		},
+		{
+			description: "CLB providerParameters nil for a but present for b",
+			expected:    true,
+			a: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.LoadBalancerServiceStrategyType,
+					LoadBalancer: &operatorv1.LoadBalancerStrategy{
+						ProviderParameters: nil,
+					},
+				},
+			},
+			b: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.LoadBalancerServiceStrategyType,
+					LoadBalancer: &operatorv1.LoadBalancerStrategy{
+						ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+							AWS: &operatorv1.AWSLoadBalancerParameters{
+								Type: operatorv1.AWSClassicLoadBalancer,
+								ClassicLoadBalancerParameters: &operatorv1.AWSClassicLoadBalancerParameters{
+									Subnets: &operatorv1.AWSSubnets{
+										Names: []operatorv1.AWSSubnetName{"name-890123", "name-123456"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			description: "CLB providerParameters present for a but nil for b",
+			expected:    true,
+			a: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.LoadBalancerServiceStrategyType,
+					LoadBalancer: &operatorv1.LoadBalancerStrategy{
+						ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+							AWS: &operatorv1.AWSLoadBalancerParameters{
+								Type: operatorv1.AWSClassicLoadBalancer,
+								ClassicLoadBalancerParameters: &operatorv1.AWSClassicLoadBalancerParameters{
+									Subnets: &operatorv1.AWSSubnets{
+										Names: []operatorv1.AWSSubnetName{"name-890123", "name-123456"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			b: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.LoadBalancerServiceStrategyType,
+					LoadBalancer: &operatorv1.LoadBalancerStrategy{
+						ProviderParameters: nil,
+					},
+				},
+			},
 		},
 		{
 			description: "NLB EIPAllocations changed",
