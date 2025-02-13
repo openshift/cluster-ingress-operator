@@ -2259,7 +2259,7 @@ func Test_IngressStatusesEqual(t *testing.T) {
 		},
 		{
 			description: "host network protocol differs",
-			expected:    true,
+			expected:    false,
 			a: operatorv1.IngressControllerStatus{
 				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
 					Type: operatorv1.HostNetworkStrategyType,
