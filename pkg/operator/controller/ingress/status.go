@@ -833,6 +833,9 @@ func IngressStatusesEqual(a, b operatorv1.IngressControllerStatus) bool {
 	if getEndpointPublishingStrategyNodePortProtocol(a.EndpointPublishingStrategy) != getEndpointPublishingStrategyNodePortProtocol(b.EndpointPublishingStrategy) {
 		return false
 	}
+	if getEndpointPublishingStrategyHostNetworkHTTPPort(a.EndpointPublishingStrategy) != getEndpointPublishingStrategyHostNetworkHTTPPort(b.EndpointPublishingStrategy) {
+		return false
+	}
 	if !reflect.DeepEqual(getAllowedSourceRanges(a.EndpointPublishingStrategy), getAllowedSourceRanges(b.EndpointPublishingStrategy)) {
 		return false
 	}
@@ -930,6 +933,14 @@ func getEndpointPublishingStrategyNodePortProtocol(eps *operatorv1.EndpointPubli
 	}
 
 	return ""
+}
+
+func getEndpointPublishingStrategyHostNetworkHTTPPort(eps *operatorv1.EndpointPublishingStrategy) int32 {
+	if eps != nil && eps.HostNetwork != nil {
+		return eps.HostNetwork.HTTPPort
+	}
+
+	return int32(0)
 }
 
 func conditionsEqual(a, b []operatorv1.OperatorCondition) bool {
