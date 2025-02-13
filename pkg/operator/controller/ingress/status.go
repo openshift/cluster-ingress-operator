@@ -827,6 +827,9 @@ func IngressStatusesEqual(a, b operatorv1.IngressControllerStatus) bool {
 	if getEndpointPublishingStrategyHostNetworkProtocol(a.EndpointPublishingStrategy) != getEndpointPublishingStrategyHostNetworkProtocol(b.EndpointPublishingStrategy) {
 		return false
 	}
+	if getEndpointPublishingStrategyPrivateProtocol(a.EndpointPublishingStrategy) != getEndpointPublishingStrategyPrivateProtocol(b.EndpointPublishingStrategy) {
+		return false
+	}
 	if !reflect.DeepEqual(getAllowedSourceRanges(a.EndpointPublishingStrategy), getAllowedSourceRanges(b.EndpointPublishingStrategy)) {
 		return false
 	}
@@ -905,6 +908,14 @@ func getEndpointPublishingStrategyIBMProtocol(eps *operatorv1.EndpointPublishing
 func getEndpointPublishingStrategyHostNetworkProtocol(eps *operatorv1.EndpointPublishingStrategy) operatorv1.IngressControllerProtocol {
 	if eps != nil && eps.HostNetwork != nil {
 		return eps.HostNetwork.Protocol
+	}
+
+	return ""
+}
+
+func getEndpointPublishingStrategyPrivateProtocol(eps *operatorv1.EndpointPublishingStrategy) operatorv1.IngressControllerProtocol {
+	if eps != nil && eps.Private != nil {
+		return eps.Private.Protocol
 	}
 
 	return ""
