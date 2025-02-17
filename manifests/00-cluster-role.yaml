@@ -25,9 +25,6 @@ rules:
   - ""
   resources:
   - namespaces
-  resourceNames:
-  - openshift-ingress
-  - openshift-ingress-canary
   verbs:
   - "*"
 
