@@ -1,0 +1,36 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: openshift-ingress-operator-gatewayapi-crd-admission
+  annotations:
+    capability.openshift.io/name: Ingress
+    include.release.openshift.io/ibm-cloud-managed: "true"
+    include.release.openshift.io/self-managed-high-availability: "true"
+    include.release.openshift.io/single-node-developer: "true"
+    release.openshift.io/feature-set: "TechPreviewNoUpgrade,CustomNoUpgrade"
+spec:
+  matchConstraints:
+    # Consider only requests to CRD resources.
+    resourceRules:
+    - apiGroups:   ["apiextensions.k8s.io"]
+      apiVersions: ["v1"]
+      operations:  ["CREATE","UPDATE","DELETE"]
+      resources:   ["customresourcedefinitions"]
+  matchConditions:
+    # Consider only request to Gateway API CRDs.
+    - name: "check-only-gateway-api-crds"
+      # When the operation is DELETE, the "object" variable is null.
+      expression: "(request.operation == 'DELETE' ? oldObject : object).spec.group == 'gateway.networking.k8s.io'"
+  # Validations are evaluated in the the order of their declaration.
+  validations:
+    # Verify that the request was sent by the ingress operator's service account.
+    - expression: "has(request.userInfo.username) && (request.userInfo.username == 'system:serviceaccount:openshift-ingress-operator:ingress-operator')"
+      message: "Gateway API Custom Resource Definitions are managed by the Ingress Operator and may not be modified"
+      reason: Forbidden
+    # Verify that the request was sent from a pod. The presence of both "node" and "pod" claims implies that the token is bound to a pod object.
+    # Ref: https://kubernetes.io/docs/reference/access-authn-authz/service-accounts-admin/#schema-for-service-account-private-claims.
+    - expression: "has(request.userInfo.extra) && ('authentication.kubernetes.io/node-name' in request.userInfo.extra) && ('authentication.kubernetes.io/pod-name' in request.userInfo.extra)"
+      message: "this user must have both \"authentication.kubernetes.io/node-name\" and \"authentication.kubernetes.io/pod-name\" claims"
+      reason: Forbidden
+  # Fail the admission if any validation evaluates to false.
+  failurePolicy: Fail

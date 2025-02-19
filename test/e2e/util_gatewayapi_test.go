@@ -19,6 +19,7 @@ import (
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 
+	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -43,6 +44,10 @@ const (
 	openshiftIstiodDeploymentName = "istiod-openshift-gateway"
 	// openshiftSMCPName holds the expected OSSM ServiceMeshControlPlane name
 	openshiftSMCPName = "openshift-gateway"
+	// cvoNamespace is the namespace of cluster version operator (CVO).
+	cvoNamespace = "openshift-cluster-version"
+	// cvoDeploymentName is the name of cluster version operator's deployment.
+	cvoDeploymentName = "cluster-version-operator"
 )
 
 // updateIngressOperatorRole updates the ingress-operator cluster role with cluster-admin privilege.
@@ -146,6 +151,53 @@ func deleteExistingCRD(t *testing.T, crdName string) error {
 		return fmt.Errorf("timed out waiting for gatewayAPI CRD %s to be deleted: %v", crdName, err)
 	}
 	t.Logf("deleted crd %s", crdName)
+	return nil
+}
+
+// deleteExistingVAP deletes if the ValidatingAdmissionPolicy of the given name exists and returns an error if not.
+func deleteExistingVAP(t *testing.T, vapName string) error {
+	t.Helper()
+
+	vap := &admissionregistrationv1.ValidatingAdmissionPolicy{}
+	newVAP := &admissionregistrationv1.ValidatingAdmissionPolicy{}
+	name := types.NamespacedName{Name: vapName}
+
+	// Retrieve the object to be deleted.
+	if err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(context context.Context) (bool, error) {
+		if err := kclient.Get(context, name, vap); err != nil {
+			t.Logf("failed to get vap %q: %v, retrying ...", vapName, err)
+			return false, nil
+		}
+		return true, nil
+	}); err != nil {
+		return fmt.Errorf("failed to get vap %q: %w", vapName, err)
+	}
+
+	if err := kclient.Delete(context.Background(), vap); err != nil {
+		return fmt.Errorf("failed to delete vap %q: %w", vapName, err)
+	}
+
+	// Verify VAP was not recreated.
+	if err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, name, newVAP); err != nil {
+			if kerrors.IsNotFound(err) {
+				// VAP does not exist as expected.
+				return true, nil
+			}
+			t.Logf("failed to get vap %q: %v, retrying ...", vapName, err)
+			return false, nil
+		}
+		// Check if new VAP got recreated.
+		if newVAP != nil && newVAP.UID != vap.UID {
+			return true, fmt.Errorf("vap %q got recreated", vapName)
+		}
+		t.Logf("vap %q still exists, retrying ...", vapName)
+		return false, nil
+	}); err != nil {
+		return fmt.Errorf("failed to verify deletion of vap %q: %v", vapName, err)
+	}
+
+	t.Logf("deleted vap %q", vapName)
 	return nil
 }
 
@@ -270,6 +322,68 @@ func buildHTTPRoute(routeName, namespace, parentgateway, parentNamespace, hostna
 			Rules:           []gatewayapiv1.HTTPRouteRule{rule},
 		},
 	}
+}
+
+// buildGWAPICRDFromName initializes the GatewayAPI CRD deducing most of its required fields from the given name.
+func buildGWAPICRDFromName(name string) *apiextensionsv1.CustomResourceDefinition {
+	var (
+		plural   = strings.Split(name, ".")[0]
+		group, _ = strings.CutPrefix(name, plural+".")
+		scope    = apiextensionsv1.NamespaceScoped
+		// removing trailing "s"
+		singular = plural[0 : len(plural)-1]
+		versions = []map[string]bool{{"v1": true /*storage version*/}, {"v1beta1": false}}
+		kind     string
+	)
+
+	switch plural {
+	case "gatewayclasses":
+		singular = "gatewayclass"
+		kind = "GatewayClass"
+		scope = apiextensionsv1.ClusterScoped
+	case "gateways":
+		kind = "Gateway"
+	case "httproutes":
+		kind = "HTTPRoute"
+	case "referencegrants":
+		kind = "ReferenceGrant"
+		versions = []map[string]bool{{"v1beta1": true}}
+	}
+
+	crd := &apiextensionsv1.CustomResourceDefinition{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: plural + "." + group,
+			Annotations: map[string]string{
+				"api-approved.kubernetes.io": "https://github.com/kubernetes-sigs/gateway-api/pull/2466",
+			},
+		},
+		Spec: apiextensionsv1.CustomResourceDefinitionSpec{
+			Group: group,
+			Names: apiextensionsv1.CustomResourceDefinitionNames{
+				Singular: singular,
+				Plural:   plural,
+				Kind:     kind,
+			},
+			Scope: scope,
+		},
+	}
+
+	for _, v := range versions {
+		for name, storage := range v {
+			crd.Spec.Versions = append(crd.Spec.Versions, apiextensionsv1.CustomResourceDefinitionVersion{
+				Name:    name,
+				Storage: storage,
+				Served:  true,
+				Schema: &apiextensionsv1.CustomResourceValidation{
+					OpenAPIV3Schema: &apiextensionsv1.JSONSchemaProps{
+						Type: "object",
+					},
+				},
+			})
+		}
+	}
+
+	return crd
 }
 
 // assertSubscription checks if the Subscription of the given name exists and returns an error if not.
@@ -740,4 +854,84 @@ func assertDNSRecord(t *testing.T, recordName types.NamespacedName) error {
 		return false, nil
 	})
 	return err
+}
+
+// assertVAP checks if the ValidatingAdmissionPolicy of the given name exists, and returns an error if not.
+func assertVAP(t *testing.T, name string) error {
+	t.Helper()
+	vap := &admissionregistrationv1.ValidatingAdmissionPolicy{}
+	return wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(context context.Context) (bool, error) {
+		if err := kclient.Get(context, types.NamespacedName{Name: name}, vap); err != nil {
+			t.Logf("failed to get vap %q: %v, retrying...", name, err)
+			return false, nil
+		}
+		t.Logf("found vap %q", name)
+		return true, nil
+	})
+}
+
+// scaleDeployment scales the deployment with the given name to the specified number of replicas.
+func scaleDeployment(t *testing.T, namespace, name string, replicas int32) error {
+	t.Helper()
+
+	nsName := types.NamespacedName{Namespace: namespace, Name: name}
+	return wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(context context.Context) (bool, error) {
+		depl := &appsv1.Deployment{}
+		if err := kclient.Get(context, nsName, depl); err != nil {
+			t.Logf("failed to get deployment %q: %v, retrying...", nsName, err)
+			return false, nil
+		}
+		if *depl.Spec.Replicas != replicas {
+			depl.Spec.Replicas = &replicas
+			if err := kclient.Update(context, depl); err != nil {
+				t.Logf("failed to update deployment %q: %v, retrying...", nsName, err)
+				return false, nil
+			}
+			t.Logf("scaled deployment %q to %d replica(s)", nsName, replicas)
+		}
+		if depl.Status.AvailableReplicas != replicas {
+			t.Logf("deployment %q expected to have %d available replica(s) but got %d, retrying...", nsName, replicas, depl.Status.AvailableReplicas)
+			return false, nil
+		}
+		t.Logf("deployment %q has %d available replica(s)", nsName, replicas)
+		return true, nil
+	})
+}
+
+// vapManager helps to disable the VAP resource which is managed by CVO.
+type vapManager struct {
+	t    *testing.T
+	name string
+}
+
+// newVAPManager returns a new instance of VAPManager.
+func newVAPManager(t *testing.T, vapName string) *vapManager {
+	return &vapManager{
+		t:    t,
+		name: vapName,
+	}
+}
+
+// disable scales down CVO and removes the VAP resource.
+func (m *vapManager) disable() (error, func()) {
+	if err := scaleDeployment(m.t, cvoNamespace, cvoDeploymentName, 0); err != nil {
+		return fmt.Errorf("failed to scale down cvo: %w", err), func() { /*scale down didn't work, nothing to do*/ }
+	}
+	if err := deleteExistingVAP(m.t, m.name); err != nil {
+		return fmt.Errorf("failed to delete vap %q: %w", m.name, err), func() {
+			if err := scaleDeployment(m.t, cvoNamespace, cvoDeploymentName, 1); err != nil {
+				m.t.Errorf("failed to scale up cvo: %v", err)
+			}
+		}
+	}
+	return nil, nil
+}
+
+// Enable scales up CVO and waits until the VAP is recreated.
+func (m *vapManager) enable() {
+	if err := scaleDeployment(m.t, cvoNamespace, cvoDeploymentName, 1); err != nil {
+		m.t.Errorf("failed to scale up cvo: %v", err)
+	} else if err := assertVAP(m.t, m.name); err != nil {
+		m.t.Errorf("failed to find vap %q: %v", m.name, err)
+	}
 }
