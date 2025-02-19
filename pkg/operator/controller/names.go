@@ -47,6 +47,10 @@ const (
 	// Remote worker label, used for node affinity of router deployment.
 	// Router should not run on remote worker nodes
 	RemoteWorkerLabel = "node.openshift.io/remote-worker"
+
+	// OpenshiftOperatorNamespace is the default namespace for
+	// the openshift operator resources.
+	OpenshiftOperatorNamespace = "openshift-operators"
 )
 
 // IngressClusterOperatorName returns the namespaced name of the ClusterOperator

@@ -289,6 +289,51 @@ func assertSubscription(t *testing.T, namespace, subName string) error {
 	return err
 }
 
+// deleteExistingSubscription deletes if the subscription of the given name exists and returns an error if not.
+func deleteExistingSubscription(t *testing.T, namespace, subName string) error {
+	t.Helper()
+	existingSubscription := &operatorsv1alpha1.Subscription{}
+	newSubscription := &operatorsv1alpha1.Subscription{}
+	nsName := types.NamespacedName{Namespace: namespace, Name: subName}
+
+	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(context context.Context) (bool, error) {
+		if err := kclient.Get(context, nsName, existingSubscription); err != nil {
+			t.Logf("failed to get Subscription %s: %v", nsName.Name, err)
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		return fmt.Errorf("timed out getting subscription %s: %w", nsName.Name, err)
+	}
+	// deleting Subscription.
+	err = kclient.Delete(context.Background(), existingSubscription)
+	if err != nil {
+		return err
+	}
+	err = wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, nsName, newSubscription); err != nil {
+			if kerrors.IsNotFound(err) {
+				return true, nil
+			}
+			t.Logf("failed to get deleted subscription %s: %v", nsName.Name, err)
+			return false, nil
+		}
+		// if new Subscription got recreated while the poll ensures the Subscription is deleted.
+		if newSubscription != nil && newSubscription.UID != existingSubscription.UID {
+			return true, nil
+		}
+		t.Logf("Subscription %s still exists", nsName.Name)
+		return false, nil
+	})
+	if err != nil {
+		return fmt.Errorf("timed out waiting for Subscription %s to be deleted: %v", nsName.Name, err)
+	}
+	t.Logf("deleted Subscription %s", nsName.Name)
+	return nil
+
+}
+
 // assertOSSMOperator checks if the OSSM Istio operator gets successfully installed
 // and returns an error if not.
 func assertOSSMOperator(t *testing.T) error {
@@ -623,6 +668,51 @@ func assertSMCP(t *testing.T) error {
 		return false, nil
 	})
 	return err
+}
+
+// deleteExistingSMCP deletes if the SMCP exists and returns an error if not.
+func deleteExistingSMCP(t *testing.T) error {
+	t.Helper()
+	existingSMCP := &maistrav2.ServiceMeshControlPlane{}
+	newSMCP := &maistrav2.ServiceMeshControlPlane{}
+	nsName := types.NamespacedName{Namespace: operatorcontroller.DefaultOperandNamespace, Name: openshiftSMCPName}
+
+	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(context context.Context) (bool, error) {
+		if err := kclient.Get(context, nsName, existingSMCP); err != nil {
+			t.Logf("failed to get smcp %s: %v", nsName.Name, err)
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		return fmt.Errorf("timed out getting smcp %s: %w", nsName.Name, err)
+	}
+	// deleting SMCP.
+	err = kclient.Delete(context.Background(), existingSMCP)
+	if err != nil {
+		t.Errorf("failed to delete smcp %s: %v", nsName.Name, err)
+		return err
+	}
+	err = wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, nsName, newSMCP); err != nil {
+			if kerrors.IsNotFound(err) {
+				return true, nil
+			}
+			t.Logf("failed to get deleted SMCP %s: %v", nsName.Name, err)
+			return false, nil
+		}
+		// if new SMCP got recreated while the poll ensures the SMCP is deleted.
+		if newSMCP != nil && newSMCP.UID != existingSMCP.UID {
+			return true, nil
+		}
+		t.Logf("smcp %s still exists", nsName.Name)
+		return false, nil
+	})
+	if err != nil {
+		return fmt.Errorf("timed out waiting for SMCP %s to be deleted: %v", nsName.Name, err)
+	}
+	t.Logf("deleted smcp %s", nsName.Name)
+	return nil
 }
 
 // assertDNSRecord checks to make sure a DNSRecord exists in a ready state,
