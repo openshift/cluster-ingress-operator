@@ -9,6 +9,7 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -587,8 +588,8 @@ func Test_computeOperatorUpgradeableCondition(t *testing.T) {
 			if tc.expectUpgradeable {
 				expected.Status = configv1.ConditionTrue
 			}
-
-			actual := computeOperatorUpgradeableCondition(ingresscontrollers)
+			gatewayAPICRDs := []apiextensionsv1.CustomResourceDefinition{} // wip, add test cases for CRDs
+			actual := computeOperatorUpgradeableCondition(ingresscontrollers, gatewayAPICRDs)
 			conditionsCmpOpts := []cmp.Option{
 				cmpopts.IgnoreFields(configv1.ClusterOperatorStatusCondition{}, "LastTransitionTime", "Reason", "Message"),
 			}

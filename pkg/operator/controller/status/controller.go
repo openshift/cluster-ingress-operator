@@ -18,6 +18,7 @@ import (
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 	oputil "github.com/openshift/cluster-ingress-operator/pkg/util"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 
 	corev1 "k8s.io/api/core/v1"
 
@@ -186,7 +187,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 			r.config.CanaryImage,
 		),
 		computeOperatorDegradedCondition(state.IngressControllers),
-		computeOperatorUpgradeableCondition(state.IngressControllers),
+		computeOperatorUpgradeableCondition(state.IngressControllers, state.gatewayAPICRDs),
 		computeOperatorEvaluationConditionsDetectedCondition(state.IngressControllers),
 	)
 
@@ -236,10 +237,12 @@ type operatorState struct {
 	CanaryNamespace    *corev1.Namespace
 	IngressControllers []operatorv1.IngressController
 	DNSRecords         []iov1.DNSRecord
+	gatewayAPICRDs     []apiextensionsv1.CustomResourceDefinition
 }
 
 // getOperatorState gets and returns the resources necessary to compute the
 // operator's current state.
+// TODO: Get GatewayAPI CRDs here:
 func (r *reconciler) getOperatorState(ingressNamespace, canaryNamespace string) (operatorState, error) {
 	state := operatorState{}
 
@@ -267,6 +270,22 @@ func (r *reconciler) getOperatorState(ingressNamespace, canaryNamespace string) 
 	} else {
 		state.IngressControllers = ingressList.Items
 	}
+
+	//Get all CRDs from the gateway.networking.k8s.io group
+	var installedGatewayAPICRDs []apiextensionsv1.CustomResourceDefinition
+
+	clusterCrds := &apiextensionsv1.CustomResourceDefinitionList{}
+	if err := r.client.List(context.TODO(), clusterCrds); err != nil {
+		return state, fmt.Errorf("failed to list CRDs: %v", err)
+	}
+
+	for _, crd := range clusterCrds.Items {
+		if crd.Spec.Group == "gateway.networking.k8s.io" {
+			installedGatewayAPICRDs = append(installedGatewayAPICRDs, crd)
+		}
+	}
+
+	state.gatewayAPICRDs = installedGatewayAPICRDs
 
 	return state, nil
 }
@@ -392,24 +411,68 @@ func checkIngressControllersUpgradeableCondition(ingresses []operatorv1.IngressC
 	return false, message
 }
 
+// checkGatewayAPICRDs will check if Gateway API CRDs exist and if they are compatible
+// TODO: Consider getting the managedCRDs from the gatewayAPI controller? Currently duplicates the list from there.
+// TODO: validate existing gatewayapi crds with crd-schema-checker
+func checkGatewayAPICRDs(gatewayAPICRDs []apiextensionsv1.CustomResourceDefinition) (bool, string) {
+	var managedGatewayAPICRDs = []*apiextensionsv1.CustomResourceDefinition{
+		manifests.GatewayClassCRD(),
+		manifests.GatewayCRD(),
+		manifests.HTTPRouteCRD(),
+		manifests.ReferenceGrantCRD(),
+	}
+
+	managedCRDNames := map[string]bool{}
+	for _, crd := range managedGatewayAPICRDs {
+		managedCRDNames[crd.Name] = true
+	}
+
+	if len(gatewayAPICRDs) == 0 {
+		return true, "No Gateway API CRDs found, upgradeable by default."
+	}
+
+	nonStandardCRDs := []string{}
+	for _, crd := range gatewayAPICRDs {
+		if !managedCRDNames[crd.Name] {
+			nonStandardCRDs = append(nonStandardCRDs, crd.Name)
+		}
+		// else: crd-schema-checker
+	}
+
+	if len(nonStandardCRDs) > 0 {
+		return false, fmt.Sprintf("Non-standard Gateway API CRDs found: %s", strings.Join(nonStandardCRDs, ", "))
+	}
+
+	return true, ""
+}
+
 // computeOperatorUpgradeableCondition computes the operator's Upgradeable
 // status condition.
-func computeOperatorUpgradeableCondition(ingresses []operatorv1.IngressController) configv1.ClusterOperatorStatusCondition {
-	ingressControllersUpgradeable, message := checkIngressControllersUpgradeableCondition(ingresses)
+func computeOperatorUpgradeableCondition(ingresses []operatorv1.IngressController, gatewayAPICRDs []apiextensionsv1.CustomResourceDefinition) configv1.ClusterOperatorStatusCondition {
+	ingressControllersUpgradeable, ingressControllersUpgradeableMessage := checkIngressControllersUpgradeableCondition(ingresses)
+	gatewayAPICRDsCompatible, gatewayAPICRDsMessage := checkGatewayAPICRDs(gatewayAPICRDs)
 
-	if ingressControllersUpgradeable {
+	if ingressControllersUpgradeable && gatewayAPICRDsCompatible {
 		return configv1.ClusterOperatorStatusCondition{
 			Type:   configv1.OperatorUpgradeable,
 			Status: configv1.ConditionTrue,
-			Reason: "IngressControllersUpgradeable",
+			Reason: "AllComponentsUpgradeable", // TODO: Find better description
 		}
+	}
+
+	messages := []string{}
+	if !ingressControllersUpgradeable {
+		messages = append(messages, ingressControllersUpgradeableMessage)
+	}
+	if !gatewayAPICRDsCompatible {
+		messages = append(messages, gatewayAPICRDsMessage)
 	}
 
 	return configv1.ClusterOperatorStatusCondition{
 		Type:    configv1.OperatorUpgradeable,
 		Status:  configv1.ConditionFalse,
-		Reason:  "IngressControllersNotUpgradeable",
-		Message: message,
+		Reason:  "ComponentsNotUpgradeable",
+		Message: strings.Join(messages, "\n"),
 	}
 }
 
