@@ -361,9 +361,8 @@ func computeOperatorDegradedCondition(ingresses []operatorv1.IngressController) 
 	return degradedCondition
 }
 
-// computeOperatorUpgradeableCondition computes the operator's Upgradeable
-// status condition.
-func computeOperatorUpgradeableCondition(ingresses []operatorv1.IngressController) configv1.ClusterOperatorStatusCondition {
+// checkIngressControllersUpgradeableCondition checks if all ingress controllers are upgradeable.
+func checkIngressControllersUpgradeableCondition(ingresses []operatorv1.IngressController) (bool, string) {
 	nonUpgradeableIngresses := make(map[*operatorv1.IngressController]operatorv1.OperatorCondition)
 	for i, ingress := range ingresses {
 		for j, cond := range ingress.Status.Conditions {
@@ -373,12 +372,9 @@ func computeOperatorUpgradeableCondition(ingresses []operatorv1.IngressControlle
 		}
 	}
 	if len(nonUpgradeableIngresses) == 0 {
-		return configv1.ClusterOperatorStatusCondition{
-			Type:   configv1.OperatorUpgradeable,
-			Status: configv1.ConditionTrue,
-			Reason: "IngressControllersUpgradeable",
-		}
+		return true, ""
 	}
+
 	message := "Some ingresscontrollers are not upgradeable:"
 	// Sort keys so that the result is deterministic.
 	keys := make([]*operatorv1.IngressController, 0, len(nonUpgradeableIngresses))
@@ -392,6 +388,23 @@ func computeOperatorUpgradeableCondition(ingresses []operatorv1.IngressControlle
 		cond := nonUpgradeableIngresses[ingress]
 		message = fmt.Sprintf("%s ingresscontroller %q is not upgradeable: %s: %s", message, ingress.Name, cond.Reason, cond.Message)
 	}
+
+	return false, message
+}
+
+// computeOperatorUpgradeableCondition computes the operator's Upgradeable
+// status condition.
+func computeOperatorUpgradeableCondition(ingresses []operatorv1.IngressController) configv1.ClusterOperatorStatusCondition {
+	ingressControllersUpgradeable, message := checkIngressControllersUpgradeableCondition(ingresses)
+
+	if ingressControllersUpgradeable {
+		return configv1.ClusterOperatorStatusCondition{
+			Type:   configv1.OperatorUpgradeable,
+			Status: configv1.ConditionTrue,
+			Reason: "IngressControllersUpgradeable",
+		}
+	}
+
 	return configv1.ClusterOperatorStatusCondition{
 		Type:    configv1.OperatorUpgradeable,
 		Status:  configv1.ConditionFalse,
