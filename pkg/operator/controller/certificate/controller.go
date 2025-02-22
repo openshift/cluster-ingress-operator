@@ -10,6 +10,7 @@ import (
 	"time"
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
+	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 
@@ -104,6 +105,33 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 			}
 			if _, err := r.ensureDefaultCertificateForIngress(ca, deployment.Namespace, deploymentRef, ingress); err != nil {
 				errs = append(errs, fmt.Errorf("failed to ensure default cert for %s: %v", ingress.Name, err))
+			}
+			if ingress.Name == manifests.DefaultIngressControllerName {
+				log.Info("ensuring canary certificate")
+				daemonset := &appsv1.DaemonSet{}
+				err = r.client.Get(ctx, controller.CanaryDaemonSetName(), daemonset)
+				if err != nil {
+					if errors.IsNotFound(err) {
+						// All ingresses should have a deployment, so this one may not have been
+						// created yet. Retry after a reasonable amount of time.
+						log.Info("canary daemonset not found; will retry default cert sync")
+						result.RequeueAfter = 5 * time.Second
+					} else {
+						errs = append(errs, fmt.Errorf("failed to get daemonset: %v", err))
+					}
+				} else {
+					trueVar := true
+					canaryRef := metav1.OwnerReference{
+						APIVersion: "apps/v1",
+						Kind:       "Daemonset",
+						Name:       daemonset.Name,
+						UID:        daemonset.UID,
+						Controller: &trueVar,
+					}
+					if _, err := r.ensureDefaultCertificateForIngress(ca, "openshift-ingress-canary", canaryRef, ingress); err != nil {
+						errs = append(errs, fmt.Errorf("failed to ensure canary cert for %s: %v", ingress.Name, err))
+					}
+				}
 			}
 		}
 	}
