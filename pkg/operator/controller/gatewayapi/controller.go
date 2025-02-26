@@ -83,6 +83,9 @@ type Config struct {
 	// resources.  The gatewayapi controller starts these controllers once
 	// the Gateway API CRDs have been created.
 	DependentControllers []controller.Controller
+
+	//AdminConsentRequired indicates
+	AdminConsentRequired bool
 }
 
 // reconciler reconciles gatewayclasses.

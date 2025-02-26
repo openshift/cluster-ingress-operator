@@ -3,6 +3,7 @@ package operator
 import (
 	"context"
 	"fmt"
+	gatewayapi_upgradeable "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gatewayapi-upgradeable"
 	"time"
 
 	configclient "github.com/openshift/client-go/config/clientset/versioned"
@@ -317,6 +318,13 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		},
 	}); err != nil {
 		return nil, fmt.Errorf("failed to create gatewayapi controller: %w", err)
+	}
+
+	//set up the gateway api upgradeable controller
+	if _, err := gatewayapi_upgradeable.New(mgr, gatewayapi_upgradeable.Config{
+		Cache: mgr.GetCache(),
+	}); err != nil {
+		return nil, fmt.Errorf("failed to create gatewayapi upgradeable controller: %w", err)
 	}
 
 	return &Operator{
