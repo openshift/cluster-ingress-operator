@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/go-autorest/autorest"
 	"github.com/Azure/go-autorest/autorest/azure"
+	"github.com/Azure/msi-dataplane/pkg/dataplane"
 	"github.com/jongio/azidext/go/azidext"
 
 	"github.com/openshift/cluster-ingress-operator/pkg/util/filewatcher"
@@ -76,10 +78,12 @@ func getAuthorizerForResource(config Config) (autorest.Authorizer, error) {
 	}
 
 	var cred azcore.TokenCredential
-	// Managed Identity Override for ARO HCP. In ARO HCP, we ignore the values provided for AZURE_TENANT_ID and
-	// AZURE_CLIENT_ID and use ARO_HCP_TENANT_ID and ARO_HCP_MI_CLIENT_ID instead.
+	// UserAssignedIdentityCredentials for managed Azure HCP
+	userAssignedIdentityCredentialsFilePath := os.Getenv("MANAGED_AZURE_HCP_CREDENTIALS_FILE_PATH")
 	managedIdentityClientID := os.Getenv("ARO_HCP_MI_CLIENT_ID")
 	if managedIdentityClientID != "" {
+		// Managed Identity Override for ARO HCP. In ARO HCP, we ignore the values provided for AZURE_TENANT_ID and
+		// AZURE_CLIENT_ID and use ARO_HCP_TENANT_ID and ARO_HCP_MI_CLIENT_ID instead.
 		options := &azidentity.ClientCertificateCredentialOptions{
 			ClientOptions: azcore.ClientOptions{
 				Cloud: cloudConfig,
@@ -113,6 +117,15 @@ func getAuthorizerForResource(config Config) (autorest.Authorizer, error) {
 		}
 
 		cred, err = azidentity.NewClientCertificateCredential(tenantID, managedIdentityClientID, certs, key, options)
+		if err != nil {
+			return nil, err
+		}
+	} else if userAssignedIdentityCredentialsFilePath != "" {
+		clientOptions := azcore.ClientOptions{
+			Cloud: cloudConfig,
+		}
+		var err error
+		cred, err = dataplane.NewUserAssignedIdentityCredential(context.Background(), userAssignedIdentityCredentialsFilePath, dataplane.WithClientOpts(clientOptions))
 		if err != nil {
 			return nil, err
 		}
