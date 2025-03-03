@@ -52,7 +52,7 @@ const (
 func AdminGatesConfigMapName() types.NamespacedName {
 	return types.NamespacedName{
 		Name:      "admin-gates",
-		Namespace: "openshift-config",
+		Namespace: GlobalMachineSpecifiedConfigNamespace,
 	}
 }
 
