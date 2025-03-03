@@ -35,6 +35,7 @@ import (
 	dnscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/dns"
 	gatewayservicednscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gateway-service-dns"
 	gatewayapicontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gatewayapi"
+	gatewayapi_upgradeable "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gatewayapi-upgradeable"
 	gatewayclasscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gatewayclass"
 	ingress "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
@@ -317,6 +318,11 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		},
 	}); err != nil {
 		return nil, fmt.Errorf("failed to create gatewayapi controller: %w", err)
+	}
+
+	// Set up the gateway api upgradeable controller
+	if _, err := gatewayapi_upgradeable.New(mgr); err != nil {
+		return nil, fmt.Errorf("failed to create gatewayapi upgradeable controller: %w", err)
 	}
 
 	return &Operator{
