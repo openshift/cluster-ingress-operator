@@ -83,7 +83,6 @@ func TestAll(t *testing.T) {
 		t.Run("TestSetRouteResponseHeaders", TestSetRouteResponseHeaders)
 		t.Run("TestReconcileInternalService", TestReconcileInternalService)
 		t.Run("TestConnectTimeout", TestConnectTimeout)
-		t.Run("TestGatewayAPI", TestGatewayAPI)
 		t.Run("TestAWSLBSubnets", TestAWSLBSubnets)
 		t.Run("TestUnmanagedAWSLBSubnets", TestUnmanagedAWSLBSubnets)
 		t.Run("TestAWSEIPAllocationsForNLB", TestAWSEIPAllocationsForNLB)
@@ -126,5 +125,16 @@ func TestAll(t *testing.T) {
 		t.Run("TestRouteHardStopAfterEnableOnIngressControllerHasPriorityOverIngressConfig", TestRouteHardStopAfterEnableOnIngressControllerHasPriorityOverIngressConfig)
 		t.Run("TestHostNetworkPortBinding", TestHostNetworkPortBinding)
 		t.Run("TestDashboardCreation", TestDashboardCreation)
+		// TestGatewayAPI creates a test ServiceMeshControlPlane (SMCP) resource,
+		// which triggers the creation of a mutating webhook for all pods in the cluster.
+		// This introduces a race condition where any pod creation request between
+		// the webhook's creation and the SMCP pod becoming ready can fail with:
+		//
+		// failed calling webhook "sidecar-injector.istio.io": failed to call webhook:
+		// no endpoints available for service "istiod-openshift-gateway"
+		//
+		// Serializing the test ensures it runs in isolation with other tests,
+		// preventing any impact of the mutating webhook on pod creation in the cluster
+		t.Run("TestGatewayAPI", TestGatewayAPI)
 	})
 }
