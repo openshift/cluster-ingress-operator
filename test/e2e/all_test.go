@@ -83,7 +83,6 @@ func TestAll(t *testing.T) {
 		t.Run("TestSetRouteResponseHeaders", TestSetRouteResponseHeaders)
 		t.Run("TestReconcileInternalService", TestReconcileInternalService)
 		t.Run("TestConnectTimeout", TestConnectTimeout)
-		t.Run("TestGatewayAPI", TestGatewayAPI)
 		t.Run("TestAWSLBSubnets", TestAWSLBSubnets)
 		t.Run("TestUnmanagedAWSLBSubnets", TestUnmanagedAWSLBSubnets)
 		t.Run("TestAWSEIPAllocationsForNLB", TestAWSEIPAllocationsForNLB)
@@ -126,5 +125,6 @@ func TestAll(t *testing.T) {
 		t.Run("TestRouteHardStopAfterEnableOnIngressControllerHasPriorityOverIngressConfig", TestRouteHardStopAfterEnableOnIngressControllerHasPriorityOverIngressConfig)
 		t.Run("TestHostNetworkPortBinding", TestHostNetworkPortBinding)
 		t.Run("TestDashboardCreation", TestDashboardCreation)
+		t.Run("TestGatewayAPI", TestGatewayAPI)
 	})
 }
