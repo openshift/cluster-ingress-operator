@@ -34,10 +34,22 @@ type Config struct {
 	Project         string
 	UserAgent       string
 	CredentialsJSON []byte
+	Endpoints       []configv1.GCPServiceEndpoint
 }
 
 func New(config Config) (*Provider, error) {
-	dnsService, err := gdnsv1.NewService(context.TODO(), option.WithCredentialsJSON(config.CredentialsJSON), option.WithUserAgent(config.UserAgent))
+	options := []option.ClientOption{
+		option.WithCredentialsJSON(config.CredentialsJSON),
+		option.WithUserAgent(config.UserAgent),
+	}
+	for _, endpoint := range config.Endpoints {
+		if endpoint.Name == configv1.GCPServiceEndpointNameDNS {
+			options = append(options, option.WithEndpoint(endpoint.URL))
+			break
+		}
+	}
+
+	dnsService, err := gdnsv1.NewService(context.TODO(), options...)
 	if err != nil {
 		return nil, err
 	}
