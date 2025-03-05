@@ -3,10 +3,14 @@ package gatewayapi_upgradeable
 import (
 	"context"
 	"fmt"
+
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+
 	corev1 "k8s.io/api/core/v1"
+	
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -31,7 +35,8 @@ var (
 // New function initializes the controller and sets up the watch for the ConfigMap
 func New(mgr manager.Manager) (controller.Controller, error) {
 	reconciler := &reconciler{
-		cache: mgr.GetCache(), // Directly using manager cache
+		client: mgr.GetClient(),
+		cache:  mgr.GetCache(), // Directly using manager cache
 	}
 
 	//Create a new controller with given reconciler
