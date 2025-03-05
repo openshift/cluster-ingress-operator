@@ -157,6 +157,6 @@ require (
 // github.com/operator-framework/operator-sdk.
 replace (
 	bitbucket.org/ww/goautoneg => github.com/munnerz/goautoneg v0.0.0-20120707110453-a547fc61f48d
-	github.com/openshift/api => github.com/openshift/api v0.0.0-20241218103150-27316471eb72
+	github.com/openshift/api => github.com/openshift/api v0.0.0-20250305225826-b8da3bfeaf77
 	k8s.io/client-go => k8s.io/client-go v0.32.1
 )
