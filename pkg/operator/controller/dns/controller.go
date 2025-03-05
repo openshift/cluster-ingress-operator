@@ -701,6 +701,7 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 			Project:         platformStatus.GCP.ProjectID,
 			CredentialsJSON: creds.Data["service_account.json"],
 			UserAgent:       userAgent,
+			Endpoints:       platformStatus.GCP.ServiceEndpoints,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create GCP DNS provider: %v", err)
