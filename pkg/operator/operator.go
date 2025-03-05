@@ -137,6 +137,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	ingressControllerLBSubnetsAWSEnabled := featureGates.Enabled(features.FeatureGateIngressControllerLBSubnetsAWS)
 	ingressControllerEIPAllocationsAWSEnabled := featureGates.Enabled(features.FeatureGateSetEIPForNLBIngressController)
 	ingressControllerDCMEnabled := featureGates.Enabled(features.FeatureGateIngressControllerDynamicConfigurationManager)
+	gcpCustomEndpointsEnabled := featureGates.Enabled(features.FeatureGateGCPCustomAPIEndpoints)
 
 	// Set up an operator manager for the operator namespace.
 	mgr, err := manager.New(kubeConfig, manager.Options{
@@ -256,6 +257,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		OperatorReleaseVersion:       config.OperatorReleaseVersion,
 		AzureWorkloadIdentityEnabled: azureWorkloadIdentityEnabled,
 		PrivateHostedZoneAWSEnabled:  sharedVPCEnabled,
+		GCPCustomEndpointsEnabled:    gcpCustomEndpointsEnabled,
 	}); err != nil {
 		return nil, fmt.Errorf("failed to create dns controller: %v", err)
 	}
