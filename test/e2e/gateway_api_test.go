@@ -91,7 +91,6 @@ func TestGatewayAPI(t *testing.T) {
 // CRDs are created.
 // It also deletes and ensure the CRDs are recreated.
 func testGatewayAPIResources(t *testing.T) {
-	t.Helper()
 	// Make sure all the *.gateway.networking.k8s.io CRDs are available since the FeatureGate is enabled.
 	ensureCRDs(t)
 
@@ -118,8 +117,6 @@ func testGatewayAPIResources(t *testing.T) {
 //   - If the Istio and Subscription CRs are deleted, they are recreated
 //     automatically.
 func testGatewayAPIIstioInstallation(t *testing.T) {
-	t.Helper()
-
 	t.Log("Checking for the Subscription...")
 	if err := assertSubscription(t, openshiftOperatorsNamespace, expectedSubscriptionName); err != nil {
 		t.Fatalf("failed to find expected Subscription %s: %v", expectedSubscriptionName, err)
@@ -160,8 +157,6 @@ func testGatewayAPIIstioInstallation(t *testing.T) {
 
 // testGatewayAPIObjects tests that Gateway API objects can be created successfully.
 func testGatewayAPIObjects(t *testing.T) {
-	t.Helper()
-
 	// Create a test namespace that cleans itself up and sets up its own service account and role binding.
 	ns := createNamespace(t, names.SimpleNameGenerator.GenerateName("test-e2e-gwapi-"))
 
