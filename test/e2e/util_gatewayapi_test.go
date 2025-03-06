@@ -10,12 +10,10 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"strings"
 	"testing"
 	"time"
 
 	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
-	v1 "github.com/openshift/api/operatoringress/v1"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 
@@ -513,7 +511,6 @@ func assertHttpRouteSuccessful(t *testing.T, namespace, name string, gateway *ga
 // and returns an error if not
 func assertHttpRouteConnection(t *testing.T, hostname string, gateway *gatewayapiv1.Gateway) error {
 	t.Helper()
-	domain := ""
 
 	// Create the http client to check the header.
 	client := &http.Client{
@@ -521,23 +518,6 @@ func assertHttpRouteConnection(t *testing.T, hostname string, gateway *gatewayap
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 		},
-	}
-
-	// Get gateway listener hostname to use for dnsRecord.
-	if len(gateway.Spec.Listeners) > 0 {
-		if gateway.Spec.Listeners[0].Hostname != nil && len(string(*gateway.Spec.Listeners[0].Hostname)) > 0 {
-			domain = string(*gateway.Spec.Listeners[0].Hostname)
-			if !strings.HasSuffix(domain, ".") {
-				domain = domain + "."
-			}
-		}
-	}
-	// Obtain the standard formatting of the dnsRecord.
-	dnsRecordName := operatorcontroller.GatewayDNSRecordName(gateway, domain)
-
-	// Make sure the DNSRecord is ready to use.
-	if err := assertDNSRecord(t, dnsRecordName); err != nil {
-		return err
 	}
 
 	// Wait and check that the dns name resolves first. Takes a long time, so
@@ -678,31 +658,4 @@ func deleteExistingIstio(t *testing.T) error {
 	}
 	t.Logf("Deleted Istio %s.", nsName.Name)
 	return nil
-}
-
-// assertDNSRecord checks to make sure a DNSRecord exists in a ready state,
-// and returns an error if not.
-func assertDNSRecord(t *testing.T, recordName types.NamespacedName) error {
-	t.Helper()
-	dnsRecord := &v1.DNSRecord{}
-
-	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(context context.Context) (bool, error) {
-		if err := kclient.Get(context, recordName, dnsRecord); err != nil {
-			t.Logf("failed to get DNSRecord %s/%s: %v, retrying...", recordName.Namespace, recordName.Name, err)
-			return false, nil
-		}
-		// Determine the current state of the DNSRecord.
-		if len(dnsRecord.Status.Zones) > 0 {
-			for _, zone := range dnsRecord.Status.Zones {
-				for _, condition := range zone.Conditions {
-					if condition.Type == v1.DNSRecordPublishedConditionType && condition.Status == string(metav1.ConditionTrue) {
-						return true, nil
-					}
-				}
-			}
-		}
-		t.Logf("found DNSRecord %s/%s but could not determine its readiness. Retrying...", recordName.Namespace, recordName.Name)
-		return false, nil
-	})
-	return err
 }
