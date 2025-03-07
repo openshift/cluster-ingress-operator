@@ -49,6 +49,13 @@ const (
 	RemoteWorkerLabel = "node.openshift.io/remote-worker"
 )
 
+func AdminGatesConfigMapName() types.NamespacedName {
+	return types.NamespacedName{
+		Name:      "admin-gates",
+		Namespace: GlobalMachineSpecifiedConfigNamespace,
+	}
+}
+
 // IngressClusterOperatorName returns the namespaced name of the ClusterOperator
 // resource for the operator.
 func IngressClusterOperatorName() types.NamespacedName {
