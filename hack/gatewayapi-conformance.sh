@@ -32,7 +32,7 @@ cd "${CLONE_DIR}"
 # find the branch of gateway-api repo
 RELEASE_VERSION=$(\grep -oP "^\d+\.\d+" <<<"${BUNDLE_VERSION#v}")
 BRANCH="release-${RELEASE_VERSION}"
-echo "gateway-api repo branch: ${BRANCH}"
+echo "gateway-api repo branch \"${BRANCH}\" into ${CLONE_DIR}..."
 
 # clone the branch that matched the installed CRDs version
 # branch release-1.0 -> bundle-version v1.0.0
@@ -50,4 +50,4 @@ sed -i "s/MaxTimeToConsistency:              30/MaxTimeToConsistency:           
 SUPPORTED_FEATURES="Gateway,HTTPRoute,ReferenceGrant,GatewayPort8080,HTTPRouteQueryParamMatching,HTTPRouteMethodMatching,HTTPRouteResponseHeaderModification,HTTPRoutePortRedirect,HTTPRouteSchemeRedirect,HTTPRoutePathRedirect,HTTPRouteHostRewrite,HTTPRoutePathRewrite,HTTPRouteRequestMirror,HTTPRouteRequestMultipleMirrors,HTTPRouteBackendProtocolH2C,HTTPRouteBackendProtocolWebSocket"
 
 echo "Start Gateway API Conformance Testing"
-go test ./conformance -v -timeout 10m -run TestConformance -args --supported-features=${SUPPORTED_FEATURES}
+go test ./conformance -v -timeout 10m -run TestConformance -args "--supported-features=${SUPPORTED_FEATURES}"
