@@ -46,6 +46,7 @@ func TestManifests(t *testing.T) {
 
 	GatewayClassCRD()
 	GatewayCRD()
+	GRPCRouteCRD()
 	HTTPRouteCRD()
 	ReferenceGrantCRD()
 

@@ -23,7 +23,7 @@ import (
 
 const (
 	// The expected OSSM subscription name.
-	expectedSubscriptionName = "servicemeshoperator"
+	expectedSubscriptionName = "servicemeshoperator3"
 	// The expected OSSM catalog source name.
 	expectedCatalogSourceName = "redhat-operators"
 	// The expected catalog source namespace.
@@ -91,7 +91,6 @@ func TestGatewayAPI(t *testing.T) {
 // CRDs are created.
 // It also deletes and ensure the CRDs are recreated.
 func testGatewayAPIResources(t *testing.T) {
-	t.Helper()
 	// Make sure all the *.gateway.networking.k8s.io CRDs are available since the FeatureGate is enabled.
 	ensureCRDs(t)
 
@@ -102,45 +101,55 @@ func testGatewayAPIResources(t *testing.T) {
 	ensureCRDs(t)
 }
 
-// testGatewayAPIIstioInstallation tests that once the Gateway API Custom Resource GatewayClass is created, that
-// the following installation operations complete automatically and successfully:
-// - the required Subscription and CatalogSource are created.
-// - the OSSM Istio operator is installed successfully and has status Running and Ready. e.g. istio-operator-9f5c88857-2xfrr  -n openshift-operators
-// - Istiod is installed successfully and has status Running and Ready.  e.g istiod-openshift-gateway-867bb8d5c7-4z6mp -n openshift-ingress
-// - the SMCP is created successfully (OSSM 2.x).
-// - deletes SMCP and subscription and tests if it gets recreated
+// testGatewayAPIIstioInstallation verifies that once the gatewayclass is
+// created, the following operations are completed automatically and
+// successfully:
+//
+//   - The required Subscription and CatalogSource are created.
+//
+//   - The Sail operator is installed successfully, and it reports status Running
+//     and Ready.
+//
+//   - Istiod is installed successfully and has status Running and Ready.
+//
+//   - The Istio CR is created successfully.
+//
+//   - If the Istio and Subscription CRs are deleted, they are recreated
+//     automatically.
 func testGatewayAPIIstioInstallation(t *testing.T) {
-	t.Helper()
-
+	t.Log("Checking for the Subscription...")
 	if err := assertSubscription(t, openshiftOperatorsNamespace, expectedSubscriptionName); err != nil {
 		t.Fatalf("failed to find expected Subscription %s: %v", expectedSubscriptionName, err)
 	}
+	t.Log("Checking for the CatalogSource...")
 	if err := assertCatalogSource(t, expectedCatalogSourceNamespace, expectedCatalogSourceName); err != nil {
 		t.Fatalf("failed to find expected CatalogSource %s: %v", expectedCatalogSourceName, err)
 	}
+	t.Log("Checking for the Sail operator deployment and pods...")
 	if err := assertOSSMOperator(t); err != nil {
 		t.Fatalf("failed to find expected Istio operator: %v", err)
 	}
+	t.Log("Checking for the Istiod pods...")
 	if err := assertIstiodControlPlane(t); err != nil {
 		t.Fatalf("failed to find expected Istiod control plane: %v", err)
 	}
-	// TODO - In OSSM 3.x the configuration object to check will be different.
-	if err := assertSMCP(t); err != nil {
-		t.Fatalf("failed to find expected SMCP: %v", err)
+	t.Log("Checking for the Istio CR...")
+	if err := assertIstio(t); err != nil {
+		t.Fatalf("failed to find expected Istio: %v", err)
 	}
-	// delete existing SMCP to test it gets recreated
-	if err := deleteExistingSMCP(t); err != nil {
-		t.Fatalf("failed to delete existing SMCP: %v", err)
+	t.Log("Deleting the Istio CR...")
+	if err := deleteExistingIstio(t); err != nil {
+		t.Fatalf("failed to delete existing Istio: %v", err)
 	}
-	// check if SMCP gets recreated
-	if err := assertSMCP(t); err != nil {
-		t.Fatalf("failed to find expected SMCP: %v", err)
+	t.Log("Checking that the Istio CR gets recreated...")
+	if err := assertIstio(t); err != nil {
+		t.Fatalf("failed to find expected Istio: %v", err)
 	}
-	// delete existing Subscription to test it gets recreated
+	t.Log("Deleting the Subscription...")
 	if err := deleteExistingSubscription(t, openshiftOperatorsNamespace, expectedSubscriptionName); err != nil {
 		t.Fatalf("failed to delete existing Subscription %s: %v", expectedSubscriptionName, err)
 	}
-	// checks if subscription gets recreated.
+	t.Log("Checking that the Subscription gets recreated...")
 	if err := assertSubscription(t, openshiftOperatorsNamespace, expectedSubscriptionName); err != nil {
 		t.Fatalf("failed to find expected Subscription %s: %v", expectedSubscriptionName, err)
 	}
@@ -148,8 +157,6 @@ func testGatewayAPIIstioInstallation(t *testing.T) {
 
 // testGatewayAPIObjects tests that Gateway API objects can be created successfully.
 func testGatewayAPIObjects(t *testing.T) {
-	t.Helper()
-
 	// Create a test namespace that cleans itself up and sets up its own service account and role binding.
 	ns := createNamespace(t, names.SimpleNameGenerator.GenerateName("test-e2e-gwapi-"))
 
