@@ -76,6 +76,8 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 type Config struct {
 	// GatewayAPIEnabled indicates that the "GatewayAPI" featuregate is enabled.
 	GatewayAPIEnabled bool
+	// GatewayAPIControllerEnabled indicates that the "GatewayAPIController" featuregate is enabled.
+	GatewayAPIControllerEnabled bool
 
 	// DependentControllers is a list of controllers that watch Gateway API
 	// resources.  The gatewayapi controller starts these controllers once
@@ -103,6 +105,10 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 
 	if err := r.ensureGatewayAPICRDs(ctx); err != nil {
 		return reconcile.Result{}, err
+	}
+
+	if !r.config.GatewayAPIControllerEnabled {
+		return reconcile.Result{}, nil
 	}
 
 	r.startControllers.Do(func() {

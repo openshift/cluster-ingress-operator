@@ -60,6 +60,11 @@ func TestGatewayAPI(t *testing.T) {
 		t.Skip("Gateway API not enabled, skipping TestGatewayAPI")
 	}
 
+	gatewayAPIControllerEnabled, err := isFeatureGateEnabled(features.FeatureGateGatewayAPIController)
+	if err != nil {
+		t.Fatalf("error checking controller feature gate enabled status: %v", err)
+	}
+
 	// Defer the cleanup of the test gateway.
 	t.Cleanup(func() {
 		testGateway := gatewayapiv1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: testGatewayName, Namespace: operatorcontroller.DefaultOperandNamespace}}
@@ -73,8 +78,12 @@ func TestGatewayAPI(t *testing.T) {
 	})
 
 	t.Run("testGatewayAPIResources", testGatewayAPIResources)
-	t.Run("testGatewayAPIObjects", testGatewayAPIObjects)
-	t.Run("testGatewayAPIIstioInstallation", testGatewayAPIIstioInstallation)
+	if gatewayAPIControllerEnabled {
+		t.Run("testGatewayAPIObjects", testGatewayAPIObjects)
+		t.Run("testGatewayAPIIstioInstallation", testGatewayAPIIstioInstallation)
+	} else {
+		t.Log("Gateway API Controller not enabled, skipping testGatewayAPIObjects and testGatewayAPIIstioInstallation")
+	}
 }
 
 // testGatewayAPIResources tests that Gateway API Custom Resource Definitions are available.
