@@ -17,6 +17,7 @@ import (
 	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
 	v1 "github.com/openshift/api/operatoringress/v1"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	util "github.com/openshift/cluster-ingress-operator/pkg/util"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
@@ -573,6 +574,7 @@ func assertGatewaySuccessful(t *testing.T, namespace, name string) (*gatewayapiv
 		return false, nil
 	})
 	if err != nil {
+		t.Logf("Last observed gateway:\n%s", util.ToYaml(gw))
 		return nil, fmt.Errorf("gateway %s not %v, last recorded status message: %s", name, gatewayapiv1.GatewayConditionAccepted, recordedConditionMsg)
 	}
 
