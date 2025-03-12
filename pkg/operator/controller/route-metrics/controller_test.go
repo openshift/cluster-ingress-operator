@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	ctrltestutil "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/test/util"
 	"github.com/openshift/cluster-ingress-operator/test/unit"
 
 	"github.com/openshift/api/operator"
@@ -426,11 +427,6 @@ func Test_routeStatusAdmitted(t *testing.T) {
 	}
 }
 
-type fakeCache struct {
-	cache.Informers
-	client.Reader
-}
-
 // newFakeClient builds a fake client and cache for testing.
 func newFakeClient(initObjs ...client.Object) (error, client.Client, cache.Cache) {
 	// Create fake client
@@ -447,7 +443,7 @@ func newFakeClient(initObjs ...client.Object) (error, client.Client, cache.Cache
 		Scheme: client.Scheme(),
 	}
 	// Create fake cache
-	cache := fakeCache{Informers: &informer, Reader: client}
+	cache := ctrltestutil.FakeCache{Informers: &informer, Reader: client}
 
 	return nil, client, cache
 }

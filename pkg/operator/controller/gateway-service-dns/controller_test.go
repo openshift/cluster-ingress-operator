@@ -14,16 +14,16 @@ import (
 	iov1 "github.com/openshift/api/operatoringress/v1"
 
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 
-	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/cache/informertest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+
+	testutil "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/test/util"
 )
 
 func Test_Reconcile(t *testing.T) {
@@ -259,9 +259,9 @@ func Test_Reconcile(t *testing.T) {
 				WithScheme(scheme).
 				WithRuntimeObjects(tc.existingObjects...).
 				Build()
-			cl := &fakeClientRecorder{fakeClient, t, []client.Object{}, []client.Object{}, []client.Object{}}
+			cl := &testutil.FakeClientRecorder{fakeClient, t, []client.Object{}, []client.Object{}, []client.Object{}}
 			informer := informertest.FakeInformers{Scheme: scheme}
-			cache := fakeCache{Informers: &informer, Reader: cl}
+			cache := testutil.FakeCache{Informers: &informer, Reader: cl}
 			reconciler := &reconciler{
 				config: Config{
 					OperandNamespace: "openshift-ingress",
@@ -283,79 +283,19 @@ func Test_Reconcile(t *testing.T) {
 				cmpopts.IgnoreFields(metav1.ObjectMeta{}, "Finalizers", "Labels", "OwnerReferences", "ResourceVersion"),
 				cmpopts.IgnoreFields(metav1.TypeMeta{}, "Kind", "APIVersion"),
 			}
-			if diff := cmp.Diff(tc.expectCreate, cl.added, cmpOpts...); diff != "" {
+			if diff := cmp.Diff(tc.expectCreate, cl.Added, cmpOpts...); diff != "" {
 				t.Fatalf("found diff between expected and actual creates: %s", diff)
 			}
-			if diff := cmp.Diff(tc.expectUpdate, cl.updated, cmpOpts...); diff != "" {
+			if diff := cmp.Diff(tc.expectUpdate, cl.Updated, cmpOpts...); diff != "" {
 				t.Fatalf("found diff between expected and actual updates: %s", diff)
 			}
 			// A deleted object has zero spec.
 			delCmpOpts := append(cmpOpts, cmpopts.IgnoreTypes(iov1.DNSRecordSpec{}))
-			if diff := cmp.Diff(tc.expectDelete, cl.deleted, delCmpOpts...); diff != "" {
+			if diff := cmp.Diff(tc.expectDelete, cl.Deleted, delCmpOpts...); diff != "" {
 				t.Fatalf("found diff between expected and actual deletes: %s", diff)
 			}
 		})
 	}
-}
-
-type fakeCache struct {
-	cache.Informers
-	client.Reader
-}
-
-type fakeClientRecorder struct {
-	client.Client
-	*testing.T
-
-	added   []client.Object
-	updated []client.Object
-	deleted []client.Object
-}
-
-func (c *fakeClientRecorder) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
-	return c.Client.Get(ctx, key, obj, opts...)
-}
-
-func (c *fakeClientRecorder) List(ctx context.Context, obj client.ObjectList, opts ...client.ListOption) error {
-	return c.Client.List(ctx, obj, opts...)
-}
-
-func (c *fakeClientRecorder) Scheme() *runtime.Scheme {
-	return c.Client.Scheme()
-}
-
-func (c *fakeClientRecorder) RESTMapper() meta.RESTMapper {
-	return c.Client.RESTMapper()
-}
-
-func (c *fakeClientRecorder) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
-	c.added = append(c.added, obj)
-	c.T.Log("CREATE", obj)
-	return c.Client.Create(ctx, obj, opts...)
-}
-
-func (c *fakeClientRecorder) Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error {
-	c.deleted = append(c.deleted, obj)
-	c.T.Log("DELETE", obj)
-	return c.Client.Delete(ctx, obj, opts...)
-}
-
-func (c *fakeClientRecorder) DeleteAllOf(ctx context.Context, obj client.Object, opts ...client.DeleteAllOfOption) error {
-	return c.Client.DeleteAllOf(ctx, obj, opts...)
-}
-
-func (c *fakeClientRecorder) Update(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error {
-	c.updated = append(c.updated, obj)
-	c.T.Log("UPDATE", obj)
-	return c.Client.Update(ctx, obj, opts...)
-}
-
-func (c *fakeClientRecorder) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
-	return c.Client.Patch(ctx, obj, patch, opts...)
-}
-
-func (c *fakeClientRecorder) Status() client.StatusWriter {
-	return c.Client.Status()
 }
 
 func Test_gatewayListenersHostnamesChanged(t *testing.T) {
