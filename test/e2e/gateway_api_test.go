@@ -10,14 +10,20 @@ import (
 	"testing"
 
 	"github.com/openshift/api/features"
+	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gatewayclass"
 
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apiserver/pkg/storage/names"
+	"k8s.io/client-go/rest"
 
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/config"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
@@ -30,6 +36,8 @@ const (
 	expectedCatalogSourceNamespace = "openshift-marketplace"
 	// The test gateway name used in multiple places.
 	testGatewayName = "test-gateway"
+	// gwapiCRDVAPName is the name of the ingress operator's Validating Admission Policy (VAP).
+	gwapiCRDVAPName = "openshift-ingress-operator-gatewayapi-crd-admission"
 )
 
 var crdNames = []string{
@@ -51,8 +59,6 @@ var defaultRoutename = ""
 // feature gate is still in effect, preface the test names with "TestGatewayAPI"
 // so that they run via the openshift/release test configuration.
 func TestGatewayAPI(t *testing.T) {
-	t.Parallel()
-
 	// Skip if feature is not enabled
 	if gatewayAPIEnabled, err := isFeatureGateEnabled(features.FeatureGateGatewayAPI); err != nil {
 		t.Fatalf("error checking feature gate enabled status: %v", err)
@@ -84,6 +90,7 @@ func TestGatewayAPI(t *testing.T) {
 	} else {
 		t.Log("Gateway API Controller not enabled, skipping testGatewayAPIObjects and testGatewayAPIIstioInstallation")
 	}
+	t.Run("testGatewayAPIResourcesProtection", testGatewayAPIResourcesProtection)
 }
 
 // testGatewayAPIResources tests that Gateway API Custom Resource Definitions are available.
@@ -167,6 +174,93 @@ func testGatewayAPIObjects(t *testing.T) {
 	}
 }
 
+// testGatewayAPIResourcesProtection verifies that the ingress operator's Validating Admission Policy
+// denies admission requests attempting to modify Gateway API CRDs on behalf of a user
+// who is not the ingress operator's service account.
+func testGatewayAPIResourcesProtection(t *testing.T) {
+	t.Helper()
+
+	// Get kube client which impersonates ingress operator's service account.
+	kubeConfig, err := config.GetConfig()
+	if err != nil {
+		t.Fatalf("failed to get kube config: %v", err)
+	}
+	kubeConfig.Impersonate = rest.ImpersonationConfig{
+		UserName: "system:serviceaccount:openshift-ingress-operator:ingress-operator",
+	}
+	kubeClient, err := operatorclient.NewClient(kubeConfig)
+	if err != nil {
+		t.Fatalf("failed to to create kube client: %v", err)
+	}
+
+	// Create test CRDs.
+	var testCRDs []*apiextensionsv1.CustomResourceDefinition
+	for _, name := range crdNames {
+		testCRDs = append(testCRDs, buildGWAPICRDFromName(name))
+	}
+
+	testCases := []struct {
+		name           string
+		kclient        client.Client
+		expectedErrMsg string
+	}{
+		{
+			name:           "Ingress operator service account required",
+			kclient:        kclient,
+			expectedErrMsg: "Gateway API Custom Resource Definitions are managed by the Ingress Operator and may not be modified",
+		},
+		{
+			name:           "Pod binding required",
+			kclient:        kubeClient,
+			expectedErrMsg: "this user must have both \"authentication.kubernetes.io/node-name\" and \"authentication.kubernetes.io/pod-name\" claims",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Verify that GatewayAPI CRD creation is forbidden.
+			for i := range testCRDs {
+				if err := tc.kclient.Create(context.Background(), testCRDs[i]); err != nil {
+					if !strings.Contains(err.Error(), tc.expectedErrMsg) {
+						t.Errorf("unexpected error received while creating CRD %q: %v", testCRDs[i].Name, err)
+					}
+				} else {
+					t.Errorf("admission error is expected while creating CRD %q but not received", testCRDs[i].Name)
+				}
+			}
+
+			// Verify that GatewayAPI CRD update is forbidden.
+			for i := range testCRDs {
+				crdName := types.NamespacedName{Name: testCRDs[i].Name}
+				crd := &apiextensionsv1.CustomResourceDefinition{}
+				if err := tc.kclient.Get(context.Background(), crdName, crd); err != nil {
+					t.Errorf("failed to get %q CRD: %v", crdName.Name, err)
+					continue
+				}
+				crd.Spec = testCRDs[i].Spec
+				if err := tc.kclient.Update(context.Background(), crd); err != nil {
+					if !strings.Contains(err.Error(), tc.expectedErrMsg) {
+						t.Errorf("unexpected error received while updating CRD %q: %v", testCRDs[i].Name, err)
+					}
+				} else {
+					t.Errorf("admission error is expected while updating CRD %q but not received", testCRDs[i].Name)
+				}
+			}
+
+			// Verify that GatewayAPI CRD deletion is forbidden.
+			for i := range testCRDs {
+				if err := tc.kclient.Delete(context.Background(), testCRDs[i]); err != nil {
+					if !strings.Contains(err.Error(), tc.expectedErrMsg) {
+						t.Errorf("unexpected error received while deleting CRD %q: %v", testCRDs[i].Name, err)
+					}
+				} else {
+					t.Errorf("admission error is expected while deleting CRD %q but not received", testCRDs[i].Name)
+				}
+			}
+		})
+	}
+}
+
 // ensureCRDs tests that the Gateway API custom resource definitions exist.
 func ensureCRDs(t *testing.T) {
 	t.Helper()
@@ -182,6 +276,19 @@ func ensureCRDs(t *testing.T) {
 // deleteCRDs deletes Gateway API custom resource definitions.
 func deleteCRDs(t *testing.T) {
 	t.Helper()
+
+	vm := newVAPManager(t, gwapiCRDVAPName)
+	// Remove the ingress operator's Validating Admission Policy (VAP)
+	// which prevents modifications of Gateway API CRDs
+	// by anything other than the ingress operator.
+	if err, recoverFn := vm.disable(); err != nil {
+		defer recoverFn()
+		t.Fatalf("failed to disable vap: %v", err)
+	}
+	// Put back the VAP to ensure that it does not prevent
+	// the ingress operator from managing Gateway API CRDs.
+	defer vm.enable()
+
 	for _, crdName := range crdNames {
 		err := deleteExistingCRD(t, crdName)
 		if err != nil {
