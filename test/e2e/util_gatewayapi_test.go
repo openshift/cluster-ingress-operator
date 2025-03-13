@@ -51,13 +51,14 @@ const (
 	cvoDeploymentName = "cluster-version-operator"
 )
 
-// assertCrdExists checks if the CRD of the given name exists and returns an error if not.
-// Otherwise returns the CRD version.
-func assertCrdExists(t *testing.T, crdname string) (string, error) {
+// assertCRDExists checks if the CRD of the given name exists and returns an
+// error if not.  If the CRD does exist, this function returns a slice of
+// strings indicating the served versions.
+func assertCRDExists(t *testing.T, crdname string) ([]string, error) {
 	t.Helper()
 	crd := &apiextensionsv1.CustomResourceDefinition{}
 	name := types.NamespacedName{Namespace: "", Name: crdname}
-	crdVersion := ""
+	crdVersions := []string{}
 
 	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(context context.Context) (bool, error) {
 		if err := kclient.Get(context, name, crd); err != nil {
@@ -67,7 +68,7 @@ func assertCrdExists(t *testing.T, crdname string) (string, error) {
 		crdConditions := crd.Status.Conditions
 		for _, version := range crd.Spec.Versions {
 			if version.Served {
-				crdVersion = version.Name
+				crdVersions = append(crdVersions, version.Name)
 			}
 		}
 		for _, c := range crdConditions {
@@ -78,7 +79,7 @@ func assertCrdExists(t *testing.T, crdname string) (string, error) {
 		t.Logf("failed to find crd %s to be Established", name)
 		return false, nil
 	})
-	return crdVersion, err
+	return crdVersions, err
 }
 
 // deleteExistingCRD deletes if the CRD of the given name exists and returns an error if not.

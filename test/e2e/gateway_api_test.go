@@ -281,11 +281,11 @@ func testGatewayAPIResourcesProtection(t *testing.T) {
 func ensureCRDs(t *testing.T) {
 	t.Helper()
 	for _, crdName := range crdNames {
-		crdVersion, err := assertCrdExists(t, crdName)
+		crdVersions, err := assertCRDExists(t, crdName)
 		if err != nil {
 			t.Fatalf("failed to find crd %s: %v", crdName, err)
 		}
-		t.Logf("found crd %s at version %s", crdName, crdVersion)
+		t.Logf("Found CRD %s with the following served versions: %s", crdName, strings.Join(crdVersions, ", "))
 	}
 }
 
