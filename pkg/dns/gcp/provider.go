@@ -31,13 +31,30 @@ type Provider struct {
 }
 
 type Config struct {
-	Project         string
-	UserAgent       string
-	CredentialsJSON []byte
+	Project                   string
+	UserAgent                 string
+	CredentialsJSON           []byte
+	Endpoints                 []configv1.GCPServiceEndpoint
+	GCPCustomEndpointsEnabled bool
 }
 
 func New(config Config) (*Provider, error) {
-	dnsService, err := gdnsv1.NewService(context.TODO(), option.WithCredentialsJSON(config.CredentialsJSON), option.WithUserAgent(config.UserAgent))
+	options := []option.ClientOption{
+		option.WithCredentialsJSON(config.CredentialsJSON),
+		option.WithUserAgent(config.UserAgent),
+	}
+	if config.GCPCustomEndpointsEnabled {
+		for _, endpoint := range config.Endpoints {
+			if endpoint.Name == configv1.GCPServiceEndpointNameDNS {
+				// There should be at most 1 endpoint override per service. If there
+				// is more than one, only use the first instance.
+				options = append(options, option.WithEndpoint(endpoint.URL))
+				break
+			}
+		}
+	}
+
+	dnsService, err := gdnsv1.NewService(context.TODO(), options...)
 	if err != nil {
 		return nil, err
 	}
