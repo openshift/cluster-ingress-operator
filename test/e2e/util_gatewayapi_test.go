@@ -235,11 +235,12 @@ func createGatewayClass(name, controllerName string) (*gatewayapiv1.GatewayClass
 	if err := kclient.Create(context.TODO(), gatewayClass); err != nil {
 		if kerrors.IsAlreadyExists(err) {
 			name := types.NamespacedName{Namespace: "", Name: name}
-			if err = kclient.Get(context.TODO(), name, gatewayClass); err == nil {
-				return gatewayClass, nil
+			if err := kclient.Get(context.TODO(), name, gatewayClass); err != nil {
+				return nil, fmt.Errorf("gatewayclass %s already exists, but get failed: %w", name.Name, err)
 			}
+			return gatewayClass, nil
 		} else {
-			return nil, fmt.Errorf("failed to create gateway class: %v", err.Error())
+			return nil, fmt.Errorf("failed to create gatewayclass %s: %w", gatewayClass.Name, err)
 		}
 	}
 	return gatewayClass, nil
