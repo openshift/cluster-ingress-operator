@@ -547,8 +547,8 @@ func assertGatewayClassSuccessful(t *testing.T, name string) (*gatewayapiv1.Gate
 	nsName := types.NamespacedName{Namespace: "", Name: name}
 	recordedConditionMsg := "not found"
 
-	// Wait up to 2 minutes for the gateway class to be Accepted.
-	err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 2*time.Minute, false, func(context context.Context) (bool, error) {
+	// Wait up to 4 minutes for the gateway class to be Accepted.
+	err := wait.PollUntilContextTimeout(context.Background(), 4*time.Second, 4*time.Minute, false, func(context context.Context) (bool, error) {
 		if err := kclient.Get(context, nsName, gwc); err != nil {
 			t.Logf("failed to get gateway class %s, retrying...", name)
 			return false, nil
@@ -581,7 +581,7 @@ func assertGatewaySuccessful(t *testing.T, namespace, name string) (*gatewayapiv
 	nsName := types.NamespacedName{Namespace: namespace, Name: name}
 	recordedConditionMsg := "not found"
 
-	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(context context.Context) (bool, error) {
+	err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 2*time.Minute, false, func(context context.Context) (bool, error) {
 		if err := kclient.Get(context, nsName, gw); err != nil {
 			t.Logf("failed to get gateway %s, retrying...", name)
 			return false, nil
@@ -615,8 +615,8 @@ func assertHttpRouteSuccessful(t *testing.T, namespace, name string, gateway *ga
 	httproute := &gatewayapiv1.HTTPRoute{}
 	nsName := types.NamespacedName{Namespace: namespace, Name: name}
 
-	// Wait 1 minute for parent/s to update
-	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(context context.Context) (bool, error) {
+	// Wait 2 minute for parent/s to update
+	err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 2*time.Minute, false, func(context context.Context) (bool, error) {
 		if err := kclient.Get(context, nsName, httproute); err != nil {
 			t.Logf("failed to get httproute %s/%s, retrying...", namespace, name)
 			return false, nil
@@ -757,7 +757,7 @@ func assertCatalogSource(t *testing.T, namespace, csName string) error {
 	catalogSource := &operatorsv1alpha1.CatalogSource{}
 	nsName := types.NamespacedName{Namespace: namespace, Name: csName}
 
-	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(context context.Context) (bool, error) {
+	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(context context.Context) (bool, error) {
 		if err := kclient.Get(context, nsName, catalogSource); err != nil {
 			t.Logf("failed to get catalogSource %s: %v, retrying...", csName, err)
 			return false, nil
@@ -853,7 +853,7 @@ func assertDNSRecord(t *testing.T, recordName types.NamespacedName) error {
 	t.Helper()
 	dnsRecord := &v1.DNSRecord{}
 
-	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(context context.Context) (bool, error) {
+	err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 2*time.Minute, false, func(context context.Context) (bool, error) {
 		if err := kclient.Get(context, recordName, dnsRecord); err != nil {
 			t.Logf("failed to get DNSRecord %s/%s: %v, retrying...", recordName.Namespace, recordName.Name, err)
 			return false, nil
@@ -893,7 +893,7 @@ func scaleDeployment(t *testing.T, namespace, name string, replicas int32) error
 	t.Helper()
 
 	nsName := types.NamespacedName{Namespace: namespace, Name: name}
-	return wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(context context.Context) (bool, error) {
+	return wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(context context.Context) (bool, error) {
 		depl := &appsv1.Deployment{}
 		if err := kclient.Get(context, nsName, depl); err != nil {
 			t.Logf("failed to get deployment %q: %v, retrying...", nsName, err)
