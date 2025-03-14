@@ -80,7 +80,7 @@ func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference) *sa
 		// the default value, which is "istio".  If we didn't set this,
 		// then our Istiod instance might try to reconcile gateways
 		// belonging to an unrelated Istiod instance.
-		"PILOT_GATEWAY_API_DEFAULT_GATEWAYCLASS_NAME": OpenShiftDefaultGatewayClassName,
+		"PILOT_GATEWAY_API_DEFAULT_GATEWAYCLASS_NAME": controller.OpenShiftDefaultGatewayClassName,
 		// Watch Gateway API and Kubernetes resources in all namespaces,
 		// but ignore Istio resources that don't match our label
 		// selector.  (We do not specify the label selector, so this
@@ -88,7 +88,7 @@ func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference) *sa
 		"PILOT_ENABLE_GATEWAY_CONTROLLER_MODE": "true",
 		// Only reconcile resources that are associated with
 		// gatewayclasses that have our controller name.
-		"PILOT_GATEWAY_API_CONTROLLER_NAME": OpenShiftGatewayClassControllerName,
+		"PILOT_GATEWAY_API_CONTROLLER_NAME": controller.OpenShiftGatewayClassControllerName,
 		// Don't create an "istio-remote" gatewayclass for
 		// "multi-network gateways".  This is an Istio feature that I
 		// haven't really found any explanation for.

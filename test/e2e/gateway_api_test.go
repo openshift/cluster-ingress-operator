@@ -12,7 +12,6 @@ import (
 	"github.com/openshift/api/features"
 	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
-	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gatewayclass"
 
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -337,7 +336,7 @@ func ensureExperimentalCRDs(t *testing.T) {
 func ensureGatewayObjectCreation(ns *corev1.Namespace) error {
 	var domain string
 
-	gatewayClass, err := createGatewayClass(gatewayclass.OpenShiftDefaultGatewayClassName, gatewayclass.OpenShiftGatewayClassControllerName)
+	gatewayClass, err := createGatewayClass(operatorcontroller.OpenShiftDefaultGatewayClassName, operatorcontroller.OpenShiftGatewayClassControllerName)
 	if err != nil {
 		return fmt.Errorf("feature gate was enabled, but gateway class object could not be created: %v", err)
 	}
@@ -355,7 +354,7 @@ func ensureGatewayObjectCreation(ns *corev1.Namespace) error {
 	hostname := names.SimpleNameGenerator.GenerateName("test-hostname-")
 	defaultRoutename = hostname + "." + domain
 
-	_, err = createHttpRoute(ns.Name, "test-httproute", operatorcontroller.DefaultOperandNamespace, defaultRoutename, testGatewayName+"-"+gatewayclass.OpenShiftDefaultGatewayClassName, testGateway)
+	_, err = createHttpRoute(ns.Name, "test-httproute", operatorcontroller.DefaultOperandNamespace, defaultRoutename, testGatewayName+"-"+operatorcontroller.OpenShiftDefaultGatewayClassName, testGateway)
 	if err != nil {
 		return fmt.Errorf("feature gate was enabled, but http route object could not be created: %v", err)
 	}
@@ -372,7 +371,7 @@ func ensureGatewayObjectSuccess(t *testing.T, ns *corev1.Namespace) []string {
 	gateway := &gatewayapiv1.Gateway{}
 
 	// Make sure gateway class was created successfully.
-	_, err := assertGatewayClassSuccessful(t, gatewayclass.OpenShiftDefaultGatewayClassName)
+	_, err := assertGatewayClassSuccessful(t, operatorcontroller.OpenShiftDefaultGatewayClassName)
 	if err != nil {
 		errs = append(errs, error.Error(err))
 	}

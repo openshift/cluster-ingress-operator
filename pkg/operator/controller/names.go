@@ -57,6 +57,16 @@ const (
 	// OpenshiftOperatorNamespace is the default namespace for
 	// the openshift operator resources.
 	OpenshiftOperatorNamespace = "openshift-operators"
+
+	// OpenShiftGatewayClassControllerName is the string by which a
+	// gatewayclass identifies itself as belonging to OpenShift Istio.  If a
+	// gatewayclass's spec.controllerName field is set to this value, then
+	// the gatewayclass is ours.
+	OpenShiftGatewayClassControllerName = "openshift.io/gateway-controller"
+
+	// OpenShiftDefaultGatewayClassName is the name of the default
+	// gatewayclass that Istio creates when it is installed.
+	OpenShiftDefaultGatewayClassName = "openshift-default"
 )
 
 // IngressClusterOperatorName returns the namespaced name of the ClusterOperator

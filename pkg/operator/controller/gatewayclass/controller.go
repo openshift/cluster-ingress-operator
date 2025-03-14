@@ -30,15 +30,6 @@ import (
 
 const (
 	controllerName = "gatewayclass_controller"
-
-	// OpenShiftGatewayClassControllerName is the string by which a
-	// gatewayclass identifies itself as belonging to OpenShift Istio.  If a
-	// gatewayclass's spec.controllerName field is set to this value, then
-	// the gatewayclass is ours.
-	OpenShiftGatewayClassControllerName = "openshift.io/gateway-controller"
-	// OpenShiftDefaultGatewayClassName is the name of the default
-	// gatewayclass that Istio creates when it is installed.
-	OpenShiftDefaultGatewayClassName = "openshift-default"
 )
 
 var log = logf.Logger.WithName(controllerName)
@@ -61,7 +52,7 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 	}
 	isOurGatewayClass := predicate.NewPredicateFuncs(func(o client.Object) bool {
 		class := o.(*gatewayapiv1.GatewayClass)
-		return class.Spec.ControllerName == OpenShiftGatewayClassControllerName
+		return class.Spec.ControllerName == operatorcontroller.OpenShiftGatewayClassControllerName
 	})
 	notIstioGatewayClass := predicate.NewPredicateFuncs(func(o client.Object) bool {
 		return o.GetName() != "istio"
@@ -135,7 +126,7 @@ func enqueueRequestForDefaultGatewayClassController(namespace string) handler.Ev
 				{
 					NamespacedName: types.NamespacedName{
 						Namespace: namespace,
-						Name:      OpenShiftDefaultGatewayClassName,
+						Name:      operatorcontroller.OpenShiftDefaultGatewayClassName,
 					},
 				},
 			}
