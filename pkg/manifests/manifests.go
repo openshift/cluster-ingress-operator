@@ -47,6 +47,12 @@ const (
 	HTTPRouteCRDAsset      = "assets/gateway-api/gateway.networking.k8s.io_httproutes.yaml"
 	ReferenceGrantCRDAsset = "assets/gateway-api/gateway.networking.k8s.io_referencegrants.yaml"
 
+	GatewayClassCRDAsset_v1_2_1   = "assets/gateway-api/v1_2_1/gateway.networking.k8s.io_gatewayclasses.yaml"
+	GatewayCRDAsset_v1_2_1        = "assets/gateway-api/v1_2_1/gateway.networking.k8s.io_gateways.yaml"
+	GRPCRouteCRDAsset_v1_2_1      = "assets/gateway-api/v1_2_1/gateway.networking.k8s.io_grpcroutes.yaml"
+	HTTPRouteCRDAsset_v1_2_1      = "assets/gateway-api/v1_2_1/gateway.networking.k8s.io_httproutes.yaml"
+	ReferenceGrantCRDAsset_v1_2_1 = "assets/gateway-api/v1_2_1/gateway.networking.k8s.io_referencegrants.yaml"
+
 	// Annotation used to inform the certificate generation service to
 	// generate a cluster-signed certificate and populate the secret.
 	ServingCertSecretAnnotation = "service.alpha.openshift.io/serving-cert-secret-name"
@@ -281,6 +287,46 @@ func HTTPRouteCRD() *apiextensionsv1.CustomResourceDefinition {
 
 func ReferenceGrantCRD() *apiextensionsv1.CustomResourceDefinition {
 	crd, err := NewCustomResourceDefinition(MustAssetReader(ReferenceGrantCRDAsset))
+	if err != nil {
+		panic(err)
+	}
+	return crd
+}
+
+func GatewayClassCRD_v1_2_1() *apiextensionsv1.CustomResourceDefinition {
+	crd, err := NewCustomResourceDefinition(MustAssetReader(GatewayClassCRDAsset_v1_2_1))
+	if err != nil {
+		panic(err)
+	}
+	return crd
+}
+
+func GatewayCRD_v1_2_1() *apiextensionsv1.CustomResourceDefinition {
+	crd, err := NewCustomResourceDefinition(MustAssetReader(GatewayCRDAsset_v1_2_1))
+	if err != nil {
+		panic(err)
+	}
+	return crd
+}
+
+func GRPCRouteCRD_v1_2_1() *apiextensionsv1.CustomResourceDefinition {
+	crd, err := NewCustomResourceDefinition(MustAssetReader(GRPCRouteCRDAsset_v1_2_1))
+	if err != nil {
+		panic(err)
+	}
+	return crd
+}
+
+func HTTPRouteCRD_v1_2_1() *apiextensionsv1.CustomResourceDefinition {
+	crd, err := NewCustomResourceDefinition(MustAssetReader(HTTPRouteCRDAsset_v1_2_1))
+	if err != nil {
+		panic(err)
+	}
+	return crd
+}
+
+func ReferenceGrantCRD_v1_2_1() *apiextensionsv1.CustomResourceDefinition {
+	crd, err := NewCustomResourceDefinition(MustAssetReader(ReferenceGrantCRDAsset_v1_2_1))
 	if err != nil {
 		panic(err)
 	}

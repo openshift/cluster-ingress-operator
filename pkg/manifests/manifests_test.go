@@ -49,6 +49,12 @@ func TestManifests(t *testing.T) {
 	HTTPRouteCRD()
 	ReferenceGrantCRD()
 
+	GatewayClassCRD_v1_2_1()
+	GatewayCRD_v1_2_1()
+	GRPCRouteCRD_v1_2_1()
+	HTTPRouteCRD_v1_2_1()
+	ReferenceGrantCRD_v1_2_1()
+
 	MustAsset(CustomResourceDefinitionManifest)
 	MustAsset(NamespaceManifest)
 }

@@ -8,7 +8,10 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
+	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
+	test_crds "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/test/crds"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -537,27 +540,103 @@ func Test_computeOperatorUpgradeableCondition(t *testing.T) {
 	testCases := []struct {
 		description                   string
 		ingresscontrollersUpgradeable []bool
+		gatewayAPICRDs                []apiextensionsv1.CustomResourceDefinition
 		expectUpgradeable             bool
+		expectReason                  string
 	}{
 		{
 			description:                   "no ingresscontrollers exist",
 			ingresscontrollersUpgradeable: []bool{},
 			expectUpgradeable:             true,
+			expectReason:                  "Upgradeable",
 		},
 		{
 			description:                   "no ingresscontrollers are upgradeable",
 			ingresscontrollersUpgradeable: []bool{false, false},
 			expectUpgradeable:             false,
+			expectReason:                  "IngressControllersNotUpgradeable",
 		},
 		{
 			description:                   "some ingresscontrollers are upgradeable",
 			ingresscontrollersUpgradeable: []bool{false, true},
 			expectUpgradeable:             false,
+			expectReason:                  "IngressControllersNotUpgradeable",
 		},
 		{
 			description:                   "all ingresscontrollers are upgradeable",
 			ingresscontrollersUpgradeable: []bool{true, true},
 			expectUpgradeable:             true,
+			expectReason:                  "Upgradeable",
+		},
+		{
+			description:                   "expected version of standard gatewayapi crds installed",
+			ingresscontrollersUpgradeable: []bool{true, true},
+			gatewayAPICRDs: []apiextensionsv1.CustomResourceDefinition{
+				*manifests.GatewayClassCRD_v1_2_1(),
+				*manifests.GatewayCRD_v1_2_1(),
+				*manifests.GRPCRouteCRD_v1_2_1(),
+				*manifests.HTTPRouteCRD_v1_2_1(),
+				*manifests.ReferenceGrantCRD_v1_2_1(),
+			},
+			expectUpgradeable: true,
+			expectReason:      "Upgradeable",
+		},
+		{
+			description:                   "incompatible standard gatewayapi crds installed",
+			ingresscontrollersUpgradeable: []bool{true, true},
+			gatewayAPICRDs: []apiextensionsv1.CustomResourceDefinition{
+				*test_crds.GatewayClassCRD_v0(),
+				*test_crds.GatewayCRD_v0(),
+				*test_crds.HTTPRouteCRD_v0(),
+				*test_crds.ReferenceGrantCRD_v0(),
+			},
+			expectUpgradeable: false,
+			expectReason:      "GatewayAPICRDsNotCompatible",
+		},
+		{
+			description:                   "experimental gatewayapi crds installed",
+			ingresscontrollersUpgradeable: []bool{true, true},
+			gatewayAPICRDs: []apiextensionsv1.CustomResourceDefinition{
+				*test_crds.TCPRouteCRD_experimental_v1(),
+				*test_crds.GatewayCRD_experimental_v1(),
+				*test_crds.ListenerSetCRD_experimental_v1(),
+			},
+			expectUpgradeable: false,
+			expectReason:      "GatewayAPICRDsNotCompatible",
+		},
+		{
+			description:                   "experimental and standard gatewayapi crd installed",
+			ingresscontrollersUpgradeable: []bool{true, true},
+			gatewayAPICRDs: []apiextensionsv1.CustomResourceDefinition{
+				*test_crds.TCPRouteCRD_experimental_v1(),
+				*test_crds.GatewayCRD_experimental_v1(),
+				*manifests.HTTPRouteCRD_v1_2_1(),
+			},
+			expectUpgradeable: false,
+			expectReason:      "GatewayAPICRDsNotCompatible",
+		},
+		{
+			description:                   "incompatible standard and experimental gatewayapi crds installed",
+			ingresscontrollersUpgradeable: []bool{true, true},
+			gatewayAPICRDs: []apiextensionsv1.CustomResourceDefinition{
+				*test_crds.GatewayClassCRD_v0(),
+				*test_crds.GatewayCRD_v0(),
+				*test_crds.HTTPRouteCRD_v0(),
+				*test_crds.TCPRouteCRD_experimental_v1(),
+			},
+			expectUpgradeable: false,
+			expectReason:      "GatewayAPICRDsNotCompatible",
+		},
+		{
+			description:                   "experimental gatewayapi crds installed and some ingresscontrollers not upgradeable",
+			ingresscontrollersUpgradeable: []bool{false, true},
+			gatewayAPICRDs: []apiextensionsv1.CustomResourceDefinition{
+				*test_crds.TCPRouteCRD_experimental_v1(),
+				*test_crds.GatewayCRD_experimental_v1(),
+				*test_crds.ListenerSetCRD_experimental_v1(),
+			},
+			expectUpgradeable: false,
+			expectReason:      "MultipleComponentsNotUpgradeable",
 		},
 	}
 
@@ -583,14 +662,14 @@ func Test_computeOperatorUpgradeableCondition(t *testing.T) {
 			expected := configv1.ClusterOperatorStatusCondition{
 				Type:   configv1.OperatorUpgradeable,
 				Status: configv1.ConditionFalse,
+				Reason: tc.expectReason,
 			}
 			if tc.expectUpgradeable {
 				expected.Status = configv1.ConditionTrue
 			}
-
-			actual := computeOperatorUpgradeableCondition(ingresscontrollers)
+			actual := computeOperatorUpgradeableCondition(ingresscontrollers, tc.gatewayAPICRDs)
 			conditionsCmpOpts := []cmp.Option{
-				cmpopts.IgnoreFields(configv1.ClusterOperatorStatusCondition{}, "LastTransitionTime", "Reason", "Message"),
+				cmpopts.IgnoreFields(configv1.ClusterOperatorStatusCondition{}, "LastTransitionTime", "Message"),
 			}
 			if !cmp.Equal(actual, expected, conditionsCmpOpts...) {
 				t.Fatalf("expected %#v, got %#v", expected, actual)
