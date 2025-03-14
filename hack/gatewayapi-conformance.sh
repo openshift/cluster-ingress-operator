@@ -43,9 +43,10 @@ cd gateway-api
 echo "Go version: $(go version)"
 go mod vendor
 
-# modify default timeout of "MaxTimeToConsistency" to make tests pass on AWS
-# because the AWS ELB needs extra ~60s for DNS propagation
-sed -i "s/MaxTimeToConsistency:              30/MaxTimeToConsistency:              90/g" conformance/utils/config/timeout.go
+# Modify the default timeout of "MaxTimeToConsistency" to make tests pass on AWS
+# because the AWS ELB needs an extra ~60s for DNS propagation.  See
+# <https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/best-practices-dns.html#DNS_change_propagation>.
+sed -i -e '/MaxTimeToConsistency:/ s/30/90/' conformance/utils/config/timeout.go
 
 SUPPORTED_FEATURES="Gateway,HTTPRoute,ReferenceGrant,GatewayPort8080,HTTPRouteQueryParamMatching,HTTPRouteMethodMatching,HTTPRouteResponseHeaderModification,HTTPRoutePortRedirect,HTTPRouteSchemeRedirect,HTTPRoutePathRedirect,HTTPRouteHostRewrite,HTTPRoutePathRewrite,HTTPRouteRequestMirror,HTTPRouteRequestMultipleMirrors,HTTPRouteBackendProtocolH2C,HTTPRouteBackendProtocolWebSocket"
 
