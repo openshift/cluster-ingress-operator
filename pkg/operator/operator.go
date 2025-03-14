@@ -33,6 +33,7 @@ import (
 	configurableroutecontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/configurable-route"
 	crlcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/crl"
 	dnscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/dns"
+	gatewaylabelercontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gateway-labeler"
 	gatewayservicednscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gateway-service-dns"
 	gatewayapicontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gatewayapi"
 	gatewayclasscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gatewayclass"
@@ -312,6 +313,12 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		return nil, fmt.Errorf("failed to create gateway-service-dns controller: %v", err)
 	}
 
+	// Set up the gateway-labeler controller.
+	gatewayLabelController, err := gatewaylabelercontroller.NewUnmanaged(mgr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create gateway-labeler controller: %w", err)
+	}
+
 	// Set up the gatewayapi controller.
 	if _, err := gatewayapicontroller.New(mgr, gatewayapicontroller.Config{
 		GatewayAPIEnabled:           gatewayAPIEnabled,
@@ -319,6 +326,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		DependentControllers: []controller.Controller{
 			gatewayClassController,
 			gatewayServiceDNSController,
+			gatewayLabelController,
 		},
 	}); err != nil {
 		return nil, fmt.Errorf("failed to create gatewayapi controller: %w", err)

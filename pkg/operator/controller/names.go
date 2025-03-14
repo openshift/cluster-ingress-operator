@@ -67,6 +67,10 @@ const (
 	// OpenShiftDefaultGatewayClassName is the name of the default
 	// gatewayclass that Istio creates when it is installed.
 	OpenShiftDefaultGatewayClassName = "openshift-default"
+
+	// IstioRevLabelKey is the key for the gateway label that Istio checks
+	// for to determine whether it should reconcile that gateway.
+	IstioRevLabelKey = "istio.io/rev"
 )
 
 // IngressClusterOperatorName returns the namespaced name of the ClusterOperator
