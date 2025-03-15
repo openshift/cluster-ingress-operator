@@ -55,6 +55,7 @@ func Test_Reconcile(t *testing.T) {
 			expectCreate: []client.Object{
 				crd("gatewayclasses.gateway.networking.k8s.io"),
 				crd("gateways.gateway.networking.k8s.io"),
+				crd("grpcroutes.gateway.networking.k8s.io"),
 				crd("httproutes.gateway.networking.k8s.io"),
 				crd("referencegrants.gateway.networking.k8s.io"),
 			},
@@ -69,6 +70,7 @@ func Test_Reconcile(t *testing.T) {
 			expectCreate: []client.Object{
 				crd("gatewayclasses.gateway.networking.k8s.io"),
 				crd("gateways.gateway.networking.k8s.io"),
+				crd("grpcroutes.gateway.networking.k8s.io"),
 				crd("httproutes.gateway.networking.k8s.io"),
 				crd("referencegrants.gateway.networking.k8s.io"),
 			},

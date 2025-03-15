@@ -42,7 +42,7 @@ const (
 	// deployments that it creates for gateways that it manages.  Istio uses
 	// this label in the selector of any service that it creates for a
 	// gateway.
-	gatewayNameLabelKey = "istio.io/gateway-name"
+	gatewayNameLabelKey = "gateway.networking.k8s.io/gateway-name"
 	// managedByIstioLabelKey is the key of a label that Istio adds to
 	// resources that it manages.
 	managedByIstioLabelKey = "gateway.istio.io/managed"
@@ -167,15 +167,15 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		return reconcile.Result{}, err
 	}
 
-	if len(service.Spec.Selector[gatewayNameLabelKey]) == 0 {
-		log.Info(`service selector has no "`+gatewayNameLabelKey+`" label; reconciliation will be skipped`, "request", request)
+	if len(service.Labels[gatewayNameLabelKey]) == 0 {
+		log.Info("service does not have a label with the expected key; reconciliation will be skipped", "request", request, "labelKey", gatewayNameLabelKey)
 		return reconcile.Result{}, nil
 	}
 
 	var gateway gatewayapiv1.Gateway
 	gatewayName := types.NamespacedName{
 		Namespace: service.Namespace,
-		Name:      service.Spec.Selector[gatewayNameLabelKey],
+		Name:      service.Labels[gatewayNameLabelKey],
 	}
 	if err := r.cache.Get(ctx, gatewayName, &gateway); err != nil {
 		if apierrors.IsNotFound(err) {

@@ -32,7 +32,7 @@ cd "${CLONE_DIR}"
 # find the branch of gateway-api repo
 RELEASE_VERSION=$(\grep -oP "^\d+\.\d+" <<<"${BUNDLE_VERSION#v}")
 BRANCH="release-${RELEASE_VERSION}"
-echo "gateway-api repo branch: ${BRANCH}"
+echo "gateway-api repo branch \"${BRANCH}\" into ${CLONE_DIR}..."
 
 # clone the branch that matched the installed CRDs version
 # branch release-1.0 -> bundle-version v1.0.0
@@ -43,11 +43,12 @@ cd gateway-api
 echo "Go version: $(go version)"
 go mod vendor
 
-# modify default timeout of "MaxTimeToConsistency" to make tests pass on AWS
-# because the AWS ELB needs extra ~60s for DNS propagation
-sed -i "s/MaxTimeToConsistency:              30/MaxTimeToConsistency:              90/g" conformance/utils/config/timeout.go
+# Modify the default timeout of "MaxTimeToConsistency" to make tests pass on AWS
+# because the AWS ELB needs an extra ~60s for DNS propagation.  See
+# <https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/best-practices-dns.html#DNS_change_propagation>.
+sed -i -e '/MaxTimeToConsistency:/ s/30/90/' conformance/utils/config/timeout.go
 
-SUPPORTED_FEATURES="Gateway,HTTPRoute,ReferenceGrant,GatewayPort8080,HTTPRouteQueryParamMatching,HTTPRouteMethodMatching,HTTPRouteResponseHeaderModification,HTTPRoutePortRedirect,HTTPRouteSchemeRedirect,HTTPRoutePathRedirect,HTTPRouteHostRewrite,HTTPRoutePathRewrite,HTTPRouteRequestMirror,HTTPRouteRequestMultipleMirrors,HTTPRouteBackendProtocolH2C,HTTPRouteBackendProtocolWebSocket"
+SUPPORTED_FEATURES='Gateway,HTTPRoute,GatewayPort8080,GatewayStaticAddresses,GatewayHTTPListenerIsolation,HTTPRouteBackendRequestHeaderModification,HTTPRouteQueryParamMatching,HTTPRouteMethodMatching,HTTPRouteResponseHeaderModification,HTTPRoutePortRedirect,HTTPRouteSchemeRedirect,HTTPRoutePathRedirect,HTTPRouteHostRewrite,HTTPRoutePathRewrite,HTTPRouteRequestMirror,HTTPRouteRequestMultipleMirrors,HTTPRouteRequestTimeout,HTTPRouteBackendTimeout,HTTPRouteParentRefPort,HTTPRouteBackendProtocolH2C,HTTPRouteBackendProtocolWebSocket,GRPCRoute,ReferenceGrant'
 
 echo "Start Gateway API Conformance Testing"
-go test ./conformance -v -timeout 10m -run TestConformance -args --supported-features=${SUPPORTED_FEATURES}
+go test ./conformance -v -timeout 2h -run TestConformance -args "--supported-features=${SUPPORTED_FEATURES}"

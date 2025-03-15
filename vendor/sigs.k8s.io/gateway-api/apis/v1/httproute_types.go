@@ -24,6 +24,7 @@ import (
 // +kubebuilder:object:root=true
 // +kubebuilder:resource:categories=gateway-api
 // +kubebuilder:subresource:status
+// +kubebuilder:storageversion
 // +kubebuilder:printcolumn:name="Hostnames",type=string,JSONPath=`.spec.hostnames`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
@@ -116,8 +117,10 @@ type HTTPRouteSpec struct {
 	// Rules are a list of HTTP matchers, filters and actions.
 	//
 	// +optional
+	// <gateway:experimental:validation:XValidation:message="Rule name must be unique within the route",rule="self.all(l1, !has(l1.name) || self.exists_one(l2, has(l2.name) && l1.name == l2.name))">
 	// +kubebuilder:validation:MaxItems=16
 	// +kubebuilder:default={{matches: {{path: {type: "PathPrefix", value: "/"}}}}}
+	// +kubebuilder:validation:XValidation:message="While 16 rules and 64 matches per rule are allowed, the total number of matches across all rules in a route must be less than 128",rule="(self.size() > 0 ? self[0].matches.size() : 0) + (self.size() > 1 ? self[1].matches.size() : 0) + (self.size() > 2 ? self[2].matches.size() : 0) + (self.size() > 3 ? self[3].matches.size() : 0) + (self.size() > 4 ? self[4].matches.size() : 0) + (self.size() > 5 ? self[5].matches.size() : 0) + (self.size() > 6 ? self[6].matches.size() : 0) + (self.size() > 7 ? self[7].matches.size() : 0) + (self.size() > 8 ? self[8].matches.size() : 0) + (self.size() > 9 ? self[9].matches.size() : 0) + (self.size() > 10 ? self[10].matches.size() : 0) + (self.size() > 11 ? self[11].matches.size() : 0) + (self.size() > 12 ? self[12].matches.size() : 0) + (self.size() > 13 ? self[13].matches.size() : 0) + (self.size() > 14 ? self[14].matches.size() : 0) + (self.size() > 15 ? self[15].matches.size() : 0) <= 128"
 	Rules []HTTPRouteRule `json:"rules,omitempty"`
 }
 
@@ -131,6 +134,13 @@ type HTTPRouteSpec struct {
 // +kubebuilder:validation:XValidation:message="Within backendRefs, when using RequestRedirect filter with path.replacePrefixMatch, exactly one PathPrefix match must be specified",rule="(has(self.backendRefs) && self.backendRefs.exists_one(b, (has(b.filters) && b.filters.exists_one(f, has(f.requestRedirect) && has(f.requestRedirect.path) && f.requestRedirect.path.type == 'ReplacePrefixMatch' && has(f.requestRedirect.path.replacePrefixMatch))) )) ? ((size(self.matches) != 1 || !has(self.matches[0].path) || self.matches[0].path.type != 'PathPrefix') ? false : true) : true"
 // +kubebuilder:validation:XValidation:message="Within backendRefs, When using URLRewrite filter with path.replacePrefixMatch, exactly one PathPrefix match must be specified",rule="(has(self.backendRefs) && self.backendRefs.exists_one(b, (has(b.filters) && b.filters.exists_one(f, has(f.urlRewrite) && has(f.urlRewrite.path) && f.urlRewrite.path.type == 'ReplacePrefixMatch' && has(f.urlRewrite.path.replacePrefixMatch))) )) ? ((size(self.matches) != 1 || !has(self.matches[0].path) || self.matches[0].path.type != 'PathPrefix') ? false : true) : true"
 type HTTPRouteRule struct {
+	// Name is the name of the route rule. This name MUST be unique within a Route if it is set.
+	//
+	// Support: Extended
+	// +optional
+	// <gateway:experimental>
+	Name *SectionName `json:"name,omitempty"`
+
 	// Matches define conditions used for matching the rule against incoming
 	// HTTP requests. Each match is independent, i.e. this rule will be matched
 	// if **any** one of the matches is satisfied.
@@ -189,15 +199,26 @@ type HTTPRouteRule struct {
 	// parent a request is coming from, a HTTP 404 status code MUST be returned.
 	//
 	// +optional
-	// +kubebuilder:validation:MaxItems=8
+	// +kubebuilder:validation:MaxItems=64
 	// +kubebuilder:default={{path:{ type: "PathPrefix", value: "/"}}}
 	Matches []HTTPRouteMatch `json:"matches,omitempty"`
 
 	// Filters define the filters that are applied to requests that match
 	// this rule.
 	//
-	// The effects of ordering of multiple behaviors are currently unspecified.
-	// This can change in the future based on feedback during the alpha stage.
+	// Wherever possible, implementations SHOULD implement filters in the order
+	// they are specified.
+	//
+	// Implementations MAY choose to implement this ordering strictly, rejecting
+	// any combination or order of filters that can not be supported. If implementations
+	// choose a strict interpretation of filter ordering, they MUST clearly document
+	// that behavior.
+	//
+	// To reject an invalid combination or order of filters, implementations SHOULD
+	// consider the Route Rules with this configuration invalid. If all Route Rules
+	// in a Route are invalid, the entire Route would be considered invalid. If only
+	// a portion of Route Rules are invalid, implementations MUST set the
+	// "PartiallyInvalid" condition for the Route.
 	//
 	// Conformance-levels at this level are defined based on the type of filter:
 	//
@@ -251,6 +272,11 @@ type HTTPRouteRule struct {
 	// invalid, 50 percent of traffic must receive a 500. Implementations may
 	// choose how that 50 percent is determined.
 	//
+	// When a HTTPBackendRef refers to a Service that has no ready endpoints,
+	// implementations SHOULD return a 503 for requests to that backend instead.
+	// If an implementation chooses to do this, all of the above rules for 500 responses
+	// MUST also apply for responses that return a 503.
+	//
 	// Support: Core for Kubernetes Service
 	//
 	// Support: Extended for Kubernetes ServiceImport
@@ -268,13 +294,28 @@ type HTTPRouteRule struct {
 	// Support: Extended
 	//
 	// +optional
-	// <gateway:experimental>
 	Timeouts *HTTPRouteTimeouts `json:"timeouts,omitempty"`
+
+	// Retry defines the configuration for when to retry an HTTP request.
+	//
+	// Support: Extended
+	//
+	// +optional
+	// <gateway:experimental>
+	Retry *HTTPRouteRetry `json:"retry,omitempty"`
+
+	// SessionPersistence defines and configures session persistence
+	// for the route rule.
+	//
+	// Support: Extended
+	//
+	// +optional
+	// <gateway:experimental>
+	SessionPersistence *SessionPersistence `json:"sessionPersistence,omitempty"`
 }
 
 // HTTPRouteTimeouts defines timeouts that can be configured for an HTTPRoute.
 // Timeout values are represented with Gateway API Duration formatting.
-// Specifying a zero value such as "0s" is interpreted as no timeout.
 //
 // +kubebuilder:validation:XValidation:message="backendRequest timeout cannot be longer than request timeout",rule="!(has(self.request) && has(self.backendRequest) && duration(self.request) != duration('0s') && duration(self.backendRequest) > duration(self.request))"
 type HTTPRouteTimeouts struct {
@@ -286,12 +327,18 @@ type HTTPRouteTimeouts struct {
 	// `HTTPRoute` will cause a timeout if a client request is taking longer than 10 seconds
 	// to complete.
 	//
+	// Setting a timeout to the zero duration (e.g. "0s") SHOULD disable the timeout
+	// completely. Implementations that cannot completely disable the timeout MUST
+	// instead interpret the zero duration as the longest possible value to which
+	// the timeout can be set.
+	//
 	// This timeout is intended to cover as close to the whole request-response transaction
 	// as possible although an implementation MAY choose to start the timeout after the entire
 	// request stream has been received instead of immediately after the transaction is
 	// initiated by the client.
 	//
-	// When this field is unspecified, request timeout behavior is implementation-specific.
+	// The value of Request is a Gateway API Duration string as defined by GEP-2257. When this
+	// field is unspecified, request timeout behavior is implementation-specific.
 	//
 	// Support: Extended
 	//
@@ -302,18 +349,114 @@ type HTTPRouteTimeouts struct {
 	// to a backend. This covers the time from when the request first starts being
 	// sent from the gateway to when the full response has been received from the backend.
 	//
+	// Setting a timeout to the zero duration (e.g. "0s") SHOULD disable the timeout
+	// completely. Implementations that cannot completely disable the timeout MUST
+	// instead interpret the zero duration as the longest possible value to which
+	// the timeout can be set.
+	//
 	// An entire client HTTP transaction with a gateway, covered by the Request timeout,
 	// may result in more than one call from the gateway to the destination backend,
 	// for example, if automatic retries are supported.
 	//
-	// Because the Request timeout encompasses the BackendRequest timeout, the value of
-	// BackendRequest must be <= the value of Request timeout.
+	// The value of BackendRequest must be a Gateway API Duration string as defined by
+	// GEP-2257.  When this field is unspecified, its behavior is implementation-specific;
+	// when specified, the value of BackendRequest must be no more than the value of the
+	// Request timeout (since the Request timeout encompasses the BackendRequest timeout).
 	//
 	// Support: Extended
 	//
 	// +optional
 	BackendRequest *Duration `json:"backendRequest,omitempty"`
 }
+
+// HTTPRouteRetry defines retry configuration for an HTTPRoute.
+//
+// Implementations SHOULD retry on connection errors (disconnect, reset, timeout,
+// TCP failure) if a retry stanza is configured.
+type HTTPRouteRetry struct {
+	// Codes defines the HTTP response status codes for which a backend request
+	// should be retried.
+	//
+	// Support: Extended
+	//
+	// +optional
+	Codes []HTTPRouteRetryStatusCode `json:"codes,omitempty"`
+
+	// Attempts specifies the maxmimum number of times an individual request
+	// from the gateway to a backend should be retried.
+	//
+	// If the maximum number of retries has been attempted without a successful
+	// response from the backend, the Gateway MUST return an error.
+	//
+	// When this field is unspecified, the number of times to attempt to retry
+	// a backend request is implementation-specific.
+	//
+	// Support: Extended
+	//
+	// +optional
+	Attempts *int `json:"attempts,omitempty"`
+
+	// Backoff specifies the minimum duration a Gateway should wait between
+	// retry attempts and is represented in Gateway API Duration formatting.
+	//
+	// For example, setting the `rules[].retry.backoff` field to the value
+	// `100ms` will cause a backend request to first be retried approximately
+	// 100 milliseconds after timing out or receiving a response code configured
+	// to be retryable.
+	//
+	// An implementation MAY use an exponential or alternative backoff strategy
+	// for subsequent retry attempts, MAY cap the maximum backoff duration to
+	// some amount greater than the specified minimum, and MAY add arbitrary
+	// jitter to stagger requests, as long as unsuccessful backend requests are
+	// not retried before the configured minimum duration.
+	//
+	// If a Request timeout (`rules[].timeouts.request`) is configured on the
+	// route, the entire duration of the initial request and any retry attempts
+	// MUST not exceed the Request timeout duration. If any retry attempts are
+	// still in progress when the Request timeout duration has been reached,
+	// these SHOULD be canceled if possible and the Gateway MUST immediately
+	// return a timeout error.
+	//
+	// If a BackendRequest timeout (`rules[].timeouts.backendRequest`) is
+	// configured on the route, any retry attempts which reach the configured
+	// BackendRequest timeout duration without a response SHOULD be canceled if
+	// possible and the Gateway should wait for at least the specified backoff
+	// duration before attempting to retry the backend request again.
+	//
+	// If a BackendRequest timeout is _not_ configured on the route, retry
+	// attempts MAY time out after an implementation default duration, or MAY
+	// remain pending until a configured Request timeout or implementation
+	// default duration for total request time is reached.
+	//
+	// When this field is unspecified, the time to wait between retry attempts
+	// is implementation-specific.
+	//
+	// Support: Extended
+	//
+	// +optional
+	Backoff *Duration `json:"backoff,omitempty"`
+}
+
+// HTTPRouteRetryStatusCode defines an HTTP response status code for
+// which a backend request should be retried.
+//
+// Implementations MUST support the following status codes as retryable:
+//
+// * 500
+// * 502
+// * 503
+// * 504
+//
+// Implementations MAY support specifying additional discrete values in the
+// 500-599 range.
+//
+// Implementations MAY support specifying discrete values in the 400-499 range,
+// which are often inadvisable to retry.
+//
+// +kubebuilder:validation:Minimum:=400
+// +kubebuilder:validation:Maximum:=599
+// <gateway:experimental>
+type HTTPRouteRetryStatusCode int
 
 // PathMatchType specifies the semantics of how HTTP paths should be compared.
 // Valid PathMatchType values, along with their support levels, are:
@@ -711,6 +854,8 @@ type HTTPRouteFilter struct {
 	// Support: Extended
 	//
 	// +optional
+	//
+	// <gateway:experimental:validation:XValidation:message="Only one of percent or fraction may be specified in HTTPRequestMirrorFilter",rule="!(has(self.percent) && has(self.fraction))">
 	RequestMirror *HTTPRequestMirrorFilter `json:"requestMirror,omitempty"`
 
 	// RequestRedirect defines a schema for a filter that responds to the
@@ -821,7 +966,7 @@ type HTTPHeader struct {
 // HTTPHeaderFilter defines a filter that modifies the headers of an HTTP
 // request or response. Only one action for a given header name is permitted.
 // Filters specifying multiple actions of the same or different type for any one
-// header name are invalid and will be rejected by the webhook if installed.
+// header name are invalid and will be rejected by CRD validation.
 // Configuration to set or add multiple values for a header must use RFC 7230
 // header value formatting, separating each value with a comma.
 type HTTPHeaderFilter struct {
@@ -1107,6 +1252,29 @@ type HTTPRequestMirrorFilter struct {
 	//
 	// Support: Implementation-specific for any other resource
 	BackendRef BackendObjectReference `json:"backendRef"`
+
+	// Percent represents the percentage of requests that should be
+	// mirrored to BackendRef. Its minimum value is 0 (indicating 0% of
+	// requests) and its maximum value is 100 (indicating 100% of requests).
+	//
+	// Only one of Fraction or Percent may be specified. If neither field
+	// is specified, 100% of requests will be mirrored.
+	//
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=100
+	// <gateway:experimental>
+	Percent *int32 `json:"percent,omitempty"`
+
+	// Fraction represents the fraction of requests that should be
+	// mirrored to BackendRef.
+	//
+	// Only one of Fraction or Percent may be specified. If neither field
+	// is specified, 100% of requests will be mirrored.
+	//
+	// +optional
+	// <gateway:experimental>
+	Fraction *Fraction `json:"fraction,omitempty"`
 }
 
 // HTTPBackendRef defines how a HTTPRoute forwards a HTTP request.
