@@ -28,8 +28,6 @@ func (r *reconciler) ensureIstio(ctx context.Context, gatewayclass *gatewayapiv1
 		return false, nil, err
 	}
 
-	// TODO If we have a current CR with a different owner reference,
-	// should we append the new gatewayclass?
 	ownerRef := metav1.OwnerReference{
 		APIVersion: gatewayapiv1.SchemeGroupVersion.String(),
 		Kind:       "GatewayClass",
@@ -195,12 +193,24 @@ func (r *reconciler) updateIstio(ctx context.Context, current, desired *sailv1.I
 // istioChanged returns a Boolean indicating whether the current Istio CR
 // matches the expected CR, and the updated CR if they do not match.
 func istioChanged(current, expected *sailv1.Istio) (bool, *sailv1.Istio) {
-	if cmp.Equal(current.Spec, expected.Spec, istioCmpOpts...) {
+	changed := false
+
+	if !cmp.Equal(current.Spec, expected.Spec, istioCmpOpts...) {
+		changed = true
+	}
+
+	if !cmp.Equal(current.OwnerReferences, expected.OwnerReferences, cmpopts.EquateEmpty()) {
+		log.Info("Unexpected ownerReferences, possibly caused by a logic error in this controller or tampering by another entity", "name", current.Name, "ownerReferences", current.OwnerReferences)
+		changed = true
+	}
+
+	if !changed {
 		return false, nil
 	}
 
 	updated := current.DeepCopy()
 	updated.Spec = expected.Spec
+	updated.OwnerReferences = expected.OwnerReferences
 
 	return true, updated
 }
