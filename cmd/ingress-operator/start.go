@@ -32,7 +32,9 @@ import (
 const (
 	// defaultTrustedCABundle is the fully qualified path of the trusted CA bundle
 	// that is mounted from configmap openshift-ingress-operator/trusted-ca.
-	defaultTrustedCABundle = "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem"
+	defaultTrustedCABundle           = "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem"
+	defaultGatewayAPIOperatorChannel = "stable"
+	defaultGatewayAPIOperatorVersion = "servicemeshoperator.v2.6.2"
 )
 
 type StartOptions struct {
@@ -51,6 +53,10 @@ type StartOptions struct {
 	CanaryImage string
 	// ReleaseVersion is the cluster version which the operator will converge to.
 	ReleaseVersion string
+	// GatewayAPIOperatorChannel is the release channel of the Gateway API implementation to install.
+	GatewayAPIOperatorChannel string
+	// GatewayAPIOperatorVersion is the name and release of the Gateway API implementation to install.
+	GatewayAPIOperatorVersion string
 }
 
 func NewStartCommand() *cobra.Command {
@@ -74,6 +80,8 @@ func NewStartCommand() *cobra.Command {
 	cmd.Flags().StringVarP(&options.ReleaseVersion, "release-version", "", statuscontroller.UnknownVersionValue, "the release version the operator should converge to (required)")
 	cmd.Flags().StringVarP(&options.MetricsListenAddr, "metrics-listen-addr", "", "127.0.0.1:60000", "metrics endpoint listen address (required)")
 	cmd.Flags().StringVarP(&options.ShutdownFile, "shutdown-file", "s", defaultTrustedCABundle, "if provided, shut down the operator when this file changes")
+	cmd.Flags().StringVarP(&options.GatewayAPIOperatorChannel, "gateway-api-operator-channel", "", defaultGatewayAPIOperatorChannel, "release channel of the Gateway API implementation to install")
+	cmd.Flags().StringVarP(&options.GatewayAPIOperatorVersion, "gateway-api-operator-version", "", defaultGatewayAPIOperatorVersion, "name and release of the Gateway API implementation to install")
 
 	if err := cmd.MarkFlagRequired("namespace"); err != nil {
 		panic(err)
@@ -118,10 +126,12 @@ func start(opts *StartOptions) error {
 	defer cancel()
 
 	operatorConfig := operatorconfig.Config{
-		OperatorReleaseVersion: opts.ReleaseVersion,
-		Namespace:              opts.OperatorNamespace,
-		IngressControllerImage: opts.IngressControllerImage,
-		CanaryImage:            opts.CanaryImage,
+		OperatorReleaseVersion:    opts.ReleaseVersion,
+		Namespace:                 opts.OperatorNamespace,
+		IngressControllerImage:    opts.IngressControllerImage,
+		CanaryImage:               opts.CanaryImage,
+		GatewayAPIOperatorChannel: opts.GatewayAPIOperatorChannel,
+		GatewayAPIOperatorVersion: opts.GatewayAPIOperatorVersion,
 	}
 
 	// Start operator metrics.

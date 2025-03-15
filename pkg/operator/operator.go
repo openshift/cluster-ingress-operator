@@ -293,8 +293,10 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	// the manager; the gatewayapi controller starts it after it creates the
 	// Gateway API CRDs.
 	gatewayClassController, err := gatewayclasscontroller.NewUnmanaged(mgr, gatewayclasscontroller.Config{
-		OperatorNamespace: config.Namespace,
-		OperandNamespace:  operatorcontroller.DefaultOperandNamespace,
+		OperatorNamespace:         config.Namespace,
+		OperandNamespace:          operatorcontroller.DefaultOperandNamespace,
+		GatewayAPIOperatorChannel: config.GatewayAPIOperatorChannel,
+		GatewayAPIOperatorVersion: config.GatewayAPIOperatorVersion,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gatewayclass controller: %w", err)

@@ -178,6 +178,7 @@ rules:
   - operators.coreos.com
   resources:
   - subscriptions
+  - installplans
   verbs:
   - '*'
 

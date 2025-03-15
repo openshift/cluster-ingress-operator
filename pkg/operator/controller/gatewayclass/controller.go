@@ -77,6 +77,28 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 		enqueueRequestForDefaultGatewayClassController(config.OperandNamespace), isServiceMeshSubscription)); err != nil {
 		return nil, err
 	}
+
+	isOurInstallPlan := predicate.NewPredicateFuncs(func(o client.Object) bool {
+		installPlan := o.(*operatorsv1alpha1.InstallPlan)
+		if len(installPlan.Spec.ClusterServiceVersionNames) > 0 {
+			for _, csv := range installPlan.Spec.ClusterServiceVersionNames {
+				if csv == config.GatewayAPIOperatorVersion {
+					return true
+				}
+			}
+		}
+		return false
+	})
+	// Check the approved status of an InstallPlan. The ingress operator only needs to potentially move install plans
+	// from Approved=false to Approved=true, so we can filter out all approved plans at the Watch() level.
+	isInstallPlanApproved := predicate.NewPredicateFuncs(func(o client.Object) bool {
+		installPlan := o.(*operatorsv1alpha1.InstallPlan)
+		return installPlan.Spec.Approved
+	})
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorsv1alpha1.InstallPlan{}, enqueueRequestForDefaultGatewayClassController(config.OperatorNamespace), isOurInstallPlan, predicate.Not(isInstallPlanApproved))); err != nil {
+		return nil, err
+	}
+
 	gatewayClassController = c
 	return c, nil
 }
@@ -89,6 +111,10 @@ type Config struct {
 	OperatorNamespace string
 	// OperandNamespace is the namespace in which Istio should be deployed.
 	OperandNamespace string
+	// GatewayAPIOperatorChannel is the release channel of the Gateway API implementation to install.
+	GatewayAPIOperatorChannel string
+	// GatewayAPIOperatorVersion is the name and release of the Gateway API implementation to install.
+	GatewayAPIOperatorVersion string
 }
 
 // reconciler reconciles gatewayclasses.
@@ -130,6 +156,9 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	var errs []error
 	if _, _, err := r.ensureServiceMeshOperatorSubscription(ctx); err != nil {
 		errs = append(errs, fmt.Errorf("failed to ensure ServiceMeshOperatorSubscription: %w", err))
+	}
+	if _, _, err := r.ensureServiceMeshOperatorInstallPlan(ctx); err != nil {
+		errs = append(errs, err)
 	}
 	if _, _, err := r.ensureServiceMeshControlPlane(ctx, &gatewayclass); err != nil {
 		errs = append(errs, err)
