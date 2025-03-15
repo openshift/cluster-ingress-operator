@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"net"
 	"net/http"
 	"strings"
@@ -695,9 +696,15 @@ func assertHttpRouteConnection(t *testing.T, hostname string, gateway *gatewayap
 		}
 	}
 
+	var (
+		statusCode int
+		body       string
+		headers    http.Header
+	)
 	// Wait for http route to respond, and when it does, check for the status code.
 	if err := wait.PollUntilContextTimeout(context.Background(), 5*time.Second, 5*time.Minute, false, func(context context.Context) (bool, error) {
-		statusCode, err := getHttpResponse(client, hostname)
+		var err error
+		statusCode, headers, body, err = getHTTPResponse(client, hostname)
 		if err != nil {
 			t.Logf("GET %s failed: %v, retrying...", hostname, err)
 			return false, nil
@@ -710,23 +717,31 @@ func assertHttpRouteConnection(t *testing.T, hostname string, gateway *gatewayap
 		return true, nil
 
 	}); err != nil {
+		if statusCode != 0 {
+			t.Log("Response headers for most recent request:", headers)
+			t.Log("Reponse body for most recent request:", body)
+		}
 		t.Fatalf("error contacting %s's endpoint: %v", hostname, err)
 	}
 
 	return nil
 }
 
-func getHttpResponse(client *http.Client, name string) (int, error) {
+func getHTTPResponse(client *http.Client, name string) (int, http.Header, string, error) {
 	// Send the HTTP request.
 	response, err := client.Get("http://" + name)
 	if err != nil {
-		return 0, fmt.Errorf("GET %s failed: %v", name, err)
+		return 0, nil, "", fmt.Errorf("GET %s failed: %v", name, err)
 	}
 
 	// Close response body.
 	defer response.Body.Close()
+	body, err := ioutil.ReadAll(response.Body)
+	if err != nil {
+		return 0, nil, "", fmt.Errorf("failed to read response body: %w", err)
+	}
 
-	return response.StatusCode, nil
+	return response.StatusCode, response.Header, string(body), nil
 }
 
 // assertCatalogSource checks if the CatalogSource of the given name exists,
