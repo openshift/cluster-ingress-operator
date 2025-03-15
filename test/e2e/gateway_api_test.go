@@ -47,6 +47,10 @@ var crdNames = []string{
 	"referencegrants.gateway.networking.k8s.io",
 }
 
+var xcrdNames = []string{
+	"listenersets.gateway.networking.x-k8s.io",
+}
+
 // Global variables for testing.
 // The default route name to be constructed.
 var defaultRoutename = ""
@@ -82,6 +86,9 @@ func TestGatewayAPI(t *testing.T) {
 		}
 		// TODO: Uninstall OSSM after test is completed.
 	})
+
+	// Create experimental CRDs which can be used in multiple tests.
+	ensureExperimentalCRDs(t)
 
 	t.Run("testGatewayAPIResources", testGatewayAPIResources)
 	if gatewayAPIControllerEnabled {
@@ -195,7 +202,7 @@ func testGatewayAPIResourcesProtection(t *testing.T) {
 
 	// Create test CRDs.
 	var testCRDs []*apiextensionsv1.CustomResourceDefinition
-	for _, name := range crdNames {
+	for _, name := range append(crdNames, xcrdNames...) {
 		testCRDs = append(testCRDs, buildGWAPICRDFromName(name))
 	}
 
@@ -359,4 +366,24 @@ func ensureGatewayObjectSuccess(t *testing.T, ns *corev1.Namespace) []string {
 	}
 
 	return errs
+}
+
+// ensureExperimentalCRDs creates experimental Gateway API custom resource definitions.
+func ensureExperimentalCRDs(t *testing.T) {
+	t.Helper()
+
+	vm := newVAPManager(t, gwapiCRDVAPName)
+	if err, recoverFn := vm.disable(); err != nil {
+		defer recoverFn()
+		t.Fatalf("failed to disable vap: %v", err)
+	}
+	defer vm.enable()
+
+	for _, crdName := range xcrdNames {
+		if _, err := createCRD(crdName); err != nil {
+			t.Fatalf("failed to create experimental crd %q: %v", crdName, err)
+		} else {
+			t.Logf("created experimental crd %q", crdName)
+		}
+	}
 }
