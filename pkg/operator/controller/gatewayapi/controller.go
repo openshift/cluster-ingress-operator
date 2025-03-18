@@ -2,6 +2,7 @@ package gatewayapi
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
@@ -25,7 +26,10 @@ import (
 )
 
 const (
-	controllerName = "gatewayapi_controller"
+	controllerName                    = "gatewayapi_controller"
+	experimantalGatewayAPIGroupName   = "gateway.networking.x-k8s.io"
+	crdAPIGroupIndexFieldName         = "crdAPIGroup"
+	gatewayCRDAPIGroupIndexFieldValue = "gateway"
 )
 
 var log = logf.Logger.WithName(controllerName)
@@ -60,14 +64,33 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 		}}
 	}
 
-	// watch for CRDs
-	crdPredicate := predicate.NewPredicateFuncs(func(o client.Object) bool {
-		return o.(*apiextensionsv1.CustomResourceDefinition).Spec.Group == gatewayapiv1.GroupName
-	})
+	isGatewayAPICRD := func(o client.Object) bool {
+		crd := o.(*apiextensionsv1.CustomResourceDefinition)
+		return crd.Spec.Group == gatewayapiv1.GroupName || crd.Spec.Group == experimantalGatewayAPIGroupName
+	}
+	crdPredicate := predicate.NewPredicateFuncs(isGatewayAPICRD)
 
+	// watch for CRDs
 	if err := c.Watch(source.Kind[client.Object](operatorCache, &apiextensionsv1.CustomResourceDefinition{}, handler.EnqueueRequestsFromMapFunc(toFeatureGate), crdPredicate)); err != nil {
 		return nil, err
 	}
+
+	// Index Gateway API CRDs by the "spec.group" field
+	// to enable efficient filtering during list operations.
+	// Currently, only Gateway API groups have a dedicated index field.
+	if err := mgr.GetFieldIndexer().IndexField(
+		context.Background(),
+		&apiextensionsv1.CustomResourceDefinition{},
+		crdAPIGroupIndexFieldName,
+		client.IndexerFunc(func(o client.Object) []string {
+			if isGatewayAPICRD(o) {
+				return []string{gatewayCRDAPIGroupIndexFieldValue}
+			}
+			return []string{}
+		})); err != nil {
+		return nil, fmt.Errorf("failed to create index for custom resource definitions: %w", err)
+	}
+
 	return c, nil
 }
 
@@ -104,6 +127,10 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	}
 
 	if err := r.ensureGatewayAPICRDs(ctx); err != nil {
+		return reconcile.Result{}, err
+	}
+
+	if err := r.deleteUnmanagedGatewayAPICRDs(ctx); err != nil {
 		return reconcile.Result{}, err
 	}
 
