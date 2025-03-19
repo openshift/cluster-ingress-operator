@@ -11,17 +11,19 @@ if [[ "${BUNDLE_VERSION}" == "null" ]]; then
 fi
 echo "Gateway API CRD bundle-version: ${BUNDLE_VERSION}"
 
-echo "Create GatewayClass gateway-conformance"
+GATEWAYCLASS_NAME=conformance
+
+echo "Create GatewayClass \"${GATEWAYCLASS_NAME}\""
 oc apply -f -<<EOF
 apiVersion: gateway.networking.k8s.io/v1
 kind: GatewayClass
 metadata:
-  name: gateway-conformance
+  name: conformance
 spec:
   controllerName: openshift.io/gateway-controller
 EOF
 
-oc wait --for=condition=Accepted=true gatewayclass/gateway-conformance --timeout=300s
+oc wait --for=condition=Accepted=true "gatewayclass/$GATEWAYCLASS_NAME" --timeout=300s
 
 echo "All gatewayclass status:"
 oc get gatewayclass -A
@@ -58,4 +60,4 @@ sed -i -e '/MaxTimeToConsistency:/ s/30/90/' conformance/utils/config/timeout.go
 SUPPORTED_FEATURES="Gateway,HTTPRoute,ReferenceGrant,GatewayPort8080,HTTPRouteQueryParamMatching,HTTPRouteMethodMatching,HTTPRouteResponseHeaderModification,HTTPRoutePortRedirect,HTTPRouteSchemeRedirect,HTTPRoutePathRedirect,HTTPRouteHostRewrite,HTTPRoutePathRewrite,HTTPRouteRequestMirror,HTTPRouteRequestMultipleMirrors,HTTPRouteBackendProtocolH2C,HTTPRouteBackendProtocolWebSocket"
 
 echo "Start Gateway API Conformance Testing"
-go test ./conformance -v -timeout 10m -run TestConformance -args "--supported-features=${SUPPORTED_FEATURES}"
+go test ./conformance -v -timeout 10m -run TestConformance -args "--supported-features=${SUPPORTED_FEATURES}" "--gateway-class=${GATEWAYCLASS_NAME}"
