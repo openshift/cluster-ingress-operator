@@ -15,6 +15,7 @@ import (
 
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 
@@ -57,7 +58,7 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 	notIstioGatewayClass := predicate.NewPredicateFuncs(func(o client.Object) bool {
 		return o.GetName() != "istio"
 	})
-	if err := c.Watch(source.Kind[client.Object](operatorCache, &gatewayapiv1.GatewayClass{}, &handler.EnqueueRequestForObject{}, isOurGatewayClass, notIstioGatewayClass)); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &gatewayapiv1.GatewayClass{}, reconciler.enqueueRequestForSomeGatewayClass(), isOurGatewayClass, notIstioGatewayClass)); err != nil {
 		return nil, err
 	}
 
@@ -65,7 +66,7 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 		return o.GetName() == operatorcontroller.ServiceMeshOperatorSubscriptionName().Name
 	})
 	if err = c.Watch(source.Kind[client.Object](operatorCache, &operatorsv1alpha1.Subscription{},
-		enqueueRequestForDefaultGatewayClassController(config.OperandNamespace), isServiceMeshSubscription)); err != nil {
+		reconciler.enqueueRequestForSomeGatewayClass(), isServiceMeshSubscription)); err != nil {
 		return nil, err
 	}
 
@@ -86,7 +87,7 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 		installPlan := o.(*operatorsv1alpha1.InstallPlan)
 		return installPlan.Spec.Approved
 	})
-	if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorsv1alpha1.InstallPlan{}, enqueueRequestForDefaultGatewayClassController(config.OperatorNamespace), isOurInstallPlan, predicate.Not(isInstallPlanApproved))); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorsv1alpha1.InstallPlan{}, reconciler.enqueueRequestForSomeGatewayClass(), isOurInstallPlan, predicate.Not(isInstallPlanApproved))); err != nil {
 		return nil, err
 	}
 
@@ -119,17 +120,48 @@ type reconciler struct {
 	startIstioWatch sync.Once
 }
 
-func enqueueRequestForDefaultGatewayClassController(namespace string) handler.EventHandler {
+// enqueueRequestForSomeGatewayClass enqueues a reconciliation request for the
+// gatewayclass that has the earliest creation timestamp and that specifies our
+// controller name.
+func (r *reconciler) enqueueRequestForSomeGatewayClass() handler.EventHandler {
 	return handler.EnqueueRequestsFromMapFunc(
-		func(ctx context.Context, a client.Object) []reconcile.Request {
-			return []reconcile.Request{
-				{
-					NamespacedName: types.NamespacedName{
-						Namespace: namespace,
-						Name:      operatorcontroller.OpenShiftDefaultGatewayClassName,
-					},
-				},
+		func(ctx context.Context, _ client.Object) []reconcile.Request {
+			requests := []reconcile.Request{}
+
+			var gatewayClasses gatewayapiv1.GatewayClassList
+			if err := r.cache.List(context.Background(), &gatewayClasses); err != nil {
+				log.Error(err, "Failed to list gatewayclasses")
+
+				return requests
 			}
+
+			var (
+				found  bool
+				oldest metav1.Time
+				name   string
+			)
+			for i := range gatewayClasses.Items {
+				if gatewayClasses.Items[i].Spec.ControllerName != operatorcontroller.OpenShiftGatewayClassControllerName {
+					continue
+				}
+
+				ctime := gatewayClasses.Items[i].CreationTimestamp
+				if !found || ctime.Before(&oldest) {
+					found, oldest, name = true, ctime, gatewayClasses.Items[i].Name
+				}
+			}
+
+			if found {
+				request := reconcile.Request{
+					NamespacedName: types.NamespacedName{
+						Namespace: "", // GatewayClass is cluster-scoped.
+						Name:      name,
+					},
+				}
+				requests = append(requests, request)
+			}
+
+			return requests
 		},
 	)
 }
@@ -162,7 +194,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 			isOurIstio := predicate.NewPredicateFuncs(func(o client.Object) bool {
 				return o.GetName() == operatorcontroller.IstioName(r.config.OperandNamespace).Name
 			})
-			if err = gatewayClassController.Watch(source.Kind[client.Object](r.cache, &sailv1.Istio{}, enqueueRequestForDefaultGatewayClassController(r.config.OperandNamespace), isOurIstio)); err != nil {
+			if err = gatewayClassController.Watch(source.Kind[client.Object](r.cache, &sailv1.Istio{}, r.enqueueRequestForSomeGatewayClass(), isOurIstio)); err != nil {
 				log.Error(err, "failed to watch istios.sailoperator.io", "request", request)
 				errs = append(errs, err)
 			}
