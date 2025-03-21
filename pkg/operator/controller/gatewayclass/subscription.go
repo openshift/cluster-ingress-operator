@@ -21,7 +21,7 @@ import (
 // for servicemeshoperator is present and returns a Boolean indicating whether
 // it exists, the subscription if it exists, and an error value.
 func (r *reconciler) ensureServiceMeshOperatorSubscription(ctx context.Context) (bool, *operatorsv1alpha1.Subscription, error) {
-	name := operatorcontroller.ServiceMeshSubscriptionName()
+	name := operatorcontroller.ServiceMeshOperatorSubscriptionName()
 	have, current, err := r.currentSubscription(ctx, name)
 	if err != nil {
 		return false, nil, err
@@ -54,11 +54,14 @@ func desiredSubscription(name types.NamespacedName, gwapiOperatorChannel, gwapiO
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: name.Namespace,
 			Name:      name.Name,
+			Annotations: map[string]string{
+				operatorcontroller.IngressOperatorOwnedAnnotation: "",
+			},
 		},
 		Spec: &operatorsv1alpha1.SubscriptionSpec{
 			Channel:                gwapiOperatorChannel,
 			InstallPlanApproval:    operatorsv1alpha1.ApprovalManual,
-			Package:                "servicemeshoperator",
+			Package:                "servicemeshoperator3",
 			CatalogSource:          "redhat-operators",
 			CatalogSourceNamespace: "openshift-marketplace",
 			StartingCSV:            gwapiOperatorVersion,
@@ -144,7 +147,7 @@ func (r *reconciler) ensureServiceMeshOperatorInstallPlan(ctx context.Context) (
 // currentInstallPlan returns the InstallPlan that describes installing the expected version of the GatewayAPI
 // implementation, if one exists.
 func (r *reconciler) currentInstallPlan(ctx context.Context) (bool, *operatorsv1alpha1.InstallPlan, error) {
-	_, subscription, err := r.currentSubscription(ctx, operatorcontroller.ServiceMeshSubscriptionName())
+	_, subscription, err := r.currentSubscription(ctx, operatorcontroller.ServiceMeshOperatorSubscriptionName())
 	if err != nil {
 		return false, nil, err
 	}

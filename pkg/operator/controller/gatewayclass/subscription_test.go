@@ -48,8 +48,8 @@ func Test_ensureServiceMeshOperatorInstallPlan(t *testing.T) {
 			existingObjects: []runtime.Object{
 				&operatorsv1alpha1.Subscription{
 					ObjectMeta: metav1.ObjectMeta{
-						Namespace: operatorcontroller.ServiceMeshSubscriptionName().Namespace,
-						Name:      operatorcontroller.ServiceMeshSubscriptionName().Name,
+						Namespace: operatorcontroller.ServiceMeshOperatorSubscriptionName().Namespace,
+						Name:      operatorcontroller.ServiceMeshOperatorSubscriptionName().Name,
 						UID:       "foobar",
 					},
 					Spec: &operatorsv1alpha1.SubscriptionSpec{
@@ -90,8 +90,8 @@ func Test_ensureServiceMeshOperatorInstallPlan(t *testing.T) {
 			existingObjects: []runtime.Object{
 				&operatorsv1alpha1.Subscription{
 					ObjectMeta: metav1.ObjectMeta{
-						Namespace: operatorcontroller.ServiceMeshSubscriptionName().Namespace,
-						Name:      operatorcontroller.ServiceMeshSubscriptionName().Name,
+						Namespace: operatorcontroller.ServiceMeshOperatorSubscriptionName().Namespace,
+						Name:      operatorcontroller.ServiceMeshOperatorSubscriptionName().Name,
 						UID:       "foobar",
 					},
 					Spec: &operatorsv1alpha1.SubscriptionSpec{
@@ -153,8 +153,8 @@ func Test_ensureServiceMeshOperatorInstallPlan(t *testing.T) {
 			existingObjects: []runtime.Object{
 				&operatorsv1alpha1.Subscription{
 					ObjectMeta: metav1.ObjectMeta{
-						Namespace: operatorcontroller.ServiceMeshSubscriptionName().Namespace,
-						Name:      operatorcontroller.ServiceMeshSubscriptionName().Name,
+						Namespace: operatorcontroller.ServiceMeshOperatorSubscriptionName().Namespace,
+						Name:      operatorcontroller.ServiceMeshOperatorSubscriptionName().Name,
 						UID:       "foobar",
 					},
 					Spec: &operatorsv1alpha1.SubscriptionSpec{
@@ -234,8 +234,8 @@ func Test_ensureServiceMeshOperatorInstallPlan(t *testing.T) {
 			existingObjects: []runtime.Object{
 				&operatorsv1alpha1.Subscription{
 					ObjectMeta: metav1.ObjectMeta{
-						Namespace: operatorcontroller.ServiceMeshSubscriptionName().Namespace,
-						Name:      operatorcontroller.ServiceMeshSubscriptionName().Name,
+						Namespace: operatorcontroller.ServiceMeshOperatorSubscriptionName().Namespace,
+						Name:      operatorcontroller.ServiceMeshOperatorSubscriptionName().Name,
 						UID:       "foobar",
 					},
 					Spec: &operatorsv1alpha1.SubscriptionSpec{
@@ -278,8 +278,8 @@ func Test_ensureServiceMeshOperatorInstallPlan(t *testing.T) {
 			existingObjects: []runtime.Object{
 				&operatorsv1alpha1.Subscription{
 					ObjectMeta: metav1.ObjectMeta{
-						Namespace: operatorcontroller.ServiceMeshSubscriptionName().Namespace,
-						Name:      operatorcontroller.ServiceMeshSubscriptionName().Name,
+						Namespace: operatorcontroller.ServiceMeshOperatorSubscriptionName().Namespace,
+						Name:      operatorcontroller.ServiceMeshOperatorSubscriptionName().Name,
 						UID:       "foobar",
 					},
 					Spec: &operatorsv1alpha1.SubscriptionSpec{

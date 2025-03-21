@@ -60,15 +60,12 @@ func Test_Reconcile(t *testing.T) {
 			Port:     gatewayapiv1.PortNumber(port),
 		}
 	}
-	svc := func(name string, labels, selector map[string]string, ingresses ...corev1.LoadBalancerIngress) *corev1.Service {
+	svc := func(name string, labels map[string]string, ingresses ...corev1.LoadBalancerIngress) *corev1.Service {
 		return &corev1.Service{
 			ObjectMeta: metav1.ObjectMeta{
 				Labels:    labels,
 				Namespace: "openshift-ingress",
 				Name:      name,
-			},
-			Spec: corev1.ServiceSpec{
-				Selector: selector,
 			},
 			Status: corev1.ServiceStatus{
 				LoadBalancer: corev1.LoadBalancerStatus{
@@ -77,11 +74,9 @@ func Test_Reconcile(t *testing.T) {
 			},
 		}
 	}
-	gatewayManagedLabel := map[string]string{
-		"gateway.istio.io/managed": "example-gateway",
-	}
-	exampleGatewayLabel := map[string]string{
-		"istio.io/gateway-name": "example-gateway",
+	exampleManagedGatewayLabel := map[string]string{
+		"gateway.istio.io/managed":               "openshift.io-gateway-controller",
+		"gateway.networking.k8s.io/gateway-name": "example-gateway",
 	}
 	ingHost := func(hostname string) corev1.LoadBalancerIngress {
 		return corev1.LoadBalancerIngress{
@@ -126,7 +121,7 @@ func Test_Reconcile(t *testing.T) {
 			existingObjects: []runtime.Object{
 				infraConfig,
 				gw("example-gateway", l("stage-http", "*.stage.example.com", 80)),
-				svc("example-gateway", gatewayManagedLabel, exampleGatewayLabel, ingHost("lb.example.com")),
+				svc("example-gateway", exampleManagedGatewayLabel, ingHost("lb.example.com")),
 			},
 			reconcileRequest: req("openshift-ingress", "example-gateway"),
 			expectCreate:     []client.Object{},
@@ -139,7 +134,7 @@ func Test_Reconcile(t *testing.T) {
 			existingObjects: []runtime.Object{
 				dnsConfig,
 				gw("example-gateway", l("stage-http", "*.stage.example.com", 80)),
-				svc("example-gateway", gatewayManagedLabel, exampleGatewayLabel, ingHost("lb.example.com")),
+				svc("example-gateway", exampleManagedGatewayLabel, ingHost("lb.example.com")),
 			},
 			reconcileRequest: req("openshift-ingress", "example-gateway"),
 			expectCreate:     []client.Object{},
@@ -152,7 +147,7 @@ func Test_Reconcile(t *testing.T) {
 			existingObjects: []runtime.Object{
 				dnsConfig, infraConfig,
 				gw("example-gateway"),
-				svc("example-gateway", gatewayManagedLabel, exampleGatewayLabel, ingHost("lb.example.com")),
+				svc("example-gateway", exampleManagedGatewayLabel, ingHost("lb.example.com")),
 			},
 			reconcileRequest: req("openshift-ingress", "example-gateway"),
 			expectCreate:     []client.Object{},
@@ -169,12 +164,12 @@ func Test_Reconcile(t *testing.T) {
 					l("stage-https", "*.stage.example.com", 443),
 					l("prod-https", "*.prod.example.com", 443),
 				),
-				svc("example-gateway", gatewayManagedLabel, exampleGatewayLabel, ingHost("lb.example.com")),
+				svc("example-gateway", exampleManagedGatewayLabel, ingHost("lb.example.com")),
 			},
 			reconcileRequest: req("openshift-ingress", "example-gateway"),
 			expectCreate: []client.Object{
-				dnsrecord("example-gateway-76456f8647-wildcard", "*.prod.example.com.", iov1.ManagedDNS, exampleGatewayLabel, "lb.example.com"),
-				dnsrecord("example-gateway-64754456b8-wildcard", "*.stage.example.com.", iov1.ManagedDNS, exampleGatewayLabel, "lb.example.com"),
+				dnsrecord("example-gateway-76456f8647-wildcard", "*.prod.example.com.", iov1.ManagedDNS, exampleManagedGatewayLabel, "lb.example.com"),
+				dnsrecord("example-gateway-64754456b8-wildcard", "*.stage.example.com.", iov1.ManagedDNS, exampleManagedGatewayLabel, "lb.example.com"),
 			},
 			expectUpdate: []client.Object{},
 			expectDelete: []client.Object{},
@@ -188,13 +183,13 @@ func Test_Reconcile(t *testing.T) {
 					l("http", "*.example.com", 80),
 					l("https", "*.example.com", 443),
 				),
-				svc("example-gateway", gatewayManagedLabel, exampleGatewayLabel, ingHost("newlb.example.com")),
-				dnsrecord("example-gateway-7bdcfc8f68-wildcard", "*.example.com.", iov1.ManagedDNS, exampleGatewayLabel, "oldlb.example.com"),
+				svc("example-gateway", exampleManagedGatewayLabel, ingHost("newlb.example.com")),
+				dnsrecord("example-gateway-7bdcfc8f68-wildcard", "*.example.com.", iov1.ManagedDNS, exampleManagedGatewayLabel, "oldlb.example.com"),
 			},
 			reconcileRequest: req("openshift-ingress", "example-gateway"),
 			expectCreate:     []client.Object{},
 			expectUpdate: []client.Object{
-				dnsrecord("example-gateway-7bdcfc8f68-wildcard", "*.example.com.", iov1.ManagedDNS, exampleGatewayLabel, "newlb.example.com"),
+				dnsrecord("example-gateway-7bdcfc8f68-wildcard", "*.example.com.", iov1.ManagedDNS, exampleManagedGatewayLabel, "newlb.example.com"),
 			},
 			expectDelete: []client.Object{},
 		},
@@ -206,16 +201,16 @@ func Test_Reconcile(t *testing.T) {
 					"example-gateway",
 					l("http", "*.new.example.com", 80),
 				),
-				svc("example-gateway", gatewayManagedLabel, exampleGatewayLabel, ingHost("lb.example.com")),
-				dnsrecord("example-gateway-64754456b8-wildcard", "*.old.example.com.", iov1.ManagedDNS, exampleGatewayLabel, "lb.example.com"),
+				svc("example-gateway", exampleManagedGatewayLabel, ingHost("lb.example.com")),
+				dnsrecord("example-gateway-64754456b8-wildcard", "*.old.example.com.", iov1.ManagedDNS, exampleManagedGatewayLabel, "lb.example.com"),
 			},
 			reconcileRequest: req("openshift-ingress", "example-gateway"),
 			expectCreate: []client.Object{
-				dnsrecord("example-gateway-68ffc6d64-wildcard", "*.new.example.com.", iov1.ManagedDNS, exampleGatewayLabel, "lb.example.com"),
+				dnsrecord("example-gateway-68ffc6d64-wildcard", "*.new.example.com.", iov1.ManagedDNS, exampleManagedGatewayLabel, "lb.example.com"),
 			},
 			expectUpdate: []client.Object{},
 			expectDelete: []client.Object{
-				dnsrecord("example-gateway-64754456b8-wildcard", "*.old.example.com.", iov1.ManagedDNS, exampleGatewayLabel, "lb.example.com"),
+				dnsrecord("example-gateway-64754456b8-wildcard", "*.old.example.com.", iov1.ManagedDNS, exampleManagedGatewayLabel, "lb.example.com"),
 			},
 		},
 		{
@@ -223,11 +218,11 @@ func Test_Reconcile(t *testing.T) {
 			existingObjects: []runtime.Object{
 				dnsConfig, infraConfig,
 				gw("example-gateway", l("stage-http", "*.stage.example.com", 80), l("stage-https", "*.stage.example.com", 443)),
-				svc("example-gateway", gatewayManagedLabel, exampleGatewayLabel, ingHost("lb.example.com")),
+				svc("example-gateway", exampleManagedGatewayLabel, ingHost("lb.example.com")),
 			},
 			reconcileRequest: req("openshift-ingress", "example-gateway"),
 			expectCreate: []client.Object{
-				dnsrecord("example-gateway-64754456b8-wildcard", "*.stage.example.com.", iov1.ManagedDNS, exampleGatewayLabel, "lb.example.com"),
+				dnsrecord("example-gateway-64754456b8-wildcard", "*.stage.example.com.", iov1.ManagedDNS, exampleManagedGatewayLabel, "lb.example.com"),
 			},
 			expectUpdate: []client.Object{},
 			expectDelete: []client.Object{},
@@ -237,11 +232,11 @@ func Test_Reconcile(t *testing.T) {
 			existingObjects: []runtime.Object{
 				dnsConfig, infraConfig,
 				gw("example-gateway", l("http", "*.foo.com", 80)),
-				svc("example-gateway", gatewayManagedLabel, exampleGatewayLabel, ingHost("lb.example.com")),
+				svc("example-gateway", exampleManagedGatewayLabel, ingHost("lb.example.com")),
 			},
 			reconcileRequest: req("openshift-ingress", "example-gateway"),
 			expectCreate: []client.Object{
-				dnsrecord("example-gateway-795d4b47fd-wildcard", "*.foo.com.", iov1.UnmanagedDNS, exampleGatewayLabel, "lb.example.com"),
+				dnsrecord("example-gateway-795d4b47fd-wildcard", "*.foo.com.", iov1.UnmanagedDNS, exampleManagedGatewayLabel, "lb.example.com"),
 			},
 			expectUpdate: []client.Object{},
 			expectDelete: []client.Object{},

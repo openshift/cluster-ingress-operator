@@ -34,7 +34,7 @@ const (
 	// that is mounted from configmap openshift-ingress-operator/trusted-ca.
 	defaultTrustedCABundle           = "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem"
 	defaultGatewayAPIOperatorChannel = "stable"
-	defaultGatewayAPIOperatorVersion = "servicemeshoperator.v2.6.2"
+	defaultGatewayAPIOperatorVersion = "servicemeshoperator3.v3.0.0"
 )
 
 type StartOptions struct {
