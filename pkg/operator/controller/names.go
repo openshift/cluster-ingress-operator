@@ -22,6 +22,12 @@ const (
 	// GlobalUserSpecifiedConfigNamespace is the namespace for configuring OpenShift.
 	GlobalUserSpecifiedConfigNamespace = "openshift-config"
 
+	// IngressOperatorOwnedAnnotation is the key for the annotation that
+	// indicates that the ingress operator owns the annotated resource.
+	// Note that this annotation is currently only intended to be added to
+	// subscriptions, and only when creating a new subscription.
+	IngressOperatorOwnedAnnotation = "ingress.operator.openshift.io/owned"
+
 	// ControllerDeploymentLabel identifies a deployment as an ingress controller
 	// deployment, and the value is the name of the owning ingress controller.
 	ControllerDeploymentLabel = "ingresscontroller.operator.openshift.io/deployment-ingresscontroller"

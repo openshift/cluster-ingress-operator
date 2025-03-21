@@ -54,6 +54,9 @@ func desiredSubscription(name types.NamespacedName, gwapiOperatorChannel, gwapiO
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: name.Namespace,
 			Name:      name.Name,
+			Annotations: map[string]string{
+				operatorcontroller.IngressOperatorOwnedAnnotation: "",
+			},
 		},
 		Spec: &operatorsv1alpha1.SubscriptionSpec{
 			Channel:                gwapiOperatorChannel,
