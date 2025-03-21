@@ -956,3 +956,21 @@ func (m *vapManager) enable() {
 		m.t.Errorf("failed to find vap %q: %v", m.name, err)
 	}
 }
+
+func bypassVAP(t *testing.T, fns ...func(t *testing.T)) {
+	vm := newVAPManager(t, gwapiCRDVAPName)
+	// Remove the ingress operator's Validating Admission Policy (VAP)
+	// which prevents modifications of Gateway API CRDs
+	// by anything other than the ingress operator.
+	if err, recoverFn := vm.disable(); err != nil {
+		defer recoverFn()
+		t.Fatalf("failed to disable vap: %v", err)
+	}
+	// Put back the VAP to ensure that it does not prevent
+	// the ingress operator from managing Gateway API CRDs.
+	defer vm.enable()
+
+	for _, fn := range fns {
+		fn(t)
+	}
+}

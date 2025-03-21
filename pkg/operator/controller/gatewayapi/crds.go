@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // managedCRDs is a list of CRDs that this controller manages.
@@ -22,6 +23,14 @@ var managedCRDs = []*apiextensionsv1.CustomResourceDefinition{
 	manifests.GatewayCRD(),
 	manifests.HTTPRouteCRD(),
 	manifests.ReferenceGrantCRD(),
+}
+
+// managedCRDMap is a map of CRDs that this controller manages.
+var managedCRDMap = map[string]*apiextensionsv1.CustomResourceDefinition{
+	manifests.GatewayClassCRD().Name:   manifests.GatewayClassCRD(),
+	manifests.GatewayCRD().Name:        manifests.GatewayCRD(),
+	manifests.HTTPRouteCRD().Name:      manifests.HTTPRouteCRD(),
+	manifests.ReferenceGrantCRD().Name: manifests.ReferenceGrantCRD(),
 }
 
 // ensureCRD attempts to ensure that the specified CRD exists and returns a
@@ -68,6 +77,24 @@ func (r *reconciler) ensureGatewayAPICRDs(ctx context.Context) error {
 	return utilerrors.NewAggregate(errs)
 }
 
+// deleteUnmanagedGatewayAPICRDs ensures that no unmanaged Gateway API CRDs exist
+// in the cluster. A Gateway API CRD has "gateway.networking.k8s.io"
+// or "gateway.networking.x-k8s.io" in its "spec.group" field.
+func (r *reconciler) deleteUnmanagedGatewayAPICRDs(ctx context.Context) error {
+	gatewayAPICRDs, err := r.listGatewayAPICRDs(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to list gateway API CRDs: %w", err)
+	}
+
+	var errs []error
+	for _, crd := range gatewayAPICRDs {
+		if _, found := managedCRDMap[crd.Name]; !found {
+			errs = append(errs, r.deleteCRD(ctx, &crd))
+		}
+	}
+	return utilerrors.NewAggregate(errs)
+}
+
 // currentCRD returns a Boolean indicating whether an CRD
 // exists for the IngressController with the given name, as well as the
 // CRD if it does exist and an error value.
@@ -108,6 +135,25 @@ func (r *reconciler) updateCRD(ctx context.Context, current, desired *apiextensi
 	}
 	log.Info("updated CRD", "name", updated.Name, "diff", diff)
 	return true, nil
+}
+
+// deleteCRD attempts to delete the specified CRD and returns an error value.
+func (r *reconciler) deleteCRD(ctx context.Context, crd *apiextensionsv1.CustomResourceDefinition) error {
+	if err := r.client.Delete(ctx, crd); err != nil {
+		return fmt.Errorf("failed to delete CRD %q: %w", crd.Name, err)
+	}
+	log.Info("deleted CRD", "name", crd.Name)
+	return nil
+}
+
+// listGatewayAPICRDs  attempts to list all CRDs which belong to the Gateway API groups (standard and experimental)
+// returns an error value.
+func (r *reconciler) listGatewayAPICRDs(ctx context.Context) ([]apiextensionsv1.CustomResourceDefinition, error) {
+	gatewayAPICRDs := &apiextensionsv1.CustomResourceDefinitionList{}
+	if err := r.client.List(ctx, gatewayAPICRDs, client.MatchingFields{crdAPIGroupIndexFieldName: gatewayCRDAPIGroupIndexFieldValue}); err != nil {
+		return nil, err
+	}
+	return gatewayAPICRDs.Items, nil
 }
 
 // crdChanged checks if the current CRD spec matches

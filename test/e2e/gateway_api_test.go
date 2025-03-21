@@ -87,13 +87,6 @@ func TestGatewayAPI(t *testing.T) {
 		// TODO: Uninstall OSSM after test is completed.
 	})
 
-	// Create test experimental CRDs for the subsequent subtests.
-	// Specifically, `testGatewayAPIResourcesProtection`, which tests VAP protection
-	// for the experimental Gateway API group, needs to check the update verb.
-	// Since an API `Get` is called before the update, the CRD must exist in the cluster,
-	// just like standard Gateway API CRDs.
-	ensureExperimentalCRDs(t)
-
 	t.Run("testGatewayAPIResources", testGatewayAPIResources)
 	if gatewayAPIControllerEnabled {
 		t.Run("testGatewayAPIObjects", testGatewayAPIObjects)
@@ -112,11 +105,15 @@ func testGatewayAPIResources(t *testing.T) {
 	// Make sure all the *.gateway.networking.k8s.io CRDs are available since the FeatureGate is enabled.
 	ensureCRDs(t)
 
-	// Deleting CRDs to ensure they gets recreated again
-	deleteCRDs(t)
+	// Deleting CRDs to ensure they get recreated again.
+	// And creating experimental CRDs to ensure they get deleted.
+	bypassVAP(t, deleteCRDs, ensureExperimentalCRDs)
 
 	// Make sure all the *.gateway.networking.k8s.io CRDs are available since they should be recreated after manual deletion.
 	ensureCRDs(t)
+
+	// Make sure all unmanaged CRDs are deleted by the operator.
+	ensureNoUnmanagedCRDs(t)
 }
 
 // testGatewayAPIIstioInstallation tests that once the Gateway API Custom Resource GatewayClass is created, that
@@ -198,8 +195,12 @@ func testGatewayAPIResourcesProtection(t *testing.T) {
 	}
 
 	// Create test CRDs.
-	var testCRDs []*apiextensionsv1.CustomResourceDefinition
-	for _, name := range append(crdNames, xcrdNames...) {
+	var managedTestCRDs []*apiextensionsv1.CustomResourceDefinition
+	for _, name := range crdNames {
+		managedTestCRDs = append(managedTestCRDs, buildGWAPICRDFromName(name))
+	}
+	testCRDs := append([]*apiextensionsv1.CustomResourceDefinition{}, managedTestCRDs...)
+	for _, name := range xcrdNames {
 		testCRDs = append(testCRDs, buildGWAPICRDFromName(name))
 	}
 
@@ -234,7 +235,9 @@ func testGatewayAPIResourcesProtection(t *testing.T) {
 			}
 
 			// Verify that GatewayAPI CRD update is forbidden.
-			for i := range testCRDs {
+			// Iterate over managed CRDs only because unmanaged ones
+			// are deleted by the operator thus cannot be retrieved from API.
+			for i := range managedTestCRDs {
 				crdName := types.NamespacedName{Name: testCRDs[i].Name}
 				crd := &apiextensionsv1.CustomResourceDefinition{}
 				if err := tc.kclient.Get(context.Background(), crdName, crd); err != nil {
@@ -277,22 +280,19 @@ func ensureCRDs(t *testing.T) {
 	}
 }
 
+// ensureNoUnmanagedCRDs tests that no unmanaged Gateway API custom resource definitions exist.
+func ensureNoUnmanagedCRDs(t *testing.T) {
+	for _, crdName := range xcrdNames {
+		crdVersion, err := assertCrdExists(t, crdName)
+		if err == nil {
+			t.Fatalf("found unexpected crd %s at version %s", crdName, crdVersion)
+		}
+		t.Logf("crd %s is expected to be not found", crdName)
+	}
+}
+
 // deleteCRDs deletes Gateway API custom resource definitions.
 func deleteCRDs(t *testing.T) {
-	t.Helper()
-
-	vm := newVAPManager(t, gwapiCRDVAPName)
-	// Remove the ingress operator's Validating Admission Policy (VAP)
-	// which prevents modifications of Gateway API CRDs
-	// by anything other than the ingress operator.
-	if err, recoverFn := vm.disable(); err != nil {
-		defer recoverFn()
-		t.Fatalf("failed to disable vap: %v", err)
-	}
-	// Put back the VAP to ensure that it does not prevent
-	// the ingress operator from managing Gateway API CRDs.
-	defer vm.enable()
-
 	for _, crdName := range crdNames {
 		err := deleteExistingCRD(t, crdName)
 		if err != nil {
@@ -305,13 +305,6 @@ func deleteCRDs(t *testing.T) {
 // This function temporarily disables the ingress operator's VAP to allow CRD creation.
 // The VAP is re-enabled before the function returns.
 func ensureExperimentalCRDs(t *testing.T) {
-	vm := newVAPManager(t, gwapiCRDVAPName)
-	if err, recoverFn := vm.disable(); err != nil {
-		defer recoverFn()
-		t.Fatalf("failed to disable vap: %v", err)
-	}
-	defer vm.enable()
-
 	for _, crdName := range xcrdNames {
 		if _, err := createCRD(crdName); err != nil {
 			t.Fatalf("failed to create experimental crd %q: %v", crdName, err)
