@@ -271,6 +271,21 @@ func createGatewayClass(name, controllerName string) (*gatewayapiv1.GatewayClass
 	return gatewayClass, nil
 }
 
+// createCRD creates the CRD with the given name or retrieves it if already exists.
+func createCRD(name string) (*apiextensionsv1.CustomResourceDefinition, error) {
+	crd := buildGWAPICRDFromName(name)
+	if err := kclient.Create(context.Background(), crd); err != nil {
+		if kerrors.IsAlreadyExists(err) {
+			if err := kclient.Get(context.Background(), types.NamespacedName{Name: name}, crd); err != nil {
+				return nil, fmt.Errorf("failed to get crd %q: %w", name, err)
+			}
+			return crd, nil
+		}
+		return nil, fmt.Errorf("failed to create crd %q: %w", name, err)
+	}
+	return crd, nil
+}
+
 // buildGatewayClass initializes the GatewayClass and returns its address.
 func buildGatewayClass(name, controllerName string) *gatewayapiv1.GatewayClass {
 	return &gatewayapiv1.GatewayClass{
@@ -348,6 +363,12 @@ func buildGWAPICRDFromName(name string) *apiextensionsv1.CustomResourceDefinitio
 	case "referencegrants":
 		kind = "ReferenceGrant"
 		versions = []map[string]bool{{"v1beta1": true}}
+	case "listenersets":
+		kind = "ListenerSet"
+		versions = []map[string]bool{{"v1alpha1": true}}
+	case "grpcroutes":
+		kind = "GRPCRoute"
+		versions = []map[string]bool{{"v1": true}}
 	}
 
 	crd := &apiextensionsv1.CustomResourceDefinition{

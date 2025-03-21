@@ -47,6 +47,10 @@ var crdNames = []string{
 	"referencegrants.gateway.networking.k8s.io",
 }
 
+var xcrdNames = []string{
+	"listenersets.gateway.networking.x-k8s.io",
+}
+
 // Global variables for testing.
 // The default route name to be constructed.
 var defaultRoutename = ""
@@ -83,6 +87,13 @@ func TestGatewayAPI(t *testing.T) {
 		// TODO: Uninstall OSSM after test is completed.
 	})
 
+	// Create test experimental CRDs for the subsequent subtests.
+	// Specifically, `testGatewayAPIResourcesProtection`, which tests VAP protection
+	// for the experimental Gateway API group, needs to check the update verb.
+	// Since an API `Get` is called before the update, the CRD must exist in the cluster,
+	// just like standard Gateway API CRDs.
+	ensureExperimentalCRDs(t)
+
 	t.Run("testGatewayAPIResources", testGatewayAPIResources)
 	if gatewayAPIControllerEnabled {
 		t.Run("testGatewayAPIObjects", testGatewayAPIObjects)
@@ -98,7 +109,6 @@ func TestGatewayAPI(t *testing.T) {
 // CRDs are created.
 // It also deletes and ensure the CRDs are recreated.
 func testGatewayAPIResources(t *testing.T) {
-	t.Helper()
 	// Make sure all the *.gateway.networking.k8s.io CRDs are available since the FeatureGate is enabled.
 	ensureCRDs(t)
 
@@ -117,8 +127,6 @@ func testGatewayAPIResources(t *testing.T) {
 // - the SMCP is created successfully (OSSM 2.x).
 // - deletes SMCP and subscription and tests if it gets recreated
 func testGatewayAPIIstioInstallation(t *testing.T) {
-	t.Helper()
-
 	if err := assertSubscription(t, openshiftOperatorsNamespace, expectedSubscriptionName); err != nil {
 		t.Fatalf("failed to find expected Subscription %s: %v", expectedSubscriptionName, err)
 	}
@@ -155,8 +163,6 @@ func testGatewayAPIIstioInstallation(t *testing.T) {
 
 // testGatewayAPIObjects tests that Gateway API objects can be created successfully.
 func testGatewayAPIObjects(t *testing.T) {
-	t.Helper()
-
 	// Create a test namespace that cleans itself up and sets up its own service account and role binding.
 	ns := createNamespace(t, names.SimpleNameGenerator.GenerateName("test-e2e-gwapi-"))
 
@@ -178,8 +184,6 @@ func testGatewayAPIObjects(t *testing.T) {
 // denies admission requests attempting to modify Gateway API CRDs on behalf of a user
 // who is not the ingress operator's service account.
 func testGatewayAPIResourcesProtection(t *testing.T) {
-	t.Helper()
-
 	// Get kube client which impersonates ingress operator's service account.
 	kubeConfig, err := config.GetConfig()
 	if err != nil {
@@ -195,7 +199,7 @@ func testGatewayAPIResourcesProtection(t *testing.T) {
 
 	// Create test CRDs.
 	var testCRDs []*apiextensionsv1.CustomResourceDefinition
-	for _, name := range crdNames {
+	for _, name := range append(crdNames, xcrdNames...) {
 		testCRDs = append(testCRDs, buildGWAPICRDFromName(name))
 	}
 
@@ -293,6 +297,26 @@ func deleteCRDs(t *testing.T) {
 		err := deleteExistingCRD(t, crdName)
 		if err != nil {
 			t.Errorf("failed to delete crd %s: %v", crdName, err)
+		}
+	}
+}
+
+// ensureExperimentalCRDs creates experimental Gateway API custom resource definitions.
+// This function temporarily disables the ingress operator's VAP to allow CRD creation.
+// The VAP is re-enabled before the function returns.
+func ensureExperimentalCRDs(t *testing.T) {
+	vm := newVAPManager(t, gwapiCRDVAPName)
+	if err, recoverFn := vm.disable(); err != nil {
+		defer recoverFn()
+		t.Fatalf("failed to disable vap: %v", err)
+	}
+	defer vm.enable()
+
+	for _, crdName := range xcrdNames {
+		if _, err := createCRD(crdName); err != nil {
+			t.Fatalf("failed to create experimental crd %q: %v", crdName, err)
+		} else {
+			t.Logf("created experimental crd %q", crdName)
 		}
 	}
 }
