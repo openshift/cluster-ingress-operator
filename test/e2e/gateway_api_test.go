@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/openshift/api/features"
 	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
@@ -18,8 +19,10 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apiserver/pkg/storage/names"
 	"k8s.io/client-go/rest"
+	"k8s.io/utils/ptr"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
@@ -96,9 +99,10 @@ func TestGatewayAPI(t *testing.T) {
 	t.Run("testGatewayAPIResources", testGatewayAPIResources)
 	if gatewayAPIControllerEnabled {
 		t.Run("testGatewayAPIObjects", testGatewayAPIObjects)
+		t.Run("testGatewayAPIManualDeployment", testGatewayAPIManualDeployment)
 		t.Run("testGatewayAPIIstioInstallation", testGatewayAPIIstioInstallation)
 	} else {
-		t.Log("Gateway API Controller not enabled, skipping testGatewayAPIObjects and testGatewayAPIIstioInstallation")
+		t.Log("Gateway API Controller not enabled, skipping controller tests")
 	}
 	t.Run("testGatewayAPIResourcesProtection", testGatewayAPIResourcesProtection)
 }
@@ -188,6 +192,128 @@ func testGatewayAPIObjects(t *testing.T) {
 		t.Errorf("failed to observe successful status of one or more gateway object/s: %v", strings.Join(errs, ","))
 	} else {
 		t.Log("gateway class, gateway, and http route created successfully")
+	}
+}
+
+// testGatewayAPIManualDeployment verifies that Istio's "manual deployment"
+// feature is not enabled (see
+// <https://istio.io/latest/docs/tasks/traffic-management/ingress/gateway-api/#manual-deployment>).
+// We only want Istio to allow "automated deployment" (see
+// <https://istio.io/latest/docs/tasks/traffic-management/ingress/gateway-api/#automated-deployment>).
+//
+// When manual deployment is enabled, then Istio allows a gateway to use an
+// existing service (for example, another gateway's service) by specifying that
+// service in spec.addresses.  When a gateway using manual deployment specifies
+// another gateway's service, the resulting behavior is effectively the same
+// behavior as Gateway API's concept of gateway listener "merging" (see
+// <https://github.com/kubernetes-sigs/gateway-api/blob/v1.2.1/apis/v1/gateway_types.go#L181-L182>).
+//
+// Gateway listener merging is underspecified in Gateway API and is not
+// consistently implemented among Gateway API implementations, and so we do not
+// want to allow it or any similar behavior (such as Istio's "manual
+// deployment") until such a time as it is well defined, standard behavior.
+// Instead, for the time being, we expect Istio to provision a service for a
+// gateway ("automated deployment"), even if the gateway specifies some existing
+// service in spec.addresses.
+func testGatewayAPIManualDeployment(t *testing.T) {
+	gatewayClass, err := createGatewayClass("openshift-default", "openshift.io/gateway-controller/v1")
+	if err != nil {
+		t.Fatalf("Failed to create gatewayclass: %v", err)
+	}
+
+	gatewayName := types.NamespacedName{
+		Name:      "manual-deployment",
+		Namespace: "openshift-ingress",
+	}
+	// Use the router's internal service in order to ensure that the
+	// referent exists.  Using an existing service isn't strictly necessary
+	// in order to verify that Istio does not use manual deployment; if
+	// manual deployment *is* enabled, Istio rejects the gateway if it
+	// points to a non-existent referent.  However, using an existing
+	// service more closely reflects the way that manual deployment *would*
+	// be used if it were allowed.
+	const existingServiceHostname = "router-internal-default.openshift-ingress.svc.cluster.local"
+	gateway := gatewayapiv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      gatewayName.Name,
+			Namespace: gatewayName.Namespace,
+		},
+		Spec: gatewayapiv1.GatewaySpec{
+			GatewayClassName: gatewayapiv1.ObjectName(gatewayClass.Name),
+			Addresses: []gatewayapiv1.GatewayAddress{{
+				Type:  ptr.To(gatewayapiv1.HostnameAddressType),
+				Value: existingServiceHostname,
+			}},
+			Listeners: []gatewayapiv1.Listener{{
+				Name:     "http",
+				Hostname: ptr.To(gatewayapiv1.Hostname(fmt.Sprintf("*.manual-deployment.%s", dnsConfig.Spec.BaseDomain))),
+				Port:     80,
+				Protocol: "HTTP",
+			}},
+		},
+	}
+	t.Logf("Creating gateway %q...", gatewayName)
+	if err := kclient.Create(context.Background(), &gateway); err != nil {
+		t.Fatalf("Failed to create gateway %v: %v", gatewayName, err)
+	}
+	t.Cleanup(func() {
+		if err := kclient.Delete(context.Background(), &gateway); err != nil {
+			if !errors.IsNotFound(err) {
+				t.Errorf("Failed to delete gateway %v: %v", gatewayName, err)
+			}
+		}
+	})
+
+	interval, timeout := 5*time.Second, 1*time.Minute
+	t.Logf("Polling for up to %v to verify that the gateway is accepted...", timeout)
+	if err := wait.PollUntilContextTimeout(context.Background(), interval, timeout, false, func(context context.Context) (bool, error) {
+		if err := kclient.Get(context, gatewayName, &gateway); err != nil {
+			t.Logf("Failed to get gateway %v: %v; retrying...", gatewayName, err)
+
+			return false, nil
+		}
+
+		for _, condition := range gateway.Status.Conditions {
+			if condition.Type == string(gatewayapiv1.GatewayConditionAccepted) {
+				t.Logf("Found %q status condition: %+v", gatewayapiv1.GatewayConditionAccepted, condition)
+
+				if condition.Status == metav1.ConditionTrue {
+					return true, nil
+				}
+			}
+		}
+
+		t.Logf("Observed that gateway %v is not yet accepted; retrying...", gatewayName)
+
+		return false, nil
+	}); err != nil {
+		t.Errorf("Failed to observe the expected condition for gateway %v: %v", gatewayName, err)
+	}
+
+	serviceName := types.NamespacedName{
+		Name:      fmt.Sprintf("%s-%s", gateway.Name, gatewayClass.Name),
+		Namespace: gateway.Namespace,
+	}
+	var service corev1.Service
+	t.Logf("Polling for up to %v to verify that service %q is created...", timeout, serviceName)
+	if err := wait.PollUntilContextTimeout(context.Background(), interval, timeout, false, func(context context.Context) (bool, error) {
+		if err := kclient.Get(context, serviceName, &service); err != nil {
+			t.Logf("Failed to get service %s: %v; retrying...", serviceName, err)
+
+			return false, nil
+		}
+
+		// Just verify that the service is created.  No need to verify
+		// that a load balancer is provisioned.  Indeed, provisioning
+		// will likely fail because Istio copies the address hostname to
+		// the service spec.loadBalancerIP field, which at least some
+		// cloud provider implementations reject.
+
+		t.Logf("Found service %q", serviceName)
+
+		return true, nil
+	}); err != nil {
+		t.Errorf("Failed to observe the expected condition for service %v: %v", serviceName, err)
 	}
 }
 
