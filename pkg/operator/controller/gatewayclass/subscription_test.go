@@ -3,6 +3,7 @@ package gatewayclass
 import (
 	"context"
 	"testing"
+	"time"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
@@ -39,6 +40,48 @@ func Test_ensureServiceMeshOperatorInstallPlan(t *testing.T) {
 			expectCreate:    []client.Object{},
 			expectUpdate:    []client.Object{},
 			expectDelete:    []client.Object{},
+		},
+		{
+			// InstallPlan exists but is not yet approved but phase is incorrect. No changes expected.
+			name:    "InstallPlan not approved with incorrect phase",
+			channel: "stable",
+			version: "servicemeshoperator.v1.0.0",
+			existingObjects: []runtime.Object{
+				&operatorsv1alpha1.Subscription{
+					ObjectMeta: metav1.ObjectMeta{
+						Namespace: operatorcontroller.ServiceMeshOperatorSubscriptionName().Namespace,
+						Name:      operatorcontroller.ServiceMeshOperatorSubscriptionName().Name,
+						UID:       "foobar",
+					},
+					Spec: &operatorsv1alpha1.SubscriptionSpec{
+						Channel:                "stable",
+						InstallPlanApproval:    operatorsv1alpha1.ApprovalManual,
+						Package:                "servicemeshoperator",
+						CatalogSource:          "redhat-operators",
+						CatalogSourceNamespace: "openshift-marketplace",
+						StartingCSV:            "servicemeshoperator.v1.0.0",
+					},
+				},
+				&operatorsv1alpha1.InstallPlan{
+					ObjectMeta: metav1.ObjectMeta{
+						OwnerReferences: []metav1.OwnerReference{
+							{
+								UID: "foobar",
+							},
+						},
+					},
+					Spec: operatorsv1alpha1.InstallPlanSpec{
+						ClusterServiceVersionNames: []string{
+							"servicemeshoperator.v1.0.0",
+						},
+						Approval: operatorsv1alpha1.ApprovalManual,
+						Approved: false,
+					},
+				},
+			},
+			expectCreate: []client.Object{},
+			expectUpdate: []client.Object{},
+			expectDelete: []client.Object{},
 		},
 		{
 			// InstallPlan exists but is already approved. No changes expected.
@@ -120,6 +163,9 @@ func Test_ensureServiceMeshOperatorInstallPlan(t *testing.T) {
 						Approval: operatorsv1alpha1.ApprovalManual,
 						Approved: false,
 					},
+					Status: operatorsv1alpha1.InstallPlanStatus{
+						Phase: operatorsv1alpha1.InstallPlanPhaseRequiresApproval,
+					},
 				},
 			},
 			expectCreate: []client.Object{},
@@ -140,6 +186,9 @@ func Test_ensureServiceMeshOperatorInstallPlan(t *testing.T) {
 						},
 						Approval: operatorsv1alpha1.ApprovalManual,
 						Approved: true,
+					},
+					Status: operatorsv1alpha1.InstallPlanStatus{
+						Phase: operatorsv1alpha1.InstallPlanPhaseRequiresApproval,
 					},
 				},
 			},
@@ -183,6 +232,9 @@ func Test_ensureServiceMeshOperatorInstallPlan(t *testing.T) {
 						Approval: operatorsv1alpha1.ApprovalManual,
 						Approved: false,
 					},
+					Status: operatorsv1alpha1.InstallPlanStatus{
+						Phase: operatorsv1alpha1.InstallPlanPhaseRequiresApproval,
+					},
 				},
 				&operatorsv1alpha1.InstallPlan{
 					ObjectMeta: metav1.ObjectMeta{
@@ -200,6 +252,9 @@ func Test_ensureServiceMeshOperatorInstallPlan(t *testing.T) {
 						},
 						Approval: operatorsv1alpha1.ApprovalManual,
 						Approved: false,
+					},
+					Status: operatorsv1alpha1.InstallPlanStatus{
+						Phase: operatorsv1alpha1.InstallPlanPhaseRequiresApproval,
 					},
 				},
 			},
@@ -221,6 +276,9 @@ func Test_ensureServiceMeshOperatorInstallPlan(t *testing.T) {
 						},
 						Approval: operatorsv1alpha1.ApprovalManual,
 						Approved: true,
+					},
+					Status: operatorsv1alpha1.InstallPlanStatus{
+						Phase: operatorsv1alpha1.InstallPlanPhaseRequiresApproval,
 					},
 				},
 			},
@@ -264,6 +322,9 @@ func Test_ensureServiceMeshOperatorInstallPlan(t *testing.T) {
 						Approval: operatorsv1alpha1.ApprovalManual,
 						Approved: false,
 					},
+					Status: operatorsv1alpha1.InstallPlanStatus{
+						Phase: operatorsv1alpha1.InstallPlanPhaseRequiresApproval,
+					},
 				},
 			},
 			expectCreate: []client.Object{},
@@ -306,10 +367,240 @@ func Test_ensureServiceMeshOperatorInstallPlan(t *testing.T) {
 						Approval: operatorsv1alpha1.ApprovalManual,
 						Approved: false,
 					},
+					Status: operatorsv1alpha1.InstallPlanStatus{
+						Phase: operatorsv1alpha1.InstallPlanPhaseRequiresApproval,
+					},
 				},
 			},
 			expectCreate: []client.Object{},
 			expectUpdate: []client.Object{},
+			expectDelete: []client.Object{},
+		},
+		{
+			// Multiple InstallPlans exist, all with the correct cluster service version and owner reference. Expect
+			// InstallPlan.Spec.Approved = true for only the most recent InstallPlan (by creation timestamp).
+			name:    "Multiple valid InstallPlans, should approve latest",
+			channel: "stable",
+			version: "servicemeshoperator.v1.0.0",
+			existingObjects: []runtime.Object{
+				&operatorsv1alpha1.Subscription{
+					ObjectMeta: metav1.ObjectMeta{
+						Namespace:         operatorcontroller.ServiceMeshOperatorSubscriptionName().Namespace,
+						Name:              operatorcontroller.ServiceMeshOperatorSubscriptionName().Name,
+						UID:               "foobar",
+						CreationTimestamp: metav1.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+					},
+					Spec: &operatorsv1alpha1.SubscriptionSpec{
+						Channel:                "stable",
+						InstallPlanApproval:    operatorsv1alpha1.ApprovalManual,
+						Package:                "servicemeshoperator",
+						CatalogSource:          "redhat-operators",
+						CatalogSourceNamespace: "openshift-marketplace",
+						StartingCSV:            "servicemeshoperator.v1.0.0",
+					},
+				},
+				&operatorsv1alpha1.InstallPlan{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "Install-foo",
+						Namespace: operatorcontroller.OpenshiftOperatorNamespace,
+						OwnerReferences: []metav1.OwnerReference{
+							{
+								UID: "foobar",
+							},
+						},
+					},
+					Spec: operatorsv1alpha1.InstallPlanSpec{
+						ClusterServiceVersionNames: []string{
+							"servicemeshoperator.v1.0.0",
+						},
+						Approval: operatorsv1alpha1.ApprovalManual,
+						Approved: false,
+					},
+					Status: operatorsv1alpha1.InstallPlanStatus{
+						Phase: operatorsv1alpha1.InstallPlanPhaseRequiresApproval,
+					},
+				},
+				&operatorsv1alpha1.InstallPlan{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "Install-bar",
+						Namespace: operatorcontroller.OpenshiftOperatorNamespace,
+						OwnerReferences: []metav1.OwnerReference{
+							{
+								UID: "foobar",
+							},
+						},
+						CreationTimestamp: metav1.Date(2025, 1, 1, 2, 30, 0, 0, time.UTC),
+					},
+					Spec: operatorsv1alpha1.InstallPlanSpec{
+						ClusterServiceVersionNames: []string{
+							"servicemeshoperator.v1.0.0",
+						},
+						Approval: operatorsv1alpha1.ApprovalManual,
+						Approved: false,
+					},
+					Status: operatorsv1alpha1.InstallPlanStatus{
+						Phase: operatorsv1alpha1.InstallPlanPhaseRequiresApproval,
+					},
+				},
+				&operatorsv1alpha1.InstallPlan{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "Install-baz",
+						Namespace: operatorcontroller.OpenshiftOperatorNamespace,
+						OwnerReferences: []metav1.OwnerReference{
+							{
+								UID: "foobar",
+							},
+						},
+						CreationTimestamp: metav1.Date(2024, 12, 31, 23, 59, 0, 0, time.UTC),
+					},
+					Spec: operatorsv1alpha1.InstallPlanSpec{
+						ClusterServiceVersionNames: []string{
+							"servicemeshoperator.v1.0.0",
+						},
+						Approval: operatorsv1alpha1.ApprovalManual,
+						Approved: false,
+					},
+					Status: operatorsv1alpha1.InstallPlanStatus{
+						Phase: operatorsv1alpha1.InstallPlanPhaseRequiresApproval,
+					},
+				},
+			},
+			expectCreate: []client.Object{},
+			expectUpdate: []client.Object{
+				&operatorsv1alpha1.InstallPlan{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "Install-bar",
+						Namespace: operatorcontroller.OpenshiftOperatorNamespace,
+						OwnerReferences: []metav1.OwnerReference{
+							{
+								UID: "foobar",
+							},
+						},
+						CreationTimestamp: metav1.Date(2025, 1, 1, 2, 30, 0, 0, time.UTC),
+					},
+					Spec: operatorsv1alpha1.InstallPlanSpec{
+						ClusterServiceVersionNames: []string{
+							"servicemeshoperator.v1.0.0",
+						},
+						Approval: operatorsv1alpha1.ApprovalManual,
+						Approved: true,
+					},
+					Status: operatorsv1alpha1.InstallPlanStatus{
+						Phase: operatorsv1alpha1.InstallPlanPhaseRequiresApproval,
+					},
+				},
+			},
+			expectDelete: []client.Object{},
+		},
+		{
+			// Multiple InstallPlans exist, all with the correct cluster service version and owner reference, but only
+			// one is in the "RequiresApproval" phase. Expect InstallPlan.Spec.Approved = true for only the one in the
+			// "RequiresApproval" phase.
+			name:    "Multiple unapproved InstallPlans, only one in correct phase",
+			channel: "stable",
+			version: "servicemeshoperator.v1.0.0",
+			existingObjects: []runtime.Object{
+				&operatorsv1alpha1.Subscription{
+					ObjectMeta: metav1.ObjectMeta{
+						Namespace:         operatorcontroller.ServiceMeshOperatorSubscriptionName().Namespace,
+						Name:              operatorcontroller.ServiceMeshOperatorSubscriptionName().Name,
+						UID:               "foobar",
+						CreationTimestamp: metav1.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+					},
+					Spec: &operatorsv1alpha1.SubscriptionSpec{
+						Channel:                "stable",
+						InstallPlanApproval:    operatorsv1alpha1.ApprovalManual,
+						Package:                "servicemeshoperator",
+						CatalogSource:          "redhat-operators",
+						CatalogSourceNamespace: "openshift-marketplace",
+						StartingCSV:            "servicemeshoperator.v1.0.0",
+					},
+				},
+				&operatorsv1alpha1.InstallPlan{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "Install-foo",
+						Namespace: operatorcontroller.OpenshiftOperatorNamespace,
+						OwnerReferences: []metav1.OwnerReference{
+							{
+								UID: "foobar",
+							},
+						},
+					},
+					Spec: operatorsv1alpha1.InstallPlanSpec{
+						ClusterServiceVersionNames: []string{
+							"servicemeshoperator.v1.0.0",
+						},
+						Approval: operatorsv1alpha1.ApprovalManual,
+						Approved: false,
+					},
+				},
+				&operatorsv1alpha1.InstallPlan{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "Install-bar",
+						Namespace: operatorcontroller.OpenshiftOperatorNamespace,
+						OwnerReferences: []metav1.OwnerReference{
+							{
+								UID: "foobar",
+							},
+						},
+						CreationTimestamp: metav1.Date(2025, 1, 1, 2, 30, 0, 0, time.UTC),
+					},
+					Spec: operatorsv1alpha1.InstallPlanSpec{
+						ClusterServiceVersionNames: []string{
+							"servicemeshoperator.v1.0.0",
+						},
+						Approval: operatorsv1alpha1.ApprovalManual,
+						Approved: false,
+					},
+				},
+				&operatorsv1alpha1.InstallPlan{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "Install-baz",
+						Namespace: operatorcontroller.OpenshiftOperatorNamespace,
+						OwnerReferences: []metav1.OwnerReference{
+							{
+								UID: "foobar",
+							},
+						},
+						CreationTimestamp: metav1.Date(2024, 12, 31, 23, 59, 0, 0, time.UTC),
+					},
+					Spec: operatorsv1alpha1.InstallPlanSpec{
+						ClusterServiceVersionNames: []string{
+							"servicemeshoperator.v1.0.0",
+						},
+						Approval: operatorsv1alpha1.ApprovalManual,
+						Approved: false,
+					},
+					Status: operatorsv1alpha1.InstallPlanStatus{
+						Phase: operatorsv1alpha1.InstallPlanPhaseRequiresApproval,
+					},
+				},
+			},
+			expectCreate: []client.Object{},
+			expectUpdate: []client.Object{
+				&operatorsv1alpha1.InstallPlan{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "Install-baz",
+						Namespace: operatorcontroller.OpenshiftOperatorNamespace,
+						OwnerReferences: []metav1.OwnerReference{
+							{
+								UID: "foobar",
+							},
+						},
+						CreationTimestamp: metav1.Date(2024, 12, 31, 23, 59, 0, 0, time.UTC),
+					},
+					Spec: operatorsv1alpha1.InstallPlanSpec{
+						ClusterServiceVersionNames: []string{
+							"servicemeshoperator.v1.0.0",
+						},
+						Approval: operatorsv1alpha1.ApprovalManual,
+						Approved: true,
+					},
+					Status: operatorsv1alpha1.InstallPlanStatus{
+						Phase: operatorsv1alpha1.InstallPlanPhaseRequiresApproval,
+					},
+				},
+			},
 			expectDelete: []client.Object{},
 		},
 	}
