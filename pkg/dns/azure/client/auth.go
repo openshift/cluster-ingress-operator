@@ -21,36 +21,14 @@ import (
 
 var watchCertificateFileOnce sync.Once
 
-func getAuthorizerForResource(config Config) (autorest.Authorizer, error) {
-	var cloudConfig cloud.Configuration
-	switch config.Environment {
-	case azure.ChinaCloud:
-		cloudConfig = cloud.AzureChina
-	// GermanCloud was closed on Oct 29, 2021
-	// https://learn.microsoft.com/en-us/azure/active-directory/develop/authentication-national-cloud
-	// case azure.GermanCloud:
-	// return nil, nil
-	case azure.USGovernmentCloud:
-		cloudConfig = cloud.AzureGovernment
-	case azure.PublicCloud:
-		cloudConfig = cloud.AzurePublic
-	default: // AzureStackCloud
-		cloudConfig = cloud.Configuration{
-			ActiveDirectoryAuthorityHost: config.Environment.ActiveDirectoryEndpoint,
-			Services: map[cloud.ServiceName]cloud.ServiceConfiguration{
-				cloud.ResourceManager: {
-					Audience: config.Environment.TokenAudience,
-					Endpoint: config.Environment.ResourceManagerEndpoint,
-				},
-			},
-		}
-	}
+func getAuthorizerForResource(config Config) (autorest.Authorizer, azcore.TokenCredential, error) {
+	cloudConfig := ParseCloudEnvironment(config)
 
 	// Fallback to using tenant ID from env variable if not set.
 	if strings.TrimSpace(config.TenantID) == "" {
 		config.TenantID = os.Getenv("AZURE_TENANT_ID")
 		if strings.TrimSpace(config.TenantID) == "" {
-			return nil, errors.New("empty tenant ID")
+			return nil, nil, errors.New("empty tenant ID")
 		}
 	}
 
@@ -58,7 +36,7 @@ func getAuthorizerForResource(config Config) (autorest.Authorizer, error) {
 	if strings.TrimSpace(config.ClientID) == "" {
 		config.ClientID = os.Getenv("AZURE_CLIENT_ID")
 		if strings.TrimSpace(config.ClientID) == "" {
-			return nil, errors.New("empty client ID")
+			return nil, nil, errors.New("empty client ID")
 		}
 	}
 
@@ -96,12 +74,12 @@ func getAuthorizerForResource(config Config) (autorest.Authorizer, error) {
 
 		certData, err := os.ReadFile(certPath)
 		if err != nil {
-			return nil, fmt.Errorf("failed to read certificate file %q: %w", certPath, err)
+			return nil, nil, fmt.Errorf("failed to read certificate file %q: %w", certPath, err)
 		}
 
 		certs, key, err := azidentity.ParseCertificates(certData, nil)
 		if err != nil {
-			return nil, fmt.Errorf("failed to parse certificate data %q: %w", certPath, err)
+			return nil, nil, fmt.Errorf("failed to parse certificate data %q: %w", certPath, err)
 		}
 
 		// Watch the certificate for changes; if the certificate changes, the pod will be restarted.
@@ -113,21 +91,21 @@ func getAuthorizerForResource(config Config) (autorest.Authorizer, error) {
 			}
 		})
 		if fileWatcherError != nil {
-			return nil, fmt.Errorf("failed to watch certificate file %q: %w", certPath, fileWatcherError)
+			return nil, nil, fmt.Errorf("failed to watch certificate file %q: %w", certPath, fileWatcherError)
 		}
 
 		cred, err = azidentity.NewClientCertificateCredential(tenantID, managedIdentityClientID, certs, key, options)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	} else if userAssignedIdentityCredentialsFilePath != "" {
-		clientOptions := azcore.ClientOptions{
+		options := azcore.ClientOptions{
 			Cloud: cloudConfig,
 		}
 		var err error
-		cred, err = dataplane.NewUserAssignedIdentityCredential(context.Background(), userAssignedIdentityCredentialsFilePath, dataplane.WithClientOpts(clientOptions))
+		cred, err = dataplane.NewUserAssignedIdentityCredential(context.Background(), userAssignedIdentityCredentialsFilePath, dataplane.WithClientOpts(options))
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	} else if config.AzureWorkloadIdentityEnabled && strings.TrimSpace(config.ClientSecret) == "" {
 		options := azidentity.WorkloadIdentityCredentialOptions{
@@ -141,7 +119,7 @@ func getAuthorizerForResource(config Config) (autorest.Authorizer, error) {
 		var err error
 		cred, err = azidentity.NewWorkloadIdentityCredential(&options)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	} else {
 		options := azidentity.ClientSecretCredentialOptions{
@@ -152,7 +130,7 @@ func getAuthorizerForResource(config Config) (autorest.Authorizer, error) {
 		var err error
 		cred, err = azidentity.NewClientSecretCredential(config.TenantID, config.ClientID, config.ClientSecret, &options)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
@@ -166,7 +144,7 @@ func getAuthorizerForResource(config Config) (autorest.Authorizer, error) {
 	// https://azure.github.io/azure-sdk/releases/latest/index.html#go
 	authorizer := azidext.NewTokenCredentialAdapter(cred, []string{scope})
 
-	return authorizer, nil
+	return authorizer, cred, nil
 }
 
 func endpointToScope(endpoint string) string {
@@ -175,4 +153,31 @@ func endpointToScope(endpoint string) string {
 		scope += "/.default"
 	}
 	return scope
+}
+
+func ParseCloudEnvironment(config Config) cloud.Configuration {
+	var cloudConfig cloud.Configuration
+	switch config.Environment {
+	case azure.ChinaCloud:
+		cloudConfig = cloud.AzureChina
+	// GermanCloud was closed on Oct 29, 2021
+	// https://learn.microsoft.com/en-us/azure/active-directory/develop/authentication-national-cloud
+	// case azure.GermanCloud:
+	// return nil, nil
+	case azure.USGovernmentCloud:
+		cloudConfig = cloud.AzureGovernment
+	case azure.PublicCloud:
+		cloudConfig = cloud.AzurePublic
+	default: // AzureStackCloud
+		cloudConfig = cloud.Configuration{
+			ActiveDirectoryAuthorityHost: config.Environment.ActiveDirectoryEndpoint,
+			Services: map[cloud.ServiceName]cloud.ServiceConfiguration{
+				cloud.ResourceManager: {
+					Audience: config.Environment.TokenAudience,
+					Endpoint: config.Environment.ResourceManagerEndpoint,
+				},
+			},
+		}
+	}
+	return cloudConfig
 }
