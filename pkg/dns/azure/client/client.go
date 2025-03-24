@@ -3,7 +3,6 @@ package client
 import (
 	"context"
 
-	"github.com/Azure/azure-sdk-for-go/profiles/2018-03-01/dns/mgmt/dns"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/dns/armdns"
@@ -61,8 +60,8 @@ type dnsClient struct {
 }
 
 // New returns an authenticated DNSClient
-func New(config Config, userAgentExtension string) (DNSClient, error) {
-	rsc, err := newRecordSetClient(config, userAgentExtension)
+func New(config Config) (DNSClient, error) {
+	rsc, err := newRecordSetClient(config)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create recordSetClient")
 	}
@@ -98,32 +97,40 @@ func (c *dnsClient) Delete(ctx context.Context, zone Zone, arec ARecord) error {
 }
 
 type recordSetClient struct {
-	client dns.RecordSetsClient
+	client *armdns.RecordSetsClient
 }
 
-func newRecordSetClient(config Config, userAgentExtension string) (*recordSetClient, error) {
-	authorizer, _, err := getAuthorizerForResource(config)
+func newRecordSetClient(config Config) (*recordSetClient, error) {
+	_, cred, err := getAuthorizerForResource(config)
 	if err != nil {
 		return nil, err
 	}
 
-	rc := dns.NewRecordSetsClientWithBaseURI(config.Environment.ResourceManagerEndpoint, config.SubscriptionID)
-	rc.AddToUserAgent(userAgentExtension)
-	rc.Authorizer = authorizer
+	cloudConfig := ParseCloudEnvironment(config)
+	options := &arm.ClientOptions{
+		ClientOptions: policy.ClientOptions{
+			Cloud: cloudConfig,
+		},
+	}
+
+	rc, err := armdns.NewRecordSetsClient(config.SubscriptionID, cred, options)
+	if err != nil {
+		return nil, err
+	}
 	return &recordSetClient{client: rc}, nil
 }
 
 func (c *recordSetClient) Put(ctx context.Context, zone Zone, arec ARecord, metadata map[string]*string) error {
-	rs := dns.RecordSet{
-		RecordSetProperties: &dns.RecordSetProperties{
+	rs := armdns.RecordSet{
+		Properties: &armdns.RecordSetProperties{
 			TTL: &arec.TTL,
-			ARecords: &[]dns.ARecord{
-				{Ipv4Address: &arec.Address},
+			ARecords: []*armdns.ARecord{
+				{IPv4Address: &arec.Address},
 			},
 			Metadata: metadata,
 		},
 	}
-	_, err := c.client.CreateOrUpdate(ctx, zone.ResourceGroup, zone.Name, arec.Name, dns.A, rs, "", "")
+	_, err := c.client.CreateOrUpdate(ctx, zone.ResourceGroup, zone.Name, arec.Name, armdns.RecordTypeA, rs, nil)
 	if err != nil {
 		return errors.Wrapf(err, "failed to update dns a record: %s.%s", arec.Name, zone.Name)
 	}
@@ -131,12 +138,7 @@ func (c *recordSetClient) Put(ctx context.Context, zone Zone, arec ARecord, meta
 }
 
 func (c *recordSetClient) Delete(ctx context.Context, zone Zone, arec ARecord) error {
-	_, err := c.client.Get(ctx, zone.ResourceGroup, zone.Name, arec.Name, dns.A)
-	if err != nil {
-		// TODO: How do we interpret this as a notfound error?
-		return nil
-	}
-	_, err = c.client.Delete(ctx, zone.ResourceGroup, zone.Name, arec.Name, dns.A, "")
+	_, err := c.client.Delete(ctx, zone.ResourceGroup, zone.Name, arec.Name, armdns.RecordTypeA, nil)
 	if err != nil {
 		return errors.Wrapf(err, "failed to delete dns a record: %s.%s", arec.Name, zone.Name)
 	}
