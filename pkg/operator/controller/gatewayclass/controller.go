@@ -81,13 +81,14 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 		}
 		return false
 	})
-	// Check the approved status of an InstallPlan. The ingress operator only needs to potentially move install plans
-	// from Approved=false to Approved=true, so we can filter out all approved plans at the Watch() level.
-	isInstallPlanApproved := predicate.NewPredicateFuncs(func(o client.Object) bool {
+	// Check if an InstallPlan is ready for approval. This requires that both the spec.approved field is false and that
+	// the status.phase is "RequiresApproval" to make sure OLM is done modifying the InstallPlan before it can be
+	// approved.
+	isInstallPlanReadyForApproval := predicate.NewPredicateFuncs(func(o client.Object) bool {
 		installPlan := o.(*operatorsv1alpha1.InstallPlan)
-		return installPlan.Spec.Approved
+		return !installPlan.Spec.Approved && installPlan.Status.Phase == operatorsv1alpha1.InstallPlanPhaseRequiresApproval
 	})
-	if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorsv1alpha1.InstallPlan{}, reconciler.enqueueRequestForSomeGatewayClass(), isOurInstallPlan, predicate.Not(isInstallPlanApproved))); err != nil {
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorsv1alpha1.InstallPlan{}, reconciler.enqueueRequestForSomeGatewayClass(), isOurInstallPlan, isInstallPlanReadyForApproval)); err != nil {
 		return nil, err
 	}
 
