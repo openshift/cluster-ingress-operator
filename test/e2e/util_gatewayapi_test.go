@@ -941,3 +941,21 @@ func (m *vapManager) enable() {
 		m.t.Errorf("failed to find vap %q: %v", m.name, err)
 	}
 }
+
+// bypassVAP temporarily removes the ingress operator's VAP, executes the given functions,
+// and then restores the VAP before returning.
+// The provided functions are expected to modify Gateway API CRDs, which are
+// normally protected from external modifications (any changes made by anything
+// other than the ingress operator) by the VAP.
+func bypassVAP(t *testing.T, fns ...func(t *testing.T)) {
+	vm := newVAPManager(t, gwapiCRDVAPName)
+	if err, recoverFn := vm.disable(); err != nil {
+		defer recoverFn()
+		t.Fatalf("failed to disable vap: %v", err)
+	}
+	defer vm.enable()
+
+	for _, fn := range fns {
+		fn(t)
+	}
+}
