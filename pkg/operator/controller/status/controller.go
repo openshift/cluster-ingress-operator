@@ -2,6 +2,7 @@ package status
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -130,6 +131,13 @@ type Config struct {
 	Namespace              string
 }
 
+// IngressOperatorStatusExtension holds status extensions of the ingress cluster operator.
+type IngressOperatorStatusExtension struct {
+	// UnmanagedGatewayAPICRDNames contains a comma separated list of unmanaged GatewayAPI CRDs
+	// which are present on the cluster.
+	UnmanagedGatewayAPICRDNames string `json:"unmanagedGatewayAPICRDNames,omitempty"`
+}
+
 // reconciler handles the actual status reconciliation logic in response to
 // events.
 type reconciler struct {
@@ -161,7 +169,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	}
 	oldStatus := co.Status.DeepCopy()
 
-	state, err := r.getOperatorState(ingressNamespace, canaryNamespace)
+	state, err := r.getOperatorState(ingressNamespace, canaryNamespace, co)
 	if err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to get operator state: %v", err)
 	}
@@ -243,7 +251,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 			r.config.IngressControllerImage,
 			r.config.CanaryImage,
 		),
-		computeOperatorDegradedCondition(state.IngressControllers),
+		computeOperatorDegradedCondition(state),
 		computeOperatorUpgradeableCondition(state.IngressControllers),
 		computeOperatorEvaluationConditionsDetectedCondition(state.IngressControllers),
 	)
@@ -295,12 +303,13 @@ type operatorState struct {
 	IngressControllers []operatorv1.IngressController
 	DNSRecords         []iov1.DNSRecord
 
-	haveOSSMSubscription bool
+	haveOSSMSubscription        bool
+	unmanagedGatewayAPICRDNames string
 }
 
 // getOperatorState gets and returns the resources necessary to compute the
 // operator's current state.
-func (r *reconciler) getOperatorState(ingressNamespace, canaryNamespace string) (operatorState, error) {
+func (r *reconciler) getOperatorState(ingressNamespace, canaryNamespace string, co *configv1.ClusterOperator) (operatorState, error) {
 	state := operatorState{}
 
 	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ingressNamespace}}
@@ -337,6 +346,14 @@ func (r *reconciler) getOperatorState(ingressNamespace, canaryNamespace string) 
 			}
 		} else {
 			state.haveOSSMSubscription = true
+		}
+
+		if len(co.Status.Extension.Raw) > 0 {
+			extension := &IngressOperatorStatusExtension{}
+			if err := json.Unmarshal(co.Status.Extension.Raw, extension); err != nil {
+				return state, fmt.Errorf("failed to unmarshal status extension of cluster operator %q: %w", co.Name, err)
+			}
+			state.unmanagedGatewayAPICRDNames = extension.UnmanagedGatewayAPICRDNames
 		}
 	}
 
@@ -386,13 +403,27 @@ func checkAllIngressesAvailable(ingresses []operatorv1.IngressController) bool {
 }
 
 // computeOperatorDegradedCondition computes the operator's current Degraded status state.
-func computeOperatorDegradedCondition(ingresses []operatorv1.IngressController) configv1.ClusterOperatorStatusCondition {
+func computeOperatorDegradedCondition(state operatorState) configv1.ClusterOperatorStatusCondition {
 	degradedCondition := configv1.ClusterOperatorStatusCondition{
 		Type: configv1.OperatorDegraded,
 	}
 
+	for _, fn := range []func(state operatorState) configv1.ClusterOperatorStatusCondition{
+		computeIngressControllerDegradedCondition,
+		computeGatewayAPICRDsDegradedCondition,
+	} {
+		degradedCondition = joinConditions(degradedCondition, fn(state))
+	}
+
+	return degradedCondition
+}
+
+// computeIngressControllerDegradedCondition computes the degraded condition for IngressControllers.
+func computeIngressControllerDegradedCondition(state operatorState) configv1.ClusterOperatorStatusCondition {
+	degradedCondition := configv1.ClusterOperatorStatusCondition{}
+
 	foundDefaultIngressController := false
-	for _, ic := range ingresses {
+	for _, ic := range state.IngressControllers {
 		if ic.Name != manifests.DefaultIngressControllerName {
 			continue
 		}
@@ -411,7 +442,7 @@ func computeOperatorDegradedCondition(ingresses []operatorv1.IngressController) 
 			case operatorv1.ConditionTrue:
 				degradedCondition.Status = configv1.ConditionTrue
 				degradedCondition.Reason = "IngressDegraded"
-				degradedCondition.Message = fmt.Sprintf("The %q ingress controller reports Degraded=True: %s: %s", ic.Name, cond.Reason, cond.Message)
+				degradedCondition.Message = fmt.Sprintf("The %q ingress controller reports Degraded=True: %s: %s.", ic.Name, cond.Reason, cond.Message)
 			default:
 				degradedCondition.Status = configv1.ConditionUnknown
 				degradedCondition.Reason = "IngressDegradedStatusUnknown"
@@ -428,6 +459,19 @@ func computeOperatorDegradedCondition(ingresses []operatorv1.IngressController) 
 		degradedCondition.Status = configv1.ConditionTrue
 		degradedCondition.Reason = "IngressDoesNotExist"
 		degradedCondition.Message = fmt.Sprintf("The %q ingress controller does not exist.", manifests.DefaultIngressControllerName)
+	}
+
+	return degradedCondition
+}
+
+// computeGatewayAPICRDsDegradedCondition computes the degraded condition for Gateway API CRDs.
+func computeGatewayAPICRDsDegradedCondition(state operatorState) configv1.ClusterOperatorStatusCondition {
+	degradedCondition := configv1.ClusterOperatorStatusCondition{}
+
+	if len(state.unmanagedGatewayAPICRDNames) > 0 {
+		degradedCondition.Status = configv1.ConditionTrue
+		degradedCondition.Reason = "GatewayAPICRDsDegraded"
+		degradedCondition.Message = fmt.Sprintf("Unmanaged Gateway API CRDs found: %s.", state.unmanagedGatewayAPICRDNames)
 	}
 
 	return degradedCondition
@@ -684,4 +728,46 @@ func operatorStatusesEqual(a, b configv1.ClusterOperatorStatus) bool {
 	}
 
 	return true
+}
+
+// joinConditions merges two cluster operator conditions into one.
+// If both conditions have the same status:
+// - Reason becomes: "MultipleComponents[Not]" + condType.
+// - Messages are concatenated.
+// If the new condition has a higher-priority status, it overrides the current one.
+// Status priority (highest to lowest): True, Unknown, False, empty.
+func joinConditions(currCond, newCond configv1.ClusterOperatorStatusCondition) configv1.ClusterOperatorStatusCondition {
+	switch newCond.Status {
+	case configv1.ConditionTrue:
+		if currCond.Status == configv1.ConditionTrue {
+			currCond.Reason += "And" + newCond.Reason
+			currCond.Message += newCond.Message
+		} else {
+			// Degraded=True status overrides other statuses.
+			currCond.Status = newCond.Status
+			currCond.Reason = newCond.Reason
+			currCond.Message = newCond.Message
+		}
+	case configv1.ConditionUnknown:
+		if currCond.Status == configv1.ConditionUnknown {
+			currCond.Reason += "And" + newCond.Reason
+			currCond.Message += newCond.Message
+		} else if currCond.Status != configv1.ConditionTrue {
+			// Degraded=Unknown overrides false and empty statuses.
+			currCond.Status = newCond.Status
+			currCond.Reason = newCond.Reason
+			currCond.Message = newCond.Message
+		}
+	case configv1.ConditionFalse:
+		if currCond.Status == configv1.ConditionFalse {
+			currCond.Reason += "And" + newCond.Reason
+			currCond.Message += newCond.Message
+		} else if currCond.Status == "" {
+			// Degraded=False overrides empty status.
+			currCond.Status = newCond.Status
+			currCond.Reason = newCond.Reason
+			currCond.Message = newCond.Message
+		}
+	}
+	return currCond
 }

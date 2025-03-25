@@ -2,6 +2,7 @@ package gatewayapi
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
@@ -14,6 +15,7 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/types"
 
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -25,7 +27,10 @@ import (
 )
 
 const (
-	controllerName = "gatewayapi_controller"
+	controllerName                        = "gatewayapi_controller"
+	experimentalGatewayAPIGroupName       = "gateway.networking.x-k8s.io"
+	gatewayAPICRDIndexFieldName           = "gatewayAPICRD"
+	unmanagedGatewayAPICRDIndexFieldValue = "unmanaged"
 )
 
 var log = logf.Logger.WithName(controllerName)
@@ -36,6 +41,7 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	operatorCache := mgr.GetCache()
 	reconciler := &reconciler{
 		client: mgr.GetClient(),
+		cache:  operatorCache,
 		config: config,
 	}
 	c, err := controller.New(controllerName, mgr, controller.Options{Reconciler: reconciler})
@@ -60,14 +66,34 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 		}}
 	}
 
-	// watch for CRDs
-	crdPredicate := predicate.NewPredicateFuncs(func(o client.Object) bool {
-		return o.(*apiextensionsv1.CustomResourceDefinition).Spec.Group == gatewayapiv1.GroupName
-	})
+	isGatewayAPICRD := func(o client.Object) bool {
+		crd := o.(*apiextensionsv1.CustomResourceDefinition)
+		return crd.Spec.Group == gatewayapiv1.GroupName || crd.Spec.Group == experimentalGatewayAPIGroupName
+	}
+	crdPredicate := predicate.NewPredicateFuncs(isGatewayAPICRD)
 
+	// watch for CRDs
 	if err := c.Watch(source.Kind[client.Object](operatorCache, &apiextensionsv1.CustomResourceDefinition{}, handler.EnqueueRequestsFromMapFunc(toFeatureGate), crdPredicate)); err != nil {
 		return nil, err
 	}
+
+	// Index unmanaged Gateway API CRDs to enable efficient filtering
+	// during list operations.
+	if err := mgr.GetFieldIndexer().IndexField(
+		context.Background(),
+		&apiextensionsv1.CustomResourceDefinition{},
+		gatewayAPICRDIndexFieldName,
+		client.IndexerFunc(func(o client.Object) []string {
+			if isGatewayAPICRD(o) {
+				if _, found := managedCRDMap[o.GetName()]; !found {
+					return []string{unmanagedGatewayAPICRDIndexFieldValue}
+				}
+			}
+			return []string{}
+		})); err != nil {
+		return nil, fmt.Errorf("failed to create index for custom resource definitions: %w", err)
+	}
+
 	return c, nil
 }
 
@@ -90,6 +116,7 @@ type reconciler struct {
 	config Config
 
 	client           client.Client
+	cache            cache.Cache
 	recorder         record.EventRecorder
 	startControllers sync.Once
 }
@@ -109,6 +136,12 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 
 	if err := r.ensureGatewayAPIRBAC(ctx); err != nil {
 		return reconcile.Result{}, err
+	}
+
+	if crdNames, err := r.listUnmanagedGatewayAPICRDs(ctx); err != nil {
+		return reconcile.Result{}, fmt.Errorf("failed to list unmanaged gateway CRDs: %w", err)
+	} else if err = r.setUnmanagedGatewayAPICRDNamesStatus(ctx, crdNames); err != nil {
+		return reconcile.Result{}, fmt.Errorf("failed to update the ingress cluster operator status: %w", err)
 	}
 
 	if !r.config.GatewayAPIControllerEnabled {

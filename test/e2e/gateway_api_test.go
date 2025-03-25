@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	configv1 "github.com/openshift/api/config/v1"
 	"github.com/openshift/api/features"
 	iov1 "github.com/openshift/api/operatoringress/v1"
 	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
@@ -18,6 +19,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -90,13 +92,6 @@ func TestGatewayAPI(t *testing.T) {
 		// TODO: Uninstall OSSM after test is completed.
 	})
 
-	// Create test experimental CRDs for the subsequent subtests.
-	// Specifically, `testGatewayAPIResourcesProtection`, which tests VAP protection
-	// for the experimental Gateway API group, needs to check the update verb.
-	// Since an API `Get` is called before the update, the CRD must exist in the cluster,
-	// just like standard Gateway API CRDs.
-	ensureExperimentalCRDs(t)
-
 	t.Run("testGatewayAPIResources", testGatewayAPIResources)
 	if gatewayAPIControllerEnabled {
 		t.Run("testGatewayAPIObjects", testGatewayAPIObjects)
@@ -110,8 +105,8 @@ func TestGatewayAPI(t *testing.T) {
 		t.Log("Gateway API Controller not enabled, skipping controller tests")
 	}
 	t.Run("testGatewayAPIResourcesProtection", testGatewayAPIResourcesProtection)
-
 	t.Run("testGatewayAPIRBAC", testGatewayAPIRBAC)
+	t.Run("testOperatorDegradedCondition", testOperatorDegradedCondition)
 }
 
 // testGatewayAPIResources tests that Gateway API Custom Resource Definitions are available.
@@ -123,7 +118,7 @@ func testGatewayAPIResources(t *testing.T) {
 	ensureCRDs(t)
 
 	// Deleting CRDs to ensure they gets recreated again
-	deleteCRDs(t)
+	bypassVAP(t, deleteCRDs)
 
 	// Make sure all the *.gateway.networking.k8s.io CRDs are available since they should be recreated after manual deletion.
 	ensureCRDs(t)
@@ -328,6 +323,15 @@ func testGatewayAPIManualDeployment(t *testing.T) {
 // denies admission requests attempting to modify Gateway API CRDs on behalf of a user
 // who is not the ingress operator's service account.
 func testGatewayAPIResourcesProtection(t *testing.T) {
+	// Create test experimental CRDs to be able to check the VAP protection
+	// of the update verb for the experimental Gateway API group.
+	// Since an API `Get` is called before the update, the CRD must exist in the cluster,
+	// just like standard Gateway API CRDs.
+	bypassVAP(t, ensureExperimentalCRDs)
+	t.Cleanup(func() {
+		bypassVAP(t, deleteExperimentalCRDs)
+	})
+
 	// Get kube client which impersonates ingress operator's service account.
 	kubeConfig, err := config.GetConfig()
 	if err != nil {
@@ -368,12 +372,24 @@ func testGatewayAPIResourcesProtection(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// Verify that GatewayAPI CRD creation is forbidden.
 			for i := range testCRDs {
-				if err := tc.kclient.Create(context.Background(), testCRDs[i]); err != nil {
-					if !strings.Contains(err.Error(), tc.expectedErrMsg) {
-						t.Errorf("unexpected error received while creating CRD %q: %v", testCRDs[i].Name, err)
+				if err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 30*time.Second, false, func(ctx context.Context) (bool, error) {
+					if err := tc.kclient.Create(ctx, testCRDs[i]); err != nil {
+						if kerrors.IsAlreadyExists(err) {
+							// VAP was disabled and re-enabled at the beginning of the test.
+							// It may take some time for the API server to process this change and register the VAP.
+							// As a result, we might encounter a "CRD X already exists" error.
+							// To handle this, we allow the API server some time to catch up.
+							t.Logf("Failed to create CRD %q: %v; retrying...", testCRDs[i].Name, err)
+							return false, nil
+						}
+						if !strings.Contains(err.Error(), tc.expectedErrMsg) {
+							return false, fmt.Errorf("unexpected error received while creating CRD %q: %v", testCRDs[i].Name, err)
+						}
+						return true, nil
 					}
-				} else {
-					t.Errorf("admission error is expected while creating CRD %q but not received", testCRDs[i].Name)
+					return false, fmt.Errorf("admission error is expected while creating CRD %q but not received", testCRDs[i].Name)
+				}); err != nil {
+					t.Errorf("failed to verify VAP protection for creating gateway API CRD %q: %v", testCRDs[i].Name, err)
 				}
 			}
 
@@ -698,7 +714,51 @@ func testGatewayAPIDNSListenerWithNoHostname(t *testing.T) {
 		return false, nil
 	})
 	t.Logf("Confirmed no DNSRecord created for gateway listener with no hostname.")
+}
 
+// testOperatorDegradedCondition verifies that unmanaged (e.g. experimental)
+// Gateway API CRDs affect the ingress cluster operator's Degraded status.
+func testOperatorDegradedCondition(t *testing.T) {
+	// Ensure that the ingress operator is not in a Degraded state
+	// to prevent conflicts with the unmanaged Gateway API CRDs logic.
+	expectedDegraded := []configv1.ClusterOperatorStatusCondition{
+		{
+			Type:   configv1.OperatorDegraded,
+			Status: configv1.ConditionFalse,
+			Reason: "IngressNotDegraded",
+		},
+	}
+	if err := waitForClusterOperatorConditions(t, kclient, expectedDegraded...); err != nil {
+		t.Fatalf("Operator should be Degraded=False: %v", err)
+	}
+
+	// Create experimental CRDs to check if the ingress cluster operator
+	// transitions to the Degraded state.
+	bypassVAP(t, ensureExperimentalCRDs)
+	expectedDegraded = []configv1.ClusterOperatorStatusCondition{
+		{
+			Type:   configv1.OperatorDegraded,
+			Status: configv1.ConditionTrue,
+			Reason: "GatewayAPICRDsDegraded",
+		},
+	}
+	if err := waitForClusterOperatorConditions(t, kclient, expectedDegraded...); err != nil {
+		t.Errorf("Did not get expected Degraded=True condition: %v", err)
+	}
+
+	// Remove the experimental CRDs to checks that the ingress cluster operator
+	// recovers from the Degraded state.
+	bypassVAP(t, deleteExperimentalCRDs)
+	expectedDegraded = []configv1.ClusterOperatorStatusCondition{
+		{
+			Type:   configv1.OperatorDegraded,
+			Status: configv1.ConditionFalse,
+			Reason: "IngressNotDegraded",
+		},
+	}
+	if err := waitForClusterOperatorConditions(t, kclient, expectedDegraded...); err != nil {
+		t.Errorf("Did not get expected Degraded=False condition: %v", err)
+	}
 }
 
 // ensureCRDs tests that the Gateway API custom resource definitions exist.
@@ -717,18 +777,6 @@ func ensureCRDs(t *testing.T) {
 func deleteCRDs(t *testing.T) {
 	t.Helper()
 
-	vm := newVAPManager(t, gwapiCRDVAPName)
-	// Remove the ingress operator's Validating Admission Policy (VAP)
-	// which prevents modifications of Gateway API CRDs
-	// by anything other than the ingress operator.
-	if err, recoverFn := vm.disable(); err != nil {
-		defer recoverFn()
-		t.Fatalf("failed to disable vap: %v", err)
-	}
-	// Put back the VAP to ensure that it does not prevent
-	// the ingress operator from managing Gateway API CRDs.
-	defer vm.enable()
-
 	for _, crdName := range crdNames {
 		err := deleteExistingCRD(t, crdName)
 		if err != nil {
@@ -737,17 +785,20 @@ func deleteCRDs(t *testing.T) {
 	}
 }
 
-// ensureExperimentalCRDs creates experimental Gateway API custom resource definitions.
-// This function temporarily disables the ingress operator's VAP to allow CRD creation.
-// The VAP is re-enabled before the function returns.
-func ensureExperimentalCRDs(t *testing.T) {
-	vm := newVAPManager(t, gwapiCRDVAPName)
-	if err, recoverFn := vm.disable(); err != nil {
-		defer recoverFn()
-		t.Fatalf("failed to disable vap: %v", err)
-	}
-	defer vm.enable()
+// deleteExperimentalCRDs deletes experimental Gateway API custom resource definitions.
+func deleteExperimentalCRDs(t *testing.T) {
+	t.Helper()
 
+	for _, crdName := range xcrdNames {
+		err := deleteExistingCRD(t, crdName)
+		if err != nil {
+			t.Errorf("failed to delete crd %s: %v", crdName, err)
+		}
+	}
+}
+
+// ensureExperimentalCRDs creates experimental Gateway API custom resource definitions.
+func ensureExperimentalCRDs(t *testing.T) {
 	for _, crdName := range xcrdNames {
 		if _, err := createCRD(crdName); err != nil {
 			t.Fatalf("failed to create experimental crd %q: %v", crdName, err)

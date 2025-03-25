@@ -3,6 +3,7 @@ package gatewayapi
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -14,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // managedCRDs is a list of CRDs that this controller manages.
@@ -23,6 +25,15 @@ var managedCRDs = []*apiextensionsv1.CustomResourceDefinition{
 	manifests.GRPCRouteCRD(),
 	manifests.HTTPRouteCRD(),
 	manifests.ReferenceGrantCRD(),
+}
+
+// managedCRDMap is a map of CRDs that this controller manages.
+var managedCRDMap = map[string]*apiextensionsv1.CustomResourceDefinition{
+	manifests.GatewayClassCRD().Name:   manifests.GatewayClassCRD(),
+	manifests.GatewayCRD().Name:        manifests.GatewayCRD(),
+	manifests.GRPCRouteCRD().Name:      manifests.GRPCRouteCRD(),
+	manifests.HTTPRouteCRD().Name:      manifests.HTTPRouteCRD(),
+	manifests.ReferenceGrantCRD().Name: manifests.ReferenceGrantCRD(),
 }
 
 // ensureCRD attempts to ensure that the specified CRD exists and returns a
@@ -56,7 +67,7 @@ func (r *reconciler) ensureCRD(ctx context.Context, desired *apiextensionsv1.Cus
 
 // ensureGatewayAPICRDs ensures the managed Gateway API CRDs are created and
 // returns an error value.  For now, the managed CRDs are the GatewayClass,
-// Gateway, HTTPRoute, and ReferenceGrant CRDs.
+// Gateway, GRPCRoute, HTTPRoute, and ReferenceGrant CRDs.
 func (r *reconciler) ensureGatewayAPICRDs(ctx context.Context) error {
 	var errs []error
 	for i := range managedCRDs {
@@ -67,6 +78,28 @@ func (r *reconciler) ensureGatewayAPICRDs(ctx context.Context) error {
 		errs = append(errs, err)
 	}
 	return utilerrors.NewAggregate(errs)
+}
+
+// listUnmanagedGatewayAPICRDs returns a list of unmanaged Gateway API CRDs
+// which exist in the cluster. A Gateway API CRD has "gateway.networking.k8s.io"
+// or "gateway.networking.x-k8s.io" in its "spec.group" field.
+func (r *reconciler) listUnmanagedGatewayAPICRDs(ctx context.Context) ([]string, error) {
+	gatewayAPICRDs := &apiextensionsv1.CustomResourceDefinitionList{}
+	if err := r.cache.List(ctx, gatewayAPICRDs, client.MatchingFields{gatewayAPICRDIndexFieldName: unmanagedGatewayAPICRDIndexFieldValue}); err != nil {
+		return nil, fmt.Errorf("failed to list unmanaged gateway API CRDs: %w", err)
+	}
+
+	var unmanagedCRDNames []string
+	for _, crd := range gatewayAPICRDs.Items {
+		unmanagedCRDNames = append(unmanagedCRDNames, crd.Name)
+	}
+
+	// Sort crd names to have a stable list.
+	// This will help to avoid cluster operator
+	// status flip flops during updates.
+	sort.Strings(unmanagedCRDNames)
+
+	return unmanagedCRDNames, nil
 }
 
 // currentCRD returns a Boolean indicating whether an CRD
