@@ -114,6 +114,10 @@ type Config struct {
 	// PrivateHostedZoneAWSEnabled indicates whether the "SharedVPC" feature gate is
 	// enabled.
 	PrivateHostedZoneAWSEnabled bool
+
+	// GCPCustomEndpointsEnabled indicates whether the "GCPCustomAPIEndpoints"
+	// feature gate is enabled.
+	GCPCustomEndpointsEnabled bool
 }
 
 type reconciler struct {
@@ -698,9 +702,11 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 		dnsProvider = provider
 	case configv1.GCPPlatformType:
 		provider, err := gcpdns.New(gcpdns.Config{
-			Project:         platformStatus.GCP.ProjectID,
-			CredentialsJSON: creds.Data["service_account.json"],
-			UserAgent:       userAgent,
+			Project:                   platformStatus.GCP.ProjectID,
+			CredentialsJSON:           creds.Data["service_account.json"],
+			UserAgent:                 userAgent,
+			Endpoints:                 platformStatus.GCP.ServiceEndpoints,
+			GCPCustomEndpointsEnabled: r.config.GCPCustomEndpointsEnabled,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create GCP DNS provider: %v", err)
