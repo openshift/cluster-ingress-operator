@@ -2,7 +2,7 @@ package client
 
 import (
 	"context"
-
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/dns/armdns"
@@ -61,12 +61,13 @@ type dnsClient struct {
 
 // New returns an authenticated DNSClient
 func New(config Config) (DNSClient, error) {
-	rsc, err := newRecordSetClient(config)
+	credential, err := getAzureCredentials(config)
+	rsc, err := newRecordSetClient(config, credential)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create recordSetClient")
 	}
 
-	prsc, err := newPrivateRecordSetClient(config)
+	prsc, err := newPrivateRecordSetClient(config, credential)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create privateRecordSetClient")
 	}
@@ -100,12 +101,7 @@ type recordSetClient struct {
 	client *armdns.RecordSetsClient
 }
 
-func newRecordSetClient(config Config) (*recordSetClient, error) {
-	_, cred, err := getAuthorizerForResource(config)
-	if err != nil {
-		return nil, err
-	}
-
+func newRecordSetClient(config Config, credential azcore.TokenCredential) (*recordSetClient, error) {
 	cloudConfig := ParseCloudEnvironment(config)
 	options := &arm.ClientOptions{
 		ClientOptions: policy.ClientOptions{
@@ -113,7 +109,7 @@ func newRecordSetClient(config Config) (*recordSetClient, error) {
 		},
 	}
 
-	rc, err := armdns.NewRecordSetsClient(config.SubscriptionID, cred, options)
+	rc, err := armdns.NewRecordSetsClient(config.SubscriptionID, credential, options)
 	if err != nil {
 		return nil, err
 	}
@@ -149,12 +145,7 @@ type privateRecordSetClient struct {
 	client *armprivatedns.RecordSetsClient
 }
 
-func newPrivateRecordSetClient(config Config) (*privateRecordSetClient, error) {
-	_, cred, err := getAuthorizerForResource(config)
-	if err != nil {
-		return nil, err
-	}
-
+func newPrivateRecordSetClient(config Config, credential azcore.TokenCredential) (*privateRecordSetClient, error) {
 	cloudConfig := ParseCloudEnvironment(config)
 	options := &arm.ClientOptions{
 		ClientOptions: policy.ClientOptions{
@@ -162,7 +153,7 @@ func newPrivateRecordSetClient(config Config) (*privateRecordSetClient, error) {
 		},
 	}
 
-	prc, err := armprivatedns.NewRecordSetsClient(config.SubscriptionID, cred, options)
+	prc, err := armprivatedns.NewRecordSetsClient(config.SubscriptionID, credential, options)
 	if err != nil {
 		return nil, err
 	}
