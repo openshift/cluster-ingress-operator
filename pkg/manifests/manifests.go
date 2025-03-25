@@ -44,6 +44,7 @@ const (
 
 	GatewayClassCRDAsset   = "assets/gateway-api/gateway.networking.k8s.io_gatewayclasses.yaml"
 	GatewayCRDAsset        = "assets/gateway-api/gateway.networking.k8s.io_gateways.yaml"
+	GRPCRouteCRDAsset      = "assets/gateway-api/gateway.networking.k8s.io_grpcroutes.yaml"
 	HTTPRouteCRDAsset      = "assets/gateway-api/gateway.networking.k8s.io_httproutes.yaml"
 	ReferenceGrantCRDAsset = "assets/gateway-api/gateway.networking.k8s.io_referencegrants.yaml"
 
@@ -265,6 +266,14 @@ func GatewayClassCRD() *apiextensionsv1.CustomResourceDefinition {
 
 func GatewayCRD() *apiextensionsv1.CustomResourceDefinition {
 	crd, err := NewCustomResourceDefinition(MustAssetReader(GatewayCRDAsset))
+	if err != nil {
+		panic(err)
+	}
+	return crd
+}
+
+func GRPCRouteCRD() *apiextensionsv1.CustomResourceDefinition {
+	crd, err := NewCustomResourceDefinition(MustAssetReader(GRPCRouteCRDAsset))
 	if err != nil {
 		panic(err)
 	}
