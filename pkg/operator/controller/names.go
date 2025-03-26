@@ -62,7 +62,7 @@ const (
 	// gatewayclass identifies itself as belonging to OpenShift Istio.  If a
 	// gatewayclass's spec.controllerName field is set to this value, then
 	// the gatewayclass is ours.
-	OpenShiftGatewayClassControllerName = "openshift.io/gateway-controller"
+	OpenShiftGatewayClassControllerName = "openshift.io/gateway-controller/v1"
 
 	// OpenShiftDefaultGatewayClassName is the name of the default
 	// gatewayclass that Istio creates when it is installed.

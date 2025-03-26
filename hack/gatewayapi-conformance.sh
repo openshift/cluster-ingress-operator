@@ -20,7 +20,7 @@ kind: GatewayClass
 metadata:
   name: conformance
 spec:
-  controllerName: openshift.io/gateway-controller
+  controllerName: openshift.io/gateway-controller/v1
 EOF
 
 oc wait --for=condition=Accepted=true "gatewayclass/$GATEWAYCLASS_NAME" --timeout=300s
