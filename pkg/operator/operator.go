@@ -10,6 +10,8 @@ import (
 	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
 	"github.com/openshift/library-go/pkg/operator/v1helpers"
 
+	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller/crd"
+	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller/detector"
 	monitoringdashboard "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/monitoring-dashboard"
 	routemetricscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/route-metrics"
 	errorpageconfigmapcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/sync-http-error-code-configmap"
@@ -32,6 +34,7 @@ import (
 	clientcacontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/clientca-configmap"
 	configurableroutecontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/configurable-route"
 	crlcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/crl"
+	istio "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/detector/istio"
 	dnscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/dns"
 	gatewaylabelercontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gateway-labeler"
 	gatewayservicednscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gateway-service-dns"
@@ -206,6 +209,8 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		return nil, fmt.Errorf("failed to create configurable-route controller: %v", err)
 	}
 
+	externalStatus := &detector.ExternalStatus{}
+
 	// Set up the status controller.
 	if _, err := statuscontroller.New(mgr, statuscontroller.Config{
 		Namespace:              config.Namespace,
@@ -213,7 +218,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		CanaryImage:            config.CanaryImage,
 		OperatorReleaseVersion: config.OperatorReleaseVersion,
 		GatewayAPIEnabled:      gatewayAPIEnabled,
-	}); err != nil {
+	}, externalStatus); err != nil {
 		return nil, fmt.Errorf("failed to create status controller: %v", err)
 	}
 
@@ -333,6 +338,16 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		},
 	}); err != nil {
 		return nil, fmt.Errorf("failed to create gatewayapi controller: %w", err)
+	}
+
+	crdMappings := map[metav1.GroupKind][]crd.ControllerFunc{}
+
+	istio.AddCRDControlFuncs(nil, mgr, crdMappings)
+
+	if _, err := crd.New(mgr, crd.Config{
+		Mappings: crdMappings,
+	}); err != nil {
+		return nil, fmt.Errorf("Failed to create crd controller: %w", err)
 	}
 
 	return &Operator{
