@@ -48,12 +48,13 @@ func Test_simpleSubController(t *testing.T) {
 		WithRuntimeObjects(crd("test-1", "istio.io", "VirtualService")).
 		Build()
 	cl := &testutil.FakeClientRecorder{fakeClient, t, []client.Object{}, []client.Object{}, []client.Object{}}
-	ctrl := &testutil.FakeController{t, false, nil}
+	ctrl1 := &testutil.FakeController{t, false, nil}
+	ctrl2 := &testutil.FakeController{t, false, nil}
 	reconciler := &reconciler{
 		client: cl,
 		config: Config{
-			Mappings: map[metav1.GroupKind]ControllerFunc{
-				{Group: "istio.io", Kind: "VirtualService"}: fakeStartCtrl(ctrl),
+			Mappings: map[metav1.GroupKind][]ControllerFunc{
+				{Group: "istio.io", Kind: "VirtualService"}: []ControllerFunc{fakeStartCtrl(ctrl1), fakeStartCtrl(ctrl2)},
 			},
 		},
 	}
@@ -64,5 +65,6 @@ func Test_simpleSubController(t *testing.T) {
 	}
 	_, err := reconciler.Reconcile(context.Background(), req)
 	assert.NoError(t, err)
-	assert.True(t, ctrl.Started, "ControllerFunc should have been called")
+	assert.True(t, ctrl1.Started, "ControllerFunc 1 should have been called")
+	assert.True(t, ctrl2.Started, "ControllerFunc 2 should have been called")
 }

@@ -44,27 +44,21 @@ type ControllerFunc func() (controller.Controller, error)
 
 // Config holds all the things necessary for the controller to run.
 type Config struct {
-	Mappings map[metav1.GroupKind]ControllerFunc
-}
-
-// state holds the internal controller state, started/failed or not.
-type state struct {
-	controller controller.Controller
-	err        error
+	Mappings map[metav1.GroupKind][]ControllerFunc
 }
 
 type reconciler struct {
 	config Config
 
 	client client.Client
-	state  map[metav1.GroupKind]state
+	state  map[metav1.GroupKind][]bool
 }
 
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
-	log.Info("reconciling", "request", request)
+	log.Info("Reconciling", "request", request)
 
 	if r.state == nil {
-		r.state = map[metav1.GroupKind]state{}
+		r.state = map[metav1.GroupKind][]bool{}
 	}
 
 	crd := &apiextensionsv1.CustomResourceDefinition{}
@@ -73,16 +67,31 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	}
 
 	key := metav1.GroupKind{Group: crd.Spec.Group, Kind: crd.Spec.Names.Kind}
-	if ctrlFunc, configured := r.config.Mappings[key]; configured {
-		if _, running := r.state[key]; running {
-			return reconcile.Result{}, nil // already started, assume all done
-		}
+	if ctrlFuncs, configured := r.config.Mappings[key]; configured {
+		log.Info("Found controller mappings", "GroupKind", key)
 
-		controller, err := ctrlFunc()
-		if err != nil {
-			return reconcile.Result{}, err // failed to create controller, retry
+		runningCtrls := r.state[key]
+		if runningCtrls == nil {
+			runningCtrls = make([]bool, len(ctrlFuncs))
 		}
-		r.state[key] = state{controller: controller, err: err}
+		var errStart error
+		for ctrlIndex, ctrlFunc := range ctrlFuncs {
+			if ctrlStarted := runningCtrls[ctrlIndex]; ctrlStarted {
+				continue
+			} else {
+				log.Info("Starting controller", "index", ctrlIndex, "GroupKind", key)
+				_, err := ctrlFunc()
+				if err != nil {
+					log.Error(err, "Failed to start controller", "index", ctrlIndex, "GroupKind", key)
+					errStart = err
+				}
+				runningCtrls[ctrlIndex] = true
+			}
+		}
+		r.state[key] = runningCtrls
+		if errStart != nil {
+			return reconcile.Result{}, errStart // retry with error from latest failed controller. multi-error?
+		}
 	}
 	return reconcile.Result{}, nil
 }
