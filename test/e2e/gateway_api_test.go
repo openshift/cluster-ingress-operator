@@ -366,27 +366,27 @@ func ensureGatewayObjectCreation(ns *corev1.Namespace) error {
 // ensureGatewayObjectSuccess tests that gateway class, gateway, and http route objects were accepted as valid,
 // and that a curl to the application via the http route returns with a valid response.
 func ensureGatewayObjectSuccess(t *testing.T, ns *corev1.Namespace) []string {
-	t.Helper()
 	errs := []string{}
 	gateway := &gatewayapiv1.Gateway{}
 
-	// Make sure gateway class was created successfully.
+	t.Log("Making sure the gatewayclass is created and accepted...")
 	_, err := assertGatewayClassSuccessful(t, operatorcontroller.OpenShiftDefaultGatewayClassName)
 	if err != nil {
 		errs = append(errs, error.Error(err))
 	}
 
-	// Make sure gateway was created successfully.
+	t.Log("Making sure the gateway is created and accepted...")
 	gateway, err = assertGatewaySuccessful(t, operatorcontroller.DefaultOperandNamespace, testGatewayName)
 	if err != nil {
 		errs = append(errs, error.Error(err))
 	}
 
+	t.Log("Making sure the httproute is created and accepted...")
 	_, err = assertHttpRouteSuccessful(t, ns.Name, "test-httproute", gateway)
 	if err != nil {
 		errs = append(errs, error.Error(err))
 	} else {
-		// Validate the connectivity to the backend app via http route.
+		t.Log("Validating the connectivity to the backend application via the httproute...")
 		err = assertHttpRouteConnection(t, defaultRoutename, gateway)
 		if err != nil {
 			errs = append(errs, error.Error(err))

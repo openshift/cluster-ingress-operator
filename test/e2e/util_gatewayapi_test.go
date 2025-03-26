@@ -529,7 +529,7 @@ func assertGatewayClassSuccessful(t *testing.T, name string) (*gatewayapiv1.Gate
 	// Wait up to 2 minutes for the gateway class to be Accepted.
 	err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 2*time.Minute, false, func(context context.Context) (bool, error) {
 		if err := kclient.Get(context, nsName, gwc); err != nil {
-			t.Logf("failed to get gateway class %s, retrying...", name)
+			t.Logf("Failed to get gatewayclass %s: %v; retrying...", name, err)
 			return false, nil
 		}
 		for _, condition := range gwc.Status.Conditions {
@@ -540,14 +540,15 @@ func assertGatewayClassSuccessful(t *testing.T, name string) (*gatewayapiv1.Gate
 				}
 			}
 		}
-		t.Logf("found gateway class %s, but it is not yet Accepted. Retrying...", name)
+		t.Logf("Found gatewayclass %s, but it is not yet accepted; retrying...", name)
 		return false, nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("gateway class %s not %v, last recorded status message: %s", name, gatewayapiv1.GatewayClassConditionStatusAccepted, recordedConditionMsg)
+		return nil, fmt.Errorf("gatewayclass %s is not %v; last recorded status message: %s", name, gatewayapiv1.GatewayClassConditionStatusAccepted, recordedConditionMsg)
 	}
 
-	t.Logf("gateway class %s successful", name)
+	t.Logf("Observed that gatewayclass %s has been accepted: %+v", name, gwc.Status)
+
 	return gwc, nil
 }
 
@@ -562,14 +563,14 @@ func assertGatewaySuccessful(t *testing.T, namespace, name string) (*gatewayapiv
 
 	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(context context.Context) (bool, error) {
 		if err := kclient.Get(context, nsName, gw); err != nil {
-			t.Logf("failed to get gateway %s, retrying...", name)
+			t.Logf("Failed to get gateway %v: %v; retrying...", nsName, err)
 			return false, nil
 		}
 		for _, condition := range gw.Status.Conditions {
 			if condition.Type == string(gatewayapiv1.GatewayConditionAccepted) {
 				recordedConditionMsg = condition.Message
 				if condition.Status == metav1.ConditionTrue {
-					t.Logf("found gateway %s/%s as Accepted", namespace, name)
+					t.Logf("Found gateway %v as Accepted", nsName)
 					return true, nil
 				}
 			}
@@ -578,8 +579,10 @@ func assertGatewaySuccessful(t *testing.T, namespace, name string) (*gatewayapiv
 	})
 	if err != nil {
 		t.Logf("Last observed gateway:\n%s", util.ToYaml(gw))
-		return nil, fmt.Errorf("gateway %s not %v, last recorded status message: %s", name, gatewayapiv1.GatewayConditionAccepted, recordedConditionMsg)
+		return nil, fmt.Errorf("gateway %v not %v, last recorded status message: %s", nsName, gatewayapiv1.GatewayConditionAccepted, recordedConditionMsg)
 	}
+
+	t.Logf("Observed that gateway %v has been accepted: %+v", nsName, gw.Status)
 
 	return gw, nil
 }
@@ -598,15 +601,15 @@ func assertHttpRouteSuccessful(t *testing.T, namespace, name string, gateway *ga
 	// Wait 1 minute for parent/s to update
 	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(context context.Context) (bool, error) {
 		if err := kclient.Get(context, nsName, httproute); err != nil {
-			t.Logf("failed to get httproute %s/%s, retrying...", namespace, name)
+			t.Logf("Failed to get httproute %v: %v; retrying...", nsName, err)
 			return false, nil
 		}
 		numParents := len(httproute.Status.Parents)
 		if numParents == 0 {
-			t.Logf("httpRoute %s/%s has no parent conditions, retrying...", namespace, name)
+			t.Logf("Found no parents in httproute %v with status %+v; retrying...", nsName, httproute.Status)
 			return false, nil
 		}
-		t.Logf("found httproute %s/%s with %d parent/s", namespace, name, numParents)
+		t.Logf("Found httproute %v with %d parent/s; status: %+v", nsName, numParents, httproute.Status)
 		return true, nil
 	})
 	if err != nil {
@@ -646,14 +649,15 @@ func assertHttpRouteSuccessful(t *testing.T, namespace, name string, gateway *ga
 			return nil, fmt.Errorf("httpRoute %s/%s, parent %v/%v not %v, last recorded status message: %s", namespace, name, parent.ParentRef.Namespace, parent.ParentRef.Name, gatewayapiv1.RouteConditionResolvedRefs, resolvedRefConditionMsg)
 		}
 	}
-	t.Logf("httpRoute %s/%s successful", namespace, name)
+
+	t.Logf("Observed that all parents of httproute %v report accepted and resolved; status: %+v", nsName, httproute.Status)
+
 	return httproute, nil
 }
 
 // assertHttpRouteConnection checks if the http route of the given name replies successfully,
 // and returns an error if not
 func assertHttpRouteConnection(t *testing.T, hostname string, gateway *gatewayapiv1.Gateway) error {
-	t.Helper()
 	domain := ""
 
 	// Create the http client to check the header.
@@ -676,7 +680,7 @@ func assertHttpRouteConnection(t *testing.T, hostname string, gateway *gatewayap
 	// Obtain the standard formatting of the dnsRecord.
 	dnsRecordName := operatorcontroller.GatewayDNSRecordName(gateway, domain)
 
-	// Make sure the DNSRecord is ready to use.
+	t.Logf("Making sure DNSRecord %v for domain %q is ready to use...", dnsRecordName, domain)
 	if err := assertDNSRecord(t, dnsRecordName); err != nil {
 		return err
 	}
@@ -684,6 +688,7 @@ func assertHttpRouteConnection(t *testing.T, hostname string, gateway *gatewayap
 	// Wait and check that the dns name resolves first. Takes a long time, so
 	// if the hostname is actually an IP address, skip this.
 	if net.ParseIP(hostname) == nil {
+		t.Logf("Attempting to resolve %s...", hostname)
 		if err := wait.PollUntilContextTimeout(context.Background(), 10*time.Second, dnsResolutionTimeout, false, func(context context.Context) (bool, error) {
 			_, err := net.LookupHost(hostname)
 			if err != nil {
@@ -692,7 +697,7 @@ func assertHttpRouteConnection(t *testing.T, hostname string, gateway *gatewayap
 			}
 			return true, nil
 		}); err != nil {
-			t.Fatalf("HTTP route name %s was unable to be resolved: %v", hostname, err)
+			t.Fatalf("Failed to resolve host name %s: %v", hostname, err)
 		}
 	}
 
@@ -701,7 +706,7 @@ func assertHttpRouteConnection(t *testing.T, hostname string, gateway *gatewayap
 		body       string
 		headers    http.Header
 	)
-	// Wait for http route to respond, and when it does, check for the status code.
+	t.Logf("Probing %s...", hostname)
 	if err := wait.PollUntilContextTimeout(context.Background(), 5*time.Second, 5*time.Minute, false, func(context context.Context) (bool, error) {
 		var err error
 		statusCode, headers, body, err = getHTTPResponse(client, hostname)
@@ -713,7 +718,7 @@ func assertHttpRouteConnection(t *testing.T, hostname string, gateway *gatewayap
 			t.Logf("GET %s failed: status %v, expected %v, retrying...", hostname, statusCode, http.StatusOK)
 			return false, nil // retry on 503 as pod/service may not be ready
 		}
-		t.Logf("request to %s was successful", hostname)
+		t.Logf("Request to %s was successful", hostname)
 		return true, nil
 
 	}); err != nil {
@@ -721,7 +726,7 @@ func assertHttpRouteConnection(t *testing.T, hostname string, gateway *gatewayap
 			t.Log("Response headers for most recent request:", headers)
 			t.Log("Reponse body for most recent request:", body)
 		}
-		t.Fatalf("error contacting %s's endpoint: %v", hostname, err)
+		t.Fatalf("Error connecting to %s: %v", hostname, err)
 	}
 
 	return nil
@@ -843,7 +848,7 @@ func assertDNSRecord(t *testing.T, recordName types.NamespacedName) error {
 
 	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(context context.Context) (bool, error) {
 		if err := kclient.Get(context, recordName, dnsRecord); err != nil {
-			t.Logf("failed to get DNSRecord %s/%s: %v, retrying...", recordName.Namespace, recordName.Name, err)
+			t.Logf("Failed to get DNSRecord %v: %v; retrying...", recordName, err)
 			return false, nil
 		}
 		// Determine the current state of the DNSRecord.
@@ -851,12 +856,13 @@ func assertDNSRecord(t *testing.T, recordName types.NamespacedName) error {
 			for _, zone := range dnsRecord.Status.Zones {
 				for _, condition := range zone.Conditions {
 					if condition.Type == v1.DNSRecordPublishedConditionType && condition.Status == string(metav1.ConditionTrue) {
+						t.Logf("Found DNSRecord %v %s=%s", recordName, condition.Type, condition.Status)
 						return true, nil
 					}
 				}
 			}
 		}
-		t.Logf("found DNSRecord %s/%s but could not determine its readiness. Retrying...", recordName.Namespace, recordName.Name)
+		t.Logf("Found DNSRecord %v but could not determine its readiness; retrying...", recordName)
 		return false, nil
 	})
 	return err
