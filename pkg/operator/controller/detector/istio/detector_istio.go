@@ -1,15 +1,15 @@
-package detector
+package istio
 
 import (
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller/crd"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller/detector"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller/detector/label"
+
+	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
-
-const IstioRevisionLabel = "istio.io/rev"
 
 var AllIstioWatchTypes []metav1.TypeMeta = []metav1.TypeMeta{
 	{APIVersion: "networking.istio.io/v1", Kind: "Gateway"},
@@ -27,48 +27,40 @@ var AllIstioWatchTypes []metav1.TypeMeta = []metav1.TypeMeta{
 	{APIVersion: "telemetry.istio.io/v1", Kind: "Telemetry"},
 }
 
-type ControllerStatus struct {
-	Controller controller.Controller
-	Error      error
-}
+func SetupDetectors(mgr manager.Manager, statusReporter detector.StatusReporter, mappings map[metav1.GroupKind][]crd.ControllerFunc) {
 
-func AddCRDControlFuncs(config Config, mgr manager.Manager, mappings map[metav1.GroupKind][]crd.ControllerFunc) {
-
-	for _, watchResource := range config.WatchedResources {
-
-		c, err := label.NewLabelMatch(mgr, statusReporter, label.Config{
-			LabelName:       IstioRevisionLabel,
-			LabelValue:      config.Revision,
-			WatchResource:   watchResource,
-			IgnoreOwnerRefs: config.IgnoreOwnerRefs,
-			IgnoreLabels:    config.IgnoreLabels,
-		})
-
-}
-
-func Setup(mgr manager.Manager, config Config, statusReporter detector.StatusReporter) []ControllerStatus {
-	status := []ControllerStatus{}
-
-	for _, watchResource := range config.WatchedResources {
-		c, err := label.NewLabelMatch(mgr, statusReporter, label.Config{
-			LabelName:       IstioRevisionLabel,
-			LabelValue:      config.Revision,
-			WatchResource:   watchResource,
-			IgnoreOwnerRefs: config.IgnoreOwnerRefs,
-			IgnoreLabels:    config.IgnoreLabels,
-		})
-		status = append(status, ControllerStatus{Controller: c, Error: err})
+	ignoreOwnerRefs := []metav1.OwnerReference{}
+	ignoreLabels := map[string]string{
+		"kuadrant.io/managed": "true", // kuadrant is allowed to configure our control plane
 	}
 
-	return status
-}
+	for i := range AllIstioWatchTypes {
+		watchedResource := AllIstioWatchTypes[i]
 
-// Config holds all the configuration that must be provided when creating the
-// controller.
-type Config struct {
-	Revision         string
-	WatchedResources []metav1.TypeMeta
+		gk := metav1.GroupKind{
+			Group: watchedResource.GetObjectKind().GroupVersionKind().Group,
+			Kind:  watchedResource.GroupVersionKind().Kind}
 
-	IgnoreOwnerRefs []metav1.OwnerReference
-	IgnoreLabels    map[string]string
+		ctrlFunc := func(mgr manager.Manager, statusReorter detector.StatusReporter) func() (controller.Controller, error) {
+			return func() (controller.Controller, error) {
+				return label.NewLabelMatch(mgr, statusReporter, label.Config{
+					LabelName:       operatorcontroller.IstioRevLabelKey,
+					LabelValue:      operatorcontroller.IstioName("").Name,
+					WatchResource:   watchedResource,
+					IgnoreOwnerRefs: ignoreOwnerRefs,
+					IgnoreLabels:    ignoreLabels,
+				})
+			}
+		}(mgr, statusReporter)
+
+		if len(mappings[gk]) > 0 { // append if already someone listens to this event. Create a "holder" object for the list and move the logic to "addd"?
+			existingCtrlFuncs := mappings[gk]
+			existingCtrlFuncs = append(existingCtrlFuncs, ctrlFunc)
+			mappings[gk] = existingCtrlFuncs
+		} else {
+			ctrlFuncs := []crd.ControllerFunc{}
+			ctrlFuncs = append(ctrlFuncs, ctrlFunc)
+			mappings[gk] = ctrlFuncs
+		}
+	}
 }

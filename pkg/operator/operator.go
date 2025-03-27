@@ -340,14 +340,13 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		return nil, fmt.Errorf("failed to create gatewayapi controller: %w", err)
 	}
 
-	crdMappings := map[metav1.GroupKind][]crd.ControllerFunc{}
-
-	istio.AddCRDControlFuncs(nil, mgr, crdMappings)
+	dependentControllers := map[metav1.GroupKind][]crd.ControllerFunc{}
+	istio.SetupDetectors(mgr, externalStatus.StatusReporter(string(configv1.OperatorDegradedSupport)), dependentControllers)
 
 	if _, err := crd.New(mgr, crd.Config{
-		Mappings: crdMappings,
+		Mappings: dependentControllers,
 	}); err != nil {
-		return nil, fmt.Errorf("Failed to create crd controller: %w", err)
+		return nil, fmt.Errorf("failed to create crd controller: %w", err)
 	}
 
 	return &Operator{

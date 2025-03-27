@@ -250,6 +250,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		computeOperatorDegradedCondition(state.IngressControllers),
 		computeOperatorUpgradeableCondition(state.IngressControllers),
 		computeOperatorEvaluationConditionsDetectedCondition(state.IngressControllers),
+		computeExternalStatus(r.externalStatusSource.GetCurrentStatus(string(configv1.OperatorDegradedSupport))),
 	)
 
 	if !operatorStatusesEqual(*oldStatus, co.Status) {
@@ -628,6 +629,23 @@ func computeOperatorAvailableCondition(ingresses []operatorv1.IngressController)
 	}
 
 	return availableCondition
+}
+
+func computeExternalStatus(status detector.Status) configv1.ClusterOperatorStatusCondition {
+	degradedCondition := configv1.ClusterOperatorStatusCondition{
+		Type: configv1.OperatorDegradedSupport,
+	}
+	if status.Active {
+		degradedCondition.Status = configv1.ConditionTrue
+		degradedCondition.Reason = "IngressDegraded"
+		degradedCondition.Message = fmt.Sprintf("Unsupportd objects found: %s", status.Details)
+	} else {
+		degradedCondition.Status = configv1.ConditionFalse
+		degradedCondition.Reason = "SupportNotDegraded"
+		degradedCondition.Message = fmt.Sprintf("No unsupported usage found.")
+
+	}
+	return degradedCondition
 }
 
 // mergeConditions adds or updates matching conditions, and updates

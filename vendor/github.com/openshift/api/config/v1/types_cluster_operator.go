@@ -183,6 +183,8 @@ const (
 	// expectation is that all unexpected errors are handled as operators mature.
 	OperatorDegraded ClusterStatusConditionType = "Degraded"
 
+	OperatorDegradedSupport ClusterStatusConditionType = "DegradedSupport"
+
 	// Upgradeable indicates whether the component (operator and all configured
 	// operands) is safe to upgrade based on the current cluster state. When
 	// Upgradeable is False, the cluster-version operator will prevent the
