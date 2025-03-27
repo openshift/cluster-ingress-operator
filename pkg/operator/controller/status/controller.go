@@ -637,12 +637,12 @@ func computeExternalStatus(status detector.Status) configv1.ClusterOperatorStatu
 	}
 	if status.Active {
 		degradedCondition.Status = configv1.ConditionTrue
-		degradedCondition.Reason = "IngressDegraded"
+		degradedCondition.Reason = "SupportDegraded"
 		degradedCondition.Message = fmt.Sprintf("Unsupportd objects found: %s", status.Details)
 	} else {
 		degradedCondition.Status = configv1.ConditionFalse
 		degradedCondition.Reason = "SupportNotDegraded"
-		degradedCondition.Message = fmt.Sprintf("No unsupported usage found.")
+		degradedCondition.Message = "No unsupported usage found."
 
 	}
 	return degradedCondition
