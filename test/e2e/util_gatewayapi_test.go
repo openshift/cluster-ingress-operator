@@ -17,6 +17,7 @@ import (
 
 	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
 	v1 "github.com/openshift/api/operatoringress/v1"
+	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	util "github.com/openshift/cluster-ingress-operator/pkg/util"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
@@ -461,20 +462,30 @@ func assertOSSMOperator(t *testing.T) error {
 		return true, nil
 	})
 	if err != nil {
-		return fmt.Errorf("error finding deployment %v: %v", ns, err)
+		return fmt.Errorf("error finding deployment %v: %w", ns, err)
 	}
 
+	pod := corev1.Pod{}
 	// Get the istio-operator pod.
-	podlist, err := getPods(t, kclient, dep)
+	err = wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(context context.Context) (bool, error) {
+		podlist, err := getPods(t, kclient, dep)
+		if err != nil {
+			t.Logf("error finding pod for deployment %v: %v, retrying...", ns, err)
+			return false, nil
+		}
+		if len(podlist.Items) > 1 {
+			t.Logf("too many pods for deployment %v: %d, retrying...", ns, len(podlist.Items))
+			return false, nil
+		}
+		pod = podlist.Items[0]
+		if pod.Status.Phase != corev1.PodRunning {
+			t.Logf("OSSM operator failure: pod %s is not running, it is %v, retrying...", pod.Name, pod.Status.Phase)
+			return false, nil
+		}
+		return true, nil
+	})
 	if err != nil {
-		return fmt.Errorf("error finding pod for deployment %v: %v", ns, err)
-	}
-	if len(podlist.Items) > 1 {
-		return fmt.Errorf("too many pods for deployment %v: %d", ns, len(podlist.Items))
-	}
-	pod := podlist.Items[0]
-	if pod.Status.Phase != corev1.PodRunning {
-		return fmt.Errorf("OSSM operator failure: pod %s is not running, it is %v", pod.Name, pod.Status.Phase)
+		return fmt.Errorf("error finding OSSM operator pod %v: %w", ns, err)
 	}
 
 	t.Logf("found OSSM operator pod %s/%s to be %s", pod.Namespace, pod.Name, pod.Status.Phase)
@@ -771,6 +782,50 @@ func assertCatalogSource(t *testing.T, namespace, csName string) error {
 	return err
 }
 
+func assertClusterServiceVersionSucceeded(t *testing.T) error {
+	t.Helper()
+	expectedVersion, err := expectedOSSMVersion(t)
+	if err != nil {
+		return fmt.Errorf("Could not determine expected OSSM version: %w", err)
+	}
+	err = wait.PollUntilContextTimeout(context.Background(), 5*time.Second, 2*time.Minute, false, func(context context.Context) (bool, error) {
+		t.Log("getting cluster service version...")
+		csv := &operatorsv1alpha1.ClusterServiceVersion{}
+		if err := kclient.Get(context, types.NamespacedName{Namespace: controller.OpenshiftOperatorNamespace, Name: expectedVersion}, csv); err != nil {
+			t.Logf("failed to get cluster service version %s/%s: %v", controller.OpenshiftOperatorNamespace, expectedVersion, err)
+			if kerrors.IsNotFound(err) {
+				return false, nil
+			}
+			return false, err
+		}
+		if csv.Status.Phase != operatorsv1alpha1.CSVPhaseSucceeded {
+			t.Logf("found cluster service version %s, but phase is %s, expected Succeeded", csv.Name, csv.Status.Phase)
+			return false, nil
+		}
+		t.Logf("found cluster service version %s, and phase is Succeeded", csv.Name)
+		return true, nil
+	})
+	return err
+}
+
+func expectedOSSMVersion(t *testing.T) (string, error) {
+	t.Helper()
+	deployment, err := getDeployment(t, kclient, types.NamespacedName{Namespace: controller.DefaultOperatorNamespace, Name: "ingress-operator"}, timeout)
+	if err != nil {
+		return "", err
+	}
+	for _, container := range deployment.Spec.Template.Spec.Containers {
+		if container.Name == "ingress-operator" {
+			for _, envvar := range container.Env {
+				if envvar.Name == "GATEWAY_API_OPERATOR_VERSION" {
+					return envvar.Value, nil
+				}
+			}
+		}
+	}
+	return "servicemeshoperator3.v3.0.0", nil
+}
+
 // assertIstio checks if the Istio exists in a ready state,
 // and returns an error if not.
 func assertIstio(t *testing.T) error {
@@ -846,7 +901,7 @@ func assertDNSRecord(t *testing.T, recordName types.NamespacedName) error {
 	t.Helper()
 	dnsRecord := &v1.DNSRecord{}
 
-	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(context context.Context) (bool, error) {
+	err := wait.PollUntilContextTimeout(context.Background(), 5*time.Second, 2*time.Minute, false, func(context context.Context) (bool, error) {
 		if err := kclient.Get(context, recordName, dnsRecord); err != nil {
 			t.Logf("Failed to get DNSRecord %v: %v; retrying...", recordName, err)
 			return false, nil
