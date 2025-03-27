@@ -43,6 +43,8 @@ const (
 	CanaryImageVersionName       = "canary-server"
 	UnknownVersionValue          = "unknown"
 
+	OperatorDegradedSupport configv1.ClusterStatusConditionType = "DegradedSupport"
+
 	ingressesEqualConditionMessage = "desired and current number of IngressControllers are equal"
 
 	controllerName = "status_controller"
@@ -194,7 +196,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		computeOperatorDegradedCondition(state.IngressControllers),
 		computeOperatorUpgradeableCondition(state.IngressControllers),
 		computeOperatorEvaluationConditionsDetectedCondition(state.IngressControllers),
-		computeExternalStatus(r.externalStatusSource.GetCurrentStatus(string(configv1.OperatorDegradedSupport))),
+		computeExternalStatus(r.externalStatusSource.GetCurrentStatus(string(OperatorDegradedSupport))),
 	)
 
 	if !operatorStatusesEqual(*oldStatus, co.Status) {
@@ -563,7 +565,7 @@ func computeOperatorAvailableCondition(ingresses []operatorv1.IngressController)
 
 func computeExternalStatus(status detector.Status) configv1.ClusterOperatorStatusCondition {
 	degradedCondition := configv1.ClusterOperatorStatusCondition{
-		Type: configv1.OperatorDegradedSupport,
+		Type: OperatorDegradedSupport,
 	}
 	if status.Active {
 		degradedCondition.Status = configv1.ConditionTrue
