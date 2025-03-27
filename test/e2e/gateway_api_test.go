@@ -101,6 +101,7 @@ func TestGatewayAPI(t *testing.T) {
 		t.Run("testGatewayAPIObjects", testGatewayAPIObjects)
 		t.Run("testGatewayAPIManualDeployment", testGatewayAPIManualDeployment)
 		t.Run("testGatewayAPIIstioInstallation", testGatewayAPIIstioInstallation)
+		t.Run("testGatewayAPIDNS", testGatewayAPIDNS)
 	} else {
 		t.Log("Gateway API Controller not enabled, skipping controller tests")
 	}
@@ -421,6 +422,117 @@ func testGatewayAPIRBAC(t *testing.T) {
 			}
 		}
 	}
+}
+
+func testGatewayAPIDNS(t *testing.T) {
+
+	domain := "gws." + dnsConfig.Spec.BaseDomain
+
+	gatewayClass, err := createGatewayClass(operatorcontroller.OpenShiftDefaultGatewayClassName, operatorcontroller.OpenShiftGatewayClassControllerName)
+	if err != nil {
+		t.Fatalf("failed to create gatewayclass %s: %v", gatewayClass.Name, err)
+	}
+
+	testCases := []struct {
+		name           string
+		createGateways []struct {
+			gatewayName string
+			namespace   string
+			hostname    string
+		}
+		// updateListener ?
+		expectedListenerConditions []metav1.Condition
+		// expectCreate             []client.Object   // expected DNSRecords
+		// expectUpdate             []client.Object
+		// expectedErrMsg           string
+	}{
+		{
+			name: "multipleGatewaysSameListenerHostname",
+			createGateways: []struct {
+				gatewayName string
+				namespace   string
+				hostname    string
+			}{
+				{gatewayName: "gw1", namespace: operatorcontroller.DefaultOperandNamespace, hostname: "foo." + domain},
+				{gatewayName: "gw2", namespace: operatorcontroller.DefaultOperandNamespace, hostname: "foo." + domain},
+			},
+			expectedListenerConditions: []metav1.Condition{
+				{Type: "Accepted", Status: metav1.ConditionTrue},
+				{Type: "Conflicted", Status: metav1.ConditionFalse},
+				{Type: "Programmed", Status: metav1.ConditionTrue},
+				{Type: "ResolvedRefs", Status: metav1.ConditionTrue},
+			},
+			// expectCreated {DNSRecord1, DNSRecord2}
+		},
+		/*
+			{
+				name: "gatewayListenerWithNoHostname",
+				createGateways: []struct {
+					gatewayName string
+					namespace   string
+					hostname    string
+				}{
+					{gatewayName: "gw1", namespace: operatorcontroller.DefaultOperandNamespace, hostname: ""}, // TODO: Modify the gw creation function to make the hostname optional
+				},
+				expectedListenerConditions: []metav1.Condition{
+					{Type: "Accepted", Status: metav1.ConditionFalse},
+					{Type: "Conflicted", Status: metav1.ConditionTrue},
+					{Type: "Programmed", Status: metav1.ConditionTrue},
+					{Type: "ResolvedRefs", Status: metav1.ConditionTrue},
+				},
+				// expectCreated: []
+			},
+		*/
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			var gateways []*gatewayapiv1.Gateway
+
+			// Create gateways
+			for _, gateway := range tc.createGateways {
+				createdGateway, err := createGatewayWithListener(gatewayClass, gateway.gatewayName, gateway.namespace, domain)
+				gateways = append(gateways, createdGateway)
+				if err != nil {
+					t.Fatalf("failed to create gateway %s: %v", gateway.gatewayName, err)
+				}
+			}
+
+			// Cleanup of the gateways
+			t.Cleanup(func() {
+				for _, gateway := range gateways {
+					gw := gatewayapiv1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: gateway.Name, Namespace: operatorcontroller.DefaultOperandNamespace}}
+					if err := kclient.Delete(context.TODO(), &gw); err != nil {
+						if errors.IsNotFound(err) {
+							return
+						}
+						t.Errorf("failed to delete gateway %q: %v", gateway.Name, err)
+					}
+				}
+			})
+
+			// Creating new gateways
+			for _, gateway := range tc.createGateways {
+				assertGatewaySuccessful(t, operatorcontroller.DefaultOperandNamespace, gateway.gatewayName)
+			}
+
+			// step 2: check if dnsrecord is created for each  hostname
+			for _, gateway := range gateways {
+				fmt.Printf("Gateway Name: %s, Namespace: %s\n", gateway.Name, gateway.Namespace)
+				// loop through all DNSRecord CRs in operatorcontroller.DefaultOperandNamespace
+				// if DNSRecord label gateway.networking.k8s.io/gateway-name: == gateway.Name
+				// Verify that a DNSRecord is created for each unique hostname.
+				// assertDNSRecord()
+			}
+			// step 3: check the gateway listener conditions if they match expected
+			for _, gateway := range gateways {
+				waitForGatewayListenerCondition(t, types.NamespacedName{Namespace: gateway.Namespace, Name: gateway.Name}, "http", tc.expectedListenerConditions...)
+			}
+			// step 4: delete the listener or gateway - optional function callback only used for some test cases.
+			// step 5: look at the dnsrecord afterwards
+		})
+	}
+
 }
 
 // ensureCRDs tests that the Gateway API custom resource definitions exist.

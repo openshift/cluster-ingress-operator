@@ -6,6 +6,7 @@ package e2e
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/ioutil"
@@ -219,6 +220,37 @@ func createHttpRoute(namespace, routeName, parentNamespace, hostname, backendRef
 // If it can, it is returned.  If it can't an error is returned.
 func createGateway(gatewayClass *gatewayapiv1.GatewayClass, name, namespace, domain string) (*gatewayapiv1.Gateway, error) {
 	gateway := buildGateway(name, namespace, gatewayClass.Name, allNamespaces, domain)
+	if err := kclient.Create(context.TODO(), gateway); err != nil {
+		if kerrors.IsAlreadyExists(err) {
+			name := types.NamespacedName{Namespace: namespace, Name: name}
+			if err = kclient.Get(context.TODO(), name, gateway); err != nil {
+				return nil, fmt.Errorf("failed to get the existing gateway: %v", err.Error())
+			}
+		} else {
+			return nil, fmt.Errorf("failed to create gateway: %v", err.Error())
+		}
+	}
+	return gateway, nil
+}
+
+func createGatewayWithListener(gatewayClass *gatewayapiv1.GatewayClass, name, namespace, listenerHostname string) (*gatewayapiv1.Gateway, error) {
+
+	// gateway := buildGateway(name, namespace, gatewayClass.Name, allNamespaces, domain)
+
+	hostname := gatewayapiv1.Hostname(listenerHostname)
+	fromNamespace := gatewayapiv1.FromNamespaces(allNamespaces)
+	// Tell the gateway listener to allow routes from the namespace/s in the fromNamespaces variable, which could be "All".
+	allowedRoutes := gatewayapiv1.AllowedRoutes{Namespaces: &gatewayapiv1.RouteNamespaces{From: &fromNamespace}}
+	listener1 := gatewayapiv1.Listener{Name: "http", Hostname: &hostname, Port: 80, Protocol: "HTTP", AllowedRoutes: &allowedRoutes}
+
+	gateway := &gatewayapiv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+		Spec: gatewayapiv1.GatewaySpec{
+			GatewayClassName: gatewayapiv1.ObjectName(gatewayClass.Name),
+			Listeners:        []gatewayapiv1.Listener{listener1},
+		},
+	}
+
 	if err := kclient.Create(context.TODO(), gateway); err != nil {
 		if kerrors.IsAlreadyExists(err) {
 			name := types.NamespacedName{Namespace: namespace, Name: name}
@@ -590,6 +622,59 @@ func assertGatewaySuccessful(t *testing.T, namespace, name string) (*gatewayapiv
 	return gw, nil
 }
 
+func waitForGatewayListenerCondition(t *testing.T, gatewayName types.NamespacedName, listenerName string, conditions ...metav1.Condition) error {
+	t.Helper()
+
+	gateway := &gatewayapiv1.Gateway{}
+	expected := gatewayListenerConditionMap(conditions...)
+	current := map[string]string{}
+
+	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(context context.Context) (bool, error) {
+		if err := kclient.Get(context, gatewayName, gateway); err != nil {
+			t.Logf("failed to get gateway %s: %v", gatewayName.Name, err)
+			return false, nil
+		}
+
+		var listenerStatus *gatewayapiv1.ListenerStatus
+		for _, ls := range gateway.Status.Listeners {
+			if string(ls.Name) == listenerName {
+				listenerStatus = &ls
+				current = gatewayListenerConditionMap(listenerStatus.Conditions...)
+				for _, condition := range listenerStatus.Conditions {
+					t.Logf("Gateway: %s - ListenerName: %s - ListenerStatus %s: %s", gatewayName.Name, listenerName, condition.Type, condition.Status)
+				}
+				return conditionsMatchExpected(expected, current), nil
+			}
+		}
+
+		if listenerStatus == nil {
+			t.Logf("listener %s not found in gateway %s", listenerName, gatewayName.Name)
+			return false, nil
+		}
+		return false, nil
+	})
+
+	if err != nil {
+		t.Errorf("Expected conditions: %v\n Current conditions: %v", expected, current)
+		if gateway != nil {
+			if gwStatusPretty, err := json.MarshalIndent(gateway.Status, "", "  "); err != nil {
+				t.Fatal(err)
+			} else {
+				t.Logf("Gateway %s/%s status: %s\n", gateway.Namespace, gateway.Name, string(gwStatusPretty))
+			}
+		}
+	}
+	return err
+}
+
+func gatewayListenerConditionMap(conditions ...metav1.Condition) map[string]string {
+	conds := map[string]string{}
+	for _, cond := range conditions {
+		conds[string(cond.Type)] = string(cond.Status)
+	}
+	return conds
+}
+
 // assertHttpRouteSuccessful checks if the http route was created and has parent conditions that indicate
 // it was accepted successfully.  A parent is usually a gateway.  Returns an error not accepted and/or not resolved.
 func assertHttpRouteSuccessful(t *testing.T, namespace, name string, gateway *gatewayapiv1.Gateway) (*gatewayapiv1.HTTPRoute, error) {
@@ -849,7 +934,7 @@ func assertDNSRecord(t *testing.T, recordName types.NamespacedName) error {
 	t.Helper()
 	dnsRecord := &v1.DNSRecord{}
 
-	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(context context.Context) (bool, error) {
+	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 3*time.Minute, false, func(context context.Context) (bool, error) {
 		if err := kclient.Get(context, recordName, dnsRecord); err != nil {
 			t.Logf("Failed to get DNSRecord %v: %v; retrying...", recordName, err)
 			return false, nil
