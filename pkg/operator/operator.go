@@ -14,6 +14,7 @@ import (
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller/detector"
 	monitoringdashboard "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/monitoring-dashboard"
 	routemetricscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/route-metrics"
+	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller/status"
 	errorpageconfigmapcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/sync-http-error-code-configmap"
 	"github.com/openshift/library-go/pkg/operator/onepodpernodeccontroller"
 	corev1 "k8s.io/api/core/v1"
@@ -341,7 +342,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	}
 
 	dependentControllers := map[metav1.GroupKind][]crd.ControllerFunc{}
-	istio.SetupDetectors(mgr, externalStatus.StatusReporter(string(configv1.OperatorDegradedSupport)), dependentControllers)
+	istio.SetupDetectors(mgr, externalStatus.StatusReporter(string(status.OperatorDegradedSupport)), dependentControllers)
 
 	if _, err := crd.New(mgr, crd.Config{
 		Mappings: dependentControllers,
