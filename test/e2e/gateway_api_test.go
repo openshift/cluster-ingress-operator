@@ -105,6 +105,8 @@ func TestGatewayAPI(t *testing.T) {
 		t.Log("Gateway API Controller not enabled, skipping controller tests")
 	}
 	t.Run("testGatewayAPIResourcesProtection", testGatewayAPIResourcesProtection)
+
+	t.Run("testGatewayAPIRBAC", testGatewayAPIRBAC)
 }
 
 // testGatewayAPIResources tests that Gateway API Custom Resource Definitions are available.
@@ -399,6 +401,25 @@ func testGatewayAPIResourcesProtection(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// testGatewayAPIRBAC checks whether RBAC resources for Gateway API (such as the
+// aggregated ClusterRoles) are properly deployed and aggregated.
+func testGatewayAPIRBAC(t *testing.T) {
+	aggregationMapping := map[string][]string{
+		"system:openshift:gateway-api:aggregate-to-admin": {"admin", "edit"},
+		"system:openshift:gateway-api:aggregate-to-view":  {"view"},
+	}
+
+	for srcClusterRoleName, destClusterRoleNames := range aggregationMapping {
+		for _, destClusterRoleName := range destClusterRoleNames {
+			t.Logf("verifying that ClusterRole %s aggregates all PolicyRules from %s", destClusterRoleName, srcClusterRoleName)
+
+			if err := eventuallyClusterRoleContainsAggregatedPolicies(t, destClusterRoleName, srcClusterRoleName); err != nil {
+				t.Errorf("ClusterRole %s did not aggregate PolicyRules from %s", destClusterRoleName, srcClusterRoleName)
+			}
+		}
 	}
 }
 
