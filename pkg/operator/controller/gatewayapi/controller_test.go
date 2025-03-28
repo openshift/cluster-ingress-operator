@@ -11,6 +11,7 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 
+	rbacv1 "k8s.io/api/rbac/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -27,6 +28,11 @@ import (
 func Test_Reconcile(t *testing.T) {
 	crd := func(name string) *apiextensionsv1.CustomResourceDefinition {
 		return &apiextensionsv1.CustomResourceDefinition{
+			ObjectMeta: metav1.ObjectMeta{Name: name},
+		}
+	}
+	clusterRole := func(name string) *rbacv1.ClusterRole {
+		return &rbacv1.ClusterRole{
 			ObjectMeta: metav1.ObjectMeta{Name: name},
 		}
 	}
@@ -58,6 +64,8 @@ func Test_Reconcile(t *testing.T) {
 				crd("grpcroutes.gateway.networking.k8s.io"),
 				crd("httproutes.gateway.networking.k8s.io"),
 				crd("referencegrants.gateway.networking.k8s.io"),
+				clusterRole("system:openshift:gateway-api:aggregate-to-admin"),
+				clusterRole("system:openshift:gateway-api:aggregate-to-view"),
 			},
 			expectUpdate:    []client.Object{},
 			expectDelete:    []client.Object{},
@@ -73,6 +81,8 @@ func Test_Reconcile(t *testing.T) {
 				crd("grpcroutes.gateway.networking.k8s.io"),
 				crd("httproutes.gateway.networking.k8s.io"),
 				crd("referencegrants.gateway.networking.k8s.io"),
+				clusterRole("system:openshift:gateway-api:aggregate-to-admin"),
+				clusterRole("system:openshift:gateway-api:aggregate-to-view"),
 			},
 			expectUpdate:    []client.Object{},
 			expectDelete:    []client.Object{},
@@ -83,6 +93,7 @@ func Test_Reconcile(t *testing.T) {
 	scheme := runtime.NewScheme()
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
+	rbacv1.AddToScheme(scheme)
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -119,9 +130,10 @@ func Test_Reconcile(t *testing.T) {
 			assert.Equal(t, ctrl.Started, tc.expectStartCtrl, "fake controller should have been started")
 			cmpOpts := []cmp.Option{
 				cmpopts.EquateEmpty(),
-				cmpopts.IgnoreFields(metav1.ObjectMeta{}, "Annotations", "ResourceVersion"),
+				cmpopts.IgnoreFields(metav1.ObjectMeta{}, "Labels", "Annotations", "ResourceVersion"),
 				cmpopts.IgnoreFields(metav1.TypeMeta{}, "Kind", "APIVersion"),
 				cmpopts.IgnoreFields(apiextensionsv1.CustomResourceDefinition{}, "Spec"),
+				cmpopts.IgnoreFields(rbacv1.ClusterRole{}, "Rules", "AggregationRule"),
 			}
 			if diff := cmp.Diff(tc.expectCreate, cl.Added, cmpOpts...); diff != "" {
 				t.Fatalf("found diff between expected and actual creates: %s", diff)
@@ -140,6 +152,7 @@ func TestReconcileOnlyStartsControllerOnce(t *testing.T) {
 	scheme := runtime.NewScheme()
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
+	rbacv1.AddToScheme(scheme)
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects().Build()
 	cl := &testutil.FakeClientRecorder{fakeClient, t, []client.Object{}, []client.Object{}, []client.Object{}}
 	ctrl := &testutil.FakeController{t, false, make(chan struct{})}
