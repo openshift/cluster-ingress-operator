@@ -8,6 +8,8 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
+	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -26,9 +28,12 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	utilclock "k8s.io/utils/clock"
 
+	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
+
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
@@ -92,11 +97,33 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	if err := c.Watch(source.Kind[client.Object](operatorCache, &configv1.ClusterOperator{}, handler.EnqueueRequestsFromMapFunc(toDefaultIngressController), predicate.NewPredicateFuncs(isIngressClusterOperator))); err != nil {
 		return nil, err
 	}
+
+	if config.GatewayAPIEnabled {
+		if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorsv1alpha1.Subscription{}, handler.EnqueueRequestsFromMapFunc(toDefaultIngressController), predicate.Funcs{
+			CreateFunc: func(e event.CreateEvent) bool {
+				return e.Object.GetNamespace() == operatorcontroller.OpenshiftOperatorNamespace
+			},
+			UpdateFunc: func(e event.UpdateEvent) bool {
+				return false
+			},
+			DeleteFunc: func(e event.DeleteEvent) bool {
+				return e.Object.GetNamespace() == operatorcontroller.OpenshiftOperatorNamespace
+			},
+			GenericFunc: func(e event.GenericEvent) bool {
+				return false
+			},
+		})); err != nil {
+			return nil, err
+		}
+	}
+
 	return c, nil
 }
 
 // Config holds all the things necessary for the controller to run.
 type Config struct {
+	// GatewayAPIEnabled indicates that the "GatewayAPI" featuregate is enabled.
+	GatewayAPIEnabled      bool
 	IngressControllerImage string
 	CanaryImage            string
 	OperatorReleaseVersion string
@@ -159,6 +186,10 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		related = append(related, configv1.ObjectReference{
 			Resource: "namespaces",
 			Name:     state.IngressNamespace.Name,
+		}, configv1.ObjectReference{
+			Group:     iov1.GroupVersion.Group,
+			Resource:  "dnsrecords",
+			Namespace: state.IngressNamespace.Name,
 		})
 	}
 	if state.CanaryNamespace != nil {
@@ -166,6 +197,33 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 			Resource: "namespaces",
 			Name:     state.CanaryNamespace.Name,
 		})
+	}
+	if r.config.GatewayAPIEnabled {
+		related = append(related, configv1.ObjectReference{
+			Group:    gatewayapiv1.GroupName,
+			Resource: "gatewayclasses",
+		})
+		if state.haveOSSMSubscription {
+			subscriptionName := operatorcontroller.ServiceMeshOperatorSubscriptionName()
+			related = append(related, configv1.ObjectReference{
+				Group:     operatorsv1alpha1.GroupName,
+				Resource:  "subscriptions",
+				Namespace: subscriptionName.Namespace,
+				Name:      subscriptionName.Name,
+			})
+			if state.IngressNamespace != nil {
+				related = append(related, configv1.ObjectReference{
+					Group:     sailv1.GroupVersion.Group,
+					Resource:  "istios",
+					Namespace: state.IngressNamespace.Name,
+				})
+				related = append(related, configv1.ObjectReference{
+					Group:     gatewayapiv1.GroupName,
+					Resource:  "gateways",
+					Namespace: state.IngressNamespace.Name,
+				})
+			}
+		}
 	}
 
 	co.Status.RelatedObjects = related
@@ -236,6 +294,8 @@ type operatorState struct {
 	CanaryNamespace    *corev1.Namespace
 	IngressControllers []operatorv1.IngressController
 	DNSRecords         []iov1.DNSRecord
+
+	haveOSSMSubscription bool
 }
 
 // getOperatorState gets and returns the resources necessary to compute the
@@ -266,6 +326,18 @@ func (r *reconciler) getOperatorState(ingressNamespace, canaryNamespace string) 
 		return state, fmt.Errorf("failed to list ingresscontrollers in %q: %v", r.config.Namespace, err)
 	} else {
 		state.IngressControllers = ingressList.Items
+	}
+
+	if r.config.GatewayAPIEnabled {
+		var subscription operatorsv1alpha1.Subscription
+		subscriptionName := operatorcontroller.ServiceMeshOperatorSubscriptionName()
+		if err := r.cache.Get(context.TODO(), subscriptionName, &subscription); err != nil {
+			if !errors.IsNotFound(err) {
+				return state, fmt.Errorf("failed to get subscription %q: %v", subscriptionName, err)
+			}
+		} else {
+			state.haveOSSMSubscription = true
+		}
 	}
 
 	return state, nil
