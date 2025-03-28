@@ -11,6 +11,7 @@ import (
 	"io/ioutil"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -21,9 +22,11 @@ import (
 	util "github.com/openshift/cluster-ingress-operator/pkg/util"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 
+	"github.com/google/go-cmp/cmp"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -946,4 +949,49 @@ func (m *vapManager) enable() {
 	} else if err := assertVAP(m.t, m.name); err != nil {
 		m.t.Errorf("failed to find vap %q: %v", m.name, err)
 	}
+}
+
+func eventuallyClusterRoleContainsAggregatedPolicies(t *testing.T, destClusterRoleName, srcClusterRoleName string) error {
+	t.Helper()
+
+	return wait.PollImmediate(time.Second, timeout, func() (bool, error) {
+		var destClusterRole rbacv1.ClusterRole
+		if err := kclient.Get(context.Background(), types.NamespacedName{Name: destClusterRoleName}, &destClusterRole); err != nil {
+			t.Logf("Failed to get destination ClusterRole %s; retrying...: %v", destClusterRoleName, err)
+			return false, nil
+		}
+
+		var srcClusterRole rbacv1.ClusterRole
+		if err := kclient.Get(context.Background(), types.NamespacedName{Name: srcClusterRoleName}, &srcClusterRole); err != nil {
+			t.Logf("Failed to get source ClusterRole %s: %v; retrying...", srcClusterRoleName, err)
+			return false, nil
+		}
+
+		if len(destClusterRole.Rules) == 0 {
+			return false, fmt.Errorf("ClusterRole %s unexpectedly had no PolicyRules set", destClusterRoleName)
+		}
+
+		if len(srcClusterRole.Rules) == 0 {
+			return false, fmt.Errorf("ClusterRole %s unexpectedly had no PolicyRules set", srcClusterRoleName)
+		}
+
+		if containsPolicyRules(destClusterRole.Rules, srcClusterRole.Rules) {
+			t.Logf("ClusterRole %s aggregated all rules from %s", destClusterRoleName, srcClusterRoleName)
+			return true, nil
+		}
+
+		return false, nil
+	})
+}
+
+func containsPolicyRules(destRules, srcRules []rbacv1.PolicyRule) bool {
+	for _, srcRule := range srcRules {
+		if !slices.ContainsFunc(destRules, func(destRule rbacv1.PolicyRule) bool {
+			return cmp.Equal(destRule, srcRule)
+		}) {
+			return false
+		}
+	}
+
+	return true
 }
