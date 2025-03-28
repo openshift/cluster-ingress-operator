@@ -2,7 +2,9 @@ package label
 
 import (
 	"context"
+	"fmt"
 
+	"github.com/go-logr/logr"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller/detector"
 
@@ -18,20 +20,20 @@ import (
 )
 
 const (
-	controllerName = "detector_controller"
+	controllerName = "detector_label_controller"
 )
-
-var log = logf.Logger.WithName(controllerName)
 
 // New creates and returns a controller that watches for known CRDs for unsupported use
 func NewLabelMatch(mgr manager.Manager, status detector.StatusReporter, config Config) (controller.Controller, error) {
+	instanceControllerName := fmt.Sprintf("%s_%s/%s", controllerName, config.WatchResource.APIVersion, config.WatchResource.Kind)
 	operatorCache := mgr.GetCache()
 	reconciler := &reconciler{
 		client: mgr.GetClient(),
+		log:    logf.Logger.WithValues("GroupVersionKind", config.WatchResource),
 		config: config,
 		status: status,
 	}
-	c, err := controller.New(controllerName, mgr, controller.Options{Reconciler: reconciler})
+	c, err := controller.New(instanceControllerName, mgr, controller.Options{Reconciler: reconciler})
 	if err != nil {
 		return nil, err
 	}
@@ -69,11 +71,12 @@ type reconciler struct {
 	status detector.StatusReporter
 
 	client client.Client
+	log    logr.Logger
 }
 
 // Reconcile check if the current object has the given label with given value. Report accordingly.
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
-	log.Info("reconciling", "request", request)
+	r.log.Info("reconciling", "request", request)
 
 	source := &metav1.PartialObjectMetadata{}
 	source.SetGroupVersionKind(r.config.WatchResource.GroupVersionKind())
