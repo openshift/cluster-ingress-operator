@@ -250,3 +250,29 @@ rules:
   verbs:
   - list
   - watch
+
+# Required for watching and detecting unsupported usage of the Gateway istio control plane
+- apiGroups:
+  - networking.istio.io
+  resources:
+  - '*'
+  verbs:
+  - list
+  - watch
+  - get
+- apiGroups:
+  - security.istio.io
+  resources:
+  - '*'
+  verbs:
+  - list
+  - watch
+  - get
+- apiGroups:
+  - telemetry.istio.io
+  resources:
+  - '*'
+  verbs:
+  - list
+  - watch
+  - get
