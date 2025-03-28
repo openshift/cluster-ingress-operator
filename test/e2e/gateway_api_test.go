@@ -95,8 +95,8 @@ func TestGatewayAPI(t *testing.T) {
 
 	t.Run("testGatewayAPIResources", testGatewayAPIResources)
 	if gatewayAPIControllerEnabled {
-		t.Run("testGatewayAPIObjects", testGatewayAPIObjects)
 		t.Run("testGatewayAPIIstioInstallation", testGatewayAPIIstioInstallation)
+		t.Run("testGatewayAPIObjects", testGatewayAPIObjects)
 	} else {
 		t.Log("Gateway API Controller not enabled, skipping testGatewayAPIObjects and testGatewayAPIIstioInstallation")
 	}
@@ -134,6 +134,12 @@ func testGatewayAPIResources(t *testing.T) {
 //   - If the Istio and Subscription CRs are deleted, they are recreated
 //     automatically.
 func testGatewayAPIIstioInstallation(t *testing.T) {
+	gatewayClassName := "openshift-test"
+	t.Logf("Ensure gateway class %s exists...", gatewayClassName)
+	_, err := createGatewayClass(gatewayClassName, operatorcontroller.OpenShiftGatewayClassControllerName)
+	if err != nil {
+		t.Fatalf("feature gate was enabled, but gateway class object could not be created: %v", err)
+	}
 	t.Log("Checking for the Subscription...")
 	if err := assertSubscription(t, openshiftOperatorsNamespace, expectedSubscriptionName); err != nil {
 		t.Fatalf("failed to find expected Subscription %s: %v", expectedSubscriptionName, err)
@@ -141,6 +147,9 @@ func testGatewayAPIIstioInstallation(t *testing.T) {
 	t.Log("Checking for the CatalogSource...")
 	if err := assertCatalogSource(t, expectedCatalogSourceNamespace, expectedCatalogSourceName); err != nil {
 		t.Fatalf("failed to find expected CatalogSource %s: %v", expectedCatalogSourceName, err)
+	}
+	if err := assertClusterServiceVersionSucceeded(t); err != nil {
+		t.Fatalf("failed to find cluster service version: %v", err)
 	}
 	t.Log("Checking for the OSSM operator deployment and pods...")
 	if err := assertOSSMOperator(t); err != nil {
