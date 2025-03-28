@@ -1,6 +1,8 @@
 package manifests
 
 import (
+	"slices"
+	"strings"
 	"testing"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -49,6 +51,19 @@ func TestManifests(t *testing.T) {
 	GRPCRouteCRD()
 	HTTPRouteCRD()
 	ReferenceGrantCRD()
+
+	adminOnlyVerbs := []string{"create", "update", "patch", "delete", "deletecollection"}
+	GatewayAPIAdminClusterRole()
+	viewClusterRole := GatewayAPIViewClusterRole()
+	for _, policyRule := range viewClusterRole.Rules {
+		for _, adminOnlyVerb := range adminOnlyVerbs {
+			if slices.ContainsFunc(policyRule.Verbs, func(verb string) bool {
+				return strings.EqualFold(verb, adminOnlyVerb)
+			}) {
+				t.Errorf("view role %s should only contain read verbs, found: %s", viewClusterRole.Name, adminOnlyVerb)
+			}
+		}
+	}
 
 	MustAsset(CustomResourceDefinitionManifest)
 	MustAsset(NamespaceManifest)

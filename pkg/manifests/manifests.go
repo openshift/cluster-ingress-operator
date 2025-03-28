@@ -42,11 +42,13 @@ const (
 	CanaryServiceAsset   = "assets/canary/service.yaml"
 	CanaryRouteAsset     = "assets/canary/route.yaml"
 
-	GatewayClassCRDAsset   = "assets/gateway-api/gateway.networking.k8s.io_gatewayclasses.yaml"
-	GatewayCRDAsset        = "assets/gateway-api/gateway.networking.k8s.io_gateways.yaml"
-	GRPCRouteCRDAsset      = "assets/gateway-api/gateway.networking.k8s.io_grpcroutes.yaml"
-	HTTPRouteCRDAsset      = "assets/gateway-api/gateway.networking.k8s.io_httproutes.yaml"
-	ReferenceGrantCRDAsset = "assets/gateway-api/gateway.networking.k8s.io_referencegrants.yaml"
+	GatewayClassCRDAsset            = "assets/gateway-api/gateway.networking.k8s.io_gatewayclasses.yaml"
+	GatewayCRDAsset                 = "assets/gateway-api/gateway.networking.k8s.io_gateways.yaml"
+	GRPCRouteCRDAsset               = "assets/gateway-api/gateway.networking.k8s.io_grpcroutes.yaml"
+	HTTPRouteCRDAsset               = "assets/gateway-api/gateway.networking.k8s.io_httproutes.yaml"
+	ReferenceGrantCRDAsset          = "assets/gateway-api/gateway.networking.k8s.io_referencegrants.yaml"
+	GatewayAPIAdminClusterRoleAsset = "assets/gateway-api/aggregated-cluster-roles/admin-cluster-role.yaml"
+	GatewayAPIViewClusterRoleAsset  = "assets/gateway-api/aggregated-cluster-roles/view-cluster-role.yaml"
 
 	// Annotation used to inform the certificate generation service to
 	// generate a cluster-signed certificate and populate the secret.
@@ -294,6 +296,22 @@ func ReferenceGrantCRD() *apiextensionsv1.CustomResourceDefinition {
 		panic(err)
 	}
 	return crd
+}
+
+func GatewayAPIAdminClusterRole() *rbacv1.ClusterRole {
+	clusterRole, err := NewClusterRole(MustAssetReader(GatewayAPIAdminClusterRoleAsset))
+	if err != nil {
+		panic(err)
+	}
+	return clusterRole
+}
+
+func GatewayAPIViewClusterRole() *rbacv1.ClusterRole {
+	clusterRole, err := NewClusterRole(MustAssetReader(GatewayAPIViewClusterRoleAsset))
+	if err != nil {
+		panic(err)
+	}
+	return clusterRole
 }
 
 func NewServiceAccount(manifest io.Reader) (*corev1.ServiceAccount, error) {
