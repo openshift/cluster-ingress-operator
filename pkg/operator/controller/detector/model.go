@@ -56,9 +56,11 @@ func (s *ExternalStatus) Channel() <-chan event.TypedGenericEvent[client.Object]
 
 func (s *ExternalStatus) GetCurrentStatus(statusName string) Status {
 	if reporter, found := s.state[statusName]; found {
-		return Status{
-			Details: strings.Join(slices.Collect(maps.Keys(reporter.state)), ", "),
-			Active:  true,
+		if len(reporter.state) > 0 {
+			return Status{
+				Details: strings.Join(slices.Collect(maps.Keys(reporter.state)), ", "),
+				Active:  true,
+			}
 		}
 	}
 	return Status{}
