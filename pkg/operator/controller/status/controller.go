@@ -16,6 +16,7 @@ import (
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller/detector"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 	oputil "github.com/openshift/cluster-ingress-operator/pkg/util"
 
@@ -42,6 +43,8 @@ const (
 	CanaryImageVersionName       = "canary-server"
 	UnknownVersionValue          = "unknown"
 
+	OperatorDegradedSupport configv1.ClusterStatusConditionType = "DegradedSupport"
+
 	ingressesEqualConditionMessage = "desired and current number of IngressControllers are equal"
 
 	controllerName = "status_controller"
@@ -59,12 +62,13 @@ var clock utilclock.Clock = utilclock.RealClock{}
 // and uses them to compute the operator status.  It also watches the
 // clusteroperators resource so that it reconciles the ingress clusteroperator
 // in case something else updates or deletes it.
-func New(mgr manager.Manager, config Config) (controller.Controller, error) {
+func New(mgr manager.Manager, config Config, externalStatusSource detector.StatusSource) (controller.Controller, error) {
 	operatorCache := mgr.GetCache()
 	reconciler := &reconciler{
-		config: config,
-		client: mgr.GetClient(),
-		cache:  operatorCache,
+		config:               config,
+		externalStatusSource: externalStatusSource,
+		client:               mgr.GetClient(),
+		cache:                operatorCache,
 	}
 	c, err := controller.New(controllerName, mgr, controller.Options{Reconciler: reconciler})
 	if err != nil {
@@ -92,6 +96,9 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	if err := c.Watch(source.Kind[client.Object](operatorCache, &configv1.ClusterOperator{}, handler.EnqueueRequestsFromMapFunc(toDefaultIngressController), predicate.NewPredicateFuncs(isIngressClusterOperator))); err != nil {
 		return nil, err
 	}
+
+	c.Watch(source.TypedChannel[client.Object, reconcile.Request](externalStatusSource.Channel(), handler.EnqueueRequestsFromMapFunc(toDefaultIngressController)))
+
 	return c, nil
 }
 
@@ -106,7 +113,8 @@ type Config struct {
 // reconciler handles the actual status reconciliation logic in response to
 // events.
 type reconciler struct {
-	config Config
+	config               Config
+	externalStatusSource detector.StatusSource
 
 	client client.Client
 	cache  cache.Cache
@@ -188,6 +196,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		computeOperatorDegradedCondition(state.IngressControllers),
 		computeOperatorUpgradeableCondition(state.IngressControllers),
 		computeOperatorEvaluationConditionsDetectedCondition(state.IngressControllers),
+		computeExternalStatus(r.externalStatusSource.GetCurrentStatus(string(OperatorDegradedSupport))),
 	)
 
 	if !operatorStatusesEqual(*oldStatus, co.Status) {
@@ -552,6 +561,23 @@ func computeOperatorAvailableCondition(ingresses []operatorv1.IngressController)
 	}
 
 	return availableCondition
+}
+
+func computeExternalStatus(status detector.Status) configv1.ClusterOperatorStatusCondition {
+	degradedCondition := configv1.ClusterOperatorStatusCondition{
+		Type: OperatorDegradedSupport,
+	}
+	if status.Active {
+		degradedCondition.Status = configv1.ConditionTrue
+		degradedCondition.Reason = "SupportDegraded"
+		degradedCondition.Message = fmt.Sprintf("Unsupportd objects found: %s", status.Details)
+	} else {
+		degradedCondition.Status = configv1.ConditionFalse
+		degradedCondition.Reason = "SupportNotDegraded"
+		degradedCondition.Message = "No unsupported usage found."
+
+	}
+	return degradedCondition
 }
 
 // mergeConditions adds or updates matching conditions, and updates
