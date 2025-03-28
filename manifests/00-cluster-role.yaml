@@ -164,6 +164,7 @@ rules:
   - gatewayclasses
   - gateways
   - httproutes
+  - grpcroutes
   verbs:
   - '*'
 
