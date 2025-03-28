@@ -107,6 +107,10 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		return reconcile.Result{}, err
 	}
 
+	if err := r.ensureGatewayAPIRBAC(ctx); err != nil {
+		return reconcile.Result{}, err
+	}
+
 	if !r.config.GatewayAPIControllerEnabled {
 		return reconcile.Result{}, nil
 	}
