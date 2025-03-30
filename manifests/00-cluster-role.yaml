@@ -14,14 +14,17 @@ rules:
 - apiGroups:
   - ""
   resources:
-  - configmaps
-  - namespaces
-  - serviceaccounts
   - endpoints
   - services
-  - secrets
   - pods
   - events
+  verbs:
+  - "*"
+
+- apiGroups:
+  - ""
+  resources:
+  - namespaces
   verbs:
   - "*"
 
@@ -38,14 +41,6 @@ rules:
   - nodes
   verbs:
   - list
-
-- apiGroups:
-  - apps
-  resources:
-  - deployments
-  - daemonsets
-  verbs:
-  - "*"
 
 - apiGroups:
   - policy
@@ -68,8 +63,6 @@ rules:
   resources:
   - clusterroles
   - clusterrolebindings
-  - roles
-  - rolebindings
   verbs:
   - create
   - get
