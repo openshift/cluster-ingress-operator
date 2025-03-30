@@ -220,23 +220,48 @@ func TestClusterOperatorStatusRelatedObjects(t *testing.T) {
 			Name:     "openshift-ingress",
 		},
 		{
+			Group:     iov1.GroupVersion.Group,
+			Resource:  "dnsrecords",
+			Namespace: "openshift-ingress",
+		},
+		{
 			Resource: "namespaces",
 			Name:     "openshift-ingress-canary",
 		},
+	}
+
+	if gatewayAPIEnabled, err := isFeatureGateEnabled(features.FeatureGateGatewayAPI); err != nil {
+		t.Fatalf("Failed to look up %q featuregate: %v", features.FeatureGateGatewayAPI, err)
+	} else if gatewayAPIEnabled {
+		expected = append(expected, configv1.ObjectReference{
+			Group:    "gateway.networking.k8s.io",
+			Resource: "gatewayclasses",
+		})
+		// This test runs before TestGatewayAPI, so we do *not* expect
+		// to see subscriptions, istios, or gateways in relatedObjects.
 	}
 
 	coName := controller.IngressClusterOperatorName()
 	err := wait.PollImmediate(1*time.Second, 5*time.Minute, func() (bool, error) {
 		co := &configv1.ClusterOperator{}
 		if err := kclient.Get(context.TODO(), coName, co); err != nil {
-			t.Logf("failed to get ingress cluster operator %s: %v", coName, err)
+			t.Logf("Failed to get clusteroperator %q: %v", coName.Name, err)
+
 			return false, nil
 		}
 
-		return reflect.DeepEqual(expected, co.Status.RelatedObjects), nil
+		if !reflect.DeepEqual(expected, co.Status.RelatedObjects) {
+			t.Logf("Expected %+v, found %+v", expected, co.Status.RelatedObjects)
+
+			return false, nil
+		}
+
+		t.Log("Found the expected status.relatedObjects")
+
+		return true, nil
 	})
 	if err != nil {
-		t.Errorf("did not get expected status related objects: %v", err)
+		t.Errorf("Did not get expected status related objects: %v", err)
 	}
 }
 
