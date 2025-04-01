@@ -95,6 +95,12 @@ func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference) *sa
 		// "multi-network gateways".  This is an Istio feature that I
 		// haven't really found any explanation for.
 		"PILOT_MULTI_NETWORK_DISCOVER_GATEWAY_API": "false",
+		// Rename the CA Bundle CM used by the Gateway Control Plane
+		// to avoid conflicts with a User Istio Control Plane.
+		"PILOT_CA_CERT_CONFIGMAP": controller.OpenShiftGatewayCARootCertName,
+		// Only create CA Bundle CM in namespaces where there are
+		// Gateway API Gateways
+		"PILOT_ENABLE_GATEWAY_API_CA_CERT_ONLY": "true",
 	}
 	return &sailv1.Istio{
 		ObjectMeta: metav1.ObjectMeta{
@@ -111,6 +117,7 @@ func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference) *sa
 				Global: &sailv1.GlobalConfig{
 					IstioNamespace:    ptr.To(controller.DefaultOperandNamespace),
 					PriorityClassName: ptr.To(systemClusterCriticalPriorityClassName),
+					TrustBundleName:   ptr.To(controller.OpenShiftGatewayCARootCertName),
 				},
 				Pilot: &sailv1.PilotConfig{
 					Cni: &sailv1.CNIUsageConfig{

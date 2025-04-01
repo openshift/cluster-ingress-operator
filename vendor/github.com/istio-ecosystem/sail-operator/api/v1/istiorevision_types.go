@@ -30,9 +30,9 @@ const (
 type IstioRevisionSpec struct {
 	// +sail:version
 	// Defines the version of Istio to install.
-	// Must be one of: v1.24.3, v1.24.2, v1.24.1, v1.24.0, v1.23.5, v1.23.4, v1.23.3, v1.23.2, v1.22.8, v1.22.7, v1.22.6, v1.22.5, v1.21.6, v1.25-alpha.c2ac935c.
-	// +operator-sdk:csv:customresourcedefinitions:type=spec,order=1,displayName="Istio Version",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:fieldGroup:General", "urn:alm:descriptor:com.tectonic.ui:select:v1.24.3", "urn:alm:descriptor:com.tectonic.ui:select:v1.24.2", "urn:alm:descriptor:com.tectonic.ui:select:v1.24.1", "urn:alm:descriptor:com.tectonic.ui:select:v1.24.0", "urn:alm:descriptor:com.tectonic.ui:select:v1.23.5", "urn:alm:descriptor:com.tectonic.ui:select:v1.23.4", "urn:alm:descriptor:com.tectonic.ui:select:v1.23.3", "urn:alm:descriptor:com.tectonic.ui:select:v1.23.2", "urn:alm:descriptor:com.tectonic.ui:select:v1.22.8", "urn:alm:descriptor:com.tectonic.ui:select:v1.22.7", "urn:alm:descriptor:com.tectonic.ui:select:v1.22.6", "urn:alm:descriptor:com.tectonic.ui:select:v1.22.5", "urn:alm:descriptor:com.tectonic.ui:select:v1.21.6", "urn:alm:descriptor:com.tectonic.ui:select:v1.25-alpha.c2ac935c"}
-	// +kubebuilder:validation:Enum=v1.24.3;v1.24.2;v1.24.1;v1.24.0;v1.23.5;v1.23.4;v1.23.3;v1.23.2;v1.22.8;v1.22.7;v1.22.6;v1.22.5;v1.21.6;v1.25-alpha.c2ac935c
+	// Must be one of: v1.25.2, v1.25.1, v1.24.5, v1.24.4, v1.24.3, v1.24.2, v1.24.1, v1.24.0, v1.23.6, v1.23.5, v1.23.4, v1.23.3, v1.23.2, v1.22.8, v1.22.7, v1.22.6, v1.22.5, v1.21.6, v1.27-alpha.f23c2f66.
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,order=1,displayName="Istio Version",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:fieldGroup:General", "urn:alm:descriptor:com.tectonic.ui:select:v1.25.2", "urn:alm:descriptor:com.tectonic.ui:select:v1.25.1", "urn:alm:descriptor:com.tectonic.ui:select:v1.24.5", "urn:alm:descriptor:com.tectonic.ui:select:v1.24.4", "urn:alm:descriptor:com.tectonic.ui:select:v1.24.3", "urn:alm:descriptor:com.tectonic.ui:select:v1.24.2", "urn:alm:descriptor:com.tectonic.ui:select:v1.24.1", "urn:alm:descriptor:com.tectonic.ui:select:v1.24.0", "urn:alm:descriptor:com.tectonic.ui:select:v1.23.6", "urn:alm:descriptor:com.tectonic.ui:select:v1.23.5", "urn:alm:descriptor:com.tectonic.ui:select:v1.23.4", "urn:alm:descriptor:com.tectonic.ui:select:v1.23.3", "urn:alm:descriptor:com.tectonic.ui:select:v1.23.2", "urn:alm:descriptor:com.tectonic.ui:select:v1.22.8", "urn:alm:descriptor:com.tectonic.ui:select:v1.22.7", "urn:alm:descriptor:com.tectonic.ui:select:v1.22.6", "urn:alm:descriptor:com.tectonic.ui:select:v1.22.5", "urn:alm:descriptor:com.tectonic.ui:select:v1.21.6", "urn:alm:descriptor:com.tectonic.ui:select:v1.27-alpha.f23c2f66"}
+	// +kubebuilder:validation:Enum=v1.25.2;v1.25.1;v1.24.5;v1.24.4;v1.24.3;v1.24.2;v1.24.1;v1.24.0;v1.23.6;v1.23.5;v1.23.4;v1.23.3;v1.23.2;v1.22.8;v1.22.7;v1.22.6;v1.22.5;v1.21.6;v1.27-alpha.f23c2f66
 	Version string `json:"version"`
 
 	// Namespace to which the Istio components should be installed.
@@ -119,7 +119,8 @@ type IstioRevisionCondition struct {
 	Message string `json:"message,omitempty"`
 
 	// Last time the condition transitioned from one status to another.
-	LastTransitionTime metav1.Time `json:"lastTransitionTime,omitempty"`
+	// +optional
+	LastTransitionTime metav1.Time `json:"lastTransitionTime,omitzero"`
 }
 
 // IstioRevisionConditionType represents the type of the condition.  Condition stages are:
@@ -169,6 +170,23 @@ const (
 )
 
 const (
+	// IstioRevisionConditionDependenciesHealthy signifies whether the dependencies required by this IstioRevision are healthy.
+	// For example, an IstioRevision with spec.values.pilot.cni.enabled=true requires the IstioCNI resource to be deployed
+	// and ready for the Istio revision to be considered healthy. The DependenciesHealthy condition is used to indicate that
+	// the IstioCNI resource is healthy.
+	IstioRevisionConditionDependenciesHealthy IstioRevisionConditionType = "DependenciesHealthy"
+
+	// IstioRevisionReasonIstioCNINotFound indicates that the IstioCNI resource is not found.
+	IstioRevisionReasonIstioCNINotFound IstioRevisionConditionReason = "IstioCNINotFound"
+
+	// IstioRevisionReasonIstioCNINotHealthy indicates that the IstioCNI resource is not healthy.
+	IstioRevisionReasonIstioCNINotHealthy IstioRevisionConditionReason = "IstioCNINotHealthy"
+
+	// IstioRevisionDependencyCheckFailed indicates that the status of the dependencies could not be ascertained.
+	IstioRevisionDependencyCheckFailed IstioRevisionConditionReason = "DependencyCheckFailed"
+)
+
+const (
 	// IstioRevisionReasonHealthy indicates that the control plane is fully reconciled and that all components are ready.
 	IstioRevisionReasonHealthy IstioRevisionConditionReason = "Healthy"
 )
@@ -176,7 +194,8 @@ const (
 // +kubebuilder:object:root=true
 // +kubebuilder:resource:scope=Cluster,shortName=istiorev,categories=istio-io
 // +kubebuilder:subresource:status
-// +kubebuilder:printcolumn:name="Type",type="string",JSONPath=".spec.type",description="Whether the control plane is installed locally or in a remote cluster."
+// +kubebuilder:printcolumn:name="Namespace",type="string",JSONPath=".spec.namespace",description="The namespace for the control plane components."
+// +kubebuilder:printcolumn:name="Profile",type="string",JSONPath=".spec.values.profile",description="The selected profile (collection of value presets)."
 // +kubebuilder:printcolumn:name="Ready",type="string",JSONPath=".status.conditions[?(@.type==\"Ready\")].status",description="Whether the control plane installation is ready to handle requests."
 // +kubebuilder:printcolumn:name="Status",type="string",JSONPath=".status.state",description="The current state of this object."
 // +kubebuilder:printcolumn:name="In use",type="string",JSONPath=".status.conditions[?(@.type==\"InUse\")].status",description="Whether the revision is being used by workloads."
@@ -189,11 +208,15 @@ const (
 // IstioRevision object(s).
 // +kubebuilder:validation:XValidation:rule="self.metadata.name == 'default' ? (!has(self.spec.values.revision) || size(self.spec.values.revision) == 0) : self.spec.values.revision == self.metadata.name",message="spec.values.revision must match metadata.name"
 type IstioRevision struct {
-	metav1.TypeMeta   `json:",inline"`
-	metav1.ObjectMeta `json:"metadata,omitempty"`
+	metav1.TypeMeta `json:",inline"`
+	// +optional
+	metav1.ObjectMeta `json:"metadata"`
 
-	Spec   IstioRevisionSpec   `json:"spec,omitempty"`
-	Status IstioRevisionStatus `json:"status,omitempty"`
+	// +optional
+	Spec IstioRevisionSpec `json:"spec"`
+
+	// +optional
+	Status IstioRevisionStatus `json:"status"`
 }
 
 // +kubebuilder:object:root=true
@@ -201,7 +224,7 @@ type IstioRevision struct {
 // IstioRevisionList contains a list of IstioRevision
 type IstioRevisionList struct {
 	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata,omitempty"`
+	metav1.ListMeta `json:"metadata"`
 	Items           []IstioRevision `json:"items"`
 }
 
