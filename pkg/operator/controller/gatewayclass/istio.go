@@ -100,6 +100,9 @@ func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference) *sa
 		// "automated deployment", meaning Istio creates a new load-
 		// balancer service for each gateway.
 		"ENABLE_GATEWAY_API_MANUAL_DEPLOYMENT": "false",
+		// Only create CA Bundle CM in namespaces where there are
+		// Gateway API Gateways
+		"PILOT_ENABLE_GATEWAY_API_CA_CERT_ONLY": "true",
 	}
 	return &sailv1.Istio{
 		ObjectMeta: metav1.ObjectMeta{
