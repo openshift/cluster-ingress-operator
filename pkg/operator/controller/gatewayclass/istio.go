@@ -91,6 +91,12 @@ func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference) *sa
 		// "multi-network gateways".  This is an Istio feature that I
 		// haven't really found any explanation for.
 		"PILOT_MULTI_NETWORK_DISCOVER_GATEWAY_API": "false",
+		// Rename the CA Bundle CM used by the Gateway Control Plane
+		// to avoid conflicts with a User Istio Control Plane.
+		"PILOT_CA_CERT_CONFIGMAP": "openshift-gw-ca-root-cert",
+		// Only create CA Bundle CM in namespaces where there are
+		// Gateway API Gateways
+		"PILOT_ENABLE_GATEWAY_API_CA_CERT_ONLY": "true",
 	}
 	return &sailv1.Istio{
 		ObjectMeta: metav1.ObjectMeta{
