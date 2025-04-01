@@ -8,13 +8,14 @@ import (
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller/detector"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
-	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 )
@@ -26,30 +27,43 @@ const (
 // New creates and returns a controller that watches for known CRDs for unsupported use
 func NewLabelMatch(mgr manager.Manager, status detector.StatusReporter, config Config) (controller.Controller, error) {
 	instanceControllerName := fmt.Sprintf("%s_%s/%s", controllerName, config.WatchResource.APIVersion, config.WatchResource.Kind)
-	operatorCache := mgr.GetCache()
+
+	resourceCache, err := cache.New(mgr.GetConfig(), cache.Options{
+		Scheme: mgr.GetScheme(),
+	})
+	if err != nil {
+		return nil, err
+	}
+	mgr.Add(resourceCache)
 	reconciler := &reconciler{
+		cache:  resourceCache,
 		client: mgr.GetClient(),
-		log:    logf.Logger.WithValues("GroupVersionKind", config.WatchResource),
+		log:    logf.Logger.WithName(instanceControllerName),
 		config: config,
 		status: status,
 	}
+
 	c, err := controller.New(instanceControllerName, mgr, controller.Options{Reconciler: reconciler})
 	if err != nil {
 		return nil, err
 	}
 
-	matchesLabel := predicate.NewPredicateFuncs(func(o client.Object) bool {
-		return config.LabelValue == o.GetLabels()[config.LabelName]
-	})
+	// Ensure we reconcile on update if old version had the label set. This to clean up. Predicates are only applied on the new version.
+	enqeueIfLabelWasSet := func(ctx context.Context, o client.Object) []reconcile.Request {
+		if config.LabelValue == o.GetLabels()[config.LabelName] {
+			return []reconcile.Request{{
+				NamespacedName: types.NamespacedName{Name: o.GetName(), Namespace: o.GetNamespace()},
+			}}
+		}
+		return []reconcile.Request{}
+	}
 
 	resource := &metav1.PartialObjectMetadata{
 		TypeMeta: config.WatchResource,
 	}
-
-	if err := c.Watch(source.Kind[client.Object](operatorCache, resource, &handler.EnqueueRequestForObject{}, matchesLabel)); err != nil {
+	if err := c.Watch(source.Kind[client.Object](resourceCache, resource, handler.EnqueueRequestsFromMapFunc(enqeueIfLabelWasSet))); err != nil {
 		return nil, err
 	}
-
 	return c, nil
 }
 
@@ -70,6 +84,7 @@ type reconciler struct {
 	config Config
 	status detector.StatusReporter
 
+	cache  cache.Cache
 	client client.Client
 	log    logr.Logger
 }
@@ -80,10 +95,21 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 
 	source := &metav1.PartialObjectMetadata{}
 	source.SetGroupVersionKind(r.config.WatchResource.GroupVersionKind())
+	//source.SetName(request.Name)           // set so we can calculate the correct key inside statusReporter.. a bit leaky, extract somehow?
+	//source.SetNamespace(request.Namespace) // see above
 
-	err := r.client.Get(ctx, request.NamespacedName, source)
+	err := r.cache.Get(ctx, request.NamespacedName, source)
 	if err != nil {
+		if apierrors.IsNotFound(err) { // deleted?
+			r.status.Update(source, false) // requires name and namespace set for key calc
+			return reconcile.Result{}, nil
+		}
 		return reconcile.Result{}, err
+	}
+
+	if source.DeletionTimestamp != nil { // deleted
+		r.status.Update(source, false)
+		return reconcile.Result{}, nil
 	}
 
 	lables := source.GetLabels()

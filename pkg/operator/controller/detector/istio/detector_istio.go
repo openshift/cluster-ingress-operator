@@ -41,7 +41,7 @@ func SetupDetectors(mgr manager.Manager, statusReporter detector.StatusReporter,
 			Group: watchedResource.GetObjectKind().GroupVersionKind().Group,
 			Kind:  watchedResource.GroupVersionKind().Kind}
 
-		ctrlFunc := func(mgr manager.Manager, statusReorter detector.StatusReporter) func() (controller.Controller, error) {
+		ctrlFunc := func(mgr manager.Manager, statusReporter detector.StatusReporter) func() (controller.Controller, error) {
 			return func() (controller.Controller, error) {
 				return label.NewLabelMatch(mgr, statusReporter, label.Config{
 					LabelName:       operatorcontroller.IstioRevLabelKey,
@@ -53,14 +53,6 @@ func SetupDetectors(mgr manager.Manager, statusReporter detector.StatusReporter,
 			}
 		}(mgr, statusReporter)
 
-		if len(mappings[gk]) > 0 { // append if already someone listens to this event. Create a "holder" object for the list and move the logic to "addd"?
-			existingCtrlFuncs := mappings[gk]
-			existingCtrlFuncs = append(existingCtrlFuncs, ctrlFunc)
-			mappings[gk] = existingCtrlFuncs
-		} else {
-			ctrlFuncs := []crd.ControllerFunc{}
-			ctrlFuncs = append(ctrlFuncs, ctrlFunc)
-			mappings[gk] = ctrlFuncs
-		}
+		mappings[gk] = append(mappings[gk], ctrlFunc)
 	}
 }

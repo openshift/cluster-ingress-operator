@@ -90,11 +90,9 @@ func (e *externalStatusReporter) Update(obj client.Object, active bool) {
 			e.source <- event.TypedGenericEvent[client.Object]{Object: obj}
 		}
 	} else if active { // not recorded before and active, add & #Update
-		fmt.Println("new active object")
 		e.state[key] = true
 		// #Update
 		e.source <- event.TypedGenericEvent[client.Object]{Object: obj}
-		fmt.Println("sent")
 	}
 }
 
