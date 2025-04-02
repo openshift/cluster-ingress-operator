@@ -55,9 +55,9 @@ go mod vendor
 # Modify the default timeout of "MaxTimeToConsistency" to make tests pass on AWS
 # because the AWS ELB needs an extra ~60s for DNS propagation.  See
 # <https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/best-practices-dns.html#DNS_change_propagation>.
-sed -i -e '/MaxTimeToConsistency:/ s/30/90/' conformance/utils/config/timeout.go
+sed -i -e '/MaxTimeToConsistency:/ s/30/150/' conformance/utils/config/timeout.go
 
-SUPPORTED_FEATURES="Gateway,HTTPRoute,ReferenceGrant,GatewayPort8080,HTTPRouteQueryParamMatching,HTTPRouteMethodMatching,HTTPRouteResponseHeaderModification,HTTPRoutePortRedirect,HTTPRouteSchemeRedirect,HTTPRoutePathRedirect,HTTPRouteHostRewrite,HTTPRoutePathRewrite,HTTPRouteRequestMirror,HTTPRouteRequestMultipleMirrors,HTTPRouteBackendProtocolH2C,HTTPRouteBackendProtocolWebSocket"
+SUPPORTED_FEATURES="Gateway,GRPCRoute,HTTPRoute,ReferenceGrant,GatewayPort8080,HTTPRouteQueryParamMatching,HTTPRouteMethodMatching,HTTPRouteResponseHeaderModification,HTTPRoutePortRedirect,HTTPRouteSchemeRedirect,HTTPRoutePathRedirect,HTTPRouteHostRewrite,HTTPRoutePathRewrite,HTTPRouteRequestMirror,HTTPRouteRequestMultipleMirrors,HTTPRouteBackendProtocolH2C,HTTPRouteBackendProtocolWebSocket"
 
 echo "Start Gateway API Conformance Testing"
-go test ./conformance -v -timeout 10m -run TestConformance -args "--supported-features=${SUPPORTED_FEATURES}" "--gateway-class=${GATEWAYCLASS_NAME}"
+go test ./conformance -v -timeout 20m -run TestConformance -args "--supported-features=${SUPPORTED_FEATURES}" "--gateway-class=${GATEWAYCLASS_NAME}"
