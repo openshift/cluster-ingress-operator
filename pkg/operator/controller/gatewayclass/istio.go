@@ -18,6 +18,10 @@ import (
 	"k8s.io/utils/ptr"
 )
 
+// systemClusterCriticalPriorityClassName is the keyword to specify
+// cluster-critical priority class in a pod's spec.priorityClassName.
+const systemClusterCriticalPriorityClassName = "system-cluster-critical"
+
 // ensureIstio attempts to ensure that an Istio CR is present and returns a
 // Boolean indicating whether it exists, the CR if it exists, and an error
 // value.
@@ -105,7 +109,8 @@ func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference) *sa
 			},
 			Values: &sailv1.Values{
 				Global: &sailv1.GlobalConfig{
-					IstioNamespace: ptr.To(controller.DefaultOperandNamespace),
+					IstioNamespace:    ptr.To(controller.DefaultOperandNamespace),
+					PriorityClassName: ptr.To(systemClusterCriticalPriorityClassName),
 				},
 				Pilot: &sailv1.PilotConfig{
 					Cni: &sailv1.CNIUsageConfig{
