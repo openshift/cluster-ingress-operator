@@ -77,15 +77,17 @@ func EnsureDNSRecord(client client.Client, name types.NamespacedName, dnsRecordL
 		if err := client.Create(context.TODO(), desired); err != nil {
 			return false, nil, fmt.Errorf("failed to create dnsrecord %s/%s: %v", desired.Namespace, desired.Name, err)
 		}
-		log.Info("created dnsrecord", "dnsrecord", desired)
+		log.Info("Created dnsrecord", "dnsrecord", desired)
 		return CurrentDNSRecord(client, name)
 	case wantWC && haveWC:
 		if updated, err := updateDNSRecord(client, current, desired); err != nil {
 			return true, current, fmt.Errorf("failed to update dnsrecord %s/%s: %v", desired.Namespace, desired.Name, err)
 		} else if updated {
+			log.Info("Updated dnsrecord", "dnsrecord", desired)
 			return CurrentDNSRecord(client, name)
 		}
 	}
+	log.Info("No desired dnsrecord")
 
 	return haveWC, current, nil
 }
@@ -130,6 +132,7 @@ func desiredWildcardDNSRecord(name types.NamespacedName, dnsRecordLabels map[str
 func desiredDNSRecord(name types.NamespacedName, dnsRecordLabels map[string]string, ownerRef metav1.OwnerReference, domain string, dnsPolicy iov1.DNSManagementPolicy, service *corev1.Service) (bool, *iov1.DNSRecord) {
 	// No LB target exists for the domain record to point at.
 	if len(service.Status.LoadBalancer.Ingress) == 0 {
+		log.Info("No load balancer target for dnsrecord", "dnsrecord", name, "service", service.Name)
 		return false, nil
 	}
 
@@ -138,6 +141,7 @@ func desiredDNSRecord(name types.NamespacedName, dnsRecordLabels map[string]stri
 	// Quick sanity check since we don't know how to handle both being set (is
 	// that even a valid state?)
 	if len(ingress.Hostname) > 0 && len(ingress.IP) > 0 {
+		log.Info("Both load balancer hostname and IP are set", "dnsrecord", name, "service", service.Name)
 		return false, nil
 	}
 
