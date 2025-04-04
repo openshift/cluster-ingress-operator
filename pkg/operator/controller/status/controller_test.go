@@ -664,3 +664,140 @@ func Test_computeOperatorEvaluationConditionsDetectedCondition(t *testing.T) {
 		})
 	}
 }
+
+func Test_computeOperatorDegradedCondition(t *testing.T) {
+	ic := func(name string) operatorv1.IngressController {
+		return operatorv1.IngressController{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: name,
+			},
+			Status: operatorv1.IngressControllerStatus{
+				Conditions: []operatorv1.OperatorCondition{
+					{
+						Type:   "Degraded",
+						Status: operatorv1.ConditionUnknown,
+					},
+				},
+			},
+		}
+	}
+	icWithStatus := func(name string, condStatus bool) operatorv1.IngressController {
+		ic := ic(name)
+		ic.Status.Conditions[0].Status = operatorv1.ConditionFalse
+		if condStatus {
+			ic.Status.Conditions[0].Status = operatorv1.ConditionTrue
+		}
+		return ic
+	}
+
+	testCases := []struct {
+		description     string
+		state           operatorState
+		expectCondition configv1.ClusterOperatorStatusCondition
+	}{
+		{
+			description: "no ingresscontrollers exist",
+			state:       operatorState{},
+			expectCondition: configv1.ClusterOperatorStatusCondition{
+				Type:   configv1.OperatorDegraded,
+				Status: configv1.ConditionTrue,
+				Reason: "IngressDoesNotExist",
+			},
+		},
+		{
+			description: "no default ingresscontroller",
+			state: operatorState{
+				IngressControllers: []operatorv1.IngressController{
+					icWithStatus("test1", false),
+					icWithStatus("test2", false),
+				},
+			},
+			expectCondition: configv1.ClusterOperatorStatusCondition{
+				Type:   configv1.OperatorDegraded,
+				Status: configv1.ConditionTrue,
+				Reason: "IngressDoesNotExist",
+			},
+		},
+		{
+			description: "default ingresscontroller degraded",
+			state: operatorState{
+				IngressControllers: []operatorv1.IngressController{
+					icWithStatus("default", true),
+					icWithStatus("test", false),
+				},
+			},
+			expectCondition: configv1.ClusterOperatorStatusCondition{
+				Type:   configv1.OperatorDegraded,
+				Status: configv1.ConditionTrue,
+				Reason: "IngressDegraded",
+			},
+		},
+		{
+			description: "default ingresscontroller not degraded",
+			state: operatorState{
+				IngressControllers: []operatorv1.IngressController{
+					icWithStatus("default", false),
+					icWithStatus("test2", true),
+				},
+			},
+			expectCondition: configv1.ClusterOperatorStatusCondition{
+				Type:   configv1.OperatorDegraded,
+				Status: configv1.ConditionFalse,
+				Reason: "IngressNotDegraded",
+			},
+		},
+		{
+			description: "default ingresscontroller status unknown",
+			state: operatorState{
+				IngressControllers: []operatorv1.IngressController{
+					ic("default"),
+				},
+			},
+			expectCondition: configv1.ClusterOperatorStatusCondition{
+				Type:   configv1.OperatorDegraded,
+				Status: configv1.ConditionUnknown,
+				Reason: "IngressDegradedStatusUnknown",
+			},
+		},
+		{
+			description: "default ingresscontroller not degraded but unmanaged gateway api crds exist",
+			state: operatorState{
+				IngressControllers: []operatorv1.IngressController{
+					icWithStatus("default", false),
+				},
+				unmanagedGatewayAPICRDNames: "listenersets.gateway.networking.x-k8s.io",
+			},
+			expectCondition: configv1.ClusterOperatorStatusCondition{
+				Type:   configv1.OperatorDegraded,
+				Status: configv1.ConditionTrue,
+				Reason: "GatewayAPICRDsDegraded",
+			},
+		},
+		{
+			description: "default ingresscontroller degraded and unmanaged gateway api crds exist",
+			state: operatorState{
+				IngressControllers: []operatorv1.IngressController{
+					icWithStatus("default", true),
+				},
+				unmanagedGatewayAPICRDNames: "listenersets.gateway.networking.x-k8s.io",
+			},
+			expectCondition: configv1.ClusterOperatorStatusCondition{
+				Type:   configv1.OperatorDegraded,
+				Status: configv1.ConditionTrue,
+				Reason: "MultipleComponentsDegraded",
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			actual := computeOperatorDegradedCondition(tc.state)
+			cmpOpts := []cmp.Option{
+				cmpopts.IgnoreFields(configv1.ClusterOperatorStatusCondition{}, "Message"),
+			}
+			if diff := cmp.Diff(actual, tc.expectCondition, cmpOpts...); diff != "" {
+				t.Fatalf("actual condition differs from expected: %v", diff)
+			}
+		})
+	}
+}
