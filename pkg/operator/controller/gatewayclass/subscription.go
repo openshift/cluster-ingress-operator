@@ -158,22 +158,45 @@ func (r *reconciler) currentInstallPlan(ctx context.Context) (bool, *operatorsv1
 	if installPlans == nil || len(installPlans.Items) == 0 {
 		return false, nil, nil
 	}
+	var currentInstallPlan *operatorsv1alpha1.InstallPlan
+	multipleInstallPlans := false
 	for _, installPlan := range installPlans.Items {
 		if len(installPlan.OwnerReferences) == 0 || len(installPlan.Spec.ClusterServiceVersionNames) == 0 {
 			continue
 		}
+		ownerRefMatches := false
 		for _, ownerRef := range installPlan.OwnerReferences {
 			if ownerRef.UID == subscription.UID {
-				for _, csvName := range installPlan.Spec.ClusterServiceVersionNames {
-					if csvName == r.config.GatewayAPIOperatorVersion {
-						return true, &installPlan, nil
-					}
+				ownerRefMatches = true
+				break
+			}
+		}
+		if !ownerRefMatches {
+			continue
+		}
+		// Ignore InstallPlans not in the "RequiresApproval" state. OLM may not be done setting them up.
+		if installPlan.Status.Phase != operatorsv1alpha1.InstallPlanPhaseRequiresApproval {
+			continue
+		}
+		for _, csvName := range installPlan.Spec.ClusterServiceVersionNames {
+			if csvName == r.config.GatewayAPIOperatorVersion {
+				// Keep the newest InstallPlan to return at the end of the loop.
+				if currentInstallPlan == nil {
+					currentInstallPlan = &installPlan
+					break
+				}
+				multipleInstallPlans = true
+				if currentInstallPlan.ObjectMeta.CreationTimestamp.Before(&installPlan.ObjectMeta.CreationTimestamp) {
+					currentInstallPlan = &installPlan
+					break
 				}
 			}
 		}
 	}
-	// No valid InstallPlan found.
-	return false, nil, nil
+	if multipleInstallPlans {
+		log.Info(fmt.Sprintf("found multiple valid InstallPlans. using %s because it's the newest", currentInstallPlan.Name))
+	}
+	return (currentInstallPlan != nil), currentInstallPlan, nil
 }
 
 // desiredInstallPlan returns a version of the expected InstallPlan that is approved.
