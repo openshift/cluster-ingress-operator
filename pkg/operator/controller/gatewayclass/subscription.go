@@ -10,11 +10,25 @@ import (
 
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 
+	securityv1 "github.com/openshift/api/security/v1"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+)
+
+const (
+	// RequiredSCCRestrictedV2 is name of the "restricted-v2" SCC.
+	RequiredSCCRestrictedV2 = "restricted-v2"
+	// WorkloadPartitioningManagementAnnotationKey is the annotation key for
+	// workload partitioning.
+	WorkloadPartitioningManagementAnnotationKey = "target.workload.openshift.io/management"
+	// WorkloadPartitioningManagementPreferredScheduling is the annotation
+	// value for preferred scheduling of workload.
+	WorkloadPartitioningManagementPreferredScheduling = `{"effect": "PreferredDuringScheduling"}`
 )
 
 // ensureServiceMeshOperatorSubscription attempts to ensure that a subscription
@@ -59,7 +73,24 @@ func desiredSubscription(name types.NamespacedName, gwapiOperatorChannel, gwapiO
 			},
 		},
 		Spec: &operatorsv1alpha1.SubscriptionSpec{
-			Channel:                gwapiOperatorChannel,
+			Channel: gwapiOperatorChannel,
+			Config: &operatorsv1alpha1.SubscriptionConfig{
+				// Resources is the default resources minus
+				// limits, which pods in platform namespaces
+				// are not permitted by OpenShift conventions
+				// to set.
+				Resources: &corev1.ResourceRequirements{
+					Limits: corev1.ResourceList{},
+					Requests: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("10m"),
+						corev1.ResourceMemory: resource.MustParse("64Mi"),
+					},
+				},
+				Annotations: map[string]string{
+					securityv1.RequiredSCCAnnotation:            RequiredSCCRestrictedV2,
+					WorkloadPartitioningManagementAnnotationKey: WorkloadPartitioningManagementPreferredScheduling,
+				},
+			},
 			InstallPlanApproval:    operatorsv1alpha1.ApprovalManual,
 			Package:                "servicemeshoperator3",
 			CatalogSource:          "redhat-operators",
