@@ -24,9 +24,11 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/sets"
 	utilclock "k8s.io/utils/clock"
 
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -50,13 +52,27 @@ const (
 
 	ingressesEqualConditionMessage = "desired and current number of IngressControllers are equal"
 
+	// gatewaysResourceName is the name of the Gateway API gateways CRD.
+	gatewaysResourceName = "gateways.gateway.networking.k8s.io"
+	// gatewayclassesResourceName is the name of the Gateway API
+	// gatewayclasses CRD.
+	gatewayclassesResourceName = "gatewayclasses.gateway.networking.k8s.io"
+	// istiosResourceName is the name of the Sail Operator istios CRD.
+	istiosResourceName = "istios.sailoperator.io"
+
 	controllerName = "status_controller"
 )
 
-var log = logf.Logger.WithName(controllerName)
+var (
+	log = logf.Logger.WithName(controllerName)
 
-// clock is to enable unit testing
-var clock utilclock.Clock = utilclock.RealClock{}
+	// clock is to enable unit testing
+	clock utilclock.Clock = utilclock.RealClock{}
+
+	// relatedObjectsCRDs is a set of names of CRDs that we add to
+	// relatedObjects if they exist.
+	relatedObjectsCRDs = sets.New[string](gatewaysResourceName, gatewayclassesResourceName, istiosResourceName)
+)
 
 // New creates the status controller. This is the controller that handles all
 // the logic for creating the ClusterOperator operator and updating its status.
@@ -116,6 +132,24 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 		})); err != nil {
 			return nil, err
 		}
+		if config.GatewayAPIControllerEnabled {
+			if err := c.Watch(source.Kind[client.Object](operatorCache, &apiextensionsv1.CustomResourceDefinition{}, handler.EnqueueRequestsFromMapFunc(toDefaultIngressController), predicate.Funcs{
+				CreateFunc: func(e event.CreateEvent) bool {
+					return relatedObjectsCRDs.Has(e.Object.GetName())
+				},
+				UpdateFunc: func(e event.UpdateEvent) bool {
+					return false
+				},
+				DeleteFunc: func(e event.DeleteEvent) bool {
+					return relatedObjectsCRDs.Has(e.Object.GetName())
+				},
+				GenericFunc: func(e event.GenericEvent) bool {
+					return false
+				},
+			})); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	return c, nil
@@ -124,7 +158,10 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 // Config holds all the things necessary for the controller to run.
 type Config struct {
 	// GatewayAPIEnabled indicates that the "GatewayAPI" featuregate is enabled.
-	GatewayAPIEnabled      bool
+	GatewayAPIEnabled bool
+	// GatewayAPIControllerEnabled indicates that the "GatewayAPIControllerEnabled" featuregate is enabled.
+	GatewayAPIControllerEnabled bool
+
 	IngressControllerImage string
 	CanaryImage            string
 	OperatorReleaseVersion string
@@ -206,11 +243,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 			Name:     state.CanaryNamespace.Name,
 		})
 	}
-	if r.config.GatewayAPIEnabled {
-		related = append(related, configv1.ObjectReference{
-			Group:    gatewayapiv1.GroupName,
-			Resource: "gatewayclasses",
-		})
+	if r.config.GatewayAPIEnabled && r.config.GatewayAPIControllerEnabled {
 		if state.haveOSSMSubscription {
 			subscriptionName := operatorcontroller.ServiceMeshOperatorSubscriptionName()
 			related = append(related, configv1.ObjectReference{
@@ -219,10 +252,20 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 				Namespace: subscriptionName.Namespace,
 				Name:      subscriptionName.Name,
 			})
+		}
+		if state.haveIstiosResource {
 			related = append(related, configv1.ObjectReference{
 				Group:    sailv1.GroupVersion.Group,
 				Resource: "istios",
 			})
+		}
+		if state.haveGatewayclassesResource {
+			related = append(related, configv1.ObjectReference{
+				Group:    gatewayapiv1.GroupName,
+				Resource: "gatewayclasses",
+			})
+		}
+		if state.haveGatewaysResource {
 			related = append(related, configv1.ObjectReference{
 				Group:     gatewayapiv1.GroupName,
 				Resource:  "gateways",
@@ -300,8 +343,17 @@ type operatorState struct {
 	IngressControllers []operatorv1.IngressController
 	DNSRecords         []iov1.DNSRecord
 
-	haveOSSMSubscription        bool
 	unmanagedGatewayAPICRDNames string
+	// haveOSSMSubscription means that the subscription for OSSM 3 exists.
+	haveOSSMSubscription bool
+	// haveIstiosResource means that the "istios.sailproject.io" CRD exists.
+	haveIstiosResource bool
+	// haveGatewaysResource means that the
+	// "gateways.gateway.networking.k8s.io" CRD exists.
+	haveGatewaysResource bool
+	// haveGatewayclassesResource means that the
+	// "gatewayclasses.gateway.networking.k8s.io" CRD exists.
+	haveGatewayclassesResource bool
 }
 
 // getOperatorState gets and returns the resources necessary to compute the
@@ -351,6 +403,37 @@ func (r *reconciler) getOperatorState(ctx context.Context, ingressNamespace, can
 				return state, fmt.Errorf("failed to unmarshal status extension of cluster operator %q: %w", co.Name, err)
 			}
 			state.unmanagedGatewayAPICRDNames = extension.UnmanagedGatewayAPICRDNames
+		}
+
+		if r.config.GatewayAPIControllerEnabled {
+			var (
+				crd                                  apiextensionsv1.CustomResourceDefinition
+				gatewaysResourceNamespacedName       = types.NamespacedName{Name: gatewaysResourceName}
+				gatewayclassesResourceNamespacedName = types.NamespacedName{Name: gatewayclassesResourceName}
+				istiosResourceNamespacedName         = types.NamespacedName{Name: istiosResourceName}
+			)
+
+			if err := r.cache.Get(ctx, gatewaysResourceNamespacedName, &crd); err != nil {
+				if !errors.IsNotFound(err) {
+					return state, fmt.Errorf("failed to get CRD %q: %v", gatewaysResourceName, err)
+				}
+			} else {
+				state.haveGatewaysResource = true
+			}
+			if err := r.cache.Get(ctx, gatewayclassesResourceNamespacedName, &crd); err != nil {
+				if !errors.IsNotFound(err) {
+					return state, fmt.Errorf("failed to get CRD %q: %v", gatewayclassesResourceName, err)
+				}
+			} else {
+				state.haveGatewayclassesResource = true
+			}
+			if err := r.cache.Get(ctx, istiosResourceNamespacedName, &crd); err != nil {
+				if !errors.IsNotFound(err) {
+					return state, fmt.Errorf("failed to get CRD %q: %v", istiosResourceName, err)
+				}
+			} else {
+				state.haveIstiosResource = true
+			}
 		}
 	}
 
