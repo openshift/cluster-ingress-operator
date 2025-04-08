@@ -237,8 +237,18 @@ func TestClusterOperatorStatusRelatedObjects(t *testing.T) {
 			Group:    "gateway.networking.k8s.io",
 			Resource: "gatewayclasses",
 		})
-		// This test runs before TestGatewayAPI, so we do *not* expect
-		// to see subscriptions, istios, or gateways in relatedObjects.
+		if gatewayAPIControllerEnabled, err := isFeatureGateEnabled(features.FeatureGateGatewayAPIController); err != nil {
+			t.Fatalf("Failed to look up %q featuregate: %v", features.FeatureGateGatewayAPIController, err)
+		} else if gatewayAPIControllerEnabled {
+			expected = append(expected, configv1.ObjectReference{
+				Group:     "gateway.networking.k8s.io",
+				Resource:  "gateways",
+				Namespace: "openshift-ingress",
+			})
+			// This test runs before TestGatewayAPI creates the
+			// subscription to install OSSM, so we do *not* expect
+			// to see subscriptions or istios in relatedObjects.
+		}
 	}
 
 	coName := controller.IngressClusterOperatorName()
