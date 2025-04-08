@@ -161,7 +161,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	}
 	oldStatus := co.Status.DeepCopy()
 
-	state, err := r.getOperatorState(ingressNamespace, canaryNamespace)
+	state, err := r.getOperatorState(ctx, ingressNamespace, canaryNamespace)
 	if err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to get operator state: %v", err)
 	}
@@ -300,11 +300,11 @@ type operatorState struct {
 
 // getOperatorState gets and returns the resources necessary to compute the
 // operator's current state.
-func (r *reconciler) getOperatorState(ingressNamespace, canaryNamespace string) (operatorState, error) {
+func (r *reconciler) getOperatorState(ctx context.Context, ingressNamespace, canaryNamespace string) (operatorState, error) {
 	state := operatorState{}
 
 	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ingressNamespace}}
-	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: ingressNamespace}, ns); err != nil {
+	if err := r.client.Get(ctx, types.NamespacedName{Name: ingressNamespace}, ns); err != nil {
 		if !errors.IsNotFound(err) {
 			return state, fmt.Errorf("failed to get namespace %q: %v", ingressNamespace, err)
 		}
@@ -313,7 +313,7 @@ func (r *reconciler) getOperatorState(ingressNamespace, canaryNamespace string) 
 	}
 
 	ns = &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: canaryNamespace}}
-	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: canaryNamespace}, ns); err != nil {
+	if err := r.client.Get(ctx, types.NamespacedName{Name: canaryNamespace}, ns); err != nil {
 		if !errors.IsNotFound(err) {
 			return state, fmt.Errorf("failed to get namespace %q: %v", canaryNamespace, err)
 		}
@@ -322,7 +322,7 @@ func (r *reconciler) getOperatorState(ingressNamespace, canaryNamespace string) 
 	}
 
 	ingressList := &operatorv1.IngressControllerList{}
-	if err := r.cache.List(context.TODO(), ingressList, client.InNamespace(r.config.Namespace)); err != nil {
+	if err := r.cache.List(ctx, ingressList, client.InNamespace(r.config.Namespace)); err != nil {
 		return state, fmt.Errorf("failed to list ingresscontrollers in %q: %v", r.config.Namespace, err)
 	} else {
 		state.IngressControllers = ingressList.Items
@@ -331,7 +331,7 @@ func (r *reconciler) getOperatorState(ingressNamespace, canaryNamespace string) 
 	if r.config.GatewayAPIEnabled {
 		var subscription operatorsv1alpha1.Subscription
 		subscriptionName := operatorcontroller.ServiceMeshOperatorSubscriptionName()
-		if err := r.cache.Get(context.TODO(), subscriptionName, &subscription); err != nil {
+		if err := r.cache.Get(ctx, subscriptionName, &subscription); err != nil {
 			if !errors.IsNotFound(err) {
 				return state, fmt.Errorf("failed to get subscription %q: %v", subscriptionName, err)
 			}
