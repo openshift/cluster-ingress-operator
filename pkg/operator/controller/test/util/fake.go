@@ -29,6 +29,8 @@ type FakeClientRecorder struct {
 	Added   []client.Object
 	Updated []client.Object
 	Deleted []client.Object
+
+	StatusWriter *FakeStatusWriter
 }
 
 func (c *FakeClientRecorder) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
@@ -71,7 +73,31 @@ func (c *FakeClientRecorder) Patch(ctx context.Context, obj client.Object, patch
 }
 
 func (c *FakeClientRecorder) Status() client.StatusWriter {
-	return c.Client.Status()
+	if c.StatusWriter == nil {
+		return c.Client.Status()
+	}
+	return c.StatusWriter
+}
+
+type FakeStatusWriter struct {
+	client.StatusWriter
+
+	Added   []client.Object
+	Updated []client.Object
+}
+
+func (w *FakeStatusWriter) Create(ctx context.Context, obj client.Object, subResource client.Object, opts ...client.SubResourceCreateOption) error {
+	w.Added = append(w.Added, obj)
+	return w.StatusWriter.Create(ctx, obj, subResource, opts...)
+}
+
+func (w *FakeStatusWriter) Update(ctx context.Context, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+	w.Updated = append(w.Updated, obj)
+	return w.StatusWriter.Update(ctx, obj, opts...)
+}
+
+func (w *FakeStatusWriter) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+	return w.StatusWriter.Patch(ctx, obj, patch, opts...)
 }
 
 type FakeController struct {
