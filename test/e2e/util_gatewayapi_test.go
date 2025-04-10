@@ -547,10 +547,11 @@ func assertGatewayClassSuccessful(t *testing.T, name string) (*gatewayapiv1.Gate
 		return false, nil
 	})
 	if err != nil {
+		t.Logf("[%s] Last observed gatewayclass:\n%s", time.Now().Format(time.DateTime), util.ToYaml(gwc))
 		return nil, fmt.Errorf("gatewayclass %s is not %v; last recorded status message: %s", name, gatewayapiv1.GatewayClassConditionStatusAccepted, recordedConditionMsg)
 	}
 
-	t.Logf("Observed that gatewayclass %s has been accepted: %+v", name, gwc.Status)
+	t.Logf("[%s] Observed that gatewayclass %s has been accepted: %+v", time.Now().Format(time.DateTime), name, gwc.Status)
 
 	return gwc, nil
 }
@@ -562,30 +563,58 @@ func assertGatewaySuccessful(t *testing.T, namespace, name string) (*gatewayapiv
 
 	gw := &gatewayapiv1.Gateway{}
 	nsName := types.NamespacedName{Namespace: namespace, Name: name}
-	recordedConditionMsg := "not found"
+	recordedAcceptedConditionMsg, recordedProgrammedConditionMsg := "", ""
 
-	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(context context.Context) (bool, error) {
+	// Wait for the gateway to be accepted and programmed.
+	// Load balancer provisioning can take several minutes on some platforms.
+	// Therefore, a timeout of 3 minutes is set to accommodate potential delays.
+	err := wait.PollUntilContextTimeout(context.Background(), 3*time.Second, 3*time.Minute, false, func(context context.Context) (bool, error) {
 		if err := kclient.Get(context, nsName, gw); err != nil {
 			t.Logf("Failed to get gateway %v: %v; retrying...", nsName, err)
 			return false, nil
 		}
+		acceptedConditionFound, programmedConditionFound := false, false
 		for _, condition := range gw.Status.Conditions {
 			if condition.Type == string(gatewayapiv1.GatewayConditionAccepted) {
-				recordedConditionMsg = condition.Message
+				recordedAcceptedConditionMsg = condition.Message
 				if condition.Status == metav1.ConditionTrue {
-					t.Logf("Found gateway %v as Accepted", nsName)
-					return true, nil
+					t.Logf("[%s] Found gateway %v as Accepted", time.Now().Format(time.DateTime), nsName)
+					acceptedConditionFound = true
+				}
+			}
+			// Ensuring the gateway configuration is ready.
+			// `AddressNotAssigned` may happen if the gateway service
+			// didn't get its load balancer target.
+			if condition.Type == string(gatewayapiv1.GatewayConditionProgrammed) {
+				recordedProgrammedConditionMsg = condition.Message
+				if condition.Status == metav1.ConditionTrue {
+					t.Logf("[%s] Found gateway %v as Programmed", time.Now().Format(time.DateTime), nsName)
+					programmedConditionFound = true
 				}
 			}
 		}
+		if acceptedConditionFound && programmedConditionFound {
+			return true, nil
+		}
+		t.Logf("[%s] Not all expected gateway conditions are found, checking gateway service...", time.Now().Format(time.DateTime))
+
+		// The creation of the gateway service may be delayed.
+		// Check the current status of the service to see where we are.
+		svc := &corev1.Service{}
+		svcNsName := types.NamespacedName{Namespace: namespace, Name: gw.Name + "-" + string(gw.Spec.GatewayClassName)}
+		if err := kclient.Get(context, svcNsName, svc); err != nil {
+			t.Logf("Failed to get gateway service %v: %v; retrying...", svcNsName, err)
+			return false, nil
+		}
+		t.Logf("[%s] Found gateway service: %s", time.Now().Format(time.DateTime), util.ToYaml(svc))
 		return false, nil
 	})
 	if err != nil {
-		t.Logf("Last observed gateway:\n%s", util.ToYaml(gw))
-		return nil, fmt.Errorf("gateway %v not %v, last recorded status message: %s", nsName, gatewayapiv1.GatewayConditionAccepted, recordedConditionMsg)
+		t.Logf("[%s] Last observed gateway:\n%s", time.Now().Format(time.DateTime), util.ToYaml(gw))
+		return nil, fmt.Errorf("gateway %v does not have all expected conditions, last recorded status messages: %q, %q", nsName, recordedAcceptedConditionMsg, recordedProgrammedConditionMsg)
 	}
 
-	t.Logf("Observed that gateway %v has been accepted: %+v", nsName, gw.Status)
+	t.Logf("[%s] Observed that gateway %v has been accepted: %+v", time.Now().Format(time.DateTime), nsName, gw.Status)
 
 	return gw, nil
 }
@@ -851,7 +880,7 @@ func assertDNSRecord(t *testing.T, recordName types.NamespacedName) error {
 
 	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(context context.Context) (bool, error) {
 		if err := kclient.Get(context, recordName, dnsRecord); err != nil {
-			t.Logf("Failed to get DNSRecord %v: %v; retrying...", recordName, err)
+			t.Logf("[%s] Failed to get DNSRecord %v: %v; retrying...", time.Now().Format(time.DateTime), recordName, err)
 			return false, nil
 		}
 		// Determine the current state of the DNSRecord.
@@ -859,13 +888,13 @@ func assertDNSRecord(t *testing.T, recordName types.NamespacedName) error {
 			for _, zone := range dnsRecord.Status.Zones {
 				for _, condition := range zone.Conditions {
 					if condition.Type == v1.DNSRecordPublishedConditionType && condition.Status == string(metav1.ConditionTrue) {
-						t.Logf("Found DNSRecord %v %s=%s", recordName, condition.Type, condition.Status)
+						t.Logf("[%s] Found DNSRecord %v %s=%s", time.Now().Format(time.DateTime), recordName, condition.Type, condition.Status)
 						return true, nil
 					}
 				}
 			}
 		}
-		t.Logf("Found DNSRecord %v but could not determine its readiness; retrying...", recordName)
+		t.Logf("[%s] Found DNSRecord %v but could not determine its readiness; retrying...", time.Now().Format(time.DateTime), recordName)
 		return false, nil
 	})
 	return err
