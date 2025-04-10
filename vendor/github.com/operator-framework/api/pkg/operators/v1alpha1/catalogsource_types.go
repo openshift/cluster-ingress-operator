@@ -3,11 +3,13 @@ package v1alpha1
 import (
 	"encoding/json"
 	"fmt"
+	"time"
+
 	"github.com/sirupsen/logrus"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"time"
 )
 
 const (
@@ -95,6 +97,13 @@ type CatalogSourceSpec struct {
 	Icon        Icon   `json:"icon,omitempty"`
 }
 
+type SecurityConfig string
+
+const (
+	Legacy     SecurityConfig = "legacy"
+	Restricted SecurityConfig = "restricted"
+)
+
 // GrpcPodConfig contains configuration specified for a catalog source
 type GrpcPodConfig struct {
 	// NodeSelector is a selector which must be true for the pod to fit on a node.
@@ -106,11 +115,58 @@ type GrpcPodConfig struct {
 	// +optional
 	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
 
+	// Affinity is the catalog source's pod's affinity.
+	// +optional
+	Affinity *corev1.Affinity `json:"affinity,omitempty"`
+
 	// If specified, indicates the pod's priority.
 	// If not specified, the pod priority will be default or zero if there is no
 	// default.
 	// +optional
 	PriorityClassName *string `json:"priorityClassName,omitempty"`
+
+	// SecurityContextConfig can be one of `legacy` or `restricted`. The CatalogSource's pod is either injected with the
+	// right pod.spec.securityContext and pod.spec.container[*].securityContext values to allow the pod to run in Pod
+	// Security Admission (PSA) `restricted` mode, or doesn't set these values at all, in which case the pod can only be
+	// run in PSA `baseline` or `privileged` namespaces. If the SecurityContextConfig is unspecified, the mode will be
+	// determined by the namespace's PSA configuration. If the namespace is enforcing `restricted` mode, then the pod
+	// will be configured as if `restricted` was specified. Otherwise, it will be configured as if `legacy` was
+	// specified. Specifying a value other than `legacy` or `restricted` result in a validation error. When using older
+	// catalog images, which can not run in `restricted` mode, the SecurityContextConfig should be set to `legacy`.
+	//
+	// More information about PSA can be found here: https://kubernetes.io/docs/concepts/security/pod-security-admission/
+	// +optional
+	// +kubebuilder:validation:Enum=legacy;restricted
+	SecurityContextConfig SecurityConfig `json:"securityContextConfig,omitempty"`
+
+	// MemoryTarget configures the $GOMEMLIMIT value for the gRPC catalog Pod. This is a soft memory limit for the server,
+	// which the runtime will attempt to meet but makes no guarantees that it will do so. If this value is set, the Pod
+	// will have the following modifications made to the container running the server:
+	// - the $GOMEMLIMIT environment variable will be set to this value in bytes
+	// - the memory request will be set to this value
+	//
+	// This field should be set if it's desired to reduce the footprint of a catalog server as much as possible, or if
+	// a catalog being served is very large and needs more than the default allocation. If your index image has a file-
+	// system cache, determine a good approximation for this value by doubling the size of the package cache at
+	// /tmp/cache/cache/packages.json in the index image.
+	//
+	// This field is best-effort; if unset, no default will be used and no Pod memory limit or $GOMEMLIMIT value will be set.
+	// +optional
+	MemoryTarget *resource.Quantity `json:"memoryTarget,omitempty"`
+
+	// ExtractContent configures the gRPC catalog Pod to extract catalog metadata from the provided index image and
+	// use a well-known version of the `opm` server to expose it. The catalog index image that this CatalogSource is
+	// configured to use *must* be using the file-based catalogs in order to utilize this feature.
+	// +optional
+	ExtractContent *ExtractContentConfig `json:"extractContent,omitempty"`
+}
+
+// ExtractContentConfig configures context extraction from a file-based catalog index image.
+type ExtractContentConfig struct {
+	// CacheDir is the directory storing the pre-calculated API cache.
+	CacheDir string `json:"cacheDir"`
+	// CatalogDir is the directory storing the file-based catalog contents.
+	CatalogDir string `json:"catalogDir"`
 }
 
 // UpdateStrategy holds all the different types of catalog source update strategies
@@ -180,9 +236,12 @@ type CatalogSourceStatus struct {
 	// The last time the CatalogSource image registry has been polled to ensure the image is up-to-date
 	LatestImageRegistryPoll *metav1.Time `json:"latestImageRegistryPoll,omitempty"`
 
-	ConfigMapResource     *ConfigMapResourceReference `json:"configMapReference,omitempty"`
-	RegistryServiceStatus *RegistryServiceStatus      `json:"registryService,omitempty"`
-	GRPCConnectionState   *GRPCConnectionState        `json:"connectionState,omitempty"`
+	// ConfigMapReference (deprecated) is the reference to the ConfigMap containing the catalog source's configuration, when the catalog source is a ConfigMap
+	ConfigMapResource *ConfigMapResourceReference `json:"configMapReference,omitempty"`
+	// RegistryService represents the current state of the GRPC service used to serve the catalog
+	RegistryServiceStatus *RegistryServiceStatus `json:"registryService,omitempty"`
+	// ConnectionState represents the current state of the CatalogSource's connection to the registry
+	GRPCConnectionState *GRPCConnectionState `json:"connectionState,omitempty"`
 
 	// Represents the state of a CatalogSource. Note that Message and Reason represent the original
 	// status information, which may be migrated to be conditions based in the future. Any new features

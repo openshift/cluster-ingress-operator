@@ -119,6 +119,9 @@ func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference) *sa
 					Enabled:            ptr.To(true),
 					Env:                pilotContainerEnv,
 					ExtraContainerArgs: []string{},
+					PodAnnotations: map[string]string{
+						WorkloadPartitioningManagementAnnotationKey: WorkloadPartitioningManagementPreferredScheduling,
+					},
 				},
 				SidecarInjectorWebhook: &sailv1.SidecarInjectorConfig{
 					EnableNamespacesByDefault: ptr.To(false),
