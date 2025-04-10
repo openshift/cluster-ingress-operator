@@ -38,3 +38,89 @@ roleRef:
   kind: Role
   apiGroup: rbac.authorization.k8s.io
   name: ingress-operator
+---
+# RoleBinding for the operator to manage ingresscontrollers
+# in the openshift-ingress namespace.
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: ingress-operator
+  namespace: openshift-ingress
+  annotations:
+    capability.openshift.io/name: Ingress
+    include.release.openshift.io/ibm-cloud-managed: "true"
+    include.release.openshift.io/self-managed-high-availability: "true"
+    include.release.openshift.io/single-node-developer: "true"
+subjects:
+- kind: ServiceAccount
+  name: ingress-operator
+  namespace: openshift-ingress-operator
+roleRef:
+  kind: Role
+  apiGroup: rbac.authorization.k8s.io
+  name: ingress-operator
+---
+# RoleBinding for the operator to manage canary deployment
+# in the openshift-ingress-canary namespace.
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: ingress-operator
+  namespace: openshift-ingress-canary
+  annotations:
+    capability.openshift.io/name: Ingress
+    include.release.openshift.io/ibm-cloud-managed: "true"
+    include.release.openshift.io/self-managed-high-availability: "true"
+    include.release.openshift.io/single-node-developer: "true"
+subjects:
+- kind: ServiceAccount
+  name: ingress-operator
+  namespace: openshift-ingress-operator
+roleRef:
+  kind: Role
+  apiGroup: rbac.authorization.k8s.io
+  name: ingress-operator
+---
+# RoleBinding for the operator to manage the following resources in openshift-config namespace:
+# - Role and RoleBindings to manage RBAC for componentRoutes (configurable-route controller).
+# - ConfigMaps to sync error code pages and client CAs (?) (sync-http-error-code-configmap, clientca-configmap  controllers).
+# - Secrets as roles created for component routes grant read access to secrets (?).
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: ingress-operator
+  namespace: openshift-config
+  annotations:
+    capability.openshift.io/name: Ingress
+    include.release.openshift.io/ibm-cloud-managed: "true"
+    include.release.openshift.io/self-managed-high-availability: "true"
+    include.release.openshift.io/single-node-developer: "true"
+subjects:
+- kind: ServiceAccount
+  name: ingress-operator
+  namespace: openshift-ingress-operator
+roleRef:
+  kind: Role
+  apiGroup: rbac.authorization.k8s.io
+  name: ingress-operator
+---
+# Role for the operator to publish the router certificates
+# in openshift-config-managed namespace (certificate-publisher controller).
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: ingress-operator
+  namespace: openshift-config-managed
+  annotations:
+    capability.openshift.io/name: Ingress
+    include.release.openshift.io/ibm-cloud-managed: "true"
+    include.release.openshift.io/self-managed-high-availability: "true"
+    include.release.openshift.io/single-node-developer: "true"
+subjects:
+- kind: ServiceAccount
+  name: ingress-operator
+  namespace: openshift-ingress-operator
+roleRef:
+  kind: Role
+  apiGroup: rbac.authorization.k8s.io
+  name: ingress-operator
