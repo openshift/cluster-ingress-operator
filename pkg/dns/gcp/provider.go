@@ -43,20 +43,21 @@ func New(config Config) (*Provider, error) {
 		option.WithCredentialsJSON(config.CredentialsJSON),
 		option.WithUserAgent(config.UserAgent),
 	}
+
+	dnsService, err := gdnsv1.NewService(context.TODO(), options...)
+	if err != nil {
+		return nil, err
+	}
+
 	if config.GCPCustomEndpointsEnabled {
 		for _, endpoint := range config.Endpoints {
 			if endpoint.Name == configv1.GCPServiceEndpointNameDNS {
 				// There should be at most 1 endpoint override per service. If there
 				// is more than one, only use the first instance.
-				options = append(options, option.WithEndpoint(endpoint.URL))
+				dnsService.BasePath = endpoint.URL
 				break
 			}
 		}
-	}
-
-	dnsService, err := gdnsv1.NewService(context.TODO(), options...)
-	if err != nil {
-		return nil, err
 	}
 
 	provider := &Provider{
