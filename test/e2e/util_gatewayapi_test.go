@@ -33,6 +33,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
@@ -227,6 +228,52 @@ func createGateway(gatewayClass *gatewayapiv1.GatewayClass, name, namespace, dom
 			}
 		} else {
 			return nil, fmt.Errorf("failed to create gateway: %v", err.Error())
+		}
+	}
+	return gateway, nil
+}
+
+func createGatewayWithListeners(gatewayClass *gatewayapiv1.GatewayClass, name, namespace string, listeners []testListener) (*gatewayapiv1.Gateway, error) {
+
+	var gatewayListeners []gatewayapiv1.Listener
+	for _, spec := range listeners {
+		var hostname *gatewayapiv1.Hostname = nil
+		if spec.hostname != nil {
+			h := gatewayapiv1.Hostname(*spec.hostname)
+			hostname = &h
+		}
+
+		fromNamespace := gatewayapiv1.FromNamespaces(allNamespaces)
+		allowedRoutes := gatewayapiv1.AllowedRoutes{
+			Namespaces: &gatewayapiv1.RouteNamespaces{From: &fromNamespace},
+		}
+
+		l := gatewayapiv1.Listener{
+			Name:          gatewayapiv1.SectionName(spec.name),
+			Hostname:      hostname,
+			Port:          80,
+			Protocol:      "HTTP",
+			AllowedRoutes: &allowedRoutes,
+		}
+		gatewayListeners = append(gatewayListeners, l)
+	}
+
+	gateway := &gatewayapiv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: gatewayapiv1.GatewaySpec{
+			GatewayClassName: gatewayapiv1.ObjectName(gatewayClass.Name),
+			Listeners:        gatewayListeners,
+		},
+	}
+
+	if err := kclient.Create(context.TODO(), gateway); err != nil {
+		if kerrors.IsAlreadyExists(err) {
+			return nil, fmt.Errorf("cannot create gateway %s: %v", name, err.Error())
+		} else {
+			return nil, fmt.Errorf("failed to create gateway %s: %v", name, err.Error())
 		}
 	}
 	return gateway, nil
@@ -588,6 +635,145 @@ func assertGatewaySuccessful(t *testing.T, namespace, name string) (*gatewayapiv
 	t.Logf("Observed that gateway %v has been accepted: %+v", nsName, gw.Status)
 
 	return gw, nil
+}
+
+func waitForGatewayListenerCondition(t *testing.T, gatewayName types.NamespacedName, listenerName string, conditions ...metav1.Condition) error {
+	t.Helper()
+
+	gateway := &gatewayapiv1.Gateway{}
+	expected := gatewayListenerConditionMap(conditions...)
+	current := map[string]string{}
+
+	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(context context.Context) (bool, error) {
+		if err := kclient.Get(context, gatewayName, gateway); err != nil {
+			t.Logf("failed to get gateway %s, retrying...", gatewayName.Name)
+			return false, nil
+		}
+
+		listenerStatus := gatewayapiv1.ListenerStatus{}
+		for _, ls := range gateway.Status.Listeners {
+			if string(ls.Name) == listenerName {
+				listenerStatus = ls
+				current = gatewayListenerConditionMap(listenerStatus.Conditions...)
+				return conditionsMatchExpected(expected, current), nil
+			}
+		}
+		if &listenerStatus == nil {
+			t.Logf("gateway %s's listener %s has not been updated with status, retrying...", gatewayName.Name, listenerName)
+			return false, nil
+		}
+		return false, nil
+	})
+
+	if err != nil {
+		return fmt.Errorf("Expected conditions: %v do not match\n Current conditions: %v", expected, current)
+	}
+	return err
+}
+
+func gatewayListenerConditionMap(conditions ...metav1.Condition) map[string]string {
+	conds := map[string]string{}
+	for _, cond := range conditions {
+		conds[cond.Type] = string(cond.Status)
+	}
+	return conds
+}
+
+// expectedDnsRecord is used to represent a DNSRecord expectation.
+type expectedDnsRecord struct {
+	dnsName     string
+	gatewayName string
+}
+
+type testGateway struct {
+	gatewayName string
+	namespace   string
+	listeners   []testListener
+}
+
+type testListener struct {
+	name     string
+	hostname *string
+}
+
+// assertExpectedDNSRecords polls until the DNSRecords in the default operand namespace match the given expectations.
+// The expectations parameter is a map where keys are expectations for DNSRecord and values indicate whether a DNSRecord should be present.
+func assertExpectedDNSRecords(t *testing.T, expectations map[expectedDnsRecord]bool) error {
+	t.Helper()
+
+	var expectationsMet bool
+
+	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(context context.Context) (bool, error) {
+		haveExpectNotPresent := false
+		// expectationsMet starts true and gets set to false when some expectation is not met.
+		expectationsMet = true
+
+		dnsRecords := &v1.DNSRecordList{}
+		if err := kclient.List(context, dnsRecords, client.InNamespace(operatorcontroller.DefaultOperandNamespace)); err != nil {
+			return false, fmt.Errorf("failed to list DNSRecords: %v", err)
+		}
+
+		// Iterate over all expectations.
+		for exp, shouldBePresent := range expectations {
+			if !shouldBePresent {
+				haveExpectNotPresent = true
+			}
+
+			// Reset the found and foundReady flags for each expectation.
+			found := false
+			foundReady := false
+			// Look for a DNSRecord that matches the expected gateway and DNS name.
+			for _, record := range dnsRecords.Items {
+				if record.Labels["gateway.networking.k8s.io/gateway-name"] == exp.gatewayName &&
+					record.Spec.DNSName == exp.dnsName {
+
+					if !shouldBePresent {
+						expectationsMet = false
+						found = true
+						t.Logf("DNSRecord %q (%s) found but should not be present.", record.Name, exp.dnsName)
+						return false, nil
+					}
+					found = true
+					// DNSRecord found and should be present, check if it is published
+					for _, zone := range record.Status.Zones {
+						for _, condition := range zone.Conditions {
+							if condition.Type == v1.DNSRecordPublishedConditionType && condition.Status == string(metav1.ConditionTrue) {
+								t.Logf("Found DNSRecord %q (%s) %s=%s as expected", record.Name, exp.dnsName, condition.Type, condition.Status)
+								foundReady = true
+							}
+						}
+					}
+					if !foundReady {
+						t.Logf("Found DNSRecord %v but could not determine its readiness; retrying...", record.Name)
+						expectationsMet = false
+						return false, nil
+					}
+				}
+			}
+
+			// If the record is expected but not found, return false to continue polling.
+			if shouldBePresent && !found {
+				t.Logf("DNSRecord for hostname %q (gateway: %s) is expected to be present but was not found; retrying...", exp.dnsName, exp.gatewayName)
+				expectationsMet = false
+				return false, nil
+			}
+			// If the record is not expected but was found, return false to continue polling.
+			if !shouldBePresent && found {
+				t.Logf("DNSRecord for hostname %q (gateway: %s) is present but was expected to be absent; retrying...", exp.dnsName, exp.gatewayName)
+				expectationsMet = false
+				return false, nil
+			}
+		}
+		if haveExpectNotPresent {
+			t.Logf("Continuing polling to ensure non-expected DNSRecords do not exist...")
+		}
+		return !haveExpectNotPresent, nil
+	})
+
+	if !expectationsMet {
+		return fmt.Errorf("failed to observe expected DNSRecords: %v", err)
+	}
+	return nil
 }
 
 // assertHttpRouteSuccessful checks if the http route was created and has parent conditions that indicate

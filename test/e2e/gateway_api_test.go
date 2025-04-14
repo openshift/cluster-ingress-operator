@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/openshift/api/features"
+	iov1 "github.com/openshift/api/operatoringress/v1"
 	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
@@ -101,6 +102,10 @@ func TestGatewayAPI(t *testing.T) {
 		t.Run("testGatewayAPIObjects", testGatewayAPIObjects)
 		t.Run("testGatewayAPIManualDeployment", testGatewayAPIManualDeployment)
 		t.Run("testGatewayAPIIstioInstallation", testGatewayAPIIstioInstallation)
+		t.Run("testGatewayAPIDNS", testGatewayAPIDNS)
+		t.Run("testGatewayAPIDNSListenerUpdate", testGatewayAPIDNSListenerUpdate)
+		t.Run("testGatewayAPIDNSListenerWithNoHostname", testGatewayAPIDNSListenerWithNoHostname)
+
 	} else {
 		t.Log("Gateway API Controller not enabled, skipping controller tests")
 	}
@@ -421,6 +426,279 @@ func testGatewayAPIRBAC(t *testing.T) {
 			}
 		}
 	}
+}
+
+func testGatewayAPIDNS(t *testing.T) {
+	domain := "gws." + dnsConfig.Spec.BaseDomain
+
+	gatewayClass, err := createGatewayClass(operatorcontroller.OpenShiftDefaultGatewayClassName, operatorcontroller.OpenShiftGatewayClassControllerName)
+	if err != nil {
+		t.Fatalf("failed to create gatewayclass: %v", err)
+	}
+
+	testCases := []struct {
+		name                       string
+		createGateways             []testGateway
+		expectedListenerConditions []metav1.Condition
+		expectedDNSRecords         map[expectedDnsRecord]bool
+	}{
+		// TODO: In this case Gateway Listeners should be reported as conflicted. To be fixed in the future release.
+		{
+			name: "multipleGatewaysSameListenerHostname",
+			createGateways: []testGateway{
+				{gatewayName: "gw1",
+					namespace: operatorcontroller.DefaultOperandNamespace,
+					listeners: []testListener{
+						{
+							name:     "http",
+							hostname: ptr.To("abc." + domain),
+						},
+					},
+				},
+				{gatewayName: "gw2",
+					namespace: operatorcontroller.DefaultOperandNamespace,
+					listeners: []testListener{
+						{
+							name:     "http",
+							hostname: ptr.To("abc." + domain)},
+					},
+				},
+			},
+			expectedListenerConditions: []metav1.Condition{
+				{Type: "Accepted", Status: metav1.ConditionTrue},
+				{Type: "Conflicted", Status: metav1.ConditionFalse},
+				{Type: "Programmed", Status: metav1.ConditionTrue},
+				{Type: "ResolvedRefs", Status: metav1.ConditionTrue},
+			},
+			expectedDNSRecords: map[expectedDnsRecord]bool{
+				{dnsName: "abc." + domain + ".", gatewayName: "gw1"}: true,
+				{dnsName: "abc." + domain + ".", gatewayName: "gw2"}: true,
+			},
+		},
+		{
+			name: "gatewayListenersWithOverlappingHostname",
+			createGateways: []testGateway{
+				{gatewayName: "gw3",
+					namespace: operatorcontroller.DefaultOperandNamespace,
+					listeners: []testListener{
+						{
+							name:     "http",
+							hostname: ptr.To("qwe." + domain)},
+					},
+				},
+				{gatewayName: "gw4",
+					namespace: operatorcontroller.DefaultOperandNamespace,
+					listeners: []testListener{
+						{
+							name:     "http",
+							hostname: ptr.To("*." + domain),
+						},
+					},
+				},
+			},
+			expectedListenerConditions: []metav1.Condition{
+				{Type: "Accepted", Status: metav1.ConditionTrue},
+				{Type: "Conflicted", Status: metav1.ConditionFalse},
+				{Type: "Programmed", Status: metav1.ConditionTrue},
+				{Type: "ResolvedRefs", Status: metav1.ConditionTrue},
+			},
+			expectedDNSRecords: map[expectedDnsRecord]bool{
+				{dnsName: "qwe." + domain + ".", gatewayName: "gw3"}: true,
+				{dnsName: "*." + domain + ".", gatewayName: "gw4"}:   true,
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			var gateways []*gatewayapiv1.Gateway
+
+			// Create gateways
+			for _, gateway := range tc.createGateways {
+				createdGateway, err := createGatewayWithListeners(gatewayClass, gateway.gatewayName, gateway.namespace, gateway.listeners)
+				gateways = append(gateways, createdGateway)
+				if err != nil {
+					t.Fatalf("failed to create gateway %s: %v", gateway.gatewayName, err)
+				}
+			}
+
+			t.Cleanup(func() {
+				for _, gateway := range gateways {
+					if err := kclient.Delete(context.TODO(), gateway); err != nil {
+						if errors.IsNotFound(err) {
+							continue
+						}
+						t.Errorf("Failed to delete gateway %q: %v", gateway.Name, err)
+					}
+				}
+			})
+
+			for _, gateway := range gateways {
+				gateway, err := assertGatewaySuccessful(t, operatorcontroller.DefaultOperandNamespace, gateway.Name)
+				if err != nil {
+					t.Errorf("Failed to create %s gateway: %v", gateway.Name, err)
+				}
+			}
+
+			if err := assertExpectedDNSRecords(t, tc.expectedDNSRecords); err != nil {
+				t.Fatalf("dnsRecord expectations not met: %v", err)
+			}
+
+			t.Logf("Check if gateways listener conditions match expected state.")
+			for _, gateway := range gateways {
+				for _, listener := range gateway.Spec.Listeners {
+					if err := waitForGatewayListenerCondition(t, types.NamespacedName{Namespace: gateway.Namespace, Name: gateway.Name}, string(listener.Name), tc.expectedListenerConditions...); err != nil {
+						t.Fatalf("did not get expected listener %s condition: %v", listener.Name, err)
+					} else {
+						t.Logf("gateway: %s listener %s conditions match expected state.", gateway.Name, listener.Name)
+					}
+				}
+			}
+		})
+	}
+
+}
+
+func testGatewayAPIDNSListenerUpdate(t *testing.T) {
+	gatewayClass, err := createGatewayClass(operatorcontroller.OpenShiftDefaultGatewayClassName, operatorcontroller.OpenShiftGatewayClassControllerName)
+	if err != nil {
+		t.Fatalf("failed to create gatewayclass: %v", err)
+	}
+
+	domain := "gws." + dnsConfig.Spec.BaseDomain
+
+	gateway, err := createGatewayWithListeners(gatewayClass, "test-gateway-update", operatorcontroller.DefaultOperandNamespace, []testListener{
+		{name: "http-listener1", hostname: ptr.To("foo." + domain)},
+		{name: "http-listener2", hostname: ptr.To("bar." + domain)},
+	})
+
+	t.Cleanup(func() {
+		if err := kclient.Delete(context.TODO(), gateway); err != nil {
+			if errors.IsNotFound(err) {
+				return
+			}
+			t.Errorf("failed to delete gateway %q: %v", gateway.Name, err)
+		}
+	})
+
+	if err != nil {
+		t.Fatalf("failed to create gateway with multiple listeners: %v", err)
+	}
+	t.Logf("Created gateway %s with multiple hostnames", gateway.Name)
+
+	gateway, err = assertGatewaySuccessful(t, operatorcontroller.DefaultOperandNamespace, "test-gateway-update")
+	if err != nil {
+		t.Fatalf("failed to accept/program gateway test-gateway-update: %v", err)
+	}
+
+	if err := assertExpectedDNSRecords(t, map[expectedDnsRecord]bool{
+		{dnsName: "foo." + domain + ".", gatewayName: "test-gateway-update"}: true,
+	}); err != nil {
+		t.Fatalf("DNSRecord %s expectations not met: %v", "foo."+domain+".", err)
+	}
+
+	// Fetch the latest version of the Gateway resource.
+	if err := kclient.Get(context.TODO(), types.NamespacedName{Namespace: operatorcontroller.DefaultOperandNamespace, Name: gateway.Name}, gateway); err != nil {
+		t.Fatalf("failed to get gateway resource: %v", err)
+	}
+
+	// Modify one gateway listener hostname
+	newHostname := gatewayapiv1.Hostname("baz." + domain)
+	gateway.Spec.Listeners[0].Hostname = &newHostname
+
+	if err := kclient.Update(context.TODO(), gateway); err != nil {
+		t.Fatalf("failed to update gateway %v: %v", gateway.Name, err)
+	}
+	t.Logf("Modified gateway %s's listener hostname from %s to: %s", gateway.Name, "foo."+domain+".", "baz."+domain+".")
+
+	if err := assertExpectedDNSRecords(t, map[expectedDnsRecord]bool{
+		{dnsName: "foo." + domain + ".", gatewayName: "test-gateway-update"}: false,
+		{dnsName: "bar." + domain + ".", gatewayName: "test-gateway-update"}: true,
+		{dnsName: "baz." + domain + ".", gatewayName: "test-gateway-update"}: true,
+	}); err != nil {
+		t.Fatalf("DNSRecord %s expectations not met: %v", "baz."+domain+".", err)
+	}
+
+	// Fetch the latest version of the Gateway resource.
+	if err := kclient.Get(context.TODO(), types.NamespacedName{Namespace: operatorcontroller.DefaultOperandNamespace, Name: gateway.Name}, gateway); err != nil {
+		t.Fatalf("failed to get gateway resource: %v", err)
+	}
+
+	// Delete one of the listeners
+	gateway.Spec.Listeners = gateway.Spec.Listeners[0 : len(gateway.Spec.Listeners)-1]
+
+	if err := kclient.Update(context.TODO(), gateway); err != nil {
+		t.Fatalf("failed to update gateway with removed listener: %v", err)
+	}
+	t.Logf("Deleted listener %s from gateway %s.", "http-listener2", gateway.Name)
+
+	t.Logf("Checking that the dnsRecord for %s gets removed after removing the listener.", "bar."+domain+".")
+
+	if err := assertExpectedDNSRecords(t, map[expectedDnsRecord]bool{
+		{dnsName: "baz." + domain + ".", gatewayName: "test-gateway-update"}: true,
+		{dnsName: "bar." + domain + ".", gatewayName: "test-gateway-update"}: false,
+	}); err != nil {
+		t.Fatalf("expected bar.%s. to be deleted, but it was not", domain)
+	}
+
+	if err := kclient.Delete(context.TODO(), gateway); err != nil {
+		t.Errorf("failed to delete gateway %q: %v", gateway.Name, err)
+	}
+
+	t.Logf("Checking the remaining DNSRecord %s gets deleted after gateway deletion.", "baz."+domain+".")
+	if err := assertExpectedDNSRecords(t, map[expectedDnsRecord]bool{
+		{dnsName: "baz." + domain + ".", gatewayName: "test-gateway-update"}: false,
+	}); err != nil {
+		t.Fatalf("expected baz.%s. to be deleted, but it was not", domain)
+	}
+	t.Logf("Confirmed DNSRecord removed after gateway deletion.")
+}
+
+func testGatewayAPIDNSListenerWithNoHostname(t *testing.T) {
+	gatewayClass, err := createGatewayClass(operatorcontroller.OpenShiftDefaultGatewayClassName, operatorcontroller.OpenShiftGatewayClassControllerName)
+	if err != nil {
+		t.Fatalf("failed to create gatewayclass: %v", err)
+	}
+
+	gateway, err := createGatewayWithListeners(gatewayClass, "test-nohost-gateway", operatorcontroller.DefaultOperandNamespace, []testListener{
+		{name: "http-listener-no-host", hostname: nil},
+	})
+
+	t.Cleanup(func() {
+		if err := kclient.Delete(context.TODO(), gateway); err != nil {
+			t.Errorf("failed to delete gateway %q: %v", gateway.Name, err)
+		}
+	})
+
+	if err != nil {
+		t.Fatalf("failed to create gateway with a listener with no hostname: %v", err)
+	}
+
+	gateway, err = assertGatewaySuccessful(t, operatorcontroller.DefaultOperandNamespace, "test-nohost-gateway")
+	if err != nil {
+		t.Fatalf("failed to accept/program gateway test-nohost-gateway: %v", err)
+	}
+
+	t.Logf("Created gateway %s with a listener with no hostname", gateway.Name)
+
+	err = wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(context context.Context) (bool, error) {
+		dnsRecords := &iov1.DNSRecordList{}
+		// List all DNSRecords from the default operand namespace.
+		if err := kclient.List(context, dnsRecords, client.InNamespace(operatorcontroller.DefaultOperandNamespace)); err != nil {
+			t.Logf("failed to list DNSRecords: %v; retrying...", err)
+			return false, nil
+		}
+
+		for _, record := range dnsRecords.Items {
+			if record.Labels["gateway.networking.k8s.io/gateway-name"] == gateway.Name {
+				t.Fatalf("dnsrecord found while not expected: %v", err)
+			}
+		}
+		t.Logf("No DNSRecord for gateway listener with no hostname, continuing polling...")
+		return false, nil
+	})
+	t.Logf("Confirmed no DNSRecord created for gateway listener with no hostname.")
+
 }
 
 // ensureCRDs tests that the Gateway API custom resource definitions exist.
