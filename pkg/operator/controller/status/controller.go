@@ -237,13 +237,11 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 				Group:    sailv1.GroupVersion.Group,
 				Resource: "istios",
 			})
-			if state.IngressNamespace != nil {
-				related = append(related, configv1.ObjectReference{
-					Group:     gatewayapiv1.GroupName,
-					Resource:  "gateways",
-					Namespace: state.IngressNamespace.Name,
-				})
-			}
+			related = append(related, configv1.ObjectReference{
+				Group:     gatewayapiv1.GroupName,
+				Resource:  "gateways",
+				Namespace: "", // Include all namespaces.
+			})
 		}
 	}
 
