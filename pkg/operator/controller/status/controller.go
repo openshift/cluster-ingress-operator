@@ -233,12 +233,11 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 				Namespace: subscriptionName.Namespace,
 				Name:      subscriptionName.Name,
 			})
+			related = append(related, configv1.ObjectReference{
+				Group:    sailv1.GroupVersion.Group,
+				Resource: "istios",
+			})
 			if state.IngressNamespace != nil {
-				related = append(related, configv1.ObjectReference{
-					Group:     sailv1.GroupVersion.Group,
-					Resource:  "istios",
-					Namespace: state.IngressNamespace.Name,
-				})
 				related = append(related, configv1.ObjectReference{
 					Group:     gatewayapiv1.GroupName,
 					Resource:  "gateways",
