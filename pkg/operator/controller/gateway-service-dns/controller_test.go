@@ -254,7 +254,13 @@ func Test_Reconcile(t *testing.T) {
 				WithScheme(scheme).
 				WithRuntimeObjects(tc.existingObjects...).
 				Build()
-			cl := &testutil.FakeClientRecorder{fakeClient, t, []client.Object{}, []client.Object{}, []client.Object{}}
+			cl := &testutil.FakeClientRecorder{
+				Client:  fakeClient,
+				T:       t,
+				Added:   []client.Object{},
+				Updated: []client.Object{},
+				Deleted: []client.Object{},
+			}
 			informer := informertest.FakeInformers{Scheme: scheme}
 			cache := testutil.FakeCache{Informers: &informer, Reader: cl}
 			reconciler := &reconciler{
