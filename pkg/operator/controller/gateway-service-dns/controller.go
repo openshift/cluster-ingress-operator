@@ -78,7 +78,11 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 			// A DNSRecord CR needs to be updated if, and only if,
 			// the hostname has changed (a listener's port and
 			// protocol have no bearing on the DNS record).
-			return gatewayListenersHostnamesChanged(old, new)
+			changed := gatewayListenersHostnamesChanged(old, new)
+			if changed {
+				log.Info("Listener hostname changed", "gateway", e.ObjectNew.(*gatewayapiv1.Gateway).Name)
+			}
+			return changed
 		},
 	}
 	isInOperandNamespace := predicate.NewPredicateFuncs(func(o client.Object) bool {
@@ -103,6 +107,7 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 				},
 			}
 			requests = append(requests, request)
+			log.Info("Enqueuing service for gateway", "gateway", o.GetName(), "service", request.NamespacedName)
 		}
 		return requests
 	}
