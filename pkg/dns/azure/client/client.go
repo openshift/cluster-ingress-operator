@@ -2,9 +2,11 @@ package client
 
 import (
 	"context"
-
-	"github.com/Azure/azure-sdk-for-go/profiles/2018-03-01/dns/mgmt/dns"
-	"github.com/Azure/azure-sdk-for-go/services/privatedns/mgmt/2018-09-01/privatedns"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/dns/armdns"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/privatedns/armprivatedns"
 	"github.com/Azure/go-autorest/autorest/azure"
 	"github.com/pkg/errors"
 )
@@ -58,13 +60,14 @@ type dnsClient struct {
 }
 
 // New returns an authenticated DNSClient
-func New(config Config, userAgentExtension string) (DNSClient, error) {
-	rsc, err := newRecordSetClient(config, userAgentExtension)
+func New(config Config) (DNSClient, error) {
+	credential, err := getAzureCredentials(config)
+	rsc, err := newRecordSetClient(config, credential)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create recordSetClient")
 	}
 
-	prsc, err := newPrivateRecordSetClient(config, userAgentExtension)
+	prsc, err := newPrivateRecordSetClient(config, credential)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create privateRecordSetClient")
 	}
@@ -95,32 +98,35 @@ func (c *dnsClient) Delete(ctx context.Context, zone Zone, arec ARecord) error {
 }
 
 type recordSetClient struct {
-	client dns.RecordSetsClient
+	client *armdns.RecordSetsClient
 }
 
-func newRecordSetClient(config Config, userAgentExtension string) (*recordSetClient, error) {
-	authorizer, err := getAuthorizerForResource(config)
+func newRecordSetClient(config Config, credential azcore.TokenCredential) (*recordSetClient, error) {
+	cloudConfig := ParseCloudEnvironment(config)
+	options := &arm.ClientOptions{
+		ClientOptions: policy.ClientOptions{
+			Cloud: cloudConfig,
+		},
+	}
+
+	rc, err := armdns.NewRecordSetsClient(config.SubscriptionID, credential, options)
 	if err != nil {
 		return nil, err
 	}
-
-	rc := dns.NewRecordSetsClientWithBaseURI(config.Environment.ResourceManagerEndpoint, config.SubscriptionID)
-	rc.AddToUserAgent(userAgentExtension)
-	rc.Authorizer = authorizer
 	return &recordSetClient{client: rc}, nil
 }
 
 func (c *recordSetClient) Put(ctx context.Context, zone Zone, arec ARecord, metadata map[string]*string) error {
-	rs := dns.RecordSet{
-		RecordSetProperties: &dns.RecordSetProperties{
+	rs := armdns.RecordSet{
+		Properties: &armdns.RecordSetProperties{
 			TTL: &arec.TTL,
-			ARecords: &[]dns.ARecord{
-				{Ipv4Address: &arec.Address},
+			ARecords: []*armdns.ARecord{
+				{IPv4Address: &arec.Address},
 			},
 			Metadata: metadata,
 		},
 	}
-	_, err := c.client.CreateOrUpdate(ctx, zone.ResourceGroup, zone.Name, arec.Name, dns.A, rs, "", "")
+	_, err := c.client.CreateOrUpdate(ctx, zone.ResourceGroup, zone.Name, arec.Name, armdns.RecordTypeA, rs, nil)
 	if err != nil {
 		return errors.Wrapf(err, "failed to update dns a record: %s.%s", arec.Name, zone.Name)
 	}
@@ -128,12 +134,7 @@ func (c *recordSetClient) Put(ctx context.Context, zone Zone, arec ARecord, meta
 }
 
 func (c *recordSetClient) Delete(ctx context.Context, zone Zone, arec ARecord) error {
-	_, err := c.client.Get(ctx, zone.ResourceGroup, zone.Name, arec.Name, dns.A)
-	if err != nil {
-		// TODO: How do we interpret this as a notfound error?
-		return nil
-	}
-	_, err = c.client.Delete(ctx, zone.ResourceGroup, zone.Name, arec.Name, dns.A, "")
+	_, err := c.client.Delete(ctx, zone.ResourceGroup, zone.Name, arec.Name, armdns.RecordTypeA, nil)
 	if err != nil {
 		return errors.Wrapf(err, "failed to delete dns a record: %s.%s", arec.Name, zone.Name)
 	}
@@ -141,32 +142,36 @@ func (c *recordSetClient) Delete(ctx context.Context, zone Zone, arec ARecord) e
 }
 
 type privateRecordSetClient struct {
-	client privatedns.RecordSetsClient
+	client *armprivatedns.RecordSetsClient
 }
 
-func newPrivateRecordSetClient(config Config, userAgentExtension string) (*privateRecordSetClient, error) {
-	authorizer, err := getAuthorizerForResource(config)
+func newPrivateRecordSetClient(config Config, credential azcore.TokenCredential) (*privateRecordSetClient, error) {
+	cloudConfig := ParseCloudEnvironment(config)
+	options := &arm.ClientOptions{
+		ClientOptions: policy.ClientOptions{
+			Cloud: cloudConfig,
+		},
+	}
+
+	prc, err := armprivatedns.NewRecordSetsClient(config.SubscriptionID, credential, options)
 	if err != nil {
 		return nil, err
 	}
-
-	prc := privatedns.NewRecordSetsClientWithBaseURI(config.Environment.ResourceManagerEndpoint, config.SubscriptionID)
-	prc.AddToUserAgent(userAgentExtension)
-	prc.Authorizer = authorizer
 	return &privateRecordSetClient{client: prc}, nil
 }
 
 func (c *privateRecordSetClient) Put(ctx context.Context, zone Zone, arec ARecord, metadata map[string]*string) error {
-	rs := privatedns.RecordSet{
-		RecordSetProperties: &privatedns.RecordSetProperties{
+	rs := armprivatedns.RecordSet{
+		Properties: &armprivatedns.RecordSetProperties{
 			TTL: &arec.TTL,
-			ARecords: &[]privatedns.ARecord{
-				{Ipv4Address: &arec.Address},
+			ARecords: []*armprivatedns.ARecord{
+				{IPv4Address: &arec.Address},
 			},
 			Metadata: metadata,
 		},
 	}
-	_, err := c.client.CreateOrUpdate(ctx, zone.ResourceGroup, zone.Name, privatedns.A, arec.Name, rs, "", "")
+
+	_, err := c.client.CreateOrUpdate(ctx, zone.ResourceGroup, zone.Name, armprivatedns.RecordTypeA, arec.Name, rs, nil)
 	if err != nil {
 		return errors.Wrapf(err, "failed to update dns a record: %s.%s", arec.Name, zone.Name)
 	}
@@ -174,12 +179,7 @@ func (c *privateRecordSetClient) Put(ctx context.Context, zone Zone, arec ARecor
 }
 
 func (c *privateRecordSetClient) Delete(ctx context.Context, zone Zone, arec ARecord) error {
-	_, err := c.client.Get(ctx, zone.ResourceGroup, zone.Name, privatedns.A, arec.Name)
-	if err != nil {
-		// TODO: How do we interpret this as a notfound error?
-		return nil
-	}
-	_, err = c.client.Delete(ctx, zone.ResourceGroup, zone.Name, privatedns.A, arec.Name, "")
+	_, err := c.client.Delete(ctx, zone.ResourceGroup, zone.Name, armprivatedns.RecordTypeA, arec.Name, nil)
 	if err != nil {
 		return errors.Wrapf(err, "failed to delete dns a record: %s.%s", arec.Name, zone.Name)
 	}

@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -10,39 +11,15 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/cloud"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
-	"github.com/Azure/go-autorest/autorest"
 	"github.com/Azure/go-autorest/autorest/azure"
-	"github.com/jongio/azidext/go/azidext"
-
+	"github.com/Azure/msi-dataplane/pkg/dataplane"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/filewatcher"
 )
 
 var watchCertificateFileOnce sync.Once
 
-func getAuthorizerForResource(config Config) (autorest.Authorizer, error) {
-	var cloudConfig cloud.Configuration
-	switch config.Environment {
-	case azure.ChinaCloud:
-		cloudConfig = cloud.AzureChina
-	// GermanCloud was closed on Oct 29, 2021
-	// https://learn.microsoft.com/en-us/azure/active-directory/develop/authentication-national-cloud
-	// case azure.GermanCloud:
-	// return nil, nil
-	case azure.USGovernmentCloud:
-		cloudConfig = cloud.AzureGovernment
-	case azure.PublicCloud:
-		cloudConfig = cloud.AzurePublic
-	default: // AzureStackCloud
-		cloudConfig = cloud.Configuration{
-			ActiveDirectoryAuthorityHost: config.Environment.ActiveDirectoryEndpoint,
-			Services: map[cloud.ServiceName]cloud.ServiceConfiguration{
-				cloud.ResourceManager: {
-					Audience: config.Environment.TokenAudience,
-					Endpoint: config.Environment.ResourceManagerEndpoint,
-				},
-			},
-		}
-	}
+func getAzureCredentials(config Config) (azcore.TokenCredential, error) {
+	cloudConfig := ParseCloudEnvironment(config)
 
 	// Fallback to using tenant ID from env variable if not set.
 	if strings.TrimSpace(config.TenantID) == "" {
@@ -76,10 +53,12 @@ func getAuthorizerForResource(config Config) (autorest.Authorizer, error) {
 	}
 
 	var cred azcore.TokenCredential
-	// Managed Identity Override for ARO HCP. In ARO HCP, we ignore the values provided for AZURE_TENANT_ID and
-	// AZURE_CLIENT_ID and use ARO_HCP_TENANT_ID and ARO_HCP_MI_CLIENT_ID instead.
+	// UserAssignedIdentityCredentials for managed Azure HCP
+	userAssignedIdentityCredentialsFilePath := os.Getenv("MANAGED_AZURE_HCP_CREDENTIALS_FILE_PATH")
 	managedIdentityClientID := os.Getenv("ARO_HCP_MI_CLIENT_ID")
 	if managedIdentityClientID != "" {
+		// Managed Identity Override for ARO HCP. In ARO HCP, we ignore the values provided for AZURE_TENANT_ID and
+		// AZURE_CLIENT_ID and use ARO_HCP_TENANT_ID and ARO_HCP_MI_CLIENT_ID instead.
 		options := &azidentity.ClientCertificateCredentialOptions{
 			ClientOptions: azcore.ClientOptions{
 				Cloud: cloudConfig,
@@ -116,6 +95,15 @@ func getAuthorizerForResource(config Config) (autorest.Authorizer, error) {
 		if err != nil {
 			return nil, err
 		}
+	} else if userAssignedIdentityCredentialsFilePath != "" {
+		options := azcore.ClientOptions{
+			Cloud: cloudConfig,
+		}
+		var err error
+		cred, err = dataplane.NewUserAssignedIdentityCredential(context.Background(), userAssignedIdentityCredentialsFilePath, dataplane.WithClientOpts(options))
+		if err != nil {
+			return nil, err
+		}
 	} else if config.AzureWorkloadIdentityEnabled && strings.TrimSpace(config.ClientSecret) == "" {
 		options := azidentity.WorkloadIdentityCredentialOptions{
 			ClientOptions: azcore.ClientOptions{
@@ -142,18 +130,7 @@ func getAuthorizerForResource(config Config) (autorest.Authorizer, error) {
 			return nil, err
 		}
 	}
-
-	scope := endpointToScope(config.Environment.TokenAudience)
-
-	// Use an adapter so azidentity in the Azure SDK can be used as
-	// Authorizer when calling the Azure Management Packages, which we
-	// currently use. Once the Azure SDK clients (found in /sdk) move to
-	// stable, we can update our clients and they will be able to use the
-	// creds directly without the authorizer. The schedule is here:
-	// https://azure.github.io/azure-sdk/releases/latest/index.html#go
-	authorizer := azidext.NewTokenCredentialAdapter(cred, []string{scope})
-
-	return authorizer, nil
+	return cred, nil
 }
 
 func endpointToScope(endpoint string) string {
@@ -162,4 +139,31 @@ func endpointToScope(endpoint string) string {
 		scope += "/.default"
 	}
 	return scope
+}
+
+func ParseCloudEnvironment(config Config) cloud.Configuration {
+	var cloudConfig cloud.Configuration
+	switch config.Environment {
+	case azure.ChinaCloud:
+		cloudConfig = cloud.AzureChina
+	// GermanCloud was closed on Oct 29, 2021
+	// https://learn.microsoft.com/en-us/azure/active-directory/develop/authentication-national-cloud
+	// case azure.GermanCloud:
+	// return nil, nil
+	case azure.USGovernmentCloud:
+		cloudConfig = cloud.AzureGovernment
+	case azure.PublicCloud:
+		cloudConfig = cloud.AzurePublic
+	default: // AzureStackCloud
+		cloudConfig = cloud.Configuration{
+			ActiveDirectoryAuthorityHost: config.Environment.ActiveDirectoryEndpoint,
+			Services: map[cloud.ServiceName]cloud.ServiceConfiguration{
+				cloud.ResourceManager: {
+					Audience: config.Environment.TokenAudience,
+					Endpoint: config.Environment.ResourceManagerEndpoint,
+				},
+			},
+		}
+	}
+	return cloudConfig
 }

@@ -62,7 +62,7 @@ type provider struct {
 
 // NewProvider creates a new dns.Provider for Azure. It only supports DNSRecords with
 // type A.
-func NewProvider(config Config, operatorReleaseVersion string, AzureWorkloadIdentityEnabled bool) (dns.Provider, error) {
+func NewProvider(config Config, AzureWorkloadIdentityEnabled bool) (dns.Provider, error) {
 	var env azure.Environment
 	var err error
 	switch config.Environment {
@@ -82,15 +82,11 @@ func NewProvider(config Config, operatorReleaseVersion string, AzureWorkloadIden
 		FederatedTokenFile:           config.FederatedTokenFile,
 		TenantID:                     config.TenantID,
 		AzureWorkloadIdentityEnabled: AzureWorkloadIdentityEnabled,
-	}, userAgent(operatorReleaseVersion))
+	})
 	if err != nil {
 		return nil, err
 	}
 	return &provider{config: config, client: c}, nil
-}
-
-func userAgent(operatorReleaseVersion string) string {
-	return fmt.Sprintf("%s/%s", "openshift.io ingress-operator", operatorReleaseVersion)
 }
 
 func (m *provider) Ensure(record *iov1.DNSRecord, zone configv1.DNSZone) error {
