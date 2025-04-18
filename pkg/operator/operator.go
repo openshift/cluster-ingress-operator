@@ -208,11 +208,12 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 
 	// Set up the status controller.
 	if _, err := statuscontroller.New(mgr, statuscontroller.Config{
-		Namespace:              config.Namespace,
-		IngressControllerImage: config.IngressControllerImage,
-		CanaryImage:            config.CanaryImage,
-		OperatorReleaseVersion: config.OperatorReleaseVersion,
-		GatewayAPIEnabled:      gatewayAPIEnabled,
+		Namespace:                   config.Namespace,
+		IngressControllerImage:      config.IngressControllerImage,
+		CanaryImage:                 config.CanaryImage,
+		OperatorReleaseVersion:      config.OperatorReleaseVersion,
+		GatewayAPIEnabled:           gatewayAPIEnabled,
+		GatewayAPIControllerEnabled: gatewayAPIControllerEnabled,
 	}); err != nil {
 		return nil, fmt.Errorf("failed to create status controller: %v", err)
 	}
