@@ -3,28 +3,28 @@ package client
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"strings"
-	"sync"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/cloud"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/go-autorest/autorest/azure"
 	"github.com/Azure/msi-dataplane/pkg/dataplane"
-	"github.com/openshift/cluster-ingress-operator/pkg/util/filewatcher"
 )
-
-var watchCertificateFileOnce sync.Once
 
 func getAzureCredentials(config Config) (azcore.TokenCredential, error) {
 	cloudConfig := ParseCloudEnvironment(config)
 
+	// UserAssignedIdentityCredentials for managed Azure HCP
+	userAssignedIdentityCredentialsFilePath := strings.TrimSpace(os.Getenv("MANAGED_AZURE_HCP_CREDENTIALS_FILE_PATH"))
+
 	// Fallback to using tenant ID from env variable if not set.
 	if strings.TrimSpace(config.TenantID) == "" {
 		config.TenantID = os.Getenv("AZURE_TENANT_ID")
-		if strings.TrimSpace(config.TenantID) == "" {
+
+		// tenant ID is not populated when managed Azure HCP is using UserAssignedIdentityCredentials
+		if strings.TrimSpace(config.TenantID) == "" && userAssignedIdentityCredentialsFilePath == "" {
 			return nil, errors.New("empty tenant ID")
 		}
 	}
@@ -32,7 +32,9 @@ func getAzureCredentials(config Config) (azcore.TokenCredential, error) {
 	// Fallback to using client ID from env variable if not set.
 	if strings.TrimSpace(config.ClientID) == "" {
 		config.ClientID = os.Getenv("AZURE_CLIENT_ID")
-		if strings.TrimSpace(config.ClientID) == "" {
+
+		// client ID is not populated when managed Azure HCP is using UserAssignedIdentityCredentials
+		if strings.TrimSpace(config.ClientID) == "" && userAssignedIdentityCredentialsFilePath == "" {
 			return nil, errors.New("empty client ID")
 		}
 	}
@@ -53,49 +55,7 @@ func getAzureCredentials(config Config) (azcore.TokenCredential, error) {
 	}
 
 	var cred azcore.TokenCredential
-	// UserAssignedIdentityCredentials for managed Azure HCP
-	userAssignedIdentityCredentialsFilePath := os.Getenv("MANAGED_AZURE_HCP_CREDENTIALS_FILE_PATH")
-	managedIdentityClientID := os.Getenv("ARO_HCP_MI_CLIENT_ID")
-	if managedIdentityClientID != "" {
-		// Managed Identity Override for ARO HCP. In ARO HCP, we ignore the values provided for AZURE_TENANT_ID and
-		// AZURE_CLIENT_ID and use ARO_HCP_TENANT_ID and ARO_HCP_MI_CLIENT_ID instead.
-		options := &azidentity.ClientCertificateCredentialOptions{
-			ClientOptions: azcore.ClientOptions{
-				Cloud: cloudConfig,
-			},
-			SendCertificateChain: true,
-		}
-
-		tenantID := os.Getenv("ARO_HCP_TENANT_ID")
-		certPath := os.Getenv("ARO_HCP_CLIENT_CERTIFICATE_PATH")
-
-		certData, err := os.ReadFile(certPath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read certificate file %q: %w", certPath, err)
-		}
-
-		certs, key, err := azidentity.ParseCertificates(certData, nil)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse certificate data %q: %w", certPath, err)
-		}
-
-		// Watch the certificate for changes; if the certificate changes, the pod will be restarted.
-		// This starts only one occurrence of the file watcher, which watches the file, certPath.
-		var fileWatcherError error
-		watchCertificateFileOnce.Do(func() {
-			if err = filewatcher.WatchFileForChanges(certPath); err != nil {
-				fileWatcherError = err
-			}
-		})
-		if fileWatcherError != nil {
-			return nil, fmt.Errorf("failed to watch certificate file %q: %w", certPath, fileWatcherError)
-		}
-
-		cred, err = azidentity.NewClientCertificateCredential(tenantID, managedIdentityClientID, certs, key, options)
-		if err != nil {
-			return nil, err
-		}
-	} else if userAssignedIdentityCredentialsFilePath != "" {
+	if userAssignedIdentityCredentialsFilePath != "" {
 		options := azcore.ClientOptions{
 			Cloud: cloudConfig,
 		}
@@ -141,6 +101,7 @@ func endpointToScope(endpoint string) string {
 	return scope
 }
 
+// ParseCloudEnvironment maps the provided Azure environment configuration to the corresponding cloud.Configuration object.
 func ParseCloudEnvironment(config Config) cloud.Configuration {
 	var cloudConfig cloud.Configuration
 	switch config.Environment {
