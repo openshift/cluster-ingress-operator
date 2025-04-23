@@ -658,7 +658,27 @@ func testGatewayAPIDNSListenerUpdate(t *testing.T) {
 	}
 
 	if err := kclient.Delete(context.TODO(), gateway); err != nil {
-		t.Errorf("failed to delete gateway %q: %v", gateway.Name, err)
+		t.Fatalf("failed to delete gateway %q: %v", gateway.Name, err)
+	}
+
+	// The load balancer deprovisioning can take some time.
+	// Signal a long deprovisioning to help distinguish it from DNS management problems.
+	gtwSvcName := types.NamespacedName{Namespace: "openshift-ingress", Name: "test-gateway-update-openshift-default"}
+	gtwSvc := &corev1.Service{}
+	t.Logf("Checking the deletion of service %q", gtwSvcName)
+	if err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 2*time.Minute, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, gtwSvcName, gtwSvc); err != nil {
+			if kerrors.IsNotFound(err) {
+				t.Logf("Service %q is deleted", gtwSvcName)
+				return true, nil
+			}
+			t.Logf("Failed to get service %q: %v, retrying ...", gtwSvcName, err)
+			return false, nil
+		}
+		t.Logf("Service %q still exists, retrying ...", gtwSvcName)
+		return false, nil
+	}); err != nil {
+		t.Logf("Timed out waiting for the service %q to finalize the deletion", gtwSvcName)
 	}
 
 	t.Logf("Checking the remaining DNSRecord %s gets deleted after gateway deletion.", "baz."+domain+".")
