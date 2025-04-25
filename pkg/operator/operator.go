@@ -139,6 +139,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	ingressControllerEIPAllocationsAWSEnabled := featureGates.Enabled(features.FeatureGateSetEIPForNLBIngressController)
 	ingressControllerDCMEnabled := featureGates.Enabled(features.FeatureGateIngressControllerDynamicConfigurationManager)
 	gcpCustomEndpointsEnabled := featureGates.Enabled(features.FeatureGateGCPCustomAPIEndpoints)
+	ingressControllerNLBSGEnabled := featureGates.Enabled(features.FeatureGateIngressNLBSecurityGroup)
 
 	// Set up an operator manager for the operator namespace.
 	mgr, err := manager.New(kubeConfig, manager.Options{
@@ -172,12 +173,13 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 
 	// Create and register the ingress controller with the operator manager.
 	if _, err := ingresscontroller.New(mgr, ingresscontroller.Config{
-		Namespace:                                 config.Namespace,
-		IngressControllerImage:                    config.IngressControllerImage,
-		RouteExternalCertificateEnabled:           routeExternalCertificateEnabled,
-		IngressControllerLBSubnetsAWSEnabled:      ingressControllerLBSubnetsAWSEnabled,
-		IngressControllerEIPAllocationsAWSEnabled: ingressControllerEIPAllocationsAWSEnabled,
-		IngressControllerDCMEnabled:               ingressControllerDCMEnabled,
+		Namespace:                                   config.Namespace,
+		IngressControllerImage:                      config.IngressControllerImage,
+		RouteExternalCertificateEnabled:             routeExternalCertificateEnabled,
+		IngressControllerLBSubnetsAWSEnabled:        ingressControllerLBSubnetsAWSEnabled,
+		IngressControllerEIPAllocationsAWSEnabled:   ingressControllerEIPAllocationsAWSEnabled,
+		IngressControllerDCMEnabled:                 ingressControllerDCMEnabled,
+		IngressControllerNLBSecurityGroupAWSEnabled: ingressControllerNLBSGEnabled,
 	}); err != nil {
 		return nil, fmt.Errorf("failed to create ingress controller: %v", err)
 	}
