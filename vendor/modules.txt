@@ -409,7 +409,7 @@ github.com/mxk/go-flowrate/flowrate
 github.com/oklog/ulid
 # github.com/onsi/ginkgo v1.16.5
 ## explicit; go 1.16
-# github.com/openshift/api v3.9.1-0.20190924102528-32369d4db2ad+incompatible => github.com/openshift/api v0.0.0-20240806152114-6b4a57ec20b0
+# github.com/openshift/api v3.9.1-0.20190924102528-32369d4db2ad+incompatible => github.com/alebedev87/api v0.0.0-20250203132557-40536dab5767
 ## explicit; go 1.22.0
 github.com/openshift/api
 github.com/openshift/api/annotations
@@ -1369,5 +1369,5 @@ sigs.k8s.io/structured-merge-diff/v4/value
 sigs.k8s.io/yaml
 sigs.k8s.io/yaml/goyaml.v2
 # bitbucket.org/ww/goautoneg => github.com/munnerz/goautoneg v0.0.0-20120707110453-a547fc61f48d
-# github.com/openshift/api => github.com/openshift/api v0.0.0-20240806152114-6b4a57ec20b0
+# github.com/openshift/api => github.com/alebedev87/api v0.0.0-20250203132557-40536dab5767
 # k8s.io/client-go => k8s.io/client-go v0.30.2
