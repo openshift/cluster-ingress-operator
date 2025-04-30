@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
@@ -54,10 +55,8 @@ func Test_desiredCanaryService(t *testing.T) {
 		t.Errorf("expected service owner references %#v, but got %#v", expectedOwnerRefs, service.OwnerReferences)
 	}
 
-	expectedAnnotations := map[string]string{
-		"service.beta.openshift.io/serving-cert-secret-name": "canary-serving-cert",
-	}
-	if !cmp.Equal(service.Annotations, expectedAnnotations) {
+	expectedAnnotations := map[string]string{}
+	if !cmp.Equal(service.Annotations, expectedAnnotations, cmpopts.EquateEmpty()) {
 		t.Errorf("expected service annotations to be %q, but got %q", expectedAnnotations, service.Annotations)
 	}
 
@@ -90,6 +89,9 @@ func Test_canaryServiceChanged(t *testing.T) {
 		{
 			description: "changed annotation",
 			mutate: func(service *corev1.Service) {
+				if service.Annotations == nil {
+					service.Annotations = map[string]string{}
+				}
 				service.Annotations["foo"] = "bar"
 			},
 			expected: true,

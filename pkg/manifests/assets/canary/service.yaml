@@ -2,10 +2,8 @@
 # Specific values are applied at runtime
 kind: Service
 apiVersion: v1
-metadata:
+metadata: {}
   # name and namespace are set at runtime.
-  annotations:
-      service.beta.openshift.io/serving-cert-secret-name: canary-serving-cert
 spec:
   type: ClusterIP
   ports:
