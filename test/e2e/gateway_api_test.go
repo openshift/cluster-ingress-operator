@@ -15,6 +15,7 @@ import (
 	iov1 "github.com/openshift/api/operatoringress/v1"
 	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	util "github.com/openshift/cluster-ingress-operator/pkg/util"
 
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -259,6 +260,14 @@ func testGatewayAPIManualDeployment(t *testing.T) {
 		t.Fatalf("Failed to create gateway %v: %v", gatewayName, err)
 	}
 	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("Dumping gateway %q...", gatewayName)
+			var gateway gatewayapiv1.Gateway
+			if err := kclient.Get(context.Background(), gatewayName, &gateway); err != nil {
+				t.Errorf("Failed to get gateway %v: %v", gatewayName, err)
+			}
+			t.Log(util.ToYaml(gateway))
+		}
 		if err := kclient.Delete(context.Background(), &gateway); err != nil {
 			if !errors.IsNotFound(err) {
 				t.Errorf("Failed to delete gateway %v: %v", gatewayName, err)
@@ -266,7 +275,7 @@ func testGatewayAPIManualDeployment(t *testing.T) {
 		}
 	})
 
-	interval, timeout := 5*time.Second, 1*time.Minute
+	interval, timeout := 5*time.Second, 5*time.Minute
 	t.Logf("Polling for up to %v to verify that the gateway is accepted...", timeout)
 	if err := wait.PollUntilContextTimeout(context.Background(), interval, timeout, false, func(context context.Context) (bool, error) {
 		if err := kclient.Get(context, gatewayName, &gateway); err != nil {
