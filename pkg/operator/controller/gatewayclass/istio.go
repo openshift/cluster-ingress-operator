@@ -83,11 +83,6 @@ func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference) *sa
 		// then our Istiod instance might try to reconcile gateways
 		// belonging to an unrelated Istiod instance.
 		"PILOT_GATEWAY_API_DEFAULT_GATEWAYCLASS_NAME": controller.OpenShiftDefaultGatewayClassName,
-		// Watch Gateway API and Kubernetes resources in all namespaces,
-		// but ignore Istio resources that don't match our label
-		// selector.  (We do not specify the label selector, so this
-		// causes Istio to ignore all Istio resources.)
-		"PILOT_ENABLE_GATEWAY_CONTROLLER_MODE": "true",
 		// Only reconcile resources that are associated with
 		// gatewayclasses that have our controller name.
 		"PILOT_GATEWAY_API_CONTROLLER_NAME": controller.OpenShiftGatewayClassControllerName,
