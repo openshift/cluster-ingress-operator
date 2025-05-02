@@ -53,7 +53,7 @@ spec:
         - name: GATEWAY_API_OPERATOR_CHANNEL
           value: stable
         - name: GATEWAY_API_OPERATOR_VERSION
-          value: servicemeshoperator3.v3.0.0
+          value: servicemeshoperator3.v3.0.3
         image: openshift/origin-cluster-ingress-operator:latest
         imagePullPolicy: IfNotPresent
         name: ingress-operator
