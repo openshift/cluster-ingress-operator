@@ -95,6 +95,11 @@ func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference) *sa
 		// "multi-network gateways".  This is an Istio feature that I
 		// haven't really found any explanation for.
 		"PILOT_MULTI_NETWORK_DISCOVER_GATEWAY_API": "false",
+		// Don't allow Istio's "manual deployment" feature, which would
+		// allow a gateway to specify an existing service.  Only allow
+		// "automated deployment", meaning Istio creates a new load-
+		// balancer service for each gateway.
+		"ENABLE_GATEWAY_API_MANUAL_DEPLOYMENT": "false",
 	}
 	return &sailv1.Istio{
 		ObjectMeta: metav1.ObjectMeta{
@@ -151,7 +156,7 @@ func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference) *sa
 					IngressControllerMode: sailv1.MeshConfigIngressControllerModeOff,
 				},
 			},
-			Version: "v1.24.3",
+			Version: "v1.24.4",
 		},
 	}
 }
