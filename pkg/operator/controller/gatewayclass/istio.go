@@ -101,6 +101,13 @@ func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference) *sa
 		// Only create CA Bundle CM in namespaces where there are
 		// Gateway API Gateways
 		"PILOT_ENABLE_GATEWAY_API_CA_CERT_ONLY": "true",
+		// Don't copy labels or annotations from gateways to resources
+		// that Istiod creates for that gateway.  This is an Istio-
+		// specific behavior which might not be supported by other
+		// Gateway API implementations and that could allow the end-user
+		// to inject unsupported configuration, for example using
+		// service annotations.
+		"PILOT_ENABLE_GATEWAY_API_COPY_LABELS_ANNOTATIONS": "false",
 	}
 	return &sailv1.Istio{
 		ObjectMeta: metav1.ObjectMeta{
