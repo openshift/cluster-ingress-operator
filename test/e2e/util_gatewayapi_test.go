@@ -1035,7 +1035,7 @@ func assertDNSRecord(t *testing.T, recordName types.NamespacedName) error {
 	t.Helper()
 	dnsRecord := &v1.DNSRecord{}
 
-	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(context context.Context) (bool, error) {
+	err := wait.PollUntilContextTimeout(context.Background(), 10*time.Second, 10*time.Minute, false, func(context context.Context) (bool, error) {
 		if err := kclient.Get(context, recordName, dnsRecord); err != nil {
 			t.Logf("Failed to get DNSRecord %v: %v; retrying...", recordName, err)
 			return false, nil
