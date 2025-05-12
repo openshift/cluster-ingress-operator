@@ -243,6 +243,7 @@ func Test_Reconcile(t *testing.T) {
 				config: Config{
 					GatewayAPIEnabled:           tc.gatewayAPIEnabled,
 					GatewayAPIControllerEnabled: tc.gatewayAPIControllerEnabled,
+					OLMCapabilityEnabled:        true,
 					DependentControllers:        []controller.Controller{ctrl},
 				},
 			}
@@ -318,6 +319,7 @@ func TestReconcileOnlyStartsControllerOnce(t *testing.T) {
 		config: Config{
 			GatewayAPIEnabled:           true,
 			GatewayAPIControllerEnabled: true,
+			OLMCapabilityEnabled:        true,
 			DependentControllers:        []controller.Controller{ctrl},
 		},
 	}

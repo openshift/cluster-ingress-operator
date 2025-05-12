@@ -99,7 +99,7 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 		return nil, err
 	}
 
-	if config.GatewayAPIEnabled {
+	if config.GatewayAPIEnabled && config.OLMCapabilityEnabled {
 		if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorsv1alpha1.Subscription{}, handler.EnqueueRequestsFromMapFunc(toDefaultIngressController), predicate.Funcs{
 			CreateFunc: func(e event.CreateEvent) bool {
 				return e.Object.GetNamespace() == operatorcontroller.OpenshiftOperatorNamespace
@@ -124,7 +124,9 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 // Config holds all the things necessary for the controller to run.
 type Config struct {
 	// GatewayAPIEnabled indicates that the "GatewayAPI" featuregate is enabled.
-	GatewayAPIEnabled      bool
+	GatewayAPIEnabled bool
+	// OLMCapabilityEnabled ...
+	OLMCapabilityEnabled   bool
 	IngressControllerImage string
 	CanaryImage            string
 	OperatorReleaseVersion string
@@ -338,14 +340,16 @@ func (r *reconciler) getOperatorState(ingressNamespace, canaryNamespace string, 
 	}
 
 	if r.config.GatewayAPIEnabled {
-		var subscription operatorsv1alpha1.Subscription
-		subscriptionName := operatorcontroller.ServiceMeshOperatorSubscriptionName()
-		if err := r.cache.Get(context.TODO(), subscriptionName, &subscription); err != nil {
-			if !errors.IsNotFound(err) {
-				return state, fmt.Errorf("failed to get subscription %q: %v", subscriptionName, err)
+		if r.config.OLMCapabilityEnabled {
+			var subscription operatorsv1alpha1.Subscription
+			subscriptionName := operatorcontroller.ServiceMeshOperatorSubscriptionName()
+			if err := r.cache.Get(context.TODO(), subscriptionName, &subscription); err != nil {
+				if !errors.IsNotFound(err) {
+					return state, fmt.Errorf("failed to get subscription %q: %v", subscriptionName, err)
+				}
+			} else {
+				state.haveOSSMSubscription = true
 			}
-		} else {
-			state.haveOSSMSubscription = true
 		}
 
 		if len(co.Status.Extension.Raw) > 0 {

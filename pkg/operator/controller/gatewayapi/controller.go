@@ -104,6 +104,8 @@ type Config struct {
 	GatewayAPIEnabled bool
 	// GatewayAPIControllerEnabled indicates that the "GatewayAPIController" featuregate is enabled.
 	GatewayAPIControllerEnabled bool
+	// OLMCapabilityEnabled ...
+	OLMCapabilityEnabled bool
 
 	// DependentControllers is a list of controllers that watch Gateway API
 	// resources.  The gatewayapi controller starts these controllers once
@@ -144,7 +146,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		return reconcile.Result{}, fmt.Errorf("failed to update the ingress cluster operator status: %w", err)
 	}
 
-	if !r.config.GatewayAPIControllerEnabled {
+	if !r.config.GatewayAPIControllerEnabled || !r.config.OLMCapabilityEnabled {
 		return reconcile.Result{}, nil
 	}
 

@@ -170,6 +170,12 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		return nil, fmt.Errorf("failed to create operator manager: %v", err)
 	}
 
+	olmCapabilityEnabled, err := ClusterCapabilityEnabled(mgr.GetClient(), configv1.ClusterVersionCapabilityOperatorLifecycleManager)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check OLM cluster capability: %w", err)
+	}
+	log.Info("OperatorLifecycleManager cluster capability retrieved", "enabled", olmCapabilityEnabled)
+
 	// Create and register the ingress controller with the operator manager.
 	if _, err := ingresscontroller.New(mgr, ingresscontroller.Config{
 		Namespace:                                 config.Namespace,
@@ -213,6 +219,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		CanaryImage:            config.CanaryImage,
 		OperatorReleaseVersion: config.OperatorReleaseVersion,
 		GatewayAPIEnabled:      gatewayAPIEnabled,
+		OLMCapabilityEnabled:   olmCapabilityEnabled,
 	}); err != nil {
 		return nil, fmt.Errorf("failed to create status controller: %v", err)
 	}
@@ -326,6 +333,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	if _, err := gatewayapicontroller.New(mgr, gatewayapicontroller.Config{
 		GatewayAPIEnabled:           gatewayAPIEnabled,
 		GatewayAPIControllerEnabled: gatewayAPIControllerEnabled,
+		OLMCapabilityEnabled:        olmCapabilityEnabled,
 		DependentControllers: []controller.Controller{
 			gatewayClassController,
 			gatewayServiceDNSController,
@@ -513,4 +521,18 @@ func (o *Operator) ensureDefaultIngressController(infraConfig *configv1.Infrastr
 	}
 	log.Info("created default ingresscontroller", "namespace", ic.Namespace, "name", ic.Name)
 	return nil
+}
+
+// ClusterCapabilityEnabled ...
+func ClusterCapabilityEnabled(client client.Client, capability configv1.ClusterVersionCapability) (bool, error) {
+	cv := &configv1.ClusterVersion{}
+	if err := client.Get(context.TODO(), types.NamespacedName{Name: "version"}, cv); err != nil {
+		return false, err
+	}
+	for _, c := range cv.Status.Capabilities.EnabledCapabilities {
+		if c == capability {
+			return true, nil
+		}
+	}
+	return false, nil
 }
