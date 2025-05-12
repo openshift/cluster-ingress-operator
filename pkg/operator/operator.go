@@ -46,6 +46,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/util/retry"
@@ -140,6 +141,17 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	ingressControllerDCMEnabled := featureGates.Enabled(features.FeatureGateIngressControllerDynamicConfigurationManager)
 	gcpCustomEndpointsEnabled := featureGates.Enabled(features.FeatureGateGCPCustomAPIEndpoints)
 
+	cv, err := configClient.ConfigV1().ClusterVersions().Get(ctx, "version", metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed fetching clusterversion: %w", err)
+	}
+	enabledCapabilities := sets.New[configv1.ClusterVersionCapability]()
+	for _, cap := range cv.Status.Capabilities.EnabledCapabilities {
+		enabledCapabilities.Insert(cap)
+	}
+	marketplaceEnabled := enabledCapabilities.Has(configv1.ClusterVersionCapabilityMarketplace)
+	olmEnabled := enabledCapabilities.Has(configv1.ClusterVersionCapabilityOperatorLifecycleManager)
+
 	// Set up an operator manager for the operator namespace.
 	mgr, err := manager.New(kubeConfig, manager.Options{
 		Scheme: scheme,
@@ -208,11 +220,13 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 
 	// Set up the status controller.
 	if _, err := statuscontroller.New(mgr, statuscontroller.Config{
-		Namespace:              config.Namespace,
-		IngressControllerImage: config.IngressControllerImage,
-		CanaryImage:            config.CanaryImage,
-		OperatorReleaseVersion: config.OperatorReleaseVersion,
-		GatewayAPIEnabled:      gatewayAPIEnabled,
+		Namespace:                       config.Namespace,
+		IngressControllerImage:          config.IngressControllerImage,
+		CanaryImage:                     config.CanaryImage,
+		OperatorReleaseVersion:          config.OperatorReleaseVersion,
+		GatewayAPIEnabled:               gatewayAPIEnabled,
+		MarketplaceEnabled:              marketplaceEnabled,
+		OperatorLifecycleManagerEnabled: olmEnabled,
 	}); err != nil {
 		return nil, fmt.Errorf("failed to create status controller: %v", err)
 	}
@@ -324,8 +338,10 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 
 	// Set up the gatewayapi controller.
 	if _, err := gatewayapicontroller.New(mgr, gatewayapicontroller.Config{
-		GatewayAPIEnabled:           gatewayAPIEnabled,
-		GatewayAPIControllerEnabled: gatewayAPIControllerEnabled,
+		GatewayAPIEnabled:               gatewayAPIEnabled,
+		GatewayAPIControllerEnabled:     gatewayAPIControllerEnabled,
+		MarketplaceEnabled:              marketplaceEnabled,
+		OperatorLifecycleManagerEnabled: olmEnabled,
 		DependentControllers: []controller.Controller{
 			gatewayClassController,
 			gatewayServiceDNSController,
