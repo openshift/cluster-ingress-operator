@@ -131,7 +131,6 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		return nil, err
 	}
 	azureWorkloadIdentityEnabled := featureGates.Enabled(features.FeatureGateAzureWorkloadIdentity)
-	sharedVPCEnabled := featureGates.Enabled(features.FeatureGatePrivateHostedZoneAWS)
 	gatewayAPIEnabled := featureGates.Enabled(features.FeatureGateGatewayAPI)
 	gatewayAPIControllerEnabled := featureGates.Enabled(features.FeatureGateGatewayAPIController)
 	routeExternalCertificateEnabled := featureGates.Enabled(features.FeatureGateRouteExternalCertificate)
@@ -258,7 +257,6 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		},
 		OperatorReleaseVersion:       config.OperatorReleaseVersion,
 		AzureWorkloadIdentityEnabled: azureWorkloadIdentityEnabled,
-		PrivateHostedZoneAWSEnabled:  sharedVPCEnabled,
 		GCPCustomEndpointsEnabled:    gcpCustomEndpointsEnabled,
 	}); err != nil {
 		return nil, fmt.Errorf("failed to create dns controller: %v", err)
