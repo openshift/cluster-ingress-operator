@@ -99,7 +99,15 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 		return nil, err
 	}
 
-	if config.GatewayAPIEnabled {
+	// If the "GatewayAPI" controller featuregate is enabled, watch
+	// subscriptions so that this controller can update status when the OSSM
+	// subscription is created or updated.  Note that the subscriptions
+	// resource only exists if the "OperatorLifecycleManager" capability is
+	// enabled, so we cannot watch it if the capability is not enabled.
+	// Additionally, the default catalog only exists if the "marketplace"
+	// capability is enabled, so we cannot install OSSM without that
+	// capability.
+	if config.GatewayAPIEnabled && config.MarketplaceEnabled && config.OperatorLifecycleManagerEnabled {
 		if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorsv1alpha1.Subscription{}, handler.EnqueueRequestsFromMapFunc(toDefaultIngressController), predicate.Funcs{
 			CreateFunc: func(e event.CreateEvent) bool {
 				return e.Object.GetNamespace() == operatorcontroller.OpenshiftOperatorNamespace
@@ -124,11 +132,17 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 // Config holds all the things necessary for the controller to run.
 type Config struct {
 	// GatewayAPIEnabled indicates that the "GatewayAPI" featuregate is enabled.
-	GatewayAPIEnabled      bool
-	IngressControllerImage string
-	CanaryImage            string
-	OperatorReleaseVersion string
-	Namespace              string
+	GatewayAPIEnabled bool
+	// MarketplaceEnabled indicates whether the "marketplace" capability is
+	// enabled.
+	MarketplaceEnabled bool
+	// OperatorLifecycleManagerEnabled indicates whether the
+	// "OperatorLifecycleManager" capability is enabled.
+	OperatorLifecycleManagerEnabled bool
+	IngressControllerImage          string
+	CanaryImage                     string
+	OperatorReleaseVersion          string
+	Namespace                       string
 }
 
 // IngressOperatorStatusExtension holds status extensions of the ingress cluster operator.
@@ -338,14 +352,17 @@ func (r *reconciler) getOperatorState(ingressNamespace, canaryNamespace string, 
 	}
 
 	if r.config.GatewayAPIEnabled {
-		var subscription operatorsv1alpha1.Subscription
-		subscriptionName := operatorcontroller.ServiceMeshOperatorSubscriptionName()
-		if err := r.cache.Get(context.TODO(), subscriptionName, &subscription); err != nil {
-			if !errors.IsNotFound(err) {
-				return state, fmt.Errorf("failed to get subscription %q: %v", subscriptionName, err)
+		if r.config.MarketplaceEnabled && r.config.OperatorLifecycleManagerEnabled {
+			var subscription operatorsv1alpha1.Subscription
+			subscriptionName := operatorcontroller.ServiceMeshOperatorSubscriptionName()
+			if err := r.cache.Get(context.TODO(), subscriptionName, &subscription); err != nil {
+				if !errors.IsNotFound(err) {
+					return state, fmt.Errorf("failed to get subscription %q: %v", subscriptionName, err)
+				}
+			} else {
+				state.haveOSSMSubscription = true
+
 			}
-		} else {
-			state.haveOSSMSubscription = true
 		}
 
 		if len(co.Status.Extension.Raw) > 0 {
