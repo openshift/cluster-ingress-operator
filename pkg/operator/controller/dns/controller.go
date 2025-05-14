@@ -111,10 +111,6 @@ type Config struct {
 	DNSRecordNamespaces          []string
 	OperatorReleaseVersion       string
 	AzureWorkloadIdentityEnabled bool
-	// PrivateHostedZoneAWSEnabled indicates whether the "SharedVPC" feature gate is
-	// enabled.
-	PrivateHostedZoneAWSEnabled bool
-
 	// GCPCustomEndpointsEnabled indicates whether the "GCPCustomAPIEndpoints"
 	// feature gate is enabled.
 	GCPCustomEndpointsEnabled bool
@@ -670,7 +666,7 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 		if dnsConfig.Spec.Platform.AWS != nil {
 			roleARN = dnsConfig.Spec.Platform.AWS.PrivateZoneIAMRole
 		}
-		if roleARN != "" && r.config.PrivateHostedZoneAWSEnabled {
+		if roleARN != "" {
 			cfg := cfg
 			cfg.RoleARN = roleARN
 			privateProvider, err := awsdns.NewProvider(cfg, r.config.OperatorReleaseVersion)
