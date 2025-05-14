@@ -225,6 +225,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		CanaryImage:                     config.CanaryImage,
 		OperatorReleaseVersion:          config.OperatorReleaseVersion,
 		GatewayAPIEnabled:               gatewayAPIEnabled,
+		GatewayAPIControllerEnabled:     gatewayAPIControllerEnabled,
 		MarketplaceEnabled:              marketplaceEnabled,
 		OperatorLifecycleManagerEnabled: olmEnabled,
 	}); err != nil {
