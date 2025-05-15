@@ -92,6 +92,12 @@ const (
 	// awsEIPAllocationsAnnotation specifies a list of eips for NLBs.
 	awsEIPAllocationsAnnotation = "service.beta.kubernetes.io/aws-load-balancer-eip-allocations"
 
+	// awsSecurityGroupsAnnotation specifies a list of security groups for NLBs.
+	awsSecurityGroupsAnnotation = "service.beta.kubernetes.io/aws-load-balancer-security-groups"
+
+	// awsManagedSecurityGroupAnnotation is the flag to enable security group creation for NLBs.
+	awsManagedSecurityGroupAnnotation = "service.beta.kubernetes.io/aws-load-balancer-managed-security-group"
+
 	// iksLBScopeAnnotation is the annotation used on a service to specify an IBM
 	// load balancer IP type.
 	iksLBScopeAnnotation = "service.kubernetes.io/ibm-load-balancer-cloud-provider-ip-type"
@@ -266,11 +272,21 @@ var (
 	}()
 )
 
+type reconcilerLoadBalancerInput struct {
+}
+
 // ensureLoadBalancerService creates an LB service if one is desired but absent.
 // Always returns the current LB service if one exists (whether it already
 // existed or was created during the course of the function).
 func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, platformStatus *configv1.PlatformStatus) (bool, *corev1.Service, error) {
-	wantLBS, desiredLBService, err := desiredLoadBalancerService(ci, deploymentRef, platformStatus, r.config.IngressControllerLBSubnetsAWSEnabled, r.config.IngressControllerEIPAllocationsAWSEnabled)
+	wantLBS, desiredLBService, err := desiredLoadBalancerService(&ingressServiceConditionInput{
+		ic:                         ci,
+		deploymentRef:              deploymentRef,
+		platform:                   platformStatus,
+		subnetsAWSEnabled:          r.config.IngressControllerLBSubnetsAWSEnabled,
+		eipAllocationsAWSEnabled:   r.config.IngressControllerEIPAllocationsAWSEnabled,
+		nlbSecurityGroupAWSEnabled: r.config.IngressControllerNLBSecurityGroupAWSEnabled,
+	})
 	if err != nil {
 		return false, nil, err
 	}
@@ -336,7 +352,9 @@ func isServiceOwnedByIngressController(service *corev1.Service, ic *operatorv1.I
 // ingresscontroller, or nil if an LB service isn't desired. An LB service is
 // desired if the high availability type is Cloud. An LB service will declare an
 // owner reference to the given deployment.
-func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, platform *configv1.PlatformStatus, subnetsAWSEnabled bool, eipAllocationsAWSEnabled bool) (bool, *corev1.Service, error) {
+func desiredLoadBalancerService(in *ingressServiceConditionInput) (bool, *corev1.Service, error) {
+	ci := in.ic
+	platform := in.platform
 	if ci.Status.EndpointPublishingStrategy.Type != operatorv1.LoadBalancerServiceStrategyType {
 		return false, nil, nil
 	}
@@ -408,17 +426,31 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 						// See <https://bugzilla.redhat.com/show_bug.cgi?id=1908758>.
 						service.Annotations[awsLBHealthCheckIntervalAnnotation] = awsLBHealthCheckIntervalNLB
 
-						if subnetsAWSEnabled {
+						if in.subnetsAWSEnabled {
 							nlbParams := getAWSNetworkLoadBalancerParametersInSpec(ci)
 							if nlbParams != nil && awsSubnetsExist(nlbParams.Subnets) {
 								service.Annotations[awsLBSubnetsAnnotation] = JoinAWSSubnets(nlbParams.Subnets, ",")
 							}
 						}
 
-						if eipAllocationsAWSEnabled {
+						if in.eipAllocationsAWSEnabled {
 							nlbParams := getAWSNetworkLoadBalancerParametersInSpec(ci)
 							if nlbParams != nil && awsEIPAllocationsExist(nlbParams.EIPAllocations) {
 								service.Annotations[awsEIPAllocationsAnnotation] = JoinAWSEIPAllocations(nlbParams.EIPAllocations, ",")
+							}
+						}
+
+						if in.nlbSecurityGroupAWSEnabled {
+							nlbParams := getAWSNetworkLoadBalancerParametersInSpec(ci)
+							// CCM does not support managed and unmanaged security groups
+							unmanagedSG := false
+							if nlbParams != nil && awsSecurityGroupsExist(nlbParams.SecurityGroups) {
+								unmanagedSG = true
+								service.Annotations[awsSecurityGroupsAnnotation] = JoinAWSESecurityGroups(nlbParams.SecurityGroups, ",")
+							}
+							// TODO do we need to check and raise issues or delegate to API CEL validations?
+							if nlbParams != nil && nlbParams.ManagedSecurityGroup && !unmanagedSG {
+								service.Annotations[awsManagedSecurityGroupAnnotation] = "true"
 							}
 						}
 
@@ -429,7 +461,7 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 							}
 						}
 
-						if subnetsAWSEnabled {
+						if in.subnetsAWSEnabled {
 							clbParams := getAWSClassicLoadBalancerParametersInSpec(ci)
 							if clbParams != nil && awsSubnetsExist(clbParams.Subnets) {
 								service.Annotations[awsLBSubnetsAnnotation] = JoinAWSSubnets(clbParams.Subnets, ",")
@@ -497,7 +529,7 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 		}
 	}
 
-	service.SetOwnerReferences([]metav1.OwnerReference{deploymentRef})
+	service.SetOwnerReferences([]metav1.OwnerReference{in.deploymentRef})
 	return true, service, nil
 }
 
@@ -760,8 +792,8 @@ func IsServiceInternal(service *corev1.Service) bool {
 // return value is nil.  Otherwise, if something or someone else has modified
 // the service, then the return value is a non-nil error indicating that the
 // modification must be reverted before upgrading is allowed.
-func loadBalancerServiceIsUpgradeable(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference, current *corev1.Service, platform *configv1.PlatformStatus, subnetsAWSEnabled bool, eipAllocationsAWSEnabled bool) error {
-	want, desired, err := desiredLoadBalancerService(ic, deploymentRef, platform, subnetsAWSEnabled, eipAllocationsAWSEnabled)
+func loadBalancerServiceIsUpgradeable(in *ingressServiceConditionInput) error {
+	want, desired, err := desiredLoadBalancerService(in)
 	if err != nil {
 		return err
 	}
@@ -774,9 +806,9 @@ func loadBalancerServiceIsUpgradeable(ic *operatorv1.IngressController, deployme
 	// Since the status logic runs after the controller sets the annotations, it checks for
 	// any discrepancy (in case modified) between the desired annotation values of the controller
 	// and the current annotation values.
-	changed, updated := loadBalancerServiceAnnotationsChanged(current, desired, managedLoadBalancerServiceAnnotations)
+	changed, updated := loadBalancerServiceAnnotationsChanged(in.service, desired, managedLoadBalancerServiceAnnotations)
 	if changed {
-		diff := cmp.Diff(current, updated, cmpopts.EquateEmpty())
+		diff := cmp.Diff(in.service, updated, cmpopts.EquateEmpty())
 		return fmt.Errorf("load balancer service has been modified; changes must be reverted before upgrading: %s", diff)
 	}
 
@@ -1013,6 +1045,23 @@ func getSubnetsFromServiceAnnotation(service *corev1.Service) *operatorv1.AWSSub
 	return awsSubnets
 }
 
+// getSecurityGroupsFromServiceAnnotation gets the effective security groups by looking at the
+// service.beta.kubernetes.io/aws-load-balancer-security-groups annotation of the LoadBalancer-type Service.
+// If no security groups are specified in the annotation, this function returns nil.
+func getSecurityGroupsFromServiceAnnotation(service *corev1.Service) (awsGroups []operatorv1.AWSSecurityGroup) {
+	if service == nil {
+		return nil
+	}
+
+	if ann, ok := service.Annotations[awsSecurityGroupsAnnotation]; ok {
+		for _, sg := range strings.Split(strings.TrimSpace(ann), ",") {
+			awsGroups = append(awsGroups, operatorv1.AWSSecurityGroup(sg))
+		}
+	}
+
+	return awsGroups
+}
+
 // getLoadBalancerIPFromService gets the effective loadBalancerIP by looking at the Service.Spec.LoadBalancerIP.
 func getLoadBalancerIPFromService(service *corev1.Service) string {
 	if service == nil {
@@ -1161,6 +1210,12 @@ func awsEIPAllocationsExist(eipAllocations []operatorv1.EIPAllocation) bool {
 	return len(eipAllocations) > 0
 }
 
+// awsSecurityGroupsExist checks if any security groups exist in an AWSSecurityGroups structure.
+func awsSecurityGroupsExist(sgs []operatorv1.AWSSecurityGroup) bool {
+	// return sgs != nil && (len(sgs.Names) > 0 || len(sgs.IDs) > 0)
+	return sgs != nil && (len(sgs) > 0)
+}
+
 // JoinAWSSubnets joins an AWS Subnets object into a string seperated by sep.
 func JoinAWSSubnets(subnets *operatorv1.AWSSubnets, sep string) string {
 	if subnets == nil {
@@ -1200,6 +1255,23 @@ func JoinAWSEIPAllocations(eipAllocations []operatorv1.EIPAllocation, sep string
 		}
 	}
 	return buffer.String()
+}
+
+// JoinAWSESecurityGroups joins an AWSSecurityGroups object into a string seperated by sep.
+func JoinAWSESecurityGroups(sgs []operatorv1.AWSSecurityGroup, sep string) string {
+	if sgs == nil {
+		return ""
+	}
+	var groupsStr strings.Builder
+	first := true
+	for _, sg := range sgs {
+		if !first {
+			groupsStr.WriteString(sep)
+		}
+		groupsStr.WriteString(string(sg))
+		first = false
+	}
+	return groupsStr.String()
 }
 
 // getAWSLoadBalancerTypeInStatus gets the AWS Load Balancer Type reported in the status.

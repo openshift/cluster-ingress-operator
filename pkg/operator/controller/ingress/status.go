@@ -83,6 +83,9 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	if platformStatus.Type == configv1.OpenStackPlatformType {
 		updateIngressControllerFloatingIPOpenStackStatus(updated, service)
 	}
+	if platformStatus.Type == configv1.AWSPlatformType && r.config.IngressControllerNLBSecurityGroupAWSEnabled {
+		updateIngressControllerAWSNLBSecurityGroupStatus(updated, service)
+	}
 
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentAvailableCondition(deployment))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentReplicasMinAvailableCondition(deployment, pods))
@@ -96,7 +99,16 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	errs = append(errs, err)
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressProgressingCondition(updated.Status.Conditions))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, degradedCondition)
-	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressUpgradeableCondition(ic, deploymentRef, service, platformStatus, secret, r.config.IngressControllerLBSubnetsAWSEnabled, r.config.IngressControllerEIPAllocationsAWSEnabled))
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressUpgradeableCondition(&ingressServiceConditionInput{
+		ic:                       ic,
+		deploymentRef:            deploymentRef,
+		service:                  service,
+		platform:                 platformStatus,
+		secret:                   secret,
+		subnetsAWSEnabled:        r.config.IngressControllerLBSubnetsAWSEnabled,
+		eipAllocationsAWSEnabled: r.config.IngressControllerEIPAllocationsAWSEnabled,
+		// TODO/Q: do we need SG condition here too?
+	}))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressEvaluationConditionsDetectedCondition(ic, service))
 
 	updated.Status.Conditions = PruneConditions(updated.Status.Conditions)
@@ -645,14 +657,25 @@ func computeIngressDegradedCondition(conditions []operatorv1.OperatorCondition, 
 	return condition, err
 }
 
+type ingressServiceConditionInput struct {
+	ic                         *operatorv1.IngressController
+	deploymentRef              metav1.OwnerReference
+	service                    *corev1.Service
+	platform                   *configv1.PlatformStatus
+	secret                     *corev1.Secret
+	subnetsAWSEnabled          bool
+	eipAllocationsAWSEnabled   bool
+	nlbSecurityGroupAWSEnabled bool
+}
+
 // computeIngressUpgradeableCondition computes the IngressController's "Upgradeable" status condition.
-func computeIngressUpgradeableCondition(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference, service *corev1.Service, platform *configv1.PlatformStatus, secret *corev1.Secret, subnetsAWSEnabled bool, eipAllocationsAWSEnabled bool) operatorv1.OperatorCondition {
+func computeIngressUpgradeableCondition(in *ingressServiceConditionInput) operatorv1.OperatorCondition {
 	var errs []error
 
-	errs = append(errs, checkDefaultCertificate(secret, "*."+ic.Status.Domain))
+	errs = append(errs, checkDefaultCertificate(in.secret, "*."+in.ic.Status.Domain))
 
-	if service != nil {
-		errs = append(errs, loadBalancerServiceIsUpgradeable(ic, deploymentRef, service, platform, subnetsAWSEnabled, eipAllocationsAWSEnabled))
+	if in.service != nil {
+		errs = append(errs, loadBalancerServiceIsUpgradeable(in))
 	}
 
 	if err := kerrors.NewAggregate(errs); err != nil {
@@ -968,6 +991,18 @@ func updateIngressControllerAWSSubnetStatus(ic *operatorv1.IngressController, se
 			clbParams.Subnets = getSubnetsFromServiceAnnotation(service)
 		}
 	}
+}
+
+func updateIngressControllerAWSNLBSecurityGroupStatus(ic *operatorv1.IngressController, service *corev1.Service) {
+	// Set the subnets status based on the actual service annotation and the load balancer type NLBs.
+	if getAWSLoadBalancerTypeInStatus(ic) != operatorv1.AWSNetworkLoadBalancer {
+		return
+	}
+
+	if nlbParams := getAWSNetworkLoadBalancerParametersInStatus(ic); nlbParams != nil {
+		nlbParams.SecurityGroups = getSecurityGroupsFromServiceAnnotation(service)
+	}
+
 }
 
 // updateIngressControllerAWSEIPAllocationStatus mutates the provided IngressController object to
