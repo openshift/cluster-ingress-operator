@@ -104,6 +104,12 @@ type Config struct {
 	GatewayAPIEnabled bool
 	// GatewayAPIControllerEnabled indicates that the "GatewayAPIController" featuregate is enabled.
 	GatewayAPIControllerEnabled bool
+	// MarketplaceEnabled indicates whether the "marketplace" capability is
+	// enabled.
+	MarketplaceEnabled bool
+	// OperatorLifecycleManagerEnabled indicates whether the
+	// "OperatorLifecycleManager" capability is enabled.
+	OperatorLifecycleManagerEnabled bool
 
 	// DependentControllers is a list of controllers that watch Gateway API
 	// resources.  The gatewayapi controller starts these controllers once
@@ -145,6 +151,16 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	}
 
 	if !r.config.GatewayAPIControllerEnabled {
+		return reconcile.Result{}, nil
+	}
+
+	// The subscriptions resource only exists if the
+	// "OperatorLifecycleManager" capability is enabled, and the default
+	// catalog only exists if the "marketplace" capability is enabled.  We
+	// cannot install OSSM if the subscriptions resource or default catalog
+	// does not exist, and accordingly, we should not start these
+	// controllers if the capabilities are not enabled.
+	if !r.config.MarketplaceEnabled || !r.config.OperatorLifecycleManagerEnabled {
 		return reconcile.Result{}, nil
 	}
 
