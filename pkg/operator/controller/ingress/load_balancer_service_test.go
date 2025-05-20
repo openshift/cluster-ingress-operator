@@ -142,6 +142,7 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 		platformStatus                  *configv1.PlatformStatus
 		subnetsAWSFeatureEnabled        bool
 		eipAllocationsAWSFeatureEnabled bool
+		securityGroupsAWSFeatureEnabled bool
 		expectedFloatingIP              string
 	}{
 		{
@@ -753,7 +754,14 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 				t.Errorf("expected IsProxyProtocolNeeded to return %v, got %v", tc.proxyNeeded, proxyNeeded)
 			}
 
-			haveSvc, svc, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig.Status.PlatformStatus, tc.subnetsAWSFeatureEnabled, tc.eipAllocationsAWSFeatureEnabled)
+			haveSvc, svc, err := desiredLoadBalancerService(&ingressServiceConfigInput{
+				ic:                         ic,
+				deploymentRef:              deploymentRef,
+				platform:                   infraConfig.Status.PlatformStatus,
+				subnetsAWSEnabled:          tc.subnetsAWSFeatureEnabled,
+				eipAllocationsAWSEnabled:   tc.eipAllocationsAWSFeatureEnabled,
+				nlbSecurityGroupAWSEnabled: tc.securityGroupsAWSFeatureEnabled,
+			})
 			switch {
 			case err != nil:
 				t.Error(err)
@@ -938,7 +946,14 @@ func TestDesiredLoadBalancerServiceAWSIdleTimeout(t *testing.T) {
 					},
 				},
 			}
-			haveSvc, svc, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig.Status.PlatformStatus, true, true)
+
+			haveSvc, svc, err := desiredLoadBalancerService(&ingressServiceConfigInput{
+				ic:                         ic,
+				deploymentRef:              deploymentRef,
+				platform:                   infraConfig.Status.PlatformStatus,
+				subnetsAWSEnabled:          true,
+				eipAllocationsAWSEnabled:   true,
+				nlbSecurityGroupAWSEnabled: true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1552,7 +1567,13 @@ func TestUpdateLoadBalancerServiceSourceRanges(t *testing.T) {
 					},
 				},
 			}
-			wantSvc, desired, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig.Status.PlatformStatus, true, true)
+			wantSvc, desired, err := desiredLoadBalancerService(&ingressServiceConfigInput{
+				ic:                         ic,
+				deploymentRef:              deploymentRef,
+				platform:                   infraConfig.Status.PlatformStatus,
+				subnetsAWSEnabled:          true,
+				eipAllocationsAWSEnabled:   true,
+				nlbSecurityGroupAWSEnabled: true})
 			if err != nil {
 				t.Fatal(err)
 			}

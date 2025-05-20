@@ -162,3 +162,7 @@ require (
 replace github.com/imdario/mergo => github.com/imdario/mergo v0.3.5
 
 replace k8s.io/client-go => k8s.io/client-go v0.32.1
+
+// WIP SPLAT-2137 / branch: SPLAT-2113
+//replace github.com/openshift/api => /home/mtulio/openshift/OCPSTRAT-1553/api
+replace github.com/openshift/api => github.com/mtulio/openshift-api v0.0.0-20250520212508-507b878818bf

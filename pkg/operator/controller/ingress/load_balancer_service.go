@@ -92,6 +92,9 @@ const (
 	// awsEIPAllocationsAnnotation specifies a list of eips for NLBs.
 	awsEIPAllocationsAnnotation = "service.beta.kubernetes.io/aws-load-balancer-eip-allocations"
 
+	// awsManagedSecurityGroupAnnotation is the flag to enable security group creation for NLBs.
+	awsManagedSecurityGroupAnnotation = "service.beta.kubernetes.io/aws-load-balancer-managed-security-group"
+
 	// iksLBScopeAnnotation is the annotation used on a service to specify an IBM
 	// load balancer IP type.
 	iksLBScopeAnnotation = "service.kubernetes.io/ibm-load-balancer-cloud-provider-ip-type"
@@ -270,7 +273,14 @@ var (
 // Always returns the current LB service if one exists (whether it already
 // existed or was created during the course of the function).
 func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, platformStatus *configv1.PlatformStatus) (bool, *corev1.Service, error) {
-	wantLBS, desiredLBService, err := desiredLoadBalancerService(ci, deploymentRef, platformStatus, r.config.IngressControllerLBSubnetsAWSEnabled, r.config.IngressControllerEIPAllocationsAWSEnabled)
+	wantLBS, desiredLBService, err := desiredLoadBalancerService(&ingressServiceConfigInput{
+		ic:                         ci,
+		deploymentRef:              deploymentRef,
+		platform:                   platformStatus,
+		subnetsAWSEnabled:          r.config.IngressControllerLBSubnetsAWSEnabled,
+		eipAllocationsAWSEnabled:   r.config.IngressControllerEIPAllocationsAWSEnabled,
+		nlbSecurityGroupAWSEnabled: r.config.IngressControllerNLBSecurityGroupAWSEnabled,
+	})
 	if err != nil {
 		return false, nil, err
 	}
@@ -336,7 +346,9 @@ func isServiceOwnedByIngressController(service *corev1.Service, ic *operatorv1.I
 // ingresscontroller, or nil if an LB service isn't desired. An LB service is
 // desired if the high availability type is Cloud. An LB service will declare an
 // owner reference to the given deployment.
-func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, platform *configv1.PlatformStatus, subnetsAWSEnabled bool, eipAllocationsAWSEnabled bool) (bool, *corev1.Service, error) {
+func desiredLoadBalancerService(in *ingressServiceConfigInput) (bool, *corev1.Service, error) {
+	ci := in.ic
+	platform := in.platform
 	if ci.Status.EndpointPublishingStrategy.Type != operatorv1.LoadBalancerServiceStrategyType {
 		return false, nil, nil
 	}
@@ -408,17 +420,24 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 						// See <https://bugzilla.redhat.com/show_bug.cgi?id=1908758>.
 						service.Annotations[awsLBHealthCheckIntervalAnnotation] = awsLBHealthCheckIntervalNLB
 
-						if subnetsAWSEnabled {
+						if in.subnetsAWSEnabled {
 							nlbParams := getAWSNetworkLoadBalancerParametersInSpec(ci)
 							if nlbParams != nil && awsSubnetsExist(nlbParams.Subnets) {
 								service.Annotations[awsLBSubnetsAnnotation] = JoinAWSSubnets(nlbParams.Subnets, ",")
 							}
 						}
 
-						if eipAllocationsAWSEnabled {
+						if in.eipAllocationsAWSEnabled {
 							nlbParams := getAWSNetworkLoadBalancerParametersInSpec(ci)
 							if nlbParams != nil && awsEIPAllocationsExist(nlbParams.EIPAllocations) {
 								service.Annotations[awsEIPAllocationsAnnotation] = JoinAWSEIPAllocations(nlbParams.EIPAllocations, ",")
+							}
+						}
+
+						if in.nlbSecurityGroupAWSEnabled {
+							nlbParams := getAWSNetworkLoadBalancerParametersInSpec(ci)
+							if nlbParams != nil && nlbParams.ManagedSecurityGroup {
+								service.Annotations[awsManagedSecurityGroupAnnotation] = "true"
 							}
 						}
 
@@ -429,7 +448,7 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 							}
 						}
 
-						if subnetsAWSEnabled {
+						if in.subnetsAWSEnabled {
 							clbParams := getAWSClassicLoadBalancerParametersInSpec(ci)
 							if clbParams != nil && awsSubnetsExist(clbParams.Subnets) {
 								service.Annotations[awsLBSubnetsAnnotation] = JoinAWSSubnets(clbParams.Subnets, ",")
@@ -497,7 +516,7 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 		}
 	}
 
-	service.SetOwnerReferences([]metav1.OwnerReference{deploymentRef})
+	service.SetOwnerReferences([]metav1.OwnerReference{in.deploymentRef})
 	return true, service, nil
 }
 
@@ -760,8 +779,8 @@ func IsServiceInternal(service *corev1.Service) bool {
 // return value is nil.  Otherwise, if something or someone else has modified
 // the service, then the return value is a non-nil error indicating that the
 // modification must be reverted before upgrading is allowed.
-func loadBalancerServiceIsUpgradeable(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference, current *corev1.Service, platform *configv1.PlatformStatus, subnetsAWSEnabled bool, eipAllocationsAWSEnabled bool) error {
-	want, desired, err := desiredLoadBalancerService(ic, deploymentRef, platform, subnetsAWSEnabled, eipAllocationsAWSEnabled)
+func loadBalancerServiceIsUpgradeable(in *ingressServiceConfigInput) error {
+	want, desired, err := desiredLoadBalancerService(in)
 	if err != nil {
 		return err
 	}
@@ -774,9 +793,9 @@ func loadBalancerServiceIsUpgradeable(ic *operatorv1.IngressController, deployme
 	// Since the status logic runs after the controller sets the annotations, it checks for
 	// any discrepancy (in case modified) between the desired annotation values of the controller
 	// and the current annotation values.
-	changed, updated := loadBalancerServiceAnnotationsChanged(current, desired, managedLoadBalancerServiceAnnotations)
+	changed, updated := loadBalancerServiceAnnotationsChanged(in.service, desired, managedLoadBalancerServiceAnnotations)
 	if changed {
-		diff := cmp.Diff(current, updated, cmpopts.EquateEmpty())
+		diff := cmp.Diff(in.service, updated, cmpopts.EquateEmpty())
 		return fmt.Errorf("load balancer service has been modified; changes must be reverted before upgrading: %s", diff)
 	}
 

@@ -49,6 +49,34 @@ type expectedCondition struct {
 	gracePeriod      time.Duration
 }
 
+// ingressServiceConfigInput represents the input parameters required to determine
+// the configuration of an ingress service in the cluster.
+//
+// Fields:
+//   - ic: The IngressController resource associated with the ingress service.
+//   - deploymentRef: A reference to the deployment that owns the ingress service.
+//   - service: The Service resource representing the ingress service.
+//   - platform: The platform status of the cluster, providing information about the
+//     underlying infrastructure.
+//   - secret: The Secret resource associated with the ingress service, typically used
+//     for TLS certificates or other sensitive data.
+//   - subnetsAWSEnabled: A boolean indicating whether AWS subnets are enabled for the
+//     ingress service.
+//   - eipAllocationsAWSEnabled: A boolean indicating whether AWS Elastic IP allocations
+//     are enabled for the ingress service.
+//   - nlbSecurityGroupAWSEnabled: A boolean indicating whether AWS Network Load Balancer
+//     (NLB) security groups are enabled for the ingress service.
+type ingressServiceConfigInput struct {
+	ic                         *operatorv1.IngressController
+	deploymentRef              metav1.OwnerReference
+	service                    *corev1.Service
+	platform                   *configv1.PlatformStatus
+	secret                     *corev1.Secret
+	subnetsAWSEnabled          bool
+	eipAllocationsAWSEnabled   bool
+	nlbSecurityGroupAWSEnabled bool
+}
+
 // syncIngressControllerStatus computes the current status of ic and
 // updates status upon any changes since last sync.
 func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressController, deployment *appsv1.Deployment, deploymentRef metav1.OwnerReference, pods []corev1.Pod, service *corev1.Service, operandEvents []corev1.Event, wildcardRecord *iov1.DNSRecord, dnsConfig *configv1.DNS, platformStatus *configv1.PlatformStatus) (error, bool) {
@@ -84,6 +112,8 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 		updateIngressControllerFloatingIPOpenStackStatus(updated, service)
 	}
 
+	// Question: Is there any requirement to collect security group created by CCM when the SG is managed?
+
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentAvailableCondition(deployment))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentReplicasMinAvailableCondition(deployment, pods))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentReplicasAllAvailableCondition(deployment))
@@ -96,7 +126,16 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	errs = append(errs, err)
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressProgressingCondition(updated.Status.Conditions))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, degradedCondition)
-	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressUpgradeableCondition(ic, deploymentRef, service, platformStatus, secret, r.config.IngressControllerLBSubnetsAWSEnabled, r.config.IngressControllerEIPAllocationsAWSEnabled))
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressUpgradeableCondition(&ingressServiceConfigInput{
+		ic:                       ic,
+		deploymentRef:            deploymentRef,
+		service:                  service,
+		platform:                 platformStatus,
+		secret:                   secret,
+		subnetsAWSEnabled:        r.config.IngressControllerLBSubnetsAWSEnabled,
+		eipAllocationsAWSEnabled: r.config.IngressControllerEIPAllocationsAWSEnabled,
+		// TODO/Q: do we need SG condition upgrade?
+	}))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressEvaluationConditionsDetectedCondition(ic, service))
 
 	updated.Status.Conditions = PruneConditions(updated.Status.Conditions)
@@ -646,13 +685,13 @@ func computeIngressDegradedCondition(conditions []operatorv1.OperatorCondition, 
 }
 
 // computeIngressUpgradeableCondition computes the IngressController's "Upgradeable" status condition.
-func computeIngressUpgradeableCondition(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference, service *corev1.Service, platform *configv1.PlatformStatus, secret *corev1.Secret, subnetsAWSEnabled bool, eipAllocationsAWSEnabled bool) operatorv1.OperatorCondition {
+func computeIngressUpgradeableCondition(in *ingressServiceConfigInput) operatorv1.OperatorCondition {
 	var errs []error
 
-	errs = append(errs, checkDefaultCertificate(secret, "*."+ic.Status.Domain))
+	errs = append(errs, checkDefaultCertificate(in.secret, "*."+in.ic.Status.Domain))
 
-	if service != nil {
-		errs = append(errs, loadBalancerServiceIsUpgradeable(ic, deploymentRef, service, platform, subnetsAWSEnabled, eipAllocationsAWSEnabled))
+	if in.service != nil {
+		errs = append(errs, loadBalancerServiceIsUpgradeable(in))
 	}
 
 	if err := kerrors.NewAggregate(errs); err != nil {

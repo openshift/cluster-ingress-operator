@@ -3175,7 +3175,14 @@ func Test_computeIngressUpgradeableCondition(t *testing.T) {
 					},
 				},
 			}
-			wantSvc, service, err := desiredLoadBalancerService(ic, deploymentRef, platformStatus, true, true)
+			wantSvc, service, err := desiredLoadBalancerService(&ingressServiceConfigInput{
+				ic:                         ic,
+				deploymentRef:              deploymentRef,
+				platform:                   platformStatus,
+				subnetsAWSEnabled:          true,
+				eipAllocationsAWSEnabled:   true,
+				nlbSecurityGroupAWSEnabled: true,
+			})
 			if err != nil {
 				t.Errorf("unexpected error from desiredLoadBalancerService: %v", err)
 				return
@@ -3197,7 +3204,15 @@ func Test_computeIngressUpgradeableCondition(t *testing.T) {
 				expectedStatus = operatorv1.ConditionTrue
 			}
 
-			actual := computeIngressUpgradeableCondition(ic, deploymentRef, service, platformStatus, secret, true, true)
+			actual := computeIngressUpgradeableCondition(&ingressServiceConfigInput{
+				ic:                         ic,
+				deploymentRef:              deploymentRef,
+				platform:                   platformStatus,
+				secret:                     secret,
+				subnetsAWSEnabled:          true,
+				eipAllocationsAWSEnabled:   true,
+				nlbSecurityGroupAWSEnabled: true,
+			})
 			if actual.Status != expectedStatus {
 				t.Errorf("expected Upgradeable to be %q, got %q", expectedStatus, actual.Status)
 			}
@@ -3285,7 +3300,14 @@ func Test_computeIngressEvaluationConditionsDetectedCondition(t *testing.T) {
 				},
 			}
 
-			wantSvc, service, err := desiredLoadBalancerService(ic, deploymentRef, platformStatus, true, true)
+			wantSvc, service, err := desiredLoadBalancerService(&ingressServiceConfigInput{
+				ic:                         ic,
+				deploymentRef:              deploymentRef,
+				platform:                   platformStatus,
+				subnetsAWSEnabled:          true,
+				eipAllocationsAWSEnabled:   true,
+				nlbSecurityGroupAWSEnabled: true,
+			})
 			if err != nil {
 				t.Fatalf("unexpected error from desiredLoadBalancerService: %v", err)
 			}
