@@ -2427,3 +2427,54 @@ func TestDesiredRouterDeploymentRouterExternalCertificate(t *testing.T) {
 
 	checkDeploymentHasEnvSorted(t, deployment)
 }
+
+// Test_IdleConnectionTerminationPolicy validates that the ingress
+// controller correctly sets the ROUTER_IDLE_CLOSE_ON_RESPONSE
+// environment variable based on the setting of the
+// IngressController's IdleConnectionTerminationPolicy.
+func Test_IdleConnectionTerminationPolicy(t *testing.T) {
+	ic, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, clusterProxyConfig := getRouterDeploymentComponents(t)
+
+	for _, tc := range []struct {
+		name                string
+		policy              operatorv1.IngressControllerConnectionTerminationPolicy
+		expectEnvVarPresent bool
+		expectedEnvVarValue string
+	}{{
+		name:                "IdleConnectionTerminationPolicy is Deferred",
+		policy:              operatorv1.IngressControllerConnectionTerminationPolicyDeferred,
+		expectEnvVarPresent: true,
+		expectedEnvVarValue: "true",
+	}, {
+		name:                "IdleConnectionTerminationPolicy is not set",
+		policy:              "",
+		expectEnvVarPresent: false,
+		expectedEnvVarValue: "",
+	}, {
+		name:                "IdleConnectionTerminationPolicy is Immediate (default)",
+		policy:              operatorv1.IngressControllerConnectionTerminationPolicyImmediate,
+		expectEnvVarPresent: false,
+		expectedEnvVarValue: "",
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			ic.Spec.IdleConnectionTerminationPolicy = tc.policy
+
+			deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, false, nil, clusterProxyConfig, false)
+			if err != nil {
+				t.Fatalf("failed to generate desired router Deployment: %v", err)
+			}
+
+			expectedEnv := []envData{{
+				name:          "ROUTER_IDLE_CLOSE_ON_RESPONSE",
+				expectPresent: tc.expectEnvVarPresent,
+				expectedValue: tc.expectedEnvVarValue,
+			}}
+
+			if err := checkDeploymentEnvironment(t, deployment, expectedEnv); err != nil {
+				t.Errorf("environment variable check failed: %v", err)
+			}
+
+			checkDeploymentHasEnvSorted(t, deployment)
+		})
+	}
+}
