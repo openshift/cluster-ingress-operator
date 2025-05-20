@@ -21,35 +21,53 @@ func lookupEnv(key, defaultVal string) string {
 	return defaultVal
 }
 
+func respondWithPodInfo(w http.ResponseWriter, response string) {
+	w.Header().Set("x-pod-name", lookupEnv("POD_NAME", "unknown-pod"))
+	w.Header().Set("x-pod-namespace", lookupEnv("POD_NAMESPACE", "unknown-namespace"))
+	fmt.Fprint(w, response)
+}
+
 func Serve() {
-	crtFile := lookupEnv("TLS_CRT", defaultTLSCrt)
-	keyFile := lookupEnv("TLS_KEY", defaultTLSKey)
+	enableHTTP := lookupEnv("HTTP2_TEST_SERVER_ENABLE_HTTP_LISTENER", "true") != "false"
+	enableHTTPS := lookupEnv("HTTP2_TEST_SERVER_ENABLE_HTTPS_LISTENER", "true") != "false"
 
 	http.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
-		fmt.Fprint(w, req.Proto)
+		respondWithPodInfo(w, req.Proto)
 	})
 
 	http.HandleFunc("/healthz", func(w http.ResponseWriter, req *http.Request) {
-		fmt.Fprint(w, "ready")
+		respondWithPodInfo(w, "ready")
 	})
 
-	go func() {
-		port := lookupEnv("HTTP_PORT", defaultHTTPPort)
-		log.Printf("Listening on port %v\n", port)
+	var httpStarted, httpsStarted bool
 
-		if err := http.ListenAndServe(":"+port, nil); err != nil {
-			log.Fatal(err)
-		}
-	}()
+	if enableHTTP {
+		go func() {
+			port := lookupEnv("HTTP_PORT", defaultHTTPPort)
+			log.Printf("Listening on port %v\n", port)
+			if err := http.ListenAndServe(":"+port, nil); err != nil {
+				log.Fatal(err)
+			}
+		}()
+		httpStarted = true
+	}
 
-	go func() {
-		port := lookupEnv("HTTPS_PORT", defaultHTTPSPort)
-		log.Printf("Listening securely on port %v\n", port)
+	if enableHTTPS {
+		go func() {
+			crtFile := lookupEnv("TLS_CRT", defaultTLSCrt)
+			keyFile := lookupEnv("TLS_KEY", defaultTLSKey)
+			port := lookupEnv("HTTPS_PORT", defaultHTTPSPort)
+			log.Printf("Listening securely on port %v\n", port)
+			if err := http.ListenAndServeTLS(":"+port, crtFile, keyFile, nil); err != nil {
+				log.Fatal(err)
+			}
+		}()
+		httpsStarted = true
+	}
 
-		if err := http.ListenAndServeTLS(":"+port, crtFile, keyFile, nil); err != nil {
-			log.Fatal(err)
-		}
-	}()
+	if !httpStarted && !httpsStarted {
+		log.Fatal("No HTTP or HTTPS listeners were started - check environment variables HTTP2_TEST_SERVER_ENABLE_HTTP_LISTENER and HTTP2_TEST_SERVER_ENABLE_HTTPS_LISTENER")
+	}
 
 	select {}
 }
