@@ -362,9 +362,9 @@ func getRouterDeploymentComponents(t *testing.T) (*operatorv1.IngressController,
 				Custom: &configv1.CustomTLSProfile{
 					TLSProfileSpec: configv1.TLSProfileSpec{
 						Ciphers: []string{
-							"foo",
-							"bar",
-							"baz",
+							"ECDHE-ECDSA-AES256-GCM-SHA384",
+							"ECDHE-RSA-AES256-GCM-SHA384",
+							"ECDHE-ECDSA-CHACHA20-POLY1305",
 						},
 						MinTLSVersion: configv1.VersionTLS11,
 					},
@@ -436,7 +436,7 @@ func Test_desiredRouterDeployment(t *testing.T) {
 		{"ROUTER_CAPTURE_HTTP_COOKIE", false, ""},
 		{"ROUTER_CAPTURE_HTTP_REQUEST_HEADERS", false, ""},
 		{"ROUTER_CAPTURE_HTTP_RESPONSE_HEADERS", false, ""},
-		{"ROUTER_CIPHERS", true, "foo:bar:baz"},
+		{"ROUTER_CIPHERS", true, "ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305"},
 		{"ROUTER_CIPHERSUITES", false, ""},
 		{"ROUTER_CLIENT_FIN_TIMEOUT", false, ""},
 		{"ROUTER_DEFAULT_CLIENT_TIMEOUT", false, ""},
@@ -659,7 +659,7 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 		Custom: &configv1.CustomTLSProfile{
 			TLSProfileSpec: configv1.TLSProfileSpec{
 				Ciphers: []string{
-					"quux",
+					"ECDHE-ECDSA-AES256-GCM-SHA384",
 					"TLS_AES_256_GCM_SHA384",
 					"TLS_CHACHA20_POLY1305_SHA256",
 				},
@@ -752,7 +752,7 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 		{RouterHAProxyThreadsEnvName, true, strconv.Itoa(RouterHAProxyThreadsDefaultValue * 2)},
 		{"ROUTER_SET_FORWARDED_HEADERS", true, "append"},
 		{RouterHTTPIgnoreProbes, true, "true"},
-		{"ROUTER_CIPHERS", true, "quux"},
+		{"ROUTER_CIPHERS", true, "ECDHE-ECDSA-AES256-GCM-SHA384"},
 		{"ROUTER_CIPHERSUITES", true, "TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256"},
 		{"SSL_MIN_VERSION", true, "TLSv1.2"},
 		{"ROUTER_IP_V4_V6_MODE", true, "v4v6"},
@@ -863,7 +863,7 @@ func TestDesiredRouterDeploymentVariety(t *testing.T) {
 		Custom: &configv1.CustomTLSProfile{
 			TLSProfileSpec: configv1.TLSProfileSpec{
 				Ciphers: []string{
-					"quux",
+					"ECDHE-ECDSA-AES256-GCM-SHA384",
 					"TLS_AES_256_GCM_SHA384",
 					"TLS_CHACHA20_POLY1305_SHA256",
 				},
@@ -971,7 +971,7 @@ func TestDesiredRouterDeploymentVariety(t *testing.T) {
 
 		{"ROUTER_SET_FORWARDED_HEADERS", true, "never"},
 
-		{"ROUTER_CIPHERS", true, "quux"},
+		{"ROUTER_CIPHERS", true, "ECDHE-ECDSA-AES256-GCM-SHA384"},
 		{"ROUTER_CIPHERSUITES", true, "TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256"},
 
 		{"SSL_MIN_VERSION", true, "TLSv1.3"},
@@ -1274,7 +1274,7 @@ func Test_inferTLSProfileSpecFromDeployment(t *testing.T) {
 					Env: []corev1.EnvVar{
 						{
 							Name:  "ROUTER_CIPHERS",
-							Value: "foo:bar:baz",
+							Value: "ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305",
 						},
 						{
 							Name:  "SSL_MIN_VERSION",
@@ -1287,7 +1287,7 @@ func Test_inferTLSProfileSpecFromDeployment(t *testing.T) {
 				},
 			},
 			expected: &configv1.TLSProfileSpec{
-				Ciphers:       []string{"foo", "bar", "baz"},
+				Ciphers:       []string{"ECDHE-ECDSA-AES256-GCM-SHA384", "ECDHE-RSA-AES256-GCM-SHA384", "ECDHE-ECDSA-CHACHA20-POLY1305"},
 				MinTLSVersion: configv1.VersionTLS11,
 			},
 		},
@@ -1299,7 +1299,7 @@ func Test_inferTLSProfileSpecFromDeployment(t *testing.T) {
 					Env: []corev1.EnvVar{
 						{
 							Name:  "ROUTER_CIPHERS",
-							Value: "foo:bar:baz",
+							Value: "ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305",
 						},
 						{
 							Name:  "SSL_MIN_VERSION",
@@ -1312,7 +1312,7 @@ func Test_inferTLSProfileSpecFromDeployment(t *testing.T) {
 				},
 			},
 			expected: &configv1.TLSProfileSpec{
-				Ciphers:       []string{"foo", "bar", "baz"},
+				Ciphers:       []string{"ECDHE-ECDSA-AES256-GCM-SHA384", "ECDHE-RSA-AES256-GCM-SHA384", "ECDHE-ECDSA-CHACHA20-POLY1305"},
 				MinTLSVersion: configv1.VersionTLS12,
 			},
 		},
@@ -1324,7 +1324,7 @@ func Test_inferTLSProfileSpecFromDeployment(t *testing.T) {
 					Env: []corev1.EnvVar{
 						{
 							Name:  "ROUTER_CIPHERS",
-							Value: "foo:bar:baz",
+							Value: "ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305",
 						},
 						{
 							Name:  "SSL_MIN_VERSION",
@@ -1337,7 +1337,7 @@ func Test_inferTLSProfileSpecFromDeployment(t *testing.T) {
 				},
 			},
 			expected: &configv1.TLSProfileSpec{
-				Ciphers:       []string{"foo", "bar", "baz"},
+				Ciphers:       []string{"ECDHE-ECDSA-AES256-GCM-SHA384", "ECDHE-RSA-AES256-GCM-SHA384", "ECDHE-ECDSA-CHACHA20-POLY1305"},
 				MinTLSVersion: configv1.VersionTLS13,
 			},
 		},
