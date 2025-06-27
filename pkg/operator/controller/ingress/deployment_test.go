@@ -25,6 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/apimachinery/pkg/util/sets"
 )
 
 const (
@@ -2573,6 +2574,92 @@ func TestDesiredRouterDeploymentRouterExternalCertificate(t *testing.T) {
 	}
 
 	checkDeploymentHasEnvSorted(t, deployment)
+}
+
+// TestDesiredRouterDeploymentTLSProfile verifies that desiredRouterDeployment
+// sets ROUTER_CIPHERS, ROUTER_CIPHERSUITES, SSL_MIN_VERSION, and
+// SSL_MAX_VERSION to the expected values based on the TLS security profile.
+func TestDesiredRouterDeploymentTLSProfile(t *testing.T) {
+	ic, ingressConfig, infraConfig, apiConfig, networkConfig, _, clusterProxyConfig := getRouterDeploymentComponents(t)
+
+	testCases := []struct {
+		name                 string
+		tlsSecurityProfile   *configv1.TLSSecurityProfile
+		allowedCiphers       sets.Set[string]
+		expectedCiphers      string
+		expectedCiphersuites string
+		expectedMinTLS       string
+		expectedMaxTLS       string
+	}{
+		{
+			name: "Old profile",
+			tlsSecurityProfile: &configv1.TLSSecurityProfile{
+				Type: configv1.TLSProfileOldType,
+			},
+			expectedCiphers:      "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:DHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-SHA256:ECDHE-RSA-AES128-SHA256:ECDHE-ECDSA-AES128-SHA:ECDHE-RSA-AES128-SHA:ECDHE-ECDSA-AES256-SHA:ECDHE-RSA-AES256-SHA:DHE-RSA-AES128-SHA256:DHE-RSA-AES256-SHA256:AES128-GCM-SHA256:AES256-GCM-SHA384:AES128-SHA256:AES256-SHA256:AES128-SHA:AES256-SHA",
+			expectedCiphersuites: "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256",
+			expectedMinTLS:       "TLSv1.1",
+			expectedMaxTLS:       "TLSv1.3",
+		},
+		{
+			name: "Intermediate profile",
+			tlsSecurityProfile: &configv1.TLSSecurityProfile{
+				Type: configv1.TLSProfileIntermediateType,
+			},
+			expectedCiphers:      "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384",
+			expectedCiphersuites: "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256",
+			expectedMinTLS:       "TLSv1.2",
+			expectedMaxTLS:       "TLSv1.3",
+		},
+		{
+			name: "Modern profile",
+			tlsSecurityProfile: &configv1.TLSSecurityProfile{
+				Type: configv1.TLSProfileModernType,
+			},
+			expectedCiphers:      "",
+			expectedCiphersuites: "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256",
+			expectedMinTLS:       "TLSv1.3",
+			expectedMaxTLS:       "TLSv1.3",
+		},
+		{
+			name: "Custom, only TLSv1.2 ciphers",
+			tlsSecurityProfile: &configv1.TLSSecurityProfile{
+				Type: configv1.TLSProfileCustomType,
+				Custom: &configv1.CustomTLSProfile{
+					TLSProfileSpec: configv1.TLSProfileSpec{
+						Ciphers: []string{
+							"ECDHE-ECDSA-AES256-GCM-SHA384",
+							"ECDHE-RSA-AES256-GCM-SHA384",
+							"DHE-RSA-AES256-GCM-SHA384",
+						},
+						MinTLSVersion: configv1.VersionTLS12,
+					},
+				},
+			},
+			expectedCiphers:      "ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-GCM-SHA384",
+			expectedCiphersuites: "",
+			expectedMinTLS:       "TLSv1.2",
+			expectedMaxTLS:       "TLSv1.2",
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ic.Spec.TLSSecurityProfile = tc.tlsSecurityProfile
+			deployment, err := desiredRouterDeployment(ic, &Config{IngressControllerImage: ingressControllerImage}, ingressConfig, infraConfig, apiConfig, networkConfig, false, false, nil, clusterProxyConfig)
+			if err != nil {
+				t.Fatal(err)
+			}
+			expectedEnv := []envData{
+				{"ROUTER_CIPHERS", true, tc.expectedCiphers},
+				{"ROUTER_CIPHERSUITES", len(tc.expectedCiphersuites) != 0, tc.expectedCiphersuites},
+				{"SSL_MIN_VERSION", true, tc.expectedMinTLS},
+				{"SSL_MAX_VERSION", true, tc.expectedMaxTLS},
+			}
+			if err := checkDeploymentEnvironment(t, deployment, expectedEnv); err != nil {
+				t.Error(err)
+			}
+		})
+	}
 }
 
 // Test_IdleConnectionTerminationPolicy validates that the ingress
