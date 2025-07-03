@@ -68,6 +68,11 @@ const (
 	// gatewayclass that Istio creates when it is installed.
 	OpenShiftDefaultGatewayClassName = "openshift-default"
 
+	// OpenShiftGatewayCARootCertName is the name of the configmap with the
+	// CA bundle that Istio creates for the Istio CR that this operator
+	// creates.
+	OpenShiftGatewayCARootCertName = "openshift-gw-ca-root-cert"
+
 	// IstioRevLabelKey is the key for the gateway label that Istio checks
 	// for to determine whether it should reconcile that gateway.
 	IstioRevLabelKey = "istio.io/rev"
