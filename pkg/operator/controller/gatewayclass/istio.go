@@ -109,6 +109,9 @@ func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference) *sa
 			},
 			Values: &sailv1.Values{
 				Global: &sailv1.GlobalConfig{
+					DefaultPodDisruptionBudget: &sailv1.DefaultPodDisruptionBudgetConfig{
+						Enabled: ptr.To(false),
+					},
 					IstioNamespace:    ptr.To(controller.DefaultOperandNamespace),
 					PriorityClassName: ptr.To(systemClusterCriticalPriorityClassName),
 				},
