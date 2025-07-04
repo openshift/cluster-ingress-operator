@@ -520,6 +520,32 @@ func probe(timeout, period, success, failure int) *corev1.Probe {
 	}
 }
 
+// updateRouteWithRetryOnConflict gets a fresh copy of the named route,
+// calls mutateRouteFn() where callers can modify fields of the route,
+// and then updates the route object. If there is a conflict error
+// on update then the complete sequence of get, mutate, and update
+// is retried until timeout is reached.
+func updateRouteWithRetryOnConflict(t *testing.T, name types.NamespacedName, timeout time.Duration, mutateRouteFn func(route *routev1.Route)) error {
+	t.Helper()
+	route := &routev1.Route{}
+	return wait.PollUntilContextTimeout(context.Background(), 1*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, name, route); err != nil {
+			t.Logf("error getting route %v: %v, retrying...", name, err)
+			return false, nil
+		}
+		mutateRouteFn(route)
+		if err := kclient.Update(ctx, route); err != nil {
+			if errors.IsConflict(err) {
+				t.Logf("conflict when updating route %v: %v, retrying...", name, err)
+				return false, nil
+			}
+			t.Logf("error updating route %v: %v, retrying...", name, err)
+			return false, nil
+		}
+		return true, nil
+	})
+}
+
 // updateIngressControllerSpecWithRetryOnConflict gets a fresh copy of
 // the named ingresscontroller, calls mutateSpecFn() where callers can
 // modify fields of the spec, and then updates the ingresscontroller
@@ -938,4 +964,36 @@ func createNamespace(t *testing.T, name string) *corev1.Namespace {
 	}
 
 	return ns
+}
+
+// getIngressControllerLBAddress waits for and returns the address (hostname or IP) for an
+// IngressController's load-balancer type service. It will call t.Fatal if the address is never found.
+func getIngressControllerLBAddress(t *testing.T, ic *operatorv1.IngressController) string {
+	t.Helper()
+	var lbAddress string
+	err := wait.PollUntilContextTimeout(context.Background(), 5*time.Second, 10*time.Minute, false, func(ctx context.Context) (bool, error) {
+		lbServiceName := controller.LoadBalancerServiceName(ic)
+		lbService := &corev1.Service{}
+		if err := kclient.Get(ctx, lbServiceName, lbService); err != nil {
+			t.Logf("failed to get service %q: %v...retrying", lbServiceName, err)
+			return false, nil
+		}
+
+		if len(lbService.Status.LoadBalancer.Ingress) == 0 {
+			t.Logf("load balancer address doesn't exist for service %q...retrying", lbServiceName)
+			return false, nil
+		}
+		ingress := lbService.Status.LoadBalancer.Ingress[0]
+		if len(ingress.Hostname) > 0 {
+			lbAddress = ingress.Hostname
+		} else {
+			lbAddress = ingress.IP
+		}
+
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("error getting IngressController's service address: %v", err)
+	}
+	return lbAddress
 }
