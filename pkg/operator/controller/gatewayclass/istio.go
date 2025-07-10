@@ -151,7 +151,7 @@ func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference) *sa
 					IngressControllerMode: sailv1.MeshConfigIngressControllerModeOff,
 				},
 			},
-			Version: "v1.24.3",
+			Version: "v1.24.4",
 		},
 	}
 }
