@@ -180,6 +180,7 @@ rules:
   resources:
   - subscriptions
   - installplans
+  - clusterserviceversions
   verbs:
   - '*'
 
