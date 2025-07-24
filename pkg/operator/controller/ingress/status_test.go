@@ -953,20 +953,6 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 			expectStatus:      operatorv1.ConditionFalse,
 		},
 		{
-			name: "NLB LoadBalancerService, AWS Subnets spec with names and nil status, but feature gate disabled",
-			ic: loadBalancerIngressControllerWithAWSSubnets(
-				operatorv1.AWSNetworkLoadBalancer,
-				&operatorv1.AWSSubnets{
-					Names: []operatorv1.AWSSubnetName{"name-12345"},
-				},
-				nil,
-			),
-			service:           &corev1.Service{},
-			awsSubnetsEnabled: false,
-			platformStatus:    awsPlatformStatus,
-			expectStatus:      operatorv1.ConditionFalse,
-		},
-		{
 			name: "NLB LoadBalancerService, AWS Subnets spec with names and nil status",
 			ic: loadBalancerIngressControllerWithAWSSubnets(
 				operatorv1.AWSNetworkLoadBalancer,
@@ -1292,7 +1278,7 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			actual := computeLoadBalancerProgressingStatus(test.ic, test.service, test.platformStatus, test.awsSubnetsEnabled, test.awsEIPAllocationsEnabled)
+			actual := computeLoadBalancerProgressingStatus(test.ic, test.service, test.platformStatus, test.awsEIPAllocationsEnabled)
 			if actual.Status != test.expectStatus {
 				t.Errorf("expected status to be %s, got %s", test.expectStatus, actual.Status)
 			}
@@ -3175,7 +3161,7 @@ func Test_computeIngressUpgradeableCondition(t *testing.T) {
 					},
 				},
 			}
-			wantSvc, service, err := desiredLoadBalancerService(ic, deploymentRef, platformStatus, true, true)
+			wantSvc, service, err := desiredLoadBalancerService(ic, deploymentRef, platformStatus, true)
 			if err != nil {
 				t.Errorf("unexpected error from desiredLoadBalancerService: %v", err)
 				return
@@ -3197,7 +3183,7 @@ func Test_computeIngressUpgradeableCondition(t *testing.T) {
 				expectedStatus = operatorv1.ConditionTrue
 			}
 
-			actual := computeIngressUpgradeableCondition(ic, deploymentRef, service, platformStatus, secret, true, true)
+			actual := computeIngressUpgradeableCondition(ic, deploymentRef, service, platformStatus, secret, true)
 			if actual.Status != expectedStatus {
 				t.Errorf("expected Upgradeable to be %q, got %q", expectedStatus, actual.Status)
 			}
@@ -3285,7 +3271,7 @@ func Test_computeIngressEvaluationConditionsDetectedCondition(t *testing.T) {
 				},
 			}
 
-			wantSvc, service, err := desiredLoadBalancerService(ic, deploymentRef, platformStatus, true, true)
+			wantSvc, service, err := desiredLoadBalancerService(ic, deploymentRef, platformStatus, true)
 			if err != nil {
 				t.Fatalf("unexpected error from desiredLoadBalancerService: %v", err)
 			}
