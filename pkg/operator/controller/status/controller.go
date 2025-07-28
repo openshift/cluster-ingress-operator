@@ -100,6 +100,9 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	isIngressClusterOperator := func(o client.Object) bool {
 		return o.GetName() == operatorcontroller.IngressClusterOperatorName().Name
 	}
+	isOpenshiftOperatorNamespace := func(o client.Object) bool {
+		return o.GetNamespace() == operatorcontroller.OpenshiftOperatorNamespace
+	}
 	toDefaultIngressController := func(ctx context.Context, _ client.Object) []reconcile.Request {
 		return []reconcile.Request{{
 			NamespacedName: types.NamespacedName{
@@ -129,13 +132,13 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 				return e.Object.GetNamespace() == operatorcontroller.OpenshiftOperatorNamespace
 			},
 			UpdateFunc: func(e event.UpdateEvent) bool {
-				return false
+				return e.ObjectNew.GetNamespace() == operatorcontroller.OpenshiftOperatorNamespace
 			},
 			DeleteFunc: func(e event.DeleteEvent) bool {
 				return e.Object.GetNamespace() == operatorcontroller.OpenshiftOperatorNamespace
 			},
 			GenericFunc: func(e event.GenericEvent) bool {
-				return false
+				return e.Object.GetNamespace() == operatorcontroller.OpenshiftOperatorNamespace
 			},
 		})); err != nil {
 			return nil, err
@@ -154,6 +157,9 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 				return false
 			},
 		})); err != nil {
+			return nil, err
+		}
+		if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorsv1alpha1.ClusterServiceVersion{}, handler.EnqueueRequestsFromMapFunc(toDefaultIngressController), predicate.NewPredicateFuncs(isOpenshiftOperatorNamespace))); err != nil {
 			return nil, err
 		}
 	}
@@ -295,13 +301,11 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	co.Status.Conditions = mergeConditions(co.Status.Conditions,
 		computeOperatorAvailableCondition(state.IngressControllers),
 		computeOperatorProgressingCondition(
-			state.IngressControllers,
+			state,
+			r.config,
 			allIngressesAvailable,
 			oldStatus.Versions,
 			co.Status.Versions,
-			r.config.OperatorReleaseVersion,
-			r.config.IngressControllerImage,
-			r.config.CanaryImage,
 		),
 		computeOperatorDegradedCondition(state),
 		computeOperatorUpgradeableCondition(state.IngressControllers),
@@ -366,6 +370,18 @@ type operatorState struct {
 	// haveGatewayclassesResource means that the
 	// "gatewayclasses.gateway.networking.k8s.io" CRD exists.
 	haveGatewayclassesResource bool
+	// desiredOSSMVersion contains the desired OSSM operator
+	// as recorded in the subscription.
+	desiredOSSMVersion string
+	// installedOSSMVersion contains the currently installed
+	// version of the OSSM operator.
+	installedOSSMVersion string
+	// currentOSSMVersion contains the OSSM operator version
+	// which is currently being installed or the next in the upgrade graph.
+	currentOSSMVersion string
+	// installedOSSMVersionSucceeded means that the installed OSSM operator
+	// version succeeded.
+	installedOSSMVersionSucceeded bool
 }
 
 // getOperatorState gets and returns the resources necessary to compute the
@@ -417,6 +433,27 @@ func (r *reconciler) getOperatorState(ctx context.Context, ingressNamespace, can
 			} else {
 				state.haveOSSMSubscription = true
 
+				// To compute the OSSM operator's progressing status,
+				// we need to inspect the CSV level to determine whether
+				// the installedCSV of the subscription succeeded.
+				var installedCSV operatorsv1alpha1.ClusterServiceVersion
+				installedCSVName := types.NamespacedName{
+					Name:      subscription.Status.InstalledCSV,
+					Namespace: operatorcontroller.OpenshiftOperatorNamespace,
+				}
+				if err := r.cache.Get(ctx, installedCSVName, &installedCSV); err != nil {
+					if !errors.IsNotFound(err) {
+						return state, fmt.Errorf("failed to get installed CSV %q: %v", installedCSVName.Name, err)
+					}
+				} else {
+					state.installedOSSMVersionSucceeded = (installedCSV.Status.Phase == operatorsv1alpha1.CSVPhaseSucceeded)
+				}
+				// StartingCSV is set by the gatewayclass controller to record
+				// the desired operator version, even if this field is noop for OLM
+				// after the operator was installed.
+				state.desiredOSSMVersion = subscription.Spec.StartingCSV
+				state.installedOSSMVersion = subscription.Status.InstalledCSV
+				state.currentOSSMVersion = subscription.Status.CurrentCSV
 			}
 
 			var (
@@ -648,7 +685,19 @@ func computeOperatorEvaluationConditionsDetectedCondition(ingresses []operatorv1
 }
 
 // computeOperatorProgressingCondition computes the operator's current Progressing status state.
-func computeOperatorProgressingCondition(ingresscontrollers []operatorv1.IngressController, allIngressesAvailable bool, oldVersions, curVersions []configv1.OperandVersion, operatorReleaseVersion, ingressControllerImage string, canaryImage string) configv1.ClusterOperatorStatusCondition {
+func computeOperatorProgressingCondition(state operatorState, config Config, allIngressesAvailable bool, oldVersions, curVersions []configv1.OperandVersion) configv1.ClusterOperatorStatusCondition {
+	progressingCondition := configv1.ClusterOperatorStatusCondition{
+		Type: configv1.OperatorProgressing,
+	}
+
+	icCondition := computeIngressControllersProgressingCondition(state.IngressControllers, allIngressesAvailable, oldVersions, curVersions, config.OperatorReleaseVersion, config.IngressControllerImage, config.CanaryImage)
+	ossmCondition := computeOSSMOperatorProgressingCondition(state)
+
+	return joinConditions(joinConditions(progressingCondition, icCondition), ossmCondition)
+}
+
+// computeIngressControllersProgressingCondition computes the IngressControllers' current Progressing status state.
+func computeIngressControllersProgressingCondition(ingresscontrollers []operatorv1.IngressController, allIngressesAvailable bool, oldVersions, curVersions []configv1.OperandVersion, operatorReleaseVersion, ingressControllerImage string, canaryImage string) configv1.ClusterOperatorStatusCondition {
 	progressingCondition := configv1.ClusterOperatorStatusCondition{
 		Type: configv1.OperatorProgressing,
 	}
@@ -710,6 +759,51 @@ func computeOperatorProgressingCondition(ingresscontrollers []operatorv1.Ingress
 	progressingCondition.Message = ingressesEqualConditionMessage
 	if len(messages) > 0 {
 		progressingCondition.Message = strings.Join(messages, "\n")
+	}
+
+	return progressingCondition
+}
+
+// computeOSSMOperatorProgressingCondition computes the OSSM operator's current Progressing status state.
+func computeOSSMOperatorProgressingCondition(state operatorState) configv1.ClusterOperatorStatusCondition {
+	progressingCondition := configv1.ClusterOperatorStatusCondition{}
+
+	// Skip updating the progressing status if OSSM operator subscription doesn't exist.
+	if !state.haveOSSMSubscription {
+		return progressingCondition
+	}
+
+	progressing := false
+
+	// Set the progressing to true if the desired version is different
+	// from the currently installed.
+	if state.desiredOSSMVersion != state.installedOSSMVersion {
+		// Note that the progressing state remains "true" if the desired version is
+		// beyond the latest available in the upgrade graph.
+		// There is no reliable way of knowing that the end of the upgrade graph
+		// is reached and no next version is available. None of OLM resources
+		// can provide such information.
+		progressing = true
+	} else {
+		// The desired version was reached. However the CSV may still be
+		// in "Replacing" or "Installing" state, stop setting progressing
+		// when the installed CSV succeeded.
+		if !state.installedOSSMVersionSucceeded {
+			progressing = true
+		}
+	}
+
+	if progressing {
+		progressingCondition.Status = configv1.ConditionTrue
+		progressingCondition.Reason = "OSSMOperatorUpgrading"
+		progressingCondition.Message = fmt.Sprintf("OSSM operator is upgrading to version %q", state.desiredOSSMVersion)
+		if len(state.installedOSSMVersion) > 0 && len(state.currentOSSMVersion) > 0 {
+			progressingCondition.Message += fmt.Sprintf(" (installed(-ing):%q,next:%q)", state.installedOSSMVersion, state.currentOSSMVersion)
+		}
+	} else {
+		progressingCondition.Status = configv1.ConditionFalse
+		progressingCondition.Reason = "OSSMOperatorUpToDate"
+		progressingCondition.Message = fmt.Sprintf("OSSM operator is running the expected version %q", state.desiredOSSMVersion)
 	}
 
 	return progressingCondition
@@ -825,7 +919,7 @@ func operatorStatusesEqual(a, b configv1.ClusterOperatorStatus) bool {
 
 // joinConditions merges two cluster operator conditions into one.
 // If both conditions have the same status:
-// - Reason becomes: "MultipleComponents[Not]" + condType.
+// - Reasons are concatenated using "And" as a delimiter.
 // - Messages are concatenated.
 // If the new condition has a higher-priority status, it overrides the current one.
 // Status priority (highest to lowest): True, Unknown, False, empty.
