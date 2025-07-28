@@ -124,7 +124,6 @@ func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference) *sa
 					},
 					IstioNamespace:    ptr.To(controller.DefaultOperandNamespace),
 					PriorityClassName: ptr.To(systemClusterCriticalPriorityClassName),
-					TrustBundleName:   ptr.To(controller.OpenShiftGatewayCARootCertName),
 				},
 				Pilot: &sailv1.PilotConfig{
 					Cni: &sailv1.CNIUsageConfig{
