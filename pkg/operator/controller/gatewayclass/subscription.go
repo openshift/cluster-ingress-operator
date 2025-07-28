@@ -272,7 +272,6 @@ func (r *reconciler) currentInstallPlan(ctx context.Context, version string) (bo
 	// but the next one in the upgrade graph exists.
 	// Return the next InstallPlan to continue the upgrade.
 	if currentInstallPlan == nil && nextInstallPlan != nil {
-		log.Info("next install plan time")
 		// The condition below prevents approving an InstallPlan
 		// that targets a version beyond the expected operator version.
 		// This can happen when:
