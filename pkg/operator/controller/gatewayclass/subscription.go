@@ -34,14 +34,14 @@ const (
 // ensureServiceMeshOperatorSubscription attempts to ensure that a subscription
 // for servicemeshoperator is present and returns a Boolean indicating whether
 // it exists, the subscription if it exists, and an error value.
-func (r *reconciler) ensureServiceMeshOperatorSubscription(ctx context.Context) (bool, *operatorsv1alpha1.Subscription, error) {
+func (r *reconciler) ensureServiceMeshOperatorSubscription(ctx context.Context, catalog, channel, version string) (bool, *operatorsv1alpha1.Subscription, error) {
 	name := operatorcontroller.ServiceMeshOperatorSubscriptionName()
 	have, current, err := r.currentSubscription(ctx, name)
 	if err != nil {
 		return false, nil, err
 	}
 
-	desired, err := desiredSubscription(name, r.config.GatewayAPIOperatorCatalog, r.config.GatewayAPIOperatorChannel, r.config.GatewayAPIOperatorVersion)
+	desired, err := desiredSubscription(name, catalog, channel, version)
 	if err != nil {
 		return have, current, err
 	}
@@ -154,8 +154,8 @@ func subscriptionChanged(current, expected *operatorsv1alpha1.Subscription) (boo
 
 // ensureServiceMeshOperatorInstallPlan attempts to ensure that the install plan for the appropriate OSSM operator
 // version is approved.
-func (r *reconciler) ensureServiceMeshOperatorInstallPlan(ctx context.Context) (bool, *operatorsv1alpha1.InstallPlan, error) {
-	haveInstallPlan, current, err := r.currentInstallPlan(ctx)
+func (r *reconciler) ensureServiceMeshOperatorInstallPlan(ctx context.Context, version string) (bool, *operatorsv1alpha1.InstallPlan, error) {
+	haveInstallPlan, current, err := r.currentInstallPlan(ctx, version)
 	if err != nil {
 		return false, nil, err
 	}
@@ -169,7 +169,7 @@ func (r *reconciler) ensureServiceMeshOperatorInstallPlan(ctx context.Context) (
 		if updated, err := r.updateInstallPlan(ctx, current, desired); err != nil {
 			return true, current, err
 		} else if updated {
-			return r.currentInstallPlan(ctx)
+			return r.currentInstallPlan(ctx, version)
 		}
 	}
 	return false, current, nil
@@ -177,7 +177,7 @@ func (r *reconciler) ensureServiceMeshOperatorInstallPlan(ctx context.Context) (
 
 // currentInstallPlan returns the InstallPlan that describes installing the expected version of the GatewayAPI
 // implementation, if one exists.
-func (r *reconciler) currentInstallPlan(ctx context.Context) (bool, *operatorsv1alpha1.InstallPlan, error) {
+func (r *reconciler) currentInstallPlan(ctx context.Context, version string) (bool, *operatorsv1alpha1.InstallPlan, error) {
 	_, subscription, err := r.currentSubscription(ctx, operatorcontroller.ServiceMeshOperatorSubscriptionName())
 	if err != nil {
 		return false, nil, err
@@ -210,7 +210,7 @@ func (r *reconciler) currentInstallPlan(ctx context.Context) (bool, *operatorsv1
 			continue
 		}
 		for _, csvName := range installPlan.Spec.ClusterServiceVersionNames {
-			if csvName == r.config.GatewayAPIOperatorVersion {
+			if csvName == version {
 				// Keep the newest InstallPlan to return at the end of the loop.
 				if currentInstallPlan == nil {
 					currentInstallPlan = &installPlan

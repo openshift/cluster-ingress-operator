@@ -212,6 +212,55 @@ func Test_Reconcile(t *testing.T) {
 			expectUpdate: []client.Object{},
 			expectDelete: []client.Object{},
 		},
+		{
+			name:    "Gatewayclass with Istio version override",
+			request: req("openshift-default"),
+			existingObjects: []runtime.Object{
+				&gatewayapiv1.GatewayClass{
+					ObjectMeta: metav1.ObjectMeta{
+						Annotations: map[string]string{
+							"unsupported.do-not-use.openshift.io/istio-version": "v1.24-latest",
+						},
+						Name: "openshift-default",
+					},
+					Spec: gatewayapiv1.GatewayClassSpec{
+						ControllerName: gatewayapiv1.GatewayController("openshift.io/gateway-controller/v1"),
+					},
+				},
+			},
+			expectCreate: []client.Object{
+				subscription("redhat-operators", "stable", "servicemeshoperator3.v3.0.1"),
+				istio("v1.24-latest", false),
+			},
+			expectUpdate: []client.Object{},
+			expectDelete: []client.Object{},
+		},
+		{
+			name:    "Gatewayclass with OSSM and Istio overrides",
+			request: req("openshift-default"),
+			existingObjects: []runtime.Object{
+				&gatewayapiv1.GatewayClass{
+					ObjectMeta: metav1.ObjectMeta{
+						Annotations: map[string]string{
+							"unsupported.do-not-use.openshift.io/ossm-catalog":  "foo",
+							"unsupported.do-not-use.openshift.io/ossm-channel":  "bar",
+							"unsupported.do-not-use.openshift.io/ossm-version":  "baz",
+							"unsupported.do-not-use.openshift.io/istio-version": "quux",
+						},
+						Name: "openshift-default",
+					},
+					Spec: gatewayapiv1.GatewayClassSpec{
+						ControllerName: gatewayapiv1.GatewayController("openshift.io/gateway-controller/v1"),
+					},
+				},
+			},
+			expectCreate: []client.Object{
+				subscription("foo", "bar", "baz"),
+				istio("quux", false),
+			},
+			expectUpdate: []client.Object{},
+			expectDelete: []client.Object{},
+		},
 	}
 
 	scheme := runtime.NewScheme()
