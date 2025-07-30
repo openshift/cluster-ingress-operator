@@ -1,13 +1,16 @@
 package status
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
+	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -793,7 +796,105 @@ func Test_computeOperatorDegradedCondition(t *testing.T) {
 				Type:    configv1.OperatorDegraded,
 				Status:  configv1.ConditionTrue,
 				Reason:  "IngressDegradedAndGatewayAPICRDsDegraded",
-				Message: `The "default" ingress controller reports Degraded=True: dummy: dummy.Unmanaged Gateway API CRDs found: listenersets.gateway.networking.x-k8s.io.`,
+				Message: `The "default" ingress controller reports Degraded=True: dummy: dummy.` + "\n" + `Unmanaged Gateway API CRDs found: listenersets.gateway.networking.x-k8s.io.`,
+			},
+		},
+		{
+			description: "Gateway API Enabled",
+			state: operatorState{
+				IngressControllers: []operatorv1.IngressController{
+					icWithStatus("default", false),
+				},
+				ossmSubscriptions: []operatorsv1alpha1.Subscription{
+					sub("servicemeshoperator3", "servicemeshoperator3", "servicemeshoperator3.v3.1.0", true),
+				},
+				shouldInstallOSSM:                 true,
+				expectedGatewayAPIOperatorVersion: "servicemeshoperator3.v3.1.0",
+			},
+			expectCondition: configv1.ClusterOperatorStatusCondition{
+				Type:    configv1.OperatorDegraded,
+				Status:  configv1.ConditionFalse,
+				Reason:  "IngressNotDegraded",
+				Message: "The \"default\" ingress controller reports Degraded=False.",
+			},
+		},
+		{
+			description: "Gateway API Enabled, Sail Operator present",
+			state: operatorState{
+				IngressControllers: []operatorv1.IngressController{
+					icWithStatus("default", false),
+				},
+				ossmSubscriptions: []operatorsv1alpha1.Subscription{
+					sub("servicemeshoperator3", "servicemeshoperator3", "servicemeshoperator3.v3.1.0", true),
+					sub("sailoperator", "sailoperator", "sailoperator.v1.0.0", false),
+				},
+				shouldInstallOSSM:                 true,
+				expectedGatewayAPIOperatorVersion: "servicemeshoperator3.v3.1.0",
+			},
+			expectCondition: configv1.ClusterOperatorStatusCondition{
+				Type:    configv1.OperatorDegraded,
+				Status:  configv1.ConditionTrue,
+				Reason:  "GatewayAPIInstallConflict",
+				Message: "Package sailoperator from subscription foo/sailoperator prevents enabling operator-managed Gateway API. Uninstall foo/sailoperator to enable functionality.",
+			},
+		},
+		{
+			description: "Gateway API Enabled, Sail Operator present, older OSSM3 present",
+			state: operatorState{
+				IngressControllers: []operatorv1.IngressController{
+					icWithStatus("default", false),
+				},
+				ossmSubscriptions: []operatorsv1alpha1.Subscription{
+					sub("servicemeshoperator3", "servicemeshoperator3", "", true),
+					sub("servicemeshoperator3", "servicemeshoperator3", "servicemeshoperator3.v3.0.0", false),
+					sub("sailoperator", "sailoperator", "", false),
+				},
+				shouldInstallOSSM:                 true,
+				expectedGatewayAPIOperatorVersion: "servicemeshoperator3.v3.1.0",
+			},
+			expectCondition: configv1.ClusterOperatorStatusCondition{
+				Type:    configv1.OperatorDegraded,
+				Status:  configv1.ConditionTrue,
+				Reason:  "GatewayAPIInstallConflict",
+				Message: "Installed version servicemeshoperator3.v3.0.0 does not support operator-managed Gateway API. Install version servicemeshoperator3.v3.1.0 or uninstall foo/servicemeshoperator3 to enable functionality.\nPackage sailoperator from subscription foo/sailoperator prevents enabling operator-managed Gateway API. Uninstall foo/sailoperator to enable functionality.",
+			},
+		},
+		{
+			description: "Gateway API Enabled, newer OSSM3 present",
+			state: operatorState{
+				IngressControllers: []operatorv1.IngressController{
+					icWithStatus("default", false),
+				},
+				ossmSubscriptions: []operatorsv1alpha1.Subscription{
+					sub("servicemeshoperator3", "servicemeshoperator3", "servicemeshoperator3.v3.5.0", false),
+				},
+				shouldInstallOSSM:                 true,
+				expectedGatewayAPIOperatorVersion: "servicemeshoperator3.v3.1.0",
+			},
+			expectCondition: configv1.ClusterOperatorStatusCondition{
+				Type:    configv1.OperatorDegraded,
+				Status:  configv1.ConditionFalse,
+				Reason:  "IngressNotDegradedAndGatewayAPIInstallWarnings",
+				Message: "The \"default\" ingress controller reports Degraded=False.\nFound version servicemeshoperator3.v3.5.0, but operator-managed Gateway API expects version servicemeshoperator3.v3.1.0. Operator-managed Gateway API may not work as intended.",
+			},
+		},
+		{
+			description: "Gateway API Enabled, OSSM3 present with unexpected version number",
+			state: operatorState{
+				IngressControllers: []operatorv1.IngressController{
+					icWithStatus("default", false),
+				},
+				ossmSubscriptions: []operatorsv1alpha1.Subscription{
+					sub("servicemeshoperator3", "servicemeshoperator3", "servicemeshoperator3.v3.5-beta", false),
+				},
+				shouldInstallOSSM:                 true,
+				expectedGatewayAPIOperatorVersion: "servicemeshoperator3.v3.1.0",
+			},
+			expectCondition: configv1.ClusterOperatorStatusCondition{
+				Type:    configv1.OperatorDegraded,
+				Status:  configv1.ConditionFalse,
+				Reason:  "IngressNotDegradedAndGatewayAPIInstallWarnings",
+				Message: "The \"default\" ingress controller reports Degraded=False.\nfailed to compare installed OSSM version to expected: \"servicemeshoperator3.v3.5-beta\" does not match expected format",
 			},
 		},
 	}
@@ -803,6 +904,103 @@ func Test_computeOperatorDegradedCondition(t *testing.T) {
 			actual := computeOperatorDegradedCondition(tc.state)
 			if diff := cmp.Diff(actual, tc.expectCondition); diff != "" {
 				t.Fatalf("actual condition differs from expected: %v", diff)
+			}
+		})
+	}
+}
+
+func sub(name, pack, version string, cioOwned bool) operatorsv1alpha1.Subscription {
+	subscription := operatorsv1alpha1.Subscription{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: "foo",
+		},
+		Spec: &operatorsv1alpha1.SubscriptionSpec{
+			Package: pack,
+		},
+		Status: operatorsv1alpha1.SubscriptionStatus{
+			InstalledCSV: version,
+		},
+	}
+	if cioOwned {
+		subscription.Annotations = map[string]string{
+			operatorcontroller.IngressOperatorOwnedAnnotation: "",
+		}
+	}
+	return subscription
+}
+
+func Test_compareVersionNums(t *testing.T) {
+	testCases := []struct {
+		a              string
+		b              string
+		expectedErr    error
+		expectedResult int
+	}{
+		{
+			// Same version
+			a:              "foo.v1.2.3",
+			b:              "foo.v1.2.3",
+			expectedErr:    nil,
+			expectedResult: 0,
+		},
+		{
+			// Differs in X
+			a:              "foo.v1.2.3",
+			b:              "foo.v2.0.0",
+			expectedErr:    nil,
+			expectedResult: 1,
+		},
+		{
+			// Differs in Y
+			a:              "foo.v1.5.3",
+			b:              "foo.v1.2.3",
+			expectedErr:    nil,
+			expectedResult: -3,
+		},
+		{
+			// Differs in Z; Includes number in package name that shouldn't be considered part of the version number
+			a:              "foo7.v1.5.3",
+			b:              "foo7.v1.5.9",
+			expectedErr:    nil,
+			expectedResult: 6,
+		},
+		{
+			// Differs in package name; expects error
+			a:              "foo.v1.5.3",
+			b:              "foobar.v1.2.3",
+			expectedErr:    fmt.Errorf(`"foo.v1.5.3" and "foobar.v1.2.3" are different packages. cannot compare version numbers`),
+			expectedResult: 0,
+		},
+		{
+			// 'b' contains too many version numbers
+			a:              "foo.v1.5.3",
+			b:              "foobar.v1.2.3.7",
+			expectedErr:    fmt.Errorf(`"foobar.v1.2.3.7" does not match expected format`),
+			expectedResult: 0,
+		},
+		{
+			// 'a' contains too few version numbers
+			a:              "foo.v1.5",
+			b:              "foobar.v1.2.3",
+			expectedErr:    fmt.Errorf(`"foo.v1.5" does not match expected format`),
+			expectedResult: 0,
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(fmt.Sprintf("%q<>%q", tc.a, tc.b), func(t *testing.T) {
+			result, err := compareVersionNums(tc.a, tc.b)
+			if tc.expectedErr != nil {
+				if diff := cmp.Diff(err.Error(), tc.expectedErr.Error()); diff != "" {
+					t.Fatalf("actual error differs from expected: %v", diff)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if result != tc.expectedResult {
+					t.Fatalf("actual result %d differs from expected result %d", result, tc.expectedResult)
+				}
 			}
 		})
 	}
