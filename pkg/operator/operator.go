@@ -180,7 +180,6 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	if err != nil {
 		return nil, fmt.Errorf("failed to create operator manager: %v", err)
 	}
-
 	// Create and register the ingress controller with the operator manager.
 	if _, err := ingresscontroller.New(mgr, ingresscontroller.Config{
 		Namespace:                                 config.Namespace,
@@ -227,6 +226,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		GatewayAPIControllerEnabled:     gatewayAPIControllerEnabled,
 		MarketplaceEnabled:              marketplaceEnabled,
 		OperatorLifecycleManagerEnabled: olmEnabled,
+		GatewayAPIOperatorVersion:       config.GatewayAPIOperatorVersion,
 	}); err != nil {
 		return nil, fmt.Errorf("failed to create status controller: %v", err)
 	}
