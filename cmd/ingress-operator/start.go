@@ -35,6 +35,7 @@ const (
 	defaultTrustedCABundle           = "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem"
 	defaultGatewayAPIOperatorChannel = "stable"
 	defaultGatewayAPIOperatorVersion = "servicemeshoperator3.v3.0.1"
+	defaultIstioVersion              = "v1.24.4"
 )
 
 type StartOptions struct {
@@ -57,6 +58,8 @@ type StartOptions struct {
 	GatewayAPIOperatorChannel string
 	// GatewayAPIOperatorVersion is the name and release of the Gateway API implementation to install.
 	GatewayAPIOperatorVersion string
+	// IstioVersion is the version Istio to install.
+	IstioVersion string
 }
 
 func NewStartCommand() *cobra.Command {
@@ -82,6 +85,7 @@ func NewStartCommand() *cobra.Command {
 	cmd.Flags().StringVarP(&options.ShutdownFile, "shutdown-file", "s", defaultTrustedCABundle, "if provided, shut down the operator when this file changes")
 	cmd.Flags().StringVarP(&options.GatewayAPIOperatorChannel, "gateway-api-operator-channel", "", defaultGatewayAPIOperatorChannel, "release channel of the Gateway API implementation to install")
 	cmd.Flags().StringVarP(&options.GatewayAPIOperatorVersion, "gateway-api-operator-version", "", defaultGatewayAPIOperatorVersion, "name and release of the Gateway API implementation to install")
+	cmd.Flags().StringVarP(&options.IstioVersion, "istio-version", "", defaultIstioVersion, "version Istio to install")
 
 	if err := cmd.MarkFlagRequired("namespace"); err != nil {
 		panic(err)
@@ -132,6 +136,7 @@ func start(opts *StartOptions) error {
 		CanaryImage:               opts.CanaryImage,
 		GatewayAPIOperatorChannel: opts.GatewayAPIOperatorChannel,
 		GatewayAPIOperatorVersion: opts.GatewayAPIOperatorVersion,
+		IstioVersion:              opts.IstioVersion,
 	}
 
 	// Start operator metrics.

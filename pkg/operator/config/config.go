@@ -21,5 +21,8 @@ type Config struct {
 	// GatewayAPIOperatorVersion is the name and release of the Gateway API implementation to install.
 	GatewayAPIOperatorVersion string
 
+	// IstioVersion is the version of Istio to install.
+	IstioVersion string
+
 	Stop chan struct{}
 }
