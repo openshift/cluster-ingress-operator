@@ -41,7 +41,7 @@ func (r *reconciler) ensureServiceMeshOperatorSubscription(ctx context.Context) 
 		return false, nil, err
 	}
 
-	desired, err := desiredSubscription(name, r.config.GatewayAPIOperatorChannel, r.config.GatewayAPIOperatorVersion)
+	desired, err := desiredSubscription(name, r.config.GatewayAPIOperatorCatalog, r.config.GatewayAPIOperatorChannel, r.config.GatewayAPIOperatorVersion)
 	if err != nil {
 		return have, current, err
 	}
@@ -63,7 +63,7 @@ func (r *reconciler) ensureServiceMeshOperatorSubscription(ctx context.Context) 
 }
 
 // desiredSubscription returns the desired subscription.
-func desiredSubscription(name types.NamespacedName, gwapiOperatorChannel, gwapiOperatorVersion string) (*operatorsv1alpha1.Subscription, error) {
+func desiredSubscription(name types.NamespacedName, gwapiOperatorCatalog, gwapiOperatorChannel, gwapiOperatorVersion string) (*operatorsv1alpha1.Subscription, error) {
 	subscription := operatorsv1alpha1.Subscription{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: name.Namespace,
@@ -93,7 +93,7 @@ func desiredSubscription(name types.NamespacedName, gwapiOperatorChannel, gwapiO
 			},
 			InstallPlanApproval:    operatorsv1alpha1.ApprovalManual,
 			Package:                "servicemeshoperator3",
-			CatalogSource:          "redhat-operators",
+			CatalogSource:          gwapiOperatorCatalog,
 			CatalogSourceNamespace: "openshift-marketplace",
 			StartingCSV:            gwapiOperatorVersion,
 		},

@@ -247,6 +247,7 @@ func Test_Reconcile(t *testing.T) {
 				config: Config{
 					OperatorNamespace:         "openshift-ingress-operator",
 					OperandNamespace:          "openshift-ingress",
+					GatewayAPIOperatorCatalog: "redhat-operators",
 					GatewayAPIOperatorChannel: "stable",
 					GatewayAPIOperatorVersion: "servicemeshoperator3.v3.0.1",
 					IstioVersion:              "v1.24.4",

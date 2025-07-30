@@ -15,6 +15,9 @@ type Config struct {
 	// CanaryImage is the ingress operator image, which runs a canary command.
 	CanaryImage string
 
+	// GatewayAPIOperatorCatalog is the catalog source to use for the Gateway API implementation.
+	GatewayAPIOperatorCatalog string
+
 	// GatewayAPIOperatorChannel is the release channel of the Gateway API implementation to install.
 	GatewayAPIOperatorChannel string
 
