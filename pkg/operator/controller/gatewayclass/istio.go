@@ -12,6 +12,7 @@ import (
 
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -38,7 +39,13 @@ func (r *reconciler) ensureIstio(ctx context.Context, gatewayclass *gatewayapiv1
 		Name:       gatewayclass.Name,
 		UID:        gatewayclass.UID,
 	}
-	desired := desiredIstio(name, ownerRef)
+
+	enableInferenceExtension, err := r.inferencepoolCrdExists(ctx)
+	if err != nil {
+		return have, current, err
+	}
+
+	desired := desiredIstio(name, ownerRef, enableInferenceExtension)
 
 	switch {
 	case !have:
@@ -56,8 +63,40 @@ func (r *reconciler) ensureIstio(ctx context.Context, gatewayclass *gatewayapiv1
 	return true, current, nil
 }
 
+// inferencepoolCrdExists returns a Boolean value indicating whether the
+// InferencePool CRD exists under the inference.networking.k8s.io or
+// inference.networking.x-k8s.io API group.
+func (r *reconciler) inferencepoolCrdExists(ctx context.Context) (bool, error) {
+	if v, err := r.crdExists(ctx, inferencepoolCrdName); err != nil {
+		return false, err
+	} else if v {
+		return true, nil
+	}
+
+	if v, err := r.crdExists(ctx, inferencepoolExperimentalCrdName); err != nil {
+		return false, err
+	} else if v {
+		return true, nil
+	}
+
+	return false, nil
+}
+
+// crdExists returns a Boolean value indicating whether the named CRD exists.
+func (r *reconciler) crdExists(ctx context.Context, crdName string) (bool, error) {
+	namespacedName := types.NamespacedName{Name: crdName}
+	var crd apiextensionsv1.CustomResourceDefinition
+	if err := r.cache.Get(ctx, namespacedName, &crd); err != nil {
+		if errors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to get CRD %s: %w", crdName, err)
+	}
+	return true, nil
+}
+
 // desiredIstio returns the desired Istio CR.
-func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference) *sailv1.Istio {
+func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference, enableInferenceExtension bool) *sailv1.Istio {
 	pilotContainerEnv := map[string]string{
 		// Enable Gateway API.
 		"PILOT_ENABLE_GATEWAY_API": "true",
@@ -105,6 +144,9 @@ func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference) *sa
 		// to inject unsupported configuration, for example using
 		// service annotations.
 		"PILOT_ENABLE_GATEWAY_API_COPY_LABELS_ANNOTATIONS": "false",
+	}
+	if enableInferenceExtension {
+		pilotContainerEnv["ENABLE_GATEWAY_API_INFERENCE_EXTENSION"] = "true"
 	}
 	return &sailv1.Istio{
 		ObjectMeta: metav1.ObjectMeta{
