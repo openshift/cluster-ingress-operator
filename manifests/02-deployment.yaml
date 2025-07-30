@@ -64,6 +64,8 @@ spec:
           - "$(CANARY_IMAGE)"
           - --release-version
           - "$(RELEASE_VERSION)"
+          - --gateway-api-operator-catalog
+          - "$(GATEWAY_API_OPERATOR_CATALOG)"
           - --gateway-api-operator-channel
           - "$(GATEWAY_API_OPERATOR_CHANNEL)"
           - --gateway-api-operator-version
@@ -81,6 +83,8 @@ spec:
               value: openshift/origin-haproxy-router:v4.0
             - name: CANARY_IMAGE
               value: openshift/origin-cluster-ingress-operator:latest
+            - name: GATEWAY_API_OPERATOR_CATALOG
+              value: redhat-operators
             - name: GATEWAY_API_OPERATOR_CHANNEL
               value: stable
             - name: GATEWAY_API_OPERATOR_VERSION

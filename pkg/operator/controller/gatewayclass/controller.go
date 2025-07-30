@@ -126,6 +126,8 @@ type Config struct {
 	OperatorNamespace string
 	// OperandNamespace is the namespace in which Istio should be deployed.
 	OperandNamespace string
+	// GatewayAPIOperatorCatalog is the catalog source to use to install the Gateway API implementation.
+	GatewayAPIOperatorCatalog string
 	// GatewayAPIOperatorChannel is the release channel of the Gateway API implementation to install.
 	GatewayAPIOperatorChannel string
 	// GatewayAPIOperatorVersion is the name and release of the Gateway API implementation to install.
