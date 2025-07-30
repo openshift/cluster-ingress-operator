@@ -249,6 +249,7 @@ func Test_Reconcile(t *testing.T) {
 					OperandNamespace:          "openshift-ingress",
 					GatewayAPIOperatorChannel: "stable",
 					GatewayAPIOperatorVersion: "servicemeshoperator3.v3.0.1",
+					IstioVersion:              "v1.24.4",
 				},
 			}
 			res, err := reconciler.Reconcile(context.Background(), tc.request)

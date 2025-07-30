@@ -68,6 +68,8 @@ spec:
           - "$(GATEWAY_API_OPERATOR_CHANNEL)"
           - --gateway-api-operator-version
           - "$(GATEWAY_API_OPERATOR_VERSION)"
+          - --istio-version
+          - "$(ISTIO_VERSION)"
           env:
             - name: RELEASE_VERSION
               value: "0.0.1-snapshot"
@@ -83,6 +85,8 @@ spec:
               value: stable
             - name: GATEWAY_API_OPERATOR_VERSION
               value: servicemeshoperator3.v3.0.1
+            - name: ISTIO_VERSION
+              value: v1.24.4
           resources:
             requests:
               cpu: 10m
