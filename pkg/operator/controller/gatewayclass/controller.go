@@ -15,6 +15,7 @@ import (
 
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
@@ -31,6 +32,13 @@ import (
 
 const (
 	controllerName = "gatewayclass_controller"
+
+	// inferencepoolCrdName is the name of the InferencePool CRD from
+	// Gateway API Inference Extension.
+	inferencepoolCrdName = "inferencepools.inference.networking.k8s.io"
+	// inferencepoolExperimentalCrdName is the name of the experimental
+	// (alpha version) InferencePool CRD.
+	inferencepoolExperimentalCrdName = "inferencepools.inference.networking.x-k8s.io"
 )
 
 var log = logf.Logger.WithName(controllerName)
@@ -89,6 +97,20 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 		return !installPlan.Spec.Approved && installPlan.Status.Phase == operatorsv1alpha1.InstallPlanPhaseRequiresApproval
 	})
 	if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorsv1alpha1.InstallPlan{}, reconciler.enqueueRequestForSomeGatewayClass(), isOurInstallPlan, isInstallPlanReadyForApproval)); err != nil {
+		return nil, err
+	}
+
+	// Watch for the InferencePool CRD to determine whether to enable
+	// Gateway API Inference Extension (GIE) on the Istio control-plane.
+	isInferencepoolCrd := predicate.NewPredicateFuncs(func(o client.Object) bool {
+		switch o.GetName() {
+		case inferencepoolCrdName, inferencepoolExperimentalCrdName:
+			return true
+		default:
+			return false
+		}
+	})
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &apiextensionsv1.CustomResourceDefinition{}, reconciler.enqueueRequestForSomeGatewayClass(), isInferencepoolCrd)); err != nil {
 		return nil, err
 	}
 
