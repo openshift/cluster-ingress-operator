@@ -62,6 +62,7 @@ spec:
           value: servicemeshoperator3.v3.0.1
         - name: ISTIO_VERSION
           value: v1.24.4
+
         image: openshift/origin-cluster-ingress-operator:latest
         imagePullPolicy: IfNotPresent
         name: ingress-operator

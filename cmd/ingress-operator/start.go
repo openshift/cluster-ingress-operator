@@ -37,6 +37,7 @@ const (
 	defaultGatewayAPIOperatorChannel = "stable"
 	defaultGatewayAPIOperatorVersion = "servicemeshoperator3.v3.0.1"
 	defaultIstioVersion              = "v1.24.4"
+
 )
 
 type StartOptions struct {

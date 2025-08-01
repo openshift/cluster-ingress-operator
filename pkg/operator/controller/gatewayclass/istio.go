@@ -122,11 +122,6 @@ func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference, ist
 		// then our Istiod instance might try to reconcile gateways
 		// belonging to an unrelated Istiod instance.
 		"PILOT_GATEWAY_API_DEFAULT_GATEWAYCLASS_NAME": controller.OpenShiftDefaultGatewayClassName,
-		// Watch Gateway API and Kubernetes resources in all namespaces,
-		// but ignore Istio resources that don't match our label
-		// selector.  (We do not specify the label selector, so this
-		// causes Istio to ignore all Istio resources.)
-		"PILOT_ENABLE_GATEWAY_CONTROLLER_MODE": "true",
 		// Only reconcile resources that are associated with
 		// gatewayclasses that have our controller name.
 		"PILOT_GATEWAY_API_CONTROLLER_NAME": controller.OpenShiftGatewayClassControllerName,
@@ -134,6 +129,21 @@ func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference, ist
 		// "multi-network gateways".  This is an Istio feature that I
 		// haven't really found any explanation for.
 		"PILOT_MULTI_NETWORK_DISCOVER_GATEWAY_API": "false",
+		// Don't allow Istio's "manual deployment" feature, which would
+		// allow a gateway to specify an existing service.  Only allow
+		// "automated deployment", meaning Istio creates a new load-
+		// balancer service for each gateway.
+		"ENABLE_GATEWAY_API_MANUAL_DEPLOYMENT": "false",
+		// Only create CA Bundle CM in namespaces where there are
+		// Gateway API Gateways
+		"PILOT_ENABLE_GATEWAY_API_CA_CERT_ONLY": "true",
+		// Don't copy labels or annotations from gateways to resources
+		// that Istiod creates for that gateway.  This is an Istio-
+		// specific behavior which might not be supported by other
+		// Gateway API implementations and that could allow the end-user
+		// to inject unsupported configuration, for example using
+		// service annotations.
+		"PILOT_ENABLE_GATEWAY_API_COPY_LABELS_ANNOTATIONS": "false",
 	}
 	if enableInferenceExtension {
 		pilotContainerEnv["ENABLE_GATEWAY_API_INFERENCE_EXTENSION"] = "true"
@@ -194,6 +204,7 @@ func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference, ist
 				},
 			},
 			Version: istioVersion,
+
 		},
 	}
 }
