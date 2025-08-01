@@ -3,7 +3,9 @@ package gatewayclass
 import (
 	"context"
 	"fmt"
+	"regexp"
 
+	"github.com/coreos/go-semver/semver"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -29,6 +31,11 @@ const (
 	// WorkloadPartitioningManagementPreferredScheduling is the annotation
 	// value for preferred scheduling of workload.
 	WorkloadPartitioningManagementPreferredScheduling = `{"effect": "PreferredDuringScheduling"}`
+)
+
+var (
+	// csvSemVerRegexp is a RegExp to extract semantic version from OLM CSV name.
+	csvSemVerRegexp = regexp.MustCompile(`v(\d+\.\d+\.\d+)`)
 )
 
 // ensureServiceMeshOperatorSubscription attempts to ensure that a subscription
@@ -193,6 +200,8 @@ func (r *reconciler) currentInstallPlan(ctx context.Context) (bool, *operatorsv1
 	}
 	var currentInstallPlan, nextInstallPlan *operatorsv1alpha1.InstallPlan
 	multipleInstallPlans := false
+	desiredCSVSemVer, currentCSVSemVer := extractSemVerFromCSV(subscription.Spec.StartingCSV), extractSemVerFromCSV(subscription.Status.CurrentCSV)
+
 	for _, installPlan := range installPlans.Items {
 		if len(installPlan.OwnerReferences) == 0 || len(installPlan.Spec.ClusterServiceVersionNames) == 0 {
 			continue
@@ -249,9 +258,15 @@ func (r *reconciler) currentInstallPlan(ctx context.Context) (bool, *operatorsv1
 			// The first condition (below) prevents setting the next InstallPlan while a replacement
 			// or installation is ongoing, or when the end of the upgrade graph is reached.
 			if subscription.Status.InstalledCSV != subscription.Status.CurrentCSV && csvName == subscription.Status.CurrentCSV {
-				if nextInstallPlan == nil {
-					nextInstallPlan = &installPlan
-					break
+				// CurrentCSV should not be greater (semver-wise) than desiredCSV to avoid upgrading past the desired version,
+				// in case the desired one was skipped.
+				// Note: since we use the "stable" channel, the upgrade graph allows transitions between minor releases.
+				// For example, after installing 3.0.3, we may see 3.1.0 in currentCSV.
+				if currentCSVSemVer != nil && desiredCSVSemVer != nil && currentCSVSemVer.Compare(*desiredCSVSemVer) != 1 {
+					if nextInstallPlan == nil {
+						nextInstallPlan = &installPlan
+						break
+					}
 				}
 			}
 		}
@@ -310,4 +325,16 @@ func installPlanChanged(current, expected *operatorsv1alpha1.InstallPlan) (bool,
 	updated.Spec = expected.Spec
 
 	return true, updated
+}
+
+// extractSemVerFromCSV exctracts the semantic version from an OLM CSV name.
+// Returns a nil pointer if it fails to parse the CSV name.
+func extractSemVerFromCSV(csv string) *semver.Version {
+	match := csvSemVerRegexp.FindStringSubmatch(csv)
+	if len(match) > 1 {
+		if v, err := semver.NewVersion(match[1]); err == nil {
+			return v
+		}
+	}
+	return nil
 }
