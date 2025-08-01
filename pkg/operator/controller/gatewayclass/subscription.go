@@ -3,6 +3,7 @@ package gatewayclass
 import (
 	"context"
 	"fmt"
+	"regexp"
 
 	"github.com/blang/semver/v4"
 	"github.com/google/go-cmp/cmp"
@@ -30,6 +31,11 @@ const (
 	// WorkloadPartitioningManagementPreferredScheduling is the annotation
 	// value for preferred scheduling of workload.
 	WorkloadPartitioningManagementPreferredScheduling = `{"effect": "PreferredDuringScheduling"}`
+)
+
+var (
+	// csvSemVerRegexp is a RegExp to extract semantic version from OLM CSV name.
+	csvSemVerRegexp = regexp.MustCompile(`v(\d+\.\d+\.\d+)`)
 )
 
 // ensureServiceMeshOperatorSubscription attempts to ensure that a subscription
