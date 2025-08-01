@@ -145,6 +145,10 @@ func Test_ensureServiceMeshOperatorInstallPlan(t *testing.T) {
 						CatalogSourceNamespace: "openshift-marketplace",
 						StartingCSV:            "servicemeshoperator.v1.0.0",
 					},
+					Status: operatorsv1alpha1.SubscriptionStatus{
+						InstalledCSV: "servicemeshoperator.v1.0.0",
+						CurrentCSV:   "servicemeshoperator.v1.0.0",
+					},
 				},
 				&operatorsv1alpha1.InstallPlan{
 					ObjectMeta: metav1.ObjectMeta{
@@ -213,6 +217,10 @@ func Test_ensureServiceMeshOperatorInstallPlan(t *testing.T) {
 						CatalogSource:          "redhat-operators",
 						CatalogSourceNamespace: "openshift-marketplace",
 						StartingCSV:            "servicemeshoperator.v1.0.0",
+					},
+					Status: operatorsv1alpha1.SubscriptionStatus{
+						InstalledCSV: "servicemeshoperator.v1.0.0",
+						CurrentCSV:   "servicemeshoperator.v1.0.0",
 					},
 				},
 				&operatorsv1alpha1.InstallPlan{
@@ -398,6 +406,10 @@ func Test_ensureServiceMeshOperatorInstallPlan(t *testing.T) {
 						CatalogSourceNamespace: "openshift-marketplace",
 						StartingCSV:            "servicemeshoperator.v1.0.0",
 					},
+					Status: operatorsv1alpha1.SubscriptionStatus{
+						InstalledCSV: "servicemeshoperator.v1.0.0",
+						CurrentCSV:   "servicemeshoperator.v1.0.0",
+					},
 				},
 				&operatorsv1alpha1.InstallPlan{
 					ObjectMeta: metav1.ObjectMeta{
@@ -515,6 +527,10 @@ func Test_ensureServiceMeshOperatorInstallPlan(t *testing.T) {
 						CatalogSourceNamespace: "openshift-marketplace",
 						StartingCSV:            "servicemeshoperator.v1.0.0",
 					},
+					Status: operatorsv1alpha1.SubscriptionStatus{
+						InstalledCSV: "servicemeshoperator.v1.0.0",
+						CurrentCSV:   "servicemeshoperator.v1.0.0",
+					},
 				},
 				&operatorsv1alpha1.InstallPlan{
 					ObjectMeta: metav1.ObjectMeta{
@@ -602,6 +618,444 @@ func Test_ensureServiceMeshOperatorInstallPlan(t *testing.T) {
 				},
 			},
 			expectDelete: []client.Object{},
+		},
+		{
+			name:    "Upgrade to next version",
+			channel: "stable",
+			version: "servicemeshoperator.v1.0.1",
+			existingObjects: []runtime.Object{
+				&operatorsv1alpha1.Subscription{
+					ObjectMeta: metav1.ObjectMeta{
+						Namespace: operatorcontroller.ServiceMeshOperatorSubscriptionName().Namespace,
+						Name:      operatorcontroller.ServiceMeshOperatorSubscriptionName().Name,
+						UID:       "foobar",
+					},
+					Spec: &operatorsv1alpha1.SubscriptionSpec{
+						Channel:                "stable",
+						InstallPlanApproval:    operatorsv1alpha1.ApprovalManual,
+						Package:                "servicemeshoperator",
+						CatalogSource:          "redhat-operators",
+						CatalogSourceNamespace: "openshift-marketplace",
+						StartingCSV:            "servicemeshoperator.v1.0.0",
+					},
+					Status: operatorsv1alpha1.SubscriptionStatus{
+						InstalledCSV: "servicemeshoperator.v1.0.0",
+						CurrentCSV:   "servicemeshoperator.v1.0.1",
+					},
+				},
+				&operatorsv1alpha1.InstallPlan{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "Install-foo",
+						Namespace: operatorcontroller.OpenshiftOperatorNamespace,
+						OwnerReferences: []metav1.OwnerReference{
+							{
+								UID: "foobar",
+							},
+						},
+					},
+					Spec: operatorsv1alpha1.InstallPlanSpec{
+						ClusterServiceVersionNames: []string{
+							"servicemeshoperator.v1.0.0",
+						},
+						Approval: operatorsv1alpha1.ApprovalManual,
+						Approved: true,
+					},
+					Status: operatorsv1alpha1.InstallPlanStatus{
+						Phase: operatorsv1alpha1.InstallPlanPhaseComplete,
+					},
+				},
+				&operatorsv1alpha1.InstallPlan{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "Install-bar",
+						Namespace: operatorcontroller.OpenshiftOperatorNamespace,
+						OwnerReferences: []metav1.OwnerReference{
+							{
+								UID: "foobar",
+							},
+						},
+					},
+					Spec: operatorsv1alpha1.InstallPlanSpec{
+						ClusterServiceVersionNames: []string{
+							"servicemeshoperator.v1.0.1",
+						},
+						Approval: operatorsv1alpha1.ApprovalManual,
+						Approved: false,
+					},
+					Status: operatorsv1alpha1.InstallPlanStatus{
+						Phase: operatorsv1alpha1.InstallPlanPhaseRequiresApproval,
+					},
+				},
+			},
+			expectUpdate: []client.Object{
+				&operatorsv1alpha1.InstallPlan{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "Install-bar",
+						Namespace: operatorcontroller.OpenshiftOperatorNamespace,
+						OwnerReferences: []metav1.OwnerReference{
+							{
+								UID: "foobar",
+							},
+						},
+					},
+					Spec: operatorsv1alpha1.InstallPlanSpec{
+						ClusterServiceVersionNames: []string{
+							"servicemeshoperator.v1.0.1",
+						},
+						Approval: operatorsv1alpha1.ApprovalManual,
+						Approved: true,
+					},
+					Status: operatorsv1alpha1.InstallPlanStatus{
+						Phase: operatorsv1alpha1.InstallPlanPhaseRequiresApproval,
+					},
+				},
+			},
+		},
+		{
+			name:    "Upgrade through intermediate version",
+			channel: "stable",
+			version: "servicemeshoperator.v1.0.2", // N+2 from the current
+			existingObjects: []runtime.Object{
+				&operatorsv1alpha1.Subscription{
+					ObjectMeta: metav1.ObjectMeta{
+						Namespace: operatorcontroller.ServiceMeshOperatorSubscriptionName().Namespace,
+						Name:      operatorcontroller.ServiceMeshOperatorSubscriptionName().Name,
+						UID:       "foobar",
+					},
+					Spec: &operatorsv1alpha1.SubscriptionSpec{
+						Channel:                "stable",
+						InstallPlanApproval:    operatorsv1alpha1.ApprovalManual,
+						Package:                "servicemeshoperator",
+						CatalogSource:          "redhat-operators",
+						CatalogSourceNamespace: "openshift-marketplace",
+						StartingCSV:            "servicemeshoperator.v1.0.2",
+					},
+					Status: operatorsv1alpha1.SubscriptionStatus{
+						InstalledCSV: "servicemeshoperator.v1.0.0",
+						CurrentCSV:   "servicemeshoperator.v1.0.1",
+					},
+				},
+				&operatorsv1alpha1.InstallPlan{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "Install-foo",
+						Namespace: operatorcontroller.OpenshiftOperatorNamespace,
+						OwnerReferences: []metav1.OwnerReference{
+							{
+								UID: "foobar",
+							},
+						},
+					},
+					Spec: operatorsv1alpha1.InstallPlanSpec{
+						ClusterServiceVersionNames: []string{
+							"servicemeshoperator.v1.0.0",
+						},
+						Approval: operatorsv1alpha1.ApprovalManual,
+						Approved: true,
+					},
+					Status: operatorsv1alpha1.InstallPlanStatus{
+						Phase: operatorsv1alpha1.InstallPlanPhaseComplete,
+					},
+				},
+				&operatorsv1alpha1.InstallPlan{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "Install-bar",
+						Namespace: operatorcontroller.OpenshiftOperatorNamespace,
+						OwnerReferences: []metav1.OwnerReference{
+							{
+								UID: "foobar",
+							},
+						},
+					},
+					Spec: operatorsv1alpha1.InstallPlanSpec{
+						ClusterServiceVersionNames: []string{
+							"servicemeshoperator.v1.0.1",
+						},
+						Approval: operatorsv1alpha1.ApprovalManual,
+						Approved: false,
+					},
+					Status: operatorsv1alpha1.InstallPlanStatus{
+						Phase: operatorsv1alpha1.InstallPlanPhaseRequiresApproval,
+					},
+				},
+			},
+			expectUpdate: []client.Object{
+				&operatorsv1alpha1.InstallPlan{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "Install-bar",
+						Namespace: operatorcontroller.OpenshiftOperatorNamespace,
+						OwnerReferences: []metav1.OwnerReference{
+							{
+								UID: "foobar",
+							},
+						},
+					},
+					Spec: operatorsv1alpha1.InstallPlanSpec{
+						ClusterServiceVersionNames: []string{
+							"servicemeshoperator.v1.0.1",
+						},
+						Approval: operatorsv1alpha1.ApprovalManual,
+						Approved: true,
+					},
+					Status: operatorsv1alpha1.InstallPlanStatus{
+						Phase: operatorsv1alpha1.InstallPlanPhaseRequiresApproval,
+					},
+				},
+			},
+		},
+		{
+			name:    "Upgrade to next version when previous installplan is complete",
+			channel: "stable",
+			version: "servicemeshoperator.v1.0.2",
+			existingObjects: []runtime.Object{
+				&operatorsv1alpha1.Subscription{
+					ObjectMeta: metav1.ObjectMeta{
+						Namespace: operatorcontroller.ServiceMeshOperatorSubscriptionName().Namespace,
+						Name:      operatorcontroller.ServiceMeshOperatorSubscriptionName().Name,
+						UID:       "foobar",
+					},
+					Spec: &operatorsv1alpha1.SubscriptionSpec{
+						Channel:                "stable",
+						InstallPlanApproval:    operatorsv1alpha1.ApprovalManual,
+						Package:                "servicemeshoperator",
+						CatalogSource:          "redhat-operators",
+						CatalogSourceNamespace: "openshift-marketplace",
+						StartingCSV:            "servicemeshoperator.v1.0.2",
+					},
+					Status: operatorsv1alpha1.SubscriptionStatus{
+						InstalledCSV: "servicemeshoperator.v1.0.1",
+						CurrentCSV:   "servicemeshoperator.v1.0.2",
+					},
+				},
+				// N-1
+				&operatorsv1alpha1.InstallPlan{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "Install-foo",
+						Namespace: operatorcontroller.OpenshiftOperatorNamespace,
+						OwnerReferences: []metav1.OwnerReference{
+							{
+								UID: "foobar",
+							},
+						},
+					},
+					Spec: operatorsv1alpha1.InstallPlanSpec{
+						ClusterServiceVersionNames: []string{
+							"servicemeshoperator.v1.0.0",
+						},
+						Approval: operatorsv1alpha1.ApprovalManual,
+						Approved: true,
+					},
+					Status: operatorsv1alpha1.InstallPlanStatus{
+						Phase: operatorsv1alpha1.InstallPlanPhaseComplete,
+					},
+				},
+				// Current
+				&operatorsv1alpha1.InstallPlan{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "Install-bar",
+						Namespace: operatorcontroller.OpenshiftOperatorNamespace,
+						OwnerReferences: []metav1.OwnerReference{
+							{
+								UID: "foobar",
+							},
+						},
+					},
+					Spec: operatorsv1alpha1.InstallPlanSpec{
+						ClusterServiceVersionNames: []string{
+							"servicemeshoperator.v1.0.1",
+						},
+						Approval: operatorsv1alpha1.ApprovalManual,
+						Approved: true,
+					},
+					Status: operatorsv1alpha1.InstallPlanStatus{
+						Phase: operatorsv1alpha1.InstallPlanPhaseComplete,
+					},
+				},
+				// N+1 (and expected).
+				&operatorsv1alpha1.InstallPlan{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "Install-baz",
+						Namespace: operatorcontroller.OpenshiftOperatorNamespace,
+						OwnerReferences: []metav1.OwnerReference{
+							{
+								UID: "foobar",
+							},
+						},
+					},
+					Spec: operatorsv1alpha1.InstallPlanSpec{
+						ClusterServiceVersionNames: []string{
+							"servicemeshoperator.v1.0.2",
+						},
+						Approval: operatorsv1alpha1.ApprovalManual,
+						Approved: false,
+					},
+					Status: operatorsv1alpha1.InstallPlanStatus{
+						Phase: operatorsv1alpha1.InstallPlanPhaseRequiresApproval,
+					},
+				},
+			},
+			expectUpdate: []client.Object{
+				&operatorsv1alpha1.InstallPlan{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "Install-baz",
+						Namespace: operatorcontroller.OpenshiftOperatorNamespace,
+						OwnerReferences: []metav1.OwnerReference{
+							{
+								UID: "foobar",
+							},
+						},
+					},
+					Spec: operatorsv1alpha1.InstallPlanSpec{
+						ClusterServiceVersionNames: []string{
+							"servicemeshoperator.v1.0.2",
+						},
+						Approval: operatorsv1alpha1.ApprovalManual,
+						Approved: true,
+					},
+					Status: operatorsv1alpha1.InstallPlanStatus{
+						Phase: operatorsv1alpha1.InstallPlanPhaseRequiresApproval,
+					},
+				},
+			},
+		},
+		{
+			name:    "Upgrade reached end",
+			channel: "stable",
+			version: "servicemeshoperator.v1.0.2",
+			existingObjects: []runtime.Object{
+				&operatorsv1alpha1.Subscription{
+					ObjectMeta: metav1.ObjectMeta{
+						Namespace: operatorcontroller.ServiceMeshOperatorSubscriptionName().Namespace,
+						Name:      operatorcontroller.ServiceMeshOperatorSubscriptionName().Name,
+						UID:       "foobar",
+					},
+					Spec: &operatorsv1alpha1.SubscriptionSpec{
+						Channel:                "stable",
+						InstallPlanApproval:    operatorsv1alpha1.ApprovalManual,
+						Package:                "servicemeshoperator",
+						CatalogSource:          "redhat-operators",
+						CatalogSourceNamespace: "openshift-marketplace",
+						StartingCSV:            "servicemeshoperator.v1.0.2",
+					},
+					Status: operatorsv1alpha1.SubscriptionStatus{
+						InstalledCSV: "servicemeshoperator.v1.0.2",
+						CurrentCSV:   "servicemeshoperator.v1.0.2",
+					},
+				},
+				&operatorsv1alpha1.InstallPlan{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "Install-foo",
+						Namespace: operatorcontroller.OpenshiftOperatorNamespace,
+						OwnerReferences: []metav1.OwnerReference{
+							{
+								UID: "foobar",
+							},
+						},
+					},
+					Spec: operatorsv1alpha1.InstallPlanSpec{
+						ClusterServiceVersionNames: []string{
+							"servicemeshoperator.v1.0.2",
+						},
+						Approval: operatorsv1alpha1.ApprovalManual,
+						Approved: true,
+					},
+					Status: operatorsv1alpha1.InstallPlanStatus{
+						Phase: operatorsv1alpha1.InstallPlanPhaseComplete,
+					},
+				},
+				// Current
+				&operatorsv1alpha1.InstallPlan{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "Install-bar",
+						Namespace: operatorcontroller.OpenshiftOperatorNamespace,
+						OwnerReferences: []metav1.OwnerReference{
+							{
+								UID: "foobar",
+							},
+						},
+					},
+					Spec: operatorsv1alpha1.InstallPlanSpec{
+						ClusterServiceVersionNames: []string{
+							"servicemeshoperator.v1.0.2",
+						},
+						Approval: operatorsv1alpha1.ApprovalManual,
+						Approved: true,
+					},
+					Status: operatorsv1alpha1.InstallPlanStatus{
+						Phase: operatorsv1alpha1.InstallPlanPhaseComplete,
+					},
+				},
+			},
+			expectUpdate: []client.Object{},
+		},
+		{
+			name:    "Upgrade to non-existing desired version",
+			channel: "stable",
+			version: "servicemeshoperator.v1.0.2",
+			existingObjects: []runtime.Object{
+				&operatorsv1alpha1.Subscription{
+					ObjectMeta: metav1.ObjectMeta{
+						Namespace: operatorcontroller.ServiceMeshOperatorSubscriptionName().Namespace,
+						Name:      operatorcontroller.ServiceMeshOperatorSubscriptionName().Name,
+						UID:       "foobar",
+					},
+					Spec: &operatorsv1alpha1.SubscriptionSpec{
+						Channel:                "stable",
+						InstallPlanApproval:    operatorsv1alpha1.ApprovalManual,
+						Package:                "servicemeshoperator",
+						CatalogSource:          "redhat-operators",
+						CatalogSourceNamespace: "openshift-marketplace",
+						StartingCSV:            "servicemeshoperator.v1.0.2",
+					},
+					Status: operatorsv1alpha1.SubscriptionStatus{
+						InstalledCSV: "servicemeshoperator.v1.0.1",
+						CurrentCSV:   "servicemeshoperator.v1.0.3", // 1.0.2 was skipped from upgrade graph
+					},
+				},
+				// Current
+				&operatorsv1alpha1.InstallPlan{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "Install-bar",
+						Namespace: operatorcontroller.OpenshiftOperatorNamespace,
+						OwnerReferences: []metav1.OwnerReference{
+							{
+								UID: "foobar",
+							},
+						},
+					},
+					Spec: operatorsv1alpha1.InstallPlanSpec{
+						ClusterServiceVersionNames: []string{
+							"servicemeshoperator.v1.0.1",
+						},
+						Approval: operatorsv1alpha1.ApprovalManual,
+						Approved: true,
+					},
+					Status: operatorsv1alpha1.InstallPlanStatus{
+						Phase: operatorsv1alpha1.InstallPlanPhaseComplete,
+					},
+				},
+				// N+2 (and expected is in between but skipped).
+				&operatorsv1alpha1.InstallPlan{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "Install-baz",
+						Namespace: operatorcontroller.OpenshiftOperatorNamespace,
+						OwnerReferences: []metav1.OwnerReference{
+							{
+								UID: "foobar",
+							},
+						},
+					},
+					Spec: operatorsv1alpha1.InstallPlanSpec{
+						ClusterServiceVersionNames: []string{
+							"servicemeshoperator.v1.0.3",
+						},
+						Approval: operatorsv1alpha1.ApprovalManual,
+						Approved: false,
+					},
+					Status: operatorsv1alpha1.InstallPlanStatus{
+						Phase: operatorsv1alpha1.InstallPlanPhaseRequiresApproval,
+					},
+				},
+			},
+			expectUpdate: []client.Object{},
 		},
 	}
 

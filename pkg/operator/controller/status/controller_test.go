@@ -18,29 +18,38 @@ func Test_computeOperatorProgressingCondition(t *testing.T) {
 	}
 
 	testCases := []struct {
-		description            string
-		noNamespace            bool
-		allIngressesAvailable  bool
-		someIngressProgressing bool
-		reportedVersions       versions
-		oldVersions            versions
-		curVersions            versions
-		expectProgressing      configv1.ConditionStatus
+		description                   string
+		noNamespace                   bool
+		allIngressesAvailable         bool
+		someIngressProgressing        bool
+		reportedVersions              versions
+		oldVersions                   versions
+		curVersions                   versions
+		haveOSSMSubscription          bool
+		desiredOSSMVersion            string
+		installedOSSMVersion          string
+		currentOSSMVersion            string
+		installedOSSMVersionSucceeded bool
+		expectProgressing             configv1.ConditionStatus
+		expectReason                  string
 	}{
 		{
 			description:           "all ingress controllers are available",
 			allIngressesAvailable: true,
 			expectProgressing:     configv1.ConditionFalse,
+			expectReason:          "AsExpected",
 		},
 		{
 			description:            "some ingress controller is progressing",
 			allIngressesAvailable:  true,
 			someIngressProgressing: true,
 			expectProgressing:      configv1.ConditionTrue,
+			expectReason:           "Reconciling",
 		},
 		{
 			description:       "all ingress controllers are not available",
 			expectProgressing: configv1.ConditionTrue,
+			expectReason:      "Reconciling",
 		},
 		{
 			description:           "versions match",
@@ -49,6 +58,7 @@ func Test_computeOperatorProgressingCondition(t *testing.T) {
 			oldVersions:           versions{"v1", "ic-v1", "c-v1"},
 			curVersions:           versions{"v1", "ic-v1", "c-v1"},
 			expectProgressing:     configv1.ConditionFalse,
+			expectReason:          "AsExpected",
 		},
 		{
 			description:           "operator upgrade in progress",
@@ -57,6 +67,7 @@ func Test_computeOperatorProgressingCondition(t *testing.T) {
 			oldVersions:           versions{"v1", "ic-v1", "c-v1"},
 			curVersions:           versions{"v2", "ic-v1", "c-v1"},
 			expectProgressing:     configv1.ConditionTrue,
+			expectReason:          "Reconciling",
 		},
 		{
 			description:           "operand upgrade in progress",
@@ -65,6 +76,7 @@ func Test_computeOperatorProgressingCondition(t *testing.T) {
 			oldVersions:           versions{"v1", "ic-v1", "c-v1"},
 			curVersions:           versions{"v1", "ic-v2", "c-v2"},
 			expectProgressing:     configv1.ConditionTrue,
+			expectReason:          "Reconciling",
 		},
 		{
 			description:           "operator and operand upgrade in progress",
@@ -73,6 +85,7 @@ func Test_computeOperatorProgressingCondition(t *testing.T) {
 			oldVersions:           versions{"v1", "ic-v1", "c-v1"},
 			curVersions:           versions{"v2", "ic-v2", "c-v2"},
 			expectProgressing:     configv1.ConditionTrue,
+			expectReason:          "Reconciling",
 		},
 		{
 			description:           "operator upgrade done",
@@ -81,6 +94,7 @@ func Test_computeOperatorProgressingCondition(t *testing.T) {
 			oldVersions:           versions{"v1", "ic-v1", "c-v1"},
 			curVersions:           versions{"v2", "ic-v1", "c-v1"},
 			expectProgressing:     configv1.ConditionFalse,
+			expectReason:          "AsExpected",
 		},
 		{
 			description:           "operand upgrade done",
@@ -89,6 +103,7 @@ func Test_computeOperatorProgressingCondition(t *testing.T) {
 			oldVersions:           versions{"v1", "ic-v1", "c-v1"},
 			curVersions:           versions{"v1", "ic-v2", "c-v2"},
 			expectProgressing:     configv1.ConditionFalse,
+			expectReason:          "AsExpected",
 		},
 		{
 			description:           "operator and operand upgrade done",
@@ -97,6 +112,7 @@ func Test_computeOperatorProgressingCondition(t *testing.T) {
 			oldVersions:           versions{"v1", "ic-v1", "c-v1"},
 			curVersions:           versions{"v2", "ic-v2", "c-v2"},
 			expectProgressing:     configv1.ConditionFalse,
+			expectReason:          "AsExpected",
 		},
 		{
 			description:           "operator upgrade in progress, operand upgrade done",
@@ -105,6 +121,118 @@ func Test_computeOperatorProgressingCondition(t *testing.T) {
 			oldVersions:           versions{"v1", "ic-v1", "c-v1"},
 			curVersions:           versions{"v2", "ic-v2", "c-v2"},
 			expectProgressing:     configv1.ConditionTrue,
+			expectReason:          "Reconciling",
+		},
+		{
+			description:                   "ossm operator not requested",
+			allIngressesAvailable:         true,
+			haveOSSMSubscription:          false,
+			desiredOSSMVersion:            "v3.0.1",
+			installedOSSMVersion:          "v3.0.1",
+			currentOSSMVersion:            "v3.0.2",
+			installedOSSMVersionSucceeded: true,
+			expectProgressing:             configv1.ConditionFalse,
+			expectReason:                  "AsExpected",
+		},
+		{
+			description:                   "ossm operator is installing",
+			allIngressesAvailable:         true,
+			haveOSSMSubscription:          true,
+			desiredOSSMVersion:            "v3.0.0",
+			installedOSSMVersion:          "v3.0.0",
+			currentOSSMVersion:            "v3.0.0",
+			installedOSSMVersionSucceeded: false,
+			expectProgressing:             configv1.ConditionTrue,
+			expectReason:                  "OSSMOperatorUpgrading",
+		},
+		{
+			description:                   "ossm operator installation succeeded",
+			allIngressesAvailable:         true,
+			haveOSSMSubscription:          true,
+			desiredOSSMVersion:            "v3.0.0",
+			installedOSSMVersion:          "v3.0.0",
+			currentOSSMVersion:            "v3.0.0",
+			installedOSSMVersionSucceeded: true,
+			expectProgressing:             configv1.ConditionFalse,
+			expectReason:                  "AsExpectedAndOSSMOperatorUpToDate",
+		},
+		{
+			description:                   "ossm operator got next version",
+			allIngressesAvailable:         true,
+			haveOSSMSubscription:          true,
+			desiredOSSMVersion:            "v3.0.0",
+			installedOSSMVersion:          "v3.0.0",
+			currentOSSMVersion:            "v3.0.1",
+			installedOSSMVersionSucceeded: true,
+			expectProgressing:             configv1.ConditionFalse,
+			expectReason:                  "AsExpectedAndOSSMOperatorUpToDate",
+		},
+		{
+			description:                   "ossm operator desired version changed",
+			allIngressesAvailable:         true,
+			haveOSSMSubscription:          true,
+			desiredOSSMVersion:            "v3.0.1",
+			installedOSSMVersion:          "v3.0.0",
+			currentOSSMVersion:            "v3.0.1",
+			installedOSSMVersionSucceeded: true,
+			expectProgressing:             configv1.ConditionTrue,
+			expectReason:                  "OSSMOperatorUpgrading",
+		},
+		{
+			description:                   "ossm operator desired version is rolling out",
+			allIngressesAvailable:         true,
+			haveOSSMSubscription:          true,
+			desiredOSSMVersion:            "v3.0.1",
+			installedOSSMVersion:          "v3.0.1",
+			currentOSSMVersion:            "v3.0.1",
+			installedOSSMVersionSucceeded: false,
+			expectProgressing:             configv1.ConditionTrue,
+			expectReason:                  "OSSMOperatorUpgrading",
+		},
+		{
+			description:                   "ossm operator desired version succeeded",
+			allIngressesAvailable:         true,
+			haveOSSMSubscription:          true,
+			desiredOSSMVersion:            "v3.0.1",
+			installedOSSMVersion:          "v3.0.1",
+			currentOSSMVersion:            "v3.0.1",
+			installedOSSMVersionSucceeded: true,
+			expectProgressing:             configv1.ConditionFalse,
+			expectReason:                  "AsExpectedAndOSSMOperatorUpToDate",
+		},
+		{
+			description:                   "ossm operator desired version is beyong graph",
+			allIngressesAvailable:         true,
+			haveOSSMSubscription:          true,
+			desiredOSSMVersion:            "v3.0.5",
+			installedOSSMVersion:          "v3.0.3",
+			currentOSSMVersion:            "v3.0.3",
+			installedOSSMVersionSucceeded: true,
+			expectProgressing:             configv1.ConditionTrue,
+			expectReason:                  "OSSMOperatorUpgrading",
+		},
+		{
+			description:                   "ossm operator desired version is back",
+			allIngressesAvailable:         true,
+			haveOSSMSubscription:          true,
+			desiredOSSMVersion:            "v3.0.3",
+			installedOSSMVersion:          "v3.0.3",
+			currentOSSMVersion:            "v3.0.3",
+			installedOSSMVersionSucceeded: true,
+			expectProgressing:             configv1.ConditionFalse,
+			expectReason:                  "AsExpectedAndOSSMOperatorUpToDate",
+		},
+		{
+			description:                   "some ingress controller is progressing and ossm operator is upgrading",
+			allIngressesAvailable:         true,
+			someIngressProgressing:        true,
+			haveOSSMSubscription:          true,
+			desiredOSSMVersion:            "v3.0.1",
+			installedOSSMVersion:          "v3.0.1",
+			currentOSSMVersion:            "v3.0.1",
+			installedOSSMVersionSucceeded: false,
+			expectProgressing:             configv1.ConditionTrue,
+			expectReason:                  "ReconcilingAndOSSMOperatorUpgrading",
 		},
 	}
 
@@ -142,6 +270,7 @@ func Test_computeOperatorProgressingCondition(t *testing.T) {
 			expected := configv1.ClusterOperatorStatusCondition{
 				Type:   configv1.OperatorProgressing,
 				Status: tc.expectProgressing,
+				Reason: tc.expectReason,
 			}
 
 			var ingresscontrollers []operatorv1.IngressController
@@ -157,10 +286,23 @@ func Test_computeOperatorProgressingCondition(t *testing.T) {
 			if tc.someIngressProgressing {
 				ingresscontrollers[0].Status.Conditions[0].Status = operatorv1.ConditionTrue
 			}
+			state := operatorState{
+				IngressControllers:            ingresscontrollers,
+				haveOSSMSubscription:          tc.haveOSSMSubscription,
+				desiredOSSMVersion:            tc.desiredOSSMVersion,
+				installedOSSMVersion:          tc.installedOSSMVersion,
+				currentOSSMVersion:            tc.currentOSSMVersion,
+				installedOSSMVersionSucceeded: tc.installedOSSMVersionSucceeded,
+			}
+			config := Config{
+				OperatorReleaseVersion: tc.curVersions.operator,
+				IngressControllerImage: tc.curVersions.operand1,
+				CanaryImage:            tc.curVersions.operand2,
+			}
 
-			actual := computeOperatorProgressingCondition(ingresscontrollers, tc.allIngressesAvailable, oldVersions, reportedVersions, tc.curVersions.operator, tc.curVersions.operand1, tc.curVersions.operand2)
+			actual := computeOperatorProgressingCondition(state, config, tc.allIngressesAvailable, oldVersions, reportedVersions)
 			conditionsCmpOpts := []cmp.Option{
-				cmpopts.IgnoreFields(configv1.ClusterOperatorStatusCondition{}, "LastTransitionTime", "Reason", "Message"),
+				cmpopts.IgnoreFields(configv1.ClusterOperatorStatusCondition{}, "LastTransitionTime", "Message"),
 			}
 			if !cmp.Equal(actual, expected, conditionsCmpOpts...) {
 				t.Fatalf("expected %#v, got %#v", expected, actual)

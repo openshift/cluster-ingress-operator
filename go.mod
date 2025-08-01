@@ -13,6 +13,7 @@ require (
 	github.com/IBM/go-sdk-core/v5 v5.17.4
 	github.com/IBM/networking-go-sdk v0.26.0
 	github.com/aws/aws-sdk-go v1.38.49
+	github.com/coreos/go-semver v0.3.1
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc
 	github.com/florianl/go-nfqueue v1.3.2
 	github.com/go-logr/logr v1.4.2
