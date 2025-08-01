@@ -3,7 +3,9 @@ package gatewayclass
 import (
 	"context"
 	"fmt"
+	"regexp"
 
+	"github.com/coreos/go-semver/semver"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -29,6 +31,11 @@ const (
 	// WorkloadPartitioningManagementPreferredScheduling is the annotation
 	// value for preferred scheduling of workload.
 	WorkloadPartitioningManagementPreferredScheduling = `{"effect": "PreferredDuringScheduling"}`
+)
+
+var (
+	// csvSemVerRegexp is a RegExp to extract semantic version from OLM CSV name.
+	csvSemVerRegexp = regexp.MustCompile(`v(\d+\.\d+\.\d+)`)
 )
 
 // ensureServiceMeshOperatorSubscription attempts to ensure that a subscription
@@ -193,6 +200,8 @@ func (r *reconciler) currentInstallPlan(ctx context.Context, version string) (bo
 	}
 	var currentInstallPlan, nextInstallPlan *operatorsv1alpha1.InstallPlan
 	multipleInstallPlans := false
+	desiredCSVSemVer, currentCSVSemVer := extractSemVerFromCSV(version), extractSemVerFromCSV(subscription.Status.CurrentCSV)
+
 	for _, installPlan := range installPlans.Items {
 		if len(installPlan.OwnerReferences) == 0 || len(installPlan.Spec.ClusterServiceVersionNames) == 0 {
 			continue
@@ -316,4 +325,16 @@ func installPlanChanged(current, expected *operatorsv1alpha1.InstallPlan) (bool,
 	updated.Spec = expected.Spec
 
 	return true, updated
+}
+
+// extractSemVerFromCSV exctracts the semantic version from an OLM CSV name.
+// Returns a nil pointer if it fails to parse the CSV name.
+func extractSemVerFromCSV(csv string) *semver.Version {
+	match := csvSemVerRegexp.FindStringSubmatch(csv)
+	if len(match) > 1 {
+		if v, err := semver.NewVersion(match[1]); err == nil {
+			return v
+		}
+	}
+	return nil
 }
