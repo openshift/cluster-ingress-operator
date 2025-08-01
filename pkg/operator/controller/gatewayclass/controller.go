@@ -13,11 +13,11 @@ import (
 
 	"k8s.io/client-go/tools/record"
 
-	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
-
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
+	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -31,6 +31,29 @@ import (
 
 const (
 	controllerName = "gatewayclass_controller"
+
+	// inferencepoolCrdName is the name of the InferencePool CRD from
+	// Gateway API Inference Extension.
+	inferencepoolCrdName = "inferencepools.inference.networking.k8s.io"
+	// inferencepoolExperimentalCrdName is the name of the experimental
+	// (alpha version) InferencePool CRD.
+	inferencepoolExperimentalCrdName = "inferencepools.inference.networking.x-k8s.io"
+	// subscriptionCatalogOverrideAnnotationKey is the key for an
+	// unsupported annotation on the gatewayclass using which a custom
+	// catalog of OSSM can be specified.
+	subscriptionCatalogOverrideAnnotationKey = "unsupported.do-not-use.openshift.io/ossm-catalog"
+	// subscriptionChannelOverrideAnnotationKey is the key for an
+	// unsupported annotation on the gatewayclass using which a custom
+	// channel of OSSM can be specified.
+	subscriptionChannelOverrideAnnotationKey = "unsupported.do-not-use.openshift.io/ossm-channel"
+	// subscriptionVersionOverrideAnnotationKey is the key for an
+	// unsupported annotation on the gatewayclass using which a custom
+	// version of OSSM can be specified.
+	subscriptionVersionOverrideAnnotationKey = "unsupported.do-not-use.openshift.io/ossm-version"
+	// istioVersionOverrideAnnotationKey is the key for an unsupported
+	// annotation on the gatewayclass using which a custom version of Istio
+	// can be specified.
+	istioVersionOverrideAnnotationKey = "unsupported.do-not-use.openshift.io/istio-version"
 )
 
 var log = logf.Logger.WithName(controllerName)
@@ -92,6 +115,21 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 		return nil, err
 	}
 
+	// Watch for the InferencePool CRD to determine whether to enable
+	// Gateway API Inference Extension (GIE) on the Istio control-plane.
+	isInferencepoolCrd := predicate.NewPredicateFuncs(func(o client.Object) bool {
+		switch o.GetName() {
+		case inferencepoolCrdName, inferencepoolExperimentalCrdName:
+			return true
+		default:
+			return false
+		}
+	})
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &apiextensionsv1.CustomResourceDefinition{}, reconciler.enqueueRequestForSomeGatewayClass(), isInferencepoolCrd)); err != nil {
+		return nil, err
+	}
+
+
 	gatewayClassController = c
 	return c, nil
 }
@@ -104,10 +142,13 @@ type Config struct {
 	OperatorNamespace string
 	// OperandNamespace is the namespace in which Istio should be deployed.
 	OperandNamespace string
+	GatewayAPIOperatorCatalog string
 	// GatewayAPIOperatorChannel is the release channel of the Gateway API implementation to install.
 	GatewayAPIOperatorChannel string
 	// GatewayAPIOperatorVersion is the name and release of the Gateway API implementation to install.
 	GatewayAPIOperatorVersion string
+	// IstioVersion is the version of Istio to configure on the Istio CR.
+	IstioVersion string
 }
 
 // reconciler reconciles gatewayclasses.
@@ -178,13 +219,29 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	}
 
 	var errs []error
-	if _, _, err := r.ensureServiceMeshOperatorSubscription(ctx); err != nil {
+	ossmCatalog := r.config.GatewayAPIOperatorCatalog
+	if v, ok := gatewayclass.Annotations[subscriptionCatalogOverrideAnnotationKey]; ok {
+		ossmCatalog = v
+	}
+	ossmChannel := r.config.GatewayAPIOperatorChannel
+	if v, ok := gatewayclass.Annotations[subscriptionChannelOverrideAnnotationKey]; ok {
+		ossmChannel = v
+	}
+	ossmVersion := r.config.GatewayAPIOperatorVersion
+	if v, ok := gatewayclass.Annotations[subscriptionVersionOverrideAnnotationKey]; ok {
+		ossmVersion = v
+	}
+	if _, _, err := r.ensureServiceMeshOperatorSubscription(ctx, ossmCatalog, ossmChannel, ossmVersion); err != nil {
 		errs = append(errs, fmt.Errorf("failed to ensure ServiceMeshOperatorSubscription: %w", err))
 	}
 	if _, _, err := r.ensureServiceMeshOperatorInstallPlan(ctx); err != nil {
 		errs = append(errs, err)
 	}
-	if _, _, err := r.ensureIstio(ctx, &gatewayclass); err != nil {
+	istioVersion := r.config.IstioVersion
+	if v, ok := gatewayclass.Annotations[istioVersionOverrideAnnotationKey]; ok {
+		istioVersion = v
+	}
+	if _, _, err := r.ensureIstio(ctx, &gatewayclass, istioVersion); err != nil {
 		errs = append(errs, err)
 	} else {
 		// The OSSM operator installs the istios.sailoperator.io CRD.
