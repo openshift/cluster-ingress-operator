@@ -406,7 +406,7 @@ func TestSetDefaultPublishingStrategySetsPlatformDefaults(t *testing.T) {
 				t.Errorf("expected result %v, got %v", true, actualResult)
 			}
 			if diff := cmp.Diff(tc.expectedIC, ic); len(diff) != 0 {
-				t.Errorf("got expected ingresscontroller: %s", diff)
+				t.Errorf("got unexpected ingresscontroller: %s", diff)
 			}
 		})
 	}
@@ -610,6 +610,13 @@ func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
 		expectedResult          bool
 		domainMatchesBaseDomain bool
 	}{
+		{
+			name:                    "loadbalancer spec.endpointPublishingStrategy.loadBalancer set to null",
+			ic:                      makeIC(spec(eps(nil)), status(eps(nil))),
+			domainMatchesBaseDomain: true,
+			expectedResult:          true,
+			expectedIC:              makeIC(spec(eps(nil)), status(eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS)))),
+		},
 		{
 			name:                    "loadbalancer scope changed from external to internal",
 			ic:                      makeIC(spec(eps(lbs(operatorv1.InternalLoadBalancer, &managedDNS))), status(eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS)))),
@@ -934,7 +941,7 @@ func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
 				t.Errorf("expected result %v, got %v", tc.expectedResult, actualResult)
 			}
 			if diff := cmp.Diff(tc.expectedIC, ic); len(diff) != 0 {
-				t.Errorf("got expected ingresscontroller: %s", diff)
+				t.Errorf("got unexpected ingresscontroller: %s", diff)
 			}
 		})
 	}
