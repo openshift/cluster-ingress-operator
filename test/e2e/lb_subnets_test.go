@@ -13,7 +13,6 @@ import (
 	"time"
 
 	configv1 "github.com/openshift/api/config/v1"
-	"github.com/openshift/api/features"
 	machinev1 "github.com/openshift/api/machine/v1beta1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
@@ -42,11 +41,6 @@ func TestAWSLBSubnets(t *testing.T) {
 	}
 	if infraConfig.Status.PlatformStatus.Type != configv1.AWSPlatformType {
 		t.Skipf("test skipped on platform %q", infraConfig.Status.PlatformStatus.Type)
-	}
-	if enabled, err := isFeatureGateEnabled(features.FeatureGateIngressControllerLBSubnetsAWS); err != nil {
-		t.Fatalf("failed to get feature gate: %v", err)
-	} else if !enabled {
-		t.Skipf("test skipped because %q feature gate is not enabled", features.FeatureGateIngressControllerLBSubnetsAWS)
 	}
 
 	// First, let's get the list of public subnets to use for the LB.
@@ -191,11 +185,6 @@ func TestUnmanagedAWSLBSubnets(t *testing.T) {
 	}
 	if infraConfig.Status.PlatformStatus.Type != configv1.AWSPlatformType {
 		t.Skipf("test skipped on platform %q", infraConfig.Status.PlatformStatus.Type)
-	}
-	if enabled, err := isFeatureGateEnabled(features.FeatureGateIngressControllerLBSubnetsAWS); err != nil {
-		t.Fatalf("failed to get feature gate: %v", err)
-	} else if !enabled {
-		t.Skipf("test skipped because %q feature gate is not enabled", features.FeatureGateIngressControllerLBSubnetsAWS)
 	}
 
 	// First, let's get the list of public subnets to use for the LB.
