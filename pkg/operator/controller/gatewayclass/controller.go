@@ -13,6 +13,9 @@ import (
 
 	"k8s.io/client-go/tools/record"
 
+	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
+
+
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -54,6 +57,7 @@ const (
 	// annotation on the gatewayclass using which a custom version of Istio
 	// can be specified.
 	istioVersionOverrideAnnotationKey = "unsupported.do-not-use.openshift.io/istio-version"
+
 )
 
 var log = logf.Logger.WithName(controllerName)
@@ -128,7 +132,6 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 	if err := c.Watch(source.Kind[client.Object](operatorCache, &apiextensionsv1.CustomResourceDefinition{}, reconciler.enqueueRequestForSomeGatewayClass(), isInferencepoolCrd)); err != nil {
 		return nil, err
 	}
-
 
 	gatewayClassController = c
 	return c, nil

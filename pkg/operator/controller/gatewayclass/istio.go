@@ -44,8 +44,8 @@ func (r *reconciler) ensureIstio(ctx context.Context, gatewayclass *gatewayapiv1
 	if err != nil {
 		return have, current, err
 	}
-
 	desired := desiredIstio(name, ownerRef, istioVersion, enableInferenceExtension)
+
 
 	switch {
 	case !have:
@@ -95,8 +95,8 @@ func (r *reconciler) crdExists(ctx context.Context, crdName string) (bool, error
 	return true, nil
 }
 
-// desiredIstio returns the desired Istio CR.
 func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference, istioVersion string, enableInferenceExtension bool) *sailv1.Istio {
+
 	pilotContainerEnv := map[string]string{
 		// Enable Gateway API.
 		"PILOT_ENABLE_GATEWAY_API": "true",
