@@ -95,7 +95,7 @@ func (r *reconciler) crdExists(ctx context.Context, crdName string) (bool, error
 	return true, nil
 }
 
-// desiredIstio returns the desired Istio CR.
+// desiredIstio returns the desired Istio CR. TEST PR 
 func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference, istioVersion string, enableInferenceExtension bool) *sailv1.Istio {
 	pilotContainerEnv := map[string]string{
 		// Enable Gateway API.
