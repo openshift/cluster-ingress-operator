@@ -237,6 +237,29 @@ func TestSetDefaultPublishingStrategySetsPlatformDefaults(t *testing.T) {
 			}
 		}
 
+		makeDefaultAzurePlatformStatus = func(platform configv1.PlatformType) *configv1.PlatformStatus {
+			return &configv1.PlatformStatus{
+				Type: platform,
+				Azure: &configv1.AzurePlatformStatus{
+					CloudLoadBalancerConfig: &configv1.CloudLoadBalancerConfig{
+						DNSType: configv1.PlatformDefaultDNSType,
+					},
+				},
+			}
+		}
+
+		makeBYODNSAzurePlatformStatus = func(platform configv1.PlatformType) *configv1.PlatformStatus {
+			return &configv1.PlatformStatus{
+				Type: platform,
+				Azure: &configv1.AzurePlatformStatus{
+					CloudLoadBalancerConfig: &configv1.CloudLoadBalancerConfig{
+						DNSType:       configv1.ClusterHostedDNSType,
+						ClusterHosted: &configv1.CloudLoadBalancerIPs{},
+					},
+				},
+			}
+		}
+
 		ingressConfigWithDefaultClassicLB = &configv1.Ingress{
 			Spec: configv1.IngressSpec{
 				LoadBalancer: configv1.LoadBalancer{
@@ -317,6 +340,18 @@ func TestSetDefaultPublishingStrategySetsPlatformDefaults(t *testing.T) {
 		{
 			name:                    "AWS With BYO DNS",
 			platformStatus:          makeBYODNSAWSPlatformStatus(configv1.AWSPlatformType),
+			expectedIC:              ingressControllerWithLoadBalancerUnmanagedDNS,
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name:                    "Azure",
+			platformStatus:          makeDefaultAzurePlatformStatus(configv1.AzurePlatformType),
+			expectedIC:              ingressControllerWithLoadBalancer,
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name:                    "Azure With BYO DNS",
+			platformStatus:          makeBYODNSAzurePlatformStatus(configv1.AzurePlatformType),
 			expectedIC:              ingressControllerWithLoadBalancerUnmanagedDNS,
 			domainMatchesBaseDomain: true,
 		},
