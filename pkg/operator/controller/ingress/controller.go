@@ -21,6 +21,7 @@ import (
 	"github.com/openshift/cluster-ingress-operator/pkg/util/ingresscontroller"
 	retryable "github.com/openshift/cluster-ingress-operator/pkg/util/retryableerror"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/slice"
+	"github.com/openshift/cluster-ingress-operator/pkg/util/tls"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -923,14 +924,31 @@ func validateTLSSecurityProfile(ic *operatorv1.IngressController) error {
 		if len(invalidCiphers) != 0 {
 			errs = append(errs, fmt.Errorf("security profile has invalid ciphers: %s", strings.Join(invalidCiphers, ", ")))
 		}
-		switch spec.MinTLSVersion {
-		case configv1.VersionTLS10, configv1.VersionTLS11, configv1.VersionTLS12:
-			if tlsVersion13Ciphers.HasAll(spec.Ciphers...) {
-				errs = append(errs, fmt.Errorf("security profile specifies minTLSVersion: %s and contains only TLSv1.3 cipher suites", spec.MinTLSVersion))
+
+		// Filter out ciphers that OpenSSL does not support.  A custom
+		// profile may reference a cipher that is no longer supported,
+		// and even the standard profiles reference unsupported ciphers,
+		// so we simply ignore these ciphers rather than reporting an
+		// error.
+		ciphers := make([]string, 0, len(spec.Ciphers))
+		for _, cipher := range spec.Ciphers {
+			if tls.IsAllowedCipher(cipher) {
+				ciphers = append(ciphers, cipher)
 			}
-		case configv1.VersionTLS13:
-			if !tlsVersion13Ciphers.HasAny(spec.Ciphers...) {
-				errs = append(errs, fmt.Errorf("security profile specifies minTLSVersion: %s and contains no TLSv1.3 cipher suites", spec.MinTLSVersion))
+		}
+
+		if len(ciphers) == 0 {
+			errs = append(errs, fmt.Errorf("security profile does not specify any supported"))
+		} else {
+			switch spec.MinTLSVersion {
+			case configv1.VersionTLS10, configv1.VersionTLS11, configv1.VersionTLS12:
+				if tlsVersion13Ciphers.HasAll(ciphers...) {
+					errs = append(errs, fmt.Errorf("security profile specifies minTLSVersion: %s and contains only TLSv1.3 cipher suites", spec.MinTLSVersion))
+				}
+			case configv1.VersionTLS13:
+				if !tlsVersion13Ciphers.HasAny(ciphers...) {
+					errs = append(errs, fmt.Errorf("security profile specifies minTLSVersion: %s and contains no TLSv1.3 cipher suites", spec.MinTLSVersion))
+				}
 			}
 		}
 	}
