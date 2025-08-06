@@ -9,6 +9,7 @@ approvers:
   - gcs278
   - Thealisyed
   - grzpiotrowski
+  - rikatz
 reviewers:
   - knobunc
   - Miciah
@@ -20,6 +21,7 @@ reviewers:
   - gcs278
   - Thealisyed
   - grzpiotrowski
+  - rikatz
 emeritus_approvers:
   - ironcladlou
   - pravisankar
