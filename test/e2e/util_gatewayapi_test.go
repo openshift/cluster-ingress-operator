@@ -501,39 +501,45 @@ func deleteExistingSubscription(t *testing.T, namespace, subName string) error {
 
 }
 
-// assertOSSMOperator checks if the OSSM Istio operator gets successfully installed
-// and returns an error if not.
+// assertOSSMOperator checks if the OSSM operator gets successfully installed
+// and returns an error if not. It uses configurable parameters such as the expected OSSM version, polling interval, and timeout.
 func assertOSSMOperator(t *testing.T) error {
+	return assertOSSMOperatorWithConfig(t, "", 1*time.Second, 60*time.Second)
+}
+
+// assertOSSMOperatorWithConfig checks if the OSSM operator gets successfully installed
+// and returns an error if not. It uses configurable parameters such as
+// the expected OSSM version, polling interval, and timeout.
+func assertOSSMOperatorWithConfig(t *testing.T, version string, interval, timeout time.Duration) error {
 	t.Helper()
 	dep := &appsv1.Deployment{}
 	ns := types.NamespacedName{Namespace: openshiftOperatorsNamespace, Name: openshiftIstioOperatorDeploymentName}
 
-	// Get the Istio operator deployment.
-	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(context context.Context) (bool, error) {
+	// Get the OSSM operator deployment.
+	if err := wait.PollUntilContextTimeout(context.Background(), interval, timeout, false, func(context context.Context) (bool, error) {
 		if err := kclient.Get(context, ns, dep); err != nil {
 			t.Logf("failed to get deployment %v, retrying...", ns)
 			return false, nil
 		}
+		if len(version) > 0 {
+			if csv, found := dep.Labels["olm.owner"]; found {
+				if csv == version {
+					t.Logf("Found OSSM deployment %q with expected version %q", ns, version)
+				} else {
+					t.Logf("OSSM deployment %q expected to have version %q but got %q, retrying...", ns, version, csv)
+					return false, nil
+				}
+			}
+		}
+		if dep.Status.AvailableReplicas < *dep.Spec.Replicas {
+			t.Logf("OSSM deployment %q expected to have %d available replica(s) but got %d, retrying...", ns, *dep.Spec.Replicas, dep.Status.AvailableReplicas)
+			return false, nil
+		}
+		t.Logf("found OSSM operator deployment %q with %d available replica(s)", ns, dep.Status.AvailableReplicas)
 		return true, nil
-	})
-	if err != nil {
+	}); err != nil {
 		return fmt.Errorf("error finding deployment %v: %v", ns, err)
 	}
-
-	// Get the istio-operator pod.
-	podlist, err := getPods(t, kclient, dep)
-	if err != nil {
-		return fmt.Errorf("error finding pod for deployment %v: %v", ns, err)
-	}
-	if len(podlist.Items) > 1 {
-		return fmt.Errorf("too many pods for deployment %v: %d", ns, len(podlist.Items))
-	}
-	pod := podlist.Items[0]
-	if pod.Status.Phase != corev1.PodRunning {
-		return fmt.Errorf("OSSM operator failure: pod %s is not running, it is %v", pod.Name, pod.Status.Phase)
-	}
-
-	t.Logf("found OSSM operator pod %s/%s to be %s", pod.Namespace, pod.Name, pod.Status.Phase)
 	return nil
 }
 
@@ -999,6 +1005,13 @@ func assertCatalogSource(t *testing.T, namespace, csName string) error {
 // assertIstio checks if the Istio exists in a ready state,
 // and returns an error if not.
 func assertIstio(t *testing.T) error {
+	return assertIstioWithConfig(t, "")
+}
+
+// assertIstio checks if the Istio exists in a ready state,
+// and returns an error if not.It uses configurable parameters such as
+// the expected version.
+func assertIstioWithConfig(t *testing.T, version string) error {
 	t.Helper()
 	istio := &sailv1.Istio{}
 	nsName := types.NamespacedName{Namespace: operatorcontroller.DefaultOperandNamespace, Name: openshiftIstioName}
@@ -1007,6 +1020,14 @@ func assertIstio(t *testing.T) error {
 		if err := kclient.Get(context, nsName, istio); err != nil {
 			t.Logf("Failed to get Istio %s/%s: %v.  Retrying...", nsName.Namespace, nsName.Name, err)
 			return false, nil
+		}
+		if len(version) > 0 {
+			if version == istio.Spec.Version {
+				t.Logf("Found Istio %s/%s with expected version %q", istio.Namespace, istio.Name, version)
+			} else {
+				t.Logf("Istio %s/%s expected to have version %q but got %q, retrying...", istio.Namespace, istio.Name, version, istio.Spec.Version)
+				return false, nil
+			}
 		}
 		if istio.Status.GetCondition(sailv1.IstioConditionReady).Status == metav1.ConditionTrue {
 			t.Logf("Found Istio %s/%s, and it reports ready", istio.Namespace, istio.Name)
