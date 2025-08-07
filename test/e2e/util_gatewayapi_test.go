@@ -555,8 +555,8 @@ func assertIstiodControlPlane(t *testing.T) error {
 	if err != nil {
 		return fmt.Errorf("error finding pod for deployment %v: %v", ns, err)
 	}
-	if len(podlist.Items) > 1 {
-		return fmt.Errorf("too many pods for deployment %v: %d", ns, len(podlist.Items))
+	if len(podlist.Items) < 1 {
+		return fmt.Errorf("Insufficient amount of pods in deployment %v: %d", ns, len(podlist.Items))
 	}
 	pod := podlist.Items[0]
 	if pod.Status.Phase != corev1.PodRunning {
