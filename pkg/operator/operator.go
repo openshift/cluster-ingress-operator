@@ -135,7 +135,6 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	gatewayAPIEnabled := featureGates.Enabled(features.FeatureGateGatewayAPI)
 	gatewayAPIControllerEnabled := featureGates.Enabled(features.FeatureGateGatewayAPIController)
 	routeExternalCertificateEnabled := featureGates.Enabled(features.FeatureGateRouteExternalCertificate)
-	ingressControllerLBSubnetsAWSEnabled := featureGates.Enabled(features.FeatureGateIngressControllerLBSubnetsAWS)
 	ingressControllerEIPAllocationsAWSEnabled := featureGates.Enabled(features.FeatureGateSetEIPForNLBIngressController)
 	ingressControllerDCMEnabled := featureGates.Enabled(features.FeatureGateIngressControllerDynamicConfigurationManager)
 	gcpCustomEndpointsEnabled := featureGates.Enabled(features.FeatureGateGCPCustomAPIEndpoints)
@@ -186,7 +185,6 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		Namespace:                                 config.Namespace,
 		IngressControllerImage:                    config.IngressControllerImage,
 		RouteExternalCertificateEnabled:           routeExternalCertificateEnabled,
-		IngressControllerLBSubnetsAWSEnabled:      ingressControllerLBSubnetsAWSEnabled,
 		IngressControllerEIPAllocationsAWSEnabled: ingressControllerEIPAllocationsAWSEnabled,
 		IngressControllerDCMEnabled:               ingressControllerDCMEnabled,
 	}); err != nil {
