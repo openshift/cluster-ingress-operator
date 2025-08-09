@@ -25,7 +25,7 @@ metadata:
     unsupported.do-not-use.openshift.io/ossm-catalog: redhat-operators
     unsupported.do-not-use.openshift.io/ossm-channel: stable
     unsupported.do-not-use.openshift.io/ossm-version: servicemeshoperator3.v3.1.0
-    unsupported.do-not-use.openshift.io/istio-version: 1.26-latest
+    unsupported.do-not-use.openshift.io/istio-version: v1.26-latest
 spec:
   controllerName: openshift.io/gateway-controller/v1
 EOF
