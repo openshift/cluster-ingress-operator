@@ -626,7 +626,7 @@ func Test_ensureServiceMeshOperatorInstallPlan(t *testing.T) {
 					GatewayAPIOperatorVersion: tc.version,
 				},
 			}
-			_, _, err := reconciler.ensureServiceMeshOperatorInstallPlan(context.Background(), tc.version)
+			_, _, err := reconciler.ensureServiceMeshOperatorInstallPlan(context.Background())
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}

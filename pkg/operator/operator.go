@@ -312,10 +312,8 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	gatewayClassController, err := gatewayclasscontroller.NewUnmanaged(mgr, gatewayclasscontroller.Config{
 		OperatorNamespace:         config.Namespace,
 		OperandNamespace:          operatorcontroller.DefaultOperandNamespace,
-		GatewayAPIOperatorCatalog: config.GatewayAPIOperatorCatalog,
 		GatewayAPIOperatorChannel: config.GatewayAPIOperatorChannel,
 		GatewayAPIOperatorVersion: config.GatewayAPIOperatorVersion,
-		IstioVersion:              config.IstioVersion,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gatewayclass controller: %w", err)

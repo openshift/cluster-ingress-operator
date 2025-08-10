@@ -64,14 +64,10 @@ spec:
           - "$(CANARY_IMAGE)"
           - --release-version
           - "$(RELEASE_VERSION)"
-          - --gateway-api-operator-catalog
-          - "$(GATEWAY_API_OPERATOR_CATALOG)"
           - --gateway-api-operator-channel
           - "$(GATEWAY_API_OPERATOR_CHANNEL)"
           - --gateway-api-operator-version
           - "$(GATEWAY_API_OPERATOR_VERSION)"
-          - --istio-version
-          - "$(ISTIO_VERSION)"
           env:
             - name: RELEASE_VERSION
               value: "0.0.1-snapshot"
@@ -83,14 +79,10 @@ spec:
               value: openshift/origin-haproxy-router:v4.0
             - name: CANARY_IMAGE
               value: openshift/origin-cluster-ingress-operator:latest
-            - name: GATEWAY_API_OPERATOR_CATALOG
-              value: redhat-operators
             - name: GATEWAY_API_OPERATOR_CHANNEL
               value: stable
             - name: GATEWAY_API_OPERATOR_VERSION
               value: servicemeshoperator3.v3.0.1
-            - name: ISTIO_VERSION
-              value: v1.24.4
           resources:
             requests:
               cpu: 10m
