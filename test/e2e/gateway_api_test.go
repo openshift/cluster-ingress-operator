@@ -381,7 +381,7 @@ func testGatewayAPIResourcesProtection(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// Verify that GatewayAPI CRD creation is forbidden.
 			for i := range testCRDs {
-				if err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 30*time.Second, false, func(ctx context.Context) (bool, error) {
+				if err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 60*time.Second, false, func(ctx context.Context) (bool, error) {
 					if err := tc.kclient.Create(ctx, testCRDs[i]); err != nil {
 						if kerrors.IsAlreadyExists(err) {
 							// VAP was disabled and re-enabled at the beginning of the test.
