@@ -8,6 +8,7 @@ import (
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 
@@ -93,4 +94,18 @@ func canaryNamespaceChanged(current, expected *corev1.Namespace) (bool, *corev1.
 	updated.Annotations[projectv1.ProjectNodeSelector] = expected.Annotations[projectv1.ProjectNodeSelector]
 
 	return true, updated
+}
+
+func (r *reconciler) ensureCanaryNamespaceNetworkPolicy() (bool, *networkingv1.NetworkPolicy, error) {
+	np := manifests.CanaryNetworkPolicyDenyAll()
+	if err := r.client.Get(context.TODO(), types.NamespacedName{Namespace: np.Namespace, Name: np.Name}, np); err != nil {
+		if !errors.IsNotFound(err) {
+			return false, nil, fmt.Errorf("failed to get canary namespace network policy %s/%s: %v", np.Namespace, np.Name, err)
+		}
+		if err := r.client.Create(context.TODO(), np); err != nil {
+			return false, nil, fmt.Errorf("failed to create canary namespace network policy %s/%s: %v", np.Namespace, np.Name, err)
+		}
+		log.Info("created canary namespace network policy", "namespace", np.Namespace, "name", np.Name)
+	}
+	return true, np, nil
 }

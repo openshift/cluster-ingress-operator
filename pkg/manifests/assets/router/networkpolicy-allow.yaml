@@ -1,0 +1,25 @@
+# Router Pods
+#  Egress to api server and everything (routes set endpoints, so can be literally anything)
+#  Ingress to http on port 80 and https on port 443 (TCP) and to metrics (1936)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+# name, namespace,labels and annotations are set at runtime
+spec:
+  podSelector:
+    # matchLabels are set at runtime
+    matchLabels: {}
+  ingress:
+  - ports:
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 1936
+  egress:
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+  policyTypes:
+  - Ingress
+  - Egress

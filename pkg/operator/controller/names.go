@@ -118,6 +118,14 @@ func RouterDeploymentName(ci *operatorv1.IngressController) types.NamespacedName
 	}
 }
 
+// RouterNetworkPolicyName returns the namespaced name for the router network policy.
+func RouterNetworkPolicyName(ci *operatorv1.IngressController) types.NamespacedName {
+	return types.NamespacedName{
+		Namespace: DefaultOperandNamespace,
+		Name:      "router-" + ci.Name,
+	}
+}
+
 // RouterCASecretName returns the namespaced name for the router CA secret.
 // This secret holds the CA certificate that the operator will use to create
 // default certificates for ingresscontrollers.
@@ -287,6 +295,13 @@ func CanaryRouteName() types.NamespacedName {
 	return types.NamespacedName{
 		Namespace: DefaultCanaryNamespace,
 		Name:      "canary",
+	}
+}
+
+func CanaryNetworkPolicyName() types.NamespacedName {
+	return types.NamespacedName{
+		Namespace: DefaultCanaryNamespace,
+		Name:      "ingress-canary",
 	}
 }
 
