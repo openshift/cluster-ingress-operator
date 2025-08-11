@@ -1061,7 +1061,9 @@ func assertDNSRecord(t *testing.T, recordName types.NamespacedName) error {
 func assertVAP(t *testing.T, name string) error {
 	t.Helper()
 	vap := &admissionregistrationv1.ValidatingAdmissionPolicy{}
-	return wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(context context.Context) (bool, error) {
+	// Re-creation of VAP can take some time especially after CVO is scaled back up.
+	// Use a large timeout of 5 minutes to avoid flakes.
+	return wait.PollUntilContextTimeout(context.Background(), 5*time.Second, 5*time.Minute, false, func(context context.Context) (bool, error) {
 		if err := kclient.Get(context, types.NamespacedName{Name: name}, vap); err != nil {
 			t.Logf("failed to get vap %q: %v, retrying...", name, err)
 			return false, nil
@@ -1076,7 +1078,7 @@ func scaleDeployment(t *testing.T, namespace, name string, replicas int32) error
 	t.Helper()
 
 	nsName := types.NamespacedName{Namespace: namespace, Name: name}
-	return wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(context context.Context) (bool, error) {
+	return wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 120*time.Second, false, func(context context.Context) (bool, error) {
 		depl := &appsv1.Deployment{}
 		if err := kclient.Get(context, nsName, depl); err != nil {
 			t.Logf("failed to get deployment %q: %v, retrying...", nsName, err)
