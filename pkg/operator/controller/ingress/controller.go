@@ -24,6 +24,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 
 	"k8s.io/client-go/tools/record"
 
@@ -114,6 +115,19 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	if err := c.Watch(source.Kind[client.Object](operatorCache, &corev1.Service{}, enqueueRequestForOwningIngressController(config.Namespace))); err != nil {
 		return nil, err
 	}
+	// Watch for per-ingresscontroller network policies.
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &networkingv1.NetworkPolicy{}, enqueueRequestForOwningIngressController(config.Namespace))); err != nil {
+		return nil, err
+	}
+	// Watch for the router namespace default deny all network policy. Queue
+	// reconciliation for the default ingress controller.
+	routerDenyAllNetworkPolicy := manifests.RouterDenyAllNetworkPolicy()
+	routerDenyAllNetworkPolicyPredicate := predicate.NewPredicateFuncs(func(o client.Object) bool {
+		return o.GetNamespace() == routerDenyAllNetworkPolicy.Namespace && o.GetName() == routerDenyAllNetworkPolicy.Name
+	})
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &networkingv1.NetworkPolicy{}, enqueueRequestForDefaultIngressController(config.Namespace), routerDenyAllNetworkPolicyPredicate)); err != nil {
+		return nil, err
+	}
 	// Add watch for deleted pods specifically for ensuring ingress deletion.
 	if err := c.Watch(source.Kind[client.Object](operatorCache, &corev1.Pod{}, enqueueRequestForOwningIngressController(config.Namespace), predicate.Funcs{
 		CreateFunc:  func(e event.CreateEvent) bool { return false },
@@ -192,6 +206,20 @@ func enqueueRequestForOwningIngressController(namespace string) handler.EventHan
 				}
 			} else {
 				return []reconcile.Request{}
+			}
+		})
+}
+
+func enqueueRequestForDefaultIngressController(namespace string) handler.EventHandler {
+	return handler.EnqueueRequestsFromMapFunc(
+		func(ctx context.Context, a client.Object) []reconcile.Request {
+			return []reconcile.Request{
+				{
+					NamespacedName: types.NamespacedName{
+						Namespace: namespace,
+						Name:      manifests.DefaultIngressControllerName,
+					},
+				},
 			}
 		})
 }
@@ -1109,28 +1137,28 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		updated := ci.DeepCopy()
 		updated.Finalizers = append(updated.Finalizers, manifests.IngressControllerFinalizer)
 		if err := r.client.Update(context.TODO(), updated); err != nil {
-			return fmt.Errorf("failed to update finalizers: %v", err)
+			return fmt.Errorf("failed to update finalizers: %w", err)
 		}
 		if err := r.client.Get(context.TODO(), types.NamespacedName{Namespace: updated.Namespace, Name: updated.Name}, updated); err != nil {
-			return fmt.Errorf("failed to get ingresscontroller: %v", err)
+			return fmt.Errorf("failed to get ingresscontroller: %w", err)
 		}
 		ci = updated
 	}
 
 	if _, _, err := r.ensureClusterRole(); err != nil {
-		return fmt.Errorf("failed to ensure cluster role: %v", err)
+		return fmt.Errorf("failed to ensure cluster role: %w", err)
 	}
 
 	if _, _, err := r.ensureRouterNamespace(); err != nil {
-		return fmt.Errorf("failed to ensure namespace: %v", err)
+		return fmt.Errorf("failed to ensure namespace: %w", err)
 	}
 
 	if err := r.ensureRouterServiceAccount(); err != nil {
-		return fmt.Errorf("failed to ensure service account: %v", err)
+		return fmt.Errorf("failed to ensure service account: %w", err)
 	}
 
 	if err := r.ensureRouterClusterRoleBinding(); err != nil {
-		return fmt.Errorf("failed to ensure cluster role binding: %v", err)
+		return fmt.Errorf("failed to ensure cluster role binding: %w", err)
 	}
 
 	var errs []error
@@ -1167,7 +1195,7 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 
 	haveDepl, deployment, err := r.ensureRouterDeployment(ci, infraConfig, ingressConfig, apiConfig, networkConfig, haveClientCAConfigmap, clientCAConfigmap, clusterProxyConfig, proxyNeeded)
 	if err != nil {
-		errs = append(errs, fmt.Errorf("failed to ensure deployment: %v", err))
+		errs = append(errs, fmt.Errorf("failed to ensure deployment: %w", err))
 		return utilerrors.NewAggregate(errs)
 	} else if !haveDepl {
 		errs = append(errs, fmt.Errorf("failed to get router deployment %s/%s", ci.Namespace, ci.Name))
@@ -1181,6 +1209,14 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		Name:       deployment.Name,
 		UID:        deployment.UID,
 		Controller: &trueVar,
+	}
+
+	if err := r.ensureRouterNetworkPolicy(ci, deploymentRef); err != nil {
+		return fmt.Errorf("failed to ensure network policy: %w", err)
+	}
+
+	if _, _, err := r.ensureRouterDenyAllNetworkPolicy(); err != nil {
+		return fmt.Errorf("failed to ensure default namespace network policy: %w", err)
 	}
 
 	var wildcardRecord *iov1.DNSRecord

@@ -14,6 +14,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/apiserver/pkg/storage/names"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -55,7 +56,8 @@ func TestSecureRedirectCorrectness(t *testing.T) {
 		t.Fatalf("failed to get ingresscontroller service: %v", err)
 	}
 
-	echoPod := buildEchoPod(name+"-echo", deployment.Namespace)
+	namespace := createNamespace(t, names.SimpleNameGenerator.GenerateName("secure-redirect-"))
+	echoPod := buildEchoPod(name+"-echo", namespace.Name)
 	if err := kclient.Create(context.TODO(), echoPod); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 	}

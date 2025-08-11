@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	networkingv1 "k8s.io/api/networking/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -30,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
+	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	testutil "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/test/util"
 )
 
@@ -350,6 +352,7 @@ func Test_Reconcile(t *testing.T) {
 			expectCreate: []client.Object{
 				subscription("redhat-operators", "stable", "servicemeshoperator3.v3.0.1"),
 				istio("v1.24.4", false, nil, gatewayclassesConfig(hpaConfig(2), "openshift-default")),
+				manifests.IstiodAllowNetworkPolicy(),
 			},
 			expectUpdate: []client.Object{},
 			expectDelete: []client.Object{},
@@ -364,6 +367,7 @@ func Test_Reconcile(t *testing.T) {
 			expectCreate: []client.Object{
 				subscription("redhat-operators", "stable", "servicemeshoperator3.v3.0.1"),
 				istio("v1.24.4", false, nil, gatewayclassesConfig(hpaConfig(1), "openshift-default")),
+				manifests.IstiodAllowNetworkPolicy(),
 			},
 			expectUpdate: []client.Object{},
 			expectDelete: []client.Object{},
@@ -387,6 +391,7 @@ func Test_Reconcile(t *testing.T) {
 			expectCreate: []client.Object{
 				subscription("redhat-operators", "stable", "servicemeshoperator3.v3.0.1"),
 				istio("v1.24.4", false, nil, gatewayclassesConfig(hpaConfig(2), "openshift-default", "openshift-internal")),
+				manifests.IstiodAllowNetworkPolicy(),
 			},
 			expectUpdate: []client.Object{},
 			expectDelete: []client.Object{},
@@ -402,6 +407,7 @@ func Test_Reconcile(t *testing.T) {
 			expectCreate: []client.Object{
 				subscription("redhat-operators", "stable", "servicemeshoperator3.v3.0.1"),
 				istio("v1.24.4", false, expectedProxyConfiguration, gatewayclassesConfig(hpaConfig(2), "openshift-default")),
+				manifests.IstiodAllowNetworkPolicy(),
 			},
 			expectUpdate: []client.Object{},
 			expectDelete: []client.Object{},
@@ -421,6 +427,7 @@ func Test_Reconcile(t *testing.T) {
 			expectCreate: []client.Object{
 				subscription("redhat-operators", "stable", "servicemeshoperator3.v3.0.1"),
 				istio("v1.24.4", true, nil, gatewayclassesConfig(hpaConfig(2), "openshift-default")),
+				manifests.IstiodAllowNetworkPolicy(),
 			},
 			expectUpdate: []client.Object{},
 			expectDelete: []client.Object{},
@@ -440,6 +447,7 @@ func Test_Reconcile(t *testing.T) {
 			expectCreate: []client.Object{
 				subscription("redhat-operators", "stable", "servicemeshoperator3.v3.0.1"),
 				istio("v1.24.4", true, nil, gatewayclassesConfig(hpaConfig(2), "openshift-default")),
+				manifests.IstiodAllowNetworkPolicy(),
 			},
 			expectUpdate: []client.Object{},
 			expectDelete: []client.Object{},
@@ -456,6 +464,7 @@ func Test_Reconcile(t *testing.T) {
 			expectCreate: []client.Object{
 				subscription("redhat-operators", "stable", "servicemeshoperator3.v3.0.1"),
 				istio("v1.24-latest", false, nil, gatewayclassesConfig(hpaConfig(2), "openshift-default")),
+				manifests.IstiodAllowNetworkPolicy(),
 			},
 			expectUpdate: []client.Object{},
 			expectDelete: []client.Object{},
@@ -475,6 +484,7 @@ func Test_Reconcile(t *testing.T) {
 			expectCreate: []client.Object{
 				subscription("foo", "bar", "baz"),
 				istio("quux", false, nil, gatewayclassesConfig(hpaConfig(2), "openshift-default")),
+				manifests.IstiodAllowNetworkPolicy(),
 			},
 			expectUpdate: []client.Object{},
 			expectDelete: []client.Object{},
@@ -602,6 +612,9 @@ func Test_Reconcile(t *testing.T) {
 				istioCRD(),
 				istioRevisionCRD(),
 			},
+			expectCreate: []client.Object{
+				manifests.IstiodAllowNetworkPolicy(),
+			},
 			expectedStatusPatched: []client.Object{
 				gatewayClass("openshift-default", true, nil, installedConditions(), false),
 			},
@@ -614,6 +627,9 @@ func Test_Reconcile(t *testing.T) {
 			existingObjects: []client.Object{
 				infraConfig(configv1.SingleReplicaTopologyMode),
 				gatewayClass("openshift-default", true, nil, nil, false),
+			},
+			expectCreate: []client.Object{
+				manifests.IstiodAllowNetworkPolicy(),
 			},
 			expectedStatusPatched: []client.Object{
 				gatewayClass("openshift-default", true, nil, installedConditions(), false),
@@ -628,6 +644,9 @@ func Test_Reconcile(t *testing.T) {
 				infraConfig(configv1.HighlyAvailableTopologyMode),
 				gatewayClass("openshift-default", true, nil, nil, false),
 			},
+			expectCreate: []client.Object{
+				manifests.IstiodAllowNetworkPolicy(),
+			},
 			expectedStatusPatched: []client.Object{
 				gatewayClass("openshift-default", true, nil, installedConditions(), false),
 			},
@@ -641,6 +660,9 @@ func Test_Reconcile(t *testing.T) {
 				infraConfig(configv1.HighlyAvailableTopologyMode),
 				gatewayClass("openshift-default", true, nil, nil, false),
 				proxyConfig("http://some.proxy.tld:8080", "https://another.proxy.tld", ".cluster.local,.ec2.internal,.svc,10.0.0.0/16,10.128.0.0/14"),
+			},
+			expectCreate: []client.Object{
+				manifests.IstiodAllowNetworkPolicy(),
 			},
 			expectedStatusPatched: []client.Object{
 				gatewayClass("openshift-default", true, nil, installedConditions(), false),
@@ -666,6 +688,9 @@ func Test_Reconcile(t *testing.T) {
 				gatewayClass("openshift-custom", true, nil, nil, false),
 				proxyConfig("http://some.proxy.tld:8080", "https://another.proxy.tld", ".cluster.local,.ec2.internal,.svc,10.0.0.0/16,10.128.0.0/14"),
 			},
+			expectCreate: []client.Object{
+				manifests.IstiodAllowNetworkPolicy(),
+			},
 			expectedStatusPatched: []client.Object{
 				gatewayClass("openshift-default", true, nil, installedConditions(), false),
 			},
@@ -683,6 +708,9 @@ func Test_Reconcile(t *testing.T) {
 						Name: "inferencepools.inference.networking.x-k8s.io",
 					},
 				},
+			},
+			expectCreate: []client.Object{
+				manifests.IstiodAllowNetworkPolicy(),
 			},
 			expectedStatusPatched: []client.Object{
 				gatewayClass("openshift-default", true, nil, installedConditions(), false),
@@ -702,6 +730,9 @@ func Test_Reconcile(t *testing.T) {
 					},
 				},
 			},
+			expectCreate: []client.Object{
+				manifests.IstiodAllowNetworkPolicy(),
+			},
 			expectedStatusPatched: []client.Object{
 				gatewayClass("openshift-default", true, nil, installedConditions(), false),
 			},
@@ -716,6 +747,9 @@ func Test_Reconcile(t *testing.T) {
 				gatewayClass("openshift-default", true, map[string]string{
 					"unsupported.do-not-use.openshift.io/istio-version": "v1.24-latest",
 				}, nil, false),
+			},
+			expectCreate: []client.Object{
+				manifests.IstiodAllowNetworkPolicy(),
 			},
 			expectedStatusPatched: []client.Object{
 				gatewayClass("openshift-default", true, map[string]string{
@@ -775,6 +809,7 @@ func Test_Reconcile(t *testing.T) {
 	operatorsv1alpha1.AddToScheme(scheme)
 	sailv1.AddToScheme(scheme)
 	apiextensionsv1.AddToScheme(scheme)
+	networkingv1.AddToScheme(scheme)
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

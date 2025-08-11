@@ -20,6 +20,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apiserver/pkg/storage/names"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
@@ -63,7 +64,8 @@ func TestHTTPHeaderBufferSize(t *testing.T) {
 		t.Fatalf("failed to get ingresscontroller service: %v", err)
 	}
 
-	echoPod := buildEchoPod("header-buffer-size-echo", deployment.Namespace)
+	namespace := createNamespace(t, names.SimpleNameGenerator.GenerateName("header-buffer-size-"))
+	echoPod := buildEchoPod("header-buffer-size-echo", namespace.Name)
 	if err := kclient.Create(context.TODO(), echoPod); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 	}

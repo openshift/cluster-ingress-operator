@@ -24,6 +24,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/apiserver/pkg/storage/names"
 )
 
 const (
@@ -111,7 +112,8 @@ func TestAWSEIPAllocationsForNLB(t *testing.T) {
 	verifyIngressControllerEIPAllocationStatus(t, name)
 
 	// Verify we can reach the NLB with the provided eipAllocations.
-	externalTestPodName := types.NamespacedName{Name: name.Name + "-external-verify", Namespace: name.Namespace}
+	namespace := createNamespace(t, names.SimpleNameGenerator.GenerateName("eip-allocations-"))
+	externalTestPodName := types.NamespacedName{Name: name.Name + "-external-verify", Namespace: namespace.Name}
 	testHostname := "apps." + ic.Spec.Domain
 	t.Logf("verifying external connectivity for ingresscontroller %q using an NLB with specified eipAllocations", ic.Name)
 	verifyExternalIngressController(t, externalTestPodName, testHostname, elbHostname)

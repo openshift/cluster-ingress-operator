@@ -2186,6 +2186,9 @@ func TestSyslogLogging(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: "openshift-ingress",
 			Name:      "syslog",
+			Labels: map[string]string{
+				"type": "test-pod",
+			},
 		},
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{
@@ -2227,6 +2230,17 @@ func TestSyslogLogging(t *testing.T) {
 			t.Fatalf("failed to delete pod %s: %v", syslogPod.Name, err)
 		}
 	}()
+
+	networkPolicy := buildTestPodNetworkPolicy(types.NamespacedName{Name: "syslog-netpol", Namespace: syslogPod.Namespace})
+	if err := kclient.Create(context.TODO(), networkPolicy); err != nil {
+		t.Fatalf("failed to create network policy %s: %v", networkPolicy.Name, err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), networkPolicy); err != nil {
+			t.Fatalf("failed to delete network policy %s: %v", networkPolicy.Name, err)
+		}
+	}()
+
 	syslogConfigmap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "rsyslog-conf",
@@ -2806,6 +2820,9 @@ func TestHTTPHeaderCapture(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "headertest",
 			Namespace: podList.Items[0].Namespace,
+			Labels: map[string]string{
+				"type": "test-pod",
+			},
 		},
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{
@@ -2836,6 +2853,16 @@ func TestHTTPHeaderCapture(t *testing.T) {
 				return
 			}
 			t.Fatalf("failed to delete pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
+		}
+	}()
+
+	networkPolicy := buildTestPodNetworkPolicy(types.NamespacedName{Name: "http-header-capture", Namespace: clientPod.Namespace})
+	if err := kclient.Create(context.TODO(), networkPolicy); err != nil {
+		t.Fatalf("failed to create network policy %s: %v", networkPolicy.Name, err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), networkPolicy); err != nil {
+			t.Fatalf("failed to delete network policy %s: %v", networkPolicy.Name, err)
 		}
 	}()
 
@@ -2950,6 +2977,9 @@ func TestHTTPCookieCapture(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "cookietest",
 			Namespace: podList.Items[0].Namespace,
+			Labels: map[string]string{
+				"type": "test-pod",
+			},
 		},
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{
@@ -2981,6 +3011,16 @@ func TestHTTPCookieCapture(t *testing.T) {
 				return
 			}
 			t.Fatalf("failed to delete pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
+		}
+	}()
+
+	networkPolicy := buildTestPodNetworkPolicy(types.NamespacedName{Name: "http-cookie-capture", Namespace: clientPod.Namespace})
+	if err := kclient.Create(context.TODO(), networkPolicy); err != nil {
+		t.Fatalf("failed to create network policy %s: %v", networkPolicy.Name, err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), networkPolicy); err != nil {
+			t.Fatalf("failed to delete network policy %s: %v", networkPolicy.Name, err)
 		}
 	}()
 
@@ -3109,7 +3149,8 @@ func TestAWSELBConnectionIdleTimeout(t *testing.T) {
 	defer assertIngressControllerDeleted(t, kclient, ic)
 
 	// Create a pod with an HTTP application that sends delayed responses.
-	httpdPod := buildSlowHTTPDPod("idle-timeout-httpd", operatorcontroller.DefaultOperandNamespace)
+	namespace := createNamespace(t, names.SimpleNameGenerator.GenerateName("idle-timeout-"))
+	httpdPod := buildSlowHTTPDPod("idle-timeout-httpd", namespace.Name)
 	if err := kclient.Create(context.TODO(), httpdPod); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", httpdPod.Namespace, httpdPod.Name, err)
 	}
@@ -3343,6 +3384,16 @@ func TestConnectTimeout(t *testing.T) {
 		}
 	})
 
+	networkPolicy := buildTestPodNetworkPolicy(types.NamespacedName{Name: "connect-timeout-http", Namespace: httpdPod.Namespace})
+	if err := kclient.Create(context.TODO(), networkPolicy); err != nil {
+		t.Fatalf("failed to create network policy %s: %v", networkPolicy.Name, err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), networkPolicy); err != nil {
+			t.Fatalf("failed to delete network policy %s: %v", networkPolicy.Name, err)
+		}
+	}()
+
 	if err := waitForPodReady(t, kclient, httpdPod, 2*time.Minute); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
@@ -3465,7 +3516,8 @@ func TestUniqueIdHeader(t *testing.T) {
 		t.Fatalf("failed to get ingresscontroller service: %v", err)
 	}
 
-	echoPod := buildEchoPod("unique-id-echo", deployment.Namespace)
+	namespace := createNamespace(t, names.SimpleNameGenerator.GenerateName("unique-id-"))
+	echoPod := buildEchoPod("unique-id-echo", namespace.Name)
 	if err := kclient.Create(context.TODO(), echoPod); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 	}

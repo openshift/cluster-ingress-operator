@@ -24,6 +24,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -185,6 +186,24 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 		return nil, err
 	}
 
+	canaryDenyAllNetworkPolicy := manifests.CanaryDenyAllNetworkPolicy()
+	canaryNetworkPolicy := operatorcontroller.CanaryNetworkPolicyName()
+	canaryNetworkPolicyPredicate := predicate.NewPredicateFuncs(func(o client.Object) bool {
+		if o.GetNamespace() != operatorcontroller.DefaultCanaryNamespace {
+			return false
+		}
+		switch {
+		case o.GetName() == canaryNetworkPolicy.Name:
+			return true
+		case o.GetName() == canaryDenyAllNetworkPolicy.Name:
+			return true
+		default:
+			return false
+		}
+	})
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &networkingv1.NetworkPolicy{}, enqueueRequestForDefaultIngressController(config.Namespace), canaryNetworkPolicyPredicate)); err != nil {
+		return nil, err
+	}
 	return c, nil
 }
 
@@ -210,7 +229,15 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	if _, _, err := r.ensureCanaryNamespace(ctx); err != nil {
 		// Return if the canary namespace cannot be created since
 		// resource creation in a namespace that does not exist will fail.
-		return result, fmt.Errorf("failed to ensure canary namespace: %v", err)
+		return result, fmt.Errorf("failed to ensure canary namespace: %w", err)
+	}
+
+	if _, _, err := r.ensureCanaryNetworkPolicy(); err != nil {
+		return result, fmt.Errorf("failed to ensure canary network policy: %w", err)
+	}
+
+	if _, _, err := r.ensureCanaryDenyAllNetworkPolicy(); err != nil {
+		return result, fmt.Errorf("failed to ensure canary namespace network policy: %w", err)
 	}
 
 	// Read the cluster APIServer config to get the TLS security profile.
@@ -230,9 +257,9 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 
 	haveDs, daemonset, err := r.ensureCanaryDaemonSet(ctx, tlsProfileSpec)
 	if err != nil {
-		return result, fmt.Errorf("failed to ensure canary daemonset: %v", err)
+		return result, fmt.Errorf("failed to ensure canary daemonset: %w", err)
 	} else if !haveDs {
-		return result, fmt.Errorf("failed to get canary daemonset: %v", err)
+		return result, fmt.Errorf("failed to get canary daemonset: %w", err)
 	}
 
 	haveSa, _, err := r.ensureCanaryServiceAccount(ctx)
@@ -253,23 +280,23 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 
 	haveService, service, err := r.ensureCanaryService(ctx, daemonsetRef)
 	if err != nil {
-		return result, fmt.Errorf("failed to ensure canary service: %v", err)
+		return result, fmt.Errorf("failed to ensure canary service: %w", err)
 	} else if !haveService {
-		return result, fmt.Errorf("failed to get canary service: %v", err)
+		return result, fmt.Errorf("failed to get canary service: %w", err)
 	}
 
 	haveRoute, _, err := r.ensureCanaryRoute(ctx, service)
 	if err != nil {
-		return result, fmt.Errorf("failed to ensure canary route: %v", err)
+		return result, fmt.Errorf("failed to ensure canary route: %w", err)
 	} else if !haveRoute {
-		return result, fmt.Errorf("failed to get canary route: %v", err)
+		return result, fmt.Errorf("failed to get canary route: %w", err)
 	}
 
 	// Get the canary route rotation annotation value
 	// from the default ingress controller.
 	ic := &operatorv1.IngressController{}
 	if err := r.client.Get(ctx, request.NamespacedName, ic); err != nil {
-		return result, fmt.Errorf("failed to get ingress controller %s: %v", request.NamespacedName.Name, err)
+		return result, fmt.Errorf("failed to get ingress controller %s: %w", request.NamespacedName.Name, err)
 	}
 
 	val, ok := ic.Annotations[CanaryRouteRotationAnnotation]

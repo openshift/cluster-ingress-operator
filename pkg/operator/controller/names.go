@@ -130,6 +130,14 @@ func RouterDeploymentName(ci *operatorv1.IngressController) types.NamespacedName
 	}
 }
 
+// RouterNetworkPolicyName returns the namespaced name for the router network policy.
+func RouterNetworkPolicyName(ci *operatorv1.IngressController) types.NamespacedName {
+	return types.NamespacedName{
+		Namespace: DefaultOperandNamespace,
+		Name:      "router-" + ci.Name,
+	}
+}
+
 // RouterCASecretName returns the namespaced name for the router CA secret.
 // This secret holds the CA certificate that the operator will use to create
 // default certificates for ingresscontrollers.
@@ -320,6 +328,13 @@ func CanaryServiceAccountName() types.NamespacedName {
 	}
 }
 
+func CanaryNetworkPolicyName() types.NamespacedName {
+	return types.NamespacedName{
+		Namespace: DefaultCanaryNamespace,
+		Name:      "ingress-canary",
+	}
+}
+
 func IngressClassName(ingressControllerName string) types.NamespacedName {
 	return types.NamespacedName{Name: "openshift-" + ingressControllerName}
 }
@@ -350,5 +365,19 @@ func GatewayDNSRecordName(gateway *gatewayapiv1.Gateway, host string) types.Name
 	return types.NamespacedName{
 		Namespace: gateway.Namespace,
 		Name:      fmt.Sprintf("%s-%s-wildcard", gateway.Name, util.Hash(host)),
+	}
+}
+
+func GatewayNetworkPolicyName(gateway *gatewayapiv1.Gateway) types.NamespacedName {
+	return types.NamespacedName{
+		Namespace: gateway.Namespace,
+		Name:      fmt.Sprintf("%s-allow", gateway.Name),
+	}
+}
+
+func IstiodNetworkPolicyName() types.NamespacedName {
+	return types.NamespacedName{
+		Name:      "istiod-allow",
+		Namespace: "openshift-ingress",
 	}
 }

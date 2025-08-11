@@ -25,6 +25,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/utils/pointer"
@@ -80,8 +81,22 @@ func TestCanaryRoute(t *testing.T) {
 		t.Fatalf("Failed to find host name for the %q router in route %s: %+v", defaultName.Name, name, canaryRoute)
 	}
 
+	clientPodName := types.NamespacedName{Name: "canary-route-check", Namespace: canaryRoute.Namespace}
+	clientNetworkPolicy := buildTestPodNetworkPolicy(clientPodName)
+	if err := kclient.Create(context.TODO(), clientNetworkPolicy); err != nil {
+		t.Fatalf("Failed to create network policy %s/%s: %v", clientNetworkPolicy.Namespace, clientNetworkPolicy.Name, err)
+	}
+	t.Cleanup(func() {
+		if err := kclient.Delete(context.TODO(), clientNetworkPolicy); err != nil {
+			if errors.IsNotFound(err) {
+				return
+			}
+			t.Errorf("Failed to delete network policy %s/%s: %v", clientNetworkPolicy.Namespace, clientNetworkPolicy.Name, err)
+		}
+	})
+
 	image := deployment.Spec.Template.Spec.Containers[0].Image
-	clientPod := buildCanaryCurlPod("canary-route-check", canaryRoute.Namespace, image, canaryRouteHost)
+	clientPod := buildCanaryCurlPod(clientPodName.Name, clientPodName.Namespace, image, canaryRouteHost)
 	if err := kclient.Create(context.TODO(), clientPod); err != nil {
 		t.Fatalf("Failed to create pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
 	}
@@ -211,6 +226,9 @@ func buildCanaryCurlPod(name, namespace, image, host string) *corev1.Pod {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
+			Labels: map[string]string{
+				"type": "test-pod",
+			},
 		},
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{

@@ -20,6 +20,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apiserver/pkg/storage/names"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
@@ -149,7 +150,8 @@ func TestForwardedHeaderPolicyAppend(t *testing.T) {
 	}
 
 	// Create a pod and route that echoes back the request.
-	echoPod := buildEchoPod("forwarded-header-policy-append-echo", deployment.Namespace)
+	namespace := createNamespace(t, names.SimpleNameGenerator.GenerateName("fhp-append-"))
+	echoPod := buildEchoPod("forwarded-header-policy-append-echo", namespace.Name)
 	if err := kclient.Create(context.TODO(), echoPod); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 	}
@@ -244,7 +246,8 @@ func TestForwardedHeaderPolicyReplace(t *testing.T) {
 		t.Fatalf("failed to get ingresscontroller service: %v", err)
 	}
 
-	echoPod := buildEchoPod("forwarded-header-policy-replace-echo", deployment.Namespace)
+	namespace := createNamespace(t, names.SimpleNameGenerator.GenerateName("fhp-replace-"))
+	echoPod := buildEchoPod("forwarded-header-policy-replace-echo", namespace.Name)
 	if err := kclient.Create(context.TODO(), echoPod); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 	}
@@ -314,7 +317,8 @@ func TestForwardedHeaderPolicyNever(t *testing.T) {
 		t.Fatalf("failed to get ingresscontroller service: %v", err)
 	}
 
-	echoPod := buildEchoPod("forwarded-header-policy-never-echo", deployment.Namespace)
+	namespace := createNamespace(t, names.SimpleNameGenerator.GenerateName("fhp-never-"))
+	echoPod := buildEchoPod("forwarded-header-policy-never-echo", namespace.Name)
 	if err := kclient.Create(context.TODO(), echoPod); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 	}
@@ -385,7 +389,8 @@ func TestForwardedHeaderPolicyIfNone(t *testing.T) {
 		t.Fatalf("failed to get ingresscontroller service: %v", err)
 	}
 
-	echoPod := buildEchoPod("forwarded-header-policy-if-none-echo", deployment.Namespace)
+	namespace := createNamespace(t, names.SimpleNameGenerator.GenerateName("fhp-if-none-"))
+	echoPod := buildEchoPod("forwarded-header-policy-if-none-echo", namespace.Name)
 	if err := kclient.Create(context.TODO(), echoPod); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 	}
