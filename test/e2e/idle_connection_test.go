@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -109,9 +110,9 @@ type idleConnectionTestConfig struct {
 }
 
 type idleConnectionTestAction struct {
-	description      string                                                                                                  // A human-readable description of the step
-	fetchResponse    func(httpClient *http.Client, elbAddress string, cfg *idleConnectionTestConfig) (string, string, error) // Function to fetch a response
-	expectedResponse string                                                                                                  // The expected response value for verification
+	description            string                                                                                                  // A human-readable description of the step
+	fetchResponse          func(httpClient *http.Client, elbAddress string, cfg *idleConnectionTestConfig) (string, string, error) // Function to fetch a response
+	expectedResponsePrefix string                                                                                                  // The expected response value for verification
 }
 
 func idleConnectionCreateBackendService(ctx context.Context, t *testing.T, namespace, name, image string) error {
@@ -124,13 +125,13 @@ func idleConnectionCreateBackendService(ctx context.Context, t *testing.T, names
 		return fmt.Errorf("failed to create service %s/%s: %w", namespace, name, err)
 	}
 
-	pod, err := idleConnectionCreatePod(ctx, namespace, name, image, labels)
+	rs, err := idleConnectionCreateReplicaSet(ctx, namespace, name, image, labels)
 	if err != nil {
-		return fmt.Errorf("failed to create pod %s: %w", name, err)
+		return fmt.Errorf("failed to create replicaset %s: %w", name, err)
 	}
 
-	if err := waitForPodReady(t, kclient, pod, 2*time.Minute); err != nil {
-		return fmt.Errorf("pod %s is not ready: %w", name, err)
+	if err := waitForReplicaSetReady(t, kclient, rs, 2*time.Minute); err != nil {
+		return fmt.Errorf("replicaset %s is not ready: %w", name, err)
 	}
 
 	return nil
@@ -154,15 +155,15 @@ func idleConnectionCreateService(ctx context.Context, namespace, name string, la
 		},
 	}
 
-	if err := kclient.Create(ctx, service); err != nil {
+	if err := createWithRetryOnError(ctx, service, 2*time.Minute); err != nil {
 		return nil, fmt.Errorf("failed to create service %s/%s: %w", service.Namespace, service.Name, err)
 	}
 
 	return service, nil
 }
 
-func idleConnectionCreatePod(ctx context.Context, namespace, name, image string, labels map[string]string) (*corev1.Pod, error) {
-	pod := &corev1.Pod{
+func idleConnectionBuildPod(namespace, name, image string, labels map[string]string) *corev1.Pod {
+	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
@@ -236,12 +237,33 @@ func idleConnectionCreatePod(ctx context.Context, namespace, name, image string,
 			},
 		},
 	}
+}
 
-	if err := kclient.Create(ctx, pod); err != nil {
-		return nil, fmt.Errorf("failed to create pod %s/%s: %w", pod.Namespace, pod.Name, err)
+func idleConnectionCreateReplicaSet(ctx context.Context, namespace, name, image string, labels map[string]string) (*appsv1.ReplicaSet, error) {
+	pod := idleConnectionBuildPod(namespace, name, image, labels)
+	one := int32(1)
+	rs := &appsv1.ReplicaSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: appsv1.ReplicaSetSpec{
+			Replicas: &one,
+			Selector: &metav1.LabelSelector{
+				MatchLabels: pod.Labels,
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: pod.Labels,
+				},
+				Spec: pod.Spec,
+			},
+		},
 	}
-
-	return pod, nil
+	if err := createWithRetryOnError(ctx, rs, 2*time.Minute); err != nil {
+		return nil, fmt.Errorf("failed to create replicaset %s/%s: %w", rs.Namespace, rs.Name, err)
+	}
+	return rs, nil
 }
 
 func idleConnectionSwitchRouteService(t *testing.T, routeName types.NamespacedName, routerName, serviceName string) error {
@@ -499,8 +521,8 @@ func idleConnectionTerminationPolicyRunTest(t *testing.T, policy operatorv1.Ingr
 			t.Fatalf("step %d: failed: %v", step+1, err)
 		}
 
-		if response != action.expectedResponse {
-			t.Fatalf("step %d: unexpected response: got %q, want %q", step+1, response, action.expectedResponse)
+		if !strings.HasPrefix(response, action.expectedResponsePrefix) {
+			t.Fatalf("step %d: unexpected response prefix: got response %q, want prefix %q", step+1, response, action.expectedResponsePrefix)
 		}
 
 		localAddresses = append(localAddresses, localAddr)
@@ -550,7 +572,7 @@ func Test_IdleConnectionTerminationPolicyImmediate(t *testing.T) {
 			fetchResponse: func(httpClient *http.Client, elbAddr string, cfg *idleConnectionTestConfig) (string, string, error) {
 				return idleConnectionFetchResponse(t, httpClient, elbAddr, cfg.routeHost)
 			},
-			expectedResponse: "web-service-1",
+			expectedResponsePrefix: "web-service-1",
 		},
 		{
 			description: "Switch route to web-service-2 and verify Immediate policy ensures new responses are served by web-service-2",
@@ -560,14 +582,14 @@ func Test_IdleConnectionTerminationPolicyImmediate(t *testing.T) {
 				}
 				return idleConnectionFetchResponse(t, httpClient, elbAddr, cfg.routeHost)
 			},
-			expectedResponse: "web-service-2",
+			expectedResponsePrefix: "web-service-2",
 		},
 		{
 			description: "Ensure subsequent responses are served by web-service-2",
 			fetchResponse: func(httpClient *http.Client, elbAddr string, cfg *idleConnectionTestConfig) (string, string, error) {
 				return idleConnectionFetchResponse(t, httpClient, elbAddr, cfg.routeHost)
 			},
-			expectedResponse: "web-service-2",
+			expectedResponsePrefix: "web-service-2",
 		},
 	})
 }
@@ -610,7 +632,7 @@ func Test_IdleConnectionTerminationPolicyDeferred(t *testing.T) {
 			fetchResponse: func(httpClient *http.Client, elbAddr string, cfg *idleConnectionTestConfig) (string, string, error) {
 				return idleConnectionFetchResponse(t, httpClient, elbAddr, cfg.routeHost)
 			},
-			expectedResponse: "web-service-1",
+			expectedResponsePrefix: "web-service-1",
 		},
 		{
 			description: "Switch route to web-service-2 and validate Deferred policy allows one final response to be served by web-service-1",
@@ -620,14 +642,14 @@ func Test_IdleConnectionTerminationPolicyDeferred(t *testing.T) {
 				}
 				return idleConnectionFetchResponse(t, httpClient, elbAddr, cfg.routeHost)
 			},
-			expectedResponse: "web-service-1",
+			expectedResponsePrefix: "web-service-1",
 		},
 		{
 			description: "Ensure subsequent responses are now served by web-service-2",
 			fetchResponse: func(httpClient *http.Client, elbAddr string, cfg *idleConnectionTestConfig) (string, string, error) {
 				return idleConnectionFetchResponse(t, httpClient, elbAddr, cfg.routeHost)
 			},
-			expectedResponse: "web-service-2",
+			expectedResponsePrefix: "web-service-2",
 		},
 	})
 }
