@@ -4275,6 +4275,27 @@ func waitForPodReady(t *testing.T, cl client.Client, pod *corev1.Pod, timeout ti
 	return nil
 }
 
+func waitForReplicaSetReady(t *testing.T, cl client.Client, replicaset *appsv1.ReplicaSet, timeout time.Duration) error {
+	t.Helper()
+	name := types.NamespacedName{Namespace: replicaset.Namespace, Name: replicaset.Name}
+	rs := &appsv1.ReplicaSet{}
+	err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
+		if err := cl.Get(ctx, name, rs); err != nil {
+			t.Logf("error getting replicaset %s: %v", name, err)
+			return false, nil
+		}
+		if rs.Status.AvailableReplicas == *rs.Spec.Replicas {
+			return true, nil
+		}
+		t.Logf("replicaset %s not ready", name)
+		return false, nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to wait for replicaset %s to become ready", name)
+	}
+	return nil
+}
+
 func clusterOperatorConditionMap(conditions ...configv1.ClusterOperatorStatusCondition) map[string]string {
 	conds := map[string]string{}
 	for _, cond := range conditions {
