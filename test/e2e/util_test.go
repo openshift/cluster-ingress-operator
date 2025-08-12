@@ -647,6 +647,26 @@ func updateInfrastructureConfigSpecWithRetryOnConflict(t *testing.T, name types.
 	})
 }
 
+// retrieveDeployment is used to retrieve a full deployment resource
+func retrieveDeployment(name types.NamespacedName) (appsv1.Deployment, error) {
+	ccmDeployment := appsv1.Deployment{}
+	err := kclient.Get(context.TODO(), name, &ccmDeployment)
+	return ccmDeployment, err
+}
+
+// retrieveCCMConfigurationHash fetches the config-hash used on CCM deployment
+// and present on the annotation operator.openshift.io/config-hash
+// this information can be used to signal that a required infrastructure change
+// was successfully applied on CCM and forces CCM to do a rollout update.
+func retrieveCCMConfigurationHash(ccmDeployment appsv1.Deployment) string {
+	ccmConfigAnnotation := "operator.openshift.io/config-hash"
+	annotations := ccmDeployment.Spec.Template.GetAnnotations()
+	if cfghash, ok := annotations[ccmConfigAnnotation]; ok {
+		return cfghash
+	}
+	return ""
+}
+
 // updateInfrastructureStatus updates the Infrastructure status by applying
 // the given update function to the current Infrastructure object.
 // If there is a conflict error on update then the complete operation

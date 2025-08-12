@@ -2630,6 +2630,17 @@ func TestIngressControllerCustomEndpoints(t *testing.T) {
 			Name: "elasticloadbalancing",
 			URL:  fmt.Sprintf("https://elasticloadbalancing.%s.amazonaws.com", platform.AWS.Region),
 		}
+
+		ccmDeploymentName := types.NamespacedName{Namespace: "openshift-cloud-controller-manager", Name: "aws-cloud-controller-manager"}
+		oldCCMDeployment, err := retrieveDeployment(ccmDeploymentName)
+		if err != nil {
+			t.Fatalf("error getting CCM deployment: %v\n", err)
+		}
+		oldConfigHash := retrieveCCMConfigurationHash(oldCCMDeployment)
+		if oldConfigHash == "" {
+			t.Fatalf("CCM does not have a config hash, this should never happen: %v\n", oldCCMDeployment)
+		}
+
 		if err := updateInfrastructureConfigSpecWithRetryOnConflict(t, types.NamespacedName{Name: "cluster"}, timeout, func(spec *configv1.InfrastructureSpec) {
 			spec.PlatformSpec.AWS = &configv1.AWSPlatformSpec{
 				ServiceEndpoints: []configv1.AWSServiceEndpoint{
@@ -2649,16 +2660,40 @@ func TestIngressControllerCustomEndpoints(t *testing.T) {
 				t.Fatalf("failed to update infrastructure config: %v", err)
 			}
 		}()
-		// Wait for infrastructure status to update with custom endpoints.
-		if err := wait.PollImmediate(1*time.Second, 15*time.Second, func() (bool, error) {
-			if err := kclient.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, &infraConfig); err != nil {
+
+		// Wait for infrastructure status to update with custom endpoints,
+		// for CCM deploy to get a new configuration hash and for pods to be scheduled
+		// and available
+		// This configuration change and replicas available may take up to 5 minutes, depending on
+		// the environment load
+		if err := wait.PollUntilContextTimeout(context.TODO(), 1*time.Second, 5*time.Minute, false, func(ctx context.Context) (done bool, err error) {
+			if err := kclient.Get(ctx, types.NamespacedName{Name: "cluster"}, &infraConfig); err != nil {
 				t.Logf("failed to get infrastructure config: %v\n", err)
 				return false, err
 			}
 			if len(infraConfig.Status.PlatformStatus.AWS.ServiceEndpoints) == 0 {
 				return false, nil
 			}
-			return true, nil
+
+			currentCCMDeployment, err := retrieveDeployment(ccmDeploymentName)
+			if err != nil {
+				t.Logf("error getting CCM deployment: %v\n", err)
+				return false, err
+			}
+			currentConfigHash := retrieveCCMConfigurationHash(currentCCMDeployment)
+			if oldConfigHash == currentConfigHash {
+				t.Log("new config hash not yet applied to CCM deployment")
+				return false, nil
+			}
+
+			if currentCCMDeployment.Generation == currentCCMDeployment.Status.ObservedGeneration &&
+				currentCCMDeployment.Status.Replicas == currentCCMDeployment.Status.ReadyReplicas &&
+				currentCCMDeployment.Status.Replicas == currentCCMDeployment.Status.UpdatedReplicas &&
+				currentCCMDeployment.Status.UnavailableReplicas == 0 {
+				return true, nil
+			}
+			return false, nil
+
 		}); err != nil {
 			t.Fatalf("failed to observe status update for infrastructure config %s", infraConfig.Name)
 		}
@@ -2677,7 +2712,10 @@ func TestIngressControllerCustomEndpoints(t *testing.T) {
 	}
 	defer assertIngressControllerDeleted(t, kclient, ic)
 	// Ensure the ingress controller is reporting expected status conditions.
-	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
+	// The readiness of the resource depends on the load of the environment, and because changing InfrastructureConfig
+	// causes the Cloud controller manager to rollout, at least 3 minutes are required for leader
+	// election of CCM to happen + the required time to properly schedule the Pods once they are killed/restarted
+	if err := waitForIngressControllerCondition(t, kclient, 7*time.Minute, name, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
 		t.Errorf("failed to observe expected conditions: %v", err)
 	}
 }
