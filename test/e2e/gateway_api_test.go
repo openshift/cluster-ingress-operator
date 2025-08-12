@@ -391,6 +391,12 @@ func testGatewayAPIResourcesProtection(t *testing.T) {
 							t.Logf("Failed to create CRD %q: %v; retrying...", testCRDs[i].Name, err)
 							return false, nil
 						}
+						if isNetworkError(err) {
+							// Retry if the creation of CRD failed due to networking
+							// problems with the api server.
+							t.Logf("Failed to create CRD %q due to network error: %v, retrying", testCRDs[i].Name, err)
+							return false, nil
+						}
 						if !strings.Contains(err.Error(), tc.expectedErrMsg) {
 							return false, fmt.Errorf("unexpected error received while creating CRD %q: %v", testCRDs[i].Name, err)
 						}
