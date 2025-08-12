@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	goerrors "errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -1210,4 +1211,17 @@ func getIngressControllerLBAddress(t *testing.T, ic *operatorv1.IngressControlle
 		t.Fatalf("error getting IngressController's service address: %v", err)
 	}
 	return lbAddress
+}
+
+func isNetworkError(err error) bool {
+	var (
+		netErr net.Error
+		opErr  *net.OpError
+		msg    = err.Error()
+	)
+	return goerrors.As(err, &netErr) ||
+		goerrors.As(err, &opErr) ||
+		strings.Contains(msg, "connection reset by peer") ||
+		strings.Contains(msg, "i/o timeout") ||
+		strings.Contains(msg, "read tcp")
 }
