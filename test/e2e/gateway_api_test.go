@@ -381,7 +381,7 @@ func testGatewayAPIResourcesProtection(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// Verify that GatewayAPI CRD creation is forbidden.
 			for i := range testCRDs {
-				if err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 30*time.Second, false, func(ctx context.Context) (bool, error) {
+				if err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 60*time.Second, false, func(ctx context.Context) (bool, error) {
 					if err := tc.kclient.Create(ctx, testCRDs[i]); err != nil {
 						if kerrors.IsAlreadyExists(err) {
 							// VAP was disabled and re-enabled at the beginning of the test.
@@ -389,6 +389,12 @@ func testGatewayAPIResourcesProtection(t *testing.T) {
 							// As a result, we might encounter a "CRD X already exists" error.
 							// To handle this, we allow the API server some time to catch up.
 							t.Logf("Failed to create CRD %q: %v; retrying...", testCRDs[i].Name, err)
+							return false, nil
+						}
+						if isNetworkError(err) {
+							// Retry if the creation of CRD failed due to networking
+							// problems with the api server.
+							t.Logf("Failed to create CRD %q due to network error: %v, retrying", testCRDs[i].Name, err)
 							return false, nil
 						}
 						if !strings.Contains(err.Error(), tc.expectedErrMsg) {
