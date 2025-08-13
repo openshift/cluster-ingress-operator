@@ -35,6 +35,19 @@ func TestOSSMOperatorUpgradeViaIntermediateVersions(t *testing.T) {
 		t.Skip("Gateway API featuregates are not enabled, skipping TestOSSMOperatorUpgradeViaIntermediateVersions")
 	}
 
+	t.Cleanup(func() {
+		// Keeping test resources for must-gather if test failed.
+		if !t.Failed() {
+			t.Logf("Cleaning GatewayClass and OSSM operator...")
+			if err := cleanupGatewayClass(t, "openshift-default"); err != nil {
+				t.Errorf("Failed to cleanup gatewayclass: %v", err)
+			}
+			if err := cleanupOLMOperator(t, "openshift-operators", "servicemeshoperator3.openshift-operators"); err != nil {
+				t.Errorf("Failed to cleanup OSSM operator: %v", err)
+			}
+		}
+	})
+
 	var (
 		initialOSSMVersion  = "servicemeshoperator3.v3.0.0"
 		initialIstioVersion = "v1.24.3"
