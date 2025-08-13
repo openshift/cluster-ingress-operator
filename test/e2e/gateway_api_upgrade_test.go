@@ -10,7 +10,6 @@ import (
 
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/apiserver/pkg/storage/names"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -34,6 +33,16 @@ func TestOSSMOperatorUpgradeViaIntermediateVersions(t *testing.T) {
 	if !gatewayAPIEnabled || !gatewayAPIControllerEnabled {
 		t.Skip("Gateway API featuregates are not enabled, skipping TestOSSMOperatorUpgradeViaIntermediateVersions")
 	}
+
+	t.Cleanup(func() {
+		t.Logf("Cleaning GatewayClass and OSSM operator...")
+		if err := cleanupGatewayClass(t, "openshift-default"); err != nil {
+			t.Errorf("Failed to cleanup gatewayclass: %v", err)
+		}
+		if err := cleanupOLMOperator(t, "openshift-operators", "servicemeshoperator3.openshift-operators"); err != nil {
+			t.Errorf("Failed to cleanup OSSM operator: %v", err)
+		}
+	})
 
 	var (
 		initialOSSMVersion  = "servicemeshoperator3.v3.0.0"
@@ -61,7 +70,7 @@ func TestOSSMOperatorUpgradeViaIntermediateVersions(t *testing.T) {
 		t.Fatalf("Failed to find expected CatalogSource %s: %v", expectedCatalogSourceName, err)
 	}
 	t.Log("Checking for the OSSM operator deployment...")
-	if err := assertOSSMOperatorWithConfig(t, initialOSSMVersion, 2*time.Second, 60*time.Second); err != nil {
+	if err := assertOSSMOperatorWithConfig(t, initialOSSMVersion, 2*time.Second, 2*time.Minute); err != nil {
 		t.Fatalf("Failed to find expected Istio operator: %v", err)
 	}
 	t.Log("Checking for the Istio CR...")
@@ -99,7 +108,7 @@ func TestOSSMOperatorUpgradeViaIntermediateVersions(t *testing.T) {
 		{
 			Type:   configv1.OperatorProgressing,
 			Status: configv1.ConditionTrue,
-			Reason: "OSSMOperatorUpgrading",
+			Reason: "GatewayAPIOperatorUpgrading",
 		},
 		{
 			Type:   configv1.OperatorDegraded,
@@ -119,7 +128,7 @@ func TestOSSMOperatorUpgradeViaIntermediateVersions(t *testing.T) {
 		{
 			Type:   configv1.OperatorProgressing,
 			Status: configv1.ConditionFalse,
-			Reason: "AsExpectedAndOSSMOperatorUpToDate",
+			Reason: "AsExpectedAndGatewayAPIOperatorUpToDate",
 		},
 		{
 			Type:   configv1.OperatorDegraded,
@@ -137,45 +146,5 @@ func TestOSSMOperatorUpgradeViaIntermediateVersions(t *testing.T) {
 	t.Log("Checking for the Istio CR...")
 	if err := assertIstioWithConfig(t, upgradeIstioVersion); err != nil {
 		t.Fatalf("Failed to find expected Istio: %v", err)
-	}
-}
-
-// testConnectivity tests the connectivity to an HTTPRoute.
-func testConnectivity(t *testing.T, gatewayClass *gatewayapiv1.GatewayClass) {
-	t.Helper()
-
-	// Use the dnsConfig base domain set up in TestMain.
-	domain := "gws." + dnsConfig.Spec.BaseDomain
-
-	t.Log("Creating gateway...")
-	testGateway, err := createGateway(gatewayClass, "test-upgrade-gateway", "openshift-ingress", domain)
-	if err != nil {
-		t.Fatalf("Gateway could not be created: %v", err)
-	}
-	// The gateway is cleaned up in TestGatewayAPI.
-
-	// Create a test namespace that cleans itself up and sets up its own service account and role binding.
-	ns := createNamespace(t, names.SimpleNameGenerator.GenerateName("test-e2e-gwapi-upgrade-"))
-	routeName := names.SimpleNameGenerator.GenerateName("test-hostname-") + "." + domain
-
-	t.Log("Creating httproute...")
-	if _, err = createHttpRoute(ns.Name, "test-httproute", "openshift-ingress", routeName, "test-upgrade-gateway-openshift-default", testGateway); err != nil {
-		t.Fatalf("HTTPRoute could not be created: %v", err)
-	}
-	// The http route is cleaned up when the namespace is deleted.
-
-	t.Log("Making sure the gateway is accepted...")
-	if _, err := assertGatewaySuccessful(t, testGateway.Namespace, testGateway.Name); err != nil {
-		t.Fatalf("Failed to find successful gateway: %v", err)
-	}
-
-	t.Log("Making sure the httproute is accepted...")
-	if _, err := assertHttpRouteSuccessful(t, ns.Name, "test-httproute", testGateway); err != nil {
-		t.Fatalf("Failed to find successful httproute: %v", err)
-	}
-
-	t.Log("Validating the connectivity to the backend application via the httproute...")
-	if err := assertHttpRouteConnection(t, routeName, testGateway); err != nil {
-		t.Fatalf("Failed to find successful httproute: %v", err)
 	}
 }

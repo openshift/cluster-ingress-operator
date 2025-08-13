@@ -20,6 +20,7 @@ import (
 	v1 "github.com/openshift/api/operatoringress/v1"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	util "github.com/openshift/cluster-ingress-operator/pkg/util"
+	olmv1 "github.com/operator-framework/api/pkg/operators/v1"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 
 	"github.com/google/go-cmp/cmp"
@@ -30,6 +31,7 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 
@@ -177,6 +179,106 @@ func deleteExistingVAP(t *testing.T, vapName string) error {
 	}
 
 	t.Logf("deleted vap %q", vapName)
+	return nil
+}
+
+// cleanupGateway deletes the given gateway and waits for the corresponding Istio proxy deployment to disappear.
+func cleanupGateway(t *testing.T, namespace, name, gcname string) error {
+	t.Helper()
+
+	gw := &gatewayapiv1.Gateway{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name}}
+	if err := kclient.Delete(context.Background(), gw); err != nil && !kerrors.IsNotFound(err) {
+		return fmt.Errorf(`failed to delete gateway "%s/%s": %w`, namespace, name, err)
+	}
+	t.Logf(`Deleted gateway "%s/%s"`, namespace, name)
+
+	depl := &appsv1.Deployment{}
+	istioName := types.NamespacedName{Namespace: operatorcontroller.DefaultOperandNamespace, Name: name + "-" + gcname}
+	if err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(context context.Context) (bool, error) {
+		if err := kclient.Get(context, istioName, depl); err != nil {
+			if !kerrors.IsNotFound(err) {
+				t.Logf("Failed to get deployment %q, retrying...", istioName)
+				return false, nil
+			}
+		} else {
+			t.Logf("Deployment %q still exists, retrying...", istioName)
+			return false, nil
+		}
+		return true, nil
+	}); err != nil {
+		return fmt.Errorf("timed out waiting for deployment %v to disappear", istioName)
+	}
+	t.Logf("Deleted deployment %q", istioName)
+
+	return nil
+}
+
+// cleanupGatewayClass deletes the given gatewayclass and waits for the corresponding Istiod deployment to disappear.
+func cleanupGatewayClass(t *testing.T, name string) error {
+	t.Helper()
+
+	gc := &gatewayapiv1.GatewayClass{ObjectMeta: metav1.ObjectMeta{Name: name}}
+	if err := kclient.Delete(context.Background(), gc); err != nil && !kerrors.IsNotFound(err) {
+		return fmt.Errorf("failed to delete gatewayclass %q: %w", name, err)
+	}
+	t.Logf("Deleted gatewayclass %q", name)
+
+	depl := &appsv1.Deployment{}
+	istiodName := types.NamespacedName{Namespace: operatorcontroller.DefaultOperandNamespace, Name: "istiod-" + name}
+	if err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(context context.Context) (bool, error) {
+		if err := kclient.Get(context, istiodName, depl); err != nil {
+			if !kerrors.IsNotFound(err) {
+				t.Logf("Failed to get deployment %q, retrying...", istiodName)
+				return false, nil
+			}
+		} else {
+			t.Logf("Deployment %q still exists, retrying...", istiodName)
+			return false, nil
+		}
+		return true, nil
+	}); err != nil {
+		return fmt.Errorf("timed out waiting for deployment %v to disappear", istiodName)
+	}
+	t.Logf("Deleted deployment %q", istiodName)
+
+	return nil
+}
+
+// cleanupOLMOperator deletes all components associated with the given OLM operator.
+func cleanupOLMOperator(t *testing.T, namespace, name string) error {
+	operatorName := types.NamespacedName{Namespace: namespace, Name: name}
+	operator := &olmv1.Operator{}
+	if err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(context context.Context) (bool, error) {
+		if err := kclient.Get(context, operatorName, operator); err != nil {
+			t.Logf("Failed to get operator %q, retrying...", operatorName)
+			return false, nil
+		}
+		return true, nil
+	}); err != nil {
+		return fmt.Errorf("timed out getting operator %v", operatorName)
+	}
+
+	if operator.Status.Components != nil {
+		for _, compRef := range operator.Status.Components.Refs {
+			// OperatorHUB's uninstall action doesn't touch operator's CRDs.
+			if compRef.Kind != "CustomResourceDefinition" {
+				unstructuredObj := &unstructured.Unstructured{}
+				unstructuredObj.SetAPIVersion(compRef.APIVersion)
+				unstructuredObj.SetKind(compRef.Kind)
+				unstructuredObj.SetName(compRef.Name)
+				if len(compRef.Namespace) > 0 {
+					unstructuredObj.SetNamespace(compRef.Namespace)
+				}
+				if err := kclient.Delete(context.Background(), unstructuredObj); err != nil && !kerrors.IsNotFound(err) {
+					return fmt.Errorf(`failed to delete operator component "%s/%s/%s/%s": %w`, compRef.APIVersion, compRef.Kind, compRef.Namespace, compRef.Name, err)
+				}
+				t.Logf(`Deleted operator component "%s/%s/%s/%s"`, compRef.APIVersion, compRef.Kind, compRef.Namespace, compRef.Name)
+			}
+		}
+	} else {
+		t.Logf("No components found for operator %q", operatorName)
+	}
+
 	return nil
 }
 

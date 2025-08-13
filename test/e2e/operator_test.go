@@ -31,6 +31,7 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 	iov1 "github.com/openshift/api/operatoringress/v1"
 	routev1 "github.com/openshift/api/route/v1"
+	olmv1 "github.com/operator-framework/api/pkg/operators/v1"
 
 	configclientset "github.com/openshift/client-go/config/clientset/versioned"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
@@ -180,6 +181,12 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	kclient = kubeClient
+
+	// GatewayAPI tests need to clean up the OSSM operator.
+	if olmv1.AddToScheme(operatorclient.GetScheme()); err != nil {
+		fmt.Printf("failed to install olmv1 scheme: %s\n", err)
+		os.Exit(1)
+	}
 
 	configClient, err = configclientset.NewForConfig(kubeConfig)
 	if err != nil {
