@@ -41,6 +41,19 @@ func Test_Reconcile(t *testing.T) {
 			},
 		},
 	}
+	infraConfigWithClusterHostedDNS := &configv1.Infrastructure{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
+		Status: configv1.InfrastructureStatus{
+			PlatformStatus: &configv1.PlatformStatus{
+				Type: configv1.GCPPlatformType,
+				GCP: &configv1.GCPPlatformStatus{
+					CloudLoadBalancerConfig: &configv1.CloudLoadBalancerConfig{
+						DNSType: configv1.ClusterHostedDNSType,
+					},
+				},
+			},
+		},
+	}
 	gw := func(name string, listeners ...gatewayapiv1.Listener) *gatewayapiv1.Gateway {
 		return &gatewayapiv1.Gateway{
 			ObjectMeta: metav1.ObjectMeta{
@@ -141,6 +154,20 @@ func Test_Reconcile(t *testing.T) {
 			expectUpdate:     []client.Object{},
 			expectDelete:     []client.Object{},
 			expectError:      `infrastructures.config.openshift.io "cluster" not found`,
+		},
+		{
+			name: "platform with ClusterHostedDNS enabled",
+			existingObjects: []runtime.Object{
+				dnsConfig, infraConfigWithClusterHostedDNS,
+				gw("example-gateway", l("stage-http", "*.stage.example.com", 80)),
+				svc("example-gateway", exampleManagedGatewayLabel, ingHost("lb.example.com")),
+			},
+			reconcileRequest: req("openshift-ingress", "example-gateway"),
+			expectCreate: []client.Object{
+				dnsrecord("example-gateway-64754456b8-wildcard", "*.stage.example.com.", iov1.UnmanagedDNS, exampleManagedGatewayLabel, "lb.example.com"),
+			},
+			expectUpdate: []client.Object{},
+			expectDelete: []client.Object{},
 		},
 		{
 			name: "gateway with no listeners",
