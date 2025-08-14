@@ -270,7 +270,7 @@ var (
 // Always returns the current LB service if one exists (whether it already
 // existed or was created during the course of the function).
 func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, platformStatus *configv1.PlatformStatus) (bool, *corev1.Service, error) {
-	wantLBS, desiredLBService, err := desiredLoadBalancerService(ci, deploymentRef, platformStatus, r.config.IngressControllerLBSubnetsAWSEnabled, r.config.IngressControllerEIPAllocationsAWSEnabled)
+	wantLBS, desiredLBService, err := desiredLoadBalancerService(ci, deploymentRef, platformStatus, r.config.IngressControllerEIPAllocationsAWSEnabled)
 	if err != nil {
 		return false, nil, err
 	}
@@ -336,7 +336,7 @@ func isServiceOwnedByIngressController(service *corev1.Service, ic *operatorv1.I
 // ingresscontroller, or nil if an LB service isn't desired. An LB service is
 // desired if the high availability type is Cloud. An LB service will declare an
 // owner reference to the given deployment.
-func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, platform *configv1.PlatformStatus, subnetsAWSEnabled bool, eipAllocationsAWSEnabled bool) (bool, *corev1.Service, error) {
+func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, platform *configv1.PlatformStatus, eipAllocationsAWSEnabled bool) (bool, *corev1.Service, error) {
 	if ci.Status.EndpointPublishingStrategy.Type != operatorv1.LoadBalancerServiceStrategyType {
 		return false, nil, nil
 	}
@@ -408,11 +408,9 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 						// See <https://bugzilla.redhat.com/show_bug.cgi?id=1908758>.
 						service.Annotations[awsLBHealthCheckIntervalAnnotation] = awsLBHealthCheckIntervalNLB
 
-						if subnetsAWSEnabled {
-							nlbParams := getAWSNetworkLoadBalancerParametersInSpec(ci)
-							if nlbParams != nil && awsSubnetsExist(nlbParams.Subnets) {
-								service.Annotations[awsLBSubnetsAnnotation] = JoinAWSSubnets(nlbParams.Subnets, ",")
-							}
+						nlbParams := getAWSNetworkLoadBalancerParametersInSpec(ci)
+						if nlbParams != nil && awsSubnetsExist(nlbParams.Subnets) {
+							service.Annotations[awsLBSubnetsAnnotation] = JoinAWSSubnets(nlbParams.Subnets, ",")
 						}
 
 						if eipAllocationsAWSEnabled {
@@ -429,11 +427,9 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 							}
 						}
 
-						if subnetsAWSEnabled {
-							clbParams := getAWSClassicLoadBalancerParametersInSpec(ci)
-							if clbParams != nil && awsSubnetsExist(clbParams.Subnets) {
-								service.Annotations[awsLBSubnetsAnnotation] = JoinAWSSubnets(clbParams.Subnets, ",")
-							}
+						clbParams := getAWSClassicLoadBalancerParametersInSpec(ci)
+						if clbParams != nil && awsSubnetsExist(clbParams.Subnets) {
+							service.Annotations[awsLBSubnetsAnnotation] = JoinAWSSubnets(clbParams.Subnets, ",")
 						}
 					}
 				}
@@ -760,8 +756,8 @@ func IsServiceInternal(service *corev1.Service) bool {
 // return value is nil.  Otherwise, if something or someone else has modified
 // the service, then the return value is a non-nil error indicating that the
 // modification must be reverted before upgrading is allowed.
-func loadBalancerServiceIsUpgradeable(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference, current *corev1.Service, platform *configv1.PlatformStatus, subnetsAWSEnabled bool, eipAllocationsAWSEnabled bool) error {
-	want, desired, err := desiredLoadBalancerService(ic, deploymentRef, platform, subnetsAWSEnabled, eipAllocationsAWSEnabled)
+func loadBalancerServiceIsUpgradeable(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference, current *corev1.Service, platform *configv1.PlatformStatus, eipAllocationsAWSEnabled bool) error {
+	want, desired, err := desiredLoadBalancerService(ic, deploymentRef, platform, eipAllocationsAWSEnabled)
 	if err != nil {
 		return err
 	}
@@ -785,7 +781,7 @@ func loadBalancerServiceIsUpgradeable(ic *operatorv1.IngressController, deployme
 
 // loadBalancerServiceIsProgressing returns an error value indicating if the
 // load balancer service is in progressing status.
-func loadBalancerServiceIsProgressing(ic *operatorv1.IngressController, service *corev1.Service, platform *configv1.PlatformStatus, subnetsAWSEnabled bool, eipAllocationsAWSEnabled bool) error {
+func loadBalancerServiceIsProgressing(ic *operatorv1.IngressController, service *corev1.Service, platform *configv1.PlatformStatus, eipAllocationsAWSEnabled bool) error {
 	var errs []error
 	wantScope := ic.Status.EndpointPublishingStrategy.LoadBalancer.Scope
 	haveScope := operatorv1.ExternalLoadBalancer
@@ -800,7 +796,7 @@ func loadBalancerServiceIsProgressing(ic *operatorv1.IngressController, service 
 		errs = append(errs, err)
 	}
 
-	if platform.Type == configv1.AWSPlatformType && subnetsAWSEnabled {
+	if platform.Type == configv1.AWSPlatformType {
 		var (
 			wantSubnets, haveSubnets *operatorv1.AWSSubnets
 			paramsFieldName          string
