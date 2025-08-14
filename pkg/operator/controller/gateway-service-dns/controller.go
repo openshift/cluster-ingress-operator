@@ -247,6 +247,9 @@ func (r *reconciler) ensureDNSRecordsForGateway(ctx context.Context, gateway *ga
 		if dnsrecord.ManageDNSForDomain(domain, infraConfig.Status.PlatformStatus, dnsConfig) {
 			dnsPolicy = iov1.ManagedDNS
 		}
+		if checkClusterHostedDNS(infraConfig) {
+			dnsPolicy = iov1.UnmanagedDNS
+		}
 		_, _, err := dnsrecord.EnsureDNSRecord(r.client, name, labels, ownerRef, domain, dnsPolicy, service)
 		errs = append(errs, err)
 	}
@@ -281,4 +284,24 @@ func (r *reconciler) deleteStaleDNSRecordsForGateway(ctx context.Context, gatewa
 		errs = append(errs, dnsrecord.DeleteDNSRecord(r.client, name))
 	}
 	return errs
+}
+
+// checkClusterHostedDNS returns true if the platform supports in-cluster DNS and if
+// that DNS solution is currently enabled in place of the Cloud provider's default DNS.
+func checkClusterHostedDNS(infraConfig *configv1.Infrastructure) bool {
+	status := infraConfig.Status.PlatformStatus
+	switch status.Type {
+	case configv1.AWSPlatformType:
+		if status.AWS != nil && status.AWS.CloudLoadBalancerConfig != nil && status.AWS.CloudLoadBalancerConfig.DNSType == configv1.ClusterHostedDNSType {
+			return true
+		}
+		return false
+	case configv1.GCPPlatformType:
+		if status.GCP != nil && status.GCP.CloudLoadBalancerConfig != nil && status.GCP.CloudLoadBalancerConfig.DNSType == configv1.ClusterHostedDNSType {
+			return true
+		}
+		return false
+	default:
+		return false
+	}
 }
