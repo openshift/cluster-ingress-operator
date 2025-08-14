@@ -12,6 +12,7 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 
+	networkingv1 "k8s.io/api/networking/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/types"
 
@@ -74,6 +75,10 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 
 	// watch for CRDs
 	if err := c.Watch(source.Kind[client.Object](operatorCache, &apiextensionsv1.CustomResourceDefinition{}, handler.EnqueueRequestsFromMapFunc(toFeatureGate), crdPredicate)); err != nil {
+		return nil, err
+	}
+	// watch for network policies
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &networkingv1.NetworkPolicy{}, handler.EnqueueRequestsFromMapFunc(toFeatureGate))); err != nil {
 		return nil, err
 	}
 
@@ -142,6 +147,11 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 
 	if err := r.ensureGatewayAPIRBAC(ctx); err != nil {
 		return reconcile.Result{}, err
+	}
+
+	// Ensure the allow NetworkPolicy for Gateway API components.
+	if _, _, err := r.ensureGatewayAPINetworkPolicy(ctx); err != nil {
+		return reconcile.Result{}, fmt.Errorf("failed to ensure gateway-api network policy: %w", err)
 	}
 
 	if crdNames, err := r.listUnmanagedGatewayAPICRDs(ctx); err != nil {

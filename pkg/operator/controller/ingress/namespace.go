@@ -8,10 +8,12 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 
+	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 )
@@ -154,4 +156,18 @@ func (r *reconciler) ensureRouterClusterRoleBinding() error {
 		log.Info("created router cluster role binding", "name", crb.Name)
 	}
 	return nil
+}
+
+func (r *reconciler) ensureRouterNamespaceNetworkPolicy(ci *operatorv1.IngressController) (bool, *networkingv1.NetworkPolicy, error) {
+	np := manifests.RouterNetworkPolicyDenyAll()
+	if err := r.client.Get(context.TODO(), types.NamespacedName{Namespace: np.Namespace, Name: np.Name}, np); err != nil {
+		if !errors.IsNotFound(err) {
+			return false, nil, fmt.Errorf("failed to get router network policy %s/%s: %v", np.Namespace, np.Name, err)
+		}
+		if err := r.client.Create(context.TODO(), np); err != nil {
+			return false, nil, fmt.Errorf("failed to create router network policy %s/%s: %v", np.Namespace, np.Name, err)
+		}
+		log.Info("created router network policy", "namespace", np.Namespace, "name", np.Name)
+	}
+	return true, np, nil
 }
