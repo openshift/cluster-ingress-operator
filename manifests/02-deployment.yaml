@@ -87,6 +87,12 @@ spec:
               value: redhat-operators
             - name: GATEWAY_API_OPERATOR_CHANNEL
               value: stable
+            # NOTE:
+            # Use an operator version that exists in the catalog.
+            # If the specified version is not found, the latest available
+            # OSSM operator version will be installed as of the upgrade date.
+            # Downgrades are not supported; the new version must be
+            # semantically greater than the previous one.
             - name: GATEWAY_API_OPERATOR_VERSION
               value: servicemeshoperator3.v3.1.0
             - name: ISTIO_VERSION

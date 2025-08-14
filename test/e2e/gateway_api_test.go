@@ -83,14 +83,19 @@ func TestGatewayAPI(t *testing.T) {
 
 	// Defer the cleanup of the test gateway.
 	t.Cleanup(func() {
-		testGateway := gatewayapiv1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: testGatewayName, Namespace: operatorcontroller.DefaultOperandNamespace}}
-		if err := kclient.Delete(context.TODO(), &testGateway); err != nil {
-			if errors.IsNotFound(err) {
-				return
+		// Keeping test resources for must-gather if test failed.
+		if !t.Failed() {
+			t.Logf("Cleaning Gateway, GatewayClass and OSSM operator...")
+			if err := cleanupGateway(t, "openshift-ingress", "test-gateway", "openshift-default"); err != nil {
+				t.Errorf("Failed to cleanup gateway: %v", err)
 			}
-			t.Errorf("failed to delete gateway %q: %v", testGateway.Name, err)
+			if err := cleanupGatewayClass(t, "openshift-default"); err != nil {
+				t.Errorf("Failed to cleanup gatewayclass: %v", err)
+			}
+			if err := cleanupOLMOperator(t, "openshift-operators", "servicemeshoperator3.openshift-operators"); err != nil {
+				t.Errorf("Failed to cleanup OSSM operator: %v", err)
+			}
 		}
-		// TODO: Uninstall OSSM after test is completed.
 	})
 
 	t.Run("testGatewayAPIResources", testGatewayAPIResources)
