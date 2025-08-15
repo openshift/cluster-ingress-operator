@@ -73,6 +73,8 @@ func init() {
 type Operator struct {
 	client client.Client
 
+	subscriptionCache cache.Cache
+
 	manager manager.Manager
 
 	namespace string
@@ -180,7 +182,6 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	if err != nil {
 		return nil, fmt.Errorf("failed to create operator manager: %v", err)
 	}
-
 	// Create and register the ingress controller with the operator manager.
 	if _, err := ingresscontroller.New(mgr, ingresscontroller.Config{
 		Namespace:                                 config.Namespace,
@@ -217,6 +218,14 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		return nil, fmt.Errorf("failed to create configurable-route controller: %v", err)
 	}
 
+	// The status controller needs to be aware of conflicting OLM subscriptions in any namespace. In order to prevent
+	// ballooning the main cache to watch all namespaces on all its informers, create a separate cache for tracking OLM
+	// subscriptions across all namespaces.
+	subscriptionCache, err := cache.New(kubeConfig, cache.Options{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create subscription cache: %w", err)
+	}
+
 	// Set up the status controller.
 	if _, err := statuscontroller.New(mgr, statuscontroller.Config{
 		Namespace:                       config.Namespace,
@@ -227,6 +236,8 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		GatewayAPIControllerEnabled:     gatewayAPIControllerEnabled,
 		MarketplaceEnabled:              marketplaceEnabled,
 		OperatorLifecycleManagerEnabled: olmEnabled,
+		SubscriptionCache:               subscriptionCache,
+		GatewayAPIOperatorVersion:       config.GatewayAPIOperatorVersion,
 	}); err != nil {
 		return nil, fmt.Errorf("failed to create status controller: %v", err)
 	}
@@ -353,7 +364,8 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	}
 
 	return &Operator{
-		manager: mgr,
+		manager:           mgr,
+		subscriptionCache: subscriptionCache,
 		// TODO: These are only needed for the default ingress controller stuff, which
 		// should be refactored away.
 		client:    mgr.GetClient(),
@@ -398,16 +410,23 @@ func (o *Operator) Start(ctx context.Context) error {
 		log.Error(err, "failed to handle single node 4.11 upgrade logic")
 	}
 
-	errChan := make(chan error)
+	mgrErrChan := make(chan error)
 	go func() {
-		errChan <- o.manager.Start(ctx)
+		mgrErrChan <- o.manager.Start(ctx)
+	}()
+
+	cacheErrChan := make(chan error)
+	go func() {
+		cacheErrChan <- o.subscriptionCache.Start(ctx)
 	}()
 
 	// Wait for the manager to exit or an explicit stop.
 	select {
 	case <-ctx.Done():
 		return nil
-	case err := <-errChan:
+	case err := <-mgrErrChan:
+		return err
+	case err := <-cacheErrChan:
 		return err
 	}
 }

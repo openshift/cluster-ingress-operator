@@ -33,6 +33,8 @@ import (
 const (
 	controllerName = "gatewayclass_controller"
 
+	GatewayClassIndexFieldName = "gatewayclassController"
+
 	// inferencepoolCrdName is the name of the InferencePool CRD from
 	// Gateway API Inference Extension.
 	inferencepoolCrdName = "inferencepools.inference.networking.k8s.io"
@@ -99,6 +101,21 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 		return o.GetName() != "istio"
 	})
 	if err := c.Watch(source.Kind[client.Object](operatorCache, &gatewayapiv1.GatewayClass{}, reconciler.enqueueRequestForSomeGatewayClass(), isOurGatewayClass, notIstioGatewayClass)); err != nil {
+		return nil, err
+	}
+
+	// Index gateway classes based on their spec.controllerName
+	if err := mgr.GetFieldIndexer().IndexField(
+		context.Background(),
+		&gatewayapiv1.GatewayClass{},
+		GatewayClassIndexFieldName,
+		client.IndexerFunc(func(o client.Object) []string {
+			gatewayclass, ok := o.(*gatewayapiv1.GatewayClass)
+			if !ok {
+				return []string{}
+			}
+			return []string{string(gatewayclass.Spec.ControllerName)}
+		})); err != nil {
 		return nil, err
 	}
 

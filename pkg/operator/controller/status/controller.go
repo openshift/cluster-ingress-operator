@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/google/go-cmp/cmp"
@@ -19,6 +20,7 @@ import (
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	gatewayclasscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gatewayclass"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 	oputil "github.com/openshift/cluster-ingress-operator/pkg/util"
 
@@ -72,6 +74,14 @@ var (
 	// relatedObjectsCRDs is a set of names of CRDs that we add to
 	// relatedObjects if they exist.
 	relatedObjectsCRDs = sets.New[string](gatewaysResourceName, gatewayclassesResourceName, istiosResourceName)
+
+	// ossmSubscriptions lists the package names for all OLM subscriptions that are known to conflict with the
+	// subscription to OSSM3 created by the Ingress Operator.
+	ossmSubscriptions = sets.New[string](
+		"sailoperator",
+		"servicemeshoperator",
+		"servicemeshoperator3",
+	)
 )
 
 // New creates the status controller. This is the controller that handles all
@@ -156,6 +166,18 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 		})); err != nil {
 			return nil, err
 		}
+
+		isOSSMSubscription := predicate.NewPredicateFuncs(func(o client.Object) bool {
+			subscription, ok := o.(*operatorsv1alpha1.Subscription)
+			if !ok {
+				return false
+			}
+			return ossmSubscriptions.Has(subscription.Spec.Package)
+		})
+
+		if err := c.Watch(source.Kind[client.Object](config.SubscriptionCache, &operatorsv1alpha1.Subscription{}, handler.EnqueueRequestsFromMapFunc(toDefaultIngressController), isOSSMSubscription)); err != nil {
+			return nil, err
+		}
 	}
 
 	return c, nil
@@ -178,6 +200,8 @@ type Config struct {
 	CanaryImage                     string
 	OperatorReleaseVersion          string
 	Namespace                       string
+	SubscriptionCache               cache.Cache
+	GatewayAPIOperatorVersion       string
 }
 
 // IngressOperatorStatusExtension holds status extensions of the ingress cluster operator.
@@ -366,6 +390,14 @@ type operatorState struct {
 	// haveGatewayclassesResource means that the
 	// "gatewayclasses.gateway.networking.k8s.io" CRD exists.
 	haveGatewayclassesResource bool
+	// ossmSubscriptions contains all subscriptions that may conflict with the operator-created ossm subscription.
+	ossmSubscriptions []operatorsv1alpha1.Subscription
+	// expectedGatewayAPIOperatorVersion reflects the expected OSSM 3 version. It is used in determining if a
+	// user-supplied OSSM 3 subscription would cause the operator's installation of OSSM 3 to fail.
+	expectedGatewayAPIOperatorVersion string
+	// shouldInstallOSSM reflects whether the ingress operator should install OSSM. Currently, this happens when a
+	// gateway class with Spec.ControllerName=operatorcontroller.OpenShiftGatewayClassControllerName is created.
+	shouldInstallOSSM bool
 }
 
 // getOperatorState gets and returns the resources necessary to compute the
@@ -448,6 +480,27 @@ func (r *reconciler) getOperatorState(ctx context.Context, ingressNamespace, can
 				state.haveIstiosResource = true
 			}
 		}
+
+		state.expectedGatewayAPIOperatorVersion = r.config.GatewayAPIOperatorVersion
+		subscriptionList := operatorsv1alpha1.SubscriptionList{}
+		if err := r.config.SubscriptionCache.List(ctx, &subscriptionList); err != nil {
+			return state, fmt.Errorf("failed to get subscriptions: %w", err)
+		}
+		for _, subscription := range subscriptionList.Items {
+			if ossmSubscriptions.Has(subscription.Spec.Package) {
+				state.ossmSubscriptions = append(state.ossmSubscriptions, subscription)
+			}
+		}
+
+		gatewayClassList := gatewayapiv1.GatewayClassList{}
+		if err := r.cache.List(ctx, &gatewayClassList, client.MatchingFields{
+			gatewayclasscontroller.GatewayClassIndexFieldName: operatorcontroller.OpenShiftGatewayClassControllerName,
+		}); err != nil {
+			return state, fmt.Errorf("failed to list gateway classes: %w", err)
+		}
+		// If one or more gateway classes have ControllerName=operatorcontroller.OpenShiftGatewayClassControllerName,
+		// the ingress operator should try to install OSSM.
+		state.shouldInstallOSSM = (len(gatewayClassList.Items) > 0)
 	}
 
 	return state, nil
@@ -504,6 +557,7 @@ func computeOperatorDegradedCondition(state operatorState) configv1.ClusterOpera
 	for _, fn := range []func(state operatorState) configv1.ClusterOperatorStatusCondition{
 		computeIngressControllerDegradedCondition,
 		computeGatewayAPICRDsDegradedCondition,
+		computeGatewayAPIInstallDegradedCondition,
 	} {
 		degradedCondition = joinConditions(degradedCondition, fn(state))
 	}
@@ -565,6 +619,64 @@ func computeGatewayAPICRDsDegradedCondition(state operatorState) configv1.Cluste
 		degradedCondition.Status = configv1.ConditionTrue
 		degradedCondition.Reason = "GatewayAPICRDsDegraded"
 		degradedCondition.Message = fmt.Sprintf("Unmanaged Gateway API CRDs found: %s.", state.unmanagedGatewayAPICRDNames)
+	}
+
+	return degradedCondition
+}
+
+// computeGatewayAPIInstallDegradedCondition computes the degraded condition for the Gateway API OSSM subscription. It
+// checks for known conflicting subscriptions, as well as already existing subscription(s) to OSSM3, and reports
+// degraded when any of those subscriptions would prevent the installation of an appropriate Istio control plane.
+func computeGatewayAPIInstallDegradedCondition(state operatorState) configv1.ClusterOperatorStatusCondition {
+	degradedCondition := configv1.ClusterOperatorStatusCondition{}
+
+	// If OSSM doesn't need to be installed, or there are no possible conflicting subscriptions, return degraded=false.
+	if !state.shouldInstallOSSM || len(state.ossmSubscriptions) == 0 {
+		return degradedCondition
+	}
+
+	conflicts := []string{}
+	warnings := []string{}
+	for _, subscription := range state.ossmSubscriptions {
+		if subscription.Spec.Package == "servicemeshoperator3" {
+			if _, found := subscription.Annotations[operatorcontroller.IngressOperatorOwnedAnnotation]; found {
+				// The subscription that the ingress operator creates naturally does not conflict with itself.
+				continue
+			}
+			if subscription.Status.InstalledCSV == "" {
+				// The subscription hasn't finished its install. We will get another reconcile request once the
+				// installation is complete, so we can ignore this for now.
+				continue
+			}
+			versionDiff, err := compareVersionNums(subscription.Status.InstalledCSV, state.expectedGatewayAPIOperatorVersion)
+			switch {
+			case err != nil:
+				conflicts = append(conflicts, fmt.Sprintf("failed to compare installed OSSM version to expected: %v", err))
+			case versionDiff < 0:
+				// Installed version is newer than expected. Gateway API install may still work if the correct Istio
+				// version is supported. Warn the user that the installed OSSM version may be incompatible.
+				warnings = append(warnings, fmt.Sprintf("Found version %s, but operator-managed Gateway API expects version %s. operator-managed Gateway API may not work as intended.", subscription.Status.InstalledCSV, state.expectedGatewayAPIOperatorVersion))
+			case versionDiff > 0:
+				// Installed version is older than expected. Gateway API install will not work, since the correct Istio
+				// version won't be supported.
+				conflicts = append(conflicts, fmt.Sprintf("Installed version %s is too old to support operator-managed Gateway API. Install version %s or remove subscription %s/%s to enable.", subscription.Status.InstalledCSV, state.expectedGatewayAPIOperatorVersion, subscription.Namespace, subscription.Name))
+			case versionDiff == 0:
+				// Installed version is exactly as expected. Nothing to do.
+			}
+		} else {
+			conflicts = append(conflicts, fmt.Sprintf("Package %s from subscription %s/%s prevents enabling operator-managed Gateway API. Remove subscription %s/%s to enable.", subscription.Spec.Package, subscription.Namespace, subscription.Name, subscription.Namespace, subscription.Name))
+		}
+	}
+	if len(conflicts) > 0 {
+		degradedCondition.Status = configv1.ConditionTrue
+		degradedCondition.Reason = "GatewayAPIInstallBlocked"
+		degradedCondition.Message = strings.Join(conflicts, "\n")
+	} else if len(warnings) > 0 {
+		// Warnings are not enough to set degraded=true, but should still be included in the status message to warn
+		// users to possible issues. Leave status=false and reason unset, but put warning messages in the message field.
+		degradedCondition.Status = configv1.ConditionFalse
+		degradedCondition.Reason = "GatewayAPIInstallSuccessful"
+		degradedCondition.Message = strings.Join(warnings, "\n")
 	}
 
 	return degradedCondition
@@ -834,7 +946,7 @@ func joinConditions(currCond, newCond configv1.ClusterOperatorStatusCondition) c
 	case configv1.ConditionTrue:
 		if currCond.Status == configv1.ConditionTrue {
 			currCond.Reason += "And" + newCond.Reason
-			currCond.Message += newCond.Message
+			currCond.Message += "\n" + newCond.Message
 		} else {
 			// Degraded=True status overrides other statuses.
 			currCond.Status = newCond.Status
@@ -844,7 +956,7 @@ func joinConditions(currCond, newCond configv1.ClusterOperatorStatusCondition) c
 	case configv1.ConditionUnknown:
 		if currCond.Status == configv1.ConditionUnknown {
 			currCond.Reason += "And" + newCond.Reason
-			currCond.Message += newCond.Message
+			currCond.Message += "\n" + newCond.Message
 		} else if currCond.Status != configv1.ConditionTrue {
 			// Degraded=Unknown overrides false and empty statuses.
 			currCond.Status = newCond.Status
@@ -854,7 +966,7 @@ func joinConditions(currCond, newCond configv1.ClusterOperatorStatusCondition) c
 	case configv1.ConditionFalse:
 		if currCond.Status == configv1.ConditionFalse {
 			currCond.Reason += "And" + newCond.Reason
-			currCond.Message += newCond.Message
+			currCond.Message += "\n" + newCond.Message
 		} else if currCond.Status == "" {
 			// Degraded=False overrides empty status.
 			currCond.Status = newCond.Status
@@ -863,4 +975,39 @@ func joinConditions(currCond, newCond configv1.ClusterOperatorStatusCondition) c
 		}
 	}
 	return currCond
+}
+
+// compareVersionNums compares two strings of format "<name>.v#.#.#". It returns a negative number if 'a' has a higher
+// version number, a positive number if 'b' has a higher version number, or 0 if the version numbers are identical. If
+// it is unable to parse either version number, or if the names from the two version strings differ, an error is
+// returned and the comparison should be considered invalid.
+func compareVersionNums(a, b string) (int, error) {
+	var aName, bName string
+	var aX, aY, aZ, bX, bY, bZ int
+	aSplit := strings.Split(a, ".")
+	if len(aSplit) != 4 {
+		return 0, fmt.Errorf("%q does not match expected format", a)
+	}
+	aName = aSplit[0]
+	aX, _ = strconv.Atoi(aSplit[1][1:]) // X has format "v%d", so [1:] cuts out the "v"
+	aY, _ = strconv.Atoi(aSplit[2])
+	aZ, _ = strconv.Atoi(aSplit[3])
+	bSplit := strings.Split(b, ".")
+	if len(bSplit) != 4 {
+		return 0, fmt.Errorf("%q does not match expected format", b)
+	}
+	bName = bSplit[0]
+	bX, _ = strconv.Atoi(bSplit[1][1:]) // X has format "v%d", so [1:] cuts out the "v"
+	bY, _ = strconv.Atoi(bSplit[2])
+	bZ, _ = strconv.Atoi(bSplit[3])
+	if aName != bName {
+		return 0, fmt.Errorf("%q and %q are different packages. cannot compare version numbers", a, b)
+	}
+	if aX != bX {
+		return bX - aX, nil
+	}
+	if aY != bY {
+		return bY - aY, nil
+	}
+	return bZ - aZ, nil
 }
