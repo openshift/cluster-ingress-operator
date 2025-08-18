@@ -27,10 +27,26 @@ import (
 )
 
 func Test_Reconcile(t *testing.T) {
+	validPublicZone := &configv1.DNSZone{
+		ID: "12345",
+	}
+	validPrivateZone := &configv1.DNSZone{
+		ID: "56789",
+	}
 	dnsConfig := &configv1.DNS{
 		ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
 		Spec: configv1.DNSSpec{
-			BaseDomain: "example.com",
+			BaseDomain:  "example.com",
+			PublicZone:  validPublicZone,
+			PrivateZone: validPrivateZone,
+		},
+	}
+	dnsConfigNilZones := &configv1.DNS{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
+		Spec: configv1.DNSSpec{
+			BaseDomain:  "example.com",
+			PublicZone:  nil,
+			PrivateZone: nil,
 		},
 	}
 	infraConfig := &configv1.Infrastructure{
@@ -128,6 +144,18 @@ func Test_Reconcile(t *testing.T) {
 			expectUpdate:     []client.Object{},
 			expectDelete:     []client.Object{},
 			expectError:      `dnses.config.openshift.io "cluster" not found`,
+		},
+		{
+			name: "dns config containing no zones",
+			existingObjects: []runtime.Object{
+				dnsConfigNilZones, infraConfig,
+				gw("example-gateway", l("stage-http", "*.stage.example.com", 80)),
+				svc("example-gateway", exampleManagedGatewayLabel, ingHost("lb.example.com")),
+			},
+			reconcileRequest: req("openshift-ingress", "example-gateway"),
+			expectCreate:     []client.Object{},
+			expectUpdate:     []client.Object{},
+			expectDelete:     []client.Object{},
 		},
 		{
 			name: "missing infrastructure config",

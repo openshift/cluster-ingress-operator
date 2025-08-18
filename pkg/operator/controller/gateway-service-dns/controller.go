@@ -199,6 +199,11 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		return reconcile.Result{}, nil
 	}
 
+	if dnsConfig.Spec.PublicZone == nil && dnsConfig.Spec.PrivateZone == nil {
+		log.Info("DNS Public and Private zones not present; no public records should be created; reconciliation will be skipped")
+		return reconcile.Result{}, nil
+	}
+
 	domains := getGatewayHostnames(&gateway)
 	var errs []error
 	errs = append(errs, r.ensureDNSRecordsForGateway(ctx, &gateway, &service, domains.List(), infraConfig, dnsConfig)...)
