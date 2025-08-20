@@ -649,6 +649,17 @@ func updateInfrastructureConfigStatusWithRetryOnConflict(t *testing.T, timeout t
 	})
 }
 
+// createWithRetryOnError creates the given object. If there is an error on create
+// apart from "AlreadyExists" then the create is retried until the timeout is reached.
+func createWithRetryOnError(ctx context.Context, obj client.Object, timeout time.Duration) error {
+	return wait.PollUntilContextTimeout(ctx, 2*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
+		if err := kclient.Create(ctx, obj); err != nil && !errors.IsAlreadyExists(err) {
+			return false, nil
+		}
+		return true, nil
+	})
+}
+
 // verifyExternalIngressController verifies connectivity between the router
 // and a test workload by making a http call using the hostname passed to it.
 // This hostname must be the domain associated with the ingresscontroller under test.
