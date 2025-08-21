@@ -189,14 +189,14 @@ func createHttpRoute(namespace, routeName, parentNamespace, hostname, backendRef
 
 	// Create the backend (service and pod) needed for the route to have resolvedRefs=true.
 	// The http route, service, and pod are cleaned up when the namespace is automatically deleted.
-	// buildEchoPod builds a pod that listens on port 8080.
-	echoPod := buildEchoPod(backendRefname, namespace)
-	if err := kclient.Create(context.TODO(), echoPod); err != nil {
-		return nil, fmt.Errorf("failed to create pod %s/%s: %v", namespace, echoPod.Name, err)
+	// buildEchoReplicaSet builds a replicaset which creates a pod that listens on port 8080.
+	echoRs := buildEchoReplicaSet(backendRefname, namespace)
+	if err := createWithRetryOnError(context.TODO(), echoRs, 2*time.Minute); err != nil {
+		return nil, fmt.Errorf("failed to create replicaset %s/%s: %v", namespace, echoRs.Name, err)
 	}
 	// buildEchoService builds a service that targets port 8080.
-	echoService := buildEchoService(echoPod.Name, namespace, echoPod.ObjectMeta.Labels)
-	if err := kclient.Create(context.TODO(), echoService); err != nil {
+	echoService := buildEchoService(echoRs.Name, namespace, echoRs.Spec.Template.ObjectMeta.Labels)
+	if err := createWithRetryOnError(context.TODO(), echoService, 2*time.Minute); err != nil {
 		return nil, fmt.Errorf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 	}
 

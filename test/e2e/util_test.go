@@ -297,6 +297,30 @@ func buildDelayConnectHTTPPod(name, namespace, initImage, image string) *corev1.
 	}
 }
 
+// buildEchoReplicaSet returns a replicaset definition for an socat-based echo server.
+func buildEchoReplicaSet(name, namespace string) *appsv1.ReplicaSet {
+	pod := buildEchoPod(name, namespace)
+	one := int32(1)
+	return &appsv1.ReplicaSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: appsv1.ReplicaSetSpec{
+			Replicas: &one,
+			Selector: &metav1.LabelSelector{
+				MatchLabels: pod.Labels,
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: pod.Labels,
+				},
+				Spec: pod.Spec,
+			},
+		},
+	}
+}
+
 // buildRoute returns a route definition targeting the specified service.
 func buildRoute(name, namespace, serviceName string) *routev1.Route {
 	return &routev1.Route{
@@ -644,6 +668,17 @@ func updateInfrastructureConfigStatusWithRetryOnConflict(t *testing.T, timeout t
 				return false, nil
 			}
 			return false, err
+		}
+		return true, nil
+	})
+}
+
+// createWithRetryOnError creates the given object. If there is an error on create
+// apart from "AlreadyExists" then the create is retried until the timeout is reached.
+func createWithRetryOnError(ctx context.Context, obj client.Object, timeout time.Duration) error {
+	return wait.PollUntilContextTimeout(ctx, 2*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
+		if err := kclient.Create(ctx, obj); err != nil && !errors.IsAlreadyExists(err) {
+			return false, nil
 		}
 		return true, nil
 	})
