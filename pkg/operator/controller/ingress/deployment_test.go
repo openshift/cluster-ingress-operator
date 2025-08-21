@@ -630,7 +630,9 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 				Type:      operatorv1.ContainerLoggingDestinationType,
 				Container: &operatorv1.ContainerLoggingDestinationParameters{},
 			},
+			TcpLogFormat: "%ci:%cp [%t] %ft %b/%s %Tw/%Tc/%Tt %B %ts",
 			HttpLogFormat: "%ci:%cp [%t] %ft %b/%s %B %bq %HM %HU %HV",
+			HttpsLogFormat: "%ci:%cp [%t] %ft %b/%s %B %bq %HM %HU %HV %sslv/%sslc",
 			HTTPCaptureCookies: []operatorv1.IngressControllerCaptureHTTPCookie{{
 				IngressControllerCaptureHTTPCookieUnion: operatorv1.IngressControllerCaptureHTTPCookieUnion{
 					MatchType:  "Prefix",
