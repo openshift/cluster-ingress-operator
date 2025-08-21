@@ -730,79 +730,69 @@ type testListener struct {
 func assertExpectedDNSRecords(t *testing.T, expectations map[expectedDnsRecord]bool) error {
 	t.Helper()
 
-	var expectationsMet bool
-
-	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(context context.Context) (bool, error) {
-		haveExpectNotPresent := false
-		// expectationsMet starts true and gets set to false when some expectation is not met.
-		expectationsMet = true
-
-		dnsRecords := &v1.DNSRecordList{}
-		if err := kclient.List(context, dnsRecords, client.InNamespace(operatorcontroller.DefaultOperandNamespace)); err != nil {
-			return false, fmt.Errorf("failed to list DNSRecords: %v", err)
-		}
-
-		// Iterate over all expectations.
-		for exp, shouldBePresent := range expectations {
-			if !shouldBePresent {
-				haveExpectNotPresent = true
+	return wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false,
+		func(ctx context.Context) (bool, error) {
+			dnsRecords := &v1.DNSRecordList{}
+			if err := kclient.List(ctx, dnsRecords, client.InNamespace(operatorcontroller.DefaultOperandNamespace)); err != nil {
+				return false, fmt.Errorf("failed to list DNSRecords: %v", err)
 			}
 
-			// Reset the found and foundReady flags for each expectation.
-			found := false
-			foundReady := false
-			// Look for a DNSRecord that matches the expected gateway and DNS name.
-			for _, record := range dnsRecords.Items {
-				if record.Labels["gateway.networking.k8s.io/gateway-name"] == exp.gatewayName &&
-					record.Spec.DNSName == exp.dnsName {
-
-					if !shouldBePresent {
-						expectationsMet = false
-						found = true
-						t.Logf("DNSRecord %q (%s) found but should not be present.", record.Name, exp.dnsName)
-						return false, nil
-					}
-					found = true
-					// DNSRecord found and should be present, check if it is published
-					for _, zone := range record.Status.Zones {
-						for _, condition := range zone.Conditions {
-							if condition.Type == v1.DNSRecordPublishedConditionType && condition.Status == string(metav1.ConditionTrue) {
-								t.Logf("Found DNSRecord %q (%s) %s=%s as expected", record.Name, exp.dnsName, condition.Type, condition.Status)
-								foundReady = true
-							}
-						}
-					}
-					if !foundReady {
-						t.Logf("Found DNSRecord %v but could not determine its readiness; retrying...", record.Name)
-						expectationsMet = false
-						return false, nil
-					}
+			for exp, shouldBePresent := range expectations {
+				expectationMet, err := checkDNSRecordExpectation(t, *dnsRecords, exp, shouldBePresent)
+				if err != nil {
+					return false, err
+				}
+				if !expectationMet {
+					return false, nil
 				}
 			}
 
-			// If the record is expected but not found, return false to continue polling.
-			if shouldBePresent && !found {
-				t.Logf("DNSRecord for hostname %q (gateway: %s) is expected to be present but was not found; retrying...", exp.dnsName, exp.gatewayName)
-				expectationsMet = false
-				return false, nil
-			}
-			// If the record is not expected but was found, return false to continue polling.
-			if !shouldBePresent && found {
-				t.Logf("DNSRecord for hostname %q (gateway: %s) is present but was expected to be absent; retrying...", exp.dnsName, exp.gatewayName)
-				expectationsMet = false
-				return false, nil
-			}
-		}
-		if haveExpectNotPresent {
-			t.Logf("Continuing polling to ensure non-expected DNSRecords do not exist...")
-		}
-		return !haveExpectNotPresent, nil
-	})
+			return true, nil
+		})
+}
 
-	if !expectationsMet {
-		return fmt.Errorf("failed to observe expected DNSRecords: %v", err)
+func checkDNSRecordExpectation(t *testing.T, dnsRecords v1.DNSRecordList, exp expectedDnsRecord, shouldBePresent bool) (bool, error) {
+	for _, rec := range dnsRecords.Items {
+		if !dnsRecordMatches(rec, exp) {
+			continue
+		}
+		if !shouldBePresent {
+			t.Logf("DNSRecord %s found but expected it absent.", exp.dnsName)
+			return false, nil
+		}
+		if !isPublished(rec) {
+			t.Logf("DNSRecord %s found but not yet published, retrying...", exp.dnsName)
+			return false, nil
+		}
+		t.Logf("DNSRecord %s found & published as expected", exp.dnsName)
+		return true, nil
 	}
-	return nil
+
+	if shouldBePresent {
+		t.Logf("DNSRecord %s not found, retrying...", exp.dnsName)
+		return false, nil
+	}
+	t.Logf("DNSRecord %s correctly absent", exp.dnsName)
+	return true, nil
+}
+
+// dnsRecordMatches checks if a DNSRecord has the labels and spec matching the expectation.
+func dnsRecordMatches(rec v1.DNSRecord, exp expectedDnsRecord) bool {
+	return rec.Labels["gateway.networking.k8s.io/gateway-name"] == exp.gatewayName &&
+		rec.Spec.DNSName == exp.dnsName
+}
+
+// isPublished returns true if the DNSRecord.Status.Zones contains a Published condition = True.
+func isPublished(rec v1.DNSRecord) bool {
+	for _, zone := range rec.Status.Zones {
+		for _, cond := range zone.Conditions {
+			if cond.Type == v1.DNSRecordPublishedConditionType &&
+				cond.Status == string(metav1.ConditionTrue) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // assertHttpRouteSuccessful checks if the http route was created and has parent conditions that indicate
