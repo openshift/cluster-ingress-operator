@@ -2604,9 +2604,6 @@ func TestContainerLoggingMinLength(t *testing.T) {
 }
 
 func TestIngressControllerCustomEndpoints(t *testing.T) {
-	if infraConfig.Status.ControlPlaneTopology == configv1.ExternalTopologyMode {
-		t.Skipf("skipping TestIngressControllerCustomEndpoints test due to controlplanetopology: %v", infraConfig.Status.ControlPlaneTopology)
-	}
 	platform := infraConfig.Status.PlatformStatus
 	if platform == nil {
 		t.Fatalf("platform status is missing for infrastructure %s", infraConfig.Name)
@@ -2646,13 +2643,20 @@ func TestIngressControllerCustomEndpoints(t *testing.T) {
 		URL:  fmt.Sprintf("https://elasticloadbalancing.%s.amazonaws.com", platform.AWS.Region),
 	}
 
-	oldCCMDeployment := waitForCCMReadiness(t, 5*time.Minute, "")
-	oldConfigHash := retrieveCCMConfigurationHash(oldCCMDeployment)
-	if oldConfigHash == "" {
-		t.Fatalf("CCM does not have a config hash, this should never happen: %v", oldCCMDeployment)
+	// On a non-managed environment, retrieve the current Cloud Controller Manager
+	// configuration hash, so later we can verify if the new configuration was applied
+	// as part of the infrastructure.config update
+	var oldConfigHash string
+	if infraConfig.Status.ControlPlaneTopology != configv1.ExternalTopologyMode {
+		oldCCMDeployment := waitForCCMAvailableAndUpdated(t, 5*time.Minute, "")
+		oldConfigHash = retrieveCCMConfigurationHash(oldCCMDeployment)
+		if oldConfigHash == "" {
+			t.Fatalf("CCM does not have a config hash, this should never happen: %v", oldCCMDeployment)
+		}
 	}
 
-	if err := updateInfrastructureConfigWithRetryOnConflict(t, types.NamespacedName{Name: "cluster"}, timeout, func(spec *configv1.InfrastructureSpec) {
+	// Wait for infrastructure status to update with custom endpoints.
+	if err := updateAndVerifyInfrastructureConfigWithRetry(t, types.NamespacedName{Name: "cluster"}, timeout, func(spec *configv1.InfrastructureSpec) {
 		spec.PlatformSpec.AWS = &configv1.AWSPlatformSpec{
 			ServiceEndpoints: []configv1.AWSServiceEndpoint{
 				route53Endpoint,
@@ -2665,22 +2669,19 @@ func TestIngressControllerCustomEndpoints(t *testing.T) {
 	}
 	defer func() {
 		// Remove the custom endpoints from the infrastructure config.
-		if err := updateInfrastructureConfigWithRetryOnConflict(t, types.NamespacedName{Name: "cluster"}, timeout, func(spec *configv1.InfrastructureSpec) {
+		if err := updateAndVerifyInfrastructureConfigWithRetry(t, types.NamespacedName{Name: "cluster"}, timeout, func(spec *configv1.InfrastructureSpec) {
 			spec.PlatformSpec.AWS = nil
 		}); err != nil {
 			t.Fatalf("failed to update infrastructure config: %v", err)
 		}
 	}()
 
-	// Wait for infrastructure status to update with custom endpoints,
-	// for CCM deploy to get a new configuration hash and for pods to be scheduled
-	// and available
-	// This configuration change and replicas available may take up to 5 minutes, depending on
-	// the environment load
-
-	// Wait for CCM to be ready with the new configuration, so we can guarantee that
-	// the LoadBalancer will be created correctly
-	_ = waitForCCMReadiness(t, 5*time.Minute, oldConfigHash)
+	if infraConfig.Status.ControlPlaneTopology != configv1.ExternalTopologyMode {
+		// Wait for CCM to be ready with the new configuration, so we can guarantee that
+		// the LoadBalancer will be created correctly. This assertion is not possible
+		// on managed control planes (eg.: hypershift or rosa)
+		_ = waitForCCMAvailableAndUpdated(t, 5*time.Minute, oldConfigHash)
+	}
 
 	// The default ingresscontroller should surface the expected status conditions.
 	if err := waitForIngressControllerCondition(t, kclient, 30*time.Second, defaultName, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {

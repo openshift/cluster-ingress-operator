@@ -623,15 +623,15 @@ func updateIngressConfigSpecWithRetryOnConflict(t *testing.T, name types.Namespa
 	})
 }
 
-// updateInfrastructureConfigWithRetryOnConflict gets a fresh copy
+// updateAndVerifyInfrastructureConfigWithRetry gets a fresh copy
 // of the named infrastructure object, calls updateSpecFn() where
 // callers can modify fields of the spec, and then updates the infrastructure
 // config object. If there is a conflict error on update then the
 // complete operation of get, mutate, and update is retried until
 // timeout is reached.
 // After updating, it will check if the desired spec.Endpoints where applied to
-// the infraconfig
-func updateInfrastructureConfigWithRetryOnConflict(t *testing.T, name types.NamespacedName, timeout time.Duration, mutateSpecFn func(*configv1.InfrastructureSpec)) error {
+// the infrastructure config
+func updateAndVerifyInfrastructureConfigWithRetry(t *testing.T, name types.NamespacedName, timeout time.Duration, mutateSpecFn func(*configv1.InfrastructureSpec)) error {
 	infraConfig := configv1.Infrastructure{}
 	// First we apply the configuration
 	err := wait.PollUntilContextTimeout(context.TODO(), 1*time.Second, timeout, false, func(ctx context.Context) (done bool, err error) {
@@ -680,17 +680,11 @@ func updateInfrastructureConfigWithRetryOnConflict(t *testing.T, name types.Name
 	})
 }
 
-// waitForCCMReadiness waits for Cloud Controller Manager to be ready.
-//
-//	for infrastructure status to update with custom endpoints,
-//
-// for CCM deploy to get a new configuration hash and for pods to be scheduled
-// and available
-// This configuration change and replicas available may take up to 5 minutes, depending on
-// the environment load
+// waitForCCMAvailableAndUpdated waits for Cloud Controller Manager Deployment
+// to be reported as ready.
 // If oldConfigurationHash is not empty it will additionally verify that the configuration hash
 // is different between the deployments
-func waitForCCMReadiness(t *testing.T, timeout time.Duration, oldConfigurationHash string) appsv1.Deployment {
+func waitForCCMAvailableAndUpdated(t *testing.T, timeout time.Duration, oldConfigurationHash string) appsv1.Deployment {
 	// The pooler below will never return an error, and instead it will log and try until it fails.
 	// This avoids errors that are network errors to cause a failure on the test, and instead retries until it
 	// is successful
