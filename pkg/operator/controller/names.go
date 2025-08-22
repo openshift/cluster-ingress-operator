@@ -76,6 +76,8 @@ const (
 	// IstioRevLabelKey is the key for the gateway label that Istio checks
 	// for to determine whether it should reconcile that gateway.
 	IstioRevLabelKey = "istio.io/rev"
+
+	GatewayClassIndexFieldName = "gatewayclassController"
 )
 
 // IngressClusterOperatorName returns the namespaced name of the ClusterOperator
