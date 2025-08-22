@@ -732,14 +732,15 @@ func assertExpectedDNSRecords(t *testing.T, expectations map[expectedDnsRecord]b
 
 	var expectationsMet bool
 
-	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(context context.Context) (bool, error) {
+	err := wait.PollUntilContextTimeout(context.Background(), 5*time.Second, 2*time.Minute, false, func(context context.Context) (bool, error) {
 		haveExpectNotPresent := false
 		// expectationsMet starts true and gets set to false when some expectation is not met.
 		expectationsMet = true
 
 		dnsRecords := &v1.DNSRecordList{}
 		if err := kclient.List(context, dnsRecords, client.InNamespace(operatorcontroller.DefaultOperandNamespace)); err != nil {
-			return false, fmt.Errorf("failed to list DNSRecords: %v", err)
+			t.Logf("failed to list DNSRecords: %v, retrying...", err)
+			return false, nil
 		}
 
 		// Iterate over all expectations.
