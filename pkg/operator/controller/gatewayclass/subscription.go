@@ -16,6 +16,10 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
+var (
+	OKD = false
+)
+
 // ensureServiceMeshOperatorSubscription attempts to ensure that a subscription
 // for servicemeshoperator is present and returns a Boolean indicating whether
 // it exists, the subscription if it exists, and an error value.
@@ -49,6 +53,13 @@ func (r *reconciler) ensureServiceMeshOperatorSubscription(ctx context.Context) 
 
 // desiredSubscription returns the desired subscription.
 func desiredSubscription(name types.NamespacedName) (*operatorsv1alpha1.Subscription, error) {
+	packageName := "servicemeshoperator"
+	catalogSource := "redhat-operators"
+
+	if OKD {
+		packageName = "servicemeshoperator3"
+		catalogSource = "okderators"
+	}
 	subscription := operatorsv1alpha1.Subscription{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: name.Namespace,
@@ -57,8 +68,8 @@ func desiredSubscription(name types.NamespacedName) (*operatorsv1alpha1.Subscrip
 		Spec: &operatorsv1alpha1.SubscriptionSpec{
 			Channel:                "stable",
 			InstallPlanApproval:    operatorsv1alpha1.ApprovalAutomatic,
-			Package:                "servicemeshoperator",
-			CatalogSource:          "redhat-operators",
+			Package:                packageName,
+			CatalogSource:          catalogSource,
 			CatalogSourceNamespace: "openshift-marketplace",
 		},
 	}
