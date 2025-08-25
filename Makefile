@@ -69,6 +69,10 @@ test-e2e-list: generate
 gatewayapi-conformance:
 	hack/gatewayapi-conformance.sh
 
+.PHONY: test-pre-release-ossm
+test-pre-release-ossm:
+	hack/test-pre-release-ossm-images.sh
+
 .PHONY: clean
 clean:
 	$(GO) clean
