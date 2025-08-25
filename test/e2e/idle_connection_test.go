@@ -120,12 +120,12 @@ func idleConnectionCreateBackendService(ctx context.Context, t *testing.T, names
 		"idle-close-on-response": name,
 	}
 
-	_, err := idleConnectionCreateService(ctx, namespace, name, labels)
+	_, err := idleConnectionCreateService(t, ctx, namespace, name, labels)
 	if err != nil {
 		return fmt.Errorf("failed to create service %s/%s: %w", namespace, name, err)
 	}
 
-	rs, err := idleConnectionCreateReplicaSet(ctx, namespace, name, image, labels)
+	rs, err := idleConnectionCreateReplicaSet(t, ctx, namespace, name, image, labels)
 	if err != nil {
 		return fmt.Errorf("failed to create replicaset %s: %w", name, err)
 	}
@@ -137,7 +137,7 @@ func idleConnectionCreateBackendService(ctx context.Context, t *testing.T, names
 	return nil
 }
 
-func idleConnectionCreateService(ctx context.Context, namespace, name string, labels map[string]string) (*corev1.Service, error) {
+func idleConnectionCreateService(t *testing.T, ctx context.Context, namespace, name string, labels map[string]string) (*corev1.Service, error) {
 	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -155,7 +155,7 @@ func idleConnectionCreateService(ctx context.Context, namespace, name string, la
 		},
 	}
 
-	if err := createWithRetryOnError(ctx, service, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, ctx, service, 2*time.Minute); err != nil {
 		return nil, fmt.Errorf("failed to create service %s/%s: %w", service.Namespace, service.Name, err)
 	}
 
@@ -239,7 +239,7 @@ func idleConnectionBuildPod(namespace, name, image string, labels map[string]str
 	}
 }
 
-func idleConnectionCreateReplicaSet(ctx context.Context, namespace, name, image string, labels map[string]string) (*appsv1.ReplicaSet, error) {
+func idleConnectionCreateReplicaSet(t *testing.T, ctx context.Context, namespace, name, image string, labels map[string]string) (*appsv1.ReplicaSet, error) {
 	pod := idleConnectionBuildPod(namespace, name, image, labels)
 	one := int32(1)
 	rs := &appsv1.ReplicaSet{
@@ -260,7 +260,7 @@ func idleConnectionCreateReplicaSet(ctx context.Context, namespace, name, image 
 			},
 		},
 	}
-	if err := createWithRetryOnError(ctx, rs, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, ctx, rs, 2*time.Minute); err != nil {
 		return nil, fmt.Errorf("failed to create replicaset %s/%s: %w", rs.Namespace, rs.Name, err)
 	}
 	return rs, nil
