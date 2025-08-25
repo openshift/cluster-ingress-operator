@@ -420,6 +420,33 @@ func createCRD(name string) (*apiextensionsv1.CustomResourceDefinition, error) {
 	return crd, nil
 }
 
+// createCatalogSource creates a CatalogSource with the given name and image.
+// It returns an error if creation fails after retries.
+func createCatalogSource(t *testing.T, namespace, name, image string) error {
+	t.Helper()
+
+	cs := &operatorsv1alpha1.CatalogSource{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: namespace,
+			Name:      name,
+		},
+		Spec: operatorsv1alpha1.CatalogSourceSpec{
+			Image:       image,
+			SourceType:  operatorsv1alpha1.SourceTypeGrpc,
+			DisplayName: name,
+			Publisher:   "Custom Red Hat",
+		},
+	}
+
+	return wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(context context.Context) (bool, error) {
+		if err := kclient.Create(context, cs); err != nil && !kerrors.IsAlreadyExists(err) {
+			t.Logf("Failed to create CatalogSource %q: %v, retrying...", name, err)
+			return false, nil
+		}
+		return true, nil
+	})
+}
+
 // buildGatewayClass initializes the GatewayClass and returns its address.
 func buildGatewayClass(name, controllerName string) *gatewayapiv1.GatewayClass {
 	return &gatewayapiv1.GatewayClass{

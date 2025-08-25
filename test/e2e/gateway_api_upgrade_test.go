@@ -45,16 +45,34 @@ func TestOSSMOperatorUpgradeViaIntermediateVersions(t *testing.T) {
 	})
 
 	var (
-		initialOSSMVersion  = "servicemeshoperator3.v3.0.0"
-		initialIstioVersion = "v1.24.3"
-		upgradeOSSMVersion  = "servicemeshoperator3.v3.1.0"
-		upgradeIstioVersion = "v1.26.2"
+		// CatalogSource image saved before the release of servicemeshoperator 3.1.0.
+		// This image is useful because it includes intermediate versions in the
+		// servicemeshoperator3 upgrade graph. After 3.1.0 was released, all
+		// upgrades from 3.0.z were changed to jump directly to 3.1.0, skipping
+		// intermediate versions.
+		customCatalogSourceImage = "registry.redhat.io/redhat/redhat-operator-index@sha256:069050dbf2970f0762b816a054342e551802c45fb77417c216aed70cec5e843c"
+		customCatalogSourceName  = "custom-redhat-operators-4-19"
+		initialOSSMVersion       = "servicemeshoperator3.v3.0.0"
+		initialIstioVersion      = "v1.24.3"
+		upgradeOSSMVersion       = "servicemeshoperator3.v3.0.3"
+		upgradeIstioVersion      = "v1.24.6"
 	)
+
+	// Create custom catalog source with expected upgrade graph for servicemeshoperator3.
+	t.Log("Creating custom CatalogSource...")
+	if err := createCatalogSource(t, "openshift-marketplace", customCatalogSourceName, customCatalogSourceImage); err != nil {
+		t.Fatalf("Failed to create CatalogSource %q: %v", customCatalogSourceName, err)
+	}
+	t.Log("Checking for the CatalogSource...")
+	if err := assertCatalogSourceWithConfig(t, "openshift-marketplace", customCatalogSourceName, 2*time.Second, 2*time.Minute); err != nil {
+		t.Fatalf("Failed to find expected CatalogSource %q: %v", customCatalogSourceName, err)
+	}
 
 	// Installation.
 	t.Logf("Creating GatewayClass with OSSMversion %q ans Istio version %q...", initialOSSMVersion, initialIstioVersion)
 	gatewayClass := buildGatewayClass("openshift-default", "openshift.io/gateway-controller/v1")
 	gatewayClass.Annotations = map[string]string{
+		"unsupported.do-not-use.openshift.io/ossm-catalog":  customCatalogSourceName,
 		"unsupported.do-not-use.openshift.io/ossm-version":  initialOSSMVersion,
 		"unsupported.do-not-use.openshift.io/istio-version": initialIstioVersion,
 	}
@@ -64,10 +82,6 @@ func TestOSSMOperatorUpgradeViaIntermediateVersions(t *testing.T) {
 	t.Log("Checking for the Subscription...")
 	if err := assertSubscription(t, openshiftOperatorsNamespace, expectedSubscriptionName); err != nil {
 		t.Fatalf("Failed to find expected Subscription %s: %v", expectedSubscriptionName, err)
-	}
-	t.Log("Checking for the CatalogSource...")
-	if err := assertCatalogSource(t, expectedCatalogSourceNamespace, expectedCatalogSourceName); err != nil {
-		t.Fatalf("Failed to find expected CatalogSource %s: %v", expectedCatalogSourceName, err)
 	}
 	t.Log("Checking for the OSSM operator deployment...")
 	if err := assertOSSMOperatorWithConfig(t, initialOSSMVersion, 2*time.Second, 2*time.Minute); err != nil {
@@ -91,6 +105,7 @@ func TestOSSMOperatorUpgradeViaIntermediateVersions(t *testing.T) {
 			return false, nil
 		}
 		gc.Annotations = map[string]string{
+			"unsupported.do-not-use.openshift.io/ossm-catalog":  customCatalogSourceName,
 			"unsupported.do-not-use.openshift.io/ossm-version":  upgradeOSSMVersion,
 			"unsupported.do-not-use.openshift.io/istio-version": upgradeIstioVersion,
 		}
