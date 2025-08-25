@@ -1085,11 +1085,18 @@ func getHTTPResponse(client *http.Client, name string) (int, http.Header, string
 // assertCatalogSource checks if the CatalogSource of the given name exists,
 // and returns an error if not.
 func assertCatalogSource(t *testing.T, namespace, csName string) error {
+	return assertCatalogSourceWithConfig(t, namespace, csName, 1*time.Second, 30*time.Second)
+}
+
+// assertCatalogSourceWithConfig checks if the CatalogSource of the given name exists,
+// and returns an error if not. It uses configurable parameters such as polling interval
+// and timeout.
+func assertCatalogSourceWithConfig(t *testing.T, namespace, csName string, interval, timeout time.Duration) error {
 	t.Helper()
 	catalogSource := &operatorsv1alpha1.CatalogSource{}
 	nsName := types.NamespacedName{Namespace: namespace, Name: csName}
 
-	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(context context.Context) (bool, error) {
+	return wait.PollUntilContextTimeout(context.Background(), interval, timeout, false, func(context context.Context) (bool, error) {
 		if err := kclient.Get(context, nsName, catalogSource); err != nil {
 			t.Logf("Failed to get CatalogSource %s: %v.  Retrying...", csName, err)
 			return false, nil
@@ -1101,7 +1108,6 @@ func assertCatalogSource(t *testing.T, namespace, csName string) error {
 		t.Logf("Found CatalogSource %s but could not determine last observed state.  Retrying...", catalogSource.Name)
 		return false, nil
 	})
-	return err
 }
 
 // assertIstio checks if the Istio exists in a ready state,
