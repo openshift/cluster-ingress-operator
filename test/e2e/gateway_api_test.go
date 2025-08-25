@@ -603,6 +603,11 @@ func testGatewayAPIDNSListenerUpdate(t *testing.T) {
 		{name: "http-listener2", hostname: ptr.To("bar." + domain)},
 	})
 
+	if err != nil {
+		t.Fatalf("failed to create gateway with multiple listeners: %v", err)
+	}
+	t.Logf("Created gateway %s with multiple hostnames", gateway.Name)
+
 	t.Cleanup(func() {
 		if err := kclient.Delete(context.TODO(), gateway); err != nil {
 			if errors.IsNotFound(err) {
@@ -611,11 +616,6 @@ func testGatewayAPIDNSListenerUpdate(t *testing.T) {
 			t.Errorf("failed to delete gateway %q: %v", gateway.Name, err)
 		}
 	})
-
-	if err != nil {
-		t.Fatalf("failed to create gateway with multiple listeners: %v", err)
-	}
-	t.Logf("Created gateway %s with multiple hostnames", gateway.Name)
 
 	gateway, err = assertGatewaySuccessful(t, operatorcontroller.DefaultOperandNamespace, "test-gateway-update")
 	if err != nil {
