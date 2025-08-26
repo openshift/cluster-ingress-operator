@@ -125,6 +125,7 @@ var (
 	operandNamespace  = operatorcontroller.DefaultOperandNamespace
 	defaultName       = types.NamespacedName{Namespace: operatorNamespace, Name: manifests.DefaultIngressControllerName}
 	clusterConfigName = types.NamespacedName{Namespace: operatorNamespace, Name: manifests.ClusterIngressConfigName}
+	ccmDeploymentName = types.NamespacedName{Namespace: "openshift-cloud-controller-manager", Name: "aws-cloud-controller-manager"}
 
 	// Platforms that need a DNS "warmup" period for internal (inside the test cluster) DNS resolution.
 	// The warmup period is a period of delay before the first query is executed to avoid negative caching.
@@ -142,6 +143,13 @@ const (
 	// cluster (which may be on different platforms) and any negative caching along the way. As of writing this, AWS
 	// typically resolves within ~1 minute (see OCPBUGS-14966), while IBMCloud takes ~7 minutes (see OCPBUGS-48780).
 	dnsResolutionTimeout = 10 * time.Minute
+
+	// ccmConfigAnnotation is an annotation that exists on CloudControllerManager
+	// and contains a hash of the current infrastructure configuration.
+	// It is used to signal to CCM deployment a configuration change that needs
+	// a rollout update, and can be used by tests to also detect changes on CCM
+	// deployment
+	ccmConfigAnnotation = "operator.openshift.io/config-hash"
 )
 
 func init() {
@@ -2600,71 +2608,81 @@ func TestIngressControllerCustomEndpoints(t *testing.T) {
 	if platform == nil {
 		t.Fatalf("platform status is missing for infrastructure %s", infraConfig.Name)
 	}
-	switch platform.Type {
-	case configv1.AWSPlatformType:
-		switch {
-		case platform.AWS == nil:
-			t.Fatalf("aws platform status is missing for infrastructure %s", infraConfig.Name)
-		case len(platform.AWS.ServiceEndpoints) != 0:
-			t.Skipf("custom endpoints detected for infrastructure %s, skipping TestIngressControllerCustomEndpoints",
-				infraConfig.Name)
-		case len(platform.AWS.Region) == 0:
-			t.Fatalf("region is missing from aws platform status for infrastructure %s", infraConfig.Name)
-		case platform.AWS.Region == endpoints.CnNorth1RegionID || platform.AWS.Region == endpoints.CnNorthwest1RegionID:
-			t.Skipf("region %s or %s detected for infrastructure %s, skipping TestIngressControllerCustomEndpoints",
-				endpoints.CnNorth1RegionID, endpoints.CnNorthwest1RegionID, infraConfig.Name)
-		}
-		route53Endpoint := configv1.AWSServiceEndpoint{
-			Name: "route53",
-			// AWS Route 53 is a non-regionalized service, so the endpoint URL
-			// does not include a region.
-			URL: "https://route53.amazonaws.com",
-		}
-		taggingEndpoint := configv1.AWSServiceEndpoint{
-			Name: "tagging",
-			// us-east-1 region is required to get hosted zone resources
-			// since route 53 is a non-regionalized service.
-			URL: "https://tagging.us-east-1.amazonaws.com",
-		}
-		elbEndpoint := configv1.AWSServiceEndpoint{
-			Name: "elasticloadbalancing",
-			URL:  fmt.Sprintf("https://elasticloadbalancing.%s.amazonaws.com", platform.AWS.Region),
-		}
-		if err := updateInfrastructureConfigSpecWithRetryOnConflict(t, types.NamespacedName{Name: "cluster"}, timeout, func(spec *configv1.InfrastructureSpec) {
-			spec.PlatformSpec.AWS = &configv1.AWSPlatformSpec{
-				ServiceEndpoints: []configv1.AWSServiceEndpoint{
-					route53Endpoint,
-					taggingEndpoint,
-					elbEndpoint,
-				},
-			}
-		}); err != nil {
-			t.Fatalf("failed to update infrastructure config: %v\n", err)
-		}
-		defer func() {
-			// Remove the custom endpoints from the infrastructure config.
-			if err := updateInfrastructureConfigSpecWithRetryOnConflict(t, types.NamespacedName{Name: "cluster"}, timeout, func(spec *configv1.InfrastructureSpec) {
-				spec.PlatformSpec.AWS = nil
-			}); err != nil {
-				t.Fatalf("failed to update infrastructure config: %v", err)
-			}
-		}()
-		// Wait for infrastructure status to update with custom endpoints.
-		if err := wait.PollImmediate(1*time.Second, 15*time.Second, func() (bool, error) {
-			if err := kclient.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, &infraConfig); err != nil {
-				t.Logf("failed to get infrastructure config: %v\n", err)
-				return false, err
-			}
-			if len(infraConfig.Status.PlatformStatus.AWS.ServiceEndpoints) == 0 {
-				return false, nil
-			}
-			return true, nil
-		}); err != nil {
-			t.Fatalf("failed to observe status update for infrastructure config %s", infraConfig.Name)
-		}
-	default:
+
+	if platform.Type != configv1.AWSPlatformType {
 		t.Skipf("skipping TestIngressControllerCustomEndpoints test due to platform type: %s", platform.Type)
 	}
+
+	switch {
+	case platform.AWS == nil:
+		t.Fatalf("aws platform status is missing for infrastructure %s", infraConfig.Name)
+	case len(platform.AWS.ServiceEndpoints) != 0:
+		t.Skipf("custom endpoints detected for infrastructure %s, skipping TestIngressControllerCustomEndpoints",
+			infraConfig.Name)
+	case len(platform.AWS.Region) == 0:
+		t.Fatalf("region is missing from aws platform status for infrastructure %s", infraConfig.Name)
+	case platform.AWS.Region == endpoints.CnNorth1RegionID || platform.AWS.Region == endpoints.CnNorthwest1RegionID:
+		t.Skipf("region %s or %s detected for infrastructure %s, skipping TestIngressControllerCustomEndpoints",
+			endpoints.CnNorth1RegionID, endpoints.CnNorthwest1RegionID, infraConfig.Name)
+	}
+
+	route53Endpoint := configv1.AWSServiceEndpoint{
+		Name: "route53",
+		// AWS Route 53 is a non-regionalized service, so the endpoint URL
+		// does not include a region.
+		URL: "https://route53.amazonaws.com",
+	}
+	taggingEndpoint := configv1.AWSServiceEndpoint{
+		Name: "tagging",
+		// us-east-1 region is required to get hosted zone resources
+		// since route 53 is a non-regionalized service.
+		URL: "https://tagging.us-east-1.amazonaws.com",
+	}
+	elbEndpoint := configv1.AWSServiceEndpoint{
+		Name: "elasticloadbalancing",
+		URL:  fmt.Sprintf("https://elasticloadbalancing.%s.amazonaws.com", platform.AWS.Region),
+	}
+
+	// On a non-managed environment, retrieve the current Cloud Controller Manager
+	// configuration hash, so later we can verify if the new configuration was applied
+	// as part of the infrastructure.config update
+	var oldConfigHash string
+	if infraConfig.Status.ControlPlaneTopology != configv1.ExternalTopologyMode {
+		oldCCMDeployment := waitForCCMAvailableAndUpdated(t, 5*time.Minute, "")
+		oldConfigHash = retrieveCCMConfigurationHash(oldCCMDeployment)
+		if oldConfigHash == "" {
+			t.Fatalf("CCM does not have a config hash, this should never happen: %v", oldCCMDeployment)
+		}
+	}
+
+	// Wait for infrastructure status to update with custom endpoints.
+	if err := updateAndVerifyInfrastructureConfigWithRetry(t, types.NamespacedName{Name: "cluster"}, timeout, func(spec *configv1.InfrastructureSpec) {
+		spec.PlatformSpec.AWS = &configv1.AWSPlatformSpec{
+			ServiceEndpoints: []configv1.AWSServiceEndpoint{
+				route53Endpoint,
+				taggingEndpoint,
+				elbEndpoint,
+			},
+		}
+	}); err != nil {
+		t.Fatalf("failed to update infrastructure config: %v", err)
+	}
+	defer func() {
+		// Remove the custom endpoints from the infrastructure config.
+		if err := updateAndVerifyInfrastructureConfigWithRetry(t, types.NamespacedName{Name: "cluster"}, timeout, func(spec *configv1.InfrastructureSpec) {
+			spec.PlatformSpec.AWS = nil
+		}); err != nil {
+			t.Fatalf("failed to update infrastructure config: %v", err)
+		}
+	}()
+
+	if infraConfig.Status.ControlPlaneTopology != configv1.ExternalTopologyMode {
+		// Wait for CCM to be ready with the new configuration, so we can guarantee that
+		// the LoadBalancer will be created correctly. This assertion is not possible
+		// on managed control planes (eg.: hypershift or rosa)
+		_ = waitForCCMAvailableAndUpdated(t, 5*time.Minute, oldConfigHash)
+	}
+
 	// The default ingresscontroller should surface the expected status conditions.
 	if err := waitForIngressControllerCondition(t, kclient, 30*time.Second, defaultName, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
 		t.Fatalf("did not get expected ingress controller conditions: %v", err)
@@ -2677,7 +2695,10 @@ func TestIngressControllerCustomEndpoints(t *testing.T) {
 	}
 	defer assertIngressControllerDeleted(t, kclient, ic)
 	// Ensure the ingress controller is reporting expected status conditions.
-	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
+	// The readiness of the resource depends on the load of the environment, and because changing InfrastructureConfig
+	// causes the Cloud controller manager to rollout, at least 3 minutes are required for leader
+	// election of CCM to happen + the required time to properly schedule the Pods once they are killed/restarted
+	if err := waitForIngressControllerCondition(t, kclient, 7*time.Minute, name, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
 		t.Errorf("failed to observe expected conditions: %v", err)
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -622,29 +623,109 @@ func updateIngressConfigSpecWithRetryOnConflict(t *testing.T, name types.Namespa
 	})
 }
 
-// updateInfrastructureConfigSpecWithRetryOnConflict gets a fresh copy
+// updateAndVerifyInfrastructureConfigWithRetry gets a fresh copy
 // of the named infrastructure object, calls updateSpecFn() where
 // callers can modify fields of the spec, and then updates the infrastructure
 // config object. If there is a conflict error on update then the
 // complete operation of get, mutate, and update is retried until
 // timeout is reached.
-func updateInfrastructureConfigSpecWithRetryOnConflict(t *testing.T, name types.NamespacedName, timeout time.Duration, mutateSpecFn func(*configv1.InfrastructureSpec)) error {
+// After updating, it will check if the desired spec.Endpoints where applied to
+// the infrastructure config
+func updateAndVerifyInfrastructureConfigWithRetry(t *testing.T, name types.NamespacedName, timeout time.Duration, mutateSpecFn func(*configv1.InfrastructureSpec)) error {
 	infraConfig := configv1.Infrastructure{}
-	return wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
-		if err := kclient.Get(context.TODO(), name, &infraConfig); err != nil {
+	// First we apply the configuration
+	err := wait.PollUntilContextTimeout(context.TODO(), 1*time.Second, timeout, false, func(ctx context.Context) (done bool, err error) {
+		if err := kclient.Get(ctx, name, &infraConfig); err != nil {
 			t.Logf("error getting infrastructure config %v: %v, retrying...", name, err)
 			return false, nil
 		}
 		mutateSpecFn(&infraConfig.Spec)
 		if err := kclient.Update(context.TODO(), &infraConfig); err != nil {
-			if errors.IsConflict(err) {
-				t.Logf("conflict when updating infrastructure config %v: %v, retrying...", name, err)
-				return false, nil
-			}
-			return false, err
+			t.Logf("error updating infrastructure config %v: %v, retrying...", name, err)
+			return false, nil
 		}
 		return true, nil
 	})
+	if err != nil {
+		return err
+	}
+	// Then we get the applied configuration, and check if the serviceendpoints match
+	return wait.PollUntilContextTimeout(context.TODO(), 1*time.Second, timeout, false, func(ctx context.Context) (done bool, err error) {
+		if err := kclient.Get(ctx, name, &infraConfig); err != nil {
+			t.Logf("error getting infrastructure config %v: %v, retrying...", name, err)
+			return false, nil
+		}
+
+		// Early return if we don't have any specific service endpoint
+		if infraConfig.Spec.PlatformSpec.AWS == nil || len(infraConfig.Spec.PlatformSpec.AWS.ServiceEndpoints) == 0 {
+			return true, nil
+		}
+		// In case we have a desired ServiceEndpoints, we need to check once it has been reflected correctly
+		if infraConfig.Status.PlatformStatus == nil ||
+			infraConfig.Status.PlatformStatus.AWS == nil ||
+			len(infraConfig.Status.PlatformStatus.AWS.ServiceEndpoints) != len(infraConfig.Spec.PlatformSpec.AWS.ServiceEndpoints) {
+			t.Logf("infrastructure config status does not contain endpoints yet %v: %v, retrying...", name, infraConfig.Status)
+			return false, nil
+		}
+
+		for _, endpoint := range infraConfig.Spec.PlatformSpec.AWS.ServiceEndpoints {
+			if !slices.ContainsFunc(infraConfig.Status.PlatformStatus.AWS.ServiceEndpoints, func(e configv1.AWSServiceEndpoint) bool {
+				return e.Name == endpoint.Name && e.URL == endpoint.URL
+			}) {
+				t.Logf("infrastructure config status does not contain the desired endpoints, retrying %v: %v, retrying...", name, endpoint)
+				return false, nil
+			}
+		}
+		return true, nil
+	})
+}
+
+// waitForCCMAvailableAndUpdated waits for Cloud Controller Manager Deployment
+// to be reported as ready.
+// If oldConfigurationHash is not empty it will additionally verify that the configuration hash
+// is different between the deployments
+func waitForCCMAvailableAndUpdated(t *testing.T, timeout time.Duration, oldConfigurationHash string) appsv1.Deployment {
+	// The pooler below will never return an error, and instead it will log and try until it fails.
+	// This avoids errors that are network errors to cause a failure on the test, and instead retries until it
+	// is successful
+	ccmDeployment := appsv1.Deployment{}
+	if err := wait.PollUntilContextTimeout(context.TODO(), 5*time.Second, timeout, false, func(ctx context.Context) (done bool, err error) {
+		if err := kclient.Get(context.TODO(), ccmDeploymentName, &ccmDeployment); err != nil {
+			t.Logf("error getting CCM deployment: %v", err)
+			return false, nil
+		}
+
+		if oldConfigurationHash != "" {
+			currentConfigHash := retrieveCCMConfigurationHash(ccmDeployment)
+			if oldConfigurationHash == currentConfigHash {
+				t.Log("new config hash not yet applied to CCM deployment")
+				return false, nil
+			}
+		}
+
+		if ccmDeployment.Generation != ccmDeployment.Status.ObservedGeneration ||
+			ccmDeployment.Status.Replicas != ccmDeployment.Status.ReadyReplicas ||
+			ccmDeployment.Status.Replicas != ccmDeployment.Status.UpdatedReplicas ||
+			ccmDeployment.Status.UnavailableReplicas != 0 {
+			t.Log("CCM replicas are not ready, will retry")
+			return false, nil
+		}
+
+		return true, nil
+
+	}); err != nil {
+		t.Fatalf("failed to observe status update for infrastructure config %s", infraConfig.Name)
+	}
+
+	return ccmDeployment
+}
+
+// retrieveCCMConfigurationHash fetches the config-hash used on CCM deployment
+// and present on the annotation operator.openshift.io/config-hash
+// this information can be used to signal that a required infrastructure change
+// was successfully applied on CCM and forces CCM to do a rollout update.
+func retrieveCCMConfigurationHash(ccmDeployment appsv1.Deployment) string {
+	return ccmDeployment.Spec.Template.Annotations[ccmConfigAnnotation]
 }
 
 // updateInfrastructureStatus updates the Infrastructure status by applying
