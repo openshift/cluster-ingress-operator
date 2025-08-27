@@ -1230,12 +1230,24 @@ func IsProxyProtocolNeeded(ic *operatorv1.IngressController, platform *configv1.
 		// This can really be done for for any external [cloud] LBs that support the proxy protocol.
 		switch platform.Type {
 		case configv1.AWSPlatformType:
+			// Handle nil cases - default to Classic Load Balancer behavior (uses PROXY)
+			// TODO: validate if this won't generate false positives
 			if ic.Status.EndpointPublishingStrategy.LoadBalancer == nil ||
 				ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters == nil ||
-				ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS == nil ||
-				ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.Type == operatorv1.AWSLoadBalancerProvider &&
-					ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.Type == operatorv1.AWSClassicLoadBalancer {
+				ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS == nil {
 				return true, nil
+			}
+
+			// Only check specific AWS provider configurations if everything is properly set
+			if ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.Type == operatorv1.AWSLoadBalancerProvider {
+				// Classic Load Balancer uses PROXY protocol
+				if ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.Type == operatorv1.AWSClassicLoadBalancer {
+					return true, nil
+				}
+				// Network Load Balancer uses PROXY protocol only when internal
+				if ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.Type == operatorv1.AWSNetworkLoadBalancer {
+					return ic.Status.EndpointPublishingStrategy.LoadBalancer.Scope == operatorv1.InternalLoadBalancer, nil
+				}
 			}
 		case configv1.IBMCloudPlatformType:
 			if ic.Status.EndpointPublishingStrategy.LoadBalancer != nil &&
