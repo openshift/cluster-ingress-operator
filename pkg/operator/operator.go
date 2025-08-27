@@ -138,7 +138,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	routeExternalCertificateEnabled := featureGates.Enabled(features.FeatureGateRouteExternalCertificate)
 	ingressControllerEIPAllocationsAWSEnabled := featureGates.Enabled(features.FeatureGateSetEIPForNLBIngressController)
 	ingressControllerDCMEnabled := featureGates.Enabled(features.FeatureGateIngressControllerDynamicConfigurationManager)
-	gcpCustomEndpointsEnabled := featureGates.Enabled(features.FeatureGateGCPCustomAPIEndpoints)
+	gcpCustomEndpointsEnabled := featureGates.Enabled(features.FeatureGateGCPCustomAPIEndpointsInstall)
 
 	cv, err := configClient.ConfigV1().ClusterVersions().Get(ctx, "version", metav1.GetOptions{})
 	if err != nil {
