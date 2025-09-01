@@ -39,38 +39,6 @@ const (
 	// inferencepoolExperimentalCrdName is the name of the experimental
 	// (alpha version) InferencePool CRD.
 	inferencepoolExperimentalCrdName = "inferencepools.inference.networking.x-k8s.io"
-
-	// subscriptionCatalogOverrideAnnotationKey is the key for an
-	// unsupported annotation on the gatewayclass using which a custom
-	// catalog source can be specified for the OSSM subscription.  This
-	// annotation is only intended for use by OpenShift developers.  Note
-	// that this annotation is intended to be used only when initially
-	// creating the gatewayclass and subscription; changing the catalog
-	// source on an existing subscription will likely have no effect or
-	// cause errors.
-	subscriptionCatalogOverrideAnnotationKey = "unsupported.do-not-use.openshift.io/ossm-catalog"
-	// subscriptionChannelOverrideAnnotationKey is the key for an
-	// unsupported annotation on the gatewayclass using which a custom
-	// channel can be specified for the OSSM subscription.  This annotation
-	// is only intended for use by OpenShift developers.  Note that this
-	// annotation is intended to be used only when initially creating the
-	// gatewayclass and subscription; changing the channel on an existing
-	// subscription will likely have no effect or cause errors.
-	subscriptionChannelOverrideAnnotationKey = "unsupported.do-not-use.openshift.io/ossm-channel"
-	// subscriptionVersionOverrideAnnotationKey is the key for an
-	// unsupported annotation on the gatewayclass using which a custom
-	// version of OSSM can be specified.  This annotation is only intended
-	// for use by OpenShift developers.  Note that this annotation is
-	// intended to be used only when initially creating the gatewayclass and
-	// subscription; OLM will not allow downgrades, and upgrades are
-	// generally restricted to the next version after the currently
-	// installed version.
-	subscriptionVersionOverrideAnnotationKey = "unsupported.do-not-use.openshift.io/ossm-version"
-	// istioVersionOverrideAnnotationKey is the key for an unsupported
-	// annotation on the gatewayclass using which a custom version of Istio
-	// can be specified.  This annotation is only intended for use by
-	// OpenShift developers.
-	istioVersionOverrideAnnotationKey = "unsupported.do-not-use.openshift.io/istio-version"
 )
 
 var log = logf.Logger.WithName(controllerName)
@@ -237,15 +205,15 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 
 	var errs []error
 	ossmCatalog := r.config.GatewayAPIOperatorCatalog
-	if v, ok := gatewayclass.Annotations[subscriptionCatalogOverrideAnnotationKey]; ok {
+	if v, ok := gatewayclass.Annotations[operatorcontroller.SubscriptionCatalogOverrideAnnotationKey]; ok {
 		ossmCatalog = v
 	}
 	ossmChannel := r.config.GatewayAPIOperatorChannel
-	if v, ok := gatewayclass.Annotations[subscriptionChannelOverrideAnnotationKey]; ok {
+	if v, ok := gatewayclass.Annotations[operatorcontroller.SubscriptionChannelOverrideAnnotationKey]; ok {
 		ossmChannel = v
 	}
 	ossmVersion := r.config.GatewayAPIOperatorVersion
-	if v, ok := gatewayclass.Annotations[subscriptionVersionOverrideAnnotationKey]; ok {
+	if v, ok := gatewayclass.Annotations[operatorcontroller.SubscriptionVersionOverrideAnnotationKey]; ok {
 		ossmVersion = v
 	}
 	if _, _, err := r.ensureServiceMeshOperatorSubscription(ctx, ossmCatalog, ossmChannel, ossmVersion); err != nil {
@@ -255,7 +223,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		errs = append(errs, err)
 	}
 	istioVersion := r.config.IstioVersion
-	if v, ok := gatewayclass.Annotations[istioVersionOverrideAnnotationKey]; ok {
+	if v, ok := gatewayclass.Annotations[operatorcontroller.IstioVersionOverrideAnnotationKey]; ok {
 		istioVersion = v
 	}
 	if _, _, err := r.ensureIstio(ctx, &gatewayclass, istioVersion); err != nil {
