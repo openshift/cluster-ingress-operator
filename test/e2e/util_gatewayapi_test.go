@@ -574,12 +574,22 @@ func assertSubscription(t *testing.T, namespace, subName string) error {
 	subscription := &operatorsv1alpha1.Subscription{}
 	nsName := types.NamespacedName{Namespace: namespace, Name: subName}
 
-	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(context context.Context) (bool, error) {
+	err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 2*time.Minute, false, func(context context.Context) (bool, error) {
 		if err := kclient.Get(context, nsName, subscription); err != nil {
 			t.Logf("failed to get subscription %s, retrying...", subName)
 			return false, nil
 		}
 		t.Logf("found subscription %s at installed version %s", subscription.Name, subscription.Status.InstalledCSV)
+		for _, c := range subscription.Status.Conditions {
+			if c.Type == operatorsv1alpha1.SubscriptionCatalogSourcesUnhealthy {
+				if c.Status == corev1.ConditionTrue {
+					t.Logf("catalog sources unhealthy for subscription %s, retrying...", subName)
+					return false, nil
+				}
+				break
+			}
+		}
+		t.Logf("all catalog sources healthy for subscription %s", subscription.Name)
 		return true, nil
 	})
 	return err
