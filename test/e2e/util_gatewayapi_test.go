@@ -755,8 +755,9 @@ func assertGatewaySuccessful(t *testing.T, namespace, name string) (*gatewayapiv
 
 	// Wait for the gateway to be accepted and programmed.
 	// Load balancer provisioning can take several minutes on some platforms.
-	// Therefore, a timeout of 3 minutes is set to accommodate potential delays.
-	err := wait.PollUntilContextTimeout(context.Background(), 3*time.Second, 3*time.Minute, false, func(context context.Context) (bool, error) {
+	// CCM leader election can also be slow - up to 8 minutes has been observed.
+	// Therefore, a timeout of 10 minutes is set to accommodate potential delays.
+	err := wait.PollUntilContextTimeout(context.Background(), 5*time.Second, 10*time.Minute, false, func(context context.Context) (bool, error) {
 		if err := kclient.Get(context, nsName, gw); err != nil {
 			t.Logf("Failed to get gateway %v: %v; retrying...", nsName, err)
 			return false, nil
@@ -794,7 +795,7 @@ func assertGatewaySuccessful(t *testing.T, namespace, name string) (*gatewayapiv
 			t.Logf("Failed to get gateway service %v: %v; retrying...", svcNsName, err)
 			return false, nil
 		}
-		t.Logf("[%s] Found gateway service: %+v", time.Now().Format(time.DateTime), svc)
+		t.Logf("[%s] Found gateway service with status: %+v", time.Now().Format(time.DateTime), svc.Status)
 		return false, nil
 	})
 	if err != nil {
