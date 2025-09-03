@@ -270,7 +270,7 @@ func createGatewayWithListeners(t *testing.T, gatewayClass *gatewayapiv1.Gateway
 	}
 
 	if err := createWithRetryOnError(t, context.TODO(), gateway, 2*time.Minute); err != nil {
-		return nil, fmt.Errorf("failed to craete gateway %s: %v", name, err.Error())
+		return nil, fmt.Errorf("failed to create gateway %s: %v", name, err.Error())
 	}
 
 	return gateway, nil
@@ -287,12 +287,12 @@ func createGatewayClass(t *testing.T, name, controllerName string) (*gatewayapiv
 		if err := kclient.Create(ctx, gatewayClass); err != nil {
 			if kerrors.IsAlreadyExists(err) {
 				if err := kclient.Get(ctx, nsName, gatewayClass); err != nil {
-					t.Logf("gatewayclass %s already exists, but get failed: %v Retrying...", nsName.Name, err)
+					t.Logf("gatewayclass %s already exists, but get failed: %v; retrying...", nsName.Name, err)
 					return false, nil
 				}
 				return true, nil
 			}
-			t.Logf("error creating gatewayclass %s: %v. Retrying...", nsName.Name, err)
+			t.Logf("error creating gatewayclass %s: %v; retrying...", nsName.Name, err)
 			return false, nil
 		}
 		return true, nil

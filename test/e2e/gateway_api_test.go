@@ -651,7 +651,7 @@ func testGatewayAPIDNSListenerUpdate(t *testing.T) {
 	if err := updateGatewaySpecWithRetry(t, gatewayNSName, timeout, func(spec *gatewayapiv1.GatewaySpec) {
 		spec.Listeners = spec.Listeners[0 : len(gateway.Spec.Listeners)-1]
 	}); err != nil {
-		t.Fatalf("failed to update gateway listener: %v", err)
+		t.Fatalf("failed to delete gateway listener: %v", err)
 	}
 	t.Logf("Deleted listener %s from gateway %s.", "http-listener2", gateway.Name)
 

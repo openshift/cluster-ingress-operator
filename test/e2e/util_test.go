@@ -767,8 +767,8 @@ func createWithRetryOnError(t *testing.T, ctx context.Context, obj client.Object
 	})
 }
 
-// deleteWithRetryOnError will try to delete the object until timeout reaches.
-// it is mostly used to retry operations that may be flaky due to network issues
+// deleteWithRetryOnError will try to delete the object until the timeout occurs.
+// Use for retrying operations that may be flaky due to network issues.
 func deleteWithRetryOnError(t *testing.T, ctx context.Context, obj client.Object, timeout time.Duration) error {
 	t.Helper()
 	return wait.PollUntilContextTimeout(ctx, 2*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
