@@ -756,9 +756,24 @@ func updateInfrastructureConfigStatusWithRetryOnConflict(t *testing.T, timeout t
 
 // createWithRetryOnError creates the given object. If there is an error on create
 // apart from "AlreadyExists" then the create is retried until the timeout is reached.
-func createWithRetryOnError(ctx context.Context, obj client.Object, timeout time.Duration) error {
+func createWithRetryOnError(t *testing.T, ctx context.Context, obj client.Object, timeout time.Duration) error {
+	t.Helper()
 	return wait.PollUntilContextTimeout(ctx, 2*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
 		if err := kclient.Create(ctx, obj); err != nil && !errors.IsAlreadyExists(err) {
+			t.Logf("error creating %s: %v, retrying...", obj.GetName(), err)
+			return false, nil
+		}
+		return true, nil
+	})
+}
+
+// deleteWithRetryOnError will try to delete the object until the timeout occurs.
+// Use for retrying operations that may be flaky due to network issues.
+func deleteWithRetryOnError(t *testing.T, ctx context.Context, obj client.Object, timeout time.Duration) error {
+	t.Helper()
+	return wait.PollUntilContextTimeout(ctx, 2*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
+		if err := kclient.Delete(ctx, obj); err != nil && !errors.IsAlreadyExists(err) {
+			t.Logf("error deleting %s: %v, retrying...", obj.GetName(), err)
 			return false, nil
 		}
 		return true, nil

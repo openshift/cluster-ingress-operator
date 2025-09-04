@@ -182,7 +182,7 @@ func deleteExistingVAP(t *testing.T, vapName string) error {
 
 // createHttpRoute checks if the HTTPRoute can be created.
 // If it can't an error is returned.
-func createHttpRoute(namespace, routeName, parentNamespace, hostname, backendRefname string, gateway *gatewayapiv1.Gateway) (*gatewayapiv1.HTTPRoute, error) {
+func createHttpRoute(t *testing.T, namespace, routeName, parentNamespace, hostname, backendRefname string, gateway *gatewayapiv1.Gateway) (*gatewayapiv1.HTTPRoute, error) {
 	if gateway == nil {
 		return nil, errors.New("unable to create httpRoute, no gateway available")
 	}
@@ -191,12 +191,12 @@ func createHttpRoute(namespace, routeName, parentNamespace, hostname, backendRef
 	// The http route, service, and pod are cleaned up when the namespace is automatically deleted.
 	// buildEchoReplicaSet builds a replicaset which creates a pod that listens on port 8080.
 	echoRs := buildEchoReplicaSet(backendRefname, namespace)
-	if err := createWithRetryOnError(context.TODO(), echoRs, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, context.TODO(), echoRs, 2*time.Minute); err != nil {
 		return nil, fmt.Errorf("failed to create replicaset %s/%s: %v", namespace, echoRs.Name, err)
 	}
 	// buildEchoService builds a service that targets port 8080.
 	echoService := buildEchoService(echoRs.Name, namespace, echoRs.Spec.Template.ObjectMeta.Labels)
-	if err := createWithRetryOnError(context.TODO(), echoService, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, context.TODO(), echoService, 2*time.Minute); err != nil {
 		return nil, fmt.Errorf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 	}
 
@@ -233,8 +233,8 @@ func createGateway(gatewayClass *gatewayapiv1.GatewayClass, name, namespace, dom
 	return gateway, nil
 }
 
-func createGatewayWithListeners(gatewayClass *gatewayapiv1.GatewayClass, name, namespace string, listeners []testListener) (*gatewayapiv1.Gateway, error) {
-
+func createGatewayWithListeners(t *testing.T, gatewayClass *gatewayapiv1.GatewayClass, name, namespace string, listeners []testListener) (*gatewayapiv1.Gateway, error) {
+	t.Helper()
 	var gatewayListeners []gatewayapiv1.Listener
 	for _, spec := range listeners {
 		var hostname *gatewayapiv1.Hostname = nil
@@ -269,31 +269,37 @@ func createGatewayWithListeners(gatewayClass *gatewayapiv1.GatewayClass, name, n
 		},
 	}
 
-	if err := kclient.Create(context.TODO(), gateway); err != nil {
-		if kerrors.IsAlreadyExists(err) {
-			return nil, fmt.Errorf("cannot create gateway %s: %v", name, err.Error())
-		} else {
-			return nil, fmt.Errorf("failed to create gateway %s: %v", name, err.Error())
-		}
+	if err := createWithRetryOnError(t, context.TODO(), gateway, 2*time.Minute); err != nil {
+		return nil, fmt.Errorf("failed to create gateway %s: %v", name, err.Error())
 	}
+
 	return gateway, nil
 }
 
 // createGatewayClass checks if the GatewayClass can be created.
 // If it can, it is returned.  If it can't an error is returned.
-func createGatewayClass(name, controllerName string) (*gatewayapiv1.GatewayClass, error) {
+func createGatewayClass(t *testing.T, name, controllerName string) (*gatewayapiv1.GatewayClass, error) {
+	t.Helper()
+
 	gatewayClass := buildGatewayClass(name, controllerName)
-	if err := kclient.Create(context.TODO(), gatewayClass); err != nil {
-		if kerrors.IsAlreadyExists(err) {
-			name := types.NamespacedName{Namespace: "", Name: name}
-			if err := kclient.Get(context.TODO(), name, gatewayClass); err != nil {
-				return nil, fmt.Errorf("gatewayclass %s already exists, but get failed: %w", name.Name, err)
+	nsName := types.NamespacedName{Namespace: "", Name: name}
+	if err := wait.PollUntilContextTimeout(context.TODO(), 2*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
+		if err := kclient.Create(ctx, gatewayClass); err != nil {
+			if kerrors.IsAlreadyExists(err) {
+				if err := kclient.Get(ctx, nsName, gatewayClass); err != nil {
+					t.Logf("gatewayclass %s already exists, but get failed: %v; retrying...", nsName.Name, err)
+					return false, nil
+				}
+				return true, nil
 			}
-			return gatewayClass, nil
-		} else {
-			return nil, fmt.Errorf("failed to create gatewayclass %s: %w", gatewayClass.Name, err)
+			t.Logf("error creating gatewayclass %s: %v; retrying...", nsName.Name, err)
+			return false, nil
 		}
+		return true, nil
+	}); err != nil {
+		return nil, err
 	}
+
 	return gatewayClass, nil
 }
 
@@ -1236,4 +1242,25 @@ func containsPolicyRules(destRules, srcRules []rbacv1.PolicyRule) bool {
 	}
 
 	return true
+}
+
+// updateGatewaySpecWithRetry gets a fresh copy
+// of the named gateway object, calls mutateSpecFn() where
+// callers can modify fields of the spec, and then updates the gateway
+// object. If there is any error during get or update, it will log
+// and retry
+func updateGatewaySpecWithRetry(t *testing.T, name types.NamespacedName, timeout time.Duration, mutateSpecFn func(*gatewayapiv1.GatewaySpec)) error {
+	gw := gatewayapiv1.Gateway{}
+	return wait.PollUntilContextTimeout(context.TODO(), 1*time.Second, timeout, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, name, &gw); err != nil {
+			t.Logf("error getting gateway resource %v: %v, retrying...", name, err)
+			return false, nil
+		}
+		mutateSpecFn(&gw.Spec)
+		if err := kclient.Update(ctx, &gw); err != nil {
+			t.Logf("error when updating gateway spec %v: %v, retrying...", name, err)
+			return false, nil
+		}
+		return true, nil
+	})
 }

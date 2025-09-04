@@ -185,7 +185,7 @@ func testGatewayAPIObjects(t *testing.T) {
 	ns := createNamespace(t, names.SimpleNameGenerator.GenerateName("test-e2e-gwapi-"))
 
 	// Validate that Gateway API objects can be created.
-	if err := ensureGatewayObjectCreation(ns); err != nil {
+	if err := ensureGatewayObjectCreation(t, ns); err != nil {
 		t.Fatalf("failed to create one or more gateway object/s: %v", err)
 	}
 
@@ -219,7 +219,7 @@ func testGatewayAPIObjects(t *testing.T) {
 // gateway ("automated deployment"), even if the gateway specifies some existing
 // service in spec.addresses.
 func testGatewayAPIManualDeployment(t *testing.T) {
-	gatewayClass, err := createGatewayClass("openshift-default", "openshift.io/gateway-controller/v1")
+	gatewayClass, err := createGatewayClass(t, "openshift-default", "openshift.io/gateway-controller/v1")
 	if err != nil {
 		t.Fatalf("Failed to create gatewayclass: %v", err)
 	}
@@ -462,7 +462,7 @@ func testGatewayAPIRBAC(t *testing.T) {
 func testGatewayAPIDNS(t *testing.T) {
 	domain := "gws." + dnsConfig.Spec.BaseDomain
 
-	gatewayClass, err := createGatewayClass(operatorcontroller.OpenShiftDefaultGatewayClassName, operatorcontroller.OpenShiftGatewayClassControllerName)
+	gatewayClass, err := createGatewayClass(t, operatorcontroller.OpenShiftDefaultGatewayClassName, operatorcontroller.OpenShiftGatewayClassControllerName)
 	if err != nil {
 		t.Fatalf("failed to create gatewayclass: %v", err)
 	}
@@ -546,7 +546,7 @@ func testGatewayAPIDNS(t *testing.T) {
 
 			// Create gateways
 			for _, gateway := range tc.createGateways {
-				createdGateway, err := createGatewayWithListeners(gatewayClass, gateway.gatewayName, gateway.namespace, gateway.listeners)
+				createdGateway, err := createGatewayWithListeners(t, gatewayClass, gateway.gatewayName, gateway.namespace, gateway.listeners)
 				gateways = append(gateways, createdGateway)
 				if err != nil {
 					t.Fatalf("failed to create gateway %s: %v", gateway.gatewayName, err)
@@ -591,17 +591,22 @@ func testGatewayAPIDNS(t *testing.T) {
 }
 
 func testGatewayAPIDNSListenerUpdate(t *testing.T) {
-	gatewayClass, err := createGatewayClass(operatorcontroller.OpenShiftDefaultGatewayClassName, operatorcontroller.OpenShiftGatewayClassControllerName)
+	gatewayClass, err := createGatewayClass(t, operatorcontroller.OpenShiftDefaultGatewayClassName, operatorcontroller.OpenShiftGatewayClassControllerName)
 	if err != nil {
 		t.Fatalf("failed to create gatewayclass: %v", err)
 	}
 
 	domain := "gws." + dnsConfig.Spec.BaseDomain
 
-	gateway, err := createGatewayWithListeners(gatewayClass, "test-gateway-update", operatorcontroller.DefaultOperandNamespace, []testListener{
+	gateway, err := createGatewayWithListeners(t, gatewayClass, "test-gateway-update", operatorcontroller.DefaultOperandNamespace, []testListener{
 		{name: "http-listener1", hostname: ptr.To("foo." + domain)},
 		{name: "http-listener2", hostname: ptr.To("bar." + domain)},
 	})
+
+	if err != nil {
+		t.Fatalf("failed to create gateway with multiple listeners: %v", err)
+	}
+	t.Logf("Created gateway %s with multiple hostnames", gateway.Name)
 
 	t.Cleanup(func() {
 		if err := kclient.Delete(context.TODO(), gateway); err != nil {
@@ -611,11 +616,6 @@ func testGatewayAPIDNSListenerUpdate(t *testing.T) {
 			t.Errorf("failed to delete gateway %q: %v", gateway.Name, err)
 		}
 	})
-
-	if err != nil {
-		t.Fatalf("failed to create gateway with multiple listeners: %v", err)
-	}
-	t.Logf("Created gateway %s with multiple hostnames", gateway.Name)
 
 	gateway, err = assertGatewaySuccessful(t, operatorcontroller.DefaultOperandNamespace, "test-gateway-update")
 	if err != nil {
@@ -628,17 +628,14 @@ func testGatewayAPIDNSListenerUpdate(t *testing.T) {
 		t.Fatalf("DNSRecord %s expectations not met: %v", "foo."+domain+".", err)
 	}
 
-	// Fetch the latest version of the Gateway resource.
-	if err := kclient.Get(context.TODO(), types.NamespacedName{Namespace: operatorcontroller.DefaultOperandNamespace, Name: gateway.Name}, gateway); err != nil {
-		t.Fatalf("failed to get gateway resource: %v", err)
-	}
+	gatewayNSName := types.NamespacedName{Name: "test-gateway-update", Namespace: operatorcontroller.DefaultOperandNamespace}
 
 	// Modify one gateway listener hostname
-	newHostname := gatewayapiv1.Hostname("baz." + domain)
-	gateway.Spec.Listeners[0].Hostname = &newHostname
-
-	if err := kclient.Update(context.TODO(), gateway); err != nil {
-		t.Fatalf("failed to update gateway %v: %v", gateway.Name, err)
+	if err := updateGatewaySpecWithRetry(t, gatewayNSName, timeout, func(spec *gatewayapiv1.GatewaySpec) {
+		newHostname := gatewayapiv1.Hostname("baz." + domain)
+		spec.Listeners[0].Hostname = &newHostname
+	}); err != nil {
+		t.Fatalf("failed to update gateway listener: %v", err)
 	}
 	t.Logf("Modified gateway %s's listener hostname from %s to: %s", gateway.Name, "foo."+domain+".", "baz."+domain+".")
 
@@ -650,21 +647,15 @@ func testGatewayAPIDNSListenerUpdate(t *testing.T) {
 		t.Fatalf("DNSRecord %s expectations not met: %v", "baz."+domain+".", err)
 	}
 
-	// Fetch the latest version of the Gateway resource.
-	if err := kclient.Get(context.TODO(), types.NamespacedName{Namespace: operatorcontroller.DefaultOperandNamespace, Name: gateway.Name}, gateway); err != nil {
-		t.Fatalf("failed to get gateway resource: %v", err)
-	}
-
 	// Delete one of the listeners
-	gateway.Spec.Listeners = gateway.Spec.Listeners[0 : len(gateway.Spec.Listeners)-1]
-
-	if err := kclient.Update(context.TODO(), gateway); err != nil {
-		t.Fatalf("failed to update gateway with removed listener: %v", err)
+	if err := updateGatewaySpecWithRetry(t, gatewayNSName, timeout, func(spec *gatewayapiv1.GatewaySpec) {
+		spec.Listeners = spec.Listeners[0 : len(gateway.Spec.Listeners)-1]
+	}); err != nil {
+		t.Fatalf("failed to delete gateway listener: %v", err)
 	}
 	t.Logf("Deleted listener %s from gateway %s.", "http-listener2", gateway.Name)
 
 	t.Logf("Checking that the dnsRecord for %s gets removed after removing the listener.", "bar."+domain+".")
-
 	if err := assertExpectedDNSRecords(t, map[expectedDnsRecord]bool{
 		{dnsName: "baz." + domain + ".", gatewayName: "test-gateway-update"}: true,
 		{dnsName: "bar." + domain + ".", gatewayName: "test-gateway-update"}: false,
@@ -672,7 +663,7 @@ func testGatewayAPIDNSListenerUpdate(t *testing.T) {
 		t.Fatalf("expected bar.%s. to be deleted, but it was not", domain)
 	}
 
-	if err := kclient.Delete(context.TODO(), gateway); err != nil {
+	if err := deleteWithRetryOnError(t, context.TODO(), gateway, 30*time.Second); err != nil {
 		t.Errorf("failed to delete gateway %q: %v", gateway.Name, err)
 	}
 
@@ -686,24 +677,24 @@ func testGatewayAPIDNSListenerUpdate(t *testing.T) {
 }
 
 func testGatewayAPIDNSListenerWithNoHostname(t *testing.T) {
-	gatewayClass, err := createGatewayClass(operatorcontroller.OpenShiftDefaultGatewayClassName, operatorcontroller.OpenShiftGatewayClassControllerName)
+	gatewayClass, err := createGatewayClass(t, operatorcontroller.OpenShiftDefaultGatewayClassName, operatorcontroller.OpenShiftGatewayClassControllerName)
 	if err != nil {
 		t.Fatalf("failed to create gatewayclass: %v", err)
 	}
 
-	gateway, err := createGatewayWithListeners(gatewayClass, "test-nohost-gateway", operatorcontroller.DefaultOperandNamespace, []testListener{
+	gateway, err := createGatewayWithListeners(t, gatewayClass, "test-nohost-gateway", operatorcontroller.DefaultOperandNamespace, []testListener{
 		{name: "http-listener-no-host", hostname: nil},
 	})
+
+	if err != nil {
+		t.Fatalf("failed to create gateway with a listener with no hostname: %v", err)
+	}
 
 	t.Cleanup(func() {
 		if err := kclient.Delete(context.TODO(), gateway); err != nil {
 			t.Errorf("failed to delete gateway %q: %v", gateway.Name, err)
 		}
 	})
-
-	if err != nil {
-		t.Fatalf("failed to create gateway with a listener with no hostname: %v", err)
-	}
 
 	gateway, err = assertGatewaySuccessful(t, operatorcontroller.DefaultOperandNamespace, "test-nohost-gateway")
 	if err != nil {
@@ -824,10 +815,10 @@ func ensureExperimentalCRDs(t *testing.T) {
 }
 
 // ensureGatewayObjectCreation tests that gateway class, gateway, and http route objects can be created.
-func ensureGatewayObjectCreation(ns *corev1.Namespace) error {
+func ensureGatewayObjectCreation(t *testing.T, ns *corev1.Namespace) error {
 	var domain string
 
-	gatewayClass, err := createGatewayClass(operatorcontroller.OpenShiftDefaultGatewayClassName, operatorcontroller.OpenShiftGatewayClassControllerName)
+	gatewayClass, err := createGatewayClass(t, operatorcontroller.OpenShiftDefaultGatewayClassName, operatorcontroller.OpenShiftGatewayClassControllerName)
 	if err != nil {
 		return fmt.Errorf("feature gate was enabled, but gateway class object could not be created: %v", err)
 	}
@@ -845,7 +836,7 @@ func ensureGatewayObjectCreation(ns *corev1.Namespace) error {
 	hostname := names.SimpleNameGenerator.GenerateName("test-hostname-")
 	defaultRoutename = hostname + "." + domain
 
-	_, err = createHttpRoute(ns.Name, "test-httproute", operatorcontroller.DefaultOperandNamespace, defaultRoutename, testGatewayName+"-"+operatorcontroller.OpenShiftDefaultGatewayClassName, testGateway)
+	_, err = createHttpRoute(t, ns.Name, "test-httproute", operatorcontroller.DefaultOperandNamespace, defaultRoutename, testGatewayName+"-"+operatorcontroller.OpenShiftDefaultGatewayClassName, testGateway)
 	if err != nil {
 		return fmt.Errorf("feature gate was enabled, but http route object could not be created: %v", err)
 	}
