@@ -61,7 +61,7 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 		cache:    operatorCache,
 		recorder: mgr.GetEventRecorderFor(controllerName),
 	}
-	c, err := controller.NewUnmanaged(controllerName, mgr, controller.Options{Reconciler: reconciler})
+	c, err := controller.NewUnmanaged(controllerName, controller.Options{Reconciler: reconciler})
 	if err != nil {
 		return nil, err
 	}
