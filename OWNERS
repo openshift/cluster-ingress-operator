@@ -10,6 +10,7 @@ approvers:
   - Thealisyed
   - grzpiotrowski
   - rikatz
+  - davidesalerno
 reviewers:
   - knobunc
   - Miciah
@@ -22,6 +23,7 @@ reviewers:
   - Thealisyed
   - grzpiotrowski
   - rikatz
+  - davidesalerno
 emeritus_approvers:
   - ironcladlou
   - pravisankar
