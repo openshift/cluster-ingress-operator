@@ -64,6 +64,9 @@ const (
 	// See https://docs.aws.amazon.com/elasticloadbalancing/latest/network/target-group-health-checks.html
 	awsLBHealthCheckIntervalNLB = "10"
 
+	// awsTargetGroupAttributesInternalProxyProtocolEnabled is the value of the awsTargetGroupAttributesAnnotation for internal load balancers that need to enable proxy protocol.
+	awsTargetGroupAttributesInternalProxyProtocolEnabled = "preserve_client_ip.enabled=false,proxy_protocol_v2.enabled=true"
+
 	// awsLBHealthCheckTimeoutAnnotation is the amount of time, in seconds, during which no response
 	// means a failed AWS load balancer health check. The value must be less than the value of
 	// awsLBHealthCheckIntervalAnnotation. Defaults to 4, must be between 2 and 60.
@@ -91,6 +94,9 @@ const (
 
 	// awsEIPAllocationsAnnotation specifies a list of eips for NLBs.
 	awsEIPAllocationsAnnotation = "service.beta.kubernetes.io/aws-load-balancer-eip-allocations"
+
+	// awsTargetGroupAttributesAnnotation is the annotation used on a service to specify target group attributes for an AWS load balancer.
+	awsTargetGroupAttributesAnnotation = "service.beta.kubernetes.io/aws-load-balancer-target-group-attributes"
 
 	// iksLBScopeAnnotation is the annotation used on a service to specify an IBM
 	// load balancer IP type.
@@ -420,6 +426,11 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 							if nlbParams != nil && awsEIPAllocationsExist(nlbParams.EIPAllocations) {
 								service.Annotations[awsEIPAllocationsAnnotation] = JoinAWSEIPAllocations(nlbParams.EIPAllocations, ",")
 							}
+						}
+
+						// Configure the target group attributes for internal load balancers that need to enable proxy protocol and support hairpinning traffic.
+						if proxyNeeded && isInternal {
+							service.Annotations[awsTargetGroupAttributesAnnotation] = awsTargetGroupAttributesInternalProxyProtocolEnabled
 						}
 
 					case operatorv1.AWSClassicLoadBalancer:
