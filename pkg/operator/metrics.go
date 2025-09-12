@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	ctrlruntimemetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 )
@@ -16,8 +17,8 @@ func StartMetricsListener(addr string, signal context.Context) {
 	// with that of the ingress-operator. This shouldn't have any side effects, as long as no 2 metrics across
 	// controller runtime or the ingress operator share the same name (which is unlikely). See
 	// https://github.com/kubernetes/test-infra/blob/master/prow/metrics/metrics.go for additional context.
-	ctrlruntimemetrics.Registry.Unregister(prometheus.NewGoCollector())
-	ctrlruntimemetrics.Registry.Unregister(prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}))
+	ctrlruntimemetrics.Registry.Unregister(collectors.NewGoCollector(collectors.WithGoCollectorRuntimeMetrics(collectors.MetricsAll)))
+	ctrlruntimemetrics.Registry.Unregister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 
 	// Create prometheus handler by combining the ingress-operator registry
 	// with the ingress-operator's controller runtime metrics registry.

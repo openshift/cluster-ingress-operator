@@ -17,6 +17,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/utils/clock"
 
 	configv1 "github.com/openshift/api/config/v1"
 	"github.com/openshift/api/features"
@@ -99,7 +100,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		Kind:       "Deployment",
 		Namespace:  config.Namespace,
 		Name:       "ingress-operator",
-	})
+	}, clock.RealClock{})
 
 	configClient, err := configclient.NewForConfig(kubeConfig)
 	if err != nil {
@@ -212,7 +213,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	// Create and register the configurable route controller with the operator manager.
 	if _, err := configurableroutecontroller.New(mgr, configurableroutecontroller.Config{
 		SecretNamespace: operatorcontroller.GlobalUserSpecifiedConfigNamespace,
-	}, events.NewLoggingEventRecorder(configurableroutecontroller.ControllerName)); err != nil {
+	}, events.NewLoggingEventRecorder(configurableroutecontroller.ControllerName, clock.RealClock{})); err != nil {
 		return nil, fmt.Errorf("failed to create configurable-route controller: %v", err)
 	}
 
