@@ -208,7 +208,6 @@ type Config struct {
 	Namespace                                 string
 	IngressControllerImage                    string
 	RouteExternalCertificateEnabled           bool
-	IngressControllerLBSubnetsAWSEnabled      bool
 	IngressControllerEIPAllocationsAWSEnabled bool
 	IngressControllerDCMEnabled               bool
 }
