@@ -7,17 +7,23 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
+	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 // ensureCanaryDaemonSet ensures the canary daemonset exists
 func (r *reconciler) ensureCanaryDaemonSet() (bool, *appsv1.DaemonSet, error) {
-	desired := desiredCanaryDaemonSet(r.config.CanaryImage)
+	secretName, err := r.canarySecretName(controller.CanaryDaemonSetName().Namespace)
+	if err != nil {
+		return false, nil, err
+	}
+	desired := desiredCanaryDaemonSet(r.config.CanaryImage, secretName.Name)
 	haveDs, current, err := r.currentCanaryDaemonSet()
 	if err != nil {
 		return false, nil, err
@@ -80,7 +86,7 @@ func (r *reconciler) updateCanaryDaemonSet(current, desired *appsv1.DaemonSet) (
 
 // desiredCanaryDaemonSet returns the desired canary daemonset read in
 // from manifests
-func desiredCanaryDaemonSet(canaryImage string) *appsv1.DaemonSet {
+func desiredCanaryDaemonSet(canaryImage, secretName string) *appsv1.DaemonSet {
 	daemonset := manifests.CanaryDaemonSet()
 	name := controller.CanaryDaemonSetName()
 	daemonset.Name = name.Name
@@ -96,6 +102,8 @@ func desiredCanaryDaemonSet(canaryImage string) *appsv1.DaemonSet {
 
 	daemonset.Spec.Template.Spec.Containers[0].Image = canaryImage
 	daemonset.Spec.Template.Spec.Containers[0].Command = []string{"ingress-operator", CanaryHealthcheckCommand}
+
+	daemonset.Spec.Template.Spec.Volumes[0].Secret.SecretName = secretName
 
 	return daemonset
 }
@@ -195,4 +203,16 @@ func cmpTolerations(a, b corev1.Toleration) bool {
 		}
 	}
 	return true
+}
+
+func (r *reconciler) canarySecretName(Namespace string) (types.NamespacedName, error) {
+	defaultIC := operatorv1.IngressController{}
+	defaultICName := types.NamespacedName{
+		Name:      manifests.DefaultIngressControllerName,
+		Namespace: r.config.Namespace,
+	}
+	if err := r.client.Get(context.TODO(), defaultICName, &defaultIC); err != nil {
+		return types.NamespacedName{}, err
+	}
+	return controller.RouterEffectiveDefaultCertificateSecretName(&defaultIC, Namespace), nil
 }
