@@ -9,6 +9,9 @@ approvers:
   - gcs278
   - Thealisyed
   - grzpiotrowski
+  - rikatz
+  - davidesalerno
+  - bentito
 reviewers:
   - knobunc
   - Miciah
@@ -20,6 +23,9 @@ reviewers:
   - gcs278
   - Thealisyed
   - grzpiotrowski
+  - rikatz
+  - davidesalerno
+  - bentito
 emeritus_approvers:
   - ironcladlou
   - pravisankar
