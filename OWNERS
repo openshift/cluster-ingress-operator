@@ -11,6 +11,7 @@ approvers:
   - grzpiotrowski
   - rikatz
   - davidesalerno
+  - bentito
 reviewers:
   - knobunc
   - Miciah
@@ -24,6 +25,7 @@ reviewers:
   - grzpiotrowski
   - rikatz
   - davidesalerno
+  - bentito
 emeritus_approvers:
   - ironcladlou
   - pravisankar
