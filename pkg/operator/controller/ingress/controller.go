@@ -237,6 +237,33 @@ func (e *admissionRejection) Error() string {
 // Reconcile expects request to refer to a ingresscontroller in the operator
 // namespace, and will do all the work to ensure the ingresscontroller is in the
 // desired state.
+//
+// Reconcile reconciles an IngressController object as follows:
+//
+//  1. Get the IngressController object.
+//
+//  2. If the IngressController object is marked for deletion, call
+//     ensureIngressDeleted to delete related resources and remove finalizers.
+//
+//  3. Otherwise, get the cluster config objects needed for reconciliation.
+//
+//  4. If the IngressController object has not been admitted or if it requires
+//     re-admission or re-initialization, call admit, which does the following:
+//
+//     * Initialize status.
+//
+//     * Validate the IngressController.
+//
+//     * Reject the IngressController if it is invalid, in which case
+//     reconciliation terminates.
+//
+//     * Accept the IngressController if it is valid, in which case Reconcile
+//     re-queues it for reconciliation, now with status fully initialized.
+//
+//  5. If the IngressController has been admitted, call ensureIngressController
+//     to reconcile it and its related resources.  The ensureIngressController
+//     method and related methods may assume that the status on which they
+//     depend has been initialized by the admit method.
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	log.Info("reconciling", "request", request)
 
