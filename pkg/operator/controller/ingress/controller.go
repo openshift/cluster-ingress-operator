@@ -318,29 +318,6 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		return reconcile.Result{Requeue: true}, nil
 	}
 
-	// During upgrades, an already admitted controller might require overriding
-	// default dnsManagementPolicy to "Unmanaged" due to mismatch in its domain and
-	// and the pre-configured base domain.
-	// TODO: Remove this in 4.13
-	if eps := ingress.Status.EndpointPublishingStrategy; eps != nil && eps.Type == operatorv1.LoadBalancerServiceStrategyType && eps.LoadBalancer != nil {
-
-		domainMatchesBaseDomain := dnsrecord.ManageDNSForDomain(ingress.Status.Domain, platformStatus, dnsConfig)
-
-		// Set dnsManagementPolicy based on current domain on the ingresscontroller
-		// and base domain on dns config. This is needed to ensure the correct dnsManagementPolicy
-		// is set on the default ingress controller since the status.domain is updated
-		// in r.admit() and spec.domain is unset on the default ingress controller.
-		if !domainMatchesBaseDomain && eps.LoadBalancer.DNSManagementPolicy != operatorv1.UnmanagedLoadBalancerDNS {
-			ingress.Status.EndpointPublishingStrategy.LoadBalancer.DNSManagementPolicy = operatorv1.UnmanagedLoadBalancerDNS
-
-			if err := r.client.Status().Update(context.TODO(), ingress); err != nil {
-				return reconcile.Result{}, fmt.Errorf("failed to update status: %w", err)
-			}
-			log.Info("Updated ingresscontroller status: dnsManagementPolicy as Unmanaged", "ingresscontroller", ingress.Status)
-			return reconcile.Result{Requeue: true}, nil
-		}
-	}
-
 	// The ingresscontroller is safe to process, so ensure it.
 	if err := r.ensureIngressController(ingress, dnsConfig, infraConfig, platformStatus, ingressConfig, apiConfig, networkConfig, clusterProxyConfig); err != nil {
 		switch e := err.(type) {
