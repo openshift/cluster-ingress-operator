@@ -1,0 +1,10 @@
+apiVersion: operators.coreos.com/v1alpha1
+kind: CatalogSource
+metadata:
+  name: custom-redhat-operators
+  namespace: openshift-marketplace
+spec:
+  displayName: "Custom Red Hat Operators"
+  publisher: "Custom Red Hat"
+  sourceType: grpc
+  image: quay.io/alebedev/ossm-operator-catalog:latest

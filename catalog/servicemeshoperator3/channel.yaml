@@ -1,0 +1,6 @@
+---
+schema: olm.channel
+name: stable
+package: servicemeshoperator3
+entries:
+  - name: servicemeshoperator3.v3.1.2

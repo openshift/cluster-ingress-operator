@@ -1,0 +1,4 @@
+---
+schema: olm.package
+name: servicemeshoperator3
+defaultChannel: stable

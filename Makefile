@@ -20,6 +20,14 @@ TEST_UNIT ?= ^.*$
 TEST_E2E ?= ^TestAll$
 endif
 
+CATALOG_VERSION ?= latest
+CATALOG_IMG ?= quay.io/alebedev/ossm-operator-catalog:$(CATALOG_VERSION)
+CATALOG_DIR := catalog
+PACKAGE_DIR := $(CATALOG_DIR)/servicemeshoperator3
+OPM = ./opm
+OPM_VERSION = v1.58.0
+CONTAINER_ENGINE ?= podman
+
 .PHONY: build
 build: generate
 	$(GO_BUILD_RECIPE)
@@ -90,3 +98,32 @@ uninstall:
 .PHONY: run-local
 run-local: build
 	hack/run-local.sh
+
+.PHONY: opm
+opm: ## Download opm locally if necessary.
+ifeq (,$(wildcard $(OPM)))
+ifeq (,$(shell which opm 2>/dev/null))
+	@{ \
+	set -e ;\
+	mkdir -p $(dir $(OPM)) ;\
+	OS=$(shell go env GOOS) && ARCH=$(shell go env GOARCH) && \
+	curl -sSLo $(OPM) https://github.com/operator-framework/operator-registry/releases/download/$(OPM_VERSION)/$${OS}-$${ARCH}-opm ;\
+	chmod +x $(OPM) ;\
+	}
+else
+OPM = $(shell which opm)
+endif
+endif
+
+.PHONY: catalog
+catalog: opm
+	$(OPM) render $(BUNDLE_IMG) -o yaml > $(PACKAGE_DIR)/bundle.yaml
+	$(OPM) validate $(CATALOG_DIR)
+
+.PHONY: catalog-build
+catalog-build: catalog
+	$(CONTAINER_ENGINE) build -t $(CATALOG_IMG) -f Dockerfile.catalog .
+
+.PHONY: catalog-push
+catalog-push:
+	$(CONTAINER_ENGINE) push $(CATALOG_IMG)
