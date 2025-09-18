@@ -76,8 +76,6 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	}
 	if platformStatus.Type == configv1.AWSPlatformType {
 		updateIngressControllerAWSSubnetStatus(updated, service)
-	}
-	if platformStatus.Type == configv1.AWSPlatformType && r.config.IngressControllerEIPAllocationsAWSEnabled {
 		updateIngressControllerAWSEIPAllocationStatus(updated, service)
 	}
 	if platformStatus.Type == configv1.OpenStackPlatformType {
@@ -89,14 +87,14 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentReplicasAllAvailableCondition(deployment))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentRollingOutCondition(deployment))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeLoadBalancerStatus(ic, service, operandEvents)...)
-	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeLoadBalancerProgressingStatus(updated, service, platformStatus, r.config.IngressControllerEIPAllocationsAWSEnabled))
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeLoadBalancerProgressingStatus(updated, service, platformStatus))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDNSStatus(ic, wildcardRecord, platformStatus, dnsConfig)...)
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressAvailableCondition(updated.Status.Conditions))
 	degradedCondition, err := computeIngressDegradedCondition(updated.Status.Conditions, updated.Name)
 	errs = append(errs, err)
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressProgressingCondition(updated.Status.Conditions))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, degradedCondition)
-	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressUpgradeableCondition(ic, deploymentRef, service, platformStatus, secret, r.config.IngressControllerEIPAllocationsAWSEnabled))
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressUpgradeableCondition(ic, deploymentRef, service, platformStatus, secret))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressEvaluationConditionsDetectedCondition(ic, service))
 
 	updated.Status.Conditions = PruneConditions(updated.Status.Conditions)
@@ -646,13 +644,13 @@ func computeIngressDegradedCondition(conditions []operatorv1.OperatorCondition, 
 }
 
 // computeIngressUpgradeableCondition computes the IngressController's "Upgradeable" status condition.
-func computeIngressUpgradeableCondition(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference, service *corev1.Service, platform *configv1.PlatformStatus, secret *corev1.Secret, eipAllocationsAWSEnabled bool) operatorv1.OperatorCondition {
+func computeIngressUpgradeableCondition(ic *operatorv1.IngressController, deploymentRef metav1.OwnerReference, service *corev1.Service, platform *configv1.PlatformStatus, secret *corev1.Secret) operatorv1.OperatorCondition {
 	var errs []error
 
 	errs = append(errs, checkDefaultCertificate(secret, "*."+ic.Status.Domain))
 
 	if service != nil {
-		errs = append(errs, loadBalancerServiceIsUpgradeable(ic, deploymentRef, service, platform, eipAllocationsAWSEnabled))
+		errs = append(errs, loadBalancerServiceIsUpgradeable(ic, deploymentRef, service, platform))
 	}
 
 	if err := kerrors.NewAggregate(errs); err != nil {
@@ -912,7 +910,7 @@ func computeLoadBalancerStatus(ic *operatorv1.IngressController, service *corev1
 // computeLoadBalancerProgressingStatus returns the LoadBalancerProgressing
 // conditions for the given ingress controller. These conditions subsequently determine
 // the ingress controller's Progressing status.
-func computeLoadBalancerProgressingStatus(ic *operatorv1.IngressController, service *corev1.Service, platform *configv1.PlatformStatus, eipAllocationsAWSEnabled bool) operatorv1.OperatorCondition {
+func computeLoadBalancerProgressingStatus(ic *operatorv1.IngressController, service *corev1.Service, platform *configv1.PlatformStatus) operatorv1.OperatorCondition {
 	// Compute the IngressControllerLoadBalancerProgressingConditionType condition for the LoadBalancer
 	if ic.Status.EndpointPublishingStrategy.Type == operatorv1.LoadBalancerServiceStrategyType {
 		switch {
@@ -931,7 +929,7 @@ func computeLoadBalancerProgressingStatus(ic *operatorv1.IngressController, serv
 				Message: "LoadBalancer Service not created.",
 			}
 		default:
-			if err := loadBalancerServiceIsProgressing(ic, service, platform, eipAllocationsAWSEnabled); err != nil {
+			if err := loadBalancerServiceIsProgressing(ic, service, platform); err != nil {
 				return operatorv1.OperatorCondition{
 					Type:    IngressControllerLoadBalancerProgressingConditionType,
 					Status:  operatorv1.ConditionTrue,

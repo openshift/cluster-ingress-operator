@@ -16,7 +16,6 @@ import (
 	"github.com/aws/aws-sdk-go/service/ec2"
 
 	configv1 "github.com/openshift/api/config/v1"
-	"github.com/openshift/api/features"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
@@ -42,11 +41,6 @@ func TestAWSEIPAllocationsForNLB(t *testing.T) {
 	}
 	if infraConfig.Status.PlatformStatus.Type != configv1.AWSPlatformType {
 		t.Skipf("test skipped on platform %q", infraConfig.Status.PlatformStatus.Type)
-	}
-	if enabled, err := isFeatureGateEnabled(features.FeatureGateSetEIPForNLBIngressController); err != nil {
-		t.Fatalf("failed to get feature gate: %v", err)
-	} else if !enabled {
-		t.Skipf("test skipped because %q feature gate is not enabled", features.FeatureGateSetEIPForNLBIngressController)
 	}
 
 	// Create an ingress controller with EIPs mentioned in the Ingress Controller CR.
@@ -190,11 +184,6 @@ func TestUnmanagedAWSEIPAllocations(t *testing.T) {
 	}
 	if infraConfig.Status.PlatformStatus.Type != configv1.AWSPlatformType {
 		t.Skipf("test skipped on platform: %q", infraConfig.Status.PlatformStatus.Type)
-	}
-	if enabled, err := isFeatureGateEnabled(features.FeatureGateSetEIPForNLBIngressController); err != nil {
-		t.Fatalf("failed to get feature gate: %v", err)
-	} else if !enabled {
-		t.Skipf("test skipped because %q feature gate is not enabled", features.FeatureGateSetEIPForNLBIngressController)
 	}
 
 	// Next, create a NLB IngressController.
