@@ -824,7 +824,6 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 		ic                       *operatorv1.IngressController
 		service                  *corev1.Service
 		platformStatus           *configv1.PlatformStatus
-		awsSubnetsEnabled        bool
 		awsEIPAllocationsEnabled bool
 
 		expectStatus                operatorv1.ConditionStatus
@@ -935,10 +934,9 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 				nil,
 				nil,
 			),
-			service:           &corev1.Service{},
-			awsSubnetsEnabled: true,
-			platformStatus:    awsPlatformStatus,
-			expectStatus:      operatorv1.ConditionFalse,
+			service:        &corev1.Service{},
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionFalse,
 		},
 		{
 			name: "NLB LoadBalancerService, AWS Subnets nil spec and empty status",
@@ -947,24 +945,9 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 				nil,
 				&operatorv1.AWSSubnets{},
 			),
-			service:           &corev1.Service{},
-			awsSubnetsEnabled: true,
-			platformStatus:    awsPlatformStatus,
-			expectStatus:      operatorv1.ConditionFalse,
-		},
-		{
-			name: "NLB LoadBalancerService, AWS Subnets spec with names and nil status, but feature gate disabled",
-			ic: loadBalancerIngressControllerWithAWSSubnets(
-				operatorv1.AWSNetworkLoadBalancer,
-				&operatorv1.AWSSubnets{
-					Names: []operatorv1.AWSSubnetName{"name-12345"},
-				},
-				nil,
-			),
-			service:           &corev1.Service{},
-			awsSubnetsEnabled: false,
-			platformStatus:    awsPlatformStatus,
-			expectStatus:      operatorv1.ConditionFalse,
+			service:        &corev1.Service{},
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionFalse,
 		},
 		{
 			name: "NLB LoadBalancerService, AWS Subnets spec with names and nil status",
@@ -975,10 +958,9 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 				},
 				nil,
 			),
-			service:           &corev1.Service{},
-			awsSubnetsEnabled: true,
-			platformStatus:    awsPlatformStatus,
-			expectStatus:      operatorv1.ConditionTrue,
+			service:        &corev1.Service{},
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionTrue,
 		},
 		{
 			name: "NLB LoadBalancerService, AWS Subnets nil spec and status with ids",
@@ -989,10 +971,9 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 					IDs: []operatorv1.AWSSubnetID{"subnet-12345"},
 				},
 			),
-			service:           &corev1.Service{},
-			awsSubnetsEnabled: true,
-			platformStatus:    awsPlatformStatus,
-			expectStatus:      operatorv1.ConditionTrue,
+			service:        &corev1.Service{},
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionTrue,
 		},
 		{
 			name: "NLB LoadBalancerService, AWS Subnets spec and status are equal",
@@ -1007,10 +988,9 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 					Names: []operatorv1.AWSSubnetName{"name-12345"},
 				},
 			),
-			service:           &corev1.Service{},
-			awsSubnetsEnabled: true,
-			platformStatus:    awsPlatformStatus,
-			expectStatus:      operatorv1.ConditionFalse,
+			service:        &corev1.Service{},
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionFalse,
 		},
 		{
 			name: "NLB LoadBalancerService, AWS Subnets spec and status are NOT equal",
@@ -1025,10 +1005,9 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 					Names: []operatorv1.AWSSubnetName{"name-67890"},
 				},
 			),
-			service:           &corev1.Service{},
-			awsSubnetsEnabled: true,
-			platformStatus:    awsPlatformStatus,
-			expectStatus:      operatorv1.ConditionTrue,
+			service:        &corev1.Service{},
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionTrue,
 		},
 		{
 			name: "NLB LoadBalancerService, AWS Subnets spec and status are equal with different order",
@@ -1043,10 +1022,9 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 					Names: []operatorv1.AWSSubnetName{"name-67890", "name-12345"},
 				},
 			),
-			service:           &corev1.Service{},
-			awsSubnetsEnabled: true,
-			platformStatus:    awsPlatformStatus,
-			expectStatus:      operatorv1.ConditionFalse,
+			service:        &corev1.Service{},
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionFalse,
 		},
 		{
 			name: "NLB LoadBalancerService, AWS Subnets spec and status have extra items",
@@ -1061,10 +1039,9 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 					Names: []operatorv1.AWSSubnetName{"name-67890", "name-12345", "name-54321"},
 				},
 			),
-			service:           &corev1.Service{},
-			awsSubnetsEnabled: true,
-			platformStatus:    awsPlatformStatus,
-			expectStatus:      operatorv1.ConditionTrue,
+			service:        &corev1.Service{},
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionTrue,
 		},
 		{
 			name: "CLB LoadBalancerService, AWS Subnets nil spec and nil status",
@@ -1073,10 +1050,9 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 				nil,
 				nil,
 			),
-			service:           &corev1.Service{},
-			awsSubnetsEnabled: true,
-			platformStatus:    awsPlatformStatus,
-			expectStatus:      operatorv1.ConditionFalse,
+			service:        &corev1.Service{},
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionFalse,
 		},
 		{
 			name: "CLB LoadBalancerService, AWS Subnets nil spec and empty status",
@@ -1085,10 +1061,9 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 				nil,
 				&operatorv1.AWSSubnets{},
 			),
-			service:           &corev1.Service{},
-			awsSubnetsEnabled: true,
-			platformStatus:    awsPlatformStatus,
-			expectStatus:      operatorv1.ConditionFalse,
+			service:        &corev1.Service{},
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionFalse,
 		},
 		{
 			name: "CLB LoadBalancerService, AWS Subnets spec with names and nil status",
@@ -1099,10 +1074,9 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 				},
 				nil,
 			),
-			service:           &corev1.Service{},
-			awsSubnetsEnabled: true,
-			platformStatus:    awsPlatformStatus,
-			expectStatus:      operatorv1.ConditionTrue,
+			service:        &corev1.Service{},
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionTrue,
 		},
 		{
 			name: "CLB LoadBalancerService, AWS Subnets nil spec and status with ids",
@@ -1113,10 +1087,9 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 					IDs: []operatorv1.AWSSubnetID{"subnet-12345"},
 				},
 			),
-			service:           &corev1.Service{},
-			awsSubnetsEnabled: true,
-			platformStatus:    awsPlatformStatus,
-			expectStatus:      operatorv1.ConditionTrue,
+			service:        &corev1.Service{},
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionTrue,
 		},
 		{
 			name: "CLB LoadBalancerService, AWS Subnets spec and status are equal",
@@ -1131,10 +1104,9 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 					Names: []operatorv1.AWSSubnetName{"name-12345"},
 				},
 			),
-			service:           &corev1.Service{},
-			awsSubnetsEnabled: true,
-			platformStatus:    awsPlatformStatus,
-			expectStatus:      operatorv1.ConditionFalse,
+			service:        &corev1.Service{},
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionFalse,
 		},
 		{
 			name: "CLB LoadBalancerService, AWS Subnets spec and status are NOT equal",
@@ -1149,10 +1121,9 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 					Names: []operatorv1.AWSSubnetName{"name-67890"},
 				},
 			),
-			service:           &corev1.Service{},
-			awsSubnetsEnabled: true,
-			platformStatus:    awsPlatformStatus,
-			expectStatus:      operatorv1.ConditionTrue,
+			service:        &corev1.Service{},
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionTrue,
 		},
 		{
 			name: "CLB LoadBalancerService, AWS Subnets spec and status are equal with different order",
@@ -1167,10 +1138,9 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 					Names: []operatorv1.AWSSubnetName{"name-67890", "name-12345"},
 				},
 			),
-			service:           &corev1.Service{},
-			awsSubnetsEnabled: true,
-			platformStatus:    awsPlatformStatus,
-			expectStatus:      operatorv1.ConditionFalse,
+			service:        &corev1.Service{},
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionFalse,
 		},
 		{
 			name: "CLB LoadBalancerService, AWS Subnets spec and status have extra items",
@@ -1185,10 +1155,9 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 					Names: []operatorv1.AWSSubnetName{"name-67890", "name-12345", "name-54321"},
 				},
 			),
-			service:           &corev1.Service{},
-			awsSubnetsEnabled: true,
-			platformStatus:    awsPlatformStatus,
-			expectStatus:      operatorv1.ConditionTrue,
+			service:        &corev1.Service{},
+			platformStatus: awsPlatformStatus,
+			expectStatus:   operatorv1.ConditionTrue,
 		},
 		{
 			name: "NLB LoadBalancerService, AWS EIPAllocations nil spec and nil status",
@@ -1292,7 +1261,7 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			actual := computeLoadBalancerProgressingStatus(test.ic, test.service, test.platformStatus, test.awsSubnetsEnabled, test.awsEIPAllocationsEnabled)
+			actual := computeLoadBalancerProgressingStatus(test.ic, test.service, test.platformStatus, test.awsEIPAllocationsEnabled)
 			if actual.Status != test.expectStatus {
 				t.Errorf("expected status to be %s, got %s", test.expectStatus, actual.Status)
 			}
@@ -3175,7 +3144,7 @@ func Test_computeIngressUpgradeableCondition(t *testing.T) {
 					},
 				},
 			}
-			wantSvc, service, err := desiredLoadBalancerService(ic, deploymentRef, platformStatus, true, true)
+			wantSvc, service, err := desiredLoadBalancerService(ic, deploymentRef, platformStatus, true)
 			if err != nil {
 				t.Errorf("unexpected error from desiredLoadBalancerService: %v", err)
 				return
@@ -3197,7 +3166,7 @@ func Test_computeIngressUpgradeableCondition(t *testing.T) {
 				expectedStatus = operatorv1.ConditionTrue
 			}
 
-			actual := computeIngressUpgradeableCondition(ic, deploymentRef, service, platformStatus, secret, true, true)
+			actual := computeIngressUpgradeableCondition(ic, deploymentRef, service, platformStatus, secret, true)
 			if actual.Status != expectedStatus {
 				t.Errorf("expected Upgradeable to be %q, got %q", expectedStatus, actual.Status)
 			}
@@ -3285,7 +3254,7 @@ func Test_computeIngressEvaluationConditionsDetectedCondition(t *testing.T) {
 				},
 			}
 
-			wantSvc, service, err := desiredLoadBalancerService(ic, deploymentRef, platformStatus, true, true)
+			wantSvc, service, err := desiredLoadBalancerService(ic, deploymentRef, platformStatus, true)
 			if err != nil {
 				t.Fatalf("unexpected error from desiredLoadBalancerService: %v", err)
 			}
