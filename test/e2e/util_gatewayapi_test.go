@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"os"
 
 	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
 	v1 "github.com/openshift/api/operatoringress/v1"
@@ -282,6 +283,14 @@ func createGatewayClass(t *testing.T, name, controllerName string) (*gatewayapiv
 	t.Helper()
 
 	gatewayClass := buildGatewayClass(name, controllerName)
+	customCatalog := os.Getenv("CUSTOM_CATALOG_SOURCE")
+    ossmVersion := os.Getenv("CUSTOM_OSSM_VERSION")
+    if customCatalog != "" && ossmVersion != "" {
+        gatewayClass.Annotations = map[string]string{
+            "unsupported.do-not-use.openshift.io/ossm-catalog":  customCatalog,
+            "unsupported.do-not-use.openshift.io/ossm-version":  ossmVersion,
+        }
+    }
 	nsName := types.NamespacedName{Namespace: "", Name: name}
 	if err := wait.PollUntilContextTimeout(context.TODO(), 2*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
 		if err := kclient.Create(ctx, gatewayClass); err != nil {
