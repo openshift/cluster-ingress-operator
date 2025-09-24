@@ -24,6 +24,13 @@ endif
 build: generate
 	$(GO_BUILD_RECIPE)
 
+.PHONY: build-tests-ext
+build-tests-ext:
+	# GO_COMPLIANCE_POLICY="exempt_all" must only be used for test related binaries.
+	# It prevents various FIPS compliance policies from being applied to this compilation.
+	# Do not set globally.
+	GO_COMPLIANCE_POLICY="exempt_all" go build ./cmd/ingress-operator-ext-tests/...
+
 .PHONY: buildconfig
 buildconfig:
 	hack/create-buildconfig.sh
