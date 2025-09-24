@@ -136,7 +136,6 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	gatewayAPIEnabled := featureGates.Enabled(features.FeatureGateGatewayAPI)
 	gatewayAPIControllerEnabled := featureGates.Enabled(features.FeatureGateGatewayAPIController)
 	routeExternalCertificateEnabled := featureGates.Enabled(features.FeatureGateRouteExternalCertificate)
-	ingressControllerEIPAllocationsAWSEnabled := featureGates.Enabled(features.FeatureGateSetEIPForNLBIngressController)
 	ingressControllerDCMEnabled := featureGates.Enabled(features.FeatureGateIngressControllerDynamicConfigurationManager)
 	gcpCustomEndpointsEnabled := featureGates.Enabled(features.FeatureGateGCPCustomAPIEndpoints)
 
@@ -182,11 +181,10 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	}
 	// Create and register the ingress controller with the operator manager.
 	if _, err := ingresscontroller.New(mgr, ingresscontroller.Config{
-		Namespace:                                 config.Namespace,
-		IngressControllerImage:                    config.IngressControllerImage,
-		RouteExternalCertificateEnabled:           routeExternalCertificateEnabled,
-		IngressControllerEIPAllocationsAWSEnabled: ingressControllerEIPAllocationsAWSEnabled,
-		IngressControllerDCMEnabled:               ingressControllerDCMEnabled,
+		Namespace:                       config.Namespace,
+		IngressControllerImage:          config.IngressControllerImage,
+		RouteExternalCertificateEnabled: routeExternalCertificateEnabled,
+		IngressControllerDCMEnabled:     ingressControllerDCMEnabled,
 	}); err != nil {
 		return nil, fmt.Errorf("failed to create ingress controller: %v", err)
 	}
