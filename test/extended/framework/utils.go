@@ -3,6 +3,7 @@ package framework
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -12,6 +13,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	admissionapi "k8s.io/pod-security-admission/api"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -123,4 +127,55 @@ func IPUrl(host string) string {
 		return "[" + host + "]"
 	}
 	return host
+}
+
+// CreateConfig takes a clientCfg and builds a config (kubeconfig style) from it.
+func createConfig(namespace string, clientCfg *rest.Config) (string, error) {
+	userNick := fmt.Sprintf("user-%s", namespace)
+	clusterNick := fmt.Sprintf("cluster-%s", namespace)
+	contextNick := fmt.Sprintf("ctx-%s", namespace)
+
+	config := clientcmdapi.NewConfig()
+
+	credentials := clientcmdapi.NewAuthInfo()
+	credentials.Token = clientCfg.BearerToken
+	credentials.ClientCertificate = clientCfg.TLSClientConfig.CertFile
+	if len(credentials.ClientCertificate) == 0 {
+		credentials.ClientCertificateData = clientCfg.TLSClientConfig.CertData
+	}
+	credentials.ClientKey = clientCfg.TLSClientConfig.KeyFile
+	if len(credentials.ClientKey) == 0 {
+		credentials.ClientKeyData = clientCfg.TLSClientConfig.KeyData
+	}
+	config.AuthInfos[userNick] = credentials
+
+	cluster := clientcmdapi.NewCluster()
+	cluster.Server = clientCfg.Host
+	cluster.CertificateAuthority = clientCfg.CAFile
+	if len(cluster.CertificateAuthority) == 0 {
+		cluster.CertificateAuthorityData = clientCfg.CAData
+	}
+	cluster.InsecureSkipTLSVerify = clientCfg.Insecure
+	config.Clusters[clusterNick] = cluster
+
+	context := clientcmdapi.NewContext()
+	context.Cluster = clusterNick
+	context.AuthInfo = userNick
+	context.Namespace = namespace
+	config.Contexts[contextNick] = context
+	config.CurrentContext = contextNick
+
+	f, err := os.CreateTemp("", "configfile")
+	if err != nil {
+		return "", err
+	}
+	if err := f.Close(); err != nil {
+		return "", err
+	}
+	err = clientcmd.WriteToFile(*config, f.Name())
+	if err != nil {
+		return "", err
+	}
+
+	return f.Name(), nil
 }

@@ -1,3 +1,12 @@
+/*
+This package is a smaller set of the client implemented by "openshift/origin/exutil"
+but removing all of the Ginkgo internals.
+
+The idea is that this client can be reused by other tests and suites without having
+to rely on openshift/origin or kubernetes/framework dependencies
+
+If you need some missing method, please copy and adapt it from openshift/origin/test/extended/util/client.go
+*/
 package framework
 
 import (
@@ -5,6 +14,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"regexp"
@@ -13,12 +23,18 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	configv1 "github.com/openshift/api/config/v1"
 	configv1client "github.com/openshift/client-go/config/clientset/versioned"
+	oauthv1client "github.com/openshift/client-go/oauth/clientset/versioned"
 	operatorv1client "github.com/openshift/client-go/operator/clientset/versioned"
 	ingressv1client "github.com/openshift/client-go/operatoringress/clientset/versioned"
+	userv1client "github.com/openshift/client-go/user/clientset/versioned"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	apiextensionsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apiserver/pkg/storage/names"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	admissionapi "k8s.io/pod-security-admission/api"
@@ -27,47 +43,61 @@ import (
 )
 
 type CLI struct {
-	execPath         string
-	adminConfigPath  string
-	configPath       string
-	commandArgs      []string
-	globalArgs       []string
-	finalArgs        []string
-	env              []string
-	addEnvVars       map[string]string
-	verbose          bool
-	verb             string
-	username         string
-	cleanupFunctions []cleanupFunc
-	namespace        string
-	restCfg          *rest.Config
-	hasError         bool
-	kclient          client.Client
-	openshiftVersion *configv1.ClusterVersion
-	stdin            *bytes.Buffer
-	stdout           io.Writer
-	stderr           io.Writer
+	execPath          string
+	adminConfigPath   string
+	configPath        string
+	token             string
+	commandArgs       []string
+	globalArgs        []string
+	finalArgs         []string
+	env               []string
+	addEnvVars        map[string]string
+	verbose           bool
+	verb              string
+	username          string
+	cleanupFunctions  []cleanupFunc
+	namespace         string
+	restCfg           *rest.Config
+	userRestCfg       *rest.Config
+	kclient           client.Client
+	openshiftVersion  *configv1.ClusterVersion
+	stdin             *bytes.Buffer
+	stdout            io.Writer
+	stderr            io.Writer
+	resourcesToDelete []resourceRef
 }
 
-func NewCLI(project string, level admissionapi.Level, kclient client.Client, restcfg *rest.Config, isOpenshift bool) (*CLI, error) {
+type resourceRef struct {
+	Resource  schema.GroupVersionResource
+	Namespace string
+	Name      string
+}
+
+// NewCLI implements a new framework client to be used by tests.
+// While it may be tempting to abstract this function and call the "framework.Get()" from
+// the function directly, this should be avoided in a way to keep the functions of
+// this framework as much generic and reusable as possible
+func NewCLI(project string, level admissionapi.Level, restcfg *rest.Config, scheme *runtime.Scheme, isOpenshift bool) (*CLI, error) {
 	if project == "" {
 		return nil, fmt.Errorf("project name cannot be empty")
 	}
-	if kclient == nil {
-		return nil, fmt.Errorf("client cannot be empty")
-	}
+
 	if restcfg == nil {
 		return nil, fmt.Errorf("restcfg cannot be empty")
 	}
 
+	if scheme == nil {
+		return nil, fmt.Errorf("scheme cannot be empty")
+	}
+
+	kclient, err := client.New(restcfg, client.Options{Scheme: scheme})
+	if err != nil {
+		log.Fatalf("failed to create controller-runtime client: %v", err)
+	}
+
 	var cv *configv1.ClusterVersion
 	if isOpenshift {
-		c, err := configv1client.NewForConfig(restcfg)
-		if err != nil {
-			return nil, err
-		}
-
-		cv, err = c.ConfigV1().ClusterVersions().Get(context.Background(), "version", metav1.GetOptions{})
+		cv, err = GetOCPClusterVersion(restcfg)
 		if err != nil {
 			return nil, err
 		}
@@ -82,13 +112,30 @@ func NewCLI(project string, level admissionapi.Level, kclient client.Client, res
 	cli := &CLI{
 		execPath:         "oc",
 		username:         "admin",
-		adminConfigPath:  os.Getenv("KUBECONFIG"),
+		adminConfigPath:  os.Getenv("KUBECONFIG"), // Assume this for "oc" commands
 		namespace:        ns.GetName(),
 		cleanupFunctions: []cleanupFunc{nsCleanupFunc},
 		restCfg:          restcfg,
 		kclient:          kclient,
 		openshiftVersion: cv,
 	}
+
+	regularUser := fmt.Sprintf("%s-user", namespaceGeneratedName)
+	userCfg, err := cli.GetClientConfigForUser(regularUser)
+	if err != nil {
+		return cli, err // We return cli here so the cleanup functions can be called
+	}
+
+	if err := cli.setupRoleInNamespace(regularUser); err != nil {
+		return cli, err
+	}
+
+	cli.userRestCfg = userCfg
+	userConfigFile, err := createConfig(namespaceGeneratedName, userCfg)
+	if err != nil {
+		return cli, err
+	}
+	cli.configPath = userConfigFile
 	return cli, nil
 
 }
@@ -108,12 +155,27 @@ func (c *CLI) Cleanup(ctx context.Context, dumpNamespace bool) error {
 			}
 		}
 	}
+
+	dynamicClient := c.AdminDynamicClient()
+	for _, resource := range c.resourcesToDelete {
+		err := dynamicClient.Resource(resource.Resource).Namespace(resource.Namespace).Delete(context.Background(), resource.Name, metav1.DeleteOptions{})
+		Infof("Deleted %v, err: %v", resource, err)
+	}
+
 	for i := len(c.cleanupFunctions) - 1; i >= 0; i-- {
 		if err := c.cleanupFunctions[i](ctx); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (c *CLI) AddExplicitResourceToDelete(resource schema.GroupVersionResource, namespace, name string) {
+	c.resourcesToDelete = append(c.resourcesToDelete, resourceRef{Resource: resource, Namespace: namespace, Name: name})
+}
+
+func (c *CLI) AddResourceToDelete(resource schema.GroupVersionResource, metadata metav1.Object) {
+	c.resourcesToDelete = append(c.resourcesToDelete, resourceRef{Resource: resource, Namespace: metadata.GetNamespace(), Name: metadata.GetName()})
 }
 
 // AllCapabilitiesEnabled returns true if all of the given capabilities are enabled on the cluster.
@@ -180,18 +242,26 @@ func (c *CLI) AdminOperatorClient() operatorv1client.Interface {
 	return operatorv1client.NewForConfigOrDie(c.restCfg)
 }
 
-// TODO: this should be a user and not an admin, need to check!
-// GatewayApiClient provides a GatewayAPI client for the current namespace user.
 func (c *CLI) GatewayApiClient() gatewayapiv1client.Interface {
-	return gatewayapiv1client.NewForConfigOrDie(c.restCfg)
+	return gatewayapiv1client.NewForConfigOrDie(c.UserConfig())
 }
 
 // KubeClient provides a Kubernetes client for the current namespace
 func (c *CLI) KubeClient() kubernetes.Interface {
-	return kubernetes.NewForConfigOrDie(c.restCfg)
+	return kubernetes.NewForConfigOrDie(c.UserConfig())
 }
 
-// END TODO
+func (c *CLI) AdminUserClient() userv1client.Interface {
+	return userv1client.NewForConfigOrDie(c.AdminConfig())
+}
+
+func (c *CLI) AdminDynamicClient() dynamic.Interface {
+	return dynamic.NewForConfigOrDie(c.AdminConfig())
+}
+
+func (c *CLI) AdminOAuthClient() oauthv1client.Interface {
+	return oauthv1client.NewForConfigOrDie(c.AdminConfig())
+}
 
 func (c *CLI) GetNamespace() string {
 	return c.namespace
@@ -243,12 +313,10 @@ func (c *CLI) Run(commands ...string) *CLI {
 	if len(c.configPath) > 0 {
 		nc.globalArgs = append([]string{fmt.Sprintf("--kubeconfig=%s", c.configPath)}, nc.globalArgs...)
 	}
-	/*if len(c.configPath) == 0 && len(c.token) > 0 {
+	if len(c.configPath) == 0 && len(c.token) > 0 {
 		nc.globalArgs = append([]string{fmt.Sprintf("--token=%s", c.token)}, nc.globalArgs...)
 	}
-	if !c.withoutNamespace {
-		nc.globalArgs = append([]string{fmt.Sprintf("--namespace=%s", c.Namespace())}, nc.globalArgs...)
-	}*/
+
 	nc.stdin, nc.stdout, nc.stderr = in, out, errout
 	return nc.setOutput(c.stdout)
 }
@@ -268,7 +336,42 @@ func (c *CLI) Execute() error {
 func (c *CLI) Output() (string, error) {
 	var buff bytes.Buffer
 	_, _, err := c.outputs(&buff, &buff)
-	return strings.TrimSpace(string(buff.Bytes())), err
+	return strings.TrimSpace(buff.String()), err
+}
+
+func (c *CLI) UserConfig() *rest.Config {
+	if c.token != "" {
+		anon := rest.AnonymousClientConfig(c.restCfg)
+		anon.BearerToken = c.token
+		return anon
+	}
+
+	return c.userRestCfg
+}
+
+func (c *CLI) setupRoleInNamespace(username string) error {
+	roleBinding := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: username,
+		},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: rbacv1.SchemeGroupVersion.Group,
+			Kind:     "ClusterRole",
+			Name:     "admin",
+		},
+		Subjects: []rbacv1.Subject{
+			{
+				Kind:      "User",
+				Name:      username,
+				Namespace: c.GetNamespace(),
+			},
+		},
+	}
+	_, err := c.AdminKubeClient().RbacV1().RoleBindings(c.GetNamespace()).Create(context.Background(), roleBinding, metav1.CreateOptions{})
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 // setOutput allows to override the default command output
@@ -296,7 +399,7 @@ func (c *CLI) outputs(stdOutBuff, stdErrBuff *bytes.Buffer) (string, string, err
 		return stdOut, stdErr, nil
 	case *exec.ExitError:
 		Infof("Error running %s %s:\nStdOut>\n%s\nStdErr>\n%s\n", c.execPath, RedactBearerToken(strings.Join(c.finalArgs, " ")), stdOut, stdErr)
-		wrappedErr := fmt.Errorf("Error running %s %s:\nStdOut>\n%s\nStdErr>\n%s\n%w\n", c.execPath, RedactBearerToken(strings.Join(c.finalArgs, " ")), stdOut[getStartingIndexForLastN(stdOutBytes, 4096):], stdErr[getStartingIndexForLastN(stdErrBytes, 4096):], err)
+		wrappedErr := fmt.Errorf("error running %s %s:\nStdOut>\n%s\nStdErr>\n%s\n%w", c.execPath, RedactBearerToken(strings.Join(c.finalArgs, " ")), stdOut[getStartingIndexForLastN(stdOutBytes, 4096):], stdErr[getStartingIndexForLastN(stdErrBytes, 4096):], err)
 		return stdOut, stdErr, wrappedErr
 	default:
 		FatalErr(fmt.Errorf("unable to execute %q: %v", c.execPath, err))
