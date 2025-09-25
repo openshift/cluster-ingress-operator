@@ -16,7 +16,7 @@ import (
 func Test_desiredCanaryDaemonSet(t *testing.T) {
 	// canaryImageName is the ingress-operator image
 	canaryImageName := "openshift/origin-cluster-ingress-operator:latest"
-	daemonset := desiredCanaryDaemonSet(canaryImageName)
+	daemonset := desiredCanaryDaemonSet(canaryImageName, "")
 
 	expectedDaemonSetName := controller.CanaryDaemonSetName()
 
@@ -225,11 +225,21 @@ func Test_canaryDaemonsetChanged(t *testing.T) {
 			},
 			expect: true,
 		},
+		{
+			description: "if canary serving cert annotation changes",
+			mutate: func(ds *appsv1.DaemonSet) {
+				if ds.Spec.Template.Annotations == nil {
+					ds.Spec.Template.Annotations = map[string]string{}
+				}
+				ds.Spec.Template.Annotations[CanaryServingCertHashAnnotation] = "d34db33f"
+			},
+			expect: true,
+		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
-			original := desiredCanaryDaemonSet("")
+			original := desiredCanaryDaemonSet("", "")
 			mutated := original.DeepCopy()
 			tc.mutate(mutated)
 			if changed, updated := canaryDaemonSetChanged(original, mutated); changed != tc.expect {

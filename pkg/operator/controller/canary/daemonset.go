@@ -13,11 +13,31 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 // ensureCanaryDaemonSet ensures the canary daemonset exists
 func (r *reconciler) ensureCanaryDaemonSet() (bool, *appsv1.DaemonSet, error) {
-	desired := desiredCanaryDaemonSet(r.config.CanaryImage)
+	// Attempt to read the canary serving cert secret and compute a content hash.
+	// If the secret is missing or incomplete, proceed without the annotation but
+	// surface a log entry so operators can investigate.
+	var certHash string
+	secret := &corev1.Secret{}
+	if err := r.client.Get(context.TODO(), types.NamespacedName{Namespace: controller.DefaultCanaryNamespace, Name: "canary-serving-cert"}, secret); err != nil {
+		if errors.IsNotFound(err) {
+			log.Info("canary serving cert secret not found; skipping canary-serving-cert-hash annotation")
+		} else {
+			return false, nil, fmt.Errorf("failed to get canary serving cert secret: %v", err)
+		}
+	} else {
+		if h, err := ComputeTLSSecretHash(secret); err != nil {
+			log.Info("canary serving cert secret is incomplete; skipping canary-serving-cert-hash annotation", "error", err)
+		} else {
+			certHash = h
+		}
+	}
+
+	desired := desiredCanaryDaemonSet(r.config.CanaryImage, certHash)
 	haveDs, current, err := r.currentCanaryDaemonSet()
 	if err != nil {
 		return false, nil, err
@@ -70,17 +90,40 @@ func (r *reconciler) updateCanaryDaemonSet(current, desired *appsv1.DaemonSet) (
 		return false, nil
 	}
 
+	// Capture annotation change for events.
+	var oldHash, newHash string
+	if current.Spec.Template.Annotations != nil {
+		oldHash = current.Spec.Template.Annotations[CanaryServingCertHashAnnotation]
+	}
+	if updated.Spec.Template.Annotations != nil {
+		newHash = updated.Spec.Template.Annotations[CanaryServingCertHashAnnotation]
+	}
+
 	diff := cmp.Diff(current, updated, cmpopts.EquateEmpty())
 	if err := r.client.Update(context.TODO(), updated); err != nil {
 		return false, fmt.Errorf("failed to update canary daemonset %s/%s: %v", updated.Namespace, updated.Name, err)
 	}
+
 	log.Info("updated canary daemonset", "namespace", updated.Namespace, "name", updated.Name, "diff", diff)
+
+	// If the only meaningful change (or one of the changes) was the canary cert
+	// annotation, emit an event for traceability.
+	if newHash != "" && newHash != oldHash {
+		short := newHash
+		if len(short) > 8 {
+			short = short[:8]
+		}
+		if r.recorder != nil {
+			r.recorder.Eventf(updated, "Normal", "CanaryCertRotated", "Canary serving cert rotated, updated pod template annotation hash: %s", short)
+		}
+	}
+
 	return true, nil
 }
 
 // desiredCanaryDaemonSet returns the desired canary daemonset read in
 // from manifests
-func desiredCanaryDaemonSet(canaryImage string) *appsv1.DaemonSet {
+func desiredCanaryDaemonSet(canaryImage string, certHash string) *appsv1.DaemonSet {
 	daemonset := manifests.CanaryDaemonSet()
 	name := controller.CanaryDaemonSetName()
 	daemonset.Name = name.Name
@@ -96,6 +139,13 @@ func desiredCanaryDaemonSet(canaryImage string) *appsv1.DaemonSet {
 
 	daemonset.Spec.Template.Spec.Containers[0].Image = canaryImage
 	daemonset.Spec.Template.Spec.Containers[0].Command = []string{"ingress-operator", CanaryHealthcheckCommand}
+
+	if certHash != "" {
+		if daemonset.Spec.Template.Annotations == nil {
+			daemonset.Spec.Template.Annotations = map[string]string{}
+		}
+		daemonset.Spec.Template.Annotations[CanaryServingCertHashAnnotation] = certHash
+	}
 
 	return daemonset
 }
@@ -160,6 +210,26 @@ func canaryDaemonSetChanged(current, expected *appsv1.DaemonSet) (bool, *appsv1.
 
 	if !cmp.Equal(current.Spec.Template.Spec.Volumes, expected.Spec.Template.Spec.Volumes, cmpopts.EquateEmpty(), cmpopts.SortSlices(func(a, b corev1.Volume) bool { return a.Name < b.Name })) {
 		updated.Spec.Template.Spec.Volumes = expected.Spec.Template.Spec.Volumes
+		changed = true
+	}
+
+	// Update when the canary-serving-cert hash annotation changes on the pod template.
+	var currentHash, expectedHash string
+	if current.Spec.Template.Annotations != nil {
+		currentHash = current.Spec.Template.Annotations[CanaryServingCertHashAnnotation]
+	}
+	if expected.Spec.Template.Annotations != nil {
+		expectedHash = expected.Spec.Template.Annotations[CanaryServingCertHashAnnotation]
+	}
+	if currentHash != expectedHash {
+		if updated.Spec.Template.Annotations == nil {
+			updated.Spec.Template.Annotations = map[string]string{}
+		}
+		if expectedHash == "" {
+			delete(updated.Spec.Template.Annotations, CanaryServingCertHashAnnotation)
+		} else {
+			updated.Spec.Template.Annotations[CanaryServingCertHashAnnotation] = expectedHash
+		}
 		changed = true
 	}
 
