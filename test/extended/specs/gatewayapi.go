@@ -6,11 +6,11 @@ import (
 
 	g "github.com/onsi/ginkgo/v2"
 	o "github.com/onsi/gomega"
-	"github.com/openshift/cluster-ingress-operator/test/extended/framework"
-
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	admissionapi "k8s.io/pod-security-admission/api"
+
+	"github.com/openshift/cluster-ingress-operator/test/extended/framework"
 )
 
 var _ = g.Describe("[sig-network][OCPFeatureGate:GatewayAPI][Feature:Router][apigroup:gateway.networking.k8s.io]", func() {
@@ -22,7 +22,7 @@ var _ = g.Describe("[sig-network][OCPFeatureGate:GatewayAPI][Feature:Router][api
 	)
 
 	g.BeforeEach(func() {
-		oc, err = framework.NewCLI("gateway-api", admissionapi.LevelBaseline, framework.Get().K8sClient, framework.Get().RestCfg, framework.Get().IsOpenShift)
+		oc, err = framework.NewCLI("gateway-api", admissionapi.LevelBaseline, framework.Get().RestCfg, framework.Get().Scheme, framework.Get().IsOpenShift)
 		o.Expect(err).NotTo(o.HaveOccurred())
 	})
 

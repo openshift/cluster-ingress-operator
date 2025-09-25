@@ -14,19 +14,18 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatoringressv1 "github.com/openshift/api/operatoringress/v1"
-	"github.com/openshift/cluster-ingress-operator/test/extended/framework"
-
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/util/intstr"
-	admissionapi "k8s.io/pod-security-admission/api"
-	"k8s.io/utils/pointer"
-
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apiserver/pkg/storage/names"
+	admissionapi "k8s.io/pod-security-admission/api"
+	"k8s.io/utils/ptr"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
+
+	"github.com/openshift/cluster-ingress-operator/test/extended/framework"
 )
 
 var (
@@ -71,7 +70,7 @@ var _ = g.Describe("[sig-network-edge][OCPFeatureGate:GatewayAPIController][Feat
 		deploymentOSSMName = "servicemesh-operator3"
 	)
 	g.BeforeAll(func() {
-		oc, err = framework.NewCLI("gatewayapi-controller", admissionapi.LevelBaseline, framework.Get().K8sClient, framework.Get().RestCfg, framework.Get().IsOpenShift)
+		oc, err = framework.NewCLI("gatewayapi-controller", admissionapi.LevelBaseline, framework.Get().RestCfg, framework.Get().Scheme, framework.Get().IsOpenShift)
 		if err != nil {
 			framework.Failf("Failed to get OC client: %v", err)
 		}
@@ -106,6 +105,8 @@ var _ = g.Describe("[sig-network-edge][OCPFeatureGate:GatewayAPIController][Feat
 			err = oc.AdminGatewayApiClient().GatewayV1().Gateways("openshift-ingress").Delete(context.Background(), name, metav1.DeleteOptions{})
 			o.Expect(err).NotTo(o.HaveOccurred(), "Gateway %s could not be deleted", name)
 		}
+		errClean := oc.Cleanup(context.Background(), g.CurrentSpecReport().Failed())
+		o.Expect(errClean).NotTo(o.HaveOccurred())
 	})
 
 	g.It("Ensure OSSM and OLM related resources are created after creating GatewayClass", func() {
@@ -581,11 +582,11 @@ func buildEchoPod(name, namespace string) *corev1.Pod {
 						},
 					},
 					SecurityContext: &corev1.SecurityContext{
-						AllowPrivilegeEscalation: pointer.Bool(false),
+						AllowPrivilegeEscalation: ptr.To(false),
 						Capabilities: &corev1.Capabilities{
 							Drop: []corev1.Capability{"ALL"},
 						},
-						RunAsNonRoot: pointer.Bool(true),
+						RunAsNonRoot: ptr.To(true),
 						SeccompProfile: &corev1.SeccompProfile{
 							Type: corev1.SeccompProfileTypeRuntimeDefault,
 						},
