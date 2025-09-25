@@ -24,12 +24,19 @@ endif
 build: generate
 	$(GO_BUILD_RECIPE)
 
-.PHONY: build-tests-ext
-build-tests-ext:
+.PHONY: tests-ext-build
+tests-ext-build:
 	# GO_COMPLIANCE_POLICY="exempt_all" must only be used for test related binaries.
 	# It prevents various FIPS compliance policies from being applied to this compilation.
 	# Do not set globally.
 	GO_COMPLIANCE_POLICY="exempt_all" go build ./cmd/ingress-operator-ext-tests/...
+
+.PHONY: tests-ext-update
+tests-ext-update: tests-ext-build
+	./ingress-operator-ext-tests update
+	for f in .openshift-tests-extension/*.json; do \
+		jq 'map(del(.codeLocations))' "$$f" > tmpp && mv tmpp "$$f"; \
+	done
 
 .PHONY: buildconfig
 buildconfig:

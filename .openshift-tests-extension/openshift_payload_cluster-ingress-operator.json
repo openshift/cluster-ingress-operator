@@ -1,0 +1,122 @@
+[
+  {
+    "name": "[sig-network][OCPFeatureGate:GatewayAPI][Feature:Router][apigroup:gateway.networking.k8s.io] Verify Gateway API CRDs and ensure required CRDs should already be installed",
+    "labels": {},
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "lifecycle": "blocking",
+    "environmentSelector": {}
+  },
+  {
+    "name": "[sig-network][OCPFeatureGate:GatewayAPI][Feature:Router][apigroup:gateway.networking.k8s.io] Verify Gateway API CRDs and ensure existing CRDs can not be deleted",
+    "labels": {},
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "lifecycle": "blocking",
+    "environmentSelector": {}
+  },
+  {
+    "name": "[sig-network][OCPFeatureGate:GatewayAPI][Feature:Router][apigroup:gateway.networking.k8s.io] Verify Gateway API CRDs and ensure existing CRDs can not be updated",
+    "labels": {},
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "lifecycle": "blocking",
+    "environmentSelector": {}
+  },
+  {
+    "name": "[sig-network][OCPFeatureGate:GatewayAPI][Feature:Router][apigroup:gateway.networking.k8s.io] Verify Gateway API CRDs and ensure CRD of standard group can not be created",
+    "labels": {},
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "lifecycle": "blocking",
+    "environmentSelector": {}
+  },
+  {
+    "name": "[sig-network][OCPFeatureGate:GatewayAPI][Feature:Router][apigroup:gateway.networking.k8s.io] Verify Gateway API CRDs and ensure CRD of experimental group is not installed",
+    "labels": {},
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "lifecycle": "blocking",
+    "environmentSelector": {}
+  },
+  {
+    "name": "[sig-network][OCPFeatureGate:GatewayAPI][Feature:Router][apigroup:gateway.networking.k8s.io] Verify Gateway API CRDs and ensure CRD of experimental group can not be created",
+    "labels": {},
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "lifecycle": "blocking",
+    "environmentSelector": {}
+  },
+  {
+    "name": "[sig-network-edge][OCPFeatureGate:GatewayAPIController][Feature:Router][apigroup:gateway.networking.k8s.io][Serial] Ensure OSSM and OLM related resources are created after creating GatewayClass",
+    "labels": {},
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "lifecycle": "blocking",
+    "environmentSelector": {}
+  },
+  {
+    "name": "[sig-network-edge][OCPFeatureGate:GatewayAPIController][Feature:Router][apigroup:gateway.networking.k8s.io][Serial] Ensure default gatewayclass is accepted",
+    "labels": {},
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "lifecycle": "blocking",
+    "environmentSelector": {}
+  },
+  {
+    "name": "[sig-network-edge][OCPFeatureGate:GatewayAPIController][Feature:Router][apigroup:gateway.networking.k8s.io][Serial] Ensure custom gatewayclass can be accepted",
+    "labels": {},
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "lifecycle": "blocking",
+    "environmentSelector": {}
+  },
+  {
+    "name": "[sig-network-edge][OCPFeatureGate:GatewayAPIController][Feature:Router][apigroup:gateway.networking.k8s.io][Serial] Ensure LB, service, and dnsRecord are created for a Gateway object",
+    "labels": {},
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "lifecycle": "blocking",
+    "environmentSelector": {}
+  },
+  {
+    "name": "[sig-network-edge][OCPFeatureGate:GatewayAPIController][Feature:Router][apigroup:gateway.networking.k8s.io][Serial] Ensure HTTPRoute object is created",
+    "labels": {},
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "lifecycle": "blocking",
+    "environmentSelector": {}
+  },
+  {
+    "name": "[sig-network-edge][OCPFeatureGate:GatewayAPIController][Feature:Router][apigroup:gateway.networking.k8s.io][Serial] Ensure GIE is enabled after creating an inferencePool CRD",
+    "labels": {},
+    "resources": {
+      "isolation": {}
+    },
+    "source": "openshift:payload:cluster-ingress-operator",
+    "lifecycle": "blocking",
+    "environmentSelector": {}
+  }
+]
