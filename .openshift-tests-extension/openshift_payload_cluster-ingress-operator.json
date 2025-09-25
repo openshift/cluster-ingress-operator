@@ -60,7 +60,7 @@
     "environmentSelector": {}
   },
   {
-    "name": "[sig-network-edge][OCPFeatureGate:GatewayAPIController][Feature:Router][apigroup:gateway.networking.k8s.io][Serial] Ensure OSSM and OLM related resources are created after creating GatewayClass",
+    "name": "[sig-network-edge][OCPFeatureGate:GatewayAPIController][Feature:Router][apigroup:gateway.networking.k8s.io] Ensure OSSM and OLM related resources are created after creating GatewayClass",
     "labels": {},
     "resources": {
       "isolation": {}
@@ -70,7 +70,7 @@
     "environmentSelector": {}
   },
   {
-    "name": "[sig-network-edge][OCPFeatureGate:GatewayAPIController][Feature:Router][apigroup:gateway.networking.k8s.io][Serial] Ensure default gatewayclass is accepted",
+    "name": "[sig-network-edge][OCPFeatureGate:GatewayAPIController][Feature:Router][apigroup:gateway.networking.k8s.io] Ensure default gatewayclass is accepted",
     "labels": {},
     "resources": {
       "isolation": {}
@@ -80,7 +80,7 @@
     "environmentSelector": {}
   },
   {
-    "name": "[sig-network-edge][OCPFeatureGate:GatewayAPIController][Feature:Router][apigroup:gateway.networking.k8s.io][Serial] Ensure custom gatewayclass can be accepted",
+    "name": "[sig-network-edge][OCPFeatureGate:GatewayAPIController][Feature:Router][apigroup:gateway.networking.k8s.io] Ensure custom gatewayclass can be accepted",
     "labels": {},
     "resources": {
       "isolation": {}
@@ -90,7 +90,7 @@
     "environmentSelector": {}
   },
   {
-    "name": "[sig-network-edge][OCPFeatureGate:GatewayAPIController][Feature:Router][apigroup:gateway.networking.k8s.io][Serial] Ensure LB, service, and dnsRecord are created for a Gateway object",
+    "name": "[sig-network-edge][OCPFeatureGate:GatewayAPIController][Feature:Router][apigroup:gateway.networking.k8s.io] Ensure LB, service, and dnsRecord are created for a Gateway object",
     "labels": {},
     "resources": {
       "isolation": {}
@@ -100,7 +100,7 @@
     "environmentSelector": {}
   },
   {
-    "name": "[sig-network-edge][OCPFeatureGate:GatewayAPIController][Feature:Router][apigroup:gateway.networking.k8s.io][Serial] Ensure HTTPRoute object is created",
+    "name": "[sig-network-edge][OCPFeatureGate:GatewayAPIController][Feature:Router][apigroup:gateway.networking.k8s.io] Ensure HTTPRoute object is created",
     "labels": {},
     "resources": {
       "isolation": {}
@@ -110,7 +110,7 @@
     "environmentSelector": {}
   },
   {
-    "name": "[sig-network-edge][OCPFeatureGate:GatewayAPIController][Feature:Router][apigroup:gateway.networking.k8s.io][Serial] Ensure GIE is enabled after creating an inferencePool CRD",
+    "name": "[sig-network-edge][OCPFeatureGate:GatewayAPIController][Feature:Router][apigroup:gateway.networking.k8s.io] Ensure GIE is enabled after creating an inferencePool CRD",
     "labels": {},
     "resources": {
       "isolation": {}

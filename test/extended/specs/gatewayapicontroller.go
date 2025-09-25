@@ -42,7 +42,7 @@ const (
 	loadBalancerReadyTimeout = 10 * time.Minute
 )
 
-var _ = g.Describe("[sig-network-edge][OCPFeatureGate:GatewayAPIController][Feature:Router][apigroup:gateway.networking.k8s.io][Serial]", g.Ordered, g.Serial, func() {
+var _ = g.Describe("[sig-network-edge][OCPFeatureGate:GatewayAPIController][Feature:Router][apigroup:gateway.networking.k8s.io]", g.Ordered, g.Serial, func() {
 	defer g.GinkgoRecover()
 	var (
 		csvName    string
