@@ -14,6 +14,7 @@ import (
 
 	"github.com/openshift-eng/openshift-tests-extension/pkg/cmd"
 	e "github.com/openshift-eng/openshift-tests-extension/pkg/extension"
+	et "github.com/openshift-eng/openshift-tests-extension/pkg/extension/extensiontests"
 	g "github.com/openshift-eng/openshift-tests-extension/pkg/ginkgo"
 	"github.com/spf13/cobra"
 
@@ -51,6 +52,11 @@ func main() {
 	// Initialize the environment before running any tests.
 	specs.AddBeforeAll(func() {
 		framework.Init()
+	})
+
+	// TODO: Remove this, it is just to verify that openshift-origin is able to fetch OTE tests
+	specs = specs.Walk(func(spec *et.ExtensionTestSpec) {
+		spec.Name = spec.Name + " using OTE"
 	})
 
 	ext.AddSpecs(specs)
