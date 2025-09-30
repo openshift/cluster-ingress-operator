@@ -968,6 +968,13 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 		})
 	}
 
+	if len(tlsProfileSpec.Curves) != 0 {
+		env = append(env, corev1.EnvVar{
+			Name:  "ROUTER_CURVES",
+			Value: strings.Join(tlsProfileSpec.Curves, ":"),
+		})
+	}
+
 	var minTLSVersion string
 	switch tlsProfileSpec.MinTLSVersion {
 	// TLS 1.0 is not supported, convert to TLS 1.1.
