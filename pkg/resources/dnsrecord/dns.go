@@ -111,9 +111,11 @@ func desiredWildcardDNSRecord(name types.NamespacedName, dnsRecordLabels map[str
 
 	dnsPolicy := iov1.ManagedDNS
 
-	// Set the DNS management policy on the dnsrecord to "Unmanaged" if ingresscontroller has "Unmanaged" DNS policy or
-	// if the ingresscontroller domain isn't a subdomain of the cluster's base domain.
-	if endpointPublishingStrategy.LoadBalancer.DNSManagementPolicy == operatorv1.UnmanagedLoadBalancerDNS {
+	// Set the DNS management policy on the dnsrecord CR to "Unmanaged" if
+	// the ingresscontroller CR specifies "Unmanaged".  For example, the
+	// policy can be set to "Unmanaged" if the ingresscontroller's domain
+	// isn't a subdomain of the cluster's base domain.
+	if endpointPublishingStrategy.LoadBalancer != nil && endpointPublishingStrategy.LoadBalancer.DNSManagementPolicy == operatorv1.UnmanagedLoadBalancerDNS {
 		dnsPolicy = iov1.UnmanagedDNS
 	}
 

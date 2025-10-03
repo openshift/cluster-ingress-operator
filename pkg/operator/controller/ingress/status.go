@@ -801,33 +801,166 @@ func IngressStatusesEqual(a, b operatorv1.IngressControllerStatus) bool {
 	if !reflect.DeepEqual(a.TLSProfile, b.TLSProfile) {
 		return false
 	}
-	if a.EndpointPublishingStrategy != nil && a.EndpointPublishingStrategy.LoadBalancer != nil &&
-		b.EndpointPublishingStrategy != nil && b.EndpointPublishingStrategy.LoadBalancer != nil {
-		if !reflect.DeepEqual(a.EndpointPublishingStrategy.LoadBalancer.AllowedSourceRanges, b.EndpointPublishingStrategy.LoadBalancer.AllowedSourceRanges) {
-			return false
-		}
-		if a.EndpointPublishingStrategy.LoadBalancer.ProviderParameters != nil && b.EndpointPublishingStrategy.LoadBalancer.ProviderParameters != nil &&
-			a.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS != nil && b.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS != nil {
-			if a.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters != nil && b.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters != nil {
-				if !awsSubnetsEqual(a.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters.Subnets, b.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters.Subnets) {
-					return false
-				}
-				if !awsEIPAllocationsEqual(a.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters.EIPAllocations, b.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters.EIPAllocations) {
-					return false
-				}
-			}
-			if a.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.ClassicLoadBalancerParameters != nil && b.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.ClassicLoadBalancerParameters != nil {
-				if !awsSubnetsEqual(a.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.ClassicLoadBalancerParameters.Subnets, b.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.ClassicLoadBalancerParameters.Subnets) {
-					return false
-				}
-			}
-		}
-		if getOpenStackFloatingIPInEPS(a.EndpointPublishingStrategy) != getOpenStackFloatingIPInEPS(b.EndpointPublishingStrategy) {
-			return false
-		}
+	if getEndpointPublishingStrategyType(a.EndpointPublishingStrategy) != getEndpointPublishingStrategyType(b.EndpointPublishingStrategy) {
+		return false
+	}
+	if getEndpointPublishingStrategyLBScope(a.EndpointPublishingStrategy) != getEndpointPublishingStrategyLBScope(b.EndpointPublishingStrategy) {
+		return false
+	}
+	if getEndpointPublishingStrategyDNSManagementPolicy(a.EndpointPublishingStrategy) != getEndpointPublishingStrategyDNSManagementPolicy(b.EndpointPublishingStrategy) {
+		return false
+	}
+	if getEndpointPublishingStrategyAWSELBType(a.EndpointPublishingStrategy) != getEndpointPublishingStrategyAWSELBType(b.EndpointPublishingStrategy) {
+		return false
+	}
+	if getEndpointPublishingStrategyAWSCLBConnectionIdleTimeout(a.EndpointPublishingStrategy) != getEndpointPublishingStrategyAWSCLBConnectionIdleTimeout(b.EndpointPublishingStrategy) {
+		return false
+	}
+	if getEndpointPublishingStrategyGCPClientAccess(a.EndpointPublishingStrategy) != getEndpointPublishingStrategyGCPClientAccess(b.EndpointPublishingStrategy) {
+		return false
+	}
+	if getEndpointPublishingStrategyIBMProtocol(a.EndpointPublishingStrategy) != getEndpointPublishingStrategyIBMProtocol(b.EndpointPublishingStrategy) {
+		return false
+	}
+	if getEndpointPublishingStrategyHostNetworkProtocol(a.EndpointPublishingStrategy) != getEndpointPublishingStrategyHostNetworkProtocol(b.EndpointPublishingStrategy) {
+		return false
+	}
+	if getEndpointPublishingStrategyPrivateProtocol(a.EndpointPublishingStrategy) != getEndpointPublishingStrategyPrivateProtocol(b.EndpointPublishingStrategy) {
+		return false
+	}
+	if getEndpointPublishingStrategyNodePortProtocol(a.EndpointPublishingStrategy) != getEndpointPublishingStrategyNodePortProtocol(b.EndpointPublishingStrategy) {
+		return false
+	}
+	if getEndpointPublishingStrategyHostNetworkHTTPPort(a.EndpointPublishingStrategy) != getEndpointPublishingStrategyHostNetworkHTTPPort(b.EndpointPublishingStrategy) {
+		return false
+	}
+	if getEndpointPublishingStrategyHostNetworkHTTPSPort(a.EndpointPublishingStrategy) != getEndpointPublishingStrategyHostNetworkHTTPSPort(b.EndpointPublishingStrategy) {
+		return false
+	}
+	if getEndpointPublishingStrategyHostNetworkStatsPort(a.EndpointPublishingStrategy) != getEndpointPublishingStrategyHostNetworkStatsPort(b.EndpointPublishingStrategy) {
+		return false
+	}
+	if !reflect.DeepEqual(getAllowedSourceRanges(a.EndpointPublishingStrategy), getAllowedSourceRanges(b.EndpointPublishingStrategy)) {
+		return false
+	}
+	if !awsSubnetsEqual(getAWSNLBSubnets(a.EndpointPublishingStrategy), getAWSNLBSubnets(b.EndpointPublishingStrategy)) {
+		return false
+	}
+	if !awsEIPAllocationsEqual(getAWSNLBEIPAllocations(a.EndpointPublishingStrategy), getAWSNLBEIPAllocations(b.EndpointPublishingStrategy)) {
+		return false
+	}
+	if !awsSubnetsEqual(getAWSCLBSubnets(a.EndpointPublishingStrategy), getAWSCLBSubnets(b.EndpointPublishingStrategy)) {
+		return false
+	}
+	if getOpenStackFloatingIPInEPS(a.EndpointPublishingStrategy) != getOpenStackFloatingIPInEPS(b.EndpointPublishingStrategy) {
+		return false
 	}
 
 	return true
+}
+
+func getEndpointPublishingStrategyType(eps *operatorv1.EndpointPublishingStrategy) operatorv1.EndpointPublishingStrategyType {
+	if eps != nil {
+		return eps.Type
+	}
+
+	return ""
+}
+
+func getEndpointPublishingStrategyLBScope(eps *operatorv1.EndpointPublishingStrategy) operatorv1.LoadBalancerScope {
+	if eps != nil && eps.LoadBalancer != nil {
+		return eps.LoadBalancer.Scope
+	}
+
+	return ""
+}
+
+func getEndpointPublishingStrategyDNSManagementPolicy(eps *operatorv1.EndpointPublishingStrategy) operatorv1.LoadBalancerDNSManagementPolicy {
+	if eps != nil && eps.LoadBalancer != nil {
+		return eps.LoadBalancer.DNSManagementPolicy
+	}
+
+	return ""
+}
+
+func getEndpointPublishingStrategyAWSELBType(eps *operatorv1.EndpointPublishingStrategy) operatorv1.AWSLoadBalancerType {
+	if eps != nil && eps.LoadBalancer != nil && eps.LoadBalancer.ProviderParameters != nil && eps.LoadBalancer.ProviderParameters.AWS != nil {
+		return eps.LoadBalancer.ProviderParameters.AWS.Type
+	}
+
+	return ""
+}
+
+func getEndpointPublishingStrategyAWSCLBConnectionIdleTimeout(eps *operatorv1.EndpointPublishingStrategy) metav1.Duration {
+	if eps != nil && eps.LoadBalancer != nil && eps.LoadBalancer.ProviderParameters != nil && eps.LoadBalancer.ProviderParameters.AWS != nil && eps.LoadBalancer.ProviderParameters.AWS.ClassicLoadBalancerParameters != nil {
+		return eps.LoadBalancer.ProviderParameters.AWS.ClassicLoadBalancerParameters.ConnectionIdleTimeout
+	}
+
+	return metav1.Duration{}
+}
+
+func getEndpointPublishingStrategyGCPClientAccess(eps *operatorv1.EndpointPublishingStrategy) operatorv1.GCPClientAccess {
+	if eps != nil && eps.LoadBalancer != nil && eps.LoadBalancer.ProviderParameters != nil && eps.LoadBalancer.ProviderParameters.GCP != nil {
+		return eps.LoadBalancer.ProviderParameters.GCP.ClientAccess
+	}
+
+	return ""
+}
+
+func getEndpointPublishingStrategyIBMProtocol(eps *operatorv1.EndpointPublishingStrategy) operatorv1.IngressControllerProtocol {
+	if eps != nil && eps.LoadBalancer != nil && eps.LoadBalancer.ProviderParameters != nil && eps.LoadBalancer.ProviderParameters.IBM != nil {
+		return eps.LoadBalancer.ProviderParameters.IBM.Protocol
+	}
+
+	return ""
+}
+
+func getEndpointPublishingStrategyHostNetworkProtocol(eps *operatorv1.EndpointPublishingStrategy) operatorv1.IngressControllerProtocol {
+	if eps != nil && eps.HostNetwork != nil {
+		return eps.HostNetwork.Protocol
+	}
+
+	return ""
+}
+
+func getEndpointPublishingStrategyPrivateProtocol(eps *operatorv1.EndpointPublishingStrategy) operatorv1.IngressControllerProtocol {
+	if eps != nil && eps.Private != nil {
+		return eps.Private.Protocol
+	}
+
+	return ""
+}
+
+func getEndpointPublishingStrategyNodePortProtocol(eps *operatorv1.EndpointPublishingStrategy) operatorv1.IngressControllerProtocol {
+	if eps != nil && eps.NodePort != nil {
+		return eps.NodePort.Protocol
+	}
+
+	return ""
+}
+
+func getEndpointPublishingStrategyHostNetworkHTTPPort(eps *operatorv1.EndpointPublishingStrategy) int32 {
+	if eps != nil && eps.HostNetwork != nil {
+		return eps.HostNetwork.HTTPPort
+	}
+
+	return int32(0)
+}
+
+func getEndpointPublishingStrategyHostNetworkHTTPSPort(eps *operatorv1.EndpointPublishingStrategy) int32 {
+	if eps != nil && eps.HostNetwork != nil {
+		return eps.HostNetwork.HTTPSPort
+	}
+
+	return int32(0)
+}
+
+func getEndpointPublishingStrategyHostNetworkStatsPort(eps *operatorv1.EndpointPublishingStrategy) int32 {
+	if eps != nil && eps.HostNetwork != nil {
+		return eps.HostNetwork.StatsPort
+	}
+
+	return int32(0)
 }
 
 func conditionsEqual(a, b []operatorv1.OperatorCondition) bool {
@@ -1037,7 +1170,8 @@ func computeDNSStatus(ic *operatorv1.IngressController, wildcardRecord *iov1.DNS
 		}
 	}
 	var conditions []operatorv1.OperatorCondition
-	if ic.Status.EndpointPublishingStrategy.LoadBalancer.DNSManagementPolicy == operatorv1.UnmanagedLoadBalancerDNS {
+	// The default value for DNSManagementPolicy is "Managed".
+	if lb := ic.Status.EndpointPublishingStrategy.LoadBalancer; lb != nil && lb.DNSManagementPolicy == operatorv1.UnmanagedLoadBalancerDNS {
 		conditions = append(conditions, operatorv1.OperatorCondition{
 			Type:    operatorv1.DNSManagedIngressConditionType,
 			Status:  operatorv1.ConditionFalse,

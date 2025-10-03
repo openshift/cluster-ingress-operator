@@ -2017,6 +2017,340 @@ func Test_IngressStatusesEqual(t *testing.T) {
 			},
 		},
 		{
+			description: "endpoint publishing strategy type differs",
+			expected:    false,
+			a: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.LoadBalancerServiceStrategyType,
+					LoadBalancer: &operatorv1.LoadBalancerStrategy{
+						Scope: operatorv1.ExternalLoadBalancer,
+					},
+				},
+			},
+			b: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.NodePortServiceStrategyType,
+					NodePort: &operatorv1.NodePortStrategy{
+						Protocol: operatorv1.ProxyProtocol,
+					},
+				},
+			},
+		},
+		{
+			description: "load balancer scope differs",
+			expected:    false,
+			a: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.LoadBalancerServiceStrategyType,
+					LoadBalancer: &operatorv1.LoadBalancerStrategy{
+						Scope:               operatorv1.ExternalLoadBalancer,
+						DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
+					},
+				},
+			},
+			b: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.LoadBalancerServiceStrategyType,
+					LoadBalancer: &operatorv1.LoadBalancerStrategy{
+						Scope:               operatorv1.InternalLoadBalancer,
+						DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
+					},
+				},
+			},
+		},
+		{
+			description: "DNS management policy differs",
+			expected:    false,
+			a: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.LoadBalancerServiceStrategyType,
+					LoadBalancer: &operatorv1.LoadBalancerStrategy{
+						Scope:               operatorv1.ExternalLoadBalancer,
+						DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
+					},
+				},
+			},
+			b: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.LoadBalancerServiceStrategyType,
+					LoadBalancer: &operatorv1.LoadBalancerStrategy{
+						Scope:               operatorv1.ExternalLoadBalancer,
+						DNSManagementPolicy: operatorv1.UnmanagedLoadBalancerDNS,
+					},
+				},
+			},
+		},
+		{
+			description: "AWS ELB type differs",
+			expected:    false,
+			a: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.LoadBalancerServiceStrategyType,
+					LoadBalancer: &operatorv1.LoadBalancerStrategy{
+						ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+							Type: operatorv1.AWSLoadBalancerProvider,
+							AWS: &operatorv1.AWSLoadBalancerParameters{
+								Type: operatorv1.AWSClassicLoadBalancer,
+							},
+						},
+					},
+				},
+			},
+			b: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.LoadBalancerServiceStrategyType,
+					LoadBalancer: &operatorv1.LoadBalancerStrategy{
+						ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+							Type: operatorv1.AWSLoadBalancerProvider,
+							AWS: &operatorv1.AWSLoadBalancerParameters{
+								Type: operatorv1.AWSNetworkLoadBalancer,
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			description: "AWS CLB connection idle timeout differs",
+			expected:    false,
+			a: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.LoadBalancerServiceStrategyType,
+					LoadBalancer: &operatorv1.LoadBalancerStrategy{
+						ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+							Type: operatorv1.AWSLoadBalancerProvider,
+							AWS: &operatorv1.AWSLoadBalancerParameters{
+								Type: operatorv1.AWSClassicLoadBalancer,
+								ClassicLoadBalancerParameters: &operatorv1.AWSClassicLoadBalancerParameters{
+									ConnectionIdleTimeout: metav1.Duration{Duration: 5 * time.Second},
+								},
+							},
+						},
+					},
+				},
+			},
+			b: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.LoadBalancerServiceStrategyType,
+					LoadBalancer: &operatorv1.LoadBalancerStrategy{
+						ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+							Type: operatorv1.AWSLoadBalancerProvider,
+							AWS: &operatorv1.AWSLoadBalancerParameters{
+								Type: operatorv1.AWSClassicLoadBalancer,
+								ClassicLoadBalancerParameters: &operatorv1.AWSClassicLoadBalancerParameters{
+									ConnectionIdleTimeout: metav1.Duration{Duration: 30 * time.Second},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			description: "GCP client access differs",
+			expected:    false,
+			a: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.LoadBalancerServiceStrategyType,
+					LoadBalancer: &operatorv1.LoadBalancerStrategy{
+						ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+							Type: operatorv1.GCPLoadBalancerProvider,
+							GCP: &operatorv1.GCPLoadBalancerParameters{
+								ClientAccess: operatorv1.GCPGlobalAccess,
+							},
+						},
+					},
+				},
+			},
+			b: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.LoadBalancerServiceStrategyType,
+					LoadBalancer: &operatorv1.LoadBalancerStrategy{
+						ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+							Type: operatorv1.GCPLoadBalancerProvider,
+							GCP: &operatorv1.GCPLoadBalancerParameters{
+								ClientAccess: operatorv1.GCPLocalAccess,
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			description: "IBM protocol differs",
+			expected:    false,
+			a: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.LoadBalancerServiceStrategyType,
+					LoadBalancer: &operatorv1.LoadBalancerStrategy{
+						ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+							Type: operatorv1.IBMLoadBalancerProvider,
+							IBM: &operatorv1.IBMLoadBalancerParameters{
+								Protocol: operatorv1.TCPProtocol,
+							},
+						},
+					},
+				},
+			},
+			b: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.LoadBalancerServiceStrategyType,
+					LoadBalancer: &operatorv1.LoadBalancerStrategy{
+						ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+							Type: operatorv1.IBMLoadBalancerProvider,
+							IBM: &operatorv1.IBMLoadBalancerParameters{
+								Protocol: operatorv1.ProxyProtocol,
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			description: "host network protocol differs",
+			expected:    false,
+			a: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.HostNetworkStrategyType,
+					HostNetwork: &operatorv1.HostNetworkStrategy{
+						Protocol:  operatorv1.TCPProtocol,
+						HTTPPort:  int32(80),
+						HTTPSPort: int32(443),
+						StatsPort: int32(1936),
+					},
+				},
+			},
+			b: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.HostNetworkStrategyType,
+					HostNetwork: &operatorv1.HostNetworkStrategy{
+						Protocol:  operatorv1.ProxyProtocol,
+						HTTPPort:  int32(80),
+						HTTPSPort: int32(443),
+						StatsPort: int32(1936),
+					},
+				},
+			},
+		},
+		{
+			description: "host network HTTP port differs",
+			expected:    false,
+			a: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.HostNetworkStrategyType,
+					HostNetwork: &operatorv1.HostNetworkStrategy{
+						Protocol:  operatorv1.TCPProtocol,
+						HTTPPort:  int32(80),
+						HTTPSPort: int32(443),
+						StatsPort: int32(1936),
+					},
+				},
+			},
+			b: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.HostNetworkStrategyType,
+					HostNetwork: &operatorv1.HostNetworkStrategy{
+						Protocol:  operatorv1.TCPProtocol,
+						HTTPPort:  int32(8080),
+						HTTPSPort: int32(443),
+						StatsPort: int32(1936),
+					},
+				},
+			},
+		},
+		{
+			description: "host network HTTPS port differs",
+			expected:    false,
+			a: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.HostNetworkStrategyType,
+					HostNetwork: &operatorv1.HostNetworkStrategy{
+						Protocol:  operatorv1.TCPProtocol,
+						HTTPPort:  int32(80),
+						HTTPSPort: int32(443),
+						StatsPort: int32(1936),
+					},
+				},
+			},
+			b: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.HostNetworkStrategyType,
+					HostNetwork: &operatorv1.HostNetworkStrategy{
+						Protocol:  operatorv1.TCPProtocol,
+						HTTPPort:  int32(80),
+						HTTPSPort: int32(8443),
+						StatsPort: int32(1936),
+					},
+				},
+			},
+		},
+		{
+			description: "host network stats port differs",
+			expected:    false,
+			a: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.HostNetworkStrategyType,
+					HostNetwork: &operatorv1.HostNetworkStrategy{
+						Protocol:  operatorv1.TCPProtocol,
+						HTTPPort:  int32(80),
+						HTTPSPort: int32(443),
+						StatsPort: int32(1936),
+					},
+				},
+			},
+			b: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.HostNetworkStrategyType,
+					HostNetwork: &operatorv1.HostNetworkStrategy{
+						Protocol:  operatorv1.TCPProtocol,
+						HTTPPort:  int32(80),
+						HTTPSPort: int32(443),
+						StatsPort: int32(19360),
+					},
+				},
+			},
+		},
+		{
+			description: "private protocol differs",
+			expected:    false,
+			a: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.PrivateStrategyType,
+					Private: &operatorv1.PrivateStrategy{
+						Protocol: operatorv1.TCPProtocol,
+					},
+				},
+			},
+			b: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.PrivateStrategyType,
+					Private: &operatorv1.PrivateStrategy{
+						Protocol: operatorv1.ProxyProtocol,
+					},
+				},
+			},
+		},
+		{
+			description: "node port protocol differs",
+			expected:    false,
+			a: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.NodePortServiceStrategyType,
+					NodePort: &operatorv1.NodePortStrategy{
+						Protocol: operatorv1.TCPProtocol,
+					},
+				},
+			},
+			b: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.NodePortServiceStrategyType,
+					NodePort: &operatorv1.NodePortStrategy{
+						Protocol: operatorv1.ProxyProtocol,
+					},
+				},
+			},
+		},
+		{
 			description: "OpenStack FloatingIP differs",
 			expected:    false,
 			a:           icStatusWithFloatingIP("1.2.3.4"),
@@ -2114,6 +2448,60 @@ func Test_IngressStatusesEqual(t *testing.T) {
 			),
 		},
 		{
+			description: "NLB providerParameters nil for a but present for b",
+			expected:    false,
+			a: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.LoadBalancerServiceStrategyType,
+					LoadBalancer: &operatorv1.LoadBalancerStrategy{
+						ProviderParameters: nil,
+					},
+				},
+			},
+			b: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.LoadBalancerServiceStrategyType,
+					LoadBalancer: &operatorv1.LoadBalancerStrategy{
+						ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+							AWS: &operatorv1.AWSLoadBalancerParameters{
+								Type: operatorv1.AWSNetworkLoadBalancer,
+								NetworkLoadBalancerParameters: &operatorv1.AWSNetworkLoadBalancerParameters{
+									EIPAllocations: []operatorv1.EIPAllocation{"eipalloc-xxxxxxxxxxxxxxxxx"},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			description: "NLB providerParameters present for a but nil for b",
+			expected:    false,
+			a: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.LoadBalancerServiceStrategyType,
+					LoadBalancer: &operatorv1.LoadBalancerStrategy{
+						ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+							AWS: &operatorv1.AWSLoadBalancerParameters{
+								Type: operatorv1.AWSNetworkLoadBalancer,
+								NetworkLoadBalancerParameters: &operatorv1.AWSNetworkLoadBalancerParameters{
+									EIPAllocations: []operatorv1.EIPAllocation{"eipalloc-xxxxxxxxxxxxxxxxx"},
+								},
+							},
+						},
+					},
+				},
+			},
+			b: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.LoadBalancerServiceStrategyType,
+					LoadBalancer: &operatorv1.LoadBalancerStrategy{
+						ProviderParameters: nil,
+					},
+				},
+			},
+		},
+		{
 			description: "CLB Subnets IDs changed",
 			expected:    false,
 			a: icStatusWithSubnetsOrEIPAllocations(
@@ -2184,6 +2572,64 @@ func Test_IngressStatusesEqual(t *testing.T) {
 				},
 				nil,
 			),
+		},
+		{
+			description: "CLB providerParameters nil for a but present for b",
+			expected:    false,
+			a: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.LoadBalancerServiceStrategyType,
+					LoadBalancer: &operatorv1.LoadBalancerStrategy{
+						ProviderParameters: nil,
+					},
+				},
+			},
+			b: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.LoadBalancerServiceStrategyType,
+					LoadBalancer: &operatorv1.LoadBalancerStrategy{
+						ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+							AWS: &operatorv1.AWSLoadBalancerParameters{
+								Type: operatorv1.AWSClassicLoadBalancer,
+								ClassicLoadBalancerParameters: &operatorv1.AWSClassicLoadBalancerParameters{
+									Subnets: &operatorv1.AWSSubnets{
+										Names: []operatorv1.AWSSubnetName{"name-890123", "name-123456"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			description: "CLB providerParameters present for a but nil for b",
+			expected:    false,
+			a: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.LoadBalancerServiceStrategyType,
+					LoadBalancer: &operatorv1.LoadBalancerStrategy{
+						ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+							AWS: &operatorv1.AWSLoadBalancerParameters{
+								Type: operatorv1.AWSClassicLoadBalancer,
+								ClassicLoadBalancerParameters: &operatorv1.AWSClassicLoadBalancerParameters{
+									Subnets: &operatorv1.AWSSubnets{
+										Names: []operatorv1.AWSSubnetName{"name-890123", "name-123456"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			b: operatorv1.IngressControllerStatus{
+				EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+					Type: operatorv1.LoadBalancerServiceStrategyType,
+					LoadBalancer: &operatorv1.LoadBalancerStrategy{
+						ProviderParameters: nil,
+					},
+				},
+			},
 		},
 		{
 			description: "NLB EIPAllocations changed",
@@ -2333,7 +2779,7 @@ func Test_computeDNSStatus(t *testing.T) {
 			},
 		},
 		{
-			name: "DNSManaged true and DNSReady is true due to NoFailedZones",
+			name: "DNSManaged true due to dnsManagementPolicy=Managed, and DNSReady is true due to NoFailedZones",
 			controller: &operatorv1.IngressController{
 				Status: operatorv1.IngressControllerStatus{
 					Domain: "apps.basedomain.com",
@@ -2342,6 +2788,59 @@ func Test_computeDNSStatus(t *testing.T) {
 						LoadBalancer: &operatorv1.LoadBalancerStrategy{
 							DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
 						},
+					},
+				},
+			},
+			record: &iov1.DNSRecord{
+				Spec: iov1.DNSRecordSpec{
+					DNSManagementPolicy: iov1.ManagedDNS,
+				},
+				Status: iov1.DNSRecordStatus{
+					Zones: []iov1.DNSZoneStatus{
+						{
+							DNSZone: configv1.DNSZone{ID: "zone1"},
+							Conditions: []iov1.DNSZoneCondition{
+								{
+									Type:               iov1.DNSRecordPublishedConditionType,
+									Status:             string(operatorv1.ConditionTrue),
+									LastTransitionTime: metav1.Now(),
+								},
+							},
+						},
+					},
+				},
+			},
+			platformStatus: &configv1.PlatformStatus{
+				Type: configv1.AWSPlatformType,
+			},
+			dnsConfig: &configv1.DNS{
+				Spec: configv1.DNSSpec{
+					BaseDomain:  "basedomain.com",
+					PublicZone:  &configv1.DNSZone{},
+					PrivateZone: &configv1.DNSZone{},
+				},
+			},
+			expect: []operatorv1.OperatorCondition{
+				{
+					Type:   "DNSManaged",
+					Status: operatorv1.ConditionTrue,
+					Reason: "Normal",
+				},
+				{
+					Type:   "DNSReady",
+					Status: operatorv1.ConditionTrue,
+					Reason: "NoFailedZones",
+				},
+			},
+		},
+		{
+			name: "DNSManaged true due to nil status.endpointPublishingStrategy.loadBalancer, and DNSReady is true due to NoFailedZones",
+			controller: &operatorv1.IngressController{
+				Status: operatorv1.IngressControllerStatus{
+					Domain: "apps.basedomain.com",
+					EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+						Type:         operatorv1.LoadBalancerServiceStrategyType,
+						LoadBalancer: nil,
 					},
 				},
 			},

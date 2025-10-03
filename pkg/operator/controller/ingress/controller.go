@@ -235,6 +235,33 @@ func (e *admissionRejection) Error() string {
 // Reconcile expects request to refer to a ingresscontroller in the operator
 // namespace, and will do all the work to ensure the ingresscontroller is in the
 // desired state.
+//
+// Reconcile reconciles an IngressController object as follows:
+//
+//  1. Get the IngressController object.
+//
+//  2. If the IngressController object is marked for deletion, call
+//     ensureIngressDeleted to delete related resources and remove finalizers.
+//
+//  3. Otherwise, get the cluster config objects needed for reconciliation.
+//
+//  4. If the IngressController object has not been admitted or if it requires
+//     re-admission or re-initialization, call admit, which does the following:
+//
+//     * Initialize status.
+//
+//     * Validate the IngressController.
+//
+//     * Reject the IngressController if it is invalid, in which case
+//     reconciliation terminates.
+//
+//     * Accept the IngressController if it is valid, in which case Reconcile
+//     re-queues it for reconciliation, now with status fully initialized.
+//
+//  5. If the IngressController has been admitted, call ensureIngressController
+//     to reconcile it and its related resources.  The ensureIngressController
+//     method and related methods may assume that the status on which they
+//     depend has been initialized by the admit method.
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	log.Info("reconciling", "request", request)
 
@@ -316,29 +343,6 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		return reconcile.Result{Requeue: true}, nil
 	}
 
-	// During upgrades, an already admitted controller might require overriding
-	// default dnsManagementPolicy to "Unmanaged" due to mismatch in its domain and
-	// and the pre-configured base domain.
-	// TODO: Remove this in 4.13
-	if eps := ingress.Status.EndpointPublishingStrategy; eps != nil && eps.Type == operatorv1.LoadBalancerServiceStrategyType && eps.LoadBalancer != nil {
-
-		domainMatchesBaseDomain := dnsrecord.ManageDNSForDomain(ingress.Status.Domain, platformStatus, dnsConfig)
-
-		// Set dnsManagementPolicy based on current domain on the ingresscontroller
-		// and base domain on dns config. This is needed to ensure the correct dnsManagementPolicy
-		// is set on the default ingress controller since the status.domain is updated
-		// in r.admit() and spec.domain is unset on the default ingress controller.
-		if !domainMatchesBaseDomain && eps.LoadBalancer.DNSManagementPolicy != operatorv1.UnmanagedLoadBalancerDNS {
-			ingress.Status.EndpointPublishingStrategy.LoadBalancer.DNSManagementPolicy = operatorv1.UnmanagedLoadBalancerDNS
-
-			if err := r.client.Status().Update(context.TODO(), ingress); err != nil {
-				return reconcile.Result{}, fmt.Errorf("failed to update status: %w", err)
-			}
-			log.Info("Updated ingresscontroller status: dnsManagementPolicy as Unmanaged", "ingresscontroller", ingress.Status)
-			return reconcile.Result{Requeue: true}, nil
-		}
-	}
-
 	// The ingresscontroller is safe to process, so ensure it.
 	if err := r.ensureIngressController(ingress, dnsConfig, infraConfig, platformStatus, ingressConfig, apiConfig, networkConfig, clusterProxyConfig); err != nil {
 		switch e := err.(type) {
@@ -382,6 +386,8 @@ func (r *reconciler) admit(current *operatorv1.IngressController, ingressConfig 
 			})
 			updated.Status.ObservedGeneration = updated.Generation
 			if !IngressStatusesEqual(current.Status, updated.Status) {
+				diff := cmp.Diff(current.Status, updated.Status, cmpopts.EquateEmpty())
+				log.Info("updated ingresscontroller status", "namespace", updated.Namespace, "name", updated.Name, "diff", diff)
 				if err := r.client.Status().Update(context.TODO(), updated); err != nil {
 					return fmt.Errorf("failed to update status: %v", err)
 				}
@@ -402,6 +408,8 @@ func (r *reconciler) admit(current *operatorv1.IngressController, ingressConfig 
 	}
 
 	if !IngressStatusesEqual(current.Status, updated.Status) {
+		diff := cmp.Diff(current.Status, updated.Status, cmpopts.EquateEmpty())
+		log.Info("updated ingresscontroller status", "namespace", updated.Namespace, "name", updated.Name, "diff", diff)
 		if err := r.client.Status().Update(context.TODO(), updated); err != nil {
 			return fmt.Errorf("failed to update status: %v", err)
 		}
@@ -411,13 +419,24 @@ func (r *reconciler) admit(current *operatorv1.IngressController, ingressConfig 
 
 // needsReadmission returns a Boolean value indicating whether the given
 // ingresscontroller needs to be re-admitted.  Re-admission is necessary in
-// order to revalidate mutable fields that are subject to admission checks.  The
-// determination whether re-admission is needed is based on the
+// order to revalidate mutable fields that are subject to admission checks.  To
+// determine whether re-admission is needed, this function compares the
 // ingresscontroller's current generation and the observed generation recorded
-// in its status.
+// in its status.  This function also checks whether status is missing required
+// fields, which could indicate that someone or something else other than this
+// operator has tampered with status.
 func needsReadmission(ic *operatorv1.IngressController) bool {
 	if ic.Generation != ic.Status.ObservedGeneration {
 		return true
+	}
+	if ic.Status.EndpointPublishingStrategy == nil {
+		return true
+	}
+	switch ic.Status.EndpointPublishingStrategy.Type {
+	case operatorv1.LoadBalancerServiceStrategyType:
+		if ic.Status.EndpointPublishingStrategy.LoadBalancer == nil {
+			return true
+		}
 	}
 	return false
 }
@@ -437,7 +456,37 @@ func setDefaultDomain(ic *operatorv1.IngressController, ingressConfig *configv1.
 	return false
 }
 
+// setDefaultPublishingStrategy sets a default value for the given
+// ingresscontroller's status.endpointPublishingStrategy field and union member
+// sub-field if either of these fields is nil.  This function returns a Boolean
+// value indicating whether it updated the status.  This function also mutates
+// the given ingresscontroller's status.
 func setDefaultPublishingStrategy(ic *operatorv1.IngressController, platformStatus *configv1.PlatformStatus, domainMatchesBaseDomain bool, ingressConfig *configv1.Ingress, alreadyAdmitted bool) bool {
+	effectiveStrategy := computeEffectivePublishingStrategy(ic, platformStatus, domainMatchesBaseDomain, ingressConfig, alreadyAdmitted)
+
+	// updatePublishingStrategy expects ic.Status.EndpointPublishingStrategy
+	// not to be nil.  However, updatePublishingStrategy also expects
+	// ic.Status.EndpointPublishingStrategy to have the stored status so
+	// that updatePublishingStrategy can identify changes from the effective
+	// strategy.  Thus it is necessary to set status here if, and only if,
+	// it is nil.  Note that updatePublishingStrategy mutates
+	// ic.Status.EndpointPublishingStrategy (and thus effectiveStrategy).
+	if ic.Status.EndpointPublishingStrategy == nil {
+		ic.Status.EndpointPublishingStrategy = effectiveStrategy
+		return true
+	}
+
+	if updatePublishingStrategy(ic, effectiveStrategy) {
+		return true
+	}
+
+	return false
+}
+
+// computeEffectivePublishingStrategy takes an endpoint publishing strategy,
+// fills in missing fields with empty structs or default values, and returns
+// the result.
+func computeEffectivePublishingStrategy(ic *operatorv1.IngressController, platformStatus *configv1.PlatformStatus, domainMatchesBaseDomain bool, ingressConfig *configv1.Ingress, alreadyAdmitted bool) *operatorv1.EndpointPublishingStrategy {
 	effectiveStrategy := ic.Spec.EndpointPublishingStrategy.DeepCopy()
 	if effectiveStrategy == nil {
 		var strategyType operatorv1.EndpointPublishingStrategyType
@@ -525,127 +574,132 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, platformStat
 			effectiveStrategy.Private.Protocol = operatorv1.TCPProtocol
 		}
 	}
-	if ic.Status.EndpointPublishingStrategy == nil {
-		ic.Status.EndpointPublishingStrategy = effectiveStrategy
-		return true
-	}
 
-	// Detect changes to endpoint publishing strategy parameters that the
-	// operator can safely update.
+	return effectiveStrategy
+}
+
+// updatePublishingStrategy detects changes to endpoint publishing strategy
+// parameters in spec that the operator can safely update.  If such changes are
+// detected, this function mutates the given ingresscontroller's status
+// accordingly.  Finally, this function returns a Boolean value indicating
+// whether it detected changes.
+func updatePublishingStrategy(ic *operatorv1.IngressController, effectiveStrategy *operatorv1.EndpointPublishingStrategy) bool {
+	changed := false
+
 	switch effectiveStrategy.Type {
 	case operatorv1.LoadBalancerServiceStrategyType:
+		if ic.Status.EndpointPublishingStrategy.LoadBalancer == nil {
+			ic.Status.EndpointPublishingStrategy.LoadBalancer = &operatorv1.LoadBalancerStrategy{}
+		}
+
 		// Update if LB provider parameters changed.
 		statusLB := ic.Status.EndpointPublishingStrategy.LoadBalancer
 		specLB := effectiveStrategy.LoadBalancer
-		if specLB != nil && statusLB != nil {
-			changed := false
 
-			// Detect changes to LB scope.
-			if specLB.Scope != statusLB.Scope {
-				ic.Status.EndpointPublishingStrategy.LoadBalancer.Scope = effectiveStrategy.LoadBalancer.Scope
+		// Detect changes to LB scope.
+		if specLB.Scope != statusLB.Scope {
+			ic.Status.EndpointPublishingStrategy.LoadBalancer.Scope = effectiveStrategy.LoadBalancer.Scope
+			changed = true
+		}
+
+		// Detect changes to LB dnsManagementPolicy
+		if specLB.DNSManagementPolicy != statusLB.DNSManagementPolicy {
+			ic.Status.EndpointPublishingStrategy.LoadBalancer.DNSManagementPolicy = effectiveStrategy.LoadBalancer.DNSManagementPolicy
+			changed = true
+		}
+
+		// Detect changes to provider-specific parameters.
+		// Currently the only platforms with configurable
+		// provider-specific parameters are AWS and GCP.
+		var lbType operatorv1.LoadBalancerProviderType
+		if specLB.ProviderParameters != nil {
+			lbType = specLB.ProviderParameters.Type
+		}
+		switch lbType {
+		case operatorv1.AWSLoadBalancerProvider:
+			if statusLB.ProviderParameters == nil {
+				statusLB.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{}
+			}
+			if len(statusLB.ProviderParameters.Type) == 0 {
+				statusLB.ProviderParameters.Type = operatorv1.AWSLoadBalancerProvider
+			}
+			if statusLB.ProviderParameters.AWS == nil {
+				statusLB.ProviderParameters.AWS = &operatorv1.AWSLoadBalancerParameters{}
+			}
+			if specLB.ProviderParameters.AWS.Type != statusLB.ProviderParameters.AWS.Type {
+				statusLB.ProviderParameters.AWS.Type = specLB.ProviderParameters.AWS.Type
 				changed = true
 			}
-
-			// Detect changes to LB dnsManagementPolicy
-			if specLB.DNSManagementPolicy != statusLB.DNSManagementPolicy {
-				ic.Status.EndpointPublishingStrategy.LoadBalancer.DNSManagementPolicy = effectiveStrategy.LoadBalancer.DNSManagementPolicy
-				changed = true
+			if statusLB.ProviderParameters.AWS.Type == operatorv1.AWSClassicLoadBalancer {
+				statusLB.ProviderParameters.AWS.NetworkLoadBalancerParameters = nil
+				if statusLB.ProviderParameters.AWS.ClassicLoadBalancerParameters == nil {
+					statusLB.ProviderParameters.AWS.ClassicLoadBalancerParameters = &operatorv1.AWSClassicLoadBalancerParameters{}
+				}
+				// The only provider parameter that is
+				// supported for AWS Classic ELBs is the
+				// connection idle timeout.
+				var specIdleTimeout metav1.Duration
+				if specLB.ProviderParameters.AWS != nil && specLB.ProviderParameters.AWS.ClassicLoadBalancerParameters != nil {
+					specIdleTimeout = specLB.ProviderParameters.AWS.ClassicLoadBalancerParameters.ConnectionIdleTimeout
+				}
+				statusIdleTimeout := statusLB.ProviderParameters.AWS.ClassicLoadBalancerParameters.ConnectionIdleTimeout
+				if specIdleTimeout != statusIdleTimeout {
+					var v metav1.Duration
+					if specIdleTimeout.Duration > 0 {
+						v = specIdleTimeout
+					}
+					statusLB.ProviderParameters.AWS.ClassicLoadBalancerParameters.ConnectionIdleTimeout = v
+					changed = true
+				}
 			}
-
-			// Detect changes to provider-specific parameters.
-			// Currently the only platforms with configurable
-			// provider-specific parameters are AWS and GCP.
-			var lbType operatorv1.LoadBalancerProviderType
-			if specLB.ProviderParameters != nil {
-				lbType = specLB.ProviderParameters.Type
+			if statusLB.ProviderParameters.AWS.Type == operatorv1.AWSNetworkLoadBalancer {
+				statusLB.ProviderParameters.AWS.ClassicLoadBalancerParameters = nil
+				if statusLB.ProviderParameters.AWS.NetworkLoadBalancerParameters == nil {
+					statusLB.ProviderParameters.AWS.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{}
+				}
 			}
-			switch lbType {
-			case operatorv1.AWSLoadBalancerProvider:
+		case operatorv1.GCPLoadBalancerProvider:
+			// The only provider parameter that is supported
+			// for GCP is the ClientAccess parameter.
+			var statusClientAccess operatorv1.GCPClientAccess
+			specClientAccess := specLB.ProviderParameters.GCP.ClientAccess
+			if statusLB.ProviderParameters != nil && statusLB.ProviderParameters.GCP != nil {
+				statusClientAccess = statusLB.ProviderParameters.GCP.ClientAccess
+			}
+			if specClientAccess != statusClientAccess {
 				if statusLB.ProviderParameters == nil {
 					statusLB.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{}
 				}
 				if len(statusLB.ProviderParameters.Type) == 0 {
-					statusLB.ProviderParameters.Type = operatorv1.AWSLoadBalancerProvider
+					statusLB.ProviderParameters.Type = operatorv1.GCPLoadBalancerProvider
 				}
-				if statusLB.ProviderParameters.AWS == nil {
-					statusLB.ProviderParameters.AWS = &operatorv1.AWSLoadBalancerParameters{}
+				if statusLB.ProviderParameters.GCP == nil {
+					statusLB.ProviderParameters.GCP = &operatorv1.GCPLoadBalancerParameters{}
 				}
-				if specLB.ProviderParameters.AWS.Type != statusLB.ProviderParameters.AWS.Type {
-					statusLB.ProviderParameters.AWS.Type = specLB.ProviderParameters.AWS.Type
-					changed = true
-				}
-				if statusLB.ProviderParameters.AWS.Type == operatorv1.AWSClassicLoadBalancer {
-					statusLB.ProviderParameters.AWS.NetworkLoadBalancerParameters = nil
-					if statusLB.ProviderParameters.AWS.ClassicLoadBalancerParameters == nil {
-						statusLB.ProviderParameters.AWS.ClassicLoadBalancerParameters = &operatorv1.AWSClassicLoadBalancerParameters{}
-					}
-					// The only provider parameter that is
-					// supported for AWS Classic ELBs is the
-					// connection idle timeout.
-					var specIdleTimeout metav1.Duration
-					if specLB.ProviderParameters.AWS != nil && specLB.ProviderParameters.AWS.ClassicLoadBalancerParameters != nil {
-						specIdleTimeout = specLB.ProviderParameters.AWS.ClassicLoadBalancerParameters.ConnectionIdleTimeout
-					}
-					statusIdleTimeout := statusLB.ProviderParameters.AWS.ClassicLoadBalancerParameters.ConnectionIdleTimeout
-					if specIdleTimeout != statusIdleTimeout {
-						var v metav1.Duration
-						if specIdleTimeout.Duration > 0 {
-							v = specIdleTimeout
-						}
-						statusLB.ProviderParameters.AWS.ClassicLoadBalancerParameters.ConnectionIdleTimeout = v
-						changed = true
-					}
-				}
-				if statusLB.ProviderParameters.AWS.Type == operatorv1.AWSNetworkLoadBalancer {
-					statusLB.ProviderParameters.AWS.ClassicLoadBalancerParameters = nil
-					if statusLB.ProviderParameters.AWS.NetworkLoadBalancerParameters == nil {
-						statusLB.ProviderParameters.AWS.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{}
-					}
-				}
-			case operatorv1.GCPLoadBalancerProvider:
-				// The only provider parameter that is supported
-				// for GCP is the ClientAccess parameter.
-				var statusClientAccess operatorv1.GCPClientAccess
-				specClientAccess := specLB.ProviderParameters.GCP.ClientAccess
-				if statusLB.ProviderParameters != nil && statusLB.ProviderParameters.GCP != nil {
-					statusClientAccess = statusLB.ProviderParameters.GCP.ClientAccess
-				}
-				if specClientAccess != statusClientAccess {
-					if statusLB.ProviderParameters == nil {
-						statusLB.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{}
-					}
-					if len(statusLB.ProviderParameters.Type) == 0 {
-						statusLB.ProviderParameters.Type = operatorv1.GCPLoadBalancerProvider
-					}
-					if statusLB.ProviderParameters.GCP == nil {
-						statusLB.ProviderParameters.GCP = &operatorv1.GCPLoadBalancerParameters{}
-					}
-					statusLB.ProviderParameters.GCP.ClientAccess = specClientAccess
-					changed = true
-				}
-			case operatorv1.IBMLoadBalancerProvider:
-				// The only provider parameter that is supported
-				// for IBM is the Protocol parameter.
-				var statusProtocol operatorv1.IngressControllerProtocol
-				specProtocol := specLB.ProviderParameters.IBM.Protocol
-				if statusLB.ProviderParameters != nil && statusLB.ProviderParameters.IBM != nil {
-					statusProtocol = statusLB.ProviderParameters.IBM.Protocol
-				}
-				if specProtocol != statusProtocol {
-					if statusLB.ProviderParameters == nil {
-						statusLB.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{}
-					}
-					if len(statusLB.ProviderParameters.Type) == 0 {
-						statusLB.ProviderParameters.Type = operatorv1.IBMLoadBalancerProvider
-					}
-					if statusLB.ProviderParameters.IBM == nil {
-						statusLB.ProviderParameters.IBM = &operatorv1.IBMLoadBalancerParameters{}
-					}
-					statusLB.ProviderParameters.IBM.Protocol = specProtocol
-					changed = true
-				}
+				statusLB.ProviderParameters.GCP.ClientAccess = specClientAccess
+				changed = true
 			}
-			return changed
+		case operatorv1.IBMLoadBalancerProvider:
+			// The only provider parameter that is supported
+			// for IBM is the Protocol parameter.
+			var statusProtocol operatorv1.IngressControllerProtocol
+			specProtocol := specLB.ProviderParameters.IBM.Protocol
+			if statusLB.ProviderParameters != nil && statusLB.ProviderParameters.IBM != nil {
+				statusProtocol = statusLB.ProviderParameters.IBM.Protocol
+			}
+			if specProtocol != statusProtocol {
+				if statusLB.ProviderParameters == nil {
+					statusLB.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{}
+				}
+				if len(statusLB.ProviderParameters.Type) == 0 {
+					statusLB.ProviderParameters.Type = operatorv1.IBMLoadBalancerProvider
+				}
+				if statusLB.ProviderParameters.IBM == nil {
+					statusLB.ProviderParameters.IBM = &operatorv1.IBMLoadBalancerParameters{}
+				}
+				statusLB.ProviderParameters.IBM.Protocol = specProtocol
+				changed = true
+			}
 		}
 	case operatorv1.NodePortServiceStrategyType:
 		// Update if PROXY protocol is turned on or off.
@@ -656,7 +710,7 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, platformStat
 		specNP := effectiveStrategy.NodePort
 		if specNP != nil && specNP.Protocol != statusNP.Protocol {
 			statusNP.Protocol = specNP.Protocol
-			return true
+			changed = true
 		}
 	case operatorv1.HostNetworkStrategyType:
 		if ic.Status.EndpointPublishingStrategy.HostNetwork == nil {
@@ -666,7 +720,6 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, platformStat
 		statusHN := ic.Status.EndpointPublishingStrategy.HostNetwork
 		specHN := effectiveStrategy.HostNetwork
 
-		var changed bool
 		if specHN != nil {
 			// Update if PROXY protocol is turned on or off.
 			if specHN.Protocol != statusHN.Protocol {
@@ -688,7 +741,6 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, platformStat
 				changed = true
 			}
 		}
-		return changed
 	case operatorv1.PrivateStrategyType:
 		// Update if PROXY protocol is turned on or off.
 		if ic.Status.EndpointPublishingStrategy.Private == nil {
@@ -698,11 +750,11 @@ func setDefaultPublishingStrategy(ic *operatorv1.IngressController, platformStat
 		specPrivate := effectiveStrategy.Private
 		if specPrivate != nil && specPrivate.Protocol != statusPrivate.Protocol {
 			statusPrivate.Protocol = specPrivate.Protocol
-			return true
+			changed = true
 		}
 	}
 
-	return false
+	return changed
 }
 
 // setDefaultProviderParameters mutates the given LoadBalancerStrategy by
