@@ -106,10 +106,10 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 			errs = append(errs, fmt.Errorf("failed to update ingresscontroller status: %v", err))
 		} else {
 			updatedIc = true
-			SetIngressControllerConditionsMetric(updated)
 		}
 	}
-
+	//OCPBUGS-61508 set at every reconcile the ingress_controller_conditions metrics
+	SetIngressControllerConditionsMetric(updated)
 	return retryableerror.NewMaybeRetryableAggregate(errs), updatedIc
 }
 
