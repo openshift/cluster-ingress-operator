@@ -531,6 +531,11 @@ func computeEffectivePublishingStrategy(ic *operatorv1.IngressController, platfo
 				platformStatus.AWS.CloudLoadBalancerConfig.DNSType == configv1.ClusterHostedDNSType {
 				effectiveStrategy.LoadBalancer.DNSManagementPolicy = operatorv1.UnmanagedLoadBalancerDNS
 			}
+		case configv1.AzurePlatformType:
+			if platformStatus.Azure != nil && platformStatus.Azure.CloudLoadBalancerConfig != nil &&
+				platformStatus.Azure.CloudLoadBalancerConfig.DNSType == configv1.ClusterHostedDNSType {
+				effectiveStrategy.LoadBalancer.DNSManagementPolicy = operatorv1.UnmanagedLoadBalancerDNS
+			}
 		case configv1.GCPPlatformType:
 			if platformStatus.GCP != nil && platformStatus.GCP.CloudLoadBalancerConfig != nil &&
 				platformStatus.GCP.CloudLoadBalancerConfig.DNSType == configv1.ClusterHostedDNSType {
@@ -1330,7 +1335,7 @@ func (r *reconciler) allRouterPodsDeleted(ingress *operatorv1.IngressController)
 	return true, nil
 }
 
-// computeUpdatedInfraFromService updates PlatformStatus for GCP and AWS with Ingress LB IPs when the DNSType is `ClusterHosted`.
+// computeUpdatedInfraFromService updates PlatformStatus for AWS, Azure and GCP with Ingress LB IPs when the DNSType is `ClusterHosted`.
 func computeUpdatedInfraFromService(service *corev1.Service, infraConfig *configv1.Infrastructure) (bool, error) {
 	platformStatus := infraConfig.Status.PlatformStatus
 	if platformStatus == nil {
@@ -1369,6 +1374,24 @@ func computeUpdatedInfraFromService(service *corev1.Service, infraConfig *config
 			}
 			if !cmp.Equal(platformStatus.AWS.CloudLoadBalancerConfig.ClusterHosted.IngressLoadBalancerIPs, ingressLBIPs, ipCmpOpts...) {
 				platformStatus.AWS.CloudLoadBalancerConfig.ClusterHosted.IngressLoadBalancerIPs = ingressLBIPs
+				return true, nil
+			}
+		}
+		return false, nil
+	case configv1.AzurePlatformType:
+		if platformStatus.Azure != nil && platformStatus.Azure.CloudLoadBalancerConfig != nil && platformStatus.Azure.CloudLoadBalancerConfig.DNSType == configv1.ClusterHostedDNSType {
+			if platformStatus.Azure.CloudLoadBalancerConfig.ClusterHosted == nil {
+				platformStatus.Azure.CloudLoadBalancerConfig.ClusterHosted = &configv1.CloudLoadBalancerIPs{}
+			}
+			ingresses := service.Status.LoadBalancer.Ingress
+			ingressLBIPs := []configv1.IP{}
+			for _, ingress := range ingresses {
+				if len(ingress.IP) > 0 {
+					ingressLBIPs = append(ingressLBIPs, configv1.IP(ingress.IP))
+				}
+			}
+			if !cmp.Equal(platformStatus.Azure.CloudLoadBalancerConfig.ClusterHosted.IngressLoadBalancerIPs, ingressLBIPs, ipCmpOpts...) {
+				platformStatus.Azure.CloudLoadBalancerConfig.ClusterHosted.IngressLoadBalancerIPs = ingressLBIPs
 				return true, nil
 			}
 		}
