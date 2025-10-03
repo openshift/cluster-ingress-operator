@@ -119,6 +119,9 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	isIngressClusterOperator := func(o client.Object) bool {
 		return o.GetName() == operatorcontroller.IngressClusterOperatorName().Name
 	}
+	isOpenshiftOperatorNamespace := func(o client.Object) bool {
+		return o.GetNamespace() == operatorcontroller.OpenshiftOperatorNamespace
+	}
 	toDefaultIngressController := func(ctx context.Context, _ client.Object) []reconcile.Request {
 		return []reconcile.Request{{
 			NamespacedName: types.NamespacedName{
@@ -148,13 +151,13 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 				return e.Object.GetNamespace() == operatorcontroller.OpenshiftOperatorNamespace
 			},
 			UpdateFunc: func(e event.UpdateEvent) bool {
-				return false
+				return e.ObjectNew.GetNamespace() == operatorcontroller.OpenshiftOperatorNamespace
 			},
 			DeleteFunc: func(e event.DeleteEvent) bool {
 				return e.Object.GetNamespace() == operatorcontroller.OpenshiftOperatorNamespace
 			},
 			GenericFunc: func(e event.GenericEvent) bool {
-				return false
+				return e.Object.GetNamespace() == operatorcontroller.OpenshiftOperatorNamespace
 			},
 		})); err != nil {
 			return nil, err
@@ -184,6 +187,10 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 			return ossmSubscriptions.Has(subscription.Spec.Package)
 		})
 		if err := c.Watch(source.Kind[client.Object](reconciler.subscriptionCache, &operatorsv1alpha1.Subscription{}, handler.EnqueueRequestsFromMapFunc(toDefaultIngressController), isOSSMSubscription)); err != nil {
+			return nil, err
+		}
+
+		if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorsv1alpha1.ClusterServiceVersion{}, handler.EnqueueRequestsFromMapFunc(toDefaultIngressController), predicate.NewPredicateFuncs(isOpenshiftOperatorNamespace))); err != nil {
 			return nil, err
 		}
 	}
@@ -327,13 +334,11 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	co.Status.Conditions = mergeConditions(co.Status.Conditions,
 		computeOperatorAvailableCondition(state.IngressControllers),
 		computeOperatorProgressingCondition(
-			state.IngressControllers,
+			state,
+			r.config,
 			allIngressesAvailable,
 			oldStatus.Versions,
 			co.Status.Versions,
-			r.config.OperatorReleaseVersion,
-			r.config.IngressControllerImage,
-			r.config.CanaryImage,
 		),
 		computeOperatorDegradedCondition(state),
 		computeOperatorUpgradeableCondition(state.IngressControllers),
@@ -406,6 +411,14 @@ type operatorState struct {
 	// shouldInstallOSSM reflects whether the ingress operator should install OSSM. Currently, this happens when a
 	// gateway class with Spec.ControllerName=operatorcontroller.OpenShiftGatewayClassControllerName is created.
 	shouldInstallOSSM bool
+	// installedGatewayAPIOperatorVersion contains the currently installed
+	// version of the OSSM operator.
+	installedGatewayAPIOperatorVersion string
+	// currentGatewayAPIOperatorVersion contains the OSSM operator version
+	// which is currently being installed or the next in the upgrade graph.
+	currentGatewayAPIOperatorVersion string
+	// installedGatewayAPIOperatorVersionPhase contains the phase of the installed OSSM operator version.
+	installedGatewayAPIOperatorVersionPhase operatorsv1alpha1.ClusterServiceVersionPhase
 }
 
 // getOperatorState gets and returns the resources necessary to compute the
@@ -456,7 +469,6 @@ func (r *reconciler) getOperatorState(ctx context.Context, ingressNamespace, can
 				}
 			} else {
 				state.haveOSSMSubscription = true
-
 			}
 
 			var (
@@ -508,6 +520,31 @@ func (r *reconciler) getOperatorState(ctx context.Context, ingressNamespace, can
 			// If one or more gateway classes have ControllerName=operatorcontroller.OpenShiftGatewayClassControllerName,
 			// the ingress operator should try to install OSSM.
 			state.shouldInstallOSSM = (len(gatewayClassList.Items) > 0)
+			// Apply the OSSM override if present.
+			// We assume that all GatewayClasses managed by the OpenShift controller
+			// share the same override.
+			if state.shouldInstallOSSM {
+				if v, ok := gatewayClassList.Items[0].Annotations[operatorcontroller.SubscriptionVersionOverrideAnnotationKey]; ok {
+					state.expectedGatewayAPIOperatorVersion = v
+				}
+				state.installedGatewayAPIOperatorVersion = subscription.Status.InstalledCSV
+				state.currentGatewayAPIOperatorVersion = subscription.Status.CurrentCSV
+				// To compute the OSSM operator's progressing status,
+				// we need to inspect the CSV level to determine whether
+				// the installedCSV of the subscription succeeded.
+				var installedCSV operatorsv1alpha1.ClusterServiceVersion
+				installedCSVName := types.NamespacedName{
+					Name:      subscription.Status.InstalledCSV,
+					Namespace: operatorcontroller.OpenshiftOperatorNamespace,
+				}
+				if err := r.cache.Get(ctx, installedCSVName, &installedCSV); err != nil {
+					if !errors.IsNotFound(err) {
+						return state, fmt.Errorf("failed to get installed CSV %q: %v", installedCSVName.Name, err)
+					}
+				} else {
+					state.installedGatewayAPIOperatorVersionPhase = installedCSV.Status.Phase
+				}
+			}
 		}
 	}
 
@@ -566,6 +603,7 @@ func computeOperatorDegradedCondition(state operatorState) configv1.ClusterOpera
 		computeIngressControllerDegradedCondition,
 		computeGatewayAPICRDsDegradedCondition,
 		computeGatewayAPIInstallDegradedCondition,
+		computeOSSMOperatorDegradedCondition,
 	} {
 		degradedCondition = joinConditions(degradedCondition, fn(state))
 	}
@@ -690,6 +728,21 @@ func computeGatewayAPIInstallDegradedCondition(state operatorState) configv1.Clu
 	return degradedCondition
 }
 
+// computeOSSMOperatorDegradedCondition computes the degraded condition for OSSM operator.
+func computeOSSMOperatorDegradedCondition(state operatorState) configv1.ClusterOperatorStatusCondition {
+	degradedCondition := configv1.ClusterOperatorStatusCondition{}
+
+	if state.shouldInstallOSSM {
+		if state.installedGatewayAPIOperatorVersionPhase == operatorsv1alpha1.CSVPhaseFailed {
+			degradedCondition.Status = configv1.ConditionTrue
+			degradedCondition.Reason = "GatewayAPIOperatorDegraded"
+			degradedCondition.Message = fmt.Sprintf("GatewayAPI operator failed to install version %q", state.installedGatewayAPIOperatorVersion)
+		}
+	}
+
+	return degradedCondition
+}
+
 // computeOperatorUpgradeableCondition computes the operator's Upgradeable
 // status condition.
 func computeOperatorUpgradeableCondition(ingresses []operatorv1.IngressController) configv1.ClusterOperatorStatusCondition {
@@ -768,7 +821,19 @@ func computeOperatorEvaluationConditionsDetectedCondition(ingresses []operatorv1
 }
 
 // computeOperatorProgressingCondition computes the operator's current Progressing status state.
-func computeOperatorProgressingCondition(ingresscontrollers []operatorv1.IngressController, allIngressesAvailable bool, oldVersions, curVersions []configv1.OperandVersion, operatorReleaseVersion, ingressControllerImage string, canaryImage string) configv1.ClusterOperatorStatusCondition {
+func computeOperatorProgressingCondition(state operatorState, config Config, allIngressesAvailable bool, oldVersions, curVersions []configv1.OperandVersion) configv1.ClusterOperatorStatusCondition {
+	progressingCondition := configv1.ClusterOperatorStatusCondition{
+		Type: configv1.OperatorProgressing,
+	}
+
+	icCondition := computeIngressControllersProgressingCondition(state.IngressControllers, allIngressesAvailable, oldVersions, curVersions, config.OperatorReleaseVersion, config.IngressControllerImage, config.CanaryImage)
+	ossmCondition := computeOSSMOperatorProgressingCondition(state)
+
+	return joinConditions(joinConditions(progressingCondition, icCondition), ossmCondition)
+}
+
+// computeIngressControllersProgressingCondition computes the IngressControllers' current Progressing status state.
+func computeIngressControllersProgressingCondition(ingresscontrollers []operatorv1.IngressController, allIngressesAvailable bool, oldVersions, curVersions []configv1.OperandVersion, operatorReleaseVersion, ingressControllerImage string, canaryImage string) configv1.ClusterOperatorStatusCondition {
 	progressingCondition := configv1.ClusterOperatorStatusCondition{
 		Type: configv1.OperatorProgressing,
 	}
@@ -830,6 +895,57 @@ func computeOperatorProgressingCondition(ingresscontrollers []operatorv1.Ingress
 	progressingCondition.Message = ingressesEqualConditionMessage
 	if len(messages) > 0 {
 		progressingCondition.Message = strings.Join(messages, "\n")
+	}
+
+	return progressingCondition
+}
+
+// computeOSSMOperatorProgressingCondition computes the OSSM operator's current Progressing status state.
+func computeOSSMOperatorProgressingCondition(state operatorState) configv1.ClusterOperatorStatusCondition {
+	progressingCondition := configv1.ClusterOperatorStatusCondition{}
+
+	// Skip updating the progressing status if OpenShift managed GatewayClass doesn't exist.
+	if !state.shouldInstallOSSM {
+		return progressingCondition
+	}
+
+	progressing, failed := false, false
+
+	// Set the progressing to true if the desired version is different
+	// from the currently installed.
+	if state.expectedGatewayAPIOperatorVersion != state.installedGatewayAPIOperatorVersion {
+		// Note that the progressing state remains "true" if the desired version is
+		// beyond the latest available in the upgrade graph.
+		// There is no reliable way of knowing that the end of the upgrade graph
+		// is reached and no next version is available. None of OLM resources
+		// can provide such information.
+		progressing = true
+	} else {
+		// The desired version was reached. However the CSV may still be
+		// in "Replacing" or "Installing" state, stop setting progressing
+		// when the installed CSV succeeded.
+		if state.installedGatewayAPIOperatorVersionPhase != operatorsv1alpha1.CSVPhaseSucceeded {
+			progressing = true
+		}
+	}
+
+	// Set Progressing=False if the installation failed.
+	if state.installedGatewayAPIOperatorVersionPhase == operatorsv1alpha1.CSVPhaseFailed {
+		failed = true
+		progressing = false
+	}
+
+	if progressing {
+		progressingCondition.Status = configv1.ConditionTrue
+		progressingCondition.Reason = "GatewayAPIOperatorUpgrading"
+		progressingCondition.Message = fmt.Sprintf("GatewayAPI operator is upgrading to version %q", state.expectedGatewayAPIOperatorVersion)
+		if len(state.installedGatewayAPIOperatorVersion) > 0 && len(state.currentGatewayAPIOperatorVersion) > 0 {
+			progressingCondition.Message += fmt.Sprintf(" (installed(-ing):%q,next:%q)", state.installedGatewayAPIOperatorVersion, state.currentGatewayAPIOperatorVersion)
+		}
+	} else if !failed {
+		progressingCondition.Status = configv1.ConditionFalse
+		progressingCondition.Reason = "GatewayAPIOperatorUpToDate"
+		progressingCondition.Message = fmt.Sprintf("GatewayAPI operator is running version %q", state.expectedGatewayAPIOperatorVersion)
 	}
 
 	return progressingCondition
@@ -945,7 +1061,7 @@ func operatorStatusesEqual(a, b configv1.ClusterOperatorStatus) bool {
 
 // joinConditions merges two cluster operator conditions into one.
 // If both conditions have the same status:
-// - Reason becomes: "MultipleComponents[Not]" + condType.
+// - Reasons are concatenated using "And" as a delimiter.
 // - Messages are concatenated.
 // If the new condition has a higher-priority status, it overrides the current one.
 // Status priority (highest to lowest): True, Unknown, False, empty.
