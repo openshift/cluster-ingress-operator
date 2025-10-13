@@ -37,15 +37,6 @@ import (
 
 const (
 	controllerName = "service_dns_controller"
-
-	// gatewayNameLabelKey is the key of a label that Istio adds to
-	// deployments that it creates for gateways that it manages.  Istio uses
-	// this label in the selector of any service that it creates for a
-	// gateway.
-	gatewayNameLabelKey = "gateway.networking.k8s.io/gateway-name"
-	// managedByIstioLabelKey is the key of a label that Istio adds to
-	// resources that it manages.
-	managedByIstioLabelKey = "gateway.istio.io/managed"
 )
 
 var log = logf.Logger.WithName(controllerName)
@@ -70,7 +61,7 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 	scheme := mgr.GetClient().Scheme()
 	mapper := mgr.GetClient().RESTMapper()
 	isServiceNeedingDNS := predicate.NewPredicateFuncs(func(o client.Object) bool {
-		_, ok := o.(*corev1.Service).Labels[managedByIstioLabelKey]
+		_, ok := o.(*corev1.Service).Labels[operatorcontroller.ManagedByIstioLabelKey]
 		return ok
 	})
 	gatewayListenersChanged := predicate.Funcs{
@@ -93,7 +84,7 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 	gatewayToService := func(ctx context.Context, o client.Object) []reconcile.Request {
 		var services corev1.ServiceList
 		listOpts := []client.ListOption{
-			client.MatchingLabels{gatewayNameLabelKey: o.GetName()},
+			client.MatchingLabels{operatorcontroller.GatewayNameLabelKey: o.GetName()},
 			client.InNamespace(config.OperandNamespace),
 		}
 		requests := []reconcile.Request{}
@@ -174,15 +165,15 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		return reconcile.Result{}, err
 	}
 
-	if len(service.Labels[gatewayNameLabelKey]) == 0 {
-		log.Info("service does not have a label with the expected key; reconciliation will be skipped", "request", request, "labelKey", gatewayNameLabelKey)
+	if len(service.Labels[operatorcontroller.GatewayNameLabelKey]) == 0 {
+		log.Info("service does not have a label with the expected key; reconciliation will be skipped", "request", request, "labelKey", operatorcontroller.GatewayNameLabelKey)
 		return reconcile.Result{}, nil
 	}
 
 	var gateway gatewayapiv1.Gateway
 	gatewayName := types.NamespacedName{
 		Namespace: service.Namespace,
-		Name:      service.Labels[gatewayNameLabelKey],
+		Name:      service.Labels[operatorcontroller.GatewayNameLabelKey],
 	}
 	if err := r.cache.Get(ctx, gatewayName, &gateway); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -236,7 +227,7 @@ func getGatewayHostnames(gateway *gatewayapiv1.Gateway) sets.String {
 // returns a list of any errors that result from ensuring those DNSRecord CRs.
 func (r *reconciler) ensureDNSRecordsForGateway(ctx context.Context, gateway *gatewayapiv1.Gateway, service *corev1.Service, domains []string, infraConfig *configv1.Infrastructure, dnsConfig *configv1.DNS) []error {
 	labels := map[string]string{
-		gatewayNameLabelKey: gateway.Name,
+		operatorcontroller.GatewayNameLabelKey: gateway.Name,
 	}
 	for k, v := range service.Labels {
 		labels[k] = v
@@ -267,7 +258,7 @@ func (r *reconciler) ensureDNSRecordsForGateway(ctx context.Context, gateway *ga
 // that result from deleting those DNSRecord CRs.
 func (r *reconciler) deleteStaleDNSRecordsForGateway(ctx context.Context, gateway *gatewayapiv1.Gateway, service *corev1.Service, domains sets.String) []error {
 	listOpts := []client.ListOption{
-		client.MatchingLabels{gatewayNameLabelKey: gateway.Name},
+		client.MatchingLabels{operatorcontroller.GatewayNameLabelKey: gateway.Name},
 		client.InNamespace(r.config.OperandNamespace),
 	}
 	var dnsrecords iov1.DNSRecordList
