@@ -152,29 +152,8 @@ func NewUnmanaged(mgr manager.Manager) (controller.Controller, error) {
 
 	// Watch gateways so that we update labels when a gateway is updated or
 	// something modifies or removes the label.
-	gatewayHasOurController := func(o client.Object) bool {
-		gateway := o.(*gatewayapiv1.Gateway)
+	gatewayHasOurController := operatorcontroller.GatewayHasOurController(log, reconciler.cache)
 
-		if gateway.Labels[key] == value {
-			return false
-		}
-
-		gatewayClassName := types.NamespacedName{
-			Namespace: "", // Gatewayclasses are cluster-scoped.
-			Name:      string(gateway.Spec.GatewayClassName),
-		}
-		var gatewayClass gatewayapiv1.GatewayClass
-		if err := reconciler.cache.Get(context.Background(), gatewayClassName, &gatewayClass); err != nil {
-			log.Error(err, "failed to get gatewayclass for gateway", "gateway", gateway.Name, "namespace", gateway.Namespace, "gatewayclass", gatewayClassName.Name)
-			return false
-		}
-
-		if gatewayClass.Spec.ControllerName == operatorcontroller.OpenShiftGatewayClassControllerName {
-			return true
-		}
-
-		return false
-	}
 	gatewayPredicate := predicate.Funcs{
 		CreateFunc: func(e event.CreateEvent) bool {
 			return gatewayHasOurController(e.Object)
