@@ -169,6 +169,14 @@ rules:
   - '*'
 
 - apiGroups:
+  - gateway.networking.k8s.io
+  resources:
+  - gateways/status
+  verbs:
+  - patch
+  - update
+
+- apiGroups:
   - apiextensions.k8s.io
   resources:
   - customresourcedefinitions
