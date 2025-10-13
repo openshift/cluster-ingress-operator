@@ -78,6 +78,15 @@ const (
 	IstioRevLabelKey = "istio.io/rev"
 
 	GatewayClassIndexFieldName = "gatewayclassController"
+
+	// GatewayNameLabelKey is the key of a label that Istio adds to
+	// deployments that it creates for gateways that it manages.  Istio uses
+	// this label in the selector of any service that it creates for a
+	// gateway.
+	GatewayNameLabelKey = "gateway.networking.k8s.io/gateway-name"
+	// managedByIstioLabelKey is the key of a label that Istio adds to
+	// resources that it manages.
+	ManagedByIstioLabelKey = "gateway.istio.io/managed"
 )
 
 // IngressClusterOperatorName returns the namespaced name of the ClusterOperator
