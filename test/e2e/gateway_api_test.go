@@ -6,6 +6,7 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"math/rand/v2"
 	"net/netip"
 	"strings"
 	"testing"
@@ -17,6 +18,10 @@ import (
 	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	util "github.com/openshift/cluster-ingress-operator/pkg/util"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	condutils "k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/fields"
 
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -104,6 +109,7 @@ func TestGatewayAPI(t *testing.T) {
 		t.Run("testGatewayAPIDNSListenerWithNoHostname", testGatewayAPIDNSListenerWithNoHostname)
 		t.Run("testGatewayAPIInfrastructureAnnotations", testGatewayAPIInfrastructureAnnotations)
 		t.Run("testGatewayAPIInternalLoadBalancer", testGatewayAPIInternalLoadBalancer)
+		t.Run("testGatewayOpenshiftConditions", testGatewayOpenshiftConditions)
 
 	} else {
 		t.Log("Gateway API Controller not enabled, skipping controller tests")
@@ -593,7 +599,381 @@ func testGatewayAPIDNS(t *testing.T) {
 			}
 		})
 	}
+}
 
+// This e2e test will verify the following scenarios:
+// 1 - Creating a gateway with the right base domain but outside of `openshift-ingress`
+// namespace will not generate a DNSRecord nor add conditions to the gateway
+// 2 - Creating a Gateway on `openshift-ingress` namespace using the wrong base
+// domain should add DNS conditions that there are no managed zones for this case
+// 3 - Creating a Gateway with the right base domain on `openshift-ingress` will
+// add the conditions on the gateway reflecting the right status of LoadBalancer and DNSRecord
+// 4 - Bumping some label on the Gateway should trigger a reconciliation that will
+// bump the generation of conditions
+// 5 - Adding a label on DNSRecord and/or Service will trigger a reconciliation
+// that should be verified by a newly recorded event
+func testGatewayOpenshiftConditions(t *testing.T) {
+	if infraConfig.Status.PlatformStatus == nil {
+		t.Skip("test skipped on nil platform")
+	}
+
+	if infraConfig.Status.PlatformStatus.Type != configv1.AWSPlatformType && infraConfig.Status.PlatformStatus.Type != configv1.GCPPlatformType {
+		t.Skip("test skipped on non-aws or non-gcp platform")
+	}
+
+	domain := "gwcondtest." + dnsConfig.Spec.BaseDomain
+
+	gatewayClass, err := createGatewayClass(t, operatorcontroller.OpenShiftDefaultGatewayClassName, operatorcontroller.OpenShiftGatewayClassControllerName)
+	require.NoError(t, err, "failed to create gatewayclass")
+
+	t.Run("creating a new gateway outside of 'openshift-ingress' namespace should not get openshift conditions", func(t *testing.T) {
+		rnd := rand.IntN(1000)
+		name := fmt.Sprintf("gw-test-%d", rnd)
+		testDomain := fmt.Sprintf("some-%d.%s", rnd, domain)
+		gateway, err := createGateway(gatewayClass, name, "default", testDomain)
+		require.NoError(t, err, "failed to create gateway", "name", name)
+		t.Cleanup(func() {
+			require.NoError(t, client.IgnoreNotFound(kclient.Delete(context.TODO(), gateway)), "failed to clean test gateway", "name", name)
+		})
+
+		gateway, err = assertGatewaySuccessful(t, "default", name)
+		require.NoError(t, err, "failed waiting gateway to be ready")
+		// Give some time to guarantee our controller will watch the change but ignore it
+		time.Sleep(time.Second)
+
+		// Get gateway a 2nd time to check the conditions
+		gateway, err = assertGatewaySuccessful(t, "default", name)
+		require.NoError(t, err, "failed waiting gateway to have conditions")
+		require.Nil(t, condutils.FindStatusCondition(gateway.Status.Conditions, "DNSManaged"), "condition should not be present")
+		require.Nil(t, condutils.FindStatusCondition(gateway.Status.Conditions, "DNSReady"), "condition should not be present")
+		require.Nil(t, condutils.FindStatusCondition(gateway.Status.Conditions, "LoadBalancerManaged"), "condition should not be present")
+		require.Nil(t, condutils.FindStatusCondition(gateway.Status.Conditions, "LoadBalancerReady"), "condition should not be present")
+	})
+
+	t.Run("creating a new gateway with the wrong base domain should add openshift conditions reflecting the failure", func(t *testing.T) {
+		rnd := rand.IntN(1000)
+		name := fmt.Sprintf("gw-test-%d", rnd)
+		testDomain := fmt.Sprintf("some-%d.not.something.managed.tld", rnd)
+		gateway, err := createGateway(gatewayClass, name, operatorcontroller.DefaultOperandNamespace, testDomain)
+		require.NoError(t, err, "failed to create gateway", "name", name)
+		t.Cleanup(func() {
+			require.NoError(t, client.IgnoreNotFound(kclient.Delete(context.TODO(), gateway)), "failed to clean test gateway", "name", name)
+		})
+
+		gateway, err = assertGatewaySuccessful(t, operatorcontroller.DefaultOperandNamespace, name)
+		require.NoError(t, err, "failed waiting gateway to be ready")
+
+		assert.Eventuallyf(t, func() bool {
+			gw := &gatewayapiv1.Gateway{}
+			nsName := types.NamespacedName{Namespace: operatorcontroller.DefaultOperandNamespace, Name: name}
+			if err := kclient.Get(context.Background(), nsName, gw); err != nil {
+				t.Logf("Failed to get gateway %v: %v; retrying...", nsName, err)
+				return false
+			}
+
+			if condutils.IsStatusConditionTrue(gw.Status.Conditions, "DNSManaged") &&
+				condutils.IsStatusConditionPresentAndEqual(gw.Status.Conditions, "DNSReady", metav1.ConditionUnknown) &&
+				condutils.IsStatusConditionTrue(gw.Status.Conditions, "LoadBalancerManaged") &&
+				condutils.IsStatusConditionTrue(gw.Status.Conditions, "LoadBalancerReady") {
+
+				return true
+			}
+			t.Logf("conditions are not yet the expected: %v, retrying...", gw.Status.Conditions)
+			return false
+		}, 30*time.Second, 2*time.Second, "error waiting for openshift conditions to be present on Gateway")
+	})
+
+	/*
+	   {DNSManaged True 1 2025-10-15 22:22:53 +0000 UTC Normal DNS management is supported and zones are specified in the cluster DNS config.} {DNSReady True 1 2025-10-15 22:23:20 +0000 UTC NoFailedZones The record is provisioned in all reported zones.} {LoadBalancerManaged True 1 2025-10-15 22:22:53 +0000 UTC WantedByEndpointPublishingStrategy The endpoint publishing strategy supports a managed load balancer} {LoadBalancerReady True 1 2025-10-15 22:23:18 +0000 UTC LoadBalancerProvisioned The LoadBalancer service is provisioned}]*/
+
+	t.Run("creating a new gateway with the right base domain", func(t *testing.T) {
+		rnd := rand.IntN(1000)
+		name := fmt.Sprintf("gw-test-%d", rnd)
+		testDomain := fmt.Sprintf("some-%d.%s", rnd, domain)
+		gateway, err := createGateway(gatewayClass, name, operatorcontroller.DefaultOperandNamespace, testDomain)
+		require.NoError(t, err, "failed to create gateway", "name", name)
+		t.Cleanup(func() {
+			require.NoError(t, client.IgnoreNotFound(kclient.Delete(context.TODO(), gateway)), "failed to clean test gateway", "name", name)
+		})
+
+		gateway, err = assertGatewaySuccessful(t, operatorcontroller.DefaultOperandNamespace, name)
+		require.NoError(t, err, "failed waiting gateway to be ready")
+
+		err = assertExpectedDNSRecords(t, map[expectedDnsRecord]bool{
+			{dnsName: "*." + testDomain + ".", gatewayName: name}: true})
+
+		assert.NoError(t, err, "dnsrecord never got ready")
+
+		t.Run("should add openshift conditions", func(t *testing.T) {
+			assert.Eventuallyf(t, func() bool {
+				gw := &gatewayapiv1.Gateway{}
+				nsName := types.NamespacedName{Namespace: operatorcontroller.DefaultOperandNamespace, Name: name}
+				if err := kclient.Get(context.Background(), nsName, gw); err != nil {
+					t.Logf("Failed to get gateway %v: %v; retrying...", nsName, err)
+					return false
+				}
+
+				if condutils.IsStatusConditionTrue(gw.Status.Conditions, "DNSManaged") &&
+					condutils.IsStatusConditionTrue(gw.Status.Conditions, "DNSReady") &&
+					condutils.IsStatusConditionTrue(gw.Status.Conditions, "LoadBalancerManaged") &&
+					condutils.IsStatusConditionTrue(gw.Status.Conditions, "LoadBalancerReady") {
+
+					return true
+				}
+				t.Logf("conditions are not yet the expected: %v, retrying...", gw.Status.Conditions)
+				return false
+			}, 30*time.Second, 2*time.Second, "error waiting for openshift conditions to be present on Gateway")
+
+			// Check also for the existing event
+			assert.Eventually(t, func() bool {
+				events, err := getMatchingEventsFromGateway(t, kclient, gateway, "Normal", "AddedConditions")
+				if err != nil {
+					t.Logf("error fetching the events from namespace: %s; retrying...", err)
+					return false
+				}
+				t.Logf("events found: (%d): %+v", len(events.Items), events.Items)
+				return len(events.Items) > 0
+			}, 30*time.Second, 2*time.Second, "error fetching matching resource to add conditions")
+		})
+
+		t.Run("should bump openshift conditions when the gateway is changed", func(t *testing.T) {
+			// Try to add a new infrastructure label, forcing the generation to bump
+			originalGateway := &gatewayapiv1.Gateway{}
+			assert.Eventually(t, func() bool {
+				gw := &gatewayapiv1.Gateway{}
+				nsName := types.NamespacedName{Namespace: operatorcontroller.DefaultOperandNamespace, Name: name}
+				if err := kclient.Get(context.Background(), nsName, gw); err != nil {
+					t.Logf("Failed to get gateway %v: %v; retrying...", nsName, err)
+					return false
+				}
+				originalGateway = gw.DeepCopy()
+				if gw.Spec.Infrastructure == nil {
+					gw.Spec.Infrastructure = &gatewayapiv1.GatewayInfrastructure{}
+				}
+				if gw.Spec.Infrastructure.Labels == nil {
+					gw.Spec.Infrastructure.Labels = make(map[gatewayapiv1.LabelKey]gatewayapiv1.LabelValue)
+				}
+
+				gw.Spec.Infrastructure.Labels["something"] = "somelabel"
+
+				if err := kclient.Patch(context.Background(), gw, client.MergeFrom(originalGateway)); err != nil {
+					t.Logf("failed to patch gateway %v: %v; retrying...", nsName, err)
+					return false
+				}
+				return true
+			}, 30*time.Second, 2*time.Second, "timeout waiting to patch the gateway")
+
+			gw := &gatewayapiv1.Gateway{}
+			// Get the Gateway and check if conditions are there, and if their generation are different from the originalGateway value
+			assert.Eventually(t, func() bool {
+				nsName := types.NamespacedName{Namespace: operatorcontroller.DefaultOperandNamespace, Name: name}
+				if err := kclient.Get(context.Background(), nsName, gw); err != nil {
+					t.Logf("Failed to get gateway %v: %v; retrying...", nsName, err)
+					return false
+				}
+
+				dnsManaged := condutils.FindStatusCondition(gw.Status.Conditions, "DNSManaged")
+				dnsReady := condutils.FindStatusCondition(gw.Status.Conditions, "DNSReady")
+				loadBalancerManaged := condutils.FindStatusCondition(gw.Status.Conditions, "LoadBalancerManaged")
+				loadBalancerReady := condutils.FindStatusCondition(gw.Status.Conditions, "LoadBalancerReady")
+
+				// Check if all conditions are not null and have a different generation from the original one
+				// before adding the label
+				if (dnsManaged != nil && dnsManaged.ObservedGeneration != originalGateway.Generation) &&
+					(dnsReady != nil && dnsReady.ObservedGeneration != originalGateway.Generation) &&
+					(loadBalancerManaged != nil && loadBalancerManaged.ObservedGeneration != originalGateway.Generation) &&
+					(loadBalancerReady != nil && loadBalancerReady.ObservedGeneration != originalGateway.Generation) {
+					return true
+				}
+
+				t.Logf("conditions are not yet the expected: %v, retrying...", gw.Status.Conditions)
+				return false
+			}, 30*time.Second, 2*time.Second, "error waiting for openshift conditions to be present on Gateway")
+			// We expect exactly 6 conditions. If we get more than it, Istio is adding
+			// more conditions and we need to be aware that Gateway API status.conditons has a maxItems of 8
+			assert.Len(t, gw.Status.Conditions, 6)
+			// We expect an event to happen, so try to get this event to guarantee it was properly added
+			assert.Eventually(t, func() bool {
+				events, err := getMatchingEventsFromGateway(t, kclient, gw, "Normal", "AddedConditions")
+				if err != nil {
+					t.Logf("error fetching the events from namespace: %s; retrying...", err)
+					return false
+				}
+				t.Logf("events found: (%d): %+v", len(events.Items), events.Items)
+				return len(events.Items) > 0
+			}, 30*time.Second, 5*time.Second, "error fetching matching resource to add conditions")
+		})
+
+		// This test will delete the Gateway service. This should kick a new reconciliation
+		// from Istio to recreate the services, and the condition "Programmed" should have
+		// a different lastTransitionTime before the service being deleted.
+		// But the condition "DNSManaged" and "LoadBalancerManaged"
+		// should have the original timestamp, meaning they weren't changed
+		t.Run("should not replace openshift conditions when Istio reconciles the gateway", func(t *testing.T) {
+			originalGateway := &gatewayapiv1.Gateway{}
+			nsName := types.NamespacedName{Namespace: operatorcontroller.DefaultOperandNamespace, Name: name}
+			require.Eventually(t, func() bool {
+				if err := kclient.Get(context.Background(), nsName, originalGateway); err != nil {
+					t.Logf("Failed to get gateway %v: %v; retrying...", nsName, err)
+					return false
+				}
+				return true
+			}, 30*time.Second, 2*time.Second)
+
+			// These lastTransitionTime should not change
+			// Also do a sanity check that they are true / ready
+			originalDNSManagedCondition := condutils.FindStatusCondition(originalGateway.Status.Conditions, "DNSManaged")
+			require.NotNil(t, originalDNSManagedCondition)
+			require.Equal(t, metav1.ConditionTrue, originalDNSManagedCondition.Status)
+			originalLoadBalancerManagedCondition := condutils.FindStatusCondition(originalGateway.Status.Conditions, "LoadBalancerManaged")
+			require.NotNil(t, originalLoadBalancerManagedCondition)
+			require.Equal(t, metav1.ConditionTrue, originalLoadBalancerManagedCondition.Status)
+
+			// These lastTransitionTime should change once the service is deleted and reprovisioned
+			originalLoadBalancerReadyCondition := condutils.FindStatusCondition(originalGateway.Status.Conditions, "LoadBalancerReady")
+			require.NotNil(t, originalLoadBalancerReadyCondition)
+			require.Equal(t, metav1.ConditionTrue, originalLoadBalancerReadyCondition.Status)
+			originalProgrammedCondition := condutils.FindStatusCondition(originalGateway.Status.Conditions, "Programmed")
+			require.NotNil(t, originalProgrammedCondition)
+			require.Equal(t, metav1.ConditionTrue, originalProgrammedCondition.Status)
+
+			t.Run("deleting a service managed by Istio", func(t *testing.T) {
+				ctx := context.Background()
+				svcList := &corev1.ServiceList{}
+				assert.Eventually(t, func() bool {
+					if err := kclient.List(ctx, svcList,
+						client.InNamespace(operatorcontroller.DefaultOperandNamespace),
+						client.MatchingLabels{operatorcontroller.GatewayNameLabelKey: originalGateway.GetName()},
+					); err != nil {
+						t.Logf("Failed to list services attached to Gateway %s; retrying...: %s", originalGateway.GetName(), err)
+						return false
+					}
+					return true
+				}, 30*time.Second, 2*time.Second)
+
+				require.Len(t, svcList.Items, 1)
+				svc := svcList.Items[0]
+
+				// Delete the service
+				assert.Eventually(t, func() bool {
+					if err := kclient.Delete(ctx, &svc); client.IgnoreNotFound(err) != nil {
+						t.Logf("Failed to delete service %s attached to Gateway %s; retrying...: %s", svc.GetName(), originalGateway.GetName(), err)
+						return false
+					}
+					return true
+				}, 30*time.Second, time.Second)
+			})
+
+			currentGateway := &gatewayapiv1.Gateway{}
+			var currentDNSManagedCondition, currentLoadBalancerManagedCondition *metav1.Condition
+			t.Run("lastTransitionTime should change for some conditions and not for others", func(t *testing.T) {
+				assert.Eventually(t, func() bool {
+
+					nsName := types.NamespacedName{Namespace: operatorcontroller.DefaultOperandNamespace, Name: name}
+
+					if err := kclient.Get(context.Background(), nsName, currentGateway); err != nil {
+						t.Logf("Failed to get current gateway %v: %v; retrying...", nsName, err)
+						return false
+					}
+
+					currentDNSManagedCondition = condutils.FindStatusCondition(currentGateway.Status.Conditions, "DNSManaged")
+					currentLoadBalancerManagedCondition = condutils.FindStatusCondition(currentGateway.Status.Conditions, "LoadBalancerManaged")
+					currentLoadBalancerReadyCondition := condutils.FindStatusCondition(currentGateway.Status.Conditions, "LoadBalancerReady")
+					currentProgrammedCondition := condutils.FindStatusCondition(currentGateway.Status.Conditions, "Programmed")
+
+					// Expect conditions to be ready
+					if (currentDNSManagedCondition == nil || currentDNSManagedCondition.Status != metav1.ConditionTrue) ||
+						(currentLoadBalancerManagedCondition == nil || currentLoadBalancerManagedCondition.Status != metav1.ConditionTrue) ||
+						(currentLoadBalancerReadyCondition == nil || currentLoadBalancerReadyCondition.Status != metav1.ConditionTrue) ||
+						(currentProgrammedCondition == nil || currentProgrammedCondition.Status != metav1.ConditionTrue) {
+
+						t.Logf("conditions on gateway %s are not ready yet: %+v", currentGateway.GetName(), currentGateway.Status.Conditions)
+						return false
+					}
+
+					// Expect LoadBalancerReady and Programmed condition to have a new transition time
+					if !currentLoadBalancerReadyCondition.LastTransitionTime.After(originalLoadBalancerReadyCondition.LastTransitionTime.Time) ||
+						!currentProgrammedCondition.LastTransitionTime.After(originalProgrammedCondition.LastTransitionTime.Time) {
+						t.Logf("conditions on gateway %s didn't changed yet: %+v", currentGateway.GetName(), currentGateway.Status.Conditions)
+						return false
+					}
+
+					return true
+				}, 3*time.Minute, 3*time.Second)
+			})
+			// After conditions are bumped, the original ones should not change
+			assert.Equal(t, originalDNSManagedCondition.LastTransitionTime, currentDNSManagedCondition.LastTransitionTime, "the DNSManaged condition LastTransitionTime should not change")
+			assert.Equal(t, originalLoadBalancerManagedCondition.LastTransitionTime, currentLoadBalancerManagedCondition.LastTransitionTime, "the LoadBalancerManaged condition LastTransitionTime should not change")
+		})
+
+		// This test verifies if creating a 2nd Gateway using the same domain of the 1st one returns
+		// all of the conditions as Ready.
+		// This test should be changed and fixed once https://github.com/openshift/cluster-ingress-operator/pull/1229
+		// is merged, as this will become an unsupported scenario (2 gateways with a conflicting DNS)
+		t.Run("should not conflict with a second Gateway created with the same domain", func(t *testing.T) {
+			dupName := gateway.GetName() + "-dup"
+			dupGateway, err := createGateway(gatewayClass, dupName, operatorcontroller.DefaultOperandNamespace, testDomain)
+			require.NoError(t, err, "failed to create gateway", "name", name)
+			t.Cleanup(func() {
+				require.NoError(t, client.IgnoreNotFound(kclient.Delete(context.TODO(), dupGateway)), "failed to clean duplicated test gateway", "name", name)
+			})
+			assert.Eventually(t, func() bool {
+				current := &gatewayapiv1.Gateway{}
+				nsName := types.NamespacedName{Namespace: operatorcontroller.DefaultOperandNamespace, Name: name}
+
+				if err := kclient.Get(context.Background(), nsName, current); err != nil {
+					t.Logf("Failed to get current gateway %v: %v; retrying...", nsName, err)
+					return false
+				}
+				if !condutils.IsStatusConditionTrue(current.Status.Conditions, "DNSManaged") ||
+					!condutils.IsStatusConditionTrue(current.Status.Conditions, "DNSReady") ||
+					!condutils.IsStatusConditionTrue(current.Status.Conditions, "LoadBalancerManaged") ||
+					!condutils.IsStatusConditionTrue(current.Status.Conditions, "LoadBalancerReady") {
+					t.Logf("current gateway %v does not have the right conditions yet %v; retrying...", nsName, err)
+					return false
+				}
+
+				duplicate := &gatewayapiv1.Gateway{}
+				duplicate.SetName(dupName)
+				duplicate.SetNamespace(dupGateway.Namespace)
+				if err := kclient.Get(context.Background(), client.ObjectKeyFromObject(duplicate), duplicate); err != nil {
+					t.Logf("Failed to get current gateway %v: %v; retrying...", nsName, err)
+					return false
+				}
+
+				// This should be false once the duplicate DNSRecord PR is merged
+				if !condutils.IsStatusConditionTrue(current.Status.Conditions, "DNSManaged") ||
+					!condutils.IsStatusConditionTrue(current.Status.Conditions, "DNSReady") ||
+					!condutils.IsStatusConditionTrue(current.Status.Conditions, "LoadBalancerManaged") ||
+					!condutils.IsStatusConditionTrue(current.Status.Conditions, "LoadBalancerReady") {
+					t.Logf("duplicate gateway %v does not have the right conditions yet %v; retrying...", nsName, err)
+					return false
+				}
+
+				return true
+			}, 3*time.Minute, 3*time.Second)
+		})
+
+	})
+}
+
+func getMatchingEventsFromGateway(t *testing.T, kclient client.Reader, gw *gatewayapiv1.Gateway, eventType, reason string) (*corev1.EventList, error) {
+	t.Helper()
+	operandEvents := &corev1.EventList{}
+	fieldSelector := fields.Set{
+		"involvedObject.kind":      "Gateway",
+		"involvedObject.namespace": gw.Namespace,
+		"involvedObject.name":      gw.Name,
+		"type":                     eventType,
+		"reason":                   reason,
+	}
+
+	t.Logf("using field selector: %+v", fieldSelector)
+
+	err := kclient.List(context.Background(), operandEvents,
+		client.InNamespace(operatorcontroller.DefaultOperandNamespace),
+		client.MatchingFieldsSelector{Selector: fields.SelectorFromSet(fieldSelector)})
+	return operandEvents, err
 }
 
 func testGatewayAPIDNSListenerUpdate(t *testing.T) {
