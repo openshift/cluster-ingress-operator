@@ -18,6 +18,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
+	"github.com/openshift/cluster-ingress-operator/pkg/resources/status"
 	util "github.com/openshift/cluster-ingress-operator/pkg/util"
 	retryable "github.com/openshift/cluster-ingress-operator/pkg/util/retryableerror"
 
@@ -1676,7 +1677,9 @@ func Test_computeLoadBalancerStatus(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			actual := computeLoadBalancerStatus(test.controller, test.service, test.events)
+			// The function was moved to another package, keeping the line here to
+			// show that no breaking change was caused
+			actual := status.ComputeLoadBalancerStatus(test.controller, test.service, test.events)
 
 			conditionsCmpOpts := []cmp.Option{
 				cmpopts.IgnoreFields(operatorv1.OperatorCondition{}, "LastTransitionTime", "Message"),
@@ -3290,7 +3293,9 @@ func Test_computeDNSStatus(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			actualConditions := computeDNSStatus(tc.controller, tc.record, tc.platformStatus, tc.dnsConfig)
+			// The function was moved to another package, keeping the line here to
+			// show that no breaking change was caused
+			actualConditions := status.ComputeDNSStatus(tc.controller, tc.record, tc.platformStatus, tc.dnsConfig)
 			opts := cmpopts.IgnoreFields(operatorv1.OperatorCondition{}, "Message", "LastTransitionTime")
 			if !cmp.Equal(actualConditions, tc.expect, opts) {
 				t.Fatalf("found diff between actual and expected operator condition:\n%s", cmp.Diff(actualConditions, tc.expect, opts))

@@ -16,6 +16,7 @@ import (
 
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	"github.com/openshift/cluster-ingress-operator/pkg/resources/status"
 	"github.com/openshift/cluster-ingress-operator/pkg/util/retryableerror"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -88,9 +89,9 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentReplicasMinAvailableCondition(deployment, pods))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentReplicasAllAvailableCondition(deployment))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentRollingOutCondition(deployment))
-	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeLoadBalancerStatus(ic, service, operandEvents)...)
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, status.ComputeLoadBalancerStatus(ic, service, operandEvents)...)
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeLoadBalancerProgressingStatus(updated, service, platformStatus))
-	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDNSStatus(ic, wildcardRecord, platformStatus, dnsConfig)...)
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, status.ComputeDNSStatus(ic, wildcardRecord, platformStatus, dnsConfig)...)
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressAvailableCondition(updated.Status.Conditions))
 	degradedCondition, err := computeIngressDegradedCondition(updated.Status.Conditions, updated.Name)
 	errs = append(errs, err)
@@ -974,74 +975,6 @@ func conditionsEqual(a, b []operatorv1.OperatorCondition) bool {
 	return cmp.Equal(a, b, conditionCmpOpts...)
 }
 
-// computeLoadBalancerStatus returns the set of current
-// LoadBalancer-prefixed conditions for the given ingress controller, which are
-// used later to determine the ingress controller's Degraded or Available status.
-func computeLoadBalancerStatus(ic *operatorv1.IngressController, service *corev1.Service, operandEvents []corev1.Event) []operatorv1.OperatorCondition {
-	// Compute the LoadBalancerManagedIngressConditionType condition
-	if ic.Status.EndpointPublishingStrategy == nil ||
-		ic.Status.EndpointPublishingStrategy.Type != operatorv1.LoadBalancerServiceStrategyType {
-		return []operatorv1.OperatorCondition{
-			{
-				Type:    operatorv1.LoadBalancerManagedIngressConditionType,
-				Status:  operatorv1.ConditionFalse,
-				Reason:  "EndpointPublishingStrategyExcludesManagedLoadBalancer",
-				Message: "The configured endpoint publishing strategy does not include a managed load balancer",
-			},
-		}
-	}
-
-	conditions := []operatorv1.OperatorCondition{}
-
-	conditions = append(conditions, operatorv1.OperatorCondition{
-		Type:    operatorv1.LoadBalancerManagedIngressConditionType,
-		Status:  operatorv1.ConditionTrue,
-		Reason:  "WantedByEndpointPublishingStrategy",
-		Message: "The endpoint publishing strategy supports a managed load balancer",
-	})
-
-	// Compute the LoadBalancerReadyIngressConditionType condition
-	switch {
-	case service == nil:
-		conditions = append(conditions, operatorv1.OperatorCondition{
-			Type:    operatorv1.LoadBalancerReadyIngressConditionType,
-			Status:  operatorv1.ConditionFalse,
-			Reason:  "ServiceNotFound",
-			Message: "The LoadBalancer service resource is missing",
-		})
-	case isProvisioned(service):
-		conditions = append(conditions, operatorv1.OperatorCondition{
-			Type:    operatorv1.LoadBalancerReadyIngressConditionType,
-			Status:  operatorv1.ConditionTrue,
-			Reason:  "LoadBalancerProvisioned",
-			Message: "The LoadBalancer service is provisioned",
-		})
-	case isPending(service):
-		reason := "LoadBalancerPending"
-		message := "The LoadBalancer service is pending"
-
-		// Try and find a more specific reason for for the pending status.
-		createFailedReason := "SyncLoadBalancerFailed"
-		failedLoadBalancerEvents := getEventsByReason(operandEvents, "service-controller", createFailedReason)
-		for _, event := range failedLoadBalancerEvents {
-			involved := event.InvolvedObject
-			if involved.Kind == "Service" && involved.Namespace == service.Namespace && involved.Name == service.Name && involved.UID == service.UID {
-				reason = "SyncLoadBalancerFailed"
-				message = fmt.Sprintf("The %s component is reporting SyncLoadBalancerFailed events like: %s\n%s",
-					event.Source.Component, event.Message, "The cloud-controller-manager logs may contain more details.")
-				break
-			}
-		}
-		conditions = append(conditions, operatorv1.OperatorCondition{
-			Type:    operatorv1.LoadBalancerReadyIngressConditionType,
-			Status:  operatorv1.ConditionFalse,
-			Reason:  reason,
-			Message: message,
-		})
-	}
-	return conditions
-}
-
 // computeLoadBalancerProgressingStatus returns the LoadBalancerProgressing
 // conditions for the given ingress controller. These conditions subsequently determine
 // the ingress controller's Progressing status.
@@ -1153,139 +1086,6 @@ func updateIngressControllerFloatingIPOpenStackStatus(ic *operatorv1.IngressCont
 		ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.OpenStack != nil {
 		ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.OpenStack.FloatingIP = getLoadBalancerIPFromService(service)
 	}
-}
-
-func isProvisioned(service *corev1.Service) bool {
-	ingresses := service.Status.LoadBalancer.Ingress
-	return len(ingresses) > 0 && (len(ingresses[0].Hostname) > 0 || len(ingresses[0].IP) > 0)
-}
-
-func isPending(service *corev1.Service) bool {
-	return !isProvisioned(service)
-}
-
-func getEventsByReason(events []corev1.Event, component, reason string) []corev1.Event {
-	var filtered []corev1.Event
-	for i := range events {
-		event := events[i]
-		if event.Source.Component == component && event.Reason == reason {
-			filtered = append(filtered, event)
-		}
-	}
-	return filtered
-}
-
-func computeDNSStatus(ic *operatorv1.IngressController, wildcardRecord *iov1.DNSRecord, status *configv1.PlatformStatus, dnsConfig *configv1.DNS) []operatorv1.OperatorCondition {
-	if dnsConfig.Spec.PublicZone == nil && dnsConfig.Spec.PrivateZone == nil {
-		return []operatorv1.OperatorCondition{
-			{
-				Type:    operatorv1.DNSManagedIngressConditionType,
-				Status:  operatorv1.ConditionFalse,
-				Reason:  "NoDNSZones",
-				Message: "No DNS zones are defined in the cluster dns config.",
-			},
-		}
-	}
-
-	if ic.Status.EndpointPublishingStrategy.Type != operatorv1.LoadBalancerServiceStrategyType {
-		return []operatorv1.OperatorCondition{
-			{
-				Type:    operatorv1.DNSManagedIngressConditionType,
-				Status:  operatorv1.ConditionFalse,
-				Reason:  "UnsupportedEndpointPublishingStrategy",
-				Message: "The endpoint publishing strategy doesn't support DNS management.",
-			},
-		}
-	}
-	var conditions []operatorv1.OperatorCondition
-	// The default value for DNSManagementPolicy is "Managed".
-	if lb := ic.Status.EndpointPublishingStrategy.LoadBalancer; lb != nil && lb.DNSManagementPolicy == operatorv1.UnmanagedLoadBalancerDNS {
-		conditions = append(conditions, operatorv1.OperatorCondition{
-			Type:    operatorv1.DNSManagedIngressConditionType,
-			Status:  operatorv1.ConditionFalse,
-			Reason:  "UnmanagedLoadBalancerDNS",
-			Message: "The DNS management policy is set to Unmanaged.",
-		})
-	} else {
-		conditions = append(conditions, operatorv1.OperatorCondition{
-			Type:    operatorv1.DNSManagedIngressConditionType,
-			Status:  operatorv1.ConditionTrue,
-			Reason:  "Normal",
-			Message: "DNS management is supported and zones are specified in the cluster DNS config.",
-		})
-	}
-
-	switch {
-	case wildcardRecord == nil:
-		conditions = append(conditions, operatorv1.OperatorCondition{
-			Type:    operatorv1.DNSReadyIngressConditionType,
-			Status:  operatorv1.ConditionFalse,
-			Reason:  "RecordNotFound",
-			Message: "The wildcard record resource was not found.",
-		})
-	case wildcardRecord.Spec.DNSManagementPolicy == iov1.UnmanagedDNS:
-		conditions = append(conditions, operatorv1.OperatorCondition{
-			Type:    operatorv1.DNSReadyIngressConditionType,
-			Status:  operatorv1.ConditionUnknown,
-			Reason:  "UnmanagedDNS",
-			Message: "The DNS management policy is set to Unmanaged.",
-		})
-	case len(wildcardRecord.Status.Zones) == 0:
-		conditions = append(conditions, operatorv1.OperatorCondition{
-			Type:    operatorv1.DNSReadyIngressConditionType,
-			Status:  operatorv1.ConditionFalse,
-			Reason:  "NoZones",
-			Message: "The record isn't present in any zones.",
-		})
-	case len(wildcardRecord.Status.Zones) > 0:
-		var failedZones []configv1.DNSZone
-		var unknownZones []configv1.DNSZone
-		for _, zone := range wildcardRecord.Status.Zones {
-			for _, cond := range zone.Conditions {
-				if cond.Type != iov1.DNSRecordPublishedConditionType {
-					continue
-				}
-				if !checkZoneInConfig(dnsConfig, zone.DNSZone) {
-					continue
-				}
-				switch cond.Status {
-				case string(operatorv1.ConditionFalse):
-					// check to see if the zone is in the dnsConfig.Spec
-					// fix:BZ1942657 - relates to status changes when updating DNS PrivateZone config
-					failedZones = append(failedZones, zone.DNSZone)
-				case string(operatorv1.ConditionUnknown):
-					unknownZones = append(unknownZones, zone.DNSZone)
-				}
-			}
-		}
-		if len(failedZones) != 0 {
-			// TODO: Add failed condition reasons
-			conditions = append(conditions, operatorv1.OperatorCondition{
-				Type:    operatorv1.DNSReadyIngressConditionType,
-				Status:  operatorv1.ConditionFalse,
-				Reason:  "FailedZones",
-				Message: fmt.Sprintf("The record failed to provision in some zones: %v", failedZones),
-			})
-		} else if len(unknownZones) != 0 {
-			// This condition is an edge case where DNSManaged=True but
-			// there was an internal error during publishing record.
-			conditions = append(conditions, operatorv1.OperatorCondition{
-				Type:    operatorv1.DNSReadyIngressConditionType,
-				Status:  operatorv1.ConditionFalse,
-				Reason:  "UnknownZones",
-				Message: fmt.Sprintf("Provisioning of the record is in an unknown state in some zones: %v", unknownZones),
-			})
-		} else {
-			conditions = append(conditions, operatorv1.OperatorCondition{
-				Type:    operatorv1.DNSReadyIngressConditionType,
-				Status:  operatorv1.ConditionTrue,
-				Reason:  "NoFailedZones",
-				Message: "The record is provisioned in all reported zones.",
-			})
-		}
-	}
-
-	return conditions
 }
 
 // checkZoneInConfig - private utility to check for a zone in the current config
