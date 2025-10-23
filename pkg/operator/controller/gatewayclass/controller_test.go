@@ -23,7 +23,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	testutil "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/test/util"
 )
 
@@ -69,7 +68,7 @@ func Test_Reconcile(t *testing.T) {
 						},
 						IstioNamespace:    ptr.To("openshift-ingress"),
 						PriorityClassName: ptr.To("system-cluster-critical"),
-						TrustBundleName:   ptr.To(controller.OpenShiftGatewayCARootCertName),
+						TrustBundleName:   ptr.To("openshift-gw-ca-root-cert"),
 					},
 					Pilot: &sailv1.PilotConfig{
 						Cni: &sailv1.CNIUsageConfig{
