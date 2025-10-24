@@ -281,9 +281,9 @@ type IngressControllerSpec struct {
 	//     case HAProxy handles it in the old process and closes
 	//     the connection after sending the response.
 	//
-	//   - HAProxy's `timeout http-keep-alive` duration expires
-	//     (300 seconds in OpenShift's configuration, not
-	//     configurable).
+	//   - HAProxy's `timeout http-keep-alive` duration expires.
+	//     By default this is 300 seconds, but it can be changed
+	//     using httpKeepAliveTimeout tuning option.
 	//
 	//   - The client's keep-alive timeout expires, causing the
 	//     client to close the connection.
@@ -1401,7 +1401,7 @@ type IngressControllerCaptureHTTPCookieUnion struct {
 	//
 	// +unionDiscriminator
 	// +required
-	MatchType CookieMatchType `json:"matchType,omitempty"`
+	MatchType CookieMatchType `json:"matchType"`
 
 	// name specifies a cookie name.  Its value must be a valid HTTP cookie
 	// name as defined in RFC 6265 section 4.1.
@@ -1554,7 +1554,6 @@ type IngressControllerHTTPUniqueIdHeaderPolicy struct {
 // (for example, "X-Forwarded-For") in the desired capitalization.  The value
 // must be a valid HTTP header name as defined in RFC 2616 section 4.2.
 //
-// +optional
 // +kubebuilder:validation:Pattern="^$|^[-!#$%&'*+.0-9A-Z^_`a-z|~]+$"
 // +kubebuilder:validation:MinLength=0
 // +kubebuilder:validation:MaxLength=1024
@@ -1871,6 +1870,36 @@ type IngressControllerTuningOptions struct {
 	// +optional
 	ConnectTimeout *metav1.Duration `json:"connectTimeout,omitempty"`
 
+	// httpKeepAliveTimeout defines the maximum allowed time to wait for
+	// a new HTTP request to appear on a connection from the client to the router.
+	//
+	// This field expects an unsigned duration string of a decimal number, with optional
+	// fraction and a unit suffix, e.g. "300ms", "1.5s" or "2m45s".
+	// Valid time units are "ms", "s", "m".
+	// The allowed range is from 1 millisecond to 15 minutes.
+	//
+	// When omitted, this means the user has no opinion and the platform is left
+	// to choose a reasonable default. This default is subject to change over time.
+	// The current default is 300s.
+	//
+	// Low values (tens of milliseconds or less) can cause clients to close and reopen connections
+	// for each request, leading to reduced connection sharing.
+	// For HTTP/2, special care should be taken with low values.
+	// A few seconds is a reasonable starting point to avoid holding idle connections open
+	// while still allowing subsequent requests to reuse the connection.
+	//
+	// High values (minutes or more) favor connection reuse but may cause idle
+	// connections to linger longer.
+	//
+	// +kubebuilder:validation:Type:=string
+	// +kubebuilder:validation:XValidation:rule="self.matches('^([0-9]+(\\\\.[0-9]+)?(ms|s|m))+$')",message="httpKeepAliveTimeout must be a valid duration string composed of an unsigned integer value, optionally followed by a decimal fraction and a unit suffix (ms, s, m)"
+	// +kubebuilder:validation:XValidation:rule="!self.matches('^([0-9]+(\\\\.[0-9]+)?(ms|s|m))+$') || duration(self) <= duration('15m')",message="httpKeepAliveTimeout must be less than or equal to 15 minutes"
+	// +kubebuilder:validation:XValidation:rule="!self.matches('^([0-9]+(\\\\.[0-9]+)?(ms|s|m))+$') || duration(self) >= duration('1ms')",message="httpKeepAliveTimeout must be greater than or equal to 1 millisecond"
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=16
+	// +optional
+	HTTPKeepAliveTimeout *metav1.Duration `json:"httpKeepAliveTimeout,omitempty"`
+
 	// tlsInspectDelay defines how long the router can hold data to find a
 	// matching route.
 	//
@@ -2021,17 +2050,21 @@ var (
 type IngressControllerStatus struct {
 	// availableReplicas is number of observed available replicas according to the
 	// ingress controller deployment.
+	// +optional
 	AvailableReplicas int32 `json:"availableReplicas"`
 
 	// selector is a label selector, in string format, for ingress controller pods
 	// corresponding to the IngressController. The number of matching pods should
 	// equal the value of availableReplicas.
+	// +optional
 	Selector string `json:"selector"`
 
 	// domain is the actual domain in use.
+	// +optional
 	Domain string `json:"domain"`
 
 	// endpointPublishingStrategy is the actual strategy in use.
+	// +optional
 	EndpointPublishingStrategy *EndpointPublishingStrategy `json:"endpointPublishingStrategy,omitempty"`
 
 	// conditions is a list of conditions and their status.
@@ -2068,6 +2101,7 @@ type IngressControllerStatus struct {
 	//   - False if any of those conditions are unsatisfied.
 	// +listType=map
 	// +listMapKey=type
+	// +optional
 	Conditions []OperatorCondition `json:"conditions,omitempty"`
 
 	// tlsProfile is the TLS connection configuration that is in effect.

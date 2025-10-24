@@ -37,9 +37,9 @@ require (
 	google.golang.org/grpc v1.72.0
 	gopkg.in/fsnotify.v1 v1.4.7
 	gopkg.in/yaml.v2 v2.4.0
-	k8s.io/api v0.33.0
+	k8s.io/api v0.33.2
 	k8s.io/apiextensions-apiserver v0.33.0
-	k8s.io/apimachinery v0.33.0
+	k8s.io/apimachinery v0.33.2
 	k8s.io/apiserver v0.33.0
 	k8s.io/client-go v12.0.0+incompatible
 	k8s.io/utils v0.0.0-20250502105355-0f33e8f1c979
@@ -158,3 +158,5 @@ require (
 replace github.com/imdario/mergo => github.com/imdario/mergo v0.3.5
 
 replace k8s.io/client-go => k8s.io/client-go v0.32.1
+
+replace github.com/openshift/api => github.com/alebedev87/api v0.0.0-20251127191356-47904179fe48
