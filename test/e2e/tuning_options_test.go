@@ -45,17 +45,20 @@ func TestHAProxyTimeouts(t *testing.T) {
 		tunnelTimeoutOutput    = "93m"
 		tlsInspectDelayInput   = 720 * time.Hour
 		tlsInspectDelayOutput  = "2147483647ms" // 720h is greater than the maximum timeout, so it should get clipped to max
+		httpKeepAliveInput     = 33 * time.Second
+		httpKeepAliveOutput    = "33s"
 	)
 	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "haproxy-timeout"}
 	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
 	ic := newPrivateController(icName, domain)
 	ic.Spec.TuningOptions = operatorv1.IngressControllerTuningOptions{
-		ClientTimeout:    &metav1.Duration{Duration: clientTimeoutInput},
-		ClientFinTimeout: &metav1.Duration{Duration: clientFinTimeoutInput},
-		ServerTimeout:    &metav1.Duration{Duration: serverTimeoutInput},
-		ServerFinTimeout: &metav1.Duration{Duration: serverFinTimeoutInput},
-		TunnelTimeout:    &metav1.Duration{Duration: tunnelTimeoutInput},
-		TLSInspectDelay:  &metav1.Duration{Duration: tlsInspectDelayInput},
+		ClientTimeout:        &metav1.Duration{Duration: clientTimeoutInput},
+		ClientFinTimeout:     &metav1.Duration{Duration: clientFinTimeoutInput},
+		ServerTimeout:        &metav1.Duration{Duration: serverTimeoutInput},
+		ServerFinTimeout:     &metav1.Duration{Duration: serverFinTimeoutInput},
+		TunnelTimeout:        &metav1.Duration{Duration: tunnelTimeoutInput},
+		TLSInspectDelay:      &metav1.Duration{Duration: tlsInspectDelayInput},
+		HTTPKeepAliveTimeout: &metav1.Duration{Duration: httpKeepAliveInput},
 	}
 	if err := kclient.Create(context.TODO(), ic); err != nil {
 		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
@@ -99,6 +102,10 @@ func TestHAProxyTimeouts(t *testing.T) {
 		case "ROUTER_INSPECT_DELAY":
 			if envVar.Value != tlsInspectDelayOutput {
 				t.Errorf("expected %s = %q, got %q", envVar.Name, tlsInspectDelayOutput, envVar.Value)
+			}
+		case "ROUTER_SLOWLORIS_HTTP_KEEPALIVE":
+			if envVar.Value != httpKeepAliveOutput {
+				t.Errorf("expected %s = %q, got %q", envVar.Name, httpKeepAliveOutput, envVar.Value)
 			}
 		}
 	}
