@@ -85,4 +85,30 @@ spec:
             summary: Route owned by an Ingress no longer managed
             description: "This alert fires when there is a Route owned by an unmanaged Ingress."
             message: "Route {{ $labels.namespace }}/{{ $labels.name }} is owned by an unmanaged Ingress."
-
+    - name: gateway-api-telemetry.rules
+      rules:
+        - record: openshift:gateway_api_usage:count
+          expr: |
+            (
+              sum by(gateway_class_type) (
+                label_replace(
+                  (
+                    kube_customresource_gateway_info{programmed="True"}
+                    and on(gateway_class) kube_customresource_gateway_class_info{accepted="True", controller="openshift.io/gateway-controller/v1"}
+                  ),
+                  "gateway_class_type", "openshift", "", ""
+                )
+              )
+            )
+            or
+            (
+              sum by(gateway_class_type) (
+                label_replace(
+                  (
+                    kube_customresource_gateway_info{programmed="True"}
+                    and on(gateway_class) kube_customresource_gateway_class_info{accepted="True", controller!="openshift.io/gateway-controller/v1"}
+                  ),
+                  "gateway_class_type", "not-openshift", "", ""
+                )
+              )
+            )
