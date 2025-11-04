@@ -285,9 +285,11 @@ func createGatewayClass(t *testing.T, name, controllerName string) (*gatewayapiv
 	gatewayClass := buildGatewayClass(name, controllerName)
 	customCatalog := os.Getenv("CUSTOM_CATALOG_SOURCE")
 	ossmVersion := os.Getenv("CUSTOM_OSSM_VERSION")
-	if customCatalog != "" && ossmVersion != "" {
+	ossmChannel := os.Getenv("CUSTOM_OSSM_CHANNEL")
+	if customCatalog != "" && ossmVersion != "" && ossmChannel != "" {
 		gatewayClass.Annotations = map[string]string{
 			"unsupported.do-not-use.openshift.io/ossm-catalog": customCatalog,
+			"unsupported.do-not-use.openshift.io/ossm-channel": ossmChannel,
 			"unsupported.do-not-use.openshift.io/ossm-version": ossmVersion,
 		}
 	}

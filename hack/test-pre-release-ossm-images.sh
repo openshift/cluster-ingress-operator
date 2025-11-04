@@ -151,18 +151,22 @@ fi
 CUSTOM_CATALOG_SOURCE=custom-istio-catalog
 TRIES=0
 while (( TRIES < MAX_TRIES )); do
-    OSSM_VERSION=$(oc get packagemanifests -n openshift-marketplace -o json | jq -r '.items[] | select(.metadata.labels.catalog=="custom-istio-catalog") | .status.channels[] | select(.currentCSV | contains("servicemeshoperator3")) | .currentCSV' | tail -n 1)
-    if [[ "$OSSM_VERSION" != "" ]]; then
+    OUTPUT=$(oc get packagemanifests -n openshift-marketplace -o json | jq -r '.items[] | select(.metadata.labels.catalog=="custom-istio-catalog") | .status.channels[] | select(.currentCSV | contains("servicemeshoperator3")) | "\(.name),\(.currentCSV)"' | tail -n 1)
+    OSSM_CHANNEL=$(echo "$OUTPUT" | cut -d ',' -f 1)
+    OSSM_VERSION=$(echo "$OUTPUT" | cut -d ',' -f 2)
+    if [[ "$OSSM_VERSION" != "" && "$OSSM_CHANNEL" != "" ]]; then
+        echo "> OSSM channel found: ${OSSM_CHANNEL}"
         echo "> OSSM version found: ${OSSM_VERSION}"
         break
     fi
     TRIES=$((TRIES+1))
-    echo "(${TRIES}/${MAX_TRIES}) OSSM version is not available, retrying..."
+    echo "(${TRIES}/${MAX_TRIES}) OSSM channel and/or version is not available, retrying..."
     sleep 2
 done
 if (( TRIES >= MAX_TRIES )); then
-    echo "> OSSM version is not found in $CUSTOM_CATALOG_SOURCE"
+    echo "> OSSM version and channel not found in $CUSTOM_CATALOG_SOURCE"
     exit 4
 fi
+
 echo "> Run GatewayAPI tests"
-CUSTOM_OSSM_VERSION=$OSSM_VERSION CUSTOM_CATALOG_SOURCE=$CUSTOM_CATALOG_SOURCE TEST=TestGatewayAPI make test-e2e
+CUSTOM_OSSM_VERSION=$OSSM_VERSION CUSTOM_CATALOG_SOURCE=$CUSTOM_CATALOG_SOURCE CUSTOM_OSSM_CHANNEL=$OSSM_CHANNEL TEST=TestGatewayAPI make test-e2e
