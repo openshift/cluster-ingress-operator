@@ -43,10 +43,10 @@ echo "gateway-api repo branch \"${BRANCH}\" into ${CLONE_DIR}..."
 git clone --branch "${BRANCH}" https://github.com/kubernetes-sigs/gateway-api
 cd gateway-api
 
-if [[ "$BUNDLE_VERSION" = "v1.2.1" ]]; then
-    echo "Cherry-picking fix for CoreDNS deployment issue in Gateway API v1.2.1"
-    git fetch origin f64c54a3606c8eee5b4c85b1c5f8f0d3cf3470ca
-    git cherry-pick f64c54a3606c8eee5b4c85b1c5f8f0d3cf3470ca
+if [[ "$BUNDLE_VERSION" = "v1.3.0" ]]; then
+    echo "Cherry-picking fix for CoreDNS deployment image tag shortname issue in v1.3.0"
+    git fetch origin 7f612b97fec9edd3aa32d193a4e9b4c3161ed09a
+    git cherry-pick 7f612b97fec9edd3aa32d193a4e9b4c3161ed09a
 fi
 
 echo "Go version: $(go version)"
@@ -58,7 +58,7 @@ go mod vendor
 # Also, GRPCRouteListenerHostnameMatching tests are taking longer than 150s to converge to passing.
 sed -i -e '/MaxTimeToConsistency:/ s/30/180/' conformance/utils/config/timeout.go
 
-SUPPORTED_FEATURES="Gateway,GRPCRoute,HTTPRoute,ReferenceGrant,GatewayPort8080,HTTPRouteQueryParamMatching,HTTPRouteMethodMatching,HTTPRouteResponseHeaderModification,HTTPRoutePortRedirect,HTTPRouteSchemeRedirect,HTTPRoutePathRedirect,HTTPRouteHostRewrite,HTTPRoutePathRewrite,HTTPRouteRequestMirror,HTTPRouteRequestMultipleMirrors,HTTPRouteBackendProtocolH2C,HTTPRouteBackendProtocolWebSocket"
+SUPPORTED_FEATURES="Gateway,GRPCRoute,HTTPRoute,ReferenceGrant,GatewayPort8080,HTTPRouteQueryParamMatching,HTTPRouteMethodMatching,HTTPRouteResponseHeaderModification,HTTPRoutePortRedirect,HTTPRouteSchemeRedirect,HTTPRoutePathRedirect,HTTPRouteHostRewrite,HTTPRoutePathRewrite,HTTPRouteRequestMirror,HTTPRouteRequestMultipleMirrors,HTTPRouteBackendProtocolH2C,HTTPRouteBackendProtocolWebSocket,HTTPRouteRequestPercentageMirror,HTTPRouteBackendRequestHeaderModification"
 
 echo "Start Gateway API Conformance Testing"
 go test ./conformance -v -timeout 20m -run TestConformance -args "--supported-features=${SUPPORTED_FEATURES}" "--gateway-class=${GATEWAYCLASS_NAME}"

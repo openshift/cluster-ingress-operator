@@ -243,7 +243,7 @@ func testGatewayAPIManualDeployment(t *testing.T) {
 		},
 		Spec: gatewayapiv1.GatewaySpec{
 			GatewayClassName: gatewayapiv1.ObjectName(gatewayClass.Name),
-			Addresses: []gatewayapiv1.GatewayAddress{{
+			Addresses: []gatewayapiv1.GatewaySpecAddress{{
 				Type:  ptr.To(gatewayapiv1.HostnameAddressType),
 				Value: existingServiceHostname,
 			}},
