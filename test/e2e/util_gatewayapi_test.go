@@ -640,6 +640,63 @@ func deleteExistingSubscription(t *testing.T, namespace, subName string) error {
 
 }
 
+// assertInstallPlan checks if the InstallPlan with given ClusterServiceVersion exists and installed.
+func assertInstallPlan(t *testing.T, namespace, csvName string) error {
+	t.Helper()
+
+	ips := &operatorsv1alpha1.InstallPlanList{}
+	var ip *operatorsv1alpha1.InstallPlan
+	ipHasCSV := func(ip operatorsv1alpha1.InstallPlan) bool {
+		for _, c := range ip.Spec.ClusterServiceVersionNames {
+			if c == csvName {
+				return true
+			}
+		}
+		return false
+	}
+
+	err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 2*time.Minute, false, func(context context.Context) (bool, error) {
+		if err := kclient.List(context, ips); err != nil {
+			t.Logf("Failed to list install plans: %v, retrying...", err)
+			return false, nil
+		}
+
+		for i := range ips.Items {
+			if ipHasCSV(ips.Items[i]) {
+				ip = &ips.Items[i]
+				break
+			}
+		}
+
+		if ip == nil {
+			t.Logf("Failed to find install plan for clusterserviceversion %q, retrying...", csvName)
+			return false, nil
+		}
+
+		t.Logf("Found install plan %q", ip.Name)
+		for _, c := range ip.Status.Conditions {
+			if c.Type == operatorsv1alpha1.InstallPlanInstalled {
+				if c.Status == corev1.ConditionTrue {
+					t.Logf("Installed condition is false for install plan %q, retrying...", ip.Name)
+					return false, nil
+				}
+				break
+			}
+		}
+		t.Logf("Install plan %q successfully installed", ip.Name)
+		return true, nil
+	})
+	if err != nil {
+		if ip != nil {
+			t.Logf("Last observed state of install plan %q:\n%s", ip.Name, util.ToYaml(ip))
+		} else {
+			t.Logf("Last observed state of all install plans:\n%s", util.ToYaml(ips))
+		}
+	}
+
+	return err
+}
+
 // assertOSSMOperator checks if the OSSM operator gets successfully installed
 // and returns an error if not. It uses configurable parameters such as the expected OSSM version, polling interval, and timeout.
 func assertOSSMOperator(t *testing.T) error {

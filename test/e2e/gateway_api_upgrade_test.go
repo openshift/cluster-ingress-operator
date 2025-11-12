@@ -69,7 +69,7 @@ func TestOSSMOperatorUpgradeViaIntermediateVersions(t *testing.T) {
 	}
 
 	// Installation.
-	t.Logf("Creating GatewayClass with OSSMversion %q ans Istio version %q...", initialOSSMVersion, initialIstioVersion)
+	t.Logf("Creating GatewayClass with OSSMversion %q and Istio version %q...", initialOSSMVersion, initialIstioVersion)
 	gatewayClass := buildGatewayClass("openshift-default", "openshift.io/gateway-controller/v1")
 	gatewayClass.Annotations = map[string]string{
 		"unsupported.do-not-use.openshift.io/ossm-catalog":  customCatalogSourceName,
@@ -82,6 +82,10 @@ func TestOSSMOperatorUpgradeViaIntermediateVersions(t *testing.T) {
 	t.Log("Checking for the Subscription...")
 	if err := assertSubscription(t, openshiftOperatorsNamespace, expectedSubscriptionName); err != nil {
 		t.Fatalf("Failed to find expected Subscription %s: %v", expectedSubscriptionName, err)
+	}
+	t.Log("Checking for the InstallPlan...")
+	if err := assertInstallPlan(t, openshiftOperatorsNamespace, initialOSSMVersion); err != nil {
+		t.Fatalf("Failed to find expected InstallPlan %s: %v", initialOSSMVersion, err)
 	}
 	t.Log("Checking for the OSSM operator deployment...")
 	if err := assertOSSMOperatorWithConfig(t, initialOSSMVersion, 2*time.Second, 2*time.Minute); err != nil {
