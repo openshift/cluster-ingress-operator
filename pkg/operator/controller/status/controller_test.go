@@ -21,29 +21,38 @@ func Test_computeOperatorProgressingCondition(t *testing.T) {
 	}
 
 	testCases := []struct {
-		description            string
-		noNamespace            bool
-		allIngressesAvailable  bool
-		someIngressProgressing bool
-		reportedVersions       versions
-		oldVersions            versions
-		curVersions            versions
-		expectProgressing      configv1.ConditionStatus
+		description               string
+		noNamespace               bool
+		allIngressesAvailable     bool
+		someIngressProgressing    bool
+		reportedVersions          versions
+		oldVersions               versions
+		curVersions               versions
+		shouldInstallOSSM         bool
+		desiredOSSMVersion        string
+		installedOSSMVersion      string
+		currentOSSMVersion        string
+		installedOSSMVersionPhase operatorsv1alpha1.ClusterServiceVersionPhase
+		expectProgressing         configv1.ConditionStatus
+		expectReason              string
 	}{
 		{
 			description:           "all ingress controllers are available",
 			allIngressesAvailable: true,
 			expectProgressing:     configv1.ConditionFalse,
+			expectReason:          "AsExpected",
 		},
 		{
 			description:            "some ingress controller is progressing",
 			allIngressesAvailable:  true,
 			someIngressProgressing: true,
 			expectProgressing:      configv1.ConditionTrue,
+			expectReason:           "Reconciling",
 		},
 		{
 			description:       "all ingress controllers are not available",
 			expectProgressing: configv1.ConditionTrue,
+			expectReason:      "Reconciling",
 		},
 		{
 			description:           "versions match",
@@ -52,6 +61,7 @@ func Test_computeOperatorProgressingCondition(t *testing.T) {
 			oldVersions:           versions{"v1", "ic-v1", "c-v1"},
 			curVersions:           versions{"v1", "ic-v1", "c-v1"},
 			expectProgressing:     configv1.ConditionFalse,
+			expectReason:          "AsExpected",
 		},
 		{
 			description:           "operator upgrade in progress",
@@ -60,6 +70,7 @@ func Test_computeOperatorProgressingCondition(t *testing.T) {
 			oldVersions:           versions{"v1", "ic-v1", "c-v1"},
 			curVersions:           versions{"v2", "ic-v1", "c-v1"},
 			expectProgressing:     configv1.ConditionTrue,
+			expectReason:          "Reconciling",
 		},
 		{
 			description:           "operand upgrade in progress",
@@ -68,6 +79,7 @@ func Test_computeOperatorProgressingCondition(t *testing.T) {
 			oldVersions:           versions{"v1", "ic-v1", "c-v1"},
 			curVersions:           versions{"v1", "ic-v2", "c-v2"},
 			expectProgressing:     configv1.ConditionTrue,
+			expectReason:          "Reconciling",
 		},
 		{
 			description:           "operator and operand upgrade in progress",
@@ -76,6 +88,7 @@ func Test_computeOperatorProgressingCondition(t *testing.T) {
 			oldVersions:           versions{"v1", "ic-v1", "c-v1"},
 			curVersions:           versions{"v2", "ic-v2", "c-v2"},
 			expectProgressing:     configv1.ConditionTrue,
+			expectReason:          "Reconciling",
 		},
 		{
 			description:           "operator upgrade done",
@@ -84,6 +97,7 @@ func Test_computeOperatorProgressingCondition(t *testing.T) {
 			oldVersions:           versions{"v1", "ic-v1", "c-v1"},
 			curVersions:           versions{"v2", "ic-v1", "c-v1"},
 			expectProgressing:     configv1.ConditionFalse,
+			expectReason:          "AsExpected",
 		},
 		{
 			description:           "operand upgrade done",
@@ -92,6 +106,7 @@ func Test_computeOperatorProgressingCondition(t *testing.T) {
 			oldVersions:           versions{"v1", "ic-v1", "c-v1"},
 			curVersions:           versions{"v1", "ic-v2", "c-v2"},
 			expectProgressing:     configv1.ConditionFalse,
+			expectReason:          "AsExpected",
 		},
 		{
 			description:           "operator and operand upgrade done",
@@ -100,6 +115,7 @@ func Test_computeOperatorProgressingCondition(t *testing.T) {
 			oldVersions:           versions{"v1", "ic-v1", "c-v1"},
 			curVersions:           versions{"v2", "ic-v2", "c-v2"},
 			expectProgressing:     configv1.ConditionFalse,
+			expectReason:          "AsExpected",
 		},
 		{
 			description:           "operator upgrade in progress, operand upgrade done",
@@ -108,6 +124,140 @@ func Test_computeOperatorProgressingCondition(t *testing.T) {
 			oldVersions:           versions{"v1", "ic-v1", "c-v1"},
 			curVersions:           versions{"v2", "ic-v2", "c-v2"},
 			expectProgressing:     configv1.ConditionTrue,
+			expectReason:          "Reconciling",
+		},
+		{
+			description:               "OSSM operator not requested",
+			allIngressesAvailable:     true,
+			shouldInstallOSSM:         false,
+			desiredOSSMVersion:        "servicemeshoperator3.v3.0.1",
+			installedOSSMVersion:      "servicemeshoperator3.v3.0.1",
+			currentOSSMVersion:        "servicemeshoperator3.v3.0.2",
+			installedOSSMVersionPhase: operatorsv1alpha1.CSVPhaseSucceeded,
+			expectProgressing:         configv1.ConditionFalse,
+			expectReason:              "AsExpected",
+		},
+		{
+			description:               "OSSM operator is installing",
+			allIngressesAvailable:     true,
+			shouldInstallOSSM:         true,
+			desiredOSSMVersion:        "servicemeshoperator3.v3.0.0",
+			installedOSSMVersion:      "servicemeshoperator3.v3.0.0",
+			currentOSSMVersion:        "servicemeshoperator3.v3.0.0",
+			installedOSSMVersionPhase: operatorsv1alpha1.CSVPhaseInstalling,
+			expectProgressing:         configv1.ConditionTrue,
+			expectReason:              "GatewayAPIOperatorUpgrading",
+		},
+		{
+			description:               "OSSM operator installation succeeded",
+			allIngressesAvailable:     true,
+			shouldInstallOSSM:         true,
+			desiredOSSMVersion:        "servicemeshoperator3.v3.0.0",
+			installedOSSMVersion:      "servicemeshoperator3.v3.0.0",
+			currentOSSMVersion:        "servicemeshoperator3.v3.0.0",
+			installedOSSMVersionPhase: operatorsv1alpha1.CSVPhaseSucceeded,
+			expectProgressing:         configv1.ConditionFalse,
+			expectReason:              "AsExpectedAndGatewayAPIOperatorUpToDate",
+		},
+		{
+			description:               "OSSM operator installation failed",
+			allIngressesAvailable:     true,
+			shouldInstallOSSM:         true,
+			desiredOSSMVersion:        "servicemeshoperator3.v3.0.0",
+			installedOSSMVersion:      "servicemeshoperator3.v3.0.0",
+			currentOSSMVersion:        "servicemeshoperator3.v3.0.0",
+			installedOSSMVersionPhase: operatorsv1alpha1.CSVPhaseFailed,
+			expectProgressing:         configv1.ConditionFalse,
+			expectReason:              "AsExpected",
+		},
+		{
+			description:               "OSSM operator got next version",
+			allIngressesAvailable:     true,
+			shouldInstallOSSM:         true,
+			desiredOSSMVersion:        "servicemeshoperator3.v3.0.0",
+			installedOSSMVersion:      "servicemeshoperator3.v3.0.0",
+			currentOSSMVersion:        "servicemeshoperator3.v3.0.1",
+			installedOSSMVersionPhase: operatorsv1alpha1.CSVPhaseSucceeded,
+			expectProgressing:         configv1.ConditionFalse,
+			expectReason:              "AsExpectedAndGatewayAPIOperatorUpToDate",
+		},
+		{
+			description:               "OSSM operator desired version changed",
+			allIngressesAvailable:     true,
+			shouldInstallOSSM:         true,
+			desiredOSSMVersion:        "servicemeshoperator3.v3.0.1",
+			installedOSSMVersion:      "servicemeshoperator3.v3.0.0",
+			currentOSSMVersion:        "servicemeshoperator3.v3.0.1",
+			installedOSSMVersionPhase: operatorsv1alpha1.CSVPhaseSucceeded,
+			expectProgressing:         configv1.ConditionTrue,
+			expectReason:              "GatewayAPIOperatorUpgrading",
+		},
+		{
+			description:               "OSSM operator desired version is rolling out",
+			allIngressesAvailable:     true,
+			shouldInstallOSSM:         true,
+			desiredOSSMVersion:        "servicemeshoperator3.v3.0.1",
+			installedOSSMVersion:      "servicemeshoperator3.v3.0.1",
+			currentOSSMVersion:        "servicemeshoperator3.v3.0.1",
+			installedOSSMVersionPhase: operatorsv1alpha1.CSVPhaseInstalling,
+			expectProgressing:         configv1.ConditionTrue,
+			expectReason:              "GatewayAPIOperatorUpgrading",
+		},
+		{
+			description:               "OSSM operator desired version succeeded",
+			allIngressesAvailable:     true,
+			shouldInstallOSSM:         true,
+			desiredOSSMVersion:        "servicemeshoperator3.v3.0.1",
+			installedOSSMVersion:      "servicemeshoperator3.v3.0.1",
+			currentOSSMVersion:        "servicemeshoperator3.v3.0.1",
+			installedOSSMVersionPhase: operatorsv1alpha1.CSVPhaseSucceeded,
+			expectProgressing:         configv1.ConditionFalse,
+			expectReason:              "AsExpectedAndGatewayAPIOperatorUpToDate",
+		},
+		{
+			description:               "OSSM operator desired version is beyong graph",
+			allIngressesAvailable:     true,
+			shouldInstallOSSM:         true,
+			desiredOSSMVersion:        "servicemeshoperator3.v3.0.5",
+			installedOSSMVersion:      "servicemeshoperator3.v3.0.3",
+			currentOSSMVersion:        "servicemeshoperator3.v3.0.3",
+			installedOSSMVersionPhase: operatorsv1alpha1.CSVPhaseSucceeded,
+			expectProgressing:         configv1.ConditionTrue,
+			expectReason:              "GatewayAPIOperatorUpgrading",
+		},
+		{
+			description:               "OSSM operator desired version is back",
+			allIngressesAvailable:     true,
+			shouldInstallOSSM:         true,
+			desiredOSSMVersion:        "servicemeshoperator3.v3.0.3",
+			installedOSSMVersion:      "servicemeshoperator3.v3.0.3",
+			currentOSSMVersion:        "servicemeshoperator3.v3.0.3",
+			installedOSSMVersionPhase: operatorsv1alpha1.CSVPhaseSucceeded,
+			expectProgressing:         configv1.ConditionFalse,
+			expectReason:              "AsExpectedAndGatewayAPIOperatorUpToDate",
+		},
+		{
+			description:               "some ingress controller is progressing and OSSM operator is upgrading",
+			allIngressesAvailable:     true,
+			someIngressProgressing:    true,
+			shouldInstallOSSM:         true,
+			desiredOSSMVersion:        "servicemeshoperator3.v3.0.1",
+			installedOSSMVersion:      "servicemeshoperator3.v3.0.1",
+			currentOSSMVersion:        "servicemeshoperator3.v3.0.1",
+			installedOSSMVersionPhase: operatorsv1alpha1.CSVPhaseInstalling,
+			expectProgressing:         configv1.ConditionTrue,
+			expectReason:              "ReconcilingAndGatewayAPIOperatorUpgrading",
+		},
+		{
+			description:               "OSSM operator upgrading failed",
+			allIngressesAvailable:     true,
+			shouldInstallOSSM:         true,
+			desiredOSSMVersion:        "servicemeshoperator3.v3.0.2",
+			installedOSSMVersion:      "servicemeshoperator3.v3.0.1",
+			currentOSSMVersion:        "servicemeshoperator3.v3.0.1",
+			installedOSSMVersionPhase: operatorsv1alpha1.CSVPhaseFailed,
+			expectProgressing:         configv1.ConditionFalse,
+			expectReason:              "AsExpected",
 		},
 	}
 
@@ -145,6 +295,7 @@ func Test_computeOperatorProgressingCondition(t *testing.T) {
 			expected := configv1.ClusterOperatorStatusCondition{
 				Type:   configv1.OperatorProgressing,
 				Status: tc.expectProgressing,
+				Reason: tc.expectReason,
 			}
 
 			var ingresscontrollers []operatorv1.IngressController
@@ -160,10 +311,23 @@ func Test_computeOperatorProgressingCondition(t *testing.T) {
 			if tc.someIngressProgressing {
 				ingresscontrollers[0].Status.Conditions[0].Status = operatorv1.ConditionTrue
 			}
+			state := operatorState{
+				IngressControllers:                      ingresscontrollers,
+				shouldInstallOSSM:                       tc.shouldInstallOSSM,
+				expectedGatewayAPIOperatorVersion:       tc.desiredOSSMVersion,
+				installedGatewayAPIOperatorVersion:      tc.installedOSSMVersion,
+				currentGatewayAPIOperatorVersion:        tc.currentOSSMVersion,
+				installedGatewayAPIOperatorVersionPhase: tc.installedOSSMVersionPhase,
+			}
+			config := Config{
+				OperatorReleaseVersion: tc.curVersions.operator,
+				IngressControllerImage: tc.curVersions.operand1,
+				CanaryImage:            tc.curVersions.operand2,
+			}
 
-			actual := computeOperatorProgressingCondition(ingresscontrollers, tc.allIngressesAvailable, oldVersions, reportedVersions, tc.curVersions.operator, tc.curVersions.operand1, tc.curVersions.operand2)
+			actual := computeOperatorProgressingCondition(state, config, tc.allIngressesAvailable, oldVersions, reportedVersions)
 			conditionsCmpOpts := []cmp.Option{
-				cmpopts.IgnoreFields(configv1.ClusterOperatorStatusCondition{}, "LastTransitionTime", "Reason", "Message"),
+				cmpopts.IgnoreFields(configv1.ClusterOperatorStatusCondition{}, "LastTransitionTime", "Message"),
 			}
 			if !cmp.Equal(actual, expected, conditionsCmpOpts...) {
 				t.Fatalf("expected %#v, got %#v", expected, actual)
@@ -895,6 +1059,60 @@ func Test_computeOperatorDegradedCondition(t *testing.T) {
 				Status:  configv1.ConditionFalse,
 				Reason:  "IngressNotDegradedAndGatewayAPIInstallWarnings",
 				Message: "The \"default\" ingress controller reports Degraded=False.\nfailed to compare installed OSSM version to expected: \"servicemeshoperator3.v3.5-beta\" does not match expected format",
+			},
+		},
+		{
+			description: "OSSM operator degraded",
+			state: operatorState{
+				IngressControllers: []operatorv1.IngressController{
+					icWithStatus("default", false),
+					icWithStatus("test2", true),
+				},
+				shouldInstallOSSM:                       true,
+				installedGatewayAPIOperatorVersion:      "servicemeshoperator3.v3.0.1",
+				installedGatewayAPIOperatorVersionPhase: operatorsv1alpha1.CSVPhaseFailed,
+			},
+			expectCondition: configv1.ClusterOperatorStatusCondition{
+				Type:    configv1.OperatorDegraded,
+				Status:  configv1.ConditionTrue,
+				Reason:  "GatewayAPIOperatorDegraded",
+				Message: `GatewayAPI operator failed to install version "servicemeshoperator3.v3.0.1"`,
+			},
+		},
+		{
+			description: "default ingresscontroller not degraded but unmanaged gateway api crds exist and OSSM operator degraded",
+			state: operatorState{
+				IngressControllers: []operatorv1.IngressController{
+					icWithStatus("default", false),
+				},
+				unmanagedGatewayAPICRDNames:             "listenersets.gateway.networking.x-k8s.io",
+				shouldInstallOSSM:                       true,
+				installedGatewayAPIOperatorVersion:      "servicemeshoperator3.v3.0.1",
+				installedGatewayAPIOperatorVersionPhase: operatorsv1alpha1.CSVPhaseFailed,
+			},
+			expectCondition: configv1.ClusterOperatorStatusCondition{
+				Type:    configv1.OperatorDegraded,
+				Status:  configv1.ConditionTrue,
+				Reason:  "GatewayAPICRDsDegradedAndGatewayAPIOperatorDegraded",
+				Message: "Unmanaged Gateway API CRDs found: listenersets.gateway.networking.x-k8s.io.\nGatewayAPI operator failed to install version \"servicemeshoperator3.v3.0.1\"",
+			},
+		},
+		{
+			description: "OSSM operator not degraded",
+			state: operatorState{
+				IngressControllers: []operatorv1.IngressController{
+					icWithStatus("default", false),
+					icWithStatus("test2", true),
+				},
+				shouldInstallOSSM:                       true,
+				installedGatewayAPIOperatorVersion:      "servicemeshoperator3.v3.0.1",
+				installedGatewayAPIOperatorVersionPhase: operatorsv1alpha1.CSVPhaseSucceeded,
+			},
+			expectCondition: configv1.ClusterOperatorStatusCondition{
+				Type:    configv1.OperatorDegraded,
+				Status:  configv1.ConditionFalse,
+				Reason:  "IngressNotDegraded",
+				Message: `The "default" ingress controller reports Degraded=False.`,
 			},
 		},
 	}

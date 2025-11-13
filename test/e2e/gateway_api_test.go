@@ -83,14 +83,16 @@ func TestGatewayAPI(t *testing.T) {
 
 	// Defer the cleanup of the test gateway.
 	t.Cleanup(func() {
-		testGateway := gatewayapiv1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: testGatewayName, Namespace: operatorcontroller.DefaultOperandNamespace}}
-		if err := kclient.Delete(context.TODO(), &testGateway); err != nil {
-			if errors.IsNotFound(err) {
-				return
-			}
-			t.Errorf("failed to delete gateway %q: %v", testGateway.Name, err)
+		t.Logf("Cleaning Gateway, GatewayClass and OSSM operator...")
+		if err := cleanupGateway(t, "openshift-ingress", "test-gateway", "openshift-default"); err != nil {
+			t.Errorf("Failed to cleanup gateway: %v", err)
 		}
-		// TODO: Uninstall OSSM after test is completed.
+		if err := cleanupGatewayClass(t, "openshift-default"); err != nil {
+			t.Errorf("Failed to cleanup gatewayclass: %v", err)
+		}
+		if err := cleanupOLMOperator(t, "openshift-operators", "servicemeshoperator3.openshift-operators"); err != nil {
+			t.Errorf("Failed to cleanup OSSM operator: %v", err)
+		}
 	})
 
 	t.Run("testGatewayAPIResources", testGatewayAPIResources)
@@ -547,10 +549,10 @@ func testGatewayAPIDNS(t *testing.T) {
 			// Create gateways
 			for _, gateway := range tc.createGateways {
 				createdGateway, err := createGatewayWithListeners(t, gatewayClass, gateway.gatewayName, gateway.namespace, gateway.listeners)
-				gateways = append(gateways, createdGateway)
 				if err != nil {
 					t.Fatalf("failed to create gateway %s: %v", gateway.gatewayName, err)
 				}
+				gateways = append(gateways, createdGateway)
 			}
 
 			t.Cleanup(func() {

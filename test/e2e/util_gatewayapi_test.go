@@ -21,6 +21,7 @@ import (
 	v1 "github.com/openshift/api/operatoringress/v1"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	util "github.com/openshift/cluster-ingress-operator/pkg/util"
+	olmv1 "github.com/operator-framework/api/pkg/operators/v1"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 
 	"github.com/google/go-cmp/cmp"
@@ -31,6 +32,7 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 
@@ -178,6 +180,106 @@ func deleteExistingVAP(t *testing.T, vapName string) error {
 	}
 
 	t.Logf("deleted vap %q", vapName)
+	return nil
+}
+
+// cleanupGateway deletes the given gateway and waits for the corresponding Istio proxy deployment to disappear.
+func cleanupGateway(t *testing.T, namespace, name, gcname string) error {
+	t.Helper()
+
+	gw := &gatewayapiv1.Gateway{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name}}
+	if err := kclient.Delete(context.Background(), gw); err != nil && !kerrors.IsNotFound(err) {
+		return fmt.Errorf(`failed to delete gateway "%s/%s": %w`, namespace, name, err)
+	}
+	t.Logf(`Deleted gateway "%s/%s"`, namespace, name)
+
+	depl := &appsv1.Deployment{}
+	istioName := types.NamespacedName{Namespace: operatorcontroller.DefaultOperandNamespace, Name: name + "-" + gcname}
+	if err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(context context.Context) (bool, error) {
+		if err := kclient.Get(context, istioName, depl); err != nil {
+			if !kerrors.IsNotFound(err) {
+				t.Logf("Failed to get deployment %q, retrying...", istioName)
+				return false, nil
+			}
+		} else {
+			t.Logf("Deployment %q still exists, retrying...", istioName)
+			return false, nil
+		}
+		return true, nil
+	}); err != nil {
+		return fmt.Errorf("timed out waiting for deployment %v to disappear", istioName)
+	}
+	t.Logf("Deleted deployment %q", istioName)
+
+	return nil
+}
+
+// cleanupGatewayClass deletes the given gatewayclass and waits for the corresponding Istiod deployment to disappear.
+func cleanupGatewayClass(t *testing.T, name string) error {
+	t.Helper()
+
+	gc := &gatewayapiv1.GatewayClass{ObjectMeta: metav1.ObjectMeta{Name: name}}
+	if err := kclient.Delete(context.Background(), gc); err != nil && !kerrors.IsNotFound(err) {
+		return fmt.Errorf("failed to delete gatewayclass %q: %w", name, err)
+	}
+	t.Logf("Deleted gatewayclass %q", name)
+
+	depl := &appsv1.Deployment{}
+	istiodName := types.NamespacedName{Namespace: operatorcontroller.DefaultOperandNamespace, Name: "istiod-" + name}
+	if err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(context context.Context) (bool, error) {
+		if err := kclient.Get(context, istiodName, depl); err != nil {
+			if !kerrors.IsNotFound(err) {
+				t.Logf("Failed to get deployment %q, retrying...", istiodName)
+				return false, nil
+			}
+		} else {
+			t.Logf("Deployment %q still exists, retrying...", istiodName)
+			return false, nil
+		}
+		return true, nil
+	}); err != nil {
+		return fmt.Errorf("timed out waiting for deployment %v to disappear", istiodName)
+	}
+	t.Logf("Deleted deployment %q", istiodName)
+
+	return nil
+}
+
+// cleanupOLMOperator deletes all components associated with the given OLM operator.
+func cleanupOLMOperator(t *testing.T, namespace, name string) error {
+	operatorName := types.NamespacedName{Namespace: namespace, Name: name}
+	operator := &olmv1.Operator{}
+	if err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(context context.Context) (bool, error) {
+		if err := kclient.Get(context, operatorName, operator); err != nil {
+			t.Logf("Failed to get operator %q, retrying...", operatorName)
+			return false, nil
+		}
+		return true, nil
+	}); err != nil {
+		return fmt.Errorf("timed out getting operator %v", operatorName)
+	}
+
+	if operator.Status.Components != nil {
+		for _, compRef := range operator.Status.Components.Refs {
+			// OperatorHUB's uninstall action doesn't touch operator's CRDs.
+			if compRef.Kind != "CustomResourceDefinition" {
+				unstructuredObj := &unstructured.Unstructured{}
+				unstructuredObj.SetAPIVersion(compRef.APIVersion)
+				unstructuredObj.SetKind(compRef.Kind)
+				unstructuredObj.SetName(compRef.Name)
+				if len(compRef.Namespace) > 0 {
+					unstructuredObj.SetNamespace(compRef.Namespace)
+				}
+				if err := kclient.Delete(context.Background(), unstructuredObj); err != nil && !kerrors.IsNotFound(err) {
+					return fmt.Errorf(`failed to delete operator component "%s/%s/%s/%s": %w`, compRef.APIVersion, compRef.Kind, compRef.Namespace, compRef.Name, err)
+				}
+				t.Logf(`Deleted operator component "%s/%s/%s/%s"`, compRef.APIVersion, compRef.Kind, compRef.Namespace, compRef.Name)
+			}
+		}
+	} else {
+		t.Logf("No components found for operator %q", operatorName)
+	}
+
 	return nil
 }
 
@@ -329,6 +431,33 @@ func createCRD(name string) (*apiextensionsv1.CustomResourceDefinition, error) {
 	return crd, nil
 }
 
+// createCatalogSource creates a CatalogSource with the given name and image.
+// It returns an error if creation fails after retries.
+func createCatalogSource(t *testing.T, namespace, name, image string) error {
+	t.Helper()
+
+	cs := &operatorsv1alpha1.CatalogSource{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: namespace,
+			Name:      name,
+		},
+		Spec: operatorsv1alpha1.CatalogSourceSpec{
+			Image:       image,
+			SourceType:  operatorsv1alpha1.SourceTypeGrpc,
+			DisplayName: name,
+			Publisher:   "Custom Red Hat",
+		},
+	}
+
+	return wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(context context.Context) (bool, error) {
+		if err := kclient.Create(context, cs); err != nil && !kerrors.IsAlreadyExists(err) {
+			t.Logf("Failed to create CatalogSource %q: %v, retrying...", name, err)
+			return false, nil
+		}
+		return true, nil
+	})
+}
+
 // buildGatewayClass initializes the GatewayClass and returns its address.
 func buildGatewayClass(name, controllerName string) *gatewayapiv1.GatewayClass {
 	return &gatewayapiv1.GatewayClass{
@@ -456,12 +585,22 @@ func assertSubscription(t *testing.T, namespace, subName string) error {
 	subscription := &operatorsv1alpha1.Subscription{}
 	nsName := types.NamespacedName{Namespace: namespace, Name: subName}
 
-	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(context context.Context) (bool, error) {
+	err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 2*time.Minute, false, func(context context.Context) (bool, error) {
 		if err := kclient.Get(context, nsName, subscription); err != nil {
 			t.Logf("failed to get subscription %s, retrying...", subName)
 			return false, nil
 		}
 		t.Logf("found subscription %s at installed version %s", subscription.Name, subscription.Status.InstalledCSV)
+		for _, c := range subscription.Status.Conditions {
+			if c.Type == operatorsv1alpha1.SubscriptionCatalogSourcesUnhealthy {
+				if c.Status == corev1.ConditionTrue {
+					t.Logf("catalog sources unhealthy for subscription %s, retrying...", subName)
+					return false, nil
+				}
+				break
+			}
+		}
+		t.Logf("all catalog sources healthy for subscription %s", subscription.Name)
 		return true, nil
 	})
 	return err
@@ -512,39 +651,119 @@ func deleteExistingSubscription(t *testing.T, namespace, subName string) error {
 
 }
 
-// assertOSSMOperator checks if the OSSM Istio operator gets successfully installed
-// and returns an error if not.
+// assertInstallPlan checks if the InstallPlan with given ClusterServiceVersion exists and installed.
+func assertInstallPlan(t *testing.T, namespace, csvName string) error {
+	t.Helper()
+
+	ips := &operatorsv1alpha1.InstallPlanList{}
+	var ip *operatorsv1alpha1.InstallPlan
+	ipHasCSV := func(ip operatorsv1alpha1.InstallPlan) bool {
+		for _, c := range ip.Spec.ClusterServiceVersionNames {
+			if c == csvName {
+				return true
+			}
+		}
+		return false
+	}
+
+	err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 2*time.Minute, false, func(context context.Context) (bool, error) {
+		if err := kclient.List(context, ips); err != nil {
+			t.Logf("Failed to list install plans: %v, retrying...", err)
+			return false, nil
+		}
+
+		for i := range ips.Items {
+			if ipHasCSV(ips.Items[i]) {
+				ip = &ips.Items[i]
+				break
+			}
+		}
+
+		if ip == nil {
+			t.Logf("Failed to find install plan for clusterserviceversion %q, retrying...", csvName)
+			return false, nil
+		}
+
+		t.Logf("Found install plan %q", ip.Name)
+		for _, c := range ip.Status.Conditions {
+			if c.Type == operatorsv1alpha1.InstallPlanInstalled {
+				if c.Status == corev1.ConditionTrue {
+					t.Logf("Installed condition is false for install plan %q, retrying...", ip.Name)
+					return false, nil
+				}
+				break
+			}
+		}
+		t.Logf("Install plan %q successfully installed", ip.Name)
+		return true, nil
+	})
+	if err != nil {
+		if ip != nil {
+			t.Logf("Last observed state of install plan %q:\n%s", ip.Name, util.ToYaml(ip))
+		} else {
+			t.Logf("Last observed state of all install plans:\n%s", util.ToYaml(ips))
+		}
+	}
+
+	return err
+}
+
+// logClusterServiceVersion logs the status of the given cluster service version.
+func logClusterServiceVersion(t *testing.T, namespace, csvName string) error {
+	t.Helper()
+
+	csv := &operatorsv1alpha1.ClusterServiceVersion{}
+	nsName := types.NamespacedName{Namespace: namespace, Name: csvName}
+
+	return wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 2*time.Minute, false, func(context context.Context) (bool, error) {
+		if err := kclient.Get(context, nsName, csv); err != nil {
+			t.Logf("Failed to get cluster service version %q: %v, retrying...", nsName.Name, err)
+			return false, nil
+		}
+		t.Logf("Found cluster service version %q:\n%s", nsName.Name, util.ToYaml(csv.Status))
+		return true, nil
+	})
+}
+
+// assertOSSMOperator checks if the OSSM operator gets successfully installed
+// and returns an error if not. It uses configurable parameters such as the expected OSSM version, polling interval, and timeout.
 func assertOSSMOperator(t *testing.T) error {
+	return assertOSSMOperatorWithConfig(t, "", 1*time.Second, 60*time.Second)
+}
+
+// assertOSSMOperatorWithConfig checks if the OSSM operator gets successfully installed
+// and returns an error if not. It uses configurable parameters such as
+// the expected OSSM version, polling interval, and timeout.
+func assertOSSMOperatorWithConfig(t *testing.T, version string, interval, timeout time.Duration) error {
 	t.Helper()
 	dep := &appsv1.Deployment{}
 	ns := types.NamespacedName{Namespace: openshiftOperatorsNamespace, Name: openshiftIstioOperatorDeploymentName}
 
-	// Get the Istio operator deployment.
-	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(context context.Context) (bool, error) {
+	// Get the OSSM operator deployment.
+	if err := wait.PollUntilContextTimeout(context.Background(), interval, timeout, false, func(context context.Context) (bool, error) {
 		if err := kclient.Get(context, ns, dep); err != nil {
 			t.Logf("failed to get deployment %v, retrying...", ns)
 			return false, nil
 		}
+		if len(version) > 0 {
+			if csv, found := dep.Labels["olm.owner"]; found {
+				if csv == version {
+					t.Logf("Found OSSM deployment %q with expected version %q", ns, version)
+				} else {
+					t.Logf("OSSM deployment %q expected to have version %q but got %q, retrying...", ns, version, csv)
+					return false, nil
+				}
+			}
+		}
+		if dep.Status.AvailableReplicas < *dep.Spec.Replicas {
+			t.Logf("OSSM deployment %q expected to have %d available replica(s) but got %d, retrying...", ns, *dep.Spec.Replicas, dep.Status.AvailableReplicas)
+			return false, nil
+		}
+		t.Logf("found OSSM operator deployment %q with %d available replica(s)", ns, dep.Status.AvailableReplicas)
 		return true, nil
-	})
-	if err != nil {
+	}); err != nil {
 		return fmt.Errorf("error finding deployment %v: %v", ns, err)
 	}
-
-	// Get the istio-operator pod.
-	podlist, err := getPods(t, kclient, dep)
-	if err != nil {
-		return fmt.Errorf("error finding pod for deployment %v: %v", ns, err)
-	}
-	if len(podlist.Items) > 1 {
-		return fmt.Errorf("too many pods for deployment %v: %d", ns, len(podlist.Items))
-	}
-	pod := podlist.Items[0]
-	if pod.Status.Phase != corev1.PodRunning {
-		return fmt.Errorf("OSSM operator failure: pod %s is not running, it is %v", pod.Name, pod.Status.Phase)
-	}
-
-	t.Logf("found OSSM operator pod %s/%s to be %s", pod.Namespace, pod.Name, pod.Status.Phase)
 	return nil
 }
 
@@ -631,8 +850,9 @@ func assertGatewaySuccessful(t *testing.T, namespace, name string) (*gatewayapiv
 
 	// Wait for the gateway to be accepted and programmed.
 	// Load balancer provisioning can take several minutes on some platforms.
-	// Therefore, a timeout of 3 minutes is set to accommodate potential delays.
-	err := wait.PollUntilContextTimeout(context.Background(), 3*time.Second, 3*time.Minute, false, func(context context.Context) (bool, error) {
+	// CCM leader election can also be slow - up to 8 minutes has been observed.
+	// Therefore, a timeout of 10 minutes is set to accommodate potential delays.
+	err := wait.PollUntilContextTimeout(context.Background(), 5*time.Second, 10*time.Minute, false, func(context context.Context) (bool, error) {
 		if err := kclient.Get(context, nsName, gw); err != nil {
 			t.Logf("Failed to get gateway %v: %v; retrying...", nsName, err)
 			return false, nil
@@ -670,7 +890,7 @@ func assertGatewaySuccessful(t *testing.T, namespace, name string) (*gatewayapiv
 			t.Logf("Failed to get gateway service %v: %v; retrying...", svcNsName, err)
 			return false, nil
 		}
-		t.Logf("[%s] Found gateway service: %+v", time.Now().Format(time.DateTime), svc)
+		t.Logf("[%s] Found gateway service with status: %+v", time.Now().Format(time.DateTime), svc.Status)
 		return false, nil
 	})
 	if err != nil {
@@ -988,11 +1208,18 @@ func getHTTPResponse(client *http.Client, name string) (int, http.Header, string
 // assertCatalogSource checks if the CatalogSource of the given name exists,
 // and returns an error if not.
 func assertCatalogSource(t *testing.T, namespace, csName string) error {
+	return assertCatalogSourceWithConfig(t, namespace, csName, 1*time.Second, 30*time.Second)
+}
+
+// assertCatalogSourceWithConfig checks if the CatalogSource of the given name exists,
+// and returns an error if not. It uses configurable parameters such as polling interval
+// and timeout.
+func assertCatalogSourceWithConfig(t *testing.T, namespace, csName string, interval, timeout time.Duration) error {
 	t.Helper()
 	catalogSource := &operatorsv1alpha1.CatalogSource{}
 	nsName := types.NamespacedName{Namespace: namespace, Name: csName}
 
-	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(context context.Context) (bool, error) {
+	return wait.PollUntilContextTimeout(context.Background(), interval, timeout, false, func(context context.Context) (bool, error) {
 		if err := kclient.Get(context, nsName, catalogSource); err != nil {
 			t.Logf("Failed to get CatalogSource %s: %v.  Retrying...", csName, err)
 			return false, nil
@@ -1004,12 +1231,18 @@ func assertCatalogSource(t *testing.T, namespace, csName string) error {
 		t.Logf("Found CatalogSource %s but could not determine last observed state.  Retrying...", catalogSource.Name)
 		return false, nil
 	})
-	return err
 }
 
 // assertIstio checks if the Istio exists in a ready state,
 // and returns an error if not.
 func assertIstio(t *testing.T) error {
+	return assertIstioWithConfig(t, "")
+}
+
+// assertIstio checks if the Istio exists in a ready state,
+// and returns an error if not.It uses configurable parameters such as
+// the expected version.
+func assertIstioWithConfig(t *testing.T, version string) error {
 	t.Helper()
 	istio := &sailv1.Istio{}
 	nsName := types.NamespacedName{Namespace: operatorcontroller.DefaultOperandNamespace, Name: openshiftIstioName}
@@ -1018,6 +1251,14 @@ func assertIstio(t *testing.T) error {
 		if err := kclient.Get(context, nsName, istio); err != nil {
 			t.Logf("Failed to get Istio %s/%s: %v.  Retrying...", nsName.Namespace, nsName.Name, err)
 			return false, nil
+		}
+		if len(version) > 0 {
+			if version == istio.Spec.Version {
+				t.Logf("Found Istio %s/%s with expected version %q", istio.Namespace, istio.Name, version)
+			} else {
+				t.Logf("Istio %s/%s expected to have version %q but got %q, retrying...", istio.Namespace, istio.Name, version, istio.Spec.Version)
+				return false, nil
+			}
 		}
 		if istio.Status.GetCondition(sailv1.IstioConditionReady).Status == metav1.ConditionTrue {
 			t.Logf("Found Istio %s/%s, and it reports ready", istio.Namespace, istio.Name)

@@ -78,6 +78,38 @@ const (
 	IstioRevLabelKey = "istio.io/rev"
 
 	GatewayClassIndexFieldName = "gatewayclassController"
+
+	// SubscriptionCatalogOverrideAnnotationKey is the key for an
+	// unsupported annotation on the gatewayclass using which a custom
+	// catalog source can be specified for the OSSM subscription.  This
+	// annotation is only intended for use by OpenShift developers.  Note
+	// that this annotation is intended to be used only when initially
+	// creating the gatewayclass and subscription; changing the catalog
+	// source on an existing subscription will likely have no effect or
+	// cause errors.
+	SubscriptionCatalogOverrideAnnotationKey = "unsupported.do-not-use.openshift.io/ossm-catalog"
+	// SubscriptionChannelOverrideAnnotationKey is the key for an
+	// unsupported annotation on the gatewayclass using which a custom
+	// channel can be specified for the OSSM subscription.  This annotation
+	// is only intended for use by OpenShift developers.  Note that this
+	// annotation is intended to be used only when initially creating the
+	// gatewayclass and subscription; changing the channel on an existing
+	// subscription will likely have no effect or cause errors.
+	SubscriptionChannelOverrideAnnotationKey = "unsupported.do-not-use.openshift.io/ossm-channel"
+	// SubscriptionVersionOverrideAnnotationKey is the key for an
+	// unsupported annotation on the gatewayclass using which a custom
+	// version of OSSM can be specified.  This annotation is only intended
+	// for use by OpenShift developers.  Note that this annotation is
+	// intended to be used only when initially creating the gatewayclass and
+	// subscription; OLM will not allow downgrades, and upgrades are
+	// generally restricted to the next version after the currently
+	// installed version.
+	SubscriptionVersionOverrideAnnotationKey = "unsupported.do-not-use.openshift.io/ossm-version"
+	// istioVersionOverrideAnnotationKey is the key for an unsupported
+	// annotation on the gatewayclass using which a custom version of Istio
+	// can be specified.  This annotation is only intended for use by
+	// OpenShift developers.
+	IstioVersionOverrideAnnotationKey = "unsupported.do-not-use.openshift.io/istio-version"
 )
 
 // IngressClusterOperatorName returns the namespaced name of the ClusterOperator
