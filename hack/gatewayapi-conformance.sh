@@ -43,10 +43,10 @@ echo "gateway-api repo branch \"${BRANCH}\" into ${CLONE_DIR}..."
 git clone --branch "${BRANCH}" https://github.com/kubernetes-sigs/gateway-api
 cd gateway-api
 
-if [[ "$BUNDLE_VERSION" = "v1.2.1" ]]; then
-    echo "Cherry-picking fix for CoreDNS deployment issue in Gateway API v1.2.1"
-    git fetch origin f64c54a3606c8eee5b4c85b1c5f8f0d3cf3470ca
-    git cherry-pick f64c54a3606c8eee5b4c85b1c5f8f0d3cf3470ca
+if [[ "$BUNDLE_VERSION" = "v1.3.0" ]]; then
+    echo "Cherry-picking fix for CoreDNS deployment image tag shortname issue in v1.3.0"
+    git fetch origin 7f612b97fec9edd3aa32d193a4e9b4c3161ed09a
+    git cherry-pick 7f612b97fec9edd3aa32d193a4e9b4c3161ed09a
 fi
 
 echo "Go version: $(go version)"
