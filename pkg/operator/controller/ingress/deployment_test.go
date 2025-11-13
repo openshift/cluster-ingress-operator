@@ -170,10 +170,10 @@ func TestTuningOptions(t *testing.T) {
 	ic.Spec.TuningOptions.ServerFinTimeout = &metav1.Duration{Duration: 4 * time.Second}
 	ic.Spec.TuningOptions.TunnelTimeout = &metav1.Duration{Duration: 30 * time.Minute}
 	ic.Spec.TuningOptions.ConnectTimeout = &metav1.Duration{Duration: 30 * time.Second}
-	ic.Spec.TuningOptions.HTTPKeepAliveTimeout = &metav1.Duration{Duration: 30 * time.Second}
 	ic.Spec.TuningOptions.TLSInspectDelay = &metav1.Duration{Duration: 5 * time.Second}
 	ic.Spec.TuningOptions.HealthCheckInterval = &metav1.Duration{Duration: 15 * time.Second}
 	ic.Spec.TuningOptions.ReloadInterval = metav1.Duration{Duration: 30 * time.Second}
+	ic.Spec.TuningOptions.HTTPKeepAliveTimeout = metav1.Duration{Duration: 30 * time.Second}
 
 	deployment, err := desiredRouterDeployment(ic, &Config{IngressControllerImage: ingressControllerImage}, ingressConfig, infraConfig, apiConfig, networkConfig, false, false, nil, clusterProxyConfig)
 	if err != nil {

@@ -58,7 +58,7 @@ func TestHAProxyTimeouts(t *testing.T) {
 		ServerFinTimeout:     &metav1.Duration{Duration: serverFinTimeoutInput},
 		TunnelTimeout:        &metav1.Duration{Duration: tunnelTimeoutInput},
 		TLSInspectDelay:      &metav1.Duration{Duration: tlsInspectDelayInput},
-		HTTPKeepAliveTimeout: &metav1.Duration{Duration: httpKeepAliveInput},
+		HTTPKeepAliveTimeout: metav1.Duration{Duration: httpKeepAliveInput},
 	}
 	if err := kclient.Create(context.TODO(), ic); err != nil {
 		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)

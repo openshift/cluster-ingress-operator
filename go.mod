@@ -159,7 +159,7 @@ require (
 // github.com/istio-ecosystem/sail-operator.
 replace github.com/imdario/mergo => github.com/imdario/mergo v0.3.5
 
-replace github.com/openshift/api => github.com/alebedev87/api v0.0.0-20251024090310-7a86cb6de3c9
+replace github.com/openshift/api => github.com/alebedev87/api v0.0.0-20251113220147-63babff947de
 
 replace github.com/openshift/client-go => github.com/openshift/client-go v0.0.0-20251015124057-db0dee36e235
 

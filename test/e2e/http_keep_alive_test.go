@@ -65,7 +65,7 @@ func httpKeepAliveTimeoutRunTest(t *testing.T, httpKATimeoutSeconds, clientTimeo
 		ic.Spec.NamespaceSelector = &metav1.LabelSelector{
 			MatchLabels: testNs.Labels,
 		}
-		ic.Spec.TuningOptions.HTTPKeepAliveTimeout = &metav1.Duration{Duration: time.Duration(httpKATimeoutSeconds) * time.Second}
+		ic.Spec.TuningOptions.HTTPKeepAliveTimeout = metav1.Duration{Duration: time.Duration(httpKATimeoutSeconds) * time.Second}
 		if clientTimeoutSeconds != 0 {
 			ic.Spec.TuningOptions.ClientTimeout = &metav1.Duration{Duration: time.Duration(clientTimeoutSeconds) * time.Second}
 		}
