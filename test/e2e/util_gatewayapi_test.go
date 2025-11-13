@@ -697,6 +697,23 @@ func assertInstallPlan(t *testing.T, namespace, csvName string) error {
 	return err
 }
 
+// logClusterServiceVersion logs the status of the given cluster service version.
+func logClusterServiceVersion(t *testing.T, namespace, csvName string) error {
+	t.Helper()
+
+	csv := &operatorsv1alpha1.ClusterServiceVersion{}
+	nsName := types.NamespacedName{Namespace: namespace, Name: csvName}
+
+	return wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 2*time.Minute, false, func(context context.Context) (bool, error) {
+		if err := kclient.Get(context, nsName, csv); err != nil {
+			t.Logf("Failed to get cluster service version %q: %v, retrying...", nsName.Name, err)
+			return false, nil
+		}
+		t.Logf("Found cluster service version %q:\n%s", nsName.Name, util.ToYaml(csv.Status))
+		return true, nil
+	})
+}
+
 // assertOSSMOperator checks if the OSSM operator gets successfully installed
 // and returns an error if not. It uses configurable parameters such as the expected OSSM version, polling interval, and timeout.
 func assertOSSMOperator(t *testing.T) error {

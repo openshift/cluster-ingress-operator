@@ -89,6 +89,7 @@ func TestOSSMOperatorUpgradeViaIntermediateVersions(t *testing.T) {
 	}
 	t.Log("Checking for the OSSM operator deployment...")
 	if err := assertOSSMOperatorWithConfig(t, initialOSSMVersion, 2*time.Second, 2*time.Minute); err != nil {
+		logClusterServiceVersion(t, openshiftOperatorsNamespace, initialOSSMVersion)
 		t.Fatalf("Failed to find expected Istio operator: %v", err)
 	}
 	t.Log("Checking for the Istio CR...")
