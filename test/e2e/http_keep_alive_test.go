@@ -27,9 +27,9 @@ func Test_HTTPKeepAliveTimeout(t *testing.T) {
 
 	// Use client timeout value lesser than the http keep alive timeout
 	// to make sure we avoid https://github.com/haproxy/haproxy/issues/2334.
-	httpKeepAliveTimeoutRunTest(t, 12, 6)
+	httpKeepAliveTimeoutRunTest(t, 7, 3)
 	// Use the default client timeout.
-	httpKeepAliveTimeoutRunTest(t, 12, 0)
+	httpKeepAliveTimeoutRunTest(t, 7, 0)
 }
 
 // httpKeepAliveTimeoutRunTest is a helper which runs a single test workflow.
