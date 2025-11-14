@@ -89,6 +89,7 @@ func TestAll(t *testing.T) {
 		t.Run("TestUnmanagedAWSEIPAllocations", TestUnmanagedAWSEIPAllocations)
 		t.Run("Test_IdleConnectionTerminationPolicyImmediate", Test_IdleConnectionTerminationPolicyImmediate)
 		t.Run("Test_IdleConnectionTerminationPolicyDeferred", Test_IdleConnectionTerminationPolicyDeferred)
+		t.Run("Test_HTTPKeepAliveTimeout", Test_HTTPKeepAliveTimeout)
 	})
 
 	t.Run("serial", func(t *testing.T) {

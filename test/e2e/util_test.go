@@ -1344,6 +1344,53 @@ func getIngressControllerLBAddress(t *testing.T, ic *operatorv1.IngressControlle
 	return lbAddress
 }
 
+func resolveIngressControllerAddress(t *testing.T, ic *operatorv1.IngressController) (string, error) {
+	t.Helper()
+
+	elbHostname := getIngressControllerLBAddress(t, ic)
+	elbAddress := elbHostname
+
+	if net.ParseIP(elbHostname) == nil {
+		if err := wait.PollUntilContextTimeout(context.Background(), 10*time.Second, dnsResolutionTimeout, false, func(ctx context.Context) (bool, error) {
+			addrs, err := net.LookupHost(elbHostname)
+			if err != nil {
+				t.Logf("%v error resolving %s: %v, retrying...", time.Now(), elbHostname, err)
+				return false, nil
+			}
+			elbAddress = addrs[0]
+			return true, nil
+		}); err != nil {
+			return "", fmt.Errorf("failed to resolve %s: %w", elbHostname, err)
+		}
+	}
+
+	return elbAddress, nil
+}
+
+func canaryImageReference(t *testing.T) (string, error) {
+	t.Helper()
+
+	ingressOperatorName := types.NamespacedName{
+		Name:      "ingress-operator",
+		Namespace: operatorNamespace,
+	}
+
+	deployment, err := getDeployment(t, kclient, ingressOperatorName, 1*time.Minute)
+	if err != nil {
+		return "", fmt.Errorf("failed to get deployment for IngressController %s: %w", ingressOperatorName, err)
+	}
+
+	for _, container := range deployment.Spec.Template.Spec.Containers {
+		for _, env := range container.Env {
+			if env.Name == "CANARY_IMAGE" {
+				return env.Value, nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("CANARY_IMAGE environment variable not found in deployment %s/%s", ingressOperatorName.Namespace, ingressOperatorName.Name)
+}
+
 func isNetworkError(err error) bool {
 	var (
 		netErr net.Error
