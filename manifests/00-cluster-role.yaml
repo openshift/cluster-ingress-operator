@@ -155,6 +155,7 @@ rules:
   - networking.k8s.io
   resources:
   - ingressclasses
+  - networkpolicies
   verbs:
   - '*'
 

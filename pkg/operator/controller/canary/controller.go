@@ -22,6 +22,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -160,7 +161,13 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	if err := c.Watch(source.Kind[client.Object](operatorCache, &corev1.Service{}, enqueueRequestForDefaultIngressController(config.Namespace), canaryServicePredicate)); err != nil {
 		return nil, err
 	}
-
+	canaryNetworkPolicyPredicate := predicate.NewPredicateFuncs(func(o client.Object) bool {
+		canaryNetworkPolicy := operatorcontroller.CanaryNetworkPolicyName()
+		return o.GetNamespace() == canaryNetworkPolicy.Namespace && o.GetName() == canaryNetworkPolicy.Name
+	})
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &networkingv1.NetworkPolicy{}, enqueueRequestForDefaultIngressController(config.Namespace), canaryNetworkPolicyPredicate)); err != nil {
+		return nil, err
+	}
 	return c, nil
 }
 
@@ -187,6 +194,14 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		// Return if the canary namespace cannot be created since
 		// resource creation in a namespace that does not exist will fail.
 		return result, fmt.Errorf("failed to ensure canary namespace: %v", err)
+	}
+
+	if _, _, err := r.ensureCanaryNamespaceNetworkPolicy(); err != nil {
+		return result, fmt.Errorf("failed to ensure canary namespace network policy: %v", err)
+	}
+
+	if _, _, err := r.ensureCanaryNetworkPolicy(); err != nil {
+		return result, fmt.Errorf("failed to ensure canary network policy: %v", err)
 	}
 
 	haveDs, daemonset, err := r.ensureCanaryDaemonSet()
