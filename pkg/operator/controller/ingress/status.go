@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -47,6 +48,38 @@ type expectedCondition struct {
 	// or else the condition is not checked.
 	ifConditionsTrue []string
 	gracePeriod      time.Duration
+	// ignoreReasons specifies condition reasons that should be ignored when
+	// determining if the expected condition is met. This allows distinguishing
+	// between significant state changes (configuration rollouts) and transient
+	// infrastructure events (node reboots, pod restarts).
+	// ignoreReasons are only consulted when the condition exists and its Status
+	// differs from expected.status; they are not consulted if the condition is
+	// entirely missing
+	ignoreReasons []string
+}
+
+// DeploymentRollingOutConditionReason enum to map the different reasons a deployment could be in rolling out condition
+// since several functions are using this condition's reason for setting the Progressing condition to true or false
+type DeploymentRollingOutConditionReason int
+
+const (
+	ReasonDeploymentRollingOut DeploymentRollingOutConditionReason = iota
+	ReasonNotRollingOut
+	ReasonPodsStarting
+	ReasonReplicasStabilizing
+)
+
+var deploymentRollingOutConditionReason = map[DeploymentRollingOutConditionReason]string{
+	ReasonDeploymentRollingOut: "DeploymentRollingOut",
+	ReasonNotRollingOut:        "DeploymentNotRollingOut",
+	ReasonPodsStarting:         "PodsStarting",
+	ReasonReplicasStabilizing:  "ReplicasStabilizing",
+}
+
+const deploymentNewRSAvailableReason = "NewReplicaSetAvailable"
+
+func (ss DeploymentRollingOutConditionReason) String() string {
+	return deploymentRollingOutConditionReason[ss]
 }
 
 // syncIngressControllerStatus computes the current status of ic and
@@ -330,7 +363,7 @@ func checkConditions(expectedConds []expectedCondition, conditions []operatorv1.
 		if !haveCondition {
 			continue
 		}
-		if condition.Status == expected.status {
+		if condition.Status == expected.status || slices.Contains(expected.ignoreReasons, condition.Reason) {
 			continue
 		}
 		failedPredicates := false
@@ -497,18 +530,32 @@ func computeDeploymentReplicasAllAvailableCondition(deployment *appsv1.Deploymen
 }
 
 // computeDeploymentRollingOutCondition computes the ingress controller's
-// "DeploymentRollingOut" status condition by examining the number of updated
-// replicas reported in the deployment's status. The "DeploymentRollingOut"
+// "ReasonDeploymentRollingOut" status condition by examining the number of updated
+// replicas reported in the deployment's status. The "ReasonDeploymentRollingOut"
 // condition is true if the number of updated replicas is not equal to the number
 // of expected or available replicas.
 // See Reference: https://github.com/kubernetes/kubectl/blob/master/pkg/polymorphichelpers/rollout_status.go
 func computeDeploymentRollingOutCondition(deployment *appsv1.Deployment) operatorv1.OperatorCondition {
-	// If have replicas is less than want replicas, then we are waiting for replicas to be updated.
+	// Check if the deployment has the "NewReplicaSetAvailable" condition.
+	// This indicates that Kubernetes has successfully completed a rollout.
+	hasNewReplicaSetAvailable := false
+	for _, cond := range deployment.Status.Conditions {
+		if cond.Type == appsv1.DeploymentProgressing &&
+			cond.Status == corev1.ConditionTrue &&
+			cond.Reason == deploymentNewRSAvailableReason {
+			hasNewReplicaSetAvailable = true
+
+			break
+		}
+	}
+
+	// If have replicas is less than wantGrace replicas, then we are waiting for replicas to be updated.
 	if deployment.Spec.Replicas != nil && deployment.Status.UpdatedReplicas < *deployment.Spec.Replicas {
+		reason := computeDeploymentRollingOutStatusAndReason(hasNewReplicaSetAvailable, deployment)
 		return operatorv1.OperatorCondition{
 			Type:   IngressControllerDeploymentRollingOutConditionType,
 			Status: operatorv1.ConditionTrue,
-			Reason: "DeploymentRollingOut",
+			Reason: reason,
 			Message: fmt.Sprintf(
 				"Waiting for router deployment rollout to finish: %d out of %d new replica(s) have been updated...\n",
 				deployment.Status.UpdatedReplicas, *deployment.Spec.Replicas),
@@ -516,10 +563,11 @@ func computeDeploymentRollingOutCondition(deployment *appsv1.Deployment) operato
 	}
 	// If have replicas greater than updated replicas, then we are waiting for old replicas to terminate.
 	if deployment.Status.Replicas > deployment.Status.UpdatedReplicas {
+		reason := computeDeploymentRollingOutStatusAndReason(hasNewReplicaSetAvailable, deployment)
 		return operatorv1.OperatorCondition{
 			Type:   IngressControllerDeploymentRollingOutConditionType,
 			Status: operatorv1.ConditionTrue,
-			Reason: "DeploymentRollingOut",
+			Reason: reason,
 			Message: fmt.Sprintf(
 				"Waiting for router deployment rollout to finish: %d old replica(s) are pending termination...\n",
 				deployment.Status.Replicas-deployment.Status.UpdatedReplicas),
@@ -527,10 +575,11 @@ func computeDeploymentRollingOutCondition(deployment *appsv1.Deployment) operato
 	}
 	// If available replicas less than updated replicas, then we are waiting for updated replicas to become available.
 	if deployment.Status.AvailableReplicas < deployment.Status.UpdatedReplicas {
+		reason := computeDeploymentRollingOutStatusAndReason(hasNewReplicaSetAvailable, deployment)
 		return operatorv1.OperatorCondition{
 			Type:   IngressControllerDeploymentRollingOutConditionType,
 			Status: operatorv1.ConditionTrue,
-			Reason: "DeploymentRollingOut",
+			Reason: reason,
 			Message: fmt.Sprintf(
 				"Waiting for router deployment rollout to finish: %d of %d updated replica(s) are available...\n",
 				deployment.Status.AvailableReplicas, deployment.Status.UpdatedReplicas),
@@ -540,9 +589,47 @@ func computeDeploymentRollingOutCondition(deployment *appsv1.Deployment) operato
 	return operatorv1.OperatorCondition{
 		Type:    IngressControllerDeploymentRollingOutConditionType,
 		Status:  operatorv1.ConditionFalse,
-		Reason:  "DeploymentNotRollingOut",
+		Reason:  ReasonNotRollingOut.String(),
 		Message: "Deployment is not actively rolling out",
 	}
+}
+
+// computeDeploymentRollingOutStatusAndReason computes the ingresscontroller's Status and Reason for DeploymentRollingOut
+// condition type checking if the deployment has the "NewReplicaSetAvailable" condition and the status of the pod replicas
+// and the generation metadata, in order to detect if the deployment is rolling out for am ingresscontroller configuration
+// change or due to an infrastructure change (i.e. node reboot due to update or scale up or down)
+func computeDeploymentRollingOutStatusAndReason(hasNewReplicaSetAvailable bool, deployment *appsv1.Deployment) string {
+	var (
+		wantReplicas      = int32(0)
+		haveReplicas      = deployment.Status.Replicas
+		updatedReplicas   = deployment.Status.UpdatedReplicas
+		availableReplicas = deployment.Status.AvailableReplicas
+		readyReplicas     = deployment.Status.ReadyReplicas
+	)
+
+	if deployment.Spec.Replicas != nil {
+		wantReplicas = *deployment.Spec.Replicas
+	}
+
+	if hasNewReplicaSetAvailable && deployment.Status.ObservedGeneration == deployment.Generation &&
+		updatedReplicas == wantReplicas {
+		if haveReplicas != wantReplicas {
+			return ReasonReplicasStabilizing.String()
+		}
+		if readyReplicas < wantReplicas || availableReplicas < wantReplicas {
+			return ReasonPodsStarting.String()
+		}
+	}
+
+	// Additional safety check: Even without NewReplicaSetAvailable, if everything
+	// matches except readiness, treat it as pods starting up
+	if deployment.Status.ObservedGeneration == deployment.Generation &&
+		updatedReplicas == wantReplicas &&
+		haveReplicas == wantReplicas &&
+		(readyReplicas < wantReplicas || availableReplicas < wantReplicas) {
+		return ReasonPodsStarting.String()
+	}
+	return ReasonDeploymentRollingOut.String()
 }
 
 // computeIngressDegradedCondition computes the ingresscontroller's "Degraded"
@@ -593,12 +680,7 @@ func computeIngressDegradedCondition(conditions []operatorv1.OperatorCondition, 
 	// Only check the default ingress controller for the canary
 	// success status condition.
 	if icName == manifests.DefaultIngressControllerName {
-		canaryCond := struct {
-			condition        string
-			status           operatorv1.ConditionStatus
-			ifConditionsTrue []string
-			gracePeriod      time.Duration
-		}{
+		canaryCond := expectedCondition{
 			condition:   IngressControllerCanaryCheckSuccessConditionType,
 			status:      operatorv1.ConditionTrue,
 			gracePeriod: time.Second * 60,
@@ -765,6 +847,12 @@ func computeIngressProgressingCondition(conditions []operatorv1.OperatorConditio
 		{
 			condition: IngressControllerDeploymentRollingOutConditionType,
 			status:    operatorv1.ConditionFalse,
+			// Ignore infrastructure-driven deployment rollouts when computing
+			// the IngressController's Progressing condition.
+			ignoreReasons: []string{
+				ReasonReplicasStabilizing.String(), // Node reboots, pod evictions
+				ReasonPodsStarting.String(),        // Pods restarting after infrastructure events
+			},
 		},
 	}
 
