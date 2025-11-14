@@ -23,6 +23,7 @@ import (
 
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	"github.com/openshift/cluster-ingress-operator/pkg/util/tls"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 
@@ -948,9 +949,25 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 	}
 
 	tlsProfileSpec := tlsProfileSpecForIngressController(ci, apiConfig)
+	ciphers := tlsProfileSpec.Ciphers
 
+	// Ignore ciphers that are not supported by OpenSSL.
+	filteredCiphers := make([]string, 0, len(ciphers))
+	for _, cipher := range ciphers {
+		if tls.IsAllowedCipher(cipher)  {
+			filteredCiphers = append(filteredCiphers, cipher)
+		}
+	}
+	if len(filteredCiphers) == 0 {
+		return nil, fmt.Errorf("no allowed ciphers are enabled")
+	}
+	ciphers = filteredCiphers
+
+	// The TLS security profile has a single list of ciphers whereas HAProxy
+	// requires two separate lists: one list for TLSv1.2 and earlier and one
+	// list for TLSv1.3, so partition the list of ciphers accordingly.
 	var tls13Ciphers, otherCiphers []string
-	for _, cipher := range tlsProfileSpec.Ciphers {
+	for _, cipher := range ciphers {
 		if tlsVersion13Ciphers.Has(cipher) {
 			tls13Ciphers = append(tls13Ciphers, cipher)
 		} else {
@@ -982,7 +999,14 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 	default:
 		minTLSVersion = "TLSv1.2"
 	}
-	env = append(env, corev1.EnvVar{Name: "SSL_MIN_VERSION", Value: minTLSVersion})
+	maxTLSVersion := "TLSv1.3"
+	if len(tls13Ciphers) == 0 {
+		maxTLSVersion = "TLSv1.2"
+	}
+	env = append(env,
+		corev1.EnvVar{Name: "SSL_MIN_VERSION", Value: minTLSVersion},
+		corev1.EnvVar{Name: "SSL_MAX_VERSION", Value: maxTLSVersion},
+	)
 
 	usingIPv4 := false
 	usingIPv6 := false
