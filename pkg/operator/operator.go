@@ -137,7 +137,6 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	gatewayAPIControllerEnabled := featureGates.Enabled(features.FeatureGateGatewayAPIController)
 	routeExternalCertificateEnabled := featureGates.Enabled(features.FeatureGateRouteExternalCertificate)
 	ingressControllerDCMEnabled := featureGates.Enabled(features.FeatureGateIngressControllerDynamicConfigurationManager)
-	gcpCustomEndpointsEnabled := featureGates.Enabled(features.FeatureGateGCPCustomAPIEndpoints)
 
 	cv, err := configClient.ConfigV1().ClusterVersions().Get(ctx, "version", metav1.GetOptions{})
 	if err != nil {
@@ -269,7 +268,6 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		},
 		OperatorReleaseVersion:       config.OperatorReleaseVersion,
 		AzureWorkloadIdentityEnabled: azureWorkloadIdentityEnabled,
-		GCPCustomEndpointsEnabled:    gcpCustomEndpointsEnabled,
 	}); err != nil {
 		return nil, fmt.Errorf("failed to create dns controller: %v", err)
 	}
