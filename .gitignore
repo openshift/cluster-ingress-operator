@@ -1,4 +1,5 @@
 /ingress-operator
+/ingress-operator-ext-tests
 /pkg/manifests/manifests
 
 tmp/
