@@ -547,10 +547,10 @@ func testGatewayAPIDNS(t *testing.T) {
 			// Create gateways
 			for _, gateway := range tc.createGateways {
 				createdGateway, err := createGatewayWithListeners(t, gatewayClass, gateway.gatewayName, gateway.namespace, gateway.listeners)
-				gateways = append(gateways, createdGateway)
 				if err != nil {
 					t.Fatalf("failed to create gateway %s: %v", gateway.gatewayName, err)
 				}
+				gateways = append(gateways, createdGateway)
 			}
 
 			t.Cleanup(func() {
@@ -565,9 +565,9 @@ func testGatewayAPIDNS(t *testing.T) {
 			})
 
 			for _, gateway := range gateways {
-				gateway, err := assertGatewaySuccessful(t, operatorcontroller.DefaultOperandNamespace, gateway.Name)
+				_, err := assertGatewaySuccessful(t, operatorcontroller.DefaultOperandNamespace, gateway.Name)
 				if err != nil {
-					t.Errorf("Failed to create %s gateway: %v", gateway.Name, err)
+					t.Fatalf("failed to accept/program gateway %s: %v", gateway.Name, err)
 				}
 			}
 
