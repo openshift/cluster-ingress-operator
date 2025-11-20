@@ -144,8 +144,8 @@ func (r *reconciler) updateCRD(ctx context.Context, current, desired *apiextensi
 	return true, nil
 }
 
-// crdChanged checks if the current CRD spec matches
-// the expected spec and if not returns an updated one.
+// crdChanged checks if the current CRD spec and annotations match
+// the expected spec and annotations, and if not returns an updated one.
 func crdChanged(current, expected *apiextensionsv1.CustomResourceDefinition) (bool, *apiextensionsv1.CustomResourceDefinition) {
 	crdCmpOpts := []cmp.Option{
 		// Ignore fields that the API may have modified.  Note: This
@@ -154,12 +154,33 @@ func crdChanged(current, expected *apiextensionsv1.CustomResourceDefinition) (bo
 		cmpopts.IgnoreFields(apiextensionsv1.CustomResourceDefinitionSpec{}, "Conversion"),
 		cmpopts.EquateEmpty(),
 	}
-	if cmp.Equal(current.Spec, expected.Spec, crdCmpOpts...) {
+
+	specChanged := !cmp.Equal(current.Spec, expected.Spec, crdCmpOpts...)
+	annotationsChanged := false
+
+	// Check if any expected annotations are missing or different
+	for k, v := range expected.Annotations {
+		if cv, ok := current.Annotations[k]; !ok || v != cv {
+			annotationsChanged = true
+			break
+		}
+	}
+
+	if !specChanged && !annotationsChanged {
 		return false, nil
 	}
 
 	updated := current.DeepCopy()
 	updated.Spec = expected.Spec
+
+	// Only update the expected annotations, preserving any additional ones
+	if updated.ObjectMeta.Annotations == nil {
+		updated.ObjectMeta.Annotations = make(map[string]string)
+	}
+	for k, v := range expected.Annotations {
+		updated.ObjectMeta.Annotations[k] = v
+	}
+
 	// Preserve fields that the API, other controllers, or user may have
 	// modified.  Note: This list must be kept consistent with crdCmpOpts
 	// above!
