@@ -56,9 +56,9 @@ go mod vendor
 # because the AWS ELB needs an extra ~60s for DNS propagation.  See
 # <https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/best-practices-dns.html#DNS_change_propagation>.
 # Also, GRPCRouteListenerHostnameMatching tests are taking longer than 150s to converge to passing.
-sed -i -e '/MaxTimeToConsistency:/ s/30/180/' conformance/utils/config/timeout.go
+sed -i -e '/MaxTimeToConsistency:/ s/30/360/' conformance/utils/config/timeout.go
 
 SUPPORTED_FEATURES="Gateway,GRPCRoute,HTTPRoute,ReferenceGrant,GatewayPort8080,HTTPRouteQueryParamMatching,HTTPRouteMethodMatching,HTTPRouteResponseHeaderModification,HTTPRoutePortRedirect,HTTPRouteSchemeRedirect,HTTPRoutePathRedirect,HTTPRouteHostRewrite,HTTPRoutePathRewrite,HTTPRouteRequestMirror,HTTPRouteRequestMultipleMirrors,HTTPRouteBackendProtocolH2C,HTTPRouteBackendProtocolWebSocket,HTTPRouteRequestPercentageMirror,HTTPRouteBackendRequestHeaderModification"
 
 echo "Start Gateway API Conformance Testing"
-go test ./conformance -v -timeout 20m -run TestConformance -args "--supported-features=${SUPPORTED_FEATURES}" "--gateway-class=${GATEWAYCLASS_NAME}"
+go test ./conformance -v -timeout 60m -run TestConformance -args "--supported-features=${SUPPORTED_FEATURES}" "--gateway-class=${GATEWAYCLASS_NAME}"
