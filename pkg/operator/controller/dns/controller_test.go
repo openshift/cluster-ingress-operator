@@ -9,9 +9,12 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 	iov1 "github.com/openshift/api/operatoringress/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
+	testutil "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/test/util"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache/informertest"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -117,6 +120,7 @@ func Test_publishRecordToZones(t *testing.T) {
 			r := &reconciler{
 				// TODO To write a fake provider that can return errors and add more test cases.
 				dnsProvider: &dns.FakeProvider{},
+				cache:       buildFakeCache(t),
 			}
 
 			_, actual := r.publishRecordToZones(test.zones, record)
@@ -128,9 +132,9 @@ func Test_publishRecordToZones(t *testing.T) {
 	}
 }
 
-// TestPublishRecordToZonesMergesStatus verifies that publishRecordToZones
+// Test_publishRecordToZonesMergesStatus verifies that publishRecordToZones
 // correctly merges status updates.
-func TestPublishRecordToZonesMergesStatus(t *testing.T) {
+func Test_publishRecordToZonesMergesStatus(t *testing.T) {
 	testCases := []struct {
 		description     string
 		oldZoneStatuses []iov1.DNSZoneStatus
@@ -215,7 +219,10 @@ func TestPublishRecordToZonesMergesStatus(t *testing.T) {
 				},
 				Status: iov1.DNSRecordStatus{Zones: tc.oldZoneStatuses},
 			}
-			r := &reconciler{dnsProvider: &dns.FakeProvider{}}
+			r := &reconciler{
+				dnsProvider: &dns.FakeProvider{},
+				cache:       buildFakeCache(t),
+			}
 			zone := []configv1.DNSZone{{ID: "zone2"}}
 			oldStatuses := record.Status.DeepCopy().Zones
 			_, newStatuses := r.publishRecordToZones(zone, record)
@@ -839,4 +846,29 @@ func Test_customCABundle(t *testing.T) {
 			}
 		})
 	}
+}
+
+// buildFakeCache returns a fake cache, with the necessary schema and index function(s) to mimic the parts of the cache
+// that the dns controller interacts with.
+func buildFakeCache(t *testing.T) *testutil.FakeCache {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	iov1.AddToScheme(scheme)
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithIndex(&iov1.DNSRecord{}, dnsRecordIndexFieldName, func(o client.Object) []string {
+			dnsRecord := o.(*iov1.DNSRecord)
+			return []string{dnsRecord.Spec.DNSName}
+		}).
+		Build()
+	cl := &testutil.FakeClientRecorder{
+		Client:  fakeClient,
+		T:       t,
+		Added:   []client.Object{},
+		Updated: []client.Object{},
+		Deleted: []client.Object{},
+	}
+	informer := informertest.FakeInformers{Scheme: scheme}
+	cache := testutil.FakeCache{Informers: &informer, Reader: cl}
+	return &cache
 }
