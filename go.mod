@@ -155,3 +155,5 @@ require (
 // This replace stanza is necessary to import
 // github.com/istio-ecosystem/sail-operator.
 replace github.com/imdario/mergo => github.com/imdario/mergo v0.3.5
+
+replace github.com/openshift/api => github.com/grzpiotrowski/api v0.0.0-20251014140948-63691f42cce9
