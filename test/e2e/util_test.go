@@ -9,6 +9,7 @@ import (
 	"context"
 	goerrors "errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"slices"
@@ -1342,6 +1343,83 @@ func getIngressControllerLBAddress(t *testing.T, ic *operatorv1.IngressControlle
 		t.Fatalf("error getting IngressController's service address: %v", err)
 	}
 	return lbAddress
+}
+
+// resolveIngressControllerAddress resolves the DNS name of the ingress controller’s
+// publishing load balancer and returns its IP address, or an error if resolution times out.
+func resolveIngressControllerAddress(t *testing.T, ic *operatorv1.IngressController) (string, error) {
+	t.Helper()
+
+	elbHostname := getIngressControllerLBAddress(t, ic)
+	elbAddress := elbHostname
+
+	if net.ParseIP(elbHostname) == nil {
+		if err := wait.PollUntilContextTimeout(context.Background(), 10*time.Second, dnsResolutionTimeout, false, func(ctx context.Context) (bool, error) {
+			addrs, err := net.LookupHost(elbHostname)
+			if err != nil {
+				t.Logf("%v error resolving %s: %v, retrying...", time.Now(), elbHostname, err)
+				return false, nil
+			}
+			elbAddress = addrs[0]
+			return true, nil
+		}); err != nil {
+			return "", fmt.Errorf("failed to resolve %s: %w", elbHostname, err)
+		}
+	}
+
+	return elbAddress, nil
+}
+
+// canaryImageReference returns the ingress operator’s canary image.
+func canaryImageReference(t *testing.T) (string, error) {
+	t.Helper()
+
+	ingressOperatorName := types.NamespacedName{
+		Name:      "ingress-operator",
+		Namespace: operatorNamespace,
+	}
+
+	deployment, err := getDeployment(t, kclient, ingressOperatorName, 1*time.Minute)
+	if err != nil {
+		return "", fmt.Errorf("failed to get deployment for IngressController %s: %w", ingressOperatorName, err)
+	}
+
+	for _, container := range deployment.Spec.Template.Spec.Containers {
+		for _, env := range container.Env {
+			if env.Name == "CANARY_IMAGE" {
+				return env.Value, nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("CANARY_IMAGE environment variable not found in deployment %s/%s", ingressOperatorName.Namespace, ingressOperatorName.Name)
+}
+
+// checkRouteConnectivity polls a route with GET requests and returns an error if
+// no successful response is received before timeout.
+func checkRouteConnectivity(t *testing.T, httpClient *http.Client, routerAddr, routeHost string) error {
+	if err := wait.PollUntilContextTimeout(context.Background(), 5*time.Second, 5*time.Minute, false, func(ctx context.Context) (bool, error) {
+		url := fmt.Sprintf("http://%s", routerAddr)
+		req, err := http.NewRequest(http.MethodGet, url, nil)
+		if err != nil {
+			t.Logf("Failed to build request %s: %v, retrying...", url, err)
+			return false, nil
+		}
+		req.Host = routeHost
+
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			t.Logf("Request to host %s failed: %v, retrying...", routeHost, err)
+			return false, nil
+		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		t.Logf("Response received from host %s", routeHost)
+		return true, nil
+	}); err != nil {
+		return fmt.Errorf("failed to verify connectivity to host %s: %w", routeHost, err)
+	}
+	return nil
 }
 
 func isNetworkError(err error) bool {
