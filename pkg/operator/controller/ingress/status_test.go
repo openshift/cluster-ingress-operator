@@ -8,6 +8,7 @@ import (
 	"encoding/pem"
 	"math/big"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -503,6 +504,9 @@ func Test_computeDeploymentRollingOutCondition(t *testing.T) {
 		replicasAvailable     *int32
 		expectStatus          operatorv1.ConditionStatus
 		expectMessageContains string
+		expectReasonContains  string
+		differentGeneration   bool
+		hasNewReplicaSet      bool
 	}{
 		{
 			name:                  "Router pod replicas not rolling out",
@@ -514,7 +518,7 @@ func Test_computeDeploymentRollingOutCondition(t *testing.T) {
 			expectMessageContains: "Deployment is not actively rolling out",
 		},
 		{
-			name:                  "Router pod replicas have/updated < want",
+			name:                  "Router pod replicas have/updated < wantGrace",
 			expectStatus:          operatorv1.ConditionTrue,
 			replicasHave:          pointer.Int32(1),
 			replicasWanted:        pointer.Int32(4),
@@ -532,7 +536,7 @@ func Test_computeDeploymentRollingOutCondition(t *testing.T) {
 			expectMessageContains: "2 old replica(s) are pending termination",
 		},
 		{
-			name:                  "Router pod replicas have > updated, but want is nil",
+			name:                  "Router pod replicas have > updated, but wantGrace is nil",
 			expectStatus:          operatorv1.ConditionTrue,
 			replicasHave:          pointer.Int32(3),
 			replicasWanted:        nil,
@@ -550,7 +554,7 @@ func Test_computeDeploymentRollingOutCondition(t *testing.T) {
 			expectMessageContains: "1 of 4 updated replica(s) are available",
 		},
 		{
-			name:                  "Router pods replicas available < updated, but want is nil",
+			name:                  "Router pods replicas available < updated, but wantGrace is nil",
 			expectStatus:          operatorv1.ConditionTrue,
 			replicasHave:          pointer.Int32(4),
 			replicasWanted:        nil,
@@ -559,7 +563,7 @@ func Test_computeDeploymentRollingOutCondition(t *testing.T) {
 			expectMessageContains: "1 of 4 updated replica(s) are available",
 		},
 		{
-			name:                  "Router pods replicas equal but want is nil",
+			name:                  "Router pods replicas equal but wantGrace is nil",
 			expectStatus:          operatorv1.ConditionFalse,
 			replicasHave:          pointer.Int32(1),
 			replicasWanted:        nil,
@@ -576,6 +580,42 @@ func Test_computeDeploymentRollingOutCondition(t *testing.T) {
 			replicasAvailable:     pointer.Int32(2),
 			expectMessageContains: "Deployment is not actively rolling out",
 		},
+		{
+			name:                  "Router pods replicas available < updated and generation is equal to observedGeneration",
+			expectStatus:          operatorv1.ConditionTrue,
+			replicasHave:          pointer.Int32(4),
+			replicasWanted:        pointer.Int32(4),
+			replicasUpdated:       pointer.Int32(4),
+			replicasAvailable:     pointer.Int32(1),
+			expectMessageContains: "1 of 4 updated replica(s) are available",
+			expectReasonContains:  ReasonPodsStarting.String(),
+			differentGeneration:   false,
+			hasNewReplicaSet:      true,
+		},
+		{
+			name:                  "Router pod replicas have > updated, generation is equal to observedGeneration and NewReplicaSet created",
+			expectStatus:          operatorv1.ConditionTrue,
+			replicasHave:          pointer.Int32(3),
+			replicasWanted:        pointer.Int32(1),
+			replicasUpdated:       pointer.Int32(1),
+			replicasAvailable:     pointer.Int32(1),
+			expectMessageContains: "2 old replica(s) are pending termination",
+			expectReasonContains:  ReasonReplicasStabilizing.String(),
+			differentGeneration:   false,
+			hasNewReplicaSet:      true,
+		},
+		{
+			name:                  "Router pod replicas have/updated < wantGrace, generation is equal to observedGeneration and NewReplicaSet created",
+			expectStatus:          operatorv1.ConditionTrue,
+			replicasHave:          pointer.Int32(4),
+			replicasWanted:        pointer.Int32(4),
+			replicasUpdated:       pointer.Int32(4),
+			replicasAvailable:     pointer.Int32(1),
+			expectMessageContains: "Waiting for router deployment rollout to finish: 1 of 4 updated replica(s) are available...\n",
+			expectReasonContains:  ReasonPodsStarting.String(),
+			differentGeneration:   false,
+			hasNewReplicaSet:      true,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -589,12 +629,28 @@ func Test_computeDeploymentRollingOutCondition(t *testing.T) {
 					UpdatedReplicas:   *test.replicasUpdated,
 				},
 			}
+			if !test.differentGeneration {
+				routerDeploy.ObjectMeta.Generation = 1
+				routerDeploy.Status.ObservedGeneration = 1
+			}
+			if test.hasNewReplicaSet {
+				routerDeploy.Status.Conditions = []appsv1.DeploymentCondition{
+					{
+						Type:   appsv1.DeploymentProgressing,
+						Status: corev1.ConditionTrue,
+						Reason: deploymentNewRSAvailableReason,
+					},
+				}
+			}
 			actual := computeDeploymentRollingOutCondition(routerDeploy)
 			if actual.Status != test.expectStatus {
 				t.Errorf("expected status to be %s, got %s", test.expectStatus, actual.Status)
 			}
 			if len(test.expectMessageContains) != 0 && !strings.Contains(actual.Message, test.expectMessageContains) {
 				t.Errorf("expected message to include %q, got %q", test.expectMessageContains, actual.Message)
+			}
+			if len(test.expectReasonContains) != 0 && !strings.Contains(actual.Reason, test.expectReasonContains) {
+				t.Errorf("expected reason to include %q, got %q", test.expectReasonContains, actual.Reason)
 			}
 		})
 	}
@@ -953,7 +1009,7 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 			ic: loadBalancerIngressControllerWithAWSSubnets(
 				operatorv1.AWSNetworkLoadBalancer,
 				&operatorv1.AWSSubnets{
-					Names: []operatorv1.AWSSubnetName{"name-12345"},
+					Names: []operatorv1.AWSSubnetName{"description-12345"},
 				},
 				nil,
 			),
@@ -980,11 +1036,11 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 				operatorv1.AWSNetworkLoadBalancer,
 				&operatorv1.AWSSubnets{
 					IDs:   []operatorv1.AWSSubnetID{"subnet-12345"},
-					Names: []operatorv1.AWSSubnetName{"name-12345"},
+					Names: []operatorv1.AWSSubnetName{"description-12345"},
 				},
 				&operatorv1.AWSSubnets{
 					IDs:   []operatorv1.AWSSubnetID{"subnet-12345"},
-					Names: []operatorv1.AWSSubnetName{"name-12345"},
+					Names: []operatorv1.AWSSubnetName{"description-12345"},
 				},
 			),
 			service:        &corev1.Service{},
@@ -997,11 +1053,11 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 				operatorv1.AWSNetworkLoadBalancer,
 				&operatorv1.AWSSubnets{
 					IDs:   []operatorv1.AWSSubnetID{"subnet-12345"},
-					Names: []operatorv1.AWSSubnetName{"name-12345"},
+					Names: []operatorv1.AWSSubnetName{"description-12345"},
 				},
 				&operatorv1.AWSSubnets{
 					IDs:   []operatorv1.AWSSubnetID{"subnet-67890"},
-					Names: []operatorv1.AWSSubnetName{"name-67890"},
+					Names: []operatorv1.AWSSubnetName{"description-67890"},
 				},
 			),
 			service:        &corev1.Service{},
@@ -1014,11 +1070,11 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 				operatorv1.AWSNetworkLoadBalancer,
 				&operatorv1.AWSSubnets{
 					IDs:   []operatorv1.AWSSubnetID{"subnet-12345", "subnet-67890"},
-					Names: []operatorv1.AWSSubnetName{"name-12345", "name-67890"},
+					Names: []operatorv1.AWSSubnetName{"description-12345", "description-67890"},
 				},
 				&operatorv1.AWSSubnets{
 					IDs:   []operatorv1.AWSSubnetID{"subnet-67890", "subnet-12345"},
-					Names: []operatorv1.AWSSubnetName{"name-67890", "name-12345"},
+					Names: []operatorv1.AWSSubnetName{"description-67890", "description-12345"},
 				},
 			),
 			service:        &corev1.Service{},
@@ -1031,11 +1087,11 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 				operatorv1.AWSNetworkLoadBalancer,
 				&operatorv1.AWSSubnets{
 					IDs:   []operatorv1.AWSSubnetID{"subnet-67890", "subnet-12345", "subnet-54321"},
-					Names: []operatorv1.AWSSubnetName{"name-12345", "name-67890"},
+					Names: []operatorv1.AWSSubnetName{"description-12345", "description-67890"},
 				},
 				&operatorv1.AWSSubnets{
 					IDs:   []operatorv1.AWSSubnetID{"subnet-12345", "subnet-67890"},
-					Names: []operatorv1.AWSSubnetName{"name-67890", "name-12345", "name-54321"},
+					Names: []operatorv1.AWSSubnetName{"description-67890", "description-12345", "description-54321"},
 				},
 			),
 			service:        &corev1.Service{},
@@ -1069,7 +1125,7 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 			ic: loadBalancerIngressControllerWithAWSSubnets(
 				operatorv1.AWSClassicLoadBalancer,
 				&operatorv1.AWSSubnets{
-					Names: []operatorv1.AWSSubnetName{"name-12345"},
+					Names: []operatorv1.AWSSubnetName{"description-12345"},
 				},
 				nil,
 			),
@@ -1096,11 +1152,11 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 				operatorv1.AWSClassicLoadBalancer,
 				&operatorv1.AWSSubnets{
 					IDs:   []operatorv1.AWSSubnetID{"subnet-12345"},
-					Names: []operatorv1.AWSSubnetName{"name-12345"},
+					Names: []operatorv1.AWSSubnetName{"description-12345"},
 				},
 				&operatorv1.AWSSubnets{
 					IDs:   []operatorv1.AWSSubnetID{"subnet-12345"},
-					Names: []operatorv1.AWSSubnetName{"name-12345"},
+					Names: []operatorv1.AWSSubnetName{"description-12345"},
 				},
 			),
 			service:        &corev1.Service{},
@@ -1113,11 +1169,11 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 				operatorv1.AWSClassicLoadBalancer,
 				&operatorv1.AWSSubnets{
 					IDs:   []operatorv1.AWSSubnetID{"subnet-12345"},
-					Names: []operatorv1.AWSSubnetName{"name-12345"},
+					Names: []operatorv1.AWSSubnetName{"description-12345"},
 				},
 				&operatorv1.AWSSubnets{
 					IDs:   []operatorv1.AWSSubnetID{"subnet-67890"},
-					Names: []operatorv1.AWSSubnetName{"name-67890"},
+					Names: []operatorv1.AWSSubnetName{"description-67890"},
 				},
 			),
 			service:        &corev1.Service{},
@@ -1130,11 +1186,11 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 				operatorv1.AWSClassicLoadBalancer,
 				&operatorv1.AWSSubnets{
 					IDs:   []operatorv1.AWSSubnetID{"subnet-12345", "subnet-67890"},
-					Names: []operatorv1.AWSSubnetName{"name-12345", "name-67890"},
+					Names: []operatorv1.AWSSubnetName{"description-12345", "description-67890"},
 				},
 				&operatorv1.AWSSubnets{
 					IDs:   []operatorv1.AWSSubnetID{"subnet-67890", "subnet-12345"},
-					Names: []operatorv1.AWSSubnetName{"name-67890", "name-12345"},
+					Names: []operatorv1.AWSSubnetName{"description-67890", "description-12345"},
 				},
 			),
 			service:        &corev1.Service{},
@@ -1147,11 +1203,11 @@ func Test_computeLoadBalancerProgressingStatus(t *testing.T) {
 				operatorv1.AWSClassicLoadBalancer,
 				&operatorv1.AWSSubnets{
 					IDs:   []operatorv1.AWSSubnetID{"subnet-67890", "subnet-12345", "subnet-54321"},
-					Names: []operatorv1.AWSSubnetName{"name-12345", "name-67890"},
+					Names: []operatorv1.AWSSubnetName{"description-12345", "description-67890"},
 				},
 				&operatorv1.AWSSubnets{
 					IDs:   []operatorv1.AWSSubnetID{"subnet-12345", "subnet-67890"},
-					Names: []operatorv1.AWSSubnetName{"name-67890", "name-12345", "name-54321"},
+					Names: []operatorv1.AWSSubnetName{"description-67890", "description-12345", "description-54321"},
 				},
 			),
 			service:        &corev1.Service{},
@@ -1698,6 +1754,60 @@ func Test_computeIngressProgressingCondition(t *testing.T) {
 				{Type: IngressControllerLoadBalancerProgressingConditionType, Status: operatorv1.ConditionFalse},
 				{Type: IngressControllerDeploymentRollingOutConditionType, Status: operatorv1.ConditionTrue},
 				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
+			},
+			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeProgressing, Status: operatorv1.ConditionTrue},
+		},
+		{
+			description: "load balancer is not progressing, but unmanaged load balancer type and router deployment is rolling out due to node reboot (pods starting)",
+			conditions: []operatorv1.OperatorCondition{
+				{Type: IngressControllerLoadBalancerProgressingConditionType, Status: operatorv1.ConditionFalse},
+				{Type: IngressControllerDeploymentRollingOutConditionType, Status: operatorv1.ConditionTrue, Reason: ReasonPodsStarting.String()},
+				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
+			},
+			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeProgressing, Status: operatorv1.ConditionFalse},
+		},
+		{
+			description: "load balancer is progressing, but unmanaged load balancer type and router deployment is rolling out due to node reboot (pods starting)",
+			conditions: []operatorv1.OperatorCondition{
+				{Type: IngressControllerLoadBalancerProgressingConditionType, Status: operatorv1.ConditionTrue},
+				{Type: IngressControllerDeploymentRollingOutConditionType, Status: operatorv1.ConditionTrue, Reason: ReasonPodsStarting.String()},
+				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
+			},
+			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeProgressing, Status: operatorv1.ConditionFalse},
+		},
+		{
+			description: "load balancer and unmanaged load balancer are progressing, but router deployment is rolling out due to node reboot (pods starting)",
+			conditions: []operatorv1.OperatorCondition{
+				{Type: IngressControllerLoadBalancerProgressingConditionType, Status: operatorv1.ConditionTrue},
+				{Type: IngressControllerDeploymentRollingOutConditionType, Status: operatorv1.ConditionTrue, Reason: ReasonPodsStarting.String()},
+				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionTrue},
+			},
+			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeProgressing, Status: operatorv1.ConditionTrue},
+		},
+		{
+			description: "load balancer is not progressing, but unmanaged load balancer type and router deployment is rolling out due to node reboot (replicas stabilizing)",
+			conditions: []operatorv1.OperatorCondition{
+				{Type: IngressControllerLoadBalancerProgressingConditionType, Status: operatorv1.ConditionFalse},
+				{Type: IngressControllerDeploymentRollingOutConditionType, Status: operatorv1.ConditionTrue, Reason: ReasonReplicasStabilizing.String()},
+				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
+			},
+			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeProgressing, Status: operatorv1.ConditionFalse},
+		},
+		{
+			description: "load balancer is progressing, but unmanaged load balancer type and router deployment is rolling out due to node reboot (replicas stabilizing)",
+			conditions: []operatorv1.OperatorCondition{
+				{Type: IngressControllerLoadBalancerProgressingConditionType, Status: operatorv1.ConditionTrue},
+				{Type: IngressControllerDeploymentRollingOutConditionType, Status: operatorv1.ConditionTrue, Reason: ReasonReplicasStabilizing.String()},
+				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
+			},
+			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeProgressing, Status: operatorv1.ConditionFalse},
+		},
+		{
+			description: "load balancer and unmanaged load balancer are progressing, but router deployment is rolling out due to node reboot (replicas stabilizing)",
+			conditions: []operatorv1.OperatorCondition{
+				{Type: IngressControllerLoadBalancerProgressingConditionType, Status: operatorv1.ConditionTrue},
+				{Type: IngressControllerDeploymentRollingOutConditionType, Status: operatorv1.ConditionTrue, Reason: ReasonReplicasStabilizing.String()},
+				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionTrue},
 			},
 			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeProgressing, Status: operatorv1.ConditionTrue},
 		},
@@ -2381,14 +2491,14 @@ func Test_IngressStatusesEqual(t *testing.T) {
 			a: icStatusWithSubnetsOrEIPAllocations(
 				operatorv1.AWSNetworkLoadBalancer,
 				&operatorv1.AWSSubnets{
-					Names: []operatorv1.AWSSubnetName{"name-567890"},
+					Names: []operatorv1.AWSSubnetName{"description-567890"},
 				},
 				nil,
 			),
 			b: icStatusWithSubnetsOrEIPAllocations(
 				operatorv1.AWSNetworkLoadBalancer,
 				&operatorv1.AWSSubnets{
-					Names: []operatorv1.AWSSubnetName{"name-123456"},
+					Names: []operatorv1.AWSSubnetName{"description-123456"},
 				},
 				nil,
 			),
@@ -2399,14 +2509,14 @@ func Test_IngressStatusesEqual(t *testing.T) {
 			a: icStatusWithSubnetsOrEIPAllocations(
 				operatorv1.AWSNetworkLoadBalancer,
 				&operatorv1.AWSSubnets{
-					Names: []operatorv1.AWSSubnetName{"name-123456", "name-890123"},
+					Names: []operatorv1.AWSSubnetName{"description-123456", "description-890123"},
 				},
 				nil,
 			),
 			b: icStatusWithSubnetsOrEIPAllocations(
 				operatorv1.AWSNetworkLoadBalancer,
 				&operatorv1.AWSSubnets{
-					Names: []operatorv1.AWSSubnetName{"name-123456"},
+					Names: []operatorv1.AWSSubnetName{"description-123456"},
 				},
 				nil,
 			),
@@ -2417,14 +2527,14 @@ func Test_IngressStatusesEqual(t *testing.T) {
 			a: icStatusWithSubnetsOrEIPAllocations(
 				operatorv1.AWSNetworkLoadBalancer,
 				&operatorv1.AWSSubnets{
-					Names: []operatorv1.AWSSubnetName{"name-123456"},
+					Names: []operatorv1.AWSSubnetName{"description-123456"},
 				},
 				nil,
 			),
 			b: icStatusWithSubnetsOrEIPAllocations(
 				operatorv1.AWSNetworkLoadBalancer,
 				&operatorv1.AWSSubnets{
-					Names: []operatorv1.AWSSubnetName{"name-123456"},
+					Names: []operatorv1.AWSSubnetName{"description-123456"},
 				},
 				nil,
 			),
@@ -2435,14 +2545,14 @@ func Test_IngressStatusesEqual(t *testing.T) {
 			a: icStatusWithSubnetsOrEIPAllocations(
 				operatorv1.AWSNetworkLoadBalancer,
 				&operatorv1.AWSSubnets{
-					Names: []operatorv1.AWSSubnetName{"name-123456", "name-890123"},
+					Names: []operatorv1.AWSSubnetName{"description-123456", "description-890123"},
 				},
 				nil,
 			),
 			b: icStatusWithSubnetsOrEIPAllocations(
 				operatorv1.AWSNetworkLoadBalancer,
 				&operatorv1.AWSSubnets{
-					Names: []operatorv1.AWSSubnetName{"name-890123", "name-123456"},
+					Names: []operatorv1.AWSSubnetName{"description-890123", "description-123456"},
 				},
 				nil,
 			),
@@ -2543,14 +2653,14 @@ func Test_IngressStatusesEqual(t *testing.T) {
 			a: icStatusWithSubnetsOrEIPAllocations(
 				operatorv1.AWSClassicLoadBalancer,
 				&operatorv1.AWSSubnets{
-					IDs: []operatorv1.AWSSubnetID{"name-123456"},
+					IDs: []operatorv1.AWSSubnetID{"description-123456"},
 				},
 				nil,
 			),
 			b: icStatusWithSubnetsOrEIPAllocations(
 				operatorv1.AWSClassicLoadBalancer,
 				&operatorv1.AWSSubnets{
-					IDs: []operatorv1.AWSSubnetID{"name-123456"},
+					IDs: []operatorv1.AWSSubnetID{"description-123456"},
 				},
 				nil,
 			),
@@ -2593,7 +2703,7 @@ func Test_IngressStatusesEqual(t *testing.T) {
 								Type: operatorv1.AWSClassicLoadBalancer,
 								ClassicLoadBalancerParameters: &operatorv1.AWSClassicLoadBalancerParameters{
 									Subnets: &operatorv1.AWSSubnets{
-										Names: []operatorv1.AWSSubnetName{"name-890123", "name-123456"},
+										Names: []operatorv1.AWSSubnetName{"description-890123", "description-123456"},
 									},
 								},
 							},
@@ -2614,7 +2724,7 @@ func Test_IngressStatusesEqual(t *testing.T) {
 								Type: operatorv1.AWSClassicLoadBalancer,
 								ClassicLoadBalancerParameters: &operatorv1.AWSClassicLoadBalancerParameters{
 									Subnets: &operatorv1.AWSSubnets{
-										Names: []operatorv1.AWSSubnetName{"name-890123", "name-123456"},
+										Names: []operatorv1.AWSSubnetName{"description-890123", "description-123456"},
 									},
 								},
 							},
@@ -3827,6 +3937,108 @@ func Test_computeAllowedSourceRanges(t *testing.T) {
 			actual := computeAllowedSourceRanges(test.service)
 			if !reflect.DeepEqual(actual, test.expect) {
 				t.Errorf("expected %v, got %v", test.expect, actual)
+			}
+		})
+	}
+}
+
+func Test_checkConditions(t *testing.T) {
+	type conditions struct {
+		expectedConds []expectedCondition
+		conditions    []operatorv1.OperatorCondition
+	}
+	testCases := []struct {
+		description      string
+		conditions       conditions
+		wantGrace        []*operatorv1.OperatorCondition
+		wantDegraded     []*operatorv1.OperatorCondition
+		wantRequeueAfter time.Duration
+	}{
+		// expected condition present and matches status -> no grace, no degraded
+		{
+			description: "expected condition matches existing status",
+			conditions: conditions{
+				expectedConds: []expectedCondition{
+					{condition: IngressControllerDeploymentAvailableConditionType, status: operatorv1.ConditionTrue},
+				},
+				conditions: []operatorv1.OperatorCondition{
+					{Type: IngressControllerDeploymentAvailableConditionType, Status: operatorv1.ConditionTrue},
+				},
+			},
+		},
+		// expected condition present but reason is ignored -> no grace, no degraded
+		{
+			description: "condition differs but reason is ignored",
+			conditions: conditions{
+				expectedConds: []expectedCondition{
+					{condition: IngressControllerDeploymentAvailableConditionType, status: operatorv1.ConditionTrue, ignoreReasons: []string{"IgnoredReason"}},
+				},
+				conditions: []operatorv1.OperatorCondition{
+					{Type: IngressControllerDeploymentAvailableConditionType, Status: operatorv1.ConditionFalse, Reason: "IgnoredReason"},
+				},
+			},
+		},
+		// predicate not satisfied -> check skipped -> no grace, no degraded
+		{
+			description: "predicate not satisfied skips check",
+			conditions: conditions{
+				expectedConds: []expectedCondition{
+					{condition: operatorv1.DNSReadyIngressConditionType, status: operatorv1.ConditionTrue, ifConditionsTrue: []string{
+						operatorv1.LoadBalancerManagedIngressConditionType,
+						operatorv1.LoadBalancerReadyIngressConditionType,
+						operatorv1.DNSManagedIngressConditionType,
+					}},
+				},
+				conditions: []operatorv1.OperatorCondition{
+					{Type: operatorv1.DNSReadyIngressConditionType, Status: operatorv1.ConditionFalse},
+					{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse}, // predicate not met
+					{Type: operatorv1.LoadBalancerReadyIngressConditionType, Status: operatorv1.ConditionTrue},
+					{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionTrue},
+				},
+			},
+		},
+		// expected condition not present -> skipped -> no grace, no degraded
+		{
+			description: "expected condition missing is skipped",
+			conditions: conditions{
+				expectedConds: []expectedCondition{
+					{condition: operatorv1.LoadBalancerReadyIngressConditionType, status: operatorv1.ConditionTrue, ifConditionsTrue: []string{operatorv1.LoadBalancerManagedIngressConditionType}},
+				},
+				conditions: []operatorv1.OperatorCondition{
+					{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionTrue},
+				},
+			},
+		},
+		// multiple expected where all match or are skipped -> no outputs
+		{
+			description: "multiple expected, all matched or skipped",
+			conditions: conditions{
+				expectedConds: []expectedCondition{
+					{condition: IngressControllerDeploymentAvailableConditionType, status: operatorv1.ConditionTrue},
+					{condition: operatorv1.DNSReadyIngressConditionType, status: operatorv1.ConditionTrue, ifConditionsTrue: []string{operatorv1.DNSManagedIngressConditionType}},
+					{condition: operatorv1.LoadBalancerReadyIngressConditionType, status: operatorv1.ConditionTrue, ifConditionsTrue: []string{operatorv1.LoadBalancerManagedIngressConditionType}},
+				},
+				conditions: []operatorv1.OperatorCondition{
+					{Type: IngressControllerDeploymentAvailableConditionType, Status: operatorv1.ConditionTrue},
+					{Type: operatorv1.DNSReadyIngressConditionType, Status: operatorv1.ConditionFalse}, // will be skipped because predicate not met
+					{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionFalse},
+					{Type: operatorv1.LoadBalancerReadyIngressConditionType, Status: operatorv1.ConditionTrue}, // will be skipped because predicate not met
+					{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
+				},
+			},
+		},
+	}
+	for _, tt := range testCases {
+		t.Run(tt.description, func(t *testing.T) {
+			graceConditions, degradedConditions, requeueAfter := checkConditions(tt.conditions.expectedConds, tt.conditions.conditions)
+			if !slices.Equal(tt.wantGrace, graceConditions) {
+				t.Errorf("expected %v, got %v for checkConditions(%v, %v)", tt.wantGrace, graceConditions, tt.conditions.expectedConds, tt.conditions.conditions)
+			}
+			if !slices.Equal(tt.wantDegraded, degradedConditions) {
+				t.Errorf("expected %v, got %v for checkConditions(%v, %v)", tt.wantDegraded, degradedConditions, tt.conditions.expectedConds, tt.conditions.conditions)
+			}
+			if tt.wantRequeueAfter != requeueAfter {
+				t.Errorf("expected %v, got %v for checkConditions(%v, %v)", tt.wantRequeueAfter, requeueAfter, tt.conditions.expectedConds, tt.conditions.conditions)
 			}
 		})
 	}
