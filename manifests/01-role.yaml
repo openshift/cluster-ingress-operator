@@ -37,6 +37,13 @@ rules:
   - services
   verbs:
   - "*"
+
+- apiGroups:
+  - networking.k8s.io
+  resources:
+  - networkpolicies
+  verbs:
+  - "*"
 ---
 # Role for the operator to delete Role and RoleBindings
 # in the openshift-config namespace.

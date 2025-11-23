@@ -1,0 +1,23 @@
+# Istio Pods for Gateway API
+#  Egress to api server and everything (routes set endpoints, so can be literally anything)
+#  Ingress need to be wildcarded as well since the ports are configurable
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gateway-api-allow
+  namespace: openshift-ingress
+spec:
+  podSelector:
+    matchLabels:
+      istio.io/rev: "openshift-gateway"
+  ingress:
+  - from:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+  egress:
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+  policyTypes:
+  - Ingress
+  - Egress

@@ -13,6 +13,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 
@@ -24,31 +25,36 @@ import (
 )
 
 const (
-	RouterNamespaceAsset          = "assets/router/namespace.yaml"
-	RouterServiceAccountAsset     = "assets/router/service-account.yaml"
-	RouterClusterRoleAsset        = "assets/router/cluster-role.yaml"
-	RouterClusterRoleBindingAsset = "assets/router/cluster-role-binding.yaml"
-	RouterDeploymentAsset         = "assets/router/deployment.yaml"
-	RouterServiceInternalAsset    = "assets/router/service-internal.yaml"
-	RouterServiceCloudAsset       = "assets/router/service-cloud.yaml"
+	RouterNamespaceAsset            = "assets/router/namespace.yaml"
+	RouterServiceAccountAsset       = "assets/router/service-account.yaml"
+	RouterClusterRoleAsset          = "assets/router/cluster-role.yaml"
+	RouterClusterRoleBindingAsset   = "assets/router/cluster-role-binding.yaml"
+	RouterDeploymentAsset           = "assets/router/deployment.yaml"
+	RouterServiceInternalAsset      = "assets/router/service-internal.yaml"
+	RouterServiceCloudAsset         = "assets/router/service-cloud.yaml"
+	RouterNetworkPolicyDenyAllAsset = "assets/router/networkpolicy-deny-all.yaml"
+	RouterNetworkPolicyAllowAsset   = "assets/router/networkpolicy-allow.yaml"
 
 	MetricsClusterRoleAsset        = "assets/router/metrics/cluster-role.yaml"
 	MetricsClusterRoleBindingAsset = "assets/router/metrics/cluster-role-binding.yaml"
 	MetricsRoleAsset               = "assets/router/metrics/role.yaml"
 	MetricsRoleBindingAsset        = "assets/router/metrics/role-binding.yaml"
 
-	CanaryNamespaceAsset = "assets/canary/namespace.yaml"
-	CanaryDaemonSetAsset = "assets/canary/daemonset.yaml"
-	CanaryServiceAsset   = "assets/canary/service.yaml"
-	CanaryRouteAsset     = "assets/canary/route.yaml"
+	CanaryNamespaceAsset            = "assets/canary/namespace.yaml"
+	CanaryDaemonSetAsset            = "assets/canary/daemonset.yaml"
+	CanaryServiceAsset              = "assets/canary/service.yaml"
+	CanaryRouteAsset                = "assets/canary/route.yaml"
+	CanaryNetworkPolicyDenyAllAsset = "assets/canary/networkpolicy-deny-all.yaml"
+	CanaryNetworkPolicyAllowAsset   = "assets/canary/networkpolicy-allow.yaml"
 
-	GatewayClassCRDAsset            = "assets/gateway-api/gateway.networking.k8s.io_gatewayclasses.yaml"
-	GatewayCRDAsset                 = "assets/gateway-api/gateway.networking.k8s.io_gateways.yaml"
-	GRPCRouteCRDAsset               = "assets/gateway-api/gateway.networking.k8s.io_grpcroutes.yaml"
-	HTTPRouteCRDAsset               = "assets/gateway-api/gateway.networking.k8s.io_httproutes.yaml"
-	ReferenceGrantCRDAsset          = "assets/gateway-api/gateway.networking.k8s.io_referencegrants.yaml"
-	GatewayAPIAdminClusterRoleAsset = "assets/gateway-api/aggregated-cluster-roles/admin-cluster-role.yaml"
-	GatewayAPIViewClusterRoleAsset  = "assets/gateway-api/aggregated-cluster-roles/view-cluster-role.yaml"
+	GatewayClassCRDAsset              = "assets/gateway-api/gateway.networking.k8s.io_gatewayclasses.yaml"
+	GatewayCRDAsset                   = "assets/gateway-api/gateway.networking.k8s.io_gateways.yaml"
+	GRPCRouteCRDAsset                 = "assets/gateway-api/gateway.networking.k8s.io_grpcroutes.yaml"
+	HTTPRouteCRDAsset                 = "assets/gateway-api/gateway.networking.k8s.io_httproutes.yaml"
+	ReferenceGrantCRDAsset            = "assets/gateway-api/gateway.networking.k8s.io_referencegrants.yaml"
+	GatewayAPIAdminClusterRoleAsset   = "assets/gateway-api/aggregated-cluster-roles/admin-cluster-role.yaml"
+	GatewayAPIViewClusterRoleAsset    = "assets/gateway-api/aggregated-cluster-roles/view-cluster-role.yaml"
+	GatewayAPIAllowNetworkPolicyAsset = "assets/gateway-api/gateway-networkpolicy-allow.yaml"
 
 	// Annotation used to inform the certificate generation service to
 	// generate a cluster-signed certificate and populate the secret.
@@ -258,6 +264,22 @@ func CanaryRoute() *routev1.Route {
 	return route
 }
 
+func CanaryNetworkPolicyDenyAll() *networkingv1.NetworkPolicy {
+	networkPolicy, err := NewNetworkPolicy(MustAssetReader(CanaryNetworkPolicyDenyAllAsset))
+	if err != nil {
+		panic(err)
+	}
+	return networkPolicy
+}
+
+func CanaryNetworkPolicyAllow() *networkingv1.NetworkPolicy {
+	networkPolicy, err := NewNetworkPolicy(MustAssetReader(CanaryNetworkPolicyAllowAsset))
+	if err != nil {
+		panic(err)
+	}
+	return networkPolicy
+}
+
 func GatewayClassCRD() *apiextensionsv1.CustomResourceDefinition {
 	crd, err := NewCustomResourceDefinition(MustAssetReader(GatewayClassCRDAsset))
 	if err != nil {
@@ -312,6 +334,30 @@ func GatewayAPIViewClusterRole() *rbacv1.ClusterRole {
 		panic(err)
 	}
 	return clusterRole
+}
+
+func GatewayAPIAllowNetworkPolicy() *networkingv1.NetworkPolicy {
+	networkPolicy, err := NewNetworkPolicy(MustAssetReader(GatewayAPIAllowNetworkPolicyAsset))
+	if err != nil {
+		panic(err)
+	}
+	return networkPolicy
+}
+
+func RouterNetworkPolicyDenyAll() *networkingv1.NetworkPolicy {
+	networkPolicy, err := NewNetworkPolicy(MustAssetReader(RouterNetworkPolicyDenyAllAsset))
+	if err != nil {
+		panic(err)
+	}
+	return networkPolicy
+}
+
+func RouterNetworkPolicyAllow() *networkingv1.NetworkPolicy {
+	networkPolicy, err := NewNetworkPolicy(MustAssetReader(RouterNetworkPolicyAllowAsset))
+	if err != nil {
+		panic(err)
+	}
+	return networkPolicy
 }
 
 func NewServiceAccount(manifest io.Reader) (*corev1.ServiceAccount, error) {
@@ -397,6 +443,15 @@ func NewDaemonSet(manifest io.Reader) (*appsv1.DaemonSet, error) {
 
 func NewRoute(manifest io.Reader) (*routev1.Route, error) {
 	o := routev1.Route{}
+	if err := yaml.NewYAMLOrJSONDecoder(manifest, 100).Decode(&o); err != nil {
+		return nil, err
+	}
+
+	return &o, nil
+}
+
+func NewNetworkPolicy(manifest io.Reader) (*networkingv1.NetworkPolicy, error) {
+	o := networkingv1.NetworkPolicy{}
 	if err := yaml.NewYAMLOrJSONDecoder(manifest, 100).Decode(&o); err != nil {
 		return nil, err
 	}
