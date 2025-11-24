@@ -35,6 +35,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
+
+	"k8s.io/client-go/tools/record"
 )
 
 const (
@@ -80,6 +82,7 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	reconciler := &reconciler{
 		config:                    config,
 		client:                    mgr.GetClient(),
+		recorder:                  mgr.GetEventRecorderFor(canaryControllerName),
 		enableCanaryRouteRotation: false,
 	}
 	c, err := controller.New(canaryControllerName, mgr, controller.Options{Reconciler: reconciler})
@@ -158,6 +161,15 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 		return o.GetNamespace() == canaryService.Namespace && o.GetName() == canaryService.Name
 	})
 	if err := c.Watch(source.Kind[client.Object](operatorCache, &corev1.Service{}, enqueueRequestForDefaultIngressController(config.Namespace), canaryServicePredicate)); err != nil {
+		return nil, err
+	}
+
+	// Watch the canary serving cert secret and enqueue the default ingress controller so
+	// that changes to the serving cert cause the canary daemonset to be reconciled.
+	canarySecretPredicate := predicate.NewPredicateFuncs(func(o client.Object) bool {
+		return o.GetNamespace() == operatorcontroller.DefaultCanaryNamespace && o.GetName() == "canary-serving-cert"
+	})
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &corev1.Secret{}, enqueueRequestForDefaultIngressController(config.Namespace), canarySecretPredicate)); err != nil {
 		return nil, err
 	}
 
@@ -252,7 +264,8 @@ type Config struct {
 type reconciler struct {
 	config Config
 
-	client client.Client
+	client   client.Client
+	recorder record.EventRecorder
 
 	// Use a mutex so enableCanaryRotation is
 	// go-routine safe.
