@@ -37,10 +37,14 @@ const (
 	MetricsRoleAsset               = "assets/router/metrics/role.yaml"
 	MetricsRoleBindingAsset        = "assets/router/metrics/role-binding.yaml"
 
-	CanaryNamespaceAsset = "assets/canary/namespace.yaml"
-	CanaryDaemonSetAsset = "assets/canary/daemonset.yaml"
-	CanaryServiceAsset   = "assets/canary/service.yaml"
-	CanaryRouteAsset     = "assets/canary/route.yaml"
+	CanaryNamespaceAsset          = "assets/canary/namespace.yaml"
+	CanaryDaemonSetAsset          = "assets/canary/daemonset.yaml"
+	CanaryServiceAsset            = "assets/canary/service.yaml"
+	CanaryRouteAsset              = "assets/canary/route.yaml"
+	CanaryClusterRoleBindingAsset = "assets/canary/cluster-role-binding.yaml"
+	CanaryRoleBindingAsset        = "assets/canary/role-binding.yaml"
+	CanaryRoleAsset               = "assets/canary/role.yaml"
+	CanaryServiceAccountAsset     = "assets/canary/service-account.yaml"
 
 	GatewayClassCRDAsset            = "assets/gateway-api/gateway.networking.k8s.io_gatewayclasses.yaml"
 	GatewayCRDAsset                 = "assets/gateway-api/gateway.networking.k8s.io_gateways.yaml"
@@ -256,6 +260,39 @@ func CanaryRoute() *routev1.Route {
 		panic(err)
 	}
 	return route
+}
+
+func CanaryClusterRoleBinding() *rbacv1.ClusterRoleBinding {
+	clusterRoleBinding, err := NewClusterRoleBinding(MustAssetReader(CanaryClusterRoleBindingAsset))
+	if err != nil {
+		panic(err)
+	}
+	return clusterRoleBinding
+
+}
+
+func CanaryRoleBinding() *rbacv1.RoleBinding {
+	roleBinding, err := NewRoleBinding(MustAssetReader(CanaryClusterRoleBindingAsset))
+	if err != nil {
+		panic(err)
+	}
+	return roleBinding
+}
+
+func CanaryRole() *rbacv1.Role {
+	role, err := NewRole(MustAssetReader(CanaryRoleAsset))
+	if err != nil {
+		panic(err)
+	}
+	return role
+}
+
+func CanaryServiceAccount() *corev1.ServiceAccount {
+	serviceAccount, err := NewServiceAccount(MustAssetReader(CanaryServiceAccountAsset))
+	if err != nil {
+		panic(err)
+	}
+	return serviceAccount
 }
 
 func GatewayClassCRD() *apiextensionsv1.CustomResourceDefinition {
