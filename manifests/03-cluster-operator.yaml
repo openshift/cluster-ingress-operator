@@ -30,3 +30,6 @@ status:
     - group: ingress.operator.openshift.io
       namespace: openshift-ingress-operator
       resource: dnsrecords
+    - group: rbac.authorization.k8s.io
+      name: openshift-ingress-operator
+      resource: clusterroles

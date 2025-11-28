@@ -12,6 +12,7 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
+	rbacv1 "k8s.io/api/rbac/v1"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -269,6 +270,11 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 			Group:     iov1.GroupVersion.Group,
 			Resource:  "dnsrecords",
 			Namespace: r.config.Namespace,
+		},
+		{
+			Group:    rbacv1.GroupName,
+			Resource: "clusterroles",
+			Name:     "openshift-ingress-operator",
 		},
 	}
 	if state.IngressNamespace != nil {

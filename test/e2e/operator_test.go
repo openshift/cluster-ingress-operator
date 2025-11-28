@@ -31,6 +31,7 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 	iov1 "github.com/openshift/api/operatoringress/v1"
 	routev1 "github.com/openshift/api/route/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 
 	configclientset "github.com/openshift/client-go/config/clientset/versioned"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
@@ -235,6 +236,11 @@ func TestClusterOperatorStatusRelatedObjects(t *testing.T) {
 		{
 			Resource: "namespaces",
 			Name:     "openshift-ingress-canary",
+		},
+		{
+			Group:    rbacv1.GroupName,
+			Resource: "clusterroles",
+			Name:     "openshift-ingress-operator",
 		},
 	}
 
