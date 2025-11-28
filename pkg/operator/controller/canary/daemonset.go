@@ -97,6 +97,8 @@ func desiredCanaryDaemonSet(canaryImage string) *appsv1.DaemonSet {
 	daemonset.Spec.Template.Spec.Containers[0].Image = canaryImage
 	daemonset.Spec.Template.Spec.Containers[0].Command = []string{"ingress-operator", CanaryHealthcheckCommand}
 
+	daemonset.Spec.Template.Spec.ServiceAccountName = "ingress-canary"
+
 	return daemonset
 }
 
@@ -160,6 +162,11 @@ func canaryDaemonSetChanged(current, expected *appsv1.DaemonSet) (bool, *appsv1.
 
 	if !cmp.Equal(current.Spec.Template.Spec.Volumes, expected.Spec.Template.Spec.Volumes, cmpopts.EquateEmpty(), cmpopts.SortSlices(func(a, b corev1.Volume) bool { return a.Name < b.Name })) {
 		updated.Spec.Template.Spec.Volumes = expected.Spec.Template.Spec.Volumes
+		changed = true
+	}
+
+	if current.Spec.Template.Spec.ServiceAccountName != expected.Spec.Template.Spec.ServiceAccountName {
+		updated.Spec.Template.Spec.ServiceAccountName = expected.Spec.Template.Spec.ServiceAccountName
 		changed = true
 	}
 
