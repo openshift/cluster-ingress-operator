@@ -31,6 +31,7 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 	iov1 "github.com/openshift/api/operatoringress/v1"
 	routev1 "github.com/openshift/api/route/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 
 	configclientset "github.com/openshift/client-go/config/clientset/versioned"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
@@ -222,6 +223,40 @@ func TestClusterOperatorStatusRelatedObjects(t *testing.T) {
 			Group:     iov1.GroupVersion.Group,
 			Resource:  "dnsrecords",
 			Namespace: operatorNamespace,
+		},
+		{
+			Group:    rbacv1.GroupName,
+			Resource: "clusterroles",
+			Name:     "openshift-ingress-operator",
+		},
+		{
+			Group:    rbacv1.GroupName,
+			Resource: "clusterrolebindings",
+			Name:     "openshift-ingress-operator",
+		},
+		{
+			Group:     rbacv1.GroupName,
+			Resource:  "roles",
+			Name:      "ingress-operator",
+			Namespace: "openshift-ingress-operator",
+		},
+		{
+			Group:     rbacv1.GroupName,
+			Resource:  "rolebindings",
+			Name:      "ingress-operator",
+			Namespace: "openshift-ingress-operator",
+		},
+		{
+			Group:     rbacv1.GroupName,
+			Resource:  "roles",
+			Name:      "ingress-operator",
+			Namespace: "openshift-config",
+		},
+		{
+			Group:     rbacv1.GroupName,
+			Resource:  "rolebindings",
+			Name:      "ingress-operator",
+			Namespace: "openshift-config",
 		},
 		{
 			Resource: "namespaces",
