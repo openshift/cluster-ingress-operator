@@ -42,8 +42,6 @@ const (
 	CanaryServiceAsset            = "assets/canary/service.yaml"
 	CanaryRouteAsset              = "assets/canary/route.yaml"
 	CanaryClusterRoleBindingAsset = "assets/canary/cluster-role-binding.yaml"
-	CanaryRoleBindingAsset        = "assets/canary/role-binding.yaml"
-	CanaryRoleAsset               = "assets/canary/role.yaml"
 	CanaryServiceAccountAsset     = "assets/canary/service-account.yaml"
 
 	GatewayClassCRDAsset            = "assets/gateway-api/gateway.networking.k8s.io_gatewayclasses.yaml"
@@ -269,22 +267,6 @@ func CanaryClusterRoleBinding() *rbacv1.ClusterRoleBinding {
 	}
 	return clusterRoleBinding
 
-}
-
-func CanaryRoleBinding() *rbacv1.RoleBinding {
-	roleBinding, err := NewRoleBinding(MustAssetReader(CanaryClusterRoleBindingAsset))
-	if err != nil {
-		panic(err)
-	}
-	return roleBinding
-}
-
-func CanaryRole() *rbacv1.Role {
-	role, err := NewRole(MustAssetReader(CanaryRoleAsset))
-	if err != nil {
-		panic(err)
-	}
-	return role
 }
 
 func CanaryServiceAccount() *corev1.ServiceAccount {
