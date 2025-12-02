@@ -94,12 +94,12 @@ func TestSecureRedirectStripsPort(t *testing.T) {
 
 	// Host header with port 80
 	hostWithPort := echoRoute.Spec.Host + ":80"
-	
-extraCurlArgs := []string{" -i", "-H", "Host: " + hostWithPort}
-	
+
+	extraCurlArgs := []string{" -i", "-H", "Host: " + hostWithPort}
+
 	clientPodImage := deployment.Spec.Template.Spec.Containers[0].Image
 	clientPod := buildCurlPod(name+"-client", echoRoute.Namespace, clientPodImage, echoRoute.Spec.Host, service.Spec.ClusterIP, extraCurlArgs...)
-	
+
 	if err := kclient.Create(context.TODO(), clientPod); err != nil {
 		t.Fatalf("failed to create client pod: %v", err)
 	}
