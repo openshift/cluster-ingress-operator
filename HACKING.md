@@ -118,3 +118,57 @@ Assuming `KUBECONFIG` is set, run end-to-end tests:
 ```
 $ make test-e2e
 ```
+
+## OSSM Pre-release Image Testing
+
+### Purpose
+
+- [Pre-release script](https://github.com/openshift/cluster-ingress-operator/blob/master/hack/test-pre-release-ossm-images.sh) uses Konflux to pick up unreleased Index Image to create a custom catalog source.
+
+- The Catalog Source can then be used to install an unreleased OSSM operator.
+
+- Used by NI&D team to validate OSSM builds against GatewayAPI e2e tests before GA to catch bugs early.
+
+### Getting Started
+
+#### Locally
+
+- Connect to RedHat VPN.
+
+- Create new service accounts for [stage registry](https://access.stage.redhat.com/terms-based-registry/accounts) and [brew registry](https://access.redhat.com/terms-based-registry/accounts).
+
+- Obtain Stage Pull Secret
+```shell
+$ podman login --authfile=/tmp/authstage --username="${STAGE_USER}" --password="${STAGE_PASS}" registry.stage.redhat.io
+```
+
+- Obtain Brew Pull Secret
+```shell
+$ podman login --authfile=/tmp/authbrew --username="${BREW_USER}" --password="${BREW_PASS}" brew.registry.redhat.io
+```
+
+- Obtain the Konflux Token from the secrets folder in [CI Vault](https://vault.ci.openshift.org/ui/vault/secrets/kv/kv/list/selfservice/nid-ossm-token/).
+
+- Run the script
+
+```shell
+$ TOKEN="${KONFLUX_TOKEN}" AUTHSTAGE="$(cat /tmp/authstage)" AUTHBREW="$(cat /tmp/authbrew)" make test-pre-release-ossm
+```
+
+#### CI
+
+- Post a test PR to this repository and look for `e2e-aws-pre-release-ossm` job ([job defintion](https://github.com/openshift/release/blob/master/ci-operator/config/openshift/cluster-ingress-operator/openshift-cluster-ingress-operator-master.yaml#L146-L167)).
+
+### Troubleshooting
+
+- OSSM team provided a 1-year valid token to access Konflux cluster.
+
+- Konflux Token, Brew and Stage secrets used by the CI job are stored in [CI Vault](https://vault.ci.openshift.org/) under `selfservice/nid-ossm-token/secrets`.
+
+- Custom catalog source relies on these secrets to become ready, you need to make sure that the konflux token and pull secrets are valid.
+
+### Konflux Applications
+
+`ossm-fbc-v4-x`: Contains next unreleased (z-stream) of current released versions.
+
+`ossm-fbc-next`: Initial builds of the next unreleased minor version.
