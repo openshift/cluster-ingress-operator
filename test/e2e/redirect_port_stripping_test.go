@@ -30,10 +30,7 @@ func TestSecureRedirectStripsPort(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get kube config: %v", err)
 	}
-	kclient, err := client.New(kubeConfig, client.Options{})
-	if err != nil {
-		t.Fatalf("failed to create runtime client: %v", err)
-	}
+
 	kubeClient, err := kubernetes.NewForConfig(kubeConfig)
 	if err != nil {
 		t.Fatalf("failed to create kube client: %v", err)
@@ -117,16 +114,24 @@ func TestSecureRedirectStripsPort(t *testing.T) {
 		defer readCloser.Close()
 
 		scanner := bufio.NewScanner(readCloser)
+		found302 := false
+		foundLocation := false
 		for scanner.Scan() {
 			line := scanner.Text()
+			if strings.Contains(line, "HTTP/1.1 302 Found") {
+				found302 = true
+			}
 			// Looking for "Location: https://<host><path>"
 			// We want to ensure NO ":80" is present.
-			if strings.HasPrefix(strings.ToLower(line), "location:") {
+			if strings.HasPrefix(strings.ToLower(line), "< location:") {
 				t.Logf("Found location header: %s", line)
-				if strings.Contains(line, "https://"+echoRoute.Spec.Host) && !strings.Contains(line, ":80") {
-					return true, nil
+				if strings.Contains(line, "https://"+echoRoute.Spec.Host+"/") && !strings.Contains(line, ":80") {
+					foundLocation = true
 				}
 			}
+		}
+		if found302 && foundLocation {
+			return true, nil
 		}
 		return false, nil
 	})
