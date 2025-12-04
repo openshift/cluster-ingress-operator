@@ -20,7 +20,7 @@ require (
 	github.com/google/go-cmp v0.7.0
 	github.com/google/gopacket v1.1.19
 	github.com/istio-ecosystem/sail-operator v0.0.0-20250513111011-30be83268d6b
-	github.com/openshift/api v0.0.0-20250305225826-b8da3bfeaf77
+	github.com/openshift/api v0.0.0-20251202204302-1cb53e34ca33
 	github.com/openshift/client-go v0.0.0-20240405120947-c67c8325cdd8
 	github.com/openshift/library-go v0.0.0-20240419113445-f1541d628746
 	github.com/operator-framework/api v0.30.0
@@ -37,9 +37,9 @@ require (
 	google.golang.org/grpc v1.72.0
 	gopkg.in/fsnotify.v1 v1.4.7
 	gopkg.in/yaml.v2 v2.4.0
-	k8s.io/api v0.33.0
+	k8s.io/api v0.33.2
 	k8s.io/apiextensions-apiserver v0.33.0
-	k8s.io/apimachinery v0.33.0
+	k8s.io/apimachinery v0.33.2
 	k8s.io/apiserver v0.33.0
 	k8s.io/client-go v12.0.0+incompatible
 	k8s.io/utils v0.0.0-20250502105355-0f33e8f1c979

@@ -2625,3 +2625,54 @@ func Test_IdleConnectionTerminationPolicy(t *testing.T) {
 		})
 	}
 }
+
+// Test_ClosedClientConnectionPolicy validates that the ingress
+// controller correctly sets the ROUTER_ABORT_ON_CLOSE
+// environment variable based on the setting of the
+// IngressController's ClosedClientConnectionPolicy.
+func Test_ClosedClientConnectionPolicy(t *testing.T) {
+	ic, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, clusterProxyConfig := getRouterDeploymentComponents(t)
+
+	for _, tc := range []struct {
+		name                string
+		policy              operatorv1.IngressControllerClosedClientConnectionPolicy
+		expectEnvVarPresent bool
+		expectedEnvVarValue string
+	}{{
+		name:                "ClosedClientConnectionPolicy is Abort",
+		policy:              operatorv1.IngressControllerClosedClientConnectionPolicyAbort,
+		expectEnvVarPresent: true,
+		expectedEnvVarValue: "true",
+	}, {
+		name:                "ClosedClientConnectionPolicy is not set",
+		policy:              "",
+		expectEnvVarPresent: false,
+		expectedEnvVarValue: "",
+	}, {
+		name:                "ClosedClientConnectionPolicy is Continue (default)",
+		policy:              operatorv1.IngressControllerClosedClientConnectionPolicyContinue,
+		expectEnvVarPresent: false,
+		expectedEnvVarValue: "",
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			ic.Spec.ClosedClientConnectionPolicy = tc.policy
+
+			deployment, err := desiredRouterDeployment(ic, &Config{IngressControllerImage: ingressControllerImage}, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, false, nil, clusterProxyConfig)
+			if err != nil {
+				t.Fatalf("failed to generate desired router Deployment: %v", err)
+			}
+
+			expectedEnv := []envData{{
+				name:          "ROUTER_ABORT_ON_CLOSE",
+				expectPresent: tc.expectEnvVarPresent,
+				expectedValue: tc.expectedEnvVarValue,
+			}}
+
+			if err := checkDeploymentEnvironment(t, deployment, expectedEnv); err != nil {
+				t.Errorf("environment variable check failed: %v", err)
+			}
+
+			checkDeploymentHasEnvSorted(t, deployment)
+		})
+	}
+}
