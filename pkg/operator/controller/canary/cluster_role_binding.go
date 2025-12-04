@@ -84,10 +84,11 @@ func desiredCanaryClusterRoleBinding() *rbacv1.ClusterRoleBinding {
 	clusterRoleBinding.Name = name.Name
 	clusterRoleBinding.Namespace = name.Namespace
 
-	clusterRoleBinding.Labels = map[string]string{
-		// associate the cluster role binding with the ingress canary controller
-		manifests.OwningIngressCanaryCheckLabel: canaryControllerName,
+	if clusterRoleBinding.Labels == nil {
+		clusterRoleBinding.Labels = map[string]string{}
 	}
+
+	clusterRoleBinding.Labels[manifests.OwningIngressCanaryCheckLabel] = canaryControllerName
 
 	return clusterRoleBinding
 }
