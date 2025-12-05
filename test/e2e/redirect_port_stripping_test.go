@@ -91,7 +91,7 @@ func TestSecureRedirectStripsPort(t *testing.T) {
 	// Host header with port 80
 	hostWithPort := echoRoute.Spec.Host + ":80"
 
-	extraCurlArgs := []string{" -i", "-H", "Host: " + hostWithPort}
+	extraCurlArgs := []string{"-i", "-H", "Host: " + hostWithPort}
 
 	clientPodImage := deployment.Spec.Template.Spec.Containers[0].Image
 	clientPod := buildCurlPod(name+"-client", echoRoute.Namespace, clientPodImage, echoRoute.Spec.Host, service.Spec.ClusterIP, extraCurlArgs...)
@@ -122,7 +122,7 @@ func TestSecureRedirectStripsPort(t *testing.T) {
 			}
 			// Looking for "Location: https://<host><path>"
 			// We want to ensure NO ":80" is present.
-			if strings.HasPrefix(strings.ToLower(line), "< location:") {
+			if strings.HasPrefix(strings.ToLower(line), "location:") {
 				t.Logf("Found location header: %s", line)
 				if strings.Contains(line, "https://"+echoRoute.Spec.Host+"/") && !strings.Contains(line, ":80") {
 					foundLocation = true
