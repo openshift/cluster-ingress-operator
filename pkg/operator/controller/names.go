@@ -292,6 +292,20 @@ func CanaryRouteName() types.NamespacedName {
 	}
 }
 
+func CanaryClusterRoleBindingName() types.NamespacedName {
+	return types.NamespacedName{
+		Namespace: DefaultCanaryNamespace,
+		Name:      "openshift-ingress-canary",
+	}
+}
+
+func CanaryServiceAccountName() types.NamespacedName {
+	return types.NamespacedName{
+		Namespace: DefaultCanaryNamespace,
+		Name:      "ingress-canary",
+	}
+}
+
 func IngressClassName(ingressControllerName string) types.NamespacedName {
 	return types.NamespacedName{Name: "openshift-" + ingressControllerName}
 }
