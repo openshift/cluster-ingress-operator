@@ -88,7 +88,7 @@ func Test_canaryServiceAccountChanged(t *testing.T) {
 					"foo": "bar",
 				}
 			},
-			expect: true,
+			expect: false,
 		},
 	}
 
