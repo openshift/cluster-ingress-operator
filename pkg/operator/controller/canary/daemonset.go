@@ -97,7 +97,7 @@ func desiredCanaryDaemonSet(canaryImage string) *appsv1.DaemonSet {
 	daemonset.Spec.Template.Spec.Containers[0].Image = canaryImage
 	daemonset.Spec.Template.Spec.Containers[0].Command = []string{"ingress-operator", CanaryHealthcheckCommand}
 
-	daemonset.Spec.Template.Spec.ServiceAccountName = "ingress-canary"
+	daemonset.Spec.Template.Spec.ServiceAccountName = controller.CanaryServiceAccountName().Name
 
 	return daemonset
 }

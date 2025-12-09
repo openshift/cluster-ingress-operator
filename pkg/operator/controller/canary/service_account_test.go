@@ -3,7 +3,7 @@ package canary
 import (
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
+	"github.com/stretchr/testify/assert"
 
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
@@ -16,11 +16,11 @@ func Test_desiredServiceAccount(t *testing.T) {
 
 	expectedServiceAccountName := controller.CanaryServiceAccountName()
 
-	if !cmp.Equal(serviceAccount.Name, expectedServiceAccountName.Name) {
+	if !assert.Equal(t, serviceAccount.Name, expectedServiceAccountName.Name) {
 		t.Errorf("expected service account name to be %s, but got %s", expectedServiceAccountName.Name, serviceAccount.Name)
 	}
 
-	if !cmp.Equal(serviceAccount.Namespace, expectedServiceAccountName.Namespace) {
+	if !assert.Equal(t, serviceAccount.Namespace, expectedServiceAccountName.Namespace) {
 		t.Errorf("expected service account namespace to be %s, but got %s", expectedServiceAccountName.Namespace, serviceAccount.Namespace)
 	}
 
@@ -28,7 +28,7 @@ func Test_desiredServiceAccount(t *testing.T) {
 		manifests.OwningIngressCanaryCheckLabel: canaryControllerName,
 	}
 
-	if !cmp.Equal(serviceAccount.Labels, expectedLabels) {
+	if !assert.Equal(t, serviceAccount.Labels, expectedLabels) {
 		t.Errorf("expected service account labels to be %q, but got %q", expectedLabels, serviceAccount.Labels)
 	}
 }
@@ -77,6 +77,15 @@ func Test_canaryServiceAccountChanged(t *testing.T) {
 					val = *sa.AutomountServiceAccountToken
 					invertVal := !val
 					sa.AutomountServiceAccountToken = &invertVal
+				}
+			},
+			expect: true,
+		},
+		{
+			description: "if annotations change",
+			mutate: func(sa *corev1.ServiceAccount) {
+				sa.Annotations = map[string]string{
+					"foo": "bar",
 				}
 			},
 			expect: true,

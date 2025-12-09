@@ -188,12 +188,12 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		// resource creation in a namespace that does not exist will fail.
 		return result, fmt.Errorf("failed to ensure canary namespace: %v", err)
 	}
-	// Service Account
-	haveSa, _, err := r.ensureCanaryServiceAccount()
+
+	haveSa, _, err := r.ensureCanaryServiceAccount(ctx)
 	if err != nil {
-		return result, fmt.Errorf("failed to ensure canary service account: %v", err)
+		return result, fmt.Errorf("failed to ensure canary service account: %w", err)
 	} else if !haveSa {
-		return result, fmt.Errorf("failed to get canary cluster role binding: %v", err)
+		return result, fmt.Errorf("failed to get canary service account: %w", err)
 	}
 
 	haveDs, daemonset, err := r.ensureCanaryDaemonSet()

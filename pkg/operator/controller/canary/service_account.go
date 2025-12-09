@@ -13,35 +13,34 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 )
 
-// ensureCurrentCanaryServiceAccount ensures the canary service account exists.
-func (r *reconciler) ensureCanaryServiceAccount() (bool, *corev1.ServiceAccount, error) {
+// ensureCanaryServiceAccount ensures the canary service account exists.
+func (r *reconciler) ensureCanaryServiceAccount(ctx context.Context) (bool, *corev1.ServiceAccount, error) {
 	desired := desiredCanaryServiceAccount()
-	haveSa, current, err := r.currentCanaryServiceAccount()
-
+	haveSa, current, err := r.currentCanaryServiceAccount(ctx)
 	if err != nil {
 		return false, nil, err
 	}
 
 	switch {
 	case !haveSa:
-		if err := r.createCanaryServiceAccount(desired); err != nil {
+		if err := r.createCanaryServiceAccount(ctx, desired); err != nil {
 			return false, nil, err
 		}
-		return r.currentCanaryServiceAccount()
+		return r.currentCanaryServiceAccount(ctx)
 	case haveSa:
 		if updated, err := r.updateCanaryServiceAccount(current, desired); err != nil {
 			return true, current, err
 		} else if updated {
-			return r.currentCanaryServiceAccount()
+			return r.currentCanaryServiceAccount(ctx)
 		}
 	}
 	return true, current, nil
 }
 
 // currentCanaryServiceAccount returns the current service account.
-func (r *reconciler) currentCanaryServiceAccount() (bool, *corev1.ServiceAccount, error) {
+func (r *reconciler) currentCanaryServiceAccount(ctx context.Context) (bool, *corev1.ServiceAccount, error) {
 	serviceAccount := &corev1.ServiceAccount{}
-	if err := r.client.Get(context.TODO(), controller.CanaryServiceAccountName(), serviceAccount); err != nil {
+	if err := r.client.Get(ctx, controller.CanaryServiceAccountName(), serviceAccount); err != nil {
 		if errors.IsNotFound(err) {
 			return false, nil, nil
 		}
@@ -51,15 +50,15 @@ func (r *reconciler) currentCanaryServiceAccount() (bool, *corev1.ServiceAccount
 }
 
 // createCanaryServiceAccount creates the given service account resource.
-func (r *reconciler) createCanaryServiceAccount(serviceAccount *corev1.ServiceAccount) error {
-	if err := r.client.Create(context.TODO(), serviceAccount); err != nil {
+func (r *reconciler) createCanaryServiceAccount(ctx context.Context, serviceAccount *corev1.ServiceAccount) error {
+	if err := r.client.Create(ctx, serviceAccount); err != nil {
 		return fmt.Errorf("failed to create canary service account %s/%s: %w", serviceAccount.Namespace, serviceAccount.Name, err)
 	}
 	log.Info("created canary service account", "namespace", serviceAccount.Namespace, "name", serviceAccount.Name)
 	return nil
 }
 
-// updateCanaryServiceaccount updates the canary ServiceAccount if an appropriate
+// updateCanaryServiceAccount updates the canary ServiceAccount if an appropriate
 // change has been detected.
 func (r *reconciler) updateCanaryServiceAccount(current, desired *corev1.ServiceAccount) (bool, error) {
 	changed, updated := canaryServiceAccountChanged(current, desired)
@@ -76,7 +75,7 @@ func (r *reconciler) updateCanaryServiceAccount(current, desired *corev1.Service
 	return true, nil
 }
 
-// desiredServiceAccount returns the desired canary ServiceAccount
+// desiredCanaryServiceAccount returns the desired canary ServiceAccount
 // read in from manifests.
 func desiredCanaryServiceAccount() *corev1.ServiceAccount {
 	serviceAccount := manifests.CanaryServiceAccount()
@@ -85,7 +84,7 @@ func desiredCanaryServiceAccount() *corev1.ServiceAccount {
 	serviceAccount.Namespace = name.Namespace
 
 	serviceAccount.Labels = map[string]string{
-		// associate the service account with the ingress canary controller
+		// Associate the service account with the ingress canary controller.
 		manifests.OwningIngressCanaryCheckLabel: canaryControllerName,
 	}
 
@@ -112,7 +111,16 @@ func canaryServiceAccountChanged(current, expected *corev1.ServiceAccount) (bool
 		return false, nil
 	}
 
-	return true, expected.DeepCopy()
+	// Bring over changed fields (Secrets, ImagePullSecrets, AutomountServiceAccountToken)
+	// from expected to current.
+	// This way we do not bring over any unwanted changes.
+	currentCopy := current.DeepCopy()
+
+	currentCopy.Secrets = expected.Secrets
+	currentCopy.ImagePullSecrets = expected.ImagePullSecrets
+	currentCopy.AutomountServiceAccountToken = expected.AutomountServiceAccountToken
+
+	return true, currentCopy.DeepCopy()
 }
 
 // SASpecComparison is a helper struct for comparing two service account objects.
