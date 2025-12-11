@@ -6,7 +6,6 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
-	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
 	corev1 "k8s.io/api/core/v1"
 )
@@ -14,14 +13,12 @@ import (
 func Test_desiredServiceAccount(t *testing.T) {
 	serviceAccount := desiredCanaryServiceAccount()
 
-	expectedServiceAccountName := controller.CanaryServiceAccountName()
-
-	if !assert.Equal(t, serviceAccount.Name, expectedServiceAccountName.Name) {
-		t.Errorf("expected service account name to be %s, but got %s", expectedServiceAccountName.Name, serviceAccount.Name)
+	if !assert.Equal(t, serviceAccount.Name, "ingress-canary") {
+		t.Errorf("expected service account name to be %s, but got %s", "ingress-canary", serviceAccount.Name)
 	}
 
-	if !assert.Equal(t, serviceAccount.Namespace, expectedServiceAccountName.Namespace) {
-		t.Errorf("expected service account namespace to be %s, but got %s", expectedServiceAccountName.Namespace, serviceAccount.Namespace)
+	if !assert.Equal(t, serviceAccount.Namespace, "openshift-ingress-canary") {
+		t.Errorf("expected service account namespace to be %s, but got %s", "openshift-ingress-canary", serviceAccount.Namespace)
 	}
 
 	expectedLabels := map[string]string{
