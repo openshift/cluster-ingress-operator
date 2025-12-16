@@ -27,7 +27,7 @@ const systemClusterCriticalPriorityClassName = "system-cluster-critical"
 // ensureIstioOLM attempts to ensure that an Istio CR is present and returns a
 // Boolean indicating whether it exists, the CR if it exists, and an error
 // value.
-func (r *reconciler) ensureIstioOLM(ctx context.Context, gatewayclass *gatewayapiv1.GatewayClass, istioVersion string) (bool, *sailv1.Istio, error) {
+func (r *reconciler) ensureIstioOLM(ctx context.Context, gatewayclass *gatewayapiv1.GatewayClass, istioVersion string, gatewayclasses []gatewayapiv1.GatewayClass, infraConfig *configv1.Infrastructure) (bool, *sailv1.Istio, error) {
 	name := controller.IstioName(r.config.OperandNamespace)
 	have, current, err := r.currentIstio(ctx, name)
 	if err != nil {
@@ -53,9 +53,13 @@ func (r *reconciler) ensureIstioOLM(ctx context.Context, gatewayclass *gatewayap
 		return have, current, fmt.Errorf("error verifying cluster proxy configuration: %w", err)
 	}
 
-	desired := desiredIstio(name, ownerRef, istioVersion, enableInferenceExtension, &extraIstioConfig{
+	desired, err := desiredIstio(name, ownerRef, istioVersion, enableInferenceExtension, gatewayclasses, &extraIstioConfig{
 		proxyConfig: &proxyConfig,
+		infraConfig: infraConfig,
 	})
+	if err != nil {
+		return have, current, err
+	}
 
 	switch {
 	case !have:
@@ -163,7 +167,7 @@ func gatewayAPIPilotEnv(enableInferenceExtension bool) map[string]string {
 }
 
 // desiredIstio returns the desired Istio CR.
-func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference, istioVersion string, enableInferenceExtension bool, extraConfig *extraIstioConfig) *sailv1.Istio {
+func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference, istioVersion string, enableInferenceExtension bool, gatewayclasses []gatewayapiv1.GatewayClass, extraConfig *extraIstioConfig) (*sailv1.Istio, error) {
 	pilotContainerEnv := gatewayAPIPilotEnv(enableInferenceExtension)
 	istio := &sailv1.Istio{
 		ObjectMeta: metav1.ObjectMeta{
@@ -226,12 +230,22 @@ func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference, ist
 	}
 
 	if extraConfig != nil {
-		if proxyMetadata := buildProxyMetadata(extraConfig.proxyConfig); proxyMetadata != nil {
-			istio.Spec.Values.MeshConfig.DefaultConfig.ProxyMetadata = proxyMetadata
+		if extraConfig.proxyConfig != nil {
+			if proxyMetadata := buildProxyMetadata(extraConfig.proxyConfig); proxyMetadata != nil {
+				istio.Spec.Values.MeshConfig.DefaultConfig.ProxyMetadata = proxyMetadata
+			}
+		}
+
+		if extraConfig.infraConfig != nil {
+			if hpaConfig, err := buildHorizontalPodAutoscalerConfig(extraConfig.infraConfig, gatewayclasses); err != nil {
+				return nil, err
+			} else {
+				istio.Spec.Values.GatewayClasses = hpaConfig
+			}
 		}
 	}
 
-	return istio
+	return istio, nil
 }
 
 // currentIstio returns the current istio CR.

@@ -98,6 +98,7 @@ const (
 
 type extraIstioConfig struct {
 	proxyConfig *configv1.Proxy
+	infraConfig *configv1.Infrastructure
 }
 
 var log = logf.Logger.WithName(controllerName)
@@ -243,6 +244,12 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 		if err := c.Watch(&SailLibrarySource[client.Object]{NotifyCh: notifyCh, RequestsFunc: reconciler.requestsForAllManagedGatewayClasses}); err != nil {
 			return nil, err
 		}
+	}
+
+	// Watch the cluster infrastructure config in case the infrastructure
+	// topology changes.
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &configv1.Infrastructure{}, reconciler.enqueueRequestForSomeGatewayClass())); err != nil {
+		return nil, err
 	}
 
 	gatewayClassController = c
@@ -418,6 +425,11 @@ func (r *reconciler) reconcileWithOLM(ctx context.Context, request reconcile.Req
 	log.Info("reconciling with OLM", "request", request)
 	var errs []error
 
+	var infraConfig configv1.Infrastructure
+	if err := r.cache.Get(ctx, types.NamespacedName{Name: "cluster"}, &infraConfig); err != nil {
+		return reconcile.Result{}, err
+	}
+
 	gatewayclass := &gatewayapiv1.GatewayClass{}
 	if err := r.cache.Get(ctx, request.NamespacedName, gatewayclass); err != nil {
 		if errors.IsNotFound(err) {
@@ -466,7 +478,12 @@ func (r *reconciler) reconcileWithOLM(ctx context.Context, request reconcile.Req
 	if v, ok := gatewayclass.Annotations[istioVersionOverrideAnnotationKey]; ok {
 		istioVersion = v
 	}
-	if _, _, err := r.ensureIstioOLM(ctx, gatewayclass, istioVersion); err != nil {
+	var gatewayclasses gatewayapiv1.GatewayClassList
+	if err := r.cache.List(ctx, &gatewayclasses, client.MatchingFields{operatorcontroller.GatewayClassIndexFieldName: operatorcontroller.OpenShiftGatewayClassControllerName}); err != nil {
+		return reconcile.Result{}, err
+	}
+
+	if _, _, err := r.ensureIstioOLM(ctx, gatewayclass, istioVersion, gatewayclasses.Items, &infraConfig); err != nil {
 		errs = append(errs, err)
 	} else {
 		// The OSSM operator installs the istios.sailoperator.io CRD.
@@ -491,6 +508,11 @@ func (r *reconciler) reconcileWithOLM(ctx context.Context, request reconcile.Req
 // for direct Helm-based installation of Istio.
 func (r *reconciler) reconcileWithSailLibrary(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	log.Info("reconciling with sail library", "request", request)
+
+	var infraConfig configv1.Infrastructure
+	if err := r.cache.Get(ctx, types.NamespacedName{Name: "cluster"}, &infraConfig); err != nil {
+		return reconcile.Result{}, err
+	}
 
 	gatewayClass := &gatewayapiv1.GatewayClass{}
 	if err := r.cache.Get(ctx, request.NamespacedName, gatewayClass); err != nil {
@@ -528,7 +550,12 @@ func (r *reconciler) reconcileWithSailLibrary(ctx context.Context, request recon
 		istioVersion = v
 	}
 
-	if err := r.ensureIstio(ctx, istioVersion); err != nil {
+	var gatewayclasses gatewayapiv1.GatewayClassList
+	if err := r.cache.List(ctx, &gatewayclasses, client.MatchingFields{operatorcontroller.GatewayClassIndexFieldName: operatorcontroller.OpenShiftGatewayClassControllerName}); err != nil {
+		return reconcile.Result{}, err
+	}
+
+	if err := r.ensureIstio(ctx, istioVersion, gatewayclasses.Items, &infraConfig); err != nil {
 		log.Error(err, "failed to ensure Istio")
 		errs = append(errs, err)
 	}
