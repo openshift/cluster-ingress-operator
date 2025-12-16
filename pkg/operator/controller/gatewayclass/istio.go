@@ -2,6 +2,7 @@ package gatewayclass
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/google/go-cmp/cmp"
@@ -10,6 +11,7 @@ import (
 
 	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
 
+	configv1 "github.com/openshift/api/config/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -17,6 +19,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
+
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // systemClusterCriticalPriorityClassName is the keyword to specify
@@ -26,7 +30,7 @@ const systemClusterCriticalPriorityClassName = "system-cluster-critical"
 // ensureIstio attempts to ensure that an Istio CR is present and returns a
 // Boolean indicating whether it exists, the CR if it exists, and an error
 // value.
-func (r *reconciler) ensureIstio(ctx context.Context, gatewayclass *gatewayapiv1.GatewayClass, istioVersion string) (bool, *sailv1.Istio, error) {
+func (r *reconciler) ensureIstio(ctx context.Context, gatewayclass *gatewayapiv1.GatewayClass, istioVersion string, infraConfig *configv1.Infrastructure) (bool, *sailv1.Istio, error) {
 	name := controller.IstioName(r.config.OperandNamespace)
 	have, current, err := r.currentIstio(ctx, name)
 	if err != nil {
@@ -45,7 +49,15 @@ func (r *reconciler) ensureIstio(ctx context.Context, gatewayclass *gatewayapiv1
 		return have, current, err
 	}
 
-	desired := desiredIstio(name, ownerRef, istioVersion, enableInferenceExtension)
+	var gatewayclasses gatewayapiv1.GatewayClassList
+	if err := r.cache.List(ctx, &gatewayclasses, client.MatchingFields{gatewayclassControllerIndexFieldName: controller.OpenShiftGatewayClassControllerName}); err != nil {
+		return have, current, err
+	}
+
+	desired, err := desiredIstio(name, ownerRef, istioVersion, enableInferenceExtension, infraConfig, gatewayclasses.Items)
+	if err != nil {
+		return have, current, err
+	}
 
 	switch {
 	case !have:
@@ -96,7 +108,30 @@ func (r *reconciler) crdExists(ctx context.Context, crdName string) (bool, error
 }
 
 // desiredIstio returns the desired Istio CR.
-func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference, istioVersion string, enableInferenceExtension bool) *sailv1.Istio {
+func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference, istioVersion string, enableInferenceExtension bool, infraConfig *configv1.Infrastructure, gatewayclasses []gatewayapiv1.GatewayClass) (*sailv1.Istio, error) {
+	var minReplicas = 2
+	const maxReplicas = 10
+	if infraConfig.Status.InfrastructureTopology == configv1.SingleReplicaTopologyMode {
+		minReplicas = 1
+	}
+
+	gatewayclassConfig := map[string]any{
+		"horizontalPodAutoscaler": map[string]any{
+			"spec": map[string]any{
+				"minReplicas": minReplicas,
+				"maxReplicas": maxReplicas,
+			},
+		},
+	}
+	gatewayclassesConfig := map[string]any{}
+	for _, gatewayclass := range gatewayclasses {
+		gatewayclassesConfig[gatewayclass.Name] = gatewayclassConfig
+	}
+	gatewayclassesConfigJson, err := json.Marshal(gatewayclassesConfig)
+	if err != nil {
+		return nil, err
+	}
+
 	pilotContainerEnv := map[string]string{
 		// Enable Gateway API.
 		"PILOT_ENABLE_GATEWAY_API": "true",
@@ -148,7 +183,8 @@ func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference, ist
 	if enableInferenceExtension {
 		pilotContainerEnv["ENABLE_GATEWAY_API_INFERENCE_EXTENSION"] = "true"
 	}
-	return &sailv1.Istio{
+
+	istio := &sailv1.Istio{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace:       name.Namespace,
 			Name:            name.Name,
@@ -160,6 +196,7 @@ func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference, ist
 				Type: sailv1.UpdateStrategyTypeInPlace,
 			},
 			Values: &sailv1.Values{
+				GatewayClasses: gatewayclassesConfigJson,
 				Global: &sailv1.GlobalConfig{
 					DefaultPodDisruptionBudget: &sailv1.DefaultPodDisruptionBudgetConfig{
 						Enabled: ptr.To(false),
@@ -206,6 +243,8 @@ func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference, ist
 			Version: istioVersion,
 		},
 	}
+
+	return istio, nil
 }
 
 // currentIstio returns the current istio CR.
