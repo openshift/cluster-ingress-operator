@@ -10,6 +10,7 @@ import (
 
 	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
 
+	configv1 "github.com/openshift/api/config/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -26,7 +27,7 @@ const systemClusterCriticalPriorityClassName = "system-cluster-critical"
 // ensureIstio attempts to ensure that an Istio CR is present and returns a
 // Boolean indicating whether it exists, the CR if it exists, and an error
 // value.
-func (r *reconciler) ensureIstio(ctx context.Context, gatewayclass *gatewayapiv1.GatewayClass, istioVersion string) (bool, *sailv1.Istio, error) {
+func (r *reconciler) ensureIstio(ctx context.Context, gatewayclass *gatewayapiv1.GatewayClass, istioVersion string, infraConfig *configv1.Infrastructure) (bool, *sailv1.Istio, error) {
 	name := controller.IstioName(r.config.OperandNamespace)
 	have, current, err := r.currentIstio(ctx, name)
 	if err != nil {
@@ -45,7 +46,7 @@ func (r *reconciler) ensureIstio(ctx context.Context, gatewayclass *gatewayapiv1
 		return have, current, err
 	}
 
-	desired := desiredIstio(name, ownerRef, istioVersion, enableInferenceExtension)
+	desired := desiredIstio(name, ownerRef, istioVersion, enableInferenceExtension, infraConfig)
 
 	switch {
 	case !have:
@@ -96,7 +97,7 @@ func (r *reconciler) crdExists(ctx context.Context, crdName string) (bool, error
 }
 
 // desiredIstio returns the desired Istio CR.
-func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference, istioVersion string, enableInferenceExtension bool) *sailv1.Istio {
+func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference, istioVersion string, enableInferenceExtension bool, infraConfig *configv1.Infrastructure) *sailv1.Istio {
 	pilotContainerEnv := map[string]string{
 		// Enable Gateway API.
 		"PILOT_ENABLE_GATEWAY_API": "true",
@@ -148,6 +149,10 @@ func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference, ist
 	if enableInferenceExtension {
 		pilotContainerEnv["ENABLE_GATEWAY_API_INFERENCE_EXTENSION"] = "true"
 	}
+	minReplicas := 2
+	if infraConfig.Status.InfrastructureTopology == configv1.SingleReplicaTopologyMode {
+		minReplicas = 1
+	}
 	return &sailv1.Istio{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace:       name.Namespace,
@@ -177,6 +182,9 @@ func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference, ist
 					PodAnnotations: map[string]string{
 						WorkloadPartitioningManagementAnnotationKey: WorkloadPartitioningManagementPreferredScheduling,
 					},
+					AutoscaleEnabled: ptr.To(true),
+					AutoscaleMin:     ptr.To(uint32(minReplicas)),
+					AutoscaleMax:     ptr.To(uint32(10)),
 				},
 				SidecarInjectorWebhook: &sailv1.SidecarInjectorConfig{
 					EnableNamespacesByDefault: ptr.To(false),

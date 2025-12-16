@@ -7,6 +7,7 @@ import (
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	configv1 "github.com/openshift/api/config/v1"
 
 	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
@@ -146,6 +147,12 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 		return nil, err
 	}
 
+	// Watch the cluster infrastructure config in case the infrastructure
+	// topology changes.
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &configv1.Infrastructure{}, reconciler.enqueueRequestForSomeGatewayClass())); err != nil {
+		return nil, err
+	}
+
 	gatewayClassController = c
 	return c, nil
 }
@@ -230,6 +237,11 @@ func (r *reconciler) enqueueRequestForSomeGatewayClass() handler.EventHandler {
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	log.Info("reconciling", "request", request)
 
+	var infraConfig configv1.Infrastructure
+	if err := r.client.Get(ctx, types.NamespacedName{Name: "cluster"}, &infraConfig); err != nil {
+		return reconcile.Result{}, err
+	}
+
 	var gatewayclass gatewayapiv1.GatewayClass
 	if err := r.cache.Get(ctx, request.NamespacedName, &gatewayclass); err != nil {
 		return reconcile.Result{}, err
@@ -258,7 +270,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	if v, ok := gatewayclass.Annotations[istioVersionOverrideAnnotationKey]; ok {
 		istioVersion = v
 	}
-	if _, _, err := r.ensureIstio(ctx, &gatewayclass, istioVersion); err != nil {
+	if _, _, err := r.ensureIstio(ctx, &gatewayclass, istioVersion, &infraConfig); err != nil {
 		errs = append(errs, err)
 	} else {
 		// The OSSM operator installs the istios.sailoperator.io CRD.
