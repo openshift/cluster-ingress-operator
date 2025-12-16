@@ -16,7 +16,7 @@ oc login --token="$TOKEN" --server=https://${KONFLUX_SERVER}:6443
 # Check if Index Image is already passed
 if [[ -z "${INDEX_IMAGE:-}" ]]; then
     echo "> Get the index image"
-    INDEX_IMAGE=$(oc get releases -l appstudio.openshift.io/application=ossm-fbc-next --sort-by=.metadata.creationTimestamp -o name -n service-mesh-tenant | tail -1 | xargs oc -n service-mesh-tenant get -ojson | jq -r '.status.artifacts.index_image.index_image')
+    INDEX_IMAGE=$(oc get releases -l appstudio.openshift.io/application=ossm-fbc-next --sort-by=.metadata.creationTimestamp -o name -n service-mesh-tenant | tail -1 | xargs oc -n service-mesh-tenant get -ojson | jq -r '.status.artifacts.index_image | .[] | .index_image')
     
 fi
 INDEX_IMAGE=${INDEX_IMAGE##*/}
