@@ -4,7 +4,7 @@
 package e2e
 
 import (
-	"bufio"
+	"bytes"
 	"context"
 	"strings"
 	"testing"
@@ -14,7 +14,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -22,20 +21,16 @@ import (
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 )
 
-func TestSecureRedirectStripsPort(t *testing.T) {
+func TestSecureRedirectCorrectness(t *testing.T) {
 	t.Parallel()
 
-	kubeConfig, err := config.GetConfig()
+	// Ensure we can get the kube config, although kclient is used for most operations.
+	_, err := config.GetConfig()
 	if err != nil {
 		t.Fatalf("failed to get kube config: %v", err)
 	}
 
-	kubeClient, err := kubernetes.NewForConfig(kubeConfig)
-	if err != nil {
-		t.Fatalf("failed to create kube client: %v", err)
-	}
-
-	name := "redirect-port-stripping"
+	name := "redirect-correctness"
 	icName := types.NamespacedName{Namespace: operatorNamespace, Name: name}
 	domain := name + "." + dnsConfig.Spec.BaseDomain
 	ic := newPrivateController(icName, domain)
@@ -88,13 +83,9 @@ func TestSecureRedirectStripsPort(t *testing.T) {
 		kclient.Delete(context.TODO(), echoRoute)
 	}()
 
-	// Host header with port 80
-	hostWithPort := echoRoute.Spec.Host + ":80"
-
-	extraCurlArgs := []string{"-i", "-H", "Host: " + hostWithPort}
-
+	// Use an exec pod to run multiple curl commands.
 	clientPodImage := deployment.Spec.Template.Spec.Containers[0].Image
-	clientPod := buildCurlPod(name+"-client", echoRoute.Namespace, clientPodImage, echoRoute.Spec.Host, service.Spec.ClusterIP, extraCurlArgs...)
+	clientPod := buildExecPod(name+"-client", echoRoute.Namespace, clientPodImage)
 
 	if err := kclient.Create(context.TODO(), clientPod); err != nil {
 		t.Fatalf("failed to create client pod: %v", err)
@@ -103,41 +94,99 @@ func TestSecureRedirectStripsPort(t *testing.T) {
 		kclient.Delete(context.TODO(), clientPod)
 	}()
 
-	err = wait.PollImmediate(1*time.Second, 2*time.Minute, func() (bool, error) {
-		readCloser, err := kubeClient.CoreV1().Pods(clientPod.Namespace).GetLogs(clientPod.Name, &corev1.PodLogOptions{
-			Container: "curl",
-		}).Stream(context.TODO())
-		if err != nil {
+	// Wait for client pod to be ready
+	if err := wait.PollImmediate(1*time.Second, 2*time.Minute, func() (bool, error) {
+		p := &corev1.Pod{}
+		if err := kclient.Get(context.TODO(), types.NamespacedName{Name: clientPod.Name, Namespace: clientPod.Namespace}, p); err != nil {
 			return false, nil
 		}
-		defer readCloser.Close()
-
-		scanner := bufio.NewScanner(readCloser)
-		found302 := false
-		foundLocation := false
-		for scanner.Scan() {
-			line := scanner.Text()
-			if strings.Contains(line, "HTTP/1.1 302 Found") {
-				found302 = true
-			}
-			// Looking for "Location: https://<host><path>"
-			// We want to ensure NO ":80" is present.
-			if strings.HasPrefix(strings.ToLower(line), "location:") {
-				t.Logf("Found location header: %s", line)
-				if strings.Contains(line, "https://"+echoRoute.Spec.Host+"/") && !strings.Contains(line, ":80") {
-					foundLocation = true
-				}
-			}
-		}
-		if found302 && foundLocation {
+		if p.Status.Phase == corev1.PodRunning {
 			return true, nil
 		}
 		return false, nil
-	})
+	}); err != nil {
+		t.Fatalf("client pod did not become ready: %v", err)
+	}
 
-	if err != nil {
-		// Fetch logs for debugging
-		logs, _ := kubeClient.CoreV1().Pods(clientPod.Namespace).GetLogs(clientPod.Name, &corev1.PodLogOptions{Container: "curl"}).DoRaw(context.TODO())
-		t.Fatalf("did not see expected Location header. Logs:\n%s", string(logs))
+	testCases := []struct {
+		name        string
+		path        string
+		expectedLoc string
+	}{
+		{
+			name:        "Root",
+			path:        "/",
+			expectedLoc: "https://" + echoRoute.Spec.Host + "/",
+		},
+		{
+			name:        "PathOnly",
+			path:        "/testpath",
+			expectedLoc: "https://" + echoRoute.Spec.Host + "/testpath",
+		},
+		{
+			name:        "PathAndQuery",
+			path:        "/testpath?bar=baz",
+			expectedLoc: "https://" + echoRoute.Spec.Host + "/testpath?bar=baz",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Service ClusterIP
+			destIP := service.Spec.ClusterIP
+			url := "http://" + destIP + tc.path
+
+			// curl -v -H "Host: <host>" <url>
+			// We need to pass the Host header to match the route
+			// And use the Service IP to hit the router
+			// -I (head) is enough for checking Location header and 302, but -v gives more debug info.
+			cmd := []string{"curl", "-v", "-k", "-H", "Host: " + echoRoute.Spec.Host, url}
+
+			stdout := &bytes.Buffer{}
+			stderr := &bytes.Buffer{}
+
+			// Retry a few times in case of transient issues
+			err := wait.PollImmediate(1*time.Second, 30*time.Second, func() (bool, error) {
+				stdout.Reset()
+				stderr.Reset()
+				if err := podExec(t, *clientPod, stdout, stderr, cmd); err != nil {
+					t.Logf("exec failed: %v", err)
+					return false, nil
+				}
+
+				output := stderr.String() + stdout.String()
+
+				if !strings.Contains(output, "HTTP/1.1 302 Found") && !strings.Contains(output, "HTTP/1.0 302 Found") {
+					t.Logf("Did not find 302 Found in output:\n%s", output)
+					return false, nil
+				}
+
+				// Check Location header
+			lines := strings.Split(output, "\n")
+			foundLocation := false
+			for _, line := range lines {
+				// Use Contains to be case-insensitive for "Location:"
+				if strings.HasPrefix(strings.ToLower(line), "location:") {
+					t.Logf("Found location header: %s", line)
+					// Verify matches expected
+					if strings.Contains(line, tc.expectedLoc) {
+						foundLocation = true
+						break
+					}
+				}
+			}
+
+			if !foundLocation {
+				t.Logf("Location header not matching expected %s. Output:\n%s", tc.expectedLoc, output)
+				return false, nil
+			}
+
+			return true, nil
+			})
+
+			if err != nil {
+				t.Fatalf("Test case %s failed: %v", tc.name, err)
+			}
+		})
 	}
 }
