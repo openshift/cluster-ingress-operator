@@ -80,7 +80,7 @@ spec:
                 fieldRef:
                   fieldPath: metadata.namespace
             - name: IMAGE
-              value: quay.io/btofel/router:test
+              value: openshift/origin-haproxy-router:v4.0
             - name: CANARY_IMAGE
               value: openshift/origin-cluster-ingress-operator:latest
             - name: GATEWAY_API_OPERATOR_CATALOG
