@@ -19,7 +19,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apiserver/pkg/storage/names"
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -306,30 +305,6 @@ func idleConnectionTerminationPolicyRunTest(t *testing.T, policy operatorv1.Ingr
 		webService2 = "web-service-2"
 	)
 
-	canaryImageReference := func(t *testing.T) (string, error) {
-		t.Helper()
-
-		ingressOperatorName := types.NamespacedName{
-			Name:      "ingress-operator",
-			Namespace: operatorNamespace,
-		}
-
-		deployment, err := getDeployment(t, kclient, ingressOperatorName, 1*time.Minute)
-		if err != nil {
-			return "", fmt.Errorf("failed to get deployment for IngressController %s: %w", ingressOperatorName, err)
-		}
-
-		for _, container := range deployment.Spec.Template.Spec.Containers {
-			for _, env := range container.Env {
-				if env.Name == "CANARY_IMAGE" {
-					return env.Value, nil
-				}
-			}
-		}
-
-		return "", fmt.Errorf("CANARY_IMAGE environment variable not found in deployment %s/%s", ingressOperatorName.Namespace, ingressOperatorName.Name)
-	}
-
 	createTestServicesAndTestRoute := func(ns *corev1.Namespace, ic *operatorv1.IngressController) (*idleConnectionTestConfig, error) {
 		canaryImage, err := canaryImageReference(t)
 		if err != nil {
@@ -408,27 +383,6 @@ func idleConnectionTerminationPolicyRunTest(t *testing.T, policy operatorv1.Ingr
 		verifyExternalIngressController(t, externalTestPodName, "apps."+ic.Spec.Domain, elbHostname)
 
 		return ic, nil
-	}
-
-	resolveIngressControllerAddress := func(t *testing.T, ic *operatorv1.IngressController) (string, error) {
-		elbHostname := getIngressControllerLBAddress(t, ic)
-		elbAddress := elbHostname
-
-		if net.ParseIP(elbHostname) == nil {
-			if err := wait.PollUntilContextTimeout(context.Background(), 10*time.Second, dnsResolutionTimeout, false, func(ctx context.Context) (bool, error) {
-				addrs, err := net.LookupHost(elbHostname)
-				if err != nil {
-					t.Logf("%v error resolving %s: %v, retrying...", time.Now(), elbHostname, err)
-					return false, nil
-				}
-				elbAddress = addrs[0]
-				return true, nil
-			}); err != nil {
-				return "", fmt.Errorf("failed to resolve %s: %w", elbHostname, err)
-			}
-		}
-
-		return elbAddress, nil
 	}
 
 	testName := names.SimpleNameGenerator.GenerateName(strings.ToLower(fmt.Sprintf("idle-connection-close-%s-", policy)))
