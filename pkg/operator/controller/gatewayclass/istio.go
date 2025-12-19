@@ -2,6 +2,7 @@ package gatewayclass
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/google/go-cmp/cmp"
@@ -23,6 +24,19 @@ import (
 // systemClusterCriticalPriorityClassName is the keyword to specify
 // cluster-critical priority class in a pod's spec.priorityClassName.
 const systemClusterCriticalPriorityClassName = "system-cluster-critical"
+
+type GatewayConfig struct {
+	HPA *HPA `json:"horizontalPodAutoscaler,omitempty"`
+}
+
+type HPA struct {
+	Spec *HPASpec `json:"spec,omitempty"`
+}
+
+type HPASpec struct {
+	MinReplicas int32 `json:"minReplicas,omitempty"`
+	MaxReplicas int32 `json:"maxReplicas,omitempty"`
+}
 
 // ensureIstio attempts to ensure that an Istio CR is present and returns a
 // Boolean indicating whether it exists, the CR if it exists, and an error
@@ -46,11 +60,38 @@ func (r *reconciler) ensureIstio(ctx context.Context, gatewayclass *gatewayapiv1
 		return have, current, err
 	}
 
-	desired := desiredIstio(name, ownerRef, istioVersion, enableInferenceExtension, infraConfig)
+	var minReplicas uint32 = 2
+	if infraConfig.Status.InfrastructureTopology == configv1.SingleReplicaTopologyMode {
+		minReplicas = 1
+	}
+
+	config := map[string]GatewayConfig{
+		gatewayclass.Name: {
+			HPA: &HPA{
+				Spec: &HPASpec{
+					MinReplicas: 2,
+					MaxReplicas: 10,
+				},
+			},
+		},
+	}
+
+	patch, err := json.Marshal(config)
+	if err != nil {
+		log.Info("error occured", "err", err.Error())
+		return have, current, err
+	}
+
+	log.Info("patch that will be applied", "patch", string(patch))
+
+	desired := desiredIstio(name, ownerRef, istioVersion, enableInferenceExtension, minReplicas, patch)
+
+	log.Info("desired Istio", "desired", desired)
 
 	switch {
 	case !have:
 		if err := r.createIstio(ctx, desired); err != nil {
+			log.Info("err create", "err", err.Error())
 			return false, nil, err
 		}
 		return r.currentIstio(ctx, name)
@@ -97,7 +138,7 @@ func (r *reconciler) crdExists(ctx context.Context, crdName string) (bool, error
 }
 
 // desiredIstio returns the desired Istio CR.
-func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference, istioVersion string, enableInferenceExtension bool, infraConfig *configv1.Infrastructure) *sailv1.Istio {
+func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference, istioVersion string, enableInferenceExtension bool, replicas uint32, patch []byte) *sailv1.Istio {
 	pilotContainerEnv := map[string]string{
 		// Enable Gateway API.
 		"PILOT_ENABLE_GATEWAY_API": "true",
@@ -149,10 +190,7 @@ func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference, ist
 	if enableInferenceExtension {
 		pilotContainerEnv["ENABLE_GATEWAY_API_INFERENCE_EXTENSION"] = "true"
 	}
-	minReplicas := 2
-	if infraConfig.Status.InfrastructureTopology == configv1.SingleReplicaTopologyMode {
-		minReplicas = 1
-	}
+
 	return &sailv1.Istio{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace:       name.Namespace,
@@ -183,7 +221,7 @@ func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference, ist
 						WorkloadPartitioningManagementAnnotationKey: WorkloadPartitioningManagementPreferredScheduling,
 					},
 					AutoscaleEnabled: ptr.To(true),
-					AutoscaleMin:     ptr.To(uint32(minReplicas)),
+					AutoscaleMin:     ptr.To(uint32(replicas)),
 					AutoscaleMax:     ptr.To(uint32(10)),
 				},
 				SidecarInjectorWebhook: &sailv1.SidecarInjectorConfig{
@@ -210,6 +248,7 @@ func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference, ist
 					},
 					IngressControllerMode: sailv1.MeshConfigIngressControllerModeOff,
 				},
+				GatewayClasses: json.RawMessage(patch),
 			},
 			Version: istioVersion,
 		},
