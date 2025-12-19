@@ -137,5 +137,6 @@ func TestAll(t *testing.T) {
 		// Serializing the test ensures it runs in isolation with other tests,
 		// preventing any impact of the mutating webhook on pod creation in the cluster
 		t.Run("TestGatewayAPI", TestGatewayAPI)
+		t.Run("TestIngressControllerConditionsMetricAfterRestart", TestIngressControllerConditionsMetricAfterRestart)
 	})
 }
