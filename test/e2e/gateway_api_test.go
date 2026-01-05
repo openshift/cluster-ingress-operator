@@ -617,8 +617,7 @@ func testGatewayAPIDNSListenerUpdate(t *testing.T) {
 		}
 	})
 
-	gateway, err = assertGatewaySuccessful(t, operatorcontroller.DefaultOperandNamespace, "test-gateway-update")
-	if err != nil {
+	if _, err = assertGatewaySuccessful(t, operatorcontroller.DefaultOperandNamespace, "test-gateway-update"); err != nil {
 		t.Fatalf("failed to accept/program gateway test-gateway-update: %v", err)
 	}
 
@@ -696,8 +695,7 @@ func testGatewayAPIDNSListenerWithNoHostname(t *testing.T) {
 		}
 	})
 
-	gateway, err = assertGatewaySuccessful(t, operatorcontroller.DefaultOperandNamespace, "test-nohost-gateway")
-	if err != nil {
+	if _, err = assertGatewaySuccessful(t, operatorcontroller.DefaultOperandNamespace, "test-nohost-gateway"); err != nil {
 		t.Fatalf("failed to accept/program gateway test-nohost-gateway: %v", err)
 	}
 
