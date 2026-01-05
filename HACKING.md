@@ -137,12 +137,12 @@ $ make test-e2e
 
 - Create new service accounts for [stage registry](https://access.stage.redhat.com/terms-based-registry/accounts) and [brew registry](https://access.redhat.com/terms-based-registry/accounts).
 
-- Obtain Stage Pull Secret
+- Obtain Stage Pull Secret using the Service Account credentials
 ```shell
 $ podman login --authfile=/tmp/authstage --username="${STAGE_USER}" --password="${STAGE_PASS}" registry.stage.redhat.io
 ```
 
-- Obtain Brew Pull Secret
+- Obtain Brew Pull Secret using the Service Account credentials
 ```shell
 $ podman login --authfile=/tmp/authbrew --username="${BREW_USER}" --password="${BREW_PASS}" brew.registry.redhat.io
 ```
@@ -155,14 +155,11 @@ $ podman login --authfile=/tmp/authbrew --username="${BREW_USER}" --password="${
 5. Click on secrets.
 6. Click on eyeball icon to see the `konflux-cluster-token` file
 7. Cut and paste the token into a file named konflux.tmp
-```shell
-$ export KONFLUX_TOKEN="$(cat konflux.tmp)"
-```
 
 - Run the script
 
 ```shell
-$ TOKEN="${KONFLUX_TOKEN}" AUTHSTAGE="$(cat /tmp/authstage)" AUTHBREW="$(cat /tmp/authbrew)" make test-pre-release-ossm
+$ TOKEN="$(cat konflux.tmp)" AUTHSTAGE="$(cat /tmp/authstage)" AUTHBREW="$(cat /tmp/authbrew)" make test-pre-release-ossm
 ```
 
 #### CI
