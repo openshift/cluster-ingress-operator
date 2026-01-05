@@ -28,6 +28,7 @@ import (
 	operatorconfig "github.com/openshift/cluster-ingress-operator/pkg/operator/config"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	canarycontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/canary"
+	canarycertcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/canary-certificate"
 	certcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/certificate"
 	certpublishercontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/certificate-publisher"
 	clientcacontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/clientca-configmap"
@@ -288,6 +289,14 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 			Stop:        config.Stop,
 		}); err != nil {
 			return nil, fmt.Errorf("failed to create canary controller: %v", err)
+		}
+
+		// Set up the canary certificate controller
+		if _, err := canarycertcontroller.New(mgr, canarycertcontroller.Config{
+			OperatorNamespace: config.Namespace,
+			OperandNamespace:  operatorcontroller.DefaultOperandNamespace,
+		}); err != nil {
+			return nil, fmt.Errorf("failed to create canary cert controller: %w", err)
 		}
 	}
 
