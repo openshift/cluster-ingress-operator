@@ -173,6 +173,7 @@ func TestTuningOptions(t *testing.T) {
 	ic.Spec.TuningOptions.TLSInspectDelay = &metav1.Duration{Duration: 5 * time.Second}
 	ic.Spec.TuningOptions.HealthCheckInterval = &metav1.Duration{Duration: 15 * time.Second}
 	ic.Spec.TuningOptions.ReloadInterval = metav1.Duration{Duration: 30 * time.Second}
+	ic.Spec.TuningOptions.HTTPKeepAliveTimeout = &metav1.Duration{Duration: 30 * time.Second}
 
 	deployment, err := desiredRouterDeployment(ic, ingressControllerImage, ingressConfig, infraConfig, apiConfig, networkConfig, false, false, nil, clusterProxyConfig, false, false)
 	if err != nil {
@@ -187,6 +188,7 @@ func TestTuningOptions(t *testing.T) {
 		{"ROUTER_DEFAULT_SERVER_FIN_TIMEOUT", true, "4s"},
 		{"ROUTER_DEFAULT_TUNNEL_TIMEOUT", true, "30m"},
 		{"ROUTER_DEFAULT_CONNECT_TIMEOUT", true, "30s"},
+		{"ROUTER_SLOWLORIS_HTTP_KEEPALIVE", true, "30s"},
 		{"ROUTER_INSPECT_DELAY", true, "5s"},
 		{RouterBackendCheckInterval, true, "15s"},
 		{RouterReloadIntervalEnvName, true, "30s"},
@@ -444,6 +446,7 @@ func Test_desiredRouterDeployment(t *testing.T) {
 		{"ROUTER_DEFAULT_SERVER_TIMEOUT", false, ""},
 		{"ROUTER_DEFAULT_TUNNEL_TIMEOUT", false, ""},
 		{"ROUTER_DEFAULT_CONNECT_TIMEOUT", false, ""},
+		{"ROUTER_SLOWLORIS_HTTP_KEEPALIVE", false, ""},
 		{"ROUTER_ERRORFILE_503", false, ""},
 		{"ROUTER_ERRORFILE_404", false, ""},
 		{"ROUTER_HAPROXY_CONFIG_MANAGER", false, ""},
