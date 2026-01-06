@@ -11,7 +11,9 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	configv1 "github.com/openshift/api/config/v1"
+	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 
+	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -103,6 +105,7 @@ func Test_Reconcile(t *testing.T) {
 				crd("referencegrants.gateway.networking.k8s.io"),
 				clusterRole("system:openshift:gateway-api:aggregate-to-admin"),
 				clusterRole("system:openshift:gateway-api:aggregate-to-view"),
+				manifests.GatewayAPIAllowNetworkPolicy(),
 			},
 			expectUpdate:    []client.Object{},
 			expectDelete:    []client.Object{},
@@ -125,6 +128,7 @@ func Test_Reconcile(t *testing.T) {
 				crd("referencegrants.gateway.networking.k8s.io"),
 				clusterRole("system:openshift:gateway-api:aggregate-to-admin"),
 				clusterRole("system:openshift:gateway-api:aggregate-to-view"),
+				manifests.GatewayAPIAllowNetworkPolicy(),
 			},
 			expectUpdate:    []client.Object{},
 			expectDelete:    []client.Object{},
@@ -147,6 +151,7 @@ func Test_Reconcile(t *testing.T) {
 				crd("referencegrants.gateway.networking.k8s.io"),
 				clusterRole("system:openshift:gateway-api:aggregate-to-admin"),
 				clusterRole("system:openshift:gateway-api:aggregate-to-view"),
+				manifests.GatewayAPIAllowNetworkPolicy(),
 			},
 			expectUpdate:    []client.Object{},
 			expectDelete:    []client.Object{},
@@ -174,6 +179,7 @@ func Test_Reconcile(t *testing.T) {
 				crd("referencegrants.gateway.networking.k8s.io"),
 				clusterRole("system:openshift:gateway-api:aggregate-to-admin"),
 				clusterRole("system:openshift:gateway-api:aggregate-to-view"),
+				manifests.GatewayAPIAllowNetworkPolicy(),
 			},
 			expectUpdate: []client.Object{},
 			expectDelete: []client.Object{},
@@ -202,6 +208,7 @@ func Test_Reconcile(t *testing.T) {
 				crd("referencegrants.gateway.networking.k8s.io"),
 				clusterRole("system:openshift:gateway-api:aggregate-to-admin"),
 				clusterRole("system:openshift:gateway-api:aggregate-to-view"),
+				manifests.GatewayAPIAllowNetworkPolicy(),
 			},
 			expectUpdate: []client.Object{},
 			expectDelete: []client.Object{},
@@ -232,6 +239,7 @@ func Test_Reconcile(t *testing.T) {
 				crd("referencegrants.gateway.networking.k8s.io"),
 				clusterRole("system:openshift:gateway-api:aggregate-to-admin"),
 				clusterRole("system:openshift:gateway-api:aggregate-to-view"),
+				manifests.GatewayAPIAllowNetworkPolicy(),
 			},
 			expectUpdate: []client.Object{},
 			expectDelete: []client.Object{},
@@ -245,6 +253,7 @@ func Test_Reconcile(t *testing.T) {
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 	rbacv1.AddToScheme(scheme)
+	networkingv1.AddToScheme(scheme)
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -330,6 +339,7 @@ func TestReconcileOnlyStartsControllerOnce(t *testing.T) {
 	configv1.Install(scheme)
 	apiextensionsv1.AddToScheme(scheme)
 	rbacv1.AddToScheme(scheme)
+	networkingv1.AddToScheme(scheme)
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithRuntimeObjects(
