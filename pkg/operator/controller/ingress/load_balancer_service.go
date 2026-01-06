@@ -797,25 +797,59 @@ func loadBalancerServiceIsUpgradeable(ic *operatorv1.IngressController, deployme
 	return nil
 }
 
+// createEffectuationMessage creates an error with a message describing how to
+// effectuate a change that requires the service to be deleted.
+// If revertPatchSpec is empty, returns a simple change message without deletion instructions.
+func createEffectuationMessage(fieldName, haveValue, wantValue, revertPatchSpec string, ic *operatorv1.IngressController, service *corev1.Service) error {
+	changedMsg := fmt.Errorf("The IngressController %s was changed from %q to %q.",
+		fieldName, haveValue, wantValue)
+
+	// If no revert patch spec, this change doesn't require service deletion
+	// (e.g., scope change on platforms with mutable scope like Azure/GCP)
+	if revertPatchSpec == "" {
+		return changedMsg
+	}
+
+	// Change requires service deletion - provide full effectuation instructions
+	ocPatchRevertCmd := fmt.Sprintf("oc -n openshift-ingress-operator patch ingresscontrollers/%s --type=merge --patch='%s'", ic.Name, revertPatchSpec)
+
+	effectuationMsg := fmt.Errorf(
+		"%[1]s  To effectuate this change, you must delete the service: `oc -n %[2]s delete svc/%[3]s`; "+
+			"the service load-balancer will then be deprovisioned and a new one created. This will most likely "+
+			"cause the new load-balancer to have a different host name and IP address and cause disruption. To "+
+			"return to the previous state, you can revert the change to the IngressController: `%[4]s`. "+
+			"Direct updates to the service annotations are not supported.",
+		changedMsg, service.Namespace, service.Name, ocPatchRevertCmd,
+	)
+
+	return effectuationMsg
+}
+
 // loadBalancerServiceIsProgressing returns an error value indicating if the
 // load balancer service is in progressing status.
+// Tricky: Status fields have mixed functions. Older status fields often represent the
+// *desired* state, while some newer fields reflect the *actual* state of the object.
 func loadBalancerServiceIsProgressing(ic *operatorv1.IngressController, service *corev1.Service, platform *configv1.PlatformStatus) error {
 	var errs []error
+	// Tricky: Scope in the status indicates the *desired* scope (user desire + defaulting).
 	wantScope := ic.Status.EndpointPublishingStrategy.LoadBalancer.Scope
 	haveScope := operatorv1.ExternalLoadBalancer
 	if IsServiceInternal(service) {
 		haveScope = operatorv1.InternalLoadBalancer
 	}
 	if wantScope != haveScope {
-		err := fmt.Errorf("The IngressController scope was changed from %q to %q.", haveScope, wantScope)
-		if _, ok := platformsWithMutableScope[platform.Type]; !ok {
-			err = fmt.Errorf("%[1]s  To effectuate this change, you must delete the service: `oc -n %[2]s delete svc/%[3]s`; the service load-balancer will then be deprovisioned and a new one created.  This will most likely cause the new load-balancer to have a different host name and IP address from the old one's.  Alternatively, you can revert the change to the IngressController: `oc -n openshift-ingress-operator patch ingresscontrollers/%[4]s --type=merge --patch='{\"spec\":{\"endpointPublishingStrategy\":{\"loadBalancer\":{\"scope\":\"%[5]s\"}}}}'`", err.Error(), service.Namespace, service.Name, ic.Name, haveScope)
+		patchSpec := fmt.Sprintf(`{"spec":{"endpointPublishingStrategy":{"loadBalancer":{"scope":"%s"}}}}`, haveScope)
+		// For platforms with mutable scope, pass empty patchSpec to avoid service deletion instructions
+		if _, ok := platformsWithMutableScope[platform.Type]; ok {
+			patchSpec = ""
 		}
+		err := createEffectuationMessage("scope", string(haveScope), string(wantScope), patchSpec, ic, service)
 		errs = append(errs, err)
 	}
 
 	if platform.Type == configv1.AWSPlatformType {
 		var (
+			// Tricky: Subnets in the status indicates the *actual* scope.
 			wantSubnets, haveSubnets *operatorv1.AWSSubnets
 			paramsFieldName          string
 		)
@@ -843,15 +877,15 @@ func loadBalancerServiceIsProgressing(ic *operatorv1.IngressController, service 
 			haveSubnetsPatchJson := convertAWSSubnetListToPatchJson(haveSubnets, "null", "null")
 			haveSubnetsPrettyJson := convertAWSSubnetListToPatchJson(haveSubnets, "{}", "[]")
 			wantSubnetsPrettyJson := convertAWSSubnetListToPatchJson(wantSubnets, "{}", "[]")
-			changedMsg := fmt.Sprintf("The IngressController subnets were changed from %q to %q.", haveSubnetsPrettyJson, wantSubnetsPrettyJson)
-			ocPatchRevertCmd := fmt.Sprintf("oc -n openshift-ingress-operator patch ingresscontrollers/%[1]s --type=merge --patch='{\"spec\":{\"endpointPublishingStrategy\":{\"type\":\"LoadBalancerService\",\"loadBalancer\":{\"providerParameters\":{\"type\":\"AWS\",\"aws\":{\"type\":\"%[2]s\",\"%[3]s\":{\"subnets\":%[4]s}}}}}}}'", ic.Name, getAWSLoadBalancerTypeInStatus(ic), paramsFieldName, haveSubnetsPatchJson)
-			err := fmt.Errorf("%[1]s  To effectuate this change, you must delete the service: `oc -n %[2]s delete svc/%[3]s`; the service load-balancer will then be deprovisioned and a new one created. This will most likely cause the new load-balancer to have a different host name and IP address and cause disruption. To return to the previous state, you can revert the change to the IngressController: `%[4]s`", changedMsg, service.Namespace, service.Name, ocPatchRevertCmd)
+			patchSpec := fmt.Sprintf(`{"spec":{"endpointPublishingStrategy":{"type":"LoadBalancerService","loadBalancer":{"providerParameters":{"type":"AWS","aws":{"type":"%s","%s":{"subnets":%s}}}}}}}`, getAWSLoadBalancerTypeInStatus(ic), paramsFieldName, haveSubnetsPatchJson)
+			err := createEffectuationMessage("subnets", haveSubnetsPrettyJson, wantSubnetsPrettyJson, patchSpec, ic, service)
 			errs = append(errs, err)
 		}
 	}
 
 	if platform.Type == configv1.AWSPlatformType && getAWSLoadBalancerTypeInStatus(ic) == operatorv1.AWSNetworkLoadBalancer {
 		var (
+			// Tricky: EIP Allocations in the status indicate the *actual* scope.
 			wantEIPAllocations, haveEIPAllocations []operatorv1.EIPAllocation
 		)
 		if nlbParams := getAWSNetworkLoadBalancerParametersInSpec(ic); nlbParams != nil {
@@ -866,21 +900,20 @@ func loadBalancerServiceIsProgressing(ic *operatorv1.IngressController, service 
 			haveEIPAllocationsPatchJson := convertAWSEIPAllocationsListToPatchJson(haveEIPAllocations, "null")
 			haveEIPAllocationsPrettyJson := convertAWSEIPAllocationsListToPatchJson(haveEIPAllocations, "[]")
 			wantEIPAllocationsPrettyJson := convertAWSEIPAllocationsListToPatchJson(wantEIPAllocations, "[]")
-			changedMsg := fmt.Sprintf("The IngressController eipAllocations were changed from %q to %q.", haveEIPAllocationsPrettyJson, wantEIPAllocationsPrettyJson)
-			ocPatchRevertCmd := fmt.Sprintf("oc -n openshift-ingress-operator patch ingresscontrollers/%[1]s --type=merge --patch='{\"spec\":{\"endpointPublishingStrategy\":{\"type\":\"LoadBalancerService\",\"loadBalancer\":{\"providerParameters\":{\"type\":\"AWS\",\"aws\":{\"type\":\"%[2]s\",\"%[3]s\":{\"eipAllocations\":%[4]s}}}}}}}'", ic.Name, getAWSLoadBalancerTypeInStatus(ic), "networkLoadBalancer", haveEIPAllocationsPatchJson)
-			err := fmt.Errorf("%[1]s  To effectuate this change, you must delete the service: `oc -n %[2]s delete svc/%[3]s`; the service load-balancer will then be deprovisioned and a new one created. This will most likely cause the new load-balancer to have a different host name and IP address and cause disruption. To return to the previous state, you can revert the change to the IngressController: `%[4]s`", changedMsg, service.Namespace, service.Name, ocPatchRevertCmd)
+			patchSpec := fmt.Sprintf(`{"spec":{"endpointPublishingStrategy":{"type":"LoadBalancerService","loadBalancer":{"providerParameters":{"type":"AWS","aws":{"type":"NLB","networkLoadBalancer":{"eipAllocations":%s}}}}}}}`, haveEIPAllocationsPatchJson)
+			err := createEffectuationMessage("eipAllocations", haveEIPAllocationsPrettyJson, wantEIPAllocationsPrettyJson, patchSpec, ic, service)
 			errs = append(errs, err)
 		}
 	}
 
 	if platform.Type == configv1.OpenStackPlatformType {
+		// Tricky: FloatingIP in the status indicates the *actual* scope.
 		wantFloatingIP := getOpenStackFloatingIPInSpec(ic)
 		haveFloatingIP := getOpenStackFloatingIPInStatus(ic)
 		// OpenStack CCM does not support updating Service.Spec.LoadBalancerIP after creation, the load balancer will never be updated.
 		if wantFloatingIP != haveFloatingIP {
-			changeMsg := fmt.Sprintf("The IngressController floatingIP was changed from %q to %q.", haveFloatingIP, wantFloatingIP)
-			ocPatchRevertCmd := fmt.Sprintf(`oc -n %[1]s patch ingresscontrollers/%[2]s --type=merge --patch='{"spec":{"endpointPublishingStrategy":{"type":"LoadBalancerService","loadBalancer":{"providerParameters":{"type":"OpenStack","openstack":{"floatingIP":"%[3]s"}}}}}}'`, ic.Namespace, ic.Name, haveFloatingIP)
-			err := fmt.Errorf("%[1]s  To effectuate this change, you must delete the service: `oc -n %[2]s delete svc/%[3]s`; the service load-balancer will then be deprovisioned and a new one created. This will most likely cause the new load-balancer to have a different host name and IP address and cause disruption. To return to the previous state, you can revert the change to the IngressController: `%[4]s`", changeMsg, service.Namespace, service.Name, ocPatchRevertCmd)
+			patchSpec := fmt.Sprintf(`{"spec":{"endpointPublishingStrategy":{"type":"LoadBalancerService","loadBalancer":{"providerParameters":{"type":"OpenStack","openstack":{"floatingIP":"%s"}}}}}}`, haveFloatingIP)
+			err := createEffectuationMessage("floatingIP", haveFloatingIP, wantFloatingIP, patchSpec, ic, service)
 			errs = append(errs, err)
 		}
 	}
