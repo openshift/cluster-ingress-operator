@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/stretchr/testify/assert"
 
 	corev1 "k8s.io/api/core/v1"
@@ -677,7 +679,7 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 				},
 			}
 
-			proxyNeeded, err := IsProxyProtocolNeeded(ic, infraConfig.Status.PlatformStatus)
+			proxyNeeded, err := IsProxyProtocolNeeded(ic, infraConfig.Status.PlatformStatus, nil)
 			switch {
 			case err != nil:
 				t.Errorf("failed to determine infrastructure platform status for ingresscontroller %s/%s: %v", ic.Namespace, ic.Name, err)
@@ -685,7 +687,7 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 				t.Errorf("expected IsProxyProtocolNeeded to return %v, got %v", tc.proxyNeeded, proxyNeeded)
 			}
 
-			haveSvc, svc, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig.Status.PlatformStatus)
+			haveSvc, svc, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig.Status.PlatformStatus, proxyNeeded)
 			switch {
 			case err != nil:
 				t.Error(err)
@@ -870,7 +872,7 @@ func TestDesiredLoadBalancerServiceAWSIdleTimeout(t *testing.T) {
 					},
 				},
 			}
-			haveSvc, svc, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig.Status.PlatformStatus)
+			haveSvc, svc, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig.Status.PlatformStatus, false)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1130,7 +1132,14 @@ func Test_loadBalancerServiceChanged(t *testing.T) {
 				svc.Annotations["service.beta.kubernetes.io/aws-load-balancer-subnets"] = "foo-subnet"
 				svc.Annotations["service.beta.kubernetes.io/aws-load-balancer-type"] = "NLB"
 			},
-			expect: true,
+			expect: false,
+		},
+		{
+			description: "if the service.beta.kubernetes.io/aws-load-balancer-type annotation is added",
+			mutate: func(svc *corev1.Service) {
+				svc.Annotations["service.beta.kubernetes.io/aws-load-balancer-type"] = "NLB"
+			},
+			expect: false,
 		},
 		{
 			description: "if the service.beta.kubernetes.io/aws-load-balancer-eip-allocations annotation added",
@@ -1200,32 +1209,33 @@ func Test_loadBalancerServiceChanged(t *testing.T) {
 // loadBalancerServiceAnnotationsChanged behaves correctly.
 func Test_loadBalancerServiceAnnotationsChanged(t *testing.T) {
 	testCases := []struct {
-		description         string
-		mutate              func(*corev1.Service)
-		currentAnnotations  map[string]string
-		expectedAnnotations map[string]string
-		managedAnnotations  sets.String
-		expect              bool
+		description              string
+		mutate                   func(*corev1.Service)
+		currentAnnotations       map[string]string
+		expectedAnnotations      map[string]string
+		managedAnnotations       sets.Set[string]
+		expect                   bool
+		expectChangedAnnotations []string
 	}{
 		{
 			description:         "if current and expected annotations are both empty",
 			currentAnnotations:  map[string]string{},
 			expectedAnnotations: map[string]string{},
-			managedAnnotations:  sets.NewString("foo"),
+			managedAnnotations:  sets.New[string]("foo"),
 			expect:              false,
 		},
 		{
 			description:         "if current annotations is nil and expected annotations is empty",
 			currentAnnotations:  nil,
 			expectedAnnotations: map[string]string{},
-			managedAnnotations:  sets.NewString("foo"),
+			managedAnnotations:  sets.New[string]("foo"),
 			expect:              false,
 		},
 		{
 			description:         "if current annotations is empty and expected annotations is nil",
 			currentAnnotations:  map[string]string{},
 			expectedAnnotations: nil,
-			managedAnnotations:  sets.NewString("foo"),
+			managedAnnotations:  sets.New[string]("foo"),
 			expect:              false,
 		},
 		{
@@ -1237,7 +1247,7 @@ func Test_loadBalancerServiceAnnotationsChanged(t *testing.T) {
 				"foo": "bar",
 				"baz": "quux",
 			},
-			managedAnnotations: sets.NewString("foo"),
+			managedAnnotations: sets.New[string]("foo"),
 			expect:             false,
 		},
 		{
@@ -1246,8 +1256,9 @@ func Test_loadBalancerServiceAnnotationsChanged(t *testing.T) {
 			expectedAnnotations: map[string]string{
 				"foo": "bar",
 			},
-			managedAnnotations: sets.NewString("foo"),
-			expect:             true,
+			managedAnnotations:       sets.New[string]("foo"),
+			expect:                   true,
+			expectChangedAnnotations: []string{"foo"},
 		},
 		{
 			description: "if a managed annotation is updated",
@@ -1257,17 +1268,19 @@ func Test_loadBalancerServiceAnnotationsChanged(t *testing.T) {
 			expectedAnnotations: map[string]string{
 				"foo": "baz",
 			},
-			managedAnnotations: sets.NewString("foo"),
-			expect:             true,
+			managedAnnotations:       sets.New[string]("foo"),
+			expect:                   true,
+			expectChangedAnnotations: []string{"foo"},
 		},
 		{
 			description: "if a managed annotation is deleted",
 			currentAnnotations: map[string]string{
 				"foo": "bar",
 			},
-			expectedAnnotations: map[string]string{},
-			managedAnnotations:  sets.NewString("foo"),
-			expect:              true,
+			expectedAnnotations:      map[string]string{},
+			managedAnnotations:       sets.New[string]("foo"),
+			expect:                   true,
+			expectChangedAnnotations: []string{"foo"},
 		},
 	}
 
@@ -1283,13 +1296,14 @@ func Test_loadBalancerServiceAnnotationsChanged(t *testing.T) {
 					Annotations: tc.expectedAnnotations,
 				},
 			}
-			if changed, updated := loadBalancerServiceAnnotationsChanged(&current, &expected, tc.managedAnnotations); changed != tc.expect {
+			if changed, changedAnnotations, updated := loadBalancerServiceAnnotationsChanged(&current, &expected, tc.managedAnnotations); changed != tc.expect {
 				t.Errorf("expected loadBalancerServiceAnnotationsChanged to be %t, got %t", tc.expect, changed)
 			} else if changed {
-				if updatedChanged, _ := loadBalancerServiceAnnotationsChanged(&current, updated, tc.managedAnnotations); !updatedChanged {
+				assert.Equal(t, tc.expectChangedAnnotations, changedAnnotations)
+				if updatedChanged, _, _ := loadBalancerServiceAnnotationsChanged(&current, updated, tc.managedAnnotations); !updatedChanged {
 					t.Error("loadBalancerServiceAnnotationsChanged reported changes but did not make any update")
 				}
-				if changedAgain, _ := loadBalancerServiceAnnotationsChanged(&expected, updated, tc.managedAnnotations); changedAgain {
+				if changedAgain, _, _ := loadBalancerServiceAnnotationsChanged(&expected, updated, tc.managedAnnotations); changedAgain {
 					t.Error("loadBalancerServiceAnnotationsChanged does not behave as a fixed point function")
 				}
 			}
@@ -1484,7 +1498,7 @@ func TestUpdateLoadBalancerServiceSourceRanges(t *testing.T) {
 					},
 				},
 			}
-			wantSvc, desired, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig.Status.PlatformStatus)
+			wantSvc, desired, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig.Status.PlatformStatus, false)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1553,12 +1567,13 @@ func TestLoadBalancerServiceChangedEmptyAnnotations(t *testing.T) {
 // recreated if the annotations or spec of the service have changed.
 func Test_shouldRecreateLoadBalancer(t *testing.T) {
 	testCases := []struct {
-		description string
-		current     *corev1.Service
-		desired     *corev1.Service
-		platform    *configv1.PlatformStatus
-		expect      bool
-		reason      string
+		description              string
+		current                  *corev1.Service
+		desired                  *corev1.Service
+		platform                 *configv1.PlatformStatus
+		expect                   bool
+		expectChangedAnnotations []string
+		expectChangedFields      []string
 	}{
 		{
 			description: "AWS platform with different subnets",
@@ -1580,7 +1595,9 @@ func Test_shouldRecreateLoadBalancer(t *testing.T) {
 				Type: configv1.AWSPlatformType,
 			},
 			expect: true,
-			reason: "its subnets changed",
+			expectChangedAnnotations: []string{
+				awsLBSubnetsAnnotation,
+			},
 		},
 		{
 			description: "AWS platform with different EIP allocations",
@@ -1602,7 +1619,9 @@ func Test_shouldRecreateLoadBalancer(t *testing.T) {
 				Type: configv1.AWSPlatformType,
 			},
 			expect: true,
-			reason: "its eipAllocations changed",
+			expectChangedAnnotations: []string{
+				awsEIPAllocationsAnnotation,
+			},
 		},
 		{
 			description: "OpenStack platform with different LoadBalancerIP",
@@ -1620,7 +1639,9 @@ func Test_shouldRecreateLoadBalancer(t *testing.T) {
 				Type: configv1.OpenStackPlatformType,
 			},
 			expect: true,
-			reason: "its load balancer IP changed",
+			expectChangedFields: []string{
+				"spec.loadBalancerIP",
+			},
 		},
 		{
 			description: "Platform with mutable scope and same scope",
@@ -1663,7 +1684,9 @@ func Test_shouldRecreateLoadBalancer(t *testing.T) {
 				Type: configv1.AWSPlatformType,
 			},
 			expect: true,
-			reason: "its scope changed",
+			expectChangedAnnotations: []string{
+				awsInternalLBAnnotation,
+			},
 		},
 		{
 			description: "Platform with same configuration",
@@ -1690,12 +1713,19 @@ func Test_shouldRecreateLoadBalancer(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
-			changed, reason := shouldRecreateLoadBalancer(tc.current, tc.desired, tc.platform)
+			changed, changedAnnotations, changedFields := shouldRecreateLoadBalancer(tc.current, tc.desired, tc.platform)
 			if changed != tc.expect {
 				t.Errorf("expected %t, got %t", tc.expect, changed)
 			}
-			if reason != tc.reason {
-				t.Errorf("expected reason %s, got %s", tc.reason, reason)
+			sliceCmpOpts := []cmp.Option{
+				cmpopts.EquateEmpty(),
+				cmpopts.SortSlices(func(a, b string) bool { return a < b }),
+			}
+			if !cmp.Equal(changedAnnotations, tc.expectChangedAnnotations, sliceCmpOpts...) {
+				t.Errorf("expected changedAnnotations %s, got %s", tc.expectChangedAnnotations, changedAnnotations)
+			}
+			if !cmp.Equal(changedFields, tc.expectChangedFields, sliceCmpOpts...) {
+				t.Errorf("expected changedFields %s, got %s", tc.expectChangedFields, changedFields)
 			}
 		})
 	}

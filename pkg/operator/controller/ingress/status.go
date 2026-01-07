@@ -71,6 +71,8 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	updated.Status.Selector = selector.String()
 	updated.Status.TLSProfile = computeIngressTLSProfile(ic.Status.TLSProfile, deployment)
 
+	clearIngressControllerInactiveAWSLBTypeParametersStatus(platformStatus, updated, service)
+
 	if updated.Status.EndpointPublishingStrategy != nil && updated.Status.EndpointPublishingStrategy.LoadBalancer != nil {
 		updated.Status.EndpointPublishingStrategy.LoadBalancer.AllowedSourceRanges = computeAllowedSourceRanges(service)
 	}
@@ -1080,12 +1082,38 @@ func computeLoadBalancerProgressingStatus(ic *operatorv1.IngressController, serv
 	}
 }
 
+// clearIngressControllerInactiveAWSLBTypeParametersStatus clears AWS parameters for the inactive load balancer type,
+// unless there is a load balancer type change is pending. When a change is pending, setDefaultPublishingStrategy
+// sets the desired parameters for the new LB type. To avoid removing the desired state, we allow
+// parameters for both classicLoadBalancer and networkLoadBalancer to exist during the transition.
+func clearIngressControllerInactiveAWSLBTypeParametersStatus(platformStatus *configv1.PlatformStatus, ic *operatorv1.IngressController, service *corev1.Service) {
+	if service == nil {
+		return
+	}
+	if platformStatus.Type == configv1.AWSPlatformType {
+		haveLBType := getAWSLoadBalancerTypeFromServiceAnnotation(service)
+		wantLBType := getAWSLoadBalancerTypeInStatus(ic)
+		if haveLBType == wantLBType {
+			switch haveLBType {
+			case operatorv1.AWSNetworkLoadBalancer:
+				if getAWSClassicLoadBalancerParametersInStatus(ic) != nil {
+					ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.ClassicLoadBalancerParameters = nil
+				}
+			case operatorv1.AWSClassicLoadBalancer:
+				if getAWSNetworkLoadBalancerParametersInStatus(ic) != nil {
+					ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters = nil
+				}
+			}
+		}
+	}
+}
+
 // updateIngressControllerAWSSubnetStatus mutates the provided IngressController object to
 // sync its status to the effective subnets on the LoadBalancer-type service.
 func updateIngressControllerAWSSubnetStatus(ic *operatorv1.IngressController, service *corev1.Service) {
 	// Set the subnets status based on the actual service annotation and the load balancer type,
 	// as NLBs and CLBs have separate subnet configuration fields.
-	switch getAWSLoadBalancerTypeInStatus(ic) {
+	switch getAWSLoadBalancerTypeFromServiceAnnotation(service) {
 	case operatorv1.AWSNetworkLoadBalancer:
 		// NetworkLoadBalancerParameters should be initialized by setDefaultPublishingStrategy
 		// when an IngressController is admitted, so we don't need to initialize here.
@@ -1105,7 +1133,7 @@ func updateIngressControllerAWSSubnetStatus(ic *operatorv1.IngressController, se
 // sync its status to the effective eipAllocations on the LoadBalancer-type service.
 func updateIngressControllerAWSEIPAllocationStatus(ic *operatorv1.IngressController, service *corev1.Service) {
 	// Set the eipAllocations status based on the actual service annotation and on the load balancer type `NLB`.
-	switch getAWSLoadBalancerTypeInStatus(ic) {
+	switch getAWSLoadBalancerTypeFromServiceAnnotation(service) {
 	case operatorv1.AWSNetworkLoadBalancer:
 		// NetworkLoadBalancerParameters should be initialized by setDefaultPublishingStrategy
 		// when an IngressController is admitted, so we don't need to initialize here.
