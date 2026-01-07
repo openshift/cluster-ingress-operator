@@ -1434,3 +1434,63 @@ func isNetworkError(err error) bool {
 		strings.Contains(msg, "i/o timeout") ||
 		strings.Contains(msg, "read tcp")
 }
+
+func dumpRouterLogs(t *testing.T, kclient client.Client, icName types.NamespacedName) {
+	t.Helper()
+	ic := &operatorv1.IngressController{}
+	if err := kclient.Get(context.TODO(), icName, ic); err != nil {
+		t.Logf("Failed to get ingress controller %s: %v", icName, err)
+		return
+	}
+
+	deploymentName := controller.RouterDeploymentName(ic)
+	deployment := &appsv1.Deployment{}
+	if err := kclient.Get(context.TODO(), deploymentName, deployment); err != nil {
+		t.Logf("Failed to get deployment %s: %v", deploymentName, err)
+		return
+	}
+
+	pods, err := getPods(t, kclient, deployment)
+	if err != nil {
+		t.Logf("Failed to get pods for deployment %s: %v", deploymentName, err)
+		return
+	}
+
+	kubeConfig, err := config.GetConfig()
+	if err != nil {
+		t.Logf("failed to get kube config: %v", err)
+		return
+	}
+	cl, err := kubernetes.NewForConfig(kubeConfig)
+	if err != nil {
+		t.Logf("failed to create kube client: %v", err)
+		return
+	}
+
+	for _, pod := range pods.Items {
+		containers := []string{"router"}
+		for _, c := range containers {
+			req := cl.CoreV1().Pods(pod.Namespace).GetLogs(pod.Name, &corev1.PodLogOptions{Container: c})
+			logs, err := req.Stream(context.TODO())
+			if err != nil {
+				t.Logf("failed to open stream for pod %s container %s: %v", pod.Name, c, err)
+				continue
+			}
+			defer logs.Close()
+
+			buf := new(bytes.Buffer)
+			buf.ReadFrom(logs)
+			t.Logf("Logs for pod %s container %s:\n%s", pod.Name, c, buf.String())
+
+			// Check previous logs
+			reqPrev := cl.CoreV1().Pods(pod.Namespace).GetLogs(pod.Name, &corev1.PodLogOptions{Container: c, Previous: true})
+			logsPrev, err := reqPrev.Stream(context.TODO())
+			if err == nil {
+				defer logsPrev.Close()
+				bufPrev := new(bytes.Buffer)
+				bufPrev.ReadFrom(logsPrev)
+				t.Logf("Previous Logs for pod %s container %s:\n%s", pod.Name, c, bufPrev.String())
+			}
+		}
+	}
+}

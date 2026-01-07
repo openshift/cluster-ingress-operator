@@ -162,26 +162,28 @@ func TestSecureRedirectCorrectness(t *testing.T) {
 				}
 
 				// Check Location header
-			lines := strings.Split(output, "\n")
-			foundLocation := false
-			for _, line := range lines {
-				// Use Contains to be case-insensitive for "Location:"
-				if strings.HasPrefix(strings.ToLower(line), "location:") {
-					t.Logf("Found location header: %s", line)
-					// Verify matches expected
-					if strings.Contains(line, tc.expectedLoc) {
-						foundLocation = true
-						break
+				lines := strings.Split(output, "\n")
+				foundLocation := false
+				for _, line := range lines {
+					// Use Contains to be case-insensitive for "Location:"
+					// We use Contains instead of HasPrefix because curl -v output might start with "< "
+					if strings.Contains(strings.ToLower(line), "location:") {
+						t.Logf("Found location header: %s", line)
+						// Verify matches expected
+						if strings.Contains(line, tc.expectedLoc) {
+							foundLocation = true
+							break
+						}
 					}
 				}
-			}
 
-			if !foundLocation {
-				t.Logf("Location header not matching expected %s. Output:\n%s", tc.expectedLoc, output)
-				return false, nil
-			}
+				if !foundLocation {
+					t.Logf("Location header not matching expected %s. Output:\n%s", tc.expectedLoc, output)
+					dumpRouterLogs(t, kclient, icName)
+					return false, nil
+				}
 
-			return true, nil
+				return true, nil
 			})
 
 			if err != nil {
