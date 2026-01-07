@@ -4,10 +4,8 @@ set -euo pipefail
 function install_crd {
   local SRC="$1"
   local DST="$2"
-  if [[ -e "$SRC" ]]
-  then
-    if [[ -e "$DST" ]]
-    then
+  if [[ -e "$SRC" ]]; then
+    if [[ -e "$DST" ]]; then
       if ! diff -Naup "$SRC" "$DST"; then
         cp "$SRC" "$DST"
         echo "updated CRD: $SRC => $DST"
@@ -19,8 +17,7 @@ function install_crd {
       echo "updated CRD: $SRC => $DST"
     fi
   else
-    if [[ -e "$DST" ]]
-    then
+    if [[ -e "$DST" ]]; then
       rm "$DST"
       echo "removed CRD that not vendored: $DST"
     else
@@ -51,3 +48,7 @@ install_crd \
 install_crd \
   "vendor/github.com/openshift/api/operatoringress/v1/zz_generated.crd-manifests/0000_50_dns_01_dnsrecords.crd.yaml" \
   "manifests/00-custom-resource-definition-internal.yaml"
+
+install_crd \
+  "vendor/github.com/openshift/api/operator/v1/zz_generated.crd-manifests/0000_50_ingress_00_ingresscontrollers-OKD.crd.yaml" \
+  "manifests/00-custom-resource-definition-OKD.yaml"
