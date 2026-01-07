@@ -20,7 +20,7 @@ spec:
     # Consider only request to Gateway API CRDs.
     - name: "check-only-gateway-api-crds"
       # When the operation is DELETE, the "object" variable is null.
-      expression: "(request.operation == 'DELETE' ? oldObject : object).spec.group == 'gateway.networking.k8s.io' || (request.operation == 'DELETE' ? oldObject : object).spec.group == 'gateway.networking.x-k8s.io'"
+      expression: "(request.operation == 'DELETE' ? oldObject : object).spec.group == 'gateway.networking.k8s.io'"
   # Validations are evaluated in the the order of their declaration.
   validations:
     # Verify that the request was sent by the ingress operator's service account.
