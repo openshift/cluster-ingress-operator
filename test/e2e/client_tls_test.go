@@ -1639,19 +1639,15 @@ func curlGetStatusCode(t *testing.T, kclient client.Client, icName types.Namespa
 	t.Logf("command: %s\nstdout:\n%s\n\nstderr:\n%s\n",
 		strings.Join(cmd, " "), stdoutStr, stderr.String())
 
-	// If curl command execution failed, dump logs and return error
-	if curlErr != nil {
-		t.Logf("curl execution failed: %v", curlErr)
-		dumpRouterLogs(t, kclient, icName)
-		return -1, curlErr
-	}
-
 	// due to the '-w %{http_code}' option in the curl command, we should expect stdout to contain exactly one 3-digit
 	// number representing the HTTP code (or 000 if curl exited without completing the request). If stdoutStr is less
 	// than 3 bytes long, something major has gone wrong. Return curlErr if it's set, or generate our own error message
 	// if curErr is unset.
 	if len(stdoutStr) < 3 {
 		dumpRouterLogs(t, kclient, icName)
+		if curlErr != nil {
+			return -1, curlErr
+		}
 		return -1, fmt.Errorf("invalid output from curl: %q", stdoutStr)
 	}
 	// Try to parse the http status code even if curl returns an error; it may still be relevant.
@@ -1659,7 +1655,18 @@ func curlGetStatusCode(t *testing.T, kclient client.Client, icName types.Namespa
 	httpStatusCodeInt, err := strconv.ParseInt(httpStatusCode, 10, 64)
 	if err != nil {
 		dumpRouterLogs(t, kclient, icName)
+		// If parsing the status code returns an error but curl also returned an error, just send the curl one.
+		if curlErr != nil {
+			return -1, curlErr
+		}
 		return -1, err
+	}
+
+	// If curl command execution failed, dump logs and return error, but return the parsed status code
+	if curlErr != nil {
+		t.Logf("curl execution failed: %v", curlErr)
+		dumpRouterLogs(t, kclient, icName)
+		return httpStatusCodeInt, curlErr
 	}
 
 	// If 000 status code, dump logs
