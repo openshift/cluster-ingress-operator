@@ -646,7 +646,6 @@ func testGatewayOpenshiftConditions(t *testing.T) {
 		require.NoError(t, err, "failed waiting gateway to have conditions")
 		require.Nil(t, condutils.FindStatusCondition(gateway.Status.Conditions, "DNSManaged"), "condition should not be present")
 		require.Nil(t, condutils.FindStatusCondition(gateway.Status.Conditions, "DNSReady"), "condition should not be present")
-		require.Nil(t, condutils.FindStatusCondition(gateway.Status.Conditions, "LoadBalancerManaged"), "condition should not be present")
 		require.Nil(t, condutils.FindStatusCondition(gateway.Status.Conditions, "LoadBalancerReady"), "condition should not be present")
 	})
 
@@ -673,7 +672,6 @@ func testGatewayOpenshiftConditions(t *testing.T) {
 
 			if condutils.IsStatusConditionTrue(gw.Status.Conditions, "DNSManaged") &&
 				condutils.IsStatusConditionPresentAndEqual(gw.Status.Conditions, "DNSReady", metav1.ConditionUnknown) &&
-				condutils.IsStatusConditionTrue(gw.Status.Conditions, "LoadBalancerManaged") &&
 				condutils.IsStatusConditionTrue(gw.Status.Conditions, "LoadBalancerReady") {
 
 				return true
@@ -682,9 +680,6 @@ func testGatewayOpenshiftConditions(t *testing.T) {
 			return false
 		}, 30*time.Second, 2*time.Second, "error waiting for openshift conditions to be present on Gateway")
 	})
-
-	/*
-	   {DNSManaged True 1 2025-10-15 22:22:53 +0000 UTC Normal DNS management is supported and zones are specified in the cluster DNS config.} {DNSReady True 1 2025-10-15 22:23:20 +0000 UTC NoFailedZones The record is provisioned in all reported zones.} {LoadBalancerManaged True 1 2025-10-15 22:22:53 +0000 UTC WantedByEndpointPublishingStrategy The endpoint publishing strategy supports a managed load balancer} {LoadBalancerReady True 1 2025-10-15 22:23:18 +0000 UTC LoadBalancerProvisioned The LoadBalancer service is provisioned}]*/
 
 	t.Run("creating a new gateway with the right base domain", func(t *testing.T) {
 		rnd := rand.IntN(1000)
@@ -715,7 +710,6 @@ func testGatewayOpenshiftConditions(t *testing.T) {
 
 				if condutils.IsStatusConditionTrue(gw.Status.Conditions, "DNSManaged") &&
 					condutils.IsStatusConditionTrue(gw.Status.Conditions, "DNSReady") &&
-					condutils.IsStatusConditionTrue(gw.Status.Conditions, "LoadBalancerManaged") &&
 					condutils.IsStatusConditionTrue(gw.Status.Conditions, "LoadBalancerReady") {
 
 					return true
@@ -774,14 +768,12 @@ func testGatewayOpenshiftConditions(t *testing.T) {
 
 				dnsManaged := condutils.FindStatusCondition(gw.Status.Conditions, "DNSManaged")
 				dnsReady := condutils.FindStatusCondition(gw.Status.Conditions, "DNSReady")
-				loadBalancerManaged := condutils.FindStatusCondition(gw.Status.Conditions, "LoadBalancerManaged")
 				loadBalancerReady := condutils.FindStatusCondition(gw.Status.Conditions, "LoadBalancerReady")
 
 				// Check if all conditions are not null and have a different generation from the original one
 				// before adding the label
 				if (dnsManaged != nil && dnsManaged.ObservedGeneration != originalGateway.Generation) &&
 					(dnsReady != nil && dnsReady.ObservedGeneration != originalGateway.Generation) &&
-					(loadBalancerManaged != nil && loadBalancerManaged.ObservedGeneration != originalGateway.Generation) &&
 					(loadBalancerReady != nil && loadBalancerReady.ObservedGeneration != originalGateway.Generation) {
 					return true
 				}
@@ -807,8 +799,8 @@ func testGatewayOpenshiftConditions(t *testing.T) {
 		// This test will delete the Gateway service. This should kick a new reconciliation
 		// from Istio to recreate the services, and the condition "Programmed" should have
 		// a different lastTransitionTime before the service being deleted.
-		// But the condition "DNSManaged" and "LoadBalancerManaged"
-		// should have the original timestamp, meaning they weren't changed
+		// But the condition "DNSManaged" should have the original timestamp,
+		// meaning they weren't changed
 		t.Run("should not replace openshift conditions when Istio reconciles the gateway", func(t *testing.T) {
 			originalGateway := &gatewayapiv1.Gateway{}
 			nsName := types.NamespacedName{Namespace: operatorcontroller.DefaultOperandNamespace, Name: name}
@@ -825,9 +817,6 @@ func testGatewayOpenshiftConditions(t *testing.T) {
 			originalDNSManagedCondition := condutils.FindStatusCondition(originalGateway.Status.Conditions, "DNSManaged")
 			require.NotNil(t, originalDNSManagedCondition)
 			require.Equal(t, metav1.ConditionTrue, originalDNSManagedCondition.Status)
-			originalLoadBalancerManagedCondition := condutils.FindStatusCondition(originalGateway.Status.Conditions, "LoadBalancerManaged")
-			require.NotNil(t, originalLoadBalancerManagedCondition)
-			require.Equal(t, metav1.ConditionTrue, originalLoadBalancerManagedCondition.Status)
 
 			// These lastTransitionTime should change once the service is deleted and reprovisioned
 			originalLoadBalancerReadyCondition := condutils.FindStatusCondition(originalGateway.Status.Conditions, "LoadBalancerReady")
@@ -865,7 +854,7 @@ func testGatewayOpenshiftConditions(t *testing.T) {
 			})
 
 			currentGateway := &gatewayapiv1.Gateway{}
-			var currentDNSManagedCondition, currentLoadBalancerManagedCondition *metav1.Condition
+			var currentDNSManagedCondition *metav1.Condition
 			t.Run("lastTransitionTime should change for some conditions and not for others", func(t *testing.T) {
 				assert.Eventually(t, func() bool {
 
@@ -877,13 +866,11 @@ func testGatewayOpenshiftConditions(t *testing.T) {
 					}
 
 					currentDNSManagedCondition = condutils.FindStatusCondition(currentGateway.Status.Conditions, "DNSManaged")
-					currentLoadBalancerManagedCondition = condutils.FindStatusCondition(currentGateway.Status.Conditions, "LoadBalancerManaged")
 					currentLoadBalancerReadyCondition := condutils.FindStatusCondition(currentGateway.Status.Conditions, "LoadBalancerReady")
 					currentProgrammedCondition := condutils.FindStatusCondition(currentGateway.Status.Conditions, "Programmed")
 
 					// Expect conditions to be ready
 					if (currentDNSManagedCondition == nil || currentDNSManagedCondition.Status != metav1.ConditionTrue) ||
-						(currentLoadBalancerManagedCondition == nil || currentLoadBalancerManagedCondition.Status != metav1.ConditionTrue) ||
 						(currentLoadBalancerReadyCondition == nil || currentLoadBalancerReadyCondition.Status != metav1.ConditionTrue) ||
 						(currentProgrammedCondition == nil || currentProgrammedCondition.Status != metav1.ConditionTrue) {
 
@@ -903,7 +890,6 @@ func testGatewayOpenshiftConditions(t *testing.T) {
 			})
 			// After conditions are bumped, the original ones should not change
 			assert.Equal(t, originalDNSManagedCondition.LastTransitionTime, currentDNSManagedCondition.LastTransitionTime, "the DNSManaged condition LastTransitionTime should not change")
-			assert.Equal(t, originalLoadBalancerManagedCondition.LastTransitionTime, currentLoadBalancerManagedCondition.LastTransitionTime, "the LoadBalancerManaged condition LastTransitionTime should not change")
 		})
 
 		// This test verifies if creating a 2nd Gateway using the same domain of the 1st one returns
@@ -927,7 +913,6 @@ func testGatewayOpenshiftConditions(t *testing.T) {
 				}
 				if !condutils.IsStatusConditionTrue(current.Status.Conditions, "DNSManaged") ||
 					!condutils.IsStatusConditionTrue(current.Status.Conditions, "DNSReady") ||
-					!condutils.IsStatusConditionTrue(current.Status.Conditions, "LoadBalancerManaged") ||
 					!condutils.IsStatusConditionTrue(current.Status.Conditions, "LoadBalancerReady") {
 					t.Logf("current gateway %v does not have the right conditions yet %v; retrying...", nsName, err)
 					return false
@@ -944,7 +929,6 @@ func testGatewayOpenshiftConditions(t *testing.T) {
 				// This should be false once the duplicate DNSRecord PR is merged
 				if !condutils.IsStatusConditionTrue(current.Status.Conditions, "DNSManaged") ||
 					!condutils.IsStatusConditionTrue(current.Status.Conditions, "DNSReady") ||
-					!condutils.IsStatusConditionTrue(current.Status.Conditions, "LoadBalancerManaged") ||
 					!condutils.IsStatusConditionTrue(current.Status.Conditions, "LoadBalancerReady") {
 					t.Logf("duplicate gateway %v does not have the right conditions yet %v; retrying...", nsName, err)
 					return false

@@ -158,7 +158,7 @@ func ComputeDNSStatus(ic *operatorv1.IngressController, wildcardRecord *iov1.DNS
 // ComputeLoadBalancerStatus returns the set of current
 // LoadBalancer-prefixed conditions for the given ingress controller, which are
 // used later to determine the ingress controller's Degraded or Available status.
-func ComputeLoadBalancerStatus(ic *operatorv1.IngressController, service *corev1.Service, operandEvents []corev1.Event) []operatorv1.OperatorCondition {
+func ComputeLoadBalancerStatus(ic *operatorv1.IngressController, service *corev1.Service, operandEvents []corev1.Event, gwapi bool) []operatorv1.OperatorCondition {
 	// Compute the LoadBalancerManagedIngressConditionType condition
 	// The condition below is only possible when an ingress controller is requesting
 	// a LoadBalancer. In case the ingresscontroller resource is null (eg.: GatewayAPI,
@@ -180,12 +180,16 @@ func ComputeLoadBalancerStatus(ic *operatorv1.IngressController, service *corev1
 	conditions := []operatorv1.OperatorCondition{}
 
 	// Initial condition for any resource that is managed is LoadBalancerManaged=True
-	conditions = append(conditions, operatorv1.OperatorCondition{
-		Type:    operatorv1.LoadBalancerManagedIngressConditionType,
-		Status:  operatorv1.ConditionTrue,
-		Reason:  "WantedByEndpointPublishingStrategy",
-		Message: "The endpoint publishing strategy supports a managed load balancer",
-	})
+	// We skip adding this condition to Gateways from Gateway API to avoid overloading
+	// it with a condition that will be always true
+	if !gwapi {
+		conditions = append(conditions, operatorv1.OperatorCondition{
+			Type:    operatorv1.LoadBalancerManagedIngressConditionType,
+			Status:  operatorv1.ConditionTrue,
+			Reason:  "WantedByEndpointPublishingStrategy",
+			Message: "The endpoint publishing strategy supports a managed load balancer",
+		})
+	}
 
 	// Compute the LoadBalancerReadyIngressConditionType (LoadBalancerReady) condition
 	switch {

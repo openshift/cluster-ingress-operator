@@ -79,7 +79,7 @@ func Test_computeLoadBalancerStatus(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			actual := ComputeLoadBalancerStatus(test.controller, test.service, test.events)
+			actual := ComputeLoadBalancerStatus(test.controller, test.service, test.events, false)
 
 			conditionsCmpOpts := []cmp.Option{
 				cmpopts.IgnoreFields(operatorv1.OperatorCondition{}, "LastTransitionTime", "Message"),
