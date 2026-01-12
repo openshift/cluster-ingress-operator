@@ -198,12 +198,6 @@ func Test_Reconcile(t *testing.T) {
 			reconcileRequest: reqFn("openshift-ingress", "example-gateway"),
 			expectedConditions: []metav1.Condition{
 				{
-					Type:    operatorv1.LoadBalancerManagedIngressConditionType,
-					Status:  metav1.ConditionTrue,
-					Reason:  "WantedByEndpointPublishingStrategy",
-					Message: "The endpoint publishing strategy supports a managed load balancer",
-				},
-				{
 					Type:    operatorv1.LoadBalancerReadyIngressConditionType,
 					Status:  metav1.ConditionFalse,
 					Reason:  "ServiceNotFound",

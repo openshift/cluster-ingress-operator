@@ -289,18 +289,11 @@ func TestComputeGatewayAPILoadBalancerStatus(t *testing.T) {
 		expectedConditions []metav1.Condition
 	}{
 		{
-			name:       "null service should return LoadBalancerManaged=True and LoadBalancerReady=False with reason=ServiceNotFound",
+			name:       "null service should return LoadBalancerReady=False with reason=ServiceNotFound",
 			service:    nil,
 			generation: 1,
 			events:     []corev1.Event{},
 			expectedConditions: []metav1.Condition{
-				{
-					Type:               "LoadBalancerManaged",
-					Status:             "True",
-					Reason:             "WantedByEndpointPublishingStrategy",
-					Message:            "The endpoint publishing strategy supports a managed load balancer",
-					ObservedGeneration: 1,
-				},
 				{
 					Type:               "LoadBalancerReady",
 					Status:             "False",
@@ -311,7 +304,7 @@ func TestComputeGatewayAPILoadBalancerStatus(t *testing.T) {
 			},
 		},
 		{
-			name: "service provisioned and with status should return LoadBalancerManaged=True and LoadBalancerReady=True with reason=LoadBalancerProvisioned",
+			name: "service provisioned and with status should return LoadBalancerReady=True with reason=LoadBalancerProvisioned",
 			service: &corev1.Service{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "somesvc",
@@ -329,13 +322,6 @@ func TestComputeGatewayAPILoadBalancerStatus(t *testing.T) {
 			generation: 1,
 			events:     []corev1.Event{},
 			expectedConditions: []metav1.Condition{
-				{
-					Type:               "LoadBalancerManaged",
-					Status:             "True",
-					Reason:             "WantedByEndpointPublishingStrategy",
-					Message:            "The endpoint publishing strategy supports a managed load balancer",
-					ObservedGeneration: 1,
-				},
 				{
 					Type:               "LoadBalancerReady",
 					Status:             "True",
@@ -356,13 +342,6 @@ func TestComputeGatewayAPILoadBalancerStatus(t *testing.T) {
 			generation: 1,
 			events:     []corev1.Event{},
 			expectedConditions: []metav1.Condition{
-				{
-					Type:               "LoadBalancerManaged",
-					Status:             "True",
-					Reason:             "WantedByEndpointPublishingStrategy",
-					Message:            "The endpoint publishing strategy supports a managed load balancer",
-					ObservedGeneration: 1,
-				},
 				{
 					Type:               "LoadBalancerReady",
 					Status:             "False",
@@ -399,13 +378,6 @@ func TestComputeGatewayAPILoadBalancerStatus(t *testing.T) {
 				},
 			},
 			expectedConditions: []metav1.Condition{
-				{
-					Type:               "LoadBalancerManaged",
-					Status:             "True",
-					Reason:             "WantedByEndpointPublishingStrategy",
-					Message:            "The endpoint publishing strategy supports a managed load balancer",
-					ObservedGeneration: 1,
-				},
 				{
 					Type:               "LoadBalancerReady",
 					Status:             "False",
