@@ -1679,7 +1679,7 @@ func Test_computeLoadBalancerStatus(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			// The function was moved to another package, keeping the line here to
 			// show that no breaking change was caused
-			actual := status.ComputeLoadBalancerStatus(test.controller, test.service, test.events)
+			actual := status.ComputeLoadBalancerStatus(test.controller, test.service, test.events, false)
 
 			conditionsCmpOpts := []cmp.Option{
 				cmpopts.IgnoreFields(operatorv1.OperatorCondition{}, "LastTransitionTime", "Message"),

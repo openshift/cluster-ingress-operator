@@ -45,7 +45,7 @@ func ComputeGatewayAPILoadBalancerStatus(service *corev1.Service, operandEvents 
 	if service != nil && service.Name == "" {
 		service = nil
 	}
-	ingressConditions := ComputeLoadBalancerStatus(nil, service, operandEvents)
+	ingressConditions := ComputeLoadBalancerStatus(nil, service, operandEvents, true)
 	for _, condition := range ingressConditions {
 		gwCondition := metav1.Condition{
 			Type:               condition.Type,
