@@ -299,7 +299,7 @@ func TestClientTLS(t *testing.T) {
 		expectAllowed: false,
 	}}
 	for _, tc := range optionalPolicyTestCases {
-		_, err := curlGetStatusCode(t, clientPod, tc.cert, routeHost, service.Spec.ClusterIP, true)
+		_, err := curlGetStatusCode(t, kclient, icName, clientPod, tc.cert, routeHost, service.Spec.ClusterIP, true)
 		if err == nil && !tc.expectAllowed {
 			t.Errorf("%q: expected error, got success", tc.description)
 		}
@@ -343,7 +343,7 @@ func TestClientTLS(t *testing.T) {
 		expectAllowed: false,
 	}}
 	for _, tc := range requiredPolicyTestCases {
-		_, err := curlGetStatusCode(t, clientPod, tc.cert, routeHost, service.Spec.ClusterIP, true)
+		_, err := curlGetStatusCode(t, kclient, icName, clientPod, tc.cert, routeHost, service.Spec.ClusterIP, true)
 		if err == nil && !tc.expectAllowed {
 			t.Errorf("%q: expected error, got success", tc.description)
 		}
@@ -1088,12 +1088,12 @@ func TestMTLSWithCRLs(t *testing.T) {
 			}
 
 			for certName := range tcCerts.ClientCerts.Accepted {
-				if _, err := curlGetStatusCode(t, clientPod, certName, routeHost, service.Spec.ClusterIP, false); err != nil {
+				if _, err := curlGetStatusCode(t, kclient, icName, clientPod, certName, routeHost, service.Spec.ClusterIP, false); err != nil {
 					t.Errorf("Failed to curl route with cert %q: %v", certName, err)
 				}
 			}
 			for certName := range tcCerts.ClientCerts.Rejected {
-				if httpStatusCode, err := curlGetStatusCode(t, clientPod, certName, routeHost, service.Spec.ClusterIP, false); err != nil {
+				if httpStatusCode, err := curlGetStatusCode(t, kclient, icName, clientPod, certName, routeHost, service.Spec.ClusterIP, false); err != nil {
 					if httpStatusCode == 0 {
 						// TLS/SSL verification failures result in a 0 http status code (no connection is made to the backend, so no http status code is returned).
 						continue
@@ -1606,7 +1606,7 @@ func encodeKey(key *rsa.PrivateKey) string {
 // router's internal service. Returns the HTTP status code returned from curl, and an error either if there is an HTTP
 // error, or if there's another error in running the command. If the error was not an HTTP error, the HTTP status code
 // returned will be -1.
-func curlGetStatusCode(t *testing.T, clientPod *corev1.Pod, certName, endpoint, ingressControllerIP string, verbose bool) (int64, error) {
+func curlGetStatusCode(t *testing.T, kclient client.Client, icName types.NamespacedName, clientPod *corev1.Pod, certName, endpoint, ingressControllerIP string, verbose bool) (int64, error) {
 	t.Helper()
 	cmd := []string{
 		"/bin/curl",
@@ -1638,11 +1638,13 @@ func curlGetStatusCode(t *testing.T, clientPod *corev1.Pod, certName, endpoint, 
 	stdoutStr := stdout.String()
 	t.Logf("command: %s\nstdout:\n%s\n\nstderr:\n%s\n",
 		strings.Join(cmd, " "), stdoutStr, stderr.String())
+
 	// due to the '-w %{http_code}' option in the curl command, we should expect stdout to contain exactly one 3-digit
 	// number representing the HTTP code (or 000 if curl exited without completing the request). If stdoutStr is less
 	// than 3 bytes long, something major has gone wrong. Return curlErr if it's set, or generate our own error message
 	// if curErr is unset.
 	if len(stdoutStr) < 3 {
+		dumpRouterLogs(t, kclient, icName)
 		if curlErr != nil {
 			return -1, curlErr
 		}
@@ -1652,15 +1654,27 @@ func curlGetStatusCode(t *testing.T, clientPod *corev1.Pod, certName, endpoint, 
 	httpStatusCode := stdoutStr[len(stdoutStr)-3:]
 	httpStatusCodeInt, err := strconv.ParseInt(httpStatusCode, 10, 64)
 	if err != nil {
+		dumpRouterLogs(t, kclient, icName)
 		// If parsing the status code returns an error but curl also returned an error, just send the curl one.
 		if curlErr != nil {
 			return -1, curlErr
 		}
 		return -1, err
 	}
+
+	// If curl command execution failed, dump logs and return error, but return the parsed status code
 	if curlErr != nil {
+		t.Logf("curl execution failed: %v", curlErr)
+		dumpRouterLogs(t, kclient, icName)
 		return httpStatusCodeInt, curlErr
 	}
+
+	// If 000 status code, dump logs
+	if httpStatusCodeInt == 0 {
+		t.Logf("curl returned status code 000 (connection failure)")
+		dumpRouterLogs(t, kclient, icName)
+	}
+
 	switch httpStatusCode[0] {
 	case '0', '4', '5':
 		return httpStatusCodeInt, fmt.Errorf("got HTTP %s status code", httpStatusCode)
