@@ -24,6 +24,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 
 	"k8s.io/client-go/tools/record"
 
@@ -112,6 +113,9 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 		return nil, err
 	}
 	if err := c.Watch(source.Kind[client.Object](operatorCache, &corev1.Service{}, enqueueRequestForOwningIngressController(config.Namespace))); err != nil {
+		return nil, err
+	}
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &networkingv1.NetworkPolicy{}, enqueueRequestForOwningIngressController(config.Namespace))); err != nil {
 		return nil, err
 	}
 	// Add watch for deleted pods specifically for ensuring ingress deletion.
@@ -1133,12 +1137,20 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		return fmt.Errorf("failed to ensure namespace: %v", err)
 	}
 
+	if _, _, err := r.ensureRouterNamespaceNetworkPolicy(ci); err != nil {
+		return fmt.Errorf("failed to ensure default namespacenetwork policy: %v", err)
+	}
+
 	if err := r.ensureRouterServiceAccount(); err != nil {
 		return fmt.Errorf("failed to ensure service account: %v", err)
 	}
 
 	if err := r.ensureRouterClusterRoleBinding(); err != nil {
 		return fmt.Errorf("failed to ensure cluster role binding: %v", err)
+	}
+
+	if err := r.ensureRouterNetworkPolicy(ci); err != nil {
+		return fmt.Errorf("failed to ensure network policy: %v", err)
 	}
 
 	var errs []error
