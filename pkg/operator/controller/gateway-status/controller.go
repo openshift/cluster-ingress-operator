@@ -89,7 +89,7 @@ func NewUnmanaged(mgr manager.Manager) (controller.Controller, error) {
 		return nil, fmt.Errorf("error initializing controller: %w", err)
 	}
 
-	gatewayHasOurController := operatorcontroller.GatewayHasOurController(logger, reconciler.cache)
+	gatewayHasOurController := operatorcontroller.GatewayHasOurController(logger, reconciler.cache, false)
 	gatewayPredicate := predicate.Funcs{
 		CreateFunc: func(e event.CreateEvent) bool {
 			return gatewayHasOurController(e.Object)
@@ -138,16 +138,50 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 
 	var errs []error
 
-	childSvc := &corev1.Service{}
-	err := fetchFirstMatchingFromGateway(ctx, r.cache, childSvc, gateway)
-	if err != nil {
-		log.Error(err, "error fetching the service from gateway")
+	listOpts := []client.ListOption{
+		client.MatchingLabels{operatorcontroller.GatewayNameLabelKey: gateway.GetName()},
+		client.InNamespace(operatorcontroller.DefaultOperandNamespace),
 	}
 
-	childDNSRecord := &iov1.DNSRecord{}
-	err = fetchFirstMatchingFromGateway(ctx, r.cache, childDNSRecord, gateway)
-	if err != nil {
+	// We want just the first service of the list, Gateway API controllers usually provision
+	// just one service
+	childSvcs := &corev1.ServiceList{}
+	childSvc := &corev1.Service{}
+	if err := r.cache.List(ctx, childSvcs, listOpts...); err != nil {
+		log.Error(err, "error fetching the services from gateway")
+	} else if len(childSvcs.Items) == 0 {
+		log.Error(fmt.Errorf("no service was found"), "error fetching the services from gateway")
+	} else {
+		childSvc = childSvcs.Items[0].DeepCopy()
+	}
+
+	// Because we will have multiple DNS records per Gateway (one per listener)
+	// we need all of the records that belong to a Gateway
+	childDNSRecords := &iov1.DNSRecordList{}
+	if err := r.cache.List(ctx, childDNSRecords, listOpts...); err != nil {
 		log.Error(err, "error fetching the dnsrecord from gateway")
+	} else if len(childDNSRecords.Items) == 0 {
+		log.Error(fmt.Errorf("no dnsrecord was found"), "error fetching the dnsrecords from gateway")
+	}
+
+	// TODO: maybe use index manager instead
+	// hostnameToDNSRecord will be used to verify that, given a listener, when it has a hostname
+	// what is the matching dnsRecord of it.
+	// This is required to cross-check the status of a specific DNSRecord from a hostname
+	hostnameToDNSRecord := make(map[string]*iov1.DNSRecord)
+	for _, dnsRecord := range childDNSRecords.Items {
+		hostnameToDNSRecord[dnsRecord.Spec.DNSName] = dnsRecord.DeepCopy()
+	}
+
+	// listenerToHostname will be used when verifying a Gateway Listener status,
+	// given a listener name, what is the desired hostname of it. This information
+	// will then be used to, given the hostnameToDNSRecord map, get the matching
+	// dnsRecord to set its status.
+	listenerToHostname := make(map[gatewayapiv1.SectionName]gatewayapiv1.Hostname)
+	for _, listener := range gateway.Spec.Listeners {
+		if listener.Hostname != nil {
+			listenerToHostname[listener.Name] = *listener.Hostname
+		}
 	}
 
 	dnsConfig := &configv1.DNS{}
@@ -168,15 +202,15 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		errs = append(errs, fmt.Errorf("failed to list events in namespace %q: %v", operatorcontroller.DefaultOperandNamespace, err))
 	}
 
-	// Initialize the conditions if they are null, as the compute* functions receives a pointer
+	// Initialize the conditions if they are null, as the compute functions receives a pointer
 	if gateway.Status.Conditions == nil {
 		gateway.Status.Conditions = make([]metav1.Condition, 0)
 	}
 
 	// WARNING: one thing to be aware is that conditions on Gateway resource are limited to 8: https://github.com/kubernetes-sigs/gateway-api/blob/a8fe5c8732a37ef471d86afaf570ff8ad0ef0221/apis/v1/gateway_types.go#L691
 	// So if the Gateway controller (in our case Istio) is adding 2 conditions, we have 6 more to add.
-	status.ComputeGatewayAPIDNSStatus(childDNSRecord, dnsConfig, gateway.GetGeneration(), &gateway.Status.Conditions)
 	status.ComputeGatewayAPILoadBalancerStatus(childSvc, operandEvents.Items, gateway.GetGeneration(), &gateway.Status.Conditions)
+	status.ComputeGatewayAPIListenerDNSStatus(dnsConfig, gateway.GetGeneration(), &gateway.Status, listenerToHostname, hostnameToDNSRecord)
 
 	log.Info("new conditions to be added", "conditions", gateway.Status.Conditions)
 	if err := r.client.Status().Patch(ctx, gateway, client.MergeFrom(sourceGateway)); err != nil {
@@ -213,48 +247,4 @@ func gatewayFromResourceLabel(_ context.Context, o client.Object) []reconcile.Re
 			},
 		},
 	}
-}
-
-type gatewayMatcheableResource interface {
-	*corev1.Service | *iov1.DNSRecord
-}
-
-func fetchFirstMatchingFromGateway[T gatewayMatcheableResource](ctx context.Context, kclient client.Reader, obj T, gw *gatewayapiv1.Gateway) error {
-	// At this moment we just know that services must have the Gateway API label with the
-	// same name of the Gateway. So we need a list, this list should have at least
-	// 1 item, and we care just about the first one (1:1 on Gateway/Service relation)
-	listOpts := []client.ListOption{
-		client.MatchingLabels{operatorcontroller.GatewayNameLabelKey: gw.GetName()},
-		client.InNamespace(operatorcontroller.DefaultOperandNamespace),
-	}
-
-	switch t := any(obj).(type) {
-	case *corev1.Service:
-		list := &corev1.ServiceList{}
-		if err := kclient.List(ctx, list, listOpts...); err != nil {
-			return err
-		}
-		if len(list.Items) == 0 {
-			err := fmt.Errorf("no services where found for Gateway")
-			return err
-		}
-
-		*t = *list.Items[0].DeepCopy()
-
-	case *iov1.DNSRecord:
-		list := &iov1.DNSRecordList{}
-		if err := kclient.List(ctx, list, listOpts...); err != nil {
-			return err
-		}
-		if len(list.Items) == 0 {
-			err := fmt.Errorf("no dnsrecord where found for Gateway")
-			return err
-		}
-		*t = *list.Items[0].DeepCopy()
-
-	default:
-		return fmt.Errorf("unsupported type %T", obj)
-	}
-
-	return nil
 }
