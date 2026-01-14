@@ -11,8 +11,11 @@ import (
 
 // GatewayHasOurController returns a function that will use the provided logger and
 // clients, receive an object and return a boolean that represents if the provided
-// object is a Gateway managed by our Gateway Class
-func GatewayHasOurController(logger logr.Logger, crclient client.Reader) func(o client.Object) bool {
+// object is a Gateway managed by our Gateway Class.
+// The checkRevLabel is used by controllers that want to check if the "istio.io/rev" label
+// is already set, meaning the reconciliation already happened. Some controllers may opt-in
+// to this behavior to ignore the rest of the reconciliation
+func GatewayHasOurController(logger logr.Logger, crclient client.Reader, checkRevLabel bool) func(o client.Object) bool {
 	key, value := IstioRevLabelKey, IstioName("").Name
 
 	return func(o client.Object) bool {
@@ -21,7 +24,7 @@ func GatewayHasOurController(logger logr.Logger, crclient client.Reader) func(o 
 			return false
 		}
 
-		if gateway.Labels[key] == value {
+		if checkRevLabel && gateway.Labels[key] == value {
 			return false
 		}
 
