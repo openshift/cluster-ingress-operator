@@ -40,10 +40,10 @@ func TestGatewayHasOurController(t *testing.T) {
 		t.Fatalf("error creating scheme for fake client: %s", err)
 	}
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(fakeObjects...).Build()
-	testFn := controller.GatewayHasOurController(logger, fakeClient)
 	tests := []struct {
 		name     string
 		resource client.Object
+		checkRev bool
 		want     bool
 	}{
 		{
@@ -82,14 +82,32 @@ func TestGatewayHasOurController(t *testing.T) {
 			},
 		},
 		{
-			name: "a gateway with invalid openshift rev labels should return false",
-			want: false,
+			name:     "a gateway with openshift rev labels and enforcing rev validation should return false",
+			want:     false,
+			checkRev: true,
 			resource: &gatewayapiv1.Gateway{
 				ObjectMeta: v1.ObjectMeta{
 					Name:      "xpto",
 					Namespace: "openshift-ingress",
 					Labels: map[string]string{
 						"istio.io/rev": "openshift-gateway",
+					},
+				},
+				Spec: gatewayapiv1.GatewaySpec{
+					GatewayClassName: "valid",
+				},
+			},
+		},
+		{
+			name:     "a gateway without openshift rev labels and enforcing rev validation should return true",
+			want:     true,
+			checkRev: true,
+			resource: &gatewayapiv1.Gateway{
+				ObjectMeta: v1.ObjectMeta{
+					Name:      "xpto",
+					Namespace: "openshift-ingress",
+					Labels: map[string]string{
+						"istio.io/rev": "bla",
 					},
 				},
 				Spec: gatewayapiv1.GatewaySpec{
@@ -113,6 +131,9 @@ func TestGatewayHasOurController(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Default is to not check the rev label, so we don't set the testFn for now
+			// unless our test explicitly request for it
+			testFn := controller.GatewayHasOurController(logger, fakeClient, tt.checkRev)
 			got := testFn(tt.resource)
 			if got != tt.want {
 				t.Errorf("GatewayHasOurController() = %v, want %v", got, tt.want)

@@ -152,7 +152,7 @@ func NewUnmanaged(mgr manager.Manager) (controller.Controller, error) {
 
 	// Watch gateways so that we update labels when a gateway is updated or
 	// something modifies or removes the label.
-	gatewayHasOurController := operatorcontroller.GatewayHasOurController(log, reconciler.cache)
+	gatewayHasOurController := operatorcontroller.GatewayHasOurController(log, reconciler.cache, true)
 
 	gatewayPredicate := predicate.Funcs{
 		CreateFunc: func(e event.CreateEvent) bool {
