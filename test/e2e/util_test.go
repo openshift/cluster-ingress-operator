@@ -681,6 +681,27 @@ func updateAndVerifyInfrastructureConfigWithRetry(t *testing.T, name types.Names
 	})
 }
 
+func isDNSManagementSupported(t *testing.T) bool {
+	t.Helper()
+	dnsConfig := &configv1.DNS{}
+	dnsManaged := false
+	name := types.NamespacedName{
+		Name: "cluster",
+	}
+	err := wait.PollUntilContextTimeout(context.TODO(), 1*time.Second, timeout, false, func(ctx context.Context) (done bool, err error) {
+		if err := kclient.Get(ctx, types.NamespacedName{Name: "cluster"}, dnsConfig); err != nil {
+			t.Logf("error getting infrastructure config %v: %v, retrying...", name, err)
+			return false, nil
+		}
+		dnsManaged = dnsConfig.Spec.PrivateZone != nil || dnsConfig.Spec.PublicZone != nil
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to define if Managed DNS is supported: %s", err)
+	}
+	return dnsManaged
+}
+
 // waitForCCMAvailableAndUpdated waits for Cloud Controller Manager Deployment
 // to be reported as ready.
 // If oldConfigurationHash is not empty it will additionally verify that the configuration hash
