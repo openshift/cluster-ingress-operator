@@ -460,6 +460,10 @@ func testGatewayAPIRBAC(t *testing.T) {
 }
 
 func testGatewayAPIDNS(t *testing.T) {
+	if !isDNSManagementSupported(t) {
+		t.Skip("this test can be executed just on platforms that support managed DNS")
+	}
+
 	domain := "gws." + dnsConfig.Spec.BaseDomain
 
 	gatewayClass, err := createGatewayClass(t, operatorcontroller.OpenShiftDefaultGatewayClassName, operatorcontroller.OpenShiftGatewayClassControllerName)
@@ -591,6 +595,10 @@ func testGatewayAPIDNS(t *testing.T) {
 }
 
 func testGatewayAPIDNSListenerUpdate(t *testing.T) {
+	if !isDNSManagementSupported(t) {
+		t.Skip("this test can be executed just on platforms that support managed DNS")
+	}
+
 	gatewayClass, err := createGatewayClass(t, operatorcontroller.OpenShiftDefaultGatewayClassName, operatorcontroller.OpenShiftGatewayClassControllerName)
 	if err != nil {
 		t.Fatalf("failed to create gatewayclass: %v", err)
