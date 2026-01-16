@@ -693,8 +693,19 @@ func isDNSManagementSupported(t *testing.T) bool {
 			t.Logf("error getting dns config %v: %v, retrying...", name, err)
 			return false, nil
 		}
-		dnsManaged = (dnsConfig.Spec.PrivateZone != nil && dnsConfig.Spec.PrivateZone.ID != "") ||
-			(dnsConfig.Spec.PublicZone != nil && dnsConfig.Spec.PublicZone.ID != "")
+
+		// On the majority of platforms, the *Zone not being null is enough
+		// On Azure, a platform can be null and be empty so we need to validate (this means unmanaged as well)
+		// On AWS, spec.ID is optional as AWS may use tags
+
+		managedPrivateZone := dnsConfig.Spec.PrivateZone != nil &&
+			(dnsConfig.Spec.PrivateZone.ID != "" || len(dnsConfig.Spec.PrivateZone.Tags) > 0)
+
+		managedPublicZone := dnsConfig.Spec.PublicZone != nil &&
+			(dnsConfig.Spec.PublicZone.ID != "" || len(dnsConfig.Spec.PublicZone.Tags) > 0)
+
+		dnsManaged = managedPrivateZone || managedPublicZone
+
 		return true, nil
 	})
 	if err != nil {
