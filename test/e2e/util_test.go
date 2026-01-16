@@ -689,11 +689,12 @@ func isDNSManagementSupported(t *testing.T) bool {
 		Name: "cluster",
 	}
 	err := wait.PollUntilContextTimeout(context.TODO(), 1*time.Second, timeout, false, func(ctx context.Context) (done bool, err error) {
-		if err := kclient.Get(ctx, types.NamespacedName{Name: "cluster"}, dnsConfig); err != nil {
-			t.Logf("error getting infrastructure config %v: %v, retrying...", name, err)
+		if err := kclient.Get(ctx, name, dnsConfig); err != nil {
+			t.Logf("error getting dns config %v: %v, retrying...", name, err)
 			return false, nil
 		}
-		dnsManaged = dnsConfig.Spec.PrivateZone != nil || dnsConfig.Spec.PublicZone != nil
+		dnsManaged = (dnsConfig.Spec.PrivateZone != nil && dnsConfig.Spec.PrivateZone.ID != "") ||
+			(dnsConfig.Spec.PublicZone != nil && dnsConfig.Spec.PublicZone.ID != "")
 		return true, nil
 	})
 	if err != nil {
