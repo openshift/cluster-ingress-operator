@@ -47,6 +47,7 @@ const (
 	GRPCRouteCRDAsset               = "assets/gateway-api/gateway.networking.k8s.io_grpcroutes.yaml"
 	HTTPRouteCRDAsset               = "assets/gateway-api/gateway.networking.k8s.io_httproutes.yaml"
 	ReferenceGrantCRDAsset          = "assets/gateway-api/gateway.networking.k8s.io_referencegrants.yaml"
+	BackendTLSPolicyCRDAsset        = "assets/gateway-api/gateway.networking.k8s.io_backendtlspolicies.yaml"
 	GatewayAPIAdminClusterRoleAsset = "assets/gateway-api/aggregated-cluster-roles/admin-cluster-role.yaml"
 	GatewayAPIViewClusterRoleAsset  = "assets/gateway-api/aggregated-cluster-roles/view-cluster-role.yaml"
 
@@ -292,6 +293,14 @@ func HTTPRouteCRD() *apiextensionsv1.CustomResourceDefinition {
 
 func ReferenceGrantCRD() *apiextensionsv1.CustomResourceDefinition {
 	crd, err := NewCustomResourceDefinition(MustAssetReader(ReferenceGrantCRDAsset))
+	if err != nil {
+		panic(err)
+	}
+	return crd
+}
+
+func BackendTLSPolicyCRD() *apiextensionsv1.CustomResourceDefinition {
+	crd, err := NewCustomResourceDefinition(MustAssetReader(BackendTLSPolicyCRDAsset))
 	if err != nil {
 		panic(err)
 	}
