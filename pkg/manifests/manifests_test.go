@@ -51,6 +51,7 @@ func TestManifests(t *testing.T) {
 	GRPCRouteCRD()
 	HTTPRouteCRD()
 	ReferenceGrantCRD()
+	BackendTLSPolicyCRD()
 
 	adminOnlyVerbs := []string{"create", "update", "patch", "delete", "deletecollection"}
 	GatewayAPIAdminClusterRole()
