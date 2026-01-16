@@ -67,4 +67,6 @@ func TestManifests(t *testing.T) {
 
 	MustAsset(CustomResourceDefinitionManifest)
 	MustAsset(NamespaceManifest)
+
+	CanaryServiceAccount()
 }
