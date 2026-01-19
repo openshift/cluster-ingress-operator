@@ -32,7 +32,7 @@ CLONE_DIR=$(mktemp -d)
 cd "${CLONE_DIR}"
 
 # find the branch of gateway-api repo
-RELEASE_VERSION=$(\grep -oP "^\d+\.\d+" <<<"${BUNDLE_VERSION#v}")
+RELEASE_VERSION=$(\ggrep -oP "^\d+\.\d+" <<<"${BUNDLE_VERSION#v}")
 BRANCH="release-${RELEASE_VERSION}"
 echo "gateway-api repo branch \"${BRANCH}\" into ${CLONE_DIR}..."
 
@@ -56,10 +56,11 @@ go mod vendor
 # because the AWS ELB needs an extra ~60s for DNS propagation.  See
 # <https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/best-practices-dns.html#DNS_change_propagation>.
 # Also, GRPCRouteListenerHostnameMatching tests are taking longer than 150s to converge to passing.
-sed -i -e '/MaxTimeToConsistency:/ s/30/360/' conformance/utils/config/timeout.go
+sed -i'' -e '/MaxTimeToConsistency:/ s/30/360/' conformance/utils/config/timeout.go
 
-SUPPORTED_FEATURES="ReferenceGrant,HTTPRoute,Gateway,GatewayInfrastructurePropagation,HTTPRouteRequestTimeout,GatewayPort8080,HTTPRoutePathRewrite,HTTPRoutePathRedirect,HTTPRouteBackendProtocolH2C,GatewayAddressEmpty,BackendTLSPolicy,GatewayHTTPListenerIsolation,HTTPRouteSchemeRedirect,HTTPRouteRequestMultipleMirrors,HTTPRouteQueryParamMatching,HTTPRouteResponseHeaderModification,HTTPRouteCORS,GatewayStaticAddresses,HTTPRouteDestinationPortMatching,HTTPRouteBackendRequestHeaderModification,HTTPRoutePortRedirect,HTTPRouteBackendProtocolWebSocket,BackendTLSPolicySANValidation,HTTPRouteHostRewrite,HTTPRouteMethodMatching,HTTPRouteRequestMirror,HTTPRouteRequestPercentageMirror,HTTPRouteNamedRouteRule,HTTPRouteBackendTimeout,HTTPRouteParentRefPort,ReferenceGrant,GRPCRoute,Gateway,GatewayStaticAddresses,GatewayHTTPListenerIsolation,GatewayInfrastructurePropagation,GatewayAddressEmpty,GatewayPort8080"
-SKIPPED_TESTS="HTTPRouteCORSAllowCredentialsBehavior,BackendTLSPolicyConflictResolution,GatewayStaticAddresses"
+SUPPORTED_FEATURES="ReferenceGrant,HTTPRoute,Gateway,GatewayInfrastructurePropagation,HTTPRouteRequestTimeout,GatewayPort8080,HTTPRoutePathRewrite,HTTPRoutePathRedirect,HTTPRouteBackendProtocolH2C,GatewayAddressEmpty,GatewayHTTPListenerIsolation,HTTPRouteSchemeRedirect,HTTPRouteRequestMultipleMirrors,HTTPRouteQueryParamMatching,HTTPRouteResponseHeaderModification,HTTPRouteCORS,GatewayStaticAddresses,HTTPRouteDestinationPortMatching,HTTPRouteBackendRequestHeaderModification,HTTPRoutePortRedirect,HTTPRouteBackendProtocolWebSocket,HTTPRouteHostRewrite,HTTPRouteMethodMatching,HTTPRouteRequestMirror,HTTPRouteRequestPercentageMirror,HTTPRouteNamedRouteRule,HTTPRouteBackendTimeout,HTTPRouteParentRefPort,ReferenceGrant,GRPCRoute,Gateway,GatewayStaticAddresses,GatewayHTTPListenerIsolation,GatewayInfrastructurePropagation,GatewayAddressEmpty,GatewayPort8080"
+#added backendTLSPolicy tests as a skipped test until we bump to OSSM 3.3
+SKIPPED_TESTS="HTTPRouteCORSAllowCredentialsBehavior,BackendTLSPolicyConflictResolution,GatewayStaticAddresses,BackendTLSPolicy,BackendTLSPolicySANValidation" 
 
 echo "Start Gateway API Conformance Testing"
 go test ./conformance -v -timeout 60m -run TestConformance -args "--gateway-class=conformance" "--report-output=openshift.yaml" "--organization=Red Hat" "--project=Openshift Service Mesh" "--version=3.3.0" "--url=https://www.redhat.com/en/technologies/cloud-computing/openshift/container-platform" "--conformance-profiles=GATEWAY-HTTP,GATEWAY-GRPC" "--supported-features=${SUPPORTED_FEATURES}" "--skip-tests=${SKIPPED_TESTS}"
