@@ -270,7 +270,7 @@ func Test_Reconcile(t *testing.T) {
 					StatusWriter: fakeClient.Status(),
 				},
 			}
-			ctrl := &testutil.FakeController{t, false, nil}
+			ctrl := &testutil.FakeController{T: t, Started: false, StartNotificationChan: nil}
 			informer := informertest.FakeInformers{Scheme: scheme}
 			cache := &testutil.FakeCache{Informers: &informer, Reader: fakeClient}
 			reconciler := &reconciler{
@@ -348,7 +348,7 @@ func TestReconcileOnlyStartsControllerOnce(t *testing.T) {
 		Updated: []client.Object{},
 		Deleted: []client.Object{},
 	}
-	ctrl := &testutil.FakeController{t, false, make(chan struct{})}
+	ctrl := &testutil.FakeController{T: t, Started: false, StartNotificationChan: make(chan struct{})}
 	informer := informertest.FakeInformers{Scheme: scheme}
 	cache := &testutil.FakeCache{Informers: &informer, Reader: fakeClient}
 	reconciler := &reconciler{
