@@ -12,6 +12,7 @@ approvers:
   - rikatz
   - davidesalerno
   - bentito
+  - jcmoraisjr
 reviewers:
   - knobunc
   - Miciah
@@ -26,6 +27,7 @@ reviewers:
   - rikatz
   - davidesalerno
   - bentito
+  - jcmoraisjr
 emeritus_approvers:
   - ironcladlou
   - pravisankar
