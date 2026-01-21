@@ -809,7 +809,6 @@ func Test_computeOperatorDegradedCondition(t *testing.T) {
 					sub("servicemeshoperator3", "servicemeshoperator3", "servicemeshoperator3.v3.1.0", true),
 				},
 				shouldInstallOSSM:                 true,
-				expectedGatewayAPIOperatorVersion: "servicemeshoperator3.v3.1.0",
 			},
 			expectCondition: configv1.ClusterOperatorStatusCondition{
 				Type:    configv1.OperatorDegraded,
@@ -829,7 +828,6 @@ func Test_computeOperatorDegradedCondition(t *testing.T) {
 					sub("sailoperator", "sailoperator", "sailoperator.v1.0.0", false),
 				},
 				shouldInstallOSSM:                 true,
-				expectedGatewayAPIOperatorVersion: "servicemeshoperator3.v3.1.0",
 			},
 			expectCondition: configv1.ClusterOperatorStatusCondition{
 				Type:    configv1.OperatorDegraded,
@@ -850,7 +848,6 @@ func Test_computeOperatorDegradedCondition(t *testing.T) {
 					sub("sailoperator", "sailoperator", "", false),
 				},
 				shouldInstallOSSM:                 true,
-				expectedGatewayAPIOperatorVersion: "servicemeshoperator3.v3.1.0",
 			},
 			expectCondition: configv1.ClusterOperatorStatusCondition{
 				Type:    configv1.OperatorDegraded,
@@ -869,7 +866,6 @@ func Test_computeOperatorDegradedCondition(t *testing.T) {
 					sub("servicemeshoperator3", "servicemeshoperator3", "servicemeshoperator3.v3.5.0", false),
 				},
 				shouldInstallOSSM:                 true,
-				expectedGatewayAPIOperatorVersion: "servicemeshoperator3.v3.1.0",
 			},
 			expectCondition: configv1.ClusterOperatorStatusCondition{
 				Type:    configv1.OperatorDegraded,
@@ -888,7 +884,6 @@ func Test_computeOperatorDegradedCondition(t *testing.T) {
 					sub("servicemeshoperator3", "servicemeshoperator3", "servicemeshoperator3.v3.5-beta", false),
 				},
 				shouldInstallOSSM:                 true,
-				expectedGatewayAPIOperatorVersion: "servicemeshoperator3.v3.1.0",
 			},
 			expectCondition: configv1.ClusterOperatorStatusCondition{
 				Type:    configv1.OperatorDegraded,

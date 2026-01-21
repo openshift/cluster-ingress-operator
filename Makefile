@@ -45,6 +45,11 @@ crd:
 	hack/update-generated-crd.sh
 	hack/update-profile-manifests.sh
 
+# Download Istio Helm charts from sail-operator repository.
+.PHONY: update-istio-charts
+update-istio-charts:
+	hack/update-istio-charts.sh
+
 .PHONY: manifests
 manifests:
 	go generate ./pkg/manifests

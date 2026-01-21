@@ -222,7 +222,6 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		GatewayAPIControllerEnabled:     gatewayAPIControllerEnabled,
 		MarketplaceEnabled:              marketplaceEnabled,
 		OperatorLifecycleManagerEnabled: olmEnabled,
-		GatewayAPIOperatorVersion:       config.GatewayAPIOperatorVersion,
 	}); err != nil {
 		return nil, fmt.Errorf("failed to create status controller: %v", err)
 	}
@@ -305,12 +304,9 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	// the manager; the gatewayapi controller starts it after it creates the
 	// Gateway API CRDs.
 	gatewayClassController, err := gatewayclasscontroller.NewUnmanaged(mgr, gatewayclasscontroller.Config{
-		OperatorNamespace:         config.Namespace,
-		OperandNamespace:          operatorcontroller.DefaultOperandNamespace,
-		GatewayAPIOperatorCatalog: config.GatewayAPIOperatorCatalog,
-		GatewayAPIOperatorChannel: config.GatewayAPIOperatorChannel,
-		GatewayAPIOperatorVersion: config.GatewayAPIOperatorVersion,
-		IstioVersion:              config.IstioVersion,
+		OperatorNamespace: config.Namespace,
+		OperandNamespace:  operatorcontroller.DefaultOperandNamespace,
+		IstioVersion:      config.IstioVersion,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gatewayclass controller: %w", err)

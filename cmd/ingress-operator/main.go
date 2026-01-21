@@ -17,6 +17,7 @@ var log = logf.Logger.WithName("main")
 func main() {
 	var rootCmd = &cobra.Command{Use: "ingress-operator"}
 	rootCmd.AddCommand(NewStartCommand())
+	rootCmd.AddCommand(NewStartGatewayClassCommand())
 	rootCmd.AddCommand(NewRenderCommand())
 	rootCmd.AddCommand(httphealthcheck.NewServeHealthCheckCommand())
 	rootCmd.AddCommand(&cobra.Command{

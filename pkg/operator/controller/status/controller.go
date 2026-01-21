@@ -208,7 +208,6 @@ type Config struct {
 	CanaryImage                     string
 	OperatorReleaseVersion          string
 	Namespace                       string
-	GatewayAPIOperatorVersion       string
 }
 
 // IngressOperatorStatusExtension holds status extensions of the ingress cluster operator.
@@ -400,9 +399,6 @@ type operatorState struct {
 	haveGatewayclassesResource bool
 	// ossmSubscriptions contains all subscriptions that may conflict with the operator-created ossm subscription.
 	ossmSubscriptions []operatorsv1alpha1.Subscription
-	// expectedGatewayAPIOperatorVersion reflects the expected OSSM 3 version. It is used in determining if a
-	// user-supplied OSSM 3 subscription would cause the operator's installation of OSSM 3 to fail.
-	expectedGatewayAPIOperatorVersion string
 	// shouldInstallOSSM reflects whether the ingress operator should install OSSM. Currently, this happens when a
 	// gateway class with Spec.ControllerName=operatorcontroller.OpenShiftGatewayClassControllerName is created.
 	shouldInstallOSSM bool
@@ -488,7 +484,6 @@ func (r *reconciler) getOperatorState(ctx context.Context, ingressNamespace, can
 				state.haveIstiosResource = true
 			}
 
-			state.expectedGatewayAPIOperatorVersion = r.config.GatewayAPIOperatorVersion
 			subscriptionList := operatorsv1alpha1.SubscriptionList{}
 			if err := r.subscriptionCache.List(ctx, &subscriptionList); err != nil {
 				return state, fmt.Errorf("failed to get subscriptions: %w", err)
@@ -651,26 +646,8 @@ func computeGatewayAPIInstallDegradedCondition(state operatorState) configv1.Clu
 				// The subscription that the ingress operator creates naturally does not conflict with itself.
 				continue
 			}
-			if subscription.Status.InstalledCSV == "" {
-				// The subscription hasn't finished its install. We will get another reconcile request once the
-				// installation is complete, so we can ignore this for now.
-				continue
-			}
-			versionDiff, err := compareVersionNums(subscription.Status.InstalledCSV, state.expectedGatewayAPIOperatorVersion)
-			switch {
-			case err != nil:
-				warnings = append(warnings, fmt.Sprintf("failed to compare installed OSSM version to expected: %v", err))
-			case versionDiff < 0:
-				// Installed version is newer than expected. Gateway API install may still work if the correct Istio
-				// version is supported. Warn the user that the installed OSSM version may be incompatible.
-				warnings = append(warnings, fmt.Sprintf("Found version %s, but operator-managed Gateway API expects version %s. Operator-managed Gateway API may not work as intended.", subscription.Status.InstalledCSV, state.expectedGatewayAPIOperatorVersion))
-			case versionDiff > 0:
-				// Installed version is older than expected. Gateway API install will not work, since the correct Istio
-				// version won't be supported.
-				conflicts = append(conflicts, fmt.Sprintf("Installed version %s does not support operator-managed Gateway API. Install version %s or uninstall %s/%s to enable functionality.", subscription.Status.InstalledCSV, state.expectedGatewayAPIOperatorVersion, subscription.Namespace, subscription.Name))
-			case versionDiff == 0:
-				// Installed version is exactly as expected. Nothing to do.
-			}
+			// User has installed servicemeshoperator3. This may conflict with our Helm-based Istio installation.
+			warnings = append(warnings, fmt.Sprintf("Found user-installed OSSM 3 subscription %s/%s. This may conflict with operator-managed Gateway API.", subscription.Namespace, subscription.Name))
 		} else {
 			conflicts = append(conflicts, fmt.Sprintf("Package %s from subscription %s/%s prevents enabling operator-managed Gateway API. Uninstall %s/%s to enable functionality.", subscription.Spec.Package, subscription.Namespace, subscription.Name, subscription.Namespace, subscription.Name))
 		}

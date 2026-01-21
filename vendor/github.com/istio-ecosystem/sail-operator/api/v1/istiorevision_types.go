@@ -30,9 +30,9 @@ const (
 type IstioRevisionSpec struct {
 	// +sail:version
 	// Defines the version of Istio to install.
-	// Must be one of: v1.25.2, v1.25.1, v1.24.5, v1.24.4, v1.24.3, v1.24.2, v1.24.1, v1.24.0, v1.23.6, v1.23.5, v1.23.4, v1.23.3, v1.23.2, v1.22.8, v1.22.7, v1.22.6, v1.22.5, v1.21.6, v1.27-alpha.f23c2f66.
-	// +operator-sdk:csv:customresourcedefinitions:type=spec,order=1,displayName="Istio Version",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:fieldGroup:General", "urn:alm:descriptor:com.tectonic.ui:select:v1.25.2", "urn:alm:descriptor:com.tectonic.ui:select:v1.25.1", "urn:alm:descriptor:com.tectonic.ui:select:v1.24.5", "urn:alm:descriptor:com.tectonic.ui:select:v1.24.4", "urn:alm:descriptor:com.tectonic.ui:select:v1.24.3", "urn:alm:descriptor:com.tectonic.ui:select:v1.24.2", "urn:alm:descriptor:com.tectonic.ui:select:v1.24.1", "urn:alm:descriptor:com.tectonic.ui:select:v1.24.0", "urn:alm:descriptor:com.tectonic.ui:select:v1.23.6", "urn:alm:descriptor:com.tectonic.ui:select:v1.23.5", "urn:alm:descriptor:com.tectonic.ui:select:v1.23.4", "urn:alm:descriptor:com.tectonic.ui:select:v1.23.3", "urn:alm:descriptor:com.tectonic.ui:select:v1.23.2", "urn:alm:descriptor:com.tectonic.ui:select:v1.22.8", "urn:alm:descriptor:com.tectonic.ui:select:v1.22.7", "urn:alm:descriptor:com.tectonic.ui:select:v1.22.6", "urn:alm:descriptor:com.tectonic.ui:select:v1.22.5", "urn:alm:descriptor:com.tectonic.ui:select:v1.21.6", "urn:alm:descriptor:com.tectonic.ui:select:v1.27-alpha.f23c2f66"}
-	// +kubebuilder:validation:Enum=v1.25.2;v1.25.1;v1.24.5;v1.24.4;v1.24.3;v1.24.2;v1.24.1;v1.24.0;v1.23.6;v1.23.5;v1.23.4;v1.23.3;v1.23.2;v1.22.8;v1.22.7;v1.22.6;v1.22.5;v1.21.6;v1.27-alpha.f23c2f66
+	// Must be one of: v1.28.2, v1.28.1, v1.28.0, v1.27.5, v1.27.4, v1.27.3, v1.27.2, v1.27.1, v1.27.0, v1.26.8, v1.26.7, v1.26.6, v1.26.5, v1.26.4, v1.26.3, v1.26.2, v1.26.1, v1.26.0, v1.30-alpha.4d7a765c.
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,order=1,displayName="Istio Version",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:fieldGroup:General", "urn:alm:descriptor:com.tectonic.ui:select:v1.28.2", "urn:alm:descriptor:com.tectonic.ui:select:v1.28.1", "urn:alm:descriptor:com.tectonic.ui:select:v1.28.0", "urn:alm:descriptor:com.tectonic.ui:select:v1.27.5", "urn:alm:descriptor:com.tectonic.ui:select:v1.27.4", "urn:alm:descriptor:com.tectonic.ui:select:v1.27.3", "urn:alm:descriptor:com.tectonic.ui:select:v1.27.2", "urn:alm:descriptor:com.tectonic.ui:select:v1.27.1", "urn:alm:descriptor:com.tectonic.ui:select:v1.27.0", "urn:alm:descriptor:com.tectonic.ui:select:v1.26.8", "urn:alm:descriptor:com.tectonic.ui:select:v1.26.7", "urn:alm:descriptor:com.tectonic.ui:select:v1.26.6", "urn:alm:descriptor:com.tectonic.ui:select:v1.26.5", "urn:alm:descriptor:com.tectonic.ui:select:v1.26.4", "urn:alm:descriptor:com.tectonic.ui:select:v1.26.3", "urn:alm:descriptor:com.tectonic.ui:select:v1.26.2", "urn:alm:descriptor:com.tectonic.ui:select:v1.26.1", "urn:alm:descriptor:com.tectonic.ui:select:v1.26.0", "urn:alm:descriptor:com.tectonic.ui:select:v1.30-alpha.4d7a765c"}
+	// +kubebuilder:validation:Enum=v1.28.2;v1.28.1;v1.28.0;v1.27.5;v1.27.4;v1.27.3;v1.27.2;v1.27.1;v1.27.0;v1.26.8;v1.26.7;v1.26.6;v1.26.5;v1.26.4;v1.26.3;v1.26.2;v1.26.1;v1.26.0;v1.25.5;v1.25.4;v1.25.3;v1.25.2;v1.25.1;v1.24.6;v1.24.5;v1.24.4;v1.24.3;v1.24.2;v1.24.1;v1.24.0;v1.23.6;v1.23.5;v1.23.4;v1.23.3;v1.23.2;v1.22.8;v1.22.7;v1.22.6;v1.22.5;v1.21.6;v1.30-alpha.4d7a765c
 	Version string `json:"version"`
 
 	// Namespace to which the Istio components should be installed.
@@ -148,6 +148,9 @@ const (
 	// IstioRevisionReasonIstiodNotReady indicates that the control plane is fully reconciled, but istiod is not ready.
 	IstioRevisionReasonIstiodNotReady IstioRevisionConditionReason = "IstiodNotReady"
 
+	// IstioRevisionTagNameAlreadyExists indicates that a IstioRevisionTag with the same name as the IstioRevision already exists.
+	IstioRevisionReasonNameAlreadyExists IstioRevisionConditionReason = "NameAlreadyExists"
+
 	// IstioRevisionReasonRemoteIstiodNotReady indicates that the remote istiod is not ready.
 	IstioRevisionReasonRemoteIstiodNotReady IstioRevisionConditionReason = "RemoteIstiodNotReady"
 
@@ -182,6 +185,12 @@ const (
 	// IstioRevisionReasonIstioCNINotHealthy indicates that the IstioCNI resource is not healthy.
 	IstioRevisionReasonIstioCNINotHealthy IstioRevisionConditionReason = "IstioCNINotHealthy"
 
+	// IstioRevisionReasonZTunnelNotFound indicates that the ZTunnel resource is not found.
+	IstioRevisionReasonZTunnelNotFound IstioRevisionConditionReason = "ZTunnelNotFound"
+
+	// IstioRevisionReasonZTunnelNotHealthy indicates that the ZTunnel resource is not healthy.
+	IstioRevisionReasonZTunnelNotHealthy IstioRevisionConditionReason = "ZTunnelNotHealthy"
+
 	// IstioRevisionDependencyCheckFailed indicates that the status of the dependencies could not be ascertained.
 	IstioRevisionDependencyCheckFailed IstioRevisionConditionReason = "DependencyCheckFailed"
 )
@@ -206,7 +215,7 @@ const (
 // Users shouldn't create IstioRevision objects directly. Instead, they should
 // create an Istio object and allow the operator to create the underlying
 // IstioRevision object(s).
-// +kubebuilder:validation:XValidation:rule="self.metadata.name == 'default' ? (!has(self.spec.values.revision) || size(self.spec.values.revision) == 0) : self.spec.values.revision == self.metadata.name",message="spec.values.revision must match metadata.name"
+// +kubebuilder:validation:XValidation:rule="self.metadata.name == 'default' ? (!has(self.spec.values.revision) || size(self.spec.values.revision) == 0) : self.spec.values.revision == self.metadata.name",message="spec.values.revision must match metadata.name or be empty when the name is 'default'"
 type IstioRevision struct {
 	metav1.TypeMeta `json:",inline"`
 	// +optional
