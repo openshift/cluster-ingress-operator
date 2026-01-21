@@ -1,0 +1,19 @@
+# Router Pods
+#  No egress
+#  Ingress to http on port 8888 and https on port 8443 (TCP)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+# name, namespace, labels and annotations are set at runtime
+spec:
+  podSelector:
+    # matchLabels are set at runtime
+    matchLabels: {}
+  ingress:
+  - ports:
+    - protocol: TCP
+      port: 8888
+    - protocol: TCP
+      port: 8443
+  policyTypes:
+  - Ingress
+  - Egress

@@ -1,0 +1,43 @@
+# We control the namespace, deny anything we do not explicitly allow
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ingress-operator-deny-all
+  namespace: openshift-ingress-operator
+  annotations:
+    capability.openshift.io/name: Ingress
+    include.release.openshift.io/self-managed-high-availability: "true"
+    include.release.openshift.io/single-node-developer: "true"
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+---
+### Allow the operator needs to talk to the apiserver and dns,
+### but it also needs to be able to configure external DNS and the endpoints
+### are only known at run time.  So it needs wildcard egress.
+### Allow access to the metrics ports on the operators
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ingress-operator-allow
+  namespace: openshift-ingress-operator
+  annotations:
+    include.release.openshift.io/self-managed-high-availability: "true"
+    include.release.openshift.io/single-node-developer: "true"
+spec:
+  podSelector:
+    matchLabels:
+      name: ingress-operator
+  policyTypes:
+  - Egress
+  - Ingress
+  egress:
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+  ingress:
+  - ports:
+    - protocol: TCP
+      port: 9393
