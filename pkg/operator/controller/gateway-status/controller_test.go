@@ -2,6 +2,7 @@ package gatewaystatus
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -82,6 +83,7 @@ var (
 				Labels:    labels,
 				Namespace: "openshift-ingress",
 				Name:      name,
+				UID:       types.UID(fmt.Sprint(10)),
 			},
 			Status: corev1.ServiceStatus{
 				LoadBalancer: corev1.LoadBalancerStatus{
@@ -90,15 +92,18 @@ var (
 			},
 		}
 	}
-	eventFn = func(kind, namespace, name, component, message, reason string) *corev1.Event {
+	eventFn = func(kind, apiversion, namespace, name, component, message, reason string) *corev1.Event {
 		return &corev1.Event{
 			ObjectMeta: metav1.ObjectMeta{
 				Namespace: namespace,
+				Name:      "event",
 			},
 			InvolvedObject: corev1.ObjectReference{
-				Kind:      kind,
-				Namespace: namespace,
-				Name:      name,
+				APIVersion: apiversion,
+				Kind:       kind,
+				Namespace:  namespace,
+				Name:       name,
+				UID:        types.UID(fmt.Sprint(10)),
 			},
 			Message: message,
 			Reason:  reason,
@@ -339,7 +344,7 @@ func Test_Reconcile(t *testing.T) {
 				infraConfigFn,
 				gwFn("example-gateway", []gatewayapiv1.Listener{}, 6, exampleConditions...),
 				svcFn("openshift-ingress-lb", exampleManagedGatewayLabel),
-				eventFn("Service", "openshift-ingress", "openshift-ingress-lb", "service-controller", "unavailable", "SyncLoadBalancerFailed"),
+				eventFn("Service", "v1", "openshift-ingress", "openshift-ingress-lb", "service-controller", "unavailable", "SyncLoadBalancerFailed"),
 			},
 			reconcileRequest: reqFn("openshift-ingress", "example-gateway"),
 			expectedConditions: []metav1.Condition{
@@ -838,6 +843,29 @@ func Test_Reconcile(t *testing.T) {
 	corev1.AddToScheme(scheme)
 	gatewayapiv1.Install(scheme)
 
+	// fakeEventLister can be used to return an event based on the reconciled Gateway
+	// API object.
+	fakeEventLister := func(indexType string) func(o client.Object) []string {
+		return func(o client.Object) []string {
+			evt, ok := o.(*corev1.Event)
+			if !ok {
+				return []string{}
+			}
+			switch indexType {
+			case "apiVersion":
+				return []string{evt.InvolvedObject.APIVersion}
+			case "kind":
+				return []string{evt.InvolvedObject.Kind}
+			case "uid":
+				return []string{string(evt.InvolvedObject.UID)}
+			case "source":
+				return []string{string(evt.Source.Component)}
+			default:
+				return []string{}
+			}
+		}
+	}
+
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -845,6 +873,10 @@ func Test_Reconcile(t *testing.T) {
 				WithScheme(scheme).
 				WithRuntimeObjects(tc.existingObjects...).
 				WithStatusSubresource(&gatewayapiv1.Gateway{}).
+				WithIndex(&corev1.Event{}, "involvedObject.apiVersion", fakeEventLister("apiVersion")).
+				WithIndex(&corev1.Event{}, "involvedObject.kind", fakeEventLister("kind")).
+				WithIndex(&corev1.Event{}, "involvedObject.uid", fakeEventLister("uid")).
+				WithIndex(&corev1.Event{}, "source", fakeEventLister("source")).
 				Build()
 			cl := &testutil.FakeClientRecorder{
 				Client:  fakeClient,
@@ -854,9 +886,10 @@ func Test_Reconcile(t *testing.T) {
 			informer := informertest.FakeInformers{Scheme: scheme}
 			cache := testutil.FakeCache{Informers: &informer, Reader: cl}
 			reconciler := &reconciler{
-				cache:    cache,
-				client:   cl,
-				recorder: record.NewFakeRecorder(1),
+				cache:       cache,
+				client:      cl,
+				recorder:    record.NewFakeRecorder(1),
+				eventreader: cl,
 			}
 			res, err := reconciler.Reconcile(ctx, tc.reconcileRequest)
 			if tc.expectError == "" {
@@ -946,10 +979,18 @@ func TestReconcileTransition(t *testing.T) {
 		svcFn("openshift-ingress-lb", exampleManagedGatewayLabel), // Initialize service without ingress status
 	}
 
+	fakeEventLister := func(o client.Object) []string {
+		return []string{}
+	}
+
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithRuntimeObjects(existingObjects...).
 		WithStatusSubresource(&gatewayapiv1.Gateway{}).
+		WithIndex(&corev1.Event{}, "involvedObject.apiVersion", fakeEventLister).
+		WithIndex(&corev1.Event{}, "involvedObject.kind", fakeEventLister).
+		WithIndex(&corev1.Event{}, "involvedObject.uid", fakeEventLister).
+		WithIndex(&corev1.Event{}, "source", fakeEventLister).
 		Build()
 	cl := &testutil.FakeClientRecorder{
 		Client:  fakeClient,
@@ -959,9 +1000,10 @@ func TestReconcileTransition(t *testing.T) {
 	informer := informertest.FakeInformers{Scheme: scheme}
 	cache := testutil.FakeCache{Informers: &informer, Reader: cl}
 	reconciler := &reconciler{
-		cache:    cache,
-		client:   cl,
-		recorder: record.NewFakeRecorder(10000),
+		cache:       cache,
+		client:      cl,
+		recorder:    record.NewFakeRecorder(10000),
+		eventreader: cl,
 	}
 
 	reconcileRequest := reqFn("openshift-ingress", "example-gateway")

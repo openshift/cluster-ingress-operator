@@ -38,6 +38,12 @@ type reconciler struct {
 	cache    cache.Cache
 	client   client.Client
 	recorder record.EventRecorder
+	// eventreader must be a direct API call because we want to get the latest events
+	// that may not be yet on the lister/cache
+	// today we could read directly from client.Client because it is constructed
+	// without a Cache (see NewClient), but in case we decide to change the client
+	// to be cached, we want to still be able to read events directly from the API
+	eventreader client.Reader
 }
 
 // NewUnmanaged creates and returns a controller that adds watches for changes on
@@ -80,9 +86,10 @@ func NewUnmanaged(mgr manager.Manager) (controller.Controller, error) {
 	}
 
 	reconciler := &reconciler{
-		cache:    gatewaysCache,
-		client:   mgr.GetClient(),
-		recorder: mgr.GetEventRecorderFor(controllerName),
+		cache:       gatewaysCache,
+		client:      mgr.GetClient(),
+		recorder:    mgr.GetEventRecorderFor(controllerName),
+		eventreader: mgr.GetAPIReader(),
 	}
 	c, err := controller.NewUnmanaged(controllerName, controller.Options{Reconciler: reconciler})
 	if err != nil {
@@ -196,8 +203,17 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		return reconcile.Result{}, fmt.Errorf("failed to get infrastructure 'cluster': %v", err)
 	}
 
+	fieldSelector := client.MatchingFields{
+		"involvedObject.apiVersion": "v1",
+		"involvedObject.kind":       "Service",
+		"source":                    "service-controller",
+	}
+	if childSvc != nil {
+		fieldSelector["involvedObject.uid"] = string(childSvc.UID)
+	}
+
 	operandEvents := &corev1.EventList{}
-	if err := r.client.List(ctx, operandEvents, client.InNamespace(operatorcontroller.DefaultOperandNamespace)); err != nil {
+	if err := r.eventreader.List(ctx, operandEvents, client.InNamespace(operatorcontroller.DefaultOperandNamespace), &fieldSelector); err != nil {
 		log.Error(err, "error fetching the events from namespace")
 		errs = append(errs, fmt.Errorf("failed to list events in namespace %q: %v", operatorcontroller.DefaultOperandNamespace, err))
 	}
