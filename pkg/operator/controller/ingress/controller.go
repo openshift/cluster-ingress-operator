@@ -1184,7 +1184,7 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 		return utilerrors.NewAggregate(errs)
 	}
 
-	haveDepl, deployment, err := r.ensureRouterDeployment(ci, infraConfig, ingressConfig, apiConfig, networkConfig, haveClientCAConfigmap, clientCAConfigmap, clusterProxyConfig, proxyNeeded)
+	haveDepl, deployment, err := r.ensureRouterDeployment(ci, infraConfig, ingressConfig, apiConfig, networkConfig, haveClientCAConfigmap, clientCAConfigmap, clusterProxyConfig, currentLBService, proxyNeeded)
 	if err != nil {
 		errs = append(errs, fmt.Errorf("failed to ensure deployment: %v", err))
 		return utilerrors.NewAggregate(errs)

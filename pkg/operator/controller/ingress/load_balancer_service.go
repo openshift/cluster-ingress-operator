@@ -48,12 +48,20 @@ const (
 	// https://kubernetes.io/docs/reference/labels-annotations-taints/#service-beta-kubernetes-io-aws-load-balancer-type
 	AWSLBTypeAnnotation = "service.beta.kubernetes.io/aws-load-balancer-type"
 
+	// AWSCLBAnnotation is the annotation value of an AWS Classic Load Balancer (CLB).
+	AWSCLBAnnotation = "clb"
+
 	// AWSNLBAnnotation is the annotation value of an AWS Network Load Balancer (NLB).
 	AWSNLBAnnotation = "nlb"
 
 	// awsInternalLBAnnotation is the annotation used on a service to specify an AWS
 	// load balancer as being internal.
 	awsInternalLBAnnotation = "service.beta.kubernetes.io/aws-load-balancer-internal"
+
+	// awsNLBDefaultTunnelTimeoutSeconds defines the amount of time a tunnel on AWS NLB times out.
+	// This configuration is used to ensure that router times out earlier than this, having a chance to
+	// close the established connection in a clean way.
+	awsNLBDefaultTunnelTimeoutSeconds = 350
 
 	// awsLBHealthCheckIntervalAnnotation is the approximate interval, in seconds, between AWS
 	// load balancer health checks of an individual AWS instance. Defaults to 5, must be between
