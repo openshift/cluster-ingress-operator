@@ -3,6 +3,7 @@ package gatewaystatus
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	configv1 "github.com/openshift/api/config/v1"
 	iov1 "github.com/openshift/api/operatoringress/v1"
@@ -177,7 +178,9 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	// This is required to cross-check the status of a specific DNSRecord from a hostname
 	hostnameToDNSRecord := make(map[string]*iov1.DNSRecord)
 	for _, dnsRecord := range childDNSRecords.Items {
-		hostnameToDNSRecord[dnsRecord.Spec.DNSName] = dnsRecord.DeepCopy()
+		// Remove the suffix "." from root records to be sure the DNS name always
+		// match with listener
+		hostnameToDNSRecord[strings.TrimSuffix(dnsRecord.Spec.DNSName, ".")] = dnsRecord.DeepCopy()
 	}
 
 	// listenerToHostname will be used when verifying a Gateway Listener status,
@@ -187,7 +190,10 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	listenerToHostname := make(map[gatewayapiv1.SectionName]gatewayapiv1.Hostname)
 	for _, listener := range gateway.Spec.Listeners {
 		if listener.Hostname != nil {
-			listenerToHostname[listener.Name] = *listener.Hostname
+			// Users may add the leading root "." in the end, we want to remove it and
+			// be sure that the dnsrecord also does not have it when validating
+			hostname := strings.TrimSuffix(string(*listener.Hostname), ".")
+			listenerToHostname[listener.Name] = gatewayapiv1.Hostname(hostname)
 		}
 	}
 

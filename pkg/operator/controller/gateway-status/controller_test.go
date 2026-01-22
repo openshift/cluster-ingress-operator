@@ -836,6 +836,138 @@ func Test_Reconcile(t *testing.T) {
 			},
 			expectError: "",
 		},
+		{
+			name: "load balancer valid, dns managed with two listeners with 'root' dot suffix and listeners with and without root suffix must set the right conditions",
+			existingObjects: []runtime.Object{
+				dnsConfigFn(true),
+				infraConfigFn,
+				gwFn("example-gateway", []gatewayapiv1.Listener{
+					{
+						Name:     "listener1",
+						Hostname: ptr.To(gatewayapiv1.Hostname("gwapi.example.tld")),
+					},
+					{
+						Name:     "listener2",
+						Hostname: ptr.To(gatewayapiv1.Hostname("gwapi2.example.tld.")),
+					},
+				}, 14, exampleConditions...),
+				svcFn("openshift-ingress-lb", exampleManagedGatewayLabel, corev1.LoadBalancerIngress{
+					Hostname: "something.somewhere.somehow",
+				}),
+				dnsRecordFn("openshift-ingress-dns", "gwapi.example.tld.", iov1.ManagedDNS, exampleManagedGatewayLabel, iov1.DNSRecordStatus{
+					Zones: []iov1.DNSZoneStatus{
+						{
+							DNSZone: *commonDNSZone.DeepCopy(),
+							Conditions: []iov1.DNSZoneCondition{
+								{
+									Type:   iov1.DNSRecordPublishedConditionType,
+									Status: string(operatorv1.ConditionTrue),
+								},
+								{
+									Type:   iov1.DNSRecordFailedConditionType,
+									Status: string(operatorv1.ConditionFalse),
+								},
+							},
+						},
+						{
+							DNSZone: *commonDNSZone.DeepCopy(),
+							Conditions: []iov1.DNSZoneCondition{
+								{
+									Type:   iov1.DNSRecordPublishedConditionType,
+									Status: string(operatorv1.ConditionTrue),
+								},
+								{
+									Type:   iov1.DNSRecordFailedConditionType,
+									Status: string(operatorv1.ConditionFalse),
+								},
+							},
+						},
+					},
+				}),
+				dnsRecordFn("openshift-ingress-dns-2", "gwapi2.example.tld", iov1.ManagedDNS, exampleManagedGatewayLabel, iov1.DNSRecordStatus{
+					Zones: []iov1.DNSZoneStatus{
+						{
+							DNSZone: *commonDNSZone.DeepCopy(),
+							Conditions: []iov1.DNSZoneCondition{
+								{
+									Type:   iov1.DNSRecordPublishedConditionType,
+									Status: string(operatorv1.ConditionTrue),
+								},
+								{
+									Type:   iov1.DNSRecordFailedConditionType,
+									Status: string(operatorv1.ConditionFalse),
+								},
+							},
+						},
+						{
+							DNSZone: *commonDNSZone.DeepCopy(),
+							Conditions: []iov1.DNSZoneCondition{
+								{
+									Type:   iov1.DNSRecordPublishedConditionType,
+									Status: string(operatorv1.ConditionTrue),
+								},
+								{
+									Type:   iov1.DNSRecordFailedConditionType,
+									Status: string(operatorv1.ConditionFalse),
+								},
+							},
+						},
+					},
+				}),
+			},
+
+			reconcileRequest: reqFn("openshift-ingress", "example-gateway"),
+			expectedConditions: []metav1.Condition{
+				{
+					Type:               operatorv1.LoadBalancerReadyIngressConditionType,
+					Status:             metav1.ConditionTrue,
+					Reason:             "LoadBalancerProvisioned",
+					Message:            "The LoadBalancer service is provisioned",
+					ObservedGeneration: 14,
+				},
+			},
+			expectedListenerStatus: []gatewayapiv1.ListenerStatus{
+				{
+					Name: "listener1",
+					Conditions: []metav1.Condition{
+						{
+							Type:               operatorv1.DNSManagedIngressConditionType,
+							Status:             metav1.ConditionTrue,
+							Reason:             "Normal",
+							Message:            "DNS management is supported and zones are specified in the cluster DNS config.",
+							ObservedGeneration: 14,
+						},
+						{
+							Type:               operatorv1.DNSReadyIngressConditionType,
+							Status:             metav1.ConditionTrue,
+							Reason:             "NoFailedZones",
+							Message:            "The record is provisioned in all reported zones.",
+							ObservedGeneration: 14,
+						},
+					},
+				},
+				{
+					Name: "listener2",
+					Conditions: []metav1.Condition{
+						{
+							Type:               operatorv1.DNSManagedIngressConditionType,
+							Status:             metav1.ConditionTrue,
+							Reason:             "Normal",
+							Message:            "DNS management is supported and zones are specified in the cluster DNS config.",
+							ObservedGeneration: 14,
+						},
+						{
+							Type:               operatorv1.DNSReadyIngressConditionType,
+							Status:             metav1.ConditionTrue,
+							Reason:             "NoFailedZones",
+							Message:            "The record is provisioned in all reported zones.",
+							ObservedGeneration: 14,
+						},
+					},
+				},
+			},
+			expectError: "",
+		},
 	}
 
 	scheme := runtime.NewScheme()
