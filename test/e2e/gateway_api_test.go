@@ -807,15 +807,18 @@ func testGatewayOpenshiftConditions(t *testing.T) {
 				if (dnsManaged != nil && dnsManaged.ObservedGeneration != originalGateway.Generation) &&
 					(dnsReady != nil && dnsReady.ObservedGeneration != originalGateway.Generation) &&
 					(loadBalancerReady != nil && loadBalancerReady.ObservedGeneration != originalGateway.Generation) {
+					// We expect exactly 6 conditions for a listener. If we get more than it, Istio is adding
+					// more conditions and we need to be aware that Gateway API status.conditons has a maxItems of 8
+					assert.Len(t, gw.Status.Listeners[lsIndex].Conditions, 6)
 					return true
 				}
 
 				t.Logf("conditions are not yet the expected: %v, retrying...", gw.Status.Conditions)
 				return false
 			}, 30*time.Second, 2*time.Second, "error waiting for openshift conditions to be present on Gateway")
-			// We expect exactly 6 conditions. If we get more than it, Istio is adding
+			// We expect exactly 3 conditions. If we get more than it, Istio is adding
 			// more conditions and we need to be aware that Gateway API status.conditons has a maxItems of 8
-			assert.Len(t, gw.Status.Conditions, 6)
+			assert.Len(t, gw.Status.Conditions, 3)
 			// We expect an event to happen, so try to get this event to guarantee it was properly added
 			assert.Eventually(t, func() bool {
 				events, err := getMatchingEventsFromGateway(t, kclient, gw, "Normal", "AddedConditions")
