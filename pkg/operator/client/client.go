@@ -10,7 +10,6 @@ import (
 	routev1 "github.com/openshift/api/route/v1"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
-	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 
@@ -54,9 +53,6 @@ func init() {
 		panic(err)
 	}
 	if err := operatorsv1alpha1.AddToScheme(scheme); err != nil {
-		panic(err)
-	}
-	if err := sailv1.SchemeBuilder.AddToScheme(scheme); err != nil {
 		panic(err)
 	}
 	if err := machinev1.Install(scheme); err != nil {

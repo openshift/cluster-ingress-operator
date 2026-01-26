@@ -1,0 +1,27 @@
+# Gateway API Ambient Preset
+#
+# Gateway API with Ambient mesh support.
+# Includes ztunnel for L4 mesh capabilities without sidecars.
+#
+# Components installed:
+# - istiod
+# - istio-cni (required on OpenShift and for ambient mode)
+# - ztunnel (L4 transparent proxy)
+#
+# This preset enables ambient mesh mode where workloads can be enrolled
+# in the mesh without sidecar injection.
+
+name: gateway-api-ambient
+description: |
+  Gateway API with Ambient mesh support.
+  Includes ztunnel for L4 mesh capabilities without sidecars.
+baseProfile: openshift-ambient
+components:
+  istiod: true
+  cni: true
+  ztunnel: true
+values:
+  profile: ambient
+  pilot:
+    autoscaleEnabled: false
+    replicaCount: 1

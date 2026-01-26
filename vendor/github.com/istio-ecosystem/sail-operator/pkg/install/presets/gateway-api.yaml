@@ -1,0 +1,65 @@
+# Gateway API Preset
+#
+# Istio installation optimized for Gateway API controller mode.
+# Configures istiod to manage Gateway API resources without sidecar injection.
+#
+# This preset mirrors the configuration used by OpenShift Ingress Operator.
+# See: https://github.com/openshift/cluster-ingress-operator
+#
+# Components installed:
+# - istiod (Gateway API controller mode)
+#
+# Components NOT installed:
+# - istio-cni (not needed for Gateway API only)
+# - ztunnel (ambient mesh)
+
+name: gateway-api
+description: |
+  Istio installation optimized for Gateway API controller mode.
+  Configures istiod to manage Gateway API resources without sidecar injection.
+baseProfile: default
+components:
+  istiod: true
+  cni: false
+  ztunnel: false
+values:
+  global:
+    defaultPodDisruptionBudget:
+      enabled: false
+  pilot:
+    enabled: true
+    autoscaleEnabled: false
+    cni:
+      enabled: false
+    env:
+      # Enable Gateway API support
+      PILOT_ENABLE_GATEWAY_API: "true"
+      # Disable experimental/alpha Gateway API features
+      PILOT_ENABLE_ALPHA_GATEWAY_API: "false"
+      # Enable status updates on Gateway API resources
+      PILOT_ENABLE_GATEWAY_API_STATUS: "true"
+      # Enable automated deployment (creates Envoy proxy deployment and service for gateways)
+      PILOT_ENABLE_GATEWAY_API_DEPLOYMENT_CONTROLLER: "true"
+      # Disable gatewayclass controller (let cluster-admin manage gatewayclass)
+      PILOT_ENABLE_GATEWAY_API_GATEWAYCLASS_CONTROLLER: "false"
+      # Disable multi-network gateway discovery
+      PILOT_MULTI_NETWORK_DISCOVER_GATEWAY_API: "false"
+      # Disable manual deployment (only allow automated deployment)
+      ENABLE_GATEWAY_API_MANUAL_DEPLOYMENT: "false"
+      # Only create CA Bundle ConfigMap in namespaces with Gateways
+      PILOT_ENABLE_GATEWAY_API_CA_CERT_ONLY: "true"
+      # Don't copy labels/annotations from gateways to created resources
+      PILOT_ENABLE_GATEWAY_API_COPY_LABELS_ANNOTATIONS: "false"
+  sidecarInjectorWebhook:
+    enableNamespacesByDefault: false
+  meshConfig:
+    accessLogFile: "/dev/stdout"
+    defaultConfig:
+      proxyHeaders:
+        server:
+          disabled: true
+        envoyDebugHeaders:
+          disabled: true
+        metadataExchangeHeaders:
+          mode: IN_MESH
+    ingressControllerMode: "OFF"

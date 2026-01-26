@@ -1,0 +1,24 @@
+# Full Istio Preset
+#
+# Complete Istio service mesh installation with all features enabled.
+# Uses upstream defaults with OpenShift platform profile.
+#
+# Components installed:
+# - istiod (full configuration)
+# - istio-cni (required on OpenShift)
+#
+# This preset enables full service mesh functionality including:
+# - Sidecar injection
+# - Traffic management
+# - Security policies
+# - Telemetry
+
+name: full
+description: |
+  Full Istio service mesh installation with all features enabled.
+baseProfile: openshift
+components:
+  istiod: true
+  cni: true
+  ztunnel: false
+values: {}
