@@ -1,7 +1,6 @@
 package priorityqueue
 
 import (
-	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -311,7 +310,6 @@ func (w *priorityqueue[T]) handleWaitingItems() {
 	blockForever := make(chan time.Time)
 	var nextReady <-chan time.Time
 	nextReady = blockForever
-	var nextItemReadyAt time.Time
 
 	for {
 		select {
@@ -320,7 +318,6 @@ func (w *priorityqueue[T]) handleWaitingItems() {
 		case <-w.waitingItemAddedOrUpdated:
 		case <-nextReady:
 			nextReady = blockForever
-			nextItemReadyAt = time.Time{}
 		}
 
 		func() {
@@ -389,66 +386,21 @@ func (w *priorityqueue[T]) handleReadyItems() {
 			// track what we want to delete and do it after we are done ascending.
 			var toDelete []*item[T]
 
-			var key T
-
-			// Items in the queue tree are sorted first by priority and second by readiness, so
-			// items with a lower priority might be ready further down in the queue.
-			// We iterate through the priorities high to low until we find a ready item
-			pivot := item[T]{
-				Key:          key,
-				AddedCounter: 0,
-				Priority:     math.MaxInt,
-				ReadyAt:      nil,
-			}
-
-			for {
-				pivotChange := false
-
-				w.queue.AscendGreaterOrEqual(&pivot, func(item *item[T]) bool {
-					// Item is locked, we can not hand it out
-					if w.locked.Has(item.Key) {
-						return true
-					}
-
-					if item.ReadyAt != nil {
-						if readyAt := item.ReadyAt.Sub(w.now()); readyAt > 0 {
-							if nextItemReadyAt.After(*item.ReadyAt) || nextItemReadyAt.IsZero() {
-								nextReady = w.tick(readyAt)
-								nextItemReadyAt = *item.ReadyAt
-							}
-
-							// Adjusting the pivot item moves the ascend to the next lower priority
-							pivot.Priority = item.Priority - 1
-							pivotChange = true
-							return false
-						}
-						if !w.becameReady.Has(item.Key) {
-							w.metrics.add(item.Key, item.Priority)
-							w.becameReady.Insert(item.Key)
-						}
-					}
-
-					if w.waiters == 0 {
-						// Have to keep iterating here to ensure we update metrics
-						// for further items that became ready and set nextReady.
-						return true
-					}
-
-					w.metrics.get(item.Key, item.Priority)
-					w.locked.Insert(item.Key)
-					w.waiters--
-					delete(w.items, item.Key)
-					toDelete = append(toDelete, item)
-					w.becameReady.Delete(item.Key)
-					w.get <- *item
-
+			w.ready.Ascend(func(item *item[T]) bool {
+				// Item is locked, we can not hand it out
+				if w.locked.Has(item.Key) {
 					return true
-				})
-
-				if !pivotChange {
-					break
 				}
-			}
+
+				w.metrics.get(item.Key, item.Priority)
+				w.locked.Insert(item.Key)
+				w.waiters--
+				delete(w.items, item.Key)
+				toDelete = append(toDelete, item)
+				w.get <- *item
+
+				return w.waiters > 0
+			})
 
 			for _, item := range toDelete {
 				w.ready.Delete(item)
@@ -576,18 +528,16 @@ func (w *priorityqueue[T]) logState() {
 	}
 }
 
-func less[T comparable](a, b *item[T]) bool {
+func lessWaiting[T comparable](a, b *item[T]) bool {
+	if !a.ReadyAt.Equal(*b.ReadyAt) {
+		return a.ReadyAt.Before(*b.ReadyAt)
+	}
+	return lessReady(a, b)
+}
+
+func lessReady[T comparable](a, b *item[T]) bool {
 	if a.Priority != b.Priority {
 		return a.Priority > b.Priority
-	}
-	if a.ReadyAt == nil && b.ReadyAt != nil {
-		return true
-	}
-	if b.ReadyAt == nil && a.ReadyAt != nil {
-		return false
-	}
-	if a.ReadyAt != nil && b.ReadyAt != nil && !a.ReadyAt.Equal(*b.ReadyAt) {
-		return a.ReadyAt.Before(*b.ReadyAt)
 	}
 	return a.AddedCounter < b.AddedCounter
 }
@@ -615,5 +565,5 @@ type bTree[T any] interface {
 	ReplaceOrInsert(item T) (T, bool)
 	Delete(item T) (T, bool)
 	Ascend(iterator btree.ItemIteratorG[T])
-	AscendGreaterOrEqual(pivot T, iterator btree.ItemIteratorG[T])
+	Len() int
 }
