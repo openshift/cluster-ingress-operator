@@ -8,7 +8,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -896,14 +896,6 @@ func assertHttpRouteSuccessful(t *testing.T, namespace, name string, gateway *ga
 func assertHttpRouteConnection(t *testing.T, hostname string, gateway *gatewayapiv1.Gateway) error {
 	domain := ""
 
-	// Create the http client to check the header.
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		},
-	}
-
 	// Get gateway listener hostname to use for dnsRecord.
 	if len(gateway.Spec.Listeners) > 0 {
 		if gateway.Spec.Listeners[0].Hostname != nil && len(string(*gateway.Spec.Listeners[0].Hostname)) > 0 {
@@ -913,28 +905,66 @@ func assertHttpRouteConnection(t *testing.T, hostname string, gateway *gatewayap
 			}
 		}
 	}
-	// Obtain the standard formatting of the dnsRecord.
-	dnsRecordName := operatorcontroller.GatewayDNSRecordName(gateway, domain)
 
-	t.Logf("Making sure DNSRecord %v for domain %q is ready to use...", dnsRecordName, domain)
-	if err := assertDNSRecord(t, dnsRecordName); err != nil {
-		return err
+	managedDns := isDNSManagementSupported(t)
+
+	// On-prem platforms the DNS may not be managed, so we cannot check if it is available
+	if managedDns {
+		// Obtain the standard formatting of the dnsRecord.
+		dnsRecordName := operatorcontroller.GatewayDNSRecordName(gateway, domain)
+		t.Logf("Making sure DNSRecord %v for domain %q is ready to use...", dnsRecordName, domain)
+		if err := assertDNSRecord(t, dnsRecordName); err != nil {
+			return err
+		}
+
+		// Wait and check that the dns name resolves first. Takes a long time, so
+		// if the hostname is actually an IP address, skip this.
+		if net.ParseIP(hostname) == nil {
+			t.Logf("Attempting to resolve %s...", hostname)
+			if err := wait.PollUntilContextTimeout(context.Background(), 10*time.Second, dnsResolutionTimeout, false, func(context context.Context) (bool, error) {
+				_, err := net.LookupHost(hostname)
+				if err != nil {
+					t.Logf("%v waiting for HTTP route name %s to resolve (%v)", time.Now(), hostname, err)
+					return false, nil
+				}
+				return true, nil
+			}); err != nil {
+				t.Fatalf("Failed to resolve host name %s: %v", hostname, err)
+			}
+		}
 	}
 
-	// Wait and check that the dns name resolves first. Takes a long time, so
-	// if the hostname is actually an IP address, skip this.
-	if net.ParseIP(hostname) == nil {
-		t.Logf("Attempting to resolve %s...", hostname)
-		if err := wait.PollUntilContextTimeout(context.Background(), 10*time.Second, dnsResolutionTimeout, false, func(context context.Context) (bool, error) {
-			_, err := net.LookupHost(hostname)
-			if err != nil {
-				t.Logf("%v waiting for HTTP route name %s to resolve (%v)", time.Now(), hostname, err)
-				return false, nil
-			}
-			return true, nil
-		}); err != nil {
-			t.Fatalf("Failed to resolve host name %s: %v", hostname, err)
+	transport := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+
+	if !managedDns {
+		if len(gateway.Status.Addresses) == 0 ||
+			gateway.Status.Addresses[0].Type == nil ||
+			*gateway.Status.Addresses[0].Type != gatewayapiv1.IPAddressType ||
+			gateway.Status.Addresses[0].Value == "" {
+			t.Fatalf("gateway test without managed DNS needs at least one address status set, got %v", gateway.Status.Addresses)
 		}
+
+		targetIP := gateway.Status.Addresses[0].Value
+		dialer := &net.Dialer{
+			Timeout: 15 * time.Second,
+		}
+		transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			_, port, err := net.SplitHostPort(addr)
+			if err != nil {
+				return nil, err
+			}
+
+			destination := net.JoinHostPort(targetIP, port)
+			return dialer.DialContext(ctx, network, destination)
+		}
+	}
+
+	// Create the http client to check the header.
+	client := &http.Client{
+		Timeout:   10 * time.Second,
+		Transport: transport,
 	}
 
 	var (
@@ -977,7 +1007,7 @@ func getHTTPResponse(client *http.Client, name string) (int, http.Header, string
 
 	// Close response body.
 	defer response.Body.Close()
-	body, err := ioutil.ReadAll(response.Body)
+	body, err := io.ReadAll(response.Body)
 	if err != nil {
 		return 0, nil, "", fmt.Errorf("failed to read response body: %w", err)
 	}
