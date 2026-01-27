@@ -107,34 +107,6 @@ func Test_Reconcile(t *testing.T) {
 			name:                        "gateway API enabled, gateway API controller disabled",
 			gatewayAPIEnabled:           true,
 			gatewayAPIControllerEnabled: false,
-<<<<<<< HEAD
-			marketplaceEnabled:          true,
-			olmEnabled:                  true,
-			existingObjects: []runtime.Object{
-				co("ingress"),
-			},
-			expectCreate: []client.Object{
-				crd("gatewayclasses.gateway.networking.k8s.io"),
-				crd("gateways.gateway.networking.k8s.io"),
-				crd("grpcroutes.gateway.networking.k8s.io"),
-				crd("httproutes.gateway.networking.k8s.io"),
-				crd("referencegrants.gateway.networking.k8s.io"),
-				crd("backendtlspolicies.gateway.networking.k8s.io"),
-				clusterRole("system:openshift:gateway-api:aggregate-to-admin"),
-				clusterRole("system:openshift:gateway-api:aggregate-to-view"),
-			},
-			expectUpdate:    []client.Object{},
-			expectDelete:    []client.Object{},
-			expectStartCtrl: false,
-		},
-		{
-			name:                        "GatewayAPI enabled, GatewayAPIController enabled, marketplace and OLM capabilities disabled",
-			gatewayAPIEnabled:           true,
-			gatewayAPIControllerEnabled: true,
-			marketplaceEnabled:          false,
-			olmEnabled:                  false,
-=======
->>>>>>> 3ab262185 (refactor(gatewayapi): replace OLM-based Istio install with Sail Library)
 			existingObjects: []runtime.Object{
 				co("ingress"),
 			},
