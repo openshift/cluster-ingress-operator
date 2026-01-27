@@ -1,0 +1,22 @@
+language: en-US
+reviews:
+  profile: chill
+  high_level_summary: false
+  review_status: true
+  commit_status: true
+  collapse_walkthrough: true
+  changed_files_summary: false
+  sequence_diagrams: false
+  estimate_code_review_effort: false
+  request_changes_workflow: false
+  poem: false
+  suggested_labels: false
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+    - master
+  path_filters:
+  - "!**/vendor/**"
+  - "!vendor/**"
+
