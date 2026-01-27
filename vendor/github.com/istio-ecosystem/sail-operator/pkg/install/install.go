@@ -156,7 +156,7 @@ func (i *Installer) InstallWithOverrides(ctx context.Context, presetName PresetN
 	values := mergeValues(preset.Values, overrides.Values)
 
 	// Compute final values (applies profiles, digests, platform settings, and overrides)
-	revisionName := v1.DefaultRevision
+	revisionName := overrides.Revision
 	finalValues, err := revision.ComputeValues(
 		values,
 		overrides.Namespace,
@@ -270,35 +270,46 @@ func (i *Installer) installZTunnel(ctx context.Context, version, namespace strin
 
 // Uninstall removes the Istio installation for a preset from the default namespace.
 func (i *Installer) Uninstall(ctx context.Context, presetName PresetName) error {
-	return i.UninstallFromNamespace(ctx, presetName, "istio-system")
+	return i.UninstallWithOverrides(ctx, presetName, nil)
 }
 
 // UninstallFromNamespace removes the Istio installation for a preset from a specific namespace.
 func (i *Installer) UninstallFromNamespace(ctx context.Context, presetName PresetName, namespace string) error {
+	return i.UninstallWithOverrides(ctx, presetName, &Overrides{Namespace: namespace})
+}
+
+// UninstallWithOverrides removes the Istio installation for a preset with the specified overrides.
+// The Revision field in overrides must match what was used during installation.
+func (i *Installer) UninstallWithOverrides(ctx context.Context, presetName PresetName, overrides *Overrides) error {
 	preset, ok := i.presets[presetName]
 	if !ok {
 		return fmt.Errorf("unknown preset: %s", presetName)
 	}
 
+	if overrides == nil {
+		overrides = &Overrides{}
+	}
+	overrides.applyDefaults()
+
 	var errs []error
 
 	// Uninstall in reverse order of installation
 	if preset.Components.ZTunnel {
-		if _, err := i.chartManager.UninstallChart(ctx, "ztunnel", namespace); err != nil {
+		if _, err := i.chartManager.UninstallChart(ctx, "ztunnel", overrides.Namespace); err != nil {
 			errs = append(errs, fmt.Errorf("failed to uninstall ztunnel: %w", err))
 		}
 	}
 
 	if preset.Components.CNI {
-		if _, err := i.chartManager.UninstallChart(ctx, "istio-cni", namespace); err != nil {
+		if _, err := i.chartManager.UninstallChart(ctx, "istio-cni", overrides.Namespace); err != nil {
 			errs = append(errs, fmt.Errorf("failed to uninstall CNI: %w", err))
 		}
 	}
 
 	if preset.Components.Istiod {
-		revisionName := v1.DefaultRevision
+		revisionName := overrides.Revision
 		istiodReleaseName := revisionName + "-" + istiodChartName
-		if _, err := i.chartManager.UninstallChart(ctx, istiodReleaseName, namespace); err != nil {
+		if _, err := i.chartManager.UninstallChart(ctx, istiodReleaseName, overrides.Namespace); err != nil {
 			errs = append(errs, fmt.Errorf("failed to uninstall istiod: %w", err))
 		}
 
@@ -403,7 +414,7 @@ func (i *Installer) InstallWithOwnerReference(
 	}
 
 	values := mergeValues(preset.Values, overrides.Values)
-	revisionName := v1.DefaultRevision
+	revisionName := overrides.Revision
 
 	finalValues, err := revision.ComputeValues(
 		values,

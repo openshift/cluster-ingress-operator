@@ -69,6 +69,12 @@ type Overrides struct {
 	// Defaults to the latest supported version if not specified.
 	Version string
 
+	// Revision specifies the Istio revision name.
+	// This controls the naming of istiod deployments and which workloads
+	// get proxies injected (via istio.io/rev=<revision> label).
+	// Defaults to "default" if not specified.
+	Revision string
+
 	// Values are merged on top of the preset's values.
 	// These take precedence over preset defaults.
 	Values *v1.Values
@@ -95,6 +101,9 @@ func (o *Options) applyDefaults() {
 func (o *Overrides) applyDefaults() {
 	if o.Namespace == "" {
 		o.Namespace = "istio-system"
+	}
+	if o.Revision == "" {
+		o.Revision = v1.DefaultRevision
 	}
 }
 

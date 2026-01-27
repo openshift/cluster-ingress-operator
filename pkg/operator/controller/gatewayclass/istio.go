@@ -70,6 +70,7 @@ func (r *reconciler) ensureIstio(ctx context.Context, gatewayclass *gatewayapiv1
 	err = installer.InstallWithOwnerReference(ctx, install.PresetGatewayAPI, &install.Overrides{
 		Namespace: r.config.OperandNamespace,
 		Version:   istioVersion,
+		Revision:  controller.IstioName("").Name,
 		Values:    values,
 	}, &ownerRef)
 	if err != nil {
