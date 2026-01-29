@@ -6,6 +6,7 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -102,6 +103,7 @@ func TestGatewayAPI(t *testing.T) {
 		t.Run("testGatewayAPIDNSListenerUpdate", testGatewayAPIDNSListenerUpdate)
 		t.Run("testGatewayAPIDNSListenerWithNoHostname", testGatewayAPIDNSListenerWithNoHostname)
 		t.Run("testGatewayAPIInfrastructureAnnotations", testGatewayAPIInfrastructureAnnotations)
+		t.Run("testGatewayAPIInternalLoadBalancer", testGatewayAPIInternalLoadBalancer)
 
 	} else {
 		t.Log("Gateway API Controller not enabled, skipping controller tests")
@@ -838,6 +840,112 @@ func testGatewayAPIInfrastructureAnnotations(t *testing.T) {
 	}
 
 	t.Logf("Successfully verified that infrastructure annotation was propagated to service for gateway %s", gatewayName)
+}
+
+func testGatewayAPIInternalLoadBalancer(t *testing.T) {
+	ctx := context.Background()
+	platform := infraConfig.Status.PlatformStatus.Type
+
+	supportedPlatforms := map[configv1.PlatformType]map[gatewayapiv1.AnnotationKey]gatewayapiv1.AnnotationValue{
+		configv1.AWSPlatformType: {
+			"service.beta.kubernetes.io/aws-load-balancer-internal": "true",
+		},
+		configv1.AzurePlatformType: {
+			"service.beta.kubernetes.io/azure-load-balancer-internal": "true",
+		},
+		configv1.GCPPlatformType: {
+			"cloud.google.com/load-balancer-type": "Internal",
+		},
+	}
+
+	if _, supported := supportedPlatforms[platform]; !supported {
+		t.Skipf("Test is not supported on platform %q, skipping...", platform)
+	}
+
+	gatewayClass, err := createGatewayClass(t, operatorcontroller.OpenShiftDefaultGatewayClassName, operatorcontroller.OpenShiftGatewayClassControllerName)
+	if err != nil {
+		t.Fatalf("Failed to create gatewayclass: %v", err)
+	}
+
+	gatewayName := "test-gateway-internal-lb"
+
+	gateway := &gatewayapiv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      gatewayName,
+			Namespace: operatorcontroller.DefaultOperandNamespace,
+		},
+		Spec: gatewayapiv1.GatewaySpec{
+			GatewayClassName: gatewayapiv1.ObjectName(gatewayClass.Name),
+			Infrastructure: &gatewayapiv1.GatewayInfrastructure{
+				Annotations: supportedPlatforms[platform],
+			},
+			Listeners: []gatewayapiv1.Listener{{
+				Name:     "http",
+				Hostname: ptr.To(gatewayapiv1.Hostname(fmt.Sprintf("*.internal-lb.%s", dnsConfig.Spec.BaseDomain))),
+				Port:     80,
+				Protocol: "HTTP",
+			}},
+		},
+	}
+
+	// create gateway and wait for it to be programmed
+	t.Logf("Creating gateway %s", gatewayName)
+	if err := createWithRetryOnError(t, ctx, gateway, 2*time.Minute); err != nil {
+		t.Fatalf("Failed to create gateway %s: %v", gatewayName, err)
+	}
+	t.Cleanup(func() {
+		if err := kclient.Delete(ctx, gateway); err != nil {
+			if !errors.IsNotFound(err) {
+				t.Logf("Failed to delete gateway %v: %v", gatewayName, err)
+			}
+		}
+	})
+
+	if _, err = assertGatewaySuccessful(t, operatorcontroller.DefaultOperandNamespace, gatewayName); err != nil {
+		t.Fatalf("Failed to program gateway %s: %v", gatewayName, err)
+	}
+
+	lbService := &corev1.Service{}
+	var hostname string
+	if err := wait.PollUntilContextTimeout(ctx, 5*time.Second, 5*time.Minute, false, func(context context.Context) (bool, error) {
+
+		if err := kclient.Get(ctx, operatorcontroller.LoadBalancerServiceNameFromGatewayName(gatewayName), lbService); err != nil {
+			t.Logf("Unable to get the LoadBalancer service, retrying...")
+			return false, nil
+		}
+		switch {
+		case platform == configv1.AWSPlatformType:
+			if len(lbService.Status.LoadBalancer.Ingress) > 0 {
+				hostname = lbService.Status.LoadBalancer.Ingress[0].Hostname
+			}
+			if strings.Contains(hostname, "internal") {
+				t.Logf("The gateway %s, has successfully created an internal LoadBalancer service on the %s platform.", gatewayName, platform)
+				return true, nil
+			}
+			t.Logf("The hostname is empty or does not contain the correct substring, retrying...")
+			return false, nil
+		case platform == configv1.AzurePlatformType || platform == configv1.GCPPlatformType:
+			var ip netip.Addr
+			var err error
+			if len(lbService.Status.LoadBalancer.Ingress) > 0 {
+				hostname = lbService.Status.LoadBalancer.Ingress[0].IP
+			}
+			ip, err = netip.ParseAddr(hostname)
+			if err != nil {
+				t.Logf("The hostname does not have a valid IP Address, retrying...")
+				return false, nil
+			}
+			if ip.IsPrivate() {
+				t.Logf("The gateway %s, has successfully created an internal LoadBalancer service on the %s platform.", gatewayName, platform)
+				return true, nil
+			} else {
+				t.Errorf("The gateway %s, does not have a private IP address on the LoadBalancer service", gatewayName)
+			}
+		}
+		return false, nil
+	}); err != nil {
+		t.Fatalf("The gateway %s, has failed to create an internal LoadBalancer service on the %s platform.", gatewayName, platform)
+	}
 }
 
 // testOperatorDegradedCondition verifies that unmanaged (e.g. experimental)
