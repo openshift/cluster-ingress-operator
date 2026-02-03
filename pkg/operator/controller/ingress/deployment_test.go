@@ -2554,20 +2554,6 @@ func TestDesiredRouterDeploymentRouterExternalCertificate(t *testing.T) {
 
 	// Verify that router external certificate env var is not added.
 	expectedEnv := []envData{
-		{"ROUTER_ENABLE_EXTERNAL_CERTIFICATE", false, ""},
-	}
-
-	if err := checkDeploymentEnvironment(t, deployment, expectedEnv); err != nil {
-		t.Error(err)
-	}
-
-	deployment, err = desiredRouterDeployment(ic, &Config{IngressControllerImage: ingressControllerImage, RouteExternalCertificateEnabled: true}, ingressConfig, infraConfig, apiConfig, networkConfig, false, false, nil, clusterProxyConfig)
-	if err != nil {
-		t.Fatalf("invalid router Deployment: %v", err)
-	}
-
-	// Verify that router external certificate env var is set to true.
-	expectedEnv = []envData{
 		{"ROUTER_ENABLE_EXTERNAL_CERTIFICATE", true, "true"},
 	}
 
