@@ -252,6 +252,10 @@ func LoadBalancerServiceNameFromICName(icName string) types.NamespacedName {
 	return types.NamespacedName{Namespace: DefaultOperandNamespace, Name: "router-" + icName}
 }
 
+func LoadBalancerServiceNameFromGatewayName(gatewayName string) types.NamespacedName {
+	return types.NamespacedName{Namespace: DefaultOperandNamespace, Name: gatewayName + "-" + OpenShiftDefaultGatewayClassName}
+}
+
 func NodePortServiceName(ic *operatorv1.IngressController) types.NamespacedName {
 	return types.NamespacedName{Namespace: DefaultOperandNamespace, Name: "router-nodeport-" + ic.Name}
 }
