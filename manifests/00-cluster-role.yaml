@@ -209,6 +209,7 @@ rules:
   - sailoperator.io
   resources:
   - istios
+  - istiorevisions
   verbs:
   - '*'
 
