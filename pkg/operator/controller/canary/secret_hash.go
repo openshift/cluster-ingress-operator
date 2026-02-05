@@ -8,12 +8,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
-const (
-	// CanaryServingCertHashAnnotation is the annotation key used on the
-	// canary DaemonSet PodTemplate to force a rollout when the canary
-	// serving cert secret changes.
-	CanaryServingCertHashAnnotation = "ingress.operator.openshift.io/canary-serving-cert-hash"
-)
+
 
 // ComputeTLSSecretHash computes a stable sha256 hex string over the
 // relevant keys in a TLS secret. Required keys are `tls.crt` and

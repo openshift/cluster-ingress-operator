@@ -15,6 +15,13 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 )
 
+const (
+	// CanaryServingCertHashAnnotation is the annotation key used on the
+	// canary DaemonSet PodTemplate to force a rollout when the canary
+	// serving cert secret changes.
+	CanaryServingCertHashAnnotation = "ingress.operator.openshift.io/canary-serving-cert-hash"
+)
+
 // ensureCanaryDaemonSet ensures the canary daemonset exists
 func (r *reconciler) ensureCanaryDaemonSet(ctx context.Context) (bool, *appsv1.DaemonSet, error) {
 	// Attempt to read the canary serving cert secret and compute a content hash.
