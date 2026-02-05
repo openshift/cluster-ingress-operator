@@ -189,6 +189,13 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		return result, fmt.Errorf("failed to ensure canary namespace: %v", err)
 	}
 
+	haveSa, _, err := r.ensureCanaryServiceAccount(ctx)
+	if err != nil {
+		return result, fmt.Errorf("failed to ensure canary service account: %w", err)
+	} else if !haveSa {
+		return result, fmt.Errorf("failed to get canary service account: %w", err)
+	}
+
 	haveDs, daemonset, err := r.ensureCanaryDaemonSet()
 	if err != nil {
 		return result, fmt.Errorf("failed to ensure canary daemonset: %v", err)
