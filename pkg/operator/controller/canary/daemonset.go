@@ -13,17 +13,16 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/types"
 )
 
 // ensureCanaryDaemonSet ensures the canary daemonset exists
-func (r *reconciler) ensureCanaryDaemonSet() (bool, *appsv1.DaemonSet, error) {
+func (r *reconciler) ensureCanaryDaemonSet(ctx context.Context) (bool, *appsv1.DaemonSet, error) {
 	// Attempt to read the canary serving cert secret and compute a content hash.
 	// If the secret is missing or incomplete, proceed without the annotation but
 	// surface a log entry so operators can investigate.
 	var certHash string
 	secret := &corev1.Secret{}
-	if err := r.client.Get(context.TODO(), types.NamespacedName{Namespace: controller.DefaultCanaryNamespace, Name: "canary-serving-cert"}, secret); err != nil {
+	if err := r.client.Get(ctx, controller.CanaryCertificateName(), secret); err != nil {
 		if errors.IsNotFound(err) {
 			log.Info("canary serving cert secret not found; skipping canary-serving-cert-hash annotation")
 		} else {
@@ -38,22 +37,22 @@ func (r *reconciler) ensureCanaryDaemonSet() (bool, *appsv1.DaemonSet, error) {
 	}
 
 	desired := desiredCanaryDaemonSet(r.config.CanaryImage, certHash)
-	haveDs, current, err := r.currentCanaryDaemonSet()
+	haveDs, current, err := r.currentCanaryDaemonSet(ctx)
 	if err != nil {
 		return false, nil, err
 	}
 
 	switch {
 	case !haveDs:
-		if err := r.createCanaryDaemonSet(desired); err != nil {
+		if err := r.createCanaryDaemonSet(ctx, desired); err != nil {
 			return false, nil, err
 		}
-		return r.currentCanaryDaemonSet()
+		return r.currentCanaryDaemonSet(ctx)
 	case haveDs:
-		if updated, err := r.updateCanaryDaemonSet(current, desired); err != nil {
+		if updated, err := r.updateCanaryDaemonSet(ctx, current, desired); err != nil {
 			return true, current, err
 		} else if updated {
-			return r.currentCanaryDaemonSet()
+			return r.currentCanaryDaemonSet(ctx)
 		}
 	}
 
@@ -61,9 +60,9 @@ func (r *reconciler) ensureCanaryDaemonSet() (bool, *appsv1.DaemonSet, error) {
 }
 
 // currentCanaryDaemonSet returns the current canary daemonset
-func (r *reconciler) currentCanaryDaemonSet() (bool, *appsv1.DaemonSet, error) {
+func (r *reconciler) currentCanaryDaemonSet(ctx context.Context) (bool, *appsv1.DaemonSet, error) {
 	daemonset := &appsv1.DaemonSet{}
-	if err := r.client.Get(context.TODO(), controller.CanaryDaemonSetName(), daemonset); err != nil {
+	if err := r.client.Get(ctx, controller.CanaryDaemonSetName(), daemonset); err != nil {
 		if errors.IsNotFound(err) {
 			return false, nil, nil
 		}
@@ -73,8 +72,8 @@ func (r *reconciler) currentCanaryDaemonSet() (bool, *appsv1.DaemonSet, error) {
 }
 
 // createCanaryDaemonSet creates the given daemonset resource
-func (r *reconciler) createCanaryDaemonSet(daemonset *appsv1.DaemonSet) error {
-	if err := r.client.Create(context.TODO(), daemonset); err != nil {
+func (r *reconciler) createCanaryDaemonSet(ctx context.Context, daemonset *appsv1.DaemonSet) error {
+	if err := r.client.Create(ctx, daemonset); err != nil {
 		return fmt.Errorf("failed to create canary daemonset %s/%s: %v", daemonset.Namespace, daemonset.Name, err)
 	}
 
@@ -84,7 +83,7 @@ func (r *reconciler) createCanaryDaemonSet(daemonset *appsv1.DaemonSet) error {
 
 // updateCanaryDaemonSet updates the canary daemonset if an appropriate change
 // has been detected
-func (r *reconciler) updateCanaryDaemonSet(current, desired *appsv1.DaemonSet) (bool, error) {
+func (r *reconciler) updateCanaryDaemonSet(ctx context.Context, current, desired *appsv1.DaemonSet) (bool, error) {
 	changed, updated := canaryDaemonSetChanged(current, desired)
 	if !changed {
 		return false, nil
@@ -100,7 +99,7 @@ func (r *reconciler) updateCanaryDaemonSet(current, desired *appsv1.DaemonSet) (
 	}
 
 	diff := cmp.Diff(current, updated, cmpopts.EquateEmpty())
-	if err := r.client.Update(context.TODO(), updated); err != nil {
+	if err := r.client.Update(ctx, updated); err != nil {
 		return false, fmt.Errorf("failed to update canary daemonset %s/%s: %v", updated.Namespace, updated.Name, err)
 	}
 

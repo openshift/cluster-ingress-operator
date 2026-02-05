@@ -19,28 +19,28 @@ import (
 )
 
 // ensureCanaryRoute ensures the canary route exists
-func (r *reconciler) ensureCanaryRoute(service *corev1.Service) (bool, *routev1.Route, error) {
+func (r *reconciler) ensureCanaryRoute(ctx context.Context, service *corev1.Service) (bool, *routev1.Route, error) {
 	desired, err := desiredCanaryRoute(service)
 	if err != nil {
 		return false, nil, fmt.Errorf("failed to build canary route: %v", err)
 	}
 
-	haveRoute, current, err := r.currentCanaryRoute()
+	haveRoute, current, err := r.currentCanaryRoute(ctx)
 	if err != nil {
 		return false, nil, err
 	}
 
 	switch {
 	case !haveRoute:
-		if err := r.createCanaryRoute(desired); err != nil {
+		if err := r.createCanaryRoute(ctx, desired); err != nil {
 			return false, nil, err
 		}
-		return r.currentCanaryRoute()
+		return r.currentCanaryRoute(ctx)
 	case haveRoute:
-		if updated, err := r.updateCanaryRoute(current, desired); err != nil {
+		if updated, err := r.updateCanaryRoute(ctx, current, desired); err != nil {
 			return true, current, err
 		} else if updated {
-			return r.currentCanaryRoute()
+			return r.currentCanaryRoute(ctx)
 		}
 	}
 
@@ -48,9 +48,9 @@ func (r *reconciler) ensureCanaryRoute(service *corev1.Service) (bool, *routev1.
 }
 
 // currentCanaryRoute gets the current canary route resource
-func (r *reconciler) currentCanaryRoute() (bool, *routev1.Route, error) {
+func (r *reconciler) currentCanaryRoute(ctx context.Context) (bool, *routev1.Route, error) {
 	route := &routev1.Route{}
-	if err := r.client.Get(context.TODO(), controller.CanaryRouteName(), route); err != nil {
+	if err := r.client.Get(ctx, controller.CanaryRouteName(), route); err != nil {
 		if errors.IsNotFound(err) {
 			return false, nil, nil
 		}
@@ -60,8 +60,8 @@ func (r *reconciler) currentCanaryRoute() (bool, *routev1.Route, error) {
 }
 
 // createCanaryRoute creates the given route
-func (r *reconciler) createCanaryRoute(route *routev1.Route) error {
-	if err := r.client.Create(context.TODO(), route); err != nil {
+func (r *reconciler) createCanaryRoute(ctx context.Context, route *routev1.Route) error {
+	if err := r.client.Create(ctx, route); err != nil {
 		return fmt.Errorf("failed to create canary route %s/%s: %v", route.Namespace, route.Name, err)
 	}
 
@@ -71,7 +71,7 @@ func (r *reconciler) createCanaryRoute(route *routev1.Route) error {
 
 // updateCanaryRoute updates the canary route if an appropriate change
 // has been detected
-func (r *reconciler) updateCanaryRoute(current, desired *routev1.Route) (bool, error) {
+func (r *reconciler) updateCanaryRoute(ctx context.Context, current, desired *routev1.Route) (bool, error) {
 	changed, updated := canaryRouteChanged(current, desired)
 	if !changed {
 		return false, nil
@@ -83,10 +83,10 @@ func (r *reconciler) updateCanaryRoute(current, desired *routev1.Route) (bool, e
 		log.Info("deleting and recreating the canary route to clear spec.host", "namespace", current.Namespace, "name", current.Name, "old spec.host", current.Spec.Host)
 		foreground := metav1.DeletePropagationForeground
 		deleteOptions := crclient.DeleteOptions{PropagationPolicy: &foreground}
-		if _, err := r.deleteCanaryRoute(current, &deleteOptions); err != nil {
+		if _, err := r.deleteCanaryRoute(ctx, current, &deleteOptions); err != nil {
 			return false, err
 		}
-		if err := r.createCanaryRoute(desired); err != nil {
+		if err := r.createCanaryRoute(ctx, desired); err != nil {
 			return false, err
 		}
 		return true, nil
@@ -94,7 +94,7 @@ func (r *reconciler) updateCanaryRoute(current, desired *routev1.Route) (bool, e
 
 	// Diff before updating because the client may mutate the object.
 	diff := cmp.Diff(current, updated, cmpopts.EquateEmpty())
-	if err := r.client.Update(context.TODO(), updated); err != nil {
+	if err := r.client.Update(ctx, updated); err != nil {
 		return false, fmt.Errorf("failed to update canary route %s/%s: %v", updated.Namespace, updated.Name, err)
 	}
 	log.Info("updated canary route", "namespace", updated.Namespace, "name", updated.Name, "diff", diff)
@@ -102,9 +102,9 @@ func (r *reconciler) updateCanaryRoute(current, desired *routev1.Route) (bool, e
 }
 
 // deleteCanaryRoute deletes a given route
-func (r *reconciler) deleteCanaryRoute(route *routev1.Route, options *crclient.DeleteOptions) (bool, error) {
+func (r *reconciler) deleteCanaryRoute(ctx context.Context, route *routev1.Route, options *crclient.DeleteOptions) (bool, error) {
 
-	if err := r.client.Delete(context.TODO(), route, options); err != nil {
+	if err := r.client.Delete(ctx, route, options); err != nil {
 		return false, fmt.Errorf("failed to delete canary route %s/%s: %v", route.Namespace, route.Name, err)
 	}
 

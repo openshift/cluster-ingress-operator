@@ -167,7 +167,8 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	// Watch the canary serving cert secret and enqueue the default ingress controller so
 	// that changes to the serving cert cause the canary daemonset to be reconciled.
 	canarySecretPredicate := predicate.NewPredicateFuncs(func(o client.Object) bool {
-		return o.GetNamespace() == operatorcontroller.DefaultCanaryNamespace && o.GetName() == "canary-serving-cert"
+		name := operatorcontroller.CanaryCertificateName()
+		return o.GetNamespace() == name.Namespace && o.GetName() == name.Name
 	})
 	if err := c.Watch(source.Kind[client.Object](operatorCache, &corev1.Secret{}, enqueueRequestForDefaultIngressController(config.Namespace), canarySecretPredicate)); err != nil {
 		return nil, err
@@ -195,13 +196,13 @@ func enqueueRequestForDefaultIngressController(namespace string) handler.EventHa
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	result := reconcile.Result{}
 
-	if _, _, err := r.ensureCanaryNamespace(); err != nil {
+	if _, _, err := r.ensureCanaryNamespace(ctx); err != nil {
 		// Return if the canary namespace cannot be created since
 		// resource creation in a namespace that does not exist will fail.
 		return result, fmt.Errorf("failed to ensure canary namespace: %v", err)
 	}
 
-	haveDs, daemonset, err := r.ensureCanaryDaemonSet()
+	haveDs, daemonset, err := r.ensureCanaryDaemonSet(ctx)
 	if err != nil {
 		return result, fmt.Errorf("failed to ensure canary daemonset: %v", err)
 	} else if !haveDs {
@@ -217,14 +218,14 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		Controller: &trueVar,
 	}
 
-	haveService, service, err := r.ensureCanaryService(daemonsetRef)
+	haveService, service, err := r.ensureCanaryService(ctx, daemonsetRef)
 	if err != nil {
 		return result, fmt.Errorf("failed to ensure canary service: %v", err)
 	} else if !haveService {
 		return result, fmt.Errorf("failed to get canary service: %v", err)
 	}
 
-	haveRoute, _, err := r.ensureCanaryRoute(service)
+	haveRoute, _, err := r.ensureCanaryRoute(ctx, service)
 	if err != nil {
 		return result, fmt.Errorf("failed to ensure canary route: %v", err)
 	} else if !haveRoute {
@@ -234,7 +235,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	// Get the canary route rotation annotation value
 	// from the default ingress controller.
 	ic := &operatorv1.IngressController{}
-	if err := r.client.Get(context.TODO(), request.NamespacedName, ic); err != nil {
+	if err := r.client.Get(ctx, request.NamespacedName, ic); err != nil {
 		return result, fmt.Errorf("failed to get ingress controller %s: %v", request.NamespacedName.Name, err)
 	}
 
@@ -302,8 +303,9 @@ func (r *reconciler) startCanaryRoutePolling(stop <-chan struct{}) error {
 
 	// using wait.NonSlidingUntil so that the canary runs every canaryCheckFrequency, regardless of how long the function takes
 	go wait.NonSlidingUntil(func() {
+		ctx := context.TODO()
 		// Get the current canary route every iteration in case it has been modified
-		haveRoute, route, err := r.currentCanaryRoute()
+		haveRoute, route, err := r.currentCanaryRoute(ctx)
 		if err != nil {
 			log.Error(err, "failed to get current canary route for canary check")
 			return
@@ -351,7 +353,7 @@ func (r *reconciler) startCanaryRoutePolling(stop <-chan struct{}) error {
 		if rotationEnabled {
 			checkCount++
 			if checkCount >= canaryCheckCycleCount {
-				haveService, service, err := r.currentCanaryService()
+				haveService, service, err := r.currentCanaryService(ctx)
 				if err != nil {
 					log.Error(err, "failed to get canary service")
 					return
@@ -359,7 +361,7 @@ func (r *reconciler) startCanaryRoutePolling(stop <-chan struct{}) error {
 					log.Info("canary check service does not exist")
 					return
 				}
-				route, err = r.rotateRouteEndpoint(service, route)
+				route, err = r.rotateRouteEndpoint(ctx, service, route)
 				if err != nil {
 					log.Error(err, "failed to rotate canary route endpoint")
 					return
@@ -493,13 +495,13 @@ func (r *reconciler) setCanaryStatusCondition(cond operatorv1.OperatorCondition)
 // Switch the current RoutePort that the route points to.
 // Use this function to periodically update the canary route endpoint
 // to verify if the router has wedged.
-func (r *reconciler) rotateRouteEndpoint(service *corev1.Service, current *routev1.Route) (*routev1.Route, error) {
+func (r *reconciler) rotateRouteEndpoint(ctx context.Context, service *corev1.Service, current *routev1.Route) (*routev1.Route, error) {
 	updated, err := cycleServicePort(service, current)
 	if err != nil {
 		return nil, fmt.Errorf("failed to rotate route port: %v", err)
 	}
 
-	if changed, err := r.updateCanaryRoute(current, updated); err != nil {
+	if changed, err := r.updateCanaryRoute(ctx, current, updated); err != nil {
 		return current, err
 	} else if !changed {
 		return current, fmt.Errorf("expected canary route to be updated: No relevant changes detected")
