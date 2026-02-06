@@ -18,21 +18,21 @@ import (
 var CanaryPorts = []int32{8443, 8888}
 
 // ensureCanaryService ensures the ingress canary service exists.
-func (r *reconciler) ensureCanaryService(daemonsetRef metav1.OwnerReference) (bool, *corev1.Service, error) {
+func (r *reconciler) ensureCanaryService(ctx context.Context, daemonsetRef metav1.OwnerReference) (bool, *corev1.Service, error) {
 	desired := desiredCanaryService(daemonsetRef)
-	haveService, current, err := r.currentCanaryService()
+	haveService, current, err := r.currentCanaryService(ctx)
 	if err != nil {
 		return false, nil, err
 	}
 	switch {
 	case haveService:
-		if updated, err := r.updateCanaryService(current, desired); err != nil {
+		if updated, err := r.updateCanaryService(ctx, current, desired); err != nil {
 			return true, current, err
 		} else if updated {
-			return r.currentCanaryService()
+			return r.currentCanaryService(ctx)
 		}
 	case !haveService:
-		if err := r.createCanaryService(desired); err != nil {
+		if err := r.createCanaryService(ctx, desired); err != nil {
 			return false, nil, err
 		}
 		return true, desired, nil
@@ -41,7 +41,7 @@ func (r *reconciler) ensureCanaryService(daemonsetRef metav1.OwnerReference) (bo
 }
 
 // updateCanaryService updates the canary service if an appropriate change is detected.
-func (r *reconciler) updateCanaryService(current, desired *corev1.Service) (bool, error) {
+func (r *reconciler) updateCanaryService(ctx context.Context, current, desired *corev1.Service) (bool, error) {
 	changed, updated := canaryServiceChanged(current, desired)
 	if !changed {
 		return false, nil
@@ -49,7 +49,7 @@ func (r *reconciler) updateCanaryService(current, desired *corev1.Service) (bool
 
 	// Diff before updating because the client may mutate the object.
 	diff := cmp.Diff(current, updated, cmpopts.EquateEmpty())
-	if err := r.client.Update(context.TODO(), updated); err != nil {
+	if err := r.client.Update(ctx, updated); err != nil {
 		return false, fmt.Errorf("failed to update canary service %s/%s: %w", updated.Namespace, updated.Name, err)
 	}
 	log.Info("updated canary service", "namespace", updated.Namespace, "name", updated.Name, "diff", diff)
@@ -79,9 +79,9 @@ func canaryServiceChanged(current, desired *corev1.Service) (bool, *corev1.Servi
 }
 
 // currentCanaryService gets the current ingress canary service resource.
-func (r *reconciler) currentCanaryService() (bool, *corev1.Service, error) {
+func (r *reconciler) currentCanaryService(ctx context.Context) (bool, *corev1.Service, error) {
 	current := &corev1.Service{}
-	err := r.client.Get(context.TODO(), controller.CanaryServiceName(), current)
+	err := r.client.Get(ctx, controller.CanaryServiceName(), current)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			return false, nil, nil
@@ -92,8 +92,8 @@ func (r *reconciler) currentCanaryService() (bool, *corev1.Service, error) {
 }
 
 // createCanaryService creates the given service resource.
-func (r *reconciler) createCanaryService(service *corev1.Service) error {
-	if err := r.client.Create(context.TODO(), service); err != nil {
+func (r *reconciler) createCanaryService(ctx context.Context, service *corev1.Service) error {
+	if err := r.client.Create(ctx, service); err != nil {
 		return fmt.Errorf("failed to create canary service %s/%s: %w", service.Namespace, service.Name, err)
 	}
 

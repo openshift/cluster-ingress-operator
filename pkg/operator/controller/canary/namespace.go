@@ -15,25 +15,25 @@ import (
 )
 
 // ensureCanaryNamespace ensures that the ingress-canary namespace exists
-func (r *reconciler) ensureCanaryNamespace() (bool, *corev1.Namespace, error) {
+func (r *reconciler) ensureCanaryNamespace(ctx context.Context) (bool, *corev1.Namespace, error) {
 	desired := manifests.CanaryNamespace()
 
-	haveNamespace, current, err := r.currentCanaryNamespace()
+	haveNamespace, current, err := r.currentCanaryNamespace(ctx)
 	if err != nil {
 		return false, nil, err
 	}
 
 	switch {
 	case !haveNamespace:
-		if err := r.createCanaryNamespace(desired); err != nil {
+		if err := r.createCanaryNamespace(ctx, desired); err != nil {
 			return false, nil, err
 		}
-		return r.currentCanaryNamespace()
+		return r.currentCanaryNamespace(ctx)
 	case haveNamespace:
-		if updated, err := r.updateCanaryNamespace(current, desired); err != nil {
+		if updated, err := r.updateCanaryNamespace(ctx, current, desired); err != nil {
 			return true, current, err
 		} else if updated {
-			return r.currentCanaryNamespace()
+			return r.currentCanaryNamespace(ctx)
 		}
 	}
 
@@ -41,9 +41,9 @@ func (r *reconciler) ensureCanaryNamespace() (bool, *corev1.Namespace, error) {
 }
 
 // currentCanaryNamespace gets the current canary namespace resource
-func (r *reconciler) currentCanaryNamespace() (bool, *corev1.Namespace, error) {
+func (r *reconciler) currentCanaryNamespace(ctx context.Context) (bool, *corev1.Namespace, error) {
 	ns := &corev1.Namespace{}
-	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: controller.DefaultCanaryNamespace}, ns); err != nil {
+	if err := r.client.Get(ctx, types.NamespacedName{Name: controller.DefaultCanaryNamespace}, ns); err != nil {
 		if errors.IsNotFound(err) {
 			return false, nil, nil
 		}
@@ -53,8 +53,8 @@ func (r *reconciler) currentCanaryNamespace() (bool, *corev1.Namespace, error) {
 }
 
 // createCanaryNamespace creates the given namespace
-func (r *reconciler) createCanaryNamespace(ns *corev1.Namespace) error {
-	if err := r.client.Create(context.TODO(), ns); err != nil {
+func (r *reconciler) createCanaryNamespace(ctx context.Context, ns *corev1.Namespace) error {
+	if err := r.client.Create(ctx, ns); err != nil {
 		return fmt.Errorf("failed to create canary namespace %s: %v", ns.Name, err)
 	}
 
@@ -64,13 +64,13 @@ func (r *reconciler) createCanaryNamespace(ns *corev1.Namespace) error {
 
 // updateCanaryNamespace updates the canary namespace if an appropriate change
 // has been detected
-func (r *reconciler) updateCanaryNamespace(current, desired *corev1.Namespace) (bool, error) {
+func (r *reconciler) updateCanaryNamespace(ctx context.Context, current, desired *corev1.Namespace) (bool, error) {
 	changed, updated := canaryNamespaceChanged(current, desired)
 	if !changed {
 		return false, nil
 	}
 
-	if err := r.client.Update(context.TODO(), updated); err != nil {
+	if err := r.client.Update(ctx, updated); err != nil {
 		return false, fmt.Errorf("failed to update canary namespace %s: %v", updated.Name, err)
 	}
 	log.Info("updated canary namespace", "namespace", updated.Name)
