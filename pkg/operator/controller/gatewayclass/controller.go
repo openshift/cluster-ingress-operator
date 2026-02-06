@@ -4,16 +4,21 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
-	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/record"
 
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
+
+	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
+	"github.com/istio-ecosystem/sail-operator/pkg/install"
+	"github.com/istio-ecosystem/sail-operator/resources"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -81,11 +86,17 @@ var gatewayClassController controller.Controller
 // that the manager does not start it.
 func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, error) {
 	operatorCache := mgr.GetCache()
+	installer, err := install.NewInstaller(config.KubeConfig, resources.FS)
+	if err != nil {
+		return nil, err
+	}
 	reconciler := &reconciler{
-		config:   config,
-		client:   mgr.GetClient(),
-		cache:    operatorCache,
-		recorder: mgr.GetEventRecorderFor(controllerName),
+		config:         config,
+		client:         mgr.GetClient(),
+		cache:          operatorCache,
+		kubeConfig:     config.KubeConfig,
+		recorder:       mgr.GetEventRecorderFor(controllerName),
+		istioInstaller: installer,
 	}
 	options := controller.Options{Reconciler: reconciler}
 	options.DefaultFromConfig(mgr.GetControllerOptions())
@@ -155,8 +166,9 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 // Config holds all the configuration that must be provided when creating the
 // controller.
 type Config struct {
-	// OperatorNamespace is the namespace in which the operator should
-	// create the Istio CR.
+	// KubeConfig is the Kubernetes client configuration used by the Sail Library.
+	KubeConfig *rest.Config
+	// OperatorNamespace is the namespace in which the operator is deployed.
 	OperatorNamespace string
 	// OperandNamespace is the namespace in which Istio should be deployed.
 	OperandNamespace string
@@ -166,7 +178,9 @@ type Config struct {
 	GatewayAPIOperatorChannel string
 	// GatewayAPIOperatorVersion is the name and release of the Gateway API implementation to install.
 	GatewayAPIOperatorVersion string
-	// IstioVersion is the version of Istio to configure on the Istio CR.
+	// GatewayAPIWithoutOLMEnabled indicates whether the GatewayAPIWithoutOLM feature gate is enabled.
+	GatewayAPIWithoutOLMEnabled bool
+	// IstioVersion is the version of Istio to install.
 	IstioVersion string
 }
 
@@ -174,11 +188,19 @@ type Config struct {
 type reconciler struct {
 	config Config
 
-	client   client.Client
-	cache    cache.Cache
-	recorder record.EventRecorder
+	client     client.Client
+	cache      cache.Cache
+	kubeConfig *rest.Config
+	recorder   record.EventRecorder
 
 	startIstioWatch sync.Once
+
+	// Sail Library Istio Installer
+	istioInstaller  *install.Installer
+	mu              sync.Mutex
+	currentOpts     *install.Options
+	driftReconciler *install.DriftReconciler
+	driftCancel     context.CancelFunc
 }
 
 // enqueueRequestForSomeGatewayClass enqueues a reconciliation request for the
@@ -230,6 +252,15 @@ func (r *reconciler) enqueueRequestForSomeGatewayClass() handler.EventHandler {
 // Reconcile expects request to refer to a GatewayClass and creates or
 // reconciles an Istio deployment.
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
+	if r.config.GatewayAPIWithoutOLMEnabled {
+		return r.reconcileWithSailLibrary(ctx, request)
+	}
+	return r.reconcileWithOLM(ctx, request)
+}
+
+// reconcileWithOLM reconciles a GatewayClass using OLM to install OSSM,
+// which then manages an Istio CR for the Istio installation.
+func (r *reconciler) reconcileWithOLM(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	log.Info("reconciling", "request", request)
 
 	var gatewayclass gatewayapiv1.GatewayClass
@@ -260,7 +291,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	if v, ok := gatewayclass.Annotations[istioVersionOverrideAnnotationKey]; ok {
 		istioVersion = v
 	}
-	if _, _, err := r.ensureIstio(ctx, &gatewayclass, istioVersion); err != nil {
+	if _, _, err := r.ensureIstioOLM(ctx, &gatewayclass, istioVersion); err != nil {
 		errs = append(errs, err)
 	} else {
 		// The OSSM operator installs the istios.sailoperator.io CRD.
@@ -276,6 +307,38 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 				errs = append(errs, err)
 			}
 		})
+	}
+
+	return reconcile.Result{}, utilerrors.NewAggregate(errs)
+}
+
+// reconcileWithSailLibrary reconciles a GatewayClass using the Sail Library
+// for direct Helm-based installation of Istio.
+func (r *reconciler) reconcileWithSailLibrary(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
+	log.Info("reconciling", "request", request)
+
+	var gatewayclass gatewayapiv1.GatewayClass
+	if err := r.cache.Get(ctx, request.NamespacedName, &gatewayclass); err != nil {
+		return reconcile.Result{}, err
+	}
+
+	// Ensure migration from 4.21 to 4.22 Sail Library.
+	if migrationComplete, err := r.ensureOSSMtoSailLibraryMigration(ctx); err != nil {
+		return reconcile.Result{}, err
+	} else if !migrationComplete {
+		// Migration isn't complete - give OSSM time to clean up.
+		return reconcile.Result{RequeueAfter: 5 * time.Second}, nil
+	}
+
+	var errs []error
+
+	istioVersion := r.config.IstioVersion
+	if v, ok := gatewayclass.Annotations[istioVersionOverrideAnnotationKey]; ok {
+		istioVersion = v
+	}
+
+	if err := r.ensureIstio(ctx, &gatewayclass, istioVersion); err != nil {
+		errs = append(errs, err)
 	}
 
 	return reconcile.Result{}, utilerrors.NewAggregate(errs)
