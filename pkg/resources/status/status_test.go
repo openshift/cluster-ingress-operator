@@ -652,7 +652,7 @@ func Test_computeDNSStatus(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			actualConditions := ComputeDNSStatus(tc.controller, tc.record, tc.platformStatus, tc.dnsConfig)
+			actualConditions := ComputeDNSStatus(tc.controller, tc.record, tc.platformStatus, tc.dnsConfig, false)
 			opts := cmpopts.IgnoreFields(operatorv1.OperatorCondition{}, "Message", "LastTransitionTime")
 			if !cmp.Equal(actualConditions, tc.expect, opts) {
 				t.Fatalf("found diff between actual and expected operator condition:\n%s", cmp.Diff(actualConditions, tc.expect, opts))

@@ -91,7 +91,7 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDeploymentRollingOutCondition(deployment))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, status.ComputeLoadBalancerStatus(ic, service, operandEvents, false)...)
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeLoadBalancerProgressingStatus(updated, service, platformStatus))
-	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, status.ComputeDNSStatus(ic, wildcardRecord, platformStatus, dnsConfig)...)
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, status.ComputeDNSStatus(ic, wildcardRecord, platformStatus, dnsConfig, false)...)
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressAvailableCondition(updated.Status.Conditions))
 	degradedCondition, err := computeIngressDegradedCondition(updated.Status.Conditions, updated.Name)
 	errs = append(errs, err)

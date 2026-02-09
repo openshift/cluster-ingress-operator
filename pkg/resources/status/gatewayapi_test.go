@@ -176,7 +176,7 @@ func TestComputeGatewayAPIListenerDNSStatus(t *testing.T) {
 			},
 		},
 		{
-			name:                "a null DNSConfig should return DNSManaged=False and NoDNSZones",
+			name:                "a null DNSConfig should return DNSReady=False and NoDNSZones",
 			dnsConfig:           nil,
 			generation:          2,
 			listenerToHostname:  listenerToHostname,
@@ -205,7 +205,7 @@ func TestComputeGatewayAPIListenerDNSStatus(t *testing.T) {
 							Status: metav1.ConditionTrue,
 						},
 						{
-							Type:               "DNSManaged",
+							Type:               "DNSReady",
 							Reason:             "NoDNSZones",
 							Status:             metav1.ConditionFalse,
 							Message:            "No DNS zones are defined in the cluster dns config.",
@@ -216,7 +216,7 @@ func TestComputeGatewayAPIListenerDNSStatus(t *testing.T) {
 			},
 		},
 		{
-			name:                "a null DNSRecord (unexistent) should return DNSManaged=True and DNSReady=False",
+			name:                "a null DNSRecord (unexistent) should return DNSReady=False",
 			dnsConfig:           defaultDNSConfig,
 			generation:          3,
 			listenerToHostname:  listenerToHostname,
@@ -245,13 +245,6 @@ func TestComputeGatewayAPIListenerDNSStatus(t *testing.T) {
 							Status: metav1.ConditionTrue,
 						},
 						{
-							Type:               "DNSManaged",
-							Reason:             "Normal",
-							Status:             metav1.ConditionTrue,
-							Message:            "DNS management is supported and zones are specified in the cluster DNS config.",
-							ObservedGeneration: 3,
-						},
-						{
 							Type:               "DNSReady",
 							Reason:             "RecordNotFound",
 							Status:             metav1.ConditionFalse,
@@ -263,7 +256,7 @@ func TestComputeGatewayAPIListenerDNSStatus(t *testing.T) {
 			},
 		},
 		{
-			name:                "a null DNSRecord (no name) should return DNSManaged=True and DNSReady=False",
+			name:                "a null DNSRecord (no name) should return DNSReady=False",
 			dnsConfig:           defaultDNSConfig,
 			generation:          4,
 			listenerToHostname:  listenerToHostname,
@@ -292,13 +285,6 @@ func TestComputeGatewayAPIListenerDNSStatus(t *testing.T) {
 							Status: metav1.ConditionTrue,
 						},
 						{
-							Type:               "DNSManaged",
-							Reason:             "Normal",
-							Status:             metav1.ConditionTrue,
-							Message:            "DNS management is supported and zones are specified in the cluster DNS config.",
-							ObservedGeneration: 4,
-						},
-						{
 							Type:               "DNSReady",
 							Reason:             "RecordNotFound",
 							Status:             metav1.ConditionFalse,
@@ -310,7 +296,7 @@ func TestComputeGatewayAPIListenerDNSStatus(t *testing.T) {
 			},
 		},
 		{
-			name:                "an unmanaged dnsrecord should return DNSManaged=True and DNSReady=False with Reason=UnmanagedDNS",
+			name:                "an unmanaged dnsrecord should return DNSReady=False with Reason=UnmanagedDNS",
 			dnsConfig:           defaultDNSConfig,
 			generation:          5,
 			listenerToHostname:  listenerToHostname,
@@ -339,13 +325,6 @@ func TestComputeGatewayAPIListenerDNSStatus(t *testing.T) {
 							Status: metav1.ConditionTrue,
 						},
 						{
-							Type:               "DNSManaged",
-							Reason:             "Normal",
-							Status:             metav1.ConditionTrue,
-							Message:            "DNS management is supported and zones are specified in the cluster DNS config.",
-							ObservedGeneration: 5,
-						},
-						{
 							Type:               "DNSReady",
 							Reason:             "UnmanagedDNS",
 							Status:             metav1.ConditionUnknown,
@@ -358,7 +337,7 @@ func TestComputeGatewayAPIListenerDNSStatus(t *testing.T) {
 		},
 		// This test verifies 2 listeners, one should be unmanaged, the other should have no zones
 		{
-			name:                "a dnsrecord without zones should return DNSManaged=True and DNSReady=False with Reason=NoZones",
+			name:                "a dnsrecord without zones should return DNSReady=False with Reason=NoZones",
 			dnsConfig:           defaultDNSConfig,
 			generation:          5,
 			listenerToHostname:  listenerToHostname,
@@ -397,13 +376,6 @@ func TestComputeGatewayAPIListenerDNSStatus(t *testing.T) {
 							Status: metav1.ConditionTrue,
 						},
 						{
-							Type:               "DNSManaged",
-							Reason:             "Normal",
-							Status:             metav1.ConditionTrue,
-							Message:            "DNS management is supported and zones are specified in the cluster DNS config.",
-							ObservedGeneration: 5,
-						},
-						{
 							Type:               "DNSReady",
 							Reason:             "UnmanagedDNS",
 							Status:             metav1.ConditionUnknown,
@@ -421,13 +393,6 @@ func TestComputeGatewayAPIListenerDNSStatus(t *testing.T) {
 							Status: metav1.ConditionTrue,
 						},
 						{
-							Type:               "DNSManaged",
-							Reason:             "Normal",
-							Status:             metav1.ConditionTrue,
-							Message:            "DNS management is supported and zones are specified in the cluster DNS config.",
-							ObservedGeneration: 5,
-						},
-						{
 							Type:               "DNSReady",
 							Reason:             "NoZones",
 							Status:             metav1.ConditionFalse,
@@ -439,7 +404,7 @@ func TestComputeGatewayAPIListenerDNSStatus(t *testing.T) {
 			},
 		},
 		{
-			name:                "a dnsrecord with failed zones should return DNSManaged=True and DNSReady=False with Reason=FailedZones",
+			name:                "a dnsrecord with failed zones should return DNSReady=False with Reason=FailedZones",
 			dnsConfig:           defaultDNSConfig,
 			generation:          6,
 			listenerToHostname:  listenerToHostname,
@@ -478,13 +443,6 @@ func TestComputeGatewayAPIListenerDNSStatus(t *testing.T) {
 							Status: metav1.ConditionTrue,
 						},
 						{
-							Type:               "DNSManaged",
-							Reason:             "Normal",
-							Status:             metav1.ConditionTrue,
-							Message:            "DNS management is supported and zones are specified in the cluster DNS config.",
-							ObservedGeneration: 6,
-						},
-						{
 							Type:               "DNSReady",
 							Reason:             "NoZones",
 							Status:             metav1.ConditionFalse,
@@ -502,13 +460,6 @@ func TestComputeGatewayAPIListenerDNSStatus(t *testing.T) {
 							Status: metav1.ConditionTrue,
 						},
 						{
-							Type:               "DNSManaged",
-							Reason:             "Normal",
-							Status:             metav1.ConditionTrue,
-							Message:            "DNS management is supported and zones are specified in the cluster DNS config.",
-							ObservedGeneration: 6,
-						},
-						{
 							Type:               "DNSReady",
 							Reason:             "FailedZones",
 							Status:             metav1.ConditionFalse,
@@ -520,7 +471,7 @@ func TestComputeGatewayAPIListenerDNSStatus(t *testing.T) {
 			},
 		},
 		{
-			name:                "a dnsrecord with unknown zones should return DNSManaged=True and DNSReady=False with Reason=UnknownZones",
+			name:                "a dnsrecord with unknown zones should return DNSReady=False with Reason=UnknownZones",
 			dnsConfig:           defaultDNSConfig,
 			generation:          7,
 			listenerToHostname:  listenerToHostname,
@@ -549,13 +500,6 @@ func TestComputeGatewayAPIListenerDNSStatus(t *testing.T) {
 							Status: metav1.ConditionTrue,
 						},
 						{
-							Type:               "DNSManaged",
-							Reason:             "Normal",
-							Status:             metav1.ConditionTrue,
-							Message:            "DNS management is supported and zones are specified in the cluster DNS config.",
-							ObservedGeneration: 7,
-						},
-						{
 							Type:               "DNSReady",
 							Reason:             "UnknownZones",
 							Status:             metav1.ConditionFalse,
@@ -569,7 +513,7 @@ func TestComputeGatewayAPIListenerDNSStatus(t *testing.T) {
 		// This test checks for 2 listeners, one should be working, the other one not. This shows status
 		// being granular to listeners
 		{
-			name:                "a dnsrecord with valid zones should return DNSManaged=True and DNSReady=True with Reason=NoFailedZones",
+			name:                "a dnsrecord with valid zones should return DNSReady=True with Reason=NoFailedZones",
 			dnsConfig:           defaultDNSConfig,
 			generation:          8,
 			listenerToHostname:  listenerToHostname,
@@ -608,13 +552,6 @@ func TestComputeGatewayAPIListenerDNSStatus(t *testing.T) {
 							Status: metav1.ConditionTrue,
 						},
 						{
-							Type:               "DNSManaged",
-							Reason:             "Normal",
-							Status:             metav1.ConditionTrue,
-							Message:            "DNS management is supported and zones are specified in the cluster DNS config.",
-							ObservedGeneration: 8,
-						},
-						{
 							Type:               "DNSReady",
 							Reason:             "UnknownZones",
 							Status:             metav1.ConditionFalse,
@@ -630,13 +567,6 @@ func TestComputeGatewayAPIListenerDNSStatus(t *testing.T) {
 							Type:   "somecond8",
 							Reason: "somereason8",
 							Status: metav1.ConditionTrue,
-						},
-						{
-							Type:               "DNSManaged",
-							Reason:             "Normal",
-							Status:             metav1.ConditionTrue,
-							Message:            "DNS management is supported and zones are specified in the cluster DNS config.",
-							ObservedGeneration: 8,
 						},
 						{
 							Type:               "DNSReady",
@@ -664,13 +594,6 @@ func TestComputeGatewayAPIListenerDNSStatus(t *testing.T) {
 								Type:   "somecond9",
 								Reason: "somereason9",
 								Status: metav1.ConditionTrue,
-							},
-							{
-								Type:               "DNSManaged",
-								Reason:             "Normal",
-								Status:             metav1.ConditionTrue,
-								Message:            "DNS management is supported and zones are specified in the cluster DNS config.",
-								ObservedGeneration: 9,
 							},
 							{
 								Type:               "DNSReady",
@@ -713,13 +636,6 @@ func TestComputeGatewayAPIListenerDNSStatus(t *testing.T) {
 							Status: metav1.ConditionTrue,
 						},
 						{
-							Type:               "DNSManaged",
-							Reason:             "Normal",
-							Status:             metav1.ConditionTrue,
-							Message:            "DNS management is supported and zones are specified in the cluster DNS config.",
-							ObservedGeneration: 9,
-						},
-						{
 							Type:               "DNSReady",
 							Reason:             "NoFailedZones",
 							Status:             metav1.ConditionTrue,
@@ -730,51 +646,6 @@ func TestComputeGatewayAPIListenerDNSStatus(t *testing.T) {
 				},
 			},
 		},
-
-		/*					{
-							name:      "a dnsrecord with valid zones should return DNSManaged=True and DNSReady=False with Reason=NoFailedZones",
-							dnsConfig: defaultDNSConfig,
-							dnsRecord: &iov1.DNSRecord{
-								ObjectMeta: metav1.ObjectMeta{
-									Name: "somedns",
-								},
-								Spec: iov1.DNSRecordSpec{
-									DNSManagementPolicy: iov1.ManagedDNS,
-								},
-								Status: iov1.DNSRecordStatus{
-									Zones: []iov1.DNSZoneStatus{
-										{
-											DNSZone: configv1.DNSZone{
-												ID: defaultZoneID,
-											},
-											Conditions: []iov1.DNSZoneCondition{
-												{
-													Type:   "Published",
-													Status: "True",
-												},
-											},
-										},
-									},
-								},
-							},
-							generation: 1,
-							expectedConditions: []metav1.Condition{
-								{
-									Type:               "DNSManaged",
-									Status:             "True",
-									Reason:             "Normal",
-									Message:            "DNS management is supported and zones are specified in the cluster DNS config.",
-									ObservedGeneration: 1,
-								},
-								{
-									Type:               "DNSReady",
-									Status:             "True",
-									Reason:             "NoFailedZones",
-									Message:            "The record is provisioned in all reported zones.",
-									ObservedGeneration: 1,
-								},
-							},
-						}, */
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

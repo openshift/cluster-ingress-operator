@@ -231,13 +231,6 @@ func Test_Reconcile(t *testing.T) {
 					Name: "listener1",
 					Conditions: []metav1.Condition{
 						{
-							Type:               operatorv1.DNSManagedIngressConditionType,
-							Status:             metav1.ConditionTrue,
-							Reason:             "Normal",
-							Message:            "DNS management is supported and zones are specified in the cluster DNS config.",
-							ObservedGeneration: 3,
-						},
-						{
 							Type:               operatorv1.DNSReadyIngressConditionType,
 							Status:             metav1.ConditionFalse,
 							Reason:             "RecordNotFound",
@@ -279,7 +272,7 @@ func Test_Reconcile(t *testing.T) {
 					Name: "listener1",
 					Conditions: []metav1.Condition{
 						{
-							Type:               operatorv1.DNSManagedIngressConditionType,
+							Type:               operatorv1.DNSReadyIngressConditionType,
 							Status:             metav1.ConditionFalse,
 							Reason:             "NoDNSZones",
 							Message:            "No DNS zones are defined in the cluster dns config.",
@@ -317,13 +310,6 @@ func Test_Reconcile(t *testing.T) {
 				{
 					Name: "listener1",
 					Conditions: []metav1.Condition{
-						{
-							Type:               operatorv1.DNSManagedIngressConditionType,
-							Status:             metav1.ConditionTrue,
-							Reason:             "Normal",
-							Message:            "DNS management is supported and zones are specified in the cluster DNS config.",
-							ObservedGeneration: 5,
-						},
 						{
 							Type:               operatorv1.DNSReadyIngressConditionType,
 							Status:             metav1.ConditionFalse,
@@ -446,13 +432,6 @@ func Test_Reconcile(t *testing.T) {
 					Name: "listener1",
 					Conditions: []metav1.Condition{
 						{
-							Type:               operatorv1.DNSManagedIngressConditionType,
-							Status:             metav1.ConditionTrue,
-							Reason:             "Normal",
-							Message:            "DNS management is supported and zones are specified in the cluster DNS config.",
-							ObservedGeneration: 8,
-						},
-						{
 							Type:               operatorv1.DNSReadyIngressConditionType,
 							Status:             metav1.ConditionUnknown,
 							Reason:             "UnmanagedDNS",
@@ -508,13 +487,6 @@ func Test_Reconcile(t *testing.T) {
 				{
 					Name: "listener1",
 					Conditions: []metav1.Condition{
-						{
-							Type:               operatorv1.DNSManagedIngressConditionType,
-							Status:             metav1.ConditionTrue,
-							Reason:             "Normal",
-							Message:            "DNS management is supported and zones are specified in the cluster DNS config.",
-							ObservedGeneration: 9,
-						},
 						{
 							Type:               operatorv1.DNSReadyIngressConditionType,
 							Status:             metav1.ConditionFalse,
@@ -581,13 +553,6 @@ func Test_Reconcile(t *testing.T) {
 					Name: "listener1",
 					Conditions: []metav1.Condition{
 						{
-							Type:               operatorv1.DNSManagedIngressConditionType,
-							Status:             metav1.ConditionTrue,
-							Reason:             "Normal",
-							Message:            "DNS management is supported and zones are specified in the cluster DNS config.",
-							ObservedGeneration: 10,
-						},
-						{
 							Type:               operatorv1.DNSReadyIngressConditionType,
 							Status:             metav1.ConditionFalse,
 							Reason:             "FailedZones",
@@ -641,13 +606,6 @@ func Test_Reconcile(t *testing.T) {
 				{
 					Name: "listener1",
 					Conditions: []metav1.Condition{
-						{
-							Type:               operatorv1.DNSManagedIngressConditionType,
-							Status:             metav1.ConditionTrue,
-							Reason:             "Normal",
-							Message:            "DNS management is supported and zones are specified in the cluster DNS config.",
-							ObservedGeneration: 11,
-						},
 						{
 							Type:               operatorv1.DNSReadyIngressConditionType,
 							Status:             metav1.ConditionFalse,
@@ -717,13 +675,6 @@ func Test_Reconcile(t *testing.T) {
 				{
 					Name: "listener1",
 					Conditions: []metav1.Condition{
-						{
-							Type:               operatorv1.DNSManagedIngressConditionType,
-							Status:             metav1.ConditionTrue,
-							Reason:             "Normal",
-							Message:            "DNS management is supported and zones are specified in the cluster DNS config.",
-							ObservedGeneration: 12,
-						},
 						{
 							Type:               operatorv1.DNSReadyIngressConditionType,
 							Status:             metav1.ConditionTrue,
@@ -798,13 +749,6 @@ func Test_Reconcile(t *testing.T) {
 					Name: "listener1",
 					Conditions: []metav1.Condition{
 						{
-							Type:               operatorv1.DNSManagedIngressConditionType,
-							Status:             metav1.ConditionTrue,
-							Reason:             "Normal",
-							Message:            "DNS management is supported and zones are specified in the cluster DNS config.",
-							ObservedGeneration: 13,
-						},
-						{
 							Type:               operatorv1.DNSReadyIngressConditionType,
 							Status:             metav1.ConditionTrue,
 							Reason:             "NoFailedZones",
@@ -816,13 +760,6 @@ func Test_Reconcile(t *testing.T) {
 				{
 					Name: "listener2",
 					Conditions: []metav1.Condition{
-						{
-							Type:               operatorv1.DNSManagedIngressConditionType,
-							Status:             metav1.ConditionTrue,
-							Reason:             "Normal",
-							Message:            "DNS management is supported and zones are specified in the cluster DNS config.",
-							ObservedGeneration: 13,
-						},
 						{
 							Type:               operatorv1.DNSReadyIngressConditionType,
 							Status:             metav1.ConditionFalse,
@@ -930,13 +867,6 @@ func Test_Reconcile(t *testing.T) {
 					Name: "listener1",
 					Conditions: []metav1.Condition{
 						{
-							Type:               operatorv1.DNSManagedIngressConditionType,
-							Status:             metav1.ConditionTrue,
-							Reason:             "Normal",
-							Message:            "DNS management is supported and zones are specified in the cluster DNS config.",
-							ObservedGeneration: 14,
-						},
-						{
 							Type:               operatorv1.DNSReadyIngressConditionType,
 							Status:             metav1.ConditionTrue,
 							Reason:             "NoFailedZones",
@@ -948,13 +878,6 @@ func Test_Reconcile(t *testing.T) {
 				{
 					Name: "listener2",
 					Conditions: []metav1.Condition{
-						{
-							Type:               operatorv1.DNSManagedIngressConditionType,
-							Status:             metav1.ConditionTrue,
-							Reason:             "Normal",
-							Message:            "DNS management is supported and zones are specified in the cluster DNS config.",
-							ObservedGeneration: 14,
-						},
 						{
 							Type:               operatorv1.DNSReadyIngressConditionType,
 							Status:             metav1.ConditionTrue,

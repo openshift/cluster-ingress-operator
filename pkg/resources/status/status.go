@@ -17,10 +17,23 @@ var clock utilclock.Clock = utilclock.RealClock{}
 // configuration of an Ingress Controller, and the Platform. It will return an array of
 // conditions that signals if a DNS record for a resource could be published,
 // and the reason on success or failure
-func ComputeDNSStatus(ic *operatorv1.IngressController, wildcardRecord *iov1.DNSRecord, status *configv1.PlatformStatus, dnsConfig *configv1.DNS) []operatorv1.OperatorCondition {
+func ComputeDNSStatus(ic *operatorv1.IngressController, wildcardRecord *iov1.DNSRecord, status *configv1.PlatformStatus, dnsConfig *configv1.DNS, gatewayAPI bool) []operatorv1.OperatorCondition {
 	// In case there is no managed DNS zone configured, return a single condition
 	// that DNSManaged=False because no zone is configured
 	if dnsConfig == nil || (dnsConfig.Spec.PublicZone == nil && dnsConfig.Spec.PrivateZone == nil) {
+		// On Gateway API we can have just the single DNSReady and the statement that it is false due to the lack of
+		// dns configuration.
+		if gatewayAPI {
+			return []operatorv1.OperatorCondition{
+				{
+					Type:    operatorv1.DNSReadyIngressConditionType,
+					Status:  operatorv1.ConditionFalse,
+					Reason:  "NoDNSZones",
+					Message: "No DNS zones are defined in the cluster dns config.",
+				},
+			}
+		}
+
 		return []operatorv1.OperatorCondition{
 			{
 				Type:    operatorv1.DNSManagedIngressConditionType,
@@ -31,40 +44,43 @@ func ComputeDNSStatus(ic *operatorv1.IngressController, wildcardRecord *iov1.DNS
 		}
 	}
 
-	// The condition below is only possible when an ingress controller is requesting
-	// a DNS. In case the ingresscontroller resource is null (eg.: GatewayAPI)
-	// this condition will not be verified.
-	// Otherwise, it will return a single condition that DNSManaged=False in case
-	// the EndpointPublishingStrategy is not "LoadBalancerService"
-	if ic != nil && ic.Status.EndpointPublishingStrategy.Type != operatorv1.LoadBalancerServiceStrategyType {
-		return []operatorv1.OperatorCondition{
-			{
-				Type:    operatorv1.DNSManagedIngressConditionType,
-				Status:  operatorv1.ConditionFalse,
-				Reason:  "UnsupportedEndpointPublishingStrategy",
-				Message: "The endpoint publishing strategy doesn't support DNS management.",
-			},
-		}
-	}
 	var conditions []operatorv1.OperatorCondition
 
-	// In case this is an ingresscontroller resource, and it contains a DNSManagementPolicy = 'Unmanaged'
-	// the "DNSManaged" condition should be false, and in any other case (GatewayAPI, ManagedDNS)
-	// return the condition as True
-	if ic != nil && ic.Status.EndpointPublishingStrategy.LoadBalancer != nil && ic.Status.EndpointPublishingStrategy.LoadBalancer.DNSManagementPolicy == operatorv1.UnmanagedLoadBalancerDNS {
-		conditions = append(conditions, operatorv1.OperatorCondition{
-			Type:    operatorv1.DNSManagedIngressConditionType,
-			Status:  operatorv1.ConditionFalse,
-			Reason:  "UnmanagedLoadBalancerDNS",
-			Message: "The DNS management policy is set to Unmanaged.",
-		})
-	} else {
-		conditions = append(conditions, operatorv1.OperatorCondition{
-			Type:    operatorv1.DNSManagedIngressConditionType,
-			Status:  operatorv1.ConditionTrue,
-			Reason:  "Normal",
-			Message: "DNS management is supported and zones are specified in the cluster DNS config.",
-		})
+	if !gatewayAPI {
+		// The condition below is only possible when an ingress controller is requesting
+		// a DNS. In case the ingresscontroller resource is null (eg.: GatewayAPI)
+		// this condition will not be verified.
+		// Otherwise, it will return a single condition that DNSManaged=False in case
+		// the EndpointPublishingStrategy is not "LoadBalancerService"
+		if ic != nil && ic.Status.EndpointPublishingStrategy.Type != operatorv1.LoadBalancerServiceStrategyType {
+			return []operatorv1.OperatorCondition{
+				{
+					Type:    operatorv1.DNSManagedIngressConditionType,
+					Status:  operatorv1.ConditionFalse,
+					Reason:  "UnsupportedEndpointPublishingStrategy",
+					Message: "The endpoint publishing strategy doesn't support DNS management.",
+				},
+			}
+		}
+
+		// In case this is an ingresscontroller resource, and it contains a DNSManagementPolicy = 'Unmanaged'
+		// the "DNSManaged" condition should be false, and in any other case (GatewayAPI, ManagedDNS)
+		// return the condition as True
+		if ic != nil && ic.Status.EndpointPublishingStrategy.LoadBalancer != nil && ic.Status.EndpointPublishingStrategy.LoadBalancer.DNSManagementPolicy == operatorv1.UnmanagedLoadBalancerDNS {
+			conditions = append(conditions, operatorv1.OperatorCondition{
+				Type:    operatorv1.DNSManagedIngressConditionType,
+				Status:  operatorv1.ConditionFalse,
+				Reason:  "UnmanagedLoadBalancerDNS",
+				Message: "The DNS management policy is set to Unmanaged.",
+			})
+		} else {
+			conditions = append(conditions, operatorv1.OperatorCondition{
+				Type:    operatorv1.DNSManagedIngressConditionType,
+				Status:  operatorv1.ConditionTrue,
+				Reason:  "Normal",
+				Message: "DNS management is supported and zones are specified in the cluster DNS config.",
+			})
+		}
 	}
 
 	// The switch below is specific for the "DNSReady" condition.
