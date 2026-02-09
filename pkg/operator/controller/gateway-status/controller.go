@@ -11,7 +11,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
-	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -36,9 +35,8 @@ var logger = logf.Logger.WithName(controllerName)
 
 // reconciler reconciles gateways, adding missing conditions to the resource
 type reconciler struct {
-	cache    cache.Cache
-	client   client.Client
-	recorder record.EventRecorder
+	cache  cache.Cache
+	client client.Client
 	// eventreader must be a direct API call because we want to get the latest events
 	// that may not be yet on the lister/cache
 	// today we could read directly from client.Client because it is constructed
@@ -89,7 +87,6 @@ func NewUnmanaged(mgr manager.Manager) (controller.Controller, error) {
 	reconciler := &reconciler{
 		cache:       gatewaysCache,
 		client:      mgr.GetClient(),
-		recorder:    mgr.GetEventRecorderFor(controllerName),
 		eventreader: mgr.GetAPIReader(),
 	}
 	c, err := controller.NewUnmanaged(controllerName, controller.Options{Reconciler: reconciler})
@@ -238,8 +235,6 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	if err := r.client.Status().Patch(ctx, gateway, client.MergeFrom(sourceGateway)); err != nil {
 		log.Error(err, "error patching the gateway status")
 		errs = append(errs, err)
-	} else {
-		r.recorder.Eventf(gateway, "Normal", "AddedConditions", "Added Openshift conditions to gateway %s", gateway.Name)
 	}
 
 	return reconcile.Result{}, utilerrors.NewAggregate(errs)
