@@ -6,12 +6,13 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
-	"github.com/stretchr/testify/assert"
 	"math/big"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 
 	"k8s.io/utils/pointer"
 
@@ -3295,7 +3296,7 @@ func Test_computeDNSStatus(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// The function was moved to another package, keeping the line here to
 			// show that no breaking change was caused
-			actualConditions := status.ComputeDNSStatus(tc.controller, tc.record, tc.platformStatus, tc.dnsConfig)
+			actualConditions := status.ComputeDNSStatus(tc.controller, tc.record, tc.platformStatus, tc.dnsConfig, false)
 			opts := cmpopts.IgnoreFields(operatorv1.OperatorCondition{}, "Message", "LastTransitionTime")
 			if !cmp.Equal(actualConditions, tc.expect, opts) {
 				t.Fatalf("found diff between actual and expected operator condition:\n%s", cmp.Diff(actualConditions, tc.expect, opts))

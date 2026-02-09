@@ -32,7 +32,6 @@ func ComputeGatewayAPIListenerDNSStatus(dnsConfig *configv1.DNS,
 		hostname, listenerHasHostname := listenerToHostname[listener.Name]
 		// if there is no hostname, we just remove any condition from the listener
 		if !listenerHasHostname {
-			condutils.RemoveStatusCondition(&gwstatus.Listeners[i].Conditions, operatorv1.DNSManagedIngressConditionType)
 			condutils.RemoveStatusCondition(&gwstatus.Listeners[i].Conditions, operatorv1.DNSReadyIngressConditionType)
 			continue
 		}
@@ -43,7 +42,7 @@ func ComputeGatewayAPIListenerDNSStatus(dnsConfig *configv1.DNS,
 			dnsRecord = nil
 		}
 
-		ingressConditions := ComputeDNSStatus(nil, dnsRecord, nil, dnsConfig)
+		ingressConditions := ComputeDNSStatus(nil, dnsRecord, nil, dnsConfig, true)
 		for _, condition := range ingressConditions {
 			gwCondition := metav1.Condition{
 				Type:               condition.Type,
