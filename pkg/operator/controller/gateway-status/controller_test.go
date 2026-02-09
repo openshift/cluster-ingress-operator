@@ -16,7 +16,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/cache/informertest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -1020,7 +1019,6 @@ func Test_Reconcile(t *testing.T) {
 			reconciler := &reconciler{
 				cache:       cache,
 				client:      cl,
-				recorder:    record.NewFakeRecorder(1),
 				eventreader: cl,
 			}
 			res, err := reconciler.Reconcile(ctx, tc.reconcileRequest)
@@ -1134,7 +1132,6 @@ func TestReconcileTransition(t *testing.T) {
 	reconciler := &reconciler{
 		cache:       cache,
 		client:      cl,
-		recorder:    record.NewFakeRecorder(10000),
 		eventreader: cl,
 	}
 
