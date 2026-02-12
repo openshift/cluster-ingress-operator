@@ -178,7 +178,7 @@ func Test_NewProvider(t *testing.T) {
 		},
 		expectedTaggingServiceEndpoint:       "http://x",
 		expectedElbServiceEndpointEndpoint:   "http://y",
-		expectedElbv2ServiceEndpointEndpoint: "https://elasticloadbalancing.us-east-1.amazonaws.com",
+		expectedElbv2ServiceEndpointEndpoint: "http://y",
 		expectedRoute53ServiceEndpoint:       "http://z",
 	}, {
 		name: "default service endpoints, GovCloud East",
@@ -198,6 +198,15 @@ func Test_NewProvider(t *testing.T) {
 		expectedElbServiceEndpointEndpoint:   "https://elasticloadbalancing.us-iso-east-1.c2s.ic.gov",
 		expectedElbv2ServiceEndpointEndpoint: "https://elasticloadbalancing.us-iso-east-1.c2s.ic.gov",
 		expectedRoute53ServiceEndpoint:       "https://route53.c2s.ic.gov",
+	}, {
+		name: "default service endpoints, SC2S",
+		config: Config{
+			Region: "us-isob-east-1",
+		},
+		expectedTaggingServiceEndpoint:       "",
+		expectedElbServiceEndpointEndpoint:   "https://elasticloadbalancing.us-isob-east-1.sc2s.sgov.gov",
+		expectedElbv2ServiceEndpointEndpoint: "https://elasticloadbalancing.us-isob-east-1.sc2s.sgov.gov",
+		expectedRoute53ServiceEndpoint:       "https://route53.sc2s.sgov.gov",
 	}, {
 		name: "default service endpoints, China North",
 		config: Config{
