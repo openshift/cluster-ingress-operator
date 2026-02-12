@@ -23,8 +23,8 @@ import (
 
 	"github.com/istio-ecosystem/sail-operator/pkg/config"
 	"github.com/istio-ecosystem/sail-operator/pkg/constants"
-	sharedreconcile "github.com/istio-ecosystem/sail-operator/pkg/reconcile"
 	"github.com/istio-ecosystem/sail-operator/pkg/helm"
+	sharedreconcile "github.com/istio-ecosystem/sail-operator/pkg/reconcile"
 	"github.com/istio-ecosystem/sail-operator/pkg/revision"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -42,6 +42,11 @@ const (
 	// WatchTypeNamespace indicates namespace resources should be watched.
 	// Used to detect when the target namespace is created/deleted.
 	WatchTypeNamespace
+
+	// WatchTypeCRD indicates CRD resources that should be watched for ownership changes.
+	// Events are filtered by TargetNames and trigger on label/annotation changes,
+	// creation, or deletion — allowing the Library to re-classify CRD ownership.
+	WatchTypeCRD
 )
 
 // String returns the string representation of the WatchType.
@@ -51,6 +56,8 @@ func (w WatchType) String() string {
 		return "Owned"
 	case WatchTypeNamespace:
 		return "Namespace"
+	case WatchTypeCRD:
+		return "CRD"
 	default:
 		return fmt.Sprintf("Unknown(%d)", w)
 	}
@@ -67,25 +74,39 @@ type WatchSpec struct {
 	// ClusterScoped indicates if this is a cluster-scoped resource (vs namespaced).
 	// Cluster-scoped resources require a different informer factory setup.
 	ClusterScoped bool
+
+	// TargetNames is an optional set of resource names to filter on.
+	// Only used with WatchTypeCRD to limit events to specific CRDs.
+	// When nil or empty, all resources of this GVK are watched.
+	TargetNames map[string]struct{}
 }
 
-// GetWatchSpecs renders the istiod Helm charts and extracts the GVKs
-// of all resources that would be created. This allows library consumers
-// to set up watches for drift detection.
+// getWatchSpecs renders the istiod Helm charts and extracts the GVKs
+// of all resources that would be created. Used internally by the Library
+// to set up informers for drift detection.
 //
 // The returned specs include:
 //   - All resource types from the base and istiod charts (WatchTypeOwned)
 //   - Namespace (WatchTypeNamespace) for namespace existence checks
-func (i *Installer) GetWatchSpecs(opts Options) ([]WatchSpec, error) {
+func (l *Library) getWatchSpecs(opts Options) ([]WatchSpec, error) {
 	opts.applyDefaults()
 
+	// Default version from FS if not specified (same logic as reconcile)
+	if opts.Version == "" {
+		v, err := DefaultVersion(l.resourceFS)
+		if err != nil {
+			return nil, fmt.Errorf("failed to determine default version: %w", err)
+		}
+		opts.Version = v
+	}
+
 	// Validate version directory exists in the resource FS
-	if err := ValidateVersion(i.resourceFS, opts.Version); err != nil {
+	if err := ValidateVersion(l.resourceFS, opts.Version); err != nil {
 		return nil, fmt.Errorf("invalid version %q: %w", opts.Version, err)
 	}
 	resolvedVersion := opts.Version
 
-	// Compute values using the same pipeline as Install()
+	// Compute values using the same pipeline as reconcile()
 	values, err := revision.ComputeValues(
 		opts.Values,
 		opts.Namespace,
@@ -93,7 +114,7 @@ func (i *Installer) GetWatchSpecs(opts Options) ([]WatchSpec, error) {
 		config.PlatformOpenShift,
 		defaultProfile,
 		"",
-		i.resourceFS,
+		l.resourceFS,
 		opts.Revision,
 	)
 	if err != nil {
@@ -107,7 +128,7 @@ func (i *Installer) GetWatchSpecs(opts Options) ([]WatchSpec, error) {
 	// Render base chart (for default revision)
 	if opts.Revision == defaultRevision {
 		baseChartPath := sharedreconcile.GetChartPath(resolvedVersion, constants.BaseChartName)
-		rendered, err := helm.RenderChart(i.resourceFS, baseChartPath, helmValues, opts.Namespace, "base")
+		rendered, err := helm.RenderChart(l.resourceFS, baseChartPath, helmValues, opts.Namespace, "base")
 		if err != nil {
 			return nil, fmt.Errorf("failed to render base chart: %w", err)
 		}
@@ -118,7 +139,7 @@ func (i *Installer) GetWatchSpecs(opts Options) ([]WatchSpec, error) {
 
 	// Render istiod chart
 	istiodChartPath := sharedreconcile.GetChartPath(resolvedVersion, constants.IstiodChartName)
-	rendered, err := helm.RenderChart(i.resourceFS, istiodChartPath, helmValues, opts.Namespace, "istiod")
+	rendered, err := helm.RenderChart(l.resourceFS, istiodChartPath, helmValues, opts.Namespace, "istiod")
 	if err != nil {
 		return nil, fmt.Errorf("failed to render istiod chart: %w", err)
 	}
