@@ -208,8 +208,6 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 		elbFound := false
 		tagFound := false
 		for _, ep := range config.ServiceEndpoints {
-			// TODO: Add custom endpoint support for elbv2. See the following for details:
-			// https://docs.aws.amazon.com/general/latest/gr/elb.html
 			switch ep.Name {
 			case Route53Service:
 				route53Found = true
@@ -233,6 +231,10 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 				elbFound = true
 				elbConfig = elbConfig.WithEndpoint(ep.URL)
 				log.Info("Found elb custom endpoint", "url", ep.URL)
+				// The SDK uses the same service ID "elasticloadbalancing" for elb and elbv2
+				// Thus, if defined, we need to use the custom service endpoint for both.
+				elbv2Config = elbv2Config.WithEndpoint(ep.URL)
+				log.Info("Found elb v2 custom endpoint", "url", ep.URL)
 			}
 			// Once the three service endpoints have been found,
 			// ignore any further service endpoint specifications.
