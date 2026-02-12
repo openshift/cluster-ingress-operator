@@ -205,10 +205,9 @@ func hasName(name string) func(o client.Object) bool {
 
 // Config holds all the things necessary for the controller to run.
 type Config struct {
-	Namespace                       string
-	IngressControllerImage          string
-	RouteExternalCertificateEnabled bool
-	IngressControllerDCMEnabled     bool
+	Namespace                   string
+	IngressControllerImage      string
+	IngressControllerDCMEnabled bool
 }
 
 // reconciler handles the actual ingress reconciliation logic in response to

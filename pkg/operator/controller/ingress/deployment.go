@@ -1178,11 +1178,9 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 	}
 
 	// Add router external certificate environment variable.
-	if config.RouteExternalCertificateEnabled {
-		env = append(env,
-			corev1.EnvVar{Name: "ROUTER_ENABLE_EXTERNAL_CERTIFICATE", Value: "true"},
-		)
-	}
+	env = append(env,
+		corev1.EnvVar{Name: "ROUTER_ENABLE_EXTERNAL_CERTIFICATE", Value: "true"},
+	)
 
 	if ci.Spec.IdleConnectionTerminationPolicy == operatorv1.IngressControllerConnectionTerminationPolicyDeferred {
 		env = append(env, corev1.EnvVar{
