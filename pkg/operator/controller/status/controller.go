@@ -12,6 +12,7 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
+	rbacv1 "k8s.io/api/rbac/v1"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -270,7 +271,42 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 			Resource:  "dnsrecords",
 			Namespace: r.config.Namespace,
 		},
+		{
+			Group:    rbacv1.GroupName,
+			Resource: "clusterroles",
+			Name:     "openshift-ingress-operator",
+		},
+		{
+			Group:    rbacv1.GroupName,
+			Resource: "clusterrolebindings",
+			Name:     "openshift-ingress-operator",
+		},
+		{
+			Group:     rbacv1.GroupName,
+			Resource:  "roles",
+			Name:      "ingress-operator",
+			Namespace: r.config.Namespace,
+		},
+		{
+			Group:     rbacv1.GroupName,
+			Resource:  "rolebindings",
+			Name:      "ingress-operator",
+			Namespace: r.config.Namespace,
+		},
+		{
+			Group:     rbacv1.GroupName,
+			Resource:  "roles",
+			Name:      "ingress-operator",
+			Namespace: "openshift-config",
+		},
+		{
+			Group:     rbacv1.GroupName,
+			Resource:  "rolebindings",
+			Name:      "ingress-operator",
+			Namespace: "openshift-config",
+		},
 	}
+
 	if state.IngressNamespace != nil {
 		related = append(related, configv1.ObjectReference{
 			Resource: "namespaces",
@@ -287,6 +323,16 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 			Name:     state.CanaryNamespace.Name,
 		})
 	}
+
+	// copy componentRoutes.relatedObjects from the global Ingress config status into related objects
+	if state.IngressComponentRoutesStatus != nil {
+		for _, cr := range state.IngressComponentRoutesStatus {
+			for _, obj := range cr.RelatedObjects {
+				addRelatedOnce(&related, obj)
+			}
+		}
+	}
+
 	if r.config.GatewayAPIEnabled && r.config.GatewayAPIControllerEnabled {
 		if state.haveOSSMSubscription {
 			subscriptionName := operatorcontroller.ServiceMeshOperatorSubscriptionName()
@@ -382,10 +428,11 @@ func initializeClusterOperator(co *configv1.ClusterOperator) {
 }
 
 type operatorState struct {
-	IngressNamespace   *corev1.Namespace
-	CanaryNamespace    *corev1.Namespace
-	IngressControllers []operatorv1.IngressController
-	DNSRecords         []iov1.DNSRecord
+	IngressNamespace             *corev1.Namespace
+	CanaryNamespace              *corev1.Namespace
+	IngressControllers           []operatorv1.IngressController
+	IngressComponentRoutesStatus []configv1.ComponentRouteStatus
+	DNSRecords                   []iov1.DNSRecord
 
 	unmanagedGatewayAPICRDNames string
 	// haveOSSMSubscription means that the subscription for OSSM 3 exists.
@@ -436,6 +483,15 @@ func (r *reconciler) getOperatorState(ctx context.Context, ingressNamespace, can
 		return state, fmt.Errorf("failed to list ingresscontrollers in %q: %v", r.config.Namespace, err)
 	} else {
 		state.IngressControllers = ingressList.Items
+	}
+
+	ingressConfig := &configv1.Ingress{}
+	if err := r.client.Get(ctx, operatorcontroller.IngressClusterConfigName(), ingressConfig); err != nil {
+		if !errors.IsNotFound(err) {
+			return state, fmt.Errorf("failed to get default ingress: %v", err)
+		}
+	} else {
+		state.IngressComponentRoutesStatus = ingressConfig.Status.ComponentRoutes
 	}
 
 	if r.config.GatewayAPIEnabled {
@@ -1018,4 +1074,23 @@ func compareVersionNums(a, b string) (int, error) {
 		return bY - aY, nil
 	}
 	return bZ - aZ, nil
+}
+
+// addRelatedOnce adds `ref` to the slice pointed to by `list` if an equivalent
+// entry is not already present.
+// The comparison treats Resource, Group, Version, Namespace and Name as the
+// identifying fields; if all these fields match an existing entry, `ref` is
+// considered duplicate and will not be added. The function preserves the
+// existing order and appends new entries. If `list` is nil it will be
+// initialized. The slice pointed to by `list` is mutated in-place.
+func addRelatedOnce(related *[]configv1.ObjectReference, ref configv1.ObjectReference) {
+	for _, r := range *related {
+		if r.Group == ref.Group &&
+			r.Resource == ref.Resource &&
+			r.Namespace == ref.Namespace &&
+			r.Name == ref.Name {
+			return
+		}
+	}
+	*related = append(*related, ref)
 }
