@@ -39,6 +39,7 @@ var (
 	pdbGVK                            = schema.GroupVersionKind{Group: "policy", Version: "v1", Kind: "PodDisruptionBudget"}
 	hpaGVK                            = schema.GroupVersionKind{Group: "autoscaling", Version: "v2", Kind: "HorizontalPodAutoscaler"}
 	validatingWebhookConfigurationGVK = schema.GroupVersionKind{Group: "admissionregistration.k8s.io", Version: "v1", Kind: "ValidatingWebhookConfiguration"}
+	crdGVK                            = schema.GroupVersionKind{Group: "apiextensions.k8s.io", Version: "v1", Kind: "CustomResourceDefinition"}
 )
 
 // shouldReconcileOnCreate determines if a create event should trigger reconciliation.
@@ -184,4 +185,23 @@ func clearWebhookIgnoredFields(obj *unstructured.Unstructured) *unstructured.Uns
 	}
 
 	return obj
+}
+
+// shouldReconcileCRDOnUpdate determines if a CRD update should trigger reconciliation.
+// We care about ownership label changes (CIO/OLM labels being added/removed) and
+// annotation changes (helm.sh/resource-policy). Spec/status changes on the CRD itself
+// are not relevant for ownership classification.
+func shouldReconcileCRDOnUpdate(oldObj, newObj *unstructured.Unstructured) bool {
+	if !reflect.DeepEqual(oldObj.GetLabels(), newObj.GetLabels()) {
+		return true
+	}
+	if !reflect.DeepEqual(oldObj.GetAnnotations(), newObj.GetAnnotations()) {
+		return true
+	}
+	// Spec changes on CRDs mean the CRD schema was updated — re-reconcile
+	// to ensure our version is still current.
+	if oldObj.GetGeneration() != newObj.GetGeneration() {
+		return true
+	}
+	return false
 }
