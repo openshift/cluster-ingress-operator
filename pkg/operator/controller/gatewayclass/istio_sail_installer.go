@@ -4,18 +4,26 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/Azure/go-autorest/autorest/to"
-
 	"github.com/istio-ecosystem/sail-operator/pkg/install"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
+const (
+	ControllerInstalledConditionType = "ControllerInstalled"
+	CRDsReadyConditionType           = "CRDsReady"
+)
+
 // ensureIstio installs or updates Istio using the Sail Library.
 // It returns an error if the installation fails.
 func (r *reconciler) ensureIstio(ctx context.Context, gatewayclass *gatewayapiv1.GatewayClass, istioVersion string) error {
+
+	// TODO: check if anything is null here, to avoid panics
+	sailInstaller := r.config.SailOperatorReconciler.Installer
+
 	enableInferenceExtension, err := r.inferencepoolCrdExists(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to check for InferencePool CRD: %w", err)
@@ -36,41 +44,23 @@ func (r *reconciler) ensureIstio(ctx context.Context, gatewayclass *gatewayapiv1
 		return err
 	}
 
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	// Enqueue the request to reconcile. This does not return
+	// any error or status. We validate the status again next, and set
+	// the right conditions on the GatewayClass for it
+	sailInstaller.Apply(opts)
 
-	// Check if options changed - if so, stop existing drift reconciler
-	if r.driftReconciler != nil && !r.optsEqual(r.currentOpts, opts) {
-		log.Info("Options changed, stopping drift reconciler")
-		r.stopDriftReconcilerLocked()
-	}
+	// Istio adds its own Accepted condition: https://github.com/istio/istio/blob/24eab8800c50b999d01d2dd6ec589bbd59d01726/pilot/pkg/config/kube/gateway/gatewayclass.go#L114
+	// We must generate a specific Openshift condition for it
+	// TODO: merge the conditions, remove conditions in case OLM is being used instead of this
 
-	// If no drift reconciler running, install and start one
-	if r.driftReconciler == nil {
-		reconciler, err := r.istioInstaller.Install(ctx, *opts)
-		if err != nil {
-			return err
-		}
-		log.Info("installed/updated Istio via Sail Library", "namespace", r.config.OperandNamespace, "version", istioVersion)
+	status := sailInstaller.Status()
 
-		// Create cancellable context for drift reconciler
-		driftCtx, cancel := context.WithCancel(context.Background())
-		r.driftCancel = cancel
-		r.driftReconciler = reconciler
-		r.currentOpts = opts
-
-		// Start drift reconciler in background
-		go func() {
-			if err := reconciler.Start(driftCtx); err != nil && driftCtx.Err() == nil {
-				log.Error(err, "drift reconciler failed")
-			}
-		}()
-	}
+	mapStatusToConditions(status, gatewayclass.Generation, &gatewayclass.Status.Conditions)
 
 	return nil
 }
 
-func (r *reconciler) buildInstallerOptions(enableInferenceExtension bool, ownerRef *metav1.OwnerReference, istioVersion string) (*install.Options, error) {
+func (r *reconciler) buildInstallerOptions(enableInferenceExtension bool, ownerRef *metav1.OwnerReference, istioVersion string) (install.Options, error) {
 	// Start with Gateway API defaults
 	values := install.GatewayAPIDefaults()
 
@@ -78,41 +68,72 @@ func (r *reconciler) buildInstallerOptions(enableInferenceExtension bool, ownerR
 	openshiftOverrides := openshiftValues(enableInferenceExtension)
 	values = install.MergeValues(values, openshiftOverrides)
 
-	return &install.Options{
-		Namespace:  controller.DefaultOperandNamespace,
-		Revision:   controller.IstioName("").Name,
-		Values:     values,
-		OwnerRef:   ownerRef,
-		Version:    istioVersion,
-		ManageCRDs: to.BoolPtr(false),
+	return install.Options{
+		Namespace:      controller.DefaultOperandNamespace,
+		Revision:       controller.IstioName("").Name,
+		Values:         values,
+		OwnerRef:       ownerRef,
+		Version:        istioVersion,
+		ManageCRDs:     ptr.To(true),
+		IncludeAllCRDs: ptr.To(true),
 	}, nil
 }
 
-func (r *reconciler) stopDriftReconcilerLocked() {
-	if r.driftCancel != nil {
-		r.driftCancel()
-		r.driftCancel = nil
+// mapStatusToConditions translates the library Status into GatewayClass conditions.
+func mapStatusToConditions(status install.Status, generation int64, conditions *[]metav1.Condition) {
+	installed := metav1.Condition{
+		Type:               ControllerInstalledConditionType,
+		ObservedGeneration: generation,
+		LastTransitionTime: metav1.Now(),
 	}
-	if r.driftReconciler != nil {
-		r.driftReconciler.Stop()
-		r.driftReconciler = nil
+	if status.Installed {
+		installed.Status = metav1.ConditionTrue
+		installed.Reason = "Installed"
+		installed.Message = fmt.Sprintf("istiod %s installed", status.Version)
+	} else if status.Error != nil {
+		installed.Status = metav1.ConditionFalse
+		installed.Reason = "InstallFailed"
+		installed.Message = status.Error.Error()
+	} else {
+		installed.Status = metav1.ConditionUnknown
+		installed.Reason = "Pending"
+		installed.Message = "waiting for first reconciliation"
 	}
-	r.currentOpts = nil
+
+	meta.SetStatusCondition(conditions, installed)
+
+	// CRD condition: reflects CRD ownership state.
+	crd := metav1.Condition{
+		Type:               CRDsReadyConditionType,
+		ObservedGeneration: generation,
+		LastTransitionTime: metav1.Now(),
+	}
+	switch status.CRDState {
+	case install.CRDManagedByCIO:
+		crd.Status = metav1.ConditionTrue
+		crd.Reason = "ManagedByCIO"
+		crd.Message = status.CRDMessage
+	case install.CRDManagedByOLM:
+		crd.Status = metav1.ConditionTrue
+		crd.Reason = "ManagedByOLM"
+		crd.Message = status.CRDMessage
+	case install.CRDNoneExist:
+		crd.Status = metav1.ConditionUnknown
+		crd.Reason = "NoneExist"
+		crd.Message = "CRDs not yet installed"
+	case install.CRDMixedOwnership:
+		crd.Status = metav1.ConditionFalse
+		crd.Reason = "MixedOwnership"
+		crd.Message = status.CRDMessage
+	default:
+		crd.Status = metav1.ConditionFalse
+		crd.Reason = "UnknownManagement"
+		crd.Message = status.CRDMessage
+	}
+	meta.SetStatusCondition(conditions, crd)
 }
 
-// Shutdown stops the drift reconciler - call on controller shutdown
-func (r *reconciler) Shutdown() {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.stopDriftReconcilerLocked()
-}
-
-func (r *reconciler) optsEqual(a, b *install.Options) bool {
-	if a == nil || b == nil {
-		return a == b
-	}
-	return a.Namespace == b.Namespace &&
-		a.Version == b.Version &&
-		a.Revision == b.Revision
-	// Note: for Values comparison, consider tracking a generation/hash
+func removeSailOperatorConditions(conditions *[]metav1.Condition) {
+	meta.RemoveStatusCondition(conditions, ControllerInstalledConditionType)
+	meta.RemoveStatusCondition(conditions, CRDsReadyConditionType)
 }
