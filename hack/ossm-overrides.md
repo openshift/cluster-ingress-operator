@@ -36,4 +36,4 @@ creating the GatewayClass CR and associated Subscription CR.**  If you set the
 annotations *after* the Subscription has already been created, then Ingress
 Operator will update the Subscription, but OLM might ignore the change or report
 an error.  In particular, OLM does not allow downgrading, and OLM typically only
-allows upgrading to the next version after the currently installed versions.
+allows upgrading to the next version after the currently installed version.
