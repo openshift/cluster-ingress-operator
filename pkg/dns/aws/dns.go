@@ -43,6 +43,10 @@ const (
 	// govCloudRoute53Region is the AWS GovCloud region for Route 53. See:
 	// https://docs.aws.amazon.com/govcloud-us/latest/UserGuide/using-govcloud-endpoints.html
 	govCloudRoute53Region = "us-gov"
+	// eusCloudRegionPrefix is the prefix of regions in AWS European Sovereign Cloud.
+	eusCloudRegionPrefix = "eusc-"
+	// euscDeEast1RegionID is the region ID of Brandenburg (German) in AWS European Sovereign Cloud.
+	euscDeEast1RegionID = "eusc-de-east-1"
 	// govCloudTaggingEndpoint is the Group Tagging service endpoint used for AWS GovCloud.
 	govCloudTaggingEndpoint = "https://tagging.us-gov-west-1.amazonaws.com"
 	// chinaRoute53Endpoint is the Route 53 service endpoint used for AWS China regions.
@@ -196,6 +200,18 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 		// Do not override the region in C2S or SC2S
 		r53Config = r53Config.WithRegion(region)
 	default:
+		// AWS European Sovereign Cloud
+		if strings.HasPrefix(region, eusCloudRegionPrefix) {
+			// Since Route 53 is not a regionalized service, the Tagging API will
+			// only return hosted zone resources when the region is "eusc-de-east-1".
+			tagConfig = tagConfig.WithRegion(euscDeEast1RegionID)
+			// Use eusc-de-east-1 for Route 53 in AWS Regions for EU Sovereign Cloud.
+			// See https://docs.aws.eu/general/latest/gr/endpoints.html for details.
+			r53Config = r53Config.WithRegion(euscDeEast1RegionID)
+			break
+		}
+
+		// AWS Standard Partition
 		// Since Route 53 is not a regionalized service, the Tagging API will
 		// only return hosted zone resources when the region is "us-east-1".
 		tagConfig = tagConfig.WithRegion(endpoints.UsEast1RegionID)
