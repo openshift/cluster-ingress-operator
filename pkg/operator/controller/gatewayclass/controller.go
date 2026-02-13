@@ -172,7 +172,7 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 	if config.GatewayAPIWithoutOLMEnabled && config.SailOperatorReconciler != nil && config.SailOperatorReconciler.NotifyCh != nil {
 		sailOperatorSource := &SailOperatorSource[client.Object]{
 			NotifyCh:     config.SailOperatorReconciler.NotifyCh,
-			RequestsFunc: reconciler.requestsForSomeGatewayClass,
+			RequestsFunc: reconciler.allManagedGatewayClasses,
 		}
 		if err := c.Watch(sailOperatorSource); err != nil {
 			return nil, err
@@ -229,6 +229,9 @@ type reconciler struct {
 func (r *reconciler) enqueueRequestForSomeGatewayClass() handler.EventHandler {
 	return handler.EnqueueRequestsFromMapFunc(
 		func(ctx context.Context, obj client.Object) []reconcile.Request {
+			if r.config.GatewayAPIWithoutOLMEnabled {
+				return r.allManagedGatewayClasses(ctx, obj)
+			}
 			return r.requestsForSomeGatewayClass(ctx, obj)
 		},
 	)
@@ -253,6 +256,19 @@ func (r *reconciler) requestsForSomeGatewayClass(ctx context.Context, _ client.O
 			continue
 		}
 
+		// If we ever added the sail library finalizer, this means this is a rollback so
+		// we need to be sure that the OLM process removes the finalizer and the status
+		if controllerutil.ContainsFinalizer(&gatewayClasses.Items[i], sailLibraryFinalizer) {
+			request := reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Namespace: "",
+					Name:      gatewayClasses.Items[i].Name,
+				},
+			}
+			requests = append(requests, request)
+			continue
+		}
+
 		ctime := gatewayClasses.Items[i].CreationTimestamp
 		if !found || ctime.Before(&oldest) {
 			found, oldest, name = true, ctime, gatewayClasses.Items[i].Name
@@ -264,6 +280,29 @@ func (r *reconciler) requestsForSomeGatewayClass(ctx context.Context, _ client.O
 			NamespacedName: types.NamespacedName{
 				Namespace: "", // GatewayClass is cluster-scoped.
 				Name:      name,
+			},
+		}
+		requests = append(requests, request)
+	}
+
+	return requests
+}
+
+func (r *reconciler) allManagedGatewayClasses(ctx context.Context, _ client.Object) []reconcile.Request {
+	requests := []reconcile.Request{}
+	var gatewayClasses gatewayapiv1.GatewayClassList
+	if err := r.cache.List(ctx, &gatewayClasses, client.MatchingFields{
+		operatorcontroller.GatewayClassIndexFieldName: operatorcontroller.OpenShiftGatewayClassControllerName,
+	}); err != nil {
+		log.Error(err, "Failed to list gatewayclasses")
+		return requests
+	}
+
+	for _, class := range gatewayClasses.Items {
+		request := reconcile.Request{
+			NamespacedName: types.NamespacedName{
+				Namespace: "", // GatewayClass is cluster-scoped.
+				Name:      class.Name,
 			},
 		}
 		requests = append(requests, request)
@@ -295,8 +334,14 @@ func (r *reconciler) reconcileWithOLM(ctx context.Context, request reconcile.Req
 	}
 
 	gatewayclass := sourceGatewayClass.DeepCopy()
-	// This is not SailOperator class, so remove any finalizer
+	// This is not SailOperator class, so remove any finalizer and any status from it
 	if controllerutil.RemoveFinalizer(gatewayclass, sailLibraryFinalizer) {
+		var errs []error
+		removeSailOperatorConditions(&gatewayclass.Status.Conditions)
+		if err := r.client.Status().Patch(ctx, gatewayclass, client.MergeFrom(sourceGatewayClass)); err != nil {
+			log.Error(err, "error patching the gatewayclass status")
+			errs = append(errs, err)
+		}
 		err := r.client.Patch(ctx, gatewayclass, client.MergeFrom(sourceGatewayClass))
 		if err != nil {
 			log.Error(err, "error patching the gatewayclass status")
@@ -343,12 +388,6 @@ func (r *reconciler) reconcileWithOLM(ctx context.Context, request reconcile.Req
 				errs = append(errs, err)
 			}
 		})
-	}
-
-	removeSailOperatorConditions(&gatewayclass.Status.Conditions)
-	if err := r.client.Status().Patch(ctx, gatewayclass, client.MergeFrom(sourceGatewayClass)); err != nil {
-		log.Error(err, "error patching the gatewayclass status")
-		errs = append(errs, err)
 	}
 
 	return reconcile.Result{}, utilerrors.NewAggregate(errs)
