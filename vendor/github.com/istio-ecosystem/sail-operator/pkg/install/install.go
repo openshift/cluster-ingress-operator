@@ -43,6 +43,8 @@ import (
 	"io/fs"
 	"os"
 	"reflect"
+	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -302,6 +304,9 @@ func (l *Library) Apply(opts Options) {
 	}
 
 	copied := opts
+	if copied.Values != nil {
+		copied.Values = copied.Values.DeepCopy()
+	}
 	l.desiredOpts = &copied
 	l.enqueue()
 }
@@ -497,6 +502,12 @@ func (l *Library) reconcile(ctx context.Context) Status {
 	opts := *l.desiredOpts
 	l.mu.RUnlock()
 
+	// Deep-copy Values so nothing in this function can mutate the
+	// stored desiredOpts through shared pointers.
+	if opts.Values != nil {
+		opts.Values = opts.Values.DeepCopy()
+	}
+
 	status := Status{}
 
 	// Default version from FS if not specified
@@ -580,6 +591,19 @@ func (l *Library) enqueue() {
 	if l.workqueue != nil {
 		l.workqueue.Add(reconcileKey)
 	}
+}
+
+// caller returns file:line of the caller's caller (2 frames up).
+func caller() string {
+	_, file, line, ok := runtime.Caller(2)
+	if !ok {
+		return "unknown"
+	}
+	// Trim to just the filename for readability
+	if idx := strings.LastIndex(file, "/"); idx >= 0 {
+		file = file[idx+1:]
+	}
+	return fmt.Sprintf("%s:%d", file, line)
 }
 
 // makeEventHandler creates a cache.ResourceEventHandler that filters events
