@@ -21,7 +21,9 @@ const (
 // It returns an error if the installation fails.
 func (r *reconciler) ensureIstio(ctx context.Context, gatewayclass *gatewayapiv1.GatewayClass, istioVersion string) error {
 
-	// TODO: check if anything is null here, to avoid panics
+	if r.config.SailOperatorReconciler == nil || r.config.SailOperatorReconciler.Installer == nil {
+		return fmt.Errorf("internal error: sail operator is null")
+	}
 	sailInstaller := r.config.SailOperatorReconciler.Installer
 
 	enableInferenceExtension, err := r.inferencepoolCrdExists(ctx)
