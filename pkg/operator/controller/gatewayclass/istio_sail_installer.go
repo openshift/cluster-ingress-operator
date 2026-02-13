@@ -6,8 +6,10 @@ import (
 
 	"github.com/istio-ecosystem/sail-operator/pkg/install"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
@@ -29,12 +31,24 @@ func (r *reconciler) ensureIstio(ctx context.Context, gatewayclass *gatewayapiv1
 		return fmt.Errorf("failed to check for InferencePool CRD: %w", err)
 	}
 
-	// Create owner reference for garbage collection
+	// We DO NOT pass GatewayClass as ownerRef, because we may have multiple GatewayClasses pointing to
+	// the same controllerName.
+	// We plan at some future to allow users to create different classes with different
+	// infrastructure configuration, so it makes sense to have multiple classes and do
+	// the helm install just once.
+	// In case the user decides to remove all of the classes, this is the same behavior (ish)
+	// of the OLM install, we do not remove the operator, etc.
+	ns := &corev1.Namespace{}
+	if err := r.client.Get(ctx, types.NamespacedName{
+		Name: controller.DefaultOperandNamespace,
+	}, ns); err != nil {
+		return fmt.Errorf("error getting the operand namespace")
+	}
 	ownerRef := &metav1.OwnerReference{
-		APIVersion: gatewayapiv1.SchemeGroupVersion.String(),
-		Kind:       "GatewayClass",
-		Name:       gatewayclass.Name,
-		UID:        gatewayclass.UID,
+		APIVersion: "v1",
+		Kind:       "Namespace",
+		Name:       controller.DefaultOperandNamespace,
+		UID:        ns.UID,
 		Controller: ptr.To(true),
 	}
 
@@ -52,7 +66,6 @@ func (r *reconciler) ensureIstio(ctx context.Context, gatewayclass *gatewayapiv1
 	// Istio adds its own Accepted condition: https://github.com/istio/istio/blob/24eab8800c50b999d01d2dd6ec589bbd59d01726/pilot/pkg/config/kube/gateway/gatewayclass.go#L114
 	// We must generate a specific Openshift condition for it
 	// TODO: merge the conditions, remove conditions in case OLM is being used instead of this
-
 	status := sailInstaller.Status()
 
 	mapStatusToConditions(status, gatewayclass.Generation, &gatewayclass.Status.Conditions)
