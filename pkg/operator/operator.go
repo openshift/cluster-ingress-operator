@@ -151,8 +151,6 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		panic(err)
 	}
 
-	log.Info("Gateway API HELM", "enabled", gatewayAPIWithoutOLMEnabled)
-
 	routeExternalCertificateEnabled := featureGates.Enabled(features.FeatureGateRouteExternalCertificate)
 	ingressControllerDCMEnabled := featureGates.Enabled(features.FeatureGateIngressControllerDynamicConfigurationManager)
 
@@ -347,7 +345,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	// Starting this library returns a channel, that can be used by the reconciliation
 	// process to receive notifications from the library informer and kick a new GatewayClass
 	// reconciliation.
-	if gatewayAPIControllerEnabled {
+	if gatewayAPIWithoutOLMEnabled {
 		installer, err := install.New(mgr.GetConfig(), resources.FS)
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize sail-operator installation library: %w", err)

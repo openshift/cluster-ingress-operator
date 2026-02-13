@@ -206,8 +206,17 @@ type Config struct {
 	SailOperatorReconciler *SailOperatorReconciler
 }
 
+// SailLibraryInstaller implements the methods of sail library but in a way we can
+// also mock and test
+type SailLibraryInstaller interface {
+	Start(ctx context.Context) <-chan struct{}
+	Apply(opts install.Options)
+	Uninstall(ctx context.Context, namespace, revision string) error
+	Status() install.Status
+}
+
 type SailOperatorReconciler struct {
-	Installer *install.Library
+	Installer SailLibraryInstaller
 	NotifyCh  <-chan struct{}
 }
 
@@ -337,16 +346,19 @@ func (r *reconciler) reconcileWithOLM(ctx context.Context, request reconcile.Req
 	// This is not SailOperator class, so remove any finalizer and any status from it
 	if controllerutil.RemoveFinalizer(gatewayclass, sailLibraryFinalizer) {
 		var errs []error
+		err := r.client.Patch(ctx, gatewayclass, client.MergeFrom(sourceGatewayClass))
+		if err != nil {
+			log.Error(err, "error patching the gatewayclass status")
+			errs = append(errs, err)
+		}
 		removeSailOperatorConditions(&gatewayclass.Status.Conditions)
 		if err := r.client.Status().Patch(ctx, gatewayclass, client.MergeFrom(sourceGatewayClass)); err != nil {
 			log.Error(err, "error patching the gatewayclass status")
 			errs = append(errs, err)
+
 		}
-		err := r.client.Patch(ctx, gatewayclass, client.MergeFrom(sourceGatewayClass))
-		if err != nil {
-			log.Error(err, "error patching the gatewayclass status")
-		}
-		return reconcile.Result{}, err // Removing the finalizer should kick a new reconciliation
+
+		return reconcile.Result{}, utilerrors.NewAggregate(errs) // Removing the finalizer should kick a new reconciliation
 	}
 
 	var errs []error
@@ -482,7 +494,7 @@ func (s *SailOperatorSource[T]) Start(ctx context.Context, queue workqueue.Typed
 		for {
 			select {
 			case <-ctx.Done():
-				break
+				return
 			case <-s.NotifyCh:
 				var empty T
 				requests := s.RequestsFunc(ctx, empty)
