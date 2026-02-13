@@ -78,6 +78,10 @@ const (
 	IstioRevLabelKey = "istio.io/rev"
 
 	GatewayClassIndexFieldName = "gatewayclassController"
+
+	// SailLibraryOwnerConfigMap is the name of the configmap used as ownerReference
+	// fot Sail Library installations
+	SailLibraryOwnerConfigMap = "gateway-api-sail-library"
 )
 
 // IngressClusterOperatorName returns the namespaced name of the ClusterOperator

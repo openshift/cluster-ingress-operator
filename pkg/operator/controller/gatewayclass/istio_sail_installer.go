@@ -6,10 +6,8 @@ import (
 
 	"github.com/istio-ecosystem/sail-operator/pkg/install"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
@@ -31,29 +29,8 @@ func (r *reconciler) ensureIstio(ctx context.Context, gatewayclass *gatewayapiv1
 		return fmt.Errorf("failed to check for InferencePool CRD: %w", err)
 	}
 
-	// We DO NOT pass GatewayClass as ownerRef, because we may have multiple GatewayClasses pointing to
-	// the same controllerName.
-	// We plan at some future to allow users to create different classes with different
-	// infrastructure configuration, so it makes sense to have multiple classes and do
-	// the helm install just once.
-	// In case the user decides to remove all of the classes, this is the same behavior (ish)
-	// of the OLM install, we do not remove the operator, etc.
-	ns := &corev1.Namespace{}
-	if err := r.client.Get(ctx, types.NamespacedName{
-		Name: controller.DefaultOperandNamespace,
-	}, ns); err != nil {
-		return fmt.Errorf("error getting the operand namespace")
-	}
-	ownerRef := &metav1.OwnerReference{
-		APIVersion: "v1",
-		Kind:       "Namespace",
-		Name:       controller.DefaultOperandNamespace,
-		UID:        ns.UID,
-		Controller: ptr.To(true),
-	}
-
 	// Build options from current state
-	opts, err := r.buildInstallerOptions(enableInferenceExtension, ownerRef, istioVersion)
+	opts, err := r.buildInstallerOptions(enableInferenceExtension, istioVersion)
 	if err != nil {
 		return err
 	}
@@ -73,7 +50,7 @@ func (r *reconciler) ensureIstio(ctx context.Context, gatewayclass *gatewayapiv1
 	return nil
 }
 
-func (r *reconciler) buildInstallerOptions(enableInferenceExtension bool, ownerRef *metav1.OwnerReference, istioVersion string) (install.Options, error) {
+func (r *reconciler) buildInstallerOptions(enableInferenceExtension bool, istioVersion string) (install.Options, error) {
 	// Start with Gateway API defaults
 	values := install.GatewayAPIDefaults()
 
@@ -85,7 +62,6 @@ func (r *reconciler) buildInstallerOptions(enableInferenceExtension bool, ownerR
 		Namespace:      controller.DefaultOperandNamespace,
 		Revision:       controller.IstioName("").Name,
 		Values:         values,
-		OwnerRef:       ownerRef,
 		Version:        istioVersion,
 		ManageCRDs:     ptr.To(true),
 		IncludeAllCRDs: ptr.To(true),

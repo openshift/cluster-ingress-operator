@@ -21,6 +21,7 @@ import (
 	"github.com/istio-ecosystem/sail-operator/pkg/install"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
@@ -28,6 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
@@ -76,6 +78,14 @@ const (
 	// can be specified.  This annotation is only intended for use by
 	// OpenShift developers.
 	istioVersionOverrideAnnotationKey = "unsupported.do-not-use.openshift.io/istio-version"
+	// sailLibraryFinalizer is a finalizer key added to GatewayClasses that
+	// at some moment were reconciled by sail-library.
+	// They signal two things:
+	// 1 - For sail-library, if there is no other gatewayclass using it, the reconciliation
+	// can be stopped
+	// 2 - For olm-install - In case it is called, it means the installation was rolled
+	// back and the finalizer must be removed
+	sailLibraryFinalizer = "openshift.io/ingress-operator-sail-finalizer"
 )
 
 var log = logf.Logger.WithName(controllerName)
@@ -278,10 +288,21 @@ func (r *reconciler) reconcileWithOLM(ctx context.Context, request reconcile.Req
 
 	sourceGatewayClass := &gatewayapiv1.GatewayClass{}
 	if err := r.cache.Get(ctx, request.NamespacedName, sourceGatewayClass); err != nil {
-		return reconcile.Result{}, err
+		if !errors.IsNotFound(err) {
+			return reconcile.Result{}, fmt.Errorf("error getting gatewayclass: %w", err)
+		}
+		return reconcile.Result{}, nil
 	}
 
 	gatewayclass := sourceGatewayClass.DeepCopy()
+	// This is not SailOperator class, so remove any finalizer
+	if controllerutil.RemoveFinalizer(gatewayclass, sailLibraryFinalizer) {
+		err := r.client.Patch(ctx, gatewayclass, client.MergeFrom(sourceGatewayClass))
+		if err != nil {
+			log.Error(err, "error patching the gatewayclass status")
+		}
+		return reconcile.Result{}, err // Removing the finalizer should kick a new reconciliation
+	}
 
 	var errs []error
 	ossmCatalog := r.config.GatewayAPIOperatorCatalog
@@ -340,10 +361,48 @@ func (r *reconciler) reconcileWithSailLibrary(ctx context.Context, request recon
 
 	sourceGatewayClass := &gatewayapiv1.GatewayClass{}
 	if err := r.cache.Get(ctx, request.NamespacedName, sourceGatewayClass); err != nil {
-		return reconcile.Result{}, fmt.Errorf("error getting gatewayclass: %w", err)
+		if !errors.IsNotFound(err) {
+			return reconcile.Result{}, fmt.Errorf("error getting gatewayclass: %w", err)
+		}
+		return reconcile.Result{}, nil
 	}
 
 	gatewayclass := sourceGatewayClass.DeepCopy()
+
+	if !gatewayclass.DeletionTimestamp.IsZero() {
+		// Check if this is the last remaining GatewayClass. If so:
+		// 1 - Stop the library in case this is the last GatewayClass
+		// 2 - Delete the finalizer (always, regardless of being the last)
+		// 3 - We must always return from here when deletion is in progress
+		gatewayClassList := gatewayapiv1.GatewayClassList{}
+		if err := r.cache.List(ctx, &gatewayClassList, client.MatchingFields{
+			operatorcontroller.GatewayClassIndexFieldName: operatorcontroller.OpenShiftGatewayClassControllerName,
+		}); err != nil {
+			return reconcile.Result{}, fmt.Errorf("failed to list gateway classes: %w", err)
+		}
+
+		if len(gatewayClassList.Items) < 2 {
+			if err := r.config.SailOperatorReconciler.Installer.Uninstall(ctx, operatorcontroller.DefaultOperandNamespace, operatorcontroller.IstioName("").Name); err != nil {
+				return reconcile.Result{}, fmt.Errorf("failed to uninstall the operator: %w", err)
+			}
+		}
+		// This is not SailOperator class, so remove any finalizer
+		if controllerutil.RemoveFinalizer(gatewayclass, sailLibraryFinalizer) {
+			err := r.client.Patch(ctx, gatewayclass, client.MergeFrom(sourceGatewayClass))
+			if err != nil {
+				log.Error(err, "error patching the gatewayclass status")
+			}
+			return reconcile.Result{}, err // Removing the finalizer should kick a new reconciliation
+		}
+	}
+
+	if controllerutil.AddFinalizer(gatewayclass, sailLibraryFinalizer) {
+		err := r.client.Patch(ctx, gatewayclass, client.MergeFrom(sourceGatewayClass))
+		if err != nil {
+			log.Error(err, "error patching the gatewayclass status")
+		}
+		return reconcile.Result{}, err // Return if we added the finalizer, to kick reconciliation again
+	}
 
 	// Ensure migration from 4.21 to 4.22 Sail Library.
 	if migrationComplete, err := r.ensureOSSMtoSailLibraryMigration(ctx); err != nil {
