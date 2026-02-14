@@ -54,8 +54,8 @@ var crdNames = []string{
 	"referencegrants.gateway.networking.k8s.io",
 }
 
-var xcrdNames = []string{
-	"listenersets.gateway.networking.x-k8s.io",
+var testCRDNames = []string{
+	"tests.gateway.networking.k8s.io",
 }
 
 // Global variables for testing.
@@ -339,11 +339,10 @@ func testGatewayAPIResourcesProtection(t *testing.T) {
 	// of the update verb for the experimental Gateway API group.
 	// Since an API `Get` is called before the update, the CRD must exist in the cluster,
 	// just like standard Gateway API CRDs.
-	bypassVAP(t, ensureExperimentalCRDs)
+	bypassVAP(t, ensureTestCRDs)
 	t.Cleanup(func() {
-		bypassVAP(t, deleteExperimentalCRDs)
+		bypassVAP(t, deleteTestCRDs)
 	})
-
 	// Get kube client which impersonates ingress operator's service account.
 	kubeConfig, err := config.GetConfig()
 	if err != nil {
@@ -359,7 +358,7 @@ func testGatewayAPIResourcesProtection(t *testing.T) {
 
 	// Create test CRDs.
 	var testCRDs []*apiextensionsv1.CustomResourceDefinition
-	for _, name := range append(crdNames, xcrdNames...) {
+	for _, name := range append(crdNames, testCRDNames...) {
 		testCRDs = append(testCRDs, buildGWAPICRDFromName(name))
 	}
 
@@ -948,8 +947,8 @@ func testGatewayAPIInternalLoadBalancer(t *testing.T) {
 	}
 }
 
-// testOperatorDegradedCondition verifies that unmanaged (e.g. experimental)
-// Gateway API CRDs affect the ingress cluster operator's Degraded status.
+// testOperatorDegradedCondition verifies that unmanaged Gateway API CRDs affect
+// the ingress cluster operator's Degraded status.
 func testOperatorDegradedCondition(t *testing.T) {
 	// Ensure that the ingress operator is not in a Degraded state
 	// to prevent conflicts with the unmanaged Gateway API CRDs logic.
@@ -964,9 +963,9 @@ func testOperatorDegradedCondition(t *testing.T) {
 		t.Fatalf("Operator should be Degraded=False: %v", err)
 	}
 
-	// Create experimental CRDs to check if the ingress cluster operator
+	// Create test CRDs to check if the ingress cluster operator
 	// transitions to the Degraded state.
-	bypassVAP(t, ensureExperimentalCRDs)
+	bypassVAP(t, ensureTestCRDs)
 	expectedDegraded = []configv1.ClusterOperatorStatusCondition{
 		{
 			Type:   configv1.OperatorDegraded,
@@ -980,7 +979,7 @@ func testOperatorDegradedCondition(t *testing.T) {
 
 	// Remove the experimental CRDs to checks that the ingress cluster operator
 	// recovers from the Degraded state.
-	bypassVAP(t, deleteExperimentalCRDs)
+	bypassVAP(t, deleteTestCRDs)
 	expectedDegraded = []configv1.ClusterOperatorStatusCondition{
 		{
 			Type:   configv1.OperatorDegraded,
@@ -1017,29 +1016,6 @@ func deleteCRDs(t *testing.T) {
 	}
 }
 
-// deleteExperimentalCRDs deletes experimental Gateway API custom resource definitions.
-func deleteExperimentalCRDs(t *testing.T) {
-	t.Helper()
-
-	for _, crdName := range xcrdNames {
-		err := deleteExistingCRD(t, crdName)
-		if err != nil {
-			t.Errorf("failed to delete crd %s: %v", crdName, err)
-		}
-	}
-}
-
-// ensureExperimentalCRDs creates experimental Gateway API custom resource definitions.
-func ensureExperimentalCRDs(t *testing.T) {
-	for _, crdName := range xcrdNames {
-		if _, err := createCRD(crdName); err != nil {
-			t.Fatalf("failed to create experimental crd %q: %v", crdName, err)
-		} else {
-			t.Logf("created experimental crd %q", crdName)
-		}
-	}
-}
-
 // ensureGatewayObjectCreation tests that gateway class, gateway, and http route objects can be created.
 func ensureGatewayObjectCreation(t *testing.T, ns *corev1.Namespace) error {
 	var domain string
@@ -1069,6 +1045,29 @@ func ensureGatewayObjectCreation(t *testing.T, ns *corev1.Namespace) error {
 	// The http route is cleaned up when the namespace is deleted.
 
 	return nil
+}
+
+// deleteTestCRDs deletes test Gateway API custom resource definitions.
+func deleteTestCRDs(t *testing.T) {
+	t.Helper()
+
+	for _, crdName := range testCRDNames {
+		err := deleteExistingCRD(t, crdName)
+		if err != nil {
+			t.Errorf("failed to delete crd %s: %v", crdName, err)
+		}
+	}
+}
+
+// ensureTestCRDs creates test Gateway API custom resource definitions.
+func ensureTestCRDs(t *testing.T) {
+	for _, crdName := range testCRDNames {
+		if _, err := createCRD(crdName); err != nil {
+			t.Fatalf("failed to create test crd %q: %v", crdName, err)
+		} else {
+			t.Logf("created test crd %q", crdName)
+		}
+	}
 }
 
 // ensureGatewayObjectSuccess tests that gateway class, gateway, and http route objects were accepted as valid,
