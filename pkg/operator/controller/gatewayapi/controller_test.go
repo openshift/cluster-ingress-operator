@@ -163,8 +163,8 @@ func Test_Reconcile(t *testing.T) {
 			olmEnabled:                  true,
 			existingObjects: []runtime.Object{
 				co("ingress"),
-				crd("listenersets.gateway.networking.x-k8s.io"),
-				crd("backendtrafficpolicies.gateway.networking.x-k8s.io"),
+				crd("invalid.test.gateway.networking.k8s.io"),
+				crd("another.test.gateway.networking.k8s.io"),
 			},
 			existingStatusSubresource: []client.Object{
 				co("ingress"),
@@ -182,7 +182,7 @@ func Test_Reconcile(t *testing.T) {
 			expectUpdate: []client.Object{},
 			expectDelete: []client.Object{},
 			expectStatusUpdate: []client.Object{
-				coWithExtension("ingress", `{"unmanagedGatewayAPICRDNames":"backendtrafficpolicies.gateway.networking.x-k8s.io,listenersets.gateway.networking.x-k8s.io"}`),
+				coWithExtension("ingress", `{"unmanagedGatewayAPICRDNames":"another.test.gateway.networking.k8s.io,invalid.test.gateway.networking.k8s.io"}`),
 			},
 			expectStartCtrl: true,
 		},
@@ -193,7 +193,7 @@ func Test_Reconcile(t *testing.T) {
 			marketplaceEnabled:          true,
 			olmEnabled:                  true,
 			existingObjects: []runtime.Object{
-				coWithExtension("ingress", `{"unmanagedGatewayAPICRDNames":"listenersets.gateway.networking.x-k8s.io"}`),
+				coWithExtension("ingress", `{"unmanagedGatewayAPICRDNames":"invalid.test.gateway.networking.k8s.io"}`),
 			},
 			existingStatusSubresource: []client.Object{
 				co("ingress"),
@@ -259,8 +259,8 @@ func Test_Reconcile(t *testing.T) {
 				WithRuntimeObjects(tc.existingObjects...).
 				WithStatusSubresource(tc.existingStatusSubresource...).
 				WithIndex(&apiextensionsv1.CustomResourceDefinition{}, "gatewayAPICRD", client.IndexerFunc(func(o client.Object) []string {
-					// Assume that all experimental CRDs are unmanaged.
-					if strings.Contains(o.GetName(), "gateway.networking.x-k8s.io") {
+					// Assume that test.gateway group CRD is unmanaged.
+					if strings.Contains(o.GetName(), "test.gateway.networking.k8s.io") {
 						return []string{"unmanaged"}
 					}
 					return []string{}
