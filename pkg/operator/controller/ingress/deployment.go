@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/url"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -113,6 +114,8 @@ const (
 	StatsPortName = "metrics"
 
 	haproxyMaxTimeoutMilliseconds = 2147483647 * time.Millisecond
+
+	routerInitContainerName = "init-router"
 )
 
 // ensureRouterDeployment ensures the router deployment exists for a given
@@ -1198,6 +1201,94 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 		})
 	}
 
+	// TODO move to a proper API
+	//
+	// * haproxyVersion defines the haproxy version to use, from the options pre-installed in router's image.
+	// * haproxyImage defines the URL of an haproxy image to use, being configured as a sidecar of router pod.
+	//   `haproxy` binary must be in the path.
+	//
+	// If both haproxyVersion and haproxyImage are configured at the same time, haproxyImage has priority and
+	// haproxyVersion is ignored.
+	var haproxyVersion, haproxyImage string
+	if ci.Annotations != nil {
+		haproxyVersion = ci.Annotations["haproxy-version"]
+		haproxyImage = ci.Annotations["haproxy-image"]
+	}
+
+	if haproxyVersion != "" {
+		env = append(env, corev1.EnvVar{
+			Name:  "ROUTER_HAPROXY_VERSION",
+			Value: haproxyVersion,
+		})
+	}
+
+	if haproxyImage != "" {
+		// TODO: hostNetwork as false must be a validation instead, this is needed due to the unprivileged port configuration below.
+		// Notes for the validation: See also hostNetwork assignment on deploymentConfigChanged(), and bear in mind that, since it is
+		// not being copied there, it is considered immutable. Being false here does not mean being false in the final config.
+		deployment.Spec.Template.Spec.HostNetwork = false
+
+		// allows binding :80 and :443
+		// In case hostNetwork is true, we have a few other not-so-good options:
+		// * bypass the configuration if all the listening ports >=1024, unlikely to happen if hostnetwork is true
+		// * binary has the bind capability and kernel accepts it - but how to know before trying?
+		//   By default library/haproxy does not configure it: https://github.com/docker-library/haproxy/issues/170#issuecomment-2005217587
+		deployment.Spec.Template.Spec.SecurityContext = &corev1.PodSecurityContext{
+			Sysctls: []corev1.Sysctl{{
+				Name:  "net.ipv4.ip_unprivileged_port_start",
+				Value: "1",
+			}},
+		}
+		// sysctl above needs this configured
+		deployment.Spec.Template.Spec.OS = &corev1.PodOS{
+			Name: corev1.Linux,
+		}
+
+		// shared volume between router and haproxy
+		deployment.Spec.Template.Spec.Volumes = append(deployment.Spec.Template.Spec.Volumes, corev1.Volume{
+			Name: "config",
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		})
+
+		// copy config data from router's container to the shared volume via this initContainer
+		deployment.Spec.Template.Spec.InitContainers = append(deployment.Spec.Template.Spec.InitContainers, corev1.Container{
+			Name:            routerInitContainerName,
+			Image:           deployment.Spec.Template.Spec.Containers[0].Image,
+			ImagePullPolicy: deployment.Spec.Template.Spec.Containers[0].ImagePullPolicy,
+			Command:         []string{"/bin/bash", "-c", "cp -R -p /var/lib/haproxy/* /mnt/config/"},
+			VolumeMounts: []corev1.VolumeMount{{
+				Name:      "config",
+				MountPath: "/mnt/config",
+			}},
+		})
+
+		// config volume on router's container
+		deployment.Spec.Template.Spec.Containers[0].VolumeMounts = append(deployment.Spec.Template.Spec.Containers[0].VolumeMounts, corev1.VolumeMount{
+			Name:      "config",
+			MountPath: "/var/lib/haproxy",
+		})
+
+		// adding haproxy as a sidecar container
+		deployment.Spec.Template.Spec.Containers = append(deployment.Spec.Template.Spec.Containers, corev1.Container{
+			Name:            "haproxy",
+			Image:           haproxyImage,
+			ImagePullPolicy: corev1.PullIfNotPresent,
+			Command:         []string{"haproxy"},
+			Args:            []string{"-W", "-db", "-S", "/var/lib/haproxy/run/master.sock,mode,600", "-f", "/var/lib/haproxy/conf/haproxy.config"},
+			Lifecycle: &corev1.Lifecycle{
+				StopSignal: ptr.To(corev1.SIGUSR1),
+			},
+			Resources:    deployment.Spec.Template.Spec.Containers[0].Resources,
+			VolumeMounts: slices.Clone(deployment.Spec.Template.Spec.Containers[0].VolumeMounts),
+		})
+		env = append(env, corev1.EnvVar{
+			Name:  "ROUTER_HAPROXY_MASTER_UNIX_SOCKET",
+			Value: "/var/lib/haproxy/run/master.sock",
+		})
+	}
+
 	// TODO: The only connections from the router that may need the cluster-wide proxy are those for downloading CRLs,
 	// which, as of writing this, will always be http. If https becomes necessary, the router will need to mount the
 	// trusted CA bundle that cluster-network-operator generates. The process for adding that is described here:
@@ -1479,6 +1570,7 @@ func hashableDeployment(deployment *appsv1.Deployment, onlyTemplate bool) *appsv
 		return containers[i].Name < containers[j].Name
 	})
 	hashableDeployment.Spec.Template.Spec.Containers = containers
+	hashableDeployment.Spec.Template.Spec.Containers = deployment.Spec.Template.Spec.InitContainers
 	hashableDeployment.Spec.Template.Spec.DNSPolicy = deployment.Spec.Template.Spec.DNSPolicy
 	hashableDeployment.Spec.Template.Spec.HostNetwork = deployment.Spec.Template.Spec.HostNetwork
 	volumes := make([]corev1.Volume, len(deployment.Spec.Template.Spec.Volumes))
@@ -1496,6 +1588,10 @@ func hashableDeployment(deployment *appsv1.Deployment, onlyTemplate bool) *appsv
 	sort.Slice(volumes, func(i, j int) bool {
 		return volumes[i].Name < volumes[j].Name
 	})
+	hashableDeployment.Spec.Template.Spec.OS = deployment.Spec.Template.Spec.OS
+	if deployment.Spec.Template.Spec.SecurityContext != nil {
+		hashableDeployment.Spec.Template.Spec.SecurityContext = &corev1.PodSecurityContext{Sysctls: deployment.Spec.Template.Spec.SecurityContext.Sysctls}
+	}
 	hashableDeployment.Spec.Template.Spec.Volumes = volumes
 	hashableDeployment.Spec.Template.Annotations = make(map[string]string)
 	annotations := []string{LivenessGracePeriodSecondsAnnotation, WorkloadPartitioningManagement}
@@ -1661,6 +1757,14 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 		containers[i+1] = *container.DeepCopy()
 	}
 	updated.Spec.Template.Spec.Containers = containers
+
+	// initContainers always override all fields
+	updated.Spec.Template.Spec.InitContainers = expected.Spec.Template.Spec.InitContainers
+
+	// TODO: MVP only, remove when moving to the hostNetwork validation
+	// See its counterpart in desiredRouterDeployment()
+	updated.Spec.Template.Spec.HostNetwork = expected.Spec.Template.Spec.HostNetwork
+
 	updated.Spec.Template.Spec.DNSPolicy = expected.Spec.Template.Spec.DNSPolicy
 	updated.Spec.Template.Labels = expected.Spec.Template.Labels
 
@@ -1696,6 +1800,16 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 	updated.Spec.Template.Spec.Tolerations = expected.Spec.Template.Spec.Tolerations
 	updated.Spec.Template.Spec.TopologySpreadConstraints = expected.Spec.Template.Spec.TopologySpreadConstraints
 	updated.Spec.Template.Spec.Affinity = expected.Spec.Template.Spec.Affinity
+	updated.Spec.Template.Spec.OS = expected.Spec.Template.Spec.OS
+	if updated.Spec.Template.Spec.SecurityContext == nil {
+		updated.Spec.Template.Spec.SecurityContext = &corev1.PodSecurityContext{}
+	}
+	if expected.Spec.Template.Spec.SecurityContext != nil {
+		updated.Spec.Template.Spec.SecurityContext.Sysctls = expected.Spec.Template.Spec.SecurityContext.Sysctls
+	} else {
+		updated.Spec.Template.Spec.SecurityContext.Sysctls = nil
+	}
+	updated.Spec.Template.Spec.InitContainers = expected.Spec.Template.Spec.InitContainers
 	replicas := int32(1)
 	if expected.Spec.Replicas != nil {
 		replicas = *expected.Spec.Replicas
