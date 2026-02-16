@@ -259,7 +259,7 @@ func Test_Reconcile(t *testing.T) {
 				WithRuntimeObjects(tc.existingObjects...).
 				WithStatusSubresource(tc.existingStatusSubresource...).
 				WithIndex(&apiextensionsv1.CustomResourceDefinition{}, "gatewayAPICRD", client.IndexerFunc(func(o client.Object) []string {
-					// Assume that all experimental CRDs are unmanaged.
+					// Assume that test.gateway group CRD is unmanaged.
 					if strings.Contains(o.GetName(), "test.gateway.networking.k8s.io") {
 						return []string{"unmanaged"}
 					}
