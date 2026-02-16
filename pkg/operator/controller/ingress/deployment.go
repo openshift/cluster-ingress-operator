@@ -51,8 +51,11 @@ const (
 	RouterLogLevelEnvName       = "ROUTER_LOG_LEVEL"
 	RouterLogMaxLengthEnvName   = "ROUTER_LOG_MAX_LENGTH"
 	RouterSyslogAddressEnvName  = "ROUTER_SYSLOG_ADDRESS"
-	RouterSyslogFormatEnvName   = "ROUTER_SYSLOG_FORMAT"
 	RouterSyslogFacilityEnvName = "ROUTER_LOG_FACILITY"
+
+        RouterTCPLogFormatEnvName   = "ROUTER_TCP_LOG_FORMAT"
+        RouterHTTPLogFormatEnvName  = "ROUTER_HTTP_LOG_FORMAT"
+        RouterHTTPSLogFormatEnvName = "ROUTER_HTTPS_LOG_FORMAT"
 
 	RouterCaptureHTTPRequestHeaders  = "ROUTER_CAPTURE_HTTP_REQUEST_HEADERS"
 	RouterCaptureHTTPResponseHeaders = "ROUTER_CAPTURE_HTTP_RESPONSE_HEADERS"
@@ -906,8 +909,14 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 			)
 		}
 
+		if len(accessLogging.TcpLogFormat) > 0 {
+			env = append(env, corev1.EnvVar{Name: RouterTCPLogFormatEnvName, Value: fmt.Sprintf("%q", accessLogging.TcpLogFormat)})
+		}
 		if len(accessLogging.HttpLogFormat) > 0 {
-			env = append(env, corev1.EnvVar{Name: RouterSyslogFormatEnvName, Value: fmt.Sprintf("%q", accessLogging.HttpLogFormat)})
+			env = append(env, corev1.EnvVar{Name: RouterHTTPLogFormatEnvName, Value: fmt.Sprintf("%q", accessLogging.HttpLogFormat)})
+		}
+		if len(accessLogging.HttpsLogFormat) > 0 {
+			env = append(env, corev1.EnvVar{Name: RouterHTTPSLogFormatEnvName, Value: fmt.Sprintf("%q", accessLogging.HttpsLogFormat)})
 		}
 		if val := serializeCaptureHeaders(accessLogging.HTTPCaptureHeaders.Request); len(val) != 0 {
 			env = append(env, corev1.EnvVar{
@@ -1254,7 +1263,9 @@ func accessLoggingForIngressController(ic *operatorv1.IngressController) *operat
 				Type:      operatorv1.ContainerLoggingDestinationType,
 				Container: &containerLoggingParameters,
 			},
+			TcpLogFormat:       ic.Spec.Logging.Access.TcpLogFormat,
 			HttpLogFormat:      ic.Spec.Logging.Access.HttpLogFormat,
+			HttpsLogFormat:     ic.Spec.Logging.Access.HttpsLogFormat,
 			HTTPCaptureHeaders: ic.Spec.Logging.Access.HTTPCaptureHeaders,
 			HTTPCaptureCookies: ic.Spec.Logging.Access.HTTPCaptureCookies,
 			LogEmptyRequests:   ic.Spec.Logging.Access.LogEmptyRequests,
@@ -1271,7 +1282,9 @@ func accessLoggingForIngressController(ic *operatorv1.IngressController) *operat
 						MaxLength: ic.Spec.Logging.Access.Destination.Syslog.MaxLength,
 					},
 				},
+				TcpLogFormat:       ic.Spec.Logging.Access.TcpLogFormat,
 				HttpLogFormat:      ic.Spec.Logging.Access.HttpLogFormat,
+				HttpsLogFormat:     ic.Spec.Logging.Access.HttpsLogFormat,
 				HTTPCaptureHeaders: ic.Spec.Logging.Access.HTTPCaptureHeaders,
 				HTTPCaptureCookies: ic.Spec.Logging.Access.HTTPCaptureCookies,
 				LogEmptyRequests:   ic.Spec.Logging.Access.LogEmptyRequests,
