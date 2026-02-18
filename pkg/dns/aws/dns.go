@@ -24,6 +24,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/elbv2"
 	"github.com/aws/aws-sdk-go/service/resourcegroupstaggingapi"
 	"github.com/aws/aws-sdk-go/service/route53"
+	"github.com/aws/aws-sdk-go/service/sts"
 
 	"k8s.io/apimachinery/pkg/types"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
@@ -38,6 +39,8 @@ const (
 	Route53Service = route53.ServiceName
 	// ELBService is the name of the Elastic Load Balancing service.
 	ELBService = elb.ServiceName
+	// STSService is the name of the Security Token Service.
+	STSService = sts.ServiceName
 	// TaggingService is the name of the Resource Group Tagging service.
 	TaggingService = resourcegroupstaggingapi.ServiceName
 	// govCloudRoute53Region is the AWS GovCloud region for Route 53. See:
@@ -163,8 +166,22 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 	// RoleARN is intended to only provide access to another account's Route 53 service, not for ELBs.
 	sessRoute53 := sess
 	if config.RoleARN != "" {
+		// Create a separate session for STS with custom endpoint support if any
+		sessSTS := sess.Copy()
+		stsConfig := aws.NewConfig().WithRegion(region)
+		// Check for custom STS endpoint
+		for _, ep := range config.ServiceEndpoints {
+			if ep.Name == STSService {
+				stsConfig = stsConfig.WithEndpoint(ep.URL)
+				log.Info("Found STS custom endpoint", "url", ep.URL)
+				break
+			}
+		}
+		stsClient := sts.New(sessSTS, stsConfig)
+
+		// Use STS client to assume role
 		sessRoute53 = sess.Copy()
-		sessRoute53.Config.WithCredentials(stscreds.NewCredentials(sessRoute53, config.RoleARN))
+		sessRoute53.Config.WithCredentials(stscreds.NewCredentialsWithClient(stsClient, config.RoleARN))
 	}
 
 	r53Config := aws.NewConfig()
