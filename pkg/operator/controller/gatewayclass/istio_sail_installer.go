@@ -24,19 +24,19 @@ const (
 )
 
 // SubscriptionExists is used as a predicate function to allow the library to
-// take an action
-func (r *reconciler) subscriptionExists(ctx context.Context, label string) bool {
+// query CIO if a subscription exists before taking an action over a CRD
+func (r *reconciler) subscriptionExists(ctx context.Context, label string) (bool, error) {
 	// Not the prefix we want
 	if !strings.HasPrefix(label, subscriptionPrefix) {
 		log.Info("ignoring resource with invalid label", "label", label)
-		return false
+		return false, nil
 	}
 
 	// Check if label is on the format we want
 	nameNamespace := strings.SplitN(strings.TrimPrefix(label, subscriptionPrefix), ".", 2)
 	if len(nameNamespace) != 2 {
 		log.Info("ignoring resource with invalid label", "label", label)
-		return false
+		return false, nil
 	}
 
 	// Check for InstallPlan, which effectivelly installs CRDs. Even if invalid it
@@ -44,10 +44,10 @@ func (r *reconciler) subscriptionExists(ctx context.Context, label string) bool 
 	installPlanList := operatorsv1alpha1.InstallPlanList{}
 	if err := r.cache.List(ctx, &installPlanList, client.HasLabels([]string{label})); err != nil {
 		log.Error(err, "error trying to find install plans, will consider that subscription exists")
-		return true
+		return false, err
 	}
 	if len(installPlanList.Items) > 0 {
-		return true
+		return false, nil
 	}
 
 	// Next check for subscriptions.
@@ -58,14 +58,13 @@ func (r *reconciler) subscriptionExists(ctx context.Context, label string) bool 
 	if err != nil {
 		if !errors.IsNotFound(err) {
 			log.Error(err, "error trying to find install plans, will consider that subscription exists")
-			// return true here to avoid overtaking a CRD. Assume something exists
-			return true
+			return false, err
 		}
-		return false // No subscription means no installplan
+		return false, nil
 	}
 	// If we are here means we don't have installplans, but we do have subscriptions
 	// which means we may be on an intermediate state
-	return true
+	return true, nil
 }
 
 // ensureIstio installs or updates Istio using the Sail Library.
