@@ -223,4 +223,4 @@ require (
 replace github.com/imdario/mergo => github.com/imdario/mergo v0.3.5
 
 // Use the sail_library_2 branch from aslakknutsen's fork for Sail Library integration
-replace github.com/istio-ecosystem/sail-operator => github.com/aslakknutsen/sail-operator v0.0.0-20260213134001-9db486eb4b9d
+replace github.com/istio-ecosystem/sail-operator => github.com/aslakknutsen/sail-operator v0.0.0-20260216135524-92a0ae891bee

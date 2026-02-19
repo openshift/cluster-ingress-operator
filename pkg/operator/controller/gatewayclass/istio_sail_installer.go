@@ -3,19 +3,70 @@ package gatewayclass
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/istio-ecosystem/sail-operator/pkg/install"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
 const (
 	ControllerInstalledConditionType = "ControllerInstalled"
 	CRDsReadyConditionType           = "CRDsReady"
+
+	subscriptionPrefix = "operators.coreos.com/"
 )
+
+// SubscriptionExists is used as a predicate function to allow the library to
+// take an action
+func (r *reconciler) subscriptionExists(ctx context.Context, label string) bool {
+	// Not the prefix we want
+	if !strings.HasPrefix(label, subscriptionPrefix) {
+		log.Info("ignoring resource with invalid label", "label", label)
+		return false
+	}
+
+	// Check if label is on the format we want
+	nameNamespace := strings.SplitN(strings.TrimPrefix(label, subscriptionPrefix), ".", 2)
+	if len(nameNamespace) != 2 {
+		log.Info("ignoring resource with invalid label", "label", label)
+		return false
+	}
+
+	// Check for InstallPlan, which effectivelly installs CRDs. Even if invalid it
+	// may become valid at some point and overwrite CRDs
+	installPlanList := operatorsv1alpha1.InstallPlanList{}
+	if err := r.cache.List(ctx, &installPlanList, client.HasLabels([]string{label})); err != nil {
+		log.Error(err, "error trying to find install plans, will consider that subscription exists")
+		return true
+	}
+	if len(installPlanList.Items) > 0 {
+		return true
+	}
+
+	// Next check for subscriptions.
+	subscription := operatorsv1alpha1.Subscription{}
+	subscription.SetNamespace(nameNamespace[1])
+	subscription.SetName(nameNamespace[0])
+	err := r.cache.Get(ctx, client.ObjectKeyFromObject(&subscription), &subscription)
+	if err != nil {
+		if !errors.IsNotFound(err) {
+			log.Error(err, "error trying to find install plans, will consider that subscription exists")
+			// return true here to avoid overtaking a CRD. Assume something exists
+			return true
+		}
+		return false // No subscription means no installplan
+	}
+	// If we are here means we don't have installplans, but we do have subscriptions
+	// which means we may be on an intermediate state
+	return true
+}
 
 // ensureIstio installs or updates Istio using the Sail Library.
 // It returns an error if the installation fails.
