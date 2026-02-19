@@ -22,22 +22,6 @@ import (
 	"k8s.io/utils/ptr"
 )
 
-// Environment variable names for Istio resource filtering.
-// X_ prefix prevents Istio from processing until the feature is ready.
-// When activating, remove the X_ prefix.
-// See: https://github.com/istio/istio/commit/7e58d08397ee7b7119bf49abc9bd7b4f550f7839
-const (
-	EnvPilotIgnoreResources  = "X_PILOT_IGNORE_RESOURCES"
-	EnvPilotIncludeResources = "X_PILOT_INCLUDE_RESOURCES"
-)
-
-// Resource filtering values for Gateway API mode.
-// Ignore all istio.io resources except the 3 needed for gateway customization.
-const (
-	GatewayAPIIgnoreResources  = "*.istio.io"
-	GatewayAPIIncludeResources = "wasmplugins.extensions.istio.io,envoyfilters.networking.istio.io,destinationrules.networking.istio.io"
-)
-
 // GatewayAPIDefaults returns pre-configured values for Gateway API mode on OpenShift.
 // These values configure istiod to work as a Gateway API controller.
 //
@@ -91,8 +75,8 @@ func GatewayAPIDefaults() *v1.Values {
 				"PILOT_ENABLE_GATEWAY_API_COPY_LABELS_ANNOTATIONS": "false",
 				// Resource filtering for Gateway API mode (X_ prefix until Istio feature is ready)
 				// When active, istiod will only reconcile Gateway API + the 3 included Istio resources
-				EnvPilotIgnoreResources:  GatewayAPIIgnoreResources,
-				EnvPilotIncludeResources: GatewayAPIIncludeResources,
+				envPilotIgnoreResources:  gatewayAPIIgnoreResources,
+				envPilotIncludeResources: gatewayAPIIncludeResources,
 			},
 		},
 		SidecarInjectorWebhook: &v1.SidecarInjectorConfig{

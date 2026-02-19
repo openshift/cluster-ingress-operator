@@ -24,6 +24,22 @@ import (
 	"github.com/istio-ecosystem/sail-operator/chart/crds"
 )
 
+// Environment variable names for Istio resource filtering.
+// X_ prefix prevents Istio from processing until the feature is ready.
+// When activating, remove the X_ prefix.
+// See: https://github.com/istio/istio/commit/7e58d08397ee7b7119bf49abc9bd7b4f550f7839
+const (
+	envPilotIgnoreResources  = "X_PILOT_IGNORE_RESOURCES"
+	envPilotIncludeResources = "X_PILOT_INCLUDE_RESOURCES"
+)
+
+// Resource filtering values for Gateway API mode.
+// Ignore all istio.io resources except the 3 needed for gateway customization.
+const (
+	gatewayAPIIgnoreResources  = "*.istio.io"
+	gatewayAPIIncludeResources = "wasmplugins.extensions.istio.io,envoyfilters.networking.istio.io,destinationrules.networking.istio.io"
+)
+
 // resourceToCRDFilename converts a resource name to its CRD filename.
 // The naming convention is: "{plural}.{group}" -> "{group}_{plural}.yaml"
 // Example: "wasmplugins.extensions.istio.io" -> "extensions.istio.io_wasmplugins.yaml"
@@ -138,8 +154,8 @@ func targetCRDsFromValues(values *v1.Values, includeAllCRDs bool) ([]string, err
 		return nil, nil
 	}
 
-	ignorePatterns := values.Pilot.Env[EnvPilotIgnoreResources]
-	includePatterns := values.Pilot.Env[EnvPilotIncludeResources]
+	ignorePatterns := values.Pilot.Env[envPilotIgnoreResources]
+	includePatterns := values.Pilot.Env[envPilotIncludeResources]
 
 	// If no filters defined, nothing to do
 	if ignorePatterns == "" && includePatterns == "" {

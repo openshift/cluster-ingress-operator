@@ -18,9 +18,14 @@ import (
 	"reflect"
 	"regexp"
 
+	"github.com/istio-ecosystem/sail-operator/pkg/constants"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
+
+// istiodValidatorRe matches istiod-managed ValidatingWebhookConfiguration names.
+// Precompiled to avoid recompilation on every update event.
+var istiodValidatorRe = regexp.MustCompile(`^(istiod-.*-validator|istio-validator.*)$`)
 
 // Predicate filtering logic adapted from controllers/istiorevision for use with dynamic informers.
 // These functions determine whether a resource change should trigger reconciliation.
@@ -73,7 +78,7 @@ func shouldReconcileOnUpdate(gvk schema.GroupVersionKind, oldObj, newObj *unstru
 	}
 
 	// Resources that need status-change filtering
-	if needsStatusChangeFilter(gvk) {
+	if shouldFilterStatusChanges(gvk) {
 		return !isStatusOnlyChange(gvk, oldObj, newObj)
 	}
 
@@ -81,8 +86,8 @@ func shouldReconcileOnUpdate(gvk schema.GroupVersionKind, oldObj, newObj *unstru
 	return true
 }
 
-// needsStatusChangeFilter returns true for GVKs that should ignore status-only changes.
-func needsStatusChangeFilter(gvk schema.GroupVersionKind) bool {
+// shouldFilterStatusChanges returns true for GVKs that should ignore status-only changes.
+func shouldFilterStatusChanges(gvk schema.GroupVersionKind) bool {
 	switch gvk {
 	case serviceGVK, networkPolicyGVK, pdbGVK, hpaGVK, namespaceGVK:
 		return true
@@ -152,8 +157,7 @@ func shouldReconcileValidatingWebhook(oldObj, newObj *unstructured.Unstructured)
 	name := newObj.GetName()
 
 	// Check if this is an istiod-managed validator webhook
-	matched, _ := regexp.MatchString("istiod-.*-validator|istio-validator.*", name)
-	if !matched {
+	if !istiodValidatorRe.MatchString(name) {
 		// Not an istiod validator, reconcile normally
 		return true
 	}
@@ -185,6 +189,49 @@ func clearWebhookIgnoredFields(obj *unstructured.Unstructured) *unstructured.Uns
 	}
 
 	return obj
+}
+
+// isOwnedResource checks if the resource is owned by our installation
+// by examining Istio labels against the expected revision and the
+// managed-by label set by the post-renderer.
+func isOwnedResource(obj *unstructured.Unstructured, revision, managedByValue string) bool {
+	labels := obj.GetLabels()
+	if labels == nil {
+		return false
+	}
+
+	if rev, ok := labels["istio.io/rev"]; ok {
+		expectedRev := revision
+		if expectedRev == defaultRevision {
+			expectedRev = "default"
+		}
+		return rev == expectedRev
+	}
+
+	if _, ok := labels["operator.istio.io/component"]; ok {
+		return true
+	}
+
+	// Check the managed-by label set by HelmPostRenderer.
+	if managedBy, ok := labels[constants.ManagedByLabelKey]; ok {
+		return managedBy == managedByValue
+	}
+
+	// Fallback: Helm sets app.kubernetes.io/managed-by to "Helm" on chart resources.
+	if managedBy, ok := labels["app.kubernetes.io/managed-by"]; ok {
+		return managedBy == "Helm"
+	}
+
+	return false
+}
+
+// isTargetCRD checks if an unstructured CRD object's name is in the target set.
+func isTargetCRD(obj *unstructured.Unstructured, targets map[string]struct{}) bool {
+	if len(targets) == 0 {
+		return false
+	}
+	_, ok := targets[obj.GetName()]
+	return ok
 }
 
 // shouldReconcileCRDOnUpdate determines if a CRD update should trigger reconciliation.

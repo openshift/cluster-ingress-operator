@@ -30,14 +30,14 @@ import (
 
 // CRD ownership labels and annotations.
 const (
-	// LabelManagedByCIO indicates the CRD is managed by the Cluster Ingress Operator.
-	LabelManagedByCIO = "ingress.operator.openshift.io/owned"
+	// labelManagedByCIO indicates the CRD is managed by the Cluster Ingress Operator.
+	labelManagedByCIO = "ingress.operator.openshift.io/owned"
 
-	// LabelOLMManaged indicates the CRD is managed by OLM (OSSM subscription).
-	LabelOLMManaged = "olm.managed"
+	// labelOLMManaged indicates the CRD is managed by OLM (OSSM subscription).
+	labelOLMManaged = "olm.managed"
 
-	// AnnotationHelmKeep prevents Helm from deleting the CRD during uninstall.
-	AnnotationHelmKeep = "helm.sh/resource-policy"
+	// annotationHelmKeep prevents Helm from deleting the CRD during uninstall.
+	annotationHelmKeep = "helm.sh/resource-policy"
 )
 
 // CRDManagementState represents the aggregate ownership state of Istio CRDs on the cluster.
@@ -78,8 +78,8 @@ type CRDInfo struct {
 	Found bool
 }
 
-// CRDResult bundles the outcome of CRD reconciliation.
-type CRDResult struct {
+// crdResult bundles the outcome of CRD reconciliation.
+type crdResult struct {
 	// State is the aggregate ownership state of the target Istio CRDs.
 	State CRDManagementState
 
@@ -93,20 +93,20 @@ type CRDResult struct {
 	Error error
 }
 
-// CRDManager encapsulates all CRD classification, installation, and update logic.
+// crdManager encapsulates all CRD classification, installation, and update logic.
 // It provides a single entry point (Reconcile) and keeps a client dependency
 // that can be swapped out in tests.
-type CRDManager struct {
+type crdManager struct {
 	cl client.Client
 }
 
-// NewCRDManager creates a CRDManager with the given Kubernetes client.
-func NewCRDManager(cl client.Client) *CRDManager {
-	return &CRDManager{cl: cl}
+// newCRDManager creates a crdManager with the given Kubernetes client.
+func newCRDManager(cl client.Client) *crdManager {
+	return &crdManager{cl: cl}
 }
 
 // classifyCRD checks a single CRD on the cluster and returns its ownership state.
-func (m *CRDManager) classifyCRD(ctx context.Context, crdName string) CRDInfo {
+func (m *crdManager) classifyCRD(ctx context.Context, crdName string) CRDInfo {
 	existing := &apiextensionsv1.CustomResourceDefinition{}
 	err := m.cl.Get(ctx, client.ObjectKey{Name: crdName}, existing)
 	if err != nil {
@@ -120,12 +120,12 @@ func (m *CRDManager) classifyCRD(ctx context.Context, crdName string) CRDInfo {
 	labels := existing.GetLabels()
 
 	// Check CIO ownership
-	if _, ok := labels[LabelManagedByCIO]; ok {
+	if _, ok := labels[labelManagedByCIO]; ok {
 		return CRDInfo{Name: crdName, Found: true, State: CRDManagedByCIO}
 	}
 
 	// Check OLM ownership
-	if val, ok := labels[LabelOLMManaged]; ok && val == "true" {
+	if val, ok := labels[labelOLMManaged]; ok && val == "true" {
 		return CRDInfo{Name: crdName, Found: true, State: CRDManagedByOLM}
 	}
 
@@ -134,7 +134,7 @@ func (m *CRDManager) classifyCRD(ctx context.Context, crdName string) CRDInfo {
 }
 
 // classifyCRDs checks all target CRDs on the cluster and returns the aggregate state.
-func (m *CRDManager) classifyCRDs(ctx context.Context, targets []string) (CRDManagementState, []CRDInfo) {
+func (m *crdManager) classifyCRDs(ctx context.Context, targets []string) (CRDManagementState, []CRDInfo) {
 	if len(targets) == 0 {
 		return CRDNoneExist, nil
 	}
@@ -206,13 +206,13 @@ func aggregateCRDState(infos []CRDInfo) CRDManagementState {
 
 // Reconcile classifies target CRDs and installs/updates them if we own them (or none exist).
 // This is the single entry point for CRD management.
-func (m *CRDManager) Reconcile(ctx context.Context, values *v1.Values, includeAllCRDs bool) CRDResult {
+func (m *crdManager) Reconcile(ctx context.Context, values *v1.Values, includeAllCRDs bool) crdResult {
 	targets, err := targetCRDsFromValues(values, includeAllCRDs)
 	if err != nil {
-		return CRDResult{State: CRDNoneExist, Error: fmt.Errorf("failed to determine target CRDs: %w", err)}
+		return crdResult{State: CRDNoneExist, Error: fmt.Errorf("failed to determine target CRDs: %w", err)}
 	}
 	if len(targets) == 0 {
-		return CRDResult{State: CRDNoneExist, Message: "no target CRDs configured"}
+		return crdResult{State: CRDNoneExist, Message: "no target CRDs configured"}
 	}
 
 	state, infos := m.classifyCRDs(ctx, targets)
@@ -221,21 +221,21 @@ func (m *CRDManager) Reconcile(ctx context.Context, values *v1.Values, includeAl
 	case CRDNoneExist:
 		// Install all with CIO labels
 		if err := m.installCRDs(ctx, targets); err != nil {
-			return CRDResult{State: state, CRDs: infos, Error: fmt.Errorf("failed to install CRDs: %w", err)}
+			return crdResult{State: state, CRDs: infos, Error: fmt.Errorf("failed to install CRDs: %w", err)}
 		}
 		// Update infos to reflect new state
 		for idx := range infos {
 			infos[idx].Found = true
 			infos[idx].State = CRDManagedByCIO
 		}
-		return CRDResult{State: CRDManagedByCIO, CRDs: infos, Message: "CRDs installed by CIO"}
+		return crdResult{State: CRDManagedByCIO, CRDs: infos, Message: "CRDs installed by CIO"}
 
 	case CRDManagedByCIO:
 		// Update existing, reinstall missing, re-label unknowns
 		missing := missingCRDNames(infos)
 		unlabeled := unlabeledCRDNames(infos)
 		if err := m.updateCRDs(ctx, targets); err != nil {
-			return CRDResult{State: state, CRDs: infos, Error: fmt.Errorf("failed to update CRDs: %w", err)}
+			return crdResult{State: state, CRDs: infos, Error: fmt.Errorf("failed to update CRDs: %w", err)}
 		}
 		// Update infos for any previously-missing or unlabeled CRDs
 		for idx := range infos {
@@ -251,10 +251,10 @@ func (m *CRDManager) Reconcile(ctx context.Context, values *v1.Values, includeAl
 		if len(unlabeled) > 0 {
 			msg += fmt.Sprintf("; reclaimed: %s", strings.Join(unlabeled, ", "))
 		}
-		return CRDResult{State: CRDManagedByCIO, CRDs: infos, Message: msg}
+		return crdResult{State: CRDManagedByCIO, CRDs: infos, Message: msg}
 
 	case CRDManagedByOLM:
-		return CRDResult{State: CRDManagedByOLM, CRDs: infos, Message: "CRDs managed by OSSM subscription via OLM"}
+		return crdResult{State: CRDManagedByOLM, CRDs: infos, Message: "CRDs managed by OSSM subscription via OLM"}
 
 	case CRDUnknownManagement:
 		missing := missingCRDNames(infos)
@@ -262,7 +262,7 @@ func (m *CRDManager) Reconcile(ctx context.Context, values *v1.Values, includeAl
 		if len(missing) > 0 {
 			msg += fmt.Sprintf("; missing from other owner: %s", strings.Join(missing, ", "))
 		}
-		return CRDResult{State: CRDUnknownManagement, CRDs: infos, Message: msg,
+		return crdResult{State: CRDUnknownManagement, CRDs: infos, Message: msg,
 			Error: fmt.Errorf("Istio CRDs are managed by an unknown party")}
 
 	case CRDMixedOwnership:
@@ -271,17 +271,17 @@ func (m *CRDManager) Reconcile(ctx context.Context, values *v1.Values, includeAl
 		if len(missing) > 0 {
 			msg += fmt.Sprintf("; missing: %s", strings.Join(missing, ", "))
 		}
-		return CRDResult{State: CRDMixedOwnership, CRDs: infos, Message: msg,
+		return crdResult{State: CRDMixedOwnership, CRDs: infos, Message: msg,
 			Error: fmt.Errorf("Istio CRDs have mixed ownership (CIO/OLM/other)")}
 
 	default:
-		return CRDResult{State: state, CRDs: infos}
+		return crdResult{State: state, CRDs: infos}
 	}
 }
 
 // WatchTargets computes the set of CRD names that should be watched for changes.
 // Returns nil if the target set cannot be determined.
-func (m *CRDManager) WatchTargets(values *v1.Values, includeAllCRDs bool) map[string]struct{} {
+func (m *crdManager) WatchTargets(values *v1.Values, includeAllCRDs bool) map[string]struct{} {
 	var targets []string
 	var err error
 
@@ -325,7 +325,7 @@ func unlabeledCRDNames(infos []CRDInfo) []string {
 }
 
 // installCRDs installs all target CRDs with CIO ownership labels and Helm keep annotation.
-func (m *CRDManager) installCRDs(ctx context.Context, targets []string) error {
+func (m *crdManager) installCRDs(ctx context.Context, targets []string) error {
 	for _, resource := range targets {
 		crd, err := loadCRD(resource)
 		if err != nil {
@@ -340,7 +340,7 @@ func (m *CRDManager) installCRDs(ctx context.Context, targets []string) error {
 }
 
 // updateCRDs updates existing CIO-owned CRDs and creates any missing ones.
-func (m *CRDManager) updateCRDs(ctx context.Context, targets []string) error {
+func (m *crdManager) updateCRDs(ctx context.Context, targets []string) error {
 	for _, resource := range targets {
 		crd, err := loadCRD(resource)
 		if err != nil {
@@ -392,13 +392,13 @@ func applyCIOLabels(crd *apiextensionsv1.CustomResourceDefinition) {
 	if labels == nil {
 		labels = make(map[string]string)
 	}
-	labels[LabelManagedByCIO] = "true"
+	labels[labelManagedByCIO] = "true"
 	crd.SetLabels(labels)
 
 	annotations := crd.GetAnnotations()
 	if annotations == nil {
 		annotations = make(map[string]string)
 	}
-	annotations[AnnotationHelmKeep] = "keep"
+	annotations[annotationHelmKeep] = "keep"
 	crd.SetAnnotations(annotations)
 }
