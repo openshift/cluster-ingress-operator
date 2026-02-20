@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync"
 
+	configv1 "github.com/openshift/api/config/v1"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
@@ -71,6 +72,9 @@ const (
 	// can be specified.  This annotation is only intended for use by
 	// OpenShift developers.
 	istioVersionOverrideAnnotationKey = "unsupported.do-not-use.openshift.io/istio-version"
+
+	// gatewayclassControllerIndexFieldName is the name of the index for gatewayclass by controller name.
+	gatewayclassControllerIndexFieldName = "spec.controllerName"
 )
 
 var log = logf.Logger.WithName(controllerName)
@@ -82,10 +86,11 @@ var gatewayClassController controller.Controller
 func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, error) {
 	operatorCache := mgr.GetCache()
 	reconciler := &reconciler{
-		config:   config,
-		client:   mgr.GetClient(),
-		cache:    operatorCache,
-		recorder: mgr.GetEventRecorderFor(controllerName),
+		config:       config,
+		client:       mgr.GetClient(),
+		cache:        operatorCache,
+		fieldIndexer: mgr.GetFieldIndexer(),
+		recorder:     mgr.GetEventRecorderFor(controllerName),
 	}
 	options := controller.Options{Reconciler: reconciler}
 	options.DefaultFromConfig(mgr.GetControllerOptions())
@@ -93,6 +98,7 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 	if err != nil {
 		return nil, err
 	}
+
 	isOurGatewayClass := predicate.NewPredicateFuncs(func(o client.Object) bool {
 		class := o.(*gatewayapiv1.GatewayClass)
 		return class.Spec.ControllerName == operatorcontroller.OpenShiftGatewayClassControllerName
@@ -148,6 +154,12 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 		return nil, err
 	}
 
+	// Watch the cluster infrastructure config in case the infrastructure
+	// topology changes.
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &configv1.Infrastructure{}, reconciler.enqueueRequestForSomeGatewayClass())); err != nil {
+		return nil, err
+	}
+
 	gatewayClassController = c
 	return c, nil
 }
@@ -174,11 +186,15 @@ type Config struct {
 type reconciler struct {
 	config Config
 
-	client   client.Client
-	cache    cache.Cache
-	recorder record.EventRecorder
+	client       client.Client
+	cache        cache.Cache
+	fieldIndexer client.FieldIndexer
+	recorder     record.EventRecorder
 
 	startIstioWatch sync.Once
+	// startGatewayclassControllerIndex ensures we create the gatewayclasses index at
+	// most once.
+	startGatewayclassControllerIndex sync.Once
 }
 
 // enqueueRequestForSomeGatewayClass enqueues a reconciliation request for the
@@ -232,12 +248,36 @@ func (r *reconciler) enqueueRequestForSomeGatewayClass() handler.EventHandler {
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	log.Info("reconciling", "request", request)
 
+	var infraConfig configv1.Infrastructure
+	if err := r.client.Get(ctx, types.NamespacedName{Name: "cluster"}, &infraConfig); err != nil {
+		return reconcile.Result{}, err
+	}
+
 	var gatewayclass gatewayapiv1.GatewayClass
 	if err := r.cache.Get(ctx, request.NamespacedName, &gatewayclass); err != nil {
 		return reconcile.Result{}, err
 	}
 
 	var errs []error
+
+	// Create the Index gatewayclasses once on first reconciliation.  The
+	// index cannot be created in NewUnmanaged as the CRD might not exist
+	// when NewUnmanaged is called, and so we create the index here.
+	r.startGatewayclassControllerIndex.Do(func() {
+		gatewayclassControllerIndexFn := client.IndexerFunc(func(o client.Object) []string {
+			gatewayclass, ok := o.(*gatewayapiv1.GatewayClass)
+			if !ok {
+				return []string{}
+			}
+
+			return []string{string(gatewayclass.Spec.ControllerName)}
+		})
+		if err := r.fieldIndexer.IndexField(context.Background(), &gatewayapiv1.GatewayClass{}, gatewayclassControllerIndexFieldName, gatewayclassControllerIndexFn); err != nil {
+			log.Error(err, "failed to create index for gatewayclasses", "request", request)
+			errs = append(errs, err)
+		}
+	})
+
 	ossmCatalog := r.config.GatewayAPIOperatorCatalog
 	if v, ok := gatewayclass.Annotations[subscriptionCatalogOverrideAnnotationKey]; ok {
 		ossmCatalog = v
@@ -260,7 +300,8 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	if v, ok := gatewayclass.Annotations[istioVersionOverrideAnnotationKey]; ok {
 		istioVersion = v
 	}
-	if _, _, err := r.ensureIstio(ctx, &gatewayclass, istioVersion); err != nil {
+
+	if _, _, err := r.ensureIstio(ctx, &gatewayclass, istioVersion, &infraConfig); err != nil {
 		errs = append(errs, err)
 	} else {
 		// The OSSM operator installs the istios.sailoperator.io CRD.
