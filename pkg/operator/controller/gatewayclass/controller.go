@@ -121,12 +121,19 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 		return nil, err
 	}
 
-	isServiceMeshSubscription := predicate.NewPredicateFuncs(func(o client.Object) bool {
-		return o.GetName() == operatorcontroller.ServiceMeshOperatorSubscriptionName().Name
-	})
-	if err = c.Watch(source.Kind[client.Object](operatorCache, &operatorsv1alpha1.Subscription{},
-		reconciler.enqueueRequestForSomeGatewayClass(), isServiceMeshSubscription)); err != nil {
-		return nil, err
+	if !config.GatewayAPIWithoutOLMEnabled {
+		isServiceMeshSubscription := predicate.NewPredicateFuncs(func(o client.Object) bool {
+			return o.GetName() == operatorcontroller.ServiceMeshOperatorSubscriptionName().Name
+		})
+		if err = c.Watch(source.Kind[client.Object](operatorCache, &operatorsv1alpha1.Subscription{},
+			reconciler.enqueueRequestForSomeGatewayClass(), isServiceMeshSubscription)); err != nil {
+			return nil, err
+		}
+	} else {
+		if err = c.Watch(source.Kind[client.Object](operatorCache, &operatorsv1alpha1.Subscription{},
+			reconciler.enqueueRequestForSomeGatewayClass())); err != nil {
+			return nil, err
+		}
 	}
 
 	isOurInstallPlan := predicate.NewPredicateFuncs(func(o client.Object) bool {
@@ -470,6 +477,7 @@ func (r *reconciler) reconcileWithSailLibrary(ctx context.Context, request recon
 		istioVersion = v
 	}
 
+	log.Info("ensuring Istio")
 	if err := r.ensureIstio(ctx, gatewayclass, istioVersion); err != nil {
 		log.Error(err, "error ensuring Istio")
 		errs = append(errs, err)

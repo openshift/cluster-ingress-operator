@@ -8,6 +8,7 @@ import (
 	"github.com/istio-ecosystem/sail-operator/pkg/install"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -25,46 +26,74 @@ const (
 
 // SubscriptionExists is used as a predicate function to allow the library to
 // query CIO if a subscription exists before taking an action over a CRD
-func (r *reconciler) subscriptionExists(ctx context.Context, label string) (bool, error) {
-	// Not the prefix we want
-	if !strings.HasPrefix(label, subscriptionPrefix) {
-		log.Info("ignoring resource with invalid label", "label", label)
-		return false, nil
+func (r *reconciler) overwriteOLMManagedCRDFunc(ctx context.Context, crd *apiextensionsv1.CustomResourceDefinition) bool {
+	// defensive measure
+	if ctx == nil || crd == nil {
+		return true
 	}
 
-	// Check if label is on the format we want
-	nameNamespace := strings.SplitN(strings.TrimPrefix(label, subscriptionPrefix), ".", 2)
-	if len(nameNamespace) != 2 {
-		log.Info("ignoring resource with invalid label", "label", label)
-		return false, nil
+	logOverwrite := log.WithValues("crd", crd.GetName())
+
+	labels := crd.GetLabels()
+	if labels == nil {
+		// no labels, we can override
+		return true
+	}
+
+	// This is not a OLM managed CRD
+	if val, ok := labels["olm.managed"]; !ok || val != "true" {
+		return true
+	}
+
+	var subscriptionName, subscriptionNamespace, foundLabel string
+	// we just care about the label name
+	for label := range labels {
+		if after, ok := strings.CutPrefix(label, subscriptionPrefix); ok {
+			// Check if label is on the format we want
+			nameNamespace := strings.SplitN(after, ".", 2)
+			if len(nameNamespace) != 2 {
+				logOverwrite.Info("ignoring invalid OLM label", "label", label)
+				continue
+			}
+			foundLabel = label
+			subscriptionName, subscriptionNamespace = nameNamespace[0], nameNamespace[1]
+			break
+		}
+	}
+
+	if foundLabel == "" || subscriptionName == "" || subscriptionNamespace == "" {
+		logOverwrite.Info("no subscription label found")
+		return true
 	}
 
 	// Check for InstallPlan, which effectivelly installs CRDs. Even if invalid it
 	// may become valid at some point and overwrite CRDs
 	installPlanList := operatorsv1alpha1.InstallPlanList{}
-	if err := r.cache.List(ctx, &installPlanList, client.HasLabels([]string{label})); err != nil {
-		log.Error(err, "error trying to find install plans, will consider that subscription exists")
-		return false, err
+	if err := r.cache.List(ctx, &installPlanList, client.HasLabels([]string{foundLabel})); err != nil {
+		log.Error(err, "error trying to find install plans")
+		return false
 	}
 	if len(installPlanList.Items) > 0 {
-		return false, nil
+		logOverwrite.Info("CRD has valid installPlans, not overwriting")
+		return false
 	}
 
 	// Next check for subscriptions.
 	subscription := operatorsv1alpha1.Subscription{}
-	subscription.SetNamespace(nameNamespace[1])
-	subscription.SetName(nameNamespace[0])
+	subscription.SetNamespace(subscriptionNamespace)
+	subscription.SetName(subscriptionName)
 	err := r.cache.Get(ctx, client.ObjectKeyFromObject(&subscription), &subscription)
 	if err != nil {
 		if !errors.IsNotFound(err) {
-			log.Error(err, "error trying to find install plans, will consider that subscription exists")
-			return false, err
+			log.Error(err, "error trying to find subscription")
+			return false
 		}
-		return false, nil
+		// No subscription was found, the CRD can be overwriten
+		return true
 	}
 	// If we are here means we don't have installplans, but we do have subscriptions
 	// which means we may be on an intermediate state
-	return true, nil
+	return false
 }
 
 // ensureIstio installs or updates Istio using the Sail Library.
@@ -81,15 +110,18 @@ func (r *reconciler) ensureIstio(ctx context.Context, gatewayclass *gatewayapiv1
 		return fmt.Errorf("failed to check for InferencePool CRD: %w", err)
 	}
 
+	log.Info("building opts")
 	// Build options from current state
 	opts, err := r.buildInstallerOptions(enableInferenceExtension, istioVersion)
 	if err != nil {
 		return err
 	}
 
+	opts.OverwriteOLMManagedCRD = r.overwriteOLMManagedCRDFunc
 	// Enqueue the request to reconcile. This does not return
 	// any error or status. We validate the status again next, and set
 	// the right conditions on the GatewayClass for it
+	log.Info("calling apply")
 	sailInstaller.Apply(opts)
 
 	// Istio adds its own Accepted condition: https://github.com/istio/istio/blob/24eab8800c50b999d01d2dd6ec589bbd59d01726/pilot/pkg/config/kube/gateway/gatewayclass.go#L114

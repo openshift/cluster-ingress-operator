@@ -28,6 +28,12 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
+// OverwriteOLMManagedCRDFunc is called when a CRD is detected with OLM ownership
+// labels. The CRD object is provided so the callback can inspect OLM
+// annotations/labels to determine whether the owning subscription still exists.
+// Return true to overwrite the CRD (take ownership), false to leave it alone.
+type OverwriteOLMManagedCRDFunc func(ctx context.Context, crd *apiextensionsv1.CustomResourceDefinition) bool
+
 // CRD ownership labels and annotations.
 const (
 	// labelManagedByCIO indicates the CRD is managed by the Cluster Ingress Operator.
@@ -106,7 +112,9 @@ func newCRDManager(cl client.Client) *crdManager {
 }
 
 // classifyCRD checks a single CRD on the cluster and returns its ownership state.
-func (m *crdManager) classifyCRD(ctx context.Context, crdName string) CRDInfo {
+// If overwriteOLM is non-nil and the CRD has OLM labels, it is called to decide
+// whether to reclassify the CRD as CIO-managed (allowing adoption).
+func (m *crdManager) classifyCRD(ctx context.Context, crdName string, overwriteOLM OverwriteOLMManagedCRDFunc) CRDInfo {
 	existing := &apiextensionsv1.CustomResourceDefinition{}
 	err := m.cl.Get(ctx, client.ObjectKey{Name: crdName}, existing)
 	if err != nil {
@@ -126,6 +134,9 @@ func (m *crdManager) classifyCRD(ctx context.Context, crdName string) CRDInfo {
 
 	// Check OLM ownership
 	if val, ok := labels[labelOLMManaged]; ok && val == "true" {
+		if overwriteOLM != nil && overwriteOLM(ctx, existing) {
+			return CRDInfo{Name: crdName, Found: true, State: CRDManagedByCIO}
+		}
 		return CRDInfo{Name: crdName, Found: true, State: CRDManagedByOLM}
 	}
 
@@ -134,14 +145,14 @@ func (m *crdManager) classifyCRD(ctx context.Context, crdName string) CRDInfo {
 }
 
 // classifyCRDs checks all target CRDs on the cluster and returns the aggregate state.
-func (m *crdManager) classifyCRDs(ctx context.Context, targets []string) (CRDManagementState, []CRDInfo) {
+func (m *crdManager) classifyCRDs(ctx context.Context, targets []string, overwriteOLM OverwriteOLMManagedCRDFunc) (CRDManagementState, []CRDInfo) {
 	if len(targets) == 0 {
 		return CRDNoneExist, nil
 	}
 
 	infos := make([]CRDInfo, len(targets))
 	for i, target := range targets {
-		infos[i] = m.classifyCRD(ctx, target)
+		infos[i] = m.classifyCRD(ctx, target, overwriteOLM)
 	}
 
 	return aggregateCRDState(infos), infos
@@ -206,7 +217,7 @@ func aggregateCRDState(infos []CRDInfo) CRDManagementState {
 
 // Reconcile classifies target CRDs and installs/updates them if we own them (or none exist).
 // This is the single entry point for CRD management.
-func (m *crdManager) Reconcile(ctx context.Context, values *v1.Values, includeAllCRDs bool) crdResult {
+func (m *crdManager) Reconcile(ctx context.Context, values *v1.Values, includeAllCRDs bool, overwriteOLM OverwriteOLMManagedCRDFunc) crdResult {
 	targets, err := targetCRDsFromValues(values, includeAllCRDs)
 	if err != nil {
 		return crdResult{State: CRDNoneExist, Error: fmt.Errorf("failed to determine target CRDs: %w", err)}
@@ -215,7 +226,7 @@ func (m *crdManager) Reconcile(ctx context.Context, values *v1.Values, includeAl
 		return crdResult{State: CRDNoneExist, Message: "no target CRDs configured"}
 	}
 
-	state, infos := m.classifyCRDs(ctx, targets)
+	state, infos := m.classifyCRDs(ctx, targets, overwriteOLM)
 
 	switch state {
 	case CRDNoneExist:

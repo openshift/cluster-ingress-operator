@@ -149,6 +149,11 @@ type Options struct {
 	// When true, all *.istio.io CRDs from the embedded FS are managed.
 	// When false (default), only CRDs matching PILOT_INCLUDE_RESOURCES are managed.
 	IncludeAllCRDs *bool
+
+	// OverwriteOLMManagedCRD is called when a CRD is detected with OLM ownership labels.
+	// If provided and returns true, the CRD is overwritten with CIO labels and adopted.
+	// If nil or returns false, OLM-labeled CRDs are left alone.
+	OverwriteOLMManagedCRD OverwriteOLMManagedCRDFunc
 }
 
 // applyDefaults fills in default values for Options.

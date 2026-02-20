@@ -154,7 +154,7 @@ func (inst *installer) reconcile(ctx context.Context, opts Options) Status {
 
 	// Manage CRDs
 	if ptr.Deref(opts.ManageCRDs, true) {
-		result := inst.crdManager.Reconcile(ctx, values, ptr.Deref(opts.IncludeAllCRDs, false))
+		result := inst.crdManager.Reconcile(ctx, values, ptr.Deref(opts.IncludeAllCRDs, false), opts.OverwriteOLMManagedCRD)
 		status.CRDState = result.State
 		status.CRDs = result.CRDs
 		status.CRDMessage = result.Message
