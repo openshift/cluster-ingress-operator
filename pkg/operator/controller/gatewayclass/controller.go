@@ -4,18 +4,24 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
-	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/util/workqueue"
 
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
+	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
+	"github.com/istio-ecosystem/sail-operator/pkg/install"
+
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
@@ -23,6 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
@@ -71,6 +78,14 @@ const (
 	// can be specified.  This annotation is only intended for use by
 	// OpenShift developers.
 	istioVersionOverrideAnnotationKey = "unsupported.do-not-use.openshift.io/istio-version"
+	// sailLibraryFinalizer is a finalizer key added to GatewayClasses that
+	// at some moment were reconciled by sail-library.
+	// They signal two things:
+	// 1 - For sail-library, if there is no other gatewayclass using it, the reconciliation
+	// can be stopped
+	// 2 - For olm-install - In case it is called, it means the installation was rolled
+	// back and the finalizer must be removed
+	sailLibraryFinalizer = "openshift.io/ingress-operator-sail-finalizer"
 )
 
 var log = logf.Logger.WithName(controllerName)
@@ -81,11 +96,13 @@ var gatewayClassController controller.Controller
 // that the manager does not start it.
 func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, error) {
 	operatorCache := mgr.GetCache()
+
 	reconciler := &reconciler{
-		config:   config,
-		client:   mgr.GetClient(),
-		cache:    operatorCache,
-		recorder: mgr.GetEventRecorderFor(controllerName),
+		config:     config,
+		client:     mgr.GetClient(),
+		cache:      operatorCache,
+		kubeConfig: config.KubeConfig,
+		recorder:   mgr.GetEventRecorderFor(controllerName),
 	}
 	options := controller.Options{Reconciler: reconciler}
 	options.DefaultFromConfig(mgr.GetControllerOptions())
@@ -104,12 +121,19 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 		return nil, err
 	}
 
-	isServiceMeshSubscription := predicate.NewPredicateFuncs(func(o client.Object) bool {
-		return o.GetName() == operatorcontroller.ServiceMeshOperatorSubscriptionName().Name
-	})
-	if err = c.Watch(source.Kind[client.Object](operatorCache, &operatorsv1alpha1.Subscription{},
-		reconciler.enqueueRequestForSomeGatewayClass(), isServiceMeshSubscription)); err != nil {
-		return nil, err
+	if !config.GatewayAPIWithoutOLMEnabled {
+		isServiceMeshSubscription := predicate.NewPredicateFuncs(func(o client.Object) bool {
+			return o.GetName() == operatorcontroller.ServiceMeshOperatorSubscriptionName().Name
+		})
+		if err = c.Watch(source.Kind[client.Object](operatorCache, &operatorsv1alpha1.Subscription{},
+			reconciler.enqueueRequestForSomeGatewayClass(), isServiceMeshSubscription)); err != nil {
+			return nil, err
+		}
+	} else {
+		if err = c.Watch(source.Kind[client.Object](operatorCache, &operatorsv1alpha1.Subscription{},
+			reconciler.enqueueRequestForSomeGatewayClass())); err != nil {
+			return nil, err
+		}
 	}
 
 	isOurInstallPlan := predicate.NewPredicateFuncs(func(o client.Object) bool {
@@ -148,6 +172,20 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 		return nil, err
 	}
 
+	// Gated Feature - For Non-OLM install, we start the sail-operator library that
+	// does the reconciliation of CRDs and resources.
+	// The channel here receives notification from the previously started sail-operator library
+	// and triggers new reconciliations
+	if config.GatewayAPIWithoutOLMEnabled && config.SailOperatorReconciler != nil && config.SailOperatorReconciler.NotifyCh != nil {
+		sailOperatorSource := &SailOperatorSource[client.Object]{
+			NotifyCh:     config.SailOperatorReconciler.NotifyCh,
+			RequestsFunc: reconciler.allManagedGatewayClasses,
+		}
+		if err := c.Watch(sailOperatorSource); err != nil {
+			return nil, err
+		}
+	}
+
 	gatewayClassController = c
 	return c, nil
 }
@@ -155,8 +193,9 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 // Config holds all the configuration that must be provided when creating the
 // controller.
 type Config struct {
-	// OperatorNamespace is the namespace in which the operator should
-	// create the Istio CR.
+	// KubeConfig is the Kubernetes client configuration used by the Sail Library.
+	KubeConfig *rest.Config
+	// OperatorNamespace is the namespace in which the operator is deployed.
 	OperatorNamespace string
 	// OperandNamespace is the namespace in which Istio should be deployed.
 	OperandNamespace string
@@ -166,17 +205,36 @@ type Config struct {
 	GatewayAPIOperatorChannel string
 	// GatewayAPIOperatorVersion is the name and release of the Gateway API implementation to install.
 	GatewayAPIOperatorVersion string
-	// IstioVersion is the version of Istio to configure on the Istio CR.
+	// GatewayAPIWithoutOLMEnabled indicates whether the GatewayAPIWithoutOLM feature gate is enabled.
+	GatewayAPIWithoutOLMEnabled bool
+	// IstioVersion is the version of Istio to install.
 	IstioVersion string
+	// SailOperatorReconciler contains the instance and the notification channel for the reconciler of Istio resources
+	SailOperatorReconciler *SailOperatorReconciler
+}
+
+// SailLibraryInstaller implements the methods of sail library but in a way we can
+// also mock and test
+type SailLibraryInstaller interface {
+	Start(ctx context.Context) <-chan struct{}
+	Apply(opts install.Options)
+	Uninstall(ctx context.Context, namespace, revision string) error
+	Status() install.Status
+}
+
+type SailOperatorReconciler struct {
+	Installer SailLibraryInstaller
+	NotifyCh  <-chan struct{}
 }
 
 // reconciler reconciles gatewayclasses.
 type reconciler struct {
 	config Config
 
-	client   client.Client
-	cache    cache.Cache
-	recorder record.EventRecorder
+	client     client.Client
+	cache      cache.Cache
+	kubeConfig *rest.Config
+	recorder   record.EventRecorder
 
 	startIstioWatch sync.Once
 }
@@ -186,55 +244,128 @@ type reconciler struct {
 // controller name.
 func (r *reconciler) enqueueRequestForSomeGatewayClass() handler.EventHandler {
 	return handler.EnqueueRequestsFromMapFunc(
-		func(ctx context.Context, _ client.Object) []reconcile.Request {
-			requests := []reconcile.Request{}
-
-			var gatewayClasses gatewayapiv1.GatewayClassList
-			if err := r.cache.List(context.Background(), &gatewayClasses); err != nil {
-				log.Error(err, "Failed to list gatewayclasses")
-
-				return requests
+		func(ctx context.Context, obj client.Object) []reconcile.Request {
+			if r.config.GatewayAPIWithoutOLMEnabled {
+				return r.allManagedGatewayClasses(ctx, obj)
 			}
-
-			var (
-				found  bool
-				oldest metav1.Time
-				name   string
-			)
-			for i := range gatewayClasses.Items {
-				if gatewayClasses.Items[i].Spec.ControllerName != operatorcontroller.OpenShiftGatewayClassControllerName {
-					continue
-				}
-
-				ctime := gatewayClasses.Items[i].CreationTimestamp
-				if !found || ctime.Before(&oldest) {
-					found, oldest, name = true, ctime, gatewayClasses.Items[i].Name
-				}
-			}
-
-			if found {
-				request := reconcile.Request{
-					NamespacedName: types.NamespacedName{
-						Namespace: "", // GatewayClass is cluster-scoped.
-						Name:      name,
-					},
-				}
-				requests = append(requests, request)
-			}
-
-			return requests
+			return r.requestsForSomeGatewayClass(ctx, obj)
 		},
 	)
+}
+
+func (r *reconciler) requestsForSomeGatewayClass(ctx context.Context, _ client.Object) []reconcile.Request {
+	requests := []reconcile.Request{}
+	var gatewayClasses gatewayapiv1.GatewayClassList
+	if err := r.cache.List(ctx, &gatewayClasses); err != nil {
+		log.Error(err, "Failed to list gatewayclasses")
+
+		return requests
+	}
+
+	var (
+		found  bool
+		oldest metav1.Time
+		name   string
+	)
+	for i := range gatewayClasses.Items {
+		if gatewayClasses.Items[i].Spec.ControllerName != operatorcontroller.OpenShiftGatewayClassControllerName {
+			continue
+		}
+
+		// If we ever added the sail library finalizer, this means this is a rollback so
+		// we need to be sure that the OLM process removes the finalizer and the status
+		if controllerutil.ContainsFinalizer(&gatewayClasses.Items[i], sailLibraryFinalizer) {
+			request := reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Namespace: "",
+					Name:      gatewayClasses.Items[i].Name,
+				},
+			}
+			requests = append(requests, request)
+			continue
+		}
+
+		ctime := gatewayClasses.Items[i].CreationTimestamp
+		if !found || ctime.Before(&oldest) {
+			found, oldest, name = true, ctime, gatewayClasses.Items[i].Name
+		}
+	}
+
+	if found {
+		request := reconcile.Request{
+			NamespacedName: types.NamespacedName{
+				Namespace: "", // GatewayClass is cluster-scoped.
+				Name:      name,
+			},
+		}
+		requests = append(requests, request)
+	}
+
+	return requests
+}
+
+func (r *reconciler) allManagedGatewayClasses(ctx context.Context, _ client.Object) []reconcile.Request {
+	requests := []reconcile.Request{}
+	var gatewayClasses gatewayapiv1.GatewayClassList
+	if err := r.cache.List(ctx, &gatewayClasses, client.MatchingFields{
+		operatorcontroller.GatewayClassIndexFieldName: operatorcontroller.OpenShiftGatewayClassControllerName,
+	}); err != nil {
+		log.Error(err, "Failed to list gatewayclasses")
+		return requests
+	}
+
+	for _, class := range gatewayClasses.Items {
+		request := reconcile.Request{
+			NamespacedName: types.NamespacedName{
+				Namespace: "", // GatewayClass is cluster-scoped.
+				Name:      class.Name,
+			},
+		}
+		requests = append(requests, request)
+	}
+
+	return requests
 }
 
 // Reconcile expects request to refer to a GatewayClass and creates or
 // reconciles an Istio deployment.
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
+	if r.config.GatewayAPIWithoutOLMEnabled && r.config.SailOperatorReconciler != nil && r.config.SailOperatorReconciler.Installer != nil {
+		return r.reconcileWithSailLibrary(ctx, request)
+	}
+	return r.reconcileWithOLM(ctx, request)
+}
+
+// reconcileWithOLM reconciles a GatewayClass using OLM to install OSSM,
+// which then manages an Istio CR for the Istio installation.
+func (r *reconciler) reconcileWithOLM(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	log.Info("reconciling", "request", request)
 
-	var gatewayclass gatewayapiv1.GatewayClass
-	if err := r.cache.Get(ctx, request.NamespacedName, &gatewayclass); err != nil {
-		return reconcile.Result{}, err
+	sourceGatewayClass := &gatewayapiv1.GatewayClass{}
+	if err := r.cache.Get(ctx, request.NamespacedName, sourceGatewayClass); err != nil {
+		if !errors.IsNotFound(err) {
+			return reconcile.Result{}, fmt.Errorf("error getting gatewayclass: %w", err)
+		}
+		return reconcile.Result{}, nil
+	}
+
+	gatewayclass := sourceGatewayClass.DeepCopy()
+	// This is not SailOperator class, so remove any finalizer and any status from it
+	if controllerutil.RemoveFinalizer(gatewayclass, sailLibraryFinalizer) {
+		var errs []error
+		err := r.client.Patch(ctx, gatewayclass, client.MergeFrom(sourceGatewayClass))
+		if err != nil {
+			log.Error(err, "error patching the gatewayclass status")
+			errs = append(errs, err)
+		}
+		removeSailOperatorConditions(&gatewayclass.Status.Conditions)
+		if err := r.client.Status().Patch(ctx, gatewayclass, client.MergeFrom(sourceGatewayClass)); err != nil {
+			log.Error(err, "error patching the gatewayclass status")
+			errs = append(errs, err)
+
+		}
+
+		return reconcile.Result{}, utilerrors.NewAggregate(errs) // Removing the finalizer should kick a new reconciliation
 	}
 
 	var errs []error
@@ -260,7 +391,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	if v, ok := gatewayclass.Annotations[istioVersionOverrideAnnotationKey]; ok {
 		istioVersion = v
 	}
-	if _, _, err := r.ensureIstio(ctx, &gatewayclass, istioVersion); err != nil {
+	if _, _, err := r.ensureIstioOLM(ctx, gatewayclass, istioVersion); err != nil {
 		errs = append(errs, err)
 	} else {
 		// The OSSM operator installs the istios.sailoperator.io CRD.
@@ -279,4 +410,108 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	}
 
 	return reconcile.Result{}, utilerrors.NewAggregate(errs)
+}
+
+// reconcileWithSailLibrary reconciles a GatewayClass using the Sail Library
+// for direct Helm-based installation of Istio.
+func (r *reconciler) reconcileWithSailLibrary(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
+	log.Info("reconciling", "request", request)
+
+	sourceGatewayClass := &gatewayapiv1.GatewayClass{}
+	if err := r.cache.Get(ctx, request.NamespacedName, sourceGatewayClass); err != nil {
+		if !errors.IsNotFound(err) {
+			return reconcile.Result{}, fmt.Errorf("error getting gatewayclass: %w", err)
+		}
+		return reconcile.Result{}, nil
+	}
+
+	gatewayclass := sourceGatewayClass.DeepCopy()
+
+	if !gatewayclass.DeletionTimestamp.IsZero() {
+		// Check if this is the last remaining GatewayClass. If so:
+		// 1 - Stop the library in case this is the last GatewayClass
+		// 2 - Delete the finalizer (always, regardless of being the last)
+		// 3 - We must always return from here when deletion is in progress
+		gatewayClassList := gatewayapiv1.GatewayClassList{}
+		if err := r.cache.List(ctx, &gatewayClassList, client.MatchingFields{
+			operatorcontroller.GatewayClassIndexFieldName: operatorcontroller.OpenShiftGatewayClassControllerName,
+		}); err != nil {
+			return reconcile.Result{}, fmt.Errorf("failed to list gateway classes: %w", err)
+		}
+
+		if len(gatewayClassList.Items) < 2 {
+			if err := r.config.SailOperatorReconciler.Installer.Uninstall(ctx, operatorcontroller.DefaultOperandNamespace, operatorcontroller.IstioName("").Name); err != nil {
+				return reconcile.Result{}, fmt.Errorf("failed to uninstall the operator: %w", err)
+			}
+		}
+		// This is not SailOperator class, so remove any finalizer
+		if controllerutil.RemoveFinalizer(gatewayclass, sailLibraryFinalizer) {
+			err := r.client.Patch(ctx, gatewayclass, client.MergeFrom(sourceGatewayClass))
+			if err != nil {
+				log.Error(err, "error patching the gatewayclass status")
+			}
+			return reconcile.Result{}, err // Removing the finalizer should kick a new reconciliation
+		}
+	}
+
+	if controllerutil.AddFinalizer(gatewayclass, sailLibraryFinalizer) {
+		err := r.client.Patch(ctx, gatewayclass, client.MergeFrom(sourceGatewayClass))
+		if err != nil {
+			log.Error(err, "error patching the gatewayclass status")
+		}
+		return reconcile.Result{}, err // Return if we added the finalizer, to kick reconciliation again
+	}
+
+	// Ensure migration from 4.21 to 4.22 Sail Library.
+	if migrationComplete, err := r.ensureOSSMtoSailLibraryMigration(ctx); err != nil {
+		return reconcile.Result{}, fmt.Errorf("error validating sail library migration: %w", err)
+	} else if !migrationComplete {
+		// Migration isn't complete - give OSSM time to clean up.
+		return reconcile.Result{RequeueAfter: 5 * time.Second}, nil
+	}
+
+	var errs []error
+
+	istioVersion := r.config.IstioVersion
+	if v, ok := gatewayclass.Annotations[istioVersionOverrideAnnotationKey]; ok {
+		istioVersion = v
+	}
+
+	log.Info("ensuring Istio")
+	if err := r.ensureIstio(ctx, gatewayclass, istioVersion); err != nil {
+		log.Error(err, "error ensuring Istio")
+		errs = append(errs, err)
+	}
+
+	if err := r.client.Status().Patch(ctx, gatewayclass, client.MergeFrom(sourceGatewayClass)); err != nil {
+		log.Error(err, "error patching the gatewayclass status")
+		errs = append(errs, err)
+	}
+
+	return reconcile.Result{}, utilerrors.NewAggregate(errs)
+}
+
+// SailOperatorSource bridges a sail operator channel to a MapFunc logic.
+type SailOperatorSource[T client.Object] struct {
+	NotifyCh     <-chan struct{}
+	RequestsFunc func(context.Context, client.Object) []reconcile.Request
+}
+
+func (s *SailOperatorSource[T]) Start(ctx context.Context, queue workqueue.TypedRateLimitingInterface[reconcile.Request]) error {
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-s.NotifyCh:
+				var empty T
+				requests := s.RequestsFunc(ctx, empty)
+				log.Info("got notification from sail library")
+				for _, req := range requests {
+					queue.Add(req)
+				}
+			}
+		}
+	}()
+	return nil
 }
