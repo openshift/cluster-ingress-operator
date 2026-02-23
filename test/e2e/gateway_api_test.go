@@ -70,12 +70,6 @@ var defaultRoutename = ""
 // feature gate is still in effect, preface the test names with "TestGatewayAPI"
 // so that they run via the openshift/release test configuration.
 func TestGatewayAPI(t *testing.T) {
-	// Skip if feature is not enabled
-	if gatewayAPIEnabled, err := isFeatureGateEnabled(features.FeatureGateGatewayAPI); err != nil {
-		t.Fatalf("error checking feature gate enabled status: %v", err)
-	} else if !gatewayAPIEnabled {
-		t.Skip("Gateway API not enabled, skipping TestGatewayAPI")
-	}
 
 	gatewayAPIControllerEnabled, err := isFeatureGateEnabled(features.FeatureGateGatewayAPIController)
 	if err != nil {

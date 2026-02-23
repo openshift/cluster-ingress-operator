@@ -134,7 +134,6 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		return nil, err
 	}
 	azureWorkloadIdentityEnabled := featureGates.Enabled(features.FeatureGateAzureWorkloadIdentity)
-	gatewayAPIEnabled := featureGates.Enabled(features.FeatureGateGatewayAPI)
 	gatewayAPIControllerEnabled := featureGates.Enabled(features.FeatureGateGatewayAPIController)
 	routeExternalCertificateEnabled := featureGates.Enabled(features.FeatureGateRouteExternalCertificate)
 	ingressControllerDCMEnabled := featureGates.Enabled(features.FeatureGateIngressControllerDynamicConfigurationManager)
@@ -219,7 +218,6 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		IngressControllerImage:          config.IngressControllerImage,
 		CanaryImage:                     config.CanaryImage,
 		OperatorReleaseVersion:          config.OperatorReleaseVersion,
-		GatewayAPIEnabled:               gatewayAPIEnabled,
 		GatewayAPIControllerEnabled:     gatewayAPIControllerEnabled,
 		MarketplaceEnabled:              marketplaceEnabled,
 		OperatorLifecycleManagerEnabled: olmEnabled,
@@ -343,7 +341,6 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 
 	// Set up the gatewayapi controller.
 	if _, err := gatewayapicontroller.New(mgr, gatewayapicontroller.Config{
-		GatewayAPIEnabled:               gatewayAPIEnabled,
 		GatewayAPIControllerEnabled:     gatewayAPIControllerEnabled,
 		MarketplaceEnabled:              marketplaceEnabled,
 		OperatorLifecycleManagerEnabled: olmEnabled,
