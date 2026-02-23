@@ -62,6 +62,8 @@ const (
 	kubeCloudConfigName = "kube-cloud-config"
 	// cloudCABundleKey is the key in the kube cloud config ConfigMap where the custom CA bundle is located
 	cloudCABundleKey = "ca-bundle.pem"
+	// dnsRecordIndexFieldName is the key for the DNSRecord index, used to identify conflicting domain names.
+	dnsRecordIndexFieldName = "Spec.DNSName"
 )
 
 var log = logf.Logger.WithName(controllerName)
@@ -79,6 +81,17 @@ func New(mgr manager.Manager, config Config) (runtimecontroller.Controller, erro
 		return nil, err
 	}
 	if err := c.Watch(source.Kind[client.Object](operatorCache, &iov1.DNSRecord{}, &handler.EnqueueRequestForObject{}, predicate.GenerationChangedPredicate{})); err != nil {
+		return nil, err
+	}
+	// When a DNS record is deleted, there may be a conflicting record that should be published. Add a second watch
+	// exclusively for deletes so that in addition to the normal on-delete cleanup, queue a reconcile for the next
+	// record with the same domain name (if one exists) so that it can be published.
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &iov1.DNSRecord{}, handler.EnqueueRequestsFromMapFunc(reconciler.mapOnRecordDelete), predicate.Funcs{
+		CreateFunc:  func(e event.CreateEvent) bool { return false },
+		DeleteFunc:  func(e event.DeleteEvent) bool { return true },
+		UpdateFunc:  func(e event.UpdateEvent) bool { return false },
+		GenericFunc: func(e event.GenericEvent) bool { return false },
+	})); err != nil {
 		return nil, err
 	}
 	if err := c.Watch(source.Kind[client.Object](operatorCache, &configv1.DNS{}, handler.EnqueueRequestsFromMapFunc(reconciler.ToDNSRecords))); err != nil {
@@ -100,6 +113,12 @@ func New(mgr manager.Manager, config Config) (runtimecontroller.Controller, erro
 		},
 		GenericFunc: func(e event.GenericEvent) bool { return false },
 	})); err != nil {
+		return nil, err
+	}
+	if err := operatorCache.IndexField(context.Background(), &iov1.DNSRecord{}, dnsRecordIndexFieldName, func(o client.Object) []string {
+		dnsRecord := o.(*iov1.DNSRecord)
+		return []string{dnsRecord.Spec.DNSName}
+	}); err != nil {
 		return nil, err
 	}
 	return c, nil
@@ -334,17 +353,33 @@ func (r *reconciler) publishRecordToZones(zones []configv1.DNSZone, record *iov1
 
 		var err error
 		var condition iov1.DNSZoneCondition
+		var isDomainPublished bool
 		if dnsPolicy == iov1.UnmanagedDNS {
-			log.Info("DNS record not published", "record", record.Spec)
+			log.Info("DNS record not published: DNS management policy is unmanaged", "record", record.Spec)
 			condition = iov1.DNSZoneCondition{
-				Message:            "DNS record is currently not being managed by the operator",
-				Reason:             "UnmanagedDNS",
-				Status:             string(operatorv1.ConditionUnknown),
-				Type:               iov1.DNSRecordPublishedConditionType,
-				LastTransitionTime: metav1.Now(),
+				Message: "DNS record is currently not being managed by the operator",
+				Reason:  "UnmanagedDNS",
+				Status:  string(operatorv1.ConditionUnknown),
+				Type:    iov1.DNSRecordPublishedConditionType,
 			}
 		} else if isRecordPublished {
 			condition, err = r.replacePublishedRecord(zones[i], record)
+		} else if isDomainPublished, err = domainIsAlreadyPublishedToZone(context.Background(), r.cache, record, &zones[i]); err != nil {
+			log.Error(err, "failed to validate DNS record", "record", record.Spec)
+			condition = iov1.DNSZoneCondition{
+				Message: "Pre-publish validation failed",
+				Reason:  "InternalError",
+				Status:  string(operatorv1.ConditionFalse),
+				Type:    iov1.DNSRecordPublishedConditionType,
+			}
+		} else if isDomainPublished {
+			log.Info("DNS record not published: domain name already used by another DNS record", "record", record.Spec)
+			condition = iov1.DNSZoneCondition{
+				Message: "Domain name is already in use",
+				Reason:  "DomainAlreadyInUse",
+				Status:  string(operatorv1.ConditionFalse),
+				Type:    iov1.DNSRecordPublishedConditionType,
+			}
 		} else {
 			condition, err = r.publishRecord(zones[i], record)
 		}
@@ -381,6 +416,34 @@ func recordIsAlreadyPublishedToZone(record *iov1.DNSRecord, zoneToPublish *confi
 	}
 
 	return false
+}
+
+// domainIsAlreadyPublishedToZone returns true if the domain name in the provided DNSRecord is already published by
+// another existing dnsRecord.
+func domainIsAlreadyPublishedToZone(ctx context.Context, cache cache.Cache, record *iov1.DNSRecord, zone *configv1.DNSZone) (bool, error) {
+	records := iov1.DNSRecordList{}
+	if err := cache.List(ctx, &records, client.MatchingFields{dnsRecordIndexFieldName: record.Spec.DNSName}); err != nil {
+		return false, err
+	}
+
+	if len(records.Items) == 0 {
+		return false, nil
+	}
+
+	for _, existingRecord := range records.Items {
+		// we only care if the domain name is published by a different record, so ignore the matching record if it
+		// already exists.
+		if record.UID == existingRecord.UID {
+			continue
+		}
+		if record.Spec.DNSName != existingRecord.Spec.DNSName {
+			continue
+		}
+		if recordIsAlreadyPublishedToZone(&existingRecord, zone) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (r *reconciler) delete(record *iov1.DNSRecord) error {
@@ -571,6 +634,44 @@ func (r *reconciler) ToDNSRecords(ctx context.Context, o client.Object) []reconc
 		}
 	}
 	return requests
+}
+
+// mapOnRecordDelete finds another DNSRecord (if any) that uses the same domain name as the deleted record, and queues a
+// reconcile for that record, so that it can be published. If multiple matching records are found, a request for the
+// oldest record is returned.
+func (r *reconciler) mapOnRecordDelete(ctx context.Context, o client.Object) []reconcile.Request {
+	deletedRecord, ok := o.(*iov1.DNSRecord)
+	if !ok {
+		log.Error(nil, "Got unexpected type of object", "expected", "DNSRecord", "actual", fmt.Sprintf("%T", o))
+		return []reconcile.Request{}
+	}
+	otherRecords := iov1.DNSRecordList{}
+	if err := r.cache.List(ctx, &otherRecords, client.MatchingFields{dnsRecordIndexFieldName: deletedRecord.Spec.DNSName}); err != nil {
+		log.Error(err, "failed to list DNS records")
+		return []reconcile.Request{}
+	}
+	if len(otherRecords.Items) == 0 {
+		// Nothing to do.
+		return []reconcile.Request{}
+	}
+	oldestExistingRecord := iov1.DNSRecord{}
+	for _, existingRecord := range otherRecords.Items {
+		// Exclude records that are marked for deletion.
+		if !existingRecord.DeletionTimestamp.IsZero() {
+			continue
+		}
+		if oldestExistingRecord.CreationTimestamp.IsZero() || existingRecord.CreationTimestamp.Before(&oldestExistingRecord.CreationTimestamp) {
+			oldestExistingRecord = existingRecord
+		}
+	}
+	return []reconcile.Request{
+		{
+			NamespacedName: types.NamespacedName{
+				Name:      oldestExistingRecord.Name,
+				Namespace: oldestExistingRecord.Namespace,
+			},
+		},
+	}
 }
 
 // createDNSProvider creates a DNS manager compatible with the given cluster
