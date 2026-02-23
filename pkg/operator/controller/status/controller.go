@@ -142,7 +142,7 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	// it if the capability is not enabled.  Additionally, the default
 	// catalog only exists if the "marketplace" capability is enabled, so we
 	// cannot install OSSM without that capability.
-	if config.GatewayAPIEnabled && config.GatewayAPIControllerEnabled && config.MarketplaceEnabled && config.OperatorLifecycleManagerEnabled {
+	if config.GatewayAPIControllerEnabled && config.MarketplaceEnabled && config.OperatorLifecycleManagerEnabled {
 		if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorsv1alpha1.Subscription{}, handler.EnqueueRequestsFromMapFunc(toDefaultIngressController), predicate.Funcs{
 			CreateFunc: func(e event.CreateEvent) bool {
 				return e.Object.GetNamespace() == operatorcontroller.OpenshiftOperatorNamespace
@@ -193,8 +193,6 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 
 // Config holds all the things necessary for the controller to run.
 type Config struct {
-	// GatewayAPIEnabled indicates that the "GatewayAPI" featuregate is enabled.
-	GatewayAPIEnabled bool
 	// GatewayAPIControllerEnabled indicates that the "GatewayAPIController"
 	// featuregate is enabled.
 	GatewayAPIControllerEnabled bool
@@ -287,7 +285,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 			Name:     state.CanaryNamespace.Name,
 		})
 	}
-	if r.config.GatewayAPIEnabled && r.config.GatewayAPIControllerEnabled {
+	if r.config.GatewayAPIControllerEnabled {
 		if state.haveOSSMSubscription {
 			subscriptionName := operatorcontroller.ServiceMeshOperatorSubscriptionName()
 			related = append(related, configv1.ObjectReference{
@@ -438,77 +436,75 @@ func (r *reconciler) getOperatorState(ctx context.Context, ingressNamespace, can
 		state.IngressControllers = ingressList.Items
 	}
 
-	if r.config.GatewayAPIEnabled {
-		if len(co.Status.Extension.Raw) > 0 {
-			extension := &IngressOperatorStatusExtension{}
-			if err := json.Unmarshal(co.Status.Extension.Raw, extension); err != nil {
-				return state, fmt.Errorf("failed to unmarshal status extension of cluster operator %q: %w", co.Name, err)
+	if len(co.Status.Extension.Raw) > 0 {
+		extension := &IngressOperatorStatusExtension{}
+		if err := json.Unmarshal(co.Status.Extension.Raw, extension); err != nil {
+			return state, fmt.Errorf("failed to unmarshal status extension of cluster operator %q: %w", co.Name, err)
+		}
+		state.unmanagedGatewayAPICRDNames = extension.UnmanagedGatewayAPICRDNames
+	}
+
+	if r.config.GatewayAPIControllerEnabled && r.config.MarketplaceEnabled && r.config.OperatorLifecycleManagerEnabled {
+		var subscription operatorsv1alpha1.Subscription
+		subscriptionName := operatorcontroller.ServiceMeshOperatorSubscriptionName()
+		if err := r.cache.Get(ctx, subscriptionName, &subscription); err != nil {
+			if !errors.IsNotFound(err) {
+				return state, fmt.Errorf("failed to get subscription %q: %v", subscriptionName, err)
 			}
-			state.unmanagedGatewayAPICRDNames = extension.UnmanagedGatewayAPICRDNames
+		} else {
+			state.haveOSSMSubscription = true
+
 		}
 
-		if r.config.GatewayAPIControllerEnabled && r.config.MarketplaceEnabled && r.config.OperatorLifecycleManagerEnabled {
-			var subscription operatorsv1alpha1.Subscription
-			subscriptionName := operatorcontroller.ServiceMeshOperatorSubscriptionName()
-			if err := r.cache.Get(ctx, subscriptionName, &subscription); err != nil {
-				if !errors.IsNotFound(err) {
-					return state, fmt.Errorf("failed to get subscription %q: %v", subscriptionName, err)
-				}
-			} else {
-				state.haveOSSMSubscription = true
+		var (
+			crd                                  apiextensionsv1.CustomResourceDefinition
+			gatewaysResourceNamespacedName       = types.NamespacedName{Name: gatewaysResourceName}
+			gatewayclassesResourceNamespacedName = types.NamespacedName{Name: gatewayclassesResourceName}
+			istiosResourceNamespacedName         = types.NamespacedName{Name: istiosResourceName}
+		)
 
+		if err := r.cache.Get(ctx, gatewaysResourceNamespacedName, &crd); err != nil {
+			if !errors.IsNotFound(err) {
+				return state, fmt.Errorf("failed to get CRD %q: %v", gatewaysResourceName, err)
 			}
-
-			var (
-				crd                                  apiextensionsv1.CustomResourceDefinition
-				gatewaysResourceNamespacedName       = types.NamespacedName{Name: gatewaysResourceName}
-				gatewayclassesResourceNamespacedName = types.NamespacedName{Name: gatewayclassesResourceName}
-				istiosResourceNamespacedName         = types.NamespacedName{Name: istiosResourceName}
-			)
-
-			if err := r.cache.Get(ctx, gatewaysResourceNamespacedName, &crd); err != nil {
-				if !errors.IsNotFound(err) {
-					return state, fmt.Errorf("failed to get CRD %q: %v", gatewaysResourceName, err)
-				}
-			} else {
-				state.haveGatewaysResource = true
-			}
-			if err := r.cache.Get(ctx, gatewayclassesResourceNamespacedName, &crd); err != nil {
-				if !errors.IsNotFound(err) {
-					return state, fmt.Errorf("failed to get CRD %q: %v", gatewayclassesResourceName, err)
-				}
-			} else {
-				state.haveGatewayclassesResource = true
-			}
-			if err := r.cache.Get(ctx, istiosResourceNamespacedName, &crd); err != nil {
-				if !errors.IsNotFound(err) {
-					return state, fmt.Errorf("failed to get CRD %q: %v", istiosResourceName, err)
-				}
-			} else {
-				state.haveIstiosResource = true
-			}
-
-			state.expectedGatewayAPIOperatorVersion = r.config.GatewayAPIOperatorVersion
-			subscriptionList := operatorsv1alpha1.SubscriptionList{}
-			if err := r.subscriptionCache.List(ctx, &subscriptionList); err != nil {
-				return state, fmt.Errorf("failed to get subscriptions: %w", err)
-			}
-			for _, subscription := range subscriptionList.Items {
-				if subscription.Spec != nil && ossmSubscriptions.Has(subscription.Spec.Package) {
-					state.ossmSubscriptions = append(state.ossmSubscriptions, subscription)
-				}
-			}
-
-			gatewayClassList := gatewayapiv1.GatewayClassList{}
-			if err := r.cache.List(ctx, &gatewayClassList, client.MatchingFields{
-				operatorcontroller.GatewayClassIndexFieldName: operatorcontroller.OpenShiftGatewayClassControllerName,
-			}); err != nil {
-				return state, fmt.Errorf("failed to list gateway classes: %w", err)
-			}
-			// If one or more gateway classes have ControllerName=operatorcontroller.OpenShiftGatewayClassControllerName,
-			// the ingress operator should try to install OSSM.
-			state.shouldInstallOSSM = (len(gatewayClassList.Items) > 0)
+		} else {
+			state.haveGatewaysResource = true
 		}
+		if err := r.cache.Get(ctx, gatewayclassesResourceNamespacedName, &crd); err != nil {
+			if !errors.IsNotFound(err) {
+				return state, fmt.Errorf("failed to get CRD %q: %v", gatewayclassesResourceName, err)
+			}
+		} else {
+			state.haveGatewayclassesResource = true
+		}
+		if err := r.cache.Get(ctx, istiosResourceNamespacedName, &crd); err != nil {
+			if !errors.IsNotFound(err) {
+				return state, fmt.Errorf("failed to get CRD %q: %v", istiosResourceName, err)
+			}
+		} else {
+			state.haveIstiosResource = true
+		}
+
+		state.expectedGatewayAPIOperatorVersion = r.config.GatewayAPIOperatorVersion
+		subscriptionList := operatorsv1alpha1.SubscriptionList{}
+		if err := r.subscriptionCache.List(ctx, &subscriptionList); err != nil {
+			return state, fmt.Errorf("failed to get subscriptions: %w", err)
+		}
+		for _, subscription := range subscriptionList.Items {
+			if subscription.Spec != nil && ossmSubscriptions.Has(subscription.Spec.Package) {
+				state.ossmSubscriptions = append(state.ossmSubscriptions, subscription)
+			}
+		}
+
+		gatewayClassList := gatewayapiv1.GatewayClassList{}
+		if err := r.cache.List(ctx, &gatewayClassList, client.MatchingFields{
+			operatorcontroller.GatewayClassIndexFieldName: operatorcontroller.OpenShiftGatewayClassControllerName,
+		}); err != nil {
+			return state, fmt.Errorf("failed to list gateway classes: %w", err)
+		}
+		// If one or more gateway classes have ControllerName=operatorcontroller.OpenShiftGatewayClassControllerName,
+		// the ingress operator should try to install OSSM.
+		state.shouldInstallOSSM = (len(gatewayClassList.Items) > 0)
 	}
 
 	return state, nil
