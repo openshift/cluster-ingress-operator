@@ -84,7 +84,7 @@ func (r *reconciler) ensureGatewayAPICRDs(ctx context.Context) error {
 
 // listUnmanagedGatewayAPICRDs returns a list of unmanaged Gateway API CRDs
 // which exist in the cluster. A Gateway API CRD has "gateway.networking.k8s.io"
-// or "gateway.networking.x-k8s.io" in its "spec.group" field.
+// in its "spec.group" field.
 func (r *reconciler) listUnmanagedGatewayAPICRDs(ctx context.Context) ([]string, error) {
 	gatewayAPICRDs := &apiextensionsv1.CustomResourceDefinitionList{}
 	if err := r.cache.List(ctx, gatewayAPICRDs, client.MatchingFields{gatewayAPICRDIndexFieldName: unmanagedGatewayAPICRDIndexFieldValue}); err != nil {
