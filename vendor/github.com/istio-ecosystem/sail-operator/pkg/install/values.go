@@ -15,24 +15,11 @@
 package install
 
 import (
+	"fmt"
+
 	v1 "github.com/istio-ecosystem/sail-operator/api/v1"
+	"github.com/istio-ecosystem/sail-operator/pkg/helm"
 	"k8s.io/utils/ptr"
-)
-
-// Environment variable names for Istio resource filtering.
-// X_ prefix prevents Istio from processing until the feature is ready.
-// When activating, remove the X_ prefix.
-// See: https://github.com/istio/istio/commit/7e58d08397ee7b7119bf49abc9bd7b4f550f7839
-const (
-	EnvPilotIgnoreResources  = "X_PILOT_IGNORE_RESOURCES"
-	EnvPilotIncludeResources = "X_PILOT_INCLUDE_RESOURCES"
-)
-
-// Resource filtering values for Gateway API mode.
-// Ignore all istio.io resources except the 3 needed for gateway customization.
-const (
-	GatewayAPIIgnoreResources  = "*.istio.io"
-	GatewayAPIIncludeResources = "wasmplugins.extensions.istio.io,envoyfilters.networking.istio.io,destinationrules.networking.istio.io"
 )
 
 // GatewayAPIDefaults returns pre-configured values for Gateway API mode on OpenShift.
@@ -88,8 +75,8 @@ func GatewayAPIDefaults() *v1.Values {
 				"PILOT_ENABLE_GATEWAY_API_COPY_LABELS_ANNOTATIONS": "false",
 				// Resource filtering for Gateway API mode (X_ prefix until Istio feature is ready)
 				// When active, istiod will only reconcile Gateway API + the 3 included Istio resources
-				EnvPilotIgnoreResources:  GatewayAPIIgnoreResources,
-				EnvPilotIncludeResources: GatewayAPIIncludeResources,
+				envPilotIgnoreResources:  gatewayAPIIgnoreResources,
+				envPilotIncludeResources: gatewayAPIIncludeResources,
 			},
 		},
 		SidecarInjectorWebhook: &v1.SidecarInjectorConfig{
@@ -122,8 +109,34 @@ func GatewayAPIDefaults() *v1.Values {
 	}
 }
 
+// mergeOverwrite recursively merges overlay into base, with overlay taking precedence.
+// NOTE: This is a copy of istiovalues.mergeOverwrite. Consider exporting the original
+// to avoid duplication once the library API stabilizes.
+func mergeOverwrite(base map[string]any, overrides map[string]any) map[string]any {
+	if base == nil {
+		base = make(map[string]any, 1)
+	}
+	for key, value := range overrides {
+		if _, exists := base[key]; !exists {
+			base[key] = value
+			continue
+		}
+		childOverrides, overrideValueIsMap := value.(map[string]any)
+		childBase, baseValueIsMap := base[key].(map[string]any)
+		if baseValueIsMap && overrideValueIsMap {
+			base[key] = mergeOverwrite(childBase, childOverrides)
+		} else {
+			base[key] = value
+		}
+	}
+	return base
+}
+
 // MergeValues merges two Values structs, with overlay taking precedence.
 // This is useful for combining GatewayAPIDefaults() with custom overrides.
+//
+// Maps are merged recursively (overlay keys override base keys).
+// Lists are replaced entirely (overlay list replaces base list).
 //
 // Example:
 //
@@ -137,124 +150,12 @@ func MergeValues(base, overlay *v1.Values) *v1.Values {
 	if overlay == nil {
 		return base
 	}
-
-	// Deep copy base to avoid modifying it
-	result := base.DeepCopy()
-
-	// Merge Global
-	if overlay.Global != nil {
-		if result.Global == nil {
-			result.Global = overlay.Global.DeepCopy()
-		} else {
-			mergeGlobal(result.Global, overlay.Global)
-		}
+	baseMap := helm.FromValues(base)
+	overlayMap := helm.FromValues(overlay)
+	merged := mergeOverwrite(baseMap, overlayMap)
+	result, err := helm.ToValues(merged, &v1.Values{})
+	if err != nil {
+		panic(fmt.Sprintf("failed to convert merged values: %v", err))
 	}
-
-	// Merge Pilot
-	if overlay.Pilot != nil {
-		if result.Pilot == nil {
-			result.Pilot = overlay.Pilot.DeepCopy()
-		} else {
-			mergePilot(result.Pilot, overlay.Pilot)
-		}
-	}
-
-	// Merge SidecarInjectorWebhook
-	if overlay.SidecarInjectorWebhook != nil {
-		if result.SidecarInjectorWebhook == nil {
-			result.SidecarInjectorWebhook = overlay.SidecarInjectorWebhook.DeepCopy()
-		} else {
-			mergeSidecarInjector(result.SidecarInjectorWebhook, overlay.SidecarInjectorWebhook)
-		}
-	}
-
-	// Merge MeshConfig
-	if overlay.MeshConfig != nil {
-		if result.MeshConfig == nil {
-			result.MeshConfig = overlay.MeshConfig.DeepCopy()
-		} else {
-			mergeMeshConfig(result.MeshConfig, overlay.MeshConfig)
-		}
-	}
-
-	// Copy other fields from overlay if set
-	if overlay.Revision != nil {
-		result.Revision = overlay.Revision
-	}
-
 	return result
-}
-
-func mergeGlobal(base, overlay *v1.GlobalConfig) {
-	if overlay.DefaultPodDisruptionBudget != nil {
-		base.DefaultPodDisruptionBudget = overlay.DefaultPodDisruptionBudget.DeepCopy()
-	}
-	if overlay.PriorityClassName != nil {
-		base.PriorityClassName = overlay.PriorityClassName
-	}
-	if overlay.IstioNamespace != nil {
-		base.IstioNamespace = overlay.IstioNamespace
-	}
-	if overlay.TrustBundleName != nil {
-		base.TrustBundleName = overlay.TrustBundleName
-	}
-	if overlay.Hub != nil {
-		base.Hub = overlay.Hub
-	}
-	if overlay.Tag != nil {
-		base.Tag = overlay.Tag
-	}
-}
-
-func mergePilot(base, overlay *v1.PilotConfig) {
-	if overlay.Enabled != nil {
-		base.Enabled = overlay.Enabled
-	}
-	if overlay.Cni != nil {
-		base.Cni = overlay.Cni.DeepCopy()
-	}
-	if overlay.Env != nil {
-		if base.Env == nil {
-			base.Env = make(map[string]string)
-		}
-		for k, v := range overlay.Env {
-			base.Env[k] = v
-		}
-	}
-	if overlay.PodAnnotations != nil {
-		if base.PodAnnotations == nil {
-			base.PodAnnotations = make(map[string]string)
-		}
-		for k, v := range overlay.PodAnnotations {
-			base.PodAnnotations[k] = v
-		}
-	}
-	if overlay.ExtraContainerArgs != nil {
-		base.ExtraContainerArgs = overlay.ExtraContainerArgs
-	}
-}
-
-func mergeSidecarInjector(base, overlay *v1.SidecarInjectorConfig) {
-	if overlay.EnableNamespacesByDefault != nil {
-		base.EnableNamespacesByDefault = overlay.EnableNamespacesByDefault
-	}
-}
-
-func mergeMeshConfig(base, overlay *v1.MeshConfig) {
-	if overlay.AccessLogFile != nil {
-		base.AccessLogFile = overlay.AccessLogFile
-	}
-	if overlay.IngressControllerMode != "" {
-		base.IngressControllerMode = overlay.IngressControllerMode
-	}
-	if overlay.DefaultConfig != nil {
-		if base.DefaultConfig == nil {
-			base.DefaultConfig = overlay.DefaultConfig.DeepCopy()
-		} else {
-			// Just overwrite for now - could be more granular
-			if overlay.DefaultConfig.ProxyHeaders != nil {
-				base.DefaultConfig.ProxyHeaders = overlay.DefaultConfig.ProxyHeaders.DeepCopy()
-			}
-		}
-	}
 }
