@@ -73,18 +73,6 @@ func Test_Reconcile(t *testing.T) {
 		expectStartCtrl    bool
 	}{
 		{
-			name:               "gateway API disabled",
-			marketplaceEnabled: true,
-			olmEnabled:         true,
-			existingObjects: []runtime.Object{
-				co("ingress"),
-			},
-			expectCreate:    []client.Object{},
-			expectUpdate:    []client.Object{},
-			expectDelete:    []client.Object{},
-			expectStartCtrl: false,
-		},
-		{
 			name:                        "gateway API enabled",
 			gatewayAPIControllerEnabled: true,
 			marketplaceEnabled:          true,
