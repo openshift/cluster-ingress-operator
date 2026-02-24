@@ -19,8 +19,8 @@ require (
 	github.com/go-logr/zapr v1.3.0
 	github.com/google/go-cmp v0.7.0
 	github.com/google/gopacket v1.1.19
-	github.com/istio-ecosystem/sail-operator v0.0.0-20250513111011-30be83268d6b
-	github.com/openshift/api v0.0.0-20251214014457-bfa868a22401
+	github.com/istio-ecosystem/sail-operator v0.0.0-20260212113734-df7c3ff58926
+	github.com/openshift/api v0.0.0-20260223154456-de86ee3bf481
 	github.com/openshift/client-go v0.0.0-20251205093018-96a6cbc1420c
 	github.com/openshift/library-go v0.0.0-20251021141706-f489e811f030
 	github.com/operator-framework/api v0.30.0
@@ -73,7 +73,7 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/chai2010/gettext-go v1.0.3 // indirect
 	github.com/cncf/xds/go v0.0.0-20251110193048-8bfbf64dc13e // indirect
-	github.com/containerd/containerd v1.7.27 // indirect
+	github.com/containerd/containerd v1.7.29 // indirect
 	github.com/containerd/errdefs v0.3.0 // indirect
 	github.com/containerd/log v0.1.0 // indirect
 	github.com/containerd/platforms v0.2.1 // indirect
@@ -201,7 +201,7 @@ require (
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	helm.sh/helm/v3 v3.18.6 // indirect
-	istio.io/istio v0.0.0-20260206004748-d9e77b1d2c2b // indirect
+	istio.io/istio v0.0.0-20260208024451-a30ad73344d7 // indirect
 	k8s.io/cli-runtime v0.35.0 // indirect
 	k8s.io/component-base v0.35.0 // indirect
 	k8s.io/klog/v2 v2.130.1 // indirect
@@ -222,8 +222,5 @@ require (
 // github.com/istio-ecosystem/sail-operator.
 replace github.com/imdario/mergo => github.com/imdario/mergo v0.3.5
 
-// Use gateway-without-olm-featuregate branch for GatewayAPIWithoutOLM feature gate
-replace github.com/openshift/api => github.com/gcs278/api v0.0.0-20260204095657-a47ac12888a3
-
-// Use the sail_library branch from aslakknutsen's fork for Sail Library integration
-replace github.com/istio-ecosystem/sail-operator => github.com/aslakknutsen/sail-operator v0.0.0-20260206153059-66612bfbf3cf
+// Use the sail_library_2 branch from aslakknutsen's fork for Sail Library integration
+replace github.com/istio-ecosystem/sail-operator => github.com/aslakknutsen/sail-operator v0.0.0-20260223154431-ffebc5493a7f
