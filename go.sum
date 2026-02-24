@@ -82,8 +82,8 @@ github.com/armon/go-socks5 v0.0.0-20160902184237-e75332964ef5/go.mod h1:wHh0iHkY
 github.com/asaskevich/govalidator v0.0.0-20200907205600-7a23bdc65eef/go.mod h1:WaHUgvxTVq04UNunO+XhnAqY/wQc+bxr74GqbsZ/Jqw=
 github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2 h1:DklsrG3dyBCFEj5IhUbnKptjxatkF07cF2ak3yi77so=
 github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2/go.mod h1:WaHUgvxTVq04UNunO+XhnAqY/wQc+bxr74GqbsZ/Jqw=
-github.com/aslakknutsen/sail-operator v0.0.0-20260206153059-66612bfbf3cf h1:9T1KocfVPt43dvB29+EVd2axkWxKMF1e/vVAv8BNnS4=
-github.com/aslakknutsen/sail-operator v0.0.0-20260206153059-66612bfbf3cf/go.mod h1:DTLYy5ruAaFaq+WF/F+vW1vayrGaiTUNNsSu/E1hER8=
+github.com/aslakknutsen/sail-operator v0.0.0-20260223154431-ffebc5493a7f h1:/wY2qCfgvOQhcr0GK+J8lkvajwseOrITgyrlHyIQWo0=
+github.com/aslakknutsen/sail-operator v0.0.0-20260223154431-ffebc5493a7f/go.mod h1:rR8cFIg6t7uYqAb03oMQSQ/vYnXR1WJN7zbnm+3VTDI=
 github.com/aws/aws-sdk-go v1.34.28/go.mod h1:H7NKnBqNVzoTJpGfLrQkkD+ytBA93eiDYi/+8rV9s48=
 github.com/aws/aws-sdk-go v1.38.49 h1:E31vxjCe6a5I+mJLmUGaZobiWmg9KdWaud9IfceYeYQ=
 github.com/aws/aws-sdk-go v1.38.49/go.mod h1:hcU610XS61/+aQV88ixoOzUoG7v3b31pl2zKMmprdro=
@@ -112,8 +112,8 @@ github.com/cncf/xds/go v0.0.0-20210922020428-25de7278fc84/go.mod h1:eXthEFrGJvWH
 github.com/cncf/xds/go v0.0.0-20211011173535-cb28da3451f1/go.mod h1:eXthEFrGJvWHgFFCl3hGmgk+/aYT6PnTQLykKQRLhEs=
 github.com/cncf/xds/go v0.0.0-20251110193048-8bfbf64dc13e h1:gt7U1Igw0xbJdyaCM5H2CnlAlPSkzrhsebQB6WQWjLA=
 github.com/cncf/xds/go v0.0.0-20251110193048-8bfbf64dc13e/go.mod h1:KdCmV+x/BuvyMxRnYBlmVaq4OLiKW6iRQfvC62cvdkI=
-github.com/containerd/containerd v1.7.27 h1:yFyEyojddO3MIGVER2xJLWoCIn+Up4GaHFquP7hsFII=
-github.com/containerd/containerd v1.7.27/go.mod h1:xZmPnl75Vc+BLGt4MIfu6bp+fy03gdHAn9bz+FreFR0=
+github.com/containerd/containerd v1.7.29 h1:90fWABQsaN9mJhGkoVnuzEY+o1XDPbg9BTC9QTAHnuE=
+github.com/containerd/containerd v1.7.29/go.mod h1:azUkWcOvHrWvaiUjSQH0fjzuHIwSPg1WL5PshGP4Szs=
 github.com/containerd/errdefs v0.3.0 h1:FSZgGOeK4yuT/+DnF07/Olde/q4KBoMsaamhXxIMDp4=
 github.com/containerd/errdefs v0.3.0/go.mod h1:+YBYIdtsnF4Iw6nWZhJcqGSg/dwvV7tyJ/kCkyJ2k+M=
 github.com/containerd/log v0.1.0 h1:TCJt7ioM2cr/tfR8GPbGf9/VRAX8D2B4PjzCpfX540I=
@@ -880,8 +880,8 @@ istio.io/api v1.29.0-alpha.0.0.20260205010447-d2bc7d18a337 h1:fTa0j3yQhp5RohEaAa
 istio.io/api v1.29.0-alpha.0.0.20260205010447-d2bc7d18a337/go.mod h1:+brQWcBHoROuyA6fv8rbgg8Kfn0RCGuqoY0duCMuSLA=
 istio.io/client-go v1.29.0-alpha.0.0.20260205011149-b3a6b2e28b06 h1:S3ger4fZHVuV61d9HKwUksc2y1vQhtyu4zgVr0lD03M=
 istio.io/client-go v1.29.0-alpha.0.0.20260205011149-b3a6b2e28b06/go.mod h1:NHEtxuW56GL/RuXXE6NLdzrBURs++EyIp2WSsL9Fpe8=
-istio.io/istio v0.0.0-20260206004748-d9e77b1d2c2b h1:+FsCm5e0teyY16nWteUorcx6ytP71fFqFjk9zFwS/ag=
-istio.io/istio v0.0.0-20260206004748-d9e77b1d2c2b/go.mod h1:chB5nG8Schg/i9DjAyc3QmiquXbfWDWql7P3bgCETHM=
+istio.io/istio v0.0.0-20260208024451-a30ad73344d7 h1:QjIjbK46AhUscVomrrEFiiFq1roN+/3I2hqCauHGO7M=
+istio.io/istio v0.0.0-20260208024451-a30ad73344d7/go.mod h1:cVTeU6zOpccSZOT3xFeSPn7G0ySPG/vaP9T0kqgk0Wg=
 k8s.io/api v0.35.0 h1:iBAU5LTyBI9vw3L5glmat1njFK34srdLmktWwLTprlY=
 k8s.io/api v0.35.0/go.mod h1:AQ0SNTzm4ZAczM03QH42c7l3bih1TbAXYo0DkF8ktnA=
 k8s.io/apiextensions-apiserver v0.35.0 h1:3xHk2rTOdWXXJM+RDQZJvdx0yEOgC0FgQ1PlJatA5T4=

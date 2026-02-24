@@ -17,6 +17,7 @@ package install
 import (
 	"fmt"
 	"io/fs"
+	"strings"
 
 	"github.com/istio-ecosystem/sail-operator/pkg/config"
 )
@@ -67,11 +68,12 @@ func SetImageDefaults(resourceFS fs.FS, registry string, images ImageNames) erro
 			continue
 		}
 		v := e.Name()
+		tag := strings.TrimPrefix(v, "v")
 		config.Config.ImageDigests[v] = config.IstioImageConfig{
-			IstiodImage:  registry + "/" + images.Istiod + ":" + v,
-			ProxyImage:   registry + "/" + images.Proxy + ":" + v,
-			CNIImage:     registry + "/" + images.CNI + ":" + v,
-			ZTunnelImage: registry + "/" + images.ZTunnel + ":" + v,
+			IstiodImage:  registry + "/" + images.Istiod + ":" + tag,
+			ProxyImage:   registry + "/" + images.Proxy + ":" + tag,
+			CNIImage:     registry + "/" + images.CNI + ":" + tag,
+			ZTunnelImage: registry + "/" + images.ZTunnel + ":" + tag,
 		}
 	}
 	return nil
