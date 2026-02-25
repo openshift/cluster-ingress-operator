@@ -29,6 +29,10 @@ import (
 
 const (
 	controllerName = "gateway_status_controller"
+	// maxGatewayConditions is the maximum number of conditions allowed on a Gateway resource
+	// as defined by the Gateway API specification.
+	// See: https://github.com/kubernetes-sigs/gateway-api/blob/main/apis/v1/gateway_types.go
+	maxGatewayConditions = 8
 )
 
 var logger = logf.Logger.WithName(controllerName)
@@ -50,13 +54,15 @@ type reconciler struct {
 // conditions to these Gateways.
 // This is an unmanaged controller, which means that the manager does not start it.
 func NewUnmanaged(mgr manager.Manager) (controller.Controller, error) {
-	// Create a new cache for gateways so it can watch all namespaces.
-	// (Using the operator cache for gateways in all namespaces would cause
-	// it to cache other resources in all namespaces.)
+	// Create a dedicated cache for this controller to watch resources only in the
+	// "openshift-ingress" namespace. Using the operator's main cache would cause it
+	// to watch Gateways, Services, and DNSRecords in all namespaces, which would
+	// increase memory usage unnecessarily.
 	// This cache is optimized just for the resources that concern this controller:
-	// * Just Openshift managed Gateway Class
-	// * Just resources on "openshift-ingress" namespace
-	// * Removing managed fields to reduce memory footprint
+	// * Gateway resources with OpenShift-managed GatewayClass
+	// * Service and DNSRecord resources labeled with gateway.networking.k8s.io/gateway-name
+	// * Only resources in the "openshift-ingress" namespace
+	// * Managed fields stripped to reduce memory footprint
 	gatewaysCache, err := cache.New(mgr.GetConfig(), cache.Options{
 		Scheme: mgr.GetScheme(),
 		Mapper: mgr.GetRESTMapper(),
@@ -127,6 +133,12 @@ func NewUnmanaged(mgr manager.Manager) (controller.Controller, error) {
 	return c, nil
 }
 
+// normalizeHostname removes the trailing root dot from a hostname for consistent matching.
+// This ensures that "example.com" and "example.com." are treated as equivalent.
+func normalizeHostname(hostname string) string {
+	return strings.TrimSuffix(hostname, ".")
+}
+
 // Reconcile expects request to refer to a gateway and adds Openshift DNS and LoadBalancer
 // conditions to it
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
@@ -150,34 +162,40 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 
 	// We want just the first service of the list, Gateway API controllers usually provision
 	// just one service
+	var childSvc *corev1.Service
 	childSvcs := &corev1.ServiceList{}
-	childSvc := &corev1.Service{}
 	if err := r.cache.List(ctx, childSvcs, listOpts...); err != nil {
 		log.Error(err, "error fetching the services from gateway")
-	} else if len(childSvcs.Items) == 0 {
-		log.Error(fmt.Errorf("no service was found"), "error fetching the services from gateway")
-	} else {
+		errs = append(errs, fmt.Errorf("failed to list services for gateway %s/%s: %w", gateway.Namespace, gateway.Name, err))
+	} else if len(childSvcs.Items) > 0 {
 		childSvc = childSvcs.Items[0].DeepCopy()
+	} else {
+		log.V(1).Info("no service was found for gateway")
 	}
 
 	// Because we will have multiple DNS records per Gateway (one per listener)
 	// we need all of the records that belong to a Gateway
 	childDNSRecords := &iov1.DNSRecordList{}
 	if err := r.cache.List(ctx, childDNSRecords, listOpts...); err != nil {
-		log.Error(err, "error fetching the dnsrecord from gateway")
+		log.Error(err, "error fetching the dnsrecords from gateway")
+		errs = append(errs, fmt.Errorf("failed to list dnsrecords for gateway %s/%s: %w", gateway.Namespace, gateway.Name, err))
 	} else if len(childDNSRecords.Items) == 0 {
-		log.Error(fmt.Errorf("no dnsrecord was found"), "error fetching the dnsrecords from gateway")
+		log.V(1).Info("no dnsrecords found for gateway")
 	}
 
-	// TODO: maybe use index manager instead
 	// hostnameToDNSRecord will be used to verify that, given a listener, when it has a hostname
 	// what is the matching dnsRecord of it.
 	// This is required to cross-check the status of a specific DNSRecord from a hostname
 	hostnameToDNSRecord := make(map[string]*iov1.DNSRecord)
 	for _, dnsRecord := range childDNSRecords.Items {
-		// Remove the suffix "." from root records to be sure the DNS name always
-		// match with listener
-		hostnameToDNSRecord[strings.TrimSuffix(dnsRecord.Spec.DNSName, ".")] = dnsRecord.DeepCopy()
+		hostname := normalizeHostname(dnsRecord.Spec.DNSName)
+		if existing, found := hostnameToDNSRecord[hostname]; found {
+			log.Info("duplicate DNSRecord found for hostname, using latest",
+				"hostname", hostname,
+				"existing", existing.Name,
+				"new", dnsRecord.Name)
+		}
+		hostnameToDNSRecord[hostname] = dnsRecord.DeepCopy()
 	}
 
 	// listenerToHostname will be used when verifying a Gateway Listener status,
@@ -187,9 +205,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	listenerToHostname := make(map[gatewayapiv1.SectionName]gatewayapiv1.Hostname)
 	for _, listener := range gateway.Spec.Listeners {
 		if listener.Hostname != nil {
-			// Users may add the leading root "." in the end, we want to remove it and
-			// be sure that the dnsrecord also does not have it when validating
-			hostname := strings.TrimSuffix(string(*listener.Hostname), ".")
+			hostname := normalizeHostname(string(*listener.Hostname))
 			listenerToHostname[listener.Name] = gatewayapiv1.Hostname(hostname)
 		}
 	}
@@ -205,7 +221,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		"involvedObject.kind":       "Service",
 		"source":                    "service-controller",
 	}
-	if childSvc != nil {
+	if childSvc != nil && childSvc.UID != "" {
 		fieldSelector["involvedObject.uid"] = string(childSvc.UID)
 	}
 
@@ -220,12 +236,26 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		gateway.Status.Conditions = make([]metav1.Condition, 0)
 	}
 
-	// WARNING: one thing to be aware is that conditions on Gateway resource are limited to 8: https://github.com/kubernetes-sigs/gateway-api/blob/a8fe5c8732a37ef471d86afaf570ff8ad0ef0221/apis/v1/gateway_types.go#L691
-	// So if the Gateway controller (in our case Istio) is adding 2 conditions, we have 6 more to add.
+	// Compute status conditions for LoadBalancer and DNS.
+	// The Gateway API specification limits Gateway status conditions to maxGatewayConditions (8).
+	// If other controllers (e.g., Istio) are adding conditions, we need to ensure we don't exceed this limit.
 	status.ComputeGatewayAPILoadBalancerStatus(childSvc, operandEvents.Items, gateway.GetGeneration(), &gateway.Status.Conditions)
 	status.ComputeGatewayAPIListenerDNSStatus(dnsConfig, gateway.GetGeneration(), &gateway.Status, listenerToHostname, hostnameToDNSRecord)
 
-	log.Info("new conditions to be added", "conditions", gateway.Status.Conditions)
+	// Validate that we haven't exceeded the Gateway API condition limit
+	if len(gateway.Status.Conditions) > maxGatewayConditions {
+		log.Error(fmt.Errorf("gateway condition count exceeds maximum"),
+			"gateway condition limit exceeded",
+			"current", len(gateway.Status.Conditions),
+			"max", maxGatewayConditions,
+			"gateway", gateway.Name)
+		// This is a warning - we'll still attempt to patch, but the API server may reject it
+	}
+
+	log.Info("updating gateway status conditions",
+		"conditionCount", len(gateway.Status.Conditions),
+		"conditions", gateway.Status.Conditions)
+
 	if err := r.client.Status().Patch(ctx, gateway, client.MergeFrom(sourceGateway)); err != nil {
 		log.Error(err, "error patching the gateway status")
 		errs = append(errs, err)

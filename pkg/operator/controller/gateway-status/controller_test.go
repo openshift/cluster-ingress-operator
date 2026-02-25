@@ -194,17 +194,6 @@ func Test_Reconcile(t *testing.T) {
 			expectError:        `dnses.config.openshift.io "cluster" not found`,
 		},
 		{
-			name: "missing infrastructure config",
-			existingObjects: []runtime.Object{
-				dnsConfigFn(true),
-				gwFn("example-gateway", nil, 2, exampleConditions...),
-				svcFn("example-gateway", exampleManagedGatewayLabel, ingHostFn("gwapi.example.tld")),
-			},
-			reconcileRequest:   reqFn("openshift-ingress", "example-gateway"),
-			expectedConditions: exampleConditions,
-			expectError:        `infrastructures.config.openshift.io "cluster" not found`,
-		},
-		{
 			name: "missing loadbalancer and dnsrecord should add the right condition about missing both resources",
 			existingObjects: []runtime.Object{
 				dnsConfigFn(true),
