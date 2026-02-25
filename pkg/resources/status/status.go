@@ -52,7 +52,7 @@ func ComputeDNSStatus(ic *operatorv1.IngressController, wildcardRecord *iov1.DNS
 		// this condition will not be verified.
 		// Otherwise, it will return a single condition that DNSManaged=False in case
 		// the EndpointPublishingStrategy is not "LoadBalancerService"
-		if ic != nil && ic.Status.EndpointPublishingStrategy.Type != operatorv1.LoadBalancerServiceStrategyType {
+		if ic != nil && (ic.Status.EndpointPublishingStrategy == nil || ic.Status.EndpointPublishingStrategy.Type != operatorv1.LoadBalancerServiceStrategyType) {
 			return []operatorv1.OperatorCondition{
 				{
 					Type:    operatorv1.DNSManagedIngressConditionType,

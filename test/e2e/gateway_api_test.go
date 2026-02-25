@@ -643,8 +643,16 @@ func testGatewayOpenshiftConditions(t *testing.T) {
 		// Get gateway a 2nd time to check the conditions
 		gateway, err = assertGatewaySuccessful(t, "default", name)
 		require.NoError(t, err, "failed waiting gateway to have conditions")
-		require.Nil(t, condutils.FindStatusCondition(gateway.Status.Conditions, "DNSReady"), "condition should not be present")
 		require.Nil(t, condutils.FindStatusCondition(gateway.Status.Conditions, "LoadBalancerReady"), "condition should not be present")
+		lsIndex := -1
+		for i, ls := range gateway.Status.Listeners {
+			if ls.Name == gatewayapiv1.SectionName("http") {
+				lsIndex = i
+				break
+			}
+		}
+		require.GreaterOrEqual(t, lsIndex, 0, "http listener should exist")
+		require.Nil(t, condutils.FindStatusCondition(gateway.Status.Listeners[lsIndex].Conditions, "DNSReady"), "listener DNSReady should not be present")
 	})
 
 	t.Run("creating a new gateway with the wrong base domain should add openshift conditions reflecting the failure", func(t *testing.T) {
@@ -916,7 +924,7 @@ func testGatewayOpenshiftConditions(t *testing.T) {
 				}, 3*time.Minute, 3*time.Second)
 			})
 			// After conditions are bumped, the original ones should not change
-			assert.Equal(t, originalListenerAcceptedCondition.LastTransitionTime, currentListenerAcceptedCondition.LastTransitionTime, "the DNSReady condition LastTransitionTime should not change")
+			assert.Equal(t, originalListenerAcceptedCondition.LastTransitionTime, currentListenerAcceptedCondition.LastTransitionTime, "the Accepted condition LastTransitionTime should not change")
 		})
 
 		// This test verifies if creating a 2nd Gateway using the same domain of the 1st one returns

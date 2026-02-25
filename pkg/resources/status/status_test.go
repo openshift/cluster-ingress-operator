@@ -584,7 +584,7 @@ func Test_computeDNSStatus(t *testing.T) {
 			},
 		},
 		{
-			// This text checks if precedence is given to failed zones over unknown zones.
+			// This test checks if precedence is given to failed zones over unknown zones.
 			name: "DNSManaged true and DNSReady is false due to failed and unknown conditions",
 			controller: &operatorv1.IngressController{
 				Status: operatorv1.IngressControllerStatus{
