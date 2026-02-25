@@ -21,7 +21,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	condutils "k8s.io/apimachinery/pkg/api/meta"
-	"k8s.io/apimachinery/pkg/fields"
 
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -627,8 +626,8 @@ func testGatewayOpenshiftConditions(t *testing.T) {
 	require.NoError(t, err, "failed to create gatewayclass")
 
 	t.Run("creating a new gateway outside of 'openshift-ingress' namespace should not get openshift conditions", func(t *testing.T) {
-		rnd := rand.IntN(1000)
-		name := fmt.Sprintf("gw-test-%d", rnd)
+		name := names.SimpleNameGenerator.GenerateName("gw-test-")
+		rnd := rand.IntN(1000000)
 		testDomain := fmt.Sprintf("some-%d.%s", rnd, domain)
 		gateway, err := createGateway(gatewayClass, name, "default", testDomain)
 		require.NoError(t, err, "failed to create gateway", "name", name)
@@ -649,8 +648,8 @@ func testGatewayOpenshiftConditions(t *testing.T) {
 	})
 
 	t.Run("creating a new gateway with the wrong base domain should add openshift conditions reflecting the failure", func(t *testing.T) {
-		rnd := rand.IntN(1000)
-		name := fmt.Sprintf("gw-test-%d", rnd)
+		name := names.SimpleNameGenerator.GenerateName("gw-test-")
+		rnd := rand.IntN(1000000)
 		testDomain := fmt.Sprintf("some-%d.not.something.managed.tld", rnd)
 		gateway, err := createGateway(gatewayClass, name, operatorcontroller.DefaultOperandNamespace, testDomain)
 		require.NoError(t, err, "failed to create gateway", "name", name)
@@ -690,8 +689,8 @@ func testGatewayOpenshiftConditions(t *testing.T) {
 	})
 
 	t.Run("creating a new gateway with the right base domain", func(t *testing.T) {
-		rnd := rand.IntN(1000)
-		name := fmt.Sprintf("gw-test-%d", rnd)
+		name := names.SimpleNameGenerator.GenerateName("gw-test-")
+		rnd := rand.IntN(1000000)
 		testDomain := fmt.Sprintf("some-%d.%s", rnd, domain)
 		gateway, err := createGateway(gatewayClass, name, operatorcontroller.DefaultOperandNamespace, testDomain)
 		require.NoError(t, err, "failed to create gateway", "name", name)
@@ -976,25 +975,6 @@ func testGatewayOpenshiftConditions(t *testing.T) {
 		})
 
 	})
-}
-
-func getMatchingEventsFromGateway(t *testing.T, kclient client.Reader, gw *gatewayapiv1.Gateway, eventType, reason string) (*corev1.EventList, error) {
-	t.Helper()
-	operandEvents := &corev1.EventList{}
-	fieldSelector := fields.Set{
-		"involvedObject.kind":      "Gateway",
-		"involvedObject.namespace": gw.Namespace,
-		"involvedObject.name":      gw.Name,
-		"type":                     eventType,
-		"reason":                   reason,
-	}
-
-	t.Logf("using field selector: %+v", fieldSelector)
-
-	err := kclient.List(context.Background(), operandEvents,
-		client.InNamespace(operatorcontroller.DefaultOperandNamespace),
-		client.MatchingFieldsSelector{Selector: fields.SelectorFromSet(fieldSelector)})
-	return operandEvents, err
 }
 
 func testGatewayAPIDNSListenerUpdate(t *testing.T) {

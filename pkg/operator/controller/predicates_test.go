@@ -99,6 +99,23 @@ func TestGatewayHasOurController(t *testing.T) {
 			},
 		},
 		{
+			name:     "a gateway with openshift rev labels but NOT enforcing rev validation should return true",
+			want:     true,
+			checkRev: false,
+			resource: &gatewayapiv1.Gateway{
+				ObjectMeta: v1.ObjectMeta{
+					Name:      "xpto",
+					Namespace: "openshift-ingress",
+					Labels: map[string]string{
+						"istio.io/rev": "openshift-gateway",
+					},
+				},
+				Spec: gatewayapiv1.GatewaySpec{
+					GatewayClassName: "valid",
+				},
+			},
+		},
+		{
 			name:     "a gateway without openshift rev labels and enforcing rev validation should return true",
 			want:     true,
 			checkRev: true,

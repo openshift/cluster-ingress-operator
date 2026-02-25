@@ -216,19 +216,18 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		return reconcile.Result{}, fmt.Errorf("failed to get dns 'cluster': %v", err)
 	}
 
-	fieldSelector := client.MatchingFields{
-		"involvedObject.apiVersion": "v1",
-		"involvedObject.kind":       "Service",
-		"source":                    "service-controller",
-	}
-	if childSvc != nil && childSvc.UID != "" {
-		fieldSelector["involvedObject.uid"] = string(childSvc.UID)
-	}
-
 	operandEvents := &corev1.EventList{}
-	if err := r.eventreader.List(ctx, operandEvents, client.InNamespace(operatorcontroller.DefaultOperandNamespace), &fieldSelector); err != nil {
-		log.Error(err, "error fetching the events from namespace")
-		errs = append(errs, fmt.Errorf("failed to list events in namespace %q: %v", operatorcontroller.DefaultOperandNamespace, err))
+	if childSvc != nil && childSvc.UID != "" {
+		fieldSelector := client.MatchingFields{
+			"involvedObject.apiVersion": "v1",
+			"involvedObject.kind":       "Service",
+			"source":                    "service-controller",
+			"involvedObject.uid":        string(childSvc.UID),
+		}
+		if err := r.eventreader.List(ctx, operandEvents, client.InNamespace(operatorcontroller.DefaultOperandNamespace), fieldSelector); err != nil {
+			log.Error(err, "error fetching the events from namespace")
+			errs = append(errs, fmt.Errorf("failed to list events in namespace %q: %v", operatorcontroller.DefaultOperandNamespace, err))
+		}
 	}
 
 	// Initialize the conditions if they are null, as the compute functions receives a pointer

@@ -47,14 +47,6 @@ var (
 		return cfg
 	}
 
-	infraConfigFn = &configv1.Infrastructure{
-		ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
-		Status: configv1.InfrastructureStatus{
-			PlatformStatus: &configv1.PlatformStatus{
-				Type: configv1.AWSPlatformType,
-			},
-		},
-	}
 	gwFn = func(name string, listeners []gatewayapiv1.Listener, generation int64, conditions ...metav1.Condition) *gatewayapiv1.Gateway {
 		listenerStatus := make([]gatewayapiv1.ListenerStatus, len(listeners))
 		for i, l := range listeners {
@@ -175,17 +167,14 @@ func Test_Reconcile(t *testing.T) {
 		expectError            string
 	}{
 		{
-			name: "gateway not found, should not return any error",
-			existingObjects: []runtime.Object{
-				infraConfigFn,
-			},
+			name:             "gateway not found, should not return any error",
+			existingObjects:  []runtime.Object{},
 			reconcileRequest: reqFn("openshift-ingress", "example-gateway"),
 			expectError:      "",
 		},
 		{
 			name: "missing dns config",
 			existingObjects: []runtime.Object{
-				infraConfigFn,
 				gwFn("example-gateway", nil, 1, exampleConditions...),
 				svcFn("example-gateway", exampleManagedGatewayLabel, ingHostFn("gwapi.example.tld")),
 			},
@@ -197,7 +186,6 @@ func Test_Reconcile(t *testing.T) {
 			name: "missing loadbalancer and dnsrecord should add the right condition about missing both resources",
 			existingObjects: []runtime.Object{
 				dnsConfigFn(true),
-				infraConfigFn,
 				gwFn("example-gateway", []gatewayapiv1.Listener{
 					{
 						Name:     "listener1",
@@ -235,7 +223,6 @@ func Test_Reconcile(t *testing.T) {
 			name: "missing dnsconfig zone should add the right condition",
 			existingObjects: []runtime.Object{
 				dnsConfigFn(false),
-				infraConfigFn,
 				gwFn("example-gateway", []gatewayapiv1.Listener{
 					{
 						Name:     "listener1",
@@ -276,7 +263,6 @@ func Test_Reconcile(t *testing.T) {
 			name: "load balancer with missing ingress status should be reflected on gateway condition",
 			existingObjects: []runtime.Object{
 				dnsConfigFn(true),
-				infraConfigFn,
 				gwFn("example-gateway", []gatewayapiv1.Listener{
 					{
 						Name:     "listener1",
@@ -315,7 +301,6 @@ func Test_Reconcile(t *testing.T) {
 			name: "load balancer with missing ingress status and extra event should be reflected on gateway condition",
 			existingObjects: []runtime.Object{
 				dnsConfigFn(true),
-				infraConfigFn,
 				gwFn("example-gateway", []gatewayapiv1.Listener{}, 6, exampleConditions...),
 				svcFn("openshift-ingress-lb", exampleManagedGatewayLabel),
 				eventFn("Service", "v1", "openshift-ingress", "openshift-ingress-lb", "service-controller", "unavailable", "SyncLoadBalancerFailed"),
@@ -348,7 +333,6 @@ func Test_Reconcile(t *testing.T) {
 			name: "load balancer with valid ingress status should be reflected on gateway condition",
 			existingObjects: []runtime.Object{
 				dnsConfigFn(true),
-				infraConfigFn,
 				gwFn("example-gateway", []gatewayapiv1.Listener{}, 7, exampleConditions...),
 				svcFn("openshift-ingress-lb", exampleManagedGatewayLabel, corev1.LoadBalancerIngress{
 					Hostname: "gwapi.example.tld",
@@ -382,7 +366,6 @@ func Test_Reconcile(t *testing.T) {
 			name: "load balancer valid, dns unmanaged should be properly reflected on conditions",
 			existingObjects: []runtime.Object{
 				dnsConfigFn(true),
-				infraConfigFn,
 				gwFn("example-gateway", []gatewayapiv1.Listener{
 					{
 						Name:     "listener1",
@@ -436,7 +419,6 @@ func Test_Reconcile(t *testing.T) {
 			name: "load balancer valid, dns managed but no zones should reflect on conditions",
 			existingObjects: []runtime.Object{
 				dnsConfigFn(true),
-				infraConfigFn,
 				gwFn("example-gateway", []gatewayapiv1.Listener{
 					{
 						Name:     "listener1",
@@ -492,7 +474,6 @@ func Test_Reconcile(t *testing.T) {
 			name: "load balancer valid, dns managed with one failed zone should reflect on conditions",
 			existingObjects: []runtime.Object{
 				dnsConfigFn(true),
-				infraConfigFn,
 				gwFn("example-gateway", []gatewayapiv1.Listener{
 					{
 						Name:     "listener1",
@@ -557,7 +538,6 @@ func Test_Reconcile(t *testing.T) {
 			name: "load balancer valid, dns managed with one zone in unknown state should reflect on conditions",
 			existingObjects: []runtime.Object{
 				dnsConfigFn(true),
-				infraConfigFn,
 				gwFn("example-gateway", []gatewayapiv1.Listener{
 					{
 						Name:     "listener1",
@@ -611,7 +591,6 @@ func Test_Reconcile(t *testing.T) {
 			name: "load balancer valid, dns managed with one zone in valid state should reflect on conditions",
 			existingObjects: []runtime.Object{
 				dnsConfigFn(true),
-				infraConfigFn,
 				gwFn("example-gateway", []gatewayapiv1.Listener{
 					{
 						Name:     "listener1",
@@ -680,7 +659,6 @@ func Test_Reconcile(t *testing.T) {
 			name: "load balancer valid, dns managed with two listeners, one dns record is valid in valid state and the other not should reflect the right condition",
 			existingObjects: []runtime.Object{
 				dnsConfigFn(true),
-				infraConfigFn,
 				gwFn("example-gateway", []gatewayapiv1.Listener{
 					{
 						Name:     "listener1",
@@ -765,7 +743,6 @@ func Test_Reconcile(t *testing.T) {
 			name: "load balancer valid, dns managed with two listeners with 'root' dot suffix and listeners with and without root suffix must set the right conditions",
 			existingObjects: []runtime.Object{
 				dnsConfigFn(true),
-				infraConfigFn,
 				gwFn("example-gateway", []gatewayapiv1.Listener{
 					{
 						Name:     "listener1",
@@ -882,9 +859,10 @@ func Test_Reconcile(t *testing.T) {
 	}
 
 	scheme := runtime.NewScheme()
-	iov1.AddToScheme(scheme)
-	corev1.AddToScheme(scheme)
-	gatewayapiv1.Install(scheme)
+	require.NoError(t, iov1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, configv1.AddToScheme(scheme))
+	require.NoError(t, gatewayapiv1.Install(scheme))
 
 	// fakeEventLister can be used to return an event based on the reconciled Gateway
 	// API object.
@@ -1011,7 +989,6 @@ func TestReconcileTransition(t *testing.T) {
 
 	existingObjects := []runtime.Object{
 		dnsConfigFn(true),
-		infraConfigFn,
 		gwFn("example-gateway", []gatewayapiv1.Listener{
 			{
 				Name:     "listener1",

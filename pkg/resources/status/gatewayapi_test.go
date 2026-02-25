@@ -6,7 +6,6 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	configv1 "github.com/openshift/api/config/v1"
-	operatorv1 "github.com/openshift/api/operator/v1"
 	iov1 "github.com/openshift/api/operatoringress/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/resources/status"
 	corev1 "k8s.io/api/core/v1"
@@ -653,7 +652,8 @@ func TestComputeGatewayAPIListenerDNSStatus(t *testing.T) {
 			conditionsCmpOpts := []cmp.Option{
 				cmpopts.IgnoreFields(metav1.Condition{}, "LastTransitionTime"),
 				cmpopts.EquateEmpty(),
-				cmpopts.SortSlices(func(a, b operatorv1.OperatorCondition) bool { return a.Type < b.Type }),
+				cmpopts.SortSlices(func(a, b gatewayapiv1.ListenerStatus) bool { return a.Name < b.Name }),
+				cmpopts.SortSlices(func(a, b metav1.Condition) bool { return a.Type < b.Type }),
 			}
 			if !cmp.Equal(tt.gwstatus.Listeners, tt.expectedListenerStatus, conditionsCmpOpts...) {
 				t.Errorf("diff: %s", cmp.Diff(tt.expectedListenerStatus, tt.gwstatus.Listeners, conditionsCmpOpts...))
@@ -796,7 +796,7 @@ func TestComputeGatewayAPILoadBalancerStatus(t *testing.T) {
 			conditionsCmpOpts := []cmp.Option{
 				cmpopts.IgnoreFields(metav1.Condition{}, "LastTransitionTime"),
 				cmpopts.EquateEmpty(),
-				cmpopts.SortSlices(func(a, b operatorv1.OperatorCondition) bool { return a.Type < b.Type }),
+				cmpopts.SortSlices(func(a, b metav1.Condition) bool { return a.Type < b.Type }),
 			}
 			if !cmp.Equal(conditions, tt.expectedConditions, conditionsCmpOpts...) {
 				t.Fatalf("expected:\n%#v\ngot:\n%#v", tt.expectedConditions, conditions)

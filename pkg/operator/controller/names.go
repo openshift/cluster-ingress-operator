@@ -84,7 +84,8 @@ const (
 	// this label in the selector of any service that it creates for a
 	// gateway.
 	GatewayNameLabelKey = "gateway.networking.k8s.io/gateway-name"
-	// managedByIstioLabelKey is the key of a label that Istio adds to
+
+	// ManagedByIstioLabelKey is the key of a label that Istio adds to
 	// resources that it manages.
 	ManagedByIstioLabelKey = "gateway.istio.io/managed"
 )

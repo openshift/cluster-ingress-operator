@@ -63,6 +63,9 @@ func ComputeGatewayAPIListenerDNSStatus(dnsConfig *configv1.DNS,
 // metav1.Condition and also inplace replacements as Gateway API is capable of doing
 // condition merge
 func ComputeGatewayAPILoadBalancerStatus(service *corev1.Service, operandEvents []corev1.Event, generation int64, existingConditions *[]metav1.Condition) {
+	if existingConditions == nil {
+		return
+	}
 	// During the fetch of service, it can come back as an empty structure instead
 	// of a null resource. In this case, we turn it into "null" again to keep
 	// the compatibility with ComputeLoadBalancerStatus
