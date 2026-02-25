@@ -611,10 +611,11 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 			cfg.ServiceEndpoints = []awsdns.ServiceEndpoint{}
 			route53Found := false
 			elbFound := false
+			stsFound := false
 			tagFound := false
 			for _, ep := range platformStatus.AWS.ServiceEndpoints {
 				switch {
-				case route53Found && elbFound && tagFound:
+				case route53Found && elbFound && stsFound && tagFound:
 					break
 				case ep.Name == awsdns.Route53Service:
 					route53Found = true
@@ -628,6 +629,16 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 					cfg.ServiceEndpoints = append(cfg.ServiceEndpoints, awsdns.ServiceEndpoint{Name: ep.Name, URL: ep.URL})
 				case ep.Name == awsdns.ELBService:
 					elbFound = true
+					scheme, err := oputil.URI(ep.URL)
+					if err != nil {
+						return nil, fmt.Errorf("failed to validate URI %s: %v", ep.URL, err)
+					}
+					if scheme != oputil.SchemeHTTPS {
+						return nil, fmt.Errorf("invalid scheme for URI %s; must be %s", ep.URL, oputil.SchemeHTTPS)
+					}
+					cfg.ServiceEndpoints = append(cfg.ServiceEndpoints, awsdns.ServiceEndpoint{Name: ep.Name, URL: ep.URL})
+				case ep.Name == awsdns.STSService:
+					stsFound = true
 					scheme, err := oputil.URI(ep.URL)
 					if err != nil {
 						return nil, fmt.Errorf("failed to validate URI %s: %v", ep.URL, err)
