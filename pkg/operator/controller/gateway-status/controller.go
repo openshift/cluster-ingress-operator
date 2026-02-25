@@ -200,12 +200,6 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		return reconcile.Result{}, fmt.Errorf("failed to get dns 'cluster': %v", err)
 	}
 
-	infraConfig := &configv1.Infrastructure{}
-	if err := r.client.Get(ctx, types.NamespacedName{Name: "cluster"}, infraConfig); err != nil {
-		log.Error(err, "error fetching the infrastructure 'cluster' object")
-		return reconcile.Result{}, fmt.Errorf("failed to get infrastructure 'cluster': %v", err)
-	}
-
 	fieldSelector := client.MatchingFields{
 		"involvedObject.apiVersion": "v1",
 		"involvedObject.kind":       "Service",
