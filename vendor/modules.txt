@@ -213,7 +213,9 @@ github.com/gabriel-vasile/mimetype/internal/magic
 # github.com/go-logr/logr v1.4.3
 ## explicit; go 1.18
 github.com/go-logr/logr
+github.com/go-logr/logr/funcr
 github.com/go-logr/logr/slogr
+github.com/go-logr/logr/testr
 # github.com/go-logr/zapr v1.3.0
 ## explicit; go 1.18
 github.com/go-logr/zapr
@@ -574,6 +576,7 @@ github.com/spf13/pflag
 ## explicit; go 1.17
 github.com/stretchr/testify/assert
 github.com/stretchr/testify/assert/yaml
+github.com/stretchr/testify/require
 # github.com/summerwind/h2spec v0.0.0-20200804131034-70ac22940108
 ## explicit; go 1.12
 github.com/summerwind/h2spec
