@@ -100,8 +100,6 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 // Config holds all the configuration that must be provided when creating the
 // controller.
 type Config struct {
-	// GatewayAPIEnabled indicates that the "GatewayAPI" featuregate is enabled.
-	GatewayAPIEnabled bool
 	// GatewayAPIControllerEnabled indicates that the "GatewayAPIController" featuregate is enabled.
 	GatewayAPIControllerEnabled bool
 	// MarketplaceEnabled indicates whether the "marketplace" capability is
@@ -132,10 +130,6 @@ type reconciler struct {
 // reconciles the Gateway API CRDs.
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	log.Info("reconciling", "request", request)
-
-	if !r.config.GatewayAPIEnabled {
-		return reconcile.Result{}, nil
-	}
 
 	if err := r.ensureGatewayAPICRDs(ctx); err != nil {
 		return reconcile.Result{}, err

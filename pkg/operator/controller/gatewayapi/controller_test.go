@@ -55,7 +55,6 @@ func Test_Reconcile(t *testing.T) {
 
 	tests := []struct {
 		name                        string
-		gatewayAPIEnabled           bool
 		gatewayAPIControllerEnabled bool
 		marketplaceEnabled          bool
 		olmEnabled                  bool
@@ -74,21 +73,7 @@ func Test_Reconcile(t *testing.T) {
 		expectStartCtrl    bool
 	}{
 		{
-			name:               "gateway API disabled",
-			gatewayAPIEnabled:  false,
-			marketplaceEnabled: true,
-			olmEnabled:         true,
-			existingObjects: []runtime.Object{
-				co("ingress"),
-			},
-			expectCreate:    []client.Object{},
-			expectUpdate:    []client.Object{},
-			expectDelete:    []client.Object{},
-			expectStartCtrl: false,
-		},
-		{
 			name:                        "gateway API enabled",
-			gatewayAPIEnabled:           true,
 			gatewayAPIControllerEnabled: true,
 			marketplaceEnabled:          true,
 			olmEnabled:                  true,
@@ -111,7 +96,6 @@ func Test_Reconcile(t *testing.T) {
 		},
 		{
 			name:                        "gateway API enabled, gateway API controller disabled",
-			gatewayAPIEnabled:           true,
 			gatewayAPIControllerEnabled: false,
 			marketplaceEnabled:          true,
 			olmEnabled:                  true,
@@ -134,7 +118,6 @@ func Test_Reconcile(t *testing.T) {
 		},
 		{
 			name:                        "GatewayAPI enabled, GatewayAPIController enabled, marketplace and OLM capabilities disabled",
-			gatewayAPIEnabled:           true,
 			gatewayAPIControllerEnabled: true,
 			marketplaceEnabled:          false,
 			olmEnabled:                  false,
@@ -157,7 +140,6 @@ func Test_Reconcile(t *testing.T) {
 		},
 		{
 			name:                        "unmanaged gateway API CRDs created",
-			gatewayAPIEnabled:           true,
 			gatewayAPIControllerEnabled: true,
 			marketplaceEnabled:          true,
 			olmEnabled:                  true,
@@ -188,7 +170,6 @@ func Test_Reconcile(t *testing.T) {
 		},
 		{
 			name:                        "unmanaged gateway API CRDs removed",
-			gatewayAPIEnabled:           true,
 			gatewayAPIControllerEnabled: true,
 			marketplaceEnabled:          true,
 			olmEnabled:                  true,
@@ -217,7 +198,6 @@ func Test_Reconcile(t *testing.T) {
 		},
 		{
 			name:                        "third party CRDs",
-			gatewayAPIEnabled:           true,
 			gatewayAPIControllerEnabled: true,
 			marketplaceEnabled:          true,
 			olmEnabled:                  true,
@@ -283,7 +263,6 @@ func Test_Reconcile(t *testing.T) {
 				client: cl,
 				cache:  cache,
 				config: Config{
-					GatewayAPIEnabled:               tc.gatewayAPIEnabled,
 					GatewayAPIControllerEnabled:     tc.gatewayAPIControllerEnabled,
 					MarketplaceEnabled:              tc.marketplaceEnabled,
 					OperatorLifecycleManagerEnabled: tc.olmEnabled,
@@ -361,7 +340,6 @@ func TestReconcileOnlyStartsControllerOnce(t *testing.T) {
 		client: cl,
 		cache:  cache,
 		config: Config{
-			GatewayAPIEnabled:               true,
 			GatewayAPIControllerEnabled:     true,
 			MarketplaceEnabled:              true,
 			OperatorLifecycleManagerEnabled: true,
