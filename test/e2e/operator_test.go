@@ -78,6 +78,7 @@ var (
 		{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionTrue},
 		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
 		{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionFalse},
+		{Type: operatorv1.OperatorStatusTypeProgressing, Status: operatorv1.ConditionFalse},
 	}
 	availableConditionsForIngressControllerWithNodePort = []operatorv1.OperatorCondition{
 		{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionTrue},
