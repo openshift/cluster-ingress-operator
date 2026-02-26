@@ -1,32 +1,32 @@
 package gatewayclass
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"strings"
 
+	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
 	"github.com/istio-ecosystem/sail-operator/pkg/install"
+
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
+
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/meta"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
+
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
 const (
-	ControllerInstalledConditionType = "ControllerInstalled"
-	CRDsReadyConditionType           = "CRDsReady"
-
+	// subscriptionPrefix is the OLM label prefix indicating subscription ownership.
 	subscriptionPrefix = "operators.coreos.com/"
 )
 
-// SubscriptionExists is used as a predicate function to allow the library to
-// query CIO if a subscription exists before taking an action over a CRD
+// overwriteOLMManagedCRDFunc is used as a predicate function by the Sail Library to determine
+// whether to take ownership of a CRD. Returns true if the owning OLM subscription
+// no longer exists (allowing CIO to take ownership), false otherwise.
 func (r *reconciler) overwriteOLMManagedCRDFunc(ctx context.Context, crd *apiextensionsv1.CustomResourceDefinition) bool {
 	// defensive measure
 	if ctx == nil || crd == nil {
@@ -46,64 +46,76 @@ func (r *reconciler) overwriteOLMManagedCRDFunc(ctx context.Context, crd *apiext
 		return true
 	}
 
-	var subscriptionName, subscriptionNamespace, foundLabel string
-	// we just care about the label name
+	// Look for OLM subscription labels (format: "operators.coreos.com/<name>.<namespace>")
+	// Example: "operators.coreos.com/servicemeshoperator.openshift-operators"
+	// Note: Multiple labels may exist; check all to avoid non-deterministic behavior from map iteration
+	type subscriptionInfo struct {
+		name, namespace, label string
+	}
+	var subscriptions []subscriptionInfo
+
 	for label := range labels {
 		if after, ok := strings.CutPrefix(label, subscriptionPrefix); ok {
-			// Check if label is on the format we want
-			nameNamespace := strings.SplitN(after, ".", 2)
-			if len(nameNamespace) != 2 {
+			// Split on last dot since subscription names can contain dots
+			lastDot := strings.LastIndex(after, ".")
+			if lastDot == -1 {
 				logOverwrite.Info("ignoring invalid OLM label", "label", label)
 				continue
 			}
-			foundLabel = label
-			subscriptionName, subscriptionNamespace = nameNamespace[0], nameNamespace[1]
-			break
+			subscriptions = append(subscriptions, subscriptionInfo{
+				name:      after[:lastDot],
+				namespace: after[lastDot+1:],
+				label:     label,
+			})
 		}
 	}
 
-	if foundLabel == "" || subscriptionName == "" || subscriptionNamespace == "" {
+	if len(subscriptions) == 0 {
 		logOverwrite.Info("no subscription label found")
 		return true
 	}
 
-	// Check for InstallPlan, which effectively installs CRDs. Even if invalid it
-	// may become valid at some point and overwrite CRDs
-	installPlanList := operatorsv1alpha1.InstallPlanList{}
-	if err := r.cache.List(ctx, &installPlanList, client.HasLabels([]string{foundLabel})); err != nil {
-		log.Error(err, "error trying to find install plans")
-		return false
-	}
-	if len(installPlanList.Items) > 0 {
-		logOverwrite.Info("CRD has valid installPlans, not overwriting")
+	// Check each subscription we found - if ANY have active resources, do not overwrite
+	for _, sub := range subscriptions {
+		// Check for InstallPlan, which effectively installs CRDs. Even if invalid it
+		// may become valid at some point and overwrite CRDs.
+		installPlanList := operatorsv1alpha1.InstallPlanList{}
+		if err := r.cache.List(ctx, &installPlanList, client.HasLabels([]string{sub.label})); err != nil {
+			log.Error(err, "error trying to list InstallPlans")
+			return false
+		}
+		if len(installPlanList.Items) > 0 {
+			logOverwrite.Info("CRD has valid InstallPlans, not overwriting")
+			return false
+		}
+
+		// Next check for subscriptions.
+		subscription := operatorsv1alpha1.Subscription{}
+		subscription.SetNamespace(sub.namespace)
+		subscription.SetName(sub.name)
+		err := r.cache.Get(ctx, client.ObjectKeyFromObject(&subscription), &subscription)
+		if err != nil {
+			if errors.IsNotFound(err) {
+				// No subscription was found, continue to check other subscriptions.
+				continue
+			}
+			log.Error(err, "error trying to get subscription")
+			return false
+		}
+
+		// If we are here means we don't have InstallPlans, but we do have a subscription
+		// which means we may be in an intermediate state.
 		return false
 	}
 
-	// Next check for subscriptions.
-	subscription := operatorsv1alpha1.Subscription{}
-	subscription.SetNamespace(subscriptionNamespace)
-	subscription.SetName(subscriptionName)
-	err := r.cache.Get(ctx, client.ObjectKeyFromObject(&subscription), &subscription)
-	if err != nil {
-		if !errors.IsNotFound(err) {
-			log.Error(err, "error trying to find subscription")
-			return false
-		}
-		// No subscription was found, the CRD can be overwritten
-		return true
-	}
-	// If we are here means we don't have installplans, but we do have subscriptions
-	// which means we may be on an intermediate state
-	return false
+	// No active subscriptions or InstallPlans found
+	return true
 }
 
 // ensureIstio installs or updates Istio using the Sail Library.
 // It returns an error if the installation fails.
-func (r *reconciler) ensureIstio(ctx context.Context, gatewayclass *gatewayapiv1.GatewayClass, istioVersion string) error {
-	if r.config.SailOperatorReconciler == nil || r.config.SailOperatorReconciler.Installer == nil {
-		return fmt.Errorf("internal error: sail operator is null")
-	}
-	sailInstaller := r.config.SailOperatorReconciler.Installer
+func (r *reconciler) ensureIstio(ctx context.Context, istioVersion string) error {
+	sailInstaller := r.sailInstaller
 
 	enableInferenceExtension, err := r.inferencepoolCrdExists(ctx)
 	if err != nil {
@@ -111,117 +123,60 @@ func (r *reconciler) ensureIstio(ctx context.Context, gatewayclass *gatewayapiv1
 	}
 
 	// Build options from current state
-	opts, err := r.buildInstallerOptions(enableInferenceExtension, istioVersion)
-	if err != nil {
-		return err
-	}
+	opts := r.buildInstallerOptions(enableInferenceExtension, istioVersion)
 
 	opts.OverwriteOLMManagedCRD = r.overwriteOLMManagedCRDFunc
-	// Enqueue the request to reconcile. This does not return
-	// any error or status. We validate the status again next, and set
-	// the right conditions on the GatewayClass for it
+
+	// Apply triggers asynchronous installation/update. Helm charts are only applied
+	// if options or values have changed. Status is checked later via r.sailInstaller.Status()
+	// and mapped to GatewayClass conditions.
 	sailInstaller.Apply(opts)
-
-	status := sailInstaller.Status()
-	log.V(1).Info("CRD management result", "status", status.CRDs)
-
-	mapStatusToConditions(status, gatewayclass.Generation, &gatewayclass.Status.Conditions)
 
 	return nil
 }
 
-func (r *reconciler) buildInstallerOptions(enableInferenceExtension bool, istioVersion string) (install.Options, error) {
+// buildInstallerOptions creates Sail Library installation options by merging
+// Gateway API defaults with OpenShift-specific overrides
+func (r *reconciler) buildInstallerOptions(enableInferenceExtension bool, istioVersion string) install.Options {
 	// Start with Gateway API defaults
 	values := install.GatewayAPIDefaults()
 
 	// Apply OpenShift-specific overrides
-	openshiftOverrides := openshiftValues(enableInferenceExtension)
+	openshiftOverrides := openshiftValues(enableInferenceExtension, r.config.OperandNamespace)
 	values = install.MergeValues(values, openshiftOverrides)
 
 	return install.Options{
-		Namespace:      controller.DefaultOperandNamespace,
+		Namespace:      r.config.OperandNamespace,
 		Revision:       controller.IstioName("").Name,
 		Values:         values,
 		Version:        istioVersion,
 		ManageCRDs:     ptr.To(true),
 		IncludeAllCRDs: ptr.To(true),
-	}, nil
+	}
 }
 
-// mapStatusToConditions translates the library Status into GatewayClass conditions.
-func mapStatusToConditions(status install.Status, generation int64, conditions *[]metav1.Condition) {
-	installed := metav1.Condition{
-		Type:               ControllerInstalledConditionType,
-		ObservedGeneration: generation,
-		LastTransitionTime: metav1.Now(),
-	}
-	if status.Installed {
-		installed.Status = metav1.ConditionTrue
-		installed.Reason = "Installed"
-		if status.Error != nil {
-			installed.Message = fmt.Sprintf("istiod %s installed (with warning: %v)", status.Version, status.Error)
-		} else {
-			installed.Message = fmt.Sprintf("istiod %s installed", status.Version)
-		}
-	} else if status.Error != nil {
-		installed.Status = metav1.ConditionFalse
-		installed.Reason = "InstallFailed"
-		installed.Message = status.Error.Error()
-	} else {
-		installed.Status = metav1.ConditionUnknown
-		installed.Reason = "Pending"
-		installed.Message = "waiting for first reconciliation"
-	}
+// openshiftValues returns the OpenShift-specific value overrides for Istio.
+// These values are merged on top of the gateway-api preset defaults.
+func openshiftValues(enableInferenceExtension bool, operandNamespace string) *sailv1.Values {
+	pilotEnv := gatewayAPIPilotEnv(enableInferenceExtension)
 
-	meta.SetStatusCondition(conditions, installed)
-
-	// CRD condition: reflects CRD ownership state.
-	crd := metav1.Condition{
-		Type:               CRDsReadyConditionType,
-		ObservedGeneration: generation,
-		LastTransitionTime: metav1.Now(),
+	return &sailv1.Values{
+		Global: &sailv1.GlobalConfig{
+			DefaultPodDisruptionBudget: &sailv1.DefaultPodDisruptionBudgetConfig{
+				Enabled: ptr.To(false),
+			},
+			IstioNamespace: ptr.To(operandNamespace),
+			// Use system-cluster-critical priority for OpenShift system workloads
+			PriorityClassName: ptr.To(systemClusterCriticalPriorityClassName),
+			// OpenShift-specific CA trust bundle
+			TrustBundleName: ptr.To(controller.OpenShiftGatewayCARootCertName),
+		},
+		Pilot: &sailv1.PilotConfig{
+			Env: pilotEnv,
+			// Workload partitioning for OpenShift management workloads
+			PodAnnotations: map[string]string{
+				WorkloadPartitioningManagementAnnotationKey: WorkloadPartitioningManagementPreferredScheduling,
+			},
+		},
 	}
-	switch status.CRDState {
-	case install.CRDManagedByCIO:
-		crd.Status = metav1.ConditionTrue
-		crd.Reason = "ManagedByCIO"
-		crd.Message = status.CRDMessage
-	case install.CRDManagedByOLM:
-		crd.Status = metav1.ConditionTrue
-		crd.Reason = "ManagedByOLM"
-		crd.Message = status.CRDMessage
-	case install.CRDNoneExist:
-		crd.Status = metav1.ConditionUnknown
-		crd.Reason = "NoneExist"
-		crd.Message = "CRDs not yet installed"
-	case install.CRDMixedOwnership:
-		crd.Status = metav1.ConditionFalse
-		crd.Reason = "MixedOwnership"
-		crd.Message = getCRDStatusMessage(status)
-	default:
-		crd.Status = metav1.ConditionFalse
-		crd.Reason = "UnknownManagement"
-		crd.Message = getCRDStatusMessage(status)
-	}
-	meta.SetStatusCondition(conditions, crd)
-}
-
-func removeSailOperatorConditions(conditions *[]metav1.Condition) {
-	meta.RemoveStatusCondition(conditions, ControllerInstalledConditionType)
-	meta.RemoveStatusCondition(conditions, CRDsReadyConditionType)
-}
-
-func getCRDStatusMessage(status install.Status) string {
-	var message bytes.Buffer
-	if _, err := message.WriteString(status.CRDMessage); err != nil {
-		log.Error(err, "error writing CRD status", "status", status.CRDMessage)
-	}
-	for _, info := range status.CRDs {
-		crdMsg := fmt.Sprintf("\n- %s: %s", info.Name, info.State)
-		_, err := message.WriteString(crdMsg)
-		if err != nil {
-			log.Error(err, "error writing CRD message", "crd", info.Name)
-		}
-	}
-	return message.String()
 }

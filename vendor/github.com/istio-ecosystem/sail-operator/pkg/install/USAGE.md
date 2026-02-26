@@ -10,8 +10,8 @@ This document shows how the Cluster Ingress Operator (CIO) would wire the instal
 │                                                              │
 │  1. Create install.Library                                   │
 │  2. Start it (returns notifyCh)                              │
-│  3. Pass Library + notifyCh to GatewayClassReconciler        │
-│  4. Register notifyCh as source.Channel on the controller    │
+│  3. Pass Library to GatewayClassReconciler                   │
+│  4. Bridge notifyCh into a source.Func on the controller     │
 │  5. Start manager                                            │
 └──────────────────────────────────────────────────────────────┘
          │ Apply(opts)                   ▲ notifyCh signal
@@ -44,15 +44,17 @@ This document shows how the Cluster Ingress Operator (CIO) would wire the instal
 package main
 
 import (
+	"context"
 	"os"
 
 	"github.com/istio-ecosystem/sail-operator/pkg/install"
 	"github.com/istio-ecosystem/sail-operator/resources"
-	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
-
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/workqueue"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
+	gwapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
 func main() {
@@ -81,14 +83,31 @@ func main() {
 		Lib:    lib,
 	}
 
-	// 4. Register the controller. The source.Channel watch triggers a
-	//    reconcile whenever the library signals that something changed
-	//    (drift repaired, CRD ownership changed, install completed).
+	// 4. Bridge notifyCh into a controller-runtime source.
+	//    notifyCh is <-chan struct{}, so we use source.Func to convert each
+	//    signal into a reconcile.Request for our fixed GatewayClass name.
+	notifySource := source.Func(func(ctx context.Context, q workqueue.TypedRateLimitingInterface[reconcile.Request]) error {
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case _, ok := <-notifyCh:
+					if !ok {
+						return
+					}
+					q.Add(reconcile.Request{
+						NamespacedName: types.NamespacedName{Name: gatewayClassName},
+					})
+				}
+			}
+		}()
+		return nil
+	})
+
 	err = ctrl.NewControllerManagedBy(mgr).
 		For(&gwapiv1.GatewayClass{}).
-		WatchesRawSource(
-			source.Channel(notifyCh, &handler.EnqueueRequestForObject{}),
-		).
+		WatchesRawSource(notifySource).
 		Complete(reconciler)
 	if err != nil {
 		os.Exit(1)
@@ -100,8 +119,6 @@ func main() {
 	}
 }
 ```
-
-> **Note on `source.Channel`**: The channel emits a `struct{}`, not a specific object key. You may need a custom `handler.EventHandler` that enqueues a fixed key (e.g. the GatewayClass name) instead of `EnqueueRequestForObject`. See the handler section below.
 
 ## GatewayClass Controller
 
@@ -233,51 +250,6 @@ func mapStatusToConditions(status install.Status, generation int64) []metav1.Con
 
 	return conditions
 }
-```
-
-## Custom Event Handler for source.Channel
-
-Since `source.Channel` receives `struct{}` (not a Kubernetes event), you need a handler that maps it to the right reconcile request:
-
-```go
-package main
-
-import (
-	"context"
-
-	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/util/workqueue"
-	"sigs.k8s.io/controller-runtime/pkg/event"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-)
-
-// enqueueGatewayClass returns an event handler that always enqueues
-// a reconcile request for the fixed GatewayClass name.
-type enqueueGatewayClass struct {
-	Name string
-}
-
-func (e *enqueueGatewayClass) Generic(_ context.Context, _ event.GenericEvent, q workqueue.RateLimitingInterface) {
-	q.Add(reconcile.Request{
-		NamespacedName: types.NamespacedName{Name: e.Name},
-	})
-}
-
-// Create, Update, Delete are unused — source.Channel only emits Generic events.
-func (e *enqueueGatewayClass) Create(context.Context, event.CreateEvent, workqueue.RateLimitingInterface)   {}
-func (e *enqueueGatewayClass) Update(context.Context, event.UpdateEvent, workqueue.RateLimitingInterface)   {}
-func (e *enqueueGatewayClass) Delete(context.Context, event.DeleteEvent, workqueue.RateLimitingInterface)   {}
-```
-
-Then in main:
-
-```go
-	err = ctrl.NewControllerManagedBy(mgr).
-		For(&gwapiv1.GatewayClass{}).
-		WatchesRawSource(
-			source.Channel(notifyCh, &enqueueGatewayClass{Name: gatewayClassName}),
-		).
-		Complete(reconciler)
 ```
 
 ## Sequence: What Happens When

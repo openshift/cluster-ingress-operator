@@ -273,8 +273,7 @@ func (m *crdManager) Reconcile(ctx context.Context, values *v1.Values, includeAl
 		if len(missing) > 0 {
 			msg += fmt.Sprintf("; missing from other owner: %s", strings.Join(missing, ", "))
 		}
-		return crdResult{State: CRDUnknownManagement, CRDs: infos, Message: msg,
-			Error: fmt.Errorf("Istio CRDs are managed by an unknown party")}
+		return crdResult{State: CRDUnknownManagement, CRDs: infos, Message: msg, Error: fmt.Errorf("Istio CRDs are managed by an unknown party")}
 
 	case CRDMixedOwnership:
 		missing := missingCRDNames(infos)
@@ -282,8 +281,7 @@ func (m *crdManager) Reconcile(ctx context.Context, values *v1.Values, includeAl
 		if len(missing) > 0 {
 			msg += fmt.Sprintf("; missing: %s", strings.Join(missing, ", "))
 		}
-		return crdResult{State: CRDMixedOwnership, CRDs: infos, Message: msg,
-			Error: fmt.Errorf("Istio CRDs have mixed ownership (CIO/OLM/other)")}
+		return crdResult{State: CRDMixedOwnership, CRDs: infos, Message: msg, Error: fmt.Errorf("Istio CRDs have mixed ownership (CIO/OLM/other)")}
 
 	default:
 		return crdResult{State: state, CRDs: infos}

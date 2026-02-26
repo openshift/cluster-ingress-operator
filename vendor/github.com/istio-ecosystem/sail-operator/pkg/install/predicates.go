@@ -163,29 +163,47 @@ func shouldReconcileValidatingWebhook(oldObj, newObj *unstructured.Unstructured)
 	}
 
 	// For istiod validators, compare objects after clearing fields that istiod updates
-	oldCopy := clearWebhookIgnoredFields(oldObj.DeepCopy())
-	newCopy := clearWebhookIgnoredFields(newObj.DeepCopy())
+	oldCopy := clearIgnoredFields(oldObj.DeepCopy())
+	newCopy := clearIgnoredFields(newObj.DeepCopy())
 
 	return !reflect.DeepEqual(oldCopy.Object, newCopy.Object)
 }
 
-// clearWebhookIgnoredFields clears fields that should be ignored when comparing webhook configs.
-func clearWebhookIgnoredFields(obj *unstructured.Unstructured) *unstructured.Unstructured {
+// clearIgnoredFields clears fields that should be ignored when comparing webhook configs.
+func clearIgnoredFields(obj *unstructured.Unstructured) *unstructured.Unstructured {
 	// Clear metadata fields that change frequently
 	obj.SetResourceVersion("")
 	obj.SetGeneration(0)
 	obj.SetManagedFields(nil)
 
-	// Clear failurePolicy in each webhook
-	webhooks, found, _ := unstructured.NestedSlice(obj.Object, "webhooks")
-	if found {
-		for i := range webhooks {
-			if webhook, ok := webhooks[i].(map[string]interface{}); ok {
-				delete(webhook, "failurePolicy")
-				webhooks[i] = webhook
+	switch obj.GetKind() {
+	case "ValidatingWebhookConfiguration":
+		webhooks, found, _ := unstructured.NestedSlice(obj.Object, "webhooks")
+		if found {
+			for i := range webhooks {
+				if webhook, ok := webhooks[i].(map[string]interface{}); ok {
+					delete(webhook, "failurePolicy")
+					if clientConfig, ok := webhook["clientConfig"].(map[string]interface{}); ok {
+						delete(clientConfig, "caBundle")
+					}
+					webhooks[i] = webhook
+				}
 			}
+			_ = unstructured.SetNestedSlice(obj.Object, webhooks, "webhooks")
 		}
-		_ = unstructured.SetNestedSlice(obj.Object, webhooks, "webhooks")
+	case "MutatingWebhookConfiguration":
+		webhooks, found, _ := unstructured.NestedSlice(obj.Object, "webhooks")
+		if found {
+			for i := range webhooks {
+				if webhook, ok := webhooks[i].(map[string]interface{}); ok {
+					if clientConfig, ok := webhook["clientConfig"].(map[string]interface{}); ok {
+						delete(clientConfig, "caBundle")
+					}
+					webhooks[i] = webhook
+				}
+			}
+			_ = unstructured.SetNestedSlice(obj.Object, webhooks, "webhooks")
+		}
 	}
 
 	return obj

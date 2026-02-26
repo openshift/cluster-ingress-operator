@@ -44,6 +44,7 @@ import (
 	"sync"
 
 	v1 "github.com/istio-ecosystem/sail-operator/api/v1"
+	"github.com/istio-ecosystem/sail-operator/bundle"
 	"github.com/istio-ecosystem/sail-operator/pkg/helm"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
@@ -241,14 +242,9 @@ func New(kubeConfig *rest.Config, resourceFS fs.FS) (*Library, error) {
 		return nil, fmt.Errorf("failed to create dynamic client: %w", err)
 	}
 
-	// Populate default image refs from the provided FS (no-op if already set by config.Read)
-	if err := SetImageDefaults(resourceFS, defaultRegistry, ImageNames{
-		Istiod:  defaultIstiodImage,
-		Proxy:   defaultProxyImage,
-		CNI:     defaultCNIImage,
-		ZTunnel: defaultZTunnelImage,
-	}); err != nil {
-		return nil, fmt.Errorf("failed to set image defaults: %w", err)
+	// Populate default image refs from the embedded CSV (no-op if already set by config.Read)
+	if err := LoadImageDigestsFromCSV(bundle.CSV); err != nil {
+		return nil, fmt.Errorf("failed to load image digests from CSV: %w", err)
 	}
 
 	return &Library{
