@@ -3,7 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.20.0
+    controller-gen.kubebuilder.io/version: v0.20.1
   name: ztunnels.sailoperator.io
 spec:
   group: sailoperator.io
@@ -62,7 +62,7 @@ spec:
           spec:
             default:
               namespace: ztunnel
-              version: v1.28.3
+              version: v1.29.0
             description: ZTunnelSpec defines the desired state of ZTunnel
             properties:
               namespace:
@@ -1135,6 +1135,62 @@ spec:
                       caAddress:
                         description: The address of the CA for CSR.
                         type: string
+                      dnsConfig:
+                        description: |-
+                          DNS config for the ztunnel pod
+                          https://kubernetes.io/docs/concepts/services-networking/dns-pod-service/#pod-dns-config
+                        properties:
+                          nameservers:
+                            description: |-
+                              A list of DNS name server IP addresses.
+                              This will be appended to the base nameservers generated from DNSPolicy.
+                              Duplicated nameservers will be removed.
+                            items:
+                              type: string
+                            type: array
+                            x-kubernetes-list-type: atomic
+                          options:
+                            description: |-
+                              A list of DNS resolver options.
+                              This will be merged with the base options generated from DNSPolicy.
+                              Duplicated entries will be removed. Resolution options given in Options
+                              will override those that appear in the base DNSPolicy.
+                            items:
+                              description: PodDNSConfigOption defines DNS resolver
+                                options of a pod.
+                              properties:
+                                name:
+                                  description: |-
+                                    Name is this DNS resolver option's name.
+                                    Required.
+                                  type: string
+                                value:
+                                  description: Value is this DNS resolver option's
+                                    value.
+                                  type: string
+                              type: object
+                            type: array
+                            x-kubernetes-list-type: atomic
+                          searches:
+                            description: |-
+                              A list of DNS search domains for host-name lookup.
+                              This will be appended to the base search paths generated from DNSPolicy.
+                              Duplicated search paths will be removed.
+                            items:
+                              type: string
+                            type: array
+                            x-kubernetes-list-type: atomic
+                        type: object
+                      dnsPolicy:
+                        description: |-
+                          DNS policy for the ztunnel pod
+                          More info: https://kubernetes.io/docs/concepts/services-networking/dns-pod-service/#pod-s-dns-policy
+                        enum:
+                        - ClusterFirstWithHostNet
+                        - ClusterFirst
+                        - Default
+                        - None
+                        type: string
                       env:
                         additionalProperties:
                           type: string
@@ -1224,6 +1280,16 @@ spec:
                           K8s node selector settings.
 
                           See https://kubernetes.io/docs/user-guide/node-selection/
+                        type: object
+                      peerCaCrl:
+                        description: |-
+                          Certificate Revocation List (CRL) support for plugged-in CAs.
+                          When enabled, ztunnel will check certificates against the CRL
+                        properties:
+                          enabled:
+                            description: When enabled, ztunnel will check certificates
+                              against the CRL
+                            type: boolean
                         type: object
                       podAnnotations:
                         additionalProperties:
@@ -3443,17 +3509,22 @@ spec:
                     type: object
                 type: object
               version:
-                default: v1.28.3
+                default: v1.29.0
                 description: |-
                   Defines the version of Istio to install.
-                  Must be one of: v1.28-latest, v1.28.3, v1.28.2, v1.28.1, v1.28.0, v1.27-latest, v1.27.5, v1.27.4, v1.27.3, v1.27.2, v1.27.1, v1.27.0, master, v1.30-alpha.a30ad733.
+                  Must be one of: v1.29-latest, v1.29.0, v1.28-latest, v1.28.4, v1.28.3, v1.28.2, v1.28.1, v1.28.0, v1.27-latest, v1.27.7, v1.27.6, v1.27.5, v1.27.4, v1.27.3, v1.27.2, v1.27.1, v1.27.0, master, v1.30-alpha.68467bae.
                 enum:
+                - v1.29-latest
+                - v1.29.0
                 - v1.28-latest
+                - v1.28.4
                 - v1.28.3
                 - v1.28.2
                 - v1.28.1
                 - v1.28.0
                 - v1.27-latest
+                - v1.27.7
+                - v1.27.6
                 - v1.27.5
                 - v1.27.4
                 - v1.27.3
@@ -3485,7 +3556,7 @@ spec:
                 - v1.24.1
                 - v1.24.0
                 - master
-                - v1.30-alpha.a30ad733
+                - v1.30-alpha.68467bae
                 type: string
             required:
             - namespace
@@ -3595,7 +3666,7 @@ spec:
             default:
               namespace: ztunnel
               profile: ambient
-              version: v1.28.3
+              version: v1.29.0
             description: ZTunnelSpec defines the desired state of ZTunnel
             properties:
               namespace:
@@ -4686,6 +4757,62 @@ spec:
                       caAddress:
                         description: The address of the CA for CSR.
                         type: string
+                      dnsConfig:
+                        description: |-
+                          DNS config for the ztunnel pod
+                          https://kubernetes.io/docs/concepts/services-networking/dns-pod-service/#pod-dns-config
+                        properties:
+                          nameservers:
+                            description: |-
+                              A list of DNS name server IP addresses.
+                              This will be appended to the base nameservers generated from DNSPolicy.
+                              Duplicated nameservers will be removed.
+                            items:
+                              type: string
+                            type: array
+                            x-kubernetes-list-type: atomic
+                          options:
+                            description: |-
+                              A list of DNS resolver options.
+                              This will be merged with the base options generated from DNSPolicy.
+                              Duplicated entries will be removed. Resolution options given in Options
+                              will override those that appear in the base DNSPolicy.
+                            items:
+                              description: PodDNSConfigOption defines DNS resolver
+                                options of a pod.
+                              properties:
+                                name:
+                                  description: |-
+                                    Name is this DNS resolver option's name.
+                                    Required.
+                                  type: string
+                                value:
+                                  description: Value is this DNS resolver option's
+                                    value.
+                                  type: string
+                              type: object
+                            type: array
+                            x-kubernetes-list-type: atomic
+                          searches:
+                            description: |-
+                              A list of DNS search domains for host-name lookup.
+                              This will be appended to the base search paths generated from DNSPolicy.
+                              Duplicated search paths will be removed.
+                            items:
+                              type: string
+                            type: array
+                            x-kubernetes-list-type: atomic
+                        type: object
+                      dnsPolicy:
+                        description: |-
+                          DNS policy for the ztunnel pod
+                          More info: https://kubernetes.io/docs/concepts/services-networking/dns-pod-service/#pod-s-dns-policy
+                        enum:
+                        - ClusterFirstWithHostNet
+                        - ClusterFirst
+                        - Default
+                        - None
+                        type: string
                       env:
                         additionalProperties:
                           type: string
@@ -4775,6 +4902,16 @@ spec:
                           K8s node selector settings.
 
                           See https://kubernetes.io/docs/user-guide/node-selection/
+                        type: object
+                      peerCaCrl:
+                        description: |-
+                          Certificate Revocation List (CRL) support for plugged-in CAs.
+                          When enabled, ztunnel will check certificates against the CRL
+                        properties:
+                          enabled:
+                            description: When enabled, ztunnel will check certificates
+                              against the CRL
+                            type: boolean
                         type: object
                       podAnnotations:
                         additionalProperties:
@@ -6994,17 +7131,22 @@ spec:
                     type: object
                 type: object
               version:
-                default: v1.28.3
+                default: v1.29.0
                 description: |-
                   Defines the version of Istio to install.
-                  Must be one of: v1.28-latest, v1.28.3, v1.28.2, v1.28.1, v1.28.0, v1.27-latest, v1.27.5, v1.27.4, v1.27.3, v1.27.2, v1.27.1, v1.27.0, master, v1.30-alpha.a30ad733.
+                  Must be one of: v1.29-latest, v1.29.0, v1.28-latest, v1.28.4, v1.28.3, v1.28.2, v1.28.1, v1.28.0, v1.27-latest, v1.27.7, v1.27.6, v1.27.5, v1.27.4, v1.27.3, v1.27.2, v1.27.1, v1.27.0, master, v1.30-alpha.68467bae.
                 enum:
+                - v1.29-latest
+                - v1.29.0
                 - v1.28-latest
+                - v1.28.4
                 - v1.28.3
                 - v1.28.2
                 - v1.28.1
                 - v1.28.0
                 - v1.27-latest
+                - v1.27.7
+                - v1.27.6
                 - v1.27.5
                 - v1.27.4
                 - v1.27.3
@@ -7036,7 +7178,7 @@ spec:
                 - v1.24.1
                 - v1.24.0
                 - master
-                - v1.30-alpha.a30ad733
+                - v1.30-alpha.68467bae
                 type: string
             required:
             - namespace

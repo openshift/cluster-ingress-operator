@@ -7,8 +7,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/istio-ecosystem/sail-operator/pkg/install"
-	"github.com/istio-ecosystem/sail-operator/resources"
 	configclient "github.com/openshift/client-go/config/clientset/versioned"
 	configinformers "github.com/openshift/client-go/config/informers/externalversions"
 	"github.com/openshift/library-go/pkg/operator/configobserver/featuregates"
@@ -329,7 +327,6 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	// Set up the gatewayclass controller.  This controller is unmanaged by
 	// the manager; the gatewayapi controller starts it after it creates the
 	// Gateway API CRDs.
-	//
 	gatewayclassControllerConfig := gatewayclasscontroller.Config{
 		KubeConfig:                  kubeConfig,
 		OperatorNamespace:           config.Namespace,
@@ -339,23 +336,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		GatewayAPIOperatorVersion:   config.GatewayAPIOperatorVersion,
 		GatewayAPIWithoutOLMEnabled: gatewayAPIWithoutOLMEnabled,
 		IstioVersion:                config.IstioVersion,
-	}
-
-	// Gated Feature - For Non-OLM install, we start the sail-operator library that
-	// does the reconciliation of CRDs and resources.
-	// Starting this library returns a channel, that can be used by the reconciliation
-	// process to receive notifications from the library informer and kick a new GatewayClass
-	// reconciliation.
-	if gatewayAPIWithoutOLMEnabled {
-		installer, err := install.New(mgr.GetConfig(), resources.FS)
-		if err != nil {
-			return nil, fmt.Errorf("failed to initialize sail-operator installation library: %w", err)
-		}
-		notifyCh := installer.Start(ctx)
-		gatewayclassControllerConfig.SailOperatorReconciler = &gatewayclasscontroller.SailOperatorReconciler{
-			NotifyCh:  notifyCh,
-			Installer: installer,
-		}
+		Context:                     ctx,
 	}
 
 	gatewayClassController, err := gatewayclasscontroller.NewUnmanaged(mgr, gatewayclassControllerConfig)

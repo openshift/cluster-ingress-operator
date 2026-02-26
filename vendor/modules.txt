@@ -460,7 +460,7 @@ github.com/imdario/mergo
 # github.com/inconshreveable/mousetrap v1.1.0
 ## explicit; go 1.18
 github.com/inconshreveable/mousetrap
-# github.com/istio-ecosystem/sail-operator v0.0.0-20250513111011-30be83268d6b => github.com/aslakknutsen/sail-operator v0.0.0-20260223154431-ffebc5493a7f
+# github.com/istio-ecosystem/sail-operator v0.0.0-20250513111011-30be83268d6b => github.com/aslakknutsen/sail-operator v0.0.0-20260225105244-8446a84765a2
 ## explicit; go 1.25.0
 github.com/istio-ecosystem/sail-operator/api/v1
 github.com/istio-ecosystem/sail-operator/chart/crds
@@ -1169,7 +1169,7 @@ helm.sh/helm/v3/pkg/storage/driver
 helm.sh/helm/v3/pkg/time
 helm.sh/helm/v3/pkg/time/ctime
 helm.sh/helm/v3/pkg/uploader
-# istio.io/istio v0.0.0-20260208024451-a30ad73344d7
+# istio.io/istio v0.0.0-20260225005859-68467bae8e13
 ## explicit; go 1.25.0
 istio.io/istio/pkg/log
 istio.io/istio/pkg/ptr
@@ -1884,4 +1884,4 @@ sigs.k8s.io/yaml
 sigs.k8s.io/yaml/goyaml.v3
 sigs.k8s.io/yaml/kyaml
 # github.com/imdario/mergo => github.com/imdario/mergo v0.3.5
-# github.com/istio-ecosystem/sail-operator => github.com/aslakknutsen/sail-operator v0.0.0-20260223154431-ffebc5493a7f
+# github.com/istio-ecosystem/sail-operator => github.com/aslakknutsen/sail-operator v0.0.0-20260225105244-8446a84765a2

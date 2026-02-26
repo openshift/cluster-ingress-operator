@@ -100,10 +100,10 @@ func (r *reconciler) overwriteOLMManagedCRDFunc(ctx context.Context, crd *apiext
 // ensureIstio installs or updates Istio using the Sail Library.
 // It returns an error if the installation fails.
 func (r *reconciler) ensureIstio(ctx context.Context, gatewayclass *gatewayapiv1.GatewayClass, istioVersion string) error {
-	if r.config.SailOperatorReconciler == nil || r.config.SailOperatorReconciler.Installer == nil {
+	if r.sailInstaller == nil {
 		return fmt.Errorf("internal error: sail operator is null")
 	}
-	sailInstaller := r.config.SailOperatorReconciler.Installer
+	sailInstaller := r.sailInstaller
 
 	enableInferenceExtension, err := r.inferencepoolCrdExists(ctx)
 	if err != nil {
@@ -111,10 +111,7 @@ func (r *reconciler) ensureIstio(ctx context.Context, gatewayclass *gatewayapiv1
 	}
 
 	// Build options from current state
-	opts, err := r.buildInstallerOptions(enableInferenceExtension, istioVersion)
-	if err != nil {
-		return err
-	}
+	opts := r.buildInstallerOptions(enableInferenceExtension, istioVersion)
 
 	opts.OverwriteOLMManagedCRD = r.overwriteOLMManagedCRDFunc
 	// Enqueue the request to reconcile. This does not return
@@ -130,7 +127,7 @@ func (r *reconciler) ensureIstio(ctx context.Context, gatewayclass *gatewayapiv1
 	return nil
 }
 
-func (r *reconciler) buildInstallerOptions(enableInferenceExtension bool, istioVersion string) (install.Options, error) {
+func (r *reconciler) buildInstallerOptions(enableInferenceExtension bool, istioVersion string) install.Options {
 	// Start with Gateway API defaults
 	values := install.GatewayAPIDefaults()
 
@@ -145,7 +142,7 @@ func (r *reconciler) buildInstallerOptions(enableInferenceExtension bool, istioV
 		Version:        istioVersion,
 		ManageCRDs:     ptr.To(true),
 		IncludeAllCRDs: ptr.To(true),
-	}, nil
+	}
 }
 
 // mapStatusToConditions translates the library Status into GatewayClass conditions.

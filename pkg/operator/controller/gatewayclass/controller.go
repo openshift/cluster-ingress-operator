@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/istio-ecosystem/sail-operator/resources"
+
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
@@ -173,9 +175,17 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 		isIstioCRD := predicate.NewPredicateFuncs(func(o client.Object) bool {
 			return strings.Contains(o.GetName(), "istio.io")
 		})
+		isServiceMeshSubscription := predicate.NewPredicateFuncs(func(o client.Object) bool {
+			sub, ok := o.(*operatorsv1alpha1.Subscription)
+			if !ok {
+				return false
+			}
+			// Check if package name starts with "servicemeshoperator"
+			return sub.Spec != nil && strings.HasPrefix(sub.Spec.Package, "servicemeshoperator")
+		})
 
 		if err = c.Watch(source.Kind[client.Object](operatorCache, &operatorsv1alpha1.Subscription{},
-			reconciler.enqueueRequestForSubscriptionChange())); err != nil {
+			reconciler.enqueueRequestForSubscriptionChange(), isServiceMeshSubscription)); err != nil {
 			return nil, err
 		}
 		if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorsv1alpha1.InstallPlan{}, reconciler.enqueueRequestForSubscriptionChange(), isOurInstallPlan)); err != nil {
@@ -187,16 +197,21 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 
 		// For Non-OLM install, we start the sail-operator library that
 		// does the reconciliation of CRDs and resources.
-		// The channel here receives notification from the previously started sail-operator library
-		// and triggers new reconciliations
-		if config.SailOperatorReconciler != nil && config.SailOperatorReconciler.NotifyCh != nil {
-			sailOperatorSource := &SailOperatorSource[client.Object]{
-				NotifyCh:     config.SailOperatorReconciler.NotifyCh,
-				RequestsFunc: reconciler.allManagedGatewayClasses,
-			}
-			if err := c.Watch(sailOperatorSource); err != nil {
-				return nil, err
-			}
+		// Starting this library returns a channel, that can be used by the reconciliation
+		// process to receive notifications from the library informer and kick a new GatewayClass
+		// reconciliation.
+		installer, err := install.New(mgr.GetConfig(), resources.FS)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize sail-operator installation library: %w", err)
+		}
+		notifyCh := installer.Start(config.Context)
+		reconciler.sailInstaller = installer
+		sailOperatorSource := &SailOperatorSource[client.Object]{
+			NotifyCh:     notifyCh,
+			RequestsFunc: reconciler.allManagedGatewayClasses,
+		}
+		if err := c.Watch(sailOperatorSource); err != nil {
+			return nil, err
 		}
 	}
 
@@ -223,8 +238,8 @@ type Config struct {
 	GatewayAPIWithoutOLMEnabled bool
 	// IstioVersion is the version of Istio to install.
 	IstioVersion string
-	// SailOperatorReconciler contains the instance and the notification channel for the reconciler of Istio resources
-	SailOperatorReconciler *SailOperatorReconciler
+	// Context is the context for controller lifecycle.
+	Context context.Context
 }
 
 // SailLibraryInstaller implements the methods of sail library but in a way we can
@@ -237,11 +252,6 @@ type SailLibraryInstaller interface {
 	Enqueue()
 }
 
-type SailOperatorReconciler struct {
-	Installer SailLibraryInstaller
-	NotifyCh  <-chan struct{}
-}
-
 // reconciler reconciles gatewayclasses.
 type reconciler struct {
 	config Config
@@ -252,17 +262,21 @@ type reconciler struct {
 	recorder   record.EventRecorder
 
 	startIstioWatch sync.Once
+
+	// sailInstaller manages Istio control plane lifecycle (install, upgrade, uninstall) via the sail library.
+	sailInstaller SailLibraryInstaller
 }
 
 func (r *reconciler) enqueueRequestForSubscriptionChange() handler.EventHandler {
 	return handler.EnqueueRequestsFromMapFunc(
 		func(ctx context.Context, obj client.Object) []reconcile.Request {
-			// If this is OLM and we detect the change of subscriptions, we must
+			// If this is OLM, and we detect the change of subscriptions, we must
 			// enforce that Sail Installer also enqueues a new reconciliation
-			if r.config.SailOperatorReconciler != nil && r.config.SailOperatorReconciler.Installer != nil {
+			if r.sailInstaller != nil {
 				// We can call Enqueue as many times as we want, as sail-library should enqueue and filter
 				// and not make concurrent operations
-				r.config.SailOperatorReconciler.Installer.Enqueue()
+				log.V(1).Info("Subscription change detected", "name", obj.GetName(), "namespace", obj.GetNamespace())
+				r.sailInstaller.Enqueue()
 			}
 			return r.allManagedGatewayClasses(ctx, obj)
 		})
@@ -359,7 +373,7 @@ func (r *reconciler) allManagedGatewayClasses(ctx context.Context, _ client.Obje
 // Reconcile expects request to refer to a GatewayClass and creates or
 // reconciles an Istio deployment.
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
-	if r.config.GatewayAPIWithoutOLMEnabled && r.config.SailOperatorReconciler != nil && r.config.SailOperatorReconciler.Installer != nil {
+	if r.config.GatewayAPIWithoutOLMEnabled {
 		return r.reconcileWithSailLibrary(ctx, request)
 	}
 	return r.reconcileWithOLM(ctx, request)
@@ -456,7 +470,7 @@ func (r *reconciler) reconcileWithSailLibrary(ctx context.Context, request recon
 
 	gatewayclass := sourceGatewayClass.DeepCopy()
 
-	if !gatewayclass.DeletionTimestamp.IsZero() {
+	if !gatewayclass.DeletionTimestamp.IsZero() && controllerutil.ContainsFinalizer(gatewayclass, sailLibraryFinalizer) {
 		// Check if this is the last remaining GatewayClass. If so:
 		// 1 - Stop the library in case this is the last GatewayClass
 		// 2 - Delete the finalizer (always, regardless of being the last)
@@ -469,7 +483,7 @@ func (r *reconciler) reconcileWithSailLibrary(ctx context.Context, request recon
 		}
 
 		if len(gatewayClassList.Items) < 2 {
-			if err := r.config.SailOperatorReconciler.Installer.Uninstall(ctx, operatorcontroller.DefaultOperandNamespace, operatorcontroller.IstioName("").Name); err != nil {
+			if err := r.sailInstaller.Uninstall(ctx, operatorcontroller.DefaultOperandNamespace, operatorcontroller.IstioName("").Name); err != nil {
 				return reconcile.Result{}, fmt.Errorf("failed to uninstall the operator: %w", err)
 			}
 		}
