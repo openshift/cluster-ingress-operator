@@ -633,6 +633,32 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 	}
 	env = append(env, corev1.EnvVar{Name: RouterHAProxyThreadsEnvName, Value: strconv.Itoa(threads)})
 
+	// Check for AWS deployment, and if so and exposed via NLB, need to change default timeout tunnel to less than 350s
+	// https://issues.redhat.com/browse/OCPBUGS-54702
+	var tunnelTimeout *time.Duration
+	if ci.Spec.TuningOptions.TunnelTimeout != nil && ci.Spec.TuningOptions.TunnelTimeout.Duration > 0*time.Second {
+		// honor any configuration provided by the user
+		tunnelTimeout = &ci.Spec.TuningOptions.TunnelTimeout.Duration
+	} else {
+		// no config from the user, checking for NLB
+		eps := ci.Spec.EndpointPublishingStrategy
+		isAWS := eps != nil &&
+			eps.LoadBalancer != nil &&
+			eps.LoadBalancer.ProviderParameters != nil &&
+			eps.LoadBalancer.ProviderParameters.Type == operatorv1.AWSLoadBalancerProvider
+		if isAWS {
+			isAWSNLB := eps.LoadBalancer.ProviderParameters.AWS != nil &&
+				eps.LoadBalancer.ProviderParameters.AWS.Type == operatorv1.AWSNetworkLoadBalancer
+			if isAWSNLB {
+				// NLB at AWS, need to use less than 350s as the default value
+				tunnelTimeout = ptr.To(349 * time.Second)
+			}
+		}
+	}
+	if tunnelTimeout != nil {
+		env = append(env, corev1.EnvVar{Name: "ROUTER_DEFAULT_TUNNEL_TIMEOUT", Value: durationToHAProxyTimespec(*tunnelTimeout)})
+	}
+
 	if ci.Spec.HTTPHeaders != nil && len(ci.Spec.HTTPHeaders.Actions.Response) != 0 {
 		env = append(env, corev1.EnvVar{Name: RouterHTTPResponseHeaders, Value: headerValues(ci.Spec.HTTPHeaders.Actions.Response)})
 	}
@@ -652,9 +678,6 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 	}
 	if ci.Spec.TuningOptions.ServerFinTimeout != nil && ci.Spec.TuningOptions.ServerFinTimeout.Duration > 0*time.Second {
 		env = append(env, corev1.EnvVar{Name: "ROUTER_DEFAULT_SERVER_FIN_TIMEOUT", Value: durationToHAProxyTimespec(ci.Spec.TuningOptions.ServerFinTimeout.Duration)})
-	}
-	if ci.Spec.TuningOptions.TunnelTimeout != nil && ci.Spec.TuningOptions.TunnelTimeout.Duration > 0*time.Second {
-		env = append(env, corev1.EnvVar{Name: "ROUTER_DEFAULT_TUNNEL_TIMEOUT", Value: durationToHAProxyTimespec(ci.Spec.TuningOptions.TunnelTimeout.Duration)})
 	}
 	if ci.Spec.TuningOptions.ConnectTimeout != nil && ci.Spec.TuningOptions.ConnectTimeout.Duration > 0*time.Second {
 		env = append(env, corev1.EnvVar{Name: "ROUTER_DEFAULT_CONNECT_TIMEOUT", Value: durationToHAProxyTimespec(ci.Spec.TuningOptions.ConnectTimeout.Duration)})
