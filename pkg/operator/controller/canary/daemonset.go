@@ -145,6 +145,7 @@ func desiredCanaryDaemonSet(canaryImage string, certHash string) *appsv1.DaemonS
 
 	daemonset.Spec.Template.Spec.Containers[0].Image = canaryImage
 	daemonset.Spec.Template.Spec.Containers[0].Command = []string{"ingress-operator", CanaryHealthcheckCommand}
+	daemonset.Spec.Template.Spec.ServiceAccountName = controller.CanaryServiceAccountName().Name
 
 	if certHash != "" {
 		if daemonset.Spec.Template.Annotations == nil {
@@ -236,6 +237,11 @@ func canaryDaemonSetChanged(current, expected *appsv1.DaemonSet) (bool, *appsv1.
 		} else {
 			updated.Spec.Template.Annotations[CanaryServingCertHashAnnotation] = expectedHash
 		}
+		changed = true
+	}
+
+	if current.Spec.Template.Spec.ServiceAccountName != expected.Spec.Template.Spec.ServiceAccountName {
+		updated.Spec.Template.Spec.ServiceAccountName = expected.Spec.Template.Spec.ServiceAccountName
 		changed = true
 	}
 

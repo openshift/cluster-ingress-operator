@@ -83,6 +83,13 @@ func Test_desiredCanaryDaemonSet(t *testing.T) {
 	if !cmp.Equal(tolerations, expectedTolerations) {
 		t.Errorf("expected daemonset tolerations to be %v, but got %v", expectedTolerations, tolerations)
 	}
+
+	serviceAccountName := daemonset.Spec.Template.Spec.ServiceAccountName
+	expectedServiceAccountName := controller.CanaryServiceAccountName()
+
+	if !cmp.Equal(serviceAccountName, expectedServiceAccountName.Name) {
+		t.Errorf("expected service account name to be %s, but got %s", serviceAccountName, expectedServiceAccountName.Name)
+	}
 }
 
 func Test_canaryDaemonsetChanged(t *testing.T) {
@@ -232,6 +239,13 @@ func Test_canaryDaemonsetChanged(t *testing.T) {
 					ds.Spec.Template.Annotations = map[string]string{}
 				}
 				ds.Spec.Template.Annotations[CanaryServingCertHashAnnotation] = "d34db33f"
+			},
+			expect: true,
+		},
+		{
+			description: "if canary service account name changes",
+			mutate: func(ds *appsv1.DaemonSet) {
+				ds.Spec.Template.Spec.ServiceAccountName = "default"
 			},
 			expect: true,
 		},
