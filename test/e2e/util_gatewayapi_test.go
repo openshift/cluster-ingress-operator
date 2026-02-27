@@ -33,6 +33,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/utils/ptr"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -1184,10 +1185,34 @@ func scaleDeployment(t *testing.T, namespace, name string, replicas int32) error
 	})
 }
 
+// getCVOReplicas returns the current replica count of the CVO deployment.
+func getCVOReplicas(t *testing.T) (int32, error) {
+	t.Helper()
+	nsName := types.NamespacedName{Namespace: cvoNamespace, Name: cvoDeploymentName}
+	cvo := &appsv1.Deployment{}
+
+	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, nsName, cvo); err != nil {
+			t.Logf("failed to get cvo deployment: %v, retrying...", err)
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("failed to get cvo deployment: %w", err)
+	}
+
+	return ptr.Deref(cvo.Spec.Replicas, 1), nil
+}
+
 // vapManager helps to disable the VAP resource which is managed by CVO.
+// Handles both disabling (to allow tests to modify/test CRDs) and restoration (test cleanup).
+// The goal is not to test VAP/CVO behavior - just to enable test execution and cleanup.
 type vapManager struct {
-	t    *testing.T
-	name string
+	t                  *testing.T
+	name               string
+	initialCVOReplicas int32
+	savedVAP           *admissionregistrationv1.ValidatingAdmissionPolicy
 }
 
 // newVAPManager returns a new instance of VAPManager.
@@ -1200,25 +1225,63 @@ func newVAPManager(t *testing.T, vapName string) *vapManager {
 
 // disable scales down CVO and removes the VAP resource.
 func (m *vapManager) disable() (error, func()) {
+	// Save the current replica count before scaling down
+	replicas, err := getCVOReplicas(m.t)
+	if err != nil {
+		return err, func() {}
+	}
+	m.initialCVOReplicas = replicas
+
+	recoverCVO := func() {
+		if err := scaleDeployment(m.t, cvoNamespace, cvoDeploymentName, m.initialCVOReplicas); err != nil {
+			m.t.Errorf("failed to scale up cvo: %v", err)
+		}
+	}
+
 	if err := scaleDeployment(m.t, cvoNamespace, cvoDeploymentName, 0); err != nil {
 		return fmt.Errorf("failed to scale down cvo: %w", err), func() { /*scale down didn't work, nothing to do*/ }
 	}
-	if err := deleteExistingVAP(m.t, m.name); err != nil {
-		return fmt.Errorf("failed to delete vap %q: %w", m.name, err), func() {
-			if err := scaleDeployment(m.t, cvoNamespace, cvoDeploymentName, 1); err != nil {
-				m.t.Errorf("failed to scale up cvo: %v", err)
-			}
-		}
+
+	// Save VAP before deleting it so we can restore it later in case CVO isn't running
+	vap := &admissionregistrationv1.ValidatingAdmissionPolicy{}
+	name := types.NamespacedName{Name: m.name}
+	if err := kclient.Get(context.Background(), name, vap); err != nil {
+		return fmt.Errorf("failed to get vap %q: %w", m.name, err), recoverCVO
 	}
+
+	// Save a copy before deleting
+	m.savedVAP = vap.DeepCopy()
+
+	if err := deleteExistingVAP(m.t, m.name); err != nil {
+		return fmt.Errorf("failed to delete vap %q: %w", m.name, err), recoverCVO
+	}
+
 	return nil, nil
 }
 
 // Enable scales up CVO and waits until the VAP is recreated.
+// This is NOT testing VAP/CVO behavior - just to restore cluster state.
+// Uses CVO to restore VAP if it was running, otherwise manually recreates the saved VAP.
 func (m *vapManager) enable() {
-	if err := scaleDeployment(m.t, cvoNamespace, cvoDeploymentName, 1); err != nil {
-		m.t.Errorf("failed to scale up cvo: %v", err)
-	} else if err := assertVAP(m.t, m.name); err != nil {
-		m.t.Errorf("failed to find vap %q: %v", m.name, err)
+	// Only restore VAP manually if CVO is disabled (it won't recreate it)
+	if m.initialCVOReplicas == 0 {
+		if m.savedVAP != nil {
+			// Clear resource version to allow recreation
+			m.savedVAP.ResourceVersion = ""
+			if err := kclient.Create(context.Background(), m.savedVAP); err != nil {
+				if !kerrors.IsAlreadyExists(err) {
+					m.t.Errorf("failed to restore vap %q: %v", m.name, err)
+				}
+			} else {
+				m.t.Logf("Manually restored VAP %q (CVO is disabled)", m.name)
+			}
+		}
+	} else {
+		if err := scaleDeployment(m.t, cvoNamespace, cvoDeploymentName, m.initialCVOReplicas); err != nil {
+			m.t.Errorf("failed to scale up cvo: %v", err)
+		} else if err := assertVAP(m.t, m.name); err != nil {
+			m.t.Errorf("failed to find vap %q: %v", m.name, err)
+		}
 	}
 }
 
