@@ -138,17 +138,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	azureWorkloadIdentityEnabled := featureGates.Enabled(features.FeatureGateAzureWorkloadIdentity)
 	gatewayAPIEnabled := featureGates.Enabled(features.FeatureGateGatewayAPI)
 	gatewayAPIControllerEnabled := featureGates.Enabled(features.FeatureGateGatewayAPIController)
-	//gatewayAPIWithoutOLMEnabled := featureGates.Enabled(features.FeatureGateGatewayAPIWithoutOLM)
-
-	gatewayAPIWithoutOLMEnabledBool, ok := os.LookupEnv("GATEWAY_HELM")
-	if !ok {
-		gatewayAPIWithoutOLMEnabledBool = "false"
-	}
-
-	gatewayAPIWithoutOLMEnabled, err := strconv.ParseBool(gatewayAPIWithoutOLMEnabledBool)
-	if err != nil {
-		return nil, err
-	}
+	gatewayAPIWithoutOLMEnabled := featureGates.Enabled(features.FeatureGateGatewayAPIWithoutOLM)
 
 	routeExternalCertificateEnabled := featureGates.Enabled(features.FeatureGateRouteExternalCertificate)
 	ingressControllerDCMEnabled := featureGates.Enabled(features.FeatureGateIngressControllerDynamicConfigurationManager)
