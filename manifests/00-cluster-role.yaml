@@ -37,13 +37,31 @@ rules:
   resources:
   - nodes
   verbs:
+  - get
   - list
+  - watch
+
+- apiGroups:
+  - ""
+  resources:
+  - services/status
+  - replicationcontrollers
+  verbs:
+  - "*"
 
 - apiGroups:
   - apps
   resources:
   - deployments
   - daemonsets
+  - replicasets
+  verbs:
+  - "*"
+
+- apiGroups:
+  - autoscaling
+  resources:
+  - horizontalpodautoscalers
   verbs:
   - "*"
 
@@ -71,11 +89,7 @@ rules:
   - roles
   - rolebindings
   verbs:
-  - create
-  - get
-  - list
-  - watch
-  - update
+  - "*"
 
 - apiGroups:
   - operator.openshift.io
@@ -159,16 +173,6 @@ rules:
   - '*'
 
 - apiGroups:
-  - gateway.networking.k8s.io
-  resources:
-  - gatewayclasses
-  - gateways
-  - httproutes
-  - grpcroutes
-  verbs:
-  - '*'
-
-- apiGroups:
   - apiextensions.k8s.io
   resources:
   - customresourcedefinitions
@@ -187,6 +191,7 @@ rules:
   - sailoperator.io
   resources:
   - istios
+  - istiorevisions
   verbs:
   - '*'
 
@@ -249,5 +254,95 @@ rules:
   resources:
   - endpointslices
   verbs:
+  - get
   - list
   - watch
+
+# Required for Istio installation via Helm
+- apiGroups:
+  - admissionregistration.k8s.io
+  resources:
+  - mutatingwebhookconfigurations
+  - validatingwebhookconfigurations
+  verbs:
+  - "*"
+
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+
+- apiGroups:
+  - networking.k8s.io
+  resources:
+  - ingresses
+  - ingresses/status
+  verbs:
+  - "*"
+
+- apiGroups:
+  - authentication.istio.io
+  - config.istio.io
+  - extensions.istio.io
+  - networking.istio.io
+  - rbac.istio.io
+  - security.istio.io
+  - telemetry.istio.io
+  resources:
+  - "*"
+  verbs:
+  - "*"
+
+- apiGroups:
+  - gateway.networking.k8s.io
+  resources:
+  - "*"
+  verbs:
+  - "*"
+
+- apiGroups:
+  - gateway.networking.x-k8s.io
+  resources:
+  - "*"
+  verbs:
+  - "*"
+
+- apiGroups:
+  - networking.x-k8s.io
+  resources:
+  - gateways
+  verbs:
+  - get
+  - list
+  - watch
+
+- apiGroups:
+  - multicluster.x-k8s.io
+  resources:
+  - serviceexports
+  - serviceimports
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - delete
+
+- apiGroups:
+  - inference.networking.x-k8s.io
+  resources:
+  - inferencepools
+  - inferencepools/status
+  verbs:
+  - get
+  - list
+  - watch
+  - update
+  - patch

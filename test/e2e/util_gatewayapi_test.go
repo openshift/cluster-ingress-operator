@@ -467,6 +467,28 @@ func assertSubscription(t *testing.T, namespace, subName string) error {
 	return err
 }
 
+// assertNoSubscription verifies that no Subscription exists with the given name
+// and returns an error if one is found.
+func assertNoSubscription(t *testing.T, namespace, subName string) error {
+	t.Helper()
+	subscription := &operatorsv1alpha1.Subscription{}
+	nsName := types.NamespacedName{Namespace: namespace, Name: subName}
+
+	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(context context.Context) (bool, error) {
+		if err := kclient.Get(context, nsName, subscription); err != nil {
+			if kerrors.IsNotFound(err) {
+				t.Logf("verified that subscription %s does not exist (as expected)", subName)
+				return true, nil
+			}
+			t.Logf("failed to get subscription %s, retrying...", subName)
+			return false, nil
+		}
+		t.Logf("found subscription %s at installed version %s, but it should not exist", subscription.Name, subscription.Status.InstalledCSV)
+		return false, fmt.Errorf("subscription %s should not exist in Sail Library mode", subName)
+	})
+	return err
+}
+
 // deleteExistingSubscription deletes if the subscription of the given name exists and returns an error if not.
 func deleteExistingSubscription(t *testing.T, namespace, subName string) error {
 	t.Helper()
@@ -584,6 +606,31 @@ func assertIstiodControlPlane(t *testing.T) error {
 	return nil
 }
 
+// assertIstiodControlPlaneRemoved checks if the Istiod control plane has been successfully removed
+// and returns an error if not.
+func assertIstiodControlPlaneRemoved(t *testing.T) error {
+	t.Helper()
+	dep := &appsv1.Deployment{}
+	ns := types.NamespacedName{Namespace: operatorcontroller.DefaultOperandNamespace, Name: openshiftIstiodDeploymentName}
+
+	err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 2*time.Minute, false, func(context context.Context) (bool, error) {
+		if err := kclient.Get(context, ns, dep); err != nil {
+			if kerrors.IsNotFound(err) {
+				t.Logf("verified that istiod deployment %v has been removed", ns)
+				return true, nil
+			}
+			t.Logf("failed to get deployment %v, retrying...", ns)
+			return false, nil
+		}
+		t.Logf("istiod deployment %v still exists, waiting for removal...", ns)
+		return false, nil
+	})
+	if err != nil {
+		return fmt.Errorf("error waiting for deployment %v to be removed: %v", ns, err)
+	}
+	return nil
+}
+
 // assertGatewayClassSuccessful checks if the gateway class was created and accepted successfully
 // and returns an error if not.
 func assertGatewayClassSuccessful(t *testing.T, name string) (*gatewayapiv1.GatewayClass, error) {
@@ -660,7 +707,7 @@ func assertGatewaySuccessful(t *testing.T, namespace, name string) (*gatewayapiv
 		if acceptedConditionFound && programmedConditionFound {
 			return true, nil
 		}
-		t.Logf("[%s] Not all expected gateway conditions are found, checking gateway service...", time.Now().Format(time.DateTime))
+		t.Logf("[%s] Not all expected gateway conditions are found (Accepted=%v, Programmed=%v), checking gateway service...", time.Now().Format(time.DateTime), acceptedConditionFound, programmedConditionFound)
 
 		// The creation of the gateway service may be delayed.
 		// Check the current status of the service to see where we are.
@@ -1059,6 +1106,28 @@ func assertIstio(t *testing.T) error {
 	return err
 }
 
+// assertNoIstio verifies that no Istio CR exists
+// and returns an error if one is found.
+func assertNoIstio(t *testing.T) error {
+	t.Helper()
+	istio := &sailv1.Istio{}
+	nsName := types.NamespacedName{Namespace: operatorcontroller.DefaultOperandNamespace, Name: openshiftIstioName}
+
+	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(context context.Context) (bool, error) {
+		if err := kclient.Get(context, nsName, istio); err != nil {
+			if kerrors.IsNotFound(err) {
+				t.Logf("Verified that Istio %s/%s does not exist (as expected)", nsName.Namespace, nsName.Name)
+				return true, nil
+			}
+			t.Logf("Got unexpected error when checking for Istio %s/%s: %v.  Retrying...", nsName.Namespace, nsName.Name, err)
+			return false, nil
+		}
+		t.Logf("Found Istio %s/%s, but it should not exist", istio.Namespace, istio.Name)
+		return false, fmt.Errorf("Istio %s/%s should not exist in Sail Library mode", istio.Namespace, istio.Name)
+	})
+	return err
+}
+
 // deleteExistingIstio deletes if the Istio exists and returns an error if not.
 func deleteExistingIstio(t *testing.T) error {
 	t.Helper()
@@ -1103,6 +1172,102 @@ func deleteExistingIstio(t *testing.T) error {
 		return fmt.Errorf("Timed out waiting for Istio %s to be deleted: %v", nsName.Name, err)
 	}
 	t.Logf("Deleted Istio %s", nsName.Name)
+	return nil
+}
+
+// assertGatewayClassFinalizer verifies that the GatewayClass has the expected
+// sail library finalizer and returns an error if not.
+func assertGatewayClassFinalizer(t *testing.T, name string) error {
+	t.Helper()
+	gwc := &gatewayapiv1.GatewayClass{}
+	nsName := types.NamespacedName{Namespace: "", Name: name}
+	expectedFinalizer := "openshift.io/ingress-operator-sail-finalizer"
+
+	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(context context.Context) (bool, error) {
+		if err := kclient.Get(context, nsName, gwc); err != nil {
+			t.Logf("Failed to get GatewayClass %s: %v; retrying...", name, err)
+			return false, nil
+		}
+		for _, finalizer := range gwc.Finalizers {
+			if finalizer == expectedFinalizer {
+				t.Logf("Verified that GatewayClass %s has finalizer %s", name, expectedFinalizer)
+				return true, nil
+			}
+		}
+		t.Logf("GatewayClass %s does not have expected finalizer %s; retrying...", name, expectedFinalizer)
+		return false, nil
+	})
+	if err != nil {
+		return fmt.Errorf("GatewayClass %s does not have expected finalizer %s", name, expectedFinalizer)
+	}
+	return nil
+}
+
+// assertGatewayClassConditions verifies that the GatewayClass has the expected
+// ControllerInstalled and CRDsReady conditions and returns an error if not.
+func assertGatewayClassConditions(t *testing.T, name string) error {
+	t.Helper()
+	gwc := &gatewayapiv1.GatewayClass{}
+	nsName := types.NamespacedName{Namespace: "", Name: name}
+
+	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 2*time.Minute, false, func(context context.Context) (bool, error) {
+		if err := kclient.Get(context, nsName, gwc); err != nil {
+			t.Logf("Failed to get GatewayClass %s: %v; retrying...", name, err)
+			return false, nil
+		}
+
+		controllerInstalledFound := false
+		crdsReadyFound := false
+
+		for _, condition := range gwc.Status.Conditions {
+			if condition.Type == "ControllerInstalled" && condition.Status == metav1.ConditionTrue {
+				controllerInstalledFound = true
+				t.Logf("Found ControllerInstalled=True condition: %s", condition.Message)
+			}
+			if condition.Type == "CRDsReady" {
+				crdsReadyFound = true
+				t.Logf("Found CRDsReady condition (Status=%s, Reason=%s): %s", condition.Status, condition.Reason, condition.Message)
+			}
+		}
+
+		if controllerInstalledFound && crdsReadyFound {
+			t.Logf("Verified that GatewayClass %s has required conditions", name)
+			return true, nil
+		}
+
+		t.Logf("GatewayClass %s does not yet have all required conditions (ControllerInstalled: %v, CRDsReady: %v); retrying...",
+			name, controllerInstalledFound, crdsReadyFound)
+		return false, nil
+	})
+	if err != nil {
+		t.Logf("Last observed GatewayClass:\n%s", util.ToYaml(gwc))
+		return fmt.Errorf("GatewayClass %s does not have expected conditions", name)
+	}
+	return nil
+}
+
+// assertGatewayClassDeleted verifies that the GatewayClass has been deleted.
+func assertGatewayClassDeleted(t *testing.T, name string) error {
+	t.Helper()
+	gwc := &gatewayapiv1.GatewayClass{}
+	nsName := types.NamespacedName{Namespace: "", Name: name}
+
+	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, nsName, gwc); err != nil {
+			if kerrors.IsNotFound(err) {
+				t.Logf("Verified that GatewayClass %s has been deleted", name)
+				return true, nil
+			}
+			t.Logf("Error checking for GatewayClass: %v, retrying...", err)
+			return false, nil
+		}
+		t.Logf("GatewayClass %s still exists (DeletionTimestamp: %v, Finalizers: %v), waiting for deletion...",
+			gwc.Name, gwc.DeletionTimestamp, gwc.Finalizers)
+		return false, nil
+	})
+	if err != nil {
+		return fmt.Errorf("GatewayClass %s was not deleted within timeout", name)
+	}
 	return nil
 }
 
@@ -1184,10 +1349,35 @@ func scaleDeployment(t *testing.T, namespace, name string, replicas int32) error
 	})
 }
 
+// getCVOReplicas returns the current replica count of the CVO deployment.
+func getCVOReplicas(t *testing.T) (int32, error) {
+	t.Helper()
+	nsName := types.NamespacedName{Namespace: cvoNamespace, Name: cvoDeploymentName}
+	cvo := &appsv1.Deployment{}
+
+	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, nsName, cvo); err != nil {
+			t.Logf("failed to get cvo deployment: %v, retrying...", err)
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("failed to get cvo deployment: %w", err)
+	}
+
+	if cvo.Spec.Replicas != nil {
+		return *cvo.Spec.Replicas, nil
+	}
+	return 1, nil
+}
+
 // vapManager helps to disable the VAP resource which is managed by CVO.
 type vapManager struct {
-	t    *testing.T
-	name string
+	t                  *testing.T
+	name               string
+	initialCVOReplicas int32
+	savedVAP           *admissionregistrationv1.ValidatingAdmissionPolicy
 }
 
 // newVAPManager returns a new instance of VAPManager.
@@ -1200,25 +1390,60 @@ func newVAPManager(t *testing.T, vapName string) *vapManager {
 
 // disable scales down CVO and removes the VAP resource.
 func (m *vapManager) disable() (error, func()) {
+	// Save the current replica count before scaling down
+	replicas, err := getCVOReplicas(m.t)
+	if err != nil {
+		return err, func() {}
+	}
+	m.initialCVOReplicas = replicas
+
 	if err := scaleDeployment(m.t, cvoNamespace, cvoDeploymentName, 0); err != nil {
 		return fmt.Errorf("failed to scale down cvo: %w", err), func() { /*scale down didn't work, nothing to do*/ }
 	}
-	if err := deleteExistingVAP(m.t, m.name); err != nil {
-		return fmt.Errorf("failed to delete vap %q: %w", m.name, err), func() {
-			if err := scaleDeployment(m.t, cvoNamespace, cvoDeploymentName, 1); err != nil {
+
+	// Save VAP before deleting it so we can restore it later in case CVO isn't running
+	vap := &admissionregistrationv1.ValidatingAdmissionPolicy{}
+	name := types.NamespacedName{Name: m.name}
+	if err := kclient.Get(context.Background(), name, vap); err != nil {
+		return fmt.Errorf("failed to get vap %q: %w", m.name, err), func() {
+			if err := scaleDeployment(m.t, cvoNamespace, cvoDeploymentName, m.initialCVOReplicas); err != nil {
 				m.t.Errorf("failed to scale up cvo: %v", err)
 			}
 		}
 	}
+
+	// Save a copy before deleting
+	m.savedVAP = vap.DeepCopy()
+
+	if err := deleteExistingVAP(m.t, m.name); err != nil {
+		return fmt.Errorf("failed to delete vap %q: %w", m.name, err), func() {
+			if err := scaleDeployment(m.t, cvoNamespace, cvoDeploymentName, m.initialCVOReplicas); err != nil {
+				m.t.Errorf("failed to scale up cvo: %v", err)
+			}
+		}
+	}
+
 	return nil, nil
 }
 
 // Enable scales up CVO and waits until the VAP is recreated.
 func (m *vapManager) enable() {
-	if err := scaleDeployment(m.t, cvoNamespace, cvoDeploymentName, 1); err != nil {
+	// Restore VAP if we saved it
+	if m.savedVAP != nil {
+		// Clear resource version to allow recreation
+		m.savedVAP.ResourceVersion = ""
+		if err := kclient.Create(context.Background(), m.savedVAP); err != nil {
+			if !kerrors.IsAlreadyExists(err) {
+				m.t.Errorf("failed to restore vap %q: %v", m.name, err)
+			}
+		} else {
+			m.t.Logf("Restored VAP %q", m.name)
+		}
+	}
+
+	// Scale CVO back up
+	if err := scaleDeployment(m.t, cvoNamespace, cvoDeploymentName, m.initialCVOReplicas); err != nil {
 		m.t.Errorf("failed to scale up cvo: %v", err)
-	} else if err := assertVAP(m.t, m.name); err != nil {
-		m.t.Errorf("failed to find vap %q: %v", m.name, err)
 	}
 }
 

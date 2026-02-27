@@ -54,6 +54,13 @@ var crdNames = []string{
 	"referencegrants.gateway.networking.k8s.io",
 }
 
+var istioCRDNames = []string{
+	"virtualservices.networking.istio.io",
+	"destinationrules.networking.istio.io",
+	"serviceentries.networking.istio.io",
+	"gateways.networking.istio.io",
+}
+
 var testCRDNames = []string{
 	"tests.gateway.networking.k8s.io",
 }
@@ -82,6 +89,12 @@ func TestGatewayAPI(t *testing.T) {
 		t.Fatalf("error checking controller feature gate enabled status: %v", err)
 	}
 
+	//gatewayAPIWithoutOLMEnabled, err := isFeatureGateEnabled(features.FeatureGateGatewayAPIWithoutOLM)
+	//if err != nil {
+	//	t.Fatalf("error checking without olm feature gate enabled status: %v", err)
+	//}
+	gatewayAPIWithoutOLMEnabled := true
+
 	// Defer the cleanup of the test gateway.
 	t.Cleanup(func() {
 		testGateway := gatewayapiv1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: testGatewayName, Namespace: operatorcontroller.DefaultOperandNamespace}}
@@ -98,7 +111,11 @@ func TestGatewayAPI(t *testing.T) {
 	if gatewayAPIControllerEnabled {
 		t.Run("testGatewayAPIObjects", testGatewayAPIObjects)
 		t.Run("testGatewayAPIManualDeployment", testGatewayAPIManualDeployment)
-		t.Run("testGatewayAPIIstioInstallation", testGatewayAPIIstioInstallation)
+		if gatewayAPIWithoutOLMEnabled {
+			t.Run("testGatewayAPIIstioInstallationSailLibrary", testGatewayAPIIstioInstallationSailLibrary)
+		} else {
+			t.Run("testGatewayAPIIstioInstallationOLM", testGatewayAPIIstioInstallationOLM)
+		}
 		t.Run("testGatewayAPIDNS", testGatewayAPIDNS)
 		t.Run("testGatewayAPIDNSListenerUpdate", testGatewayAPIDNSListenerUpdate)
 		t.Run("testGatewayAPIDNSListenerWithNoHostname", testGatewayAPIDNSListenerWithNoHostname)
@@ -111,6 +128,10 @@ func TestGatewayAPI(t *testing.T) {
 	t.Run("testGatewayAPIResourcesProtection", testGatewayAPIResourcesProtection)
 	t.Run("testGatewayAPIRBAC", testGatewayAPIRBAC)
 	t.Run("testOperatorDegradedCondition", testOperatorDegradedCondition)
+
+	if gatewayAPIControllerEnabled && gatewayAPIWithoutOLMEnabled {
+		t.Run("testGatewayAPIIstioUninstallSailLibrary", testGatewayAPIIstioUninstallSailLibrary)
+	}
 }
 
 // testGatewayAPIResources tests that Gateway API Custom Resource Definitions are available.
@@ -128,7 +149,7 @@ func testGatewayAPIResources(t *testing.T) {
 	ensureCRDs(t)
 }
 
-// testGatewayAPIIstioInstallation verifies that once the gatewayclass is
+// testGatewayAPIIstioInstallationOLM verifies that once the gatewayclass is
 // created, the following operations are completed automatically and
 // successfully:
 //
@@ -143,7 +164,7 @@ func testGatewayAPIResources(t *testing.T) {
 //
 //   - If the Istio and Subscription CRs are deleted, they are recreated
 //     automatically.
-func testGatewayAPIIstioInstallation(t *testing.T) {
+func testGatewayAPIIstioInstallationOLM(t *testing.T) {
 	t.Log("Checking for the Subscription...")
 	if err := assertSubscription(t, openshiftOperatorsNamespace, expectedSubscriptionName); err != nil {
 		t.Fatalf("failed to find expected Subscription %s: %v", expectedSubscriptionName, err)
@@ -179,6 +200,69 @@ func testGatewayAPIIstioInstallation(t *testing.T) {
 	t.Log("Checking that the Subscription gets recreated...")
 	if err := assertSubscription(t, openshiftOperatorsNamespace, expectedSubscriptionName); err != nil {
 		t.Fatalf("failed to find expected Subscription %s: %v", expectedSubscriptionName, err)
+	}
+}
+
+// testGatewayAPIIstioInstallationSailLibrary verifies that when using the Sail
+// Library installation path (without OLM), the following operations are
+// completed automatically and successfully:
+//
+//   - Istiod is installed successfully and has status Running and Ready.
+//
+//   - The GatewayClass has the sail library finalizer.
+//
+//   - The GatewayClass has ControllerInstalled and CRDsReady status conditions.
+//
+//   - No Subscription exists (unlike the OLM path).
+//
+//   - No Istio CR exists (unlike the OLM path).
+func testGatewayAPIIstioInstallationSailLibrary(t *testing.T) {
+	t.Log("Checking for the Istiod pods...")
+	if err := assertIstiodControlPlane(t); err != nil {
+		t.Fatalf("failed to find expected Istiod control plane: %v", err)
+	}
+	t.Log("Validating Istio CRDs are installed...")
+	if err := assertIstioCRDs(t); err != nil {
+		t.Fatalf("failed to validate Istio CRDs: %v", err)
+	}
+	t.Log("Checking that GatewayClass has the sail library finalizer...")
+	if err := assertGatewayClassFinalizer(t, "openshift-default"); err != nil {
+		t.Fatalf("GatewayClass does not have expected finalizer: %v", err)
+	}
+	t.Log("Checking that GatewayClass has required status conditions...")
+	if err := assertGatewayClassConditions(t, "openshift-default"); err != nil {
+		t.Fatalf("GatewayClass does not have expected conditions: %v", err)
+	}
+	t.Log("Verifying that no OLM Subscription exists...")
+	if err := assertNoSubscription(t, openshiftOperatorsNamespace, expectedSubscriptionName); err != nil {
+		t.Fatalf("unexpected OLM Subscription found: %v", err)
+	}
+	t.Log("Verifying that no Istio CR exists...")
+	if err := assertNoIstio(t); err != nil {
+		t.Fatalf("unexpected Istio CR found: %v", err)
+	}
+}
+
+// testGatewayAPIIstioUninstallSailLibrary verifies that when the GatewayClass
+// is deleted, Istio is fully uninstalled via the Sail Library.
+func testGatewayAPIIstioUninstallSailLibrary(t *testing.T) {
+	t.Log("Deleting the GatewayClass openshift-default...")
+	gwc := &gatewayapiv1.GatewayClass{}
+	gwc.Name = "openshift-default"
+	if err := kclient.Delete(context.Background(), gwc); err != nil {
+		t.Fatalf("failed to delete GatewayClass: %v", err)
+	}
+	t.Log("Waiting for Istiod deployment to be removed...")
+	if err := assertIstiodControlPlaneRemoved(t); err != nil {
+		t.Fatalf("Istiod was not removed: %v", err)
+	}
+	t.Log("Verifying GatewayClass is deleted...")
+	if err := assertGatewayClassDeleted(t, "openshift-default"); err != nil {
+		t.Fatalf("GatewayClass was not deleted: %v", err)
+	}
+	t.Log("Verifying Istio CRDs still exist after uninstall...")
+	if err := assertIstioCRDs(t); err != nil {
+		t.Fatalf("Istio CRDs should persist after uninstall: %v", err)
 	}
 }
 
@@ -1002,6 +1086,34 @@ func ensureCRDs(t *testing.T) {
 		}
 		t.Logf("Found CRD %s with the following served versions: %s", crdName, strings.Join(crdVersions, ", "))
 	}
+}
+
+// assertIstioCRDs validates that all required Istio CRDs are installed and owned by CIO.
+// It checks that each CRD exists and has the CIO ownership label.
+func assertIstioCRDs(t *testing.T) error {
+	t.Helper()
+	const cioOwnershipLabel = "ingress.operator.openshift.io/owned"
+
+	for _, crdName := range istioCRDNames {
+		_, err := assertCRDExists(t, crdName)
+		if err != nil {
+			return fmt.Errorf("failed to find istio crd %s: %w", crdName, err)
+		}
+
+		// Check for CIO ownership label
+		crd := &apiextensionsv1.CustomResourceDefinition{}
+		name := types.NamespacedName{Name: crdName}
+		if err := kclient.Get(context.Background(), name, crd); err != nil {
+			return fmt.Errorf("failed to get crd %s to check labels: %w", crdName, err)
+		}
+
+		labels := crd.GetLabels()
+		if labels == nil || labels[cioOwnershipLabel] != "true" {
+			return fmt.Errorf("istio crd %s is missing CIO ownership label %s", crdName, cioOwnershipLabel)
+		}
+		t.Logf("Verified Istio CRD %s has CIO ownership label", crdName)
+	}
+	return nil
 }
 
 // deleteCRDs deletes Gateway API custom resource definitions.

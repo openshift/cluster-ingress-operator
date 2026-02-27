@@ -3,6 +3,8 @@ package operator
 import (
 	"context"
 	"fmt"
+	"os"
+	"strconv"
 	"time"
 
 	configclient "github.com/openshift/client-go/config/clientset/versioned"
@@ -136,6 +138,8 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	azureWorkloadIdentityEnabled := featureGates.Enabled(features.FeatureGateAzureWorkloadIdentity)
 	gatewayAPIEnabled := featureGates.Enabled(features.FeatureGateGatewayAPI)
 	gatewayAPIControllerEnabled := featureGates.Enabled(features.FeatureGateGatewayAPIController)
+	gatewayAPIWithoutOLMEnabled := featureGates.Enabled(features.FeatureGateGatewayAPIWithoutOLM)
+
 	routeExternalCertificateEnabled := featureGates.Enabled(features.FeatureGateRouteExternalCertificate)
 	ingressControllerDCMEnabled := featureGates.Enabled(features.FeatureGateIngressControllerDynamicConfigurationManager)
 
@@ -313,14 +317,19 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	// Set up the gatewayclass controller.  This controller is unmanaged by
 	// the manager; the gatewayapi controller starts it after it creates the
 	// Gateway API CRDs.
-	gatewayClassController, err := gatewayclasscontroller.NewUnmanaged(mgr, gatewayclasscontroller.Config{
-		OperatorNamespace:         config.Namespace,
-		OperandNamespace:          operatorcontroller.DefaultOperandNamespace,
-		GatewayAPIOperatorCatalog: config.GatewayAPIOperatorCatalog,
-		GatewayAPIOperatorChannel: config.GatewayAPIOperatorChannel,
-		GatewayAPIOperatorVersion: config.GatewayAPIOperatorVersion,
-		IstioVersion:              config.IstioVersion,
-	})
+	gatewayclassControllerConfig := gatewayclasscontroller.Config{
+		KubeConfig:                  kubeConfig,
+		OperatorNamespace:           config.Namespace,
+		OperandNamespace:            operatorcontroller.DefaultOperandNamespace,
+		GatewayAPIOperatorCatalog:   config.GatewayAPIOperatorCatalog,
+		GatewayAPIOperatorChannel:   config.GatewayAPIOperatorChannel,
+		GatewayAPIOperatorVersion:   config.GatewayAPIOperatorVersion,
+		GatewayAPIWithoutOLMEnabled: gatewayAPIWithoutOLMEnabled,
+		IstioVersion:                config.IstioVersion,
+		Context:                     ctx,
+	}
+
+	gatewayClassController, err := gatewayclasscontroller.NewUnmanaged(mgr, gatewayclassControllerConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gatewayclass controller: %w", err)
 	}
