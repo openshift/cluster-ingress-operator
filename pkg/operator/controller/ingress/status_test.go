@@ -1817,82 +1817,149 @@ func Test_computeIngressProgressingCondition(t *testing.T) {
 }
 
 func Test_computeIngressAvailableCondition(t *testing.T) {
+	// NOTE: this test relies on the package-level clock used by checkConditions.
+	// Inject a fake clock and don't forget to reset it
+	fakeClock := utilclocktesting.NewFakeClock(time.Time{})
+	clock = fakeClock
+	defer func() {
+		clock = utilclock.RealClock{}
+	}()
+
 	testCases := []struct {
-		description string
-		conditions  []operatorv1.OperatorCondition
-		expect      operatorv1.OperatorCondition
+		description                  string
+		conditions                   []operatorv1.OperatorCondition
+		expectIngressAvailableStatus operatorv1.ConditionStatus
+		expectRequeue                bool
+		expectAfter                  time.Duration
 	}{
 		{
 			description: "deployment, dns, and lb available",
 			conditions: []operatorv1.OperatorCondition{
-				{Type: IngressControllerDeploymentAvailableConditionType, Status: operatorv1.ConditionTrue},
-				{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionTrue},
-				{Type: operatorv1.DNSReadyIngressConditionType, Status: operatorv1.ConditionTrue},
-				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionTrue},
-				{Type: operatorv1.LoadBalancerReadyIngressConditionType, Status: operatorv1.ConditionTrue},
+				cond(IngressControllerDeploymentAvailableConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+				cond(operatorv1.DNSManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+				cond(operatorv1.DNSReadyIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
 			},
-			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeAvailable, Status: operatorv1.ConditionTrue},
+			expectIngressAvailableStatus: operatorv1.ConditionTrue,
+			expectRequeue:                false,
 		},
 		{
-			description: "deployment not available, but dns and lb available",
+			description: "deployment unavailable with zero lastTransitionTime does not requeue forever",
 			conditions: []operatorv1.OperatorCondition{
+				// If LastTransitionTime is zero, we should not treat it as "just transitioned" and requeue indefinitely.
+				// We expect the grace period NOT to apply (conservative behavior).
 				{Type: IngressControllerDeploymentAvailableConditionType, Status: operatorv1.ConditionFalse},
-				{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionTrue},
-				{Type: operatorv1.DNSReadyIngressConditionType, Status: operatorv1.ConditionTrue},
-				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionTrue},
-				{Type: operatorv1.LoadBalancerReadyIngressConditionType, Status: operatorv1.ConditionTrue},
+				cond(operatorv1.DNSManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+				cond(operatorv1.DNSReadyIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
 			},
-			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeAvailable, Status: operatorv1.ConditionFalse},
+			expectIngressAvailableStatus: operatorv1.ConditionFalse,
+			expectRequeue:                false,
+		},
+		{
+			description: "deployment unavailable for <60s",
+			conditions: []operatorv1.OperatorCondition{
+				cond(IngressControllerDeploymentAvailableConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Second*-20)),
+				cond(operatorv1.DNSManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+				cond(operatorv1.DNSReadyIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+			},
+			expectIngressAvailableStatus: operatorv1.ConditionTrue,
+			expectRequeue:                true,
+			// Grace period is 60 seconds, subtract the 20 second spoofed last transition time
+			expectAfter: time.Second * 40,
+		},
+		{
+			description: "deployment unavailable for >60s",
+			conditions: []operatorv1.OperatorCondition{
+				cond(IngressControllerDeploymentAvailableConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Second*-61)),
+				cond(operatorv1.DNSManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+				cond(operatorv1.DNSReadyIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+			},
+			expectIngressAvailableStatus: operatorv1.ConditionFalse,
+			expectRequeue:                false,
 		},
 		{
 			description: "dns not available, but deployment and lb available",
 			conditions: []operatorv1.OperatorCondition{
-				{Type: IngressControllerDeploymentAvailableConditionType, Status: operatorv1.ConditionTrue},
-				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionTrue},
-				{Type: operatorv1.LoadBalancerReadyIngressConditionType, Status: operatorv1.ConditionTrue},
-				{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionTrue},
-				{Type: operatorv1.DNSReadyIngressConditionType, Status: operatorv1.ConditionFalse},
+				cond(IngressControllerDeploymentAvailableConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+				cond(operatorv1.DNSManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+				cond(operatorv1.DNSReadyIngressConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Hour*-1)),
 			},
-			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeAvailable, Status: operatorv1.ConditionFalse},
+			expectIngressAvailableStatus: operatorv1.ConditionFalse,
+			expectRequeue:                false,
 		},
 		{
 			description: "lb not available, but dns and deployment available",
 			conditions: []operatorv1.OperatorCondition{
-				{Type: IngressControllerDeploymentAvailableConditionType, Status: operatorv1.ConditionTrue},
-				{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionTrue},
-				{Type: operatorv1.DNSReadyIngressConditionType, Status: operatorv1.ConditionTrue},
-				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionTrue},
-				{Type: operatorv1.LoadBalancerReadyIngressConditionType, Status: operatorv1.ConditionFalse},
+				cond(IngressControllerDeploymentAvailableConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+				cond(operatorv1.DNSManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+				cond(operatorv1.DNSReadyIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionFalse, "", clock.Now().Add(time.Hour*-1)),
 			},
-			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeAvailable, Status: operatorv1.ConditionFalse},
+			expectIngressAvailableStatus: operatorv1.ConditionFalse,
+			expectRequeue:                false,
+		},
+		{
+			description: "deployment availability unknown for <60s is not grace-eligible",
+			conditions: []operatorv1.OperatorCondition{
+				cond(IngressControllerDeploymentAvailableConditionType, operatorv1.ConditionUnknown, "", clock.Now().Add(time.Second*-20)),
+				cond(operatorv1.DNSManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+				cond(operatorv1.DNSReadyIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+			},
+			expectIngressAvailableStatus: operatorv1.ConditionFalse,
+			expectRequeue:                false,
 		},
 		{
 			description: "all availability unknown",
 			conditions: []operatorv1.OperatorCondition{
-				{Type: IngressControllerDeploymentAvailableConditionType, Status: operatorv1.ConditionUnknown},
-				{Type: operatorv1.DNSManagedIngressConditionType, Status: operatorv1.ConditionTrue},
-				{Type: operatorv1.DNSReadyIngressConditionType, Status: operatorv1.ConditionUnknown},
-				{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionTrue},
-				{Type: operatorv1.LoadBalancerReadyIngressConditionType, Status: operatorv1.ConditionUnknown},
+				cond(IngressControllerDeploymentAvailableConditionType, operatorv1.ConditionUnknown, "", clock.Now().Add(time.Second*-61)),
+				cond(operatorv1.DNSManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+				cond(operatorv1.DNSReadyIngressConditionType, operatorv1.ConditionUnknown, "", clock.Now().Add(time.Hour*-1)),
+				cond(operatorv1.LoadBalancerManagedIngressConditionType, operatorv1.ConditionTrue, "", clock.Now().Add(time.Hour*-1)),
+				cond(operatorv1.LoadBalancerReadyIngressConditionType, operatorv1.ConditionUnknown, "", clock.Now().Add(time.Hour*-1)),
 			},
-			expect: operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeAvailable, Status: operatorv1.ConditionFalse},
+			expectIngressAvailableStatus: operatorv1.ConditionFalse,
+			expectRequeue:                false,
 		},
 		{
-			description: "all availability not present",
-			conditions:  []operatorv1.OperatorCondition{},
-			expect:      operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeAvailable, Status: operatorv1.ConditionFalse},
+			description:                  "all availability not present",
+			conditions:                   []operatorv1.OperatorCondition{},
+			expectIngressAvailableStatus: operatorv1.ConditionFalse,
+			expectRequeue:                false,
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
-			actual := computeIngressAvailableCondition(tc.conditions)
-			conditionsCmpOpts := []cmp.Option{
-				cmpopts.IgnoreFields(operatorv1.OperatorCondition{}, "LastTransitionTime", "Reason", "Message"),
-				cmpopts.EquateEmpty(),
+			actual, err := computeIngressAvailableCondition(tc.conditions)
+			switch e := err.(type) {
+			case retryable.Error:
+				if !tc.expectRequeue {
+					t.Error("expected not to be told to requeue")
+				}
+				if tc.expectAfter != e.After() {
+					t.Errorf("expected requeue after %v, got %v", tc.expectAfter, e.After())
+				}
+			case nil:
+				if tc.expectRequeue {
+					t.Error("expected to be told to requeue")
+				}
+			default:
+				t.Fatalf("unexpected error: %v", err)
 			}
-			if !cmp.Equal(actual, tc.expect, conditionsCmpOpts...) {
-				t.Fatalf("expected %#v, got %#v", tc.expect, actual)
+			if actual.Status != tc.expectIngressAvailableStatus {
+				t.Fatalf("expected status %v, got %v", tc.expectIngressAvailableStatus, actual.Status)
 			}
 		})
 	}
