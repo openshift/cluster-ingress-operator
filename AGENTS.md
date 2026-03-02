@@ -8,25 +8,30 @@ This document provides guidance for AI coding agents working with the cluster-in
 cluster-ingress-operator/
 ├── cmd/ingress-operator/        # Main entry point
 │   ├── main.go                  # CLI commands (start, render)
-│   └── start.go                 # Operator initialization and controller registration
+│   ├── render.go                # Manifest rendering command
+│   └── start.go                 # Operator startup and metrics registration
 ├── pkg/
 │   ├── operator/
-│   │   ├── controller/          # Reconciliation controllers (17 controllers)
+│   │   ├── operator.go          # Controller registration
+│   │   ├── controller/          # Reconciliation controllers (sub-packages per controller)
 │   │   ├── client/              # Kubernetes client setup with custom schemes
-│   │   └── config/              # Operator configuration structures
+│   │   └── config/              # Operator configuration structure
 │   ├── dns/                     # DNS provider implementations
 │   │   ├── aws/                 # AWS Route 53
 │   │   ├── azure/               # Azure DNS
 │   │   ├── gcp/                 # Google Cloud DNS
-│   │   └── ibm/                 # IBM Cloud DNS (public and private)
-│   └── manifests/               # Kubernetes manifest generation
-├── manifests/                   # Static Kubernetes YAML (CRDs, RBAC, monitoring)
+│   │   ├── ibm/                 # IBM Cloud DNS (public and private)
+│   │   └── split/               # Meta-provider routing between public/private
+│   └── manifests/               # Kubernetes object manifests used by controllers
+├── manifests/                   # CVO manifests (CRDs, RBAC, monitoring) — instantiated by CVO, not used by operator directly
 ├── test/
 │   └── e2e/                     # End-to-end integration tests
 ├── hack/                        # Development and CI scripts
 ├── Makefile                     # Build automation
 └── HACKING.md                   # Developer documentation
 ```
+
+`pkg/manifests/` contains asset loading utilities (`manifests.go`) that bind Go templates to Kubernetes objects for controller use.
 
 ## Feature Development
 
@@ -35,7 +40,7 @@ cluster-ingress-operator/
 Controllers follow this pattern:
 
 1. Create a package in `pkg/operator/controller/<name>/`
-2. Define a `reconciler` struct:
+2. Define a `reconciler` struct (for example — not all controllers need all fields; customize to required fields):
    ```go
    type reconciler struct {
        client            client.Client
@@ -46,8 +51,10 @@ Controllers follow this pattern:
    }
    ```
 3. Implement `New()` factory function to create controller and register watches
-4. Implement `Reconcile()` method with idempotent `ensure*()` functions
-5. Register the controller in `cmd/ingress-operator/start.go`
+4. Implement `Reconcile()` method with idempotent `ensure*()` functions. Controllers delegate logic to `ensure<Resource>` methods that handle creation/update of specific resources (e.g., `ensureIngressController`, `ensureIngressDeleted`).
+5. Register the controller in `pkg/operator/operator.go`. Metrics (if any) are registered in `cmd/ingress-operator/start.go`.
+
+See `pkg/operator/controller/ingress/controller_test.go` as a reference for controller test patterns.
 
 ### Existing Controllers
 
@@ -61,7 +68,7 @@ Located in `pkg/operator/controller/`:
 | `certificate-publisher` | Publishes router certs to openshift-config-managed |
 | `clientca-configmap` | Syncs client CA configmaps between namespaces |
 | `configurable-route` | Manages custom route configuration |
-| `crl` | Certificate Revocation List management |
+| `crl` | Certificate Revocation List management (deprecated since 4.14, pending removal — NE-2491) |
 | `dns` | DNS record management |
 | `gatewayapi` | Gateway API CRD management |
 | `gatewayclass` | Istio/OSSM installation for Gateway API |
@@ -84,6 +91,7 @@ Located in `pkg/dns/`:
 | `gcp` | Google Cloud DNS |
 | `ibm` | IBM Cloud DNS (public CIS and private DNS Services) |
 | `split` | Meta-provider routing between public/private providers |
+| `(fake)` | No-op provider for testing (defined in `pkg/dns/dns.go`) |
 
 DNS providers implement the `dns.Provider` interface:
 - `Ensure(record, zone)` - Create or update DNS record
@@ -93,8 +101,7 @@ DNS providers implement the `dns.Provider` interface:
 ## Building
 
 ```bash
-make build          # Build the operator binary
-make all            # Run generate and build (default target)
+make build          # Build the operator binary (depends on generate)
 ```
 
 - Uses vendored dependencies (`-mod=vendor`)
@@ -135,14 +142,16 @@ make gatewayapi-conformance          # Gateway API conformance tests
 ### Test Framework
 
 - Standard Go testing package
-- `testify` for assertions (`assert`, `require`)
+- `github.com/stretchr/testify/assert` for assertions (e.g., `pkg/dns/aws/dns_test.go`)
 - `google/go-cmp` for deep comparisons
 
 ### Test Patterns
 
-- **Behavior-based testing**: Focus on public API behavior, not implementation details
 - **Table-driven tests**: Use for testing multiple scenarios
 - **Subtests**: Use `t.Run()` with descriptive names for nested tests
+- **Test naming conventions**:
+  - `Test_foo` — general test for function `foo`
+  - `TestFooFunctionality` — test for specific functionality in `foo`
 
 ### Test Organization
 
@@ -154,26 +163,14 @@ make gatewayapi-conformance          # Gateway API conformance tests
 ### Assertions
 
 ```go
-// Use testify/require for fatal assertions
-require.NoError(t, err, "failed to create resource")
+// Use testify/assert for assertions
+assert.NoError(t, err, "failed to create resource")
 
 // Use google/go-cmp for deep comparisons
 if diff := cmp.Diff(expected, actual); diff != "" {
     t.Errorf("mismatch (-want +got):\n%s", diff)
 }
 ```
-
-### Coverage
-
-- Test both success and error paths
-- Cover edge cases: empty inputs, nil values, boundary conditions
-- Verify error messages contain useful context
-
-### Error Handling in Tests
-
-- Use `t.Fatalf()` for errors that should stop the test
-- Use `t.Errorf()` for non-fatal errors allowing test to continue
-- Always include context in error messages
 
 ### Test Helpers
 
@@ -202,16 +199,16 @@ make verify
 ```
 
 Runs verification scripts:
-- `hack/verify-gofmt.sh` - Go formatting
-- `hack/verify-generated-crd.sh` - CRD generation
-- `hack/verify-profile-manifests.sh` - Profile manifests
-- `hack/verify-deps.sh` - Dependencies
+- `hack/verify-gofmt.sh` - gofmt
+- `hack/verify-generated-crd.sh` - Verifies CRDs under `manifests/` match CRDs under `vendor/`
+- `hack/verify-profile-manifests.sh` - Verifies profile-specific manifests (e.g., `02-deployment.yaml` for `ibm-cloud-managed`) are up to date
+- `hack/verify-deps.sh` - Verifies `go mod` vendoring is up to date (`go mod vendor` / `go mod tidy`)
 
 ## Additional Makefile Targets
 
 | Target | Description |
 |--------|-------------|
-| `make generate` | Generate manifests from API specs |
+| `make generate` | Update embedded manifests (operator namespace, ingresscontrollers CRD) used by `ingress-operator render` |
 | `make crd` | Generate CRD YAML files |
 | `make release-local` | Build image and deployment manifests |
 | `make uninstall` | Remove operator from cluster |
@@ -224,20 +221,21 @@ Runs verification scripts:
 Dependencies are vendored. After modifying `go.mod`:
 
 ```bash
+go mod tidy
 go mod vendor
 ```
 
-Key dependencies:
-- `sigs.k8s.io/controller-runtime` v0.21.0
-- `k8s.io/client-go` v0.34.1
-- `sigs.k8s.io/gateway-api` v1.3.0
+Dependencies:
+- `sigs.k8s.io/controller-runtime`
+- `k8s.io/client-go`
+- `sigs.k8s.io/gateway-api`
 - `github.com/openshift/api`
 
 ## Coding Style
 
 ### Go Version
 
-Go 1.24
+Go version is specified in `go.mod`.
 
 ### Code Organization
 
@@ -268,27 +266,32 @@ Defined in `pkg/operator/controller/names.go`:
 | `IngressClassName(name)` | `openshift-<name>` IngressClass |
 | `CanaryDaemonSetName()` | Canary daemonset name |
 | `ClientCAConfigMapName(ic)` | `router-client-ca-<name>` |
-| `CRLConfigMapName(ic)` | `router-client-ca-crl-<name>` |
+| `CRLConfigMapName(ic)` | `router-client-ca-crl-<name>` (deprecated — see crl controller) |
 
-### Important Annotations
+### Important Annotations and Labels
 
-```go
-IngressOperatorOwnedAnnotation = "ingress.operator.openshift.io/owned"
-ControllerDeploymentLabel      = "ingresscontroller.operator.openshift.io/deployment-ingresscontroller"
-ControllerDeploymentHashLabel  = "ingresscontroller.operator.openshift.io/hash"
-CanaryDaemonSetLabel           = "ingresscanary.operator.openshift.io/daemonset-ingresscanary"
-```
+Defined as constants in `pkg/operator/controller/names.go`:
+
+| Constant | Value | Purpose |
+|----------|-------|---------|
+| `IngressOperatorOwnedAnnotation` | `ingress.operator.openshift.io/owned` | Marks a resource as owned by the ingress operator (used on subscriptions) |
+| `ControllerDeploymentLabel` | `ingresscontroller.operator.openshift.io/deployment-ingresscontroller` | Identifies a deployment as an ingress controller; value is the IC name |
+| `ControllerDeploymentHashLabel` | `ingresscontroller.operator.openshift.io/hash` | Identifies an ingress controller deployment's generation (used for affinity/anti-affinity) |
+| `CanaryDaemonSetLabel` | `ingresscanary.operator.openshift.io/daemonset-ingresscanary` | Identifies a daemonset as an ingress canary daemonset; value is the owning canary controller name |
 
 ### Feature Gates
 
-Controllers check these feature gates:
-- `FeatureGateGatewayAPI` - Gateway API support
-- `FeatureGateAzureWorkloadIdentity` - Azure workload identity
-- `FeatureGateRouteExternalCertificate` - External route certificates
+Controllers check these feature gates (from `github.com/openshift/api/features`):
+- `features.FeatureGateGatewayAPI` — Gateway API support
+- `features.FeatureGateGatewayAPIController` — Gateway API controller
+- `features.FeatureGateAzureWorkloadIdentity` — Azure workload identity
+- `features.FeatureGateIngressControllerDynamicConfigurationManager` — Dynamic configuration management
+- `features.FeatureGateRouteExternalCertificate` — External route certificates (being removed)
 
 ### Error Handling
 
 - Return errors with context: `fmt.Errorf("failed to create deployment: %w", err)`
+- Use `%w` for wrapped error values to allow `errors.Is`/`errors.As` unwrapping
 - Aggregate errors when multiple operations can fail independently
 - Use `k8s.io/apimachinery/pkg/util/errors` for error aggregation
 
@@ -296,6 +299,7 @@ Controllers check these feature gates:
 
 - Use structured logging via `go-logr/logr`
 - Include relevant context (namespace, name, resource type)
+- Follow [Kubernetes logging conventions](https://github.com/kubernetes/community/blob/master/contributors/devel/sig-instrumentation/logging.md#message-style-guidelines)
 
 ### Formatting
 
@@ -312,7 +316,7 @@ hack/verify-gofmt.sh
 | Dockerfile | Description |
 |------------|-------------|
 | `Dockerfile` | Default build |
-| `Dockerfile.rhel7` | RHEL 7 variant |
+| `Dockerfile.rhel7` | RHEL 7 variant (outdated, may be removed) |
 | `Dockerfile.ubi` | UBI (Universal Base Image) variant |
 
 ### Deployment
@@ -321,12 +325,8 @@ hack/verify-gofmt.sh
 - Runs in `openshift-ingress-operator` namespace
 - Managed by Cluster Version Operator (CVO)
 
-### Local Development
+## Contribution Conventions
 
-```bash
-# Build and push image, generate manifests
-make release-local REPO=docker.io/you/cluster-ingress-operator
-
-# Run operator locally (not in cluster pod)
-make run-local
-```
+- Commit messages should reference the Jira ticket: `NE-XXXX: description`
+- PRs should have logical, atomic commits
+- Test coverage is expected for new features and bug fixes
