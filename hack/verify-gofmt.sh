@@ -1,7 +1,7 @@
 #!/bin/bash
 
-go_files=$( find . -name '*.go' -not -path './vendor/*' -print )
-bad_files=$(gofmt -s -l ${go_files})
+mapfile -d '' go_files < <( find . -name '*.go' -not -path './vendor/*' -not -path './tests-extension/vendor/*' -print0 )
+bad_files=$(gofmt -s -l "${go_files[@]}")
 if [[ -n "${bad_files}" ]]; then
     (>&2 echo "!!! gofmt needs to be run on the listed files")
 	echo "${bad_files}"
