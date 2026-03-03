@@ -1,4 +1,5 @@
 language: en-US
+inheritance: true
 reviews:
   profile: chill
   high_level_summary: false
