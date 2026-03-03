@@ -593,8 +593,12 @@ func assertGatewayClassSuccessful(t *testing.T, name string) (*gatewayapiv1.Gate
 	nsName := types.NamespacedName{Namespace: "", Name: name}
 	recordedConditionMsg := "not found"
 
-	// Wait up to 2 minutes for the gateway class to be Accepted.
-	err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 2*time.Minute, false, func(context context.Context) (bool, error) {
+	// Wait up to 5 minutes for the gateway class to be Accepted.
+	// The GatewayClass is accepted by Istiod, which requires the full
+	// OSSM installation pipeline to complete first: Subscription creation,
+	// OSSM operator installation, Istio CR creation, and Istiod deployment.
+	// This chain can take several minutes, especially on slower platforms.
+	err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 5*time.Minute, false, func(context context.Context) (bool, error) {
 		if err := kclient.Get(context, nsName, gwc); err != nil {
 			t.Logf("Failed to get gatewayclass %s: %v; retrying...", name, err)
 			return false, nil
