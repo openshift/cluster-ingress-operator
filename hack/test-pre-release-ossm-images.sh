@@ -149,18 +149,23 @@ if (( TRIES >= MAX_TRIES )); then
 fi
 
 CUSTOM_CATALOG_SOURCE=custom-istio-catalog
+ISTIO_VERSION=""
 TRIES=0
 while (( TRIES < MAX_TRIES )); do
     OUTPUT=$(oc get packagemanifests -n openshift-marketplace -o json | jq -r '.items[] | select(.metadata.labels.catalog=="custom-istio-catalog") | .status.channels[] | select(.currentCSV | contains("servicemeshoperator3")) | "\(.name),\(.currentCSV)"' | tail -n 1)
     OSSM_CHANNEL=$(echo "$OUTPUT" | cut -d ',' -f 1)
     OSSM_VERSION=$(echo "$OUTPUT" | cut -d ',' -f 2)
-    if [[ "$OSSM_VERSION" != "" && "$OSSM_CHANNEL" != "" ]]; then
+    if [[ "$OSSM_VERSION" != "" ]]; then
+       ISTIO_VERSION=$(oc get packagemanifests -n openshift-marketplace -o json | jq -r --arg VERSION "$OSSM_VERSION" '.items[] | select(.metadata.labels.catalog == "custom-istio-catalog") | .status.channels[] | select(.currentCSV | contains($VERSION)) | .currentCSVDesc.annotations["alm-examples"] // "[]" | fromjson | .[] | select(.kind == "Istio") | .spec.version' | tail -n 1)
+    fi
+    if [[ "$OSSM_VERSION" != "" && "$OSSM_CHANNEL" != "" && "$ISTIO_VERSION" != "" ]]; then
         echo "> OSSM channel found: ${OSSM_CHANNEL}"
         echo "> OSSM version found: ${OSSM_VERSION}"
+        echo "> Istio version found: ${ISTIO_VERSION}"
         break
     fi
     TRIES=$((TRIES+1))
-    echo "(${TRIES}/${MAX_TRIES}) OSSM channel and/or version is not available, retrying..."
+    echo "(${TRIES}/${MAX_TRIES}) OSSM channel, version and/or Istio version is not available, retrying..."
     sleep 2
 done
 if (( TRIES >= MAX_TRIES )); then
@@ -169,4 +174,4 @@ if (( TRIES >= MAX_TRIES )); then
 fi
 
 echo "> Run GatewayAPI tests"
-CUSTOM_OSSM_VERSION=$OSSM_VERSION CUSTOM_CATALOG_SOURCE=$CUSTOM_CATALOG_SOURCE CUSTOM_OSSM_CHANNEL=$OSSM_CHANNEL TEST=TestGatewayAPI make test-e2e
+CUSTOM_OSSM_VERSION=$OSSM_VERSION CUSTOM_CATALOG_SOURCE=$CUSTOM_CATALOG_SOURCE CUSTOM_OSSM_CHANNEL=$OSSM_CHANNEL CUSTOM_ISTIO_VERSION=$ISTIO_VERSION TEST=TestGatewayAPI make test-e2e
