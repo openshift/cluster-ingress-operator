@@ -238,23 +238,19 @@ func TestClusterOperatorStatusRelatedObjects(t *testing.T) {
 		},
 	}
 
-	if gatewayAPIControllerEnabled, err := isFeatureGateEnabled(features.FeatureGateGatewayAPIController); err != nil {
-		t.Fatalf("Failed to look up %q featuregate: %v", features.FeatureGateGatewayAPIController, err)
-	} else if gatewayAPIControllerEnabled {
-		// This test runs before TestGatewayAPI creates the
-		// subscription to install OSSM, so we do *not* expect
-		// to see subscriptions or istios in relatedObjects.
-		// However, we *do* expect to see gatewayclasses and
-		// gateways whenever the GatewayAPI and
-		// GatewayAPIController featuregates are enabled.
-		expected = append(expected, configv1.ObjectReference{
-			Group:    "gateway.networking.k8s.io",
-			Resource: "gatewayclasses",
-		}, configv1.ObjectReference{
-			Group:    "gateway.networking.k8s.io",
-			Resource: "gateways",
-		})
-	}
+	// This test runs before TestGatewayAPI creates the
+	// subscription to install OSSM, so we do *not* expect
+	// to see subscriptions or istios in relatedObjects.
+	// However, we *do* expect to see gatewayclasses and
+	// gateways whenever the GatewayAPI and
+	// GatewayAPIController featuregates are enabled.
+	expected = append(expected, configv1.ObjectReference{
+		Group:    "gateway.networking.k8s.io",
+		Resource: "gatewayclasses",
+	}, configv1.ObjectReference{
+		Group:    "gateway.networking.k8s.io",
+		Resource: "gateways",
+	})
 
 	coName := controller.IngressClusterOperatorName()
 	err := wait.PollImmediate(1*time.Second, 5*time.Minute, func() (bool, error) {

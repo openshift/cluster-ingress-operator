@@ -54,11 +54,10 @@ func Test_Reconcile(t *testing.T) {
 	}
 
 	tests := []struct {
-		name                        string
-		gatewayAPIControllerEnabled bool
-		marketplaceEnabled          bool
-		olmEnabled                  bool
-		existingObjects             []runtime.Object
+		name               string
+		marketplaceEnabled bool
+		olmEnabled         bool
+		existingObjects    []runtime.Object
 		// existingStatusSubresource contains the original version of objects
 		// whose status will updated by Reconcile function.
 		// This field is similar to `existingObjects` but is specifically used
@@ -73,10 +72,9 @@ func Test_Reconcile(t *testing.T) {
 		expectStartCtrl    bool
 	}{
 		{
-			name:                        "gateway API enabled",
-			gatewayAPIControllerEnabled: true,
-			marketplaceEnabled:          true,
-			olmEnabled:                  true,
+			name:               "gateway API enabled",
+			marketplaceEnabled: true,
+			olmEnabled:         true,
 			existingObjects: []runtime.Object{
 				co("ingress"),
 			},
@@ -95,10 +93,9 @@ func Test_Reconcile(t *testing.T) {
 			expectStartCtrl: true,
 		},
 		{
-			name:                        "gateway API enabled, gateway API controller disabled",
-			gatewayAPIControllerEnabled: false,
-			marketplaceEnabled:          true,
-			olmEnabled:                  true,
+			name:               "GatewayAPI enabled, GatewayAPIController enabled, marketplace and OLM capabilities disabled",
+			marketplaceEnabled: false,
+			olmEnabled:         false,
 			existingObjects: []runtime.Object{
 				co("ingress"),
 			},
@@ -117,32 +114,9 @@ func Test_Reconcile(t *testing.T) {
 			expectStartCtrl: false,
 		},
 		{
-			name:                        "GatewayAPI enabled, GatewayAPIController enabled, marketplace and OLM capabilities disabled",
-			gatewayAPIControllerEnabled: true,
-			marketplaceEnabled:          false,
-			olmEnabled:                  false,
-			existingObjects: []runtime.Object{
-				co("ingress"),
-			},
-			expectCreate: []client.Object{
-				crd("gatewayclasses.gateway.networking.k8s.io"),
-				crd("gateways.gateway.networking.k8s.io"),
-				crd("grpcroutes.gateway.networking.k8s.io"),
-				crd("httproutes.gateway.networking.k8s.io"),
-				crd("referencegrants.gateway.networking.k8s.io"),
-				crd("backendtlspolicies.gateway.networking.k8s.io"),
-				clusterRole("system:openshift:gateway-api:aggregate-to-admin"),
-				clusterRole("system:openshift:gateway-api:aggregate-to-view"),
-			},
-			expectUpdate:    []client.Object{},
-			expectDelete:    []client.Object{},
-			expectStartCtrl: false,
-		},
-		{
-			name:                        "unmanaged gateway API CRDs created",
-			gatewayAPIControllerEnabled: true,
-			marketplaceEnabled:          true,
-			olmEnabled:                  true,
+			name:               "unmanaged gateway API CRDs created",
+			marketplaceEnabled: true,
+			olmEnabled:         true,
 			existingObjects: []runtime.Object{
 				co("ingress"),
 				crd("invalid.test.gateway.networking.k8s.io"),
@@ -169,10 +143,9 @@ func Test_Reconcile(t *testing.T) {
 			expectStartCtrl: true,
 		},
 		{
-			name:                        "unmanaged gateway API CRDs removed",
-			gatewayAPIControllerEnabled: true,
-			marketplaceEnabled:          true,
-			olmEnabled:                  true,
+			name:               "unmanaged gateway API CRDs removed",
+			marketplaceEnabled: true,
+			olmEnabled:         true,
 			existingObjects: []runtime.Object{
 				coWithExtension("ingress", `{"unmanagedGatewayAPICRDNames":"invalid.test.gateway.networking.k8s.io"}`),
 			},
@@ -197,10 +170,9 @@ func Test_Reconcile(t *testing.T) {
 			expectStartCtrl: true,
 		},
 		{
-			name:                        "third party CRDs",
-			gatewayAPIControllerEnabled: true,
-			marketplaceEnabled:          true,
-			olmEnabled:                  true,
+			name:               "third party CRDs",
+			marketplaceEnabled: true,
+			olmEnabled:         true,
 			existingObjects: []runtime.Object{
 				co("ingress"),
 				crd("thirdpartycrd1.openshift.io"),
@@ -263,7 +235,6 @@ func Test_Reconcile(t *testing.T) {
 				client: cl,
 				cache:  cache,
 				config: Config{
-					GatewayAPIControllerEnabled:     tc.gatewayAPIControllerEnabled,
 					MarketplaceEnabled:              tc.marketplaceEnabled,
 					OperatorLifecycleManagerEnabled: tc.olmEnabled,
 					DependentControllers:            []controller.Controller{ctrl},
@@ -340,7 +311,6 @@ func TestReconcileOnlyStartsControllerOnce(t *testing.T) {
 		client: cl,
 		cache:  cache,
 		config: Config{
-			GatewayAPIControllerEnabled:     true,
 			MarketplaceEnabled:              true,
 			OperatorLifecycleManagerEnabled: true,
 			DependentControllers:            []controller.Controller{ctrl},

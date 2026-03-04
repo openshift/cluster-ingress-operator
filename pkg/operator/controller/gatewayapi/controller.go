@@ -100,8 +100,6 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 // Config holds all the configuration that must be provided when creating the
 // controller.
 type Config struct {
-	// GatewayAPIControllerEnabled indicates that the "GatewayAPIController" featuregate is enabled.
-	GatewayAPIControllerEnabled bool
 	// MarketplaceEnabled indicates whether the "marketplace" capability is
 	// enabled.
 	MarketplaceEnabled bool
@@ -143,10 +141,6 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		return reconcile.Result{}, fmt.Errorf("failed to list unmanaged gateway CRDs: %w", err)
 	} else if err = r.setUnmanagedGatewayAPICRDNamesStatus(ctx, crdNames); err != nil {
 		return reconcile.Result{}, fmt.Errorf("failed to update the ingress cluster operator status: %w", err)
-	}
-
-	if !r.config.GatewayAPIControllerEnabled {
-		return reconcile.Result{}, nil
 	}
 
 	// The subscriptions resource only exists if the

@@ -142,7 +142,7 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	// it if the capability is not enabled.  Additionally, the default
 	// catalog only exists if the "marketplace" capability is enabled, so we
 	// cannot install OSSM without that capability.
-	if config.GatewayAPIControllerEnabled && config.MarketplaceEnabled && config.OperatorLifecycleManagerEnabled {
+	if config.MarketplaceEnabled && config.OperatorLifecycleManagerEnabled {
 		if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorsv1alpha1.Subscription{}, handler.EnqueueRequestsFromMapFunc(toDefaultIngressController), predicate.Funcs{
 			CreateFunc: func(e event.CreateEvent) bool {
 				return e.Object.GetNamespace() == operatorcontroller.OpenshiftOperatorNamespace
@@ -193,9 +193,6 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 
 // Config holds all the things necessary for the controller to run.
 type Config struct {
-	// GatewayAPIControllerEnabled indicates that the "GatewayAPIController"
-	// featuregate is enabled.
-	GatewayAPIControllerEnabled bool
 	// MarketplaceEnabled indicates whether the "marketplace" capability is
 	// enabled.
 	MarketplaceEnabled bool
@@ -285,35 +282,33 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 			Name:     state.CanaryNamespace.Name,
 		})
 	}
-	if r.config.GatewayAPIControllerEnabled {
-		if state.haveOSSMSubscription {
-			subscriptionName := operatorcontroller.ServiceMeshOperatorSubscriptionName()
-			related = append(related, configv1.ObjectReference{
-				Group:     operatorsv1alpha1.GroupName,
-				Resource:  "subscriptions",
-				Namespace: subscriptionName.Namespace,
-				Name:      subscriptionName.Name,
-			})
-		}
-		if state.haveIstiosResource {
-			related = append(related, configv1.ObjectReference{
-				Group:    sailv1.GroupVersion.Group,
-				Resource: "istios",
-			})
-		}
-		if state.haveGatewayclassesResource {
-			related = append(related, configv1.ObjectReference{
-				Group:    gatewayapiv1.GroupName,
-				Resource: "gatewayclasses",
-			})
-		}
-		if state.haveGatewaysResource {
-			related = append(related, configv1.ObjectReference{
-				Group:     gatewayapiv1.GroupName,
-				Resource:  "gateways",
-				Namespace: "", // Include all namespaces.
-			})
-		}
+	if state.haveOSSMSubscription {
+		subscriptionName := operatorcontroller.ServiceMeshOperatorSubscriptionName()
+		related = append(related, configv1.ObjectReference{
+			Group:     operatorsv1alpha1.GroupName,
+			Resource:  "subscriptions",
+			Namespace: subscriptionName.Namespace,
+			Name:      subscriptionName.Name,
+		})
+	}
+	if state.haveIstiosResource {
+		related = append(related, configv1.ObjectReference{
+			Group:    sailv1.GroupVersion.Group,
+			Resource: "istios",
+		})
+	}
+	if state.haveGatewayclassesResource {
+		related = append(related, configv1.ObjectReference{
+			Group:    gatewayapiv1.GroupName,
+			Resource: "gatewayclasses",
+		})
+	}
+	if state.haveGatewaysResource {
+		related = append(related, configv1.ObjectReference{
+			Group:     gatewayapiv1.GroupName,
+			Resource:  "gateways",
+			Namespace: "", // Include all namespaces.
+		})
 	}
 
 	co.Status.RelatedObjects = related
@@ -444,7 +439,7 @@ func (r *reconciler) getOperatorState(ctx context.Context, ingressNamespace, can
 		state.unmanagedGatewayAPICRDNames = extension.UnmanagedGatewayAPICRDNames
 	}
 
-	if r.config.GatewayAPIControllerEnabled && r.config.MarketplaceEnabled && r.config.OperatorLifecycleManagerEnabled {
+	if r.config.MarketplaceEnabled && r.config.OperatorLifecycleManagerEnabled {
 		var subscription operatorsv1alpha1.Subscription
 		subscriptionName := operatorcontroller.ServiceMeshOperatorSubscriptionName()
 		if err := r.cache.Get(ctx, subscriptionName, &subscription); err != nil {
