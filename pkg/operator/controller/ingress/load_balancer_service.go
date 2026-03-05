@@ -496,6 +496,21 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 				}
 			}
 
+			// Set ipFamilies and ipFamilyPolicy for dual-stack clusters.
+			// Only NLB supports dual-stack; CLB does not.
+			if platform.AWS != nil && isAWSNLB(lbStatus) {
+				switch platform.AWS.IPFamily {
+				case configv1.DualStackIPv4Primary:
+					ipFamilyPolicy := corev1.IPFamilyPolicyRequireDualStack
+					service.Spec.IPFamilyPolicy = &ipFamilyPolicy
+					service.Spec.IPFamilies = []corev1.IPFamily{corev1.IPv4Protocol, corev1.IPv6Protocol}
+				case configv1.DualStackIPv6Primary:
+					ipFamilyPolicy := corev1.IPFamilyPolicyRequireDualStack
+					service.Spec.IPFamilyPolicy = &ipFamilyPolicy
+					service.Spec.IPFamilies = []corev1.IPFamily{corev1.IPv6Protocol, corev1.IPv4Protocol}
+				}
+			}
+
 			// Set the load balancer for AWS to be as aggressive as Azure (2 fail @ 5s interval, 2 healthy)
 			service.Annotations[awsLBHealthCheckTimeoutAnnotation] = awsLBHealthCheckTimeoutDefault
 			service.Annotations[awsLBHealthCheckUnhealthyThresholdAnnotation] = awsLBHealthCheckUnhealthyThresholdDefault
@@ -715,6 +730,27 @@ func loadBalancerServiceChanged(current, expected *corev1.Service) (bool, *corev
 		}
 	}
 
+	// Reconcile ipFamilies and ipFamilyPolicy when the desired service
+	// specifies them (i.e. the cluster is dual-stack).
+	if len(expected.Spec.IPFamilies) != 0 {
+		if !reflect.DeepEqual(current.Spec.IPFamilies, expected.Spec.IPFamilies) {
+			if !changed {
+				changed = true
+				updated = current.DeepCopy()
+			}
+			updated.Spec.IPFamilies = expected.Spec.IPFamilies
+		}
+	}
+	if expected.Spec.IPFamilyPolicy != nil {
+		if current.Spec.IPFamilyPolicy == nil || *current.Spec.IPFamilyPolicy != *expected.Spec.IPFamilyPolicy {
+			if !changed {
+				changed = true
+				updated = current.DeepCopy()
+			}
+			updated.Spec.IPFamilyPolicy = expected.Spec.IPFamilyPolicy
+		}
+	}
+
 	return changed, updated
 }
 
@@ -859,6 +895,11 @@ func loadBalancerServiceIsProgressing(ic *operatorv1.IngressController, service 
 			patchSpec := fmt.Sprintf(`{"spec":{"endpointPublishingStrategy":{"type":"LoadBalancerService","loadBalancer":{"providerParameters":{"type":"AWS","aws":{"type":"%s"}}}}}}`, haveLBType)
 			err := createEffectuationMessage("loadBalancer.providerParameters.aws.type", string(haveLBType), string(wantLBType), patchSpec, ic, service)
 			errs = append(errs, err)
+
+			// Add a note to the effectuation message about CLB not supporting dual-stack.
+			if wantLBType == operatorv1.AWSClassicLoadBalancer && platform.AWS != nil && isAWSDualStack(platform.AWS.IPFamily) {
+				errs = append(errs, fmt.Errorf("Classic Load Balancers do not support dual-stack. The IngressController %q will use IPv4-only despite that the cluster is configured as %q. Use an NLB type to support dual-stack networking.", ic.Name, platform.AWS.IPFamily))
+			}
 		}
 
 		var (
@@ -1385,4 +1426,20 @@ func getAllowedSourceRanges(eps *operatorv1.EndpointPublishingStrategy) []operat
 	}
 
 	return nil
+}
+
+// isAWSDualStack returns true if the given IPFamilyType indicates a dual-stack
+// configuration.
+func isAWSDualStack(ipFamily configv1.IPFamilyType) bool {
+	return ipFamily == configv1.DualStackIPv4Primary || ipFamily == configv1.DualStackIPv6Primary
+}
+
+// isAWSNLB returns true if the IngressController's load balancer status
+// indicates an AWS Network Load Balancer.
+func isAWSNLB(lbStatus *operatorv1.LoadBalancerStrategy) bool {
+	return lbStatus != nil &&
+		lbStatus.ProviderParameters != nil &&
+		lbStatus.ProviderParameters.Type == operatorv1.AWSLoadBalancerProvider &&
+		lbStatus.ProviderParameters.AWS != nil &&
+		lbStatus.ProviderParameters.AWS.Type == operatorv1.AWSNetworkLoadBalancer
 }
