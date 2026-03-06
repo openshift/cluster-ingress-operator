@@ -201,6 +201,98 @@ func TestTuningOptions(t *testing.T) {
 	checkDeploymentHasEnvSorted(t, deployment)
 }
 
+func TestTunningOptionForAWSNLB(t *testing.T) {
+	awsCLB := &operatorv1.AWSLoadBalancerParameters{Type: operatorv1.AWSClassicLoadBalancer}
+	awsNLB := &operatorv1.AWSLoadBalancerParameters{Type: operatorv1.AWSNetworkLoadBalancer}
+	fullAWSNLBParam := &operatorv1.ProviderLoadBalancerParameters{Type: operatorv1.AWSLoadBalancerProvider, AWS: awsNLB}
+
+	testCases := []struct {
+		name                 string
+		providerParams       *operatorv1.ProviderLoadBalancerParameters
+		userTimeoutTunnel    *time.Duration
+		expectedTimeoutValue string
+	}{
+		// missing param, being AWS or being NLB
+		{
+			name:                 "missing ProviderParameters",
+			providerParams:       nil,
+			userTimeoutTunnel:    nil,
+			expectedTimeoutValue: "",
+		},
+		{
+			name:                 "using AWS as provider type, missing AWS parameters",
+			providerParams:       &operatorv1.ProviderLoadBalancerParameters{Type: operatorv1.AWSLoadBalancerProvider},
+			userTimeoutTunnel:    nil,
+			expectedTimeoutValue: "",
+		},
+		{
+			name:                 "using CLB on AWS parameters, missing provider type as AWS",
+			providerParams:       &operatorv1.ProviderLoadBalancerParameters{AWS: awsCLB},
+			userTimeoutTunnel:    nil,
+			expectedTimeoutValue: "",
+		},
+		{
+			name:                 "using NLB on AWS parameters, missing provider type as AWS",
+			providerParams:       &operatorv1.ProviderLoadBalancerParameters{AWS: awsNLB},
+			userTimeoutTunnel:    nil,
+			expectedTimeoutValue: "",
+		},
+		{
+			name:                 "using AWS as provider type and CLB on AWS parameters",
+			providerParams:       &operatorv1.ProviderLoadBalancerParameters{Type: operatorv1.AWSLoadBalancerProvider, AWS: awsCLB},
+			userTimeoutTunnel:    nil,
+			expectedTimeoutValue: "",
+		},
+
+		// NLB, with and without user config
+		{
+			name:                 "using NLB without user timeout",
+			providerParams:       fullAWSNLBParam,
+			userTimeoutTunnel:    nil,
+			expectedTimeoutValue: "349s",
+		},
+		{
+			name:                 "using NLB and a low user timeout",
+			providerParams:       fullAWSNLBParam,
+			userTimeoutTunnel:    ptr.To(time.Minute),
+			expectedTimeoutValue: "1m",
+		},
+		{
+			name:                 "using NLB and a high user timeout",
+			providerParams:       fullAWSNLBParam,
+			userTimeoutTunnel:    ptr.To(time.Hour),
+			expectedTimeoutValue: "1h",
+		},
+	}
+
+	for _, test := range testCases {
+		t.Run(test.name, func(t *testing.T) {
+			ic, ingressConfig, infraConfig, apiConfig, networkConfig, _, clusterProxyConfig := getRouterDeploymentComponents(t)
+			ic.Spec.EndpointPublishingStrategy = &operatorv1.EndpointPublishingStrategy{
+				LoadBalancer: &operatorv1.LoadBalancerStrategy{
+					ProviderParameters: test.providerParams,
+				},
+			}
+			if test.userTimeoutTunnel != nil {
+				ic.Spec.TuningOptions.TunnelTimeout = &metav1.Duration{Duration: *test.userTimeoutTunnel}
+			}
+			deployment, err := desiredRouterDeployment(ic, &Config{IngressControllerImage: ingressControllerImage}, ingressConfig, infraConfig, apiConfig, networkConfig, false, false, nil, clusterProxyConfig)
+			if err != nil {
+				t.Fatalf("invalid router Deployment: %v", err)
+			}
+
+			// Verify tuning options
+			tests := []envData{
+				{"ROUTER_DEFAULT_TUNNEL_TIMEOUT", test.expectedTimeoutValue != "", test.expectedTimeoutValue},
+			}
+
+			if err := checkDeploymentEnvironment(t, deployment, tests); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+}
+
 // TestClusterProxy tests that the cluster-wide proxy settings from proxies.config.openshift.io/cluster are included in the desired router deployment.
 func TestClusterProxy(t *testing.T) {
 	ic, ingressConfig, infraConfig, apiConfig, networkConfig, _, clusterProxyConfig := getRouterDeploymentComponents(t)
