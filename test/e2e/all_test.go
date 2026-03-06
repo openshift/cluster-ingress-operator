@@ -91,6 +91,7 @@ func TestAll(t *testing.T) {
 		t.Run("Test_IdleConnectionTerminationPolicyDeferred", Test_IdleConnectionTerminationPolicyDeferred)
 		t.Run("Test_HTTPKeepAliveTimeout", Test_HTTPKeepAliveTimeout)
 		t.Run("TestSecureRedirectCorrectness", TestSecureRedirectCorrectness)
+		t.Run("TestMaxConnectionsMetric", TestMaxConnectionsMetric)
 	})
 
 	t.Run("serial", func(t *testing.T) {
