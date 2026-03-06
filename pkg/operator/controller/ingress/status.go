@@ -91,7 +91,9 @@ func (r *reconciler) syncIngressControllerStatus(ic *operatorv1.IngressControlle
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeLoadBalancerStatus(ic, service, operandEvents)...)
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeLoadBalancerProgressingStatus(updated, service, platformStatus))
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeDNSStatus(ic, wildcardRecord, platformStatus, dnsConfig)...)
-	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressAvailableCondition(updated.Status.Conditions))
+	availableCondition, availableErr := computeIngressAvailableCondition(updated.Status.Conditions)
+	errs = append(errs, availableErr)
+	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, availableCondition)
 	degradedCondition, err := computeIngressDegradedCondition(updated.Status.Conditions, updated.Name)
 	errs = append(errs, err)
 	updated.Status.Conditions = MergeConditions(updated.Status.Conditions, computeIngressProgressingCondition(updated.Status.Conditions))
@@ -272,12 +274,16 @@ func checkPodsScheduledForDeployment(deployment *appsv1.Deployment, pods []corev
 // 1) the Available condition of Deployment,
 // 2) the DNSReady condition of the IngressController, and
 // 3) the LoadBalancerReady condition of the IngressController.
-// The ingresscontroller is judged Available only if all 3 conditions are true
-func computeIngressAvailableCondition(conditions []operatorv1.OperatorCondition) operatorv1.OperatorCondition {
+// The ingresscontroller is judged Available only if all 3 conditions are true.
+// A grace period is applied to the DeploymentAvailable condition to avoid
+// reporting Available=False during brief unavailability windows that occur
+// during normal rolling updates.
+func computeIngressAvailableCondition(conditions []operatorv1.OperatorCondition) (operatorv1.OperatorCondition, error) {
 	expected := []expectedCondition{
 		{
-			condition: IngressControllerDeploymentAvailableConditionType,
-			status:    operatorv1.ConditionTrue,
+			condition:   IngressControllerDeploymentAvailableConditionType,
+			status:      operatorv1.ConditionTrue,
+			gracePeriod: time.Second * 60,
 		},
 		{
 			condition: operatorv1.DNSReadyIngressConditionType,
@@ -297,9 +303,22 @@ func computeIngressAvailableCondition(conditions []operatorv1.OperatorCondition)
 
 	// Cover the rare case of no conditions
 	if len(conditions) == 0 {
-		return operatorv1.OperatorCondition{Type: operatorv1.OperatorStatusTypeAvailable, Status: operatorv1.ConditionFalse}
+		return operatorv1.OperatorCondition{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionFalse}, nil
 	}
-	_, unavailableConditions, _ := checkConditions(expected, conditions)
+	graceConditions, unavailableConditions, requeueAfter := checkConditions(expected, conditions)
+
+	// Only apply the grace period when the deployment is explicitly
+	// unavailable (ConditionFalse), not when the status is unknown.
+	filtered := graceConditions[:0]
+	for _, cond := range graceConditions {
+		if cond.Type == IngressControllerDeploymentAvailableConditionType && cond.Status != operatorv1.ConditionFalse {
+			unavailableConditions = append(unavailableConditions, cond)
+			continue
+		}
+		filtered = append(filtered, cond)
+	}
+	graceConditions = filtered
+
 	if len(unavailableConditions) != 0 {
 		degraded := formatConditions(unavailableConditions)
 		return operatorv1.OperatorCondition{
@@ -307,12 +326,30 @@ func computeIngressAvailableCondition(conditions []operatorv1.OperatorCondition)
 			Status:  operatorv1.ConditionFalse,
 			Reason:  "IngressControllerUnavailable",
 			Message: "One or more status conditions indicate unavailable: " + degraded,
-		}
+		}, nil
 	}
-	return operatorv1.OperatorCondition{
+	condition := operatorv1.OperatorCondition{
 		Type:   operatorv1.IngressControllerAvailableConditionType,
 		Status: operatorv1.ConditionTrue,
 	}
+	var err error
+	if len(graceConditions) != 0 {
+		var grace string
+		for _, cond := range graceConditions {
+			grace = grace + fmt.Sprintf(", %s=%s", cond.Type, cond.Status)
+		}
+		grace = grace[2:]
+
+		// Keep Available=True during the grace period, but surface why we're requeueing.
+		condition.Reason = "IngressControllerAvailabilityGracePeriod"
+		condition.Message = "Temporarily tolerating unavailable condition(s) during rollout (within grace period): " + grace
+
+		err = retryableerror.New(
+			errors.New("Deployment availability is temporarily tolerated within grace period: "+grace),
+			requeueAfter,
+		)
+	}
+	return condition, err
 }
 
 // checkConditions compares expected operator conditions to existing operator
@@ -346,11 +383,14 @@ func checkConditions(expectedConds []expectedCondition, conditions []operatorv1.
 		if failedPredicates {
 			continue
 		}
-		if expected.gracePeriod != 0 {
+		if expected.gracePeriod != 0 && !condition.LastTransitionTime.IsZero() {
 			t1 := now.Add(-expected.gracePeriod)
 			t2 := condition.LastTransitionTime
 			if t2.After(t1) {
 				d := t2.Sub(t1)
+				if d > expected.gracePeriod {
+					d = expected.gracePeriod
+				}
 				if len(graceConditions) == 0 || d < requeueAfter {
 					// Recompute status conditions again
 					// after the grace period has elapsed.
