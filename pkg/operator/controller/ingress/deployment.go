@@ -20,6 +20,7 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
+	"github.com/openshift/library-go/pkg/crypto"
 
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
@@ -982,6 +983,14 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 		minTLSVersion = "TLSv1.2"
 	}
 	env = append(env, corev1.EnvVar{Name: "SSL_MIN_VERSION", Value: minTLSVersion})
+
+	tlsProfileMetrics := tlsProfileSpecForSecurityProfile(apiConfig.Spec.TLSSecurityProfile)
+
+	// User facing config uses OpenSSL names. Internally we always use IANA ones.
+	// OpenSSLToIANACipherSuites() converts and also removes any invalid cipher, otherwise router would crash.
+	ianaNames := crypto.OpenSSLToIANACipherSuites(tlsProfileMetrics.Ciphers)
+	env = append(env, corev1.EnvVar{Name: "ROUTER_METRICS_TLS_CIPHERS", Value: strings.Join(ianaNames, ":")})
+	env = append(env, corev1.EnvVar{Name: "ROUTER_METRICS_TLS_MIN_VERSION", Value: string(tlsProfileMetrics.MinTLSVersion)})
 
 	usingIPv4 := false
 	usingIPv6 := false
