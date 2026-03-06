@@ -12,7 +12,6 @@ import (
 	"time"
 
 	configv1 "github.com/openshift/api/config/v1"
-	"github.com/openshift/api/features"
 	iov1 "github.com/openshift/api/operatoringress/v1"
 	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
@@ -70,17 +69,6 @@ var defaultRoutename = ""
 // feature gate is still in effect, preface the test names with "TestGatewayAPI"
 // so that they run via the openshift/release test configuration.
 func TestGatewayAPI(t *testing.T) {
-	// Skip if feature is not enabled
-	if gatewayAPIEnabled, err := isFeatureGateEnabled(features.FeatureGateGatewayAPI); err != nil {
-		t.Fatalf("error checking feature gate enabled status: %v", err)
-	} else if !gatewayAPIEnabled {
-		t.Skip("Gateway API not enabled, skipping TestGatewayAPI")
-	}
-
-	gatewayAPIControllerEnabled, err := isFeatureGateEnabled(features.FeatureGateGatewayAPIController)
-	if err != nil {
-		t.Fatalf("error checking controller feature gate enabled status: %v", err)
-	}
 
 	// Defer the cleanup of the test gateway.
 	t.Cleanup(func() {
@@ -95,19 +83,14 @@ func TestGatewayAPI(t *testing.T) {
 	})
 
 	t.Run("testGatewayAPIResources", testGatewayAPIResources)
-	if gatewayAPIControllerEnabled {
-		t.Run("testGatewayAPIObjects", testGatewayAPIObjects)
-		t.Run("testGatewayAPIManualDeployment", testGatewayAPIManualDeployment)
-		t.Run("testGatewayAPIIstioInstallation", testGatewayAPIIstioInstallation)
-		t.Run("testGatewayAPIDNS", testGatewayAPIDNS)
-		t.Run("testGatewayAPIDNSListenerUpdate", testGatewayAPIDNSListenerUpdate)
-		t.Run("testGatewayAPIDNSListenerWithNoHostname", testGatewayAPIDNSListenerWithNoHostname)
-		t.Run("testGatewayAPIInfrastructureAnnotations", testGatewayAPIInfrastructureAnnotations)
-		t.Run("testGatewayAPIInternalLoadBalancer", testGatewayAPIInternalLoadBalancer)
-
-	} else {
-		t.Log("Gateway API Controller not enabled, skipping controller tests")
-	}
+	t.Run("testGatewayAPIObjects", testGatewayAPIObjects)
+	t.Run("testGatewayAPIManualDeployment", testGatewayAPIManualDeployment)
+	t.Run("testGatewayAPIIstioInstallation", testGatewayAPIIstioInstallation)
+	t.Run("testGatewayAPIDNS", testGatewayAPIDNS)
+	t.Run("testGatewayAPIDNSListenerUpdate", testGatewayAPIDNSListenerUpdate)
+	t.Run("testGatewayAPIDNSListenerWithNoHostname", testGatewayAPIDNSListenerWithNoHostname)
+	t.Run("testGatewayAPIInfrastructureAnnotations", testGatewayAPIInfrastructureAnnotations)
+	t.Run("testGatewayAPIInternalLoadBalancer", testGatewayAPIInternalLoadBalancer)
 	t.Run("testGatewayAPIResourcesProtection", testGatewayAPIResourcesProtection)
 	t.Run("testGatewayAPIRBAC", testGatewayAPIRBAC)
 	t.Run("testOperatorDegradedCondition", testOperatorDegradedCondition)
