@@ -24,6 +24,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/elbv2"
 	"github.com/aws/aws-sdk-go/service/resourcegroupstaggingapi"
 	"github.com/aws/aws-sdk-go/service/route53"
+	"github.com/aws/aws-sdk-go/service/sts"
 
 	"k8s.io/apimachinery/pkg/types"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
@@ -38,11 +39,17 @@ const (
 	Route53Service = route53.ServiceName
 	// ELBService is the name of the Elastic Load Balancing service.
 	ELBService = elb.ServiceName
+	// STSService is the name of the Security Token Service.
+	STSService = sts.ServiceName
 	// TaggingService is the name of the Resource Group Tagging service.
 	TaggingService = resourcegroupstaggingapi.ServiceName
 	// govCloudRoute53Region is the AWS GovCloud region for Route 53. See:
 	// https://docs.aws.amazon.com/govcloud-us/latest/UserGuide/using-govcloud-endpoints.html
 	govCloudRoute53Region = "us-gov"
+	// eusCloudRegionPrefix is the prefix of regions in AWS European Sovereign Cloud.
+	eusCloudRegionPrefix = "eusc-"
+	// euscDeEast1RegionID is the region ID of Brandenburg (German) in AWS European Sovereign Cloud.
+	euscDeEast1RegionID = "eusc-de-east-1"
 	// govCloudTaggingEndpoint is the Group Tagging service endpoint used for AWS GovCloud.
 	govCloudTaggingEndpoint = "https://tagging.us-gov-west-1.amazonaws.com"
 	// chinaRoute53Endpoint is the Route 53 service endpoint used for AWS China regions.
@@ -159,8 +166,22 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 	// RoleARN is intended to only provide access to another account's Route 53 service, not for ELBs.
 	sessRoute53 := sess
 	if config.RoleARN != "" {
+		// Create a separate session for STS with custom endpoint support if any
+		sessSTS := sess.Copy()
+		stsConfig := aws.NewConfig().WithRegion(region)
+		// Check for custom STS endpoint
+		for _, ep := range config.ServiceEndpoints {
+			if ep.Name == STSService {
+				stsConfig = stsConfig.WithEndpoint(ep.URL)
+				log.Info("Found STS custom endpoint", "url", ep.URL)
+				break
+			}
+		}
+		stsClient := sts.New(sessSTS, stsConfig)
+
+		// Use STS client to assume role
 		sessRoute53 = sess.Copy()
-		sessRoute53.Config.WithCredentials(stscreds.NewCredentials(sessRoute53, config.RoleARN))
+		sessRoute53.Config.WithCredentials(stscreds.NewCredentialsWithClient(stsClient, config.RoleARN))
 	}
 
 	r53Config := aws.NewConfig()
@@ -196,6 +217,18 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 		// Do not override the region in C2S or SC2S
 		r53Config = r53Config.WithRegion(region)
 	default:
+		// AWS European Sovereign Cloud
+		if strings.HasPrefix(region, eusCloudRegionPrefix) {
+			// Since Route 53 is not a regionalized service, the Tagging API will
+			// only return hosted zone resources when the region is "eusc-de-east-1".
+			tagConfig = tagConfig.WithRegion(euscDeEast1RegionID)
+			// Use eusc-de-east-1 for Route 53 in AWS Regions for EU Sovereign Cloud.
+			// See https://docs.aws.eu/general/latest/gr/endpoints.html for details.
+			r53Config = r53Config.WithRegion(euscDeEast1RegionID)
+			break
+		}
+
+		// AWS Standard Partition
 		// Since Route 53 is not a regionalized service, the Tagging API will
 		// only return hosted zone resources when the region is "us-east-1".
 		tagConfig = tagConfig.WithRegion(endpoints.UsEast1RegionID)
@@ -208,8 +241,6 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 		elbFound := false
 		tagFound := false
 		for _, ep := range config.ServiceEndpoints {
-			// TODO: Add custom endpoint support for elbv2. See the following for details:
-			// https://docs.aws.amazon.com/general/latest/gr/elb.html
 			switch ep.Name {
 			case Route53Service:
 				route53Found = true
@@ -233,6 +264,10 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 				elbFound = true
 				elbConfig = elbConfig.WithEndpoint(ep.URL)
 				log.Info("Found elb custom endpoint", "url", ep.URL)
+				// The SDK uses the same service ID "elasticloadbalancing" for elb and elbv2
+				// Thus, if defined, we need to use the custom service endpoint for both.
+				elbv2Config = elbv2Config.WithEndpoint(ep.URL)
+				log.Info("Found elb v2 custom endpoint", "url", ep.URL)
 			}
 			// Once the three service endpoints have been found,
 			// ignore any further service endpoint specifications.
