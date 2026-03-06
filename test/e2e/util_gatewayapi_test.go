@@ -286,11 +286,13 @@ func createGatewayClass(t *testing.T, name, controllerName string) (*gatewayapiv
 	customCatalog := os.Getenv("CUSTOM_CATALOG_SOURCE")
 	ossmVersion := os.Getenv("CUSTOM_OSSM_VERSION")
 	ossmChannel := os.Getenv("CUSTOM_OSSM_CHANNEL")
-	if customCatalog != "" && ossmVersion != "" && ossmChannel != "" {
+	istioVersion := os.Getenv("CUSTOM_ISTIO_VERSION")
+	if customCatalog != "" && ossmVersion != "" && ossmChannel != "" && istioVersion != "" {
 		gatewayClass.Annotations = map[string]string{
-			"unsupported.do-not-use.openshift.io/ossm-catalog": customCatalog,
-			"unsupported.do-not-use.openshift.io/ossm-channel": ossmChannel,
-			"unsupported.do-not-use.openshift.io/ossm-version": ossmVersion,
+			"unsupported.do-not-use.openshift.io/ossm-catalog":  customCatalog,
+			"unsupported.do-not-use.openshift.io/ossm-channel":  ossmChannel,
+			"unsupported.do-not-use.openshift.io/ossm-version":  ossmVersion,
+			"unsupported.do-not-use.openshift.io/istio-version": istioVersion,
 		}
 	}
 	nsName := types.NamespacedName{Namespace: "", Name: name}
