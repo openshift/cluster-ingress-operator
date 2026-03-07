@@ -2,6 +2,8 @@ package gatewayclass
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -33,6 +35,15 @@ func Test_Reconcile(t *testing.T) {
 		}
 	}
 
+	infraConfig := func(infraTopologyMode configv1.TopologyMode) *configv1.Infrastructure {
+		return &configv1.Infrastructure{
+			ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
+			Status: configv1.InfrastructureStatus{
+				InfrastructureTopology: infraTopologyMode,
+			},
+		}
+	}
+
 	subscription := func(catalog, channel, version string) *operatorsv1alpha1.Subscription {
 		return &operatorsv1alpha1.Subscription{
 			ObjectMeta: metav1.ObjectMeta{
@@ -51,7 +62,7 @@ func Test_Reconcile(t *testing.T) {
 		}
 	}
 
-	istio := func(version string, gieEnabled bool) *sailv1.Istio {
+	istio := func(version string, gieEnabled bool, gatewayclasses []string, minReplicas int) *sailv1.Istio {
 		ret := &sailv1.Istio{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "openshift-gateway",
@@ -121,6 +132,15 @@ func Test_Reconcile(t *testing.T) {
 		if gieEnabled {
 			ret.Spec.Values.Pilot.Env["ENABLE_GATEWAY_API_INFERENCE_EXTENSION"] = "true"
 		}
+		ret.Spec.Values.GatewayClasses = []byte(fmt.Sprintf(`{%s}`, strings.Join(func() []string {
+			var result []string
+
+			for _, name := range gatewayclasses {
+				result = append(result, fmt.Sprintf(`"%s":{"horizontalPodAutoscaler":{"spec":{"maxReplicas":10,"minReplicas":%d}}}`, name, minReplicas))
+			}
+
+			return result
+		}(), ",")))
 
 		return ret
 	}
@@ -135,16 +155,27 @@ func Test_Reconcile(t *testing.T) {
 		expectError     string
 	}{
 		{
-			name:            "Nonexistent gatewayclass",
+			name:            "Missing cluster infrastructure config and nonexistent gatewayclass",
 			request:         req("openshift-default"),
 			existingObjects: []runtime.Object{},
 			expectCreate:    []client.Object{},
 			expectUpdate:    []client.Object{},
 			expectDelete:    []client.Object{},
-			expectError:     `"openshift-default" not found`,
+			expectError:     `infrastructures.config.openshift.io "cluster" not found`,
 		},
 		{
-			name:    "Minimal gatewayclass",
+			name:    "Nonexistent gatewayclass",
+			request: req("openshift-default"),
+			existingObjects: []runtime.Object{
+				infraConfig(configv1.HighlyAvailableTopologyMode),
+			},
+			expectCreate: []client.Object{},
+			expectUpdate: []client.Object{},
+			expectDelete: []client.Object{},
+			expectError:  `"openshift-default" not found`,
+		},
+		{
+			name:    "Missing cluster infrastructure config",
 			request: req("openshift-default"),
 			existingObjects: []runtime.Object{
 				&gatewayapiv1.GatewayClass{
@@ -156,9 +187,86 @@ func Test_Reconcile(t *testing.T) {
 					},
 				},
 			},
+			expectCreate: []client.Object{},
+			expectUpdate: []client.Object{},
+			expectDelete: []client.Object{},
+			expectError:  `infrastructures.config.openshift.io "cluster" not found`,
+		},
+		{
+			name:    "Minimal gatewayclass",
+			request: req("openshift-default"),
+			existingObjects: []runtime.Object{
+				infraConfig(configv1.HighlyAvailableTopologyMode),
+				&gatewayapiv1.GatewayClass{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "openshift-default",
+					},
+					Spec: gatewayapiv1.GatewayClassSpec{
+						ControllerName: gatewayapiv1.GatewayController("openshift.io/gateway-controller/v1"),
+					},
+				},
+			},
 			expectCreate: []client.Object{
 				subscription("redhat-operators", "stable", "servicemeshoperator3.v3.0.1"),
-				istio("v1.24.4", false),
+				istio("v1.24.4", false, []string{"openshift-default"}, 2),
+			},
+			expectUpdate: []client.Object{},
+			expectDelete: []client.Object{},
+		},
+		{
+			name:    "Minimal gatewayclass with single-node topology",
+			request: req("openshift-default"),
+			existingObjects: []runtime.Object{
+				infraConfig(configv1.SingleReplicaTopologyMode),
+				&gatewayapiv1.GatewayClass{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "openshift-default",
+					},
+					Spec: gatewayapiv1.GatewayClassSpec{
+						ControllerName: gatewayapiv1.GatewayController("openshift.io/gateway-controller/v1"),
+					},
+				},
+			},
+			expectCreate: []client.Object{
+				subscription("redhat-operators", "stable", "servicemeshoperator3.v3.0.1"),
+				istio("v1.24.4", false, []string{"openshift-default"}, 1),
+			},
+			expectUpdate: []client.Object{},
+			expectDelete: []client.Object{},
+		},
+		{
+			name:    "Minimal gatewayclass on a cluster with multiple gatewayclasses",
+			request: req("openshift-default"),
+			existingObjects: []runtime.Object{
+				infraConfig(configv1.HighlyAvailableTopologyMode),
+				&gatewayapiv1.GatewayClass{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "openshift-default",
+					},
+					Spec: gatewayapiv1.GatewayClassSpec{
+						ControllerName: gatewayapiv1.GatewayController("openshift.io/gateway-controller/v1"),
+					},
+				},
+				&gatewayapiv1.GatewayClass{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "openshift-internal",
+					},
+					Spec: gatewayapiv1.GatewayClassSpec{
+						ControllerName: gatewayapiv1.GatewayController("openshift.io/gateway-controller/v1"),
+					},
+				},
+				&gatewayapiv1.GatewayClass{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "istio",
+					},
+					Spec: gatewayapiv1.GatewayClassSpec{
+						ControllerName: gatewayapiv1.GatewayController("istio"),
+					},
+				},
+			},
+			expectCreate: []client.Object{
+				subscription("redhat-operators", "stable", "servicemeshoperator3.v3.0.1"),
+				istio("v1.24.4", false, []string{"openshift-default", "openshift-internal"}, 2),
 			},
 			expectUpdate: []client.Object{},
 			expectDelete: []client.Object{},
@@ -167,6 +275,7 @@ func Test_Reconcile(t *testing.T) {
 			name:    "Minimal gatewayclass with experimental InferencePool CRD",
 			request: req("openshift-default"),
 			existingObjects: []runtime.Object{
+				infraConfig(configv1.HighlyAvailableTopologyMode),
 				&gatewayapiv1.GatewayClass{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "openshift-default",
@@ -183,7 +292,7 @@ func Test_Reconcile(t *testing.T) {
 			},
 			expectCreate: []client.Object{
 				subscription("redhat-operators", "stable", "servicemeshoperator3.v3.0.1"),
-				istio("v1.24.4", true),
+				istio("v1.24.4", true, []string{"openshift-default"}, 2),
 			},
 			expectUpdate: []client.Object{},
 			expectDelete: []client.Object{},
@@ -192,6 +301,7 @@ func Test_Reconcile(t *testing.T) {
 			name:    "Minimal gatewayclass with stable InferencePool CRD",
 			request: req("openshift-default"),
 			existingObjects: []runtime.Object{
+				infraConfig(configv1.HighlyAvailableTopologyMode),
 				&gatewayapiv1.GatewayClass{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "openshift-default",
@@ -208,7 +318,7 @@ func Test_Reconcile(t *testing.T) {
 			},
 			expectCreate: []client.Object{
 				subscription("redhat-operators", "stable", "servicemeshoperator3.v3.0.1"),
-				istio("v1.24.4", true),
+				istio("v1.24.4", true, []string{"openshift-default"}, 2),
 			},
 			expectUpdate: []client.Object{},
 			expectDelete: []client.Object{},
@@ -217,6 +327,7 @@ func Test_Reconcile(t *testing.T) {
 			name:    "Gatewayclass with Istio version override",
 			request: req("openshift-default"),
 			existingObjects: []runtime.Object{
+				infraConfig(configv1.HighlyAvailableTopologyMode),
 				&gatewayapiv1.GatewayClass{
 					ObjectMeta: metav1.ObjectMeta{
 						Annotations: map[string]string{
@@ -231,7 +342,7 @@ func Test_Reconcile(t *testing.T) {
 			},
 			expectCreate: []client.Object{
 				subscription("redhat-operators", "stable", "servicemeshoperator3.v3.0.1"),
-				istio("v1.24-latest", false),
+				istio("v1.24-latest", false, []string{"openshift-default"}, 2),
 			},
 			expectUpdate: []client.Object{},
 			expectDelete: []client.Object{},
@@ -240,6 +351,7 @@ func Test_Reconcile(t *testing.T) {
 			name:    "Gatewayclass with OSSM and Istio overrides",
 			request: req("openshift-default"),
 			existingObjects: []runtime.Object{
+				infraConfig(configv1.HighlyAvailableTopologyMode),
 				&gatewayapiv1.GatewayClass{
 					ObjectMeta: metav1.ObjectMeta{
 						Annotations: map[string]string{
@@ -257,7 +369,7 @@ func Test_Reconcile(t *testing.T) {
 			},
 			expectCreate: []client.Object{
 				subscription("foo", "bar", "baz"),
-				istio("quux", false),
+				istio("quux", false, []string{"openshift-default"}, 2),
 			},
 			expectUpdate: []client.Object{},
 			expectDelete: []client.Object{},
@@ -276,6 +388,9 @@ func Test_Reconcile(t *testing.T) {
 			fakeClient := fake.NewClientBuilder().
 				WithScheme(scheme).
 				WithRuntimeObjects(tc.existingObjects...).
+				WithIndex(&gatewayapiv1.GatewayClass{}, "spec.controllerName", client.IndexerFunc(func(o client.Object) []string {
+					return []string{string(o.(*gatewayapiv1.GatewayClass).Spec.ControllerName)}
+				})).
 				Build()
 			cl := &testutil.FakeClientRecorder{
 				Client:  fakeClient,
@@ -292,8 +407,9 @@ func Test_Reconcile(t *testing.T) {
 			informer := informertest.FakeInformers{Scheme: scheme}
 			cache := &testutil.FakeCache{Informers: &informer, Reader: fakeClient}
 			reconciler := &reconciler{
-				client: cl,
-				cache:  cache,
+				client:       cl,
+				cache:        cache,
+				fieldIndexer: FakeIndexer{},
 				config: Config{
 					OperatorNamespace:         "openshift-ingress-operator",
 					OperandNamespace:          "openshift-ingress",
@@ -328,4 +444,10 @@ func Test_Reconcile(t *testing.T) {
 			}
 		})
 	}
+}
+
+type FakeIndexer struct{}
+
+func (indexer FakeIndexer) IndexField(ctx context.Context, obj client.Object, field string, extractValue client.IndexerFunc) error {
+	return nil
 }
