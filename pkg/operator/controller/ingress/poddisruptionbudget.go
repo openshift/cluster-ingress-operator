@@ -68,10 +68,21 @@ func desiredRouterPodDisruptionBudget(ic *operatorv1.IngressController, deployme
 		return false, nil, nil
 	}
 
-	maxUnavailable := "50%"
+	// OCPBUGS-25739 - For HostNetwork ingress controllers with 2 replicas, use an integer
+	// MaxUnavailable of 1 instead of "50%" to avoid ambiguous percent-based rounding behavior
+	// in the disruption controller.
+	//
 	// OCPBUGS-7546 - make sure number of available pods is always 2 when there are only 3 replicas.
-	if ic.Spec.Replicas != nil && int(*ic.Spec.Replicas) >= 3 {
-		maxUnavailable = "25%"
+	var maxUnavailable intstr.IntOrString
+	isHostNetwork := ic.Status.EndpointPublishingStrategy != nil &&
+		ic.Status.EndpointPublishingStrategy.Type == operatorv1.HostNetworkStrategyType
+	switch {
+	case isHostNetwork && ic.Spec.Replicas != nil && int(*ic.Spec.Replicas) == 2:
+		maxUnavailable = intstr.FromInt(1)
+	case ic.Spec.Replicas != nil && int(*ic.Spec.Replicas) >= 3:
+		maxUnavailable = intstr.FromString("25%")
+	default:
+		maxUnavailable = intstr.FromString("50%")
 	}
 
 	name := controller.RouterPodDisruptionBudgetName(ic)
@@ -84,7 +95,7 @@ func desiredRouterPodDisruptionBudget(ic *operatorv1.IngressController, deployme
 		Spec: policyv1.PodDisruptionBudgetSpec{
 			// The disruption controller rounds MaxUnavailable up.
 			// https://github.com/kubernetes/kubernetes/blob/65dc445aa2d581b4fa829258e46e4faf44e999b6/pkg/controller/disruption/disruption.go#L539
-			MaxUnavailable: pointerTo(intstr.FromString(maxUnavailable)),
+			MaxUnavailable: pointerTo(maxUnavailable),
 			Selector:       controller.IngressControllerDeploymentPodSelector(ic),
 		},
 	}
