@@ -10,7 +10,6 @@ LDFLAGS := -X '$(GO_PKG_NAME)/pkg/version.CommitFromGit=$(GIT_COMMIT)' \
 
 TOOLS_BIN_DIR := $(CURDIR)/bin
 BINARY        := $(TOOLS_BIN_DIR)/cluster-ingress-operator-tests-ext
-METADATA      := $(CURDIR)/.openshift-tests-extension/openshift_payload_cluster-ingress-operator.json
 
 # GO_COMPLIANCE_POLICY="exempt_all" must only be used for test related binaries.
 # It prevents various FIPS compliance policies from being applied to this compilation.
@@ -19,28 +18,6 @@ build: ## Build the extended tests binary
 	@mkdir -p $(TOOLS_BIN_DIR)
 	GO_COMPLIANCE_POLICY="exempt_all" go build -ldflags "$(LDFLAGS)" -mod=vendor \
 		-o $(BINARY) ./cmd/...
-
-.PHONY: update-metadata
-update-metadata: build ## Build and run 'update' to generate test metadata
-	$(BINARY) update --component openshift:payload:cluster-ingress-operator
-	$(MAKE) clean-metadata
-
-# Remove 'codeLocations' to avoid absolute paths like "/home/user/go/src/.../gatewayapi.go:12".
-# These are machine-specific and make the metadata non-idempotent.
-# See: https://issues.redhat.com/browse/TRT-2186
-.PHONY: clean-metadata
-clean-metadata: ## Remove 'codeLocations' from metadata JSON
-	@jq 'map(del(.codeLocations))' $(METADATA) > $(METADATA).tmp && mv $(METADATA).tmp $(METADATA)
-
-.PHONY: build-update
-build-update: update-metadata ## Build binary and regenerate metadata
-
-.PHONY: verify-metadata
-verify-metadata: update-metadata ## Verify metadata is up to date (fails if stale)
-	@if ! git diff --exit-code $(METADATA); then \
-		echo "ERROR: Metadata is out of date. Run 'make build-update' and commit the result."; \
-		exit 1; \
-	fi
 
 .PHONY: list-test-names
 list-test-names: build ## List all registered test names

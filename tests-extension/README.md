@@ -8,9 +8,7 @@ This directory contains the [OpenShift Tests Extension (OTE)](https://github.com
 tests-extension/
 ├── cmd/main.go                          # binary entry point
 ├── go.mod                               # separate Go module
-├── Makefile                             # build and metadata targets
-├── .openshift-tests-extension/
-│   └── openshift_payload_cluster-ingress-operator.json  # generated, committed
+├── Makefile                             # build targets
 ├── test/
 │   └── *.go                             # tests migrated from openshift/origin (no Extended label)
 └── test/qe/
@@ -58,25 +56,21 @@ ingress/extended                                       # all Extended (from test
 
 ### Title tags (in test name string)
 
+The tagging policy differs by test source:
+
+- **Origin-migrated tests** (`test/`): preserve the original test name exactly as it appeared in `openshift/origin`. Do NOT add new tags — doing so would constitute a rename and sever historical result data in Sippy and ci-test-mapping.
+
+- **tests-private-migrated tests** (`test/qe/specs/`): these are new to OTE and have no prior result history, so apply the following tags:
+
 | Tag | Meaning |
 |-----|---------|
-| `[sig-network-edge]` | Required on all tests — signals routing/ingress component |
-| `[OTE]` | Required on all tests — marks the test as living in this repo, not in origin |
-| `[Jira:NE]` | Jira project key for the Network Edge team; confirm exact key with the team |
+| `[sig-network-edge]` | Required — signals routing/ingress component |
+| `PolarionID:XXXXX` | Required — identifies the test case in Polarion |
 | `[Serial]` | Must run in isolation |
 | `[Slow]` | Takes > 5 minutes; requires architect approval |
-| `[Disruptive]` | Disrupts the cluster; auto-promoted to `[Serial]` |
 
-### Ginkgo labels (via `g.Label(...)`)
+> **Migration note**: Replace `[Disruptive]` from old QE tests with `[Serial]` when migrating to OTE.
 
-| Label | Meaning |
-|-------|---------|
-| `ReleaseGate` | Promotes an Extended test into the standard conformance suites |
-| `Extended` | Auto-applied to all tests in `test/qe/specs/`; do NOT add manually |
-| `StressTest` | Routes test into the `candidate/stress` suite only |
-| `NonHyperShiftHOST` | Excludes test from HyperShift external topology |
-
-> **Rule**: Do NOT add `ReleaseGate` to `[Disruptive]`, `[Slow]`, or `StressTest` tests.
 
 ## Build and Verify
 
@@ -88,43 +82,13 @@ make build
 
 # List all registered tests
 ./bin/cluster-ingress-operator-tests-ext list -o names
-
-# Regenerate metadata after adding/renaming/removing tests
-make build-update
-
-# Verify metadata is up to date (runs in CI)
-# Rebuilds the binary, regenerates the JSON, and fails with a diff if the
-# committed JSON does not match what the binary produces.
-make verify-metadata
 ```
 
-## Renaming and Deleting Tests
+## Renaming Tests
 
-The committed metadata JSON (`.openshift-tests-extension/openshift_payload_cluster-ingress-operator.json`) is the source of truth for what tests exist. Only the gzipped binary is shipped in the operator image — the JSON is **not** included. At runtime, `openshift-tests` discovers the binary, decompresses it, and invokes it directly to get the test list and metadata; the binary is self-describing.
+Avoid renaming tests. Downstream systems such as [Sippy](https://sippy.dptools.openshift.org) and [Component Readiness](https://github.com/openshift-eng/ci-test-mapping) track test results by name — renaming a test severs its historical pass/fail data. Prefer additive changes such as appending new tags rather than rewriting the description.
 
-The JSON's purpose is purely **dev/CI time validation**: `make verify-metadata` runs in CI on every PR. It rebuilds the binary, regenerates the JSON from scratch, and **fails if the result differs from the committed file**. This catches accidental renames, deletions, or additions before they merge.
-
-> **Note**: A test's full name is the concatenation of all enclosing `Describe`/`Context` strings and the `It` string, joined by spaces. Tags such as `[sig-network-edge]` and `[OTE]` are part of the outer `Describe` string and are therefore part of the full name. Changing any tag counts as a rename.
-
-### Rename
-
-When a test is renamed, the old name remains in the committed metadata JSON. `make verify-metadata` fails because the JSON contains a name that the binary no longer registers. Historical test results in dashboards (Sippy, etc.) are also tracked by name — a silent rename severs that history.
-
-To rename correctly:
-
-1. Add `g.Label("original-name:<old full test name>")` to the test. This tells the framework the test was previously known by that name, allowing it to match the old metadata entry to the new name and preserve result history.
-2. Run `make build-update` to regenerate and commit the updated metadata JSON.
-
-If the test was renamed multiple times, add one `original-name:` label for each previous name.
-
-### Delete
-
-When a test is deleted, its name remains in the committed metadata JSON. `make verify-metadata` fails because a name in the JSON has no corresponding test in the binary.
-
-To delete correctly:
-
-1. Add the old test name to `ext.IgnoreObsoleteTests(...)` in `cmd/main.go` before removing the test code. This explicitly tells the framework the test was intentionally removed.
-2. Run `make build-update` to drop the entry from the JSON and commit the result.
+If a rename is truly necessary, the test mapping in [ci-test-mapping](https://github.com/openshift-eng/ci-test-mapping) may need to be updated to preserve result history.
 
 ## Why `openshift/origin` Cannot Be Imported
 
