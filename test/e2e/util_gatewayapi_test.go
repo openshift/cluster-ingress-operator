@@ -32,6 +32,7 @@ import (
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/wait"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -314,6 +315,53 @@ func createGatewayClass(t *testing.T, name, controllerName string) (*gatewayapiv
 	}
 
 	return gatewayClass, nil
+}
+
+// createGatewayClass checks if the GatewayClass can be created.
+// If it can, it is returned.  If it can't an error is returned.
+func createGatewayService(t *testing.T, gatewayName, gatewayClass string, svctype corev1.ServiceType, trafficpolicy corev1.ServiceExternalTrafficPolicy) (*corev1.Service, error) {
+	t.Helper()
+
+	svcDefinition := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: fmt.Sprintf("%s-%s", gatewayName, gatewayClass),
+		},
+		Spec: corev1.ServiceSpec{
+			Type:                  svctype,
+			ExternalTrafficPolicy: trafficpolicy,
+			Ports: []corev1.ServicePort{
+				{
+					Name:       "http",
+					Port:       80,
+					TargetPort: intstr.FromInt(80),
+					Protocol:   corev1.ProtocolTCP,
+				},
+			},
+			Selector: map[string]string{
+				"gateway.networking.k8s.io/gateway-name": gatewayName,
+			},
+		},
+	}
+
+	svckey := client.ObjectKeyFromObject(svcDefinition)
+	if err := wait.PollUntilContextTimeout(context.TODO(), 2*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
+		if err := kclient.Create(ctx, svcDefinition); err != nil {
+			if kerrors.IsAlreadyExists(err) {
+				if err := kclient.Get(ctx, svckey, svcDefinition); err != nil {
+					t.Logf("service %s/%s already exists, but get failed: %v; retrying...", svckey.Namespace, svckey.Name, err)
+					return false, nil
+				}
+				return true, nil
+			}
+			t.Logf("error creating service %s/%s: %v; retrying...", svckey.Namespace, svckey.Name, err)
+			return false, nil
+		}
+		return true, nil
+	}); err != nil {
+		return nil, err
+	}
+
+	return svcDefinition, nil
 }
 
 // createCRD creates the CRD with the given name or retrieves it if already exists.
