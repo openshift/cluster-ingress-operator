@@ -984,7 +984,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 	}
 	env = append(env, corev1.EnvVar{Name: "SSL_MIN_VERSION", Value: minTLSVersion})
 
-	tlsProfileMetrics := tlsProfileSpecForSecurityProfile(apiConfig.Spec.TLSSecurityProfile)
+	tlsProfileMetrics := controller.TLSProfileSpecForSecurityProfile(apiConfig.Spec.TLSSecurityProfile)
 
 	// User facing config uses OpenSSL names. Internally we always use IANA ones.
 	// OpenSSLToIANACipherSuites() converts and also removes any invalid cipher, otherwise router would crash.

@@ -9,6 +9,7 @@ import (
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
+	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	util "github.com/openshift/cluster-ingress-operator/pkg/util"
 
 	corev1 "k8s.io/api/core/v1"
@@ -1006,7 +1007,7 @@ func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
 	}
 }
 
-func Test_tlsProfileSpecForSecurityProfile(t *testing.T) {
+func Test_TLSProfileSpecForSecurityProfile(t *testing.T) {
 	invalidTLSVersion := configv1.TLSProtocolVersion("abc")
 	invalidCiphers := []string{"ECDHE-ECDSA-AES256-GCM-SHA384", "invalid cipher"}
 	validCiphers := []string{"ECDHE-ECDSA-AES256-GCM-SHA384"}
@@ -1151,7 +1152,7 @@ func Test_tlsProfileSpecForSecurityProfile(t *testing.T) {
 					TLSSecurityProfile: tc.profile,
 				},
 			}
-			tlsProfileSpec := tlsProfileSpecForSecurityProfile(ic.Spec.TLSSecurityProfile)
+			tlsProfileSpec := operatorcontroller.TLSProfileSpecForSecurityProfile(ic.Spec.TLSSecurityProfile)
 			err := validateTLSSecurityProfile(ic)
 			if tc.valid && err != nil {
 				t.Fatalf("unexpected error: %v\nprofile:\n%s", err, util.ToYaml(tlsProfileSpec))

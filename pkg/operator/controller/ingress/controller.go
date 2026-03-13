@@ -853,9 +853,9 @@ func setDefaultProviderParameters(lbs *operatorv1.LoadBalancerStrategy, ingressC
 // caller; the caller must make a copy if it needs to mutate the value.
 func tlsProfileSpecForIngressController(ic *operatorv1.IngressController, apiConfig *configv1.APIServer) *configv1.TLSProfileSpec {
 	if hasTLSSecurityProfile(ic) {
-		return tlsProfileSpecForSecurityProfile(ic.Spec.TLSSecurityProfile)
+		return operatorcontroller.TLSProfileSpecForSecurityProfile(ic.Spec.TLSSecurityProfile)
 	}
-	return tlsProfileSpecForSecurityProfile(apiConfig.Spec.TLSSecurityProfile)
+	return operatorcontroller.TLSProfileSpecForSecurityProfile(apiConfig.Spec.TLSSecurityProfile)
 }
 
 // hasTLSSecurityProfile checks whether the given ingresscontroller specifies a
@@ -868,25 +868,6 @@ func hasTLSSecurityProfile(ic *operatorv1.IngressController) bool {
 		return false
 	}
 	return true
-}
-
-// tlsProfileSpecForSecurityProfile returns a TLS profile spec based on the
-// provided security profile, or the "Intermediate" profile if an unknown
-// security profile type is provided.  Note that the return value must not be
-// mutated by the caller; the caller must make a copy if it needs to mutate the
-// value.
-func tlsProfileSpecForSecurityProfile(profile *configv1.TLSSecurityProfile) *configv1.TLSProfileSpec {
-	if profile != nil {
-		if profile.Type == configv1.TLSProfileCustomType {
-			if profile.Custom != nil {
-				return &profile.Custom.TLSProfileSpec
-			}
-			return &configv1.TLSProfileSpec{}
-		} else if spec, ok := configv1.TLSProfiles[profile.Type]; ok {
-			return spec
-		}
-	}
-	return configv1.TLSProfiles[configv1.TLSProfileIntermediateType]
 }
 
 // validate attempts to perform validation of the given ingresscontroller and
