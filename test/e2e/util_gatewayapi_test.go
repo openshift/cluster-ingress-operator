@@ -324,7 +324,11 @@ func createGatewayService(t *testing.T, gatewayName, gatewayClass, namespace str
 
 	svcDefinition := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: fmt.Sprintf("%s-%s", gatewayName, gatewayClass),
+			Name:      fmt.Sprintf("%s-%s", gatewayName, gatewayClass),
+			Namespace: namespace,
+			Labels: map[string]string{
+				"gateway.networking.k8s.io/gateway-name": gatewayName,
+			},
 		},
 		Spec: corev1.ServiceSpec{
 			Type:                  svctype,

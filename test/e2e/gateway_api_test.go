@@ -956,7 +956,7 @@ func testGatewayAPIManualLBService(t *testing.T) {
 		operatorcontroller.DefaultOperandNamespace, corev1.ServiceTypeLoadBalancer,
 		corev1.ServiceExternalTrafficPolicyLocal)
 	if err != nil {
-		t.Fatalf("Failed to create service %s/%s: %v", gatewayName, gatewayClass.Name, err)
+		t.Fatalf("Failed to create service %s/%s-%s: %v", operatorcontroller.DefaultOperandNamespace, gatewayName, gatewayClass.Name, err)
 	}
 	t.Cleanup(func() {
 		if err := kclient.Delete(context.TODO(), service); err != nil {
