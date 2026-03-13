@@ -952,7 +952,9 @@ func testGatewayAPIManualLBService(t *testing.T) {
 	gatewayName := "test-gateway-managed-service"
 
 	t.Logf("Creating service %s-%s with type %s...", gatewayName, gatewayClass.Name, corev1.ServiceTypeLoadBalancer)
-	service, err := createGatewayService(t, gatewayName, gatewayClass.Name, corev1.ServiceTypeLoadBalancer, corev1.ServiceExternalTrafficPolicyLocal)
+	service, err := createGatewayService(t, gatewayName, gatewayClass.Name,
+		operatorcontroller.DefaultOperandNamespace, corev1.ServiceTypeLoadBalancer,
+		corev1.ServiceExternalTrafficPolicyLocal)
 	if err != nil {
 		t.Fatalf("Failed to create service %s/%s: %v", gatewayName, gatewayClass.Name, err)
 	}

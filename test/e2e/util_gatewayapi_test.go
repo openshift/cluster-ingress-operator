@@ -319,7 +319,7 @@ func createGatewayClass(t *testing.T, name, controllerName string) (*gatewayapiv
 
 // createGatewayClass checks if the GatewayClass can be created.
 // If it can, it is returned.  If it can't an error is returned.
-func createGatewayService(t *testing.T, gatewayName, gatewayClass string, svctype corev1.ServiceType, trafficpolicy corev1.ServiceExternalTrafficPolicy) (*corev1.Service, error) {
+func createGatewayService(t *testing.T, gatewayName, gatewayClass, namespace string, svctype corev1.ServiceType, trafficpolicy corev1.ServiceExternalTrafficPolicy) (*corev1.Service, error) {
 	t.Helper()
 
 	svcDefinition := &corev1.Service{
