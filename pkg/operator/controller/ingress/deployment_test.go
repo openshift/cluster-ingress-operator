@@ -1121,15 +1121,34 @@ func TestDesiredRouterDeploymentClientTLS(t *testing.T) {
 // TestDesiredRouterDeploymentDynamicConfigManager verifies that desiredRouterDeployment
 // returns the expected deployment when DCM featuregate is enabled.
 func TestDesiredRouterDeploymentDynamicConfigManager(t *testing.T) {
+	notSet := []envData{
+		{"ROUTER_HAPROXY_CONFIG_MANAGER", false, ""},
+		{"ROUTER_MAX_DYNAMIC_SERVERS", false, ""},
+		{"ROUTER_BLUEPRINT_ROUTE_POOL_SIZE", false, ""},
+	}
 	testCases := []struct {
 		name                       string
+		configurationManagement    operatorv1.IngressControllerConfigurationManagement
 		unsupportedConfigOverrides string
 		dcmEnabled                 bool
 		expectedEnv                []envData
 	}{
 		{
-			name:       "featuregate-enabled-default-values",
+			name:       "featuregate-enabled-configurationManagement-omitted-default-values",
 			dcmEnabled: true,
+			/* configurationManagement omitted. */
+			expectedEnv: notSet,
+		},
+		{
+			name:                    "featuregate-enabled-configurationManagement-ForkAndReload-default-values",
+			dcmEnabled:              true,
+			configurationManagement: operatorv1.IngressControllerConfigurationManagementForkAndReload,
+			expectedEnv:             notSet,
+		},
+		{
+			name:                    "featuregate-enabled-configurationManagement-Dynamic-default-values",
+			dcmEnabled:              true,
+			configurationManagement: operatorv1.IngressControllerConfigurationManagementDynamic,
 			expectedEnv: []envData{
 				{"ROUTER_HAPROXY_CONFIG_MANAGER", true, "true"},
 				{"ROUTER_MAX_DYNAMIC_SERVERS", true, "1"},
@@ -1137,19 +1156,24 @@ func TestDesiredRouterDeploymentDynamicConfigManager(t *testing.T) {
 			},
 		},
 		{
-			name:                       "featuregate-enabled-max-servers",
+			name:                       "featuregate-enabled-configurationManagement-omitted-max-servers",
 			unsupportedConfigOverrides: `{"maxDynamicServers":"7"}`,
 			dcmEnabled:                 true,
-			expectedEnv: []envData{
-				{"ROUTER_HAPROXY_CONFIG_MANAGER", true, "true"},
-				{"ROUTER_MAX_DYNAMIC_SERVERS", true, "7"},
-				{"ROUTER_BLUEPRINT_ROUTE_POOL_SIZE", true, "0"},
-			},
+			/* configurationManagement omitted. */
+			expectedEnv: notSet,
 		},
 		{
-			name:                       "featuregate-enabled-max-servers-lower-limit",
+			name:                       "featuregate-enabled-configurationManagement-ForkAndReload-max-servers",
+			unsupportedConfigOverrides: `{"maxDynamicServers":"7"}`,
+			configurationManagement:    operatorv1.IngressControllerConfigurationManagementForkAndReload,
+			dcmEnabled:                 true,
+			expectedEnv:                notSet,
+		},
+		{
+			name:                       "featuregate-enabled-configurationManagement-Dynamic-max-servers-lower-limit",
 			unsupportedConfigOverrides: `{"maxDynamicServers":"0"}`,
 			dcmEnabled:                 true,
+			configurationManagement:    operatorv1.IngressControllerConfigurationManagementDynamic,
 			expectedEnv: []envData{
 				{"ROUTER_HAPROXY_CONFIG_MANAGER", true, "true"},
 				{"ROUTER_MAX_DYNAMIC_SERVERS", true, "1"},
@@ -1157,9 +1181,24 @@ func TestDesiredRouterDeploymentDynamicConfigManager(t *testing.T) {
 			},
 		},
 		{
-			name:                       "featuregate-enabled-max-servers-invalid-value",
+			name:                       "featuregate-enabled-configurationManagement-omitted-max-servers-invalid-value",
 			unsupportedConfigOverrides: `{"maxDynamicServers":"10K"}`,
 			dcmEnabled:                 true,
+			/* configurationManagement omitted. */
+			expectedEnv: notSet,
+		},
+		{
+			name:                       "featuregate-enabled-configurationManagement-ForkAndReload-max-servers-invalid-value",
+			unsupportedConfigOverrides: `{"maxDynamicServers":"10K"}`,
+			dcmEnabled:                 true,
+			configurationManagement:    operatorv1.IngressControllerConfigurationManagementForkAndReload,
+			expectedEnv:                notSet,
+		},
+		{
+			name:                       "featuregate-enabled-configurationManagement-Dynamic-max-servers-invalid-value",
+			unsupportedConfigOverrides: `{"maxDynamicServers":"10K"}`,
+			dcmEnabled:                 true,
+			configurationManagement:    operatorv1.IngressControllerConfigurationManagementDynamic,
 			expectedEnv: []envData{
 				{"ROUTER_HAPROXY_CONFIG_MANAGER", true, "true"},
 				{"ROUTER_MAX_DYNAMIC_SERVERS", true, "1"},
@@ -1167,33 +1206,49 @@ func TestDesiredRouterDeploymentDynamicConfigManager(t *testing.T) {
 			},
 		},
 		{
-			name:                       "featuregate-enabled-dcm-override",
+			name:                       "featuregate-enabled-configurationManagement-omitted-dcm-override",
 			unsupportedConfigOverrides: `{"dynamicConfigManager":"false","maxDynamicServers":"7"}`,
 			dcmEnabled:                 true,
-			expectedEnv: []envData{
-				{"ROUTER_HAPROXY_CONFIG_MANAGER", false, ""},
-				{"ROUTER_MAX_DYNAMIC_SERVERS", false, ""},
-				{"ROUTER_BLUEPRINT_ROUTE_POOL_SIZE", false, ""},
-			},
+			/* configurationManagement omitted. */
+			expectedEnv: notSet,
+		},
+		{
+			name:                       "featuregate-enabled-configurationManagement-ForkAndReload-dcm-override",
+			unsupportedConfigOverrides: `{"dynamicConfigManager":"false","maxDynamicServers":"7"}`,
+			dcmEnabled:                 true,
+			configurationManagement:    operatorv1.IngressControllerConfigurationManagementForkAndReload,
+			expectedEnv:                notSet,
+		},
+		{
+			name:                       "featuregate-enabled-configurationManagement-Dynamic-dcm-override",
+			unsupportedConfigOverrides: `{"dynamicConfigManager":"false","maxDynamicServers":"7"}`,
+			dcmEnabled:                 true,
+			configurationManagement:    operatorv1.IngressControllerConfigurationManagementDynamic,
+			expectedEnv:                notSet,
 		},
 		{
 			name:       "featuregate-disabled-default-values",
 			dcmEnabled: false,
-			expectedEnv: []envData{
-				{"ROUTER_HAPROXY_CONFIG_MANAGER", false, ""},
-				{"ROUTER_MAX_DYNAMIC_SERVERS", false, ""},
-				{"ROUTER_BLUEPRINT_ROUTE_POOL_SIZE", false, ""},
-			},
+			/* configurationManagement omitted. */
+			expectedEnv: notSet,
+		},
+		{
+			name:                    "featuregate-disabled-configurationManagement-ForkAndReload-default-values",
+			dcmEnabled:              false,
+			configurationManagement: operatorv1.IngressControllerConfigurationManagementForkAndReload,
+			expectedEnv:             notSet,
+		},
+		{
+			name:                    "featuregate-disabled-configurationManagement-Dynamic-default-values",
+			dcmEnabled:              false,
+			configurationManagement: operatorv1.IngressControllerConfigurationManagementDynamic,
+			expectedEnv:             notSet,
 		},
 		{
 			name:                       "featuregate-disabled-max-servers",
 			unsupportedConfigOverrides: `{"maxDynamicServers":"7"}`,
 			dcmEnabled:                 false,
-			expectedEnv: []envData{
-				{"ROUTER_HAPROXY_CONFIG_MANAGER", false, ""},
-				{"ROUTER_MAX_DYNAMIC_SERVERS", false, ""},
-				{"ROUTER_BLUEPRINT_ROUTE_POOL_SIZE", false, ""},
-			},
+			expectedEnv:                notSet,
 		},
 		{
 			name:                       "featuregate-disabled-dcm-override",
@@ -1213,6 +1268,9 @@ func TestDesiredRouterDeploymentDynamicConfigManager(t *testing.T) {
 					Name: "default",
 				},
 				Spec: operatorv1.IngressControllerSpec{
+					TuningOptions: operatorv1.IngressControllerTuningOptions{
+						ConfigurationManagement: tc.configurationManagement,
+					},
 					UnsupportedConfigOverrides: runtime.RawExtension{
 						Raw: []byte(tc.unsupportedConfigOverrides),
 					},
