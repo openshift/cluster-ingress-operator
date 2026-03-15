@@ -323,6 +323,7 @@ func TestReconcileOnlyStartsControllerOnce(t *testing.T) {
 	res, err := reconciler.Reconcile(context.Background(), req)
 	assert.NoError(t, err)
 	assert.Equal(t, reconcile.Result{}, res)
+	assert.True(t, reconciler.controllersStarted, "controllersStarted should be true after first reconcile")
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	select {
@@ -337,6 +338,7 @@ func TestReconcileOnlyStartsControllerOnce(t *testing.T) {
 	res, err = reconciler.Reconcile(context.Background(), req)
 	assert.NoError(t, err)
 	assert.Equal(t, reconcile.Result{}, res)
+	assert.True(t, reconciler.controllersStarted, "controllersStarted should still be true after second reconcile")
 	select {
 	case <-ctrl.StartNotificationChan:
 		t.Error("Start() was called again for the second reconcile request")

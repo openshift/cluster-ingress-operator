@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
@@ -117,11 +118,12 @@ type Config struct {
 type reconciler struct {
 	config Config
 
-	client           client.Client
-	cache            cache.Cache
-	recorder         record.EventRecorder
-	fieldIndexer     client.FieldIndexer
-	startControllers sync.Once
+	client             client.Client
+	cache              cache.Cache
+	recorder           record.EventRecorder
+	fieldIndexer       client.FieldIndexer
+	mu                 sync.Mutex
+	controllersStarted bool
 }
 
 // Reconcile expects request to refer to a FeatureGate and creates or
@@ -153,16 +155,25 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		return reconcile.Result{}, nil
 	}
 
-	r.startControllers.Do(func() {
-		r.ensureDependentControllers(ctx)
-	})
+	if err := r.ensureDependentControllers(ctx); err != nil {
+		log.Error(err, "failed to ensure dependent controllers, will retry")
+		return reconcile.Result{RequeueAfter: 10 * time.Second}, nil
+	}
 
 	return reconcile.Result{}, nil
 }
 
 // ensureDependentControllers indexes GatewayClass resources and starts
-// dependent controllers.
-func (r *reconciler) ensureDependentControllers(ctx context.Context) {
+// dependent controllers exactly once. Returns an error if the GatewayClass
+// field indexer cannot be created, allowing the caller to retry.
+func (r *reconciler) ensureDependentControllers(ctx context.Context) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.controllersStarted {
+		return nil
+	}
+
 	// Index gateway classes based on their spec.controllerName
 	if err := r.fieldIndexer.IndexField(
 		context.Background(),
@@ -175,7 +186,7 @@ func (r *reconciler) ensureDependentControllers(ctx context.Context) {
 			}
 			return []string{string(gatewayclass.Spec.ControllerName)}
 		})); err != nil {
-		log.Error(err, "failed to add field indexer")
+		return fmt.Errorf("failed to add field indexer: %w", err)
 	}
 	for i := range r.config.DependentControllers {
 		c := &r.config.DependentControllers[i]
@@ -185,4 +196,7 @@ func (r *reconciler) ensureDependentControllers(ctx context.Context) {
 			}
 		}()
 	}
+
+	r.controllersStarted = true
+	return nil
 }
