@@ -154,29 +154,35 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	}
 
 	r.startControllers.Do(func() {
-		// Index gateway classes based on their spec.controllerName
-		if err := r.fieldIndexer.IndexField(
-			context.Background(),
-			&gatewayapiv1.GatewayClass{},
-			operatorcontroller.GatewayClassIndexFieldName,
-			client.IndexerFunc(func(o client.Object) []string {
-				gatewayclass, ok := o.(*gatewayapiv1.GatewayClass)
-				if !ok {
-					return []string{}
-				}
-				return []string{string(gatewayclass.Spec.ControllerName)}
-			})); err != nil {
-			log.Error(err, "failed to add field indexer")
-		}
-		for i := range r.config.DependentControllers {
-			c := &r.config.DependentControllers[i]
-			go func() {
-				if err := (*c).Start(ctx); err != nil {
-					log.Error(err, "cannot start controller")
-				}
-			}()
-		}
+		r.ensureDependentControllers(ctx)
 	})
 
 	return reconcile.Result{}, nil
+}
+
+// ensureDependentControllers indexes GatewayClass resources and starts
+// dependent controllers.
+func (r *reconciler) ensureDependentControllers(ctx context.Context) {
+	// Index gateway classes based on their spec.controllerName
+	if err := r.fieldIndexer.IndexField(
+		context.Background(),
+		&gatewayapiv1.GatewayClass{},
+		operatorcontroller.GatewayClassIndexFieldName,
+		client.IndexerFunc(func(o client.Object) []string {
+			gatewayclass, ok := o.(*gatewayapiv1.GatewayClass)
+			if !ok {
+				return []string{}
+			}
+			return []string{string(gatewayclass.Spec.ControllerName)}
+		})); err != nil {
+		log.Error(err, "failed to add field indexer")
+	}
+	for i := range r.config.DependentControllers {
+		c := &r.config.DependentControllers[i]
+		go func() {
+			if err := (*c).Start(ctx); err != nil {
+				log.Error(err, "cannot start controller")
+			}
+		}()
+	}
 }
