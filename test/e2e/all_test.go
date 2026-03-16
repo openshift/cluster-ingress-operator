@@ -105,7 +105,6 @@ func TestAll(t *testing.T) {
 		t.Run("TestAWSLBTypeDefaulting", TestAWSLBTypeDefaulting)
 		t.Run("TestAWSResourceTagsChanged", TestAWSResourceTagsChanged)
 		t.Run("TestHstsPolicyWorks", TestHstsPolicyWorks)
-		t.Run("TestIngressControllerCustomEndpoints", TestIngressControllerCustomEndpoints)
 		t.Run("TestIngressStatus", TestIngressStatus)
 		t.Run("TestLocalWithFallbackOverrideForLoadBalancerService", TestLocalWithFallbackOverrideForLoadBalancerService)
 		t.Run("TestOperatorSteadyConditions", TestOperatorSteadyConditions)
@@ -139,5 +138,10 @@ func TestAll(t *testing.T) {
 		// preventing any impact of the mutating webhook on pod creation in the cluster
 		t.Run("TestGatewayAPI", TestGatewayAPI)
 		t.Run("TestIngressControllerConditionsMetricAfterRestart", TestIngressControllerConditionsMetricAfterRestart)
+		// TestIngressControllerCustomEndpoints must run last because
+		// modifying Infrastructure.spec.platformSpec.aws.serviceEndpoints
+		// triggers MachineConfig re-rendering, causing a full cluster
+		// node rollout. Running it last avoids disrupting other tests.
+		t.Run("TestIngressControllerCustomEndpoints", TestIngressControllerCustomEndpoints)
 	})
 }
