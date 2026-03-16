@@ -159,6 +159,18 @@ rules:
   - '*'
 
 - apiGroups:
+  - networking.k8s.io
+  resources:
+  - networkpolicies
+  verbs:
+  - get
+  - list
+  - create
+  - update
+  - watch
+  - delete
+
+- apiGroups:
   - gateway.networking.k8s.io
   resources:
   - gatewayclasses
