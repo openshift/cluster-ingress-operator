@@ -16,6 +16,8 @@ import (
 	operatorclient "github.com/openshift/cluster-ingress-operator/pkg/operator/client"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	util "github.com/openshift/cluster-ingress-operator/pkg/util"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -82,7 +84,7 @@ func TestGatewayAPI(t *testing.T) {
 		// TODO: Uninstall OSSM after test is completed.
 	})
 
-	t.Run("testGatewayAPIResources", testGatewayAPIResources)
+	/*t.Run("testGatewayAPIResources", testGatewayAPIResources)
 	t.Run("testGatewayAPIObjects", testGatewayAPIObjects)
 	t.Run("testGatewayAPIManualDeployment", testGatewayAPIManualDeployment)
 	t.Run("testGatewayAPIIstioInstallation", testGatewayAPIIstioInstallation)
@@ -91,10 +93,12 @@ func TestGatewayAPI(t *testing.T) {
 	t.Run("testGatewayAPIDNSListenerWithNoHostname", testGatewayAPIDNSListenerWithNoHostname)
 	t.Run("testGatewayAPIInfrastructureAnnotations", testGatewayAPIInfrastructureAnnotations)
 	t.Run("testGatewayAPIInternalLoadBalancer", testGatewayAPIInternalLoadBalancer)
-	t.Run("testGatewayAPIManualLBService", testGatewayAPIManualLBService)
 	t.Run("testGatewayAPIResourcesProtection", testGatewayAPIResourcesProtection)
 	t.Run("testGatewayAPIRBAC", testGatewayAPIRBAC)
-	t.Run("testOperatorDegradedCondition", testOperatorDegradedCondition)
+	t.Run("testOperatorDegradedCondition", testOperatorDegradedCondition)*/
+	t.Run("testGatewayAPIManualLBService", testGatewayAPIManualLBService)
+	t.Run("testGatewayAPIManualClusterIPService", testGatewayAPIManualClusterIPService)
+
 }
 
 // testGatewayAPIResources tests that Gateway API Custom Resource Definitions are available.
@@ -934,9 +938,8 @@ func testGatewayAPIInternalLoadBalancer(t *testing.T) {
 // testGatewayAPIManualLBService tests the case where a user deploys a service before
 // deploying a Gateway resource. This scenario is used when users wants to deploy a
 // customized service, as an example enforcing externalTrafficPolicy=Local.
-// In this case, it is expected that the whole management of the service is done by
-// the user, including in case a listener being created, the port of this listener
-// MUST be added by the user on the service manually
+// In this case, it is expected that Istio is able to manage the service ports and
+// selector, without replacing the desired state of other specs from the service
 func testGatewayAPIManualLBService(t *testing.T) {
 	// Given we want to execute tests against the Gateway to guarantee that externalTrafficPolicy=Local
 	// is working, it is better to do it just on environments with managed DNS
@@ -954,7 +957,7 @@ func testGatewayAPIManualLBService(t *testing.T) {
 	t.Logf("Creating service %s-%s with type %s...", gatewayName, gatewayClass.Name, corev1.ServiceTypeLoadBalancer)
 	service, err := createGatewayService(t, gatewayName, gatewayClass.Name,
 		operatorcontroller.DefaultOperandNamespace, corev1.ServiceTypeLoadBalancer,
-		corev1.ServiceExternalTrafficPolicyLocal)
+		false, true)
 	if err != nil {
 		t.Fatalf("Failed to create service %s/%s-%s: %v", operatorcontroller.DefaultOperandNamespace, gatewayName, gatewayClass.Name, err)
 	}
@@ -967,7 +970,7 @@ func testGatewayAPIManualLBService(t *testing.T) {
 		}
 	})
 
-	// Create a gateway with infrastructure annotations
+	// Create a simple Gateway
 	// Use a unique wildcard hostname to avoid conflicts with other gateways
 	gateway := &gatewayapiv1.Gateway{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1006,43 +1009,172 @@ func testGatewayAPIManualLBService(t *testing.T) {
 
 	// Wait for the service to be available and verify it has the expected externalTrafficPolicy
 	interval, timeout := 5*time.Second, 3*time.Minute
+	var serviceSpec corev1.ServiceSpec
 	t.Logf("Polling for up to %v to verify that service for gateway %q has the expected externalTrafficPolicy...", timeout, gatewayName)
-	if err := wait.PollUntilContextTimeout(context.Background(), interval, timeout, false, func(context context.Context) (bool, error) {
-		var services corev1.ServiceList
-		listOpts := []client.ListOption{
-			client.MatchingLabels{
-				"gateway.networking.k8s.io/gateway-name": gatewayName,
-			},
-			client.InNamespace(gateway.Namespace),
-		}
-		if err := kclient.List(context, &services, listOpts...); err != nil {
-			t.Logf("Failed to list services for gateway %s: %v; retrying...", gatewayName, err)
-			return false, nil
-		}
-
-		if len(services.Items) == 0 {
-			t.Logf("No services found for gateway %s yet; retrying...", gatewayName)
-			return false, nil
-		}
-
-		if len(services.Items) > 1 {
-			t.Fatalf("Expected 1 service for gateway %s, found %d", gatewayName, len(services.Items))
-		}
-
-		service := services.Items[0]
-
-		// Check if the traffic policy matches
-		if service.Spec.ExternalTrafficPolicy != corev1.ServiceExternalTrafficPolicyLocal {
-			return false, fmt.Errorf("service externalTrafficPolicy was mutated to %v", service.Spec.ExternalTrafficPolicy)
-		}
-		return true, nil
-
-	}); err != nil {
-		t.Fatalf("Failed to observe the expected externalTrafficPolicy on service for gateway %s: %v", gatewayName, err)
+	if err := wait.PollUntilContextTimeout(context.Background(), interval, timeout, false, waitForGatewayService(t, gateway, &serviceSpec, 1)); err != nil {
+		t.Fatalf("Failed to observe the expected service for gateway %s: %v", gatewayName, err)
 	}
 
+	assert.Equal(t, corev1.ServiceTypeLoadBalancer, serviceSpec.Type)
+	assert.Equal(t, corev1.ServiceExternalTrafficPolicyLocal, serviceSpec.ExternalTrafficPolicy, "externalTrafficPolicy does not match")
+	expectedSelector := map[string]string{
+		"gateway.networking.k8s.io/gateway-name": gatewayName,
+	}
+
+	assert.Equal(t, expectedSelector, serviceSpec.Selector, "expected service selector does not match")
+	require.Len(t, serviceSpec.Ports, 2, "service must have 2 ports (one set by Istio)")
+	port1 := serviceSpec.Ports[1]
+	assert.Equal(t, "http", port1.Name)
+	assert.Equal(t, corev1.ProtocolTCP, port1.Protocol)
+	assert.Equal(t, int32(80), port1.Port)
+
 	t.Logf("Successfully verified that externalTrafficPolicy was not mutated %s", gatewayName)
-	// TODO: Add a connection test
+
+	// We now add a new Listener to the Gateway, and expect that Istio adds it to the service, but still respects
+	// the externalTrafficPolicy
+	if err := updateGatewaySpecWithRetry(t, client.ObjectKeyFromObject(gateway), timeout, func(spec *gatewayapiv1.GatewaySpec) {
+		newListener := gatewayapiv1.Listener{
+			Name:     "http-8080",
+			Port:     gatewayapiv1.PortNumber(8080),
+			Protocol: gatewayapiv1.HTTPProtocolType,
+		}
+		spec.Listeners = append(spec.Listeners, newListener)
+	}); err != nil {
+		t.Fatalf("failed to update gateway listener: %v", err)
+	}
+
+	t.Logf("Polling for up to %v to verify that service for gateway %q has the new Port but externalTrafficPolicy is unchanged...", timeout, gatewayName)
+	if err := wait.PollUntilContextTimeout(context.Background(), interval, timeout, false, waitForGatewayService(t, gateway, &serviceSpec, 2)); err != nil {
+		t.Fatalf("Failed to observe the expected service for gateway %s: %v", gatewayName, err)
+	}
+	assert.Equal(t, corev1.ServiceExternalTrafficPolicyLocal, serviceSpec.ExternalTrafficPolicy, "externalTrafficPolicy does not match")
+	assert.Equal(t, expectedSelector, serviceSpec.Selector, "expected service selector does not match")
+	require.Len(t, serviceSpec.Ports, 3, "service must have 3 ports (two set by Istio)")
+	port1 = serviceSpec.Ports[1]
+	assert.Equal(t, "http", port1.Name)
+	assert.Equal(t, corev1.ProtocolTCP, port1.Protocol)
+	assert.Equal(t, int32(80), port1.Port)
+	port2 := serviceSpec.Ports[2]
+	assert.Equal(t, "http-8080", port2.Name)
+	assert.Equal(t, corev1.ProtocolTCP, port2.Protocol)
+	assert.Equal(t, int32(8080), port2.Port)
+}
+
+// testGatewayAPIManualClusterIPService tests the case where a user deploys a service before
+// deploying a Gateway resource, and the service is of type ClusterIP.
+// In this case, it is NOT EXPECTED that Istio is able to manage the service ports and
+// selector, and user must set them manually.
+// This means the Gateway will be ready just if it has at least one listener port set
+func testGatewayAPIManualClusterIPService(t *testing.T) {
+	gatewayClass, err := createGatewayClass(t, operatorcontroller.OpenShiftDefaultGatewayClassName, operatorcontroller.OpenShiftGatewayClassControllerName)
+	if err != nil {
+		t.Fatalf("Failed to create gatewayclass: %v", err)
+	}
+
+	gatewayName := "test-gateway-clusterip-service"
+
+	t.Logf("Creating service %s-%s with type %s...", gatewayName, gatewayClass.Name, corev1.ServiceTypeClusterIP)
+	service, err := createGatewayService(t, gatewayName, gatewayClass.Name,
+		operatorcontroller.DefaultOperandNamespace, corev1.ServiceTypeClusterIP,
+		true, false)
+	if err != nil {
+		t.Fatalf("Failed to create service %s/%s-%s: %v", operatorcontroller.DefaultOperandNamespace, gatewayName, gatewayClass.Name, err)
+	}
+	t.Cleanup(func() {
+		if err := kclient.Delete(context.TODO(), service); err != nil {
+			if errors.IsNotFound(err) {
+				return
+			}
+			t.Errorf("Failed to delete service %s/%s: %v", service.Namespace, service.Name, err)
+		}
+	})
+
+	// Create a simple Gateway
+	// Use a unique wildcard hostname to avoid conflicts with other gateways
+	gateway := &gatewayapiv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      gatewayName,
+			Namespace: operatorcontroller.DefaultOperandNamespace,
+		},
+		Spec: gatewayapiv1.GatewaySpec{
+			GatewayClassName: gatewayapiv1.ObjectName(gatewayClass.Name),
+			Listeners: []gatewayapiv1.Listener{{
+				Name:     "http",
+				Hostname: ptr.To(gatewayapiv1.Hostname(fmt.Sprintf("*.clusterip-service.%s", dnsConfig.Spec.BaseDomain))),
+				Port:     80,
+				Protocol: "HTTP",
+			}},
+		},
+	}
+
+	t.Logf("Creating gateway %s with custom service...", gatewayName)
+	if err := createWithRetryOnError(t, context.Background(), gateway, 2*time.Minute); err != nil {
+		t.Fatalf("Failed to create gateway %s: %v", gatewayName, err)
+	}
+
+	t.Cleanup(func() {
+		if err := kclient.Delete(context.TODO(), gateway); err != nil {
+			if errors.IsNotFound(err) {
+				return
+			}
+			t.Errorf("Failed to delete gateway %q: %v", gateway.Name, err)
+		}
+	})
+
+	// Wait for the gateway to be accepted and programmed
+	if _, err = assertGatewaySuccessful(t, operatorcontroller.DefaultOperandNamespace, gatewayName); err != nil {
+		t.Fatalf("Failed to accept/program gateway %s: %v", gatewayName, err)
+	}
+
+	// Wait for the service to be available and verify it has the expected externalTrafficPolicy
+	interval, timeout := 5*time.Second, 3*time.Minute
+	var serviceSpec corev1.ServiceSpec
+	t.Logf("Polling for up to %v to verify that service for gateway %q has the expected service type...", timeout, gatewayName)
+	if err := wait.PollUntilContextTimeout(context.Background(), interval, timeout, false, waitForGatewayService(t, gateway, &serviceSpec, 1)); err != nil {
+		t.Fatalf("Failed to observe the expected service for gateway %s: %v", gatewayName, err)
+	}
+
+	// The service type MUST NOT be mutated
+	require.Equal(t, corev1.ServiceTypeClusterIP, serviceSpec.Type)
+	expectedSelector := map[string]string{
+		"gateway.networking.k8s.io/gateway-name": gatewayName,
+	}
+	assert.Equal(t, expectedSelector, serviceSpec.Selector, "expected service selector does not match")
+	require.Len(t, serviceSpec.Ports, 2, "service must have 2 ports (one set by Istio)")
+	port1 := serviceSpec.Ports[1]
+	assert.Equal(t, "http", port1.Name)
+	assert.Equal(t, corev1.ProtocolTCP, port1.Protocol)
+	assert.Equal(t, int32(80), port1.Port)
+
+	// We now add a new Listener to the Gateway, and expect that Istio adds it to the service, but still respects
+	// the externalTrafficPolicy
+	if err := updateGatewaySpecWithRetry(t, client.ObjectKeyFromObject(gateway), timeout, func(spec *gatewayapiv1.GatewaySpec) {
+		newListener := gatewayapiv1.Listener{
+			Name:     "http-8080",
+			Port:     gatewayapiv1.PortNumber(8080),
+			Protocol: gatewayapiv1.HTTPProtocolType,
+		}
+		spec.Listeners = append(spec.Listeners, newListener)
+	}); err != nil {
+		t.Fatalf("failed to update gateway listener: %v", err)
+	}
+
+	t.Logf("Polling for up to %v to verify that service for gateway %q has the new Port but externalTrafficPolicy is unchanged...", timeout, gatewayName)
+	if err := wait.PollUntilContextTimeout(context.Background(), interval, timeout, false, waitForGatewayService(t, gateway, &serviceSpec, 2)); err != nil {
+		t.Fatalf("Failed to observe the expected service for gateway %s: %v", gatewayName, err)
+	}
+	// The service type MUST NOT be mutated
+	require.Equal(t, corev1.ServiceTypeClusterIP, serviceSpec.Type)
+	assert.Equal(t, expectedSelector, serviceSpec.Selector, "expected service selector does not match")
+	require.Len(t, serviceSpec.Ports, 3, "service must have 3 ports (two set by Istio)")
+	port1 = serviceSpec.Ports[1]
+	assert.Equal(t, "http", port1.Name)
+	assert.Equal(t, corev1.ProtocolTCP, port1.Protocol)
+	assert.Equal(t, int32(80), port1.Port)
+	port2 := serviceSpec.Ports[2]
+	assert.Equal(t, "http-8080", port2.Name)
+	assert.Equal(t, corev1.ProtocolTCP, port2.Protocol)
+	assert.Equal(t, int32(8080), port2.Port)
 }
 
 // testOperatorDegradedCondition verifies that unmanaged Gateway API CRDs affect

@@ -34,6 +34,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/utils/ptr"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -319,7 +320,7 @@ func createGatewayClass(t *testing.T, name, controllerName string) (*gatewayapiv
 
 // createGatewayClass checks if the GatewayClass can be created.
 // If it can, it is returned.  If it can't an error is returned.
-func createGatewayService(t *testing.T, gatewayName, gatewayClass, namespace string, svctype corev1.ServiceType, trafficpolicy corev1.ServiceExternalTrafficPolicy) (*corev1.Service, error) {
+func createGatewayService(t *testing.T, gatewayName, gatewayClass, namespace string, svctype corev1.ServiceType, setSelector bool, setManaged bool) (*corev1.Service, error) {
 	t.Helper()
 
 	svcDefinition := &corev1.Service{
@@ -331,20 +332,31 @@ func createGatewayService(t *testing.T, gatewayName, gatewayClass, namespace str
 			},
 		},
 		Spec: corev1.ServiceSpec{
-			Type:                  svctype,
-			ExternalTrafficPolicy: trafficpolicy,
+			Type: svctype,
 			Ports: []corev1.ServicePort{
 				{
-					Name:       "http",
-					Port:       80,
-					TargetPort: intstr.FromInt(80),
-					Protocol:   corev1.ProtocolTCP,
+					Name:        "status-port",
+					Port:        15021,
+					TargetPort:  intstr.FromInt(15021),
+					Protocol:    corev1.ProtocolTCP,
+					AppProtocol: ptr.To("tcp"),
 				},
 			},
-			Selector: map[string]string{
-				"gateway.networking.k8s.io/gateway-name": gatewayName,
-			},
 		},
+	}
+
+	if svctype == corev1.ServiceTypeLoadBalancer {
+		svcDefinition.Spec.ExternalTrafficPolicy = corev1.ServiceExternalTrafficPolicyLocal
+	}
+
+	if setSelector {
+		svcDefinition.Spec.Selector = map[string]string{
+			"gateway.networking.k8s.io/gateway-name": gatewayName,
+		}
+	}
+
+	if setManaged {
+		svcDefinition.ObjectMeta.Labels["gateway.istio.io/managed"] = "openshift.io-gateway-controller-v1"
 	}
 
 	svckey := client.ObjectKeyFromObject(svcDefinition)
@@ -1362,4 +1374,43 @@ func updateGatewaySpecWithRetry(t *testing.T, name types.NamespacedName, timeout
 		}
 		return true, nil
 	})
+}
+
+func waitForGatewayService(t *testing.T, gateway *gatewayapiv1.Gateway, serviceSpec *corev1.ServiceSpec, portLen int) func(ctx context.Context) (bool, error) {
+	return func(ctx context.Context) (bool, error) {
+		var services corev1.ServiceList
+		listOpts := []client.ListOption{
+			client.MatchingLabels{
+				"gateway.networking.k8s.io/gateway-name": gateway.Name,
+			},
+			client.InNamespace(gateway.Namespace),
+		}
+		if err := kclient.List(ctx, &services, listOpts...); err != nil {
+			t.Logf("Failed to list services for gateway %s: %v; retrying...", gateway.Name, err)
+			return false, nil
+		}
+
+		if len(services.Items) == 0 {
+			t.Logf("No services found for gateway %s yet; retrying...", gateway.Name)
+			return false, nil
+		}
+
+		if len(services.Items) > 1 {
+			t.Fatalf("Expected 1 service for gateway %s, found %d", gateway.Name, len(services.Items))
+		}
+
+		*serviceSpec = services.Items[0].Spec
+
+		if len(serviceSpec.Selector) == 0 {
+			t.Logf("ServiceSpec Selector for %s is null; retrying...", services.Items[0].Name)
+			return false, nil
+		}
+
+		if len(serviceSpec.Ports) < portLen {
+			t.Logf("ServiceSpec Ports for %s is less than %d; retrying...", services.Items[0].Name, portLen)
+			return false, nil
+		}
+
+		return true, nil
+	}
 }
