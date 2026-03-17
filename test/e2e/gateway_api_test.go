@@ -95,6 +95,7 @@ func TestGatewayAPI(t *testing.T) {
 	t.Run("testGatewayAPIDNSListenerWithNoHostname", testGatewayAPIDNSListenerWithNoHostname)
 	t.Run("testGatewayAPIInfrastructureAnnotations", testGatewayAPIInfrastructureAnnotations)
 	t.Run("testGatewayAPIInternalLoadBalancer", testGatewayAPIInternalLoadBalancer)
+	t.Run("testGatewayAPIManualLBService", testGatewayAPIManualLBService)
 	t.Run("testGatewayAPIResourcesProtection", testGatewayAPIResourcesProtection)
 	t.Run("testGatewayAPIRBAC", testGatewayAPIRBAC)
 	t.Run("testOperatorDegradedCondition", testOperatorDegradedCondition)
@@ -1322,6 +1323,120 @@ func testGatewayAPIInternalLoadBalancer(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("The gateway %s, has failed to create an internal LoadBalancer service on the %s platform.", gatewayName, platform)
 	}
+}
+
+// testGatewayAPIManualLBService tests the case where a user deploys a service before
+// deploying a Gateway resource. This scenario is used when users wants to deploy a
+// customized service, as an example enforcing externalTrafficPolicy=Local.
+// In this case, it is expected that the whole management of the service is done by
+// the user, including in case a listener being created, the port of this listener
+// MUST be added by the user on the service manually
+func testGatewayAPIManualLBService(t *testing.T) {
+	// Given we want to execute tests against the Gateway to guarantee that externalTrafficPolicy=Local
+	// is working, it is better to do it just on environments with managed DNS
+	// This can be revisited on on-prem environments
+	if !isDNSManagementSupported(t) {
+		t.Skip("this test can be executed just on platforms that support managed DNS")
+	}
+	gatewayClass, err := createGatewayClass(t, operatorcontroller.OpenShiftDefaultGatewayClassName, operatorcontroller.OpenShiftGatewayClassControllerName)
+	if err != nil {
+		t.Fatalf("Failed to create gatewayclass: %v", err)
+	}
+
+	gatewayName := "test-gateway-managed-service"
+
+	t.Logf("Creating service %s-%s with type %s...", gatewayName, gatewayClass.Name, corev1.ServiceTypeLoadBalancer)
+	service, err := createGatewayService(t, gatewayName, gatewayClass.Name,
+		operatorcontroller.DefaultOperandNamespace, corev1.ServiceTypeLoadBalancer,
+		corev1.ServiceExternalTrafficPolicyLocal)
+	if err != nil {
+		t.Fatalf("Failed to create service %s/%s-%s: %v", operatorcontroller.DefaultOperandNamespace, gatewayName, gatewayClass.Name, err)
+	}
+	t.Cleanup(func() {
+		if err := kclient.Delete(context.TODO(), service); err != nil {
+			if errors.IsNotFound(err) {
+				return
+			}
+			t.Errorf("Failed to delete service %s/%s: %v", service.Namespace, service.Name, err)
+		}
+	})
+
+	// Create a gateway with infrastructure annotations
+	// Use a unique wildcard hostname to avoid conflicts with other gateways
+	gateway := &gatewayapiv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      gatewayName,
+			Namespace: operatorcontroller.DefaultOperandNamespace,
+		},
+		Spec: gatewayapiv1.GatewaySpec{
+			GatewayClassName: gatewayapiv1.ObjectName(gatewayClass.Name),
+			Listeners: []gatewayapiv1.Listener{{
+				Name:     "http",
+				Hostname: ptr.To(gatewayapiv1.Hostname(fmt.Sprintf("*.custom-service.%s", dnsConfig.Spec.BaseDomain))),
+				Port:     80,
+				Protocol: "HTTP",
+			}},
+		},
+	}
+
+	t.Logf("Creating gateway %s with custom service...", gatewayName)
+	if err := createWithRetryOnError(t, context.Background(), gateway, 2*time.Minute); err != nil {
+		t.Fatalf("Failed to create gateway %s: %v", gatewayName, err)
+	}
+
+	t.Cleanup(func() {
+		if err := kclient.Delete(context.TODO(), gateway); err != nil {
+			if errors.IsNotFound(err) {
+				return
+			}
+			t.Errorf("Failed to delete gateway %q: %v", gateway.Name, err)
+		}
+	})
+
+	// Wait for the gateway to be accepted and programmed
+	if _, err = assertGatewaySuccessful(t, operatorcontroller.DefaultOperandNamespace, gatewayName); err != nil {
+		t.Fatalf("Failed to accept/program gateway %s: %v", gatewayName, err)
+	}
+
+	// Wait for the service to be available and verify it has the expected externalTrafficPolicy
+	interval, timeout := 5*time.Second, 3*time.Minute
+	t.Logf("Polling for up to %v to verify that service for gateway %q has the expected externalTrafficPolicy...", timeout, gatewayName)
+	if err := wait.PollUntilContextTimeout(context.Background(), interval, timeout, false, func(context context.Context) (bool, error) {
+		var services corev1.ServiceList
+		listOpts := []client.ListOption{
+			client.MatchingLabels{
+				"gateway.networking.k8s.io/gateway-name": gatewayName,
+			},
+			client.InNamespace(gateway.Namespace),
+		}
+		if err := kclient.List(context, &services, listOpts...); err != nil {
+			t.Logf("Failed to list services for gateway %s: %v; retrying...", gatewayName, err)
+			return false, nil
+		}
+
+		if len(services.Items) == 0 {
+			t.Logf("No services found for gateway %s yet; retrying...", gatewayName)
+			return false, nil
+		}
+
+		if len(services.Items) > 1 {
+			t.Fatalf("Expected 1 service for gateway %s, found %d", gatewayName, len(services.Items))
+		}
+
+		service := services.Items[0]
+
+		// Check if the traffic policy matches
+		if service.Spec.ExternalTrafficPolicy != corev1.ServiceExternalTrafficPolicyLocal {
+			return false, fmt.Errorf("service externalTrafficPolicy was mutated to %v", service.Spec.ExternalTrafficPolicy)
+		}
+		return true, nil
+
+	}); err != nil {
+		t.Fatalf("Failed to observe the expected externalTrafficPolicy on service for gateway %s: %v", gatewayName, err)
+	}
+
+	t.Logf("Successfully verified that externalTrafficPolicy was not mutated %s", gatewayName)
+	// TODO: Add a connection test
 }
 
 // testOperatorDegradedCondition verifies that unmanaged Gateway API CRDs affect
