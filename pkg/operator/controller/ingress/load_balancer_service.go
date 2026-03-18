@@ -15,6 +15,7 @@ import (
 
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	awsutil "github.com/openshift/cluster-ingress-operator/pkg/util/aws"
 	corev1 "k8s.io/api/core/v1"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -496,6 +497,35 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 				}
 			}
 
+			// Set ipFamilies and ipFamilyPolicy for dual-stack clusters.
+			if platform.AWS != nil && awsutil.IsDualStack(platform.AWS.IPFamily) {
+				if lbStatus != nil && lbStatus.ProviderParameters != nil && lbStatus.ProviderParameters.AWS != nil {
+					switch lbStatus.ProviderParameters.AWS.Type {
+					case operatorv1.AWSNetworkLoadBalancer:
+						// NLB supports dual-stack natively.
+						ipFamilyPolicy := corev1.IPFamilyPolicyRequireDualStack
+						service.Spec.IPFamilyPolicy = &ipFamilyPolicy
+						if platform.AWS.IPFamily == configv1.DualStackIPv4Primary {
+							service.Spec.IPFamilies = []corev1.IPFamily{corev1.IPv4Protocol, corev1.IPv6Protocol}
+						} else {
+							service.Spec.IPFamilies = []corev1.IPFamily{corev1.IPv6Protocol, corev1.IPv4Protocol}
+						}
+					case operatorv1.AWSClassicLoadBalancer:
+						// CLB does not support dual-stack and only forwards
+						// IPv4 traffic. On DualStackIPv4Primary clusters,
+						// the service defaults to SingleStack/IPv4, which
+						// is correct. However on DualStackIPv6Primary, the
+						// default would be SingleStack/IPv6, causing OVN to
+						// refuse IPv4 traffic on the service's NodePort.
+						// Explicitly set SingleStack/IPv4 to ensure CLB
+						// traffic is always accepted.
+						ipFamilyPolicy := corev1.IPFamilyPolicySingleStack
+						service.Spec.IPFamilyPolicy = &ipFamilyPolicy
+						service.Spec.IPFamilies = []corev1.IPFamily{corev1.IPv4Protocol}
+					}
+				}
+			}
+
 			// Set the load balancer for AWS to be as aggressive as Azure (2 fail @ 5s interval, 2 healthy)
 			service.Annotations[awsLBHealthCheckTimeoutAnnotation] = awsLBHealthCheckTimeoutDefault
 			service.Annotations[awsLBHealthCheckUnhealthyThresholdAnnotation] = awsLBHealthCheckUnhealthyThresholdDefault
@@ -715,6 +745,27 @@ func loadBalancerServiceChanged(current, expected *corev1.Service) (bool, *corev
 		}
 	}
 
+	// Reconcile ipFamilies and ipFamilyPolicy when the desired service
+	// specifies them (i.e. the cluster is dual-stack).
+	if len(expected.Spec.IPFamilies) != 0 {
+		if !reflect.DeepEqual(current.Spec.IPFamilies, expected.Spec.IPFamilies) {
+			if !changed {
+				changed = true
+				updated = current.DeepCopy()
+			}
+			updated.Spec.IPFamilies = expected.Spec.IPFamilies
+		}
+	}
+	if expected.Spec.IPFamilyPolicy != nil {
+		if current.Spec.IPFamilyPolicy == nil || *current.Spec.IPFamilyPolicy != *expected.Spec.IPFamilyPolicy {
+			if !changed {
+				changed = true
+				updated = current.DeepCopy()
+			}
+			updated.Spec.IPFamilyPolicy = expected.Spec.IPFamilyPolicy
+		}
+	}
+
 	return changed, updated
 }
 
@@ -858,6 +909,10 @@ func loadBalancerServiceIsProgressing(ic *operatorv1.IngressController, service 
 		if wantLBType != haveLBType {
 			patchSpec := fmt.Sprintf(`{"spec":{"endpointPublishingStrategy":{"type":"LoadBalancerService","loadBalancer":{"providerParameters":{"type":"AWS","aws":{"type":"%s"}}}}}}`, haveLBType)
 			err := createEffectuationMessage("loadBalancer.providerParameters.aws.type", string(haveLBType), string(wantLBType), patchSpec, ic, service)
+			// Add a note to the effectuation message about CLB not supporting dual-stack.
+			if wantLBType == operatorv1.AWSClassicLoadBalancer && platform.AWS != nil && awsutil.IsDualStack(platform.AWS.IPFamily) {
+				err = fmt.Errorf("%w Classic Load Balancers do not support dual-stack. The IngressController %q will use IPv4-only despite that the cluster is configured as %q. Use an NLB type to support dual-stack networking.", err, ic.Name, platform.AWS.IPFamily)
+			}
 			errs = append(errs, err)
 		}
 
