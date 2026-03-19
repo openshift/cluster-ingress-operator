@@ -9,11 +9,14 @@ import (
 	"github.com/istio-ecosystem/sail-operator/pkg/install"
 
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	openshifttls "github.com/openshift/controller-runtime-common/pkg/tls"
 
+	configv1 "github.com/openshift/api/config/v1"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -122,8 +125,27 @@ func (r *reconciler) ensureIstio(ctx context.Context, istioVersion string) error
 		return fmt.Errorf("failed to check for InferencePool CRD: %w", err)
 	}
 
+	// Read the cluster APIServer config to get the TLS security profile.
+	// If this read fails (e.g. transient API error), continue with the
+	// intermediate default profile instead of hard-failing reconcile.
+	apiConfig := &configv1.APIServer{}
+	if err := r.client.Get(ctx, types.NamespacedName{Name: "cluster"}, apiConfig); err != nil {
+		if errors.IsNotFound(err) {
+			log.Info("APIServer 'cluster' not found; falling back to intermediate TLS profile")
+		} else {
+			return fmt.Errorf("failed to get APIServer 'cluster': %w", err)
+		}
+	}
+
+	tlsProfile, err := openshifttls.GetTLSProfileSpec(apiConfig.Spec.TLSSecurityProfile)
+	if err != nil {
+		return fmt.Errorf("failed to get APIServer 'cluster': %w", err)
+	}
+
 	// Build options from current state
-	opts := r.buildInstallerOptions(enableInferenceExtension, istioVersion)
+	opts := r.buildInstallerOptions(enableInferenceExtension, istioVersion, &extraIstioConfig{
+		tlsConfig: &tlsProfile,
+	})
 
 	opts.OverwriteOLMManagedCRD = r.overwriteOLMManagedCRDFunc
 
@@ -137,7 +159,7 @@ func (r *reconciler) ensureIstio(ctx context.Context, istioVersion string) error
 
 // buildInstallerOptions creates Sail Library installation options by merging
 // Gateway API defaults with OpenShift-specific overrides
-func (r *reconciler) buildInstallerOptions(enableInferenceExtension bool, istioVersion string) install.Options {
+func (r *reconciler) buildInstallerOptions(enableInferenceExtension bool, istioVersion string, extraConfig *extraIstioConfig) install.Options {
 	// Start with Gateway API defaults
 	values := install.GatewayAPIDefaults()
 
@@ -157,7 +179,7 @@ func (r *reconciler) buildInstallerOptions(enableInferenceExtension bool, istioV
 
 // openshiftValues returns the OpenShift-specific value overrides for Istio.
 // These values are merged on top of the gateway-api preset defaults.
-func openshiftValues(enableInferenceExtension bool, operandNamespace string) *sailv1.Values {
+func openshiftValues(enableInferenceExtension bool, operandNamespace string, extraConfig *extraIstioConfig) *sailv1.Values {
 	pilotEnv := gatewayAPIPilotEnv(enableInferenceExtension)
 
 	return &sailv1.Values{
