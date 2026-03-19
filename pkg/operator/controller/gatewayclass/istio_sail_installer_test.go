@@ -11,6 +11,7 @@ import (
 
 	"github.com/istio-ecosystem/sail-operator/pkg/install"
 
+	configv1 "github.com/openshift/api/config/v1"
 	testutil "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/test/util"
 
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
@@ -542,6 +543,7 @@ func TestOLMAndSailLibraryValuesMatch(t *testing.T) {
 	testCases := []struct {
 		name                     string
 		enableInferenceExtension bool
+		extraconfig              *extraIstioConfig
 	}{
 		{
 			name:                     "without inference extension",
@@ -551,13 +553,25 @@ func TestOLMAndSailLibraryValuesMatch(t *testing.T) {
 			name:                     "with inference extension",
 			enableInferenceExtension: true,
 		},
+		{
+			name: "with system proxy config enabled",
+			extraconfig: &extraIstioConfig{
+				proxyConfig: &configv1.Proxy{
+					Status: configv1.ProxyStatus{
+						HTTPProxy:  "http://some.proxy.tld:8080",
+						HTTPSProxy: "http://some.proxytls.tld:8080",
+						NoProxy:    ".cluster.local,.ec2.internal,.svc,10.0.0.0/16,10.128.0.0/14",
+					},
+				},
+			},
+		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Get values from Sail Library path (GatewayAPIDefaults + OpenShift overrides)
 			sailValues := install.GatewayAPIDefaults()
-			openshiftOverrides := openshiftValues(tc.enableInferenceExtension, "openshift-ingress")
+			openshiftOverrides := openshiftValues(tc.enableInferenceExtension, "openshift-ingress", tc.extraconfig)
 			sailValues = install.MergeValues(sailValues, openshiftOverrides)
 
 			// Get values from OLM path
@@ -566,6 +580,7 @@ func TestOLMAndSailLibraryValuesMatch(t *testing.T) {
 				metav1.OwnerReference{},
 				"v1.24.4",
 				tc.enableInferenceExtension,
+				tc.extraconfig,
 			)
 
 			cmpOpts := []cmp.Option{
