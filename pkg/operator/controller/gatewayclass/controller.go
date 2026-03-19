@@ -523,6 +523,15 @@ func (r *reconciler) reconcileWithSailLibrary(ctx context.Context, request recon
 	// Update status for indicating installation success, CRD management, etc.
 	status := r.sailInstaller.Status()
 	if changed := mapStatusToConditions(status, gatewayClass.Generation, &updatedGatewayClass.Status.Conditions); changed {
+		if status.Error != nil {
+			log.Error(status.Error, "Sail Library status updated: install failed", "installed", status.Installed, "version", status.Version, "crdState", status.CRDState)
+		} else if status.Installed {
+			log.Info("Sail Library status updated: installed", "version", status.Version, "crdState", status.CRDState)
+		} else {
+			// status.Error == nil && status.Installed == false
+			// Installation is in progress or not yet started
+			log.Info("Sail Library status updated: install pending", "version", status.Version, "crdState", status.CRDState)
+		}
 		if err := r.client.Status().Patch(ctx, updatedGatewayClass, client.MergeFrom(gatewayClass)); err != nil {
 			log.Error(err, "error patching the gatewayclass status")
 			errs = append(errs, err)
