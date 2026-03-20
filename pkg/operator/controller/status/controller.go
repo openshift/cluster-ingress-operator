@@ -290,13 +290,13 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 			Name:     state.CanaryNamespace.Name,
 		})
 	}
-	if state.haveOSSMSubscription {
-		subscriptionName := operatorcontroller.ServiceMeshOperatorSubscriptionName()
+
+	for _, subscription := range state.ossmSubscriptions {
 		related = append(related, configv1.ObjectReference{
 			Group:     operatorsv1alpha1.GroupName,
 			Resource:  "subscriptions",
-			Namespace: subscriptionName.Namespace,
-			Name:      subscriptionName.Name,
+			Namespace: subscription.Namespace,
+			Name:      subscription.Name,
 		})
 	}
 	if state.haveIstiosResource {
@@ -391,8 +391,6 @@ type operatorState struct {
 	unmanagedGatewayAPICRDNames string
 	// useSailLibrary indicates whether the GatewayAPIWithoutOLM feature is enabled.
 	useSailLibrary bool
-	// haveOSSMSubscription means that the subscription for OSSM 3 exists.
-	haveOSSMSubscription bool
 	// haveIstiosResource means that the "istios.sailproject.io" CRD exists.
 	haveIstiosResource bool
 	// haveGatewaysResource means that the
@@ -456,16 +454,6 @@ func (r *reconciler) getOperatorState(ctx context.Context, ingressNamespace, can
 	useSailLibrary := r.config.GatewayAPIWithoutOLMEnabled
 	state.useSailLibrary = useSailLibrary
 	if useOLM || useSailLibrary {
-		var subscription operatorsv1alpha1.Subscription
-		subscriptionName := operatorcontroller.ServiceMeshOperatorSubscriptionName()
-		if err := r.cache.Get(ctx, subscriptionName, &subscription); err != nil {
-			if !errors.IsNotFound(err) {
-				return state, fmt.Errorf("failed to get subscription %q: %v", subscriptionName, err)
-			}
-		} else {
-			state.haveOSSMSubscription = true
-
-		}
 		var (
 			crd                                  apiextensionsv1.CustomResourceDefinition
 			gatewaysResourceNamespacedName       = types.NamespacedName{Name: gatewaysResourceName}
@@ -501,7 +489,9 @@ func (r *reconciler) getOperatorState(ctx context.Context, ingressNamespace, can
 		// In Sail Library mode, we don't check for subscription conflicts, so no need to list them.
 		if useOLM {
 			subscriptionList := operatorsv1alpha1.SubscriptionList{}
-			if err := r.subscriptionCache.List(ctx, &subscriptionList); err != nil {
+			if err := r.client.List(ctx, &subscriptionList, &client.ListOptions{
+				Namespace: "",
+			}); err != nil {
 				return state, fmt.Errorf("failed to get subscriptions: %w", err)
 			}
 			for _, subscription := range subscriptionList.Items {
