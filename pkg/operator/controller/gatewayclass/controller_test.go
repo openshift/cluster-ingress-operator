@@ -31,6 +31,17 @@ import (
 	testutil "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/test/util"
 )
 
+var (
+	expectedProxyConfiguration = map[string]string{
+		"HTTP_PROXY":  "http://some.proxy.tld:8080",
+		"HTTPS_PROXY": "https://another.proxy.tld",
+		"NO_PROXY":    ".cluster.local,.ec2.internal,.svc,10.0.0.0/16,10.128.0.0/14",
+		"http_proxy":  "http://some.proxy.tld:8080",
+		"https_proxy": "https://another.proxy.tld",
+		"no_proxy":    ".cluster.local,.ec2.internal,.svc,10.0.0.0/16,10.128.0.0/14",
+	}
+)
+
 func Test_Reconcile(t *testing.T) {
 	req := func(name string) reconcile.Request {
 		return reconcile.Request{
@@ -72,7 +83,18 @@ func Test_Reconcile(t *testing.T) {
 		}
 	}
 
-	istio := func(version string, gieEnabled bool) *sailv1.Istio {
+	proxyConfig := func(http, https, noproxy string) *configv1.Proxy {
+		return &configv1.Proxy{
+			ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
+			Status: configv1.ProxyStatus{
+				HTTPProxy:  http,
+				HTTPSProxy: https,
+				NoProxy:    noproxy,
+			},
+		}
+	}
+
+	istio := func(version string, gieEnabled bool, proxyconfig map[string]string) *sailv1.Istio {
 		ret := &sailv1.Istio{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "openshift-gateway",
@@ -131,6 +153,7 @@ func Test_Reconcile(t *testing.T) {
 									Mode: sailv1.ProxyConfigProxyHeadersMetadataExchangeModeInMesh,
 								},
 							},
+							ProxyMetadata: proxyconfig,
 						},
 						IngressControllerMode: sailv1.MeshConfigIngressControllerModeOff,
 					},
@@ -201,7 +224,7 @@ func Test_Reconcile(t *testing.T) {
 		}
 	}
 
-	expectedSailLibraryOptions := func(version string, gieEnabled bool) *install.Options {
+	expectedSailLibraryOptions := func(version string, gieEnabled bool, proxyConfig map[string]string) *install.Options {
 		// Start with sail-operator's Gateway API defaults aka trust upstream defaults
 		values := install.GatewayAPIDefaults()
 
@@ -223,6 +246,11 @@ func Test_Reconcile(t *testing.T) {
 				Env: pilotEnv,
 				PodAnnotations: map[string]string{
 					"target.workload.openshift.io/management": `{"effect": "PreferredDuringScheduling"}`,
+				},
+			},
+			MeshConfig: &sailv1.MeshConfig{
+				DefaultConfig: &sailv1.MeshConfigProxyConfig{
+					ProxyMetadata: proxyConfig,
 				},
 			},
 		}
@@ -270,7 +298,21 @@ func Test_Reconcile(t *testing.T) {
 			},
 			expectCreate: []client.Object{
 				subscription("redhat-operators", "stable", "servicemeshoperator3.v3.0.1"),
-				istio("v1.24.4", false),
+				istio("v1.24.4", false, nil),
+			},
+			expectUpdate: []client.Object{},
+			expectDelete: []client.Object{},
+		},
+		{
+			name:    "OLM mode: Minimal gatewayclass and system proxy",
+			request: req("openshift-default"),
+			existingObjects: []client.Object{
+				gatewayClass("openshift-default", false, nil, nil, false),
+				proxyConfig("http://some.proxy.tld:8080", "https://another.proxy.tld", ".cluster.local,.ec2.internal,.svc,10.0.0.0/16,10.128.0.0/14"),
+			},
+			expectCreate: []client.Object{
+				subscription("redhat-operators", "stable", "servicemeshoperator3.v3.0.1"),
+				istio("v1.24.4", false, expectedProxyConfiguration),
 			},
 			expectUpdate: []client.Object{},
 			expectDelete: []client.Object{},
@@ -288,7 +330,7 @@ func Test_Reconcile(t *testing.T) {
 			},
 			expectCreate: []client.Object{
 				subscription("redhat-operators", "stable", "servicemeshoperator3.v3.0.1"),
-				istio("v1.24.4", true),
+				istio("v1.24.4", true, nil),
 			},
 			expectUpdate: []client.Object{},
 			expectDelete: []client.Object{},
@@ -306,7 +348,7 @@ func Test_Reconcile(t *testing.T) {
 			},
 			expectCreate: []client.Object{
 				subscription("redhat-operators", "stable", "servicemeshoperator3.v3.0.1"),
-				istio("v1.24.4", true),
+				istio("v1.24.4", true, nil),
 			},
 			expectUpdate: []client.Object{},
 			expectDelete: []client.Object{},
@@ -321,7 +363,7 @@ func Test_Reconcile(t *testing.T) {
 			},
 			expectCreate: []client.Object{
 				subscription("redhat-operators", "stable", "servicemeshoperator3.v3.0.1"),
-				istio("v1.24-latest", false),
+				istio("v1.24-latest", false, nil),
 			},
 			expectUpdate: []client.Object{},
 			expectDelete: []client.Object{},
@@ -339,7 +381,7 @@ func Test_Reconcile(t *testing.T) {
 			},
 			expectCreate: []client.Object{
 				subscription("foo", "bar", "baz"),
-				istio("quux", false),
+				istio("quux", false, nil),
 			},
 			expectUpdate: []client.Object{},
 			expectDelete: []client.Object{},
@@ -399,11 +441,11 @@ func Test_Reconcile(t *testing.T) {
 			existingObjects: []client.Object{
 				gatewayClass("openshift-default", true, nil, nil, false),
 				istioCRD(),
-				istio("v1.24.4", true),
+				istio("v1.24.4", true, nil),
 			},
 			expectPatched: []client.Object{},
 			expectDelete: []client.Object{
-				istio("v1.24.4", true),
+				istio("v1.24.4", true, nil),
 			},
 			expectedResult: reconcile.Result{
 				RequeueAfter: 5 * time.Second,
@@ -439,7 +481,7 @@ func Test_Reconcile(t *testing.T) {
 			expectedStatusPatched: []client.Object{
 				gatewayClass("openshift-default", true, nil, installedConditions(), false),
 			},
-			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", false),
+			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", false, nil),
 		},
 		{
 			name:              "Sail Library: installs Istio",
@@ -451,7 +493,20 @@ func Test_Reconcile(t *testing.T) {
 			expectedStatusPatched: []client.Object{
 				gatewayClass("openshift-default", true, nil, installedConditions(), false),
 			},
-			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", false),
+			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", false, nil),
+		},
+		{
+			name:              "Sail Library: installs Istio with system proxy configuration",
+			fakeSailInstaller: &fakeSailInstaller{},
+			request:           req("openshift-default"),
+			existingObjects: []client.Object{
+				gatewayClass("openshift-default", true, nil, nil, false),
+				proxyConfig("http://some.proxy.tld:8080", "https://another.proxy.tld", ".cluster.local,.ec2.internal,.svc,10.0.0.0/16,10.128.0.0/14"),
+			},
+			expectedStatusPatched: []client.Object{
+				gatewayClass("openshift-default", true, nil, installedConditions(), false),
+			},
+			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", false, expectedProxyConfiguration),
 		},
 		{
 			name:              "Sail Library: experimental InferencePool CRD",
@@ -468,7 +523,7 @@ func Test_Reconcile(t *testing.T) {
 			expectedStatusPatched: []client.Object{
 				gatewayClass("openshift-default", true, nil, installedConditions(), false),
 			},
-			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", true),
+			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", true, nil),
 		},
 		{
 			name:              "Sail Library: stable InferencePool CRD",
@@ -485,7 +540,7 @@ func Test_Reconcile(t *testing.T) {
 			expectedStatusPatched: []client.Object{
 				gatewayClass("openshift-default", true, nil, installedConditions(), false),
 			},
-			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", true),
+			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", true, nil),
 		},
 		{
 			name:              "Sail Library: Istio version override",
@@ -501,7 +556,7 @@ func Test_Reconcile(t *testing.T) {
 					"unsupported.do-not-use.openshift.io/istio-version": "v1.24-latest",
 				}, installedConditions(), false),
 			},
-			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24-latest", false),
+			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24-latest", false, nil),
 		},
 		{
 			name:              "Sail Library: full removal of last GatewayClass",
