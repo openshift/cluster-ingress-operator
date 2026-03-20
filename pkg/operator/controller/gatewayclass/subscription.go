@@ -43,16 +43,16 @@ func (r *reconciler) ensureServiceMeshOperatorSubscription(ctx context.Context, 
 		return false, nil, err
 	}
 
-	// There is a subscription that is not owned by us. In this case we early return
-	// because we cannot support multiple existing OSSM subscriptions, so instead of
-	// trying to continue the workflow of making CIO take over the subscription
-	// the code is early returned without further update, and CIO can be marked
-	// with a degradation warning that allows the cluster admin to identify the
-	// other existing subscriptions, and decide further action.
-	// This does not block the rest of GatewayClass reconciliation, it just avoids
-	// CIO taking over subscriptions (or adding new ones) while other subscription
-	// exists.
 	for _, subscription := range subscriptionList.Items {
+		// There is a subscription that is not owned by us. In this case we early return
+		// because we cannot support multiple existing OSSM subscriptions, so instead of
+		// trying to continue the workflow of making CIO take over the subscription
+		// the code is early returned without further update, and CIO can be marked
+		// with a degradation warning that allows the cluster admin to identify the
+		// other existing subscriptions, and decide further action.
+		// This does not block the rest of GatewayClass reconciliation, it just avoids
+		// CIO taking over subscriptions (or adding new ones) while other subscription
+		// exists.
 		if _, ok := subscription.Annotations[operatorcontroller.IngressOperatorOwnedAnnotation]; subscription.Spec.Package == "servicemeshoperator3" && !ok {
 			return true, &subscription, nil
 		}
