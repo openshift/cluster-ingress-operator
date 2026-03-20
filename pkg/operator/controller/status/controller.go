@@ -489,6 +489,7 @@ func (r *reconciler) getOperatorState(ctx context.Context, ingressNamespace, can
 		// In Sail Library mode, we don't check for subscription conflicts, so no need to list them.
 		if useOLM {
 			subscriptionList := operatorsv1alpha1.SubscriptionList{}
+			// r.client is being used here so we can scan all namespaces without relying/requiring them to be on the cache
 			if err := r.client.List(ctx, &subscriptionList, &client.ListOptions{
 				Namespace: "",
 			}); err != nil {
