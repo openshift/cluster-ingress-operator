@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	configv1 "github.com/openshift/api/config/v1"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
@@ -96,10 +95,6 @@ const (
 	istioImageZTunnel = "istio-ztunnel-rhel9"
 )
 
-type extraIstioConfig struct {
-	proxyConfig *configv1.Proxy
-}
-
 var log = logf.Logger.WithName(controllerName)
 var gatewayClassController controller.Controller
 
@@ -160,14 +155,6 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 		}
 	})
 	if err := c.Watch(source.Kind[client.Object](operatorCache, &apiextensionsv1.CustomResourceDefinition{}, reconciler.enqueueRequestForSomeGatewayClass(), isInferencepoolCrd)); err != nil {
-		return nil, err
-	}
-
-	// Watch for Proxy configuration to set the right options on Istio resource
-	isClusterProxy := predicate.NewPredicateFuncs(func(o client.Object) bool {
-		return o.GetName() == "cluster"
-	})
-	if err := c.Watch(source.Kind[client.Object](operatorCache, &configv1.Proxy{}, reconciler.enqueueRequestForSomeGatewayClass(), isClusterProxy)); err != nil {
 		return nil, err
 	}
 

@@ -10,7 +10,6 @@ import (
 
 	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
 
-	configv1 "github.com/openshift/api/config/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -46,16 +45,7 @@ func (r *reconciler) ensureIstioOLM(ctx context.Context, gatewayclass *gatewayap
 		return have, current, err
 	}
 
-	// We can ignore the error if it is not found. It means the configuration of proxy will
-	// be null, and no proxy will be configured in this case
-	var proxyConfig configv1.Proxy
-	if err := r.cache.Get(ctx, types.NamespacedName{Name: "cluster"}, &proxyConfig); err != nil && !errors.IsNotFound(err) {
-		return have, current, fmt.Errorf("error verifying cluster proxy configuration: %w", err)
-	}
-
-	desired := desiredIstio(name, ownerRef, istioVersion, enableInferenceExtension, &extraIstioConfig{
-		proxyConfig: &proxyConfig,
-	})
+	desired := desiredIstio(name, ownerRef, istioVersion, enableInferenceExtension)
 
 	switch {
 	case !have:
@@ -163,9 +153,9 @@ func gatewayAPIPilotEnv(enableInferenceExtension bool) map[string]string {
 }
 
 // desiredIstio returns the desired Istio CR.
-func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference, istioVersion string, enableInferenceExtension bool, extraConfig *extraIstioConfig) *sailv1.Istio {
+func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference, istioVersion string, enableInferenceExtension bool) *sailv1.Istio {
 	pilotContainerEnv := gatewayAPIPilotEnv(enableInferenceExtension)
-	istio := &sailv1.Istio{
+	return &sailv1.Istio{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace:       name.Namespace,
 			Name:            name.Name,
@@ -224,14 +214,6 @@ func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference, ist
 			Version: istioVersion,
 		},
 	}
-
-	if extraConfig != nil {
-		if proxyMetadata := buildProxyMetadata(extraConfig.proxyConfig); proxyMetadata != nil {
-			istio.Spec.Values.MeshConfig.DefaultConfig.ProxyMetadata = proxyMetadata
-		}
-	}
-
-	return istio
 }
 
 // currentIstio returns the current istio CR.
