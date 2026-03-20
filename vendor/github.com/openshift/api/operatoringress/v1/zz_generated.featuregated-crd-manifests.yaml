@@ -4,9 +4,7 @@ dnsrecords.ingress.operator.openshift.io:
   CRDName: dnsrecords.ingress.operator.openshift.io
   Capability: Ingress
   Category: ""
-  FeatureGates:
-  - AzureDualStackInstall
-  - GCPDualStackInstall
+  FeatureGates: []
   FilenameOperatorName: dns
   FilenameOperatorOrdering: "01"
   FilenameRunLevel: "0000_50"

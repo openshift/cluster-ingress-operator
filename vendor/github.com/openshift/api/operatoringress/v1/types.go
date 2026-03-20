@@ -49,10 +49,9 @@ type DNSRecordSpec struct {
 	// targets are record targets.
 	//
 	// +kubebuilder:validation:MinItems=1
-	// +listType=atomic
 	// +required
 	Targets []string `json:"targets"`
-	// recordType is the DNS record type. For example, "A", "AAAA", or "CNAME".
+	// recordType is the DNS record type. For example, "A" or "CNAME".
 	// +required
 	RecordType DNSRecordType `json:"recordType"`
 	// recordTTL is the record TTL in seconds. If zero, the default is 30.
@@ -82,7 +81,6 @@ type DNSRecordSpec struct {
 // DNSRecordStatus is the most recently observed status of each record.
 type DNSRecordStatus struct {
 	// zones are the status of the record in each zone.
-	// +listType=atomic
 	// +optional
 	Zones []DNSZoneStatus `json:"zones,omitempty"`
 
@@ -105,8 +103,6 @@ type DNSZoneStatus struct {
 	// If publishing the record succeeds, the "Published" condition will be
 	// set with status "True" and upon failure it will be set to "False" along
 	// with the reason and message describing the cause of the failure.
-	//
-	// +listType=atomic
 	Conditions []DNSZoneCondition `json:"conditions,omitempty"`
 }
 
@@ -133,8 +129,7 @@ type DNSZoneCondition struct {
 }
 
 // DNSRecordType is a DNS resource record type.
-// +openshift:validation:FeatureGateAwareEnum:featureGate="",enum=CNAME;A
-// +openshift:validation:FeatureGateAwareEnum:featureGate=AzureDualStackInstall;GCPDualStackInstall,enum=CNAME;A;AAAA
+// +kubebuilder:validation:Enum=CNAME;A
 type DNSRecordType string
 
 const (
@@ -143,9 +138,6 @@ const (
 
 	// ARecordType is an RFC 1035 A record.
 	ARecordType DNSRecordType = "A"
-
-	// AAAARecordType is an RFC 3596 AAAA record that is used to map a domain name to an IPv6 address.
-	AAAARecordType DNSRecordType = "AAAA"
 )
 
 // DNSManagementPolicy is a policy for configuring how the dns controller
@@ -177,6 +169,5 @@ type DNSRecordList struct {
 	// More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#metadata
 	metav1.ListMeta `json:"metadata,omitempty"`
 
-	// +listType=atomic
 	Items []DNSRecord `json:"items"`
 }

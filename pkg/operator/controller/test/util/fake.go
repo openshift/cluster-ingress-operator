@@ -29,7 +29,6 @@ type FakeClientRecorder struct {
 	Added   []client.Object
 	Updated []client.Object
 	Deleted []client.Object
-	Patched []client.Object
 
 	StatusWriter *FakeStatusWriter
 }
@@ -70,7 +69,6 @@ func (c *FakeClientRecorder) Update(ctx context.Context, obj client.Object, opts
 }
 
 func (c *FakeClientRecorder) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
-	c.Patched = append(c.Patched, obj)
 	return c.Client.Patch(ctx, obj, patch, opts...)
 }
 
@@ -86,7 +84,6 @@ type FakeStatusWriter struct {
 
 	Added   []client.Object
 	Updated []client.Object
-	Patched []client.Object
 }
 
 func (w *FakeStatusWriter) Create(ctx context.Context, obj client.Object, subResource client.Object, opts ...client.SubResourceCreateOption) error {
@@ -100,7 +97,6 @@ func (w *FakeStatusWriter) Update(ctx context.Context, obj client.Object, opts .
 }
 
 func (w *FakeStatusWriter) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
-	w.Patched = append(w.Patched, obj)
 	return w.StatusWriter.Patch(ctx, obj, patch, opts...)
 }
 

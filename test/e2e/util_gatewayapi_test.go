@@ -30,7 +30,6 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -470,28 +469,6 @@ func assertSubscription(t *testing.T, namespace, subName string) error {
 	return err
 }
 
-// assertNoSubscription verifies that no Subscription exists with the given name
-// and returns an error if one is found.
-func assertNoSubscription(t *testing.T, namespace, subName string) error {
-	t.Helper()
-	subscription := &operatorsv1alpha1.Subscription{}
-	nsName := types.NamespacedName{Namespace: namespace, Name: subName}
-
-	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(context context.Context) (bool, error) {
-		if err := kclient.Get(context, nsName, subscription); err != nil {
-			if kerrors.IsNotFound(err) {
-				t.Logf("verified that subscription %s does not exist (as expected)", subName)
-				return true, nil
-			}
-			t.Logf("failed to get subscription %s, retrying...", subName)
-			return false, nil
-		}
-		t.Logf("found subscription %s at installed version %s, but it should not exist", subscription.Name, subscription.Status.InstalledCSV)
-		return false, fmt.Errorf("subscription %s should not exist in Sail Library mode", subName)
-	})
-	return err
-}
-
 // deleteExistingSubscription deletes if the subscription of the given name exists and returns an error if not.
 func deleteExistingSubscription(t *testing.T, namespace, subName string) error {
 	t.Helper()
@@ -609,65 +586,6 @@ func assertIstiodControlPlane(t *testing.T) error {
 	return nil
 }
 
-// assertIstioCRDs validates that all required Istio CRDs are installed and owned by CIO.
-// It checks that each CRD exists and has the CIO ownership label.
-func assertIstioCRDs(t *testing.T) error {
-	t.Helper()
-	const cioOwnershipLabel = "ingress.operator.openshift.io/owned"
-
-	for _, crdName := range istioCRDNames {
-		_, err := assertCRDExists(t, crdName)
-		if err != nil {
-			return fmt.Errorf("failed to find istio crd %s: %w", crdName, err)
-		}
-
-		// Wait for CIO ownership label
-		crd := &apiextensionsv1.CustomResourceDefinition{}
-		name := types.NamespacedName{Name: crdName}
-		if err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 1*time.Minute, false, func(ctx context.Context) (bool, error) {
-			if err := kclient.Get(ctx, name, crd); err != nil {
-				t.Logf("failed to get crd %s: %v", name, err)
-				return false, nil
-			}
-			labels := crd.GetLabels()
-			if labels == nil || labels[cioOwnershipLabel] != "true" {
-				t.Logf("istio crd %s is missing CIO ownership label %s...retrying", crdName, cioOwnershipLabel)
-				return false, nil
-			}
-			return true, nil
-		}); err != nil {
-			return fmt.Errorf("timed out waiting for CIO ownership label on CRD %s: %w", crdName, err)
-		}
-		t.Logf("Verified Istio CRD %s has CIO ownership label", crdName)
-	}
-	return nil
-}
-
-// assertIstiodControlPlaneRemoved checks if the Istiod control plane has been successfully removed
-// and returns an error if not.
-func assertIstiodControlPlaneRemoved(t *testing.T) error {
-	t.Helper()
-	dep := &appsv1.Deployment{}
-	ns := types.NamespacedName{Namespace: operatorcontroller.DefaultOperandNamespace, Name: openshiftIstiodDeploymentName}
-
-	err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 2*time.Minute, false, func(context context.Context) (bool, error) {
-		if err := kclient.Get(context, ns, dep); err != nil {
-			if kerrors.IsNotFound(err) {
-				t.Logf("verified that istiod deployment %v has been removed", ns)
-				return true, nil
-			}
-			t.Logf("failed to get deployment %v, retrying...", ns)
-			return false, nil
-		}
-		t.Logf("istiod deployment %v still exists, waiting for removal...", ns)
-		return false, nil
-	})
-	if err != nil {
-		return fmt.Errorf("error waiting for deployment %v to be removed: %v", ns, err)
-	}
-	return nil
-}
-
 // assertGatewayClassSuccessful checks if the gateway class was created and accepted successfully
 // and returns an error if not.
 func assertGatewayClassSuccessful(t *testing.T, name string) (*gatewayapiv1.GatewayClass, error) {
@@ -748,7 +666,7 @@ func assertGatewaySuccessful(t *testing.T, namespace, name string) (*gatewayapiv
 		if acceptedConditionFound && programmedConditionFound {
 			return true, nil
 		}
-		t.Logf("[%s] Not all expected gateway conditions are found (Accepted=%v, Programmed=%v), checking gateway service...", time.Now().Format(time.DateTime), acceptedConditionFound, programmedConditionFound)
+		t.Logf("[%s] Not all expected gateway conditions are found, checking gateway service...", time.Now().Format(time.DateTime))
 
 		// The creation of the gateway service may be delayed.
 		// Check the current status of the service to see where we are.
@@ -1147,32 +1065,6 @@ func assertIstio(t *testing.T) error {
 	return err
 }
 
-// assertNoIstio verifies that no Istio CR exists
-// and returns an error if one is found.
-func assertNoIstio(t *testing.T) error {
-	t.Helper()
-	istio := &sailv1.Istio{}
-	nsName := types.NamespacedName{Namespace: operatorcontroller.DefaultOperandNamespace, Name: openshiftIstioName}
-
-	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(context context.Context) (bool, error) {
-		if err := kclient.Get(context, nsName, istio); err != nil {
-			if kerrors.IsNotFound(err) {
-				t.Logf("Verified that Istio %s/%s does not exist (as expected)", nsName.Namespace, nsName.Name)
-				return true, nil
-			}
-			if meta.IsNoMatchError(err) {
-				t.Logf("Verified that Istio CRD does not exist (Sail Library mode)")
-				return true, nil
-			}
-			t.Logf("Got unexpected error when checking for Istio %s/%s: %v.  Retrying...", nsName.Namespace, nsName.Name, err)
-			return false, nil
-		}
-		t.Logf("Found Istio %s/%s, but it should not exist", istio.Namespace, istio.Name)
-		return false, fmt.Errorf("Istio %s/%s should not exist in Sail Library mode", istio.Namespace, istio.Name)
-	})
-	return err
-}
-
 // deleteExistingIstio deletes if the Istio exists and returns an error if not.
 func deleteExistingIstio(t *testing.T) error {
 	t.Helper()
@@ -1217,91 +1109,6 @@ func deleteExistingIstio(t *testing.T) error {
 		return fmt.Errorf("Timed out waiting for Istio %s to be deleted: %v", nsName.Name, err)
 	}
 	t.Logf("Deleted Istio %s", nsName.Name)
-	return nil
-}
-
-// assertGatewayClassFinalizer verifies that the GatewayClass has the expected
-// sail library finalizer and returns an error if not.
-func assertGatewayClassFinalizer(t *testing.T, name string) error {
-	t.Helper()
-	gwc := &gatewayapiv1.GatewayClass{}
-	nsName := types.NamespacedName{Namespace: "", Name: name}
-	expectedFinalizer := "openshift.io/ingress-operator-sail-finalizer"
-
-	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(context context.Context) (bool, error) {
-		if err := kclient.Get(context, nsName, gwc); err != nil {
-			t.Logf("Failed to get GatewayClass %s: %v; retrying...", name, err)
-			return false, nil
-		}
-		for _, finalizer := range gwc.Finalizers {
-			if finalizer == expectedFinalizer {
-				t.Logf("Verified that GatewayClass %s has finalizer %s", name, expectedFinalizer)
-				return true, nil
-			}
-		}
-		t.Logf("GatewayClass %s does not have expected finalizer %s; retrying...", name, expectedFinalizer)
-		return false, nil
-	})
-	if err != nil {
-		return fmt.Errorf("GatewayClass %s does not have expected finalizer %s", name, expectedFinalizer)
-	}
-	return nil
-}
-
-// assertGatewayClassConditions verifies that the GatewayClass has the expected
-// ControllerInstalled and CRDsReady conditions and returns an error if not.
-func assertGatewayClassConditions(t *testing.T, name string) error {
-	t.Helper()
-	gwc := &gatewayapiv1.GatewayClass{}
-	nsName := types.NamespacedName{Namespace: "", Name: name}
-
-	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 2*time.Minute, false, func(context context.Context) (bool, error) {
-		if err := kclient.Get(context, nsName, gwc); err != nil {
-			t.Logf("Failed to get GatewayClass %s: %v; retrying...", name, err)
-			return false, nil
-		}
-
-		controllerInstalledFound := meta.IsStatusConditionTrue(gwc.Status.Conditions, "ControllerInstalled")
-		crdsReadyFound := meta.IsStatusConditionTrue(gwc.Status.Conditions, "CRDsReady")
-		if controllerInstalledFound && crdsReadyFound {
-			t.Logf("Verified that GatewayClass %s has required conditions (ControllerInstalled: %v, CRDsReady: %v)",
-				name, controllerInstalledFound, crdsReadyFound)
-			return true, nil
-		}
-
-		t.Logf("GatewayClass %s does not yet have all required conditions (ControllerInstalled: %v, CRDsReady: %v); retrying...",
-			name, controllerInstalledFound, crdsReadyFound)
-		return false, nil
-	})
-	if err != nil {
-		t.Logf("Last observed GatewayClass:\n%s", util.ToYaml(gwc))
-		return fmt.Errorf("GatewayClass %s does not have expected conditions", name)
-	}
-	return nil
-}
-
-// assertGatewayClassDeleted verifies that the GatewayClass has been deleted.
-func assertGatewayClassDeleted(t *testing.T, name string) error {
-	t.Helper()
-	gwc := &gatewayapiv1.GatewayClass{}
-	nsName := types.NamespacedName{Namespace: "", Name: name}
-
-	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(ctx context.Context) (bool, error) {
-		if err := kclient.Get(ctx, nsName, gwc); err != nil {
-			if kerrors.IsNotFound(err) {
-				t.Logf("Verified that GatewayClass %s has been deleted", name)
-				return true, nil
-			}
-			t.Logf("Error checking for GatewayClass: %v, retrying...", err)
-			return false, nil
-		}
-		t.Logf("GatewayClass %s still exists (DeletionTimestamp: %v, Finalizers: %v), waiting for deletion...",
-			gwc.Name, gwc.DeletionTimestamp, gwc.Finalizers)
-		return false, nil
-	})
-	if err != nil {
-		return fmt.Errorf("GatewayClass %s was not deleted within timeout", name)
-	}
 	return nil
 }
 

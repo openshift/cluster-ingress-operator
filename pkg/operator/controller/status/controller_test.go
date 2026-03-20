@@ -695,23 +695,13 @@ func Test_computeOperatorDegradedCondition(t *testing.T) {
 		return ic
 	}
 
-	type mode string
-	const (
-		olmMode         mode = "OLM"
-		sailLibraryMode mode = "SailLibrary"
-		both            mode = "Both"
-	)
-
 	testCases := []struct {
 		description     string
-		modes           mode // Which modes this test applies to
 		state           operatorState
 		expectCondition configv1.ClusterOperatorStatusCondition
 	}{
-		// Common tests (run in both modes)
 		{
 			description: "no ingresscontrollers exist",
-			modes:       both,
 			state:       operatorState{},
 			expectCondition: configv1.ClusterOperatorStatusCondition{
 				Type:    configv1.OperatorDegraded,
@@ -722,7 +712,6 @@ func Test_computeOperatorDegradedCondition(t *testing.T) {
 		},
 		{
 			description: "no default ingresscontroller",
-			modes:       both,
 			state: operatorState{
 				IngressControllers: []operatorv1.IngressController{
 					icWithStatus("test1", false),
@@ -738,7 +727,6 @@ func Test_computeOperatorDegradedCondition(t *testing.T) {
 		},
 		{
 			description: "default ingresscontroller degraded",
-			modes:       both,
 			state: operatorState{
 				IngressControllers: []operatorv1.IngressController{
 					icWithStatus("default", true),
@@ -754,7 +742,6 @@ func Test_computeOperatorDegradedCondition(t *testing.T) {
 		},
 		{
 			description: "default ingresscontroller not degraded",
-			modes:       both,
 			state: operatorState{
 				IngressControllers: []operatorv1.IngressController{
 					icWithStatus("default", false),
@@ -770,7 +757,6 @@ func Test_computeOperatorDegradedCondition(t *testing.T) {
 		},
 		{
 			description: "default ingresscontroller status unknown",
-			modes:       both,
 			state: operatorState{
 				IngressControllers: []operatorv1.IngressController{
 					ic("default"),
@@ -785,7 +771,6 @@ func Test_computeOperatorDegradedCondition(t *testing.T) {
 		},
 		{
 			description: "default ingresscontroller not degraded but unmanaged gateway api crds exist",
-			modes:       both,
 			state: operatorState{
 				IngressControllers: []operatorv1.IngressController{
 					icWithStatus("default", false),
@@ -801,7 +786,6 @@ func Test_computeOperatorDegradedCondition(t *testing.T) {
 		},
 		{
 			description: "default ingresscontroller degraded and unmanaged gateway api crds exist",
-			modes:       both,
 			state: operatorState{
 				IngressControllers: []operatorv1.IngressController{
 					icWithStatus("default", true),
@@ -815,10 +799,8 @@ func Test_computeOperatorDegradedCondition(t *testing.T) {
 				Message: `The "default" ingress controller reports Degraded=True: dummy: dummy.` + "\n" + `Unmanaged Gateway API CRDs found: notvalid.gateway.networking.k8s.io.`,
 			},
 		},
-		// OLM-specific tests
 		{
 			description: "Gateway API Enabled",
-			modes:       olmMode,
 			state: operatorState{
 				IngressControllers: []operatorv1.IngressController{
 					icWithStatus("default", false),
@@ -838,7 +820,6 @@ func Test_computeOperatorDegradedCondition(t *testing.T) {
 		},
 		{
 			description: "Gateway API Enabled, Sail Operator present",
-			modes:       olmMode,
 			state: operatorState{
 				IngressControllers: []operatorv1.IngressController{
 					icWithStatus("default", false),
@@ -859,7 +840,6 @@ func Test_computeOperatorDegradedCondition(t *testing.T) {
 		},
 		{
 			description: "Gateway API Enabled, Sail Operator present, older OSSM3 present",
-			modes:       olmMode,
 			state: operatorState{
 				IngressControllers: []operatorv1.IngressController{
 					icWithStatus("default", false),
@@ -881,7 +861,6 @@ func Test_computeOperatorDegradedCondition(t *testing.T) {
 		},
 		{
 			description: "Gateway API Enabled, newer OSSM3 present",
-			modes:       olmMode,
 			state: operatorState{
 				IngressControllers: []operatorv1.IngressController{
 					icWithStatus("default", false),
@@ -901,7 +880,6 @@ func Test_computeOperatorDegradedCondition(t *testing.T) {
 		},
 		{
 			description: "Gateway API Enabled, OSSM3 present with unexpected version number",
-			modes:       olmMode,
 			state: operatorState{
 				IngressControllers: []operatorv1.IngressController{
 					icWithStatus("default", false),
@@ -919,79 +897,15 @@ func Test_computeOperatorDegradedCondition(t *testing.T) {
 				Message: "The \"default\" ingress controller reports Degraded=False.\nfailed to compare installed OSSM version to expected: \"servicemeshoperator3.v3.5-beta\" does not match expected format",
 			},
 		},
-		// Sail Library-specific tests
-		{
-			description: "OSSM subscription conflicts ignored",
-			modes:       sailLibraryMode,
-			state: operatorState{
-				IngressControllers: []operatorv1.IngressController{
-					icWithStatus("default", false),
-				},
-				ossmSubscriptions: []operatorsv1alpha1.Subscription{
-					sub("sailoperator", "sailoperator", "sailoperator.v1.0.0", false),
-					sub("servicemeshoperator3", "servicemeshoperator3", "servicemeshoperator3.v3.0.0", false),
-				},
-				shouldInstallOSSM:                 true,
-				expectedGatewayAPIOperatorVersion: "servicemeshoperator3.v3.1.0",
-			},
-			expectCondition: configv1.ClusterOperatorStatusCondition{
-				Type:    configv1.OperatorDegraded,
-				Status:  configv1.ConditionFalse,
-				Reason:  "IngressNotDegraded",
-				Message: `The "default" ingress controller reports Degraded=False.`,
-			},
-		},
-		{
-			description: "OSSM conflicts ignored but unmanaged CRDs still degrade",
-			modes:       sailLibraryMode,
-			state: operatorState{
-				IngressControllers: []operatorv1.IngressController{
-					icWithStatus("default", false),
-				},
-				ossmSubscriptions: []operatorsv1alpha1.Subscription{
-					sub("sailoperator", "sailoperator", "sailoperator.v1.0.0", false),
-				},
-				shouldInstallOSSM:                 true,
-				expectedGatewayAPIOperatorVersion: "servicemeshoperator3.v3.1.0",
-				unmanagedGatewayAPICRDNames:       "httproutes.gateway.networking.k8s.io",
-			},
-			expectCondition: configv1.ClusterOperatorStatusCondition{
-				Type:    configv1.OperatorDegraded,
-				Status:  configv1.ConditionTrue,
-				Reason:  "GatewayAPICRDsDegraded",
-				Message: "Unmanaged Gateway API CRDs found: httproutes.gateway.networking.k8s.io.",
-			},
-		},
 	}
 
 	for _, tc := range testCases {
-		var modesToRun []bool // false = OLM, true = Sail
-		switch tc.modes {
-		case olmMode:
-			modesToRun = []bool{false}
-		case sailLibraryMode:
-			modesToRun = []bool{true}
-		case both:
-			modesToRun = []bool{false, true}
-		}
-
-		for _, useSail := range modesToRun {
-			modeLabel := "OLM"
-			if useSail {
-				modeLabel = "SailLibrary"
+		t.Run(tc.description, func(t *testing.T) {
+			actual := computeOperatorDegradedCondition(tc.state)
+			if diff := cmp.Diff(actual, tc.expectCondition); diff != "" {
+				t.Fatalf("actual condition differs from expected: %v", diff)
 			}
-			testName := fmt.Sprintf("%s [%s]", tc.description, modeLabel)
-
-			t.Run(testName, func(t *testing.T) {
-				state := tc.state
-				state.useSailLibrary = useSail
-
-				actual := computeOperatorDegradedCondition(state)
-				if diff := cmp.Diff(actual, tc.expectCondition); diff != "" {
-					t.Fatalf("actual condition differs from expected: %v", diff)
-				}
-			})
-		}
+		})
 	}
 }
 

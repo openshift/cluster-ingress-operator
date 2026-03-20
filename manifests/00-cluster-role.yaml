@@ -174,7 +174,6 @@ rules:
   - gateway.networking.k8s.io
   resources:
   - gatewayclasses
-  - gatewayclasses/status
   - gateways
   - httproutes
   - grpcroutes
@@ -208,7 +207,6 @@ rules:
   - sailoperator.io
   resources:
   - istios
-  - istiorevisions
   verbs:
   - '*'
 
