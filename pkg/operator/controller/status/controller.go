@@ -671,13 +671,13 @@ func computeGatewayAPIInstallDegradedCondition(state operatorState) configv1.Clu
 			case versionDiff < 0:
 				// Installed version is newer than expected. Gateway API install may still work if the correct Istio
 				// version is supported. Warn the user that the installed OSSM version may be incompatible.
-				warnings = append(warnings, fmt.Sprintf("Found version %s, but operator-managed Gateway API expects version %s. Operator-managed Gateway API may not work as intended.", subscription.Status.InstalledCSV, state.expectedGatewayAPIOperatorVersion))
+				warnings = append(warnings, fmt.Sprintf("Found version %s on %s/%s, but operator-managed Gateway API expects version %s. Operator-managed Gateway API may not work as intended.", subscription.Status.InstalledCSV, subscription.Namespace, subscription.Name, state.expectedGatewayAPIOperatorVersion))
 			case versionDiff > 0:
 				// Installed version is older than expected. Gateway API install will not work, since the correct Istio
 				// version won't be supported.
 				conflicts = append(conflicts, fmt.Sprintf("Installed version %s does not support operator-managed Gateway API. Install version %s or uninstall %s/%s to enable functionality.", subscription.Status.InstalledCSV, state.expectedGatewayAPIOperatorVersion, subscription.Namespace, subscription.Name))
 			case versionDiff == 0:
-				// Installed version is exactly as expected. Nothing to do.
+				warnings = append(warnings, fmt.Sprintf("Found the expected version %s on %s/%s, but the subscription is not managed by ingress operator. Operator-managed Gateway API may not work as intended.", subscription.Status.InstalledCSV, subscription.Namespace, subscription.Name))
 			}
 		} else {
 			conflicts = append(conflicts, fmt.Sprintf("Package %s from subscription %s/%s prevents enabling operator-managed Gateway API. Uninstall %s/%s to enable functionality.", subscription.Spec.Package, subscription.Namespace, subscription.Name, subscription.Namespace, subscription.Name))
