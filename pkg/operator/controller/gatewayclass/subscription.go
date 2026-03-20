@@ -33,9 +33,28 @@ const (
 
 // ensureServiceMeshOperatorSubscription attempts to ensure that a subscription
 // for servicemeshoperator is present and returns a Boolean indicating whether
-// it exists, the subscription if it exists, and an error value.
+// it exists, another boolean indicating if the one that exists is out of our namespace (pre-existing),
+// the subscription if it exists, and an error value.
 func (r *reconciler) ensureServiceMeshOperatorSubscription(ctx context.Context, catalog, channel, version string) (bool, *operatorsv1alpha1.Subscription, error) {
+
 	name := operatorcontroller.ServiceMeshOperatorSubscriptionName()
+
+	// TODO: check if we also can rely on a label selector to limit the List for ossm only
+	// TODO: check if we care on OSSM2 subscriptions
+	var subscriptionList operatorsv1alpha1.SubscriptionList
+	if err := r.client.List(ctx, &subscriptionList, &client.ListOptions{
+		Namespace: "",
+	}); err != nil {
+		return false, nil, err
+	}
+
+	for _, subscription := range subscriptionList.Items {
+		// The same subscription exists on a different namespace, we should not try to override it
+		if subscription.Name == name.Name && subscription.Namespace != name.Namespace {
+			return true, &subscription, nil
+		}
+	}
+
 	have, current, err := r.currentSubscription(ctx, name)
 	if err != nil {
 		return false, nil, err
