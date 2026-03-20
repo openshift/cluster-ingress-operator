@@ -289,13 +289,12 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		})
 	}
 	if r.config.GatewayAPIEnabled && r.config.GatewayAPIControllerEnabled {
-		if state.haveOSSMSubscription {
-			subscriptionName := operatorcontroller.ServiceMeshOperatorSubscriptionName()
+		for _, subscription := range state.ossmSubscriptions {
 			related = append(related, configv1.ObjectReference{
 				Group:     operatorsv1alpha1.GroupName,
 				Resource:  "subscriptions",
-				Namespace: subscriptionName.Namespace,
-				Name:      subscriptionName.Name,
+				Namespace: subscription.Namespace,
+				Name:      subscription.Name,
 			})
 		}
 		if state.haveIstiosResource {
@@ -391,8 +390,6 @@ type operatorState struct {
 	unmanagedGatewayAPICRDNames string
 	// useSailLibrary indicates whether the GatewayAPIWithoutOLM feature is enabled.
 	useSailLibrary bool
-	// haveOSSMSubscription means that the subscription for OSSM 3 exists.
-	haveOSSMSubscription bool
 	// haveIstiosResource means that the "istios.sailproject.io" CRD exists.
 	haveIstiosResource bool
 	// haveGatewaysResource means that the
@@ -457,38 +454,12 @@ func (r *reconciler) getOperatorState(ctx context.Context, ingressNamespace, can
 		useSailLibrary := r.config.GatewayAPIWithoutOLMEnabled
 		state.useSailLibrary = useSailLibrary
 		if r.config.GatewayAPIControllerEnabled && (useOLM || useSailLibrary) {
-			var subscription operatorsv1alpha1.Subscription
-			subscriptionName := operatorcontroller.ServiceMeshOperatorSubscriptionName()
-			if err := r.cache.Get(ctx, subscriptionName, &subscription); err != nil {
-				if !errors.IsNotFound(err) {
-					return state, fmt.Errorf("failed to get subscription %q: %v", subscriptionName, err)
-				}
-			} else {
-				state.haveOSSMSubscription = true
-			}
-
 			var (
 				crd                                  apiextensionsv1.CustomResourceDefinition
 				gatewaysResourceNamespacedName       = types.NamespacedName{Name: gatewaysResourceName}
 				gatewayclassesResourceNamespacedName = types.NamespacedName{Name: gatewayclassesResourceName}
 				istiosResourceNamespacedName         = types.NamespacedName{Name: istiosResourceName}
 			)
-
-			state.expectedGatewayAPIOperatorVersion = r.config.GatewayAPIOperatorVersion
-
-			// List OSSM subscriptions (OLM-specific only).
-			// In Sail Library mode, we don't check for subscription conflicts, so no need to list them.
-			if useOLM {
-				subscriptionList := operatorsv1alpha1.SubscriptionList{}
-				if err := r.subscriptionCache.List(ctx, &subscriptionList); err != nil {
-					return state, fmt.Errorf("failed to get subscriptions: %w", err)
-				}
-				for _, subscription := range subscriptionList.Items {
-					if subscription.Spec != nil && ossmSubscriptions.Has(subscription.Spec.Package) {
-						state.ossmSubscriptions = append(state.ossmSubscriptions, subscription)
-					}
-				}
-			}
 
 			if err := r.cache.Get(ctx, gatewaysResourceNamespacedName, &crd); err != nil {
 				if !errors.IsNotFound(err) {
@@ -510,6 +481,25 @@ func (r *reconciler) getOperatorState(ctx context.Context, ingressNamespace, can
 				}
 			} else {
 				state.haveIstiosResource = true
+			}
+
+			state.expectedGatewayAPIOperatorVersion = r.config.GatewayAPIOperatorVersion
+
+			// List OSSM subscriptions (OLM-specific only).
+			// In Sail Library mode, we don't check for subscription conflicts, so no need to list them.
+			if useOLM {
+				subscriptionList := operatorsv1alpha1.SubscriptionList{}
+				// r.client is being used here so we can scan all namespaces without relying/requiring them to be on the cache
+				if err := r.client.List(ctx, &subscriptionList, &client.ListOptions{
+					Namespace: "",
+				}); err != nil {
+					return state, fmt.Errorf("failed to get subscriptions: %w", err)
+				}
+				for _, subscription := range subscriptionList.Items {
+					if subscription.Spec != nil && ossmSubscriptions.Has(subscription.Spec.Package) {
+						state.ossmSubscriptions = append(state.ossmSubscriptions, subscription)
+					}
+				}
 			}
 
 			gatewayClassList := gatewayapiv1.GatewayClassList{}
