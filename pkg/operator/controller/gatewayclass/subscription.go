@@ -35,8 +35,6 @@ const (
 // for servicemeshoperator is present and returns a Boolean indicating whether
 // it exists, the subscription if it exists, and an error value.
 func (r *reconciler) ensureServiceMeshOperatorSubscription(ctx context.Context, catalog, channel, version string) (bool, *operatorsv1alpha1.Subscription, error) {
-	name := operatorcontroller.ServiceMeshOperatorSubscriptionName()
-
 	var subscriptionList operatorsv1alpha1.SubscriptionList
 	// r.client is being used here so we can scan all namespaces without relying/requiring them to be on the cache
 	if err := r.client.List(ctx, &subscriptionList, &client.ListOptions{
@@ -45,21 +43,22 @@ func (r *reconciler) ensureServiceMeshOperatorSubscription(ctx context.Context, 
 		return false, nil, err
 	}
 
+	// There is a subscription that is not owned by us. In this case we early return
+	// because we cannot support multiple existing OSSM subscriptions, so instead of
+	// trying to continue the workflow of making CIO take over the subscription
+	// the code is early returned without further update, and CIO can be marked
+	// with a degradation warning that allows the cluster admin to identify the
+	// other existing subscriptions, and decide further action.
+	// This does not block the rest of GatewayClass reconciliation, it just avoids
+	// CIO taking over subscriptions (or adding new ones) while other subscription
+	// exists.
 	for _, subscription := range subscriptionList.Items {
-		// There is a subscription that is not owned by us. In this case we early return
-		// because we cannot support multiple existing OSSM subscriptions, so instead of
-		// trying to continue the workflow of making CIO take over the subscription
-		// the code is early returned without further update, and CIO can be marked
-		// with a degradation warning that allows the cluster admin to identify the
-		// other existing subscriptions, and decide further action.
-		// This does not block the rest of GatewayClass reconciliation, it just avoids
-		// CIO taking over subscriptions (or adding new ones) while other subscription
-		// exists.
-		if _, ok := subscription.Annotations[operatorcontroller.IngressOperatorOwnedAnnotation]; subscription.Name == name.Name && !ok {
+		if _, ok := subscription.Annotations[operatorcontroller.IngressOperatorOwnedAnnotation]; subscription.Spec.Package == "servicemeshoperator3" && !ok {
 			return true, &subscription, nil
 		}
 	}
 
+	name := operatorcontroller.ServiceMeshOperatorSubscriptionName()
 	have, current, err := r.currentSubscription(ctx, name)
 	if err != nil {
 		return false, nil, err
