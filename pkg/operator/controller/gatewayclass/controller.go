@@ -463,7 +463,8 @@ func (r *reconciler) reconcileWithOLM(ctx context.Context, request reconcile.Req
 	if subscription == nil {
 		log.Info("No OSSM subscription available; skipping install plan enforcement")
 	} else if _, ok := subscription.Annotations[operatorcontroller.IngressOperatorOwnedAnnotation]; !ok {
-		log.Info("Found an existing OSSM subscription with another owner; installation skipped")
+		log.Info("Found an existing OSSM subscription with another owner; installation skipped",
+			"namespace", subscription.Namespace, "name", subscription.Name)
 	} else {
 		if _, _, err := r.ensureServiceMeshOperatorInstallPlan(ctx, ossmVersion); err != nil {
 			errs = append(errs, err)

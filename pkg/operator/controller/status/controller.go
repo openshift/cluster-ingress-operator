@@ -654,7 +654,7 @@ func computeGatewayAPIInstallDegradedCondition(state operatorState) configv1.Clu
 	conflicts := []string{}
 	warnings := []string{}
 	for _, subscription := range state.ossmSubscriptions {
-		if subscription.Spec.Package == "servicemeshoperator3" {
+		if subscription.Spec.Package == operatorcontroller.ServiceMeshOperatorSubscriptionPackage {
 			if _, found := subscription.Annotations[operatorcontroller.IngressOperatorOwnedAnnotation]; found {
 				// The subscription that the ingress operator creates naturally does not conflict with itself.
 				continue
