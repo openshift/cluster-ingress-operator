@@ -9,6 +9,7 @@ import (
 	securityv1 "github.com/openshift/api/security/v1"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -26,16 +27,15 @@ import (
 
 func Test_ensureServiceMeshOperatorSubscription(t *testing.T) {
 	tests := []struct {
-		name            string
-		catalog         string
-		channel         string
-		version         string
-		existingObjects []runtime.Object
-		expectCreate    []client.Object
-		expectUpdate    []client.Object
-		expectDelete    []client.Object
-		expectHave      bool
-		expectErr       bool
+		name               string
+		catalog            string
+		channel            string
+		version            string
+		existingObjects    []runtime.Object
+		expectCreate       []client.Object
+		expectUpdate       []client.Object
+		expectDelete       []client.Object
+		expectSubscription *operatorsv1alpha1.Subscription
 	}{
 		{
 			name:            "No subscription exists, should create one",
@@ -53,7 +53,20 @@ func Test_ensureServiceMeshOperatorSubscription(t *testing.T) {
 						},
 					},
 					Spec: &operatorsv1alpha1.SubscriptionSpec{
-						Channel:                "stable",
+						Channel: "stable",
+						Config: &operatorsv1alpha1.SubscriptionConfig{
+							Resources: &corev1.ResourceRequirements{
+								Limits: corev1.ResourceList{},
+								Requests: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("10m"),
+									corev1.ResourceMemory: resource.MustParse("64Mi"),
+								},
+							},
+							Annotations: map[string]string{
+								securityv1.RequiredSCCAnnotation:            RequiredSCCRestrictedV2,
+								WorkloadPartitioningManagementAnnotationKey: WorkloadPartitioningManagementPreferredScheduling,
+							},
+						},
 						InstallPlanApproval:    operatorsv1alpha1.ApprovalManual,
 						Package:                "servicemeshoperator3",
 						CatalogSource:          "redhat-operators",
@@ -64,11 +77,39 @@ func Test_ensureServiceMeshOperatorSubscription(t *testing.T) {
 			},
 			expectUpdate: []client.Object{},
 			expectDelete: []client.Object{},
-			expectHave:   true,
-			expectErr:    false,
+			expectSubscription: &operatorsv1alpha1.Subscription{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: operatorcontroller.ServiceMeshOperatorSubscriptionName().Namespace,
+					Name:      operatorcontroller.ServiceMeshOperatorSubscriptionName().Name,
+					Annotations: map[string]string{
+						operatorcontroller.IngressOperatorOwnedAnnotation: "",
+					},
+				},
+				Spec: &operatorsv1alpha1.SubscriptionSpec{
+					Channel: "stable",
+					Config: &operatorsv1alpha1.SubscriptionConfig{
+						Resources: &corev1.ResourceRequirements{
+							Limits: corev1.ResourceList{},
+							Requests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("10m"),
+								corev1.ResourceMemory: resource.MustParse("64Mi"),
+							},
+						},
+						Annotations: map[string]string{
+							securityv1.RequiredSCCAnnotation:            RequiredSCCRestrictedV2,
+							WorkloadPartitioningManagementAnnotationKey: WorkloadPartitioningManagementPreferredScheduling,
+						},
+					},
+					InstallPlanApproval:    operatorsv1alpha1.ApprovalManual,
+					Package:                "servicemeshoperator3",
+					CatalogSource:          "redhat-operators",
+					CatalogSourceNamespace: "openshift-marketplace",
+					StartingCSV:            "servicemeshoperator3.v3.1.0",
+				},
+			},
 		},
 		{
-			name:    "Subscription exists with servicemeshoperator3 package without ingress operator annotation, should return early",
+			name:    "Subscription exists with servicemeshoperator3 package without ingress operator annotation, should not create or update the subscription",
 			catalog: "redhat-operators",
 			channel: "stable",
 			version: "servicemeshoperator3.v3.1.0",
@@ -91,8 +132,20 @@ func Test_ensureServiceMeshOperatorSubscription(t *testing.T) {
 			expectCreate: []client.Object{},
 			expectUpdate: []client.Object{},
 			expectDelete: []client.Object{},
-			expectHave:   true,
-			expectErr:    false,
+			expectSubscription: &operatorsv1alpha1.Subscription{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: operatorcontroller.ServiceMeshOperatorSubscriptionName().Namespace,
+					Name:      operatorcontroller.ServiceMeshOperatorSubscriptionName().Name,
+				},
+				Spec: &operatorsv1alpha1.SubscriptionSpec{
+					Channel:                "stable",
+					InstallPlanApproval:    operatorsv1alpha1.ApprovalManual,
+					Package:                "servicemeshoperator3",
+					CatalogSource:          "user-catalog",
+					CatalogSourceNamespace: "openshift-marketplace",
+					StartingCSV:            "servicemeshoperator3.v3.0.0",
+				},
+			},
 		},
 		{
 			name:    "Subscription exists in different namespace with servicemeshoperator3 package without annotation, should return early",
@@ -118,11 +171,23 @@ func Test_ensureServiceMeshOperatorSubscription(t *testing.T) {
 			expectCreate: []client.Object{},
 			expectUpdate: []client.Object{},
 			expectDelete: []client.Object{},
-			expectHave:   true,
-			expectErr:    false,
+			expectSubscription: &operatorsv1alpha1.Subscription{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "other-namespace",
+					Name:      "user-managed-subscription",
+				},
+				Spec: &operatorsv1alpha1.SubscriptionSpec{
+					Channel:                "stable",
+					InstallPlanApproval:    operatorsv1alpha1.ApprovalManual,
+					Package:                "servicemeshoperator3",
+					CatalogSource:          "user-catalog",
+					CatalogSourceNamespace: "openshift-marketplace",
+					StartingCSV:            "servicemeshoperator3.v3.0.0",
+				},
+			},
 		},
 		{
-			name:    "Subscription exists with servicemeshoperator3 package WITH ingress operator annotation, should proceed normally",
+			name:    "Subscription exists with servicemeshoperator3 package WITH ingress operator annotation and is consistent with the desired subscription, should do nothing",
 			catalog: "redhat-operators",
 			channel: "stable",
 			version: "servicemeshoperator3.v3.1.0",
@@ -161,8 +226,36 @@ func Test_ensureServiceMeshOperatorSubscription(t *testing.T) {
 			expectCreate: []client.Object{},
 			expectUpdate: []client.Object{},
 			expectDelete: []client.Object{},
-			expectHave:   true,
-			expectErr:    false,
+			expectSubscription: &operatorsv1alpha1.Subscription{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: operatorcontroller.ServiceMeshOperatorSubscriptionName().Namespace,
+					Name:      operatorcontroller.ServiceMeshOperatorSubscriptionName().Name,
+					Annotations: map[string]string{
+						operatorcontroller.IngressOperatorOwnedAnnotation: "",
+					},
+				},
+				Spec: &operatorsv1alpha1.SubscriptionSpec{
+					Channel: "stable",
+					Config: &operatorsv1alpha1.SubscriptionConfig{
+						Resources: &corev1.ResourceRequirements{
+							Limits: corev1.ResourceList{},
+							Requests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("10m"),
+								corev1.ResourceMemory: resource.MustParse("64Mi"),
+							},
+						},
+						Annotations: map[string]string{
+							securityv1.RequiredSCCAnnotation:            RequiredSCCRestrictedV2,
+							WorkloadPartitioningManagementAnnotationKey: WorkloadPartitioningManagementPreferredScheduling,
+						},
+					},
+					InstallPlanApproval:    operatorsv1alpha1.ApprovalManual,
+					Package:                "servicemeshoperator3",
+					CatalogSource:          "redhat-operators",
+					CatalogSourceNamespace: "openshift-marketplace",
+					StartingCSV:            "servicemeshoperator3.v3.1.0",
+				},
+			},
 		},
 		{
 			name:    "Subscription exists with DIFFERENT package name, should create CIO subscription",
@@ -195,7 +288,20 @@ func Test_ensureServiceMeshOperatorSubscription(t *testing.T) {
 						},
 					},
 					Spec: &operatorsv1alpha1.SubscriptionSpec{
-						Channel:                "stable",
+						Channel: "stable",
+						Config: &operatorsv1alpha1.SubscriptionConfig{
+							Resources: &corev1.ResourceRequirements{
+								Limits: corev1.ResourceList{},
+								Requests: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("10m"),
+									corev1.ResourceMemory: resource.MustParse("64Mi"),
+								},
+							},
+							Annotations: map[string]string{
+								securityv1.RequiredSCCAnnotation:            RequiredSCCRestrictedV2,
+								WorkloadPartitioningManagementAnnotationKey: WorkloadPartitioningManagementPreferredScheduling,
+							},
+						},
 						InstallPlanApproval:    operatorsv1alpha1.ApprovalManual,
 						Package:                "servicemeshoperator3",
 						CatalogSource:          "redhat-operators",
@@ -206,8 +312,36 @@ func Test_ensureServiceMeshOperatorSubscription(t *testing.T) {
 			},
 			expectUpdate: []client.Object{},
 			expectDelete: []client.Object{},
-			expectHave:   true,
-			expectErr:    false,
+			expectSubscription: &operatorsv1alpha1.Subscription{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: operatorcontroller.ServiceMeshOperatorSubscriptionName().Namespace,
+					Name:      operatorcontroller.ServiceMeshOperatorSubscriptionName().Name,
+					Annotations: map[string]string{
+						operatorcontroller.IngressOperatorOwnedAnnotation: "",
+					},
+				},
+				Spec: &operatorsv1alpha1.SubscriptionSpec{
+					Channel: "stable",
+					Config: &operatorsv1alpha1.SubscriptionConfig{
+						Resources: &corev1.ResourceRequirements{
+							Limits: corev1.ResourceList{},
+							Requests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("10m"),
+								corev1.ResourceMemory: resource.MustParse("64Mi"),
+							},
+						},
+						Annotations: map[string]string{
+							securityv1.RequiredSCCAnnotation:            RequiredSCCRestrictedV2,
+							WorkloadPartitioningManagementAnnotationKey: WorkloadPartitioningManagementPreferredScheduling,
+						},
+					},
+					InstallPlanApproval:    operatorsv1alpha1.ApprovalManual,
+					Package:                "servicemeshoperator3",
+					CatalogSource:          "redhat-operators",
+					CatalogSourceNamespace: "openshift-marketplace",
+					StartingCSV:            "servicemeshoperator3.v3.1.0",
+				},
+			},
 		},
 		{
 			name:    "Multiple subscriptions exist, one with servicemeshoperator3 without annotation, should return early",
@@ -244,8 +378,19 @@ func Test_ensureServiceMeshOperatorSubscription(t *testing.T) {
 			expectCreate: []client.Object{},
 			expectUpdate: []client.Object{},
 			expectDelete: []client.Object{},
-			expectHave:   true,
-			expectErr:    false,
+			expectSubscription: &operatorsv1alpha1.Subscription{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "namespace2",
+					Name:      "subscription2",
+				},
+				Spec: &operatorsv1alpha1.SubscriptionSpec{
+					Channel:                "stable",
+					Package:                "servicemeshoperator3",
+					CatalogSource:          "user-catalog",
+					CatalogSourceNamespace: "openshift-marketplace",
+					StartingCSV:            "servicemeshoperator3.v3.0.0",
+				},
+			},
 		},
 		{
 			name:    "CIO-owned subscription needs version update",
@@ -282,7 +427,20 @@ func Test_ensureServiceMeshOperatorSubscription(t *testing.T) {
 						},
 					},
 					Spec: &operatorsv1alpha1.SubscriptionSpec{
-						Channel:                "stable",
+						Channel: "stable",
+						Config: &operatorsv1alpha1.SubscriptionConfig{
+							Resources: &corev1.ResourceRequirements{
+								Limits: corev1.ResourceList{},
+								Requests: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("10m"),
+									corev1.ResourceMemory: resource.MustParse("64Mi"),
+								},
+							},
+							Annotations: map[string]string{
+								securityv1.RequiredSCCAnnotation:            RequiredSCCRestrictedV2,
+								WorkloadPartitioningManagementAnnotationKey: WorkloadPartitioningManagementPreferredScheduling,
+							},
+						},
 						InstallPlanApproval:    operatorsv1alpha1.ApprovalManual,
 						Package:                "servicemeshoperator3",
 						CatalogSource:          "redhat-operators",
@@ -292,8 +450,36 @@ func Test_ensureServiceMeshOperatorSubscription(t *testing.T) {
 				},
 			},
 			expectDelete: []client.Object{},
-			expectHave:   true,
-			expectErr:    false,
+			expectSubscription: &operatorsv1alpha1.Subscription{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: operatorcontroller.ServiceMeshOperatorSubscriptionName().Namespace,
+					Name:      operatorcontroller.ServiceMeshOperatorSubscriptionName().Name,
+					Annotations: map[string]string{
+						operatorcontroller.IngressOperatorOwnedAnnotation: "",
+					},
+				},
+				Spec: &operatorsv1alpha1.SubscriptionSpec{
+					Channel: "stable",
+					Config: &operatorsv1alpha1.SubscriptionConfig{
+						Resources: &corev1.ResourceRequirements{
+							Limits: corev1.ResourceList{},
+							Requests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("10m"),
+								corev1.ResourceMemory: resource.MustParse("64Mi"),
+							},
+						},
+						Annotations: map[string]string{
+							securityv1.RequiredSCCAnnotation:            RequiredSCCRestrictedV2,
+							WorkloadPartitioningManagementAnnotationKey: WorkloadPartitioningManagementPreferredScheduling,
+						},
+					},
+					InstallPlanApproval:    operatorsv1alpha1.ApprovalManual,
+					Package:                "servicemeshoperator3",
+					CatalogSource:          "redhat-operators",
+					CatalogSourceNamespace: "openshift-marketplace",
+					StartingCSV:            "servicemeshoperator3.v3.2.0",
+				},
+			},
 		},
 	}
 
@@ -319,23 +505,12 @@ func Test_ensureServiceMeshOperatorSubscription(t *testing.T) {
 					GatewayAPIOperatorVersion: tc.version,
 				},
 			}
-			have, _, err := reconciler.ensureServiceMeshOperatorSubscription(context.Background(), tc.catalog, tc.channel, tc.version)
-			if tc.expectErr && err == nil {
-				t.Fatalf("expected error, got nil")
-			}
-			if !tc.expectErr && err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if have != tc.expectHave {
-				t.Fatalf("expected have=%v, got have=%v", tc.expectHave, have)
-			}
+			_, actualSubscription, err := reconciler.ensureServiceMeshOperatorSubscription(context.Background(), tc.catalog, tc.channel, tc.version)
+			require.NoError(t, err)
 			cmpOpts := []cmp.Option{
 				cmpopts.EquateEmpty(),
 				cmpopts.IgnoreFields(metav1.ObjectMeta{}, "ResourceVersion"),
 				cmpopts.IgnoreFields(metav1.TypeMeta{}, "Kind", "APIVersion"),
-				cmpopts.IgnoreFields(apiextensionsv1.CustomResourceDefinition{}, "Spec"),
-				cmpopts.IgnoreFields(operatorsv1alpha1.Subscription{}, "TypeMeta"),
-				cmpopts.IgnoreFields(operatorsv1alpha1.SubscriptionSpec{}, "Config"),
 			}
 			if diff := cmp.Diff(tc.expectCreate, cl.added, cmpOpts...); diff != "" {
 				t.Fatalf("found diff between expected and actual creates: %s", diff)
@@ -345,6 +520,14 @@ func Test_ensureServiceMeshOperatorSubscription(t *testing.T) {
 			}
 			if diff := cmp.Diff(tc.expectDelete, cl.deleted, cmpOpts...); diff != "" {
 				t.Fatalf("found diff between expected and actual deletes: %s", diff)
+			}
+
+			// Verify the returned subscription matches expectations
+			if tc.expectSubscription != nil {
+				require.NotNil(t, actualSubscription, "expected subscription to be returned but got nil")
+				if diff := cmp.Diff(tc.expectSubscription, actualSubscription, cmpOpts...); diff != "" {
+					t.Fatalf("found diff between expected and actual returned subscription: %s", diff)
+				}
 			}
 		})
 	}
