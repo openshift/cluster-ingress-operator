@@ -6,6 +6,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/go-logr/zapr"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -13,8 +14,10 @@ import (
 var Logger logr.Logger
 
 func init() {
-	// Build a zap development logger.
-	zapLogger, err := zap.NewDevelopment(zap.AddCallerSkip(1), zap.AddStacktrace(zap.FatalLevel))
+	// Build a zap development logger with INFO level.
+	config := zap.NewDevelopmentConfig()
+	config.Level = zap.NewAtomicLevelAt(zapcore.InfoLevel)
+	zapLogger, err := config.Build(zap.AddCallerSkip(1), zap.AddStacktrace(zap.FatalLevel))
 	if err != nil {
 		panic(fmt.Sprintf("error building logger: %v", err))
 	}
