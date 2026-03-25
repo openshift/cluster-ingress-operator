@@ -10,6 +10,7 @@ import (
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
+	kerrors "k8s.io/apimachinery/pkg/api/errors"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -17,6 +18,7 @@ import (
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 
+	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	routev1 "github.com/openshift/api/route/v1"
 
@@ -174,6 +176,15 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 		return nil, err
 	}
 
+	// Watch the cluster APIServer config so that changes to the TLS security
+	// profile cause the canary daemonset to be reconciled.
+	apiServerPredicate := predicate.NewPredicateFuncs(func(o client.Object) bool {
+		return o.GetName() == "cluster"
+	})
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &configv1.APIServer{}, enqueueRequestForDefaultIngressController(config.Namespace), apiServerPredicate)); err != nil {
+		return nil, err
+	}
+
 	return c, nil
 }
 
@@ -202,7 +213,22 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		return result, fmt.Errorf("failed to ensure canary namespace: %v", err)
 	}
 
-	haveDs, daemonset, err := r.ensureCanaryDaemonSet(ctx)
+	// Read the cluster APIServer config to get the TLS security profile.
+	// If this read fails (e.g. transient API error), continue with the
+	// intermediate default profile instead of hard-failing reconcile.
+	apiConfig := &configv1.APIServer{}
+	tlsProfileSpec := configv1.TLSProfiles[configv1.TLSProfileIntermediateType]
+	if err := r.client.Get(ctx, types.NamespacedName{Name: "cluster"}, apiConfig); err != nil {
+		if kerrors.IsNotFound(err) {
+			log.Info("APIServer 'cluster' not found; falling back to intermediate TLS profile")
+		} else {
+			return result, fmt.Errorf("failed to get APIServer 'cluster': %w", err)
+		}
+	} else {
+		tlsProfileSpec = operatorcontroller.TLSProfileSpecForSecurityProfile(apiConfig.Spec.TLSSecurityProfile)
+	}
+
+	haveDs, daemonset, err := r.ensureCanaryDaemonSet(ctx, tlsProfileSpec)
 	if err != nil {
 		return result, fmt.Errorf("failed to ensure canary daemonset: %v", err)
 	} else if !haveDs {

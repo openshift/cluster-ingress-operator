@@ -3,9 +3,12 @@ package canary
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+
+	configv1 "github.com/openshift/api/config/v1"
 
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
@@ -23,7 +26,7 @@ const (
 )
 
 // ensureCanaryDaemonSet ensures the canary daemonset exists
-func (r *reconciler) ensureCanaryDaemonSet(ctx context.Context) (bool, *appsv1.DaemonSet, error) {
+func (r *reconciler) ensureCanaryDaemonSet(ctx context.Context, tlsProfileSpec *configv1.TLSProfileSpec) (bool, *appsv1.DaemonSet, error) {
 	// Attempt to read the canary serving cert secret and compute a content hash.
 	// If the secret is missing or incomplete, proceed without the annotation but
 	// surface a log entry so operators can investigate.
@@ -43,7 +46,7 @@ func (r *reconciler) ensureCanaryDaemonSet(ctx context.Context) (bool, *appsv1.D
 		}
 	}
 
-	desired := desiredCanaryDaemonSet(r.config.CanaryImage, certHash)
+	desired := desiredCanaryDaemonSet(r.config.CanaryImage, certHash, tlsProfileSpec)
 	haveDs, current, err := r.currentCanaryDaemonSet(ctx)
 	if err != nil {
 		return false, nil, err
@@ -129,7 +132,7 @@ func (r *reconciler) updateCanaryDaemonSet(ctx context.Context, current, desired
 
 // desiredCanaryDaemonSet returns the desired canary daemonset read in
 // from manifests
-func desiredCanaryDaemonSet(canaryImage string, certHash string) *appsv1.DaemonSet {
+func desiredCanaryDaemonSet(canaryImage string, certHash string, tlsProfileSpec *configv1.TLSProfileSpec) *appsv1.DaemonSet {
 	daemonset := manifests.CanaryDaemonSet()
 	name := controller.CanaryDaemonSetName()
 	daemonset.Name = name.Name
@@ -146,6 +149,30 @@ func desiredCanaryDaemonSet(canaryImage string, certHash string) *appsv1.DaemonS
 	daemonset.Spec.Template.Spec.Containers[0].Image = canaryImage
 	daemonset.Spec.Template.Spec.Containers[0].Command = []string{"ingress-operator", CanaryHealthcheckCommand}
 	daemonset.Spec.Template.Spec.ServiceAccountName = controller.CanaryServiceAccountName().Name
+
+	// Set the TLS cipher suites and minimum TLS version from the API Server's
+	// TLS security profile so that the canary server inherits the centrally
+	// managed TLS configuration.
+	if tlsProfileSpec != nil {
+		if len(tlsProfileSpec.Ciphers) > 0 {
+			daemonset.Spec.Template.Spec.Containers[0].Env = append(
+				daemonset.Spec.Template.Spec.Containers[0].Env,
+				corev1.EnvVar{
+					Name:  "TLS_CIPHERS",
+					Value: strings.Join(tlsProfileSpec.Ciphers, ","),
+				},
+			)
+		}
+		if len(tlsProfileSpec.MinTLSVersion) > 0 {
+			daemonset.Spec.Template.Spec.Containers[0].Env = append(
+				daemonset.Spec.Template.Spec.Containers[0].Env,
+				corev1.EnvVar{
+					Name:  "TLS_MIN_VERSION",
+					Value: string(tlsProfileSpec.MinTLSVersion),
+				},
+			)
+		}
+	}
 
 	if certHash != "" {
 		if daemonset.Spec.Template.Annotations == nil {

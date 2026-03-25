@@ -1,9 +1,12 @@
 package canary
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+
+	configv1 "github.com/openshift/api/config/v1"
 
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
@@ -16,7 +19,7 @@ import (
 func Test_desiredCanaryDaemonSet(t *testing.T) {
 	// canaryImageName is the ingress-operator image
 	canaryImageName := "openshift/origin-cluster-ingress-operator:latest"
-	daemonset := desiredCanaryDaemonSet(canaryImageName, "")
+	daemonset := desiredCanaryDaemonSet(canaryImageName, "", configv1.TLSProfiles[configv1.TLSProfileIntermediateType])
 
 	expectedDaemonSetName := controller.CanaryDaemonSetName()
 
@@ -253,7 +256,7 @@ func Test_canaryDaemonsetChanged(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
-			original := desiredCanaryDaemonSet("", "")
+			original := desiredCanaryDaemonSet("", "", configv1.TLSProfiles[configv1.TLSProfileIntermediateType])
 			mutated := original.DeepCopy()
 			tc.mutate(mutated)
 			if changed, updated := canaryDaemonSetChanged(original, mutated); changed != tc.expect {
@@ -265,6 +268,72 @@ func Test_canaryDaemonsetChanged(t *testing.T) {
 				if changedAgain, _ := canaryDaemonSetChanged(mutated, updated); changedAgain {
 					t.Error("canaryDaemonSetChanged does not behave as a fixed point function")
 				}
+			}
+		})
+	}
+}
+
+// getEnvVar returns the value of the environment variable with the given name
+// from the daemonset's container, or an empty string if not found.
+func getEnvVar(ds *appsv1.DaemonSet, name string) string {
+	for _, env := range ds.Spec.Template.Spec.Containers[0].Env {
+		if env.Name == name {
+			return env.Value
+		}
+	}
+	return ""
+}
+
+func Test_desiredCanaryDaemonSet_TLS_Profile(t *testing.T) {
+	canaryImageName := "openshift/origin-cluster-ingress-operator:latest"
+
+	testCases := []struct {
+		name             string
+		tlsProfile       *configv1.TLSProfileSpec
+		expectCiphers    string
+		expectMinVersion string
+	}{
+		{
+			name:             "Intermediate profile",
+			tlsProfile:       configv1.TLSProfiles[configv1.TLSProfileIntermediateType],
+			expectCiphers:    strings.Join(configv1.TLSProfiles[configv1.TLSProfileIntermediateType].Ciphers, ","),
+			expectMinVersion: string(configv1.TLSProfiles[configv1.TLSProfileIntermediateType].MinTLSVersion),
+		},
+		{
+			name:             "Old profile",
+			tlsProfile:       configv1.TLSProfiles[configv1.TLSProfileOldType],
+			expectCiphers:    strings.Join(configv1.TLSProfiles[configv1.TLSProfileOldType].Ciphers, ","),
+			expectMinVersion: string(configv1.TLSProfiles[configv1.TLSProfileOldType].MinTLSVersion),
+		},
+		{
+			name: "Custom profile",
+			tlsProfile: &configv1.TLSProfileSpec{
+				Ciphers:       []string{"ECDHE-RSA-AES128-GCM-SHA256", "ECDHE-RSA-AES256-GCM-SHA384"},
+				MinTLSVersion: configv1.VersionTLS13,
+			},
+			expectCiphers:    "ECDHE-RSA-AES128-GCM-SHA256,ECDHE-RSA-AES256-GCM-SHA384",
+			expectMinVersion: string(configv1.VersionTLS13),
+		},
+		{
+			name:             "Nil profile",
+			tlsProfile:       nil,
+			expectCiphers:    "",
+			expectMinVersion: "",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ds := desiredCanaryDaemonSet(canaryImageName, "", tc.tlsProfile)
+
+			actualCiphers := getEnvVar(ds, "TLS_CIPHERS")
+			if diff := cmp.Diff(tc.expectCiphers, actualCiphers); diff != "" {
+				t.Errorf("TLS_CIPHERS mismatch (-want +got):\n%s", diff)
+			}
+
+			actualMinVersion := getEnvVar(ds, "TLS_MIN_VERSION")
+			if diff := cmp.Diff(tc.expectMinVersion, actualMinVersion); diff != "" {
+				t.Errorf("TLS_MIN_VERSION mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
