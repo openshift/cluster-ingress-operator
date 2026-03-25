@@ -16,7 +16,7 @@ metadata:
               "inactiveRevisionDeletionGracePeriodSeconds": 30,
               "type": "InPlace"
             },
-            "version": "v1.29.0"
+            "version": "v1.28.5"
           }
         },
         {
@@ -27,7 +27,7 @@ metadata:
           },
           "spec": {
             "namespace": "istio-cni",
-            "version": "v1.29.0"
+            "version": "v1.28.5"
           }
         },
         {
@@ -38,14 +38,14 @@ metadata:
           },
           "spec": {
             "namespace": "ztunnel",
-            "version": "v1.29.0"
+            "version": "v1.27.3"
           }
         }
       ]
     capabilities: Seamless Upgrades
     categories: OpenShift Optional, Integration & Delivery, Networking, Security
-    containerImage: quay.io/sail-dev/sail-operator:3.0-latest
-    createdAt: "2026-03-09T06:22:23Z"
+    containerImage: ${OSSM_OPERATOR_3_3}
+    createdAt: "2026-03-23T11:07:05Z"
     description: The OpenShift Service Mesh Operator enables you to install, configure, and manage an instance of Red Hat OpenShift Service Mesh. OpenShift Service Mesh is based on the open source Istio project.
     features.operators.openshift.io/cnf: "false"
     features.operators.openshift.io/cni: "true"
@@ -58,7 +58,7 @@ metadata:
     features.operators.openshift.io/token-auth-azure: "false"
     features.operators.openshift.io/token-auth-gcp: "false"
     operators.openshift.io/valid-subscription: '["OpenShift Container Platform", "OpenShift Platform Plus"]'
-    operators.operatorframework.io/builder: operator-sdk-v1.42.0
+    operators.operatorframework.io/builder: operator-sdk-v1.41.1
     operators.operatorframework.io/internal-objects: '["wasmplugins.extensions.istio.io","destinationrules.networking.istio.io","envoyfilters.networking.istio.io","gateways.networking.istio.io","proxyconfigs.networking.istio.io","serviceentries.networking.istio.io","sidecars.networking.istio.io","virtualservices.networking.istio.io","workloadentries.networking.istio.io","workloadgroups.networking.istio.io","authorizationpolicies.security.istio.io","peerauthentications.security.istio.io","requestauthentications.security.istio.io","telemetries.telemetry.istio.io"]'
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
     repository: https://github.com/istio-ecosystem/sail-operator
@@ -68,7 +68,7 @@ metadata:
     operatorframework.io/arch.arm64: supported
     operatorframework.io/arch.ppc64le: supported
     operatorframework.io/arch.s390x: supported
-  name: servicemeshoperator3.v3.0.1
+  name: servicemeshoperator3.v3.3.1
   namespace: placeholder
 spec:
   apiservicedefinitions: {}
@@ -180,30 +180,24 @@ spec:
         specDescriptors:
           - description: |-
               Defines the version of Istio to install.
-              Must be one of: v1.29-latest, v1.29.0, v1.28-latest, v1.28.4, v1.28.3, v1.28.2, v1.28.1, v1.28.0, v1.27-latest, v1.27.7, v1.27.6, v1.27.5, v1.27.4, v1.27.3, v1.27.2, v1.27.1, v1.27.0, master, v1.30-alpha.a22c3091.
+              Must be one of: v1.28-latest, v1.28.5, v1.28.4, v1.27-latest, v1.27.8, v1.27.5, v1.27.3, v1.26-latest, v1.26.8, v1.26.6, v1.26.4, v1.26.3, v1.26.2.
             displayName: Istio Version
             path: version
             x-descriptors:
               - urn:alm:descriptor:com.tectonic.ui:fieldGroup:General
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.29-latest
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.29.0
               - urn:alm:descriptor:com.tectonic.ui:select:v1.28-latest
+              - urn:alm:descriptor:com.tectonic.ui:select:v1.28.5
               - urn:alm:descriptor:com.tectonic.ui:select:v1.28.4
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.28.3
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.28.2
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.28.1
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.28.0
               - urn:alm:descriptor:com.tectonic.ui:select:v1.27-latest
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.27.7
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.27.6
+              - urn:alm:descriptor:com.tectonic.ui:select:v1.27.8
               - urn:alm:descriptor:com.tectonic.ui:select:v1.27.5
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.27.4
               - urn:alm:descriptor:com.tectonic.ui:select:v1.27.3
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.27.2
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.27.1
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.27.0
-              - urn:alm:descriptor:com.tectonic.ui:select:master
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.30-alpha.a22c3091
+              - urn:alm:descriptor:com.tectonic.ui:select:v1.26-latest
+              - urn:alm:descriptor:com.tectonic.ui:select:v1.26.8
+              - urn:alm:descriptor:com.tectonic.ui:select:v1.26.6
+              - urn:alm:descriptor:com.tectonic.ui:select:v1.26.4
+              - urn:alm:descriptor:com.tectonic.ui:select:v1.26.3
+              - urn:alm:descriptor:com.tectonic.ui:select:v1.26.2
           - description: Namespace to which the Istio CNI component should be installed. Note that this field is immutable.
             displayName: Namespace
             path: namespace
@@ -241,26 +235,21 @@ spec:
         specDescriptors:
           - description: |-
               Defines the version of Istio to install.
-              Must be one of: v1.29.0, v1.28.4, v1.28.3, v1.28.2, v1.28.1, v1.28.0, v1.27.7, v1.27.6, v1.27.5, v1.27.4, v1.27.3, v1.27.2, v1.27.1, v1.27.0, v1.30-alpha.a22c3091.
+              Must be one of: v1.28.5, v1.28.4, v1.27.8, v1.27.5, v1.27.3, v1.26.8, v1.26.6, v1.26.4, v1.26.3, v1.26.2.
             displayName: Istio Version
             path: version
             x-descriptors:
               - urn:alm:descriptor:com.tectonic.ui:fieldGroup:General
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.29.0
+              - urn:alm:descriptor:com.tectonic.ui:select:v1.28.5
               - urn:alm:descriptor:com.tectonic.ui:select:v1.28.4
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.28.3
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.28.2
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.28.1
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.28.0
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.27.7
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.27.6
+              - urn:alm:descriptor:com.tectonic.ui:select:v1.27.8
               - urn:alm:descriptor:com.tectonic.ui:select:v1.27.5
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.27.4
               - urn:alm:descriptor:com.tectonic.ui:select:v1.27.3
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.27.2
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.27.1
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.27.0
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.30-alpha.a22c3091
+              - urn:alm:descriptor:com.tectonic.ui:select:v1.26.8
+              - urn:alm:descriptor:com.tectonic.ui:select:v1.26.6
+              - urn:alm:descriptor:com.tectonic.ui:select:v1.26.4
+              - urn:alm:descriptor:com.tectonic.ui:select:v1.26.3
+              - urn:alm:descriptor:com.tectonic.ui:select:v1.26.2
           - description: Namespace to which the Istio components should be installed.
             displayName: Namespace
             path: namespace
@@ -295,30 +284,24 @@ spec:
               - urn:alm:descriptor:com.tectonic.ui:select:RevisionBased
           - description: |-
               Defines the version of Istio to install.
-              Must be one of: v1.29-latest, v1.29.0, v1.28-latest, v1.28.4, v1.28.3, v1.28.2, v1.28.1, v1.28.0, v1.27-latest, v1.27.7, v1.27.6, v1.27.5, v1.27.4, v1.27.3, v1.27.2, v1.27.1, v1.27.0, master, v1.30-alpha.a22c3091.
+              Must be one of: v1.28-latest, v1.28.5, v1.28.4, v1.27-latest, v1.27.8, v1.27.5, v1.27.3, v1.26-latest, v1.26.8, v1.26.6, v1.26.4, v1.26.3, v1.26.2.
             displayName: Istio Version
             path: version
             x-descriptors:
               - urn:alm:descriptor:com.tectonic.ui:fieldGroup:General
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.29-latest
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.29.0
               - urn:alm:descriptor:com.tectonic.ui:select:v1.28-latest
+              - urn:alm:descriptor:com.tectonic.ui:select:v1.28.5
               - urn:alm:descriptor:com.tectonic.ui:select:v1.28.4
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.28.3
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.28.2
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.28.1
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.28.0
               - urn:alm:descriptor:com.tectonic.ui:select:v1.27-latest
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.27.7
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.27.6
+              - urn:alm:descriptor:com.tectonic.ui:select:v1.27.8
               - urn:alm:descriptor:com.tectonic.ui:select:v1.27.5
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.27.4
               - urn:alm:descriptor:com.tectonic.ui:select:v1.27.3
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.27.2
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.27.1
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.27.0
-              - urn:alm:descriptor:com.tectonic.ui:select:master
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.30-alpha.a22c3091
+              - urn:alm:descriptor:com.tectonic.ui:select:v1.26-latest
+              - urn:alm:descriptor:com.tectonic.ui:select:v1.26.8
+              - urn:alm:descriptor:com.tectonic.ui:select:v1.26.6
+              - urn:alm:descriptor:com.tectonic.ui:select:v1.26.4
+              - urn:alm:descriptor:com.tectonic.ui:select:v1.26.3
+              - urn:alm:descriptor:com.tectonic.ui:select:v1.26.2
           - description: |-
               Defines how many seconds the operator should wait before removing a non-active revision after all
               the workloads have stopped using it. You may want to set this value on the order of minutes.
@@ -374,30 +357,24 @@ spec:
         specDescriptors:
           - description: |-
               Defines the version of Istio to install.
-              Must be one of: v1.29-latest, v1.29.0, v1.28-latest, v1.28.4, v1.28.3, v1.28.2, v1.28.1, v1.28.0, v1.27-latest, v1.27.7, v1.27.6, v1.27.5, v1.27.4, v1.27.3, v1.27.2, v1.27.1, v1.27.0, master, v1.30-alpha.a22c3091.
+              Must be one of: v1.28-latest, v1.28.5, v1.28.4, v1.27-latest, v1.27.8, v1.27.5, v1.27.3, v1.26-latest, v1.26.8, v1.26.6, v1.26.4, v1.26.3, v1.26.2.
             displayName: Istio Version
             path: version
             x-descriptors:
               - urn:alm:descriptor:com.tectonic.ui:fieldGroup:General
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.29-latest
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.29.0
               - urn:alm:descriptor:com.tectonic.ui:select:v1.28-latest
+              - urn:alm:descriptor:com.tectonic.ui:select:v1.28.5
               - urn:alm:descriptor:com.tectonic.ui:select:v1.28.4
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.28.3
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.28.2
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.28.1
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.28.0
               - urn:alm:descriptor:com.tectonic.ui:select:v1.27-latest
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.27.7
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.27.6
+              - urn:alm:descriptor:com.tectonic.ui:select:v1.27.8
               - urn:alm:descriptor:com.tectonic.ui:select:v1.27.5
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.27.4
               - urn:alm:descriptor:com.tectonic.ui:select:v1.27.3
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.27.2
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.27.1
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.27.0
-              - urn:alm:descriptor:com.tectonic.ui:select:master
-              - urn:alm:descriptor:com.tectonic.ui:select:v1.30-alpha.a22c3091
+              - urn:alm:descriptor:com.tectonic.ui:select:v1.26-latest
+              - urn:alm:descriptor:com.tectonic.ui:select:v1.26.8
+              - urn:alm:descriptor:com.tectonic.ui:select:v1.26.6
+              - urn:alm:descriptor:com.tectonic.ui:select:v1.26.4
+              - urn:alm:descriptor:com.tectonic.ui:select:v1.26.3
+              - urn:alm:descriptor:com.tectonic.ui:select:v1.26.2
           - description: Namespace to which the Istio ztunnel component should be installed.
             displayName: Namespace
             path: namespace
@@ -466,26 +443,9 @@ spec:
             - apiGroups:
                 - ""
               resources:
-                - configmaps
-                - endpoints
-                - events
-                - namespaces
-                - nodes
-                - persistentvolumeclaims
-                - pods
-                - replicationcontrollers
-                - resourcequotas
-                - secrets
-                - serviceaccounts
-                - services
+                - '*'
               verbs:
-                - create
-                - delete
-                - get
-                - list
-                - patch
-                - update
-                - watch
+                - '*'
             - apiGroups:
                 - admissionregistration.k8s.io
               resources:
@@ -494,13 +454,7 @@ spec:
                 - validatingadmissionpolicybindings
                 - validatingwebhookconfigurations
               verbs:
-                - create
-                - delete
-                - get
-                - list
-                - patch
-                - update
-                - watch
+                - '*'
             - apiGroups:
                 - apiextensions.k8s.io
               resources:
@@ -515,25 +469,13 @@ spec:
                 - daemonsets
                 - deployments
               verbs:
-                - create
-                - delete
-                - get
-                - list
-                - patch
-                - update
-                - watch
+                - '*'
             - apiGroups:
                 - autoscaling
               resources:
                 - horizontalpodautoscalers
               verbs:
-                - create
-                - delete
-                - get
-                - list
-                - patch
-                - update
-                - watch
+                - '*'
             - apiGroups:
                 - discovery.k8s.io
               resources:
@@ -551,37 +493,19 @@ spec:
               resources:
                 - network-attachment-definitions
               verbs:
-                - create
-                - delete
-                - get
-                - list
-                - patch
-                - update
-                - watch
+                - '*'
             - apiGroups:
                 - networking.istio.io
               resources:
                 - envoyfilters
               verbs:
-                - create
-                - delete
-                - get
-                - list
-                - patch
-                - update
-                - watch
+                - '*'
             - apiGroups:
                 - networking.k8s.io
               resources:
                 - networkpolicies
               verbs:
-                - create
-                - delete
-                - get
-                - list
-                - patch
-                - update
-                - watch
+                - '*'
             - apiGroups:
                 - sailoperator.io
               resources:
@@ -717,13 +641,7 @@ spec:
               resources:
                 - poddisruptionbudgets
               verbs:
-                - create
-                - delete
-                - get
-                - list
-                - patch
-                - update
-                - watch
+                - '*'
             - apiGroups:
                 - rbac.authorization.k8s.io
               resources:
@@ -731,16 +649,9 @@ spec:
                 - clusterroles
                 - rolebindings
                 - roles
+                - serviceaccount
               verbs:
-                - create
-                - delete
-                - get
-                - list
-                - patch
-                - update
-                - watch
-                - bind
-                - escalate
+                - '*'
             - apiGroups:
                 - security.openshift.io
               resourceNames:
@@ -798,11 +709,56 @@ spec:
             template:
               metadata:
                 annotations:
-                  images.v1_24_4.cni: registry.redhat.io/openshift-service-mesh/istio-cni-rhel9:1.24.4
-                  images.v1_24_4.istiod: registry.redhat.io/openshift-service-mesh/istio-pilot-rhel9:1.24.4
-                  images.v1_24_4.must-gather: registry.redhat.io/openshift-service-mesh/istio-must-gather-rhel9:3.0.1
-                  images.v1_24_4.proxy: registry.redhat.io/openshift-service-mesh/istio-proxyv2-rhel9:1.24.4
-                  images.v1_24_4.ztunnel: registry.redhat.io/openshift-service-mesh/istio-pilot-rhel9:1.24.4
+                  images.v1_26_2.cni: registry.redhat.io/openshift-service-mesh/istio-cni-rhel9@sha256:14c5a52faf20267baa43d9a72ee6416f56fbc41dd640adc2aba3c4043802a0e9
+                  images.v1_26_2.istiod: registry.redhat.io/openshift-service-mesh/istio-pilot-rhel9@sha256:028e10651db0d1ddb769a27c9483c6d41be6ac597f253afd9d599f395d9c82d8
+                  images.v1_26_2.must-gather: registry.redhat.io/openshift-service-mesh/istio-must-gather-rhel9@sha256:366266f10e658c4cea86bddf6ee847e1908ea4dd780cb5f7fb0e466bac8995f1
+                  images.v1_26_2.proxy: registry.redhat.io/openshift-service-mesh/istio-proxyv2-rhel9@sha256:d518f3d1539f45e1253c5c9fa22062802804601d4998cd50344e476a3cc388fe
+                  images.v1_26_2.ztunnel: registry.redhat.io/openshift-service-mesh-tech-preview/istio-ztunnel-rhel9@sha256:ecc6a22a471f4f4b836648f3a72ea7f57a4ea960ebcbc7dbe3fe729500902d0b
+                  images.v1_26_3.cni: registry.redhat.io/openshift-service-mesh/istio-cni-rhel9@sha256:2ea112ab90b8540f11e9949d77c3e7e3b3ef57ac3bf23f6cf1e883a88430e1f9
+                  images.v1_26_3.istiod: registry.redhat.io/openshift-service-mesh/istio-pilot-rhel9@sha256:33feac0c9c888b375e207e86b3f9a1a289126ca46b64632a7f693e2191cfbbfd
+                  images.v1_26_3.must-gather: registry.redhat.io/openshift-service-mesh/istio-must-gather-rhel9@sha256:2ca96716812d339775d3dfd396c863834dd3810720e98bfcf87bc67c5fbd29b5
+                  images.v1_26_3.proxy: registry.redhat.io/openshift-service-mesh/istio-proxyv2-rhel9@sha256:26747627ae22bbdffcf9de58077454fc0c890cda83659d7834b15dea2b5aaaf2
+                  images.v1_26_3.ztunnel: registry.redhat.io/openshift-service-mesh-tech-preview/istio-ztunnel-rhel9@sha256:f7ab868455b5e887e2d89b7078678531290365f9166cae99ce56119f31fa2ba4
+                  images.v1_26_4.cni: registry.redhat.io/openshift-service-mesh/istio-cni-rhel9@sha256:9536c5850961488b3e01e29140d9ace0cbaa1f4bd1c1860cb49d10bf0514a5bf
+                  images.v1_26_4.istiod: registry.redhat.io/openshift-service-mesh/istio-pilot-rhel9@sha256:02b82941a92c537233c4f60d9223da2e637b045189b8700dd7030bd9c1c352d5
+                  images.v1_26_4.must-gather: registry.redhat.io/openshift-service-mesh/istio-must-gather-rhel9@sha256:cadc30c15a54d89de1992624a3641c7d5951dd292b668d026ab9d5e2f3878a77
+                  images.v1_26_4.proxy: registry.redhat.io/openshift-service-mesh/istio-proxyv2-rhel9@sha256:b45ecae5a9240b40403c4e39c6a81ab66c8c7e8de194dc3e21b1336ff3a0fa38
+                  images.v1_26_4.ztunnel: registry.redhat.io/openshift-service-mesh-tech-preview/istio-ztunnel-rhel9@sha256:950e9a2e8fef8740b4909957c2cced52d45abd66324fb056097f2d0782970573
+                  images.v1_26_6.cni: registry.redhat.io/openshift-service-mesh/istio-cni-rhel9@sha256:be16b9a7e2693bf294c99d96ba4cf36e98629ebff2ce6f2ce946fd9ae1e9f2dc
+                  images.v1_26_6.istiod: registry.redhat.io/openshift-service-mesh/istio-pilot-rhel9@sha256:91229b8d6e932178ddddf0b4878114b65c0451755919996239d1fe6285b644e8
+                  images.v1_26_6.must-gather: registry.redhat.io/openshift-service-mesh/istio-must-gather-rhel9@sha256:8a21e30593e51f2fd2e51d9ab1d0ed2fc43eaa9b98173d7fb74f799d6b2f163d
+                  images.v1_26_6.proxy: registry.redhat.io/openshift-service-mesh/istio-proxyv2-rhel9@sha256:47100186c27934adeda3002bb04cac28980ca8854eee7d6e4f4b3f85562e9a8e
+                  images.v1_26_6.ztunnel: registry.redhat.io/openshift-service-mesh-tech-preview/istio-ztunnel-rhel9@sha256:f39e2c28ef36fce9f808f3946cc4e4126047e142ad84cb18c222cecceae29730
+                  images.v1_26_8.cni: ${ISTIO_CNI_1_26}
+                  images.v1_26_8.istiod: ${ISTIO_PILOT_1_26}
+                  images.v1_26_8.must-gather: ${OSSM_MUST_GATHER_3_1}
+                  images.v1_26_8.proxy: ${ISTIO_PROXY_1_26}
+                  images.v1_26_8.ztunnel: ${ISTIO_ZTUNNEL_1_26}
+                  images.v1_27_3.cni: registry.redhat.io/openshift-service-mesh/istio-cni-rhel9@sha256:ddadd677161ad8c1077dd156821d6b4e32742ccbb210e9c14696fa66a58c0867
+                  images.v1_27_3.istiod: registry.redhat.io/openshift-service-mesh/istio-pilot-rhel9@sha256:0850242436e88f7d82f0f2126de064c7e0f09844f31d8ff0f53dc8d3908075d9
+                  images.v1_27_3.must-gather: registry.redhat.io/openshift-service-mesh/istio-must-gather-rhel9@sha256:742bc084c26769ff57cb3aa47b7a35c2b94684c3f67a9388da07a0490a942e5c
+                  images.v1_27_3.proxy: registry.redhat.io/openshift-service-mesh/istio-proxyv2-rhel9@sha256:7d15cebf9b62f3f235c0eab5158ac8ff2fda86a1d193490dc94c301402c99da8
+                  images.v1_27_3.ztunnel: registry.redhat.io/openshift-service-mesh/istio-ztunnel-rhel9@sha256:b2b3216a05f6136ed9ddb71d72d493030c6d6b431682dddffa692c760b6c9ba1
+                  images.v1_27_5.cni: registry.redhat.io/openshift-service-mesh/istio-cni-rhel9@sha256:2929b7df3da8228a728945542647ec5450c0585a2ed5cbdb84f8e3d81ab41806
+                  images.v1_27_5.istiod: registry.redhat.io/openshift-service-mesh/istio-pilot-rhel9@sha256:2e515a40de141bd4e516bfcf4fd0cbb8d236ac02799a7a35d77ae44f53916bc9
+                  images.v1_27_5.must-gather: registry.redhat.io/openshift-service-mesh/istio-must-gather-rhel9@sha256:d1baba8cb454b62d804dc427d4ccfea928348631c384d1ab3d170e1e2a9d1178
+                  images.v1_27_5.proxy: registry.redhat.io/openshift-service-mesh/istio-proxyv2-rhel9@sha256:650da1e2ad1cb93e6a0231dba7ca1f27f4cccac84e5925135281adc629a0caea
+                  images.v1_27_5.ztunnel: registry.redhat.io/openshift-service-mesh/istio-ztunnel-rhel9@sha256:0ae2919cd446e0e1f0a21d0850e7809ba8f44c06d484c023b3bee2787ca4bdd0
+                  images.v1_27_8.cni: ${ISTIO_CNI_1_27}
+                  images.v1_27_8.istiod: ${ISTIO_PILOT_1_27}
+                  images.v1_27_8.must-gather: ${OSSM_MUST_GATHER_3_2}
+                  images.v1_27_8.proxy: ${ISTIO_PROXY_1_27}
+                  images.v1_27_8.ztunnel: ${ISTIO_ZTUNNEL_1_27}
+                  images.v1_28_4.cni: registry.redhat.io/openshift-service-mesh/istio-cni-rhel9@sha256:f8abbd0d6c7758cf2ccd49dba34921e3ac9b6e4cdbfed4e5fb38dc9a11d30a5d
+                  images.v1_28_4.istiod: registry.redhat.io/openshift-service-mesh/istio-pilot-rhel9@sha256:978f840ceda7eb00c6f15740bcd60e241bee732cd215e9de464ce431b0156ffa
+                  images.v1_28_4.must-gather: registry.redhat.io/openshift-service-mesh/istio-must-gather-rhel9@sha256:d57d23fc8ec4053a3d819ffb87532d6aec6b5874fdf22e22afdd7f0f0712df52
+                  images.v1_28_4.proxy: registry.redhat.io/openshift-service-mesh/istio-proxyv2-rhel9@sha256:ba78d718627a0662f61ec633fdd2867ba5c24be6bdbc6df672d46456fb399dba
+                  images.v1_28_4.ztunnel: registry.redhat.io/openshift-service-mesh/istio-ztunnel-rhel9@sha256:2d5a3154e7b6b8d7eadb851a86cc5b7ee556b923843e73ae56197e875c564b03
+                  images.v1_28_5.cni: ${ISTIO_CNI_1_28}
+                  images.v1_28_5.istiod: ${ISTIO_PILOT_1_28}
+                  images.v1_28_5.must-gather: ${OSSM_MUST_GATHER_3_3}
+                  images.v1_28_5.proxy: ${ISTIO_PROXY_1_28}
+                  images.v1_28_5.ztunnel: ${ISTIO_ZTUNNEL_1_28}
                   kubectl.kubernetes.io/default-container: sail-operator
                 labels:
                   app.kubernetes.io/created-by: servicemeshoperator3
@@ -832,7 +788,7 @@ spec:
                       - --zap-log-level=info
                     command:
                       - /sail-operator
-                    image: quay.io/sail-dev/sail-operator:3.0-latest
+                    image: ${OSSM_OPERATOR_3_3}
                     livenessProbe:
                       httpGet:
                         path: /healthz
@@ -932,4 +888,4 @@ spec:
   maturity: alpha
   provider:
     name: Red Hat, Inc.
-  version: 3.0.1
+  version: 3.3.1

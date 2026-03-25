@@ -88,7 +88,6 @@ func (r *ZTunnelReconciler) ComputeValues(version string, userValues *v1.ZTunnel
 		return nil, fmt.Errorf("failed to apply profile: %w", err)
 	}
 
-	// apply fips values
 	mergedHelmValues, err = istiovalues.ApplyZTunnelFipsValues(mergedHelmValues)
 	if err != nil {
 		return nil, fmt.Errorf("failed to apply FIPS values: %w", err)

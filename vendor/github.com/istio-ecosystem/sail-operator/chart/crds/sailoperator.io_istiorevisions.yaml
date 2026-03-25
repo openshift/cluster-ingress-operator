@@ -3,7 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.20.1
+    controller-gen.kubebuilder.io/version: v0.19.0
   name: istiorevisions.sailoperator.io
 spec:
   group: sailoperator.io
@@ -121,12 +121,6 @@ spec:
                   global:
                     description: Global configuration for Istio components.
                     properties:
-                      agentgateway:
-                        description: Specifies how proxies are configured within Istio.
-                        properties:
-                          image:
-                            type: string
-                        type: object
                       arch:
                         description: "Specifies pod scheduling arch(amd64, ppc64le,
                           s390x, arm64) and weight as follows:\n\n\t0 - Never scheduled\n\t1
@@ -288,10 +282,9 @@ spec:
                             operator:
                               description: |-
                                 Operator represents a key's relationship to the value.
-                                Valid operators are Exists, Equal, Lt, and Gt. Defaults to Equal.
+                                Valid operators are Exists and Equal. Defaults to Equal.
                                 Exists is equivalent to wildcard for value, so that a pod can
                                 tolerate all taints of a particular category.
-                                Lt and Gt perform numeric comparisons (requires feature gate TaintTolerationComparisonOperators).
                               type: string
                             tolerationSeconds:
                               description: |-
@@ -1000,31 +993,6 @@ spec:
                                   otherwise to an implementation-defined value. Requests cannot exceed Limits.
                                   More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                                 type: object
-                            type: object
-                          seccompProfile:
-                            description: |-
-                              Configures the seccomp profile for the istio-validation and istio-proxy containers.
-
-                              See: https://kubernetes.io/docs/tutorials/security/seccomp/
-                            properties:
-                              localhostProfile:
-                                description: |-
-                                  localhostProfile indicates a profile defined in a file on the node should be used.
-                                  The profile must be preconfigured on the node to work.
-                                  Must be a descending path, relative to the kubelet's configured seccomp profile location.
-                                  Must be set if type is "Localhost". Must NOT be set for any other type.
-                                type: string
-                              type:
-                                description: |-
-                                  type indicates which kind of seccomp profile will be applied.
-                                  Valid options are:
-
-                                  Localhost - a profile defined in a file on the node should be used.
-                                  RuntimeDefault - the container runtime default profile should be used.
-                                  Unconfined - no profile should be applied.
-                                type: string
-                            required:
-                            - type
                             type: object
                           startupProbe:
                             description: Configures the startup probe for the istio-proxy
@@ -2358,10 +2326,9 @@ spec:
                                 operator:
                                   description: |-
                                     Operator represents a key's relationship to the value.
-                                    Valid operators are Exists, Equal, Lt, and Gt. Defaults to Equal.
+                                    Valid operators are Exists and Equal. Defaults to Equal.
                                     Exists is equivalent to wildcard for value, so that a pod can
                                     tolerate all taints of a particular category.
-                                    Lt and Gt perform numeric comparisons (requires feature gate TaintTolerationComparisonOperators).
                                   type: string
                                 tolerationSeconds:
                                   description: |-
@@ -3269,20 +3236,6 @@ spec:
                             items:
                               type: string
                             type: array
-                          fileFlushInterval:
-                            description: |-
-                              File flush interval for envoy flushes buffers to disk in milliseconds.
-                              The duration needs to be set to a value greater than or equal to 1 millisecond.
-                              Default is 1000ms.
-                              Optional.
-                            type: string
-                          fileFlushMinSizeKb:
-                            description: |-
-                              File flush buffer size for envoy flushes buffers to disk in kilobytes.
-                              Defaults to 64.
-                              Optional.
-                            format: int32
-                            type: integer
                           gatewayTopology:
                             description: |-
                               Topology encapsulates the configuration which describes where the proxy is
@@ -3817,12 +3770,6 @@ spec:
                               Increase the value of this field if you find that the metrics from Envoys are truncated.
                             format: int32
                             type: integer
-                          statsCompression:
-                            description: |-
-                              Offer HTTP compression for stats
-                              Defaults to true.
-                              Optional.
-                            type: boolean
                           statsdUdpAddress:
                             description: IP Address and Port of a statsd UDP listener
                               (e.g. `10.75.241.127:9125`).
@@ -5235,32 +5182,6 @@ spec:
 
                                     Example: "otlp.default.svc.cluster.local" or "bar/otlp.example.com".
                                   type: string
-                                serviceAttributeEnrichment:
-                                  description: |-
-                                    Optional. Controls how service resource attributes are enriched in
-                                    exported trace spans. When set to `OTEL_SEMANTIC_CONVENTIONS`, the
-                                    service attributes (`service.name`, `service.namespace`,
-                                    `service.version`, `service.instance.id`) will be populated following
-                                    the OpenTelemetry semantic conventions for Kubernetes:
-                                    https://opentelemetry.io/docs/specs/semconv/non-normative/k8s-attributes/#service-attributes
-
-                                    When not set or set to `ISTIO_CANONICAL`, Istio's default enrichment
-                                    logic is used (controlled by `TracingServiceName` in `ProxyConfig`).
-
-                                    Example:
-                                    ```yaml
-                                    extensionProviders:
-                                      - name: otel-tracing
-                                        opentelemetry:
-                                        port: 443
-                                        service: my.olly-backend.com
-                                        serviceAttributeEnrichment: OTEL_SEMANTIC_CONVENTIONS
-
-                                    ```
-                                  enum:
-                                  - ISTIO_CANONICAL
-                                  - OTEL_SEMANTIC_CONVENTIONS
-                                  type: string
                               required:
                               - port
                               - service
@@ -5391,35 +5312,6 @@ spec:
                                     Optional. A 128 bit trace id will be used in Istio.
                                     If true, will result in a 64 bit trace id being used.
                                   type: boolean
-                                headers:
-                                  description: |-
-                                    Optional. Additional HTTP headers to include in the request to the Zipkin collector.
-                                    These headers will be added to the HTTP request when sending spans to the collector.
-                                  items:
-                                    properties:
-                                      envName:
-                                        description: |-
-                                          The HTTP header value from the environment variable.
-
-                                          Warning:
-                                          - The environment variable must be set in the istiod pod spec.
-                                          - This is not a end-to-end secure.
-                                        type: string
-                                      name:
-                                        description: REQUIRED. The HTTP header name.
-                                        type: string
-                                      value:
-                                        description: The HTTP header value.
-                                        type: string
-                                    required:
-                                    - name
-                                    type: object
-                                    x-kubernetes-validations:
-                                    - message: At most one of [value envName] should
-                                        be set
-                                      rule: (has(self.value)?1:0) + (has(self.envName)?1:0)
-                                        <= 1
-                                  type: array
                                 maxTagLength:
                                   description: |-
                                     Optional. Controls the overall path length allowed in a reported span.
@@ -5444,11 +5336,6 @@ spec:
                                     service defined by the Kubernetes service or ServiceEntry.
 
                                     Example: "zipkin.default.svc.cluster.local" or "bar/zipkin.example.com".
-                                  type: string
-                                timeout:
-                                  description: |-
-                                    Optional. The timeout for the HTTP request to the Zipkin collector.
-                                    If not specified, the default timeout from Envoy's configuration will be used (which is 5 seconds currently).
                                   type: string
                                 traceContextOption:
                                   description: |-
@@ -5490,16 +5377,6 @@ spec:
                         enum:
                         - DO_NOT_UPGRADE
                         - UPGRADE
-                        type: string
-                      hboneIdleTimeout:
-                        description: |-
-                          Idle timeout configured on Envoy proxies for their connection pools to ztunnel via HBONE.
-                          This controls how long Envoy will keep idle connections to ztunnel before closing them.
-                          Note: This setting is applied only on the Envoy proxy side; ztunnel does not use it.
-                          Default timeout is 1 hour (3600s).
-                          For environments with aggressive IP address reuse, it is recommended to set
-                          this to a value less than the CNI IP cooldown period to prevent stale connection reuse.
-                          For example, if your CNI has a 30s cooldown period, setting this to 15s is recommended.
                         type: string
                       inboundClusterStatName:
                         description: |-
@@ -6075,6 +5952,7 @@ spec:
                       tlsDefaults:
                         description: |-
                           Configuration of TLS for all traffic except for ISTIO_MUTUAL mode.
+                          Currently, this supports configuration of ecdhCurves and cipherSuites only.
                           For ISTIO_MUTUAL TLS settings, use meshMTLS configuration.
                         properties:
                           cipherSuites:
@@ -7157,8 +7035,8 @@ spec:
                                   and scale-down and scale-up tolerances of 5% and 1% respectively, scaling will be
                                   triggered when the actual consumption falls below 95Mi or exceeds 101Mi.
 
-                                  This is an beta field and requires the HPAConfigurableTolerance feature
-                                  gate to be enabled.
+                                  This is an alpha field and requires enabling the HPAConfigurableTolerance
+                                  feature gate.
                                 pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                                 x-kubernetes-int-or-string: true
                             type: object
@@ -7232,8 +7110,8 @@ spec:
                                   and scale-down and scale-up tolerances of 5% and 1% respectively, scaling will be
                                   triggered when the actual consumption falls below 95Mi or exceeds 101Mi.
 
-                                  This is an beta field and requires the HPAConfigurableTolerance feature
-                                  gate to be enabled.
+                                  This is an alpha field and requires enabling the HPAConfigurableTolerance
+                                  feature gate.
                                 pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                                 x-kubernetes-int-or-string: true
                             type: object
@@ -7288,10 +7166,6 @@ spec:
                             format: int32
                             type: integer
                         type: object
-                      crlConfigMapName:
-                        description: Select a custom name for istiod's plugged-in
-                          CA CRL ConfigMap.
-                        type: string
                       deploymentLabels:
                         additionalProperties:
                           type: string
@@ -7754,10 +7628,9 @@ spec:
                             operator:
                               description: |-
                                 Operator represents a key's relationship to the value.
-                                Valid operators are Exists, Equal, Lt, and Gt. Defaults to Equal.
+                                Valid operators are Exists and Equal. Defaults to Equal.
                                 Exists is equivalent to wildcard for value, so that a pod can
                                 tolerate all taints of a particular category.
-                                Lt and Gt perform numeric comparisons (requires feature gate TaintTolerationComparisonOperators).
                               type: string
                             tolerationSeconds:
                               description: |-
@@ -8624,7 +8497,7 @@ spec:
                                         resources:
                                           description: |-
                                             resources represents the minimum resources the volume should have.
-                                            Users are allowed to specify resource requirements
+                                            If RecoverVolumeExpansionFailure feature is enabled users are allowed to specify resource requirements
                                             that are lower than previous value but must still be higher than capacity recorded in the
                                             status field of the claim.
                                             More info: https://kubernetes.io/docs/concepts/storage/persistent-volumes#resources
@@ -9510,24 +9383,6 @@ spec:
                                             description: Kubelet's generated CSRs
                                               will be addressed to this signer.
                                             type: string
-                                          userAnnotations:
-                                            additionalProperties:
-                                              type: string
-                                            description: |-
-                                              userAnnotations allow pod authors to pass additional information to
-                                              the signer implementation.  Kubernetes does not restrict or validate this
-                                              metadata in any way.
-
-                                              These values are copied verbatim into the `spec.unverifiedUserAnnotations` field of
-                                              the PodCertificateRequest objects that Kubelet creates.
-
-                                              Entries are subject to the same validation as object metadata annotations,
-                                              with the addition that all keys must be domain-prefixed. No restrictions
-                                              are placed on values, except an overall size limitation on the entire field.
-
-                                              Signers should document the keys and values they support. Signers should
-                                              deny requests that contain keys they do not recognize.
-                                            type: object
                                         required:
                                         - keyType
                                         - signerName
@@ -10147,54 +10002,18 @@ spec:
               version:
                 description: |-
                   Defines the version of Istio to install.
-                  Must be one of: v1.29.0, v1.28.4, v1.28.3, v1.28.2, v1.28.1, v1.28.0, v1.27.7, v1.27.6, v1.27.5, v1.27.4, v1.27.3, v1.27.2, v1.27.1, v1.27.0, v1.30-alpha.a22c3091.
+                  Must be one of: v1.28.5, v1.28.4, v1.27.8, v1.27.5, v1.27.3, v1.26.8, v1.26.6, v1.26.4, v1.26.3, v1.26.2.
                 enum:
-                - v1.29.0
+                - v1.28.5
                 - v1.28.4
-                - v1.28.3
-                - v1.28.2
-                - v1.28.1
-                - v1.28.0
-                - v1.27.7
-                - v1.27.6
+                - v1.27.8
                 - v1.27.5
-                - v1.27.4
                 - v1.27.3
-                - v1.27.2
-                - v1.27.1
-                - v1.27.0
                 - v1.26.8
-                - v1.26.7
                 - v1.26.6
-                - v1.26.5
                 - v1.26.4
                 - v1.26.3
                 - v1.26.2
-                - v1.26.1
-                - v1.26.0
-                - v1.25.5
-                - v1.25.4
-                - v1.25.3
-                - v1.25.2
-                - v1.25.1
-                - v1.24.6
-                - v1.24.5
-                - v1.24.4
-                - v1.24.3
-                - v1.24.2
-                - v1.24.1
-                - v1.24.0
-                - v1.23.6
-                - v1.23.5
-                - v1.23.4
-                - v1.23.3
-                - v1.23.2
-                - v1.22.8
-                - v1.22.7
-                - v1.22.6
-                - v1.22.5
-                - v1.21.6
-                - v1.30-alpha.a22c3091
                 type: string
             required:
             - namespace
