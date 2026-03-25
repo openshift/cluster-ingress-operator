@@ -44,7 +44,7 @@ require (
 	k8s.io/client-go v0.35.1
 	k8s.io/utils v0.0.0-20260108192941-914a6e750570
 	sigs.k8s.io/controller-runtime v0.23.3
-	sigs.k8s.io/gateway-api v1.5.0 // Pinned to v1.4.1 in replace directive
+	sigs.k8s.io/gateway-api v1.4.1
 )
 
 require (
@@ -201,7 +201,7 @@ require (
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	helm.sh/helm/v3 v3.18.6 // indirect
-	istio.io/istio v0.0.0-20260309041103-f67b89f49d1a // indirect
+	istio.io/istio v0.0.0-20260306174229-7da666217518 // indirect
 	k8s.io/cli-runtime v0.35.0 // indirect
 	k8s.io/component-base v0.35.1 // indirect
 	k8s.io/klog/v2 v2.130.1 // indirect
@@ -222,12 +222,6 @@ require (
 // github.com/istio-ecosystem/sail-operator.
 replace github.com/imdario/mergo => github.com/imdario/mergo v0.3.5
 
-// Use the sail_library_ossm branch from aslakknutsen's fork for Sail Library integration
-replace github.com/istio-ecosystem/sail-operator => github.com/aslakknutsen/sail-operator v0.0.0-20260318134045-4159c7d6ebbd
-
-// Pin gateway-api to v1.4.1 to avoid upgrading via transitive dependency.
-// The sail-operator main branch uses the latest Istio, which depends on gateway-api v1.5.0.
-// However, sail-operator itself doesn't use gateway-api, so pinning is safe and avoids
-// unintended API changes in CIO's Gateway API implementation.
-// Remove this when sail-operator switches to an OSSM release branch.
-replace sigs.k8s.io/gateway-api => sigs.k8s.io/gateway-api v1.4.1
+// Use OSSM 3.3.1 for Sail Library integration.
+// Replace needed because the fork keeps upstream module name for compatibility.
+replace github.com/istio-ecosystem/sail-operator => github.com/openshift-service-mesh/sail-operator v0.0.0-20260327145107-d4059b965c68
