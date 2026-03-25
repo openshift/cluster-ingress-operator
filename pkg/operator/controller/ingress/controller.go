@@ -331,12 +331,14 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		if err := r.admit(ingress, ingressConfig, platformStatus, dnsConfig, alreadyAdmitted); err != nil {
 			switch err := err.(type) {
 			case *admissionRejection:
+				log.Info("IngressController rejected", "namespace", ingress.Namespace, "name", ingress.Name, "reason", err.Reason)
 				r.recorder.Event(ingress, "Warning", "Rejected", err.Reason)
 				return reconcile.Result{}, nil
 			default:
 				return reconcile.Result{}, fmt.Errorf("failed to admit ingresscontroller: %v", err)
 			}
 		}
+		log.Info("IngressController admitted", "namespace", ingress.Namespace, "name", ingress.Name)
 		r.recorder.Event(ingress, "Normal", "Admitted", "ingresscontroller passed validation")
 		// Just re-queue for simplicity
 		return reconcile.Result{Requeue: true}, nil
@@ -403,6 +405,7 @@ func (r *reconciler) admit(current *operatorv1.IngressController, ingressConfig 
 	updated.Status.ObservedGeneration = updated.Generation
 
 	if !domainMatchesBaseDomain {
+		log.Info("Domain does not match base domain, DNS management disabled", "namespace", updated.Namespace, "name", updated.Name, "domain", updated.Status.Domain, "baseDomain", dnsConfig.Spec.BaseDomain)
 		r.recorder.Eventf(updated, "Warning", "DomainNotMatching", fmt.Sprintf("Domain [%s] of ingresscontroller does not match the baseDomain [%s] of the cluster DNS config, so DNS management is not supported.", updated.Status.Domain, dnsConfig.Spec.BaseDomain))
 	}
 

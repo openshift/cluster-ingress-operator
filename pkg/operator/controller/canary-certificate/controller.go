@@ -206,6 +206,7 @@ func (r *reconciler) createCanaryCertificate(ctx context.Context, certificate *c
 		return err
 	}
 
+	log.Info("Created canary certificate secret", "namespace", certificate.Namespace, "name", certificate.Name)
 	r.recorder.Event(certificate, "Normal", "CreatedCanaryCertificate", "created canary certificate")
 	return nil
 }
@@ -220,6 +221,7 @@ func (r *reconciler) updateCanaryCertificate(ctx context.Context, current, desir
 	if err := r.client.Update(ctx, updated); err != nil {
 		return false, err
 	}
+	log.Info("Updated canary certificate secret", "namespace", updated.Namespace, "name", updated.Name)
 	r.recorder.Event(updated, "Normal", "UpdatedCanaryCertificate", "updated canary certificate")
 	return true, nil
 }
