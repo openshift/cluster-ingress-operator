@@ -425,30 +425,14 @@ func GetPodRunningTimeoutFlag(cmd *cobra.Command) (time.Duration, error) {
 type FeatureGate string
 
 const (
-	// owner: @ardaguclu
-	// kep: https://kep.k8s.io/3104
-	//
-	// Separate kubectl user preferences.
-	KubeRC FeatureGate = "KUBECTL_KUBERC"
-
-	// owner: @justinb
-	// kep: https://kep.k8s.io/3659
-	//
-	// Improved kubectl apply --prune behavior.
-	ApplySet FeatureGate = "KUBECTL_APPLYSET"
-
-	// owner: @seans
-	// kep: https://kep.k8s.io/4006
-	//
-	// Transition to WebSockets.
+	ApplySet                FeatureGate = "KUBECTL_APPLYSET"
+	CmdPluginAsSubcommand   FeatureGate = "KUBECTL_ENABLE_CMD_SHADOW"
+	OpenAPIV3Patch          FeatureGate = "KUBECTL_OPENAPIV3_PATCH"
 	RemoteCommandWebsockets FeatureGate = "KUBECTL_REMOTE_COMMAND_WEBSOCKETS"
 	PortForwardWebsockets   FeatureGate = "KUBECTL_PORT_FORWARD_WEBSOCKETS"
-
-	// owner: @thockin
-	// kep: https://kep.k8s.io/5296
-	//
-	// Support KYAML output.
-	KYAMLOutput FeatureGate = "KUBECTL_KYAML"
+	// DebugCustomProfile should be dropped in 1.34
+	DebugCustomProfile FeatureGate = "KUBECTL_DEBUG_CUSTOM_PROFILE"
+	KubeRC             FeatureGate = "KUBECTL_KUBERC"
 )
 
 // IsEnabled returns true iff environment variable is set to true.
@@ -532,7 +516,7 @@ func AddApplyAnnotationVarFlags(cmd *cobra.Command, applyAnnotation *bool) {
 
 func AddChunkSizeFlag(cmd *cobra.Command, value *int64) {
 	cmd.Flags().Int64Var(value, "chunk-size", *value,
-		"Return large lists in chunks rather than all at once. Pass 0 to disable.")
+		"Return large lists in chunks rather than all at once. Pass 0 to disable. This flag is beta and may change in the future.")
 }
 
 func AddLabelSelectorFlagVar(cmd *cobra.Command, p *string) {

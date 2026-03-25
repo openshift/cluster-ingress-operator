@@ -18,9 +18,14 @@ import (
 	"reflect"
 	"regexp"
 
+	"github.com/istio-ecosystem/sail-operator/pkg/constants"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
+
+// istiodValidatorRe matches istiod-managed ValidatingWebhookConfiguration names.
+// Precompiled to avoid recompilation on every update event.
+var istiodValidatorRe = regexp.MustCompile(`^(istiod-.*-validator|istio-validator.*)$`)
 
 // Predicate filtering logic adapted from controllers/istiorevision for use with dynamic informers.
 // These functions determine whether a resource change should trigger reconciliation.
@@ -39,6 +44,7 @@ var (
 	pdbGVK                            = schema.GroupVersionKind{Group: "policy", Version: "v1", Kind: "PodDisruptionBudget"}
 	hpaGVK                            = schema.GroupVersionKind{Group: "autoscaling", Version: "v2", Kind: "HorizontalPodAutoscaler"}
 	validatingWebhookConfigurationGVK = schema.GroupVersionKind{Group: "admissionregistration.k8s.io", Version: "v1", Kind: "ValidatingWebhookConfiguration"}
+	crdGVK                            = schema.GroupVersionKind{Group: "apiextensions.k8s.io", Version: "v1", Kind: "CustomResourceDefinition"}
 )
 
 // shouldReconcileOnCreate determines if a create event should trigger reconciliation.
@@ -72,7 +78,7 @@ func shouldReconcileOnUpdate(gvk schema.GroupVersionKind, oldObj, newObj *unstru
 	}
 
 	// Resources that need status-change filtering
-	if needsStatusChangeFilter(gvk) {
+	if shouldFilterStatusChanges(gvk) {
 		return !isStatusOnlyChange(gvk, oldObj, newObj)
 	}
 
@@ -80,8 +86,8 @@ func shouldReconcileOnUpdate(gvk schema.GroupVersionKind, oldObj, newObj *unstru
 	return true
 }
 
-// needsStatusChangeFilter returns true for GVKs that should ignore status-only changes.
-func needsStatusChangeFilter(gvk schema.GroupVersionKind) bool {
+// shouldFilterStatusChanges returns true for GVKs that should ignore status-only changes.
+func shouldFilterStatusChanges(gvk schema.GroupVersionKind) bool {
 	switch gvk {
 	case serviceGVK, networkPolicyGVK, pdbGVK, hpaGVK, namespaceGVK:
 		return true
@@ -151,37 +157,116 @@ func shouldReconcileValidatingWebhook(oldObj, newObj *unstructured.Unstructured)
 	name := newObj.GetName()
 
 	// Check if this is an istiod-managed validator webhook
-	matched, _ := regexp.MatchString("istiod-.*-validator|istio-validator.*", name)
-	if !matched {
+	if !istiodValidatorRe.MatchString(name) {
 		// Not an istiod validator, reconcile normally
 		return true
 	}
 
 	// For istiod validators, compare objects after clearing fields that istiod updates
-	oldCopy := clearWebhookIgnoredFields(oldObj.DeepCopy())
-	newCopy := clearWebhookIgnoredFields(newObj.DeepCopy())
+	oldCopy := clearIgnoredFields(oldObj.DeepCopy())
+	newCopy := clearIgnoredFields(newObj.DeepCopy())
 
 	return !reflect.DeepEqual(oldCopy.Object, newCopy.Object)
 }
 
-// clearWebhookIgnoredFields clears fields that should be ignored when comparing webhook configs.
-func clearWebhookIgnoredFields(obj *unstructured.Unstructured) *unstructured.Unstructured {
+// clearIgnoredFields clears fields that should be ignored when comparing webhook configs.
+func clearIgnoredFields(obj *unstructured.Unstructured) *unstructured.Unstructured {
 	// Clear metadata fields that change frequently
 	obj.SetResourceVersion("")
 	obj.SetGeneration(0)
 	obj.SetManagedFields(nil)
 
-	// Clear failurePolicy in each webhook
-	webhooks, found, _ := unstructured.NestedSlice(obj.Object, "webhooks")
-	if found {
-		for i := range webhooks {
-			if webhook, ok := webhooks[i].(map[string]interface{}); ok {
-				delete(webhook, "failurePolicy")
-				webhooks[i] = webhook
+	switch obj.GetKind() {
+	case "ValidatingWebhookConfiguration":
+		webhooks, found, _ := unstructured.NestedSlice(obj.Object, "webhooks")
+		if found {
+			for i := range webhooks {
+				if webhook, ok := webhooks[i].(map[string]interface{}); ok {
+					delete(webhook, "failurePolicy")
+					if clientConfig, ok := webhook["clientConfig"].(map[string]interface{}); ok {
+						delete(clientConfig, "caBundle")
+					}
+					webhooks[i] = webhook
+				}
 			}
+			_ = unstructured.SetNestedSlice(obj.Object, webhooks, "webhooks")
 		}
-		_ = unstructured.SetNestedSlice(obj.Object, webhooks, "webhooks")
+	case "MutatingWebhookConfiguration":
+		webhooks, found, _ := unstructured.NestedSlice(obj.Object, "webhooks")
+		if found {
+			for i := range webhooks {
+				if webhook, ok := webhooks[i].(map[string]interface{}); ok {
+					if clientConfig, ok := webhook["clientConfig"].(map[string]interface{}); ok {
+						delete(clientConfig, "caBundle")
+					}
+					webhooks[i] = webhook
+				}
+			}
+			_ = unstructured.SetNestedSlice(obj.Object, webhooks, "webhooks")
+		}
 	}
 
 	return obj
+}
+
+// isOwnedResource checks if the resource is owned by our installation
+// by examining Istio labels against the expected revision and the
+// managed-by label set by the post-renderer.
+func isOwnedResource(obj *unstructured.Unstructured, revision, managedByValue string) bool {
+	labels := obj.GetLabels()
+	if labels == nil {
+		return false
+	}
+
+	if rev, ok := labels["istio.io/rev"]; ok {
+		expectedRev := revision
+		if expectedRev == defaultRevision {
+			expectedRev = "default"
+		}
+		return rev == expectedRev
+	}
+
+	if _, ok := labels["operator.istio.io/component"]; ok {
+		return true
+	}
+
+	// Check the managed-by label set by HelmPostRenderer.
+	if managedBy, ok := labels[constants.ManagedByLabelKey]; ok {
+		return managedBy == managedByValue
+	}
+
+	// Fallback: Helm sets app.kubernetes.io/managed-by to "Helm" on chart resources.
+	if managedBy, ok := labels["app.kubernetes.io/managed-by"]; ok {
+		return managedBy == "Helm"
+	}
+
+	return false
+}
+
+// isTargetCRD checks if an unstructured CRD object's name is in the target set.
+func isTargetCRD(obj *unstructured.Unstructured, targets map[string]struct{}) bool {
+	if len(targets) == 0 {
+		return false
+	}
+	_, ok := targets[obj.GetName()]
+	return ok
+}
+
+// shouldReconcileCRDOnUpdate determines if a CRD update should trigger reconciliation.
+// We care about ownership label changes (CIO/OLM labels being added/removed) and
+// annotation changes (helm.sh/resource-policy). Spec/status changes on the CRD itself
+// are not relevant for ownership classification.
+func shouldReconcileCRDOnUpdate(oldObj, newObj *unstructured.Unstructured) bool {
+	if !reflect.DeepEqual(oldObj.GetLabels(), newObj.GetLabels()) {
+		return true
+	}
+	if !reflect.DeepEqual(oldObj.GetAnnotations(), newObj.GetAnnotations()) {
+		return true
+	}
+	// Spec changes on CRDs mean the CRD schema was updated — re-reconcile
+	// to ensure our version is still current.
+	if oldObj.GetGeneration() != newObj.GetGeneration() {
+		return true
+	}
+	return false
 }

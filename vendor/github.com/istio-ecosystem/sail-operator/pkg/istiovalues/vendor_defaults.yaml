@@ -1,8 +1,8 @@
 # This file can be overwritten in vendor distributions of sail-operator to set
 # vendor-specific defaults. You can configure version-specific defaults for
-# every field in `spec.values` for both Istio and IstioCNI resource, 
+# every field in `spec.values` for both Istio and IstioCNI resource,
 # see the following example:
-# 
+#
 # v1.26.0:
 #   istio:
 #     pilot:
@@ -15,3 +15,48 @@
 # These defaults are type-checked at compile time.
 # Note: After modifying this file, run `make test` to ensure that the
 # generated defaults values from this files are valid.
+v1.26.2:
+  istio:
+    pilot:
+      env:
+        ENABLE_GATEWAY_API_MANUAL_DEPLOYMENT: "false"
+v1.26.3:
+  istio:
+    pilot:
+      env:
+        ENABLE_GATEWAY_API_MANUAL_DEPLOYMENT: "false"
+v1.26.4:
+  istio:
+    pilot:
+      env:
+        ENABLE_GATEWAY_API_MANUAL_DEPLOYMENT: "false"
+v1.26.6:
+  istio:
+    pilot:
+      env:
+        ENABLE_GATEWAY_API_MANUAL_DEPLOYMENT: "false"
+v1.26.8:
+  istio:
+    pilot:
+      env:
+        ENABLE_GATEWAY_API_MANUAL_DEPLOYMENT: "false"
+v1.27.0:
+  istio:
+    pilot:
+      env:
+        ENABLE_GATEWAY_API_MANUAL_DEPLOYMENT: "false"
+v1.27.3:
+  istio:
+    pilot:
+      env:
+        ENABLE_GATEWAY_API_MANUAL_DEPLOYMENT: "false"
+v1.27.5:
+  istio:
+    pilot:
+      env:
+        ENABLE_GATEWAY_API_MANUAL_DEPLOYMENT: "false"
+v1.28.3:
+  istio:
+    pilot:
+      env:
+        ENABLE_GATEWAY_API_MANUAL_DEPLOYMENT: "false"

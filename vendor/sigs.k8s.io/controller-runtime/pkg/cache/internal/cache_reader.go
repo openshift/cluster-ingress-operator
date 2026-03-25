@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"reflect"
-	"slices"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
@@ -55,10 +54,7 @@ type CacheReader struct {
 }
 
 // Get checks the indexer for the object and writes a copy of it if found.
-func (c *CacheReader) Get(_ context.Context, key client.ObjectKey, out client.Object, opts ...client.GetOption) error {
-	getOpts := client.GetOptions{}
-	getOpts.ApplyOptions(opts)
-
+func (c *CacheReader) Get(_ context.Context, key client.ObjectKey, out client.Object, _ ...client.GetOption) error {
 	if c.scopeName == apimeta.RESTScopeNameRoot {
 		key.Namespace = ""
 	}
@@ -85,7 +81,7 @@ func (c *CacheReader) Get(_ context.Context, key client.ObjectKey, out client.Ob
 		return fmt.Errorf("cache contained %T, which is not an Object", obj)
 	}
 
-	if c.disableDeepCopy || (getOpts.UnsafeDisableDeepCopy != nil && *getOpts.UnsafeDisableDeepCopy) {
+	if c.disableDeepCopy {
 		// skip deep copy which might be unsafe
 		// you must DeepCopy any object before mutating it outside
 	} else {
@@ -101,7 +97,7 @@ func (c *CacheReader) Get(_ context.Context, key client.ObjectKey, out client.Ob
 		return fmt.Errorf("cache had type %s, but %s was asked for", objVal.Type(), outVal.Type())
 	}
 	reflect.Indirect(outVal).Set(reflect.Indirect(objVal))
-	if !c.disableDeepCopy && (getOpts.UnsafeDisableDeepCopy == nil || !*getOpts.UnsafeDisableDeepCopy) {
+	if !c.disableDeepCopy {
 		out.GetObjectKind().SetGroupVersionKind(c.groupVersionKind)
 	}
 
@@ -110,7 +106,7 @@ func (c *CacheReader) Get(_ context.Context, key client.ObjectKey, out client.Ob
 
 // List lists items out of the indexer and writes them to out.
 func (c *CacheReader) List(_ context.Context, out client.ObjectList, opts ...client.ListOption) error {
-	var objs []any
+	var objs []interface{}
 	var err error
 
 	listOpts := client.ListOptions{}
@@ -187,10 +183,10 @@ func (c *CacheReader) List(_ context.Context, out client.ObjectList, opts ...cli
 	return nil
 }
 
-func byIndexes(indexer cache.Indexer, requires fields.Requirements, namespace string) ([]any, error) {
+func byIndexes(indexer cache.Indexer, requires fields.Requirements, namespace string) ([]interface{}, error) {
 	var (
 		err  error
-		objs []any
+		objs []interface{}
 		vals []string
 	)
 	indexers := indexer.GetIndexers()
@@ -214,14 +210,17 @@ func byIndexes(indexer cache.Indexer, requires fields.Requirements, namespace st
 		if !exist {
 			return nil, fmt.Errorf("index with name %s does not exist", indexName)
 		}
-		filteredObjects := make([]any, 0, len(objs))
+		filteredObjects := make([]interface{}, 0, len(objs))
 		for _, obj := range objs {
 			vals, err = fn(obj)
 			if err != nil {
 				return nil, err
 			}
-			if slices.Contains(vals, indexedValue) {
-				filteredObjects = append(filteredObjects, obj)
+			for _, val := range vals {
+				if val == indexedValue {
+					filteredObjects = append(filteredObjects, obj)
+					break
+				}
 			}
 		}
 		if len(filteredObjects) == 0 {

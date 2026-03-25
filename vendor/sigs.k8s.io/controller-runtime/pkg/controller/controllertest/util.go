@@ -18,7 +18,6 @@ package controllertest
 
 import (
 	"context"
-	"sync"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -30,26 +29,12 @@ var _ cache.SharedIndexInformer = &FakeInformer{}
 // FakeInformer provides fake Informer functionality for testing.
 type FakeInformer struct {
 	// Synced is returned by the HasSynced functions to implement the Informer interface
-	Synced     bool
-	SyncedLock sync.Mutex
+	Synced bool
 
 	// RunCount is incremented each time RunInformersAndControllers is called
 	RunCount int
 
 	handlers []cache.ResourceEventHandler
-}
-
-// fakeHandlerRegistration implements cache.ResourceEventHandlerRegistration for testing.
-type fakeHandlerRegistration struct {
-	informer *FakeInformer
-}
-
-// HasSynced implements cache.ResourceEventHandlerRegistration.
-func (f *fakeHandlerRegistration) HasSynced() bool {
-	f.informer.SyncedLock.Lock()
-	defer f.informer.SyncedLock.Unlock()
-
-	return f.informer.Synced
 }
 
 // AddIndexers does nothing.  TODO(community): Implement this.
@@ -59,7 +44,7 @@ func (f *FakeInformer) AddIndexers(indexers cache.Indexers) error {
 
 // GetIndexer does nothing.  TODO(community): Implement this.
 func (f *FakeInformer) GetIndexer() cache.Indexer {
-	return cache.NewIndexer(cache.DeletionHandlingMetaNamespaceKeyFunc, nil)
+	return nil
 }
 
 // Informer returns the fake Informer.
@@ -69,28 +54,25 @@ func (f *FakeInformer) Informer() cache.SharedIndexInformer {
 
 // HasSynced implements the Informer interface.  Returns f.Synced.
 func (f *FakeInformer) HasSynced() bool {
-	f.SyncedLock.Lock()
-	defer f.SyncedLock.Unlock()
-
 	return f.Synced
 }
 
 // AddEventHandler implements the Informer interface. Adds an EventHandler to the fake Informers. TODO(community): Implement Registration.
 func (f *FakeInformer) AddEventHandler(handler cache.ResourceEventHandler) (cache.ResourceEventHandlerRegistration, error) {
 	f.handlers = append(f.handlers, handler)
-	return &fakeHandlerRegistration{informer: f}, nil
+	return nil, nil
 }
 
 // AddEventHandlerWithResyncPeriod implements the Informer interface. Adds an EventHandler to the fake Informers (ignores resyncPeriod). TODO(community): Implement Registration.
 func (f *FakeInformer) AddEventHandlerWithResyncPeriod(handler cache.ResourceEventHandler, _ time.Duration) (cache.ResourceEventHandlerRegistration, error) {
 	f.handlers = append(f.handlers, handler)
-	return &fakeHandlerRegistration{informer: f}, nil
+	return nil, nil
 }
 
 // AddEventHandlerWithOptions implements the Informer interface. Adds an EventHandler to the fake Informers (ignores options). TODO(community): Implement Registration.
 func (f *FakeInformer) AddEventHandlerWithOptions(handler cache.ResourceEventHandler, _ cache.HandlerOptions) (cache.ResourceEventHandlerRegistration, error) {
 	f.handlers = append(f.handlers, handler)
-	return &fakeHandlerRegistration{informer: f}, nil
+	return nil, nil
 }
 
 // Run implements the Informer interface.  Increments f.RunCount.

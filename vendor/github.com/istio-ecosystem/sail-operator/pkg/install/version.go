@@ -56,6 +56,15 @@ func DefaultVersion(resourceFS fs.FS) (string, error) {
 	return bestName, nil
 }
 
+// NormalizeVersion ensures the version string has a "v" prefix.
+// Returns the input unchanged if it is empty or already starts with "v".
+func NormalizeVersion(version string) string {
+	if version != "" && !strings.HasPrefix(version, "v") {
+		return "v" + version
+	}
+	return version
+}
+
 // ValidateVersion checks that a version directory exists in the resource filesystem.
 // Unlike istioversion.Resolve, this does not support aliases — only concrete
 // version directory names (e.g. "v1.28.3").
