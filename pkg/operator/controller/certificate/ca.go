@@ -38,6 +38,7 @@ func (r *reconciler) ensureRouterCASecret() (*corev1.Secret, error) {
 		if err != nil {
 			return nil, err
 		}
+		log.Info("Created default wildcard CA certificate secret", "namespace", new.Namespace, "name", new.Name)
 		r.recorder.Event(new, "Normal", "CreatedWildcardCACert", "Created a default wildcard CA certificate")
 		return new, nil
 
