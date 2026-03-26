@@ -2,7 +2,17 @@ package certificatepublisher
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"fmt"
+	"math/big"
+	"strings"
 	"testing"
+	"time"
 
 	operatorv1 "github.com/openshift/api/operator/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
@@ -11,17 +21,45 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// generatePEMKeyPair generates a unique self-signed certificate and key in PEM
+// format.  The certificate's CN is set to the provided name so that each call
+// produces distinct PEM data, preserving the ability of table-driven tests to
+// verify which secret was selected.
+func generatePEMKeyPair(name string) (certPEM, keyPEM []byte) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		panic(fmt.Sprintf("failed to generate key for %q: %v", name, err))
+	}
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: name},
+		NotBefore:    time.Now().Add(-1 * time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		panic(fmt.Sprintf("failed to create certificate for %q: %v", name, err))
+	}
+	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		panic(fmt.Sprintf("failed to marshal key for %q: %v", name, err))
+	}
+	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	return certPEM, keyPEM
+}
+
 // newSecret returns a secret with the specified name and with data fields
-// "tls.crt" and "tls.key" set to the secret's name.  Note that the values for
-// "tls.crt" and "tls.key" are not valid PEM data.
+// "tls.crt" and "tls.key" set to valid PEM data unique to the secret name.
 func newSecret(name string) corev1.Secret {
+	certPEM, keyPEM := generatePEMKeyPair(name)
 	return corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
 		},
 		Data: map[string][]byte{
-			"tls.crt": []byte(name),
-			"tls.key": []byte(name),
+			"tls.crt": certPEM,
+			"tls.key": keyPEM,
 		},
 	}
 }
@@ -99,18 +137,12 @@ func Test_desiredRouterCertsGlobalSecret(t *testing.T) {
 		// admitted by the operator.
 		invalidCustomICWithClusterIngressDomain = newIngressController("custom", "custom-router-certs-default", "apps.my.devcluster.openshift.com", false)
 
-		ic1             = newIngressController("ic1", "s1", "dom1", true)
-		ic2             = newIngressController("ic2", "s2", "dom2", true)
-		s1              = newSecret("s1")
-		s2              = newSecret("s2")
-		defaultCertData = bytes.Join([][]byte{
-			defaultCert.Data["tls.crt"],
-			defaultCert.Data["tls.key"],
-		}, nil)
-		customDefaultCertData = bytes.Join([][]byte{
-			customDefaultCert.Data["tls.crt"],
-			customDefaultCert.Data["tls.key"],
-		}, nil)
+		ic1                   = newIngressController("ic1", "s1", "dom1", true)
+		ic2                   = newIngressController("ic2", "s2", "dom2", true)
+		s1                    = newSecret("s1")
+		s2                    = newSecret("s2")
+		defaultCertData       = joinPEMBlocks(defaultCert.Data["tls.crt"], defaultCert.Data["tls.key"])
+		customDefaultCertData = joinPEMBlocks(customDefaultCert.Data["tls.crt"], customDefaultCert.Data["tls.key"])
 	)
 	testCases := []struct {
 		description string
@@ -277,6 +309,182 @@ func Test_desiredRouterCertsGlobalSecret(t *testing.T) {
 					t.Errorf("expected %v, got %v", expected, actual)
 				}
 			}
+		})
+	}
+}
+
+// generateTestCertAndKey creates a self-signed cert and private key in PEM
+// format.  If noTrailingNewline is true, the trailing newline is stripped from
+// the certificate PEM to simulate certs produced by certain tools.
+func generateTestCertAndKey(t *testing.T, noTrailingNewline bool) (certPEM, keyPEM []byte) {
+	t.Helper()
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "*.apps.example.com"},
+		NotBefore:    time.Now().Add(-1 * time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("failed to create certificate: %v", err)
+	}
+
+	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatalf("failed to marshal key: %v", err)
+	}
+	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+
+	if noTrailingNewline {
+		certPEM = bytes.TrimRight(certPEM, "\n")
+	}
+
+	return certPEM, keyPEM
+}
+
+// Test_desiredRouterCertsGlobalSecret_PEMNewline verifies that
+// desiredRouterCertsGlobalSecret produces a valid PEM bundle regardless of
+// whether tls.crt has a trailing newline.  Previously, bytes.Join with a nil
+// separator would concatenate the END CERTIFICATE and BEGIN PRIVATE KEY
+// markers on the same line when tls.crt lacked a trailing newline, producing
+// a malformed PEM bundle that downstream consumers could not parse.
+func Test_desiredRouterCertsGlobalSecret_PEMNewline(t *testing.T) {
+	domain := "apps.my.devcluster.openshift.com"
+
+	testCases := []struct {
+		name              string
+		noTrailingNewline bool
+	}{
+		{
+			name:              "cert with trailing newline produces valid PEM",
+			noTrailingNewline: false,
+		},
+		{
+			name:              "cert without trailing newline produces valid PEM",
+			noTrailingNewline: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			certPEM, keyPEM := generateTestCertAndKey(t, tc.noTrailingNewline)
+
+			secret := corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "router-certs-default",
+				},
+				Data: map[string][]byte{
+					"tls.crt": certPEM,
+					"tls.key": keyPEM,
+				},
+			}
+
+			ic := newIngressController("default", "", domain, true)
+
+			result, err := desiredRouterCertsGlobalSecret(
+				[]corev1.Secret{secret},
+				[]operatorv1.IngressController{ic},
+				"openshift-ingress",
+				domain,
+			)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result == nil {
+				t.Fatal("expected a secret, got nil")
+			}
+
+			bundleData := result.Data[domain]
+
+			// The bundle must not contain concatenated PEM markers
+			if strings.Contains(string(bundleData), "-----END CERTIFICATE----------BEGIN") {
+				t.Errorf("PEM bundle contains concatenated markers:\n%s", string(bundleData))
+			}
+
+			// The bundle must yield both a CERTIFICATE and a key block
+			var blockTypes []string
+			rest := bundleData
+			for {
+				var block *pem.Block
+				block, rest = pem.Decode(rest)
+				if block == nil {
+					break
+				}
+				blockTypes = append(blockTypes, block.Type)
+			}
+			if len(blockTypes) != 2 {
+				t.Errorf("expected 2 PEM blocks (CERTIFICATE + key), got %d: %v\nPEM bundle:\n%s", len(blockTypes), blockTypes, string(bundleData))
+			}
+		})
+	}
+}
+
+// Test_joinPEMBlocks verifies that joinPEMBlocks produces well-formed output
+// for various input combinations.
+func Test_joinPEMBlocks(t *testing.T) {
+	withNewline := []byte("-----BEGIN CERTIFICATE-----\ndata\n-----END CERTIFICATE-----\n")
+	withoutNewline := []byte("-----BEGIN CERTIFICATE-----\ndata\n-----END CERTIFICATE-----")
+	keyBlock := []byte("-----BEGIN EC PRIVATE KEY-----\nkeydata\n-----END EC PRIVATE KEY-----\n")
+
+	testCases := []struct {
+		name   string
+		blocks [][]byte
+		check  func(t *testing.T, result []byte)
+	}{
+		{
+			name:   "both blocks have trailing newlines",
+			blocks: [][]byte{withNewline, keyBlock},
+			check: func(t *testing.T, result []byte) {
+				// Should not double up newlines
+				if strings.Contains(string(result), "\n\n") {
+					t.Error("unexpected double newline")
+				}
+			},
+		},
+		{
+			name:   "first block missing trailing newline",
+			blocks: [][]byte{withoutNewline, keyBlock},
+			check: func(t *testing.T, result []byte) {
+				if strings.Contains(string(result), "----------") {
+					t.Error("markers concatenated without newline")
+				}
+			},
+		},
+		{
+			name:   "empty block is skipped",
+			blocks: [][]byte{nil, withNewline, {}, keyBlock},
+			check: func(t *testing.T, result []byte) {
+				if !bytes.Equal(result, append(withNewline, keyBlock...)) {
+					t.Errorf("unexpected output: %q", result)
+				}
+			},
+		},
+		{
+			name:   "all empty blocks",
+			blocks: [][]byte{nil, {}},
+			check: func(t *testing.T, result []byte) {
+				if len(result) != 0 {
+					t.Errorf("expected empty output, got %q", result)
+				}
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := joinPEMBlocks(tc.blocks...)
+			tc.check(t, result)
 		})
 	}
 }
