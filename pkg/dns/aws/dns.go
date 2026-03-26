@@ -11,6 +11,7 @@ import (
 	iov1 "github.com/openshift/api/operatoringress/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
+	awsutil "github.com/openshift/cluster-ingress-operator/pkg/util/aws"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/arn"
@@ -109,6 +110,11 @@ type Config struct {
 	// Client is a Kubernetes client, which the provider uses to annotate
 	// DNSRecord CRs.
 	Client client.Client
+
+	// IPFamily is the cluster's IP family configuration from the
+	// Infrastructure CR. When dual-stack, the provider creates both
+	// Alias A and Alias AAAA Route53 records.
+	IPFamily configv1.IPFamilyType
 }
 
 // ServiceEndpoint stores the configuration of a custom url to
@@ -619,21 +625,33 @@ func (m *Provider) updateRecord(domain, zoneID, target, targetHostedZoneID, acti
 			},
 		}
 	} else {
-		input.ChangeBatch = &route53.ChangeBatch{
-			Changes: []*route53.Change{
-				{
-					Action: aws.String(action),
-					ResourceRecordSet: &route53.ResourceRecordSet{
-						Name: aws.String(domain),
-						Type: aws.String(route53.RRTypeA),
-						AliasTarget: &route53.AliasTarget{
-							HostedZoneId:         aws.String(targetHostedZoneID),
-							DNSName:              aws.String(target),
-							EvaluateTargetHealth: aws.Bool(false),
-						},
-					},
+		aliasTarget := &route53.AliasTarget{
+			HostedZoneId:         aws.String(targetHostedZoneID),
+			DNSName:              aws.String(target),
+			EvaluateTargetHealth: aws.Bool(false),
+		}
+		changes := []*route53.Change{
+			{
+				Action: aws.String(action),
+				ResourceRecordSet: &route53.ResourceRecordSet{
+					Name:        aws.String(domain),
+					Type:        aws.String(route53.RRTypeA),
+					AliasTarget: aliasTarget,
 				},
 			},
+		}
+		if awsutil.IsDualStack(m.config.IPFamily) {
+			changes = append(changes, &route53.Change{
+				Action: aws.String(action),
+				ResourceRecordSet: &route53.ResourceRecordSet{
+					Name:        aws.String(domain),
+					Type:        aws.String(route53.RRTypeAaaa),
+					AliasTarget: aliasTarget,
+				},
+			})
+		}
+		input.ChangeBatch = &route53.ChangeBatch{
+			Changes: changes,
 		}
 	}
 	resp, err := m.route53.ChangeResourceRecordSets(&input)

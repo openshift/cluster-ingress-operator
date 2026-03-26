@@ -594,8 +594,9 @@ func (r *reconciler) createDNSProvider(dnsConfig *configv1.DNS, platformStatus *
 	switch platformStatus.Type {
 	case configv1.AWSPlatformType:
 		cfg := awsdns.Config{
-			Region: platformStatus.AWS.Region,
-			Client: r.client,
+			Region:   platformStatus.AWS.Region,
+			IPFamily: platformStatus.AWS.IPFamily,
+			Client:   r.client,
 		}
 
 		sharedCredsFile, err := awsutil.SharedCredentialsFileFromSecret(creds)

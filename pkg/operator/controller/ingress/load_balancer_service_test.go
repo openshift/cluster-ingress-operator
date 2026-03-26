@@ -893,6 +893,176 @@ func TestDesiredLoadBalancerServiceAWSIdleTimeout(t *testing.T) {
 	}
 }
 
+// TestDesiredLoadBalancerServiceDualStack verifies that
+// desiredLoadBalancerService sets the expected ipFamilies and ipFamilyPolicy
+// based on the infrastructure platform status ipFamily field.
+func TestDesiredLoadBalancerServiceDualStack(t *testing.T) {
+	testCases := []struct {
+		name                   string
+		strategyStatus         *operatorv1.EndpointPublishingStrategy
+		platformStatus         *configv1.PlatformStatus
+		expectedIPFamilies     []corev1.IPFamily
+		expectedIPFamilyPolicy *corev1.IPFamilyPolicyType
+	}{
+		{
+			name:           "NLB with DualStackIPv4Primary sets IPv4-primary dual-stack",
+			strategyStatus: nlbStrategy(operatorv1.ExternalLoadBalancer),
+			platformStatus: &configv1.PlatformStatus{
+				Type: configv1.AWSPlatformType,
+				AWS: &configv1.AWSPlatformStatus{
+					IPFamily: configv1.DualStackIPv4Primary,
+				},
+			},
+			expectedIPFamilies:     []corev1.IPFamily{corev1.IPv4Protocol, corev1.IPv6Protocol},
+			expectedIPFamilyPolicy: ipFamilyPolicyPtr(corev1.IPFamilyPolicyRequireDualStack),
+		},
+		{
+			name:           "NLB with DualStackIPv6Primary sets IPv6-primary dual-stack",
+			strategyStatus: nlbStrategy(operatorv1.ExternalLoadBalancer),
+			platformStatus: &configv1.PlatformStatus{
+				Type: configv1.AWSPlatformType,
+				AWS: &configv1.AWSPlatformStatus{
+					IPFamily: configv1.DualStackIPv6Primary,
+				},
+			},
+			expectedIPFamilies:     []corev1.IPFamily{corev1.IPv6Protocol, corev1.IPv4Protocol},
+			expectedIPFamilyPolicy: ipFamilyPolicyPtr(corev1.IPFamilyPolicyRequireDualStack),
+		},
+		{
+			name:           "NLB with IPv4 does not set ipFamilies",
+			strategyStatus: nlbStrategy(operatorv1.ExternalLoadBalancer),
+			platformStatus: &configv1.PlatformStatus{
+				Type: configv1.AWSPlatformType,
+				AWS: &configv1.AWSPlatformStatus{
+					IPFamily: configv1.IPv4,
+				},
+			},
+			expectedIPFamilies:     nil,
+			expectedIPFamilyPolicy: nil,
+		},
+		{
+			name:           "NLB with empty ipFamily does not set ipFamilies",
+			strategyStatus: nlbStrategy(operatorv1.ExternalLoadBalancer),
+			platformStatus: &configv1.PlatformStatus{
+				Type: configv1.AWSPlatformType,
+				AWS:  &configv1.AWSPlatformStatus{},
+			},
+			expectedIPFamilies:     nil,
+			expectedIPFamilyPolicy: nil,
+		},
+		{
+			name:           "NLB without AWS platform status does not set ipFamilies",
+			strategyStatus: nlbStrategy(operatorv1.ExternalLoadBalancer),
+			platformStatus: &configv1.PlatformStatus{
+				Type: configv1.AWSPlatformType,
+			},
+			expectedIPFamilies:     nil,
+			expectedIPFamilyPolicy: nil,
+		},
+		{
+			name:           "CLB with DualStackIPv4Primary sets SingleStack/IPv4",
+			strategyStatus: clbStrategy(operatorv1.ExternalLoadBalancer),
+			platformStatus: &configv1.PlatformStatus{
+				Type: configv1.AWSPlatformType,
+				AWS: &configv1.AWSPlatformStatus{
+					IPFamily: configv1.DualStackIPv4Primary,
+				},
+			},
+			expectedIPFamilies:     []corev1.IPFamily{corev1.IPv4Protocol},
+			expectedIPFamilyPolicy: ipFamilyPolicyPtr(corev1.IPFamilyPolicySingleStack),
+		},
+		{
+			name:           "CLB with DualStackIPv6Primary sets SingleStack/IPv4",
+			strategyStatus: clbStrategy(operatorv1.ExternalLoadBalancer),
+			platformStatus: &configv1.PlatformStatus{
+				Type: configv1.AWSPlatformType,
+				AWS: &configv1.AWSPlatformStatus{
+					IPFamily: configv1.DualStackIPv6Primary,
+				},
+			},
+			expectedIPFamilies:     []corev1.IPFamily{corev1.IPv4Protocol},
+			expectedIPFamilyPolicy: ipFamilyPolicyPtr(corev1.IPFamilyPolicySingleStack),
+		},
+		{
+			name:           "NLB with DualStackIPv4Primary on non-AWS platform does not set ipFamilies",
+			strategyStatus: nlbStrategy(operatorv1.ExternalLoadBalancer),
+			platformStatus: &configv1.PlatformStatus{
+				Type: configv1.GCPPlatformType,
+				AWS: &configv1.AWSPlatformStatus{
+					IPFamily: configv1.DualStackIPv6Primary,
+				},
+			},
+			expectedIPFamilies:     nil,
+			expectedIPFamilyPolicy: nil,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ic := &operatorv1.IngressController{
+				ObjectMeta: metav1.ObjectMeta{Name: "default"},
+				Status: operatorv1.IngressControllerStatus{
+					EndpointPublishingStrategy: tc.strategyStatus,
+				},
+			}
+			trueVar := true
+			deploymentRef := metav1.OwnerReference{
+				APIVersion: "apps/v1",
+				Kind:       "Deployment",
+				Name:       "router-default",
+				UID:        "1",
+				Controller: &trueVar,
+			}
+			haveSvc, svc, err := desiredLoadBalancerService(ic, deploymentRef, tc.platformStatus, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !haveSvc {
+				t.Fatal("desiredLoadBalancerService didn't return a service")
+			}
+			assert.Equal(t, tc.expectedIPFamilies, svc.Spec.IPFamilies)
+			assert.Equal(t, tc.expectedIPFamilyPolicy, svc.Spec.IPFamilyPolicy)
+		})
+	}
+}
+
+// nlbStrategy returns an EndpointPublishingStrategy for an AWS NLB.
+func nlbStrategy(scope operatorv1.LoadBalancerScope) *operatorv1.EndpointPublishingStrategy {
+	return &operatorv1.EndpointPublishingStrategy{
+		Type: operatorv1.LoadBalancerServiceStrategyType,
+		LoadBalancer: &operatorv1.LoadBalancerStrategy{
+			Scope: scope,
+			ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+				Type: operatorv1.AWSLoadBalancerProvider,
+				AWS: &operatorv1.AWSLoadBalancerParameters{
+					Type: operatorv1.AWSNetworkLoadBalancer,
+				},
+			},
+		},
+	}
+}
+
+// clbStrategy returns an EndpointPublishingStrategy for an AWS CLB.
+func clbStrategy(scope operatorv1.LoadBalancerScope) *operatorv1.EndpointPublishingStrategy {
+	return &operatorv1.EndpointPublishingStrategy{
+		Type: operatorv1.LoadBalancerServiceStrategyType,
+		LoadBalancer: &operatorv1.LoadBalancerStrategy{
+			Scope: scope,
+			ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+				Type: operatorv1.AWSLoadBalancerProvider,
+				AWS: &operatorv1.AWSLoadBalancerParameters{
+					Type: operatorv1.AWSClassicLoadBalancer,
+				},
+			},
+		},
+	}
+}
+
+// ipFamilyPolicyPtr returns a pointer to the given IPFamilyPolicyType.
+func ipFamilyPolicyPtr(p corev1.IPFamilyPolicyType) *corev1.IPFamilyPolicyType {
+	return &p
+}
+
 // Test_shouldUseLocalWithFallback verifies that shouldUseLocalWithFallback
 // behaves as expected.
 func Test_shouldUseLocalWithFallback(t *testing.T) {
@@ -1147,6 +1317,21 @@ func Test_loadBalancerServiceChanged(t *testing.T) {
 				svc.Annotations["service.beta.kubernetes.io/aws-load-balancer-eip-allocations"] = "eipalloc-xxxxxxxxxxxxxxxxx,eipalloc-yyyyyyyyyyyyyyyyy"
 			},
 			expect: false,
+		},
+		{
+			description: "if .spec.ipFamilies is added",
+			mutate: func(svc *corev1.Service) {
+				svc.Spec.IPFamilies = []corev1.IPFamily{corev1.IPv4Protocol, corev1.IPv6Protocol}
+			},
+			expect: true,
+		},
+		{
+			description: "if .spec.ipFamilyPolicy is added",
+			mutate: func(svc *corev1.Service) {
+				policy := corev1.IPFamilyPolicyRequireDualStack
+				svc.Spec.IPFamilyPolicy = &policy
+			},
+			expect: true,
 		},
 	}
 
