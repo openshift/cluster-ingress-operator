@@ -31,6 +31,10 @@ var operatorProgressingFalse = operatorv1.OperatorCondition{
 	Type: operatorv1.OperatorStatusTypeProgressing, Status: operatorv1.ConditionFalse,
 }
 
+// TestUnmanagedDNSToManagedDNSIngressController tests dnsManagementPolicy during
+// transitioning from Unmanaged to Managed DNS on an external ingress controller.
+// The load balancer scope remains external throughout the transition, so only the
+// DNS management policy changes.
 func TestUnmanagedDNSToManagedDNSIngressController(t *testing.T) {
 	t.Parallel()
 
@@ -107,6 +111,10 @@ func TestUnmanagedDNSToManagedDNSIngressController(t *testing.T) {
 	verifyExternalIngressController(t, testPodName, "apps."+ic.Spec.Domain, wildcardRecord.Spec.Targets[0])
 }
 
+// TestManagedDNSToUnmanagedDNSIngressController tests dnsManagementPolicy during
+// transitioning from Managed to Unmanaged DNS on an external ingress controller.
+// The load balancer scope remains external throughout the transition, so only the
+// DNS management policy changes.
 func TestManagedDNSToUnmanagedDNSIngressController(t *testing.T) {
 	t.Parallel()
 
@@ -277,8 +285,9 @@ func TestUnmanagedDNSToManagedDNSInternalIngressController(t *testing.T) {
 	}
 
 	// Ensure the service's load-balancer status changes.
-	err := wait.PollImmediate(10*time.Second, 5*time.Minute, func() (bool, error) {
-		lbService := &corev1.Service{}
+	lbService = &corev1.Service{}
+	var lbAddress string
+	err := wait.PollUntilContextTimeout(context.Background(), 10*time.Second, 5*time.Minute, true, func(ctx context.Context) (bool, error) {
 		if err := kclient.Get(context.TODO(), controller.LoadBalancerServiceName(ic), lbService); err != nil {
 			t.Logf("Get %q failed: %v, retrying ...", controller.LoadBalancerServiceName(ic), err)
 			return false, nil
@@ -289,6 +298,14 @@ func TestUnmanagedDNSToManagedDNSInternalIngressController(t *testing.T) {
 		} else if ingresscontroller.IsServiceInternal(lbService) {
 			// The service got updated, but is not external.
 			return true, fmt.Errorf("load balancer %s is internal but should be external", lbService.Name)
+		}
+		if len(lbService.Status.LoadBalancer.Ingress) == 0 {
+			t.Logf("service %s has no load balancer ingress, retrying...", lbService.Name)
+			return false, nil
+		}
+		lbAddress = lbService.Status.LoadBalancer.Ingress[0].IP
+		if lbAddress == "" {
+			lbAddress = lbService.Status.LoadBalancer.Ingress[0].Hostname
 		}
 		return true, nil
 	})
@@ -316,8 +333,12 @@ func TestUnmanagedDNSToManagedDNSInternalIngressController(t *testing.T) {
 		t.Fatalf("DNSRecord %s expected allocated dnsZones but found none", wildcardRecordName.Name)
 	}
 
+	// Use lbAddress from the service instead of wildcardRecord.Spec.Targets[0] because when migrating
+	// from internal to external scope, the IngressController may report DNSReady=True (causing
+	// waitForIngressControllerCondition to pass) before the ingress-operator has reconciled the DNSRecord
+	// with the new external load balancer address.
 	testPodName = types.NamespacedName{Name: name.Name + "-final", Namespace: testPodNamespace.Name}
-	verifyExternalIngressController(t, testPodName, "apps."+ic.Spec.Domain, wildcardRecord.Spec.Targets[0])
+	verifyExternalIngressController(t, testPodName, "apps."+ic.Spec.Domain, lbAddress)
 }
 
 func verifyUnmanagedDNSRecordStatus(t *testing.T, record *iov1.DNSRecord) {
