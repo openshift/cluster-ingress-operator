@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/istio-ecosystem/sail-operator/pkg/install"
+	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	configv1 "github.com/openshift/api/config/v1"
 	testutil "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/test/util"
@@ -540,21 +541,55 @@ func Test_mapStatusToConditions(t *testing.T) {
 // is identical between the OLM path (desiredIstio) and Sail Library path (openshiftValues)
 // during the transition period. This test can be removed once the OLM path is deleted.
 func TestOLMAndSailLibraryValuesMatch(t *testing.T) {
+	defaultGatewayClass := []gatewayapiv1.GatewayClass{{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "openshift-default",
+		},
+	}}
+	infraConfig := func(infraTopologyMode configv1.TopologyMode) *configv1.Infrastructure {
+		return &configv1.Infrastructure{
+			ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
+			Status: configv1.InfrastructureStatus{
+				InfrastructureTopology: infraTopologyMode,
+			},
+		}
+	}
+	singleReplicaInfraConfig := infraConfig(configv1.SingleReplicaTopologyMode)
+	highlyAvailableInfraConfig := infraConfig(configv1.HighlyAvailableTopologyMode)
+
 	testCases := []struct {
 		name                     string
+		gatewayclasses           []gatewayapiv1.GatewayClass
 		enableInferenceExtension bool
 		extraconfig              *extraIstioConfig
 	}{
 		{
 			name:                     "without inference extension",
+			gatewayclasses:           defaultGatewayClass,
 			enableInferenceExtension: false,
+			extraconfig: &extraIstioConfig{
+				infraConfig: highlyAvailableInfraConfig,
+			},
 		},
 		{
 			name:                     "with inference extension",
+			gatewayclasses:           defaultGatewayClass,
 			enableInferenceExtension: true,
+			extraconfig: &extraIstioConfig{
+				infraConfig: highlyAvailableInfraConfig,
+			},
 		},
 		{
-			name: "with system proxy config enabled",
+			name:                     "with single-node topology",
+			gatewayclasses:           defaultGatewayClass,
+			enableInferenceExtension: true,
+			extraconfig: &extraIstioConfig{
+				infraConfig: singleReplicaInfraConfig,
+			},
+		},
+		{
+			name:           "with system proxy config enabled",
+			gatewayclasses: defaultGatewayClass,
 			extraconfig: &extraIstioConfig{
 				proxyConfig: &configv1.Proxy{
 					Status: configv1.ProxyStatus{
@@ -563,6 +598,7 @@ func TestOLMAndSailLibraryValuesMatch(t *testing.T) {
 						NoProxy:    ".cluster.local,.ec2.internal,.svc,10.0.0.0/16,10.128.0.0/14",
 					},
 				},
+				infraConfig: highlyAvailableInfraConfig,
 			},
 		},
 	}
@@ -571,17 +607,20 @@ func TestOLMAndSailLibraryValuesMatch(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// Get values from Sail Library path (GatewayAPIDefaults + OpenShift overrides)
 			sailValues := install.GatewayAPIDefaults()
-			openshiftOverrides := openshiftValues(tc.enableInferenceExtension, "openshift-ingress", tc.extraconfig)
+			openshiftOverrides, err := openshiftValues(tc.enableInferenceExtension, "openshift-ingress", tc.gatewayclasses, tc.extraconfig)
+			assert.Nil(t, err)
 			sailValues = install.MergeValues(sailValues, openshiftOverrides)
 
 			// Get values from OLM path
-			olmIstio := desiredIstio(
+			olmIstio, err := desiredIstio(
 				types.NamespacedName{Name: "test", Namespace: "test-ns"},
 				metav1.OwnerReference{},
 				"v1.24.4",
 				tc.enableInferenceExtension,
+				tc.gatewayclasses,
 				tc.extraconfig,
 			)
+			assert.Nil(t, err)
 
 			cmpOpts := []cmp.Option{
 				cmpopts.EquateEmpty(),

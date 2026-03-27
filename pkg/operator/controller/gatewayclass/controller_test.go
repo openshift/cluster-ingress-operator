@@ -2,7 +2,9 @@ package gatewayclass
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -46,6 +48,15 @@ func Test_Reconcile(t *testing.T) {
 	req := func(name string) reconcile.Request {
 		return reconcile.Request{
 			NamespacedName: types.NamespacedName{Name: name},
+		}
+	}
+
+	infraConfig := func(infraTopologyMode configv1.TopologyMode) *configv1.Infrastructure {
+		return &configv1.Infrastructure{
+			ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
+			Status: configv1.InfrastructureStatus{
+				InfrastructureTopology: infraTopologyMode,
+			},
 		}
 	}
 
@@ -94,7 +105,7 @@ func Test_Reconcile(t *testing.T) {
 		}
 	}
 
-	istio := func(version string, gieEnabled bool, proxyconfig map[string]string) *sailv1.Istio {
+	istio := func(version string, gieEnabled bool, proxyconfig map[string]string, gatewayclassesConfig json.RawMessage) *sailv1.Istio {
 		ret := &sailv1.Istio{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "openshift-gateway",
@@ -165,8 +176,24 @@ func Test_Reconcile(t *testing.T) {
 		if gieEnabled {
 			ret.Spec.Values.Pilot.Env["ENABLE_GATEWAY_API_INFERENCE_EXTENSION"] = "true"
 		}
+		ret.Spec.Values.GatewayClasses = gatewayclassesConfig
 
 		return ret
+	}
+
+	gatewayclassesConfig := func(config string, gatewayclasses ...string) json.RawMessage {
+		return json.RawMessage(fmt.Appendf(nil, `{%s}`, strings.Join(func() []string {
+			var result []string
+
+			for _, name := range gatewayclasses {
+				result = append(result, fmt.Sprintf(`"%s":%s`, name, config))
+			}
+
+			return result
+		}(), ",")))
+	}
+	hpaConfig := func(minReplicas int) string {
+		return fmt.Sprintf(`{"horizontalPodAutoscaler":{"spec":{"maxReplicas":10,"minReplicas":%d}}}`, minReplicas)
 	}
 
 	istioRevision := func() *sailv1.IstioRevision {
@@ -224,7 +251,7 @@ func Test_Reconcile(t *testing.T) {
 		}
 	}
 
-	expectedSailLibraryOptions := func(version string, gieEnabled bool, proxyConfig map[string]string) *install.Options {
+	expectedSailLibraryOptions := func(version string, gieEnabled bool, proxyConfig map[string]string, gatewayclassesConfig json.RawMessage) *install.Options {
 		// Start with sail-operator's Gateway API defaults aka trust upstream defaults
 		values := install.GatewayAPIDefaults()
 
@@ -253,6 +280,7 @@ func Test_Reconcile(t *testing.T) {
 					ProxyMetadata: proxyConfig,
 				},
 			},
+			GatewayClasses: gatewayclassesConfig,
 		}
 		values = install.MergeValues(values, openshiftOverrides)
 
@@ -282,23 +310,83 @@ func Test_Reconcile(t *testing.T) {
 		expectSailLibraryUninstallCalled bool
 	}{
 		{
-			name:            "OLM mode: Nonexistent gatewayclass",
+			name:            "OLM mode: Missing cluster infrastructure config and nonexistent gatewayclass",
 			request:         req("openshift-default"),
 			existingObjects: []client.Object{},
 			expectCreate:    []client.Object{},
 			expectUpdate:    []client.Object{},
 			expectDelete:    []client.Object{},
+			expectError:     `infrastructures.config.openshift.io "cluster" not found`,
+		},
+		{
+			name:    "OLM mode: Nonexistent gatewayclass",
+			request: req("openshift-default"),
+			existingObjects: []client.Object{
+				infraConfig(configv1.HighlyAvailableTopologyMode),
+			},
+			expectCreate: []client.Object{},
+			expectUpdate: []client.Object{},
+			expectDelete: []client.Object{},
 			//expectError:     `"openshift-default" not found`, // We should not expect an error when a class is not found
+		},
+		{
+			name:    "OLM mode: Missing cluster infrastructure config",
+			request: req("openshift-default"),
+			existingObjects: []client.Object{
+				gatewayClass("openshift-default", false, nil, nil, false),
+			},
+			expectCreate: []client.Object{},
+			expectUpdate: []client.Object{},
+			expectDelete: []client.Object{},
+			expectError:  `infrastructures.config.openshift.io "cluster" not found`,
 		},
 		{
 			name:    "OLM mode: Minimal gatewayclass",
 			request: req("openshift-default"),
 			existingObjects: []client.Object{
+				infraConfig(configv1.HighlyAvailableTopologyMode),
 				gatewayClass("openshift-default", false, nil, nil, false),
 			},
 			expectCreate: []client.Object{
 				subscription("redhat-operators", "stable", "servicemeshoperator3.v3.0.1"),
-				istio("v1.24.4", false, nil),
+				istio("v1.24.4", false, nil, gatewayclassesConfig(hpaConfig(2), "openshift-default")),
+			},
+			expectUpdate: []client.Object{},
+			expectDelete: []client.Object{},
+		},
+		{
+			name:    "OLM mode: Minimal gatewayclass with single-node topology",
+			request: req("openshift-default"),
+			existingObjects: []client.Object{
+				infraConfig(configv1.SingleReplicaTopologyMode),
+				gatewayClass("openshift-default", false, nil, nil, false),
+			},
+			expectCreate: []client.Object{
+				subscription("redhat-operators", "stable", "servicemeshoperator3.v3.0.1"),
+				istio("v1.24.4", false, nil, gatewayclassesConfig(hpaConfig(1), "openshift-default")),
+			},
+			expectUpdate: []client.Object{},
+			expectDelete: []client.Object{},
+		},
+		{
+			name:    "OLM mode: Minimal gatewayclass on a cluster with multiple gatewayclasses",
+			request: req("openshift-default"),
+			existingObjects: []client.Object{
+				infraConfig(configv1.HighlyAvailableTopologyMode),
+				gatewayClass("openshift-default", false, nil, nil, false),
+				gatewayClass("openshift-internal", false, nil, nil, false),
+				&gatewayapiv1.GatewayClass{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "istio",
+					},
+					Spec: gatewayapiv1.GatewayClassSpec{
+						ControllerName: gatewayapiv1.GatewayController("istio"),
+					},
+				},
+			},
+			expectCreate: []client.Object{
+				subscription("redhat-operators", "stable", "servicemeshoperator3.v3.0.1"),
+				istio("v1.24.4", false, nil, gatewayclassesConfig(hpaConfig(2), "openshift-default", "openshift-internal")),
 			},
 			expectUpdate: []client.Object{},
 			expectDelete: []client.Object{},
@@ -307,12 +395,13 @@ func Test_Reconcile(t *testing.T) {
 			name:    "OLM mode: Minimal gatewayclass and system proxy",
 			request: req("openshift-default"),
 			existingObjects: []client.Object{
+				infraConfig(configv1.HighlyAvailableTopologyMode),
 				gatewayClass("openshift-default", false, nil, nil, false),
 				proxyConfig("http://some.proxy.tld:8080", "https://another.proxy.tld", ".cluster.local,.ec2.internal,.svc,10.0.0.0/16,10.128.0.0/14"),
 			},
 			expectCreate: []client.Object{
 				subscription("redhat-operators", "stable", "servicemeshoperator3.v3.0.1"),
-				istio("v1.24.4", false, expectedProxyConfiguration),
+				istio("v1.24.4", false, expectedProxyConfiguration, gatewayclassesConfig(hpaConfig(2), "openshift-default")),
 			},
 			expectUpdate: []client.Object{},
 			expectDelete: []client.Object{},
@@ -321,6 +410,7 @@ func Test_Reconcile(t *testing.T) {
 			name:    "OLM mode: Minimal gatewayclass with experimental InferencePool CRD",
 			request: req("openshift-default"),
 			existingObjects: []client.Object{
+				infraConfig(configv1.HighlyAvailableTopologyMode),
 				gatewayClass("openshift-default", false, nil, nil, false),
 				&apiextensionsv1.CustomResourceDefinition{
 					ObjectMeta: metav1.ObjectMeta{
@@ -330,7 +420,7 @@ func Test_Reconcile(t *testing.T) {
 			},
 			expectCreate: []client.Object{
 				subscription("redhat-operators", "stable", "servicemeshoperator3.v3.0.1"),
-				istio("v1.24.4", true, nil),
+				istio("v1.24.4", true, nil, gatewayclassesConfig(hpaConfig(2), "openshift-default")),
 			},
 			expectUpdate: []client.Object{},
 			expectDelete: []client.Object{},
@@ -339,6 +429,7 @@ func Test_Reconcile(t *testing.T) {
 			name:    "OLM mode: Minimal gatewayclass with stable InferencePool CRD",
 			request: req("openshift-default"),
 			existingObjects: []client.Object{
+				infraConfig(configv1.HighlyAvailableTopologyMode),
 				gatewayClass("openshift-default", false, nil, nil, false),
 				&apiextensionsv1.CustomResourceDefinition{
 					ObjectMeta: metav1.ObjectMeta{
@@ -348,7 +439,7 @@ func Test_Reconcile(t *testing.T) {
 			},
 			expectCreate: []client.Object{
 				subscription("redhat-operators", "stable", "servicemeshoperator3.v3.0.1"),
-				istio("v1.24.4", true, nil),
+				istio("v1.24.4", true, nil, gatewayclassesConfig(hpaConfig(2), "openshift-default")),
 			},
 			expectUpdate: []client.Object{},
 			expectDelete: []client.Object{},
@@ -357,13 +448,14 @@ func Test_Reconcile(t *testing.T) {
 			name:    "OLM mode: Gatewayclass with Istio version override",
 			request: req("openshift-default"),
 			existingObjects: []client.Object{
+				infraConfig(configv1.HighlyAvailableTopologyMode),
 				gatewayClass("openshift-default", false, map[string]string{
 					"unsupported.do-not-use.openshift.io/istio-version": "v1.24-latest",
 				}, nil, false),
 			},
 			expectCreate: []client.Object{
 				subscription("redhat-operators", "stable", "servicemeshoperator3.v3.0.1"),
-				istio("v1.24-latest", false, nil),
+				istio("v1.24-latest", false, nil, gatewayclassesConfig(hpaConfig(2), "openshift-default")),
 			},
 			expectUpdate: []client.Object{},
 			expectDelete: []client.Object{},
@@ -372,6 +464,7 @@ func Test_Reconcile(t *testing.T) {
 			name:    "OLM mode: Gatewayclass with OSSM and Istio overrides",
 			request: req("openshift-default"),
 			existingObjects: []client.Object{
+				infraConfig(configv1.HighlyAvailableTopologyMode),
 				gatewayClass("openshift-default", false, map[string]string{
 					"unsupported.do-not-use.openshift.io/ossm-catalog":  "foo",
 					"unsupported.do-not-use.openshift.io/ossm-channel":  "bar",
@@ -381,26 +474,53 @@ func Test_Reconcile(t *testing.T) {
 			},
 			expectCreate: []client.Object{
 				subscription("foo", "bar", "baz"),
-				istio("quux", false, nil),
+				istio("quux", false, nil, gatewayclassesConfig(hpaConfig(2), "openshift-default")),
 			},
 			expectUpdate: []client.Object{},
 			expectDelete: []client.Object{},
 		},
 		{
+			name:                       "Sail Library: Missing cluster infrastructure config and nonexistent gatewayclass",
+			fakeSailInstaller:          &fakeSailInstaller{},
+			request:                    req("openshift-default"),
+			existingObjects:            []client.Object{},
+			expectCreate:               []client.Object{},
+			expectUpdate:               []client.Object{},
+			expectDelete:               []client.Object{},
+			expectError:                `infrastructures.config.openshift.io "cluster" not found`,
+			expectedSailLibraryOptions: &install.Options{},
+		},
+		{
 			name:              "Sail Library: nonexistent GatewayClass",
 			fakeSailInstaller: &fakeSailInstaller{},
 			request:           req("openshift-default"),
-			existingObjects:   []client.Object{},
-			expectCreate:      []client.Object{},
-			expectUpdate:      []client.Object{},
-			expectDelete:      []client.Object{},
+			existingObjects: []client.Object{
+				infraConfig(configv1.HighlyAvailableTopologyMode),
+			},
+			expectCreate: []client.Object{},
+			expectUpdate: []client.Object{},
+			expectDelete: []client.Object{},
 			//expectError:     `"openshift-default" not found`, // We should not expect an error when a class is not found
+			expectedSailLibraryOptions: &install.Options{},
+		},
+		{
+			name:              "Sail Library: Missing cluster infrastructure config",
+			fakeSailInstaller: &fakeSailInstaller{},
+			request:           req("openshift-default"),
+			existingObjects: []client.Object{
+				gatewayClass("openshift-default", false, nil, nil, false),
+			},
+			expectCreate:               []client.Object{},
+			expectUpdate:               []client.Object{},
+			expectDelete:               []client.Object{},
+			expectError:                `infrastructures.config.openshift.io "cluster" not found`,
 			expectedSailLibraryOptions: &install.Options{},
 		},
 		{
 			name:    "Sail Library: disabled - removes finalizer and status",
 			request: req("openshift-default"),
 			existingObjects: []client.Object{
+				infraConfig(configv1.HighlyAvailableTopologyMode),
 				gatewayClass("openshift-default", true, nil, []metav1.Condition{
 					{
 						Type:   ControllerInstalledConditionType,
@@ -426,6 +546,7 @@ func Test_Reconcile(t *testing.T) {
 			fakeSailInstaller: &fakeSailInstaller{},
 			request:           req("openshift-default"),
 			existingObjects: []client.Object{
+				infraConfig(configv1.HighlyAvailableTopologyMode),
 				gatewayClass("openshift-default", false, nil, nil, false),
 			},
 			expectPatched: []client.Object{
@@ -439,13 +560,14 @@ func Test_Reconcile(t *testing.T) {
 			fakeSailInstaller: &fakeSailInstaller{},
 			request:           req("openshift-default"),
 			existingObjects: []client.Object{
+				infraConfig(configv1.HighlyAvailableTopologyMode),
 				gatewayClass("openshift-default", true, nil, nil, false),
 				istioCRD(),
-				istio("v1.24.4", true, nil),
+				istio("v1.24.4", true, nil, gatewayclassesConfig(hpaConfig(2), "openshift-default")),
 			},
 			expectPatched: []client.Object{},
 			expectDelete: []client.Object{
-				istio("v1.24.4", true, nil),
+				istio("v1.24.4", true, nil, gatewayclassesConfig(hpaConfig(2), "openshift-default")),
 			},
 			expectedResult: reconcile.Result{
 				RequeueAfter: 5 * time.Second,
@@ -457,6 +579,7 @@ func Test_Reconcile(t *testing.T) {
 			fakeSailInstaller: &fakeSailInstaller{},
 			request:           req("openshift-default"),
 			existingObjects: []client.Object{
+				infraConfig(configv1.HighlyAvailableTopologyMode),
 				gatewayClass("openshift-default", true, nil, nil, false),
 				istioCRD(),
 				istioRevisionCRD(),
@@ -474,6 +597,7 @@ func Test_Reconcile(t *testing.T) {
 			fakeSailInstaller: &fakeSailInstaller{},
 			request:           req("openshift-default"),
 			existingObjects: []client.Object{
+				infraConfig(configv1.HighlyAvailableTopologyMode),
 				gatewayClass("openshift-default", true, nil, nil, false),
 				istioCRD(),
 				istioRevisionCRD(),
@@ -481,38 +605,78 @@ func Test_Reconcile(t *testing.T) {
 			expectedStatusPatched: []client.Object{
 				gatewayClass("openshift-default", true, nil, installedConditions(), false),
 			},
-			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", false, nil),
+			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", false, nil, gatewayclassesConfig(hpaConfig(2), "openshift-default")),
 		},
 		{
-			name:              "Sail Library: installs Istio",
+			name:              "Sail Library: installs Istio (single replica)",
 			fakeSailInstaller: &fakeSailInstaller{},
 			request:           req("openshift-default"),
 			existingObjects: []client.Object{
+				infraConfig(configv1.SingleReplicaTopologyMode),
 				gatewayClass("openshift-default", true, nil, nil, false),
 			},
 			expectedStatusPatched: []client.Object{
 				gatewayClass("openshift-default", true, nil, installedConditions(), false),
 			},
-			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", false, nil),
+			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", false, nil, gatewayclassesConfig(hpaConfig(1), "openshift-default")),
+		},
+		{
+			name:              "Sail Library: installs Istio (highly available)",
+			fakeSailInstaller: &fakeSailInstaller{},
+			request:           req("openshift-default"),
+			existingObjects: []client.Object{
+				infraConfig(configv1.HighlyAvailableTopologyMode),
+				gatewayClass("openshift-default", true, nil, nil, false),
+			},
+			expectedStatusPatched: []client.Object{
+				gatewayClass("openshift-default", true, nil, installedConditions(), false),
+			},
+			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", false, nil, gatewayclassesConfig(hpaConfig(2), "openshift-default")),
 		},
 		{
 			name:              "Sail Library: installs Istio with system proxy configuration",
 			fakeSailInstaller: &fakeSailInstaller{},
 			request:           req("openshift-default"),
 			existingObjects: []client.Object{
+				infraConfig(configv1.HighlyAvailableTopologyMode),
 				gatewayClass("openshift-default", true, nil, nil, false),
 				proxyConfig("http://some.proxy.tld:8080", "https://another.proxy.tld", ".cluster.local,.ec2.internal,.svc,10.0.0.0/16,10.128.0.0/14"),
 			},
 			expectedStatusPatched: []client.Object{
 				gatewayClass("openshift-default", true, nil, installedConditions(), false),
 			},
-			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", false, expectedProxyConfiguration),
+			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", false, expectedProxyConfiguration, gatewayclassesConfig(hpaConfig(2), "openshift-default")),
+		},
+		{
+			name:              "Sail Library: installs Istio for multiple gatewayclasses in single-topology mode with system proxy configuration",
+			fakeSailInstaller: &fakeSailInstaller{},
+			request:           req("openshift-default"),
+			existingObjects: []client.Object{
+				infraConfig(configv1.SingleReplicaTopologyMode),
+				gatewayClass("openshift-default", true, nil, nil, false),
+				gatewayClass("openshift-internal", true, nil, nil, false),
+				&gatewayapiv1.GatewayClass{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "istio",
+					},
+					Spec: gatewayapiv1.GatewayClassSpec{
+						ControllerName: gatewayapiv1.GatewayController("istio"),
+					},
+				},
+				gatewayClass("openshift-custom", true, nil, nil, false),
+				proxyConfig("http://some.proxy.tld:8080", "https://another.proxy.tld", ".cluster.local,.ec2.internal,.svc,10.0.0.0/16,10.128.0.0/14"),
+			},
+			expectedStatusPatched: []client.Object{
+				gatewayClass("openshift-default", true, nil, installedConditions(), false),
+			},
+			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", false, expectedProxyConfiguration, gatewayclassesConfig(hpaConfig(1), "openshift-default", "openshift-internal", "openshift-custom")),
 		},
 		{
 			name:              "Sail Library: experimental InferencePool CRD",
 			fakeSailInstaller: &fakeSailInstaller{},
 			request:           req("openshift-default"),
 			existingObjects: []client.Object{
+				infraConfig(configv1.HighlyAvailableTopologyMode),
 				gatewayClass("openshift-default", true, nil, nil, false),
 				&apiextensionsv1.CustomResourceDefinition{
 					ObjectMeta: metav1.ObjectMeta{
@@ -523,13 +687,14 @@ func Test_Reconcile(t *testing.T) {
 			expectedStatusPatched: []client.Object{
 				gatewayClass("openshift-default", true, nil, installedConditions(), false),
 			},
-			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", true, nil),
+			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", true, nil, gatewayclassesConfig(hpaConfig(2), "openshift-default")),
 		},
 		{
 			name:              "Sail Library: stable InferencePool CRD",
 			fakeSailInstaller: &fakeSailInstaller{},
 			request:           req("openshift-default"),
 			existingObjects: []client.Object{
+				infraConfig(configv1.HighlyAvailableTopologyMode),
 				gatewayClass("openshift-default", true, nil, nil, false),
 				&apiextensionsv1.CustomResourceDefinition{
 					ObjectMeta: metav1.ObjectMeta{
@@ -540,13 +705,14 @@ func Test_Reconcile(t *testing.T) {
 			expectedStatusPatched: []client.Object{
 				gatewayClass("openshift-default", true, nil, installedConditions(), false),
 			},
-			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", true, nil),
+			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", true, nil, gatewayclassesConfig(hpaConfig(2), "openshift-default")),
 		},
 		{
 			name:              "Sail Library: Istio version override",
 			fakeSailInstaller: &fakeSailInstaller{},
 			request:           req("openshift-default"),
 			existingObjects: []client.Object{
+				infraConfig(configv1.HighlyAvailableTopologyMode),
 				gatewayClass("openshift-default", true, map[string]string{
 					"unsupported.do-not-use.openshift.io/istio-version": "v1.24-latest",
 				}, nil, false),
@@ -556,13 +722,14 @@ func Test_Reconcile(t *testing.T) {
 					"unsupported.do-not-use.openshift.io/istio-version": "v1.24-latest",
 				}, installedConditions(), false),
 			},
-			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24-latest", false, nil),
+			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24-latest", false, nil, gatewayclassesConfig(hpaConfig(2), "openshift-default")),
 		},
 		{
 			name:              "Sail Library: full removal of last GatewayClass",
 			fakeSailInstaller: &fakeSailInstaller{},
 			request:           req("openshift-default"),
 			existingObjects: []client.Object{
+				infraConfig(configv1.HighlyAvailableTopologyMode),
 				gatewayClass("openshift-default", true, nil, nil, true),
 			},
 			expectPatched: []client.Object{
@@ -576,6 +743,7 @@ func Test_Reconcile(t *testing.T) {
 			fakeSailInstaller: &fakeSailInstaller{},
 			request:           req("openshift-default"),
 			existingObjects: []client.Object{
+				infraConfig(configv1.HighlyAvailableTopologyMode),
 				gatewayClass("openshift-default", true, nil, nil, true),
 				gatewayClass("openshift-secondary", true, nil, nil, false),
 			},
@@ -592,6 +760,7 @@ func Test_Reconcile(t *testing.T) {
 			},
 			request: req("openshift-default"),
 			existingObjects: []client.Object{
+				infraConfig(configv1.HighlyAvailableTopologyMode),
 				gatewayClass("openshift-default", true, nil, nil, true),
 			},
 			expectError:                      "failed to uninstall Istio: failed to cleanup resources",

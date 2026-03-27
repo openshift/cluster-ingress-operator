@@ -23,6 +23,7 @@ import (
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 	oputil "github.com/openshift/cluster-ingress-operator/pkg/util"
 
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -274,6 +275,12 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		}, configv1.ObjectReference{
 			Group:     iov1.GroupVersion.Group,
 			Resource:  "dnsrecords",
+			Namespace: state.IngressNamespace.Name,
+		}, configv1.ObjectReference{
+			Group:    autoscalingv2.GroupName,
+			Resource: "horizontalpodautoscalers",
+			// The operator configures HPA for gateways in the
+			// operand namespace.
 			Namespace: state.IngressNamespace.Name,
 		})
 	}

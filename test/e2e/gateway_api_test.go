@@ -1565,6 +1565,16 @@ func ensureGatewayObjectSuccess(t *testing.T, ns *corev1.Namespace) []string {
 		errs = append(errs, error.Error(err))
 	}
 
+	// Keep going even if there was an error; the gateway might be partially
+	// configured, and the test should report what is or isn't as expected.
+
+	t.Log("Verifying HPA is enabled...")
+	var expectedMinReplicas = 2
+	if infraConfig.Status.InfrastructureTopology == configv1.SingleReplicaTopologyMode {
+		expectedMinReplicas = 1
+	}
+	assertHorizontalPodAutoscalerEnabled(t, operatorcontroller.DefaultOperandNamespace, testGatewayName, operatorcontroller.OpenShiftDefaultGatewayClassName, expectedMinReplicas)
+
 	t.Log("Making sure the httproute is created and accepted...")
 	_, err = assertHttpRouteSuccessful(t, ns.Name, "test-httproute", gateway)
 	if err != nil {

@@ -232,6 +232,10 @@ func TestClusterOperatorStatusRelatedObjects(t *testing.T) {
 			Group:     iov1.GroupVersion.Group,
 			Resource:  "dnsrecords",
 			Namespace: "openshift-ingress",
+		}, {
+			Group:     "autoscaling",
+			Resource:  "horizontalpodautoscalers",
+			Namespace: "openshift-ingress",
 		},
 		{
 			Resource: "namespaces",

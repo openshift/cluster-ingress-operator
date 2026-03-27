@@ -26,6 +26,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -769,6 +770,45 @@ func assertGatewaySuccessful(t *testing.T, namespace, name string) (*gatewayapiv
 	t.Logf("[%s] Observed that gateway %v has been accepted: %+v", time.Now().Format(time.DateTime), nsName, gw.Status)
 
 	return gw, nil
+}
+
+// assertHorizontalPodAutoscalerEnabled verifies that HPA is enabled and
+// configured appropriately for the given gateway.
+func assertHorizontalPodAutoscalerEnabled(t *testing.T, namespaceName, gatewayName, gatewayclassName string, expectedMinReplicas int) {
+	t.Helper()
+
+	var hpa autoscalingv2.HorizontalPodAutoscaler
+	hpaName := types.NamespacedName{
+		Namespace: namespaceName,
+		Name:      fmt.Sprintf("%s-%s", gatewayName, gatewayclassName),
+	}
+	gatewayNamespacedName := types.NamespacedName{
+		Namespace: namespaceName,
+		Name:      gatewayName,
+	}
+	t.Logf("Getting HorizontalPodAutoscaler %s for Gateway %s...", hpaName, gatewayNamespacedName)
+	if err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(context context.Context) (bool, error) {
+		if err := kclient.Get(context, hpaName, &hpa); err != nil {
+			t.Logf("Failed to get HorizontalPodAutoscaler %s: %v; retrying...", hpaName, err)
+
+			return false, nil
+		}
+
+		if hpa.Spec.MinReplicas == nil {
+			t.Logf("HorizontalPodAutoscaler %s has no minReplicas set yet; retrying...", hpaName)
+
+			return false, nil
+		}
+
+		if int(*hpa.Spec.MinReplicas) != expectedMinReplicas {
+			t.Logf("HorizontalPodAutoscaler %s has minReplicas %d; expected %d; retrying...", hpaName, *hpa.Spec.MinReplicas, expectedMinReplicas)
+			return false, nil
+		}
+
+		return true, nil
+	}); err != nil {
+		t.Errorf("Failed to verify that gateway %s has the expected HorizontalPodAutoscaler: %v", gatewayNamespacedName, err)
+	}
 }
 
 func waitForGatewayListenerCondition(t *testing.T, gatewayName types.NamespacedName, listenerName string, conditions ...metav1.Condition) error {

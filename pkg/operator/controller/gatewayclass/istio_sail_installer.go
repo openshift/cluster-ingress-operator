@@ -2,11 +2,13 @@ package gatewayclass
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
 	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
 	"github.com/istio-ecosystem/sail-operator/pkg/install"
+	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	configv1 "github.com/openshift/api/config/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
@@ -116,7 +118,7 @@ func (r *reconciler) overwriteOLMManagedCRDFunc(ctx context.Context, crd *apiext
 
 // ensureIstio installs or updates Istio using the Sail Library.
 // It returns an error if the installation fails.
-func (r *reconciler) ensureIstio(ctx context.Context, istioVersion string) error {
+func (r *reconciler) ensureIstio(ctx context.Context, istioVersion string, gatewayclasses []gatewayapiv1.GatewayClass, infraConfig *configv1.Infrastructure) error {
 	sailInstaller := r.sailInstaller
 
 	enableInferenceExtension, err := r.inferencepoolCrdExists(ctx)
@@ -132,9 +134,13 @@ func (r *reconciler) ensureIstio(ctx context.Context, istioVersion string) error
 	}
 
 	// Build options from current state
-	opts := r.buildInstallerOptions(enableInferenceExtension, istioVersion, &extraIstioConfig{
+	opts, err := r.buildInstallerOptions(enableInferenceExtension, istioVersion, gatewayclasses, &extraIstioConfig{
 		proxyConfig: &proxyConfig,
+		infraConfig: infraConfig,
 	})
+	if err != nil {
+		return err
+	}
 
 	opts.OverwriteOLMManagedCRD = r.overwriteOLMManagedCRDFunc
 
@@ -148,12 +154,15 @@ func (r *reconciler) ensureIstio(ctx context.Context, istioVersion string) error
 
 // buildInstallerOptions creates Sail Library installation options by merging
 // Gateway API defaults with OpenShift-specific overrides
-func (r *reconciler) buildInstallerOptions(enableInferenceExtension bool, istioVersion string, extraConfig *extraIstioConfig) install.Options {
+func (r *reconciler) buildInstallerOptions(enableInferenceExtension bool, istioVersion string, gatewayclasses []gatewayapiv1.GatewayClass, extraConfig *extraIstioConfig) (install.Options, error) {
 	// Start with Gateway API defaults
 	values := install.GatewayAPIDefaults()
 
 	// Apply OpenShift-specific overrides
-	openshiftOverrides := openshiftValues(enableInferenceExtension, r.config.OperandNamespace, extraConfig)
+	openshiftOverrides, err := openshiftValues(enableInferenceExtension, r.config.OperandNamespace, gatewayclasses, extraConfig)
+	if err != nil {
+		return install.Options{}, err
+	}
 	values = install.MergeValues(values, openshiftOverrides)
 
 	return install.Options{
@@ -163,12 +172,12 @@ func (r *reconciler) buildInstallerOptions(enableInferenceExtension bool, istioV
 		Version:        istioVersion,
 		ManageCRDs:     ptr.To(true),
 		IncludeAllCRDs: ptr.To(true),
-	}
+	}, nil
 }
 
 // openshiftValues returns the OpenShift-specific value overrides for Istio.
 // These values are merged on top of the gateway-api preset defaults.
-func openshiftValues(enableInferenceExtension bool, operandNamespace string, extraConfig *extraIstioConfig) *sailv1.Values {
+func openshiftValues(enableInferenceExtension bool, operandNamespace string, gatewayclasses []gatewayapiv1.GatewayClass, extraConfig *extraIstioConfig) (*sailv1.Values, error) {
 	pilotEnv := gatewayAPIPilotEnv(enableInferenceExtension)
 
 	val := &sailv1.Values{
@@ -194,12 +203,21 @@ func openshiftValues(enableInferenceExtension bool, operandNamespace string, ext
 		},
 	}
 
-	if extraConfig != nil && extraConfig.proxyConfig != nil {
-		if proxyMetadata := buildProxyMetadata(extraConfig.proxyConfig); proxyMetadata != nil {
-			val.MeshConfig.DefaultConfig.ProxyMetadata = proxyMetadata
+	if extraConfig != nil {
+		if extraConfig.proxyConfig != nil {
+			if proxyMetadata := buildProxyMetadata(extraConfig.proxyConfig); proxyMetadata != nil {
+				val.MeshConfig.DefaultConfig.ProxyMetadata = proxyMetadata
+			}
+		}
+		if extraConfig.infraConfig != nil {
+			if hpaConfig, err := buildHorizontalPodAutoscalerConfig(extraConfig.infraConfig, gatewayclasses); err != nil {
+				return nil, fmt.Errorf("failed to build HPA config: %w", err)
+			} else {
+				val.GatewayClasses = hpaConfig
+			}
 		}
 	}
-	return val
+	return val, nil
 }
 
 func buildProxyMetadata(proxyConfig *configv1.Proxy) map[string]string {
@@ -224,4 +242,36 @@ func buildProxyMetadata(proxyConfig *configv1.Proxy) map[string]string {
 		return nil
 	}
 	return proxyMetadata
+}
+
+// buildHorizontalPodAutoscalerConfig returns Istio configuration for the
+// horizontal pod autoscaler given an infrastructure config and a slice of
+// gatewayclasses.
+func buildHorizontalPodAutoscalerConfig(infraConfig *configv1.Infrastructure, gatewayclasses []gatewayapiv1.GatewayClass) (json.RawMessage, error) {
+	const maxReplicas = 10
+
+	var minReplicas = 2
+	if infraConfig.Status.InfrastructureTopology == configv1.SingleReplicaTopologyMode {
+		minReplicas = 1
+	}
+
+	gatewayclassConfig := map[string]any{
+		"horizontalPodAutoscaler": map[string]any{
+			"spec": map[string]any{
+				"minReplicas": minReplicas,
+				"maxReplicas": maxReplicas,
+			},
+		},
+	}
+	gatewayclassesConfig := map[string]any{}
+	for _, gatewayclass := range gatewayclasses {
+		gatewayclassesConfig[gatewayclass.Name] = gatewayclassConfig
+	}
+
+	gatewayclassesConfigJson, err := json.Marshal(gatewayclassesConfig)
+	if err != nil {
+		return nil, err
+	}
+
+	return gatewayclassesConfigJson, nil
 }
