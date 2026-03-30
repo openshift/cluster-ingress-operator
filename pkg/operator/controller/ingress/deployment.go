@@ -580,7 +580,10 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 
 	enableDCM := false
 	if config.IngressControllerDCMEnabled {
-		enableDCM = true
+		switch ci.Spec.TuningOptions.ConfigurationManagement {
+		case operatorv1.IngressControllerConfigurationManagementDynamic:
+			enableDCM = true
+		}
 	}
 	dynamicConfigOverride := unsupportedConfigOverrides.DynamicConfigManager
 	if v, err := strconv.ParseBool(dynamicConfigOverride); err == nil {
