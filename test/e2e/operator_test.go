@@ -4242,26 +4242,45 @@ func waitForDeploymentComplete(t *testing.T, cl client.Client, deployment *appsv
 // value, or unset if the provided value is the empty string.
 func waitForDeploymentEnvVar(t *testing.T, cl client.Client, deployment *appsv1.Deployment, timeout time.Duration, name, value string) error {
 	t.Helper()
-	deploymentName := types.NamespacedName{Namespace: deployment.Namespace, Name: deployment.Name}
-	err := wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
-		deployment := &appsv1.Deployment{}
-		if err := kclient.Get(context.TODO(), deploymentName, deployment); err != nil {
-			t.Logf("error getting deployment %s/%s: %v", deploymentName.Namespace, deploymentName.Name, err)
-			return false, nil
-		}
+
+	return waitForDeploymentFunc(t, deployment, timeout, func(deployment *appsv1.Deployment) bool {
 		for _, container := range deployment.Spec.Template.Spec.Containers {
 			if container.Name == "router" {
 				for _, v := range container.Env {
 					if v.Name == name {
-						return v.Value == value, nil
+						return v.Value == value
 					}
 				}
-				return len(value) == 0, nil
+
+				return len(value) == 0
 			}
 		}
-		return false, nil
+
+		return false
 	})
-	return err
+}
+
+// waitForDeploymentFunc polls the given deployment until the given condition
+// func returns true or the timeout elapses.
+func waitForDeploymentFunc(t *testing.T, deployment *appsv1.Deployment, timeout time.Duration, fn func(deployment *appsv1.Deployment) bool) error {
+	t.Helper()
+
+	deploymentName := types.NamespacedName{
+		Namespace: deployment.Namespace,
+		Name:      deployment.Name,
+	}
+
+	return wait.PollUntilContextTimeout(context.Background(), 1*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
+		var deployment appsv1.Deployment
+
+		if err := kclient.Get(ctx, deploymentName, &deployment); err != nil {
+			t.Logf("Failed to get deployment %s: %v", deploymentName, err)
+
+			return false, nil
+		}
+
+		return fn(&deployment), nil
+	})
 }
 
 // waitForDeploymentCompleteWithOldPodTermination waits for a deployment to
