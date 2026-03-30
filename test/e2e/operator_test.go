@@ -27,7 +27,6 @@ import (
 	"gopkg.in/yaml.v2"
 
 	configv1 "github.com/openshift/api/config/v1"
-	"github.com/openshift/api/features"
 	operatorv1 "github.com/openshift/api/operator/v1"
 	iov1 "github.com/openshift/api/operatoringress/v1"
 	routev1 "github.com/openshift/api/route/v1"
@@ -3664,74 +3663,110 @@ func TestLoadBalancingAlgorithmUnsupportedConfigOverride(t *testing.T) {
 }
 
 // TestUnsupportedConfigOverride verifies that the operator
-// configures router pod replicas to use the:
-// - dynamic config manager
-// - contstats
-// - max dynamic servers
-// if the ingresscontroller is so configured using an unsupported config override.
+// handles the following overrides for the router deployment:
+//
+// - loadBalancingAlgorithm
+// - dynamicConfigManager
+// - contStats
+// - maxDynamicServers
 func TestUnsupportedConfigOverride(t *testing.T) {
 	t.Parallel()
 
-	var (
-		dcmDefaultValue         = ""
-		dcmUpdateValue          = "true"
-		dcmExpectedValue        = "true"
-		maxServersDefaultValue  = ""
-		maxServersUpdateValue   = "2"
-		maxServersExpectedValue = "" // max dynamic servers cannot be set if DCM is off
-	)
-
-	if dcmEnabled, err := isFeatureGateEnabled(features.FeatureGateIngressControllerDynamicConfigurationManager); err != nil {
-		t.Fatalf("failed to get dynamic config manager feature gate: %v", err)
-	} else if dcmEnabled {
-		t.Logf("DynamicConfigurationManager feature gate is enabled for this test")
-		dcmDefaultValue = "true"
-		dcmUpdateValue = "false"
-		dcmExpectedValue = ""
-		maxServersDefaultValue = "1"
-		maxServersUpdateValue = "2"
-		maxServersExpectedValue = "2"
+	var tests = []struct {
+		name                       string
+		unsupportedConfigOverrides string
+		expectedEnv                map[string]string
+	}{
+		{
+			name:                       "dynamic-config-manager-false",
+			unsupportedConfigOverrides: `{"dynamicConfigManager":"false"}`,
+			expectedEnv: map[string]string{
+				"ROUTER_HAPROXY_CONFIG_MANAGER": "",
+				"ROUTER_HAPROXY_CONTSTATS":      "",
+				"ROUTER_MAX_DYNAMIC_SERVERS":    "",
+			},
+		}, {
+			name:                       "dynamic-config-manager-true",
+			unsupportedConfigOverrides: `{"dynamicConfigManager":"true"}`,
+			expectedEnv: map[string]string{
+				// DCM should be enabled.
+				"ROUTER_HAPROXY_CONFIG_MANAGER": "true",
+				"ROUTER_HAPROXY_CONTSTATS":      "",
+				"ROUTER_MAX_DYNAMIC_SERVERS":    "1",
+			},
+		}, {
+			name:                       "contstats-true",
+			unsupportedConfigOverrides: `{"dynamicConfigManager":"true","contStats":"true"}`,
+			expectedEnv: map[string]string{
+				"ROUTER_HAPROXY_CONFIG_MANAGER": "true",
+				"ROUTER_HAPROXY_CONTSTATS":      "true",
+				"ROUTER_MAX_DYNAMIC_SERVERS":    "1",
+			},
+		}, {
+			name:                       "max-dynamic-servers",
+			unsupportedConfigOverrides: `{"dynamicConfigManager":"true","maxDynamicServers":"2"}`,
+			expectedEnv: map[string]string{
+				"ROUTER_HAPROXY_CONFIG_MANAGER": "true",
+				"ROUTER_HAPROXY_CONTSTATS":      "",
+				"ROUTER_MAX_DYNAMIC_SERVERS":    "2",
+			},
+		}, {
+			name:                       "max-dynamic-servers-without-dynamic-config-manager-enabled",
+			unsupportedConfigOverrides: `{"dynamicConfigManager":"false","maxDynamicServers":"2"}`,
+			expectedEnv: map[string]string{
+				"ROUTER_HAPROXY_CONFIG_MANAGER": "",
+				"ROUTER_HAPROXY_CONTSTATS":      "",
+				"ROUTER_MAX_DYNAMIC_SERVERS":    "",
+			},
+		}, {
+			name:                       "load-balancing-algorithm",
+			unsupportedConfigOverrides: `{"loadBalancingAlgorithm":"leastconn"}`,
+			expectedEnv: map[string]string{
+				"ROUTER_LOAD_BALANCE_ALGORITHM": "leastconn",
+				"ROUTER_TCP_BALANCE_SCHEME":     "source",
+			},
+		},
 	}
 
-	var tests = []struct {
-		name, unsupportedConfigOverride, env, defaultValue, updateValue, expectedValue string
-	}{
-		{"dynamic-config-manager", "dynamicConfigManager", "ROUTER_HAPROXY_CONFIG_MANAGER", dcmDefaultValue, dcmUpdateValue, dcmExpectedValue},
-		{"contstats", "contStats", "ROUTER_HAPROXY_CONTSTATS", "", "true", "true"},
-		{"max-dynamic-servers", "maxDynamicServers", "ROUTER_MAX_DYNAMIC_SERVERS", maxServersDefaultValue, maxServersUpdateValue, maxServersExpectedValue},
+	icName := types.NamespacedName{
+		Namespace: operatorNamespace,
+		Name:      names.SimpleNameGenerator.GenerateName("unsupported-config-override-"),
+	}
+	domain := fmt.Sprintf("%s.%s", icName.Name, dnsConfig.Spec.BaseDomain)
+	ic := newPrivateController(icName, domain)
+	if err := kclient.Create(context.Background(), ic); err != nil {
+		t.Fatalf("failed to create ingresscontroller: %v", err)
+	}
+	defer assertIngressControllerDeleted(t, kclient, ic)
+
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
+		t.Errorf("failed to observe expected conditions: %v", err)
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			icName := types.NamespacedName{Namespace: operatorNamespace, Name: tt.name}
-			domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
-			ic := newPrivateController(icName, domain)
-			if err := kclient.Create(context.TODO(), ic); err != nil {
-				t.Fatalf("failed to create ingresscontroller: %v", err)
-			}
-			defer assertIngressControllerDeleted(t, kclient, ic)
-
-			if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
-				t.Errorf("failed to observe expected conditions: %v", err)
-			}
-
-			deployment := &appsv1.Deployment{}
-			if err := kclient.Get(context.TODO(), controller.RouterDeploymentName(ic), deployment); err != nil {
-				t.Fatalf("failed to get ingresscontroller deployment: %v", err)
-			}
-			if err := waitForDeploymentEnvVar(t, kclient, deployment, 30*time.Second, tt.env, tt.defaultValue); err != nil {
-				t.Fatalf("expected initial deployment not to set %s=%s: %v", tt.env, tt.defaultValue, err)
-			}
-
 			if err := updateIngressControllerWithRetryOnConflict(t, icName, timeout, func(ic *operatorv1.IngressController) {
 				ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{
-					Raw: []byte(fmt.Sprintf(`{"%s":"%s"}`, tt.unsupportedConfigOverride, tt.updateValue)),
+					Raw: []byte(tt.unsupportedConfigOverrides),
 				}
 			}); err != nil {
 				t.Fatalf("failed to update ingresscontroller: %v", err)
 			}
-			if err := waitForDeploymentEnvVar(t, kclient, deployment, 1*time.Minute, tt.env, tt.expectedValue); err != nil {
-				t.Fatalf("expected updated deployment to set %s=%s: %v", tt.env, tt.expectedValue, err)
+
+			deploymentName := controller.RouterDeploymentName(ic)
+			deployment := appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      deploymentName.Name,
+					Namespace: deploymentName.Namespace,
+				},
+			}
+
+			if err := waitForDeploymentEnv(t, &deployment, "router", 1*time.Minute, tt.expectedEnv); err != nil {
+				if err := kclient.Get(context.Background(), deploymentName, &deployment); err != nil {
+					t.Logf("failed to get ingresscontroller deployment: %v", err)
+				}
+				actualEnv := getDeploymentContainer(&deployment, "router").Env
+				t.Fatalf("expected updated deployment to set env. vars. %#v, found %#v: %v", tt.expectedEnv, actualEnv, err)
 			}
 		})
 	}
@@ -4310,6 +4345,50 @@ func waitForDeploymentEnvVar(t *testing.T, cl client.Client, deployment *appsv1.
 
 		return false
 	})
+}
+
+// waitForDeploymentEnv waits for the provided deployment to have the specified
+// environment variables set in the named container.  Specifying the empty
+// string "" for an environment variable in expectedEnv indicates that the
+// environment variable is expected *not* to be set in the container.
+func waitForDeploymentEnv(t *testing.T, deployment *appsv1.Deployment, containerName string, timeout time.Duration, expectedEnv map[string]string) error {
+	t.Helper()
+
+	return waitForDeploymentFunc(t, deployment, timeout, func(deployment *appsv1.Deployment) bool {
+		currentEnv := map[string]string{}
+		for k := range expectedEnv {
+			// Initialize the entry in currentEnv to "" to indicate
+			// that the env. var.  is not set.  The next loop
+			// updates the entry if it is in fact set.
+			currentEnv[k] = ""
+		}
+
+		container := getDeploymentContainer(deployment, containerName)
+		for _, envVar := range container.Env {
+			k, v := envVar.Name, envVar.Value
+
+			if _, ok := expectedEnv[k]; !ok {
+				// Ignore env. vars. that are not in
+				// expectedEnv.
+				continue
+			}
+
+			currentEnv[k] = v
+		}
+
+		return reflect.DeepEqual(expectedEnv, currentEnv)
+	})
+}
+
+// getDeploymentContainer returns the named container from the given deployment.
+func getDeploymentContainer(deployment *appsv1.Deployment, containerName string) corev1.Container {
+	for _, container := range deployment.Spec.Template.Spec.Containers {
+		if container.Name == containerName {
+			return container
+		}
+	}
+
+	return corev1.Container{}
 }
 
 // waitForDeploymentFunc polls the given deployment until the given condition
