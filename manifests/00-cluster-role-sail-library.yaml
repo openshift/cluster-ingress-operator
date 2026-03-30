@@ -31,7 +31,7 @@ metadata:
   name: openshift-ingress-operator-sail-library
   annotations:
     capability.openshift.io/name: Ingress
-    release.openshift.io/feature-set: DevPreviewNoUpgrade,TechPreviewNoUpgrade # Remove when GA
+    release.openshift.io/feature-gate: GatewayAPIWithoutOLM
     include.release.openshift.io/ibm-cloud-managed: "true"
     include.release.openshift.io/self-managed-high-availability: "true"
     include.release.openshift.io/single-node-developer: "true"
