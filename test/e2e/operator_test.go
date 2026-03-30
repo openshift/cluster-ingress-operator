@@ -4237,9 +4237,9 @@ func waitForDeploymentComplete(t *testing.T, cl client.Client, deployment *appsv
 	return nil
 }
 
-// Wait for the provided deployment to have the specified environment variable
-// set with the provided value, or unset if the provided value is the empty
-// string.
+// waitForDeploymentEnvVar waits for the provided router deployment to have the
+// specified environment variable set in the router container with the provided
+// value, or unset if the provided value is the empty string.
 func waitForDeploymentEnvVar(t *testing.T, cl client.Client, deployment *appsv1.Deployment, timeout time.Duration, name, value string) error {
 	t.Helper()
 	deploymentName := types.NamespacedName{Namespace: deployment.Namespace, Name: deployment.Name}
