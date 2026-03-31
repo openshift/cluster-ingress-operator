@@ -2,6 +2,49 @@
 
 This document provides guidance for AI coding agents working with the cluster-ingress-operator repository.
 
+## 1. SYSTEM CONTEXT & TOPOLOGY
+* **Domain:** North-South network traffic management (Layer 7 & Layer 4).
+* **Prerequisites:** CNI (Cluster Network Operator), Pod IP routing, internal CoreDNS.
+* **Dual Architecture Mode:**
+  1. **Legacy/Primary:** HAProxy orchestration via `openshift3/ose-haproxy-router`.
+  2. **Modern/GWAPI:** Gateway API via OpenShift Service Mesh (OSSM / Istio / Envoy).
+
+## 2. STRICT NAMESPACE BOUNDARIES
+* **`openshift-ingress-operator`**: Execution environment for operator logic, control loops, and metrics endpoints. **DO NOT** deploy data-plane operands here.
+* **`openshift-ingress`**: Execution environment for all data-plane workloads. HAProxy pods, `haproxy.cfg` ConfigMaps, TLS secrets, Envoy proxies, and Services **MUST** be strictly confined to this namespace.
+
+## 3. CUSTOM RESOURCE DEFINITION (CRD) MATRIX
+
+### Core Configuration
+* **`Ingress`** (`config.openshift.io/v1`, Cluster-scoped): Defines cluster-wide routing defaults and toggles.
+* **`IngressController`** (`operator.openshift.io/v1`, Namespace-scoped): Primary interface for legacy HAProxy. Controls replicas, deployment affinity, and endpoint publishing.
+* **`DNSRecord`** (`ingress.operator.openshift.io/v1`, Namespace-scoped): Internal abstraction for cloud DNS manipulation. 
+
+### Gateway API (GWAPI)
+* **`GatewayClass`**: Trigger resource. Detecting `openshift.io/gateway-controller/v1` initiates OSSM deployment.
+* **`Gateway`**: Defines external proxy instances / ports. Mapped to Envoy proxies.
+* **`HTTPRoute`**: Advanced routing, traffic weighting, and header matching to backend services.
+
+## 4. DIRECTORY TOPOGRAPHY
+* `pkg/operator/controller/ingress/`: Legacy core. Reconciles `IngressController` and manages HAProxy deployment, load balancer services, and status loops.
+* `pkg/operator/controller/dns/`: Fulfills `DNSRecord` resources. Interfaces with AWS/GCP/Azure SDKs. 
+* `pkg/operator/controller/gatewayapi/`: GWAPI meta-controller. Manages CRD lifecycles and launches dependent watchers.
+* `pkg/operator/controller/gatewayclass/`: Provisions OSSM and generates the `ServiceMeshControlPlane`.
+* `pkg/operator/controller/certificate/`: Manages automated certificate rotation and expiry.
+
+## 5. TACTICAL DIRECTIVES & CONSTRAINTS
+* **RULE 1: No Silent Failures.** If a cloud API times out or a version conflict occurs, set the expected error condition in `.status.conditions` (`expectedCondition` in `status.go`) and mark the operator as `Degraded`.
+* **RULE 2: OSSM Meta-Management for GWAPI.** The operator does not write Envoy configs directly. It manages the OpenShift Service Mesh Operator by generating a `ServiceMeshControlPlane` (SMCP) resource.
+* **RULE 3: Decouple DNS for GWAPI.** Directly generate `DNSRecord` objects for GWAPI endpoints; do not tie external endpoints for Envoy to the legacy HAProxy `IngressController`.
+* **RULE 4: Finalizer Management.** Explicitly handle the removal of finalizers (e.g., `ingress.openshift.io/operator`) during deletion workflows in `load_balancer_service.go` to prevent infinite `Terminating` states.
+* **RULE 5: Cloud Credential Operator (CCO) Awareness.** Gracefully degrade and report HTTP 403 Forbidden errors if assumed roles lack permissions in "manual mode" where dynamic IAM credentials are disabled.
+* **RULE 6: Immutable HAProxy Template.** Do not inject arbitrary, unsupported HAProxy directives into the base router template.
+
+## 6. EXPLICIT NON-GOALS
+* Managing underlying cloud infrastructure subnets or legacy security groups.
+* Fixing application-level protocol downgrade failures (e.g., HTTP/2 to WebSocket).
+* Generating default TLS certificates for Envoy proxies.
+
 ## Project Structure and Repository Layout
 
 ```
