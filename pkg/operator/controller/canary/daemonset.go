@@ -122,6 +122,7 @@ func (r *reconciler) updateCanaryDaemonSet(ctx context.Context, current, desired
 		if len(short) > 8 {
 			short = short[:8]
 		}
+		log.Info("Updated canary-serving-cert-hash annotation on the canary daemonset", "namespace", updated.Namespace, "name", updated.Name, "hash", short)
 		if r.recorder != nil {
 			r.recorder.Eventf(updated, "Normal", "CanaryCertRotated", "Canary serving cert rotated, updated pod template annotation hash: %s", short)
 		}

@@ -170,7 +170,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	} else if len(childSvcs.Items) > 0 {
 		childSvc = childSvcs.Items[0].DeepCopy()
 	} else {
-		log.V(1).Info("no service was found for gateway")
+		log.Info("no service was found for gateway")
 	}
 
 	// Because we will have multiple DNS records per Gateway (one per listener)
@@ -180,7 +180,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		log.Error(err, "error fetching the dnsrecords from gateway")
 		errs = append(errs, fmt.Errorf("failed to list dnsrecords for gateway %s/%s: %w", gateway.Namespace, gateway.Name, err))
 	} else if len(childDNSRecords.Items) == 0 {
-		log.V(1).Info("no dnsrecords found for gateway")
+		log.Info("no dnsrecords found for gateway")
 	}
 
 	// hostnameToDNSRecord will be used to verify that, given a listener, when it has a hostname

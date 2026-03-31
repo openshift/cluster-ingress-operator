@@ -40,6 +40,7 @@ func (r *reconciler) ensureConfigMap(name types.NamespacedName, desired *corev1.
 		if deleted, err := r.deleteRouterCAConfigMap(current); err != nil {
 			return fmt.Errorf("failed to ensure %q in %q was unpublished: %v", name.Name, name.Namespace, err)
 		} else if deleted {
+			log.Info("Unpublished router CA configmap", "name", name.Name, "namespace", name.Namespace)
 			r.recorder.Eventf(current, "Normal", "UnpublishedRouterCA", "Unpublished %q in %q", name.Name, name.Namespace)
 		}
 	case desired != nil && current == nil:
@@ -50,12 +51,14 @@ func (r *reconciler) ensureConfigMap(name types.NamespacedName, desired *corev1.
 			if err != nil {
 				return err
 			}
+			log.Info("Published router CA configmap", "name", desired.Name, "namespace", desired.Namespace)
 			r.recorder.Eventf(new, "Normal", "PublishedRouterCA", "Published %q in %q", desired.Name, desired.Namespace)
 		}
 	case desired != nil && current != nil:
 		if updated, err := r.updateRouterCAConfigMap(current, desired); err != nil {
 			return fmt.Errorf("failed to update published %q in %q: %v", desired.Name, desired.Namespace, err)
 		} else if updated {
+			log.Info("Updated published router CA configmap", "name", desired.Name, "namespace", desired.Namespace)
 			r.recorder.Eventf(current, "Normal", "UpdatedPublishedRouterCA", "Updated the published %q in %q", desired.Name, desired.Namespace)
 		}
 	}
