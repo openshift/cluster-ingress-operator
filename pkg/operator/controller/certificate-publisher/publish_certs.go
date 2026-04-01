@@ -227,7 +227,7 @@ func validatePEMBundle(bundle []byte) error {
 		decoded++
 	}
 	if decoded < 2 {
-		return fmt.Errorf("expected at least certificate and key PEM blocks, got %d", decoded)
+		return fmt.Errorf("expected at least 2 PEM blocks, got %d", decoded)
 	}
 	return nil
 }

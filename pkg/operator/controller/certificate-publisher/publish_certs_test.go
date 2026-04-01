@@ -355,16 +355,20 @@ func generateTestCertAndKey(t *testing.T, noTrailingNewline bool) (certPEM, keyP
 
 // Test_desiredRouterCertsGlobalSecret_PEMNewline verifies that
 // desiredRouterCertsGlobalSecret produces a valid PEM bundle regardless of
-// whether tls.crt has a trailing newline.  Previously, bytes.Join with a nil
-// separator would concatenate the END CERTIFICATE and BEGIN PRIVATE KEY
-// markers on the same line when tls.crt lacked a trailing newline, producing
-// a malformed PEM bundle that downstream consumers could not parse.
+// whether tls.crt has a trailing newline, and rejects malformed PEM input.
+// Previously, bytes.Join with a nil separator would concatenate the END
+// CERTIFICATE and BEGIN PRIVATE KEY markers on the same line when tls.crt
+// lacked a trailing newline, producing a malformed PEM bundle that downstream
+// consumers could not parse.
 func Test_desiredRouterCertsGlobalSecret_PEMNewline(t *testing.T) {
 	domain := "apps.my.devcluster.openshift.com"
 
 	testCases := []struct {
 		name              string
 		noTrailingNewline bool
+		mutateCertPEM     func([]byte) []byte
+		mutateKeyPEM      func([]byte) []byte
+		wantErrSubstring  string
 	}{
 		{
 			name:              "cert with trailing newline produces valid PEM",
@@ -374,11 +378,24 @@ func Test_desiredRouterCertsGlobalSecret_PEMNewline(t *testing.T) {
 			name:              "cert without trailing newline produces valid PEM",
 			noTrailingNewline: true,
 		},
+		{
+			name: "malformed key PEM returns error",
+			mutateKeyPEM: func([]byte) []byte {
+				return []byte("not a PEM block")
+			},
+			wantErrSubstring: "failed to decode PEM block",
+		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			certPEM, keyPEM := generateTestCertAndKey(t, tc.noTrailingNewline)
+			if tc.mutateCertPEM != nil {
+				certPEM = tc.mutateCertPEM(certPEM)
+			}
+			if tc.mutateKeyPEM != nil {
+				keyPEM = tc.mutateKeyPEM(keyPEM)
+			}
 
 			secret := corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{
@@ -398,6 +415,18 @@ func Test_desiredRouterCertsGlobalSecret_PEMNewline(t *testing.T) {
 				"openshift-ingress",
 				domain,
 			)
+			if len(tc.wantErrSubstring) != 0 {
+				if err == nil {
+					t.Fatal("expected an error, got nil")
+				}
+				if !strings.Contains(err.Error(), tc.wantErrSubstring) {
+					t.Fatalf("expected error containing %q, got %v", tc.wantErrSubstring, err)
+				}
+				if result != nil {
+					t.Fatalf("expected no secret on error, got %#v", result)
+				}
+				return
+			}
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -412,19 +441,25 @@ func Test_desiredRouterCertsGlobalSecret_PEMNewline(t *testing.T) {
 				t.Errorf("PEM bundle contains concatenated markers:\n%s", string(bundleData))
 			}
 
-			// The bundle must yield both a CERTIFICATE and a key block
-			var blockTypes []string
-			rest := bundleData
-			for {
-				var block *pem.Block
-				block, rest = pem.Decode(rest)
-				if block == nil {
-					break
-				}
-				blockTypes = append(blockTypes, block.Type)
+			// The bundle must contain exactly a CERTIFICATE block followed by the key block.
+			firstBlock, rest := pem.Decode(bundleData)
+			if firstBlock == nil {
+				t.Fatalf("expected first PEM block, got nil\nPEM bundle:\n%s", string(bundleData))
 			}
-			if len(blockTypes) != 2 {
-				t.Errorf("expected 2 PEM blocks (CERTIFICATE + key), got %d: %v\nPEM bundle:\n%s", len(blockTypes), blockTypes, string(bundleData))
+			if firstBlock.Type != "CERTIFICATE" {
+				t.Fatalf("expected first PEM block type CERTIFICATE, got %q\nPEM bundle:\n%s", firstBlock.Type, string(bundleData))
+			}
+
+			secondBlock, rest := pem.Decode(rest)
+			if secondBlock == nil {
+				t.Fatalf("expected second PEM block, got nil\nPEM bundle:\n%s", string(bundleData))
+			}
+			if secondBlock.Type != "EC PRIVATE KEY" {
+				t.Fatalf("expected second PEM block type EC PRIVATE KEY, got %q\nPEM bundle:\n%s", secondBlock.Type, string(bundleData))
+			}
+
+			if len(bytes.TrimSpace(rest)) != 0 {
+				t.Fatalf("expected exactly 2 PEM blocks, found trailing data %q\nPEM bundle:\n%s", string(rest), string(bundleData))
 			}
 		})
 	}
