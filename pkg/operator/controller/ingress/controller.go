@@ -84,6 +84,14 @@ var (
 		"TLS_AES_128_CCM_SHA256",
 		"TLS_AES_128_CCM_8_SHA256",
 	)
+
+	// fipsApprovedTLS13Ciphers is the set of TLS 1.3 cipher suites that are
+	// FIPS-approved. These are kept in ROUTER_CIPHERSUITES when the operator
+	// is running in FIPS mode, while others are filtered out.
+	fipsApprovedTLS13Ciphers = sets.NewString(
+		"TLS_AES_128_GCM_SHA256",
+		"TLS_AES_256_GCM_SHA384",
+	)
 )
 
 // New creates the ingress controller from configuration. This is the controller
@@ -356,7 +364,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	// successful, immediately re-queue to refresh state.
 	alreadyAdmitted := ingresscontroller.IsAdmitted(ingress)
 	if !alreadyAdmitted || needsReadmission(ingress) {
-		if err := r.admit(ingress, ingressConfig, platformStatus, dnsConfig, alreadyAdmitted); err != nil {
+		if err := r.admit(ingress, ingressConfig, platformStatus, dnsConfig, apiConfig, alreadyAdmitted); err != nil {
 			switch err := err.(type) {
 			case *admissionRejection:
 				log.Info("IngressController rejected", "namespace", ingress.Namespace, "name", ingress.Name, "reason", err.Reason)
@@ -389,7 +397,7 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 // fields.  Returns an error value, which will have a non-nil value of type
 // admissionRejection if the ingresscontroller was rejected, or a non-nil
 // value of a different type if the ingresscontroller could not be processed.
-func (r *reconciler) admit(current *operatorv1.IngressController, ingressConfig *configv1.Ingress, platformStatus *configv1.PlatformStatus, dnsConfig *configv1.DNS, alreadyAdmitted bool) error {
+func (r *reconciler) admit(current *operatorv1.IngressController, ingressConfig *configv1.Ingress, platformStatus *configv1.PlatformStatus, dnsConfig *configv1.DNS, apiConfig *configv1.APIServer, alreadyAdmitted bool) error {
 	updated := current.DeepCopy()
 
 	setDefaultDomain(updated, ingressConfig)
@@ -404,7 +412,7 @@ func (r *reconciler) admit(current *operatorv1.IngressController, ingressConfig 
 	// get the default from the APIServer config (which is assumed to be
 	// valid).
 
-	if err := r.validate(updated); err != nil {
+	if err := r.validate(updated, apiConfig); err != nil {
 		switch err := err.(type) {
 		case *admissionRejection:
 			updated.Status.Conditions = MergeConditions(updated.Status.Conditions, operatorv1.OperatorCondition{
@@ -905,7 +913,7 @@ func hasTLSSecurityProfile(ic *operatorv1.IngressController) bool {
 // returns an error value, which will have a non-nil value of type
 // admissionRejection if the ingresscontroller is invalid, or a non-nil value of
 // a different type if validation could not be completed.
-func (r *reconciler) validate(ic *operatorv1.IngressController) error {
+func (r *reconciler) validate(ic *operatorv1.IngressController, apiConfig *configv1.APIServer) error {
 	var errors []error
 
 	ingresses := &operatorv1.IngressControllerList{}
@@ -919,7 +927,7 @@ func (r *reconciler) validate(ic *operatorv1.IngressController) error {
 	if err := validateDomainUniqueness(ic, ingresses.Items); err != nil {
 		errors = append(errors, err)
 	}
-	if err := validateTLSSecurityProfile(ic); err != nil {
+	if err := validateTLSSecurityProfile(ic, apiConfig); err != nil {
 		errors = append(errors, err)
 	}
 	if err := validateHTTPHeaderBufferValues(ic); err != nil {
@@ -972,49 +980,76 @@ var (
 )
 
 // validateTLSSecurityProfile validates the given ingresscontroller's TLS
-// security profile, if it specifies one.
-func validateTLSSecurityProfile(ic *operatorv1.IngressController) error {
-	if !hasTLSSecurityProfile(ic) {
-		return nil
-	}
-
-	if ic.Spec.TLSSecurityProfile.Type != configv1.TLSProfileCustomType {
-		return nil
-	}
-
-	spec := ic.Spec.TLSSecurityProfile.Custom
-	if spec == nil {
-		return fmt.Errorf("security profile is not defined")
-	}
-
+// security profile. It resolves the effective profile (which may be inherited
+// from the APIServer config) and ensures it is properly configured and FIPS-compliant.
+func validateTLSSecurityProfile(ic *operatorv1.IngressController, apiConfig *configv1.APIServer) error {
 	var errs []error
 
-	if len(spec.Ciphers) == 0 {
-		errs = append(errs, fmt.Errorf("security profile has an empty ciphers list"))
+	if apiConfig == nil {
+		apiConfig = &configv1.APIServer{}
+	}
+
+	// 1. Figure out which profile is in effect.
+	var effectiveProfile *configv1.TLSSecurityProfile
+	if hasTLSSecurityProfile(ic) {
+		effectiveProfile = ic.Spec.TLSSecurityProfile
 	} else {
-		invalidCiphers := []string{}
-		for _, cipher := range spec.Ciphers {
-			if !isValidCipher(strings.TrimPrefix(cipher, "!")) {
-				invalidCiphers = append(invalidCiphers, cipher)
+		effectiveProfile = apiConfig.Spec.TLSSecurityProfile
+	}
+
+	// 2. Validate the effective profile.
+	if effectiveProfile != nil && effectiveProfile.Type == configv1.TLSProfileCustomType {
+		spec := effectiveProfile.Custom
+		if spec == nil {
+			return fmt.Errorf("security profile is not defined")
+		}
+
+		if len(spec.Ciphers) == 0 {
+			errs = append(errs, fmt.Errorf("security profile has an empty ciphers list"))
+		} else {
+			invalidCiphers := []string{}
+			for _, cipher := range spec.Ciphers {
+				if !isValidCipher(strings.TrimPrefix(cipher, "!")) {
+					invalidCiphers = append(invalidCiphers, cipher)
+				}
+			}
+			if len(invalidCiphers) != 0 {
+				errs = append(errs, fmt.Errorf("security profile has invalid ciphers: %s", strings.Join(invalidCiphers, ", ")))
+			}
+			switch spec.MinTLSVersion {
+			case configv1.VersionTLS10, configv1.VersionTLS11, configv1.VersionTLS12:
+				if tlsVersion13Ciphers.HasAll(spec.Ciphers...) {
+					errs = append(errs, fmt.Errorf("security profile specifies minTLSVersion: %s and contains only TLSv1.3 cipher suites", spec.MinTLSVersion))
+				}
+			case configv1.VersionTLS13:
+				if !tlsVersion13Ciphers.HasAny(spec.Ciphers...) {
+					errs = append(errs, fmt.Errorf("security profile specifies minTLSVersion: %s and contains no TLSv1.3 cipher suites", spec.MinTLSVersion))
+				}
 			}
 		}
-		if len(invalidCiphers) != 0 {
-			errs = append(errs, fmt.Errorf("security profile has invalid ciphers: %s", strings.Join(invalidCiphers, ", ")))
-		}
-		switch spec.MinTLSVersion {
-		case configv1.VersionTLS10, configv1.VersionTLS11, configv1.VersionTLS12:
-			if tlsVersion13Ciphers.HasAll(spec.Ciphers...) {
-				errs = append(errs, fmt.Errorf("security profile specifies minTLSVersion: %s and contains only TLSv1.3 cipher suites", spec.MinTLSVersion))
-			}
-		case configv1.VersionTLS13:
-			if !tlsVersion13Ciphers.HasAny(spec.Ciphers...) {
-				errs = append(errs, fmt.Errorf("security profile specifies minTLSVersion: %s and contains no TLSv1.3 cipher suites", spec.MinTLSVersion))
-			}
+
+		if _, ok := validTLSVersions[spec.MinTLSVersion]; !ok {
+			errs = append(errs, fmt.Errorf("security profile has invalid minimum security protocol version: %q", spec.MinTLSVersion))
 		}
 	}
 
-	if _, ok := validTLSVersions[spec.MinTLSVersion]; !ok {
-		errs = append(errs, fmt.Errorf("security profile has invalid minimum security protocol version: %q", spec.MinTLSVersion))
+	// On FIPS-enabled clusters, non-FIPS TLS 1.3 ciphers are filtered from
+	// ROUTER_CIPHERSUITES. If the effective profile's only TLS 1.3 cipher suites
+	// are non-FIPS, they would all be removed, leaving no TLS 1.3 ciphers
+	// configured. Reject such profiles with a clear error message.
+	if isFIPSEnabled {
+		resolvedSpec := tlsProfileSpecForIngressController(ic, apiConfig)
+		tls13InProfile := tlsVersion13Ciphers.Intersection(sets.NewString(resolvedSpec.Ciphers...))
+		if tls13InProfile.Len() > 0 && !tls13InProfile.HasAny(fipsApprovedTLS13Ciphers.UnsortedList()...) {
+			errs = append(errs, fmt.Errorf(
+				"security profile's TLS 1.3 cipher suites (%s) are not FIPS-compliant"+
+					" and will be removed on this FIPS-enabled cluster,"+
+					" leaving no TLS 1.3 ciphers configured;"+
+					" specify at least one FIPS-compliant TLS 1.3 cipher suite"+
+					" (e.g. TLS_AES_128_GCM_SHA256 or TLS_AES_256_GCM_SHA384)"+
+					" or remove the non-FIPS cipher suites from the profile",
+				strings.Join(tls13InProfile.List(), ", ")))
+		}
 	}
 
 	return utilerrors.NewAggregate(errs)
