@@ -116,6 +116,7 @@ const (
 	RouterEnableCompression    = "ROUTER_ENABLE_COMPRESSION"
 	RouterCompressionMIMETypes = "ROUTER_COMPRESSION_MIME"
 	RouterBackendCheckInterval = "ROUTER_BACKEND_CHECK_INTERVAL"
+	RouterTLSCurves            = "ROUTER_CURVES"
 
 	RouterServiceHTTPPort  = "ROUTER_SERVICE_HTTP_PORT"
 	RouterServiceHTTPSPort = "ROUTER_SERVICE_HTTPS_PORT"
@@ -996,6 +997,22 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 			Value: strings.Join(tls13Ciphers, ":"),
 		})
 	}
+
+	// The default TLS supportedGroups (curves) include X25519MLKEM768,
+	// x25519, P-256, P-384, and P-521.
+	tlsCurves := "X25519MLKEM768:X25519:P-256:P-384:P-521"
+	// If FIPS is enabled on this cluster, we cannot use
+	// ML-KEM or X25519 in the TLS supportedGroups (aka curves).
+	// ML-KEM and X25519 are not supported by OpenSSL FIPS 140-3.
+	// See https://redhat.atlassian.net/browse/TRT-2597 and Appendix D of
+	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-56Ar3.pdf
+	if isFIPSEnabled {
+		tlsCurves = "P-256:P-384:P-521"
+	}
+	env = append(env, corev1.EnvVar{
+		Name:  RouterTLSCurves,
+		Value: tlsCurves,
+	})
 
 	var minTLSVersion string
 	switch tlsProfileSpec.MinTLSVersion {
