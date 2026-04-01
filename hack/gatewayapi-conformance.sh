@@ -59,8 +59,9 @@ go mod vendor
 sed -i -e '/MaxTimeToConsistency:/ s/30/360/' conformance/utils/config/timeout.go
 
 SUPPORTED_FEATURES="BackendTLSPolicy,BackendTLSPolicySANValidation,GRPCRoute,Gateway,GatewayAddressEmpty,GatewayHTTPListenerIsolation,GatewayInfrastructurePropagation,GatewayPort8080,HTTPRoute,HTTPRouteBackendProtocolH2C,HTTPRouteBackendProtocolWebSocket,HTTPRouteBackendRequestHeaderModification,HTTPRouteBackendTimeout,HTTPRouteCORS,HTTPRouteDestinationPortMatching,HTTPRouteHostRewrite,HTTPRouteMethodMatching,HTTPRouteNamedRouteRule,HTTPRouteParentRefPort,HTTPRoutePathRedirect,HTTPRoutePathRewrite,HTTPRoutePortRedirect,HTTPRouteQueryParamMatching,HTTPRouteRequestMirror,HTTPRouteRequestMultipleMirrors,HTTPRouteRequestPercentageMirror,HTTPRouteRequestTimeout,HTTPRouteResponseHeaderModification,HTTPRouteSchemeRedirect,ReferenceGrant"
+# skipping BackendTLSPolicyConflictResolution confornance test because upstream istio is not supporting this at the moment: https://github.com/istio/istio/blob/ba49f7398a8542c3612788e9bd0371c079e44165/tests/integration/pilot/gateway_conformance_test.go#L67
 SKIPPED_TESTS="HTTPRouteCORSAllowCredentialsBehavior,GatewayStaticAddresses,BackendTLSPolicyConflictResolution" 
 
 echo "Start Gateway API Conformance Testing"
-go test ./conformance -v -timeout 60m -run TestConformance -args "--gateway-class=conformance" "--report-output=openshift.yaml" "--organization=Red Hat" "--project=Openshift Service Mesh" "--version=3.3.0" "--url=https://www.redhat.com/en/technologies/cloud-computing/openshift/container-platform" "--conformance-profiles=GATEWAY-HTTP,GATEWAY-GRPC" "--supported-features=${SUPPORTED_FEATURES}" "--skip-tests=${SKIPPED_TESTS}"
+go test ./conformance -v -timeout 60m -run TestConformance -args "--gateway-class=conformance" "--report-output=openshift.yaml" "--organization=Red Hat" "--project=Openshift Service Mesh" "--version=3.3.1" "--url=https://www.redhat.com/en/technologies/cloud-computing/openshift/container-platform" "--conformance-profiles=GATEWAY-HTTP,GATEWAY-GRPC" "--supported-features=${SUPPORTED_FEATURES}" "--skip-tests=${SKIPPED_TESTS}"
 cat conformance/openshift.yaml
