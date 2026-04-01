@@ -1498,5 +1498,4 @@ func computeUpdatedInfraFromService(service *corev1.Service, infraConfig *config
 	default:
 		return false, nil
 	}
-	return false, nil
 }

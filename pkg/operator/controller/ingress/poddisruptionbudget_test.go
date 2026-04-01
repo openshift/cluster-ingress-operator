@@ -14,42 +14,56 @@ func Test_desiredRouterPodDisruptionBudget(t *testing.T) {
 	testCases := []struct {
 		description          string
 		replicas             *int32
+		strategyType         operatorv1.EndpointPublishingStrategyType
 		expectPDB            bool
 		expectMaxUnavailable intstr.IntOrString
 	}{
 		{
 			description:          "if replicas is not set, PDB should be 50%",
 			replicas:             nil,
+			strategyType:         operatorv1.LoadBalancerServiceStrategyType,
 			expectPDB:            true,
 			expectMaxUnavailable: intstr.FromString("50%"),
 		},
 		{
 			description:          "if replicas is 1, PDB should be absent",
 			replicas:             pointerTo(1),
+			strategyType:         operatorv1.LoadBalancerServiceStrategyType,
 			expectPDB:            false,
 			expectMaxUnavailable: intstr.FromString("50%"),
 		},
 		{
-			description:          "if replicas is 2, PDB should be 50%",
+			description:          "if replicas is 2 with LoadBalancer, PDB should be 50%",
 			replicas:             pointerTo(2),
+			strategyType:         operatorv1.LoadBalancerServiceStrategyType,
 			expectPDB:            true,
 			expectMaxUnavailable: intstr.FromString("50%"),
 		},
 		{
+			description:          "if replicas is 2 with HostNetwork, PDB should be 1",
+			replicas:             pointerTo(2),
+			strategyType:         operatorv1.HostNetworkStrategyType,
+			expectPDB:            true,
+			expectMaxUnavailable: intstr.FromInt(1),
+		},
+		{
 			description:          "if replicas is 3, PDB should be 25%",
 			replicas:             pointerTo(3),
+			strategyType:         operatorv1.LoadBalancerServiceStrategyType,
 			expectPDB:            true,
 			expectMaxUnavailable: intstr.FromString("25%"),
 		},
 		{
 			description:          "if replicas is 4, PDB should be 25%",
 			replicas:             pointerTo(4),
+			strategyType:         operatorv1.LoadBalancerServiceStrategyType,
 			expectPDB:            true,
 			expectMaxUnavailable: intstr.FromString("25%"),
 		},
 		{
 			description:          "if replicas is 5, PDB should be 25%",
 			replicas:             pointerTo(5),
+			strategyType:         operatorv1.LoadBalancerServiceStrategyType,
 			expectPDB:            true,
 			expectMaxUnavailable: intstr.FromString("25%"),
 		},
@@ -63,6 +77,11 @@ func Test_desiredRouterPodDisruptionBudget(t *testing.T) {
 				},
 				Spec: operatorv1.IngressControllerSpec{
 					Replicas: tc.replicas,
+				},
+				Status: operatorv1.IngressControllerStatus{
+					EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+						Type: tc.strategyType,
+					},
 				},
 			}
 			deploymentRef := metav1.OwnerReference{
@@ -116,13 +135,18 @@ func Test_podDisruptionBudgetChange(t *testing.T) {
 		},
 	}
 
-	// Set up the original ingress controller with 2 replicas
+	// Set up the original ingress controller with 2 replicas using HostNetwork
 	ic := &operatorv1.IngressController{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "default",
 		},
 		Spec: operatorv1.IngressControllerSpec{
 			Replicas: &two,
+		},
+		Status: operatorv1.IngressControllerStatus{
+			EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+				Type: operatorv1.HostNetworkStrategyType,
+			},
 		},
 	}
 	deploymentRef := metav1.OwnerReference{
