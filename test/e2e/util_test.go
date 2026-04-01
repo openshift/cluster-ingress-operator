@@ -25,6 +25,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/utils/pointer"
 
@@ -48,7 +49,8 @@ func buildEchoPod(name, namespace string) *corev1.Pod {
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Labels: map[string]string{
-				"app": name,
+				"app":  name,
+				"type": "test-pod",
 			},
 			Name:      name,
 			Namespace: namespace,
@@ -149,6 +151,9 @@ func buildCurlPod(name, namespace, image, host, address string, extraArgs ...str
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
+			Labels: map[string]string{
+				"type": "test-pod",
+			},
 		},
 		Spec: corev1.PodSpec{
 			TerminationGracePeriodSeconds: pointer.Int64(0),
@@ -183,6 +188,9 @@ func buildExecPod(name, namespace, image string) *corev1.Pod {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
+			Labels: map[string]string{
+				"type": "test-pod",
+			},
 		},
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{
@@ -213,7 +221,8 @@ func buildSlowHTTPDPod(name, namespace string) *corev1.Pod {
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Labels: map[string]string{
-				"app": "slow-httpd",
+				"app":  "slow-httpd",
+				"type": "test-pod",
 			},
 			Name:      name,
 			Namespace: namespace,
@@ -257,7 +266,8 @@ func buildDelayConnectHTTPPod(name, namespace, initImage, image string) *corev1.
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Labels: map[string]string{
-				"app": name,
+				"app":  name,
+				"type": "test-pod",
 			},
 			Name:      name,
 			Namespace: namespace,
@@ -1525,5 +1535,23 @@ func dumpRouterLogs(t *testing.T, kclient client.Client, icName types.Namespaced
 				t.Logf("Previous Logs for pod %s container %s:\n%s", pod.Name, c, bufPrev.String())
 			}
 		}
+	}
+}
+
+func buildTestPodNetworkPolicy(name types.NamespacedName) *networkingv1.NetworkPolicy {
+	return &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: name.Namespace,
+			Name:      name.Name,
+		},
+		Spec: networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"type": "test-pod",
+				},
+			},
+			Ingress: []networkingv1.NetworkPolicyIngressRule{{}},
+			Egress:  []networkingv1.NetworkPolicyEgressRule{{}},
+		},
 	}
 }

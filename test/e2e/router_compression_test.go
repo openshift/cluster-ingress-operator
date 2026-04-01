@@ -186,12 +186,13 @@ func TestRouterCompressionOperation(t *testing.T) {
 		},
 	}
 
+	namespace := createNamespace(t, names.SimpleNameGenerator.GenerateName("router-compression-operation-"))
 	helloPodName := names.SimpleNameGenerator.GenerateName("hello-pod-")
 
 	helloConfigMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      helloPodName,
-			Namespace: "openshift-ingress",
+			Namespace: namespace.Name,
 		},
 		Data: map[string]string{
 			"index.html": "Hello World!",
@@ -205,7 +206,7 @@ func TestRouterCompressionOperation(t *testing.T) {
 	helloPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      helloPodName,
-			Namespace: "openshift-ingress",
+			Namespace: namespace.Name,
 			Labels:    map[string]string{"app": helloPodName},
 		},
 		Spec: corev1.PodSpec{

@@ -28,13 +28,13 @@ func (r *reconciler) ensureRouterNamespace() (bool, *corev1.Namespace, error) {
 	switch {
 	case !haveNamespace:
 		if err := r.client.Create(context.TODO(), desired); err != nil {
-			return false, nil, fmt.Errorf("failed to create router namespace: %v", err)
+			return false, nil, fmt.Errorf("failed to create router namespace: %w", err)
 		}
 		log.Info("created router namespace", "desired", desired)
 		return r.currentRouterNamespace()
 	case haveNamespace:
 		if updated, err := r.updateRouterNamespace(current, desired); err != nil {
-			return true, current, fmt.Errorf("failed to update router namespace: %v", err)
+			return true, current, fmt.Errorf("failed to update router namespace: %w", err)
 		} else if updated {
 			return r.currentRouterNamespace()
 		}
@@ -131,10 +131,10 @@ func (r *reconciler) ensureRouterServiceAccount() error {
 	sa := manifests.RouterServiceAccount()
 	if err := r.client.Get(context.TODO(), types.NamespacedName{Namespace: sa.Namespace, Name: sa.Name}, sa); err != nil {
 		if !errors.IsNotFound(err) {
-			return fmt.Errorf("failed to get router service account %s/%s: %v", sa.Namespace, sa.Name, err)
+			return fmt.Errorf("failed to get router service account %s/%s: %w", sa.Namespace, sa.Name, err)
 		}
 		if err := r.client.Create(context.TODO(), sa); err != nil {
-			return fmt.Errorf("failed to create router service account %s/%s: %v", sa.Namespace, sa.Name, err)
+			return fmt.Errorf("failed to create router service account %s/%s: %w", sa.Namespace, sa.Name, err)
 		}
 		log.Info("created router service account", "namespace", sa.Namespace, "name", sa.Name)
 	}
@@ -146,10 +146,10 @@ func (r *reconciler) ensureRouterClusterRoleBinding() error {
 	crb := manifests.RouterClusterRoleBinding()
 	if err := r.client.Get(context.TODO(), types.NamespacedName{Name: crb.Name}, crb); err != nil {
 		if !errors.IsNotFound(err) {
-			return fmt.Errorf("failed to get router cluster role binding %s: %v", crb.Name, err)
+			return fmt.Errorf("failed to get router cluster role binding %s: %w", crb.Name, err)
 		}
 		if err := r.client.Create(context.TODO(), crb); err != nil {
-			return fmt.Errorf("failed to create router cluster role binding %s: %v", crb.Name, err)
+			return fmt.Errorf("failed to create router cluster role binding %s: %w", crb.Name, err)
 		}
 		log.Info("created router cluster role binding", "name", crb.Name)
 	}

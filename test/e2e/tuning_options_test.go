@@ -350,7 +350,7 @@ func TestCookieLen(t *testing.T) {
 		// The upper bound. 1024 bytes is the maximum allowed by the OpenShift API.
 		{"1024 bytes", 1024},
 	}
-	testNamespace := "openshift-ingress"
+	namespace := createNamespace(t, names.SimpleNameGenerator.GenerateName("test-cookielen-"))
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			maxLength := testCase.maxLength
@@ -391,7 +391,7 @@ func TestCookieLen(t *testing.T) {
 				t.Fatalf("Timed out waiting for ingresscontroller %s to become available: %v", icName.Name, err)
 			}
 
-			echoPod := buildEchoPod(names.SimpleNameGenerator.GenerateName("echo-pod-"), testNamespace)
+			echoPod := buildEchoPod(names.SimpleNameGenerator.GenerateName("echo-pod-"), namespace.Name)
 			if err := kclient.Create(context.TODO(), echoPod); err != nil {
 				t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 			}
@@ -448,7 +448,7 @@ func TestCookieLen(t *testing.T) {
 			}
 			curlPodName := types.NamespacedName{
 				Name:      names.SimpleNameGenerator.GenerateName("cookielen-curl-"),
-				Namespace: testNamespace,
+				Namespace: namespace.Name,
 			}
 
 			icInternalService := &corev1.Service{}

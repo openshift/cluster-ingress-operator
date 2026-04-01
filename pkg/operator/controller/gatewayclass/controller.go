@@ -13,6 +13,7 @@ import (
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
 
@@ -227,6 +228,14 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 	// Watch the cluster infrastructure config in case the infrastructure
 	// topology changes.
 	if err := c.Watch(source.Kind[client.Object](operatorCache, &configv1.Infrastructure{}, reconciler.enqueueRequestForSomeGatewayClass())); err != nil {
+		return nil, err
+	}
+	// Watch the istiod network policy.
+	isIstiodNetworkPolicy := predicate.NewPredicateFuncs(func(o client.Object) bool {
+		istiodNetworkPolicyName := operatorcontroller.IstiodNetworkPolicyName()
+		return o.GetNamespace() == istiodNetworkPolicyName.Namespace && o.GetName() == istiodNetworkPolicyName.Name
+	})
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &networkingv1.NetworkPolicy{}, reconciler.enqueueRequestForSomeGatewayClass(), isIstiodNetworkPolicy)); err != nil {
 		return nil, err
 	}
 
@@ -478,6 +487,9 @@ func (r *reconciler) reconcileWithOLM(ctx context.Context, request reconcile.Req
 			}
 		})
 	}
+	if _, _, err := r.ensureIstiodNetworkPolicy(ctx); err != nil {
+		errs = append(errs, err)
+	}
 
 	return reconcile.Result{}, utilerrors.NewAggregate(errs)
 }
@@ -545,6 +557,9 @@ func (r *reconciler) reconcileWithSailLibrary(ctx context.Context, request recon
 			log.Error(err, "error patching the gatewayclass status")
 			errs = append(errs, err)
 		}
+	}
+	if _, _, err := r.ensureIstiodNetworkPolicy(ctx); err != nil {
+		errs = append(errs, err)
 	}
 
 	return reconcile.Result{}, utilerrors.NewAggregate(errs)

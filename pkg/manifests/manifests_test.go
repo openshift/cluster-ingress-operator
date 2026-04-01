@@ -35,7 +35,8 @@ func TestManifests(t *testing.T) {
 	RouterClusterRole()
 	RouterClusterRoleBinding()
 	RouterStatsSecret(ci)
-
+	RouterDenyAllNetworkPolicy()
+	RouterAllowNetworkPolicy()
 	MetricsClusterRole()
 	MetricsClusterRoleBinding()
 	MetricsRole()
@@ -52,6 +53,15 @@ func TestManifests(t *testing.T) {
 	HTTPRouteCRD()
 	ReferenceGrantCRD()
 	BackendTLSPolicyCRD()
+	GatewayAPIAllowNetworkPolicy()
+	IstiodAllowNetworkPolicy()
+
+	CanaryNamespace()
+	CanaryDaemonSet()
+	CanaryService()
+	CanaryRoute()
+	CanaryDenyAllNetworkPolicy()
+	CanaryAllowNetworkPolicy()
 
 	adminOnlyVerbs := []string{"create", "update", "patch", "delete", "deletecollection"}
 	GatewayAPIAdminClusterRole()

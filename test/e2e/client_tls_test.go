@@ -80,6 +80,8 @@ func TestClientTLS(t *testing.T) {
 		t.Fatalf("failed to generate third client certificate: %v", err)
 	}
 
+	testNamespace := createNamespace(t, names.SimpleNameGenerator.GenerateName("test-client-tls-"))
+
 	// Create the configmap for the CA certificate that our custom
 	// ingresscontroller will use.
 	clientCAConfigmap := &corev1.ConfigMap{
@@ -123,7 +125,7 @@ func TestClientTLS(t *testing.T) {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
-	echoPod := buildEchoPod(names.SimpleNameGenerator.GenerateName("echo-pod-"), "openshift-ingress")
+	echoPod := buildEchoPod(names.SimpleNameGenerator.GenerateName("echo-pod-"), testNamespace.Name)
 	if err := kclient.Create(context.TODO(), echoPod); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 	}
@@ -199,7 +201,7 @@ func TestClientTLS(t *testing.T) {
 	clientCertsConfigmap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "client-certificates",
-			Namespace: "openshift-ingress",
+			Namespace: testNamespace.Name,
 		},
 		Data: map[string]string{
 			"valid-matching.pem":    encodeCert(validMatchingCert),
@@ -1025,7 +1027,7 @@ func TestMTLSWithCRLs(t *testing.T) {
 				return crl.Issuer.CommonName != "Placeholder CA", nil
 			})
 
-			echoPod := buildEchoPod(names.SimpleNameGenerator.GenerateName("echo-pod-"), "openshift-ingress")
+			echoPod := buildEchoPod(names.SimpleNameGenerator.GenerateName("echo-pod-"), namespace.Name)
 			if err := kclient.Create(context.TODO(), echoPod); err != nil {
 				t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 			}

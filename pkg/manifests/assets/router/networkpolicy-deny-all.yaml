@@ -1,0 +1,11 @@
+# Default deny all policy for all pods in the namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+    name: openshift-ingress-deny-all
+    namespace: openshift-ingress
+spec:
+ podSelector: {}
+ policyTypes:
+ - Ingress
+ - Egress

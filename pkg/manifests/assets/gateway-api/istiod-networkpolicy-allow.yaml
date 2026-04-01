@@ -1,0 +1,33 @@
+# Istiod Pods for Gateway API
+#  Egress to TCP :6443 for api server access
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: istiod-allow
+  namespace: openshift-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app: istiod
+  ingress:
+  # xDS traffic
+  - ports:
+    - protocol: TCP
+      port: 8080
+    - protocol: TCP
+      port: 15010
+    - protocol: TCP
+      port: 15011
+    - protocol: TCP
+      port: 15012
+    - protocol: TCP
+      port: 15014
+  # apiserver webhook(s)
+  - ports:
+    - protocol: TCP
+      port: 15017
+  egress:
+  - {}
+  policyTypes:
+  - Ingress
+  - Egress

@@ -22,6 +22,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/apiserver/pkg/storage/names"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -89,7 +90,8 @@ func TestAWSLBSubnets(t *testing.T) {
 	verifyIngressControllerSubnetStatus(t, icName)
 
 	// Verify we can reach the CLB with the provided public subnets.
-	externalTestPodName := types.NamespacedName{Name: icName.Name + "-external-verify", Namespace: icName.Namespace}
+	namespace := createNamespace(t, names.SimpleNameGenerator.GenerateName("lb-subnets-"))
+	externalTestPodName := types.NamespacedName{Name: icName.Name + "-external-verify", Namespace: namespace.Name}
 	testHostname := "apps." + ic.Spec.Domain
 	t.Logf("verifying external connectivity for ingresscontroller %q using an CLB with specified public subnets", ic.Name)
 	verifyExternalIngressController(t, externalTestPodName, testHostname, elbHostname)

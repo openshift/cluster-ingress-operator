@@ -1,0 +1,28 @@
+# Router Pods
+#  Egress to api server and everything (routes set endpoints, so can be literally anything)
+#  Ingress to http on port 80 and https on port 443 (TCP) and to metrics (1936)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+# name, namespace,labels and annotations are set at runtime
+spec:
+  podSelector:
+    # matchLabels are set at runtime
+    matchLabels: {}
+  ingress:
+  # When using the "host" endpoint publishing strategy, the ports for http
+  # traffic, https traffic, and metrics can be customized. Use the port names
+  # instead of numbers to account for this.
+  - ports:
+    - protocol: TCP
+      port: http
+    - protocol: TCP
+      port: https
+    # The metrics port serves both metrics and health checks. This needs to be
+    # left open for external load balancers to verify the router is available.
+    - protocol: TCP
+      port: metrics
+  egress:
+  - {}
+  policyTypes:
+  - Ingress
+  - Egress
