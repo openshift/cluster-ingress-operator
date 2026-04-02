@@ -1,6 +1,7 @@
 package ingress
 
 import (
+	"context"
 	"reflect"
 	"testing"
 	"time"
@@ -14,6 +15,8 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 // Test_setDefaultDomain verifies that setDefaultDomain behaves correctly.
@@ -1791,6 +1794,41 @@ func Test_IsProxyProtocolNeeded(t *testing.T) {
 }
 
 func Test_computeUpdatedInfraFromService(t *testing.T) {
+	// Helper function to create machine-config-operator ClusterOperator with specific conditions
+	makeMCOClusterOperator := func(available, progressing bool) *configv1.ClusterOperator {
+		mco := &configv1.ClusterOperator{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "machine-config-operator",
+			},
+			Status: configv1.ClusterOperatorStatus{
+				Conditions: []configv1.ClusterOperatorStatusCondition{},
+			},
+		}
+		if available {
+			mco.Status.Conditions = append(mco.Status.Conditions, configv1.ClusterOperatorStatusCondition{
+				Type:   configv1.OperatorAvailable,
+				Status: configv1.ConditionTrue,
+			})
+		} else {
+			mco.Status.Conditions = append(mco.Status.Conditions, configv1.ClusterOperatorStatusCondition{
+				Type:   configv1.OperatorAvailable,
+				Status: configv1.ConditionFalse,
+			})
+		}
+		if progressing {
+			mco.Status.Conditions = append(mco.Status.Conditions, configv1.ClusterOperatorStatusCondition{
+				Type:   configv1.OperatorProgressing,
+				Status: configv1.ConditionTrue,
+			})
+		} else {
+			mco.Status.Conditions = append(mco.Status.Conditions, configv1.ClusterOperatorStatusCondition{
+				Type:   configv1.OperatorProgressing,
+				Status: configv1.ConditionFalse,
+			})
+		}
+		return mco
+	}
+
 	var (
 		IngressLBIP  = configv1.IP("196.78.125.4")
 		nonePlatform = configv1.PlatformStatus{
@@ -1884,12 +1922,13 @@ func Test_computeUpdatedInfraFromService(t *testing.T) {
 		}
 	)
 	testCases := []struct {
-		description   string
-		platform      *configv1.PlatformStatus
-		ingresses     []corev1.LoadBalancerIngress
-		expectedLBIPs []configv1.IP
-		expectUpdated bool
-		expectError   bool
+		description               string
+		platform                  *configv1.PlatformStatus
+		ingresses                 []corev1.LoadBalancerIngress
+		mcoClusterOperator        *configv1.ClusterOperator
+		expectedLBIPs             []configv1.IP
+		expectUpdated             bool
+		expectError               bool
 	}{
 		{
 			description:   "nil platformStatus should cause an error",
@@ -1989,35 +2028,55 @@ func Test_computeUpdatedInfraFromService(t *testing.T) {
 			expectError:   false,
 		},
 		{
-			description:   "azure platform with DNSType and no LB IP",
-			platform:      &azurePlatformWithDNSType,
-			ingresses:     []corev1.LoadBalancerIngress{},
-			expectUpdated: false,
-			expectError:   false,
+			description:        "azure platform with DNSType but cluster install not complete (progressing)",
+			platform:           &azurePlatformWithDNSType,
+			ingresses:          ingresses,
+			mcoClusterOperator: makeMCOClusterOperator(false, true), // Available=False, Progressing=True
+			expectUpdated:      false,
+			expectError:        false,
 		},
 		{
-			description:   "azure platform with DNSType and no LB IP in infra config, service has 1 IP",
-			platform:      &azurePlatformWithDNSType,
-			ingresses:     ingresses,
-			expectedLBIPs: []configv1.IP{IngressLBIP},
-			expectUpdated: true,
-			expectError:   false,
+			description:        "azure platform with DNSType but cluster install not complete (not available)",
+			platform:           &azurePlatformWithDNSType,
+			ingresses:          ingresses,
+			mcoClusterOperator: makeMCOClusterOperator(false, false), // Available=False, Progressing=False
+			expectUpdated:      false,
+			expectError:        false,
 		},
 		{
-			description:   "azure platform with no change to LB IPs",
-			platform:      &azurePlatformWithLBIP,
-			ingresses:     ingresses,
-			expectedLBIPs: []configv1.IP{IngressLBIP},
-			expectUpdated: false,
-			expectError:   false,
+			description:        "azure platform with DNSType and cluster install complete, service has 1 IP",
+			platform:           &azurePlatformWithDNSType,
+			ingresses:          ingresses,
+			mcoClusterOperator: makeMCOClusterOperator(true, false), // Available=True, Progressing=False
+			expectedLBIPs:      []configv1.IP{IngressLBIP},
+			expectUpdated:      true,
+			expectError:        false,
 		},
 		{
-			description:   "azure platform with DNSType and LB IP",
-			platform:      &azurePlatformWithLBIP,
-			ingresses:     ingressesWithMultipleIPs,
-			expectedLBIPs: []configv1.IP{IngressLBIP, configv1.IP("10.10.10.4")},
-			expectUpdated: true,
-			expectError:   false,
+			description:        "azure platform with DNSType and no machine-config-operator (install not complete)",
+			platform:           &azurePlatformWithDNSType,
+			ingresses:          ingresses,
+			mcoClusterOperator: nil,
+			expectUpdated:      false,
+			expectError:        false,
+		},
+		{
+			description:        "azure platform with no change to LB IPs after install complete",
+			platform:           &azurePlatformWithLBIP,
+			ingresses:          ingresses,
+			mcoClusterOperator: makeMCOClusterOperator(true, false), // Available=True, Progressing=False
+			expectedLBIPs:      []configv1.IP{IngressLBIP},
+			expectUpdated:      false,
+			expectError:        false,
+		},
+		{
+			description:        "azure platform with multiple IPs and cluster install complete",
+			platform:           &azurePlatformWithLBIP,
+			ingresses:          ingressesWithMultipleIPs,
+			mcoClusterOperator: makeMCOClusterOperator(true, false), // Available=True, Progressing=False
+			expectedLBIPs:      []configv1.IP{IngressLBIP, configv1.IP("10.10.10.4")},
+			expectUpdated:      true,
+			expectError:        false,
 		},
 	}
 	for _, tc := range testCases {
@@ -2032,7 +2091,16 @@ func Test_computeUpdatedInfraFromService(t *testing.T) {
 				service.Status.LoadBalancer.Ingress = append(service.Status.LoadBalancer.Ingress, ingress)
 			}
 
-			updated, err := computeUpdatedInfraFromService(service, infraConfig)
+			// Create a fake client with the machine-config-operator ClusterOperator if provided
+			scheme := runtime.NewScheme()
+			configv1.AddToScheme(scheme)
+			var objs []runtime.Object
+			if tc.mcoClusterOperator != nil {
+				objs = append(objs, tc.mcoClusterOperator)
+			}
+			fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objs...).Build()
+
+			updated, err := computeUpdatedInfraFromService(context.TODO(), fakeClient, service, infraConfig)
 			switch {
 			case tc.expectError && err == nil:
 				t.Error("expected error, got nil")
@@ -2050,6 +2118,10 @@ func Test_computeUpdatedInfraFromService(t *testing.T) {
 				case configv1.GCPPlatformType:
 					if !reflect.DeepEqual(infraConfig.Status.PlatformStatus.GCP.CloudLoadBalancerConfig.ClusterHosted.IngressLoadBalancerIPs, tc.expectedLBIPs) {
 						t.Errorf("expected Infra CR to contain %s but found %s", tc.expectedLBIPs, infraConfig.Status.PlatformStatus.GCP.CloudLoadBalancerConfig.ClusterHosted.IngressLoadBalancerIPs)
+					}
+				case configv1.AzurePlatformType:
+					if !reflect.DeepEqual(infraConfig.Status.PlatformStatus.Azure.CloudLoadBalancerConfig.ClusterHosted.IngressLoadBalancerIPs, tc.expectedLBIPs) {
+						t.Errorf("expected Infra CR to contain %s but found %s", tc.expectedLBIPs, infraConfig.Status.PlatformStatus.Azure.CloudLoadBalancerConfig.ClusterHosted.IngressLoadBalancerIPs)
 					}
 				}
 			}

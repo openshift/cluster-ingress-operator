@@ -1328,7 +1328,7 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 
 	// If the lbService exists for the "default" IngressController, then update Infra CR's PlatformStatus with the Ingress LB IPs.
 	if haveLB && ci.Name == manifests.DefaultIngressControllerName {
-		if updated, err := computeUpdatedInfraFromService(lbService, infraConfig); err != nil {
+		if updated, err := computeUpdatedInfraFromService(context.TODO(), r.client, lbService, infraConfig); err != nil {
 			errs = append(errs, fmt.Errorf("failed to update Infrastructure PlatformStatus: %w", err))
 		} else if updated {
 			if err := r.client.Status().Update(context.TODO(), infraConfig); err != nil {
@@ -1416,8 +1416,36 @@ func (r *reconciler) allRouterPodsDeleted(ingress *operatorv1.IngressController)
 	return true, nil
 }
 
-// computeUpdatedInfraFromService updates PlatformStatus for AWS, Azure and GCP with Ingress LB IPs when the DNSType is `ClusterHosted`.
-func computeUpdatedInfraFromService(service *corev1.Service, infraConfig *configv1.Infrastructure) (bool, error) {
+// isMCOReady checks if the machine-config-operator is ready by examining its
+// ClusterOperator conditions. Returns true if machine-config-operator is
+// Available=True and Progressing=False.
+func isMCOReady(ctx context.Context, client client.Client) bool {
+	mco := &configv1.ClusterOperator{}
+	if err := client.Get(ctx, types.NamespacedName{Name: "machine-config-operator"}, mco); err != nil {
+		// If machine-config-operator is not available, assume it's not ready
+		log.V(2).Info("failed to get machine-config-operator ClusterOperator, assuming not ready", "error", err)
+		return false
+	}
+
+	availableCondition := false
+	progressingCondition := true // Default to true (progressing) if not found
+
+	for _, condition := range mco.Status.Conditions {
+		if condition.Type == configv1.OperatorAvailable {
+			availableCondition = (condition.Status == configv1.ConditionTrue)
+		}
+		if condition.Type == configv1.OperatorProgressing {
+			progressingCondition = (condition.Status == configv1.ConditionTrue)
+		}
+	}
+
+	// MCO is ready when Available=True and Progressing=False
+	return availableCondition && !progressingCondition
+}
+
+// computeUpdatedInfraFromService updates PlatformStatus for Azure, GCP and AWS with Ingress LB IPs when the DNSType is `ClusterHosted`.
+// For Azure platform with userProvisionedDNS (ClusterHosted DNS), the update is only done after cluster install is completed.
+func computeUpdatedInfraFromService(ctx context.Context, client client.Client, service *corev1.Service, infraConfig *configv1.Infrastructure) (bool, error) {
 	platformStatus := infraConfig.Status.PlatformStatus
 	if platformStatus == nil {
 		return false, fmt.Errorf("invalid PlatformStatus within Infrastructure config")
@@ -1491,6 +1519,32 @@ func computeUpdatedInfraFromService(service *corev1.Service, infraConfig *config
 			}
 			if !cmp.Equal(platformStatus.GCP.CloudLoadBalancerConfig.ClusterHosted.IngressLoadBalancerIPs, ingressLBIPs, ipCmpOpts...) {
 				platformStatus.GCP.CloudLoadBalancerConfig.ClusterHosted.IngressLoadBalancerIPs = ingressLBIPs
+				return true, nil
+			}
+		}
+		return false, nil
+	case configv1.AzurePlatformType:
+		if platformStatus.Azure != nil && platformStatus.Azure.CloudLoadBalancerConfig != nil && platformStatus.Azure.CloudLoadBalancerConfig.DNSType == configv1.ClusterHostedDNSType {
+			// For Azure with userProvisionedDNS (ClusterHosted DNS), only update Infrastructure API
+			// after machine-config-operator is ready to avoid installation issues.
+			if !isMCOReady(ctx, client) {
+				log.Info("Skipping Azure Infrastructure status update: machine-config-operator not yet ready")
+				return false, nil
+			}
+
+			if platformStatus.Azure.CloudLoadBalancerConfig.ClusterHosted == nil {
+				platformStatus.Azure.CloudLoadBalancerConfig.ClusterHosted = &configv1.CloudLoadBalancerIPs{}
+			}
+			ingresses := service.Status.LoadBalancer.Ingress
+			ingressLBIPs := []configv1.IP{}
+			for _, ingress := range ingresses {
+				if len(ingress.IP) > 0 {
+					ingressLBIPs = append(ingressLBIPs, configv1.IP(ingress.IP))
+				}
+			}
+			if !cmp.Equal(platformStatus.Azure.CloudLoadBalancerConfig.ClusterHosted.IngressLoadBalancerIPs, ingressLBIPs, ipCmpOpts...) {
+				platformStatus.Azure.CloudLoadBalancerConfig.ClusterHosted.IngressLoadBalancerIPs = ingressLBIPs
+				log.Info("Updating Azure Infrastructure status with Ingress Load Balancer IPs after machine-config-operator is ready")
 				return true, nil
 			}
 		}
