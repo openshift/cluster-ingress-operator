@@ -88,6 +88,10 @@ const (
 	// ManagedByIstioLabelKey is the key of a label that Istio adds to
 	// resources that it manages.
 	ManagedByIstioLabelKey = "gateway.istio.io/managed"
+
+	// ServiceMeshOperatorSubscriptionPackage represents the name of the package
+	// on a OLM subscription that installs OSSM
+	ServiceMeshOperatorSubscriptionPackage = "servicemeshoperator3"
 )
 
 // IngressClusterOperatorName returns the namespaced name of the ClusterOperator
