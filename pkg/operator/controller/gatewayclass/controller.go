@@ -455,12 +455,11 @@ func (r *reconciler) reconcileWithOLM(ctx context.Context, request reconcile.Req
 	if v, ok := gatewayclass.Annotations[subscriptionVersionOverrideAnnotationKey]; ok {
 		ossmVersion = v
 	}
+
 	_, subscription, err := r.ensureServiceMeshOperatorSubscription(ctx, ossmCatalog, ossmChannel, ossmVersion)
 	if err != nil {
 		errs = append(errs, fmt.Errorf("failed to ensure ServiceMeshOperatorSubscription: %w", err))
-	}
-
-	if subscription == nil {
+	} else if subscription == nil {
 		log.Info("No OSSM subscription available; skipping install plan enforcement")
 	} else if _, ok := subscription.Annotations[operatorcontroller.IngressOperatorOwnedAnnotation]; !ok {
 		log.Info("Found an existing OSSM subscription with another owner; installation skipped",

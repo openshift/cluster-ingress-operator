@@ -191,6 +191,9 @@ func (r *reconciler) currentInstallPlan(ctx context.Context, version string) (bo
 	if err != nil {
 		return false, nil, err
 	}
+	if subscription == nil {
+		return false, nil, nil
+	}
 	installPlans := &operatorsv1alpha1.InstallPlanList{}
 	if err := r.client.List(ctx, installPlans, client.InNamespace(operatorcontroller.OpenshiftOperatorNamespace)); err != nil {
 		return false, nil, err
