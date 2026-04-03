@@ -130,12 +130,12 @@ const (
 
 // ensureRouterDeployment ensures the router deployment exists for a given
 // ingresscontroller.
-func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, infraConfig *configv1.Infrastructure, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer, networkConfig *configv1.Network, haveClientCAConfigmap bool, clientCAConfigmap *corev1.ConfigMap, clusterProxyConfig *configv1.Proxy, proxyNeeded bool) (bool, *appsv1.Deployment, error) {
+func (r *reconciler) ensureRouterDeployment(ci *operatorv1.IngressController, infraConfig *configv1.Infrastructure, ingressConfig *configv1.Ingress, apiConfig *configv1.APIServer, networkConfig *configv1.Network, haveClientCAConfigmap bool, clientCAConfigmap *corev1.ConfigMap, clusterProxyConfig *configv1.Proxy, currentLBService *corev1.Service, proxyNeeded bool) (bool, *appsv1.Deployment, error) {
 	haveDepl, current, err := r.currentRouterDeployment(ci)
 	if err != nil {
 		return false, nil, err
 	}
-	desired, err := desiredRouterDeployment(ci, &r.config, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, haveClientCAConfigmap, clientCAConfigmap, clusterProxyConfig)
+	desired, err := desiredRouterDeployment(ci, &r.config, ingressConfig, infraConfig, apiConfig, networkConfig, currentLBService, proxyNeeded, haveClientCAConfigmap, clientCAConfigmap, clusterProxyConfig)
 	if err != nil {
 		return haveDepl, current, fmt.Errorf("failed to build router deployment: %v", err)
 	}
@@ -257,7 +257,7 @@ func headerValues(values []operatorv1.IngressControllerHTTPHeader) string {
 }
 
 // desiredRouterDeployment returns the desired router deployment.
-func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, ingressConfig *configv1.Ingress, infraConfig *configv1.Infrastructure, apiConfig *configv1.APIServer, networkConfig *configv1.Network, proxyNeeded bool, haveClientCAConfigmap bool, clientCAConfigmap *corev1.ConfigMap, clusterProxyConfig *configv1.Proxy) (*appsv1.Deployment, error) {
+func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, ingressConfig *configv1.Ingress, infraConfig *configv1.Infrastructure, apiConfig *configv1.APIServer, networkConfig *configv1.Network, currentLBService *corev1.Service, proxyNeeded bool, haveClientCAConfigmap bool, clientCAConfigmap *corev1.ConfigMap, clusterProxyConfig *configv1.Proxy) (*appsv1.Deployment, error) {
 	deployment := manifests.RouterDeployment()
 	name := controller.RouterDeploymentName(ci)
 	deployment.Name = name.Name
@@ -649,6 +649,33 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 	}
 	env = append(env, corev1.EnvVar{Name: RouterHAProxyThreadsEnvName, Value: strconv.Itoa(threads)})
 
+	// Check for AWS deployment, and if so and exposed via NLB, need to change default timeout tunnel to less than 350s
+	// https://issues.redhat.com/browse/OCPBUGS-54702
+	var tunnelTimeout *time.Duration
+	if ci.Spec.TuningOptions.TunnelTimeout != nil && ci.Spec.TuningOptions.TunnelTimeout.Duration > 0*time.Second {
+		// honor any configuration provided by the user
+		tunnelTimeout = &ci.Spec.TuningOptions.TunnelTimeout.Duration
+	} else {
+		// no config from the user, checking for NLB
+		isAWS := infraConfig.Status.PlatformStatus != nil &&
+			infraConfig.Status.PlatformStatus.Type == configv1.AWSPlatformType
+		if isAWS {
+			var lbType operatorv1.AWSLoadBalancerType
+			if currentLBService != nil {
+				lbType = getAWSLoadBalancerTypeFromServiceAnnotation(currentLBService)
+			} else {
+				lbType = getAWSLoadBalancerTypeInStatus(ci)
+			}
+			if lbType == operatorv1.AWSNetworkLoadBalancer {
+				// NLB at AWS, need to use less than 350s as the timeout
+				tunnelTimeout = ptr.To((awsNLBDefaultTunnelTimeoutSeconds - 1) * time.Second)
+			}
+		}
+	}
+	if tunnelTimeout != nil {
+		env = append(env, corev1.EnvVar{Name: "ROUTER_DEFAULT_TUNNEL_TIMEOUT", Value: durationToHAProxyTimespec(*tunnelTimeout)})
+	}
+
 	if ci.Spec.HTTPHeaders != nil && len(ci.Spec.HTTPHeaders.Actions.Response) != 0 {
 		env = append(env, corev1.EnvVar{Name: RouterHTTPResponseHeaders, Value: headerValues(ci.Spec.HTTPHeaders.Actions.Response)})
 	}
@@ -668,9 +695,6 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 	}
 	if ci.Spec.TuningOptions.ServerFinTimeout != nil && ci.Spec.TuningOptions.ServerFinTimeout.Duration > 0*time.Second {
 		env = append(env, corev1.EnvVar{Name: "ROUTER_DEFAULT_SERVER_FIN_TIMEOUT", Value: durationToHAProxyTimespec(ci.Spec.TuningOptions.ServerFinTimeout.Duration)})
-	}
-	if ci.Spec.TuningOptions.TunnelTimeout != nil && ci.Spec.TuningOptions.TunnelTimeout.Duration > 0*time.Second {
-		env = append(env, corev1.EnvVar{Name: "ROUTER_DEFAULT_TUNNEL_TIMEOUT", Value: durationToHAProxyTimespec(ci.Spec.TuningOptions.TunnelTimeout.Duration)})
 	}
 	if ci.Spec.TuningOptions.ConnectTimeout != nil && ci.Spec.TuningOptions.ConnectTimeout.Duration > 0*time.Second {
 		env = append(env, corev1.EnvVar{Name: "ROUTER_DEFAULT_CONNECT_TIMEOUT", Value: durationToHAProxyTimespec(ci.Spec.TuningOptions.ConnectTimeout.Duration)})
