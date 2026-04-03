@@ -2781,3 +2781,55 @@ func Test_ClosedClientConnectionPolicy(t *testing.T) {
 		})
 	}
 }
+
+// TestDesiredRouterDeploymentTLSCurves verifies that desiredRouterDeployment
+// sets ROUTER_CURVES as expected with and without FIPS enabled.
+func TestDesiredRouterDeploymentTLSCurves(t *testing.T) {
+	testCases := []struct {
+		name        string
+		fipsEnabled bool
+		expectedEnv []envData
+	}{
+		{
+			name:        "Include ML-KEM and X25519 when FIPS is not enabled",
+			fipsEnabled: false,
+			expectedEnv: []envData{
+				{"ROUTER_CURVES", true, "X25519MLKEM768:X25519:P-256:P-384:P-521"},
+			},
+		}, {
+			name:        "Exclude ML-KEM and X25519 when FIPS is enabled",
+			fipsEnabled: true,
+			expectedEnv: []envData{
+				{"ROUTER_CURVES", true, "P-256:P-384:P-521"},
+			},
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ic := &operatorv1.IngressController{
+				Status: operatorv1.IngressControllerStatus{
+					EndpointPublishingStrategy: &operatorv1.EndpointPublishingStrategy{
+						Type: operatorv1.PrivateStrategyType,
+					},
+				},
+			}
+
+			wasFIPSEnabled := isFIPSEnabled
+			// Restore the real value of isFIPSEnabled in case it is used by other tests.
+			defer func() {
+				isFIPSEnabled = wasFIPSEnabled
+			}()
+			// Use the temporary test case status of FIPS enablement for testing.
+			isFIPSEnabled = tc.fipsEnabled
+
+			deployment, err := desiredRouterDeployment(ic, &Config{IngressControllerImage: ingressControllerImage}, &configv1.Ingress{}, &configv1.Infrastructure{}, &configv1.APIServer{}, &configv1.Network{}, false, false, nil, &configv1.Proxy{})
+			if err != nil {
+				t.Error(err)
+			}
+
+			if err := checkDeploymentEnvironment(t, deployment, tc.expectedEnv); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+}
