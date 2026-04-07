@@ -1608,6 +1608,15 @@ func testGatewayAPIManualLBService(t *testing.T) {
 		assert.NotEqual(t, int32(8080), p.Port, "Port 8080 must not appear after adding listener")
 	}
 
+	// Re-list services to verify no duplicate was created after adding listener.
+	if err := kclient.List(ctx, &services,
+		client.MatchingLabels{"gateway.networking.k8s.io/gateway-name": gatewayName},
+		client.InNamespace(operatorcontroller.DefaultOperandNamespace),
+	); err != nil {
+		t.Fatalf("Failed to list services after adding listener: %v", err)
+	}
+	require.Len(t, services.Items, 1, "Istio must not create a duplicate service after adding listener")
+
 	// Step 8: Managed label toggle -- remove and re-add the managed label.
 	t.Logf("Testing managed label toggle on service %s...", svc.Name)
 	if err := kclient.Get(ctx, svcKey, &svc); err != nil {
@@ -1637,6 +1646,15 @@ func testGatewayAPIManualLBService(t *testing.T) {
 	assert.Equal(t, corev1.ServiceExternalTrafficPolicyLocal, svc.Spec.ExternalTrafficPolicy, "Managed label toggle must not change externalTrafficPolicy")
 	assert.Equal(t, expectedSelector, svc.Spec.Selector, "Managed label toggle must not change selector")
 	require.Len(t, svc.Spec.Ports, 2, "Managed label toggle must not trigger port modification")
+
+	// Re-list services to verify no duplicate was created after managed label toggle.
+	if err := kclient.List(ctx, &services,
+		client.MatchingLabels{"gateway.networking.k8s.io/gateway-name": gatewayName},
+		client.InNamespace(operatorcontroller.DefaultOperandNamespace),
+	); err != nil {
+		t.Fatalf("Failed to list services after managed label toggle: %v", err)
+	}
+	require.Len(t, services.Items, 1, "Istio must not create a duplicate service after managed label toggle")
 
 	t.Logf("Successfully verified manual LoadBalancer service immutability for gateway %s", gatewayName)
 }
@@ -1770,6 +1788,15 @@ func testGatewayAPIManualClusterIPService(t *testing.T) {
 		assert.NotEqual(t, int32(8443), p.Port, "Port 8443 must not appear after adding listener")
 		assert.NotEqual(t, int32(8080), p.Port, "Port 8080 must not appear after adding listener")
 	}
+
+	// Re-list services to verify no duplicate was created after adding listener.
+	if err := kclient.List(ctx, &services,
+		client.MatchingLabels{"gateway.networking.k8s.io/gateway-name": gatewayName},
+		client.InNamespace(operatorcontroller.DefaultOperandNamespace),
+	); err != nil {
+		t.Fatalf("Failed to list services after adding listener: %v", err)
+	}
+	require.Len(t, services.Items, 1, "Istio must not create a duplicate service after adding listener")
 
 	t.Logf("Successfully verified manual ClusterIP service immutability for gateway %s", gatewayName)
 }
