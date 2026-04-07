@@ -330,3 +330,315 @@ The test code itself is clean: no credentials, no RBAC escalation, proper cleanu
 - `/home/rpchevuz/codes/work/cluster-ingress-operator/manifests/01-cluster-role-binding.yaml`
 - `/home/rpchevuz/codes/work/cluster-ingress-operator/pkg/manifests/assets/router/namespace.yaml`
 - `/home/rpchevuz/codes/work/cluster-ingress-operator/.GCC/branches/manual-service-creation/plan.md`
+
+## Session: 2026-04-07 (CodeRabbit Review Findings Resolution)
+
+### Agent: @engineer
+
+### Observation
+
+Received 4 actionable findings from CodeRabbit review (findings 5 and 6 are "do not change" items). Analyzed each finding against the actual codebase to determine the correct action.
+
+### Analysis
+
+**Finding 1 (CRITICAL): Missing t.Cleanup for GatewayClass**
+
+Investigation: Searched for GatewayClass cleanup patterns across ALL tests in `gateway_api_test.go`. Result: NO test in the entire file registers a `t.Cleanup` for the GatewayClass. The reason is structural:
+
+- All tests use the same GatewayClass name `"openshift-default"` (a shared cluster-scoped resource).
+- `createGatewayClass` handles `AlreadyExists` by getting the existing object.
+- Tests run sequentially in `TestGatewayAPI`. Deleting the GatewayClass triggers the full Istio uninstall flow (as demonstrated by `testGatewayAPIIstioUninstallSailLibrary`), which would break ALL subsequent tests.
+- The dedicated `testGatewayAPIIstioUninstallSailLibrary` test at the end of the suite handles GatewayClass deletion.
+
+Resolution: Added explanatory comments to both test functions documenting why cleanup is intentionally omitted. This matches the established pattern used by every other test (`testGatewayAPIDNS`, `testGatewayAPIDNSListenerUpdate`, `testGatewayAPIInfrastructureAnnotations`, `testGatewayAPIInternalLoadBalancer`, etc.).
+
+Note: The review finding referenced `testGatewayAPIHTTPRoute` and `testGatewayAPIHTTPRouteInDefaultNamespace` as examples, but these functions do not exist in the codebase.
+
+**Finding 2 (MAJOR): dnsConfig.Spec.BaseDomain without nil guard**
+
+Investigation: `dnsConfig` is declared as a package-level VALUE type (`var dnsConfig configv1.DNS`) in `operator_test.go` line 123. It is initialized in `TestMain` via `kclient.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, &dnsConfig)` -- if this fails, `os.Exit(1)` is called and no tests run. Since it is a value type (not a pointer), it can NEVER be nil. Every test in the file uses `dnsConfig.Spec.BaseDomain` without any guard, including tests that have DNS skip guards (the skip is for DNS management support, not for dnsConfig availability).
+
+Resolution: Added a clarifying comment in `testGatewayAPIManualClusterIPService` documenting that `dnsConfig` is always populated. No code change needed.
+
+**Finding 3 (MAJOR): assertGatewaySuccessful for ClusterIP-backed Gateway**
+
+Investigation: Read `assertGatewaySuccessful` (util_gatewayapi_test.go lines 716-775). The function waits for exactly two conditions: `Accepted=True` AND `Programmed=True`. It does NOT require addresses. The service check inside the polling loop is purely diagnostic logging -- it fetches the service to log progress but does not gate on it. For ClusterIP-backed gateways, Istio sets `Programmed=True` once the gateway deployment is ready, regardless of service type.
+
+Resolution: No code change needed. The function is safe for ClusterIP-backed gateways.
+
+**Finding 4 (MINOR): Silent spec mismatch in createGatewayService AlreadyExists branch**
+
+Investigation: Valid finding. When `Create` returns `AlreadyExists`, the helper calls `Get` and returns the existing object without any indication that the returned object may not match what was requested.
+
+Resolution: Added `t.Logf("WARNING: ...")` message when hitting the `AlreadyExists` path, logging the service key, type, and port count of the returned (potentially mismatched) object.
+
+### Action
+
+Modified files:
+- `test/e2e/gateway_api_test.go`: Added GatewayClass cleanup intent comments to both manual service test functions. Added dnsConfig safety comment to ClusterIP test.
+- `test/e2e/util_gatewayapi_test.go`: Added WARNING log in `createGatewayService` `AlreadyExists` branch.
+
+### Build Verification
+
+`go build -tags e2e ./test/e2e/` succeeded with zero errors.
+
+### Obstacles and Workarounds
+
+- The CodeRabbit review referenced non-existent test functions (`testGatewayAPIHTTPRoute`, `testGatewayAPIHTTPRouteInDefaultNamespace`). These do not exist in the codebase. The actual pattern was determined by examining all 12+ tests that call `createGatewayClass`.
+- Finding 2 is a false positive: `dnsConfig` is a value type initialized in `TestMain` with `os.Exit(1)` on failure. It cannot be nil on any platform.
+- Finding 3 is a false positive: `assertGatewaySuccessful` only checks conditions, not addresses. Safe for ClusterIP.
+
+### Approval Status
+
+READY FOR QA
+
+## Session: 2026-04-07 (QA Re-Review -- @qa)
+
+### Agent: @qa (Lead SDET)
+
+### Context
+
+Re-review triggered after external reviewer (CodeRabbit) identified 4 issues that the initial QA review (97/100) missed. The engineer has applied uncommitted fixes for those 4 issues (comments for GatewayClass cleanup intent, dnsConfig safety note, assertGatewaySuccessful analysis, and WARNING log in createGatewayService AlreadyExists branch). This re-review focuses on finding any ADDITIONAL issues not yet identified.
+
+### Observation
+
+Performed exhaustive line-by-line review of:
+- `test/e2e/gateway_api_test.go` lines 1479-1811 (both test functions)
+- `test/e2e/util_gatewayapi_test.go` lines 1550-1627 (createGatewayService, defaultManualServicePorts)
+- All uncommitted diffs (GatewayClass comments, dnsConfig comment, WARNING log)
+- `updateGatewaySpecWithRetry` (lines 1534-1548) used by both tests
+- `assertGatewaySuccessful` (lines 716-775) used by both tests
+- `createWithRetryOnError` (util_test.go lines 803-812) used for Gateway creation
+- Import declarations in both files
+- Cleanup ordering (LIFO behavior of t.Cleanup)
+- Package-level variable declarations (dnsConfig, timeout, kclient)
+
+Also verified: `go build -tags e2e ./test/e2e/` and `go vet ./test/e2e/...` both pass clean.
+
+### New Issues Found (NOT previously identified)
+
+#### Issue A: Managed label Update calls are not retried on conflict (MAJOR)
+
+**File**: `/home/rpchevuz/codes/work/cluster-ingress-operator/test/e2e/gateway_api_test.go`
+**Lines**: 1631, 1650
+
+**Description**: The managed label toggle section performs two `kclient.Update` calls (remove label at line 1631, re-add label at line 1650) without retry-on-conflict handling. Both follow the pattern:
+
+```go
+if err := kclient.Get(ctx, svcKey, &svc); err != nil { ... }
+// mutate svc
+if err := kclient.Update(ctx, &svc); err != nil {
+    t.Fatalf(...)
+}
+```
+
+If Istio or any other controller (e.g., the ingress operator itself, or a webhook) modifies the Service between the `Get` and the `Update`, the Update will fail with a `409 Conflict` (ResourceVersion mismatch), and `t.Fatalf` will kill the test. This is a flake vector in CI.
+
+Compare with `updateGatewaySpecWithRetry` which correctly retries on conflict using a poll loop. The service update should use a similar pattern.
+
+**Severity**: MAJOR (CI flake risk; not a logic error but will cause spurious failures in shared test environments).
+
+**Suggested fix**: Extract a `updateServiceWithRetry` helper or inline a retry loop:
+
+```go
+err := wait.PollUntilContextTimeout(ctx, 1*time.Second, 30*time.Second, true, func(ctx context.Context) (bool, error) {
+    if err := kclient.Get(ctx, svcKey, &svc); err != nil {
+        t.Logf("Failed to get service for label toggle: %v; retrying...", err)
+        return false, nil
+    }
+    delete(svc.Labels, "gateway.istio.io/managed")
+    if err := kclient.Update(ctx, &svc); err != nil {
+        t.Logf("Failed to update service to remove managed label: %v; retrying...", err)
+        return false, nil
+    }
+    return true, nil
+})
+if err != nil {
+    t.Fatalf("Failed to remove managed label from service: %v", err)
+}
+```
+
+Apply the same pattern for the re-add step.
+
+#### Issue B: WARNING log in createGatewayService prints stale/wrong values (MINOR)
+
+**File**: `/home/rpchevuz/codes/work/cluster-ingress-operator/test/e2e/util_gatewayapi_test.go`
+**Line**: 1595
+
+**Description**: The WARNING log added as the fix for CodeRabbit finding #4 prints `svcDefinition.Spec.Type` and `len(svcDefinition.Spec.Ports)`, but at this point `svcDefinition` has already been overwritten by `kclient.Get` on line 1591. The logged values are the EXISTING service's spec, not the REQUESTED spec. The message says "without verifying it matches the requested spec" but then prints the existing spec values, making it appear as though those are the requested values.
+
+**Severity**: MINOR (misleading log output; no functional impact).
+
+**Suggested fix**: Log the function parameters instead:
+
+```go
+t.Logf("WARNING: Service %s/%s already exists; returning existing object (existing type=%s, ports=%d) without verifying it matches the requested spec (requested type=%s, ports=%d)",
+    svckey.Namespace, svckey.Name,
+    svcDefinition.Spec.Type, len(svcDefinition.Spec.Ports),
+    svctype, len(ports))
+```
+
+#### Issue C: Missing selector reassertion in ClusterIP test after listener addition (MINOR)
+
+**File**: `/home/rpchevuz/codes/work/cluster-ingress-operator/test/e2e/gateway_api_test.go`
+**Lines**: 1794-1799
+
+**Description**: After adding the third listener to the ClusterIP Gateway (step 7), the test re-fetches the service and asserts type and port count but does NOT reassert that the selector is unchanged. The plan (section 3.3, Test 2, step 8) says "Assert the service was NOT modified" with explicit mention of selector. The LB test does reassert selector after the managed label toggle, but the ClusterIP test has no equivalent reassertion after mutation.
+
+**Severity**: MINOR (gap in assertion coverage; unlikely to miss a real bug since the selector assertion passes in step 4).
+
+**Suggested fix**: Add after line 1795:
+
+```go
+assert.Equal(t, expectedSelector, svc.Spec.Selector, "Selector must not be mutated after adding listener")
+```
+
+### Previously Identified Issues -- Fix Verification
+
+| # | Finding | Fix Applied | Fix Correct |
+|---|---------|-------------|-------------|
+| 1 | Missing t.Cleanup for GatewayClass | Comment explaining intentional omission added to both tests | YES. Matches codebase pattern -- no other test cleans up GatewayClass. |
+| 2 | dnsConfig.Spec.BaseDomain nil risk | Comment explaining dnsConfig is a value type added to ClusterIP test | YES. dnsConfig is `configv1.DNS` (value type), never nil. |
+| 3 | assertGatewaySuccessful for ClusterIP | No code change; analysis in log.md | YES. Function checks conditions only, not addresses. Safe for ClusterIP. |
+| 4 | createGatewayService AlreadyExists returns stale service | WARNING log added | PARTIAL. Log is helpful but prints wrong values (see Issue B above). |
+
+### 100-Point Rubric Re-Evaluation
+
+| Category | Points | Score | Notes |
+|----------|--------|-------|-------|
+| Completeness (plan adherence) | 25 | 23 | -2: Missing selector reassertion in ClusterIP step 7 (Issue C). |
+| Code Idioms | 20 | 17 | -3: Service Updates not retried on conflict (Issue A), inconsistent with codebase pattern of using retry helpers for all mutations. |
+| Test Coverage | 20 | 20 | All 16 rubric checks pass. Both positive and negative assertions present. |
+| Documentation | 15 | 15 | GatewayClass intent comments, dnsConfig safety comment, WARNING log all added. |
+| Resilience | 10 | 7 | -3: Conflict-vulnerable Updates will cause CI flakes (Issue A). |
+| Traceability | 10 | 10 | OTA log is comprehensive and accurate. |
+| **Total** | **100** | **92** | |
+
+### Thought
+
+The implementation is fundamentally sound but has one MAJOR issue (Issue A: unretrieved Update conflicts on managed label toggle) that will manifest as intermittent CI flakes. This is the kind of issue that passes in local testing but fails in shared CI clusters where controllers are actively reconciling. The two MINOR issues (B, C) are cosmetic/coverage gaps that don't affect correctness.
+
+Issue A is the only one I would classify as a must-fix before merge. Issues B and C are should-fix but non-blocking.
+
+### Decision
+
+**Grade: 92/100**
+
+**Approval Status: CONDITIONAL RELEASE**
+
+Conditions for RELEASE:
+1. **MUST FIX**: Issue A -- Add retry-on-conflict handling for both service Update calls in the managed label toggle section (lines 1626-1632 and 1644-1651).
+
+Should fix (non-blocking):
+2. Issue B -- Fix the WARNING log to print both requested and existing values.
+3. Issue C -- Add selector reassertion after listener addition in ClusterIP test.
+
+### Files Reviewed
+
+- `/home/rpchevuz/codes/work/cluster-ingress-operator/test/e2e/gateway_api_test.go` (lines 1479-1811, plus imports 1-39)
+- `/home/rpchevuz/codes/work/cluster-ingress-operator/test/e2e/util_gatewayapi_test.go` (lines 1550-1627, plus imports 1-43)
+- `/home/rpchevuz/codes/work/cluster-ingress-operator/test/e2e/util_test.go` (lines 803-812, createWithRetryOnError)
+- `/home/rpchevuz/codes/work/cluster-ingress-operator/test/e2e/operator_test.go` (lines 120-130, variable declarations)
+
+## Session: 2026-04-07 (Final QA Review -- @qa)
+
+### Agent: @qa (Lead SDET) -- Third and final review pass
+
+### Context
+
+Third review pass after all 10 previously identified issues have been fixed:
+1. TLS protocol changed to HTTP for 8443 listeners
+2. Service re-list after mutations added
+3. Assertions added after managed label removal (before re-add)
+4. GatewayClass cleanup intentionally omitted (documented with comment)
+5. dnsConfig is always populated (documented with comment)
+6. assertGatewaySuccessful works for ClusterIP (confirmed)
+7. AlreadyExists WARNING log now shows requested vs existing values
+8. Managed label Update calls now use retry loops (PollUntilContextTimeout)
+9. Missing selector assertion added in ClusterIP test after listener addition
+10. waitForGatewayService dead code removed
+
+### Methodology
+
+Exhaustive line-by-line review of every line of new code in:
+- `test/e2e/gateway_api_test.go` lines 1474-1843 (both test functions + comments)
+- `test/e2e/util_gatewayapi_test.go` lines 1550-1629 (createGatewayService + defaultManualServicePorts)
+- Import declarations in both files (lines 1-39 of gateway_api_test.go, lines 1-43 of util_gatewayapi_test.go)
+- Test registration in TestGatewayAPI (lines 98-138)
+- All helper functions invoked by the new code: assertGatewaySuccessful, createWithRetryOnError, updateGatewaySpecWithRetry, createGatewayClass, isDNSManagementSupported
+- Package-level variables: dnsConfig (value type configv1.DNS), timeout (time.Minute), kclient
+
+Also verified: `go build -tags e2e ./test/e2e/` passes with zero errors.
+
+### Verification of All Previously Fixed Issues
+
+| # | Fix | Verified |
+|---|-----|----------|
+| 1 | HTTP protocol for 8443 listeners | YES. Lines 1533, 1751: `Protocol: "HTTP"` |
+| 2 | Service re-list after mutations | YES. Lines 1617-1623 (post-listener), 1681-1688 (post-label-toggle), 1834-1840 (ClusterIP post-listener) |
+| 3 | Assertions after managed label removal | YES. Lines 1643-1653: Assert service unchanged while label absent, including label-absent check |
+| 4 | GatewayClass cleanup omission comments | YES. Lines 1484-1488 (LB), 1698-1702 (ClusterIP) |
+| 5 | dnsConfig safety comment | YES. Lines 1708-1710 (ClusterIP) |
+| 6 | assertGatewaySuccessful for ClusterIP | YES. Function checks Accepted+Programmed conditions only, no address requirement |
+| 7 | WARNING log with requested vs existing | YES. Line 1597: Shows existing type/ports AND requested type/ports using captured `requestedType`/`requestedPortCount` |
+| 8 | Retry loops for managed label toggle | YES. Lines 1627-1639 (remove) and 1656-1667 (re-add) both use PollUntilContextTimeout |
+| 9 | Selector assertion in ClusterIP after listener add | YES. Line 1826: `assert.Equal(t, expectedSelector, svc.Spec.Selector, ...)` |
+| 10 | waitForGatewayService removed | YES. `grep` confirms no `func waitForGatewayService` in codebase |
+
+### Deep Analysis Performed
+
+1. **Kubernetes semantics**: Cleanup LIFO ordering is correct (Gateway deleted before Service). `createWithRetryOnError` handles AlreadyExists correctly. `kclient.Delete` works with Name+Namespace even without server-populated UID.
+
+2. **Race conditions**: All Get-Update sequences use retry loops (PollUntilContextTimeout). The `updateGatewaySpecWithRetry` re-Gets before applying the mutation function, preventing stale ResourceVersion conflicts. The append-based mutation in the listener addition cannot double-append because the poll exits on first success.
+
+3. **Error handling**: Every kclient.Get, kclient.List, kclient.Create, kclient.Update, kclient.Delete call has error checks. Fatal operations use t.Fatalf, non-blocking assertions use assert.Equal.
+
+4. **Resource leaks**: t.Cleanup registered for both Gateway and Service in both tests. IsNotFound guards prevent spurious cleanup errors. No resources without cleanup.
+
+5. **Test isolation**: LB test uses gateway name `test-gateway-managed-service`, ClusterIP uses `test-gateway-clusterip-service`. No shared state between tests. Both use the shared GatewayClass (by design).
+
+6. **Assertion completeness**: Type, selector, port count, negative port assertions (8443, 8080), externalTrafficPolicy (LB only), service count (no duplicates) -- all covered at every stage (initial, post-listener-add, post-label-toggle for LB).
+
+7. **Import correctness**: All imports in gateway_api_test.go are used. The duplicate `errors`/`kerrors` import is pre-existing (not introduced by this change). All imports in util_gatewayapi_test.go are used (intstr for TargetPort, ptr for AppProtocol).
+
+8. **Naming conventions**: Test names follow `testGatewayAPI<Feature>` pattern. Helper names follow lowercase camelCase. Consistent with codebase.
+
+9. **Comment accuracy**: Step comments match code behavior. GatewayClass intent comments are accurate. dnsConfig comment is factually correct.
+
+10. **Plan compliance**: All 10 plan steps for LB test and all 9 plan steps for ClusterIP test are implemented. The 100-point rubric items 1-16 are all covered.
+
+11. **Context usage**: Tests use context.Background(), helper uses context.TODO(). Both produce identical zero-value contexts. The codebase itself uses both interchangeably (73 instances of context.Background() and 8 instances of context.TODO() in util_gatewayapi_test.go alone).
+
+12. **Edge cases in createGatewayService**: The AlreadyExists path returns the existing service with a WARNING log showing mismatched values. The requestedType/requestedPortCount capture before the loop correctly preserves caller intent for the log.
+
+### New Issues Found
+
+None. After three review passes and 10 fixes, the implementation is complete and correct.
+
+### 100-Point Rubric Final Evaluation
+
+| Category | Points | Score | Notes |
+|----------|--------|-------|-------|
+| Completeness (plan adherence) | 25 | 25 | All plan steps implemented. All rubric items 1-16 covered. |
+| Code Idioms | 20 | 20 | assert/require used correctly. t.Helper on helpers. Retry loops for all mutations. Structured logging with context. |
+| Test Coverage | 20 | 20 | Positive and negative assertions. Immutability checked at 3 stages (initial, post-listener, post-label-toggle). Duplicate service guard at all stages. |
+| Documentation | 15 | 15 | GatewayClass intent comments, dnsConfig safety comment, WARNING log, comprehensive Godoc on helpers. |
+| Resilience | 10 | 10 | All mutations use retry loops. Cleanup guards against IsNotFound. time.Sleep used for reconciliation waits (accepted codebase pattern). |
+| Traceability | 10 | 10 | OTA log comprehensive across all sessions. Decision rationale documented for every non-obvious choice. |
+| **Total** | **100** | **100** | |
+
+### Decision
+
+**Grade: 100/100**
+
+**Approval Status: RELEASE**
+
+No remaining issues. The implementation is a faithful, correct, and robust realization of the plan. All previously identified issues have been verified as fixed. The code compiles cleanly, follows all codebase conventions, and provides comprehensive regression coverage for the manual service ownership feature.
+
+### Files Reviewed
+
+- `/home/rpchevuz/codes/work/cluster-ingress-operator/test/e2e/gateway_api_test.go` (full file, focus on lines 1474-1843 and imports 1-39)
+- `/home/rpchevuz/codes/work/cluster-ingress-operator/test/e2e/util_gatewayapi_test.go` (full file, focus on lines 1550-1629 and imports 1-43)
+- `/home/rpchevuz/codes/work/cluster-ingress-operator/test/e2e/util_test.go` (lines 694-812: isDNSManagementSupported, createWithRetryOnError)
+- `/home/rpchevuz/codes/work/cluster-ingress-operator/test/e2e/operator_test.go` (lines 120-194: variable declarations and TestMain)
+- `/home/rpchevuz/codes/work/cluster-ingress-operator/.GCC/branches/manual-service-creation/plan.md` (full)
