@@ -1628,10 +1628,19 @@ func testGatewayAPIManualLBService(t *testing.T) {
 	}
 	time.Sleep(10 * time.Second)
 
-	// Re-add the managed label.
+	// Assert service is unchanged while the managed label is absent.
 	if err := kclient.Get(ctx, svcKey, &svc); err != nil {
 		t.Fatalf("Failed to get service after label removal: %v", err)
 	}
+	if _, found := svc.Labels["gateway.istio.io/managed"]; found {
+		t.Fatalf("Label gateway.istio.io/managed must be absent after removal, but was found on service %s", svc.Name)
+	}
+	assert.Equal(t, corev1.ServiceTypeLoadBalancer, svc.Spec.Type, "Service type must remain LoadBalancer after managed label removal")
+	assert.Equal(t, corev1.ServiceExternalTrafficPolicyLocal, svc.Spec.ExternalTrafficPolicy, "externalTrafficPolicy must remain Local after managed label removal")
+	assert.Equal(t, expectedSelector, svc.Spec.Selector, "Selector must not be mutated after managed label removal")
+	require.Len(t, svc.Spec.Ports, 2, "Service must still have exactly 2 ports after managed label removal")
+
+	// Re-add the managed label.
 	svc.Labels["gateway.istio.io/managed"] = "openshift.io-gateway-controller-v1"
 	if err := kclient.Update(ctx, &svc); err != nil {
 		t.Fatalf("Failed to re-add managed label: %v", err)
