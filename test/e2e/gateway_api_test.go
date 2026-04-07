@@ -1481,6 +1481,11 @@ func testGatewayAPIManualLBService(t *testing.T) {
 		t.Skip("this test can be executed just on platforms that support managed DNS")
 	}
 
+	// NOTE: GatewayClass cleanup is intentionally omitted. The GatewayClass
+	// "openshift-default" is a shared cluster-scoped resource reused by all
+	// Gateway API tests in this sequential suite. Deleting it would trigger
+	// the full Istio uninstall flow and break subsequent tests. The dedicated
+	// testGatewayAPIIstioUninstallSailLibrary test handles its deletion.
 	gatewayClass, err := createGatewayClass(t, operatorcontroller.OpenShiftDefaultGatewayClassName, operatorcontroller.OpenShiftGatewayClassControllerName)
 	if err != nil {
 		t.Fatalf("Failed to create gatewayclass: %v", err)
@@ -1619,12 +1624,19 @@ func testGatewayAPIManualLBService(t *testing.T) {
 
 	// Step 8: Managed label toggle -- remove and re-add the managed label.
 	t.Logf("Testing managed label toggle on service %s...", svc.Name)
-	if err := kclient.Get(ctx, svcKey, &svc); err != nil {
-		t.Fatalf("Failed to get service for label toggle: %v", err)
-	}
-	delete(svc.Labels, "gateway.istio.io/managed")
-	if err := kclient.Update(ctx, &svc); err != nil {
-		t.Fatalf("Failed to remove managed label: %v", err)
+	if err := wait.PollUntilContextTimeout(ctx, 1*time.Second, 3*time.Minute, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, svcKey, &svc); err != nil {
+			t.Logf("Failed to get service for label removal: %v; retrying...", err)
+			return false, nil
+		}
+		delete(svc.Labels, "gateway.istio.io/managed")
+		if err := kclient.Update(ctx, &svc); err != nil {
+			t.Logf("Failed to remove managed label: %v; retrying...", err)
+			return false, nil
+		}
+		return true, nil
+	}); err != nil {
+		t.Fatalf("Timed out removing managed label from service %s: %v", svc.Name, err)
 	}
 	time.Sleep(10 * time.Second)
 
@@ -1641,9 +1653,19 @@ func testGatewayAPIManualLBService(t *testing.T) {
 	require.Len(t, svc.Spec.Ports, 2, "Service must still have exactly 2 ports after managed label removal")
 
 	// Re-add the managed label.
-	svc.Labels["gateway.istio.io/managed"] = "openshift.io-gateway-controller-v1"
-	if err := kclient.Update(ctx, &svc); err != nil {
-		t.Fatalf("Failed to re-add managed label: %v", err)
+	if err := wait.PollUntilContextTimeout(ctx, 1*time.Second, 3*time.Minute, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, svcKey, &svc); err != nil {
+			t.Logf("Failed to get service for label re-add: %v; retrying...", err)
+			return false, nil
+		}
+		svc.Labels["gateway.istio.io/managed"] = "openshift.io-gateway-controller-v1"
+		if err := kclient.Update(ctx, &svc); err != nil {
+			t.Logf("Failed to re-add managed label: %v; retrying...", err)
+			return false, nil
+		}
+		return true, nil
+	}); err != nil {
+		t.Fatalf("Timed out re-adding managed label to service %s: %v", svc.Name, err)
 	}
 	time.Sleep(10 * time.Second)
 
@@ -1673,10 +1695,19 @@ func testGatewayAPIManualLBService(t *testing.T) {
 // without modifying it. It also verifies that adding new listeners to the
 // Gateway does NOT add ports to the service.
 func testGatewayAPIManualClusterIPService(t *testing.T) {
+	// NOTE: GatewayClass cleanup is intentionally omitted. The GatewayClass
+	// "openshift-default" is a shared cluster-scoped resource reused by all
+	// Gateway API tests in this sequential suite. Deleting it would trigger
+	// the full Istio uninstall flow and break subsequent tests. The dedicated
+	// testGatewayAPIIstioUninstallSailLibrary test handles its deletion.
 	gatewayClass, err := createGatewayClass(t, operatorcontroller.OpenShiftDefaultGatewayClassName, operatorcontroller.OpenShiftGatewayClassControllerName)
 	if err != nil {
 		t.Fatalf("Failed to create gatewayclass: %v", err)
 	}
+
+	// NOTE: dnsConfig is a value type (configv1.DNS) initialized in TestMain
+	// and is always populated regardless of platform. It is safe to use
+	// dnsConfig.Spec.BaseDomain without a nil guard.
 
 	gatewayName := "test-gateway-clusterip-service"
 	ctx := context.Background()
@@ -1792,6 +1823,7 @@ func testGatewayAPIManualClusterIPService(t *testing.T) {
 	}
 
 	assert.Equal(t, corev1.ServiceTypeClusterIP, svc.Spec.Type, "Service type must remain ClusterIP after adding listener")
+	assert.Equal(t, expectedSelector, svc.Spec.Selector, "Selector must not be mutated after adding listener")
 	require.Len(t, svc.Spec.Ports, 2, "Istio must not add ports to manual service after adding listener")
 	for _, p := range svc.Spec.Ports {
 		assert.NotEqual(t, int32(8443), p.Port, "Port 8443 must not appear after adding listener")

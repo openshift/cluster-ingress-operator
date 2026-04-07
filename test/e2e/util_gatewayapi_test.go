@@ -1584,6 +1584,8 @@ func createGatewayService(
 		svcDefinition.Spec.ExternalTrafficPolicy = corev1.ServiceExternalTrafficPolicyLocal
 	}
 
+	requestedType := svctype
+	requestedPortCount := len(ports)
 	svckey := client.ObjectKeyFromObject(svcDefinition)
 	if err := wait.PollUntilContextTimeout(context.TODO(), 2*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
 		if err := kclient.Create(ctx, svcDefinition); err != nil {
@@ -1592,6 +1594,7 @@ func createGatewayService(
 					t.Logf("Service %s/%s already exists, but get failed: %v; retrying...", svckey.Namespace, svckey.Name, err)
 					return false, nil
 				}
+				t.Logf("WARNING: Service %s/%s already exists; returning existing object (type=%s, ports=%d) without verifying it matches requested spec (type=%s, ports=%d)", svckey.Namespace, svckey.Name, svcDefinition.Spec.Type, len(svcDefinition.Spec.Ports), requestedType, requestedPortCount)
 				return true, nil
 			}
 			t.Logf("Error creating service %s/%s: %v; retrying...", svckey.Namespace, svckey.Name, err)
