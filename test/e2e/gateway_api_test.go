@@ -28,6 +28,7 @@ import (
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apiserver/pkg/storage/names"
 	"k8s.io/client-go/rest"
@@ -127,11 +128,11 @@ func TestGatewayAPI(t *testing.T) {
 	t.Run("testGatewayAPIDNSListenerWithNoHostname", testGatewayAPIDNSListenerWithNoHostname)
 	t.Run("testGatewayAPIInfrastructureAnnotations", testGatewayAPIInfrastructureAnnotations)
 	t.Run("testGatewayAPIInternalLoadBalancer", testGatewayAPIInternalLoadBalancer)
+	t.Run("testGatewayAPIManualLBService", testGatewayAPIManualLBService)
+	t.Run("testGatewayAPIManualClusterIPService", testGatewayAPIManualClusterIPService)
 	t.Run("testGatewayAPIResourcesProtection", testGatewayAPIResourcesProtection)
 	t.Run("testGatewayAPIRBAC", testGatewayAPIRBAC)
 	t.Run("testOperatorDegradedCondition", testOperatorDegradedCondition)
-	t.Run("testGatewayAPIManualLBService", testGatewayAPIManualLBService)
-	t.Run("testGatewayAPIManualClusterIPService", testGatewayAPIManualClusterIPService)
 	t.Run("testGatewayOpenshiftConditions", testGatewayOpenshiftConditions)
 	if gatewayAPIWithoutOLMEnabled {
 		t.Run("testGatewayAPIIstioUninstallSailLibrary", testGatewayAPIIstioUninstallSailLibrary)
@@ -1474,8 +1475,8 @@ func testOperatorDegradedCondition(t *testing.T) {
 // testGatewayAPIManualLBService validates that a user can pre-create a
 // LoadBalancer Service with externalTrafficPolicy=Local before creating a
 // Gateway, and that Istio uses the service without modifying it. It also
-// verifies that adding new listeners to the Gateway does NOT add ports to
-// the service, and that toggling the managed label does not trigger mutations.
+// verifies that adding a listener whose port is missing from the service
+// causes the Gateway to report Programmed=False without modifying the service.
 func testGatewayAPIManualLBService(t *testing.T) {
 	if !isDNSManagementSupported(t) {
 		t.Skip("this test can be executed just on platforms that support managed DNS")
@@ -1510,8 +1511,8 @@ func testGatewayAPIManualLBService(t *testing.T) {
 		}
 	})
 
-	// Step 2: Create the Gateway with TWO listeners: HTTP on port 80 and
-	// HTTPS/TLS on port 8443. The service deliberately omits port 8443.
+	// Step 2: Create the Gateway with ONE listener: HTTP on port 80.
+	// The service covers port 80, so the Gateway should reach Programmed=True.
 	gateway := &gatewayapiv1.Gateway{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      gatewayName,
@@ -1526,17 +1527,11 @@ func testGatewayAPIManualLBService(t *testing.T) {
 					Port:     80,
 					Protocol: "HTTP",
 				},
-				{
-					Name:     "http-8443",
-					Hostname: ptr.To(gatewayapiv1.Hostname(fmt.Sprintf("*.manual-lb-8443.%s", dnsConfig.Spec.BaseDomain))),
-					Port:     8443,
-					Protocol: "HTTP",
-				},
 			},
 		},
 	}
 
-	t.Logf("Creating gateway %s with two listeners (port 80 and 8443)...", gatewayName)
+	t.Logf("Creating gateway %s with ONE listener (port 80)...", gatewayName)
 	if err := createWithRetryOnError(t, ctx, gateway, 2*time.Minute); err != nil {
 		t.Fatalf("Failed to create gateway %s: %v", gatewayName, err)
 	}
@@ -1584,33 +1579,39 @@ func testGatewayAPIManualLBService(t *testing.T) {
 	}
 	require.Len(t, services.Items, 1, "Istio must not create a duplicate service")
 
-	// Step 6: Update Gateway to add a third listener on port 8080.
-	t.Logf("Adding third listener (port 8080) to gateway %s...", gatewayName)
+	// Step 6: Update Gateway to add a second listener on port 8443.
+	// The service does NOT have port 8443, so this should cause Programmed=False.
+	t.Logf("Adding second listener (port 8443) to gateway %s...", gatewayName)
 	gwNSName := types.NamespacedName{Name: gatewayName, Namespace: operatorcontroller.DefaultOperandNamespace}
 	if err := updateGatewaySpecWithRetry(t, gwNSName, 3*time.Minute, func(spec *gatewayapiv1.GatewaySpec) {
 		spec.Listeners = append(spec.Listeners, gatewayapiv1.Listener{
-			Name:     "http-8080",
-			Hostname: ptr.To(gatewayapiv1.Hostname(fmt.Sprintf("*.manual-lb-8080.%s", dnsConfig.Spec.BaseDomain))),
-			Port:     8080,
+			Name:     "http-8443",
+			Hostname: ptr.To(gatewayapiv1.Hostname(fmt.Sprintf("*.manual-lb-8443.%s", dnsConfig.Spec.BaseDomain))),
+			Port:     8443,
 			Protocol: "HTTP",
 		})
 	}); err != nil {
 		t.Fatalf("Failed to add listener to gateway: %v", err)
 	}
 
-	// Step 7: Wait briefly for any Istio reconciliation, then assert unchanged.
-	time.Sleep(10 * time.Second)
+	// Step 7: Assert Gateway transitions to Programmed=False because
+	// the service does not have port 8443.
+	t.Logf("Asserting gateway %s transitions to Programmed=False...", gatewayName)
+	if err := assertGatewayProgrammedFalse(t, operatorcontroller.DefaultOperandNamespace, gatewayName); err != nil {
+		t.Fatalf("Gateway %s did not transition to Programmed=False after adding listener with missing port: %v", gatewayName, err)
+	}
 
+	// Step 8: Assert the service was NOT modified after adding the 8443 listener.
 	if err := kclient.Get(ctx, svcKey, &svc); err != nil {
 		t.Fatalf("Failed to re-fetch service %v: %v", svcKey, err)
 	}
 
 	assert.Equal(t, corev1.ServiceTypeLoadBalancer, svc.Spec.Type, "Service type must remain LoadBalancer after adding listener")
 	assert.Equal(t, corev1.ServiceExternalTrafficPolicyLocal, svc.Spec.ExternalTrafficPolicy, "externalTrafficPolicy must remain Local after adding listener")
+	assert.Equal(t, expectedSelector, svc.Spec.Selector, "Selector must not be mutated after adding listener")
 	require.Len(t, svc.Spec.Ports, 2, "Istio must not add ports to manual service after adding listener")
 	for _, p := range svc.Spec.Ports {
 		assert.NotEqual(t, int32(8443), p.Port, "Port 8443 must not appear after adding listener")
-		assert.NotEqual(t, int32(8080), p.Port, "Port 8080 must not appear after adding listener")
 	}
 
 	// Re-list services to verify no duplicate was created after adding listener.
@@ -1622,78 +1623,60 @@ func testGatewayAPIManualLBService(t *testing.T) {
 	}
 	require.Len(t, services.Items, 1, "Istio must not create a duplicate service after adding listener")
 
-	// Step 8: Managed label toggle -- remove and re-add the managed label.
-	t.Logf("Testing managed label toggle on service %s...", svc.Name)
+	// Step 10: User manually adds port 8443 to the service to recover the Gateway.
+	t.Logf("Adding port 8443 to service %s to recover Gateway...", svc.Name)
 	if err := wait.PollUntilContextTimeout(ctx, 1*time.Second, 3*time.Minute, false, func(ctx context.Context) (bool, error) {
 		if err := kclient.Get(ctx, svcKey, &svc); err != nil {
-			t.Logf("Failed to get service for label removal: %v; retrying...", err)
+			t.Logf("Failed to get service for port addition: %v; retrying...", err)
 			return false, nil
 		}
-		delete(svc.Labels, "gateway.istio.io/managed")
+		svc.Spec.Ports = append(svc.Spec.Ports, corev1.ServicePort{
+			Name:       "http-8443",
+			Port:       8443,
+			TargetPort: intstr.FromInt32(8443),
+			Protocol:   corev1.ProtocolTCP,
+		})
 		if err := kclient.Update(ctx, &svc); err != nil {
-			t.Logf("Failed to remove managed label: %v; retrying...", err)
+			t.Logf("Failed to update service to add port 8443: %v; retrying...", err)
 			return false, nil
 		}
 		return true, nil
 	}); err != nil {
-		t.Fatalf("Timed out removing managed label from service %s: %v", svc.Name, err)
+		t.Fatalf("Timed out adding port 8443 to service %s: %v", svc.Name, err)
 	}
-	time.Sleep(10 * time.Second)
 
-	// Assert service is unchanged while the managed label is absent.
+	// Step 11: Assert Gateway recovers to Programmed=True.
+	if _, err := assertGatewaySuccessful(t, operatorcontroller.DefaultOperandNamespace, gatewayName); err != nil {
+		t.Fatalf("Gateway %s must recover to Programmed=True after adding port 8443: %v", gatewayName, err)
+	}
+
+	// Step 12: Assert service was NOT further modified by Istio after recovery.
 	if err := kclient.Get(ctx, svcKey, &svc); err != nil {
-		t.Fatalf("Failed to get service after label removal: %v", err)
+		t.Fatalf("Failed to re-fetch service %v after recovery: %v", svcKey, err)
 	}
-	if _, found := svc.Labels["gateway.istio.io/managed"]; found {
-		t.Fatalf("Label gateway.istio.io/managed must be absent after removal, but was found on service %s", svc.Name)
-	}
-	assert.Equal(t, corev1.ServiceTypeLoadBalancer, svc.Spec.Type, "Service type must remain LoadBalancer after managed label removal")
-	assert.Equal(t, corev1.ServiceExternalTrafficPolicyLocal, svc.Spec.ExternalTrafficPolicy, "externalTrafficPolicy must remain Local after managed label removal")
-	assert.Equal(t, expectedSelector, svc.Spec.Selector, "Selector must not be mutated after managed label removal")
-	require.Len(t, svc.Spec.Ports, 2, "Service must still have exactly 2 ports after managed label removal")
 
-	// Re-add the managed label.
-	if err := wait.PollUntilContextTimeout(ctx, 1*time.Second, 3*time.Minute, false, func(ctx context.Context) (bool, error) {
-		if err := kclient.Get(ctx, svcKey, &svc); err != nil {
-			t.Logf("Failed to get service for label re-add: %v; retrying...", err)
-			return false, nil
-		}
-		svc.Labels["gateway.istio.io/managed"] = "openshift.io-gateway-controller-v1"
-		if err := kclient.Update(ctx, &svc); err != nil {
-			t.Logf("Failed to re-add managed label: %v; retrying...", err)
-			return false, nil
-		}
-		return true, nil
-	}); err != nil {
-		t.Fatalf("Timed out re-adding managed label to service %s: %v", svc.Name, err)
-	}
-	time.Sleep(10 * time.Second)
+	require.Len(t, svc.Spec.Ports, 3, "Service must have exactly 3 ports after adding port 8443 (status-port + http + http-8443)")
+	assert.Equal(t, corev1.ServiceTypeLoadBalancer, svc.Spec.Type, "Service type must remain LoadBalancer after recovery")
+	assert.Equal(t, corev1.ServiceExternalTrafficPolicyLocal, svc.Spec.ExternalTrafficPolicy, "externalTrafficPolicy must remain Local after recovery")
+	assert.Equal(t, expectedSelector, svc.Spec.Selector, "Selector must not be mutated after recovery")
 
-	// Re-fetch and assert nothing changed.
-	if err := kclient.Get(ctx, svcKey, &svc); err != nil {
-		t.Fatalf("Failed to get service after label re-add: %v", err)
-	}
-	assert.Equal(t, corev1.ServiceTypeLoadBalancer, svc.Spec.Type, "Managed label toggle must not change service type")
-	assert.Equal(t, corev1.ServiceExternalTrafficPolicyLocal, svc.Spec.ExternalTrafficPolicy, "Managed label toggle must not change externalTrafficPolicy")
-	assert.Equal(t, expectedSelector, svc.Spec.Selector, "Managed label toggle must not change selector")
-	require.Len(t, svc.Spec.Ports, 2, "Managed label toggle must not trigger port modification")
-
-	// Re-list services to verify no duplicate was created after managed label toggle.
+	// Re-list services to verify no duplicate was created after recovery.
 	if err := kclient.List(ctx, &services,
 		client.MatchingLabels{"gateway.networking.k8s.io/gateway-name": gatewayName},
 		client.InNamespace(operatorcontroller.DefaultOperandNamespace),
 	); err != nil {
-		t.Fatalf("Failed to list services after managed label toggle: %v", err)
+		t.Fatalf("Failed to list services after recovery: %v", err)
 	}
-	require.Len(t, services.Items, 1, "Istio must not create a duplicate service after managed label toggle")
+	require.Len(t, services.Items, 1, "Istio must not create a duplicate service after recovery")
 
 	t.Logf("Successfully verified manual LoadBalancer service immutability for gateway %s", gatewayName)
 }
 
 // testGatewayAPIManualClusterIPService validates that a user can pre-create a
 // ClusterIP Service before creating a Gateway, and that Istio uses the service
-// without modifying it. It also verifies that adding new listeners to the
-// Gateway does NOT add ports to the service.
+// without modifying it. It also verifies that adding a listener whose port is
+// missing from the service causes the Gateway to report Programmed=False
+// without modifying the service.
 func testGatewayAPIManualClusterIPService(t *testing.T) {
 	// NOTE: GatewayClass cleanup is intentionally omitted. The GatewayClass
 	// "openshift-default" is a shared cluster-scoped resource reused by all
@@ -1728,8 +1711,8 @@ func testGatewayAPIManualClusterIPService(t *testing.T) {
 		}
 	})
 
-	// Step 2: Create the Gateway with TWO listeners: port 80 and port 8443.
-	// The service deliberately omits port 8443.
+	// Step 2: Create the Gateway with ONE listener: HTTP on port 80.
+	// The service covers port 80, so the Gateway should reach Programmed=True.
 	gateway := &gatewayapiv1.Gateway{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      gatewayName,
@@ -1744,17 +1727,11 @@ func testGatewayAPIManualClusterIPService(t *testing.T) {
 					Port:     80,
 					Protocol: "HTTP",
 				},
-				{
-					Name:     "http-8443",
-					Hostname: ptr.To(gatewayapiv1.Hostname(fmt.Sprintf("*.manual-clusterip-8443.%s", dnsConfig.Spec.BaseDomain))),
-					Port:     8443,
-					Protocol: "HTTP",
-				},
 			},
 		},
 	}
 
-	t.Logf("Creating gateway %s with two listeners (port 80 and 8443)...", gatewayName)
+	t.Logf("Creating gateway %s with ONE listener (port 80)...", gatewayName)
 	if err := createWithRetryOnError(t, ctx, gateway, 2*time.Minute); err != nil {
 		t.Fatalf("Failed to create gateway %s: %v", gatewayName, err)
 	}
@@ -1801,23 +1778,29 @@ func testGatewayAPIManualClusterIPService(t *testing.T) {
 	}
 	require.Len(t, services.Items, 1, "Istio must not create a duplicate service")
 
-	// Step 6: Update Gateway to add a third listener on port 8080.
-	t.Logf("Adding third listener (port 8080) to gateway %s...", gatewayName)
+	// Step 6: Update Gateway to add a second listener on port 8443.
+	// The service does NOT have port 8443, so this should cause Programmed=False.
+	t.Logf("Adding second listener (port 8443) to gateway %s...", gatewayName)
 	gwNSName := types.NamespacedName{Name: gatewayName, Namespace: operatorcontroller.DefaultOperandNamespace}
 	if err := updateGatewaySpecWithRetry(t, gwNSName, 3*time.Minute, func(spec *gatewayapiv1.GatewaySpec) {
 		spec.Listeners = append(spec.Listeners, gatewayapiv1.Listener{
-			Name:     "http-8080",
-			Hostname: ptr.To(gatewayapiv1.Hostname(fmt.Sprintf("*.manual-clusterip-8080.%s", dnsConfig.Spec.BaseDomain))),
-			Port:     8080,
+			Name:     "http-8443",
+			Hostname: ptr.To(gatewayapiv1.Hostname(fmt.Sprintf("*.manual-clusterip-8443.%s", dnsConfig.Spec.BaseDomain))),
+			Port:     8443,
 			Protocol: "HTTP",
 		})
 	}); err != nil {
 		t.Fatalf("Failed to add listener to gateway: %v", err)
 	}
 
-	// Step 7: Wait briefly for any Istio reconciliation, then assert unchanged.
-	time.Sleep(10 * time.Second)
+	// Step 7: Assert Gateway transitions to Programmed=False because
+	// the service does not have port 8443.
+	t.Logf("Asserting gateway %s transitions to Programmed=False...", gatewayName)
+	if err := assertGatewayProgrammedFalse(t, operatorcontroller.DefaultOperandNamespace, gatewayName); err != nil {
+		t.Fatalf("Gateway %s did not transition to Programmed=False after adding listener with missing port: %v", gatewayName, err)
+	}
 
+	// Step 8: Assert the service was NOT modified after adding the 8443 listener.
 	if err := kclient.Get(ctx, svcKey, &svc); err != nil {
 		t.Fatalf("Failed to re-fetch service %v: %v", svcKey, err)
 	}
@@ -1827,7 +1810,6 @@ func testGatewayAPIManualClusterIPService(t *testing.T) {
 	require.Len(t, svc.Spec.Ports, 2, "Istio must not add ports to manual service after adding listener")
 	for _, p := range svc.Spec.Ports {
 		assert.NotEqual(t, int32(8443), p.Port, "Port 8443 must not appear after adding listener")
-		assert.NotEqual(t, int32(8080), p.Port, "Port 8080 must not appear after adding listener")
 	}
 
 	// Re-list services to verify no duplicate was created after adding listener.
@@ -1838,6 +1820,51 @@ func testGatewayAPIManualClusterIPService(t *testing.T) {
 		t.Fatalf("Failed to list services after adding listener: %v", err)
 	}
 	require.Len(t, services.Items, 1, "Istio must not create a duplicate service after adding listener")
+
+	// Step 10: User manually adds port 8443 to the service to recover the Gateway.
+	t.Logf("Adding port 8443 to service %s to recover Gateway...", svc.Name)
+	if err := wait.PollUntilContextTimeout(ctx, 1*time.Second, 3*time.Minute, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, svcKey, &svc); err != nil {
+			t.Logf("Failed to get service for port addition: %v; retrying...", err)
+			return false, nil
+		}
+		svc.Spec.Ports = append(svc.Spec.Ports, corev1.ServicePort{
+			Name:       "http-8443",
+			Port:       8443,
+			TargetPort: intstr.FromInt32(8443),
+			Protocol:   corev1.ProtocolTCP,
+		})
+		if err := kclient.Update(ctx, &svc); err != nil {
+			t.Logf("Failed to update service to add port 8443: %v; retrying...", err)
+			return false, nil
+		}
+		return true, nil
+	}); err != nil {
+		t.Fatalf("Timed out adding port 8443 to service %s: %v", svc.Name, err)
+	}
+
+	// Step 11: Assert Gateway recovers to Programmed=True.
+	if _, err := assertGatewaySuccessful(t, operatorcontroller.DefaultOperandNamespace, gatewayName); err != nil {
+		t.Fatalf("Gateway %s must recover to Programmed=True after adding port 8443: %v", gatewayName, err)
+	}
+
+	// Step 12: Assert service was NOT further modified by Istio after recovery.
+	if err := kclient.Get(ctx, svcKey, &svc); err != nil {
+		t.Fatalf("Failed to re-fetch service %v after recovery: %v", svcKey, err)
+	}
+
+	require.Len(t, svc.Spec.Ports, 3, "Service must have exactly 3 ports after adding port 8443 (status-port + http + http-8443)")
+	assert.Equal(t, corev1.ServiceTypeClusterIP, svc.Spec.Type, "Service type must remain ClusterIP after recovery")
+	assert.Equal(t, expectedSelector, svc.Spec.Selector, "Selector must not be mutated after recovery")
+
+	// Re-list services to verify no duplicate was created after recovery.
+	if err := kclient.List(ctx, &services,
+		client.MatchingLabels{"gateway.networking.k8s.io/gateway-name": gatewayName},
+		client.InNamespace(operatorcontroller.DefaultOperandNamespace),
+	); err != nil {
+		t.Fatalf("Failed to list services after recovery: %v", err)
+	}
+	require.Len(t, services.Items, 1, "Istio must not create a duplicate service after recovery")
 
 	t.Logf("Successfully verified manual ClusterIP service immutability for gateway %s", gatewayName)
 }

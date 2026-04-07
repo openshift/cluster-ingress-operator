@@ -1568,7 +1568,6 @@ func createGatewayService(
 			Namespace: namespace,
 			Labels: map[string]string{
 				"gateway.networking.k8s.io/gateway-name": gatewayName,
-				"gateway.istio.io/managed":               "openshift.io-gateway-controller-v1",
 			},
 		},
 		Spec: corev1.ServiceSpec{
@@ -1606,6 +1605,33 @@ func createGatewayService(
 	}
 
 	return svcDefinition, nil
+}
+
+// assertGatewayProgrammedFalse polls until the Gateway's Programmed condition
+// transitions to False. This is used after adding a listener whose port is
+// missing from the pre-created service -- Istio checks service ports against
+// listener ports and sets Programmed=False when a port is missing.
+func assertGatewayProgrammedFalse(t *testing.T, namespace, name string) error {
+	t.Helper()
+	gw := &gatewayapiv1.Gateway{}
+	nsName := types.NamespacedName{Namespace: namespace, Name: name}
+	return wait.PollUntilContextTimeout(context.Background(), 3*time.Second, 2*time.Minute, false,
+		func(ctx context.Context) (bool, error) {
+			if err := kclient.Get(ctx, nsName, gw); err != nil {
+				t.Logf("Failed to get gateway %v: %v; retrying...", nsName, err)
+				return false, nil
+			}
+			for _, condition := range gw.Status.Conditions {
+				if condition.Type == string(gatewayapiv1.GatewayConditionProgrammed) {
+					if condition.Status == metav1.ConditionFalse {
+						t.Logf("Gateway %v is Programmed=False as expected", nsName)
+						return true, nil
+					}
+				}
+			}
+			t.Logf("Gateway %v is not yet Programmed=False; retrying...", nsName)
+			return false, nil
+		})
 }
 
 // defaultManualServicePorts returns the standard ports used for manual service

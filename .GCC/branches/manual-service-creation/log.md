@@ -642,3 +642,220 @@ No remaining issues. The implementation is a faithful, correct, and robust reali
 - `/home/rpchevuz/codes/work/cluster-ingress-operator/test/e2e/util_test.go` (lines 694-812: isDNSManagementSupported, createWithRetryOnError)
 - `/home/rpchevuz/codes/work/cluster-ingress-operator/test/e2e/operator_test.go` (lines 120-194: variable declarations and TestMain)
 - `/home/rpchevuz/codes/work/cluster-ingress-operator/.GCC/branches/manual-service-creation/plan.md` (full)
+
+## Session: 2026-04-07 (Plan Correction -- Two Incorrect Assumptions)
+
+### Agent: @architect
+
+### Observation
+
+User (domain expert) identified two incorrect assumptions in the plan that propagated into the implementation:
+
+**Incorrect Assumption 1: `gateway.istio.io/managed` label**
+
+The plan assumed that `gateway.istio.io/managed: openshift.io-gateway-controller-v1` should be added to manually created services. This is WRONG. Analysis:
+- This label is set by Istio itself on services it creates via the automated deployment model.
+- Istio documentation does NOT recommend adding it to manually pre-created services.
+- The only required identifiers for manual service recognition are: (a) the naming pattern `<gatewayName>-<gatewayClassName>`, and (b) the label `gateway.networking.k8s.io/gateway-name: <gatewayName>`.
+- Consequently, the entire managed label toggle test (old Step 9 in the LB test) was based on a false premise and must be removed.
+- The `createGatewayService` helper must NOT set this label.
+- The documentation guidance must NOT tell users to set this label.
+
+**Incorrect Assumption 2: Gateway Programmed status with missing ports**
+
+The plan assumed that when a user adds a listener to a Gateway but the service lacks the corresponding port, the Gateway stays `Programmed=True`. This is WRONG. Analysis:
+- Istio does NOT modify the pre-created service (correct).
+- But Istio DOES check whether the service has ports matching all Gateway listeners.
+- If a listener's port is missing from the service, that listener will NOT be ready.
+- The Gateway's `status.conditions` will show `Programmed=False` because not all listeners are ready.
+- This means `assertGatewaySuccessful()` (which waits for `Programmed=True`) will TIMEOUT if the Gateway has a listener whose port is missing from the service.
+
+### Thought
+
+The impact of these two corrections is significant:
+
+**For Assumption 1 (managed label)**: This is a straightforward removal. Every occurrence of `gateway.istio.io/managed` in the plan, the helper function, the test assertions, and the documentation guidance must be removed. The managed label toggle test (Step 9 in LB test) must be entirely deleted -- it was testing behavior of a label that users should never set.
+
+**For Assumption 2 (Programmed=False)**: This requires a redesign of the test flow. The previous design created the Gateway with TWO listeners from the start (port 80 + port 8443, where the service only had port 80). Since `assertGatewaySuccessful` waits for `Programmed=True`, this would timeout because the 8443 listener port is missing from the service.
+
+The correct test flow is:
+1. Create the Gateway with ONLY ONE listener (port 80). The service covers port 80, so `assertGatewaySuccessful` will pass.
+2. Assert service immutability after Gateway creation.
+3. Add a SECOND listener (port 8443) whose port is missing from the service.
+4. Assert `Programmed=False` -- this is actually a STRONGER test than the previous design. It proves two things at once: (a) Istio checks service ports against listener ports, and (b) Istio does NOT modify the service to add the missing port.
+
+This also means we need a new assertion helper (`assertGatewayProgrammedFalse`) that polls for `Programmed=False` instead of `Programmed=True`.
+
+**Design decision**: I chose to add only ONE missing-port listener (8443) rather than two (8443 + 8080) to keep the test focused. Adding one missing port is sufficient to prove the behavior. The 8080 listener addition (which was in the old plan) is removed because it was redundant -- once we prove that one missing port causes `Programmed=False` and the service is not modified, testing a second missing port adds no new signal.
+
+### Action
+
+Updated `plan.md` with the following changes:
+
+1. **Summary section**: Updated behavioral rules to include Programmed=False behavior and the managed label correction. Removed objective item 6 (managed label toggle). Updated objective item 5 to include Programmed=False assertion.
+
+2. **Assumptions section**: Removed the assumption that `gateway.istio.io/managed` is needed. Added corrected assumption about `Programmed=False` behavior. Added explicit "Corrected Assumptions" subsection documenting what changed and why.
+
+3. **Obstacles section**: Added note about `assertGatewaySuccessful` waiting for `Programmed=True`, which constrains the test design.
+
+4. **LB test (Test 1)**:
+   - Step 2: Removed `gateway.istio.io/managed` label from service creation.
+   - Step 3: Changed from TWO listeners (80 + 8443) to ONE listener (80) only.
+   - Step 7: Changed from "add a third listener (8080)" to "add a second listener (8443)".
+   - Step 8: Changed from "assert service unchanged" to "assert Gateway Programmed=False" -- the key new behavioral assertion.
+   - Step 9: Changed from managed label toggle test to service immutability assertion.
+   - Removed old Step 9 (managed label toggle) entirely.
+
+5. **ClusterIP test (Test 2)**: Same structural changes as LB test. Removed managed label, changed to single-listener creation, added Programmed=False assertion.
+
+6. **Helper function `createGatewayService`**: Removed `gateway.istio.io/managed` label from the definition. Updated rationale.
+
+7. **Added new helper `assertGatewayProgrammedFalse`**: Polls Gateway status for `Programmed=False`. Needed because `assertGatewaySuccessful` only checks for `Programmed=True`.
+
+8. **Section 3.7 (Critical Fixes)**: Added explicit list of all removals and changes needed from the current implementation.
+
+9. **Verification rubric**: Replaced managed label toggle check (#10 in old rubric) with Programmed=False checks. Added separate checks for LB and ClusterIP Programmed=False assertions. Rebalanced points.
+
+10. **Documentation guidance (Section 6)**:
+    - Removed `gateway.istio.io/managed` from the contract list.
+    - Added explicit "MUST NOT" for the managed label.
+    - Added `Programmed=False` behavior to user responsibilities.
+    - Updated example YAML to remove managed label.
+    - Updated troubleshooting to describe Programmed=False diagnosis.
+    - Removed managed label from Quick Reference table.
+
+11. **Quick Reference table**: Removed the `gateway.istio.io/managed` row.
+
+12. **Added Changes Summary**: Explicit list of all changes from the previous plan version for traceability.
+
+### Discovered Environment Quirks
+
+- `assertGatewaySuccessful` (lines 716-775) is a hard gate on `Programmed=True`. There is no way to parameterize it to accept `Programmed=False`. The test must use a separate assertion helper for the `Programmed=False` case.
+- The `assertGatewaySuccessful` function also logs the gateway service status during polling (lines 759-764) but this is purely diagnostic and does not affect the poll condition.
+
+### Approval Status
+
+AWAITING EXECUTION
+
+## Session: 2026-04-07 (Plan Correction Implementation -- @engineer)
+
+### Agent: @engineer
+
+### Observation
+
+Received updated plan with two corrected assumptions:
+1. `gateway.istio.io/managed` label must NOT be set on manually created services
+2. Gateway reports `Programmed=False` when a listener port is missing from the service
+
+### Action
+
+Applied all changes to both test files:
+
+**`test/e2e/util_gatewayapi_test.go`**:
+- Added `assertGatewayProgrammedFalse` helper function that polls for `Programmed=False` condition
+- `createGatewayService` was already clean (no managed label) from prior sessions
+
+**`test/e2e/gateway_api_test.go`** -- `testGatewayAPIManualLBService`:
+- Changed Gateway creation from TWO listeners (80 + 8443) to ONE listener (80)
+- Removed Step 6 (add 8080 listener) and Step 7 (sleep + assertions)
+- Removed Step 8 (entire managed label toggle section: remove label, sleep, assert, re-add label, sleep, assert, re-list)
+- Added Step 6: Update Gateway to add 8443 listener (port missing from service)
+- Added Step 7: Assert Gateway transitions to Programmed=False via `assertGatewayProgrammedFalse`
+- Added Step 8: Assert service immutability (type, policy, selector, ports, negative 8443 port assertion, no duplicate service)
+- Updated function docstring to remove managed label reference
+
+**`test/e2e/gateway_api_test.go`** -- `testGatewayAPIManualClusterIPService`:
+- Changed Gateway creation from TWO listeners (80 + 8443) to ONE listener (80)
+- Removed Step 6 (add 8080 listener) and Step 7 (sleep + assertions)
+- Added Step 6: Update Gateway to add 8443 listener (port missing from service)
+- Added Step 7: Assert Gateway transitions to Programmed=False
+- Added Step 8: Assert service immutability (type, selector, ports, negative 8443 port assertion, no duplicate service)
+- Updated function docstring
+
+### Build Verification
+
+`go build -tags e2e ./test/e2e/` succeeded with zero errors.
+
+### Verification of Managed Label Removal
+
+Grepped for `gateway.istio.io/managed` in test/e2e/. Only reference is in `testGatewayAPIInfrastructureAnnotations` (line 1281), which uses it for service listing in the automated deployment model. This is pre-existing and correct. No references remain in the manual service tests or helper functions.
+
+### Obstacles and Workarounds
+
+None. All changes were straightforward removals and replacements.
+
+### Approval Status
+
+READY FOR QA
+
+## Session: 2026-04-07 (Plan Update -- Recovery Lifecycle Steps)
+
+### Agent: @architect
+
+### Observation
+
+User identified a gap in the test lifecycle: after proving that a missing port causes `Programmed=False` and the service is not modified, the test ends. It does not verify the recovery path -- what happens when the user manually adds the missing port to the service. This leaves the full lifecycle untested.
+
+### Thought
+
+The recovery step completes the lifecycle test and provides two additional signals:
+
+1. **Istio re-evaluates port matching**: After the user adds port 8443 to the service, Istio should detect that all listener ports are now covered and transition the Gateway back to `Programmed=True`. If this does not happen, it would indicate a bug in Istio's reconciliation (e.g., it only checks ports at Gateway creation time, not on service updates).
+
+2. **Service immutability holds after recovery**: After the Gateway becomes `Programmed=True` again, the service should have exactly 3 ports (15021, 80, 8443) -- no more, no less. This proves that Istio did not "help" by modifying the service during the recovery transition.
+
+The service update must use a retry loop (Get-mutate-Update with PollUntilContextTimeout) to handle ResourceVersion conflicts, consistent with the pattern established for managed label updates. The port addition appends a new ServicePort entry to `spec.ports`.
+
+After the update, `assertGatewaySuccessful` is the right assertion -- it already exists and waits for both `Accepted=True` and `Programmed=True`. No new helper needed for this step.
+
+Design decision: Steps 10-12 are added to BOTH test scenarios (LB and ClusterIP) because the recovery behavior could theoretically differ by service type (e.g., LoadBalancer address propagation vs ClusterIP). Testing both ensures coverage.
+
+### Action
+
+Updated `plan.md`:
+- Added Steps 10-12 to LB test (recovery port addition, Programmed=True assertion, immutability re-assertion with 3 ports)
+- Added Steps 10-12 to ClusterIP test (same pattern)
+- Added objective 6 covering the full lifecycle
+- Added recovery assertion pattern in section 3.9 with code example
+- Added rubric checks 8a/8b (LB) and 15a/15b (ClusterIP) for recovery assertions
+- Updated Changes Summary with items 8-11
+
+### Approval Status
+
+AWAITING EXECUTION
+
+## Session: 2026-04-07 (Recovery Lifecycle Implementation -- @engineer)
+
+### Agent: @engineer
+
+### Observation
+
+Received plan update with Steps 10-12 for both LB and ClusterIP tests: port recovery, Programmed=True reassertion, and post-recovery immutability checks.
+
+### Action
+
+Added Steps 10-12 to both test functions in `test/e2e/gateway_api_test.go`:
+
+**`testGatewayAPIManualLBService`** (after existing Step 8 assertions):
+- Step 10: Retry loop (PollUntilContextTimeout) to Get-mutate-Update the service, appending port 8443 (http-8443, TCP).
+- Step 11: `assertGatewaySuccessful` to wait for Gateway recovery to Programmed=True.
+- Step 12: Re-fetch service and assert: 3 ports, type=LoadBalancer, externalTrafficPolicy=Local, selector unchanged, no duplicate service.
+
+**`testGatewayAPIManualClusterIPService`** (after existing Step 8 assertions):
+- Step 10: Same retry loop for port 8443 addition.
+- Step 11: Same `assertGatewaySuccessful` call.
+- Step 12: Re-fetch service and assert: 3 ports, type=ClusterIP, selector unchanged, no duplicate service.
+
+**Import**: Added `k8s.io/apimachinery/pkg/util/intstr` to `gateway_api_test.go` imports (required for `intstr.FromInt32(8443)` in the port addition). This import was already present in `util_gatewayapi_test.go` but Go requires per-file imports.
+
+### Build Verification
+
+`go build -tags e2e ./test/e2e/` succeeded with zero errors.
+
+### Obstacles and Workarounds
+
+None. The `intstr` package was already vendored. The retry pattern matches the established codebase convention.
+
+### Approval Status
+
+READY FOR QA
