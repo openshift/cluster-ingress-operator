@@ -130,6 +130,8 @@ func TestGatewayAPI(t *testing.T) {
 	t.Run("testGatewayAPIResourcesProtection", testGatewayAPIResourcesProtection)
 	t.Run("testGatewayAPIRBAC", testGatewayAPIRBAC)
 	t.Run("testOperatorDegradedCondition", testOperatorDegradedCondition)
+	t.Run("testGatewayAPIManualLBService", testGatewayAPIManualLBService)
+	t.Run("testGatewayAPIManualClusterIPService", testGatewayAPIManualClusterIPService)
 	t.Run("testGatewayOpenshiftConditions", testGatewayOpenshiftConditions)
 	if gatewayAPIWithoutOLMEnabled {
 		t.Run("testGatewayAPIIstioUninstallSailLibrary", testGatewayAPIIstioUninstallSailLibrary)
@@ -1467,6 +1469,309 @@ func testOperatorDegradedCondition(t *testing.T) {
 	if err := waitForClusterOperatorConditions(t, kclient, expectedDegraded...); err != nil {
 		t.Errorf("Did not get expected Degraded=False condition: %v", err)
 	}
+}
+
+// testGatewayAPIManualLBService validates that a user can pre-create a
+// LoadBalancer Service with externalTrafficPolicy=Local before creating a
+// Gateway, and that Istio uses the service without modifying it. It also
+// verifies that adding new listeners to the Gateway does NOT add ports to
+// the service, and that toggling the managed label does not trigger mutations.
+func testGatewayAPIManualLBService(t *testing.T) {
+	if !isDNSManagementSupported(t) {
+		t.Skip("this test can be executed just on platforms that support managed DNS")
+	}
+
+	gatewayClass, err := createGatewayClass(t, operatorcontroller.OpenShiftDefaultGatewayClassName, operatorcontroller.OpenShiftGatewayClassControllerName)
+	if err != nil {
+		t.Fatalf("Failed to create gatewayclass: %v", err)
+	}
+
+	gatewayName := "test-gateway-managed-service"
+	ctx := context.Background()
+
+	// Step 1: Create the Service BEFORE the Gateway.
+	t.Logf("Creating LoadBalancer service %s-%s before the Gateway...", gatewayName, gatewayClass.Name)
+	service, err := createGatewayService(t, gatewayName, gatewayClass.Name,
+		operatorcontroller.DefaultOperandNamespace, corev1.ServiceTypeLoadBalancer,
+		defaultManualServicePorts())
+	if err != nil {
+		t.Fatalf("Failed to create service %s/%s-%s: %v", operatorcontroller.DefaultOperandNamespace, gatewayName, gatewayClass.Name, err)
+	}
+	t.Cleanup(func() {
+		if err := kclient.Delete(ctx, service); err != nil {
+			if !errors.IsNotFound(err) {
+				t.Errorf("Failed to delete service %s/%s: %v", service.Namespace, service.Name, err)
+			}
+		}
+	})
+
+	// Step 2: Create the Gateway with TWO listeners: HTTP on port 80 and
+	// HTTPS/TLS on port 8443. The service deliberately omits port 8443.
+	gateway := &gatewayapiv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      gatewayName,
+			Namespace: operatorcontroller.DefaultOperandNamespace,
+		},
+		Spec: gatewayapiv1.GatewaySpec{
+			GatewayClassName: gatewayapiv1.ObjectName(gatewayClass.Name),
+			Listeners: []gatewayapiv1.Listener{
+				{
+					Name:     "http",
+					Hostname: ptr.To(gatewayapiv1.Hostname(fmt.Sprintf("*.manual-lb.%s", dnsConfig.Spec.BaseDomain))),
+					Port:     80,
+					Protocol: "HTTP",
+				},
+				{
+					Name:     "https",
+					Hostname: ptr.To(gatewayapiv1.Hostname(fmt.Sprintf("*.manual-lb-tls.%s", dnsConfig.Spec.BaseDomain))),
+					Port:     8443,
+					Protocol: "TLS",
+				},
+			},
+		},
+	}
+
+	t.Logf("Creating gateway %s with two listeners (port 80 and 8443)...", gatewayName)
+	if err := createWithRetryOnError(t, ctx, gateway, 2*time.Minute); err != nil {
+		t.Fatalf("Failed to create gateway %s: %v", gatewayName, err)
+	}
+	t.Cleanup(func() {
+		if err := kclient.Delete(ctx, gateway); err != nil {
+			if !errors.IsNotFound(err) {
+				t.Errorf("Failed to delete gateway %q: %v", gateway.Name, err)
+			}
+		}
+	})
+
+	// Step 3: Wait for Gateway to be Accepted and Programmed.
+	if _, err = assertGatewaySuccessful(t, operatorcontroller.DefaultOperandNamespace, gatewayName); err != nil {
+		t.Fatalf("Failed to accept/program gateway %s: %v", gatewayName, err)
+	}
+
+	// Step 4: Assert the service was NOT mutated by Istio.
+	svcKey := types.NamespacedName{Name: service.Name, Namespace: service.Namespace}
+	var svc corev1.Service
+	if err := kclient.Get(ctx, svcKey, &svc); err != nil {
+		t.Fatalf("Failed to get service %v: %v", svcKey, err)
+	}
+
+	assert.Equal(t, corev1.ServiceTypeLoadBalancer, svc.Spec.Type, "Service type must remain LoadBalancer")
+	assert.Equal(t, corev1.ServiceExternalTrafficPolicyLocal, svc.Spec.ExternalTrafficPolicy, "externalTrafficPolicy must remain Local")
+	expectedSelector := map[string]string{
+		"gateway.networking.k8s.io/gateway-name": gatewayName,
+	}
+	assert.Equal(t, expectedSelector, svc.Spec.Selector, "Selector must not be mutated")
+	require.Len(t, svc.Spec.Ports, 2, "Service must still have exactly 2 ports (status-port + http)")
+
+	// Step 4b: Negative port assertion -- port 8443 must NOT be present.
+	for _, p := range svc.Spec.Ports {
+		assert.NotEqual(t, int32(8443), p.Port,
+			"Istio must not add omitted port 8443 to pre-created service (regression guard)")
+	}
+
+	// Step 5: Assert only ONE service exists for this gateway.
+	var services corev1.ServiceList
+	if err := kclient.List(ctx, &services,
+		client.MatchingLabels{"gateway.networking.k8s.io/gateway-name": gatewayName},
+		client.InNamespace(operatorcontroller.DefaultOperandNamespace),
+	); err != nil {
+		t.Fatalf("Failed to list services for gateway %s: %v", gatewayName, err)
+	}
+	require.Len(t, services.Items, 1, "Istio must not create a duplicate service")
+
+	// Step 6: Update Gateway to add a third listener on port 8080.
+	t.Logf("Adding third listener (port 8080) to gateway %s...", gatewayName)
+	gwNSName := types.NamespacedName{Name: gatewayName, Namespace: operatorcontroller.DefaultOperandNamespace}
+	if err := updateGatewaySpecWithRetry(t, gwNSName, 3*time.Minute, func(spec *gatewayapiv1.GatewaySpec) {
+		spec.Listeners = append(spec.Listeners, gatewayapiv1.Listener{
+			Name:     "http-8080",
+			Hostname: ptr.To(gatewayapiv1.Hostname(fmt.Sprintf("*.manual-lb-8080.%s", dnsConfig.Spec.BaseDomain))),
+			Port:     8080,
+			Protocol: "HTTP",
+		})
+	}); err != nil {
+		t.Fatalf("Failed to add listener to gateway: %v", err)
+	}
+
+	// Step 7: Wait briefly for any Istio reconciliation, then assert unchanged.
+	time.Sleep(10 * time.Second)
+
+	if err := kclient.Get(ctx, svcKey, &svc); err != nil {
+		t.Fatalf("Failed to re-fetch service %v: %v", svcKey, err)
+	}
+
+	assert.Equal(t, corev1.ServiceTypeLoadBalancer, svc.Spec.Type, "Service type must remain LoadBalancer after adding listener")
+	assert.Equal(t, corev1.ServiceExternalTrafficPolicyLocal, svc.Spec.ExternalTrafficPolicy, "externalTrafficPolicy must remain Local after adding listener")
+	require.Len(t, svc.Spec.Ports, 2, "Istio must not add ports to manual service after adding listener")
+	for _, p := range svc.Spec.Ports {
+		assert.NotEqual(t, int32(8443), p.Port, "Port 8443 must not appear after adding listener")
+		assert.NotEqual(t, int32(8080), p.Port, "Port 8080 must not appear after adding listener")
+	}
+
+	// Step 8: Managed label toggle -- remove and re-add the managed label.
+	t.Logf("Testing managed label toggle on service %s...", svc.Name)
+	if err := kclient.Get(ctx, svcKey, &svc); err != nil {
+		t.Fatalf("Failed to get service for label toggle: %v", err)
+	}
+	delete(svc.Labels, "gateway.istio.io/managed")
+	if err := kclient.Update(ctx, &svc); err != nil {
+		t.Fatalf("Failed to remove managed label: %v", err)
+	}
+	time.Sleep(10 * time.Second)
+
+	// Re-add the managed label.
+	if err := kclient.Get(ctx, svcKey, &svc); err != nil {
+		t.Fatalf("Failed to get service after label removal: %v", err)
+	}
+	svc.Labels["gateway.istio.io/managed"] = "openshift.io-gateway-controller-v1"
+	if err := kclient.Update(ctx, &svc); err != nil {
+		t.Fatalf("Failed to re-add managed label: %v", err)
+	}
+	time.Sleep(10 * time.Second)
+
+	// Re-fetch and assert nothing changed.
+	if err := kclient.Get(ctx, svcKey, &svc); err != nil {
+		t.Fatalf("Failed to get service after label re-add: %v", err)
+	}
+	assert.Equal(t, corev1.ServiceTypeLoadBalancer, svc.Spec.Type, "Managed label toggle must not change service type")
+	assert.Equal(t, corev1.ServiceExternalTrafficPolicyLocal, svc.Spec.ExternalTrafficPolicy, "Managed label toggle must not change externalTrafficPolicy")
+	assert.Equal(t, expectedSelector, svc.Spec.Selector, "Managed label toggle must not change selector")
+	require.Len(t, svc.Spec.Ports, 2, "Managed label toggle must not trigger port modification")
+
+	t.Logf("Successfully verified manual LoadBalancer service immutability for gateway %s", gatewayName)
+}
+
+// testGatewayAPIManualClusterIPService validates that a user can pre-create a
+// ClusterIP Service before creating a Gateway, and that Istio uses the service
+// without modifying it. It also verifies that adding new listeners to the
+// Gateway does NOT add ports to the service.
+func testGatewayAPIManualClusterIPService(t *testing.T) {
+	gatewayClass, err := createGatewayClass(t, operatorcontroller.OpenShiftDefaultGatewayClassName, operatorcontroller.OpenShiftGatewayClassControllerName)
+	if err != nil {
+		t.Fatalf("Failed to create gatewayclass: %v", err)
+	}
+
+	gatewayName := "test-gateway-clusterip-service"
+	ctx := context.Background()
+
+	// Step 1: Create the Service BEFORE the Gateway.
+	t.Logf("Creating ClusterIP service %s-%s before the Gateway...", gatewayName, gatewayClass.Name)
+	service, err := createGatewayService(t, gatewayName, gatewayClass.Name,
+		operatorcontroller.DefaultOperandNamespace, corev1.ServiceTypeClusterIP,
+		defaultManualServicePorts())
+	if err != nil {
+		t.Fatalf("Failed to create service %s/%s-%s: %v", operatorcontroller.DefaultOperandNamespace, gatewayName, gatewayClass.Name, err)
+	}
+	t.Cleanup(func() {
+		if err := kclient.Delete(ctx, service); err != nil {
+			if !errors.IsNotFound(err) {
+				t.Errorf("Failed to delete service %s/%s: %v", service.Namespace, service.Name, err)
+			}
+		}
+	})
+
+	// Step 2: Create the Gateway with TWO listeners: port 80 and port 8443.
+	// The service deliberately omits port 8443.
+	gateway := &gatewayapiv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      gatewayName,
+			Namespace: operatorcontroller.DefaultOperandNamespace,
+		},
+		Spec: gatewayapiv1.GatewaySpec{
+			GatewayClassName: gatewayapiv1.ObjectName(gatewayClass.Name),
+			Listeners: []gatewayapiv1.Listener{
+				{
+					Name:     "http",
+					Hostname: ptr.To(gatewayapiv1.Hostname(fmt.Sprintf("*.manual-clusterip.%s", dnsConfig.Spec.BaseDomain))),
+					Port:     80,
+					Protocol: "HTTP",
+				},
+				{
+					Name:     "https",
+					Hostname: ptr.To(gatewayapiv1.Hostname(fmt.Sprintf("*.manual-clusterip-tls.%s", dnsConfig.Spec.BaseDomain))),
+					Port:     8443,
+					Protocol: "TLS",
+				},
+			},
+		},
+	}
+
+	t.Logf("Creating gateway %s with two listeners (port 80 and 8443)...", gatewayName)
+	if err := createWithRetryOnError(t, ctx, gateway, 2*time.Minute); err != nil {
+		t.Fatalf("Failed to create gateway %s: %v", gatewayName, err)
+	}
+	t.Cleanup(func() {
+		if err := kclient.Delete(ctx, gateway); err != nil {
+			if !errors.IsNotFound(err) {
+				t.Errorf("Failed to delete gateway %q: %v", gateway.Name, err)
+			}
+		}
+	})
+
+	// Step 3: Wait for Gateway to be Accepted and Programmed.
+	if _, err = assertGatewaySuccessful(t, operatorcontroller.DefaultOperandNamespace, gatewayName); err != nil {
+		t.Fatalf("Failed to accept/program gateway %s: %v", gatewayName, err)
+	}
+
+	// Step 4: Assert the service was NOT mutated by Istio.
+	svcKey := types.NamespacedName{Name: service.Name, Namespace: service.Namespace}
+	var svc corev1.Service
+	if err := kclient.Get(ctx, svcKey, &svc); err != nil {
+		t.Fatalf("Failed to get service %v: %v", svcKey, err)
+	}
+
+	assert.Equal(t, corev1.ServiceTypeClusterIP, svc.Spec.Type, "Service type must remain ClusterIP")
+	expectedSelector := map[string]string{
+		"gateway.networking.k8s.io/gateway-name": gatewayName,
+	}
+	assert.Equal(t, expectedSelector, svc.Spec.Selector, "Selector must not be mutated")
+	require.Len(t, svc.Spec.Ports, 2, "Service must still have exactly 2 ports (status-port + http)")
+
+	// Step 4b: Negative port assertion -- port 8443 must NOT be present.
+	for _, p := range svc.Spec.Ports {
+		assert.NotEqual(t, int32(8443), p.Port,
+			"Istio must not add omitted port 8443 to pre-created service (regression guard)")
+	}
+
+	// Step 5: Assert only ONE service exists for this gateway.
+	var services corev1.ServiceList
+	if err := kclient.List(ctx, &services,
+		client.MatchingLabels{"gateway.networking.k8s.io/gateway-name": gatewayName},
+		client.InNamespace(operatorcontroller.DefaultOperandNamespace),
+	); err != nil {
+		t.Fatalf("Failed to list services for gateway %s: %v", gatewayName, err)
+	}
+	require.Len(t, services.Items, 1, "Istio must not create a duplicate service")
+
+	// Step 6: Update Gateway to add a third listener on port 8080.
+	t.Logf("Adding third listener (port 8080) to gateway %s...", gatewayName)
+	gwNSName := types.NamespacedName{Name: gatewayName, Namespace: operatorcontroller.DefaultOperandNamespace}
+	if err := updateGatewaySpecWithRetry(t, gwNSName, 3*time.Minute, func(spec *gatewayapiv1.GatewaySpec) {
+		spec.Listeners = append(spec.Listeners, gatewayapiv1.Listener{
+			Name:     "http-8080",
+			Hostname: ptr.To(gatewayapiv1.Hostname(fmt.Sprintf("*.manual-clusterip-8080.%s", dnsConfig.Spec.BaseDomain))),
+			Port:     8080,
+			Protocol: "HTTP",
+		})
+	}); err != nil {
+		t.Fatalf("Failed to add listener to gateway: %v", err)
+	}
+
+	// Step 7: Wait briefly for any Istio reconciliation, then assert unchanged.
+	time.Sleep(10 * time.Second)
+
+	if err := kclient.Get(ctx, svcKey, &svc); err != nil {
+		t.Fatalf("Failed to re-fetch service %v: %v", svcKey, err)
+	}
+
+	assert.Equal(t, corev1.ServiceTypeClusterIP, svc.Spec.Type, "Service type must remain ClusterIP after adding listener")
+	require.Len(t, svc.Spec.Ports, 2, "Istio must not add ports to manual service after adding listener")
+	for _, p := range svc.Spec.Ports {
+		assert.NotEqual(t, int32(8443), p.Port, "Port 8443 must not appear after adding listener")
+		assert.NotEqual(t, int32(8080), p.Port, "Port 8080 must not appear after adding listener")
+	}
+
+	t.Logf("Successfully verified manual ClusterIP service immutability for gateway %s", gatewayName)
 }
 
 // ensureCRDs tests that the Gateway API custom resource definitions exist.

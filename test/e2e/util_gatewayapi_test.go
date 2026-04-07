@@ -34,7 +34,9 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/utils/ptr"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -1543,4 +1545,82 @@ func updateGatewaySpecWithRetry(t *testing.T, name types.NamespacedName, timeout
 		}
 		return true, nil
 	})
+}
+
+// createGatewayService creates a Kubernetes Service that follows the Istio
+// manual service ownership contract. The service name follows the pattern
+// <gatewayName>-<gatewayClassName>, and it always sets the gateway-name label,
+// the Istio managed label, and the gateway-name selector. When the service type
+// is LoadBalancer, externalTrafficPolicy is set to Local.
+func createGatewayService(
+	t *testing.T,
+	gatewayName string,
+	gatewayClass string,
+	namespace string,
+	svctype corev1.ServiceType,
+	ports []corev1.ServicePort,
+) (*corev1.Service, error) {
+	t.Helper()
+
+	svcDefinition := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-%s", gatewayName, gatewayClass),
+			Namespace: namespace,
+			Labels: map[string]string{
+				"gateway.networking.k8s.io/gateway-name": gatewayName,
+				"gateway.istio.io/managed":               "openshift.io-gateway-controller-v1",
+			},
+		},
+		Spec: corev1.ServiceSpec{
+			Type:  svctype,
+			Ports: ports,
+			Selector: map[string]string{
+				"gateway.networking.k8s.io/gateway-name": gatewayName,
+			},
+		},
+	}
+
+	if svctype == corev1.ServiceTypeLoadBalancer {
+		svcDefinition.Spec.ExternalTrafficPolicy = corev1.ServiceExternalTrafficPolicyLocal
+	}
+
+	svckey := client.ObjectKeyFromObject(svcDefinition)
+	if err := wait.PollUntilContextTimeout(context.TODO(), 2*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
+		if err := kclient.Create(ctx, svcDefinition); err != nil {
+			if kerrors.IsAlreadyExists(err) {
+				if err := kclient.Get(ctx, svckey, svcDefinition); err != nil {
+					t.Logf("Service %s/%s already exists, but get failed: %v; retrying...", svckey.Namespace, svckey.Name, err)
+					return false, nil
+				}
+				return true, nil
+			}
+			t.Logf("Error creating service %s/%s: %v; retrying...", svckey.Namespace, svckey.Name, err)
+			return false, nil
+		}
+		return true, nil
+	}); err != nil {
+		return nil, err
+	}
+
+	return svcDefinition, nil
+}
+
+// defaultManualServicePorts returns the standard ports used for manual service
+// e2e tests: status-port (15021/TCP) and http (80/TCP).
+func defaultManualServicePorts() []corev1.ServicePort {
+	return []corev1.ServicePort{
+		{
+			Name:        "status-port",
+			Port:        15021,
+			TargetPort:  intstr.FromInt32(15021),
+			Protocol:    corev1.ProtocolTCP,
+			AppProtocol: ptr.To("tcp"),
+		},
+		{
+			Name:       "http",
+			Port:       80,
+			TargetPort: intstr.FromInt32(80),
+			Protocol:   corev1.ProtocolTCP,
+		},
+	}
 }
