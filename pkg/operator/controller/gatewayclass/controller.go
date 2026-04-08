@@ -103,7 +103,9 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 	}
 
 	isServiceMeshSubscription := predicate.NewPredicateFuncs(func(o client.Object) bool {
-		return o.GetName() == operatorcontroller.ServiceMeshOperatorSubscriptionName().Name
+		subscription, ok := o.(*operatorsv1alpha1.Subscription)
+		return ok && subscription.Spec != nil &&
+			subscription.Spec.Package == operatorcontroller.ServiceMeshOperatorSubscriptionPackage
 	})
 	if err = c.Watch(source.Kind[client.Object](operatorCache, &operatorsv1alpha1.Subscription{},
 		reconciler.enqueueRequestForSomeGatewayClass(), isServiceMeshSubscription)); err != nil {
