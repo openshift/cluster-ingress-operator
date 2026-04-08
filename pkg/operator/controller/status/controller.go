@@ -290,13 +290,13 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 			Name:     state.CanaryNamespace.Name,
 		})
 	}
-	if state.haveOSSMSubscription {
-		subscriptionName := operatorcontroller.ServiceMeshOperatorSubscriptionName()
+
+	for _, subscription := range state.ossmSubscriptions {
 		related = append(related, configv1.ObjectReference{
 			Group:     operatorsv1alpha1.GroupName,
 			Resource:  "subscriptions",
-			Namespace: subscriptionName.Namespace,
-			Name:      subscriptionName.Name,
+			Namespace: subscription.Namespace,
+			Name:      subscription.Name,
 		})
 	}
 	if state.haveIstiosResource {
@@ -391,8 +391,6 @@ type operatorState struct {
 	unmanagedGatewayAPICRDNames string
 	// useSailLibrary indicates whether the GatewayAPIWithoutOLM feature is enabled.
 	useSailLibrary bool
-	// haveOSSMSubscription means that the subscription for OSSM 3 exists.
-	haveOSSMSubscription bool
 	// haveIstiosResource means that the "istios.sailproject.io" CRD exists.
 	haveIstiosResource bool
 	// haveGatewaysResource means that the
@@ -456,16 +454,6 @@ func (r *reconciler) getOperatorState(ctx context.Context, ingressNamespace, can
 	useSailLibrary := r.config.GatewayAPIWithoutOLMEnabled
 	state.useSailLibrary = useSailLibrary
 	if useOLM || useSailLibrary {
-		var subscription operatorsv1alpha1.Subscription
-		subscriptionName := operatorcontroller.ServiceMeshOperatorSubscriptionName()
-		if err := r.cache.Get(ctx, subscriptionName, &subscription); err != nil {
-			if !errors.IsNotFound(err) {
-				return state, fmt.Errorf("failed to get subscription %q: %v", subscriptionName, err)
-			}
-		} else {
-			state.haveOSSMSubscription = true
-
-		}
 		var (
 			crd                                  apiextensionsv1.CustomResourceDefinition
 			gatewaysResourceNamespacedName       = types.NamespacedName{Name: gatewaysResourceName}
@@ -501,7 +489,10 @@ func (r *reconciler) getOperatorState(ctx context.Context, ingressNamespace, can
 		// In Sail Library mode, we don't check for subscription conflicts, so no need to list them.
 		if useOLM {
 			subscriptionList := operatorsv1alpha1.SubscriptionList{}
-			if err := r.subscriptionCache.List(ctx, &subscriptionList); err != nil {
+			// r.client is being used here so we can scan all namespaces without relying/requiring them to be on the cache
+			if err := r.client.List(ctx, &subscriptionList, &client.ListOptions{
+				Namespace: "",
+			}); err != nil {
 				return state, fmt.Errorf("failed to get subscriptions: %w", err)
 			}
 			for _, subscription := range subscriptionList.Items {
@@ -663,7 +654,7 @@ func computeGatewayAPIInstallDegradedCondition(state operatorState) configv1.Clu
 	conflicts := []string{}
 	warnings := []string{}
 	for _, subscription := range state.ossmSubscriptions {
-		if subscription.Spec.Package == "servicemeshoperator3" {
+		if subscription.Spec.Package == operatorcontroller.ServiceMeshOperatorSubscriptionPackage {
 			if _, found := subscription.Annotations[operatorcontroller.IngressOperatorOwnedAnnotation]; found {
 				// The subscription that the ingress operator creates naturally does not conflict with itself.
 				continue
@@ -680,13 +671,13 @@ func computeGatewayAPIInstallDegradedCondition(state operatorState) configv1.Clu
 			case versionDiff < 0:
 				// Installed version is newer than expected. Gateway API install may still work if the correct Istio
 				// version is supported. Warn the user that the installed OSSM version may be incompatible.
-				warnings = append(warnings, fmt.Sprintf("Found version %s, but operator-managed Gateway API expects version %s. Operator-managed Gateway API may not work as intended.", subscription.Status.InstalledCSV, state.expectedGatewayAPIOperatorVersion))
+				warnings = append(warnings, fmt.Sprintf("Found version %s on %s/%s, but operator-managed Gateway API expects version %s. Operator-managed Gateway API may not work as intended.", subscription.Status.InstalledCSV, subscription.Namespace, subscription.Name, state.expectedGatewayAPIOperatorVersion))
 			case versionDiff > 0:
 				// Installed version is older than expected. Gateway API install will not work, since the correct Istio
 				// version won't be supported.
 				conflicts = append(conflicts, fmt.Sprintf("Installed version %s does not support operator-managed Gateway API. Install version %s or uninstall %s/%s to enable functionality.", subscription.Status.InstalledCSV, state.expectedGatewayAPIOperatorVersion, subscription.Namespace, subscription.Name))
 			case versionDiff == 0:
-				// Installed version is exactly as expected. Nothing to do.
+				warnings = append(warnings, fmt.Sprintf("Found the expected version %s on %s/%s, but the subscription is not managed by ingress operator. Operator-managed Gateway API may not work as intended.", subscription.Status.InstalledCSV, subscription.Namespace, subscription.Name))
 			}
 		} else {
 			conflicts = append(conflicts, fmt.Sprintf("Package %s from subscription %s/%s prevents enabling operator-managed Gateway API. Uninstall %s/%s to enable functionality.", subscription.Spec.Package, subscription.Namespace, subscription.Name, subscription.Namespace, subscription.Name))
