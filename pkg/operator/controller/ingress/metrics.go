@@ -139,15 +139,8 @@ func (r *reconciler) ensureMetricsIntegration(ci *operatorv1.IngressController, 
 		log.Info("created router metrics cluster role binding", "name", crb.Name)
 	}
 
-	mr := manifests.MetricsRole()
-	if err := r.client.Get(context.TODO(), types.NamespacedName{Namespace: mr.Namespace, Name: mr.Name}, mr); err != nil {
-		if !errors.IsNotFound(err) {
-			return fmt.Errorf("failed to get router metrics role %s: %v", mr.Name, err)
-		}
-		if err := r.client.Create(context.TODO(), mr); err != nil {
-			return fmt.Errorf("failed to create router metrics role %s: %v", mr.Name, err)
-		}
-		log.Info("created router metrics role", "name", mr.Name)
+	if _, _, err := r.ensureMetricsRole(); err != nil {
+		return fmt.Errorf("failed to ensure metrics role for %s: %v", ci.Name, err)
 	}
 
 	mrb := manifests.MetricsRoleBinding()
