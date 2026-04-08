@@ -65,8 +65,8 @@ type provider struct {
 func NewProvider(config Config, AzureWorkloadIdentityEnabled bool) (dns.Provider, error) {
 	var env azure.Environment
 	var err error
-	switch config.Environment {
-	case string(configv1.AzureStackCloud):
+	switch {
+	case config.ARMEndpoint != "":
 		env, err = azure.EnvironmentFromURL(config.ARMEndpoint)
 	default:
 		env, err = azure.EnvironmentFromName(config.Environment)
