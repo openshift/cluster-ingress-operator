@@ -203,7 +203,7 @@ func TestForwardedHeaderPolicyAppend(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("failed to update ingresscontroller: %v", err)
 	}
-	if err := waitForDeploymentEnvVar(t, kclient, deployment, 1*time.Minute, "ROUTER_SET_FORWARDED_HEADERS", "append"); err != nil {
+	if err := waitForDeploymentEnvVar(t, deployment, 1*time.Minute, "ROUTER_SET_FORWARDED_HEADERS", "append"); err != nil {
 		t.Fatalf("failed to observe ROUTER_SET_FORWARDED_HEADERS=append: %v", err)
 	}
 	if err := waitForDeploymentComplete(t, kclient, deployment, 3*time.Minute); err != nil {

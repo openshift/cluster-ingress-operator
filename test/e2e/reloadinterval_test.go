@@ -124,7 +124,7 @@ func TestReloadInterval(t *testing.T) {
 			t.Fatalf("failed to delete and recreate the %q deployment", controller.RouterDeploymentName(ic))
 		}
 
-		if err := waitForDeploymentEnvVar(t, kclient, deployment, 1*time.Minute, ingresscontroller.RouterReloadIntervalEnvName, testCase.expectedEnvVar); err != nil {
+		if err := waitForDeploymentEnvVar(t, deployment, 1*time.Minute, ingresscontroller.RouterReloadIntervalEnvName, testCase.expectedEnvVar); err != nil {
 			t.Fatalf("router deployment not updated with %s=%v: %v", ingresscontroller.RouterReloadIntervalEnvName, testCase.expectedEnvVar, err)
 		}
 	}
