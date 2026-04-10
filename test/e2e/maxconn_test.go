@@ -59,7 +59,7 @@ func TestTunableMaxConnectionsValidValues(t *testing.T) {
 		t.Fatalf("failed to get ingresscontroller deployment: %v", err)
 	}
 
-	if err := waitForDeploymentEnvVar(t, kclient, deployment, time.Minute, ingress.RouterMaxConnectionsEnvName, ""); err != nil {
+	if err := waitForDeploymentEnvVar(t, deployment, time.Minute, ingress.RouterMaxConnectionsEnvName, ""); err != nil {
 		t.Fatalf("expected router deployment to have %s unset: %v", ingress.RouterMaxConnectionsEnvName, err)
 	}
 
@@ -80,7 +80,7 @@ func TestTunableMaxConnectionsValidValues(t *testing.T) {
 		if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
 			t.Fatalf("failed to observe expected conditions: %v", err)
 		}
-		if err := waitForDeploymentEnvVar(t, kclient, deployment, time.Minute, ingress.RouterMaxConnectionsEnvName, testCase.expectedEnvVar); err != nil {
+		if err := waitForDeploymentEnvVar(t, deployment, time.Minute, ingress.RouterMaxConnectionsEnvName, testCase.expectedEnvVar); err != nil {
 			t.Fatalf("router deployment not updated with %s=%v: %v", ingress.RouterMaxConnectionsEnvName, testCase.expectedEnvVar, err)
 		}
 	}
@@ -125,7 +125,7 @@ func TestTunableMaxConnectionsInvalidValues(t *testing.T) {
 		t.Fatalf("failed to get ingresscontroller deployment: %v", err)
 	}
 
-	if err := waitForDeploymentEnvVar(t, kclient, deployment, time.Minute, ingress.RouterMaxConnectionsEnvName, ""); err != nil {
+	if err := waitForDeploymentEnvVar(t, deployment, time.Minute, ingress.RouterMaxConnectionsEnvName, ""); err != nil {
 		t.Fatalf("expected router deployment to have %s unset: %v", ingress.RouterMaxConnectionsEnvName, err)
 	}
 

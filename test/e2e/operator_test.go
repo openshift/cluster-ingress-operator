@@ -530,7 +530,7 @@ func TestProxyProtocolAPI(t *testing.T) {
 	if err := kclient.Get(context.TODO(), controller.RouterDeploymentName(ic), deployment); err != nil {
 		t.Fatalf("failed to get ingresscontroller deployment: %v", err)
 	}
-	if err := waitForDeploymentEnvVar(t, kclient, deployment, 1*time.Minute, "ROUTER_USE_PROXY_PROTOCOL", ""); err != nil {
+	if err := waitForDeploymentEnvVar(t, deployment, 1*time.Minute, "ROUTER_USE_PROXY_PROTOCOL", ""); err != nil {
 		t.Fatalf("expected initial deployment not to enable PROXY protocol: %v", err)
 	}
 
@@ -541,7 +541,7 @@ func TestProxyProtocolAPI(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("failed to update ingresscontroller: %v", err)
 	}
-	if err := waitForDeploymentEnvVar(t, kclient, deployment, 1*time.Minute, "ROUTER_USE_PROXY_PROTOCOL", "true"); err != nil {
+	if err := waitForDeploymentEnvVar(t, deployment, 1*time.Minute, "ROUTER_USE_PROXY_PROTOCOL", "true"); err != nil {
 		t.Fatalf("expected updated deployment to enable PROXY protocol: %v", err)
 	}
 }
@@ -3587,10 +3587,10 @@ func TestLoadBalancingAlgorithmUnsupportedConfigOverride(t *testing.T) {
 		t.Fatalf("failed to get ingresscontroller deployment: %v", err)
 	}
 	expectedAlgorithm := "random"
-	if err := waitForDeploymentEnvVar(t, kclient, deployment, 30*time.Second, "ROUTER_LOAD_BALANCE_ALGORITHM", expectedAlgorithm); err != nil {
+	if err := waitForDeploymentEnvVar(t, deployment, 30*time.Second, "ROUTER_LOAD_BALANCE_ALGORITHM", expectedAlgorithm); err != nil {
 		t.Fatalf("expected initial deployment to have ROUTER_LOAD_BALANCE_ALGORITHM=%s: %v", expectedAlgorithm, err)
 	}
-	if err := waitForDeploymentEnvVar(t, kclient, deployment, 30*time.Second, "ROUTER_TCP_BALANCE_SCHEME", "source"); err != nil {
+	if err := waitForDeploymentEnvVar(t, deployment, 30*time.Second, "ROUTER_TCP_BALANCE_SCHEME", "source"); err != nil {
 		t.Fatalf("expected initial deployment to have ROUTER_TCP_BALANCE_SCHEME=source: %v", err)
 	}
 
@@ -3602,10 +3602,10 @@ func TestLoadBalancingAlgorithmUnsupportedConfigOverride(t *testing.T) {
 		t.Fatalf("failed to update ingresscontroller: %v", err)
 	}
 	expectedAlgorithm = "leastconn"
-	if err := waitForDeploymentEnvVar(t, kclient, deployment, 1*time.Minute, "ROUTER_LOAD_BALANCE_ALGORITHM", expectedAlgorithm); err != nil {
+	if err := waitForDeploymentEnvVar(t, deployment, 1*time.Minute, "ROUTER_LOAD_BALANCE_ALGORITHM", expectedAlgorithm); err != nil {
 		t.Fatalf("expected updated deployment to have ROUTER_LOAD_BALANCE_ALGORITHM=%s: %v", expectedAlgorithm, err)
 	}
-	if err := waitForDeploymentEnvVar(t, kclient, deployment, 30*time.Second, "ROUTER_TCP_BALANCE_SCHEME", "source"); err != nil {
+	if err := waitForDeploymentEnvVar(t, deployment, 30*time.Second, "ROUTER_TCP_BALANCE_SCHEME", "source"); err != nil {
 		t.Fatalf("expected updated deployment to have ROUTER_TCP_BALANCE_SCHEME=source: %v", err)
 	}
 }
@@ -3906,7 +3906,7 @@ func TestCustomErrorpages(t *testing.T) {
 	if err := kclient.Get(context.TODO(), deploymentName, deployment); err != nil {
 		t.Fatalf("failed to get deployment %q: %v", deploymentName, err)
 	}
-	if err := waitForDeploymentEnvVar(t, kclient, deployment, 1*time.Minute, "ROUTER_ERRORFILE_503", "/var/lib/haproxy/conf/error_code_pages/error-page-503.http"); err != nil {
+	if err := waitForDeploymentEnvVar(t, deployment, 1*time.Minute, "ROUTER_ERRORFILE_503", "/var/lib/haproxy/conf/error_code_pages/error-page-503.http"); err != nil {
 		t.Fatalf("expected deployment %q to use the custom error-page file: %v", deploymentName, err)
 	}
 
@@ -4275,7 +4275,7 @@ func waitForDeploymentComplete(t *testing.T, cl client.Client, deployment *appsv
 // waitForDeploymentEnvVar waits for the provided router deployment to have the
 // specified environment variable set in the router container with the provided
 // value, or unset if the provided value is the empty string.
-func waitForDeploymentEnvVar(t *testing.T, cl client.Client, deployment *appsv1.Deployment, timeout time.Duration, name, value string) error {
+func waitForDeploymentEnvVar(t *testing.T, deployment *appsv1.Deployment, timeout time.Duration, name, value string) error {
 	t.Helper()
 
 	return waitForDeploymentFunc(t, deployment, timeout, func(deployment *appsv1.Deployment) bool {
