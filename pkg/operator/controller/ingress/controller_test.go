@@ -1920,7 +1920,7 @@ func Test_computeUpdatedInfraFromService(t *testing.T) {
 			expectError:   false,
 		},
 		{
-			description:   "gcp platform with DNSType and no LB IP in infra config, service has 1 IP",
+			description:   "gcp platform with DNSType and service has 1 IP",
 			platform:      &gcpPlatformWithDNSType,
 			ingresses:     ingresses,
 			expectedLBIPs: []configv1.IP{IngressLBIP},
@@ -1958,7 +1958,7 @@ func Test_computeUpdatedInfraFromService(t *testing.T) {
 			expectError:   false,
 		},
 		{
-			description:   "aws platform with DNSType and no LB IP in infra config, service has 1 IP",
+			description:   "aws platform with DNSType and service has 1 IP",
 			platform:      &awsPlatformWithDNSType,
 			ingresses:     awsIngresses,
 			expectedLBIPs: []configv1.IP{IngressLBIP},
@@ -1996,7 +1996,7 @@ func Test_computeUpdatedInfraFromService(t *testing.T) {
 			expectError:   false,
 		},
 		{
-			description:   "azure platform with DNSType and no LB IP in infra config, service has 1 IP",
+			description:   "azure platform with DNSType and service has 1 IP",
 			platform:      &azurePlatformWithDNSType,
 			ingresses:     ingresses,
 			expectedLBIPs: []configv1.IP{IngressLBIP},
@@ -2012,7 +2012,7 @@ func Test_computeUpdatedInfraFromService(t *testing.T) {
 			expectError:   false,
 		},
 		{
-			description:   "azure platform with DNSType and LB IP",
+			description:   "azure platform with multiple IPs",
 			platform:      &azurePlatformWithLBIP,
 			ingresses:     ingressesWithMultipleIPs,
 			expectedLBIPs: []configv1.IP{IngressLBIP, configv1.IP("10.10.10.4")},
@@ -2050,6 +2050,10 @@ func Test_computeUpdatedInfraFromService(t *testing.T) {
 				case configv1.GCPPlatformType:
 					if !reflect.DeepEqual(infraConfig.Status.PlatformStatus.GCP.CloudLoadBalancerConfig.ClusterHosted.IngressLoadBalancerIPs, tc.expectedLBIPs) {
 						t.Errorf("expected Infra CR to contain %s but found %s", tc.expectedLBIPs, infraConfig.Status.PlatformStatus.GCP.CloudLoadBalancerConfig.ClusterHosted.IngressLoadBalancerIPs)
+					}
+				case configv1.AzurePlatformType:
+					if !reflect.DeepEqual(infraConfig.Status.PlatformStatus.Azure.CloudLoadBalancerConfig.ClusterHosted.IngressLoadBalancerIPs, tc.expectedLBIPs) {
+						t.Errorf("expected Infra CR to contain %s but found %s", tc.expectedLBIPs, infraConfig.Status.PlatformStatus.Azure.CloudLoadBalancerConfig.ClusterHosted.IngressLoadBalancerIPs)
 					}
 				}
 			}
