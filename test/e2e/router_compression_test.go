@@ -129,7 +129,7 @@ func testCompressionPolicy(t *testing.T, name string, compressionPolicy operator
 
 	// Check if the MIME type environment variable has been updated
 	mimeTypes := ingress.GetMIMETypes(compressionPolicy.MimeTypes)
-	if err := waitForDeploymentEnvVar(t, kclient, deployment, 2*time.Minute, "ROUTER_COMPRESSION_MIME", strings.Join(mimeTypes, " ")); err != nil {
+	if err := waitForDeploymentEnvVar(t, deployment, 2*time.Minute, "ROUTER_COMPRESSION_MIME", strings.Join(mimeTypes, " ")); err != nil {
 		return fmt.Errorf("expected deployment to have mimeTypes %s: %v", mimeTypes, err)
 	}
 

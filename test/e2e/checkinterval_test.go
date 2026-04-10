@@ -57,7 +57,7 @@ func TestHealthCheckIntervalIngressController(t *testing.T) {
 	}
 
 	// verify the update to double the default
-	if err := waitForDeploymentEnvVar(t, kclient, routerDeployment, deploymentTimeout, ingresscontroller.RouterBackendCheckInterval, (2 * defaultHealthCheckInterval).String()); err != nil {
+	if err := waitForDeploymentEnvVar(t, routerDeployment, deploymentTimeout, ingresscontroller.RouterBackendCheckInterval, (2 * defaultHealthCheckInterval).String()); err != nil {
 		t.Fatalf("expected router deployment to set %s to %v: %v", ingresscontroller.RouterBackendCheckInterval, 2*defaultHealthCheckInterval, err)
 	}
 
@@ -71,7 +71,7 @@ func TestHealthCheckIntervalIngressController(t *testing.T) {
 	}
 
 	// when set to an unacceptable value, the env variable should not exist
-	if err := waitForDeploymentEnvVar(t, kclient, routerDeployment, deploymentTimeout, ingresscontroller.RouterBackendCheckInterval, ""); err != nil {
+	if err := waitForDeploymentEnvVar(t, routerDeployment, deploymentTimeout, ingresscontroller.RouterBackendCheckInterval, ""); err != nil {
 		t.Fatalf("expected router deployment to remove %s: %v", ingresscontroller.RouterBackendCheckInterval, err)
 	}
 }

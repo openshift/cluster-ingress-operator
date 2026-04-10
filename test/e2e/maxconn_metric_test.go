@@ -93,7 +93,7 @@ func TestMaxConnectionsMetric(t *testing.T) {
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
-	if err := waitForDeploymentEnvVar(t, kclient, deployment, 1*time.Minute, ingress.RouterMaxConnectionsEnvName, fmt.Sprintf("%d", customMaxConn)); err != nil {
+	if err := waitForDeploymentEnvVar(t, deployment, 1*time.Minute, ingress.RouterMaxConnectionsEnvName, fmt.Sprintf("%d", customMaxConn)); err != nil {
 		t.Fatalf("router deployment not updated with %s=%d: %v", ingress.RouterMaxConnectionsEnvName, customMaxConn, err)
 	}
 	if err := waitForDeploymentComplete(t, kclient, deployment, 3*time.Minute); err != nil {
