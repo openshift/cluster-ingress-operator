@@ -34,7 +34,9 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/utils/ptr"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -1543,4 +1545,111 @@ func updateGatewaySpecWithRetry(t *testing.T, name types.NamespacedName, timeout
 		}
 		return true, nil
 	})
+}
+
+// createGatewayService creates a Kubernetes Service that follows the Istio
+// manual service ownership contract. The service name follows the pattern
+// <gatewayName>-<gatewayClassName>, and it always sets the gateway-name label,
+// the Istio managed label, and the gateway-name selector. When the service type
+// is LoadBalancer, externalTrafficPolicy is set to Local.
+func createGatewayService(
+	t *testing.T,
+	gatewayName string,
+	gatewayClass string,
+	namespace string,
+	svctype corev1.ServiceType,
+	ports []corev1.ServicePort,
+) (*corev1.Service, error) {
+	t.Helper()
+
+	svcDefinition := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-%s", gatewayName, gatewayClass),
+			Namespace: namespace,
+			Labels: map[string]string{
+				"gateway.networking.k8s.io/gateway-name": gatewayName,
+			},
+		},
+		Spec: corev1.ServiceSpec{
+			Type:  svctype,
+			Ports: ports,
+			Selector: map[string]string{
+				"gateway.networking.k8s.io/gateway-name": gatewayName,
+			},
+		},
+	}
+
+	if svctype == corev1.ServiceTypeLoadBalancer {
+		svcDefinition.Spec.ExternalTrafficPolicy = corev1.ServiceExternalTrafficPolicyLocal
+	}
+
+	requestedType := svctype
+	requestedPortCount := len(ports)
+	svckey := client.ObjectKeyFromObject(svcDefinition)
+	if err := wait.PollUntilContextTimeout(context.TODO(), 2*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
+		if err := kclient.Create(ctx, svcDefinition); err != nil {
+			if kerrors.IsAlreadyExists(err) {
+				if err := kclient.Get(ctx, svckey, svcDefinition); err != nil {
+					t.Logf("Service %s/%s already exists, but get failed: %v; retrying...", svckey.Namespace, svckey.Name, err)
+					return false, nil
+				}
+				t.Logf("WARNING: Service %s/%s already exists; returning existing object (type=%s, ports=%d) without verifying it matches requested spec (type=%s, ports=%d)", svckey.Namespace, svckey.Name, svcDefinition.Spec.Type, len(svcDefinition.Spec.Ports), requestedType, requestedPortCount)
+				return true, nil
+			}
+			t.Logf("Error creating service %s/%s: %v; retrying...", svckey.Namespace, svckey.Name, err)
+			return false, nil
+		}
+		return true, nil
+	}); err != nil {
+		return nil, err
+	}
+
+	return svcDefinition, nil
+}
+
+// assertGatewayProgrammedFalse polls until the Gateway's Programmed condition
+// transitions to False. This is used after adding a listener whose port is
+// missing from the pre-created service -- Istio checks service ports against
+// listener ports and sets Programmed=False when a port is missing.
+func assertGatewayProgrammedFalse(t *testing.T, namespace, name string) error {
+	t.Helper()
+	gw := &gatewayapiv1.Gateway{}
+	nsName := types.NamespacedName{Namespace: namespace, Name: name}
+	return wait.PollUntilContextTimeout(context.Background(), 3*time.Second, 2*time.Minute, false,
+		func(ctx context.Context) (bool, error) {
+			if err := kclient.Get(ctx, nsName, gw); err != nil {
+				t.Logf("Failed to get gateway %v: %v; retrying...", nsName, err)
+				return false, nil
+			}
+			for _, condition := range gw.Status.Conditions {
+				if condition.Type == string(gatewayapiv1.GatewayConditionProgrammed) {
+					if condition.Status == metav1.ConditionFalse {
+						t.Logf("Gateway %v is Programmed=False as expected", nsName)
+						return true, nil
+					}
+				}
+			}
+			t.Logf("Gateway %v is not yet Programmed=False; retrying...", nsName)
+			return false, nil
+		})
+}
+
+// defaultManualServicePorts returns the standard ports used for manual service
+// e2e tests: status-port (15021/TCP) and http (80/TCP).
+func defaultManualServicePorts() []corev1.ServicePort {
+	return []corev1.ServicePort{
+		{
+			Name:        "status-port",
+			Port:        15021,
+			TargetPort:  intstr.FromInt32(15021),
+			Protocol:    corev1.ProtocolTCP,
+			AppProtocol: ptr.To("tcp"),
+		},
+		{
+			Name:       "http",
+			Port:       80,
+			TargetPort: intstr.FromInt32(80),
+			Protocol:   corev1.ProtocolTCP,
+		},
+	}
 }
