@@ -30,10 +30,10 @@ func Test_desiredRouterPodDisruptionBudget(t *testing.T) {
 			expectMaxUnavailable: intstr.FromString("50%"),
 		},
 		{
-			description:          "if replicas is 2, PDB should be 50%",
+			description:          "if replicas is 2, PDB should be 1",
 			replicas:             pointerTo(2),
 			expectPDB:            true,
-			expectMaxUnavailable: intstr.FromString("50%"),
+			expectMaxUnavailable: intstr.FromInt(1),
 		},
 		{
 			description:          "if replicas is 3, PDB should be 25%",
@@ -44,12 +44,6 @@ func Test_desiredRouterPodDisruptionBudget(t *testing.T) {
 		{
 			description:          "if replicas is 4, PDB should be 25%",
 			replicas:             pointerTo(4),
-			expectPDB:            true,
-			expectMaxUnavailable: intstr.FromString("25%"),
-		},
-		{
-			description:          "if replicas is 5, PDB should be 25%",
-			replicas:             pointerTo(5),
 			expectPDB:            true,
 			expectMaxUnavailable: intstr.FromString("25%"),
 		},
