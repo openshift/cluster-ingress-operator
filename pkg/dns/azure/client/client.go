@@ -107,6 +107,9 @@ func newRecordSetClient(config Config, credential azcore.TokenCredential) (*reco
 	options := &arm.ClientOptions{
 		ClientOptions: policy.ClientOptions{
 			Cloud: cloudConfig,
+			Telemetry: policy.TelemetryOptions{
+				ApplicationID: "[cio-useragent]",
+			},
 		},
 	}
 
@@ -151,6 +154,9 @@ func newPrivateRecordSetClient(config Config, credential azcore.TokenCredential)
 	options := &arm.ClientOptions{
 		ClientOptions: policy.ClientOptions{
 			Cloud: cloudConfig,
+			Telemetry: policy.TelemetryOptions{
+				ApplicationID: "[cio-useragent]",
+			},
 		},
 	}
 

@@ -8,6 +8,7 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/cloud"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/go-autorest/autorest/azure"
 	"github.com/Azure/msi-dataplane/pkg/dataplane"
@@ -58,6 +59,9 @@ func getAzureCredentials(config Config) (azcore.TokenCredential, error) {
 	if userAssignedIdentityCredentialsFilePath != "" {
 		options := azcore.ClientOptions{
 			Cloud: cloudConfig,
+			Telemetry: policy.TelemetryOptions{
+				ApplicationID: "[cio-useragent]",
+			},
 		}
 		var err error
 		cred, err = dataplane.NewUserAssignedIdentityCredential(context.Background(), userAssignedIdentityCredentialsFilePath, dataplane.WithClientOpts(options))
@@ -68,6 +72,9 @@ func getAzureCredentials(config Config) (azcore.TokenCredential, error) {
 		options := azidentity.WorkloadIdentityCredentialOptions{
 			ClientOptions: azcore.ClientOptions{
 				Cloud: cloudConfig,
+				Telemetry: policy.TelemetryOptions{
+					ApplicationID: "[cio-useragent]",
+				},
 			},
 			ClientID:      config.ClientID,
 			TenantID:      config.TenantID,
@@ -82,6 +89,9 @@ func getAzureCredentials(config Config) (azcore.TokenCredential, error) {
 		options := azidentity.ClientSecretCredentialOptions{
 			ClientOptions: azcore.ClientOptions{
 				Cloud: cloudConfig,
+				Telemetry: policy.TelemetryOptions{
+					ApplicationID: "[cio-useragent]",
+				},
 			},
 		}
 		var err error
