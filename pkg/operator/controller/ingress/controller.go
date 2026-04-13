@@ -1,11 +1,13 @@
 package ingress
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net"
 	"regexp"
 	"regexp/syntax"
+	"slices"
 	"strings"
 	"time"
 
@@ -162,6 +164,12 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	// Watch for changes to infrastructure config to update user defined tags.
 	if err := c.Watch(source.Kind[client.Object](operatorCache, &configv1.Infrastructure{}, handler.EnqueueRequestsFromMapFunc(reconciler.ingressConfigToIngressController),
 		predicate.NewPredicateFuncs(hasName(clusterInfrastructureName)),
+	)); err != nil {
+		return nil, err
+	}
+	// Watch for changes to machine-config ClusterOperator to know when MCO is ready.
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &configv1.ClusterOperator{}, handler.EnqueueRequestsFromMapFunc(reconciler.ingressConfigToIngressController),
+		predicate.NewPredicateFuncs(hasName("machine-config")),
 	)); err != nil {
 		return nil, err
 	}
@@ -1485,6 +1493,20 @@ func isMCOReady(ctx context.Context, client client.Client) bool {
 	return availableCondition && !progressingCondition
 }
 
+// sortAndConvertIPs sorts a slice of net.IP addresses and converts them to []configv1.IP
+func sortAndConvertIPs(ips []net.IP) []configv1.IP {
+	slices.SortFunc(ips, func(a, b net.IP) int {
+		return bytes.Compare(a, b)
+	})
+	result := make([]configv1.IP, 0, len(ips))
+	for _, ip := range ips {
+		if ip != nil {
+			result = append(result, configv1.IP(ip.String()))
+		}
+	}
+	return result
+}
+
 // computeUpdatedInfraFromService updates PlatformStatus for AWS, Azure and GCP with Ingress LB IPs when the DNSType is `ClusterHosted`.
 func computeUpdatedInfraFromService(service *corev1.Service, infraConfig *configv1.Infrastructure) (bool, error) {
 	platformStatus := infraConfig.Status.PlatformStatus
@@ -1508,20 +1530,16 @@ func computeUpdatedInfraFromService(service *corev1.Service, infraConfig *config
 				platformStatus.AWS.CloudLoadBalancerConfig.ClusterHosted = &configv1.CloudLoadBalancerIPs{}
 			}
 			ingresses := service.Status.LoadBalancer.Ingress
-			ingressLBIPs := []configv1.IP{}
+			latestIngressIPs := []net.IP{}
 			for _, ingress := range ingresses {
 				// Resolving the LoadBalancer's IPs is not ideal because they may change, but currently there is no better alternative.
 				ingressIPs, err := net.LookupIP(ingress.Hostname)
 				if err != nil {
 					return false, fmt.Errorf("failed to lookup IP addresses corresponding to AWS LB hostname: %w", err)
 				}
-
-				if len(ingressIPs) > 0 {
-					for _, ingressIP := range ingressIPs {
-						ingressLBIPs = append(ingressLBIPs, configv1.IP(ingressIP.String()))
-					}
-				}
+				latestIngressIPs = append(latestIngressIPs, ingressIPs...)
 			}
+			ingressLBIPs := sortAndConvertIPs(latestIngressIPs)
 			if !cmp.Equal(platformStatus.AWS.CloudLoadBalancerConfig.ClusterHosted.IngressLoadBalancerIPs, ingressLBIPs, ipCmpOpts...) {
 				platformStatus.AWS.CloudLoadBalancerConfig.ClusterHosted.IngressLoadBalancerIPs = ingressLBIPs
 				log.Info("Updating AWS Infrastructure status with Ingress Load Balancer IPs")
@@ -1535,12 +1553,17 @@ func computeUpdatedInfraFromService(service *corev1.Service, infraConfig *config
 				platformStatus.Azure.CloudLoadBalancerConfig.ClusterHosted = &configv1.CloudLoadBalancerIPs{}
 			}
 			ingresses := service.Status.LoadBalancer.Ingress
-			ingressLBIPs := []configv1.IP{}
+			latestIngressIPs := []net.IP{}
 			for _, ingress := range ingresses {
 				if len(ingress.IP) > 0 {
-					ingressLBIPs = append(ingressLBIPs, configv1.IP(ingress.IP))
+					if ip := net.ParseIP(ingress.IP); ip != nil {
+						latestIngressIPs = append(latestIngressIPs, ip)
+					} else {
+						log.Info("skipping invalid IP address", "ip", ingress.IP, "platform", "Azure")
+					}
 				}
 			}
+			ingressLBIPs := sortAndConvertIPs(latestIngressIPs)
 			if !cmp.Equal(platformStatus.Azure.CloudLoadBalancerConfig.ClusterHosted.IngressLoadBalancerIPs, ingressLBIPs, ipCmpOpts...) {
 				platformStatus.Azure.CloudLoadBalancerConfig.ClusterHosted.IngressLoadBalancerIPs = ingressLBIPs
 				log.Info("Updating Azure Infrastructure status with Ingress Load Balancer IPs")
@@ -1554,12 +1577,17 @@ func computeUpdatedInfraFromService(service *corev1.Service, infraConfig *config
 				platformStatus.GCP.CloudLoadBalancerConfig.ClusterHosted = &configv1.CloudLoadBalancerIPs{}
 			}
 			ingresses := service.Status.LoadBalancer.Ingress
-			ingressLBIPs := []configv1.IP{}
+			latestIngressIPs := []net.IP{}
 			for _, ingress := range ingresses {
 				if len(ingress.IP) > 0 {
-					ingressLBIPs = append(ingressLBIPs, configv1.IP(ingress.IP))
+					if ip := net.ParseIP(ingress.IP); ip != nil {
+						latestIngressIPs = append(latestIngressIPs, ip)
+					} else {
+						log.Info("skipping invalid IP address", "ip", ingress.IP, "platform", "GCP")
+					}
 				}
 			}
+			ingressLBIPs := sortAndConvertIPs(latestIngressIPs)
 			if !cmp.Equal(platformStatus.GCP.CloudLoadBalancerConfig.ClusterHosted.IngressLoadBalancerIPs, ingressLBIPs, ipCmpOpts...) {
 				platformStatus.GCP.CloudLoadBalancerConfig.ClusterHosted.IngressLoadBalancerIPs = ingressLBIPs
 				log.Info("Updating GCP Infrastructure status with Ingress Load Balancer IPs")
