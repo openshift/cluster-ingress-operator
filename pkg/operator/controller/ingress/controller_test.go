@@ -1868,12 +1868,44 @@ func Test_computeUpdatedInfraFromService(t *testing.T) {
 				},
 			},
 		}
+		gcpPlatformWithMultipleLBIPs = configv1.PlatformStatus{
+			Type: configv1.GCPPlatformType,
+			GCP: &configv1.GCPPlatformStatus{
+				CloudLoadBalancerConfig: &configv1.CloudLoadBalancerConfig{
+					DNSType: configv1.ClusterHostedDNSType,
+					ClusterHosted: &configv1.CloudLoadBalancerIPs{
+						IngressLoadBalancerIPs: []configv1.IP{
+							configv1.IP("10.10.10.4"),
+							IngressLBIP,
+						},
+					},
+				},
+			},
+		}
+		azurePlatformWithMultipleLBIPs = configv1.PlatformStatus{
+			Type: configv1.AzurePlatformType,
+			Azure: &configv1.AzurePlatformStatus{
+				CloudLoadBalancerConfig: &configv1.CloudLoadBalancerConfig{
+					DNSType: configv1.ClusterHostedDNSType,
+					ClusterHosted: &configv1.CloudLoadBalancerIPs{
+						IngressLoadBalancerIPs: []configv1.IP{
+							configv1.IP("10.10.10.4"),
+							IngressLBIP,
+						},
+					},
+				},
+			},
+		}
 		ingresses = []corev1.LoadBalancerIngress{
 			{IP: "196.78.125.4"},
 		}
 		ingressesWithMultipleIPs = []corev1.LoadBalancerIngress{
 			{IP: "196.78.125.4"},
 			{IP: "10.10.10.4"},
+		}
+		ingressesWithMultipleIPsReversed = []corev1.LoadBalancerIngress{
+			{IP: "10.10.10.4"},
+			{IP: "196.78.125.4"},
 		}
 		// Hostname is intentionally assigned an IP address for unit testing purposes since net.LookupIP simply returns the provided IP.
 		awsIngresses = []corev1.LoadBalancerIngress{
@@ -1939,8 +1971,16 @@ func Test_computeUpdatedInfraFromService(t *testing.T) {
 			description:   "gcp platform with DNSType and LB IP",
 			platform:      &gcpPlatformWithLBIP,
 			ingresses:     ingressesWithMultipleIPs,
-			expectedLBIPs: []configv1.IP{IngressLBIP, configv1.IP("10.10.10.4")},
+			expectedLBIPs: []configv1.IP{configv1.IP("10.10.10.4"), IngressLBIP},
 			expectUpdated: true,
+			expectError:   false,
+		},
+		{
+			description:   "gcp platform with multiple IPs in different order should not update",
+			platform:      &gcpPlatformWithMultipleLBIPs,
+			ingresses:     ingressesWithMultipleIPsReversed,
+			expectedLBIPs: []configv1.IP{configv1.IP("10.10.10.4"), IngressLBIP},
+			expectUpdated: false,
 			expectError:   false,
 		},
 		{
@@ -2015,8 +2055,16 @@ func Test_computeUpdatedInfraFromService(t *testing.T) {
 			description:   "azure platform with multiple IPs",
 			platform:      &azurePlatformWithLBIP,
 			ingresses:     ingressesWithMultipleIPs,
-			expectedLBIPs: []configv1.IP{IngressLBIP, configv1.IP("10.10.10.4")},
+			expectedLBIPs: []configv1.IP{configv1.IP("10.10.10.4"), IngressLBIP},
 			expectUpdated: true,
+			expectError:   false,
+		},
+		{
+			description:   "azure platform with multiple IPs in different order should not update",
+			platform:      &azurePlatformWithMultipleLBIPs,
+			ingresses:     ingressesWithMultipleIPsReversed,
+			expectedLBIPs: []configv1.IP{configv1.IP("10.10.10.4"), IngressLBIP},
+			expectUpdated: false,
 			expectError:   false,
 		},
 	}
