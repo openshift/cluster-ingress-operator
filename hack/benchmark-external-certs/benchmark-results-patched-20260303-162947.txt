@@ -1,0 +1,7 @@
+mode=patched
+image=quay.io/btofel/router:patched
+pod=router-default-7ff6c6557f-z7724
+secret_count=100
+secret_load_seconds=0.07
+pod_to_ready_seconds=110
+timestamp=2026-03-03T21:29:47Z
