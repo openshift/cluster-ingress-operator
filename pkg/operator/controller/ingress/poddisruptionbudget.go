@@ -15,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/utils/ptr"
 )
 
 // ensureRouterPodDisruptionBudget ensures the pod disruption budget exists for
@@ -68,14 +69,23 @@ func desiredRouterPodDisruptionBudget(ic *operatorv1.IngressController, deployme
 		return false, nil, nil
 	}
 
-	maxUnavailable := "50%"
+	// OCPBUGS-25739 - For 2-replica ingress controllers, use an integer MaxUnavailable
+	// of 1 instead of "50%" to provide a deterministic value regardless of topology,
+	// avoiding any dependency on percent-based rounding in the disruption controller.
+	//
 	// OCPBUGS-7546 - make sure number of available pods is always 2 when there are only 3 replicas.
-	if ic.Spec.Replicas != nil && int(*ic.Spec.Replicas) >= 3 {
-		maxUnavailable = "25%"
+	var maxUnavailable intstr.IntOrString
+	replicas := ptr.Deref(ic.Spec.Replicas, 0)
+	switch {
+	case replicas == 2:
+		maxUnavailable = intstr.FromInt(1)
+	case replicas >= 3:
+		maxUnavailable = intstr.FromString("25%")
+	default:
+		maxUnavailable = intstr.FromString("50%")
 	}
 
 	name := controller.RouterPodDisruptionBudgetName(ic)
-	pointerTo := func(ios intstr.IntOrString) *intstr.IntOrString { return &ios }
 	pdb := policyv1.PodDisruptionBudget{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name.Name,
@@ -84,7 +94,7 @@ func desiredRouterPodDisruptionBudget(ic *operatorv1.IngressController, deployme
 		Spec: policyv1.PodDisruptionBudgetSpec{
 			// The disruption controller rounds MaxUnavailable up.
 			// https://github.com/kubernetes/kubernetes/blob/65dc445aa2d581b4fa829258e46e4faf44e999b6/pkg/controller/disruption/disruption.go#L539
-			MaxUnavailable: pointerTo(intstr.FromString(maxUnavailable)),
+			MaxUnavailable: &maxUnavailable,
 			Selector:       controller.IngressControllerDeploymentPodSelector(ic),
 		},
 	}
