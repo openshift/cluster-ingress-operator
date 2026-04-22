@@ -103,7 +103,9 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 	}
 
 	isServiceMeshSubscription := predicate.NewPredicateFuncs(func(o client.Object) bool {
-		return o.GetName() == operatorcontroller.ServiceMeshOperatorSubscriptionName().Name
+		subscription, ok := o.(*operatorsv1alpha1.Subscription)
+		return ok && subscription.Spec != nil &&
+			subscription.Spec.Package == operatorcontroller.ServiceMeshOperatorSubscriptionPackage
 	})
 	if err = c.Watch(source.Kind[client.Object](operatorCache, &operatorsv1alpha1.Subscription{},
 		reconciler.enqueueRequestForSomeGatewayClass(), isServiceMeshSubscription)); err != nil {
@@ -248,12 +250,21 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	if v, ok := gatewayclass.Annotations[subscriptionVersionOverrideAnnotationKey]; ok {
 		ossmVersion = v
 	}
-	if _, _, err := r.ensureServiceMeshOperatorSubscription(ctx, ossmCatalog, ossmChannel, ossmVersion); err != nil {
+
+	_, subscription, err := r.ensureServiceMeshOperatorSubscription(ctx, ossmCatalog, ossmChannel, ossmVersion)
+	if err != nil {
 		errs = append(errs, fmt.Errorf("failed to ensure ServiceMeshOperatorSubscription: %w", err))
+	} else if subscription == nil {
+		log.Info("No OSSM subscription available; skipping install plan enforcement")
+	} else if _, ok := subscription.Annotations[operatorcontroller.IngressOperatorOwnedAnnotation]; !ok {
+		log.Info("Found an existing OSSM subscription with another owner; installation skipped",
+			"namespace", subscription.Namespace, "name", subscription.Name)
+	} else {
+		if _, _, err := r.ensureServiceMeshOperatorInstallPlan(ctx, ossmVersion); err != nil {
+			errs = append(errs, err)
+		}
 	}
-	if _, _, err := r.ensureServiceMeshOperatorInstallPlan(ctx, ossmVersion); err != nil {
-		errs = append(errs, err)
-	}
+
 	istioVersion := r.config.IstioVersion
 	if v, ok := gatewayclass.Annotations[istioVersionOverrideAnnotationKey]; ok {
 		istioVersion = v
