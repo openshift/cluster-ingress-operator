@@ -78,6 +78,10 @@ const (
 	IstioRevLabelKey = "istio.io/rev"
 
 	GatewayClassIndexFieldName = "gatewayclassController"
+
+	// ServiceMeshOperatorSubscriptionPackage represents the name of the package
+	// on a OLM subscription that installs OSSM
+	ServiceMeshOperatorSubscriptionPackage = "servicemeshoperator3"
 )
 
 // IngressClusterOperatorName returns the namespaced name of the ClusterOperator
