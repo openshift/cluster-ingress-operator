@@ -660,6 +660,32 @@ func updateIngressConfigStatusWithRetryOnConflict(t *testing.T, name types.Names
 	})
 }
 
+// updateIngressControllerStatusWithRetryOnConflict gets a fresh copy
+// of the named IngressController, calls mutateStatusFn() where
+// callers can modify fields of the status, and then updates the
+// IngressController's status subresource. If there is a conflict error
+// on update then the complete operation of get, mutate, and update is
+// retried until timeout is reached.
+func updateIngressControllerStatusWithRetryOnConflict(t *testing.T, name types.NamespacedName, timeout time.Duration, mutateStatusFn func(*operatorv1.IngressControllerStatus)) error {
+	t.Helper()
+	ic := operatorv1.IngressController{}
+	return wait.PollUntilContextTimeout(context.Background(), 1*time.Second, timeout, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, name, &ic); err != nil {
+			t.Logf("error getting ingress controller %v: %v, retrying...", name, err)
+			return false, nil
+		}
+		mutateStatusFn(&ic.Status)
+		if err := kclient.Status().Update(ctx, &ic); err != nil {
+			if errors.IsConflict(err) {
+				t.Logf("conflict when updating ingress controller status %v: %v, retrying...", name, err)
+				return false, nil
+			}
+			return false, err
+		}
+		return true, nil
+	})
+}
+
 // updateAndVerifyInfrastructureConfigWithRetry gets a fresh copy
 // of the named infrastructure object, calls updateSpecFn() where
 // callers can modify fields of the spec, and then updates the infrastructure

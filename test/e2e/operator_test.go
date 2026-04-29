@@ -1678,6 +1678,301 @@ func TestAWSLBTypeDefaulting(t *testing.T) {
 	assertServiceAnnotation(t, controller.LoadBalancerServiceName(nlbIC), ingresscontroller.AWSLBTypeAnnotation, ingresscontroller.AWSNLBAnnotation, true)
 }
 
+// TestAWSLBTypeTransitionSafety verifies that changing the LB type on an
+// IngressController does not break traffic or stomp proxy protocol annotations
+// while the service is in a pending transition state (before the service is
+// deleted and recreated).
+func TestAWSLBTypeTransitionSafety(t *testing.T) {
+	t.Parallel()
+	if infraConfig.Status.PlatformStatus == nil {
+		t.Skip("test skipped on nil platform")
+	}
+	if infraConfig.Status.PlatformStatus.Type != configv1.AWSPlatformType {
+		t.Skipf("test skipped on platform %q", infraConfig.Status.PlatformStatus.Type)
+	}
+
+	awsLBProxyProtocolAnnotation := "service.beta.kubernetes.io/aws-load-balancer-proxy-protocol"
+
+	testCases := []struct {
+		name                  string
+		initialLBType         operatorv1.AWSLoadBalancerType
+		configureProvider     func(aws *operatorv1.AWSLoadBalancerParameters)
+		targetLBType          operatorv1.AWSLoadBalancerType
+		mutateWhilePending    func(t *testing.T, name types.NamespacedName)
+		verifyWhilePending    func(t *testing.T, ic *operatorv1.IngressController)
+		verifyAfterTransition func(t *testing.T, ic *operatorv1.IngressController)
+	}{
+		{
+			name:          "CLB to NLB preserves CLB proxy annotation during transition",
+			initialLBType: operatorv1.AWSClassicLoadBalancer,
+			targetLBType:  operatorv1.AWSNetworkLoadBalancer,
+			verifyWhilePending: func(t *testing.T, ic *operatorv1.IngressController) {
+				t.Helper()
+				// The CLB proxy protocol annotation should still be present
+				// on the old CLB service while the type change is pending.
+				waitForLBAnnotation(t, ic, awsLBProxyProtocolAnnotation, true, "*")
+				// The NLB type annotation should NOT be on the service yet
+				// (it's still a CLB).
+				waitForLBAnnotation(t, ic, ingresscontroller.AWSLBTypeAnnotation, false, "")
+			},
+			verifyAfterTransition: func(t *testing.T, ic *operatorv1.IngressController) {
+				t.Helper()
+				// After transition to NLB with defaulted PROXY protocol,
+				// the target-group-attributes annotation should be set and
+				// the CLB proxy annotation should be absent.
+				waitForLBAnnotation(t, ic, awsLBTargetGroupAttributesAnnotation, true, "preserve_client_ip.enabled=false,proxy_protocol_v2.enabled=true")
+				waitForLBAnnotation(t, ic, awsLBProxyProtocolAnnotation, false, "")
+			},
+		},
+		{
+			name:          "NLB PROXY to CLB preserves NLB target-group-attrs during transition",
+			initialLBType: operatorv1.AWSNetworkLoadBalancer,
+			configureProvider: func(aws *operatorv1.AWSLoadBalancerParameters) {
+				aws.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{
+					Protocol: operatorv1.NLBProtocolProxy,
+				}
+			},
+			targetLBType: operatorv1.AWSClassicLoadBalancer,
+			verifyWhilePending: func(t *testing.T, ic *operatorv1.IngressController) {
+				t.Helper()
+				// The NLB target-group-attributes annotation should still be present
+				// on the old NLB service while the type change is pending.
+				waitForLBAnnotation(t, ic, awsLBTargetGroupAttributesAnnotation, true, "preserve_client_ip.enabled=false,proxy_protocol_v2.enabled=true")
+				// The NLB type annotation should still be on the service.
+				waitForLBAnnotation(t, ic, ingresscontroller.AWSLBTypeAnnotation, true, ingresscontroller.AWSNLBAnnotation)
+			},
+			verifyAfterTransition: func(t *testing.T, ic *operatorv1.IngressController) {
+				t.Helper()
+				// After transition to CLB, the CLB proxy annotation should be
+				// set and the NLB target-group-attributes should be absent.
+				waitForLBAnnotation(t, ic, awsLBProxyProtocolAnnotation, true, "*")
+				waitForLBAnnotation(t, ic, ingresscontroller.AWSLBTypeAnnotation, false, "")
+			},
+		},
+		{
+			name:          "NLB TCP to CLB preserves NLB target-group-attrs during transition",
+			initialLBType: operatorv1.AWSNetworkLoadBalancer,
+			configureProvider: func(aws *operatorv1.AWSLoadBalancerParameters) {
+				aws.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{
+					Protocol: operatorv1.NLBProtocolTCP,
+				}
+			},
+			targetLBType: operatorv1.AWSClassicLoadBalancer,
+			verifyWhilePending: func(t *testing.T, ic *operatorv1.IngressController) {
+				t.Helper()
+				// The NLB target-group-attributes annotation should still have TCP
+				// values on the old NLB service while the type change is pending.
+				waitForLBAnnotation(t, ic, awsLBTargetGroupAttributesAnnotation, true, "preserve_client_ip.enabled=true,proxy_protocol_v2.enabled=false")
+				// The NLB type annotation should still be on the service.
+				waitForLBAnnotation(t, ic, ingresscontroller.AWSLBTypeAnnotation, true, ingresscontroller.AWSNLBAnnotation)
+			},
+			verifyAfterTransition: func(t *testing.T, ic *operatorv1.IngressController) {
+				t.Helper()
+				// After transition to CLB, the CLB proxy annotation should be
+				// set and the NLB target-group-attributes should be absent.
+				waitForLBAnnotation(t, ic, awsLBProxyProtocolAnnotation, true, "*")
+				waitForLBAnnotation(t, ic, ingresscontroller.AWSLBTypeAnnotation, false, "")
+			},
+		},
+		{
+			name:          "NLB PROXY to CLB with protocol change while pending",
+			initialLBType: operatorv1.AWSNetworkLoadBalancer,
+			configureProvider: func(aws *operatorv1.AWSLoadBalancerParameters) {
+				aws.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{
+					Protocol: operatorv1.NLBProtocolProxy,
+				}
+			},
+			targetLBType: operatorv1.AWSClassicLoadBalancer,
+			mutateWhilePending: func(t *testing.T, name types.NamespacedName) {
+				t.Helper()
+				// Change the NLB protocol from PROXY to TCP while the LB type
+				// change to CLB is pending. The old NLB service should be unaffected.
+				t.Logf("changing NLB protocol to TCP while LB type change is pending")
+				if err := updateIngressControllerWithRetryOnConflict(t, name, 5*time.Minute, func(ic *operatorv1.IngressController) {
+					if ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters == nil {
+						ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{}
+					}
+					ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters.Protocol = operatorv1.NLBProtocolTCP
+				}); err != nil {
+					t.Fatalf("failed to change NLB protocol while pending: %v", err)
+				}
+			},
+			verifyWhilePending: func(t *testing.T, ic *operatorv1.IngressController) {
+				t.Helper()
+				// The NLB target-group-attributes annotation should still have PROXY
+				// values on the old NLB service (the protocol change shouldn't affect
+				// the still-live NLB).
+				waitForLBAnnotation(t, ic, awsLBTargetGroupAttributesAnnotation, true, "preserve_client_ip.enabled=false,proxy_protocol_v2.enabled=true")
+			},
+			verifyAfterTransition: func(t *testing.T, ic *operatorv1.IngressController) {
+				t.Helper()
+				// After transition to CLB, the CLB proxy annotation should be set.
+				waitForLBAnnotation(t, ic, awsLBProxyProtocolAnnotation, true, "*")
+			},
+		},
+		{
+			name:          "CLB to NLB with protocol set to TCP while pending",
+			initialLBType: operatorv1.AWSClassicLoadBalancer,
+			targetLBType:  operatorv1.AWSNetworkLoadBalancer,
+			mutateWhilePending: func(t *testing.T, name types.NamespacedName) {
+				t.Helper()
+				// Set NLB protocol to TCP while the CLB→NLB type change is
+				// pending. The new NLB should use TCP, not the defaulted PROXY.
+				t.Logf("setting NLB protocol to TCP while LB type change is pending")
+				if err := updateIngressControllerWithRetryOnConflict(t, name, 5*time.Minute, func(ic *operatorv1.IngressController) {
+					if ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters == nil {
+						ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{}
+					}
+					ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters.Protocol = operatorv1.NLBProtocolTCP
+				}); err != nil {
+					t.Fatalf("failed to set NLB protocol while pending: %v", err)
+				}
+			},
+			verifyWhilePending: func(t *testing.T, ic *operatorv1.IngressController) {
+				t.Helper()
+				// The old CLB service should still have its proxy annotation.
+				waitForLBAnnotation(t, ic, awsLBProxyProtocolAnnotation, true, "*")
+			},
+			verifyAfterTransition: func(t *testing.T, ic *operatorv1.IngressController) {
+				t.Helper()
+				// After transition to NLB, the target-group-attributes should
+				// reflect TCP (client IP preserved, no proxy protocol), not
+				// the defaulted PROXY values.
+				waitForLBAnnotation(t, ic, awsLBTargetGroupAttributesAnnotation, true, "preserve_client_ip.enabled=true,proxy_protocol_v2.enabled=false")
+				waitForLBAnnotation(t, ic, awsLBProxyProtocolAnnotation, false, "")
+			},
+		},
+		{
+			name:          "NLB TCP to CLB with protocol change to PROXY while pending",
+			initialLBType: operatorv1.AWSNetworkLoadBalancer,
+			configureProvider: func(aws *operatorv1.AWSLoadBalancerParameters) {
+				aws.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{
+					Protocol: operatorv1.NLBProtocolTCP,
+				}
+			},
+			targetLBType: operatorv1.AWSClassicLoadBalancer,
+			mutateWhilePending: func(t *testing.T, name types.NamespacedName) {
+				t.Helper()
+				// Change the NLB protocol from TCP to PROXY while the LB type
+				// change to CLB is pending. The old NLB service should be unaffected.
+				t.Logf("changing NLB protocol to PROXY while LB type change is pending")
+				if err := updateIngressControllerWithRetryOnConflict(t, name, 5*time.Minute, func(ic *operatorv1.IngressController) {
+					if ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters == nil {
+						ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{}
+					}
+					ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters.Protocol = operatorv1.NLBProtocolProxy
+				}); err != nil {
+					t.Fatalf("failed to change NLB protocol while pending: %v", err)
+				}
+			},
+			verifyWhilePending: func(t *testing.T, ic *operatorv1.IngressController) {
+				t.Helper()
+				// The NLB target-group-attributes annotation should still have TCP
+				// values on the old NLB service (the protocol change shouldn't affect
+				// the still-live NLB).
+				waitForLBAnnotation(t, ic, awsLBTargetGroupAttributesAnnotation, true, "preserve_client_ip.enabled=true,proxy_protocol_v2.enabled=false")
+			},
+			verifyAfterTransition: func(t *testing.T, ic *operatorv1.IngressController) {
+				t.Helper()
+				// After transition to CLB, the CLB proxy annotation should be set.
+				waitForLBAnnotation(t, ic, awsLBProxyProtocolAnnotation, true, "*")
+			},
+		},
+	}
+
+	for i, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			icName := fmt.Sprintf("lb-trans-%d", i)
+			name := types.NamespacedName{Namespace: operatorNamespace, Name: icName}
+			domain := name.Name + "." + dnsConfig.Spec.BaseDomain
+			ic := newLoadBalancerController(name, domain)
+
+			// Configure initial LB type.
+			awsParams := &operatorv1.AWSLoadBalancerParameters{Type: tc.initialLBType}
+			if tc.configureProvider != nil {
+				tc.configureProvider(awsParams)
+			}
+			ic.Spec.EndpointPublishingStrategy.LoadBalancer = &operatorv1.LoadBalancerStrategy{
+				Scope:               operatorv1.ExternalLoadBalancer,
+				DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
+				ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+					Type: operatorv1.AWSLoadBalancerProvider,
+					AWS:  awsParams,
+				},
+			}
+
+			t.Logf("creating ingresscontroller %q with LB type %s", ic.Name, tc.initialLBType)
+			if err := kclient.Create(context.TODO(), ic); err != nil {
+				t.Fatalf("failed to create ingresscontroller: %v", err)
+			}
+			t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
+
+			if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, availableNotProgressingConditionsForIngressControllerWithLoadBalancer...); err != nil {
+				t.Fatalf("failed to observe expected conditions: %v", err)
+			}
+
+			// Verify initial connectivity.
+			elbHostname := getIngressControllerLBAddress(t, ic)
+			namespace := createNamespace(t, names.SimpleNameGenerator.GenerateName(icName+"-"))
+			testPodName := types.NamespacedName{Name: icName + "-verify", Namespace: namespace.Name}
+			testHostname := "apps." + ic.Spec.Domain
+			t.Logf("verifying initial connectivity for %q", ic.Name)
+			verifyExternalIngressController(t, testPodName, testHostname, elbHostname)
+
+			// Change the LB type without auto-delete to enter the pending
+			// transition state.
+			t.Logf("changing LB type from %s to %s (no auto-delete)", tc.initialLBType, tc.targetLBType)
+			if err := updateIngressControllerWithRetryOnConflict(t, name, 5*time.Minute, func(ic *operatorv1.IngressController) {
+				ic.Spec.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.Type = tc.targetLBType
+			}); err != nil {
+				t.Fatalf("failed to change LB type: %v", err)
+			}
+
+			// Wait for the IC to enter the progressing state.
+			progressingTrue := operatorv1.OperatorCondition{
+				Type:   ingresscontroller.IngressControllerLoadBalancerProgressingConditionType,
+				Status: operatorv1.ConditionTrue,
+			}
+			if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, progressingTrue); err != nil {
+				t.Fatalf("expected Progressing=True after LB type change: %v", err)
+			}
+
+			// Apply any mutation while in the pending transition state.
+			if tc.mutateWhilePending != nil {
+				tc.mutateWhilePending(t, name)
+			}
+
+			// Verify the old service is not broken during the transition.
+			if tc.verifyWhilePending != nil {
+				t.Logf("verifying old service annotations during pending transition")
+				tc.verifyWhilePending(t, ic)
+			}
+
+			// Verify connectivity still works with the old service.
+			t.Logf("verifying connectivity during pending LB type transition")
+			verifyExternalIngressController(t, testPodName, testHostname, elbHostname)
+
+			// Complete the transition by deleting and recreating the service.
+			t.Logf("effectuating LB type change to %s", tc.targetLBType)
+			effectuateIngressControllerLBType(t, ic, tc.targetLBType, availableNotProgressingConditionsForIngressControllerWithLoadBalancer...)
+
+			// Verify the new service has correct configuration.
+			if tc.verifyAfterTransition != nil {
+				t.Logf("verifying new service annotations after transition")
+				tc.verifyAfterTransition(t, ic)
+			}
+
+			// Verify connectivity with the new service.
+			newLBHostname := getIngressControllerLBAddress(t, ic)
+			t.Logf("verifying connectivity after LB type transition to %s", tc.targetLBType)
+			verifyExternalIngressController(t, testPodName, testHostname, newLBHostname)
+		})
+	}
+}
+
 // TestScopeChange creates an ingresscontroller with the "LoadBalancerService"
 // endpoint publishing strategy type and verifies that the operator behaves
 // correctly when the ingresscontroller's scope is mutated.  The correct
