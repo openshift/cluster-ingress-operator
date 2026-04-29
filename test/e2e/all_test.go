@@ -86,6 +86,8 @@ func TestAll(t *testing.T) {
 		t.Run("TestAWSLBSubnets", TestAWSLBSubnets)
 		t.Run("TestUnmanagedAWSLBSubnets", TestUnmanagedAWSLBSubnets)
 		t.Run("TestAWSEIPAllocationsForNLB", TestAWSEIPAllocationsForNLB)
+		t.Run("TestAWSNLBClientIPPreservationMode", TestAWSNLBClientIPPreservationMode)
+		t.Run("TestAWSNLBDefaultClientIPPreservationMode", TestAWSNLBDefaultClientIPPreservationMode)
 		t.Run("TestUnmanagedAWSEIPAllocations", TestUnmanagedAWSEIPAllocations)
 		t.Run("Test_IdleConnectionTerminationPolicyImmediate", Test_IdleConnectionTerminationPolicyImmediate)
 		t.Run("Test_IdleConnectionTerminationPolicyDeferred", Test_IdleConnectionTerminationPolicyDeferred)
