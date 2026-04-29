@@ -1,6 +1,7 @@
 package dns
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -9,9 +10,13 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 	iov1 "github.com/openshift/api/operatoringress/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
+	testutil "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/test/util"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/uuid"
+	"sigs.k8s.io/controller-runtime/pkg/cache/informertest"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -117,6 +122,7 @@ func Test_publishRecordToZones(t *testing.T) {
 			r := &reconciler{
 				// TODO To write a fake provider that can return errors and add more test cases.
 				dnsProvider: &dns.FakeProvider{},
+				cache:       buildFakeCache(t, nil),
 			}
 
 			_, actual := r.publishRecordToZones(test.zones, record)
@@ -128,9 +134,9 @@ func Test_publishRecordToZones(t *testing.T) {
 	}
 }
 
-// TestPublishRecordToZonesMergesStatus verifies that publishRecordToZones
+// Test_publishRecordToZonesMergesStatus verifies that publishRecordToZones
 // correctly merges status updates.
-func TestPublishRecordToZonesMergesStatus(t *testing.T) {
+func Test_publishRecordToZonesMergesStatus(t *testing.T) {
 	testCases := []struct {
 		description     string
 		oldZoneStatuses []iov1.DNSZoneStatus
@@ -215,7 +221,10 @@ func TestPublishRecordToZonesMergesStatus(t *testing.T) {
 				},
 				Status: iov1.DNSRecordStatus{Zones: tc.oldZoneStatuses},
 			}
-			r := &reconciler{dnsProvider: &dns.FakeProvider{}}
+			r := &reconciler{
+				dnsProvider: &dns.FakeProvider{},
+				cache:       buildFakeCache(t, nil),
+			}
 			zone := []configv1.DNSZone{{ID: "zone2"}}
 			oldStatuses := record.Status.DeepCopy().Zones
 			_, newStatuses := r.publishRecordToZones(zone, record)
@@ -839,4 +848,204 @@ func Test_customCABundle(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestConflictingDNSRecords(t *testing.T) {
+	tests := []struct {
+		name            string
+		recordName      string
+		recordType      iov1.DNSRecordType
+		existingObjects []runtime.Object
+		zones           []configv1.DNSZone
+		unmanagedDNS    bool
+		expect          []iov1.DNSZoneStatus
+	}{
+		{
+			name:            "nonconflicting record",
+			recordName:      "foo.com",
+			recordType:      iov1.ARecordType,
+			existingObjects: []runtime.Object{},
+			zones: []configv1.DNSZone{
+				{ID: "foobar"},
+			},
+			expect: []iov1.DNSZoneStatus{{
+				DNSZone: configv1.DNSZone{
+					ID: "foobar",
+				},
+				Conditions: []iov1.DNSZoneCondition{
+					{
+						Type:   "Published",
+						Status: "True",
+					},
+				},
+			}},
+		},
+		{
+			name:       "conflicting record already exists",
+			recordName: "foo.com",
+			recordType: iov1.ARecordType,
+			existingObjects: []runtime.Object{
+				dnsRecord("foo.com", iov1.ARecordType, "111.22.33.44", iov1.ManagedDNS, "foobar", "True"),
+			},
+			zones: []configv1.DNSZone{
+				{ID: "foobar"},
+			},
+			expect: []iov1.DNSZoneStatus{{
+				DNSZone: configv1.DNSZone{
+					ID: "foobar",
+				},
+				Conditions: []iov1.DNSZoneCondition{
+					{
+						Type:   "Published",
+						Status: "False",
+					},
+				},
+			}},
+		},
+		{
+			name:       "same name different zone",
+			recordName: "foo.com",
+			recordType: iov1.ARecordType,
+			existingObjects: []runtime.Object{
+				dnsRecord("foo.com", iov1.ARecordType, "111.22.33.44", iov1.ManagedDNS, "quux", "True"),
+			},
+			zones: []configv1.DNSZone{
+				{ID: "foobar"},
+			},
+			expect: []iov1.DNSZoneStatus{{
+				DNSZone: configv1.DNSZone{
+					ID: "foobar",
+				},
+				Conditions: []iov1.DNSZoneCondition{
+					{
+						Type:   "Published",
+						Status: "True",
+					},
+				},
+			}},
+		},
+		{
+			name:       "different name same zone",
+			recordName: "foo.com",
+			recordType: iov1.ARecordType,
+			existingObjects: []runtime.Object{
+				dnsRecord("bar.com", iov1.ARecordType, "111.22.33.44", iov1.ManagedDNS, "foobar", "True"),
+			},
+			zones: []configv1.DNSZone{
+				{ID: "foobar"},
+			},
+			expect: []iov1.DNSZoneStatus{{
+				DNSZone: configv1.DNSZone{
+					ID: "foobar",
+				},
+				Conditions: []iov1.DNSZoneCondition{
+					{
+						Type:   "Published",
+						Status: "True",
+					},
+				},
+			}},
+		},
+		{
+			name:       "conflicting record exists but is not published",
+			recordName: "foo.com",
+			recordType: iov1.ARecordType,
+			existingObjects: []runtime.Object{
+				dnsRecord("foo.com", iov1.ARecordType, "111.22.33.44", iov1.UnmanagedDNS, "foobar", "False"),
+			},
+			zones: []configv1.DNSZone{
+				{ID: "foobar"},
+			},
+			expect: []iov1.DNSZoneStatus{{
+				DNSZone: configv1.DNSZone{
+					ID: "foobar",
+				},
+				Conditions: []iov1.DNSZoneCondition{
+					{
+						Type:   "Published",
+						Status: "True",
+					},
+				},
+			}},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			record := &iov1.DNSRecord{
+				Spec: iov1.DNSRecordSpec{
+					DNSName:             test.recordName,
+					RecordType:          test.recordType,
+					DNSManagementPolicy: iov1.ManagedDNS,
+					Targets:             []string{"55.11.22.33"},
+				},
+			}
+			if test.unmanagedDNS {
+				record.Spec.DNSManagementPolicy = iov1.UnmanagedDNS
+			}
+			r := &reconciler{
+				// TODO To write a fake provider that can return errors and add more test cases.
+				dnsProvider: &dns.FakeProvider{},
+				cache:       buildFakeCache(t, test.existingObjects),
+			}
+
+			_, actual := r.publishRecordToZones(test.zones, record)
+			opts := cmpopts.IgnoreFields(iov1.DNSZoneCondition{}, "Reason", "Message", "LastTransitionTime")
+			if !cmp.Equal(actual, test.expect, opts) {
+				t.Fatalf("found diff between actual and expected:\n%s", cmp.Diff(test.expect, actual, opts))
+			}
+		})
+	}
+}
+
+func dnsRecord(name string, recordType iov1.DNSRecordType, target string, managed iov1.DNSManagementPolicy, zoneID string, published string) *iov1.DNSRecord {
+	return &iov1.DNSRecord{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: fmt.Sprintf("record-%s", name),
+			UID:  uuid.NewUUID(),
+		},
+		Spec: iov1.DNSRecordSpec{
+			DNSName:             name,
+			RecordType:          recordType,
+			Targets:             []string{target},
+			DNSManagementPolicy: managed,
+		},
+		Status: iov1.DNSRecordStatus{
+			Zones: []iov1.DNSZoneStatus{
+				{
+					DNSZone: configv1.DNSZone{
+						ID: zoneID,
+					},
+					Conditions: []iov1.DNSZoneCondition{
+						{
+							Type:   "Published",
+							Status: published,
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+// buildFakeCache returns a fake cache, with the necessary schema and index function(s) to mimic the parts of the cache
+// that the dns controller interacts with.
+func buildFakeCache(t *testing.T, existingObjects []runtime.Object) *testutil.FakeCache {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	iov1.AddToScheme(scheme)
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithIndex(&iov1.DNSRecord{}, dnsRecordIndexFieldName, indexDNSRecords).
+		WithRuntimeObjects(existingObjects...).
+		Build()
+	cl := &testutil.FakeClientRecorder{
+		Client:  fakeClient,
+		T:       t,
+		Added:   []client.Object{},
+		Updated: []client.Object{},
+		Deleted: []client.Object{},
+	}
+	informer := informertest.FakeInformers{Scheme: scheme}
+	cache := testutil.FakeCache{Informers: &informer, Reader: cl}
+	return &cache
 }
