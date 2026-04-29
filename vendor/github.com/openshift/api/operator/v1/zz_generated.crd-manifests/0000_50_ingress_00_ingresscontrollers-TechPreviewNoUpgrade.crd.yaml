@@ -477,6 +477,31 @@ spec:
                                   networkLoadBalancerParameters holds configuration parameters for an AWS
                                   network load balancer. Present only if type is NLB.
                                 properties:
+                                  clientIPPreservationMode:
+                                    description: |-
+                                      clientIPPreservationMode specifies how client IP addresses are
+                                      preserved by the load balancer.
+
+                                      Valid values are "Native" and "ProxyProtocol".
+
+                                      When set to "Native", the NLB uses AWS's native client IP preservation,
+                                      which may cause hairpin connection failures for internal load balancers when
+                                      connections are made from pods to router pods on the same node.
+
+                                      When set to "ProxyProtocol", the NLB uses PROXY protocol v2 to preserve
+                                      client IP addresses. This avoids hairpin connection failures.
+
+                                      When omitted, this means the user has no opinion and the value is left
+                                      to the platform to choose a good default, which is subject to change
+                                      over time. The current default is "ProxyProtocol".
+
+                                      Note that changing this field may cause brief connection failures during
+                                      the transition as the NLB attribute change and router rollout occur
+                                      independently.
+                                    enum:
+                                    - Native
+                                    - ProxyProtocol
+                                    type: string
                                   eipAllocations:
                                     description: |-
                                       eipAllocations is a list of IDs for Elastic IP (EIP) addresses that
@@ -2749,6 +2774,31 @@ spec:
                                   networkLoadBalancerParameters holds configuration parameters for an AWS
                                   network load balancer. Present only if type is NLB.
                                 properties:
+                                  clientIPPreservationMode:
+                                    description: |-
+                                      clientIPPreservationMode specifies how client IP addresses are
+                                      preserved by the load balancer.
+
+                                      Valid values are "Native" and "ProxyProtocol".
+
+                                      When set to "Native", the NLB uses AWS's native client IP preservation,
+                                      which may cause hairpin connection failures for internal load balancers when
+                                      connections are made from pods to router pods on the same node.
+
+                                      When set to "ProxyProtocol", the NLB uses PROXY protocol v2 to preserve
+                                      client IP addresses. This avoids hairpin connection failures.
+
+                                      When omitted, this means the user has no opinion and the value is left
+                                      to the platform to choose a good default, which is subject to change
+                                      over time. The current default is "ProxyProtocol".
+
+                                      Note that changing this field may cause brief connection failures during
+                                      the transition as the NLB attribute change and router rollout occur
+                                      independently.
+                                    enum:
+                                    - Native
+                                    - ProxyProtocol
+                                    type: string
                                   eipAllocations:
                                     description: |-
                                       eipAllocations is a list of IDs for Elastic IP (EIP) addresses that
