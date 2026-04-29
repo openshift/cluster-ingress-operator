@@ -56,6 +56,11 @@ const (
 	// load balancer as being internal.
 	awsInternalLBAnnotation = "service.beta.kubernetes.io/aws-load-balancer-internal"
 
+	// awsNLBDefaultTunnelTimeoutSeconds defines the amount of time a tunnel on AWS NLB times out.
+	// This configuration is used to ensure that router times out earlier than this, having a chance to
+	// close the established connection in a clean way.
+	awsNLBDefaultTunnelTimeoutSeconds = 350
+
 	// awsLBHealthCheckIntervalAnnotation is the approximate interval, in seconds, between AWS
 	// load balancer health checks of an individual AWS instance. Defaults to 5, must be between
 	// 5 and 300.
