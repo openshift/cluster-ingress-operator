@@ -27,6 +27,8 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apiserver/pkg/storage/names"
@@ -1575,6 +1577,9 @@ func ensureGatewayObjectSuccess(t *testing.T, ns *corev1.Namespace) []string {
 	}
 	assertHorizontalPodAutoscalerEnabled(t, operatorcontroller.DefaultOperandNamespace, testGatewayName, operatorcontroller.OpenShiftDefaultGatewayClassName, expectedMinReplicas)
 
+	t.Log("Verifying PodMonitor is created for the gateway...")
+	assertGatewayPodMonitor(t, operatorcontroller.DefaultOperandNamespace, testGatewayName)
+
 	t.Log("Making sure the httproute is created and accepted...")
 	_, err = assertHttpRouteSuccessful(t, ns.Name, "test-httproute", gateway)
 	if err != nil {
@@ -1588,4 +1593,69 @@ func ensureGatewayObjectSuccess(t *testing.T, ns *corev1.Namespace) []string {
 	}
 
 	return errs
+}
+
+// assertGatewayPodMonitor verifies that a PodMonitor resource is created for
+// the given gateway with the expected spec, labels, and ownerReference.
+func assertGatewayPodMonitor(t *testing.T, namespace, gatewayName string) {
+	t.Helper()
+
+	podMonitorName := types.NamespacedName{
+		Namespace: namespace,
+		Name:      fmt.Sprintf("%s-monitor", gatewayName),
+	}
+
+	pm := &unstructured.Unstructured{}
+	pm.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "monitoring.coreos.com",
+		Kind:    "PodMonitor",
+		Version: "v1",
+	})
+
+	err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 2*time.Minute, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, podMonitorName, pm); err != nil {
+			t.Logf("Failed to get PodMonitor %v: %v; retrying...", podMonitorName, err)
+			return false, nil
+		}
+		return true, nil
+	})
+	if !assert.NoError(t, err, "PodMonitor %v should exist", podMonitorName) {
+		return
+	}
+
+	// Verify the owning-gateway label used by the controller to map
+	// PodMonitor events back to the owning Gateway for reconciliation.
+	labels := pm.GetLabels()
+	assert.Equal(t, gatewayName, labels["ingress.openshift.io/owning-gateway"],
+		"PodMonitor should have owning-gateway label set to the gateway name")
+
+	// Verify the ownerReference used by Kubernetes GC for cascading
+	// deletion when the Gateway is removed.
+	ownerRefs := pm.GetOwnerReferences()
+	if assert.Len(t, ownerRefs, 1, "PodMonitor should have exactly one ownerReference") {
+		assert.Equal(t, "Gateway", ownerRefs[0].Kind, "ownerReference should point to a Gateway")
+		assert.Equal(t, gatewayName, ownerRefs[0].Name, "ownerReference should point to the test gateway")
+	}
+
+	// Verify the pod selector matches the gateway name label.
+	selector, found, err := unstructured.NestedMap(pm.Object, "spec", "selector", "matchLabels")
+	if assert.NoError(t, err) && assert.True(t, found, "PodMonitor should have spec.selector.matchLabels") {
+		assert.Equal(t, gatewayName, selector["gateway.networking.k8s.io/gateway-name"],
+			"PodMonitor selector should match the gateway name")
+	}
+
+	// Verify podMetricsEndpoints configuration.
+	endpoints, found, err := unstructured.NestedSlice(pm.Object, "spec", "podMetricsEndpoints")
+	if assert.NoError(t, err) && assert.True(t, found, "PodMonitor should have spec.podMetricsEndpoints") {
+		if assert.Len(t, endpoints, 1, "PodMonitor should have exactly one endpoint") {
+			ep, ok := endpoints[0].(map[string]interface{})
+			if assert.True(t, ok, "endpoint should be a map") {
+				assert.Equal(t, "/stats/prometheus", ep["path"], "endpoint path should be /stats/prometheus")
+				assert.Equal(t, "60s", ep["interval"], "endpoint interval should be 60s")
+				assert.Equal(t, "http-envoy-prom", ep["port"], "endpoint port should be http-envoy-prom")
+			}
+		}
+	}
+
+	t.Logf("PodMonitor %v verified successfully", podMonitorName)
 }

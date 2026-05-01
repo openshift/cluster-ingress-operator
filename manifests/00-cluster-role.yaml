@@ -58,9 +58,12 @@ rules:
   - monitoring.coreos.com
   resources:
   - servicemonitors
+  - podmonitors
   verbs:
   - create
   - get
+  - list
+  - watch
   - update
 
 - apiGroups:

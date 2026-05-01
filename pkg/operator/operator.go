@@ -37,6 +37,7 @@ import (
 	dnscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/dns"
 	gatewaylabelercontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gateway-labeler"
 	gatewaynetworkpolicycontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gateway-networkpolicy"
+	gatewaypodmonitorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gateway-podmonitor"
 	gatewayservicednscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gateway-service-dns"
 	gatewaystatuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gateway-status"
 	gatewayapicontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gatewayapi"
@@ -354,6 +355,11 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		return nil, fmt.Errorf("failed to create gateway-networkpolicy controller: %w", err)
 	}
 
+	gatewayPodMonitorController, err := gatewaypodmonitorcontroller.NewUnmanaged(mgr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create gateway-podmonitor controller: %w", err)
+	}
+
 	// Set up the gatewayapi controller.
 	if _, err := gatewayapicontroller.New(mgr, gatewayapicontroller.Config{
 		MarketplaceEnabled:              marketplaceEnabled,
@@ -365,6 +371,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 			gatewayLabelController,
 			gatewayStatusController,
 			gatewayNetworkPolicyController,
+			gatewayPodMonitorController,
 		},
 	}); err != nil {
 		return nil, fmt.Errorf("failed to create gatewayapi controller: %w", err)
