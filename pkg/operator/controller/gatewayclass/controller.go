@@ -81,6 +81,9 @@ const (
 	// can be specified.  This annotation is only intended for use by
 	// OpenShift developers.
 	istioVersionOverrideAnnotationKey = "unsupported.do-not-use.openshift.io/istio-version"
+	// gatewayProxyContainerName is the name of the proxy container
+	// in gateway deployments managed by Istio.
+	gatewayProxyContainerName = "istio-proxy"
 	// sailLibraryFinalizer is added to GatewayClasses using Sail Library installation.
 	// When a GatewayClass with this finalizer is deleted:
 	// 1. Sail Library mode: Uninstall Istio if this is the last GatewayClass, then remove finalizer
