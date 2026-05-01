@@ -1575,6 +1575,8 @@ func ensureGatewayObjectSuccess(t *testing.T, ns *corev1.Namespace) []string {
 	}
 	assertHorizontalPodAutoscalerEnabled(t, operatorcontroller.DefaultOperandNamespace, testGatewayName, operatorcontroller.OpenShiftDefaultGatewayClassName, expectedMinReplicas)
 
+	assertProxyDeployCustomConfigurations(t, operatorcontroller.DefaultOperandNamespace, testGatewayName, operatorcontroller.OpenShiftDefaultGatewayClassName)
+
 	t.Log("Making sure the httproute is created and accepted...")
 	_, err = assertHttpRouteSuccessful(t, ns.Name, "test-httproute", gateway)
 	if err != nil {
