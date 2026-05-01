@@ -485,6 +485,74 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 			},
 		},
 		{
+			description:    "network load balancer with ProxyProtocol clientIPPreservationMode for aws platform",
+			platformStatus: platformStatus(configv1.AWSPlatformType),
+			strategySpec: func() *operatorv1.EndpointPublishingStrategy {
+				eps := nlb(operatorv1.ExternalLoadBalancer)
+				eps.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{
+					ClientIPPreservationMode: operatorv1.ClientIPPreservationProxyProtocol,
+				}
+				return eps
+			}(),
+			strategyStatus: func() *operatorv1.EndpointPublishingStrategy {
+				eps := nlb(operatorv1.ExternalLoadBalancer)
+				eps.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{
+					ClientIPPreservationMode: operatorv1.ClientIPPreservationProxyProtocol,
+				}
+				return eps
+			}(),
+			proxyNeeded:                   true,
+			expectService:                 true,
+			expectedExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyLocal,
+			expectedServiceAnnotations: map[string]annotationExpectation{
+				awsInternalLBAnnotation:                      {false, ""},
+				awsLBAdditionalResourceTags:                  {false, ""},
+				awsLBHealthCheckHealthyThresholdAnnotation:   {true, awsLBHealthCheckHealthyThresholdDefault},
+				awsLBHealthCheckIntervalAnnotation:           {true, awsLBHealthCheckIntervalNLB},
+				awsLBHealthCheckTimeoutAnnotation:            {true, awsLBHealthCheckTimeoutDefault},
+				awsLBHealthCheckUnhealthyThresholdAnnotation: {true, awsLBHealthCheckUnhealthyThresholdDefault},
+				awsLBProxyProtocolAnnotation:                 {false, ""},
+				AWSLBTypeAnnotation:                          {true, AWSNLBAnnotation},
+				localWithFallbackAnnotation:                  {true, ""},
+				awsLBSubnetsAnnotation:                       {false, ""},
+				awsLBTargetGroupAttributesAnnotation:         {true, "preserve_client_ip.enabled=false,proxy_protocol_v2.enabled=true"},
+			},
+		},
+		{
+			description:    "network load balancer with Native clientIPPreservationMode for aws platform",
+			platformStatus: platformStatus(configv1.AWSPlatformType),
+			strategySpec: func() *operatorv1.EndpointPublishingStrategy {
+				eps := nlb(operatorv1.ExternalLoadBalancer)
+				eps.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{
+					ClientIPPreservationMode: operatorv1.ClientIPPreservationNative,
+				}
+				return eps
+			}(),
+			strategyStatus: func() *operatorv1.EndpointPublishingStrategy {
+				eps := nlb(operatorv1.ExternalLoadBalancer)
+				eps.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{
+					ClientIPPreservationMode: operatorv1.ClientIPPreservationNative,
+				}
+				return eps
+			}(),
+			proxyNeeded:                   false,
+			expectService:                 true,
+			expectedExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyLocal,
+			expectedServiceAnnotations: map[string]annotationExpectation{
+				awsInternalLBAnnotation:                      {false, ""},
+				awsLBAdditionalResourceTags:                  {false, ""},
+				awsLBHealthCheckHealthyThresholdAnnotation:   {true, awsLBHealthCheckHealthyThresholdDefault},
+				awsLBHealthCheckIntervalAnnotation:           {true, awsLBHealthCheckIntervalNLB},
+				awsLBHealthCheckTimeoutAnnotation:            {true, awsLBHealthCheckTimeoutDefault},
+				awsLBHealthCheckUnhealthyThresholdAnnotation: {true, awsLBHealthCheckUnhealthyThresholdDefault},
+				awsLBProxyProtocolAnnotation:                 {false, ""},
+				AWSLBTypeAnnotation:                          {true, AWSNLBAnnotation},
+				localWithFallbackAnnotation:                  {true, ""},
+				awsLBSubnetsAnnotation:                       {false, ""},
+				awsLBTargetGroupAttributesAnnotation:         {false, ""},
+			},
+		},
+		{
 			description:    "nodePort service for aws platform",
 			platformStatus: platformStatus(configv1.AWSPlatformType),
 			strategyStatus: nps(operatorv1.TCPProtocol),

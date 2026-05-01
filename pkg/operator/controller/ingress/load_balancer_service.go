@@ -37,8 +37,9 @@ const (
 	// https://kubernetes.io/docs/reference/labels-annotations-taints/#service-beta-kubernetes-io-aws-load-balancer-additional-resource-tags
 	awsLBAdditionalResourceTags = "service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags"
 
-	// awsLBProxyProtocolAnnotation is used to enable the PROXY protocol on any
-	// AWS load balancer services created.
+	// awsLBProxyProtocolAnnotation is used to enable the PROXY protocol on
+	// AWS Classic Load Balancers. For NLBs, proxy protocol is configured
+	// via target group attributes using awsLBTargetGroupAttributesAnnotation.
 	//
 	// https://kubernetes.io/docs/reference/labels-annotations-taints/#service-beta-kubernetes-io-aws-load-balancer-proxy-protocol
 	awsLBProxyProtocolAnnotation = "service.beta.kubernetes.io/aws-load-balancer-proxy-protocol"
@@ -97,6 +98,11 @@ const (
 
 	// awsEIPAllocationsAnnotation specifies a list of eips for NLBs.
 	awsEIPAllocationsAnnotation = "service.beta.kubernetes.io/aws-load-balancer-eip-allocations"
+
+	// awsLBTargetGroupAttributesAnnotation specifies key=value pairs of NLB
+	// target group attributes. Used to configure client IP preservation and
+	// proxy protocol v2 on target groups.
+	awsLBTargetGroupAttributesAnnotation = "service.beta.kubernetes.io/aws-load-balancer-target-group-attributes"
 
 	// iksLBScopeAnnotation is the annotation used on a service to specify an IBM
 	// load balancer IP type.
@@ -250,6 +256,10 @@ var (
 			// Status.PlatformStatus.AWS.ResourceTags in the
 			// infrastructure config.
 			awsLBAdditionalResourceTags,
+			// awsLBTargetGroupAttributesAnnotation is used to configure
+			// NLB target group attributes such as client IP preservation
+			// and proxy protocol v2.
+			awsLBTargetGroupAttributesAnnotation,
 		)
 
 		// Azure and GCP support switching between internal and external
@@ -455,7 +465,11 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 		case configv1.AWSPlatformType:
 			service.Annotations[awsLBHealthCheckIntervalAnnotation] = awsLBHealthCheckIntervalDefault
 			if proxyNeeded {
-				service.Annotations[awsLBProxyProtocolAnnotation] = "*"
+				if getAWSLoadBalancerTypeInStatus(ci) == operatorv1.AWSNetworkLoadBalancer {
+					service.Annotations[awsLBTargetGroupAttributesAnnotation] = "preserve_client_ip.enabled=false,proxy_protocol_v2.enabled=true"
+				} else {
+					service.Annotations[awsLBProxyProtocolAnnotation] = "*"
+				}
 			}
 			if lbStatus != nil && lbStatus.ProviderParameters != nil {
 				if aws := lbStatus.ProviderParameters.AWS; aws != nil && lbStatus.ProviderParameters.Type == operatorv1.AWSLoadBalancerProvider {
@@ -1414,6 +1428,16 @@ func getAWSNLBSubnets(eps *operatorv1.EndpointPublishingStrategy) *operatorv1.AW
 	}
 
 	return nil
+}
+
+// getAWSNLBClientIPPreservationMode returns the clientIPPreservationMode for the
+// NLB reported in the endpoint publishing strategy.
+func getAWSNLBClientIPPreservationMode(eps *operatorv1.EndpointPublishingStrategy) operatorv1.ClientIPPreservationMode {
+	if eps != nil && eps.LoadBalancer != nil && eps.LoadBalancer.ProviderParameters != nil && eps.LoadBalancer.ProviderParameters.AWS != nil && eps.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters != nil {
+		return eps.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters.ClientIPPreservationMode
+	}
+
+	return ""
 }
 
 // getOpenStackFloatingIPInSpec gets the OpenStack Floating IP reported in the spec.

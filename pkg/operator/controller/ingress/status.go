@@ -929,6 +929,9 @@ func IngressStatusesEqual(a, b operatorv1.IngressControllerStatus) bool {
 	if getOpenStackFloatingIPInEPS(a.EndpointPublishingStrategy) != getOpenStackFloatingIPInEPS(b.EndpointPublishingStrategy) {
 		return false
 	}
+	if getAWSNLBClientIPPreservationMode(a.EndpointPublishingStrategy) != getAWSNLBClientIPPreservationMode(b.EndpointPublishingStrategy) {
+		return false
+	}
 
 	return true
 }

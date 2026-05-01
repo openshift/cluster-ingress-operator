@@ -154,8 +154,10 @@ func TestSetDefaultPublishingStrategySetsPlatformDefaults(t *testing.T) {
 						ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
 							Type: operatorv1.AWSLoadBalancerProvider,
 							AWS: &operatorv1.AWSLoadBalancerParameters{
-								Type:                          operatorv1.AWSNetworkLoadBalancer,
-								NetworkLoadBalancerParameters: &operatorv1.AWSNetworkLoadBalancerParameters{},
+								Type: operatorv1.AWSNetworkLoadBalancer,
+								NetworkLoadBalancerParameters: &operatorv1.AWSNetworkLoadBalancerParameters{
+									ClientIPPreservationMode: operatorv1.ClientIPPreservationProxyProtocol,
+								},
 							},
 						},
 					},
@@ -1571,6 +1573,34 @@ func Test_IsProxyProtocolNeeded(t *testing.T) {
 				},
 			},
 		}
+		loadBalancerStrategyWithNLBProxyProtocol = operatorv1.EndpointPublishingStrategy{
+			Type: operatorv1.LoadBalancerServiceStrategyType,
+			LoadBalancer: &operatorv1.LoadBalancerStrategy{
+				ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+					Type: operatorv1.AWSLoadBalancerProvider,
+					AWS: &operatorv1.AWSLoadBalancerParameters{
+						Type: operatorv1.AWSNetworkLoadBalancer,
+						NetworkLoadBalancerParameters: &operatorv1.AWSNetworkLoadBalancerParameters{
+							ClientIPPreservationMode: operatorv1.ClientIPPreservationProxyProtocol,
+						},
+					},
+				},
+			},
+		}
+		loadBalancerStrategyWithNLBNative = operatorv1.EndpointPublishingStrategy{
+			Type: operatorv1.LoadBalancerServiceStrategyType,
+			LoadBalancer: &operatorv1.LoadBalancerStrategy{
+				ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+					Type: operatorv1.AWSLoadBalancerProvider,
+					AWS: &operatorv1.AWSLoadBalancerParameters{
+						Type: operatorv1.AWSNetworkLoadBalancer,
+						NetworkLoadBalancerParameters: &operatorv1.AWSNetworkLoadBalancerParameters{
+							ClientIPPreservationMode: operatorv1.ClientIPPreservationNative,
+						},
+					},
+				},
+			},
+		}
 		loadBalancerStrategyWithIBMCloudPROXY = operatorv1.EndpointPublishingStrategy{
 			Type: operatorv1.LoadBalancerServiceStrategyType,
 			LoadBalancer: &operatorv1.LoadBalancerStrategy{
@@ -1695,6 +1725,18 @@ func Test_IsProxyProtocolNeeded(t *testing.T) {
 			strategy:    &loadBalancerStrategy,
 			platform:    &awsPlatform,
 			service:     &serviceWithNLB,
+			expect:      false,
+		},
+		{
+			description: "loadbalancer strategy with NLB and ProxyProtocol clientIPPreservationMode should use PROXY",
+			strategy:    &loadBalancerStrategyWithNLBProxyProtocol,
+			platform:    &awsPlatform,
+			expect:      true,
+		},
+		{
+			description: "loadbalancer strategy with NLB and Native clientIPPreservationMode shouldn't use PROXY",
+			strategy:    &loadBalancerStrategyWithNLBNative,
+			platform:    &awsPlatform,
 			expect:      false,
 		},
 		{
