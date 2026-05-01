@@ -42,7 +42,7 @@ func TestRouteNbthreadIngressController(t *testing.T) {
 	defaultThreadsStr := strconv.Itoa(ingresscontroller.RouterHAProxyThreadsDefaultValue)
 
 	// by default, the router deployment should have ROUTER_THREADS set to 4
-	if err := waitForDeploymentEnvVar(t, kclient, routerDeployment, nbthreadRouterDeployTimeout, "ROUTER_THREADS", defaultThreadsStr); err != nil {
+	if err := waitForDeploymentEnvVar(t, routerDeployment, nbthreadRouterDeployTimeout, "ROUTER_THREADS", defaultThreadsStr); err != nil {
 		t.Fatalf("expected router deployment to set ROUTER_THREADS to %v: %v", ingresscontroller.RouterHAProxyThreadsDefaultValue, err)
 	}
 
@@ -55,7 +55,7 @@ func TestRouteNbthreadIngressController(t *testing.T) {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
-	if err := waitForDeploymentEnvVar(t, kclient, routerDeployment, nbthreadRouterDeployTimeout, "ROUTER_THREADS", strconv.Itoa(ingresscontroller.RouterHAProxyThreadsDefaultValue*2)); err != nil {
+	if err := waitForDeploymentEnvVar(t, routerDeployment, nbthreadRouterDeployTimeout, "ROUTER_THREADS", strconv.Itoa(ingresscontroller.RouterHAProxyThreadsDefaultValue*2)); err != nil {
 		t.Fatalf("expected router deployment to set ROUTER_THREADS to %v: %v", ingresscontroller.RouterHAProxyThreadsDefaultValue*2, err)
 	}
 
@@ -65,7 +65,7 @@ func TestRouteNbthreadIngressController(t *testing.T) {
 	}
 
 	// when set back to default, the router deployment should have ROUTER_THREADS set to 4
-	if err := waitForDeploymentEnvVar(t, kclient, routerDeployment, nbthreadRouterDeployTimeout, "ROUTER_THREADS", defaultThreadsStr); err != nil {
+	if err := waitForDeploymentEnvVar(t, routerDeployment, nbthreadRouterDeployTimeout, "ROUTER_THREADS", defaultThreadsStr); err != nil {
 		t.Fatalf("expected router deployment to set ROUTER_THREADS to %v: %v", ingresscontroller.RouterHAProxyThreadsDefaultValue, err)
 	}
 }
