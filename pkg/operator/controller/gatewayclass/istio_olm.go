@@ -237,10 +237,10 @@ func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference, ist
 		}
 
 		if extraConfig.infraConfig != nil {
-			if hpaConfig, err := buildHorizontalPodAutoscalerConfig(extraConfig.infraConfig, gatewayclasses); err != nil {
+			if gwClassConfig, err := buildGatewayClassesConfig(extraConfig.infraConfig, gatewayclasses); err != nil {
 				return nil, err
 			} else {
-				istio.Spec.Values.GatewayClasses = hpaConfig
+				istio.Spec.Values.GatewayClasses = gwClassConfig
 			}
 		}
 	}
