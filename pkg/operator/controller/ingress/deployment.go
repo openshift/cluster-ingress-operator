@@ -40,16 +40,47 @@ import (
 	securityv1 "github.com/openshift/api/security/v1"
 )
 
-// isFIPSEnabled reports whether the current node is operating in FIPS
-// mode by checking /proc/sys/crypto/fips_enabled. This is a
-// package-level variable so tests can override it to simulate FIPS mode.
-var isFIPSEnabled = func() bool {
-	data, err := os.ReadFile("/proc/sys/crypto/fips_enabled")
-	if err != nil {
-		return false
+// isFIPSEnabled reports whether the cluster has FIPS enabled.
+var isFIPSEnabled = detectFIPS()
+
+// lookupEnv is an alias for os.LookupEnv that can be overridden in unit tests.
+var lookupEnv = os.LookupEnv
+
+// readFile is an alias for os.ReadFile that can be overridden in unit tests.
+var readFile = os.ReadFile
+
+// detectFIPS reports whether the cluster is operating in FIPS
+// mode by checking the FIPS_ENABLED environment variable if it set or
+// the /proc/sys/crypto/fips_enabled file otherwise. This is a package-
+// level variable so tests can override it to simulate FIPS mode.
+func detectFIPS() bool {
+	if v, ok := lookupEnv("FIPS_ENABLED"); ok {
+		if result, err := strconv.ParseBool(v); err != nil {
+			log.Error(err, "Failed to parse FIPS_ENABLED environment variable; falling back to procfs")
+		} else {
+			log.Info("Found FIPS_ENABLED environment variable", "value", v, "result", result)
+
+			return result
+		}
 	}
-	return len(data) > 0 && data[0] == '1'
-}()
+
+	result := false
+	if data, err := readFile("/proc/sys/crypto/fips_enabled"); err != nil {
+		log.Error(err, "Failed to read /proc/sys/crypto/fips_enabled; assuming FIPS is not enabled", "result", result)
+
+		return result
+	} else if len(data) == 0 {
+		log.Error(nil, "Got empty /proc/sys/crypto/fips_enabled; assuming FIPS is not enabled", "result", result)
+
+		return result
+	} else {
+		result = data[0] == '1'
+
+		log.Info("Read /proc/sys/crypto/fips_enabled", "data", data, "result", result)
+
+		return result
+	}
+}
 
 const (
 	WildcardRouteAdmissionPolicy = "ROUTER_ALLOW_WILDCARD_ROUTES"
