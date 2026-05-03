@@ -2,6 +2,7 @@ package ingress
 
 import (
 	"fmt"
+	"os"
 	"reflect"
 	"sort"
 	"strconv"
@@ -2830,6 +2831,98 @@ func TestDesiredRouterDeploymentTLSCurves(t *testing.T) {
 			if err := checkDeploymentEnvironment(t, deployment, tc.expectedEnv); err != nil {
 				t.Error(err)
 			}
+		})
+	}
+}
+
+// Test_detectFIPS verifies that detectFIPS correctly checks the FIPS_ENABLED
+// environment variable if it is set and falls back to the
+// /proc/sys/crypto/fips_enabled file.
+func Test_detectFIPS(t *testing.T) {
+	defer func() {
+		lookupEnv = os.LookupEnv
+		readFile = os.ReadFile
+	}()
+
+	var fipsEnabledEnvVar *string
+	lookupEnv = func(name string) (string, bool) {
+		switch name {
+		case "FIPS_ENABLED":
+			if fipsEnabledEnvVar == nil {
+				return "", false
+			} else {
+				return *fipsEnabledEnvVar, true
+			}
+		default:
+			t.Fatalf("unexpected argument for lookupEnv: %s", name)
+			return "", false
+		}
+	}
+
+	var fipsEnabledProcfsData []byte
+	readFile = func(name string) ([]byte, error) {
+		switch name {
+		case "/proc/sys/crypto/fips_enabled":
+			return fipsEnabledProcfsData, nil
+		default:
+			t.Fatalf("unexpected argument for readFile: %s", name)
+
+			return fipsEnabledProcfsData, nil
+		}
+	}
+
+	testCases := []struct {
+		name        string
+		envVarValue *string
+		procfsData  []byte
+		expected    bool
+	}{{
+		name:        `expect false if no env var and procfs has "0"`,
+		envVarValue: nil,
+		procfsData:  []byte{'0'},
+		expected:    false,
+	}, {
+		name:        `expect true if no env var and procfs has "1"`,
+		envVarValue: nil,
+		procfsData:  []byte{'1'},
+		expected:    true,
+	}, {
+		name:        `expect false if env var has "false"`,
+		envVarValue: ptr.To("false"),
+		procfsData:  []byte{'1'},
+		expected:    false,
+	}, {
+		name:        `expect true if env var has "true"`,
+		envVarValue: ptr.To("true"),
+		procfsData:  []byte{'1'},
+		expected:    true,
+	}, {
+		name:        `expect false if env var is empty and procfs has "0"`,
+		envVarValue: ptr.To(""),
+		procfsData:  []byte{'0'},
+		expected:    false,
+	}, {
+		name:        `expect true if env var is empty and procfs has "1"`,
+		envVarValue: ptr.To(""),
+		procfsData:  []byte{'1'},
+		expected:    true,
+	}, {
+		name:        `expect false if env var has garbage and procfs has "0"`,
+		envVarValue: ptr.To("garbage"),
+		procfsData:  []byte{'0'},
+		expected:    false,
+	}, {
+		name:        `expect true if env var has garbage and procfs has "1"`,
+		envVarValue: ptr.To("garbage"),
+		procfsData:  []byte{'1'},
+		expected:    true,
+	}}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			fipsEnabledEnvVar = tc.envVarValue
+			fipsEnabledProcfsData = tc.procfsData
+			assert.Equal(t, tc.expected, detectFIPS())
 		})
 	}
 }
