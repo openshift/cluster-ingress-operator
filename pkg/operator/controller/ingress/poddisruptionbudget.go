@@ -94,8 +94,9 @@ func desiredRouterPodDisruptionBudget(ic *operatorv1.IngressController, deployme
 		Spec: policyv1.PodDisruptionBudgetSpec{
 			// The disruption controller rounds MaxUnavailable up.
 			// https://github.com/kubernetes/kubernetes/blob/65dc445aa2d581b4fa829258e46e4faf44e999b6/pkg/controller/disruption/disruption.go#L539
-			MaxUnavailable: &maxUnavailable,
-			Selector:       controller.IngressControllerDeploymentPodSelector(ic),
+			MaxUnavailable:             &maxUnavailable,
+			UnhealthyPodEvictionPolicy: ptr.To(policyv1.AlwaysAllow),
+			Selector:                   controller.IngressControllerDeploymentPodSelector(ic),
 		},
 	}
 	pdb.SetOwnerReferences([]metav1.OwnerReference{deploymentRef})
