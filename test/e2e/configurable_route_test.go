@@ -36,7 +36,7 @@ func TestConfigurableRouteRBAC(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Get(context.TODO(), types.NamespacedName{Namespace: "", Name: "cluster"}, ingress); err != nil {
-			t.Fatalf("failed to get ingress resource: %v", err)
+			t.Errorf("failed to get ingress resource: %v", err)
 		}
 		ingress.Spec.ComponentRoutes = nil
 		if err := eventuallyUpdateIngressSpec(t, ingress.Spec); err != nil {
@@ -195,7 +195,7 @@ func TestConfigurableRouteNoSecretNoRBAC(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Get(context.TODO(), types.NamespacedName{Namespace: "", Name: "cluster"}, ingress); err != nil {
-			t.Fatalf("failed to get ingress resource: %v", err)
+			t.Errorf("failed to get ingress resource: %v", err)
 		}
 		ingress.Spec.ComponentRoutes = nil
 		if err := eventuallyUpdateIngressSpec(t, ingress.Spec); err != nil {
@@ -294,7 +294,7 @@ func TestConfigurableRouteNoConsumingUserNoRBAC(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Get(context.TODO(), types.NamespacedName{Namespace: "", Name: "cluster"}, ingress); err != nil {
-			t.Fatalf("failed to get ingress resource: %v", err)
+			t.Errorf("failed to get ingress resource: %v", err)
 		}
 		ingress.Spec.ComponentRoutes = nil
 		if err := eventuallyUpdateIngressSpec(t, ingress.Spec); err != nil {

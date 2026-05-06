@@ -26,9 +26,10 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 
 	"k8s.io/client-go/kubernetes"
+	"sync/atomic"
 )
 
-var podCount int
+var podCount atomic.Int32
 
 const (
 	headerName  = "x-frame-options"
@@ -50,8 +51,8 @@ func testHeaders(t *testing.T, image string, route *routev1.Route, address strin
 	var extraCurlArgs []string
 
 	extraCurlArgs = append(extraCurlArgs, "-v", "--resolve", route.Spec.Host+":80:"+address)
-	podCount++
-	name := fmt.Sprintf("%s%d", route.Name, podCount)
+	count := podCount.Add(1)
+	name := fmt.Sprintf("%s%d", route.Name, count)
 	clientPod := buildCurlPod(name, route.Namespace, image, route.Spec.Host, address, extraCurlArgs...)
 	if err := kclient.Create(context.TODO(), clientPod); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
@@ -59,7 +60,7 @@ func testHeaders(t *testing.T, image string, route *routev1.Route, address strin
 	defer func() {
 		if err := kclient.Delete(context.TODO(), clientPod); err != nil {
 			if !errors.IsNotFound(err) {
-				t.Fatalf("failed to delete pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
+				t.Errorf("failed to delete pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
 			}
 		}
 	}()
@@ -157,7 +158,7 @@ func TestSetIngressControllerResponseHeaders(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), echoPod); err != nil {
-			t.Fatalf("failed to delete pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
+			t.Errorf("failed to delete pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 		}
 	}()
 
@@ -167,7 +168,7 @@ func TestSetIngressControllerResponseHeaders(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), echoService); err != nil {
-			t.Fatalf("failed to delete service %s/%s: %v", echoService.Namespace, echoService.Name, err)
+			t.Errorf("failed to delete service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 		}
 	}()
 
@@ -177,7 +178,7 @@ func TestSetIngressControllerResponseHeaders(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), echoRoute); err != nil {
-			t.Fatalf("failed to delete route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
+			t.Errorf("failed to delete route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
 		}
 	}()
 	cond := routev1.RouteIngressCondition{
@@ -229,7 +230,7 @@ func TestSetRouteResponseHeaders(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), echoPod); err != nil {
-			t.Fatalf("failed to delete pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
+			t.Errorf("failed to delete pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 		}
 	}()
 
@@ -239,7 +240,7 @@ func TestSetRouteResponseHeaders(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), echoService); err != nil {
-			t.Fatalf("failed to delete service %s/%s: %v", echoService.Namespace, echoService.Name, err)
+			t.Errorf("failed to delete service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 		}
 	}()
 
@@ -249,7 +250,7 @@ func TestSetRouteResponseHeaders(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), echoRoute); err != nil {
-			t.Fatalf("failed to delete route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
+			t.Errorf("failed to delete route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
 		}
 	}()
 	cond := routev1.RouteIngressCondition{

@@ -816,7 +816,7 @@ func createWithRetryOnError(t *testing.T, ctx context.Context, obj client.Object
 func deleteWithRetryOnError(t *testing.T, ctx context.Context, obj client.Object, timeout time.Duration) error {
 	t.Helper()
 	return wait.PollUntilContextTimeout(ctx, 2*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
-		if err := kclient.Delete(ctx, obj); err != nil && !errors.IsAlreadyExists(err) {
+		if err := kclient.Delete(ctx, obj); err != nil && !errors.IsNotFound(err) {
 			t.Logf("error deleting %s: %v, retrying...", obj.GetName(), err)
 			return false, nil
 		}
@@ -837,7 +837,7 @@ func verifyExternalIngressController(t *testing.T, name types.NamespacedName, ho
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), echoPod); err != nil {
-			t.Fatalf("failed to delete pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
+			t.Errorf("failed to delete pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 		}
 	}()
 
@@ -847,7 +847,7 @@ func verifyExternalIngressController(t *testing.T, name types.NamespacedName, ho
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), echoService); err != nil {
-			t.Fatalf("failed to delete service %s/%s: %v", echoService.Namespace, echoService.Name, err)
+			t.Errorf("failed to delete service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 		}
 	}()
 
@@ -857,7 +857,7 @@ func verifyExternalIngressController(t *testing.T, name types.NamespacedName, ho
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), echoRoute); err != nil {
-			t.Fatalf("failed to delete route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
+			t.Errorf("failed to delete route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
 		}
 	}()
 
@@ -918,7 +918,7 @@ func verifyInternalIngressController(t *testing.T, name types.NamespacedName, ho
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), echoPod); err != nil {
-			t.Fatalf("failed to delete pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
+			t.Errorf("failed to delete pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 		}
 	}()
 
@@ -928,7 +928,7 @@ func verifyInternalIngressController(t *testing.T, name types.NamespacedName, ho
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), echoService); err != nil {
-			t.Fatalf("failed to delete service %s/%s: %v", echoService.Namespace, echoService.Name, err)
+			t.Errorf("failed to delete service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 		}
 	}()
 
@@ -938,7 +938,7 @@ func verifyInternalIngressController(t *testing.T, name types.NamespacedName, ho
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), echoRoute); err != nil {
-			t.Fatalf("failed to delete route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
+			t.Errorf("failed to delete route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
 		}
 	}()
 
@@ -963,7 +963,7 @@ func verifyInternalIngressController(t *testing.T, name types.NamespacedName, ho
 			if errors.IsNotFound(err) {
 				return
 			}
-			t.Fatalf("failed to delete pod %q: %v", clientPodName, err)
+			t.Errorf("failed to delete pod %q: %v", clientPodName, err)
 		}
 	}()
 
@@ -1004,12 +1004,14 @@ func verifyInternalIngressController(t *testing.T, name types.NamespacedName, ho
 		// If failed or succeeded, the pod is stopped, but didn't provide us 200 response, let's try again.
 		if clientPod.Status.Phase == corev1.PodFailed || clientPod.Status.Phase == corev1.PodSucceeded {
 			t.Logf("client pod %q has stopped...restarting. Curl Pod Logs:\n%s", clientPodName, curlPodLogs)
-			if err := kclient.Delete(context.TODO(), clientPod); err != nil && errors.IsNotFound(err) {
+			if err := kclient.Delete(context.TODO(), clientPod); err != nil && !errors.IsNotFound(err) {
 				t.Fatalf("failed to delete pod %q: %v", clientPodName, err)
 			}
-			// Wait for deletion to prevent a race condition. Use PollInfinite since we are already in a Poll.
-			wait.PollInfinite(5*time.Second, func() (bool, error) {
-				err = kclient.Get(context.TODO(), clientPodName, clientPod)
+			// Wait for deletion to prevent a race condition.
+			deleteCtx, deleteCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer deleteCancel()
+			wait.PollUntilContextTimeout(deleteCtx, 5*time.Second, 2*time.Minute, true, func(ctx context.Context) (bool, error) {
+				err = kclient.Get(ctx, clientPodName, clientPod)
 				if !errors.IsNotFound(err) {
 					t.Logf("waiting for %q: to be deleted", clientPodName)
 					return false, nil

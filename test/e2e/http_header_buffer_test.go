@@ -71,7 +71,7 @@ func TestHTTPHeaderBufferSize(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), echoPod); err != nil {
-			t.Fatalf("failed to delete pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
+			t.Errorf("failed to delete pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 		}
 	}()
 
@@ -81,7 +81,7 @@ func TestHTTPHeaderBufferSize(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), echoService); err != nil {
-			t.Fatalf("failed to delete service %s/%s: %v", echoService.Namespace, echoService.Name, err)
+			t.Errorf("failed to delete service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 		}
 	}()
 
@@ -91,7 +91,7 @@ func TestHTTPHeaderBufferSize(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), echoRoute); err != nil {
-			t.Fatalf("failed to delete route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
+			t.Errorf("failed to delete route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
 		}
 	}()
 
@@ -129,7 +129,7 @@ func TestHTTPHeaderBufferSize(t *testing.T) {
 			if errors.IsNotFound(err) {
 				return
 			}
-			t.Fatalf("failed to delete pod %s/%s: %v", clientPodValidRequest.Namespace, clientPodValidRequest.Name, err)
+			t.Errorf("failed to delete pod %s/%s: %v", clientPodValidRequest.Namespace, clientPodValidRequest.Name, err)
 		}
 	}()
 
@@ -258,7 +258,7 @@ func TestHTTPHeaderBufferSize(t *testing.T) {
 			if errors.IsNotFound(err) {
 				return
 			}
-			t.Fatalf("failed to delete pod %s/%s: %v", clientPodInvalidRequest.Namespace, clientPodInvalidRequest.Name, err)
+			t.Errorf("failed to delete pod %s/%s: %v", clientPodInvalidRequest.Namespace, clientPodInvalidRequest.Name, err)
 		}
 	}()
 
