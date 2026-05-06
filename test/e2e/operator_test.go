@@ -2303,6 +2303,46 @@ $ModLoad omstdout.so
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
+	routerPod, err := getRouterPod(context.TODO(), ic)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// makes a HTTP request to the router so the log scanner has something to collect.
+	clientPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "ping-router",
+			Namespace: routerPod.Namespace,
+			Labels: map[string]string{
+				"type": "test-pod",
+			},
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name:    "curl",
+					Image:   routerPod.Spec.Containers[0].Image,
+					Command: []string{"/bin/curl"},
+					Args: []string{
+						"-ksS", "http://" + routerPod.Status.PodIP,
+					},
+				},
+			},
+			RestartPolicy: corev1.RestartPolicyNever,
+		},
+	}
+	if err := kclient.Create(context.TODO(), clientPod); err != nil {
+		t.Fatalf("failed to create pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), clientPod); err != nil {
+			if apierrors.IsNotFound(err) {
+				return
+			}
+			t.Fatalf("failed to delete pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
+		}
+	}()
+
 	// Scan the syslog logs to make sure some requests get logged;
 	// the kubelet's health probes should get logged.
 	kubeConfig, err := config.GetConfig()
@@ -2389,26 +2429,10 @@ func TestContainerLoggingMaxLength(t *testing.T) {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
-	// Get the deployment's pods.  We will use these to curl a route and to
-	// scan access logs.
-	deployment := &appsv1.Deployment{}
-	if err := kclient.Get(context.TODO(), controller.RouterDeploymentName(ic), deployment); err != nil {
-		t.Fatalf("failed to get ingresscontroller deployment: %v", err)
-	}
-	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
+	// We will use the router's pod to curl a route and to scan access logs.
+	routerPod, err := getRouterPod(context.TODO(), ic)
 	if err != nil {
-		t.Fatalf("router deployment has invalid spec.selector: %v", err)
-	}
-	podList := &corev1.PodList{}
-	if err := kclient.List(context.TODO(), podList, client.MatchingLabelsSelector{Selector: selector}); err != nil {
-		t.Fatalf("failed to list pods for ingresscontroller: %v", err)
-	}
-	if len(podList.Items) != 1 {
-		var podNames []string
-		for i := range podList.Items {
-			podNames = append(podNames, podList.Items[i].Name)
-		}
-		t.Fatalf("expected ingress controller %s to have exactly 1 router pod, but it has %d: %s", ic.Name, len(podList.Items), strings.Join(podNames, ", "))
+		t.Fatal(err)
 	}
 
 	// Make a request to the console route.
@@ -2420,19 +2444,22 @@ func TestContainerLoggingMaxLength(t *testing.T) {
 	clientPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "loggingmaxlengthtest",
-			Namespace: podList.Items[0].Namespace,
+			Namespace: routerPod.Namespace,
+			Labels: map[string]string{
+				"type": "test-pod",
+			},
 		},
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{
 				{
 					Name:    "curl",
-					Image:   podList.Items[0].Spec.Containers[0].Image,
+					Image:   routerPod.Spec.Containers[0].Image,
 					Command: []string{"/bin/curl"},
 					Args: []string{
 						"-k",
 						"-o", "/dev/null", "-s",
 						"--resolve",
-						route.Spec.Host + ":443:" + podList.Items[0].Status.PodIP,
+						route.Spec.Host + ":443:" + routerPod.Status.PodIP,
 						"https://" + route.Spec.Host,
 					},
 				},
@@ -2452,6 +2479,16 @@ func TestContainerLoggingMaxLength(t *testing.T) {
 		}
 	}()
 
+	networkPolicy := buildTestPodNetworkPolicy(types.NamespacedName{Name: "syslog-netpol", Namespace: clientPod.Namespace})
+	if err := kclient.Create(context.TODO(), networkPolicy); err != nil {
+		t.Fatalf("failed to create network policy %s: %v", networkPolicy.Name, err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), networkPolicy); err != nil {
+			t.Fatalf("failed to delete network policy %s: %v", networkPolicy.Name, err)
+		}
+	}()
+
 	kubeConfig, err := config.GetConfig()
 	if err != nil {
 		t.Fatalf("failed to get kube config: %v", err)
@@ -2462,18 +2499,17 @@ func TestContainerLoggingMaxLength(t *testing.T) {
 	}
 
 	err = wait.PollImmediate(1*time.Second, 3*time.Minute, func() (bool, error) {
-		pod := podList.Items[0]
-		readCloser, err := client.CoreV1().Pods(pod.Namespace).GetLogs(pod.Name, &corev1.PodLogOptions{
+		readCloser, err := client.CoreV1().Pods(routerPod.Namespace).GetLogs(routerPod.Name, &corev1.PodLogOptions{
 			Container: "logs",
 			Follow:    false,
 		}).Stream(context.TODO())
 		if err != nil {
-			t.Logf("failed to read logs from pod %s: %v", pod.Name, err)
+			t.Logf("failed to read logs from pod %s: %v", routerPod.Name, err)
 			return false, nil
 		}
 		data, err := ioutil.ReadAll(readCloser)
 		if err != nil {
-			t.Logf("failed to read logs from pod %s: %v", pod.Name, err)
+			t.Logf("failed to read logs from pod %s: %v", routerPod.Name, err)
 			return false, nil
 		}
 		scanner := bufio.NewScanner(bytes.NewBuffer(data))
@@ -2491,7 +2527,7 @@ func TestContainerLoggingMaxLength(t *testing.T) {
 			// the POD name can be different for each test and how the name is build can be changed in the future, so it is not possible to
 			// set a fixed value for the test
 			if strings.Contains(line, "8192abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@@@@@@@=") && (length >= 8100 && length <= 8400) {
-				t.Logf("found log message for maxLength and the length is equals to 8192 chars in pod %s logs", pod.Name)
+				t.Logf("found log message for maxLength and the length is equals to 8192 chars in pod %s logs", routerPod.Name)
 				found = true
 				break
 			}
@@ -2531,26 +2567,10 @@ func TestContainerLoggingMinLength(t *testing.T) {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 
-	// Get the deployment's pods.  We will use these to curl a route and to
-	// scan access logs.
-	deployment := &appsv1.Deployment{}
-	if err := kclient.Get(context.TODO(), controller.RouterDeploymentName(ic), deployment); err != nil {
-		t.Fatalf("failed to get ingresscontroller deployment: %v", err)
-	}
-	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
+	// We will use the router's pod to curl a route and to scan access logs.
+	routerPod, err := getRouterPod(context.TODO(), ic)
 	if err != nil {
-		t.Fatalf("router deployment has invalid spec.selector: %v", err)
-	}
-	podList := &corev1.PodList{}
-	if err := kclient.List(context.TODO(), podList, client.MatchingLabelsSelector{Selector: selector}); err != nil {
-		t.Fatalf("failed to list pods for ingresscontroller: %v", err)
-	}
-	if len(podList.Items) != 1 {
-		var podNames []string
-		for i := range podList.Items {
-			podNames = append(podNames, podList.Items[i].Name)
-		}
-		t.Fatalf("expected ingress controller %s to have exactly 1 router pod, but it has %d: %s", ic.Name, len(podList.Items), strings.Join(podNames, ", "))
+		t.Fatal(err)
 	}
 
 	// Make a request to the console route.
@@ -2562,19 +2582,22 @@ func TestContainerLoggingMinLength(t *testing.T) {
 	clientPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "loggingminlengthtest",
-			Namespace: podList.Items[0].Namespace,
+			Namespace: routerPod.Namespace,
+			Labels: map[string]string{
+				"type": "test-pod",
+			},
 		},
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{
 				{
 					Name:    "curl",
-					Image:   podList.Items[0].Spec.Containers[0].Image,
+					Image:   routerPod.Spec.Containers[0].Image,
 					Command: []string{"/bin/curl"},
 					Args: []string{
 						"-k",
 						"-o", "/dev/null", "-s",
 						"--resolve",
-						route.Spec.Host + ":443:" + podList.Items[0].Status.PodIP,
+						route.Spec.Host + ":443:" + routerPod.Status.PodIP,
 						"https://" + route.Spec.Host,
 					},
 				},
@@ -2594,6 +2617,16 @@ func TestContainerLoggingMinLength(t *testing.T) {
 		}
 	}()
 
+	networkPolicy := buildTestPodNetworkPolicy(types.NamespacedName{Name: "syslog-netpol", Namespace: clientPod.Namespace})
+	if err := kclient.Create(context.TODO(), networkPolicy); err != nil {
+		t.Fatalf("failed to create network policy %s: %v", networkPolicy.Name, err)
+	}
+	defer func() {
+		if err := kclient.Delete(context.TODO(), networkPolicy); err != nil {
+			t.Fatalf("failed to delete network policy %s: %v", networkPolicy.Name, err)
+		}
+	}()
+
 	kubeConfig, err := config.GetConfig()
 	if err != nil {
 		t.Fatalf("failed to get kube config: %v", err)
@@ -2604,18 +2637,17 @@ func TestContainerLoggingMinLength(t *testing.T) {
 	}
 
 	err = wait.PollImmediate(1*time.Second, 3*time.Minute, func() (bool, error) {
-		pod := podList.Items[0]
-		readCloser, err := client.CoreV1().Pods(pod.Namespace).GetLogs(pod.Name, &corev1.PodLogOptions{
+		readCloser, err := client.CoreV1().Pods(routerPod.Namespace).GetLogs(routerPod.Name, &corev1.PodLogOptions{
 			Container: "logs",
 			Follow:    false,
 		}).Stream(context.TODO())
 		if err != nil {
-			t.Logf("failed to read logs from pod %s: %v", pod.Name, err)
+			t.Logf("failed to read logs from pod %s: %v", routerPod.Name, err)
 			return false, nil
 		}
 		data, err := ioutil.ReadAll(readCloser)
 		if err != nil {
-			t.Logf("failed to read logs from pod %s: %v", pod.Name, err)
+			t.Logf("failed to read logs from pod %s: %v", routerPod.Name, err)
 			return false, nil
 		}
 		scanner := bufio.NewScanner(bytes.NewBuffer(data))
@@ -2633,7 +2665,7 @@ func TestContainerLoggingMinLength(t *testing.T) {
 			// the POD name can be different for each test and how the name is build can be changed in the future, so it is not possible to
 			// set a fixed value for the test
 			if strings.Contains(line, "0480abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@@@@@@@=") && (length >= 450 && length <= 650) {
-				t.Logf("found log message for minLength and the length is equals to 480 chars in pod %s logs", pod.Name)
+				t.Logf("found log message for minLength and the length is equals to 480 chars in pod %s logs", routerPod.Name)
 				found = true
 				break
 			}
@@ -4216,6 +4248,40 @@ func TestIngressOperatorCacheIsNotGlobal(t *testing.T) {
 		}
 		return false, nil
 	})
+}
+
+func getRouterPod(ctx context.Context, ic *operatorv1.IngressController) (*corev1.Pod, error) {
+	deployment := &appsv1.Deployment{}
+	if err := kclient.Get(ctx, controller.RouterDeploymentName(ic), deployment); err != nil {
+		return nil, fmt.Errorf("failed to get ingresscontroller deployment: %w", err)
+	}
+	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
+	if err != nil {
+		return nil, fmt.Errorf("router deployment has invalid spec.selector: %w", err)
+	}
+
+	// wait for router to have one single pod, in case of unexpected events like node reload
+	var routerPod *corev1.Pod
+	var pollErr error
+	_ = wait.PollUntilContextTimeout(ctx, 5*time.Second, time.Minute, true, func(ctx context.Context) (done bool, err error) {
+		podList := &corev1.PodList{}
+		if err := kclient.List(context.TODO(), podList, client.MatchingLabelsSelector{Selector: selector}); err != nil {
+			pollErr = fmt.Errorf("failed to list pods for ingresscontroller: %w", err)
+			return false, nil
+		}
+		if len(podList.Items) != 1 {
+			var podNames []string
+			for i := range podList.Items {
+				podNames = append(podNames, podList.Items[i].Name)
+			}
+			pollErr = fmt.Errorf("expected ingress controller %s to have exactly 1 router pod, but it has %d: %s", ic.Name, len(podList.Items), strings.Join(podNames, ", "))
+			return false, nil
+		}
+		routerPod = &podList.Items[0]
+		pollErr = nil
+		return true, nil
+	})
+	return routerPod, pollErr
 }
 
 func newNodePortController(name types.NamespacedName, domain string) *operatorv1.IngressController {
