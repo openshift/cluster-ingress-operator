@@ -15,8 +15,13 @@ spec:
     - protocol: TCP
       port: 8443
     from:
+    # depending on topology, valid canary checks will either appear to come from
+    # the router's namespace or the host network.
     - namespaceSelector:
         matchLabels:
           kubernetes.io/metadata.name: openshift-ingress
+    - namespaceSelector:
+        matchLabels:
+          policy-group.network.openshift.io/host-network: ""
   policyTypes:
   - Ingress
