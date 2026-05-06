@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -31,6 +33,11 @@ import (
 const (
 	ingressControllerImage = "quay.io/openshift/router:latest"
 	routerContainerName    = "router"
+
+	routerInitContainerName        = "init-router"
+	routerHAProxyContainerName     = "haproxy"
+	routerHAProxyConfigVolume      = "haproxy-config"
+	routerServiceAccountVolumeName = "kube-api-access"
 )
 
 var toleration = corev1.Toleration{
@@ -59,10 +66,10 @@ func checkDeploymentHasEnvSorted(t *testing.T, deployment *appsv1.Deployment) {
 	}
 }
 
-func checkDeploymentHasContainer(t *testing.T, deployment *appsv1.Deployment, name string, expect bool) {
+func checkDeploymentHasContainer(t *testing.T, containers []corev1.Container, name string, expect bool) {
 	t.Helper()
 
-	for _, container := range deployment.Spec.Template.Spec.Containers {
+	for _, container := range containers {
 		if container.Name == name {
 			if expect {
 				return
@@ -75,20 +82,38 @@ func checkDeploymentHasContainer(t *testing.T, deployment *appsv1.Deployment, na
 	}
 }
 
-func checkRouterContainerSecurityContext(t *testing.T, deployment *appsv1.Deployment) {
+func getHAProxyContainer(t *testing.T, deployment *appsv1.Deployment) *corev1.Container {
 	t.Helper()
-	checkDeploymentHasContainer(t, deployment, routerContainerName, true)
+	checkDeploymentHasContainer(t, deployment.Spec.Template.Spec.InitContainers, routerHAProxyContainerName, true)
 
-	for _, container := range deployment.Spec.Template.Spec.Containers {
-		if container.Name == routerContainerName {
-			if allowPrivEsc := container.SecurityContext.AllowPrivilegeEscalation; allowPrivEsc == nil || !*allowPrivEsc {
-				t.Errorf("%s container does not have securityContext.allowPrivilegeEscalation: true", routerContainerName)
-			}
-			if readOnlyFS := container.SecurityContext.ReadOnlyRootFilesystem; readOnlyFS == nil || *readOnlyFS {
-				t.Errorf("%s container does not have securityContext.readOnlyRootFilesystem: false", routerContainerName)
-			}
+	for _, container := range deployment.Spec.Template.Spec.InitContainers {
+		if container.Name == routerHAProxyContainerName {
+			return &container
 		}
 	}
+
+	t.Errorf("haproxy container not found")
+	return nil
+}
+
+func checkHAProxyContainerSecurityContext(t *testing.T, deployment *appsv1.Deployment) {
+	t.Helper()
+	container := getHAProxyContainer(t, deployment)
+
+	if allowPrivEsc := container.SecurityContext.AllowPrivilegeEscalation; allowPrivEsc == nil || !*allowPrivEsc {
+		t.Errorf("%s container does not have securityContext.allowPrivilegeEscalation: true", routerContainerName)
+	}
+	if readOnlyFS := container.SecurityContext.ReadOnlyRootFilesystem; readOnlyFS == nil || !*readOnlyFS {
+		t.Errorf("%s container does not have securityContext.readOnlyRootFilesystem: true", routerContainerName)
+	}
+}
+
+func checkHAProxyContainerSocketRef(t *testing.T, deployment *appsv1.Deployment) {
+	t.Helper()
+	container := getHAProxyContainer(t, deployment)
+
+	require.Equal(t, container.Args, []string{"-W", "-db", "-S", routerHAProxyAdminSocket + ",mode,600", "-f", "/var/lib/haproxy/conf/haproxy.config"}, "containers[haproxy].Args")
+	require.Equal(t, container.StartupProbe.Exec.Command, []string{"/bin/sh", "-c", "echo show version | socat - " + routerHAProxyAdminSocket}, "containers[haproxy].startupProbe.exec.command")
 }
 
 func checkDeploymentHash(t *testing.T, deployment *appsv1.Deployment) {
@@ -540,7 +565,8 @@ func Test_desiredRouterDeployment(t *testing.T) {
 		t.Fatalf("invalid router Deployment: %v", err)
 	}
 
-	checkRouterContainerSecurityContext(t, deployment)
+	checkHAProxyContainerSecurityContext(t, deployment)
+	checkHAProxyContainerSocketRef(t, deployment)
 	checkDeploymentHash(t, deployment)
 
 	if deployment.Spec.Replicas == nil {
@@ -648,6 +674,43 @@ func assertVolumeHasDefaultMode(t *testing.T, expected int32, actual *int32, vol
 	}
 }
 
+func assertVolumeHasServiceAccount(t *testing.T, volume corev1.Volume) {
+	t.Helper()
+
+	if !assert.NotNil(t, volume.Projected) {
+		return
+	}
+
+	assertVolumeHasDefaultMode(t, int32(0400), volume.Projected.DefaultMode, volume.Name)
+
+	require.Len(t, volume.Projected.Sources, 3, "expected 3 projected sources")
+
+	var hasToken, hasConfigMap, hasDownwardAPI bool
+	for _, source := range volume.Projected.Sources {
+		switch {
+		case source.ServiceAccountToken != nil:
+			assert.Equal(t, ptr.To(int64(3600)), source.ServiceAccountToken.ExpirationSeconds)
+			assert.Equal(t, "token", source.ServiceAccountToken.Path)
+			hasToken = true
+		case source.ConfigMap != nil:
+			assert.Equal(t, "kube-root-ca.crt", source.ConfigMap.Name)
+			assert.Equal(t, []corev1.KeyToPath{{Key: "ca.crt", Path: "ca.crt"}}, source.ConfigMap.Items)
+			hasConfigMap = true
+		case source.DownwardAPI != nil:
+			volumeFile := []corev1.DownwardAPIVolumeFile{{
+				Path: "namespace",
+				FieldRef: &corev1.ObjectFieldSelector{
+					FieldPath: "metadata.namespace"},
+			}}
+			assert.Equal(t, volumeFile, source.DownwardAPI.Items)
+			hasDownwardAPI = true
+		}
+	}
+	assert.True(t, hasToken, "missing ServiceAccountToken source")
+	assert.True(t, hasConfigMap, "missing ConfigMap source")
+	assert.True(t, hasDownwardAPI, "missing DownwardAPI source")
+}
+
 // checkProbes asserts that the given container specifies liveness, readiness,
 // and startup probes, and that these probes have the expected parameters.  If
 // useLocalhost is true, checkProbes asserts that the probe's HTTP action
@@ -695,18 +758,67 @@ func TestDesiredRouterDeploymentSpecTemplate(t *testing.T) {
 		t.Fatalf("invalid router Deployment: %v", err)
 	}
 
-	expectedVolumeSecretPairs := map[string]string{
-		"default-certificate": fmt.Sprintf("router-certs-%s", ic.Name),
-		"metrics-certs":       fmt.Sprintf("router-metrics-certs-%s", ic.Name),
-		"stats-auth":          fmt.Sprintf("router-stats-%s", ic.Name),
-	}
 	expectedVolumes := []string{
 		"default-certificate",
 		"metrics-certs",
 		"stats-auth",
 		"service-ca-bundle",
+		routerServiceAccountVolumeName,
+		routerHAProxyConfigVolume,
 	}
+	hasDesiredRouterDeploymentSpecTemplate(t, ic, deployment, expectedVolumes)
+}
+
+func TestDesiredRouterDeploymentSpecTemplateSidecar(t *testing.T) {
+	ic, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, clusterProxyConfig := getRouterDeploymentComponents(t)
+	deployment, err := desiredRouterDeployment(ic, &Config{IngressControllerImage: ingressControllerImage}, ingressConfig, infraConfig, apiConfig, networkConfig, nil, proxyNeeded, false, nil, clusterProxyConfig)
+	if err != nil {
+		t.Fatalf("invalid router Deployment: %v", err)
+	}
+
+	require.Len(t, deployment.Spec.Template.Spec.InitContainers, 2, "len(initContainers)")
+	require.Len(t, deployment.Spec.Template.Spec.Containers, 1, "len(containers)")
+
+	checkDeploymentHasContainer(t, deployment.Spec.Template.Spec.InitContainers, routerHAProxyContainerName, true)
+	checkDeploymentHasContainer(t, deployment.Spec.Template.Spec.InitContainers, routerInitContainerName, true)
+
+	envvars := []envData{
+		{name: "ROUTER_HAPROXY_ADMIN_UNIX_SOCKET", expectPresent: true, expectedValue: routerHAProxyAdminSocket},
+	}
+	if err := checkDeploymentEnvironment(t, deployment, envvars); err != nil {
+		t.Error(err)
+	}
+
+	expectedVolumes := []string{
+		"default-certificate",
+		"metrics-certs",
+		"stats-auth",
+		"service-ca-bundle",
+		routerServiceAccountVolumeName, // available in the pod but not mounted in the container
+		routerHAProxyConfigVolume,
+	}
+	hasDesiredRouterDeploymentSpecTemplate(t, ic, deployment, expectedVolumes)
+
+	haproxyContainer := deployment.Spec.Template.Spec.InitContainers[1]
+
+	// restartPolicy == Always configures an init container as a sidecar
+	require.Equal(t, haproxyContainer.RestartPolicy, ptr.To(corev1.ContainerRestartPolicyAlways))
+
+	kubeAPIAccessMounted := slices.ContainsFunc(haproxyContainer.VolumeMounts, func(mount corev1.VolumeMount) bool {
+		return mount.Name == routerServiceAccountVolumeName
+	})
+	require.Falsef(t, kubeAPIAccessMounted, "haproxy sidecar is unexpectedly mounting volume %q", routerServiceAccountVolumeName)
+}
+
+// hasDesiredRouterDeploymentSpecTemplate has common configuration for router deployments, with and without an HAProxy sidecar
+func hasDesiredRouterDeploymentSpecTemplate(t *testing.T, ic *operatorv1.IngressController, deployment *appsv1.Deployment, expectedVolumes []string) {
 	assertHasVolumes(t, deployment.Spec.Template.Spec.Volumes, expectedVolumes)
+
+	expectedVolumeSecretPairs := map[string]string{
+		"default-certificate": fmt.Sprintf("router-certs-%s", ic.Name),
+		"metrics-certs":       fmt.Sprintf("router-metrics-certs-%s", ic.Name),
+		"stats-auth":          fmt.Sprintf("router-stats-%s", ic.Name),
+	}
 	for _, volume := range deployment.Spec.Template.Spec.Volumes {
 		if secretName, ok := expectedVolumeSecretPairs[volume.Name]; ok {
 			if volume.Secret.SecretName != secretName {
@@ -718,6 +830,9 @@ func TestDesiredRouterDeploymentSpecTemplate(t *testing.T) {
 		switch volume.Name {
 		case "service-ca-bundle":
 			assertVolumeHasDefaultMode(t, int32(0644), volume.ConfigMap.DefaultMode, volume.Name)
+		case routerServiceAccountVolumeName:
+			assertVolumeHasServiceAccount(t, volume)
+		case routerHAProxyConfigVolume:
 		default:
 			t.Errorf("router deployment has unexpected volume %s", volume.Name)
 		}
@@ -757,7 +872,7 @@ func TestDesiredRouterDeploymentSpecTemplate(t *testing.T) {
 
 	checkProbes(t, &deployment.Spec.Template.Spec.Containers[0], false)
 
-	checkDeploymentHasContainer(t, deployment, operatorv1.ContainerLoggingSidecarContainerName, false)
+	checkDeploymentHasContainer(t, deployment.Spec.Template.Spec.Containers, operatorv1.ContainerLoggingSidecarContainerName, false)
 
 	checkDeploymentHasEnvSorted(t, deployment)
 }
@@ -856,6 +971,8 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 		"error-pages",
 		"rsyslog-config",
 		"rsyslog-socket",
+		routerServiceAccountVolumeName,
+		routerHAProxyConfigVolume,
 	}
 	assertHasVolumes(t, deployment.Spec.Template.Spec.Volumes, expectedVolumes)
 	for _, volume := range deployment.Spec.Template.Spec.Volumes {
@@ -864,13 +981,16 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 			assertVolumeHasDefaultMode(t, int32(0644), volume.Secret.DefaultMode, volume.Name)
 		case "error-pages", "rsyslog-config", "service-ca-bundle":
 			assertVolumeHasDefaultMode(t, int32(0644), volume.ConfigMap.DefaultMode, volume.Name)
+		case routerServiceAccountVolumeName:
+			assertVolumeHasServiceAccount(t, volume)
+		case routerHAProxyConfigVolume:
 		case "rsyslog-socket":
 		default:
 			t.Errorf("router deployment has unexpected volume %s", volume.Name)
 		}
 	}
 
-	checkDeploymentHasContainer(t, deployment, operatorv1.ContainerLoggingSidecarContainerName, true)
+	checkDeploymentHasContainer(t, deployment.Spec.Template.Spec.Containers, operatorv1.ContainerLoggingSidecarContainerName, true)
 	tests := []envData{
 		{"ROUTER_HAPROXY_CONFIG_MANAGER", false, ""},
 		{"ROUTER_LOAD_BALANCE_ALGORITHM", true, "leastconn"},
@@ -1084,6 +1204,8 @@ func TestDesiredRouterDeploymentVariety(t *testing.T) {
 		"metrics-certs",
 		"stats-auth",
 		"service-ca-bundle",
+		routerServiceAccountVolumeName,
+		routerHAProxyConfigVolume,
 	}
 	assertHasVolumes(t, deployment.Spec.Template.Spec.Volumes, expectedVolumes)
 	for _, volume := range deployment.Spec.Template.Spec.Volumes {
@@ -1097,12 +1219,15 @@ func TestDesiredRouterDeploymentVariety(t *testing.T) {
 		switch volume.Name {
 		case "service-ca-bundle":
 			assertVolumeHasDefaultMode(t, int32(0644), volume.ConfigMap.DefaultMode, volume.Name)
+		case routerServiceAccountVolumeName:
+			assertVolumeHasServiceAccount(t, volume)
+		case routerHAProxyConfigVolume:
 		default:
 			t.Errorf("router deployment has unexpected volume %s", volume.Name)
 		}
 	}
 
-	checkDeploymentHasContainer(t, deployment, operatorv1.ContainerLoggingSidecarContainerName, false)
+	checkDeploymentHasContainer(t, deployment.Spec.Template.Spec.Containers, operatorv1.ContainerLoggingSidecarContainerName, false)
 	tests := []envData{
 		{"ROUTER_LOG_FACILITY", true, "local2"},
 		{"ROUTER_LOG_MAX_LENGTH", true, "4096"},
@@ -1300,6 +1425,8 @@ func TestDesiredRouterDeploymentClientTLS(t *testing.T) {
 		"stats-auth",
 		"service-ca-bundle",
 		"client-ca",
+		routerServiceAccountVolumeName,
+		routerHAProxyConfigVolume,
 	}
 	assertHasVolumes(t, deployment.Spec.Template.Spec.Volumes, expectedVolumes)
 	for _, volume := range deployment.Spec.Template.Spec.Volumes {
@@ -1311,6 +1438,9 @@ func TestDesiredRouterDeploymentClientTLS(t *testing.T) {
 		case "client-ca":
 			assertVolumeHasDefaultMode(t, int32(0644), volume.ConfigMap.DefaultMode, volume.Name)
 			assert.Equal(t, "router-client-ca-default", volume.VolumeSource.ConfigMap.LocalObjectReference.Name)
+		case routerServiceAccountVolumeName:
+			assertVolumeHasServiceAccount(t, volume)
+		case routerHAProxyConfigVolume:
 		default:
 			t.Errorf("router deployment has unexpected volume %s", volume.Name)
 		}
