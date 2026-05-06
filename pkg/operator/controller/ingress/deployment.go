@@ -159,6 +159,12 @@ const (
 	StatsPortName = "metrics"
 
 	haproxyMaxTimeoutMilliseconds = 2147483647 * time.Millisecond
+
+	// routerHAProxyAdminSocket has the path to the unix socket of the master process CLI.
+	// This socket is used to issue reload, grab HAProxy version, list and manage active processes.
+	//
+	// NOTE: it is hardcoded in the deployment.yaml manifest, update there if updating here.
+	routerHAProxyAdminSocket = "/var/lib/haproxy/run/admin.sock"
 )
 
 // ensureRouterDeployment ensures the router deployment exists for a given
@@ -321,6 +327,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 
 	volumes := deployment.Spec.Template.Spec.Volumes
 	routerVolumeMounts := deployment.Spec.Template.Spec.Containers[0].VolumeMounts
+	haproxyVolumeMounts := deployment.Spec.Template.Spec.InitContainers[1].VolumeMounts
 
 	desiredReplicas := determineDeploymentReplicas(ci, ingressConfig, infraConfig)
 	deployment.Spec.Replicas = &desiredReplicas
@@ -550,6 +557,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 			MountPath: "/var/lib/haproxy/conf/error_code_pages",
 		}
 		routerVolumeMounts = append(routerVolumeMounts, httpErrorCodeVolumeMount)
+		haproxyVolumeMounts = append(haproxyVolumeMounts, httpErrorCodeVolumeMount)
 		if len(configmapName.Name) != 0 {
 			env = append(env, corev1.EnvVar{
 				Name:  "ROUTER_ERRORFILE_503",
@@ -813,7 +821,17 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 		env = append(env, corev1.EnvVar{Name: "ROUTE_LABELS", Value: routeSelector.String()})
 	}
 
+	// init image: just needs bash, reusing router's image is fine since we already need to download it anyway.
+	deployment.Spec.Template.Spec.InitContainers[0].Image = config.IngressControllerImage
+
+	// router image.
 	deployment.Spec.Template.Spec.Containers[0].Image = config.IngressControllerImage
+
+	// haproxy image: using router's image for now, but it needs its own image.
+	// HAProxy images: https://redhat.atlassian.net/browse/NE-2218
+	// API field: https://redhat.atlassian.net/browse/NE-2217
+	deployment.Spec.Template.Spec.InitContainers[1].Image = config.IngressControllerImage
+
 	deployment.Spec.Template.Spec.DNSPolicy = corev1.DNSClusterFirst
 
 	var (
@@ -966,6 +984,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 			)
 			volumes = append(volumes, rsyslogConfigVolume, rsyslogSocketVolume)
 			routerVolumeMounts = append(routerVolumeMounts, rsyslogSocketVolumeMount)
+			haproxyVolumeMounts = append(haproxyVolumeMounts, rsyslogSocketVolumeMount)
 			deployment.Spec.Template.Spec.Containers = append(deployment.Spec.Template.Spec.Containers, syslogContainer)
 
 		case accessLogging.Destination.Type == operatorv1.SyslogLoggingDestinationType:
@@ -1271,6 +1290,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 
 	deployment.Spec.Template.Spec.Volumes = volumes
 	deployment.Spec.Template.Spec.Containers[0].VolumeMounts = routerVolumeMounts
+	deployment.Spec.Template.Spec.InitContainers[1].VolumeMounts = haproxyVolumeMounts
 
 	// If MIMETypes were supplied, expose the RouterEnableCompression and RouterCompressionMIMETypes
 	// environment variables.
@@ -1318,6 +1338,12 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 			Value: "true",
 		})
 	}
+
+	// ROUTER_HAPROXY_ADMIN_UNIX_SOCKET envvar defines where the router should find the HAProxy's admin socket.
+	env = append(env, corev1.EnvVar{
+		Name:  "ROUTER_HAPROXY_ADMIN_UNIX_SOCKET",
+		Value: routerHAProxyAdminSocket,
+	})
 
 	// TODO: The only connections from the router that may need the cluster-wide proxy are those for downloading CRLs,
 	// which, as of writing this, will always be http. If https becomes necessary, the router will need to mount the
@@ -1600,6 +1626,33 @@ func hashableDeployment(deployment *appsv1.Deployment, onlyTemplate bool) *appsv
 		return containers[i].Name < containers[j].Name
 	})
 	hashableDeployment.Spec.Template.Spec.Containers = containers
+	initContainers := make([]corev1.Container, len(deployment.Spec.Template.Spec.InitContainers))
+	for i, initContainer := range deployment.Spec.Template.Spec.InitContainers {
+		env := initContainer.Env
+		sort.Slice(env, func(i, j int) bool {
+			return env[i].Name < env[j].Name
+		})
+		initContainers[i] = corev1.Container{
+			Args:            initContainer.Args,
+			Command:         initContainer.Command,
+			Env:             env,
+			Image:           initContainer.Image,
+			ImagePullPolicy: initContainer.ImagePullPolicy,
+			Name:            initContainer.Name,
+			LivenessProbe:   hashableProbe(initContainer.LivenessProbe),
+			ReadinessProbe:  hashableProbe(initContainer.ReadinessProbe),
+			StartupProbe:    hashableProbe(initContainer.StartupProbe),
+			SecurityContext: initContainer.SecurityContext,
+			Ports:           initContainer.Ports,
+			Resources:       initContainer.Resources,
+			RestartPolicy:   initContainer.RestartPolicy,
+			VolumeMounts:    initContainer.VolumeMounts,
+		}
+	}
+	sort.Slice(initContainers, func(i, j int) bool {
+		return initContainers[i].Name < initContainers[j].Name
+	})
+	hashableDeployment.Spec.Template.Spec.InitContainers = initContainers
 	hashableDeployment.Spec.Template.Spec.DNSPolicy = deployment.Spec.Template.Spec.DNSPolicy
 	hashableDeployment.Spec.Template.Spec.HostNetwork = deployment.Spec.Template.Spec.HostNetwork
 	volumes := make([]corev1.Volume, len(deployment.Spec.Template.Spec.Volumes))
@@ -1782,6 +1835,9 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 		containers[i+1] = *container.DeepCopy()
 	}
 	updated.Spec.Template.Spec.Containers = containers
+	updated.Spec.Template.Spec.InitContainers = expected.Spec.Template.Spec.InitContainers
+	updated.Spec.Template.Spec.AutomountServiceAccountToken = expected.Spec.Template.Spec.AutomountServiceAccountToken
+	updated.Spec.Template.Spec.ShareProcessNamespace = expected.Spec.Template.Spec.ShareProcessNamespace
 	updated.Spec.Template.Spec.DNSPolicy = expected.Spec.Template.Spec.DNSPolicy
 	updated.Spec.Template.Labels = expected.Spec.Template.Labels
 
