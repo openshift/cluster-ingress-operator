@@ -62,7 +62,7 @@ func testRouteHeaders(t *testing.T, image string, route *routev1.Route, address 
 	defer func() {
 		if err := kclient.Delete(context.TODO(), clientPod); err != nil {
 			if !errors.IsNotFound(err) {
-				t.Fatalf("failed to delete pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
+				t.Errorf("failed to delete pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
 			}
 		}
 	}()
@@ -157,7 +157,7 @@ func TestForwardedHeaderPolicyAppend(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), echoPod); err != nil {
-			t.Fatalf("failed to delete pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
+			t.Errorf("failed to delete pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 		}
 	}()
 
@@ -167,7 +167,7 @@ func TestForwardedHeaderPolicyAppend(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), echoService); err != nil {
-			t.Fatalf("failed to delete service %s/%s: %v", echoService.Namespace, echoService.Name, err)
+			t.Errorf("failed to delete service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 		}
 	}()
 
@@ -177,7 +177,7 @@ func TestForwardedHeaderPolicyAppend(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), echoRoute); err != nil {
-			t.Fatalf("failed to delete route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
+			t.Errorf("failed to delete route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
 		}
 	}()
 
@@ -253,7 +253,7 @@ func TestForwardedHeaderPolicyReplace(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), echoPod); err != nil {
-			t.Fatalf("failed to delete pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
+			t.Errorf("failed to delete pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 		}
 	}()
 
@@ -263,7 +263,7 @@ func TestForwardedHeaderPolicyReplace(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), echoService); err != nil {
-			t.Fatalf("failed to delete service %s/%s: %v", echoService.Namespace, echoService.Name, err)
+			t.Errorf("failed to delete service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 		}
 	}()
 
@@ -273,7 +273,7 @@ func TestForwardedHeaderPolicyReplace(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), echoRoute); err != nil {
-			t.Fatalf("failed to delete route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
+			t.Errorf("failed to delete route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
 		}
 	}()
 
@@ -324,7 +324,7 @@ func TestForwardedHeaderPolicyNever(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), echoPod); err != nil {
-			t.Fatalf("failed to delete pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
+			t.Errorf("failed to delete pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 		}
 	}()
 
@@ -334,7 +334,7 @@ func TestForwardedHeaderPolicyNever(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), echoService); err != nil {
-			t.Fatalf("failed to delete service %s/%s: %v", echoService.Namespace, echoService.Name, err)
+			t.Errorf("failed to delete service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 		}
 	}()
 
@@ -344,7 +344,7 @@ func TestForwardedHeaderPolicyNever(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), echoRoute); err != nil {
-			t.Fatalf("failed to delete route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
+			t.Errorf("failed to delete route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
 		}
 	}()
 
@@ -396,7 +396,7 @@ func TestForwardedHeaderPolicyIfNone(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), echoPod); err != nil {
-			t.Fatalf("failed to delete pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
+			t.Errorf("failed to delete pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 		}
 	}()
 
@@ -406,7 +406,7 @@ func TestForwardedHeaderPolicyIfNone(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), echoService); err != nil {
-			t.Fatalf("failed to delete service %s/%s: %v", echoService.Namespace, echoService.Name, err)
+			t.Errorf("failed to delete service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 		}
 	}()
 
@@ -416,7 +416,7 @@ func TestForwardedHeaderPolicyIfNone(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), echoRoute); err != nil {
-			t.Fatalf("failed to delete route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
+			t.Errorf("failed to delete route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
 		}
 	}()
 

@@ -180,7 +180,7 @@ func testRouteMetricsControllerLabelSelector(t *testing.T, testRS, testNS bool) 
 	// Cleanup step - delete the Namespace.
 	defer func() {
 		if err := kclient.Delete(context.TODO(), ns); err != nil {
-			t.Fatalf("failed to delete test namespace %s: %v", ns.Name, err)
+			t.Errorf("failed to delete test namespace %s: %v", ns.Name, err)
 		}
 	}()
 
@@ -213,7 +213,7 @@ func testRouteMetricsControllerLabelSelector(t *testing.T, testRS, testNS bool) 
 			if apierrors.IsNotFound(err) {
 				return
 			} else {
-				t.Fatalf("failed to delete route %s: %v", routeFooLabelName, err)
+				t.Errorf("failed to delete route %s: %v", routeFooLabelName, err)
 			}
 		}
 	}()

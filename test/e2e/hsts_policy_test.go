@@ -61,7 +61,7 @@ func TestHstsPolicyWorks(t *testing.T) {
 		if err := updateIngressConfigSpecWithRetryOnConflict(t, clusterConfigName, timeout, func(spec *configv1.IngressSpec) {
 			spec.RequiredHSTSPolicies = nil
 		}); err != nil {
-			t.Fatalf("failed to restore ingress config: %v", err)
+			t.Errorf("failed to restore ingress config: %v", err)
 		}
 	}()
 

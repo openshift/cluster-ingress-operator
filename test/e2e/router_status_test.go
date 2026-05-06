@@ -51,7 +51,7 @@ func TestDeleteIngressControllerShouldClearRouteStatus(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), route); err != nil {
-			t.Fatalf("failed to delete route %s: %v", routeName, err)
+			t.Errorf("failed to delete route %s: %v", routeName, err)
 		}
 	}()
 
@@ -98,7 +98,7 @@ func TestIngressControllerRouteSelectorUpdateShouldClearRouteStatus(t *testing.T
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), routeFooLabel); err != nil {
-			t.Fatalf("failed to delete route %s: %v", routeFooLabelName, err)
+			t.Errorf("failed to delete route %s: %v", routeFooLabelName, err)
 		}
 	}()
 
@@ -112,7 +112,7 @@ func TestIngressControllerRouteSelectorUpdateShouldClearRouteStatus(t *testing.T
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), routeBarLabel); err != nil {
-			t.Fatalf("failed to delete route %s: %v", routeBarLabel, err)
+			t.Errorf("failed to delete route %s: %v", routeBarLabel, err)
 		}
 	}()
 
@@ -175,7 +175,7 @@ func TestIngressControllerNamespaceSelectorUpdateShouldClearRouteStatus(t *testi
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), nsFoo); err != nil {
-			t.Fatalf("failed to delete test namespace %v: %v", nsFoo.Name, err)
+			t.Errorf("failed to delete test namespace %v: %v", nsFoo.Name, err)
 		}
 	}()
 
@@ -193,7 +193,7 @@ func TestIngressControllerNamespaceSelectorUpdateShouldClearRouteStatus(t *testi
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), nsBar); err != nil {
-			t.Fatalf("failed to delete test namespace %v: %v", nsBar.Name, err)
+			t.Errorf("failed to delete test namespace %v: %v", nsBar.Name, err)
 		}
 	}()
 
@@ -206,7 +206,7 @@ func TestIngressControllerNamespaceSelectorUpdateShouldClearRouteStatus(t *testi
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), routeFooLabel); err != nil {
-			t.Fatalf("failed to delete route %s: %v", routeFooLabelName, err)
+			t.Errorf("failed to delete route %s: %v", routeFooLabelName, err)
 		}
 	}()
 
@@ -219,7 +219,7 @@ func TestIngressControllerNamespaceSelectorUpdateShouldClearRouteStatus(t *testi
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), routeBarLabel); err != nil {
-			t.Fatalf("failed to delete route %s: %v", routeBarLabel, err)
+			t.Errorf("failed to delete route %s: %v", routeBarLabel, err)
 		}
 	}()
 

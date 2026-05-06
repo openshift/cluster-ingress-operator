@@ -630,7 +630,7 @@ func TestUpdateDefaultIngressControllerSecret(t *testing.T) {
 		if err := updateIngressControllerWithRetryOnConflict(t, defaultName, timeout, func(ic *operatorv1.IngressController) {
 			ic.Spec.DefaultCertificate = originalSecret
 		}); err != nil {
-			t.Fatalf("failed to reset default ingresscontroller: %v", err)
+			t.Errorf("failed to reset default ingresscontroller: %v", err)
 		}
 	}()
 
@@ -1978,7 +1978,7 @@ func TestRouteAdmissionPolicy(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), ns1); err != nil {
-			t.Fatalf("failed to delete test namespace %v: %v", ns1.Name, err)
+			t.Errorf("failed to delete test namespace %v: %v", ns1.Name, err)
 		}
 	}()
 	ns2 := &corev1.Namespace{
@@ -1991,7 +1991,7 @@ func TestRouteAdmissionPolicy(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), ns2); err != nil {
-			t.Fatalf("failed to delete test namespace %v: %v", ns2.Name, err)
+			t.Errorf("failed to delete test namespace %v: %v", ns2.Name, err)
 		}
 	}()
 
@@ -2226,7 +2226,7 @@ func TestSyslogLogging(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), syslogPod); err != nil {
-			t.Fatalf("failed to delete pod %s: %v", syslogPod.Name, err)
+			t.Errorf("failed to delete pod %s: %v", syslogPod.Name, err)
 		}
 	}()
 
@@ -2236,7 +2236,7 @@ func TestSyslogLogging(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), networkPolicy); err != nil {
-			t.Fatalf("failed to delete network policy %s: %v", networkPolicy.Name, err)
+			t.Errorf("failed to delete network policy %s: %v", networkPolicy.Name, err)
 		}
 	}()
 
@@ -2258,7 +2258,7 @@ $ModLoad omstdout.so
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), syslogConfigmap); err != nil {
-			t.Fatalf("failed to delete configmap %s: %v", syslogConfigmap.Name, err)
+			t.Errorf("failed to delete configmap %s: %v", syslogConfigmap.Name, err)
 		}
 	}()
 
@@ -2448,7 +2448,7 @@ func TestContainerLoggingMaxLength(t *testing.T) {
 			if apierrors.IsNotFound(err) {
 				return
 			}
-			t.Fatalf("failed to delete pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
+			t.Errorf("failed to delete pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
 		}
 	}()
 
@@ -2590,7 +2590,7 @@ func TestContainerLoggingMinLength(t *testing.T) {
 			if apierrors.IsNotFound(err) {
 				return
 			}
-			t.Fatalf("failed to delete pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
+			t.Errorf("failed to delete pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
 		}
 	}()
 
@@ -2717,7 +2717,7 @@ func TestIngressControllerCustomEndpoints(t *testing.T) {
 		if err := updateAndVerifyInfrastructureConfigWithRetry(t, types.NamespacedName{Name: "cluster"}, timeout, func(spec *configv1.InfrastructureSpec) {
 			spec.PlatformSpec.AWS = nil
 		}); err != nil {
-			t.Fatalf("failed to update infrastructure config: %v", err)
+			t.Errorf("failed to update infrastructure config: %v", err)
 		}
 	}()
 
@@ -2851,7 +2851,7 @@ func TestHTTPHeaderCapture(t *testing.T) {
 			if apierrors.IsNotFound(err) {
 				return
 			}
-			t.Fatalf("failed to delete pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
+			t.Errorf("failed to delete pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
 		}
 	}()
 
@@ -2861,7 +2861,7 @@ func TestHTTPHeaderCapture(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), networkPolicy); err != nil {
-			t.Fatalf("failed to delete network policy %s: %v", networkPolicy.Name, err)
+			t.Errorf("failed to delete network policy %s: %v", networkPolicy.Name, err)
 		}
 	}()
 
@@ -3009,7 +3009,7 @@ func TestHTTPCookieCapture(t *testing.T) {
 			if apierrors.IsNotFound(err) {
 				return
 			}
-			t.Fatalf("failed to delete pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
+			t.Errorf("failed to delete pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
 		}
 	}()
 
@@ -3019,7 +3019,7 @@ func TestHTTPCookieCapture(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), networkPolicy); err != nil {
-			t.Fatalf("failed to delete network policy %s: %v", networkPolicy.Name, err)
+			t.Errorf("failed to delete network policy %s: %v", networkPolicy.Name, err)
 		}
 	}()
 
@@ -3155,7 +3155,7 @@ func TestAWSELBConnectionIdleTimeout(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), httpdPod); err != nil {
-			t.Fatalf("failed to delete pod %s/%s: %v", httpdPod.Namespace, httpdPod.Name, err)
+			t.Errorf("failed to delete pod %s/%s: %v", httpdPod.Namespace, httpdPod.Name, err)
 		}
 	}()
 
@@ -3165,7 +3165,7 @@ func TestAWSELBConnectionIdleTimeout(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), httpdService); err != nil {
-			t.Fatalf("failed to delete service %s/%s: %v", httpdService.Namespace, httpdService.Name, err)
+			t.Errorf("failed to delete service %s/%s: %v", httpdService.Namespace, httpdService.Name, err)
 		}
 	}()
 
@@ -3176,7 +3176,7 @@ func TestAWSELBConnectionIdleTimeout(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), route); err != nil {
-			t.Fatalf("failed to delete route %s/%s: %v", route.Namespace, route.Name, err)
+			t.Errorf("failed to delete route %s/%s: %v", route.Namespace, route.Name, err)
 		}
 	}()
 
@@ -3389,7 +3389,7 @@ func TestConnectTimeout(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), networkPolicy); err != nil {
-			t.Fatalf("failed to delete network policy %s: %v", networkPolicy.Name, err)
+			t.Errorf("failed to delete network policy %s: %v", networkPolicy.Name, err)
 		}
 	}()
 
@@ -3522,7 +3522,7 @@ func TestUniqueIdHeader(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), echoPod); err != nil {
-			t.Fatalf("failed to delete pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
+			t.Errorf("failed to delete pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 		}
 	}()
 
@@ -3532,7 +3532,7 @@ func TestUniqueIdHeader(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), echoService); err != nil {
-			t.Fatalf("failed to delete service %s/%s: %v", echoService.Namespace, echoService.Name, err)
+			t.Errorf("failed to delete service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 		}
 	}()
 
@@ -3542,7 +3542,7 @@ func TestUniqueIdHeader(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), echoRoute); err != nil {
-			t.Fatalf("failed to delete route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
+			t.Errorf("failed to delete route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
 		}
 	}()
 
@@ -3571,7 +3571,7 @@ func TestUniqueIdHeader(t *testing.T) {
 				if apierrors.IsNotFound(err) {
 					return
 				}
-				t.Fatalf("failed to delete pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
+				t.Errorf("failed to delete pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
 			}
 		}()
 
@@ -3819,7 +3819,7 @@ func TestLocalWithFallbackOverrideForLoadBalancerService(t *testing.T) {
 		if err := updateIngressControllerWithRetryOnConflict(t, defaultName, timeout, func(ic *operatorv1.IngressController) {
 			ic.Spec.UnsupportedConfigOverrides = runtime.RawExtension{}
 		}); err != nil {
-			t.Fatalf("failed to update ingresscontroller %q to remove the override: %v", defaultName, err)
+			t.Errorf("failed to update ingresscontroller %q to remove the override: %v", defaultName, err)
 		}
 	}()
 
@@ -3922,7 +3922,7 @@ func TestCustomErrorpages(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), errorPageConfigmap); err != nil {
-			t.Fatalf("failed to delete configmap %q: %v", errorPageConfigmapName, err)
+			t.Errorf("failed to delete configmap %q: %v", errorPageConfigmapName, err)
 		}
 	}()
 
@@ -4108,7 +4108,7 @@ func TestIngressControllerServiceNameCollision(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), conflictingLoadBalancerService); err != nil {
-			t.Fatalf("failed to delete service %s: %v", conflictingLoadBalancerServiceName, err)
+			t.Errorf("failed to delete service %s: %v", conflictingLoadBalancerServiceName, err)
 		}
 	}()
 
@@ -4122,7 +4122,7 @@ func TestIngressControllerServiceNameCollision(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), conflictingNodeportService); err != nil {
-			t.Fatalf("failed to delete service %s: %v", conflictingNodeportServiceName, err)
+			t.Errorf("failed to delete service %s: %v", conflictingNodeportServiceName, err)
 		}
 	}()
 
@@ -4188,7 +4188,7 @@ func TestIngressOperatorCacheIsNotGlobal(t *testing.T) {
 	}
 	defer func() {
 		if err := kclient.Delete(context.TODO(), ns); err != nil {
-			t.Fatalf("failed to delete namespace %v: %v", ns.Name, err)
+			t.Errorf("failed to delete namespace %v: %v", ns.Name, err)
 		}
 	}()
 	// Create the new private controller in a namespace that will be ignored by the Ingress Operator.
