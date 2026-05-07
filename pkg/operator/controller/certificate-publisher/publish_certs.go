@@ -3,6 +3,7 @@ package certificatepublisher
 import (
 	"bytes"
 	"context"
+	"encoding/pem"
 	"fmt"
 	"reflect"
 
@@ -88,16 +89,17 @@ func desiredRouterCertsGlobalSecret(secrets []corev1.Secret, ingresses []operato
 		}
 
 		globalCertName := controller.RouterCertsGlobalSecretName()
+		bundle := joinPEMBlocks(cert.Data["tls.crt"], cert.Data["tls.key"])
+		if err := validatePEMBundle(bundle); err != nil {
+			return nil, fmt.Errorf("assembled PEM bundle for domain %q is invalid: %w", ingresses[i].Status.Domain, err)
+		}
 		return &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      globalCertName.Name,
 				Namespace: globalCertName.Namespace,
 			},
 			Data: map[string][]byte{
-				ingresses[i].Status.Domain: bytes.Join([][]byte{
-					cert.Data["tls.crt"],
-					cert.Data["tls.key"],
-				}, nil),
+				ingresses[i].Status.Domain: bundle,
 			},
 		}, nil
 	}
@@ -194,6 +196,43 @@ func (r *reconciler) deleteRouterCertsGlobalSecret(secret *corev1.Secret) (bool,
 		return false, err
 	}
 	return true, nil
+}
+
+// joinPEMBlocks concatenates PEM-encoded blocks, ensuring each block is
+// separated by a newline.  This prevents malformed PEM output when a block
+// does not end with a trailing newline, which can happen with certificates
+// produced by certain tools.
+func joinPEMBlocks(blocks ...[]byte) []byte {
+	var buf []byte
+	for _, b := range blocks {
+		if len(b) == 0 {
+			continue
+		}
+		buf = append(buf, b...)
+		if b[len(b)-1] != '\n' {
+			buf = append(buf, '\n')
+		}
+	}
+	return buf
+}
+
+// validatePEMBundle verifies that the given byte slice contains only valid PEM
+// blocks and that there are at least two (certificate + key).
+func validatePEMBundle(bundle []byte) error {
+	rest := bundle
+	decoded := 0
+	for len(bytes.TrimSpace(rest)) > 0 {
+		var block *pem.Block
+		block, rest = pem.Decode(rest)
+		if block == nil {
+			return fmt.Errorf("failed to decode PEM block")
+		}
+		decoded++
+	}
+	if decoded < 2 {
+		return fmt.Errorf("expected at least 2 PEM blocks, got %d", decoded)
+	}
+	return nil
 }
 
 // routerCertsSecretsEqual compares two router-certs secrets.  Returns true if
