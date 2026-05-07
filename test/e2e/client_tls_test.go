@@ -317,7 +317,7 @@ func TestClientTLS(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("failed to update ingresscontroller %q: %v", icName, err)
 	}
-	if err := waitForDeploymentEnvVar(t, kclient, deployment, 1*time.Minute, "ROUTER_MUTUAL_TLS_AUTH", "required"); err != nil {
+	if err := waitForDeploymentEnvVar(t, deployment, 1*time.Minute, "ROUTER_MUTUAL_TLS_AUTH", "required"); err != nil {
 		t.Fatalf("expected updated deployment to have ROUTER_MUTUAL_TLS_AUTH=required: %v", err)
 	}
 	if err := waitForDeploymentCompleteWithOldPodTermination(t, kclient, deploymentName, 3*time.Minute); err != nil {
