@@ -165,6 +165,12 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	)); err != nil {
 		return nil, err
 	}
+	// Watch for changes to machine-config ClusterOperator to know when MCO is ready.
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &configv1.ClusterOperator{}, handler.EnqueueRequestsFromMapFunc(reconciler.ingressConfigToIngressController),
+		predicate.NewPredicateFuncs(hasName("machine-config")),
+	)); err != nil {
+		return nil, err
+	}
 	return c, nil
 }
 
