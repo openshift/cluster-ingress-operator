@@ -35,6 +35,14 @@ const (
 // for servicemeshoperator is present and returns a Boolean indicating whether
 // it exists, the subscription if it exists, and an error value.
 func (r *reconciler) ensureServiceMeshOperatorSubscription(ctx context.Context, catalog, channel, version string) (bool, *operatorsv1alpha1.Subscription, error) {
+	conflictingSubscription, err := r.findConflictingSubscription(ctx)
+	if err != nil {
+		return false, nil, err
+	}
+
+	if conflictingSubscription != nil {
+		return true, conflictingSubscription, nil
+	}
 	name := operatorcontroller.ServiceMeshOperatorSubscriptionName()
 	have, current, err := r.currentSubscription(ctx, name)
 	if err != nil {
@@ -92,7 +100,7 @@ func desiredSubscription(name types.NamespacedName, gwapiOperatorCatalog, gwapiO
 				},
 			},
 			InstallPlanApproval:    operatorsv1alpha1.ApprovalManual,
-			Package:                "servicemeshoperator3",
+			Package:                operatorcontroller.ServiceMeshOperatorSubscriptionPackage,
 			CatalogSource:          gwapiOperatorCatalog,
 			CatalogSourceNamespace: "openshift-marketplace",
 			StartingCSV:            gwapiOperatorVersion,
@@ -182,6 +190,9 @@ func (r *reconciler) currentInstallPlan(ctx context.Context, version string) (bo
 	if err != nil {
 		return false, nil, err
 	}
+	if subscription == nil {
+		return false, nil, nil
+	}
 	installPlans := &operatorsv1alpha1.InstallPlanList{}
 	if err := r.client.List(ctx, installPlans, client.InNamespace(operatorcontroller.OpenshiftOperatorNamespace)); err != nil {
 		return false, nil, err
@@ -249,6 +260,38 @@ func (r *reconciler) updateInstallPlan(ctx context.Context, current, desired *op
 	}
 	log.Info("updated InstallPlan", "namespace", updated.Namespace, "name", updated.Name, "diff", diff)
 	return true, nil
+}
+
+// findConflictingSubscription tries to find any OSSM/servicemesh subscription that may have conflicts with the one
+// that CIO will install
+func (r *reconciler) findConflictingSubscription(ctx context.Context) (*operatorsv1alpha1.Subscription, error) {
+	var subscriptionList operatorsv1alpha1.SubscriptionList
+	// r.client is being used here so we can scan all namespaces without relying/requiring them to be on the cache
+	if err := r.client.List(ctx, &subscriptionList, &client.ListOptions{
+		Namespace: "",
+	}); err != nil {
+		return nil, err
+	}
+
+	for i := range subscriptionList.Items {
+		// There is a subscription that is not owned by us. In this case we early return
+		// because we cannot support multiple existing OSSM subscriptions, so instead of
+		// trying to continue the workflow of making CIO take over the subscription
+		// the code is early returned without further update, and CIO can be marked
+		// with a degradation warning that allows the cluster admin to identify the
+		// other existing subscriptions, and decide further action.
+		// This does not block the rest of GatewayClass reconciliation, it just avoids
+		// CIO taking over subscriptions (or adding new ones) while other subscription
+		// exists.
+		sub := &subscriptionList.Items[i]
+		if sub.Spec != nil && sub.Spec.Package == operatorcontroller.ServiceMeshOperatorSubscriptionPackage {
+			if _, ok := sub.Annotations[operatorcontroller.IngressOperatorOwnedAnnotation]; !ok {
+				return sub, nil
+			}
+		}
+	}
+	// No conflicting subscription found, return null
+	return nil, nil
 }
 
 // installPlanChanged returns a Boolean indicating whether the current InstallPlan matches the expected InstallPlan and
