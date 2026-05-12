@@ -52,10 +52,10 @@ func NewServeDelayConnectCommand() *cobra.Command {
 
 // serveDelayConnect registers a handler on the specified netfilter queue and
 // starts an HTTP server on the given port. The handler delays SYN packet
-// acceptance by the specified delay. Use the following iptables command to configure the handler:
-// iptables -I INPUT -p tcp --dport 8080 -m conntrack --ctstate NEW -j NFQUEUE --queue-num 100
-// or this one for ipv6 stack:
-// ip6tables -I INPUT -p tcp --dport 8080 -m conntrack --ctstate NEW -j NFQUEUE --queue-num 100
+// acceptance by the specified delay. Use the following nft commands to configure the handler:
+// nft add table inet cio_test
+// nft add chain inet cio_test input '{ type filter hook input priority 0; policy accept; }'
+// nft add rule inet cio_test input tcp dport 8080 ct state new queue num 100
 func serveDelayConnect(queueNum uint16, delay time.Duration, port string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

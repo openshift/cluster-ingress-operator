@@ -276,13 +276,13 @@ func buildDelayConnectHTTPPod(name, namespace, initImage, image string) *corev1.
 			InitContainers: []corev1.Container{
 				{
 					Image: initImage,
-					Name:  "init-iptables",
-					// Integrate with the iptables rules to handle incoming traffic for the echo container.
+					Name:  "init-nftables",
+					// Set up nftables rules to redirect incoming SYN packets to a netfilter queue.
 					// The echo container opens the netfilter queue with the same number to delay incoming SYN packets.
 					Command: []string{
 						"/bin/sh",
 						"-c",
-						"iptables -I INPUT -p tcp --dport 8080 -m conntrack --ctstate NEW -j NFQUEUE --queue-num 100",
+						"nft add table inet cio_test && nft add chain inet cio_test input '{ type filter hook input priority 0; policy accept; }' && nft add rule inet cio_test input tcp dport 8080 ct state new queue num 100",
 					},
 					SecurityContext: &corev1.SecurityContext{
 						Privileged: &t,
@@ -442,8 +442,8 @@ func getIngressOperatorDeploymentImage(t *testing.T, client client.Client, timeo
 	return "", fmt.Errorf("image not found")
 }
 
-// getIptablesImage returns the image with the iptables tool installed in it.
-func getIptablesImage(t *testing.T, client client.Client, timeout time.Duration) (string, error) {
+// getNftImage returns an image with the nft tool installed in it.
+func getNftImage(t *testing.T, client client.Client, timeout time.Duration) (string, error) {
 	t.Helper()
 	daemonset, err := getDaemonSet(t, client, types.NamespacedName{Namespace: "openshift-ovn-kubernetes", Name: "ovnkube-node"}, timeout)
 	if err != nil {
