@@ -8,6 +8,7 @@ import (
 
 	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
 	"github.com/istio-ecosystem/sail-operator/pkg/install"
+	v1 "k8s.io/api/core/v1"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -210,10 +211,10 @@ func openshiftValues(enableInferenceExtension bool, operandNamespace string, gat
 			}
 		}
 		if extraConfig.infraConfig != nil {
-			if hpaConfig, err := buildHorizontalPodAutoscalerConfig(extraConfig.infraConfig, gatewayclasses); err != nil {
-				return nil, fmt.Errorf("failed to build HPA config: %w", err)
+			if gwClassConfig, err := buildGatewayClassesConfig(extraConfig.infraConfig, gatewayclasses); err != nil {
+				return nil, fmt.Errorf("failed to build gateway class config: %w", err)
 			} else {
-				val.GatewayClasses = hpaConfig
+				val.GatewayClasses = gwClassConfig
 			}
 		}
 	}
@@ -244,10 +245,9 @@ func buildProxyMetadata(proxyConfig *configv1.Proxy) map[string]string {
 	return proxyMetadata
 }
 
-// buildHorizontalPodAutoscalerConfig returns Istio configuration for the
-// horizontal pod autoscaler given an infrastructure config and a slice of
-// gatewayclasses.
-func buildHorizontalPodAutoscalerConfig(infraConfig *configv1.Infrastructure, gatewayclasses []gatewayapiv1.GatewayClass) (json.RawMessage, error) {
+// buildGatewayClassesConfig returns Istio per-gatewayclass configuration
+// overlays given an infrastructure config and a slice of gatewayclasses.
+func buildGatewayClassesConfig(infraConfig *configv1.Infrastructure, gatewayclasses []gatewayapiv1.GatewayClass) (json.RawMessage, error) {
 	const maxReplicas = 10
 
 	var minReplicas = 2
@@ -260,6 +260,20 @@ func buildHorizontalPodAutoscalerConfig(infraConfig *configv1.Infrastructure, ga
 			"spec": map[string]any{
 				"minReplicas": minReplicas,
 				"maxReplicas": maxReplicas,
+			},
+		},
+		"deployment": map[string]any{
+			"spec": map[string]any{
+				"template": map[string]any{
+					"spec": map[string]any{
+						"containers": []map[string]any{
+							{
+								"name":                     gatewayProxyContainerName,
+								"terminationMessagePolicy": v1.TerminationMessageFallbackToLogsOnError,
+							},
+						},
+					},
+				},
 			},
 		},
 	}

@@ -811,6 +811,34 @@ func assertHorizontalPodAutoscalerEnabled(t *testing.T, namespaceName, gatewayNa
 	}
 }
 
+// assertTerminationMessagePolicy verifies that all containers in the gateway
+// deployment have terminationMessagePolicy set to FallbackToLogsOnError.
+func assertTerminationMessagePolicy(t *testing.T, namespaceName, gatewayName, gatewayclassName string) {
+	t.Helper()
+
+	deploymentName := types.NamespacedName{
+		Namespace: namespaceName,
+		Name:      fmt.Sprintf("%s-%s", gatewayName, gatewayclassName),
+	}
+	t.Logf("Verifying terminationMessagePolicy on deployment %s...", deploymentName)
+	if err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 2*time.Minute, false, func(ctx context.Context) (bool, error) {
+		var dep appsv1.Deployment
+		if err := kclient.Get(ctx, deploymentName, &dep); err != nil {
+			t.Logf("Failed to get Deployment %s: %v; retrying...", deploymentName, err)
+			return false, nil
+		}
+		for _, c := range dep.Spec.Template.Spec.Containers {
+			if c.TerminationMessagePolicy != corev1.TerminationMessageFallbackToLogsOnError {
+				t.Logf("Container %q has terminationMessagePolicy %q, expected FallbackToLogsOnError; retrying...", c.Name, c.TerminationMessagePolicy)
+				return false, nil
+			}
+		}
+		return true, nil
+	}); err != nil {
+		t.Errorf("Failed to verify terminationMessagePolicy on deployment %s: %v", deploymentName, err)
+	}
+}
+
 func waitForGatewayListenerCondition(t *testing.T, gatewayName types.NamespacedName, listenerName string, conditions ...metav1.Condition) error {
 	t.Helper()
 
