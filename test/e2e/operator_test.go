@@ -3367,13 +3367,13 @@ func TestConnectTimeout(t *testing.T) {
 		t.Fatal("failed to determine ingress operator deployment's image: ", err)
 	}
 
-	iptablesImage, err := getIptablesImage(t, kclient, 1*time.Minute)
+	nftImage, err := getNftImage(t, kclient, 1*time.Minute)
 	if err != nil {
-		t.Fatal("failed to determine image with iptables tool: ", err)
+		t.Fatal("failed to determine image with nft tool: ", err)
 	}
 
 	// Create a pod with an HTTP application that delays the connection and sends echo responses.
-	httpdPod := buildDelayConnectHTTPPod("connect-timeout-http", operatorcontroller.DefaultOperandNamespace, iptablesImage, operatorImage)
+	httpdPod := buildDelayConnectHTTPPod("connect-timeout-http", operatorcontroller.DefaultOperandNamespace, nftImage, operatorImage)
 	if err := kclient.Create(context.Background(), httpdPod); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", httpdPod.Namespace, httpdPod.Name, err)
 	}
