@@ -371,7 +371,7 @@ func (r *reconciler) publishRecordToZones(zones []configv1.DNSZone, record *iov1
 			if err != nil {
 				requeue = true
 			}
-		} else if isDomainPublished, err := domainIsAlreadyPublishedToZone(context.Background(), r.cache, record, &zones[i]); err != nil {
+		} else if isOldestRecord, err := isOldestRecordForDomain(context.Background(), r.cache, record); err != nil {
 			log.Error(err, "failed to validate DNS record", "record", record.Spec)
 			condition = iov1.DNSZoneCondition{
 				Message: "Pre-publish validation failed",
@@ -380,7 +380,7 @@ func (r *reconciler) publishRecordToZones(zones []configv1.DNSZone, record *iov1
 				Type:    iov1.DNSRecordPublishedConditionType,
 			}
 			requeue = true
-		} else if isDomainPublished {
+		} else if !isOldestRecord {
 			log.Info("DNS record not published: domain name already used by another DNS record", "record", record.Spec)
 			condition = iov1.DNSZoneCondition{
 				Message: "Domain name is already in use",
@@ -423,33 +423,38 @@ func recordIsAlreadyPublishedToZone(record *iov1.DNSRecord, zoneToPublish *confi
 	return false
 }
 
-// domainIsAlreadyPublishedToZone returns true if the domain name in the
-// provided DNSRecord is already published by another existing dnsRecord.
-func domainIsAlreadyPublishedToZone(ctx context.Context, cache cache.Cache, record *iov1.DNSRecord, zone *configv1.DNSZone) (bool, error) {
+// isOldestRecordForDomain returns true if the provided DNSRecord is the oldest
+// record claiming its domain name.
+func isOldestRecordForDomain(ctx context.Context, cache cache.Cache, record *iov1.DNSRecord) (bool, error) {
 	records := iov1.DNSRecordList{}
 	if err := cache.List(ctx, &records, client.MatchingFields{dnsRecordIndexFieldName: record.Spec.DNSName}); err != nil {
 		return false, err
 	}
 
+	// If there are no other records claiming this domain name, this record must
+	// be the oldest record.
 	if len(records.Items) == 0 {
-		log.Info(fmt.Sprintf("No existing records found for domain %q", record.Spec.DNSName))
-		return false, nil
+		return true, nil
 	}
 
+	// Look for any older DNS records.
 	for _, existingRecord := range records.Items {
-		// we only care if the domain name is published by a different record,
-		// so ignore the matching record if it already exists.
+		// This record is, by definition, not older than itself.
 		if record.UID == existingRecord.UID {
 			continue
 		}
-		if record.Spec.DNSName != existingRecord.Spec.DNSName {
-			continue
+		// If this record is currently in the creation process, then any
+		// existing record must be older.
+		if record.CreationTimestamp.IsZero() {
+			return false, nil
 		}
-		if recordIsAlreadyPublishedToZone(&existingRecord, zone) {
-			return true, nil
+		// After considering all special cases, compare the creation timestamps
+		// to determine which record is older.
+		if existingRecord.CreationTimestamp.Before(&record.CreationTimestamp) {
+			return false, nil
 		}
 	}
-	return false, nil
+	return true, nil
 }
 
 func (r *reconciler) delete(record *iov1.DNSRecord) error {
@@ -662,6 +667,12 @@ func (r *reconciler) mapOnRecordDelete(ctx context.Context, o client.Object) []r
 	}
 	oldestExistingRecord := iov1.DNSRecord{}
 	for _, existingRecord := range otherRecords.Items {
+		// mapOnRecordDelete should be called after the deleted record is
+		// actually removed from the cache, but just in case, filter out the
+		// deleted record.
+		if existingRecord.UID == deletedRecord.UID {
+			continue
+		}
 		// Exclude records that are marked for deletion.
 		if !existingRecord.DeletionTimestamp.IsZero() {
 			continue
@@ -673,6 +684,11 @@ func (r *reconciler) mapOnRecordDelete(ctx context.Context, o client.Object) []r
 		if oldestExistingRecord.CreationTimestamp.IsZero() || existingRecord.CreationTimestamp.Before(&oldestExistingRecord.CreationTimestamp) {
 			oldestExistingRecord = existingRecord
 		}
+	}
+	// If there is no existing record that can be published, don't return a
+	// request.
+	if oldestExistingRecord.Name == "" {
+		return []reconcile.Request{}
 	}
 	return []reconcile.Request{
 		{

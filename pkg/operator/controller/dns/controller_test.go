@@ -885,7 +885,7 @@ func TestConflictingDNSRecords(t *testing.T) {
 			recordName: "foo.com",
 			recordType: iov1.ARecordType,
 			existingObjects: []runtime.Object{
-				dnsRecord("foo.com", iov1.ARecordType, "111.22.33.44", iov1.ManagedDNS, "foobar", "True"),
+				dnsRecord("foo.com", iov1.ARecordType, "111.22.33.44", iov1.ManagedDNS),
 			},
 			zones: []configv1.DNSZone{
 				{ID: "foobar"},
@@ -903,11 +903,11 @@ func TestConflictingDNSRecords(t *testing.T) {
 			}},
 		},
 		{
-			name:       "same name different zone",
+			name:       "different name should not conflict",
 			recordName: "foo.com",
 			recordType: iov1.ARecordType,
 			existingObjects: []runtime.Object{
-				dnsRecord("foo.com", iov1.ARecordType, "111.22.33.44", iov1.ManagedDNS, "quux", "True"),
+				dnsRecord("bar.com", iov1.ARecordType, "111.22.33.44", iov1.ManagedDNS),
 			},
 			zones: []configv1.DNSZone{
 				{ID: "foobar"},
@@ -925,11 +925,11 @@ func TestConflictingDNSRecords(t *testing.T) {
 			}},
 		},
 		{
-			name:       "different name same zone",
+			name:       "unmanaged record should conflict",
 			recordName: "foo.com",
 			recordType: iov1.ARecordType,
 			existingObjects: []runtime.Object{
-				dnsRecord("bar.com", iov1.ARecordType, "111.22.33.44", iov1.ManagedDNS, "foobar", "True"),
+				dnsRecord("foo.com", iov1.ARecordType, "111.22.33.44", iov1.UnmanagedDNS),
 			},
 			zones: []configv1.DNSZone{
 				{ID: "foobar"},
@@ -941,29 +941,7 @@ func TestConflictingDNSRecords(t *testing.T) {
 				Conditions: []iov1.DNSZoneCondition{
 					{
 						Type:   "Published",
-						Status: "True",
-					},
-				},
-			}},
-		},
-		{
-			name:       "conflicting record exists but is not published",
-			recordName: "foo.com",
-			recordType: iov1.ARecordType,
-			existingObjects: []runtime.Object{
-				dnsRecord("foo.com", iov1.ARecordType, "111.22.33.44", iov1.UnmanagedDNS, "foobar", "False"),
-			},
-			zones: []configv1.DNSZone{
-				{ID: "foobar"},
-			},
-			expect: []iov1.DNSZoneStatus{{
-				DNSZone: configv1.DNSZone{
-					ID: "foobar",
-				},
-				Conditions: []iov1.DNSZoneCondition{
-					{
-						Type:   "Published",
-						Status: "True",
+						Status: "False",
 					},
 				},
 			}},
@@ -997,7 +975,7 @@ func TestConflictingDNSRecords(t *testing.T) {
 	}
 }
 
-func dnsRecord(name string, recordType iov1.DNSRecordType, target string, managed iov1.DNSManagementPolicy, zoneID string, published string) *iov1.DNSRecord {
+func dnsRecord(name string, recordType iov1.DNSRecordType, target string, managed iov1.DNSManagementPolicy) *iov1.DNSRecord {
 	return &iov1.DNSRecord{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: fmt.Sprintf("record-%s", name),
@@ -1008,21 +986,6 @@ func dnsRecord(name string, recordType iov1.DNSRecordType, target string, manage
 			RecordType:          recordType,
 			Targets:             []string{target},
 			DNSManagementPolicy: managed,
-		},
-		Status: iov1.DNSRecordStatus{
-			Zones: []iov1.DNSZoneStatus{
-				{
-					DNSZone: configv1.DNSZone{
-						ID: zoneID,
-					},
-					Conditions: []iov1.DNSZoneCondition{
-						{
-							Type:   "Published",
-							Status: published,
-						},
-					},
-				},
-			},
 		},
 	}
 }
