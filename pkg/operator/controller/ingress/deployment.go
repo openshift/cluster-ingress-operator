@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -158,6 +159,12 @@ const (
 	StatsPortName = "metrics"
 
 	haproxyMaxTimeoutMilliseconds = 2147483647 * time.Millisecond
+
+	routerInitContainerName        = "init-router"
+	routerHAProxyContainerName     = "haproxy"
+	routerHAProxyConfigVolume      = "haproxy-config"
+	routerHAProxyAdminSocket       = "/var/lib/haproxy/run/admin.sock"
+	routerServiceAccountVolumeName = "kube-api-access"
 )
 
 // ensureRouterDeployment ensures the router deployment exists for a given
@@ -1310,6 +1317,70 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 		})
 	}
 
+	// TODO move to a proper API - part of https://github.com/openshift/enhancements/pull/1965
+	haproxySidecar := ci.Annotations != nil && ci.Annotations["haproxy-sidecar"] != ""
+
+	if haproxySidecar {
+		// initImage just needs bash, reusing router's image is fine since we already need to download it anyway.
+		initImage := deployment.Spec.Template.Spec.Containers[0].Image
+
+		// haproxyImage uses router's image for now, but it needs its own image.
+		// HAProxy images: https://redhat.atlassian.net/browse/NE-2218
+		// API field: https://redhat.atlassian.net/browse/NE-2217
+		haproxyImage := deployment.Spec.Template.Spec.Containers[0].Image
+
+		// Add the haproxy config volume, this volume is shared between router controller and haproxy sidecar
+		deployment.Spec.Template.Spec.Volumes = append(deployment.Spec.Template.Spec.Volumes, corev1.Volume{
+			Name: routerHAProxyConfigVolume,
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		})
+
+		// The initContainer is responsible for copying static config data from router's container to the shared volume
+		deployment.Spec.Template.Spec.InitContainers = append(deployment.Spec.Template.Spec.InitContainers, corev1.Container{
+			Name:            routerInitContainerName,
+			Image:           initImage,
+			ImagePullPolicy: deployment.Spec.Template.Spec.Containers[0].ImagePullPolicy,
+			Command:         []string{"/bin/bash", "-c", "cp -R -p /var/lib/haproxy/* /mnt/config/"},
+			VolumeMounts: []corev1.VolumeMount{{
+				Name:      routerHAProxyConfigVolume,
+				MountPath: "/mnt/config",
+			}},
+		})
+
+		// Adding the shared haproxy config volume to the router's container. It is mounted in the same expected /var/lib/haproxy directory,
+		// overriding the original content, which was already copied to the shared volume via the init container
+		deployment.Spec.Template.Spec.Containers[0].VolumeMounts = append(deployment.Spec.Template.Spec.Containers[0].VolumeMounts, corev1.VolumeMount{
+			Name:      routerHAProxyConfigVolume,
+			MountPath: "/var/lib/haproxy",
+		})
+
+		// HAProxy sidecar mount all the router volumes, except the service account token
+		haproxyVolumeMounts := slices.Clone(deployment.Spec.Template.Spec.Containers[0].VolumeMounts)
+		haproxyVolumeMounts = slices.DeleteFunc(haproxyVolumeMounts, func(mount corev1.VolumeMount) bool {
+			return mount.Name == routerServiceAccountVolumeName
+		})
+
+		// Finally, adding haproxy as a sidecar container
+		deployment.Spec.Template.Spec.Containers = append(deployment.Spec.Template.Spec.Containers, corev1.Container{
+			Name:            routerHAProxyContainerName,
+			Image:           haproxyImage,
+			ImagePullPolicy: deployment.Spec.Template.Spec.Containers[0].ImagePullPolicy,
+			Command:         []string{"/var/lib/haproxy/start-haproxy"},
+			Args:            []string{"-W", "-db", "-S", routerHAProxyAdminSocket + ",mode,600", "-f", "/var/lib/haproxy/conf/haproxy.config"},
+			Resources:       deployment.Spec.Template.Spec.Containers[0].Resources,
+			VolumeMounts:    haproxyVolumeMounts,
+		})
+
+		// ROUTER_HAPROXY_ADMIN_UNIX_SOCKET envvar, if configured, instructs the router that
+		// haproxy is deployed as a sidecar container, otherwise router uses the embedded haproxy.
+		env = append(env, corev1.EnvVar{
+			Name:  "ROUTER_HAPROXY_ADMIN_UNIX_SOCKET",
+			Value: routerHAProxyAdminSocket,
+		})
+	}
+
 	// TODO: The only connections from the router that may need the cluster-wide proxy are those for downloading CRLs,
 	// which, as of writing this, will always be http. If https becomes necessary, the router will need to mount the
 	// trusted CA bundle that cluster-network-operator generates. The process for adding that is described here:
@@ -1591,6 +1662,7 @@ func hashableDeployment(deployment *appsv1.Deployment, onlyTemplate bool) *appsv
 		return containers[i].Name < containers[j].Name
 	})
 	hashableDeployment.Spec.Template.Spec.Containers = containers
+	hashableDeployment.Spec.Template.Spec.InitContainers = deployment.Spec.Template.Spec.InitContainers
 	hashableDeployment.Spec.Template.Spec.DNSPolicy = deployment.Spec.Template.Spec.DNSPolicy
 	hashableDeployment.Spec.Template.Spec.HostNetwork = deployment.Spec.Template.Spec.HostNetwork
 	volumes := make([]corev1.Volume, len(deployment.Spec.Template.Spec.Volumes))
@@ -1773,6 +1845,7 @@ func deploymentConfigChanged(current, expected *appsv1.Deployment) (bool, *appsv
 		containers[i+1] = *container.DeepCopy()
 	}
 	updated.Spec.Template.Spec.Containers = containers
+	updated.Spec.Template.Spec.InitContainers = expected.Spec.Template.Spec.InitContainers
 	updated.Spec.Template.Spec.DNSPolicy = expected.Spec.Template.Spec.DNSPolicy
 	updated.Spec.Template.Labels = expected.Spec.Template.Labels
 
