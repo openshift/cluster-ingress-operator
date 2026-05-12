@@ -811,6 +811,46 @@ func assertHorizontalPodAutoscalerEnabled(t *testing.T, namespaceName, gatewayNa
 	}
 }
 
+// assertProxyDeployCustomConfigurations verifies that the deployment sets
+// the right custom configurations on pods.
+func assertProxyDeployCustomConfigurations(t *testing.T, namespaceName, gatewayName, gatewayclassName string) {
+	t.Helper()
+
+	deploymentName := types.NamespacedName{
+		Namespace: namespaceName,
+		Name:      fmt.Sprintf("%s-%s", gatewayName, gatewayclassName),
+	}
+	t.Logf("Verifying resource limit is null on the proxy containers of the deployment %s...", deploymentName)
+	if err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 2*time.Minute, false, func(ctx context.Context) (bool, error) {
+		var dep appsv1.Deployment
+		if err := kclient.Get(ctx, deploymentName, &dep); err != nil {
+			t.Logf("Failed to get Deployment %s: %v; retrying...", deploymentName, err)
+			return false, nil
+		}
+
+		foundIstioProxy := false
+		for _, c := range dep.Spec.Template.Spec.Containers {
+			if c.Name == "istio-proxy" {
+				foundIstioProxy = true
+				if c.Resources.Limits != nil {
+					t.Log("Container 'istio-proxy' has resources.limits, expected no limits set; retrying...")
+					return false, nil
+				}
+			}
+		}
+
+		// We need to be sure that the istio-proxy exists, and that it has no resources.limits.
+		// If we cannot find istio-proxy, we must try again
+		if !foundIstioProxy {
+			t.Log("Container 'istio-proxy' was not found; retrying...")
+			return false, nil
+		}
+		return true, nil
+	}); err != nil {
+		t.Errorf("Failed to verify the proxy configuration on deployment %s: %v", deploymentName, err)
+	}
+}
+
 func waitForGatewayListenerCondition(t *testing.T, gatewayName types.NamespacedName, listenerName string, conditions ...metav1.Condition) error {
 	t.Helper()
 
