@@ -8,10 +8,11 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/ec2"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	awscreds "github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 
 	configv1 "github.com/openshift/api/config/v1"
 
@@ -20,7 +21,7 @@ import (
 )
 
 // createEC2ServiceClient creates an ec2 client using aws credentials and region.
-func createEC2ServiceClient(t *testing.T, infraConfig configv1.Infrastructure) *ec2.EC2 {
+func createEC2ServiceClient(t *testing.T, infraConfig configv1.Infrastructure) *ec2.Client {
 	decodedAccessKeyID, decodedSecretAccessKey, err := getIDAndKey()
 	if err != nil {
 		t.Fatalf("failed to get access key id and secret access key due to error: %v", err)
@@ -29,13 +30,14 @@ func createEC2ServiceClient(t *testing.T, infraConfig configv1.Infrastructure) *
 	if err != nil {
 		t.Fatalf("failed to get aws region due to error: %v", err)
 	}
-	// Set up an AWS session
-	sess, err := createSession(region, decodedAccessKeyID, decodedSecretAccessKey)
+	cfg, err := awsconfig.LoadDefaultConfig(context.TODO(),
+		awsconfig.WithRegion(region),
+		awsconfig.WithCredentialsProvider(awscreds.NewStaticCredentialsProvider(decodedAccessKeyID, decodedSecretAccessKey, "")),
+	)
 	if err != nil {
-		t.Fatalf("failed to create session due to error: %v", err)
+		t.Fatalf("failed to load AWS config due to error: %v", err)
 	}
-	// Create an EC2 service client
-	return ec2.New(sess)
+	return ec2.NewFromConfig(cfg)
 }
 
 // getClusterName fetches cluster name from the infrastructures.config.openshift.io cluster object.
@@ -72,49 +74,43 @@ func getIDAndKey() (string, string, error) {
 }
 
 // getPublicSubnets fetches public subnets for a AWS VPC ID.
-func getPublicSubnets(vpcID string, svc *ec2.EC2) (map[string]struct{}, error) {
+func getPublicSubnets(vpcID string, svc *ec2.Client) (map[string]struct{}, error) {
 	// Get the Internet Gateway associated with the VPC
 	input := &ec2.DescribeInternetGatewaysInput{
-		Filters: []*ec2.Filter{
+		Filters: []ec2types.Filter{
 			{
 				Name:   aws.String("attachment.vpc-id"),
-				Values: []*string{aws.String(vpcID)},
+				Values: []string{vpcID},
 			},
 		},
 	}
 
-	resultIG, err := svc.DescribeInternetGateways(input)
+	resultIG, err := svc.DescribeInternetGateways(context.TODO(), input)
 	if err != nil {
 		return nil, fmt.Errorf("Error describing Internet Gateways: %v", err)
 	}
 
-	// Extract Internet Gateway IDs
-	var igws []*ec2.InternetGateway
-	for _, igw := range resultIG.InternetGateways {
-		igws = append(igws, igw)
-	}
-
 	// Find public subnets associated with the Internet Gateways
 	publicSubnets := make(map[string]struct{})
-	for _, igw := range igws {
+	for _, igw := range resultIG.InternetGateways {
 		input := &ec2.DescribeRouteTablesInput{
-			Filters: []*ec2.Filter{
+			Filters: []ec2types.Filter{
 				{
 					Name:   aws.String("route.gateway-id"),
-					Values: []*string{igw.InternetGatewayId},
+					Values: []string{aws.ToString(igw.InternetGatewayId)},
 				},
 			},
 		}
 
-		result, err := svc.DescribeRouteTables(input)
+		result, err := svc.DescribeRouteTables(context.TODO(), input)
 		if err != nil {
 			return nil, fmt.Errorf("Error describing Route Tables: %v", err)
 		}
 
 		for _, rt := range result.RouteTables {
 			for _, assoc := range rt.Associations {
-				if assoc != nil && assoc.SubnetId != nil {
-					publicSubnets[aws.StringValue(assoc.SubnetId)] = struct{}{}
+				if assoc.SubnetId != nil {
+					publicSubnets[aws.ToString(assoc.SubnetId)] = struct{}{}
 				}
 			}
 		}
@@ -122,23 +118,15 @@ func getPublicSubnets(vpcID string, svc *ec2.EC2) (map[string]struct{}, error) {
 	return publicSubnets, nil
 }
 
-// createSession creates a session using decoded AWS credentials.
-func createSession(region, decodedAccessKeyID, decodedSecretAccessKey string) (*session.Session, error) {
-	return session.NewSession(&aws.Config{
-		Region:      aws.String(region),
-		Credentials: credentials.NewStaticCredentials(decodedAccessKeyID, decodedSecretAccessKey, ""),
-	})
-}
-
 // getVPCId return the VPC ID of the cluster
-func getVPCId(ec2Client *ec2.EC2, clusterName string) (string, error) {
+func getVPCId(ec2Client *ec2.Client, clusterName string) (string, error) {
 	tagKey := "kubernetes.io/cluster/" + clusterName
 	tagValue := "owned"
-	vpcs, err := ec2Client.DescribeVpcs(&ec2.DescribeVpcsInput{
-		Filters: []*ec2.Filter{
+	vpcs, err := ec2Client.DescribeVpcs(context.TODO(), &ec2.DescribeVpcsInput{
+		Filters: []ec2types.Filter{
 			{
 				Name:   aws.String("tag:" + tagKey),
-				Values: []*string{aws.String(tagValue)},
+				Values: []string{tagValue},
 			},
 		},
 	})
@@ -151,7 +139,7 @@ func getVPCId(ec2Client *ec2.EC2, clusterName string) (string, error) {
 	if len(vpcs.Vpcs) > 1 {
 		return "", fmt.Errorf("multiple VPCs with tag %s:%s found", tagKey, tagValue)
 	}
-	return aws.StringValue(vpcs.Vpcs[0].VpcId), nil
+	return aws.ToString(vpcs.Vpcs[0].VpcId), nil
 }
 
 func getTagKeyAndValue(t *testing.T) (string, string) {

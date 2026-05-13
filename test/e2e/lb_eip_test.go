@@ -12,8 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/ec2"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 
 	configv1 "github.com/openshift/api/config/v1"
 	operatorv1 "github.com/openshift/api/operator/v1"
@@ -389,7 +390,7 @@ func randomHex(n int) (string, error) {
 }
 
 // createAWSEIPs creates valid eipAllocations whose count is equal to the number of public subnets.
-func createAWSEIPs(t *testing.T, ec2ServiceClient *ec2.EC2, clusterName string, vpcID string) ([]string, error) {
+func createAWSEIPs(t *testing.T, ec2ServiceClient *ec2.Client, clusterName string, vpcID string) ([]string, error) {
 	publicSubnets, err := getPublicSubnets(vpcID, ec2ServiceClient)
 	if err != nil {
 		t.Fatalf("failed to get public subnets due to error: %v", err)
@@ -404,22 +405,22 @@ func createAWSEIPs(t *testing.T, ec2ServiceClient *ec2.EC2, clusterName string, 
 	var allocationIDs []string
 	for i := 0; i < len(publicSubnets); i++ {
 		// Allocate EIP
-		result, err := ec2ServiceClient.AllocateAddress(&ec2.AllocateAddressInput{
-			Domain: aws.String("vpc"),
+		result, err := ec2ServiceClient.AllocateAddress(context.TODO(), &ec2.AllocateAddressInput{
+			Domain: ec2types.DomainTypeVpc,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("Error allocating EIP: %v", err)
 		}
-		allocationID := aws.StringValue(result.AllocationId)
+		allocationID := aws.ToString(result.AllocationId)
 		t.Logf("EIP allocated successfully. Allocation ID: %s", allocationID)
 
 		// Generate random name
 		randomName := fmt.Sprintf("%s-EIP-%d", clusterName, rand.Int())
 
 		// Tag EIP
-		_, err = ec2ServiceClient.CreateTags(&ec2.CreateTagsInput{
-			Resources: []*string{result.AllocationId},
-			Tags: []*ec2.Tag{
+		_, err = ec2ServiceClient.CreateTags(context.TODO(), &ec2.CreateTagsInput{
+			Resources: []string{aws.ToString(result.AllocationId)},
+			Tags: []ec2types.Tag{
 				{
 					Key:   aws.String("Name"),
 					Value: aws.String(randomName),
@@ -439,25 +440,24 @@ func createAWSEIPs(t *testing.T, ec2ServiceClient *ec2.EC2, clusterName string, 
 }
 
 // cleanupEIPAllocations clean all unassociated EIPs created during the e2e tests. It returns true if no associated eipAllocations tagged with cluster name are found.
-func cleanupEIPAllocations(t *testing.T, svc *ec2.EC2, clusterName string) bool {
+func cleanupEIPAllocations(t *testing.T, svc *ec2.Client, clusterName string) bool {
 	t.Log("Releasing unassociated EIPs")
 
 	tagKeyEIP, tagValueEIP := getTagKeyAndValue(t)
 
 	// Describe addresses to get unassociated EIPs
-	describeAddressesInput := &ec2.DescribeAddressesInput{}
-	describeAddressesOutput, err := svc.DescribeAddresses(describeAddressesInput)
+	describeAddressesOutput, err := svc.DescribeAddresses(context.TODO(), &ec2.DescribeAddressesInput{})
 	if err != nil {
 		t.Fatalf("failed to describe addresses: %v", err)
 	}
 
-	var unassociatedEIPs, associatedEIPs []*ec2.Address
+	var unassociatedEIPs, associatedEIPs []ec2types.Address
 
 	for _, address := range describeAddressesOutput.Addresses {
 		// Check if the EIP has the specified tag key and value
 		hasTag := false
 		for _, tag := range address.Tags {
-			if *tag.Key == tagKeyEIP && *tag.Value == tagValueEIP {
+			if aws.ToString(tag.Key) == tagKeyEIP && aws.ToString(tag.Value) == tagValueEIP {
 				hasTag = true
 				break
 			}
@@ -476,31 +476,36 @@ func cleanupEIPAllocations(t *testing.T, svc *ec2.EC2, clusterName string) bool 
 	} else {
 		t.Log("Unassociated EIPs with the specified tag key and value:")
 		for _, eip := range unassociatedEIPs {
-			t.Logf("Public IP: %v, Allocation ID: %v", *eip.PublicIp, *eip.AllocationId)
+			t.Logf("Public IP: %v, Allocation ID: %v", aws.ToString(eip.PublicIp), aws.ToString(eip.AllocationId))
 		}
 	}
 
 	// Release each unassociated EIP
+	releaseFailed := false
 	for _, eip := range unassociatedEIPs {
-		releaseAddressInput := &ec2.ReleaseAddressInput{
+		_, err := svc.ReleaseAddress(context.TODO(), &ec2.ReleaseAddressInput{
 			AllocationId: eip.AllocationId,
-		}
-		_, err := svc.ReleaseAddress(releaseAddressInput)
+		})
 		if err != nil {
-			t.Errorf("Failed to release EIP %v with Allocation ID %v: %v", *eip.PublicIp, *eip.AllocationId, err)
+			releaseFailed = true
+			t.Errorf("Failed to release EIP %v with Allocation ID %v: %v", aws.ToString(eip.PublicIp), aws.ToString(eip.AllocationId), err)
 		} else {
-			t.Logf("Released EIP %v with Allocation ID %v", *eip.PublicIp, *eip.AllocationId)
+			t.Logf("Released EIP %v with Allocation ID %v", aws.ToString(eip.PublicIp), aws.ToString(eip.AllocationId))
 		}
 	}
 
-	if len(associatedEIPs) == 0 {
-		t.Log("No associated EIPs found with the specified tag key and value.")
-		return true
-	} else {
+	if len(associatedEIPs) > 0 {
 		t.Log("Associated EIPs with the specified tag key and value:")
 		for _, eip := range associatedEIPs {
-			t.Logf("Public IP: %v, Allocation ID: %v", *eip.PublicIp, *eip.AllocationId)
+			t.Logf("Public IP: %v, Allocation ID: %v", aws.ToString(eip.PublicIp), aws.ToString(eip.AllocationId))
 		}
 		return false
 	}
+
+	if releaseFailed {
+		return false
+	}
+
+	t.Log("No associated EIPs found with the specified tag key and value.")
+	return true
 }

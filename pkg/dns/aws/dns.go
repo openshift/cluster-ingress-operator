@@ -2,29 +2,32 @@ package aws
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"regexp"
 	"strings"
 	"sync"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/arn"
+	awsmiddleware "github.com/aws/aws-sdk-go-v2/aws/middleware"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
+	"github.com/aws/aws-sdk-go-v2/service/elasticloadbalancing"
+	elbv2 "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
+	"github.com/aws/aws-sdk-go-v2/service/resourcegroupstaggingapi"
+	tagtypes "github.com/aws/aws-sdk-go-v2/service/resourcegroupstaggingapi/types"
+	"github.com/aws/aws-sdk-go-v2/service/route53"
+	r53types "github.com/aws/aws-sdk-go-v2/service/route53/types"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/aws/smithy-go"
+	smithymw "github.com/aws/smithy-go/middleware"
+
 	iov1 "github.com/openshift/api/operatoringress/v1"
 	"github.com/openshift/cluster-ingress-operator/pkg/dns"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	awsutil "github.com/openshift/cluster-ingress-operator/pkg/util/aws"
-
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/arn"
-	"github.com/aws/aws-sdk-go/aws/awserr"
-	"github.com/aws/aws-sdk-go/aws/client/metadata"
-	"github.com/aws/aws-sdk-go/aws/credentials/stscreds"
-	"github.com/aws/aws-sdk-go/aws/endpoints"
-	"github.com/aws/aws-sdk-go/aws/request"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/elb"
-	"github.com/aws/aws-sdk-go/service/elbv2"
-	"github.com/aws/aws-sdk-go/service/resourcegroupstaggingapi"
-	"github.com/aws/aws-sdk-go/service/route53"
 
 	"k8s.io/apimachinery/pkg/types"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
@@ -35,12 +38,12 @@ import (
 )
 
 const (
-	// Route53Service is the name of the Route 53 service.
-	Route53Service = route53.ServiceName
-	// ELBService is the name of the Elastic Load Balancing service.
-	ELBService = elb.ServiceName
-	// TaggingService is the name of the Resource Group Tagging service.
-	TaggingService = resourcegroupstaggingapi.ServiceName
+	// Service name constants are hardcoded because aws-sdk-go-v2 only exports
+	// human-readable ServiceIDs (e.g. "Route 53"), not the endpoint URL prefixes
+	// that the OpenShift infrastructure API uses in AWSServiceEndpoint.Name.
+	Route53Service = "route53"
+	ELBService     = "elasticloadbalancing"
+	TaggingService = "tagging"
 	// govCloudRoute53Region is the AWS GovCloud region for Route 53. See:
 	// https://docs.aws.amazon.com/govcloud-us/latest/UserGuide/using-govcloud-endpoints.html
 	govCloudRoute53Region = "us-gov"
@@ -74,10 +77,17 @@ var (
 // zone and if their names match expectations. This is relatively dangerous
 // compared to storing additional metadata (like tags or TXT records).
 type Provider struct {
-	elb     *elb.ELB
-	elbv2   *elbv2.ELBV2
-	route53 *route53.Route53
-	tags    *resourcegroupstaggingapi.ResourceGroupsTaggingAPI
+	elb     *elasticloadbalancing.Client
+	elbv2   *elbv2.Client
+	route53 *route53.Client
+	tags    *resourcegroupstaggingapi.Client
+
+	// endpoint strings stored for logging and test verification, since v2
+	// resolves endpoints dynamically per-request.
+	elbEndpoint     string
+	elbv2Endpoint   string
+	route53Endpoint string
+	tagsEndpoint    string
 
 	config Config
 
@@ -133,97 +143,182 @@ type ServiceEndpoint struct {
 	URL string
 }
 
-func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error) {
-	sessionOpts := session.Options{
-		SharedConfigState: session.SharedConfigEnable,
-		SharedConfigFiles: []string{config.SharedCredentialFile},
+// partitionIDForRegion returns the AWS partition ID for the given region.
+// aws-sdk-go-v2 has no public partition lookup API; the logic is internal to
+// each service's endpoint resolver, so we use region prefix conventions.
+func partitionIDForRegion(region string) string {
+	switch {
+	case strings.HasPrefix(region, "cn-"):
+		return "aws-cn"
+	case strings.HasPrefix(region, "us-gov-"):
+		return "aws-us-gov"
+	case strings.HasPrefix(region, "us-iso-"):
+		return "aws-iso"
+	case strings.HasPrefix(region, "us-isob-"):
+		return "aws-iso-b"
+	default:
+		return "aws"
 	}
+}
+
+// isGovCloudRegion returns true if the provided region is in a US
+// GovCloud partition.
+func isGovCloudRegion(region string) bool {
+	return strings.HasPrefix(region, "us-gov-")
+}
+
+// resolveEndpoint returns the endpoint URL for logging and test assertions.
+// In aws-sdk-go-v2, endpoints are resolved per-request internally — there is
+// no client.Endpoint field — so we compute them here at construction time.
+func resolveEndpoint(customEndpoint, serviceID, region string) string {
+	if customEndpoint != "" {
+		return customEndpoint
+	}
+	// For logging purposes when no custom endpoint is set, we construct
+	// a best-effort endpoint string. The actual endpoint resolution in
+	// v2 happens per-request inside the SDK.
+	switch serviceID {
+	case "Route 53":
+		switch partitionIDForRegion(region) {
+		case "aws-cn":
+			return chinaRoute53Endpoint
+		case "aws-us-gov":
+			return fmt.Sprintf("https://route53.%s.amazonaws.com", govCloudRoute53Region)
+		case "aws-iso":
+			return "https://route53.c2s.ic.gov"
+		case "aws-iso-b":
+			return "https://route53.sc2s.sgov.gov"
+		default:
+			if strings.HasPrefix(region, eusCloudRegionPrefix) {
+				return "https://route53.amazonaws.eu"
+			}
+			return "https://route53.amazonaws.com"
+		}
+	case "Elastic Load Balancing", "Elastic Load Balancing v2":
+		switch partitionIDForRegion(region) {
+		case "aws-cn":
+			return fmt.Sprintf("https://elasticloadbalancing.%s.amazonaws.com.cn", region)
+		case "aws-us-gov":
+			return fmt.Sprintf("https://elasticloadbalancing.%s.amazonaws.com", region)
+		case "aws-iso":
+			return fmt.Sprintf("https://elasticloadbalancing.%s.c2s.ic.gov", region)
+		case "aws-iso-b":
+			return fmt.Sprintf("https://elasticloadbalancing.%s.sc2s.sgov.gov", region)
+		default:
+			if strings.HasPrefix(region, eusCloudRegionPrefix) {
+				return fmt.Sprintf("https://elasticloadbalancing.%s.amazonaws.eu", region)
+			}
+			return fmt.Sprintf("https://elasticloadbalancing.%s.amazonaws.com", region)
+		}
+	case "Resource Groups Tagging API":
+		switch partitionIDForRegion(region) {
+		case "aws-cn":
+			return fmt.Sprintf("https://tagging.%s.amazonaws.com.cn", region)
+		case "aws-us-gov":
+			return fmt.Sprintf("https://tagging.%s.amazonaws.com", region)
+		default:
+			if strings.HasPrefix(region, eusCloudRegionPrefix) {
+				return fmt.Sprintf("https://tagging.%s.amazonaws.eu", region)
+			}
+			return fmt.Sprintf("https://tagging.%s.amazonaws.com", region)
+		}
+	}
+	return ""
+}
+
+func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error) {
+	ctx := context.TODO()
+
+	var loadOpts []func(*awsconfig.LoadOptions) error
+	loadOpts = append(loadOpts,
+		awsconfig.WithSharedCredentialsFiles([]string{config.SharedCredentialFile}),
+		awsconfig.WithSharedConfigFiles([]string{config.SharedCredentialFile}),
+	)
 	if config.CustomCABundle != "" {
-		sessionOpts.CustomCABundle = strings.NewReader(config.CustomCABundle)
+		loadOpts = append(loadOpts, awsconfig.WithCustomCABundle(strings.NewReader(config.CustomCABundle)))
 	}
 	var region string
 	if len(config.Region) > 0 {
 		region = config.Region
-		sessionOpts.Config.Region = aws.String(config.Region)
+		loadOpts = append(loadOpts, awsconfig.WithRegion(config.Region))
 		log.Info("using region from operator config", "region name", region)
 	}
-	sess, err := session.NewSessionWithOptions(sessionOpts)
+	loadOpts = append(loadOpts, awsconfig.WithAPIOptions([]func(*smithymw.Stack) error{
+		awsmiddleware.AddUserAgentKeyValue("openshift.io/ingress-operator", operatorReleaseVersion),
+	}))
+
+	cfg, err := awsconfig.LoadDefaultConfig(ctx, loadOpts...)
 	if err != nil {
-		return nil, fmt.Errorf("couldn't create AWS client session: %v", err)
+		return nil, fmt.Errorf("couldn't create AWS client config: %v", err)
 	}
-	sess.Handlers.Build.PushBackNamed(request.NamedHandler{
-		Name: "openshift.io/ingress-operator",
-		Fn:   request.MakeAddToUserAgentHandler("openshift.io ingress-operator", operatorReleaseVersion),
-	})
 
 	if len(region) == 0 {
-		if sess.Config.Region != nil {
-			region = aws.StringValue(sess.Config.Region)
+		if cfg.Region != "" {
+			region = cfg.Region
 			log.Info("using region from shared config", "region name", region)
 		} else {
 			return nil, fmt.Errorf("region is required")
 		}
 	}
 
-	// When RoleARN is provided, make a copy of the Route 53 session and configure it to use RoleARN.
+	// When RoleARN is provided, make a copy of the Route 53 config and configure it to use RoleARN.
 	// RoleARN is intended to only provide access to another account's Route 53 service, not for ELBs.
-	sessRoute53 := sess
+	cfgRoute53 := cfg
 	if config.RoleARN != "" {
-		sessRoute53 = sess.Copy()
-		sessRoute53.Config.WithCredentials(stscreds.NewCredentials(sessRoute53, config.RoleARN))
+		stsClient := sts.NewFromConfig(cfg)
+		cfgRoute53.Credentials = aws.NewCredentialsCache(
+			stscreds.NewAssumeRoleProvider(stsClient, config.RoleARN),
+		)
 	}
 
-	r53Config := aws.NewConfig()
-	// elb requires no special region treatment.
-	elbConfig := aws.NewConfig().WithRegion(region)
-	elbv2Config := aws.NewConfig().WithRegion(region)
-	tagConfig := aws.NewConfig()
-
-	partition, ok := endpoints.PartitionForRegion(endpoints.DefaultPartitions(), region)
-	if !ok {
-		log.Info("unable to determine partition from region", "region name", region)
-	}
+	var r53Endpoint string
+	var r53Region string
+	var elbEndpointOverride string
+	var tagEndpoint string
+	var tagRegion string
+	enableTagging := true
 
 	// If the region is in aws china, cn-north-1 or cn-northwest-1, we should:
 	// 1. hard code route53 api endpoint to https://route53.amazonaws.com.cn and region to "cn-northwest-1"
 	//    as route53 is not GA in AWS China and aws sdk didn't have the endpoint.
 	// 2. use the aws china region cn-northwest-1 to setup tagging api correctly instead of "us-east-1"
-	switch partition.ID() {
-	case endpoints.AwsCnPartitionID:
-		tagConfig = tagConfig.WithRegion(endpoints.CnNorthwest1RegionID)
-		r53Config = r53Config.WithRegion(endpoints.CnNorthwest1RegionID).WithEndpoint(chinaRoute53Endpoint)
-	case endpoints.AwsUsGovPartitionID:
+	switch partitionIDForRegion(region) {
+	case "aws-cn":
+		tagRegion = "cn-northwest-1"
+		r53Region = "cn-northwest-1"
+		r53Endpoint = chinaRoute53Endpoint
+	case "aws-us-gov":
 		// Route53 for GovCloud uses the "us-gov-west-1" region id:
 		// https://docs.aws.amazon.com/govcloud-us/latest/UserGuide/using-govcloud-endpoints.html
-		r53Config = r53Config.WithRegion(endpoints.UsGovWest1RegionID)
+		r53Region = "us-gov-west-1"
 		// As with other AWS partitions, the GovCloud Tagging client must be
 		// in the same region as the Route53 client to find the hosted zone
 		// of managed records.
-		tagConfig = tagConfig.WithRegion(endpoints.UsGovWest1RegionID)
-	case endpoints.AwsIsoPartitionID, endpoints.AwsIsoBPartitionID:
+		tagRegion = "us-gov-west-1"
+	case "aws-iso", "aws-iso-b":
 		// The resourcetagging API is not available in C2S or SC2S
-		tagConfig = nil
+		enableTagging = false
 		// Do not override the region in C2S or SC2S
-		r53Config = r53Config.WithRegion(region)
+		r53Region = region
 	default:
 		// AWS European Sovereign Cloud
 		if strings.HasPrefix(region, eusCloudRegionPrefix) {
 			// Since Route 53 is not a regionalized service, the Tagging API will
 			// only return hosted zone resources when the region is "eusc-de-east-1".
-			tagConfig = tagConfig.WithRegion(euscDeEast1RegionID)
+			tagRegion = euscDeEast1RegionID
 			// Use eusc-de-east-1 for Route 53 in AWS Regions for EU Sovereign Cloud.
 			// See https://docs.aws.eu/general/latest/gr/endpoints.html for details.
-			r53Config = r53Config.WithRegion(euscDeEast1RegionID)
+			r53Region = euscDeEast1RegionID
 			break
 		}
 
 		// AWS Standard Partition
 		// Since Route 53 is not a regionalized service, the Tagging API will
 		// only return hosted zone resources when the region is "us-east-1".
-		tagConfig = tagConfig.WithRegion(endpoints.UsEast1RegionID)
+		tagRegion = "us-east-1"
 		// Use us-east-1 for Route 53 in AWS Regions other than China or GovCloud Regions.
 		// See https://docs.aws.amazon.com/general/latest/gr/r53.html for details.
-		r53Config = r53Config.WithRegion(endpoints.UsEast1RegionID)
+		r53Region = "us-east-1"
 	}
 	if len(config.ServiceEndpoints) > 0 {
 		route53Found := false
@@ -233,10 +328,10 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 			switch ep.Name {
 			case Route53Service:
 				route53Found = true
-				r53Config = r53Config.WithEndpoint(ep.URL)
+				r53Endpoint = ep.URL
 				log.Info("Found route53 custom endpoint", "url", ep.URL)
 			case TaggingService:
-				if tagConfig == nil {
+				if !enableTagging {
 					log.Info(fmt.Sprintf("Found resourcegroupstaggingapi custom endpoint, which will be ignored since the %s region does not support that API", region))
 					continue
 				}
@@ -247,15 +342,14 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 				if strings.Contains(ep.URL, "us-gov-east-1") {
 					url = govCloudTaggingEndpoint
 				}
-				tagConfig = tagConfig.WithEndpoint(url)
+				tagEndpoint = url
 				log.Info("Found resourcegroupstaggingapi custom endpoint", "url", url)
 			case ELBService:
 				elbFound = true
-				elbConfig = elbConfig.WithEndpoint(ep.URL)
+				elbEndpointOverride = ep.URL
 				log.Info("Found elb custom endpoint", "url", ep.URL)
 				// The SDK uses the same service ID "elasticloadbalancing" for elb and elbv2
 				// Thus, if defined, we need to use the custom service endpoint for both.
-				elbv2Config = elbv2Config.WithEndpoint(ep.URL)
 				log.Info("Found elb v2 custom endpoint", "url", ep.URL)
 			}
 			// Once the three service endpoints have been found,
@@ -265,27 +359,69 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 			}
 		}
 	}
-	var tags *resourcegroupstaggingapi.ResourceGroupsTaggingAPI
-	if tagConfig == nil {
+
+	var tags *resourcegroupstaggingapi.Client
+	var tagsEndpointStr string
+	if !enableTagging {
 		log.Info("No tags client configured")
 	} else {
-		tags = resourcegroupstaggingapi.New(sess, tagConfig)
-		log.Info("Created tags client", "endpoint", tags.Client.Endpoint)
+		tagOpts := func(o *resourcegroupstaggingapi.Options) {
+			if tagRegion != "" {
+				o.Region = tagRegion
+			}
+			if tagEndpoint != "" {
+				o.BaseEndpoint = aws.String(tagEndpoint)
+			}
+		}
+		tags = resourcegroupstaggingapi.NewFromConfig(cfg, tagOpts)
+		tagsEndpointStr = resolveEndpoint(tagEndpoint, "Resource Groups Tagging API", tagRegion)
+		log.Info("Created tags client", "endpoint", tagsEndpointStr)
 	}
-	elbClient := elb.New(sess, elbConfig)
-	log.Info("Created elb client", "endpoint", elbClient.Client.Endpoint)
-	elbv2Client := elbv2.New(sess, elbv2Config)
-	log.Info("Created elbv2 client", "endpoint", elbv2Client.Client.Endpoint)
-	r53client := route53.New(sessRoute53, r53Config)
-	log.Info("Created route53 client", "endpoint", r53client.Client.Endpoint)
+
+	elbOpts := func(o *elasticloadbalancing.Options) {
+		o.Region = region
+		if elbEndpointOverride != "" {
+			o.BaseEndpoint = aws.String(elbEndpointOverride)
+		}
+	}
+	elbClient := elasticloadbalancing.NewFromConfig(cfg, elbOpts)
+	elbEndpointStr := resolveEndpoint(elbEndpointOverride, "Elastic Load Balancing", region)
+	log.Info("Created elb client", "endpoint", elbEndpointStr)
+
+	elbv2Opts := func(o *elbv2.Options) {
+		o.Region = region
+		if elbEndpointOverride != "" {
+			o.BaseEndpoint = aws.String(elbEndpointOverride)
+		}
+	}
+	elbv2Client := elbv2.NewFromConfig(cfg, elbv2Opts)
+	elbv2EndpointStr := resolveEndpoint(elbEndpointOverride, "Elastic Load Balancing v2", region)
+	log.Info("Created elbv2 client", "endpoint", elbv2EndpointStr)
+
+	r53Opts := func(o *route53.Options) {
+		if r53Region != "" {
+			o.Region = r53Region
+		}
+		if r53Endpoint != "" {
+			o.BaseEndpoint = aws.String(r53Endpoint)
+		}
+	}
+	r53client := route53.NewFromConfig(cfgRoute53, r53Opts)
+	r53EndpointStr := resolveEndpoint(r53Endpoint, "Route 53", r53Region)
+	log.Info("Created route53 client", "endpoint", r53EndpointStr)
+
 	p := &Provider{
-		elb:       elbClient,
-		elbv2:     elbv2Client,
-		route53:   r53client,
-		tags:      tags,
-		config:    config,
-		idsToTags: map[string]map[string]string{},
-		lbZones:   map[string]string{},
+		elb:             elbClient,
+		elbv2:           elbv2Client,
+		route53:         r53client,
+		tags:            tags,
+		elbEndpoint:     elbEndpointStr,
+		elbv2Endpoint:   elbv2EndpointStr,
+		route53Endpoint: r53EndpointStr,
+		tagsEndpoint:    tagsEndpointStr,
+		config:          config,
+		idsToTags:       map[string]map[string]string{},
+		lbZones:         map[string]string{},
 	}
 	if err := validateServiceEndpointsFn(p); err != nil {
 		return nil, fmt.Errorf("failed to validate aws provider service endpoints: %v", err)
@@ -296,22 +432,23 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 // validateServiceEndpoints validates that provider clients can communicate with
 // associated API endpoints by having each client make a list/describe/get call.
 func validateServiceEndpoints(provider *Provider) error {
+	ctx := context.TODO()
 	var errs []error
-	zoneInput := route53.ListHostedZonesInput{MaxItems: aws.String("1")}
-	if _, err := provider.route53.ListHostedZones(&zoneInput); err != nil {
+	zoneInput := route53.ListHostedZonesInput{MaxItems: aws.Int32(1)}
+	if _, err := provider.route53.ListHostedZones(ctx, &zoneInput); err != nil {
 		errs = append(errs, fmt.Errorf("failed to list route53 hosted zones: %v", err))
 	}
-	elbInput := elb.DescribeLoadBalancersInput{PageSize: aws.Int64(int64(1))}
-	if _, err := provider.elb.DescribeLoadBalancers(&elbInput); err != nil {
+	elbInput := elasticloadbalancing.DescribeLoadBalancersInput{PageSize: aws.Int32(1)}
+	if _, err := provider.elb.DescribeLoadBalancers(ctx, &elbInput); err != nil {
 		errs = append(errs, fmt.Errorf("failed to describe elb load balancers: %v", err))
 	}
-	elbv2Input := elbv2.DescribeLoadBalancersInput{PageSize: aws.Int64(int64(1))}
-	if _, err := provider.elbv2.DescribeLoadBalancers(&elbv2Input); err != nil {
+	elbv2Input := elbv2.DescribeLoadBalancersInput{PageSize: aws.Int32(1)}
+	if _, err := provider.elbv2.DescribeLoadBalancers(ctx, &elbv2Input); err != nil {
 		errs = append(errs, fmt.Errorf("failed to describe elbv2 load balancers: %v", err))
 	}
 	if provider.tags != nil {
-		tagInput := resourcegroupstaggingapi.GetResourcesInput{TagsPerPage: aws.Int64(int64(100))}
-		if _, err := provider.tags.GetResources(&tagInput); err != nil {
+		tagInput := resourcegroupstaggingapi.GetResourcesInput{TagsPerPage: aws.Int32(100)}
+		if _, err := provider.tags.GetResources(ctx, &tagInput); err != nil {
 			errs = append(errs, fmt.Errorf("failed to get group tagging resources: %v", err))
 		}
 	}
@@ -361,100 +498,82 @@ func (m *Provider) getZoneID(zoneConfig configv1.DNSZone) (string, error) {
 }
 
 func (m *Provider) lookupZoneID(zoneConfig configv1.DNSZone) (string, error) {
-	var id string
+	ctx := context.TODO()
+	tagFilters := []tagtypes.TagFilter{}
+	for k, v := range zoneConfig.Tags {
+		tagFilters = append(tagFilters, tagtypes.TagFilter{
+			Key:    aws.String(k),
+			Values: []string{v},
+		})
+	}
 	// Even though we use filters when getting resources, the resources are still
 	// paginated as though no filter were applied.  If the desired resource is not
 	// on the first page, then GetResources will not return it.  We need to use
-	// GetResourcesPages and possibly go through one or more empty pages of
+	// the paginator and possibly go through one or more empty pages of
 	// resources till we find a resource that gets through the filters.
-	var innerError error
-	f := func(resp *resourcegroupstaggingapi.GetResourcesOutput, lastPage bool) (shouldContinue bool) {
-		for _, zone := range resp.ResourceTagMappingList {
-			zoneARN, err := arn.Parse(aws.StringValue(zone.ResourceARN))
-			if err != nil {
-				innerError = fmt.Errorf("failed to parse hostedzone ARN %q: %v", aws.StringValue(zone.ResourceARN), err)
-				return false
-			}
-			id, innerError = zoneIDFromResource(zoneARN.Resource)
-			return false
-		}
-		return true
-	}
-	tagFilters := []*resourcegroupstaggingapi.TagFilter{}
-	for k, v := range zoneConfig.Tags {
-		tagFilters = append(tagFilters, &resourcegroupstaggingapi.TagFilter{
-			Key:    aws.String(k),
-			Values: []*string{aws.String(v)},
-		})
-	}
-	outerError := m.tags.GetResourcesPages(&resourcegroupstaggingapi.GetResourcesInput{
-		ResourceTypeFilters: []*string{aws.String("route53:hostedzone")},
+	paginator := resourcegroupstaggingapi.NewGetResourcesPaginator(m.tags, &resourcegroupstaggingapi.GetResourcesInput{
+		ResourceTypeFilters: []string{"route53:hostedzone"},
 		TagFilters:          tagFilters,
-	}, f)
-	if err := kerrors.NewAggregate([]error{innerError, outerError}); err != nil {
-		return id, fmt.Errorf("failed to get tagged resources: %v", err)
+	})
+	for paginator.HasMorePages() {
+		resp, err := paginator.NextPage(ctx)
+		if err != nil {
+			return "", fmt.Errorf("failed to get tagged resources: %v", err)
+		}
+		for _, zone := range resp.ResourceTagMappingList {
+			zoneARN, err := arn.Parse(aws.ToString(zone.ResourceARN))
+			if err != nil {
+				return "", fmt.Errorf("failed to parse hostedzone ARN %q: %v", aws.ToString(zone.ResourceARN), err)
+			}
+			return zoneIDFromResource(zoneARN.Resource)
+		}
 	}
-	if len(id) == 0 {
-		return id, fmt.Errorf("no matching hosted zone found")
-	}
-	return id, nil
+	return "", fmt.Errorf("no matching hosted zone found")
 }
 
 func (m *Provider) lookupZoneIDWithoutResourceTagging(zoneConfig configv1.DNSZone) (string, error) {
-	var id string
-	var innerError error
-	searchZones := func(resp *route53.ListHostedZonesOutput, lastPage bool) (shouldContinue bool) {
-		input := &route53.ListTagsForResourcesInput{
-			ResourceIds:  make([]*string, len(resp.HostedZones)),
-			ResourceType: aws.String("hostedzone"),
-		}
-		for i, zone := range resp.HostedZones {
-			zoneID, err := zoneIDFromResource(aws.StringValue(zone.Id))
-			if err != nil {
-				innerError = err
-				return false
-			}
-			input.ResourceIds[i] = &zoneID
-		}
-		output, err := m.route53.ListTagsForResources(input)
+	ctx := context.TODO()
+	// the maximum page size is limited to 10 because the call to ListTagsForResources only supports 10 resources in a single call.
+	paginator := route53.NewListHostedZonesPaginator(m.route53, &route53.ListHostedZonesInput{
+		MaxItems: aws.Int32(10),
+	})
+	for paginator.HasMorePages() {
+		resp, err := paginator.NextPage(ctx)
 		if err != nil {
-			innerError = err
-			return false
+			return "", fmt.Errorf("failed to list hosted zones: %v", err)
+		}
+		resourceIds := make([]string, len(resp.HostedZones))
+		for i, zone := range resp.HostedZones {
+			zoneID, err := zoneIDFromResource(aws.ToString(zone.Id))
+			if err != nil {
+				return "", err
+			}
+			resourceIds[i] = zoneID
+		}
+		output, err := m.route53.ListTagsForResources(ctx, &route53.ListTagsForResourcesInput{
+			ResourceIds:  resourceIds,
+			ResourceType: r53types.TagResourceTypeHostedzone,
+		})
+		if err != nil {
+			return "", err
 		}
 		for _, tagSet := range output.ResourceTagSets {
 			if zoneMatchesTags(tagSet.Tags, zoneConfig) {
-				id = aws.StringValue(tagSet.ResourceId)
-				return false
+				return aws.ToString(tagSet.ResourceId), nil
 			}
 		}
-		return true
 	}
-	// the maximum page size is limited to 10 because the call to ListTagsForResources only supports 10 resources in a single call.
-	outerError := m.route53.ListHostedZonesPages(
-		&route53.ListHostedZonesInput{MaxItems: aws.String("10")},
-		searchZones,
-	)
-	if err := kerrors.NewAggregate([]error{innerError, outerError}); err != nil {
-		return id, fmt.Errorf("failed to get tagged resources: %v", err)
-	}
-	if len(id) == 0 {
-		return id, fmt.Errorf("no matching hosted zone found")
-	}
-	return id, nil
+	return "", fmt.Errorf("no matching hosted zone found")
 }
 
-func zoneMatchesTags(tags []*route53.Tag, zoneConfig configv1.DNSZone) bool {
+func zoneMatchesTags(tags []r53types.Tag, zoneConfig configv1.DNSZone) bool {
 	for k, v := range zoneConfig.Tags {
 		tagMatches := false
-		for _, tagPointer := range tags {
-			if tagPointer == nil {
+		for _, tag := range tags {
+			if k != aws.ToString(tag.Key) {
 				continue
 			}
-			tag := *tagPointer
-			if k != aws.StringValue(tag.Key) {
-				continue
-			}
-			if v != aws.StringValue(tag.Value) {
+			if v != aws.ToString(tag.Value) {
 				return false
 			}
 			tagMatches = true
@@ -485,39 +604,47 @@ func (m *Provider) getLBHostedZone(name string) (string, error) {
 		return id, nil
 	}
 
+	ctx := context.TODO()
 	var id string
-	elbFn := func(resp *elb.DescribeLoadBalancersOutput, lastPage bool) (shouldContinue bool) {
+
+	elbPaginator := elasticloadbalancing.NewDescribeLoadBalancersPaginator(m.elb, &elasticloadbalancing.DescribeLoadBalancersInput{})
+	for elbPaginator.HasMorePages() {
+		resp, err := elbPaginator.NextPage(ctx)
+		if err != nil {
+			return "", fmt.Errorf("failed to describe classic load balancers: %v", err)
+		}
 		for _, lb := range resp.LoadBalancerDescriptions {
-			dnsName := aws.StringValue(lb.DNSName)
-			zoneID := aws.StringValue(lb.CanonicalHostedZoneNameID)
-			log.V(2).Info("found classic load balancer", "name", aws.StringValue(lb.LoadBalancerName), "dns name", dnsName, "hosted zone ID", zoneID)
+			dnsName := aws.ToString(lb.DNSName)
+			zoneID := aws.ToString(lb.CanonicalHostedZoneNameID)
+			log.V(2).Info("found classic load balancer", "name", aws.ToString(lb.LoadBalancerName), "dns name", dnsName, "hosted zone ID", zoneID)
 			if dnsName == name {
 				id = zoneID
-				return false
+				break
 			}
 		}
-		return true
-	}
-	err := m.elb.DescribeLoadBalancersPages(&elb.DescribeLoadBalancersInput{}, elbFn)
-	if err != nil {
-		return "", fmt.Errorf("failed to describe classic load balancers: %v", err)
+		if len(id) > 0 {
+			break
+		}
 	}
 	if len(id) == 0 {
-		elbv2Fn := func(resp *elbv2.DescribeLoadBalancersOutput, lastPage bool) (shouldContinue bool) {
+		elbv2Paginator := elbv2.NewDescribeLoadBalancersPaginator(m.elbv2, &elbv2.DescribeLoadBalancersInput{})
+		for elbv2Paginator.HasMorePages() {
+			resp, err := elbv2Paginator.NextPage(ctx)
+			if err != nil {
+				return "", fmt.Errorf("failed to describe network load balancers: %v", err)
+			}
 			for _, lb := range resp.LoadBalancers {
-				dnsName := aws.StringValue(lb.DNSName)
-				zoneID := aws.StringValue(lb.CanonicalHostedZoneId)
-				log.V(2).Info("found network load balancer", "name", aws.StringValue(lb.LoadBalancerName), "dns name", dnsName, "hosted zone ID", zoneID)
+				dnsName := aws.ToString(lb.DNSName)
+				zoneID := aws.ToString(lb.CanonicalHostedZoneId)
+				log.V(2).Info("found network load balancer", "name", aws.ToString(lb.LoadBalancerName), "dns name", dnsName, "hosted zone ID", zoneID)
 				if dnsName == name {
 					id = zoneID
-					return false
+					break
 				}
 			}
-			return true
-		}
-		err := m.elbv2.DescribeLoadBalancersPages(&elbv2.DescribeLoadBalancersInput{}, elbv2Fn)
-		if err != nil {
-			return "", fmt.Errorf("failed to describe network load balancers: %v", err)
+			if len(id) > 0 {
+				break
+			}
 		}
 	}
 	if len(id) == 0 {
@@ -627,56 +754,57 @@ func (m *Provider) change(record *iov1.DNSRecord, zone configv1.DNSZone, action 
 // Note that by API contract, TTL cannot be specified for an AliasTarget.
 func (m *Provider) updateRecord(domain, zoneID, target, targetHostedZoneID, action string, ttl int64) error {
 	input := route53.ChangeResourceRecordSetsInput{HostedZoneId: aws.String(zoneID)}
-	if clientEndpointIsGovCloud(&m.route53.Client.ClientInfo) {
-		record := route53.ResourceRecord{Value: aws.String(target)}
-		input.ChangeBatch = &route53.ChangeBatch{
-			Changes: []*route53.Change{
+	if isGovCloudRegion(m.route53.Options().Region) {
+		record := r53types.ResourceRecord{Value: aws.String(target)}
+		input.ChangeBatch = &r53types.ChangeBatch{
+			Changes: []r53types.Change{
 				{
-					Action: aws.String(action),
-					ResourceRecordSet: &route53.ResourceRecordSet{
+					Action: r53types.ChangeAction(action),
+					ResourceRecordSet: &r53types.ResourceRecordSet{
 						Name:            aws.String(domain),
-						Type:            aws.String(route53.RRTypeCname),
+						Type:            r53types.RRTypeCname,
 						TTL:             aws.Int64(ttl),
-						ResourceRecords: []*route53.ResourceRecord{&record},
+						ResourceRecords: []r53types.ResourceRecord{record},
 					},
 				},
 			},
 		}
 	} else {
-		aliasTarget := &route53.AliasTarget{
+		aliasTarget := &r53types.AliasTarget{
 			HostedZoneId:         aws.String(targetHostedZoneID),
 			DNSName:              aws.String(target),
-			EvaluateTargetHealth: aws.Bool(false),
+			EvaluateTargetHealth: false,
 		}
-		changes := []*route53.Change{
+		changes := []r53types.Change{
 			{
-				Action: aws.String(action),
-				ResourceRecordSet: &route53.ResourceRecordSet{
+				Action: r53types.ChangeAction(action),
+				ResourceRecordSet: &r53types.ResourceRecordSet{
 					Name:        aws.String(domain),
-					Type:        aws.String(route53.RRTypeA),
+					Type:        r53types.RRTypeA,
 					AliasTarget: aliasTarget,
 				},
 			},
 		}
 		if awsutil.IsDualStack(m.config.IPFamily) {
-			changes = append(changes, &route53.Change{
-				Action: aws.String(action),
-				ResourceRecordSet: &route53.ResourceRecordSet{
+			changes = append(changes, r53types.Change{
+				Action: r53types.ChangeAction(action),
+				ResourceRecordSet: &r53types.ResourceRecordSet{
 					Name:        aws.String(domain),
-					Type:        aws.String(route53.RRTypeAaaa),
+					Type:        r53types.RRTypeAaaa,
 					AliasTarget: aliasTarget,
 				},
 			})
 		}
-		input.ChangeBatch = &route53.ChangeBatch{
+		input.ChangeBatch = &r53types.ChangeBatch{
 			Changes: changes,
 		}
 	}
-	resp, err := m.route53.ChangeResourceRecordSets(&input)
+	resp, err := m.route53.ChangeResourceRecordSets(context.TODO(), &input)
 	if err != nil {
 		if action == string(deleteAction) {
-			if aerr, ok := err.(awserr.Error); ok {
-				if strings.Contains(aerr.Message(), "not found") {
+			var apiErr smithy.APIError
+			if errors.As(err, &apiErr) {
+				if strings.Contains(apiErr.ErrorMessage(), "not found") {
 					log.Info("record not found", "zone id", zoneID, "domain", domain, "target", target)
 					return nil
 				}
@@ -686,10 +814,4 @@ func (m *Provider) updateRecord(domain, zoneID, target, targetHostedZoneID, acti
 	}
 	log.Info("updated DNS record", "zone id", zoneID, "domain", domain, "target", target, "response", resp)
 	return nil
-}
-
-// clientEndpointIsGovCloud returns true if the provided client info
-// references a US GovCloud API endpoint.
-func clientEndpointIsGovCloud(clientInfo *metadata.ClientInfo) bool {
-	return strings.Contains(clientInfo.Endpoint, govCloudRoute53Region)
 }

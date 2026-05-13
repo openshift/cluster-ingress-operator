@@ -1,7 +1,6 @@
 package aws
 
 import (
-	"io/ioutil"
 	"os"
 	"testing"
 
@@ -103,7 +102,7 @@ aws_secret_access_key = ANOTHERTHING
 
 			if test.err == "" {
 				assert.NoError(t, err)
-				data, err := ioutil.ReadFile(fPath)
+				data, err := os.ReadFile(fPath)
 				assert.NoError(t, err)
 				assert.Equal(t, string(data), test.sharedConfig)
 			} else {
