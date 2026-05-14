@@ -3,7 +3,7 @@ package aws
 import (
 	"bytes"
 	"fmt"
-	"io/ioutil"
+	"os"
 
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
@@ -12,7 +12,7 @@ import (
 // SharedCredentialsFileFromSecret returns a location (path) to the shared
 // credentials file that was created using the provided secret.
 //
-// Consumers can configure the aws Session using that file to use the
+// Consumers can configure the aws config using that file to use the
 // credentials as follows:
 //
 //	sharedCredentialsFile, err := SharedCredentialsFileFromSecret(secret)
@@ -20,11 +20,10 @@ import (
 //		// handle error
 //	}
 //
-//	options := session.Options{
-//		SharedConfigState: session.SharedConfigEnable,
-//		SharedConfigFiles: []string{sharedCredentialsFile},
-//	}
-//	sess := session.Must(session.NewSessionWithOptions(options))
+//	cfg, err := config.LoadDefaultConfig(ctx,
+//		config.WithSharedCredentialsFiles([]string{sharedCredentialsFile}),
+//		config.WithSharedConfigFiles([]string{sharedCredentialsFile}),
+//	)
 func SharedCredentialsFileFromSecret(secret *corev1.Secret) (string, error) {
 	var data []byte
 	switch {
@@ -40,7 +39,7 @@ func SharedCredentialsFileFromSecret(secret *corev1.Secret) (string, error) {
 		return "", errors.New("invalid secret for aws credentials")
 	}
 
-	f, err := ioutil.TempFile("", "aws-shared-credentials")
+	f, err := os.CreateTemp("", "aws-shared-credentials")
 	if err != nil {
 		return "", errors.Wrap(err, "failed to create file for shared credentials")
 	}

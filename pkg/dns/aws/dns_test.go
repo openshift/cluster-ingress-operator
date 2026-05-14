@@ -3,10 +3,10 @@ package aws
 import (
 	"testing"
 
-	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	r53types "github.com/aws/aws-sdk-go-v2/service/route53/types"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/aws/aws-sdk-go/service/route53"
 	configv1 "github.com/openshift/api/config/v1"
 )
 
@@ -70,9 +70,9 @@ func Test_zoneMatchesTags(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			var tagsForZone []*route53.Tag
+			var tagsForZone []r53types.Tag
 			for k, v := range tc.tagsForZone {
-				tag := &route53.Tag{
+				tag := r53types.Tag{
 					Key:   aws.String(k),
 					Value: aws.String(v),
 				}
@@ -134,6 +134,48 @@ func Test_zoneIDFromResource(t *testing.T) {
 	}
 }
 
+func Test_partitionIDForRegion(t *testing.T) {
+	cases := []struct {
+		region    string
+		partition string
+	}{
+		{"us-east-1", "aws"},
+		{"eu-west-1", "aws"},
+		{"ap-southeast-1", "aws"},
+		{"cn-north-1", "aws-cn"},
+		{"cn-northwest-1", "aws-cn"},
+		{"us-gov-east-1", "aws-us-gov"},
+		{"us-gov-west-1", "aws-us-gov"},
+		{"us-iso-east-1", "aws-iso"},
+		{"us-isob-east-1", "aws-iso-b"},
+		{"eusc-de-east-1", "aws"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.region, func(t *testing.T) {
+			assert.Equal(t, tc.partition, partitionIDForRegion(tc.region))
+		})
+	}
+}
+
+func Test_isGovCloudRegion(t *testing.T) {
+	cases := []struct {
+		region   string
+		expected bool
+	}{
+		{"us-gov-west-1", true},
+		{"us-gov-east-1", true},
+		{"us-east-1", false},
+		{"cn-north-1", false},
+		{"us-iso-east-1", false},
+		{"eu-west-1", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.region, func(t *testing.T) {
+			assert.Equal(t, tc.expected, isGovCloudRegion(tc.region))
+		})
+	}
+}
+
 // Test_NewProvider verifies that NewProvider creates clients with the expected
 // service endpoints.
 func Test_NewProvider(t *testing.T) {
@@ -180,6 +222,15 @@ func Test_NewProvider(t *testing.T) {
 		expectedElbServiceEndpointEndpoint:   "http://y",
 		expectedElbv2ServiceEndpointEndpoint: "http://y",
 		expectedRoute53ServiceEndpoint:       "http://z",
+	}, {
+		name: "default service endpoints, EUSC Brandenburg",
+		config: Config{
+			Region: "eusc-de-east-1",
+		},
+		expectedTaggingServiceEndpoint:       "https://tagging.eusc-de-east-1.amazonaws.eu",
+		expectedElbServiceEndpointEndpoint:   "https://elasticloadbalancing.eusc-de-east-1.amazonaws.eu",
+		expectedElbv2ServiceEndpointEndpoint: "https://elasticloadbalancing.eusc-de-east-1.amazonaws.eu",
+		expectedRoute53ServiceEndpoint:       "https://route53.amazonaws.eu",
 	}, {
 		name: "custom service endpoints, EUSC Brandenburg",
 		config: Config{
@@ -243,19 +294,19 @@ func Test_NewProvider(t *testing.T) {
 			}
 
 			assert.NotNil(t, provider.elb)
-			assert.Equal(t, tc.expectedElbServiceEndpointEndpoint, provider.elb.Client.Endpoint)
+			assert.Equal(t, tc.expectedElbServiceEndpointEndpoint, provider.elbEndpoint)
 
 			assert.NotNil(t, provider.elbv2)
-			assert.Equal(t, tc.expectedElbv2ServiceEndpointEndpoint, provider.elbv2.Client.Endpoint)
+			assert.Equal(t, tc.expectedElbv2ServiceEndpointEndpoint, provider.elbv2Endpoint)
 
 			assert.NotNil(t, provider.route53)
-			assert.Equal(t, tc.expectedRoute53ServiceEndpoint, provider.route53.Client.Endpoint)
+			assert.Equal(t, tc.expectedRoute53ServiceEndpoint, provider.route53Endpoint)
 
 			if tc.expectedTaggingServiceEndpoint == "" {
 				assert.Nil(t, provider.tags)
 			} else {
 				assert.NotNil(t, provider.tags)
-				assert.Equal(t, tc.expectedTaggingServiceEndpoint, provider.tags.Client.Endpoint)
+				assert.Equal(t, tc.expectedTaggingServiceEndpoint, provider.tagsEndpoint)
 			}
 		})
 	}

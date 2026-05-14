@@ -13,7 +13,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"net/http"
 	"os"
@@ -38,8 +37,7 @@ import (
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 
-	"github.com/aws/aws-sdk-go/aws/endpoints"
-	"github.com/aws/aws-sdk-go/service/ec2"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
 
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
@@ -990,7 +988,7 @@ func TestDefaultIngressCertificate(t *testing.T) {
 
 	// We do not care about the response as long as we can read it without
 	// error.
-	if _, err := io.Copy(ioutil.Discard, conn); err != nil && err != io.EOF {
+	if _, err := io.Copy(io.Discard, conn); err != nil && err != io.EOF {
 		t.Fatalf("failed to read response from router at %s: %v", address, err)
 	}
 }
@@ -2471,7 +2469,7 @@ func TestContainerLoggingMaxLength(t *testing.T) {
 			t.Logf("failed to read logs from pod %s: %v", pod.Name, err)
 			return false, nil
 		}
-		data, err := ioutil.ReadAll(readCloser)
+		data, err := io.ReadAll(readCloser)
 		if err != nil {
 			t.Logf("failed to read logs from pod %s: %v", pod.Name, err)
 			return false, nil
@@ -2613,7 +2611,7 @@ func TestContainerLoggingMinLength(t *testing.T) {
 			t.Logf("failed to read logs from pod %s: %v", pod.Name, err)
 			return false, nil
 		}
-		data, err := ioutil.ReadAll(readCloser)
+		data, err := io.ReadAll(readCloser)
 		if err != nil {
 			t.Logf("failed to read logs from pod %s: %v", pod.Name, err)
 			return false, nil
@@ -2666,9 +2664,9 @@ func TestIngressControllerCustomEndpoints(t *testing.T) {
 			infraConfig.Name)
 	case len(platform.AWS.Region) == 0:
 		t.Fatalf("region is missing from aws platform status for infrastructure %s", infraConfig.Name)
-	case platform.AWS.Region == endpoints.CnNorth1RegionID || platform.AWS.Region == endpoints.CnNorthwest1RegionID:
+	case platform.AWS.Region == "cn-north-1" || platform.AWS.Region == "cn-northwest-1":
 		t.Skipf("region %s or %s detected for infrastructure %s, skipping TestIngressControllerCustomEndpoints",
-			endpoints.CnNorth1RegionID, endpoints.CnNorthwest1RegionID, infraConfig.Name)
+			"cn-north-1", "cn-northwest-1", infraConfig.Name)
 	}
 
 	route53Endpoint := configv1.AWSServiceEndpoint{
@@ -2885,7 +2883,7 @@ func TestHTTPHeaderCapture(t *testing.T) {
 				t.Errorf("failed to read logs from pod %s: %v", pod.Name, err)
 				continue
 			}
-			data, _ := ioutil.ReadAll(readCloser)
+			data, _ := io.ReadAll(readCloser)
 			scanner := bufio.NewScanner(bytes.NewBuffer(data))
 			var found bool
 			for scanner.Scan() {
@@ -3258,7 +3256,7 @@ func TestAWSELBConnectionIdleTimeout(t *testing.T) {
 			return true, nil
 		} else {
 			defer response.Body.Close()
-			body, err := ioutil.ReadAll(response.Body)
+			body, err := io.ReadAll(response.Body)
 			if err != nil {
 				t.Log(err)
 				return false, nil
@@ -3331,7 +3329,7 @@ func TestAWSELBConnectionIdleTimeout(t *testing.T) {
 		}
 
 		defer response.Body.Close()
-		body, err := ioutil.ReadAll(response.Body)
+		body, err := io.ReadAll(response.Body)
 		if err != nil {
 			t.Log(err)
 			return false, nil
@@ -4605,7 +4603,7 @@ func waitForIngressControllerCondition(t *testing.T, cl client.Client, timeout t
 }
 
 // assertEIPAllocationDeleted cleans the EIPs having a tag key and value and the polling to clean EIPs continues until all the unassociated EIPs are released.
-func assertEIPAllocationDeleted(t *testing.T, svc *ec2.EC2, timeout time.Duration, clusterName string) {
+func assertEIPAllocationDeleted(t *testing.T, svc *ec2.Client, timeout time.Duration, clusterName string) {
 	t.Helper()
 	t.Log("Starting cleanup of EIPs")
 	if err := wait.PollUntilContextTimeout(context.Background(), 10*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
