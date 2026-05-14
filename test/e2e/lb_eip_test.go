@@ -395,9 +395,6 @@ func createAWSEIPs(t *testing.T, ec2ServiceClient *ec2.Client, clusterName strin
 	if err != nil {
 		t.Fatalf("failed to get public subnets due to error: %v", err)
 	}
-	// Set up random seed
-	rand.Seed(time.Now().UnixNano())
-
 	// Set tag key and value
 	tagKeyEIP, tagValueEIP := getTagKeyAndValue(t)
 

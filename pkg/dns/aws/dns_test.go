@@ -223,6 +223,15 @@ func Test_NewProvider(t *testing.T) {
 		expectedElbv2ServiceEndpointEndpoint: "http://y",
 		expectedRoute53ServiceEndpoint:       "http://z",
 	}, {
+		name: "default service endpoints, EUSC Brandenburg",
+		config: Config{
+			Region: "eusc-de-east-1",
+		},
+		expectedTaggingServiceEndpoint:       "https://tagging.eusc-de-east-1.amazonaws.eu",
+		expectedElbServiceEndpointEndpoint:   "https://elasticloadbalancing.eusc-de-east-1.amazonaws.eu",
+		expectedElbv2ServiceEndpointEndpoint: "https://elasticloadbalancing.eusc-de-east-1.amazonaws.eu",
+		expectedRoute53ServiceEndpoint:       "https://route53.amazonaws.eu",
+	}, {
 		name: "custom service endpoints, EUSC Brandenburg",
 		config: Config{
 			Region: "eusc-de-east-1",

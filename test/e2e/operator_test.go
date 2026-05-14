@@ -13,7 +13,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"net/http"
 	"os"
@@ -989,7 +988,7 @@ func TestDefaultIngressCertificate(t *testing.T) {
 
 	// We do not care about the response as long as we can read it without
 	// error.
-	if _, err := io.Copy(ioutil.Discard, conn); err != nil && err != io.EOF {
+	if _, err := io.Copy(io.Discard, conn); err != nil && err != io.EOF {
 		t.Fatalf("failed to read response from router at %s: %v", address, err)
 	}
 }
@@ -2470,7 +2469,7 @@ func TestContainerLoggingMaxLength(t *testing.T) {
 			t.Logf("failed to read logs from pod %s: %v", pod.Name, err)
 			return false, nil
 		}
-		data, err := ioutil.ReadAll(readCloser)
+		data, err := io.ReadAll(readCloser)
 		if err != nil {
 			t.Logf("failed to read logs from pod %s: %v", pod.Name, err)
 			return false, nil
@@ -2612,7 +2611,7 @@ func TestContainerLoggingMinLength(t *testing.T) {
 			t.Logf("failed to read logs from pod %s: %v", pod.Name, err)
 			return false, nil
 		}
-		data, err := ioutil.ReadAll(readCloser)
+		data, err := io.ReadAll(readCloser)
 		if err != nil {
 			t.Logf("failed to read logs from pod %s: %v", pod.Name, err)
 			return false, nil
@@ -2884,7 +2883,7 @@ func TestHTTPHeaderCapture(t *testing.T) {
 				t.Errorf("failed to read logs from pod %s: %v", pod.Name, err)
 				continue
 			}
-			data, _ := ioutil.ReadAll(readCloser)
+			data, _ := io.ReadAll(readCloser)
 			scanner := bufio.NewScanner(bytes.NewBuffer(data))
 			var found bool
 			for scanner.Scan() {
@@ -3257,7 +3256,7 @@ func TestAWSELBConnectionIdleTimeout(t *testing.T) {
 			return true, nil
 		} else {
 			defer response.Body.Close()
-			body, err := ioutil.ReadAll(response.Body)
+			body, err := io.ReadAll(response.Body)
 			if err != nil {
 				t.Log(err)
 				return false, nil
@@ -3330,7 +3329,7 @@ func TestAWSELBConnectionIdleTimeout(t *testing.T) {
 		}
 
 		defer response.Body.Close()
-		body, err := ioutil.ReadAll(response.Body)
+		body, err := io.ReadAll(response.Body)
 		if err != nil {
 			t.Log(err)
 			return false, nil

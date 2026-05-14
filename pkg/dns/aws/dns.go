@@ -263,6 +263,8 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 
 	// When RoleARN is provided, make a copy of the Route 53 config and configure it to use RoleARN.
 	// RoleARN is intended to only provide access to another account's Route 53 service, not for ELBs.
+	// Shallow copy is safe here: only Credentials is overwritten; shared reference fields
+	// (HTTPClient, Logger, etc.) are not mutated after this point.
 	cfgRoute53 := cfg
 	if config.RoleARN != "" {
 		stsClient := sts.NewFromConfig(cfg)
