@@ -158,3 +158,6 @@ require (
 replace github.com/imdario/mergo => github.com/imdario/mergo v0.3.5
 
 replace k8s.io/client-go => k8s.io/client-go v0.32.1
+
+// Use the sail_library branch from aslakknutsen's fork for Sail Library integration
+replace github.com/istio-ecosystem/sail-operator => github.com/aslakknutsen/sail-operator v0.0.0-20260206153059-66612bfbf3cf

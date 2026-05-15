@@ -137,6 +137,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	routeExternalCertificateEnabled := featureGates.Enabled(features.FeatureGateRouteExternalCertificate)
 	ingressControllerLBSubnetsAWSEnabled := featureGates.Enabled(features.FeatureGateIngressControllerLBSubnetsAWS)
 	ingressControllerEIPAllocationsAWSEnabled := featureGates.Enabled(features.FeatureGateSetEIPForNLBIngressController)
+	gatewayAPIWithoutOLMEnabled := featureGates.Enabled(features.FeatureGateGatewayAPIWithoutOLM)
 	ingressControllerDCMEnabled := featureGates.Enabled(features.FeatureGateIngressControllerDynamicConfigurationManager)
 	gcpCustomEndpointsEnabled := featureGates.Enabled(features.FeatureGateGCPCustomAPIEndpoints)
 
@@ -310,12 +311,14 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	// the manager; the gatewayapi controller starts it after it creates the
 	// Gateway API CRDs.
 	gatewayClassController, err := gatewayclasscontroller.NewUnmanaged(mgr, gatewayclasscontroller.Config{
-		OperatorNamespace:         config.Namespace,
-		OperandNamespace:          operatorcontroller.DefaultOperandNamespace,
-		GatewayAPIOperatorCatalog: config.GatewayAPIOperatorCatalog,
-		GatewayAPIOperatorChannel: config.GatewayAPIOperatorChannel,
-		GatewayAPIOperatorVersion: config.GatewayAPIOperatorVersion,
-		IstioVersion:              config.IstioVersion,
+		KubeConfig:                  kubeConfig,
+		OperatorNamespace:           config.Namespace,
+		OperandNamespace:            operatorcontroller.DefaultOperandNamespace,
+		GatewayAPIOperatorCatalog:   config.GatewayAPIOperatorCatalog,
+		GatewayAPIOperatorChannel:   config.GatewayAPIOperatorChannel,
+		GatewayAPIOperatorVersion:   config.GatewayAPIOperatorVersion,
+		GatewayAPIWithoutOLMEnabled: gatewayAPIWithoutOLMEnabled,
+		IstioVersion:                config.IstioVersion,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gatewayclass controller: %w", err)

@@ -9,7 +9,6 @@ import (
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
-
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -23,10 +22,10 @@ import (
 // cluster-critical priority class in a pod's spec.priorityClassName.
 const systemClusterCriticalPriorityClassName = "system-cluster-critical"
 
-// ensureIstio attempts to ensure that an Istio CR is present and returns a
+// ensureIstioOLM attempts to ensure that an Istio CR is present and returns a
 // Boolean indicating whether it exists, the CR if it exists, and an error
 // value.
-func (r *reconciler) ensureIstio(ctx context.Context, gatewayclass *gatewayapiv1.GatewayClass, istioVersion string) (bool, *sailv1.Istio, error) {
+func (r *reconciler) ensureIstioOLM(ctx context.Context, gatewayclass *gatewayapiv1.GatewayClass, istioVersion string) (bool, *sailv1.Istio, error) {
 	name := controller.IstioName(r.config.OperandNamespace)
 	have, current, err := r.currentIstio(ctx, name)
 	if err != nil {
@@ -95,9 +94,10 @@ func (r *reconciler) crdExists(ctx context.Context, crdName string) (bool, error
 	return true, nil
 }
 
-// desiredIstio returns the desired Istio CR.
-func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference, istioVersion string, enableInferenceExtension bool) *sailv1.Istio {
-	pilotContainerEnv := map[string]string{
+// gatewayAPIPilotEnv returns the pilot environment variables for configuring
+// Istio's Gateway API controller with OpenShift-specific settings.
+func gatewayAPIPilotEnv(enableInferenceExtension bool) map[string]string {
+	env := map[string]string{
 		// Enable Gateway API.
 		"PILOT_ENABLE_GATEWAY_API": "true",
 		// Do not enable experimental Gateway API features.
@@ -146,8 +146,14 @@ func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference, ist
 		"PILOT_ENABLE_GATEWAY_API_COPY_LABELS_ANNOTATIONS": "false",
 	}
 	if enableInferenceExtension {
-		pilotContainerEnv["ENABLE_GATEWAY_API_INFERENCE_EXTENSION"] = "true"
+		env["ENABLE_GATEWAY_API_INFERENCE_EXTENSION"] = "true"
 	}
+	return env
+}
+
+// desiredIstio returns the desired Istio CR.
+func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference, istioVersion string, enableInferenceExtension bool) *sailv1.Istio {
+	pilotContainerEnv := gatewayAPIPilotEnv(enableInferenceExtension)
 	return &sailv1.Istio{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace:       name.Namespace,
@@ -277,4 +283,30 @@ func istioChanged(current, expected *sailv1.Istio) (bool, *sailv1.Istio) {
 	updated.OwnerReferences = expected.OwnerReferences
 
 	return true, updated
+}
+
+// openshiftValues returns the OpenShift-specific value overrides for Istio.
+// These values are merged on top of the gateway-api preset defaults.
+func openshiftValues(enableInferenceExtension bool) *sailv1.Values {
+	pilotEnv := gatewayAPIPilotEnv(enableInferenceExtension)
+
+	return &sailv1.Values{
+		Global: &sailv1.GlobalConfig{
+			DefaultPodDisruptionBudget: &sailv1.DefaultPodDisruptionBudgetConfig{
+				Enabled: ptr.To(false),
+			},
+			IstioNamespace: ptr.To(controller.DefaultOperandNamespace),
+			// Use system-cluster-critical priority for OpenShift system workloads
+			PriorityClassName: ptr.To(systemClusterCriticalPriorityClassName),
+			// OpenShift-specific CA trust bundle
+			TrustBundleName: ptr.To(controller.OpenShiftGatewayCARootCertName),
+		},
+		Pilot: &sailv1.PilotConfig{
+			Env: pilotEnv,
+			// Workload partitioning for OpenShift management workloads
+			PodAnnotations: map[string]string{
+				WorkloadPartitioningManagementAnnotationKey: WorkloadPartitioningManagementPreferredScheduling,
+			},
+		},
+	}
 }
