@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
@@ -319,6 +320,14 @@ func (r *reconciler) reconcileWithSailLibrary(ctx context.Context, request recon
 	var gatewayclass gatewayapiv1.GatewayClass
 	if err := r.cache.Get(ctx, request.NamespacedName, &gatewayclass); err != nil {
 		return reconcile.Result{}, err
+	}
+
+	// Ensure migration from 4.21 to 4.22 Sail Library.
+	if migrationComplete, err := r.ensureOSSMtoSailLibraryMigration(ctx); err != nil {
+		return reconcile.Result{}, err
+	} else if !migrationComplete {
+		// Migration isn't complete - give OSSM time to clean up.
+		return reconcile.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 
 	var errs []error
