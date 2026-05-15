@@ -277,7 +277,7 @@ func TestCanaryWithMTLS(t *testing.T) {
 		t.Fatalf("Failed to create configmap %s: %v", clientCAConfigmap.Name, err)
 	}
 
-	t.Cleanup(func() { assertDeleted(t, kclient, clientCAConfigmap) })
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), clientCAConfigmap, 2*time.Minute) })
 
 	defaultIC := &operatorv1.IngressController{}
 	if err := kclient.Get(context.TODO(), defaultName, defaultIC); err != nil {

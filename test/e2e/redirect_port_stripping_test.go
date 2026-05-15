@@ -38,7 +38,7 @@ func TestSecureRedirectCorrectness(t *testing.T) {
 	if err := kclient.Create(context.TODO(), ic); err != nil {
 		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 
 	conditions := []operatorv1.OperatorCondition{
 		{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionTrue},
@@ -61,17 +61,13 @@ func TestSecureRedirectCorrectness(t *testing.T) {
 	if err := kclient.Create(context.TODO(), echoPod); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 	}
-	defer func() {
-		kclient.Delete(context.TODO(), echoPod)
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoPod, 2*time.Minute) })
 
 	echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels)
 	if err := kclient.Create(context.TODO(), echoService); err != nil {
 		t.Fatalf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 	}
-	defer func() {
-		kclient.Delete(context.TODO(), echoService)
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoService, 2*time.Minute) })
 
 	echoRoute := buildRoute(echoPod.Name, echoPod.Namespace, echoService.Name)
 	echoRoute.Spec.TLS = &routev1.TLSConfig{
@@ -81,9 +77,7 @@ func TestSecureRedirectCorrectness(t *testing.T) {
 	if err := kclient.Create(context.TODO(), echoRoute); err != nil {
 		t.Fatalf("failed to create route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
 	}
-	defer func() {
-		kclient.Delete(context.TODO(), echoRoute)
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoRoute, 2*time.Minute) })
 
 	// Use an exec pod to run multiple curl commands.
 	clientPodImage := deployment.Spec.Template.Spec.Containers[0].Image
@@ -92,9 +86,7 @@ func TestSecureRedirectCorrectness(t *testing.T) {
 	if err := kclient.Create(context.TODO(), clientPod); err != nil {
 		t.Fatalf("failed to create client pod: %v", err)
 	}
-	defer func() {
-		kclient.Delete(context.TODO(), clientPod)
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), clientPod, 2*time.Minute) })
 
 	// Wait for client pod to be ready
 	if err := wait.PollImmediate(1*time.Second, 2*time.Minute, func() (bool, error) {

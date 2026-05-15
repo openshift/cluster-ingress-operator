@@ -32,7 +32,7 @@ func TestHealthCheckIntervalIngressController(t *testing.T) {
 	if err := kclient.Create(context.TODO(), ic); err != nil {
 		t.Fatalf("failed to create ingresscontroller %s: %v", name, err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, availableConditionsForPrivateIngressController...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)

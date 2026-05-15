@@ -56,14 +56,14 @@ func TestHstsPolicyWorks(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("failed to update ingress config: %v", err)
 	}
-	defer func() {
+	t.Cleanup(func() {
 		// Remove the HSTS policies from the ingress config
 		if err := updateIngressConfigSpecWithRetryOnConflict(t, clusterConfigName, timeout, func(spec *configv1.IngressSpec) {
 			spec.RequiredHSTSPolicies = nil
 		}); err != nil {
 			t.Errorf("failed to restore ingress config: %v", err)
 		}
-	}()
+	})
 
 	p := ing.Spec.RequiredHSTSPolicies[0]
 	t.Logf("created a RequiredHSTSPolicy with DomainPatterns: %v,\n preload policy: %s,\n includeSubDomains policy: %s,\n largest age: %d,\n smallest age: %d\n", p.DomainPatterns, p.PreloadPolicy, p.IncludeSubDomainsPolicy, *p.MaxAge.LargestMaxAge, *p.MaxAge.SmallestMaxAge)

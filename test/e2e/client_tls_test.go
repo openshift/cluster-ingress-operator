@@ -129,13 +129,13 @@ func TestClientTLS(t *testing.T) {
 	if err := kclient.Create(context.TODO(), echoPod); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 	}
-	t.Cleanup(func() { assertDeleted(t, kclient, echoPod) })
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoPod, 2*time.Minute) })
 
 	echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels)
 	if err := kclient.Create(context.TODO(), echoService); err != nil {
 		t.Fatalf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 	}
-	t.Cleanup(func() { assertDeleted(t, kclient, echoService) })
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoService, 2*time.Minute) })
 
 	echoRoute := buildRoute(echoPod.Name, echoPod.Namespace, echoService.Name)
 	echoRoute.Spec.TLS = &routev1.TLSConfig{
@@ -145,7 +145,7 @@ func TestClientTLS(t *testing.T) {
 	if err := kclient.Create(context.TODO(), echoRoute); err != nil {
 		t.Fatalf("failed to create route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
 	}
-	t.Cleanup(func() { assertDeleted(t, kclient, echoRoute) })
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoRoute, 2*time.Minute) })
 
 	// Wait for echo pod to be ready.
 	err = wait.PollImmediate(2*time.Second, 1*time.Minute, func() (bool, error) {
@@ -844,7 +844,7 @@ func TestMTLSWithCRLs(t *testing.T) {
 				if err := kclient.Create(context.TODO(), &crlConfigMap); err != nil {
 					t.Fatalf("Failed to create configmap %q: %v", crlConfigMap.Name, err)
 				}
-				t.Cleanup(func() { assertDeleted(t, kclient, &crlConfigMap) })
+				t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), &crlConfigMap, 2*time.Minute) })
 			}
 
 			if err := kclient.Create(context.TODO(), &crlHostPod); err != nil {
@@ -875,7 +875,7 @@ func TestMTLSWithCRLs(t *testing.T) {
 			if err := kclient.Create(context.TODO(), &crlHostService); err != nil {
 				t.Fatalf("Failed to create service %q: %v", crlHostService.Name, err)
 			}
-			t.Cleanup(func() { assertDeleted(t, kclient, &crlHostService) })
+			t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), &crlHostService, 2*time.Minute) })
 			// Wait for CRL host to be ready.
 			err := wait.PollImmediate(2*time.Second, 3*time.Minute, func() (bool, error) {
 				if err := kclient.Get(context.TODO(), crlHostName, &crlHostPod); err != nil {
@@ -903,7 +903,7 @@ func TestMTLSWithCRLs(t *testing.T) {
 			if err := kclient.Create(context.TODO(), &clientCAConfigmap); err != nil {
 				t.Fatalf("Failed to create CA cert configmap: %v", err)
 			}
-			t.Cleanup(func() { assertDeleted(t, kclient, &clientCAConfigmap) })
+			t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), &clientCAConfigmap, 2*time.Minute) })
 			icName := types.NamespacedName{
 				Name:      "mtls-with-crls",
 				Namespace: operatorNamespace,
@@ -945,7 +945,7 @@ func TestMTLSWithCRLs(t *testing.T) {
 			if err := kclient.Create(context.TODO(), &clientCertsConfigmap); err != nil {
 				t.Fatalf("failed to create configmap %q: %v", clientCertsConfigmap.Name, err)
 			}
-			t.Cleanup(func() { assertDeleted(t, kclient, &clientCertsConfigmap) })
+			t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), &clientCertsConfigmap, 2*time.Minute) })
 
 			// Use the router image for the exec pod since it has curl.
 			routerDeployment := &appsv1.Deployment{}
@@ -979,7 +979,7 @@ func TestMTLSWithCRLs(t *testing.T) {
 			if err := kclient.Create(context.TODO(), clientPod); err != nil {
 				t.Fatalf("failed to create pod %q: %v", clientPodName, err)
 			}
-			t.Cleanup(func() { assertDeleted(t, kclient, clientPod) })
+			t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), clientPod, 2*time.Minute) })
 
 			err = wait.PollImmediate(2*time.Second, 3*time.Minute, func() (bool, error) {
 				if err := kclient.Get(context.TODO(), clientPodName, clientPod); err != nil {
@@ -1031,13 +1031,13 @@ func TestMTLSWithCRLs(t *testing.T) {
 			if err := kclient.Create(context.TODO(), echoPod); err != nil {
 				t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 			}
-			t.Cleanup(func() { assertDeleted(t, kclient, echoPod) })
+			t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoPod, 2*time.Minute) })
 
 			echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels)
 			if err := kclient.Create(context.TODO(), echoService); err != nil {
 				t.Fatalf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 			}
-			t.Cleanup(func() { assertDeleted(t, kclient, echoService) })
+			t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoService, 2*time.Minute) })
 
 			echoRoute := buildRoute(echoPod.Name, echoPod.Namespace, echoService.Name)
 			echoRoute.Spec.TLS = &routev1.TLSConfig{
@@ -1047,7 +1047,7 @@ func TestMTLSWithCRLs(t *testing.T) {
 			if err := kclient.Create(context.TODO(), echoRoute); err != nil {
 				t.Fatalf("failed to create route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
 			}
-			t.Cleanup(func() { assertDeleted(t, kclient, echoRoute) })
+			t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoRoute, 2*time.Minute) })
 
 			// Wait for echo pod to be ready.
 			err = wait.PollImmediate(2*time.Second, 1*time.Minute, func() (bool, error) {
@@ -1128,7 +1128,7 @@ func TestCRLUpdate(t *testing.T) {
 	if err := kclient.Create(context.TODO(), &namespace); err != nil {
 		t.Fatalf("Failed to create namespace %q: %v", namespace.Name, err)
 	}
-	t.Cleanup(func() { assertDeleted(t, kclient, &namespace) })
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), &namespace, 2*time.Minute) })
 	testCases := []struct {
 		// Test case name
 		Name string
@@ -1250,7 +1250,7 @@ func TestCRLUpdate(t *testing.T) {
 			if err := kclient.Create(context.TODO(), &crlConfigMap); err != nil {
 				t.Fatalf("Failed to create configmap %q: %v", crlConfigMap.Name, err)
 			}
-			t.Cleanup(func() { assertDeleted(t, kclient, &crlConfigMap) })
+			t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), &crlConfigMap, 2*time.Minute) })
 			crlHostPod := corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      crlHostName.Name,
@@ -1324,7 +1324,7 @@ func TestCRLUpdate(t *testing.T) {
 			if err := kclient.Create(context.TODO(), &crlHostService); err != nil {
 				t.Fatalf("Failed to create service %q: %v", crlHostService.Name, err)
 			}
-			t.Cleanup(func() { assertDeleted(t, kclient, &crlHostService) })
+			t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), &crlHostService, 2*time.Minute) })
 			// Wait for CRL host to be ready.
 			err := wait.PollImmediate(2*time.Second, 3*time.Minute, func() (bool, error) {
 				if err := kclient.Get(context.TODO(), crlHostName, &crlHostPod); err != nil {
@@ -1352,7 +1352,7 @@ func TestCRLUpdate(t *testing.T) {
 			if err := kclient.Create(context.TODO(), &clientCAConfigmap); err != nil {
 				t.Fatalf("Failed to create CA cert configmap: %v", err)
 			}
-			t.Cleanup(func() { assertDeleted(t, kclient, &clientCAConfigmap) })
+			t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), &clientCAConfigmap, 2*time.Minute) })
 			icName := types.NamespacedName{
 				Name:      testName,
 				Namespace: operatorNamespace,

@@ -63,7 +63,7 @@ func TestHAProxyTimeouts(t *testing.T) {
 	if err := kclient.Create(context.TODO(), ic); err != nil {
 		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 	conditions := []operatorv1.OperatorCondition{
 		{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionTrue},
 		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
@@ -222,7 +222,7 @@ func TestHAProxyTimeoutsRejection(t *testing.T) {
 	if err := kclient.Create(context.TODO(), ic); err != nil {
 		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 	conditions := []operatorv1.OperatorCondition{
 		{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionTrue},
 		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
@@ -385,7 +385,7 @@ func TestCookieLen(t *testing.T) {
 			if err := kclient.Create(context.TODO(), ic); err != nil {
 				t.Fatalf("Failed to create ingresscontroller %s: %v", icName, err)
 			}
-			defer assertIngressControllerDeleted(t, kclient, ic)
+			t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 
 			if err := waitForIngressControllerCondition(t, kclient, 2*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
 				t.Fatalf("Timed out waiting for ingresscontroller %s to become available: %v", icName.Name, err)
@@ -395,19 +395,19 @@ func TestCookieLen(t *testing.T) {
 			if err := kclient.Create(context.TODO(), echoPod); err != nil {
 				t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 			}
-			defer assertDeleted(t, kclient, echoPod)
+			t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoPod, 2*time.Minute) })
 
 			echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels)
 			if err := kclient.Create(context.TODO(), echoService); err != nil {
 				t.Fatalf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 			}
-			defer assertDeleted(t, kclient, echoService)
+			t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoService, 2*time.Minute) })
 
 			echoRoute := buildRoute(echoPod.Name, echoPod.Namespace, echoService.Name)
 			if err := kclient.Create(context.TODO(), echoRoute); err != nil {
 				t.Fatalf("failed to create route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
 			}
-			defer assertDeleted(t, kclient, echoRoute)
+			t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoRoute, 2*time.Minute) })
 
 			// Wait for echo pod to be ready
 			err := wait.PollImmediate(2*time.Second, 1*time.Minute, func() (bool, error) {
@@ -475,7 +475,7 @@ func TestCookieLen(t *testing.T) {
 			if err := kclient.Create(context.TODO(), curlPod); err != nil {
 				t.Fatalf("failed to create pod %q: %v", curlPodName.Name, err)
 			}
-			defer assertDeleted(t, kclient, curlPod)
+			t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), curlPod, 2*time.Minute) })
 
 			// Wait for the curl pod to complete its request
 			err = wait.PollImmediate(2*time.Second, 3*time.Minute, func() (bool, error) {
