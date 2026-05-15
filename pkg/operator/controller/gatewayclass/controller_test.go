@@ -3,6 +3,7 @@ package gatewayclass
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -10,6 +11,7 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -47,6 +49,14 @@ func Test_Reconcile(t *testing.T) {
 				Channel:                channel,
 				StartingCSV:            version,
 				InstallPlanApproval:    "Manual",
+			},
+		}
+	}
+
+	istioCRD := func() *apiextensionsv1.CustomResourceDefinition {
+		return &apiextensionsv1.CustomResourceDefinition{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "istios.sailoperator.io",
 			},
 		}
 	}
@@ -126,27 +136,31 @@ func Test_Reconcile(t *testing.T) {
 	}
 
 	tests := []struct {
-		name            string
-		request         reconcile.Request
-		existingObjects []runtime.Object
-		expectCreate    []client.Object
-		expectUpdate    []client.Object
-		expectDelete    []client.Object
-		expectError     string
+		name                  string
+		request               reconcile.Request
+		expectedResult        reconcile.Result
+		fakeHelmInstaller     SailLibraryInstaller
+		existingObjects       []client.Object
+		expectCreate          []client.Object
+		expectUpdate          []client.Object
+		expectPatched         []client.Object
+		expectDelete          []client.Object
+		expectedStatusPatched []client.Object
+		expectError           string
 	}{
 		{
 			name:            "Nonexistent gatewayclass",
 			request:         req("openshift-default"),
-			existingObjects: []runtime.Object{},
+			existingObjects: []client.Object{},
 			expectCreate:    []client.Object{},
 			expectUpdate:    []client.Object{},
 			expectDelete:    []client.Object{},
-			expectError:     `"openshift-default" not found`,
+			//expectError:     `"openshift-default" not found`, // We should not expect an error when a class is not found
 		},
 		{
 			name:    "Minimal gatewayclass",
 			request: req("openshift-default"),
-			existingObjects: []runtime.Object{
+			existingObjects: []client.Object{
 				&gatewayapiv1.GatewayClass{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "openshift-default",
@@ -166,7 +180,7 @@ func Test_Reconcile(t *testing.T) {
 		{
 			name:    "Minimal gatewayclass with experimental InferencePool CRD",
 			request: req("openshift-default"),
-			existingObjects: []runtime.Object{
+			existingObjects: []client.Object{
 				&gatewayapiv1.GatewayClass{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "openshift-default",
@@ -191,7 +205,7 @@ func Test_Reconcile(t *testing.T) {
 		{
 			name:    "Minimal gatewayclass with stable InferencePool CRD",
 			request: req("openshift-default"),
-			existingObjects: []runtime.Object{
+			existingObjects: []client.Object{
 				&gatewayapiv1.GatewayClass{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "openshift-default",
@@ -216,7 +230,7 @@ func Test_Reconcile(t *testing.T) {
 		{
 			name:    "Gatewayclass with Istio version override",
 			request: req("openshift-default"),
-			existingObjects: []runtime.Object{
+			existingObjects: []client.Object{
 				&gatewayapiv1.GatewayClass{
 					ObjectMeta: metav1.ObjectMeta{
 						Annotations: map[string]string{
@@ -239,7 +253,7 @@ func Test_Reconcile(t *testing.T) {
 		{
 			name:    "Gatewayclass with OSSM and Istio overrides",
 			request: req("openshift-default"),
-			existingObjects: []runtime.Object{
+			existingObjects: []client.Object{
 				&gatewayapiv1.GatewayClass{
 					ObjectMeta: metav1.ObjectMeta{
 						Annotations: map[string]string{
@@ -262,6 +276,164 @@ func Test_Reconcile(t *testing.T) {
 			expectUpdate: []client.Object{},
 			expectDelete: []client.Object{},
 		},
+		{
+			name:    "Gatewayclass when has sail finalizer but helm fg is disabled should remove the finalizer and status",
+			request: req("openshift-default"),
+			existingObjects: []client.Object{
+				&gatewayapiv1.GatewayClass{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:       "openshift-default",
+						Finalizers: []string{"openshift.io/ingress-operator-sail-finalizer"},
+					},
+					Spec: gatewayapiv1.GatewayClassSpec{
+						ControllerName: gatewayapiv1.GatewayController("openshift.io/gateway-controller/v1"),
+					},
+					Status: gatewayapiv1.GatewayClassStatus{
+						Conditions: []metav1.Condition{
+							{
+								Type:   ControllerInstalledConditionType,
+								Reason: "Something",
+								Status: metav1.ConditionUnknown,
+							},
+							{
+								Type:   CRDsReadyConditionType,
+								Reason: "Otherthing",
+								Status: metav1.ConditionTrue,
+							},
+						},
+					},
+				},
+			},
+			expectPatched: []client.Object{
+				&gatewayapiv1.GatewayClass{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "openshift-default",
+					},
+					Spec: gatewayapiv1.GatewayClassSpec{
+						ControllerName: gatewayapiv1.GatewayController("openshift.io/gateway-controller/v1"),
+					},
+					Status: gatewayapiv1.GatewayClassStatus{
+						Conditions: []metav1.Condition{},
+					},
+				},
+			},
+			expectedStatusPatched: []client.Object{
+				&gatewayapiv1.GatewayClass{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "openshift-default",
+					},
+					Spec: gatewayapiv1.GatewayClassSpec{
+						ControllerName: gatewayapiv1.GatewayController("openshift.io/gateway-controller/v1"),
+					},
+					Status: gatewayapiv1.GatewayClassStatus{
+						Conditions: []metav1.Condition{},
+					},
+				},
+			},
+		},
+		{
+			name:              "Gatewayclass when using helm installer should get finalizer",
+			fakeHelmInstaller: &fakeSailInstaller{},
+			request:           req("openshift-default"),
+			existingObjects: []client.Object{
+				&gatewayapiv1.GatewayClass{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "openshift-default",
+					},
+					Spec: gatewayapiv1.GatewayClassSpec{
+						ControllerName: gatewayapiv1.GatewayController("openshift.io/gateway-controller/v1"),
+					},
+				},
+			},
+			expectPatched: []client.Object{
+				&gatewayapiv1.GatewayClass{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:       "openshift-default",
+						Finalizers: []string{"openshift.io/ingress-operator-sail-finalizer"},
+					},
+					Spec: gatewayapiv1.GatewayClassSpec{
+						ControllerName: gatewayapiv1.GatewayController("openshift.io/gateway-controller/v1"),
+					},
+				},
+			},
+			expectDelete: []client.Object{},
+		},
+		{
+			name:              "Gatewayclass when using helm installer should migrate old Istio instances",
+			fakeHelmInstaller: &fakeSailInstaller{},
+			request:           req("openshift-default"),
+			existingObjects: []client.Object{
+				&gatewayapiv1.GatewayClass{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:       "openshift-default",
+						Finalizers: []string{"openshift.io/ingress-operator-sail-finalizer"},
+					},
+					Spec: gatewayapiv1.GatewayClassSpec{
+						ControllerName: gatewayapiv1.GatewayController("openshift.io/gateway-controller/v1"),
+					},
+				},
+				istioCRD(),
+				istio("v1.24.4", true),
+			},
+			expectPatched: []client.Object{},
+			expectDelete: []client.Object{
+				istio("v1.24.4", true), // Expect this resource to be deleted
+			},
+			expectedResult: reconcile.Result{
+				RequeueAfter: 5 * time.Second,
+			},
+		},
+		{
+			name:              "Gatewayclass when using helm installer and has no istio instance should install via helm",
+			fakeHelmInstaller: &fakeSailInstaller{},
+			request:           req("openshift-default"),
+			existingObjects: []client.Object{
+				&gatewayapiv1.GatewayClass{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:       "openshift-default",
+						Finalizers: []string{"openshift.io/ingress-operator-sail-finalizer"},
+					},
+					Spec: gatewayapiv1.GatewayClassSpec{
+						ControllerName: gatewayapiv1.GatewayController("openshift.io/gateway-controller/v1"),
+					},
+					Status: gatewayapiv1.GatewayClassStatus{
+						Conditions: []metav1.Condition{},
+					},
+				},
+			},
+			expectedStatusPatched: []client.Object{
+				&gatewayapiv1.GatewayClass{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:       "openshift-default",
+						Finalizers: []string{"openshift.io/ingress-operator-sail-finalizer"},
+					},
+					Spec: gatewayapiv1.GatewayClassSpec{
+						ControllerName: gatewayapiv1.GatewayController("openshift.io/gateway-controller/v1"),
+					},
+					Status: gatewayapiv1.GatewayClassStatus{
+						Conditions: []metav1.Condition{
+							{
+								Type:   "ControllerInstalled",
+								Status: metav1.ConditionTrue,
+								Reason: "Installed",
+							},
+							{
+								Type:   "CRDsReady",
+								Status: metav1.ConditionUnknown,
+								Reason: "NoneExist",
+							},
+						},
+					},
+				},
+			},
+		},
+		/* TODO:
+		- Add tests for different conditions
+		- Verify if we can force some error on Istio removal
+		- Add a full "update/downgrade/update" test
+		- Add a test for GatewayClass removal when there are still classes (should not call Uninstall)
+		- Add a test for full removal
+		*/
 	}
 
 	scheme := runtime.NewScheme()
@@ -275,14 +447,20 @@ func Test_Reconcile(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			fakeClient := fake.NewClientBuilder().
 				WithScheme(scheme).
-				WithRuntimeObjects(tc.existingObjects...).
+				WithStatusSubresource(tc.existingObjects...).
+				WithObjects(tc.existingObjects...).
+				// TODO: add index
 				Build()
 			cl := &testutil.FakeClientRecorder{
-				Client:  fakeClient,
+				Client: fakeClient,
+				StatusWriter: &testutil.FakeStatusWriter{
+					StatusWriter: fakeClient.Status(),
+				},
 				T:       t,
 				Added:   []client.Object{},
 				Updated: []client.Object{},
 				Deleted: []client.Object{},
+				Patched: []client.Object{},
 			}
 			gatewayClassController = &testutil.FakeController{
 				T:                     t,
@@ -303,17 +481,27 @@ func Test_Reconcile(t *testing.T) {
 					IstioVersion:              "v1.24.4",
 				},
 			}
+			if tc.fakeHelmInstaller != nil {
+				reconciler.config.GatewayAPIWithoutOLMEnabled = true
+				reconciler.config.SailOperatorReconciler = &SailOperatorReconciler{
+					Installer: tc.fakeHelmInstaller,
+					NotifyCh:  tc.fakeHelmInstaller.Start(context.Background()),
+				}
+			}
 			res, err := reconciler.Reconcile(context.Background(), tc.request)
 			if tc.expectError != "" {
+				require.NotNil(t, err)
 				assert.Contains(t, err.Error(), tc.expectError)
 			} else {
 				assert.NoError(t, err)
 			}
-			assert.Equal(t, reconcile.Result{}, res)
+
+			assert.Equal(t, tc.expectedResult, res)
 			cmpOpts := []cmp.Option{
 				cmpopts.EquateEmpty(),
 				cmpopts.IgnoreFields(metav1.ObjectMeta{}, "ResourceVersion", "OwnerReferences"),
 				cmpopts.IgnoreFields(metav1.TypeMeta{}, "Kind", "APIVersion"),
+				cmpopts.IgnoreFields(metav1.Condition{}, "LastTransitionTime", "Message"),
 				cmpopts.IgnoreFields(operatorsv1alpha1.SubscriptionSpec{}, "Config"),
 				cmpopts.IgnoreFields(apiextensionsv1.CustomResourceDefinition{}, "Spec"),
 			}
@@ -325,6 +513,12 @@ func Test_Reconcile(t *testing.T) {
 			}
 			if diff := cmp.Diff(tc.expectDelete, cl.Deleted, cmpOpts...); diff != "" {
 				t.Fatalf("found diff between expected and actual deletes: %s", diff)
+			}
+			if diff := cmp.Diff(tc.expectPatched, cl.Patched, cmpOpts...); diff != "" {
+				t.Fatalf("found diff between expected and actual patches: %s", diff)
+			}
+			if diff := cmp.Diff(tc.expectedStatusPatched, cl.StatusWriter.Patched, cmpOpts...); diff != "" {
+				t.Fatalf("found diff between expected and actual patches: %s", diff)
 			}
 		})
 	}
