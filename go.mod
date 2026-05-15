@@ -214,11 +214,15 @@ require (
 // github.com/istio-ecosystem/sail-operator.
 replace github.com/imdario/mergo => github.com/imdario/mergo v0.3.5
 
-// Pin controller-runtime and gateway-api to 4.21 versions to prevent
-// sail-operator transitive deps from bumping them.
-replace sigs.k8s.io/controller-runtime => sigs.k8s.io/controller-runtime v0.21.0
-
-replace sigs.k8s.io/gateway-api => sigs.k8s.io/gateway-api v1.3.0
+// Pin controller-runtime and gateway-api to 4.21 versions. The sail-operator
+// requires controller-runtime 0.22 and gateway-api v1.4.1, but the install
+// package only uses basic client CRUD operations unchanged across 0.20-0.22,
+// and CRD manifests shipped in this release are v1.3.0. Pinned to minimize
+// dependency changes on a post-GA branch, consistent with the 4.20 backport.
+replace (
+	sigs.k8s.io/controller-runtime => sigs.k8s.io/controller-runtime v0.21.0
+	sigs.k8s.io/gateway-api => sigs.k8s.io/gateway-api v1.3.0
+)
 
 // Use OSSM 3.3.1 for Sail Library integration.
 // Replace needed because the fork keeps upstream module name for compatibility.
