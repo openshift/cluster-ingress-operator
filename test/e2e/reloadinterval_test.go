@@ -34,7 +34,7 @@ func TestReloadInterval(t *testing.T) {
 		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
 	}
 
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 	t.Logf("waiting for ingresscontroller %v", icName)
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)

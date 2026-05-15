@@ -30,23 +30,28 @@ const (
 // TestConfigurableRouteRBAC tests that the Configurable Route Controller is correctly creating and deleting
 // roles and roleBindings based on the componentRoutes defined in the ingress resource.
 func TestConfigurableRouteRBAC(t *testing.T) {
-	ingress := &configv1.Ingress{}
-	if err := kclient.Get(context.TODO(), types.NamespacedName{Namespace: "", Name: "cluster"}, ingress); err != nil {
-		t.Fatalf("failed to get ingress resource: %v", err)
-	}
-	defer func() {
-		if err := kclient.Get(context.TODO(), types.NamespacedName{Namespace: "", Name: "cluster"}, ingress); err != nil {
-			t.Fatalf("failed to get ingress resource: %v", err)
+	resourceName := types.NamespacedName{Namespace: "", Name: "cluster"}
+
+	t.Cleanup(func() {
+		if err := updateIngressConfigSpecWithRetryOnConflict(t, resourceName,
+			5*time.Minute,
+			func(is *configv1.IngressSpec) {
+				is.ComponentRoutes = nil
+			}); err != nil {
+			t.Errorf("error executing ingress 'cluster' spec update: %v", err)
 		}
-		ingress.Spec.ComponentRoutes = nil
-		if err := eventuallyUpdateIngressSpec(t, ingress.Spec); err != nil {
-			t.Errorf("failed to restore cluster ingress.spec resource to original state: %v", err)
-		}
-		ingress.Status.ComponentRoutes = nil
-		if err := eventuallyUpdateIngressStatus(t, ingress.Status); err != nil {
+
+		if err := updateIngressConfigSstatusWithRetryOnConflict(t, resourceName, 5*time.Minute, func(is *configv1.IngressStatus) {
+			is.ComponentRoutes = nil
+		}); err != nil {
 			t.Errorf("failed to restore cluster ingress resource to original state: %v", err)
 		}
-	}()
+	})
+
+	ingress := &configv1.Ingress{}
+	if err := kclient.Get(context.TODO(), resourceName, ingress); err != nil {
+		t.Fatalf("failed to get ingress resource: %v", err)
+	}
 
 	// Set the ingress.spec.
 	ingress.Spec.ComponentRoutes = []configv1.ComponentRouteSpec{
@@ -189,23 +194,28 @@ func TestConfigurableRouteRBAC(t *testing.T) {
 // TestConfigurableRouteNoSecretNoRBAC tests that the no roles or roleBindings are generated
 // for componentRoutes that include an empty servingCertKeyPairSecret name.
 func TestConfigurableRouteNoSecretNoRBAC(t *testing.T) {
+	resourceName := types.NamespacedName{Namespace: "", Name: "cluster"}
+
+	t.Cleanup(func() {
+		if err := updateIngressConfigSpecWithRetryOnConflict(t, resourceName,
+			5*time.Minute,
+			func(is *configv1.IngressSpec) {
+				is.ComponentRoutes = nil
+			}); err != nil {
+			t.Errorf("error executing ingress 'cluster' spec update: %v", err)
+		}
+
+		if err := updateIngressConfigSstatusWithRetryOnConflict(t, resourceName, 5*time.Minute, func(is *configv1.IngressStatus) {
+			is.ComponentRoutes = nil
+		}); err != nil {
+			t.Errorf("failed to restore cluster ingress resource to original state: %v", err)
+		}
+	})
+
 	ingress := &configv1.Ingress{}
-	if err := kclient.Get(context.TODO(), types.NamespacedName{Namespace: "", Name: "cluster"}, ingress); err != nil {
+	if err := kclient.Get(context.TODO(), resourceName, ingress); err != nil {
 		t.Fatalf("failed to get ingress resource: %v", err)
 	}
-	defer func() {
-		if err := kclient.Get(context.TODO(), types.NamespacedName{Namespace: "", Name: "cluster"}, ingress); err != nil {
-			t.Fatalf("failed to get ingress resource: %v", err)
-		}
-		ingress.Spec.ComponentRoutes = nil
-		if err := eventuallyUpdateIngressSpec(t, ingress.Spec); err != nil {
-			t.Errorf("failed to restore cluster ingress resource to original state: %v", err)
-		}
-		ingress.Status.ComponentRoutes = nil
-		if err := eventuallyUpdateIngressStatus(t, ingress.Status); err != nil {
-			t.Errorf("failed to restore cluster ingress resource to original state: %v", err)
-		}
-	}()
 
 	// Include the componentRoute entry in the spec.
 	ingress.Spec.ComponentRoutes = []configv1.ComponentRouteSpec{
@@ -287,24 +297,28 @@ func TestConfigurableRouteNoSecretNoRBAC(t *testing.T) {
 // TestConfigurableRouteNoConsumingUserNoRBAC tests that the no roles or roleBindings are generated
 // for componentRoutes that do not include any consumingUsers.
 func TestConfigurableRouteNoConsumingUserNoRBAC(t *testing.T) {
-	// Get the cluster ingress resource.
+	resourceName := types.NamespacedName{Namespace: "", Name: "cluster"}
+
+	t.Cleanup(func() {
+		if err := updateIngressConfigSpecWithRetryOnConflict(t, resourceName,
+			5*time.Minute,
+			func(is *configv1.IngressSpec) {
+				is.ComponentRoutes = nil
+			}); err != nil {
+			t.Errorf("error executing ingress 'cluster' spec update: %v", err)
+		}
+
+		if err := updateIngressConfigSstatusWithRetryOnConflict(t, resourceName, 5*time.Minute, func(is *configv1.IngressStatus) {
+			is.ComponentRoutes = nil
+		}); err != nil {
+			t.Errorf("failed to restore cluster ingress resource to original state: %v", err)
+		}
+	})
+
 	ingress := &configv1.Ingress{}
-	if err := kclient.Get(context.TODO(), types.NamespacedName{Namespace: "", Name: "cluster"}, ingress); err != nil {
+	if err := kclient.Get(context.TODO(), resourceName, ingress); err != nil {
 		t.Fatalf("failed to get ingress resource: %v", err)
 	}
-	defer func() {
-		if err := kclient.Get(context.TODO(), types.NamespacedName{Namespace: "", Name: "cluster"}, ingress); err != nil {
-			t.Fatalf("failed to get ingress resource: %v", err)
-		}
-		ingress.Spec.ComponentRoutes = nil
-		if err := eventuallyUpdateIngressSpec(t, ingress.Spec); err != nil {
-			t.Errorf("failed to restore cluster ingress resource to original state: %v", err)
-		}
-		ingress.Status.ComponentRoutes = nil
-		if err := eventuallyUpdateIngressStatus(t, ingress.Status); err != nil {
-			t.Errorf("failed to restore cluster ingress resource to original state: %v", err)
-		}
-	}()
 
 	// Include the componentRoute entry in the spec
 	ingress.Spec.ComponentRoutes = []configv1.ComponentRouteSpec{
