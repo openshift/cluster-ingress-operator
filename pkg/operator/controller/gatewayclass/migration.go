@@ -12,7 +12,7 @@ import (
 )
 
 // ensureOSSMtoSailLibraryMigration handles the upgrade migration from OLM-based
-// Istio installation (4.21) to Helm-based installation via Sail Library (4.22).
+// Istio installation to Helm-based installation via Sail Library.
 //
 // Steps:
 //  1. Check if old Istio CR exists and delete it if present
@@ -21,7 +21,7 @@ import (
 //
 // Returns a bool whether the migration is complete and an error.
 //
-// This migration logic can be removed in 4.23+ when 4.21 is no longer supported.
+// This migration logic can be removed in 4.23+ (all clusters will have migrated).
 func (r *reconciler) ensureOSSMtoSailLibraryMigration(ctx context.Context) (bool, error) {
 	// Check if migration is needed.
 	needsMigration, istio, err := r.needsOSSMtoSailLibraryMigration(ctx)
@@ -57,6 +57,8 @@ func (r *reconciler) ensureOSSMtoSailLibraryMigration(ctx context.Context) (bool
 	return false, nil
 }
 
+// needsOSSMtoSailLibraryMigration checks if an Istio CR exists from the OLM-based
+// installation, indicating that migration to Sail Library is needed.
 func (r *reconciler) needsOSSMtoSailLibraryMigration(ctx context.Context) (bool, *sailv1.Istio, error) {
 	// First check if the Istio CRD exists.
 	istioCrdExists, err := r.crdExists(ctx, "istios.sailoperator.io")
