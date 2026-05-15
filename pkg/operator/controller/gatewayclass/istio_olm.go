@@ -9,6 +9,7 @@ import (
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
+
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -283,30 +284,4 @@ func istioChanged(current, expected *sailv1.Istio) (bool, *sailv1.Istio) {
 	updated.OwnerReferences = expected.OwnerReferences
 
 	return true, updated
-}
-
-// openshiftValues returns the OpenShift-specific value overrides for Istio.
-// These values are merged on top of the gateway-api preset defaults.
-func openshiftValues(enableInferenceExtension bool) *sailv1.Values {
-	pilotEnv := gatewayAPIPilotEnv(enableInferenceExtension)
-
-	return &sailv1.Values{
-		Global: &sailv1.GlobalConfig{
-			DefaultPodDisruptionBudget: &sailv1.DefaultPodDisruptionBudgetConfig{
-				Enabled: ptr.To(false),
-			},
-			IstioNamespace: ptr.To(controller.DefaultOperandNamespace),
-			// Use system-cluster-critical priority for OpenShift system workloads
-			PriorityClassName: ptr.To(systemClusterCriticalPriorityClassName),
-			// OpenShift-specific CA trust bundle
-			TrustBundleName: ptr.To(controller.OpenShiftGatewayCARootCertName),
-		},
-		Pilot: &sailv1.PilotConfig{
-			Env: pilotEnv,
-			// Workload partitioning for OpenShift management workloads
-			PodAnnotations: map[string]string{
-				WorkloadPartitioningManagementAnnotationKey: WorkloadPartitioningManagementPreferredScheduling,
-			},
-		},
-	}
 }
