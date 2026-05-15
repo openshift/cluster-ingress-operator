@@ -10,7 +10,6 @@ import (
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
-
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 
 	"k8s.io/client-go/tools/record"
@@ -85,6 +84,15 @@ const (
 	// 1. Sail Library mode: Uninstall Istio if this is the last GatewayClass, then remove finalizer
 	// 2. Downgrade to OLM: Clean up Sail Library status and finalizer (then OLM takes over Istio)
 	sailLibraryFinalizer = "openshift.io/ingress-operator-sail-finalizer"
+
+	// Image configuration for Sail Library installations.
+	// These are only used for defaulting when CSV image annotations are missing,
+	// which should not happen in production clusters with proper OSSM release branches.
+	ossmImageRegistry = "registry.redhat.io/openshift-service-mesh"
+	istioImageIstiod  = "istio-pilot-rhel9"
+	istioImageProxy   = "istio-proxyv2-rhel9"
+	istioImageCNI     = "istio-cni-rhel9"
+	istioImageZTunnel = "istio-ztunnel-rhel9"
 )
 
 var log = logf.Logger.WithName(controllerName)
@@ -162,6 +170,19 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 			return nil, err
 		}
 	} else {
+		// TODO: Remove this when we switch to an OSSM release branch with proper CSV image annotations.
+		//       The main branch of sail-operator does not maintain image annotations in the CSV,
+		//       causing Istio to fall back to upstream container images. This explicit configuration
+		//       ensures Red Hat images are used until the release branch has the annotations properly maintained.
+		err := install.SetImageDefaults(resources.FS, ossmImageRegistry, install.ImageNames{
+			Istiod:  istioImageIstiod,
+			Proxy:   istioImageProxy,
+			CNI:     istioImageCNI,
+			ZTunnel: istioImageZTunnel,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to set image defaults: %w", err)
+		}
 		// Start the Sail Library's background reconciliation loop (runs in a goroutine).
 		// Returns a notification channel that signals when library reconciliation completes,
 		// allowing us to update GatewayClass status conditions accordingly.
