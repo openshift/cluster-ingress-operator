@@ -13,7 +13,6 @@ import (
 
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 
-	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
 
@@ -21,6 +20,7 @@ import (
 
 	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
 	"github.com/istio-ecosystem/sail-operator/pkg/install"
+	"github.com/istio-ecosystem/sail-operator/resources"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -80,13 +80,10 @@ const (
 	// can be specified.  This annotation is only intended for use by
 	// OpenShift developers.
 	istioVersionOverrideAnnotationKey = "unsupported.do-not-use.openshift.io/istio-version"
-	// sailLibraryFinalizer is a finalizer key added to GatewayClasses that
-	// at some moment were reconciled by sail-library.
-	// They signal two things:
-	// 1 - For sail-library, if there is no other gatewayclass using it, the reconciliation
-	// can be stopped
-	// 2 - For olm-install - In case it is called, it means the installation was rolled
-	// back and the finalizer must be removed
+	// sailLibraryFinalizer is added to GatewayClasses using Sail Library installation.
+	// When a GatewayClass with this finalizer is deleted:
+	// 1. Sail Library mode: Uninstall Istio if this is the last GatewayClass, then remove finalizer
+	// 2. Downgrade to OLM: Clean up Sail Library status and finalizer (then OLM takes over Istio)
 	sailLibraryFinalizer = "openshift.io/ingress-operator-sail-finalizer"
 )
 
@@ -100,11 +97,10 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 	operatorCache := mgr.GetCache()
 
 	reconciler := &reconciler{
-		config:     config,
-		client:     mgr.GetClient(),
-		cache:      operatorCache,
-		kubeConfig: config.KubeConfig,
-		recorder:   mgr.GetEventRecorderFor(controllerName),
+		config:   config,
+		client:   mgr.GetClient(),
+		cache:    operatorCache,
+		recorder: mgr.GetEventRecorderFor(controllerName),
 	}
 	options := controller.Options{Reconciler: reconciler}
 	options.DefaultFromConfig(mgr.GetControllerOptions())
@@ -150,6 +146,9 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 			return false
 		}
 	})
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &apiextensionsv1.CustomResourceDefinition{}, reconciler.enqueueRequestForSomeGatewayClass(), isInferencepoolCrd)); err != nil {
+		return nil, err
+	}
 
 	if !config.GatewayAPIWithoutOLMEnabled {
 		isServiceMeshSubscription := predicate.NewPredicateFuncs(func(o client.Object) bool {
@@ -162,41 +161,53 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 		if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorsv1alpha1.InstallPlan{}, reconciler.enqueueRequestForSomeGatewayClass(), isOurInstallPlan, isInstallPlanReadyForApproval)); err != nil {
 			return nil, err
 		}
-		if err := c.Watch(source.Kind[client.Object](operatorCache, &apiextensionsv1.CustomResourceDefinition{}, reconciler.enqueueRequestForSomeGatewayClass(), isInferencepoolCrd)); err != nil {
-			return nil, err
-		}
 	} else {
-		// On OLM we need to watch Subscriptions, InstallPlans and CRDs differently.
-		// Any change on any subscription, installplan (if ours) or CRD (if Istio or GIE) must:
-		// - Trigger a new installer enqueue (part of enqueueRequestForSubscriptionChange)
-		// - Trigger a reconciliation for ALL (and not SOME) classes we manage to add status
+		// Start the Sail Library's background reconciliation loop (runs in a goroutine).
+		// Returns a notification channel that signals when library reconciliation completes,
+		// allowing us to update GatewayClass status conditions accordingly.
+		installer, err := install.New(mgr.GetConfig(), resources.FS)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize sail-operator installation library: %w", err)
+		}
+		notifyCh := installer.Start(config.Context)
+		reconciler.sailInstaller = installer
+
+		// Reconciliation Triggers with the Sail Library:
+		//
+		// 1. CIO-initiated reconciliation (GatewayClass controller triggers):
+		//    Watches GatewayClass resources, OLM Subscriptions, OLM InstallPlans, and Istio/GIE CRDs.
+		//    All events trigger GatewayClass reconciliation, which computes Options and calls
+		//    sailInstaller.Apply(). For CRD management events (Subscription/InstallPlan/Istio CRD changes),
+		//    we additionally call sailInstaller.Enqueue() to trigger CRD ownership re-evaluation.
+		//
+		// 2. Sail Library-initiated reconciliation (notification channel):
+		//    The Sail Library runs its own reconciliation loop with drift detection for Istio
+		//    Helm-managed resources (Deployments, Services, ConfigMaps, etc.). When reconciliation
+		//    completes (install, uninstall, drift repair, or error), it signals via notifyCh,
+		//    which triggers reconciliation to update GatewayClass status conditions.
 		isIstioCRD := predicate.NewPredicateFuncs(func(o client.Object) bool {
 			return strings.Contains(o.GetName(), "istio.io")
 		})
-
-		if err = c.Watch(source.Kind[client.Object](operatorCache, &operatorsv1alpha1.Subscription{},
-			reconciler.enqueueRequestForSubscriptionChange())); err != nil {
-			return nil, err
-		}
-		if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorsv1alpha1.InstallPlan{}, reconciler.enqueueRequestForSubscriptionChange(), isOurInstallPlan)); err != nil {
-			return nil, err
-		}
-		if err := c.Watch(source.Kind[client.Object](operatorCache, &apiextensionsv1.CustomResourceDefinition{}, reconciler.enqueueRequestForSubscriptionChange(), predicate.Or(isInferencepoolCrd, isIstioCRD))); err != nil {
-			return nil, err
-		}
-
-		// For Non-OLM install, we start the sail-operator library that
-		// does the reconciliation of CRDs and resources.
-		// The channel here receives notification from the previously started sail-operator library
-		// and triggers new reconciliations
-		if config.SailOperatorReconciler != nil && config.SailOperatorReconciler.NotifyCh != nil {
-			sailOperatorSource := &SailOperatorSource[client.Object]{
-				NotifyCh:     config.SailOperatorReconciler.NotifyCh,
-				RequestsFunc: reconciler.allManagedGatewayClasses,
+		isServiceMeshSubscription := predicate.NewPredicateFuncs(func(o client.Object) bool {
+			sub, ok := o.(*operatorsv1alpha1.Subscription)
+			if !ok {
+				return false
 			}
-			if err := c.Watch(sailOperatorSource); err != nil {
-				return nil, err
-			}
+			// Check if package name starts with "servicemeshoperator"
+			return sub.Spec != nil && strings.HasPrefix(sub.Spec.Package, "servicemeshoperator")
+		})
+
+		if err = c.Watch(source.Kind[client.Object](operatorCache, &operatorsv1alpha1.Subscription{}, reconciler.enqueueRequestForCRDOwnershipChange(), isServiceMeshSubscription)); err != nil {
+			return nil, err
+		}
+		if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorsv1alpha1.InstallPlan{}, reconciler.enqueueRequestForCRDOwnershipChange(), isOurInstallPlan)); err != nil {
+			return nil, err
+		}
+		if err := c.Watch(source.Kind[client.Object](operatorCache, &apiextensionsv1.CustomResourceDefinition{}, reconciler.enqueueRequestForCRDOwnershipChange(), isIstioCRD)); err != nil {
+			return nil, err
+		}
+		if err := c.Watch(&SailLibrarySource[client.Object]{NotifyCh: notifyCh, RequestsFunc: reconciler.requestsForAllManagedGatewayClasses}); err != nil {
+			return nil, err
 		}
 	}
 
@@ -207,8 +218,6 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 // Config holds all the configuration that must be provided when creating the
 // controller.
 type Config struct {
-	// KubeConfig is the Kubernetes client configuration used by the Sail Library.
-	KubeConfig *rest.Config
 	// OperatorNamespace is the namespace in which the operator is deployed.
 	OperatorNamespace string
 	// OperandNamespace is the namespace in which Istio should be deployed.
@@ -223,8 +232,8 @@ type Config struct {
 	GatewayAPIWithoutOLMEnabled bool
 	// IstioVersion is the version of Istio to install.
 	IstioVersion string
-	// SailOperatorReconciler contains the instance and the notification channel for the reconciler of Istio resources
-	SailOperatorReconciler *SailOperatorReconciler
+	// Context is the context for controller lifecycle.
+	Context context.Context
 }
 
 // SailLibraryInstaller implements the methods of sail library but in a way we can
@@ -237,51 +246,53 @@ type SailLibraryInstaller interface {
 	Enqueue()
 }
 
-type SailOperatorReconciler struct {
-	Installer SailLibraryInstaller
-	NotifyCh  <-chan struct{}
-}
-
 // reconciler reconciles gatewayclasses.
 type reconciler struct {
 	config Config
 
-	client     client.Client
-	cache      cache.Cache
-	kubeConfig *rest.Config
-	recorder   record.EventRecorder
+	client   client.Client
+	cache    cache.Cache
+	recorder record.EventRecorder
 
 	startIstioWatch sync.Once
+
+	// sailInstaller manages Istio control plane lifecycle (install, upgrade, uninstall) via the sail library.
+	sailInstaller SailLibraryInstaller
 }
 
-func (r *reconciler) enqueueRequestForSubscriptionChange() handler.EventHandler {
+// enqueueRequestForCRDOwnershipChange handles events that may affect CRD ownership.
+// This is used for OLM Subscriptions, InstallPlans, and Istio CRDs. When these
+// resources change, CRD ownership may transition between OLM and CIO management.
+//
+// Calls sailInstaller.Enqueue() to trigger the Sail Library to re-evaluate which
+// CRDs it can manage, then enqueues reconciliation requests for all GatewayClasses
+// so they can update their status based on the new installation state.
+func (r *reconciler) enqueueRequestForCRDOwnershipChange() handler.EventHandler {
 	return handler.EnqueueRequestsFromMapFunc(
 		func(ctx context.Context, obj client.Object) []reconcile.Request {
-			// If this is OLM and we detect the change of subscriptions, we must
-			// enforce that Sail Installer also enqueues a new reconciliation
-			if r.config.SailOperatorReconciler != nil && r.config.SailOperatorReconciler.Installer != nil {
-				// We can call Enqueue as many times as we want, as sail-library should enqueue and filter
-				// and not make concurrent operations
-				r.config.SailOperatorReconciler.Installer.Enqueue()
-			}
-			return r.allManagedGatewayClasses(ctx, obj)
+			// We can call Enqueue as many times as we want, as sail-library should enqueue and filter
+			// and not make concurrent operations
+			r.sailInstaller.Enqueue()
+			return r.requestsForAllManagedGatewayClasses(ctx, obj)
 		})
 }
 
-// enqueueRequestForSomeGatewayClass enqueues a reconciliation request for the
-// gatewayclass that has the earliest creation timestamp and that specifies our
-// controller name.
+// enqueueRequestForSomeGatewayClass enqueues GatewayClass reconciliation.
+// Sail Library mode: all classes. OLM mode: oldest class only (to avoid subscription conflicts).
 func (r *reconciler) enqueueRequestForSomeGatewayClass() handler.EventHandler {
 	return handler.EnqueueRequestsFromMapFunc(
 		func(ctx context.Context, obj client.Object) []reconcile.Request {
 			if r.config.GatewayAPIWithoutOLMEnabled {
-				return r.allManagedGatewayClasses(ctx, obj)
+				return r.requestsForAllManagedGatewayClasses(ctx, obj)
 			}
 			return r.requestsForSomeGatewayClass(ctx, obj)
 		},
 	)
 }
 
+// requestsForSomeGatewayClass returns a reconciliation request for the
+// gatewayclass that has the earliest creation timestamp and that specifies our
+// controller name.
 func (r *reconciler) requestsForSomeGatewayClass(ctx context.Context, _ client.Object) []reconcile.Request {
 	requests := []reconcile.Request{}
 	var gatewayClasses gatewayapiv1.GatewayClassList
@@ -333,7 +344,9 @@ func (r *reconciler) requestsForSomeGatewayClass(ctx context.Context, _ client.O
 	return requests
 }
 
-func (r *reconciler) allManagedGatewayClasses(ctx context.Context, _ client.Object) []reconcile.Request {
+// requestsForAllManagedGatewayClasses enqueues all GatewayClasses managed by this controller.
+// Used when shared installation state changes (Sail Library events, CRD ownership).
+func (r *reconciler) requestsForAllManagedGatewayClasses(ctx context.Context, _ client.Object) []reconcile.Request {
 	requests := []reconcile.Request{}
 	var gatewayClasses gatewayapiv1.GatewayClassList
 	if err := r.cache.List(ctx, &gatewayClasses, client.MatchingFields{
@@ -359,7 +372,7 @@ func (r *reconciler) allManagedGatewayClasses(ctx context.Context, _ client.Obje
 // Reconcile expects request to refer to a GatewayClass and creates or
 // reconciles an Istio deployment.
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
-	if r.config.GatewayAPIWithoutOLMEnabled && r.config.SailOperatorReconciler != nil && r.config.SailOperatorReconciler.Installer != nil {
+	if r.config.GatewayAPIWithoutOLMEnabled {
 		return r.reconcileWithSailLibrary(ctx, request)
 	}
 	return r.reconcileWithOLM(ctx, request)
@@ -368,36 +381,35 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 // reconcileWithOLM reconciles a GatewayClass using OLM to install OSSM,
 // which then manages an Istio CR for the Istio installation.
 func (r *reconciler) reconcileWithOLM(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
-	log.Info("reconciling", "request", request)
-
-	sourceGatewayClass := &gatewayapiv1.GatewayClass{}
-	if err := r.cache.Get(ctx, request.NamespacedName, sourceGatewayClass); err != nil {
-		if !errors.IsNotFound(err) {
-			return reconcile.Result{}, fmt.Errorf("error getting gatewayclass: %w", err)
-		}
-		return reconcile.Result{}, nil
-	}
-
-	gatewayclass := sourceGatewayClass.DeepCopy()
-	// This is not SailOperator class, so remove any finalizer and any status from it
-	if controllerutil.RemoveFinalizer(gatewayclass, sailLibraryFinalizer) {
-		var errs []error
-		err := r.client.Patch(ctx, gatewayclass, client.MergeFrom(sourceGatewayClass))
-		if err != nil {
-			log.Error(err, "error patching the gatewayclass status")
-			errs = append(errs, err)
-		}
-		removeSailOperatorConditions(&gatewayclass.Status.Conditions)
-		if err := r.client.Status().Patch(ctx, gatewayclass, client.MergeFrom(sourceGatewayClass)); err != nil {
-			log.Error(err, "error patching the gatewayclass status")
-			errs = append(errs, err)
-
-		}
-
-		return reconcile.Result{}, utilerrors.NewAggregate(errs) // Removing the finalizer should kick a new reconciliation
-	}
-
+	log.Info("reconciling with OLM", "request", request)
 	var errs []error
+
+	gatewayclass := &gatewayapiv1.GatewayClass{}
+	if err := r.cache.Get(ctx, request.NamespacedName, gatewayclass); err != nil {
+		if errors.IsNotFound(err) {
+			return reconcile.Result{}, nil
+		}
+		return reconcile.Result{}, err
+	}
+
+	// Downgrade scenario: transitioning from Sail Library installation back to OLM-based installation.
+	// Clean up Sail Library finalizers and status to allow OLM to take over.
+	updatedGatewayClass := gatewayclass.DeepCopy()
+	if controllerutil.ContainsFinalizer(updatedGatewayClass, sailLibraryFinalizer) {
+		removeSailInstallConditions(&updatedGatewayClass.Status.Conditions)
+		if err := r.client.Status().Patch(ctx, updatedGatewayClass, client.MergeFrom(gatewayclass)); err != nil {
+			log.Error(err, "error patching the gatewayclass status")
+			return reconcile.Result{}, err
+		}
+		controllerutil.RemoveFinalizer(updatedGatewayClass, sailLibraryFinalizer)
+		if err := r.client.Patch(ctx, updatedGatewayClass, client.MergeFrom(gatewayclass)); err != nil {
+			log.Error(err, "failed to remove finalizer from gatewayclass")
+			return reconcile.Result{}, err
+		}
+
+		return reconcile.Result{}, nil // Removing the finalizer should kick a new reconciliation
+	}
+
 	ossmCatalog := r.config.GatewayAPIOperatorCatalog
 	if v, ok := gatewayclass.Annotations[subscriptionCatalogOverrideAnnotationKey]; ok {
 		ossmCatalog = v
@@ -444,56 +456,30 @@ func (r *reconciler) reconcileWithOLM(ctx context.Context, request reconcile.Req
 // reconcileWithSailLibrary reconciles a GatewayClass using the Sail Library
 // for direct Helm-based installation of Istio.
 func (r *reconciler) reconcileWithSailLibrary(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
-	log.Info("reconciling", "request", request)
+	log.Info("reconciling with sail library", "request", request)
 
-	sourceGatewayClass := &gatewayapiv1.GatewayClass{}
-	if err := r.cache.Get(ctx, request.NamespacedName, sourceGatewayClass); err != nil {
-		if !errors.IsNotFound(err) {
-			return reconcile.Result{}, fmt.Errorf("error getting gatewayclass: %w", err)
+	gatewayClass := &gatewayapiv1.GatewayClass{}
+	if err := r.cache.Get(ctx, request.NamespacedName, gatewayClass); err != nil {
+		if errors.IsNotFound(err) {
+			return reconcile.Result{}, nil
 		}
-		return reconcile.Result{}, nil
+		return reconcile.Result{}, err
 	}
 
-	gatewayclass := sourceGatewayClass.DeepCopy()
-
-	if !gatewayclass.DeletionTimestamp.IsZero() {
-		// Check if this is the last remaining GatewayClass. If so:
-		// 1 - Stop the library in case this is the last GatewayClass
-		// 2 - Delete the finalizer (always, regardless of being the last)
-		// 3 - We must always return from here when deletion is in progress
-		gatewayClassList := gatewayapiv1.GatewayClassList{}
-		if err := r.cache.List(ctx, &gatewayClassList, client.MatchingFields{
-			operatorcontroller.GatewayClassIndexFieldName: operatorcontroller.OpenShiftGatewayClassControllerName,
-		}); err != nil {
-			return reconcile.Result{}, fmt.Errorf("failed to list gateway classes: %w", err)
-		}
-
-		if len(gatewayClassList.Items) < 2 {
-			if err := r.config.SailOperatorReconciler.Installer.Uninstall(ctx, operatorcontroller.DefaultOperandNamespace, operatorcontroller.IstioName("").Name); err != nil {
-				return reconcile.Result{}, fmt.Errorf("failed to uninstall the operator: %w", err)
-			}
-		}
-		// This is not SailOperator class, so remove any finalizer
-		if controllerutil.RemoveFinalizer(gatewayclass, sailLibraryFinalizer) {
-			err := r.client.Patch(ctx, gatewayclass, client.MergeFrom(sourceGatewayClass))
-			if err != nil {
-				log.Error(err, "error patching the gatewayclass status")
-			}
-			return reconcile.Result{}, err // Removing the finalizer should kick a new reconciliation
-		}
-		// Finalizer already absent; nothing else to do during deletion.
-		return reconcile.Result{}, nil
+	if !gatewayClass.DeletionTimestamp.IsZero() {
+		return r.ensureGatewayClassDeleted(ctx, gatewayClass)
 	}
 
-	if controllerutil.AddFinalizer(gatewayclass, sailLibraryFinalizer) {
-		err := r.client.Patch(ctx, gatewayclass, client.MergeFrom(sourceGatewayClass))
-		if err != nil {
-			log.Error(err, "error patching the gatewayclass status")
+	updatedGatewayClass := gatewayClass.DeepCopy()
+	if controllerutil.AddFinalizer(updatedGatewayClass, sailLibraryFinalizer) {
+		if err := r.client.Patch(ctx, updatedGatewayClass, client.MergeFrom(gatewayClass)); err != nil {
+			log.Error(err, "failed to add finalizer to gatewayclass")
+			return reconcile.Result{}, err
 		}
-		return reconcile.Result{}, err // Return if we added the finalizer, to kick reconciliation again
+		return reconcile.Result{}, nil // Finalizer add successful: watch will trigger another reconciliation
 	}
 
-	// Ensure migration from 4.21 to 4.22 Sail Library.
+	// Ensure migration from OLM to Sail Library.
 	if migrationComplete, err := r.ensureOSSMtoSailLibraryMigration(ctx); err != nil {
 		return reconcile.Result{}, fmt.Errorf("error validating sail library migration: %w", err)
 	} else if !migrationComplete {
@@ -504,32 +490,82 @@ func (r *reconciler) reconcileWithSailLibrary(ctx context.Context, request recon
 	var errs []error
 
 	istioVersion := r.config.IstioVersion
-	if v, ok := gatewayclass.Annotations[istioVersionOverrideAnnotationKey]; ok {
+	if v, ok := gatewayClass.Annotations[istioVersionOverrideAnnotationKey]; ok {
 		istioVersion = v
 	}
 
-	if err := r.ensureIstio(ctx, gatewayclass, istioVersion); err != nil {
-		log.Error(err, "error ensuring Istio")
+	if err := r.ensureIstio(ctx, istioVersion); err != nil {
+		log.Error(err, "failed to ensure Istio")
 		errs = append(errs, err)
 	}
 
-	if err := r.client.Status().Patch(ctx, gatewayclass, client.MergeFrom(sourceGatewayClass)); err != nil {
-		log.Error(err, "error patching the gatewayclass status")
-		errs = append(errs, err)
+	// Update status for indicating installation success, CRD management, etc.
+	status := r.sailInstaller.Status()
+	if changed := mapStatusToConditions(status, gatewayClass.Generation, &updatedGatewayClass.Status.Conditions); changed {
+		if err := r.client.Status().Patch(ctx, updatedGatewayClass, client.MergeFrom(gatewayClass)); err != nil {
+			log.Error(err, "error patching the gatewayclass status")
+			errs = append(errs, err)
+		}
 	}
 
 	return reconcile.Result{}, utilerrors.NewAggregate(errs)
 }
 
-// SailOperatorSource bridges a sail operator channel to a MapFunc logic.
-// the Sail operator contains a source channel where notification for changes (like drifts)
-// can be sent back to our controller, so we trigger a reconciliation of our GatewayClass and its status
-type SailOperatorSource[T client.Object] struct {
+// countActiveGatewayClasses returns the number of managed GatewayClasses that
+// are not being deleted, excluding the given name.
+func countActiveGatewayClasses(list *gatewayapiv1.GatewayClassList, excludeName string) int {
+	count := 0
+	for i := range list.Items {
+		gc := &list.Items[i]
+		if gc.Name == excludeName || !gc.DeletionTimestamp.IsZero() {
+			continue
+		}
+		count++
+	}
+	return count
+}
+
+// ensureGatewayClassDeleted handles cleanup when a GatewayClass is being deleted.
+// Uninstalls Istio if this is the last managed GatewayClass, then removes the finalizer.
+func (r *reconciler) ensureGatewayClassDeleted(ctx context.Context, gatewayClass *gatewayapiv1.GatewayClass) (reconcile.Result, error) {
+	if !controllerutil.ContainsFinalizer(gatewayClass, sailLibraryFinalizer) {
+		// No finalizer present; nothing to clean up
+		return reconcile.Result{}, nil
+	}
+
+	// Check if this is the last active GatewayClass - if so, uninstall Istio
+	updatedGatewayClass := gatewayClass.DeepCopy()
+	gatewayClassList := gatewayapiv1.GatewayClassList{}
+	if err := r.cache.List(ctx, &gatewayClassList, client.MatchingFields{
+		operatorcontroller.GatewayClassIndexFieldName: operatorcontroller.OpenShiftGatewayClassControllerName,
+	}); err != nil {
+		return reconcile.Result{}, fmt.Errorf("failed to list gateway classes: %w", err)
+	}
+	if countActiveGatewayClasses(&gatewayClassList, gatewayClass.Name) == 0 {
+		if err := r.sailInstaller.Uninstall(ctx, r.config.OperandNamespace, operatorcontroller.IstioName("").Name); err != nil {
+			return reconcile.Result{}, fmt.Errorf("failed to uninstall Istio: %w", err)
+		}
+	}
+
+	// Remove finalizer to allow Kubernetes to delete the object
+	if controllerutil.RemoveFinalizer(updatedGatewayClass, sailLibraryFinalizer) {
+		if err := r.client.Patch(ctx, updatedGatewayClass, client.MergeFrom(gatewayClass)); err != nil {
+			log.Error(err, "failed to remove finalizer from gatewayclass")
+			return reconcile.Result{}, err
+		}
+	}
+	return reconcile.Result{}, nil
+}
+
+// SailLibrarySource bridges a Sail Library channel to a MapFunc logic.
+// The Sail Library contains a source channel where notification for changes (like drifts)
+// can be sent back to our controller, so we trigger a reconciliation of our GatewayClass and its status.
+type SailLibrarySource[T client.Object] struct {
 	NotifyCh     <-chan struct{}
 	RequestsFunc func(context.Context, client.Object) []reconcile.Request
 }
 
-func (s *SailOperatorSource[T]) Start(ctx context.Context, queue workqueue.TypedRateLimitingInterface[reconcile.Request]) error {
+func (s *SailLibrarySource[T]) Start(ctx context.Context, queue workqueue.TypedRateLimitingInterface[reconcile.Request]) error {
 	go func() {
 		for {
 			select {
@@ -537,12 +573,13 @@ func (s *SailOperatorSource[T]) Start(ctx context.Context, queue workqueue.Typed
 				return
 			case _, ok := <-s.NotifyCh:
 				if !ok {
-					log.Info("sail operator notification channel closed, stopping watch")
+					log.Info("Sail Library notification channel closed, stopping watch")
 					return
 				}
 				var empty T
 				requests := s.RequestsFunc(ctx, empty)
-				log.Info("got notification from sail library")
+				log.Info("Sail Library reconciliation complete, enqueuing GatewayClass reconciliations",
+					"count", len(requests), "gatewayclasses", requests)
 				for _, req := range requests {
 					queue.Add(req)
 				}
