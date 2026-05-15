@@ -1149,9 +1149,7 @@ func testGatewayAPIDNSListenerUpdate(t *testing.T) {
 		t.Fatalf("expected bar.%s. to be deleted, but it was not", domain)
 	}
 
-	if err := deleteWithRetryOnError(t, context.TODO(), gateway, 30*time.Second); err != nil {
-		t.Errorf("failed to delete gateway %q: %v", gateway.Name, err)
-	}
+	deleteWithRetryOnError(t, context.TODO(), gateway, 30*time.Second)
 
 	t.Logf("Checking the remaining DNSRecord %s gets deleted after gateway deletion.", "baz."+domain+".")
 	if err := assertExpectedDNSRecords(t, map[expectedDnsRecord]bool{

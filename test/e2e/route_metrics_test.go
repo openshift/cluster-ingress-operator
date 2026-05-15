@@ -152,7 +152,7 @@ func testRouteMetricsControllerLabelSelector(t *testing.T, testRS, testNS bool) 
 	}
 
 	// Cleanup step - delete the Ingress Controller.
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 
 	// Wait for metrics to be added and set to 0.
 	if err := waitForRouteMetricsAddorUpdate(t, prometheusClient, ic.Name, 0); err != nil {
@@ -178,11 +178,7 @@ func testRouteMetricsControllerLabelSelector(t *testing.T, testRS, testNS bool) 
 	}
 
 	// Cleanup step - delete the Namespace.
-	defer func() {
-		if err := kclient.Delete(context.TODO(), ns); err != nil {
-			t.Errorf("failed to delete test namespace %s: %v", ns.Name, err)
-		}
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), ns, 2*time.Minute) })
 
 	// Create a Route to be immediately admitted by this Ingress Controller.
 	routeFooLabelName := types.NamespacedName{Namespace: ns.Name, Name: routeNameStr}
@@ -208,15 +204,7 @@ func testRouteMetricsControllerLabelSelector(t *testing.T, testRS, testNS bool) 
 	}
 
 	// Cleanup step - delete the Route.
-	defer func() {
-		if err := kclient.Delete(context.TODO(), routeFooLabel); err != nil {
-			if apierrors.IsNotFound(err) {
-				return
-			} else {
-				t.Errorf("failed to delete route %s: %v", routeFooLabelName, err)
-			}
-		}
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), routeFooLabel, 2*time.Minute) })
 
 	// Wait for metrics to be updated to 1 as the Route will get admitted by the IC.
 	if err := waitForRouteMetricsAddorUpdate(t, prometheusClient, ic.Name, 1); err != nil {

@@ -31,7 +31,7 @@ func TestDomainNotMatchingBase(t *testing.T) {
 	if err := kclient.Create(context.TODO(), ic); err != nil {
 		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 
 	// Ensure the DNSManaged=False condition
 	t.Logf("waiting for ingresscontroller %v", icName)

@@ -22,7 +22,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apiserver/pkg/storage/names"
 
-	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 
@@ -44,7 +43,7 @@ func TestHTTPHeaderBufferSize(t *testing.T) {
 		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
 	}
 
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 	conditions := []operatorv1.OperatorCondition{
 		{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionTrue},
 		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
@@ -69,31 +68,19 @@ func TestHTTPHeaderBufferSize(t *testing.T) {
 	if err := kclient.Create(context.TODO(), echoPod); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 	}
-	defer func() {
-		if err := kclient.Delete(context.TODO(), echoPod); err != nil {
-			t.Errorf("failed to delete pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
-		}
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoPod, 2*time.Minute) })
 
 	echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels)
 	if err := kclient.Create(context.TODO(), echoService); err != nil {
 		t.Fatalf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 	}
-	defer func() {
-		if err := kclient.Delete(context.TODO(), echoService); err != nil {
-			t.Errorf("failed to delete service %s/%s: %v", echoService.Namespace, echoService.Name, err)
-		}
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoService, 2*time.Minute) })
 
 	echoRoute := buildRoute(echoPod.Name, echoPod.Namespace, echoService.Name)
 	if err := kclient.Create(context.TODO(), echoRoute); err != nil {
 		t.Fatalf("failed to create route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
 	}
-	defer func() {
-		if err := kclient.Delete(context.TODO(), echoRoute); err != nil {
-			t.Errorf("failed to delete route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
-		}
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoRoute, 2*time.Minute) })
 
 	kubeConfig, err := config.GetConfig()
 	if err != nil {
@@ -124,14 +111,7 @@ func TestHTTPHeaderBufferSize(t *testing.T) {
 	if err := kclient.Create(context.TODO(), clientPodValidRequest); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", clientPodValidRequest.Namespace, clientPodValidRequest.Name, err)
 	}
-	defer func() {
-		if err := kclient.Delete(context.TODO(), clientPodValidRequest); err != nil {
-			if errors.IsNotFound(err) {
-				return
-			}
-			t.Errorf("failed to delete pod %s/%s: %v", clientPodValidRequest.Namespace, clientPodValidRequest.Name, err)
-		}
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), clientPodValidRequest, 2*time.Minute) })
 
 	pollErr := wait.PollImmediate(1*time.Second, 3*time.Minute, func() (bool, error) {
 		readCloser, err := cl.CoreV1().Pods(clientPodValidRequest.Namespace).GetLogs(clientPodValidRequest.Name, &corev1.PodLogOptions{
@@ -253,14 +233,7 @@ func TestHTTPHeaderBufferSize(t *testing.T) {
 		t.Fatalf("failed to create pod %s/%s: %v", clientPodInvalidRequest.Namespace, clientPodInvalidRequest.Name, err)
 	}
 
-	defer func() {
-		if err := kclient.Delete(context.TODO(), clientPodInvalidRequest); err != nil {
-			if errors.IsNotFound(err) {
-				return
-			}
-			t.Errorf("failed to delete pod %s/%s: %v", clientPodInvalidRequest.Namespace, clientPodInvalidRequest.Name, err)
-		}
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), clientPodInvalidRequest, 2*time.Minute) })
 
 	// Check curl pod logs for a 400 response since the sent headers
 	// are too large for HAProxy.

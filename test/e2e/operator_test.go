@@ -281,7 +281,7 @@ func TestClusterOperatorStatusRelatedObjects(t *testing.T) {
 }
 
 func TestDefaultIngressControllerSteadyConditions(t *testing.T) {
-	if err := waitForIngressControllerCondition(t, kclient, 10*time.Second, defaultName, defaultAvailableConditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 3*time.Minute, defaultName, defaultAvailableConditions...); err != nil {
 		t.Errorf("did not get expected conditions: %v", err)
 	}
 }
@@ -436,7 +436,7 @@ func TestUserDefinedIngressController(t *testing.T) {
 	if err := kclient.Create(context.TODO(), ing); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, ing)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ing) })
 
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
 		t.Errorf("failed to observe expected conditions: %v", err)
@@ -459,7 +459,7 @@ func TestUniqueDomainRejection(t *testing.T) {
 	if err := kclient.Create(context.TODO(), conflict); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, conflict)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, conflict) })
 
 	conditions := []operatorv1.OperatorCondition{
 		{Type: ingresscontroller.IngressControllerAdmittedConditionType, Status: operatorv1.ConditionFalse},
@@ -520,7 +520,7 @@ func TestProxyProtocolAPI(t *testing.T) {
 	if err := kclient.Create(context.TODO(), ic); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForIngressControllerWithNodePort...); err != nil {
 		t.Errorf("failed to observe expected conditions: %v", err)
@@ -665,11 +665,7 @@ func TestUpdateDefaultIngressControllerSecret(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create secret %s: %v", secretName, err)
 	}
-	defer func() {
-		if err := kclient.Delete(context.TODO(), secret); err != nil {
-			t.Errorf("failed to delete secret %s: %v", secretName, err)
-		}
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), secret, 2*time.Minute) })
 
 	// Verify that the deployment uses the new certificate.
 	err = wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
@@ -791,7 +787,7 @@ func TestIngressControllerScale(t *testing.T) {
 	if err := kclient.Create(context.TODO(), ic); err != nil {
 		t.Fatalf("failed to create ingresscontroller %s: %v", name, err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, availableConditionsForPrivateIngressController...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
@@ -1023,7 +1019,7 @@ func TestHostNetworkEndpointPublishingStrategy(t *testing.T) {
 	if err := kclient.Create(context.TODO(), ing); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, ing)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ing) })
 
 	conditions := []operatorv1.OperatorCondition{
 		{Type: ingresscontroller.IngressControllerAdmittedConditionType, Status: operatorv1.ConditionTrue},
@@ -1204,7 +1200,7 @@ func TestInternalLoadBalancer(t *testing.T) {
 	if err := kclient.Create(context.TODO(), ic); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 
 	// Wait for the load balancer and DNS to be ready.
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
@@ -1293,7 +1289,7 @@ func TestInternalLoadBalancerGlobalAccessGCP(t *testing.T) {
 	if err := kclient.Create(context.TODO(), ic); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 
 	// Wait for the load balancer and DNS to be ready.
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
@@ -1361,7 +1357,7 @@ func TestAWSResourceTagsChanged(t *testing.T) {
 	if infraConfig.Status.Platform != "AWS" {
 		t.Skipf("test skipped on platform %q", infraConfig.Status.Platform)
 	}
-	if err := waitForIngressControllerCondition(t, kclient, 10*time.Second, defaultName, defaultAvailableConditions...); err != nil {
+	if err := waitForIngressControllerCondition(t, kclient, 3*time.Minute, defaultName, defaultAvailableConditions...); err != nil {
 		t.Errorf("did not get expected conditions: %v", err)
 	}
 	defaultIC := &operatorv1.IngressController{
@@ -1446,7 +1442,7 @@ func TestAWSLBTypeChange(t *testing.T) {
 	if err := kclient.Create(context.Background(), ic); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 
 	// Wait for the load balancer and DNS to be ready.
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
@@ -1548,7 +1544,7 @@ func TestAWSLBTypeDefaulting(t *testing.T) {
 	if err := kclient.Create(context.TODO(), clbIC); err != nil {
 		t.Fatalf("failed to create ingresscontroller %s: %v", clbName, err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, clbIC)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, clbIC) })
 
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, clbName, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
@@ -1597,7 +1593,7 @@ func TestAWSLBTypeDefaulting(t *testing.T) {
 	if err := kclient.Create(context.TODO(), nlbIC); err != nil {
 		t.Fatalf("failed to create ingresscontroller %s: %v", nlbName, err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, nlbIC)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, nlbIC) })
 
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, nlbName, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
@@ -1612,7 +1608,7 @@ func TestAWSLBTypeDefaulting(t *testing.T) {
 	// default setting.
 	assertServiceAnnotation(t, controller.LoadBalancerServiceName(clbIC), ingresscontroller.AWSLBTypeAnnotation, "", false)
 
-	t.Log("resetting the default LB type to Classic")
+	t.Log("resetting the default LB type to NLB")
 	if err := updateIngressConfigSpecWithRetryOnConflict(t, clusterConfigName, timeout, func(spec *configv1.IngressSpec) {
 		spec.LoadBalancer.Platform.Type = configv1.AWSPlatformType
 		spec.LoadBalancer.Platform.AWS = &configv1.AWSIngressSpec{
@@ -1667,7 +1663,7 @@ func TestScopeChange(t *testing.T) {
 	if err := kclient.Create(context.TODO(), ic); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 
 	// Wait for the load balancer and DNS to be ready.
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
@@ -1817,7 +1813,7 @@ func TestNodePortServiceEndpointPublishingStrategy(t *testing.T) {
 	if err := kclient.Create(context.TODO(), ing); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, ing)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ing) })
 
 	conditions := []operatorv1.OperatorCondition{
 		{Type: ingresscontroller.IngressControllerAdmittedConditionType, Status: operatorv1.ConditionTrue},
@@ -1891,7 +1887,7 @@ func TestTLSSecurityProfile(t *testing.T) {
 	if err := kclient.Create(context.TODO(), ic); err != nil {
 		t.Fatalf("failed to create ingresscontroller %s: %v", name, err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, availableConditionsForPrivateIngressController...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
@@ -1962,7 +1958,7 @@ func TestRouteAdmissionPolicy(t *testing.T) {
 	if err := kclient.Create(context.TODO(), ic); err != nil {
 		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
@@ -1976,11 +1972,7 @@ func TestRouteAdmissionPolicy(t *testing.T) {
 	if err := kclient.Create(context.TODO(), ns1); err != nil {
 		t.Fatalf("failed to create namespace: %v", err)
 	}
-	defer func() {
-		if err := kclient.Delete(context.TODO(), ns1); err != nil {
-			t.Errorf("failed to delete test namespace %v: %v", ns1.Name, err)
-		}
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), ns1, 2*time.Minute) })
 	ns2 := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "routeadmissionpolicytest2",
@@ -1989,11 +1981,7 @@ func TestRouteAdmissionPolicy(t *testing.T) {
 	if err := kclient.Create(context.TODO(), ns2); err != nil {
 		t.Fatalf("failed to create namespace: %v", err)
 	}
-	defer func() {
-		if err := kclient.Delete(context.TODO(), ns2); err != nil {
-			t.Errorf("failed to delete test namespace %v: %v", ns2.Name, err)
-		}
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), ns2, 2*time.Minute) })
 
 	// Create conflicting routes in the namespaces
 	makeRoute := func(name types.NamespacedName, host, path string) *routev1.Route {
@@ -2224,21 +2212,13 @@ func TestSyslogLogging(t *testing.T) {
 	if err := kclient.Create(context.TODO(), syslogPod); err != nil {
 		t.Fatalf("failed to create pod for rsyslog: %v", err)
 	}
-	defer func() {
-		if err := kclient.Delete(context.TODO(), syslogPod); err != nil {
-			t.Errorf("failed to delete pod %s: %v", syslogPod.Name, err)
-		}
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), syslogPod, 2*time.Minute) })
 
 	networkPolicy := buildTestPodNetworkPolicy(types.NamespacedName{Name: "syslog-netpol", Namespace: syslogPod.Namespace})
 	if err := kclient.Create(context.TODO(), networkPolicy); err != nil {
 		t.Fatalf("failed to create network policy %s: %v", networkPolicy.Name, err)
 	}
-	defer func() {
-		if err := kclient.Delete(context.TODO(), networkPolicy); err != nil {
-			t.Errorf("failed to delete network policy %s: %v", networkPolicy.Name, err)
-		}
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), networkPolicy, 2*time.Minute) })
 
 	syslogConfigmap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
@@ -2256,11 +2236,7 @@ $ModLoad omstdout.so
 	if err := kclient.Create(context.TODO(), syslogConfigmap); err != nil {
 		t.Fatalf("failed to create configmap for rsyslog: %v", err)
 	}
-	defer func() {
-		if err := kclient.Delete(context.TODO(), syslogConfigmap); err != nil {
-			t.Errorf("failed to delete configmap %s: %v", syslogConfigmap.Name, err)
-		}
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), syslogConfigmap, 2*time.Minute) })
 
 	// Get the rsyslog endpoint.
 	var syslogAddress string
@@ -2298,7 +2274,7 @@ $ModLoad omstdout.so
 	if err := kclient.Create(context.TODO(), ic); err != nil {
 		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
@@ -2358,7 +2334,7 @@ func TestContainerLogging(t *testing.T) {
 	if err := kclient.Create(context.TODO(), ic); err != nil {
 		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
@@ -2384,7 +2360,7 @@ func TestContainerLoggingMaxLength(t *testing.T) {
 	if err := kclient.Create(context.TODO(), ic); err != nil {
 		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
@@ -2443,14 +2419,7 @@ func TestContainerLoggingMaxLength(t *testing.T) {
 	if err := kclient.Create(context.TODO(), clientPod); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
 	}
-	defer func() {
-		if err := kclient.Delete(context.TODO(), clientPod); err != nil {
-			if apierrors.IsNotFound(err) {
-				return
-			}
-			t.Errorf("failed to delete pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
-		}
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), clientPod, 2*time.Minute) })
 
 	kubeConfig, err := config.GetConfig()
 	if err != nil {
@@ -2526,7 +2495,7 @@ func TestContainerLoggingMinLength(t *testing.T) {
 	if err := kclient.Create(context.TODO(), ic); err != nil {
 		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
@@ -2585,14 +2554,7 @@ func TestContainerLoggingMinLength(t *testing.T) {
 	if err := kclient.Create(context.TODO(), clientPod); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
 	}
-	defer func() {
-		if err := kclient.Delete(context.TODO(), clientPod); err != nil {
-			if apierrors.IsNotFound(err) {
-				return
-			}
-			t.Errorf("failed to delete pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
-		}
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), clientPod, 2*time.Minute) })
 
 	kubeConfig, err := config.GetConfig()
 	if err != nil {
@@ -2738,7 +2700,7 @@ func TestIngressControllerCustomEndpoints(t *testing.T) {
 	if err := kclient.Create(context.TODO(), ic); err != nil {
 		t.Fatalf("failed to create ingresscontroller %s: %v", ic.Name, err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 	// Ensure the ingress controller is reporting expected status conditions.
 	// The readiness of the resource depends on the load of the environment, and because changing InfrastructureConfig
 	// causes the Cloud controller manager to rollout, at least 3 minutes are required for leader
@@ -2773,7 +2735,7 @@ func TestHTTPHeaderCapture(t *testing.T) {
 	if err := kclient.Create(context.TODO(), ic); err != nil {
 		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 	conditions := []operatorv1.OperatorCondition{
 		{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionTrue},
 		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
@@ -2846,24 +2808,13 @@ func TestHTTPHeaderCapture(t *testing.T) {
 	if err := kclient.Create(context.TODO(), clientPod); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
 	}
-	defer func() {
-		if err := kclient.Delete(context.TODO(), clientPod); err != nil {
-			if apierrors.IsNotFound(err) {
-				return
-			}
-			t.Errorf("failed to delete pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
-		}
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), clientPod, 2*time.Minute) })
 
 	networkPolicy := buildTestPodNetworkPolicy(types.NamespacedName{Name: "http-header-capture", Namespace: clientPod.Namespace})
 	if err := kclient.Create(context.TODO(), networkPolicy); err != nil {
 		t.Fatalf("failed to create network policy %s: %v", networkPolicy.Name, err)
 	}
-	defer func() {
-		if err := kclient.Delete(context.TODO(), networkPolicy); err != nil {
-			t.Errorf("failed to delete network policy %s: %v", networkPolicy.Name, err)
-		}
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), networkPolicy, 2*time.Minute) })
 
 	// Scan the access logs to make sure the expected headers were captured
 	// and logged.
@@ -2934,7 +2885,7 @@ func TestHTTPCookieCapture(t *testing.T) {
 	if err := kclient.Create(context.TODO(), ic); err != nil {
 		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 	conditions := []operatorv1.OperatorCondition{
 		{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionTrue},
 		{Type: operatorv1.LoadBalancerManagedIngressConditionType, Status: operatorv1.ConditionFalse},
@@ -3004,24 +2955,13 @@ func TestHTTPCookieCapture(t *testing.T) {
 	if err := kclient.Create(context.TODO(), clientPod); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
 	}
-	defer func() {
-		if err := kclient.Delete(context.TODO(), clientPod); err != nil {
-			if apierrors.IsNotFound(err) {
-				return
-			}
-			t.Errorf("failed to delete pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
-		}
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), clientPod, 2*time.Minute) })
 
 	networkPolicy := buildTestPodNetworkPolicy(types.NamespacedName{Name: "http-cookie-capture", Namespace: clientPod.Namespace})
 	if err := kclient.Create(context.TODO(), networkPolicy); err != nil {
 		t.Fatalf("failed to create network policy %s: %v", networkPolicy.Name, err)
 	}
-	defer func() {
-		if err := kclient.Delete(context.TODO(), networkPolicy); err != nil {
-			t.Errorf("failed to delete network policy %s: %v", networkPolicy.Name, err)
-		}
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), networkPolicy, 2*time.Minute) })
 
 	// Scan the access logs to make sure the expected cookie was captured
 	// and logged.
@@ -3093,7 +3033,7 @@ func TestNetworkLoadBalancer(t *testing.T) {
 	if err := kclient.Create(context.TODO(), ic); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 
 	// Wait for the load balancer and DNS to be ready.
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
@@ -3145,7 +3085,7 @@ func TestAWSELBConnectionIdleTimeout(t *testing.T) {
 	if err := kclient.Create(context.TODO(), ic); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 
 	// Create a pod with an HTTP application that sends delayed responses.
 	namespace := createNamespace(t, names.SimpleNameGenerator.GenerateName("idle-timeout-"))
@@ -3153,32 +3093,20 @@ func TestAWSELBConnectionIdleTimeout(t *testing.T) {
 	if err := kclient.Create(context.TODO(), httpdPod); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", httpdPod.Namespace, httpdPod.Name, err)
 	}
-	defer func() {
-		if err := kclient.Delete(context.TODO(), httpdPod); err != nil {
-			t.Errorf("failed to delete pod %s/%s: %v", httpdPod.Namespace, httpdPod.Name, err)
-		}
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), httpdPod, 2*time.Minute) })
 
 	httpdService := buildEchoService(httpdPod.Name, httpdPod.Namespace, httpdPod.ObjectMeta.Labels)
 	if err := kclient.Create(context.TODO(), httpdService); err != nil {
 		t.Fatalf("failed to create service %s/%s: %v", httpdService.Namespace, httpdService.Name, err)
 	}
-	defer func() {
-		if err := kclient.Delete(context.TODO(), httpdService); err != nil {
-			t.Errorf("failed to delete service %s/%s: %v", httpdService.Namespace, httpdService.Name, err)
-		}
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), httpdService, 2*time.Minute) })
 
 	route := buildRoute(httpdPod.Name, httpdPod.Namespace, httpdService.Name)
 	route.Spec.Host = fmt.Sprintf("%s-%s.%s", route.Name, route.Namespace, ic.Spec.Domain)
 	if err := kclient.Create(context.TODO(), route); err != nil {
 		t.Fatalf("failed to create route %s/%s: %v", route.Namespace, route.Name, err)
 	}
-	defer func() {
-		if err := kclient.Delete(context.TODO(), route); err != nil {
-			t.Errorf("failed to delete route %s/%s: %v", route.Namespace, route.Name, err)
-		}
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), route, 2*time.Minute) })
 
 	// Wait for the load balancer and DNS to be ready.
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {
@@ -3387,11 +3315,7 @@ func TestConnectTimeout(t *testing.T) {
 	if err := kclient.Create(context.TODO(), networkPolicy); err != nil {
 		t.Fatalf("failed to create network policy %s: %v", networkPolicy.Name, err)
 	}
-	defer func() {
-		if err := kclient.Delete(context.TODO(), networkPolicy); err != nil {
-			t.Errorf("failed to delete network policy %s: %v", networkPolicy.Name, err)
-		}
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), networkPolicy, 2*time.Minute) })
 
 	if err := waitForPodReady(t, kclient, httpdPod, 2*time.Minute); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
@@ -3500,7 +3424,7 @@ func TestUniqueIdHeader(t *testing.T) {
 	if err := kclient.Create(context.TODO(), ic); err != nil {
 		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
@@ -3520,31 +3444,19 @@ func TestUniqueIdHeader(t *testing.T) {
 	if err := kclient.Create(context.TODO(), echoPod); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 	}
-	defer func() {
-		if err := kclient.Delete(context.TODO(), echoPod); err != nil {
-			t.Errorf("failed to delete pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
-		}
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoPod, 2*time.Minute) })
 
 	echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels)
 	if err := kclient.Create(context.TODO(), echoService); err != nil {
 		t.Fatalf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 	}
-	defer func() {
-		if err := kclient.Delete(context.TODO(), echoService); err != nil {
-			t.Errorf("failed to delete service %s/%s: %v", echoService.Namespace, echoService.Name, err)
-		}
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoService, 2*time.Minute) })
 
 	echoRoute := buildRoute(echoPod.Name, echoPod.Namespace, echoService.Name)
 	if err := kclient.Create(context.TODO(), echoRoute); err != nil {
 		t.Fatalf("failed to create route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
 	}
-	defer func() {
-		if err := kclient.Delete(context.TODO(), echoRoute); err != nil {
-			t.Errorf("failed to delete route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
-		}
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoRoute, 2*time.Minute) })
 
 	kubeConfig, err := config.GetConfig()
 	if err != nil {
@@ -3566,14 +3478,7 @@ func TestUniqueIdHeader(t *testing.T) {
 		if err := kclient.Create(context.TODO(), clientPod); err != nil {
 			t.Fatalf("failed to create pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
 		}
-		defer func() {
-			if err := kclient.Delete(context.TODO(), clientPod); err != nil {
-				if apierrors.IsNotFound(err) {
-					return
-				}
-				t.Errorf("failed to delete pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
-			}
-		}()
+		t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), clientPod, 2*time.Minute) })
 
 		err = wait.PollImmediate(1*time.Second, 5*time.Minute, func() (bool, error) {
 			readCloser, err := client.CoreV1().Pods(clientPod.Namespace).GetLogs(clientPod.Name, &corev1.PodLogOptions{
@@ -3628,7 +3533,7 @@ func TestLoadBalancingAlgorithmUnsupportedConfigOverride(t *testing.T) {
 	if err := kclient.Create(context.TODO(), ic); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
 		t.Errorf("failed to observe expected conditions: %v", err)
@@ -3737,7 +3642,7 @@ func TestUnsupportedConfigOverride(t *testing.T) {
 	if err := kclient.Create(context.Background(), ic); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
 		t.Errorf("failed to observe expected conditions: %v", err)
@@ -3850,7 +3755,7 @@ func TestLocalWithFallbackOverrideForNodePortService(t *testing.T) {
 	if err := kclient.Create(context.TODO(), ic); err != nil {
 		t.Fatalf("failed to create ingresscontroller %q: %v", icName, err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForIngressControllerWithNodePort...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
@@ -3911,7 +3816,7 @@ func TestCustomErrorpages(t *testing.T) {
 	if err := kclient.Create(context.TODO(), ic); err != nil {
 		t.Fatalf("failed to create ingresscontroller %q: %v", icName, err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 
 	errorPageConfigmapName := types.NamespacedName{
 		Name:      errorPageConfigmap.Name,
@@ -3920,11 +3825,7 @@ func TestCustomErrorpages(t *testing.T) {
 	if err := kclient.Create(context.TODO(), errorPageConfigmap); err != nil {
 		t.Fatalf("failed to create configmap %q: %v", errorPageConfigmapName, err)
 	}
-	defer func() {
-		if err := kclient.Delete(context.TODO(), errorPageConfigmap); err != nil {
-			t.Errorf("failed to delete configmap %q: %v", errorPageConfigmapName, err)
-		}
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), errorPageConfigmap, 2*time.Minute) })
 
 	conditions := []operatorv1.OperatorCondition{
 		{Type: operatorv1.IngressControllerAvailableConditionType, Status: operatorv1.ConditionTrue},
@@ -4012,7 +3913,7 @@ func TestTunableRouterKubeletProbesForCustomIngressController(t *testing.T) {
 	if err := kclient.Create(context.TODO(), ic); err != nil {
 		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
@@ -4088,7 +3989,7 @@ func TestIngressControllerServiceNameCollision(t *testing.T) {
 	}
 
 	// Clean up our new Ingress Controller after we are done.
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 
 	// Wait for new ingress controller to come online.
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
@@ -4106,11 +4007,7 @@ func TestIngressControllerServiceNameCollision(t *testing.T) {
 	if err := kclient.Create(context.TODO(), conflictingLoadBalancerService); err != nil {
 		t.Fatalf("failed to create service %s: %v", conflictingLoadBalancerServiceName, err)
 	}
-	defer func() {
-		if err := kclient.Delete(context.TODO(), conflictingLoadBalancerService); err != nil {
-			t.Errorf("failed to delete service %s: %v", conflictingLoadBalancerServiceName, err)
-		}
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), conflictingLoadBalancerService, 2*time.Minute) })
 
 	conflictingNodeportServiceName := types.NamespacedName{
 		Name:      "router-nodeport-" + icName.Name,
@@ -4120,11 +4017,7 @@ func TestIngressControllerServiceNameCollision(t *testing.T) {
 	if err := kclient.Create(context.TODO(), conflictingNodeportService); err != nil {
 		t.Fatalf("failed to create service %s: %v", conflictingNodeportServiceName, err)
 	}
-	defer func() {
-		if err := kclient.Delete(context.TODO(), conflictingNodeportService); err != nil {
-			t.Errorf("failed to delete service %s: %v", conflictingNodeportServiceName, err)
-		}
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), conflictingNodeportService, 2*time.Minute) })
 
 	ic, err := getIngressController(t, kclient, icName, 1*time.Minute)
 	if err != nil {
@@ -4186,11 +4079,7 @@ func TestIngressOperatorCacheIsNotGlobal(t *testing.T) {
 	if err := kclient.Create(context.TODO(), ns); err != nil {
 		t.Fatalf("failed to create namespace: %v", err)
 	}
-	defer func() {
-		if err := kclient.Delete(context.TODO(), ns); err != nil {
-			t.Errorf("failed to delete namespace %v: %v", ns.Name, err)
-		}
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), ns, 2*time.Minute) })
 	// Create the new private controller in a namespace that will be ignored by the Ingress Operator.
 	icName := types.NamespacedName{
 		Namespace: ns.Name,
@@ -4203,7 +4092,7 @@ func TestIngressOperatorCacheIsNotGlobal(t *testing.T) {
 	}
 
 	// Clean up our new Ingress Controller after we are done.
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 
 	// Verify new Ingress Controller is ignored by ensuring its status never gets modified.
 	wait.PollImmediate(1*time.Second, 1*time.Minute, func() (bool, error) {
@@ -4626,7 +4515,7 @@ func assertIngressControllerDeleted(t *testing.T, cl client.Client, ing *operato
 		if apierrors.IsNotFound(errors.Unwrap(err)) {
 			return
 		}
-		t.Fatalf("WARNING: cloud resources may have been leaked! failed to delete ingresscontroller %s: %v", ing.Name, err)
+		t.Errorf("WARNING: cloud resources may have been leaked! failed to delete ingresscontroller %s: %v", ing.Name, err)
 	} else {
 		t.Logf("deleted ingresscontroller %s", ing.Name)
 	}

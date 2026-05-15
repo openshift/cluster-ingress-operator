@@ -49,7 +49,7 @@ func TestRouterCompressionParsing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("error getting private controller: %v", err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, pc4)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, pc4) })
 
 	if err := testCompressionPolicy(t, "http-compression-4", compressionPolicyErrors); err == nil {
 		t.Errorf("compression policy with errors should have failed but didn't")
@@ -63,7 +63,7 @@ func testParsing(t *testing.T, name string, policy operatorv1.HTTPCompressionPol
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, pc)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, pc) })
 
 	if err := testCompressionPolicy(t, name, policy); err != nil {
 		t.Errorf(errorMsg, err)
@@ -201,7 +201,7 @@ func TestRouterCompressionOperation(t *testing.T) {
 	if err := kclient.Create(context.TODO(), helloConfigMap); err != nil {
 		t.Fatalf("failed to create configmap %s/%s: %v", helloConfigMap.Namespace, helloConfigMap.Name, err)
 	}
-	t.Cleanup(func() { assertDeleted(t, kclient, helloConfigMap) })
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), helloConfigMap, 2*time.Minute) })
 
 	helloPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -239,13 +239,13 @@ func TestRouterCompressionOperation(t *testing.T) {
 	if err := kclient.Create(context.TODO(), helloPod); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", helloPod.Namespace, helloPod.Name, err)
 	}
-	t.Cleanup(func() { assertDeleted(t, kclient, helloPod) })
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), helloPod, 2*time.Minute) })
 
 	helloService := buildEchoService(helloPod.Name, helloPod.Namespace, helloPod.ObjectMeta.Labels)
 	if err := kclient.Create(context.TODO(), helloService); err != nil {
 		t.Fatalf("failed to create service %s/%s: %v", helloService.Namespace, helloService.Name, err)
 	}
-	t.Cleanup(func() { assertDeleted(t, kclient, helloService) })
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), helloService, 2*time.Minute) })
 
 	helloRoute := buildRoute(helloPod.Name, helloPod.Namespace, helloService.Name)
 	helloRoute.Spec.TLS = &routev1.TLSConfig{
@@ -255,7 +255,7 @@ func TestRouterCompressionOperation(t *testing.T) {
 	if err := kclient.Create(context.TODO(), helloRoute); err != nil {
 		t.Fatalf("failed to create route %s/%s: %v", helloRoute.Namespace, helloRoute.Name, err)
 	}
-	t.Cleanup(func() { assertDeleted(t, kclient, helloRoute) })
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), helloRoute, 2*time.Minute) })
 
 	// Wait for hello pod to be ready.
 	if err = wait.PollImmediate(2*time.Second, 1*time.Minute, func() (bool, error) {

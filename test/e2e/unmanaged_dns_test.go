@@ -48,7 +48,7 @@ func TestUnmanagedDNSToManagedDNSIngressController(t *testing.T) {
 	if err := kclient.Create(context.TODO(), ic); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 
 	// Wait for the load balancer and DNS to reach stable conditions.
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, append(availableConditionsForIngressControllerWithLoadBalancerUnmanagedDNS, operatorProgressingFalse)...); err != nil {
@@ -127,7 +127,7 @@ func TestManagedDNSToUnmanagedDNSIngressController(t *testing.T) {
 	if err := kclient.Create(context.TODO(), ic); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 
 	// Wait for the load balancer and DNS to reach stable conditions.
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, append(availableConditionsForIngressControllerWithLoadBalancer, operatorProgressingFalse)...); err != nil {
@@ -228,7 +228,7 @@ func TestUnmanagedDNSToManagedDNSInternalIngressController(t *testing.T) {
 	if err := kclient.Create(context.TODO(), ic); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 
 	// Wait for the load balancer and DNS to reach stable conditions.
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, append(availableConditionsForIngressControllerWithLoadBalancerUnmanagedDNS, operatorProgressingFalse)...); err != nil {
