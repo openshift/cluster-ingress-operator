@@ -111,6 +111,9 @@ type Config struct {
 	// OperatorLifecycleManagerEnabled indicates whether the
 	// "OperatorLifecycleManager" capability is enabled.
 	OperatorLifecycleManagerEnabled bool
+	// GatewayAPIWithoutOLMEnabled indicates whether the GatewayAPIWithoutOLM
+	// feature gate is enabled, allowing Sail Library-based installation.
+	GatewayAPIWithoutOLMEnabled bool
 
 	// DependentControllers is a list of controllers that watch Gateway API
 	// resources.  The gatewayapi controller starts these controllers once
@@ -159,10 +162,12 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	// The subscriptions resource only exists if the
 	// "OperatorLifecycleManager" capability is enabled, and the default
 	// catalog only exists if the "marketplace" capability is enabled.  We
-	// cannot install OSSM if the subscriptions resource or default catalog
-	// does not exist, and accordingly, we should not start these
-	// controllers if the capabilities are not enabled.
-	if !r.config.MarketplaceEnabled || !r.config.OperatorLifecycleManagerEnabled {
+	// cannot install OSSM via OLM if the subscriptions resource or default
+	// catalog does not exist. However, when the GatewayAPIWithoutOLM feature
+	// is enabled, we can install Istio directly using the Sail Library.
+	useOLM := r.config.MarketplaceEnabled && r.config.OperatorLifecycleManagerEnabled
+	useSailLibrary := r.config.GatewayAPIWithoutOLMEnabled
+	if !useOLM && !useSailLibrary {
 		return reconcile.Result{}, nil
 	}
 

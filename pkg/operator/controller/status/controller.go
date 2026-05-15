@@ -204,6 +204,7 @@ type Config struct {
 	// OperatorLifecycleManagerEnabled indicates whether the
 	// "OperatorLifecycleManager" capability is enabled.
 	OperatorLifecycleManagerEnabled bool
+	GatewayAPIWithoutOLMEnabled     bool
 	IngressControllerImage          string
 	CanaryImage                     string
 	OperatorReleaseVersion          string
@@ -388,6 +389,8 @@ type operatorState struct {
 	DNSRecords         []iov1.DNSRecord
 
 	unmanagedGatewayAPICRDNames string
+	// useSailLibrary indicates whether the GatewayAPIWithoutOLM feature is enabled.
+	useSailLibrary bool
 	// haveOSSMSubscription means that the subscription for OSSM 3 exists.
 	haveOSSMSubscription bool
 	// haveIstiosResource means that the "istios.sailproject.io" CRD exists.
@@ -447,7 +450,13 @@ func (r *reconciler) getOperatorState(ctx context.Context, ingressNamespace, can
 			state.unmanagedGatewayAPICRDNames = extension.UnmanagedGatewayAPICRDNames
 		}
 
-		if r.config.GatewayAPIControllerEnabled && r.config.MarketplaceEnabled && r.config.OperatorLifecycleManagerEnabled {
+		// Check for Gateway API resources.
+		// OLM related objects are kept to handle failed migration scenarios, even though
+		// Sail Library doesn't use OLM. Can be removed after all clusters migrate
+		useOLM := r.config.MarketplaceEnabled && r.config.OperatorLifecycleManagerEnabled
+		useSailLibrary := r.config.GatewayAPIWithoutOLMEnabled
+		state.useSailLibrary = useSailLibrary
+		if useOLM || useSailLibrary {
 			var subscription operatorsv1alpha1.Subscription
 			subscriptionName := operatorcontroller.ServiceMeshOperatorSubscriptionName()
 			if err := r.cache.Get(ctx, subscriptionName, &subscription); err != nil {
@@ -456,7 +465,6 @@ func (r *reconciler) getOperatorState(ctx context.Context, ingressNamespace, can
 				}
 			} else {
 				state.haveOSSMSubscription = true
-
 			}
 
 			var (
@@ -465,6 +473,22 @@ func (r *reconciler) getOperatorState(ctx context.Context, ingressNamespace, can
 				gatewayclassesResourceNamespacedName = types.NamespacedName{Name: gatewayclassesResourceName}
 				istiosResourceNamespacedName         = types.NamespacedName{Name: istiosResourceName}
 			)
+
+			state.expectedGatewayAPIOperatorVersion = r.config.GatewayAPIOperatorVersion
+
+			// List OSSM subscriptions (OLM-specific only).
+			// In Sail Library mode, we don't check for subscription conflicts, so no need to list them.
+			if useOLM {
+				subscriptionList := operatorsv1alpha1.SubscriptionList{}
+				if err := r.subscriptionCache.List(ctx, &subscriptionList); err != nil {
+					return state, fmt.Errorf("failed to get subscriptions: %w", err)
+				}
+				for _, subscription := range subscriptionList.Items {
+					if subscription.Spec != nil && ossmSubscriptions.Has(subscription.Spec.Package) {
+						state.ossmSubscriptions = append(state.ossmSubscriptions, subscription)
+					}
+				}
+			}
 
 			if err := r.cache.Get(ctx, gatewaysResourceNamespacedName, &crd); err != nil {
 				if !errors.IsNotFound(err) {
@@ -486,17 +510,6 @@ func (r *reconciler) getOperatorState(ctx context.Context, ingressNamespace, can
 				}
 			} else {
 				state.haveIstiosResource = true
-			}
-
-			state.expectedGatewayAPIOperatorVersion = r.config.GatewayAPIOperatorVersion
-			subscriptionList := operatorsv1alpha1.SubscriptionList{}
-			if err := r.subscriptionCache.List(ctx, &subscriptionList); err != nil {
-				return state, fmt.Errorf("failed to get subscriptions: %w", err)
-			}
-			for _, subscription := range subscriptionList.Items {
-				if subscription.Spec != nil && ossmSubscriptions.Has(subscription.Spec.Package) {
-					state.ossmSubscriptions = append(state.ossmSubscriptions, subscription)
-				}
 			}
 
 			gatewayClassList := gatewayapiv1.GatewayClassList{}
@@ -637,6 +650,12 @@ func computeGatewayAPICRDsDegradedCondition(state operatorState) configv1.Cluste
 // degraded when any of those subscriptions would prevent the installation of an appropriate Istio control plane.
 func computeGatewayAPIInstallDegradedCondition(state operatorState) configv1.ClusterOperatorStatusCondition {
 	degradedCondition := configv1.ClusterOperatorStatusCondition{}
+
+	// Subscription conflicts only apply to OLM-based installations.
+	// In Sail Library mode, we install Istio directly via Helm, so OLM subscriptions are irrelevant.
+	if state.useSailLibrary {
+		return degradedCondition
+	}
 
 	// If OSSM doesn't need to be installed, or there are no possible conflicting subscriptions, return degraded=false.
 	if !state.shouldInstallOSSM || len(state.ossmSubscriptions) == 0 {

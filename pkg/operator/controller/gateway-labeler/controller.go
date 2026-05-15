@@ -50,7 +50,9 @@ func NewUnmanaged(mgr manager.Manager) (controller.Controller, error) {
 		client:   mgr.GetClient(),
 		recorder: mgr.GetEventRecorderFor(controllerName),
 	}
-	c, err := controller.NewUnmanaged(controllerName, controller.Options{Reconciler: reconciler})
+	options := controller.Options{Reconciler: reconciler}
+	options.DefaultFromConfig(mgr.GetControllerOptions())
+	c, err := controller.NewUnmanaged(controllerName, options)
 	if err != nil {
 		return nil, err
 	}
