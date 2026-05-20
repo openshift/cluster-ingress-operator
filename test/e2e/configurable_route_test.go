@@ -41,7 +41,7 @@ func TestConfigurableRouteRBAC(t *testing.T) {
 			t.Errorf("error executing ingress 'cluster' spec update: %v", err)
 		}
 
-		if err := updateIngressConfigSstatusWithRetryOnConflict(t, resourceName, 5*time.Minute, func(is *configv1.IngressStatus) {
+		if err := updateIngressConfigStatusWithRetryOnConflict(t, resourceName, 5*time.Minute, func(is *configv1.IngressStatus) {
 			is.ComponentRoutes = nil
 		}); err != nil {
 			t.Errorf("failed to restore cluster ingress resource to original state: %v", err)
@@ -205,7 +205,7 @@ func TestConfigurableRouteNoSecretNoRBAC(t *testing.T) {
 			t.Errorf("error executing ingress 'cluster' spec update: %v", err)
 		}
 
-		if err := updateIngressConfigSstatusWithRetryOnConflict(t, resourceName, 5*time.Minute, func(is *configv1.IngressStatus) {
+		if err := updateIngressConfigStatusWithRetryOnConflict(t, resourceName, 5*time.Minute, func(is *configv1.IngressStatus) {
 			is.ComponentRoutes = nil
 		}); err != nil {
 			t.Errorf("failed to restore cluster ingress resource to original state: %v", err)
@@ -308,7 +308,7 @@ func TestConfigurableRouteNoConsumingUserNoRBAC(t *testing.T) {
 			t.Errorf("error executing ingress 'cluster' spec update: %v", err)
 		}
 
-		if err := updateIngressConfigSstatusWithRetryOnConflict(t, resourceName, 5*time.Minute, func(is *configv1.IngressStatus) {
+		if err := updateIngressConfigStatusWithRetryOnConflict(t, resourceName, 5*time.Minute, func(is *configv1.IngressStatus) {
 			is.ComponentRoutes = nil
 		}); err != nil {
 			t.Errorf("failed to restore cluster ingress resource to original state: %v", err)

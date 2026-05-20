@@ -635,19 +635,19 @@ func updateIngressConfigSpecWithRetryOnConflict(t *testing.T, name types.Namespa
 	})
 }
 
-// updateIngressConfigSstatusWithRetryOnConflict gets a fresh copy of the
-// name ingress config, calls updateSpecFn() where callers can modify
+// updateIngressConfigStatusWithRetryOnConflict gets a fresh copy of the
+// named ingress config, calls mutateStatusFn() where callers can modify
 // fields of the status, and then updates the ingress config object. If
 // there is a conflict error on update then the complete operation of
 // get, mutate, and update is retried until timeout is reached.
-func updateIngressConfigSstatusWithRetryOnConflict(t *testing.T, name types.NamespacedName, timeout time.Duration, mutateSpecFn func(*configv1.IngressStatus)) error {
+func updateIngressConfigStatusWithRetryOnConflict(t *testing.T, name types.NamespacedName, timeout time.Duration, mutateStatusFn func(*configv1.IngressStatus)) error {
 	ingressConfig := configv1.Ingress{}
 	return wait.PollUntilContextTimeout(context.Background(), 1*time.Second, timeout, false, func(ctx context.Context) (bool, error) {
 		if err := kclient.Get(ctx, name, &ingressConfig); err != nil {
 			t.Logf("error getting ingress config %v: %v, retrying...", name, err)
 			return false, nil
 		}
-		mutateSpecFn(&ingressConfig.Status)
+		mutateStatusFn(&ingressConfig.Status)
 		if err := kclient.Status().Update(ctx, &ingressConfig); err != nil {
 			if errors.IsConflict(err) {
 				t.Logf("conflict when updating ingress status %v: %v, retrying...", name, err)
