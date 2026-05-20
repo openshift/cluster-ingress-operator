@@ -379,6 +379,13 @@ func GatewayNetworkPolicyName(gateway *gatewayapiv1.Gateway) types.NamespacedNam
 	}
 }
 
+func GatewayPodMonitorName(gateway *gatewayapiv1.Gateway) types.NamespacedName {
+	return types.NamespacedName{
+		Namespace: gateway.Namespace,
+		Name:      fmt.Sprintf("%s-monitor", gateway.Name),
+	}
+}
+
 func IstiodNetworkPolicyName() types.NamespacedName {
 	return types.NamespacedName{
 		Name:      "istiod-allow",
