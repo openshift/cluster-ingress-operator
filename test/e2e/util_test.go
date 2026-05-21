@@ -641,6 +641,7 @@ func updateIngressConfigSpecWithRetryOnConflict(t *testing.T, name types.Namespa
 // there is a conflict error on update then the complete operation of
 // get, mutate, and update is retried until timeout is reached.
 func updateIngressConfigStatusWithRetryOnConflict(t *testing.T, name types.NamespacedName, timeout time.Duration, mutateStatusFn func(*configv1.IngressStatus)) error {
+	t.Helper()
 	ingressConfig := configv1.Ingress{}
 	return wait.PollUntilContextTimeout(context.Background(), 1*time.Second, timeout, false, func(ctx context.Context) (bool, error) {
 		if err := kclient.Get(ctx, name, &ingressConfig); err != nil {
@@ -1011,14 +1012,16 @@ func verifyInternalIngressController(t *testing.T, name types.NamespacedName, ho
 
 			// Wait for the Pod to be deleted. In case it is not deleted,
 			// try getting again until the Pod is gone, before moving
-			wait.PollUntilContextTimeout(ctx, 5*time.Second, 2*time.Minute, true, func(ctx context.Context) (bool, error) {
+			if err := wait.PollUntilContextTimeout(ctx, 5*time.Second, 2*time.Minute, true, func(ctx context.Context) (bool, error) {
 				err = kclient.Get(ctx, clientPodName, clientPod)
 				if !errors.IsNotFound(err) {
 					t.Logf("waiting for %q: to be deleted", clientPodName)
 					return false, nil
 				}
 				return true, nil
-			})
+			}); err != nil {
+				t.Logf("timed out waiting for pod %q to be deleted; will attempt recreation: %v", clientPodName, err)
+			}
 			clientPod = clientPodSpec.DeepCopy()
 			if err := kclient.Create(context.TODO(), clientPod); err != nil {
 				t.Fatalf("failed to create pod %q: %v", clientPodName, err)
