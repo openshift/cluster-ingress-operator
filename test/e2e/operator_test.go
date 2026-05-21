@@ -3305,11 +3305,8 @@ func TestConnectTimeout(t *testing.T) {
 	if err := kclient.Create(context.Background(), httpdPod); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", httpdPod.Namespace, httpdPod.Name, err)
 	}
-	t.Cleanup(func() {
-		if err := kclient.Delete(context.Background(), httpdPod); err != nil {
-			t.Fatalf("failed to delete pod %s/%s: %v", httpdPod.Namespace, httpdPod.Name, err)
-		}
-	})
+
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), httpdPod, 2*time.Minute) })
 
 	networkPolicy := buildTestPodNetworkPolicy(types.NamespacedName{Name: "connect-timeout-http", Namespace: httpdPod.Namespace})
 	if err := kclient.Create(context.TODO(), networkPolicy); err != nil {
@@ -3325,22 +3322,14 @@ func TestConnectTimeout(t *testing.T) {
 	if err := kclient.Create(context.Background(), httpdService); err != nil {
 		t.Fatalf("failed to create service %s/%s: %v", httpdService.Namespace, httpdService.Name, err)
 	}
-	t.Cleanup(func() {
-		if err := kclient.Delete(context.Background(), httpdService); err != nil {
-			t.Fatalf("failed to delete service %s/%s: %v", httpdService.Namespace, httpdService.Name, err)
-		}
-	})
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), httpdService, 2*time.Minute) })
 
 	route := buildRoute(httpdPod.Name, httpdPod.Namespace, httpdService.Name)
 	route.Spec.Host = fmt.Sprintf("%s-%s.%s", route.Name, route.Namespace, ic.Spec.Domain)
 	if err := kclient.Create(context.Background(), route); err != nil {
 		t.Fatalf("failed to create route %s/%s: %v", route.Namespace, route.Name, err)
 	}
-	t.Cleanup(func() {
-		if err := kclient.Delete(context.Background(), route); err != nil {
-			t.Fatalf("failed to delete route %s/%s: %v", route.Namespace, route.Name, err)
-		}
-	})
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), route, 2*time.Minute) })
 
 	// Wait for the load balancer and DNS to be ready.
 	if err := waitForIngressControllerCondition(t, kclient, 10*time.Minute, icName, availableConditionsForIngressControllerWithLoadBalancer...); err != nil {

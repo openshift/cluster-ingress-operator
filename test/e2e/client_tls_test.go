@@ -30,7 +30,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apiserver/pkg/storage/names"
 
-	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -100,11 +99,7 @@ func TestClientTLS(t *testing.T) {
 	if err := kclient.Create(context.TODO(), clientCAConfigmap); err != nil {
 		t.Fatalf("failed to create configmap %q: %v", clientCAConfigmapName, err)
 	}
-	t.Cleanup(func() {
-		if err := kclient.Delete(context.TODO(), clientCAConfigmap); err != nil {
-			t.Fatalf("failed to delete configmap %q: %v", clientCAConfigmapName, err)
-		}
-	})
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), clientCAConfigmap, 2*time.Minute) })
 
 	// Create the custom ingresscontroller.
 	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "client-tls"}
@@ -219,11 +214,8 @@ func TestClientTLS(t *testing.T) {
 	if err := kclient.Create(context.TODO(), clientCertsConfigmap); err != nil {
 		t.Fatalf("failed to create configmap %q: %v", clientCertsConfigmapName, err)
 	}
-	t.Cleanup(func() {
-		if err := kclient.Delete(context.TODO(), clientCertsConfigmap); err != nil {
-			t.Fatalf("failed to delete configmap %q: %v", clientCertsConfigmapName, err)
-		}
-	})
+
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), clientCertsConfigmap, 2*time.Minute) })
 
 	// Create a test client pod with the client certificates.  We will exec
 	// curl commands in this pod to perform the tests.
@@ -252,14 +244,8 @@ func TestClientTLS(t *testing.T) {
 	if err := kclient.Create(context.TODO(), clientPod); err != nil {
 		t.Fatalf("failed to create pod %q: %v", clientPodName, err)
 	}
-	t.Cleanup(func() {
-		if err := kclient.Delete(context.TODO(), clientPod); err != nil {
-			if errors.IsNotFound(err) {
-				return
-			}
-			t.Fatalf("failed to delete pod %q: %v", clientPodName, err)
-		}
-	})
+
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), clientPod, 2*time.Minute) })
 
 	err = wait.PollImmediate(2*time.Second, 3*time.Minute, func() (bool, error) {
 		if err := kclient.Get(context.TODO(), clientPodName, clientPod); err != nil {
