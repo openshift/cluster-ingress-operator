@@ -303,7 +303,7 @@ func TestCanaryWithMTLS(t *testing.T) {
 		if err := updateIngressControllerWithRetryOnConflict(t, defaultName, timeout, func(defaultIC *operatorv1.IngressController) {
 			defaultIC.Spec.ClientTLS = *originalClientTLS
 		}); err != nil {
-			t.Fatalf("Failed to restore default ingress configuration: %v", err)
+			t.Errorf("Failed to restore default ingress configuration: %v", err)
 		}
 		t.Log("Restored clientTLS config for default ingresscontroller.")
 	})

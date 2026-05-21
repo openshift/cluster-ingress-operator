@@ -169,7 +169,7 @@ func TestRouterCompressionOperation(t *testing.T) {
 			}
 			return true, nil
 		}); err != nil {
-			t.Fatalf("failed to cleanup ingress controller: %v", err)
+			t.Errorf("failed to cleanup ingress controller: %v", err)
 		}
 	})
 
