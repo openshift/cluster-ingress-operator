@@ -3066,3 +3066,62 @@ func Test_detectFIPS(t *testing.T) {
 		})
 	}
 }
+
+// Test_HaproxyServerThreshold validates that desiredRouterDeployment correctly
+// sets or omits the ROUTER_METRICS_HAPROXY_SERVER_THRESHOLD environment variable
+// based on the value of spec.tuningOptions.haproxyServerThreshold.
+//
+// When the field is zero (omitted/default), the env var must not be set so that
+// the router image applies its own built-in default. When the field is a positive
+// integer, the env var must be set to the corresponding string value.
+func Test_HaproxyServerThreshold(t *testing.T) {
+	ic, ingressConfig, infraConfig, apiConfig, networkConfig, proxyNeeded, clusterProxyConfig := getRouterDeploymentComponents(t)
+
+	for _, tc := range []struct {
+		name                string
+		threshold           int32
+		expectEnvVarPresent bool
+		expectedEnvVarValue string
+	}{{
+		name:                "threshold is zero (default) — env var must be absent",
+		threshold:           0,
+		expectEnvVarPresent: false,
+		expectedEnvVarValue: "",
+	}, {
+		name:                "threshold is 1 (minimum valid value)",
+		threshold:           1,
+		expectEnvVarPresent: true,
+		expectedEnvVarValue: "1",
+	}, {
+		name:                "threshold is 500 (common production value)",
+		threshold:           500,
+		expectEnvVarPresent: true,
+		expectedEnvVarValue: "500",
+	}, {
+		name:                "threshold is 10000 (large cluster value)",
+		threshold:           10000,
+		expectEnvVarPresent: true,
+		expectedEnvVarValue: "10000",
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			ic.Spec.TuningOptions.HaproxyServerThreshold = tc.threshold
+
+			deployment, err := desiredRouterDeployment(ic, &Config{IngressControllerImage: ingressControllerImage}, ingressConfig, infraConfig, apiConfig, networkConfig, nil, proxyNeeded, false, nil, clusterProxyConfig)
+			if err != nil {
+				t.Fatalf("failed to generate desired router Deployment: %v", err)
+			}
+
+			expectedEnv := []envData{{
+				name:          RouterMetricsHAProxyServerThreshold,
+				expectPresent: tc.expectEnvVarPresent,
+				expectedValue: tc.expectedEnvVarValue,
+			}}
+
+			if err := checkDeploymentEnvironment(t, deployment, expectedEnv); err != nil {
+				t.Errorf("environment variable check failed: %v", err)
+			}
+
+			checkDeploymentHasEnvSorted(t, deployment)
+		})
+	}
+}

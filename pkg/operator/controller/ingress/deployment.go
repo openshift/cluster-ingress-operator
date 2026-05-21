@@ -149,6 +149,12 @@ const (
 	RouterBackendCheckInterval = "ROUTER_BACKEND_CHECK_INTERVAL"
 	RouterTLSCurves            = "ROUTER_CURVES"
 
+	// RouterMetricsHAProxyServerThreshold is the env var that controls the maximum
+	// number of servers (backends) per HAProxy process for which per-server Prometheus
+	// metrics are reported. Exceeding this threshold disables per-server metrics to
+	// limit metric cardinality. Maps to spec.tuningOptions.haproxyServerThreshold.
+	RouterMetricsHAProxyServerThreshold = "ROUTER_METRICS_HAPROXY_SERVER_THRESHOLD"
+
 	RouterServiceHTTPPort  = "ROUTER_SERVICE_HTTP_PORT"
 	RouterServiceHTTPSPort = "ROUTER_SERVICE_HTTPS_PORT"
 	StatsPort              = "STATS_PORT"
@@ -564,6 +570,12 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 	env = append(env, corev1.EnvVar{Name: "ROUTER_METRICS_TYPE", Value: "haproxy"})
 	env = append(env, corev1.EnvVar{Name: "ROUTER_METRICS_TLS_CERT_FILE", Value: filepath.Join(certsVolumeMountPath, "tls.crt")})
 	env = append(env, corev1.EnvVar{Name: "ROUTER_METRICS_TLS_KEY_FILE", Value: filepath.Join(certsVolumeMountPath, "tls.key")})
+	if ci.Spec.TuningOptions.HaproxyServerThreshold > 0 {
+		env = append(env, corev1.EnvVar{
+			Name:  RouterMetricsHAProxyServerThreshold,
+			Value: strconv.Itoa(int(ci.Spec.TuningOptions.HaproxyServerThreshold)),
+		})
+	}
 
 	var unsupportedConfigOverrides struct {
 		LoadBalancingAlgorithm string `json:"loadBalancingAlgorithm"`
