@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -29,7 +30,7 @@ import (
 )
 
 // testPodCount is a counter that is used to give each test pod a distinct name.
-var testPodCount int
+var testPodCount atomic.Int32
 
 // testRouteHeaders connects to the specified route using the provided address
 // and verifies that the response has the expected number of matches of the
@@ -52,8 +53,8 @@ func testRouteHeaders(t *testing.T, image string, route *routev1.Route, address 
 		extraCurlArgs = append(extraCurlArgs, "-H", header)
 	}
 	extraCurlArgs = append(extraCurlArgs, "--resolve", route.Spec.Host+":80:"+address)
-	testPodCount++
-	name := fmt.Sprintf("%s%d", route.Name, testPodCount)
+	count := testPodCount.Add(1)
+	name := fmt.Sprintf("%s%d", route.Name, count)
 	clientPod := buildCurlPod(name, route.Namespace, image, route.Spec.Host, address, extraCurlArgs...)
 	if err := createWithRetryOnError(t, context.Background(), clientPod, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)

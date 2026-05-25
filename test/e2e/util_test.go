@@ -826,10 +826,19 @@ func updateInfrastructureConfigStatusWithRetryOnConflict(t *testing.T, timeout t
 
 // createWithRetryOnError creates the given object. If there is an error on create
 // apart from "AlreadyExists" then the create is retried until the timeout is reached.
+// AlreadyExists is treated as success because this helper is used in verification
+// functions (verifyExternalIngressController, verifyInternalIngressController) that
+// may be called multiple times for the same IngressController. For first-time
+// resource creation where AlreadyExists indicates test pollution, prefer using
+// kclient.Create directly or createOrGetWithRetry (which populates server-side fields).
 func createWithRetryOnError(t *testing.T, ctx context.Context, obj client.Object, timeout time.Duration) error {
 	t.Helper()
 	return wait.PollUntilContextTimeout(ctx, 2*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
-		if err := kclient.Create(ctx, obj); err != nil && !errors.IsAlreadyExists(err) {
+		if err := kclient.Create(ctx, obj); err != nil {
+			if errors.IsAlreadyExists(err) {
+				t.Logf("resource %s already exists, treating as success", obj.GetName())
+				return true, nil
+			}
 			t.Logf("error creating %s: %v, retrying...", obj.GetName(), err)
 			return false, nil
 		}

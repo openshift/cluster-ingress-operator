@@ -715,7 +715,9 @@ func testGatewayOpenshiftConditions(t *testing.T) {
 		gateway, err := createGateway(t, gatewayClass, name, "default", testDomain)
 		require.NoError(t, err, "failed to create gateway", "name", name)
 		t.Cleanup(func() {
-			require.NoError(t, client.IgnoreNotFound(kclient.Delete(context.TODO(), gateway)), "failed to clean test gateway", "name", name)
+			if err := client.IgnoreNotFound(kclient.Delete(context.TODO(), gateway)); err != nil {
+				t.Errorf("failed to clean test gateway %q: %v", name, err)
+			}
 		})
 
 		gateway, err = assertGatewaySuccessful(t, "default", name)
@@ -745,7 +747,9 @@ func testGatewayOpenshiftConditions(t *testing.T) {
 		gateway, err := createGateway(t, gatewayClass, name, operatorcontroller.DefaultOperandNamespace, testDomain)
 		require.NoError(t, err, "failed to create gateway", "name", name)
 		t.Cleanup(func() {
-			require.NoError(t, client.IgnoreNotFound(kclient.Delete(context.TODO(), gateway)), "failed to clean test gateway", "name", name)
+			if err := client.IgnoreNotFound(kclient.Delete(context.TODO(), gateway)); err != nil {
+				t.Errorf("failed to clean test gateway %q: %v", name, err)
+			}
 		})
 
 		gateway, err = assertGatewaySuccessful(t, operatorcontroller.DefaultOperandNamespace, name)
@@ -787,7 +791,9 @@ func testGatewayOpenshiftConditions(t *testing.T) {
 		gateway, err := createGateway(t, gatewayClass, name, operatorcontroller.DefaultOperandNamespace, testDomain)
 		require.NoError(t, err, "failed to create gateway", "name", name)
 		t.Cleanup(func() {
-			require.NoError(t, client.IgnoreNotFound(kclient.Delete(context.TODO(), gateway)), "failed to clean test gateway", "name", name)
+			if err := client.IgnoreNotFound(kclient.Delete(context.TODO(), gateway)); err != nil {
+				t.Errorf("failed to clean test gateway %q: %v", name, err)
+			}
 		})
 
 		gateway, err = assertGatewaySuccessful(t, operatorcontroller.DefaultOperandNamespace, name)
@@ -1025,7 +1031,9 @@ func testGatewayOpenshiftConditions(t *testing.T) {
 			dupGateway, err := createGateway(t, gatewayClass, dupName, operatorcontroller.DefaultOperandNamespace, testDomain)
 			require.NoError(t, err, "failed to create gateway", "name", name)
 			t.Cleanup(func() {
-				require.NoError(t, client.IgnoreNotFound(kclient.Delete(context.TODO(), dupGateway)), "failed to clean duplicated test gateway", "name", name)
+				if err := client.IgnoreNotFound(kclient.Delete(context.TODO(), dupGateway)); err != nil {
+					t.Errorf("failed to clean duplicated test gateway %q: %v", name, err)
+				}
 			})
 			assert.Eventually(t, func() bool {
 				current := &gatewayapiv1.Gateway{}
