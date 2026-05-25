@@ -37,7 +37,7 @@ func TestDeleteIngressControllerShouldClearRouteStatus(t *testing.T) {
 			"type": icName.Name,
 		},
 	}
-	if err := kclient.Create(context.TODO(), ic); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ic, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
 	}
 	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
@@ -46,7 +46,7 @@ func TestDeleteIngressControllerShouldClearRouteStatus(t *testing.T) {
 	// Use openshift-console namespace to get a namespace outside the ingress-operator's cache.
 	routeName := types.NamespacedName{Namespace: "openshift-console", Name: "route-" + icName.Name}
 	route := newRouteWithLabel(routeName, icName.Name)
-	if err := kclient.Create(context.TODO(), route); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), route, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create route: %v", err)
 	}
 	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), route, 2*time.Minute) })
@@ -79,7 +79,7 @@ func TestIngressControllerRouteSelectorUpdateShouldClearRouteStatus(t *testing.T
 		},
 	}
 
-	if err := kclient.Create(context.TODO(), ic); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ic, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
 	}
 	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
@@ -89,7 +89,7 @@ func TestIngressControllerRouteSelectorUpdateShouldClearRouteStatus(t *testing.T
 	// Use openshift-console namespace to get a namespace outside the ingress-operator's cache.
 	routeFooLabelName := types.NamespacedName{Namespace: "openshift-console", Name: "route-foo-label"}
 	routeFooLabel := newRouteWithLabel(routeFooLabelName, "foo")
-	if err := kclient.Create(context.TODO(), routeFooLabel); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), routeFooLabel, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create route: %v", err)
 	}
 	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), routeFooLabel, 2*time.Minute) })
@@ -99,7 +99,7 @@ func TestIngressControllerRouteSelectorUpdateShouldClearRouteStatus(t *testing.T
 	// Use openshift-console namespace to get a namespace outside the ingress-operator's cache.
 	routeBarLabelName := types.NamespacedName{Namespace: "openshift-console", Name: "route-bar-label"}
 	routeBarLabel := newRouteWithLabel(routeBarLabelName, "bar")
-	if err := kclient.Create(context.TODO(), routeBarLabel); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), routeBarLabel, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create route: %v", err)
 	}
 	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), routeBarLabel, 2*time.Minute) })
@@ -144,7 +144,7 @@ func TestIngressControllerNamespaceSelectorUpdateShouldClearRouteStatus(t *testi
 		},
 	}
 
-	if err := kclient.Create(context.TODO(), ic); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ic, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
 	}
 	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
@@ -158,7 +158,7 @@ func TestIngressControllerNamespaceSelectorUpdateShouldClearRouteStatus(t *testi
 			},
 		},
 	}
-	if err := kclient.Create(context.TODO(), nsFoo); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), nsFoo, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create namespace: %v", err)
 	}
 	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), nsFoo, 2*time.Minute) })
@@ -172,7 +172,7 @@ func TestIngressControllerNamespaceSelectorUpdateShouldClearRouteStatus(t *testi
 			},
 		},
 	}
-	if err := kclient.Create(context.TODO(), nsBar); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), nsBar, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create namespace: %v", err)
 	}
 	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), nsBar, 2*time.Minute) })
@@ -181,7 +181,7 @@ func TestIngressControllerNamespaceSelectorUpdateShouldClearRouteStatus(t *testi
 	// updated, the status should clear.
 	routeFooLabelName := types.NamespacedName{Namespace: nsFoo.Name, Name: "route-foo-label"}
 	routeFooLabel := newRouteWithLabel(routeFooLabelName, "")
-	if err := kclient.Create(context.TODO(), routeFooLabel); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), routeFooLabel, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create route: %v", err)
 	}
 	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), routeFooLabel, 2*time.Minute) })
@@ -190,7 +190,7 @@ func TestIngressControllerNamespaceSelectorUpdateShouldClearRouteStatus(t *testi
 	// the IC selectors are updated. The status SHOULD be successfully admitted.
 	routeBarLabelName := types.NamespacedName{Namespace: nsBar.Name, Name: "route-bar-label"}
 	routeBarLabel := newRouteWithLabel(routeBarLabelName, "bar")
-	if err := kclient.Create(context.TODO(), routeBarLabel); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), routeBarLabel, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create route: %v", err)
 	}
 	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), routeBarLabel, 2*time.Minute) })

@@ -343,7 +343,7 @@ func idleConnectionTerminationPolicyRunTest(t *testing.T, policy operatorv1.Ingr
 
 		routeName := types.NamespacedName{Namespace: ns.Name, Name: "test"}
 		route := buildRoute(routeName.Name, routeName.Namespace, webService1)
-		if err := kclient.Create(context.Background(), route); err != nil {
+		if err := createWithRetryOnError(t, context.Background(), route, 2*time.Minute); err != nil {
 			return nil, fmt.Errorf("failed to create route %s: %w", routeName, err)
 		}
 
@@ -389,7 +389,7 @@ func idleConnectionTerminationPolicyRunTest(t *testing.T, policy operatorv1.Ingr
 		ic.Spec.NamespaceSelector = &metav1.LabelSelector{
 			MatchLabels: testNs.Labels,
 		}
-		if err := kclient.Create(context.Background(), ic); err != nil {
+		if err := createWithRetryOnError(t, context.Background(), ic, 2*time.Minute); err != nil {
 			return nil, fmt.Errorf("failed to create IngressController: %w", err)
 		}
 		t.Cleanup(func() {

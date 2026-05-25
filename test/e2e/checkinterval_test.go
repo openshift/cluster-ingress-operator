@@ -29,7 +29,7 @@ func TestHealthCheckIntervalIngressController(t *testing.T) {
 	domain := name.Name + "." + dnsConfig.Spec.BaseDomain
 	ic := newPrivateController(name, domain)
 
-	if err := kclient.Create(context.TODO(), ic); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ic, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create ingresscontroller %s: %v", name, err)
 	}
 	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })

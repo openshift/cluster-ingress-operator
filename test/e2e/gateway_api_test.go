@@ -347,7 +347,7 @@ func testGatewayAPIManualDeployment(t *testing.T) {
 		},
 	}
 	t.Logf("Creating gateway %q...", gatewayName)
-	if err := kclient.Create(context.Background(), &gateway); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), &gateway, 2*time.Minute); err != nil {
 		t.Fatalf("Failed to create gateway %v: %v", gatewayName, err)
 	}
 	t.Cleanup(func() {
@@ -712,7 +712,7 @@ func testGatewayOpenshiftConditions(t *testing.T) {
 		name := names.SimpleNameGenerator.GenerateName("gw-test-")
 		rnd := rand.IntN(1000000)
 		testDomain := fmt.Sprintf("some-%d.%s", rnd, domain)
-		gateway, err := createGateway(gatewayClass, name, "default", testDomain)
+		gateway, err := createGateway(t, gatewayClass, name, "default", testDomain)
 		require.NoError(t, err, "failed to create gateway", "name", name)
 		t.Cleanup(func() {
 			require.NoError(t, client.IgnoreNotFound(kclient.Delete(context.TODO(), gateway)), "failed to clean test gateway", "name", name)
@@ -742,7 +742,7 @@ func testGatewayOpenshiftConditions(t *testing.T) {
 		name := names.SimpleNameGenerator.GenerateName("gw-test-")
 		rnd := rand.IntN(1000000)
 		testDomain := fmt.Sprintf("some-%d.not.something.managed.tld", rnd)
-		gateway, err := createGateway(gatewayClass, name, operatorcontroller.DefaultOperandNamespace, testDomain)
+		gateway, err := createGateway(t, gatewayClass, name, operatorcontroller.DefaultOperandNamespace, testDomain)
 		require.NoError(t, err, "failed to create gateway", "name", name)
 		t.Cleanup(func() {
 			require.NoError(t, client.IgnoreNotFound(kclient.Delete(context.TODO(), gateway)), "failed to clean test gateway", "name", name)
@@ -784,7 +784,7 @@ func testGatewayOpenshiftConditions(t *testing.T) {
 		name := names.SimpleNameGenerator.GenerateName("gw-test-")
 		rnd := rand.IntN(1000000)
 		testDomain := fmt.Sprintf("some-%d.%s", rnd, domain)
-		gateway, err := createGateway(gatewayClass, name, operatorcontroller.DefaultOperandNamespace, testDomain)
+		gateway, err := createGateway(t, gatewayClass, name, operatorcontroller.DefaultOperandNamespace, testDomain)
 		require.NoError(t, err, "failed to create gateway", "name", name)
 		t.Cleanup(func() {
 			require.NoError(t, client.IgnoreNotFound(kclient.Delete(context.TODO(), gateway)), "failed to clean test gateway", "name", name)
@@ -1022,7 +1022,7 @@ func testGatewayOpenshiftConditions(t *testing.T) {
 		t.Run("should not conflict with a second Gateway created with the same domain", func(t *testing.T) {
 			t.Skip("skipping while the PR for duplicate DNS is not merged")
 			dupName := gateway.GetName() + "-dup"
-			dupGateway, err := createGateway(gatewayClass, dupName, operatorcontroller.DefaultOperandNamespace, testDomain)
+			dupGateway, err := createGateway(t, gatewayClass, dupName, operatorcontroller.DefaultOperandNamespace, testDomain)
 			require.NoError(t, err, "failed to create gateway", "name", name)
 			t.Cleanup(func() {
 				require.NoError(t, client.IgnoreNotFound(kclient.Delete(context.TODO(), dupGateway)), "failed to clean duplicated test gateway", "name", name)
@@ -1504,7 +1504,7 @@ func ensureGatewayObjectCreation(t *testing.T, ns *corev1.Namespace) error {
 	// Use the dnsConfig base domain set up in TestMain.
 	domain = "gws." + dnsConfig.Spec.BaseDomain
 
-	testGateway, err := createGateway(gatewayClass, testGatewayName, operatorcontroller.DefaultOperandNamespace, domain)
+	testGateway, err := createGateway(t, gatewayClass, testGatewayName, operatorcontroller.DefaultOperandNamespace, domain)
 	if err != nil {
 		return fmt.Errorf("feature gate was enabled, but gateway object could not be created: %v", err)
 	}
@@ -1537,7 +1537,7 @@ func deleteTestCRDs(t *testing.T) {
 // ensureTestCRDs creates test Gateway API custom resource definitions.
 func ensureTestCRDs(t *testing.T) {
 	for _, crdName := range testCRDNames {
-		if _, err := createCRD(crdName); err != nil {
+		if _, err := createCRD(t, crdName); err != nil {
 			t.Fatalf("failed to create test crd %q: %v", crdName, err)
 		} else {
 			t.Logf("created test crd %q", crdName)

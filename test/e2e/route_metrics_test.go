@@ -147,7 +147,7 @@ func testRouteMetricsControllerLabelSelector(t *testing.T, testRS, testNS bool) 
 		}
 	}
 
-	if err := kclient.Create(context.TODO(), ic); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ic, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
 	}
 
@@ -173,7 +173,7 @@ func testRouteMetricsControllerLabelSelector(t *testing.T, testRS, testNS bool) 
 			"expression": correctLabel,
 		}
 	}
-	if err := kclient.Create(context.TODO(), ns); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ns, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create namespace: %v", err)
 	}
 
@@ -199,7 +199,7 @@ func testRouteMetricsControllerLabelSelector(t *testing.T, testRS, testNS bool) 
 		},
 	}
 
-	if err := kclient.Create(context.TODO(), routeFooLabel); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), routeFooLabel, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create route: %v", err)
 	}
 

@@ -53,7 +53,7 @@ func testHeaders(t *testing.T, image string, route *routev1.Route, address strin
 	count := podCount.Add(1)
 	name := fmt.Sprintf("%s%d", route.Name, count)
 	clientPod := buildCurlPod(name, route.Namespace, image, route.Spec.Host, address, extraCurlArgs...)
-	if err := kclient.Create(context.TODO(), clientPod); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), clientPod, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
 	}
 	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), clientPod, 2*time.Minute) })
@@ -122,7 +122,7 @@ func TestSetIngressControllerResponseHeaders(t *testing.T) {
 			},
 		},
 	}
-	if err := kclient.Create(context.TODO(), ic); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ic, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
 	}
 	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
@@ -146,19 +146,19 @@ func TestSetIngressControllerResponseHeaders(t *testing.T) {
 
 	namespace := createNamespace(t, names.SimpleNameGenerator.GenerateName("set-response-headers-"))
 	echoPod := buildEchoPod("set-response-header-via-ic-echo", namespace.Name)
-	if err := kclient.Create(context.TODO(), echoPod); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoPod, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 	}
 	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoPod, 2*time.Minute) })
 
 	echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels)
-	if err := kclient.Create(context.TODO(), echoService); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoService, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 	}
 	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoService, 2*time.Minute) })
 
 	echoRoute := buildRoute(echoPod.Name, echoPod.Namespace, echoService.Name)
-	if err := kclient.Create(context.TODO(), echoRoute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoRoute, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
 	}
 	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoRoute, 2*time.Minute) })
@@ -182,7 +182,7 @@ func TestSetRouteResponseHeaders(t *testing.T) {
 	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "set-response-headers-route"}
 	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
 	ic := newPrivateController(icName, domain)
-	if err := kclient.Create(context.TODO(), ic); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ic, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
 	}
 	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
@@ -206,19 +206,19 @@ func TestSetRouteResponseHeaders(t *testing.T) {
 
 	namespace := createNamespace(t, names.SimpleNameGenerator.GenerateName("set-response-headers-"))
 	echoPod := buildEchoPod("set-response-header-via-route-echo", namespace.Name)
-	if err := kclient.Create(context.TODO(), echoPod); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoPod, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 	}
 	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoPod, 2*time.Minute) })
 
 	echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels)
-	if err := kclient.Create(context.TODO(), echoService); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoService, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 	}
 	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoService, 2*time.Minute) })
 
 	echoRoute := buildRouteWithHTTPResponseHeaders(echoPod.Name, echoPod.Namespace, echoService.Name, headerName, headerValue)
-	if err := kclient.Create(context.TODO(), echoRoute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoRoute, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
 	}
 	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoRoute, 2*time.Minute) })

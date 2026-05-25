@@ -69,7 +69,7 @@ func TestAWSLBSubnets(t *testing.T) {
 			},
 		},
 	}
-	if err = kclient.Create(context.Background(), ic); err != nil {
+	if err = createWithRetryOnError(t, context.Background(), ic, 2*time.Minute); err != nil {
 		t.Fatalf("expected ingresscontroller creation failed: %v", err)
 	}
 	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
@@ -226,7 +226,7 @@ func TestUnmanagedAWSLBSubnets(t *testing.T) {
 					},
 				},
 			}
-			if err = kclient.Create(context.Background(), ic); err != nil {
+			if err = createWithRetryOnError(t, context.Background(), ic, 2*time.Minute); err != nil {
 				t.Fatalf("expected ingresscontroller creation failed: %v", err)
 			}
 			t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })

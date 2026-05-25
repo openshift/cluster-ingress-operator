@@ -78,7 +78,7 @@ func createPrivateController(t *testing.T, privateName string, privateDomain str
 
 	ic := newPrivateController(icName, domain)
 	// Create a new private Ingress Controller (deletion handled by caller)
-	if err := kclient.Create(context.TODO(), ic); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ic, 2*time.Minute); err != nil {
 		return ic, fmt.Errorf("error creating private ingresscontroller %s: %v", privateName, err)
 	}
 	return ic, nil
@@ -198,7 +198,7 @@ func TestRouterCompressionOperation(t *testing.T) {
 			"index.html": "Hello World!",
 		},
 	}
-	if err := kclient.Create(context.TODO(), helloConfigMap); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), helloConfigMap, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create configmap %s/%s: %v", helloConfigMap.Namespace, helloConfigMap.Name, err)
 	}
 	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), helloConfigMap, 2*time.Minute) })
@@ -236,13 +236,13 @@ func TestRouterCompressionOperation(t *testing.T) {
 			}},
 		},
 	}
-	if err := kclient.Create(context.TODO(), helloPod); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), helloPod, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", helloPod.Namespace, helloPod.Name, err)
 	}
 	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), helloPod, 2*time.Minute) })
 
 	helloService := buildEchoService(helloPod.Name, helloPod.Namespace, helloPod.ObjectMeta.Labels)
-	if err := kclient.Create(context.TODO(), helloService); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), helloService, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create service %s/%s: %v", helloService.Namespace, helloService.Name, err)
 	}
 	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), helloService, 2*time.Minute) })
@@ -252,7 +252,7 @@ func TestRouterCompressionOperation(t *testing.T) {
 		Termination:                   routev1.TLSTerminationEdge,
 		InsecureEdgeTerminationPolicy: routev1.InsecureEdgeTerminationPolicyRedirect,
 	}
-	if err := kclient.Create(context.TODO(), helloRoute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), helloRoute, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create route %s/%s: %v", helloRoute.Namespace, helloRoute.Name, err)
 	}
 	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), helloRoute, 2*time.Minute) })

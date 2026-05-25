@@ -204,34 +204,19 @@ func createHttpRoute(t *testing.T, namespace, routeName, parentNamespace, hostna
 	}
 
 	httpRoute := buildHTTPRoute(routeName, namespace, gateway.Name, parentNamespace, hostname, backendRefname)
-	if err := kclient.Create(context.TODO(), httpRoute); err != nil {
-		if kerrors.IsAlreadyExists(err) {
-			name := types.NamespacedName{Namespace: namespace, Name: routeName}
-			if err = kclient.Get(context.TODO(), name, httpRoute); err == nil {
-				return httpRoute, nil
-			} else {
-				return nil, fmt.Errorf("failed to access existing http route: %v", err.Error())
-			}
-		} else {
-			return nil, fmt.Errorf("failed to create http route: %v", err.Error())
-		}
+	if err := createOrGetWithRetry(t, context.Background(), httpRoute, 2*time.Minute); err != nil {
+		return nil, fmt.Errorf("failed to create http route: %v", err)
 	}
 	return httpRoute, nil
 }
 
 // createGateway checks if the Gateway can be created.
 // If it can, it is returned.  If it can't an error is returned.
-func createGateway(gatewayClass *gatewayapiv1.GatewayClass, name, namespace, domain string) (*gatewayapiv1.Gateway, error) {
+func createGateway(t *testing.T, gatewayClass *gatewayapiv1.GatewayClass, name, namespace, domain string) (*gatewayapiv1.Gateway, error) {
+	t.Helper()
 	gateway := buildGateway(name, namespace, gatewayClass.Name, allNamespaces, domain)
-	if err := kclient.Create(context.TODO(), gateway); err != nil {
-		if kerrors.IsAlreadyExists(err) {
-			name := types.NamespacedName{Namespace: namespace, Name: name}
-			if err = kclient.Get(context.TODO(), name, gateway); err != nil {
-				return nil, fmt.Errorf("failed to get the existing gateway: %v", err.Error())
-			}
-		} else {
-			return nil, fmt.Errorf("failed to create gateway: %v", err.Error())
-		}
+	if err := createOrGetWithRetry(t, context.Background(), gateway, 2*time.Minute); err != nil {
+		return nil, fmt.Errorf("failed to create gateway: %v", err)
 	}
 	return gateway, nil
 }
@@ -319,15 +304,10 @@ func createGatewayClass(t *testing.T, name, controllerName string) (*gatewayapiv
 }
 
 // createCRD creates the CRD with the given name or retrieves it if already exists.
-func createCRD(name string) (*apiextensionsv1.CustomResourceDefinition, error) {
+func createCRD(t *testing.T, name string) (*apiextensionsv1.CustomResourceDefinition, error) {
+	t.Helper()
 	crd := buildGWAPICRDFromName(name)
-	if err := kclient.Create(context.Background(), crd); err != nil {
-		if kerrors.IsAlreadyExists(err) {
-			if err := kclient.Get(context.Background(), types.NamespacedName{Name: name}, crd); err != nil {
-				return nil, fmt.Errorf("failed to get crd %q: %w", name, err)
-			}
-			return crd, nil
-		}
+	if err := createOrGetWithRetry(t, context.Background(), crd, 2*time.Minute); err != nil {
 		return nil, fmt.Errorf("failed to create crd %q: %w", name, err)
 	}
 	return crd, nil

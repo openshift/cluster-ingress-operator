@@ -39,7 +39,7 @@ func TestHTTPHeaderBufferSize(t *testing.T) {
 		HeaderBufferBytes:           65536,
 		HeaderBufferMaxRewriteBytes: 16384,
 	}
-	if err := kclient.Create(context.TODO(), ic); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ic, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
 	}
 
@@ -65,19 +65,19 @@ func TestHTTPHeaderBufferSize(t *testing.T) {
 
 	namespace := createNamespace(t, names.SimpleNameGenerator.GenerateName("header-buffer-size-"))
 	echoPod := buildEchoPod("header-buffer-size-echo", namespace.Name)
-	if err := kclient.Create(context.TODO(), echoPod); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoPod, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 	}
 	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoPod, 2*time.Minute) })
 
 	echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels)
-	if err := kclient.Create(context.TODO(), echoService); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoService, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 	}
 	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoService, 2*time.Minute) })
 
 	echoRoute := buildRoute(echoPod.Name, echoPod.Namespace, echoService.Name)
-	if err := kclient.Create(context.TODO(), echoRoute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoRoute, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
 	}
 	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoRoute, 2*time.Minute) })
@@ -108,7 +108,7 @@ func TestHTTPHeaderBufferSize(t *testing.T) {
 	name := "header-buffer-size-test-large-buffers"
 	image := deployment.Spec.Template.Spec.Containers[0].Image
 	clientPodValidRequest := buildCurlPod(name, echoRoute.Namespace, image, echoRoute.Spec.Host, service.Spec.ClusterIP, extraCurlArgs...)
-	if err := kclient.Create(context.TODO(), clientPodValidRequest); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), clientPodValidRequest, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", clientPodValidRequest.Namespace, clientPodValidRequest.Name, err)
 	}
 	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), clientPodValidRequest, 2*time.Minute) })
@@ -229,7 +229,7 @@ func TestHTTPHeaderBufferSize(t *testing.T) {
 	name = name + "-fail-case"
 	clientPodInvalidRequest := buildCurlPod(name, echoRoute.Namespace, image, echoRoute.Spec.Host, service.Spec.ClusterIP, extraCurlArgs...)
 
-	if err := kclient.Create(context.TODO(), clientPodInvalidRequest); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), clientPodInvalidRequest, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", clientPodInvalidRequest.Namespace, clientPodInvalidRequest.Name, err)
 	}
 

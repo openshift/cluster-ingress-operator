@@ -73,13 +73,13 @@ func TestHstsPolicyWorks(t *testing.T) {
 
 	// Create pod
 	echoPod := buildEchoPod("hsts-policy-echo", ns.Name)
-	if err := kclient.Create(context.TODO(), echoPod); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoPod, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", ns, echoPod.Name, err)
 	}
 
 	// Create service
 	echoService := buildEchoService(echoPod.Name, ns.Name, echoPod.ObjectMeta.Labels)
-	if err := kclient.Create(context.TODO(), echoService); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoService, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 	}
 
@@ -96,7 +96,7 @@ func TestHstsPolicyWorks(t *testing.T) {
 	exampleHeader := "max-age=0;preload;includesubdomains"
 	t.Logf("creating a valid route at %s", time.Now().Format(time.StampMilli))
 	validRoute := buildRouteWithHSTS("valid-route", echoPod.Namespace, echoService.Name, "valid-route."+appsDomain, exampleHeader)
-	if err := kclient.Create(context.TODO(), validRoute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), validRoute, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create a valid route %s/%s: %v", validRoute.Namespace, validRoute.Name, err)
 	} else {
 		t.Logf("created a valid route at %s: %s/%s with annotation %s", time.Now().Format(time.StampMilli), validRoute.Namespace, validRoute.Name, validRoute.Annotations)

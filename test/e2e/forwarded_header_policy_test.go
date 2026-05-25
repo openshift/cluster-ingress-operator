@@ -55,7 +55,7 @@ func testRouteHeaders(t *testing.T, image string, route *routev1.Route, address 
 	testPodCount++
 	name := fmt.Sprintf("%s%d", route.Name, testPodCount)
 	clientPod := buildCurlPod(name, route.Namespace, image, route.Spec.Host, address, extraCurlArgs...)
-	if err := kclient.Create(context.TODO(), clientPod); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), clientPod, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
 	}
 
@@ -124,7 +124,7 @@ func TestForwardedHeaderPolicyAppend(t *testing.T) {
 	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "forwardedheader-append"}
 	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
 	ic := newPrivateController(icName, domain)
-	if err := kclient.Create(context.TODO(), ic); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ic, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
 	}
 	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
@@ -149,7 +149,7 @@ func TestForwardedHeaderPolicyAppend(t *testing.T) {
 	// Create a pod and route that echoes back the request.
 	namespace := createNamespace(t, names.SimpleNameGenerator.GenerateName("fhp-append-"))
 	echoPod := buildEchoPod("forwarded-header-policy-append-echo", namespace.Name)
-	if err := kclient.Create(context.TODO(), echoPod); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoPod, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 	}
 
@@ -158,7 +158,7 @@ func TestForwardedHeaderPolicyAppend(t *testing.T) {
 	})
 
 	echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels)
-	if err := kclient.Create(context.TODO(), echoService); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoService, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 	}
 
@@ -167,7 +167,7 @@ func TestForwardedHeaderPolicyAppend(t *testing.T) {
 	})
 
 	echoRoute := buildRoute(echoPod.Name, echoPod.Namespace, echoService.Name)
-	if err := kclient.Create(context.TODO(), echoRoute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoRoute, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
 	}
 
@@ -218,7 +218,7 @@ func TestForwardedHeaderPolicyReplace(t *testing.T) {
 	ic.Spec.HTTPHeaders = &operatorv1.IngressControllerHTTPHeaders{
 		ForwardedHeaderPolicy: operatorv1.ReplaceHTTPHeaderPolicy,
 	}
-	if err := kclient.Create(context.TODO(), ic); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ic, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
 	}
 	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
@@ -242,7 +242,7 @@ func TestForwardedHeaderPolicyReplace(t *testing.T) {
 
 	namespace := createNamespace(t, names.SimpleNameGenerator.GenerateName("fhp-replace-"))
 	echoPod := buildEchoPod("forwarded-header-policy-replace-echo", namespace.Name)
-	if err := kclient.Create(context.TODO(), echoPod); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoPod, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 	}
 	t.Cleanup(func() {
@@ -250,7 +250,7 @@ func TestForwardedHeaderPolicyReplace(t *testing.T) {
 	})
 
 	echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels)
-	if err := kclient.Create(context.TODO(), echoService); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoService, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 	}
 	t.Cleanup(func() {
@@ -258,7 +258,7 @@ func TestForwardedHeaderPolicyReplace(t *testing.T) {
 	})
 
 	echoRoute := buildRoute(echoPod.Name, echoPod.Namespace, echoService.Name)
-	if err := kclient.Create(context.TODO(), echoRoute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoRoute, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
 	}
 	t.Cleanup(func() {
@@ -283,7 +283,7 @@ func TestForwardedHeaderPolicyNever(t *testing.T) {
 	ic.Spec.HTTPHeaders = &operatorv1.IngressControllerHTTPHeaders{
 		ForwardedHeaderPolicy: operatorv1.NeverHTTPHeaderPolicy,
 	}
-	if err := kclient.Create(context.TODO(), ic); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ic, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
 	}
 	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
@@ -307,7 +307,7 @@ func TestForwardedHeaderPolicyNever(t *testing.T) {
 
 	namespace := createNamespace(t, names.SimpleNameGenerator.GenerateName("fhp-never-"))
 	echoPod := buildEchoPod("forwarded-header-policy-never-echo", namespace.Name)
-	if err := kclient.Create(context.TODO(), echoPod); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoPod, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 	}
 
@@ -316,7 +316,7 @@ func TestForwardedHeaderPolicyNever(t *testing.T) {
 	})
 
 	echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels)
-	if err := kclient.Create(context.TODO(), echoService); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoService, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 	}
 	t.Cleanup(func() {
@@ -324,7 +324,7 @@ func TestForwardedHeaderPolicyNever(t *testing.T) {
 	})
 
 	echoRoute := buildRoute(echoPod.Name, echoPod.Namespace, echoService.Name)
-	if err := kclient.Create(context.TODO(), echoRoute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoRoute, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
 	}
 	t.Cleanup(func() {
@@ -350,7 +350,7 @@ func TestForwardedHeaderPolicyIfNone(t *testing.T) {
 	ic.Spec.HTTPHeaders = &operatorv1.IngressControllerHTTPHeaders{
 		ForwardedHeaderPolicy: operatorv1.IfNoneHTTPHeaderPolicy,
 	}
-	if err := kclient.Create(context.TODO(), ic); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ic, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
 	}
 	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
@@ -374,7 +374,7 @@ func TestForwardedHeaderPolicyIfNone(t *testing.T) {
 
 	namespace := createNamespace(t, names.SimpleNameGenerator.GenerateName("fhp-if-none-"))
 	echoPod := buildEchoPod("forwarded-header-policy-if-none-echo", namespace.Name)
-	if err := kclient.Create(context.TODO(), echoPod); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoPod, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 	}
 
@@ -383,14 +383,14 @@ func TestForwardedHeaderPolicyIfNone(t *testing.T) {
 	})
 
 	echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels)
-	if err := kclient.Create(context.TODO(), echoService); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoService, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 	}
 	t.Cleanup(func() {
 		deleteWithRetryOnError(t, context.Background(), echoService, 2*time.Minute)
 	})
 	echoRoute := buildRoute(echoPod.Name, echoPod.Namespace, echoService.Name)
-	if err := kclient.Create(context.TODO(), echoRoute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoRoute, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
 	}
 	t.Cleanup(func() {

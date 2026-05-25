@@ -84,7 +84,7 @@ func TestAWSEIPAllocationsForNLB(t *testing.T) {
 		},
 	}
 
-	if err := kclient.Create(context.TODO(), ic); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ic, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
 	}
 	t.Cleanup(func() {
@@ -204,7 +204,7 @@ func TestUnmanagedAWSEIPAllocations(t *testing.T) {
 		},
 	}
 
-	if err := kclient.Create(context.Background(), ic); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ic, 2*time.Minute); err != nil {
 		t.Fatalf("expected ingresscontroller creation failed: %v", err)
 	}
 	t.Cleanup(func() {

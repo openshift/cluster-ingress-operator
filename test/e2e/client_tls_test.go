@@ -96,7 +96,7 @@ func TestClientTLS(t *testing.T) {
 		Name:      clientCAConfigmap.Name,
 		Namespace: clientCAConfigmap.Namespace,
 	}
-	if err := kclient.Create(context.TODO(), clientCAConfigmap); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), clientCAConfigmap, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create configmap %q: %v", clientCAConfigmapName, err)
 	}
 	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), clientCAConfigmap, 2*time.Minute) })
@@ -111,7 +111,7 @@ func TestClientTLS(t *testing.T) {
 			Name: clientCAConfigmapName.Name,
 		},
 	}
-	if err := kclient.Create(context.TODO(), ic); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ic, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
 	}
 	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
@@ -121,13 +121,13 @@ func TestClientTLS(t *testing.T) {
 	}
 
 	echoPod := buildEchoPod(names.SimpleNameGenerator.GenerateName("echo-pod-"), testNamespace.Name)
-	if err := kclient.Create(context.TODO(), echoPod); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoPod, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 	}
 	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoPod, 2*time.Minute) })
 
 	echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels)
-	if err := kclient.Create(context.TODO(), echoService); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoService, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 	}
 	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoService, 2*time.Minute) })
@@ -137,7 +137,7 @@ func TestClientTLS(t *testing.T) {
 		Termination:                   routev1.TLSTerminationEdge,
 		InsecureEdgeTerminationPolicy: routev1.InsecureEdgeTerminationPolicyRedirect,
 	}
-	if err := kclient.Create(context.TODO(), echoRoute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoRoute, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
 	}
 	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoRoute, 2*time.Minute) })
@@ -211,7 +211,7 @@ func TestClientTLS(t *testing.T) {
 		Name:      clientCertsConfigmap.Name,
 		Namespace: clientCertsConfigmap.Namespace,
 	}
-	if err := kclient.Create(context.TODO(), clientCertsConfigmap); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), clientCertsConfigmap, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create configmap %q: %v", clientCertsConfigmapName, err)
 	}
 
@@ -241,7 +241,7 @@ func TestClientTLS(t *testing.T) {
 		Name:      clientPod.Name,
 		Namespace: clientPod.Namespace,
 	}
-	if err := kclient.Create(context.TODO(), clientPod); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), clientPod, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create pod %q: %v", clientPodName, err)
 	}
 
@@ -827,13 +827,13 @@ func TestMTLSWithCRLs(t *testing.T) {
 					ReadOnly:  true,
 				})
 
-				if err := kclient.Create(context.TODO(), &crlConfigMap); err != nil {
+				if err := createWithRetryOnError(t, context.Background(), &crlConfigMap, 2*time.Minute); err != nil {
 					t.Fatalf("Failed to create configmap %q: %v", crlConfigMap.Name, err)
 				}
 				t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), &crlConfigMap, 2*time.Minute) })
 			}
 
-			if err := kclient.Create(context.TODO(), &crlHostPod); err != nil {
+			if err := createWithRetryOnError(t, context.Background(), &crlHostPod, 2*time.Minute); err != nil {
 				t.Fatalf("Failed to create pod %q: %v", crlHostPod.Name, err)
 			}
 			// the crlHostPod is one of the first resources to be created, and one of the last to be deleted thanks to
@@ -858,7 +858,7 @@ func TestMTLSWithCRLs(t *testing.T) {
 					}},
 				},
 			}
-			if err := kclient.Create(context.TODO(), &crlHostService); err != nil {
+			if err := createWithRetryOnError(t, context.Background(), &crlHostService, 2*time.Minute); err != nil {
 				t.Fatalf("Failed to create service %q: %v", crlHostService.Name, err)
 			}
 			t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), &crlHostService, 2*time.Minute) })
@@ -886,7 +886,7 @@ func TestMTLSWithCRLs(t *testing.T) {
 					"ca-bundle.pem": strings.Join(tcCerts.CABundle, "\n"),
 				},
 			}
-			if err := kclient.Create(context.TODO(), &clientCAConfigmap); err != nil {
+			if err := createWithRetryOnError(t, context.Background(), &clientCAConfigmap, 2*time.Minute); err != nil {
 				t.Fatalf("Failed to create CA cert configmap: %v", err)
 			}
 			t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), &clientCAConfigmap, 2*time.Minute) })
@@ -902,7 +902,7 @@ func TestMTLSWithCRLs(t *testing.T) {
 				},
 				ClientCertificatePolicy: operatorv1.ClientCertificatePolicyRequired,
 			}
-			if err := kclient.Create(context.TODO(), ic); err != nil {
+			if err := createWithRetryOnError(t, context.Background(), ic, 2*time.Minute); err != nil {
 				t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
 			}
 			t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
@@ -928,7 +928,7 @@ func TestMTLSWithCRLs(t *testing.T) {
 				clientCertsConfigmap.Data[name+".key"] = encodeKey(keyCert.Key)
 				clientCertsConfigmap.Data[name+".pem"] = keyCert.CertFullChain
 			}
-			if err := kclient.Create(context.TODO(), &clientCertsConfigmap); err != nil {
+			if err := createWithRetryOnError(t, context.Background(), &clientCertsConfigmap, 2*time.Minute); err != nil {
 				t.Fatalf("failed to create configmap %q: %v", clientCertsConfigmap.Name, err)
 			}
 			t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), &clientCertsConfigmap, 2*time.Minute) })
@@ -962,7 +962,7 @@ func TestMTLSWithCRLs(t *testing.T) {
 				Name:      clientPod.Name,
 				Namespace: clientPod.Namespace,
 			}
-			if err := kclient.Create(context.TODO(), clientPod); err != nil {
+			if err := createWithRetryOnError(t, context.Background(), clientPod, 2*time.Minute); err != nil {
 				t.Fatalf("failed to create pod %q: %v", clientPodName, err)
 			}
 			t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), clientPod, 2*time.Minute) })
@@ -1014,13 +1014,13 @@ func TestMTLSWithCRLs(t *testing.T) {
 			})
 
 			echoPod := buildEchoPod(names.SimpleNameGenerator.GenerateName("echo-pod-"), namespace.Name)
-			if err := kclient.Create(context.TODO(), echoPod); err != nil {
+			if err := createWithRetryOnError(t, context.Background(), echoPod, 2*time.Minute); err != nil {
 				t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 			}
 			t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoPod, 2*time.Minute) })
 
 			echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels)
-			if err := kclient.Create(context.TODO(), echoService); err != nil {
+			if err := createWithRetryOnError(t, context.Background(), echoService, 2*time.Minute); err != nil {
 				t.Fatalf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 			}
 			t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoService, 2*time.Minute) })
@@ -1030,7 +1030,7 @@ func TestMTLSWithCRLs(t *testing.T) {
 				Termination:                   routev1.TLSTerminationEdge,
 				InsecureEdgeTerminationPolicy: routev1.InsecureEdgeTerminationPolicyRedirect,
 			}
-			if err := kclient.Create(context.TODO(), echoRoute); err != nil {
+			if err := createWithRetryOnError(t, context.Background(), echoRoute, 2*time.Minute); err != nil {
 				t.Fatalf("failed to create route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
 			}
 			t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoRoute, 2*time.Minute) })
@@ -1111,7 +1111,7 @@ func TestCRLUpdate(t *testing.T) {
 			Name: testName,
 		},
 	}
-	if err := kclient.Create(context.TODO(), &namespace); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), &namespace, 2*time.Minute); err != nil {
 		t.Fatalf("Failed to create namespace %q: %v", namespace.Name, err)
 	}
 	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), &namespace, 2*time.Minute) })
@@ -1233,7 +1233,7 @@ func TestCRLUpdate(t *testing.T) {
 				},
 				Data: crlPems,
 			}
-			if err := kclient.Create(context.TODO(), &crlConfigMap); err != nil {
+			if err := createWithRetryOnError(t, context.Background(), &crlConfigMap, 2*time.Minute); err != nil {
 				t.Fatalf("Failed to create configmap %q: %v", crlConfigMap.Name, err)
 			}
 			t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), &crlConfigMap, 2*time.Minute) })
@@ -1282,7 +1282,7 @@ func TestCRLUpdate(t *testing.T) {
 				},
 			}
 
-			if err := kclient.Create(context.TODO(), &crlHostPod); err != nil {
+			if err := createWithRetryOnError(t, context.Background(), &crlHostPod, 2*time.Minute); err != nil {
 				t.Fatalf("Failed to create pod %q: %v", crlHostPod.Name, err)
 			}
 			// the crlHostPod is one of the first resources to be created, and one of the last to be deleted thanks to
@@ -1307,7 +1307,7 @@ func TestCRLUpdate(t *testing.T) {
 					}},
 				},
 			}
-			if err := kclient.Create(context.TODO(), &crlHostService); err != nil {
+			if err := createWithRetryOnError(t, context.Background(), &crlHostService, 2*time.Minute); err != nil {
 				t.Fatalf("Failed to create service %q: %v", crlHostService.Name, err)
 			}
 			t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), &crlHostService, 2*time.Minute) })
@@ -1335,7 +1335,7 @@ func TestCRLUpdate(t *testing.T) {
 					"ca-bundle.pem": strings.Join(caBundle, "\n"),
 				},
 			}
-			if err := kclient.Create(context.TODO(), &clientCAConfigmap); err != nil {
+			if err := createWithRetryOnError(t, context.Background(), &clientCAConfigmap, 2*time.Minute); err != nil {
 				t.Fatalf("Failed to create CA cert configmap: %v", err)
 			}
 			t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), &clientCAConfigmap, 2*time.Minute) })
@@ -1351,7 +1351,7 @@ func TestCRLUpdate(t *testing.T) {
 				},
 				ClientCertificatePolicy: operatorv1.ClientCertificatePolicyRequired,
 			}
-			if err := kclient.Create(context.TODO(), ic); err != nil {
+			if err := createWithRetryOnError(t, context.Background(), ic, 2*time.Minute); err != nil {
 				t.Fatalf("failed to create ingresscontroller %s/%s: %v", icName.Namespace, icName.Name, err)
 			}
 			t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })

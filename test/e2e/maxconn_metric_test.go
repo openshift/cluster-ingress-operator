@@ -58,7 +58,7 @@ func TestMaxConnectionsMetric(t *testing.T) {
 	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "maxconn-metric"}
 	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
 	ic := newPrivateController(icName, domain)
-	if err := kclient.Create(context.TODO(), ic); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ic, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
 	}
 	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })

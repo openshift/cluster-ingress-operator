@@ -45,7 +45,7 @@ func TestUnmanagedDNSToManagedDNSIngressController(t *testing.T) {
 		Scope:               operatorv1.ExternalLoadBalancer,
 		DNSManagementPolicy: operatorv1.UnmanagedLoadBalancerDNS,
 	}
-	if err := kclient.Create(context.TODO(), ic); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ic, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
 	}
 	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
@@ -124,7 +124,7 @@ func TestManagedDNSToUnmanagedDNSIngressController(t *testing.T) {
 	ic.Spec.EndpointPublishingStrategy.LoadBalancer = &operatorv1.LoadBalancerStrategy{
 		Scope: operatorv1.ExternalLoadBalancer,
 	}
-	if err := kclient.Create(context.TODO(), ic); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ic, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
 	}
 	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
@@ -225,7 +225,7 @@ func TestUnmanagedDNSToManagedDNSInternalIngressController(t *testing.T) {
 		Scope:               operatorv1.InternalLoadBalancer,
 		DNSManagementPolicy: operatorv1.UnmanagedLoadBalancerDNS,
 	}
-	if err := kclient.Create(context.TODO(), ic); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ic, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
 	}
 	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })

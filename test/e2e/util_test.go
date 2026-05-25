@@ -837,6 +837,28 @@ func createWithRetryOnError(t *testing.T, ctx context.Context, obj client.Object
 	})
 }
 
+// createOrGetWithRetry creates the given object. If the object already exists,
+// it fetches the existing object to populate server-side fields. If there is a
+// transient error, the operation is retried until the timeout is reached.
+func createOrGetWithRetry(t *testing.T, ctx context.Context, obj client.Object, timeout time.Duration) error {
+	t.Helper()
+	return wait.PollUntilContextTimeout(ctx, 2*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
+		if err := kclient.Create(ctx, obj); err != nil {
+			if errors.IsAlreadyExists(err) {
+				key := types.NamespacedName{Namespace: obj.GetNamespace(), Name: obj.GetName()}
+				if err := kclient.Get(ctx, key, obj); err != nil {
+					t.Logf("error getting existing %s: %v, retrying...", obj.GetName(), err)
+					return false, nil
+				}
+				return true, nil
+			}
+			t.Logf("error creating %s: %v, retrying...", obj.GetName(), err)
+			return false, nil
+		}
+		return true, nil
+	})
+}
+
 // deleteWithRetryOnError will try to delete the object until the timeout occurs.
 // Use for retrying operations that may be flaky due to network issues.
 func deleteWithRetryOnError(t *testing.T, ctx context.Context, obj client.Object, timeout time.Duration) {
@@ -1023,7 +1045,7 @@ func verifyInternalIngressController(t *testing.T, name types.NamespacedName, ho
 				t.Logf("timed out waiting for pod %q to be deleted; will attempt recreation: %v", clientPodName, err)
 			}
 			clientPod = clientPodSpec.DeepCopy()
-			if err := kclient.Create(context.TODO(), clientPod); err != nil {
+			if err := createWithRetryOnError(t, context.Background(), clientPod, 2*time.Minute); err != nil {
 				t.Fatalf("failed to create pod %q: %v", clientPodName, err)
 			}
 			return false, nil
@@ -1128,7 +1150,7 @@ func createNamespace(t *testing.T, name string) *corev1.Namespace {
 
 	t.Logf("Creating namespace %q...", name)
 	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name}}
-	if err := kclient.Create(context.TODO(), ns); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ns, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create namespace: %v", err)
 	}
 	t.Cleanup(func() {
@@ -1137,9 +1159,7 @@ func createNamespace(t *testing.T, name string) *corev1.Namespace {
 			dumpEventsInNamespace(t, name)
 		}
 		t.Logf("Deleting namespace %q...", name)
-		if err := kclient.Delete(context.TODO(), ns); err != nil {
-			t.Errorf("failed to delete namespace %s: %v", ns.Name, err)
-		}
+		deleteWithRetryOnError(t, context.Background(), ns, 2*time.Minute)
 	})
 
 	saName := types.NamespacedName{
