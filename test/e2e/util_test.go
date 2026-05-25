@@ -860,19 +860,19 @@ func deleteWithRetryOnError(t *testing.T, ctx context.Context, obj client.Object
 func verifyExternalIngressController(t *testing.T, name types.NamespacedName, hostname, address string) {
 	t.Helper()
 	echoPod := buildEchoPod(name.Name, name.Namespace)
-	if err := kclient.Create(context.TODO(), echoPod); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoPod, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 	}
 	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoPod, 2*time.Minute) })
 
 	echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels)
-	if err := kclient.Create(context.TODO(), echoService); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoService, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 	}
 	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoService, 2*time.Minute) })
 
 	echoRoute := buildRouteWithHost(echoPod.Name, echoPod.Namespace, echoService.Name, hostname)
-	if err := kclient.Create(context.TODO(), echoRoute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoRoute, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
 	}
 	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoRoute, 2*time.Minute) })
@@ -929,19 +929,19 @@ func verifyInternalIngressController(t *testing.T, name types.NamespacedName, ho
 	}
 
 	echoPod := buildEchoPod(name.Name, name.Namespace)
-	if err := kclient.Create(context.TODO(), echoPod); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoPod, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 	}
 	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoPod, 2*time.Minute) })
 
 	echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels)
-	if err := kclient.Create(context.TODO(), echoService); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoService, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 	}
 	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoService, 2*time.Minute) })
 
 	echoRoute := buildRouteWithHost(echoPod.Name, echoPod.Namespace, echoService.Name, hostname)
-	if err := kclient.Create(context.TODO(), echoRoute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoRoute, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
 	}
 	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoRoute, 2*time.Minute) })
@@ -959,7 +959,7 @@ func verifyInternalIngressController(t *testing.T, name types.NamespacedName, ho
 	clientPodName := types.NamespacedName{Namespace: name.Namespace, Name: "curl-" + name.Name}
 	clientPodSpec := buildCurlPod(clientPodName.Name, clientPodName.Namespace, image, address, echoRoute.Spec.Host, extraArgs...)
 	clientPod := clientPodSpec.DeepCopy()
-	if err := kclient.Create(context.TODO(), clientPod); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), clientPod, 2*time.Minute); err != nil {
 		t.Fatalf("failed to create pod %q: %v", clientPodName, err)
 	}
 	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), clientPod, 2*time.Minute) })
