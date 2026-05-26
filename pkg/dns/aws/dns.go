@@ -179,6 +179,7 @@ func resolveRoute53Endpoint(ctx context.Context, customEndpoint, region string) 
 		UseDualStack: aws.Bool(false),
 	})
 	if err != nil {
+		log.Error(err, "Failed to resolve Route53 endpoint, endpoint will not be logged", "region", region)
 		return ""
 	}
 	return strings.TrimRight(ep.URI.String(), "/")
@@ -197,6 +198,7 @@ func resolveELBEndpoint(ctx context.Context, customEndpoint, region string) stri
 		UseDualStack: aws.Bool(false),
 	})
 	if err != nil {
+		log.Error(err, "Failed to resolve ELB endpoint, endpoint will not be logged", "region", region)
 		return ""
 	}
 	return strings.TrimRight(ep.URI.String(), "/")
@@ -215,6 +217,7 @@ func resolveELBv2Endpoint(ctx context.Context, customEndpoint, region string) st
 		UseDualStack: aws.Bool(false),
 	})
 	if err != nil {
+		log.Error(err, "Failed to resolve ELBv2 endpoint, endpoint will not be logged", "region", region)
 		return ""
 	}
 	return strings.TrimRight(ep.URI.String(), "/")
@@ -234,6 +237,7 @@ func resolveTaggingEndpoint(ctx context.Context, customEndpoint, region string) 
 		UseDualStack: aws.Bool(false),
 	})
 	if err != nil {
+		log.Error(err, "Failed to resolve Tagging endpoint, endpoint will not be logged", "region", region)
 		return ""
 	}
 	return strings.TrimRight(ep.URI.String(), "/")
