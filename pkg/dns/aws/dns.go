@@ -44,17 +44,10 @@ const (
 	Route53Service = "route53"
 	ELBService     = "elasticloadbalancing"
 	TaggingService = "tagging"
-	// govCloudRoute53Region is the AWS GovCloud region for Route 53. See:
-	// https://docs.aws.amazon.com/govcloud-us/latest/UserGuide/using-govcloud-endpoints.html
-	govCloudRoute53Region = "us-gov"
 	// eusCloudRegionPrefix is the prefix of regions in AWS European Sovereign Cloud.
 	eusCloudRegionPrefix = "eusc-"
 	// euscDeEast1RegionID is the region ID of Brandenburg (German) in AWS European Sovereign Cloud.
 	euscDeEast1RegionID = "eusc-de-east-1"
-	// govCloudTaggingEndpoint is the Group Tagging service endpoint used for AWS GovCloud.
-	govCloudTaggingEndpoint = "https://tagging.us-gov-west-1.amazonaws.com"
-	// chinaRoute53Endpoint is the Route 53 service endpoint used for AWS China regions.
-	chinaRoute53Endpoint = "https://route53.amazonaws.com.cn"
 	// targetHostedZoneIdAnnotationKey is the key of an annotation that this
 	// provider adds to DNSRecord CRs to track the target hosted zone id of
 	// the ELB that is associated with the record, which is needed when
@@ -144,8 +137,13 @@ type ServiceEndpoint struct {
 }
 
 // partitionIDForRegion returns the AWS partition ID for the given region.
-// aws-sdk-go-v2 has no public partition lookup API; the logic is internal to
-// each service's endpoint resolver, so we use region prefix conventions.
+// aws-sdk-go-v2's partition lookup (awsrulesfn.GetPartition) is internal,
+// so we use region prefix conventions. The SDK itself also falls back to
+// "aws" for unrecognized regions, so the default case here is consistent
+// with SDK behavior and safe for forward compatibility. Any genuinely new
+// partition (with a novel region prefix) would require code changes here
+// and in the switch block in NewProvider that configures Route53/tagging
+// region overrides.
 func partitionIDForRegion(region string) string {
 	switch {
 	case strings.HasPrefix(region, "cn-"):
@@ -167,63 +165,78 @@ func isGovCloudRegion(region string) bool {
 	return strings.HasPrefix(region, "us-gov-")
 }
 
-// resolveEndpoint returns the endpoint URL for logging and test assertions.
-// In aws-sdk-go-v2, endpoints are resolved per-request internally — there is
-// no client.Endpoint field — so we compute them here at construction time.
-func resolveEndpoint(customEndpoint, serviceID, region string) string {
+// resolveRoute53Endpoint returns the endpoint URL that the SDK's Route53
+// endpoint resolver produces for the given region, or the custom endpoint
+// if one is set.
+func resolveRoute53Endpoint(ctx context.Context, customEndpoint, region string) string {
 	if customEndpoint != "" {
 		return customEndpoint
 	}
-	// For logging purposes when no custom endpoint is set, we construct
-	// a best-effort endpoint string. The actual endpoint resolution in
-	// v2 happens per-request inside the SDK.
-	switch serviceID {
-	case "Route 53":
-		switch partitionIDForRegion(region) {
-		case "aws-cn":
-			return chinaRoute53Endpoint
-		case "aws-us-gov":
-			return fmt.Sprintf("https://route53.%s.amazonaws.com", govCloudRoute53Region)
-		case "aws-iso":
-			return "https://route53.c2s.ic.gov"
-		case "aws-iso-b":
-			return "https://route53.sc2s.sgov.gov"
-		default:
-			if strings.HasPrefix(region, eusCloudRegionPrefix) {
-				return "https://route53.amazonaws.eu"
-			}
-			return "https://route53.amazonaws.com"
-		}
-	case "Elastic Load Balancing", "Elastic Load Balancing v2":
-		switch partitionIDForRegion(region) {
-		case "aws-cn":
-			return fmt.Sprintf("https://elasticloadbalancing.%s.amazonaws.com.cn", region)
-		case "aws-us-gov":
-			return fmt.Sprintf("https://elasticloadbalancing.%s.amazonaws.com", region)
-		case "aws-iso":
-			return fmt.Sprintf("https://elasticloadbalancing.%s.c2s.ic.gov", region)
-		case "aws-iso-b":
-			return fmt.Sprintf("https://elasticloadbalancing.%s.sc2s.sgov.gov", region)
-		default:
-			if strings.HasPrefix(region, eusCloudRegionPrefix) {
-				return fmt.Sprintf("https://elasticloadbalancing.%s.amazonaws.eu", region)
-			}
-			return fmt.Sprintf("https://elasticloadbalancing.%s.amazonaws.com", region)
-		}
-	case "Resource Groups Tagging API":
-		switch partitionIDForRegion(region) {
-		case "aws-cn":
-			return fmt.Sprintf("https://tagging.%s.amazonaws.com.cn", region)
-		case "aws-us-gov":
-			return fmt.Sprintf("https://tagging.%s.amazonaws.com", region)
-		default:
-			if strings.HasPrefix(region, eusCloudRegionPrefix) {
-				return fmt.Sprintf("https://tagging.%s.amazonaws.eu", region)
-			}
-			return fmt.Sprintf("https://tagging.%s.amazonaws.com", region)
-		}
+	resolver := route53.NewDefaultEndpointResolverV2()
+	ep, err := resolver.ResolveEndpoint(ctx, route53.EndpointParameters{
+		Region:       aws.String(region),
+		UseFIPS:      aws.Bool(false),
+		UseDualStack: aws.Bool(false),
+	})
+	if err != nil {
+		return ""
 	}
-	return ""
+	return strings.TrimRight(ep.URI.String(), "/")
+}
+
+// resolveELBEndpoint returns the endpoint URL that the SDK's ELB endpoint
+// resolver produces for the given region, or the custom endpoint if one is set.
+func resolveELBEndpoint(ctx context.Context, customEndpoint, region string) string {
+	if customEndpoint != "" {
+		return customEndpoint
+	}
+	resolver := elasticloadbalancing.NewDefaultEndpointResolverV2()
+	ep, err := resolver.ResolveEndpoint(ctx, elasticloadbalancing.EndpointParameters{
+		Region:       aws.String(region),
+		UseFIPS:      aws.Bool(false),
+		UseDualStack: aws.Bool(false),
+	})
+	if err != nil {
+		return ""
+	}
+	return strings.TrimRight(ep.URI.String(), "/")
+}
+
+// resolveELBv2Endpoint returns the endpoint URL that the SDK's ELBv2 endpoint
+// resolver produces for the given region, or the custom endpoint if one is set.
+func resolveELBv2Endpoint(ctx context.Context, customEndpoint, region string) string {
+	if customEndpoint != "" {
+		return customEndpoint
+	}
+	resolver := elbv2.NewDefaultEndpointResolverV2()
+	ep, err := resolver.ResolveEndpoint(ctx, elbv2.EndpointParameters{
+		Region:       aws.String(region),
+		UseFIPS:      aws.Bool(false),
+		UseDualStack: aws.Bool(false),
+	})
+	if err != nil {
+		return ""
+	}
+	return strings.TrimRight(ep.URI.String(), "/")
+}
+
+// resolveTaggingEndpoint returns the endpoint URL that the SDK's Resource
+// Groups Tagging API endpoint resolver produces for the given region, or the
+// custom endpoint if one is set.
+func resolveTaggingEndpoint(ctx context.Context, customEndpoint, region string) string {
+	if customEndpoint != "" {
+		return customEndpoint
+	}
+	resolver := resourcegroupstaggingapi.NewDefaultEndpointResolverV2()
+	ep, err := resolver.ResolveEndpoint(ctx, resourcegroupstaggingapi.EndpointParameters{
+		Region:       aws.String(region),
+		UseFIPS:      aws.Bool(false),
+		UseDualStack: aws.Bool(false),
+	})
+	if err != nil {
+		return ""
+	}
+	return strings.TrimRight(ep.URI.String(), "/")
 }
 
 func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error) {
@@ -280,15 +293,12 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 	var tagRegion string
 	enableTagging := true
 
-	// If the region is in aws china, cn-north-1 or cn-northwest-1, we should:
-	// 1. hard code route53 api endpoint to https://route53.amazonaws.com.cn and region to "cn-northwest-1"
-	//    as route53 is not GA in AWS China and aws sdk didn't have the endpoint.
-	// 2. use the aws china region cn-northwest-1 to setup tagging api correctly instead of "us-east-1"
+	// Route53 is a global (non-regionalized) service. Each partition has a
+	// specific region that Route53 and the Tagging API must use.
 	switch partitionIDForRegion(region) {
 	case "aws-cn":
 		tagRegion = "cn-northwest-1"
 		r53Region = "cn-northwest-1"
-		r53Endpoint = chinaRoute53Endpoint
 	case "aws-us-gov":
 		// Route53 for GovCloud uses the "us-gov-west-1" region id:
 		// https://docs.aws.amazon.com/govcloud-us/latest/UserGuide/using-govcloud-endpoints.html
@@ -338,14 +348,15 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 					continue
 				}
 				tagFound = true
-				url := ep.URL
-				// route53 for govcloud is based out of us-gov-west-1,
-				// so the tagging client must match.
-				if strings.Contains(ep.URL, "us-gov-east-1") {
-					url = govCloudTaggingEndpoint
+				// Route53 for GovCloud is based out of us-gov-west-1,
+				// so ignore any custom tagging endpoint for us-gov-east-1
+				// and let the SDK resolve from the correct tagRegion.
+				if region == "us-gov-east-1" {
+					log.Info("Ignoring custom resourcegroupstaggingapi endpoint for us-gov-east-1; using us-gov-west-1 instead", "ignored url", ep.URL)
+				} else {
+					tagEndpoint = ep.URL
+					log.Info("Found resourcegroupstaggingapi custom endpoint", "url", ep.URL)
 				}
-				tagEndpoint = url
-				log.Info("Found resourcegroupstaggingapi custom endpoint", "url", url)
 			case ELBService:
 				elbFound = true
 				elbEndpointOverride = ep.URL
@@ -376,7 +387,7 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 			}
 		}
 		tags = resourcegroupstaggingapi.NewFromConfig(cfg, tagOpts)
-		tagsEndpointStr = resolveEndpoint(tagEndpoint, "Resource Groups Tagging API", tagRegion)
+		tagsEndpointStr = resolveTaggingEndpoint(ctx, tagEndpoint, tagRegion)
 		log.Info("Created tags client", "endpoint", tagsEndpointStr)
 	}
 
@@ -387,7 +398,7 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 		}
 	}
 	elbClient := elasticloadbalancing.NewFromConfig(cfg, elbOpts)
-	elbEndpointStr := resolveEndpoint(elbEndpointOverride, "Elastic Load Balancing", region)
+	elbEndpointStr := resolveELBEndpoint(ctx, elbEndpointOverride, region)
 	log.Info("Created elb client", "endpoint", elbEndpointStr)
 
 	elbv2Opts := func(o *elbv2.Options) {
@@ -397,7 +408,7 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 		}
 	}
 	elbv2Client := elbv2.NewFromConfig(cfg, elbv2Opts)
-	elbv2EndpointStr := resolveEndpoint(elbEndpointOverride, "Elastic Load Balancing v2", region)
+	elbv2EndpointStr := resolveELBv2Endpoint(ctx, elbEndpointOverride, region)
 	log.Info("Created elbv2 client", "endpoint", elbv2EndpointStr)
 
 	r53Opts := func(o *route53.Options) {
@@ -409,7 +420,7 @@ func NewProvider(config Config, operatorReleaseVersion string) (*Provider, error
 		}
 	}
 	r53client := route53.NewFromConfig(cfgRoute53, r53Opts)
-	r53EndpointStr := resolveEndpoint(r53Endpoint, "Route 53", r53Region)
+	r53EndpointStr := resolveRoute53Endpoint(ctx, r53Endpoint, r53Region)
 	log.Info("Created route53 client", "endpoint", r53EndpointStr)
 
 	p := &Provider{
@@ -543,6 +554,9 @@ func (m *Provider) lookupZoneIDWithoutResourceTagging(zoneConfig configv1.DNSZon
 		resp, err := paginator.NextPage(ctx)
 		if err != nil {
 			return "", fmt.Errorf("failed to list hosted zones: %v", err)
+		}
+		if len(resp.HostedZones) == 0 {
+			continue
 		}
 		resourceIds := make([]string, len(resp.HostedZones))
 		for i, zone := range resp.HostedZones {
@@ -757,6 +771,9 @@ func (m *Provider) change(record *iov1.DNSRecord, zone configv1.DNSZone, action 
 func (m *Provider) updateRecord(domain, zoneID, target, targetHostedZoneID, action string, ttl int64) error {
 	input := route53.ChangeResourceRecordSetsInput{HostedZoneId: aws.String(zoneID)}
 	if isGovCloudRegion(m.route53.Options().Region) {
+		// GovCloud uses CNAME instead of Alias records due to Route53
+		// limitations in that partition. CNAME is protocol-agnostic (resolves
+		// to a hostname), so dual-stack AAAA records are unnecessary here.
 		record := r53types.ResourceRecord{Value: aws.String(target)}
 		input.ChangeBatch = &r53types.ChangeBatch{
 			Changes: []r53types.Change{

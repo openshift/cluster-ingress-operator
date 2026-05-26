@@ -255,6 +255,45 @@ func Test_NewProvider(t *testing.T) {
 		expectedElbv2ServiceEndpointEndpoint: "https://elasticloadbalancing.us-gov-east-1.amazonaws.com",
 		expectedRoute53ServiceEndpoint:       "https://route53.us-gov.amazonaws.com",
 	}, {
+		name: "default service endpoints, GovCloud West",
+		config: Config{
+			Region: "us-gov-west-1",
+		},
+		expectedTaggingServiceEndpoint:       "https://tagging.us-gov-west-1.amazonaws.com",
+		expectedElbServiceEndpointEndpoint:   "https://elasticloadbalancing.us-gov-west-1.amazonaws.com",
+		expectedElbv2ServiceEndpointEndpoint: "https://elasticloadbalancing.us-gov-west-1.amazonaws.com",
+		expectedRoute53ServiceEndpoint:       "https://route53.us-gov.amazonaws.com",
+	}, {
+		name: "custom service endpoints, GovCloud East ignores custom tagging",
+		config: Config{
+			Region: "us-gov-east-1",
+			ServiceEndpoints: []ServiceEndpoint{
+				{Name: "tagging", URL: "https://tagging.us-gov-east-1.amazonaws.com"},
+				{Name: "elasticloadbalancing", URL: "http://custom-elb"},
+				{Name: "route53", URL: "http://custom-r53"},
+			},
+		},
+		// Custom tagging endpoint is ignored for us-gov-east-1;
+		// SDK resolves from tagRegion=us-gov-west-1.
+		expectedTaggingServiceEndpoint:       "https://tagging.us-gov-west-1.amazonaws.com",
+		expectedElbServiceEndpointEndpoint:   "http://custom-elb",
+		expectedElbv2ServiceEndpointEndpoint: "http://custom-elb",
+		expectedRoute53ServiceEndpoint:       "http://custom-r53",
+	}, {
+		name: "custom service endpoints, GovCloud West uses custom tagging",
+		config: Config{
+			Region: "us-gov-west-1",
+			ServiceEndpoints: []ServiceEndpoint{
+				{Name: "tagging", URL: "http://custom-tagging"},
+				{Name: "elasticloadbalancing", URL: "http://custom-elb"},
+				{Name: "route53", URL: "http://custom-r53"},
+			},
+		},
+		expectedTaggingServiceEndpoint:       "http://custom-tagging",
+		expectedElbServiceEndpointEndpoint:   "http://custom-elb",
+		expectedElbv2ServiceEndpointEndpoint: "http://custom-elb",
+		expectedRoute53ServiceEndpoint:       "http://custom-r53",
+	}, {
 		name: "default service endpoints, C2S",
 		config: Config{
 			Region: "us-iso-east-1",
