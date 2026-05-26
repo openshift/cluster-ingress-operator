@@ -57,7 +57,8 @@ func getAzureCredentials(config Config) (azcore.TokenCredential, error) {
 	var cred azcore.TokenCredential
 	if userAssignedIdentityCredentialsFilePath != "" {
 		options := azcore.ClientOptions{
-			Cloud: cloudConfig,
+			Cloud:     cloudConfig,
+			Telemetry: telemetryOptions(),
 		}
 		var err error
 		cred, err = dataplane.NewUserAssignedIdentityCredential(context.Background(), userAssignedIdentityCredentialsFilePath, dataplane.WithClientOpts(options))
@@ -67,7 +68,8 @@ func getAzureCredentials(config Config) (azcore.TokenCredential, error) {
 	} else if config.AzureWorkloadIdentityEnabled && strings.TrimSpace(config.ClientSecret) == "" {
 		options := azidentity.WorkloadIdentityCredentialOptions{
 			ClientOptions: azcore.ClientOptions{
-				Cloud: cloudConfig,
+				Cloud:     cloudConfig,
+				Telemetry: telemetryOptions(),
 			},
 			ClientID:      config.ClientID,
 			TenantID:      config.TenantID,
@@ -81,7 +83,8 @@ func getAzureCredentials(config Config) (azcore.TokenCredential, error) {
 	} else {
 		options := azidentity.ClientSecretCredentialOptions{
 			ClientOptions: azcore.ClientOptions{
-				Cloud: cloudConfig,
+				Cloud:     cloudConfig,
+				Telemetry: telemetryOptions(),
 			},
 		}
 		var err error
