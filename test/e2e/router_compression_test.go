@@ -78,7 +78,7 @@ func createPrivateController(t *testing.T, privateName string, privateDomain str
 
 	ic := newPrivateController(icName, domain)
 	// Create a new private Ingress Controller (deletion handled by caller)
-	if err := createWithRetryOnError(t, context.Background(), ic, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ic, DefaultRetryTimeout); err != nil {
 		return ic, fmt.Errorf("error creating private ingresscontroller %s: %v", privateName, err)
 	}
 	return ic, nil
@@ -92,7 +92,7 @@ func testCompressionPolicy(t *testing.T, name string, compressionPolicy operator
 	namespacedName := types.NamespacedName{Namespace: operatorNamespace, Name: name}
 	routerDeploymentNamespacedName := types.NamespacedName{Namespace: controller.DefaultOperandNamespace, Name: "router-" + name}
 
-	if err := wait.PollImmediate(10*time.Second, 2*time.Minute, func() (bool, error) {
+	if err := wait.PollImmediate(10*time.Second, DefaultRetryTimeout, func() (bool, error) {
 		ic, err := getIngressController(t, kclient, namespacedName, 5*time.Second)
 		if err != nil {
 			t.Logf("failed to get ingress controller: %v, retrying...", err)
@@ -122,14 +122,14 @@ func testCompressionPolicy(t *testing.T, name string, compressionPolicy operator
 	}
 
 	// Get the router deployment
-	deployment, err := getDeployment(t, kclient, routerDeploymentNamespacedName, 2*time.Minute)
+	deployment, err := getDeployment(t, kclient, routerDeploymentNamespacedName, DefaultRetryTimeout)
 	if err != nil {
 		return fmt.Errorf("failed to get deployment: %v", err)
 	}
 
 	// Check if the MIME type environment variable has been updated
 	mimeTypes := ingress.GetMIMETypes(compressionPolicy.MimeTypes)
-	if err := waitForDeploymentEnvVar(t, deployment, 2*time.Minute, "ROUTER_COMPRESSION_MIME", strings.Join(mimeTypes, " ")); err != nil {
+	if err := waitForDeploymentEnvVar(t, deployment, DefaultRetryTimeout, "ROUTER_COMPRESSION_MIME", strings.Join(mimeTypes, " ")); err != nil {
 		return fmt.Errorf("expected deployment to have mimeTypes %s: %v", mimeTypes, err)
 	}
 
@@ -198,10 +198,10 @@ func TestRouterCompressionOperation(t *testing.T) {
 			"index.html": "Hello World!",
 		},
 	}
-	if err := createWithRetryOnError(t, context.Background(), helloConfigMap, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), helloConfigMap, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create configmap %s/%s: %v", helloConfigMap.Namespace, helloConfigMap.Name, err)
 	}
-	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), helloConfigMap, 2*time.Minute) })
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), helloConfigMap, DefaultRetryTimeout) })
 
 	helloPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -236,26 +236,26 @@ func TestRouterCompressionOperation(t *testing.T) {
 			}},
 		},
 	}
-	if err := createWithRetryOnError(t, context.Background(), helloPod, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), helloPod, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", helloPod.Namespace, helloPod.Name, err)
 	}
-	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), helloPod, 2*time.Minute) })
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), helloPod, DefaultRetryTimeout) })
 
 	helloService := buildEchoService(helloPod.Name, helloPod.Namespace, helloPod.ObjectMeta.Labels)
-	if err := createWithRetryOnError(t, context.Background(), helloService, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), helloService, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create service %s/%s: %v", helloService.Namespace, helloService.Name, err)
 	}
-	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), helloService, 2*time.Minute) })
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), helloService, DefaultRetryTimeout) })
 
 	helloRoute := buildRoute(helloPod.Name, helloPod.Namespace, helloService.Name)
 	helloRoute.Spec.TLS = &routev1.TLSConfig{
 		Termination:                   routev1.TLSTerminationEdge,
 		InsecureEdgeTerminationPolicy: routev1.InsecureEdgeTerminationPolicyRedirect,
 	}
-	if err := createWithRetryOnError(t, context.Background(), helloRoute, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), helloRoute, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create route %s/%s: %v", helloRoute.Namespace, helloRoute.Name, err)
 	}
-	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), helloRoute, 2*time.Minute) })
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), helloRoute, DefaultRetryTimeout) })
 
 	// Wait for hello pod to be ready.
 	if err = wait.PollImmediate(2*time.Second, 1*time.Minute, func() (bool, error) {

@@ -58,7 +58,7 @@ func TestMaxConnectionsMetric(t *testing.T) {
 	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "maxconn-metric"}
 	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
 	ic := newPrivateController(icName, domain)
-	if err := createWithRetryOnError(t, context.Background(), ic, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ic, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
 	}
 	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
@@ -113,7 +113,7 @@ func waitForMaxConnectionsMetric(t *testing.T, prometheusClient prometheusv1.API
 	serviceName := "router-internal-" + icName
 	query := fmt.Sprintf(`haproxy_max_connections{namespace="openshift-ingress",service="%s"}`, serviceName)
 	t.Logf("waiting for haproxy_max_connections{service=%q} to become %d", serviceName, expectedValue)
-	return wait.PollUntilContextTimeout(context.Background(), 5*time.Second, 5*time.Minute, false, func(ctx context.Context) (bool, error) {
+	return wait.PollUntilContextTimeout(t.Context(), 5*time.Second, 5*time.Minute, false, func(ctx context.Context) (bool, error) {
 		result, _, err := prometheusClient.Query(ctx, query, time.Now())
 		if err != nil {
 			t.Logf("failed to query haproxy_max_connections: %v, retrying...", err)

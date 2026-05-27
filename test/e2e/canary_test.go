@@ -83,7 +83,7 @@ func TestCanaryRoute(t *testing.T) {
 
 	clientPodName := types.NamespacedName{Name: "canary-route-check", Namespace: canaryRoute.Namespace}
 	clientNetworkPolicy := buildTestPodNetworkPolicy(clientPodName)
-	if err := createWithRetryOnError(t, context.Background(), clientNetworkPolicy, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), clientNetworkPolicy, DefaultRetryTimeout); err != nil {
 		t.Fatalf("Failed to create network policy %s/%s: %v", clientNetworkPolicy.Namespace, clientNetworkPolicy.Name, err)
 	}
 	t.Cleanup(func() {
@@ -97,7 +97,7 @@ func TestCanaryRoute(t *testing.T) {
 
 	image := deployment.Spec.Template.Spec.Containers[0].Image
 	clientPod := buildCanaryCurlPod(clientPodName.Name, clientPodName.Namespace, image, canaryRouteHost)
-	if err := createWithRetryOnError(t, context.Background(), clientPod, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), clientPod, DefaultRetryTimeout); err != nil {
 		t.Fatalf("Failed to create pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
 	}
 	t.Cleanup(func() {
@@ -273,11 +273,11 @@ func TestCanaryWithMTLS(t *testing.T) {
 		},
 	}
 
-	if err := createWithRetryOnError(t, context.Background(), clientCAConfigmap, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), clientCAConfigmap, DefaultRetryTimeout); err != nil {
 		t.Fatalf("Failed to create configmap %s: %v", clientCAConfigmap.Name, err)
 	}
 
-	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), clientCAConfigmap, 2*time.Minute) })
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), clientCAConfigmap, DefaultRetryTimeout) })
 
 	defaultIC := &operatorv1.IngressController{}
 	if err := kclient.Get(context.TODO(), defaultName, defaultIC); err != nil {

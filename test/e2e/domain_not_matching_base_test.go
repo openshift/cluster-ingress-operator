@@ -28,7 +28,7 @@ func TestDomainNotMatchingBase(t *testing.T) {
 	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "domain-not-matching"}
 	domain := icName.Name + ".local"
 	ic := newLoadBalancerController(icName, domain)
-	if err := createWithRetryOnError(t, context.Background(), ic, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ic, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
 	}
 	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })

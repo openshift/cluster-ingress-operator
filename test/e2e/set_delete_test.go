@@ -53,10 +53,10 @@ func testHeaders(t *testing.T, image string, route *routev1.Route, address strin
 	count := podCount.Add(1)
 	name := fmt.Sprintf("%s%d", route.Name, count)
 	clientPod := buildCurlPod(name, route.Namespace, image, route.Spec.Host, address, extraCurlArgs...)
-	if err := createWithRetryOnError(t, context.Background(), clientPod, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), clientPod, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
 	}
-	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), clientPod, 2*time.Minute) })
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), clientPod, DefaultRetryTimeout) })
 	err = wait.PollImmediate(1*time.Second, 4*time.Minute, func() (bool, error) {
 		readCloser, err := client.CoreV1().Pods(clientPod.Namespace).GetLogs(clientPod.Name, &corev1.PodLogOptions{
 			Container: "curl",
@@ -122,7 +122,7 @@ func TestSetIngressControllerResponseHeaders(t *testing.T) {
 			},
 		},
 	}
-	if err := createWithRetryOnError(t, context.Background(), ic, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ic, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
 	}
 	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
@@ -146,22 +146,22 @@ func TestSetIngressControllerResponseHeaders(t *testing.T) {
 
 	namespace := createNamespace(t, names.SimpleNameGenerator.GenerateName("set-response-headers-"))
 	echoPod := buildEchoPod("set-response-header-via-ic-echo", namespace.Name)
-	if err := createWithRetryOnError(t, context.Background(), echoPod, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoPod, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 	}
-	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoPod, 2*time.Minute) })
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoPod, DefaultRetryTimeout) })
 
 	echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels)
-	if err := createWithRetryOnError(t, context.Background(), echoService, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoService, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 	}
-	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoService, 2*time.Minute) })
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoService, DefaultRetryTimeout) })
 
 	echoRoute := buildRoute(echoPod.Name, echoPod.Namespace, echoService.Name)
-	if err := createWithRetryOnError(t, context.Background(), echoRoute, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoRoute, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
 	}
-	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoRoute, 2*time.Minute) })
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoRoute, DefaultRetryTimeout) })
 	cond := routev1.RouteIngressCondition{
 		Type:   routev1.RouteAdmitted,
 		Status: corev1.ConditionTrue,
@@ -182,7 +182,7 @@ func TestSetRouteResponseHeaders(t *testing.T) {
 	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "set-response-headers-route"}
 	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
 	ic := newPrivateController(icName, domain)
-	if err := createWithRetryOnError(t, context.Background(), ic, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ic, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
 	}
 	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
@@ -206,22 +206,22 @@ func TestSetRouteResponseHeaders(t *testing.T) {
 
 	namespace := createNamespace(t, names.SimpleNameGenerator.GenerateName("set-response-headers-"))
 	echoPod := buildEchoPod("set-response-header-via-route-echo", namespace.Name)
-	if err := createWithRetryOnError(t, context.Background(), echoPod, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoPod, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 	}
-	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoPod, 2*time.Minute) })
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoPod, DefaultRetryTimeout) })
 
 	echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels)
-	if err := createWithRetryOnError(t, context.Background(), echoService, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoService, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 	}
-	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoService, 2*time.Minute) })
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoService, DefaultRetryTimeout) })
 
 	echoRoute := buildRouteWithHTTPResponseHeaders(echoPod.Name, echoPod.Namespace, echoService.Name, headerName, headerValue)
-	if err := createWithRetryOnError(t, context.Background(), echoRoute, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoRoute, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
 	}
-	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoRoute, 2*time.Minute) })
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoRoute, DefaultRetryTimeout) })
 	cond := routev1.RouteIngressCondition{
 		Type:   routev1.RouteAdmitted,
 		Status: corev1.ConditionTrue,

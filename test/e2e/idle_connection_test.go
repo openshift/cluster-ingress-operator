@@ -129,7 +129,7 @@ func idleConnectionCreateBackendService(ctx context.Context, t *testing.T, names
 		return fmt.Errorf("failed to create replicaset %s: %w", name, err)
 	}
 
-	if err := waitForReplicaSetReady(t, kclient, rs, 2*time.Minute); err != nil {
+	if err := waitForReplicaSetReady(t, kclient, rs, DefaultRetryTimeout); err != nil {
 		return fmt.Errorf("replicaset %s is not ready: %w", name, err)
 	}
 
@@ -154,7 +154,7 @@ func idleConnectionCreateService(t *testing.T, ctx context.Context, namespace, n
 		},
 	}
 
-	if err := createWithRetryOnError(t, ctx, service, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, ctx, service, DefaultRetryTimeout); err != nil {
 		return nil, fmt.Errorf("failed to create service %s/%s: %w", service.Namespace, service.Name, err)
 	}
 
@@ -259,7 +259,7 @@ func idleConnectionCreateReplicaSet(t *testing.T, ctx context.Context, namespace
 			},
 		},
 	}
-	if err := createWithRetryOnError(t, ctx, rs, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, ctx, rs, DefaultRetryTimeout); err != nil {
 		return nil, fmt.Errorf("failed to create replicaset %s/%s: %w", rs.Namespace, rs.Name, err)
 	}
 	return rs, nil
@@ -343,7 +343,7 @@ func idleConnectionTerminationPolicyRunTest(t *testing.T, policy operatorv1.Ingr
 
 		routeName := types.NamespacedName{Namespace: ns.Name, Name: "test"}
 		route := buildRoute(routeName.Name, routeName.Namespace, webService1)
-		if err := createWithRetryOnError(t, context.Background(), route, 2*time.Minute); err != nil {
+		if err := createWithRetryOnError(t, context.Background(), route, DefaultRetryTimeout); err != nil {
 			return nil, fmt.Errorf("failed to create route %s: %w", routeName, err)
 		}
 
@@ -389,7 +389,7 @@ func idleConnectionTerminationPolicyRunTest(t *testing.T, policy operatorv1.Ingr
 		ic.Spec.NamespaceSelector = &metav1.LabelSelector{
 			MatchLabels: testNs.Labels,
 		}
-		if err := createWithRetryOnError(t, context.Background(), ic, 2*time.Minute); err != nil {
+		if err := createWithRetryOnError(t, context.Background(), ic, DefaultRetryTimeout); err != nil {
 			return nil, fmt.Errorf("failed to create IngressController: %w", err)
 		}
 		t.Cleanup(func() {

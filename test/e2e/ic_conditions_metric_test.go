@@ -26,8 +26,8 @@ import (
 // waitForIngressControllerConditionsMetrics waits for the metrics for ingress_controller_conditions to be present.
 func waitForIngressControllerConditionsMetrics(t *testing.T, prometheusClient prometheusv1.API) error {
 	t.Logf("Waiting for ingress_controller_conditions to be present")
-	if err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 2*time.Minute, false, func(context context.Context) (bool, error) {
-		result, _, err := prometheusClient.Query(context, "ingress_controller_conditions", time.Now())
+	if err := wait.PollUntilContextTimeout(t.Context(), 1*time.Second, DefaultRetryTimeout, false, func(ctx context.Context) (bool, error) {
+		result, _, err := prometheusClient.Query(ctx, "ingress_controller_conditions", time.Now())
 		if err != nil {
 			t.Logf("Failed to fetch metrics: %v, retrying...", err)
 			return false, nil
@@ -58,10 +58,12 @@ func restartOperatorPod(t *testing.T, kubeClient kubernetes.Interface) error {
 	interval, timeout := 5*time.Second, 5*time.Minute
 	var podsList *corev1.PodList
 
+	ctx := t.Context()
+
 	// Find the operator pod
 	t.Logf("Restarting Ingress operator pod...")
-	if err := wait.PollUntilContextTimeout(context.Background(), interval, timeout, false, func(context context.Context) (bool, error) {
-		innerPodsList, err := kubeClient.CoreV1().Pods("openshift-ingress-operator").List(context, metav1.ListOptions{})
+	if err := wait.PollUntilContextTimeout(ctx, interval, timeout, false, func(ctx context.Context) (bool, error) {
+		innerPodsList, err := kubeClient.CoreV1().Pods("openshift-ingress-operator").List(ctx, metav1.ListOptions{})
 		podsList = innerPodsList
 		if err != nil {
 			t.Logf("Failed to list pods: %v, retying...", err)
@@ -78,8 +80,8 @@ func restartOperatorPod(t *testing.T, kubeClient kubernetes.Interface) error {
 	}
 
 	// Delete the operator pod
-	if err := wait.PollUntilContextTimeout(context.Background(), interval, timeout, false, func(context context.Context) (bool, error) {
-		if err := kubeClient.CoreV1().Pods("openshift-ingress-operator").Delete(context, operatorPodName, metav1.DeleteOptions{}); err != nil {
+	if err := wait.PollUntilContextTimeout(ctx, interval, timeout, false, func(ctx context.Context) (bool, error) {
+		if err := kubeClient.CoreV1().Pods("openshift-ingress-operator").Delete(ctx, operatorPodName, metav1.DeleteOptions{}); err != nil {
 			t.Logf("Failed to delete operator pod: %v, retying...", err)
 			return false, nil
 		}
@@ -90,8 +92,8 @@ func restartOperatorPod(t *testing.T, kubeClient kubernetes.Interface) error {
 
 	// Wait for new pod to be ready
 	t.Logf("Polling for up to %v to verify that the operator restart is terminated...", timeout)
-	if err := wait.PollUntilContextTimeout(context.Background(), interval, timeout, false, func(context context.Context) (bool, error) {
-		podsList, err := kubeClient.CoreV1().Pods("openshift-ingress-operator").List(context, metav1.ListOptions{})
+	if err := wait.PollUntilContextTimeout(ctx, interval, timeout, false, func(ctx context.Context) (bool, error) {
+		podsList, err := kubeClient.CoreV1().Pods("openshift-ingress-operator").List(ctx, metav1.ListOptions{})
 		if err != nil {
 			t.Logf("Failed to list pods: %v, retying...", err)
 			return false, nil

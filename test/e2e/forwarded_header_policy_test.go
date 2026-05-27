@@ -56,12 +56,12 @@ func testRouteHeaders(t *testing.T, image string, route *routev1.Route, address 
 	count := testPodCount.Add(1)
 	name := fmt.Sprintf("%s%d", route.Name, count)
 	clientPod := buildCurlPod(name, route.Namespace, image, route.Spec.Host, address, extraCurlArgs...)
-	if err := createWithRetryOnError(t, context.Background(), clientPod, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), clientPod, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", clientPod.Namespace, clientPod.Name, err)
 	}
 
 	t.Cleanup(func() {
-		deleteWithRetryOnError(t, context.Background(), clientPod, 2*time.Minute)
+		deleteWithRetryOnError(t, context.Background(), clientPod, DefaultRetryTimeout)
 	})
 
 	expectedResponse = strings.ToLower(expectedResponse)
@@ -125,7 +125,7 @@ func TestForwardedHeaderPolicyAppend(t *testing.T) {
 	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "forwardedheader-append"}
 	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
 	ic := newPrivateController(icName, domain)
-	if err := createWithRetryOnError(t, context.Background(), ic, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ic, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
 	}
 	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
@@ -150,30 +150,30 @@ func TestForwardedHeaderPolicyAppend(t *testing.T) {
 	// Create a pod and route that echoes back the request.
 	namespace := createNamespace(t, names.SimpleNameGenerator.GenerateName("fhp-append-"))
 	echoPod := buildEchoPod("forwarded-header-policy-append-echo", namespace.Name)
-	if err := createWithRetryOnError(t, context.Background(), echoPod, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoPod, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 	}
 
 	t.Cleanup(func() {
-		deleteWithRetryOnError(t, context.Background(), echoPod, 2*time.Minute)
+		deleteWithRetryOnError(t, context.Background(), echoPod, DefaultRetryTimeout)
 	})
 
 	echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels)
-	if err := createWithRetryOnError(t, context.Background(), echoService, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoService, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 	}
 
 	t.Cleanup(func() {
-		deleteWithRetryOnError(t, context.Background(), echoService, 2*time.Minute)
+		deleteWithRetryOnError(t, context.Background(), echoService, DefaultRetryTimeout)
 	})
 
 	echoRoute := buildRoute(echoPod.Name, echoPod.Namespace, echoService.Name)
-	if err := createWithRetryOnError(t, context.Background(), echoRoute, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoRoute, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
 	}
 
 	t.Cleanup(func() {
-		deleteWithRetryOnError(t, context.Background(), echoRoute, 2*time.Minute)
+		deleteWithRetryOnError(t, context.Background(), echoRoute, DefaultRetryTimeout)
 	})
 
 	// Use the OpenShift Router container image, which includes curl, to
@@ -219,7 +219,7 @@ func TestForwardedHeaderPolicyReplace(t *testing.T) {
 	ic.Spec.HTTPHeaders = &operatorv1.IngressControllerHTTPHeaders{
 		ForwardedHeaderPolicy: operatorv1.ReplaceHTTPHeaderPolicy,
 	}
-	if err := createWithRetryOnError(t, context.Background(), ic, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ic, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
 	}
 	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
@@ -243,27 +243,27 @@ func TestForwardedHeaderPolicyReplace(t *testing.T) {
 
 	namespace := createNamespace(t, names.SimpleNameGenerator.GenerateName("fhp-replace-"))
 	echoPod := buildEchoPod("forwarded-header-policy-replace-echo", namespace.Name)
-	if err := createWithRetryOnError(t, context.Background(), echoPod, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoPod, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 	}
 	t.Cleanup(func() {
-		deleteWithRetryOnError(t, context.Background(), echoPod, 2*time.Minute)
+		deleteWithRetryOnError(t, context.Background(), echoPod, DefaultRetryTimeout)
 	})
 
 	echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels)
-	if err := createWithRetryOnError(t, context.Background(), echoService, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoService, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 	}
 	t.Cleanup(func() {
-		deleteWithRetryOnError(t, context.Background(), echoService, 2*time.Minute)
+		deleteWithRetryOnError(t, context.Background(), echoService, DefaultRetryTimeout)
 	})
 
 	echoRoute := buildRoute(echoPod.Name, echoPod.Namespace, echoService.Name)
-	if err := createWithRetryOnError(t, context.Background(), echoRoute, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoRoute, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
 	}
 	t.Cleanup(func() {
-		deleteWithRetryOnError(t, context.Background(), echoRoute, 2*time.Minute)
+		deleteWithRetryOnError(t, context.Background(), echoRoute, DefaultRetryTimeout)
 	})
 
 	clientPodImage := deployment.Spec.Template.Spec.Containers[0].Image
@@ -284,7 +284,7 @@ func TestForwardedHeaderPolicyNever(t *testing.T) {
 	ic.Spec.HTTPHeaders = &operatorv1.IngressControllerHTTPHeaders{
 		ForwardedHeaderPolicy: operatorv1.NeverHTTPHeaderPolicy,
 	}
-	if err := createWithRetryOnError(t, context.Background(), ic, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ic, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
 	}
 	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
@@ -308,28 +308,28 @@ func TestForwardedHeaderPolicyNever(t *testing.T) {
 
 	namespace := createNamespace(t, names.SimpleNameGenerator.GenerateName("fhp-never-"))
 	echoPod := buildEchoPod("forwarded-header-policy-never-echo", namespace.Name)
-	if err := createWithRetryOnError(t, context.Background(), echoPod, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoPod, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 	}
 
 	t.Cleanup(func() {
-		deleteWithRetryOnError(t, context.Background(), echoPod, 2*time.Minute)
+		deleteWithRetryOnError(t, context.Background(), echoPod, DefaultRetryTimeout)
 	})
 
 	echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels)
-	if err := createWithRetryOnError(t, context.Background(), echoService, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoService, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 	}
 	t.Cleanup(func() {
-		deleteWithRetryOnError(t, context.Background(), echoService, 2*time.Minute)
+		deleteWithRetryOnError(t, context.Background(), echoService, DefaultRetryTimeout)
 	})
 
 	echoRoute := buildRoute(echoPod.Name, echoPod.Namespace, echoService.Name)
-	if err := createWithRetryOnError(t, context.Background(), echoRoute, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoRoute, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
 	}
 	t.Cleanup(func() {
-		deleteWithRetryOnError(t, context.Background(), echoRoute, 2*time.Minute)
+		deleteWithRetryOnError(t, context.Background(), echoRoute, DefaultRetryTimeout)
 	})
 
 	clientPodImage := deployment.Spec.Template.Spec.Containers[0].Image
@@ -351,7 +351,7 @@ func TestForwardedHeaderPolicyIfNone(t *testing.T) {
 	ic.Spec.HTTPHeaders = &operatorv1.IngressControllerHTTPHeaders{
 		ForwardedHeaderPolicy: operatorv1.IfNoneHTTPHeaderPolicy,
 	}
-	if err := createWithRetryOnError(t, context.Background(), ic, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ic, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
 	}
 	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
@@ -375,27 +375,27 @@ func TestForwardedHeaderPolicyIfNone(t *testing.T) {
 
 	namespace := createNamespace(t, names.SimpleNameGenerator.GenerateName("fhp-if-none-"))
 	echoPod := buildEchoPod("forwarded-header-policy-if-none-echo", namespace.Name)
-	if err := createWithRetryOnError(t, context.Background(), echoPod, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoPod, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 	}
 
 	t.Cleanup(func() {
-		deleteWithRetryOnError(t, context.Background(), echoPod, 2*time.Minute)
+		deleteWithRetryOnError(t, context.Background(), echoPod, DefaultRetryTimeout)
 	})
 
 	echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels)
-	if err := createWithRetryOnError(t, context.Background(), echoService, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoService, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 	}
 	t.Cleanup(func() {
-		deleteWithRetryOnError(t, context.Background(), echoService, 2*time.Minute)
+		deleteWithRetryOnError(t, context.Background(), echoService, DefaultRetryTimeout)
 	})
 	echoRoute := buildRoute(echoPod.Name, echoPod.Namespace, echoService.Name)
-	if err := createWithRetryOnError(t, context.Background(), echoRoute, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoRoute, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
 	}
 	t.Cleanup(func() {
-		deleteWithRetryOnError(t, context.Background(), echoRoute, 2*time.Minute)
+		deleteWithRetryOnError(t, context.Background(), echoRoute, DefaultRetryTimeout)
 	})
 
 	clientPodImage := deployment.Spec.Template.Spec.Containers[0].Image

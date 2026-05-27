@@ -68,8 +68,8 @@ func assertCRDExists(t *testing.T, crdname string) ([]string, error) {
 	name := types.NamespacedName{Namespace: "", Name: crdname}
 	crdVersions := []string{}
 
-	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(context context.Context) (bool, error) {
-		if err := kclient.Get(context, name, crd); err != nil {
+	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, name, crd); err != nil {
 			t.Logf("failed to get crd %s: %v", name, err)
 			return false, nil
 		}
@@ -97,8 +97,8 @@ func deleteExistingCRD(t *testing.T, crdName string) error {
 	newCRD := &apiextensionsv1.CustomResourceDefinition{}
 	name := types.NamespacedName{Namespace: "", Name: crdName}
 
-	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(context context.Context) (bool, error) {
-		if err := kclient.Get(context, name, crd); err != nil {
+	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, name, crd); err != nil {
 			t.Logf("failed to get crd %s: %v", name, err)
 			return false, nil
 		}
@@ -145,8 +145,8 @@ func deleteExistingVAP(t *testing.T, vapName string) error {
 	name := types.NamespacedName{Name: vapName}
 
 	// Retrieve the object to be deleted.
-	if err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(context context.Context) (bool, error) {
-		if err := kclient.Get(context, name, vap); err != nil {
+	if err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, name, vap); err != nil {
 			t.Logf("failed to get vap %q: %v, retrying ...", vapName, err)
 			return false, nil
 		}
@@ -194,17 +194,17 @@ func createHttpRoute(t *testing.T, namespace, routeName, parentNamespace, hostna
 	// The http route, service, and pod are cleaned up when the namespace is automatically deleted.
 	// buildEchoReplicaSet builds a replicaset which creates a pod that listens on port 8080.
 	echoRs := buildEchoReplicaSet(backendRefname, namespace)
-	if err := createWithRetryOnError(t, context.TODO(), echoRs, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, context.TODO(), echoRs, DefaultRetryTimeout); err != nil {
 		return nil, fmt.Errorf("failed to create replicaset %s/%s: %v", namespace, echoRs.Name, err)
 	}
 	// buildEchoService builds a service that targets port 8080.
 	echoService := buildEchoService(echoRs.Name, namespace, echoRs.Spec.Template.ObjectMeta.Labels)
-	if err := createWithRetryOnError(t, context.TODO(), echoService, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, context.TODO(), echoService, DefaultRetryTimeout); err != nil {
 		return nil, fmt.Errorf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 	}
 
 	httpRoute := buildHTTPRoute(routeName, namespace, gateway.Name, parentNamespace, hostname, backendRefname)
-	if err := createOrGetWithRetry(t, context.Background(), httpRoute, 2*time.Minute); err != nil {
+	if err := createOrGetWithRetry(t, context.Background(), httpRoute, DefaultRetryTimeout); err != nil {
 		return nil, fmt.Errorf("failed to create http route: %v", err)
 	}
 	return httpRoute, nil
@@ -215,7 +215,7 @@ func createHttpRoute(t *testing.T, namespace, routeName, parentNamespace, hostna
 func createGateway(t *testing.T, gatewayClass *gatewayapiv1.GatewayClass, name, namespace, domain string) (*gatewayapiv1.Gateway, error) {
 	t.Helper()
 	gateway := buildGateway(name, namespace, gatewayClass.Name, allNamespaces, domain)
-	if err := createOrGetWithRetry(t, context.Background(), gateway, 2*time.Minute); err != nil {
+	if err := createOrGetWithRetry(t, context.Background(), gateway, DefaultRetryTimeout); err != nil {
 		return nil, fmt.Errorf("failed to create gateway: %v", err)
 	}
 	return gateway, nil
@@ -257,7 +257,7 @@ func createGatewayWithListeners(t *testing.T, gatewayClass *gatewayapiv1.Gateway
 		},
 	}
 
-	if err := createWithRetryOnError(t, context.TODO(), gateway, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, context.TODO(), gateway, DefaultRetryTimeout); err != nil {
 		return nil, fmt.Errorf("failed to create gateway %s: %v", name, err.Error())
 	}
 
@@ -283,7 +283,7 @@ func createGatewayClass(t *testing.T, name, controllerName string) (*gatewayapiv
 		}
 	}
 	nsName := types.NamespacedName{Namespace: "", Name: name}
-	if err := wait.PollUntilContextTimeout(context.TODO(), 2*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
+	if err := wait.PollUntilContextTimeout(t.Context(), 2*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
 		if err := kclient.Create(ctx, gatewayClass); err != nil {
 			if kerrors.IsAlreadyExists(err) {
 				if err := kclient.Get(ctx, nsName, gatewayClass); err != nil {
@@ -307,7 +307,7 @@ func createGatewayClass(t *testing.T, name, controllerName string) (*gatewayapiv
 func createCRD(t *testing.T, name string) (*apiextensionsv1.CustomResourceDefinition, error) {
 	t.Helper()
 	crd := buildGWAPICRDFromName(name)
-	if err := createOrGetWithRetry(t, context.Background(), crd, 2*time.Minute); err != nil {
+	if err := createOrGetWithRetry(t, context.Background(), crd, DefaultRetryTimeout); err != nil {
 		return nil, fmt.Errorf("failed to create crd %q: %w", name, err)
 	}
 	return crd, nil
@@ -440,8 +440,8 @@ func assertSubscription(t *testing.T, namespace, subName string) error {
 	subscription := &operatorsv1alpha1.Subscription{}
 	nsName := types.NamespacedName{Namespace: namespace, Name: subName}
 
-	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(context context.Context) (bool, error) {
-		if err := kclient.Get(context, nsName, subscription); err != nil {
+	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, nsName, subscription); err != nil {
 			t.Logf("failed to get subscription %s, retrying...", subName)
 			return false, nil
 		}
@@ -458,8 +458,8 @@ func assertNoSubscription(t *testing.T, namespace, subName string) error {
 	subscription := &operatorsv1alpha1.Subscription{}
 	nsName := types.NamespacedName{Namespace: namespace, Name: subName}
 
-	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(context context.Context) (bool, error) {
-		if err := kclient.Get(context, nsName, subscription); err != nil {
+	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, nsName, subscription); err != nil {
 			if kerrors.IsNotFound(err) {
 				t.Logf("verified that subscription %s does not exist (as expected)", subName)
 				return true, nil
@@ -480,8 +480,8 @@ func deleteExistingSubscription(t *testing.T, namespace, subName string) error {
 	newSubscription := &operatorsv1alpha1.Subscription{}
 	nsName := types.NamespacedName{Namespace: namespace, Name: subName}
 
-	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(context context.Context) (bool, error) {
-		if err := kclient.Get(context, nsName, existingSubscription); err != nil {
+	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, nsName, existingSubscription); err != nil {
 			t.Logf("failed to get Subscription %s: %v", nsName.Name, err)
 			return false, nil
 		}
@@ -526,8 +526,8 @@ func assertOSSMOperator(t *testing.T) error {
 	ns := types.NamespacedName{Namespace: openshiftOperatorsNamespace, Name: openshiftIstioOperatorDeploymentName}
 
 	// Get the Istio operator deployment.
-	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(context context.Context) (bool, error) {
-		if err := kclient.Get(context, ns, dep); err != nil {
+	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, ns, dep); err != nil {
 			t.Logf("failed to get deployment %v, retrying...", ns)
 			return false, nil
 		}
@@ -562,8 +562,8 @@ func assertIstiodControlPlane(t *testing.T) error {
 	ns := types.NamespacedName{Namespace: operatorcontroller.DefaultOperandNamespace, Name: openshiftIstiodDeploymentName}
 
 	// Get the Istiod deployment.
-	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(context context.Context) (bool, error) {
-		if err := kclient.Get(context, ns, dep); err != nil {
+	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, ns, dep); err != nil {
 			t.Logf("failed to get deployment %v, retrying...", ns)
 			return false, nil
 		}
@@ -631,8 +631,8 @@ func assertIstiodControlPlaneRemoved(t *testing.T) error {
 	dep := &appsv1.Deployment{}
 	ns := types.NamespacedName{Namespace: operatorcontroller.DefaultOperandNamespace, Name: openshiftIstiodDeploymentName}
 
-	err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 2*time.Minute, false, func(context context.Context) (bool, error) {
-		if err := kclient.Get(context, ns, dep); err != nil {
+	err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, DefaultRetryTimeout, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, ns, dep); err != nil {
 			if kerrors.IsNotFound(err) {
 				t.Logf("verified that istiod deployment %v has been removed", ns)
 				return true, nil
@@ -663,8 +663,8 @@ func assertGatewayClassSuccessful(t *testing.T, name string) (*gatewayapiv1.Gate
 	// OSSM installation pipeline to complete first: Subscription creation,
 	// OSSM operator installation, Istio CR creation, and Istiod deployment.
 	// This chain can take several minutes, especially on slower platforms.
-	err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 5*time.Minute, false, func(context context.Context) (bool, error) {
-		if err := kclient.Get(context, nsName, gwc); err != nil {
+	err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 5*time.Minute, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, nsName, gwc); err != nil {
 			t.Logf("Failed to get gatewayclass %s: %v; retrying...", name, err)
 			return false, nil
 		}
@@ -701,8 +701,8 @@ func assertGatewaySuccessful(t *testing.T, namespace, name string) (*gatewayapiv
 	// Wait for the gateway to be accepted and programmed.
 	// Load balancer provisioning can take several minutes on some platforms.
 	// Therefore, a timeout of 5 minutes is set to accommodate potential delays.
-	err := wait.PollUntilContextTimeout(context.Background(), 3*time.Second, 5*time.Minute, false, func(context context.Context) (bool, error) {
-		if err := kclient.Get(context, nsName, gw); err != nil {
+	err := wait.PollUntilContextTimeout(context.Background(), 3*time.Second, 5*time.Minute, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, nsName, gw); err != nil {
 			t.Logf("Failed to get gateway %v: %v; retrying...", nsName, err)
 			return false, nil
 		}
@@ -735,7 +735,7 @@ func assertGatewaySuccessful(t *testing.T, namespace, name string) (*gatewayapiv
 		// Check the current status of the service to see where we are.
 		svc := &corev1.Service{}
 		svcNsName := types.NamespacedName{Namespace: namespace, Name: gw.Name + "-" + string(gw.Spec.GatewayClassName)}
-		if err := kclient.Get(context, svcNsName, svc); err != nil {
+		if err := kclient.Get(ctx, svcNsName, svc); err != nil {
 			t.Logf("Failed to get gateway service %v: %v; retrying...", svcNsName, err)
 			return false, nil
 		}
@@ -767,8 +767,8 @@ func assertHorizontalPodAutoscalerEnabled(t *testing.T, namespaceName, gatewayNa
 		Name:      gatewayName,
 	}
 	t.Logf("Getting HorizontalPodAutoscaler %s for Gateway %s...", hpaName, gatewayNamespacedName)
-	if err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(context context.Context) (bool, error) {
-		if err := kclient.Get(context, hpaName, &hpa); err != nil {
+	if err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, hpaName, &hpa); err != nil {
 			t.Logf("Failed to get HorizontalPodAutoscaler %s: %v; retrying...", hpaName, err)
 
 			return false, nil
@@ -798,24 +798,20 @@ func waitForGatewayListenerCondition(t *testing.T, gatewayName types.NamespacedN
 	expected := gatewayListenerConditionMap(conditions...)
 	current := map[string]string{}
 
-	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(context context.Context) (bool, error) {
-		if err := kclient.Get(context, gatewayName, gateway); err != nil {
+	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, gatewayName, gateway); err != nil {
 			t.Logf("failed to get gateway %s, retrying...", gatewayName.Name)
 			return false, nil
 		}
 
-		listenerStatus := gatewayapiv1.ListenerStatus{}
 		for _, ls := range gateway.Status.Listeners {
 			if string(ls.Name) == listenerName {
-				listenerStatus = ls
-				current = gatewayListenerConditionMap(listenerStatus.Conditions...)
+				current = gatewayListenerConditionMap(ls.Conditions...)
 				return conditionsMatchExpected(expected, current), nil
 			}
 		}
-		if &listenerStatus == nil {
-			t.Logf("gateway %s's listener %s has not been updated with status, retrying...", gatewayName.Name, listenerName)
-			return false, nil
-		}
+
+		t.Logf("gateway %s's listener %s has not been updated with status, retrying...", gatewayName.Name, listenerName)
 		return false, nil
 	})
 
@@ -857,13 +853,13 @@ func assertExpectedDNSRecords(t *testing.T, expectations map[expectedDnsRecord]b
 
 	var expectationsMet bool
 
-	err := wait.PollUntilContextTimeout(context.Background(), 5*time.Second, 2*time.Minute, false, func(context context.Context) (bool, error) {
+	err := wait.PollUntilContextTimeout(context.Background(), 5*time.Second, DefaultRetryTimeout, false, func(ctx context.Context) (bool, error) {
 		haveExpectNotPresent := false
 		// expectationsMet starts true and gets set to false when some expectation is not met.
 		expectationsMet = true
 
 		dnsRecords := &v1.DNSRecordList{}
-		if err := kclient.List(context, dnsRecords, client.InNamespace(operatorcontroller.DefaultOperandNamespace)); err != nil {
+		if err := kclient.List(ctx, dnsRecords, client.InNamespace(operatorcontroller.DefaultOperandNamespace)); err != nil {
 			t.Logf("failed to list DNSRecords: %v, retrying...", err)
 			return false, nil
 		}
@@ -943,8 +939,8 @@ func assertHttpRouteSuccessful(t *testing.T, namespace, name string, gateway *ga
 	nsName := types.NamespacedName{Namespace: namespace, Name: name}
 
 	// Wait 1 minute for parent/s to update
-	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(context context.Context) (bool, error) {
-		if err := kclient.Get(context, nsName, httproute); err != nil {
+	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 1*time.Minute, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, nsName, httproute); err != nil {
 			t.Logf("Failed to get httproute %v: %v; retrying...", nsName, err)
 			return false, nil
 		}
@@ -1029,7 +1025,7 @@ func assertHttpRouteConnection(t *testing.T, hostname string, gateway *gatewayap
 		// if the hostname is actually an IP address, skip this.
 		if net.ParseIP(hostname) == nil {
 			t.Logf("Attempting to resolve %s...", hostname)
-			if err := wait.PollUntilContextTimeout(context.Background(), 10*time.Second, dnsResolutionTimeout, false, func(context context.Context) (bool, error) {
+			if err := wait.PollUntilContextTimeout(context.Background(), 10*time.Second, dnsResolutionTimeout, false, func(ctx context.Context) (bool, error) {
 				_, err := net.LookupHost(hostname)
 				if err != nil {
 					t.Logf("%v waiting for HTTP route name %s to resolve (%v)", time.Now(), hostname, err)
@@ -1081,7 +1077,7 @@ func assertHttpRouteConnection(t *testing.T, hostname string, gateway *gatewayap
 		headers    http.Header
 	)
 	t.Logf("Probing %s...", hostname)
-	if err := wait.PollUntilContextTimeout(context.Background(), 5*time.Second, 5*time.Minute, false, func(context context.Context) (bool, error) {
+	if err := wait.PollUntilContextTimeout(context.Background(), 5*time.Second, 5*time.Minute, false, func(ctx context.Context) (bool, error) {
 		var err error
 		statusCode, headers, body, err = getHTTPResponse(client, hostname)
 		if err != nil {
@@ -1130,8 +1126,8 @@ func assertCatalogSource(t *testing.T, namespace, csName string) error {
 	catalogSource := &operatorsv1alpha1.CatalogSource{}
 	nsName := types.NamespacedName{Namespace: namespace, Name: csName}
 
-	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(context context.Context) (bool, error) {
-		if err := kclient.Get(context, nsName, catalogSource); err != nil {
+	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, nsName, catalogSource); err != nil {
 			t.Logf("Failed to get CatalogSource %s: %v.  Retrying...", csName, err)
 			return false, nil
 		}
@@ -1152,8 +1148,8 @@ func assertIstio(t *testing.T) error {
 	istio := &sailv1.Istio{}
 	nsName := types.NamespacedName{Namespace: operatorcontroller.DefaultOperandNamespace, Name: openshiftIstioName}
 
-	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 3*time.Minute, false, func(context context.Context) (bool, error) {
-		if err := kclient.Get(context, nsName, istio); err != nil {
+	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 3*time.Minute, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, nsName, istio); err != nil {
 			t.Logf("Failed to get Istio %s/%s: %v.  Retrying...", nsName.Namespace, nsName.Name, err)
 			return false, nil
 		}
@@ -1174,8 +1170,8 @@ func assertNoIstio(t *testing.T) error {
 	istio := &sailv1.Istio{}
 	nsName := types.NamespacedName{Namespace: operatorcontroller.DefaultOperandNamespace, Name: openshiftIstioName}
 
-	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(context context.Context) (bool, error) {
-		if err := kclient.Get(context, nsName, istio); err != nil {
+	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, nsName, istio); err != nil {
 			if kerrors.IsNotFound(err) {
 				t.Logf("Verified that Istio %s/%s does not exist (as expected)", nsName.Namespace, nsName.Name)
 				return true, nil
@@ -1200,8 +1196,8 @@ func deleteExistingIstio(t *testing.T) error {
 	newIstio := &sailv1.Istio{}
 	nsName := types.NamespacedName{Namespace: operatorcontroller.DefaultOperandNamespace, Name: openshiftIstioName}
 
-	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(context context.Context) (bool, error) {
-		if err := kclient.Get(context, nsName, existingIstio); err != nil {
+	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, nsName, existingIstio); err != nil {
 			t.Logf("Failed to get Istio %s: %v", nsName.Name, err)
 			return false, nil
 		}
@@ -1248,8 +1244,8 @@ func assertGatewayClassFinalizer(t *testing.T, name string) error {
 	nsName := types.NamespacedName{Namespace: "", Name: name}
 	expectedFinalizer := "openshift.io/ingress-operator-sail-finalizer"
 
-	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(context context.Context) (bool, error) {
-		if err := kclient.Get(context, nsName, gwc); err != nil {
+	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 30*time.Second, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, nsName, gwc); err != nil {
 			t.Logf("Failed to get GatewayClass %s: %v; retrying...", name, err)
 			return false, nil
 		}
@@ -1275,8 +1271,8 @@ func assertGatewayClassConditions(t *testing.T, name string) error {
 	gwc := &gatewayapiv1.GatewayClass{}
 	nsName := types.NamespacedName{Namespace: "", Name: name}
 
-	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, 2*time.Minute, false, func(context context.Context) (bool, error) {
-		if err := kclient.Get(context, nsName, gwc); err != nil {
+	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, DefaultRetryTimeout, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, nsName, gwc); err != nil {
 			t.Logf("Failed to get GatewayClass %s: %v; retrying...", name, err)
 			return false, nil
 		}
@@ -1331,8 +1327,8 @@ func assertDNSRecord(t *testing.T, recordName types.NamespacedName) error {
 	t.Helper()
 	dnsRecord := &v1.DNSRecord{}
 
-	err := wait.PollUntilContextTimeout(context.Background(), 10*time.Second, 10*time.Minute, false, func(context context.Context) (bool, error) {
-		if err := kclient.Get(context, recordName, dnsRecord); err != nil {
+	err := wait.PollUntilContextTimeout(context.Background(), 10*time.Second, 10*time.Minute, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, recordName, dnsRecord); err != nil {
 			t.Logf("[%s] Failed to get DNSRecord %v: %v; retrying...", time.Now().Format(time.DateTime), recordName, err)
 			return false, nil
 		}
@@ -1365,8 +1361,8 @@ func assertVAP(t *testing.T, name string) error {
 	vap := &admissionregistrationv1.ValidatingAdmissionPolicy{}
 	// Re-creation of VAP can take some time especially after CVO is scaled back up.
 	// Use a large timeout of 5 minutes to avoid flakes.
-	return wait.PollUntilContextTimeout(context.Background(), 5*time.Second, 5*time.Minute, false, func(context context.Context) (bool, error) {
-		if err := kclient.Get(context, types.NamespacedName{Name: name}, vap); err != nil {
+	return wait.PollUntilContextTimeout(context.Background(), 5*time.Second, 5*time.Minute, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, types.NamespacedName{Name: name}, vap); err != nil {
 			t.Logf("failed to get vap %q: %v, retrying...", name, err)
 			return false, nil
 		}
@@ -1380,15 +1376,15 @@ func scaleDeployment(t *testing.T, namespace, name string, replicas int32) error
 	t.Helper()
 
 	nsName := types.NamespacedName{Namespace: namespace, Name: name}
-	return wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 120*time.Second, false, func(context context.Context) (bool, error) {
+	return wait.PollUntilContextTimeout(context.Background(), 2*time.Second, DefaultRetryTimeout, false, func(ctx context.Context) (bool, error) {
 		depl := &appsv1.Deployment{}
-		if err := kclient.Get(context, nsName, depl); err != nil {
+		if err := kclient.Get(ctx, nsName, depl); err != nil {
 			t.Logf("failed to get deployment %q: %v, retrying...", nsName, err)
 			return false, nil
 		}
 		if *depl.Spec.Replicas != replicas {
 			depl.Spec.Replicas = &replicas
-			if err := kclient.Update(context, depl); err != nil {
+			if err := kclient.Update(ctx, depl); err != nil {
 				t.Logf("failed to update deployment %q: %v, retrying...", nsName, err)
 				return false, nil
 			}
@@ -1511,7 +1507,7 @@ func containsPolicyRules(destRules, srcRules []rbacv1.PolicyRule) bool {
 // and retry
 func updateGatewaySpecWithRetry(t *testing.T, name types.NamespacedName, timeout time.Duration, mutateSpecFn func(*gatewayapiv1.GatewaySpec)) error {
 	gw := gatewayapiv1.Gateway{}
-	return wait.PollUntilContextTimeout(context.TODO(), 1*time.Second, timeout, false, func(ctx context.Context) (bool, error) {
+	return wait.PollUntilContextTimeout(context.Background(), 1*time.Second, timeout, false, func(ctx context.Context) (bool, error) {
 		if err := kclient.Get(ctx, name, &gw); err != nil {
 			t.Logf("error getting gateway resource %v: %v, retrying...", name, err)
 			return false, nil

@@ -147,7 +147,7 @@ func testRouteMetricsControllerLabelSelector(t *testing.T, testRS, testNS bool) 
 		}
 	}
 
-	if err := createWithRetryOnError(t, context.Background(), ic, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ic, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
 	}
 
@@ -173,12 +173,12 @@ func testRouteMetricsControllerLabelSelector(t *testing.T, testRS, testNS bool) 
 			"expression": correctLabel,
 		}
 	}
-	if err := createWithRetryOnError(t, context.Background(), ns, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ns, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create namespace: %v", err)
 	}
 
 	// Cleanup step - delete the Namespace.
-	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), ns, 2*time.Minute) })
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), ns, DefaultRetryTimeout) })
 
 	// Create a Route to be immediately admitted by this Ingress Controller.
 	routeFooLabelName := types.NamespacedName{Namespace: ns.Name, Name: routeNameStr}
@@ -199,12 +199,12 @@ func testRouteMetricsControllerLabelSelector(t *testing.T, testRS, testNS bool) 
 		},
 	}
 
-	if err := createWithRetryOnError(t, context.Background(), routeFooLabel, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), routeFooLabel, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create route: %v", err)
 	}
 
 	// Cleanup step - delete the Route.
-	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), routeFooLabel, 2*time.Minute) })
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), routeFooLabel, DefaultRetryTimeout) })
 
 	// Wait for metrics to be updated to 1 as the Route will get admitted by the IC.
 	if err := waitForRouteMetricsAddorUpdate(t, prometheusClient, ic.Name, 1); err != nil {
@@ -353,7 +353,7 @@ func updateRouteAndWaitForMetricsUpdate(t *testing.T, name types.NamespacedName,
 // waitForRouteMetricsAddorUpdate waits for the metrics for the corresponding shard to be added or updated to the expected value.
 func waitForRouteMetricsAddorUpdate(t *testing.T, prometheusClient prometheusv1.API, shardName string, value int) error {
 	t.Logf("waiting for route_metrics_controller_routes_per_shard{shard_name=%s} to become %d", shardName, value)
-	if err := wait.PollImmediate(1*time.Second, 2*time.Minute, func() (bool, error) {
+	if err := wait.PollImmediate(1*time.Second, DefaultRetryTimeout, func() (bool, error) {
 		result, _, err := prometheusClient.Query(context.TODO(), fmt.Sprintf(`route_metrics_controller_routes_per_shard{shard_name="%s"}`, shardName), time.Now())
 		if err != nil {
 			t.Logf("failed to fetch metrics: %v", err)
@@ -387,7 +387,7 @@ func waitForRouteMetricsAddorUpdate(t *testing.T, prometheusClient prometheusv1.
 
 // waitForRouteMetricsDelete waits for the metrics for the corresponding shard to be deleted.
 func waitForRouteMetricsDelete(t *testing.T, prometheusClient prometheusv1.API, shardName string) error {
-	if err := wait.PollImmediate(1*time.Second, 2*time.Minute, func() (bool, error) {
+	if err := wait.PollImmediate(1*time.Second, DefaultRetryTimeout, func() (bool, error) {
 		result, _, err := prometheusClient.Query(context.TODO(), fmt.Sprintf(`route_metrics_controller_routes_per_shard{shard_name="%s"}`, shardName), time.Now())
 		if err != nil {
 			t.Logf("failed to fetch metrics: %v", err)
