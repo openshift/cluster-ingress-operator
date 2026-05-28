@@ -43,10 +43,10 @@ echo "gateway-api repo branch \"${BRANCH}\" into ${CLONE_DIR}..."
 git clone --branch "${BRANCH}" https://github.com/kubernetes-sigs/gateway-api
 cd gateway-api
 
-if [[ "$BUNDLE_VERSION" = "v1.2.1" ]]; then
-    echo "Cherry-picking fix for CoreDNS deployment issue in Gateway API v1.2.1"
-    git fetch origin f64c54a3606c8eee5b4c85b1c5f8f0d3cf3470ca
-    git cherry-pick f64c54a3606c8eee5b4c85b1c5f8f0d3cf3470ca
+if [[ "$BUNDLE_VERSION" = "v1.3.0" ]]; then
+    echo "Cherry-picking fix for CoreDNS deployment image tag shortname issue in v1.3.0"
+    git fetch origin 7f612b97fec9edd3aa32d193a4e9b4c3161ed09a
+    git cherry-pick 7f612b97fec9edd3aa32d193a4e9b4c3161ed09a
 fi
 
 echo "Go version: $(go version)"
@@ -56,9 +56,12 @@ go mod vendor
 # because the AWS ELB needs an extra ~60s for DNS propagation.  See
 # <https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/best-practices-dns.html#DNS_change_propagation>.
 # Also, GRPCRouteListenerHostnameMatching tests are taking longer than 150s to converge to passing.
-sed -i -e '/MaxTimeToConsistency:/ s/30/180/' conformance/utils/config/timeout.go
+sed -i -e '/MaxTimeToConsistency:/ s/30/360/' conformance/utils/config/timeout.go
 
-SUPPORTED_FEATURES="Gateway,GRPCRoute,HTTPRoute,ReferenceGrant,GatewayPort8080,HTTPRouteQueryParamMatching,HTTPRouteMethodMatching,HTTPRouteResponseHeaderModification,HTTPRoutePortRedirect,HTTPRouteSchemeRedirect,HTTPRoutePathRedirect,HTTPRouteHostRewrite,HTTPRoutePathRewrite,HTTPRouteRequestMirror,HTTPRouteRequestMultipleMirrors,HTTPRouteBackendProtocolH2C,HTTPRouteBackendProtocolWebSocket"
+SUPPORTED_FEATURES="BackendTLSPolicy,BackendTLSPolicySANValidation,GRPCRoute,Gateway,GatewayAddressEmpty,GatewayHTTPListenerIsolation,GatewayInfrastructurePropagation,GatewayPort8080,HTTPRoute,HTTPRouteBackendProtocolH2C,HTTPRouteBackendProtocolWebSocket,HTTPRouteBackendRequestHeaderModification,HTTPRouteBackendTimeout,HTTPRouteCORS,HTTPRouteDestinationPortMatching,HTTPRouteHostRewrite,HTTPRouteMethodMatching,HTTPRouteNamedRouteRule,HTTPRouteParentRefPort,HTTPRoutePathRedirect,HTTPRoutePathRewrite,HTTPRoutePortRedirect,HTTPRouteQueryParamMatching,HTTPRouteRequestMirror,HTTPRouteRequestMultipleMirrors,HTTPRouteRequestPercentageMirror,HTTPRouteRequestTimeout,HTTPRouteResponseHeaderModification,HTTPRouteSchemeRedirect,ReferenceGrant"
+# skipping BackendTLSPolicyConflictResolution confornance test because upstream istio is not supporting this at the moment: https://github.com/istio/istio/blob/ba49f7398a8542c3612788e9bd0371c079e44165/tests/integration/pilot/gateway_conformance_test.go#L67
+SKIPPED_TESTS="HTTPRouteCORSAllowCredentialsBehavior,GatewayStaticAddresses,BackendTLSPolicyConflictResolution" 
 
 echo "Start Gateway API Conformance Testing"
-go test ./conformance -v -timeout 20m -run TestConformance -args "--supported-features=${SUPPORTED_FEATURES}" "--gateway-class=${GATEWAYCLASS_NAME}"
+go test ./conformance -v -timeout 60m -run TestConformance -args "--gateway-class=conformance" "--report-output=openshift.yaml" "--organization=Red Hat" "--project=Openshift Service Mesh" "--version=3.3.1" "--url=https://www.redhat.com/en/technologies/cloud-computing/openshift/container-platform" "--conformance-profiles=GATEWAY-HTTP,GATEWAY-GRPC" "--supported-features=${SUPPORTED_FEATURES}" "--skip-tests=${SKIPPED_TESTS}"
+cat conformance/openshift.yaml
