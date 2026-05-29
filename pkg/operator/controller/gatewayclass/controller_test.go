@@ -247,28 +247,26 @@ func Test_Reconcile(t *testing.T) {
 			{
 				Type:   "CRDsReady",
 				Status: metav1.ConditionUnknown,
-				Reason: "NoneExist",
+				Reason: "Unknown",
 			},
 		}
 	}
 
 	expectedSailLibraryOptions := func(version string, gieEnabled bool, proxyConfig map[string]string, gatewayclassesConfig json.RawMessage) *install.Options {
 		// Start with sail-operator's Gateway API defaults aka trust upstream defaults
-		values := install.GatewayAPIDefaults()
+		values := install.GatewayAPIDefaults("openshift-ingress")
 
 		// Apply our OpenShift-specific overrides
-		pilotEnv := map[string]string{
-			"PILOT_GATEWAY_API_DEFAULT_GATEWAYCLASS_NAME": "openshift-default",
-			"PILOT_GATEWAY_API_CONTROLLER_NAME":           "openshift.io/gateway-controller/v1",
-		}
-		if gieEnabled {
-			pilotEnv["ENABLE_GATEWAY_API_INFERENCE_EXTENSION"] = "true"
-		}
+		pilotEnv := gatewayAPIPilotEnv(gieEnabled)
 
 		openshiftOverrides := &sailv1.Values{
 			Global: &sailv1.GlobalConfig{
-				IstioNamespace:  ptr.To("openshift-ingress"),
-				TrustBundleName: ptr.To("openshift-gw-ca-root-cert"),
+				DefaultPodDisruptionBudget: &sailv1.DefaultPodDisruptionBudgetConfig{
+					Enabled: ptr.To(false),
+				},
+				IstioNamespace:    ptr.To("openshift-ingress"),
+				PriorityClassName: ptr.To("system-cluster-critical"),
+				TrustBundleName:   ptr.To("openshift-gw-ca-root-cert"),
 			},
 			Pilot: &sailv1.PilotConfig{
 				Env: pilotEnv,
@@ -283,15 +281,18 @@ func Test_Reconcile(t *testing.T) {
 			},
 			GatewayClasses: gatewayclassesConfig,
 		}
-		values = install.MergeValues(values, openshiftOverrides)
+		values, err := install.MergeValues(values, openshiftOverrides)
+		if err != nil {
+			t.Fatalf("failed to merge values: %v", err)
+		}
 
 		return &install.Options{
 			Namespace:      "openshift-ingress",
 			Version:        version,
 			Revision:       "openshift-gateway",
 			Values:         values,
-			ManageCRDs:     ptr.To(true),
-			IncludeAllCRDs: ptr.To(true),
+			ManageCRDs:     true,
+			IncludeAllCRDs: true,
 		}
 	}
 
