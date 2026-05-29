@@ -343,13 +343,17 @@ func testGatewayAPIResourcesProtection(t *testing.T) {
 	t.Cleanup(func() {
 		bypassVAP(t, deleteTestCRDs)
 	})
-	// Get kube client which impersonates ingress operator's service account.
+	// Get kube client which impersonates the ingress operator's service
+	// account with cluster-admin RBAC.  The "system:masters" group
+	// ensures RBAC never blocks the request so the VAP is the only
+	// enforcement layer under test.
 	kubeConfig, err := config.GetConfig()
 	if err != nil {
 		t.Fatalf("failed to get kube config: %v", err)
 	}
 	kubeConfig.Impersonate = rest.ImpersonationConfig{
 		UserName: "system:serviceaccount:openshift-ingress-operator:ingress-operator",
+		Groups:   []string{"system:masters"},
 	}
 	kubeClient, err := operatorclient.NewClient(kubeConfig)
 	if err != nil {

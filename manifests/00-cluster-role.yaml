@@ -173,7 +173,11 @@ rules:
   resources:
   - customresourcedefinitions
   verbs:
-  - '*'
+  - create
+  - get
+  - list
+  - update
+  - watch
 
 - apiGroups:
   - operators.coreos.com
