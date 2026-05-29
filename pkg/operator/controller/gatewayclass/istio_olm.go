@@ -229,20 +229,20 @@ func desiredIstio(name types.NamespacedName, ownerRef metav1.OwnerReference, ist
 		},
 	}
 
+	var infraConfig *configv1.Infrastructure
 	if extraConfig != nil {
 		if extraConfig.proxyConfig != nil {
 			if proxyMetadata := buildProxyMetadata(extraConfig.proxyConfig); proxyMetadata != nil {
 				istio.Spec.Values.MeshConfig.DefaultConfig.ProxyMetadata = proxyMetadata
 			}
 		}
+		infraConfig = extraConfig.infraConfig
+	}
 
-		if extraConfig.infraConfig != nil {
-			if hpaConfig, err := buildHorizontalPodAutoscalerConfig(extraConfig.infraConfig, gatewayclasses); err != nil {
-				return nil, err
-			} else {
-				istio.Spec.Values.GatewayClasses = hpaConfig
-			}
-		}
+	if gwClassConfig, err := buildGatewayClassesConfig(infraConfig, gatewayclasses); err != nil {
+		return nil, err
+	} else {
+		istio.Spec.Values.GatewayClasses = gwClassConfig
 	}
 
 	return istio, nil
