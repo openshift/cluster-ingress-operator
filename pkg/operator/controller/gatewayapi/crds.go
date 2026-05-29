@@ -25,6 +25,7 @@ var managedCRDs = []*apiextensionsv1.CustomResourceDefinition{
 	manifests.GRPCRouteCRD(),
 	manifests.HTTPRouteCRD(),
 	manifests.ReferenceGrantCRD(),
+	manifests.BackendTLSPolicyCRD(),
 }
 
 // managedCRDMap is a map of CRDs that this controller manages.
