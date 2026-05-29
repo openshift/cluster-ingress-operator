@@ -9,6 +9,7 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/stretchr/testify/assert"
 
+	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
 	"github.com/istio-ecosystem/sail-operator/pkg/install"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
@@ -40,18 +41,19 @@ type fakeSailInstaller struct {
 // Test if implementation adheres the interface
 var _ SailLibraryInstaller = &fakeSailInstaller{}
 
-func (i *fakeSailInstaller) Start(ctx context.Context) <-chan struct{} {
+func (i *fakeSailInstaller) Start(ctx context.Context) (<-chan struct{}, error) {
 	i.notifyCh = make(chan struct{})
-	return i.notifyCh
+	return i.notifyCh, nil
 }
 
-func (i *fakeSailInstaller) Apply(opts install.Options) {
+func (i *fakeSailInstaller) Apply(opts install.Options) error {
 	i.internalOpts = opts // Capture the options passed in
 
-	// Simulate successful installation with CRDs not yet installed
+	// Simulate successful installation with CRDs in unknown state
 	i.status.Installed = true
 	i.status.Version = opts.Version
-	i.status.CRDState = install.CRDNoneExist
+	i.status.CRDState = install.CRDManagementStateUnknown
+	return nil
 }
 
 func (i *fakeSailInstaller) Uninstall(ctx context.Context, namespace, revision string) error {
@@ -252,12 +254,12 @@ func Test_mapStatusToConditions(t *testing.T) {
 		expectedChanged    bool
 	}{
 		{
-			name: "Installed with CRDs managed by CIO",
+			name: "Installed with CRDs ready",
 			status: install.Status{
 				Installed:  true,
 				Version:    "v1.24.4",
-				CRDState:   install.CRDManagedByCIO,
-				CRDMessage: "CRDs installed by cluster-ingress-operator",
+				CRDState:   install.CRDManagementStateReady,
+				CRDMessage: "",
 			},
 			generation: 1,
 			expectedConditions: []metav1.Condition{
@@ -271,20 +273,20 @@ func Test_mapStatusToConditions(t *testing.T) {
 				{
 					Type:               CRDsReadyConditionType,
 					Status:             metav1.ConditionTrue,
-					Reason:             "ManagedByCIO",
-					Message:            "CRDs installed by cluster-ingress-operator",
+					Reason:             "Ready",
+					Message:            "all CRDs are ready",
 					ObservedGeneration: 1,
 				},
 			},
 			expectedChanged: true,
 		},
 		{
-			name: "Installed with CRDs managed by OLM",
+			name: "Installed with CRDs ready and message",
 			status: install.Status{
 				Installed:  true,
 				Version:    "v1.24.4",
-				CRDState:   install.CRDManagedByOLM,
-				CRDMessage: "CRDs managed by OLM",
+				CRDState:   install.CRDManagementStateReady,
+				CRDMessage: "CRDs managed by cluster-ingress-operator",
 			},
 			generation: 1,
 			expectedConditions: []metav1.Condition{
@@ -298,19 +300,19 @@ func Test_mapStatusToConditions(t *testing.T) {
 				{
 					Type:               CRDsReadyConditionType,
 					Status:             metav1.ConditionTrue,
-					Reason:             "ManagedByOLM",
-					Message:            "CRDs managed by OLM",
+					Reason:             "Ready",
+					Message:            "CRDs managed by cluster-ingress-operator",
 					ObservedGeneration: 1,
 				},
 			},
 			expectedChanged: true,
 		},
 		{
-			name: "Installed with no CRDs",
+			name: "Installed with CRDs unknown",
 			status: install.Status{
 				Installed: true,
 				Version:   "v1.24.4",
-				CRDState:  install.CRDNoneExist,
+				CRDState:  install.CRDManagementStateUnknown,
 			},
 			generation: 2,
 			expectedConditions: []metav1.Condition{
@@ -324,23 +326,23 @@ func Test_mapStatusToConditions(t *testing.T) {
 				{
 					Type:               CRDsReadyConditionType,
 					Status:             metav1.ConditionUnknown,
-					Reason:             "NoneExist",
-					Message:            "CRDs not yet installed",
+					Reason:             "Unknown",
+					Message:            "CRD management state is unknown",
 					ObservedGeneration: 2,
 				},
 			},
 			expectedChanged: true,
 		},
 		{
-			name: "Installed with mixed CRD ownership",
+			name: "Installed with CRDs not ready",
 			status: install.Status{
 				Installed:  true,
 				Version:    "v1.24.4",
-				CRDState:   install.CRDMixedOwnership,
-				CRDMessage: "Mixed ownership detected",
+				CRDState:   install.CRDManagementStateNotReady,
+				CRDMessage: "not all CRDs are ready",
 				CRDs: []install.CRDInfo{
-					{Name: "gateways.gateway.networking.k8s.io", State: install.CRDManagedByOLM},
-					{Name: "httproutes.gateway.networking.k8s.io", State: install.CRDManagedByCIO},
+					{Name: "gateways.gateway.networking.k8s.io", Managed: false, Ready: true},
+					{Name: "httproutes.gateway.networking.k8s.io", Managed: true, Ready: false},
 				},
 			},
 			generation: 1,
@@ -355,8 +357,8 @@ func Test_mapStatusToConditions(t *testing.T) {
 				{
 					Type:               CRDsReadyConditionType,
 					Status:             metav1.ConditionFalse,
-					Reason:             "MixedOwnership",
-					Message:            "Mixed ownership detected\n- gateways.gateway.networking.k8s.io: ManagedByOLM\n- httproutes.gateway.networking.k8s.io: ManagedByCIO",
+					Reason:             "NotReady",
+					Message:            "not all CRDs are ready\n- gateways.gateway.networking.k8s.io: ready (not managed)\n- httproutes.gateway.networking.k8s.io: not ready",
 					ObservedGeneration: 1,
 				},
 			},
@@ -367,7 +369,7 @@ func Test_mapStatusToConditions(t *testing.T) {
 			status: install.Status{
 				Installed: false,
 				Error:     fmt.Errorf("failed to apply helm chart"),
-				CRDState:  install.CRDUnknownManagement,
+				CRDState:  install.CRDManagementStateError,
 			},
 			generation: 1,
 			expectedConditions: []metav1.Condition{
@@ -381,7 +383,7 @@ func Test_mapStatusToConditions(t *testing.T) {
 				{
 					Type:               CRDsReadyConditionType,
 					Status:             metav1.ConditionFalse,
-					Reason:             "UnknownManagement",
+					Reason:             "Error",
 					Message:            "unable to determine CRD ownership",
 					ObservedGeneration: 1,
 				},
@@ -392,7 +394,7 @@ func Test_mapStatusToConditions(t *testing.T) {
 			name: "Pending installation",
 			status: install.Status{
 				Installed: false,
-				CRDState:  install.CRDNoneExist,
+				CRDState:  install.CRDManagementStateUnknown,
 			},
 			generation: 1,
 			expectedConditions: []metav1.Condition{
@@ -406,8 +408,8 @@ func Test_mapStatusToConditions(t *testing.T) {
 				{
 					Type:               CRDsReadyConditionType,
 					Status:             metav1.ConditionUnknown,
-					Reason:             "NoneExist",
-					Message:            "CRDs not yet installed",
+					Reason:             "Unknown",
+					Message:            "CRD management state is unknown",
 					ObservedGeneration: 1,
 				},
 			},
@@ -419,7 +421,7 @@ func Test_mapStatusToConditions(t *testing.T) {
 				Installed:  true,
 				Version:    "v1.24.4",
 				Error:      fmt.Errorf("drift detected in deployment"),
-				CRDState:   install.CRDManagedByCIO,
+				CRDState:   install.CRDManagementStateReady,
 				CRDMessage: "CRDs managed",
 			},
 			generation: 3,
@@ -434,7 +436,7 @@ func Test_mapStatusToConditions(t *testing.T) {
 				{
 					Type:               CRDsReadyConditionType,
 					Status:             metav1.ConditionTrue,
-					Reason:             "ManagedByCIO",
+					Reason:             "Ready",
 					Message:            "CRDs managed",
 					ObservedGeneration: 3,
 				},
@@ -442,11 +444,11 @@ func Test_mapStatusToConditions(t *testing.T) {
 			expectedChanged: true,
 		},
 		{
-			name: "Unknown CRD management",
+			name: "CRD error state",
 			status: install.Status{
 				Installed:  true,
 				Version:    "v1.24.4",
-				CRDState:   install.CRDUnknownManagement,
+				CRDState:   install.CRDManagementStateError,
 				CRDMessage: "Cannot determine CRD ownership",
 			},
 			generation: 1,
@@ -461,7 +463,7 @@ func Test_mapStatusToConditions(t *testing.T) {
 				{
 					Type:               CRDsReadyConditionType,
 					Status:             metav1.ConditionFalse,
-					Reason:             "UnknownManagement",
+					Reason:             "Error",
 					Message:            "Cannot determine CRD ownership",
 					ObservedGeneration: 1,
 				},
@@ -471,10 +473,9 @@ func Test_mapStatusToConditions(t *testing.T) {
 		{
 			name: "No change when conditions already set",
 			status: install.Status{
-				Installed:  true,
-				Version:    "v1.24.4",
-				CRDState:   install.CRDManagedByCIO,
-				CRDMessage: "CRDs installed by cluster-ingress-operator",
+				Installed: true,
+				Version:   "v1.24.4",
+				CRDState:  install.CRDManagementStateReady,
 			},
 			generation: 1,
 			initialConditions: []metav1.Condition{
@@ -489,8 +490,8 @@ func Test_mapStatusToConditions(t *testing.T) {
 				{
 					Type:               CRDsReadyConditionType,
 					Status:             metav1.ConditionTrue,
-					Reason:             "ManagedByCIO",
-					Message:            "CRDs installed by cluster-ingress-operator",
+					Reason:             "Ready",
+					Message:            "all CRDs are ready",
 					ObservedGeneration: 1,
 					LastTransitionTime: metav1.Now(),
 				},
@@ -506,8 +507,8 @@ func Test_mapStatusToConditions(t *testing.T) {
 				{
 					Type:               CRDsReadyConditionType,
 					Status:             metav1.ConditionTrue,
-					Reason:             "ManagedByCIO",
-					Message:            "CRDs installed by cluster-ingress-operator",
+					Reason:             "Ready",
+					Message:            "all CRDs are ready",
 					ObservedGeneration: 1,
 				},
 			},
@@ -606,10 +607,11 @@ func TestOLMAndSailLibraryValuesMatch(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Get values from Sail Library path (GatewayAPIDefaults + OpenShift overrides)
-			sailValues := install.GatewayAPIDefaults()
+			sailValues := install.GatewayAPIDefaults("openshift-ingress")
 			openshiftOverrides, err := openshiftValues(tc.enableInferenceExtension, "openshift-ingress", tc.gatewayclasses, tc.extraconfig)
 			assert.Nil(t, err)
-			sailValues = install.MergeValues(sailValues, openshiftOverrides)
+			sailValues, err = install.MergeValues(sailValues, openshiftOverrides)
+			assert.Nil(t, err)
 
 			// Get values from OLM path
 			olmIstio, err := desiredIstio(
@@ -629,6 +631,13 @@ func TestOLMAndSailLibraryValuesMatch(t *testing.T) {
 				cmpopts.IgnoreMapEntries(func(k string, v string) bool {
 					return k == "X_PILOT_IGNORE_RESOURCES" || k == "X_PILOT_INCLUDE_RESOURCES"
 				}),
+				// The OLM path applies the "openshift" profile inline (via desiredIstio),
+				// while the Sail Library applies profiles internally during reconciliation
+				// via ComputeValues. Ignore fields that come from the openshift profile.
+				cmpopts.IgnoreFields(sailv1.PilotConfig{}, "Enabled", "Cni"),
+				cmpopts.IgnoreFields(sailv1.Values{}, "SidecarInjectorWebhook"),
+				cmpopts.IgnoreFields(sailv1.MeshConfig{}, "IngressControllerMode", "AccessLogFile"),
+				cmpopts.IgnoreFields(sailv1.MeshConfigProxyConfig{}, "ProxyHeaders"),
 			}
 
 			// Compare entire Values struct
