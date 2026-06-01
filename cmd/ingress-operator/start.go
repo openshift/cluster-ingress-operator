@@ -39,7 +39,7 @@ const (
 	// OSSM 3.3.1 ships Istio 1.28.5.
 	// Using floating z-stream tag to avoid breaking clusters with
 	// customer-managed subscriptions on a different OSSM minor version.
-	defaultIstioVersion = "v1.28-latest"
+	defaultIstioVersion = "v1.28.5"
 )
 
 type StartOptions struct {
