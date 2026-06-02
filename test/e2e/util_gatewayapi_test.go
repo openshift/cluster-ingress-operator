@@ -406,9 +406,9 @@ func buildGWAPICRDFromName(name string) *apiextensionsv1.CustomResourceDefinitio
 	case "referencegrants":
 		kind = "ReferenceGrant"
 		versions = []map[string]bool{{"v1beta1": true}}
-	case "listenersets":
-		kind = "ListenerSet"
-		versions = []map[string]bool{{"v1alpha1": true}}
+	case "tests":
+		kind = "Test"
+		versions = []map[string]bool{{"v1": true}}
 	case "grpcroutes":
 		kind = "GRPCRoute"
 		versions = []map[string]bool{{"v1": true}}

@@ -28,7 +28,6 @@ import (
 
 const (
 	controllerName                        = "gatewayapi_controller"
-	experimentalGatewayAPIGroupName       = "gateway.networking.x-k8s.io"
 	gatewayAPICRDIndexFieldName           = "gatewayAPICRD"
 	unmanagedGatewayAPICRDIndexFieldValue = "unmanaged"
 )
@@ -68,8 +67,8 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	}
 
 	isGatewayAPICRD := func(o client.Object) bool {
-		crd := o.(*apiextensionsv1.CustomResourceDefinition)
-		return crd.Spec.Group == gatewayapiv1.GroupName || crd.Spec.Group == experimentalGatewayAPIGroupName
+		crd, ok := o.(*apiextensionsv1.CustomResourceDefinition)
+		return ok && crd.Spec.Group == gatewayapiv1.GroupName
 	}
 	crdPredicate := predicate.NewPredicateFuncs(isGatewayAPICRD)
 

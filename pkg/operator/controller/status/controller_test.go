@@ -775,13 +775,13 @@ func Test_computeOperatorDegradedCondition(t *testing.T) {
 				IngressControllers: []operatorv1.IngressController{
 					icWithStatus("default", false),
 				},
-				unmanagedGatewayAPICRDNames: "listenersets.gateway.networking.x-k8s.io",
+				unmanagedGatewayAPICRDNames: "notvalid.gateway.networking.k8s.io",
 			},
 			expectCondition: configv1.ClusterOperatorStatusCondition{
 				Type:    configv1.OperatorDegraded,
 				Status:  configv1.ConditionTrue,
 				Reason:  "GatewayAPICRDsDegraded",
-				Message: "Unmanaged Gateway API CRDs found: listenersets.gateway.networking.x-k8s.io.",
+				Message: "Unmanaged Gateway API CRDs found: notvalid.gateway.networking.k8s.io.",
 			},
 		},
 		{
@@ -790,13 +790,13 @@ func Test_computeOperatorDegradedCondition(t *testing.T) {
 				IngressControllers: []operatorv1.IngressController{
 					icWithStatus("default", true),
 				},
-				unmanagedGatewayAPICRDNames: "listenersets.gateway.networking.x-k8s.io",
+				unmanagedGatewayAPICRDNames: "notvalid.gateway.networking.k8s.io",
 			},
 			expectCondition: configv1.ClusterOperatorStatusCondition{
 				Type:    configv1.OperatorDegraded,
 				Status:  configv1.ConditionTrue,
 				Reason:  "IngressDegradedAndGatewayAPICRDsDegraded",
-				Message: `The "default" ingress controller reports Degraded=True: dummy: dummy.` + "\n" + `Unmanaged Gateway API CRDs found: listenersets.gateway.networking.x-k8s.io.`,
+				Message: `The "default" ingress controller reports Degraded=True: dummy: dummy.` + "\n" + `Unmanaged Gateway API CRDs found: notvalid.gateway.networking.k8s.io.`,
 			},
 		},
 		{
