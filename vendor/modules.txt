@@ -397,7 +397,7 @@ github.com/mxk/go-flowrate/flowrate
 # github.com/oklog/ulid v1.3.1
 ## explicit
 github.com/oklog/ulid
-# github.com/openshift/api v0.0.0-20251202204302-1cb53e34ca33
+# github.com/openshift/api v0.0.0-20260605171052-6755619009c2
 ## explicit; go 1.24.0
 github.com/openshift/api
 github.com/openshift/api/annotations
