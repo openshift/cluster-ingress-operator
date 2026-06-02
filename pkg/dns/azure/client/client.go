@@ -12,6 +12,16 @@ import (
 	"github.com/pkg/errors"
 )
 
+// userAgent is the User-Agent identifier for the Cluster Ingress Operator.
+// Azure SDK has a 24-character limit for ApplicationID, and spaces are replaced with '/'.
+const userAgent = "cluster-ingress-operator"
+
+func telemetryOptions() policy.TelemetryOptions {
+	return policy.TelemetryOptions{
+		ApplicationID: userAgent,
+	}
+}
+
 type DNSClient interface {
 	Put(ctx context.Context, zone Zone, arec ARecord, metadata map[string]*string) error
 	Delete(ctx context.Context, zone Zone, arec ARecord) error
@@ -106,7 +116,8 @@ func newRecordSetClient(config Config, credential azcore.TokenCredential) (*reco
 	cloudConfig := ParseCloudEnvironment(config)
 	options := &arm.ClientOptions{
 		ClientOptions: policy.ClientOptions{
-			Cloud: cloudConfig,
+			Cloud:     cloudConfig,
+			Telemetry: telemetryOptions(),
 		},
 	}
 
@@ -150,7 +161,8 @@ func newPrivateRecordSetClient(config Config, credential azcore.TokenCredential)
 	cloudConfig := ParseCloudEnvironment(config)
 	options := &arm.ClientOptions{
 		ClientOptions: policy.ClientOptions{
-			Cloud: cloudConfig,
+			Cloud:     cloudConfig,
+			Telemetry: telemetryOptions(),
 		},
 	}
 
