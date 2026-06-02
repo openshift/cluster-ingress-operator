@@ -20,7 +20,7 @@ require (
 	github.com/google/go-cmp v0.7.0
 	github.com/google/gopacket v1.1.19
 	github.com/istio-ecosystem/sail-operator v0.0.0-20250513111011-30be83268d6b
-	github.com/openshift/api v0.0.0-20251202204302-1cb53e34ca33
+	github.com/openshift/api v0.0.0-20260605171052-6755619009c2
 	github.com/openshift/client-go v0.0.0-20240405120947-c67c8325cdd8
 	github.com/openshift/library-go v0.0.0-20240419113445-f1541d628746
 	github.com/operator-framework/api v0.30.0
