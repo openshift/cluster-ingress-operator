@@ -397,7 +397,7 @@ github.com/mxk/go-flowrate/flowrate
 # github.com/oklog/ulid v1.3.1
 ## explicit
 github.com/oklog/ulid
-# github.com/openshift/api v0.0.0-20251202204302-1cb53e34ca33
+# github.com/openshift/api v0.0.0-20251202204302-1cb53e34ca33 => github.com/gcs278/api v0.0.0-20260515020707-697ef2e02b5d
 ## explicit; go 1.24.0
 github.com/openshift/api
 github.com/openshift/api/annotations
@@ -1416,3 +1416,4 @@ sigs.k8s.io/yaml
 sigs.k8s.io/yaml/goyaml.v2
 # github.com/imdario/mergo => github.com/imdario/mergo v0.3.5
 # k8s.io/client-go => k8s.io/client-go v0.32.1
+# github.com/openshift/api => github.com/gcs278/api v0.0.0-20260515020707-697ef2e02b5d
