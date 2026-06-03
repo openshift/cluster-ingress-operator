@@ -283,6 +283,7 @@ func Test_Reconcile(t *testing.T) {
 					OperatorLifecycleManagerEnabled: tc.olmEnabled,
 					DependentControllers:            []controller.Controller{ctrl},
 				},
+				fieldIndexer: FakeIndexer{},
 			}
 			req := reconcile.Request{
 				NamespacedName: types.NamespacedName{
@@ -360,6 +361,7 @@ func TestReconcileOnlyStartsControllerOnce(t *testing.T) {
 			OperatorLifecycleManagerEnabled: true,
 			DependentControllers:            []controller.Controller{ctrl},
 		},
+		fieldIndexer: FakeIndexer{},
 	}
 	req := reconcile.Request{NamespacedName: types.NamespacedName{Name: "cluster"}}
 
@@ -388,4 +390,10 @@ func TestReconcileOnlyStartsControllerOnce(t *testing.T) {
 		t.Log(ctx.Err())
 	}
 	assert.True(t, ctrl.Started, "fake controller should have been started")
+}
+
+type FakeIndexer struct{}
+
+func (indexer FakeIndexer) IndexField(ctx context.Context, obj client.Object, field string, extractValue client.IndexerFunc) error {
+	return nil
 }
