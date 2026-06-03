@@ -291,6 +291,27 @@ func TestClusterOperatorStatusRelatedObjects(t *testing.T) {
 		Resource: "gateways",
 	})
 
+	ingressConfig := &configv1.Ingress{}
+	if err := kclient.Get(context.TODO(), operatorcontroller.IngressClusterConfigName(), ingressConfig); err != nil {
+		t.Fatalf("Failed to get ingress config: %v", err)
+	}
+	addExpectedOnce := func(ref configv1.ObjectReference) {
+		for _, existing := range expected {
+			if existing.Group == ref.Group &&
+				existing.Resource == ref.Resource &&
+				existing.Namespace == ref.Namespace &&
+				existing.Name == ref.Name {
+				return
+			}
+		}
+		expected = append(expected, ref)
+	}
+	for _, cr := range ingressConfig.Status.ComponentRoutes {
+		for _, obj := range cr.RelatedObjects {
+			addExpectedOnce(obj)
+		}
+	}
+
 	coName := controller.IngressClusterOperatorName()
 	err := wait.PollImmediate(1*time.Second, 5*time.Minute, func() (bool, error) {
 		co := &configv1.ClusterOperator{}

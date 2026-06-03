@@ -136,6 +136,18 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 		return nil, err
 	}
 
+	isClusterIngressConfig := predicate.NewPredicateFuncs(func(o client.Object) bool {
+		return o.GetName() == operatorcontroller.IngressClusterConfigName().Name
+	})
+	if err := c.Watch(source.Kind[client.Object](
+		operatorCache,
+		&configv1.Ingress{},
+		handler.EnqueueRequestsFromMapFunc(toDefaultIngressController),
+		isClusterIngressConfig,
+	)); err != nil {
+		return nil, err
+	}
+
 	// If the "GatewayAPI" and "GatewayAPIController" featuregates are
 	// enabled, watch subscriptions so that this controller can update
 	// status when the OSSM subscription is created or updated.  Note that
