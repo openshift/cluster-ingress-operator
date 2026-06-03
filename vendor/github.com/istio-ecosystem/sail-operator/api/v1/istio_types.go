@@ -37,10 +37,10 @@ const (
 type IstioSpec struct {
 	// +sail:version
 	// Defines the version of Istio to install.
-	// Must be one of: v1.24-latest, v1.24.3, v1.24.2, v1.24.1, v1.24.0, v1.23-latest, v1.23.5, v1.23.4, v1.23.3, v1.23.2, v1.22-latest, v1.22.8, v1.22.7, v1.22.6, v1.22.5, v1.21.6, master, v1.25-alpha.c2ac935c.
-	// +operator-sdk:csv:customresourcedefinitions:type=spec,order=1,displayName="Istio Version",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:fieldGroup:General", "urn:alm:descriptor:com.tectonic.ui:select:v1.24-latest", "urn:alm:descriptor:com.tectonic.ui:select:v1.24.3", "urn:alm:descriptor:com.tectonic.ui:select:v1.24.2", "urn:alm:descriptor:com.tectonic.ui:select:v1.24.1", "urn:alm:descriptor:com.tectonic.ui:select:v1.24.0", "urn:alm:descriptor:com.tectonic.ui:select:v1.23-latest", "urn:alm:descriptor:com.tectonic.ui:select:v1.23.5", "urn:alm:descriptor:com.tectonic.ui:select:v1.23.4", "urn:alm:descriptor:com.tectonic.ui:select:v1.23.3", "urn:alm:descriptor:com.tectonic.ui:select:v1.23.2", "urn:alm:descriptor:com.tectonic.ui:select:v1.22-latest", "urn:alm:descriptor:com.tectonic.ui:select:v1.22.8", "urn:alm:descriptor:com.tectonic.ui:select:v1.22.7", "urn:alm:descriptor:com.tectonic.ui:select:v1.22.6", "urn:alm:descriptor:com.tectonic.ui:select:v1.22.5", "urn:alm:descriptor:com.tectonic.ui:select:v1.21.6", "urn:alm:descriptor:com.tectonic.ui:select:master", "urn:alm:descriptor:com.tectonic.ui:select:v1.25-alpha.c2ac935c"}
-	// +kubebuilder:validation:Enum=v1.24-latest;v1.24.3;v1.24.2;v1.24.1;v1.24.0;v1.23-latest;v1.23.5;v1.23.4;v1.23.3;v1.23.2;v1.22-latest;v1.22.8;v1.22.7;v1.22.6;v1.22.5;v1.21.6;master;v1.25-alpha.c2ac935c
-	// +kubebuilder:default=v1.24.3
+	// Must be one of: v1.28-latest, v1.28.5, v1.28.4, v1.27-latest, v1.27.8, v1.27.5, v1.27.3, v1.26-latest, v1.26.8, v1.26.6, v1.26.4, v1.26.3, v1.26.2.
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,order=1,displayName="Istio Version",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:fieldGroup:General", "urn:alm:descriptor:com.tectonic.ui:select:v1.28-latest", "urn:alm:descriptor:com.tectonic.ui:select:v1.28.5", "urn:alm:descriptor:com.tectonic.ui:select:v1.28.4", "urn:alm:descriptor:com.tectonic.ui:select:v1.27-latest", "urn:alm:descriptor:com.tectonic.ui:select:v1.27.8", "urn:alm:descriptor:com.tectonic.ui:select:v1.27.5", "urn:alm:descriptor:com.tectonic.ui:select:v1.27.3", "urn:alm:descriptor:com.tectonic.ui:select:v1.26-latest", "urn:alm:descriptor:com.tectonic.ui:select:v1.26.8", "urn:alm:descriptor:com.tectonic.ui:select:v1.26.6", "urn:alm:descriptor:com.tectonic.ui:select:v1.26.4", "urn:alm:descriptor:com.tectonic.ui:select:v1.26.3", "urn:alm:descriptor:com.tectonic.ui:select:v1.26.2"}
+	// +kubebuilder:validation:Enum=v1.28-latest;v1.28.5;v1.28.4;v1.27-latest;v1.27.8;v1.27.5;v1.27.3;v1.26-latest;v1.26.8;v1.26.6;v1.26.4;v1.26.3;v1.26.2
+	// +kubebuilder:default=v1.28.5
 	Version string `json:"version"`
 
 	// Defines the update strategy to use when the version in the Istio CR is updated.
@@ -51,10 +51,9 @@ type IstioSpec struct {
 	// +sail:profile
 	// The built-in installation configuration profile to use.
 	// The 'default' profile is always applied. On OpenShift, the 'openshift' profile is also applied on top of 'default'.
-	// Must be one of: ambient, default, demo, empty, external, openshift-ambient, openshift, preview, remote, stable.
-	// +++PROFILES-DROPDOWN-HIDDEN-UNTIL-WE-FULLY-IMPLEMENT-THEM+++operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Profile",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:fieldGroup:General", "urn:alm:descriptor:com.tectonic.ui:select:ambient", "urn:alm:descriptor:com.tectonic.ui:select:default", "urn:alm:descriptor:com.tectonic.ui:select:demo", "urn:alm:descriptor:com.tectonic.ui:select:empty", "urn:alm:descriptor:com.tectonic.ui:select:external", "urn:alm:descriptor:com.tectonic.ui:select:minimal", "urn:alm:descriptor:com.tectonic.ui:select:preview", "urn:alm:descriptor:com.tectonic.ui:select:remote"}
-	// +operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:hidden"}
-	// +kubebuilder:validation:Enum=ambient;default;demo;empty;external;openshift-ambient;openshift;preview;remote;stable
+	// Must be one of: ambient, default, demo, empty, openshift, openshift-ambient, preview, remote, stable.
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Profile",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:fieldGroup:General", "urn:alm:descriptor:com.tectonic.ui:select:ambient", "urn:alm:descriptor:com.tectonic.ui:select:default", "urn:alm:descriptor:com.tectonic.ui:select:demo", "urn:alm:descriptor:com.tectonic.ui:select:empty", "urn:alm:descriptor:com.tectonic.ui:select:openshift", "urn:alm:descriptor:com.tectonic.ui:select:openshift-ambient", "urn:alm:descriptor:com.tectonic.ui:select:preview", "urn:alm:descriptor:com.tectonic.ui:select:remote", "urn:alm:descriptor:com.tectonic.ui:select:stable"}
+	// +kubebuilder:validation:Enum=ambient;default;demo;empty;external;openshift;openshift-ambient;preview;remote;stable
 	Profile string `json:"profile,omitempty"`
 
 	// Namespace to which the Istio components should be installed. Note that this field is immutable.
@@ -119,7 +118,8 @@ type IstioStatus struct {
 	ActiveRevisionName string `json:"activeRevisionName,omitempty"`
 
 	// Reports information about the underlying IstioRevisions.
-	Revisions RevisionSummary `json:"revisions,omitempty"`
+	// +optional
+	Revisions RevisionSummary `json:"revisions"`
 }
 
 // RevisionSummary contains information on the number of IstioRevisions associated with this Istio.
@@ -193,7 +193,8 @@ type IstioCondition struct {
 	Message string `json:"message,omitempty"`
 
 	// Last time the condition transitioned from one status to another.
-	LastTransitionTime metav1.Time `json:"lastTransitionTime,omitempty"`
+	// +optional
+	LastTransitionTime metav1.Time `json:"lastTransitionTime,omitzero"`
 }
 
 // IstioConditionType represents the type of the condition.  Condition stages are:
@@ -235,6 +236,23 @@ const (
 )
 
 const (
+	// IstioConditionDependenciesHealthy signifies whether the dependencies required by this Istio are healthy.
+	// For example, an Istio with spec.values.pilot.cni.enabled=true requires the IstioCNI resource to be deployed
+	// and ready for the Istio revision to be considered healthy. The DependenciesHealthy condition is used to indicate that
+	// the IstioCNI resource is healthy.
+	IstioConditionDependenciesHealthy IstioConditionType = "DependenciesHealthy"
+
+	// IstioReasonIstioCNINotFound indicates that the IstioCNI resource is not found.
+	IstioReasonIstioCNINotFound IstioConditionReason = "IstioCNINotFound"
+
+	// IstioReasonIstioCNINotHealthy indicates that the IstioCNI resource is not healthy.
+	IstioReasonIstioCNINotHealthy IstioConditionReason = "IstioCNINotHealthy"
+
+	// IstioReasonDependencyCheckFailed indicates that the status of the dependencies could not be ascertained.
+	IstioReasonDependencyCheckFailed IstioConditionReason = "DependencyCheckFailed"
+)
+
+const (
 	// IstioReasonHealthy indicates that the control plane is fully reconciled and that all components are ready.
 	IstioReasonHealthy IstioConditionReason = "Healthy"
 )
@@ -242,6 +260,8 @@ const (
 // +kubebuilder:object:root=true
 // +kubebuilder:resource:scope=Cluster,categories=istio-io
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Namespace",type="string",JSONPath=".spec.namespace",description="The namespace for the control plane components."
+// +kubebuilder:printcolumn:name="Profile",type="string",JSONPath=".spec.profile",description="The selected profile (collection of value presets)."
 // +kubebuilder:printcolumn:name="Revisions",type="string",JSONPath=".status.revisions.total",description="Total number of IstioRevision objects currently associated with this object."
 // +kubebuilder:printcolumn:name="Ready",type="string",JSONPath=".status.revisions.ready",description="Number of revisions that are ready."
 // +kubebuilder:printcolumn:name="In use",type="string",JSONPath=".status.revisions.inUse",description="Number of revisions that are currently being used by workloads."
@@ -258,13 +278,16 @@ const (
 // objects for istiod and other control plane components, similar to how a
 // Deployment object in Kubernetes creates ReplicaSets that create the Pods.
 type Istio struct {
-	metav1.TypeMeta   `json:",inline"`
-	metav1.ObjectMeta `json:"metadata,omitempty"`
+	metav1.TypeMeta `json:",inline"`
+	// +optional
+	metav1.ObjectMeta `json:"metadata"`
 
-	// +kubebuilder:default={version: "v1.24.3", namespace: "istio-system", updateStrategy: {type:"InPlace"}}
-	Spec IstioSpec `json:"spec,omitempty"`
+	// +kubebuilder:default={version: "v1.28.5", namespace: "istio-system", updateStrategy: {type:"InPlace"}}
+	// +optional
+	Spec IstioSpec `json:"spec"`
 
-	Status IstioStatus `json:"status,omitempty"`
+	// +optional
+	Status IstioStatus `json:"status"`
 }
 
 // +kubebuilder:object:root=true
@@ -272,7 +295,7 @@ type Istio struct {
 // IstioList contains a list of Istio
 type IstioList struct {
 	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata,omitempty"`
+	metav1.ListMeta `json:"metadata"`
 	Items           []Istio `json:"items"`
 }
 
