@@ -164,3 +164,5 @@ replace github.com/imdario/mergo => github.com/imdario/mergo v0.3.5
 replace k8s.io/client-go => k8s.io/client-go v0.32.1
 
 replace golang.org/x/net => github.com/openshift-sustaining/net v0.43.0-sec.3
+
+replace github.com/openshift/api => github.com/gcs278/api v0.0.0-20260603002316-bfe7976b2d99
