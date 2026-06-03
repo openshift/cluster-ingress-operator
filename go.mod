@@ -162,3 +162,5 @@ require (
 replace github.com/imdario/mergo => github.com/imdario/mergo v0.3.5
 
 replace k8s.io/client-go => k8s.io/client-go v0.32.1
+
+replace github.com/openshift/api => github.com/gcs278/api v0.0.0-20260603002316-bfe7976b2d99
