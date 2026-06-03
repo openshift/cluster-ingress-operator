@@ -69,7 +69,7 @@ func TestAWSLBSubnets(t *testing.T) {
 			},
 		},
 	}
-	if err = kclient.Create(context.Background(), ic); err != nil {
+	if err = createWithRetryOnError(t, context.Background(), ic, DefaultRetryTimeout); err != nil {
 		t.Fatalf("expected ingresscontroller creation failed: %v", err)
 	}
 	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
@@ -226,7 +226,7 @@ func TestUnmanagedAWSLBSubnets(t *testing.T) {
 					},
 				},
 			}
-			if err = kclient.Create(context.Background(), ic); err != nil {
+			if err = createWithRetryOnError(t, context.Background(), ic, DefaultRetryTimeout); err != nil {
 				t.Fatalf("expected ingresscontroller creation failed: %v", err)
 			}
 			t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
@@ -301,7 +301,7 @@ func waitForLBSubnetAnnotation(t *testing.T, ic *operatorv1.IngressController, s
 	lbService := &corev1.Service{}
 	expectedSubnetAnnotation := ingress.JoinAWSSubnets(subnets, ",")
 	t.Logf("waiting for %q service to have subnet annotation of %q", controller.LoadBalancerServiceName(ic), expectedSubnetAnnotation)
-	err := wait.PollUntilContextTimeout(context.Background(), 10*time.Second, 5*time.Minute, false, func(ctx context.Context) (bool, error) {
+	err := wait.PollUntilContextTimeout(t.Context(), 10*time.Second, 5*time.Minute, false, func(ctx context.Context) (bool, error) {
 		if err := kclient.Get(ctx, controller.LoadBalancerServiceName(ic), lbService); err != nil {
 			t.Logf("failed to get %q service: %v, retrying ...", controller.LoadBalancerServiceName(ic), err)
 			return false, nil
@@ -342,9 +342,9 @@ func verifyIngressControllerSubnetStatus(t *testing.T, icName types.NamespacedNa
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 	// Poll until the subnet status is what we expect.
-	err := wait.PollUntilContextTimeout(context.Background(), 10*time.Second, 3*time.Minute, false, func(ctx context.Context) (bool, error) {
+	err := wait.PollUntilContextTimeout(t.Context(), 10*time.Second, 3*time.Minute, false, func(ctx context.Context) (bool, error) {
 		ic := &operatorv1.IngressController{}
-		if err := kclient.Get(context.Background(), icName, ic); err != nil {
+		if err := kclient.Get(ctx, icName, ic); err != nil {
 			t.Logf("failed to get ingresscontroller: %v, retrying...", err)
 			return false, nil
 		}

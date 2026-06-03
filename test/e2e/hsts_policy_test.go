@@ -56,14 +56,14 @@ func TestHstsPolicyWorks(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("failed to update ingress config: %v", err)
 	}
-	defer func() {
+	t.Cleanup(func() {
 		// Remove the HSTS policies from the ingress config
 		if err := updateIngressConfigSpecWithRetryOnConflict(t, clusterConfigName, timeout, func(spec *configv1.IngressSpec) {
 			spec.RequiredHSTSPolicies = nil
 		}); err != nil {
-			t.Fatalf("failed to restore ingress config: %v", err)
+			t.Errorf("failed to restore ingress config: %v", err)
 		}
-	}()
+	})
 
 	p := ing.Spec.RequiredHSTSPolicies[0]
 	t.Logf("created a RequiredHSTSPolicy with DomainPatterns: %v,\n preload policy: %s,\n includeSubDomains policy: %s,\n largest age: %d,\n smallest age: %d\n", p.DomainPatterns, p.PreloadPolicy, p.IncludeSubDomainsPolicy, *p.MaxAge.LargestMaxAge, *p.MaxAge.SmallestMaxAge)
@@ -73,13 +73,13 @@ func TestHstsPolicyWorks(t *testing.T) {
 
 	// Create pod
 	echoPod := buildEchoPod("hsts-policy-echo", ns.Name)
-	if err := kclient.Create(context.TODO(), echoPod); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoPod, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", ns, echoPod.Name, err)
 	}
 
 	// Create service
 	echoService := buildEchoService(echoPod.Name, ns.Name, echoPod.ObjectMeta.Labels)
-	if err := kclient.Create(context.TODO(), echoService); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoService, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 	}
 
@@ -96,7 +96,7 @@ func TestHstsPolicyWorks(t *testing.T) {
 	exampleHeader := "max-age=0;preload;includesubdomains"
 	t.Logf("creating a valid route at %s", time.Now().Format(time.StampMilli))
 	validRoute := buildRouteWithHSTS("valid-route", echoPod.Namespace, echoService.Name, "valid-route."+appsDomain, exampleHeader)
-	if err := kclient.Create(context.TODO(), validRoute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), validRoute, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create a valid route %s/%s: %v", validRoute.Namespace, validRoute.Name, err)
 	} else {
 		t.Logf("created a valid route at %s: %s/%s with annotation %s", time.Now().Format(time.StampMilli), validRoute.Namespace, validRoute.Name, validRoute.Annotations)

@@ -49,7 +49,7 @@ func TestRouterCompressionParsing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("error getting private controller: %v", err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, pc4)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, pc4) })
 
 	if err := testCompressionPolicy(t, "http-compression-4", compressionPolicyErrors); err == nil {
 		t.Errorf("compression policy with errors should have failed but didn't")
@@ -63,7 +63,7 @@ func testParsing(t *testing.T, name string, policy operatorv1.HTTPCompressionPol
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, pc)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, pc) })
 
 	if err := testCompressionPolicy(t, name, policy); err != nil {
 		t.Errorf(errorMsg, err)
@@ -78,7 +78,7 @@ func createPrivateController(t *testing.T, privateName string, privateDomain str
 
 	ic := newPrivateController(icName, domain)
 	// Create a new private Ingress Controller (deletion handled by caller)
-	if err := kclient.Create(context.TODO(), ic); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ic, DefaultRetryTimeout); err != nil {
 		return ic, fmt.Errorf("error creating private ingresscontroller %s: %v", privateName, err)
 	}
 	return ic, nil
@@ -92,7 +92,7 @@ func testCompressionPolicy(t *testing.T, name string, compressionPolicy operator
 	namespacedName := types.NamespacedName{Namespace: operatorNamespace, Name: name}
 	routerDeploymentNamespacedName := types.NamespacedName{Namespace: controller.DefaultOperandNamespace, Name: "router-" + name}
 
-	if err := wait.PollImmediate(10*time.Second, 2*time.Minute, func() (bool, error) {
+	if err := wait.PollImmediate(10*time.Second, DefaultRetryTimeout, func() (bool, error) {
 		ic, err := getIngressController(t, kclient, namespacedName, 5*time.Second)
 		if err != nil {
 			t.Logf("failed to get ingress controller: %v, retrying...", err)
@@ -122,14 +122,14 @@ func testCompressionPolicy(t *testing.T, name string, compressionPolicy operator
 	}
 
 	// Get the router deployment
-	deployment, err := getDeployment(t, kclient, routerDeploymentNamespacedName, 2*time.Minute)
+	deployment, err := getDeployment(t, kclient, routerDeploymentNamespacedName, DefaultRetryTimeout)
 	if err != nil {
 		return fmt.Errorf("failed to get deployment: %v", err)
 	}
 
 	// Check if the MIME type environment variable has been updated
 	mimeTypes := ingress.GetMIMETypes(compressionPolicy.MimeTypes)
-	if err := waitForDeploymentEnvVar(t, deployment, 2*time.Minute, "ROUTER_COMPRESSION_MIME", strings.Join(mimeTypes, " ")); err != nil {
+	if err := waitForDeploymentEnvVar(t, deployment, DefaultRetryTimeout, "ROUTER_COMPRESSION_MIME", strings.Join(mimeTypes, " ")); err != nil {
 		return fmt.Errorf("expected deployment to have mimeTypes %s: %v", mimeTypes, err)
 	}
 
@@ -169,7 +169,7 @@ func TestRouterCompressionOperation(t *testing.T) {
 			}
 			return true, nil
 		}); err != nil {
-			t.Fatalf("failed to cleanup ingress controller: %v", err)
+			t.Errorf("failed to cleanup ingress controller: %v", err)
 		}
 	})
 
@@ -198,10 +198,10 @@ func TestRouterCompressionOperation(t *testing.T) {
 			"index.html": "Hello World!",
 		},
 	}
-	if err := kclient.Create(context.TODO(), helloConfigMap); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), helloConfigMap, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create configmap %s/%s: %v", helloConfigMap.Namespace, helloConfigMap.Name, err)
 	}
-	t.Cleanup(func() { assertDeleted(t, kclient, helloConfigMap) })
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), helloConfigMap, DefaultRetryTimeout) })
 
 	helloPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -236,26 +236,26 @@ func TestRouterCompressionOperation(t *testing.T) {
 			}},
 		},
 	}
-	if err := kclient.Create(context.TODO(), helloPod); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), helloPod, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", helloPod.Namespace, helloPod.Name, err)
 	}
-	t.Cleanup(func() { assertDeleted(t, kclient, helloPod) })
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), helloPod, DefaultRetryTimeout) })
 
 	helloService := buildEchoService(helloPod.Name, helloPod.Namespace, helloPod.ObjectMeta.Labels)
-	if err := kclient.Create(context.TODO(), helloService); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), helloService, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create service %s/%s: %v", helloService.Namespace, helloService.Name, err)
 	}
-	t.Cleanup(func() { assertDeleted(t, kclient, helloService) })
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), helloService, DefaultRetryTimeout) })
 
 	helloRoute := buildRoute(helloPod.Name, helloPod.Namespace, helloService.Name)
 	helloRoute.Spec.TLS = &routev1.TLSConfig{
 		Termination:                   routev1.TLSTerminationEdge,
 		InsecureEdgeTerminationPolicy: routev1.InsecureEdgeTerminationPolicyRedirect,
 	}
-	if err := kclient.Create(context.TODO(), helloRoute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), helloRoute, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create route %s/%s: %v", helloRoute.Namespace, helloRoute.Name, err)
 	}
-	t.Cleanup(func() { assertDeleted(t, kclient, helloRoute) })
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), helloRoute, DefaultRetryTimeout) })
 
 	// Wait for hello pod to be ready.
 	if err = wait.PollImmediate(2*time.Second, 1*time.Minute, func() (bool, error) {

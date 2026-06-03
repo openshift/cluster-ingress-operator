@@ -84,7 +84,7 @@ func TestAWSEIPAllocationsForNLB(t *testing.T) {
 		},
 	}
 
-	if err := kclient.Create(context.TODO(), ic); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ic, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
 	}
 	t.Cleanup(func() {
@@ -204,7 +204,7 @@ func TestUnmanagedAWSEIPAllocations(t *testing.T) {
 		},
 	}
 
-	if err := kclient.Create(context.Background(), ic); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ic, DefaultRetryTimeout); err != nil {
 		t.Fatalf("expected ingresscontroller creation failed: %v", err)
 	}
 	t.Cleanup(func() {
@@ -304,9 +304,9 @@ func verifyIngressControllerEIPAllocationStatus(t *testing.T, icName types.Names
 		t.Fatalf("failed to observe expected conditions: %v", err)
 	}
 	// Poll until the eipAllocation status is what we expect.
-	err := wait.PollUntilContextTimeout(context.Background(), 10*time.Second, 3*time.Minute, false, func(ctx context.Context) (bool, error) {
+	err := wait.PollUntilContextTimeout(t.Context(), 10*time.Second, 3*time.Minute, false, func(ctx context.Context) (bool, error) {
 		ic := &operatorv1.IngressController{}
-		if err := kclient.Get(context.Background(), icName, ic); err != nil {
+		if err := kclient.Get(ctx, icName, ic); err != nil {
 			t.Logf("failed to get ingresscontroller: %v, retrying...", err)
 			return false, nil
 		}

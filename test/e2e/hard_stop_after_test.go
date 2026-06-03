@@ -212,16 +212,16 @@ func hardStopAfterTestIngressConfig(t *testing.T, client client.Client, ingressC
 
 func hardStopAfterTestIngressController(t *testing.T, client client.Client, ic *operatorv1.IngressController, routerDeployment *appsv1.Deployment, duration string) error {
 	if err := setHardStopAfterDurationForIngressController(t, client, hardStopAfterRetryTimeout, duration, hardStopAfterSetValue, ic); err != nil {
-		t.Fatalf("failed to update ingresscontroller: %v", err)
+		return fmt.Errorf("failed to update ingresscontroller: %w", err)
 	}
 	if err := waitForIngressControllerCondition(t, client, hardStopAfterRetryTimeout, defaultName, defaultAvailableConditions...); err != nil {
-		t.Fatalf("failed to observe expected conditions: %v", err)
+		return fmt.Errorf("failed to observe expected conditions: %w", err)
 	}
 	if err := waitForIngressControllerHardStopAfterToBeSet(client, hardStopAfterRetryTimeout, ic, duration); err != nil {
-		t.Fatalf("hard-stop-after not set on ingress controller: %v", err)
+		return fmt.Errorf("hard-stop-after not set on ingress controller: %w", err)
 	}
 	if err := waitForRouterDeploymentHardStopAfterToBeSet(client, routerDeployTimeout, routerDeployment, duration); err != nil {
-		t.Fatalf("expected router deployment to have hard-stop-after configured: %v", err)
+		return fmt.Errorf("expected router deployment to have hard-stop-after configured: %w", err)
 	}
 	return nil
 }

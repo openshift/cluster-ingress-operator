@@ -3,7 +3,15 @@
 
 package e2e
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
+
+// Define default timeouts
+const (
+	DefaultRetryTimeout = 2 * time.Minute
+)
 
 // TestAll is the entrypoint for `make test-e2e` unless you override
 // with: make TEST=Test<foo> test-e2e.

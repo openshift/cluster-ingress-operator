@@ -30,11 +30,11 @@ func TestReloadInterval(t *testing.T) {
 	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
 	ic := newPrivateController(icName, domain)
 
-	if err := kclient.Create(context.TODO(), ic); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ic, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
 	}
 
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 	t.Logf("waiting for ingresscontroller %v", icName)
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
@@ -106,7 +106,7 @@ func TestReloadInterval(t *testing.T) {
 		}
 
 		// Ensure the deployment has been recreated.
-		err := wait.PollImmediate(1*time.Second, 2*time.Minute, func() (bool, error) {
+		err := wait.PollImmediate(1*time.Second, DefaultRetryTimeout, func() (bool, error) {
 			deployment := &appsv1.Deployment{}
 			if err := kclient.Get(context.TODO(), controller.RouterDeploymentName(ic), deployment); err != nil {
 				t.Logf("Get %q failed: %v, retrying ...", controller.RouterDeploymentName(ic), err)

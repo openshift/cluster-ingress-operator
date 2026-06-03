@@ -60,7 +60,7 @@ func TestAllowedSourceRanges(t *testing.T) {
 	// Create an ingresscontroller with a valid CIDR
 	t.Logf("Creating ingresscontroller with spec.endpointPublishingStrategy.loadBalancer.allowedSourceRanges set to a valid CIDR range %s", validCIDR)
 	ic.Spec.EndpointPublishingStrategy.LoadBalancer.AllowedSourceRanges = []operatorv1.CIDR{operatorv1.CIDR(validCIDR)}
-	if err := kclient.Create(context.TODO(), ic); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ic, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
 	}
 
@@ -145,7 +145,7 @@ func TestAllowedSourceRangesStatus(t *testing.T) {
 		Scope:               operatorv1.ExternalLoadBalancer,
 		DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
 	}
-	if err := kclient.Create(context.TODO(), ic); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ic, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
 	}
 	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
@@ -166,7 +166,7 @@ func TestAllowedSourceRangesStatus(t *testing.T) {
 		t.Fatalf("failed to update service: %v", err)
 	}
 
-	err := wait.PollImmediate(10*time.Second, 2*time.Minute, func() (bool, error) {
+	err := wait.PollImmediate(10*time.Second, DefaultRetryTimeout, func() (bool, error) {
 		if err := kclient.Get(context.TODO(), name, ic); err != nil {
 			return false, fmt.Errorf("failed to get ingresscontroller: %w", err)
 		}
@@ -204,7 +204,7 @@ func TestAllowedSourceRangesStatus(t *testing.T) {
 		t.Fatalf("failed to update service: %v", err)
 	}
 
-	err = wait.PollImmediate(10*time.Second, 2*time.Minute, func() (bool, error) {
+	err = wait.PollImmediate(10*time.Second, DefaultRetryTimeout, func() (bool, error) {
 		if err := kclient.Get(context.TODO(), name, ic); err != nil {
 			return false, fmt.Errorf("failed to get ingresscontroller: %w", err)
 		}
@@ -264,7 +264,7 @@ func TestSourceRangesProgressingAndEvaluationConditionsDetectedStatuses(t *testi
 		Scope:               operatorv1.ExternalLoadBalancer,
 		DNSManagementPolicy: operatorv1.ManagedLoadBalancerDNS,
 	}
-	if err := kclient.Create(context.TODO(), ic); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ic, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
 	}
 	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })

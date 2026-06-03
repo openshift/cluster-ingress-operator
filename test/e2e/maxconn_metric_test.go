@@ -58,10 +58,10 @@ func TestMaxConnectionsMetric(t *testing.T) {
 	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "maxconn-metric"}
 	domain := icName.Name + "." + dnsConfig.Spec.BaseDomain
 	ic := newPrivateController(icName, domain)
-	if err := kclient.Create(context.TODO(), ic); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ic, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 	t.Logf("waiting for ingresscontroller %v", icName)
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForPrivateIngressController...); err != nil {
 		t.Fatalf("failed to observe expected conditions: %v", err)
@@ -113,7 +113,7 @@ func waitForMaxConnectionsMetric(t *testing.T, prometheusClient prometheusv1.API
 	serviceName := "router-internal-" + icName
 	query := fmt.Sprintf(`haproxy_max_connections{namespace="openshift-ingress",service="%s"}`, serviceName)
 	t.Logf("waiting for haproxy_max_connections{service=%q} to become %d", serviceName, expectedValue)
-	return wait.PollUntilContextTimeout(context.Background(), 5*time.Second, 5*time.Minute, false, func(ctx context.Context) (bool, error) {
+	return wait.PollUntilContextTimeout(t.Context(), 5*time.Second, 5*time.Minute, false, func(ctx context.Context) (bool, error) {
 		result, _, err := prometheusClient.Query(ctx, query, time.Now())
 		if err != nil {
 			t.Logf("failed to query haproxy_max_connections: %v, retrying...", err)

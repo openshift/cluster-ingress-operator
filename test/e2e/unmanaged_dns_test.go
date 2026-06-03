@@ -45,10 +45,10 @@ func TestUnmanagedDNSToManagedDNSIngressController(t *testing.T) {
 		Scope:               operatorv1.ExternalLoadBalancer,
 		DNSManagementPolicy: operatorv1.UnmanagedLoadBalancerDNS,
 	}
-	if err := kclient.Create(context.TODO(), ic); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ic, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 
 	// Wait for the load balancer and DNS to reach stable conditions.
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, append(availableConditionsForIngressControllerWithLoadBalancerUnmanagedDNS, operatorProgressingFalse)...); err != nil {
@@ -124,10 +124,10 @@ func TestManagedDNSToUnmanagedDNSIngressController(t *testing.T) {
 	ic.Spec.EndpointPublishingStrategy.LoadBalancer = &operatorv1.LoadBalancerStrategy{
 		Scope: operatorv1.ExternalLoadBalancer,
 	}
-	if err := kclient.Create(context.TODO(), ic); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ic, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 
 	// Wait for the load balancer and DNS to reach stable conditions.
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, append(availableConditionsForIngressControllerWithLoadBalancer, operatorProgressingFalse)...); err != nil {
@@ -225,10 +225,10 @@ func TestUnmanagedDNSToManagedDNSInternalIngressController(t *testing.T) {
 		Scope:               operatorv1.InternalLoadBalancer,
 		DNSManagementPolicy: operatorv1.UnmanagedLoadBalancerDNS,
 	}
-	if err := kclient.Create(context.TODO(), ic); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ic, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 
 	// Wait for the load balancer and DNS to reach stable conditions.
 	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, name, append(availableConditionsForIngressControllerWithLoadBalancerUnmanagedDNS, operatorProgressingFalse)...); err != nil {
@@ -287,8 +287,8 @@ func TestUnmanagedDNSToManagedDNSInternalIngressController(t *testing.T) {
 	// Ensure the service's load-balancer status changes.
 	lbService = &corev1.Service{}
 	var lbAddress string
-	err := wait.PollUntilContextTimeout(context.Background(), 10*time.Second, 5*time.Minute, true, func(ctx context.Context) (bool, error) {
-		if err := kclient.Get(context.TODO(), controller.LoadBalancerServiceName(ic), lbService); err != nil {
+	err := wait.PollUntilContextTimeout(t.Context(), 10*time.Second, 5*time.Minute, true, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, controller.LoadBalancerServiceName(ic), lbService); err != nil {
 			t.Logf("Get %q failed: %v, retrying ...", controller.LoadBalancerServiceName(ic), err)
 			return false, nil
 		}
@@ -321,7 +321,7 @@ func TestUnmanagedDNSToManagedDNSInternalIngressController(t *testing.T) {
 	}
 
 	// Ensure DNSRecord CR is present.
-	if err := kclient.Get(context.TODO(), wildcardRecordName, wildcardRecord); err != nil {
+	if err := kclient.Get(t.Context(), wildcardRecordName, wildcardRecord); err != nil {
 		t.Fatalf("failed to get wildcard dnsrecord %s: %v", wildcardRecordName, err)
 	}
 

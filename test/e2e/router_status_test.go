@@ -37,23 +37,19 @@ func TestDeleteIngressControllerShouldClearRouteStatus(t *testing.T) {
 			"type": icName.Name,
 		},
 	}
-	if err := kclient.Create(context.TODO(), ic); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ic, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 
 	// Create a route to be admitted by this ingress controller.
 	// Use openshift-console namespace to get a namespace outside the ingress-operator's cache.
 	routeName := types.NamespacedName{Namespace: "openshift-console", Name: "route-" + icName.Name}
 	route := newRouteWithLabel(routeName, icName.Name)
-	if err := kclient.Create(context.TODO(), route); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), route, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create route: %v", err)
 	}
-	defer func() {
-		if err := kclient.Delete(context.TODO(), route); err != nil {
-			t.Fatalf("failed to delete route %s: %v", routeName, err)
-		}
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), route, DefaultRetryTimeout) })
 
 	// Wait for route to be admitted.
 	if err := waitForRouteIngressConditions(t, kclient, routeName, ic.Name, admittedCondition); err != nil {
@@ -83,38 +79,30 @@ func TestIngressControllerRouteSelectorUpdateShouldClearRouteStatus(t *testing.T
 		},
 	}
 
-	if err := kclient.Create(context.TODO(), ic); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ic, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 
 	// Create a route to be immediately admitted by this ingress controller and then when the IC label selectors are
 	// updated, the status should clear.
 	// Use openshift-console namespace to get a namespace outside the ingress-operator's cache.
 	routeFooLabelName := types.NamespacedName{Namespace: "openshift-console", Name: "route-foo-label"}
 	routeFooLabel := newRouteWithLabel(routeFooLabelName, "foo")
-	if err := kclient.Create(context.TODO(), routeFooLabel); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), routeFooLabel, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create route: %v", err)
 	}
-	defer func() {
-		if err := kclient.Delete(context.TODO(), routeFooLabel); err != nil {
-			t.Fatalf("failed to delete route %s: %v", routeFooLabelName, err)
-		}
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), routeFooLabel, DefaultRetryTimeout) })
 
 	// Create a route that will NOT be immediately admitted by the ingress controller, but will be admitted AFTER
 	// the IC selectors are updated. The status SHOULD be successfully admitted.
 	// Use openshift-console namespace to get a namespace outside the ingress-operator's cache.
 	routeBarLabelName := types.NamespacedName{Namespace: "openshift-console", Name: "route-bar-label"}
 	routeBarLabel := newRouteWithLabel(routeBarLabelName, "bar")
-	if err := kclient.Create(context.TODO(), routeBarLabel); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), routeBarLabel, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create route: %v", err)
 	}
-	defer func() {
-		if err := kclient.Delete(context.TODO(), routeBarLabel); err != nil {
-			t.Fatalf("failed to delete route %s: %v", routeBarLabel, err)
-		}
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), routeBarLabel, DefaultRetryTimeout) })
 
 	// Wait for routeFooLabel to be admitted upon creation.
 	if err := waitForRouteIngressConditions(t, kclient, routeFooLabelName, ic.Name, admittedCondition); err != nil {
@@ -156,10 +144,10 @@ func TestIngressControllerNamespaceSelectorUpdateShouldClearRouteStatus(t *testi
 		},
 	}
 
-	if err := kclient.Create(context.TODO(), ic); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ic, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create ingresscontroller: %v", err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 
 	// Create a new namespace for the route that we can immediately match with the IC's namespace selector.
 	nsFoo := &corev1.Namespace{
@@ -170,14 +158,10 @@ func TestIngressControllerNamespaceSelectorUpdateShouldClearRouteStatus(t *testi
 			},
 		},
 	}
-	if err := kclient.Create(context.TODO(), nsFoo); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), nsFoo, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create namespace: %v", err)
 	}
-	defer func() {
-		if err := kclient.Delete(context.TODO(), nsFoo); err != nil {
-			t.Fatalf("failed to delete test namespace %v: %v", nsFoo.Name, err)
-		}
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), nsFoo, DefaultRetryTimeout) })
 
 	// Create a new namespace for the route that we can NOT immediately match with the IC's namespace selector.
 	nsBar := &corev1.Namespace{
@@ -188,40 +172,28 @@ func TestIngressControllerNamespaceSelectorUpdateShouldClearRouteStatus(t *testi
 			},
 		},
 	}
-	if err := kclient.Create(context.TODO(), nsBar); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), nsBar, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create namespace: %v", err)
 	}
-	defer func() {
-		if err := kclient.Delete(context.TODO(), nsBar); err != nil {
-			t.Fatalf("failed to delete test namespace %v: %v", nsBar.Name, err)
-		}
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), nsBar, DefaultRetryTimeout) })
 
 	// Create a route to be immediately admitted by this ingress controller and then when the IC label selectors are
 	// updated, the status should clear.
 	routeFooLabelName := types.NamespacedName{Namespace: nsFoo.Name, Name: "route-foo-label"}
 	routeFooLabel := newRouteWithLabel(routeFooLabelName, "")
-	if err := kclient.Create(context.TODO(), routeFooLabel); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), routeFooLabel, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create route: %v", err)
 	}
-	defer func() {
-		if err := kclient.Delete(context.TODO(), routeFooLabel); err != nil {
-			t.Fatalf("failed to delete route %s: %v", routeFooLabelName, err)
-		}
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), routeFooLabel, DefaultRetryTimeout) })
 
 	// Create a route that will NOT be immediately admitted by the ingress controller, but will be admitted AFTER
 	// the IC selectors are updated. The status SHOULD be successfully admitted.
 	routeBarLabelName := types.NamespacedName{Namespace: nsBar.Name, Name: "route-bar-label"}
 	routeBarLabel := newRouteWithLabel(routeBarLabelName, "bar")
-	if err := kclient.Create(context.TODO(), routeBarLabel); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), routeBarLabel, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create route: %v", err)
 	}
-	defer func() {
-		if err := kclient.Delete(context.TODO(), routeBarLabel); err != nil {
-			t.Fatalf("failed to delete route %s: %v", routeBarLabel, err)
-		}
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), routeBarLabel, DefaultRetryTimeout) })
 
 	// Ensure routeBarLabel starts with a clear status.
 	if err := waitForRouteStatusClear(t, kclient, routeBarLabelName, ic.Name); err != nil {

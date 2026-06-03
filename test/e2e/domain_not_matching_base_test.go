@@ -28,10 +28,10 @@ func TestDomainNotMatchingBase(t *testing.T) {
 	icName := types.NamespacedName{Namespace: operatorNamespace, Name: "domain-not-matching"}
 	domain := icName.Name + ".local"
 	ic := newLoadBalancerController(icName, domain)
-	if err := kclient.Create(context.TODO(), ic); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ic, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create ingresscontroller %s: %v", icName, err)
 	}
-	defer assertIngressControllerDeleted(t, kclient, ic)
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ic) })
 
 	// Ensure the DNSManaged=False condition
 	t.Logf("waiting for ingresscontroller %v", icName)

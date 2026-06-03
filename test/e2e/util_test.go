@@ -616,16 +616,42 @@ func updateIngressControllerWithRetryOnConflict(t *testing.T, name types.Namespa
 // there is a conflict error on update then the complete operation of
 // get, mutate, and update is retried until timeout is reached.
 func updateIngressConfigSpecWithRetryOnConflict(t *testing.T, name types.NamespacedName, timeout time.Duration, mutateSpecFn func(*configv1.IngressSpec)) error {
+	t.Helper()
 	ingressConfig := configv1.Ingress{}
-	return wait.PollImmediate(1*time.Second, timeout, func() (bool, error) {
-		if err := kclient.Get(context.TODO(), name, &ingressConfig); err != nil {
+	return wait.PollUntilContextTimeout(context.Background(), 1*time.Second, timeout, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, name, &ingressConfig); err != nil {
 			t.Logf("error getting ingress config %v: %v, retrying...", name, err)
 			return false, nil
 		}
 		mutateSpecFn(&ingressConfig.Spec)
-		if err := kclient.Update(context.TODO(), &ingressConfig); err != nil {
+		if err := kclient.Update(ctx, &ingressConfig); err != nil {
 			if errors.IsConflict(err) {
 				t.Logf("conflict when updating ingress config %v: %v, retrying...", name, err)
+				return false, nil
+			}
+			return false, err
+		}
+		return true, nil
+	})
+}
+
+// updateIngressConfigStatusWithRetryOnConflict gets a fresh copy of the
+// named ingress config, calls mutateStatusFn() where callers can modify
+// fields of the status, and then updates the ingress config object. If
+// there is a conflict error on update then the complete operation of
+// get, mutate, and update is retried until timeout is reached.
+func updateIngressConfigStatusWithRetryOnConflict(t *testing.T, name types.NamespacedName, timeout time.Duration, mutateStatusFn func(*configv1.IngressStatus)) error {
+	t.Helper()
+	ingressConfig := configv1.Ingress{}
+	return wait.PollUntilContextTimeout(context.Background(), 1*time.Second, timeout, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, name, &ingressConfig); err != nil {
+			t.Logf("error getting ingress config %v: %v, retrying...", name, err)
+			return false, nil
+		}
+		mutateStatusFn(&ingressConfig.Status)
+		if err := kclient.Status().Update(ctx, &ingressConfig); err != nil {
+			if errors.IsConflict(err) {
+				t.Logf("conflict when updating ingress status %v: %v, retrying...", name, err)
 				return false, nil
 			}
 			return false, err
@@ -651,7 +677,7 @@ func updateAndVerifyInfrastructureConfigWithRetry(t *testing.T, name types.Names
 			return false, nil
 		}
 		mutateSpecFn(&infraConfig.Spec)
-		if err := kclient.Update(context.TODO(), &infraConfig); err != nil {
+		if err := kclient.Update(ctx, &infraConfig); err != nil {
 			t.Logf("error updating infrastructure config %v: %v, retrying...", name, err)
 			return false, nil
 		}
@@ -734,7 +760,7 @@ func waitForCCMAvailableAndUpdated(t *testing.T, timeout time.Duration, oldConfi
 	// is successful
 	ccmDeployment := appsv1.Deployment{}
 	if err := wait.PollUntilContextTimeout(context.TODO(), 5*time.Second, timeout, false, func(ctx context.Context) (done bool, err error) {
-		if err := kclient.Get(context.TODO(), ccmDeploymentName, &ccmDeployment); err != nil {
+		if err := kclient.Get(ctx, ccmDeploymentName, &ccmDeployment); err != nil {
 			t.Logf("error getting CCM deployment: %v", err)
 			return false, nil
 		}
@@ -800,10 +826,41 @@ func updateInfrastructureConfigStatusWithRetryOnConflict(t *testing.T, timeout t
 
 // createWithRetryOnError creates the given object. If there is an error on create
 // apart from "AlreadyExists" then the create is retried until the timeout is reached.
+// AlreadyExists is treated as success because this helper is used in verification
+// functions (verifyExternalIngressController, verifyInternalIngressController) that
+// may be called multiple times for the same IngressController. For first-time
+// resource creation where AlreadyExists indicates test pollution, prefer using
+// kclient.Create directly or createOrGetWithRetry (which populates server-side fields).
 func createWithRetryOnError(t *testing.T, ctx context.Context, obj client.Object, timeout time.Duration) error {
 	t.Helper()
 	return wait.PollUntilContextTimeout(ctx, 2*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
-		if err := kclient.Create(ctx, obj); err != nil && !errors.IsAlreadyExists(err) {
+		if err := kclient.Create(ctx, obj); err != nil {
+			if errors.IsAlreadyExists(err) {
+				t.Logf("resource %s already exists, treating as success", obj.GetName())
+				return true, nil
+			}
+			t.Logf("error creating %s: %v, retrying...", obj.GetName(), err)
+			return false, nil
+		}
+		return true, nil
+	})
+}
+
+// createOrGetWithRetry creates the given object. If the object already exists,
+// it fetches the existing object to populate server-side fields. If there is a
+// transient error, the operation is retried until the timeout is reached.
+func createOrGetWithRetry(t *testing.T, ctx context.Context, obj client.Object, timeout time.Duration) error {
+	t.Helper()
+	return wait.PollUntilContextTimeout(ctx, 2*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
+		if err := kclient.Create(ctx, obj); err != nil {
+			if errors.IsAlreadyExists(err) {
+				key := types.NamespacedName{Namespace: obj.GetNamespace(), Name: obj.GetName()}
+				if err := kclient.Get(ctx, key, obj); err != nil {
+					t.Logf("error getting existing %s: %v, retrying...", obj.GetName(), err)
+					return false, nil
+				}
+				return true, nil
+			}
 			t.Logf("error creating %s: %v, retrying...", obj.GetName(), err)
 			return false, nil
 		}
@@ -813,15 +870,17 @@ func createWithRetryOnError(t *testing.T, ctx context.Context, obj client.Object
 
 // deleteWithRetryOnError will try to delete the object until the timeout occurs.
 // Use for retrying operations that may be flaky due to network issues.
-func deleteWithRetryOnError(t *testing.T, ctx context.Context, obj client.Object, timeout time.Duration) error {
+func deleteWithRetryOnError(t *testing.T, ctx context.Context, obj client.Object, timeout time.Duration) {
 	t.Helper()
-	return wait.PollUntilContextTimeout(ctx, 2*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
-		if err := kclient.Delete(ctx, obj); err != nil && !errors.IsAlreadyExists(err) {
+	if err := wait.PollUntilContextTimeout(ctx, 2*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
+		if err := kclient.Delete(ctx, obj); err != nil && !errors.IsNotFound(err) {
 			t.Logf("error deleting %s: %v, retrying...", obj.GetName(), err)
 			return false, nil
 		}
 		return true, nil
-	})
+	}); err != nil {
+		t.Errorf("failed waiting resource %s/%s to be deleted: %v", obj.GetNamespace(), obj.GetName(), err)
+	}
 }
 
 // verifyExternalIngressController verifies connectivity between the router
@@ -832,34 +891,22 @@ func deleteWithRetryOnError(t *testing.T, ctx context.Context, obj client.Object
 func verifyExternalIngressController(t *testing.T, name types.NamespacedName, hostname, address string) {
 	t.Helper()
 	echoPod := buildEchoPod(name.Name, name.Namespace)
-	if err := kclient.Create(context.TODO(), echoPod); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoPod, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 	}
-	defer func() {
-		if err := kclient.Delete(context.TODO(), echoPod); err != nil {
-			t.Fatalf("failed to delete pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
-		}
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoPod, DefaultRetryTimeout) })
 
 	echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels)
-	if err := kclient.Create(context.TODO(), echoService); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoService, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 	}
-	defer func() {
-		if err := kclient.Delete(context.TODO(), echoService); err != nil {
-			t.Fatalf("failed to delete service %s/%s: %v", echoService.Namespace, echoService.Name, err)
-		}
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoService, DefaultRetryTimeout) })
 
 	echoRoute := buildRouteWithHost(echoPod.Name, echoPod.Namespace, echoService.Name, hostname)
-	if err := kclient.Create(context.TODO(), echoRoute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoRoute, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
 	}
-	defer func() {
-		if err := kclient.Delete(context.TODO(), echoRoute); err != nil {
-			t.Fatalf("failed to delete route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
-		}
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoRoute, DefaultRetryTimeout) })
 
 	// If we have a DNS as an external IP address, make sure we can resolve it before moving on.
 	// This just limits the number of "could not resolve host" errors which can be confusing.
@@ -913,34 +960,22 @@ func verifyInternalIngressController(t *testing.T, name types.NamespacedName, ho
 	}
 
 	echoPod := buildEchoPod(name.Name, name.Namespace)
-	if err := kclient.Create(context.TODO(), echoPod); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoPod, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
 	}
-	defer func() {
-		if err := kclient.Delete(context.TODO(), echoPod); err != nil {
-			t.Fatalf("failed to delete pod %s/%s: %v", echoPod.Namespace, echoPod.Name, err)
-		}
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoPod, DefaultRetryTimeout) })
 
 	echoService := buildEchoService(echoPod.Name, echoPod.Namespace, echoPod.ObjectMeta.Labels)
-	if err := kclient.Create(context.TODO(), echoService); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoService, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create service %s/%s: %v", echoService.Namespace, echoService.Name, err)
 	}
-	defer func() {
-		if err := kclient.Delete(context.TODO(), echoService); err != nil {
-			t.Fatalf("failed to delete service %s/%s: %v", echoService.Namespace, echoService.Name, err)
-		}
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoService, DefaultRetryTimeout) })
 
 	echoRoute := buildRouteWithHost(echoPod.Name, echoPod.Namespace, echoService.Name, hostname)
-	if err := kclient.Create(context.TODO(), echoRoute); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), echoRoute, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
 	}
-	defer func() {
-		if err := kclient.Delete(context.TODO(), echoRoute); err != nil {
-			t.Fatalf("failed to delete route %s/%s: %v", echoRoute.Namespace, echoRoute.Name, err)
-		}
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), echoRoute, DefaultRetryTimeout) })
 
 	// Since we've created a new IngressController, and we are about to use a curl pod to query the
 	// wildcard DNS record, we need to wait for platforms that require a warmup period for internal queries.
@@ -955,21 +990,19 @@ func verifyInternalIngressController(t *testing.T, name types.NamespacedName, ho
 	clientPodName := types.NamespacedName{Namespace: name.Namespace, Name: "curl-" + name.Name}
 	clientPodSpec := buildCurlPod(clientPodName.Name, clientPodName.Namespace, image, address, echoRoute.Spec.Host, extraArgs...)
 	clientPod := clientPodSpec.DeepCopy()
-	if err := kclient.Create(context.TODO(), clientPod); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), clientPod, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create pod %q: %v", clientPodName, err)
 	}
-	defer func() {
-		if err := kclient.Delete(context.TODO(), clientPod); err != nil {
-			if errors.IsNotFound(err) {
-				return
-			}
-			t.Fatalf("failed to delete pod %q: %v", clientPodName, err)
-		}
-	}()
+	t.Cleanup(func() { deleteWithRetryOnError(t, context.Background(), clientPod, DefaultRetryTimeout) })
 
 	var curlPodLogs string
-	err = wait.PollImmediate(10*time.Second, 10*time.Minute, func() (bool, error) {
-		if err := kclient.Get(context.TODO(), clientPodName, clientPod); err != nil {
+
+	// This loop will try, for 10 minutes, to get the client pod used to test the connectivity
+	// and execute the test until it passes.
+	// In case there is an error with the Pod creation, it will enter on another loop
+	// of maximum 5 minutes to delete and wait for this pod to be deleted before continuing
+	err = wait.PollUntilContextTimeout(t.Context(), 10*time.Second, 10*time.Minute, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, clientPodName, clientPod); err != nil {
 			t.Logf("error getting client pod %q: %v, retrying...", clientPodName, err)
 			return false, nil
 		}
@@ -981,7 +1014,7 @@ func verifyInternalIngressController(t *testing.T, name types.NamespacedName, ho
 		readCloser, err := client.CoreV1().Pods(clientPod.Namespace).GetLogs(clientPod.Name, &corev1.PodLogOptions{
 			Container: "curl",
 			Follow:    false,
-		}).Stream(context.TODO())
+		}).Stream(ctx)
 		if err != nil {
 			t.Logf("failed to read output from pod %s: %v", clientPod.Name, err)
 			return false, nil
@@ -1004,20 +1037,24 @@ func verifyInternalIngressController(t *testing.T, name types.NamespacedName, ho
 		// If failed or succeeded, the pod is stopped, but didn't provide us 200 response, let's try again.
 		if clientPod.Status.Phase == corev1.PodFailed || clientPod.Status.Phase == corev1.PodSucceeded {
 			t.Logf("client pod %q has stopped...restarting. Curl Pod Logs:\n%s", clientPodName, curlPodLogs)
-			if err := kclient.Delete(context.TODO(), clientPod); err != nil && errors.IsNotFound(err) {
+			if err := kclient.Delete(ctx, clientPod); err != nil && !errors.IsNotFound(err) {
 				t.Fatalf("failed to delete pod %q: %v", clientPodName, err)
 			}
-			// Wait for deletion to prevent a race condition. Use PollInfinite since we are already in a Poll.
-			wait.PollInfinite(5*time.Second, func() (bool, error) {
-				err = kclient.Get(context.TODO(), clientPodName, clientPod)
+
+			// Wait for the Pod to be deleted. In case it is not deleted,
+			// try getting again until the Pod is gone, before moving
+			if err := wait.PollUntilContextTimeout(ctx, 5*time.Second, DefaultRetryTimeout, true, func(ctx context.Context) (bool, error) {
+				err = kclient.Get(ctx, clientPodName, clientPod)
 				if !errors.IsNotFound(err) {
 					t.Logf("waiting for %q: to be deleted", clientPodName)
 					return false, nil
 				}
 				return true, nil
-			})
+			}); err != nil {
+				t.Logf("timed out waiting for pod %q to be deleted; will attempt recreation: %v", clientPodName, err)
+			}
 			clientPod = clientPodSpec.DeepCopy()
-			if err := kclient.Create(context.TODO(), clientPod); err != nil {
+			if err := createWithRetryOnError(t, ctx, clientPod, DefaultRetryTimeout); err != nil {
 				t.Fatalf("failed to create pod %q: %v", clientPodName, err)
 			}
 			return false, nil
@@ -1061,7 +1098,7 @@ func assertDeletedWaitForCleanup(t *testing.T, cl client.Client, thing client.Ob
 		Namespace: thing.GetNamespace(),
 	}
 	assertDeleted(t, cl, thing)
-	if err := wait.PollImmediate(5*time.Second, 2*time.Minute, func() (bool, error) {
+	if err := wait.PollImmediate(5*time.Second, DefaultRetryTimeout, func() (bool, error) {
 		if err := cl.Get(context.TODO(), thingName, thing); err != nil {
 			if errors.IsNotFound(err) {
 				return true, nil
@@ -1122,7 +1159,7 @@ func createNamespace(t *testing.T, name string) *corev1.Namespace {
 
 	t.Logf("Creating namespace %q...", name)
 	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name}}
-	if err := kclient.Create(context.TODO(), ns); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), ns, DefaultRetryTimeout); err != nil {
 		t.Fatalf("failed to create namespace: %v", err)
 	}
 	t.Cleanup(func() {
@@ -1131,9 +1168,7 @@ func createNamespace(t *testing.T, name string) *corev1.Namespace {
 			dumpEventsInNamespace(t, name)
 		}
 		t.Logf("Deleting namespace %q...", name)
-		if err := kclient.Delete(context.TODO(), ns); err != nil {
-			t.Errorf("failed to delete namespace %s: %v", ns.Name, err)
-		}
+		deleteWithRetryOnError(t, context.Background(), ns, DefaultRetryTimeout)
 	})
 
 	saName := types.NamespacedName{
@@ -1250,7 +1285,7 @@ func recreateIngressControllerService(t *testing.T, ic *operatorv1.IngressContro
 
 	// Wait for the service to be recreated by Ingress Operator.
 	err := wait.PollUntilContextTimeout(context.Background(), 10*time.Second, 3*time.Minute, false, func(ctx context.Context) (bool, error) {
-		if err := kclient.Get(context.Background(), controller.LoadBalancerServiceName(ic), lbService); err != nil {
+		if err := kclient.Get(ctx, controller.LoadBalancerServiceName(ic), lbService); err != nil {
 			t.Logf("failed to get service %s/%s: %v, retrying ...", serviceName.Namespace, serviceName.Namespace, err)
 			return false, nil
 		}
@@ -1307,7 +1342,7 @@ func waitForIngressControllerServiceDeleted(t *testing.T, ic *operatorv1.Ingress
 	serviceName := controller.LoadBalancerServiceName(ic)
 
 	err := wait.PollUntilContextTimeout(context.Background(), 1*time.Second, timeout, false, func(ctx context.Context) (bool, error) {
-		if err := kclient.Get(context.TODO(), serviceName, lbService); err != nil {
+		if err := kclient.Get(ctx, serviceName, lbService); err != nil {
 			if apierrors.IsNotFound(err) {
 				return true, nil
 			}

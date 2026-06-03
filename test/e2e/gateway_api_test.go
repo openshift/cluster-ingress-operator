@@ -347,7 +347,7 @@ func testGatewayAPIManualDeployment(t *testing.T) {
 		},
 	}
 	t.Logf("Creating gateway %q...", gatewayName)
-	if err := kclient.Create(context.Background(), &gateway); err != nil {
+	if err := createWithRetryOnError(t, context.Background(), &gateway, DefaultRetryTimeout); err != nil {
 		t.Fatalf("Failed to create gateway %v: %v", gatewayName, err)
 	}
 	t.Cleanup(func() {
@@ -368,8 +368,8 @@ func testGatewayAPIManualDeployment(t *testing.T) {
 
 	interval, timeout := 5*time.Second, 5*time.Minute
 	t.Logf("Polling for up to %v to verify that the gateway is accepted...", timeout)
-	if err := wait.PollUntilContextTimeout(context.Background(), interval, timeout, false, func(context context.Context) (bool, error) {
-		if err := kclient.Get(context, gatewayName, &gateway); err != nil {
+	if err := wait.PollUntilContextTimeout(t.Context(), interval, timeout, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, gatewayName, &gateway); err != nil {
 			t.Logf("Failed to get gateway %v: %v; retrying...", gatewayName, err)
 
 			return false, nil
@@ -398,8 +398,8 @@ func testGatewayAPIManualDeployment(t *testing.T) {
 	}
 	var service corev1.Service
 	t.Logf("Polling for up to %v to verify that service %q is created...", timeout, serviceName)
-	if err := wait.PollUntilContextTimeout(context.Background(), interval, timeout, false, func(context context.Context) (bool, error) {
-		if err := kclient.Get(context, serviceName, &service); err != nil {
+	if err := wait.PollUntilContextTimeout(t.Context(), interval, timeout, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, serviceName, &service); err != nil {
 			t.Logf("Failed to get service %s: %v; retrying...", serviceName, err)
 
 			return false, nil
@@ -473,9 +473,10 @@ func testGatewayAPIResourcesProtection(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			ctx := t.Context()
 			// Verify that GatewayAPI CRD creation is forbidden.
 			for i := range testCRDs {
-				if err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 60*time.Second, false, func(ctx context.Context) (bool, error) {
+				if err := wait.PollUntilContextTimeout(t.Context(), 2*time.Second, 60*time.Second, false, func(ctx context.Context) (bool, error) {
 					if err := tc.kclient.Create(ctx, testCRDs[i]); err != nil {
 						if kerrors.IsAlreadyExists(err) {
 							// VAP was disabled and re-enabled at the beginning of the test.
@@ -506,12 +507,12 @@ func testGatewayAPIResourcesProtection(t *testing.T) {
 			for i := range testCRDs {
 				crdName := types.NamespacedName{Name: testCRDs[i].Name}
 				crd := &apiextensionsv1.CustomResourceDefinition{}
-				if err := tc.kclient.Get(context.Background(), crdName, crd); err != nil {
+				if err := tc.kclient.Get(ctx, crdName, crd); err != nil {
 					t.Errorf("failed to get %q CRD: %v", crdName.Name, err)
 					continue
 				}
 				crd.Spec = testCRDs[i].Spec
-				if err := tc.kclient.Update(context.Background(), crd); err != nil {
+				if err := tc.kclient.Update(ctx, crd); err != nil {
 					if !strings.Contains(err.Error(), tc.expectedErrMsg) {
 						t.Errorf("unexpected error received while updating CRD %q: %v", testCRDs[i].Name, err)
 					}
@@ -522,7 +523,7 @@ func testGatewayAPIResourcesProtection(t *testing.T) {
 
 			// Verify that GatewayAPI CRD deletion is forbidden.
 			for i := range testCRDs {
-				if err := tc.kclient.Delete(context.Background(), testCRDs[i]); err != nil {
+				if err := tc.kclient.Delete(ctx, testCRDs[i]); err != nil {
 					if !strings.Contains(err.Error(), tc.expectedErrMsg) {
 						t.Errorf("unexpected error received while deleting CRD %q: %v", testCRDs[i].Name, err)
 					}
@@ -716,10 +717,12 @@ func testGatewayOpenshiftConditions(t *testing.T) {
 		name := names.SimpleNameGenerator.GenerateName("gw-test-")
 		rnd := rand.IntN(1000000)
 		testDomain := fmt.Sprintf("some-%d.%s", rnd, domain)
-		gateway, err := createGateway(gatewayClass, name, "default", testDomain)
+		gateway, err := createGateway(t, gatewayClass, name, "default", testDomain)
 		require.NoError(t, err, "failed to create gateway", "name", name)
 		t.Cleanup(func() {
-			require.NoError(t, client.IgnoreNotFound(kclient.Delete(context.TODO(), gateway)), "failed to clean test gateway", "name", name)
+			if err := client.IgnoreNotFound(kclient.Delete(context.TODO(), gateway)); err != nil {
+				t.Errorf("failed to clean test gateway %q: %v", name, err)
+			}
 		})
 
 		gateway, err = assertGatewaySuccessful(t, "default", name)
@@ -746,10 +749,12 @@ func testGatewayOpenshiftConditions(t *testing.T) {
 		name := names.SimpleNameGenerator.GenerateName("gw-test-")
 		rnd := rand.IntN(1000000)
 		testDomain := fmt.Sprintf("some-%d.not.something.managed.tld", rnd)
-		gateway, err := createGateway(gatewayClass, name, operatorcontroller.DefaultOperandNamespace, testDomain)
+		gateway, err := createGateway(t, gatewayClass, name, operatorcontroller.DefaultOperandNamespace, testDomain)
 		require.NoError(t, err, "failed to create gateway", "name", name)
 		t.Cleanup(func() {
-			require.NoError(t, client.IgnoreNotFound(kclient.Delete(context.TODO(), gateway)), "failed to clean test gateway", "name", name)
+			if err := client.IgnoreNotFound(kclient.Delete(context.TODO(), gateway)); err != nil {
+				t.Errorf("failed to clean test gateway %q: %v", name, err)
+			}
 		})
 
 		gateway, err = assertGatewaySuccessful(t, operatorcontroller.DefaultOperandNamespace, name)
@@ -788,10 +793,12 @@ func testGatewayOpenshiftConditions(t *testing.T) {
 		name := names.SimpleNameGenerator.GenerateName("gw-test-")
 		rnd := rand.IntN(1000000)
 		testDomain := fmt.Sprintf("some-%d.%s", rnd, domain)
-		gateway, err := createGateway(gatewayClass, name, operatorcontroller.DefaultOperandNamespace, testDomain)
+		gateway, err := createGateway(t, gatewayClass, name, operatorcontroller.DefaultOperandNamespace, testDomain)
 		require.NoError(t, err, "failed to create gateway", "name", name)
 		t.Cleanup(func() {
-			require.NoError(t, client.IgnoreNotFound(kclient.Delete(context.TODO(), gateway)), "failed to clean test gateway", "name", name)
+			if err := client.IgnoreNotFound(kclient.Delete(context.TODO(), gateway)); err != nil {
+				t.Errorf("failed to clean test gateway %q: %v", name, err)
+			}
 		})
 
 		gateway, err = assertGatewaySuccessful(t, operatorcontroller.DefaultOperandNamespace, name)
@@ -1026,10 +1033,12 @@ func testGatewayOpenshiftConditions(t *testing.T) {
 		t.Run("should not conflict with a second Gateway created with the same domain", func(t *testing.T) {
 			t.Skip("skipping while the PR for duplicate DNS is not merged")
 			dupName := gateway.GetName() + "-dup"
-			dupGateway, err := createGateway(gatewayClass, dupName, operatorcontroller.DefaultOperandNamespace, testDomain)
+			dupGateway, err := createGateway(t, gatewayClass, dupName, operatorcontroller.DefaultOperandNamespace, testDomain)
 			require.NoError(t, err, "failed to create gateway", "name", name)
 			t.Cleanup(func() {
-				require.NoError(t, client.IgnoreNotFound(kclient.Delete(context.TODO(), dupGateway)), "failed to clean duplicated test gateway", "name", name)
+				if err := client.IgnoreNotFound(kclient.Delete(context.TODO(), dupGateway)); err != nil {
+					t.Errorf("failed to clean duplicated test gateway %q: %v", name, err)
+				}
 			})
 			assert.Eventually(t, func() bool {
 				current := &gatewayapiv1.Gateway{}
@@ -1153,9 +1162,7 @@ func testGatewayAPIDNSListenerUpdate(t *testing.T) {
 		t.Fatalf("expected bar.%s. to be deleted, but it was not", domain)
 	}
 
-	if err := deleteWithRetryOnError(t, context.TODO(), gateway, 30*time.Second); err != nil {
-		t.Errorf("failed to delete gateway %q: %v", gateway.Name, err)
-	}
+	deleteWithRetryOnError(t, context.TODO(), gateway, DefaultRetryTimeout)
 
 	t.Logf("Checking the remaining DNSRecord %s gets deleted after gateway deletion.", "baz."+domain+".")
 	if err := assertExpectedDNSRecords(t, map[expectedDnsRecord]bool{
@@ -1251,7 +1258,7 @@ func testGatewayAPIInfrastructureAnnotations(t *testing.T) {
 	}
 
 	t.Logf("Creating gateway %s with infrastructure annotations...", gatewayName)
-	if err := createWithRetryOnError(t, context.Background(), gateway, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, t.Context(), gateway, DefaultRetryTimeout); err != nil {
 		t.Fatalf("Failed to create gateway %s: %v", gatewayName, err)
 	}
 
@@ -1276,7 +1283,7 @@ func testGatewayAPIInfrastructureAnnotations(t *testing.T) {
 	managedLabelValue := strings.ReplaceAll(operatorcontroller.OpenShiftGatewayClassControllerName, "/", "-")
 	interval, timeout := 5*time.Second, 3*time.Minute
 	t.Logf("Polling for up to %v to verify that service for gateway %q has the expected annotation...", timeout, gatewayName)
-	if err := wait.PollUntilContextTimeout(context.Background(), interval, timeout, false, func(context context.Context) (bool, error) {
+	if err := wait.PollUntilContextTimeout(t.Context(), interval, timeout, false, func(ctx context.Context) (bool, error) {
 		// List services with the gateway labels
 		var services corev1.ServiceList
 		listOpts := []client.ListOption{
@@ -1286,7 +1293,7 @@ func testGatewayAPIInfrastructureAnnotations(t *testing.T) {
 			},
 			client.InNamespace(gateway.Namespace),
 		}
-		if err := kclient.List(context, &services, listOpts...); err != nil {
+		if err := kclient.List(ctx, &services, listOpts...); err != nil {
 			t.Logf("Failed to list services for gateway %s: %v; retrying...", gatewayName, err)
 			return false, nil
 		}
@@ -1323,7 +1330,7 @@ func testGatewayAPIInfrastructureAnnotations(t *testing.T) {
 }
 
 func testGatewayAPIInternalLoadBalancer(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	platform := infraConfig.Status.PlatformStatus.Type
 
 	supportedPlatforms := map[configv1.PlatformType]map[gatewayapiv1.AnnotationKey]gatewayapiv1.AnnotationValue{
@@ -1370,11 +1377,11 @@ func testGatewayAPIInternalLoadBalancer(t *testing.T) {
 
 	// create gateway and wait for it to be programmed
 	t.Logf("Creating gateway %s", gatewayName)
-	if err := createWithRetryOnError(t, ctx, gateway, 2*time.Minute); err != nil {
+	if err := createWithRetryOnError(t, ctx, gateway, DefaultRetryTimeout); err != nil {
 		t.Fatalf("Failed to create gateway %s: %v", gatewayName, err)
 	}
 	t.Cleanup(func() {
-		if err := kclient.Delete(ctx, gateway); err != nil {
+		if err := kclient.Delete(context.Background(), gateway); err != nil {
 			if !errors.IsNotFound(err) {
 				t.Logf("Failed to delete gateway %v: %v", gatewayName, err)
 			}
@@ -1510,7 +1517,7 @@ func ensureGatewayObjectCreation(t *testing.T, ns *corev1.Namespace) error {
 	// Use the dnsConfig base domain set up in TestMain.
 	domain = "gws." + dnsConfig.Spec.BaseDomain
 
-	testGateway, err := createGateway(gatewayClass, testGatewayName, operatorcontroller.DefaultOperandNamespace, domain)
+	testGateway, err := createGateway(t, gatewayClass, testGatewayName, operatorcontroller.DefaultOperandNamespace, domain)
 	if err != nil {
 		return fmt.Errorf("feature gate was enabled, but gateway object could not be created: %v", err)
 	}
@@ -1543,7 +1550,7 @@ func deleteTestCRDs(t *testing.T) {
 // ensureTestCRDs creates test Gateway API custom resource definitions.
 func ensureTestCRDs(t *testing.T) {
 	for _, crdName := range testCRDNames {
-		if _, err := createCRD(crdName); err != nil {
+		if _, err := createCRD(t, crdName); err != nil {
 			t.Fatalf("failed to create test crd %q: %v", crdName, err)
 		} else {
 			t.Logf("created test crd %q", crdName)

@@ -70,7 +70,7 @@ func httpKeepAliveTimeoutRunTest(t *testing.T, httpKATimeoutSeconds, clientTimeo
 			ic.Spec.TuningOptions.ClientTimeout = &metav1.Duration{Duration: time.Duration(clientTimeoutSeconds) * time.Second}
 		}
 
-		if err := kclient.Create(context.Background(), ic); err != nil {
+		if err := createWithRetryOnError(t, context.Background(), ic, DefaultRetryTimeout); err != nil {
 			return nil, fmt.Errorf("failed to create IngressController: %w", err)
 		}
 		t.Cleanup(func() {
@@ -99,7 +99,7 @@ func httpKeepAliveTimeoutRunTest(t *testing.T, httpKATimeoutSeconds, clientTimeo
 
 		routeName := types.NamespacedName{Namespace: ns.Name, Name: webService}
 		route := buildRoute(routeName.Name, routeName.Namespace, webService)
-		if err := kclient.Create(context.Background(), route); err != nil {
+		if err := createWithRetryOnError(t, context.Background(), route, DefaultRetryTimeout); err != nil {
 			return "", fmt.Errorf("failed to create route %s: %w", routeName, err)
 		}
 
