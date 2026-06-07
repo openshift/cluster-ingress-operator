@@ -1,4 +1,4 @@
-FROM registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.25-openshift-4.22 AS builder
+FROM registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.26-openshift-5.0 AS builder
 WORKDIR /ingress-operator
 COPY . .
 RUN make build && \
@@ -8,7 +8,7 @@ RUN make build && \
     cp bin/cluster-ingress-operator-tests-ext /tmp/ && \
     gzip -f /tmp/cluster-ingress-operator-tests-ext
 
-FROM registry.ci.openshift.org/ocp/4.22:base-rhel9
+FROM registry.ci.openshift.org/ocp/5.0:base-rhel9
 COPY --from=builder /ingress-operator/ingress-operator /usr/bin/
 COPY --from=builder /tmp/cluster-ingress-operator-tests-ext.gz /usr/bin/
 COPY manifests /manifests
