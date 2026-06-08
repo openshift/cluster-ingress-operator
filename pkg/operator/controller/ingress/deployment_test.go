@@ -1131,6 +1131,7 @@ func TestDesiredRouterDeploymentVariety(t *testing.T) {
 		{"STATS_PORT", true, "9146"},
 		{"ROUTER_SERVICE_HTTP_PORT", true, "8080"},
 		{"ROUTER_SERVICE_HTTPS_PORT", true, "8443"},
+		{"ENDPOINT_ADDRESS_VALIDATION", false, ""},
 	}
 	if err := checkDeploymentEnvironment(t, deployment, tests); err != nil {
 		t.Error(err)
@@ -1141,6 +1142,164 @@ func TestDesiredRouterDeploymentVariety(t *testing.T) {
 	checkContainerPort(t, deployment, "http", 8080)
 	checkContainerPort(t, deployment, "https", 8443)
 	checkContainerPort(t, deployment, "metrics", 9146)
+}
+
+func TestDesiredRouterDeploymentEndpointAddressValidation(t *testing.T) {
+	tests := []struct {
+		name         string
+		icName       string
+		strategyType operatorv1.EndpointPublishingStrategyType
+		platformType configv1.PlatformType
+		nilPlatform  bool
+		expectEnvVar bool
+	}{
+		{
+			name:         "user IC with HostNetwork on AWS enables validation",
+			icName:       "custom",
+			strategyType: operatorv1.HostNetworkStrategyType,
+			platformType: configv1.AWSPlatformType,
+			expectEnvVar: true,
+		},
+		{
+			name:         "user IC with HostNetwork on Azure enables validation",
+			icName:       "custom",
+			strategyType: operatorv1.HostNetworkStrategyType,
+			platformType: configv1.AzurePlatformType,
+			expectEnvVar: true,
+		},
+		{
+			name:         "user IC with HostNetwork on GCP enables validation",
+			icName:       "custom",
+			strategyType: operatorv1.HostNetworkStrategyType,
+			platformType: configv1.GCPPlatformType,
+			expectEnvVar: true,
+		},
+		{
+			name:         "user IC with HostNetwork on IBMCloud enables validation",
+			icName:       "custom",
+			strategyType: operatorv1.HostNetworkStrategyType,
+			platformType: configv1.IBMCloudPlatformType,
+			expectEnvVar: true,
+		},
+		{
+			name:         "user IC with HostNetwork on PowerVS enables validation",
+			icName:       "custom",
+			strategyType: operatorv1.HostNetworkStrategyType,
+			platformType: configv1.PowerVSPlatformType,
+			expectEnvVar: true,
+		},
+		{
+			name:         "user IC with HostNetwork on AlibabaCloud enables validation",
+			icName:       "custom",
+			strategyType: operatorv1.HostNetworkStrategyType,
+			platformType: configv1.AlibabaCloudPlatformType,
+			expectEnvVar: true,
+		},
+		{
+			name:         "user IC with HostNetwork on OpenStack enables validation",
+			icName:       "custom",
+			strategyType: operatorv1.HostNetworkStrategyType,
+			platformType: configv1.OpenStackPlatformType,
+			expectEnvVar: true,
+		},
+		{
+			name:         "user IC with HostNetwork on BareMetal does not enable validation",
+			icName:       "custom",
+			strategyType: operatorv1.HostNetworkStrategyType,
+			platformType: configv1.BareMetalPlatformType,
+			expectEnvVar: false,
+		},
+		{
+			name:         "user IC with HostNetwork on None does not enable validation",
+			icName:       "custom",
+			strategyType: operatorv1.HostNetworkStrategyType,
+			platformType: configv1.NonePlatformType,
+			expectEnvVar: false,
+		},
+		{
+			name:         "user IC with LoadBalancerService on AWS does not enable validation",
+			icName:       "custom",
+			strategyType: operatorv1.LoadBalancerServiceStrategyType,
+			platformType: configv1.AWSPlatformType,
+			expectEnvVar: false,
+		},
+		{
+			name:         "user IC with NodePortService on GCP does not enable validation",
+			icName:       "custom",
+			strategyType: operatorv1.NodePortServiceStrategyType,
+			platformType: configv1.GCPPlatformType,
+			expectEnvVar: false,
+		},
+		{
+			name:         "default IC with HostNetwork on AWS does not enable validation",
+			icName:       "default",
+			strategyType: operatorv1.HostNetworkStrategyType,
+			platformType: configv1.AWSPlatformType,
+			expectEnvVar: false,
+		},
+		{
+			name:         "default IC with HostNetwork on GCP does not enable validation",
+			icName:       "default",
+			strategyType: operatorv1.HostNetworkStrategyType,
+			platformType: configv1.GCPPlatformType,
+			expectEnvVar: false,
+		},
+		{
+			name:         "user IC with Private strategy on AWS does not enable validation",
+			icName:       "custom",
+			strategyType: operatorv1.PrivateStrategyType,
+			platformType: configv1.AWSPlatformType,
+			expectEnvVar: false,
+		},
+		{
+			name:         "user IC with HostNetwork and nil PlatformStatus does not enable validation",
+			icName:       "custom",
+			strategyType: operatorv1.HostNetworkStrategyType,
+			nilPlatform:  true,
+			expectEnvVar: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ic, ingressConfig, infraConfig, apiConfig, networkConfig, _, clusterProxyConfig := getRouterDeploymentComponents(t)
+			ic.Name = tc.icName
+			if tc.nilPlatform {
+				infraConfig.Status.PlatformStatus = nil
+			} else {
+				infraConfig.Status.PlatformStatus.Type = tc.platformType
+			}
+			ic.Status.EndpointPublishingStrategy.Type = tc.strategyType
+			if tc.strategyType == operatorv1.HostNetworkStrategyType {
+				ic.Status.EndpointPublishingStrategy.HostNetwork = &operatorv1.HostNetworkStrategy{
+					Protocol:  operatorv1.TCPProtocol,
+					HTTPPort:  80,
+					HTTPSPort: 443,
+					StatsPort: 1936,
+				}
+			}
+			var proxyNeeded bool
+			if infraConfig.Status.PlatformStatus != nil {
+				var err error
+				proxyNeeded, err = IsProxyProtocolNeeded(ic, infraConfig.Status.PlatformStatus, nil)
+				if err != nil {
+					t.Fatalf("failed to determine proxy protocol need: %v", err)
+				}
+			}
+			deployment, err := desiredRouterDeployment(ic, &Config{IngressControllerImage: ingressControllerImage}, ingressConfig, infraConfig, apiConfig, networkConfig, nil, proxyNeeded, false, nil, clusterProxyConfig)
+			if err != nil {
+				t.Fatalf("invalid router Deployment: %v", err)
+			}
+
+			envTests := []envData{
+				{"ENDPOINT_ADDRESS_VALIDATION", tc.expectEnvVar, "true"},
+			}
+			if err := checkDeploymentEnvironment(t, deployment, envTests); err != nil {
+				t.Error(err)
+			}
+			checkDeploymentHasEnvSorted(t, deployment)
+		})
+	}
 }
 
 // TestDesiredRouterDeploymentFIPS verifies that on a FIPS-enabled cluster,
@@ -2153,6 +2312,16 @@ func Test_deploymentConfigChanged(t *testing.T) {
 				deployment.Spec.Template.Spec.Containers[0].Ports[0].Protocol = corev1.ProtocolUDP
 				deployment.Spec.Template.Spec.Containers[0].Ports[1].Protocol = corev1.ProtocolUDP
 				deployment.Spec.Template.Spec.Containers[0].Ports[2].Protocol = corev1.ProtocolUDP
+			},
+			expect: true,
+		},
+		{
+			description: "if ENDPOINT_ADDRESS_VALIDATION is added",
+			mutate: func(deployment *appsv1.Deployment) {
+				deployment.Spec.Template.Spec.Containers[0].Env = append(deployment.Spec.Template.Spec.Containers[0].Env, corev1.EnvVar{
+					Name:  "ENDPOINT_ADDRESS_VALIDATION",
+					Value: "true",
+				})
 			},
 			expect: true,
 		},

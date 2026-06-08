@@ -153,6 +153,12 @@ const (
 	RouterServiceHTTPSPort = "ROUTER_SERVICE_HTTPS_PORT"
 	StatsPort              = "STATS_PORT"
 
+	// EndpointAddressValidation is the environment variable that enables the validation
+	// of endpoints/endpointslices addresses used by router. When enabled, Router will
+	// drop endpoint updates containing FQDN-typed EndpointSlices or addresses that
+	// resolve to restricted IPs (loopback, link-local, unspecified, etc.).
+	EndpointAddressValidation = "ENDPOINT_ADDRESS_VALIDATION"
+
 	HTTPPortName  = "http"
 	HTTPSPortName = "https"
 	StatsPortName = "metrics"
@@ -826,6 +832,21 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 	)
 
 	if ci.Status.EndpointPublishingStrategy.Type == operatorv1.HostNetworkStrategyType {
+		// Enable endpoint address validation on user-deployed ingress controllers
+		// running with HostNetwork strategy on cloud platforms. The default
+		// ingress controller is excluded because its lifecycle and network
+		// exposure are managed by the platform installer.
+		if infraStatus := infraConfig.Status.PlatformStatus; infraStatus != nil && ci.Name != manifests.DefaultIngressControllerName {
+			switch infraStatus.Type {
+			case configv1.AWSPlatformType, configv1.AzurePlatformType, configv1.GCPPlatformType,
+				configv1.AlibabaCloudPlatformType, configv1.IBMCloudPlatformType, configv1.PowerVSPlatformType, configv1.OpenStackPlatformType:
+				env = append(env, corev1.EnvVar{
+					Name:  EndpointAddressValidation,
+					Value: "true",
+				})
+			}
+		}
+
 		// Expose ports 80, 443, and 1936 on the host to provide
 		// endpoints for the user's HA solution.
 		deployment.Spec.Template.Spec.HostNetwork = true
