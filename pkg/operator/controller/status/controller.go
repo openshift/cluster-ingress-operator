@@ -1096,7 +1096,7 @@ func compareVersionNums(a, b string) (int, error) {
 
 // addRelatedOnce adds `ref` to the slice pointed to by `list` if an equivalent
 // entry is not already present.
-// The comparison treats Resource, Group, Version, Namespace and Name as the
+// The comparison treats Resource, Group, Namespace and Name as the
 // identifying fields; if all these fields match an existing entry, `ref` is
 // considered duplicate and will not be added. The function preserves the
 // existing order and appends new entries. If `list` is nil it will be
