@@ -13,6 +13,7 @@ approvers:
   - davidesalerno
   - bentito
   - jcmoraisjr
+  - aswinsuryan
 reviewers:
   - knobunc
   - Miciah
@@ -28,6 +29,7 @@ reviewers:
   - davidesalerno
   - bentito
   - jcmoraisjr
+  - aswinsuryan
 emeritus_approvers:
   - ironcladlou
   - pravisankar
