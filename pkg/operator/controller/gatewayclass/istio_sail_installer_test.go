@@ -9,11 +9,6 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/stretchr/testify/assert"
 
-	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
-	"github.com/istio-ecosystem/sail-operator/pkg/install"
-	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
-
-	configv1 "github.com/openshift/api/config/v1"
 	testutil "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/test/util"
 
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
@@ -21,7 +16,6 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 
 	"sigs.k8s.io/controller-runtime/pkg/cache/informertest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -32,13 +26,12 @@ import (
 // We care for now just about Apply, Uninstall and Status for the reconciliation tests
 type fakeSailInstaller struct {
 	notifyCh        chan struct{}
-	internalOpts    install.Options
-	status          install.Status
+	internalOpts    SailOptions
+	status          SailStatus
 	uninstallCalled bool
 	uninstallError  error
 }
 
-// Test if implementation adheres the interface
 var _ SailLibraryInstaller = &fakeSailInstaller{}
 
 func (i *fakeSailInstaller) Start(ctx context.Context) (<-chan struct{}, error) {
@@ -46,13 +39,12 @@ func (i *fakeSailInstaller) Start(ctx context.Context) (<-chan struct{}, error) 
 	return i.notifyCh, nil
 }
 
-func (i *fakeSailInstaller) Apply(opts install.Options) error {
-	i.internalOpts = opts // Capture the options passed in
+func (i *fakeSailInstaller) Apply(opts SailOptions) error {
+	i.internalOpts = opts
 
-	// Simulate successful installation with CRDs in unknown state
 	i.status.Installed = true
 	i.status.Version = opts.Version
-	i.status.CRDState = install.CRDManagementStateUnknown
+	i.status.CRDState = SailCRDStateUnknown
 	return nil
 }
 
@@ -61,22 +53,13 @@ func (i *fakeSailInstaller) Uninstall(ctx context.Context, namespace, revision s
 	return i.uninstallError
 }
 
-func (i *fakeSailInstaller) Status() install.Status {
+func (i *fakeSailInstaller) Status() SailStatus {
 	return i.status
 }
 
 func (i *fakeSailInstaller) Enqueue() {}
 
-func Test_overwriteOLMManagedCRDFunc(t *testing.T) {
-	crd := func(name string, labels map[string]string) *apiextensionsv1.CustomResourceDefinition {
-		return &apiextensionsv1.CustomResourceDefinition{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:   name,
-				Labels: labels,
-			},
-		}
-	}
-
+func Test_overwriteOLMCRDCheck(t *testing.T) {
 	subscription := func(name, namespace, label string) *operatorsv1alpha1.Subscription {
 		sub := &operatorsv1alpha1.Subscription{
 			ObjectMeta: metav1.ObjectMeta{
@@ -102,120 +85,128 @@ func Test_overwriteOLMManagedCRDFunc(t *testing.T) {
 
 	tests := []struct {
 		name            string
-		crd             *apiextensionsv1.CustomResourceDefinition
+		crdName         string
+		crdLabels       map[string]string
 		existingObjects []client.Object
 		expectedResult  bool
 	}{
 		{
-			name:           "nil CRD returns false",
-			crd:            nil,
-			expectedResult: false,
-		},
-		{
 			name:           "CRD with no labels can be overwritten",
-			crd:            crd("test-crd", nil),
+			crdName:        "test-crd",
+			crdLabels:      nil,
 			expectedResult: true,
 		},
 		{
-			name: "CRD without olm.managed label can be overwritten",
-			crd: crd("test-crd", map[string]string{
+			name:    "CRD without olm.managed label can be overwritten",
+			crdName: "test-crd",
+			crdLabels: map[string]string{
 				"some-other-label": "value",
-			}),
+			},
 			expectedResult: true,
 		},
 		{
-			name: "CRD with olm.managed=false can be overwritten",
-			crd: crd("test-crd", map[string]string{
+			name:    "CRD with olm.managed=false can be overwritten",
+			crdName: "test-crd",
+			crdLabels: map[string]string{
 				"olm.managed": "false",
-			}),
+			},
 			expectedResult: true,
 		},
 		{
-			name: "CRD with olm.managed but no subscription label can be overwritten",
-			crd: crd("test-crd", map[string]string{
+			name:    "CRD with olm.managed but no subscription label can be overwritten",
+			crdName: "test-crd",
+			crdLabels: map[string]string{
 				"olm.managed": "true",
-			}),
+			},
 			expectedResult: true,
 		},
 		{
-			name: "CRD with olm.managed and invalid subscription label can be overwritten",
-			crd: crd("test-crd", map[string]string{
+			name:    "CRD with olm.managed and invalid subscription label can be overwritten",
+			crdName: "test-crd",
+			crdLabels: map[string]string{
 				"olm.managed":                        "true",
 				"operators.coreos.com/invalid":       "",
 				"operators.coreos.com/too.many.dots": "",
-			}),
+			},
 			expectedResult: true,
 		},
 		{
-			name: "CRD with active InstallPlans cannot be overwritten",
-			crd: crd("test-crd", map[string]string{
+			name:    "CRD with active InstallPlans cannot be overwritten",
+			crdName: "test-crd",
+			crdLabels: map[string]string{
 				"olm.managed": "true",
 				"operators.coreos.com/servicemeshoperator.openshift-operators": "",
-			}),
+			},
 			existingObjects: []client.Object{
 				installPlan("operators.coreos.com/servicemeshoperator.openshift-operators"),
 			},
 			expectedResult: false,
 		},
 		{
-			name: "CRD with subscription but no InstallPlans cannot be overwritten",
-			crd: crd("test-crd", map[string]string{
+			name:    "CRD with subscription but no InstallPlans cannot be overwritten",
+			crdName: "test-crd",
+			crdLabels: map[string]string{
 				"olm.managed": "true",
 				"operators.coreos.com/servicemeshoperator.openshift-operators": "",
-			}),
+			},
 			existingObjects: []client.Object{
 				subscription("servicemeshoperator", "openshift-operators", "operators.coreos.com/servicemeshoperator.openshift-operators"),
 			},
 			expectedResult: false,
 		},
 		{
-			name: "CRD without subscription can be overwritten",
-			crd: crd("test-crd", map[string]string{
+			name:    "CRD without subscription can be overwritten",
+			crdName: "test-crd",
+			crdLabels: map[string]string{
 				"olm.managed": "true",
 				"operators.coreos.com/servicemeshoperator.openshift-operators": "",
-			}),
+			},
 			existingObjects: []client.Object{},
 			expectedResult:  true,
 		},
 		{
-			name: "CRD with subscription name containing dots - parses correctly",
-			crd: crd("test-crd", map[string]string{
+			name:    "CRD with subscription name containing dots - parses correctly",
+			crdName: "test-crd",
+			crdLabels: map[string]string{
 				"olm.managed": "true",
 				"operators.coreos.com/my.service.operator.openshift-operators": "",
-			}),
+			},
 			existingObjects: []client.Object{
 				subscription("my.service.operator", "openshift-operators", "operators.coreos.com/my.service.operator.openshift-operators"),
 			},
 			expectedResult: false,
 		},
 		{
-			name: "CRD with subscription name containing dots - subscription deleted",
-			crd: crd("test-crd", map[string]string{
+			name:    "CRD with subscription name containing dots - subscription deleted",
+			crdName: "test-crd",
+			crdLabels: map[string]string{
 				"olm.managed": "true",
 				"operators.coreos.com/my.service.operator.openshift-operators": "",
-			}),
+			},
 			existingObjects: []client.Object{},
 			expectedResult:  true,
 		},
 		{
-			name: "CRD with multiple subscription labels - one active subscription exists",
-			crd: crd("test-crd", map[string]string{
+			name:    "CRD with multiple subscription labels - one active subscription exists",
+			crdName: "test-crd",
+			crdLabels: map[string]string{
 				"olm.managed": "true",
 				"operators.coreos.com/operator-one.openshift-operators": "",
 				"operators.coreos.com/operator-two.openshift-operators": "",
-			}),
+			},
 			existingObjects: []client.Object{
 				subscription("operator-two", "openshift-operators", "operators.coreos.com/operator-two.openshift-operators"),
 			},
 			expectedResult: false,
 		},
 		{
-			name: "CRD with multiple subscription labels - all subscriptions deleted",
-			crd: crd("test-crd", map[string]string{
+			name:    "CRD with multiple subscription labels - all subscriptions deleted",
+			crdName: "test-crd",
+			crdLabels: map[string]string{
 				"olm.managed": "true",
 				"operators.coreos.com/operator-one.openshift-operators": "",
 				"operators.coreos.com/operator-two.openshift-operators": "",
-			}),
+			},
 			existingObjects: []client.Object{},
 			expectedResult:  true,
 		},
@@ -238,7 +229,7 @@ func Test_overwriteOLMManagedCRDFunc(t *testing.T) {
 				cache: cache,
 			}
 
-			result := reconciler.overwriteOLMManagedCRDFunc(context.Background(), tc.crd)
+			result := reconciler.overwriteOLMCRDCheck(context.Background(), tc.crdName, tc.crdLabels)
 			assert.Equal(t, tc.expectedResult, result)
 		})
 	}
@@ -247,7 +238,7 @@ func Test_overwriteOLMManagedCRDFunc(t *testing.T) {
 func Test_mapStatusToConditions(t *testing.T) {
 	tests := []struct {
 		name               string
-		status             install.Status
+		status             SailStatus
 		generation         int64
 		initialConditions  []metav1.Condition
 		expectedConditions []metav1.Condition
@@ -255,10 +246,10 @@ func Test_mapStatusToConditions(t *testing.T) {
 	}{
 		{
 			name: "Installed with CRDs ready",
-			status: install.Status{
+			status: SailStatus{
 				Installed:  true,
 				Version:    "v1.24.4",
-				CRDState:   install.CRDManagementStateReady,
+				CRDState:   SailCRDStateReady,
 				CRDMessage: "",
 			},
 			generation: 1,
@@ -282,10 +273,10 @@ func Test_mapStatusToConditions(t *testing.T) {
 		},
 		{
 			name: "Installed with CRDs ready and message",
-			status: install.Status{
+			status: SailStatus{
 				Installed:  true,
 				Version:    "v1.24.4",
-				CRDState:   install.CRDManagementStateReady,
+				CRDState:   SailCRDStateReady,
 				CRDMessage: "CRDs managed by cluster-ingress-operator",
 			},
 			generation: 1,
@@ -309,10 +300,10 @@ func Test_mapStatusToConditions(t *testing.T) {
 		},
 		{
 			name: "Installed with CRDs unknown",
-			status: install.Status{
+			status: SailStatus{
 				Installed: true,
 				Version:   "v1.24.4",
-				CRDState:  install.CRDManagementStateUnknown,
+				CRDState:  SailCRDStateUnknown,
 			},
 			generation: 2,
 			expectedConditions: []metav1.Condition{
@@ -335,12 +326,12 @@ func Test_mapStatusToConditions(t *testing.T) {
 		},
 		{
 			name: "Installed with CRDs not ready",
-			status: install.Status{
+			status: SailStatus{
 				Installed:  true,
 				Version:    "v1.24.4",
-				CRDState:   install.CRDManagementStateNotReady,
+				CRDState:   SailCRDStateNotReady,
 				CRDMessage: "not all CRDs are ready",
-				CRDs: []install.CRDInfo{
+				CRDs: []SailCRDInfo{
 					{Name: "gateways.gateway.networking.k8s.io", Managed: false, Ready: true},
 					{Name: "httproutes.gateway.networking.k8s.io", Managed: true, Ready: false},
 				},
@@ -366,10 +357,10 @@ func Test_mapStatusToConditions(t *testing.T) {
 		},
 		{
 			name: "Install failed",
-			status: install.Status{
+			status: SailStatus{
 				Installed: false,
 				Error:     fmt.Errorf("failed to apply helm chart"),
-				CRDState:  install.CRDManagementStateError,
+				CRDState:  SailCRDStateError,
 			},
 			generation: 1,
 			expectedConditions: []metav1.Condition{
@@ -392,9 +383,9 @@ func Test_mapStatusToConditions(t *testing.T) {
 		},
 		{
 			name: "Pending installation",
-			status: install.Status{
+			status: SailStatus{
 				Installed: false,
-				CRDState:  install.CRDManagementStateUnknown,
+				CRDState:  SailCRDStateUnknown,
 			},
 			generation: 1,
 			expectedConditions: []metav1.Condition{
@@ -417,11 +408,11 @@ func Test_mapStatusToConditions(t *testing.T) {
 		},
 		{
 			name: "Installed with warning",
-			status: install.Status{
+			status: SailStatus{
 				Installed:  true,
 				Version:    "v1.24.4",
 				Error:      fmt.Errorf("drift detected in deployment"),
-				CRDState:   install.CRDManagementStateReady,
+				CRDState:   SailCRDStateReady,
 				CRDMessage: "CRDs managed",
 			},
 			generation: 3,
@@ -445,10 +436,10 @@ func Test_mapStatusToConditions(t *testing.T) {
 		},
 		{
 			name: "CRD error state",
-			status: install.Status{
+			status: SailStatus{
 				Installed:  true,
 				Version:    "v1.24.4",
-				CRDState:   install.CRDManagementStateError,
+				CRDState:   SailCRDStateError,
 				CRDMessage: "Cannot determine CRD ownership",
 			},
 			generation: 1,
@@ -472,10 +463,10 @@ func Test_mapStatusToConditions(t *testing.T) {
 		},
 		{
 			name: "No change when conditions already set",
-			status: install.Status{
+			status: SailStatus{
 				Installed: true,
 				Version:   "v1.24.4",
-				CRDState:  install.CRDManagementStateReady,
+				CRDState:  SailCRDStateReady,
 			},
 			generation: 1,
 			initialConditions: []metav1.Condition{
@@ -538,112 +529,6 @@ func Test_mapStatusToConditions(t *testing.T) {
 	}
 }
 
-// TestOLMAndSailLibraryValuesMatch ensures that the OpenShift-specific Istio configuration
-// is identical between the OLM path (desiredIstio) and Sail Library path (openshiftValues)
-// during the transition period. This test can be removed once the OLM path is deleted.
-func TestOLMAndSailLibraryValuesMatch(t *testing.T) {
-	defaultGatewayClass := []gatewayapiv1.GatewayClass{{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "openshift-default",
-		},
-	}}
-	infraConfig := func(infraTopologyMode configv1.TopologyMode) *configv1.Infrastructure {
-		return &configv1.Infrastructure{
-			ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
-			Status: configv1.InfrastructureStatus{
-				InfrastructureTopology: infraTopologyMode,
-			},
-		}
-	}
-	singleReplicaInfraConfig := infraConfig(configv1.SingleReplicaTopologyMode)
-	highlyAvailableInfraConfig := infraConfig(configv1.HighlyAvailableTopologyMode)
-
-	testCases := []struct {
-		name                     string
-		gatewayclasses           []gatewayapiv1.GatewayClass
-		enableInferenceExtension bool
-		extraconfig              *extraIstioConfig
-	}{
-		{
-			name:                     "without inference extension",
-			gatewayclasses:           defaultGatewayClass,
-			enableInferenceExtension: false,
-			extraconfig: &extraIstioConfig{
-				infraConfig: highlyAvailableInfraConfig,
-			},
-		},
-		{
-			name:                     "with inference extension",
-			gatewayclasses:           defaultGatewayClass,
-			enableInferenceExtension: true,
-			extraconfig: &extraIstioConfig{
-				infraConfig: highlyAvailableInfraConfig,
-			},
-		},
-		{
-			name:                     "with single-node topology",
-			gatewayclasses:           defaultGatewayClass,
-			enableInferenceExtension: true,
-			extraconfig: &extraIstioConfig{
-				infraConfig: singleReplicaInfraConfig,
-			},
-		},
-		{
-			name:           "with system proxy config enabled",
-			gatewayclasses: defaultGatewayClass,
-			extraconfig: &extraIstioConfig{
-				proxyConfig: &configv1.Proxy{
-					Status: configv1.ProxyStatus{
-						HTTPProxy:  "http://some.proxy.tld:8080",
-						HTTPSProxy: "http://some.proxytls.tld:8080",
-						NoProxy:    ".cluster.local,.ec2.internal,.svc,10.0.0.0/16,10.128.0.0/14",
-					},
-				},
-				infraConfig: highlyAvailableInfraConfig,
-			},
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			// Get values from Sail Library path (GatewayAPIDefaults + OpenShift overrides)
-			sailValues := install.GatewayAPIDefaults("openshift-ingress")
-			openshiftOverrides, err := openshiftValues(tc.enableInferenceExtension, "openshift-ingress", tc.gatewayclasses, tc.extraconfig)
-			assert.Nil(t, err)
-			sailValues, err = install.MergeValues(sailValues, openshiftOverrides)
-			assert.Nil(t, err)
-
-			// Get values from OLM path
-			olmIstio, err := desiredIstio(
-				types.NamespacedName{Name: "test", Namespace: "test-ns"},
-				metav1.OwnerReference{},
-				"v1.24.4",
-				tc.enableInferenceExtension,
-				tc.gatewayclasses,
-				tc.extraconfig,
-			)
-			assert.Nil(t, err)
-
-			cmpOpts := []cmp.Option{
-				cmpopts.EquateEmpty(),
-				// Ignore X_PILOT_IGNORE_RESOURCES and X_PILOT_INCLUDE_RESOURCES env variables.
-				// These were added in the Sail Library update and are not present in the OLM path.
-				cmpopts.IgnoreMapEntries(func(k string, v string) bool {
-					return k == "X_PILOT_IGNORE_RESOURCES" || k == "X_PILOT_INCLUDE_RESOURCES"
-				}),
-				// The OLM path applies the "openshift" profile inline (via desiredIstio),
-				// while the Sail Library applies profiles internally during reconciliation
-				// via ComputeValues. Ignore fields that come from the openshift profile.
-				cmpopts.IgnoreFields(sailv1.PilotConfig{}, "Enabled", "Cni"),
-				cmpopts.IgnoreFields(sailv1.Values{}, "SidecarInjectorWebhook"),
-				cmpopts.IgnoreFields(sailv1.MeshConfig{}, "IngressControllerMode", "AccessLogFile"),
-				cmpopts.IgnoreFields(sailv1.MeshConfigProxyConfig{}, "ProxyHeaders"),
-			}
-
-			// Compare entire Values struct
-			if diff := cmp.Diff(olmIstio.Spec.Values, sailValues, cmpOpts...); diff != "" {
-				t.Errorf("Values differ between OLM and Sail Library paths:\n%s", diff)
-			}
-		})
-	}
-}
+// TestOLMAndSailLibraryValuesMatch was removed: with the gRPC sidecar,
+// the sail library path builds values as map[string]any, so a typed
+// comparison against the OLM path is no longer meaningful.

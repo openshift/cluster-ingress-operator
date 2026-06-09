@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
-	"github.com/istio-ecosystem/sail-operator/pkg/install"
 	v1 "k8s.io/api/core/v1"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
@@ -16,10 +14,8 @@ import (
 
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/utils/ptr"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -29,20 +25,18 @@ const (
 	subscriptionPrefix = "operators.coreos.com/"
 )
 
-// overwriteOLMManagedCRDFunc is used as a predicate function by the Sail Library to determine
-// whether to take ownership of a CRD. Returns true if the owning OLM subscription
-// no longer exists (allowing CIO to take ownership), false otherwise.
-func (r *reconciler) overwriteOLMManagedCRDFunc(ctx context.Context, crd *apiextensionsv1.CustomResourceDefinition) bool {
-	// defensive measure
-	if ctx == nil || crd == nil {
+// overwriteOLMCRDCheck is used as the OLM callback by the gRPC client.
+// It receives the CRD name and labels from the sidecar and determines
+// whether CIO should take ownership of the CRD.
+func (r *reconciler) overwriteOLMCRDCheck(ctx context.Context, crdName string, crdLabels map[string]string) bool {
+	if ctx == nil {
 		return false
 	}
 
-	logOverwrite := log.WithValues("crd", crd.GetName())
+	logOverwrite := log.WithValues("crd", crdName)
 
-	labels := crd.GetLabels()
+	labels := crdLabels
 	if labels == nil {
-		// no labels, we can override
 		return true
 	}
 
@@ -143,8 +137,6 @@ func (r *reconciler) ensureIstio(ctx context.Context, istioVersion string, gatew
 		return err
 	}
 
-	opts.OverwriteOLMManagedCRD = r.overwriteOLMManagedCRDFunc
-
 	// Apply triggers asynchronous installation/update. Helm charts are only applied
 	// if options or values have changed. Status is checked later via r.sailInstaller.Status()
 	// and mapped to GatewayClass conditions.
@@ -156,23 +148,34 @@ func (r *reconciler) ensureIstio(ctx context.Context, istioVersion string, gatew
 }
 
 // buildInstallerOptions creates Sail Library installation options by merging
-// Gateway API defaults with OpenShift-specific overrides
-func (r *reconciler) buildInstallerOptions(enableInferenceExtension bool, istioVersion string, gatewayclasses []gatewayapiv1.GatewayClass, extraConfig *extraIstioConfig) (install.Options, error) {
-	// Start with Gateway API defaults
-	values := install.GatewayAPIDefaults(r.config.OperandNamespace)
+// Gateway API defaults with OpenShift-specific overrides.
+func (r *reconciler) buildInstallerOptions(enableInferenceExtension bool, istioVersion string, gatewayclasses []gatewayapiv1.GatewayClass, extraConfig *extraIstioConfig) (SailOptions, error) {
+	ns := r.config.OperandNamespace
 
-	// Apply OpenShift-specific overrides
-	openshiftOverrides, err := openshiftValues(enableInferenceExtension, r.config.OperandNamespace, gatewayclasses, extraConfig)
-	if err != nil {
-		return install.Options{}, err
-	}
-	values, err = install.MergeValues(values, openshiftOverrides)
-	if err != nil {
-		return install.Options{}, fmt.Errorf("failed to merge Istio values: %w", err)
+	// Gateway API defaults (equivalent to install.GatewayAPIDefaults)
+	values := map[string]any{
+		"pilot": map[string]any{
+			"env": map[string]string{
+				"PILOT_ENABLE_GATEWAY_API":                       "true",
+				"PILOT_ENABLE_GATEWAY_API_STATUS":                "true",
+				"PILOT_ENABLE_GATEWAY_API_DEPLOYMENT_CONTROLLER": "true",
+			},
+		},
+		"global": map[string]any{
+			"istioNamespace":  ns,
+			"trustBundleName": "openshift-gateway-ca-cert",
+		},
 	}
 
-	return install.Options{
-		Namespace:      r.config.OperandNamespace,
+	// OpenShift-specific overrides
+	overrides, err := openshiftValuesMap(enableInferenceExtension, ns, gatewayclasses, extraConfig)
+	if err != nil {
+		return SailOptions{}, err
+	}
+	values = mergeValuesMap(values, overrides)
+
+	return SailOptions{
+		Namespace:      ns,
 		Revision:       controller.IstioName("").Name,
 		Values:         values,
 		Version:        istioVersion,
@@ -181,31 +184,27 @@ func (r *reconciler) buildInstallerOptions(enableInferenceExtension bool, istioV
 	}, nil
 }
 
-// openshiftValues returns the OpenShift-specific value overrides for Istio.
-// These values are merged on top of the gateway-api preset defaults.
-func openshiftValues(enableInferenceExtension bool, operandNamespace string, gatewayclasses []gatewayapiv1.GatewayClass, extraConfig *extraIstioConfig) (*sailv1.Values, error) {
+// openshiftValuesMap returns OpenShift-specific value overrides as a generic map.
+func openshiftValuesMap(enableInferenceExtension bool, operandNamespace string, gatewayclasses []gatewayapiv1.GatewayClass, extraConfig *extraIstioConfig) (map[string]any, error) {
 	pilotEnv := gatewayAPIPilotEnv(enableInferenceExtension)
 
-	val := &sailv1.Values{
-		Global: &sailv1.GlobalConfig{
-			DefaultPodDisruptionBudget: &sailv1.DefaultPodDisruptionBudgetConfig{
-				Enabled: ptr.To(false),
+	val := map[string]any{
+		"global": map[string]any{
+			"defaultPodDisruptionBudget": map[string]any{
+				"enabled": false,
 			},
-			IstioNamespace: ptr.To(operandNamespace),
-			// Use system-cluster-critical priority for OpenShift system workloads
-			PriorityClassName: ptr.To(systemClusterCriticalPriorityClassName),
-			// OpenShift-specific CA trust bundle
-			TrustBundleName: ptr.To(controller.OpenShiftGatewayCARootCertName),
+			"istioNamespace":  operandNamespace,
+			"priorityClassName": systemClusterCriticalPriorityClassName,
+			"trustBundleName": controller.OpenShiftGatewayCARootCertName,
 		},
-		Pilot: &sailv1.PilotConfig{
-			Env: pilotEnv,
-			// Workload partitioning for OpenShift management workloads
-			PodAnnotations: map[string]string{
+		"pilot": map[string]any{
+			"env": pilotEnv,
+			"podAnnotations": map[string]string{
 				WorkloadPartitioningManagementAnnotationKey: WorkloadPartitioningManagementPreferredScheduling,
 			},
 		},
-		MeshConfig: &sailv1.MeshConfig{
-			DefaultConfig: &sailv1.MeshConfigProxyConfig{},
+		"meshConfig": map[string]any{
+			"defaultConfig": map[string]any{},
 		},
 	}
 
@@ -213,17 +212,19 @@ func openshiftValues(enableInferenceExtension bool, operandNamespace string, gat
 	if extraConfig != nil {
 		if extraConfig.proxyConfig != nil {
 			if proxyMetadata := buildProxyMetadata(extraConfig.proxyConfig); proxyMetadata != nil {
-				val.MeshConfig.DefaultConfig.ProxyMetadata = proxyMetadata
+				meshDefault := val["meshConfig"].(map[string]any)["defaultConfig"].(map[string]any)
+				meshDefault["proxyMetadata"] = proxyMetadata
 			}
 		}
 		infraConfig = extraConfig.infraConfig
 	}
 
-	if gwClassConfig, err := buildGatewayClassesConfig(infraConfig, gatewayclasses); err != nil {
+	gwClassConfig, err := buildGatewayClassesConfigMap(infraConfig, gatewayclasses)
+	if err != nil {
 		return nil, fmt.Errorf("failed to build gateway class config: %w", err)
-	} else {
-		val.GatewayClasses = gwClassConfig
 	}
+	val["gatewayClasses"] = gwClassConfig
+
 	return val, nil
 }
 
@@ -251,9 +252,18 @@ func buildProxyMetadata(proxyConfig *configv1.Proxy) map[string]string {
 	return proxyMetadata
 }
 
-// buildGatewayClassesConfig returns Istio per-gatewayclass configuration
-// overlays given an infrastructure config and a slice of gatewayclasses.
+// buildGatewayClassesConfig returns per-gatewayclass config as JSON
+// for the OLM path which uses sailv1.Istio with json.RawMessage fields.
 func buildGatewayClassesConfig(infraConfig *configv1.Infrastructure, gatewayclasses []gatewayapiv1.GatewayClass) (json.RawMessage, error) {
+	m, err := buildGatewayClassesConfigMap(infraConfig, gatewayclasses)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(m)
+}
+
+// buildGatewayClassesConfigMap returns per-gatewayclass config as a map.
+func buildGatewayClassesConfigMap(infraConfig *configv1.Infrastructure, gatewayclasses []gatewayapiv1.GatewayClass) (map[string]any, error) {
 	const maxReplicas = 10
 
 	var minReplicas = 2
@@ -275,7 +285,7 @@ func buildGatewayClassesConfig(infraConfig *configv1.Infrastructure, gatewayclas
 						"containers": []map[string]any{
 							{
 								"name":                     gatewayProxyContainerName,
-								"terminationMessagePolicy": v1.TerminationMessageFallbackToLogsOnError,
+								"terminationMessagePolicy": string(v1.TerminationMessageFallbackToLogsOnError),
 							},
 						},
 					},
@@ -283,15 +293,28 @@ func buildGatewayClassesConfig(infraConfig *configv1.Infrastructure, gatewayclas
 			},
 		},
 	}
-	gatewayclassesConfig := map[string]any{}
-	for _, gatewayclass := range gatewayclasses {
-		gatewayclassesConfig[gatewayclass.Name] = gatewayclassConfig
+	result := map[string]any{}
+	for _, gc := range gatewayclasses {
+		result[gc.Name] = gatewayclassConfig
 	}
 
-	gatewayclassesConfigJson, err := json.Marshal(gatewayclassesConfig)
-	if err != nil {
-		return nil, err
-	}
+	return result, nil
+}
 
-	return gatewayclassesConfigJson, nil
+// mergeValuesMap deep-merges overlay on top of base. Overlay wins.
+func mergeValuesMap(base, overlay map[string]any) map[string]any {
+	result := make(map[string]any, len(base))
+	for k, v := range base {
+		result[k] = v
+	}
+	for k, v := range overlay {
+		if baseMap, ok := result[k].(map[string]any); ok {
+			if overlayMap, ok2 := v.(map[string]any); ok2 {
+				result[k] = mergeValuesMap(baseMap, overlayMap)
+				continue
+			}
+		}
+		result[k] = v
+	}
+	return result
 }

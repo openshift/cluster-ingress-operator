@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"fmt"
 
-	"github.com/istio-ecosystem/sail-operator/pkg/install"
-
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -29,7 +27,7 @@ const (
 
 // mapStatusToConditions translates the Sail Library Status into GatewayClass conditions.
 // Returns true if any conditions were added or updated.
-func mapStatusToConditions(status install.Status, generation int64, conditions *[]metav1.Condition) bool {
+func mapStatusToConditions(status SailStatus, generation int64, conditions *[]metav1.Condition) bool {
 	installed := metav1.Condition{
 		Type:               ControllerInstalledConditionType,
 		ObservedGeneration: generation,
@@ -62,7 +60,7 @@ func mapStatusToConditions(status install.Status, generation int64, conditions *
 		LastTransitionTime: metav1.Now(),
 	}
 	switch status.CRDState {
-	case install.CRDManagementStateReady:
+	case SailCRDStateReady:
 		crd.Status = metav1.ConditionTrue
 		crd.Reason = "Ready"
 		if status.CRDMessage != "" {
@@ -70,11 +68,11 @@ func mapStatusToConditions(status install.Status, generation int64, conditions *
 		} else {
 			crd.Message = "all CRDs are ready"
 		}
-	case install.CRDManagementStateNotReady:
+	case SailCRDStateNotReady:
 		crd.Status = metav1.ConditionFalse
 		crd.Reason = "NotReady"
 		crd.Message = getCRDStatusMessage(status)
-	case install.CRDManagementStateError:
+	case SailCRDStateError:
 		crd.Status = metav1.ConditionFalse
 		crd.Reason = "Error"
 		crd.Message = getCRDStatusMessage(status)
@@ -96,7 +94,7 @@ func removeSailInstallConditions(conditions *[]metav1.Condition) {
 
 // getCRDStatusMessage formats a detailed CRD status message including the overall
 // state and a bulleted list of individual CRD ownership states.
-func getCRDStatusMessage(status install.Status) string {
+func getCRDStatusMessage(status SailStatus) string {
 	if status.CRDMessage == "" && len(status.CRDs) == 0 {
 		return "unable to determine CRD ownership"
 	}

@@ -102,6 +102,30 @@ spec:
           - name: bound-sa-token
             mountPath: /var/run/secrets/openshift/serviceaccount
             readOnly: true
+          - name: sail-socket
+            mountPath: /var/run/sail
+        - name: sail-sidecar
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          image: quay.io/istio-ecosystem/sail-sidecar:latest
+          terminationMessagePolicy: FallbackToLogsOnError
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+          readinessProbe:
+            exec:
+              command:
+              - test
+              - -S
+              - /var/run/sail/sail.sock
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          volumeMounts:
+          - name: sail-socket
+            mountPath: /var/run/sail
         - name: kube-rbac-proxy
           securityContext:
             allowPrivilegeEscalation: false
@@ -128,6 +152,8 @@ spec:
             name: metrics-tls
             readOnly: true
       volumes:
+      - name: sail-socket
+        emptyDir: {}
       - name: metrics-tls
         secret:
           secretName: metrics-tls

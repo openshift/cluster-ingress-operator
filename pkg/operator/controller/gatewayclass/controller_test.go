@@ -10,7 +10,6 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
-	"github.com/istio-ecosystem/sail-operator/pkg/install"
 	configv1 "github.com/openshift/api/config/v1"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
@@ -196,6 +195,37 @@ func Test_Reconcile(t *testing.T) {
 	gatewayclassConfig := func(minReplicas int) string {
 		return fmt.Sprintf(`{"deployment":{"spec":{"template":{"spec":{"containers":[{"name":"istio-proxy","terminationMessagePolicy":"FallbackToLogsOnError"}]}}}},"horizontalPodAutoscaler":{"spec":{"maxReplicas":10,"minReplicas":%d}}}`, minReplicas)
 	}
+	gatewayclassMapConfig := func(minReplicas int) map[string]any {
+		return map[string]any{
+			"horizontalPodAutoscaler": map[string]any{
+				"spec": map[string]any{
+					"minReplicas": minReplicas,
+					"maxReplicas": 10,
+				},
+			},
+			"deployment": map[string]any{
+				"spec": map[string]any{
+					"template": map[string]any{
+						"spec": map[string]any{
+							"containers": []map[string]any{
+								{
+									"name":                     "istio-proxy",
+									"terminationMessagePolicy": "FallbackToLogsOnError",
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+	}
+	gatewayclassesMapConfig := func(config map[string]any, gatewayclasses ...string) map[string]any {
+		result := map[string]any{}
+		for _, name := range gatewayclasses {
+			result[name] = config
+		}
+		return result
+	}
 
 	istioRevision := func() *sailv1.IstioRevision {
 		return &sailv1.IstioRevision{
@@ -252,41 +282,36 @@ func Test_Reconcile(t *testing.T) {
 		}
 	}
 
-	expectedSailLibraryOptions := func(version string, gieEnabled bool, proxyConfig map[string]string, gatewayclassesConfig json.RawMessage) *install.Options {
-		// Start with sail-operator's Gateway API defaults aka trust upstream defaults
-		values := install.GatewayAPIDefaults("openshift-ingress")
-
-		// Apply our OpenShift-specific overrides
+	expectedSailLibraryOptions := func(version string, gieEnabled bool, proxyConfig map[string]string, gatewayclassesConfig map[string]any) *SailOptions {
 		pilotEnv := gatewayAPIPilotEnv(gieEnabled)
 
-		openshiftOverrides := &sailv1.Values{
-			Global: &sailv1.GlobalConfig{
-				DefaultPodDisruptionBudget: &sailv1.DefaultPodDisruptionBudgetConfig{
-					Enabled: ptr.To(false),
-				},
-				IstioNamespace:    ptr.To("openshift-ingress"),
-				PriorityClassName: ptr.To("system-cluster-critical"),
-				TrustBundleName:   ptr.To("openshift-gw-ca-root-cert"),
-			},
-			Pilot: &sailv1.PilotConfig{
-				Env: pilotEnv,
-				PodAnnotations: map[string]string{
+		defaultConfig := map[string]any{}
+		if proxyConfig != nil {
+			defaultConfig["proxyMetadata"] = proxyConfig
+		}
+
+		values := map[string]any{
+			"pilot": map[string]any{
+				"env": pilotEnv,
+				"podAnnotations": map[string]string{
 					"target.workload.openshift.io/management": `{"effect": "PreferredDuringScheduling"}`,
 				},
 			},
-			MeshConfig: &sailv1.MeshConfig{
-				DefaultConfig: &sailv1.MeshConfigProxyConfig{
-					ProxyMetadata: proxyConfig,
+			"global": map[string]any{
+				"defaultPodDisruptionBudget": map[string]any{
+					"enabled": false,
 				},
+				"istioNamespace":  "openshift-ingress",
+				"priorityClassName": "system-cluster-critical",
+				"trustBundleName": "openshift-gw-ca-root-cert",
 			},
-			GatewayClasses: gatewayclassesConfig,
-		}
-		values, err := install.MergeValues(values, openshiftOverrides)
-		if err != nil {
-			t.Fatalf("failed to merge values: %v", err)
+			"meshConfig": map[string]any{
+				"defaultConfig": defaultConfig,
+			},
+			"gatewayClasses": gatewayclassesConfig,
 		}
 
-		return &install.Options{
+		return &SailOptions{
 			Namespace:      "openshift-ingress",
 			Version:        version,
 			Revision:       "openshift-gateway",
@@ -308,7 +333,7 @@ func Test_Reconcile(t *testing.T) {
 		expectDelete                     []client.Object
 		expectedStatusPatched            []client.Object
 		expectError                      string
-		expectedSailLibraryOptions       *install.Options
+		expectedSailLibraryOptions       *SailOptions
 		expectSailLibraryUninstallCalled bool
 	}{
 		{
@@ -498,7 +523,7 @@ func Test_Reconcile(t *testing.T) {
 			expectUpdate:               []client.Object{},
 			expectDelete:               []client.Object{},
 			expectError:                `infrastructures.config.openshift.io "cluster" not found`,
-			expectedSailLibraryOptions: &install.Options{},
+			expectedSailLibraryOptions: &SailOptions{},
 		},
 		{
 			name:              "Sail Library: nonexistent GatewayClass",
@@ -511,7 +536,7 @@ func Test_Reconcile(t *testing.T) {
 			expectUpdate: []client.Object{},
 			expectDelete: []client.Object{},
 			//expectError:     `"openshift-default" not found`, // We should not expect an error when a class is not found
-			expectedSailLibraryOptions: &install.Options{},
+			expectedSailLibraryOptions: &SailOptions{},
 		},
 		{
 			name:              "Sail Library: Missing cluster infrastructure config",
@@ -524,7 +549,7 @@ func Test_Reconcile(t *testing.T) {
 			expectUpdate:               []client.Object{},
 			expectDelete:               []client.Object{},
 			expectError:                `infrastructures.config.openshift.io "cluster" not found`,
-			expectedSailLibraryOptions: &install.Options{},
+			expectedSailLibraryOptions: &SailOptions{},
 		},
 		{
 			name:    "Sail Library: disabled - removes finalizer and status",
@@ -563,7 +588,7 @@ func Test_Reconcile(t *testing.T) {
 				gatewayClass("openshift-default", true, nil, nil, false),
 			},
 			expectDelete:               []client.Object{},
-			expectedSailLibraryOptions: &install.Options{},
+			expectedSailLibraryOptions: &SailOptions{},
 		},
 		{
 			name:              "Sail Library: migrates old Istio CR instances",
@@ -582,7 +607,7 @@ func Test_Reconcile(t *testing.T) {
 			expectedResult: reconcile.Result{
 				RequeueAfter: 5 * time.Second,
 			},
-			expectedSailLibraryOptions: &install.Options{},
+			expectedSailLibraryOptions: &SailOptions{},
 		},
 		{
 			name:              "Sail Library: migration waiting for IstioRevision cleanup",
@@ -600,7 +625,7 @@ func Test_Reconcile(t *testing.T) {
 			expectedResult: reconcile.Result{
 				RequeueAfter: 5 * time.Second,
 			},
-			expectedSailLibraryOptions: &install.Options{},
+			expectedSailLibraryOptions: &SailOptions{},
 		},
 		{
 			name:              "Sail Library: migration complete, proceed with install",
@@ -618,7 +643,7 @@ func Test_Reconcile(t *testing.T) {
 			expectedStatusPatched: []client.Object{
 				gatewayClass("openshift-default", true, nil, installedConditions(), false),
 			},
-			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", false, nil, gatewayclassesConfig(gatewayclassConfig(2), "openshift-default")),
+			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", false, nil, gatewayclassesMapConfig(gatewayclassMapConfig(2), "openshift-default")),
 		},
 		{
 			name:              "Sail Library: installs Istio (single replica)",
@@ -634,7 +659,7 @@ func Test_Reconcile(t *testing.T) {
 			expectedStatusPatched: []client.Object{
 				gatewayClass("openshift-default", true, nil, installedConditions(), false),
 			},
-			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", false, nil, gatewayclassesConfig(gatewayclassConfig(1), "openshift-default")),
+			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", false, nil, gatewayclassesMapConfig(gatewayclassMapConfig(1), "openshift-default")),
 		},
 		{
 			name:              "Sail Library: installs Istio (highly available)",
@@ -650,7 +675,7 @@ func Test_Reconcile(t *testing.T) {
 			expectedStatusPatched: []client.Object{
 				gatewayClass("openshift-default", true, nil, installedConditions(), false),
 			},
-			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", false, nil, gatewayclassesConfig(gatewayclassConfig(2), "openshift-default")),
+			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", false, nil, gatewayclassesMapConfig(gatewayclassMapConfig(2), "openshift-default")),
 		},
 		{
 			name:              "Sail Library: installs Istio with system proxy configuration",
@@ -667,7 +692,7 @@ func Test_Reconcile(t *testing.T) {
 			expectedStatusPatched: []client.Object{
 				gatewayClass("openshift-default", true, nil, installedConditions(), false),
 			},
-			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", false, expectedProxyConfiguration, gatewayclassesConfig(gatewayclassConfig(2), "openshift-default")),
+			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", false, expectedProxyConfiguration, gatewayclassesMapConfig(gatewayclassMapConfig(2), "openshift-default")),
 		},
 		{
 			name:              "Sail Library: installs Istio for multiple gatewayclasses in single-topology mode with system proxy configuration",
@@ -694,7 +719,7 @@ func Test_Reconcile(t *testing.T) {
 			expectedStatusPatched: []client.Object{
 				gatewayClass("openshift-default", true, nil, installedConditions(), false),
 			},
-			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", false, expectedProxyConfiguration, gatewayclassesConfig(gatewayclassConfig(1), "openshift-default", "openshift-internal", "openshift-custom")),
+			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", false, expectedProxyConfiguration, gatewayclassesMapConfig(gatewayclassMapConfig(1), "openshift-default", "openshift-internal", "openshift-custom")),
 		},
 		{
 			name:              "Sail Library: experimental InferencePool CRD",
@@ -715,7 +740,7 @@ func Test_Reconcile(t *testing.T) {
 			expectedStatusPatched: []client.Object{
 				gatewayClass("openshift-default", true, nil, installedConditions(), false),
 			},
-			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", true, nil, gatewayclassesConfig(gatewayclassConfig(2), "openshift-default")),
+			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", true, nil, gatewayclassesMapConfig(gatewayclassMapConfig(2), "openshift-default")),
 		},
 		{
 			name:              "Sail Library: stable InferencePool CRD",
@@ -736,7 +761,7 @@ func Test_Reconcile(t *testing.T) {
 			expectedStatusPatched: []client.Object{
 				gatewayClass("openshift-default", true, nil, installedConditions(), false),
 			},
-			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", true, nil, gatewayclassesConfig(gatewayclassConfig(2), "openshift-default")),
+			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24.4", true, nil, gatewayclassesMapConfig(gatewayclassMapConfig(2), "openshift-default")),
 		},
 		{
 			name:              "Sail Library: Istio version override",
@@ -756,7 +781,7 @@ func Test_Reconcile(t *testing.T) {
 					"unsupported.do-not-use.openshift.io/istio-version": "v1.24-latest",
 				}, installedConditions(), false),
 			},
-			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24-latest", false, nil, gatewayclassesConfig(gatewayclassConfig(2), "openshift-default")),
+			expectedSailLibraryOptions: expectedSailLibraryOptions("v1.24-latest", false, nil, gatewayclassesMapConfig(gatewayclassMapConfig(2), "openshift-default")),
 		},
 		{
 			name:              "Sail Library: full removal of last GatewayClass",
@@ -769,7 +794,7 @@ func Test_Reconcile(t *testing.T) {
 			expectPatched: []client.Object{
 				gatewayClass("openshift-default", false, nil, nil, true),
 			},
-			expectedSailLibraryOptions:       &install.Options{},
+			expectedSailLibraryOptions:       &SailOptions{},
 			expectSailLibraryUninstallCalled: true,
 		},
 		{
@@ -784,7 +809,7 @@ func Test_Reconcile(t *testing.T) {
 			expectPatched: []client.Object{
 				gatewayClass("openshift-default", false, nil, nil, true),
 			},
-			expectedSailLibraryOptions:       &install.Options{},
+			expectedSailLibraryOptions:       &SailOptions{},
 			expectSailLibraryUninstallCalled: false,
 		},
 		{
@@ -798,7 +823,7 @@ func Test_Reconcile(t *testing.T) {
 				gatewayClass("openshift-default", true, nil, nil, true),
 			},
 			expectError:                      "failed to uninstall Istio: failed to cleanup resources",
-			expectedSailLibraryOptions:       &install.Options{},
+			expectedSailLibraryOptions:       &SailOptions{},
 			expectSailLibraryUninstallCalled: true,
 		},
 	}
@@ -895,7 +920,6 @@ func Test_Reconcile(t *testing.T) {
 					optsDiff := cmp.Diff(
 						tc.expectedSailLibraryOptions,
 						&fakeInstaller.internalOpts,
-						cmpopts.IgnoreFields(install.Options{}, "OverwriteOLMManagedCRD"),
 					)
 					if optsDiff != "" {
 						t.Fatalf("found diff between Sail Library options:\n%s", optsDiff)
