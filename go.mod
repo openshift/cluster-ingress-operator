@@ -188,6 +188,6 @@ replace github.com/imdario/mergo => github.com/imdario/mergo v0.3.5
 
 // Use OSSM 3.3.1 for Sail Library integration.
 // Replace needed because the fork keeps upstream module name for compatibility.
-replace github.com/istio-ecosystem/sail-operator => github.com/aslakknutsen/sail-operator v0.0.0-20260610143338-670830dcf920
+replace github.com/istio-ecosystem/sail-operator => github.com/aslakknutsen/sail-operator v0.0.0-20260610225744-84dc602cc569
 
 replace github.com/istio-ecosystem/sail-operator/api/sidecar => /home/aslak/.gvm/pkgsets/go1.26.0/istio/src/istio.io/sail-operator/api/sidecar

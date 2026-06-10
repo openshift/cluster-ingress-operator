@@ -63,10 +63,8 @@ github.com/armon/go-socks5 v0.0.0-20160902184237-e75332964ef5/go.mod h1:wHh0iHkY
 github.com/asaskevich/govalidator v0.0.0-20200907205600-7a23bdc65eef/go.mod h1:WaHUgvxTVq04UNunO+XhnAqY/wQc+bxr74GqbsZ/Jqw=
 github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2 h1:DklsrG3dyBCFEj5IhUbnKptjxatkF07cF2ak3yi77so=
 github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2/go.mod h1:WaHUgvxTVq04UNunO+XhnAqY/wQc+bxr74GqbsZ/Jqw=
-github.com/aslakknutsen/sail-operator v0.0.0-20260603205906-7d7aeed95855 h1:yko1pWjJiBLYnLx6ElLbkYt2/JCIiVZTv3cw5Hr3jmY=
-github.com/aslakknutsen/sail-operator v0.0.0-20260603205906-7d7aeed95855/go.mod h1:Yj7y0eII57VC+yjUT8Xp0DQhY82lgLa0psrE2b+0p5I=
-github.com/aslakknutsen/sail-operator v0.0.0-20260610143338-670830dcf920 h1:zl6r4r45k9Yp/bSRLds53BSUnXVKcc56Tc5rUYLm6I0=
-github.com/aslakknutsen/sail-operator v0.0.0-20260610143338-670830dcf920/go.mod h1:JLjqL8hOHaky9m9yOYKjorPUm44g00c9S60DN+veVTM=
+github.com/aslakknutsen/sail-operator v0.0.0-20260610225744-84dc602cc569 h1:A2AaNmsZfAk50SSYxGda/8Z1/LLkz3UqIxxPd41JxjU=
+github.com/aslakknutsen/sail-operator v0.0.0-20260610225744-84dc602cc569/go.mod h1:TEg5n4/Lli3/cNmJEHIflBOsrklZlOas7oHPKnybTTU=
 github.com/aws/aws-sdk-go v1.34.28/go.mod h1:H7NKnBqNVzoTJpGfLrQkkD+ytBA93eiDYi/+8rV9s48=
 github.com/aws/aws-sdk-go-v2 v1.41.7 h1:DWpAJt66FmnnaRIOT/8ASTucrvuDPZASqhhLey6tLY8=
 github.com/aws/aws-sdk-go-v2 v1.41.7/go.mod h1:4LAfZOPHNVNQEckOACQx60Y8pSRjIkNZQz1w92xpMJc=

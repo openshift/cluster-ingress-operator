@@ -148,3 +148,7 @@ type IstioRevisionTagList struct {
 	metav1.ListMeta `json:"metadata"`
 	Items           []IstioRevisionTag `json:"items"`
 }
+
+func init() {
+	SchemeBuilder.Register(&IstioRevisionTag{}, &IstioRevisionTagList{})
+}
