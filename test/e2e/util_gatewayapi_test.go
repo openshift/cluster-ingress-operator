@@ -590,11 +590,12 @@ func assertIstiodControlPlane(t *testing.T) error {
 	return nil
 }
 
-// assertIstioCRDs validates that all required Istio CRDs are installed and owned by CIO.
-// It checks that each CRD exists and has the CIO ownership label.
+// assertIstioCRDs validates that all required Istio CRDs are installed and managed by the Sail Library.
+// It checks that each CRD exists and has the managed-by label set to "sail-library".
 func assertIstioCRDs(t *testing.T) error {
 	t.Helper()
-	const cioOwnershipLabel = "ingress.operator.openshift.io/owned"
+	const managedByLabel = "app.kubernetes.io/managed-by"
+	const managedByValue = "sail-library"
 
 	for _, crdName := range istioCRDNames {
 		_, err := assertCRDExists(t, crdName)
@@ -602,7 +603,6 @@ func assertIstioCRDs(t *testing.T) error {
 			return fmt.Errorf("failed to find istio crd %s: %w", crdName, err)
 		}
 
-		// Wait for CIO ownership label
 		crd := &apiextensionsv1.CustomResourceDefinition{}
 		name := types.NamespacedName{Name: crdName}
 		if err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 1*time.Minute, false, func(ctx context.Context) (bool, error) {
@@ -611,15 +611,15 @@ func assertIstioCRDs(t *testing.T) error {
 				return false, nil
 			}
 			labels := crd.GetLabels()
-			if labels == nil || labels[cioOwnershipLabel] != "true" {
-				t.Logf("istio crd %s is missing CIO ownership label %s...retrying", crdName, cioOwnershipLabel)
+			if labels == nil || labels[managedByLabel] != managedByValue {
+				t.Logf("istio crd %s is missing %s=%s label...retrying", crdName, managedByLabel, managedByValue)
 				return false, nil
 			}
 			return true, nil
 		}); err != nil {
-			return fmt.Errorf("timed out waiting for CIO ownership label on CRD %s: %w", crdName, err)
+			return fmt.Errorf("timed out waiting for %s=%s label on CRD %s: %w", managedByLabel, managedByValue, crdName, err)
 		}
-		t.Logf("Verified Istio CRD %s has CIO ownership label", crdName)
+		t.Logf("Verified Istio CRD %s has %s=%s label", crdName, managedByLabel, managedByValue)
 	}
 	return nil
 }
