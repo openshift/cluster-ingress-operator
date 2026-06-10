@@ -57,6 +57,7 @@ var crdNames = []string{
 	"grpcroutes.gateway.networking.k8s.io",
 	"httproutes.gateway.networking.k8s.io",
 	"referencegrants.gateway.networking.k8s.io",
+	"backendtlspolicies.gateway.networking.k8s.io",
 }
 
 // List of Istio CRDs for testing installation and ownership.
