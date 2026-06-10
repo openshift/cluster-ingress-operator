@@ -1407,7 +1407,7 @@ func TestDesiredRouterDeploymentMutualTLSHeaderFilter(t *testing.T) {
 				},
 			}
 
-			deployment, err := desiredRouterDeployment(ic, &Config{IngressControllerImage: ingressControllerImage}, &configv1.Ingress{}, &configv1.Infrastructure{}, &configv1.APIServer{}, &configv1.Network{}, nil, false, false, nil, &configv1.Proxy{})
+			deployment, err := desiredRouterDeployment(ic, &Config{IngressControllerImage: ingressControllerImage}, &configv1.Ingress{}, &configv1.Infrastructure{}, &configv1.APIServer{}, &configv1.Network{}, false, false, nil, &configv1.Proxy{})
 			assert.NoError(t, err)
 			assert.NoError(t, checkDeploymentEnvironment(t, deployment, tc.expectedEnv))
 		})
