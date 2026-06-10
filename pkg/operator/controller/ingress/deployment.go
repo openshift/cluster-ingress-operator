@@ -9,6 +9,7 @@ import (
 	"math"
 	"net"
 	"net/url"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -37,6 +38,17 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	securityv1 "github.com/openshift/api/security/v1"
 )
+
+// isFIPSEnabled reports whether the current node is operating in FIPS
+// mode by checking /proc/sys/crypto/fips_enabled. This is a
+// package-level variable so tests can override it to simulate FIPS mode.
+var isFIPSEnabled = func() bool {
+	data, err := os.ReadFile("/proc/sys/crypto/fips_enabled")
+	if err != nil {
+		return false
+	}
+	return len(data) > 0 && data[0] == '1'
+}()
 
 const (
 	WildcardRouteAdmissionPolicy = "ROUTER_ALLOW_WILDCARD_ROUTES"
@@ -959,6 +971,20 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 		} else {
 			otherCiphers = append(otherCiphers, cipher)
 		}
+	}
+	// On FIPS-enabled clusters, remove non-FIPS-compliant TLS 1.3 cipher
+	// suites (specifically TLS_CHACHA20_POLY1305_SHA256) from
+	// ROUTER_CIPHERSUITES. HAProxy would fail TLS handshakes when a client
+	// offers a non-FIPS cipher first if that cipher is listed in
+	// ssl-default-bind-ciphersuites but excluded by the OS FIPS policy.
+	if isFIPSEnabled {
+		fipsCiphers := tls13Ciphers[:0]
+		for _, c := range tls13Ciphers {
+			if fipsApprovedTLS13Ciphers.Has(c) {
+				fipsCiphers = append(fipsCiphers, c)
+			}
+		}
+		tls13Ciphers = fipsCiphers
 	}
 	env = append(env, corev1.EnvVar{
 		Name:  "ROUTER_CIPHERS",
