@@ -12,9 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package v1
+package v1alpha1
 
 import (
+	v1 "github.com/istio-ecosystem/sail-operator/api/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -32,6 +33,16 @@ type ZTunnelSpec struct {
 	// +kubebuilder:default=v1.30.1
 	Version string `json:"version"`
 
+	// +sail:profile
+	// The built-in installation configuration profile to use.
+	// The 'default' profile is 'ambient' and it is always applied.
+	// Must be one of: ambient, default, demo, empty, external, preview, remote, stable.
+	// +++PROFILES-DROPDOWN-HIDDEN-UNTIL-WE-FULLY-IMPLEMENT-THEM+++operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Profile",xDescriptors={"urn:alm:descriptor:com.tectonic.ui:fieldGroup:General", "urn:alm:descriptor:com.tectonic.ui:select:ambient", "urn:alm:descriptor:com.tectonic.ui:select:default", "urn:alm:descriptor:com.tectonic.ui:select:demo", "urn:alm:descriptor:com.tectonic.ui:select:empty", "urn:alm:descriptor:com.tectonic.ui:select:external", "urn:alm:descriptor:com.tectonic.ui:select:minimal", "urn:alm:descriptor:com.tectonic.ui:select:preview", "urn:alm:descriptor:com.tectonic.ui:select:remote"}
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:com.tectonic.ui:hidden"}
+	// +kubebuilder:validation:Enum=ambient;default;demo;empty;external;openshift-ambient;openshift;preview;remote;stable
+	// +kubebuilder:default=ambient
+	Profile string `json:"profile,omitempty"`
+
 	// Namespace to which the Istio ztunnel component should be installed.
 	// +operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors={"urn:alm:descriptor:io.kubernetes:Namespace"}
 	// +kubebuilder:default=ztunnel
@@ -39,11 +50,7 @@ type ZTunnelSpec struct {
 
 	// Defines the values to be passed to the Helm charts when installing Istio ztunnel.
 	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Helm Values"
-	Values *ZTunnelValues `json:"values,omitempty"`
-
-	// The Istio control plane that this ZTunnel instance is associated with. Valid references are Istio and IstioRevision resources, Istio resources are always resolved to their current active revision.
-	// Values relevant for ZTunnel will be copied from the referenced IstioRevision resource, these are `spec.values.global`, `spec.values.meshConfig`, `spec.values.revision`. Any user configuration in the ZTunnel spec will always take precedence over the settings copied from the Istio resource, however.
-	TargetRef *TargetReference `json:"targetRef,omitempty"`
+	Values *v1.ZTunnelValues `json:"values,omitempty"`
 }
 
 // ZTunnelStatus defines the observed state of ZTunnel
@@ -55,33 +62,30 @@ type ZTunnelStatus struct {
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
 	// Represents the latest available observations of the object's current state.
-	Conditions []StatusCondition `json:"conditions,omitempty"`
+	Conditions []v1.StatusCondition `json:"conditions,omitempty"`
 
 	// Reports the current state of the object.
 	State ZTunnelConditionReason `json:"state,omitempty"`
-
-	// IstioRevision stores the name of the referenced IstioRevision
-	IstioRevision string `json:"istioRevision,omitempty"`
 }
 
 // GetCondition returns the condition of the specified type
-func (s *ZTunnelStatus) GetCondition(conditionType ZTunnelConditionType) StatusCondition {
-	if s == nil {
-		return StatusCondition{Type: conditionType, Status: metav1.ConditionUnknown}
+func (s *ZTunnelStatus) GetCondition(conditionType ZTunnelConditionType) v1.StatusCondition {
+	if s != nil {
+		return v1.GetCondition(s.Conditions, v1.ConditionType(conditionType))
 	}
-	return GetCondition(s.Conditions, conditionType)
+	return v1.StatusCondition{Type: v1.ConditionType(conditionType), Status: metav1.ConditionUnknown}
 }
 
 // SetCondition sets a specific condition in the list of conditions
-func (s *ZTunnelStatus) SetCondition(condition StatusCondition) {
-	SetCondition(&s.Conditions, condition)
+func (s *ZTunnelStatus) SetCondition(condition v1.StatusCondition) {
+	v1.SetCondition(&s.Conditions, condition)
 }
 
-// ZTunnelConditionType is an alias for ConditionType.
-type ZTunnelConditionType = ConditionType
+// ZTunnelConditionType represents the type of a ZTunnel condition.
+type ZTunnelConditionType string
 
-// ZTunnelConditionReason is an alias for ConditionReason.
-type ZTunnelConditionReason = ConditionReason
+// ZTunnelConditionReason represents the reason for a ZTunnel condition.
+type ZTunnelConditionReason string
 
 const (
 	// ZTunnelConditionReconciled signifies whether the controller has
@@ -108,15 +112,15 @@ const (
 	ZTunnelReasonHealthy ZTunnelConditionReason = "Healthy"
 )
 
+// +kubebuilder:deprecatedversion
 // +kubebuilder:object:root=true
 // +kubebuilder:resource:scope=Cluster,categories=istio-io
 // +kubebuilder:subresource:status
-// +kubebuilder:storageversion
 // +kubebuilder:printcolumn:name="Namespace",type="string",JSONPath=".spec.namespace",description="The namespace for the ztunnel component."
+// +kubebuilder:printcolumn:name="Profile",type="string",JSONPath=".spec.values.profile",description="The selected profile (collection of value presets)."
 // +kubebuilder:printcolumn:name="Ready",type="string",JSONPath=".status.conditions[?(@.type==\"Ready\")].status",description="Whether the Istio ztunnel installation is ready to handle requests."
 // +kubebuilder:printcolumn:name="Status",type="string",JSONPath=".status.state",description="The current state of this object."
 // +kubebuilder:printcolumn:name="Version",type="string",JSONPath=".spec.version",description="The version of the Istio ztunnel installation."
-// +kubebuilder:printcolumn:name="Revision",type="string",JSONPath=".status.istioRevision",description="The referenced IstioRevision."
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp",description="The age of the object"
 // +kubebuilder:validation:XValidation:rule="self.metadata.name == 'default'",message="metadata.name must be 'default'"
 
@@ -126,7 +130,7 @@ type ZTunnel struct {
 	// +optional
 	metav1.ObjectMeta `json:"metadata"`
 
-	// +kubebuilder:default={version: "v1.30.1", namespace: "ztunnel"}
+	// +kubebuilder:default={version: "v1.30.1", namespace: "ztunnel", profile: "ambient"}
 	// +optional
 	Spec ZTunnelSpec `json:"spec"`
 

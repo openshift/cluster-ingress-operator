@@ -109,7 +109,7 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
-          image: quay.io/istio-ecosystem/sail-sidecar:latest
+          image: quay.io/aslakknutsen/sail-sidecar:1.30-latest
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
             requests:
