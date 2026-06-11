@@ -2037,6 +2037,27 @@ type IngressControllerTuningOptions struct {
 	// +optional
 	MaxConnections int32 `json:"maxConnections,omitempty"`
 
+	// haproxyServerThreshold defines the maximum number of servers (backends) per HAProxy
+	// process for which HAProxy will report per-server metrics. When the number of servers
+	// exceeds this threshold, per-server metrics collection is disabled to prevent high
+	// Prometheus metric cardinality, which can cause significant memory and CPU overhead
+	// in large clusters.
+	//
+	// This value applies globally across all HAProxy processes on each ingress controller
+	// pod. Setting the threshold too high in clusters with many backends may cause
+	// excessive memory consumption in the monitoring stack.
+	//
+	// If this field is empty or 0, the IngressController will use the default value
+	// built into the router image. The current default is 500, but this is subject to
+	// change in future releases.
+	//
+	// The minimum allowed value is 1. There is no enforced upper bound, but values
+	// significantly above the number of active backends provide no benefit.
+	//
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	HaproxyServerThreshold int32 `json:"haproxyServerThreshold,omitempty"`
+
 	// reloadInterval defines the minimum interval at which the router is allowed to reload
 	// to accept new changes. Increasing this value can prevent the accumulation of
 	// HAProxy processes, depending on the scenario. Increasing this interval can
