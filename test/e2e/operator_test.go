@@ -1031,6 +1031,71 @@ func TestHostNetworkEndpointPublishingStrategy(t *testing.T) {
 	}
 }
 
+// TestHostNetworkEndpointAddressValidation creates a user-deployed
+// ingresscontroller with the "HostNetwork" endpoint publishing strategy on a
+// cloud platform and verifies that the ENDPOINT_ADDRESS_VALIDATION env var is
+// set to "true" on the router deployment.
+func TestHostNetworkEndpointAddressValidation(t *testing.T) {
+	t.Parallel()
+	if infraConfig.Status.PlatformStatus == nil {
+		t.Skip("test skipped on nil platform")
+	}
+	supportedPlatforms := map[configv1.PlatformType]struct{}{
+		configv1.AWSPlatformType:          {},
+		configv1.AzurePlatformType:        {},
+		configv1.GCPPlatformType:          {},
+		configv1.AlibabaCloudPlatformType: {},
+		configv1.IBMCloudPlatformType:     {},
+		configv1.PowerVSPlatformType:      {},
+		configv1.OpenStackPlatformType:    {},
+	}
+	if _, supported := supportedPlatforms[infraConfig.Status.PlatformStatus.Type]; !supported {
+		t.Skipf("test skipped on platform %q", infraConfig.Status.PlatformStatus.Type)
+	}
+
+	icName := types.NamespacedName{
+		Namespace: operatorNamespace,
+		Name:      names.SimpleNameGenerator.GenerateName("hostnet-addrval-"),
+	}
+	domain := fmt.Sprintf("%s.%s", icName.Name, dnsConfig.Spec.BaseDomain)
+	ing := newHostNetworkController(icName, domain)
+	if err := createWithRetryOnError(t, t.Context(), ing, DefaultRetryTimeout); err != nil {
+		t.Fatalf("failed to create ingresscontroller: %v", err)
+	}
+	t.Cleanup(func() { assertIngressControllerDeleted(t, kclient, ing) })
+
+	if err := waitForIngressControllerCondition(t, kclient, 5*time.Minute, icName, availableConditionsForIngressControllerWithHostNetwork...); err != nil {
+		t.Fatalf("failed to observe expected conditions: %v", err)
+	}
+
+	deploymentName := controller.RouterDeploymentName(ing)
+	deployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: deploymentName.Namespace,
+			Name:      deploymentName.Name,
+		},
+	}
+	if err := waitForDeploymentEnvVar(t, deployment, 1*time.Minute, "ENDPOINT_ADDRESS_VALIDATION", "true"); err != nil {
+		t.Fatalf("expected deployment to have ENDPOINT_ADDRESS_VALIDATION=true: %v", err)
+	}
+
+	// Verify the default ingress controller does NOT have the env var set.
+	defaultIC := &operatorv1.IngressController{}
+	if err := kclient.Get(t.Context(), defaultName, defaultIC); err != nil {
+		t.Fatalf("failed to get default ingresscontroller: %v", err)
+	}
+	defaultDeploymentName := controller.RouterDeploymentName(defaultIC)
+	defaultDeployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: defaultDeploymentName.Namespace,
+			Name:      defaultDeploymentName.Name,
+		},
+	}
+	if err := waitForDeploymentEnvVar(t, defaultDeployment, 1*time.Minute, "ENDPOINT_ADDRESS_VALIDATION", ""); err != nil {
+		t.Fatalf("expected default ingresscontroller deployment not to have ENDPOINT_ADDRESS_VALIDATION: %v", err)
+	}
+}
+
 // TestHostNetworkPortBinding creates two ingresscontrollers on the same node
 // with different port bindings and verifies that both routers are available.
 func TestHostNetworkPortBinding(t *testing.T) {
