@@ -1,0 +1,769 @@
+
+══════════════════════════════════════════════════════════════
+  PHASE 0: Preflight
+══════════════════════════════════════════════════════════════
+==> Checking oc connectivity
+kube:admin
+ip-10-0-10-7.ec2.internal     Ready   worker                 5h57m   v1.32.8
+ip-10-0-2-116.ec2.internal    Ready   control-plane,master   6h4m    v1.32.8
+ip-10-0-53-34.ec2.internal    Ready   worker                 5h57m   v1.32.8
+==> Logging into quay.io
+Login Succeeded!
+==> Config: count=100 namespace=extcert-bench image=quay.io/btofel/router:patched
+
+══════════════════════════════════════════════════════════════
+  PHASE 1: Route setup (wipe + create 100 external-cert routes)
+══════════════════════════════════════════════════════════════
+==> Wiping namespace extcert-bench (if exists)
+namespace "extcert-bench" deleted
+==> Creating namespace extcert-bench
+namespace/extcert-bench created
+==> Detected app domain: apps.btofel-netedg-260303.devcluster.openshift.com
+==> Creating RBAC for router secret access
+role.rbac.authorization.k8s.io/router-secret-reader created
+rolebinding.rbac.authorization.k8s.io/router-secret-reader created
+==> Generating test TLS certificate
+==> Creating 100 secrets and routes in namespace extcert-bench
+secret/extcert-bench-1 created
+service/extcert-bench-1 created
+route.route.openshift.io/extcert-bench-1 created
+secret/extcert-bench-2 created
+service/extcert-bench-2 created
+route.route.openshift.io/extcert-bench-2 created
+secret/extcert-bench-3 created
+service/extcert-bench-3 created
+route.route.openshift.io/extcert-bench-3 created
+secret/extcert-bench-4 created
+service/extcert-bench-4 created
+route.route.openshift.io/extcert-bench-4 created
+secret/extcert-bench-5 created
+service/extcert-bench-5 created
+route.route.openshift.io/extcert-bench-5 created
+secret/extcert-bench-6 created
+service/extcert-bench-6 created
+route.route.openshift.io/extcert-bench-6 created
+secret/extcert-bench-7 created
+service/extcert-bench-7 created
+route.route.openshift.io/extcert-bench-7 created
+secret/extcert-bench-8 created
+service/extcert-bench-8 created
+route.route.openshift.io/extcert-bench-8 created
+secret/extcert-bench-9 created
+service/extcert-bench-9 created
+route.route.openshift.io/extcert-bench-9 created
+secret/extcert-bench-10 created
+service/extcert-bench-10 created
+route.route.openshift.io/extcert-bench-10 created
+  ... created 10/100 routes
+secret/extcert-bench-11 created
+service/extcert-bench-11 created
+route.route.openshift.io/extcert-bench-11 created
+secret/extcert-bench-12 created
+service/extcert-bench-12 created
+route.route.openshift.io/extcert-bench-12 created
+secret/extcert-bench-13 created
+service/extcert-bench-13 created
+route.route.openshift.io/extcert-bench-13 created
+secret/extcert-bench-14 created
+service/extcert-bench-14 created
+route.route.openshift.io/extcert-bench-14 created
+secret/extcert-bench-15 created
+service/extcert-bench-15 created
+route.route.openshift.io/extcert-bench-15 created
+secret/extcert-bench-16 created
+service/extcert-bench-16 created
+route.route.openshift.io/extcert-bench-16 created
+secret/extcert-bench-17 created
+service/extcert-bench-17 created
+route.route.openshift.io/extcert-bench-17 created
+secret/extcert-bench-18 created
+service/extcert-bench-18 created
+route.route.openshift.io/extcert-bench-18 created
+secret/extcert-bench-19 created
+service/extcert-bench-19 created
+route.route.openshift.io/extcert-bench-19 created
+secret/extcert-bench-20 created
+service/extcert-bench-20 created
+route.route.openshift.io/extcert-bench-20 created
+  ... created 20/100 routes
+secret/extcert-bench-21 created
+service/extcert-bench-21 created
+route.route.openshift.io/extcert-bench-21 created
+secret/extcert-bench-22 created
+service/extcert-bench-22 created
+route.route.openshift.io/extcert-bench-22 created
+secret/extcert-bench-23 created
+service/extcert-bench-23 created
+route.route.openshift.io/extcert-bench-23 created
+secret/extcert-bench-24 created
+service/extcert-bench-24 created
+route.route.openshift.io/extcert-bench-24 created
+secret/extcert-bench-25 created
+service/extcert-bench-25 created
+route.route.openshift.io/extcert-bench-25 created
+secret/extcert-bench-26 created
+service/extcert-bench-26 created
+route.route.openshift.io/extcert-bench-26 created
+secret/extcert-bench-27 created
+service/extcert-bench-27 created
+route.route.openshift.io/extcert-bench-27 created
+secret/extcert-bench-28 created
+service/extcert-bench-28 created
+route.route.openshift.io/extcert-bench-28 created
+secret/extcert-bench-29 created
+service/extcert-bench-29 created
+route.route.openshift.io/extcert-bench-29 created
+secret/extcert-bench-30 created
+service/extcert-bench-30 created
+route.route.openshift.io/extcert-bench-30 created
+  ... created 30/100 routes
+secret/extcert-bench-31 created
+service/extcert-bench-31 created
+route.route.openshift.io/extcert-bench-31 created
+secret/extcert-bench-32 created
+service/extcert-bench-32 created
+route.route.openshift.io/extcert-bench-32 created
+secret/extcert-bench-33 created
+service/extcert-bench-33 created
+route.route.openshift.io/extcert-bench-33 created
+secret/extcert-bench-34 created
+service/extcert-bench-34 created
+route.route.openshift.io/extcert-bench-34 created
+secret/extcert-bench-35 created
+service/extcert-bench-35 created
+route.route.openshift.io/extcert-bench-35 created
+secret/extcert-bench-36 created
+service/extcert-bench-36 created
+route.route.openshift.io/extcert-bench-36 created
+secret/extcert-bench-37 created
+service/extcert-bench-37 created
+route.route.openshift.io/extcert-bench-37 created
+secret/extcert-bench-38 created
+service/extcert-bench-38 created
+route.route.openshift.io/extcert-bench-38 created
+secret/extcert-bench-39 created
+service/extcert-bench-39 created
+route.route.openshift.io/extcert-bench-39 created
+secret/extcert-bench-40 created
+service/extcert-bench-40 created
+route.route.openshift.io/extcert-bench-40 created
+  ... created 40/100 routes
+secret/extcert-bench-41 created
+service/extcert-bench-41 created
+route.route.openshift.io/extcert-bench-41 created
+secret/extcert-bench-42 created
+service/extcert-bench-42 created
+route.route.openshift.io/extcert-bench-42 created
+secret/extcert-bench-43 created
+service/extcert-bench-43 created
+route.route.openshift.io/extcert-bench-43 created
+secret/extcert-bench-44 created
+service/extcert-bench-44 created
+route.route.openshift.io/extcert-bench-44 created
+secret/extcert-bench-45 created
+service/extcert-bench-45 created
+route.route.openshift.io/extcert-bench-45 created
+secret/extcert-bench-46 created
+service/extcert-bench-46 created
+route.route.openshift.io/extcert-bench-46 created
+secret/extcert-bench-47 created
+service/extcert-bench-47 created
+route.route.openshift.io/extcert-bench-47 created
+secret/extcert-bench-48 created
+service/extcert-bench-48 created
+route.route.openshift.io/extcert-bench-48 created
+secret/extcert-bench-49 created
+service/extcert-bench-49 created
+route.route.openshift.io/extcert-bench-49 created
+secret/extcert-bench-50 created
+service/extcert-bench-50 created
+route.route.openshift.io/extcert-bench-50 created
+  ... created 50/100 routes
+secret/extcert-bench-51 created
+service/extcert-bench-51 created
+route.route.openshift.io/extcert-bench-51 created
+secret/extcert-bench-52 created
+service/extcert-bench-52 created
+route.route.openshift.io/extcert-bench-52 created
+secret/extcert-bench-53 created
+service/extcert-bench-53 created
+route.route.openshift.io/extcert-bench-53 created
+secret/extcert-bench-54 created
+service/extcert-bench-54 created
+route.route.openshift.io/extcert-bench-54 created
+secret/extcert-bench-55 created
+service/extcert-bench-55 created
+route.route.openshift.io/extcert-bench-55 created
+secret/extcert-bench-56 created
+service/extcert-bench-56 created
+route.route.openshift.io/extcert-bench-56 created
+secret/extcert-bench-57 created
+service/extcert-bench-57 created
+route.route.openshift.io/extcert-bench-57 created
+secret/extcert-bench-58 created
+service/extcert-bench-58 created
+route.route.openshift.io/extcert-bench-58 created
+secret/extcert-bench-59 created
+service/extcert-bench-59 created
+route.route.openshift.io/extcert-bench-59 created
+secret/extcert-bench-60 created
+service/extcert-bench-60 created
+route.route.openshift.io/extcert-bench-60 created
+  ... created 60/100 routes
+secret/extcert-bench-61 created
+service/extcert-bench-61 created
+route.route.openshift.io/extcert-bench-61 created
+secret/extcert-bench-62 created
+service/extcert-bench-62 created
+route.route.openshift.io/extcert-bench-62 created
+secret/extcert-bench-63 created
+service/extcert-bench-63 created
+route.route.openshift.io/extcert-bench-63 created
+secret/extcert-bench-64 created
+service/extcert-bench-64 created
+route.route.openshift.io/extcert-bench-64 created
+secret/extcert-bench-65 created
+service/extcert-bench-65 created
+route.route.openshift.io/extcert-bench-65 created
+secret/extcert-bench-66 created
+service/extcert-bench-66 created
+route.route.openshift.io/extcert-bench-66 created
+secret/extcert-bench-67 created
+service/extcert-bench-67 created
+route.route.openshift.io/extcert-bench-67 created
+secret/extcert-bench-68 created
+service/extcert-bench-68 created
+route.route.openshift.io/extcert-bench-68 created
+secret/extcert-bench-69 created
+service/extcert-bench-69 created
+route.route.openshift.io/extcert-bench-69 created
+secret/extcert-bench-70 created
+service/extcert-bench-70 created
+route.route.openshift.io/extcert-bench-70 created
+  ... created 70/100 routes
+secret/extcert-bench-71 created
+service/extcert-bench-71 created
+route.route.openshift.io/extcert-bench-71 created
+secret/extcert-bench-72 created
+service/extcert-bench-72 created
+route.route.openshift.io/extcert-bench-72 created
+secret/extcert-bench-73 created
+service/extcert-bench-73 created
+route.route.openshift.io/extcert-bench-73 created
+secret/extcert-bench-74 created
+service/extcert-bench-74 created
+route.route.openshift.io/extcert-bench-74 created
+secret/extcert-bench-75 created
+service/extcert-bench-75 created
+route.route.openshift.io/extcert-bench-75 created
+secret/extcert-bench-76 created
+service/extcert-bench-76 created
+route.route.openshift.io/extcert-bench-76 created
+secret/extcert-bench-77 created
+service/extcert-bench-77 created
+route.route.openshift.io/extcert-bench-77 created
+secret/extcert-bench-78 created
+service/extcert-bench-78 created
+route.route.openshift.io/extcert-bench-78 created
+secret/extcert-bench-79 created
+service/extcert-bench-79 created
+route.route.openshift.io/extcert-bench-79 created
+secret/extcert-bench-80 created
+service/extcert-bench-80 created
+route.route.openshift.io/extcert-bench-80 created
+  ... created 80/100 routes
+secret/extcert-bench-81 created
+service/extcert-bench-81 created
+route.route.openshift.io/extcert-bench-81 created
+secret/extcert-bench-82 created
+service/extcert-bench-82 created
+route.route.openshift.io/extcert-bench-82 created
+secret/extcert-bench-83 created
+service/extcert-bench-83 created
+route.route.openshift.io/extcert-bench-83 created
+secret/extcert-bench-84 created
+service/extcert-bench-84 created
+route.route.openshift.io/extcert-bench-84 created
+secret/extcert-bench-85 created
+service/extcert-bench-85 created
+route.route.openshift.io/extcert-bench-85 created
+secret/extcert-bench-86 created
+service/extcert-bench-86 created
+route.route.openshift.io/extcert-bench-86 created
+secret/extcert-bench-87 created
+service/extcert-bench-87 created
+route.route.openshift.io/extcert-bench-87 created
+secret/extcert-bench-88 created
+service/extcert-bench-88 created
+route.route.openshift.io/extcert-bench-88 created
+secret/extcert-bench-89 created
+service/extcert-bench-89 created
+route.route.openshift.io/extcert-bench-89 created
+secret/extcert-bench-90 created
+service/extcert-bench-90 created
+route.route.openshift.io/extcert-bench-90 created
+  ... created 90/100 routes
+secret/extcert-bench-91 created
+service/extcert-bench-91 created
+route.route.openshift.io/extcert-bench-91 created
+secret/extcert-bench-92 created
+service/extcert-bench-92 created
+route.route.openshift.io/extcert-bench-92 created
+secret/extcert-bench-93 created
+service/extcert-bench-93 created
+route.route.openshift.io/extcert-bench-93 created
+secret/extcert-bench-94 created
+service/extcert-bench-94 created
+route.route.openshift.io/extcert-bench-94 created
+secret/extcert-bench-95 created
+service/extcert-bench-95 created
+route.route.openshift.io/extcert-bench-95 created
+secret/extcert-bench-96 created
+service/extcert-bench-96 created
+route.route.openshift.io/extcert-bench-96 created
+secret/extcert-bench-97 created
+service/extcert-bench-97 created
+route.route.openshift.io/extcert-bench-97 created
+secret/extcert-bench-98 created
+service/extcert-bench-98 created
+route.route.openshift.io/extcert-bench-98 created
+secret/extcert-bench-99 created
+service/extcert-bench-99 created
+route.route.openshift.io/extcert-bench-99 created
+secret/extcert-bench-100 created
+service/extcert-bench-100 created
+route.route.openshift.io/extcert-bench-100 created
+  ... created 100/100 routes
+
+==> Done: 100 external-cert routes in namespace extcert-bench
+    Secrets: 103
+    Routes:  100
+
+══════════════════════════════════════════════════════════════
+  PHASE 2: BASELINE benchmark (existing cluster router — bug present)
+══════════════════════════════════════════════════════════════
+==> Restoring original router image
+Warning: spec.template.spec.nodeSelector[node-role.kubernetes.io/master]: use "node-role.kubernetes.io/control-plane" instead
+deployment.apps/ingress-operator scaled
+==> Removing CVO override for Ingress Operator
+clusterversion.config.openshift.io/version patched
+==> Waiting for router to recover...
+Waiting for deployment "router-default" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "router-default" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "router-default" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "router-default" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "router-default" rollout to finish: 1 of 2 updated replicas are available...
+Waiting for deployment "router-default" rollout to finish: 1 of 2 updated replicas are available...
+deployment "router-default" successfully rolled out
+==> Cleanup done.
+
+══════════════════════════════════════════════════════════════
+  OCPBUGS-77056 Benchmark — existing
+══════════════════════════════════════════════════════════════
+==> Restarting router-default
+deployment.apps/router-default restarted
+==> Waiting for new pod to be created: . Found: router-default-97b7b594b-9c7pd (Phase: Pending)
+==> Tracking pod: router-default-97b7b594b-9c7pd
+==> Waiting for deployment rollout to finish (timeout 600s)...
+Waiting for deployment "router-default" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "router-default" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "router-default" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "router-default" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "router-default" rollout to finish: 1 of 2 updated replicas are available...
+Waiting for deployment "router-default" rollout to finish: 1 of 2 updated replicas are available...
+deployment "router-default" successfully rolled out
+
+══════════════════════════════════════════════════════════════
+  RESULTS — existing
+══════════════════════════════════════════════════════════════
+  Pod:                           router-default-97b7b594b-9c7pd
+  Image:                         <cluster default>
+  Secrets loaded:                100
+  Secret loading span:           58.10s
+  Pod → Ready (wall):          137s
+══════════════════════════════════════════════════════════════
+==> Results saved: benchmark-results-existing-20260303-162614.txt
+
+══════════════════════════════════════════════════════════════
+  PHASE 3: PATCHED benchmark (fixed library-go)
+══════════════════════════════════════════════════════════════
+==> Wiping namespace extcert-bench (if exists)
+namespace "extcert-bench" deleted
+==> Creating namespace extcert-bench
+namespace/extcert-bench created
+==> Detected app domain: apps.btofel-netedg-260303.devcluster.openshift.com
+==> Creating RBAC for router secret access
+role.rbac.authorization.k8s.io/router-secret-reader created
+rolebinding.rbac.authorization.k8s.io/router-secret-reader created
+==> Generating test TLS certificate
+==> Creating 100 secrets and routes in namespace extcert-bench
+secret/extcert-bench-1 created
+service/extcert-bench-1 created
+route.route.openshift.io/extcert-bench-1 created
+secret/extcert-bench-2 created
+service/extcert-bench-2 created
+route.route.openshift.io/extcert-bench-2 created
+secret/extcert-bench-3 created
+service/extcert-bench-3 created
+route.route.openshift.io/extcert-bench-3 created
+secret/extcert-bench-4 created
+service/extcert-bench-4 created
+route.route.openshift.io/extcert-bench-4 created
+secret/extcert-bench-5 created
+service/extcert-bench-5 created
+route.route.openshift.io/extcert-bench-5 created
+secret/extcert-bench-6 created
+service/extcert-bench-6 created
+route.route.openshift.io/extcert-bench-6 created
+secret/extcert-bench-7 created
+service/extcert-bench-7 created
+route.route.openshift.io/extcert-bench-7 created
+secret/extcert-bench-8 created
+service/extcert-bench-8 created
+route.route.openshift.io/extcert-bench-8 created
+secret/extcert-bench-9 created
+service/extcert-bench-9 created
+route.route.openshift.io/extcert-bench-9 created
+secret/extcert-bench-10 created
+service/extcert-bench-10 created
+route.route.openshift.io/extcert-bench-10 created
+  ... created 10/100 routes
+secret/extcert-bench-11 created
+service/extcert-bench-11 created
+route.route.openshift.io/extcert-bench-11 created
+secret/extcert-bench-12 created
+service/extcert-bench-12 created
+route.route.openshift.io/extcert-bench-12 created
+secret/extcert-bench-13 created
+service/extcert-bench-13 created
+route.route.openshift.io/extcert-bench-13 created
+secret/extcert-bench-14 created
+service/extcert-bench-14 created
+route.route.openshift.io/extcert-bench-14 created
+secret/extcert-bench-15 created
+service/extcert-bench-15 created
+route.route.openshift.io/extcert-bench-15 created
+secret/extcert-bench-16 created
+service/extcert-bench-16 created
+route.route.openshift.io/extcert-bench-16 created
+secret/extcert-bench-17 created
+service/extcert-bench-17 created
+route.route.openshift.io/extcert-bench-17 created
+secret/extcert-bench-18 created
+service/extcert-bench-18 created
+route.route.openshift.io/extcert-bench-18 created
+secret/extcert-bench-19 created
+service/extcert-bench-19 created
+route.route.openshift.io/extcert-bench-19 created
+secret/extcert-bench-20 created
+service/extcert-bench-20 created
+route.route.openshift.io/extcert-bench-20 created
+  ... created 20/100 routes
+secret/extcert-bench-21 created
+service/extcert-bench-21 created
+route.route.openshift.io/extcert-bench-21 created
+secret/extcert-bench-22 created
+service/extcert-bench-22 created
+route.route.openshift.io/extcert-bench-22 created
+secret/extcert-bench-23 created
+service/extcert-bench-23 created
+route.route.openshift.io/extcert-bench-23 created
+secret/extcert-bench-24 created
+service/extcert-bench-24 created
+route.route.openshift.io/extcert-bench-24 created
+secret/extcert-bench-25 created
+service/extcert-bench-25 created
+route.route.openshift.io/extcert-bench-25 created
+secret/extcert-bench-26 created
+service/extcert-bench-26 created
+route.route.openshift.io/extcert-bench-26 created
+secret/extcert-bench-27 created
+service/extcert-bench-27 created
+route.route.openshift.io/extcert-bench-27 created
+secret/extcert-bench-28 created
+service/extcert-bench-28 created
+route.route.openshift.io/extcert-bench-28 created
+secret/extcert-bench-29 created
+service/extcert-bench-29 created
+route.route.openshift.io/extcert-bench-29 created
+secret/extcert-bench-30 created
+service/extcert-bench-30 created
+route.route.openshift.io/extcert-bench-30 created
+  ... created 30/100 routes
+secret/extcert-bench-31 created
+service/extcert-bench-31 created
+route.route.openshift.io/extcert-bench-31 created
+secret/extcert-bench-32 created
+service/extcert-bench-32 created
+route.route.openshift.io/extcert-bench-32 created
+secret/extcert-bench-33 created
+service/extcert-bench-33 created
+route.route.openshift.io/extcert-bench-33 created
+secret/extcert-bench-34 created
+service/extcert-bench-34 created
+route.route.openshift.io/extcert-bench-34 created
+secret/extcert-bench-35 created
+service/extcert-bench-35 created
+route.route.openshift.io/extcert-bench-35 created
+secret/extcert-bench-36 created
+service/extcert-bench-36 created
+route.route.openshift.io/extcert-bench-36 created
+secret/extcert-bench-37 created
+service/extcert-bench-37 created
+route.route.openshift.io/extcert-bench-37 created
+secret/extcert-bench-38 created
+service/extcert-bench-38 created
+route.route.openshift.io/extcert-bench-38 created
+secret/extcert-bench-39 created
+service/extcert-bench-39 created
+route.route.openshift.io/extcert-bench-39 created
+secret/extcert-bench-40 created
+service/extcert-bench-40 created
+route.route.openshift.io/extcert-bench-40 created
+  ... created 40/100 routes
+secret/extcert-bench-41 created
+service/extcert-bench-41 created
+route.route.openshift.io/extcert-bench-41 created
+secret/extcert-bench-42 created
+service/extcert-bench-42 created
+route.route.openshift.io/extcert-bench-42 created
+secret/extcert-bench-43 created
+service/extcert-bench-43 created
+route.route.openshift.io/extcert-bench-43 created
+secret/extcert-bench-44 created
+service/extcert-bench-44 created
+route.route.openshift.io/extcert-bench-44 created
+secret/extcert-bench-45 created
+service/extcert-bench-45 created
+route.route.openshift.io/extcert-bench-45 created
+secret/extcert-bench-46 created
+service/extcert-bench-46 created
+route.route.openshift.io/extcert-bench-46 created
+secret/extcert-bench-47 created
+service/extcert-bench-47 created
+route.route.openshift.io/extcert-bench-47 created
+secret/extcert-bench-48 created
+service/extcert-bench-48 created
+route.route.openshift.io/extcert-bench-48 created
+secret/extcert-bench-49 created
+service/extcert-bench-49 created
+route.route.openshift.io/extcert-bench-49 created
+secret/extcert-bench-50 created
+service/extcert-bench-50 created
+route.route.openshift.io/extcert-bench-50 created
+  ... created 50/100 routes
+secret/extcert-bench-51 created
+service/extcert-bench-51 created
+route.route.openshift.io/extcert-bench-51 created
+secret/extcert-bench-52 created
+service/extcert-bench-52 created
+route.route.openshift.io/extcert-bench-52 created
+secret/extcert-bench-53 created
+service/extcert-bench-53 created
+route.route.openshift.io/extcert-bench-53 created
+secret/extcert-bench-54 created
+service/extcert-bench-54 created
+route.route.openshift.io/extcert-bench-54 created
+secret/extcert-bench-55 created
+service/extcert-bench-55 created
+route.route.openshift.io/extcert-bench-55 created
+secret/extcert-bench-56 created
+service/extcert-bench-56 created
+route.route.openshift.io/extcert-bench-56 created
+secret/extcert-bench-57 created
+service/extcert-bench-57 created
+route.route.openshift.io/extcert-bench-57 created
+secret/extcert-bench-58 created
+service/extcert-bench-58 created
+route.route.openshift.io/extcert-bench-58 created
+secret/extcert-bench-59 created
+service/extcert-bench-59 created
+route.route.openshift.io/extcert-bench-59 created
+secret/extcert-bench-60 created
+service/extcert-bench-60 created
+route.route.openshift.io/extcert-bench-60 created
+  ... created 60/100 routes
+secret/extcert-bench-61 created
+service/extcert-bench-61 created
+route.route.openshift.io/extcert-bench-61 created
+secret/extcert-bench-62 created
+service/extcert-bench-62 created
+route.route.openshift.io/extcert-bench-62 created
+secret/extcert-bench-63 created
+service/extcert-bench-63 created
+route.route.openshift.io/extcert-bench-63 created
+secret/extcert-bench-64 created
+service/extcert-bench-64 created
+route.route.openshift.io/extcert-bench-64 created
+secret/extcert-bench-65 created
+service/extcert-bench-65 created
+route.route.openshift.io/extcert-bench-65 created
+secret/extcert-bench-66 created
+service/extcert-bench-66 created
+route.route.openshift.io/extcert-bench-66 created
+secret/extcert-bench-67 created
+service/extcert-bench-67 created
+route.route.openshift.io/extcert-bench-67 created
+secret/extcert-bench-68 created
+service/extcert-bench-68 created
+route.route.openshift.io/extcert-bench-68 created
+secret/extcert-bench-69 created
+service/extcert-bench-69 created
+route.route.openshift.io/extcert-bench-69 created
+secret/extcert-bench-70 created
+service/extcert-bench-70 created
+route.route.openshift.io/extcert-bench-70 created
+  ... created 70/100 routes
+secret/extcert-bench-71 created
+service/extcert-bench-71 created
+route.route.openshift.io/extcert-bench-71 created
+secret/extcert-bench-72 created
+service/extcert-bench-72 created
+route.route.openshift.io/extcert-bench-72 created
+secret/extcert-bench-73 created
+service/extcert-bench-73 created
+route.route.openshift.io/extcert-bench-73 created
+secret/extcert-bench-74 created
+service/extcert-bench-74 created
+route.route.openshift.io/extcert-bench-74 created
+secret/extcert-bench-75 created
+service/extcert-bench-75 created
+route.route.openshift.io/extcert-bench-75 created
+secret/extcert-bench-76 created
+service/extcert-bench-76 created
+route.route.openshift.io/extcert-bench-76 created
+secret/extcert-bench-77 created
+service/extcert-bench-77 created
+route.route.openshift.io/extcert-bench-77 created
+secret/extcert-bench-78 created
+service/extcert-bench-78 created
+route.route.openshift.io/extcert-bench-78 created
+secret/extcert-bench-79 created
+service/extcert-bench-79 created
+route.route.openshift.io/extcert-bench-79 created
+secret/extcert-bench-80 created
+service/extcert-bench-80 created
+route.route.openshift.io/extcert-bench-80 created
+  ... created 80/100 routes
+secret/extcert-bench-81 created
+service/extcert-bench-81 created
+route.route.openshift.io/extcert-bench-81 created
+secret/extcert-bench-82 created
+service/extcert-bench-82 created
+route.route.openshift.io/extcert-bench-82 created
+secret/extcert-bench-83 created
+service/extcert-bench-83 created
+route.route.openshift.io/extcert-bench-83 created
+secret/extcert-bench-84 created
+service/extcert-bench-84 created
+route.route.openshift.io/extcert-bench-84 created
+secret/extcert-bench-85 created
+service/extcert-bench-85 created
+route.route.openshift.io/extcert-bench-85 created
+secret/extcert-bench-86 created
+service/extcert-bench-86 created
+route.route.openshift.io/extcert-bench-86 created
+secret/extcert-bench-87 created
+service/extcert-bench-87 created
+route.route.openshift.io/extcert-bench-87 created
+secret/extcert-bench-88 created
+service/extcert-bench-88 created
+route.route.openshift.io/extcert-bench-88 created
+secret/extcert-bench-89 created
+service/extcert-bench-89 created
+route.route.openshift.io/extcert-bench-89 created
+secret/extcert-bench-90 created
+service/extcert-bench-90 created
+route.route.openshift.io/extcert-bench-90 created
+  ... created 90/100 routes
+secret/extcert-bench-91 created
+service/extcert-bench-91 created
+route.route.openshift.io/extcert-bench-91 created
+secret/extcert-bench-92 created
+service/extcert-bench-92 created
+route.route.openshift.io/extcert-bench-92 created
+secret/extcert-bench-93 created
+service/extcert-bench-93 created
+route.route.openshift.io/extcert-bench-93 created
+secret/extcert-bench-94 created
+service/extcert-bench-94 created
+route.route.openshift.io/extcert-bench-94 created
+secret/extcert-bench-95 created
+service/extcert-bench-95 created
+route.route.openshift.io/extcert-bench-95 created
+secret/extcert-bench-96 created
+service/extcert-bench-96 created
+route.route.openshift.io/extcert-bench-96 created
+secret/extcert-bench-97 created
+service/extcert-bench-97 created
+route.route.openshift.io/extcert-bench-97 created
+secret/extcert-bench-98 created
+service/extcert-bench-98 created
+route.route.openshift.io/extcert-bench-98 created
+secret/extcert-bench-99 created
+service/extcert-bench-99 created
+route.route.openshift.io/extcert-bench-99 created
+secret/extcert-bench-100 created
+service/extcert-bench-100 created
+route.route.openshift.io/extcert-bench-100 created
+  ... created 100/100 routes
+
+==> Done: 100 external-cert routes in namespace extcert-bench
+    Secrets: 103
+    Routes:  100
+
+══════════════════════════════════════════════════════════════
+  OCPBUGS-77056 Benchmark — patched
+══════════════════════════════════════════════════════════════
+==> Pausing Ingress Operator to prevent image revert...
+clusterversion.config.openshift.io/version patched
+Warning: spec.template.spec.nodeSelector[node-role.kubernetes.io/master]: use "node-role.kubernetes.io/control-plane" instead
+deployment.apps/ingress-operator scaled
+==> Deploying image: quay.io/btofel/router:patched
+deployment.apps/router-default image updated
+==> Forcing imagePullPolicy to Always
+deployment.apps/router-default patched (no change)
+==> Restarting router-default
+deployment.apps/router-default restarted
+==> Waiting for new pod to be created: . Found: router-default-7ff6c6557f-z7724 (Phase: Pending)
+==> Tracking pod: router-default-7ff6c6557f-z7724
+==> Waiting for deployment rollout to finish (timeout 600s)...
+Waiting for deployment "router-default" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "router-default" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "router-default" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "router-default" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "router-default" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "router-default" rollout to finish: 1 of 2 updated replicas are available...
+deployment "router-default" successfully rolled out
+
+══════════════════════════════════════════════════════════════
+  RESULTS — patched
+══════════════════════════════════════════════════════════════
+  Pod:                           router-default-7ff6c6557f-z7724
+  Image:                         quay.io/btofel/router:patched
+  Secrets loaded:                100
+  Secret loading span:           0.07s
+  Pod → Ready (wall):          110s
+══════════════════════════════════════════════════════════════
+==> Results saved: benchmark-results-patched-20260303-162947.txt
+
+══════════════════════════════════════════════════════════════
+  PHASE 4: Results comparison
+══════════════════════════════════════════════════════════════
+
+  Metric                           BASELINE (bug)   PATCHED (fix)   
+  -------------------------------- ---------------- ----------------
+  Secrets loaded                   100              100             
+  Secret loading span (s)          58.10            0.07            
+  Pod → Ready wall time (s)      137              110             
+
+  Speedup (secret loading): 830.0x faster with the fix
+  58s  →  0s
+
+  Baseline file : /Users/btofel/workspace/cluster-ingress-operator/hack/benchmark-external-certs/benchmark-results-existing-20260303-162614.txt
+  Patched file  : /Users/btofel/workspace/cluster-ingress-operator/hack/benchmark-external-certs/benchmark-results-patched-20260303-162947.txt
+
+══════════════════════════════════════════════════════════════
+  PHASE 5: Cleanup
+══════════════════════════════════════════════════════════════
+  Clean up test namespace and restore original router? [y/N] 

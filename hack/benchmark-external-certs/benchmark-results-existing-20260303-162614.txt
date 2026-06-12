@@ -1,0 +1,7 @@
+mode=existing
+image=cluster-default
+pod=router-default-97b7b594b-9c7pd
+secret_count=100
+secret_load_seconds=58.10
+pod_to_ready_seconds=137
+timestamp=2026-03-03T21:26:14Z
