@@ -92,6 +92,16 @@ var (
 		"TLS_AES_128_GCM_SHA256",
 		"TLS_AES_256_GCM_SHA384",
 	)
+
+	// nonFIPSGroups is the set of TLS groups that are NOT approved for use
+	// under FIPS 140-3 / NIST SP 800-56Ar3. X25519 and X25519MLKEM768 rely
+	// on Curve25519 arithmetic which is excluded from the FIPS-approved list
+	// (see TRT-2597 and NIST SP 800-56Ar3 Appendix D). These are stripped from
+	// any group list — explicit or default — when isFIPSEnabled is true.
+	nonFIPSGroups = sets.NewString(
+		string(configv1.TLSGroupX25519),
+		string(configv1.TLSGroupX25519MLKEM768),
+	)
 )
 
 // New creates the ingress controller from configuration. This is the controller
