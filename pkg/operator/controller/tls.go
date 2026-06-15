@@ -12,6 +12,7 @@ func copyTLSSpec(in *configv1.TLSProfileSpec) *configv1.TLSProfileSpec {
 	}
 	out := *in
 	out.Ciphers = append([]string(nil), in.Ciphers...)
+	out.Groups = append([]configv1.TLSGroup(nil), in.Groups...)
 	return &out
 }
 
