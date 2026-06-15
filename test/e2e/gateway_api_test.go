@@ -56,6 +56,8 @@ var crdNames = []string{
 	"gateways.gateway.networking.k8s.io",
 	"httproutes.gateway.networking.k8s.io",
 	"referencegrants.gateway.networking.k8s.io",
+	"listenersets.gateway.networking.k8s.io",
+	"tlsroutes.gateway.networking.k8s.io",
 }
 
 // List of Istio CRDs for testing installation and ownership.
@@ -129,11 +131,13 @@ func TestGatewayAPI(t *testing.T) {
 	t.Run("testGatewayAPIInternalLoadBalancer", testGatewayAPIInternalLoadBalancer)
 	t.Run("testGatewayAPIResourcesProtection", testGatewayAPIResourcesProtection)
 	t.Run("testGatewayAPIRBAC", testGatewayAPIRBAC)
+	t.Run("testGatewayAPIListenerSetRejection", testGatewayAPIListenerSetRejection)
 	t.Run("testOperatorDegradedCondition", testOperatorDegradedCondition)
 	t.Run("testGatewayOpenshiftConditions", testGatewayOpenshiftConditions)
 	if gatewayAPIWithoutOLMEnabled {
 		t.Run("testGatewayAPIIstioUninstallSailLibrary", testGatewayAPIIstioUninstallSailLibrary)
 	}
+
 }
 
 // testGatewayAPIResources tests that Gateway API Custom Resource Definitions are available.
@@ -1433,6 +1437,109 @@ func testGatewayAPIInternalLoadBalancer(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("The gateway %s, has failed to create an internal LoadBalancer service on the %s platform.", gatewayName, platform)
 	}
+}
+
+func testGatewayAPIListenerSetRejection(t *testing.T) {
+	ctx := t.Context()
+
+	gatewayClass, err := createGatewayClass(t, operatorcontroller.OpenShiftDefaultGatewayClassName, operatorcontroller.OpenShiftGatewayClassControllerName)
+	if err != nil {
+		t.Fatalf("Failed to create gatewayclass: %v", err)
+	}
+
+	gatewayName := "gateway-listenerset"
+
+	gateway := &gatewayapiv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      gatewayName,
+			Namespace: operatorcontroller.DefaultOperandNamespace,
+		},
+		Spec: gatewayapiv1.GatewaySpec{
+			GatewayClassName: gatewayapiv1.ObjectName(gatewayClass.Name),
+			AllowedListeners: &gatewayapiv1.AllowedListeners{
+				Namespaces: &gatewayapiv1.ListenerNamespaces{
+					From: ptr.To(gatewayapiv1.NamespacesFromSame),
+				},
+			},
+			Listeners: []gatewayapiv1.Listener{{
+				Name:     "http",
+				Hostname: ptr.To(gatewayapiv1.Hostname(fmt.Sprintf("*.gwapi.%s", dnsConfig.Spec.BaseDomain))),
+				Port:     80,
+				Protocol: "HTTP",
+			}},
+		},
+	}
+
+	// create gateway and wait for it to be programmed
+	t.Logf("Creating gateway %s", gatewayName)
+	if err := createWithRetryOnError(t, ctx, gateway, DefaultRetryTimeout); err != nil {
+		t.Fatalf("Failed to create gateway %s: %v", gatewayName, err)
+	}
+	t.Cleanup(func() {
+		if err := kclient.Delete(context.Background(), gateway); err != nil {
+			if !errors.IsNotFound(err) {
+				t.Logf("Failed to delete gateway %v: %v", gatewayName, err)
+			}
+		}
+	})
+
+	if _, err = assertGatewaySuccessful(t, operatorcontroller.DefaultOperandNamespace, gatewayName); err != nil {
+		t.Fatalf("Failed to program gateway %s: %v", gatewayName, err)
+	}
+
+	listenerSetName := "test-listenerset"
+	listenerSet := &gatewayapiv1.ListenerSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      listenerSetName,
+			Namespace: operatorcontroller.DefaultOperandNamespace,
+		},
+		Spec: gatewayapiv1.ListenerSetSpec{
+			ParentRef: gatewayapiv1.ParentGatewayReference{Name: gatewayapiv1.ObjectName(gatewayName), Namespace: ptr.To(gatewayapiv1.Namespace(operatorcontroller.DefaultOperandNamespace))},
+			Listeners: []gatewayapiv1.ListenerEntry{{
+				Name:     "http-app",
+				Hostname: ptr.To(gatewayapiv1.Hostname(fmt.Sprintf("app.gwapi.%s", dnsConfig.Spec.BaseDomain))),
+				Port:     80,
+				Protocol: "HTTP",
+			}},
+		},
+	}
+	if err := createWithRetryOnError(t, ctx, listenerSet, DefaultRetryTimeout); err != nil {
+		t.Fatalf("Failed to create ListenerSet %s: %v", listenerSetName, err)
+	}
+	t.Cleanup(func() {
+		if err := kclient.Delete(context.Background(), listenerSet); err != nil {
+			if !errors.IsNotFound(err) {
+				t.Logf("Failed to delete ListenerSet %v: %v", listenerSetName, err)
+			}
+		}
+	})
+	nsName := types.NamespacedName{Namespace: listenerSet.Namespace, Name: listenerSet.Name}
+	if err := wait.PollUntilContextTimeout(ctx, 5*time.Second, 30*time.Second, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, nsName, listenerSet); err != nil {
+			t.Logf("Failed to get ListenerSet %v: %v; retrying...", listenerSet.Namespace, err)
+		}
+
+		for _, condition := range listenerSet.Status.Conditions {
+			if condition.Type == string(gatewayapiv1.ListenerSetConditionAccepted) {
+				if condition.Status == metav1.ConditionTrue {
+					t.Logf("ListenerSet has become Accepted. Current status: %v", condition.Status)
+					return false, fmt.Errorf("condition unexpectedly became true")
+
+				}
+			}
+			if condition.Type == string(gatewayapiv1.ListenerSetConditionProgrammed) {
+				if condition.Status == metav1.ConditionTrue {
+					t.Logf("ListenerSet has become Programmed. Current status: %v", condition.Status)
+					return false, fmt.Errorf("condition unexpectedly became true")
+				}
+			}
+		}
+		t.Logf("Neither ListenerSet Condition has become true. Current status: %v", listenerSet.Status.Conditions)
+		return false, nil
+	}); err != nil && !wait.Interrupted(err) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
 }
 
 // testOperatorDegradedCondition verifies that unmanaged Gateway API CRDs affect

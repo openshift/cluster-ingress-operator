@@ -159,6 +159,11 @@ func gatewayAPIPilotEnv(enableInferenceExtension bool) map[string]string {
 		// to inject unsupported configuration, for example using
 		// service annotations.
 		"PILOT_ENABLE_GATEWAY_API_COPY_LABELS_ANNOTATIONS": "false",
+		// Ignore ListenerSet resources - Istio does not yet support
+		// ListenerSets, but CIO installs the CRD as part of the
+		// Gateway API v1.5.1 standard channel.
+		// This will be implemented as soon as Istio provides support.
+		"PILOT_IGNORE_RESOURCES": "listenersets.gateway.networking.k8s.io",
 	}
 	if enableInferenceExtension {
 		env["ENABLE_GATEWAY_API_INFERENCE_EXTENSION"] = "true"
