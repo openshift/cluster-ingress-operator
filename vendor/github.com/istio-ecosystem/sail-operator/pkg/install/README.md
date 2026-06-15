@@ -7,13 +7,17 @@ to install and maintain Istio as an internal dependency.
 ## Usage
 
 ```go
-lib, err := install.New(kubeConfig, resourceFS)
-notifyCh := lib.Start(ctx)
+lib, err := install.New(kubeConfig, resourceFS, crdFS,
+    install.WithCRDOwnershipLabel("ingress.operator.openshift.io/owned", "true"), // optional
+)
+notifyCh, err := lib.Start(ctx)
 
 // In controller reconcile:
 lib.Apply(install.Options{
     Namespace: "istio-system",
-    Values:    install.GatewayAPIDefaults(),
+    Version:   "v1.24.3",
+    Values:    install.GatewayAPIDefaults("istio-system"),
+    ManageCRDs: true,
 })
 
 // Read result after notification:
@@ -32,78 +36,87 @@ The Library runs as an independent actor with a simple state model:
 
 1. **Apply** -- consumer sends desired state (version, namespace, values)
 2. **Reconcile** -- Library installs/upgrades CRDs and istiod via Helm
-3. **Drift detection** -- dynamic informers watch owned resources and CRDs, re-enqueuing reconciliation on changes
+3. **Drift detection** -- controller-runtime watches on owned resources and CRDs re-trigger reconciliation on changes
 4. **Status** -- consumer reads the reconciliation result
 
-The reconciliation loop sits idle until the first `Apply()` call. After that,
-it stays active with informers running until `Uninstall()` clears the desired
-state and stops the loop.
+The library delegates heavily to existing Sail Operator infrastructure:
+- `pkg/reconcile.IstiodReconciler` for Helm install/uninstall/validate
+- `pkg/watches.IstiodWatches` for drift detection watch list
+- `pkg/istioversion` for version validation and resolution
+- `pkg/istiovalues` for values merging
 
 ## Public API
 
 ### Constructor
 
-- `New(kubeConfig, resourceFS)` -- creates a Library with Kubernetes clients, Helm chart manager, and CRD manager
+- `New(kubeConfig, resourceFS, crdFS, opts...)` -- creates a Library with Kubernetes clients, Helm chart manager, and CRD manager (defaults: QPS=50, Burst=100; override with `WithQPS()` / `WithBurst()` / `WithCRDOwnershipLabel()`)
 - `FromDirectory(path)` -- creates an `fs.FS` from a filesystem path (alternative to embedded resources)
 
 ### Library methods
 
 | Method | Description |
 |---|---|
-| `Start(ctx)` | Starts the reconciliation loop; returns a notification channel |
-| `Apply(opts)` | Sets desired state; enqueues reconciliation if changed |
+| `Start(ctx)` | Starts the controller manager and drift-detection watches; returns notification channel |
+| `Apply(opts)` | Validates and sets desired state; enqueues reconciliation |
+| `Stop()` | Cancels the reconciliation loop and waits for the manager to shut down |
 | `Enqueue()` | Forces re-reconciliation without changing desired state |
 | `Status()` | Returns the latest reconciliation result |
-| `Uninstall(ctx, ns, rev)` | Stops informers, waits for processing, then Helm-uninstalls |
+| `Uninstall(ctx, ns, rev)` | Performs Helm uninstall of istiod |
 
 ### Types
 
 - **Options** -- install options: `Namespace`, `Version`, `Revision`, `Values`, `ManageCRDs`, `IncludeAllCRDs`, `OverwriteOLMManagedCRD`
 - **Status** -- reconciliation result: `CRDState`, `CRDMessage`, `CRDs`, `Installed`, `Version`, `Error`
-- **CRDManagementState** -- aggregate CRD ownership: `ManagedByCIO`, `ManagedByOLM`, `UnknownManagement`, `MixedOwnership`, `NoneExist`
-- **CRDInfo** -- per-CRD state: `Name`, `State`, `Found`
-- **ImageNames** -- image names for each component: `Istiod`, `Proxy`, `CNI`, `ZTunnel`
+- **CRDManagementState** -- CRD state: `Unknown`, `Ready`, `NotReady`, `Error`
+- **CRDInfo** -- per-CRD state: `Name`, `Managed`, `Ready`
 
 ### Helper functions
 
-- `GatewayAPIDefaults()` -- pre-configured values for Gateway API mode on OpenShift
+- `GatewayAPIDefaults(namespace)` -- pre-configured values for Gateway API mode
 - `MergeValues(base, overlay)` -- deep-merge two Values structs (overlay wins)
-- `DefaultVersion(resourceFS)` -- highest stable semver version from the resource FS
-- `NormalizeVersion(version)` -- ensures a `v` prefix
-- `ValidateVersion(resourceFS, version)` -- checks that a version directory exists
-- `SetImageDefaults(resourceFS, registry, images)` -- populates image refs from version directories
+- `ValidateOptions(opts)` -- checks that options are valid
 - `LibraryRBACRules()` -- returns RBAC PolicyRules for a consumer's ClusterRole
+- `AggregateState(infos)` -- derives overall CRD state from individual CRDInfo entries
 
 ## CRD management
 
-The Library classifies existing CRDs by ownership labels before deciding what to do:
+The Library manages Istio CRDs when `ManageCRDs` is true (the default in PR #721; explicit on this branch).
+CRDs are loaded from the embedded `chart/crds/` filesystem, but only `*.istio.io` API groups are
+managed. `sailoperator.io` CRDs are excluded — they are installed separately by the Sail Operator
+Helm chart. When `IncludeAllCRDs` is false, `PILOT_INCLUDE_RESOURCES` further narrows which
+Istio CRDs are installed.
 
-| State | Meaning | Action |
-|---|---|---|
-| `NoneExist` | No target CRDs on cluster | Install with CIO labels |
-| `ManagedByCIO` | All owned by Cluster Ingress Operator | Update as needed |
-| `ManagedByOLM` | All owned by OLM (OSSM subscription) | Leave alone; Helm install proceeds |
-| `UnknownManagement` | CRDs exist without recognized labels | Leave alone; set Status.Error |
-| `MixedOwnership` | Inconsistent labels across CRDs | Leave alone; set Status.Error |
+When an existing CRD has OLM labels (`olm.managed`), it is left alone unless `OverwriteOLMManagedCRD`
+is set to true.
 
-The `OverwriteOLMManagedCRD` callback in Options lets the consumer decide
-whether to take over OLM-managed CRDs (e.g. after an OSSM subscription is deleted).
+CRD ownership is determined by a configurable label (default: `app.kubernetes.io/managed-by=sail-library`).
+Use `WithCRDOwnershipLabel(key, value)` at library construction time to match labels already present
+on cluster CRDs. For example, OpenShift Ingress can pass
+`WithCRDOwnershipLabel("ingress.operator.openshift.io/owned", "true")` to continue managing CRDs
+installed by a previous version. The embedder must configure the label to match existing CRDs;
+the library does not migrate ownership labels automatically.
 
-Which CRDs are targeted depends on `IncludeAllCRDs`: when false (default), only
-CRDs matching `PILOT_INCLUDE_RESOURCES` / `PILOT_IGNORE_RESOURCES` are managed.
+## Design: delegation over reimplementation
+
+Unlike a standalone library, this implementation reuses existing Sail Operator packages
+to minimize code duplication and maintenance burden:
+
+| Concern | Shared Package | Library Role |
+|---------|---------------|--------------|
+| Helm install/uninstall | `pkg/reconcile.IstiodReconciler` | Wraps in `installer` struct |
+| Watch list | `pkg/watches.IstiodWatches` | Registered via `RegisterOwnedWatches` |
+| Event filtering | `pkg/watches.ShouldReconcile` | Used as controller-runtime predicates |
+| Version management | `pkg/istioversion` | Delegates validation/resolution |
+| Values merging | `pkg/istiovalues.MergeOverwrite` | Called from `MergeValues()` |
+| Chart rendering | `pkg/helm` | Used for CRD rendering |
 
 ## Files
 
 | File | Purpose |
 |---|---|
 | `library.go` | Public API, types (`Library`, `Status`, `Options`), constructor |
-| `lifecycle.go` | Reconciliation loop, workqueue, `Start`/`Apply`/`Uninstall` |
-| `installer.go` | Core install/uninstall logic, Helm values resolution, watch spec extraction |
-| `crds.go` | CRD ownership classification, install, update |
-| `crds_filter.go` | CRD selection based on `PILOT_INCLUDE_RESOURCES` / `PILOT_IGNORE_RESOURCES` |
+| `reconciler.go` | Controller-runtime reconciler, controller setup, installer |
+| `crds.go` | CRD management: load, filter, classify, install, update |
 | `values.go` | `GatewayAPIDefaults()`, `MergeValues()` |
-| `predicates.go` | Event filtering for informers (ownership checks, status-only changes) |
-| `informers.go` | Dynamic informer setup for drift detection |
-| `version.go` | Version resolution and validation |
-| `images.go` | Image configuration from resource FS |
+| `images.gen.go` | Image configuration (generated) |
 | `rbac.go` | RBAC rules for library consumers |
