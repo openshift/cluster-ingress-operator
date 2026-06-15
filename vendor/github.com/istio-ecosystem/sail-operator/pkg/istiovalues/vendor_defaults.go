@@ -35,10 +35,6 @@ func init() {
 	vendorDefaults = MustParseVendorDefaultsYAML(vendorDefaultsYAML)
 }
 
-func SetVendorDefaults(defaults map[string]map[string]any) {
-	vendorDefaults = defaults
-}
-
 func MustParseVendorDefaultsYAML(defaultsYAML []byte) map[string]map[string]any {
 	var parsedDefaults map[string]map[string]any
 	err := yaml.Unmarshal(defaultsYAML, &parsedDefaults)
@@ -119,5 +115,5 @@ func applyVendorDefaultsForResourceType(version, resourceType string, userValues
 	}
 
 	valsMap := runtime.DeepCopyJSON(resourceSpecificDefaultsMap)
-	return mergeOverwrite(valsMap, userValuesMap), nil
+	return MergeOverwrite(valsMap, userValuesMap), nil
 }
