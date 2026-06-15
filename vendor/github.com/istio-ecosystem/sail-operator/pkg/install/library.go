@@ -12,262 +12,313 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package install provides a library for managing istiod installations.
-// It is designed for embedding in other operators (like OpenShift Ingress)
-// that need to install and maintain Istio without running a separate operator.
-//
-// The Library runs as an independent actor: the consumer sends desired state
-// via Apply(), and reads the result via Status(). A notification channel
-// returned by Start() signals when the Library has reconciled.
-//
-// Usage:
-//
-//	lib, _ := install.New(kubeConfig, resourceFS)
-//	notifyCh := lib.Start(ctx)
-//
-//	// In controller reconcile:
-//	lib.Apply(install.Options{Values: values, Namespace: "openshift-ingress"})
-//	status := lib.Status()
-//	// update GatewayClass conditions from status
-//
-//	// In a goroutine or source.Channel watch:
-//	for range notifyCh {
-//	    status := lib.Status()
-//	    // ...
-//	}
 package install
 
 import (
+	"context"
 	"fmt"
 	"io/fs"
 	"os"
+	"reflect"
 	"sync"
 
 	v1 "github.com/istio-ecosystem/sail-operator/api/v1"
-	"github.com/istio-ecosystem/sail-operator/bundle"
+	"github.com/istio-ecosystem/sail-operator/pkg/config"
+	"github.com/istio-ecosystem/sail-operator/pkg/constants"
 	"github.com/istio-ecosystem/sail-operator/pkg/helm"
-	"k8s.io/client-go/dynamic"
+	"github.com/istio-ecosystem/sail-operator/pkg/istioversion"
+	"github.com/istio-ecosystem/sail-operator/pkg/scheme"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/util/workqueue"
-	"k8s.io/utils/ptr"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 )
 
 const (
-	defaultNamespace      = "istio-system"
-	defaultProfile        = "openshift"
-	defaultHelmDriver     = "secret"
-	defaultRevision       = v1.DefaultRevision
-	defaultManagedByValue = "sail-library"
+	managedByLabelKey = constants.ManagedByLabelKey // "managed-by"
+	managedByValue    = "sail-library"
+	helmDriver        = "secret"
+
+	defaultQPS   float32 = 50
+	defaultBurst int     = 100
+
+	defaultCRDOwnershipLabelKey   = "app.kubernetes.io/managed-by"
+	defaultCRDOwnershipLabelValue = "sail-library"
 )
 
-// Status represents the result of a reconciliation, covering both
-// CRD management and Helm installation.
-type Status struct {
-	// CRDState is the aggregate ownership state of the target Istio CRDs.
-	CRDState CRDManagementState
+// OverwriteOLMManagedCRDFunc is called when a CRD is detected with OLM
+// ownership labels. If provided and returns true, the library takes
+// ownership of the CRD. If nil or returns false, OLM-labeled CRDs are
+// left alone.
+type OverwriteOLMManagedCRDFunc func(ctx context.Context, crd *apiextensionsv1.CustomResourceDefinition) bool
 
-	// CRDMessage is a human-readable description of the CRD state.
-	CRDMessage string
+// LibraryOption configures optional Library parameters.
+type LibraryOption func(*libraryOptions)
 
-	// CRDs contains per-CRD detail (name, ownership, found on cluster).
-	CRDs []CRDInfo
-
-	// Installed is true if the Helm install/upgrade completed successfully.
-	Installed bool
-
-	// Version is the resolved Istio version (set even if Installed is false).
-	Version string
-
-	// Error is non-nil if something went wrong during CRD management or Helm installation.
-	// CRD ownership problems (UnknownManagement, MixedOwnership) set this but do not
-	// prevent Helm installation from being attempted.
-	Error error
+type libraryOptions struct {
+	qps                    float32
+	burst                  int
+	crdOwnershipLabelKey   string
+	crdOwnershipLabelValue string
 }
 
-// String returns a human-readable summary of the status.
-func (s Status) String() string {
-	state := "not installed"
-	if s.Installed {
-		state = "installed"
-	}
-
-	ver := s.Version
-	if ver == "" {
-		ver = "unknown"
-	}
-
-	msg := fmt.Sprintf("%s version=%s crds=%s", state, ver, s.CRDState)
-	if s.CRDMessage != "" {
-		msg += fmt.Sprintf(" (%s)", s.CRDMessage)
-	}
-	if len(s.CRDs) > 0 {
-		msg += " ["
-		for i, crd := range s.CRDs {
-			if i > 0 {
-				msg += ", "
-			}
-			if crd.Found {
-				msg += fmt.Sprintf("%s:%s", crd.Name, crd.State)
-			} else {
-				msg += fmt.Sprintf("%s:missing", crd.Name)
-			}
-		}
-		msg += "]"
-	}
-	if s.Error != nil {
-		msg += fmt.Sprintf(" error=%v", s.Error)
-	}
-	return msg
+// WithQPS sets the maximum sustained queries-per-second to the API server.
+func WithQPS(qps float32) LibraryOption {
+	return func(o *libraryOptions) { o.qps = qps }
 }
 
-// Options for installing istiod.
+// WithBurst sets the maximum burst of requests to the API server.
+func WithBurst(burst int) LibraryOption {
+	return func(o *libraryOptions) { o.burst = burst }
+}
+
+// WithCRDOwnershipLabel sets the label key and value used to identify CRDs
+// owned by the library. Existing CRDs must already carry this label for the
+// library to manage them. Defaults: app.kubernetes.io/managed-by=sail-library.
+func WithCRDOwnershipLabel(key, value string) LibraryOption {
+	return func(o *libraryOptions) {
+		o.crdOwnershipLabelKey = key
+		o.crdOwnershipLabelValue = value
+	}
+}
+
+// Options specifies the desired state for the istiod installation.
 type Options struct {
-	// Namespace is the target namespace for installation.
-	// Defaults to "istio-system" if not specified.
-	Namespace string
+	Namespace      string
+	Version        string
+	Revision       string
+	Values         *v1.Values
+	OpenShiftTLS   *config.OpenShiftTLS
+	ManageCRDs     bool
+	IncludeAllCRDs bool
 
-	// Version is the Istio version to install.
-	// Defaults to the latest supported version if not specified.
-	Version string
-
-	// Revision is the Istio revision name.
-	// Defaults to "default" if not specified.
-	Revision string
-
-	// Values are Helm value overrides.
-	// Use GatewayAPIDefaults() to get pre-configured values for Gateway API mode,
-	// then modify as needed before passing here.
-	Values *v1.Values
-
-	// ManageCRDs controls whether the Library manages Istio CRDs.
-	// When true (default), CRDs are classified by ownership and installed/updated
-	// if we own them or none exist.
-	// Set to false to skip CRD management entirely.
-	ManageCRDs *bool
-
-	// IncludeAllCRDs controls which CRDs are managed.
-	// When true, all *.istio.io CRDs from the embedded FS are managed.
-	// When false (default), only CRDs matching PILOT_INCLUDE_RESOURCES are managed.
-	IncludeAllCRDs *bool
-
-	// OverwriteOLMManagedCRD is called when a CRD is detected with OLM ownership labels.
-	// If provided and returns true, the CRD is overwritten with CIO labels and adopted.
-	// If nil or returns false, OLM-labeled CRDs are left alone.
+	// OverwriteOLMManagedCRD is called when a CRD is detected with OLM
+	// ownership labels. Skipped by optionsEqual since function values
+	// are not comparable.
 	OverwriteOLMManagedCRD OverwriteOLMManagedCRDFunc
 }
 
-// applyDefaults fills in default values for Options.
-// Version is not defaulted here — it requires access to the resource FS,
-// so it is resolved during reconciliation via DefaultVersion().
-func (o *Options) applyDefaults() {
-	o.Version = NormalizeVersion(o.Version)
-	if o.Namespace == "" {
-		o.Namespace = defaultNamespace
+// optionsEqual compares two Options for equality, skipping function
+// fields (OverwriteOLMManagedCRD, TLSConfigFunc). Used by Apply to
+// suppress no-op reconciliation triggers.
+func optionsEqual(a, b Options) bool {
+	if a.Namespace != b.Namespace ||
+		a.Version != b.Version ||
+		a.Revision != b.Revision ||
+		a.ManageCRDs != b.ManageCRDs ||
+		a.IncludeAllCRDs != b.IncludeAllCRDs ||
+		!openShiftTLSEqual(a.OpenShiftTLS, b.OpenShiftTLS) {
+		return false
 	}
-	if o.Revision == "" {
-		o.Revision = defaultRevision
-	}
-	if o.ManageCRDs == nil {
-		o.ManageCRDs = ptr.To(true)
-	}
-	if o.IncludeAllCRDs == nil {
-		o.IncludeAllCRDs = ptr.To(false)
-	}
+	return reflect.DeepEqual(helm.FromValues(a.Values), helm.FromValues(b.Values))
 }
 
-// Library manages the lifecycle of an istiod installation. It runs as an
-// independent actor: the consumer sends desired state via Apply() and reads
-// the result via Status(). Start() returns a notification channel that
-// signals when the Library has reconciled (drift repair, CRD change, or
-// a new Apply).
+func openShiftTLSEqual(a, b *config.OpenShiftTLS) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return reflect.DeepEqual(a.TLSProfileSpec, b.TLSProfileSpec) &&
+		a.TLSAdherencePolicy == b.TLSAdherencePolicy
+}
+
+// CRDManagementState represents the state of CRD management.
+type CRDManagementState string
+
+const (
+	CRDManagementStateUnknown  CRDManagementState = "Unknown"
+	CRDManagementStateReady    CRDManagementState = "Ready"
+	CRDManagementStateNotReady CRDManagementState = "NotReady"
+	CRDManagementStateError    CRDManagementState = "Error"
+)
+
+// CRDInfo contains information about a managed CRD.
+type CRDInfo struct {
+	Name    string
+	Managed bool
+	Ready   bool
+}
+
+// Status contains the current state of the installation.
+type Status struct {
+	Generation uint64
+	CRDState   CRDManagementState
+	CRDMessage string
+	CRDs       []CRDInfo
+	Installed  bool
+	Version    string
+	Error      error
+}
+
+// Library manages the lifecycle of an istiod installation without
+// requiring the full Sail Operator to be deployed.
 type Library struct {
-	// Core install/uninstall logic (no concurrency concerns)
-	inst *installer
-
-	// managedByValue is the value of the "managed-by" label set on all
-	// Helm-managed resources. Used both by the post-renderer (write) and
-	// by informer predicates (read) for ownership filtering.
-	managedByValue string
-
-	// Infrastructure needed only by Library (informers, dynamic client)
-	kubeConfig *rest.Config
-	dynamicCl  dynamic.Interface
-
-	// Lifecycle serialization (Apply and Uninstall hold this)
-	lifecycleMu sync.Mutex
-
-	// Desired state (set by Apply, read by worker)
-	mu          sync.RWMutex
-	desiredOpts *Options // nil until first Apply(); nil again after Uninstall()
-
-	// Informer lifecycle (per install cycle)
-	informerStop   chan struct{} // closed to stop current informer cycle
-	processingDone chan struct{} // closed when processWorkQueue exits
-
-	// Latest status (written by worker, read by Status())
+	mu       sync.Mutex
 	statusMu sync.RWMutex
-	status   Status
 
-	// Signal channel: Apply() sends on it to wake waitForDesiredState().
-	// Buffered 1, non-blocking write — if the signal is already pending,
-	// the new one is dropped.
-	applySignal chan struct{}
+	kubeConfig             *rest.Config
+	resourceFS             fs.FS
+	crdFS                  fs.FS
+	cl                     client.Client
+	chartManager           *helm.ChartManager
+	platform               config.Platform
+	crdOwnershipLabelKey   string
+	crdOwnershipLabelValue string
 
-	// Internal workqueue
-	workqueue workqueue.TypedRateLimitingInterface[string]
+	triggerCh chan event.GenericEvent
+	notifyCh  chan struct{}
+	cancel    context.CancelFunc
+	done      chan struct{}
+
+	generation    uint64
+	desiredOpts   *Options
+	currentStatus Status
 }
 
-// New creates a new Library.
-//
-// Parameters:
-//   - kubeConfig: Kubernetes client configuration (required)
-//   - resourceFS: Filesystem containing Helm charts and profiles (required).
-//     Use resources.FS for embedded resources or FromDirectory() for a filesystem path.
-func New(kubeConfig *rest.Config, resourceFS fs.FS) (*Library, error) {
-	if kubeConfig == nil {
-		return nil, fmt.Errorf("kubeConfig is required")
+// ValidateOptions checks that the provided options are valid.
+func ValidateOptions(opts Options) error {
+	if opts.Namespace == "" {
+		return fmt.Errorf("namespace must not be empty")
 	}
-	if resourceFS == nil {
-		return nil, fmt.Errorf("resourceFS is required")
+	return istioversion.ValidateVersion(opts.Version)
+}
+
+func validateCRDOwnershipLabel(key, value string) error {
+	if key == "" {
+		return fmt.Errorf("CRD ownership label key must not be empty")
+	}
+	if value == "" {
+		return fmt.Errorf("CRD ownership label value must not be empty")
+	}
+	return nil
+}
+
+// New creates a new Library instance. The resourceFS should contain Helm chart
+// resources (typically from resources/ directory or FromDirectory()).
+// The crdFS should contain CRD YAML files (typically from chart/crds/).
+func New(kubeConfig *rest.Config, resourceFS, crdFS fs.FS, opts ...LibraryOption) (*Library, error) {
+	o := libraryOptions{
+		qps:                    defaultQPS,
+		burst:                  defaultBurst,
+		crdOwnershipLabelKey:   defaultCRDOwnershipLabelKey,
+		crdOwnershipLabelValue: defaultCRDOwnershipLabelValue,
+	}
+	for _, fn := range opts {
+		fn(&o)
+	}
+	if err := validateCRDOwnershipLabel(o.crdOwnershipLabelKey, o.crdOwnershipLabelValue); err != nil {
+		return nil, err
 	}
 
-	cl, err := client.New(kubeConfig, client.Options{})
+	cfg := rest.CopyConfig(kubeConfig)
+	cfg.QPS = o.qps
+	cfg.Burst = o.burst
+
+	chartManager := helm.NewChartManager(cfg, helmDriver, helm.WithManagedByValue(managedByValue))
+
+	cl, err := client.New(cfg, client.Options{Scheme: scheme.Scheme})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create client: %w", err)
+		return nil, fmt.Errorf("failed to create kubernetes client: %w", err)
 	}
 
-	dynamicCl, err := dynamic.NewForConfig(kubeConfig)
+	setupLog := ctrl.Log.WithName("install-library")
+
+	platform, err := config.DetectPlatform(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create dynamic client: %w", err)
+		return nil, fmt.Errorf("failed to detect platform: %w", err)
 	}
-
-	// Populate default image refs from the embedded CSV (no-op if already set by config.Read)
-	if err := LoadImageDigestsFromCSV(bundle.CSV); err != nil {
-		return nil, fmt.Errorf("failed to load image digests from CSV: %w", err)
-	}
+	setupLog.Info("detected platform", "platform", platform)
 
 	return &Library{
-		inst: &installer{
-			resourceFS:   resourceFS,
-			chartManager: helm.NewChartManager(kubeConfig, defaultHelmDriver, helm.WithManagedByValue(defaultManagedByValue)),
-			cl:           cl,
-			crdManager:   newCRDManager(cl),
-		},
-		managedByValue: defaultManagedByValue,
-		kubeConfig:     kubeConfig,
-		dynamicCl:      dynamicCl,
-		applySignal:    make(chan struct{}, 1),
+		kubeConfig:             cfg,
+		resourceFS:             resourceFS,
+		crdFS:                  crdFS,
+		cl:                     cl,
+		chartManager:           chartManager,
+		platform:               platform,
+		crdOwnershipLabelKey:   o.crdOwnershipLabelKey,
+		crdOwnershipLabelValue: o.crdOwnershipLabelValue,
+		triggerCh:              make(chan event.GenericEvent, 1),
+		notifyCh:               make(chan struct{}, 1),
 	}, nil
 }
 
-// FromDirectory creates an fs.FS from a filesystem directory path.
-// This is a convenience function for consumers who want to load resources
-// from the filesystem instead of using embedded resources.
-//
-// Example:
-//
-//	lib, _ := install.New(kubeConfig, install.FromDirectory("/var/lib/sail-operator/resources"))
+// FromDirectory creates an fs.FS from a local directory path.
 func FromDirectory(path string) fs.FS {
 	return os.DirFS(path)
+}
+
+// Apply validates the desired installation state and triggers reconciliation.
+// If the options are identical to the previously applied options, this is a
+// no-op — no new reconciliation is triggered. Use Enqueue to force a
+// reconciliation with the current options (e.g. after drift detection).
+func (l *Library) Apply(opts Options) error {
+	if err := ValidateOptions(opts); err != nil {
+		return fmt.Errorf("invalid options: %w", err)
+	}
+	l.mu.Lock()
+	if l.desiredOpts != nil && optionsEqual(*l.desiredOpts, opts) {
+		l.mu.Unlock()
+		return nil
+	}
+	l.generation++
+	copied := opts
+	if copied.Values != nil {
+		copied.Values = copied.Values.DeepCopy()
+	}
+	l.desiredOpts = &copied
+	l.mu.Unlock()
+	l.sendTrigger()
+	return nil
+}
+
+// Stop cancels the reconciliation loop and waits for the manager to shut down.
+func (l *Library) Stop() {
+	l.mu.Lock()
+	cancel := l.cancel
+	done := l.done
+	l.mu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
+	if done != nil {
+		<-done
+	}
+}
+
+// Enqueue triggers a reconciliation of the current desired state.
+func (l *Library) Enqueue() {
+	l.sendTrigger()
+}
+
+// Status returns the current installation status.
+func (l *Library) Status() Status {
+	l.statusMu.RLock()
+	defer l.statusMu.RUnlock()
+	return l.currentStatus
+}
+
+// Uninstall removes the istiod Helm release. It nils the desired state
+// first so that any in-flight reconciliation triggered by drift watches
+// will short-circuit. On success, the status is cleared so that Status()
+// reflects the uninstalled state and a subsequent Apply with the same
+// options will trigger a fresh installation.
+func (l *Library) Uninstall(ctx context.Context, namespace, revision string) error {
+	l.mu.Lock()
+	l.desiredOpts = nil
+	inst := l.newInstaller(namespace)
+	l.mu.Unlock()
+
+	if err := inst.uninstall(ctx, namespace, revision); err != nil {
+		return err
+	}
+
+	l.statusMu.Lock()
+	l.currentStatus = Status{}
+	l.statusMu.Unlock()
+	return nil
 }
