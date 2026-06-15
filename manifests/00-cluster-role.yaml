@@ -178,6 +178,8 @@ rules:
   - gateways
   - httproutes
   - grpcroutes
+  - referencegrants
+  - backendtlspolicies
   verbs:
   - '*'
 

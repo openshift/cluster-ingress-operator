@@ -19,6 +19,8 @@ rules:
     resources:
       - httproutes
       - grpcroutes
+      - referencegrants
+      - backendtlspolicies
     verbs:
       - get
       - list
