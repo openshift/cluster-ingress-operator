@@ -589,7 +589,7 @@ github.com/imdario/mergo
 # github.com/inconshreveable/mousetrap v1.1.0
 ## explicit; go 1.18
 github.com/inconshreveable/mousetrap
-# github.com/istio-ecosystem/sail-operator v0.0.0-20250513111011-30be83268d6b => github.com/openshift-service-mesh/sail-operator v0.0.0-20260615081635-39a617f84279
+# github.com/istio-ecosystem/sail-operator v0.0.0-20250513111011-30be83268d6b => github.com/aslakknutsen/sail-operator v0.0.0-20260615214919-983d460dac4e
 ## explicit; go 1.25.7
 github.com/istio-ecosystem/sail-operator/api/v1
 github.com/istio-ecosystem/sail-operator/api/v1alpha1
@@ -2082,4 +2082,4 @@ sigs.k8s.io/yaml
 sigs.k8s.io/yaml/goyaml.v3
 sigs.k8s.io/yaml/kyaml
 # github.com/imdario/mergo => github.com/imdario/mergo v0.3.5
-# github.com/istio-ecosystem/sail-operator => github.com/openshift-service-mesh/sail-operator v0.0.0-20260615081635-39a617f84279
+# github.com/istio-ecosystem/sail-operator => github.com/aslakknutsen/sail-operator v0.0.0-20260615214919-983d460dac4e

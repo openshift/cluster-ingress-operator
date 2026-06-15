@@ -247,4 +247,4 @@ replace github.com/imdario/mergo => github.com/imdario/mergo v0.3.5
 
 // Use OSSM 3.4 release branch for Sail Library integration.
 // Replace needed because the fork keeps upstream module name for compatibility.
-replace github.com/istio-ecosystem/sail-operator => github.com/openshift-service-mesh/sail-operator v0.0.0-20260615081635-39a617f84279
+replace github.com/istio-ecosystem/sail-operator => github.com/aslakknutsen/sail-operator v0.0.0-20260615214919-983d460dac4e

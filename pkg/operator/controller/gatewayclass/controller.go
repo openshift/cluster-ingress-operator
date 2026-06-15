@@ -183,7 +183,9 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 		// Start the Sail Library's background reconciliation loop (runs in a goroutine).
 		// Returns a notification channel that signals when library reconciliation completes,
 		// allowing us to update GatewayClass status conditions accordingly.
-		installer, err := install.New(mgr.GetConfig(), resources.FS, chart.CRDsFS)
+		installer, err := install.New(mgr.GetConfig(), resources.FS, chart.CRDsFS,
+			install.WithCRDOwnershipLabel("ingress.operator.openshift.io/owned", "true"),
+		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize sail-operator installation library: %w", err)
 		}

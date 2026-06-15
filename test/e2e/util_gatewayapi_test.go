@@ -592,11 +592,11 @@ func assertIstiodControlPlane(t *testing.T) error {
 }
 
 // assertIstioCRDs validates that all required Istio CRDs are installed and managed by the Sail Library.
-// It checks that each CRD exists and has the managed-by label set to "sail-library".
+// It checks that each CRD exists and has the CIO ownership label.
 func assertIstioCRDs(t *testing.T) error {
 	t.Helper()
-	const managedByLabel = "app.kubernetes.io/managed-by"
-	const managedByValue = "sail-library"
+	const managedByLabel = "ingress.operator.openshift.io/owned"
+	const managedByValue = "true"
 
 	for _, crdName := range istioCRDNames {
 		_, err := assertCRDExists(t, crdName)
