@@ -20,6 +20,7 @@ import (
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gatewayapi/managementmode"
 	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 	oputil "github.com/openshift/cluster-ingress-operator/pkg/util"
 
@@ -92,6 +93,9 @@ var (
 // clusteroperators resource so that it reconciles the ingress clusteroperator
 // in case something else updates or deletes it.
 func New(mgr manager.Manager, config Config) (controller.Controller, error) {
+	if err := managementmode.ValidateManagementModeConfig(config.GatewayAPIManagementModeEnabled, config.ManagementModeReader); err != nil {
+		return nil, err
+	}
 	operatorCache := mgr.GetCache()
 	// The status controller needs to be aware of conflicting OLM subscriptions in any namespace. In order to
 	// prevent ballooning the main cache to watch all namespaces on all its informers, create a separate cache for
@@ -206,6 +210,12 @@ type Config struct {
 	OperatorReleaseVersion          string
 	Namespace                       string
 	GatewayAPIOperatorVersion       string
+	// GatewayAPIManagementModeEnabled indicates whether the GatewayAPIManagementMode
+	// feature gate is enabled. When false, management mode logic is not used.
+	GatewayAPIManagementModeEnabled bool
+	// ManagementModeReader provides Gateway API management mode state when
+	// GatewayAPIManagementModeEnabled is true.
+	ManagementModeReader managementmode.Reader
 }
 
 // IngressOperatorStatusExtension holds status extensions of the ingress cluster operator.
@@ -407,12 +417,18 @@ type operatorState struct {
 	// shouldInstallOSSM reflects whether the ingress operator should install OSSM. Currently, this happens when a
 	// gateway class with Spec.ControllerName=operatorcontroller.OpenShiftGatewayClassControllerName is created.
 	shouldInstallOSSM bool
+	// gatewayAPIEffectiveModeUnmanaged is true when Gateway API management mode is Unmanaged.
+	gatewayAPIEffectiveModeUnmanaged bool
 }
 
 // getOperatorState gets and returns the resources necessary to compute the
 // operator's current state.
 func (r *reconciler) getOperatorState(ctx context.Context, ingressNamespace, canaryNamespace string, co *configv1.ClusterOperator) (operatorState, error) {
 	state := operatorState{}
+	if r.config.GatewayAPIManagementModeEnabled {
+		modeState := r.config.ManagementModeReader.Current()
+		state.gatewayAPIEffectiveModeUnmanaged = modeState.EffectiveMode == managementmode.ModeUnmanaged
+	}
 
 	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ingressNamespace}}
 	if err := r.client.Get(ctx, types.NamespacedName{Name: ingressNamespace}, ns); err != nil {
@@ -624,6 +640,11 @@ func computeIngressControllerDegradedCondition(state operatorState) configv1.Clu
 // computeGatewayAPICRDsDegradedCondition computes the degraded condition for Gateway API CRDs.
 func computeGatewayAPICRDsDegradedCondition(state operatorState) configv1.ClusterOperatorStatusCondition {
 	degradedCondition := configv1.ClusterOperatorStatusCondition{}
+
+	// Foreign Gateway API CRDs are only a ClusterOperator concern in Managed mode.
+	if state.gatewayAPIEffectiveModeUnmanaged {
+		return degradedCondition
+	}
 
 	if len(state.unmanagedGatewayAPICRDNames) > 0 {
 		degradedCondition.Status = configv1.ConditionTrue

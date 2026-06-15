@@ -22,6 +22,7 @@ import (
 	"k8s.io/apiserver/pkg/storage/names"
 
 	routev1 "github.com/openshift/api/route/v1"
+	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 )
 
 const (
@@ -58,6 +59,10 @@ const (
 	GatewayAPIViewClusterRoleAsset    = "assets/gateway-api/aggregated-cluster-roles/view-cluster-role.yaml"
 	GatewayAPIAllowNetworkPolicyAsset = "assets/gateway-api/gateway-networkpolicy-allow.yaml"
 	IstiodAllowNetworkPolicyAsset     = "assets/gateway-api/istiod-networkpolicy-allow.yaml"
+
+	GatewayAPIVAPAsset                = "assets/gateway-api-vap/validating-admission-policy.yaml"
+	GatewayAPIVAPIBMAsset             = "assets/gateway-api-vap/validating-admission-policy-ibm-cloud-managed.yaml"
+	GatewayAPIVAPBindingAsset         = "assets/gateway-api-vap/validating-admission-policy-binding.yaml"
 
 	// Annotation used to inform the certificate generation service to
 	// generate a cluster-signed certificate and populate the secret.
@@ -342,6 +347,33 @@ func BackendTLSPolicyCRD() *apiextensionsv1.CustomResourceDefinition {
 	return crd
 }
 
+// GatewayAPIVAP returns the HA/SNO ValidatingAdmissionPolicy that protects managed Gateway API CRDs.
+func GatewayAPIVAP() *admissionregistrationv1.ValidatingAdmissionPolicy {
+	policy, err := NewValidatingAdmissionPolicy(MustAssetReader(GatewayAPIVAPAsset))
+	if err != nil {
+		panic(err)
+	}
+	return policy
+}
+
+// GatewayAPIVAPIBM returns the IBM Cloud Managed / HyperShift VAP variant without pod binding rules.
+func GatewayAPIVAPIBM() *admissionregistrationv1.ValidatingAdmissionPolicy {
+	policy, err := NewValidatingAdmissionPolicy(MustAssetReader(GatewayAPIVAPIBMAsset))
+	if err != nil {
+		panic(err)
+	}
+	return policy
+}
+
+// GatewayAPIVAPBinding returns the ValidatingAdmissionPolicyBinding for Gateway API CRD protection.
+func GatewayAPIVAPBinding() *admissionregistrationv1.ValidatingAdmissionPolicyBinding {
+	binding, err := NewValidatingAdmissionPolicyBinding(MustAssetReader(GatewayAPIVAPBindingAsset))
+	if err != nil {
+		panic(err)
+	}
+	return binding
+}
+
 func GatewayAPIAdminClusterRole() *rbacv1.ClusterRole {
 	clusterRole, err := NewClusterRole(MustAssetReader(GatewayAPIAdminClusterRoleAsset))
 	if err != nil {
@@ -495,5 +527,21 @@ func NewCustomResourceDefinition(manifest io.Reader) (*apiextensionsv1.CustomRes
 		return nil, err
 	}
 
+	return &o, nil
+}
+
+func NewValidatingAdmissionPolicy(manifest io.Reader) (*admissionregistrationv1.ValidatingAdmissionPolicy, error) {
+	o := admissionregistrationv1.ValidatingAdmissionPolicy{}
+	if err := yaml.NewYAMLOrJSONDecoder(manifest, 100).Decode(&o); err != nil {
+		return nil, err
+	}
+	return &o, nil
+}
+
+func NewValidatingAdmissionPolicyBinding(manifest io.Reader) (*admissionregistrationv1.ValidatingAdmissionPolicyBinding, error) {
+	o := admissionregistrationv1.ValidatingAdmissionPolicyBinding{}
+	if err := yaml.NewYAMLOrJSONDecoder(manifest, 100).Decode(&o); err != nil {
+		return nil, err
+	}
 	return &o, nil
 }

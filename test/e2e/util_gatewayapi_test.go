@@ -18,6 +18,9 @@ import (
 	"time"
 
 	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
+	"github.com/openshift/api/features"
+	operatorv1 "github.com/openshift/api/operator/v1"
+	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	v1 "github.com/openshift/api/operatoringress/v1"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
 	util "github.com/openshift/cluster-ingress-operator/pkg/util"
@@ -1557,4 +1560,198 @@ func updateGatewaySpecWithRetry(t *testing.T, name types.NamespacedName, timeout
 		}
 		return true, nil
 	})
+}
+
+// requireGatewayAPIManagementMode skips the test unless both required feature gates are enabled.
+func requireGatewayAPIManagementMode(t *testing.T) {
+	t.Helper()
+	managementModeEnabled, err := isFeatureGateEnabled(features.FeatureGateGatewayAPIManagementMode)
+	if err != nil {
+		t.Fatalf("error checking GatewayAPIManagementMode feature gate: %v", err)
+	}
+	if !managementModeEnabled {
+		t.Skip("GatewayAPIManagementMode feature gate is not enabled")
+	}
+	withoutOLM, err := isFeatureGateEnabled(features.FeatureGateGatewayAPIWithoutOLM)
+	if err != nil {
+		t.Fatalf("error checking GatewayAPIWithoutOLM feature gate: %v", err)
+	}
+	if !withoutOLM {
+		t.Skip("GatewayAPIWithoutOLM feature gate is not enabled")
+	}
+}
+
+// setGatewayAPIManagementMode patches spec.gatewayAPI.managementMode on the Ingress operator config singleton.
+func setGatewayAPIManagementMode(t *testing.T, mode operatorv1alpha1.GatewayAPIManagementMode) {
+	t.Helper()
+	ctx := context.Background()
+	ingress := &operatorv1alpha1.Ingress{}
+	name := operatorcontroller.IngressOperatorConfigClusterName()
+	err := wait.PollUntilContextTimeout(ctx, 1*time.Second, 2*time.Minute, true, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, name, ingress); err != nil {
+			t.Logf("waiting for ingress operator config: %v", err)
+			return false, nil
+		}
+		updated := ingress.DeepCopy()
+		updated.Spec.GatewayAPI.ManagementMode = mode
+		if err := kclient.Patch(ctx, updated, client.MergeFrom(ingress)); err != nil {
+			t.Logf("patch ingress operator config: %v", err)
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to set management mode %q: %v", mode, err)
+	}
+}
+
+// restoreGatewayAPIManagementModeManaged resets management mode to Managed for test teardown.
+func restoreGatewayAPIManagementModeManaged(t *testing.T) {
+	t.Helper()
+	setGatewayAPIManagementMode(t, operatorv1alpha1.GatewayAPIManagementModeManaged)
+}
+
+// waitForIngressOperatorConfigCondition polls until the Ingress operator config reports the expected condition.
+func waitForIngressOperatorConfigCondition(t *testing.T, cType string, status operatorv1.ConditionStatus, reason string) {
+	t.Helper()
+	ctx := context.Background()
+	name := operatorcontroller.IngressOperatorConfigClusterName()
+	err := wait.PollUntilContextTimeout(ctx, 2*time.Second, 5*time.Minute, true, func(ctx context.Context) (bool, error) {
+		ingress := &operatorv1alpha1.Ingress{}
+		if err := kclient.Get(ctx, name, ingress); err != nil {
+			return false, err
+		}
+		for _, c := range ingress.Status.Conditions {
+			if c.Type == cType && c.Status == status && (reason == "" || c.Reason == reason) {
+				return true, nil
+			}
+		}
+		t.Logf("waiting for condition %s=%s reason=%s, have: %+v", cType, status, reason, ingress.Status.Conditions)
+		return false, nil
+	})
+	if err != nil {
+		t.Fatalf("timed out waiting for ingress operator config condition %s=%s reason=%s: %v", cType, status, reason, err)
+	}
+}
+
+// assertGatewayAPIVAPPresent verifies whether the Gateway API CRD VAP exists on the cluster.
+func assertGatewayAPIVAPPresent(t *testing.T, present bool) {
+	t.Helper()
+	ctx := context.Background()
+	policy := &admissionregistrationv1.ValidatingAdmissionPolicy{}
+	err := kclient.Get(ctx, types.NamespacedName{Name: gwapiCRDVAPName}, policy)
+	if present {
+		if err != nil {
+			t.Fatalf("expected VAP present, got error: %v", err)
+		}
+		return
+	}
+	if !kerrors.IsNotFound(err) {
+		t.Fatalf("expected VAP absent, got error: %v", err)
+	}
+}
+
+// assertIstioControlPlaneRunning waits until istiod presence matches the expected running state.
+func assertIstioControlPlaneRunning(t *testing.T, running bool) {
+	t.Helper()
+	ctx := context.Background()
+	dep := &appsv1.Deployment{}
+	name := types.NamespacedName{Namespace: operatorcontroller.DefaultOperandNamespace, Name: openshiftIstiodDeploymentName}
+	err := wait.PollUntilContextTimeout(ctx, 2*time.Second, 5*time.Minute, true, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, name, dep); err != nil {
+			if running {
+				t.Logf("waiting for istiod deployment: %v", err)
+				return false, nil
+			}
+			return kerrors.IsNotFound(err), nil
+		}
+		if running {
+			return dep.Status.ReadyReplicas > 0, nil
+		}
+		return dep.Status.ReadyReplicas == 0, nil
+	})
+	if err != nil {
+		t.Fatalf("timed out waiting for istiod running=%v: %v", running, err)
+	}
+}
+
+// gwapiResourceSnapshot captures UIDs of managed Gateway API CRDs for preservation checks.
+type gwapiResourceSnapshot struct {
+	crdUIDs map[string]types.UID
+}
+
+// snapshotGatewayAPIResources records UIDs of the six managed Gateway API CRDs.
+func snapshotGatewayAPIResources(t *testing.T) *gwapiResourceSnapshot {
+	t.Helper()
+	snap := &gwapiResourceSnapshot{crdUIDs: map[string]types.UID{}}
+	ctx := context.Background()
+	for _, name := range managedGatewayAPICRDNames() {
+		crd := &apiextensionsv1.CustomResourceDefinition{}
+		if err := kclient.Get(ctx, types.NamespacedName{Name: name}, crd); err != nil {
+			t.Fatalf("failed to snapshot CRD %s: %v", name, err)
+		}
+		snap.crdUIDs[name] = crd.UID
+	}
+	return snap
+}
+
+// assertGatewayAPIResourcesPreserved verifies managed Gateway API CRD UIDs are unchanged.
+func assertGatewayAPIResourcesPreserved(t *testing.T, before *gwapiResourceSnapshot) {
+	t.Helper()
+	after := snapshotGatewayAPIResources(t)
+	if diff := cmp.Diff(before.crdUIDs, after.crdUIDs); diff != "" {
+		t.Fatalf("CRD UIDs changed (-want +got):\n%s", diff)
+	}
+}
+
+// patchCRDAnnotation merges a single annotation on a CRD without deleting the resource.
+func patchCRDAnnotation(t *testing.T, crdName, key, value string) {
+	t.Helper()
+	ctx := context.Background()
+	err := wait.PollUntilContextTimeout(ctx, 1*time.Second, 2*time.Minute, true, func(ctx context.Context) (bool, error) {
+		crd := &apiextensionsv1.CustomResourceDefinition{}
+		if err := kclient.Get(ctx, types.NamespacedName{Name: crdName}, crd); err != nil {
+			return false, err
+		}
+		updated := crd.DeepCopy()
+		if updated.Annotations == nil {
+			updated.Annotations = map[string]string{}
+		}
+		updated.Annotations[key] = value
+		if err := kclient.Patch(ctx, updated, client.MergeFrom(crd)); err != nil {
+			t.Logf("patch CRD annotation: %v", err)
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to patch CRD %s annotation %s: %v", crdName, key, err)
+	}
+}
+
+// restoreCRDAnnotations replaces the annotation map on a CRD for test cleanup.
+func restoreCRDAnnotations(t *testing.T, crdName string, annotations map[string]string) {
+	t.Helper()
+	ctx := context.Background()
+	crd := &apiextensionsv1.CustomResourceDefinition{}
+	if err := kclient.Get(ctx, types.NamespacedName{Name: crdName}, crd); err != nil {
+		t.Fatalf("failed to get CRD %s: %v", crdName, err)
+	}
+	updated := crd.DeepCopy()
+	updated.Annotations = annotations
+	if err := kclient.Patch(ctx, updated, client.MergeFrom(crd)); err != nil {
+		t.Fatalf("failed to restore CRD %s annotations: %v", crdName, err)
+	}
+}
+
+// managedGatewayAPICRDNames returns the six Gateway API CRD names managed by CIO.
+func managedGatewayAPICRDNames() []string {
+	return []string{
+		"gatewayclasses.gateway.networking.k8s.io",
+		"gateways.gateway.networking.k8s.io",
+		"httproutes.gateway.networking.k8s.io",
+		"grpcroutes.gateway.networking.k8s.io",
+		"referencegrants.gateway.networking.k8s.io",
+		"backendtlspolicies.gateway.networking.k8s.io",
+	}
 }

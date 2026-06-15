@@ -11,6 +11,7 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gatewayapi/managementmode"
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
 
 	networkingv1 "k8s.io/api/networking/v1"
@@ -103,6 +104,9 @@ var gatewayClassController controller.Controller
 // installs and configures Istio.  This is an unmanaged controller, which means
 // that the manager does not start it.
 func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, error) {
+	if err := managementmode.ValidateManagementModeConfig(config.GatewayAPIManagementModeEnabled, config.ManagementModeReader); err != nil {
+		return nil, err
+	}
 	operatorCache := mgr.GetCache()
 
 	reconciler := &reconciler{
@@ -265,6 +269,12 @@ type Config struct {
 	IstioVersion string
 	// Context is the context for controller lifecycle.
 	Context context.Context
+	// GatewayAPIManagementModeEnabled indicates whether the GatewayAPIManagementMode
+	// feature gate is enabled. When false, management mode logic is not used.
+	GatewayAPIManagementModeEnabled bool
+	// ManagementModeReader provides Gateway API management mode state when
+	// GatewayAPIManagementModeEnabled is true.
+	ManagementModeReader managementmode.Reader
 }
 
 // SailLibraryInstaller implements the methods of sail library but in a way we can
@@ -403,10 +413,37 @@ func (r *reconciler) requestsForAllManagedGatewayClasses(ctx context.Context, _ 
 // Reconcile expects request to refer to a GatewayClass and creates or
 // reconciles an Istio deployment.
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
+	if r.config.GatewayAPIManagementModeEnabled &&
+		!r.config.ManagementModeReader.Current().ShouldRunGatewayStack() {
+		// Uninstall Istio when management mode disables the Gateway stack.
+		return r.ensureGatewayStackStopped(ctx)
+	}
 	if r.config.GatewayAPIWithoutOLMEnabled {
 		return r.reconcileWithSailLibrary(ctx, request)
 	}
 	return r.reconcileWithOLM(ctx, request)
+}
+
+// ensureGatewayStackStopped uninstalls the operator-managed Gateway controller
+// stack when StackReady is false. It does not delete GatewayClass, Gateway, or
+// HTTPRoute resources owned by the customer.
+func (r *reconciler) ensureGatewayStackStopped(ctx context.Context) (reconcile.Result, error) {
+	// Uninstall the Sail-managed Istio control plane when management mode disables
+	// the Gateway stack. GatewayClass and Gateway objects are preserved.
+	if !r.config.GatewayAPIWithoutOLMEnabled {
+		return reconcile.Result{}, nil
+	}
+	if r.sailInstaller == nil {
+		return reconcile.Result{}, nil
+	}
+	if err := r.sailInstaller.Uninstall(ctx, r.config.OperandNamespace, operatorcontroller.IstioName("").Name); err != nil {
+		return reconcile.Result{}, fmt.Errorf("failed to uninstall gateway stack: %w", err)
+	}
+	status := r.sailInstaller.Status()
+	if status.Installed {
+		return reconcile.Result{RequeueAfter: 5 * time.Second}, nil
+	}
+	return reconcile.Result{}, nil
 }
 
 // reconcileWithOLM reconciles a GatewayClass using OLM to install OSSM,

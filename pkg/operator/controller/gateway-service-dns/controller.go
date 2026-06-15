@@ -8,6 +8,7 @@ import (
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gatewayapi/managementmode"
 	"github.com/openshift/cluster-ingress-operator/pkg/resources/dnsrecord"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
@@ -45,6 +46,9 @@ var log = logf.Logger.WithName(controllerName)
 // associated with gateways and creates dnsrecord objects for them.  This is an
 // unmanaged controller, which means that the manager does not start it.
 func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, error) {
+	if err := managementmode.ValidateManagementModeConfig(config.GatewayAPIManagementModeEnabled, config.ManagementModeReader); err != nil {
+		return nil, err
+	}
 	operatorCache := mgr.GetCache()
 	reconciler := &reconciler{
 		config:   config,
@@ -140,6 +144,12 @@ type Config struct {
 	// OperandNamespace is the namespace in which to watch for services and
 	// dnsrecords and in which to create dnsrecords.
 	OperandNamespace string
+	// GatewayAPIManagementModeEnabled indicates whether the GatewayAPIManagementMode
+	// feature gate is enabled. When false, management mode logic is not used.
+	GatewayAPIManagementModeEnabled bool
+	// ManagementModeReader provides Gateway API management mode state when
+	// GatewayAPIManagementModeEnabled is true.
+	ManagementModeReader managementmode.Reader
 }
 
 // reconciler handles the actual service reconciliation logic.
@@ -154,6 +164,11 @@ type reconciler struct {
 // Reconcile expects request to refer to a service and creates or reconciles a
 // dnsrecord.
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
+	// Do not create DNSRecords while the Gateway controller stack is stopped.
+	if r.config.GatewayAPIManagementModeEnabled &&
+		!r.config.ManagementModeReader.Current().ShouldRunGatewayStack() {
+		return reconcile.Result{RequeueAfter: managementmode.StackNotReadyRequeueInterval}, nil
+	}
 	log.Info("reconciling", "request", request)
 
 	var service corev1.Service

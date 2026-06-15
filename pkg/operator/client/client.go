@@ -6,6 +6,7 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	machinev1 "github.com/openshift/api/machine/v1beta1"
 	operatorv1 "github.com/openshift/api/operator/v1"
+	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 	iov1 "github.com/openshift/api/operatoringress/v1"
 	routev1 "github.com/openshift/api/route/v1"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -60,6 +61,9 @@ func init() {
 		panic(err)
 	}
 	if err := machinev1.Install(scheme); err != nil {
+		panic(err)
+	}
+	if err := operatorv1alpha1.Install(scheme); err != nil {
 		panic(err)
 	}
 }
