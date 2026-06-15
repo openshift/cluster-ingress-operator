@@ -1,8 +1,8 @@
 package gatewayclass
 
 import (
-	"bytes"
 	"fmt"
+	"strings"
 
 	"github.com/istio-ecosystem/sail-operator/pkg/install"
 
@@ -19,11 +19,11 @@ const (
 	//   - Unknown (Pending): waiting for first reconciliation
 	ControllerInstalledConditionType = "ControllerInstalled"
 
-	// CRDsReadyConditionType indicates the readiness state of Istio CRDs.
+	// CRDsReadyConditionType indicates the ownership and readiness state of Istio CRDs.
 	// Status values:
-	//   - True (Ready): all CRDs are ready
-	//   - False (NotReady/Error): not all CRDs are ready or an error occurred
-	//   - Unknown: CRD management state is unknown
+	//   - True (Ready): all CRDs are ready and managed
+	//   - False (NotReady/MixedOwnership/Error): CRDs are not ready, have mixed ownership, or errored
+	//   - Unknown (NoneExist): CRDs have not yet been installed
 	CRDsReadyConditionType = "CRDsReady"
 )
 
@@ -63,25 +63,27 @@ func mapStatusToConditions(status install.Status, generation int64, conditions *
 	}
 	switch status.CRDState {
 	case install.CRDManagementStateReady:
-		crd.Status = metav1.ConditionTrue
-		crd.Reason = "Ready"
-		if status.CRDMessage != "" {
-			crd.Message = status.CRDMessage
+		if unmanaged := getUnmanagedCRDs(status.CRDs); len(unmanaged) > 0 {
+			crd.Status = metav1.ConditionFalse
+			crd.Reason = "MixedOwnership"
+			crd.Message = getCRDStatusMessage("CRDs have mixed ownership", status.CRDs)
 		} else {
-			crd.Message = "all CRDs are ready"
+			crd.Status = metav1.ConditionTrue
+			crd.Reason = "Ready"
+			crd.Message = "all CRDs are ready and managed"
 		}
 	case install.CRDManagementStateNotReady:
 		crd.Status = metav1.ConditionFalse
 		crd.Reason = "NotReady"
-		crd.Message = getCRDStatusMessage(status)
+		crd.Message = getCRDStatusMessage("not all CRDs are ready", status.CRDs)
 	case install.CRDManagementStateError:
 		crd.Status = metav1.ConditionFalse
 		crd.Reason = "Error"
-		crd.Message = getCRDStatusMessage(status)
+		crd.Message = getCRDStatusMessage(status.CRDMessage, status.CRDs)
 	default:
 		crd.Status = metav1.ConditionUnknown
-		crd.Reason = "Unknown"
-		crd.Message = "CRD management state is unknown"
+		crd.Reason = "NoneExist"
+		crd.Message = "CRDs not yet installed"
 	}
 	changed = meta.SetStatusCondition(conditions, crd) || changed
 
@@ -94,29 +96,42 @@ func removeSailInstallConditions(conditions *[]metav1.Condition) {
 	meta.RemoveStatusCondition(conditions, CRDsReadyConditionType)
 }
 
-// getCRDStatusMessage formats a detailed CRD status message including the overall
-// state and a bulleted list of individual CRD ownership states.
-func getCRDStatusMessage(status install.Status) string {
-	if status.CRDMessage == "" && len(status.CRDs) == 0 {
+func getUnmanagedCRDs(crds []install.CRDInfo) []string {
+	var unmanaged []string
+	for _, info := range crds {
+		if !info.Managed {
+			unmanaged = append(unmanaged, info.Name)
+		}
+	}
+	return unmanaged
+}
+
+// getCRDStatusMessage formats a status message with a summary line and
+// a bulleted list of individual CRD states.
+func getCRDStatusMessage(summary string, crds []install.CRDInfo) string {
+	if summary == "" && len(crds) == 0 {
 		return "unable to determine CRD ownership"
 	}
-	var message bytes.Buffer
-	if _, err := message.WriteString(status.CRDMessage); err != nil {
-		log.Error(err, "error writing CRD status", "status", status.CRDMessage)
+	var lines []string
+	if summary != "" {
+		lines = append(lines, summary)
 	}
-	for _, info := range status.CRDs {
-		state := "not ready"
-		if info.Ready {
-			state = "ready"
-		}
-		if !info.Managed {
-			state += " (not managed)"
-		}
-		crdMsg := fmt.Sprintf("\n- %s: %s", info.Name, state)
-		_, err := message.WriteString(crdMsg)
-		if err != nil {
-			log.Error(err, "error writing CRD message", "crd", info.Name)
-		}
+	for _, info := range crds {
+		lines = append(lines, fmt.Sprintf("- %s: %s", info.Name,
+			crdStateString(info)))
 	}
-	return message.String()
+	return strings.Join(lines, "\n")
+}
+
+func crdStateString(info install.CRDInfo) string {
+	switch {
+	case info.Managed && info.Ready:
+		return "Managed"
+	case info.Managed && !info.Ready:
+		return "Managed (not ready)"
+	case !info.Managed && info.Ready:
+		return "NotManaged"
+	default:
+		return "NotManaged (not ready)"
+	}
 }

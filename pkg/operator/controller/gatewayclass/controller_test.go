@@ -247,7 +247,7 @@ func Test_Reconcile(t *testing.T) {
 			{
 				Type:   "CRDsReady",
 				Status: metav1.ConditionUnknown,
-				Reason: "Unknown",
+				Reason: "NoneExist",
 			},
 		}
 	}
