@@ -589,6 +589,7 @@ github.com/inconshreveable/mousetrap
 ## explicit; go 1.25.7
 github.com/istio-ecosystem/sail-operator/api/v1
 github.com/istio-ecosystem/sail-operator/api/v1alpha1
+github.com/istio-ecosystem/sail-operator/chart
 github.com/istio-ecosystem/sail-operator/pkg/config
 github.com/istio-ecosystem/sail-operator/pkg/constants
 github.com/istio-ecosystem/sail-operator/pkg/env
