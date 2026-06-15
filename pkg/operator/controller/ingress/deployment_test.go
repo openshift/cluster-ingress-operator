@@ -807,6 +807,11 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 					"TLS_AES_256_GCM_SHA384",
 					"TLS_CHACHA20_POLY1305_SHA256",
 				},
+				Groups: []configv1.TLSGroup{
+					configv1.TLSGroupX25519,
+					configv1.TLSGroupSecP256r1,
+					configv1.TLSGroupSecP384r1,
+				},
 				MinTLSVersion: configv1.VersionTLS12,
 			},
 		},
@@ -898,6 +903,7 @@ func TestDesiredRouterDeploymentSpecAndNetwork(t *testing.T) {
 		{RouterHTTPIgnoreProbes, true, "true"},
 		{"ROUTER_CIPHERS", true, "quux"},
 		{"ROUTER_CIPHERSUITES", true, "TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256"},
+		{"ROUTER_CURVES", true, "X25519:secp256r1:secp384r1"},
 		{"SSL_MIN_VERSION", true, "TLSv1.2"},
 		{"ROUTER_IP_V4_V6_MODE", true, "v4v6"},
 		{RouterEnableCompression, true, "true"},
@@ -2983,25 +2989,68 @@ func Test_ClosedClientConnectionPolicy(t *testing.T) {
 	}
 }
 
-// TestDesiredRouterDeploymentTLSCurves verifies that desiredRouterDeployment
-// sets ROUTER_CURVES as expected with and without FIPS enabled.
-func TestDesiredRouterDeploymentTLSCurves(t *testing.T) {
+// TestDesiredRouterDeploymentTLSGroups verifies that desiredRouterDeployment
+// sets ROUTER_CURVES correctly for both default and explicit group
+// configurations, including proper FIPS filtering in both cases.
+func TestDesiredRouterDeploymentTLSGroups(t *testing.T) {
 	testCases := []struct {
-		name        string
-		fipsEnabled bool
-		expectedEnv []envData
+		name           string
+		fipsEnabled    bool
+		explicitGroups []configv1.TLSGroup // nil means no Custom profile / no groups field set
+		expectedEnv    []envData
 	}{
+		// ── Default groups (no explicit profile) ────────────────────────────
 		{
-			name:        "Include ML-KEM and X25519 when FIPS is not enabled",
+			name:        "Default: include ML-KEM and X25519 when FIPS is not enabled",
 			fipsEnabled: false,
 			expectedEnv: []envData{
-				{"ROUTER_CURVES", true, "X25519MLKEM768:X25519:P-256:P-384:P-521"},
+				{"ROUTER_CURVES", true, "X25519MLKEM768:X25519:secp256r1:secp384r1"},
 			},
-		}, {
-			name:        "Exclude ML-KEM and X25519 when FIPS is enabled",
+		},
+		{
+			name:        "Default: exclude ML-KEM and X25519 when FIPS is enabled",
 			fipsEnabled: true,
 			expectedEnv: []envData{
-				{"ROUTER_CURVES", true, "P-256:P-384:P-521"},
+				{"ROUTER_CURVES", true, "secp256r1:secp384r1"},
+			},
+		},
+		// ── Explicit groups (Custom TLS profile) ────────────────────────────
+		{
+			name:        "Explicit: groups passed through unchanged when FIPS is not enabled",
+			fipsEnabled: false,
+			explicitGroups: []configv1.TLSGroup{
+				configv1.TLSGroupX25519MLKEM768,
+				configv1.TLSGroupX25519,
+				configv1.TLSGroupSecP256r1,
+			},
+			expectedEnv: []envData{
+				{"ROUTER_CURVES", true, "X25519MLKEM768:X25519:secp256r1"},
+			},
+		},
+		{
+			name:        "Explicit: non-FIPS groups filtered out when FIPS is enabled",
+			fipsEnabled: true,
+			explicitGroups: []configv1.TLSGroup{
+				configv1.TLSGroupX25519MLKEM768,
+				configv1.TLSGroupX25519,
+				configv1.TLSGroupSecP256r1,
+				configv1.TLSGroupSecP384r1,
+			},
+			expectedEnv: []envData{
+				// X25519MLKEM768 and X25519 are non-FIPS; only secp256r1 and secp384r1 remain.
+				{"ROUTER_CURVES", true, "secp256r1:secp384r1"},
+			},
+		},
+		{
+			name:        "Explicit: fall back to FIPS defaults when all explicit groups are non-FIPS",
+			fipsEnabled: true,
+			explicitGroups: []configv1.TLSGroup{
+				configv1.TLSGroupX25519MLKEM768,
+				configv1.TLSGroupX25519,
+			},
+			expectedEnv: []envData{
+				// Entire list is non-FIPS; must fall back to secp256r1:secp384r1:secp521r1.
+				{"ROUTER_CURVES", true, "secp256r1:secp384r1:secp521r1"},
 			},
 		},
 	}
@@ -3013,6 +3062,17 @@ func TestDesiredRouterDeploymentTLSCurves(t *testing.T) {
 						Type: operatorv1.PrivateStrategyType,
 					},
 				},
+			}
+			if len(tc.explicitGroups) > 0 {
+				ic.Spec.TLSSecurityProfile = &configv1.TLSSecurityProfile{
+					Type: configv1.TLSProfileCustomType,
+					Custom: &configv1.CustomTLSProfile{
+						TLSProfileSpec: configv1.TLSProfileSpec{
+							Groups:        tc.explicitGroups,
+							MinTLSVersion: configv1.VersionTLS12,
+						},
+					},
+				}
 			}
 
 			wasFIPSEnabled := isFIPSEnabled
