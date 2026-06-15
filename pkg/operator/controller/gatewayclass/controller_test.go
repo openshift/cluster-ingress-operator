@@ -142,6 +142,7 @@ func Test_Reconcile(t *testing.T) {
 							"ENABLE_GATEWAY_API_MANUAL_DEPLOYMENT":             "false",
 							"PILOT_ENABLE_GATEWAY_API_CA_CERT_ONLY":            "true",
 							"PILOT_ENABLE_GATEWAY_API_COPY_LABELS_ANNOTATIONS": "false",
+							"PILOT_IGNORE_RESOURCES":                           "listenersets.gateway.networking.k8s.io",
 						},
 						ExtraContainerArgs: []string{},
 						PodAnnotations: map[string]string{
@@ -269,6 +270,7 @@ func Test_Reconcile(t *testing.T) {
 			"ENABLE_GATEWAY_API_MANUAL_DEPLOYMENT":             "false",
 			"PILOT_ENABLE_GATEWAY_API_CA_CERT_ONLY":            "true",
 			"PILOT_ENABLE_GATEWAY_API_COPY_LABELS_ANNOTATIONS": "false",
+			"PILOT_IGNORE_RESOURCES":                           "listenersets.gateway.networking.k8s.io",
 		}
 		if gieEnabled {
 			pilotEnv["ENABLE_GATEWAY_API_INFERENCE_EXTENSION"] = "true"
