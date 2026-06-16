@@ -962,6 +962,40 @@ func Test_computeOperatorDegradedCondition(t *testing.T) {
 			},
 		},
 		{
+			description: "orphaned CIO-owned subscription detected after migration",
+			modes:       sailLibraryMode,
+			state: operatorState{
+				IngressControllers: []operatorv1.IngressController{
+					icWithStatus("default", false),
+				},
+				orphanedOSSMSubscriptions: []operatorsv1alpha1.Subscription{
+					sub("servicemeshoperator3", "servicemeshoperator3", "servicemeshoperator3.v3.1.0", true),
+				},
+			},
+			expectCondition: configv1.ClusterOperatorStatusCondition{
+				Type:   configv1.OperatorDegraded,
+				Status: configv1.ConditionFalse,
+				Reason: "IngressNotDegradedAndOrphanedOSSMSubscription",
+				Message: `The "default" ingress controller reports Degraded=False.` + "\n" +
+					"Orphaned OSSM subscription(s) found after migration to Sail Library: foo/servicemeshoperator3.",
+			},
+		},
+		{
+			description: "no orphaned subscription warning when no CIO-owned subscriptions exist",
+			modes:       sailLibraryMode,
+			state: operatorState{
+				IngressControllers: []operatorv1.IngressController{
+					icWithStatus("default", false),
+				},
+			},
+			expectCondition: configv1.ClusterOperatorStatusCondition{
+				Type:    configv1.OperatorDegraded,
+				Status:  configv1.ConditionFalse,
+				Reason:  "IngressNotDegraded",
+				Message: `The "default" ingress controller reports Degraded=False.`,
+			},
+		},
+		{
 			description: "OSSM conflicts ignored but unmanaged CRDs still degrade",
 			modes:       sailLibraryMode,
 			state: operatorState{
