@@ -35,6 +35,8 @@ import (
 
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -64,6 +66,15 @@ const (
 
 	controllerName = "status_controller"
 )
+
+var orphanedOSSMSubscriptionMetric = prometheus.NewGauge(prometheus.GaugeOpts{
+	Name: "ingress_operator_orphaned_ossm_subscription",
+	Help: "Set to 1 when a CIO-owned OSSM subscription persists after migration to Sail Library (noOLM).",
+})
+
+func RegisterMetrics() error {
+	return prometheus.Register(orphanedOSSMSubscriptionMetric)
+}
 
 var (
 	log = logf.Logger.WithName(controllerName)
@@ -254,6 +265,12 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 		return reconcile.Result{}, fmt.Errorf("failed to get operator state: %v", err)
 	}
 
+	if len(state.orphanedOSSMSubscriptions) > 0 {
+		orphanedOSSMSubscriptionMetric.Set(1)
+	} else {
+		orphanedOSSMSubscriptionMetric.Set(0)
+	}
+
 	related := []configv1.ObjectReference{
 		{
 			Resource: "namespaces",
@@ -403,6 +420,8 @@ type operatorState struct {
 	haveGatewayclassesResource bool
 	// ossmSubscriptions contains all subscriptions that may conflict with the operator-created ossm subscription.
 	ossmSubscriptions []operatorsv1alpha1.Subscription
+	// orphanedOSSMSubscriptions contains CIO-owned OSSM subscriptions that persist after migration to Sail Library.
+	orphanedOSSMSubscriptions []operatorsv1alpha1.Subscription
 	// expectedGatewayAPIOperatorVersion reflects the expected OSSM 3 version. It is used in determining if a
 	// user-supplied OSSM 3 subscription would cause the operator's installation of OSSM 3 to fail.
 	expectedGatewayAPIOperatorVersion string
@@ -487,9 +506,10 @@ func (r *reconciler) getOperatorState(ctx context.Context, ingressNamespace, can
 
 		state.expectedGatewayAPIOperatorVersion = r.config.GatewayAPIOperatorVersion
 
-		// List OSSM subscriptions (OLM-specific only).
-		// In Sail Library mode, we don't check for subscription conflicts, so no need to list them.
-		if useOLM {
+		// List OSSM subscriptions.
+		// In OLM mode, check for subscription conflicts.
+		// In Sail Library mode, detect orphaned CIO-owned subscriptions.
+		if useOLM || useSailLibrary {
 			subscriptionList := operatorsv1alpha1.SubscriptionList{}
 			// r.client is being used here so we can scan all namespaces without relying/requiring them to be on the cache
 			if err := r.client.List(ctx, &subscriptionList, &client.ListOptions{
@@ -498,8 +518,16 @@ func (r *reconciler) getOperatorState(ctx context.Context, ingressNamespace, can
 				return state, fmt.Errorf("failed to get subscriptions: %w", err)
 			}
 			for _, subscription := range subscriptionList.Items {
-				if subscription.Spec != nil && ossmSubscriptions.Has(subscription.Spec.Package) {
+				if subscription.Spec == nil {
+					continue
+				}
+				if useOLM && ossmSubscriptions.Has(subscription.Spec.Package) {
 					state.ossmSubscriptions = append(state.ossmSubscriptions, subscription)
+				}
+				if useSailLibrary && subscription.Spec.Package == operatorcontroller.ServiceMeshOperatorSubscriptionPackage {
+					if _, ok := subscription.Annotations[operatorcontroller.IngressOperatorOwnedAnnotation]; ok {
+						state.orphanedOSSMSubscriptions = append(state.orphanedOSSMSubscriptions, subscription)
+					}
 				}
 			}
 		}
@@ -570,6 +598,7 @@ func computeOperatorDegradedCondition(state operatorState) configv1.ClusterOpera
 		computeIngressControllerDegradedCondition,
 		computeGatewayAPICRDsDegradedCondition,
 		computeGatewayAPIInstallDegradedCondition,
+		computeOrphanedSubscriptionCondition,
 	} {
 		degradedCondition = joinConditions(degradedCondition, fn(state))
 	}
@@ -697,6 +726,24 @@ func computeGatewayAPIInstallDegradedCondition(state operatorState) configv1.Clu
 		degradedCondition.Message = strings.Join(warnings, "\n")
 	}
 
+	return degradedCondition
+}
+
+func computeOrphanedSubscriptionCondition(state operatorState) configv1.ClusterOperatorStatusCondition {
+	degradedCondition := configv1.ClusterOperatorStatusCondition{}
+	if !state.useSailLibrary || len(state.orphanedOSSMSubscriptions) == 0 {
+		return degradedCondition
+	}
+	names := make([]string, 0, len(state.orphanedOSSMSubscriptions))
+	for _, sub := range state.orphanedOSSMSubscriptions {
+		names = append(names, fmt.Sprintf("%s/%s", sub.Namespace, sub.Name))
+	}
+	degradedCondition.Status = configv1.ConditionFalse
+	degradedCondition.Reason = "OrphanedOSSMSubscription"
+	degradedCondition.Message = fmt.Sprintf(
+		"Orphaned OSSM subscription(s) found after migration to Sail Library: %s.",
+		strings.Join(names, ", "),
+	)
 	return degradedCondition
 }
 
