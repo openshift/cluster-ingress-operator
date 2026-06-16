@@ -30,6 +30,7 @@ import (
 	operatorv1 "github.com/openshift/api/operator/v1"
 	iov1 "github.com/openshift/api/operatoringress/v1"
 	routev1 "github.com/openshift/api/route/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 
 	configclientset "github.com/openshift/client-go/config/clientset/versioned"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
@@ -224,6 +225,40 @@ func TestClusterOperatorStatusRelatedObjects(t *testing.T) {
 			Namespace: operatorNamespace,
 		},
 		{
+			Group:    rbacv1.GroupName,
+			Resource: "clusterroles",
+			Name:     "openshift-ingress-operator",
+		},
+		{
+			Group:    rbacv1.GroupName,
+			Resource: "clusterrolebindings",
+			Name:     "openshift-ingress-operator",
+		},
+		{
+			Group:     rbacv1.GroupName,
+			Resource:  "roles",
+			Name:      "ingress-operator",
+			Namespace: "openshift-ingress-operator",
+		},
+		{
+			Group:     rbacv1.GroupName,
+			Resource:  "rolebindings",
+			Name:      "ingress-operator",
+			Namespace: "openshift-ingress-operator",
+		},
+		{
+			Group:     rbacv1.GroupName,
+			Resource:  "roles",
+			Name:      "ingress-operator",
+			Namespace: "openshift-config",
+		},
+		{
+			Group:     rbacv1.GroupName,
+			Resource:  "rolebindings",
+			Name:      "ingress-operator",
+			Namespace: "openshift-config",
+		},
+		{
 			Resource: "namespaces",
 			Name:     "openshift-ingress",
 		},
@@ -255,6 +290,27 @@ func TestClusterOperatorStatusRelatedObjects(t *testing.T) {
 		Group:    "gateway.networking.k8s.io",
 		Resource: "gateways",
 	})
+
+	ingressConfig := &configv1.Ingress{}
+	if err := kclient.Get(context.TODO(), operatorcontroller.IngressClusterConfigName(), ingressConfig); err != nil {
+		t.Fatalf("Failed to get ingress config: %v", err)
+	}
+	addExpectedOnce := func(ref configv1.ObjectReference) {
+		for _, existing := range expected {
+			if existing.Group == ref.Group &&
+				existing.Resource == ref.Resource &&
+				existing.Namespace == ref.Namespace &&
+				existing.Name == ref.Name {
+				return
+			}
+		}
+		expected = append(expected, ref)
+	}
+	for _, cr := range ingressConfig.Status.ComponentRoutes {
+		for _, obj := range cr.RelatedObjects {
+			addExpectedOnce(obj)
+		}
+	}
 
 	coName := controller.IngressClusterOperatorName()
 	err := wait.PollImmediate(1*time.Second, 5*time.Minute, func() (bool, error) {
