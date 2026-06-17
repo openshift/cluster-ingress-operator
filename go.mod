@@ -44,6 +44,9 @@ require (
 	k8s.io/client-go v12.0.0+incompatible
 	k8s.io/utils v0.0.0-20250502105355-0f33e8f1c979
 	sigs.k8s.io/controller-runtime v0.20.4
+	// The `sigs.k8s.io/gateway-api` Go module version may differ from the Gateway API CRD manifests in
+	// pkg/manifests/assets/gateway-api/. To determine which CRD version the operator installs, check
+	// the manifest files, not `go.mod`.
 	sigs.k8s.io/gateway-api v1.2.1
 )
 
