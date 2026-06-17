@@ -292,6 +292,13 @@ func CanaryRouteName() types.NamespacedName {
 	}
 }
 
+func CanaryCertificateName() types.NamespacedName {
+	return types.NamespacedName{
+		Namespace: DefaultCanaryNamespace,
+		Name:      "canary-serving-cert",
+	}
+}
+
 func IngressClassName(ingressControllerName string) types.NamespacedName {
 	return types.NamespacedName{Name: "openshift-" + ingressControllerName}
 }
