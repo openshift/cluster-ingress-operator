@@ -96,9 +96,10 @@ const (
 
 	WorkloadPartitioningManagement = "target.workload.openshift.io/management"
 
-	RouterClientAuthPolicy = "ROUTER_MUTUAL_TLS_AUTH"
-	RouterClientAuthCA     = "ROUTER_MUTUAL_TLS_AUTH_CA"
-	RouterClientAuthFilter = "ROUTER_MUTUAL_TLS_AUTH_FILTER"
+	RouterClientAuthPolicy      = "ROUTER_MUTUAL_TLS_AUTH"
+	RouterClientAuthCA          = "ROUTER_MUTUAL_TLS_AUTH_CA"
+	RouterClientAuthFilter      = "ROUTER_MUTUAL_TLS_AUTH_FILTER"
+	RouterMutualTLSHeaderFilter = "ROUTER_MUTUAL_TLS_HEADER_FILTER"
 
 	RouterEnableCompression    = "ROUTER_ENABLE_COMPRESSION"
 	RouterCompressionMIMETypes = "ROUTER_COMPRESSION_MIME"
@@ -536,7 +537,8 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 		// Note, however, that dynamic servers consume memory even when not enabled.
 		// Use this analysis of the memory usage to assess the impact of different numbers of servers:
 		// https://gist.github.com/frobware/2b527ce3f040797909eff482a4776e0b
-		MaxDynamicServers string `json:"maxDynamicServers"`
+		MaxDynamicServers     string `json:"maxDynamicServers"`
+		MutualTLSHeaderFilter string `json:"mutualTLSHeaderFilter"`
 	}
 	if len(ci.Spec.UnsupportedConfigOverrides.Raw) > 0 {
 		if err := json.Unmarshal(ci.Spec.UnsupportedConfigOverrides.Raw, &unsupportedConfigOverrides); err != nil {
@@ -616,6 +618,13 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 		env = append(env, corev1.EnvVar{
 			Name:  RouterHAProxyContstats,
 			Value: "true",
+		})
+	}
+
+	if v, err := strconv.ParseBool(unsupportedConfigOverrides.MutualTLSHeaderFilter); err == nil && !v {
+		env = append(env, corev1.EnvVar{
+			Name:  RouterMutualTLSHeaderFilter,
+			Value: "false",
 		})
 	}
 
