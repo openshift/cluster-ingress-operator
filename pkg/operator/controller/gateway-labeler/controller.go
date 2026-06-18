@@ -5,6 +5,7 @@ import (
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gatewayapi/managementmode"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
@@ -32,7 +33,10 @@ var log = logf.Logger.WithName(controllerName)
 // The "istio.io/rev" label MUST be present on gateways in order for an
 // Istio control-plane deployed via the OSSM Operator to consider that
 // resource managed.
-func NewUnmanaged(mgr manager.Manager) (controller.Controller, error) {
+func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, error) {
+	if err := managementmode.ValidateManagementModeConfig(config.GatewayAPIManagementModeEnabled, config.ManagementModeReader); err != nil {
+		return nil, err
+	}
 	// Create a new cache for gateways so it can watch all namespaces.
 	// (Using the operator cache for gateways in all namespaces would cause
 	// it to cache other resources in all namespaces.)
@@ -46,6 +50,7 @@ func NewUnmanaged(mgr manager.Manager) (controller.Controller, error) {
 	mgr.Add(gatewaysCache)
 
 	reconciler := &reconciler{
+		config:   config,
 		cache:    gatewaysCache,
 		client:   mgr.GetClient(),
 		recorder: mgr.GetEventRecorderFor(controllerName),
@@ -171,8 +176,21 @@ func NewUnmanaged(mgr manager.Manager) (controller.Controller, error) {
 	return c, nil
 }
 
+// Config holds configuration for the gateway-labeler controller.
+type Config struct {
+	// GatewayAPIManagementModeEnabled indicates whether the GatewayAPIManagementMode
+	// feature gate is enabled. When false, management mode logic is not used.
+	GatewayAPIManagementModeEnabled bool
+	// ManagementModeReader provides Gateway API management mode state when
+	// GatewayAPIManagementModeEnabled is true. When the stack is not ready,
+	// Reconcile becomes a no-op so labels are not applied while Istio is stopped
+	// or during Unmanaged mode.
+	ManagementModeReader managementmode.Reader
+}
+
 // reconciler reconciles gateways, adding the istio.io/rev label.
 type reconciler struct {
+	config   Config
 	cache    cache.Cache
 	client   client.Client
 	recorder record.EventRecorder
@@ -181,6 +199,11 @@ type reconciler struct {
 // Reconcile expects request to refer to a gateway and adds the istio.io/rev
 // label to it.
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
+	// Do not label gateways while the Gateway controller stack is stopped.
+	if r.config.GatewayAPIManagementModeEnabled &&
+		!r.config.ManagementModeReader.Current().ShouldRunGatewayStack() {
+		return reconcile.Result{RequeueAfter: managementmode.StackNotReadyRequeueInterval}, nil
+	}
 	log.Info("Reconciling gateway", "request", request)
 
 	var gateway gatewayapiv1.Gateway

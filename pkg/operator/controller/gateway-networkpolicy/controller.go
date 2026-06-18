@@ -6,6 +6,7 @@ import (
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	"github.com/openshift/cluster-ingress-operator/pkg/manifests"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gatewayapi/managementmode"
 
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -28,9 +29,13 @@ const (
 
 var log = logf.Logger.WithName(controllerName)
 
-func NewUnmanaged(mgr manager.Manager) (controller.Controller, error) {
+func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, error) {
+	if err := managementmode.ValidateManagementModeConfig(config.GatewayAPIManagementModeEnabled, config.ManagementModeReader); err != nil {
+		return nil, err
+	}
 	operatorCache := mgr.GetCache()
 	reconciler := &reconciler{
+		config:       config,
 		client:       mgr.GetClient(),
 		cache:        operatorCache,
 		fieldIndexer: mgr.GetFieldIndexer(),
@@ -71,15 +76,35 @@ func enqueueRequestForOwningGateway() handler.EventHandler {
 		})
 }
 
+// Config holds configuration for the gateway-networkpolicy controller.
+type Config struct {
+	// GatewayAPIManagementModeEnabled indicates whether the GatewayAPIManagementMode
+	// feature gate is enabled. When false, management mode logic is not used.
+	GatewayAPIManagementModeEnabled bool
+	// ManagementModeReader provides Gateway API management mode state when
+	// GatewayAPIManagementModeEnabled is true. When the stack is not ready,
+	// Reconcile becomes a no-op so network policies are not reconciled while
+	// Istio is stopped or during Unmanaged mode.
+	ManagementModeReader managementmode.Reader
+}
+
 // reconciler reconciles gateways.
 type reconciler struct {
+	config       Config
 	client       client.Client
 	cache        cache.Cache
 	recorder     record.EventRecorder
 	fieldIndexer client.FieldIndexer
 }
 
+// Reconcile expects request to refer to a Gateway and ensures its allow
+// NetworkPolicy exists in the operand namespace.
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
+	// Do not reconcile network policies while the Gateway controller stack is stopped.
+	if r.config.GatewayAPIManagementModeEnabled &&
+		!r.config.ManagementModeReader.Current().ShouldRunGatewayStack() {
+		return reconcile.Result{RequeueAfter: managementmode.StackNotReadyRequeueInterval}, nil
+	}
 	log.Info("Reconciling gateway", "request", request)
 
 	gateway := gatewayapiv1.Gateway{}

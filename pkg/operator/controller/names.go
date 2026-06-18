@@ -110,6 +110,14 @@ func IngressClusterConfigName() types.NamespacedName {
 	}
 }
 
+// IngressOperatorConfigClusterName returns the namespaced name of the
+// operator.openshift.io/v1alpha1 Ingress cluster singleton.
+func IngressOperatorConfigClusterName() types.NamespacedName {
+	return types.NamespacedName{
+		Name: "cluster",
+	}
+}
+
 // InfrastructureClusterConfigName returns the namespaced name of the infrastructure.config.openshift.io
 // resource of the cluster.
 func InfrastructureClusterConfigName() types.NamespacedName {

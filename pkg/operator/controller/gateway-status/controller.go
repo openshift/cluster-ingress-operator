@@ -24,6 +24,7 @@ import (
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gatewayapi/managementmode"
 	"github.com/openshift/cluster-ingress-operator/pkg/resources/status"
 )
 
@@ -37,8 +38,21 @@ const (
 
 var logger = logf.Logger.WithName(controllerName)
 
+// Config holds configuration for the gateway-status controller.
+type Config struct {
+	// GatewayAPIManagementModeEnabled indicates whether the GatewayAPIManagementMode
+	// feature gate is enabled. When false, management mode logic is not used.
+	GatewayAPIManagementModeEnabled bool
+	// ManagementModeReader provides Gateway API management mode state when
+	// GatewayAPIManagementModeEnabled is true. When the stack is not ready,
+	// Reconcile becomes a no-op so status conditions are not updated while the
+	// operator is idle.
+	ManagementModeReader managementmode.Reader
+}
+
 // reconciler reconciles gateways, adding missing conditions to the resource
 type reconciler struct {
+	config Config
 	cache  cache.Cache
 	client client.Client
 	// eventreader must be a direct API call because we want to get the latest events
@@ -53,7 +67,10 @@ type reconciler struct {
 // Services, DNSRecords and Gateways and when managed, adds the proper status
 // conditions to these Gateways.
 // This is an unmanaged controller, which means that the manager does not start it.
-func NewUnmanaged(mgr manager.Manager) (controller.Controller, error) {
+func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, error) {
+	if err := managementmode.ValidateManagementModeConfig(config.GatewayAPIManagementModeEnabled, config.ManagementModeReader); err != nil {
+		return nil, err
+	}
 	// Create a dedicated cache for this controller to watch resources only in the
 	// "openshift-ingress" namespace. Using the operator's main cache would cause it
 	// to watch Gateways, Services, and DNSRecords in all namespaces, which would
@@ -91,6 +108,7 @@ func NewUnmanaged(mgr manager.Manager) (controller.Controller, error) {
 	}
 
 	reconciler := &reconciler{
+		config:      config,
 		cache:       gatewaysCache,
 		client:      mgr.GetClient(),
 		eventreader: mgr.GetAPIReader(),
@@ -142,6 +160,11 @@ func normalizeHostname(hostname string) string {
 // Reconcile expects request to refer to a gateway and adds Openshift DNS and LoadBalancer
 // conditions to it
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
+	if r.config.GatewayAPIManagementModeEnabled &&
+		!r.config.ManagementModeReader.Current().ShouldRunGatewayStack() {
+		// Do not update Gateway status while the Gateway controller stack is stopped.
+		return reconcile.Result{RequeueAfter: managementmode.StackNotReadyRequeueInterval}, nil
+	}
 	log := logger.WithValues("name", request.Name, "namespace", request.Namespace)
 	log.Info("Reconciling gateway")
 

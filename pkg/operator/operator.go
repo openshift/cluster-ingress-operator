@@ -40,7 +40,9 @@ import (
 	gatewayservicednscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gateway-service-dns"
 	gatewaystatuscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gateway-status"
 	gatewayapicontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gatewayapi"
+	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gatewayapi/managementmode"
 	gatewayclasscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gatewayclass"
+	ingressconfigcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress-config"
 	ingress "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 	ingresscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingress"
 	ingressclasscontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/ingressclass"
@@ -137,6 +139,7 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	}
 	azureWorkloadIdentityEnabled := featureGates.Enabled(features.FeatureGateAzureWorkloadIdentity)
 	gatewayAPIWithoutOLMEnabled := featureGates.Enabled(features.FeatureGateGatewayAPIWithoutOLM)
+	gatewayAPIManagementModeEnabled := featureGates.Enabled(features.FeatureGateGatewayAPIManagementMode)
 	ingressControllerDCMEnabled := featureGates.Enabled(features.FeatureGateIngressControllerDynamicConfigurationManager)
 
 	cv, err := configClient.ConfigV1().ClusterVersions().Get(ctx, "version", metav1.GetOptions{})
@@ -149,6 +152,13 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	}
 	marketplaceEnabled := enabledCapabilities.Has(configv1.ClusterVersionCapabilityMarketplace)
 	olmEnabled := enabledCapabilities.Has(configv1.ClusterVersionCapabilityOperatorLifecycleManager)
+
+	ibmCloudManaged := false
+	if infra, err := configClient.ConfigV1().Infrastructures().Get(ctx, "cluster", metav1.GetOptions{}); err == nil {
+		ibmCloudManaged = infra.Status.ControlPlaneTopology == configv1.ExternalTopologyMode
+	}
+
+	modeStore := managementmode.NewStore(managementmode.DefaultManagedStackReadyState(gatewayAPIManagementModeEnabled))
 
 	// Set up an operator manager for the operator namespace.
 	mgr, err := manager.New(kubeConfig, manager.Options{
@@ -222,6 +232,8 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		OperatorLifecycleManagerEnabled: olmEnabled,
 		GatewayAPIWithoutOLMEnabled:     gatewayAPIWithoutOLMEnabled,
 		GatewayAPIOperatorVersion:       config.GatewayAPIOperatorVersion,
+		GatewayAPIManagementModeEnabled: gatewayAPIManagementModeEnabled,
+		ManagementModeReader:            modeStore,
 	}); err != nil {
 		return nil, fmt.Errorf("failed to create status controller: %v", err)
 	}
@@ -318,8 +330,10 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		GatewayAPIOperatorChannel:   config.GatewayAPIOperatorChannel,
 		GatewayAPIOperatorVersion:   config.GatewayAPIOperatorVersion,
 		GatewayAPIWithoutOLMEnabled: gatewayAPIWithoutOLMEnabled,
-		IstioVersion:                config.IstioVersion,
-		Context:                     ctx,
+		IstioVersion:                    config.IstioVersion,
+		Context:                         ctx,
+		GatewayAPIManagementModeEnabled: gatewayAPIManagementModeEnabled,
+		ManagementModeReader:            modeStore,
 	}
 
 	gatewayClassController, err := gatewayclasscontroller.NewUnmanaged(mgr, gatewayclassControllerConfig)
@@ -331,27 +345,52 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 	// the manager; the gatewayapi controller starts it after it creates the
 	// Gateway API CRDs.
 	gatewayServiceDNSController, err := gatewayservicednscontroller.NewUnmanaged(mgr, gatewayservicednscontroller.Config{
-		OperandNamespace: operatorcontroller.DefaultOperandNamespace,
+		OperandNamespace:                operatorcontroller.DefaultOperandNamespace,
+		GatewayAPIManagementModeEnabled: gatewayAPIManagementModeEnabled,
+		ManagementModeReader:            modeStore,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gateway-service-dns controller: %v", err)
 	}
 
 	// Set up the gateway-labeler controller.
-	gatewayLabelController, err := gatewaylabelercontroller.NewUnmanaged(mgr)
+	gatewayLabelController, err := gatewaylabelercontroller.NewUnmanaged(mgr, gatewaylabelercontroller.Config{
+		GatewayAPIManagementModeEnabled: gatewayAPIManagementModeEnabled,
+		ManagementModeReader:            modeStore,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gateway-labeler controller: %w", err)
 	}
 
 	// Set up the gateway-status controller.
-	gatewayStatusController, err := gatewaystatuscontroller.NewUnmanaged(mgr)
+	gatewayStatusController, err := gatewaystatuscontroller.NewUnmanaged(mgr, gatewaystatuscontroller.Config{
+		GatewayAPIManagementModeEnabled: gatewayAPIManagementModeEnabled,
+		ManagementModeReader:            modeStore,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gateway-status controller: %w", err)
 	}
 
-	gatewayNetworkPolicyController, err := gatewaynetworkpolicycontroller.NewUnmanaged(mgr)
+	gatewayNetworkPolicyController, err := gatewaynetworkpolicycontroller.NewUnmanaged(mgr, gatewaynetworkpolicycontroller.Config{
+		GatewayAPIManagementModeEnabled: gatewayAPIManagementModeEnabled,
+		ManagementModeReader:            modeStore,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gateway-networkpolicy controller: %w", err)
+	}
+
+	// Set up the ingress-config controller before gatewayapi so management mode state is published first.
+	if gatewayAPIManagementModeEnabled {
+		if _, err := ingressconfigcontroller.New(mgr, ingressconfigcontroller.Config{
+			GatewayAPIManagementModeEnabled: gatewayAPIManagementModeEnabled,
+			GatewayAPIWithoutOLMEnabled:     gatewayAPIWithoutOLMEnabled,
+			IBMCloudManaged:                 ibmCloudManaged,
+			StateStore:                      modeStore,
+			OperatorNamespace:               config.Namespace,
+			OperandNamespace:                operatorcontroller.DefaultOperandNamespace,
+		}, events.NewLoggingEventRecorder(ingressconfigcontroller.ControllerName, clock.RealClock{})); err != nil {
+			return nil, fmt.Errorf("failed to create ingress-config controller: %w", err)
+		}
 	}
 
 	// Set up the gatewayapi controller.
@@ -359,6 +398,8 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 		MarketplaceEnabled:              marketplaceEnabled,
 		OperatorLifecycleManagerEnabled: olmEnabled,
 		GatewayAPIWithoutOLMEnabled:     gatewayAPIWithoutOLMEnabled,
+		GatewayAPIManagementModeEnabled: gatewayAPIManagementModeEnabled,
+		ManagementModeReader:            modeStore,
 		DependentControllers: []controller.Controller{
 			gatewayClassController,
 			gatewayServiceDNSController,

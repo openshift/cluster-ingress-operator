@@ -8,10 +8,12 @@ import (
 
 	logf "github.com/openshift/cluster-ingress-operator/pkg/log"
 	operatorcontroller "github.com/openshift/cluster-ingress-operator/pkg/operator/controller"
+	"github.com/openshift/cluster-ingress-operator/pkg/operator/controller/gatewayapi/managementmode"
 
 	"k8s.io/client-go/tools/record"
 
 	configv1 "github.com/openshift/api/config/v1"
+	operatorv1alpha1 "github.com/openshift/api/operator/v1alpha1"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -38,6 +40,9 @@ var log = logf.Logger.WithName(controllerName)
 // New creates and returns a controller that creates Gateway API CRDs when the
 // appropriate featuregate is enabled.
 func New(mgr manager.Manager, config Config) (controller.Controller, error) {
+	if err := managementmode.ValidateManagementModeConfig(config.GatewayAPIManagementModeEnabled, config.ManagementModeReader); err != nil {
+		return nil, err
+	}
 	operatorCache := mgr.GetCache()
 	reconciler := &reconciler{
 		client:       mgr.GetClient(),
@@ -78,6 +83,18 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 		return nil, err
 	}
 
+	ingressSingletonPredicate := predicate.NewPredicateFuncs(func(o client.Object) bool {
+		return o.GetName() == operatorcontroller.IngressOperatorConfigClusterName().Name
+	})
+	toFeatureGateFromIngress := func(ctx context.Context, _ client.Object) []reconcile.Request {
+		return []reconcile.Request{{NamespacedName: operatorcontroller.FeatureGateClusterConfigName()}}
+	}
+	if config.GatewayAPIManagementModeEnabled {
+		if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorv1alpha1.Ingress{}, handler.EnqueueRequestsFromMapFunc(toFeatureGateFromIngress), ingressSingletonPredicate)); err != nil {
+			return nil, err
+		}
+	}
+
 	// Index unmanaged Gateway API CRDs to enable efficient filtering
 	// during list operations.
 	if err := mgr.GetFieldIndexer().IndexField(
@@ -111,6 +128,13 @@ type Config struct {
 	// feature gate is enabled, allowing Sail Library-based installation.
 	GatewayAPIWithoutOLMEnabled bool
 
+	// GatewayAPIManagementModeEnabled indicates whether the GatewayAPIManagementMode
+	// feature gate is enabled. When false, management mode logic is not used.
+	GatewayAPIManagementModeEnabled bool
+	// ManagementModeReader provides Gateway API management mode state when
+	// GatewayAPIManagementModeEnabled is true.
+	ManagementModeReader managementmode.Reader
+
 	// DependentControllers is a list of controllers that watch Gateway API
 	// resources.  The gatewayapi controller starts these controllers once
 	// the Gateway API CRDs have been created.
@@ -134,18 +158,34 @@ type reconciler struct {
 func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	log.Info("reconciling", "request", request)
 
-	if err := r.ensureGatewayAPICRDs(ctx); err != nil {
-		return reconcile.Result{}, err
+	shouldManageCRDs := true
+	shouldRunGatewayStack := true
+	if r.config.GatewayAPIManagementModeEnabled {
+		modeState := r.config.ManagementModeReader.Current()
+		shouldManageCRDs = modeState.ShouldManageCRDs()
+		shouldRunGatewayStack = modeState.ShouldRunGatewayStack()
+	}
+
+	if shouldManageCRDs {
+		if err := r.ensureGatewayAPICRDs(ctx); err != nil {
+			return reconcile.Result{}, err
+		}
 	}
 
 	if err := r.ensureGatewayAPIRBAC(ctx); err != nil {
 		return reconcile.Result{}, err
 	}
 
-	if crdNames, err := r.listUnmanagedGatewayAPICRDs(ctx); err != nil {
-		return reconcile.Result{}, fmt.Errorf("failed to list unmanaged gateway CRDs: %w", err)
-	} else if err = r.setUnmanagedGatewayAPICRDNamesStatus(ctx, crdNames); err != nil {
-		return reconcile.Result{}, fmt.Errorf("failed to update the ingress cluster operator status: %w", err)
+	if shouldManageCRDs {
+		if crdNames, err := r.listUnmanagedGatewayAPICRDs(ctx); err != nil {
+			return reconcile.Result{}, fmt.Errorf("failed to list unmanaged gateway CRDs: %w", err)
+		} else if err = r.setUnmanagedGatewayAPICRDNamesStatus(ctx, crdNames); err != nil {
+			return reconcile.Result{}, fmt.Errorf("failed to update the ingress cluster operator status: %w", err)
+		}
+	} else if r.config.GatewayAPIManagementModeEnabled {
+		if err := r.setUnmanagedGatewayAPICRDNamesStatus(ctx, nil); err != nil {
+			return reconcile.Result{}, fmt.Errorf("failed to clear unmanaged gateway CRD status: %w", err)
+		}
 	}
 
 	// The subscriptions resource only exists if the
@@ -158,6 +198,10 @@ func (r *reconciler) Reconcile(ctx context.Context, request reconcile.Request) (
 	useSailLibrary := r.config.GatewayAPIWithoutOLMEnabled
 	if !useOLM && !useSailLibrary {
 		return reconcile.Result{}, nil
+	}
+
+	if r.config.GatewayAPIManagementModeEnabled && !shouldRunGatewayStack {
+		return reconcile.Result{RequeueAfter: managementmode.StackNotReadyRequeueInterval}, nil
 	}
 
 	if err := r.ensureDependentControllers(ctx); err != nil {
