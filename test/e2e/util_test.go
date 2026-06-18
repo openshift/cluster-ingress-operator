@@ -681,6 +681,39 @@ func updateAndVerifyInfrastructureConfigWithRetry(t *testing.T, name types.Names
 	})
 }
 
+func isDNSManagementSupported(t *testing.T) bool {
+	t.Helper()
+	dnsConfig := &configv1.DNS{}
+	dnsManaged := false
+	name := types.NamespacedName{
+		Name: "cluster",
+	}
+	err := wait.PollUntilContextTimeout(context.TODO(), 1*time.Second, timeout, false, func(ctx context.Context) (done bool, err error) {
+		if err := kclient.Get(ctx, name, dnsConfig); err != nil {
+			t.Logf("error getting dns config %v: %v, retrying...", name, err)
+			return false, nil
+		}
+
+		// On the majority of platforms, the *Zone not being null is enough
+		// On Azure, a platform can be null and be empty so we need to validate (this means unmanaged as well)
+		// On AWS, spec.ID is optional as AWS may use tags
+
+		managedPrivateZone := dnsConfig.Spec.PrivateZone != nil &&
+			(dnsConfig.Spec.PrivateZone.ID != "" || len(dnsConfig.Spec.PrivateZone.Tags) > 0)
+
+		managedPublicZone := dnsConfig.Spec.PublicZone != nil &&
+			(dnsConfig.Spec.PublicZone.ID != "" || len(dnsConfig.Spec.PublicZone.Tags) > 0)
+
+		dnsManaged = managedPrivateZone || managedPublicZone
+
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to define if Managed DNS is supported: %s", err)
+	}
+	return dnsManaged
+}
+
 // waitForCCMAvailableAndUpdated waits for Cloud Controller Manager Deployment
 // to be reported as ready.
 // If oldConfigurationHash is not empty it will additionally verify that the configuration hash
