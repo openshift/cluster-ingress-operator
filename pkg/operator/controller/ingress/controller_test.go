@@ -1086,7 +1086,7 @@ func Test_tlsProfileSpecForSecurityProfile(t *testing.T) {
 				},
 			}
 			tlsProfileSpec := tlsProfileSpecForSecurityProfile(ic.Spec.TLSSecurityProfile)
-			err := validateTLSSecurityProfile(ic)
+			err := validateTLSSecurityProfile(ic, &configv1.APIServer{})
 			if tc.valid && err != nil {
 				t.Fatalf("unexpected error: %v\nprofile:\n%s", err, util.ToYaml(tlsProfileSpec))
 			}
@@ -1097,6 +1097,98 @@ func Test_tlsProfileSpecForSecurityProfile(t *testing.T) {
 				t.Fatalf("expected profile:\n%s\ngot profile:\n%s", util.ToYaml(tc.expectedSpec), util.ToYaml(tlsProfileSpec))
 			}
 			t.Logf("got expected values; profile:\n%s\nerror value: %v", util.ToYaml(tlsProfileSpec), err)
+		})
+	}
+}
+
+// Test_validateTLSSecurityProfileFIPS verifies that validateTLSSecurityProfile
+// rejects custom profiles whose only TLS 1.3 cipher suites are non-FIPS when
+// the cluster is running in FIPS mode (OCPBUGS-3917).
+func Test_validateTLSSecurityProfileFIPS(t *testing.T) {
+	// Simulate FIPS mode by overriding the package-level isFIPSEnabled var.
+	origFIPS := isFIPSEnabled
+	isFIPSEnabled = true
+	defer func() { isFIPSEnabled = origFIPS }()
+
+	testCases := []struct {
+		description    string
+		ciphers        []string
+		expectError    bool
+		inheritFromAPI bool
+	}{
+		{
+			description: "FIPS mode: profile with only TLS_CHACHA20_POLY1305_SHA256 as TLS 1.3 cipher should be rejected",
+			ciphers: []string{
+				"ECDHE-RSA-AES128-GCM-SHA256",
+				"TLS_CHACHA20_POLY1305_SHA256",
+			},
+			expectError: true,
+		},
+		{
+			description: "FIPS mode: profile with FIPS-compliant TLS 1.3 cipher alongside CHACHA20 should be accepted",
+			ciphers: []string{
+				"ECDHE-RSA-AES128-GCM-SHA256",
+				"TLS_AES_128_GCM_SHA256",
+				"TLS_CHACHA20_POLY1305_SHA256",
+			},
+			expectError: false,
+		},
+		{
+			description: "FIPS mode: profile with only FIPS-compliant TLS 1.3 ciphers should be accepted",
+			ciphers: []string{
+				"ECDHE-RSA-AES128-GCM-SHA256",
+				"TLS_AES_128_GCM_SHA256",
+				"TLS_AES_256_GCM_SHA384",
+			},
+			expectError: false,
+		},
+		{
+			description: "FIPS mode: inherited custom profile from APIServer with only TLS_CHACHA20_POLY1305_SHA256 as TLS 1.3 cipher should be rejected",
+			ciphers: []string{
+				"ECDHE-RSA-AES128-GCM-SHA256",
+				"TLS_CHACHA20_POLY1305_SHA256",
+			},
+			expectError:    true,
+			inheritFromAPI: true,
+		},
+		{
+			description: "FIPS mode: profile with only TLS 1.2 ciphers (no TLS 1.3 at all) should be accepted",
+			ciphers: []string{
+				"ECDHE-RSA-AES128-GCM-SHA256",
+				"ECDHE-RSA-AES256-GCM-SHA384",
+			},
+			expectError: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			ic := &operatorv1.IngressController{}
+			apiConfig := &configv1.APIServer{}
+
+			profile := &configv1.TLSSecurityProfile{
+				Type: configv1.TLSProfileCustomType,
+				Custom: &configv1.CustomTLSProfile{
+					TLSProfileSpec: configv1.TLSProfileSpec{
+						Ciphers:       tc.ciphers,
+						MinTLSVersion: configv1.VersionTLS12,
+					},
+				},
+			}
+
+			if tc.inheritFromAPI {
+				apiConfig.Spec.TLSSecurityProfile = profile
+			} else {
+				ic.Spec.TLSSecurityProfile = profile
+			}
+
+			err := validateTLSSecurityProfile(ic, apiConfig)
+			if tc.expectError && err == nil {
+				t.Error("expected error for FIPS-incompatible profile, got nil")
+			}
+			if !tc.expectError && err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
 		})
 	}
 }
