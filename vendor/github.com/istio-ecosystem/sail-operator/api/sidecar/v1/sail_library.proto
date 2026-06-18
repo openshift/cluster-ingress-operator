@@ -1,0 +1,133 @@
+// Copyright Istio Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package sail.sidecar.v1;
+
+option go_package = "github.com/istio-ecosystem/sail-operator/api/sidecar/v1;sidecarv1";
+
+// SailLibrary exposes the Sail install library over gRPC.
+// A single bidirectional Session stream carries commands from the
+// client (CIO) and events from the server (sidecar), including
+// OLM CRD ownership callbacks.
+service SailLibrary {
+  // Session is a long-lived bidirectional stream. The client sends
+  // commands (Apply, Uninstall, Enqueue) and receives events
+  // (StatusUpdate, OverwriteOLMCRDRequest). The OLM callback is
+  // handled inline: the server sends a request, the client responds.
+  rpc Session(stream ClientMessage) returns (stream ServerMessage);
+
+  // GetStatus returns the current installation status without
+  // requiring an active Session stream.
+  rpc GetStatus(GetStatusRequest) returns (StatusResponse);
+}
+
+// ClientMessage wraps all messages sent from CIO to the sidecar.
+message ClientMessage {
+  oneof msg {
+    ApplyRequest apply = 1;
+    UninstallRequest uninstall = 2;
+    EnqueueRequest enqueue = 3;
+    OverwriteOLMCRDResponse olm_crd_response = 4;
+    StopRequest stop = 5;
+  }
+}
+
+// ServerMessage wraps all messages sent from the sidecar to CIO.
+message ServerMessage {
+  oneof msg {
+    StatusUpdate status_update = 1;
+    OverwriteOLMCRDRequest olm_crd_request = 2;
+    ApplyResponse apply_response = 3;
+    UninstallResponse uninstall_response = 4;
+  }
+}
+
+// ApplyRequest sets the desired Istio installation state.
+// values_json is the Helm values serialized as JSON; the sidecar
+// deserializes it into the typed Values struct.
+message ApplyRequest {
+  string namespace = 1;
+  string version = 2;
+  string revision = 3;
+  bytes values_json = 4;
+  bool manage_crds = 5;
+  bool include_all_crds = 6;
+}
+
+// ApplyResponse reports the result of an Apply. An empty error
+// string means success.
+message ApplyResponse {
+  string error = 1;
+}
+
+// UninstallRequest removes the istiod Helm release.
+message UninstallRequest {
+  string namespace = 1;
+  string revision = 2;
+}
+
+// UninstallResponse reports the result of an Uninstall.
+message UninstallResponse {
+  string error = 1;
+}
+
+// EnqueueRequest triggers reconciliation without changing desired state.
+message EnqueueRequest {}
+
+// StopRequest asks the sidecar to shut down the library.
+message StopRequest {}
+
+// GetStatusRequest is the request for the GetStatus unary RPC.
+message GetStatusRequest {}
+
+// StatusResponse represents the current installation status.
+message StatusResponse {
+  uint64 generation = 1;
+  string crd_state = 2;
+  string crd_message = 3;
+  repeated CRDInfo crds = 4;
+  bool installed = 5;
+  string version = 6;
+  string error = 7;
+}
+
+// StatusUpdate wraps a StatusResponse for streaming delivery.
+message StatusUpdate {
+  StatusResponse status = 1;
+}
+
+// CRDInfo describes the state of a single managed CRD.
+message CRDInfo {
+  string name = 1;
+  bool managed = 2;
+  bool ready = 3;
+}
+
+// OverwriteOLMCRDRequest is sent by the sidecar when the library
+// encounters a CRD with OLM ownership labels. The client must
+// respond with OverwriteOLMCRDResponse to unblock the reconciliation.
+message OverwriteOLMCRDRequest {
+  string request_id = 1;
+  string crd_name = 2;
+  map<string, string> crd_labels = 3;
+}
+
+// OverwriteOLMCRDResponse is the client's answer to an
+// OverwriteOLMCRDRequest.
+message OverwriteOLMCRDResponse {
+  string request_id = 1;
+  bool overwrite = 2;
+}
