@@ -6,14 +6,18 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-logr/logr"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
 	"github.com/istio-ecosystem/sail-operator/pkg/config"
 	"github.com/istio-ecosystem/sail-operator/pkg/install"
+	"github.com/istio-ecosystem/sail-operator/pkg/istiovalues"
 
+	configv1 "github.com/openshift/api/config/v1"
 	testutil "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/test/util"
 
 	operatorsv1alpha1 "github.com/operator-framework/api/pkg/operators/v1alpha1"
@@ -598,4 +602,57 @@ func TestSailLibraryImageDigestsAreDownstream(t *testing.T) {
 				"ProxyImage %q is not from registry.redhat.io", images.ProxyImage)
 		})
 	}
+}
+
+// TestSailLibraryCipherForTLS verifies that the sail library is properly parsing the TLS
+// options, removing any cipher suite from "modern" profiles and adding properly ECDH curves.
+// Because Envoy does not support passing a CipherSuite when TLS is v1.3, we need to
+// guarantee that the ApplyTLSConfig is properly patched.
+// This is implemented on the commit https://github.com/openshift-service-mesh/sail-operator/commit/3666a74d8bfae662bcb32a948b6c02a6dd53461b
+// and we have added it to the vendored library while it is not bumped to v3.4.1 or up
+func TestSailLibraryCipherForTLS(t *testing.T) {
+	istioVersion := "1.29.0"
+	t.Run("intermediate profile must return ciphersuite and TLS 1.2", func(t *testing.T) {
+		tlsconfig := expectedTLSConfig(t, configv1.TLSProfileIntermediateType, configv1.TLSAdherencePolicyStrictAllComponents)
+		istioTLS := config.NewTLSConfigForOpenShift(
+			tlsconfig.TLSProfileSpec,
+			tlsconfig.TLSAdherencePolicy,
+			logr.Discard(),
+		)
+		values := &sailv1.Values{}
+		istiovalues.ApplyTLSConfig(istioTLS, istioVersion, values)
+		require.NotNil(t, values.MeshConfig)
+		require.NotNil(t, values.MeshConfig.TlsDefaults)
+		assert.Equal(t, sailv1.MeshConfigTLSConfigTLSProtocolTlsv12, values.MeshConfig.TlsDefaults.MinProtocolVersion)
+		assert.Greater(t, len(values.MeshConfig.TlsDefaults.CipherSuites), 0)
+	})
+
+	t.Run("modern profile must return a null ciphersuite and TLS 1.3", func(t *testing.T) {
+		tlsconfig := expectedTLSConfig(t, configv1.TLSProfileModernType, configv1.TLSAdherencePolicyStrictAllComponents)
+		istioTLS := config.NewTLSConfigForOpenShift(
+			tlsconfig.TLSProfileSpec,
+			tlsconfig.TLSAdherencePolicy,
+			logr.Discard(),
+		)
+		values := &sailv1.Values{}
+		istiovalues.ApplyTLSConfig(istioTLS, istioVersion, values)
+		require.NotNil(t, values.MeshConfig)
+		require.NotNil(t, values.MeshConfig.TlsDefaults)
+		assert.Equal(t, sailv1.MeshConfigTLSConfigTLSProtocolTlsv13, values.MeshConfig.TlsDefaults.MinProtocolVersion)
+		assert.Greater(t, len(values.MeshConfig.TlsDefaults.EcdhCurves), 0)
+		assert.Nil(t, values.MeshConfig.TlsDefaults.CipherSuites)
+	})
+
+}
+
+func expectedTLSConfig(t *testing.T, profile configv1.TLSProfileType, adherence configv1.TLSAdherencePolicy) *config.OpenShiftTLS {
+	t.Helper()
+	if profile == "" {
+		return &config.OpenShiftTLS{}
+	}
+	config, err := getTLSOptions(&configv1.TLSSecurityProfile{
+		Type: profile,
+	}, adherence)
+	require.NoError(t, err, "getting the TLSOptions should never return error on unit tests")
+	return config
 }

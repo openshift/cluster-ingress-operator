@@ -93,8 +93,9 @@ const (
 )
 
 type extraIstioConfig struct {
-	proxyConfig *configv1.Proxy
-	infraConfig *configv1.Infrastructure
+	proxyConfig     *configv1.Proxy
+	infraConfig     *configv1.Infrastructure
+	apiserverConfig *configv1.APIServer
 }
 
 var log = logf.Logger.WithName(controllerName)
@@ -240,6 +241,15 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 	if err := c.Watch(source.Kind[client.Object](operatorCache, &configv1.Infrastructure{}, reconciler.enqueueRequestForSomeGatewayClass())); err != nil {
 		return nil, err
 	}
+
+	// Watch the cluster TLSProfile config for changes
+	isClusterAPIServerConfig := predicate.NewPredicateFuncs(func(o client.Object) bool {
+		return o.GetName() == "cluster"
+	})
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &configv1.APIServer{}, reconciler.enqueueRequestForSomeGatewayClass(), isClusterAPIServerConfig)); err != nil {
+		return nil, err
+	}
+
 	// Watch the istiod network policy.
 	isIstiodNetworkPolicy := predicate.NewPredicateFuncs(func(o client.Object) bool {
 		istiodNetworkPolicyName := operatorcontroller.IstiodNetworkPolicyName()
