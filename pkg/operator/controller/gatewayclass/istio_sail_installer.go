@@ -7,7 +7,9 @@ import (
 	"strings"
 
 	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
+	"github.com/istio-ecosystem/sail-operator/pkg/config"
 	"github.com/istio-ecosystem/sail-operator/pkg/install"
+	openshifttls "github.com/openshift/controller-runtime-common/pkg/tls"
 	v1 "k8s.io/api/core/v1"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
@@ -134,10 +136,16 @@ func (r *reconciler) ensureIstio(ctx context.Context, istioVersion string, gatew
 		return fmt.Errorf("error verifying cluster proxy configuration: %w", err)
 	}
 
+	var apiserverConfig configv1.APIServer
+	if err := r.cache.Get(ctx, types.NamespacedName{Name: "cluster"}, &apiserverConfig); err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("error verifying apiserver configuration: %w", err)
+	}
+
 	// Build options from current state
 	opts, err := r.buildInstallerOptions(enableInferenceExtension, istioVersion, gatewayclasses, &extraIstioConfig{
-		proxyConfig: &proxyConfig,
-		infraConfig: infraConfig,
+		proxyConfig:     &proxyConfig,
+		infraConfig:     infraConfig,
+		apiserverConfig: &apiserverConfig,
 	})
 	if err != nil {
 		return err
@@ -171,6 +179,24 @@ func (r *reconciler) buildInstallerOptions(enableInferenceExtension bool, istioV
 		return install.Options{}, fmt.Errorf("failed to merge Istio values: %w", err)
 	}
 
+	tlsOptions := &config.OpenShiftTLS{}
+	if extraConfig.apiserverConfig != nil {
+		logTLS := log.WithName("tlsconfig")
+
+		tlsspec, err := openshifttls.GetTLSProfileSpec(extraConfig.apiserverConfig.Spec.TLSSecurityProfile)
+		if err != nil {
+			return install.Options{}, fmt.Errorf("failed to get TLS Profile spec: %w", err)
+		}
+
+		tlsconfig, _ := openshifttls.NewTLSConfigFromProfile(tlsspec)
+
+		tlsOptions.TLSAdherencePolicy = extraConfig.apiserverConfig.Spec.TLSAdherence
+		tlsOptions.TLSProfileSpec = tlsspec
+		tlsOptions.TLSConfigFunc = tlsconfig
+
+		logTLS.Info("configuring tls with values", "tls", tlsOptions.TLSProfileSpec)
+	}
+
 	return install.Options{
 		Namespace:      r.config.OperandNamespace,
 		Revision:       controller.IstioName("").Name,
@@ -178,6 +204,7 @@ func (r *reconciler) buildInstallerOptions(enableInferenceExtension bool, istioV
 		Version:        istioVersion,
 		ManageCRDs:     true,
 		IncludeAllCRDs: true,
+		OpenShiftTLS:   tlsOptions,
 	}, nil
 }
 

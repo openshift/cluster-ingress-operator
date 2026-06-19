@@ -93,8 +93,9 @@ const (
 )
 
 type extraIstioConfig struct {
-	proxyConfig *configv1.Proxy
-	infraConfig *configv1.Infrastructure
+	proxyConfig     *configv1.Proxy
+	infraConfig     *configv1.Infrastructure
+	apiserverConfig *configv1.APIServer
 }
 
 var log = logf.Logger.WithName(controllerName)
@@ -183,9 +184,7 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 		// Start the Sail Library's background reconciliation loop (runs in a goroutine).
 		// Returns a notification channel that signals when library reconciliation completes,
 		// allowing us to update GatewayClass status conditions accordingly.
-		installer, err := install.New(mgr.GetConfig(), resources.FS, chart.CRDsFS,
-			install.WithCRDOwnershipLabel("ingress.operator.openshift.io/owned", "true"),
-		)
+		installer, err := install.New(mgr.GetConfig(), resources.FS, chart.CRDsFS)
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize sail-operator installation library: %w", err)
 		}
@@ -239,6 +238,15 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 	if err := c.Watch(source.Kind[client.Object](operatorCache, &configv1.Infrastructure{}, reconciler.enqueueRequestForSomeGatewayClass())); err != nil {
 		return nil, err
 	}
+
+	// Watch the cluster TLSProfile config for changes
+	isClusterAPIServerConfig := predicate.NewPredicateFuncs(func(o client.Object) bool {
+		return o.GetName() == "cluster"
+	})
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &configv1.APIServer{}, reconciler.enqueueRequestForSomeGatewayClass(), isClusterAPIServerConfig)); err != nil {
+		return nil, err
+	}
+
 	// Watch the istiod network policy.
 	isIstiodNetworkPolicy := predicate.NewPredicateFuncs(func(o client.Object) bool {
 		istiodNetworkPolicyName := operatorcontroller.IstiodNetworkPolicyName()
@@ -660,5 +668,3 @@ func (s *SailLibrarySource[T]) Start(ctx context.Context, queue workqueue.TypedR
 	}()
 	return nil
 }
-
-
