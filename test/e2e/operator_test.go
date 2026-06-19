@@ -2408,7 +2408,9 @@ func TestContainerLoggingMaxLength(t *testing.T) {
 				},
 			},
 			// String with more than 8192 characters
+			TcpLogFormat: "8192" + strings.Repeat("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@@@@@@@=", 120),
 			HttpLogFormat: "8192" + strings.Repeat("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@@@@@@@=", 120),
+			HttpsLogFormat: "8192" + strings.Repeat("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@@@@@@@=", 120),
 		},
 	}
 	if err := createWithRetryOnError(t, context.Background(), ic, DefaultRetryTimeout); err != nil {
@@ -2543,7 +2545,9 @@ func TestContainerLoggingMinLength(t *testing.T) {
 				},
 			},
 			// String with more than 480 characters
+			TcpLogFormat: "0480" + strings.Repeat("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@@@@@@@=", 40),
 			HttpLogFormat: "0480" + strings.Repeat("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@@@@@@@=", 40),
+			HttpsLogFormat: "0480" + strings.Repeat("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@@@@@@@=", 40),
 		},
 	}
 	if err := createWithRetryOnError(t, context.Background(), ic, DefaultRetryTimeout); err != nil {
