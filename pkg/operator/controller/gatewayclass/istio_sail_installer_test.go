@@ -3,12 +3,15 @@ package gatewayclass
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
+	"github.com/istio-ecosystem/sail-operator/pkg/config"
 	"github.com/istio-ecosystem/sail-operator/pkg/install"
 
 	testutil "github.com/openshift/cluster-ingress-operator/pkg/operator/controller/test/util"
@@ -577,3 +580,22 @@ func Test_mapStatusToConditions(t *testing.T) {
 	}
 }
 
+// TestSailLibraryImageDigestsAreDownstream verifies that the istiod and
+// proxy images for all configured Istio versions use a downstream (Red Hat)
+// registry. The sail library silently defaults to upstream images
+// (registry.istio.io) via images.gen.go, which must be patched to use
+// registry.redhat.io during the downstream build. Without this test,
+// upstream images slip through undetected and only surface as failures
+// in CI or production.
+func TestSailLibraryImageDigestsAreDownstream(t *testing.T) {
+	require.NotEmpty(t, config.Config.ImageDigests, "config.Config.ImageDigests must not be empty")
+
+	for version, images := range config.Config.ImageDigests {
+		t.Run(version, func(t *testing.T) {
+			assert.True(t, strings.HasPrefix(images.IstiodImage, "registry.redhat.io/"),
+				"IstiodImage %q is not from registry.redhat.io", images.IstiodImage)
+			assert.True(t, strings.HasPrefix(images.ProxyImage, "registry.redhat.io/"),
+				"ProxyImage %q is not from registry.redhat.io", images.ProxyImage)
+		})
+	}
+}
