@@ -60,9 +60,9 @@ spec:
         labels:
           severity: info
         annotations:
-          summary: Orphaned OSSM subscription detected after Gateway API migration
-          description: "This alert fires when the servicemeshoperator3 OLM subscription with the 'ingress.operator.openshift.io/owned' annotation persists after migration to Sail Library (noOLM). The subscription is no longer managed by the Cluster Ingress Operator. To take ownership, remove the annotation: `oc annotate subscription servicemeshoperator3 -n openshift-operators ingress.operator.openshift.io/owned-`. To delete it: `oc delete subscription servicemeshoperator3 -n openshift-operators`."
-          message: "The servicemeshoperator3 subscription is orphaned after migration to Sail Library and is no longer managed by the Cluster Ingress Operator."
+          summary: Orphaned OpenShift Service Mesh operator subscription detected after Gateway API migration
+          description: "This alert fires when the servicemeshoperator3 OLM subscription with the 'ingress.operator.openshift.io/owned' annotation persists after the Cluster Ingress Operator migrated Gateway API from OLM-managed to direct installation. The subscription is no longer managed by the Cluster Ingress Operator. To take ownership, remove the annotation: `oc annotate subscription servicemeshoperator3 -n openshift-operators ingress.operator.openshift.io/owned-`. To uninstall the operator entirely, follow the procedure in the OpenShift documentation for deleting operators from a cluster."
+          message: "An OpenShift Service Mesh operator subscription is orphaned after Gateway API migration and is no longer managed by the Cluster Ingress Operator."
       # Recording rules related to route metrics for sending via telemetry
       - expr: min(route_metrics_controller_routes_per_shard)
         record: cluster:route_metrics_controller_routes_per_shard:min
