@@ -977,7 +977,10 @@ func Test_computeOperatorDegradedCondition(t *testing.T) {
 				Status: configv1.ConditionFalse,
 				Reason: "IngressNotDegradedAndOrphanedOSSMSubscription",
 				Message: `The "default" ingress controller reports Degraded=False.` + "\n" +
-					"Orphaned OSSM subscription(s) found after migration to Sail Library: foo/servicemeshoperator3.",
+					"Orphaned OSSM subscription(s) found after the Cluster Ingress Operator migrated Gateway API from OLM-managed to direct installation: foo/servicemeshoperator3. " +
+					"The subscription(s) are no longer managed by the Cluster Ingress Operator. " +
+					"To take ownership, remove the 'ingress.operator.openshift.io/owned' annotation. " +
+					"To uninstall the operator entirely, follow the procedure in the OpenShift documentation for deleting operators from a cluster.",
 			},
 		},
 		{
