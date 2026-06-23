@@ -205,20 +205,21 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 		isIstioCRD := predicate.NewPredicateFuncs(func(o client.Object) bool {
 			return strings.Contains(o.GetName(), "istio.io")
 		})
-		isServiceMeshSubscription := predicate.NewPredicateFuncs(func(o client.Object) bool {
-			sub, ok := o.(*operatorsv1alpha1.Subscription)
-			if !ok {
-				return false
-			}
-			// Check if package name starts with "servicemeshoperator"
-			return sub.Spec != nil && strings.HasPrefix(sub.Spec.Package, "servicemeshoperator")
-		})
+		if config.OperatorLifecycleManagerEnabled {
+			isServiceMeshSubscription := predicate.NewPredicateFuncs(func(o client.Object) bool {
+				sub, ok := o.(*operatorsv1alpha1.Subscription)
+				if !ok {
+					return false
+				}
+				return sub.Spec != nil && strings.HasPrefix(sub.Spec.Package, "servicemeshoperator")
+			})
 
-		if err = c.Watch(source.Kind[client.Object](operatorCache, &operatorsv1alpha1.Subscription{}, reconciler.enqueueRequestForCRDOwnershipChange(), isServiceMeshSubscription)); err != nil {
-			return nil, err
-		}
-		if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorsv1alpha1.InstallPlan{}, reconciler.enqueueRequestForCRDOwnershipChange(), isOurInstallPlan)); err != nil {
-			return nil, err
+			if err = c.Watch(source.Kind[client.Object](operatorCache, &operatorsv1alpha1.Subscription{}, reconciler.enqueueRequestForCRDOwnershipChange(), isServiceMeshSubscription)); err != nil {
+				return nil, err
+			}
+			if err := c.Watch(source.Kind[client.Object](operatorCache, &operatorsv1alpha1.InstallPlan{}, reconciler.enqueueRequestForCRDOwnershipChange(), isOurInstallPlan)); err != nil {
+				return nil, err
+			}
 		}
 		if err := c.Watch(source.Kind[client.Object](operatorCache, &apiextensionsv1.CustomResourceDefinition{}, reconciler.enqueueRequestForCRDOwnershipChange(), isIstioCRD)); err != nil {
 			return nil, err
@@ -261,6 +262,8 @@ type Config struct {
 	GatewayAPIOperatorVersion string
 	// GatewayAPIWithoutOLMEnabled indicates whether the GatewayAPIWithoutOLM feature gate is enabled.
 	GatewayAPIWithoutOLMEnabled bool
+	// OperatorLifecycleManagerEnabled indicates whether the OperatorLifecycleManager capability is enabled.
+	OperatorLifecycleManagerEnabled bool
 	// IstioVersion is the version of Istio to install.
 	IstioVersion string
 	// Context is the context for controller lifecycle.
