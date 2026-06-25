@@ -939,6 +939,9 @@ func IngressStatusesEqual(a, b operatorv1.IngressControllerStatus) bool {
 	if a.EffectiveHAProxyVersion != b.EffectiveHAProxyVersion {
 		return false
 	}
+	if getAWSNLBProtocol(a.EndpointPublishingStrategy) != getAWSNLBProtocol(b.EndpointPublishingStrategy) {
+		return false
+	}
 
 	return true
 }
