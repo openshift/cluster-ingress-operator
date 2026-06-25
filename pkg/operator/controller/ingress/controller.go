@@ -686,6 +686,7 @@ func updatePublishingStrategy(ic *operatorv1.IngressController, effectiveStrateg
 			if statusLB.ProviderParameters.AWS == nil {
 				statusLB.ProviderParameters.AWS = &operatorv1.AWSLoadBalancerParameters{}
 			}
+			previousStatusLBType := statusLB.ProviderParameters.AWS.Type
 			if specLB.ProviderParameters.AWS.Type != statusLB.ProviderParameters.AWS.Type {
 				statusLB.ProviderParameters.AWS.Type = specLB.ProviderParameters.AWS.Type
 				changed = true
@@ -714,6 +715,30 @@ func updatePublishingStrategy(ic *operatorv1.IngressController, effectiveStrateg
 			if statusLB.ProviderParameters.AWS.Type == operatorv1.AWSNetworkLoadBalancer {
 				if statusLB.ProviderParameters.AWS.NetworkLoadBalancerParameters == nil {
 					statusLB.ProviderParameters.AWS.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{}
+				}
+				var specNLBProtocol operatorv1.NLBProtocol
+				if specLB.ProviderParameters.AWS != nil && specLB.ProviderParameters.AWS.NetworkLoadBalancerParameters != nil {
+					specNLBProtocol = specLB.ProviderParameters.AWS.NetworkLoadBalancerParameters.Protocol
+				}
+				statusNLBProtocol := statusLB.ProviderParameters.AWS.NetworkLoadBalancerParameters.Protocol
+				if len(specNLBProtocol) > 0 && specNLBProtocol != statusNLBProtocol {
+					statusLB.ProviderParameters.AWS.NetworkLoadBalancerParameters.Protocol = specNLBProtocol
+					changed = true
+				} else if len(specNLBProtocol) == 0 && len(statusNLBProtocol) > 0 && statusNLBProtocol != operatorv1.NLBProtocolProxy {
+					// User cleared the spec field. Re-apply the controller-managed
+					// default. Status being non-empty proves this IC previously had
+					// the field set, distinguishing it from the upgrade case where
+					// both are empty.
+					statusLB.ProviderParameters.AWS.NetworkLoadBalancerParameters.Protocol = operatorv1.NLBProtocolProxy
+					changed = true
+				} else if len(specNLBProtocol) == 0 && len(statusNLBProtocol) == 0 && previousStatusLBType != operatorv1.AWSNetworkLoadBalancer {
+					// The LB type just transitioned to NLB (e.g. CLB→NLB)
+					// and no protocol was specified. Default to PROXY so the
+					// new NLB gets the same default as a freshly created one.
+					// This does not fire on upgrade because the status type
+					// was already NLB (previousStatusLBType == NLB).
+					statusLB.ProviderParameters.AWS.NetworkLoadBalancerParameters.Protocol = operatorv1.NLBProtocolProxy
+					changed = true
 				}
 			}
 		case operatorv1.GCPLoadBalancerProvider:
@@ -857,6 +882,12 @@ func setDefaultProviderParameters(lbs *operatorv1.LoadBalancerStrategy, ingressC
 		case operatorv1.AWSNetworkLoadBalancer:
 			if lbs.ProviderParameters.AWS.NetworkLoadBalancerParameters == nil {
 				lbs.ProviderParameters.AWS.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{}
+			}
+			// Only default protocol for new IngressControllers. Existing ICs retain an empty
+			// protocol in status so that on upgrade the operator does not stomp the target-group-attributes
+			// annotation on customers who have already manually set it to work around hairpin failures.
+			if len(lbs.ProviderParameters.AWS.NetworkLoadBalancerParameters.Protocol) == 0 && !alreadyAdmitted {
+				lbs.ProviderParameters.AWS.NetworkLoadBalancerParameters.Protocol = operatorv1.NLBProtocolProxy
 			}
 		}
 
@@ -1379,16 +1410,15 @@ func IsProxyProtocolNeeded(ic *operatorv1.IngressController, platform *configv1.
 		// This can really be done for any external [cloud] LBs that support the proxy protocol.
 		switch platform.Type {
 		case configv1.AWSPlatformType:
-			// TRICKY: If the service exists, use the LB Type annotation from the service,
-			//         as status will be inaccurate if a LB Type update is pending.
-			//         If the service does not exist, the status WILL be what determines the next LB Type.
-			var lbType operatorv1.AWSLoadBalancerType
-			if service != nil {
-				lbType = getAWSLoadBalancerTypeFromServiceAnnotation(service)
-			} else {
-				lbType = getAWSLoadBalancerTypeInStatus(ic)
+			lbType := getEffectiveAWSLoadBalancerType(ic, service)
+			if lbType == operatorv1.AWSClassicLoadBalancer {
+				return true, nil
 			}
-			return lbType == operatorv1.AWSClassicLoadBalancer, nil
+			if lbType == operatorv1.AWSNetworkLoadBalancer &&
+				getAWSNLBProtocol(ic.Status.EndpointPublishingStrategy) == operatorv1.NLBProtocolProxy {
+				return true, nil
+			}
+			return false, nil
 		case configv1.IBMCloudPlatformType:
 			if ic.Status.EndpointPublishingStrategy.LoadBalancer != nil &&
 				ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters != nil &&

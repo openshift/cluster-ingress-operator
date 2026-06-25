@@ -154,8 +154,10 @@ func TestSetDefaultPublishingStrategySetsPlatformDefaults(t *testing.T) {
 						ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
 							Type: operatorv1.AWSLoadBalancerProvider,
 							AWS: &operatorv1.AWSLoadBalancerParameters{
-								Type:                          operatorv1.AWSNetworkLoadBalancer,
-								NetworkLoadBalancerParameters: &operatorv1.AWSNetworkLoadBalancerParameters{},
+								Type: operatorv1.AWSNetworkLoadBalancer,
+								NetworkLoadBalancerParameters: &operatorv1.AWSNetworkLoadBalancerParameters{
+									Protocol: operatorv1.NLBProtocolProxy,
+								},
 							},
 						},
 					},
@@ -538,13 +540,28 @@ func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
 			}
 			return eps
 		}
-		nlbWithBothNullParameters = func() *operatorv1.EndpointPublishingStrategy {
+		nlbProxyWithNullParameters = func() *operatorv1.EndpointPublishingStrategy {
 			eps := eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS))
 			eps.LoadBalancer.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{
 				Type: operatorv1.AWSLoadBalancerProvider,
 				AWS: &operatorv1.AWSLoadBalancerParameters{
-					Type:                          operatorv1.AWSNetworkLoadBalancer,
-					NetworkLoadBalancerParameters: &operatorv1.AWSNetworkLoadBalancerParameters{},
+					Type: operatorv1.AWSNetworkLoadBalancer,
+					NetworkLoadBalancerParameters: &operatorv1.AWSNetworkLoadBalancerParameters{
+						Protocol: operatorv1.NLBProtocolProxy,
+					},
+				},
+			}
+			return eps
+		}
+		nlbProxyWithBothNullParameters = func() *operatorv1.EndpointPublishingStrategy {
+			eps := eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS))
+			eps.LoadBalancer.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{
+				Type: operatorv1.AWSLoadBalancerProvider,
+				AWS: &operatorv1.AWSLoadBalancerParameters{
+					Type: operatorv1.AWSNetworkLoadBalancer,
+					NetworkLoadBalancerParameters: &operatorv1.AWSNetworkLoadBalancerParameters{
+						Protocol: operatorv1.NLBProtocolProxy,
+					},
 					ClassicLoadBalancerParameters: &operatorv1.AWSClassicLoadBalancerParameters{},
 				},
 			}
@@ -706,10 +723,104 @@ func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
 			domainMatchesBaseDomain: true,
 		},
 		{
-			name:                    "loadbalancer type changed from ELB to NLB",
+			name: "existing NLB with empty protocol gets managed when spec protocol is set",
+			ic: makeIC(spec(func() *operatorv1.EndpointPublishingStrategy {
+				e := eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS))
+				e.LoadBalancer.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{
+					Type: operatorv1.AWSLoadBalancerProvider,
+					AWS: &operatorv1.AWSLoadBalancerParameters{
+						Type: operatorv1.AWSNetworkLoadBalancer,
+						NetworkLoadBalancerParameters: &operatorv1.AWSNetworkLoadBalancerParameters{
+							Protocol: operatorv1.NLBProtocolProxy,
+						},
+					},
+				}
+				return e
+			}()), status(nlbWithNullParameters())),
+			expectedResult: true,
+			expectedIC: makeIC(spec(func() *operatorv1.EndpointPublishingStrategy {
+				e := eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS))
+				e.LoadBalancer.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{
+					Type: operatorv1.AWSLoadBalancerProvider,
+					AWS: &operatorv1.AWSLoadBalancerParameters{
+						Type: operatorv1.AWSNetworkLoadBalancer,
+						NetworkLoadBalancerParameters: &operatorv1.AWSNetworkLoadBalancerParameters{
+							Protocol: operatorv1.NLBProtocolProxy,
+						},
+					},
+				}
+				return e
+			}()), status(func() *operatorv1.EndpointPublishingStrategy {
+				e := eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS))
+				e.LoadBalancer.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{
+					Type: operatorv1.AWSLoadBalancerProvider,
+					AWS: &operatorv1.AWSLoadBalancerParameters{
+						Type: operatorv1.AWSNetworkLoadBalancer,
+						NetworkLoadBalancerParameters: &operatorv1.AWSNetworkLoadBalancerParameters{
+							Protocol: operatorv1.NLBProtocolProxy,
+						},
+					},
+				}
+				return e
+			}())),
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name: "NLB with cleared spec protocol reverts status to default PROXY",
+			ic: makeIC(spec(func() *operatorv1.EndpointPublishingStrategy {
+				e := eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS))
+				e.LoadBalancer.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{
+					Type: operatorv1.AWSLoadBalancerProvider,
+					AWS: &operatorv1.AWSLoadBalancerParameters{
+						Type:                          operatorv1.AWSNetworkLoadBalancer,
+						NetworkLoadBalancerParameters: &operatorv1.AWSNetworkLoadBalancerParameters{},
+					},
+				}
+				return e
+			}()), status(func() *operatorv1.EndpointPublishingStrategy {
+				e := eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS))
+				e.LoadBalancer.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{
+					Type: operatorv1.AWSLoadBalancerProvider,
+					AWS: &operatorv1.AWSLoadBalancerParameters{
+						Type: operatorv1.AWSNetworkLoadBalancer,
+						NetworkLoadBalancerParameters: &operatorv1.AWSNetworkLoadBalancerParameters{
+							Protocol: operatorv1.NLBProtocolTCP,
+						},
+					},
+				}
+				return e
+			}())),
+			expectedResult: true,
+			expectedIC: makeIC(spec(func() *operatorv1.EndpointPublishingStrategy {
+				e := eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS))
+				e.LoadBalancer.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{
+					Type: operatorv1.AWSLoadBalancerProvider,
+					AWS: &operatorv1.AWSLoadBalancerParameters{
+						Type:                          operatorv1.AWSNetworkLoadBalancer,
+						NetworkLoadBalancerParameters: &operatorv1.AWSNetworkLoadBalancerParameters{},
+					},
+				}
+				return e
+			}()), status(func() *operatorv1.EndpointPublishingStrategy {
+				e := eps(lbs(operatorv1.ExternalLoadBalancer, &managedDNS))
+				e.LoadBalancer.ProviderParameters = &operatorv1.ProviderLoadBalancerParameters{
+					Type: operatorv1.AWSLoadBalancerProvider,
+					AWS: &operatorv1.AWSLoadBalancerParameters{
+						Type: operatorv1.AWSNetworkLoadBalancer,
+						NetworkLoadBalancerParameters: &operatorv1.AWSNetworkLoadBalancerParameters{
+							Protocol: operatorv1.NLBProtocolProxy,
+						},
+					},
+				}
+				return e
+			}())),
+			domainMatchesBaseDomain: true,
+		},
+		{
+			name:                    "loadbalancer type changed from ELB to NLB defaults protocol to PROXY",
 			ic:                      makeIC(spec(nlb()), status(elb())),
 			expectedResult:          true,
-			expectedIC:              makeIC(spec(nlb()), status(nlbWithNullParameters())),
+			expectedIC:              makeIC(spec(nlb()), status(nlbProxyWithNullParameters())),
 			domainMatchesBaseDomain: true,
 		},
 		{
@@ -720,10 +831,10 @@ func TestSetDefaultPublishingStrategyHandlesUpdates(t *testing.T) {
 			domainMatchesBaseDomain: true,
 		},
 		{
-			name:                    "loadbalancer type changed from ELB to NLB, with old ELB parameters preserved",
+			name:                    "loadbalancer type changed from ELB to NLB with old ELB parameters preserved defaults protocol to PROXY",
 			ic:                      makeIC(spec(nlb()), status(elbWithNullParameters())),
 			expectedResult:          true,
-			expectedIC:              makeIC(spec(nlb()), status(nlbWithBothNullParameters())),
+			expectedIC:              makeIC(spec(nlb()), status(nlbProxyWithBothNullParameters())),
 			domainMatchesBaseDomain: true,
 		},
 		{
@@ -1571,6 +1682,34 @@ func Test_IsProxyProtocolNeeded(t *testing.T) {
 				},
 			},
 		}
+		loadBalancerStrategyWithNLBProxyProtocol = operatorv1.EndpointPublishingStrategy{
+			Type: operatorv1.LoadBalancerServiceStrategyType,
+			LoadBalancer: &operatorv1.LoadBalancerStrategy{
+				ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+					Type: operatorv1.AWSLoadBalancerProvider,
+					AWS: &operatorv1.AWSLoadBalancerParameters{
+						Type: operatorv1.AWSNetworkLoadBalancer,
+						NetworkLoadBalancerParameters: &operatorv1.AWSNetworkLoadBalancerParameters{
+							Protocol: operatorv1.NLBProtocolProxy,
+						},
+					},
+				},
+			},
+		}
+		loadBalancerStrategyWithNLBTcp = operatorv1.EndpointPublishingStrategy{
+			Type: operatorv1.LoadBalancerServiceStrategyType,
+			LoadBalancer: &operatorv1.LoadBalancerStrategy{
+				ProviderParameters: &operatorv1.ProviderLoadBalancerParameters{
+					Type: operatorv1.AWSLoadBalancerProvider,
+					AWS: &operatorv1.AWSLoadBalancerParameters{
+						Type: operatorv1.AWSNetworkLoadBalancer,
+						NetworkLoadBalancerParameters: &operatorv1.AWSNetworkLoadBalancerParameters{
+							Protocol: operatorv1.NLBProtocolTCP,
+						},
+					},
+				},
+			},
+		}
 		loadBalancerStrategyWithIBMCloudPROXY = operatorv1.EndpointPublishingStrategy{
 			Type: operatorv1.LoadBalancerServiceStrategyType,
 			LoadBalancer: &operatorv1.LoadBalancerStrategy{
@@ -1696,6 +1835,32 @@ func Test_IsProxyProtocolNeeded(t *testing.T) {
 			platform:    &awsPlatform,
 			service:     &serviceWithNLB,
 			expect:      false,
+		},
+		{
+			description: "loadbalancer strategy with NLB and PROXY protocol should use PROXY",
+			strategy:    &loadBalancerStrategyWithNLBProxyProtocol,
+			platform:    &awsPlatform,
+			expect:      true,
+		},
+		{
+			description: "loadbalancer strategy with NLB and TCP protocol shouldn't use PROXY",
+			strategy:    &loadBalancerStrategyWithNLBTcp,
+			platform:    &awsPlatform,
+			expect:      false,
+		},
+		{
+			description: "loadbalancer strategy with NLB and TCP protocol, but a service with CLB should use PROXY",
+			strategy:    &loadBalancerStrategyWithNLBTcp,
+			platform:    &awsPlatform,
+			service:     &serviceWithCLB,
+			expect:      true,
+		},
+		{
+			description: "loadbalancer strategy with NLB and PROXY protocol with NLB service should use PROXY",
+			strategy:    &loadBalancerStrategyWithNLBProxyProtocol,
+			platform:    &awsPlatform,
+			service:     &serviceWithNLB,
+			expect:      true,
 		},
 		{
 			description: "loadbalancer strategy shouldn't use PROXY on Azure",
