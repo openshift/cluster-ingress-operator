@@ -251,6 +251,7 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 				AWSLBTypeAnnotation:                          {true, AWSNLBAnnotation},
 				localWithFallbackAnnotation:                  {true, ""},
 				awsLBSubnetsAnnotation:                       {false, ""},
+				awsLBTargetGroupAttributesAnnotation:         {false, ""},
 			},
 		},
 		{
@@ -271,6 +272,7 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 				AWSLBTypeAnnotation:                          {true, AWSNLBAnnotation},
 				localWithFallbackAnnotation:                  {true, ""},
 				awsLBSubnetsAnnotation:                       {false, ""},
+				awsLBTargetGroupAttributesAnnotation:         {false, ""},
 			},
 		},
 		{
@@ -485,6 +487,74 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 			},
 		},
 		{
+			description:    "network load balancer with PROXY protocol for aws platform",
+			platformStatus: platformStatus(configv1.AWSPlatformType),
+			strategySpec: func() *operatorv1.EndpointPublishingStrategy {
+				eps := nlb(operatorv1.ExternalLoadBalancer)
+				eps.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{
+					Protocol: operatorv1.NLBProtocolProxy,
+				}
+				return eps
+			}(),
+			strategyStatus: func() *operatorv1.EndpointPublishingStrategy {
+				eps := nlb(operatorv1.ExternalLoadBalancer)
+				eps.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{
+					Protocol: operatorv1.NLBProtocolProxy,
+				}
+				return eps
+			}(),
+			proxyNeeded:                   true,
+			expectService:                 true,
+			expectedExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyLocal,
+			expectedServiceAnnotations: map[string]annotationExpectation{
+				awsInternalLBAnnotation:                      {false, ""},
+				awsLBAdditionalResourceTags:                  {false, ""},
+				awsLBHealthCheckHealthyThresholdAnnotation:   {true, awsLBHealthCheckHealthyThresholdDefault},
+				awsLBHealthCheckIntervalAnnotation:           {true, awsLBHealthCheckIntervalNLB},
+				awsLBHealthCheckTimeoutAnnotation:            {true, awsLBHealthCheckTimeoutDefault},
+				awsLBHealthCheckUnhealthyThresholdAnnotation: {true, awsLBHealthCheckUnhealthyThresholdDefault},
+				awsLBProxyProtocolAnnotation:                 {false, ""},
+				AWSLBTypeAnnotation:                          {true, AWSNLBAnnotation},
+				localWithFallbackAnnotation:                  {true, ""},
+				awsLBSubnetsAnnotation:                       {false, ""},
+				awsLBTargetGroupAttributesAnnotation:         {true, "preserve_client_ip.enabled=false,proxy_protocol_v2.enabled=true"},
+			},
+		},
+		{
+			description:    "network load balancer with TCP protocol for aws platform",
+			platformStatus: platformStatus(configv1.AWSPlatformType),
+			strategySpec: func() *operatorv1.EndpointPublishingStrategy {
+				eps := nlb(operatorv1.ExternalLoadBalancer)
+				eps.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{
+					Protocol: operatorv1.NLBProtocolTCP,
+				}
+				return eps
+			}(),
+			strategyStatus: func() *operatorv1.EndpointPublishingStrategy {
+				eps := nlb(operatorv1.ExternalLoadBalancer)
+				eps.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{
+					Protocol: operatorv1.NLBProtocolTCP,
+				}
+				return eps
+			}(),
+			proxyNeeded:                   false,
+			expectService:                 true,
+			expectedExternalTrafficPolicy: corev1.ServiceExternalTrafficPolicyLocal,
+			expectedServiceAnnotations: map[string]annotationExpectation{
+				awsInternalLBAnnotation:                      {false, ""},
+				awsLBAdditionalResourceTags:                  {false, ""},
+				awsLBHealthCheckHealthyThresholdAnnotation:   {true, awsLBHealthCheckHealthyThresholdDefault},
+				awsLBHealthCheckIntervalAnnotation:           {true, awsLBHealthCheckIntervalNLB},
+				awsLBHealthCheckTimeoutAnnotation:            {true, awsLBHealthCheckTimeoutDefault},
+				awsLBHealthCheckUnhealthyThresholdAnnotation: {true, awsLBHealthCheckUnhealthyThresholdDefault},
+				awsLBProxyProtocolAnnotation:                 {false, ""},
+				AWSLBTypeAnnotation:                          {true, AWSNLBAnnotation},
+				localWithFallbackAnnotation:                  {true, ""},
+				awsLBSubnetsAnnotation:                       {false, ""},
+				awsLBTargetGroupAttributesAnnotation:         {true, "preserve_client_ip.enabled=true,proxy_protocol_v2.enabled=false"},
+			},
+		},
+		{
 			description:    "nodePort service for aws platform",
 			platformStatus: platformStatus(configv1.AWSPlatformType),
 			strategyStatus: nps(operatorv1.TCPProtocol),
@@ -687,7 +757,7 @@ func Test_desiredLoadBalancerService(t *testing.T) {
 				t.Errorf("expected IsProxyProtocolNeeded to return %v, got %v", tc.proxyNeeded, proxyNeeded)
 			}
 
-			haveSvc, svc, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig.Status.PlatformStatus, proxyNeeded)
+			haveSvc, svc, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig.Status.PlatformStatus, nil, proxyNeeded)
 			switch {
 			case err != nil:
 				t.Error(err)
@@ -872,7 +942,7 @@ func TestDesiredLoadBalancerServiceAWSIdleTimeout(t *testing.T) {
 					},
 				},
 			}
-			haveSvc, svc, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig.Status.PlatformStatus, false)
+			haveSvc, svc, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig.Status.PlatformStatus, nil, false)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1013,7 +1083,7 @@ func TestDesiredLoadBalancerServiceDualStack(t *testing.T) {
 				UID:        "1",
 				Controller: &trueVar,
 			}
-			haveSvc, svc, err := desiredLoadBalancerService(ic, deploymentRef, tc.platformStatus, false)
+			haveSvc, svc, err := desiredLoadBalancerService(ic, deploymentRef, tc.platformStatus, nil, false)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1683,7 +1753,7 @@ func TestUpdateLoadBalancerServiceSourceRanges(t *testing.T) {
 					},
 				},
 			}
-			wantSvc, desired, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig.Status.PlatformStatus, false)
+			wantSvc, desired, err := desiredLoadBalancerService(ic, deploymentRef, infraConfig.Status.PlatformStatus, nil, false)
 			if err != nil {
 				t.Fatal(err)
 			}

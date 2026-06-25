@@ -37,8 +37,9 @@ const (
 	// https://kubernetes.io/docs/reference/labels-annotations-taints/#service-beta-kubernetes-io-aws-load-balancer-additional-resource-tags
 	awsLBAdditionalResourceTags = "service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags"
 
-	// awsLBProxyProtocolAnnotation is used to enable the PROXY protocol on any
-	// AWS load balancer services created.
+	// awsLBProxyProtocolAnnotation is used to enable the PROXY protocol on
+	// AWS Classic Load Balancers. For NLBs, proxy protocol is configured
+	// via target group attributes using awsLBTargetGroupAttributesAnnotation.
 	//
 	// https://kubernetes.io/docs/reference/labels-annotations-taints/#service-beta-kubernetes-io-aws-load-balancer-proxy-protocol
 	awsLBProxyProtocolAnnotation = "service.beta.kubernetes.io/aws-load-balancer-proxy-protocol"
@@ -97,6 +98,11 @@ const (
 
 	// awsEIPAllocationsAnnotation specifies a list of eips for NLBs.
 	awsEIPAllocationsAnnotation = "service.beta.kubernetes.io/aws-load-balancer-eip-allocations"
+
+	// awsLBTargetGroupAttributesAnnotation specifies key=value pairs of NLB
+	// target group attributes. Used to configure client IP preservation and
+	// proxy protocol v2 on target groups.
+	awsLBTargetGroupAttributesAnnotation = "service.beta.kubernetes.io/aws-load-balancer-target-group-attributes"
 
 	// iksLBScopeAnnotation is the annotation used on a service to specify an IBM
 	// load balancer IP type.
@@ -333,12 +339,12 @@ var (
 // existed or was created during the course of the function).
 
 func (r *reconciler) ensureLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, platformStatus *configv1.PlatformStatus, proxyNeeded bool) (bool, *corev1.Service, error) {
-	wantLBS, desiredLBService, err := desiredLoadBalancerService(ci, deploymentRef, platformStatus, proxyNeeded)
+	haveLBS, currentLBService, err := r.currentLoadBalancerService(ci)
 	if err != nil {
 		return false, nil, err
 	}
 
-	haveLBS, currentLBService, err := r.currentLoadBalancerService(ci)
+	wantLBS, desiredLBService, err := desiredLoadBalancerService(ci, deploymentRef, platformStatus, currentLBService, proxyNeeded)
 	if err != nil {
 		return false, nil, err
 	}
@@ -399,7 +405,7 @@ func isServiceOwnedByIngressController(service *corev1.Service, ic *operatorv1.I
 // ingresscontroller, or nil if an LB service isn't desired. An LB service is
 // desired if the high availability type is Cloud. An LB service will declare an
 // owner reference to the given deployment.
-func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, platform *configv1.PlatformStatus, proxyNeeded bool) (bool, *corev1.Service, error) {
+func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef metav1.OwnerReference, platform *configv1.PlatformStatus, currentService *corev1.Service, proxyNeeded bool) (bool, *corev1.Service, error) {
 	if ci.Status.EndpointPublishingStrategy.Type != operatorv1.LoadBalancerServiceStrategyType {
 		return false, nil, nil
 	}
@@ -454,8 +460,15 @@ func desiredLoadBalancerService(ci *operatorv1.IngressController, deploymentRef 
 		switch platform.Type {
 		case configv1.AWSPlatformType:
 			service.Annotations[awsLBHealthCheckIntervalAnnotation] = awsLBHealthCheckIntervalDefault
+			effectiveLBType := getEffectiveAWSLoadBalancerType(ci, currentService)
 			if proxyNeeded {
-				service.Annotations[awsLBProxyProtocolAnnotation] = "*"
+				if effectiveLBType == operatorv1.AWSNetworkLoadBalancer {
+					service.Annotations[awsLBTargetGroupAttributesAnnotation] = "preserve_client_ip.enabled=false,proxy_protocol_v2.enabled=true"
+				} else {
+					service.Annotations[awsLBProxyProtocolAnnotation] = "*"
+				}
+			} else if effectiveLBType == operatorv1.AWSNetworkLoadBalancer && getAWSNLBProtocol(ci.Status.EndpointPublishingStrategy) == operatorv1.NLBProtocolTCP {
+				service.Annotations[awsLBTargetGroupAttributesAnnotation] = "preserve_client_ip.enabled=true,proxy_protocol_v2.enabled=false"
 			}
 			if lbStatus != nil && lbStatus.ProviderParameters != nil {
 				if aws := lbStatus.ProviderParameters.AWS; aws != nil && lbStatus.ProviderParameters.Type == operatorv1.AWSLoadBalancerProvider {
@@ -729,6 +742,21 @@ func loadBalancerServiceChanged(current, expected *corev1.Service) (bool, *corev
 	// release manages.
 	changed, _, updated := loadBalancerServiceAnnotationsChanged(current, expected, managedLBServiceAnnotations)
 
+	// Reconcile the target group attributes annotation when the desired
+	// service specifies it. This annotation is not in managedLBServiceAnnotations
+	// to avoid stomping user-set values on existing IngressControllers that
+	// have no status.protocol set. When status.protocol is set, the operator
+	// always writes the annotation with the appropriate values.
+	if expectedVal, ok := expected.Annotations[awsLBTargetGroupAttributesAnnotation]; ok {
+		if currentVal, curOk := current.Annotations[awsLBTargetGroupAttributesAnnotation]; !curOk || currentVal != expectedVal {
+			if !changed {
+				changed = true
+				updated = current.DeepCopy()
+			}
+			updated.Annotations[awsLBTargetGroupAttributesAnnotation] = expectedVal
+		}
+	}
+
 	// If spec.loadBalancerSourceRanges is nonempty on the service, that
 	// means that allowedSourceRanges is nonempty on the ingresscontroller,
 	// which means we can clear the annotation if it's set and overwrite the
@@ -834,7 +862,7 @@ func loadBalancerServiceIsUpgradeable(ic *operatorv1.IngressController, deployme
 	if err != nil {
 		return fmt.Errorf("failed to determine if proxy protocol is needed for ingresscontroller %s/%s: %w", ic.Namespace, ic.Name, err)
 	}
-	want, desired, err := desiredLoadBalancerService(ic, deploymentRef, platform, proxyNeeded)
+	want, desired, err := desiredLoadBalancerService(ic, deploymentRef, platform, current, proxyNeeded)
 	if err != nil {
 		return err
 	}
@@ -1338,6 +1366,17 @@ func getAWSLoadBalancerTypeInStatus(ic *operatorv1.IngressController) operatorv1
 	return operatorv1.AWSClassicLoadBalancer
 }
 
+// getEffectiveAWSLoadBalancerType returns the AWS load balancer type that is
+// currently in effect. If a service exists, the type is read from the service
+// annotation, which reflects the actual LB type. Otherwise, the type is read
+// from the IngressController status, which reflects the desired LB type.
+func getEffectiveAWSLoadBalancerType(ic *operatorv1.IngressController, service *corev1.Service) operatorv1.AWSLoadBalancerType {
+	if service != nil {
+		return getAWSLoadBalancerTypeFromServiceAnnotation(service)
+	}
+	return getAWSLoadBalancerTypeInStatus(ic)
+}
+
 // getAWSClassicLoadBalancerParametersInSpec gets the ClassicLoadBalancerParameter struct
 // defined in the IngressController spec.
 func getAWSClassicLoadBalancerParametersInSpec(ic *operatorv1.IngressController) *operatorv1.AWSClassicLoadBalancerParameters {
@@ -1414,6 +1453,16 @@ func getAWSNLBSubnets(eps *operatorv1.EndpointPublishingStrategy) *operatorv1.AW
 	}
 
 	return nil
+}
+
+// getAWSNLBProtocol returns the protocol for the NLB reported in the
+// endpoint publishing strategy.
+func getAWSNLBProtocol(eps *operatorv1.EndpointPublishingStrategy) operatorv1.NLBProtocol {
+	if eps != nil && eps.LoadBalancer != nil && eps.LoadBalancer.ProviderParameters != nil && eps.LoadBalancer.ProviderParameters.AWS != nil && eps.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters != nil {
+		return eps.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters.Protocol
+	}
+
+	return ""
 }
 
 // getOpenStackFloatingIPInSpec gets the OpenStack Floating IP reported in the spec.

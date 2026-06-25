@@ -709,12 +709,7 @@ func desiredRouterDeployment(ci *operatorv1.IngressController, config *Config, i
 		isAWS := infraConfig.Status.PlatformStatus != nil &&
 			infraConfig.Status.PlatformStatus.Type == configv1.AWSPlatformType
 		if isAWS {
-			var lbType operatorv1.AWSLoadBalancerType
-			if currentLBService != nil {
-				lbType = getAWSLoadBalancerTypeFromServiceAnnotation(currentLBService)
-			} else {
-				lbType = getAWSLoadBalancerTypeInStatus(ci)
-			}
+			lbType := getEffectiveAWSLoadBalancerType(ci, currentLBService)
 			if lbType == operatorv1.AWSNetworkLoadBalancer {
 				// NLB at AWS, need to use less than 350s as the timeout
 				tunnelTimeout = ptr.To((awsNLBDefaultTunnelTimeoutSeconds - 1) * time.Second)
