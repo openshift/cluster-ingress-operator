@@ -712,6 +712,14 @@ func updatePublishingStrategy(ic *operatorv1.IngressController, effectiveStrateg
 				if statusLB.ProviderParameters.AWS.NetworkLoadBalancerParameters == nil {
 					statusLB.ProviderParameters.AWS.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{}
 				}
+				var specProtocol operatorv1.NLBProtocol
+				if specLB.ProviderParameters.AWS != nil && specLB.ProviderParameters.AWS.NetworkLoadBalancerParameters != nil {
+					specProtocol = specLB.ProviderParameters.AWS.NetworkLoadBalancerParameters.Protocol
+				}
+				if len(specProtocol) > 0 && specProtocol != statusLB.ProviderParameters.AWS.NetworkLoadBalancerParameters.Protocol {
+					statusLB.ProviderParameters.AWS.NetworkLoadBalancerParameters.Protocol = specProtocol
+					changed = true
+				}
 			}
 		case operatorv1.GCPLoadBalancerProvider:
 			// The only provider parameter that is supported
@@ -854,6 +862,13 @@ func setDefaultProviderParameters(lbs *operatorv1.LoadBalancerStrategy, ingressC
 		case operatorv1.AWSNetworkLoadBalancer:
 			if lbs.ProviderParameters.AWS.NetworkLoadBalancerParameters == nil {
 				lbs.ProviderParameters.AWS.NetworkLoadBalancerParameters = &operatorv1.AWSNetworkLoadBalancerParameters{}
+			}
+			if len(lbs.ProviderParameters.AWS.NetworkLoadBalancerParameters.Protocol) == 0 {
+				if !alreadyAdmitted {
+					lbs.ProviderParameters.AWS.NetworkLoadBalancerParameters.Protocol = operatorv1.NLBProtocolProxy
+				} else {
+					lbs.ProviderParameters.AWS.NetworkLoadBalancerParameters.Protocol = operatorv1.NLBProtocolTCP
+				}
 			}
 		}
 
@@ -1385,7 +1400,18 @@ func IsProxyProtocolNeeded(ic *operatorv1.IngressController, platform *configv1.
 			} else {
 				lbType = getAWSLoadBalancerTypeInStatus(ic)
 			}
-			return lbType == operatorv1.AWSClassicLoadBalancer, nil
+			if lbType == operatorv1.AWSClassicLoadBalancer {
+				return true, nil
+			}
+			if lbType == operatorv1.AWSNetworkLoadBalancer &&
+				ic.Status.EndpointPublishingStrategy.LoadBalancer != nil &&
+				ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters != nil &&
+				ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS != nil &&
+				ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters != nil &&
+				ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters.AWS.NetworkLoadBalancerParameters.Protocol == operatorv1.NLBProtocolProxy {
+				return true, nil
+			}
+			return false, nil
 		case configv1.IBMCloudPlatformType:
 			if ic.Status.EndpointPublishingStrategy.LoadBalancer != nil &&
 				ic.Status.EndpointPublishingStrategy.LoadBalancer.ProviderParameters != nil &&
