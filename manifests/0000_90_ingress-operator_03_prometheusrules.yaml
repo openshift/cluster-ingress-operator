@@ -54,6 +54,17 @@ spec:
           message: |
             The {{ $labels.namespace }}/{{ $labels.name }} ingresscontroller is
             unavailable: {{ $labels.reason }}.
+      - alert: NLBHairpinRisk
+        expr: ingress_controller_aws_nlb_hairpin_risk == 1
+        for: 1h
+        labels:
+          severity: info
+        annotations:
+          summary: Internal NLB IngressController may have hairpin connection failures.
+          description: "This alert fires when an IngressController uses an internal AWS Network Load Balancer without an explicit protocol setting. It may be affected by hairpin connection failures when client pods and router pods share a node. Set spec.endpointPublishingStrategy.loadBalancer.providerParameters.aws.networkLoadBalancer.protocol to PROXY to fix hairpin failures, or to TCP to acknowledge the current behavior and silence this alert."
+          message: >-
+            The {{ $labels.namespace }}/{{ $labels.name }} IngressController
+            uses an internal NLB without an explicit protocol setting.
       # Recording rules related to route metrics for sending via telemetry
       - expr: min(route_metrics_controller_routes_per_shard)
         record: cluster:route_metrics_controller_routes_per_shard:min
