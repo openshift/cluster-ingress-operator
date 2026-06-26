@@ -2,13 +2,18 @@ package gatewayclass
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
+	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
+	"github.com/istio-ecosystem/sail-operator/pkg/config"
 	"github.com/istio-ecosystem/sail-operator/pkg/install"
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
@@ -21,6 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 
 	"sigs.k8s.io/controller-runtime/pkg/cache/informertest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -40,18 +46,19 @@ type fakeSailInstaller struct {
 // Test if implementation adheres the interface
 var _ SailLibraryInstaller = &fakeSailInstaller{}
 
-func (i *fakeSailInstaller) Start(ctx context.Context) <-chan struct{} {
+func (i *fakeSailInstaller) Start(ctx context.Context) (<-chan struct{}, error) {
 	i.notifyCh = make(chan struct{})
-	return i.notifyCh
+	return i.notifyCh, nil
 }
 
-func (i *fakeSailInstaller) Apply(opts install.Options) {
+func (i *fakeSailInstaller) Apply(opts install.Options) error {
 	i.internalOpts = opts // Capture the options passed in
 
-	// Simulate successful installation with CRDs not yet installed
+	// Simulate successful installation with CRDs in unknown state
 	i.status.Installed = true
 	i.status.Version = opts.Version
-	i.status.CRDState = install.CRDNoneExist
+	i.status.CRDState = install.CRDManagementStateUnknown
+	return nil
 }
 
 func (i *fakeSailInstaller) Uninstall(ctx context.Context, namespace, revision string) error {
@@ -252,12 +259,12 @@ func Test_mapStatusToConditions(t *testing.T) {
 		expectedChanged    bool
 	}{
 		{
-			name: "Installed with CRDs managed by CIO",
+			name: "Installed with CRDs ready",
 			status: install.Status{
 				Installed:  true,
 				Version:    "v1.24.4",
-				CRDState:   install.CRDManagedByCIO,
-				CRDMessage: "CRDs installed by cluster-ingress-operator",
+				CRDState:   install.CRDManagementStateReady,
+				CRDMessage: "",
 			},
 			generation: 1,
 			expectedConditions: []metav1.Condition{
@@ -271,46 +278,49 @@ func Test_mapStatusToConditions(t *testing.T) {
 				{
 					Type:               CRDsReadyConditionType,
 					Status:             metav1.ConditionTrue,
-					Reason:             "ManagedByCIO",
-					Message:            "CRDs installed by cluster-ingress-operator",
+					Reason:             "Ready",
+					Message:            "all CRDs are ready and managed",
 					ObservedGeneration: 1,
 				},
 			},
 			expectedChanged: true,
 		},
 		{
-			name: "Installed with CRDs managed by OLM",
-			status: install.Status{
-				Installed:  true,
-				Version:    "v1.24.4",
-				CRDState:   install.CRDManagedByOLM,
-				CRDMessage: "CRDs managed by OLM",
-			},
-			generation: 1,
-			expectedConditions: []metav1.Condition{
-				{
-					Type:               ControllerInstalledConditionType,
-					Status:             metav1.ConditionTrue,
-					Reason:             "Installed",
-					Message:            "istiod v1.24.4 installed",
-					ObservedGeneration: 1,
-				},
-				{
-					Type:               CRDsReadyConditionType,
-					Status:             metav1.ConditionTrue,
-					Reason:             "ManagedByOLM",
-					Message:            "CRDs managed by OLM",
-					ObservedGeneration: 1,
-				},
-			},
-			expectedChanged: true,
-		},
-		{
-			name: "Installed with no CRDs",
+			name: "Installed with CRDs ready and all managed",
 			status: install.Status{
 				Installed: true,
 				Version:   "v1.24.4",
-				CRDState:  install.CRDNoneExist,
+				CRDState:  install.CRDManagementStateReady,
+				CRDs: []install.CRDInfo{
+					{Name: "wasmplugins.extensions.istio.io", Managed: true, Ready: true},
+					{Name: "destinationrules.networking.istio.io", Managed: true, Ready: true},
+				},
+			},
+			generation: 1,
+			expectedConditions: []metav1.Condition{
+				{
+					Type:               ControllerInstalledConditionType,
+					Status:             metav1.ConditionTrue,
+					Reason:             "Installed",
+					Message:            "istiod v1.24.4 installed",
+					ObservedGeneration: 1,
+				},
+				{
+					Type:               CRDsReadyConditionType,
+					Status:             metav1.ConditionTrue,
+					Reason:             "Ready",
+					Message:            "all CRDs are ready and managed",
+					ObservedGeneration: 1,
+				},
+			},
+			expectedChanged: true,
+		},
+		{
+			name: "Installed with CRDs unknown",
+			status: install.Status{
+				Installed: true,
+				Version:   "v1.24.4",
+				CRDState:  install.CRDManagementStateUnknown,
 			},
 			generation: 2,
 			expectedConditions: []metav1.Condition{
@@ -332,15 +342,46 @@ func Test_mapStatusToConditions(t *testing.T) {
 			expectedChanged: true,
 		},
 		{
-			name: "Installed with mixed CRD ownership",
+			name: "Installed with CRDs not ready",
 			status: install.Status{
 				Installed:  true,
 				Version:    "v1.24.4",
-				CRDState:   install.CRDMixedOwnership,
-				CRDMessage: "Mixed ownership detected",
+				CRDState:   install.CRDManagementStateNotReady,
+				CRDMessage: "not all CRDs are ready",
 				CRDs: []install.CRDInfo{
-					{Name: "gateways.gateway.networking.k8s.io", State: install.CRDManagedByOLM},
-					{Name: "httproutes.gateway.networking.k8s.io", State: install.CRDManagedByCIO},
+					{Name: "gateways.gateway.networking.k8s.io", Managed: false, Ready: true},
+					{Name: "httproutes.gateway.networking.k8s.io", Managed: true, Ready: false},
+				},
+			},
+			generation: 1,
+			expectedConditions: []metav1.Condition{
+				{
+					Type:               ControllerInstalledConditionType,
+					Status:             metav1.ConditionTrue,
+					Reason:             "Installed",
+					Message:            "istiod v1.24.4 installed",
+					ObservedGeneration: 1,
+				},
+				{
+					Type:               CRDsReadyConditionType,
+					Status:             metav1.ConditionFalse,
+					Reason:             "NotReady",
+					Message:            "not all CRDs are ready\n- gateways.gateway.networking.k8s.io: NotManaged\n- httproutes.gateway.networking.k8s.io: Managed (not ready)",
+					ObservedGeneration: 1,
+				},
+			},
+			expectedChanged: true,
+		},
+		{
+			name: "CRDs ready but some not managed",
+			status: install.Status{
+				Installed: true,
+				Version:   "v1.24.4",
+				CRDState:  install.CRDManagementStateReady,
+				CRDs: []install.CRDInfo{
+					{Name: "wasmplugins.extensions.istio.io", Managed: true, Ready: true},
+					{Name: "destinationrules.networking.istio.io", Managed: false, Ready: true},
+					{Name: "virtualservices.networking.istio.io", Managed: false, Ready: true},
 				},
 			},
 			generation: 1,
@@ -356,7 +397,7 @@ func Test_mapStatusToConditions(t *testing.T) {
 					Type:               CRDsReadyConditionType,
 					Status:             metav1.ConditionFalse,
 					Reason:             "MixedOwnership",
-					Message:            "Mixed ownership detected\n- gateways.gateway.networking.k8s.io: ManagedByOLM\n- httproutes.gateway.networking.k8s.io: ManagedByCIO",
+					Message:            "CRDs have mixed ownership\n- wasmplugins.extensions.istio.io: Managed\n- destinationrules.networking.istio.io: NotManaged\n- virtualservices.networking.istio.io: NotManaged",
 					ObservedGeneration: 1,
 				},
 			},
@@ -367,7 +408,7 @@ func Test_mapStatusToConditions(t *testing.T) {
 			status: install.Status{
 				Installed: false,
 				Error:     fmt.Errorf("failed to apply helm chart"),
-				CRDState:  install.CRDUnknownManagement,
+				CRDState:  install.CRDManagementStateError,
 			},
 			generation: 1,
 			expectedConditions: []metav1.Condition{
@@ -381,7 +422,7 @@ func Test_mapStatusToConditions(t *testing.T) {
 				{
 					Type:               CRDsReadyConditionType,
 					Status:             metav1.ConditionFalse,
-					Reason:             "UnknownManagement",
+					Reason:             "Error",
 					Message:            "unable to determine CRD ownership",
 					ObservedGeneration: 1,
 				},
@@ -392,7 +433,7 @@ func Test_mapStatusToConditions(t *testing.T) {
 			name: "Pending installation",
 			status: install.Status{
 				Installed: false,
-				CRDState:  install.CRDNoneExist,
+				CRDState:  install.CRDManagementStateUnknown,
 			},
 			generation: 1,
 			expectedConditions: []metav1.Condition{
@@ -416,11 +457,13 @@ func Test_mapStatusToConditions(t *testing.T) {
 		{
 			name: "Installed with warning",
 			status: install.Status{
-				Installed:  true,
-				Version:    "v1.24.4",
-				Error:      fmt.Errorf("drift detected in deployment"),
-				CRDState:   install.CRDManagedByCIO,
-				CRDMessage: "CRDs managed",
+				Installed: true,
+				Version:   "v1.24.4",
+				Error:     fmt.Errorf("drift detected in deployment"),
+				CRDState:  install.CRDManagementStateReady,
+				CRDs: []install.CRDInfo{
+					{Name: "wasmplugins.extensions.istio.io", Managed: true, Ready: true},
+				},
 			},
 			generation: 3,
 			expectedConditions: []metav1.Condition{
@@ -434,20 +477,24 @@ func Test_mapStatusToConditions(t *testing.T) {
 				{
 					Type:               CRDsReadyConditionType,
 					Status:             metav1.ConditionTrue,
-					Reason:             "ManagedByCIO",
-					Message:            "CRDs managed",
+					Reason:             "Ready",
+					Message:            "all CRDs are ready and managed",
 					ObservedGeneration: 3,
 				},
 			},
 			expectedChanged: true,
 		},
 		{
-			name: "Unknown CRD management",
+			name: "CRD error state",
 			status: install.Status{
 				Installed:  true,
 				Version:    "v1.24.4",
-				CRDState:   install.CRDUnknownManagement,
-				CRDMessage: "Cannot determine CRD ownership",
+				CRDState:   install.CRDManagementStateError,
+				CRDMessage: "failed to reconcile CRDs",
+				CRDs: []install.CRDInfo{
+					{Name: "wasmplugins.extensions.istio.io", Managed: true, Ready: true},
+					{Name: "destinationrules.networking.istio.io", Managed: true, Ready: false},
+				},
 			},
 			generation: 1,
 			expectedConditions: []metav1.Condition{
@@ -461,8 +508,8 @@ func Test_mapStatusToConditions(t *testing.T) {
 				{
 					Type:               CRDsReadyConditionType,
 					Status:             metav1.ConditionFalse,
-					Reason:             "UnknownManagement",
-					Message:            "Cannot determine CRD ownership",
+					Reason:             "Error",
+					Message:            "failed to reconcile CRDs\n- wasmplugins.extensions.istio.io: Managed\n- destinationrules.networking.istio.io: Managed (not ready)",
 					ObservedGeneration: 1,
 				},
 			},
@@ -471,10 +518,9 @@ func Test_mapStatusToConditions(t *testing.T) {
 		{
 			name: "No change when conditions already set",
 			status: install.Status{
-				Installed:  true,
-				Version:    "v1.24.4",
-				CRDState:   install.CRDManagedByCIO,
-				CRDMessage: "CRDs installed by cluster-ingress-operator",
+				Installed: true,
+				Version:   "v1.24.4",
+				CRDState:  install.CRDManagementStateReady,
 			},
 			generation: 1,
 			initialConditions: []metav1.Condition{
@@ -489,8 +535,8 @@ func Test_mapStatusToConditions(t *testing.T) {
 				{
 					Type:               CRDsReadyConditionType,
 					Status:             metav1.ConditionTrue,
-					Reason:             "ManagedByCIO",
-					Message:            "CRDs installed by cluster-ingress-operator",
+					Reason:             "Ready",
+					Message:            "all CRDs are ready and managed",
 					ObservedGeneration: 1,
 					LastTransitionTime: metav1.Now(),
 				},
@@ -506,8 +552,8 @@ func Test_mapStatusToConditions(t *testing.T) {
 				{
 					Type:               CRDsReadyConditionType,
 					Status:             metav1.ConditionTrue,
-					Reason:             "ManagedByCIO",
-					Message:            "CRDs installed by cluster-ingress-operator",
+					Reason:             "Ready",
+					Message:            "all CRDs are ready and managed",
 					ObservedGeneration: 1,
 				},
 			},
@@ -537,10 +583,10 @@ func Test_mapStatusToConditions(t *testing.T) {
 	}
 }
 
-// TestOLMAndSailLibraryValuesMatch ensures that the OpenShift-specific Istio configuration
-// is identical between the OLM path (desiredIstio) and Sail Library path (openshiftValues)
-// during the transition period. This test can be removed once the OLM path is deleted.
-func TestOLMAndSailLibraryValuesMatch(t *testing.T) {
+// TestIstioValues verifies that both the OLM and Sail Library paths produce
+// the expected Istio values. Each path is compared against a hardcoded golden
+// struct so that changes in either CIO or the sail library are caught.
+func TestIstioValues(t *testing.T) {
 	defaultGatewayClass := []gatewayapiv1.GatewayClass{{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "openshift-default",
@@ -557,35 +603,41 @@ func TestOLMAndSailLibraryValuesMatch(t *testing.T) {
 	singleReplicaInfraConfig := infraConfig(configv1.SingleReplicaTopologyMode)
 	highlyAvailableInfraConfig := infraConfig(configv1.HighlyAvailableTopologyMode)
 
+	gwClassConfig := func(minReplicas int) json.RawMessage {
+		return json.RawMessage(fmt.Sprintf(
+			`{"openshift-default":{"deployment":{"spec":{"template":{"spec":{"containers":[{"name":"istio-proxy","terminationMessagePolicy":"FallbackToLogsOnError"}]}}}},"horizontalPodAutoscaler":{"spec":{"maxReplicas":10,"minReplicas":%d}}}}`,
+			minReplicas,
+		))
+	}
+
 	testCases := []struct {
 		name                     string
 		gatewayclasses           []gatewayapiv1.GatewayClass
 		enableInferenceExtension bool
 		extraconfig              *extraIstioConfig
+		expectedProxyMetadata    map[string]string
+		expectedGatewayClasses   json.RawMessage
 	}{
 		{
 			name:                     "without inference extension",
 			gatewayclasses:           defaultGatewayClass,
 			enableInferenceExtension: false,
-			extraconfig: &extraIstioConfig{
-				infraConfig: highlyAvailableInfraConfig,
-			},
+			extraconfig:              &extraIstioConfig{infraConfig: highlyAvailableInfraConfig},
+			expectedGatewayClasses:   gwClassConfig(2),
 		},
 		{
 			name:                     "with inference extension",
 			gatewayclasses:           defaultGatewayClass,
 			enableInferenceExtension: true,
-			extraconfig: &extraIstioConfig{
-				infraConfig: highlyAvailableInfraConfig,
-			},
+			extraconfig:              &extraIstioConfig{infraConfig: highlyAvailableInfraConfig},
+			expectedGatewayClasses:   gwClassConfig(2),
 		},
 		{
 			name:                     "with single-node topology",
 			gatewayclasses:           defaultGatewayClass,
 			enableInferenceExtension: true,
-			extraconfig: &extraIstioConfig{
-				infraConfig: singleReplicaInfraConfig,
-			},
+			extraconfig:              &extraIstioConfig{infraConfig: singleReplicaInfraConfig},
+			expectedGatewayClasses:   gwClassConfig(1),
 		},
 		{
 			name:           "with system proxy config enabled",
@@ -600,41 +652,136 @@ func TestOLMAndSailLibraryValuesMatch(t *testing.T) {
 				},
 				infraConfig: highlyAvailableInfraConfig,
 			},
+			expectedProxyMetadata: map[string]string{
+				"HTTP_PROXY":  "http://some.proxy.tld:8080",
+				"HTTPS_PROXY": "http://some.proxytls.tld:8080",
+				"NO_PROXY":    ".cluster.local,.ec2.internal,.svc,10.0.0.0/16,10.128.0.0/14",
+				"http_proxy":  "http://some.proxy.tld:8080",
+				"https_proxy": "http://some.proxytls.tld:8080",
+				"no_proxy":    ".cluster.local,.ec2.internal,.svc,10.0.0.0/16,10.128.0.0/14",
+			},
+			expectedGatewayClasses: gwClassConfig(2),
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Get values from Sail Library path (GatewayAPIDefaults + OpenShift overrides)
-			sailValues := install.GatewayAPIDefaults()
-			openshiftOverrides, err := openshiftValues(tc.enableInferenceExtension, "openshift-ingress", tc.gatewayclasses, tc.extraconfig)
-			assert.Nil(t, err)
-			sailValues = install.MergeValues(sailValues, openshiftOverrides)
-
-			// Get values from OLM path
-			olmIstio, err := desiredIstio(
-				types.NamespacedName{Name: "test", Namespace: "test-ns"},
-				metav1.OwnerReference{},
-				"v1.24.4",
-				tc.enableInferenceExtension,
-				tc.gatewayclasses,
-				tc.extraconfig,
-			)
-			assert.Nil(t, err)
-
-			cmpOpts := []cmp.Option{
-				cmpopts.EquateEmpty(),
-				// Ignore X_PILOT_IGNORE_RESOURCES and X_PILOT_INCLUDE_RESOURCES env variables.
-				// These were added in the Sail Library update and are not present in the OLM path.
-				cmpopts.IgnoreMapEntries(func(k string, v string) bool {
-					return k == "X_PILOT_IGNORE_RESOURCES" || k == "X_PILOT_INCLUDE_RESOURCES"
-				}),
+			pilotEnv := map[string]string{
+				"PILOT_ENABLE_GATEWAY_API":                         "true",
+				"PILOT_ENABLE_ALPHA_GATEWAY_API":                   "false",
+				"PILOT_ENABLE_GATEWAY_API_STATUS":                  "true",
+				"PILOT_ENABLE_GATEWAY_API_DEPLOYMENT_CONTROLLER":   "true",
+				"PILOT_ENABLE_GATEWAY_API_GATEWAYCLASS_CONTROLLER": "false",
+				"PILOT_GATEWAY_API_DEFAULT_GATEWAYCLASS_NAME":      "openshift-default",
+				"PILOT_GATEWAY_API_CONTROLLER_NAME":                "openshift.io/gateway-controller/v1",
+				"PILOT_MULTI_NETWORK_DISCOVER_GATEWAY_API":         "false",
+				"ENABLE_GATEWAY_API_MANUAL_DEPLOYMENT":             "false",
+				"PILOT_ENABLE_GATEWAY_API_CA_CERT_ONLY":            "true",
+				"PILOT_ENABLE_GATEWAY_API_COPY_LABELS_ANNOTATIONS": "false",
+			}
+			if tc.enableInferenceExtension {
+				pilotEnv["ENABLE_GATEWAY_API_INFERENCE_EXTENSION"] = "true"
 			}
 
-			// Compare entire Values struct
-			if diff := cmp.Diff(olmIstio.Spec.Values, sailValues, cmpOpts...); diff != "" {
-				t.Errorf("Values differ between OLM and Sail Library paths:\n%s", diff)
+			expected := &sailv1.Values{
+				Global: &sailv1.GlobalConfig{
+					DefaultPodDisruptionBudget: &sailv1.DefaultPodDisruptionBudgetConfig{
+						Enabled: ptr.To(false),
+					},
+					IstioNamespace:    ptr.To("openshift-ingress"),
+					PriorityClassName: ptr.To("system-cluster-critical"),
+					TrustBundleName:   ptr.To("openshift-gw-ca-root-cert"),
+				},
+				Pilot: &sailv1.PilotConfig{
+					Env: pilotEnv,
+					PodAnnotations: map[string]string{
+						"target.workload.openshift.io/management": `{"effect": "PreferredDuringScheduling"}`,
+					},
+				},
+				MeshConfig: &sailv1.MeshConfig{
+					AccessLogFile:         ptr.To("/dev/stdout"),
+					IngressControllerMode: sailv1.MeshConfigIngressControllerModeOff,
+					DefaultConfig: &sailv1.MeshConfigProxyConfig{
+						ProxyHeaders: &sailv1.ProxyConfigProxyHeaders{
+							Server: &sailv1.ProxyConfigProxyHeadersServer{
+								Disabled: ptr.To(true),
+							},
+							EnvoyDebugHeaders: &sailv1.ProxyConfigProxyHeadersEnvoyDebugHeaders{
+								Disabled: ptr.To(true),
+							},
+							MetadataExchangeHeaders: &sailv1.ProxyConfigProxyHeadersMetadataExchangeHeaders{
+								Mode: sailv1.ProxyConfigProxyHeadersMetadataExchangeModeInMesh,
+							},
+						},
+						ProxyMetadata: tc.expectedProxyMetadata,
+					},
+				},
+				GatewayClasses: tc.expectedGatewayClasses,
 			}
+
+			// Sail Library path: only tests the values CIO explicitly sets
+			// (GatewayAPIDefaults + openshiftValues), not the full effective
+			// values after OSSM applies profiles and Istio defaults via
+			// ComputeValues, which is difficult to invoke in a unit test.
+			t.Run("sail library", func(t *testing.T) {
+				sailValues := install.GatewayAPIDefaults("openshift-ingress")
+				openshiftOverrides, err := openshiftValues(tc.enableInferenceExtension, "openshift-ingress", tc.gatewayclasses, tc.extraconfig)
+				require.NoError(t, err)
+				sailValues, err = install.MergeValues(sailValues, openshiftOverrides)
+				require.NoError(t, err)
+
+				cmpOpts := []cmp.Option{
+					cmpopts.EquateEmpty(),
+				}
+				if diff := cmp.Diff(expected, sailValues, cmpOpts...); diff != "" {
+					t.Errorf("Sail Library values differ from expected:\n%s", diff)
+				}
+			})
+
+			// OLM path
+			t.Run("OLM", func(t *testing.T) {
+				olmIstio, err := desiredIstio(
+					types.NamespacedName{Name: "test", Namespace: "test-ns"},
+					metav1.OwnerReference{},
+					"v1.24.4",
+					tc.enableInferenceExtension,
+					tc.gatewayclasses,
+					tc.extraconfig,
+				)
+				require.NoError(t, err)
+
+				cmpOpts := []cmp.Option{
+					cmpopts.EquateEmpty(),
+					// OLM explicitly sets these Istio defaults but the sail
+					// library path does not. Including them in the expected
+					// struct would fail the sail library sub-test.
+					cmpopts.IgnoreFields(sailv1.PilotConfig{}, "Enabled", "Cni", "ExtraContainerArgs"),
+					cmpopts.IgnoreFields(sailv1.Values{}, "SidecarInjectorWebhook"),
+				}
+				if diff := cmp.Diff(expected, olmIstio.Spec.Values, cmpOpts...); diff != "" {
+					t.Errorf("OLM values differ from expected:\n%s", diff)
+				}
+			})
+		})
+	}
+}
+
+// TestSailLibraryImageDigestsAreDownstream verifies that the istiod and
+// proxy images for all configured Istio versions use a downstream (Red Hat)
+// registry. The sail library silently defaults to upstream images
+// (registry.istio.io) via images.gen.go, which must be patched to use
+// registry.redhat.io during the downstream build. Without this test,
+// upstream images slip through undetected and only surface as failures
+// in CI or production.
+func TestSailLibraryImageDigestsAreDownstream(t *testing.T) {
+	require.NotEmpty(t, config.Config.ImageDigests, "config.Config.ImageDigests must not be empty")
+
+	for version, images := range config.Config.ImageDigests {
+		t.Run(version, func(t *testing.T) {
+			assert.True(t, strings.HasPrefix(images.IstiodImage, "registry.redhat.io/"),
+				"IstiodImage %q is not from registry.redhat.io", images.IstiodImage)
+			assert.True(t, strings.HasPrefix(images.ProxyImage, "registry.redhat.io/"),
+				"ProxyImage %q is not from registry.redhat.io", images.ProxyImage)
 		})
 	}
 }
