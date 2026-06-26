@@ -31,10 +31,16 @@ var (
 		Help: "Report the number of active NLBs on AWS clusters.",
 	}, []string{"name"})
 
+	nlbHairpinRisk = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "ingress_controller_aws_nlb_hairpin_risk",
+		Help: "Reports whether an IngressController using an internal AWS NLB has no explicit protocol setting and may be affected by hairpin connection failures. 0 is no risk, 1 is at risk.",
+	}, []string{"name"})
+
 	// metricsList is a list of metrics for this package.
 	metricsList = []prometheus.Collector{
 		ingressControllerConditions,
 		activeNLBs,
+		nlbHairpinRisk,
 	}
 )
 
@@ -89,6 +95,23 @@ func SetIngressControllerNLBMetric(ci *operatorv1.IngressController) {
 		labelVal = 1
 	}
 	activeNLBs.WithLabelValues(ci.Name).Set(float64(labelVal))
+}
+
+func DeleteNLBHairpinRiskMetric(ic *operatorv1.IngressController) {
+	nlbHairpinRisk.DeleteLabelValues(ic.Name)
+}
+
+func SetNLBHairpinRiskMetric(ic *operatorv1.IngressController) {
+	var labelVal float64
+	status := ic.Status.EndpointPublishingStrategy
+	if status != nil &&
+		status.LoadBalancer != nil &&
+		status.LoadBalancer.Scope == operatorv1.InternalLoadBalancer &&
+		getAWSLoadBalancerTypeInStatus(ic) == operatorv1.AWSNetworkLoadBalancer &&
+		len(getAWSNLBProtocol(status)) == 0 {
+		labelVal = 1
+	}
+	nlbHairpinRisk.WithLabelValues(ic.Name).Set(labelVal)
 }
 
 // RegisterMetrics calls prometheus.Register on each metric in metricsList, and
