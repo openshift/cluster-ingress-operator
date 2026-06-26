@@ -390,6 +390,9 @@ func buildGWAPICRDFromName(name string) *apiextensionsv1.CustomResourceDefinitio
 	case "referencegrants":
 		kind = "ReferenceGrant"
 		versions = []map[string]bool{{"v1beta1": true}}
+	case "backendtlspolicies":
+		singular = "backendtlspolicy"
+		kind = "BackendTLSPolicy"
 	case "tests":
 		kind = "Test"
 		versions = []map[string]bool{{"v1": true}}
@@ -1524,6 +1527,60 @@ func eventuallyClusterRoleContainsAggregatedPolicies(t *testing.T, destClusterRo
 
 		return false, nil
 	})
+}
+
+func assertAllGatewayAPICRDsCovered(t *testing.T, crdNames []string) {
+	t.Helper()
+	crdList := &apiextensionsv1.CustomResourceDefinitionList{}
+	if err := kclient.List(context.Background(), crdList); err != nil {
+		t.Fatalf("failed to list CRDs: %v", err)
+	}
+	for _, crd := range crdList.Items {
+		if crd.Spec.Group == "gateway.networking.k8s.io" {
+			if !slices.Contains(crdNames, crd.Name) {
+				t.Errorf("Gateway API CRD %q exists on cluster but is not in crdNames; add it to ensure test coverage", crd.Name)
+			}
+		}
+	}
+}
+
+func assertClusterRoleCoversGatewayAPICRDs(t *testing.T, clusterRoleName string) {
+	t.Helper()
+
+	var clusterRole rbacv1.ClusterRole
+	if err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 30*time.Second, false, func(ctx context.Context) (bool, error) {
+		if err := kclient.Get(ctx, types.NamespacedName{Name: clusterRoleName}, &clusterRole); err != nil {
+			t.Logf("failed to get ClusterRole %s: %v; retrying...", clusterRoleName, err)
+			return false, nil
+		}
+		return true, nil
+	}); err != nil {
+		t.Fatalf("failed to get ClusterRole %s: %v", clusterRoleName, err)
+	}
+
+	var roleResources []string
+	for _, rule := range clusterRole.Rules {
+		if slices.Contains(rule.APIGroups, "gateway.networking.k8s.io") {
+			roleResources = append(roleResources, rule.Resources...)
+		}
+	}
+
+	crdList := &apiextensionsv1.CustomResourceDefinitionList{}
+	if err := kclient.List(context.Background(), crdList); err != nil {
+		t.Fatalf("failed to list CRDs: %v", err)
+	}
+	for _, crd := range crdList.Items {
+		if crd.Spec.Group != "gateway.networking.k8s.io" {
+			continue
+		}
+		if crd.Spec.Scope == apiextensionsv1.ClusterScoped {
+			continue
+		}
+		plural := crd.Spec.Names.Plural
+		if !slices.Contains(roleResources, plural) {
+			t.Errorf("ClusterRole %s missing rule for Gateway API resource %q (CRD %s)", clusterRoleName, plural, crd.Name)
+		}
+	}
 }
 
 func containsPolicyRules(destRules, srcRules []rbacv1.PolicyRule) bool {

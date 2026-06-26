@@ -56,6 +56,7 @@ var crdNames = []string{
 	"gateways.gateway.networking.k8s.io",
 	"httproutes.gateway.networking.k8s.io",
 	"referencegrants.gateway.networking.k8s.io",
+	"backendtlspolicies.gateway.networking.k8s.io",
 }
 
 // List of Istio CRDs for testing installation and ownership.
@@ -143,6 +144,9 @@ func TestGatewayAPI(t *testing.T) {
 func testGatewayAPIResources(t *testing.T) {
 	// Make sure all the *.gateway.networking.k8s.io CRDs are available since the FeatureGate is enabled.
 	ensureCRDs(t)
+
+	// Verify that all Gateway API CRDs on the cluster are in our test list.
+	assertAllGatewayAPICRDsCovered(t, crdNames)
 
 	// Deleting CRDs to ensure they gets recreated again
 	bypassVAP(t, deleteCRDs)
@@ -544,6 +548,9 @@ func testGatewayAPIRBAC(t *testing.T) {
 	}
 
 	for srcClusterRoleName, destClusterRoleNames := range aggregationMapping {
+		t.Logf("verifying that ClusterRole %s covers all namespaced Gateway API CRDs", srcClusterRoleName)
+		assertClusterRoleCoversGatewayAPICRDs(t, srcClusterRoleName)
+
 		for _, destClusterRoleName := range destClusterRoleNames {
 			t.Logf("verifying that ClusterRole %s aggregates all PolicyRules from %s", destClusterRoleName, srcClusterRoleName)
 
