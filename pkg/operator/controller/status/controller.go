@@ -97,10 +97,12 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	// tracking OLM subscriptions across all namespaces.
 	var subscriptionCache cache.Cache
 	var err error
-	if subscriptionCache, err = cache.New(mgr.GetConfig(), cache.Options{}); err != nil {
-		return nil, err
+	if config.OperatorLifecycleManagerEnabled {
+		if subscriptionCache, err = cache.New(mgr.GetConfig(), cache.Options{}); err != nil {
+			return nil, err
+		}
+		mgr.Add(subscriptionCache)
 	}
-	mgr.Add(subscriptionCache)
 	reconciler := &reconciler{
 		config:            config,
 		client:            mgr.GetClient(),
