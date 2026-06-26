@@ -4,22 +4,26 @@ metadata:
   annotations:
     api-approved.openshift.io: https://github.com/openshift/api/pull/475
     api.openshift.io/merged-by-featuregates: "true"
+    include.release.openshift.io/ibm-cloud-managed: "true"
     include.release.openshift.io/self-managed-high-availability: "true"
-  name: authentications.operator.openshift.io
+    release.openshift.io/feature-set: Default
+  name: openshiftapiservers.operator.openshift.io
 spec:
   group: operator.openshift.io
   names:
-    kind: Authentication
-    listKind: AuthenticationList
-    plural: authentications
-    singular: authentication
+    categories:
+    - coreoperators
+    kind: OpenShiftAPIServer
+    listKind: OpenShiftAPIServerList
+    plural: openshiftapiservers
+    singular: openshiftapiserver
   scope: Cluster
   versions:
   - name: v1
     schema:
       openAPIV3Schema:
         description: |-
-          Authentication provides information to configure an operator to manage authentication.
+          OpenShiftAPIServer provides information to configure an operator to manage openshift-apiserver.
 
           Compatibility level 1: Stable within a major release for a minimum of 12 months or 3 minor releases (whichever is longer).
         properties:
@@ -41,6 +45,8 @@ spec:
           metadata:
             type: object
           spec:
+            description: spec is the specification of the desired behavior of the
+              OpenShift API Server.
             properties:
               logLevel:
                 default: Normal
@@ -96,6 +102,7 @@ spec:
                 x-kubernetes-preserve-unknown-fields: true
             type: object
           status:
+            description: status defines the observed status of the OpenShift API Server.
             properties:
               conditions:
                 description: conditions is a list of conditions and their status
@@ -184,17 +191,6 @@ spec:
                 x-kubernetes-validations:
                 - message: must only increase
                   rule: self >= oldSelf
-              oauthAPIServer:
-                description: oauthAPIServer holds status specific only to oauth-apiserver
-                properties:
-                  latestAvailableRevision:
-                    description: |-
-                      latestAvailableRevision is the latest revision used as suffix of revisioned
-                      secrets like encryption-config. A new revision causes a new deployment of pods.
-                    format: int32
-                    minimum: 0
-                    type: integer
-                type: object
               observedGeneration:
                 description: observedGeneration is the last generation change you've
                   dealt with
