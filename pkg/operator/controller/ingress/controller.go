@@ -1161,6 +1161,7 @@ func (r *reconciler) ensureIngressDeleted(ingress *operatorv1.IngressController)
 	// Delete the metrics related to the ingresscontroller
 	DeleteIngressControllerConditionsMetric(ingress)
 	DeleteActiveNLBMetrics(ingress)
+	DeleteNLBHairpinRiskMetric(ingress)
 
 	// Delete the RoutesPerShard metric label corresponding to the Ingress Controller.
 	routemetrics.DeleteRouteMetricsControllerRoutesPerShardMetric(ingress.Name)
@@ -1339,6 +1340,7 @@ func (r *reconciler) ensureIngressController(ci *operatorv1.IngressController, d
 	}
 
 	SetIngressControllerNLBMetric(ci)
+	SetNLBHairpinRiskMetric(ci)
 
 	// If the lbService exists for the "default" IngressController, then update Infra CR's PlatformStatus with the Ingress LB IPs.
 	if haveLB && ci.Name == manifests.DefaultIngressControllerName {
