@@ -385,33 +385,32 @@ func New(config operatorconfig.Config, kubeConfig *rest.Config) (*Operator, erro
 // TODO: Move the default IngressController logic elsewhere.
 func (o *Operator) Start(ctx context.Context) error {
 
-	infraConfig := &configv1.Infrastructure{}
-	if err := o.client.Get(context.TODO(), types.NamespacedName{Name: "cluster"}, infraConfig); err != nil {
-		return fmt.Errorf("failed fetching infrastructure config: %w", err)
-	}
-
-	if infraConfig.Status.ControlPlaneTopology == configv1.ExternalTopologyMode {
-		log.Info("skipping default ingress controller creation")
-	} else {
-		// Periodicaly ensure the default controller exists.
-		go wait.Until(func() {
-			if !o.manager.GetCache().WaitForCacheSync(ctx) {
-				log.Error(nil, "failed to sync cache before ensuring default ingresscontroller")
-				return
-			}
-			ingressConfigName := operatorcontroller.IngressClusterConfigName()
-			ingressConfig := &configv1.Ingress{}
-			if err := o.client.Get(context.TODO(), ingressConfigName, ingressConfig); err != nil {
-				log.Error(err, "failed to fetch ingress config")
-				return
-			}
-			err := o.ensureDefaultIngressController(infraConfig, ingressConfig)
-			if err != nil {
-				log.Error(err, "failed to ensure default ingresscontroller")
-			}
-		}, 1*time.Minute, ctx.Done())
-
-	}
+	// Periodically ensure the default controller exists.
+	go wait.Until(func() {
+		if !o.manager.GetCache().WaitForCacheSync(ctx) {
+			log.Error(nil, "failed to sync cache before ensuring default ingresscontroller")
+			return
+		}
+		infraConfig := &configv1.Infrastructure{}
+		if err := o.client.Get(context.TODO(), operatorcontroller.InfrastructureClusterConfigName(), infraConfig); err != nil {
+			log.Error(err, "failed to fetch infrastructure config")
+			return
+		}
+		if infraConfig.Status.ControlPlaneTopology == configv1.ExternalTopologyMode {
+			log.V(4).Info("skipping default ingress controller creation for external topology")
+			return
+		}
+		ingressConfigName := operatorcontroller.IngressClusterConfigName()
+		ingressConfig := &configv1.Ingress{}
+		if err := o.client.Get(context.TODO(), ingressConfigName, ingressConfig); err != nil {
+			log.Error(err, "failed to fetch ingress config")
+			return
+		}
+		err := o.ensureDefaultIngressController(infraConfig, ingressConfig)
+		if err != nil {
+			log.Error(err, "failed to ensure default ingresscontroller")
+		}
+	}, 1*time.Minute, ctx.Done())
 
 	if err := o.handleSingleNode4Dot11Upgrade(); err != nil {
 		log.Error(err, "failed to handle single node 4.11 upgrade logic")
