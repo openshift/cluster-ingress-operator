@@ -51,6 +51,7 @@ func TestAll(t *testing.T) {
 		t.Run("TestHTTPHeaderCapture", TestHTTPHeaderCapture)
 		t.Run("TestHeaderNameCaseAdjustment", TestHeaderNameCaseAdjustment)
 		t.Run("TestHealthCheckIntervalIngressController", TestHealthCheckIntervalIngressController)
+		t.Run("TestHostNetworkEndpointAddressValidation", TestHostNetworkEndpointAddressValidation)
 		t.Run("TestHostNetworkEndpointPublishingStrategy", TestHostNetworkEndpointPublishingStrategy)
 		t.Run("TestIngressControllerScale", TestIngressControllerScale)
 		t.Run("TestIngressControllerServiceNameCollision", TestIngressControllerServiceNameCollision)
