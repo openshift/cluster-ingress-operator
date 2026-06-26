@@ -63,6 +63,29 @@ spec:
           summary: Orphaned OpenShift Service Mesh operator subscription detected after Gateway API migration
           description: "This alert fires when the servicemeshoperator3 OLM subscription with the 'ingress.operator.openshift.io/owned' annotation persists after the Cluster Ingress Operator migrated Gateway API from OLM-managed to direct installation. The subscription is no longer managed by the Cluster Ingress Operator. To take ownership, remove the annotation: `oc annotate subscription servicemeshoperator3 -n openshift-operators ingress.operator.openshift.io/owned-`. To uninstall the operator entirely, follow the procedure in the OpenShift documentation for deleting operators from a cluster."
           message: "An OpenShift Service Mesh operator subscription is orphaned after Gateway API migration and is no longer managed by the Cluster Ingress Operator."
+      - alert: NLBHairpinRisk
+        expr: ingress_controller_aws_nlb_hairpin_risk == 1
+        for: 1h
+        labels:
+          severity: info
+        annotations:
+          summary: Internal NLB IngressController may have hairpin connection failures.
+          description: >-
+            This alert fires when an IngressController uses an internal AWS Network Load Balancer
+            that may be affected by hairpin connection failures. Hairpin failures occur when a pod
+            connects to a route served by a router pod on the same node — the connection times out
+            because the NLB's default client IP preservation setting causes the return traffic to
+            be dropped. To fix hairpin failures, set the NLB protocol to PROXY:
+            `oc patch ingresscontroller/<name> -n openshift-ingress-operator --type=merge
+            -p '{"spec":{"endpointPublishingStrategy":{"loadBalancer":{"providerParameters":{"aws":{"networkLoadBalancer":{"protocol":"PROXY"}}}}}}}'`.
+            To keep the current behavior and silence this alert, set the protocol to TCP:
+            `oc patch ingresscontroller/<name> -n openshift-ingress-operator --type=merge
+            -p '{"spec":{"endpointPublishingStrategy":{"loadBalancer":{"providerParameters":{"aws":{"networkLoadBalancer":{"protocol":"TCP"}}}}}}}'`.
+          message: >-
+            The {{ $labels.namespace }}/{{ $labels.name }} IngressController uses an internal
+            AWS NLB that may have hairpin connection failures. Connections from pods to routes
+            served by router pods on the same node may time out. Set the NLB protocol field to
+            PROXY to fix, or TCP to keep current behavior. See the alert description for commands.
       # Recording rules related to route metrics for sending via telemetry
       - expr: min(route_metrics_controller_routes_per_shard)
         record: cluster:route_metrics_controller_routes_per_shard:min
