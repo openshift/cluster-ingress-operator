@@ -10,7 +10,8 @@ GO_GCFLAGS ?= -gcflags=all="-N -l"
 endif
 
 GO=GO111MODULE=on GOFLAGS=-mod=vendor go
-GO_BUILD_RECIPE=CGO_ENABLED=1 $(GO) build -o $(BIN) $(GO_GCFLAGS) $(MAIN_PACKAGE)
+GO_LDFLAGS=-ldflags "-X github.com/istio-ecosystem/sail-operator/pkg/istioversion.versionsFilename=versions.ossm.yaml"
+GO_BUILD_RECIPE=CGO_ENABLED=1 $(GO) build -o $(BIN) $(GO_GCFLAGS) $(GO_LDFLAGS) $(MAIN_PACKAGE)
 
 ifdef TEST
 TEST_UNIT ?= $(TEST)

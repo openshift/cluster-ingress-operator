@@ -20,6 +20,7 @@ import (
 	gatewayapiv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	sailv1 "github.com/istio-ecosystem/sail-operator/api/v1"
+	"github.com/istio-ecosystem/sail-operator/chart"
 	"github.com/istio-ecosystem/sail-operator/pkg/install"
 	"github.com/istio-ecosystem/sail-operator/resources"
 
@@ -92,8 +93,9 @@ const (
 )
 
 type extraIstioConfig struct {
-	proxyConfig *configv1.Proxy
-	infraConfig *configv1.Infrastructure
+	proxyConfig     *configv1.Proxy
+	infraConfig     *configv1.Infrastructure
+	apiserverConfig *configv1.APIServer
 }
 
 var log = logf.Logger.WithName(controllerName)
@@ -182,11 +184,14 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 		// Start the Sail Library's background reconciliation loop (runs in a goroutine).
 		// Returns a notification channel that signals when library reconciliation completes,
 		// allowing us to update GatewayClass status conditions accordingly.
-		installer, err := install.New(mgr.GetConfig(), resources.FS)
+		installer, err := install.New(mgr.GetConfig(), resources.FS, chart.CRDsFS)
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize sail-operator installation library: %w", err)
 		}
-		notifyCh := installer.Start(config.Context)
+		notifyCh, err := installer.Start(config.Context)
+		if err != nil {
+			return nil, fmt.Errorf("failed to start sail-operator installation library: %w", err)
+		}
 		reconciler.sailInstaller = installer
 
 		// Reconciliation Triggers with the Sail Library:
@@ -234,6 +239,15 @@ func NewUnmanaged(mgr manager.Manager, config Config) (controller.Controller, er
 	if err := c.Watch(source.Kind[client.Object](operatorCache, &configv1.Infrastructure{}, reconciler.enqueueRequestForSomeGatewayClass())); err != nil {
 		return nil, err
 	}
+
+	// Watch the cluster TLSProfile config for changes
+	isClusterAPIServerConfig := predicate.NewPredicateFuncs(func(o client.Object) bool {
+		return o.GetName() == "cluster"
+	})
+	if err := c.Watch(source.Kind[client.Object](operatorCache, &configv1.APIServer{}, reconciler.enqueueRequestForSomeGatewayClass(), isClusterAPIServerConfig)); err != nil {
+		return nil, err
+	}
+
 	// Watch the istiod network policy.
 	isIstiodNetworkPolicy := predicate.NewPredicateFuncs(func(o client.Object) bool {
 		istiodNetworkPolicyName := operatorcontroller.IstiodNetworkPolicyName()
@@ -273,8 +287,8 @@ type Config struct {
 // SailLibraryInstaller implements the methods of sail library but in a way we can
 // also mock and test
 type SailLibraryInstaller interface {
-	Start(ctx context.Context) <-chan struct{}
-	Apply(opts install.Options)
+	Start(ctx context.Context) (<-chan struct{}, error)
+	Apply(opts install.Options) error
 	Uninstall(ctx context.Context, namespace, revision string) error
 	Status() install.Status
 	Enqueue()
