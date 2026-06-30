@@ -459,14 +459,16 @@ func (r *reconciler) getOperatorState(ctx context.Context, ingressNamespace, can
 		useSailLibrary := r.config.GatewayAPIWithoutOLMEnabled
 		state.useSailLibrary = useSailLibrary
 		if r.config.GatewayAPIControllerEnabled && (useOLM || useSailLibrary) {
-			var subscription operatorsv1alpha1.Subscription
-			subscriptionName := operatorcontroller.ServiceMeshOperatorSubscriptionName()
-			if err := r.cache.Get(ctx, subscriptionName, &subscription); err != nil {
-				if !errors.IsNotFound(err) {
-					return state, fmt.Errorf("failed to get subscription %q: %v", subscriptionName, err)
+			if useOLM {
+				var subscription operatorsv1alpha1.Subscription
+				subscriptionName := operatorcontroller.ServiceMeshOperatorSubscriptionName()
+				if err := r.cache.Get(ctx, subscriptionName, &subscription); err != nil {
+					if !errors.IsNotFound(err) {
+						return state, fmt.Errorf("failed to get subscription %q: %v", subscriptionName, err)
+					}
+				} else {
+					state.haveOSSMSubscription = true
 				}
-			} else {
-				state.haveOSSMSubscription = true
 			}
 
 			var (
