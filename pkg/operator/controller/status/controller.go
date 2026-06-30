@@ -97,10 +97,12 @@ func New(mgr manager.Manager, config Config) (controller.Controller, error) {
 	// tracking OLM subscriptions across all namespaces.
 	var subscriptionCache cache.Cache
 	var err error
-	if subscriptionCache, err = cache.New(mgr.GetConfig(), cache.Options{}); err != nil {
-		return nil, err
+	if config.OperatorLifecycleManagerEnabled {
+		if subscriptionCache, err = cache.New(mgr.GetConfig(), cache.Options{}); err != nil {
+			return nil, err
+		}
+		mgr.Add(subscriptionCache)
 	}
-	mgr.Add(subscriptionCache)
 	reconciler := &reconciler{
 		config:            config,
 		client:            mgr.GetClient(),
@@ -457,14 +459,16 @@ func (r *reconciler) getOperatorState(ctx context.Context, ingressNamespace, can
 		useSailLibrary := r.config.GatewayAPIWithoutOLMEnabled
 		state.useSailLibrary = useSailLibrary
 		if r.config.GatewayAPIControllerEnabled && (useOLM || useSailLibrary) {
-			var subscription operatorsv1alpha1.Subscription
-			subscriptionName := operatorcontroller.ServiceMeshOperatorSubscriptionName()
-			if err := r.cache.Get(ctx, subscriptionName, &subscription); err != nil {
-				if !errors.IsNotFound(err) {
-					return state, fmt.Errorf("failed to get subscription %q: %v", subscriptionName, err)
+			if useOLM {
+				var subscription operatorsv1alpha1.Subscription
+				subscriptionName := operatorcontroller.ServiceMeshOperatorSubscriptionName()
+				if err := r.cache.Get(ctx, subscriptionName, &subscription); err != nil {
+					if !errors.IsNotFound(err) {
+						return state, fmt.Errorf("failed to get subscription %q: %v", subscriptionName, err)
+					}
+				} else {
+					state.haveOSSMSubscription = true
 				}
-			} else {
-				state.haveOSSMSubscription = true
 			}
 
 			var (
