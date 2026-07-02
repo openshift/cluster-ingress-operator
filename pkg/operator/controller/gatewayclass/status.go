@@ -1,8 +1,8 @@
 package gatewayclass
 
 import (
-	"bytes"
 	"fmt"
+	"strings"
 
 	"github.com/istio-ecosystem/sail-operator/pkg/install"
 
@@ -21,9 +21,9 @@ const (
 
 	// CRDsReadyConditionType indicates the ownership and readiness state of Istio CRDs.
 	// Status values:
-	//   - True (ManagedByCIO/ManagedByOLM): CRDs are managed by CIO or OLM respectively
+	//   - True (Ready): all CRDs are ready and managed
+	//   - False (NotReady/MixedOwnership/Error): CRDs are not ready, have mixed ownership, or errored
 	//   - Unknown (NoneExist): CRDs have not yet been installed
-	//   - False (MixedOwnership/UnknownManagement): CRDs have conflicting ownership or unknown management
 	CRDsReadyConditionType = "CRDsReady"
 )
 
@@ -55,33 +55,35 @@ func mapStatusToConditions(status install.Status, generation int64, conditions *
 
 	changed := meta.SetStatusCondition(conditions, installed)
 
-	// CRD condition: reflects CRD ownership state.
+	// CRD condition: reflects CRD readiness state.
 	crd := metav1.Condition{
 		Type:               CRDsReadyConditionType,
 		ObservedGeneration: generation,
 		LastTransitionTime: metav1.Now(),
 	}
 	switch status.CRDState {
-	case install.CRDManagedByCIO:
-		crd.Status = metav1.ConditionTrue
-		crd.Reason = "ManagedByCIO"
-		crd.Message = status.CRDMessage
-	case install.CRDManagedByOLM:
-		crd.Status = metav1.ConditionTrue
-		crd.Reason = "ManagedByOLM"
-		crd.Message = status.CRDMessage
-	case install.CRDNoneExist:
+	case install.CRDManagementStateReady:
+		if unmanaged := getUnmanagedCRDs(status.CRDs); len(unmanaged) > 0 {
+			crd.Status = metav1.ConditionFalse
+			crd.Reason = "MixedOwnership"
+			crd.Message = getCRDStatusMessage("CRDs have mixed ownership", status.CRDs)
+		} else {
+			crd.Status = metav1.ConditionTrue
+			crd.Reason = "Ready"
+			crd.Message = "all CRDs are ready and managed"
+		}
+	case install.CRDManagementStateNotReady:
+		crd.Status = metav1.ConditionFalse
+		crd.Reason = "NotReady"
+		crd.Message = getCRDStatusMessage("not all CRDs are ready", status.CRDs)
+	case install.CRDManagementStateError:
+		crd.Status = metav1.ConditionFalse
+		crd.Reason = "Error"
+		crd.Message = getCRDStatusMessage(status.CRDMessage, status.CRDs)
+	default:
 		crd.Status = metav1.ConditionUnknown
 		crd.Reason = "NoneExist"
 		crd.Message = "CRDs not yet installed"
-	case install.CRDMixedOwnership:
-		crd.Status = metav1.ConditionFalse
-		crd.Reason = "MixedOwnership"
-		crd.Message = getCRDStatusMessage(status)
-	default:
-		crd.Status = metav1.ConditionFalse
-		crd.Reason = "UnknownManagement"
-		crd.Message = getCRDStatusMessage(status)
 	}
 	changed = meta.SetStatusCondition(conditions, crd) || changed
 
@@ -94,22 +96,42 @@ func removeSailInstallConditions(conditions *[]metav1.Condition) {
 	meta.RemoveStatusCondition(conditions, CRDsReadyConditionType)
 }
 
-// getCRDStatusMessage formats a detailed CRD status message including the overall
-// state and a bulleted list of individual CRD ownership states.
-func getCRDStatusMessage(status install.Status) string {
-	if status.CRDMessage == "" && len(status.CRDs) == 0 {
-		return "unable to determine CRD ownership"
-	}
-	var message bytes.Buffer
-	if _, err := message.WriteString(status.CRDMessage); err != nil {
-		log.Error(err, "error writing CRD status", "status", status.CRDMessage)
-	}
-	for _, info := range status.CRDs {
-		crdMsg := fmt.Sprintf("\n- %s: %s", info.Name, info.State)
-		_, err := message.WriteString(crdMsg)
-		if err != nil {
-			log.Error(err, "error writing CRD message", "crd", info.Name)
+func getUnmanagedCRDs(crds []install.CRDInfo) []string {
+	var unmanaged []string
+	for _, info := range crds {
+		if !info.Managed {
+			unmanaged = append(unmanaged, info.Name)
 		}
 	}
-	return message.String()
+	return unmanaged
+}
+
+// getCRDStatusMessage formats a status message with a summary line and
+// a bulleted list of individual CRD states.
+func getCRDStatusMessage(summary string, crds []install.CRDInfo) string {
+	if summary == "" && len(crds) == 0 {
+		return "unable to determine CRD ownership"
+	}
+	var lines []string
+	if summary != "" {
+		lines = append(lines, summary)
+	}
+	for _, info := range crds {
+		lines = append(lines, fmt.Sprintf("- %s: %s", info.Name,
+			crdStateString(info)))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func crdStateString(info install.CRDInfo) string {
+	switch {
+	case info.Managed && info.Ready:
+		return "Managed"
+	case info.Managed && !info.Ready:
+		return "Managed (not ready)"
+	case !info.Managed && info.Ready:
+		return "NotManaged"
+	default:
+		return "NotManaged (not ready)"
+	}
 }
