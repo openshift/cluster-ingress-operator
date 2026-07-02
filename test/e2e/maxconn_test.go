@@ -5,6 +5,7 @@ package e2e
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -138,7 +139,7 @@ func TestTunableMaxConnectionsInvalidValues(t *testing.T) {
 		{"set maxconn 2000001", 2000001},
 	} {
 		t.Log(testCase.description)
-		const expectedErr string = `"spec.tuningOptions" must validate at least one schema (anyOf), spec.tuningOptions.maxConnections`
+		expectedErr := fmt.Sprintf("Invalid value: %d: maxConnections must be 0, -1, or between 2000 and 2000000", testCase.maxConnections)
 		err := updateMaxConnections(t, kclient, testCase.maxConnections, icName)
 		if err == nil {
 			t.Fatal("expected an error")
